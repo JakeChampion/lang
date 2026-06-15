@@ -2775,7 +2775,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 				if !ok {
 					continue
 				}
-				fn = genEnumDropFn(en, ed, info, ptrW, genEnumDrops, genTupleDrops)
+				fn = genEnumDropFn(en, ed, info, ptrW, genEnumDrops, genTupleDrops, lo.dynRcSupported)
 				if fn == nil {
 					continue // plan failed — routing shouldn't have named it
 				}
@@ -2788,7 +2788,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 				if !ok {
 					continue
 				}
-				fn = genTupleDropFn(mangled, tt, info, ptrW, genEnumDrops, genTupleDrops)
+				fn = genTupleDropFn(mangled, tt, info, ptrW, genEnumDrops, genTupleDrops, lo.dynRcSupported)
 				if fn == nil {
 					continue
 				}
@@ -2798,7 +2798,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 				if !ok {
 					continue // routing only names structs it verified exist
 				}
-				fn = genStructDropFn(sn, sd, info, ptrW, genEnumDrops, genTupleDrops)
+				fn = genStructDropFn(sn, sd, info, ptrW, genEnumDrops, genTupleDrops, lo.dynRcSupported)
 			}
 			generated[name] = true
 			enqueueCalls(fn.Ops) // a generated body may call further drop fns
@@ -7832,7 +7832,27 @@ func genMapStrColDropFn(name string, colOff int32, ptrW int) *Func {
 // enum-payload, and map-key reclamation are later slices). Used by the
 // generated __drop_struct_ bodies; the inline (builder) struct-field
 // sweep delegates equivalently.
-func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType) []Op {
+func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, dynRcSupported bool) []Op {
+	// `dyn Trait` child (enum payload / tuple element / struct field): the
+	// per-set __drop_dyn_<set> destructor reads the vtable's trailing drop
+	// slot, dispatches the concrete dtor on `data`, and frees the boxed cell
+	// (docs/DYN-TRAITS.md §4.4 + §7.8). The caller loaded the dyn via
+	// payloadLoadOpFor (ONE word boxed cell ptr on the natives); the call's
+	// argc is 1 and — unlike the other branches — __drop_dyn_<set> returns
+	// VOID, so there is NO trailing OpDrop.
+	//
+	// NATIVES ONLY (dynRcSupported, ptrW==8). wasm (ptrW==4, inline two-word
+	// `dyn`) is deliberately EXCLUDED here: a `dyn` nested in an enum /
+	// struct / tuple that is then matched-and-bound (`match (e) { V(s) => …
+	// }`) double-drops on the inline representation (the bound `s` and the
+	// container payload both reclaim the same `data` → "pointer not
+	// aligned"). wasm keeps its prior correct-but-leaking behaviour for
+	// these container kinds (the array-element kind reclaims via the
+	// dedicated genArrDynDropFn path, unaffected). See §7.8.
+	if dt, isDyn := t.(ast.DynTraitType); isDyn && dynRcSupported {
+		return append(ops,
+			Op{Kind: OpCallDirect, Str: dynDropFnName(dt.Traits), I32: 1})
+	}
 	// Two-word string value (wasm + arm64-TwoWordOverride): the
 	// caller loaded (data, len) via a string-aware load
 	// (payloadLoadOpFor), so reclaim via __fern_str_dec. Reached from
@@ -7909,7 +7929,7 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 // filtered upstream by tupleNeedsDrop before the routing fires, so
 // genTupleDropFn assumes at least one element drop is emitted; the
 // box_free + dec arms are always emitted.
-func genTupleDropFn(mangled string, tt ast.TupleType, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType) *Func {
+func genTupleDropFn(mangled string, tt ast.TupleType, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, dynRcSupported bool) *Func {
 	offs, size := tupleElemLayout(tt.Elems, ptrW)
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
@@ -7955,7 +7975,7 @@ func genTupleDropFn(mangled string, tt ast.TupleType, info *checker.Info, ptrW i
 			ops = append(ops, Op{Kind: OpConstI32, I32: offs[i]}, Op{Kind: OpAdd})
 		}
 		ops = append(ops, Op{Kind: OpLoad, Width: WidthPtr})
-		ops = appendChildDrop(ops, et, info, ptrW, reg, tupleReg)
+		ops = appendChildDrop(ops, et, info, ptrW, reg, tupleReg, dynRcSupported)
 	}
 	ops = append(ops,
 		Op{Kind: OpLoadLocal, I32: 0},
@@ -7985,7 +8005,7 @@ func genTupleDropFn(mangled string, tt ast.TupleType, info *checker.Info, ptrW i
 // frees base = data-8, size+8 (structFieldLayout's size already
 // accounts for the header). Works for a childless struct too: the
 // field loop is empty, so it just is_unique-gates and frees the box.
-func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType) *Func {
+func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, dynRcSupported bool) *Func {
 	offs, size := structFieldLayout(sd.Fields, ptrW)
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
@@ -8036,7 +8056,7 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 			continue
 		}
 		ops = append(ops, Op{Kind: OpLoad, Width: WidthPtr})
-		ops = appendChildDrop(ops, f.Type, info, ptrW, reg, tupleReg)
+		ops = appendChildDrop(ops, f.Type, info, ptrW, reg, tupleReg, dynRcSupported)
 	}
 	ops = append(ops,
 		Op{Kind: OpLoadLocal, I32: 0},
@@ -8067,8 +8087,8 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 // gate and take the dec path. Mirrors the inline non-uniform enum drop
 // (emitDec), but as a standalone fn so a nested enum field / payload /
 // capture can route to it. Slots: 0=ptr (param), 1=tag (scratch).
-func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType) *Func {
-	plan, ok := enumVariantDropPlan(ed, ptrW)
+func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, dynRcSupported bool) *Func {
+	plan, ok := enumVariantDropPlan(ed, ptrW, dynRcSupported)
 	if !ok {
 		return nil
 	}
@@ -8094,7 +8114,7 @@ func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, 
 				ops = append(ops, Op{Kind: OpConstI32, I32: ld.off}, Op{Kind: OpAdd})
 			}
 			ops = append(ops, payloadLoadOpFor(ld.typ, ptrW))
-			ops = appendChildDrop(ops, ld.typ, info, ptrW, reg, tupleReg)
+			ops = appendChildDrop(ops, ld.typ, info, ptrW, reg, tupleReg, dynRcSupported)
 		}
 		ops = append(ops,
 			Op{Kind: OpLoadLocal, I32: 0},
@@ -8249,7 +8269,7 @@ type variantDrop struct {
 // ParamType payload — its drop-kind / size isn't statically known, so
 // the enum keeps leaking its box (safe). Mirrors uniformEnumDropLoads'
 // dropKind classification.
-func enumVariantDropPlan(ed *ast.EnumDecl, ptrW int) ([]variantDrop, bool) {
+func enumVariantDropPlan(ed *ast.EnumDecl, ptrW int, dynRcSupported bool) ([]variantDrop, bool) {
 	dropKind := func(t ast.Type) (int, bool) {
 		if _, isParam := t.(ast.ParamType); isParam {
 			return 0, false
@@ -8265,6 +8285,15 @@ func enumVariantDropPlan(ed *ast.EnumDecl, ptrW int) ([]variantDrop, bool) {
 		}
 		if _, isStr := t.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
 			return 4, true // single-word native string dec (__fern_rc_dec)
+		}
+		// `dyn Trait` payload (docs/DYN-TRAITS.md §7.8): the per-set
+		// __drop_dyn_<set> destructor reclaims the concrete + boxed cell.
+		// NATIVES ONLY (dynRcSupported, ptrW==8) — wasm's inline two-word
+		// `dyn` double-drops when the payload is matched-and-bound, so it
+		// stays scalar-leaking here (correct-but-never-double-free); see
+		// appendChildDrop's dyn arm + §7.8.
+		if _, isDyn := t.(ast.DynTraitType); isDyn && dynRcSupported {
+			return 5, true // dyn drop (__drop_dyn_<set>, void)
 		}
 		return 0, false // scalar — nothing to drop
 	}
@@ -16046,6 +16075,17 @@ func (b *builder) dropStructField(t ast.Type) {
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
+	// `dyn Trait` payload (enum variant-plan / inline struct field): the caller
+	// loaded the boxed one-word cell ptr via payloadLoadOpFor. __drop_dyn_<set>
+	// returns VOID, so argc is 1 and there is NO trailing OpDrop (unlike the
+	// dropFnNameFor branch below, whose drop fns return the ptr). NATIVES ONLY
+	// (b.dynRcSupported): wasm's inline two-word `dyn` double-drops when the
+	// payload is matched-and-bound, so it stays correct-but-leaking there;
+	// see appendChildDrop's dyn arm + docs/DYN-TRAITS.md §7.8.
+	if dt, isDyn := t.(ast.DynTraitType); isDyn && b.dynRcSupported {
+		b.emit(Op{Kind: OpCallDirect, Str: dynDropFnName(dt.Traits), I32: 1})
+		return
+	}
 	if name, ok := dropFnNameFor(t, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok {
 		b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
 		b.emit(Op{Kind: OpDrop})
@@ -16137,7 +16177,7 @@ func (b *builder) emitEnumDropViaGenFn(slot int32, et ast.EnumType) bool {
 	if !ok {
 		return false
 	}
-	if _, ok := enumVariantDropPlan(ed, b.ptrW); !ok {
+	if _, ok := enumVariantDropPlan(ed, b.ptrW, b.dynRcSupported); !ok {
 		return false
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: slot})
@@ -16350,7 +16390,12 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 		// read it from the stack, never from the (possibly freed) box.
 		// Concrete enums take the wasm-correct generated-fn route above before
 		// reaching here; this inline path serves generic instantiations.
-		if plan, ok := enumVariantDropPlan(ed, b.ptrW); ok {
+		// This inline tag-switch drops each variant's payloads via
+		// b.dropStructField, which now has a `dyn` arm (right argc + void, no
+		// trailing drop) — so an enum-with-dyn-payload reclaims its `dyn` here
+		// too on a dyn-RC backend (docs/DYN-TRAITS.md §7.8). The generated
+		// __drop_enum_ route handles the per-iteration loop-var reinit drop.
+		if plan, ok := enumVariantDropPlan(ed, b.ptrW, b.dynRcSupported); ok {
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
