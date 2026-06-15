@@ -4891,6 +4891,186 @@ function iife_arm_returns_ident(arm: parser.MatchArm, name: string): boolean {
     return false;
 }
 
+// iife_arm_tail_expr returns the arm's TAIL `return E` value expression, or an
+// e_unknown when the arm's last statement is not a return. Used to classify the
+// arm's RESULT for the borrow-only payload gate below.
+function iife_arm_tail_expr(arm: parser.MatchArm): parser.Expr {
+    if (arm.body.len() == 0) { return parser.e_unknown(""); }
+    var last: parser.Stmt = arm.body[arm.body.len() - 1];
+    match (last) {
+        parser.StmtReturn(r) => { return r.value; },
+        _ => { return parser.e_unknown(""); }
+    }
+    return parser.e_unknown("");
+}
+
+// iife_expr_mentions_ident reports whether `name` appears anywhere in `e`. Used to
+// route a sub-expression that does NOT reference the bound payload through the
+// ordinary `s`-based i32 classifier (the binding is irrelevant to it), and one that
+// DOES through the payload-aware borrow check.
+function iife_expr_mentions_ident(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == name; },
+        parser.ExprBinary(b) => { return iife_expr_mentions_ident(b.left, name) || iife_expr_mentions_ident(b.right, name); },
+        parser.ExprUnary(u) => { return iife_expr_mentions_ident(u.operand, name); },
+        parser.ExprFieldAccess(fa) => { return iife_expr_mentions_ident(fa.obj, name); },
+        parser.ExprIndex(ix) => { return iife_expr_mentions_ident(ix.array, name) || iife_expr_mentions_ident(ix.index, name); },
+        parser.ExprCall(c) => {
+            if (iife_expr_mentions_ident(c.callee, name)) { return true; }
+            var i: i32 = 0;
+            while (i < c.args.len()) { if (iife_expr_mentions_ident(c.args[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// iife_method_ret_i32 reports whether method `method` on a receiver of type `recv`
+// (a struct / enum) provably returns an i32 (or boolean — both ride the i32 temp).
+// Sound by EXCLUSION: a method registered as returning string / i64 / f64 / an array
+// / a tuple / a struct / an Option is rejected; anything else (an i32 / boolean
+// return) is admitted. The qualified key "<recv>.<method>" is how every *_ret
+// registry stores receiver methods (mirroring expr_is_str / infer_expr_width).
+function iife_method_ret_i32(recv: string, method: string, s: LowerState): boolean {
+    var key: string = recv + "." + method;
+    if (s.is_str_ret_fn(key)) { return false; }
+    if (s.is_i64_ret_fn(key)) { return false; }
+    if (s.is_f64_ret_fn(key)) { return false; }
+    if (s.is_arr_ret_fn(key) || s.is_strarr_ret_fn(key) || s.is_f64arr_ret_fn(key) || s.is_i64arr_ret_fn(key)) { return false; }
+    if (s.struct_ret_type(key) != "") { return false; }
+    if (s.tuple_ret_type(key) != "") { return false; }
+    if (s.opt_ret_type(key) != "") { return false; }
+    return true;
+}
+
+// iife_borrow_leaf_i32 reports whether `e` — a borrow READ of the bound payload
+// `name` (declared type `ft`) — provably yields an i32 value, WITHOUT constructing a
+// trial scope (the type is recovered directly from `ft`). The admitted shapes:
+//   - `name.<field>`  : struct / enum payload, the field's type is i32.
+//   - `name.<digit>`  : tuple payload, that element's tag is i32 / boolean.
+//   - `name.len()`    : string OR array payload → i32 length.
+//   - `name[idx]`     : string payload (a char code) or i32[]/boolean[] element.
+// A BARE `name` (the payload itself) is NOT i32 — it is rejected so the arm bails
+// (it would need a payload-typed result temp). Any other read is rejected.
+function iife_borrow_leaf_i32(e: parser.Expr, name: string, ft: string, s: LowerState): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return false; },   // bare payload — not i32
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIdent(oid) => {
+                    if (oid.name != name) { return false; }
+                    // `name.<digit>` — a tuple element read; i32 iff that element is i32 / boolean.
+                    if (util.is_all_digits(fa.field)) {
+                        var et: string = tuple_type_elem_tag(ft, util.digits_to_i32(fa.field));
+                        return et == "i32" || et == "boolean";
+                    }
+                    // `name.<field>` — a struct / enum field read; i32 iff the field is i32 / boolean.
+                    if (decl_is_struct(s.structs, ft) || is_enum_like_name(ft, s.structs)) {
+                        var fdt: string = decl_field_type(s.structs, ft, fa.field);
+                        return fdt == "i32" || fdt == "boolean";
+                    }
+                    return false;
+                },
+                _ => { return false; }
+            }
+        },
+        parser.ExprIndex(ix) => {
+            match (ix.array) {
+                parser.ExprIdent(aid) => {
+                    if (aid.name != name) { return false; }
+                    // `name[idx]` — a string char code (i32) or a scalar-array element (i32).
+                    if (ft == "string" || is_scalar_array_type(ft)) { return iife_borrow_subexpr_i32(ix.index, name, ft, s); }
+                    return false;
+                },
+                _ => { return false; }
+            }
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    match (cfa.obj) {
+                        parser.ExprIdent(rid) => {
+                            if (rid.name != name) { return false; }
+                            // `name.len()` — string / array length → i32.
+                            if (cfa.field == "len" && c.args.len() == 0) { return true; }
+                            // `name.method()` on a struct / enum payload whose return is
+                            // provably i32 (NOT in any wider-result registry — a boolean
+                            // return also rides the i32 temp, so it's fine).
+                            if (decl_is_struct(s.structs, ft) || is_enum_like_name(ft, s.structs)) {
+                                return iife_method_ret_i32(ft, cfa.field, s);
+                            }
+                            return false;
+                        },
+                        _ => { return false; }
+                    }
+                },
+                _ => {}
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// iife_borrow_subexpr_i32 reports whether `e` provably yields an i32 value given the
+// bound payload `name` (type `ft`) is in scope. A sub-expression that does NOT
+// mention `name` is classified by the ordinary i32 predicates over `s` (the binding
+// is irrelevant); one that DOES is either an arithmetic / comparison / logical
+// COMPOSITION of i32 sub-results, or a direct borrow LEAF (iife_borrow_leaf_i32).
+// This is the trial-scope-free classifier the borrow gate uses (it avoids adding a
+// local to the lowering state purely to classify).
+function iife_borrow_subexpr_i32(e: parser.Expr, name: string, ft: string, s: LowerState): boolean {
+    if (!iife_expr_mentions_ident(e, name)) {
+        // The bound payload is irrelevant here — classify with the existing rules.
+        if (expr_is_str(e, s)) { return false; }
+        if (expr_is_f64(e, s)) { return false; }
+        if (infer_expr_width(e, s) == 64) { return false; }
+        if (expr_is_tuple(e, s)) { return false; }
+        if (expr_is_result(e, s)) { return false; }
+        if (expr_is_arr_src(e, s) || expr_is_strarr(e, s) || expr_is_f64arr(e, s) || expr_is_i64arr(e, s)) { return false; }
+        if (expr_struct_type(e, s) != "") { return false; }
+        return true;
+    }
+    match (e) {
+        parser.ExprBinary(b) => {
+            // Comparison / logical ops yield an i32 boolean regardless of operand
+            // width (booleans ride the i32 slot). Arithmetic / bitwise ops are i32
+            // only when BOTH operands are provably i32 (an i64 operand widens the op).
+            if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=" || b.op == "&&" || b.op == "||") { return true; }
+            return iife_borrow_subexpr_i32(b.left, name, ft, s) && iife_borrow_subexpr_i32(b.right, name, ft, s);
+        },
+        parser.ExprUnary(u) => {
+            if (u.op == "!") { return true; }                  // boolean → i32
+            if (u.op == "as_i64" || u.op == "as_u64") { return false; }
+            return iife_borrow_subexpr_i32(u.operand, name, ft, s);
+        },
+        _ => { return iife_borrow_leaf_i32(e, name, ft, s); }
+    }
+    return false;
+}
+
+// iife_payload_borrow_i32 admits a STRUCT / STRING / TUPLE / ENUM payload binding
+// for the inlined match-EXPRESSION when the arm's tail reads it as a BORROW that
+// produces a provably-i32 result (`p.x` of an i32 field, `s.len()`, `t.0` of an i32
+// element, an i32 composition of these). The underlying StmtMatch path already
+// binds + deep-drops / leaks these payloads correctly; this gate only needs to
+// guarantee the i32 result temp is the right width. A BARE return (`V(p) => p`)
+// would need a payload-typed temp the IIFE can't classify, so it is rejected (like
+// the array case). A non-i32 borrow result (string / i64 / f64 / tuple / array /
+// struct field read) is rejected too — its temp would be mis-classified at the
+// width inferred before the binding is in scope. Leak-safe struct payloads only.
+function iife_payload_borrow_i32(ft: string, name: string, arm: parser.MatchArm, s: LowerState): boolean {
+    // A struct payload must be leak-safe (no aliasing array fields needing RC) — it
+    // is borrowed from the enum box, never reclaimable, so it must leak cleanly.
+    if (decl_is_struct(s.structs, ft) && !is_enum_like_name(ft, s.structs) && !decl_is_leaksafe(s.structs, ft)) { return false; }
+    // Bare return of the payload is rejected (needs a payload-typed temp).
+    if (iife_arm_returns_ident(arm, name)) { return false; }
+    var tail: parser.Expr = iife_arm_tail_expr(arm);
+    return iife_borrow_subexpr_i32(tail, name, ft, s);
+}
+
 // iife_payload_field_bindable reports whether a payload of field TYPE `ft`, bound to
 // `name` in `arm`, is admissible for the inlined match-EXPRESSION:
 //   - i32: always (an i32 store / borrow).
@@ -4905,10 +5085,20 @@ function iife_arm_returns_ident(arm: parser.MatchArm, name: string): boolean {
 //     (is_scalar_array_type only) doesn't carry the i64/f64 element width, so an
 //     element read would default to i32 width and read garbage — they stay gated to
 //     AST (the same limitation applies to the statement-match path itself).
+//   - struct / string / tuple / nominal-enum payload: only when read as a BORROW
+//     whose result is provably i32 (`p.x` of an i32 field, `s.len()`, `t.0` of an
+//     i32 element, an enum method returning i32) — NOT returned bare. The result
+//     temp stays the (default) i32 width, so the value lands correctly; a non-i32
+//     borrow result (string / i64 / f64 / tuple / array / struct field) is rejected
+//     because its temp would be mis-classified at the i32 width inferred before the
+//     binding is in scope (iife_payload_borrow_i32 / iife_expr_result_is_i32).
 function iife_payload_field_bindable(ft: string, name: string, arm: parser.MatchArm, s: LowerState): boolean {
     if (ft == "i32") { return true; }
     if (ft == "i64" || ft == "f64") { return iife_arm_returns_ident(arm, name); }
     if (is_scalar_array_type(ft)) { return !iife_arm_returns_ident(arm, name); }
+    if (ft == "string" || decl_is_struct(s.structs, ft) || is_enum_like_name(ft, s.structs) || tuple_elems_lowerable(ft, s.structs)) {
+        return iife_payload_borrow_i32(ft, name, arm, s);
+    }
     return false;
 }
 

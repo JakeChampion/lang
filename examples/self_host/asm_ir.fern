@@ -637,7 +637,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .align 8\n");
     s = s.write("__fern_freelist: .skip 524288\n");
     s = s.write("    .align 8\n");
-    s = s.write("__fern_heap: .skip 1879048192\n");   // 1.75 GiB (matches asm.fern's AST heap; zero-page .bss; 0x70000000 fits the signed imm32 bounds-check addq)
+    s = s.write("__fern_heap: .skip 2013265920\n");   // 0x78000000 (~1.875 GiB) (matches asm.fern's AST heap + the native x86-64 backend; zero-page .bss; heap_base + size < 0x80000000 keeps the RIP-relative `leaq __fern_heap(%rip)` within the small-code-model ±2 GiB, and 0x78000000 fits the signed imm32 bounds-check addq)
     s = s.write("    .section .text\n");
     // __fern_alloc(%rdi = bytes) -> %rax = block. Size-classed freelist reuse
     // (class = bytes/8 < 65536) then bump; OOM traps with exit 137.
@@ -675,7 +675,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    addq %rax, %rdi\n");
     s = s.write("    pushq %rcx\n");
     s = s.write("    leaq __fern_heap(%rip), %rcx\n");
-    s = s.write("    addq $1879048192, %rcx\n");
+    s = s.write("    addq $2013265920, %rcx\n");
     s = s.write("    cmpq %rcx, %rdi\n");
     s = s.write("    popq %rcx\n");
     s = s.write("    ja .Lalloc_oom\n");

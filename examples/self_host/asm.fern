@@ -5199,7 +5199,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // each `__fern_alloc(size)` call. No deallocation — fine
     // for the small validation programs that exercise structs.
     if (s.has_need("heap")) {
-        var heap_size: string = "1879048192";   // 1.75 GiB
+        var heap_size: string = "2013265920";   // ~1.875 GiB
         s = s.write("    .section .bss\n");
         s = s.write("    .align 8\n");
         s = s.write("__fern_heap_ptr: .quad 0\n");
@@ -5214,7 +5214,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    .align 8\n");
         s = s.write("__fern_freelist: .skip 524288\n");
         s = s.write("    .align 8\n");
-        s = s.write("__fern_heap: .skip " + heap_size + "\n");   // 1.75 GiB — room for read_all_stdin + self-compiling a whole source bundle (zero-page .bss, no file-size cost); 1 GiB was within ~tens of source lines of exhaustion as the bundle grew (alloc OOM exits 137)
+        s = s.write("__fern_heap: .skip " + heap_size + "\n");   // 0x78000000 (~1.875 GiB) — room for read_all_stdin + self-compiling a whole source bundle (zero-page .bss, no file-size cost); 1.75 GiB sat within ~30 MiB of the self-compile peak as the IR subset widened (alloc OOM exits 137). Ceiling: this is a STATIC .bss block addressed RIP-relative (`leaq __fern_heap(%rip)`), so heap_base + heap_size must stay < 0x80000000 for the small-code-model ±2 GiB displacement (INT32_MAX overflowed it); also the bounds-check `addq $heap_size, %rcx` needs a signed imm32 ≤ 0x7FFFFFFF
         s = s.write("    .section .text\n");
         s = s.write(".globl __fern_alloc\n");
         s = s.write(".type __fern_alloc, @function\n");
