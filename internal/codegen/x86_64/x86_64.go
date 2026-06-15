@@ -3227,7 +3227,7 @@ func (g *generator) emitDataSections() {
 // persistent cursors were deleted. See the arm64 generator's
 // `emitAllocRuntime` comment for the full rationale.
 func (g *generator) emitAllocRuntime() {
-	const heapBytes = 1024 * 1024 * 1024 // 1 GiB per region — sized so a cmd/fern-built self-host compiler can bootstrap-compile the WHOLE self-host source in one process (the AST path needs ~0.75 GiB live). Lazy MAP_ANONYMOUS so it costs nothing until touched. Kept ≤ INT32_MAX so the `lea [base + heapBytes]` disp32 / `mov esi, heapBytes` size stay valid.
+	const heapBytes = 1879048192 // 1.75 GiB per region — sized so a cmd/fern-built self-host compiler can bootstrap-compile the WHOLE self-host source in one process. The AST path's live set grew past the old 1 GiB as the self-host bundle widened (a clean compile peaks ~1 GiB, so any new helper tipped mmc into the exit-137 alloc trap), so this matches the self-host emitters' own `heap_size` (asm.fern / asm_arm64.fern = 1879048192) — keeping the native (stage-0 mmc) and self-host (stage-1+ gen) heaps in lockstep instead of letting the native one lag. Lazy MAP_ANONYMOUS so it costs nothing until touched. Kept ≤ INT32_MAX so the `lea [base + heapBytes]` disp32 / `mov esi, heapBytes` size stay valid.
 	g.line("")
 	g.line(".globl __fern_alloc")
 	g.line(".type __fern_alloc, @function")

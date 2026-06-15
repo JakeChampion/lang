@@ -953,6 +953,20 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"array-sum-import-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; return a.sum(); }\n"},
 		{"array-sum-squared-import-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; return a.sum_squared(); }\n"},
 		{"array-bogus-import-e043", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; return a.bogus(); }\n"},
+		// Array method RETURN-TYPING: `a.<m>()` resolves to the std/array
+		// helper's declared return type, not `unknown`. So a result used in a
+		// type-incompatible context surfaces the same E002/E003 the Go checker
+		// reports (before, the unknown result was conservatively accepted and
+		// the self-host stayed silent — a divergence). Scalar (sum→i32),
+		// array (reversed→i32[]), bool (every_positive→boolean) and string
+		// (join→string) returns are each covered on a clean and a mismatch path.
+		{"array-sum-ret-i32-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; var x: i32 = a.sum(); return x; }\n"},
+		{"array-sum-ret-string-mismatch", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; var x: string = a.sum(); return 0; }\n"},
+		{"array-reversed-ret-array-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; var b: i32[] = a.reversed(); return b[0]; }\n"},
+		{"array-reversed-ret-string-mismatch", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; var c: string = a.reversed(); return 0; }\n"},
+		{"array-every-positive-ret-bool-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; if (a.every_positive()) { return 1; } return 0; }\n"},
+		{"array-join-ret-string-ok", "import \"std/array\";\nfunction main(): i32 { var a: string[] = [\"x\", \"y\"]; var s: string = a.join(\",\"); return 0; }\n"},
+		{"array-join-ret-i32-mismatch", "import \"std/array\";\nfunction main(): i32 { var a: string[] = [\"x\", \"y\"]; var n: i32 = a.join(\",\"); return 0; }\n"},
 		// The string-method-existence E043 rule must still fire for a method
 		// that no imported module defines, even WITH std/string in scope —
 		// the bundle harness's reason for existing. `substr` isn't a std/string

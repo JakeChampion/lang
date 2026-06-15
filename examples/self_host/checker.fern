@@ -596,6 +596,36 @@ function (s: Scope) has_array_method(field: string): boolean {
     return false;
 }
 
+// try_array_method_type resolves the result type of an array method call
+// `a.<field>(...)` where `a` is an array. The std/array helpers are free
+// functions named `__method_Array_<field>` (or the `<mod>__`-mangled form
+// the bundler emits, which still ends in that convention name), discovered
+// the same suffix-matching way has_array_method finds them. Returns the
+// helper's declared return type, or t_unknown when no such helper is in
+// scope — at which point check_call_expr falls through to its normal
+// "receiver isn't a typed value" handling so a genuine unknown array
+// method still surfaces as unknown rather than a wrong concrete type.
+// `append` / `with` are the built-in array growers and return the array
+// itself (the receiver type), short-circuited ahead of the sig scan.
+function (s: Scope) array_method_ret_type(recv_ty: Type, field: string): Type {
+    match (recv_ty) {
+        TypeArray(_) => {
+            if (field == "append" || field == "with") { return recv_ty; }
+            var target: string = "__method_Array_" + field;
+            var tn: i32 = target.len();
+            var i: i32 = 0;
+            while (i < s.sigs.len()) {
+                var nm: string = s.sigs[i].name;
+                if (nm == target) { return s.sigs[i].ret_type; }
+                if (nm.len() > tn && nm[nm.len() - tn : nm.len()] == target) { return s.sigs[i].ret_type; }
+                i = i + 1;
+            }
+            return t_unknown("no array method `" + field + "`");
+        },
+        _ => { return t_unknown("array_method_ret_type: receiver isn't an array"); }
+    }
+}
+
 function (s: Scope) lookup_struct(name: string): StructSig {
     var i: i32 = 0;
     while (i < s.structs.len()) {
@@ -849,6 +879,14 @@ function check_call_expr(c: parser.ExprCall, s: Scope): Type {
                 name = fa.field;
                 is_method = true;
                 recv_ty = check_expr(fa.obj, s);
+                // Array method-syntax dispatch: `a.<field>(...)` on an
+                // array resolves to the std/array `__method_Array_<field>`
+                // helper's return type (or the built-in append/with growers).
+                // Done ahead of the recv_type_name match below because an
+                // array receiver has no nominal type-name and would
+                // otherwise fall into the `_` "isn't a typed value" arm.
+                var arr_mt: Type = s.array_method_ret_type(recv_ty, name);
+                if (!is_unknown(arr_mt)) { return arr_mt; }
                 // Receiver type-name comes from the receiver
                 // expression's static type. Primitive types
                 // use their type-keyword spelling so methods

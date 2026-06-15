@@ -801,11 +801,16 @@ func (g *generator) emitAllocRuntime() {
 	// space is reserved up front but pages only commit as
 	// they're touched, so the wider window costs nothing on
 	// programs that don't grow into it.
-	// 1 GiB (was 512 MiB) so a cmd/fern-built self-host compiler can
-	// bootstrap-compile the whole self-host source (unified fern.fern + all
-	// modules) in one process — that needs ~0.75 GiB live. Lazy-mapped, so
-	// it costs nothing until touched.
-	const heapBytes = 1024 * 1024 * 1024
+	// 1.75 GiB (was 1 GiB, was 512 MiB) so a cmd/fern-built self-host
+	// compiler can bootstrap-compile the whole self-host source (unified
+	// fern.fern + all modules) in one process. The AST path's live set grew
+	// past 1 GiB as the bundle widened, so this matches the self-host
+	// emitters' own heap_size (asm.fern / asm_arm64.fern = 1879048192),
+	// keeping the native (stage-0 mmc) and self-host (stage-1+ gen) heaps in
+	// lockstep instead of letting the native one lag. Lazy-mapped via a
+	// literal-pool load (`ldr =N`), so the wider window costs nothing until
+	// touched and has no 32-bit-immediate constraint.
+	const heapBytes = 1879048192
 	g.line("")
 	g.line(".global __fern_alloc")
 	g.typeDirective("__fern_alloc")
