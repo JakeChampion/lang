@@ -73,9 +73,9 @@ function main(): i32 {
 ```
 
 - `dyn Trait` is a trait-object type. Multi-trait objects `dyn A + B`
-  (interpreter + all three compiled backends, via the merged vtable —
-  only the multi-trait `as?` downcast still rejects) span a set of
-  traits — see §10.
+  (interpreter + all three compiled backends + the self-host, via the
+  merged vtable — dispatch AND `as?` downcast) span a set of traits —
+  see §10.
 - `dyn Trait` carries no postfix generics of its own; `dyn Trait[]`
   parses as `(dyn Trait)[]` — an array of trait objects.
 - A `dyn Trait` value is produced by **coercion**: a concrete value
@@ -673,16 +673,18 @@ Emit a clean unsupported-feature error on encountering `DynTraitType`
    ordinary heap-box `Option` representation. Downcast-only targets are
    rooted via `treeshake.DowncastImplMethods`. Struct/enum targets;
    primitive targets remain a follow-up.
-7. **Multi-trait objects (`dyn A + B`) — slices 1 + 2 shipped.**
+7. **Multi-trait objects (`dyn A + B`) — slices 1 + 2 + downcast shipped.**
    Slice 1: surface + checker + interpreter. Slice 2: merged-vtable
    **dispatch** codegen on all three backends (wasm + x86-64 + arm64) —
-   single-trait `dyn A` lowers byte-for-byte as before. Spec + status in
-   **§10**. Remaining: the multi-trait `as?` **downcast** codegen (still
-   rejects cleanly) and disambiguation syntax for a method declared by
-   two traits.
+   single-trait `dyn A` lowers byte-for-byte as before. The multi-trait
+   `as?` **downcast** now also lowers on all three native backends (and the
+   self-host, which is shape-based) via the MERGED-vtable pointer compare
+   (`emitDowncast` keys `OpConstVtable` by `dynVtableSetKey(dc.Traits)`).
+   Spec + status in **§10**. Remaining: disambiguation syntax for a method
+   declared by two traits.
 8. **Follow-ups.** Explicit upcast, primitive downcast targets, `dyn` in
-   struct fields with the fat-pointer layout, RC of the produced downcast
-   `Option`/`data` (§4.4), and the multi-trait `as?` downcast codegen.
+   struct fields with the fat-pointer layout, and RC of the produced
+   downcast `Option`/`data` (§4.4).
 
 ## 8. Testing
 
@@ -778,14 +780,22 @@ The result is an ordinary `Option` heap-box a `match` reads with the same
 
 The `rejectDowncast` gate in `LowerWith` now only fires for a backend that
 has **not** lifted its `dyn` gate (`!dynSupported`) or — defensively — a
-non-struct/enum target (the checker blocks primitives with E060 first). A
+non-struct/enum target (the checker blocks primitives with E060 first).
+**Multi-trait `dyn A + B` downcast is supported** (§10): `emitDowncast`
+keys `OpConstVtable` by the whole trait set (`dynVtableSetKey(dc.Traits)`),
+so the compare references the MERGED `__vtable_<A+B>_<T>` cell a multi-trait
+coercion of `T` stores — exact for any set, and byte-identical to the
+single-trait path for a 1-element set (the set key collapses to the bare
+trait name). A
 **downcast-only target** `T` (never coerced to `dyn Trait`, only downcast
 to) is absent from `Info.DynCoercions`, so its `__method_*` would be
 tree-shaken / IR-dead-function-eliminated and the vtable cell would
 reference a missing symbol; `treeshake.DowncastImplMethods(prog, info)`
-roots them on every backend (and the wasm path also feeds them to its
-IR-level `LiveFunctions` cull). RC of the produced `Option`/`data` is
-out of scope (leak-mode, like the rest of `dyn` — §4.4).
+roots them on every backend (rooting **every** trait in the set, not just
+the primary, so a multi-trait downcast-only target's full merged vtable
+links — and the wasm path also feeds them to its IR-level `LiveFunctions`
+cull). RC of the produced `Option`/`data` is out of scope (leak-mode, like
+the rest of `dyn` — §4.4).
 
 **Tests.** Parser (`DowncastExpr` vs `CastExpr` disambiguation); checker
 (valid → `Option[T]`, `DowncastExpr.Trait` stamped, non-`dyn` LHS →
@@ -793,7 +803,13 @@ E059, non-impl target → E060); e2e interp + compiled — `TestInterpDowncast`
 (interp behaviour + all three targets now compile) and the differential
 `TestDowncast*` (`dyn_trait_compiled_test.go`, via `dynAllBackends`):
 struct hit/miss, heterogeneous `dyn Shape[]` per-element count, an
-enum-with-payload target, and a downcast-only-target tree-shake guard.
+enum-with-payload target, a downcast-only-target tree-shake guard, plus the
+multi-trait cases — `TestDowncastMultiTraitHitMiss` (`dyn A + B` hit on the
+matching concrete / miss on a different one that also impls both),
+`TestDowncastMultiTraitOnlyTargetRooted` (multi-trait downcast-only target),
+and `TestDowncastThreeTrait` (`dyn A + B + C`). The self-host's shape-based
+downcast handles any trait set for free (`downcast-multi-*` cases in
+`self_host_dyn_trait_ir_test.go`).
 
 ## 10. Multi-trait trait objects — `dyn A + B`
 
@@ -852,7 +868,8 @@ Dispatch is still by the receiver's **runtime concrete type** (the
 interpreter's `valueTypeName` tag), so once `m` is resolved the call
 lands on `C`'s impl exactly as for single-trait `dyn`.
 
-**Status — slices 1 + 2 shipped (interp + merged-vtable codegen).**
+**Status — slices 1 + 2 + downcast shipped (interp + merged-vtable
+codegen + multi-trait downcast).**
 Slice 1 shipped the surface (parser), the checker (validity / coercion /
 resolution / ambiguity), and the interpreter (dispatch from any trait in
 the set, heterogeneous `dyn A + B[]`, passing to a `dyn A + B` param) —
@@ -861,10 +878,16 @@ shipped interp-first. Slice 2 lifts the compiled gate: **merged-vtable
 dispatch now lowers on all three backends** (wasm + x86-64 + arm64),
 matching the interpreter. Single-trait `dyn A` lowers exactly as before
 (byte-for-byte — the merged key collapses to the bare trait name for a
-1-element set). The one multi-trait sub-case still rejected on the
-compiled backends is the `e as? T` **downcast** of a multi-trait value
-(`rejectDowncast`): its per-trait `__vtable_<Trait>_<T>` pointer-compare
-doesn't understand the merged table's address yet — a follow-up.
+1-element set). The `e as? T` **downcast** of a multi-trait value now
+also lowers on all three native backends (and the self-host): `emitDowncast`
+keys the vtable-pointer compare by the whole set (`dynVtableSetKey(dc.Traits)`),
+so it references the same MERGED `__vtable_<A+B>_<T>` cell a multi-trait
+coercion of `T` stores — the compare matches exactly when the runtime
+concrete is `T` (§9). `treeshake.DowncastImplMethods` roots **every** trait
+in the set's impl methods, so a multi-trait downcast-only target's full
+merged vtable links. Single-trait downcast is unchanged. The only
+multi-trait sub-case still missing is disambiguation syntax for a method
+declared by two traits (a parser follow-up).
 
 **Merged-vtable codegen (shipped).** For `dyn {A,B}` (sorted set) over
 concrete `C`, the vtable is the **concatenation** of the per-trait tables

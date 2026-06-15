@@ -1143,11 +1143,13 @@ type DowncastExpr struct {
 	// codegen. Empty before checking.
 	Trait string
 	// Traits is the WHOLE trait set of `Inner`'s `dyn Trait` type (sorted,
-	// == Trait for a single-trait dyn). Compiled downcast codegen only
-	// supports a single-trait `dyn` (the merged-vtable address a
-	// multi-trait coercion stores differs from the per-trait
-	// `__vtable_<Trait>_<T>` the compare uses), so the IR rejects a
-	// len>1 downcast cleanly; the interpreter handles any set.
+	// == Trait for a single-trait dyn). Compiled downcast codegen keys the
+	// vtable-pointer compare by this whole set (dynVtableSetKey): a
+	// single-trait `dyn A` selects `__vtable_<A>_<T>` (byte-identical to
+	// before), a multi-trait `dyn A + B` selects the MERGED
+	// `__vtable_<A+B>_<T>` cell a multi-trait coercion of T stores, so the
+	// compare is exact for any trait set (docs/DYN-TRAITS.md §10). The
+	// interpreter handles any set by runtime concrete-type tag.
 	Traits []string
 }
 // BlockExpr is a block used in value position: `{ stmt; stmt; …; tailExpr }`.

@@ -102,6 +102,19 @@ var dynTraitIRCases = []struct {
 	// hits. [Circle, Rect, Circle] → 2 circles.
 	{"downcast-array-count",
 		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function count(xs: dyn Shape[]): i32 { var n: i32 = 0; for x in xs { match (x as? Circle) { Some(c) => { n = n + 1; }, None => { } } } return n; } function main(): i32 { var xs: dyn Shape[] = [Circle { r: 3 }, Rect { w: 2, h: 5 }, Circle { r: 1 }]; return count(xs); }`, 2},
+
+	// --- MULTI-TRAIT `dyn A + B` downcast (docs/DYN-TRAITS.md §10). The
+	// self-host downcast is SHAPE-based (op_dyn_downcast compares the dyn
+	// value's runtime shape to T's interned shape) — it never looks at the
+	// trait set, so a multi-trait `dyn A + B` value (a heap pointer with a
+	// shape, exactly like a single-trait one) downcasts for free. These pin
+	// that it parses + lowers + runs.
+	// HIT: a `dyn Show + Weigh` holding an Apple, `d as? Apple` → Some; g = 7.
+	{"downcast-multi-hit",
+		`trait Show { function show(self: Self): i32; } trait Weigh { function weight(self: Self): i32; } struct Apple { g: i32 } struct Brick { kg: i32 } impl Show for Apple { function show(self: Self): i32 { return self.g; } } impl Weigh for Apple { function weight(self: Self): i32 { return self.g; } } impl Show for Brick { function show(self: Self): i32 { return self.kg; } } impl Weigh for Brick { function weight(self: Self): i32 { return self.kg; } } function dc(d: dyn Show + Weigh): i32 { match (d as? Apple) { Some(a) => { return a.g; }, None => { return 0; } } } function main(): i32 { var x: Apple = Apple { g: 7 }; return dc(x); }`, 7},
+	// MISS: a `dyn Show + Weigh` holding a Brick, `d as? Apple` → None → 0.
+	{"downcast-multi-miss",
+		`trait Show { function show(self: Self): i32; } trait Weigh { function weight(self: Self): i32; } struct Apple { g: i32 } struct Brick { kg: i32 } impl Show for Apple { function show(self: Self): i32 { return self.g; } } impl Weigh for Apple { function weight(self: Self): i32 { return self.g; } } impl Show for Brick { function show(self: Self): i32 { return self.kg; } } impl Weigh for Brick { function weight(self: Self): i32 { return self.kg; } } function dc(d: dyn Show + Weigh): i32 { match (d as? Apple) { Some(a) => { return a.g; }, None => { return 99; } } } function main(): i32 { var x: Brick = Brick { kg: 3 }; return dc(x); }`, 99},
 }
 
 // TestSelfHostDynTraitIRX86_64 routes each case through the self-hosted x86-64
