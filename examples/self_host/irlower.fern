@@ -8494,11 +8494,59 @@ pub struct LoweredFn {
 // array-returning function names so move-on-return / move-from-call can fire.
 // str_ret_fns_of collects the names of a module's string-returning functions
 // (for the call-site string tracking). The emitters compute it once per module.
+// str_leaf_is_string reports whether a lifted-lambda leaf return expression is
+// statically a STRING — a string literal, a `+` concatenation with a string
+// operand (in Fern `+` is concat iff a side is a string, so a literal / string-
+// returning side on EITHER operand identifies it), or a call to a string-
+// returning function (a str builtin, a user fn, or a nested `__lam`). Works off
+// the module function list (no LowerState), like the other *_ret_fns_of
+// inferences; an unresolvable operand (e.g. a bare string LOCAL) returns false.
+function str_leaf_is_string(e: parser.Expr, funcs: parser.FuncDecl[], depth: i32): boolean {
+    if (depth > 8) { return false; }
+    match (e) {
+        parser.ExprString(_) => { return true; },
+        parser.ExprBinary(b) => {
+            if (b.op == "+") { return str_leaf_is_string(b.left, funcs, depth + 1) || str_leaf_is_string(b.right, funcs, depth + 1); }
+            return false;
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (cid.name == "random_bytes" || cid.name == "string_from_bytes" || cid.name == "read_line") { return true; }
+                    var ni: i32 = 0;
+                    while (ni < funcs.len()) {
+                        if (funcs[ni].name == cid.name) {
+                            if (funcs[ni].ret_type == "string") { return true; }
+                            if (cid.name.len() >= 6 && cid.name[0:6] == "__lam_" && funcs[ni].body.len() > 0) {
+                                return str_leaf_is_string(iife_first_return_expr(funcs[ni].body[funcs[ni].body.len() - 1]), funcs, depth + 1);
+                            }
+                            return false;
+                        }
+                        ni = ni + 1;
+                    }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return false;
+}
+
 pub function str_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
     while (k < funcs.len()) {
         if (funcs[k].ret_type == "string") { out = out.append(funcs[k].name); }
+        // A lifted if-/match-EXPRESSION (`__lam_N`) whose branch is a string
+        // CONCAT carries a default `i32` ret_type (the desugar doesn't infer
+        // `string + string : string`), so a `(if (c) { "a" + "b" } else { … })`
+        // value would mis-dispatch `.len()` to the array path — a silent
+        // miscompile. Trust the body: register it as string-returning when its
+        // leaf return is statically a string.
+        else if (funcs[k].name.len() >= 6 && funcs[k].name[0:6] == "__lam_" && funcs[k].body.len() > 0) {
+            if (str_leaf_is_string(iife_first_return_expr(funcs[k].body[funcs[k].body.len() - 1]), funcs, 0)) { out = out.append(funcs[k].name); }
+        }
         k = k + 1;
     }
     return out;
