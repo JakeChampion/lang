@@ -11337,13 +11337,19 @@ pub function find_fn(fns: LoweredFn[], name: string): i32 {
 // Option) RETURNED from a callee survive into its caller — the per-call-heap
 // model used to leave such a pointer dangling and crash. Operand stack + locals
 // stay per-frame (each eval_ops has its own); only the heap is global.
-struct EvalOut { value: i32, heap: i32[], freehead: i32 }
+// `bailed` marks a result that did NOT run to completion: the program called a
+// function the IR path can't lower (find_fn miss / LoweredFn.ok false — the
+// real compiler AST-falls-back for it) or hit an op this evaluator doesn't
+// model. It propagates up the call chain so the round-trip harness reports the
+// sentinel 198 instead of a silent wrong answer (a not-found callee used to
+// yield 0, which could spuriously match an expected value).
+struct EvalOut { value: i32, heap: i32[], freehead: i32, bailed: boolean }
 
 pub function eval_call(fns: LoweredFn[], name: string, args: i32[], heap: i32[], freehead: i32): EvalOut {
     var idx: i32 = find_fn(fns, name);
-    if (idx < 0) { return EvalOut { value: 0, heap: heap, freehead: freehead }; }
+    if (idx < 0) { return EvalOut { value: 198, heap: heap, freehead: freehead, bailed: true }; }
     var fn: LoweredFn = fns[idx];
-    if (!fn.ok) { return EvalOut { value: 0, heap: heap, freehead: freehead }; }
+    if (!fn.ok) { return EvalOut { value: 198, heap: heap, freehead: freehead, bailed: true }; }
     return eval_ops(fn.ops, fn.n_locals, args, fns, heap, freehead);
 }
 
@@ -11448,7 +11454,7 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
         else if (o.kind == "load_local") { stack = stack.with(sp, locals[o.i32_imm]); sp = sp + 1; pc = pc + 1; }
         else if (o.kind == "store_local") { sp = sp - 1; locals = locals.with(o.i32_imm, stack[sp]); pc = pc + 1; }
         else if (o.kind == "not") { stack = stack.with(sp - 1, bool_not(stack[sp - 1])); pc = pc + 1; }
-        else if (o.kind == "return") { sp = sp - 1; return EvalOut { value: stack[sp], heap: heap, freehead: freehead }; }
+        else if (o.kind == "return") { sp = sp - 1; return EvalOut { value: stack[sp], heap: heap, freehead: freehead, bailed: false }; }
         else if (o.kind == "if") {
             // pop cond: nonzero -> fall into then; zero -> jump to the else
             // body (if any) or past the matching end.
@@ -11847,8 +11853,12 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
             var kk: i32 = argc - 1;
             while (kk >= 0) { sp = sp - 1; callargs = callargs.with(kk, stack[sp]); kk = kk - 1; }
             // Thread the shared heap + freelist through the nested call so any
-            // box the callee allocates (and may return) persists on return.
+            // box the callee allocates (and may return) persists on return. If
+            // the callee bailed (unlowered in the IR path — the real compiler
+            // AST-falls-back), propagate the bail rather than pushing its
+            // sentinel as a real value.
             var co: EvalOut = eval_call(fns, o.str, callargs, heap, freehead);
+            if (co.bailed) { return co; }
             heap = co.heap;
             freehead = co.freehead;
             stack = stack.with(sp, co.value);
@@ -11873,12 +11883,12 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
             // covered by the differential x86 / wasm IR suites; the round-trip
             // evaluator stays integer-only by design. (Distinct from 200 =
             // lowering bailed, 201 = no `main`.)
-            return EvalOut { value: 198, heap: heap, freehead: freehead };
+            return EvalOut { value: 198, heap: heap, freehead: freehead, bailed: true };
         }
     }
     // fell off the end with no return — yield top-of-stack if present, else 0
-    if (sp > 0) { return EvalOut { value: stack[sp - 1], heap: heap, freehead: freehead }; }
-    return EvalOut { value: 0, heap: heap, freehead: freehead };
+    if (sp > 0) { return EvalOut { value: stack[sp - 1], heap: heap, freehead: freehead, bailed: false }; }
+    return EvalOut { value: 0, heap: heap, freehead: freehead, bailed: false };
 }
 
 function bool_not(x: i32): i32 {
