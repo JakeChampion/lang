@@ -835,6 +835,13 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"i64-rem", `function main(): i32 { var a: i64 = 12000000007; var r = (a % 10) as i32; return r; }`},
 		{"i64-div-trunc", `function main(): i32 { var a: i64 = 10000000000; var c: i64 = a / 3; if (c > 3000000000) { return 5; } return 0; }`},
 		{"i64-div-signed", `function main(): i32 { var a: i64 = 0 - 12000000000; var c: i64 = a / 4; if (c < 0) { return 9; } return 0; }`},
+		// An i64-PRIM-receiver method returning i64 (`n.dbl()` on `(n: i64) dbl`):
+		// the receiver has no struct type, so lower_i64's call-recovery used to
+		// bail (couldn't form the "i64.<m>" i64-ret-fn key). method_recv_tyname now
+		// recovers "i64"/"u64" from the receiver's value width, keeping the whole
+		// thing on the IR path (mirrors std/i64's gcd/lcm flipping BAIL->ir).
+		{"i64-method-recv", `function (n: i64) dbl(): i64 { return n * 2; } function main(): i32 { var a: i64 = 3000000000; var r: i64 = a.dbl(); if (r > 5000000000) { return 7; } return 0; }`},
+		{"i64-method-recv-calls-method", `function (n: i64) absv(): i64 { if (n < 0) { return 0 - n; } return n; } function (n: i64) gcdv(m: i64): i64 { var a: i64 = n.absv(); var b: i64 = m.absv(); while (b != 0) { var t: i64 = b; b = a % b; a = t; } return a; } function main(): i32 { var x: i64 = 48; var y: i64 = 36; if (x.gcdv(y) == 12) { return 0; } return 1; }`},
 		{"arr-slice", `function main(): i32 { var a = [10, 20, 30, 40, 50]; var b = a[1:4]; return b[0] + b[2]; }`},
 		{"arr-slice-len", `function main(): i32 { var a = [1, 2, 3, 4, 5]; var b = a[1:4]; return b.len(); }`},
 		{"arr-slice-strarr", `function main(): i32 { var a = ["x", "yy", "zzz", "w"]; var b = a[1:3]; return b[0].len() + b[1].len(); }`},
