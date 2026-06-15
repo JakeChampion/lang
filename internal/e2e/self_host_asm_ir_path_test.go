@@ -784,6 +784,16 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"struct-arr-field-return", `struct P { x: i32 } struct H { ps: P[] } function get(h: H): P[] { return h.ps; } function main(): i32 { var h = H { ps: [P { x: 4 }, P { x: 9 }] }; var got: P[] = get(h); return got[0].x * 10 + got[1].x; }`},
 		{"struct-arr-field-return-local", `struct P { x: i32 } struct H { ps: P[] } function mk(): P[] { var h = H { ps: [P { x: 6 }, P { x: 2 }] }; return h.ps; } function main(): i32 { var ps = mk(); return ps[0].x * 10 + ps[1].x; }`},
 		{"struct-arr-field-assign", `struct P { x: i32 } struct H { ps: P[] } function f(h: H): i32 { var ps: P[] = []; ps = h.ps; var s = 0; var i = 0; while (i < ps.len()) { s = s + ps[i].x; i = i + 1; } return s; } function main(): i32 { var h = H { ps: [P { x: 5 }, P { x: 7 }, P { x: 11 }] }; return f(h); }`},
+		// A struct-array IDENT / PARAM as a struct-literal FIELD VALUE
+		// (`S { es: xs }`) — the alias-creating sibling of the field-access form
+		// (`S { es: s.es }`, already lowered) and the bind/return/assign positions.
+		// Same buffer-pointer Perceus dup; admits the checker's new_scope* /
+		// Scope-construction shape (`Scope { sigs: fs, ... }`) and lexer.fstring_tok
+		// (`TokFString { parts: parts }`). Local-ident source, param source, and a
+		// fresh-empty-then-populate source.
+		{"struct-arr-into-lit-ident", `struct E { v: i32 } struct S { es: E[], tag: i32 } function main(): i32 { var xs: E[] = [E { v: 3 }, E { v: 5 }]; var s = S { es: xs, tag: 7 }; return s.es[0].v * 100 + s.es[1].v * 10 + s.tag; }`},
+		{"struct-arr-into-lit-param", `struct E { v: i32 } struct S { es: E[], tag: i32 } function mk(xs: E[], t: i32): S { return S { es: xs, tag: t }; } function main(): i32 { var s = mk([E { v: 2 }, E { v: 8 }], 4); return s.es[0].v * 100 + s.es[1].v * 10 + s.tag; }`},
+		{"struct-arr-into-lit-empty", `struct E { v: i32 } struct S { es: E[] } function empty(): S { var none: E[] = []; return S { es: none }; } function main(): i32 { var s = empty(); return s.es.len(); }`},
 		// The nested-array motivating shape (parser.module_has_default_params): an
 		// array-of-struct field read out of an element of an outer array-of-struct,
 		// bound in a loop, then indexed for a scalar field.
