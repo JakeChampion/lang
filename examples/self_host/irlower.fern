@@ -10806,8 +10806,22 @@ pub function lower_func_for(fn: parser.FuncDecl, arr_ret_fns: string[], structs:
 // are irrelevant there; passing them empty keeps those scans matching their
 // previous behaviour while sharing the side-table derivation.
 pub function lower_func_for_noret(fn: parser.FuncDecl, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): LowerResult {
-    var none: string[] = [];
-    return lower_func(fn, none, structs, none, none, arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs));
+    // Pass the SAME return-type registries the emit path (lower_func_for) uses,
+    // not empty lists. This function backs the eligibility checks
+    // (calls_only_known / const_funcs_only_known), which resolve a call's
+    // dispatch target via the receiver's inferred type. Without str_ret_fns a
+    // string-returning METHOD-call receiver (`s.m()` in `s.m().n()`) types as
+    // i32, so the chained `.n()` mis-resolves to `i32.n` and the check wrongly
+    // BAILs an otherwise-fine module. Mirroring the emit lists keeps the gate
+    // and the emit in agreement (and never admits a module the emit can't lower,
+    // since both now lower identically).
+    var arr_ret: string[] = [];
+    var k: i32 = 0;
+    while (k < funcs.len()) {
+        if (is_array_type_name(funcs[k].ret_type)) { arr_ret = arr_ret.append(funcs[k].name); }
+        k = k + 1;
+    }
+    return lower_func(fn, arr_ret, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs));
 }
 
 // i64_sig_of returns the "<ret><params>" flag string for `name`, or "" if the

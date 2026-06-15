@@ -213,6 +213,14 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// helper. This is the shape std/array distinct/distinct_count/mode use
 		// (calling index_of via method syntax). dedup of [x,y,x,z,y] over i32 -> 3.
 		{"arr-method-dispatch", "function __method_Array_idx_i(arr: i32[], v: i32): i32 { var i = 0; while (i < arr.len()) { if (arr[i] == v) { return i; } i = i + 1; } return 0 - 1; } function distinct_n(arr: i32[]): i32 { var seen: i32[] = []; var i = 0; while (i < arr.len()) { if (seen.idx_i(arr[i]) < 0) { seen = seen.append(arr[i]); } i = i + 1; } return seen.len(); } function main(): i32 { var a: i32[] = []; a = a.append(3); a = a.append(7); a = a.append(3); a = a.append(9); a = a.append(7); return distinct_n(a); }"},
+		// Chained method call `recv.m().n()` — a method on a method-call RESULT.
+		// Was BAIL call: the eligibility check (calls_only_known) lowered via
+		// lower_func_for_noret, which passed empty str_ret_fns, so the inner
+		// `s.m()` result typed as i32 and the outer `.n()` mis-resolved to
+		// `i32.n`. lower_func_for_noret now mirrors the emit path's registries, so
+		// the chained string-method dispatches `string.n` (the shape i32.to_rgb_hex
+		// uses: r.to_hex().pad_start(...)). "ab".dup().dup() -> "abababab", len 8.
+		{"chained-str-method", "function (s: string) dup(): string { return s + s; } function f(s: string): i32 { return s.dup().dup().len(); } function main(): i32 { return f(\"ab\"); }"},
 		{"with-loop", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; while (i < 4) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3]; }"},
 		{"append-build", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a[0] + a[4]; }"},
 		// `.append(e)` as a general EXPRESSION (not the `out = out.append(e)`
