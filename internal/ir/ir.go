@@ -1502,6 +1502,19 @@ type VtableDecl struct {
 	Trait    string         // trait name (mangled, as in Info.Traits)
 	Concrete string         // concrete type name (mangled, as in Info.Impls)
 	Methods  []VtableMethod // dispatchable methods, trait declaration order
+	// Drop is the concrete type's recursive-drop function name
+	// (dropFnNameFor(C) → __drop_struct_<C> / __drop_enum_<…> /
+	// __drop_tuple_<…>), or "" when C needs no drop (a flat scalar
+	// struct). The RC slices (docs/DYN-TRAITS.md §4.4) emit this as a
+	// TRAILING vtable slot at index len(Methods) — a backend's drop
+	// helper reads vtable[len(Methods)] and call_indirects it (or
+	// skips on a null sentinel) to run the erased concrete destructor.
+	// Trailing keeps the method slot indices (0..n-1) unchanged, so
+	// OpCallDyn's slot math is untouched and a backend that hasn't
+	// wired RC yet simply omits the slot (harmless). For a merged
+	// `dyn A + B` vtable the drop slot is at the MERGED method count
+	// (len(Methods) across the whole set).
+	Drop string
 }
 
 // VtableMethod is one slot of a VtableDecl: the trait method name and the
@@ -1988,7 +2001,31 @@ func collectVtables(prog *ast.Program, info *checker.Info) []VtableDecl {
 			for _, tr := range traits {
 				methods = append(methods, traitVtableSlots(info, info.Traits[tr], concrete, prim)...)
 			}
-			out = append(out, VtableDecl{Trait: key, Concrete: concrete, Methods: methods})
+			// Record the concrete type's drop fn for the trailing drop slot
+			// (docs/DYN-TRAITS.md §4.4). A primitive concrete carries its
+			// value inline (no separate heap box behind `data`), so it has
+			// no destructor — leave Drop empty (null sentinel). For a
+			// struct/enum concrete, dropFnNameFor names its recursive drop
+			// (or returns "" for a flat scalar struct that needs none); nil
+			// registries are fine here — a `dyn` concrete is always a
+			// non-generic struct/enum, neither of which needs the
+			// generic-enum / tuple registry, and the worklist regenerates
+			// the body from info.Structs / info.Enums by name.
+			drop := ""
+			if !prim {
+				var ct ast.Type
+				if _, ok := info.Structs[concrete]; ok {
+					ct = ast.StructType{Name: concrete}
+				} else if _, ok := info.Enums[concrete]; ok {
+					ct = ast.EnumType{Name: concrete}
+				}
+				if ct != nil {
+					if name, ok := dropFnNameFor(ct, info, nil, nil, 0); ok {
+						drop = name
+					}
+				}
+			}
+			out = append(out, VtableDecl{Trait: key, Concrete: concrete, Methods: methods, Drop: drop})
 		}
 	}
 	return out
@@ -2102,6 +2139,101 @@ func buildDynboxWrappers(info *checker.Info, ptrW int, vtables []VtableDecl) ([]
 		}
 	}
 	return out, nil
+}
+
+// buildDynDropHelpers synthesizes the per-trait-set `__drop_dyn_<set>`
+// destructor helpers that reclaim a `dyn Trait` value's erased concrete
+// `data` object (docs/DYN-TRAITS.md §4.4). **wasm only** (inline two-word
+// representation): a `dyn` value is `[data, vtable]`, the vtable's
+// TRAILING slot at index `methodCount` (= the merged method count for the
+// set) holds the concrete type's drop fn as a function-table index (or a
+// null sentinel 0 when the concrete needs no drop). Each helper:
+//
+//	__drop_dyn_<set>(data: i32, vtable: i32) {
+//	    let d = vtable[methodCount];     // function-table index
+//	    if (d != 0) { call_indirect[d](data); }   // run concrete dtor
+//	}
+//
+// The concrete drop (`__drop_struct_<C>` / `__drop_enum_<C>`) frees `data`
+// and everything it transitively owns (e.g. a String field). The inline
+// form has no separate cell to free, so the helper stops after the
+// concrete drop. The vtable word is static data — never inc/dec'd.
+//
+// Dispatch reuses OpCallDyn (slot = methodCount, sig (i32)->i32 — every
+// generated drop fn returns the box pointer): it rebuilds the same
+// `[data, vtable]` stack OpCallDyn expects, pops the vtable, loads the
+// slot's table index, and call_indirects. The returned box pointer is
+// dropped.
+//
+// One helper per trait SET actually used (dynTraitSetsUsed); a set with no
+// implementors still emits a helper (its method count is well-defined and
+// a no-implementor set is unreachable at runtime, but the symbol must
+// resolve where a `dyn` of that set is dec'd).
+func buildDynDropHelpers(prog *ast.Program, info *checker.Info, ptrW int) []*Func {
+	if ptrW != 4 || info == nil {
+		return nil
+	}
+	sets := dynTraitSetsUsed(prog)
+	if len(sets) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(sets))
+	for k := range sets {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	dropSig := &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	var out []*Func
+	for _, key := range keys {
+		traits := sets[key]
+		// Merged method count = total non-associated methods across the
+		// set, in sorted order — the same count collectVtables uses for
+		// len(Methods), so the drop slot lands at exactly that index.
+		methodCount := 0
+		known := true
+		for _, tr := range traits {
+			td, ok := info.Traits[tr]
+			if !ok {
+				known = false
+				break
+			}
+			for i := range td.Methods {
+				if !td.Methods[i].Assoc {
+					methodCount++
+				}
+			}
+		}
+		if !known {
+			continue // malformed set the checker already errored on
+		}
+		fn := &Func{
+			Name: "__drop_dyn_" + key,
+			Params: []ast.Param{
+				{Name: "__ddata", Type: ast.NumberType{}},
+				{Name: "__dvtbl", Type: ast.NumberType{}},
+			},
+			ReturnType: ast.VoidType{},
+		}
+		emit := func(op Op) { fn.Ops = append(fn.Ops, op) }
+		// d = vtable[methodCount] (function-table index of the dtor).
+		emit(Op{Kind: OpLoadLocal, I32: 1})
+		emit(Op{Kind: OpConstI32, I32: int32(methodCount * 4)})
+		emit(Op{Kind: OpAdd})
+		emit(Op{Kind: OpLoad}) // 4-byte word
+		// if (d != 0) run the concrete destructor on `data`.
+		emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+		emit(Op{Kind: OpLoadLocal, I32: 0}) // data
+		emit(Op{Kind: OpLoadLocal, I32: 1}) // vtable
+		emit(Op{Kind: OpCallDyn, I32: int32(methodCount), Sig: dropSig})
+		emit(Op{Kind: OpDrop}) // discard the box ptr the dtor returns
+		emit(Op{Kind: OpEnd})
+		emit(Op{Kind: OpReturnVoid})
+		out = append(out, fn)
+	}
+	return out
 }
 
 // LowerOption tweaks LowerWith's behaviour for a particular backend.
@@ -2429,6 +2561,24 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 		for _, fn := range out.Funcs {
 			enqueueCalls(fn.Ops)
 		}
+		// Seed the worklist with the concrete-destructor drop fns named in
+		// the `dyn` vtable drop slots (docs/DYN-TRAITS.md §4.4). The
+		// __drop_dyn_<set> helper reaches these by an indirect call through
+		// the vtable, not a named OpCallDirect, so enqueueCalls above never
+		// sees them — without this seeding a struct/enum behind `dyn` whose
+		// __drop_struct_/__drop_enum_ body is reached ONLY via the vtable
+		// would be referenced (by name in the vtable cell) but never
+		// generated. wasm only: the natives don't append the drop slot yet
+		// (slices 4b/4c), so they record no Drop and need no seeding.
+		if ptrW == 4 {
+			for _, vt := range out.Vtables {
+				if vt.Drop == "" || queued[vt.Drop] {
+					continue
+				}
+				queued[vt.Drop] = true
+				work = append(work, vt.Drop)
+			}
+		}
 		for i := 0; i < len(work); i++ {
 			name := work[i]
 			if generated[name] {
@@ -2550,6 +2700,21 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 		return nil, wrErr
 	}
 	for _, fn := range dynWrappers {
+		prog.Funcs = append(prog.Funcs, &ast.FuncDecl{
+			Name:       fn.Name,
+			Params:     fn.Params,
+			ReturnType: fn.ReturnType,
+			Body:       &ast.Block{},
+		})
+		out.Funcs = append(out.Funcs, fn)
+	}
+	// `dyn Trait` RC: synthesize the per-trait-set `__drop_dyn_<set>`
+	// destructor helpers the Perceus dec/drop sweep calls at a `dyn`
+	// value's last use / scope exit (docs/DYN-TRAITS.md §4.4). wasm only
+	// (ptrW==4); buildDynDropHelpers no-ops on the natives, whose `dyn`
+	// values still leak (slices 4b/4c). Appended in lockstep like the
+	// other synthesized helpers.
+	for _, fn := range buildDynDropHelpers(prog, info, ptrW) {
 		prog.Funcs = append(prog.Funcs, &ast.FuncDecl{
 			Name:       fn.Name,
 			Params:     fn.Params,
@@ -4393,6 +4558,18 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			if ast.UseTwoWordStrings(b.ptrW) {
 				elig[v.Name] = true
 			}
+		case ast.DynTraitType:
+			// An owned `dyn Trait` local reclaims its erased concrete
+			// `data` object through the per-set __drop_dyn_<set> helper at
+			// its last reference (emitDec / emitVarReinitDropOld's
+			// DynTraitType arm) — docs/DYN-TRAITS.md §4.4. Same borrow-
+			// aware taint: a `dyn` that escapes (stored into a container,
+			// returned, passed as a retained arg) is tainted above and
+			// falls back. wasm only (ptrW==4) — the natives leak `dyn` and
+			// never set rcTracked for it, so eligibility there is moot.
+			if b.ptrW == 4 {
+				elig[v.Name] = true
+			}
 		}
 	}
 	// Owned (`own`) params get the SAME borrow-aware eligibility as an owned
@@ -4419,6 +4596,17 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			}
 		case ast.StringType:
 			if ast.UseTwoWordStrings(b.ptrW) {
+				elig[p.Name] = true
+			}
+		case ast.DynTraitType:
+			// An OWNED `dyn` param (one that escapes — stored / returned /
+			// retained, so paramOwnedByDefault held above) reclaims through
+			// __drop_dyn_<set> at exit, like an owned `dyn` local. A
+			// dispatched-only `dyn` param is borrowed (paramOwnedByDefault
+			// false), never reaches this switch, and is never dropped — the
+			// borrow contract of docs/DYN-TRAITS.md §4.4 (no double-free).
+			// wasm only.
+			if b.ptrW == 4 {
 				elig[p.Name] = true
 			}
 		}
@@ -5711,6 +5899,23 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			}
 			return
 		}
+		// `dyn Trait` reclamation (wasm inline two-word, docs/DYN-TRAITS.md
+		// §4.4). The slot is `[data, vtable]`; OpLoadLocal fans both words
+		// out (isTwoWordType) and the per-set __drop_dyn_<set> helper reads
+		// the vtable's trailing drop slot and dispatches the concrete
+		// destructor on `data` (freeing it + anything it transitively
+		// owns, e.g. a String field). The concrete dtor self-guards on
+		// rc==1 and the drop slot null-guards, so this is safe whether the
+		// concrete is shared or unique; the static vtable word is never
+		// dec'd. Borrowed `dyn` params never reach here (the param sweep
+		// skips non-owned params), so a dispatched-only borrow is never
+		// dropped — no double-free. The natives leak `dyn` and never set
+		// rcTracked for it, so this arm is wasm-only by construction.
+		if dt, ok := t.(ast.DynTraitType); ok && b.ptrW == 4 {
+			b.emit(Op{Kind: OpLoadLocal, I32: slot}) // pushes [data, vtable]
+			b.emit(Op{Kind: OpCallDirect, Str: "__drop_dyn_" + dynVtableSetKey(dt.Traits), I32: 2})
+			return
+		}
 		// Tuple reclamation: an OWNED tuple local drops its pointer-shaped
 		// elements then returns its box to the freelist on the last
 		// reference (rc==1), mirroring the struct box path. The box was
@@ -6031,6 +6236,15 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		if _, isTuple := t.(ast.TupleType); isTuple {
 			return true
 		}
+		// `dyn Trait` values own their erased concrete `data` object
+		// (docs/DYN-TRAITS.md §4.4). On wasm (inline two-word) the slot's
+		// `data` word is dropped through the per-set __drop_dyn_<set>
+		// helper at scope exit (emitDec's DynTraitType arm). wasm only —
+		// the natives still leak `dyn` (no __drop_dyn helper, slices
+		// 4b/4c), so don't sweep them or the dec would call a missing fn.
+		if _, isDyn := t.(ast.DynTraitType); isDyn && b.ptrW == 4 {
+			return true
+		}
 		return false
 	}
 	// Phase 2d-borrow: parameters are BORROWED, not owned. The
@@ -6343,6 +6557,23 @@ func dropFnNameFor(t ast.Type, info *checker.Info, reg map[string]*ast.EnumDecl,
 		mangled := mangleTupleInst(v)
 		tupleReg[mangled] = v
 		return "__drop_tuple_" + mangled, true
+	case ast.DynTraitType:
+		// A `dyn Trait` value owns its concrete `data` object (the erased
+		// type), reclaimed through a per-trait-set drop helper that reads
+		// the vtable's trailing drop slot and dispatches the concrete
+		// destructor (docs/DYN-TRAITS.md §4.4). Per-SET (not per-trait) so
+		// the drop-slot index (= the merged method count) is baked into
+		// the helper; a single-trait set keys by the bare trait name.
+		// **wasm only** (ptrW==4): the natives (boxed, ptrW==8) still leak
+		// `dyn` — their RC slices (4b/4c) haven't landed and their vtable
+		// emitters don't append the drop slot, so routing a `dyn` field /
+		// local drop through a non-existent __drop_dyn_ helper there would
+		// be a dangling call. Declining on the natives keeps them exactly
+		// as before (leak, no regression).
+		if ptrW != 4 {
+			return "", false
+		}
+		return "__drop_dyn_" + dynVtableSetKey(v.Traits), true
 	}
 	return "", false
 }
@@ -15378,6 +15609,22 @@ func (b *builder) emitOwnedSlotDrop(idx int32, t ast.Type) {
 		// between OpMakeClosure and OpStoreLocal breaks the defunctionalise /
 		// closure-pair-elide pattern match, and a flat closure dec leaks
 		// captures anyway — it keeps its prior safe-leak behaviour.
+	case ast.DynTraitType:
+		// `dyn Trait` reclamation on loop-body re-declaration (wasm inline
+		// two-word, docs/DYN-TRAITS.md §4.4) — mirrors the exit sweep's
+		// DynTraitType branch. Without this a `var d: dyn Shape = C{...}`
+		// re-declared each iteration leaks the prior iteration's concrete
+		// `data` object (and anything it transitively owns) — the exit
+		// sweep only reclaims the final iteration. The per-set
+		// __drop_dyn_<set> helper reads the vtable drop slot and dispatches
+		// the concrete destructor; the concrete dtor self-guards on rc==1.
+		// wasm only (ptrW==4) — the natives leak `dyn` and never reach here
+		// (rcTracked is false for a native `dyn`, so the slot is never an
+		// owned rc-tracked local the reinit path drops).
+		if b.ptrW == 4 {
+			b.emit(Op{Kind: OpLoadLocal, I32: idx}) // [data, vtable]
+			b.emit(Op{Kind: OpCallDirect, Str: "__drop_dyn_" + dynVtableSetKey(ty.Traits), I32: 2})
+		}
 	}
 }
 

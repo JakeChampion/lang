@@ -440,7 +440,23 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 			dataBytes = append(dataBytes,
 				byte(idx), byte(idx>>8), byte(idx>>16), byte(idx>>24))
 		}
-		stringNextOff = off + 4*len(decl.Methods)
+		// Trailing drop slot at index len(Methods) (docs/DYN-TRAITS.md
+		// §4.4): the concrete type's drop fn as a function-table index, or
+		// a null sentinel (0) when it needs none. The __drop_dyn_<set>
+		// helper reads this slot and call_indirects it to run the erased
+		// concrete destructor. Appended trailing so the method slot indices
+		// (0..n-1) are unchanged — OpCallDyn's slot math is untouched.
+		dropIdx := uint32(0)
+		if decl.Drop != "" {
+			idx, ok := progFuncTableIdx[decl.Drop]
+			if !ok {
+				return 0, fmt.Errorf("OpConstVtable: drop fn %q not in prog.Funcs", decl.Drop)
+			}
+			dropIdx = idx
+		}
+		dataBytes = append(dataBytes,
+			byte(dropIdx), byte(dropIdx>>8), byte(dropIdx>>16), byte(dropIdx>>24))
+		stringNextOff = off + 4*(len(decl.Methods)+1)
 		vtablePool[key] = off
 		return off, nil
 	}

@@ -1,11 +1,13 @@
 # `dyn Trait` — runtime trait-object dispatch
 
-Status: **design + slices 1–3 shipped** — interpreter (slice 1), all
-three compiled backends (slice 2: wasm 2b, x86-64 2c, arm64 2d), and the
-self-host (slice 3: x86-64 + arm64 + wasm). Dispatch is complete
-everywhere; **next is slice 4, RC of trait objects (§4.4)**. This
-document is the design of record; implement against it and update it as
-slices land. It is the
+Status: **design + slices 1–3 shipped, slice 4a (wasm RC) shipped** —
+interpreter (slice 1), all three compiled backends (slice 2: wasm 2b,
+x86-64 2c, arm64 2d), the self-host (slice 3: x86-64 + arm64 + wasm), and
+the first cut of Perceus RC for trait objects on **wasm** (slice 4a,
+§4.4). Dispatch is complete everywhere; `dyn` values are now RECLAIMED on
+wasm (no leak), with x86-64 + arm64 still leaking until slices 4b/4c.
+This document is the design of record; implement against it and update it
+as slices land. It is the
 runtime-dispatch counterpart to the static trait system in
 [`TRAITS.md`](TRAITS.md) — read that first.
 
@@ -531,8 +533,32 @@ shape of `TestX86_64ArrayDropFree` / `DestructureHeapBumpBounded`: a
 loop that creates and drops many `dyn` values and asserts the heap stays
 bounded, plus a differential case where the concrete type transitively
 owns an RC value (a `struct` with a `String` field behind `dyn`) to
-prove the inner free runs through the vtable destructor. Until slice (a)
-lands, the leak is the documented, accepted behaviour.
+prove the inner free runs through the vtable destructor.
+
+**Slice (a) — wasm — SHIPPED.** `VtableDecl` gained a `Drop` field
+(`collectVtables` records `dropFnNameFor(C)`, or "" for a primitive
+concrete that lives inline behind `data`); the wasm `internVtable`
+appends it as the trailing function-table-index slot at index
+`len(Methods)`. `dropFnNameFor` learns `DynTraitType` → `__drop_dyn_<set>`
+(wasm only — declines on `ptrW==8` so the natives keep leaking, no
+dangling call). `buildDynDropHelpers` synthesizes one `__drop_dyn_<set>`
+per used trait set: it reads `vtable[methodCount]`, null-guards, and
+reuses `OpCallDyn{slot: methodCount, sig: (i32)->i32}` to dispatch the
+concrete destructor on `data` (the returned box ptr is dropped). The
+Perceus passes treat a wasm `dyn` local as owning: `rcTracked`,
+`computeFreeEligible`, the exit sweep (`emitDec`), and the loop-body
+reinit drop (`emitOwnedSlotDrop`) all gained `DynTraitType` arms gated on
+`ptrW==4`. A dispatched-only `dyn` param stays borrowed
+(`paramOwnedByDefault` false → never dropped), so no double-free. Aliasing
+is move-only (first cut — `needsRcIncOnAlias` declines `dyn`, so no inc).
+The vtable-referenced drop fns are reached only by indirect call, so the
+wasm build roots them (`ip.Vtables[*].Drop` + `__drop_dyn_*`) past IR
+dead-function elimination, and the drop worklist is seeded from the
+vtable drop slots. Tests: `internal/ir/vtable_test.go`
+(`TestCollectVtablesDropSlot`) + `internal/e2e/rc_heap_bump_dyn_trait_test.go`
+(bounded loop, no-underflow, multi-trait merged drop slot, borrowed-param
+no-drop). Slices (b)/(c) (natives, boxed — adds the cell free) remain;
+until they land the native leak is the documented, accepted behaviour.
 
 ## 5. Coercion (boxing) model
 
@@ -657,11 +683,16 @@ Emit a clean unsupported-feature error on encountering `DynTraitType`
    §4.3). Remaining: the strict object-safety / coercion checks in
    `checker.fern` (only needed once the Go checker retires).
 4. **Slice 4: RC of trait objects (Perceus — designed in §4.4).** Stop
-   leaking the boxed object: a leading vtable drop slot + a universal
-   `__drop_dyn` that runs the concrete destructor (and frees the box
-   cell on natives), wired into the inc/dec/borrow passes. Phased
+   leaking the boxed object: a TRAILING vtable drop slot + a per-trait-set
+   `__drop_dyn_<set>` that runs the concrete destructor (and, on natives,
+   frees the box cell), wired into the inc/dec/borrow passes. Phased
    wasm-inline → x86-64-boxed → arm64-boxed, each with leak/reclaim
-   tests. **Next up.**
+   tests. **Slice 4a (wasm inline) SHIPPED** — `dyn` values are reclaimed
+   on wasm (the transitively-owned String behind `dyn` frees through the
+   vtable destructor; multi-trait merged-slot drop works; a borrowed
+   dispatched-only `dyn` param is not dropped). x86-64 + arm64 still leak
+   (slices 4b/4c next), their vtable emitters simply not appending the
+   drop slot yet (harmless). See §4.4 for the shipped wasm details.
 5. **Downcast slice 1 (shipped): `e as? T` on the interpreter.** Surface
    syntax + checker + interp for the fallible downcast (§9). Struct/enum
    targets.
