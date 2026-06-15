@@ -3822,12 +3822,28 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         }
                     }
                     var mrslot: i32 = 0 - 1;
+                    var mtype: string = "";
                     match (fa.obj) {
-                        parser.ExprIdent(mrid) => { mrslot = s.slot_of(mrid.name); },
+                        parser.ExprIdent(mrid) => {
+                            mrslot = s.slot_of(mrid.name);
+                            if (mrslot >= 0) { mtype = s.map_type_of(mrslot); }
+                        },
+                        // A Map-typed struct FIELD receiver (`c.m.get_or(k, d)`):
+                        // resolve the map type from the field's declaration so the
+                        // map op dispatches (the field read lowers fa.obj to push
+                        // the map pointer, same as a local). #map-struct-field.
+                        parser.ExprFieldAccess(mrfa) => {
+                            if (!util.is_all_digits(mrfa.field)) {
+                                var moty: string = expr_struct_type(mrfa.obj, s);
+                                if (moty != "") {
+                                    var mft: string = decl_field_type(s.structs, moty, mrfa.field);
+                                    if (is_map_type_name(mft)) { mtype = mft; }
+                                }
+                            }
+                        },
                         _ => {}
                     }
-                    if (mrslot >= 0 && s.map_type_of(mrslot) != "") {
-                        var mtype: string = s.map_type_of(mrslot);
+                    if (mtype != "") {
                         var mkk2: i32 = map_key_kind_of(mtype);
                         if ((fa.field == "insert" || fa.field == "set") && c.args.len() == 2) {
                             var mset: LowerState = lower_expr(fa.obj, s);
