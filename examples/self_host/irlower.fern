@@ -7178,6 +7178,174 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[])
     return out;
 }
 
+// --- consumed scalar-payload enum scrutinee free (Perceus) -------------------
+//
+// The simplest SOUND enum-box reclamation: a function-local `var x = V(args...)`
+// of an enum ALL of whose variants carry ONLY scalar payloads (no array/string/
+// struct/nested/option/tuple/map field → the box needs NO per-variant deep-drop)
+// that is CONSUMED by exactly one `match (x) { ... }` where x is single-owner and
+// DEAD after the match. The match reads the scalar payloads as BORROWS (struct_get
+// copies them into their own slots) BEFORE the bodies run, and never decs the box,
+// so after the match statement the box is the sole reference in x's slot and can be
+// freed: dec + zero the slot (mirrors the array precise-drop), SOUND now that
+// op_struct_make gives the box an rc header. Anything not provably this shape is
+// left to leak (sound). Conservative + deterministic — a mis-classified free is a
+// use-after-free that breaks the byte-identical fixpoint.
+
+// enum_variant_scalar_payload: every payload field of variant struct `vname` is a
+// flat scalar (i32/boolean/i64/f64/u32/u64). A no-payload (0-field) variant
+// trivially qualifies. The shape-ptr is at slot 0; payload fields are __ev, __ev1…
+function enum_variant_scalar_payload(structs: parser.StructDecl[], vname: string): boolean {
+    var n: i32 = decl_field_count(structs, vname);
+    var fi: i32 = 0;
+    while (fi < n) {
+        if (!reuse_field_is_scalar(decl_field_type_at(structs, vname, fi))) { return false; }
+        fi = fi + 1;
+    }
+    return true;
+}
+
+// enum_all_variants_scalar: every variant of enum `enum_name` (every struct whose
+// enum_owner == enum_name) has only scalar payloads. False if the enum has no
+// variants (defensive — never a free candidate then).
+function enum_all_variants_scalar(structs: parser.StructDecl[], enum_name: string): boolean {
+    var any: boolean = false;
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].enum_owner == enum_name) {
+            any = true;
+            if (!enum_variant_scalar_payload(structs, structs[i].name)) { return false; }
+        }
+        i = i + 1;
+    }
+    return any;
+}
+
+// fresh_scalar_enum_init: `e` is a sole-owner construction of an all-scalar enum —
+// a call `V(args...)` whose callee V is a variant ctor of such an enum, OR a bare
+// unit variant `V` (an ExprIdent resolving to a 0-field variant struct). Returns
+// the enum's name, or "" if not.
+function fresh_scalar_enum_init(e: parser.Expr, structs: parser.StructDecl[]): string {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    var owner: string = variant_enum_owner(structs, id.name);
+                    if (owner != "" && enum_all_variants_scalar(structs, owner)) { return owner; }
+                    return "";
+                },
+                _ => { return ""; }
+            }
+        },
+        parser.ExprIdent(id) => {
+            var owner2: string = variant_enum_owner(structs, id.name);
+            if (owner2 != "" && enum_all_variants_scalar(structs, owner2)) { return owner2; }
+            return "";
+        },
+        _ => { return ""; }
+    }
+}
+
+// match_scrutinee_ident: if top-level body statement `st` is a `match (x) { ... }`
+// whose scrutinee is the bare ident `name`, returns true.
+function match_scrutinee_is(st: parser.Stmt, name: string): boolean {
+    match (st) {
+        parser.StmtMatch(m) => {
+            match (m.scrutinee) {
+                parser.ExprIdent(id) => { return id.name == name; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+}
+
+// arm_bodies_use_name: does `name` appear (read) in any arm body OR guard of the
+// match statement `st`? (The scrutinee itself is excluded — the caller handles it.)
+// A use inside a body is a real use, so x is NOT dead-after / single-mention.
+function match_arms_use_name(st: parser.Stmt, name: string): boolean {
+    match (st) {
+        parser.StmtMatch(m) => {
+            var used: string[] = [];
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                if (m.arms[i].has_guard) { used = astwalk.collect_idents_expr(m.arms[i].guard, used); }
+                var j: i32 = 0;
+                while (j < m.arms[i].body.len()) { used = astwalk.collect_idents_stmt(m.arms[i].body[j], used); j = j + 1; }
+                i = i + 1;
+            }
+            return util.index_of_str(used, name) >= 0;
+        },
+        _ => { return false; }
+    }
+}
+
+// name_used_after collects every ident read in body statements with index > after,
+// and reports whether `name` appears — i.e. is `name` live past statement `after`.
+function name_used_after(body: parser.Stmt[], name: string, after: i32): boolean {
+    var used: string[] = [];
+    var i: i32 = after + 1;
+    while (i < body.len()) { used = astwalk.collect_idents_stmt(body[i], used); i = i + 1; }
+    return util.index_of_str(used, name) >= 0;
+}
+
+// EnumFrees: parallel arrays — for each consumed scalar-enum free, the top-level
+// body-statement index of the consuming `match` (after which the box is freed) and
+// the local name x whose box is freed. Flat (not nested) for the same self-host
+// limitation as PreciseDrops / ReuseSites.
+struct EnumFrees { idxs: i32[], names: string[] }
+
+// consumed_scalar_enum_frees finds every function-local `var x = V(scalar...)` of
+// an all-scalar enum consumed by exactly one `match (x)` where x is single-owner
+// (only uses: the construction + that one scrutinee mention) and DEAD after the
+// match. Each such x's box is freed right after its match statement. Conservative:
+// any deviation (reassigned, escapes outside the scrutinee, used in an arm body,
+// matched/used after, no match or more than one match mention) drops the candidate.
+function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructDecl[]): EnumFrees {
+    var idxs: i32[] = [];
+    var names: string[] = [];
+    var reassigned: string[] = body_assign_targets(body);
+    var vi: i32 = 0;
+    while (vi < body.len()) {
+        match (body[vi]) {
+            parser.StmtVar(v) => {
+                var owner: string = fresh_scalar_enum_init(v.init, structs);
+                if (owner != "" && util.index_of_str(reassigned, v.name) < 0) {
+                    // Find the single consuming match: exactly one top-level
+                    // statement whose scrutinee is the bare ident `v.name`.
+                    var match_idx: i32 = 0 - 1;
+                    var n_match: i32 = 0;
+                    var mj: i32 = 0;
+                    while (mj < body.len()) {
+                        if (match_scrutinee_is(body[mj], v.name)) { match_idx = mj; n_match = n_match + 1; }
+                        mj = mj + 1;
+                    }
+                    if (n_match == 1 && match_idx > vi) {
+                        // x must not be used in the match's arm bodies/guards (those
+                        // uses would be a real escape/re-reference), must not be dead
+                        // after the match (no later use), and must not escape anywhere
+                        // outside the scrutinee mention. name_escapes_outside_stmt skips
+                        // the WHOLE match statement, so it ignores the scrutinee escape;
+                        // we separately reject any arm-body use of x. Every other
+                        // statement (incl. the construction's own init — a ctor call
+                        // does not push x) is walked for escapes.
+                        var arms_use: boolean = match_arms_use_name(body[match_idx], v.name);
+                        var dead_after: boolean = !name_used_after(body, v.name, match_idx);
+                        var escapes: boolean = name_escapes_outside_stmt(body, v.name, match_idx);
+                        if (!arms_use && dead_after && !escapes) {
+                            idxs = idxs.append(match_idx);
+                            names = names.append(v.name);
+                        }
+                    }
+                }
+            },
+            _ => {}
+        }
+        vi = vi + 1;
+    }
+    return EnumFrees { idxs: idxs, names: names };
+}
+
 // slot_is_reclaimable_struct: slot i holds a reclaimable struct — a non-param
 // struct slot whose name was proven fresh + non-escaping. Such a box is the sole
 // reference (rc=1) and outlives nothing, so a shallow rc-dec at scope exit /
@@ -7904,6 +8072,12 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // earlier dead same-type donor's box (see cross_reuse_sites). Disjoint from the
     // self-overwrite sites by construction (it skips those indices + donors).
     var xreuse: CrossReuseSites = cross_reuse_sites(fn.body, structs);
+    // Consumed scalar-payload enum frees: a function-local `var x = V(scalar...)`
+    // consumed by exactly one `match (x)` where x is single-owner and dead after
+    // the match. The box is freed (dec + zero) right after its match statement —
+    // sound because the box now carries an rc header and the match read its scalar
+    // payloads as borrows before any free.
+    var enumfrees: EnumFrees = consumed_scalar_enum_frees(fn.body, structs);
     var j: i32 = 0;
     while (j < fn.body.len()) {
         // Is statement j a self-overwrite reuse site? If so, lower it in place.
@@ -7953,6 +8127,26 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                 }
             }
             pi = pi + 1;
+        }
+        // Consumed scalar-enum free: if statement j is the consuming match of a
+        // single-owner, dead-after enum local, free its box now (dec + zero the
+        // slot), mirroring the array precise drop. Sound: the box has an rc header
+        // (op_struct_make) and the match already read its scalar payloads as
+        // borrows; the exit dec-sweep never sweeps struct/enum slots, so this is
+        // the only release — no double-free.
+        var ei: i32 = 0;
+        while (ei < enumfrees.idxs.len()) {
+            if (enumfrees.idxs[ei] == j) {
+                var xslot: i32 = s.slot_of(enumfrees.names[ei]);
+                if (xslot >= s.n_params) {
+                    s = s.emit(ir.op_load_local(xslot));
+                    s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    s = s.emit(ir.op_drop());
+                    s = s.emit(ir.op_const_i32(0));
+                    s = s.emit(ir.op_store_local(xslot));
+                }
+            }
+            ei = ei + 1;
         }
         j = j + 1;
     }
