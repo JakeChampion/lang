@@ -267,6 +267,15 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// its layout + leaf-safety resolve. write_byte spreads + appends; len()
 		// reads the buffer length. 3 bytes written -> len 3.
 		{"builtin-byteswriter", "function main(): i32 { var w: BytesWriter = BytesWriter { data: [] }; w = BytesWriter { ...w, data: w.data.append(65 as u8) }; w = BytesWriter { ...w, data: w.data.append(66 as u8) }; w = BytesWriter { ...w, data: w.data.append(67 as u8) }; return w.data.len(); }"},
+		// A FRESH scalar-array-returning CALL as a struct-lit field value (move):
+		// `S { data: gen() }` where gen(): i32[]. Previously only array literals /
+		// idents / field-copies / `.with`/`.append` clones were admitted; a plain
+		// array-returning call (expr_is_arr_src — an arr_ret_fn move source) now
+		// lowers, owned by the struct with no alias-inc. gen() = [3,4,5]; sum 12.
+		{"scalar-arr-call-field", "struct S { data: i32[] } function gen(): i32[] { var a: i32[] = []; a = a.append(3); a = a.append(4); a = a.append(5); return a; } function (x: S) sum(): i32 { var d: i32[] = x.data; var t: i32 = 0; var i: i32 = 0; while (i < d.len()) { t = t + d[i]; i = i + 1; } return t; } function main(): i32 { var x: S = S { data: gen() }; return x.sum(); }"},
+		// The std/stream `stream_from_string` shape: a string `.bytes()` call (a
+		// fresh u8[] move source) as a u8[] struct-lit field value. 65+66+67 = 198.
+		{"bytes-call-field", "struct S { data: u8[], pos: i32 } function mk(s: string): S { return S { data: s.bytes(), pos: 0 }; } function (x: S) sum(): i32 { var d: u8[] = x.data; var t: i32 = 0; var i: i32 = 0; while (i < d.len()) { t = t + (d[i] as i32); i = i + 1; } return t; } function main(): i32 { var x: S = mk(\"ABC\"); return x.sum(); }"},
 		{"with-loop", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; while (i < 4) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3]; }"},
 		{"append-build", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a[0] + a[4]; }"},
 		// `.append(e)` as a general EXPRESSION (not the `out = out.append(e)`

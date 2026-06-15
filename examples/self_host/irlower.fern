@@ -3241,6 +3241,29 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                                         },
                                         _ => {}
                                     }
+                                    // A FRESH/owned scalar-array-returning CALL as the
+                                    // field value — `S { data: s.bytes() }`, `S { xs:
+                                    // gen() }`, `S { xs: arr.reverse() }`. expr_is_arr_src
+                                    // (and the f64/i64 twins) classify exactly the
+                                    // move sources: a string `.bytes()`/`.split()`, an
+                                    // array-returning user fn (arr_ret_fns), __alloc_u8,
+                                    // or an array-method result — each a fresh, sole-
+                                    // owned buffer moved into the struct's field. Owned
+                                    // by the struct with NO alias-inc, exactly like the
+                                    // `[…]` literal: the callee moves the buffer out, so
+                                    // nothing else holds a counted handle to dec. Mirrors
+                                    // the unrestricted string[]-field-value path (string[]
+                                    // skips this gate entirely). Bails (fav_ok stays
+                                    // false) for any call the predicates don't recognise.
+                                    if (!fav_ok) {
+                                        if (cfft == "f64[]") {
+                                            if (expr_is_f64arr(fav, s)) { fav_ok = true; }
+                                        } else if (cfft == "i64[]") {
+                                            if (expr_is_i64arr(fav, s)) { fav_ok = true; }
+                                        } else if (expr_is_arr_src(fav, s)) {
+                                            fav_ok = true;
+                                        }
+                                    }
                                 } else if (is_struct_array_field_type(s.structs, cfft)) {
                                     // A CALL returning an array-of-struct as the field value
                                     // (`Module { structs: inject_builtin_enums(mono.structs) }`):
@@ -3251,8 +3274,8 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                                     // inc only leaks (the field never frees it), never over-frees —
                                     // unlike a SCALAR-array field, which emit_struct_field_drops
                                     // DOES dec, so a scalar call value stays restricted to the
-                                    // fresh-guaranteed .with/.append forms above. Mirrors the
-                                    // array-literal case (owned/moved, leaks with the struct).
+                                    // fresh-guaranteed .with/.append + expr_is_arr_src forms above.
+                                    // Mirrors the array-literal case (owned/moved, leaks).
                                     fav_ok = true;
                                 }
                             },
