@@ -2392,7 +2392,7 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
                     if (s.is_i64_ret_fn(cid.name)) { return 64; }
                 },
                 parser.ExprFieldAccess(cfa) => {
-                    var crty: string = expr_struct_type(cfa.obj, s);
+                    var crty: string = method_recv_tyname(cfa.obj, s);
                     if (crty != "" && s.is_i64_ret_fn(crty + "." + cfa.field)) { return 64; }
                 },
                 _ => {}
@@ -2416,6 +2416,21 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
         },
         _ => { return 32; }
     }
+}
+
+// method_recv_tyname returns the base type name to use when forming a
+// "<Type>.<method>" key for a method-call receiver. A struct/enum receiver
+// uses its declared type; an i64/u64 PRIM receiver (e.g. `n.gcd(m)` on a
+// `(n: i64) gcd` method) has no struct type, so recover "u64"/"i64" from its
+// value width — i64_ret_fns_of keys those methods as "i64.<m>"/"u64.<m>"
+// (base_type_name of the receiver type), and without this the lookup misses
+// and the call bails to the AST path.
+pub function method_recv_tyname(obj: parser.Expr, s: LowerState): string {
+    var st: string = expr_struct_type(obj, s);
+    if (st != "") { return st; }
+    if (expr_is_u64(obj, s)) { return "u64"; }
+    if (infer_expr_width(obj, s) == 64) { return "i64"; }
+    return "";
 }
 
 // lower_i64 lowers `e` as an i64 VALUE (pushing an i64). Integer literals become
@@ -2517,7 +2532,7 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                     if (s.is_i64_ret_fn(cid.name)) { return lower_expr(e, s); }
                 },
                 parser.ExprFieldAccess(cfa) => {
-                    var crty: string = expr_struct_type(cfa.obj, s);
+                    var crty: string = method_recv_tyname(cfa.obj, s);
                     if (crty != "" && s.is_i64_ret_fn(crty + "." + cfa.field)) { return lower_expr(e, s); }
                 },
                 _ => {}
