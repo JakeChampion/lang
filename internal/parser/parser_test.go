@@ -1712,6 +1712,29 @@ func TestPathSepParse(t *testing.T) {
 	}
 }
 
+// A trait may declare type parameters (`trait From[T]`), recorded on
+// TraitDecl.TypeParams, and an impl binds them via `impl From[i32] for T`,
+// recorded on ImplDecl.TraitArgs. See docs/TRAITS.md.
+func TestGenericTraitParse(t *testing.T) {
+	prog, err := Parse(`trait From[T] { function from(v: T): Self; }
+struct Celsius { deg: i32 }
+impl From[i32] for Celsius { function from(v: i32): Self { return Celsius { deg: v }; } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := prog.Traits[0]
+	if len(tr.TypeParams) != 1 || tr.TypeParams[0] != "T" {
+		t.Errorf("trait TypeParams = %v, want [T]", tr.TypeParams)
+	}
+	impl := prog.Impls[0]
+	if len(impl.TraitArgs) != 1 {
+		t.Fatalf("impl TraitArgs = %v, want 1 arg", impl.TraitArgs)
+	}
+	if nt, ok := impl.TraitArgs[0].(ast.NumberType); !ok || nt.NormalWidth() != 32 {
+		t.Errorf("impl TraitArgs[0] = %#v, want i32", impl.TraitArgs[0])
+	}
+}
+
 // A trait may declare associated types (`type Item;`), an impl binds them
 // (`type Item = i32;`), and signatures reference them as `Self::Item` /
 // `T::Item` (parsed to ast.ProjType). See docs/ASSOCIATED-TYPES.md.

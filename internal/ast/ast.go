@@ -2399,6 +2399,12 @@ type TraitDecl struct {
 	Name    string
 	NamePos Position
 	Methods []TraitMethod
+	// TypeParams names the trait's own type parameters (`trait From[T]`).
+	// A method signature refers to them; each `impl From[Arg] for Type`
+	// binds them via ImplDecl.TraitArgs, and the conformance check
+	// substitutes them when comparing the impl's methods to the trait's.
+	// Empty for a non-generic trait. See docs/TRAITS.md.
+	TypeParams []string
 	// Supertraits names the traits this trait requires (`trait Ord: Eq +
 	// Hash { … }`): an `impl Ord for T` is legal only if `T` also
 	// implements every supertrait (transitively), and a `T: Ord` bound
@@ -2463,6 +2469,12 @@ type ImplDecl struct {
 	Type        Type
 	TypePos     Position
 	MethodNames []string
+	// TraitArgs are the type arguments applied to a generic trait in
+	// `impl From[i32] for Celsius` — bound positionally to the trait's
+	// TraitDecl.TypeParams. The conformance check substitutes them into
+	// the trait's method signatures. Empty for a non-generic trait. See
+	// docs/TRAITS.md.
+	TraitArgs []Type
 	// TypeParams names the impl's own type parameters for a parametric
 	// impl (`impl[T: Bound] Trait for Box[T]`). Empty for a plain
 	// `impl Trait for ConcreteType`. The checker resolves occurrences

@@ -170,6 +170,40 @@ pub function assert_eq[T: Display + Eq](actual: T, expected: T): Option[string] 
 }
 ```
 
+### Generic traits
+
+A trait may take type parameters, written `trait Name[T, …]`, referenced in
+its method signatures. Each impl binds them positionally with
+`impl Name[Arg, …] for Type`:
+
+```fern
+trait From[T] { function from(v: T): Self; }
+struct Celsius { deg: i32 }
+impl From[i32] for Celsius { function from(v: i32): Self { return Celsius { deg: v }; } }
+
+var c: Celsius = Celsius.from(20);   // associated function, T=i32
+
+trait Container[T] { function get(self: Self): T; }
+impl Container[i32] for IntBox { function get(self: Self): i32 { return self.v; } }
+```
+
+The conformance check binds the trait's `TypeParams` to the impl's
+`TraitArgs` (`From[i32]` → `T=i32`) and substitutes them into the trait's
+method signatures before comparing against the impl's concrete methods
+(`substByName` + the usual `Self`→impl-type substitution). A wrong arity
+(`impl From for …`) or a mismatched method binding is rejected.
+
+Implementation: `TraitDecl.TypeParams` (parser: `[T,…]` after the trait
+name) and `ImplDecl.TraitArgs` (parser: `[Arg,…]` after the trait name in
+the `impl`); modload mangles struct/enum names in `TraitArgs`; the checker
+substitutes them in the conformance pass. Dispatch is unchanged — calls
+resolve to the impl's concrete monomorphic method.
+
+**Scope:** concrete trait arguments (`From[i32]`, `From[mod.Foo]`).
+*Bounded generics over a generic trait* (`function f[T: From[i32]](…)`) and
+`dyn`-generic-traits are follow-ups (the bound grammar `T: Trait` doesn't
+yet parse `Trait[args]`).
+
 ### Supertraits
 
 A trait may require other traits with a `: Trait + Trait` clause after its

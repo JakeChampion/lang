@@ -1996,6 +1996,13 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			c.errfCode(impl.TraitPos, "E021", "unknown trait %q in impl", demangle(impl.Trait))
 			continue
 		}
+		// Generic-trait arity: `impl From[i32] for T` must supply exactly
+		// one type argument per the trait's type parameters. See docs/TRAITS.md.
+		if len(impl.TraitArgs) != len(td.TypeParams) {
+			c.errfCode(impl.TraitPos, "E021", "trait %s takes %d type argument(s), %d supplied",
+				demangle(impl.Trait), len(td.TypeParams), len(impl.TraitArgs))
+			continue
+		}
 		// Orphan rule: legal only if the trait or the type is declared
 		// in the impl's own module. Single-file programs leave every
 		// SourceModule empty, so the rule is vacuous there.
@@ -2059,11 +2066,27 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			// impl's own bindings, so `Self::Item` (expected, after
 			// Self→impl-type) and the impl method's `Self::Item` both
 			// collapse to the bound type before the structural compare.
+			// Generic trait: bind the trait's type parameters to this
+			// impl's TraitArgs (`impl From[i32] for …` → T=i32) before the
+			// Self substitution, so `(self: Self): T` becomes `(IntBox): i32`
+			// for the structural compare. See docs/TRAITS.md.
+			traitSub := map[string]ast.Type{}
+			if len(td.TypeParams) == len(impl.TraitArgs) {
+				for i, tp := range td.TypeParams {
+					traitSub[tp] = impl.TraitArgs[i]
+				}
+			}
+			subTrait := func(t ast.Type) ast.Type {
+				if len(traitSub) > 0 {
+					t = substByName(t, traitSub)
+				}
+				return c.resolveProjWith(c.normalizeEnumKinds(ast.SubstSelf(t, impl.Type)), impl.AssocTypeBindings)
+			}
 			want := make([]ast.Type, len(m.Params))
 			for i, p := range m.Params {
-				want[i] = c.resolveProjWith(c.normalizeEnumKinds(ast.SubstSelf(p.Type, impl.Type)), impl.AssocTypeBindings)
+				want[i] = subTrait(p.Type)
 			}
-			wantRet := c.resolveProjWith(c.normalizeEnumKinds(ast.SubstSelf(m.Result, impl.Type)), impl.AssocTypeBindings)
+			wantRet := subTrait(m.Result)
 			// Normalize the impl side to the same nominal kinds. The parser
 			// defaults every bare type name to StructType (no symbol table), so a
 			// trait signature naming an enum — `Self` on an enum impl, or a
@@ -4757,6 +4780,65 @@ func (c *checker) resolveProjInExpr(e ast.Expr) {
 	case *ast.FieldAccess:
 		c.resolveProjInExpr(x.Target)
 	}
+}
+
+// substByName substitutes a type whose bare name (StructType / EnumType
+// with no args, or ParamType) is a key in `sub` — used to bind a generic
+// trait's type parameters to an impl's TraitArgs during conformance. A
+// trait method signature spells a trait param `T` as an unresolved
+// `StructType{Name:"T"}` (trait methods aren't resolved against the
+// trait's params), so plain ParamType substitution wouldn't catch it.
+func substByName(t ast.Type, sub map[string]ast.Type) ast.Type {
+	switch x := t.(type) {
+	case ast.StructType:
+		if len(x.Args) == 0 {
+			if v, ok := sub[x.Name]; ok {
+				return v
+			}
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = substByName(x.Args[i], sub)
+		}
+		return ast.StructType{Name: x.Name, Args: args}
+	case ast.EnumType:
+		if len(x.Args) == 0 {
+			if v, ok := sub[x.Name]; ok {
+				return v
+			}
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = substByName(x.Args[i], sub)
+		}
+		return ast.EnumType{Name: x.Name, Args: args}
+	case ast.ParamType:
+		if v, ok := sub[x.Name]; ok {
+			return v
+		}
+		return x
+	case ast.ArrayType:
+		return ast.ArrayType{Elem: substByName(x.Elem, sub)}
+	case ast.SliceType:
+		return ast.SliceType{Elem: substByName(x.Elem, sub)}
+	case ast.TupleType:
+		out := ast.TupleType{Elems: make([]ast.Type, len(x.Elems))}
+		for i := range x.Elems {
+			out.Elems[i] = substByName(x.Elems[i], sub)
+		}
+		return out
+	case *ast.FuncType:
+		out := &ast.FuncType{Result: substByName(x.Result, sub)}
+		for _, p := range x.Params {
+			out.Params = append(out.Params, substByName(p, sub))
+		}
+		return out
+	case ast.ProjType:
+		return ast.ProjType{Base: substByName(x.Base, sub), Name: x.Name}
+	}
+	return t
 }
 
 func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {

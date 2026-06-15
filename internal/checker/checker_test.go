@@ -2451,6 +2451,52 @@ function main(): i32 { var d: Dog = Dog { age: 1 }; var s: string = announce(d);
 }
 
 // Associated types: a trait declares `type Item;`, an impl binds it, and
+// A generic trait (`trait Container[T]`) binds its type parameters per
+// impl (`impl Container[i32] for B`); the conformance check substitutes
+// them, so the impl's concrete method signature lines up. A wrong arity
+// is rejected. See docs/TRAITS.md.
+func TestGenericTraitConformance(t *testing.T) {
+	ok := []string{
+		// receiver method returning the trait param
+		`trait Container[T] { function get(self: Self): T; }
+struct B { v: i32 }
+impl Container[i32] for B { function get(self: Self): i32 { return self.v; } }
+function main(): i32 { var b: B = B { v: 7 }; return b.get(); }`,
+		// associated function taking the trait param, returning Self
+		`trait From[T] { function from(v: T): Self; }
+struct C { d: i32 }
+impl From[i32] for C { function from(v: i32): Self { return C { d: v }; } }
+function main(): i32 { return C.from(9).d; }`,
+		// two type parameters
+		`trait Pair[A, B] { function fst(self: Self): A; function snd(self: Self): B; }
+struct P { a: i32, b: i32 }
+impl Pair[i32, i32] for P { function fst(self: Self): i32 { return self.a; } function snd(self: Self): i32 { return self.b; } }
+function main(): i32 { var p: P = P { a: 1, b: 2 }; return p.fst() + p.snd(); }`,
+	}
+	for _, src := range ok {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("generic-trait program should type-check, got: %v\nsrc:\n%s", err, src)
+		}
+	}
+	// Wrong arity: impl omits the trait's type argument.
+	err := checkSource(t, `trait Container[T] { function get(self: Self): T; }
+struct B { v: i32 }
+impl Container for B { function get(self: Self): i32 { return self.v; } }
+function main(): i32 { return 0; }`)
+	if err == nil || !strings.Contains(err.Error(), "takes 1 type argument") {
+		t.Errorf("generic-trait impl with wrong arity should be rejected, got: %v", err)
+	}
+	// Mismatched binding: impl's method type doesn't match the substituted
+	// trait param (Container[i32] but get returns boolean).
+	err = checkSource(t, `trait Container[T] { function get(self: Self): T; }
+struct B { v: i32 }
+impl Container[i32] for B { function get(self: Self): boolean { return true; } }
+function main(): i32 { return 0; }`)
+	if err == nil || !strings.Contains(err.Error(), "wrong signature") {
+		t.Errorf("generic-trait impl with a mismatched method should be rejected, got: %v", err)
+	}
+}
+
 // the projection `Self::Item` / `T::Item` resolves to the binding — both
 // for a concrete method call and through a bounded generic. See
 // docs/ASSOCIATED-TYPES.md.
