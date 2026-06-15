@@ -6299,7 +6299,17 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 // Option/Result type so the inner `match (inner)`
                                 // recovers the payload via opt_type_of_slot.
                                 var ptag_is_opt: boolean = ptag.len() >= 8 && (ptag[0:7] == "Option[" || ptag[0:7] == "Result[");
-                                if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && ptag != "f64" && !ptag_is_struct && !ptag_is_enum && !ptag_is_opt) { return s.fail(); }
+                                // A leak-safe tuple payload (`Some(p)` where p is a
+                                // tuple of scalar/string/leaf-safe-struct/Option
+                                // elements — e.g. split_once's (string, string)) is a
+                                // pointer at offset 8 like a struct: read via
+                                // op_opt_payload and bound with its element tags so
+                                // `p.0` / `p.1` resolve. Tuples carry no RC (leak-only),
+                                // so binding one borrowed from the Option box can't
+                                // double-free. tuple_elems_lowerable is false for
+                                // non-tuples and for array/i64-element tuples (deferred).
+                                var ptag_is_tuple: boolean = tuple_elems_lowerable(ptag, ms.structs);
+                                if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && ptag != "f64" && !ptag_is_struct && !ptag_is_enum && !ptag_is_opt && !ptag_is_tuple) { return s.fail(); }
                             }
                             var want: i32 = 0;
                             if (pv.type_name == "None" || pv.type_name == "Err") { want = 1; }
@@ -6335,6 +6345,9 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 // slot's Option/Result type so the inner match (or a
                                 // `?`) recovers its payload.
                                 else if (ptag.len() >= 8 && (ptag[0:7] == "Option[" || ptag[0:7] == "Result[")) { ms = ms.mark_opt_type(pbslot, ptag); }
+                                // A tuple payload: tag the bound slot's element types
+                                // so `p.0` / `p.1` read the right element width / type.
+                                else if (tuple_elems_lowerable(ptag, ms.structs)) { ms = ms.mark_tuple_elems(pbslot, tuple_elem_tags(ptag)); }
                             }
                             if (arm.has_guard) {
                                 ms = lower_expr(arm.guard, ms);
