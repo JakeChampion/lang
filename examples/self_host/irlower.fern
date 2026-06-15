@@ -1682,6 +1682,14 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     // read_line() returns a fresh string box (so `var s = read_line()`
                     // tracks s as a string for `.len()` / concat dispatch).
                     if (cid.name == "read_line") { return true; }
+                    // The string-returning str_* free builtins (transform family) —
+                    // the free-function spelling of `.to_upper()` / `.trim()` /
+                    // `.repeat()` / `.replace()`, each yielding a fresh string box.
+                    // (str_contains/index_of/starts_with/ends_with return bool/i32;
+                    // str_split is string[], tracked in expr_is_strarr.)
+                    if (cid.name == "str_to_upper" || cid.name == "str_to_lower"
+                            || cid.name == "str_trim" || cid.name == "str_repeat"
+                            || cid.name == "str_replace") { return true; }
                     return s.is_str_ret_fn(cid.name);
                 },
                 // `X.to_string()` yields a string box (the i32 runtime helper or
@@ -2612,6 +2620,18 @@ pub function str_free_call_field(name: string): string {
     if (name == "str_starts_with") { return "starts_with"; }
     if (name == "str_ends_with") { return "ends_with"; }
     if (name == "str_index_of") { return "index_of"; }
+    // The transform + remaining-predicate free-function spellings: the same
+    // ops as the `.<field>()` method forms (lower_str_method), differing only
+    // in that the receiver is the first positional arg. Arity is recovered via
+    // str_method_argc(field) at the call site, so a 0-method-arg transform
+    // (`str_to_upper(s)`), a 1-arg form (`str_repeat(s, n)`) and the 2-arg
+    // `str_replace(s, old, new)` all route through one generalised lowerer.
+    if (name == "str_to_upper") { return "to_upper"; }
+    if (name == "str_to_lower") { return "to_lower"; }
+    if (name == "str_trim") { return "trim"; }
+    if (name == "str_repeat") { return "repeat"; }
+    if (name == "str_replace") { return "replace"; }
+    if (name == "str_contains") { return "contains"; }
     return "";
 }
 
@@ -3531,8 +3551,14 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // `.starts_with` / … method forms, so they route through
                     // lower_str_method (field = the name minus its `str_` prefix).
                     var sfreef: string = str_free_call_field(cid.name);
-                    if (sfreef != "" && c.args.len() == 2) {
-                        return lower_str_method(sfreef, c.args[0], [c.args[1]], s);
+                    if (sfreef != "" && c.args.len() == str_method_argc(sfreef) + 1) {
+                        // Free-call form: receiver is the first positional arg, the
+                        // rest are the method args. Hand both to the shared
+                        // lower_str_method (the `.<field>()` method-form lowerer).
+                        var mfargs: parser.Expr[] = [];
+                        var mfi: i32 = 1;
+                        while (mfi < c.args.len()) { mfargs = mfargs.append(c.args[mfi]); mfi = mfi + 1; }
+                        return lower_str_method(sfreef, c.args[0], mfargs, s);
                     }
                     // No arity cap: the call ABI is fully stack-based on every
                     // backend (x86-64/arm64 push the args on the runtime stack and
