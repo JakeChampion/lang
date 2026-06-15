@@ -1064,6 +1064,16 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		src  string
 		want int
 	}{
+		// A string-CONCAT branch in a value-position if-/match-expression: the
+		// lifted `__lam` carries a default i32 ret_type (the desugar doesn't infer
+		// `string + string : string`), so before str_ret_fns_of's body-inference a
+		// `.len()` on the result mis-dispatched to the array path — a silent
+		// miscompile (returned 56, not 4). These assert the IR value directly (the
+		// AST==IR differential is blind to a both-paths-wrong case).
+		{"str-concat-if-expr-direct", `function main(): i32 { return (if (true) { "ab" + "cd" } else { "x" }).len(); }`, 4},
+		{"str-concat-if-expr-var", `function main(): i32 { var s = if (true) { "ab" + "cd" } else { "x" }; return s.len(); }`, 4},
+		{"str-concat-if-expr-else", `function main(): i32 { var s = if (false) { "x" } else { "ab" + "cdef" }; return s.len(); }`, 6},
+		{"str-concat-match-expr", `function main(): i32 { return (match (1) { 1 => "aa" + "bb", _ => "z" }).len(); }`, 4},
 		// Two random_i32 draws differ (a stuck/zero generator returns 0/1).
 		{"random-i32-varies", `function main(): i32 { var a: i32 = random_i32(); var b: i32 = random_i32(); if (a == 0) { return 0; } if (a == b) { return 1; } return 7; }`, 7},
 		// A random byte is in 0..255.
