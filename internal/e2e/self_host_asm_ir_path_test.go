@@ -1074,6 +1074,16 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"str-concat-if-expr-var", `function main(): i32 { var s = if (true) { "ab" + "cd" } else { "x" }; return s.len(); }`, 4},
 		{"str-concat-if-expr-else", `function main(): i32 { var s = if (false) { "x" } else { "ab" + "cdef" }; return s.len(); }`, 6},
 		{"str-concat-match-expr", `function main(): i32 { return (match (1) { 1 => "aa" + "bb", _ => "z" }).len(); }`, 4},
+		// A string-ARRAY-valued if-/match-expression: the lifted `__lam` carries a
+		// default i32 ret_type, so the binding was mis-treated as a scalar and the
+		// 8-byte string elements were read at i32 width — a silent miscompile
+		// (`xs[i].len()` returned 1, not the element length). array_ret_fns +
+		// strarr_ret_fns_of now infer the array element type from the __lam body.
+		// Asserted against the IR value directly (the AST==IR gate was blind).
+		{"strarr-if-expr-direct-elem", `function main(): i32 { return (if (true) { ["a", "bb"] } else { ["ccc"] })[1].len(); }`, 2},
+		{"strarr-if-expr-var-elems", `function main(): i32 { var xs = if (true) { ["a", "bb"] } else { ["ccc"] }; return xs[0].len() + xs[1].len(); }`, 3},
+		{"strarr-if-expr-forin", `function main(): i32 { var xs = if (true) { ["a", "bb", "ccc"] } else { ["z"] }; var t = 0; for s in xs { t = t + s.len(); } return t; }`, 6},
+		{"strarr-match-expr-elems", `function main(): i32 { var xs = match (1) { 1 => ["hi", "yo"], _ => ["x"] }; return xs[0].len() + xs[1].len() + xs.len(); }`, 6},
 		// Two random_i32 draws differ (a stuck/zero generator returns 0/1).
 		{"random-i32-varies", `function main(): i32 { var a: i32 = random_i32(); var b: i32 = random_i32(); if (a == 0) { return 0; } if (a == b) { return 1; } return 7; }`, 7},
 		// A random byte is in 0..255.

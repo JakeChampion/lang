@@ -4163,7 +4163,7 @@ function try_opt_type(inner: parser.Expr, s: LowerState): string {
 // StmtMatch. All branches share the if/match result type, so the first return
 // classifies the whole expression's value (string vs i32). Returns ExprUnknown
 // for any other shape.
-function iife_first_return_expr(st: parser.Stmt): parser.Expr {
+pub function iife_first_return_expr(st: parser.Stmt): parser.Expr {
     match (st) {
         parser.StmtReturn(r) => { return r.value; },
         parser.StmtIf(iff) => {
@@ -8580,6 +8580,48 @@ function str_leaf_is_string(e: parser.Expr, funcs: parser.FuncDecl[], depth: i32
     return false;
 }
 
+// lam_leaf_array_elem returns the ELEMENT type ("string" / "i32") of a lifted
+// `__lam_`'s array return — its leaf return is an array LITERAL — or "" when it
+// is not an array literal (or an element type this focused recovery doesn't
+// handle, e.g. f64/i64, which stay on the AST path). Recurses through a nested
+// `__lam_` leaf. Mirrors fn_inferred_struct_ret for the array case: the lifted
+// lambda otherwise carries a default i32 ret_type, so `var xs = if (c) { [..] }
+// else { .. }` was mis-treated as a SCALAR i32 — the array tracking (is_arr) and
+// element-string typing (is_strarr) were both lost, miscompiling 8-byte string
+// elements (#3224). A string element type also routes the binding through the
+// array's normal owned-move + RC path (rc=1, drop at scope exit).
+pub function lam_leaf_array_elem(fn: parser.FuncDecl, funcs: parser.FuncDecl[], depth: i32): string {
+    if (depth > 8) { return ""; }
+    if (fn.body.len() == 0) { return ""; }
+    var re: parser.Expr = iife_first_return_expr(fn.body[fn.body.len() - 1]);
+    match (re) {
+        parser.ExprArray(arr) => {
+            if (arr.elements.len() == 0) { return ""; }
+            match (arr.elements[0]) {
+                parser.ExprString(_) => { return "string"; },
+                parser.ExprNumber(num) => { if (num.is_float) { return ""; } return "i32"; },
+                _ => { return ""; }
+            }
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (cid.name.len() >= 6 && cid.name[0:6] == "__lam_") {
+                        var ni: i32 = 0;
+                        while (ni < funcs.len()) {
+                            if (funcs[ni].name == cid.name) { return lam_leaf_array_elem(funcs[ni], funcs, depth + 1); }
+                            ni = ni + 1;
+                        }
+                    }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return "";
+}
+
 pub function str_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
@@ -8606,6 +8648,10 @@ pub function strarr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var k: i32 = 0;
     while (k < funcs.len()) {
         if (funcs[k].ret_type == "string[]") { out = out.append(funcs[k].name); }
+        // A lifted `__lam_` whose branch is a string-array literal carries a
+        // default i32 ret_type; register it so `(if (c) { ["a"] } else { … })[i]`
+        // reads its elements as strings (8-byte) instead of i32 (#3224).
+        else if (funcs[k].name.len() >= 6 && funcs[k].name[0:6] == "__lam_" && lam_leaf_array_elem(funcs[k], funcs, 0) == "string") { out = out.append(funcs[k].name); }
         k = k + 1;
     }
     return out;

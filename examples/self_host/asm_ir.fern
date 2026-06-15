@@ -63,6 +63,11 @@ pub function array_ret_fns(mod: parser.Module): string[] {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (is_array_type(mod.funcs[i].ret_type)) { out = out.append(mod.funcs[i].name); }
+        // A lifted if-/match-expression `__lam_` whose branch is an array literal
+        // carries a default i32 ret_type, so `var xs = if (c) { [..] } else { .. }`
+        // was mis-treated as a scalar. Register it (a fresh owned-array move, like
+        // any array-returning fn) so the binding tracks as an array (#3224).
+        else if (mod.funcs[i].name.len() >= 6 && mod.funcs[i].name[0:6] == "__lam_" && irlower.lam_leaf_array_elem(mod.funcs[i], mod.funcs, 0) != "") { out = out.append(mod.funcs[i].name); }
         i = i + 1;
     }
     return out;
