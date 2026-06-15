@@ -1723,6 +1723,20 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     // `s.repeat(n)` on a string receiver yields a fresh string.
                     if (cfa.field == "repeat" && c.args.len() == 1 && expr_is_str(cfa.obj, s)) { return true; }
                     if (cfa.field == "replace" && c.args.len() == 2 && expr_is_str(cfa.obj, s)) { return true; }
+                    // `m.get_or(k, d)` on a string-VALUE map (`Map[K, string]`)
+                    // returns the stored string value, so the result feeds
+                    // `.len()` / concat as a string. Without this the result is
+                    // mis-tracked as i32 and `.len()` reads the box's data-ptr
+                    // slot as a length (garbage). Keyed off the receiver slot's
+                    // recorded Map type (map_value_of == "string").
+                    if (cfa.field == "get_or" && c.args.len() == 2) {
+                        match (cfa.obj) {
+                            parser.ExprIdent(mgid) => {
+                                if (map_value_of(s.map_type_of(s.slot_of(mgid.name))) == "string") { return true; }
+                            },
+                            _ => {}
+                        }
+                    }
                     // A string-returning METHOD call `recv.m(...)`. Methods store
                     // their bare name (`receiver_type` is separate), so str_ret_fns
                     // records `m` by bare name — same as the free-call lookup above.
@@ -5883,11 +5897,31 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 // 0 (string) for an i32-key map — the i32 key is then dereferenced
                 // as a string pointer and segfaults. Store the FULL `Map[K, V]`
                 // form map_key_kind_of expects (it keys on the `Map[i32,` prefix);
-                // the value tag defaults to i32 (the dominant case — string-value
-                // maps are a follow-up and currently bail anyway).
+                // form map_key_kind_of / map_value_of expect (the `Map[i32,`
+                // prefix drives the key dispatch, the `, V]` suffix the value).
                 var umk: i32 = expr_map_kind(v.init, sb);
-                if (umk == 1) { sb = sb.mark_map_type(slot, "Map[i32, i32]"); }
-                else if (umk == 0) { sb = sb.mark_map_type(slot, "Map[string, i32]"); }
+                if (umk >= 0) {
+                    var uktag: string = "string";
+                    if (umk == 1) { uktag = "i32"; }
+                    // Value tag from the outermost `.insert`'s value arg (the
+                    // literal's last entry; the map is homogeneous). A string
+                    // value records `Map[K, string]` so `m.get_or(k, d)` /
+                    // `.values()` track the result as a string; else default i32.
+                    // An empty literal (`Map {}`, no insert) keeps i32.
+                    var uvtag: string = "i32";
+                    match (v.init) {
+                        parser.ExprCall(uvc) => {
+                            match (uvc.callee) {
+                                parser.ExprFieldAccess(uvfa) => {
+                                    if (uvfa.field == "insert" && uvc.args.len() == 2 && expr_is_str(uvc.args[1], sb)) { uvtag = "string"; }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                    sb = sb.mark_map_type(slot, "Map[" + uktag + ", " + uvtag + "]");
+                }
             }
             // Record tuple element type tags for `var t = (e0, e1, ...)` so a
             // later `t.N` recovers each element's type.
