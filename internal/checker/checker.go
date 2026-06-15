@@ -5971,6 +5971,7 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 		c.inferReturnType(fn, rets)
 	}
 	c.checkOwnedParams(fn)
+	c.checkSliceEscape(fn)
 	// A value-returning function must return on every path. Falling off
 	// the end leaves the result undefined (the interpreter yields Void
 	// where a real value is expected and crashes downstream; a scalar
@@ -5979,6 +5980,108 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	if fn.Body != nil && !isVoidReturn(fn.ReturnType) && !funcBodyExits(fn.Body) {
 		c.errfCode(fn.P, "E052", "missing return: %q has return type %s but can fall off the end without returning a value", fn.Name, fn.ReturnType.String())
 	}
+}
+
+// checkSliceEscape implements E063: a non-owning `[T]` slice must not
+// outlive the storage it views. A slice is a `{data_ptr, len}` pair
+// that holds no RC reference to its parent, so returning a slice whose
+// backing array is function-local is a use-after-free the moment the
+// frame's last owning reference drops — the documented dangling case
+// in docs/LANGUAGE-DIRECTION.md's "Slice / view lifetime contract".
+//
+// The rule is conservative and low-false-positive: a return is rejected
+// only when we can *prove* the slice views storage owned by this
+// function — an array literal or a locally-declared owned array (chased
+// through slice-typed local bindings and sub-slices). String slices are
+// copies (`__str_slice` yields a fresh owned string), and slices of a
+// parameter / receiver stay valid as long as the caller's owner does, so
+// neither is flagged. Anything whose origin we can't pin down (a call
+// result, a global, a field read) is assumed safe rather than rejected.
+func (c *checker) checkSliceEscape(fn *ast.FuncDecl) {
+	if fn.Body == nil {
+		return
+	}
+	params := map[string]bool{}
+	for _, p := range fn.Params {
+		params[p.Name] = true
+	}
+	locals := map[string]*ast.Var{}
+	for _, v := range c.info.Locals[fn] {
+		locals[v.Name] = v
+	}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		ret, ok := n.(*ast.Return)
+		if !ok || ret.Value == nil {
+			return true
+		}
+		if c.sliceBorrowsLocal(ret.Value, locals, params, map[string]bool{}) {
+			c.errfCode(ret.P, "E063", "returning a `[T]` slice that views function-local storage: the backing array is reclaimed when %q returns, leaving a dangling view — return an owned array (`T[]`) or slice a parameter instead", fn.Name)
+		}
+		return true
+	})
+}
+
+// sliceBorrowsLocal reports whether expr evaluates to a `[T]` slice
+// whose backing storage is local to the current function (so it dies
+// when the function returns). `visiting` guards the binding-chase
+// recursion against cycles. See checkSliceEscape.
+func (c *checker) sliceBorrowsLocal(expr ast.Expr, locals map[string]*ast.Var, params, visiting map[string]bool) bool {
+	switch e := expr.(type) {
+	case *ast.SliceExpr:
+		if e.IsString {
+			// String slicing copies into a fresh owned string.
+			return false
+		}
+		return c.sourceIsLocalStorage(e.Source, locals, params, visiting)
+	case *ast.Ident:
+		if params[e.Name] {
+			return false
+		}
+		v, ok := locals[e.Name]
+		if !ok || v.Init == nil || visiting[e.Name] {
+			return false
+		}
+		visiting[e.Name] = true
+		defer delete(visiting, e.Name)
+		return c.sliceBorrowsLocal(v.Init, locals, params, visiting)
+	}
+	return false
+}
+
+// sourceIsLocalStorage reports whether src names storage owned by the
+// current function — an array literal, a locally-declared owned array,
+// or a (sub)slice that itself views such storage. Parameters and
+// receivers are caller-owned, so a slice of them is excluded.
+func (c *checker) sourceIsLocalStorage(src ast.Expr, locals map[string]*ast.Var, params, visiting map[string]bool) bool {
+	switch s := src.(type) {
+	case *ast.ArrayLit:
+		return true
+	case *ast.SliceExpr:
+		if s.IsString {
+			return false
+		}
+		return c.sourceIsLocalStorage(s.Source, locals, params, visiting)
+	case *ast.Ident:
+		if params[s.Name] || visiting[s.Name] {
+			return false
+		}
+		v, ok := locals[s.Name]
+		if !ok {
+			return false
+		}
+		if _, isArr := v.Type.(ast.ArrayType); isArr {
+			// A locally-declared owned array is the backing storage.
+			return true
+		}
+		if _, isSlice := v.Type.(ast.SliceType); isSlice && v.Init != nil {
+			// A local slice borrows whatever its initializer views.
+			visiting[s.Name] = true
+			defer delete(visiting, s.Name)
+			return c.sliceBorrowsLocal(v.Init, locals, params, visiting)
+		}
+		return false
+	}
+	return false
 }
 
 // inferReturnType folds the return-expression types collected while

@@ -3841,3 +3841,82 @@ function main(): i32 { return describe(Circle { r: 5 }); }`,
 		}
 	}
 }
+
+// TestSliceEscapeRejected (E063): returning a `[T]` slice that views
+// function-local storage is a use-after-free — the backing array is
+// reclaimed when the frame unwinds. The checker rejects the cases it
+// can prove are local; see docs/LANGUAGE-DIRECTION.md's slice lifetime
+// contract.
+func TestSliceEscapeRejected(t *testing.T) {
+	for _, src := range []string{
+		// slice of a locally-declared owned array
+		`function f(): [i32] { var xs: i32[] = [1, 2, 3]; return xs[0:2]; }`,
+		// slice of an array literal
+		`function f(): [i32] { return [1, 2, 3][0:2]; }`,
+		// slice bound to a local, then returned
+		`function f(): [i32] { var xs: i32[] = [1, 2, 3]; var s = xs[0:2]; return s; }`,
+		// sub-slice of a local slice that views a local array
+		`function f(): [i32] { var xs: i32[] = [1, 2, 3]; var s = xs[0:3]; return s[0:2]; }`,
+	} {
+		err := checkSource(t, src)
+		if err == nil {
+			t.Errorf("%q: expected E063, got nil", src)
+			continue
+		}
+		if !strings.Contains(err.Error(), "dangling view") || !strings.Contains(err.Error(), "function-local storage") {
+			t.Errorf("%q: want dangling-view error, got %v", src, err)
+		}
+		if !hasCode(err, "E063") {
+			t.Errorf("%q: want diagnostic stamped E063, got %v", src, err)
+		}
+	}
+}
+
+// TestSliceEscapeAllowed: slices the checker can't prove are local must
+// not be flagged. Slices of a parameter / receiver stay valid as long as
+// the caller's owner does; string slices copy; returning the owned array
+// itself is a move, not a view.
+func TestSliceEscapeAllowed(t *testing.T) {
+	for _, src := range []string{
+		// slice of a parameter — caller owns the backing array
+		`function f(xs: i32[]): [i32] { return xs[0:2]; }`,
+		// slice of a parameter, bound through a local first
+		`function f(xs: i32[]): [i32] { var s = xs[0:2]; return s; }`,
+		// string slice copies into a fresh owned string
+		`function f(s: string): string { return s[0:2]; }`,
+		// returning the owned array itself is a move
+		`function f(): i32[] { var xs: i32[] = [1, 2, 3]; return xs; }`,
+		// receiver-backed slice (element-polymorphic method): caller owns
+		// the receiver, so the view is valid.
+		`function (xs: T[]) head(): [T] { return xs[0:2]; }
+function main(): i32 { var a: i32[] = [1,2,3]; return a.head()[0]; }`,
+	} {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("%q: unexpected error %v", src, err)
+		}
+	}
+}
+
+// hasCode reports whether err (or any aggregated sub-error) carries the
+// given stable diagnostic code.
+func hasCode(err error, code string) bool {
+	type coded interface{ Code() string }
+	var walk func(error) bool
+	walk = func(e error) bool {
+		if e == nil {
+			return false
+		}
+		if c, ok := e.(coded); ok && c.Code() == code {
+			return true
+		}
+		if errs, ok := e.(diag.Errors); ok {
+			for _, sub := range errs {
+				if walk(sub) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return walk(err)
+}

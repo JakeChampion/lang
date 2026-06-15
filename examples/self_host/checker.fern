@@ -2081,6 +2081,107 @@ function void_ret_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]): Dia
     return out;
 }
 
+// name_in reports whether `name` appears in `list` — the membership test
+// the slice-escape walk uses to classify identifiers.
+function name_in(name: string, list: string[]): boolean {
+    var i: i32 = 0;
+    while (i < list.len()) { if (list[i] == name) { return true; } i = i + 1; }
+    return false;
+}
+
+// slc_src_is_local reports whether `e` names storage owned by the current
+// function (so a slice of it dangles once the frame is reclaimed): an
+// array literal, a local owned-array binding (`localarr`), or a local
+// slice binding that itself views local storage (`tainted`). A sub-slice
+// inherits its source's origin. Parameters / receivers are never added to
+// either list, so membership alone excludes them — the caller owns them.
+function slc_src_is_local(e: parser.Expr, localarr: string[], tainted: string[]): boolean {
+    match (e) {
+        parser.ExprArray(_) => { return true; },
+        parser.ExprSlice(s2) => { return slc_src_is_local(s2.array, localarr, tainted); },
+        parser.ExprIdent(id) => { return name_in(id.name, localarr) || name_in(id.name, tainted); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// slc_expr_escapes reports whether `e` evaluates to a `[T]` slice that
+// views function-local storage. A string slice copies into a fresh owned
+// string (`__str_slice`) so it never dangles; a bare reference to a
+// tainted local slice does.
+function slc_expr_escapes(e: parser.Expr, cur: Scope, localarr: string[], tainted: string[]): boolean {
+    match (e) {
+        parser.ExprSlice(sl) => {
+            match (check_expr(sl.array, cur)) {
+                TypeString(_) => { return false; },
+                _ => { }
+            }
+            return slc_src_is_local(sl.array, localarr, tainted);
+        },
+        parser.ExprIdent(id) => { return name_in(id.name, tainted); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// slc_walk is the E063 body walk: it threads the scope (so a slice's
+// source type resolves) plus two name sets — `localarr` (locals bound to
+// an owned array literal) and `tainted` (locals bound to a slice that
+// views local storage) — and flags every `return` of a slice viewing
+// local storage. Conservative and false-positive-free: a local whose
+// init is a slice of a *parameter* lands in neither set, so returning it
+// (or a sub-slice of it) is not flagged. Mirrors the native checker's
+// checkSliceEscape (internal/checker/checker.go).
+function slc_walk(stmts: parser.Stmt[], s: Scope, localarr: string[], tainted: string[]): Diag[] {
+    var out: Diag[] = [];
+    var cur: Scope = s;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var st: parser.Stmt = stmts[i];
+        match (st) {
+            parser.StmtVar(v) => {
+                match (v.init) {
+                    parser.ExprArray(_) => { localarr = localarr.append(v.name); },
+                    _ => {
+                        if (slc_expr_escapes(v.init, cur, localarr, tainted)) { tainted = tainted.append(v.name); }
+                    }
+                }
+            },
+            parser.StmtReturn(r) => {
+                if (slc_expr_escapes(r.value, cur, localarr, tainted)) {
+                    out = out.append(dg_at("E063", "returning a `[T]` slice that views function-local storage: the backing array is reclaimed when the function returns, leaving a dangling view", r.line, r.col));
+                }
+            },
+            parser.StmtIf(f) => {
+                out = append_diags(out, slc_walk(f.then_body, cur, localarr, tainted));
+                out = append_diags(out, slc_walk(f.else_body, cur, localarr, tainted));
+            },
+            parser.StmtWhile(w) => { out = append_diags(out, slc_walk(w.body, cur, localarr, tainted)); },
+            parser.StmtFor(fr) => { out = append_diags(out, slc_walk(fr.body, cur, localarr, tainted)); },
+            parser.StmtMatch(m) => {
+                var a: i32 = 0;
+                while (a < m.arms.len()) { out = append_diags(out, slc_walk(m.arms[a].body, cur, localarr, tainted)); a = a + 1; }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                out = append_diags(out, slc_walk(one, cur, localarr, tainted));
+            },
+            _ => { }
+        }
+        cur = check_stmt(st, cur).scope;
+        i = i + 1;
+    }
+    return out;
+}
+
+// slice_escape_diags is the E063 entry point: seed empty name sets and
+// walk a function body. See slc_walk.
+function slice_escape_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
+    var localarr: string[] = [];
+    var tainted: string[] = [];
+    return slc_walk(stmts, s, localarr, tainted);
+}
+
 // lret_expr walks an expression looking for lambdas and, for each one
 // that declares a return type, checks the lambda body's `return`s against
 // THAT type (not the enclosing function's) by reusing ret_diags. This is
@@ -5343,6 +5444,10 @@ pub function check_module(mod: parser.Module): ModuleTypes {
                 body_diags = body_diags.append(dg_at("E052", "missing return: \"" + mod.funcs[i].name + "\" has return type " + mod.funcs[i].ret_type + " but can fall off the end without returning a value", mod.funcs[i].line, mod.funcs[i].col));
             }
         }
+        // E063: returning a `[T]` slice that views function-local storage
+        // (a use-after-free once the frame is reclaimed). Runs for every
+        // function — a slice can escape from an inferred-return body too.
+        body_diags = append_diags(body_diags, slice_escape_diags(dbody, build_func_scope(mod.funcs[i], sigs, structs, unions, methods)));
         // E002 (lambda bodies): return-type mismatch inside a lambda is
         // checked against the lambda's own declared return type, not the
         // enclosing function's. Runs for every function (even void ones —
