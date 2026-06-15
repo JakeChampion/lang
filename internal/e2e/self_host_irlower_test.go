@@ -199,6 +199,16 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		{"option-value-pos", "function main(): i32 { var o: Option[i32] = Some(20); var r = match (o) { Some(v) => v + 1, None => 0 }; return r * 2; }", 42},
 		{"result-ok", "function main(): i32 { var r: Result[i32, i32] = Ok(42); match (r) { Ok(v) => { return v; }, Err(e) => { return 0; } } }", 42},
 		{"result-err", "function main(): i32 { var r: Result[i32, i32] = Err(7); match (r) { Ok(v) => { return v; }, Err(e) => { return e * 6; } } }", 42},
+		// Boxes that CROSS a function boundary: the evaluator's heap is now shared
+		// across the whole call chain (threaded through eval_call as EvalOut), so a
+		// box a callee allocates and RETURNS survives into its caller. Previously
+		// the per-call heap left the returned pointer dangling -> SIGABRT (134).
+		// Covers an array (the originally-documented limitation), a struct, a
+		// tuple, and an Option returned from a function.
+		{"array-returned", "function mk(): i32[] { return [40, 2]; } function main(): i32 { var a = mk(); return a[0] + a[1]; }", 42},
+		{"struct-returned", "struct P { x: i32 } function mk(): P { return P { x: 42 }; } function main(): i32 { var p = mk(); return p.x; }", 42},
+		{"tuple-returned", "function mk(): (i32, i32) { return (40, 2); } function main(): i32 { var t = mk(); return t.0 + t.1; }", 42},
+		{"option-from-fn", "function f(b: i32): Option[i32] { if (b > 0) { return Some(42); } return None; } function main(): i32 { match (f(1)) { Some(v) => { return v; }, None => { return 0; } } }", 42},
 	}
 
 	for _, tc := range cases {
