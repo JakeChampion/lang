@@ -322,6 +322,34 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// after the first match — the consumed-free never classifies it; the box (and its
 		// array) stays live, freed by the exit sweep. Value correct, detector 0.
 		{"rc-enum-used-after-match-detector", `enum E { V(i32[]), N } function go(): i32 { var x = V([3, 4]); var a = 0; match (x) { V(_) => { a = 1; }, N => { a = 0; }, } var b = 0; match (x) { V(_) => { b = 2; }, N => { b = 0; }, } if (a + b != 3) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// In-arm consuming-match box reuse (FBIP), the marquee "functional but in-place"
+		// win: `var y = match (x) { V(a, b) => W(a+1, b+1), W(c, d) => V(c, d) }` where x
+		// is a fresh, sole-owner, dead-after, non-escaping ALL-SCALAR enum box and EVERY
+		// arm constructs a SAME-SIZE scalar variant. x's box is reused IN PLACE
+		// (op_struct_set_shape + field writes) to build y instead of allocating a fresh
+		// box per arm — one fewer __fern_arr_box per arm. y owns the box on every path,
+		// freed exactly once at its reclamation (no post-match free exists for an in-arm
+		// scrutinee). Read-before-overwrite is structural: each arm reads its i32 payloads
+		// into temps BEFORE the box is re-shaped. The V arm fires (x is a V box → reshaped
+		// to W in place). Value W(4,5) → 4+5 = 9; detector 0 (box freed once).
+		{"inarm-reuse-value", `enum E { V(i32, i32), W(i32, i32) } function go(): i32 { var x = V(3, 4); var y = match (x) { V(a, b) => W(a + 1, b + 1), W(c, d) => V(c, d) }; var r = match (y) { V(a, b) => a + b, W(c, d) => c + d }; return r; } function main(): i32 { return go(); }`, 9},
+		{"inarm-reuse-detector", `enum E { V(i32, i32), W(i32, i32) } function go(): i32 { var x = V(3, 4); var y = match (x) { V(a, b) => W(a + 1, b + 1), W(c, d) => V(c, d) }; var r = match (y) { V(a, b) => a + b, W(c, d) => c + d }; if (r != 9) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// FIRING + heap-reuse corruption probe: allocate FRESH arrays AFTER the reusing
+		// match and read them back. If the in-place reuse corrupted the heap (e.g. wrote
+		// past the reused box, or freed it early so a later alloc recycled it under y),
+		// the fresh array's contents would be wrong. Both the match result (r == 9) and
+		// the fresh array (11+22+33 == 66) read back correctly; detector 0.
+		{"inarm-reuse-corruption-probe-detector", `enum E { V(i32, i32), W(i32, i32) } function go(): i32 { var x = V(3, 4); var y = match (x) { V(a, b) => W(a + 1, b + 1), W(c, d) => V(c, d) }; var r = match (y) { V(a, b) => a + b, W(c, d) => c + d }; var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (r != 9) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// NON-FIRING (different size): the matched variant V is 2-field but an arm
+		// constructs a 1-field variant `W(a + b)`, so the box sizes differ — reuse must
+		// NOT fire (x is freed/leaks via the normal path, each arm allocates a fresh
+		// result box). Value W(7) → 7; detector 0.
+		{"inarm-no-reuse-diff-size-detector", `enum E { V(i32, i32), W(i32) } function go(): i32 { var x = V(3, 4); var y = match (x) { V(a, b) => W(a + b), W(c) => V(c, c) }; var r = match (y) { V(a, b) => a + b, W(c) => c }; if (r != 7) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// NON-FIRING (x escapes / used after match): x is passed to a function AFTER the
+		// reusing match, so it is NOT dead at the match site — reuse must NOT fire (x's
+		// box stays live; each arm allocates a fresh result box). Value 9 + 1 = 10;
+		// detector 0.
+		{"inarm-no-reuse-escapes-detector", `enum E { V(i32, i32), W(i32, i32) } function use_x(e: E): i32 { return 1; } function go(): i32 { var x = V(3, 4); var y = match (x) { V(a, b) => W(a + 1, b + 1), W(c, d) => V(c, d) }; var g = use_x(x); var r = match (y) { V(a, b) => a + b, W(c, d) => c + d }; if (r + g != 10) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
