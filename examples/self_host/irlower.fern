@@ -11030,6 +11030,70 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
             sp = sp + 1;
             pc = pc + 1;
         }
+        else if (o.kind == "struct_make") {
+            // High-level struct box: allocate [rc, f0, f1, …] (this
+            // interpreter's 4-byte model — rc at base-4, field i at
+            // base+i*4), pop `i32_imm` field values (field 0 deepest, the
+            // order the lowering pushes them) and fill them, then push the
+            // base. Mirrors arr_make's alloc (reuse an exact-size freed
+            // block or bump-grow). Scalar (i32/boolean) fields only, and
+            // leak-only (no RC/drop on structs yet), so the box is never
+            // freed — exit-code-equivalent to every backend's AST path. A
+            // 0-field box is a bare enum variant value (`E.A`).
+            var snf: i32 = o.i32_imm;
+            var ssize: i32 = (snf + 1) * 4;
+            var sreuse: i32 = 0;
+            var scur: i32 = freehead;
+            var sprev: i32 = 0;
+            while (scur != 0) {
+                if (heap[scur / 4 + 1] == ssize) {
+                    var snxt: i32 = heap[scur / 4];
+                    if (sprev == 0) { freehead = snxt; } else { heap = heap.with(sprev / 4, snxt); }
+                    sreuse = scur;
+                    scur = 0;
+                } else {
+                    sprev = scur;
+                    scur = heap[scur / 4];
+                }
+            }
+            var sraw: i32 = 0;
+            if (sreuse != 0) {
+                sraw = sreuse;
+            } else {
+                sraw = heap.len() * 4;
+                var snw: i32 = ssize / 4;
+                var sq: i32 = 0;
+                while (sq < snw) { heap = heap.append(0); sq = sq + 1; }
+            }
+            var sbase: i32 = sraw + 4;
+            heap = heap.with((sbase - 4) / 4, 1);       // rc = 1
+            var sfi: i32 = snf - 1;
+            while (sfi >= 0) {
+                sp = sp - 1;
+                heap = heap.with((sbase + sfi * 4) / 4, stack[sp]);
+                sfi = sfi - 1;
+            }
+            stack = stack.with(sp, sbase);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind == "struct_get") {
+            // pop base; push field `i32_imm` at base+i*4.
+            sp = sp - 1;
+            var sgbase: i32 = stack[sp];
+            stack = stack.with(sp, heap[sgbase / 4 + o.i32_imm]);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind == "struct_set") {
+            // pop val (top), box; store val into field `i32_imm` at base+i*4.
+            sp = sp - 1;
+            var ssval: i32 = stack[sp];
+            sp = sp - 1;
+            var ssbase: i32 = stack[sp];
+            heap = heap.with(ssbase / 4 + o.i32_imm, ssval);
+            pc = pc + 1;
+        }
         else if (o.kind == "call_direct" && o.str == "__fern_rc_inc") {
             // RC retain: inc the refcount header at base-4, return base.
             sp = sp - 1;
