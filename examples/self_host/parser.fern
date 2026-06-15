@@ -3594,7 +3594,56 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         hsf = hsf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap" });
         structs = structs.append(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], line: 0, col: 0, enum_owner: "" });
     }
+    // std/time's seven date/time types are compiler built-ins (registered in
+    // the Go checker, not `struct`-declared in std/time), so the self-host's
+    // shape-pointer dispatch + field-offset resolution need their layouts here
+    // — the same pattern as FileStat / HeaderMap above. Field lists mirror
+    // internal/checker/checker.go's registration exactly. All are leaf-safe
+    // (scalar / string / nested leaf-safe struct fields), so their constructors
+    // (date_make / span_days / …) and field reads lower on the IR path.
+    structs = add_builtin_struct2(structs, "Instant", "sec", "i64", "nsec", "i32");
+    structs = add_builtin_struct2(structs, "Duration", "sec", "i64", "nsec", "i32");
+    structs = add_builtin_struct2(structs, "TimeZone", "name", "string", "offset_seconds", "i32");
+    structs = add_builtin_struct2(structs, "DateTime", "date", "Date", "time", "Time");
+    structs = add_builtin_struct2(structs, "Zoned", "instant", "Instant", "zone", "TimeZone");
+    if (!struct_declared(structs, "Date")) {
+        var df: StructFieldDecl[] = [];
+        df = df.append(StructFieldDecl { name: "year", type_name: "i32" });
+        df = df.append(StructFieldDecl { name: "month", type_name: "i32" });
+        df = df.append(StructFieldDecl { name: "day", type_name: "i32" });
+        structs = structs.append(StructDecl { name: "Date", fields: df, type_params: [], line: 0, col: 0, enum_owner: "" });
+    }
+    if (!struct_declared(structs, "Time")) {
+        var tf: StructFieldDecl[] = [];
+        tf = tf.append(StructFieldDecl { name: "hour", type_name: "i32" });
+        tf = tf.append(StructFieldDecl { name: "minute", type_name: "i32" });
+        tf = tf.append(StructFieldDecl { name: "second", type_name: "i32" });
+        tf = tf.append(StructFieldDecl { name: "nsec", type_name: "i32" });
+        structs = structs.append(StructDecl { name: "Time", fields: tf, type_params: [], line: 0, col: 0, enum_owner: "" });
+    }
+    if (!struct_declared(structs, "Span")) {
+        var spf: StructFieldDecl[] = [];
+        spf = spf.append(StructFieldDecl { name: "years", type_name: "i32" });
+        spf = spf.append(StructFieldDecl { name: "months", type_name: "i32" });
+        spf = spf.append(StructFieldDecl { name: "weeks", type_name: "i32" });
+        spf = spf.append(StructFieldDecl { name: "days", type_name: "i32" });
+        spf = spf.append(StructFieldDecl { name: "hours", type_name: "i32" });
+        spf = spf.append(StructFieldDecl { name: "minutes", type_name: "i32" });
+        spf = spf.append(StructFieldDecl { name: "seconds", type_name: "i32" });
+        spf = spf.append(StructFieldDecl { name: "nanos", type_name: "i32" });
+        structs = structs.append(StructDecl { name: "Span", fields: spf, type_params: [], line: 0, col: 0, enum_owner: "" });
+    }
     return structs;
+}
+
+// add_builtin_struct2 injects a 2-field built-in struct (guarded by name) —
+// the common shape for the injected time types (sec/nsec, name/offset, …).
+function add_builtin_struct2(structs: StructDecl[], name: string, f0: string, t0: string, f1: string, t1: string): StructDecl[] {
+    if (struct_declared(structs, name)) { return structs; }
+    var fields: StructFieldDecl[] = [];
+    fields = fields.append(StructFieldDecl { name: f0, type_name: t0 });
+    fields = fields.append(StructFieldDecl { name: f1, type_name: t1 });
+    return structs.append(StructDecl { name: name, fields: fields, type_params: [], line: 0, col: 0, enum_owner: "" });
 }
 
 // module_with_builtins returns `mod` with the auto-injected builtin

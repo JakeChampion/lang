@@ -2773,9 +2773,17 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
 
 // lift_lambdas re-exports irlower's lambda-lift pre-pass so the dispatch sites
 // (asm.emit_module / asm_ir_run) can hoist no-capture lambda arguments before
-// the eligibility check + emit without importing irlower directly.
+// the eligibility check + emit without importing irlower directly. It also
+// injects the built-in struct/enum declarations (FileStat / HeaderMap /
+// JsonValue / the std/time types / …) into the module's struct table — the AST
+// path gets these via parser.module_with_builtins, but the IR path (probe +
+// emit_module_ir) both funnel through here, so this is the single point that
+// keeps the IR path's struct visibility in sync with the AST path's. Without
+// it the IR path can't resolve built-in struct layouts (e.g. std/time's Date)
+// and bails every function that uses one.
 pub function lift_lambdas(mod: parser.Module): parser.Module {
-    return irlower.lift_lambdas(mod);
+    var lifted: parser.Module = irlower.lift_lambdas(mod);
+    return parser.Module { funcs: lifted.funcs, structs: parser.inject_builtin_enums(lifted.structs), aliases: lifted.aliases, imports: lifted.imports, top_stmts: lifted.top_stmts, enums: lifted.enums, resources: lifted.resources, exports: lifted.exports };
 }
 
 // emit_module_ir emits a full all-i32-eligible module via the IR path. The

@@ -248,6 +248,12 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// shape (`__op_f64(x as f64) as f32`). myabs(-5)=5, myclamp via mymax(7,3)=7
 		// -> 5*10+7 = 57.
 		{"f32-methods", "function (x: f32) myabs(): f32 { var d: f64 = x as f64; if (d < 0.0) { return (0.0 - d) as f32; } return d as f32; } function (x: f32) mymax(y: f32): f32 { if ((x as f64) > (y as f64)) { return x; } return y; } function (x: f32) myclamp(lo: f32, hi: f32): f32 { return lo.mymax(x); } function f(): i32 { var a: f32 = 0.0 - 5.0 as f32; var b = a.myabs(); var c: f32 = 3.0 as f32; var m = c.myclamp(7.0 as f32, 9.0 as f32); return (b as i32) * 10 + (m as i32); } function main(): i32 { return f(); }"},
+		// Built-in struct types (std/time's Date / Span etc. are registered in the
+		// Go checker, not `struct`-declared) are injected into the IR path's struct
+		// table by lift_lambdas (matching the AST path's module_with_builtins), so
+		// constructing them + reading fields lowers. d.month*100 + d.day + s.days =
+		// 6*100 + 15 + 3 = 618 (exit 106 mod 256). Was BAIL (Date layout unknown).
+		{"builtin-struct-date", "function f(): i32 { var d = Date { year: 2026, month: 6, day: 15 }; var s = Span { years: 0, months: 0, weeks: 0, days: 3, hours: 0, minutes: 0, seconds: 0, nanos: 0 }; return d.month * 100 + d.day + s.days; } function main(): i32 { return f(); }"},
 		{"with-loop", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; while (i < 4) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3]; }"},
 		{"append-build", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a[0] + a[4]; }"},
 		// `.append(e)` as a general EXPRESSION (not the `out = out.append(e)`
