@@ -214,6 +214,22 @@ type DynTraitType struct {
 	// arguments (the vtable is keyed by trait name), so Args drives only
 	// the checker's coercion gate and method-signature substitution.
 	Args [][]Type
+	// AssocBindings carries the pinned associated-type bindings for each
+	// trait, parallel to Traits (AssocBindings[i] are the `Name = Type`
+	// pins for Traits[i]). A trait with associated types is object-unsafe
+	// UNLESS the `dyn` type pins every one — `dyn Producer[Item = i32]` is
+	// Traits=["Producer"], AssocBindings=[[{Item, i32}]]. Like Args, the
+	// runtime erases them; they drive only the checker's object-safety
+	// gate, coercion gate, and the `Self::Item` projection resolution in
+	// method signatures. Each trait's bindings are kept sorted by name at
+	// construction so Equal is an elementwise compare.
+	AssocBindings [][]AssocBinding
+}
+
+// AssocBinding is one pinned associated type in a `dyn` object: `Item = i32`.
+type AssocBinding struct {
+	Name string
+	Type Type
 }
 
 // ArgsFor returns the generic trait-arguments for the i-th trait, or nil
@@ -225,10 +241,20 @@ func (d DynTraitType) ArgsFor(i int) []Type {
 	return d.Args[i]
 }
 
+// AssocFor returns the pinned associated-type bindings for the i-th trait, or
+// nil when the trait pins none (or AssocBindings is short / absent).
+func (d DynTraitType) AssocFor(i int) []AssocBinding {
+	if i < 0 || i >= len(d.AssocBindings) {
+		return nil
+	}
+	return d.AssocBindings[i]
+}
+
 // NewDynTraitType builds a DynTraitType from a trait-name set, normalising
 // it to the canonical sorted+deduped form. Callers (the parser, modload,
 // any code synthesising a `dyn` type) should go through this so the
-// invariant holds everywhere. Use NewDynTraitTypeArgs for generic traits.
+// invariant holds everywhere. Use NewDynTraitTypeFull for generic traits /
+// pinned associated types.
 func NewDynTraitType(traits ...string) DynTraitType {
 	if len(traits) <= 1 {
 		return DynTraitType{Traits: append([]string(nil), traits...)}
@@ -246,47 +272,76 @@ func NewDynTraitType(traits ...string) DynTraitType {
 	return DynTraitType{Traits: out}
 }
 
-// NewDynTraitTypeArgs builds a DynTraitType carrying per-trait generic
-// arguments (args parallel to traits), normalising to canonical sorted +
-// deduped form. The (trait, args) pairs sort together by trait name, with
-// the args' string form breaking ties so `dyn A[i32] + A[string]` is
-// deterministic (and only deduped when BOTH name and args match). When
-// every args entry is empty this is equivalent to NewDynTraitType.
-func NewDynTraitTypeArgs(traits []string, args [][]Type) DynTraitType {
+// NewDynTraitTypeFull builds a DynTraitType carrying per-trait generic
+// arguments (args) and pinned associated-type bindings (assoc), both parallel
+// to traits, normalising to canonical sorted + deduped form. The (trait, args,
+// assoc) triples sort
+// together by trait name, with the args' and assoc' string forms breaking
+// ties. Each trait's assoc bindings are sorted by name so Equal is an
+// elementwise compare. When both args and assoc are all-empty this is
+// equivalent to NewDynTraitType.
+func NewDynTraitTypeFull(traits []string, args [][]Type, assoc [][]AssocBinding) DynTraitType {
 	if len(args) != len(traits) {
-		// Defensive: pad/truncate so indexing stays in step.
 		na := make([][]Type, len(traits))
 		copy(na, args)
 		args = na
 	}
-	anyArgs := false
+	if len(assoc) != len(traits) {
+		nb := make([][]AssocBinding, len(traits))
+		copy(nb, assoc)
+		assoc = nb
+	}
+	any := false
 	for _, a := range args {
 		if len(a) > 0 {
-			anyArgs = true
-			break
+			any = true
 		}
 	}
-	if !anyArgs {
+	for i := range assoc {
+		if len(assoc[i]) > 0 {
+			// Canonicalise each trait's bindings by name.
+			sort.SliceStable(assoc[i], func(x, y int) bool { return assoc[i][x].Name < assoc[i][y].Name })
+			any = true
+		}
+	}
+	if !any {
 		return NewDynTraitType(traits...)
 	}
 	idx := make([]int, len(traits))
 	for i := range idx {
 		idx[i] = i
 	}
-	key := func(i int) string { return traits[i] + "\x00" + typeArgsString(args[i]) }
+	key := func(i int) string {
+		return traits[i] + "\x00" + typeArgsString(args[i]) + "\x00" + assocString(assoc[i])
+	}
 	sort.SliceStable(idx, func(a, b int) bool { return key(idx[a]) < key(idx[b]) })
 	outT := make([]string, 0, len(traits))
 	outA := make([][]Type, 0, len(traits))
+	outB := make([][]AssocBinding, 0, len(traits))
 	var prev string
 	for n, i := range idx {
 		k := key(i)
 		if n == 0 || k != prev {
 			outT = append(outT, traits[i])
 			outA = append(outA, args[i])
+			outB = append(outB, assoc[i])
 			prev = k
 		}
 	}
-	return DynTraitType{Traits: outT, Args: outA}
+	return DynTraitType{Traits: outT, Args: outA, AssocBindings: outB}
+}
+
+// assocString renders pinned associated-type bindings as `[Name = T, …]`
+// (empty string for none) — used for canonical ordering + String().
+func assocString(bs []AssocBinding) string {
+	if len(bs) == 0 {
+		return ""
+	}
+	parts := make([]string, len(bs))
+	for i, b := range bs {
+		parts[i] = b.Name + " = " + b.Type.String()
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
 }
 
 // typeArgsString renders a generic-argument list as `[a, b]` (empty string
@@ -421,7 +476,20 @@ func (SelfType) String() string    { return "Self" }
 func (d DynTraitType) String() string {
 	parts := make([]string, len(d.Traits))
 	for i, t := range d.Traits {
-		parts[i] = t + typeArgsString(d.ArgsFor(i))
+		// Positional generic args and pinned associated-type bindings share
+		// one bracket: `Foo[i32]`, `Producer[Item = i32]`, or both.
+		var inner []string
+		for _, a := range d.ArgsFor(i) {
+			inner = append(inner, a.String())
+		}
+		for _, b := range d.AssocFor(i) {
+			inner = append(inner, b.Name+" = "+b.Type.String())
+		}
+		if len(inner) > 0 {
+			parts[i] = t + "[" + strings.Join(inner, ", ") + "]"
+		} else {
+			parts[i] = t
+		}
 	}
 	return "dyn " + strings.Join(parts, " + ")
 }
@@ -1150,6 +1218,18 @@ func Equal(a, b Type) bool {
 			}
 			for j := range xa {
 				if !Equal(xa[j], ya[j]) {
+					return false
+				}
+			}
+			// Pinned associated-type bindings (sorted by name at
+			// construction) must match too: `dyn P[Item = i32]` ≠
+			// `dyn P[Item = string]` ≠ `dyn P` (unpinned).
+			xb, yb := x.AssocFor(i), y.AssocFor(i)
+			if len(xb) != len(yb) {
+				return false
+			}
+			for j := range xb {
+				if xb[j].Name != yb[j].Name || !Equal(xb[j].Type, yb[j].Type) {
 					return false
 				}
 			}

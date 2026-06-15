@@ -1957,6 +1957,43 @@ function take(d: dyn Container[i32]): i32 { return d.get(); }`)
 	}
 }
 
+// `dyn Producer[Item = i32]` parses to a DynTraitType carrying a pinned
+// associated-type binding (AssocBindings), distinct from a positional generic
+// argument. See docs/DYN-TRAITS.md.
+func TestDynAssocTypeParse(t *testing.T) {
+	prog, err := Parse(`trait Producer { type Item; function get(self: Self): Self::Item; }
+function take(d: dyn Producer[Item = i32]): i32 { return 0; }`)
+	if err != nil {
+		t.Fatalf("dyn assoc-pin type should parse: %v", err)
+	}
+	var take *ast.FuncDecl
+	for _, fn := range prog.Funcs {
+		if fn.Name == "take" {
+			take = fn
+		}
+	}
+	if take == nil {
+		t.Fatal("function not parsed")
+	}
+	dt, ok := take.Params[0].Type.(ast.DynTraitType)
+	if !ok || len(dt.Traits) != 1 || dt.Traits[0] != "Producer" {
+		t.Fatalf("take param type = %#v, want dyn Producer[Item = i32]", take.Params[0].Type)
+	}
+	if len(dt.ArgsFor(0)) != 0 {
+		t.Errorf("Producer should have no positional args, got %#v", dt.ArgsFor(0))
+	}
+	binds := dt.AssocFor(0)
+	if len(binds) != 1 || binds[0].Name != "Item" {
+		t.Fatalf("Producer assoc bindings = %#v, want one (Item)", binds)
+	}
+	if n, ok := binds[0].Type.(ast.NumberType); !ok || n.String() != "i32" {
+		t.Errorf("Item binding = %#v, want i32", binds[0].Type)
+	}
+	if got := dt.String(); got != "dyn Producer[Item = i32]" {
+		t.Errorf("String() = %q, want %q", got, "dyn Producer[Item = i32]")
+	}
+}
+
 // `dyn A + B` parses to a DynTraitType carrying the SORTED + DEDUPED
 // trait set (so `dyn A + B` ≡ `dyn B + A`), `dyn A + B + C` keeps all
 // three, `dyn A+B[]` is an array of multi-trait objects, and a trailing

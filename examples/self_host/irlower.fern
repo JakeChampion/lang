@@ -1237,7 +1237,7 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
                 // read loads at the default 32-bit width; a sub-word cast wraps the
                 // value before the store). u64 / f32 are NOT added: they need real
                 // 64-bit / float width handling, so they keep the struct on AST.
-                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || t == "u64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field(t) || is_leaksafe_tuple_field(t) || is_map_type_name(t)) {
+                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || t == "f32" || t == "float" || t == "u64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field(t) || is_leaksafe_tuple_field(t) || is_map_type_name(t)) {
                     fi = fi + 1;
                     continue;
                 }
@@ -1417,7 +1417,7 @@ pub function decl_field_type_at(structs: parser.StructDecl[], struct_name: strin
 // f64.load/store vs i32.load/store selection (register backends ignore it).
 pub function struct_field_width(structs: parser.StructDecl[], struct_name: string, index: i32): i32 {
     var t: string = decl_field_type_at(structs, struct_name, index);
-    if (t == "f64" || t == "i64" || t == "u64") { return 64; }
+    if (t == "f64" || t == "f32" || t == "float" || t == "i64" || t == "u64") { return 64; }
     return 0;
 }
 // struct_field_is_i64 reports whether field `index` of `struct_name` is i64 (an
@@ -1701,6 +1701,10 @@ pub function expr_is_f64arr(e: parser.Expr, s: LowerState): boolean {
             match (c.callee) {
                 parser.ExprIdent(cid) => { return s.is_f64arr_ret_fn(cid.name); },
                 parser.ExprFieldAccess(cfa) => {
+                    // `a.with(...)` / `a.append(...)` preserve the receiver's element
+                    // kind: an f64[] receiver yields a fresh f64[].
+                    if (((cfa.field == "with" && c.args.len() == 2) || (cfa.field == "append" && c.args.len() == 1))
+                        && expr_is_f64arr(cfa.obj, s)) { return true; }
                     var crty: string = expr_struct_type(cfa.obj, s);
                     if (crty == "") { return false; }
                     return s.is_f64arr_ret_fn(crty + "." + cfa.field);
@@ -2333,6 +2337,10 @@ pub function expr_is_i64arr(e: parser.Expr, s: LowerState): boolean {
             match (c.callee) {
                 parser.ExprIdent(cid) => { return s.is_i64arr_ret_fn(cid.name); },
                 parser.ExprFieldAccess(cfa) => {
+                    // `a.with(...)` / `a.append(...)` preserve the receiver's element
+                    // kind: an i64[] receiver yields a fresh i64[].
+                    if (((cfa.field == "with" && c.args.len() == 2) || (cfa.field == "append" && c.args.len() == 1))
+                        && expr_is_i64arr(cfa.obj, s)) { return true; }
                     var crty: string = expr_struct_type(cfa.obj, s);
                     if (crty == "") { return false; }
                     return s.is_i64arr_ret_fn(crty + "." + cfa.field);
@@ -2405,11 +2413,13 @@ pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
         parser.ExprFieldAccess(fa) => {
             // An f64-typed struct field read `p.x`, or an f64 tuple element.
             if (util.is_all_digits(fa.field)) {
-                return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "f64";
+                var ttf: string = expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s);
+                return ttf == "f64" || ttf == "f32" || ttf == "float";
             }
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return false; }
-            return decl_field_type(s.structs, oty, fa.field) == "f64";
+            var sff: string = decl_field_type(s.structs, oty, fa.field);
+            return sff == "f64" || sff == "f32" || sff == "float";
         },
         parser.ExprIndex(ix) => { return arr_index_is_f64(ix.array, s); },
         _ => { return false; }
@@ -3033,13 +3043,34 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             // RC-frontier slice 3). field_access_arr_field_type only
                             // admits a scalar-element OR array-of-struct field read
                             // (NOT enum-array), matching the outer struct-lit gate.
-                            // A `.with`/`.append` CALL value stays bailing (no value-
-                            // producing COW; arr_push reuses the receiver buffer in
-                            // place → over-release — a separate COW-arr_with slice).
                             parser.ExprFieldAccess(_) => {
                                 if (field_access_arr_field_type(fav, s) != "") {
                                     fav_ok = true;
                                     fav_alias_inc = true;
+                                }
+                            },
+                            // The immutable-update idiom `State { xs: s.xs.with(i, v), … }`
+                            // / `State { xs: s.xs.append(v), … }`. The `.with` / `.append`
+                            // on a scalar-element array field read produces a FRESH,
+                            // sole-owned array (lower_arr_with_value / _append_value clone
+                            // the receiver — the base field is borrowed for the copy, NOT
+                            // aliased into the result), so it is owned by the struct with
+                            // NO alias-inc — exactly like the `[…]` literal case. Only the
+                            // scalar-element field (is_leaksafe_array_field); array-of-
+                            // struct / array-of-enum fields stay bailing (deep copy later).
+                            parser.ExprCall(favc) => {
+                                if (is_leaksafe_array_field(cfft)) {
+                                    match (favc.callee) {
+                                        parser.ExprFieldAccess(favfa) => {
+                                            if ((favfa.field == "with" && favc.args.len() == 2)
+                                                || (favfa.field == "append" && favc.args.len() == 1)) {
+                                                if (scalar_arr_field_type(favfa.obj, s) != "") {
+                                                    fav_ok = true;
+                                                }
+                                            }
+                                        },
+                                        _ => {}
+                                    }
                                 }
                             },
                             _ => {}
@@ -3099,7 +3130,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 // keep the 4-byte read.
                 var tgt: string = expr_tuple_elem_tag(fa.obj, tgi, s);
                 if (tgt == "i64" || tgt == "u64") { return so0.emit(ir.op_tuple_get_w(tgi, 64, true)); }
-                if (tgt == "f64") { return so0.emit(ir.op_tuple_get_w(tgi, 64, false)); }
+                if (tgt == "f64" || tgt == "f32" || tgt == "float") { return so0.emit(ir.op_tuple_get_w(tgi, 64, false)); }
                 return so0.emit(ir.op_tuple_get(tgi));
             }
             // Qualified built-in `Option.None` (no call) — the same value as the
@@ -4219,6 +4250,18 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // RC: arr_push consumes the receiver array and yields the grown
                     // one; StmtReturn excludes a moved receiver ident from its exit
                     // dec-sweep so the consumed buffer isn't also freed.
+                    // `s.xs.append(v)` on a scalar-element array struct FIELD read:
+                    // the field is a borrowed, possibly-shared array (it does NOT
+                    // match expr_is_arr_src — a bare field access isn't an array
+                    // source), so the consume-form arr_push below would corrupt
+                    // `s.xs`. Use the CLONE form (clone then grow the sole-owned
+                    // clone), the same sound shape as the value-producing `.with`.
+                    // This is what admits the immutable-update idiom
+                    // `State { xs: s.xs.append(v), … }` as a struct-field value.
+                    if (fa.field == "append" && c.args.len() == 1
+                        && scalar_arr_field_type(fa.obj, s) != "") {
+                        return lower_arr_append_value(fa.obj, c.args[0], s);
+                    }
                     if (fa.field == "append" && c.args.len() == 1
                         && (expr_is_arr_src(fa.obj, s) || expr_is_strarr(fa.obj, s) || expr_is_f64arr(fa.obj, s) || expr_is_i64arr(fa.obj, s))) {
                         if (expr_is_f64arr(fa.obj, s)) {
@@ -4240,6 +4283,27 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         aps = lower_expr(c.args[0], aps);
                         if (!aps.ok) { return aps; }
                         return aps.emit(ir.op_arr_push());
+                    }
+                    // `arr.with(i, v)` as a general VALUE-PRODUCING EXPRESSION (a
+                    // var-init `var b = a.with(i, v)`, an argument, a struct-field
+                    // value `State { xs: s.xs.with(i, v), … }`): evaluates to a FRESH
+                    // array = a clone of the receiver with element i replaced by v,
+                    // leaving the receiver UNMUTATED. This is the sound counterpart
+                    // to the in-place self-reassign form `a = a.with(i, v)` (handled
+                    // in StmtAssign): there the slot is the sole owner so the store
+                    // is in place; here the receiver may be shared (an ident the
+                    // caller still holds, or a borrowed `s.xs` field read), so we
+                    // CLONE then set into the clone (lower_arr_with_value). Fires for
+                    // any leak-safe scalar / string-element array source — an array
+                    // local / fresh array / slice (expr_is_arr_src & friends) OR a
+                    // scalar-element array struct-field read (scalar_arr_field_type).
+                    // Array-of-struct / array-of-enum receivers are NOT admitted
+                    // (deep-element copy is a later slice); they fall through / bail.
+                    if (fa.field == "with" && c.args.len() == 2
+                        && (expr_is_arr_src(fa.obj, s) || expr_is_strarr(fa.obj, s)
+                            || expr_is_f64arr(fa.obj, s) || expr_is_i64arr(fa.obj, s)
+                            || scalar_arr_field_type(fa.obj, s) != "")) {
+                        return lower_arr_with_value(fa.obj, c.args[0], c.args[1], s);
                     }
                     // `arr.to_json()` on an ARRAY receiver — the element-poly
                     // `(xs: T[]) to_json[T: Json]()` serialiser from std/json.
@@ -5779,13 +5843,13 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                     // lower_i64); an f64 element marks it f64.
                     dt = dt.emit(ir.op_load_local(tmp_slot));
                     if (dtag == "i64" || dtag == "u64") { dt = dt.emit(ir.op_tuple_get_w(dk, 64, true)); }
-                    else if (dtag == "f64") { dt = dt.emit(ir.op_tuple_get_w(dk, 64, false)); }
+                    else if (dtag == "f64" || dtag == "f32" || dtag == "float") { dt = dt.emit(ir.op_tuple_get_w(dk, 64, false)); }
                     else { dt = dt.emit(ir.op_tuple_get(dk)); }
                     dt = dt.emit(ir.op_store_local(dkslot));
                     if (dtag == "string") { dt = dt.mark_str(dkslot, true); }
                     else if (dtag == "i64") { dt = dt.mark_i64(dkslot, true); }
                     else if (dtag == "u64") { dt = dt.mark_u64(dkslot, true); }
-                    else if (dtag == "f64") { dt = dt.mark_f64(dkslot, true); }
+                    else if (dtag == "f64" || dtag == "f32" || dtag == "float") { dt = dt.mark_f64(dkslot, true); }
                     else if (is_map_type_name(dtag)) { dt = dt.mark_map_type(dkslot, dtag); }
                     else if (dtag.len() >= 8 && (dtag[0:7] == "Option[" || dtag[0:7] == "Result[")) { dt = dt.mark_opt_type(dkslot, dtag); }
                     // A 4-byte scalar-array element (i32[]/boolean[]/u32[]) binds the
@@ -5876,6 +5940,17 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                             // element struct type, keyed "<Type>.m"). The struct
                             // receiver gate keeps this to a genuine method call (#3040).
                             else if (se.is_arr_ret_fn(cfa.field) && expr_struct_type(cfa.obj, se) != "") { is_arr = true; }
+                            // `var b = a.with(i, v)` / `var b = a.append(v)` — the
+                            // value-producing builders return a FRESH owned array
+                            // (lower_arr_with_value / _append_value clone the
+                            // receiver), so the slot is a MOVE (rc=1, no alias_inc).
+                            // The receiver is any leak-safe scalar / string-element
+                            // array source OR a scalar-array struct-field read.
+                            else if ((cfa.field == "with" && cc.args.len() == 2) || (cfa.field == "append" && cc.args.len() == 1)) {
+                                if (expr_is_arr_src(cfa.obj, se) || expr_is_strarr(cfa.obj, se)
+                                    || expr_is_f64arr(cfa.obj, se) || expr_is_i64arr(cfa.obj, se)
+                                    || scalar_arr_field_type(cfa.obj, se) != "") { is_arr = true; }
+                            }
                         },
                         // `var a = if (c) { [..] } else { [..] }` — an if-/match-
                         // EXPRESSION desugars to a 0-arg IIFE (callee is ExprLambda).
@@ -7688,6 +7763,117 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
         _ => { return s.fail(); }
     }
     return s.fail();
+}
+
+// arr_elem_kind classifies an array RECEIVER expression's element width for the
+// value-producing `.with` / `.append` clone helpers: "i64" (i64[]/u64[], 8-byte
+// integer store), "f64" (f64[], 8-byte float store), or "i32" (i32[]/string[]/
+// boolean[]/u32[]/…, the 4-byte-slot default — strings and structs ride the
+// pointer slot like an i32). The caller has already confirmed the receiver IS a
+// leak-safe scalar / string-element array (so no array-of-struct/enum here).
+function arr_elem_kind(obj: parser.Expr, s: LowerState): string {
+    if (expr_is_f64arr(obj, s)) { return "f64"; }
+    if (expr_is_i64arr(obj, s) || (expr_is_arr_src(obj, s) && expr_is_u64(obj, s))) { return "i64"; }
+    return "i32";
+}
+
+// lower_arr_with_value lowers `obj.with(idx, val)` as a VALUE-PRODUCING
+// expression: it evaluates to a FRESH array equal to `obj` with element `idx`
+// replaced by `val`, leaving `obj` UNMUTATED. This is the sound counterpart to
+// the in-place StmtAssign self-reassign form (`a = a.with(i, v)`): there the
+// slot is the sole owner so an in-place arr_set is safe, but in expression /
+// struct-field position the receiver (e.g. a borrowed `s.xs` field read) may be
+// shared, so we must NOT mutate it. We CLONE the base first (arr_slice over its
+// whole length — a fresh `__fern_arr_box` with rc=1, the same full-copy helper
+// `a[0:a.len()]` already uses on every backend) and arr_set into the CLONE,
+// which is sole-owned. The base array is read twice (slice src + length) so it
+// is spilled to a scratch local; the clone is read twice (the set target, then
+// re-loaded to leave it on the stack) so it too is spilled. Composed entirely of
+// existing ops — every backend + eval_ops lower it for free. The element width
+// follows the receiver's element kind (mirrors the reassign-self path).
+pub function lower_arr_with_value(obj: parser.Expr, idx: parser.Expr, val: parser.Expr, s: LowerState): LowerState {
+    var kind: string = arr_elem_kind(obj, s);
+    var sw: i32 = 32;
+    if (kind != "i32") { sw = 64; }
+    // Spill the base once: it is the slice source AND the .len() argument.
+    var bscratch: string = "$wcb" + util.i32_to_string(s.local_names.len());
+    var st: LowerState = s.add_local(bscratch);
+    var btmp: i32 = st.slot_of(bscratch);
+    st = lower_expr(obj, st);
+    if (!st.ok) { return st; }
+    st = st.emit(ir.op_store_local(btmp));
+    // clone = base[0 : base.len()] — a fresh, sole-owned full copy.
+    st = st.emit(ir.op_load_local(btmp));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_load_local(btmp));
+    st = st.emit(ir.op_arr_len());
+    st = st.emit(ir.op_arr_slice(sw));
+    // Spill the clone: it is the arr_set target AND the value left on the stack.
+    var cscratch: string = "$wcc" + util.i32_to_string(st.local_names.len());
+    st = st.add_local(cscratch);
+    var ctmp: i32 = st.slot_of(cscratch);
+    st = st.emit(ir.op_store_local(ctmp));
+    // arr_set into the CLONE (sole-owned: an in-place store is sound). Pops
+    // [clone, idx, val] and pushes nothing.
+    st = st.emit(ir.op_load_local(ctmp));
+    st = lower_expr(idx, st);
+    if (!st.ok) { return st; }
+    if (kind == "i64") {
+        st = lower_i64(val, st);
+        if (!st.ok) { return st; }
+        st = st.emit(ir.op_arr_set_i64());
+    } else if (kind == "f64") {
+        st = lower_expr(val, st);
+        if (!st.ok) { return st; }
+        st = st.emit(ir.op_arr_set(64));
+    } else {
+        st = lower_expr(val, st);
+        if (!st.ok) { return st; }
+        st = st.emit(ir.op_arr_set(32));
+    }
+    // Leave the fresh clone on the operand stack.
+    return st.emit(ir.op_load_local(ctmp));
+}
+
+// lower_arr_append_value lowers `obj.append(val)` as a VALUE-PRODUCING
+// expression that does NOT consume / mutate `obj`: it clones `obj` first (the
+// same arr_slice full-copy as `.with`) then grows the CLONE via arr_push. Unlike
+// the existing move-form `.append` (which consumes a fresh / owned receiver via
+// arr_push in place), this clone form is sound when `obj` is a borrowed,
+// possibly-shared array (e.g. a struct field read `s.xs`): the receiver buffer
+// is never reused, only the sole-owned clone. The element width follows the
+// receiver's element kind.
+pub function lower_arr_append_value(obj: parser.Expr, val: parser.Expr, s: LowerState): LowerState {
+    var kind: string = arr_elem_kind(obj, s);
+    var sw: i32 = 32;
+    if (kind != "i32") { sw = 64; }
+    var bscratch: string = "$acb" + util.i32_to_string(s.local_names.len());
+    var st: LowerState = s.add_local(bscratch);
+    var btmp: i32 = st.slot_of(bscratch);
+    st = lower_expr(obj, st);
+    if (!st.ok) { return st; }
+    st = st.emit(ir.op_store_local(btmp));
+    // clone = base[0 : base.len()]
+    st = st.emit(ir.op_load_local(btmp));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_load_local(btmp));
+    st = st.emit(ir.op_arr_len());
+    st = st.emit(ir.op_arr_slice(sw));
+    // grow the CLONE in place (sole-owned: arr_push reuse is sound). Pops
+    // [clone, val] and pushes the grown array.
+    if (kind == "i64") {
+        st = lower_i64(val, st);
+        if (!st.ok) { return st; }
+        return st.emit(ir.op_arr_push_i64());
+    }
+    if (kind == "f64") {
+        st = lower_expr(val, st);
+        if (!st.ok) { return st; }
+        return st.emit(ir.op_arr_push_f64());
+    }
+    st = lower_expr(val, st);
+    if (!st.ok) { return st; }
+    return st.emit(ir.op_arr_push());
 }
 
 // emit_arr_store stores the new value (on top of the operand stack) into
@@ -10929,7 +11115,7 @@ pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): bo
             // (elem_type_tag's infer_expr_width==64 path), and the `.N` / destructure
             // reads route a "u64" type-annotation tag through tuple_get_w(64) below.
             // f32 / usize are NOT here: they need float / pointer-width handling.
-            var ok_elem: boolean = (t == "i32" || t == "bool" || t == "boolean" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || t == "string" || t == "i64" || t == "u64" || t == "f64");
+            var ok_elem: boolean = (t == "i32" || t == "bool" || t == "boolean" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || t == "string" || t == "i64" || t == "u64" || t == "f64" || t == "f32" || t == "float");
             if (!ok_elem && decl_is_struct(structs, t) && decl_is_leaksafe(structs, t)) { ok_elem = true; }
             // An Option[T] element is a leak-only box — one pointer slot, like a
             // string / struct element — so a tuple-returning fn can return it

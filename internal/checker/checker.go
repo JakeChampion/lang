@@ -2610,33 +2610,43 @@ func (c *checker) validateDynTraitTypes(prog *ast.Program) {
 			if _, ok := c.info.Traits[trait]; !ok {
 				reported[trait] = true
 				c.errfCode(pos, "E021", "unknown trait %q in `dyn` type", demangle(trait))
-				return
-			}
-			if safe, reason := c.objectSafe(trait); !safe {
-				reported[trait] = true
-				c.errfCode(pos, "E021", "trait %s is not object-safe: %s, so it cannot be used as `dyn %s`",
-					demangle(trait), reason, demangle(trait))
 			}
 		})
-		// A generic trait used as a `dyn` object must PIN its type
-		// parameters — the concrete type is erased, so an unpinned `T`
-		// in a method signature can't be resolved at the call site.
-		// `dyn Container[i32]` is fine; `dyn Container` (arity 1, no
-		// args) is not. Reported once per trait, like the checks above.
+		// Per-object checks (object-safety + generic-arg arity), which need
+		// the dyn type's pinned arguments / associated types. A generic
+		// trait must PIN its type parameters (`dyn Container[i32]`, not bare
+		// `dyn Container`); a trait with associated types must pin every one
+		// (`dyn Producer[Item = i32]`) to be object-safe — the concrete type
+		// is erased, so an unpinned `T` / `Self::Item` can't be resolved at
+		// the call site. Reported once per trait.
 		forEachDynTraitObj(t, func(dt ast.DynTraitType) {
 			for i, trait := range dt.Traits {
 				td, ok := c.info.Traits[trait]
-				if !ok || len(td.TypeParams) == 0 {
+				if !ok {
 					continue
 				}
-				if got := len(dt.ArgsFor(i)); got != len(td.TypeParams) {
-					key := trait + "!arity"
-					if reported[key] {
-						continue
+				pinned := map[string]bool{}
+				for _, b := range dt.AssocFor(i) {
+					pinned[b.Name] = true
+				}
+				if safe, reason := c.objectSafe(trait, pinned); !safe {
+					if !reported[trait] {
+						reported[trait] = true
+						c.errfCode(pos, "E021", "trait %s is not object-safe: %s, so it cannot be used as `dyn %s`",
+							demangle(trait), reason, demangle(trait))
 					}
-					reported[key] = true
-					c.errfCode(pos, "E021", "generic trait %s used as `dyn` must pin its type parameter(s): expected %d argument(s) (e.g. `dyn %s[...]`), got %d",
-						demangle(trait), len(td.TypeParams), demangle(trait), got)
+					continue
+				}
+				if len(td.TypeParams) > 0 {
+					if got := len(dt.ArgsFor(i)); got != len(td.TypeParams) {
+						key := trait + "!arity"
+						if reported[key] {
+							continue
+						}
+						reported[key] = true
+						c.errfCode(pos, "E021", "generic trait %s used as `dyn` must pin its type parameter(s): expected %d argument(s) (e.g. `dyn %s[...]`), got %d",
+							demangle(trait), len(td.TypeParams), demangle(trait), got)
+					}
 				}
 			}
 		})
@@ -2730,18 +2740,20 @@ func mentionsSelf(t ast.Type) bool {
 // concrete type is erased behind the object, so the compiler can
 // neither supply nor name a second value of it. Returns the offending
 // reason for the diagnostic. See docs/DYN-TRAITS.md §3.
-func (c *checker) objectSafe(traitName string) (bool, string) {
+func (c *checker) objectSafe(traitName string, pinned map[string]bool) (bool, string) {
 	td, ok := c.info.Traits[traitName]
 	if !ok {
 		return false, ""
 	}
-	// A trait with associated types isn't object-safe: a `dyn Trait` value
-	// erases the concrete type, so the per-impl associated-type bindings
-	// (and any `Self::Item` projection in a method signature) can't be
-	// resolved at the call site. (Rust requires `dyn Trait<Item=T>` to pin
-	// them — a follow-up.) See docs/ASSOCIATED-TYPES.md.
-	if len(td.AssocTypes) > 0 {
-		return false, "it has associated types"
+	// A trait with associated types is object-safe ONLY when the `dyn` type
+	// PINS every one (`dyn Producer[Item = i32]`): the concrete type is
+	// erased, so an unpinned associated type — and any `Self::Item`
+	// projection in a method signature — can't be resolved at the call
+	// site. See docs/ASSOCIATED-TYPES.md.
+	for _, at := range td.AssocTypes {
+		if !pinned[at] {
+			return false, fmt.Sprintf("associated type %q is not pinned — write `dyn %s[%s = ...]`", at, demangle(traitName), at)
+		}
 	}
 	for _, m := range td.Methods {
 		for i := 1; i < len(m.Params); i++ { // params[0] is self: Self
@@ -2765,11 +2777,15 @@ func (c *checker) checkDynMethodCall(n *ast.Call, fa *ast.FieldAccess, dt ast.Dy
 	// Each trait must be known + object-safe (validateDynTraitTypes
 	// reports those errors once over type positions; bail silently here
 	// so per-call sites don't repeat them).
-	for _, tr := range dt.Traits {
+	for i, tr := range dt.Traits {
 		if _, ok := c.info.Traits[tr]; !ok {
 			return nil
 		}
-		if safe, _ := c.objectSafe(tr); !safe {
+		pinned := map[string]bool{}
+		for _, b := range dt.AssocFor(i) {
+			pinned[b.Name] = true
+		}
+		if safe, _ := c.objectSafe(tr, pinned); !safe {
 			return nil
 		}
 	}
@@ -2825,6 +2841,33 @@ func (c *checker) checkDynMethodCall(n *ast.Call, fa *ast.FieldAccess, dt ast.Dy
 			}
 			pinned := substTraitMethodTypeParams(*tm, sub)
 			tm = &pinned
+		}
+	}
+	// Resolve `Self::Item` projections in the signature to the dyn object's
+	// pinned associated types: `dyn Producer[Item = i32]` makes
+	// `get(): Self::Item` read as `get(): i32`. The bindings come from the
+	// owner trait's AssocFor; resolveProjWith rewrites every ProjType.
+	if td := c.info.Traits[ownerTrait]; td != nil && len(td.AssocTypes) > 0 {
+		var binds []ast.AssocBinding
+		for i, tr := range dt.Traits {
+			if tr == ownerTrait {
+				binds = dt.AssocFor(i)
+				break
+			}
+		}
+		if len(binds) > 0 {
+			bindings := make(map[string]ast.Type, len(binds))
+			for _, b := range binds {
+				bindings[b.Name] = b.Type
+			}
+			resolved := *tm
+			resolved.Params = make([]ast.Param, len(tm.Params))
+			for i, p := range tm.Params {
+				p.Type = c.resolveProjWith(p.Type, bindings)
+				resolved.Params[i] = p
+			}
+			resolved.Result = c.resolveProjWith(tm.Result, bindings)
+			tm = &resolved
 		}
 	}
 	// Trait method signatures are stored as written: a `self` receiver is
@@ -5428,6 +5471,16 @@ func (c *checker) implementsAllDynTraits(dt ast.DynTraitType, tn string) bool {
 		// impl bound; an empty dyn-arg list (non-generic trait) skips it.
 		if want := dt.ArgsFor(i); len(want) > 0 {
 			if !typeArgsEqual(c.info.ImplTraitArgs[tr][tn], want) {
+				return false
+			}
+		}
+		// Pinned associated types must match the impl's binding too:
+		// `IntBox: Producer<Item=i32>` coerces to `dyn Producer[Item = i32]`
+		// but not `dyn Producer[Item = string]`. Info.AssocBindings records
+		// what the impl bound (keyed by concrete type then assoc name).
+		for _, b := range dt.AssocFor(i) {
+			got, ok := c.info.AssocBindings[tn][b.Name]
+			if !ok || !ast.Equal(got, b.Type) {
 				return false
 			}
 		}
