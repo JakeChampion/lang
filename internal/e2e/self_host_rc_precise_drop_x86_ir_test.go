@@ -242,6 +242,42 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// field-drop) — freed exactly once. Detector 0 proves the inc count is
 		// correct under multiple aliases (no leak, no over-release).
 		{"struct-arr-field-two-alias-detector", `struct Box { v: i32[] } function main(): i32 { var a = [1, 2, 3]; var b = Box { v: a }; var c = Box { v: a }; var r = b.v[0] + c.v[1]; if (r != 3) { return 99; } return __rc_underflow(); }`, 0},
+		// Read an array OUT of a struct field (RC-frontier slice 2). The three
+		// alias-creating positions — bind (`var y = h.items`), return
+		// (`return h.items`), assign (`x = h.items`) — previously bailed to the AST
+		// emitter; now each lowers via the IR with a Perceus dup (rc_inc) so the new
+		// owner holds a counted reference, balanced against the struct's own
+		// field-drop + the exit-sweep (and, for return, the caller's eventual dec).
+		//
+		// BIND `var y = h.items`: y becomes a second owner of the field's array.
+		// inc at the field read; y is exit-swept (dec), the struct field deep-drops
+		// (dec) at the box's reclamation — the inc balances both (rc 1 →inc 2
+		// →sweep(y) 1 →field-drop 0). Reads back correctly, detector 0.
+		{"field-arr-bind-value", `struct H { items: i32[] } function main(): i32 { var h = H { items: [10, 20, 30] }; var y = h.items; return y[0] + y[2]; }`, 40},
+		{"field-arr-bind-detector", `struct H { items: i32[] } function main(): i32 { var h = H { items: [10, 20, 30] }; var y = h.items; var r = y[0] + y[2]; if (r != 40) { return 99; } return __rc_underflow(); }`, 0},
+		// BIND from a BORROWED struct PARAM (`function f(h: H): i32 { var y = h.items; }`):
+		// h is a borrow (never swept), the inc hands the new local its own counted
+		// ref; the local is exit-swept (dec) → balanced. Detector 0.
+		{"field-arr-bind-param-detector", `struct H { items: i32[] } function f(h: H): i32 { var y = h.items; var r = y[1]; return r; } function main(): i32 { var h = H { items: [5, 6, 7] }; var v = f(h); if (v != 6) { return 99; } return __rc_underflow(); }`, 0},
+		// RETURN `return h.items`: the field escapes to the caller, who will own it.
+		// inc so the returned ref is counted; the field is NOT moved out (the struct
+		// keeps its ref). Caller indexes the returned array. Value + detector 0.
+		{"field-arr-return-value", `struct H { items: i32[] } function get(h: H): i32[] { return h.items; } function main(): i32 { var h = H { items: [11, 22, 33] }; var xs = get(h); return xs[0] + xs[2]; }`, 44},
+		{"field-arr-return-detector", `struct H { items: i32[] } function get(h: H): i32[] { return h.items; } function main(): i32 { var h = H { items: [11, 22, 33] }; var xs = get(h); var r = xs[0] + xs[2]; if (r != 44) { return 99; } return __rc_underflow(); }`, 0},
+		// RETURN from a function that OWNS the struct (fresh local `h`, reclaimable):
+		// at exit the struct field-drop decs the array (rc 1 →inc 2 →field-drop 1),
+		// the caller decs to 0. The escaping array survives the field-drop. Value +
+		// detector 0.
+		{"field-arr-return-owned-detector", `struct H { items: i32[] } function mk(): i32[] { var h = H { items: [4, 5, 6] }; return h.items; } function main(): i32 { var xs = mk(); var r = xs[0] + xs[1] + xs[2]; if (r != 15) { return 99; } return __rc_underflow(); }`, 0},
+		// ASSIGN `x = h.items` where x previously held a DIFFERENT array: emit_arr_store
+		// decs the OLD array x held (cow-guarded) THEN incs the new field read. No
+		// leak-of-old (freed once), no over-release of the field's array. Value +
+		// detector 0.
+		{"field-arr-assign-value", `struct H { items: i32[] } function main(): i32 { var h = H { items: [7, 8, 9] }; var x = [1, 2, 3]; x = h.items; return x[0] + x[2]; }`, 16},
+		{"field-arr-assign-detector", `struct H { items: i32[] } function main(): i32 { var h = H { items: [7, 8, 9] }; var x = [1, 2, 3]; var pre = x[1]; x = h.items; var r = x[0] + x[2]; if (pre != 2) { return 98; } if (r != 16) { return 99; } return __rc_underflow(); }`, 0},
+		// ASSIGN f64[] field: same dec-old / inc-new through emit_arr_store on the
+		// 8-byte-element field. Detector 0 (the dec-old + inc-new balance for f64[] too).
+		{"field-arr-assign-f64-detector", `struct H { items: f64[] } function main(): i32 { var h = H { items: [1.5, 2.5, 3.0] }; var x: f64[] = [0.5, 0.5]; x = h.items; var s = x[0] + x[2]; if ((s as i32) != 4) { return 99; } return __rc_underflow(); }`, 0},
 		// Consumed scalar-payload enum free: a function-local `var x = V(scalar...)`
 		// of an all-scalar-variant enum consumed by exactly one `match (x)` where x
 		// is single-owner and DEAD after the match. The box (now rc-headered via

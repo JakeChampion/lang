@@ -1119,6 +1119,30 @@ pub function is_scalar_arr_field_access(e: parser.Expr, s: LowerState): boolean 
     return false;
 }
 
+// scalar_arr_field_type returns the field type of a SCALAR-element array struct
+// field read (`v.items` where items: i32[] / f64[] / i64[]) — the subset of
+// is_scalar_arr_field_access that is_leaksafe_array_field admits. Struct-array
+// (P[]) / enum-array (C[]) field reads return "" (they still bail in the
+// alias-creating positions — deep-drop recursion is a later slice). The RC
+// frontier slice 2 lowers these (bind / return / assign) via the IR by emitting
+// a Perceus dup (__fern_rc_inc) so the new owner holds a counted reference; the
+// struct's own field-drop and the local exit-sweep then each balance against the
+// inc (rc 1 →inc 2 →sweep/escape 1 →field-drop 0). Returns "" for anything that
+// is NOT such a field read.
+pub function scalar_arr_field_type(e: parser.Expr, s: LowerState): string {
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return ""; }
+            var ft: string = decl_field_type(s.structs, oty, fa.field);
+            if (is_leaksafe_array_field(ft)) { return ft; }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 pub function decl_is_leaksafe(structs: parser.StructDecl[], struct_name: string): boolean {
     return decl_is_leaksafe_d(structs, struct_name, 0);
 }
@@ -5125,9 +5149,33 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // alias-inc and broke `__rc`. Kept out of line so this huge arm
             // doesn't grow (oversized functions miscompile — cf. #2720).
             if (ascription_target(v.init) != "") { return lower_stmt(ascription_rebind(v), s); }
-            // Binding a scalar-array struct field (`var y = h.items`) aliases the
-            // array — which the AST path retains but the leak-only IR path can't;
-            // bail to AST to preserve that RC behaviour.
+            // Binding a SCALAR-element array struct field (`var y = h.items`,
+            // items: i32[]/f64[]/i64[]) aliases the array: `y` becomes a second
+            // owner of the field's buffer. Lower it via the IR with a Perceus dup
+            // (RC-frontier slice 2): read the field (struct_get pushes the array
+            // pointer), retain it (__fern_rc_inc — a BARE inc, the pointer stays on
+            // the operand stack for the store, the slice-1 idiom), then bind `y` as
+            // an rc-tracked array local. Balance: the field's array is rc N; the inc
+            // makes it N+1; the exit-sweep decs y back to N; the struct's own
+            // field-drop decs the field on the box's reclamation → 0. Sound (the inc
+            // matches both later decs; no move detection, never under-frees). Only
+            // the scalar-element field (scalar_arr_field_type != ""); array-of-
+            // struct / array-of-enum fields still bail (deep-drop recursion is a
+            // later slice).
+            var vfft: string = scalar_arr_field_type(v.init, s);
+            if (vfft != "") {
+                var vfs: LowerState = lower_expr(v.init, s);   // struct_get -> array ptr on stack
+                if (!vfs.ok) { return vfs; }
+                vfs = vfs.emit(ir.op_call_direct("__fern_rc_inc", 1));   // Perceus dup (bare inc)
+                var vfb: LowerState = vfs.add_local(v.name);
+                var vfslot: i32 = vfb.slot_of(v.name);
+                vfb = vfb.mark_arr(vfslot, true);
+                if (vfft == "f64[]") { vfb = vfb.mark_f64arr(vfslot, true); }
+                else if (vfft == "i64[]") { vfb = vfb.mark_i64arr(vfslot, true); }
+                return vfb.emit(ir.op_store_local(vfslot));
+            }
+            // A non-scalar array field (struct-array P[] / enum-array C[]) still
+            // bails: aliasing it needs deep-drop recursion (a later slice).
             if (is_scalar_arr_field_access(v.init, s)) { return s.fail(); }
             // `var xs: dyn Trait[] = [ ... ]` — a `dyn Trait` ARRAY literal. Each
             // element coerces to `dyn Trait`: a struct/enum element flows unboxed
@@ -6105,8 +6153,18 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 return iva.emit(ir.op_store_local(slot));
             }
             if (infer_expr_width(a.value, s) == 64) { return s.fail(); }
-            // Assigning a scalar-array struct field aliases it — bail (see StmtVar).
-            if (is_scalar_arr_field_access(a.value, s)) { return s.fail(); }
+            // Assigning a SCALAR-element array struct field (`x = h.items`) aliases
+            // it: `x` becomes a second owner of the field's buffer. Lower via the IR
+            // (RC-frontier slice 2) through the generic reassignment path below —
+            // set reassign_inc so the new field read is retained (Perceus dup), and
+            // emit_arr_store's cow-guarded do_dec releases the OLD array `x` held
+            // first (the assign analogue of the bind case). Balance: dec-old frees
+            // x's prior buffer; inc-new counts the field's array for x; the struct's
+            // own field-drop + the exit-sweep then each dec it. Sound (the dec-old +
+            // inc-new never under-free). Only the scalar-element field; array-of-
+            // struct / array-of-enum fields still bail (deep-drop is a later slice).
+            var afft: string = scalar_arr_field_type(a.value, s);
+            if (afft == "" && is_scalar_arr_field_access(a.value, s)) { return s.fail(); }
             // Perceus reassignment `y = x`: retain the new ref if it aliases an
             // rc-tracked array, and release the OLD value the slot held
             // (cow-guarded). A reassigned BORROWED array param (slot <
@@ -6115,6 +6173,11 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             match (a.value) {
                 parser.ExprIdent(id) => {
                     if (s.is_arr_slot(s.slot_of(id.name))) { reassign_inc = true; }
+                },
+                // `x = h.items` — the field read is an rc-tracked scalar array; the
+                // new owner `x` retains it (the dup), mirroring the ident alias.
+                parser.ExprFieldAccess(_) => {
+                    if (afft != "") { reassign_inc = true; }
                 },
                 _ => {}
             }
@@ -6189,8 +6252,29 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 _ => {}
             }
             if (!ret_val_is_arr && infer_expr_width(r.value, s) == 64) { return s.fail(); }
-            // Returning a scalar-array struct field aliases it out — the AST path
-            // retains; bail so that RC behaviour is preserved (see StmtVar).
+            // Returning a SCALAR-element array struct field (`return h.items`)
+            // aliases it out to the caller, who will own it. Lower it via the IR
+            // with a Perceus dup (RC-frontier slice 2): lower_expr emits struct_get
+            // (the array pointer on the operand stack); __fern_rc_inc retains it so
+            // the ESCAPING return is a counted reference (the helper pops + re-pushes
+            // the same pointer, so it stays on top for op_return). We do NOT move-out
+            // the field (`moved` stays -1): the struct still owns its field. Balance
+            // — if `h` is a BORROWED param, its box/field are never swept, the inc
+            // simply hands the caller its own counted ref (field rc N →inc N+1
+            // →caller decs N); if `h` is a fresh RECLAIMABLE local, the exit sweep's
+            // struct field-drop decs the field (array rc 1 →inc 2 →field-drop 1
+            // →caller decs 0). Sound either way (never under-frees). Only the scalar-
+            // element field; array-of-struct / array-of-enum fields still bail.
+            var rfft: string = scalar_arr_field_type(r.value, s);
+            if (rfft != "") {
+                var rfs: LowerState = lower_expr(r.value, s);   // struct_get -> array ptr on stack
+                if (!rfs.ok) { return rfs; }
+                rfs = rfs.emit(ir.op_call_direct("__fern_rc_inc", 1));   // Perceus dup (escape, bare inc)
+                rfs = emit_dec_sweep_except(rfs, 0 - 1);   // field NOT moved out; struct keeps its ref
+                return rfs.emit(ir.op_return());
+            }
+            // A non-scalar array field (struct-array / enum-array) still bails:
+            // aliasing it out needs deep-drop recursion (a later slice).
             if (is_scalar_arr_field_access(r.value, s)) { return s.fail(); }
             var se: LowerState = lower_expr(r.value, s);
             if (!se.ok) { return se; }
