@@ -3848,6 +3848,39 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (str_recv) { return sl.emit(ir.op_str_len()); }
                         return sl.emit(ir.op_arr_len());
                     }
+                    // `arr.append(e)` as a general EXPRESSION (return position,
+                    // var-init, an argument): lower the array receiver + the
+                    // element, then grow via the width-matched arr_push, leaving
+                    // the grown array on the stack. (The `out = out.append(e)`
+                    // reassign-self form is lowered in StmtAssign; this is the
+                    // non-self form — e.g. std/string split/splitn/chunks end with
+                    // `return out.append(s[start:n])`.) The element width follows
+                    // the receiver's element kind, mirroring the reassign path.
+                    // RC: arr_push consumes the receiver array and yields the grown
+                    // one; StmtReturn excludes a moved receiver ident from its exit
+                    // dec-sweep so the consumed buffer isn't also freed.
+                    if (fa.field == "append" && c.args.len() == 1
+                        && (expr_is_arr_src(fa.obj, s) || expr_is_strarr(fa.obj, s) || expr_is_f64arr(fa.obj, s) || expr_is_i64arr(fa.obj, s))) {
+                        if (expr_is_f64arr(fa.obj, s)) {
+                            var apf: LowerState = lower_expr(fa.obj, s);
+                            if (!apf.ok) { return apf; }
+                            apf = lower_expr(c.args[0], apf);
+                            if (!apf.ok) { return apf; }
+                            return apf.emit(ir.op_arr_push_f64());
+                        }
+                        if (expr_is_i64arr(fa.obj, s) || (expr_is_arr_src(fa.obj, s) && expr_is_u64(fa.obj, s))) {
+                            var ap8: LowerState = lower_expr(fa.obj, s);
+                            if (!ap8.ok) { return ap8; }
+                            ap8 = lower_i64(c.args[0], ap8);
+                            if (!ap8.ok) { return ap8; }
+                            return ap8.emit(ir.op_arr_push_i64());
+                        }
+                        var aps: LowerState = lower_expr(fa.obj, s);
+                        if (!aps.ok) { return aps; }
+                        aps = lower_expr(c.args[0], aps);
+                        if (!aps.ok) { return aps; }
+                        return aps.emit(ir.op_arr_push());
+                    }
                     // `arr.to_json()` on an ARRAY receiver — the element-poly
                     // `(xs: T[]) to_json[T: Json]()` serialiser from std/json.
                     // The self-host emits the generic body ONCE by erasure, so it
@@ -5804,6 +5837,28 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 parser.ExprIdent(rid) => {
                     var rs: i32 = se.slot_of(rid.name);
                     if (se.is_arr_slot(rs)) { moved = rs; }
+                },
+                // `return <arr>.append(e)`: arr_push consumed the receiver array
+                // and the grown array is what's returned (moved to the caller). If
+                // the receiver is a bare array local, exclude it from the exit
+                // dec-sweep — its buffer now backs the returned value, so a dec
+                // here would free it out from under the caller. Mirrors the bare
+                // `return <arr-local>` move above. (std/string split/splitn/chunks.)
+                parser.ExprCall(rcall) => {
+                    match (rcall.callee) {
+                        parser.ExprFieldAccess(rfa) => {
+                            if (rfa.field == "append" && rcall.args.len() == 1) {
+                                match (rfa.obj) {
+                                    parser.ExprIdent(raid) => {
+                                        var ras: i32 = se.slot_of(raid.name);
+                                        if (se.is_arr_slot(ras)) { moved = ras; }
+                                    },
+                                    _ => {}
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
                 },
                 _ => {}
             }
