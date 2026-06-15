@@ -64,3 +64,62 @@ func TestWASMTryDynError(t *testing.T) {
 		t.Errorf("wasm exit = %d, want 50", code)
 	}
 }
+
+// Multi-trait error-converting `?`: a `Result[_, E]` propagated through a
+// function returning `Result[_, dyn A + B]` boxes E into the multi-trait
+// object when E implements EVERY trait in the set (the impl-all gate). find
+// yields Err(E{c:7}); handler boxes it into `dyn Code + Msg`; the caller reads
+// both methods: 7 + 100 = 107, plus the Ok path 42 = 149.
+const tryDynMultiTraitSrc = `trait Code { function code(self: Self): i32; }
+trait Msg { function msg(self: Self): i32; }
+struct E { c: i32 }
+impl Code for E { function code(self: Self): i32 { return self.c; } }
+impl Msg for E { function msg(self: Self): i32 { return 100; } }
+function find(ok: boolean): Result[i32, E] {
+    if (ok) { return Ok(42); }
+    return Err(E { c: 7 });
+}
+function handler(ok: boolean): Result[i32, dyn Code + Msg] {
+    var v: i32 = find(ok)?;
+    return Ok(v);
+}
+function main(): i32 {
+    var a: i32 = match (handler(true)) { Ok(v) => v, Err(e) => 0 };
+    var b: i32 = match (handler(false)) { Ok(v) => 0, Err(e) => e.code() + e.msg() };
+    return a + b;
+}
+`
+
+func TestInterpTryDynMultiTrait(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(src, []byte(tryDynMultiTraitSrc), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 149 {
+		t.Errorf("exit = %d, want 149\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+}
+
+func TestX86_64TryDynMultiTrait(t *testing.T) {
+	if out, code := compileAndRunX86_64(t, tryDynMultiTraitSrc); code != 149 {
+		t.Errorf("exit = %d, want 149\n%s", code, out)
+	}
+}
+
+func TestArm64TryDynMultiTrait(t *testing.T) {
+	if out, code := compileAndRunArm64(t, tryDynMultiTraitSrc); code != 149 {
+		t.Errorf("exit = %d, want 149\n%s", code, out)
+	}
+}
+
+func TestWASMTryDynMultiTrait(t *testing.T) {
+	if code := runWasm(t, tryDynMultiTraitSrc); code != 149 {
+		t.Errorf("wasm exit = %d, want 149", code)
+	}
+}

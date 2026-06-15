@@ -1042,8 +1042,19 @@ pub function is_enum_array_field_type(structs: parser.StructDecl[], t: string): 
 }
 
 // is_leaksafe_payload reports whether a payload type is a leak-safe scalar/string.
+// u32 rides one full i32 slot exactly like i32 (no narrowing on read), so an
+// Option/Result box carrying a u32 stores / reads at the default 32-bit width
+// (op_opt_make / op_opt_payload) and the match binding marks the bound slot u32
+// so its `>>` is logical and its arithmetic wraps at 2^32. u64 rides the i64
+// 8-byte slot: construction already tags a u64 arg "i64" (elem_type_tag's
+// infer_expr_width==64 path) so the box stores 8 bytes, and the match binding
+// reads via op_opt_payload_w(64) + marks the slot u64 (unsigned, 8-byte). The
+// sub-word ints (u8/u16/i8/i16) are NOT here: their payload-box read needs
+// sign/zero-extension that currently differs across backends (a u8 read
+// mis-extends on wasm), so an Option/Result-of-them field stays on the AST path.
 function is_leaksafe_payload(p: string): boolean {
-    return p == "i32" || p == "boolean" || p == "string" || p == "i64" || p == "f64";
+    return p == "i32" || p == "boolean" || p == "string" || p == "i64" || p == "f64"
+        || p == "u32" || p == "u64";
 }
 
 // is_leaksafe_opt_field: an Option[T] / Result[T, E] field whose payload type(s)
@@ -1154,6 +1165,32 @@ pub function scalar_arr_field_type(e: parser.Expr, s: LowerState): string {
     return "";
 }
 
+// field_access_arr_field_type returns the field type of an array-field struct
+// field read (`s.xs` where xs: i32[]/f64[]/i64[]/boolean[] — a scalar-element
+// array — OR xs: P[] — an array-of-struct), for use as a struct-literal field
+// VALUE (`State { xs: s.xs }`). This is the bare-field-copy admission for the
+// `ExprStructLit` array-field path (RC-frontier slice 3, following the array-
+// ident-into-field #3292 + the array-out-of-field #3308 reads): the field read
+// lowers via op_struct_get (a real value), aliasing the SOURCE struct's array,
+// so the consuming struct_make stores a SECOND owner — balanced by a Perceus dup
+// (__fern_rc_inc), exactly the #3292 alias-inc idiom. Returns "" for anything
+// that is NOT such a bare array-field read (enum-array fields stay bailing —
+// deep-drop recursion is a later slice — to match the outer struct-lit gate,
+// which only admits is_leaksafe_array_field / is_struct_array_field_type).
+pub function field_access_arr_field_type(e: parser.Expr, s: LowerState): string {
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return ""; }
+            var ft: string = decl_field_type(s.structs, oty, fa.field);
+            if (is_leaksafe_array_field(ft) || is_struct_array_field_type(s.structs, ft)) { return ft; }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 pub function decl_is_leaksafe(structs: parser.StructDecl[], struct_name: string): boolean {
     return decl_is_leaksafe_d(structs, struct_name, 0);
 }
@@ -1178,7 +1215,7 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
                 // read loads at the default 32-bit width; a sub-word cast wraps the
                 // value before the store). u64 / f32 are NOT added: they need real
                 // 64-bit / float width handling, so they keep the struct on AST.
-                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || is_leaksafe_array_field(t) || is_leaksafe_opt_field(t) || is_leaksafe_tuple_field(t) || is_map_type_name(t)) {
+                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || t == "u64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field(t) || is_leaksafe_tuple_field(t) || is_map_type_name(t)) {
                     fi = fi + 1;
                     continue;
                 }
@@ -1358,13 +1395,14 @@ pub function decl_field_type_at(structs: parser.StructDecl[], struct_name: strin
 // f64.load/store vs i32.load/store selection (register backends ignore it).
 pub function struct_field_width(structs: parser.StructDecl[], struct_name: string, index: i32): i32 {
     var t: string = decl_field_type_at(structs, struct_name, index);
-    if (t == "f64" || t == "i64") { return 64; }
+    if (t == "f64" || t == "i64" || t == "u64") { return 64; }
     return 0;
 }
 // struct_field_is_i64 reports whether field `index` of `struct_name` is i64 (an
 // 8-byte INTEGER field — i64.load/store on wasm, vs f64.load/store for f64).
 pub function struct_field_is_i64(structs: parser.StructDecl[], struct_name: string, index: i32): boolean {
-    return decl_field_type_at(structs, struct_name, index) == "i64";
+    var ft64: string = decl_field_type_at(structs, struct_name, index);
+    return ft64 == "i64" || ft64 == "u64";
 }
 
 pub function (s: LowerState) field_index_in(struct_name: string, field: string): i32 {
@@ -1692,6 +1730,15 @@ pub function expr_is_arr_src(e: parser.Expr, s: LowerState): boolean {
                     if (cfa.field == "lines" && c.args.len() == 0) {
                         return expr_is_str(cfa.obj, s);
                     }
+                    // An array-receiver method `arr.m()` whose std/array helper
+                    // __method_Array_m RETURNS an array (reverse / sorted_asc /
+                    // distinct / …) is itself an array source — so a chained
+                    // `arr.reverse().join(...)` (reverse_words) recognises the
+                    // inner array and dispatches the outer array method.
+                    if (expr_is_arr_src(cfa.obj, s) || expr_is_strarr(cfa.obj, s) || expr_is_f64arr(cfa.obj, s) || expr_is_i64arr(cfa.obj, s)) {
+                        var amn: string = s.find_arr_method(cfa.field);
+                        if (amn.len() > 0 && s.is_arr_ret_fn(amn)) { return true; }
+                    }
                     return false;
                 },
                 _ => { return false; }
@@ -1746,6 +1793,8 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     // i32_to_string(n) yields a fresh decimal-text string box (the
                     // free-function spelling of `n.to_string()`).
                     if (cid.name == "i32_to_string") { return true; }
+                    // chr(n) yields a fresh 1-char string box.
+                    if (cid.name == "chr") { return true; }
                     return s.is_str_ret_fn(cid.name);
                 },
                 // `X.to_string()` yields a string box (the i32 runtime helper or
@@ -1786,7 +1835,12 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     // receiver type so only genuine method calls match.
                     var mrty: string = expr_struct_type(cfa.obj, s);
                     if (mrty == "") { mrty = expr_recv_prim_type(cfa.obj, s); }
-                    if (mrty != "" && s.is_str_ret_fn(cfa.field)) { return true; }
+                    // Qualified lookup "<recvType>.<method>" (str_ret_fns_of keys
+                    // methods that way) so a string-returning method on THIS
+                    // receiver type is recognised — without colliding with a
+                    // same-named method on another type that returns non-string
+                    // (e.g. i32.to_lower vs string.to_lower).
+                    if (mrty != "" && s.is_str_ret_fn(mrty + "." + cfa.field)) { return true; }
                     return false;
                 },
                 _ => { return false; }
@@ -2386,6 +2440,14 @@ pub function expr_is_u64(e: parser.Expr, s: LowerState): boolean {
                 _ => { return false; }
             }
         },
+        parser.ExprFieldAccess(fa) => {
+            // A u64 tuple element `t.N` (tag carried from the tuple's annotated
+            // `(u64, …)` type) is a u64 value, so unsigned ops on it stay unsigned.
+            if (util.is_all_digits(fa.field)) {
+                return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "u64";
+            }
+            return false;
+        },
         parser.ExprUnary(u) => {
             if (u.op == "as_u64") { return true; }
             return false;
@@ -2513,9 +2575,10 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
             return 32;
         },
         parser.ExprFieldAccess(fa) => {
-            // An i64 tuple element `t.N` or i64 struct field `p.x` is an i64 value.
+            // An i64/u64 tuple element `t.N` or i64 struct field `p.x` is 64-bit.
             if (util.is_all_digits(fa.field)) {
-                if (expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "i64") { return 64; }
+                var tew: string = expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s);
+                if (tew == "i64" || tew == "u64") { return 64; }
                 return 32;
             }
             var oty: string = expr_struct_type(fa.obj, s);
@@ -2662,7 +2725,8 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
             // lower_expr).
             if (util.is_all_digits(fa.field)) {
                 var tn: i32 = util.digits_to_i32(fa.field);
-                if (expr_tuple_elem_tag(fa.obj, tn, s) != "i64") { return s.fail(); }
+                var tnt: string = expr_tuple_elem_tag(fa.obj, tn, s);
+                if (tnt != "i64" && tnt != "u64") { return s.fail(); }
                 var ts: LowerState = lower_expr(fa.obj, s);
                 if (!ts.ok) { return ts; }
                 return ts.emit(ir.op_tuple_get_w(tn, 64, true));
@@ -2894,6 +2958,26 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                                     fav_alias_inc = true;
                                 }
                             },
+                            // A BARE array-field COPY (`State { xs: s.xs }`, or
+                            // array-of-struct `S { ops: s.ops }`): the field read
+                            // lowers via struct_get (a real array pointer), aliasing
+                            // the SOURCE struct's array — so the new box co-owns it.
+                            // Retain it with the same Perceus dup (fav_alias_inc) as
+                            // the ident case: rc 1 →inc 2 →source-struct field-drop 1
+                            // →new-struct field-drop 0, both deep-drops balanced by
+                            // the one inc (#3292 idiom, on a field-read source —
+                            // RC-frontier slice 3). field_access_arr_field_type only
+                            // admits a scalar-element OR array-of-struct field read
+                            // (NOT enum-array), matching the outer struct-lit gate.
+                            // A `.with`/`.append` CALL value stays bailing (no value-
+                            // producing COW; arr_push reuses the receiver buffer in
+                            // place → over-release — a separate COW-arr_with slice).
+                            parser.ExprFieldAccess(_) => {
+                                if (field_access_arr_field_type(fav, s) != "") {
+                                    fav_ok = true;
+                                    fav_alias_inc = true;
+                                }
+                            },
                             _ => {}
                         }
                         if (!fav_ok) { return s.fail(); }
@@ -2950,7 +3034,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 // read routes through lower_i64). i32 / string / struct elements
                 // keep the 4-byte read.
                 var tgt: string = expr_tuple_elem_tag(fa.obj, tgi, s);
-                if (tgt == "i64") { return so0.emit(ir.op_tuple_get_w(tgi, 64, true)); }
+                if (tgt == "i64" || tgt == "u64") { return so0.emit(ir.op_tuple_get_w(tgi, 64, true)); }
                 if (tgt == "f64") { return so0.emit(ir.op_tuple_get_w(tgi, 64, false)); }
                 return so0.emit(ir.op_tuple_get(tgi));
             }
@@ -3734,6 +3818,14 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         var s2i: LowerState = lower_expr(c.args[0], s);
                         if (!s2i.ok) { return s2i; }
                         return s2i.emit(ir.op_call_direct("__fern_str_to_i32", 1));
+                    }
+                    // Built-in `chr(n)` — an i32 byte value to a fresh 1-char
+                    // string box. Routes to the __fern_chr runtime (allocates).
+                    // The result is a string (expr_is_str tracks it below).
+                    if (cid.name == "chr" && c.args.len() == 1) {
+                        var chrs: LowerState = lower_expr(c.args[0], s);
+                        if (!chrs.ok) { return chrs; }
+                        return chrs.emit(ir.op_call_direct("__fern_chr", 1));
                     }
                     // Built-in `exit(n)` — terminate the process with exit code n
                     // (an inline sys_exit / proc_exit per backend).
@@ -5426,12 +5518,13 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                     // element marks the slot i64 (so later uses route through
                     // lower_i64); an f64 element marks it f64.
                     dt = dt.emit(ir.op_load_local(tmp_slot));
-                    if (dtag == "i64") { dt = dt.emit(ir.op_tuple_get_w(dk, 64, true)); }
+                    if (dtag == "i64" || dtag == "u64") { dt = dt.emit(ir.op_tuple_get_w(dk, 64, true)); }
                     else if (dtag == "f64") { dt = dt.emit(ir.op_tuple_get_w(dk, 64, false)); }
                     else { dt = dt.emit(ir.op_tuple_get(dk)); }
                     dt = dt.emit(ir.op_store_local(dkslot));
                     if (dtag == "string") { dt = dt.mark_str(dkslot, true); }
                     else if (dtag == "i64") { dt = dt.mark_i64(dkslot, true); }
+                    else if (dtag == "u64") { dt = dt.mark_u64(dkslot, true); }
                     else if (dtag == "f64") { dt = dt.mark_f64(dkslot, true); }
                     else if (is_map_type_name(dtag)) { dt = dt.mark_map_type(dkslot, dtag); }
                     else if (dtag.len() >= 8 && (dtag[0:7] == "Option[" || dtag[0:7] == "Result[")) { dt = dt.mark_opt_type(dkslot, dtag); }
@@ -7108,17 +7201,29 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 ms = ms.add_local(pv.binding);
                                 var pbslot: i32 = ms.slot_of(pv.binding);
                                 ms = ms.emit(ir.op_load_local(scrut_slot));
-                                // Read the payload at its width (an i64/f64 payload
-                                // uses the matching 8-byte load) and type the bound
-                                // name so later uses route correctly (i64 ->
-                                // lower_i64; f64 -> the float ops).
-                                if (ptag == "i64") { ms = ms.emit(ir.op_opt_payload_w(64, true)); }
+                                // Read the payload at its width (an i64/u64/f64
+                                // payload uses the matching 8-byte load) and type the
+                                // bound name so later uses route correctly (i64/u64 ->
+                                // lower_i64 / the i64 domain; f64 -> the float ops).
+                                if (ptag == "i64" || ptag == "u64") { ms = ms.emit(ir.op_opt_payload_w(64, true)); }
                                 else if (ptag == "f64") { ms = ms.emit(ir.op_opt_payload_w(64, false)); }
                                 else { ms = ms.emit(ir.op_opt_payload()); }
                                 ms = ms.emit(ir.op_store_local(pbslot));
                                 if (ptag == "string") { ms = ms.mark_str(pbslot, true); }
                                 else if (ptag == "i64") { ms = ms.mark_i64(pbslot, true); }
+                                // A u64 payload rode the 8-byte op_opt_payload_w(64)
+                                // load above; mark the slot u64 (its own 8-byte domain,
+                                // like the u64 tuple destructure) so its compare / `>>`
+                                // / div-rem are UNSIGNED in the i64 domain.
+                                else if (ptag == "u64") { ms = ms.mark_u64(pbslot, true); }
                                 else if (ptag == "f64") { ms = ms.mark_f64(pbslot, true); }
+                                // A u32 payload rode the default 32-bit op_opt_payload
+                                // load above (a full i32 slot, no narrowing); mark the
+                                // bound slot so its `>>` is logical and its arithmetic
+                                // wraps at 2^32 (the sibling of the StmtVar mark_u32 at
+                                // the binding site). Sub-word payloads stay on AST (see
+                                // is_leaksafe_payload).
+                                else if (ptag == "u32") { ms = ms.mark_u32(pbslot, true); }
                                 // A struct payload: tag the bound slot's struct type so
                                 // `p.field` resolves. It is BORROWED from the enum box
                                 // (not a fresh `var p = P{...}`), so it is never in
@@ -8688,7 +8793,7 @@ function reuse_field_is_scalar(t: string): boolean {
 // NOT admitted: struct_field_is_i64 / struct_field_width both classify a u64 field
 // as i32-shaped, so the i64 8-byte path is never selected and the value truncates.
 function inarm_reuse_payload_type_ok(t: string): boolean {
-    return t == "i32" || t == "u32" || t == "boolean" || t == "i64" || t == "f64";
+    return t == "i32" || t == "u32" || t == "boolean" || t == "i64" || t == "u64" || t == "f64";
 }
 
 // struct_fields_reusable: every field of `struct_name` is either a flat scalar
@@ -10356,7 +10461,19 @@ pub function str_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
     while (k < funcs.len()) {
-        if (funcs[k].ret_type == "string") { out = out.append(funcs[k].name); }
+        if (funcs[k].ret_type == "string") {
+            // A METHOD is keyed "<BaseType>.<method>" (like i64_ret_fns_of /
+            // f64_ret_fns_of), NOT its bare name — a method name can collide
+            // across receiver types with DIFFERENT return types (e.g. i32's
+            // `to_lower` returns i32 while string's `to_lower` returns string).
+            // A bare key let `b.to_lower()` on an i32 wrongly type as string, so
+            // the chained `b.to_lower().to_ascii_string()` mis-dispatched to the
+            // nonexistent `string.to_ascii_string` (#case_separator). The method
+            // str-check (expr_is_str) now looks up the qualified key.
+            var key: string = funcs[k].name;
+            if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+            out = out.append(key);
+        }
         // A lifted if-/match-EXPRESSION (`__lam_N`) whose branch is a string
         // CONCAT carries a default `i32` ret_type (the desugar doesn't infer
         // `string + string : string`), so a `(if (c) { "a" + "b" } else { … })`
@@ -10537,9 +10654,11 @@ pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): bo
             // one i32 slot exactly like i32 — a sub-word cast wraps the value BEFORE
             // the tuple store, and construction/access need no width plumbing
             // (verified round-trip on x86-64 + wasm, incl. signed-i8 negatives). u64
-            // / f32 / usize are deliberately NOT here: they need real width handling
-            // (64-bit access / float / pointer-width), so they stay on the AST path.
-            var ok_elem: boolean = (t == "i32" || t == "bool" || t == "boolean" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || t == "string" || t == "i64" || t == "f64");
+            // rides the i64 8-byte slot: construction already tags it "i64"
+            // (elem_type_tag's infer_expr_width==64 path), and the `.N` / destructure
+            // reads route a "u64" type-annotation tag through tuple_get_w(64) below.
+            // f32 / usize are NOT here: they need float / pointer-width handling.
+            var ok_elem: boolean = (t == "i32" || t == "bool" || t == "boolean" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || t == "string" || t == "i64" || t == "u64" || t == "f64");
             if (!ok_elem && decl_is_struct(structs, t) && decl_is_leaksafe(structs, t)) { ok_elem = true; }
             // An Option[T] element is a leak-only box — one pointer slot, like a
             // string / struct element — so a tuple-returning fn can return it
@@ -11278,7 +11397,19 @@ pub function lower_module(funcs: parser.FuncDecl[], structs: parser.StructDecl[]
     var i: i32 = 0;
     while (i < funcs.len()) {
         var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs));
-        out = out.append(LoweredFn { name: funcs[i].name, ok: r.ok, ops: r.ops, n_locals: r.n_locals, n_params: r.n_params, arr_slots: r.arr_slots });
+        // A receiver method is registered under the receiver-qualified name
+        // `<BaseType>.<method>` — the SAME label a method call lowers to
+        // (op_call_direct(receiver_type + "." + field)) and the backends'
+        // `__fn_<Type>.<method>` emission. Without this the round-trip
+        // evaluator's find_fn looked up "P.getx" while the def was stored as
+        // bare "getx", so a method call missed and bailed. (The asm backends
+        // re-derive the label from the FuncDecl directly, so they're unaffected
+        // by this stored name.)
+        var fname: string = funcs[i].name;
+        if (funcs[i].receiver_type.len() > 0) {
+            fname = util.base_type_name(funcs[i].receiver_type) + "." + funcs[i].name;
+        }
+        out = out.append(LoweredFn { name: fname, ok: r.ok, ops: r.ops, n_locals: r.n_locals, n_params: r.n_params, arr_slots: r.arr_slots });
         i = i + 1;
     }
     return out;
@@ -11296,18 +11427,38 @@ pub function find_fn(fns: LoweredFn[], name: string): i32 {
 
 // eval_call evaluates a call to `name` with `args` (recursion-safe via
 // eval_ops' fns parameter). A missing / unlowered callee yields 0.
-pub function eval_call(fns: LoweredFn[], name: string, args: i32[]): i32 {
+// EvalOut threads the round-trip evaluator's SHARED heap through the call
+// chain: eval_ops / eval_call take the incoming heap + freelist head and return
+// the call's value alongside the (possibly grown) heap + freelist. A single
+// heap shared across every call frame lets a box (array / struct / tuple /
+// Option) RETURNED from a callee survive into its caller — the per-call-heap
+// model used to leave such a pointer dangling and crash. Operand stack + locals
+// stay per-frame (each eval_ops has its own); only the heap is global.
+// `bailed` marks a result that did NOT run to completion: the program called a
+// function the IR path can't lower (find_fn miss / LoweredFn.ok false — the
+// real compiler AST-falls-back for it) or hit an op this evaluator doesn't
+// model. It propagates up the call chain so the round-trip harness reports the
+// sentinel 198 instead of a silent wrong answer (a not-found callee used to
+// yield 0, which could spuriously match an expected value).
+struct EvalOut { value: i32, heap: i32[], freehead: i32, bailed: boolean }
+
+pub function eval_call(fns: LoweredFn[], name: string, args: i32[], heap: i32[], freehead: i32): EvalOut {
     var idx: i32 = find_fn(fns, name);
-    if (idx < 0) { return 0; }
+    if (idx < 0) { return EvalOut { value: 198, heap: heap, freehead: freehead, bailed: true }; }
     var fn: LoweredFn = fns[idx];
-    if (!fn.ok) { return 0; }
-    return eval_ops(fn.ops, fn.n_locals, args, fns);
+    if (!fn.ok) { return EvalOut { value: 198, heap: heap, freehead: freehead, bailed: true }; }
+    return eval_ops(fn.ops, fn.n_locals, args, fns, heap, freehead);
 }
 
-// eval_program runs `main` (with no args).
+// eval_program runs `main` (with no args) on a fresh shared heap. Word 0 (byte
+// address 0) is reserved as the RC over-release counter, so the first
+// allocation starts at byte address 4 — no real box uses 0.
 pub function eval_program(fns: LoweredFn[]): i32 {
     var noargs: i32[] = [];
-    return eval_call(fns, "main", noargs);
+    var heap0: i32[] = [];
+    heap0 = heap0.append(0);
+    var out: EvalOut = eval_call(fns, "main", noargs, heap0, 0);
+    return out.value;
 }
 
 // ---- stack-machine interpreter ----------------------------------------
@@ -11334,6 +11485,17 @@ function shape_id(name: string): i32 {
     return h;
 }
 
+// is_bin_kind reports whether an op kind is one of the i32 binary ops
+// bin_apply evaluates (pop r, pop l, push apply). It gates eval_ops' default
+// arm so a genuinely-unmodelled op (i64 / f64 / string / map) bails cleanly
+// instead of being mis-popped as a binary op (which underflowed -> SIGABRT).
+function is_bin_kind(kind: string): boolean {
+    return kind == "add" || kind == "sub" || kind == "mul" || kind == "div_s"
+        || kind == "rem_s" || kind == "and" || kind == "or" || kind == "xor"
+        || kind == "shl" || kind == "shr_s" || kind == "eq" || kind == "ne"
+        || kind == "lt_s" || kind == "le_s" || kind == "gt_s" || kind == "ge_s";
+}
+
 function bin_apply(kind: string, l: i32, r: i32): i32 {
     if (kind == "add") { return l + r; }
     if (kind == "sub") { return l - r; }
@@ -11354,7 +11516,7 @@ function bin_apply(kind: string, l: i32, r: i32): i32 {
     return 0;
 }
 
-pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]): i32 {
+pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[], heap_in: i32[], freehead_in: i32): EvalOut {
     var nloc: i32 = n_locals;
     if (nloc < 1) { nloc = 1; }
     // The self-host source is fully immutable: build the frames by growing
@@ -11371,23 +11533,15 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
     while (si < 256) { stack = stack.append(0); si = si + 1; }
     var sp: i32 = 0;
 
-    // A simple word-addressed heap for the leak-only bump allocator: a byte
-    // address `a` maps to word index a/4. Local to this call (the corpus
-    // keeps arrays within the function that creates them). Word 0 (byte
-    // address 0) is reserved as the RC over-release (underflow) counter, so
-    // the first allocation starts at byte address 4 — no real array uses 0.
-    var heap: i32[] = [];
-    heap = heap.append(0);
-    // Freelist head (0 = null; no real block lives at byte address 0, which
-    // is the reserved underflow counter). A free node stores [next@+0,
-    // size@+4] in the block's own first two words.
-    //
-    // NOTE: this heap is per-eval_ops-call, so the interpreter only models
-    // arrays that stay within their creating function. Arrays that cross a
-    // function boundary (move-on-return) need a shared heap — the x86 backend
-    // (global __heap / __freelist) handles them, and move-on-return is
-    // validated there + against the AST backend in the differential test.
-    var freehead: i32 = 0;
+    // The word-addressed heap (byte address `a` -> word index a/4) is SHARED
+    // across the whole program: it arrives via heap_in (eval_program seeds it
+    // with the reserved word 0 = RC over-release counter) and is returned in
+    // the EvalOut so a box this call allocates — and returns — survives into
+    // its caller. Copied into locals so the op loop can grow it with .with /
+    // .append. The freelist head likewise threads in + out (0 = null; a free
+    // node stores [next@+0, size@+4] in its own first two words).
+    var heap: i32[] = heap_in;
+    var freehead: i32 = freehead_in;
 
     var pc: i32 = 0;
     while (pc < ops.len()) {
@@ -11397,7 +11551,7 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
         else if (o.kind == "load_local") { stack = stack.with(sp, locals[o.i32_imm]); sp = sp + 1; pc = pc + 1; }
         else if (o.kind == "store_local") { sp = sp - 1; locals = locals.with(o.i32_imm, stack[sp]); pc = pc + 1; }
         else if (o.kind == "not") { stack = stack.with(sp - 1, bool_not(stack[sp - 1])); pc = pc + 1; }
-        else if (o.kind == "return") { sp = sp - 1; return stack[sp]; }
+        else if (o.kind == "return") { sp = sp - 1; return EvalOut { value: stack[sp], heap: heap, freehead: freehead, bailed: false }; }
         else if (o.kind == "if") {
             // pop cond: nonzero -> fall into then; zero -> jump to the else
             // body (if any) or past the matching end.
@@ -11795,12 +11949,20 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
             while (z < argc) { callargs = callargs.append(0); z = z + 1; }
             var kk: i32 = argc - 1;
             while (kk >= 0) { sp = sp - 1; callargs = callargs.with(kk, stack[sp]); kk = kk - 1; }
-            var rv: i32 = eval_call(fns, o.str, callargs);
-            stack = stack.with(sp, rv);
+            // Thread the shared heap + freelist through the nested call so any
+            // box the callee allocates (and may return) persists on return. If
+            // the callee bailed (unlowered in the IR path — the real compiler
+            // AST-falls-back), propagate the bail rather than pushing its
+            // sentinel as a real value.
+            var co: EvalOut = eval_call(fns, o.str, callargs, heap, freehead);
+            if (co.bailed) { return co; }
+            heap = co.heap;
+            freehead = co.freehead;
+            stack = stack.with(sp, co.value);
             sp = sp + 1;
             pc = pc + 1;
         }
-        else {
+        else if (is_bin_kind(o.kind)) {
             // a binary op: pop r, pop l, push apply
             sp = sp - 1;
             var r: i32 = stack[sp];
@@ -11810,10 +11972,20 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
             sp = sp + 1;
             pc = pc + 1;
         }
+        else {
+            // An op this i32-only evaluator doesn't model (i64 / f64 / string /
+            // map ops). Bail cleanly with the sentinel 198 instead of mis-popping
+            // the stack as a binary op — that underflowed to stack[-1] and
+            // SIGABRT'd (134), which reads like a real crash in CI. These ops are
+            // covered by the differential x86 / wasm IR suites; the round-trip
+            // evaluator stays integer-only by design. (Distinct from 200 =
+            // lowering bailed, 201 = no `main`.)
+            return EvalOut { value: 198, heap: heap, freehead: freehead, bailed: true };
+        }
     }
     // fell off the end with no return — yield top-of-stack if present, else 0
-    if (sp > 0) { return stack[sp - 1]; }
-    return 0;
+    if (sp > 0) { return EvalOut { value: stack[sp - 1], heap: heap, freehead: freehead, bailed: false }; }
+    return EvalOut { value: 0, heap: heap, freehead: freehead, bailed: false };
 }
 
 function bool_not(x: i32): i32 {
@@ -12710,6 +12882,23 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
         acc = LiftAcc { funcs: [], counter: acc.counter };
         wi = wi + 1;
     }
-    if (acc.counter == 0) { return mod; }
-    return parser.Module { funcs: newfuncs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
+    // Normalise the lifted module for the IR path, mirroring the transient-node
+    // passes the AST backend gets via module_with_builtins:
+    //   * desugar `switch` → the nested if/else-if chain the IR path lowers
+    //     (cf. desugar_switch_in_stmt);
+    //   * lower `defer` / `errdefer` → the action scheduled at every scope exit
+    //     (cf. lower_defers; the AST emitters likewise see no StmtDefer).
+    // Without these a module whose only IR-ineligible construct was a switch or
+    // a defer bailed the whole module to the AST backend. Applied to the FINAL
+    // lifted module so switches/defers inside lifted-lambda bodies (now
+    // top-level funcs in `newfuncs`) are covered — lower_defers doesn't descend
+    // into lambda bodies, but after lifting those bodies are ordinary functions.
+    // `switch` is desugared before `defer` is lowered, matching module_with_
+    // builtins' pass order. The AST fallback path uses the original `mod`, not
+    // this lifted module, so its own switch/defer handling is unchanged.
+    var result: parser.Module = mod;
+    if (acc.counter != 0) {
+        result = parser.Module { funcs: newfuncs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
+    }
+    return parser.lower_defers_module(parser.desugar_switches_module(result));
 }

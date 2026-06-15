@@ -221,6 +221,22 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// the chained string-method dispatches `string.n` (the shape i32.to_rgb_hex
 		// uses: r.to_hex().pad_start(...)). "ab".dup().dup() -> "abababab", len 8.
 		{"chained-str-method", "function (s: string) dup(): string { return s + s; } function f(s: string): i32 { return s.dup().dup().len(); } function main(): i32 { return f(\"ab\"); }"},
+		// Method-name collision across receiver types with different return types:
+		// `bump` exists on i32 (-> i32) AND string (-> string). str_ret_fns is now
+		// keyed "<Type>.<method>" (not bare), so `b.bump()` on an i32 does NOT
+		// wrongly type as string (which let the chained `.chr()` mis-dispatch to a
+		// nonexistent string.chr -> BAIL). This is the std/string case_separator /
+		// to_acronym shape (i32.to_lower vs string.to_lower). f(64): 64+1 -> char
+		// 65 'A' -> s[0] -> 65.
+		{"method-name-collision", "function (n: i32) bump(): i32 { return n + 1; } function (s: string) bump(): string { return s + \"!\"; } function (n: i32) chr(): string { var a: u8[] = __alloc_u8(1); a = a.with(0, n as u8); return string_from_bytes(a); } function f(b: i32): i32 { var s: string = b.bump().chr(); return s[0] as i32; } function main(): i32 { return f(64); }"},
+		// Chained ARRAY-method call `arr.m().n()` where the inner m returns an
+		// array — `__method_Array_rev` (-> i32[]) then `.sum2()`. Was BAIL call:
+		// expr_is_arr_src didn't recognise an array-RETURNING array-method call
+		// result as an array source, so the outer `.sum2()` mis-dispatched. Now
+		// it resolves the helper + checks is_arr_ret_fn. This is the std/string
+		// reverse_words shape (`words.reverse().join(" ")`). rev([1,2,3])=[3,2,1],
+		// sum2 -> 6.
+		{"chained-arr-method", "function __method_Array_rev(xs: i32[]): i32[] { var out: i32[] = []; var i = xs.len() - 1; while (i >= 0) { out = out.append(xs[i]); i = i - 1; } return out; } function __method_Array_sum2(xs: i32[]): i32 { var s = 0; var i = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; } function f(xs: i32[]): i32 { return xs.rev().sum2(); } function main(): i32 { var a: i32[] = []; a = a.append(1); a = a.append(2); a = a.append(3); return f(a); }"},
 		{"with-loop", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; while (i < 4) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3]; }"},
 		{"append-build", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a[0] + a[4]; }"},
 		// `.append(e)` as a general EXPRESSION (not the `out = out.append(e)`
@@ -369,6 +385,12 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"struct-u32-param", `struct B { hi: u32, n: i32 } function sz(b: B): i32 { return b.n; } function main(): i32 { return sz(B { hi: 1 as u32, n: 9 }); }`},
 		{"struct-mixed-int-fields", `struct B { a: u8, b: i16, c: u32, d: i32 } function main(): i32 { var x = B { a: 1 as u8, b: 2 as i16, c: 3 as u32, d: 4 }; return (x.a as i32) + (x.b as i32) + (x.c as i32) + x.d; }`},
 		{"struct-u32-update", `struct B { hi: u32, n: i32 } function main(): i32 { var b = B { hi: 5 as u32, n: 1 }; var c = B { ...b, n: 9 }; return (c.hi as i32) + c.n; }`},
+		// A u64 struct field is a 64-bit integer field — routed through the i64 path
+		// (struct_get_i64 / lower_i64 / struct_field_width 64). The full 64 bits must
+		// survive (high half via `>> 32`); local / struct-returning / param shapes.
+		{"struct-u64-field", `struct B { hi: u64, n: i32 } function main(): i32 { var b = B { hi: 5000000000 as u64, n: 3 }; var q: u64 = b.hi / (1000000000 as u64); return (q as i32) + b.n; }`},
+		{"struct-u64-ret", `struct B { hi: u64, n: i32 } function mk(): B { return B { hi: 8000000000 as u64, n: 2 }; } function main(): i32 { var b = mk(); var q: u64 = b.hi / (1000000000 as u64); return (q as i32) + b.n; }`},
+		{"struct-u64-param", `struct B { hi: u64, n: i32 } function f(b: B): i32 { var q: u64 = b.hi >> 32; return (q as i32) + b.n; } function main(): i32 { return f(B { hi: 4294967296 as u64, n: 5 }); }`},
 		{"struct-in-loop", `struct P { x: i32, y: i32 } function main(): i32 { var s = 0; var i = 0; while (i < 4) { var p = P { x: i, y: i * 2 }; s = s + p.x + p.y; i = i + 1; } return s; }`},
 		{"struct-update-one", `struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; var q = P { ...p, y: 9 }; return q.x + q.y; }`},
 		{"struct-update-keeps-base", `struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 5, y: 6 }; var q = P { ...p, x: 50 }; return p.x + q.x; }`},
@@ -407,6 +429,13 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"tuple-i16", `function f(): (i16, i32) { return (1000 as i16, 2); } function main(): i32 { var t = f(); return ((t.0 as i32) + t.1) % 200; }`},
 		{"tuple-i8-neg", `function f(): (i8, i32) { return (0 - 5 as i8, 10); } function main(): i32 { var t = f(); return t.1 - (t.0 as i32); }`},
 		{"tuple-u32-second", `function f(): (i32, u32) { return (3, 9 as u32); } function main(): i32 { var t = f(); return t.0 + (t.1 as i32); }`},
+		// A u64 tuple element rides the i64 8-byte slot (tuple_get_w(64)); `.N`
+		// access, destructure, and the 2nd-element position all preserve the full
+		// 64 bits, and the element stays UNSIGNED for shifts (bit-63-set >> case).
+		{"tuple-u64-access", `function f(): (u64, i32) { return (4294967296 as u64, 5); } function main(): i32 { var t = f(); var q: u64 = t.0 >> 32; return (q as i32) + t.1; }`},
+		{"tuple-u64-destr", `function f(): (u64, i32) { return (5000000000 as u64, 3); } function main(): i32 { var (hi, n) = f(); var q: u64 = hi / (1000000000 as u64); return (q as i32) + n; }`},
+		{"tuple-u64-second", `function f(): (i32, u64) { return (2, 8000000000 as u64); } function main(): i32 { var t = f(); var q: u64 = t.1 / (1000000000 as u64); return t.0 + (q as i32); }`},
+		{"tuple-u64-unsigned", `function f(): (u64, i32) { return (18000000000000000000 as u64, 1); } function main(): i32 { var t = f(); var q: u64 = t.0 >> 60; return (q as i32) + t.1; }`},
 		// Methods (receiver = arg 0, static dispatch).
 		{"method-field", `struct P { x: i32 } function (p: P) get(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.get(); }`},
 		{"method-with-arg", `struct B { v: i32 } function (b: B) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = B { v: 4 }; return x.scale(3); }`},
@@ -447,6 +476,27 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// `.len()` + `match (b.o[i])` (field-array element) lower.
 		{"optarr-field-match", `struct B { o: Option[i32][] } function main(): i32 { var b = B { o: [Some(7), None] }; match (b.o[0]) { Some(x) => { return x; }, None => { return 0; } } return 0; }`},
 		{"resultarr-field-match", `struct B { o: Result[i32, i32][] } function main(): i32 { var b = B { o: [Ok(5), Err(3)] }; match (b.o[1]) { Ok(x) => { return x; }, Err(e) => { return e * 10; } } return 0; }`},
+		// An Option/Result payload that is a u32 — a full i32 slot like i32 (no
+		// narrowing on read), so the box stores / reads at the default 32-bit
+		// width and only is_leaksafe_payload (the field / tuple-element leak-
+		// safety gate) had to admit it; the bound payload is marked u32 so its
+		// arithmetic wraps. Sub-word (u8/u16/i8/i16) payloads stay on the AST
+		// path (sign-extension is a separate slice).
+		{"opt-u32-field-match", `struct S { o: Option[u32] } function main(): i32 { var s = S { o: Some(7) }; match (s.o) { Some(n) => { return n as i32; }, None => { return 1; } } return 0; }`},
+		{"result-u32-field-match", `struct S { r: Result[u32, i32] } function main(): i32 { var s = S { r: Ok(9) }; match (s.r) { Ok(n) => { return n as i32; }, Err(e) => { return e; } } return 0; }`},
+		{"opt-u32-payload-shift", `function main(): i32 { var o: Option[u32] = Some(4294967294 as u32); match (o) { Some(n) => { return (n >> 31) as i32; }, None => { return 0; } } return 0; }`},
+		{"opt-u32-tuple-field", `struct S { t: (Option[u32], i32) } function main(): i32 { var s = S { t: (Some(7), 3) }; return s.t.1; }`},
+		// A u64 Option/Result payload rides the i64 8-byte slot: construction tags
+		// a u64 arg "i64" (8-byte store), and the match binding reads via
+		// op_opt_payload_w(64) and marks the slot u64. The full 64 bits must
+		// survive the box round-trip — `5000000000 >> 32 == 1` (a 32-bit-truncated
+		// read would give 0). The value is < 2^63, so the shift is signedness-
+		// agnostic: this pins the 8-byte WIDTH, independent of the separate
+		// frontend gap that a match-bound u64 isn't typed unsigned for `>>`.
+		{"opt-u64-field-match", `struct S { o: Option[u64] } function main(): i32 { var s = S { o: Some(42 as u64) }; match (s.o) { Some(n) => { return n as i32; }, None => { return 1; } } return 0; }`},
+		{"result-u64-field-match", `struct S { r: Result[u64, i32] } function main(): i32 { var s = S { r: Ok(9 as u64) }; match (s.r) { Ok(n) => { return n as i32; }, Err(e) => { return e; } } return 0; }`},
+		{"opt-u64-payload-wide", `function main(): i32 { var o: Option[u64] = Some(5000000000 as u64); match (o) { Some(n) => { return (n >> 32) as i32; }, None => { return 0; } } return 0; }`},
+		{"opt-u64-tuple-field", `struct S { t: (Option[u64], i32) } function main(): i32 { var s = S { t: (Some(7 as u64), 3) }; return s.t.1; }`},
 		{"optarr-alias-index-match", `function main(): i32 { var a: Option[i32][] = [Some(9), None]; var b = a; var o = b[0]; match (o) { Some(x) => { return x; }, None => { return 0; } } return 0; }`},
 		// `for o in optArray { match (o) }` — the asmcore type checker no longer
 		// mis-parses the `Option[T][]` / `Result[…][]` annotation as
@@ -1124,6 +1174,12 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"str2i32-trailing", `function main(): i32 { return str_to_i32("12x9"); }`},
 		{"str2i32-empty", `function main(): i32 { return str_to_i32("") + 7; }`},
 		{"str2i32-roundtrip", `function main(): i32 { return str_to_i32(i32_to_string(99)); }`},
+		// chr(n): i32 byte -> 1-char string box. The IR stack-ABI body must agree
+		// with asm.fern's register-ABI __fern_chr. Covers len, indexed byte, and
+		// `+` concat of two chr results.
+		{"chr-len", `function main(): i32 { return chr(65).len(); }`},
+		{"chr-byte", `function main(): i32 { return chr(122)[0]; }`},
+		{"chr-concat", `function main(): i32 { var s = chr(72) + chr(105); return s.len() * 100 + s[0]; }`},
 		// String chars -> string[] of 1-char strings (op_str_chars; result is_arr +
 		// is_strarr like split). AST emits __fern_str_chars; IR emits emit_ir_str_chars.
 		{"chars-len", `function main(): i32 { return "abcde".chars().len(); }`},
@@ -1218,6 +1274,27 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// `(...)[]` ret type; excluding array types lets it take the array
 		// move-on-return path. Build via append, return, read .0/.1 at the caller.
 		{"tuple-array-build-return", "function enum2(xs: i32[]): (i32, i32)[] { var out: (i32, i32)[] = []; var i = 0; for x in xs { out = out.append((i, x * x)); i = i + 1; } return out; } function main(): i32 { var e = enum2([5, 6, 7]); if (e.len() == 3 && e[1].0 == 1 && e[1].1 == 36 && e[2].1 == 49) { return 0; } return 1; }"},
+		// `switch` statements — lift_lambdas now desugars every switch to the
+		// nested if/else-if chain the IR path already lowers (mirroring the AST
+		// backend's desugar_switch_in_stmt), so a module whose only IR-ineligible
+		// construct was a switch lowers via the IR path instead of bailing. Covers
+		// the i32 / multi-value-case / no-default / fall-through-assign / nested /
+		// string-scrutinee shapes.
+		{"switch-i32", "function f(n: i32): i32 { switch (n) { case 1: return 10; case 2: return 20; default: return 0; } } function main(): i32 { return f(2); }"},
+		{"switch-multi-value", "function f(n: i32): i32 { switch (n) { case 1, 2, 3: return 100; default: return 0; } } function main(): i32 { return f(3); }"},
+		{"switch-no-default", "function f(n: i32): i32 { var r = 0; switch (n) { case 5: r = 50; } return r; } function main(): i32 { return f(5); }"},
+		{"switch-assign", "function main(): i32 { var x = 0; switch (2) { case 1: x = 10; case 2: x = 20; default: x = 99; } return x; }"},
+		{"switch-nested", "function f(a: i32, b: i32): i32 { switch (a) { case 1: switch (b) { case 1: return 11; default: return 19; } default: return 0; } } function main(): i32 { return f(1, 1); }"},
+		{"switch-string", "function f(s: string): i32 { switch (s) { case \"a\": return 1; case \"b\": return 2; default: return 9; } } function main(): i32 { return f(\"b\"); }"},
+		// `defer` / `errdefer` — lift_lambdas now runs parser.lower_defers_module
+		// (after the switch desugar), scheduling the deferred action at every
+		// scope exit, exactly as module_with_builtins does for the AST backend.
+		// A module whose only IR-ineligible construct was a defer now lowers via
+		// the IR path. Covers basic / early-return / two-defer-order / errdefer.
+		{"defer-basic", "function main(): i32 { var x = 0; defer { x = 99; } x = 1; return x; }"},
+		{"defer-early-return", "function f(n: i32): i32 { var x = 5; defer { x = 0; } if (n > 0) { return n; } return x; } function main(): i32 { return f(7); }"},
+		{"defer-order-two", "function main(): i32 { var a = [0, 0]; defer { a = a.with(0, 1); } defer { a = a.with(1, 2); } return a[0] + a[1]; }"},
+		{"errdefer-ok-path", "function f(): Result[i32, string] { var x = 1; errdefer { x = 9; } return Ok(x); } function main(): i32 { match (f()) { Ok(v) => { return v; }, Err(_) => { return 0; } } }"},
 	}
 
 	for _, tc := range cases {
@@ -1272,6 +1349,14 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// the u32 high bits and the signed-i8 negative survive the field round-trip.
 		{"struct-u32-field-val", `struct B { hi: u32, n: i32 } function main(): i32 { var b = B { hi: 4000000000 as u32, n: 7 }; var hi: u32 = b.hi >> 30; return (hi as i32) + b.n; }`, 10},
 		{"struct-i8-neg-field-val", `struct B { v: i8, n: i32 } function main(): i32 { var b = B { v: 0 - 5 as i8, n: 10 }; return b.n - (b.v as i32); }`, 15},
+		// A u64 struct field, pinned to the absolute IR value: 2^32 >> 32 == 1 proves
+		// the high 32 bits survive the field round-trip (a truncating read gives 5).
+		{"struct-u64-param-val", `struct B { hi: u64, n: i32 } function f(b: B): i32 { var q: u64 = b.hi >> 32; return (q as i32) + b.n; } function main(): i32 { return f(B { hi: 4294967296 as u64, n: 5 }); }`, 6},
+		// u64 tuple element, pinned to the absolute IR value. The unsigned case
+		// (18e18 has bit 63 set; `>> 60` unsigned == 15, a signed shift differs)
+		// proves both the 64-bit width and the unsigned tracking survive the slot.
+		{"tuple-u64-access-val", `function f(): (u64, i32) { return (4294967296 as u64, 5); } function main(): i32 { var t = f(); var q: u64 = t.0 >> 32; return (q as i32) + t.1; }`, 6},
+		{"tuple-u64-unsigned-val", `function f(): (u64, i32) { return (18000000000000000000 as u64, 1); } function main(): i32 { var t = f(); var q: u64 = t.0 >> 60; return (q as i32) + t.1; }`, 16},
 		// A string-ARRAY-valued if-/match-expression: the lifted `__lam` carries a
 		// default i32 ret_type, so the binding was mis-treated as a scalar and the
 		// 8-byte string elements were read at i32 width — a silent miscompile
@@ -1294,6 +1379,18 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"opt-fncall-if-none-else", `function mkO(v: i32): Option[i32] { return Some(v); } function main(): i32 { var o = if (true) { mkO(7) } else { None }; match (o) { Some(n) => { return n; }, None => { return 0; } } return 0; }`, 7},
 		{"opt-fncall-if-call-else", `function mkO(v: i32): Option[i32] { return Some(v); } function main(): i32 { var o = if (true) { mkO(7) } else { mkO(2) }; match (o) { Some(n) => { return n; }, None => { return 0; } } return 0; }`, 7},
 		{"result-fncall-if-err-else", `function div(a: i32, b: i32): Result[i32, i32] { if (b == 0) { return Err(1); } return Ok(a / b); } function main(): i32 { var r = if (true) { div(20, 4) } else { Err(9) }; match (r) { Ok(n) => { return n; }, Err(e) => { return e; } } return 0; }`, 5},
+		// A u32 Option/Result payload, IR value pinned. The u32 case reads a
+		// high-bit value back through the box; the `>> 31` is LOGICAL
+		// (4294967294 >> 31 = 1), so a wrong i32-arithmetic shift (-> -1, exit
+		// 255) is caught — proof the bound payload is marked u32, not i32.
+		{"opt-u32-payload-shift-val", `function main(): i32 { var o: Option[u32] = Some(4294967294 as u32); match (o) { Some(n) => { return (n >> 31) as i32; }, None => { return 0; } } return 0; }`, 1},
+		{"result-u32-payload-val", `struct S { r: Result[u32, i32] } function main(): i32 { var s = S { r: Ok(42) }; match (s.r) { Ok(n) => { return n as i32; }, Err(e) => { return e; } } return 0; }`, 42},
+		// A u64 Option payload, IR value pinned for 8-byte WIDTH: 5000000000
+		// (> 2^32) `>> 32 == 1`, but a 32-bit-truncated payload read would give 0.
+		// Value < 2^63 so the shift is signedness-agnostic — the pin isolates the
+		// box width from the separate frontend u64-typing gap.
+		{"opt-u64-payload-wide-val", `function main(): i32 { var o: Option[u64] = Some(5000000000 as u64); match (o) { Some(n) => { return (n >> 32) as i32; }, None => { return 0; } } return 0; }`, 1},
+		{"result-u64-payload-val", `struct S { r: Result[u64, i32] } function main(): i32 { var s = S { r: Ok(42 as u64) }; match (s.r) { Ok(n) => { return n as i32; }, Err(e) => { return e; } } return 0; }`, 42},
 		// A struct-ARRAY-valued if-/match-expression (literal, or a P[]-returning
 		// call in the branch): the lifted __lam's element struct type is inferred
 		// so `ps[i].field` / `for p in ps { p.method() }` resolve. P[] sibling of

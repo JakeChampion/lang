@@ -278,6 +278,29 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// ASSIGN f64[] field: same dec-old / inc-new through emit_arr_store on the
 		// 8-byte-element field. Detector 0 (the dec-old + inc-new balance for f64[] too).
 		{"field-arr-assign-f64-detector", `struct H { items: f64[] } function main(): i32 { var h = H { items: [1.5, 2.5, 3.0] }; var x: f64[] = [0.5, 0.5]; x = h.items; var s = x[0] + x[2]; if ((s as i32) != 4) { return 99; } return __rc_underflow(); }`, 0},
+		// Bare array FIELD-COPY as a struct-literal field value (RC-frontier slice 3,
+		// following #3292 array-ident-into-field + #3308 array-out-of-field). The
+		// value `s.xs` is a field READ — it lowers via struct_get to a real array
+		// pointer that ALIASES the source struct's field — so the new box `s2` becomes
+		// a second owner of the same array. A Perceus dup (rc_inc) at the construction
+		// store gives the field its counted reference: the source struct's field-drop
+		// and the new struct's field-drop each dec, the inc covers the second owner
+		// (rc 1 →inc 2 →src-field-drop 1 →new-field-drop 0). Previously bailed to AST
+		// (only a fresh literal / bare ident was admitted); now routes "ir". Reads
+		// back correctly and the over-release detector stays 0.
+		{"field-copy-scalar-value", `struct S { xs: i32[], n: i32 } function main(): i32 { var s = S { xs: [10, 20, 30], n: 3 }; var s2 = S { xs: s.xs, n: s.n }; return s2.xs[1] + s2.n; }`, 23},
+		{"field-copy-scalar-detector", `struct S { xs: i32[], n: i32 } function main(): i32 { var s = S { xs: [10, 20, 30], n: 3 }; var s2 = S { xs: s.xs, n: s.n }; var r = s2.xs[1] + s2.n; if (r != 23) { return 99; } return __rc_underflow(); }`, 0},
+		// i64[] field-copy: the 8-byte-element array aliased through struct_get + the
+		// same alias-inc. Value + detector 0 (the inc balances the two field-drops for
+		// i64[] too).
+		{"field-copy-i64-detector", `struct S { xs: i64[], n: i32 } function main(): i32 { var s = S { xs: [100, 200, 300], n: 3 }; var s2 = S { xs: s.xs, n: s.n }; var v: i64 = s2.xs[0]; var r = (v as i32) + s2.n; if (r != 103) { return 99; } return __rc_underflow(); }`, 0},
+		// f64[] field-copy: same through the 8-byte float-element array.
+		{"field-copy-f64-detector", `struct S { xs: f64[], n: i32 } function main(): i32 { var s = S { xs: [1.5, 2.5, 3.0], n: 2 }; var s2 = S { xs: s.xs, n: s.n }; var r = (s2.xs[0] as i32) + s2.n; if (r != 3) { return 99; } return __rc_underflow(); }`, 0},
+		// Array-of-struct (`S { ops: s.ops }` with `ops: Op[]`) bare field-copy: the
+		// struct-array field is admitted via is_struct_array_field_type + the same
+		// alias-inc, exactly like the scalar-element case. Value + detector 0.
+		{"field-copy-struct-arr-value", `struct Point { x: i32, y: i32 } struct S { pts: Point[] } function main(): i32 { var s = S { pts: [Point { x: 3, y: 4 }, Point { x: 5, y: 6 }] }; var s2 = S { pts: s.pts }; return s2.pts[0].x + s2.pts[1].y; }`, 9},
+		{"field-copy-struct-arr-detector", `struct Point { x: i32, y: i32 } struct S { pts: Point[] } function main(): i32 { var s = S { pts: [Point { x: 3, y: 4 }, Point { x: 5, y: 6 }] }; var s2 = S { pts: s.pts }; var r = s2.pts[0].x + s2.pts[1].y; if (r != 9) { return 99; } return __rc_underflow(); }`, 0},
 		// Consumed scalar-payload enum free: a function-local `var x = V(scalar...)`
 		// of an all-scalar-variant enum consumed by exactly one `match (x)` where x
 		// is single-owner and DEAD after the match. The box (now rc-headered via
@@ -522,6 +545,28 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		{"iife-match-arr-payload-detector", `enum E { V(i32[]), W(i32[]) } function go(): i32 { var x: E = E.V([10, 20, 30]); var r = match (x) { V(xs) => xs[0], W(ys) => ys[0] }; if (r != 10) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 		// boolean[] payload bound, read .len() (single-expr arm); result is i32.
 		{"iife-match-boolarr-payload-len-value", `enum E { V(boolean[]), N } function main(): i32 { var x: E = E.V([true, false, true]); var r = match (x) { V(xs) => xs.len(), N => 0 }; return r; }`, 3},
+		// ARROW LAMBDA (`(params): R => expr`) — the self-host parser now parses the
+		// concise arrow form into the SAME ExprLambda the verbose `function (params):
+		// R { return expr; }` produces, so it rides the existing lambda-lift + IR
+		// lowering with no codegen changes. Each case routes "ir" and is oracle-checked
+		// against the native interpreter. Previously the self-host parser had NO arrow
+		// syntax at all, so these mis-parsed and bailed to the AST emitter.
+		// Non-capturing binding, called once: __lam_N(5) = 6.
+		{"arrow-lambda-noncap-binding", `function main(): i32 { var f = (x: i32): i32 => x + 1; return f(5); }`, 6},
+		// Capturing binding (captures outer `n`): param-lifted with n threaded as an
+		// argument — (5)+10 = 15.
+		{"arrow-lambda-capturing-binding", `function main(): i32 { var n: i32 = 10; var f = (x: i32): i32 => x + n; return f(5); }`, 15},
+		// Multi-param arrow: add(3, 4) = 7.
+		{"arrow-lambda-multi-param", `function main(): i32 { var add = (a: i32, b: i32): i32 => a + b; return add(3, 4); }`, 7},
+		// Empty-param arrow: () => 42 → 42.
+		{"arrow-lambda-empty-params", `function main(): i32 { var f = (): i32 => 42; return f(); }`, 42},
+		// No-capture arrow passed as a CALL ARGUMENT — hoisted to a __lam_N function
+		// value (the slice-1 const_func path): ap((y) => y*2, 5) = 10.
+		{"arrow-lambda-as-arg", `function ap(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { return ap((y: i32): i32 => y * 2, 5); }`, 10},
+		// Verbose `function (...)` and arrow forms must still BOTH route ir — a
+		// grouping `(a + b)` next to an arrow lambda confirms the lookahead doesn't
+		// mis-class an ordinary parenthesised expression: (3 + 4) + ((x) => x)(1) = 8.
+		{"arrow-lambda-vs-grouping", `function main(): i32 { var a: i32 = 3; var b: i32 = 4; var id = (x: i32): i32 => x; return (a + b) + id(1); }`, 8},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -531,6 +576,28 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 			}
 			if got := run(t, emit(t, tc.src)); got != tc.expected {
 				t.Errorf("precise-drop x86 IR %q = %d, want %d", tc.name, got, tc.expected)
+			}
+		})
+	}
+
+	// NEGATIVE: a `.with(i, v)` / `.append(v)` CALL as a struct-literal array-field
+	// value STAYS bailing to the AST emitter. The bare field-COPY admission above is
+	// only a bare ExprFieldAccess (a value-producing field READ); an ExprCall is
+	// explicitly NOT admitted because the current self-host IR has no value-producing
+	// COW `.with` and `arr_push` reuses the receiver buffer in place — admitting it
+	// would over-release. That needs a separate COW-`arr_with` prerequisite slice, so
+	// this case must continue to route "ast" (the unsound path stays bailing).
+	negatives := []struct {
+		name string
+		src  string
+	}{
+		{"field-with-call-stays-ast", `struct S { xs: i32[], n: i32 } function main(): i32 { var s = S { xs: [10, 20, 30], n: 3 }; var s2 = S { xs: s.xs.with(0, 99), n: s.n }; return s2.xs[0]; }`},
+	}
+	for _, tc := range negatives {
+		t.Run(tc.name, func(t *testing.T) {
+			route := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, []byte(tc.src))))
+			if route != "ast" {
+				t.Errorf("%s routed through %q path, want \"ast\" (the unsound .with-into-field case must stay bailing)", tc.name, route)
 			}
 		})
 	}

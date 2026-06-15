@@ -199,6 +199,42 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		{"option-value-pos", "function main(): i32 { var o: Option[i32] = Some(20); var r = match (o) { Some(v) => v + 1, None => 0 }; return r * 2; }", 42},
 		{"result-ok", "function main(): i32 { var r: Result[i32, i32] = Ok(42); match (r) { Ok(v) => { return v; }, Err(e) => { return 0; } } }", 42},
 		{"result-err", "function main(): i32 { var r: Result[i32, i32] = Err(7); match (r) { Ok(v) => { return v; }, Err(e) => { return e * 6; } } }", 42},
+		// Boxes that CROSS a function boundary: the evaluator's heap is now shared
+		// across the whole call chain (threaded through eval_call as EvalOut), so a
+		// box a callee allocates and RETURNS survives into its caller. Previously
+		// the per-call heap left the returned pointer dangling -> SIGABRT (134).
+		// Covers an array (the originally-documented limitation), a struct, a
+		// tuple, and an Option returned from a function.
+		{"array-returned", "function mk(): i32[] { return [40, 2]; } function main(): i32 { var a = mk(); return a[0] + a[1]; }", 42},
+		{"struct-returned", "struct P { x: i32 } function mk(): P { return P { x: 42 }; } function main(): i32 { var p = mk(); return p.x; }", 42},
+		{"tuple-returned", "function mk(): (i32, i32) { return (40, 2); } function main(): i32 { var t = mk(); return t.0 + t.1; }", 42},
+		{"option-from-fn", "function f(b: i32): Option[i32] { if (b > 0) { return Some(42); } return None; } function main(): i32 { match (f(1)) { Some(v) => { return v; }, None => { return 0; } } }", 42},
+		// Ops this i32-only evaluator doesn't model — i64 / string — now bail
+		// cleanly with sentinel 198 instead of mis-popping the operand stack as a
+		// binary op (which underflowed to stack[-1] and SIGABRT'd / exit 134, a
+		// false "crash" in CI). The lowering itself is fine — these are exercised
+		// by the differential x86 / wasm IR suites; the round-trip evaluator stays
+		// integer-only by design. (Distinct from 200 = lowering bailed.)
+		{"i64-eval-unsupported", "function main(): i32 { var x: i64 = 5; var y: i64 = x + 3; return y as i32; }", 198},
+		{"string-eval-unsupported", "function main(): i32 { var s = \"hello\"; return s.len(); }", 198},
+		// Calling a function the IR path can't lower bails cleanly (198) — the
+		// callee's bail propagates up the call chain — instead of silently
+		// returning 0 (find_fn miss / LoweredFn.ok false used to yield 0, which
+		// could spuriously match an expected value and hide a regression). Here
+		// the callee's body uses an unmodelled string op, so it bails.
+		{"unlowered-callee-bails", "function f(): i32 { var s = \"x\"; return s.len(); } function main(): i32 { return f(); }", 198},
+		// A lowered callee that returns a box still computes correctly (bail flag
+		// stays false, value + shared heap propagate).
+		{"lowered-callee-ok", "struct P { x: i32 } function mk(): P { return P { x: 42 }; } function main(): i32 { var p = mk(); return p.x; }", 42},
+		// Receiver methods now lower + evaluate through the IR round-trip: a
+		// method is registered under the receiver-qualified name `<Type>.<method>`
+		// — the same label a method call lowers to (op_call_direct of
+		// receiver_type + "." + field) — so find_fn matches. The method body is an
+		// ordinary function with the receiver as arg 0. Covers a plain read, a
+		// method taking an argument, and chained method calls returning a struct.
+		{"recv-method-read", "struct P { x: i32 } function (p: P) getx(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.getx(); }", 42},
+		{"recv-method-arg", "struct P { x: i32 } function (p: P) addx(d: i32): i32 { return p.x + d; } function main(): i32 { var p = P { x: 40 }; return p.addx(2); }", 42},
+		{"recv-method-chain", "struct C { n: i32 } function (c: C) inc(): C { return C { n: c.n + 1 }; } function main(): i32 { var c = C { n: 40 }; return c.inc().inc().n; }", 42},
 	}
 
 	for _, tc := range cases {

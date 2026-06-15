@@ -50,6 +50,14 @@ var toStringIRCases = []struct {
 	// Free call feeds `+` concat: "n=" + i32_to_string(7) == "n=7".
 	{"free-concat",
 		`function main(): i32 { var msg: string = "n=" + i32_to_string(7); if (msg.len() != 3) { return 80; } if (msg[0] != 110) { return 81; } if (msg[2] != 55) { return 82; } return msg.len(); }`, 3},
+	// chr(n): an i32 byte to a fresh 1-char string box (the inverse of `s[0]`).
+	// len is 1, byte 0 is n; the result feeds `.len()` / `[i]` / `+` concat as a
+	// string. chr(65) == "A".
+	{"chr-basic",
+		`function main(): i32 { var a: string = chr(65); if (a.len() != 1) { return 30; } if (a[0] != 65) { return 31; } return a.len(); }`, 1},
+	// chr result feeds `+` concat: chr(72) + chr(105) == "Hi" (len 2, bytes 72,105).
+	{"chr-concat",
+		`function main(): i32 { var s: string = chr(72) + chr(105); if (s.len() != 2) { return 40; } if (s[0] != 72) { return 41; } if (s[1] != 105) { return 42; } return s.len(); }`, 2},
 }
 
 // TestSelfHostToStringIRX86_64 compiles each case through the self-hosted x86-64

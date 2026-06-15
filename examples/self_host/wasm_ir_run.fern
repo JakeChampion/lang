@@ -58,7 +58,7 @@ function main(): i32 {
                 + wasm.le32_escape(sv[di].len()) + wasm.wat_escape(sv[di]) + "\")\n";
             di = di + 1;
         }
-        if (wasm_ir.module_allocates(mod) || wasm_ir.module_uses_i32_to_string(mod)) {
+        if (wasm_ir.module_allocates(mod) || wasm_ir.module_uses_i32_to_string(mod) || wasm_ir.module_uses_chr(mod)) {
             o = o + wasm.heap_alloc_helpers(wasm_ir.heap_base_for(mod), wasm_ir.fl_base_for(mod), wasm_ir.fl_cells());
             o = o + wasm.rc_runtime_helpers(wasm_ir.heap_base_for(mod));
         }
@@ -73,6 +73,8 @@ function main(): i32 {
         if (wasm_ir.module_uses_i32_to_string(mod)) { o = o + wasm.to_string_helpers(); }
         // $__fern_str_to_i32 backs str_to_i32(s); allocation-free, own gate.
         if (wasm_ir.module_uses_str_to_i32(mod)) { o = o + wasm.str_to_i32_helper(); }
+        // $__fern_chr backs chr(n); allocates (heap gate ORs in module_uses_chr).
+        if (wasm_ir.module_uses_chr(mod)) { o = o + wasm.chr_helper(); }
         if (wasm_ir.module_uses_str_cmp(mod)) { o = o + wasm.strcmp_helper(); }
         // $__fern_substr backs str_slice AND str_split (split slices each
         // segment), so emit it for either — but only ONCE.

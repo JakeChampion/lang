@@ -4220,6 +4220,30 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ldr x0, [sp]\n");
         s = s.write("    b __fern_str_to_i32\n");
     }
+    // __fn___fern_chr — STACK-arg ABI for the IR path (the i32 byte sits at
+    // [sp]). Self-contained (only __fern_alloc), so no dependency on the
+    // str_search-bundled register-ABI __fern_chr: alloc 1 byte for the char +
+    // a 16-byte box, store the low byte + length 1, return the box in x0.
+    if (s.has_need("chr")) {
+        s = s.write("__fn___fern_chr:\n");
+        s = s.write("    ldr x0, [sp]\n");               // stack arg -> x0 (byte value)
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");                // save value
+        s = s.write("    mov x0, #1\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x20, x0\n");                // buf ptr
+        s = s.write("    strb w19, [x20]\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    str x20, [x0]\n");
+        s = s.write("    mov x1, #1\n");
+        s = s.write("    str x1, [x0, #8]\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+    }
     // __fern_eprint_str: x0 = string box. write(2, data, len).
     if (s.has_need("eprint")) {
         s = s.write("__fern_eprint_str:\n");
