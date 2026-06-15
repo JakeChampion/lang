@@ -117,9 +117,13 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	dynRoots := append(treeshake.DynCoercionImplMethods(info), treeshake.DowncastImplMethods(prog, info)...)
 	treeshake.Run(prog, dynRoots...)
 	// x86-64 supports boxed one-word `dyn Trait` values
-	// (docs/DYN-TRAITS.md §4.2.2); pass DynSupported so the IR gate
-	// lifts here (arm64, also ptrW==8, omits it and keeps rejecting).
-	ip, err := ir.LowerWith(prog, info, 8, ir.DynSupported())
+	// (docs/DYN-TRAITS.md §4.2.2): DynSupported lifts the dispatch gate.
+	// It ALSO reclaims them (Perceus RC, slice 4b — docs/DYN-TRAITS.md
+	// §4.4): DynRcSupported lifts the RC path (the trailing vtable drop
+	// slot + the per-set __drop_dyn_<set> helper + the dec/drop sweep
+	// arms). arm64 passes only DynSupported (dispatch) — its RC slice 4c
+	// hasn't landed, so it keeps leaking `dyn` (harmless).
+	ip, err := ir.LowerWith(prog, info, 8, ir.DynSupported(), ir.DynRcSupported())
 	if err != nil {
 		return "", err
 	}
@@ -3004,6 +3008,18 @@ func (g *generator) emitDataSections() {
 			g.label(dynVtableLabel(vt.Trait, vt.Concrete))
 			for _, m := range vt.Methods {
 				g.line(fmt.Sprintf("\t.quad %s", m.Func))
+			}
+			// Trailing drop slot at index len(Methods) (docs/DYN-TRAITS.md
+			// §4.4, slice 4b): the concrete type's drop fn as an absolute
+			// pointer, or a null sentinel (0) when it needs none. The boxed
+			// __drop_dyn_<set> helper reads this slot and calls it to run the
+			// erased concrete destructor before freeing the cell. Appended
+			// trailing so the method slot indices (0..n-1) are unchanged —
+			// OpCallDyn's slot math is untouched. Mirrors wasm internVtable.
+			if vt.Drop != "" {
+				g.line(fmt.Sprintf("\t.quad %s", vt.Drop))
+			} else {
+				g.line("\t.quad 0")
 			}
 		}
 	}
