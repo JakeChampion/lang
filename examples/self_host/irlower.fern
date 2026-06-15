@@ -256,6 +256,16 @@ pub function (s: LowerState) cur_loop_blk(): i32 {
     if (s.loop_blk.len() == 0) { return 0 - 1; }
     return s.loop_blk[s.loop_blk.len() - 1];
 }
+// loop_blk_at_depth returns the exit-block ctrl level of the loop `n` levels out
+// from the innermost (n = 0 → innermost, n = 1 → its enclosing loop, …), or -1 if
+// out of range. Drives labeled break/continue: a labeled break's relative depth is
+// pre-resolved into StmtBreak.tag by the parser's resolve_labels pass, so n = 0
+// (unlabeled / innermost) reproduces cur_loop_blk exactly.
+pub function (s: LowerState) loop_blk_at_depth(n: i32): i32 {
+    var idx: i32 = s.loop_blk.len() - 1 - n;
+    if (idx < 0 || idx >= s.loop_blk.len()) { return 0 - 1; }
+    return s.loop_blk[idx];
+}
 
 pub function (s: LowerState) fail(): LowerState {
     return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: false };
@@ -1992,7 +2002,7 @@ pub function lower_foreach_snapshot(var_name: string, iter: parser.Expr, body: p
     var sv: parser.Stmt = parser.StmtVar { name: itn, type_name: "", init: iter, line: 0, col: 0 };
     var s2: LowerState = lower_stmt(sv, s);
     if (!s2.ok) { return s2; }
-    var nf: parser.Stmt = parser.StmtFor { var_name: var_name, iter: parser.ExprIdent { name: itn, line: 0, col: 0 }, body: body };
+    var nf: parser.Stmt = parser.StmtFor { var_name: var_name, iter: parser.ExprIdent { name: itn, line: 0, col: 0 }, body: body, label: "" };
     return lower_stmt(nf, s2);
 }
 
@@ -2032,7 +2042,7 @@ function to_json_loop_stmt(on: string, inm: string, aref: parser.Expr): parser.S
     var appendj: parser.Stmt = parser.StmtAssign { target: on, value: parser.ExprBinary { op: "+", left: oref, right: elemj, line: 0, col: 0 }, line: 0, col: 0, target_line: 0, target_col: 0 };
     var inc: parser.Stmt = parser.StmtAssign { target: inm, value: parser.ExprBinary { op: "+", left: iref, right: one, line: 0, col: 0 }, line: 0, col: 0, target_line: 0, target_col: 0 };
     var body: parser.Stmt[] = [ifc, appendj, inc];
-    return parser.StmtWhile { cond: cond, body: body };
+    return parser.StmtWhile { cond: cond, body: body, label: "" };
 }
 
 pub function lower_array_to_json(arr: parser.Expr, s: LowerState): LowerState {
@@ -2096,7 +2106,7 @@ function lower_string_foreach(var_name: string, iter: parser.Expr, body: parser.
     var nbody: parser.Stmt[] = [bind];
     var bi: i32 = 0;
     while (bi < body.len()) { nbody = nbody.append(body[bi]); bi = bi + 1; }
-    var forc: parser.Stmt = parser.StmtFor { var_name: idx, iter: range_iter, body: nbody };
+    var forc: parser.Stmt = parser.StmtFor { var_name: idx, iter: range_iter, body: nbody, label: "" };
     return lower_stmt(forc, s2);
 }
 
@@ -7244,18 +7254,20 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             }
             return ms.emit(ir.op_end());   // end outer block
         },
-        parser.StmtBreak(_) => {
-            // br out to the innermost (while) loop's exit block. blk is that
-            // block's ctrl level; from depth s.ctrl the relative br is the
-            // difference. -1 (no enclosing loop) bails.
-            var bblk: i32 = s.cur_loop_blk();
+        parser.StmtBreak(b) => {
+            // br out to the target loop's exit block. b.tag is the relative loop
+            // depth (0 = innermost; a labeled `break outer` was resolved to its
+            // depth by resolve_labels). blk is that loop's exit-block ctrl level;
+            // from depth s.ctrl the relative br is the difference. -1 (no such
+            // enclosing loop) bails.
+            var bblk: i32 = s.loop_blk_at_depth(b.tag);
             if (bblk < 0) { return s.fail(); }
             return s.emit(ir.op_br(s.ctrl - bblk));
         },
-        parser.StmtContinue(_) => {
-            // br to the loop header, which sits one level deeper than the exit
-            // block (block then loop).
-            var cblk: i32 = s.cur_loop_blk();
+        parser.StmtContinue(c) => {
+            // br to the target loop's header, which sits one level deeper than its
+            // exit block (block then loop). c.tag is the relative loop depth.
+            var cblk: i32 = s.loop_blk_at_depth(c.tag);
             if (cblk < 0) { return s.fail(); }
             return s.emit(ir.op_br(s.ctrl - cblk - 1));
         },
@@ -12045,13 +12057,13 @@ function lift_stmt(st: parser.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
         parser.StmtWhile(w) => {
             var ce: LiftExpr = lift_expr_walk(w.cond, acc, gfns);
             var b: LiftStmts = lift_stmts(w.body, ce.acc, gfns);
-            var ns: parser.Stmt = parser.StmtWhile { cond: ce.expr, body: b.stmts };
+            var ns: parser.Stmt = parser.StmtWhile { cond: ce.expr, body: b.stmts, label: w.label };
             return LiftStmts { stmts: [ns], acc: b.acc };
         },
         parser.StmtFor(fo) => {
             var ie: LiftExpr = lift_expr_walk(fo.iter, acc, gfns);
             var b: LiftStmts = lift_stmts(fo.body, ie.acc, gfns);
-            var ns: parser.Stmt = parser.StmtFor { var_name: fo.var_name, iter: ie.expr, body: b.stmts };
+            var ns: parser.Stmt = parser.StmtFor { var_name: fo.var_name, iter: ie.expr, body: b.stmts, label: fo.label };
             return LiftStmts { stmts: [ns], acc: b.acc };
         },
         _ => { return LiftStmts { stmts: [st], acc: acc }; }
@@ -12277,8 +12289,8 @@ function subst_fcall_stmts(stmts: parser.Stmt[], fname: string, lname: string, c
             parser.StmtExpr(s) => { var ns: parser.Stmt = parser.StmtExpr { value: subst_fcall_expr(s.value, fname, lname, capargs) }; out = out.append(ns); },
             parser.StmtAssign(a) => { var ns: parser.Stmt = parser.StmtAssign { target: a.target, value: subst_fcall_expr(a.value, fname, lname, capargs), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; out = out.append(ns); },
             parser.StmtIf(f) => { var ns: parser.Stmt = parser.StmtIf { cond: subst_fcall_expr(f.cond, fname, lname, capargs), then_body: subst_fcall_stmts(f.then_body, fname, lname, capargs), else_body: subst_fcall_stmts(f.else_body, fname, lname, capargs) }; out = out.append(ns); },
-            parser.StmtWhile(w) => { var ns: parser.Stmt = parser.StmtWhile { cond: subst_fcall_expr(w.cond, fname, lname, capargs), body: subst_fcall_stmts(w.body, fname, lname, capargs) }; out = out.append(ns); },
-            parser.StmtFor(fr) => { var ns: parser.Stmt = parser.StmtFor { var_name: fr.var_name, iter: subst_fcall_expr(fr.iter, fname, lname, capargs), body: subst_fcall_stmts(fr.body, fname, lname, capargs) }; out = out.append(ns); },
+            parser.StmtWhile(w) => { var ns: parser.Stmt = parser.StmtWhile { cond: subst_fcall_expr(w.cond, fname, lname, capargs), body: subst_fcall_stmts(w.body, fname, lname, capargs), label: w.label }; out = out.append(ns); },
+            parser.StmtFor(fr) => { var ns: parser.Stmt = parser.StmtFor { var_name: fr.var_name, iter: subst_fcall_expr(fr.iter, fname, lname, capargs), body: subst_fcall_stmts(fr.body, fname, lname, capargs), label: fr.label }; out = out.append(ns); },
             _ => { out = out.append(stmts[i]); }
         }
         i = i + 1;
@@ -12501,8 +12513,8 @@ function box_rewrite_stmt(st: parser.Stmt, boxed: string[]): parser.Stmt {
         parser.StmtReturn(r) => { return parser.StmtReturn { value: box_rewrite_expr(r.value, boxed), line: r.line, col: r.col }; },
         parser.StmtExpr(e) => { return parser.StmtExpr { value: box_rewrite_expr(e.value, boxed) }; },
         parser.StmtIf(f) => { return parser.StmtIf { cond: box_rewrite_expr(f.cond, boxed), then_body: box_rewrite_stmts(f.then_body, boxed), else_body: box_rewrite_stmts(f.else_body, boxed) }; },
-        parser.StmtWhile(w) => { return parser.StmtWhile { cond: box_rewrite_expr(w.cond, boxed), body: box_rewrite_stmts(w.body, boxed) }; },
-        parser.StmtFor(fr) => { return parser.StmtFor { var_name: fr.var_name, iter: box_rewrite_expr(fr.iter, boxed), body: box_rewrite_stmts(fr.body, boxed) }; },
+        parser.StmtWhile(w) => { return parser.StmtWhile { cond: box_rewrite_expr(w.cond, boxed), body: box_rewrite_stmts(w.body, boxed), label: w.label }; },
+        parser.StmtFor(fr) => { return parser.StmtFor { var_name: fr.var_name, iter: box_rewrite_expr(fr.iter, boxed), body: box_rewrite_stmts(fr.body, boxed), label: fr.label }; },
         parser.StmtMatch(m) => {
             var na: parser.MatchArm[] = [];
             var ai: i32 = 0;

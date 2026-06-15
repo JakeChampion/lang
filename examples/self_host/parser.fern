@@ -115,7 +115,7 @@ pub struct StmtIf { cond: Expr, then_body: Stmt[], else_body: Stmt[] }
 // repeatedly as long as cond evaluates to a true VBool; an
 // in-body `return` short-circuits the loop the same way it
 // short-circuits an if-branch.
-pub struct StmtWhile { cond: Expr, body: Stmt[] }
+pub struct StmtWhile { cond: Expr, body: Stmt[], label: string }
 // StmtAssign models a re-assignment to an existing var: `x = expr;`.
 // The target is an ident name — full lvalue syntax (field /
 // index / tuple) is a later port milestone. The checker verifies
@@ -154,14 +154,14 @@ pub struct StmtMatch { scrutinee: Expr, arms: MatchArm[], line: i32, col: i32, o
 // loop binds `var_name` to each element in turn. break /
 // continue inside the body aren't modeled yet — a future
 // slice can add them as StmtBreak / StmtContinue.
-pub struct StmtFor { var_name: string, iter: Expr, body: Stmt[] }
+pub struct StmtFor { var_name: string, iter: Expr, body: Stmt[], label: string }
 // StmtBreak / StmtContinue model `break;` and `continue;`. The
 // tag fields are placeholder payload — variants need a shape
 // in the union and these stmts have no other state. The
 // surrounding while / for body handles the actual control
 // transfer.
-pub struct StmtBreak { tag: i32, line: i32, col: i32 }
-pub struct StmtContinue { tag: i32, line: i32, col: i32 }
+pub struct StmtBreak { tag: i32, line: i32, col: i32, label: string }
+pub struct StmtContinue { tag: i32, line: i32, col: i32, label: string }
 pub struct StmtUnknown { kind: string }
 
 // StmtDefer holds an action statement to run when the enclosing function
@@ -358,15 +358,27 @@ function s_if(cond: Expr, then_body: Stmt[], else_body: Stmt[]): Stmt {
     return StmtIf { cond: cond, then_body: then_body, else_body: else_body };
 }
 function s_while(cond: Expr, body: Stmt[]): Stmt {
-    return StmtWhile { cond: cond, body: body };
+    return StmtWhile { cond: cond, body: body, label: "" };
 }
 function s_for(var_name: string, iter: Expr, body: Stmt[]): Stmt {
-    return StmtFor { var_name: var_name, iter: iter, body: body };
+    return StmtFor { var_name: var_name, iter: iter, body: body, label: "" };
 }
-function s_break(): Stmt { return StmtBreak { tag: 0, line: 0, col: 0 }; }
-function s_break_at(line: i32, col: i32): Stmt { return StmtBreak { tag: 0, line: line, col: col }; }
-function s_continue(): Stmt { return StmtContinue { tag: 0, line: 0, col: 0 }; }
-function s_continue_at(line: i32, col: i32): Stmt { return StmtContinue { tag: 0, line: line, col: col }; }
+// with_loop_label stamps a parsed loop label onto a freshly-built while/for loop
+// (a no-op for the empty label or a non-loop stmt). `loop`/for-range parse helpers
+// return a StmtWhile/StmtFor; this re-wraps it carrying the label.
+function with_loop_label(st: Stmt, label: string): Stmt {
+    if (label.len() == 0) { return st; }
+    match (st) {
+        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: w.body, label: label }; },
+        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: fr.iter, body: fr.body, label: label }; },
+        _ => { return st; }
+    }
+    return st;
+}
+function s_break(): Stmt { return StmtBreak { tag: 0, line: 0, col: 0, label: "" }; }
+function s_break_at(line: i32, col: i32): Stmt { return StmtBreak { tag: 0, line: line, col: col, label: "" }; }
+function s_continue(): Stmt { return StmtContinue { tag: 0, line: 0, col: 0, label: "" }; }
+function s_continue_at(line: i32, col: i32): Stmt { return StmtContinue { tag: 0, line: line, col: col, label: "" }; }
 function s_assign(target: string, value: Expr): Stmt {
     return StmtAssign { target: target, value: value, line: 0, col: 0, target_line: 0, target_col: 0 };
 }
@@ -439,10 +451,10 @@ function rewrite_builder_stmt(s: Stmt, b: string): Stmt {
             return StmtIf { cond: f.cond, then_body: rewrite_builder_stmts(f.then_body, b), else_body: rewrite_builder_stmts(f.else_body, b) };
         },
         StmtWhile(w) => {
-            return StmtWhile { cond: w.cond, body: rewrite_builder_stmts(w.body, b) };
+            return StmtWhile { cond: w.cond, body: rewrite_builder_stmts(w.body, b), label: w.label };
         },
         StmtFor(fr) => {
-            return StmtFor { var_name: fr.var_name, iter: fr.iter, body: rewrite_builder_stmts(fr.body, b) };
+            return StmtFor { var_name: fr.var_name, iter: fr.iter, body: rewrite_builder_stmts(fr.body, b), label: fr.label };
         },
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
@@ -661,8 +673,8 @@ pub function desugar_switch_in_stmt(st: Stmt): Stmt {
             return desugar_switch(lowered);
         },
         StmtIf(f) => { return StmtIf { cond: f.cond, then_body: desugar_switch_block(f.then_body), else_body: desugar_switch_block(f.else_body) }; },
-        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: desugar_switch_block(w.body) }; },
-        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: fr.iter, body: desugar_switch_block(fr.body) }; },
+        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: desugar_switch_block(w.body), label: w.label }; },
+        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: fr.iter, body: desugar_switch_block(fr.body), label: fr.label }; },
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
             var a: i32 = 0;
@@ -676,6 +688,103 @@ pub function desugar_switch_in_stmt(st: Stmt): Stmt {
         _ => { return st; }
     }
     return st;
+}
+
+// label_depth returns the relative loop depth of `name` in the enclosing-loop
+// label stack (the last entry is the innermost loop), or -1 if absent. Depth 0 is
+// the innermost loop, 1 its enclosing loop, and so on.
+function label_depth(labels: string[], name: string): i32 {
+    var i: i32 = labels.len() - 1;
+    while (i >= 0) {
+        if (labels[i] == name) { return (labels.len() - 1) - i; }
+        i = i - 1;
+    }
+    return 0 - 1;
+}
+
+// resolve_labels_stmt rewrites a labeled `break`/`continue`'s `tag` to the
+// relative loop depth of its target label, recursing through every statement
+// container (if / while / for / match / switch / defer) so a break/continue
+// anywhere in the nest is resolved against the live enclosing-loop label stack
+// (`labels`; "" for an unlabeled loop). An unlabeled break/continue keeps tag 0
+// (the innermost loop). This runs on the RAW parsed module before any desugar
+// pass, so the loop labels are still in place and every downstream pass only has
+// to carry the already-resolved `tag` (which break/continue stmts preserve by
+// identity through those passes).
+function resolve_labels_stmt(st: Stmt, labels: string[]): Stmt {
+    match (st) {
+        StmtBreak(b) => {
+            if (b.label.len() == 0) { return st; }
+            var d: i32 = label_depth(labels, b.label);
+            if (d < 0) { d = 0; }
+            return StmtBreak { tag: d, line: b.line, col: b.col, label: b.label };
+        },
+        StmtContinue(c) => {
+            if (c.label.len() == 0) { return st; }
+            var d2: i32 = label_depth(labels, c.label);
+            if (d2 < 0) { d2 = 0; }
+            return StmtContinue { tag: d2, line: c.line, col: c.col, label: c.label };
+        },
+        StmtWhile(w) => {
+            return StmtWhile { cond: w.cond, body: resolve_labels_block(w.body, labels.append(w.label)), label: w.label };
+        },
+        StmtFor(fr) => {
+            return StmtFor { var_name: fr.var_name, iter: fr.iter, body: resolve_labels_block(fr.body, labels.append(fr.label)), label: fr.label };
+        },
+        StmtIf(f) => {
+            return StmtIf { cond: f.cond, then_body: resolve_labels_block(f.then_body, labels), else_body: resolve_labels_block(f.else_body, labels) };
+        },
+        StmtMatch(m) => {
+            var arms2: MatchArm[] = [];
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var a: MatchArm = m.arms[ai];
+                arms2 = arms2.append(MatchArm { pattern: a.pattern, body: resolve_labels_block(a.body, labels), line: a.line, col: a.col, guard: a.guard, has_guard: a.has_guard });
+                ai = ai + 1;
+            }
+            return StmtMatch { scrutinee: m.scrutinee, arms: arms2, line: m.line, col: m.col, origin: m.origin };
+        },
+        StmtSwitch(sw) => {
+            var cases2: SwitchCase[] = [];
+            var ci: i32 = 0;
+            while (ci < sw.cases.len()) {
+                var sc: SwitchCase = sw.cases[ci];
+                cases2 = cases2.append(SwitchCase { values: sc.values, body: resolve_labels_block(sc.body, labels) });
+                ci = ci + 1;
+            }
+            return StmtSwitch { scrutinee: sw.scrutinee, cases: cases2, has_default: sw.has_default, default_body: resolve_labels_block(sw.default_body, labels), line: sw.line, col: sw.col };
+        },
+        StmtDefer(dd) => {
+            return StmtDefer { action: resolve_labels_stmt(dd.action, labels), on_error: dd.on_error };
+        },
+        _ => { return st; }
+    }
+    return st;
+}
+
+function resolve_labels_block(stmts: Stmt[], labels: string[]): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        out = out.append(resolve_labels_stmt(stmts[i], labels));
+        i = i + 1;
+    }
+    return out;
+}
+
+// resolve_labels_module bakes each labeled break/continue's relative loop depth
+// into its `tag` (see resolve_labels_stmt). Runs first in the prepare pipeline,
+// on the freshly parsed module.
+pub function resolve_labels_module(mod: Module): Module {
+    var funcs: FuncDecl[] = [];
+    var none: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var fd: FuncDecl = mod.funcs[i];
+        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: resolve_labels_block(fd.body, none), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count });
+        i = i + 1;
+    }
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: resolve_labels_block(mod.top_stmts, none), enums: mod.enums, resources: mod.resources, exports: mod.exports };
 }
 
 pub function desugar_switches_module(mod: Module): Module {
@@ -2267,6 +2376,25 @@ function parse_stmt(p: Par): StmtResult {
         var noelse: Stmt[] = [];
         return StmtResult { par: bb.par, stmt: s_if(e_bool(true), bb.body, noelse) };
     }
+    // Loop label `outer: while (…) { … }` / `outer: for … ` / `outer: loop { … }`.
+    // A leading `IDENT :` immediately before a loop keyword is a label (a bare
+    // `IDENT :` at statement start has no other meaning). Capture it, consume the
+    // `IDENT :`, and attach it to the loop below via with_loop_label; a labeled
+    // `break outer` / `continue outer` targets it (resolve_labels bakes the
+    // relative depth into the break/continue tag).
+    var loop_label: string = "";
+    var llid: string = p.peek_ident();
+    if (llid.len() > 0) {
+        var lp1: Par = p.advance();
+        if (lp1.peek_punct() == ":") {
+            var lp2: Par = lp1.advance();
+            var lkw: string = lp2.peek_keyword();
+            if (lkw == "while" || lkw == "for" || lkw == "loop") {
+                loop_label = llid;
+                p = lp2;
+            }
+        }
+    }
     var kw: string = p.peek_keyword();
     if (kw == "defer") {
         // `defer ACTION;` — the deferred action is an ordinary statement
@@ -2386,10 +2514,10 @@ function parse_stmt(p: Par): StmtResult {
         if (p.peek_punct() == ")") { p = p.advance(); }
         var wb: BlockResult = parse_block(p);
         p = wb.par;
-        return StmtResult { par: p, stmt: s_while(wc.expr, wb.body) };
+        return StmtResult { par: p, stmt: with_loop_label(s_while(wc.expr, wb.body), loop_label) };
     }
-    if (kw == "loop") { return parse_loop_stmt(p); }
-    if (kw == "for") { return parse_for_stmt(p); }
+    if (kw == "loop") { var lr: StmtResult = parse_loop_stmt(p); return StmtResult { par: lr.par, stmt: with_loop_label(lr.stmt, loop_label) }; }
+    if (kw == "for") { var fr0: StmtResult = parse_for_stmt(p); return StmtResult { par: fr0.par, stmt: with_loop_label(fr0.stmt, loop_label) }; }
     // `let` and `var` introduce a binding the same way here — the
     // self-host compiler doesn't track the immutability distinction
     // (the Go checker enforces it), so both parse to the same StmtVar.
@@ -2522,16 +2650,29 @@ function parse_stmt(p: Par): StmtResult {
         var bkline: i32 = p.peek_line();
         var bkcol: i32 = p.peek_col();
         p = p.advance();
+        // Optional target label: `break outer;`. resolve_labels turns it into a
+        // relative loop depth in the tag. Only treat a trailing ident as the label
+        // when it is immediately followed by `;` — otherwise a `break` with no
+        // trailing semicolon followed by an identifier-led statement would wrongly
+        // swallow that statement's leading ident.
+        var blbl: string = "";
+        var bid: string = p.peek_ident();
+        if (bid.len() > 0 && p.advance().peek_punct() == ";") { blbl = bid; p = p.advance(); }
         if (p.peek_punct() == ";") { p = p.advance(); }
-        return StmtResult { par: p, stmt: s_break_at(bkline, bkcol) };
+        return StmtResult { par: p, stmt: StmtBreak { tag: 0, line: bkline, col: bkcol, label: blbl } };
     }
     if (kw == "continue") {
         // E011 is reported at the `continue` keyword (Go's `Continue{P}`).
         var ckline: i32 = p.peek_line();
         var ckcol: i32 = p.peek_col();
         p = p.advance();
+        // Optional target label: `continue outer;` (only when followed by `;`; see
+        // the break case for why).
+        var clbl: string = "";
+        var cid: string = p.peek_ident();
+        if (cid.len() > 0 && p.advance().peek_punct() == ";") { clbl = cid; p = p.advance(); }
         if (p.peek_punct() == ";") { p = p.advance(); }
-        return StmtResult { par: p, stmt: s_continue_at(ckline, ckcol) };
+        return StmtResult { par: p, stmt: StmtContinue { tag: 0, line: ckline, col: ckcol, label: clbl } };
     }
     // Expression statement — or (compound) assignment if `=`,
     // `+=`, `-=`, `*=`, `/=`, `%=` follows. The parser doesn't
@@ -3807,13 +3948,13 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts): RStmtOne
         StmtWhile(w) => {
             var cv: RExpr = mono_expr(w.cond, env, funcs, ins);
             var wb: RStmts = mono_stmts(w.body, env, funcs, cv.rins);
-            return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts }, renv: env, rins2: wb.rins3 };
+            return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label }, renv: env, rins2: wb.rins3 };
         },
         StmtFor(fr) => {
             var it: RExpr = mono_expr(fr.iter, env, funcs, ins);
             var benv: MEnv = env.ebind(fr.var_name, "");
             var fb: RStmts = mono_stmts(fr.body, benv, funcs, it.rins);
-            return RStmtOne { rstmt: StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts }, renv: env, rins2: fb.rins3 };
+            return RStmtOne { rstmt: StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label }, renv: env, rins2: fb.rins3 };
         },
         StmtMatch(m) => {
             var sv: RExpr = mono_expr(m.scrutinee, env, funcs, ins);
@@ -3961,8 +4102,8 @@ function subst_stmts(stmts: Stmt[], tparams: string[], cts: string[]): Stmt[] {
             StmtExpr(x) => { out = out.append(StmtExpr { value: subst_expr(x.value, tparams, cts) }); },
             StmtAssign(a) => { out = out.append(StmtAssign { target: a.target, value: subst_expr(a.value, tparams, cts), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }); },
             StmtIf(f) => { out = out.append(StmtIf { cond: subst_expr(f.cond, tparams, cts), then_body: subst_stmts(f.then_body, tparams, cts), else_body: subst_stmts(f.else_body, tparams, cts) }); },
-            StmtWhile(w) => { out = out.append(StmtWhile { cond: subst_expr(w.cond, tparams, cts), body: subst_stmts(w.body, tparams, cts) }); },
-            StmtFor(fr) => { out = out.append(StmtFor { var_name: fr.var_name, iter: subst_expr(fr.iter, tparams, cts), body: subst_stmts(fr.body, tparams, cts) }); },
+            StmtWhile(w) => { out = out.append(StmtWhile { cond: subst_expr(w.cond, tparams, cts), body: subst_stmts(w.body, tparams, cts), label: w.label }); },
+            StmtFor(fr) => { out = out.append(StmtFor { var_name: fr.var_name, iter: subst_expr(fr.iter, tparams, cts), body: subst_stmts(fr.body, tparams, cts), label: fr.label }); },
             StmtMatch(m) => {
                 var arms: MatchArm[] = [];
                 var j: i32 = 0;
@@ -4376,13 +4517,13 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
         StmtWhile(w) => {
             var cv: RExpr = ms_expr(w.cond, env, gstructs, funcs, ins);
             var wb: RStmts = ms_stmts(w.body, env, gstructs, funcs, cv.rins);
-            return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts }, renv: env, rins2: wb.rins3 };
+            return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label }, renv: env, rins2: wb.rins3 };
         },
         StmtFor(fr) => {
             var it: RExpr = ms_expr(fr.iter, env, gstructs, funcs, ins);
             var benv: MEnv = env.ebind(fr.var_name, "");
             var fb: RStmts = ms_stmts(fr.body, benv, gstructs, funcs, it.rins);
-            return RStmtOne { rstmt: StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts }, renv: env, rins2: fb.rins3 };
+            return RStmtOne { rstmt: StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label }, renv: env, rins2: fb.rins3 };
         },
         StmtMatch(m) => {
             var sv: RExpr = ms_expr(m.scrutinee, env, gstructs, funcs, ins);
@@ -5449,13 +5590,13 @@ function desugar_ranges_one(st: Stmt): Stmt[] {
                 while (k < dbody.len()) { wbody = wbody.append(dbody[k]); k = k + 1; }
                 return [ivar, hivar, s_while(e_bool(true), wbody)];
             }
-            return [StmtFor { var_name: fr.var_name, iter: fr.iter, body: dbody }];
+            return [StmtFor { var_name: fr.var_name, iter: fr.iter, body: dbody, label: fr.label }];
         },
         StmtIf(f) => {
             return [StmtIf { cond: f.cond, then_body: desugar_ranges_block(f.then_body), else_body: desugar_ranges_block(f.else_body) }];
         },
         StmtWhile(w) => {
-            return [StmtWhile { cond: w.cond, body: desugar_ranges_block(w.body) }];
+            return [StmtWhile { cond: w.cond, body: desugar_ranges_block(w.body), label: w.label }];
         },
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
@@ -5819,7 +5960,7 @@ pub function module_with_builtins(mod: Module): Module {
     // Lower switches to if/else-if chains first (the type checker has
     // already run on the StmtSwitch shape for E025), so no later pass or
     // backend sees a StmtSwitch at runtime.
-    var mono: Module = monomorphize_structs(monomorphize_module(lower_defers_module(insert_resource_drops(infer_ret_types_module(hoist_local_funcs_module(desugar_switches_module(desugar_ranges_module(fill_default_args_module(mod)))))))));
+    var mono: Module = monomorphize_structs(monomorphize_module(lower_defers_module(insert_resource_drops(infer_ret_types_module(hoist_local_funcs_module(desugar_switches_module(desugar_ranges_module(fill_default_args_module(resolve_labels_module(mod))))))))));
     return Module {
         funcs: mono.funcs,
         structs: inject_builtin_enums(mono.structs),
@@ -6893,7 +7034,11 @@ pub function parse_module(toks: lexer.Token[]): Module {
         }
         iii = iii + 1;
     }
-    return Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports };
+    // Resolve loop labels here, at the single shared parse entry, so every
+    // driver/backend pipeline sees break/continue tags already baked in (the
+    // per-driver prep pipelines diverge, so doing it here is the universal spot).
+    // Idempotent: re-running on already-resolved tags recomputes the same depth.
+    return resolve_labels_module(Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports });
 }
 
 // merge_module flat-concatenates `into`'s decls with `from`'s:

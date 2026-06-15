@@ -321,13 +321,14 @@ function rewrite_stmt(st: parser.Stmt, ctx: RewriteCtx): parser.Stmt {
             };
         },
         parser.StmtWhile(w) => {
-            return parser.StmtWhile { cond: rewrite_expr(w.cond, ctx), body: rewrite_block(w.body, ctx) };
+            return parser.StmtWhile { cond: rewrite_expr(w.cond, ctx), body: rewrite_block(w.body, ctx), label: w.label };
         },
         parser.StmtFor(f) => {
             return parser.StmtFor {
                 var_name: f.var_name,
                 iter: rewrite_expr(f.iter, ctx),
-                body: rewrite_block(f.body, ctx)
+                body: rewrite_block(f.body, ctx),
+                label: f.label
             };
         },
         parser.StmtMatch(m) => {

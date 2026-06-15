@@ -2830,8 +2830,8 @@ function switch_diag_block(stmts: parser.Stmt[]): parser.Stmt[] {
                 }
             },
             parser.StmtIf(f) => { out = out.append(parser.StmtIf { cond: f.cond, then_body: switch_diag_block(f.then_body), else_body: switch_diag_block(f.else_body) }); },
-            parser.StmtWhile(w) => { out = out.append(parser.StmtWhile { cond: w.cond, body: switch_diag_block(w.body) }); },
-            parser.StmtFor(fr) => { out = out.append(parser.StmtFor { var_name: fr.var_name, iter: fr.iter, body: switch_diag_block(fr.body) }); },
+            parser.StmtWhile(w) => { out = out.append(parser.StmtWhile { cond: w.cond, body: switch_diag_block(w.body), label: w.label }); },
+            parser.StmtFor(fr) => { out = out.append(parser.StmtFor { var_name: fr.var_name, iter: fr.iter, body: switch_diag_block(fr.body), label: fr.label }); },
             parser.StmtMatch(m) => {
                 var arms: parser.MatchArm[] = [];
                 var a: i32 = 0;

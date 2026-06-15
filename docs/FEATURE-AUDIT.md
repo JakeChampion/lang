@@ -250,6 +250,33 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-15 — labeled break / continue on the self-host IR path (widen IR subset)
+
+`outer: while/for { … break outer; … continue outer; … }` now parses, resolves,
+and lowers through the self-host IR path (previously the `outer:` label prefix
+failed to parse → module fell to AST). Design (deliberately low-risk):
+- **Parser** records a loop label on `StmtWhile`/`StmtFor` (lookahead on a leading
+  `IDENT :` before a loop keyword) and a target label on `StmtBreak`/`StmtContinue`
+  (`break outer` / `continue outer`); new `label` field on all four structs.
+- A **`resolve_labels` pass** runs at the single shared parse entry (`parse_module`,
+  before any desugar — and idempotent, so re-running in the prepare chain is
+  harmless) and bakes each labeled break/continue's RELATIVE loop depth into its
+  existing `tag` field (0 = innermost). This collapses the risk surface: downstream
+  passes never need to preserve loop labels, only the already-resolved `tag` (which
+  break/continue carry by identity).
+- **irlower** break/continue lower to `loop_blk_at_depth(tag)` (tag 0 reproduces
+  the old innermost-targeting exactly, so unlabeled behaviour is unchanged).
+  All backends emit the same `op_br`, so x86/arm worked immediately; the universal
+  `parse_module` placement was needed so the wasm driver (which assembles its own
+  prep pipeline) also sees resolved tags — its native multi-level `br` then lands
+  correctly.
+`ssa.fern` is off the active asm_run/irlower path, so its `tag != 0` guard is moot
+here. Verified on x86-64, wasm, and arm64 (qemu) against the interpreter:
+`break outer`, `continue outer`, labeled `for`, triple-nested `continue mid`,
+`break` out of a `match` arm; plain (unlabeled) break/continue regress. Fixpoint
+still converges byte-identically (the compiler's own sources use no labeled loops,
+so resolution is a no-op there). Guarded by `TestSelfHostLabeledBreakIR{X86_64,Wasm}`.
+
 ### 2026-06-15 — oracle-checked modload coverage: std/u32, std/u64, std/i64, std/sort (coverage)
 
 Extends the self-host **modload** coverage (the `asm_load_run` driver that resolves
