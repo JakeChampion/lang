@@ -350,6 +350,41 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// box stays live; each arm allocates a fresh result box). Value 9 + 1 = 10;
 		// detector 0.
 		{"inarm-no-reuse-escapes-detector", `enum E { V(i32, i32), W(i32, i32) } function use_x(e: E): i32 { return 1; } function go(): i32 { var x = V(3, 4); var y = match (x) { V(a, b) => W(a + 1, b + 1), W(c, d) => V(c, d) }; var g = use_x(x); var r = match (y) { V(a, b) => a + b, W(c, d) => c + d }; if (r + g != 10) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// WIDENED PAYLOAD WIDTHS (FBIP in-arm reuse now admits all i32-shaped scalars
+		// — i32 / u32 / boolean — plus the 8-byte i64 and f64, not just i32). Each
+		// FIRING `var y = match (x) { ... }` reuses x's box in place: payloads are read
+		// into temps at their width (struct_get_i64 / struct_get width-64 for the 8-byte
+		// cases, marked i64/f64 so the arm's ctor-arg expressions type correctly) and
+		// the constructed fields written back at width (lower_i64+struct_set_i64 for i64,
+		// lower_expr+struct_set width-64 for f64). The reuse dispatch intercepts the
+		// firing IIFE match-EXPRESSION directly (it does NOT go through lower_iife_match's
+		// i32-only gate). The result y is read back via a STATEMENT match (the generic
+		// enum path handles i64/f64 payloads; the match-EXPRESSION form is still
+		// i32-only, an orthogonal IR-subset gap), so the only width-sensitive lowering
+		// under test is the reuse itself. Value correct + detector 0 (box freed once via y).
+		// FIRING i64: V(i64,i64)→W(a+1,b+1); W(4,5) read back → 4+5 = 9.
+		{"inarm-reuse-i64-value", `enum E { V(i64, i64), W(i64, i64) } function go(): i32 { var x = V(3, 4); var y = match (x) { V(a, b) => W(a + 1, b + 1), W(c, d) => V(c, d) }; var r: i64 = 0; match (y) { V(a, b) => { r = a + b; }, W(c, d) => { r = c + d; } } return r as i32; } function main(): i32 { return go(); }`, 9},
+		{"inarm-reuse-i64-detector", `enum E { V(i64, i64), W(i64, i64) } function go(): i32 { var x = V(3, 4); var y = match (x) { V(a, b) => W(a + 1, b + 1), W(c, d) => V(c, d) }; var r: i64 = 0; match (y) { V(a, b) => { r = a + b; }, W(c, d) => { r = c + d; } } if (r as i32 != 9) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// FIRING i64 corruption probe: fresh array allocated AFTER the reusing match
+		// reads back intact (reuse didn't clobber the heap / free early).
+		{"inarm-reuse-i64-corruption-probe-detector", `enum E { V(i64, i64), W(i64, i64) } function go(): i32 { var x = V(3, 4); var y = match (x) { V(a, b) => W(a + 1, b + 1), W(c, d) => V(c, d) }; var r: i64 = 0; match (y) { V(a, b) => { r = a + b; }, W(c, d) => { r = c + d; } } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (r as i32 != 9) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// FIRING f64: V(f64,f64)→W(a+1.0,b+1.0); W(4.0,5.0) read back → 4+5 = 9.
+		{"inarm-reuse-f64-value", `enum E { V(f64, f64), W(f64, f64) } function go(): i32 { var x = V(3.0, 4.0); var y = match (x) { V(a, b) => W(a + 1.0, b + 1.0), W(c, d) => V(c, d) }; var r: f64 = 0.0; match (y) { V(a, b) => { r = a + b; }, W(c, d) => { r = c + d; } } return r as i32; } function main(): i32 { return go(); }`, 9},
+		{"inarm-reuse-f64-detector", `enum E { V(f64, f64), W(f64, f64) } function go(): i32 { var x = V(3.0, 4.0); var y = match (x) { V(a, b) => W(a + 1.0, b + 1.0), W(c, d) => V(c, d) }; var r: f64 = 0.0; match (y) { V(a, b) => { r = a + b; }, W(c, d) => { r = c + d; } } if (r as i32 != 9) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// FIRING boolean: V(boolean,boolean)→W(!a,!b); V(true,false) → W(false,true);
+		// read back → false?10:0 + true?1:0 = 1.
+		{"inarm-reuse-boolean-value", `enum E { V(boolean, boolean), W(boolean, boolean) } function go(): i32 { var x = V(true, false); var y = match (x) { V(a, b) => W(!a, !b), W(c, d) => V(c, d) }; var r = 0; match (y) { V(a, b) => { r = 0; }, W(c, d) => { if (c) { r = r + 10; } if (d) { r = r + 1; } } } return r; } function main(): i32 { return go(); }`, 1},
+		{"inarm-reuse-boolean-detector", `enum E { V(boolean, boolean), W(boolean, boolean) } function go(): i32 { var x = V(true, false); var y = match (x) { V(a, b) => W(!a, !b), W(c, d) => V(c, d) }; var r = 0; match (y) { V(a, b) => { r = 0; }, W(c, d) => { if (c) { r = r + 10; } if (d) { r = r + 1; } } } if (r != 1) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// FIRING u32: V(u32,u32)→W(a+1,b+1); W(4,5) read back → 4+5 = 9 (i32-shaped).
+		{"inarm-reuse-u32-detector", `enum E { V(u32, u32), W(u32, u32) } function go(): i32 { var x = V(3, 4); var y = match (x) { V(a, b) => W(a + 1, b + 1), W(c, d) => V(c, d) }; var r = 0; match (y) { V(a, b) => { r = (a + b) as i32; }, W(c, d) => { r = (c + d) as i32; } } if (r != 9) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// (u64 is deliberately NOT admitted by the in-arm reuse gate —
+		// struct_field_is_i64 / struct_field_width classify a u64 field as i32-shaped,
+		// so the 8-byte read/write path is never selected and the value would truncate.
+		// inarm_reuse_payload_type_ok excludes it. A u64-payload program can't route the
+		// IR path here at all: with reuse not firing, the firing IIFE `var y = match(x)`
+		// falls to lower_iife_match, whose match-EXPRESSION binding is itself i32-only
+		// — so no route=="ir" u64 case is expressible in this harness. The exclusion is
+		// covered structurally by the gate + the firing i64/f64 cases above.)
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

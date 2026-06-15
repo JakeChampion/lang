@@ -7961,6 +7961,17 @@ function reuse_field_is_scalar(t: string): boolean {
     return t == "i32" || t == "boolean" || t == "i64" || t == "f64" || t == "u32" || t == "u64";
 }
 
+// inarm_reuse_payload_type_ok: a payload field type the in-arm match-reuse lowering
+// can read into a temp and write back at the right width. Admits the i32-shaped
+// scalars (i32 / u32 / boolean — plain struct_get/struct_set) plus the 8-byte i64
+// and f64 (struct_get_i64 / struct_get width-64 on read; lower_i64+struct_set_i64 /
+// lower_expr+struct_set width-64 on write, mirroring emit_enum_donor_reuse). u64 is
+// NOT admitted: struct_field_is_i64 / struct_field_width both classify a u64 field
+// as i32-shaped, so the i64 8-byte path is never selected and the value truncates.
+function inarm_reuse_payload_type_ok(t: string): boolean {
+    return t == "i32" || t == "u32" || t == "boolean" || t == "i64" || t == "f64";
+}
+
 // struct_fields_reusable: every field of `struct_name` is either a flat scalar
 // (reuse_field_is_scalar) or a leak-safe rc-tracked array field
 // (is_leaksafe_array_field — i32[]/boolean[]/i64[]/f64[]). String / nested-struct
@@ -8612,8 +8623,8 @@ function emit_enum_donor_reuse(y_name: string, init: parser.Expr, recip: string,
 //      lowering is done HERE by emit_inarm_match_reuse, dispatched from lower_func
 //      for a firing `var y = match(x)` statement (like emit_enum_donor_reuse). The
 //      donor box is x's OWN slot (the scrutinee is the bare ident x).
-//   2. Read-before-overwrite. Each arm reads its i32 payloads (__ev, __ev1, …) out
-//      of x's box into fresh temps at arm entry (struct_get → store_local) BEFORE
+//   2. Read-before-overwrite. Each arm reads its scalar payloads (__ev, __ev1, …)
+//      out of x's box into fresh temps at arm entry (struct_get → store_local) BEFORE
 //      the box is re-shaped/overwritten — so the arm's field expressions read the
 //      payload COPIES, never the box fields being overwritten.
 //   3. Same-size. The arm's constructed variant W has the SAME field count as x's
@@ -8728,17 +8739,30 @@ function inarm_reuse_match_ok(arms: parser.MatchArm[], enum_name: string, want: 
                 if (is_builtin_pattern(pv.type_name)) { return false; }
                 if (variant_enum_owner(structs, pv.type_name) != enum_name) { return false; }
                 if (!enum_variant_scalar_payload(structs, pv.type_name)) { return false; }
-                // The matched variant's payload fields are read into temps; they
-                // must all be i32 (the temp-store path). decl_field_count gives the
-                // payload count; each field is scalar (checked above) — require i32.
+                // The matched variant's payload fields are read into temps at their
+                // width. Admit i32 / u32 / boolean (plain i32 path) plus the 8-byte
+                // i64 / f64 (read via struct_get_i64 / struct_get width-64, written
+                // via lower_i64+struct_set_i64 / struct_set width-64 — mirroring
+                // emit_enum_donor_reuse). u64 is excluded (see
+                // inarm_reuse_payload_type_ok): struct_field_is_i64 / struct_field_width
+                // both classify it as i32-shaped, so the 8-byte path is never taken.
                 var nf: i32 = decl_field_count(structs, pv.type_name);
                 var fi: i32 = 0;
                 while (fi < nf) {
-                    if (decl_field_type_at(structs, pv.type_name, fi) != "i32") { return false; }
+                    if (!inarm_reuse_payload_type_ok(decl_field_type_at(structs, pv.type_name, fi))) { return false; }
                     fi = fi + 1;
                 }
-                // The constructed result must be a same-size (== want) scalar variant.
-                if (inarm_arm_ctor_variant(arm.body, enum_name, want, structs) == "") { return false; }
+                // The constructed result must be a same-size (== want) scalar variant
+                // whose every written field is also an admitted width (its write path
+                // is i32 / i64 / f64 only — u64 results would truncate the same way).
+                var rv: string = inarm_arm_ctor_variant(arm.body, enum_name, want, structs);
+                if (rv == "") { return false; }
+                var rnf: i32 = decl_field_count(structs, rv);
+                var rfi: i32 = 0;
+                while (rfi < rnf) {
+                    if (!inarm_reuse_payload_type_ok(decl_field_type_at(structs, rv, rfi))) { return false; }
+                    rfi = rfi + 1;
+                }
             },
             _ => { return false; }
         }
@@ -8822,13 +8846,16 @@ function consumed_inarm_reuse_sites(body: parser.Stmt[], structs: parser.StructD
 
 // emit_inarm_match_reuse lowers a firing `var y = match (x) { ... }` (the site found
 // by consumed_inarm_reuse_sites) with IN-PLACE reuse of x's box. It emits the same
-// block/br dispatch as the generic enum match, but each arm — after reading its i32
-// payloads into temps — re-shapes x's box to the arm's constructed variant
-// (op_struct_set_shape), writes the constructed fields, binds y to x's box, zeroes
-// x's slot, then br's out. Every arm reuses the box, so y owns it on every path and
-// it is freed exactly once at y's reclamation (no post-match free exists for an
-// in-arm scrutinee). Restricted to the inarm_reuse_match_ok shape (scalar enum,
-// i32 payloads, same-size scalar-variant results, no guards/wildcards).
+// block/br dispatch as the generic enum match, but each arm — after reading its
+// scalar payloads into temps at their width (i32 / u32 / boolean via struct_get,
+// i64 via struct_get_i64, f64 via struct_get width-64) — re-shapes x's box to the
+// arm's constructed variant (op_struct_set_shape), writes the constructed fields at
+// their width (i64 via lower_i64+struct_set_i64, else lower_expr+struct_set), binds
+// y to x's box, zeroes x's slot, then br's out. Every arm reuses the box, so y owns
+// it on every path and it is freed exactly once at y's reclamation (no post-match
+// free exists for an in-arm scrutinee). Restricted to the inarm_reuse_match_ok shape
+// (scalar enum, i32/u32/boolean/i64/f64 payloads, same-size scalar-variant results,
+// no guards/wildcards; u64 excluded — see inarm_reuse_payload_type_ok).
 function emit_inarm_match_reuse(y_name: string, init: parser.Expr, donor_name: string, s: LowerState): LowerState {
     var xslot: i32 = s.slot_of(donor_name);
     if (xslot < 0) { return s.fail(); }
@@ -8859,19 +8886,29 @@ function emit_inarm_match_reuse(y_name: string, init: parser.Expr, donor_name: s
                 st = st.emit(ir.op_variant_is(vname));
                 st = st.emit(ir.op_bin("not", 0, false));   // 1 if NOT this variant
                 st = st.emit(ir.op_brif(0));                // -> skip arm on mismatch
-                // READ-BEFORE-OVERWRITE: read every i32 payload of the matched
+                // READ-BEFORE-OVERWRITE: read every scalar payload of the matched
                 // variant out of x's box into a fresh temp slot, BEFORE re-shaping.
+                // Read at the field's width: an i64 payload uses struct_get_i64
+                // (i64.load), an f64 one struct_get width-64 (f64.load), else the i32
+                // read — and mark the temp slot i64 / f64 so later uses in the arm's
+                // ctor-arg expressions route through lower_i64 / the float ops
+                // (mirrors the generic enum-match payload-binding path).
                 var nbinds: i32 = 1 + pv.extra_bindings.len();
                 var bidx: i32 = 0;
                 while (bidx < nbinds) {
                     var bname: string = pv.binding;
                     if (bidx > 0) { bname = pv.extra_bindings[bidx - 1]; }
                     if (bname.len() > 0 && bname != "_") {
+                        var bty: string = decl_field_type_at(st.structs, vname, bidx);
                         st = st.add_local(bname);
                         var bslot: i32 = st.slot_of(bname);
                         st = st.emit(ir.op_load_local(xslot));
-                        st = st.emit(ir.op_struct_get(bidx, 0));
+                        if (bty == "i64") { st = st.emit(ir.op_struct_get_i64(bidx)); }
+                        else if (bty == "f64") { st = st.emit(ir.op_struct_get(bidx, 64)); }
+                        else { st = st.emit(ir.op_struct_get(bidx, 0)); }
                         st = st.emit(ir.op_store_local(bslot));
+                        if (bty == "i64") { st = st.mark_i64(bslot, true); }
+                        else if (bty == "f64") { st = st.mark_f64(bslot, true); }
                     }
                     bidx = bidx + 1;
                 }
@@ -8896,10 +8933,22 @@ function emit_inarm_match_reuse(y_name: string, init: parser.Expr, donor_name: s
                 st = st.emit(ir.op_drop());
                 var di: i32 = 0;
                 while (di < ctor_args.len()) {
-                    st = st.emit(ir.op_load_local(xslot));
-                    st = lower_expr(ctor_args[di], st);
-                    if (!st.ok) { return st; }
-                    st = st.emit(ir.op_struct_set(di, struct_field_width(st.structs, rvariant, di)));
+                    // Write each constructed field at its width: an i64 field via
+                    // lower_i64 + struct_set_i64; an f64 / i32-shaped field via
+                    // lower_expr + struct_set (width 64 for f64, 0 otherwise — the
+                    // width comes from struct_field_width). Mirrors
+                    // emit_enum_donor_reuse's struct_field_is_i64 branch.
+                    if (struct_field_is_i64(st.structs, rvariant, di)) {
+                        st = st.emit(ir.op_load_local(xslot));
+                        st = lower_i64(ctor_args[di], st);
+                        if (!st.ok) { return st; }
+                        st = st.emit(ir.op_struct_set_i64(di));
+                    } else {
+                        st = st.emit(ir.op_load_local(xslot));
+                        st = lower_expr(ctor_args[di], st);
+                        if (!st.ok) { return st; }
+                        st = st.emit(ir.op_struct_set(di, struct_field_width(st.structs, rvariant, di)));
+                    }
                     di = di + 1;
                 }
                 // Bind y to the reused box; zero x's slot (y now owns the box, freed
