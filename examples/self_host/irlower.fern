@@ -1731,7 +1731,12 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     // receiver type so only genuine method calls match.
                     var mrty: string = expr_struct_type(cfa.obj, s);
                     if (mrty == "") { mrty = expr_recv_prim_type(cfa.obj, s); }
-                    if (mrty != "" && s.is_str_ret_fn(cfa.field)) { return true; }
+                    // Qualified lookup "<recvType>.<method>" (str_ret_fns_of keys
+                    // methods that way) so a string-returning method on THIS
+                    // receiver type is recognised — without colliding with a
+                    // same-named method on another type that returns non-string
+                    // (e.g. i32.to_lower vs string.to_lower).
+                    if (mrty != "" && s.is_str_ret_fn(mrty + "." + cfa.field)) { return true; }
                     return false;
                 },
                 _ => { return false; }
@@ -10178,7 +10183,19 @@ pub function str_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
     while (k < funcs.len()) {
-        if (funcs[k].ret_type == "string") { out = out.append(funcs[k].name); }
+        if (funcs[k].ret_type == "string") {
+            // A METHOD is keyed "<BaseType>.<method>" (like i64_ret_fns_of /
+            // f64_ret_fns_of), NOT its bare name — a method name can collide
+            // across receiver types with DIFFERENT return types (e.g. i32's
+            // `to_lower` returns i32 while string's `to_lower` returns string).
+            // A bare key let `b.to_lower()` on an i32 wrongly type as string, so
+            // the chained `b.to_lower().to_ascii_string()` mis-dispatched to the
+            // nonexistent `string.to_ascii_string` (#case_separator). The method
+            // str-check (expr_is_str) now looks up the qualified key.
+            var key: string = funcs[k].name;
+            if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+            out = out.append(key);
+        }
         // A lifted if-/match-EXPRESSION (`__lam_N`) whose branch is a string
         // CONCAT carries a default `i32` ret_type (the desugar doesn't infer
         // `string + string : string`), so a `(if (c) { "a" + "b" } else { … })`
