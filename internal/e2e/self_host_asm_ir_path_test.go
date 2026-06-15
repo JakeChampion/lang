@@ -254,6 +254,19 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// constructing them + reading fields lowers. d.month*100 + d.day + s.days =
 		// 6*100 + 15 + 3 = 618 (exit 106 mod 256). Was BAIL (Date layout unknown).
 		{"builtin-struct-date", "function f(): i32 { var d = Date { year: 2026, month: 6, day: 15 }; var s = Span { years: 0, months: 0, weeks: 0, days: 3, hours: 0, minutes: 0, seconds: 0, nanos: 0 }; return d.month * 100 + d.day + s.days; } function main(): i32 { return f(); }"},
+		// Sub-word (u8[]) array as a STRUCT FIELD (is_leaksafe_array_field now
+		// admits u8[]/u16[]/i8[]/i16[]) — a byte-buffer struct (the BytesWriter
+		// shape from std/io_buffered). The field stores a pointer; elements ride
+		// the i32[] 4-byte-slot representation (op_arr_push / op_arr_get(32)), the
+		// sub-word value pre-wrapped by `as u8` at the push site. Binding the
+		// field to a local (`var data = w.data`) aliases via a Perceus dup,
+		// append grows the clone, struct-lit spread rebuilds. 10+20+33 = 63.
+		{"subword-arr-field", "struct BW { data: u8[] } function bw_new(): BW { var e: u8[] = []; return BW { data: e }; } function (w: BW) push(b: u8): BW { var data: u8[] = w.data; data = data.append(b); return BW { ...w, data: data }; } function (w: BW) sum(): i32 { var data: u8[] = w.data; var t: i32 = 0; var i: i32 = 0; while (i < data.len()) { t = t + (data[i] as i32); i = i + 1; } return t; } function main(): i32 { var w = bw_new(); w = w.push(10 as u8); w = w.push(20 as u8); w = w.push(33 as u8); return w.sum(); }"},
+		// The checker-injected BytesWriter built-in (std/io_buffered) reachable on
+		// the IR path: same u8[]-field shape, injected by inject_builtin_enums so
+		// its layout + leaf-safety resolve. write_byte spreads + appends; len()
+		// reads the buffer length. 3 bytes written -> len 3.
+		{"builtin-byteswriter", "function main(): i32 { var w: BytesWriter = BytesWriter { data: [] }; w = BytesWriter { ...w, data: w.data.append(65 as u8) }; w = BytesWriter { ...w, data: w.data.append(66 as u8) }; w = BytesWriter { ...w, data: w.data.append(67 as u8) }; return w.data.len(); }"},
 		{"with-loop", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; while (i < 4) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3]; }"},
 		{"append-build", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a[0] + a[4]; }"},
 		// `.append(e)` as a general EXPRESSION (not the `out = out.append(e)`
