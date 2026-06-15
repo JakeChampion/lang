@@ -236,6 +236,21 @@ func TestStaticPieExecutableLayout(t *testing.T) {
 	if val := u64(bin, int(dynOff)+8); val != relaOff {
 		t.Errorf("DT_RELA value = %#x, want %#x", val, relaOff)
 	}
+
+	// The x86-64 PIE container shares the layout but differs in e_machine
+	// (EM_X86_64) and relocation type (R_X86_64_RELATIVE = 8). The x86
+	// assembler's PIE path is a later slice; the container is exercised
+	// here at the byte level.
+	binX := elf.StaticPieExecutableX86(text, data, relocs)
+	if e_machine := u16(binX, 18); e_machine != 62 { // EM_X86_64
+		t.Errorf("x86 e_machine = %d, want 62", e_machine)
+	}
+	if e_type := u16(binX, 16); e_type != 3 { // ET_DYN
+		t.Errorf("x86 e_type = %d, want 3 (ET_DYN)", e_type)
+	}
+	if got := u64(binX, int(relaOff)+8); got != 8 { // r_info type
+		t.Errorf("x86 rela r_info = %d, want 8 (R_X86_64_RELATIVE)", got)
+	}
 }
 
 // TestExitCodeRunsUnderQemu is the end-to-end gate: encode a tiny
