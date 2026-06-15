@@ -3146,7 +3146,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         match (fav) {
                             parser.ExprArray(_) => { fav_ok = true; },
                             parser.ExprIdent(faid) => {
-                                if (is_leaksafe_array_field(cfft)
+                                // A bare ident naming an rc-tracked array local/param,
+                                // SCALAR-element (is_leaksafe_array_field) OR array-of-
+                                // struct (is_struct_array_field_type): the field aliases
+                                // the local's buffer, so retain it with a Perceus dup
+                                // (alias-inc) — the dup is on the buffer POINTER, element-
+                                // type-agnostic, exactly like the field-access arm below
+                                // (`S { xs: s.xs }`) and the struct-array bind/return/
+                                // assign positions. Enum-array idents stay bailing.
+                                if ((is_leaksafe_array_field(cfft) || is_struct_array_field_type(s.structs, cfft))
                                     && s.is_arr_slot(s.slot_of(faid.name))) {
                                     fav_ok = true;
                                     fav_alias_inc = true;
