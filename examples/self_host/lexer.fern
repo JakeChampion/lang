@@ -23,9 +23,11 @@
 // pieces (`{{` / `}}` escape literal braces; standard escapes
 // apply in the literal portions; `{...}` interpolants pass
 // through verbatim, with inner string literals skipped during
-// the brace-matching scan). The PARSER side — sub-parsing each
-// interpolant Expr text into an ast.Expr — is still a follow-up;
-// parser.fern surfaces a TokFString as an unknown expr for now.
+// the brace-matching scan). The PARSER side now sub-parses each
+// interpolant Expr text and desugars the f-string to a `+`-chain
+// of literal parts and `(<expr>).to_string()` calls (see the
+// `lexer.TokFString` arm in parser.fern's parse_primary), so an
+// f-string lowers end-to-end through both self-host backends.
 //
 // Still out of scope (the Go lexer covers it; deferred to a
 // follow-up port): the separate comment list (skip_trivia drops
