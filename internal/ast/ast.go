@@ -204,12 +204,31 @@ type ProjType struct {
 // slice compare, and `String()` is deterministic. A single-trait
 // `dyn A` is the 1-element case. Use Trait0() for genuinely
 // single-trait-only contexts; multi-trait-aware code iterates Traits.
-type DynTraitType struct{ Traits []string }
+type DynTraitType struct {
+	Traits []string
+	// Args carries the generic trait-arguments for each trait, parallel
+	// to Traits (Args[i] are the arguments for Traits[i]). It is nil for
+	// the common non-generic case, and an entry is nil/empty for any
+	// individual non-generic trait in a mixed set. `dyn Container[i32]`
+	// is Traits=["Container"], Args=[[i32]]; the runtime erases the
+	// arguments (the vtable is keyed by trait name), so Args drives only
+	// the checker's coercion gate and method-signature substitution.
+	Args [][]Type
+}
+
+// ArgsFor returns the generic trait-arguments for the i-th trait, or nil
+// when the trait is non-generic (or Args is short / absent).
+func (d DynTraitType) ArgsFor(i int) []Type {
+	if i < 0 || i >= len(d.Args) {
+		return nil
+	}
+	return d.Args[i]
+}
 
 // NewDynTraitType builds a DynTraitType from a trait-name set, normalising
 // it to the canonical sorted+deduped form. Callers (the parser, modload,
 // any code synthesising a `dyn` type) should go through this so the
-// invariant holds everywhere.
+// invariant holds everywhere. Use NewDynTraitTypeArgs for generic traits.
 func NewDynTraitType(traits ...string) DynTraitType {
 	if len(traits) <= 1 {
 		return DynTraitType{Traits: append([]string(nil), traits...)}
@@ -225,6 +244,62 @@ func NewDynTraitType(traits ...string) DynTraitType {
 		}
 	}
 	return DynTraitType{Traits: out}
+}
+
+// NewDynTraitTypeArgs builds a DynTraitType carrying per-trait generic
+// arguments (args parallel to traits), normalising to canonical sorted +
+// deduped form. The (trait, args) pairs sort together by trait name, with
+// the args' string form breaking ties so `dyn A[i32] + A[string]` is
+// deterministic (and only deduped when BOTH name and args match). When
+// every args entry is empty this is equivalent to NewDynTraitType.
+func NewDynTraitTypeArgs(traits []string, args [][]Type) DynTraitType {
+	if len(args) != len(traits) {
+		// Defensive: pad/truncate so indexing stays in step.
+		na := make([][]Type, len(traits))
+		copy(na, args)
+		args = na
+	}
+	anyArgs := false
+	for _, a := range args {
+		if len(a) > 0 {
+			anyArgs = true
+			break
+		}
+	}
+	if !anyArgs {
+		return NewDynTraitType(traits...)
+	}
+	idx := make([]int, len(traits))
+	for i := range idx {
+		idx[i] = i
+	}
+	key := func(i int) string { return traits[i] + "\x00" + typeArgsString(args[i]) }
+	sort.SliceStable(idx, func(a, b int) bool { return key(idx[a]) < key(idx[b]) })
+	outT := make([]string, 0, len(traits))
+	outA := make([][]Type, 0, len(traits))
+	var prev string
+	for n, i := range idx {
+		k := key(i)
+		if n == 0 || k != prev {
+			outT = append(outT, traits[i])
+			outA = append(outA, args[i])
+			prev = k
+		}
+	}
+	return DynTraitType{Traits: outT, Args: outA}
+}
+
+// typeArgsString renders a generic-argument list as `[a, b]` (empty string
+// for none) — used for the canonical ordering of dyn-trait sets.
+func typeArgsString(args []Type) string {
+	if len(args) == 0 {
+		return ""
+	}
+	parts := make([]string, len(args))
+	for i, a := range args {
+		parts[i] = a.String()
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
 }
 
 // Trait0 returns the first (and, for a single-trait object, only) trait
@@ -341,9 +416,15 @@ func (e EnumType) String() string {
 	}
 	return out + "]"
 }
-func (p ParamType) String() string    { return p.Name }
-func (SelfType) String() string       { return "Self" }
-func (d DynTraitType) String() string { return "dyn " + strings.Join(d.Traits, " + ") }
+func (p ParamType) String() string { return p.Name }
+func (SelfType) String() string    { return "Self" }
+func (d DynTraitType) String() string {
+	parts := make([]string, len(d.Traits))
+	for i, t := range d.Traits {
+		parts[i] = t + typeArgsString(d.ArgsFor(i))
+	}
+	return "dyn " + strings.Join(parts, " + ")
+}
 func (h HandleType) String() string {
 	if h.Borrowed {
 		return "borrow " + h.Resource
@@ -1057,10 +1138,20 @@ func Equal(a, b Type) bool {
 		}
 		// Both are kept sorted+deduped at construction, so an
 		// element-wise compare is order-insensitive: `dyn A + B` ≡
-		// `dyn B + A`.
+		// `dyn B + A`. Generic trait-args (parallel Args) must match
+		// too, so `dyn Container[i32]` ≠ `dyn Container[string]`.
 		for i := range x.Traits {
 			if x.Traits[i] != y.Traits[i] {
 				return false
+			}
+			xa, ya := x.ArgsFor(i), y.ArgsFor(i)
+			if len(xa) != len(ya) {
+				return false
+			}
+			for j := range xa {
+				if !Equal(xa[j], ya[j]) {
+					return false
+				}
 			}
 		}
 		return true
@@ -1152,6 +1243,7 @@ type DowncastExpr struct {
 	// interpreter handles any set by runtime concrete-type tag.
 	Traits []string
 }
+
 // BlockExpr is a block used in value position: `{ stmt; stmt; …; tailExpr }`.
 // The statements run first, in a fresh child scope, then the trailing
 // expression `Tail` (written WITHOUT a `;`) is the block's value. A block

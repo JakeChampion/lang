@@ -1809,8 +1809,10 @@ func (r *rewriter) rewriteType(slot *ast.Type) {
 		// and fails the `unknown trait` check in validateDynTraitTypes.
 		// DynTraitType carries no position; the public-visibility check
 		// reports at the zero position, which is acceptable for the rare
-		// non-pub case. Re-normalise (sort+dedup) via NewDynTraitType
-		// since mangling can reorder names.
+		// non-pub case. Re-normalise (sort+dedup) via NewDynTraitTypeArgs
+		// since mangling can reorder names. Any generic trait-arguments
+		// (`dyn Container[mod.Foo]`) are themselves rewritten and carried
+		// through, kept paired with their trait across the re-sort.
 		changed := false
 		newTraits := make([]string, len(t.Traits))
 		for i, tr := range t.Traits {
@@ -1820,8 +1822,24 @@ func (r *rewriter) rewriteType(slot *ast.Type) {
 				changed = true
 			}
 		}
+		var newArgs [][]ast.Type
+		if len(t.Args) > 0 {
+			newArgs = make([][]ast.Type, len(t.Args))
+			for i, args := range t.Args {
+				if len(args) == 0 {
+					continue
+				}
+				na := make([]ast.Type, len(args))
+				for j := range args {
+					na[j] = args[j]
+					r.rewriteType(&na[j])
+				}
+				newArgs[i] = na
+			}
+			changed = true
+		}
 		if changed {
-			*slot = ast.NewDynTraitType(newTraits...)
+			*slot = ast.NewDynTraitTypeArgs(newTraits, newArgs)
 		}
 	}
 }

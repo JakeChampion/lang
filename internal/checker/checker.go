@@ -2477,6 +2477,43 @@ func forEachDynTrait(t ast.Type, fn func(string)) {
 	}
 }
 
+// forEachDynTraitObj invokes fn on every DynTraitType nested in t (itself,
+// or inside an array / slice / tuple / func / generic argument). Unlike
+// forEachDynTrait it surfaces the whole object so callers can inspect the
+// per-trait generic arguments (e.g. arity validation of `dyn Container[i32]`).
+func forEachDynTraitObj(t ast.Type, fn func(ast.DynTraitType)) {
+	switch x := t.(type) {
+	case ast.DynTraitType:
+		fn(x)
+		for _, args := range x.Args {
+			for _, a := range args {
+				forEachDynTraitObj(a, fn)
+			}
+		}
+	case ast.ArrayType:
+		forEachDynTraitObj(x.Elem, fn)
+	case ast.SliceType:
+		forEachDynTraitObj(x.Elem, fn)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			forEachDynTraitObj(e, fn)
+		}
+	case *ast.FuncType:
+		for _, p := range x.Params {
+			forEachDynTraitObj(p, fn)
+		}
+		forEachDynTraitObj(x.Result, fn)
+	case ast.StructType:
+		for _, a := range x.Args {
+			forEachDynTraitObj(a, fn)
+		}
+	case ast.EnumType:
+		for _, a := range x.Args {
+			forEachDynTraitObj(a, fn)
+		}
+	}
+}
+
 // forEachHandle invokes fn for every resource HandleType (`own R` /
 // `borrow R`) nested anywhere in t. Drives the resource-handle validation
 // pass (P5 — docs/WIT-BRING-YOUR-OWN.md).
@@ -2579,6 +2616,28 @@ func (c *checker) validateDynTraitTypes(prog *ast.Program) {
 				reported[trait] = true
 				c.errfCode(pos, "E021", "trait %s is not object-safe: %s, so it cannot be used as `dyn %s`",
 					demangle(trait), reason, demangle(trait))
+			}
+		})
+		// A generic trait used as a `dyn` object must PIN its type
+		// parameters — the concrete type is erased, so an unpinned `T`
+		// in a method signature can't be resolved at the call site.
+		// `dyn Container[i32]` is fine; `dyn Container` (arity 1, no
+		// args) is not. Reported once per trait, like the checks above.
+		forEachDynTraitObj(t, func(dt ast.DynTraitType) {
+			for i, trait := range dt.Traits {
+				td, ok := c.info.Traits[trait]
+				if !ok || len(td.TypeParams) == 0 {
+					continue
+				}
+				if got := len(dt.ArgsFor(i)); got != len(td.TypeParams) {
+					key := trait + "!arity"
+					if reported[key] {
+						continue
+					}
+					reported[key] = true
+					c.errfCode(pos, "E021", "generic trait %s used as `dyn` must pin its type parameter(s): expected %d argument(s) (e.g. `dyn %s[...]`), got %d",
+						demangle(trait), len(td.TypeParams), demangle(trait), got)
+				}
 			}
 		})
 	}
@@ -2746,6 +2805,27 @@ func (c *checker) checkDynMethodCall(n *ast.Call, fa *ast.FieldAccess, dt ast.Dy
 	if tm == nil {
 		c.errfCode(fa.FieldPos, "E021", "no method %q on `%s`", fa.Field, dt.String())
 		return nil
+	}
+	// Pin the owner trait's generic type parameters to the dyn object's
+	// arguments before reading the signature: `dyn Container[i32]` makes
+	// `get(): T` read as `get(): i32`. Self is still substituted to the
+	// dyn type itself (below) so the receiver keeps its object type.
+	if td := c.info.Traits[ownerTrait]; td != nil && len(td.TypeParams) > 0 {
+		var args []ast.Type
+		for i, tr := range dt.Traits {
+			if tr == ownerTrait {
+				args = dt.ArgsFor(i)
+				break
+			}
+		}
+		if len(args) == len(td.TypeParams) {
+			sub := make(map[string]ast.Type, len(args))
+			for i, tp := range td.TypeParams {
+				sub[tp] = args[i]
+			}
+			pinned := substTraitMethodTypeParams(*tm, sub)
+			tm = &pinned
+		}
 	}
 	// Trait method signatures are stored as written: a `self` receiver is
 	// present in Params only when the author spelled it (`function area(self:
@@ -5338,9 +5418,18 @@ func (c *checker) inStdlibContext() bool {
 // for `dyn A + B` (a concrete coerces in iff it impls A AND B). The
 // single-trait case is just the 1-element loop.
 func (c *checker) implementsAllDynTraits(dt ast.DynTraitType, tn string) bool {
-	for _, tr := range dt.Traits {
+	for i, tr := range dt.Traits {
 		if !c.info.Impls[tr][tn] {
 			return false
+		}
+		// For a generic trait the impl must match the pinned arguments:
+		// `BoxI: Container[i32]` coerces to `dyn Container[i32]` but not
+		// to `dyn Container[string]`. ImplTraitArgs records what the
+		// impl bound; an empty dyn-arg list (non-generic trait) skips it.
+		if want := dt.ArgsFor(i); len(want) > 0 {
+			if !typeArgsEqual(c.info.ImplTraitArgs[tr][tn], want) {
+				return false
+			}
 		}
 	}
 	return true

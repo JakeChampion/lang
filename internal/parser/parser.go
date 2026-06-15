@@ -1835,28 +1835,50 @@ func (p *parser) parseType() (ast.Type, error) {
 	case t.Kind == lexer.Keyword && t.Text == "dyn":
 		// `dyn Trait` (single) or `dyn A + B` (multi-trait object) — a
 		// runtime trait-object type. Each trait name is a bare
-		// (optionally module-qualified) identifier; no generic args or
-		// bounds. Additional traits after the first are joined with `+`
-		// (mirroring trait-bound syntax, parseOptBounds). The set is
-		// normalised (sorted + deduped) by NewDynTraitType so
-		// `dyn A + B` ≡ `dyn B + A`. Falls through to the trailing-`[]`
-		// suffix loop, so `dyn Shape[]` / `dyn A + B[]` is an array of
-		// trait objects. A trailing/empty `+` is a parse error. See
+		// (optionally module-qualified) identifier, optionally followed
+		// by generic arguments (`dyn Container[i32]`). Additional traits
+		// after the first are joined with `+` (mirroring trait-bound
+		// syntax, parseOptBounds). The set is normalised (sorted +
+		// deduped) by NewDynTraitTypeArgs so `dyn A + B` ≡ `dyn B + A`.
+		// Falls through to the trailing-`[]` suffix loop, so `dyn Shape[]`
+		// / `dyn A + B[]` is an array of trait objects. A trailing/empty
+		// `+` is a parse error. The `[` immediately followed by `]` is the
+		// array suffix (handled below), not an empty generic-arg list. See
 		// docs/DYN-TRAITS.md.
 		p.advance() // consume `dyn`
 		var traits []string
+		var traitArgs [][]ast.Type
 		for {
 			nameTok, err := p.expect(lexer.Ident, "")
 			if err != nil {
 				return nil, err
 			}
 			traits = append(traits, p.maybeQualify(nameTok.Text))
+			var args []ast.Type
+			if p.match(lexer.Punct, "[") && p.i+1 < len(p.tokens) && !(p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == "]") {
+				p.advance() // consume `[`
+				for {
+					at, err := p.parseType()
+					if err != nil {
+						return nil, err
+					}
+					args = append(args, at)
+					if _, ok := p.accept(lexer.Punct, ","); ok {
+						continue
+					}
+					break
+				}
+				if _, err := p.expect(lexer.Punct, "]"); err != nil {
+					return nil, err
+				}
+			}
+			traitArgs = append(traitArgs, args)
 			if _, ok := p.accept(lexer.Punct, "+"); ok {
 				continue
 			}
 			break
 		}
-		base = ast.NewDynTraitType(traits...)
+		base = ast.NewDynTraitTypeArgs(traits, traitArgs)
 	case (t.Kind == lexer.Ident) && (t.Text == "own" || t.Text == "borrow") &&
 		p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Ident:
 		// `own R` / `borrow R` — a WIT resource-handle type (P5 —
