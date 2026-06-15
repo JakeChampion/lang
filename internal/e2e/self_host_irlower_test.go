@@ -152,6 +152,21 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		// IR-path differential suites; the round-trip evaluator here is
 		// integer-only, so it can only exercise float programs that bail.)
 		{"f64-mod-bails", "function main(): i32 { var x: f64 = 5.5; var y: f64 = x % 2.0; if (y > 0.0) { return 1; } return 2; }", 200},
+		// Scalar (i32 / boolean) structs: a literal lowers to struct_make and
+		// field reads/writes to struct_get / struct_set, which the round-trip
+		// evaluator now models as a [rc, f0, f1, …] box on its word-heap (leak-
+		// only, like every backend's AST path). Before this the evaluator had no
+		// case for these ops and fell into the binary-op default, underflowing
+		// the stack -> SIGABRT instead of a clean value. A 0-field struct_make is
+		// a bare enum variant box (`E.A`).
+		{"struct-field-read", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 7, y: 35 }; return p.x + p.y; }", 42},
+		{"struct-lit-unused", "struct P { x: i32 } function main(): i32 { var p = P { x: 7 }; return 5; }", 5},
+		{"struct-nested", "struct P { x: i32 } struct Q { p: P } function main(): i32 { var q = Q { p: P { x: 9 } }; return q.p.x; }", 9},
+		{"struct-bool-field", "struct F { a: boolean, n: i32 } function main(): i32 { var f = F { a: true, n: 8 }; if (f.a) { return f.n; } return 0; }", 8},
+		{"struct-mutate", "struct P { x: i32 } function main(): i32 { var p = P { x: 1 }; p.x = 41; return p.x + 1; }", 42},
+		{"struct-update", "struct P { x: i32, y: i32 } function main(): i32 { var a = P { x: 1, y: 2 }; var b = P { ...a, y: 40 }; return b.x + b.y; }", 41},
+		{"struct-in-loop", "struct P { x: i32 } function main(): i32 { var s = 0; var i = 0; while (i < 4) { var p = P { x: i }; s = s + p.x; i = i + 1; } return s; }", 6},
+		{"enum-bare-construct", "enum E { A, B } function main(): i32 { var e = E.A; return 5; }", 5},
 	}
 
 	for _, tc := range cases {
