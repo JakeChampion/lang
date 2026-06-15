@@ -794,6 +794,14 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"struct-arr-into-lit-ident", `struct E { v: i32 } struct S { es: E[], tag: i32 } function main(): i32 { var xs: E[] = [E { v: 3 }, E { v: 5 }]; var s = S { es: xs, tag: 7 }; return s.es[0].v * 100 + s.es[1].v * 10 + s.tag; }`},
 		{"struct-arr-into-lit-param", `struct E { v: i32 } struct S { es: E[], tag: i32 } function mk(xs: E[], t: i32): S { return S { es: xs, tag: t }; } function main(): i32 { var s = mk([E { v: 2 }, E { v: 8 }], 4); return s.es[0].v * 100 + s.es[1].v * 10 + s.tag; }`},
 		{"struct-arr-into-lit-empty", `struct E { v: i32 } struct S { es: E[] } function empty(): S { var none: E[] = []; return S { es: none }; } function main(): i32 { var s = empty(); return s.es.len(); }`},
+		// Array-of-ENUM field aliasing (bind / return / assign) — the enum twin of
+		// the struct-array positions. Same buffer-pointer Perceus dup; the element
+		// ENUM name is marked on the slot so a later `match (es[i])` recovers the
+		// variant. `Expr[]` / `Stmt[]` field reads in the parser's AST walkers are
+		// exactly this shape (e.g. iter_range_args' `return c.args`).
+		{"enum-arr-field-bind-match", `enum E { A(i32), B } struct H { es: E[] } function sum(h: H): i32 { var es: E[] = h.es; var s = 0; var i = 0; while (i < es.len()) { match (es[i]) { A(n) => { s = s + n; }, B => { s = s + 100; } } i = i + 1; } return s; } function main(): i32 { var h = H { es: [A(5), B, A(9)] }; return sum(h); }`},
+		{"enum-arr-field-return", `enum E { A(i32), B } struct H { es: E[] } function get(h: H): E[] { return h.es; } function main(): i32 { var h = H { es: [A(3), B] }; var es = get(h); return match (es[0]) { A(n) => n, B => 0 } + es.len(); }`},
+		{"enum-arr-field-assign", `enum E { A(i32), B } struct H { es: E[] } function f(h: H): i32 { var es: E[] = []; es = h.es; var s = 0; var i = 0; while (i < es.len()) { match (es[i]) { A(n) => { s = s + n; }, B => {} } i = i + 1; } return s; } function main(): i32 { var h = H { es: [A(7), A(8), B] }; return f(h); }`},
 		// The nested-array motivating shape (parser.module_has_default_params): an
 		// array-of-struct field read out of an element of an outer array-of-struct,
 		// bound in a loop, then indexed for a scalar field.
