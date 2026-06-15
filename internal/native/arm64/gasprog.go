@@ -43,6 +43,18 @@ func AssembleProgramWX(src string, textVAddr uint64) (text, rodata []byte, err e
 	return a.BytesProgramWX(textVAddr)
 }
 
+// AssembleProgramPIE is AssembleProgram for a static position-independent
+// executable (elf.StaticPieExecutable): the W^X layout laid out from a
+// load base of 0, returning the R_AARCH64_RELATIVE relocations for the
+// `.quad <symbol>` slots. Pass elf.TextVAddrPIE as textVAddr.
+func AssembleProgramPIE(src string, textVAddr uint64) (text, rodata []byte, relocs []Reloc, err error) {
+	a, err := ParseProgram(src)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return a.BytesProgramPIE(textVAddr)
+}
+
 // ParseProgram parses and encodes the program (instructions + data
 // directives + symbol/relocation bookkeeping) but does not resolve
 // vaddr-dependent fixups. The caller finishes with BytesProgram (ELF,

@@ -57,6 +57,46 @@ func pageUp(v uint64) uint64 {
 	return (v + pageAlign - 1) &^ (pageAlign - 1)
 }
 
+// PIE (position-independent / ET_DYN) constants. A Fern PIE is a static,
+// no-PLT/GOT image whose only load-base-dependent values are the
+// `.quad <symbol>` function-pointer slots; those carry R_*_RELATIVE
+// relocations the loader (or the program's own self-relocation prologue)
+// applies as `*(base + r_offset) = base + r_addend`.
+const (
+	etDyn = 3 // e_type = ET_DYN (position-independent)
+
+	ptDynamic          = 2    // p_type = PT_DYNAMIC
+	relAArch64Relative = 1027 // R_AARCH64_RELATIVE
+	relX86_64Relative  = 8    // R_X86_64_RELATIVE
+
+	// .dynamic d_tag values.
+	dtNull      = 0
+	dtRela      = 7
+	dtRelaSz    = 8
+	dtRelaEnt   = 9
+	dtRelaCount = 0x6ffffff9 // DT_RELACOUNT: count of R_*_RELATIVE entries
+
+	relaEntSize = 24 // ELF64 Elf64_Rela: r_offset, r_info, r_addend
+	dynEntSize  = 16 // ELF64 Elf64_Dyn:  d_tag, d_un
+	phNumPIE    = 3  // PT_LOAD(R+X) + PT_LOAD(R+W) + PT_DYNAMIC
+)
+
+// TextVAddrPIE is the .text address in the static-PIE image, measured from
+// a load base of 0 (just past the ELF header + three program headers).
+// Pass it to arm64.AssembleProgramPIE / x86_64.AssembleProgramPIE as the
+// textVAddr so every PC-relative fixup is laid out base-relative.
+const TextVAddrPIE = ehSize + phNumPIE*phSize
+
+// Reloc is one R_*_RELATIVE entry: at load time `*(base + Offset) =
+// base + Addend`. Both fields are relative to a load base of 0, matching
+// the ET_DYN image StaticPieExecutable produces. The assemblers return
+// their own Reloc; callers map them onto this type (kept here so the elf
+// package does not depend on the assembler packages).
+type Reloc struct {
+	Offset uint64
+	Addend uint64
+}
+
 // StaticExecutableData wraps .text + a data blob (rodata followed by
 // the zero-initialised .bss globals, which AssembleProgram appends) into
 // a runnable static ELF-64 executable. Both live in a single PT_LOAD,
@@ -119,11 +159,11 @@ func staticExecutableDataWX(text, data []byte, machine uint16) []byte {
 func imageWX(text, data []byte, machine uint16) []byte {
 	const headers = ehSize + 2*phSize        // 64 + 112 = 176
 	textEnd := uint64(headers + len(text))   // end of the R+X segment
-	dataOff := pageUp(textEnd)                // file offset == vaddr offset of data
-	codeVAddr := uint64(baseVAddr)            // headers + .text
-	dataVAddr := uint64(baseVAddr) + dataOff  // .rodata + writable globals
-	entry := uint64(TextVAddrWX)              // first instruction of .text
-	codeSz := textEnd                         // headers + .text live in one segment
+	dataOff := pageUp(textEnd)               // file offset == vaddr offset of data
+	codeVAddr := uint64(baseVAddr)           // headers + .text
+	dataVAddr := uint64(baseVAddr) + dataOff // .rodata + writable globals
+	entry := uint64(TextVAddrWX)             // first instruction of .text
+	codeSz := textEnd                        // headers + .text live in one segment
 	dataSz := uint64(len(data))
 	total := dataOff + dataSz
 
@@ -173,6 +213,126 @@ func imageWX(text, data []byte, machine uint16) []byte {
 		buf = append(buf, 0)
 	}
 	return append(buf, data...)
+}
+
+// StaticPieExecutable wraps .text + data + relocations into a static
+// position-independent (ET_DYN) arm64 executable: the W^X two-segment
+// layout, laid out from a load base of 0, plus a .rela.dyn section (one
+// R_AARCH64_RELATIVE per reloc) and a .dynamic section / PT_DYNAMIC so the
+// relocations are discoverable. The kernel maps it at an arbitrary base;
+// PC-relative code runs as-is. Programs whose only absolute addresses are
+// resolved at startup need a self-relocation prologue to apply .rela.dyn
+// (a later slice); reloc-free programs run unchanged. Pair with
+// arm64.AssembleProgramPIE(.., TextVAddrPIE).
+func StaticPieExecutable(text, data []byte, relocs []Reloc) []byte {
+	return staticPie(text, data, relocs, emAArch64)
+}
+
+// StaticPieExecutableX86 is the x86-64 counterpart (EM_X86_64,
+// R_X86_64_RELATIVE). Pair with x86_64.AssembleProgramPIE.
+func StaticPieExecutableX86(text, data []byte, relocs []Reloc) []byte {
+	return staticPie(text, data, relocs, emX86_64)
+}
+
+func staticPie(text, data []byte, relocs []Reloc, machine uint16) []byte {
+	const headers = ehSize + phNumPIE*phSize // 64 + 168 = 232
+	textEnd := uint64(headers + len(text))   // end of the R+X segment
+	dataOff := pageUp(textEnd)               // page boundary: start of R+W data
+
+	// Within the R+W segment: data blob, then (8-aligned) .rela.dyn, then
+	// .dynamic. All offsets/vaddrs are relative to a load base of 0.
+	relaOff := dataOff + uint64(len(data))
+	if rem := relaOff % 8; rem != 0 {
+		relaOff += 8 - rem
+	}
+	relaSz := uint64(len(relocs) * relaEntSize)
+	dynOff := relaOff + relaSz
+	dynSz := uint64(5 * dynEntSize) // RELA, RELASZ, RELAENT, RELACOUNT, NULL
+	dataEnd := dynOff + dynSz
+	dataSegSz := dataEnd - dataOff
+
+	relType := uint64(relAArch64Relative)
+	if machine == emX86_64 {
+		relType = relX86_64Relative
+	}
+
+	buf := make([]byte, 0, dataEnd)
+
+	// ---- ELF-64 header ----
+	buf = append(buf, 0x7f, 'E', 'L', 'F')
+	buf = append(buf, 2, 1, 1, 0)
+	buf = append(buf, 0, 0, 0, 0, 0, 0, 0, 0)
+	buf = le16(buf, etDyn)        // e_type = ET_DYN
+	buf = le16(buf, machine)      // e_machine
+	buf = le32(buf, 1)            // e_version
+	buf = le64(buf, TextVAddrPIE) // e_entry (base-relative; loader adds bias)
+	buf = le64(buf, ehSize)       // e_phoff
+	buf = le64(buf, 0)            // e_shoff
+	buf = le32(buf, 0)            // e_flags
+	buf = le16(buf, ehSize)       // e_ehsize
+	buf = le16(buf, phSize)       // e_phentsize
+	buf = le16(buf, phNumPIE)     // e_phnum
+	buf = le16(buf, 0)            // e_shentsize
+	buf = le16(buf, 0)            // e_shnum
+	buf = le16(buf, 0)            // e_shstrndx
+
+	// ---- PH 0: R+X code (headers + .text) ----
+	buf = le32(buf, 1)         // PT_LOAD
+	buf = le32(buf, 5)         // PF_R | PF_X
+	buf = le64(buf, 0)         // p_offset
+	buf = le64(buf, 0)         // p_vaddr
+	buf = le64(buf, 0)         // p_paddr
+	buf = le64(buf, textEnd)   // p_filesz
+	buf = le64(buf, textEnd)   // p_memsz
+	buf = le64(buf, pageAlign) // p_align
+
+	// ---- PH 1: R+W data (.rodata + globals + .rela.dyn + .dynamic) ----
+	buf = le32(buf, 1)         // PT_LOAD
+	buf = le32(buf, 6)         // PF_R | PF_W
+	buf = le64(buf, dataOff)   // p_offset
+	buf = le64(buf, dataOff)   // p_vaddr
+	buf = le64(buf, dataOff)   // p_paddr
+	buf = le64(buf, dataSegSz) // p_filesz
+	buf = le64(buf, dataSegSz) // p_memsz
+	buf = le64(buf, pageAlign) // p_align
+
+	// ---- PH 2: PT_DYNAMIC (view into the R+W segment) ----
+	buf = le32(buf, ptDynamic) // PT_DYNAMIC
+	buf = le32(buf, 6)         // PF_R | PF_W
+	buf = le64(buf, dynOff)    // p_offset
+	buf = le64(buf, dynOff)    // p_vaddr
+	buf = le64(buf, dynOff)    // p_paddr
+	buf = le64(buf, dynSz)     // p_filesz
+	buf = le64(buf, dynSz)     // p_memsz
+	buf = le64(buf, 8)         // p_align
+
+	// ---- body: .text, page padding, data blob, .rela.dyn, .dynamic ----
+	buf = append(buf, text...)
+	for uint64(len(buf)) < dataOff {
+		buf = append(buf, 0)
+	}
+	buf = append(buf, data...)
+	for uint64(len(buf)) < relaOff {
+		buf = append(buf, 0)
+	}
+	// .rela.dyn: one Elf64_Rela per reloc (r_offset, r_info, r_addend).
+	for _, r := range relocs {
+		buf = le64(buf, r.Offset) // r_offset
+		buf = le64(buf, relType)  // r_info: sym=0, type=R_*_RELATIVE
+		buf = le64(buf, r.Addend) // r_addend
+	}
+	// .dynamic.
+	buf = le64(buf, dtRela)
+	buf = le64(buf, relaOff)
+	buf = le64(buf, dtRelaSz)
+	buf = le64(buf, relaSz)
+	buf = le64(buf, dtRelaEnt)
+	buf = le64(buf, relaEntSize)
+	buf = le64(buf, dtRelaCount)
+	buf = le64(buf, uint64(len(relocs)))
+	buf = le64(buf, dtNull)
+	buf = le64(buf, 0)
+	return buf
 }
 
 func padTo8(b []byte) []byte {

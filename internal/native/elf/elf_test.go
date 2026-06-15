@@ -1,6 +1,8 @@
 package elf_test
 
 import (
+	"bytes"
+	goelf "debug/elf"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -158,6 +160,81 @@ func TestAssembledDataWXRunsUnderQemu(t *testing.T) {
 	}
 	if got != 42 {
 		t.Fatalf("exit code = %d, want 42", got)
+	}
+}
+
+// TestStaticPieExecutableLayout checks the static-PIE (ET_DYN) image: a
+// position-independent type, three program headers (R+X code, R+W data,
+// PT_DYNAMIC) none of them W+X, one R_AARCH64_RELATIVE entry in .rela.dyn
+// with base-relative offset/addend, and a .dynamic section whose DT_RELA*
+// tags describe it. All addresses are relative to a load base of 0.
+func TestStaticPieExecutableLayout(t *testing.T) {
+	text := []byte{0x00, 0x00, 0x80, 0xd2} // movz x0,#0
+	data := []byte{1, 2, 3, 4, 5, 6, 7, 8} // one 8-byte slot
+	// One relocation: slot at data start, target somewhere in .text.
+	const headers = 64 + 3*56 // 232
+	const page = 0x10000
+	dataOff := (uint64(headers+len(text)) + page - 1) &^ (page - 1)
+	relocs := []elf.Reloc{{Offset: dataOff, Addend: headers /* = TextVAddrPIE */}}
+	bin := elf.StaticPieExecutable(text, data, relocs)
+
+	if e_type := u16(bin, 16); e_type != 3 { // ET_DYN
+		t.Errorf("e_type = %d, want 3 (ET_DYN)", e_type)
+	}
+	if e_entry := u64(bin, 24); e_entry != headers {
+		t.Errorf("e_entry = %#x, want %#x (base-relative)", e_entry, headers)
+	}
+	if e_phnum := u16(bin, 56); e_phnum != 3 {
+		t.Errorf("e_phnum = %d, want 3", e_phnum)
+	}
+	// PH2 (offset 64 + 2*56 = 176) is PT_DYNAMIC (p_type = 2).
+	if p_type := u32(bin, 176); p_type != 2 {
+		t.Errorf("PH2 p_type = %d, want 2 (PT_DYNAMIC)", p_type)
+	}
+	// Parse it with debug/elf as a sanity check that the dynamic image is
+	// well-formed, and confirm the two PT_LOAD segments and no W+X.
+	f, err := goelf.NewFile(bytes.NewReader(bin))
+	if err != nil {
+		t.Fatalf("not a parseable ELF: %v", err)
+	}
+	if f.Type != goelf.ET_DYN {
+		t.Errorf("debug/elf type = %v, want ET_DYN", f.Type)
+	}
+	loads, dyn := 0, false
+	for _, p := range f.Progs {
+		switch p.Type {
+		case goelf.PT_LOAD:
+			loads++
+			if p.Flags&goelf.PF_W != 0 && p.Flags&goelf.PF_X != 0 {
+				t.Errorf("PT_LOAD is W+X (%v)", p.Flags)
+			}
+		case goelf.PT_DYNAMIC:
+			dyn = true
+		}
+	}
+	if loads != 2 || !dyn {
+		t.Errorf("segments: %d PT_LOAD, PT_DYNAMIC=%v; want 2 + true", loads, dyn)
+	}
+
+	// .rela.dyn sits 8-aligned after the data blob: r_offset, r_info
+	// (type = R_AARCH64_RELATIVE = 1027), r_addend.
+	relaOff := dataOff + uint64(len(data)) // already 8-aligned here
+	if got := u64(bin, int(relaOff)); got != dataOff {
+		t.Errorf("rela r_offset = %#x, want %#x", got, dataOff)
+	}
+	if got := u64(bin, int(relaOff)+8); got != 1027 {
+		t.Errorf("rela r_info = %d, want 1027 (R_AARCH64_RELATIVE)", got)
+	}
+	if got := u64(bin, int(relaOff)+16); got != headers {
+		t.Errorf("rela r_addend = %#x, want %#x", got, headers)
+	}
+	// .dynamic follows: first tag DT_RELA(7) -> relaOff.
+	dynOff := relaOff + 24
+	if tag := u64(bin, int(dynOff)); tag != 7 {
+		t.Errorf("first .dynamic tag = %d, want 7 (DT_RELA)", tag)
+	}
+	if val := u64(bin, int(dynOff)+8); val != relaOff {
+		t.Errorf("DT_RELA value = %#x, want %#x", val, relaOff)
 	}
 }
 
