@@ -4641,17 +4641,17 @@ var arithOpMethod = map[string]string{
 // See #3234.
 func (c *checker) tryConvertErrToDyn(n *ast.TryOp, srcEnum, retEnum ast.EnumType, s *scope) (ast.Expr, bool) {
 	dt, ok := retEnum.Args[1].(ast.DynTraitType)
-	if !ok || len(dt.Traits) != 1 {
-		// v1 handles single-trait `dyn Error`; a `dyn A + B` error target
-		// would need E to implement every trait (a follow-up).
+	if !ok {
 		return nil, false
 	}
-	trait := dt.Traits[0]
 	tn, ok := methodTypeName(srcEnum.Args[1])
 	if !ok {
 		return nil, false
 	}
-	if impls := c.info.Impls[trait]; impls == nil || !impls[tn] {
+	// E must implement EVERY trait in the dyn-error set — `dyn A + B` ⇐ E iff
+	// E impls A AND B (the same impl-all gate the multi-trait coercion uses).
+	// A single-trait `dyn Error` is the 1-element case.
+	if !c.implementsAllDynTraits(dt, tn) {
 		return nil, false
 	}
 	c.tryConvN++
