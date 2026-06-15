@@ -249,6 +249,27 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-15 — `Result[T, E]` tuple elements on the self-host IR path (widen IR subset)
+
+Closes the comma-containing-tuple-element story (after nested tuples): a
+`Result[T, E]` element of a tuple — `(1, Ok(5))`, accessed via `match (t.1)` —
+now lowers on the IR path. `Result[T, E]` has an internal comma but is bracketed,
+so the now-depth-aware tag decoders keep it whole; the only remaining blockers
+were the explicit "Option-only, Result deferred" exclusions (#3018, left when the
+split was comma-naive). Fix, all in `irlower.fern`: (1) the tuple-construction
+guard admits a Result element (`expr_is_result` — a bare `Ok(x)`/`Err(x)` or a
+Result-typed local — a leak-only one-pointer box like Option); (2)
+`tuple_elems_lowerable` accepts a `Result[` element tag; (3) the var-decl tuple
+marking prefers the binding's tuple TYPE annotation (`tuple_type_elem_tag`) — the
+full `Result[T, E]` is only knowable from the annotation since a bare `Ok(x)`
+cannot name E, and the checker rejects an un-annotated Result, so the annotation
+is always present where it matters. `opt_payload_type` already recovers both arms
+(depth-aware split + `trim_spaces`), so no match-side change was needed. Verified
+on x86-64, wasm, and arm64 (qemu) against the interpreter — Ok/Err payloads,
+Result as first or second element, and a function returning a Result-bearing
+tuple; Option-in-tuple and flat-result regressions hold. Fixpoint still converges
+byte-identically. Guarded by `TestSelfHostResultTupleIR{X86_64,Wasm}`.
+
 ### 2026-06-15 — nested tuples in return / param position on the self-host IR path (widen IR subset)
 
 Follow-on to nested-tuple construction/access: a function whose **return type** or
