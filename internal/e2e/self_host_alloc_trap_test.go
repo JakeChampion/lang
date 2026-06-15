@@ -9,16 +9,16 @@ import (
 
 // allocTrapSrc allocates without bound (string concat reallocates the
 // whole string each iteration, so cumulative allocation grows
-// quadratically and blows past the 1.75 GiB bump heap). The self-host's
+// quadratically and blows past the 2.5 GiB bump heap). The self-host's
 // __fern_alloc bounds check must trap with a clean, recognisable exit
 // code (137) rather than silently running past the heap into adjacent
 // .bss (the strbuf output accumulator) and corrupting it.
 //
-// 80000 iterations is ~3.2 GiB cumulative (n²/2), comfortably past the
-// 1.75 GiB heap so it traps mid-loop on every backend. (60000 ≈ 1.80 GiB
-// was marginally UNDER the 1.75 GiB heap after #2909 bumped it from 1 GiB,
+// 100000 iterations is ~4.66 GiB cumulative (n²/2), robustly past the
+// 2.5 GiB heap (and any heap ≤ 4 GiB) so it traps mid-loop on every
+// backend. (60000 ≈ 1.80 GiB was marginally UNDER the older 1.75 GiB heap,
 // so the program completed and returned 60000 → exit 96 instead of trapping.)
-const allocTrapSrc = "function main(): i32 { var s: string = \"\"; var i: i32 = 0; while (i < 80000) { s = s + \"x\"; i = i + 1; } return s.len(); }"
+const allocTrapSrc = "function main(): i32 { var s: string = \"\"; var i: i32 = 0; while (i < 100000) { s = s + \"x\"; i = i + 1; } return s.len(); }"
 
 // TestSelfHostAllocTrapX86_64 — heap-overflow trap, self-hosted x86-64.
 func TestSelfHostAllocTrapX86_64(t *testing.T) {
