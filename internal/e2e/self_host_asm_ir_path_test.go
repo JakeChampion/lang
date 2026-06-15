@@ -1459,6 +1459,17 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"map-tuple-elem-get_or", `function main(): i32 { var t = (Map { 1: 10 }, 5); return t.0.get_or(1, 0) + t.1; }`, 15},
 		{"map-tuple-elem-rebind", `function main(): i32 { var t = (Map { 1: 10 }, 5); var m = t.0; return m.get_or(1, 0) + t.1; }`, 15},
 		{"map-tuple-elem-string-val", `function main(): i32 { var t = (Map { 1: "abcd" }, 5); return t.0.get_or(1, "z").len() + t.1; }`, 9},
+		// An ARRAY of maps (`var ms = [Map { … }, …]`): the array slot carries the
+		// ELEMENT map type (the map sibling of the struct-array element-type
+		// overload), so `ms[i].get_or(…)` dispatches as a map op, a rebind
+		// `var m = ms[i]` recovers the map type, an annotated `Map[K,V][]` binding
+		// works, and a string-VALUE element's get_or tracks as a string. The
+		// self-host AST path also mishandled this (link error on `i32.get_or`), so
+		// these pin the absolute IR value. #3317.
+		{"map-array-elem-get_or", `function main(): i32 { var ms = [Map { 1: 10 }, Map { 1: 20 }]; return ms[0].get_or(1, 0) + ms[1].get_or(1, 0); }`, 30},
+		{"map-array-elem-rebind", `function main(): i32 { var ms = [Map { 1: 10 }, Map { 1: 20 }]; var m = ms[1]; return m.get_or(1, 0) + ms[0].get_or(1, 0); }`, 30},
+		{"map-array-elem-annotated", `function main(): i32 { var ms: Map[i32, i32][] = [Map { 1: 10 }]; return ms[0].get_or(1, 0); }`, 10},
+		{"map-array-elem-string-val", `function main(): i32 { var ms = [Map { 1: "abcd" }]; return ms[0].get_or(1, "z").len(); }`, 4},
 		// Two random_i32 draws differ (a stuck/zero generator returns 0/1).
 		{"random-i32-varies", `function main(): i32 { var a: i32 = random_i32(); var b: i32 = random_i32(); if (a == 0) { return 0; } if (a == b) { return 1; } return 7; }`, 7},
 		// A random byte is in 0..255.
