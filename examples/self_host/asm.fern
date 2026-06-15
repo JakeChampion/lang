@@ -5199,7 +5199,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // each `__fern_alloc(size)` call. No deallocation — fine
     // for the small validation programs that exercise structs.
     if (s.has_need("heap")) {
-        var heap_size: string = "1879048192";   // 1.75 GiB
+        var heap_size: string = "2013265920";   // 1.875 GiB (0x78000000; <2 GiB signed-imm32 + small-code-model cap)
         s = s.write("    .section .bss\n");
         s = s.write("    .align 8\n");
         s = s.write("__fern_heap_ptr: .quad 0\n");
