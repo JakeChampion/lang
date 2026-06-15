@@ -987,13 +987,19 @@ pub function is_scalar_array_type(t: string): boolean {
 }
 
 // is_leaksafe_array_field reports whether `t` is an array type that is leak-safe
-// AS A STRUCT FIELD: the scalar-element arrays (i32[]/boolean[]) plus the 8-byte-
-// element f64[]/i64[]. All store a pointer in the field slot, are owned by the
-// struct (a fresh array literal at construction — is_scalar_arr_field_access bails
-// the aliasing forms), and are deep-dropped on the struct's reclamation. NOT used
-// for enum payloads (those need the element-width mark, not a plain mark_arr).
+// AS A STRUCT FIELD: the scalar-element arrays (i32[]/boolean[]) plus the 4-byte
+// u32[] and the 8-byte-element f64[]/i64[]. All store a pointer in the field slot,
+// are owned by the struct (a fresh array literal at construction —
+// is_scalar_arr_field_access bails the aliasing forms), and are deep-dropped on
+// the struct's reclamation. u32[] rides the i32[] 4-byte element read unchanged;
+// its unsignedness only affects arithmetic ON a read element, not the field
+// round-trip. NOT here: u64[] (its 8-byte element read needs the i64-width
+// dispatch routed through the "u64[]" field tag — like the u64 tuple element
+// slice — a separate increment) and the sub-word arrays (u8[]/u16[]/i8[]/i16[],
+// whose element read needs sign/zero-extension). NOT used for enum payloads
+// (those need the element-width mark, not a plain mark_arr).
 pub function is_leaksafe_array_field(t: string): boolean {
-    return is_scalar_array_type(t) || t == "f64[]" || t == "i64[]";
+    return is_scalar_array_type(t) || t == "f64[]" || t == "i64[]" || t == "u32[]";
 }
 
 // is_map_type_name reports whether `t` is a Map[K, V] type. Maps are leak-only
