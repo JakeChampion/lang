@@ -2436,6 +2436,7 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
                     // The clock builtins return an i64 timespec reading, so a
                     // binding `var a = monotonic_ns()` width-tracks i64.
                     if (cid.name == "monotonic_ns" || cid.name == "now_unix_ms" || cid.name == "now_ns") { return 64; }
+                    if (cid.name == "__load_i64") { return 64; }
                     if (s.is_i64_ret_fn(cid.name)) { return 64; }
                 },
                 parser.ExprFieldAccess(cfa) => {
@@ -2576,6 +2577,7 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                     // The clock builtins return an i64 value: lower via the
                     // normal call path (which emits the op + pushes the result).
                     if (cid.name == "monotonic_ns" || cid.name == "now_unix_ms" || cid.name == "now_ns") { return lower_expr(e, s); }
+                    if (cid.name == "__load_i64") { return lower_expr(e, s); }
                     if (s.is_i64_ret_fn(cid.name)) { return lower_expr(e, s); }
                 },
                 parser.ExprFieldAccess(cfa) => {
@@ -3384,6 +3386,43 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         mc = lower_expr(c.args[2], mc);
                         if (!mc.ok) { return mc; }
                         return mc.emit(ir.op_memcpy());
+                    }
+                    // Raw-memory loads/stores at a usize address (core/map runtime).
+                    // __load_i32(addr) / __load_ptr(addr): pop the address, emit the
+                    // inline load. (__load_i64 returns i64 — handled in lower_i64.)
+                    // __store_i32(addr, v) / __store_ptr(addr, v): pop addr + value,
+                    // store, push dummy 0 (statement-position, discarded).
+                    if (cid.name == "__load_i32" && c.args.len() == 1) {
+                        var li: LowerState = lower_expr(c.args[0], s);
+                        if (!li.ok) { return li; }
+                        return li.emit(ir.op_load_i32());
+                    }
+                    // __load_i64(addr) reads an 8-byte i64. Emitted here (pushing an
+                    // i64) like the clock builtins; lower_i64 / infer_expr_width /
+                    // expr_is_i64 recognise it so an i64 context routes through here.
+                    if (cid.name == "__load_i64" && c.args.len() == 1) {
+                        var l8: LowerState = lower_expr(c.args[0], s);
+                        if (!l8.ok) { return l8; }
+                        return l8.emit(ir.op_load_i64());
+                    }
+                    if (cid.name == "__load_ptr" && c.args.len() == 1) {
+                        var lp: LowerState = lower_expr(c.args[0], s);
+                        if (!lp.ok) { return lp; }
+                        return lp.emit(ir.op_load_ptr());
+                    }
+                    if (cid.name == "__store_i32" && c.args.len() == 2) {
+                        var si: LowerState = lower_expr(c.args[0], s);
+                        if (!si.ok) { return si; }
+                        si = lower_expr(c.args[1], si);
+                        if (!si.ok) { return si; }
+                        return si.emit(ir.op_store_i32());
+                    }
+                    if (cid.name == "__store_ptr" && c.args.len() == 2) {
+                        var sp: LowerState = lower_expr(c.args[0], s);
+                        if (!sp.ok) { return sp; }
+                        sp = lower_expr(c.args[1], sp);
+                        if (!sp.ok) { return sp; }
+                        return sp.emit(ir.op_store_ptr());
                     }
                     // std/float single-instruction math builtins: __sqrt_f64 /
                     // __floor_f64 / __ceil_f64 / __trunc_f64 / __abs_f64. Lower the

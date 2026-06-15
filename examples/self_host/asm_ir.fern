@@ -2187,6 +2187,18 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // n is on top, then src, then dst (the lowering order). Mirrors the
             // AST __memcpy emitter in asm.fern.
             s = s.write("    popq %rcx\n    popq %rsi\n    popq %rdi\n    rep movsb\n    pushq $0\n");
+        } else if (o.kind == "load_i32") {
+            // [addr] -> sign-extended 4-byte load (matches __fn___load_i32).
+            s = s.write("    popq %rax\n    movslq (%rax), %rax\n    pushq %rax\n");
+        } else if (o.kind == "load_i64" || o.kind == "load_ptr") {
+            // [addr] -> 8-byte load (ptr is heap-pointer width = 8 on x86-64).
+            s = s.write("    popq %rax\n    movq (%rax), %rax\n    pushq %rax\n");
+        } else if (o.kind == "store_i32") {
+            // [addr, val] -> store low 4 bytes; push dummy 0 (val on top).
+            s = s.write("    popq %rcx\n    popq %rax\n    movl %ecx, (%rax)\n    pushq $0\n");
+        } else if (o.kind == "store_ptr") {
+            // [addr, val] -> store 8 bytes; push dummy 0.
+            s = s.write("    popq %rcx\n    popq %rax\n    movq %rcx, (%rax)\n    pushq $0\n");
         } else if (o.kind == "load_local") {
             s = s.write("    pushq " + util.i32_to_string(0 - 8 * (o.i32_imm + 1)) + "(%rbp)\n");
         } else if (o.kind == "store_local") {

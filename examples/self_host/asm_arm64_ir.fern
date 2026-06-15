@@ -317,6 +317,18 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    b " + lp + "mc" + util.i32_to_string(i) + "\n");
             s = s.write(lp + "mcd" + util.i32_to_string(i) + ":\n");
             s = s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "load_i32") {
+            // [addr] -> sign-extended 4-byte load.
+            s = s.write("    ldr x0, [sp], #16\n    ldrsw x0, [x0]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "load_i64" || o.kind == "load_ptr") {
+            // [addr] -> 8-byte load (ptr is heap-pointer width = 8 on arm64).
+            s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "store_i32") {
+            // [addr, val] -> store low 4 bytes (val on top); push dummy 0.
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str w1, [x0]\n    mov x0, #0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "store_ptr") {
+            // [addr, val] -> store 8 bytes; push dummy 0.
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [x0]\n    mov x0, #0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "load_local") {
             s = fr_ldr(s, "x0", 0 - 8 * (o.i32_imm + 1));
             s = s.write("    str x0, [sp, #-16]!\n");
