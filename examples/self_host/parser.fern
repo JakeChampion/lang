@@ -2666,16 +2666,40 @@ function consume_array_suffix(p: Par, name: string): TypeNameResult {
 function parse_type_name(p: Par): TypeNameResult {
     var base: string = p.peek_ident();
     if (base.len() == 0) { base = p.peek_keyword(); }
-    // `dyn Trait` runtime trait-object type. The self-host erases it to
-    // a coarse `"dyn <trait>"` spelling and dispatches method calls by
-    // the value's runtime shape (a struct/enum value carries its own
-    // shape pointer), so no special dispatch path is needed — only the
-    // type parse. Recurse so `dyn Shape[]` / `dyn mod.Shape` reuse the
-    // generic-arg + trailing-`[]` handling. See docs/DYN-TRAITS.md.
+    // `dyn Trait` (single) or `dyn A + B + …` (multi-trait object) — a
+    // runtime trait-object type. The self-host erases it to a coarse
+    // `"dyn <trait>"` / `"dyn A + B"` spelling and dispatches method
+    // calls by the value's runtime shape (a struct/enum value carries
+    // its own shape pointer); op_dyn_dispatch enumerates EVERY module
+    // method of the called name over its struct/prim receivers, so a
+    // method from ANY trait in the set lands on the concrete impl with
+    // no trait-specific dispatch path — only the type parse changes for
+    // the multi-trait case. Recurse per trait so `dyn Shape[]` /
+    // `dyn mod.Shape` / `dyn A + B[]` reuse the generic-arg +
+    // trailing-`[]` handling; the `[]` falls on the last trait and so on
+    // the whole `"dyn …"` spelling, which is what is_array_type_name +
+    // the element-strip (name[0:len-2]) expect. Traits are joined in
+    // source order with " + " (matching the native String() separator);
+    // dispatch is set-agnostic, so no sort/dedup is needed for the
+    // coarse self-host model. A trailing/empty `+` is a parse error.
+    // See docs/DYN-TRAITS.md §4.3 + §10.
     if (base == "dyn") {
         p = p.advance(); // consume `dyn`
         var dinner: TypeNameResult = parse_type_name(p);
-        return TypeNameResult { par: dinner.par, name: "dyn " + dinner.name };
+        p = dinner.par;
+        var dynname: string = dinner.name;
+        // Collect any `+ Trait` continuations (multi-trait `dyn A + B`).
+        while (p.peek_punct() == "+") {
+            p = p.advance(); // consume `+`
+            var dmore: TypeNameResult = parse_type_name(p);
+            p = dmore.par;
+            if (dmore.name.len() == 0) {
+                // Trailing / empty `+` — no trait name followed it.
+                return TypeNameResult { par: p, name: "" };
+            }
+            dynname = dynname + " + " + dmore.name;
+        }
+        return TypeNameResult { par: p, name: "dyn " + dynname };
     }
     // WIT resource-handle type `own R` / `borrow R` (P5 —
     // docs/WIT-BRING-YOUR-OWN.md). A handle is an opaque i32 at the canonical
