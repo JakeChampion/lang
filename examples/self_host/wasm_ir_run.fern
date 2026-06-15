@@ -71,6 +71,8 @@ function main(): i32 {
         // $__fern_i32_to_str backs i32.to_string() (wasm_helper_symbol maps the
         // IR call_direct to it).
         if (wasm_ir.module_uses_i32_to_string(mod)) { o = o + wasm.to_string_helpers(); }
+        // $__fern_str_to_i32 backs str_to_i32(s); allocation-free, own gate.
+        if (wasm_ir.module_uses_str_to_i32(mod)) { o = o + wasm.str_to_i32_helper(); }
         if (wasm_ir.module_uses_str_cmp(mod)) { o = o + wasm.strcmp_helper(); }
         // $__fern_substr backs str_slice AND str_split (split slices each
         // segment), so emit it for either — but only ONCE.

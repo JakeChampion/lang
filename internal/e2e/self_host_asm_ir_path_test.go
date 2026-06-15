@@ -1002,6 +1002,15 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"free-contains-false", `function main(): i32 { if (str_contains("hello", "xyz")) { return 7; } return 9; }`},
 		{"free-nested", `function main(): i32 { var t = str_trim(str_to_upper("  ab  ")); return t.len(); }`},
 		{"free-concat", `function main(): i32 { var t = str_to_upper("ab") + "Z"; return t.len(); }`},
+		// str_to_i32(s): parse a string box to an i32 (the inverse of
+		// i32_to_string). Allocation-free; the IR stack-ABI body must agree with
+		// asm.fern's register-ABI __fern_str_to_i32. Covers plain, negative,
+		// trailing-junk, empty (->0), and the i32_to_string round-trip.
+		{"str2i32-basic", `function main(): i32 { return str_to_i32("42"); }`},
+		{"str2i32-neg", `function main(): i32 { var n = str_to_i32("-5"); if (n < 0) { return 0 - n; } return n; }`},
+		{"str2i32-trailing", `function main(): i32 { return str_to_i32("12x9"); }`},
+		{"str2i32-empty", `function main(): i32 { return str_to_i32("") + 7; }`},
+		{"str2i32-roundtrip", `function main(): i32 { return str_to_i32(i32_to_string(99)); }`},
 		// String chars -> string[] of 1-char strings (op_str_chars; result is_arr +
 		// is_strarr like split). AST emits __fern_str_chars; IR emits emit_ir_str_chars.
 		{"chars-len", `function main(): i32 { return "abcde".chars().len(); }`},

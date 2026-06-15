@@ -4213,6 +4213,12 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    neg x0, x0\n");
         s = s.write(".Ls2i_no_neg:\n");
         s = s.write("    ret\n");
+        // Stack-ABI wrapper for the IR path: the string box is on the rt-stack
+        // at [sp], not in x0. Load it, then tail-call the register-ABI body above
+        // (lr still points at the IR call site). Mirrors __fn___fern_i32_to_string.
+        s = s.write("__fn___fern_str_to_i32:\n");
+        s = s.write("    ldr x0, [sp]\n");
+        s = s.write("    b __fern_str_to_i32\n");
     }
     // __fern_eprint_str: x0 = string box. write(2, data, len).
     if (s.has_need("eprint")) {
