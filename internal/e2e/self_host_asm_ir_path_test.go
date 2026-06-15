@@ -776,6 +776,14 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"struct-arr-field-bind", `struct P { x: i32 } struct H { ps: P[] } function main(): i32 { var h = H { ps: [P { x: 7 }, P { x: 3 }] }; var ps: P[] = h.ps; return ps[0].x * 10 + ps[1].x; }`},
 		{"struct-arr-field-bind-len", `struct P { x: i32 } struct H { ps: P[] } function main(): i32 { var h = H { ps: [P { x: 1 }, P { x: 2 }, P { x: 3 }] }; var ps: P[] = h.ps; return ps.len(); }`},
 		{"struct-arr-field-bind-param", `struct P { d: boolean } struct H { ps: P[] } function any_d(h: H): boolean { var ps: P[] = h.ps; var i = 0; while (i < ps.len()) { if (ps[i].d) { return true; } i = i + 1; } return false; } function main(): i32 { var yes = H { ps: [P { d: false }, P { d: true }] }; var no = H { ps: [P { d: false }] }; var r = 0; if (any_d(yes)) { r = r + 10; } if (any_d(no)) { r = r + 1; } return r; }`},
+		// Returning / assigning an array-of-struct field — the alias-creating
+		// siblings of the bind above. Same buffer-pointer Perceus dup; the source
+		// struct keeps owning the elements (no deep-drop). Return covers a borrowed-
+		// param source and a reclaimable-local source; assign re-binds an existing
+		// P[] local.
+		{"struct-arr-field-return", `struct P { x: i32 } struct H { ps: P[] } function get(h: H): P[] { return h.ps; } function main(): i32 { var h = H { ps: [P { x: 4 }, P { x: 9 }] }; var got: P[] = get(h); return got[0].x * 10 + got[1].x; }`},
+		{"struct-arr-field-return-local", `struct P { x: i32 } struct H { ps: P[] } function mk(): P[] { var h = H { ps: [P { x: 6 }, P { x: 2 }] }; return h.ps; } function main(): i32 { var ps = mk(); return ps[0].x * 10 + ps[1].x; }`},
+		{"struct-arr-field-assign", `struct P { x: i32 } struct H { ps: P[] } function f(h: H): i32 { var ps: P[] = []; ps = h.ps; var s = 0; var i = 0; while (i < ps.len()) { s = s + ps[i].x; i = i + 1; } return s; } function main(): i32 { var h = H { ps: [P { x: 5 }, P { x: 7 }, P { x: 11 }] }; return f(h); }`},
 		// The nested-array motivating shape (parser.module_has_default_params): an
 		// array-of-struct field read out of an element of an outer array-of-struct,
 		// bound in a loop, then indexed for a scalar field.
