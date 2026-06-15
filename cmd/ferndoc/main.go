@@ -135,11 +135,18 @@ func collectFrom(root string) ([]module, error) {
 			fmt.Fprintf(os.Stderr, "ferndoc: skipping %s (parse: %v)\n", path, perr)
 			return nil
 		}
-		modName := strings.TrimSuffix(base, ".fern")
+		// Name is the module's path RELATIVE to its root namespace, so a
+		// nested module keeps its subdir: `std/wasm/convert.fern` →
+		// name "wasm/convert" (modPath "std/wasm/convert"), not just
+		// "convert". Top-level modules are unchanged ("convert"). The page
+		// filename flattens the subdir with `_` so it stays a single file
+		// and basenames can't collide across subdirs (e.g. std/convert vs
+		// std/wasm/convert).
+		rel := strings.TrimSuffix(strings.TrimPrefix(path, root+"/"), ".fern")
 		out = append(out, module{
-			name:     modName,
+			name:     rel,
 			prefix:   root,
-			fileName: modName,
+			fileName: strings.ReplaceAll(rel, "/", "_"),
 			prog:     prog,
 			src:      src,
 		})
