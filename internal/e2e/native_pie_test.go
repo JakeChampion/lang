@@ -24,11 +24,13 @@ import (
 
 	"github.com/jakechampion/lang/internal/checker"
 	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
+	x86codegen "github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
 	na "github.com/jakechampion/lang/internal/native/arm64"
 	nativeelf "github.com/jakechampion/lang/internal/native/elf"
+	nativex86 "github.com/jakechampion/lang/internal/native/x86_64"
 )
 
 // TestArm64NativePIERelocFree builds reloc-free programs as static PIEs and
@@ -213,6 +215,93 @@ function main(): i32 { var d: dyn Shape = Sq { s: 7 }; return d.area(); }`, 49, 
 			}
 		})
 	}
+}
+
+// TestX86_64NativePIESelfReloc is the x86-64 counterpart of
+// TestArm64NativePIESelfReloc: programs are compiled as static PIEs with the
+// self-relocation prologue (Options.PIE) and run (natively on amd64, else
+// under qemu-x86_64). rip-relative code is already position-independent; the
+// prologue applies the .rela.dyn entries for the `.quad <symbol>` slots.
+func TestX86_64NativePIESelfReloc(t *testing.T) {
+	runner := x86NativeRunner(t) // SKIPs if neither native amd64 nor qemu-x86_64
+	cases := []struct {
+		name      string
+		src       string
+		exit      int
+		wantReloc bool
+	}{
+		{"exit_relocfree", `function main(): i32 { return 42; }`, 42, false},
+		{"funcvalue", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); }
+function dbl(x: i32): i32 { return x * 2; }
+function main(): i32 { return apply(dbl, 21); }`, 42, true},
+		{"dyntrait", `trait Shape { function area(self: Self): i32; }
+struct Sq { s: i32 }
+impl Shape for Sq { function area(self: Self): i32 { return self.s * self.s; } }
+function main(): i32 { var d: dyn Shape = Sq { s: 7 }; return d.area(); }`, 49, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			asm := compileToX86AsmPIE(t, c.src)
+			text, rodata, relocs, err := nativex86.AssembleProgramPIE(asm, nativeelf.TextVAddrPIE)
+			if err != nil {
+				t.Fatalf("AssembleProgramPIE: %v", err)
+			}
+			if c.wantReloc && len(relocs) == 0 {
+				t.Fatalf("expected relocations, got none")
+			}
+			if !c.wantReloc && len(relocs) != 0 {
+				t.Fatalf("expected reloc-free, got %d", len(relocs))
+			}
+			bin := nativeelf.StaticPieExecutableX86(text, rodata, toElfRelocsX86(relocs))
+			assertPIELayout(t, bin)
+			path := filepath.Join(t.TempDir(), "prog")
+			if err := os.WriteFile(path, bin, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			out, code := runWXBin(t, runner, path)
+			if code != c.exit {
+				t.Fatalf("PIE self-reloc run exit = %d, want %d (out=%q)", code, c.exit, out)
+			}
+		})
+	}
+}
+
+// compileToX86AsmPIE compiles src to x86-64 assembly with the PIE
+// self-relocation prologue enabled (Options.PIE).
+func compileToX86AsmPIE(t *testing.T, src string) string {
+	t.Helper()
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prog, _, err := modload.Load(srcPath)
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	asm, err := x86codegen.EmitWithOptions(prog, info, x86codegen.Options{PIE: true})
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	return asm
+}
+
+func toElfRelocsX86(rs []nativex86.Reloc) []nativeelf.Reloc {
+	out := make([]nativeelf.Reloc, len(rs))
+	for i, r := range rs {
+		out[i] = nativeelf.Reloc{Offset: r.Offset, Addend: r.Addend}
+	}
+	return out
 }
 
 // compileToArm64AsmPIE compiles src to arm64 assembly with the PIE
