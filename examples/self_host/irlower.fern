@@ -1237,7 +1237,7 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
                 // read loads at the default 32-bit width; a sub-word cast wraps the
                 // value before the store). u64 / f32 are NOT added: they need real
                 // 64-bit / float width handling, so they keep the struct on AST.
-                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || t == "u64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field(t) || is_leaksafe_tuple_field(t) || is_map_type_name(t)) {
+                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || t == "f32" || t == "float" || t == "u64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field(t) || is_leaksafe_tuple_field(t) || is_map_type_name(t)) {
                     fi = fi + 1;
                     continue;
                 }
@@ -1417,7 +1417,7 @@ pub function decl_field_type_at(structs: parser.StructDecl[], struct_name: strin
 // f64.load/store vs i32.load/store selection (register backends ignore it).
 pub function struct_field_width(structs: parser.StructDecl[], struct_name: string, index: i32): i32 {
     var t: string = decl_field_type_at(structs, struct_name, index);
-    if (t == "f64" || t == "i64" || t == "u64") { return 64; }
+    if (t == "f64" || t == "f32" || t == "float" || t == "i64" || t == "u64") { return 64; }
     return 0;
 }
 // struct_field_is_i64 reports whether field `index` of `struct_name` is i64 (an
@@ -2405,11 +2405,13 @@ pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
         parser.ExprFieldAccess(fa) => {
             // An f64-typed struct field read `p.x`, or an f64 tuple element.
             if (util.is_all_digits(fa.field)) {
-                return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "f64";
+                var ttf: string = expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s);
+                return ttf == "f64" || ttf == "f32" || ttf == "float";
             }
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return false; }
-            return decl_field_type(s.structs, oty, fa.field) == "f64";
+            var sff: string = decl_field_type(s.structs, oty, fa.field);
+            return sff == "f64" || sff == "f32" || sff == "float";
         },
         parser.ExprIndex(ix) => { return arr_index_is_f64(ix.array, s); },
         _ => { return false; }
@@ -3099,7 +3101,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 // keep the 4-byte read.
                 var tgt: string = expr_tuple_elem_tag(fa.obj, tgi, s);
                 if (tgt == "i64" || tgt == "u64") { return so0.emit(ir.op_tuple_get_w(tgi, 64, true)); }
-                if (tgt == "f64") { return so0.emit(ir.op_tuple_get_w(tgi, 64, false)); }
+                if (tgt == "f64" || tgt == "f32" || tgt == "float") { return so0.emit(ir.op_tuple_get_w(tgi, 64, false)); }
                 return so0.emit(ir.op_tuple_get(tgi));
             }
             // Qualified built-in `Option.None` (no call) — the same value as the
@@ -5779,13 +5781,13 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                     // lower_i64); an f64 element marks it f64.
                     dt = dt.emit(ir.op_load_local(tmp_slot));
                     if (dtag == "i64" || dtag == "u64") { dt = dt.emit(ir.op_tuple_get_w(dk, 64, true)); }
-                    else if (dtag == "f64") { dt = dt.emit(ir.op_tuple_get_w(dk, 64, false)); }
+                    else if (dtag == "f64" || dtag == "f32" || dtag == "float") { dt = dt.emit(ir.op_tuple_get_w(dk, 64, false)); }
                     else { dt = dt.emit(ir.op_tuple_get(dk)); }
                     dt = dt.emit(ir.op_store_local(dkslot));
                     if (dtag == "string") { dt = dt.mark_str(dkslot, true); }
                     else if (dtag == "i64") { dt = dt.mark_i64(dkslot, true); }
                     else if (dtag == "u64") { dt = dt.mark_u64(dkslot, true); }
-                    else if (dtag == "f64") { dt = dt.mark_f64(dkslot, true); }
+                    else if (dtag == "f64" || dtag == "f32" || dtag == "float") { dt = dt.mark_f64(dkslot, true); }
                     else if (is_map_type_name(dtag)) { dt = dt.mark_map_type(dkslot, dtag); }
                     else if (dtag.len() >= 8 && (dtag[0:7] == "Option[" || dtag[0:7] == "Result[")) { dt = dt.mark_opt_type(dkslot, dtag); }
                     // A 4-byte scalar-array element (i32[]/boolean[]/u32[]) binds the
@@ -10929,7 +10931,7 @@ pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): bo
             // (elem_type_tag's infer_expr_width==64 path), and the `.N` / destructure
             // reads route a "u64" type-annotation tag through tuple_get_w(64) below.
             // f32 / usize are NOT here: they need float / pointer-width handling.
-            var ok_elem: boolean = (t == "i32" || t == "bool" || t == "boolean" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || t == "string" || t == "i64" || t == "u64" || t == "f64");
+            var ok_elem: boolean = (t == "i32" || t == "bool" || t == "boolean" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || t == "string" || t == "i64" || t == "u64" || t == "f64" || t == "f32" || t == "float");
             if (!ok_elem && decl_is_struct(structs, t) && decl_is_leaksafe(structs, t)) { ok_elem = true; }
             // An Option[T] element is a leak-only box — one pointer slot, like a
             // string / struct element — so a tuple-returning fn can return it
