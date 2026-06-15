@@ -10112,7 +10112,7 @@ pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): bo
     while (i <= tags.len()) {
         if (i == tags.len() || (depth == 0 && tags[i] == 44)) {   // 44 = ','
             var t: string = tags[start : i];
-            var ok_elem: boolean = (t == "i32" || t == "bool" || t == "string" || t == "i64" || t == "f64");
+            var ok_elem: boolean = (t == "i32" || t == "bool" || t == "boolean" || t == "string" || t == "i64" || t == "f64");
             if (!ok_elem && decl_is_struct(structs, t) && decl_is_leaksafe(structs, t)) { ok_elem = true; }
             // An Option[T] element is a leak-only box — one pointer slot, like a
             // string / struct element — so a tuple-returning fn can return it

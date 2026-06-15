@@ -361,6 +361,16 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"tuple-three", `function main(): i32 { var t = (1, 2, 3); return t.0 * 100 + t.1 * 10 + t.2; }`},
 		{"tuple-destructure", `function main(): i32 { var (a, b) = (40, 2); return a + b; }`},
 		{"tuple-expr-elems", `function main(): i32 { var x = 5; var t = (x * 2, x + 1); return t.0 + t.1; }`},
+		// A tuple-returning function with a `boolean` element. tuple_elems_lowerable
+		// gated this on `"bool"`, but the type is spelled `boolean`, so a boolean
+		// element wrongly bailed the whole function to AST. (Construction + `.N` /
+		// destructure already treat a boolean as a scalar — only the return-type
+		// gate was wrong.)
+		{"tuple-bool-first", `function f(): (boolean, i32) { return (true, 7); } function main(): i32 { var t = f(); if (t.0) { return t.1; } return 0; }`},
+		{"tuple-bool-first-false", `function f(): (boolean, i32) { return (false, 7); } function main(): i32 { var t = f(); if (t.0) { return t.1; } return 99; }`},
+		{"tuple-bool-second", `function f(): (i32, boolean) { return (9, true); } function main(): i32 { var t = f(); if (t.1) { return t.0; } return 0; }`},
+		{"tuple-bool-destructure", `function f(): (boolean, i32) { return (true, 42); } function main(): i32 { var (b, n) = f(); if (b) { return n; } return 0; }`},
+		{"tuple-bool-both", `function f(): (boolean, boolean) { return (true, false); } function main(): i32 { var t = f(); var r = 0; if (t.0) { r = r + 1; } if (t.1) { r = r + 10; } return r; }`},
 		// Methods (receiver = arg 0, static dispatch).
 		{"method-field", `struct P { x: i32 } function (p: P) get(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.get(); }`},
 		{"method-with-arg", `struct B { v: i32 } function (b: B) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = B { v: 4 }; return x.scale(3); }`},
@@ -1186,6 +1196,11 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"fstring-expr-val", `function main(): i32 { var a = 10; var s = f"v={a * 2}"; return s[2]; }`, 50},
 		{"fstring-esc-brace-val", `function main(): i32 { var s = f"a{{b"; return s[1]; }`, 123},
 		{"fstring-len-val", `function main(): i32 { var n = 42; return f"{n} apples".len(); }`, 9},
+		// boolean-element tuple returns, pinned to the absolute IR-path value (the
+		// AST==IR differential is blind to a both-paths-wrong result). The boolean
+		// element round-trips through the tuple box and drives the `if`.
+		{"tuple-bool-val", `function f(): (boolean, i32) { return (true, 7); } function main(): i32 { var t = f(); if (t.0) { return t.1; } return 0; }`, 7},
+		{"tuple-bool-both-val", `function f(): (boolean, boolean) { return (true, false); } function main(): i32 { var t = f(); var r = 0; if (t.0) { r = r + 1; } if (t.1) { r = r + 10; } return r; }`, 1},
 		// A string-ARRAY-valued if-/match-expression: the lifted `__lam` carries a
 		// default i32 ret_type, so the binding was mis-treated as a scalar and the
 		// 8-byte string elements were read at i32 width — a silent miscompile
