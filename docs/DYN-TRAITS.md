@@ -1,12 +1,15 @@
 # `dyn Trait` — runtime trait-object dispatch
 
-Status: **design + slices 1–3 shipped, slice 4a (wasm RC) shipped** —
-interpreter (slice 1), all three compiled backends (slice 2: wasm 2b,
-x86-64 2c, arm64 2d), the self-host (slice 3: x86-64 + arm64 + wasm), and
-the first cut of Perceus RC for trait objects on **wasm** (slice 4a,
-§4.4). Dispatch is complete everywhere; `dyn` values are now RECLAIMED on
-wasm (no leak), with x86-64 + arm64 still leaking until slices 4b/4c.
-This document is the design of record; implement against it and update it
+Status: **design + slices 1–4 shipped** — interpreter (slice 1), all
+three compiled backends (slice 2: wasm 2b, x86-64 2c, arm64 2d), the
+self-host (slice 3: x86-64 + arm64 + wasm), and Perceus RC for trait
+objects on **all three backends** (slice 4: wasm 4a, x86-64 4b, arm64 4c,
+§4.4), now including `dyn` values held as **array elements**
+(`dyn Trait[]`). Dispatch is complete everywhere and standalone + array
+`dyn` values are RECLAIMED (no leak) on every backend. Remaining: other
+nested-container `dyn` on the natives (closure capture / enum payload /
+map value / tuple element — still leak on x86-64 + arm64, reclaim on
+wasm; see §7). This document is the design of record; implement against it and update it
 as slices land. It is the
 runtime-dispatch counterpart to the static trait system in
 [`TRAITS.md`](TRAITS.md) — read that first.
@@ -557,8 +560,58 @@ dead-function elimination, and the drop worklist is seeded from the
 vtable drop slots. Tests: `internal/ir/vtable_test.go`
 (`TestCollectVtablesDropSlot`) + `internal/e2e/rc_heap_bump_dyn_trait_test.go`
 (bounded loop, no-underflow, multi-trait merged drop slot, borrowed-param
-no-drop). Slices (b)/(c) (natives, boxed — adds the cell free) remain;
-until they land the native leak is the documented, accepted behaviour.
+no-drop).
+
+**Slices (b) x86-64 + (c) arm64 — boxed — SHIPPED.** Both natives now
+reclaim a STANDALONE `dyn` local/param (pass `ir.DynRcSupported()`): the
+boxed `__drop_dyn_<set>` helper reloads `data`/`vtable` from the cell,
+dispatches the concrete dtor through the trailing vtable drop slot
+(`vtable[methodCount*ptrW]`, an absolute fn pointer), and `__free`s the
+16-byte cell. Tests: `rc_heap_bump_dyn_trait_x86_64_test.go` +
+`rc_heap_bump_dyn_trait_aarch64_test.go`.
+
+**§7.8 follow-up — `dyn` NESTED INSIDE A CONTAINER — array element
+SHIPPED on all backends.** Standalone `dyn` reclaim left a `dyn` value
+held *inside a container* leaking on the natives: the container's
+recursive-drop path called `dropFnNameFor(elemType, …,
+dynRcSupported=false)`, declining a `DynTraitType` element. The headline
+container is **`dyn Shape[]`** (the §2 motivating example — a
+heterogeneous array). It now reclaims on x86-64 + arm64 + wasm via a
+dedicated `__drop_arr_dyn_<__drop_dyn_<set>>` array drop:
+`arrElemStructDropName` gained a `DynTraitType` arm (gated on the
+backend's dyn-RC capability — `ptrW==4 || dynRcSupported`) that names it,
+and `genArrDynDropFn` builds a per-element loop that runs the per-set
+`__drop_dyn_<set>` destructor on each element, then frees the outer
+buffer. The loop is **representation-aware** in two ways the generic
+`genArrOfArrDropFn` cannot express, hence a dedicated generator:
+(1) a `dyn` element is ONE word (the boxed cell ptr, stride `ptrW`,
+`WidthPtr` load, 1-arg call) on the natives but TWO words (inline
+`[data, vtable]`, stride `2*ptrW`, `WidthString` load, 2-arg call) on
+wasm; (2) `__drop_dyn_<set>` returns VOID, so there is NO trailing
+`OpDrop` after the per-element call (unlike `genArrOfArrDropFn`, whose
+perElem returns the i32 box ptr). The `dyn-RC` flag is threaded to
+`arrElemStructDropName` at the array LOCAL drop sites (the `b.`
+exit-sweep / reinit / precise-drop callers carry `b.dynRcSupported`);
+the worklist regenerates `__drop_arr_dyn_*` from the name and seeds
+`__drop_dyn_*` (always emitted by `buildDynDropHelpers`). Tests:
+`internal/e2e/rc_heap_bump_dyn_trait_container_test.go` (bounded loop +
+no-underflow, heterogeneous `Circle`+`Rect` each owning a String, on
+x86-64 + arm64 + wasm).
+
+**§7.8 — still FLAGGED-LEAKING on the natives (follow-up).** Other
+container kinds that hold a `dyn` element still call
+`arrElemStructDropName` / `dropFnNameFor` / `appendChildDrop` with
+`dynRcSupported=false`, so a `dyn` (or a `dyn Trait[]`) held there leaks
+on the natives (correct-but-leaking, never a double-free / UAF). Left for
+a later slice: a **closure capture** of a `dyn` array
+(`genClosureDropThunk`); a **struct field / enum payload / tuple element**
+holding a `dyn` or a `dyn Trait[]` (`appendChildDrop` — its
+`arrElemIsRcTracked` gate excludes `DynTraitType` and its child load is
+one-word, wrong for wasm's two-word inline `dyn`, and its call+`OpDrop`
+form mismatches `__drop_dyn`'s void return); and a **map value** of a
+`dyn` (`mapValHasDrop` / `genMapValDropFn`). Wiring these correctly needs
+width-aware child loads + a void-return drop branch in the shared
+child-drop path — genuinely double-free-sensitive, hence deferred.
 
 ## 5. Coercion (boxing) model
 
