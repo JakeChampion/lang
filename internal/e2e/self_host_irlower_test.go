@@ -209,6 +209,14 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		{"struct-returned", "struct P { x: i32 } function mk(): P { return P { x: 42 }; } function main(): i32 { var p = mk(); return p.x; }", 42},
 		{"tuple-returned", "function mk(): (i32, i32) { return (40, 2); } function main(): i32 { var t = mk(); return t.0 + t.1; }", 42},
 		{"option-from-fn", "function f(b: i32): Option[i32] { if (b > 0) { return Some(42); } return None; } function main(): i32 { match (f(1)) { Some(v) => { return v; }, None => { return 0; } } }", 42},
+		// Ops this i32-only evaluator doesn't model — i64 / string — now bail
+		// cleanly with sentinel 198 instead of mis-popping the operand stack as a
+		// binary op (which underflowed to stack[-1] and SIGABRT'd / exit 134, a
+		// false "crash" in CI). The lowering itself is fine — these are exercised
+		// by the differential x86 / wasm IR suites; the round-trip evaluator stays
+		// integer-only by design. (Distinct from 200 = lowering bailed.)
+		{"i64-eval-unsupported", "function main(): i32 { var x: i64 = 5; var y: i64 = x + 3; return y as i32; }", 198},
+		{"string-eval-unsupported", "function main(): i32 { var s = \"hello\"; return s.len(); }", 198},
 	}
 
 	for _, tc := range cases {
