@@ -2167,9 +2167,9 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             else if (o.str == "i16") { s = s.write("    movswq %ax, %rax\n"); }
             else if (o.str == "i32") { s = s.write("    movslq %eax, %rax\n"); }
             s = s.write("    pushq %rax\n");
-        } else if (o.kind == "arr_push" || o.kind == "arr_push_i64") {
+        } else if (o.kind == "arr_push" || o.kind == "arr_push_i64" || o.kind == "arr_push_f64") {
             // [arr, val] -> grown array. __fern_arr_push(%rdi=arr, %rsi=val). Every
-            // array slot is 8 bytes here, so the i64/u64 element rides the SAME
+            // array slot is 8 bytes here, so the i64/u64/f64 element rides the SAME
             // helper (the popped operand-stack slot already holds the full 8-byte
             // value); only wasm needs a distinct 8-byte-stride push.
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_arr_push\n    pushq %rax\n");

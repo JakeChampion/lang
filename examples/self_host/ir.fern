@@ -231,6 +231,14 @@ pub function op_arr_push(): Op { return op0("arr_push"); }
 // where i32[] packs 4-byte slots, it lowers to the 8-byte-stride
 // $__fern_arr_push_i64. Lowered from `a = a.append(v)` on a u64[] / i64[].
 pub function op_arr_push_i64(): Op { return op0("arr_push_i64"); }
+
+// `arr_push_f64` is `arr_push` for an f64[] (8-byte float element): the value
+// is an f64 (f64.store / 8-byte slot). On the register backends every array
+// slot is already 8 bytes and the f64 value rides the value stack as raw 8
+// bytes, so this reuses __fern_arr_push exactly like arr_push_i64; on wasm32
+// the operand stack is typed, so it lowers to the 8-byte-stride
+// $__fern_arr_push_f64. Lowered from `a = a.append(v)` on an f64[].
+pub function op_arr_push_f64(): Op { return op0("arr_push_f64"); }
 // `alloc_u8` pops [n] → a fresh n-element array (8-byte slots, len = n) via
 // __fern_alloc_u8 (the `__alloc_u8(n)` byte-buffer builtin). Contents are NOT
 // zeroed (a reused freelist block keeps stale bytes — callers zero explicitly).
@@ -659,7 +667,7 @@ pub function render_op(o: Op): string {
 // result.)
 pub function op_allocates(kind: string): boolean {
     // Low-level + literal allocations.
-    if (kind == "alloc" || kind == "alloc_u8" || kind == "arr_make" || kind == "arr_push" || kind == "arr_push_i64") { return true; }
+    if (kind == "alloc" || kind == "alloc_u8" || kind == "arr_make" || kind == "arr_push" || kind == "arr_push_i64" || kind == "arr_push_f64") { return true; }
     if (kind == "const_str" || kind == "str_concat" || kind == "str_slice" || kind == "str_from_bytes") { return true; }
     // Composite boxes.
     if (kind == "struct_make" || kind == "tuple_make") { return true; }
