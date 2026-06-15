@@ -1,0 +1,21 @@
+// std/error — a common supertype for error values.
+//
+// `Error` is the shared vocabulary for "a thing that went wrong": any type
+// that can describe itself with a human-readable message implements it.
+// Returning `Result[T, dyn error.Error]` lets a function propagate
+// heterogeneous concrete error types through `?` — each boxes into
+// `dyn error.Error` on the failure path (the `?` dyn-error conversion) —
+// and lets callers handle any of them uniformly via `message()`:
+//
+//     import "std/error" as error;
+//
+//     function handle(req: Request): Result[Response, dyn error.Error] {
+//         var body: string = read_body(req)?;   // boxes a ReadError
+//         var cfg: Config  = parse(body)?;       // boxes a ParseError
+//         return Ok(respond(cfg));
+//     }
+//
+// A type opts in with `impl error.Error for MyError { function message(...) … }`.
+pub trait Error {
+    function message(self: Self): string;
+}
