@@ -9468,18 +9468,29 @@ pub function lam_leaf_array_elem(fn: parser.FuncDecl, funcs: parser.FuncDecl[], 
             match (arr.elements[0]) {
                 parser.ExprString(_) => { return "string"; },
                 parser.ExprNumber(num) => { if (num.is_float) { return "f64"; } return "i32"; },
+                // A struct-array literal `[P{..}, …]` — return the element struct
+                // type name (the caller verifies it names a declared leak-safe
+                // struct before treating it as a struct-array element).
+                parser.ExprStructLit(sl) => { return sl.type_name; },
                 _ => { return ""; }
             }
         },
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(cid) => {
-                    if (cid.name.len() >= 6 && cid.name[0:6] == "__lam_") {
-                        var ni: i32 = 0;
-                        while (ni < funcs.len()) {
-                            if (funcs[ni].name == cid.name) { return lam_leaf_array_elem(funcs[ni], funcs, depth + 1); }
-                            ni = ni + 1;
+                    var ni: i32 = 0;
+                    while (ni < funcs.len()) {
+                        if (funcs[ni].name == cid.name && funcs[ni].receiver_type.len() == 0) {
+                            // A nested `__lam_` — recurse into its body.
+                            if (cid.name.len() >= 6 && cid.name[0:6] == "__lam_") { return lam_leaf_array_elem(funcs[ni], funcs, depth + 1); }
+                            // A regular array-returning function in the branch
+                            // (`if (c) { mk() } else { … }` where mk returns P[]):
+                            // its declared element type is the array element.
+                            var crt: string = funcs[ni].ret_type;
+                            if (crt.len() >= 3 && crt[crt.len() - 2 : crt.len()] == "[]") { return crt[0 : crt.len() - 2]; }
+                            return "";
                         }
+                        ni = ni + 1;
                     }
                 },
                 _ => {}
@@ -9760,6 +9771,16 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructD
         else if (funcs[k].name.len() >= 6 && funcs[k].name[0:6] == "__lam_") {
             var inf: string = fn_inferred_struct_ret(funcs[k], structs, funcs, 0);
             if (inf.len() > 0) { elig = true; elem_t = inf; }
+            else {
+                // A struct-ARRAY-valued lifted if-/match-expression (`var ps =
+                // if (c) { [P{..}] } else { … }`): its leaf is a struct-array
+                // literal, so record the ELEMENT struct type (the slot is is_arr
+                // via array_ret_fns, so struct_type_of_slot reads as the element
+                // for `ps[i].field`). The P[] sibling of the string[]/f64[] #3224
+                // fixes.
+                var aelem: string = lam_leaf_array_elem(funcs[k], funcs, 0);
+                if (aelem.len() > 0 && decl_is_struct(structs, aelem) && decl_is_leaksafe(structs, aelem)) { elig = true; elem_t = aelem; }
+            }
         }
         // A struct-ARRAY return `P[]` (leaf-safe element): record the ELEMENT
         // struct type so a call site `var a = f()` (already is_arr via
