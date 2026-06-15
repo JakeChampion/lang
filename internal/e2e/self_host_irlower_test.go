@@ -217,6 +217,15 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		// integer-only by design. (Distinct from 200 = lowering bailed.)
 		{"i64-eval-unsupported", "function main(): i32 { var x: i64 = 5; var y: i64 = x + 3; return y as i32; }", 198},
 		{"string-eval-unsupported", "function main(): i32 { var s = \"hello\"; return s.len(); }", 198},
+		// Calling a function the IR path can't lower (here a receiver method,
+		// which falls back to the AST emitter in the real compiler) now bails
+		// cleanly (198) — the callee's bail propagates up the call chain. It used
+		// to silently return 0 (find_fn miss / LoweredFn.ok false yielded 0),
+		// which could spuriously match an expected value and hide a regression.
+		{"unlowered-callee-bails", "struct P { x: i32 } function (p: P) getx(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.getx(); }", 198},
+		// A lowered callee that returns a box still computes correctly (bail flag
+		// stays false, value + shared heap propagate).
+		{"lowered-callee-ok", "struct P { x: i32 } function mk(): P { return P { x: 42 }; } function main(): i32 { var p = mk(); return p.x; }", 42},
 	}
 
 	for _, tc := range cases {
