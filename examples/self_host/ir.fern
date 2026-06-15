@@ -246,6 +246,13 @@ pub function op_alloc_u8(): Op { return op0("alloc_u8"); }
 // `str_from_bytes` pops [arr] → a fresh string box packing each slot's low byte
 // via __fern_string_from_bytes (the `string_from_bytes(arr)` builtin).
 pub function op_str_from_bytes(): Op { return op0("str_from_bytes"); }
+// `memcpy` pops [dst, src, n] (raw usize pointers + a byte count) → copies n
+// bytes src→dst and pushes a dummy 0 (the `__memcpy(dst, src, n)` builtin is
+// used statement-position, its value discarded). x86-64 emits `rep movsb`,
+// arm64 a byte-copy loop, wasm `memory.copy` — matching the AST emitters. This
+// is what lets core/int's int_to_string / __int_to_string_u64 (and everything
+// transitively calling them) lower on the IR path instead of BAIL call.
+pub function op_memcpy(): Op { return op0("memcpy"); }
 // `int_cast` masks / extends a 32-bit integer to a narrower int type's range:
 // `as u8` (and 255), `as u16` (and 65535), `as i8`/`as i16` (sign-extend),
 // `as i32` (sign-extend low 32 — movslq), `as u32` (zero-extend low 32 — movl).

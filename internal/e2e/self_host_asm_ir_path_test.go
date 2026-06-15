@@ -192,6 +192,12 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// .append (-> __fern_arr_push), plus __alloc_u8 / string_from_bytes. These
 		// don't overflow u32, so IR matches the AST path.
 		{"with-reassign", "function main(): i32 { var a = [10, 20, 30]; a = a.with(1, 99); return a[0] + a[1] + a[2]; }"},
+		// __memcpy(dst, src, n): raw byte copy — op_memcpy (rep movsb on x86-64).
+		// Was BAIL call (no IR op), which kept core/int's int_to_string and
+		// everything calling it off the IR path. Cloning a same-size u8[] box
+		// (8-byte header + 3*8-byte slots = 32 bytes) makes the copy observable:
+		// dst[0..2] become src's 5/7/9 -> 21. IR must match the AST rep-movsb path.
+		{"memcpy-clone", "function main(): i32 { var src: u8[] = __alloc_u8(3); src = src.with(0, 5 as u8); src = src.with(1, 7 as u8); src = src.with(2, 9 as u8); var dst: u8[] = __alloc_u8(3); __memcpy(dst as usize, src as usize, 32); return (dst[0] as i32) + (dst[1] as i32) + (dst[2] as i32); }"},
 		{"with-loop", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; while (i < 4) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3]; }"},
 		{"append-build", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a[0] + a[4]; }"},
 		// NB: __alloc_u8 / string_from_bytes programs are NOT differential cases —

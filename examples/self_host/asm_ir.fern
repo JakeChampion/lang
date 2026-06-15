@@ -2182,6 +2182,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // [arr] -> string box packing each slot's low byte.
             s = s.write("    popq %rdi\n    call __fern_string_from_bytes\n    pushq %rax\n");
             s = s.need("heap").need("str_from_bytes");
+        } else if (o.kind == "memcpy") {
+            // [dst, src, n] -> copy n bytes src->dst (rep movsb), push dummy 0.
+            // n is on top, then src, then dst (the lowering order). Mirrors the
+            // AST __memcpy emitter in asm.fern.
+            s = s.write("    popq %rcx\n    popq %rsi\n    popq %rdi\n    rep movsb\n    pushq $0\n");
         } else if (o.kind == "load_local") {
             s = s.write("    pushq " + util.i32_to_string(0 - 8 * (o.i32_imm + 1)) + "(%rbp)\n");
         } else if (o.kind == "store_local") {
