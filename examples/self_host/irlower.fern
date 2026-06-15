@@ -1137,7 +1137,13 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
             var fi: i32 = 0;
             while (fi < structs[i].fields.len()) {
                 var t: string = structs[i].fields[fi].type_name;
-                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field(t) || is_leaksafe_tuple_field(t) || is_map_type_name(t)) {
+                // The ≤32-bit integer scalars (u32 + the sub-word u8/u16/i8/i16)
+                // are leak-only and ride one i32 slot exactly like i32, so a struct
+                // carrying them is leaf-safe and lowers (construction stores / field
+                // read loads at the default 32-bit width; a sub-word cast wraps the
+                // value before the store). u64 / f32 are NOT added: they need real
+                // 64-bit / float width handling, so they keep the struct on AST.
+                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || is_leaksafe_array_field(t) || is_leaksafe_opt_field(t) || is_leaksafe_tuple_field(t) || is_map_type_name(t)) {
                     fi = fi + 1;
                     continue;
                 }

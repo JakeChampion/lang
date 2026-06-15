@@ -349,6 +349,18 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"struct-three-fields", `struct V { a: i32, b: i32, c: i32 } function main(): i32 { var v = V { a: 1, b: 2, c: 3 }; return v.a * 100 + v.b * 10 + v.c; }`},
 		{"struct-param", `struct P { x: i32, y: i32 } function sum(p: P): i32 { return p.x + p.y; } function main(): i32 { var p = P { x: 30, y: 12 }; return sum(p); }`},
 		{"struct-bool-field", `struct F { on: boolean, n: i32 } function main(): i32 { var f = F { on: true, n: 7 }; if (f.on) { return f.n; } return 0; }`},
+		// A struct with a ≤32-bit non-i32 integer field (u32 / sub-word u8/u16/i8/i16)
+		// is leak-safe and lowers — these ride the same i32 slot, so only the
+		// leaf-safe gate blocked them. Covers local / param / struct-returning /
+		// mixed-field / functional-update shapes; u64 / f32 stay on AST (width work).
+		{"struct-u32-field", `struct B { hi: u32, n: i32 } function main(): i32 { var b = B { hi: 4000000000 as u32, n: 7 }; var hi: u32 = b.hi >> 30; return (hi as i32) + b.n; }`},
+		{"struct-u8-field", `struct B { c: u8, n: i32 } function main(): i32 { var b = B { c: 250 as u8, n: 5 }; return (b.c as i32) + b.n; }`},
+		{"struct-i16-field", `struct B { v: i16, n: i32 } function main(): i32 { var b = B { v: 1000 as i16, n: 2 }; return ((b.v as i32) + b.n) % 200; }`},
+		{"struct-i8-neg-field", `struct B { v: i8, n: i32 } function main(): i32 { var b = B { v: 0 - 5 as i8, n: 10 }; return b.n - (b.v as i32); }`},
+		{"struct-u32-ret", `struct B { hi: u32, n: i32 } function mk(): B { return B { hi: 100 as u32, n: 4 }; } function main(): i32 { var b = mk(); return (b.hi as i32) + b.n; }`},
+		{"struct-u32-param", `struct B { hi: u32, n: i32 } function sz(b: B): i32 { return b.n; } function main(): i32 { return sz(B { hi: 1 as u32, n: 9 }); }`},
+		{"struct-mixed-int-fields", `struct B { a: u8, b: i16, c: u32, d: i32 } function main(): i32 { var x = B { a: 1 as u8, b: 2 as i16, c: 3 as u32, d: 4 }; return (x.a as i32) + (x.b as i32) + (x.c as i32) + x.d; }`},
+		{"struct-u32-update", `struct B { hi: u32, n: i32 } function main(): i32 { var b = B { hi: 5 as u32, n: 1 }; var c = B { ...b, n: 9 }; return (c.hi as i32) + c.n; }`},
 		{"struct-in-loop", `struct P { x: i32, y: i32 } function main(): i32 { var s = 0; var i = 0; while (i < 4) { var p = P { x: i, y: i * 2 }; s = s + p.x + p.y; i = i + 1; } return s; }`},
 		{"struct-update-one", `struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; var q = P { ...p, y: 9 }; return q.x + q.y; }`},
 		{"struct-update-keeps-base", `struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 5, y: 6 }; var q = P { ...p, x: 50 }; return p.x + q.x; }`},
@@ -1235,6 +1247,10 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// the u32 high bits and the signed-i8 negative must survive the round-trip.
 		{"tuple-u32-val", `function f(): (u32, i32) { return (4000000000 as u32, 7); } function main(): i32 { var t = f(); var hi: u32 = t.0 >> 30; return (hi as i32) + t.1; }`, 10},
 		{"tuple-i8-neg-val", `function f(): (i8, i32) { return (0 - 5 as i8, 10); } function main(): i32 { var t = f(); return t.1 - (t.0 as i32); }`, 15},
+		// ≤32-bit non-i32 integer STRUCT fields, pinned to the absolute IR value:
+		// the u32 high bits and the signed-i8 negative survive the field round-trip.
+		{"struct-u32-field-val", `struct B { hi: u32, n: i32 } function main(): i32 { var b = B { hi: 4000000000 as u32, n: 7 }; var hi: u32 = b.hi >> 30; return (hi as i32) + b.n; }`, 10},
+		{"struct-i8-neg-field-val", `struct B { v: i8, n: i32 } function main(): i32 { var b = B { v: 0 - 5 as i8, n: 10 }; return b.n - (b.v as i32); }`, 15},
 		// A string-ARRAY-valued if-/match-expression: the lifted `__lam` carries a
 		// default i32 ret_type, so the binding was mis-treated as a scalar and the
 		// 8-byte string elements were read at i32 width — a silent miscompile
