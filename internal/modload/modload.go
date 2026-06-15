@@ -1119,6 +1119,11 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 	for _, impl := range m.prog.Impls {
 		r.rewriteType(&impl.Type)
 		impl.Trait = r.rewriteTraitNameAt(impl.Trait, impl.TraitPos)
+		// Generic-trait args (`impl From[mod.Foo] for …`) are types too —
+		// mangle any struct/enum names so they line up with the trait sig.
+		for i := range impl.TraitArgs {
+			r.rewriteType(&impl.TraitArgs[i])
+		}
 	}
 	for _, fn := range m.prog.Funcs {
 		for tp, traits := range fn.Bounds {

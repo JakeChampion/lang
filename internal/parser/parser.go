@@ -703,6 +703,16 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Optional trait type parameters: `trait From[T] { … }`. Bound to the
+	// trait's method signatures; each `impl From[Arg] for T` supplies the
+	// arg. Names only for now (bounds parsed but ignored). See docs/TRAITS.md.
+	var typeParams []string
+	if p.match(lexer.Punct, "[") {
+		typeParams, _, err = p.parseTypeParamList()
+		if err != nil {
+			return nil, err
+		}
+	}
 	// Optional supertraits: `trait Ord: Eq + Hash { … }`. Same `: Trait
 	// (+ Trait)*` grammar as a type-parameter bound (qualifiers allowed).
 	supertraits, err := p.parseOptBounds()
@@ -712,7 +722,7 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 	if _, err := p.expect(lexer.Punct, "{"); err != nil {
 		return nil, err
 	}
-	td := &ast.TraitDecl{P: kw.Pos, Name: name.Text, NamePos: name.Pos, Supertraits: supertraits}
+	td := &ast.TraitDecl{P: kw.Pos, Name: name.Text, NamePos: name.Pos, Supertraits: supertraits, TypeParams: typeParams}
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
 		// Associated type declaration: `type Item;`. Referenced in method
 		// signatures as `Self::Item`; each impl binds it with
@@ -837,6 +847,25 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 		return nil, nil, err
 	}
 	tname := p.maybeQualify(tnameTok.Text)
+	// Optional trait type arguments: `impl From[i32] for Celsius`. Bound
+	// positionally to the trait's type parameters. See docs/TRAITS.md.
+	var traitArgs []ast.Type
+	if p.match(lexer.Punct, "[") {
+		p.advance() // consume `[`
+		for {
+			at, err := p.parseType()
+			if err != nil {
+				return nil, nil, err
+			}
+			traitArgs = append(traitArgs, at)
+			if _, ok := p.accept(lexer.Punct, ","); !ok {
+				break
+			}
+		}
+		if _, err := p.expect(lexer.Punct, "]"); err != nil {
+			return nil, nil, err
+		}
+	}
 	if _, err := p.expect(lexer.Keyword, "for"); err != nil {
 		return nil, nil, err
 	}
@@ -851,7 +880,7 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 	if _, err := p.expect(lexer.Punct, "{"); err != nil {
 		return nil, nil, err
 	}
-	id := &ast.ImplDecl{P: kw.Pos, Trait: tname, TraitPos: tnameTok.Pos, Type: implType, TypePos: typePos, TypeParams: implTypeParams, Bounds: implBounds}
+	id := &ast.ImplDecl{P: kw.Pos, Trait: tname, TraitPos: tnameTok.Pos, Type: implType, TypePos: typePos, TypeParams: implTypeParams, Bounds: implBounds, TraitArgs: traitArgs}
 	var methods []*ast.FuncDecl
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
 		// Associated-type binding: `type Item = T;`. Records the concrete
