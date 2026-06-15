@@ -264,11 +264,14 @@ paths, so it can't run under the qemu runner — mirrors the existing import tes
 gate). Coverage-only, no compiler change. Guarded by
 `TestSelfHostStdlibModloadIRX86_64`.
 
-Surfaced (not fixed here): an **unqualified** call to an imported free function
-(`format_bytes(…)` after `import "std/format"`, rather than `format.format_bytes`)
-links against `__fn_format_bytes` while the loader emits the mangled
-`format__format_bytes` — an interp-vs-loader qualification discrepancy worth a
-separate look.
+Surfaced while writing the cases (not a loader/IR bug): an **unqualified** call to
+an imported free function (`range(…)` after `import "std/math"`, rather than
+`math.range`) is correctly rejected by the native checker (`error[E001]: undefined
+identifier`), and the self-host loader correctly fails to link it — but the *native
+interpreter* over-leniently accepts and runs it. So the qualified form is the only
+valid one (matching the checker), and the discrepancy is an interpreter-leniency
+quirk, not a loader gap. The shipped cases all use methods or qualified `mod.fn`
+calls accordingly.
 
 ### 2026-06-15 — std/crypto, std/path, std/math via the self-host IR path (coverage)
 
