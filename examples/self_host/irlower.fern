@@ -3341,6 +3341,20 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!au.ok) { return au; }
                         return au.emit(ir.op_alloc_u8());
                     }
+                    // __memcpy(dst, src, n): raw byte copy. Lower the three
+                    // usize/i32 operands (dst, src, n) then emit op_memcpy, which
+                    // the IR backends select rep movsb / a byte loop / memory.copy
+                    // for. Pushes a dummy 0 (used statement-position, discarded) —
+                    // matching the AST emitters. Unblocks core/int int_to_string.
+                    if (cid.name == "__memcpy" && c.args.len() == 3) {
+                        var mc: LowerState = lower_expr(c.args[0], s);
+                        if (!mc.ok) { return mc; }
+                        mc = lower_expr(c.args[1], mc);
+                        if (!mc.ok) { return mc; }
+                        mc = lower_expr(c.args[2], mc);
+                        if (!mc.ok) { return mc; }
+                        return mc.emit(ir.op_memcpy());
+                    }
                     // std/float single-instruction math builtins: __sqrt_f64 /
                     // __floor_f64 / __ceil_f64 / __trunc_f64 / __abs_f64. Lower the
                     // f64 operand, then emit the op_funary intrinsic the IR backends
