@@ -8784,10 +8784,25 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         cii = cii + 1;
     }
     var noclos: string[] = [];
+    // flat_map shape: a closure PARAM `f: (T) => U[]` (parsed coarse "fn", its
+    // array-RETURN recorded on ParamDecl.ret_arr) means a call `f(x)` yields a
+    // fresh owned array — a move, exactly like an arr_ret_fn call. Admit each
+    // such param's name into THIS function's arr_ret_fns view so the existing
+    // var-init / foreach-snapshot machinery marks `var $forit = f(x)` an array
+    // and `for y in f(x)` lowers like `for x in xs`. The augmented list lives
+    // only in the LowerState built below (a fresh copy per lower_func call), so
+    // it never leaks to another function — a param named `f` elsewhere that is
+    // NOT array-returning is unaffected.
+    var arr_ret_fns_aug: string[] = arr_ret_fns;
+    var pri: i32 = 0;
+    while (pri < fn.params.len()) {
+        if (fn.params[pri].ret_arr) { arr_ret_fns_aug = arr_ret_fns_aug.append(fn.params[pri].name); }
+        pri = pri + 1;
+    }
     // Struct reclamation: the fresh, non-escaping struct locals this function may
     // free at scope exit / loop-rebind (conservative escape analysis above).
     var reclaim: string[] = reclaimable_names_of(fn.body, structs);
-    var s: LowerState = LowerState { ops: empty, local_names: names, local_is_arr: isarr, local_is_str: isstr, local_is_strarr: isstrarr, local_struct_type: structty, local_opt_type: optty, local_tuple_elems: tupty, local_map_type: mapty, local_is_i64: isi64, local_is_f64: isf64, local_is_f64arr: isf64arr, local_is_i64arr: isi64arr, local_is_closurearr: isclosurearr, local_is_arrarr: isarrarr, local_is_u32: isu32, local_is_u64: isu64, local_subword: subword, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_is_i64arr: ret_i64arr, ret_is_dyn: ret_dyn, i64_ret_fns: i64_ret_fns, fn_param_sigs: fn_param_sigs, cur_fn: fn.name, closure_fns: closure_fns, const_fns: const_fns, closure_locals: noclos, f64_ret_fns: f64_ret_fns, f64arr_ret_fns: f64arr_ret_fns, i64arr_ret_fns: i64arr_ret_fns, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns, strarr_ret_fns: strarr_ret_fns, opt_ret_fns: opt_ret_fns, tuple_ret_fns: tuple_ret_fns, struct_ret_fns: struct_ret_fns, reclaimable_names: reclaim, n_params: names.len(), ok: true };
+    var s: LowerState = LowerState { ops: empty, local_names: names, local_is_arr: isarr, local_is_str: isstr, local_is_strarr: isstrarr, local_struct_type: structty, local_opt_type: optty, local_tuple_elems: tupty, local_map_type: mapty, local_is_i64: isi64, local_is_f64: isf64, local_is_f64arr: isf64arr, local_is_i64arr: isi64arr, local_is_closurearr: isclosurearr, local_is_arrarr: isarrarr, local_is_u32: isu32, local_is_u64: isu64, local_subword: subword, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_is_i64arr: ret_i64arr, ret_is_dyn: ret_dyn, i64_ret_fns: i64_ret_fns, fn_param_sigs: fn_param_sigs, cur_fn: fn.name, closure_fns: closure_fns, const_fns: const_fns, closure_locals: noclos, f64_ret_fns: f64_ret_fns, f64arr_ret_fns: f64arr_ret_fns, i64arr_ret_fns: i64arr_ret_fns, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns_aug, strarr_ret_fns: strarr_ret_fns, opt_ret_fns: opt_ret_fns, tuple_ret_fns: tuple_ret_fns, struct_ret_fns: struct_ret_fns, reclaimable_names: reclaim, n_params: names.len(), ok: true };
     // Perceus precise drops: release each linear, owned array-literal local right
     // after its last top-level use (drop-on-last-use), instead of at the exit
     // sweep — bounding the live set so its block recycles for later allocations.
@@ -10665,7 +10680,7 @@ function try_lift_binding(body: parser.Stmt[], idx: i32, fname: string, lam: par
     var pj: i32 = 0;
     while (pj < lam.params.len()) { lparams = lparams.append(lam.params[pj]); pj = pj + 1; }
     var cj: i32 = 0;
-    while (cj < caps.len()) { lparams = lparams.append(parser.ParamDecl { name: caps[cj], type_name: ctypes[cj], own: false, has_default: false, default_value: parser.e_unknown("") }); cj = cj + 1; }
+    while (cj < caps.len()) { lparams = lparams.append(parser.ParamDecl { name: caps[cj], type_name: ctypes[cj], own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false }); cj = cj + 1; }
     var lname: string = "__lam_" + util.i32_to_string(acc.counter);
     var notp: string[] = [];
     var newfn: parser.FuncDecl = parser.FuncDecl { name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
@@ -10742,7 +10757,7 @@ function hoist_escaping_closure(fd: parser.FuncDecl, gfns: string[]): HoistResul
                         ci = ci + 1;
                     }
                     // params = __env first, then the lambda's declared params.
-                    var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown("") }];
+                    var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false }];
                     var pj: i32 = 0;
                     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
                     // body = capture reads (var cap = __env[1+i]) then the lambda body.

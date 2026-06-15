@@ -159,6 +159,15 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"clo-arr-idxvar", `function main(): i32 { var fs = [function(x: i32): i32 { return x * 10; }]; var i = 0; return fs[i](7); }`},
 		{"clo-arr-forin", `function main(): i32 { var fs = [function(x: i32): i32 { return x + 1; }, function(x: i32): i32 { return x + 2; }]; var s = 0; for f in fs { s = s + f(10); } return s; }`},
 		{"clo-arr-mixed", `function dbl(x: i32): i32 { return x * 2; } function main(): i32 { var fs = [dbl, function(x: i32): i32 { return x + 5; }]; return fs[0](10) + fs[1](10); }`},
+		// flat_map shape: `for y in f(x)` where `f` is a closure PARAM whose type
+		// `(T) => U[]` returns an array (ParamDecl.ret_arr). lower_func admits
+		// such a param into its arr_ret_fns view, so the foreach snapshot
+		// `var $forit = f(x)` marks an owned array and `for y in f(x)` lowers like
+		// `for x in xs`. Was BAIL lower (the single bail across the functional
+		// core); now ir. The bare-fn-name arg `apply(dup)` rides the existing
+		// fn-value-arg path (callee_param_is_fn still sees type_name "fn").
+		{"fnval-ret-arr-forin", `function apply(xs: i32[], f: (i32) => i32[]): i32 { var out = 0; for x in xs { for y in f(x) { out = out + y; } } return out; } function dup(n: i32): i32[] { return [n, n]; } function main(): i32 { return apply([1, 2, 3], dup); }`},
+		{"fnval-ret-arr-varlen", `function apply(xs: i32[], f: (i32) => i32[]): i32 { var c = 0; for x in xs { for y in f(x) { c = c + 1; } } return c; } function upto(n: i32): i32[] { var a: i32[] = []; var i = 0; while (i < n) { a = a.append(i); i = i + 1; } return a; } function main(): i32 { return apply([1, 2, 3], upto); }`},
 		{"modulo", "function main(): i32 { return 23 % 5; }"},
 		{"division", "function main(): i32 { return 84 / 2; }"},
 		{"bitwise", "function main(): i32 { return (6 & 3) | 8; }"},
