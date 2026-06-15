@@ -23,15 +23,15 @@ import "std/test";
 // runner_self_test.fern uses to exercise failure
 // reporting without poisoning the parent's exit code.
 
-function intentional_fail(): Option[string] {
+function intentional_fail(): test.TestOutcome {
     return test.fail("expected fail used to trigger fail-fast");
 }
 
-function trivial_pass(): Option[string] {
-    return None;
+function trivial_pass(): test.TestOutcome {
+    return test.pass();
 }
 
-function test_fail_fast_short_circuits_post_fail(): Option[string] {
+function test_fail_fast_short_circuits_post_fail(): test.TestOutcome {
     // Build an independent runner with fail-fast on.
     // Using `test_new_fail_fast` so the same call path
     // gets exercised. Its output WILL appear in the
@@ -54,10 +54,10 @@ function test_fail_fast_short_circuits_post_fail(): Option[string] {
     if (sub.skipped != 1) {
         return test.fail("expected 1 skip, got " + sub.skipped.to_string());
     }
-    return None;
+    return test.pass();
 }
 
-function test_fail_fast_off_runs_every_case(): Option[string] {
+function test_fail_fast_off_runs_every_case(): test.TestOutcome {
     // Sanity check: without fail-fast, the same shape
     // produces 2 pass + 1 test.fail(c3 actually runs).
     // Pins the contract that fail-fast is OPT-IN.
@@ -71,25 +71,25 @@ function test_fail_fast_off_runs_every_case(): Option[string] {
                     sub.failed.to_string() + " skipped=" +
                     sub.skipped.to_string());
     }
-    return None;
+    return test.pass();
 }
 
-function test_parse_fail_fast_present(): Option[string] {
+function test_parse_fail_fast_present(): test.TestOutcome {
     var argv: string[] = ["lang", "-interp", "test.fern", "--", "--fail-fast"];
-    if (test.parse_fail_fast_from_args(argv)) { return None; }
+    if (test.parse_fail_fast_from_args(argv)) { return test.pass(); }
     return test.fail("--fail-fast not detected in argv");
 }
 
-function test_parse_fail_fast_absent(): Option[string] {
+function test_parse_fail_fast_absent(): test.TestOutcome {
     var argv: string[] = ["lang", "-interp", "test.fern"];
-    if (!test.parse_fail_fast_from_args(argv)) { return None; }
+    if (!test.parse_fail_fast_from_args(argv)) { return test.pass(); }
     return test.fail("false-positive: detected --fail-fast in clean argv");
 }
 
-function test_with_fail_fast_preserves_filter(): Option[string] {
+function test_with_fail_fast_preserves_filter(): test.TestOutcome {
     var r0: test.TestRunner = test.test_new_filtered("with-ff", "x");
     var r1: test.TestRunner = r0.with_fail_fast();
-    if (r1.filter == "x" && r1.fail_fast) { return None; }
+    if (r1.filter == "x" && r1.fail_fast) { return test.pass(); }
     return test.fail("with_fail_fast clobbered an unrelated field");
 }
 

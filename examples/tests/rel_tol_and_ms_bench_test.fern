@@ -11,74 +11,74 @@ import "std/test";
 //     test authors writing frame-budget-shaped assertions
 //     ("under 16 ms") don't have to hand-multiply by 1000.
 
-function test_rel_tol_passes_within_ratio(): Option[string] {
+function test_rel_tol_passes_within_ratio(): test.TestOutcome {
     // 1% relative tolerance: 100.0 vs 100.5 is 0.5%.
     return test.assert_eq_f64_rel(100.5, 100.0, 0.01);
 }
 
-function test_rel_tol_fails_outside_ratio(): Option[string] {
+function test_rel_tol_fails_outside_ratio(): test.TestOutcome {
     // 0.1% tolerance against a 1% diff — must fail.
     match (test.assert_eq_f64_rel(101.0, 100.0, 0.001)) {
-        None => { return test.fail("expected rel_tol mismatch to be reported"); },
-        Some(_) => { return None; }
+        Pass => { return test.fail("expected rel_tol mismatch to be reported"); },
+        Fail(_) => { return test.pass(); }
     }
 }
 
-function test_rel_tol_scale_invariance(): Option[string] {
+function test_rel_tol_scale_invariance(): test.TestOutcome {
     // The whole point of relative tolerance: 1% works
     // across both microscale and gigascale magnitudes.
     // (Lexer doesn't take scientific notation yet, so we
     // compose the scales by multiplication.)
     var small_base: f64 = 0.000001;             // 1e-6
     var small_diff: f64 = 0.000000001;          // 1e-9, i.e. 0.1% of base
-    var lo: Option[string] = test.assert_eq_f64_rel(small_base + small_diff, small_base, 0.01);
+    var lo: test.TestOutcome = test.assert_eq_f64_rel(small_base + small_diff, small_base, 0.01);
     match (lo) {
-        Some(msg) => { return Some("small-scale: " + msg); },
-        None => {}
+        Fail(msg) => { return test.fail("small-scale: " + msg); },
+        Pass => {}
     }
     var big_base: f64 = 1000000000.0;           // 1e9
     var big_diff: f64 = 1000000.0;              // 1e6, i.e. 0.1% of base
     return test.assert_eq_f64_rel(big_base + big_diff, big_base, 0.01);
 }
 
-function test_rel_tol_zero_expected_falls_back_to_abs(): Option[string] {
+function test_rel_tol_zero_expected_falls_back_to_abs(): test.TestOutcome {
     // expected == 0.0 makes the ratio undefined; helper
     // compares |actual| directly against rel_tol.
     return test.assert_eq_f64_rel(0.0001, 0.0, 0.001);
 }
 
-function test_rel_tol_zero_expected_with_too_large_actual(): Option[string] {
+function test_rel_tol_zero_expected_with_too_large_actual(): test.TestOutcome {
     match (test.assert_eq_f64_rel(0.5, 0.0, 0.001)) {
-        None => { return test.fail("expected 0.5 vs 0 to fail at rel_tol=0.001"); },
-        Some(_) => { return None; }
+        Pass => { return test.fail("expected 0.5 vs 0 to fail at rel_tol=0.001"); },
+        Fail(_) => { return test.pass(); }
     }
 }
 
-function test_rel_tol_nan_actual_fails(): Option[string] {
+function test_rel_tol_nan_actual_fails(): test.TestOutcome {
     var z: f64 = 0.0;
     var nan: f64 = z / z;
     match (test.assert_eq_f64_rel(nan, 1.0, 0.01)) {
-        None => { return test.fail("NaN actual should fail rel compare"); },
-        Some(_) => { return None; }
+        Pass => { return test.fail("NaN actual should fail rel compare"); },
+        Fail(_) => { return test.pass(); }
     }
 }
 
-function test_rel_tol_nan_expected_fails(): Option[string] {
+function test_rel_tol_nan_expected_fails(): test.TestOutcome {
     var z: f64 = 0.0;
     var nan: f64 = z / z;
     match (test.assert_eq_f64_rel(1.0, nan, 0.01)) {
-        None => { return test.fail("NaN expected should fail rel compare"); },
-        Some(_) => { return None; }
+        Pass => { return test.fail("NaN expected should fail rel compare"); },
+        Fail(_) => { return test.pass(); }
     }
 }
 
-function test_rel_tol_negative_expected(): Option[string] {
+function test_rel_tol_negative_expected(): test.TestOutcome {
     // |denom| not denom itself — must work for negative
     // expecteds.
     return test.assert_eq_f64_rel(0.0 - 1000.0, 0.0 - 999.0, 0.01);
 }
 
-function test_rel_tol_f32_mirror(): Option[string] {
+function test_rel_tol_f32_mirror(): test.TestOutcome {
     var actual: f32 = 1005.0 as f32;
     var expected: f32 = 1000.0 as f32;
     return test.assert_eq_f32_rel(actual, expected, 0.01 as f32);

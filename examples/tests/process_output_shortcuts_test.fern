@@ -11,86 +11,86 @@ import "std/test";
 //     `test.assert_stderr_line_count(proc, n)` — line
 //     cardinality without pinning content.
 
-function test_exit_zero_pass(): Option[string] {
+function test_exit_zero_pass(): test.TestOutcome {
     var res: ProcessResult = subprocess("true", [], "");
     return test.assert_exit_zero(res);
 }
 
-function test_exit_zero_fail_reports(): Option[string] {
+function test_exit_zero_fail_reports(): test.TestOutcome {
     var res: ProcessResult = subprocess("false", [], "");
     match (test.assert_exit_zero(res)) {
-        None => { return test.fail("non-zero exit should fail"); },
-        Some(_) => { return None; }
+        Pass => { return test.fail("non-zero exit should fail"); },
+        Fail(_) => { return test.pass(); }
     }
 }
 
-function test_exit_nonzero_pass(): Option[string] {
+function test_exit_nonzero_pass(): test.TestOutcome {
     var res: ProcessResult = subprocess("false", [], "");
     return test.assert_exit_nonzero(res);
 }
 
-function test_exit_nonzero_zero_fails(): Option[string] {
+function test_exit_nonzero_zero_fails(): test.TestOutcome {
     var res: ProcessResult = subprocess("true", [], "");
     match (test.assert_exit_nonzero(res)) {
-        None => { return test.fail("exit 0 should fail nonzero check"); },
-        Some(msg) => {
+        Pass => { return test.fail("exit 0 should fail nonzero check"); },
+        Fail(msg) => {
             if (!msg.contains("exited 0")) {
-                return Some("expected 'exited 0' in failure: " + msg);
+                return test.fail("expected 'exited 0' in failure: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_stdout_lines_pass(): Option[string] {
+function test_stdout_lines_pass(): test.TestOutcome {
     var res: ProcessResult = subprocess("printf",
         ["alpha\nbeta\ngamma\n"], "");
     return test.assert_stdout_lines(res, ["alpha", "beta", "gamma"]);
 }
 
-function test_stdout_lines_mismatch(): Option[string] {
+function test_stdout_lines_mismatch(): test.TestOutcome {
     var res: ProcessResult = subprocess("printf",
         ["alpha\nWRONG\ngamma\n"], "");
     match (test.assert_stdout_lines(res, ["alpha", "beta", "gamma"])) {
-        None => { return test.fail("mismatch should fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("mismatch should fail"); },
+        Fail(msg) => {
             // assert_lines_eq names the differing line.
             if (!msg.contains("line 2")) {
-                return Some("expected 'line 2' in failure: " + msg);
+                return test.fail("expected 'line 2' in failure: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_stderr_lines_pass(): Option[string] {
+function test_stderr_lines_pass(): test.TestOutcome {
     // Send something to stderr via sh -c.
     var res: ProcessResult = subprocess("sh",
         ["-c", "printf 'err1\\nerr2\\n' >&2"], "");
     return test.assert_stderr_lines(res, ["err1", "err2"]);
 }
 
-function test_stdout_line_count_pass(): Option[string] {
+function test_stdout_line_count_pass(): test.TestOutcome {
     var res: ProcessResult = subprocess("printf",
         ["x\ny\nz\n"], "");
     return test.assert_stdout_line_count(res, 3);
 }
 
-function test_stdout_line_count_wrong_reports(): Option[string] {
+function test_stdout_line_count_wrong_reports(): test.TestOutcome {
     var res: ProcessResult = subprocess("printf",
         ["x\ny\n"], "");
     match (test.assert_stdout_line_count(res, 5)) {
-        None => { return test.fail("expected count mismatch"); },
-        Some(msg) => {
+        Pass => { return test.fail("expected count mismatch"); },
+        Fail(msg) => {
             if (!msg.contains("got 2") || !msg.contains("expected 5")) {
-                return Some("expected both counts in failure: " + msg);
+                return test.fail("expected both counts in failure: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_stderr_line_count_pass(): Option[string] {
+function test_stderr_line_count_pass(): test.TestOutcome {
     var res: ProcessResult = subprocess("sh",
         ["-c", "printf 'a\\nb\\nc\\n' >&2"], "");
     return test.assert_stderr_line_count(res, 3);

@@ -1,10 +1,10 @@
 // std/fuzz — byte-stream fuzzing harness layered on `std/test`.
 //
 // A fuzz target is a function that takes a string of bytes
-// (the fuzz input) and returns Option[string] — same shape as
+// (the fuzz input) and returns test.TestOutcome — same shape as
 // a regular test:
-//   None       — the input passed all the property checks
-//   Some(msg)  — a counter-example: `msg` describes the
+//   Pass       — the input passed all the property checks
+//   Fail(msg)  — a counter-example: `msg` describes the
 //                violation, the runner records both the
 //                message + the offending input (escaped) so
 //                the failure log doubles as a reproducer.
@@ -22,10 +22,10 @@
 //
 // Usage:
 //
-//   function check_no_panic(input: string): Option[string] {
-//       // try to parse `input`; return Some if a property
+//   function check_no_panic(input: string): test.TestOutcome {
+//       // try to parse `input`; return Fail(msg) if a property
 //       // we care about doesn't hold.
-//       return None;
+//       return test.pass();
 //   }
 //
 //   function main(): i32 {
@@ -177,20 +177,20 @@ function __fuzz_escape(s: string): string {
 // fuzz_run(name, seeds, iterations, target) — run the
 // `target` function against `iterations` inputs drawn from
 // `seeds` + mutations. Returns:
-//   None              — every input passed
-//   Some(diagnostic)  — the first failing input, with the
+//   Pass              — every input passed
+//   Fail(diagnostic)  — the first failing input, with the
 //                       target's message and the escaped
 //                       offending input embedded
 //
 // Use through `r.fuzz(...)` rather than calling directly;
 // the receiver-method form folds the result into the
 // runner's TAP stream.
-pub function fuzz_run(seeds: string[], iterations: i32, target: (string) => Option[string]): Option[string] {
+pub function fuzz_run(seeds: string[], iterations: i32, target: (string) => test.TestOutcome): test.TestOutcome {
     if (iterations <= 0) {
-        return Some("fuzz_run: iterations must be > 0, got " + iterations.to_string());
+        return test.fail("fuzz_run: iterations must be > 0, got " + iterations.to_string());
     }
     if (seeds.len() == 0) {
-        return Some("fuzz_run: at least one seed required");
+        return test.fail("fuzz_run: at least one seed required");
     }
     // Always run every seed verbatim first so a regression
     // in the trivial-input case isn't masked by mutation
@@ -198,11 +198,11 @@ pub function fuzz_run(seeds: string[], iterations: i32, target: (string) => Opti
     var i: i32 = 0;
     while (i < seeds.len()) {
         match (target(seeds[i])) {
-            Some(msg) => {
-                return Some("seed[" + i.to_string() + "] = \"" +
+            Fail(msg) => {
+                return test.fail("seed[" + i.to_string() + "] = \"" +
                             __fuzz_escape(seeds[i]) + "\": " + msg);
             },
-            None => { },
+            Pass => { },
         }
         i = i + 1;
     }
@@ -213,23 +213,23 @@ pub function fuzz_run(seeds: string[], iterations: i32, target: (string) => Opti
         var mode: i32 = math.random_int(0, __fuzz_mutator_count());
         var input: string = __fuzz_mutate(seed, mode);
         match (target(input)) {
-            Some(msg) => {
-                return Some("iter " + iter.to_string() +
+            Fail(msg) => {
+                return test.fail("iter " + iter.to_string() +
                             " mode " + mode.to_string() +
                             " input \"" + __fuzz_escape(input) + "\": " + msg);
             },
-            None => { },
+            Pass => { },
         }
         iter = iter + 1;
     }
-    return None;
+    return test.pass();
 }
 
 // (r) fuzz(name, seeds, iterations, target) — run a fuzz
 // target and report its outcome as a single TAP case.
 // Pass at most one fuzz target per `it`-equivalent line so
 // the failure attribution stays clean.
-pub function (r: test.TestRunner) fuzz(name: string, seeds: string[], iterations: i32, target: (string) => Option[string]): test.TestRunner {
+pub function (r: test.TestRunner) fuzz(name: string, seeds: string[], iterations: i32, target: (string) => test.TestOutcome): test.TestRunner {
     return r.it(name, fuzz_run(seeds, iterations, target));
 }
 
@@ -267,7 +267,7 @@ function __fuzz_shrink_budget(): i32 { return 256; }
 // single-byte deletes). Counts every call into `budget` and
 // stops returning new candidates when the budget is
 // exhausted.
-function __fuzz_shrink_once(seed: string, target: (string) => Option[string], budget: i32): (string, i32) {
+function __fuzz_shrink_once(seed: string, target: (string) => test.TestOutcome, budget: i32): (string, i32) {
     var n: i32 = seed.len();
     var best: string = seed;
     var best_len: i32 = n;
@@ -276,13 +276,13 @@ function __fuzz_shrink_once(seed: string, target: (string) => Option[string], bu
         var candidate: string = seed[0:i] + seed[i + 1:n];
         budget = budget - 1;
         match (target(candidate)) {
-            Some(_) => {
+            Fail(_) => {
                 if (candidate.len() < best_len) {
                     best = candidate;
                     best_len = candidate.len();
                 }
             },
-            None => { },
+            Pass => { },
         }
         i = i + 1;
     }
@@ -294,7 +294,7 @@ function __fuzz_shrink_once(seed: string, target: (string) => Option[string], bu
 // still fails. Logarithmic win when the failure is
 // localised; falls through to __fuzz_shrink_once for
 // fine-grained minimisation.
-function __fuzz_shrink_halve(seed: string, target: (string) => Option[string], budget: i32): (string, i32) {
+function __fuzz_shrink_halve(seed: string, target: (string) => test.TestOutcome, budget: i32): (string, i32) {
     var n: i32 = seed.len();
     if (n < 2 || budget <= 0) { return (seed, budget); }
     var mid: i32 = n / 2;
@@ -305,18 +305,18 @@ function __fuzz_shrink_halve(seed: string, target: (string) => Option[string], b
     // toward the "obvious" minimal reproducer.
     budget = budget - 1;
     match (target(left)) {
-        Some(_) => {
+        Fail(_) => {
             return __fuzz_shrink_halve(left, target, budget);
         },
-        None => { },
+        Pass => { },
     }
     if (budget <= 0) { return (seed, budget); }
     budget = budget - 1;
     match (target(right)) {
-        Some(_) => {
+        Fail(_) => {
             return __fuzz_shrink_halve(right, target, budget);
         },
-        None => { },
+        Pass => { },
     }
     return (seed, budget);
 }
@@ -325,7 +325,7 @@ function __fuzz_shrink_halve(seed: string, target: (string) => Option[string], b
 // further halving wins, then single-byte-drop until a full
 // pass yields no reduction. Return the best (shortest)
 // failing input found.
-function __fuzz_shrink(seed: string, target: (string) => Option[string]): string {
+function __fuzz_shrink(seed: string, target: (string) => test.TestOutcome): string {
     var budget: i32 = __fuzz_shrink_budget();
     var current: string = seed;
     // Halving pass.
@@ -358,23 +358,23 @@ function __fuzz_shrink(seed: string, target: (string) => Option[string]): string
 // budget that does NOT inflate the user-visible `iterations`
 // param — `iterations` is the mutation count, shrinking is
 // a post-process amortised against the first failure.
-pub function fuzz_run_shrink(seeds: string[], iterations: i32, target: (string) => Option[string]): Option[string] {
+pub function fuzz_run_shrink(seeds: string[], iterations: i32, target: (string) => test.TestOutcome): test.TestOutcome {
     if (iterations <= 0) {
-        return Some("fuzz_run_shrink: iterations must be > 0, got " + iterations.to_string());
+        return test.fail("fuzz_run_shrink: iterations must be > 0, got " + iterations.to_string());
     }
     if (seeds.len() == 0) {
-        return Some("fuzz_run_shrink: at least one seed required");
+        return test.fail("fuzz_run_shrink: at least one seed required");
     }
     // Pass 1: seeds verbatim.
     var i: i32 = 0;
     while (i < seeds.len()) {
         match (target(seeds[i])) {
-            Some(msg) => {
+            Fail(msg) => {
                 var min: string = __fuzz_shrink(seeds[i], target);
-                return Some(__fuzz_format_failure(
+                return test.fail(__fuzz_format_failure(
                     "seed[" + i.to_string() + "]", seeds[i], min, msg));
             },
-            None => { },
+            Pass => { },
         }
         i = i + 1;
     }
@@ -385,17 +385,17 @@ pub function fuzz_run_shrink(seeds: string[], iterations: i32, target: (string) 
         var mode: i32 = math.random_int(0, __fuzz_mutator_count());
         var input: string = __fuzz_mutate(seed, mode);
         match (target(input)) {
-            Some(msg) => {
+            Fail(msg) => {
                 var min: string = __fuzz_shrink(input, target);
-                return Some(__fuzz_format_failure(
+                return test.fail(__fuzz_format_failure(
                     "iter " + iter.to_string() + " mode " + mode.to_string(),
                     input, min, msg));
             },
-            None => { },
+            Pass => { },
         }
         iter = iter + 1;
     }
-    return None;
+    return test.pass();
 }
 
 // __fuzz_format_failure builds the diagnostic block. When
@@ -417,7 +417,7 @@ function __fuzz_format_failure(origin: string, raw: string, minimised: string, m
 // TAP case; on failure the case message embeds the
 // minimised counter-example so CI logs preserve a clean
 // reproducer.
-pub function (r: test.TestRunner) fuzz_shrink(name: string, seeds: string[], iterations: i32, target: (string) => Option[string]): test.TestRunner {
+pub function (r: test.TestRunner) fuzz_shrink(name: string, seeds: string[], iterations: i32, target: (string) => test.TestOutcome): test.TestRunner {
     return r.it(name, fuzz_run_shrink(seeds, iterations, target));
 }
 

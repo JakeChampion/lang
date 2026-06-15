@@ -2,7 +2,7 @@ import "std/fuzz";
 import "std/test";
 // examples/tests/fuzz_example_test.fern — `std/fuzz` walkthrough.
 //
-// Each fuzz target is a `(string) => Option[string]` function:
+// Each fuzz target is a `(string) => test.TestOutcome` function:
 //   None       — the property held for this input
 //   Some(msg)  — the property was violated; the runner records
 //                the offending input alongside the message
@@ -16,39 +16,39 @@ import "std/test";
 // without flagging any input. Use this to confirm a fuzz target
 // doesn't crash on the supplied corpus before adding property
 // checks.
-function check_always_ok(input: string): Option[string] {
-    return None;
+function check_always_ok(input: string): test.TestOutcome {
+    return test.pass();
 }
 
 // Property: len(input) is non-negative — always true, but
 // useful as a smoke test of the integer-comparison path.
-function check_len_nonneg(input: string): Option[string] {
-    if (input.len() >= 0) { return None; }
-    return Some("len returned negative for input of " + input.len().to_string() + " bytes");
+function check_len_nonneg(input: string): test.TestOutcome {
+    if (input.len() >= 0) { return test.pass(); }
+    return test.fail("len returned negative for input of " + input.len().to_string() + " bytes");
 }
 
 // Property: an idempotent transform — `to_upper(to_upper(s))`
 // equals `to_upper(s)`. Pure-Fern invariant, no external state.
-function check_to_upper_idempotent(input: string): Option[string] {
+function check_to_upper_idempotent(input: string): test.TestOutcome {
     var once: string = input.to_upper();
     var twice: string = once.to_upper();
-    if (once == twice) { return None; }
-    return Some("to_upper is not idempotent: \"" + once + "\" vs \"" + twice + "\"");
+    if (once == twice) { return test.pass(); }
+    return test.fail("to_upper is not idempotent: \"" + once + "\" vs \"" + twice + "\"");
 }
 
 // Property: trim() output never starts or ends with a space.
 // The corpus seeds whitespace at both ends so the mutation
 // path is exercising both sides.
-function check_trim_strips_spaces(input: string): Option[string] {
+function check_trim_strips_spaces(input: string): test.TestOutcome {
     var trimmed: string = input.trim();
-    if (trimmed.len() == 0) { return None; }
+    if (trimmed.len() == 0) { return test.pass(); }
     if (trimmed[0] == 32) {
-        return Some("trim left a leading space: \"" + trimmed + "\"");
+        return test.fail("trim left a leading space: \"" + trimmed + "\"");
     }
     if (trimmed[trimmed.len() - 1] == 32) {
-        return Some("trim left a trailing space: \"" + trimmed + "\"");
+        return test.fail("trim left a trailing space: \"" + trimmed + "\"");
     }
-    return None;
+    return test.pass();
 }
 
 function main(): i32 {

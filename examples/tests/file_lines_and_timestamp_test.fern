@@ -45,15 +45,15 @@ function test_file_lines_mismatch_reports(r: test.TestRunner): test.TestRunner {
         None => {}
     }
     match (test.assert_file_lines(path, ["alpha", "beta", "gamma"])) {
-        None => { return rr.it("expected mismatch fail", test.fail("missed")); },
-        Some(msg) => {
+        Pass => { return rr.it("expected mismatch fail", test.fail("missed")); },
+        Fail(msg) => {
             // assert_lines_eq names the differing line; the
             // file wrapper just routes through it.
             if (!msg.contains("line 2")) {
                 rr = rr.it("file_lines diff names line",
                            test.fail("expected 'line 2': " + msg));
             } else {
-                rr = rr.it("file_lines mismatch named", None);
+                rr = rr.it("file_lines mismatch named", test.pass());
             }
         }
     }
@@ -69,60 +69,60 @@ function test_file_line_count_wrong_reports(r: test.TestRunner): test.TestRunner
         None => {}
     }
     match (test.assert_file_line_count(path, 5)) {
-        None => { return rr.it("count mismatch missed", test.fail("expected fail")); },
-        Some(msg) => {
+        Pass => { return rr.it("count mismatch missed", test.fail("expected fail")); },
+        Fail(msg) => {
             if (!msg.contains("2") || !msg.contains("5")) {
                 rr = rr.it("count mismatch context",
                            test.fail("expected '2' + '5': " + msg));
             } else {
-                rr = rr.it("count mismatch reports both", None);
+                rr = rr.it("count mismatch reports both", test.pass());
             }
         }
     }
     return rr;
 }
 
-function test_file_lines_missing_file(): Option[string] {
+function test_file_lines_missing_file(): test.TestOutcome {
     match (test.assert_file_lines("/tmp/lang-test-no-such-file-zztop",
                              ["x"])) {
-        None => { return test.fail("missing file should fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("missing file should fail"); },
+        Fail(msg) => {
             if (!msg.contains("failed to read")) {
-                return Some("expected 'failed to read': " + msg);
+                return test.fail("expected 'failed to read': " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_close_to_now_ms_now_passes(): Option[string] {
+function test_close_to_now_ms_now_passes(): test.TestOutcome {
     // A timestamp captured "right now" should be within
     // 5s of now_unix_ms() under any sane runtime.
     var t: i64 = now_unix_ms();
     return test.assert_close_to_now_ms(t, 5000 as i64);
 }
 
-function test_close_to_now_ms_old_fails(): Option[string] {
+function test_close_to_now_ms_old_fails(): test.TestOutcome {
     // A timestamp from 1 hour ago must NOT be considered
     // recent.
     var t: i64 = now_unix_ms() - (3600000 as i64);
     match (test.assert_close_to_now_ms(t, 1000 as i64)) {
-        None => { return test.fail("old timestamp should fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("old timestamp should fail"); },
+        Fail(msg) => {
             if (!msg.contains("exceeds bound")) {
-                return Some("expected 'exceeds bound': " + msg);
+                return test.fail("expected 'exceeds bound': " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_close_to_now_ms_future_skew_fails(): Option[string] {
+function test_close_to_now_ms_future_skew_fails(): test.TestOutcome {
     // Future-skewed (negative signed skew) must also fail.
     var t: i64 = now_unix_ms() + (3600000 as i64);
     match (test.assert_close_to_now_ms(t, 1000 as i64)) {
-        None => { return test.fail("future timestamp should fail"); },
-        Some(_) => { return None; }
+        Pass => { return test.fail("future timestamp should fail"); },
+        Fail(_) => { return test.pass(); }
     }
 }
 

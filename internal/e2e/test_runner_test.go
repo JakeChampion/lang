@@ -114,7 +114,7 @@ func TestRunnerStringsExamplePasses(t *testing.T) {
 
 // `examples/tests/runner_self_test.fern` is the runner's own
 // meta-test — confirms that every assertion helper returns the
-// expected Option[string] shape on both pass and fail paths.
+// expected TestOutcome shape on both pass and fail paths.
 // If THIS regresses, the rest of the suite reports false
 // positives.
 func TestRunnerSelfTestPasses(t *testing.T) {
@@ -161,11 +161,11 @@ func TestRunnerFailingSuiteExitsOne(t *testing.T) {
 	cmd.Stdin = strings.NewReader(`
 import "std/test";
 
-function test_passing(): Option[string] {
+function test_passing(): test.TestOutcome {
     return test.assert_eq(1 + 1, 2);
 }
 
-function test_failing(): Option[string] {
+function test_failing(): test.TestOutcome {
     return test.assert_eq(2 + 2, 5);
 }
 
@@ -271,9 +271,9 @@ func TestRunnerFuzzFailureSurfacesInputReproducer(t *testing.T) {
 import "std/fuzz";
 import "std/test";
 
-function detect_bad(input: string): Option[string] {
-    if (input.contains("BAD")) { return Some("forbidden pattern"); }
-    return None;
+function detect_bad(input: string): test.TestOutcome {
+    if (input.contains("BAD")) { return test.fail("forbidden pattern"); }
+    return test.pass();
 }
 
 function main(): i32 {
@@ -671,9 +671,9 @@ func TestRunnerFuzzShrinkSurfacesMinimisedInput(t *testing.T) {
 import "std/fuzz";
 import "std/test";
 
-function detect_bad(input: string): Option[string] {
-    if (input.contains("BAD")) { return Some("forbidden"); }
-    return None;
+function detect_bad(input: string): test.TestOutcome {
+    if (input.contains("BAD")) { return test.fail("forbidden"); }
+    return test.pass();
 }
 
 function main(): i32 {

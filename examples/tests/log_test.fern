@@ -10,49 +10,49 @@ import "std/test";
 // so it compiles on the self-host backends too — this suite runs
 // through the self-host stdtest gate as well as the interpreter.
 
-function test_text_basic(): Option[string] {
+function test_text_basic(): test.TestOutcome {
     var lg: log.Logger = log.new_logger(log.level_info());
     return test.assert_eq(lg.info_().render("hello"), "[INFO] hello\n");
 }
 
-function test_text_fields(): Option[string] {
+function test_text_fields(): test.TestOutcome {
     var lg: log.Logger = log.new_logger(log.level_trace());
     var line: string = lg.warn_().str("user", "bob").int("id", 7).bool("ok", true).render("hi");
     return test.assert_eq(line, "[WARN] hi user=bob id=7 ok=true\n");
 }
 
-function test_threshold_filters_below(): Option[string] {
+function test_threshold_filters_below(): test.TestOutcome {
     // INFO threshold drops DEBUG / TRACE.
     var lg: log.Logger = log.new_logger(log.level_info());
     if (lg.debug_().str("k", "v").render("d") != "") { return test.fail("DEBUG should be filtered at INFO threshold"); }
     return test.assert_eq(lg.trace_().render("t"), "");
 }
 
-function test_threshold_passes_at_or_above(): Option[string] {
+function test_threshold_passes_at_or_above(): test.TestOutcome {
     var lg: log.Logger = log.new_logger(log.level_warn());
     if (lg.warn_().render("w") == "") { return test.fail("WARN should pass at WARN threshold"); }
     return test.assert_eq(lg.error_().render("e"), "[ERROR] e\n");
 }
 
-function test_json_basic(): Option[string] {
+function test_json_basic(): test.TestOutcome {
     var lg: log.Logger = log.new_json_logger(log.level_trace());
     return test.assert_eq(lg.info_().render("m"), "{\"level\":\"INFO\",\"msg\":\"m\"}\n");
 }
 
-function test_json_fields(): Option[string] {
+function test_json_fields(): test.TestOutcome {
     var lg: log.Logger = log.new_json_logger(log.level_trace());
     var line: string = lg.error_().str("k", "v").int("n", 42).bool("ok", false).render("boom");
     return test.assert_eq(line, "{\"level\":\"ERROR\",\"msg\":\"boom\",\"k\":\"v\",\"n\":42,\"ok\":false}\n");
 }
 
-function test_json_escaping(): Option[string] {
+function test_json_escaping(): test.TestOutcome {
     // Quote + backslash in the message must not break the JSON object.
     var lg: log.Logger = log.new_json_logger(log.level_trace());
     var line: string = lg.info_().render("a\"b\\c");
     return test.assert_eq(line, "{\"level\":\"INFO\",\"msg\":\"a\\\"b\\\\c\"}\n");
 }
 
-function test_level_names(): Option[string] {
+function test_level_names(): test.TestOutcome {
     if (log.level_name(log.level_trace()) != "TRACE") { return test.fail("trace name"); }
     if (log.level_name(log.level_debug()) != "DEBUG") { return test.fail("debug name"); }
     if (log.level_name(log.level_info()) != "INFO") { return test.fail("info name"); }
@@ -60,7 +60,7 @@ function test_level_names(): Option[string] {
     return test.assert_eq(log.level_name(log.level_error()), "ERROR");
 }
 
-function test_at_explicit_level(): Option[string] {
+function test_at_explicit_level(): test.TestOutcome {
     // `.at(level)` is the general form the shortcuts delegate to.
     var lg: log.Logger = log.new_logger(log.level_debug());
     return test.assert_eq(lg.at(log.level_debug()).render("x"), "[DEBUG] x\n");

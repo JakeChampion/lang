@@ -11,7 +11,7 @@ import "std/test";
 //   - Map assertions (len / has / lacks for i32-i32 + string-
 //     string)
 
-function test_argv_basic(): Option[string] {
+function test_argv_basic(): test.TestOutcome {
     // args()[0] is conventionally the program path; subsequent
     // entries come from `-- ...` on the Fern command line. We
     // can't pin a specific argv shape here (this file is
@@ -21,40 +21,40 @@ function test_argv_basic(): Option[string] {
     if (a.len() < 1) {
         return test.fail("args() returned empty (expected at least argv[0])");
     }
-    return None;
+    return test.pass();
 }
 
-function test_map_len_string_string(): Option[string] {
+function test_map_len_string_string(): test.TestOutcome {
     var m: Map[string, string] = map_new(8);
     m = m.insert("a", "alpha");
     m = m.insert("b", "beta");
     return test.assert_map_len(m, 2);
 }
 
-function test_map_has_string_string(): Option[string] {
+function test_map_has_string_string(): test.TestOutcome {
     var m: Map[string, string] = map_new(4);
     m = m.insert("ok", "yes");
     return test.assert_map_has(m, "ok", "yes");
 }
 
-function test_map_lacks_string_string(): Option[string] {
+function test_map_lacks_string_string(): test.TestOutcome {
     var m: Map[string, string] = map_new(4);
     m = m.insert("ok", "yes");
     return test.assert_map_lacks(m, "missing");
 }
 
-function test_map_has_i32_i32(): Option[string] {
+function test_map_has_i32_i32(): test.TestOutcome {
     var m: Map[i32, i32] = map_new(4);
     m = m.insert(1, 100);
     m = m.insert(2, 200);
     return test.assert_map_has(m, 1, 100);
 }
 
-function test_map_has_wrong_value_reports(): Option[string] {
+function test_map_has_wrong_value_reports(): test.TestOutcome {
     var m: Map[string, string] = map_new(4);
     m = m.insert("k", "actual");
     match (test.assert_map_has(m, "k", "expected")) {
-        Some(msg) => {
+        Fail(msg) => {
             // Values render via Display (unquoted) now that the helper
             // is generic over K/V.
             if (!msg.contains("actual")) {
@@ -63,11 +63,11 @@ function test_map_has_wrong_value_reports(): Option[string] {
             if (!msg.contains("expected")) {
                 return test.fail("missing expected value in msg: " + msg);
             }
-            return None;
+            return test.pass();
         },
-        None => { return test.fail("expected wrong-value to fail"); }
+        Pass => { return test.fail("expected wrong-value to fail"); }
     }
-    return None;
+    return test.pass();
 }
 
 function test_golden_bootstrap_and_compare(r: test.TestRunner): test.TestRunner {
@@ -85,12 +85,12 @@ function test_golden_bootstrap_and_compare(r: test.TestRunner): test.TestRunner 
     return rr;
 }
 
-function invert_pass_b8(result: Option[string]): Option[string] {
+function invert_pass_b8(result: test.TestOutcome): test.TestOutcome {
     match (result) {
-        Some(_) => { return None; },
-        None => { return test.fail("expected failure"); }
+        Fail(_) => { return test.pass(); },
+        Pass => { return test.fail("expected failure"); }
     }
-    return None;
+    return test.pass();
 }
 
 function main(): i32 {

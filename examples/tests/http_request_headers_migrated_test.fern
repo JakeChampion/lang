@@ -16,7 +16,7 @@ import "std/http";
 // file with assertions on the parsed shape directly —
 // no subprocess, no print-then-grep.
 
-function test_parsed_headers_reachable_on_req(): Option[string] {
+function test_parsed_headers_reachable_on_req(): test.TestOutcome {
     var wire: string = "GET /x HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n";
     match (http.http_parse_request(wire)) {
         Some(req) => {
@@ -34,7 +34,7 @@ function test_parsed_headers_reachable_on_req(): Option[string] {
     return test.fail("unreachable");
 }
 
-function test_parsed_header_count_is_3(): Option[string] {
+function test_parsed_header_count_is_3(): test.TestOutcome {
     var wire: string = "GET /x HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n";
     match (http.http_parse_request(wire)) {
         Some(req) => {
@@ -47,7 +47,7 @@ function test_parsed_header_count_is_3(): Option[string] {
     return test.fail("unreachable");
 }
 
-function test_duplicate_header_insertion_order(): Option[string] {
+function test_duplicate_header_insertion_order(): test.TestOutcome {
     var wire: string = "GET / HTTP/1.1\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 0\r\n\r\n";
     match (http.http_parse_request(wire)) {
         Some(req) => {
@@ -64,7 +64,7 @@ function test_duplicate_header_insertion_order(): Option[string] {
     return test.fail("unreachable");
 }
 
-function test_missing_header_returns_none(): Option[string] {
+function test_missing_header_returns_none(): test.TestOutcome {
     var wire: string = "GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n";
     match (http.http_parse_request(wire)) {
         Some(req) => {
@@ -75,7 +75,7 @@ function test_missing_header_returns_none(): Option[string] {
     return test.fail("unreachable");
 }
 
-function test_get_all_on_missing_is_empty(): Option[string] {
+function test_get_all_on_missing_is_empty(): test.TestOutcome {
     var wire: string = "GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n";
     match (http.http_parse_request(wire)) {
         Some(req) => {

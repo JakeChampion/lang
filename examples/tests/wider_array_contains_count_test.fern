@@ -14,142 +14,142 @@ import "std/test";
 //       `test.assert_count_string(arr, pred, n)` — exactly N
 //       elements satisfy the predicate
 
-function test_eq_i64_array_pass(): Option[string] {
+function test_eq_i64_array_pass(): test.TestOutcome {
     var actual: i64[] = [1 as i64, 2 as i64, 3 as i64];
     var expected: i64[] = [1 as i64, 2 as i64, 3 as i64];
     return test.assert_eq_array(actual, expected);
 }
 
-function test_eq_i64_array_length_mismatch(): Option[string] {
+function test_eq_i64_array_length_mismatch(): test.TestOutcome {
     var actual: i64[] = [1 as i64, 2 as i64];
     var expected: i64[] = [1 as i64, 2 as i64, 3 as i64];
     match (test.assert_eq_array(actual, expected)) {
-        None => { return test.fail("expected length-mismatch"); },
-        Some(msg) => {
+        Pass => { return test.fail("expected length-mismatch"); },
+        Fail(msg) => {
             if (!msg.contains("length differs")) {
-                return Some("expected 'length differs': " + msg);
+                return test.fail("expected 'length differs': " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_eq_i64_array_mismatch_reports_index(): Option[string] {
+function test_eq_i64_array_mismatch_reports_index(): test.TestOutcome {
     var actual: i64[] = [10 as i64, 20 as i64, 30 as i64];
     var expected: i64[] = [10 as i64, 99 as i64, 30 as i64];
     match (test.assert_eq_array(actual, expected)) {
-        None => { return test.fail("expected value-mismatch"); },
-        Some(msg) => {
+        Pass => { return test.fail("expected value-mismatch"); },
+        Fail(msg) => {
             if (!msg.contains("at index 1")) {
-                return Some("expected 'at index 1': " + msg);
+                return test.fail("expected 'at index 1': " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_eq_u32_array_pass(): Option[string] {
+function test_eq_u32_array_pass(): test.TestOutcome {
     var actual: u32[] = [1 as u32, 2 as u32, 3 as u32];
     var expected: u32[] = [1 as u32, 2 as u32, 3 as u32];
     return test.assert_eq_array(actual, expected);
 }
 
-function test_eq_u64_array_pass(): Option[string] {
+function test_eq_u64_array_pass(): test.TestOutcome {
     var actual: u64[] = [100 as u64, 200 as u64];
     var expected: u64[] = [100 as u64, 200 as u64];
     return test.assert_eq_array(actual, expected);
 }
 
-function test_array_contains_i32_pass(): Option[string] {
+function test_array_contains_i32_pass(): test.TestOutcome {
     return test.assert_array_contains([1, 2, 3, 5, 8], 5);
 }
 
-function test_array_contains_i32_first(): Option[string] {
+function test_array_contains_i32_first(): test.TestOutcome {
     return test.assert_array_contains([1, 2, 3], 1);
 }
 
-function test_array_contains_i32_last(): Option[string] {
+function test_array_contains_i32_last(): test.TestOutcome {
     return test.assert_array_contains([1, 2, 3], 3);
 }
 
-function test_array_contains_i32_missing(): Option[string] {
+function test_array_contains_i32_missing(): test.TestOutcome {
     match (test.assert_array_contains([1, 2, 3], 99)) {
-        None => { return test.fail("expected missing-element fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("expected missing-element fail"); },
+        Fail(msg) => {
             if (!msg.contains("99")) {
-                return Some("expected '99' in failure: " + msg);
+                return test.fail("expected '99' in failure: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_array_contains_i32_empty_fails(): Option[string] {
+function test_array_contains_i32_empty_fails(): test.TestOutcome {
     var empty: i32[] = [];
     match (test.assert_array_contains(empty, 1)) {
-        None => { return test.fail("empty array should fail contains"); },
-        Some(_) => { return None; }
+        Pass => { return test.fail("empty array should fail contains"); },
+        Fail(_) => { return test.pass(); }
     }
 }
 
-function test_array_contains_string_pass(): Option[string] {
+function test_array_contains_string_pass(): test.TestOutcome {
     return test.assert_array_contains(["a", "b", "c"], "b");
 }
 
-function test_array_not_contains_i32_pass(): Option[string] {
+function test_array_not_contains_i32_pass(): test.TestOutcome {
     return test.assert_array_not_contains([1, 2, 3], 99);
 }
 
-function test_array_not_contains_i32_fail(): Option[string] {
+function test_array_not_contains_i32_fail(): test.TestOutcome {
     match (test.assert_array_not_contains([1, 2, 3], 2)) {
-        None => { return test.fail("expected found-element fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("expected found-element fail"); },
+        Fail(msg) => {
             if (!msg.contains("index 1")) {
-                return Some("expected 'index 1' in failure: " + msg);
+                return test.fail("expected 'index 1' in failure: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_array_not_contains_i32_empty_passes(): Option[string] {
+function test_array_not_contains_i32_empty_passes(): test.TestOutcome {
     var empty: i32[] = [];
     return test.assert_array_not_contains(empty, 1);
 }
 
-function test_array_not_contains_string_pass(): Option[string] {
+function test_array_not_contains_string_pass(): test.TestOutcome {
     return test.assert_array_not_contains(["a", "b"], "z");
 }
 
 function is_even(n: i32): boolean { return n % 2 == 0; }
 
-function test_count_i32_exact(): Option[string] {
+function test_count_i32_exact(): test.TestOutcome {
     return test.assert_count_i32([1, 2, 3, 4, 5, 6], is_even, 3);
 }
 
-function test_count_i32_zero(): Option[string] {
+function test_count_i32_zero(): test.TestOutcome {
     return test.assert_count_i32([1, 3, 5, 7], is_even, 0);
 }
 
-function test_count_i32_all(): Option[string] {
+function test_count_i32_all(): test.TestOutcome {
     return test.assert_count_i32([2, 4, 6], is_even, 3);
 }
 
-function test_count_i32_wrong_count_reports(): Option[string] {
+function test_count_i32_wrong_count_reports(): test.TestOutcome {
     match (test.assert_count_i32([1, 2, 3, 4], is_even, 99)) {
-        None => { return test.fail("expected count-mismatch"); },
-        Some(msg) => {
+        Pass => { return test.fail("expected count-mismatch"); },
+        Fail(msg) => {
             if (!msg.contains("expected 99 matches") || !msg.contains("got 2")) {
-                return Some("expected '99 matches' + 'got 2': " + msg);
+                return test.fail("expected '99 matches' + 'got 2': " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
 function is_non_empty(s: string): boolean { return s.len() > 0; }
 
-function test_count_string_pass(): Option[string] {
+function test_count_string_pass(): test.TestOutcome {
     return test.assert_count_string(["", "x", "", "y", "z"], is_non_empty, 3);
 }
 

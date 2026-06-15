@@ -25,9 +25,9 @@ import "std/test";
 // `fail_fast_test.fern` — keeps the outer suite's exit
 // code clean while still pinning the behaviour.
 
-function trivial_pass(): Option[string] { return None; }
+function trivial_pass(): test.TestOutcome { return test.pass(); }
 
-function test_quiet_preserves_counters(): Option[string] {
+function test_quiet_preserves_counters(): test.TestOutcome {
     // Build a quiet runner with 3 passes; counters
     // should reflect the work even though no per-case
     // lines were printed.
@@ -40,49 +40,49 @@ function test_quiet_preserves_counters(): Option[string] {
                     " f=" + sub.failed.to_string() +
                     " s=" + sub.skipped.to_string());
     }
-    return None;
+    return test.pass();
 }
 
-function test_quiet_skip_still_counted(): Option[string] {
+function test_quiet_skip_still_counted(): test.TestOutcome {
     // A skip in quiet mode still increments `skipped`
     // even though the SKIP line is suppressed.
     var sub: test.TestRunner = test.test_new_quiet("quiet-skip");
     sub = sub.skip("p1", "manual skip");
-    if (sub.skipped == 1 && sub.passed == 0) { return None; }
+    if (sub.skipped == 1 && sub.passed == 0) { return test.pass(); }
     return test.fail("skip counter off in quiet mode");
 }
 
-function test_parse_quiet_present(): Option[string] {
+function test_parse_quiet_present(): test.TestOutcome {
     var argv: string[] = ["lang", "-interp", "test.fern", "--", "--quiet"];
-    if (test.parse_quiet_from_args(argv)) { return None; }
+    if (test.parse_quiet_from_args(argv)) { return test.pass(); }
     return test.fail("--quiet not detected in argv");
 }
 
-function test_parse_quiet_absent(): Option[string] {
+function test_parse_quiet_absent(): test.TestOutcome {
     var argv: string[] = ["lang", "-interp", "test.fern"];
-    if (!test.parse_quiet_from_args(argv)) { return None; }
+    if (!test.parse_quiet_from_args(argv)) { return test.pass(); }
     return test.fail("false-positive: detected --quiet in clean argv");
 }
 
-function test_with_quiet_preserves_filter(): Option[string] {
+function test_with_quiet_preserves_filter(): test.TestOutcome {
     var r0: test.TestRunner = test.test_new_filtered("with-q", "x");
     var r1: test.TestRunner = r0.with_quiet();
-    if (r1.filter == "x" && r1.quiet) { return None; }
+    if (r1.filter == "x" && r1.quiet) { return test.pass(); }
     return test.fail("with_quiet clobbered an unrelated field");
 }
 
-function test_with_quiet_preserves_fail_fast(): Option[string] {
+function test_with_quiet_preserves_fail_fast(): test.TestOutcome {
     // Quiet + fail-fast should be orthogonal — setting one
     // must not affect the other.
     var r0: test.TestRunner = test.test_new_fail_fast("with-q-ff");
     var r1: test.TestRunner = r0.with_quiet();
-    if (r1.fail_fast && r1.quiet) { return None; }
+    if (r1.fail_fast && r1.quiet) { return test.pass(); }
     return test.fail("with_quiet did not preserve fail_fast=true");
 }
 
-function test_test_new_quiet_constructor(): Option[string] {
+function test_test_new_quiet_constructor(): test.TestOutcome {
     var r: test.TestRunner = test.test_new_quiet("ctor-quiet");
-    if (r.quiet) { return None; }
+    if (r.quiet) { return test.pass(); }
     return test.fail("test_new_quiet did not enable quiet field");
 }
 

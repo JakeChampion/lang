@@ -7,145 +7,145 @@ import "std/test";
 //     the existing `_i32` / `_i64` / `_f64` range
 //     helpers; NaN inputs always fail.
 
-function test_at_i32_pass(): Option[string] {
+function test_at_i32_pass(): test.TestOutcome {
     return test.assert_at([10, 20, 30, 40], 2, 30);
 }
 
-function test_at_i32_first(): Option[string] {
+function test_at_i32_first(): test.TestOutcome {
     return test.assert_at([10, 20, 30], 0, 10);
 }
 
-function test_at_i32_last(): Option[string] {
+function test_at_i32_last(): test.TestOutcome {
     return test.assert_at([10, 20, 30], 2, 30);
 }
 
-function test_at_i32_wrong_value(): Option[string] {
+function test_at_i32_wrong_value(): test.TestOutcome {
     match (test.assert_at([10, 20, 30], 1, 99)) {
-        None => { return test.fail("wrong value should fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("wrong value should fail"); },
+        Fail(msg) => {
             if (!msg.contains("at index 1") || !msg.contains("expected 99") || !msg.contains("got 20")) {
-                return Some("expected index + both values: " + msg);
+                return test.fail("expected index + both values: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_at_i32_out_of_bounds_high(): Option[string] {
+function test_at_i32_out_of_bounds_high(): test.TestOutcome {
     match (test.assert_at([10, 20, 30], 5, 0)) {
-        None => { return test.fail("OOB high should fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("OOB high should fail"); },
+        Fail(msg) => {
             // Distinct diagnostic from value-mismatch so the
             // mode is obvious in CI logs.
             if (!msg.contains("out of bounds") || !msg.contains("length 3")) {
-                return Some("expected 'out of bounds' + 'length 3': " + msg);
+                return test.fail("expected 'out of bounds' + 'length 3': " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_at_i32_out_of_bounds_negative(): Option[string] {
+function test_at_i32_out_of_bounds_negative(): test.TestOutcome {
     match (test.assert_at([10, 20, 30], 0 - 1, 0)) {
-        None => { return test.fail("negative OOB should fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("negative OOB should fail"); },
+        Fail(msg) => {
             if (!msg.contains("out of bounds")) {
-                return Some("expected 'out of bounds': " + msg);
+                return test.fail("expected 'out of bounds': " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_at_i32_empty_array(): Option[string] {
+function test_at_i32_empty_array(): test.TestOutcome {
     var empty: i32[] = [];
     match (test.assert_at(empty, 0, 0)) {
-        None => { return test.fail("empty array, idx 0 should fail OOB"); },
-        Some(_) => { return None; }
+        Pass => { return test.fail("empty array, idx 0 should fail OOB"); },
+        Fail(_) => { return test.pass(); }
     }
 }
 
-function test_at_string_pass(): Option[string] {
+function test_at_string_pass(): test.TestOutcome {
     return test.assert_at(["alpha", "beta", "gamma"], 1, "beta");
 }
 
-function test_at_string_wrong_value_embeds_both(): Option[string] {
+function test_at_string_wrong_value_embeds_both(): test.TestOutcome {
     // The generic `assert_at` renders values via Display (no quoting,
     // matching the scalar `assert_eq` collapse) — the message embeds
     // both the expected and actual element.
     match (test.assert_at(["alpha", "beta"], 0, "ALPHA")) {
-        None => { return test.fail("wrong value should fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("wrong value should fail"); },
+        Fail(msg) => {
             if (!msg.contains("ALPHA") || !msg.contains("alpha")) {
-                return Some("expected both values in message: " + msg);
+                return test.fail("expected both values in message: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_at_i64_pass(): Option[string] {
+function test_at_i64_pass(): test.TestOutcome {
     var arr: i64[] = [100 as i64, 200 as i64, 300 as i64];
     return test.assert_at(arr, 2, 300 as i64);
 }
 
-function test_at_i64_wrong_value(): Option[string] {
+function test_at_i64_wrong_value(): test.TestOutcome {
     var arr: i64[] = [100 as i64, 200 as i64];
     match (test.assert_at(arr, 0, 999 as i64)) {
-        None => { return test.fail("expected mismatch fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("expected mismatch fail"); },
+        Fail(msg) => {
             if (!msg.contains("expected 999") || !msg.contains("got 100")) {
-                return Some("expected both values: " + msg);
+                return test.fail("expected both values: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_in_range_f32_pass(): Option[string] {
+function test_in_range_f32_pass(): test.TestOutcome {
     var v: f32 = 1.5 as f32;
     var lo: f32 = 1.0 as f32;
     var hi: f32 = 2.0 as f32;
     return test.assert_in_range_f32(v, lo, hi);
 }
 
-function test_in_range_f32_inclusive_bounds(): Option[string] {
+function test_in_range_f32_inclusive_bounds(): test.TestOutcome {
     var lo: f32 = 1.0 as f32;
     var hi: f32 = 2.0 as f32;
     match (test.assert_in_range_f32(lo, lo, hi)) {
-        Some(msg) => { return Some("lo should be in range: " + msg); },
-        None => {}
+        Fail(msg) => { return test.fail("lo should be in range: " + msg); },
+        Pass => {}
     }
     return test.assert_in_range_f32(hi, lo, hi);
 }
 
-function test_in_range_f32_below(): Option[string] {
+function test_in_range_f32_below(): test.TestOutcome {
     var v: f32 = 0.5 as f32;
     var lo: f32 = 1.0 as f32;
     var hi: f32 = 2.0 as f32;
     match (test.assert_in_range_f32(v, lo, hi)) {
-        None => { return test.fail("below-range should fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("below-range should fail"); },
+        Fail(msg) => {
             if (!msg.contains("lower bound")) {
-                return Some("expected 'lower bound': " + msg);
+                return test.fail("expected 'lower bound': " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_in_range_f32_nan_fails(): Option[string] {
+function test_in_range_f32_nan_fails(): test.TestOutcome {
     var z: f32 = 0.0 as f32;
     var nan: f32 = z / z;
     var lo: f32 = 0.0 as f32;
     var hi: f32 = 1.0 as f32;
     match (test.assert_in_range_f32(nan, lo, hi)) {
-        None => { return test.fail("NaN should fail range check"); },
-        Some(msg) => {
+        Pass => { return test.fail("NaN should fail range check"); },
+        Fail(msg) => {
             if (!msg.contains("NaN")) {
-                return Some("expected 'NaN' in failure: " + msg);
+                return test.fail("expected 'NaN' in failure: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
