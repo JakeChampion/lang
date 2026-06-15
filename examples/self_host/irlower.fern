@@ -1479,13 +1479,8 @@ pub function expr_recv_prim_type(e: parser.Expr, s: LowerState): string {
         parser.ExprIdent(uvi) => { if (decl_is_struct(s.structs, uvi.name)) { return ""; } },
         _ => {}
     }
-    // Arrays / tuples / maps aren't primitive receivers either. Builtin array
-    // methods (.len / .append / map ops) are intercepted before this fallback,
-    // but a USER/std array method (`arr.distinct()` -> __method_Array_distinct)
-    // reaches here — return "" so the prim path doesn't mis-dispatch it to
-    // `i32.<method>`; the array-method case (after the prim path in lower_expr)
-    // then resolves the helper.
-    if (expr_is_arr_src(e, s) || expr_is_strarr(e, s) || expr_is_f64arr(e, s) || expr_is_i64arr(e, s)) { return ""; }
+    // Arrays / tuples / maps aren't primitive receivers either; their builtin
+    // methods (.len / .append / map ops) are intercepted before this fallback.
     if (expr_is_str(e, s)) { return "string"; }
     if (expr_is_f64(e, s)) { return "f64"; }
     if (infer_expr_width(e, s) == 64) { return "i64"; }
@@ -4166,6 +4161,33 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         }
                         return em.emit(ir.op_call_direct(ety + "." + fa.field, 1 + c.args.len()));
                     }
+                    // Array-receiver method `arr.<field>(args)` — the std/array
+                    // auto-discovered helper `__method_Array_<field>(arr, args)`.
+                    // The AST backend rewrites this at emit time (asm.fern via
+                    // find_array_method_func); the IR sibling resolves the in-scope
+                    // helper name (find_arr_method) and lowers a free call with the
+                    // array as arg 0. Checked BEFORE the prim path — an array
+                    // receiver has no struct/enum type and expr_recv_prim_type would
+                    // otherwise fall back to "i32" and mis-dispatch `i32.<field>`.
+                    // Builtin array methods (.len / .append / .to_json / map ops)
+                    // are intercepted earlier, so only user/std array methods reach
+                    // here; a field with no __method_Array_ helper falls through to
+                    // the prim path (which bails via calls_only_known). Unblocks
+                    // std/array distinct / distinct_count / mode.
+                    if (expr_is_arr_src(fa.obj, s) || expr_is_strarr(fa.obj, s) || expr_is_f64arr(fa.obj, s) || expr_is_i64arr(fa.obj, s)) {
+                        var amn: string = s.find_arr_method(fa.field);
+                        if (amn.len() > 0) {
+                            var ams: LowerState = lower_expr(fa.obj, s);
+                            if (!ams.ok) { return ams; }
+                            var amai: i32 = 0;
+                            while (amai < c.args.len()) {
+                                ams = lower_expr(c.args[amai], ams);
+                                if (!ams.ok) { return ams; }
+                                amai = amai + 1;
+                            }
+                            return ams.emit(ir.op_call_direct(amn, 1 + c.args.len()));
+                        }
+                    }
                     // Primitive-receiver method call `n.method(args)` (impl Trait
                     // for i32/string/i64/f64) — derive the receiver's primitive
                     // type and dispatch `call_direct("<Prim>.<method>")` with the
@@ -4190,29 +4212,6 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             pai = pai + 1;
                         }
                         return pm.emit(ir.op_call_direct(pty + "." + fa.field, 1 + c.args.len()));
-                    }
-                    // Array-receiver method `arr.<field>(args)` — the std/array
-                    // auto-discovered helper `__method_Array_<field>(arr, args)`.
-                    // The AST backend rewrites this at emit time (asm.fern via
-                    // find_array_method_func); the IR sibling resolves the in-scope
-                    // helper name (find_arr_method) and lowers a free call with the
-                    // array as arg 0. Unblocks distinct / distinct_count / mode
-                    // (which call index_of/append via method syntax) and any
-                    // user-defined array method. A receiver that isn't an array, or
-                    // a field with no __method_Array_ helper, falls through to fail.
-                    if (expr_is_arr_src(fa.obj, s) || expr_is_strarr(fa.obj, s) || expr_is_f64arr(fa.obj, s) || expr_is_i64arr(fa.obj, s)) {
-                        var amn: string = s.find_arr_method(fa.field);
-                        if (amn.len() > 0) {
-                            var ams: LowerState = lower_expr(fa.obj, s);
-                            if (!ams.ok) { return ams; }
-                            var amai: i32 = 0;
-                            while (amai < c.args.len()) {
-                                ams = lower_expr(c.args[amai], ams);
-                                if (!ams.ok) { return ams; }
-                                amai = amai + 1;
-                            }
-                            return ams.emit(ir.op_call_direct(amn, 1 + c.args.len()));
-                        }
                     }
                     return s.fail();
                 },
