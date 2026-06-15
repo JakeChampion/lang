@@ -19,6 +19,7 @@ package wasmbin
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
@@ -197,6 +198,25 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	liveExtras = append(liveExtras, exportRoots...)
 	liveExtras = append(liveExtras, dynImplMethods...)
 	liveExtras = append(liveExtras, downcastImplMethods...)
+	// `dyn Trait` RC drop fns (docs/DYN-TRAITS.md §4.4) are reached only
+	// through the vtable's trailing drop slot (an indirect call_indirect
+	// the IR reachability walker can't follow), so root them explicitly so
+	// they survive IR dead-function elimination. The vtable cell embeds
+	// each Drop fn by table index; a culled drop fn would make
+	// OpConstVtable reference a missing func. The per-set __drop_dyn_<set>
+	// helpers are called by name (OpCallDirect) from the exit sweep, but
+	// rooting them too is harmless and keeps a no-coercion-but-typed-dyn
+	// program linking.
+	for _, vt := range ip.Vtables {
+		if vt.Drop != "" {
+			liveExtras = append(liveExtras, vt.Drop)
+		}
+	}
+	for _, fn := range ip.Funcs {
+		if strings.HasPrefix(fn.Name, "__drop_dyn_") {
+			liveExtras = append(liveExtras, fn.Name)
+		}
+	}
 	if live := ir.LiveFunctionsWithAliases(ip, CallDirectAliases, liveExtras...); live != nil {
 		out := ip.Funcs[:0]
 		for _, irFn := range ip.Funcs {

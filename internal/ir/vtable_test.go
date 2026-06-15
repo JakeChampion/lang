@@ -80,6 +80,53 @@ function main(): i32 { return 0; }`
 	}
 }
 
+// TestCollectVtablesDropSlot: the per-concrete vtable records the
+// concrete type's drop fn for the trailing drop slot (docs/DYN-TRAITS.md
+// §4.4). A struct concrete records __drop_struct_<C> (its heap box — and
+// any transitively-owned RC value like a String field — is reclaimed
+// through it); a primitive concrete records "" (the null sentinel: the
+// value lives inline in `data`, no box to free).
+func TestCollectVtablesDropSlot(t *testing.T) {
+	src := `import "std/i32";
+trait Shape {
+    function area(self: Self): i32;
+}
+struct Named { tag: string }
+struct Flat { r: i32 }
+impl Shape for Named {
+    function area(self: Self): i32 { return 1; }
+}
+impl Shape for Flat {
+    function area(self: Self): i32 { return self.r; }
+}
+impl Shape for i32 {
+    function area(self: Self): i32 { return self; }
+}
+function describe(s: dyn Shape): i32 { return s.area(); }
+function main(): i32 { return 0; }`
+	prog, info := checkSourceForVtable(t, src)
+	vts := collectVtables(prog, info)
+	byName := map[string]VtableDecl{}
+	for _, vt := range vts {
+		byName[vt.Concrete] = vt
+	}
+	// A struct concrete that owns a String field reclaims through its
+	// generated struct drop.
+	if got := byName["Named"].Drop; got != "__drop_struct_Named" {
+		t.Errorf("Named drop slot = %q, want __drop_struct_Named", got)
+	}
+	// A scalar-only struct concrete still owns its heap box, reclaimed
+	// through its generated struct drop (which just frees the box).
+	if got := byName["Flat"].Drop; got != "__drop_struct_Flat" {
+		t.Errorf("Flat drop slot = %q, want __drop_struct_Flat", got)
+	}
+	// A primitive concrete carries its value inline behind `data` — no
+	// box, so the null sentinel.
+	if got := byName["i32"].Drop; got != "" {
+		t.Errorf("i32 (primitive) drop slot = %q, want \"\" (null sentinel)", got)
+	}
+}
+
 // TestCollectVtablesNoneWhenNoDyn: a trait with impls but no `dyn` use
 // anywhere emits no vtables (nothing to dispatch dynamically).
 func TestCollectVtablesNoneWhenNoDyn(t *testing.T) {
