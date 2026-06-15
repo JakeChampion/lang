@@ -6420,7 +6420,8 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // keys()/values() call on a map local.
             if (!for_var_comma) {
                 var mki_method: string = "";
-                var mki_slot: i32 = 0 - 1;
+                var mki_mtype: string = "";
+                var mki_recv: parser.Expr = parser.e_unknown("");
                 match (fr.iter) {
                     parser.ExprCall(mkic) => {
                         if (mkic.args.len() == 0) {
@@ -6428,10 +6429,21 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 parser.ExprFieldAccess(mkifa) => {
                                     if (mkifa.field == "keys" || mkifa.field == "values") {
                                         match (mkifa.obj) {
+                                            // A map LOCAL (`for k in m.keys()`).
                                             parser.ExprIdent(mkid) => {
-                                                if (s.map_type_of(s.slot_of(mkid.name)) != "") {
-                                                    mki_method = mkifa.field;
-                                                    mki_slot = s.slot_of(mkid.name);
+                                                var mkimt0: string = s.map_type_of(s.slot_of(mkid.name));
+                                                if (mkimt0 != "") { mki_method = mkifa.field; mki_mtype = mkimt0; mki_recv = mkifa.obj; }
+                                            },
+                                            // A Map-typed struct FIELD (`for k in c.m.keys()`):
+                                            // resolve the map type from the field decl, like
+                                            // the map-method dispatch. #map-struct-field-iter.
+                                            parser.ExprFieldAccess(mkffa) => {
+                                                if (!util.is_all_digits(mkffa.field)) {
+                                                    var mkoty: string = expr_struct_type(mkffa.obj, s);
+                                                    if (mkoty != "") {
+                                                        var mkft: string = decl_field_type(s.structs, mkoty, mkffa.field);
+                                                        if (is_map_type_name(mkft)) { mki_method = mkifa.field; mki_mtype = mkft; mki_recv = mkifa.obj; }
+                                                    }
                                                 }
                                             },
                                             _ => {}
@@ -6444,17 +6456,20 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                     },
                     _ => {}
                 }
-                if (mki_slot >= 0) {
-                    var mkimty: string = s.map_type_of(mki_slot);
+                if (mki_method != "") {
+                    var mkimty: string = mki_mtype;
                     // element type tag: keys -> key kind; values -> value type.
                     var mki_elem_str: boolean = false;
                     if (mki_method == "keys") { if (map_key_kind_of(mkimty) == 0) { mki_elem_str = true; } }
                     else { if (map_value_of(mkimty) == "string") { mki_elem_str = true; } }
                     // snapshot keys()/values() -> hidden borrow local (NOT marked).
+                    // The map receiver (a local or a struct field) lowers via
+                    // lower_expr, which pushes the map pointer either way.
                     var mkisn: string = "$formk" + util.i32_to_string(s.local_names.len());
                     var mkf: LowerState = s.add_local(mkisn);
                     var mkisslot: i32 = mkf.slot_of(mkisn);
-                    mkf = mkf.emit(ir.op_load_local(mki_slot));
+                    mkf = lower_expr(mki_recv, mkf);
+                    if (!mkf.ok) { return mkf; }
                     if (mki_method == "keys") { mkf = mkf.emit(ir.op_map_keys()); }
                     else { mkf = mkf.emit(ir.op_map_values()); }
                     mkf = mkf.emit(ir.op_store_local(mkisslot));
