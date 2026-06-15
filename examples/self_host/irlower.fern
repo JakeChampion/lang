@@ -9059,6 +9059,42 @@ pub function strarr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 
 // opt_ret_fns_of collects "name|rettype" for a module's Option/Result-returning
 // functions, so a match on `f()` can recover the bound payload type.
+// lam_leaf_opt_type returns the Option[..]/Result[..] type a lifted `__lam_`
+// returns, inferred from its leaf return — a call to an Option/Result-returning
+// function (or a nested `__lam_`) — or "". An if-/match-expression whose branch
+// CALLS an opt-returning fn and whose other branch is `None` (a keyword) /
+// another gfn call is lambda-LIFTED (no captures), so its `__lam` carries a
+// default i32 ret_type and `var o = __lam(); match (o)` lost the payload type.
+// A direct `Some(..)` branch keeps the expression INLINE (a captured-looking
+// constructor), recovered via the StmtVar inline-IIFE path instead — so this
+// only needs the call-leaf case. #3236 sibling for the lifted shape.
+pub function lam_leaf_opt_type(fn: parser.FuncDecl, funcs: parser.FuncDecl[], depth: i32): string {
+    if (depth > 8) { return ""; }
+    if (fn.body.len() == 0) { return ""; }
+    var re: parser.Expr = iife_first_return_expr(fn.body[fn.body.len() - 1]);
+    match (re) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    var ni: i32 = 0;
+                    while (ni < funcs.len()) {
+                        if (funcs[ni].name == cid.name && funcs[ni].receiver_type.len() == 0) {
+                            var crt: string = funcs[ni].ret_type;
+                            if (crt.len() >= 8 && (crt[0:7] == "Option[" || crt[0:7] == "Result[")) { return crt; }
+                            if (cid.name.len() >= 6 && cid.name[0:6] == "__lam_") { return lam_leaf_opt_type(funcs[ni], funcs, depth + 1); }
+                            return "";
+                        }
+                        ni = ni + 1;
+                    }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return "";
+}
+
 pub function opt_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
@@ -9072,6 +9108,14 @@ pub function opt_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
             var key: string = funcs[k].name;
             if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
             out = out.append(key + "|" + rt);
+        }
+        // A lifted if-/match-expression `__lam_` whose leaf branch calls an
+        // opt-returning fn (`var o = if (c) { mkO(7) } else { None }`): infer its
+        // Option/Result type from the body so a later `match (o)` recovers the
+        // payload (#3236 sibling for the lambda-lifted shape).
+        else if (funcs[k].name.len() >= 6 && funcs[k].name[0:6] == "__lam_") {
+            var inf: string = lam_leaf_opt_type(funcs[k], funcs, 0);
+            if (inf.len() > 0) { out = out.append(funcs[k].name + "|" + inf); }
         }
         k = k + 1;
     }
