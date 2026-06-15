@@ -436,6 +436,40 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// routes "ir" in this harness. The swap rejection is covered structurally by
 		// inarm_reuse_match_ok's per-position binding check; its non-firing is verified
 		// by an arr_box-count probe in the slice report.)
+		//
+		// MATCH-EXPRESSION PAYLOAD-BINDING WIDENING (lower_iife_match / lower_i64):
+		// a `var r = match (x) { V(a) => ... }` IIFE match-EXPRESSION that BINDS a
+		// non-i32 enum payload now routes "ir" (was "ast"). The underlying StmtMatch
+		// path already binds + deep-drops i64 / f64 / leak-safe-array payloads at
+		// width; the IIFE gate was merely over-conservative (i32-only). Admitted:
+		//   - i64 / f64 payload returned DIRECTLY (`V(a) => a`) — the result temp is
+		//     classified to the matching width from the variant's payload field type
+		//     (iife_payload_result_width), since the bare ident isn't in scope to
+		//     infer at classify time. An annotated `var r: i64 =` binding routes
+		//     through lower_i64, which also admits the payload-i64 IIFE match now.
+		//   - a scalar-element array payload (i32[]/boolean[]) bound and read as a
+		//     BORROW (`V(xs) => xs[0]` / `xs.len()`) — result stays i32; the array
+		//     isn't returned bare (that would need an array temp the IIFE doesn't
+		//     classify, so it stays gated to AST). The 8-byte-element arrays
+		//     (i64[]/f64[]) are NOT admitted — the StmtMatch payload-binding mark
+		//     doesn't carry the element width, so an element read would mis-width
+		//     (the statement-match path has the same limitation); they stay on AST.
+		// i64 payload returned directly into an i64 result temp; value (7) correct.
+		{"iife-match-i64-payload-value", `enum E { V(i64), W(i64) } function main(): i32 { var x: E = E.V(7); var r: i64 = match (x) { V(a) => a, W(b) => b }; return r as i32; }`, 7},
+		// f64 payload returned directly into an f64 result temp; value (3) correct.
+		{"iife-match-f64-payload-value", `enum E { V(f64), W(f64) } function main(): i32 { var x: E = E.V(3.5); var r: f64 = match (x) { V(a) => a, W(b) => b }; return r as i32; }`, 3},
+		// i32[] payload bound, read element [0]; result is i32 (the element).
+		{"iife-match-arr-payload-elem-value", `enum E { V(i32[]), W(i32[]) } function main(): i32 { var x: E = E.V([42, 7]); var r = match (x) { V(xs) => xs[0], W(ys) => ys[0] }; return r; }`, 42},
+		// i32[] payload bound, read .len() (single-expr arm); result is i32.
+		{"iife-match-arr-payload-len-value", `enum E { V(i32[]), W(i32[]) } function main(): i32 { var x: E = E.V([1, 2, 3]); var r = match (x) { V(xs) => xs.len(), W(ys) => ys.len() }; return r; }`, 3},
+		// i32[] payload BOUND but unused (arm returns a literal); still routes "ir".
+		{"iife-match-arr-payload-unused-value", `enum E { V(i32[]), W(i32[]) } function main(): i32 { var x: E = E.V([1, 2]); var r = match (x) { V(xs) => 5, W(ys) => 9 }; return r; }`, 5},
+		// Leak-safety detector: the array payload's box is bound + read through the
+		// IIFE path then dropped; the over-release detector reads 0 (freed exactly
+		// once — no leak, no double-free).
+		{"iife-match-arr-payload-detector", `enum E { V(i32[]), W(i32[]) } function go(): i32 { var x: E = E.V([10, 20, 30]); var r = match (x) { V(xs) => xs[0], W(ys) => ys[0] }; if (r != 10) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// boolean[] payload bound, read .len() (single-expr arm); result is i32.
+		{"iife-match-boolarr-payload-len-value", `enum E { V(boolean[]), N } function main(): i32 { var x: E = E.V([true, false, true]); var r = match (x) { V(xs) => xs.len(), N => 0 }; return r; }`, 3},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

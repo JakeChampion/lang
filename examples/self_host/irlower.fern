@@ -2562,8 +2562,15 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
             if (c.args.len() == 0) {
                 match (c.callee) {
                     parser.ExprLambda(lam) => {
-                        if (lam.params.len() == 0 && lam.body.len() == 1 && iife_any_return_i64(lam.body[0], s)) {
-                            return lower_iife(c, lam, s);
+                        if (lam.params.len() == 0 && lam.body.len() == 1) {
+                            // i64-classifiable by a branch's i64 value, OR a
+                            // match-EXPRESSION whose arm returns a BOUND i64 enum
+                            // payload directly (`V(a) => a`, a:i64) — recovered from
+                            // the variant's payload field via iife_match_returns_i64
+                            // since the bare ident isn't in scope to infer here.
+                            if (iife_any_return_i64(lam.body[0], s) || iife_match_returns_i64_payload(lam.body[0], s)) {
+                                return lower_iife(c, lam, s);
+                            }
                         }
                     },
                     _ => {}
@@ -4574,30 +4581,68 @@ function lower_iife(c: parser.ExprCall, lam: parser.ExprLambda, s: LowerState): 
 // result temp keeps the strict i32-only rule (a payload returned directly would
 // need its type at gate-classify time, before the binding is in scope). A
 // string / Result / fn payload stays on the AST path here.
-function iife_payload_bindable(pv: parser.PatVariant, opt_srt: string, temp_is_i32: boolean, scrut_is_ident: boolean, s: LowerState): boolean {
+// iife_arm_returns_ident reports whether the arm's TAIL `return E` is exactly the
+// bare ident `name` (so a payload bound to `name` would be stored DIRECTLY into the
+// result temp). Used to reject a leak-safe array payload returned bare (it would
+// need an array-typed temp, which the IIFE doesn't classify) while still admitting
+// a borrow read of it (`xs[0]` / `xs.len()` produce an i32 result).
+function iife_arm_returns_ident(arm: parser.MatchArm, name: string): boolean {
+    if (arm.body.len() == 0) { return false; }
+    var last: parser.Stmt = arm.body[arm.body.len() - 1];
+    match (last) {
+        parser.StmtReturn(r) => {
+            match (r.value) {
+                parser.ExprIdent(rid) => { return rid.name == name; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// iife_payload_field_bindable reports whether a payload of field TYPE `ft`, bound to
+// `name` in `arm`, is admissible for the inlined match-EXPRESSION:
+//   - i32: always (an i32 store / borrow).
+//   - i64 / f64: only when RETURNED DIRECTLY (`V(a) => a`) — the result temp was
+//     classified to the matching width by iife_payload_result_width. (A non-direct
+//     i64/f64 use, e.g. `a + 1`, would need width-aware arm-body lowering this gate
+//     doesn't provide, so it bails.)
+//   - scalar-element array (i32[]/boolean[]): only when NOT returned bare — the
+//     array is bound + deep-dropped by the underlying StmtMatch path and read as a
+//     borrow (`xs[0]` / `xs.len()`), producing an i32 result. The 8-byte-element
+//     arrays (i64[]/f64[]) are NOT admitted: the StmtMatch payload-binding mark
+//     (is_scalar_array_type only) doesn't carry the i64/f64 element width, so an
+//     element read would default to i32 width and read garbage — they stay gated to
+//     AST (the same limitation applies to the statement-match path itself).
+function iife_payload_field_bindable(ft: string, name: string, arm: parser.MatchArm, s: LowerState): boolean {
+    if (ft == "i32") { return true; }
+    if (ft == "i64" || ft == "f64") { return iife_arm_returns_ident(arm, name); }
+    if (is_scalar_array_type(ft)) { return !iife_arm_returns_ident(arm, name); }
+    return false;
+}
+
+function iife_payload_bindable(pv: parser.PatVariant, arm: parser.MatchArm, opt_srt: string, temp_is_i32: boolean, scrut_is_ident: boolean, s: LowerState): boolean {
     if (opt_srt != "") {
         var pt: string = opt_payload_type(opt_srt, pv.type_name);
         if (pt == "i32") { return true; }
         if (temp_is_i32 && scrut_is_ident && pt.len() >= 8 && pt[0:7] == "Option[") { return true; }
         return false;
     }
-    // User-enum variant: strip any `Enum.` qualifier, then read its payload field.
-    var vname: string = pv.type_name;
-    var vld: i32 = 0;
-    while (vld < pv.type_name.len()) {
-        if (pv.type_name[vld] == 46) { vname = pv.type_name[vld + 1 : pv.type_name.len()]; }
-        vld = vld + 1;
-    }
-    if (!decl_is_struct(s.structs, vname)) { return false; }
-    return decl_field_type(s.structs, vname, "__ev") == "i32";
+    // User-enum variant: read its single payload field type, then admit i32 / i64 /
+    // f64 / leak-safe scalar array per iife_payload_field_bindable.
+    var ft: string = iife_user_enum_payload_type(pv, s);
+    if (ft == "") { return false; }
+    return iife_payload_field_bindable(ft, pv.binding, arm, s);
 }
 
-// iife_enum_payloads_i32 reports whether a MULTI-payload user-enum variant arm
-// (`Pair(a, b)`) binds only i32 payloads — the main binding (`__ev`) and every
-// extra binding (`__ev1`, `__ev2`, …). Used to admit a multi-payload variant arm
-// into the inlined match-expression: each `tmp = E` store is i32 and the
-// underlying StmtMatch path binds the payload fields. A `_` binding is skipped.
-function iife_enum_payloads_i32(pv: parser.PatVariant, s: LowerState): boolean {
+// iife_enum_payloads_bindable reports whether a MULTI-payload user-enum variant arm
+// (`Pair(a, b)`) binds only admissible payloads — the main binding (`__ev`) and
+// every extra binding (`__ev1`, `__ev2`, …), each admitted by
+// iife_payload_field_bindable (i32 / directly-returned i64-f64 / borrow-only
+// leak-safe array). The underlying StmtMatch path binds the payload fields at
+// width. A `_` binding is skipped.
+function iife_enum_payloads_bindable(pv: parser.PatVariant, arm: parser.MatchArm, s: LowerState): boolean {
     var vname: string = pv.type_name;
     var vld: i32 = 0;
     while (vld < pv.type_name.len()) {
@@ -4606,22 +4651,105 @@ function iife_enum_payloads_i32(pv: parser.PatVariant, s: LowerState): boolean {
     }
     if (!decl_is_struct(s.structs, vname)) { return false; }
     if (pv.binding.len() > 0 && pv.binding != "_") {
-        if (decl_field_type(s.structs, vname, "__ev") != "i32") { return false; }
+        var ft0: string = decl_field_type(s.structs, vname, "__ev");
+        if (!iife_payload_field_bindable(ft0, pv.binding, arm, s)) { return false; }
     }
     var k: i32 = 0;
     while (k < pv.extra_bindings.len()) {
-        // Bind the array element to an explicitly-typed string local: the
-        // self-host compiler's inference defaults a parameter field's array
-        // element to i32, so `pv.extra_bindings[k].len()` would dispatch as
-        // `i32__len` (undefined) when this file is bootstrapped. The annotated
-        // local pins the receiver type to string.
         var eb: string = pv.extra_bindings[k];
         if (eb.len() > 0 && eb != "_") {
-            if (decl_field_type(s.structs, vname, "__ev" + util.i32_to_string(k + 1)) != "i32") { return false; }
+            var ftk: string = decl_field_type(s.structs, vname, "__ev" + util.i32_to_string(k + 1));
+            if (!iife_payload_field_bindable(ftk, eb, arm, s)) { return false; }
         }
         k = k + 1;
     }
     return true;
+}
+
+// iife_variant_payload_field returns the variant struct's payload FIELD TYPE for a
+// binding name within a PatVariant arm: `__ev` for the main binding, `__ev<k+1>`
+// for the k-th extra binding. Returns "" when the name doesn't bind a payload of
+// this variant (so a bare-ident return that isn't a payload is left unclassified).
+function iife_variant_payload_field(pv: parser.PatVariant, name: string, s: LowerState): string {
+    var vname: string = pv.type_name;
+    var vld: i32 = 0;
+    while (vld < pv.type_name.len()) {
+        if (pv.type_name[vld] == 46) { vname = pv.type_name[vld + 1 : pv.type_name.len()]; }
+        vld = vld + 1;
+    }
+    if (!decl_is_struct(s.structs, vname)) { return ""; }
+    var pvb: string = pv.binding;
+    if (pvb.len() > 0 && pvb != "_" && pvb == name) { return decl_field_type(s.structs, vname, "__ev"); }
+    var k: i32 = 0;
+    while (k < pv.extra_bindings.len()) {
+        var eb: string = pv.extra_bindings[k];
+        if (eb.len() > 0 && eb != "_" && eb == name) { return decl_field_type(s.structs, vname, "__ev" + util.i32_to_string(k + 1)); }
+        k = k + 1;
+    }
+    return "";
+}
+
+// iife_payload_result_width classifies a match-EXPRESSION's RESULT temp when an arm
+// directly returns a BOUND enum payload (`V(a) => a`). The width can't be inferred
+// from the bare ident at classify time (the binding isn't in scope yet), so it is
+// recovered from the variant's payload FIELD TYPE: "i64" / "f64" when any arm's tail
+// `return E` is a bare ident bound as an i64 / f64 payload of THAT arm's variant,
+// else "". Mirrors the underlying StmtMatch path's struct_get_i64 / width-64 read
+// of the same field — so the temp width lines up with the value the binding loads.
+function iife_payload_result_width(m: parser.StmtMatch, s: LowerState): string {
+    var i: i32 = 0;
+    while (i < m.arms.len()) {
+        var arm: parser.MatchArm = m.arms[i];
+        if (arm.body.len() > 0) {
+            var last: parser.Stmt = arm.body[arm.body.len() - 1];
+            match (last) {
+                parser.StmtReturn(r) => {
+                    match (arm.pattern) {
+                        parser.PatVariant(pv) => {
+                            match (r.value) {
+                                parser.ExprIdent(rid) => {
+                                    var ft: string = iife_variant_payload_field(pv, rid.name, s);
+                                    if (ft == "i64") { return "i64"; }
+                                    if (ft == "f64") { return "f64"; }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// iife_match_returns_i64_payload reports whether `st` is a match-EXPRESSION whose
+// result is a directly-returned BOUND i64 enum payload (`V(a) => a`, a:i64). Lets
+// lower_i64 admit such a match-EXPRESSION (the bare ident isn't in scope to infer
+// width, so it's recovered from the payload field via iife_payload_result_width).
+function iife_match_returns_i64_payload(st: parser.Stmt, s: LowerState): boolean {
+    match (st) {
+        parser.StmtMatch(mm) => { return iife_payload_result_width(mm, s) == "i64"; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// iife_user_enum_payload_type returns a user-enum variant's single payload field
+// type (`__ev`), stripping any `Enum.` qualifier. "" when the variant isn't a
+// known struct (so a non-user-enum / Option scrutinee is handled elsewhere).
+function iife_user_enum_payload_type(pv: parser.PatVariant, s: LowerState): string {
+    var vname: string = pv.type_name;
+    var vld: i32 = 0;
+    while (vld < pv.type_name.len()) {
+        if (pv.type_name[vld] == 46) { vname = pv.type_name[vld + 1 : pv.type_name.len()]; }
+        vld = vld + 1;
+    }
+    if (!decl_is_struct(s.structs, vname)) { return ""; }
+    return decl_field_type(s.structs, vname, "__ev");
 }
 
 function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
@@ -4646,8 +4774,16 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
             while (mj < m.arms[mi].body.len()) { if (iife_any_return_i64(m.arms[mi].body[mj], ts)) { many_i64 = true; } mj = mj + 1; }
             mi = mi + 1;
         }
+        // A directly-returned BOUND enum payload (`V(a) => a`) can't be classified
+        // by expr_is_f64 / iife_any_return_i64 — the binding isn't in scope at
+        // classify time, so the bare ident infers as i32. Recover the result width
+        // from the variant's payload field type (iife_payload_result_width) so an
+        // i64 / f64 payload returns into a matching-width temp instead of bailing.
+        var pay_w: string = iife_payload_result_width(m, ts);
         if (expr_is_f64(mfre, ts)) { ts = ts.mark_f64(tslot, true); }
         else if (many_i64) { ts = ts.mark_i64(tslot, true); }
+        else if (pay_w == "f64") { ts = ts.mark_f64(tslot, true); }
+        else if (pay_w == "i64") { ts = ts.mark_i64(tslot, true); }
         else if (expr_is_str(mfre, ts)) { ts = ts.mark_str(tslot, true); }
     }
     // A payload-binding arm (`Some(n) => n`) is admitted only when the bound
@@ -4676,14 +4812,21 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
             parser.PatVariant(pv) => {
                 if (pv.extra_bindings.len() > 0) {
                     // A MULTI-payload user-enum variant arm (`Pair(a, b) => a + b`):
-                    // admit when every bound payload is i32 and the result temp is
-                    // i32 — the underlying StmtMatch path binds __ev / __ev1… (#3193).
-                    if (!temp_is_i32 || !iife_enum_payloads_i32(pv, ts)) { return s.fail(); }
+                    // admit when every bound payload is admissible (i32, or a leak-safe
+                    // scalar array bound borrow-only) and — for an i32-result temp —
+                    // the result is i32. An i64 / f64 payload returned DIRECTLY
+                    // (`Pair(a, b) => a`, a i64) is admitted into the matching-width
+                    // temp classified above. The underlying StmtMatch path binds
+                    // __ev / __ev1… at width (#3193).
+                    if (!iife_enum_payloads_bindable(pv, m.arms[i], ts)) { return s.fail(); }
                 } else if (pv.binding.len() > 0 && pv.binding != "_") {
                     // Single payload binding: an i32 payload (`tmp = n` is an i32
-                    // store), or a nested-Option payload into an i32 temp (bound via
-                    // the underlying StmtMatch path, consumed by an inner match).
-                    if (!iife_payload_bindable(pv, opt_srt, temp_is_i32, scrut_is_ident, ts)) { return s.fail(); }
+                    // store), a nested-Option payload into an i32 temp (bound via the
+                    // underlying StmtMatch path, consumed by an inner match), an i64 /
+                    // f64 payload returned directly into the matching-width temp, or a
+                    // leak-safe scalar array payload bound and read as a BORROW
+                    // (`V(xs) => xs[0]` / `.len()`) — never the array returned bare.
+                    if (!iife_payload_bindable(pv, m.arms[i], opt_srt, temp_is_i32, scrut_is_ident, ts)) { return s.fail(); }
                 }
             },
             _ => {}
