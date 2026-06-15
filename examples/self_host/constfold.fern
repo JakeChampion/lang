@@ -241,7 +241,7 @@ function fold_stmt(st: parser.Stmt): parser.Stmt {
             };
         },
         parser.StmtWhile(w) => {
-            return parser.StmtWhile { cond: fold_expr(w.cond), body: fold_block(w.body) };
+            return parser.StmtWhile { cond: fold_expr(w.cond), body: fold_block(w.body), label: w.label };
         },
         parser.StmtMatch(m) => {
             var arms: parser.MatchArm[] = [];
@@ -253,7 +253,7 @@ function fold_stmt(st: parser.Stmt): parser.Stmt {
             return parser.StmtMatch { scrutinee: fold_expr(m.scrutinee), arms: arms, line: m.line, col: m.col, origin: m.origin };
         },
         parser.StmtFor(f) => {
-            return parser.StmtFor { var_name: f.var_name, iter: fold_expr(f.iter), body: fold_block(f.body) };
+            return parser.StmtFor { var_name: f.var_name, iter: fold_expr(f.iter), body: fold_block(f.body), label: f.label };
         },
         parser.StmtBreak(_) => { return st; },
         parser.StmtContinue(_) => { return st; },
