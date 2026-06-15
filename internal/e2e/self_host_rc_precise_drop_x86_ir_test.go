@@ -251,6 +251,34 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// NON-firing: x is used AFTER the match (`snd(x)`), so it is not dead — must
 		// NOT be freed. Detector 0.
 		{"enum-used-after-match-not-freed-detector", `enum Shape { Circle(i32), Square(i32) } function snd(s: Shape): i32 { return 1; } function main(): i32 { var x = Circle(7); var total = 0; match (x) { Circle(r) => { total = r; }, Square(w) => { total = w; }, } var g = snd(x); if (total + g != 8) { return 99; } return __rc_underflow(); }`, 0},
+		// Enum-donor cross-reuse (FBIP): a consumed-and-dead scalar-enum box donated
+		// to a LATER same-size full struct construction instead of being freed. Here
+		// the variant `A(i32, i32)` box (3 words: shape + 2 payloads) is the donor and
+		// `W { p, q }` (3 words: shape + 2 fields) is the recipient — same field count,
+		// so W reuses x's box in place (shape rewritten to W, fields written, x's slot
+		// zeroed). The post-match free of x is SUPPRESSED (the reuse consumes the box).
+		// Value correct, detector 0 (box freed exactly once, through y).
+		{"enum-donor-reuse-value", `enum E { A(i32, i32), B(i32, i32) } struct W { p: i32, q: i32 } function main(): i32 { var x = A(10, 20); var t = 0; match (x) { A(a, b) => { t = a + b; }, B(c, d) => { t = c - d; }, } var y = W { p: 3, q: 4 }; return t + y.p + y.q; }`, 37},
+		{"enum-donor-reuse-detector", `enum E { A(i32, i32), B(i32, i32) } struct W { p: i32, q: i32 } function main(): i32 { var x = A(10, 20); var t = 0; match (x) { A(a, b) => { t = a + b; }, B(c, d) => { t = c - d; }, } var y = W { p: 3, q: 4 }; var s = t + y.p + y.q; if (s != 37) { return 99; } return __rc_underflow(); }`, 0},
+		// Recipient with a leak-safe array field: the donor's reused box becomes W;
+		// only the fresh `[7, 8]` array allocates (the box itself does not). The donor's
+		// old scalar slots hold no rc value to release. Array deep-dropped once at y's
+		// reclamation. Value correct, detector 0.
+		{"enum-donor-reuse-array-field-value", `enum E { A(i32, i32), B(i32, i32) } struct W { p: i32, xs: i32[] } function main(): i32 { var x = A(10, 20); var t = 0; match (x) { A(a, b) => { t = a + b; }, B(c, d) => { t = c - d; }, } var y = W { p: 5, xs: [7, 8] }; return t + y.p + y.xs[0] + y.xs[1]; }`, 50},
+		{"enum-donor-reuse-array-field-detector", `enum E { A(i32, i32), B(i32, i32) } struct W { p: i32, xs: i32[] } function main(): i32 { var x = A(10, 20); var t = 0; match (x) { A(a, b) => { t = a + b; }, B(c, d) => { t = c - d; }, } var y = W { p: 5, xs: [7, 8] }; var s = t + y.p + y.xs[0] + y.xs[1]; if (s != 50) { return 99; } return __rc_underflow(); }`, 0},
+		// NON-firing (different size): the donor box is 3 words (shape + 2 payloads)
+		// but `W { p, q, r }` is 4 words (shape + 3 fields), so no donation — x is freed
+		// after its match and W gets a fresh box. Value correct, detector 0.
+		{"enum-donor-no-reuse-diff-size-detector", `enum E { A(i32, i32), B(i32, i32) } struct W { p: i32, q: i32, r: i32 } function main(): i32 { var x = A(10, 20); var t = 0; match (x) { A(a, b) => { t = a + b; }, B(c, d) => { t = c - d; }, } var y = W { p: 3, q: 4, r: 5 }; var s = t + y.p + y.q + y.r; if (s != 42) { return 99; } return __rc_underflow(); }`, 0},
+		// NON-firing (enum used after the match): x is matched twice, so it is NOT dead
+		// after the first match — the consumed-free never classifies it, hence it is not
+		// a donor either. W gets a fresh box. Value correct, detector 0.
+		{"enum-donor-no-reuse-used-after-detector", `enum E { A(i32, i32), B(i32, i32) } struct W { p: i32, q: i32 } function main(): i32 { var x = A(10, 20); var t = 0; match (x) { A(a, b) => { t = a + b; }, B(c, d) => { t = c - d; }, } var y = W { p: 3, q: 4 }; var u = 0; match (x) { A(a, b) => { u = a; }, B(c, d) => { u = c; }, } var s = t + y.p + y.q + u; if (s != 47) { return 99; } return __rc_underflow(); }`, 0},
+		// NON-firing (recipient escapes): the recipient y is returned (moved to the
+		// caller). Donation is still sound (the box is now owned by the caller via y;
+		// x's slot is zeroed so no double-free), but more importantly the value is
+		// correct and the detector reads 0.
+		{"enum-donor-reuse-recipient-escapes-detector", `enum E { A(i32, i32), B(i32, i32) } struct W { p: i32, q: i32 } function mk(): W { var x = A(10, 20); var t = 0; match (x) { A(a, b) => { t = a + b; }, B(c, d) => { t = c - d; }, } var y = W { p: t, q: 4 }; return y; } function main(): i32 { var w = mk(); if (w.p + w.q != 34) { return 99; } return __rc_underflow(); }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

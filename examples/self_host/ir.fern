@@ -473,6 +473,18 @@ pub function op_struct_set_i64(field_index: i32): Op {
     return Op { kind: "struct_set", i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
 
+// struct_set_shape pops [box] and writes `type_name`'s interned shape (the SAME
+// .S<idx> label / numeric type-id struct_make stores at offset 0, that variant_is
+// / dyn_dispatch compare pointer/id-equal against), then pushes [box] back. Used
+// by the enum-donor cross-reuse: a dead scalar-enum box is overwritten IN PLACE
+// as a different same-size shape (a struct W of equal field count), so its slot 0
+// must change from the donor variant's shape to W's. Layout-agnostic — each
+// backend writes its own offset-0 identity (.S label on x86/arm64, type-id i32 on
+// wasm), reusing exactly the struct_make shape-write.
+pub function op_struct_set_shape(type_name: string): Op {
+    return Op { kind: "struct_set_shape", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
+}
+
 // high-level tuple ops — layout-agnostic, like the struct ops, but a tuple box
 // has NO shape/type-id slot (field access is the numeric `.0` / `.1` spelling,
 // resolved at the access site): element i sits at the box's slot i. `tuple_make`

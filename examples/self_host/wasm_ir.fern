@@ -1032,6 +1032,13 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             } else {
                 out = out + "    local.set " + util.i32_to_string(eltmp) + "\n    i32.const " + util.i32_to_string(soff) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
             }
+        } else if (o.kind == "struct_set_shape") {
+            // stack: box (kept). Write o.str's type-id (the SAME id struct_make
+            // stores at offset 0 / variant_is compares) at box+0, leaving the box
+            // on the stack. Used by the enum-donor in-place reuse to re-shape a
+            // dead scalar-enum box as a same-size struct.
+            out = out + "    local.tee " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(struct_type_id(structs, o.str)) + "\n    i32.store\n";
         } else if (o.kind == "variant_is") {
             // stack: variant box -> i32.load (type_id @0) == struct_type_id(name)
             out = out + "    i32.load\n    i32.const " + util.i32_to_string(struct_type_id(structs, o.str)) + "\n    i32.eq\n";
