@@ -815,6 +815,15 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"enum-arr-field-bind-match", `enum E { A(i32), B } struct H { es: E[] } function sum(h: H): i32 { var es: E[] = h.es; var s = 0; var i = 0; while (i < es.len()) { match (es[i]) { A(n) => { s = s + n; }, B => { s = s + 100; } } i = i + 1; } return s; } function main(): i32 { var h = H { es: [A(5), B, A(9)] }; return sum(h); }`},
 		{"enum-arr-field-return", `enum E { A(i32), B } struct H { es: E[] } function get(h: H): E[] { return h.es; } function main(): i32 { var h = H { es: [A(3), B] }; var es = get(h); return match (es[0]) { A(n) => n, B => 0 } + es.len(); }`},
 		{"enum-arr-field-assign", `enum E { A(i32), B } struct H { es: E[] } function f(h: H): i32 { var es: E[] = []; es = h.es; var s = 0; var i = 0; while (i < es.len()) { match (es[i]) { A(n) => { s = s + n; }, B => {} } i = i + 1; } return s; } function main(): i32 { var h = H { es: [A(7), A(8), B] }; return f(h); }`},
+		// A CALL returning an array-of-struct as a struct-literal field value
+		// (`S { es: build(...) }`) — owned/moved value, no alias-inc; a struct-array
+		// field is never deep-dropped so the missing inc only leaks, never over-frees.
+		// Admits parser.module_with_builtins (`Module { structs: inject_builtin_enums
+		// (mono.structs), funcs: mono.funcs, ... }`) — a call value beside field-access
+		// values. Scalar-array call values stay restricted to .with/.append (deep-
+		// dropped, so they need the fresh guarantee).
+		{"struct-arr-call-into-lit", `struct E { v: i32 } struct S { es: E[], n: i32 } function build(seed: i32): E[] { return [E { v: seed }, E { v: seed + 1 }]; } function mk(seed: i32): S { return S { es: build(seed), n: seed + 5 }; } function main(): i32 { var s = mk(3); return s.es[0].v * 100 + s.es[1].v * 10 + s.n; }`},
+		{"struct-arr-call-and-fieldaccess-into-lit", `struct E { v: i32 } struct M { funcs: E[], structs: E[], n: i32 } function more(xs: E[]): E[] { return xs.append(E { v: 9 }); } function rebuild(m: M): M { return M { funcs: m.funcs, structs: more(m.structs), n: m.n + 1 }; } function main(): i32 { var m = M { funcs: [E { v: 1 }], structs: [E { v: 2 }], n: 10 }; var r = rebuild(m); return r.funcs.len() * 1000 + r.structs.len() * 100 + r.n; }`},
 		// The nested-array motivating shape (parser.module_has_default_params): an
 		// array-of-struct field read out of an element of an outer array-of-struct,
 		// bound in a loop, then indexed for a scalar field.

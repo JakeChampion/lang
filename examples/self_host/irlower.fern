@@ -3241,6 +3241,19 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                                         },
                                         _ => {}
                                     }
+                                } else if (is_struct_array_field_type(s.structs, cfft)) {
+                                    // A CALL returning an array-of-struct as the field value
+                                    // (`Module { structs: inject_builtin_enums(mono.structs) }`):
+                                    // the call's result is an array VALUE on the operand stack,
+                                    // stored straight into the field with NO alias-inc. A struct-
+                                    // array field is never deep-dropped (the safe-leak invariant),
+                                    // so even if the callee returned an aliased buffer the missing
+                                    // inc only leaks (the field never frees it), never over-frees —
+                                    // unlike a SCALAR-array field, which emit_struct_field_drops
+                                    // DOES dec, so a scalar call value stays restricted to the
+                                    // fresh-guaranteed .with/.append forms above. Mirrors the
+                                    // array-literal case (owned/moved, leaks with the struct).
+                                    fav_ok = true;
                                 }
                             },
                             _ => {}
