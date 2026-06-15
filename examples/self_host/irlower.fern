@@ -1153,6 +1153,32 @@ pub function scalar_arr_field_type(e: parser.Expr, s: LowerState): string {
     return "";
 }
 
+// field_access_arr_field_type returns the field type of an array-field struct
+// field read (`s.xs` where xs: i32[]/f64[]/i64[]/boolean[] — a scalar-element
+// array — OR xs: P[] — an array-of-struct), for use as a struct-literal field
+// VALUE (`State { xs: s.xs }`). This is the bare-field-copy admission for the
+// `ExprStructLit` array-field path (RC-frontier slice 3, following the array-
+// ident-into-field #3292 + the array-out-of-field #3308 reads): the field read
+// lowers via op_struct_get (a real value), aliasing the SOURCE struct's array,
+// so the consuming struct_make stores a SECOND owner — balanced by a Perceus dup
+// (__fern_rc_inc), exactly the #3292 alias-inc idiom. Returns "" for anything
+// that is NOT such a bare array-field read (enum-array fields stay bailing —
+// deep-drop recursion is a later slice — to match the outer struct-lit gate,
+// which only admits is_leaksafe_array_field / is_struct_array_field_type).
+pub function field_access_arr_field_type(e: parser.Expr, s: LowerState): string {
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return ""; }
+            var ft: string = decl_field_type(s.structs, oty, fa.field);
+            if (is_leaksafe_array_field(ft) || is_struct_array_field_type(s.structs, ft)) { return ft; }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 pub function decl_is_leaksafe(structs: parser.StructDecl[], struct_name: string): boolean {
     return decl_is_leaksafe_d(structs, struct_name, 0);
 }
@@ -2914,6 +2940,26 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             parser.ExprIdent(faid) => {
                                 if (is_leaksafe_array_field(cfft)
                                     && s.is_arr_slot(s.slot_of(faid.name))) {
+                                    fav_ok = true;
+                                    fav_alias_inc = true;
+                                }
+                            },
+                            // A BARE array-field COPY (`State { xs: s.xs }`, or
+                            // array-of-struct `S { ops: s.ops }`): the field read
+                            // lowers via struct_get (a real array pointer), aliasing
+                            // the SOURCE struct's array — so the new box co-owns it.
+                            // Retain it with the same Perceus dup (fav_alias_inc) as
+                            // the ident case: rc 1 →inc 2 →source-struct field-drop 1
+                            // →new-struct field-drop 0, both deep-drops balanced by
+                            // the one inc (#3292 idiom, on a field-read source —
+                            // RC-frontier slice 3). field_access_arr_field_type only
+                            // admits a scalar-element OR array-of-struct field read
+                            // (NOT enum-array), matching the outer struct-lit gate.
+                            // A `.with`/`.append` CALL value stays bailing (no value-
+                            // producing COW; arr_push reuses the receiver buffer in
+                            // place → over-release — a separate COW-arr_with slice).
+                            parser.ExprFieldAccess(_) => {
+                                if (field_access_arr_field_type(fav, s) != "") {
                                     fav_ok = true;
                                     fav_alias_inc = true;
                                 }
