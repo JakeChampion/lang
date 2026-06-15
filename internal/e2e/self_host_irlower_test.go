@@ -217,15 +217,24 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		// integer-only by design. (Distinct from 200 = lowering bailed.)
 		{"i64-eval-unsupported", "function main(): i32 { var x: i64 = 5; var y: i64 = x + 3; return y as i32; }", 198},
 		{"string-eval-unsupported", "function main(): i32 { var s = \"hello\"; return s.len(); }", 198},
-		// Calling a function the IR path can't lower (here a receiver method,
-		// which falls back to the AST emitter in the real compiler) now bails
-		// cleanly (198) — the callee's bail propagates up the call chain. It used
-		// to silently return 0 (find_fn miss / LoweredFn.ok false yielded 0),
-		// which could spuriously match an expected value and hide a regression.
-		{"unlowered-callee-bails", "struct P { x: i32 } function (p: P) getx(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.getx(); }", 198},
+		// Calling a function the IR path can't lower bails cleanly (198) — the
+		// callee's bail propagates up the call chain — instead of silently
+		// returning 0 (find_fn miss / LoweredFn.ok false used to yield 0, which
+		// could spuriously match an expected value and hide a regression). Here
+		// the callee's body uses an unmodelled string op, so it bails.
+		{"unlowered-callee-bails", "function f(): i32 { var s = \"x\"; return s.len(); } function main(): i32 { return f(); }", 198},
 		// A lowered callee that returns a box still computes correctly (bail flag
 		// stays false, value + shared heap propagate).
 		{"lowered-callee-ok", "struct P { x: i32 } function mk(): P { return P { x: 42 }; } function main(): i32 { var p = mk(); return p.x; }", 42},
+		// Receiver methods now lower + evaluate through the IR round-trip: a
+		// method is registered under the receiver-qualified name `<Type>.<method>`
+		// — the same label a method call lowers to (op_call_direct of
+		// receiver_type + "." + field) — so find_fn matches. The method body is an
+		// ordinary function with the receiver as arg 0. Covers a plain read, a
+		// method taking an argument, and chained method calls returning a struct.
+		{"recv-method-read", "struct P { x: i32 } function (p: P) getx(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.getx(); }", 42},
+		{"recv-method-arg", "struct P { x: i32 } function (p: P) addx(d: i32): i32 { return p.x + d; } function main(): i32 { var p = P { x: 40 }; return p.addx(2); }", 42},
+		{"recv-method-chain", "struct C { n: i32 } function (c: C) inc(): C { return C { n: c.n + 1 }; } function main(): i32 { var c = C { n: 40 }; return c.inc().inc().n; }", 42},
 	}
 
 	for _, tc := range cases {
