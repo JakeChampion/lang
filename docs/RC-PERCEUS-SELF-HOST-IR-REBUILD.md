@@ -1396,3 +1396,100 @@ fresh/sole-owner/dead-after/non-escape predicate family and emit through the sha
    needs a recursive per-field deep-drop, not the single shallow array dec.
 5. **String payload reclamation** is blocked on the leak-only string model (header-less
    {ptr,len}); out of scope until strings gain an rc header.
+
+## LANDED (2026-06-15): in-arm reuse admits leak-safe ARRAY payloads (frontier item 2)
+
+Frontier item 2 (above) is done for the array sub-case. In-arm consuming-match box
+reuse — `var y = match (x) { V(...) => W(...), ... }` over a fresh / sole-owner /
+dead-after / non-escaping enum box `x` where every arm builds a same-size variant —
+now admits **leak-safe scalar-array payload fields** (`i32[]`/`i64[]`/`f64[]`/
+`boolean[]`, `is_leaksafe_array_field`) on the donor variant **and** the constructed
+result, alongside the existing scalars. The box is still reused in place
+(`op_struct_set_shape` + per-field writes); the new part manages the donor's OLD array
+fields via a per-field **cow-guarded** write that mirrors `emit_arr_store` /
+`emit_cross_struct_reuse`.
+
+### Soundness model (move vs replace, via one cow-guard)
+
+For each RESULT field `di` that is a leak-safe array, the emitter
+(`emit_inarm_match_reuse`) writes:
+
+```
+lower_expr(arg) ; store $iar           // NEW array value in a scratch local
+load box ; struct_get(di,0)            // OLD donor array at slot di (still intact:
+load $iar                              //   reshape rewrites offset 0 only; earlier
+bin ne                                 //   field writes touched di' < di)
+if (old != new)
+    load box ; struct_get(di,0)
+    __fern_rc_dec ; drop               // release the donor's old array
+end
+load box ; load $iar ; struct_set(di,0)  // store NEW
+```
+
+This makes both arm shapes sound automatically:
+
+- **Move** (`V(a, xs) => W(a+1, xs)`): the binding `xs` is read into a pointer temp at
+  arm entry (read-before-overwrite); the temp **is** the array still in box slot `di`,
+  so `old == new` → **no dec** → the array is reused in place (the strongest FBIP win;
+  no `__fern_arr_box` for the array either).
+- **Replace** (`V(a, xs) => W(a, [7,8])`): the arg is a fresh literal, `old != new` →
+  the donor's old array is dropped and the fresh one written, owned by the reused box.
+
+Field-order safety: the guard for field `di` reads `box.field[di]` *before* it is
+overwritten, and writes proceed `di = 0..n-1`, so no field is read after being
+overwritten (identical to `emit_cross_struct_reuse`).
+
+### Conservative gates (what is rejected, and why)
+
+Implemented in `inarm_reuse_match_ok` + `consumed_inarm_reuse_sites`:
+
+1. **Donor arrays must be fresh literals** (`inarm_donor_arrays_are_fresh`): `var x =
+   V(.., [..])` — every leak-safe-array payload arg is an `ExprArray`, so the box solely
+   owns each donor array; the cow-guard dec can't double-free a value aliased elsewhere.
+2. **Per-position array-ness must match** between the arm's pattern variant and its
+   result variant: `result-field-di is array  iff  pattern-field-di is array`. This
+   guarantees the cow-guard at an array result slot reads a *real array pointer* (never
+   a scalar-as-pointer), and never silently overwrites + leaks a donor array under a
+   scalar result.
+3. **Each array result arg is a fresh literal OR the same-slot move** (`arg di == the
+   pattern binding at slot di`). A **permutation / swap** (`V(p,q) => V(q,p)`) is
+   rejected here — at slot `di` the new value would be bound from a *different* slot, so
+   `old != new` would wrongly dec a still-needed array (use-after-free). A
+   **double-reuse** (same binding moved into two result slots) and any **stray borrow**
+   of a moved array (e.g. `xs.len()` in another arg) are rejected by a follow-up check:
+   each array pattern binding may appear in the result ctor *only* as its own same-slot
+   move.
+
+Donor-init gate widened from `fresh_scalar_enum_init` →
+`fresh_reuse_enum_init` (`enum_all_variants_reuse_ok` =
+`enum_variant_reuse_payload_ok` per variant: every payload scalar-or-leak-safe-array).
+Scalar payload fields keep the existing read/write path
+(`struct_get`/`struct_set`/`struct_get_i64`/`struct_set_i64`); only array result fields
+take the cow-guard branch.
+
+### Firing proof
+
+Route `"ir"`, value-correct, detector `__rc_underflow()` == 0, plus a heap-reuse
+corruption probe (a fresh array allocated after the match reads back intact). The
+`__fern_arr_box` count over the self-host IR emitter confirms the FBIP win: the MOVE
+program emits **one fewer** `__fern_arr_box` than the REPLACE program (3 vs 4) — the
+moved array is reused in place (no fresh box) whereas the replace allocates a fresh
+`[7,8]`. The swap negative routes to the AST fallback (reuse correctly does not fire)
+and stays value-correct.
+
+Tests: `TestSelfHostRcPreciseDropX86IR` gains
+`inarm-reuse-array-move-{value,detector}`,
+`inarm-reuse-array-move-corruption-probe-detector`,
+`inarm-reuse-array-replace-{value,detector}`,
+`inarm-reuse-array-replace-corruption-probe-detector`, and
+`inarm-reuse-array-mixed-i64-detector` (i64 scalar + i32[] array).
+
+### Deferred (still open under item 2 / beyond)
+
+- **i64[] / f64[] enum-array payload read-back** routes outside the IR subset for an
+  orthogonal reason (the y read-back via the i32-only match-EXPRESSION / 8-byte-element
+  enum-array path), so those firing cases aren't expressible in the route-asserting
+  harness yet. The reuse cow-guard itself is element-width-agnostic (it moves/drops a
+  single array *pointer*), so once the read-back lands they fire for free.
+- **String / nested-struct / struct-array / map / option / tuple payloads** remain out
+  (items 4–5).

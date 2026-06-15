@@ -7492,6 +7492,110 @@ function enum_variant_scalar_payload(structs: parser.StructDecl[], vname: string
     return true;
 }
 
+// enum_variant_reuse_payload_ok: every payload field of variant `vname` is either a
+// flat scalar (reuse_field_is_scalar — no rc, copied/reused with the box) or a
+// leak-safe scalar array (is_leaksafe_array_field — i32[]/i64[]/f64[]/boolean[],
+// a single rc-headered box released by one __fern_rc_dec). String / nested-struct /
+// struct-array / map / option / tuple payloads bail. The widened in-arm match-reuse
+// admits these payloads: scalar fields ride the existing struct_get/struct_set
+// path, array fields are written via a cow-guarded drop (mirroring emit_arr_store /
+// emit_cross_struct_reuse) so an old donor array is released on replace and reused
+// in place on a same-slot move.
+function enum_variant_reuse_payload_ok(structs: parser.StructDecl[], vname: string): boolean {
+    var n: i32 = decl_field_count(structs, vname);
+    var fi: i32 = 0;
+    while (fi < n) {
+        var t: string = decl_field_type_at(structs, vname, fi);
+        if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t)) { return false; }
+        fi = fi + 1;
+    }
+    return true;
+}
+
+// enum_all_variants_reuse_ok: every variant of enum `enum_name` has only
+// scalar-or-leak-safe-array payloads (enum_variant_reuse_payload_ok). False if the
+// enum has no variants. The widened donor-init gate for in-arm match reuse.
+function enum_all_variants_reuse_ok(structs: parser.StructDecl[], enum_name: string): boolean {
+    var any: boolean = false;
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].enum_owner == enum_name) {
+            any = true;
+            if (!enum_variant_reuse_payload_ok(structs, structs[i].name)) { return false; }
+        }
+        i = i + 1;
+    }
+    return any;
+}
+
+// fresh_reuse_enum_init: like fresh_scalar_enum_init but admits a donor enum whose
+// variants carry scalar-or-leak-safe-array payloads (enum_all_variants_reuse_ok).
+// Returns the enum's name, or "". Used only by the in-arm match-reuse analysis,
+// which separately verifies the donor's array payload args are fresh array literals
+// (so the box solely owns each donor array — the cow-guard dec can't double-free).
+function fresh_reuse_enum_init(e: parser.Expr, structs: parser.StructDecl[]): string {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    var owner: string = variant_enum_owner(structs, id.name);
+                    if (owner != "" && enum_all_variants_reuse_ok(structs, owner)) { return owner; }
+                    return "";
+                },
+                _ => { return ""; }
+            }
+        },
+        parser.ExprIdent(id) => {
+            var owner2: string = variant_enum_owner(structs, id.name);
+            if (owner2 != "" && enum_all_variants_reuse_ok(structs, owner2)) { return owner2; }
+            return "";
+        },
+        _ => { return ""; }
+    }
+}
+
+// inarm_donor_arrays_are_fresh: x's init `var x = V(args)` has every leak-safe-array
+// payload arg a FRESH array literal (ExprArray) — so the donor box is the sole owner
+// of each such array and the cow-guard dec at reuse can't double-free a value still
+// aliased elsewhere. Scalar args are unconstrained. Returns true also for a unit
+// variant (no args). Mirrors the okv check in enum_donor_reuse_sites / cross_reuse.
+function inarm_donor_arrays_are_fresh(body: parser.Stmt[], structs: parser.StructDecl[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    match (v.init) {
+                        parser.ExprCall(c) => {
+                            var vn: string = "";
+                            match (c.callee) {
+                                parser.ExprIdent(id) => { vn = id.name; },
+                                _ => { return false; }
+                            }
+                            var ai: i32 = 0;
+                            while (ai < c.args.len()) {
+                                if (is_leaksafe_array_field(decl_field_type_at(structs, vn, ai))) {
+                                    match (c.args[ai]) {
+                                        parser.ExprArray(_) => {},
+                                        _ => { return false; }
+                                    }
+                                }
+                                ai = ai + 1;
+                            }
+                            return true;
+                        },
+                        parser.ExprIdent(_) => { return true; },
+                        _ => { return false; }
+                    }
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 // enum_all_variants_scalar: every variant of enum `enum_name` (every struct whose
 // enum_owner == enum_name) has only scalar payloads. False if the enum has no
 // variants (defensive — never a free candidate then).
@@ -8702,8 +8806,10 @@ function inarm_iife_scrutinee(e: parser.Expr): string {
 
 // inarm_arm_ctor_variant: the result variant name of arm body `body` when its
 // terminal `return E` constructs a same-enum variant `W(args)` whose every payload
-// field is a flat scalar and whose field count equals `want` (the donor variant's
-// field count). Returns "" if the arm is not a same-size scalar-variant ctor.
+// field is scalar-or-leak-safe-array (enum_variant_reuse_payload_ok) and whose field
+// count equals `want` (the donor variant's field count). Returns "" if the arm is
+// not a same-size reuse-payload variant ctor. (Per-position move/replace soundness of
+// the array args is checked in inarm_reuse_match_ok, which sees the pattern too.)
 function inarm_arm_ctor_variant(body: parser.Stmt[], enum_name: string, want: i32, structs: parser.StructDecl[]): string {
     if (body.len() != 1) { return ""; }
     match (body[0]) {
@@ -8713,7 +8819,7 @@ function inarm_arm_ctor_variant(body: parser.Stmt[], enum_name: string, want: i3
                     match (c.callee) {
                         parser.ExprIdent(id) => {
                             if (variant_enum_owner(structs, id.name) != enum_name) { return ""; }
-                            if (!enum_variant_scalar_payload(structs, id.name)) { return ""; }
+                            if (!enum_variant_reuse_payload_ok(structs, id.name)) { return ""; }
                             if (decl_field_count(structs, id.name) != want) { return ""; }
                             if (c.args.len() != want) { return ""; }
                             return id.name;
@@ -8729,11 +8835,44 @@ function inarm_arm_ctor_variant(body: parser.Stmt[], enum_name: string, want: i3
     return "";
 }
 
-// inarm_reuse_match_ok: every arm of the IIFE match is a plain variant pattern
-// (no guard) binding only i32 payloads, and constructs a same-size scalar variant
-// of the SAME enum. The donor variant's field count `want` is the box size; every
-// arm's pattern variant must have that field count (so reading payloads is in-range)
-// AND its constructed result must too. Bool/Option/wildcard arms bail.
+// inarm_field_is_leaksafe_array: convenience — field `idx` of variant `vname` is a
+// leak-safe scalar array (i32[]/i64[]/f64[]/boolean[]).
+function inarm_field_is_leaksafe_array(structs: parser.StructDecl[], vname: string, idx: i32): boolean {
+    return is_leaksafe_array_field(decl_field_type_at(structs, vname, idx));
+}
+
+// inarm_arm_pattern_binding: the pattern binding name at payload position `pos` of a
+// PatVariant `pv` (pos 0 = pv.binding, pos i = pv.extra_bindings[i-1]), or "" if out
+// of range or a `_` wildcard. Used to recognise an in-place ARRAY MOVE: a result
+// ctor arg that is the bare ident bound from the SAME slot pos.
+function inarm_arm_pattern_binding(pv: parser.PatVariant, pos: i32): string {
+    if (pos == 0) {
+        if (pv.binding == "_") { return ""; }
+        return pv.binding;
+    }
+    if (pos - 1 < pv.extra_bindings.len()) {
+        var b: string = pv.extra_bindings[pos - 1];
+        if (b == "_") { return ""; }
+        return b;
+    }
+    return "";
+}
+
+// inarm_reuse_match_ok: every arm of the IIFE match is a plain variant pattern (no
+// guard) of the SAME enum, binding only reuse-payload fields (scalar or leak-safe
+// array), and constructs a same-size reuse-payload variant of that enum. For ARRAY
+// payload fields the lowering uses a cow-guarded drop; that is sound only when, per
+// arm and per field position di where the RESULT field is a leak-safe array:
+//   (a) the PATTERN field di is ALSO a leak-safe array (so the box slot di holds a
+//       real array pointer the cow-guard can read+dec, never a scalar-as-pointer),
+//   AND
+//   (b) the result ctor arg di is EITHER a fresh array literal `[...]` (replace: old
+//       array dropped, fresh written) OR the bare pattern binding bound from the
+//       SAME slot di (in-place move: old==new so no dec, the array is reused).
+// A permutation/swap (`V(p,q) => V(q,p)`) is rejected by (b) — the arg at di is bound
+// from a DIFFERENT slot, so old!=new would wrongly dec a still-needed array. A scalar
+// pattern slot under an array result (or vice-versa) is rejected by (a) / the type
+// match. Bool/Option/wildcard arms and guards bail.
 function inarm_reuse_match_ok(arms: parser.MatchArm[], enum_name: string, want: i32, structs: parser.StructDecl[]): boolean {
     if (arms.len() == 0) { return false; }
     var i: i32 = 0;
@@ -8747,30 +8886,97 @@ function inarm_reuse_match_ok(arms: parser.MatchArm[], enum_name: string, want: 
                 while (vld < pv.type_name.len()) { if (pv.type_name[vld] == 46) { return false; } vld = vld + 1; }
                 if (is_builtin_pattern(pv.type_name)) { return false; }
                 if (variant_enum_owner(structs, pv.type_name) != enum_name) { return false; }
-                if (!enum_variant_scalar_payload(structs, pv.type_name)) { return false; }
-                // The matched variant's payload fields are read into temps at their
-                // width. Admit i32 / u32 / boolean (plain i32 path) plus the 8-byte
-                // i64 / f64 (read via struct_get_i64 / struct_get width-64, written
-                // via lower_i64+struct_set_i64 / struct_set width-64 — mirroring
-                // emit_enum_donor_reuse). u64 is excluded (see
-                // inarm_reuse_payload_type_ok): struct_field_is_i64 / struct_field_width
-                // both classify it as i32-shaped, so the 8-byte path is never taken.
+                if (!enum_variant_reuse_payload_ok(structs, pv.type_name)) { return false; }
+                // The matched variant's SCALAR payload fields are read into temps at
+                // their width. Admit i32 / u32 / boolean (plain i32 path) plus the
+                // 8-byte i64 / f64; an ARRAY payload field rides the leak-safe-array
+                // path (read into a pointer temp, written via cow-guard). u64 is
+                // excluded for scalar fields (see inarm_reuse_payload_type_ok).
                 var nf: i32 = decl_field_count(structs, pv.type_name);
                 var fi: i32 = 0;
                 while (fi < nf) {
-                    if (!inarm_reuse_payload_type_ok(decl_field_type_at(structs, pv.type_name, fi))) { return false; }
+                    var pft: string = decl_field_type_at(structs, pv.type_name, fi);
+                    if (!is_leaksafe_array_field(pft) && !inarm_reuse_payload_type_ok(pft)) { return false; }
                     fi = fi + 1;
                 }
-                // The constructed result must be a same-size (== want) scalar variant
-                // whose every written field is also an admitted width (its write path
-                // is i32 / i64 / f64 only — u64 results would truncate the same way).
+                // The constructed result must be a same-size (== want) reuse-payload
+                // variant whose every written SCALAR field is an admitted width.
                 var rv: string = inarm_arm_ctor_variant(arm.body, enum_name, want, structs);
                 if (rv == "") { return false; }
                 var rnf: i32 = decl_field_count(structs, rv);
                 var rfi: i32 = 0;
                 while (rfi < rnf) {
-                    if (!inarm_reuse_payload_type_ok(decl_field_type_at(structs, rv, rfi))) { return false; }
+                    var rft: string = decl_field_type_at(structs, rv, rfi);
+                    if (!is_leaksafe_array_field(rft) && !inarm_reuse_payload_type_ok(rft)) { return false; }
                     rfi = rfi + 1;
+                }
+                // Per-position array-soundness: for each result array field di, the
+                // pattern field di must be an array too (a), and the arg must be a
+                // fresh literal or the same-slot pattern binding (b). Also reject the
+                // reverse (pattern array under scalar result) so a donor array is not
+                // silently overwritten + leaked.
+                var rargs: parser.Expr[] = [];
+                match (arm.body[0]) {
+                    parser.StmtReturn(r2) => {
+                        match (r2.value) {
+                            parser.ExprCall(rc2) => { rargs = rc2.args; },
+                            _ => { return false; }
+                        }
+                    },
+                    _ => { return false; }
+                }
+                var di: i32 = 0;
+                while (di < rnf) {
+                    var res_arr: boolean = inarm_field_is_leaksafe_array(structs, rv, di);
+                    var pat_arr: boolean = inarm_field_is_leaksafe_array(structs, pv.type_name, di);
+                    if (res_arr != pat_arr) { return false; }   // (a) + reverse
+                    if (res_arr) {
+                        // (b): fresh literal OR the same-slot binding move.
+                        var ok_arg: boolean = false;
+                        match (rargs[di]) {
+                            parser.ExprArray(_) => { ok_arg = true; },
+                            parser.ExprIdent(aid) => {
+                                var pb: string = inarm_arm_pattern_binding(pv, di);
+                                if (pb != "" && aid.name == pb) { ok_arg = true; }
+                            },
+                            _ => {}
+                        }
+                        if (!ok_arg) { return false; }
+                    }
+                    di = di + 1;
+                }
+                // Each ARRAY pattern binding may be referenced in the result ctor
+                // ONLY as its own same-slot move (handled above) — never elsewhere
+                // (another arg, or a borrow sub-expression like `xs.len()`/`xs[i]`).
+                // The move temp is an unmarked pointer alias, so a stray borrow use
+                // wouldn't dispatch and a second move would double-reuse the slot.
+                // Conservatively gate those out: an array binding that appears in any
+                // arg OTHER than its own slot move bails the whole match.
+                var pdi: i32 = 0;
+                while (pdi < nf) {
+                    if (inarm_field_is_leaksafe_array(structs, pv.type_name, pdi)) {
+                        var abn: string = inarm_arm_pattern_binding(pv, pdi);
+                        if (abn != "") {
+                            var aj: i32 = 0;
+                            while (aj < rargs.len()) {
+                                // The own-slot move (arg aj==pdi is the bare ident abn)
+                                // is allowed; any other mention of abn bails.
+                                var is_own_move: boolean = false;
+                                if (aj == pdi) {
+                                    match (rargs[aj]) {
+                                        parser.ExprIdent(mid) => { if (mid.name == abn) { is_own_move = true; } },
+                                        _ => {}
+                                    }
+                                }
+                                if (!is_own_move) {
+                                    var ids: string[] = astwalk.collect_idents_expr(rargs[aj], []);
+                                    if (util.index_of_str(ids, abn) >= 0) { return false; }
+                                }
+                                aj = aj + 1;
+                            }
+                        }
+                    }
+                    pdi = pdi + 1;
                 }
             },
             _ => { return false; }
@@ -8812,7 +9018,7 @@ function consumed_inarm_reuse_sites(body: parser.Stmt[], structs: parser.StructD
                             match (body[xi]) {
                                 parser.StmtVar(xv) => {
                                     if (xv.name == xname) {
-                                        owner = fresh_scalar_enum_init(xv.init, structs);
+                                        owner = fresh_reuse_enum_init(xv.init, structs);
                                         want = enum_init_box_fields(body, structs, xname);
                                     }
                                 },
@@ -8837,7 +9043,11 @@ function consumed_inarm_reuse_sites(body: parser.Stmt[], structs: parser.StructD
                             // not read x; the scrutinee is the single read). So a sole
                             // owner consumed here has exactly ONE mention (at k).
                             var escapes: boolean = name_escapes_outside_stmt(body, xname, k);
-                            if (mentions == 1 && dead_after && !escapes
+                            // The donor's leak-safe-array payload args must be fresh
+                            // array literals (sole ownership) so the cow-guard dec at
+                            // reuse can't double-free a still-aliased array.
+                            var donor_fresh: boolean = inarm_donor_arrays_are_fresh(body, structs, xname);
+                            if (mentions == 1 && dead_after && !escapes && donor_fresh
                                     && inarm_reuse_match_ok(arms, owner, want, structs)) {
                                 idxs = idxs.append(k);
                                 donors = donors.append(xname);
@@ -8942,12 +9152,43 @@ function emit_inarm_match_reuse(y_name: string, init: parser.Expr, donor_name: s
                 st = st.emit(ir.op_drop());
                 var di: i32 = 0;
                 while (di < ctor_args.len()) {
-                    // Write each constructed field at its width: an i64 field via
-                    // lower_i64 + struct_set_i64; an f64 / i32-shaped field via
-                    // lower_expr + struct_set (width 64 for f64, 0 otherwise — the
-                    // width comes from struct_field_width). Mirrors
-                    // emit_enum_donor_reuse's struct_field_is_i64 branch.
-                    if (struct_field_is_i64(st.structs, rvariant, di)) {
+                    // Write each constructed field at its width: a LEAK-SAFE ARRAY
+                    // field via a cow-guarded drop (release the donor's OLD array at
+                    // this slot unless the new value IS that same array — an in-place
+                    // move — then store the new value); an i64 field via lower_i64 +
+                    // struct_set_i64; an f64 / i32-shaped field via lower_expr +
+                    // struct_set (width 64 for f64, 0 otherwise).
+                    if (is_leaksafe_array_field(decl_field_type_at(st.structs, rvariant, di))) {
+                        // Stash the NEW array value in a scratch local (read 3x:
+                        // cow-compare, dec-guard test, final store). The donor slot di
+                        // still holds the OLD array (reshape doesn't touch payload
+                        // slots; earlier fields wrote di' < di only). For the MOVE
+                        // (arg is the same-slot binding temp) old==new -> no dec, the
+                        // array is reused in place; for a FRESH literal old!=new ->
+                        // the old array is dropped and the fresh one written. Mirrors
+                        // emit_arr_store / emit_cross_struct_reuse's cow-guard.
+                        var scratch: string = "$iar" + util.i32_to_string(st.local_names.len());
+                        st = st.add_local(scratch);
+                        var tmp: i32 = st.slot_of(scratch);
+                        st = lower_expr(ctor_args[di], st);
+                        if (!st.ok) { return st; }
+                        st = st.emit(ir.op_store_local(tmp));
+                        // if (old != new) arr_dec(old)
+                        st = st.emit(ir.op_load_local(xslot));
+                        st = st.emit(ir.op_struct_get(di, 0));     // OLD array ptr
+                        st = st.emit(ir.op_load_local(tmp));       // NEW array ptr
+                        st = st.emit(ir.op_bin("ne", 0, false));
+                        st = st.emit(ir.op_if(0));
+                        st = st.emit(ir.op_load_local(xslot));
+                        st = st.emit(ir.op_struct_get(di, 0));
+                        st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                        st = st.emit(ir.op_drop());
+                        st = st.emit(ir.op_end());
+                        // store NEW into slot di
+                        st = st.emit(ir.op_load_local(xslot));
+                        st = st.emit(ir.op_load_local(tmp));
+                        st = st.emit(ir.op_struct_set(di, 0));
+                    } else if (struct_field_is_i64(st.structs, rvariant, di)) {
                         st = st.emit(ir.op_load_local(xslot));
                         st = lower_i64(ctor_args[di], st);
                         if (!st.ok) { return st; }
