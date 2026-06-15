@@ -997,6 +997,12 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// is read from `mk`'s declared return type.
 		{"struct-fncall-if-expr", `struct P { x: i32, y: i32 } function mk(v: i32): P { return P{x:v, y:v+1}; } function main(): i32 { var p = if (true) { mk(5) } else { mk(2) }; return p.x + p.y; }`},
 		{"struct-fncall-match-expr", `struct P { x: i32, y: i32 } function mk(v: i32): P { return P{x:v, y:v+1}; } function main(): i32 { var p = match (2) { 2 => mk(10), _ => mk(0) }; return p.x + p.y; }`},
+		// An if-/match-expression binding whose first branch CALLS an
+		// Option/Result-returning function (`if (c) { mkO(7) } else { Some(0) }`):
+		// the leaf is a call, so the bound local's opt-type is recovered from the
+		// callee's registered return type, letting a later `match (o)` lower.
+		{"opt-fncall-if-expr", `function mkO(v: i32): Option[i32] { return Some(v); } function main(): i32 { var o = if (true) { mkO(7) } else { Some(0) }; match (o) { Some(n) => { return n; }, None => { return 0; } } return 0; }`},
+		{"result-fncall-if-expr", `function div(a: i32, b: i32): Result[i32, i32] { if (b == 0) { return Err(1); } return Ok(a / b); } function main(): i32 { var r = if (true) { div(20, 4) } else { Err(9) }; match (r) { Ok(n) => { return n; }, Err(e) => { return e; } } return 0; }`},
 		// `for x in <u64[]>`: the element rides the i64 8-byte read but is bound
 		// u64, so body compares/shifts on it are unsigned. The IR path now lowers
 		// this (previously bailed to AST); both paths must agree, and the large
