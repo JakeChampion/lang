@@ -480,12 +480,23 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// narrowing on read), so the box stores / reads at the default 32-bit
 		// width and only is_leaksafe_payload (the field / tuple-element leak-
 		// safety gate) had to admit it; the bound payload is marked u32 so its
-		// arithmetic wraps. Sub-word (u8/u16/i8/i16) and u64 payloads stay on the
-		// AST path (sign-extension / wide-box width are separate slices).
+		// arithmetic wraps. Sub-word (u8/u16/i8/i16) payloads stay on the AST
+		// path (sign-extension is a separate slice).
 		{"opt-u32-field-match", `struct S { o: Option[u32] } function main(): i32 { var s = S { o: Some(7) }; match (s.o) { Some(n) => { return n as i32; }, None => { return 1; } } return 0; }`},
 		{"result-u32-field-match", `struct S { r: Result[u32, i32] } function main(): i32 { var s = S { r: Ok(9) }; match (s.r) { Ok(n) => { return n as i32; }, Err(e) => { return e; } } return 0; }`},
 		{"opt-u32-payload-shift", `function main(): i32 { var o: Option[u32] = Some(4294967294 as u32); match (o) { Some(n) => { return (n >> 31) as i32; }, None => { return 0; } } return 0; }`},
 		{"opt-u32-tuple-field", `struct S { t: (Option[u32], i32) } function main(): i32 { var s = S { t: (Some(7), 3) }; return s.t.1; }`},
+		// A u64 Option/Result payload rides the i64 8-byte slot: construction tags
+		// a u64 arg "i64" (8-byte store), and the match binding reads via
+		// op_opt_payload_w(64) and marks the slot u64. The full 64 bits must
+		// survive the box round-trip — `5000000000 >> 32 == 1` (a 32-bit-truncated
+		// read would give 0). The value is < 2^63, so the shift is signedness-
+		// agnostic: this pins the 8-byte WIDTH, independent of the separate
+		// frontend gap that a match-bound u64 isn't typed unsigned for `>>`.
+		{"opt-u64-field-match", `struct S { o: Option[u64] } function main(): i32 { var s = S { o: Some(42 as u64) }; match (s.o) { Some(n) => { return n as i32; }, None => { return 1; } } return 0; }`},
+		{"result-u64-field-match", `struct S { r: Result[u64, i32] } function main(): i32 { var s = S { r: Ok(9 as u64) }; match (s.r) { Ok(n) => { return n as i32; }, Err(e) => { return e; } } return 0; }`},
+		{"opt-u64-payload-wide", `function main(): i32 { var o: Option[u64] = Some(5000000000 as u64); match (o) { Some(n) => { return (n >> 32) as i32; }, None => { return 0; } } return 0; }`},
+		{"opt-u64-tuple-field", `struct S { t: (Option[u64], i32) } function main(): i32 { var s = S { t: (Some(7 as u64), 3) }; return s.t.1; }`},
 		{"optarr-alias-index-match", `function main(): i32 { var a: Option[i32][] = [Some(9), None]; var b = a; var o = b[0]; match (o) { Some(x) => { return x; }, None => { return 0; } } return 0; }`},
 		// `for o in optArray { match (o) }` — the asmcore type checker no longer
 		// mis-parses the `Option[T][]` / `Result[…][]` annotation as
@@ -1365,6 +1376,12 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// 255) is caught — proof the bound payload is marked u32, not i32.
 		{"opt-u32-payload-shift-val", `function main(): i32 { var o: Option[u32] = Some(4294967294 as u32); match (o) { Some(n) => { return (n >> 31) as i32; }, None => { return 0; } } return 0; }`, 1},
 		{"result-u32-payload-val", `struct S { r: Result[u32, i32] } function main(): i32 { var s = S { r: Ok(42) }; match (s.r) { Ok(n) => { return n as i32; }, Err(e) => { return e; } } return 0; }`, 42},
+		// A u64 Option payload, IR value pinned for 8-byte WIDTH: 5000000000
+		// (> 2^32) `>> 32 == 1`, but a 32-bit-truncated payload read would give 0.
+		// Value < 2^63 so the shift is signedness-agnostic — the pin isolates the
+		// box width from the separate frontend u64-typing gap.
+		{"opt-u64-payload-wide-val", `function main(): i32 { var o: Option[u64] = Some(5000000000 as u64); match (o) { Some(n) => { return (n >> 32) as i32; }, None => { return 0; } } return 0; }`, 1},
+		{"result-u64-payload-val", `struct S { r: Result[u64, i32] } function main(): i32 { var s = S { r: Ok(42 as u64) }; match (s.r) { Ok(n) => { return n as i32; }, Err(e) => { return e; } } return 0; }`, 42},
 		// A struct-ARRAY-valued if-/match-expression (literal, or a P[]-returning
 		// call in the branch): the lifted __lam's element struct type is inferred
 		// so `ps[i].field` / `for p in ps { p.method() }` resolve. P[] sibling of

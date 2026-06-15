@@ -1044,14 +1044,16 @@ pub function is_enum_array_field_type(structs: parser.StructDecl[], t: string): 
 // u32 rides one full i32 slot exactly like i32 (no narrowing on read), so an
 // Option/Result box carrying a u32 stores / reads at the default 32-bit width
 // (op_opt_make / op_opt_payload) and the match binding marks the bound slot u32
-// so its `>>` is logical and its arithmetic wraps at 2^32. The sub-word ints
-// (u8/u16/i8/i16) are NOT here: their payload-box read needs sign/zero-extension
-// that currently differs across backends (a u8 read mis-extends on wasm), and
-// u64 needs the wide op_opt_make_w(64) / op_opt_payload_w(64) — each a separate
-// slice — so both keep an Option/Result-of-them field on the AST path.
+// so its `>>` is logical and its arithmetic wraps at 2^32. u64 rides the i64
+// 8-byte slot: construction already tags a u64 arg "i64" (elem_type_tag's
+// infer_expr_width==64 path) so the box stores 8 bytes, and the match binding
+// reads via op_opt_payload_w(64) + marks the slot u64 (unsigned, 8-byte). The
+// sub-word ints (u8/u16/i8/i16) are NOT here: their payload-box read needs
+// sign/zero-extension that currently differs across backends (a u8 read
+// mis-extends on wasm), so an Option/Result-of-them field stays on the AST path.
 function is_leaksafe_payload(p: string): boolean {
     return p == "i32" || p == "boolean" || p == "string" || p == "i64" || p == "f64"
-        || p == "u32";
+        || p == "u32" || p == "u64";
 }
 
 // is_leaksafe_opt_field: an Option[T] / Result[T, E] field whose payload type(s)
@@ -7173,16 +7175,21 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 ms = ms.add_local(pv.binding);
                                 var pbslot: i32 = ms.slot_of(pv.binding);
                                 ms = ms.emit(ir.op_load_local(scrut_slot));
-                                // Read the payload at its width (an i64/f64 payload
-                                // uses the matching 8-byte load) and type the bound
-                                // name so later uses route correctly (i64 ->
-                                // lower_i64; f64 -> the float ops).
-                                if (ptag == "i64") { ms = ms.emit(ir.op_opt_payload_w(64, true)); }
+                                // Read the payload at its width (an i64/u64/f64
+                                // payload uses the matching 8-byte load) and type the
+                                // bound name so later uses route correctly (i64/u64 ->
+                                // lower_i64 / the i64 domain; f64 -> the float ops).
+                                if (ptag == "i64" || ptag == "u64") { ms = ms.emit(ir.op_opt_payload_w(64, true)); }
                                 else if (ptag == "f64") { ms = ms.emit(ir.op_opt_payload_w(64, false)); }
                                 else { ms = ms.emit(ir.op_opt_payload()); }
                                 ms = ms.emit(ir.op_store_local(pbslot));
                                 if (ptag == "string") { ms = ms.mark_str(pbslot, true); }
                                 else if (ptag == "i64") { ms = ms.mark_i64(pbslot, true); }
+                                // A u64 payload rode the 8-byte op_opt_payload_w(64)
+                                // load above; mark the slot u64 (its own 8-byte domain,
+                                // like the u64 tuple destructure) so its compare / `>>`
+                                // / div-rem are UNSIGNED in the i64 domain.
+                                else if (ptag == "u64") { ms = ms.mark_u64(pbslot, true); }
                                 else if (ptag == "f64") { ms = ms.mark_f64(pbslot, true); }
                                 // A u32 payload rode the default 32-bit op_opt_payload
                                 // load above (a full i32 slot, no narrowing); mark the
