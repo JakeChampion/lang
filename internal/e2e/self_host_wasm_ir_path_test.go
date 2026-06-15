@@ -241,6 +241,12 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"tuple-bool-first", `function f(): (boolean, i32) { return (true, 7); } function main(): i32 { var t = f(); if (t.0) { return t.1; } return 0; }`},
 		{"tuple-bool-second", `function f(): (i32, boolean) { return (9, true); } function main(): i32 { var t = f(); if (t.1) { return t.0; } return 0; }`},
 		{"tuple-bool-destructure", `function f(): (boolean, i32) { return (true, 42); } function main(): i32 { var (b, n) = f(); if (b) { return n; } return 0; }`},
+		// A tuple return with a ≤32-bit non-i32 integer element (u32 / sub-word
+		// u8/i16/i8) — same i32 slot; verifies the wasm width handling agrees.
+		{"tuple-u32", `function f(): (u32, i32) { return (4000000000 as u32, 7); } function main(): i32 { var t = f(); var hi: u32 = t.0 >> 30; return (hi as i32) + t.1; }`},
+		{"tuple-u8", `function f(): (u8, i32) { return (250 as u8, 5); } function main(): i32 { var t = f(); return (t.0 as i32) + t.1; }`},
+		{"tuple-i16", `function f(): (i16, i32) { return (1000 as i16, 2); } function main(): i32 { var t = f(); return ((t.0 as i32) + t.1) % 200; }`},
+		{"tuple-i8-neg", `function f(): (i8, i32) { return (0 - 5 as i8, 10); } function main(): i32 { var t = f(); return t.1 - (t.0 as i32); }`},
 		// Methods (receiver = arg 0, static dispatch to $<Type>.<name>).
 		{"method-field", `struct P { x: i32 } function (p: P) get(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.get(); }`},
 		{"method-with-arg", `struct B { v: i32 } function (b: B) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = B { v: 4 }; return x.scale(3); }`},
