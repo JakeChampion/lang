@@ -436,6 +436,15 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"tuple-u64-destr", `function f(): (u64, i32) { return (5000000000 as u64, 3); } function main(): i32 { var (hi, n) = f(); var q: u64 = hi / (1000000000 as u64); return (q as i32) + n; }`},
 		{"tuple-u64-second", `function f(): (i32, u64) { return (2, 8000000000 as u64); } function main(): i32 { var t = f(); var q: u64 = t.1 / (1000000000 as u64); return t.0 + (q as i32); }`},
 		{"tuple-u64-unsigned", `function f(): (u64, i32) { return (18000000000000000000 as u64, 1); } function main(): i32 { var t = f(); var q: u64 = t.0 >> 60; return (q as i32) + t.1; }`},
+		// f32 in composites rides the f64 8-byte slot (Fern represents f32 as f64
+		// internally), so tuple elements + struct fields lower like f64: `.N`
+		// access, destructure, 2nd-position, and float arithmetic on the element.
+		{"tuple-f32-access", `function f(): (f32, i32) { return (4.5 as f32, 3); } function main(): i32 { var t = f(); return (t.0 as i32) + t.1; }`},
+		{"tuple-f32-destr", `function f(): (f32, i32) { return (6.5 as f32, 2); } function main(): i32 { var (a, n) = f(); return (a as i32) + n; }`},
+		{"tuple-f32-second", `function f(): (i32, f32) { return (1, 9.5 as f32); } function main(): i32 { var t = f(); return t.0 + (t.1 as i32); }`},
+		{"tuple-f32-arith", `function f(): (f32, i32) { return (2.5 as f32, 1); } function main(): i32 { var t = f(); var d: f32 = t.0 * 2.0; return (d as i32) + t.1; }`},
+		{"struct-f32-field", `struct B { v: f32, n: i32 } function main(): i32 { var b = B { v: 2.5 as f32, n: 3 }; return (b.v as i32) + b.n; }`},
+		{"struct-f32-ret", `struct B { v: f32, n: i32 } function mk(): B { return B { v: 7.5 as f32, n: 1 }; } function main(): i32 { var b = mk(); return (b.v as i32) + b.n; }`},
 		// Methods (receiver = arg 0, static dispatch).
 		{"method-field", `struct P { x: i32 } function (p: P) get(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.get(); }`},
 		{"method-with-arg", `struct B { v: i32 } function (b: B) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = B { v: 4 }; return x.scale(3); }`},

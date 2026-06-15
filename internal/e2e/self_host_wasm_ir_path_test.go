@@ -256,6 +256,11 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"tuple-u64-access", `function f(): (u64, i32) { return (4294967296 as u64, 5); } function main(): i32 { var t = f(); var q: u64 = t.0 >> 32; return (q as i32) + t.1; }`},
 		{"tuple-u64-destr", `function f(): (u64, i32) { return (5000000000 as u64, 3); } function main(): i32 { var (hi, n) = f(); var q: u64 = hi / (1000000000 as u64); return (q as i32) + n; }`},
 		{"tuple-u64-unsigned", `function f(): (u64, i32) { return (18000000000000000000 as u64, 1); } function main(): i32 { var t = f(); var q: u64 = t.0 >> 60; return (q as i32) + t.1; }`},
+		// f32 in composites rides the f64 8-byte slot (f32 is f64 internally) —
+		// tuple element + struct field, incl. float arithmetic; verified on wasm.
+		{"tuple-f32-access", `function f(): (f32, i32) { return (4.5 as f32, 3); } function main(): i32 { var t = f(); return (t.0 as i32) + t.1; }`},
+		{"tuple-f32-arith", `function f(): (f32, i32) { return (2.5 as f32, 1); } function main(): i32 { var t = f(); var d: f32 = t.0 * 2.0; return (d as i32) + t.1; }`},
+		{"struct-f32-field", `struct B { v: f32, n: i32 } function main(): i32 { var b = B { v: 2.5 as f32, n: 3 }; return (b.v as i32) + b.n; }`},
 		// A tuple return with a ≤32-bit non-i32 integer element (u32 / sub-word
 		// u8/i16/i8) — same i32 slot; verifies the wasm width handling agrees.
 		{"tuple-u32", `function f(): (u32, i32) { return (4000000000 as u32, 7); } function main(): i32 { var t = f(); var hi: u32 = t.0 >> 30; return (hi as i32) + t.1; }`},
