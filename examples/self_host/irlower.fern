@@ -11304,6 +11304,17 @@ function shape_id(name: string): i32 {
     return h;
 }
 
+// is_bin_kind reports whether an op kind is one of the i32 binary ops
+// bin_apply evaluates (pop r, pop l, push apply). It gates eval_ops' default
+// arm so a genuinely-unmodelled op (i64 / f64 / string / map) bails cleanly
+// instead of being mis-popped as a binary op (which underflowed -> SIGABRT).
+function is_bin_kind(kind: string): boolean {
+    return kind == "add" || kind == "sub" || kind == "mul" || kind == "div_s"
+        || kind == "rem_s" || kind == "and" || kind == "or" || kind == "xor"
+        || kind == "shl" || kind == "shr_s" || kind == "eq" || kind == "ne"
+        || kind == "lt_s" || kind == "le_s" || kind == "gt_s" || kind == "ge_s";
+}
+
 function bin_apply(kind: string, l: i32, r: i32): i32 {
     if (kind == "add") { return l + r; }
     if (kind == "sub") { return l - r; }
@@ -11766,7 +11777,7 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
             sp = sp + 1;
             pc = pc + 1;
         }
-        else {
+        else if (is_bin_kind(o.kind)) {
             // a binary op: pop r, pop l, push apply
             sp = sp - 1;
             var r: i32 = stack[sp];
@@ -11775,6 +11786,16 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
             stack = stack.with(sp, bin_apply(o.kind, l, r));
             sp = sp + 1;
             pc = pc + 1;
+        }
+        else {
+            // An op this i32-only evaluator doesn't model (i64 / f64 / string /
+            // map ops). Bail cleanly with the sentinel 198 instead of mis-popping
+            // the stack as a binary op — that underflowed to stack[-1] and
+            // SIGABRT'd (134), which reads like a real crash in CI. These ops are
+            // covered by the differential x86 / wasm IR suites; the round-trip
+            // evaluator stays integer-only by design. (Distinct from 200 =
+            // lowering bailed, 201 = no `main`.)
+            return EvalOut { value: 198, heap: heap, freehead: freehead };
         }
     }
     // fell off the end with no return — yield top-of-stack if present, else 0
