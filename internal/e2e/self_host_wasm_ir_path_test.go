@@ -823,6 +823,11 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"strarr-if-expr-var-elems", `function main(): i32 { var xs = if (true) { ["a", "bb"] } else { ["ccc"] }; return xs[0].len() + xs[1].len(); }`, 3},
 		{"strarr-if-expr-forin", `function main(): i32 { var xs = if (true) { ["a", "bb", "ccc"] } else { ["z"] }; var t = 0; for s in xs { t = t + s.len(); } return t; }`, 6},
 		{"strarr-match-expr-elems", `function main(): i32 { var xs = match (1) { 1 => ["hi", "yo"], _ => ["x"] }; return xs[0].len() + xs[1].len() + xs.len(); }`, 6},
+		// f64-ARRAY-valued if-/match-expression: same lifted-__lam scalar miscompile
+		// as the string-array case (8-byte f64 elements read at i32 width). #3224.
+		{"f64arr-if-expr-elem", `function main(): i32 { var xs = if (true) { [1.5, 2.5] } else { [3.5] }; return xs.len() * 10 + (xs[1] as i32); }`, 22},
+		{"f64arr-if-expr-forin", `function main(): i32 { var xs = if (true) { [1.5, 2.5, 3.0] } else { [9.0] }; var t = 0.0; for x in xs { t = t + x; } return t as i32; }`, 7},
+		{"f64arr-match-expr-elem", `function main(): i32 { return (match (1) { 1 => [2.5, 4.5], _ => [0.0] })[1] as i32; }`, 4},
 		{"random-bytes-len", `function main(): i32 { return random_bytes(8).len(); }`, 8},
 		{"random-bytes-byte-range", `function main(): i32 { var s: string = random_bytes(4); var x: i32 = s[0]; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},
 		{"random-i32-varies", `function main(): i32 { var a: i32 = random_i32(); var b: i32 = random_i32(); if (a == b) { return 1; } return 7; }`, 7},
