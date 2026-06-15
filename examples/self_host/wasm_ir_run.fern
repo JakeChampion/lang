@@ -103,6 +103,7 @@ function main(): i32 {
         // the push-only emitter). Depends on $__fern_arr_box (module_allocates).
         if (wasm_ir.module_emits_op(mod, "arr_push")) { o = o + wasm.arr_push_helper(); }
         if (wasm_ir.module_emits_op(mod, "arr_push_i64")) { o = o + wasm.arr_push_i64_helper(); }
+        if (wasm_ir.module_emits_op(mod, "arr_push_f64")) { o = o + wasm.arr_push_f64_helper(); }
         if (wasm_ir.module_uses_maps(mod)) { o = o + wasm.map_helpers(); }
         // Byte-source helpers (issue #2747). random_bytes returns a [len][bytes]
         // string block; str_bytes returns a u8[]; both reference the heap runtime

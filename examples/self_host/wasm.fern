@@ -7404,6 +7404,15 @@ pub function arr_push_i64_helper(): string {
     return arr_push_wide("i64", "i64");
 }
 
+// arr_push_f64_helper emits $__fern_arr_push_f64 — the f64[] companion to
+// arr_push_i64_helper. Same 8-byte-slot geometric-growth push, but the value
+// param + final store are f64 (the existing-element copy loop stays i64.load /
+// i64.store, which is bit-preserving for the raw 8-byte slots). Lowered from
+// `a = a.append(v)` on an f64[].
+pub function arr_push_f64_helper(): string {
+    return arr_push_wide("f64", "f64");
+}
+
 function arr_push_wide(vty: string, sop: string): string {
     var o: string = "";
     o = o + "  (func $__fern_arr_push_" + vty + " (param $a i32) (param $v " + vty + ") (result i32)\n";
@@ -11218,6 +11227,11 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         // str_split entanglement (str_split builds 4-byte arrays).
         if (wasm_ir.module_emits_op(mod, "arr_push_i64")) {
             ir_out = ir_out + arr_push_i64_helper();
+        }
+        // f64[] push — its own helper ($__fern_arr_push_f64), parallel to the
+        // i64 one above (8-byte slots, f64-typed value/store).
+        if (wasm_ir.module_emits_op(mod, "arr_push_f64")) {
+            ir_out = ir_out + arr_push_f64_helper();
         }
         // $__fern_str_split (bundles its own $__fern_arr_push via arr_push_helper).
         if (wasm_ir.module_emits_op(mod, "str_split") || wasm_ir.module_uses_str_lines(mod)) { ir_out = ir_out + str_split_helper(); }

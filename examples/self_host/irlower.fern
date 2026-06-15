@@ -5613,9 +5613,18 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                     return ws.emit(ir.op_arr_set(32));
                                 }
                                 if (self_recv && wfa.field == "append" && wc.args.len() == 1) {
-                                    // f64[] append still bails (needs an f64 value +
-                                    // arr_push_f64 — a separate slice).
-                                    if (s.is_f64arr_slot(slot)) { return s.fail(); }
+                                    // f64[] (8-byte float element): lower the value as an
+                                    // f64 expression and grow via the 8-byte arr_push_f64.
+                                    // Parallels the i64[] path below; on the register
+                                    // backends both reuse __fern_arr_push, wasm uses its
+                                    // f64-typed $__fern_arr_push_f64.
+                                    if (s.is_f64arr_slot(slot)) {
+                                        var apf: LowerState = s.emit(ir.op_load_local(slot));
+                                        apf = lower_expr(wc.args[0], apf);
+                                        if (!apf.ok) { return apf; }
+                                        apf = apf.emit(ir.op_arr_push_f64());
+                                        return apf.emit(ir.op_store_local(slot));
+                                    }
                                     // i64[] / u64[] (8-byte element): lower the value as
                                     // an i64 and grow via the 8-byte arr_push_i64. u64
                                     // rides the i64 width here — its unsigned-ness only

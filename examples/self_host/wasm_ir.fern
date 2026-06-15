@@ -713,6 +713,10 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // stack: arr, i64 val -> the 8-byte-stride push (wasm32 packs i32[] at
             // 4-byte but i64[]/u64[] at 8-byte, so this needs its own helper).
             out = out + "    call $__fern_arr_push_i64\n";
+        } else if (o.kind == "arr_push_f64") {
+            // stack: arr, f64 val -> the 8-byte-stride push for an f64[] (its own
+            // helper takes an f64-typed value, mirroring f64.store in arr_set).
+            out = out + "    call $__fern_arr_push_f64\n";
         } else if (o.kind == "str_from_bytes") {
             // stack: arr -> $__fern_string_from_bytes(arr) -> string block.
             out = out + "    call $__fern_string_from_bytes\n";
