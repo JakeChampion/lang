@@ -3105,6 +3105,61 @@ function main(): i32 { var ds: dyn Shape[] = [Circle { r: 1 }, NoShape { z: 2 }]
 	}
 }
 
+// TestDynGenericTraitChecker exercises generic dyn-trait objects
+// (`dyn Container[i32]`, #2691 trait-spine): a concrete type coerces in
+// iff it impls the trait at the PINNED arguments; the method signature is
+// read with the trait's type params substituted (so `get(): T` returns
+// i32); and the negative cases — argument mismatch, an unpinned generic
+// trait, and a method-result type check against the pinned arg — are
+// rejected.
+func TestDynGenericTraitChecker(t *testing.T) {
+	const prelude = `trait Container[T] { function get(self: Self): T; }
+struct BoxI { v: i32 }
+impl Container[i32] for BoxI { function get(self: Self): i32 { return self.v; } }
+struct BoxS { v: i32 }
+impl Container[string] for BoxS { function get(self: Self): string { return "x"; } }
+`
+	// Accepted: BoxI coerces to dyn Container[i32]; get() returns i32, so
+	// it composes in an i32 context.
+	if err := checkSource(t, prelude+`
+function take(d: dyn Container[i32]): i32 { return d.get(); }
+function main(): i32 { var d: dyn Container[i32] = BoxI { v: 7 }; return take(d); }`); err != nil {
+		t.Fatalf("valid generic dyn use should check: %v", err)
+	}
+
+	cases := []struct{ name, src, want string }{
+		{"argument mismatch",
+			prelude + `function main(): i32 { var d: dyn Container[string] = BoxI { v: 1 }; return 0; }`,
+			"cannot assign BoxI"},
+		{"unpinned generic trait",
+			prelude + `function f(d: dyn Container): i32 { return 0; }
+function main(): i32 { return 0; }`,
+			"must pin its type parameter"},
+		{"pinned result type respected",
+			prelude + `function f(d: dyn Container[i32]): string { return d.get(); }
+function main(): i32 { return 0; }`,
+			"string"},
+		{"string-pinned accepted",
+			prelude + `function f(d: dyn Container[string]): string { return d.get(); }
+function main(): i32 { var d: dyn Container[string] = BoxS { v: 1 }; return 0; }`,
+			""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkSource(t, c.src)
+			if c.want == "" {
+				if err != nil {
+					t.Errorf("expected to type-check, got %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("got %v, want containing %q", err, c.want)
+			}
+		})
+	}
+}
+
 // TestDynMultiTraitChecker exercises multi-trait trait objects
 // (`dyn A + B`, docs/DYN-TRAITS.md): a concrete coerces in iff it impls
 // EVERY trait; a method resolves across the UNION of the traits' method

@@ -85,12 +85,66 @@ function main(): i32 {
   (interpreter + all three compiled backends + the self-host, via the
   merged vtable — dispatch AND `as?` downcast) span a set of traits —
   see §10.
-- `dyn Trait` carries no postfix generics of its own; `dyn Trait[]`
-  parses as `(dyn Trait)[]` — an array of trait objects.
+- A **generic** trait is used as a `dyn` object by **pinning** its type
+  parameter(s): `dyn Container[i32]` (mirrors Rust's `dyn Container<i32>`).
+  The arguments are erased at runtime — the vtable is still keyed by trait
+  name — so they drive only the checker's coercion gate (a concrete type
+  coerces iff it `impl`s the trait at *those* arguments:
+  `impl Container[i32] for BoxI` ⇒ `dyn Container[i32]`, not
+  `dyn Container[string]`) and the method-signature substitution that makes
+  `get(self: Self): T` read as `get(): i32`. A generic trait used as `dyn`
+  *must* pin all its parameters — bare `dyn Container` is an error (the
+  erased `T` in a method signature would be unresolvable at the call site).
+  See §2.1.
+- The pinned-args `[…]` (one or more types) is distinct from the array
+  suffix `dyn Trait[]` (empty brackets), which parses as `(dyn Trait)[]` —
+  an array of trait objects. `dyn Container[i32][]` is an array of
+  `dyn Container[i32]`.
 - A `dyn Trait` value is produced by **coercion**: a concrete value
   whose type `impl`s `Trait` is implicitly boxed where a `dyn Trait` is
   expected (var init, assignment, argument, array element, `return`).
   No explicit cast syntax in v1.
+
+### 2.1 Generic trait objects — `dyn Container[i32]`
+
+```fern
+trait Container[T] {
+    function get(self: Self): T;
+}
+struct BoxI { v: i32 }
+struct Pair { a: i32, b: i32 }
+impl Container[i32] for BoxI { function get(self: Self): i32 { return self.v; } }
+impl Container[i32] for Pair { function get(self: Self): i32 { return self.a + self.b; } }
+
+function sum(d: dyn Container[i32]): i32 {
+    return d.get();   // dispatched by concrete type; statically typed i32
+}
+
+function main(): i32 {
+    var x: dyn Container[i32] = BoxI { v: 40 };
+    var y: dyn Container[i32] = Pair { a: 1, b: 1 };
+    return sum(x) + sum(y);   // 42
+}
+```
+
+Representation and dispatch are exactly as for a non-generic `dyn Trait`
+(§4): the trait argument is **erased**, so there is no per-instantiation
+vtable — `impl Container[i32] for BoxI` registers the same
+`__method_BoxI_get` the boxed object's vtable points at. The argument list
+lives only in the `ast.DynTraitType.Args` carried alongside `Traits`
+(parallel slices, normalised together by `ast.NewDynTraitTypeArgs`), and is
+consulted by the checker at two points:
+
+- **Coercion gate** (`implementsAllDynTraits`): the concrete type's recorded
+  impl arguments (`Info.ImplTraitArgs[trait][type]`) must equal the pinned
+  arguments. A `Container[string]` impl does not satisfy `dyn Container[i32]`.
+- **Method resolution** (`checkDynMethodCall`): the owner trait's type
+  parameters are substituted with the pinned arguments before the signature
+  is read, so a method returning the trait param `T` types as the pinned
+  type. `Self` is still substituted to the `dyn` type itself.
+
+A generic trait with **associated types** remains object-unsafe (§3); only
+type parameters are pinnable this way.
 
 ## 3. Object safety
 

@@ -1924,6 +1924,39 @@ function many(ds: dyn Shape[]): i32 { return 0; }`)
 	}
 }
 
+// `dyn Container[i32]` parses to a DynTraitType carrying the trait's
+// pinned generic arguments (parallel Args). See docs/DYN-TRAITS.md.
+func TestDynGenericTraitTypeParse(t *testing.T) {
+	prog, err := Parse(`trait Container[T] { function get(self: Self): T; }
+function take(d: dyn Container[i32]): i32 { return d.get(); }`)
+	if err != nil {
+		t.Fatalf("dyn generic type should parse: %v", err)
+	}
+	var take *ast.FuncDecl
+	for _, fn := range prog.Funcs {
+		if fn.Name == "take" {
+			take = fn
+		}
+	}
+	if take == nil {
+		t.Fatal("function not parsed")
+	}
+	dt, ok := take.Params[0].Type.(ast.DynTraitType)
+	if !ok || len(dt.Traits) != 1 || dt.Traits[0] != "Container" {
+		t.Fatalf("take param type = %#v, want dyn Container[i32]", take.Params[0].Type)
+	}
+	args := dt.ArgsFor(0)
+	if len(args) != 1 {
+		t.Fatalf("Container args = %#v, want one (i32)", args)
+	}
+	if n, ok := args[0].(ast.NumberType); !ok || n.String() != "i32" {
+		t.Errorf("Container arg[0] = %#v, want i32", args[0])
+	}
+	if got := dt.String(); got != "dyn Container[i32]" {
+		t.Errorf("String() = %q, want %q", got, "dyn Container[i32]")
+	}
+}
+
 // `dyn A + B` parses to a DynTraitType carrying the SORTED + DEDUPED
 // trait set (so `dyn A + B` ≡ `dyn B + A`), `dyn A + B + C` keeps all
 // three, `dyn A+B[]` is an array of multi-trait objects, and a trailing
