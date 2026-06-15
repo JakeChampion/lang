@@ -162,6 +162,15 @@ type Options struct {
 	// shape both Linux's `as` and macOS's `clang -c -arch
 	// arm64` accept.
 	Darwin bool
+
+	// PIE emits a static position-independent (ET_DYN) executable: a
+	// self-relocation prologue runs at `_start` and applies the
+	// R_AARCH64_RELATIVE entries in .rela.dyn (the `.quad <symbol>`
+	// function-pointer / vtable slots) before the program runs, so the
+	// binary is correct at the arbitrary base the kernel loads it at.
+	// Pair with arm64.AssembleProgramPIE + elf.StaticPieExecutable. Linux
+	// only (the Darwin path is its own non-PIE Mach-O image).
+	PIE bool
 }
 
 // Emit produces the assembly text for prog.
@@ -233,7 +242,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// `adrp + add` of a static `.rodata` cell instead of a
 	// 16-byte heap-allocated pair.
 	ir.InlineZeroCaptureClosures(ip)
-	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, darwin: opts.Darwin, vtables: ip.Vtables}
+	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, darwin: opts.Darwin, pie: opts.PIE, vtables: ip.Vtables}
 	for _, fn := range prog.Funcs {
 		g.funcs[fn.Name] = fn
 	}
@@ -867,24 +876,24 @@ func (g *generator) emitAllocRuntime() {
 		// derive the class from it so alloc and free agree.
 		g.emit("clz x2, x0")
 		g.emit("mov x3, #63")
-		g.emit("sub x3, x3, x2")   // x3 = e = bsr(size)
-		g.emit("sub x4, x3, #2")   // x4 = e-2 = grid-spacing exponent
+		g.emit("sub x3, x3, x2") // x3 = e = bsr(size)
+		g.emit("sub x4, x3, #2") // x4 = e-2 = grid-spacing exponent
 		g.emit("mov x6, #1")
-		g.emit("lsl x6, x6, x4")   // x6 = gran = 1<<(e-2)
+		g.emit("lsl x6, x6, x4") // x6 = gran = 1<<(e-2)
 		g.emit("add x1, x0, x6")
-		g.emit("sub x1, x1, #1")   // x1 = size + gran - 1
-		g.emit("neg x7, x6")       // x7 = -gran
-		g.emit("and x0, x1, x7")   // x0 = cap = roundup(size, gran) = bytes to bump
+		g.emit("sub x1, x1, #1") // x1 = size + gran - 1
+		g.emit("neg x7, x6")     // x7 = -gran
+		g.emit("and x0, x1, x7") // x0 = cap = roundup(size, gran) = bytes to bump
 		// class = (e2-11)*4 + (mant-4) + 128 = 4*e2 + mant + 80, e2 = bsr(cap),
 		// mant = cap>>(e2-2) ∈ {4,5,6,7}. e2 recomputed so a carry into a new
 		// power of two bins right.
 		g.emit("clz x2, x0")
 		g.emit("mov x3, #63")
-		g.emit("sub x3, x3, x2")   // x3 = e2
-		g.emit("sub x4, x3, #2")   // x4 = e2-2
-		g.emit("lsr x1, x0, x4")   // x1 = mant = cap>>(e2-2)
+		g.emit("sub x3, x3, x2") // x3 = e2
+		g.emit("sub x4, x3, #2") // x4 = e2-2
+		g.emit("lsr x1, x0, x4") // x1 = mant = cap>>(e2-2)
 		g.emit("sub x3, x3, #11")
-		g.emit("lsl x3, x3, #2")   // x3 = (e2-11)*4
+		g.emit("lsl x3, x3, #2") // x3 = (e2-11)*4
 		g.emit("add x1, x1, x3")
 		g.emit("add x1, x1, #124") // x1 = large class index
 		g.label(".Lalloc_fltry")
@@ -982,21 +991,21 @@ func (g *generator) emitFreeRuntime() {
 		g.emit("b.hi .Lfree_ret")
 		g.emit("clz x3, x1")
 		g.emit("mov x4, #63")
-		g.emit("sub x4, x4, x3")   // x4 = e
-		g.emit("sub x6, x4, #2")   // x6 = e-2
+		g.emit("sub x4, x4, x3") // x4 = e
+		g.emit("sub x6, x4, #2") // x6 = e-2
 		g.emit("mov x7, #1")
-		g.emit("lsl x7, x7, x6")   // x7 = gran
+		g.emit("lsl x7, x7, x6") // x7 = gran
 		g.emit("add x2, x1, x7")
 		g.emit("sub x2, x2, #1")
 		g.emit("neg x7, x7")
-		g.emit("and x2, x2, x7")   // x2 = cap
+		g.emit("and x2, x2, x7") // x2 = cap
 		g.emit("clz x3, x2")
 		g.emit("mov x4, #63")
-		g.emit("sub x4, x4, x3")   // x4 = e2
-		g.emit("sub x6, x4, #2")   // x6 = e2-2
-		g.emit("lsr x3, x2, x6")   // x3 = mant
+		g.emit("sub x4, x4, x3") // x4 = e2
+		g.emit("sub x6, x4, #2") // x6 = e2-2
+		g.emit("lsr x3, x2, x6") // x3 = mant
 		g.emit("sub x4, x4, #11")
-		g.emit("lsl x4, x4, #2")   // x4 = (e2-11)*4
+		g.emit("lsl x4, x4, #2") // x4 = (e2-11)*4
 		g.emit("add x3, x3, x4")
 		g.emit("add x2, x3, #124") // x2 = large class index
 		g.label(".Lfree_push")
@@ -5847,6 +5856,10 @@ type generator struct {
 	// locally before the object format matters.
 	darwin bool
 
+	// pie emits the static-PIE self-relocation prologue at `_start`
+	// (see Options.PIE). Linux only.
+	pie bool
+
 	// stringLabel / stringOrder hold the string-pool scheme:
 	// each unique string literal in the program gets a single
 	// `.LStr_N` .rodata label with a 4-byte little-endian
@@ -6331,6 +6344,32 @@ func (g *generator) emitCallArgsCleanup(argc int) {
 	g.emit("add sp, sp, #%d", stackSize+slotBytes*argc)
 }
 
+// emitPieSelfReloc emits the static-PIE self-relocation prologue at the
+// top of `_start`. It computes the kernel-chosen load base via
+// __ehdr_start (which the assembler resolves to vaddr 0, so adrp/:lo12:
+// yields the base), then walks the R_AARCH64_RELATIVE entries in
+// [__rela_start, __rela_end) — the `.quad <symbol>` function-pointer /
+// vtable slots — applying each as *(base + r_offset) = base + r_addend.
+// PC-relative code (adrp/:lo12:) needs no relocation, so reloc-free
+// programs run an empty loop. Uses scratch x9-x14 only (nothing is set up
+// at entry) and leaves sp / x0 untouched, so the normal startup that
+// follows reads argv off the kernel stack unchanged.
+func (g *generator) emitPieSelfReloc() {
+	g.adrpAdd("x9", "__ehdr_start")  // x9 = load base
+	g.adrpAdd("x10", "__rela_start") // x10 = &.rela.dyn (cursor)
+	g.adrpAdd("x11", "__rela_end")   // x11 = end of .rela.dyn
+	g.label(".Lfern_reloc_loop")
+	g.emit("cmp x10, x11")
+	g.emit("b.hs .Lfern_reloc_done")
+	g.emit("ldr x12, [x10]")      // r_offset
+	g.emit("ldr x13, [x10, #16]") // r_addend (r_info at +8 is RELATIVE)
+	g.emit("add x14, x9, x13")    // base + addend
+	g.emit("str x14, [x9, x12]")  // *(base + r_offset) = base + addend
+	g.emit("add x10, x10, #24")   // advance one Elf64_Rela (24 bytes)
+	g.emit("b .Lfern_reloc_loop")
+	g.label(".Lfern_reloc_done")
+}
+
 // emitStartRuntime writes `_start`, the binary's entry under
 // `-nostdlib` on Linux arm64. The kernel hands us a 16-aligned
 // sp at process entry; we trust it (no explicit re-alignment
@@ -6360,6 +6399,9 @@ func (g *generator) emitStartRuntime() {
 		g.typeDirective(entry)
 	}
 	g.label(entry)
+	if g.pie && !g.darwin {
+		g.emitPieSelfReloc()
+	}
 	if g.usesEnv || g.usesArgs {
 		// Capture argc / argv (and derive envp on Linux) from
 		// the platform's process-entry convention. The two
@@ -6743,8 +6785,8 @@ func (g *generator) slotIsString(idx int32) bool {
 // string counts as 2). __fern_str_inc / __fern_str_dec both take a
 // single (data, len) string → 2 slots.
 var twoWordStrHelperArgSlots = map[string]int{
-	"__fern_str_inc":            2,
-	"__fern_str_dec":            2,
+	"__fern_str_inc":           2,
+	"__fern_str_dec":           2,
 	"__method_string_as_bytes": 2,
 }
 
@@ -7368,9 +7410,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.emit("mov x20, x10")                  // x20 = vtable
 		g.emit("mov w0, #16")                   // cell size = 2 * ptrW
 		g.emit("bl __fern_alloc")
-		g.emit("str x19, [x0]")             // cell[0] = data
-		g.emit("str x20, [x0, #8]")         // cell[8] = vtable
-		g.emit("ldp x19, x20, [sp], #16")   // restore callee-saves
+		g.emit("str x19, [x0]")           // cell[0] = data
+		g.emit("str x20, [x0, #8]")       // cell[8] = vtable
+		g.emit("ldp x19, x20, [sp], #16") // restore callee-saves
 		g.push()
 
 	case ir.OpCallDyn:
@@ -7385,8 +7427,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		if op.Sig == nil {
 			return fmt.Errorf("arm64: OpCallDyn missing op.Sig")
 		}
-		g.pop()                // x0 = vtable (top)
-		g.emit("mov x17, x0")  // x17 = vtable base
+		g.pop()               // x0 = vtable (top)
+		g.emit("mov x17, x0") // x17 = vtable base
 		if op.I32 != 0 {
 			g.emit("ldr x16, [x17, #%d]", int(op.I32)*8)
 		} else {
