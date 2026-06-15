@@ -1337,3 +1337,62 @@ Once boxes are header'd: (1) the plain-struct + array-field reclamation decs bec
 consuming-`match` box reuse become implementable — there is no sound way to free or reuse a
 box the runtime can't refcount, so this header refactor is the single prerequisite for the
 entire remaining struct/enum-reclamation + FBIP-reuse-with-free roadmap.
+
+---
+
+## STATUS UPDATE (2026-06-15): the rc-header prerequisite AND the consumed-enum / FBIP arc have LANDED
+
+The "ROOT CAUSE pinned" section above is now **historical**. The rc-header refactor
+it identified as the single prerequisite shipped, and the whole struct/enum-reclamation
++ FBIP-reuse-with-free roadmap it gated has been built on top, all merged green (each
+gated on the byte-identical self-compile fixpoint AND `TestSelfHostBootstrapsItself`,
+the gcc-link test that catches self-host codegen gaps):
+
+- **#3231 — rc header for struct/enum boxes.** `op_struct_make` now allocates via
+  `__fern_arr_box(nf+1)` on all three backends, so a box carries an rc word at
+  `data-8` and a free-size word at `data-16` (the array layout `__fern_arr_dec`
+  frees), with field offsets unchanged (shape@0, field i at (i+1)*8) — every box
+  reader stays byte-identical. Fixed the latent over-release/heap-corruption bug
+  (header-less boxes mis-dec'd) and unblocked everything below.
+- **#3232 — consumed scalar-enum free.** `consumed_scalar_enum_frees`: a fresh,
+  sole-owner, dead-after, non-escaping `var x = V(scalars…)` consumed by exactly one
+  top-level `match (x)` is freed (dec + zero) right after the match instead of leaking.
+- **#3233 — enum-donor cross-reuse (FBIP).** A consumed-and-dead scalar-enum box is
+  DONATED to a later same-size struct literal (`op_struct_set_shape` re-shapes it in
+  place) instead of being freed; the post-match free is suppressed.
+- **#3239 — rc-payload enum deep-drop free.** Widened the consumed-enum free to enums
+  whose variants carry a leak-safe scalar-array payload (i32[]/i64[]/f64[]/boolean[]):
+  at the free a per-variant `variant_is` dispatch deep-drops exactly that variant's rc
+  array fields, then the box. (string stays leak-only — a header-less {ptr,len} fat
+  struct; string[]/nested struct/enum/map/opt/tuple payloads excluded.)
+- **#3252 — borrow-only payload bindings.** The rc-payload free's arm gate widened from
+  "reject any arm that binds an rc payload" to "reject only when a bound rc payload
+  ESCAPES its arm" (`binding_escapes_arm` reuses the precise-drop `body_unsafe_for` /
+  `expr_unsafe_for` with an empty borrowable registry).
+- **#3259 — in-arm consuming-match box reuse (FBIP).** The marquee win: `var y =
+  match (x) { … }` over a fresh sole-owner dead-after scalar-enum box where EVERY arm
+  builds a same-size variant reuses x's box IN PLACE to construct y (read payloads to
+  temps → `op_struct_set_shape` → write fields → bind y), one fewer `__fern_arr_box`
+  per arm. An in-arm scrutinee is not a top-level `match (x)`, so the box previously
+  leaked — there is no free to suppress; y owns it on every path, freed once.
+
+All of the above gate `var x = V(...)` candidates through `consumed_scalar_enum_frees`'s
+fresh/sole-owner/dead-after/non-escape predicate family and emit through the shared
+`op_struct_set_shape` / per-variant `variant_is` dispatch + `op_struct_get/_set`.
+
+### Current frontier (next slices, in rough order)
+
+1. **Widen in-arm reuse payload types.** Today `inarm_reuse_match_ok` requires every
+   payload field to be `i32`; generalise to all scalar widths (i64/f64/boolean/u32/u64)
+   with width-aware temp reads + field writes (mirror `emit_enum_donor_reuse`'s
+   `struct_field_is_i64` / `lower_i64` / `op_struct_set_i64` branch). Contained.
+2. **Widen in-arm reuse to rc-payload donors.** Reuse a box whose old fields held
+   leak-safe arrays: drop those old arrays before the overwrite (mirror
+   `emit_cross_struct_reuse`'s old-value dec), and admit array fields in the result.
+3. **Mixed arms (some reuse, some not).** Today every arm must construct a same-size
+   variant. Per-path free-or-reuse accounting would admit matches where only some arms
+   reconstruct — needs care that each path frees-or-reuses exactly once.
+4. **rc-payload enum free for non-array rc payloads** (nested struct/enum/tuple/map):
+   needs a recursive per-field deep-drop, not the single shallow array dec.
+5. **String payload reclamation** is blocked on the leak-only string model (header-less
+   {ptr,len}); out of scope until strings gain an rc header.
