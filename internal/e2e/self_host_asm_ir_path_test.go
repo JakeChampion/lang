@@ -221,6 +221,14 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// the chained string-method dispatches `string.n` (the shape i32.to_rgb_hex
 		// uses: r.to_hex().pad_start(...)). "ab".dup().dup() -> "abababab", len 8.
 		{"chained-str-method", "function (s: string) dup(): string { return s + s; } function f(s: string): i32 { return s.dup().dup().len(); } function main(): i32 { return f(\"ab\"); }"},
+		// Method-name collision across receiver types with different return types:
+		// `bump` exists on i32 (-> i32) AND string (-> string). str_ret_fns is now
+		// keyed "<Type>.<method>" (not bare), so `b.bump()` on an i32 does NOT
+		// wrongly type as string (which let the chained `.chr()` mis-dispatch to a
+		// nonexistent string.chr -> BAIL). This is the std/string case_separator /
+		// to_acronym shape (i32.to_lower vs string.to_lower). f(64): 64+1 -> char
+		// 65 'A' -> s[0] -> 65.
+		{"method-name-collision", "function (n: i32) bump(): i32 { return n + 1; } function (s: string) bump(): string { return s + \"!\"; } function (n: i32) chr(): string { var a: u8[] = __alloc_u8(1); a = a.with(0, n as u8); return string_from_bytes(a); } function f(b: i32): i32 { var s: string = b.bump().chr(); return s[0] as i32; } function main(): i32 { return f(64); }"},
 		{"with-loop", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; while (i < 4) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3]; }"},
 		{"append-build", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a[0] + a[4]; }"},
 		// `.append(e)` as a general EXPRESSION (not the `out = out.append(e)`
