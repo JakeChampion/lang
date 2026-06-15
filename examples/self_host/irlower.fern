@@ -12744,6 +12744,13 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
         acc = LiftAcc { funcs: [], counter: acc.counter };
         wi = wi + 1;
     }
-    if (acc.counter == 0) { return mod; }
-    return parser.Module { funcs: newfuncs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
+    // Desugar `switch` to the nested if/else-if chain the IR path already
+    // lowers (mirrors the AST backend's desugar_switch_in_stmt at emit time),
+    // so a module whose only IR-ineligible construct was a switch now lowers
+    // through the IR path instead of bailing to AST. Applied to the FINAL
+    // module so switches inside lifted-lambda bodies (now top-level funcs in
+    // `newfuncs`) are covered too. The AST fallback path uses the original
+    // `mod`, not this lifted module, so its own switch handling is unchanged.
+    if (acc.counter == 0) { return parser.desugar_switches_module(mod); }
+    return parser.desugar_switches_module(parser.Module { funcs: newfuncs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports });
 }
