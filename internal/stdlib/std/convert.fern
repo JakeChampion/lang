@@ -30,3 +30,36 @@ pub trait From[T] {
 pub trait Into[T] {
     function into(self: Self): T;
 }
+
+// `TryFrom[T]` / `TryInto[T]` are the FALLIBLE siblings of From / Into, for
+// conversions that can fail — parsing, checked narrowing (`i32` from a too-big
+// `i64`), range/shape validation. They mirror the From / Into split: implement
+// `TryFrom` (the constructor's home, more composable) and call it as an
+// associated function; `TryInto` is for when only the source type is yours.
+// The result carries a `string` reason on failure, matching the rest of the
+// stdlib's parse/convert surface (e.g. `str_to_i32`):
+//
+//     impl convert.TryFrom[i64] for Small {
+//         function try_from(v: i64): Result[Self, string] {
+//             if (v < 0 || v > 255) { return Err("out of range"); }
+//             return Ok(Small { v: v as i32 });
+//         }
+//     }
+//
+//     match (Small.try_from(300)) {        // TryFrom — associated function
+//         Ok(s)  => …,
+//         Err(m) => …,                      // m = "out of range"
+//     }
+//
+// Like From / Into these are ordinary traits — no compiler magic; the call is
+// plain associated-function / method dispatch — so a generic bound
+// (`function parse[U: convert.TryFrom[string]](proto: U, s: string)
+// : Result[U, string] { return U.try_from(s); }`) resolves `U.try_from`
+// against the bound. See docs/TRAITS.md.
+pub trait TryFrom[T] {
+    function try_from(v: T): Result[Self, string];
+}
+
+pub trait TryInto[T] {
+    function try_into(self: Self): Result[T, string];
+}
