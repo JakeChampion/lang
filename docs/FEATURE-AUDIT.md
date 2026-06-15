@@ -250,6 +250,26 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-15 — fully-matched `Option[Result[T, E]]` on the self-host IR path (bug fix)
+
+A fully-matched `Option[Result[T, E]]` (outer `Some` bound, then the inner Result
+matched and its payload read) bailed the module to AST. Root cause in
+`some_opt_type`: for `var o: Option[Result[..]] = Some(Ok(x))` it inferred o's type
+from the construction, and `elem_type_tag(Ok(x))` **defaults** an Ok/Err payload to
+`"i32"` (it doesn't recognise Ok/Err as Result constructions). So o was mis-recorded
+as `Option[i32]`, and that wrong inference preempted the authoritative annotation
+(the annotation fallback only fires when the inferred type is empty). The inner
+`match (r)` then found no Result type on the Some-bound slot and bailed. Fix:
+`some_opt_type` returns `""` when the Some payload is itself an Ok/Err (Result)
+construction — a bare `Ok(x)` can't name `E` anyway — so the binding's annotation
+(`Option[Result[T, E]]`) wins. `Option[Option[T]]` was already fine (a Some payload
+types cleanly), and unannotated `Some(<scalar>)` inference is unchanged. Found via
+temporary `eprint` instrumentation of the self-host compiler (irlower is itself a
+Fern program). Verified on x86-64, wasm, and arm64 (qemu) against the interpreter —
+`Some(Ok)`, `Some(Err)`, plus `Option[Option]` and unannotated-Some regressions.
+Fixpoint still converges byte-identically. Guarded by
+`TestSelfHostNestedOptResultIR{X86_64,Wasm}`.
+
 ### 2026-06-15 — Result with a tuple payload on the self-host IR path (bug fix)
 
 A `Result[T, E]` whose `T` or `E` is itself a tuple — e.g. `Result[(i32, i32),
