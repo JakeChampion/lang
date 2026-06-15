@@ -248,6 +248,25 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-15 — nested tuples in return / param position on the self-host IR path (widen IR subset)
+
+Follow-on to nested-tuple construction/access: a function whose **return type** or
+a **parameter type** is a nested tuple (`(i32, (i32, i32))`) still bailed the
+module to AST. The gate `tuple_elems_lowerable` (which decides whether a
+tuple-returning function can lower) split the return type's element tags with a
+*naive* comma scan and accepted only scalar/string/leaf-struct/Option elements —
+a nested-tuple element tag `(…)` was both mis-split and unlisted. Fix (one
+function in `irlower.fern`): the element split is now depth-aware, and a
+nested-tuple element is admitted by **recursing** `tuple_elems_lowerable` on it
+(so an inner array / `Result` still bails, matching the construction guard). The
+construction, call-result binding, and `t.N.M` access already lowered (prior
+change) and the return-type elem-tag encoder (`tuple_elem_tags`) was already
+depth-aware, so no other change was needed. Verified on x86-64, wasm, and arm64
+(qemu) against the interpreter — right/left nesting in return position, a string
+sibling, and a nested-tuple parameter; flat-tuple return regression holds.
+Fixpoint still converges byte-identically. Guarded by
+`TestSelfHostNestedTupleRetIR{X86_64,Wasm}`.
+
 ### 2026-06-15 — nested tuples on the self-host IR path (widen IR subset)
 
 A tuple element that is itself a tuple — `(1, (2, 3))`, accessed `t.1.1` —

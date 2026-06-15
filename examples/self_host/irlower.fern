@@ -9020,18 +9020,22 @@ pub function tuple_elem_tags(rt: string): string {
 }
 
 // tuple_elems_lowerable reports whether every element of tuple type `rt` is a
-// scalar (i32 / bool), a string, or a leaf-safe struct — the set lower_func can
-// return as a tuple box. A leaf-safe struct element is a leak-only pointer (no
+// scalar (i32 / bool), a string, a leaf-safe struct, an Option[T], or a NESTED
+// tuple of lowerable elements — the set lower_func can return as a tuple box. A
+// leaf-safe struct / Option / nested-tuple element is a leak-only pointer (no
 // RC), recovered at the call site by its type tag, like the struct-return path.
-// Array / i64 / Option/Result / nested-tuple elements still make it false so the
-// function bails to the AST path (they'd need RC / width / payload threading).
+// Array / i64-array / Result elements still make it false so the function bails
+// to the AST path (they'd need RC / width / payload threading).
 pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): boolean {
     var tags: string = tuple_elem_tags(rt);
     if (tags.len() == 0) { return false; }
+    // Depth-aware split: a nested-tuple element tag `(i32,i32)` carries internal
+    // commas, so only top-level commas (depth 0) separate elements.
+    var depth: i32 = 0;
     var start: i32 = 0;
     var i: i32 = 0;
     while (i <= tags.len()) {
-        if (i == tags.len() || tags[i] == 44) {   // 44 = ','
+        if (i == tags.len() || (depth == 0 && tags[i] == 44)) {   // 44 = ','
             var t: string = tags[start : i];
             var ok_elem: boolean = (t == "i32" || t == "bool" || t == "string" || t == "i64" || t == "f64");
             if (!ok_elem && decl_is_struct(structs, t) && decl_is_leaksafe(structs, t)) { ok_elem = true; }
@@ -9039,11 +9043,16 @@ pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): bo
             // string / struct element — so a tuple-returning fn can return it
             // (the ExprTuple construction admits it too). Only a comma-free tag
             // matches here: a `Result[T, E]` tag has an internal comma this
-            // (non-depth-aware) element split can't see, so it stays deferred.
+            // split sees as a top-level separator, so it stays deferred.
             if (!ok_elem && t.len() >= 8 && t[0:7] == "Option[") { ok_elem = true; }
+            // A NESTED tuple element `(…)` is itself a leak-only heap-tuple
+            // pointer; admit it iff its own elements are all lowerable (recursion
+            // bails on an inner array / Result, matching the construction guard).
+            if (!ok_elem && t.len() >= 2 && t[0:1] == "(") { ok_elem = tuple_elems_lowerable(t, structs); }
             if (!ok_elem) { return false; }
             start = i + 1;
-        }
+        } else if (tags[i] == 91 || tags[i] == 40) { depth = depth + 1; }   // '[' '('
+        else if (tags[i] == 93 || tags[i] == 41) { depth = depth - 1; }   // ']' ')'
         i = i + 1;
     }
     return true;
