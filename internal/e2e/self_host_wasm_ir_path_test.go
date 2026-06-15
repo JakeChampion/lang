@@ -221,6 +221,12 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"struct-param", `struct P { x: i32, y: i32 } function sum(p: P): i32 { return p.x + p.y; } function main(): i32 { var p = P { x: 30, y: 12 }; return sum(p); }`},
 		{"struct-bool-field", `struct F { on: boolean, n: i32 } function main(): i32 { var f = F { on: true, n: 7 }; if (f.on) { return f.n; } return 0; }`},
 		{"struct-in-loop", `struct P { x: i32, y: i32 } function main(): i32 { var s = 0; var i = 0; while (i < 4) { var p = P { x: i, y: i * 2 }; s = s + p.x + p.y; i = i + 1; } return s; }`},
+		// Functional update with a NON-IDENT base (`P { ...<expr>, f: v }`): the
+		// base is spilled into a scratch local once so each copied field re-reads
+		// the same evaluated value (call / field-read / array-element bases).
+		{"struct-update-call-base", `struct P { x: i32, y: i32 } function mk(): P { return P { x: 3, y: 4 }; } function main(): i32 { var p = P { ...mk(), y: 9 }; return p.x * 10 + p.y; }`},
+		{"struct-update-field-base", `struct Inner { a: i32, b: i32 } struct Outer { inner: Inner } function main(): i32 { var o = Outer { inner: Inner { a: 5, b: 6 } }; var n = Inner { ...o.inner, b: 20 }; return n.a * 10 + n.b; }`},
+		{"struct-update-index-base", `struct P { x: i32, y: i32 } function main(): i32 { var a: P[] = [P { x: 1, y: 2 }, P { x: 3, y: 4 }]; var q = P { ...a[1], y: 9 }; return q.x * 10 + q.y; }`},
 		// Field mutation `p.x = v` (struct_set).
 		{"field-mutate", `struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; p.x = 40; return p.x + p.y; }`},
 		{"field-mutate-loop", `struct C { n: i32 } function main(): i32 { var c = C { n: 0 }; var i = 0; while (i < 5) { c.n = c.n + i; i = i + 1; } return c.n; }`},
