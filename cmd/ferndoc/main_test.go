@@ -34,6 +34,37 @@ func TestCollectModulesIncludesStdAndCore(t *testing.T) {
 	findModule(t, mods, "core", "int")
 }
 
+// A nested module (`std/wasm/convert.fern`) keeps its subdir in the
+// module name + page title and gets a path-flattened, collision-free page
+// filename — so it doesn't clash with a same-basename top-level module
+// (`std/convert.fern`). Regression for the ferndoc basename collision.
+func TestCollectModulesNestedNoCollision(t *testing.T) {
+	mods, err := collectModules()
+	if err != nil {
+		// A collision (e.g. std/convert vs std/wasm/convert) returns an
+		// error here — the bug this guards against.
+		t.Fatalf("collectModules: %v", err)
+	}
+	top := findModule(t, mods, "std", "convert")
+	nested := findModule(t, mods, "std", "wasm/convert")
+	if top.fileName == nested.fileName {
+		t.Errorf("page filenames collide: both %q", top.fileName)
+	}
+	if top.fileName != "convert" {
+		t.Errorf("top-level fileName = %q, want unchanged \"convert\"", top.fileName)
+	}
+	if nested.fileName != "wasm_convert" {
+		t.Errorf("nested fileName = %q, want \"wasm_convert\"", nested.fileName)
+	}
+	page, err := renderModule(nested)
+	if err != nil {
+		t.Fatalf("renderModule(std/wasm/convert): %v", err)
+	}
+	if !strings.Contains(page, "# `std/wasm/convert`") {
+		t.Errorf("nested page missing the path-qualified `std/wasm/convert` heading\n%s", page)
+	}
+}
+
 // The page title / heading must carry the right namespace so a reader
 // (and the sidebar) can tell `core/cmp` from a hypothetical `std/cmp`.
 func TestRenderModulePrefixesNamespace(t *testing.T) {
