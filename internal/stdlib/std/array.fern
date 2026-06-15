@@ -374,6 +374,24 @@ pub function __method_Array_contains(arr: string[], s: string): boolean {
     return __method_Array_index_of(arr, s) != (0 - 1);
 }
 
+// `arr.position(s)` — Option[i32] index of the first element
+// equal to `s`, `None` if absent. The Option-returning companion
+// to `index_of` (which uses the `-1` sentinel), mirroring the
+// i32[] `first_index_of` form so "not found" stays out-of-band
+// rather than relying on a `< 0` check at every call site.
+// (Named `position` rather than `first_index_of` because Array
+// method dispatch keys on the name only — `first_index_of` is
+// already claimed by the i32[] receiver and can't be overloaded
+// on element type.)
+pub function __method_Array_position(arr: string[], s: string): Option[i32] {
+    var i: i32 = 0;
+    while (i < arr.len()) {
+        if (arr[i] == s) { return Some(i); }
+        i = i + 1;
+    }
+    return None;
+}
+
 // `arr.reverse()` — fresh string[] with elements in reverse
 // order. Functional shape (returns a new array; input is
 // untouched). O(n) build via push, no in-place mutation —

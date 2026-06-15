@@ -145,6 +145,30 @@ pub function (s: string) last_index_of(needle: string): i32 {
     return 0 - 1;
 }
 
+// `s.find(needle)` / `s.rfind(needle)` — the Option-returning
+// companions to `index_of` / `last_index_of`. They report
+// "not found" as `None` instead of the `-1` sentinel, which is
+// the convention the rest of the stdlib settled on (split_once,
+// strip_prefix, the i32[] first_index_of family). Prefer these
+// in new code so a forgotten `< 0` check can't silently read a
+// bogus index; `index_of` / `last_index_of` stay as the
+// low-level i32 form (and the self-host compiler's own builtin).
+//
+// Empty-needle semantics match the underlying primitive: `find`
+// returns `Some(0)` and `rfind` returns `Some(len(s))`, never
+// `None`, since an empty needle is always "found".
+pub function (s: string) find(needle: string): Option[i32] {
+    var idx: i32 = s.index_of(needle);
+    if (idx < 0) { return None; }
+    return Some(idx);
+}
+
+pub function (s: string) rfind(needle: string): Option[i32] {
+    var idx: i32 = s.last_index_of(needle);
+    if (idx < 0) { return None; }
+    return Some(idx);
+}
+
 // `s.capitalize()` — uppercase the first byte, leave the
 // rest unchanged. ASCII-only: non-letter first bytes pass
 // through. Different from `to_upper` (which folds every
@@ -1505,6 +1529,16 @@ pub function (s: string) index_of_ci(needle: string): i32 {
         i = i + 1;
     }
     return 0 - 1;
+}
+
+// `s.find_ci(needle)` — Option-returning companion to
+// `index_of_ci`: `Some(byte-index)` of the first case-
+// insensitive match, `None` when absent. Empty needle returns
+// `Some(0)`. Same Option convention as `find` / `rfind`.
+pub function (s: string) find_ci(needle: string): Option[i32] {
+    var idx: i32 = s.index_of_ci(needle);
+    if (idx < 0) { return None; }
+    return Some(idx);
 }
 
 // `s.pad_start_str(width, fill)` / `pad_end_str(width, fill)`

@@ -275,6 +275,11 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"opt-bind-local", `function g(n: i32): Option[i32] { if (n > 0) { return Some(n + 100); } return None; } function f(n: i32): i32 { var r = g(n); match (r) { Some(x) => { return x; }, None => { return 0; } } return 0; } function main(): i32 { return f(5); }`},
 		{"opt-bind-local-strerr", `function chk(n: i32): Result[i32, string] { if (n > 0) { return Ok(n); } return Err("oops"); } function f(n: i32): i32 { var r = chk(n); match (r) { Ok(x) => { return x; }, Err(e) => { return e.len(); } } return 0; } function main(): i32 { return f(7) * 10 + f(0); }`},
 		{"opt-bind-param", `function f(o: Option[i32]): i32 { match (o) { Some(x) => { return x * 2; }, None => { return 0; } } return 0; } function main(): i32 { return f(Some(21)) + f(None); }`},
+		// The std/array `position` / std/string `find` body shape: scan a string[]
+		// for an equal element, returning `Some(index)` or `None`. Guards that the
+		// Option-returning search family lowers through the wasm IR path.
+		{"strarr-position-hit", `function pos(a: string[], s: string): Option[i32] { var i = 0; while (i < a.len()) { if (a[i] == s) { return Some(i); } i = i + 1; } return None; } function main(): i32 { match (pos(["a", "b", "c"], "b")) { Some(i) => { return i; }, None => { return 99; } } return 0; }`},
+		{"strarr-position-miss", `function pos(a: string[], s: string): Option[i32] { var i = 0; while (i < a.len()) { if (a[i] == s) { return Some(i); } i = i + 1; } return None; } function main(): i32 { match (pos(["a", "b"], "z")) { Some(_) => { return 1; }, None => { return 7; } } return 0; }`},
 		// match on a STRUCT-METHOD call returning Option/Result, binding the
 		// payload — the method's return type is recovered via the qualified
 		// "<Type>.<method>" key in opt_ret_fns (#2969 follow-up).

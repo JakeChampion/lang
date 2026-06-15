@@ -19,6 +19,13 @@ var stringCases = []struct {
 	exit int
 }{
 	{"index-of", `return "hello world".index_of("world");`, 6},
+	// Option-returning search family: find / rfind / find_ci wrap the
+	// -1-sentinel primitives in Option, so "not found" is None. Match on
+	// the result to recover the index (or a sentinel exit code).
+	{"find-hit", `match ("hello world".find("world")) { Some(i) => { return i; }, None => { return 99; } } return 0;`, 6},
+	{"find-miss", `match ("abc".find("zz")) { Some(_) => { return 1; }, None => { return 7; } } return 0;`, 7},
+	{"rfind-hit", `match ("hello hello".rfind("hello")) { Some(i) => { return i; }, None => { return 99; } } return 0;`, 6},
+	{"find-ci-hit", `match ("Hello World".find_ci("WORLD")) { Some(i) => { return i; }, None => { return 99; } } return 0;`, 6},
 	{"trim-len", `return "  hi  ".trim().len();`, 2},
 	{"to-upper", `var u: string = "abc".to_upper(); return u[0];`, 65},
 	{"to-lower", `var u: string = "ABC".to_lower(); return u[0];`, 97},

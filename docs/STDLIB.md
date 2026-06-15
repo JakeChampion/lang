@@ -88,7 +88,12 @@ Grouped by family:
 - **Substring search:** `starts_with`, `ends_with`, `contains`,
   `index_of`, `last_index_of`, `starts_with_ci`,
   `ends_with_ci`, `contains_ci`, `index_of_ci`,
-  `starts_with_any`, `ends_with_any`
+  `starts_with_any`, `ends_with_any`. The `index_of` /
+  `last_index_of` / `index_of_ci` family reports "not found"
+  with the `-1` sentinel; prefer the `Option`-returning
+  companions `find`, `rfind`, `find_ci` (which return
+  `None` instead) so a forgotten `< 0` check can't read a
+  bogus index — consistent with `split_once` / `strip_prefix`.
 - **Casing / transform:** `capitalize`, `to_lower`, `to_upper`,
   `snake_case`, `kebab_case`, `title_case`, `to_acronym`,
   `word_count`, `eq_ignore_ascii_case`
@@ -145,7 +150,8 @@ convention.
   `sum_u32`, `max_u32`, `min_u32`;
   `sum_u64`, `max_u64`, `min_u64`;
   `sum_f64`, `max_f64`, `min_f64`, `avg_f64`
-- **string[] core:** `join`, `index_of`, `contains`, `reverse`,
+- **string[] core:** `join`, `index_of`, `position`, `contains`,
+  `reverse`,
   `filter_non_empty`, `count_non_empty`, `distinct`,
   `distinct_count`, `max_by_len`, `min_by_len`, `sum_lens`,
   `take`, `drop`, `all_non_empty`, `any_contains`,
