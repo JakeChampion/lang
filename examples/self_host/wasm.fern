@@ -7798,6 +7798,22 @@ pub function str_to_i32_helper(): string {
     return o;
 }
 
+// chr_helper emits $__fern_chr: an i32 byte value to a fresh 1-char
+// `[len@0][bytes@4]` string block (len 1, the low byte at +4). The wasm
+// companion to asm_ir's __fn___fern_chr (the wasm AST backend had no chr, so
+// this is authored fresh). Depends on $__fern_alloc (module_allocates is pulled
+// in by the chr gate alongside this).
+pub function chr_helper(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_chr (param $n i32) (result i32)\n";
+    o = o + "    (local $blk i32)\n";
+    o = o + "    (local.set $blk (call $__fern_alloc (i32.const 5)))\n";
+    o = o + "    (i32.store (local.get $blk) (i32.const 1))\n";
+    o = o + "    (i32.store8 (i32.add (local.get $blk) (i32.const 4)) (local.get $n))\n";
+    o = o + "    (local.get $blk))\n";
+    return o;
+}
+
 // an i32 / i64 into a fresh `[len][bytes]` heap block. Depends on
 // $__fern_alloc.
 pub function to_string_helpers(): string {
@@ -11224,7 +11240,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         // i32.to_string() allocates its decimal-text box, so it needs the heap
         // allocator even in an otherwise alloc-free module (mirrors asm_ir's
         // has_need("i32_to_string") gate on the register backend).
-        if (wasm_ir.module_allocates(mod) || wasm_ir.module_uses_i32_to_string(mod)) {
+        if (wasm_ir.module_allocates(mod) || wasm_ir.module_uses_i32_to_string(mod) || wasm_ir.module_uses_chr(mod)) {
             ir_out = ir_out + heap_alloc_helpers(wasm_ir.heap_base_for(mod), wasm_ir.fl_base_for(mod), wasm_ir.fl_cells());
             ir_out = ir_out + rc_runtime_helpers(wasm_ir.heap_base_for(mod));
         }
@@ -11239,6 +11255,10 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         // $__fern_str_to_i32 backs str_to_i32(s) (the default wasm_helper_symbol
         // names it $__fern_str_to_i32). Allocation-free, so gated on its own scan.
         if (wasm_ir.module_uses_str_to_i32(mod)) { ir_out = ir_out + str_to_i32_helper(); }
+        // $__fern_chr backs chr(n) (the default wasm_helper_symbol names it
+        // $__fern_chr). Allocates its 1-char box, so the heap gate above also
+        // ORs in module_uses_chr.
+        if (wasm_ir.module_uses_chr(mod)) { ir_out = ir_out + chr_helper(); }
         // $__fern_random_bytes (a `[len][bytes]` string block — needs $__fern_str_box
         // from the heap runtime, which module_allocates pulls in for random_bytes)
         // and $__fern_random_i32 (fills the low scratch). Each gated on its own op.

@@ -1153,6 +1153,12 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"str2i32-trailing", `function main(): i32 { return str_to_i32("12x9"); }`},
 		{"str2i32-empty", `function main(): i32 { return str_to_i32("") + 7; }`},
 		{"str2i32-roundtrip", `function main(): i32 { return str_to_i32(i32_to_string(99)); }`},
+		// chr(n): i32 byte -> 1-char string box. The IR stack-ABI body must agree
+		// with asm.fern's register-ABI __fern_chr. Covers len, indexed byte, and
+		// `+` concat of two chr results.
+		{"chr-len", `function main(): i32 { return chr(65).len(); }`},
+		{"chr-byte", `function main(): i32 { return chr(122)[0]; }`},
+		{"chr-concat", `function main(): i32 { var s = chr(72) + chr(105); return s.len() * 100 + s[0]; }`},
 		// String chars -> string[] of 1-char strings (op_str_chars; result is_arr +
 		// is_strarr like split). AST emits __fern_str_chars; IR emits emit_ir_str_chars.
 		{"chars-len", `function main(): i32 { return "abcde".chars().len(); }`},
