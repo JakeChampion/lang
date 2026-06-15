@@ -159,13 +159,31 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 			},
 			wantExit: 42,
 		},
+		{
+			name: "std-subpath",
+			files: map[string]string{
+				// A `std/`-prefixed import resolves to its sub-directory
+				// file (<dir>/std/mathx.fern) while the namespace stays the
+				// basename (mathx.triple → mathx__triple). triple(14) = 42.
+				"builtins.fern":  string(builtinsSrc),
+				"std/mathx.fern": "pub function triple(x: i32): i32 { return x * 3; }\n",
+				"main.fern": "" +
+					"import \"std/mathx\";\n" +
+					"function main(): i32 { return mathx.triple(14); }\n",
+			},
+			wantExit: 42,
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			progDir := t.TempDir()
 			for name, src := range tc.files {
-				if err := os.WriteFile(filepath.Join(progDir, name), []byte(src), 0o644); err != nil {
+				dst := filepath.Join(progDir, name)
+				if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+					t.Fatalf("mkdir for %s: %v", name, err)
+				}
+				if err := os.WriteFile(dst, []byte(src), 0o644); err != nil {
 					t.Fatalf("write %s: %v", name, err)
 				}
 			}
