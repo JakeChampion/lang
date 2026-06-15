@@ -1480,6 +1480,13 @@ type TryOp struct {
 	// Ok(T) → T). Lets the IR pick `OpLoad` vs `OpFLoad` for
 	// the success-path payload load.
 	Type Type
+	// Lowered, when non-nil, is a desugared replacement for this `?`
+	// built + checked by the checker and swapped in by the post-check
+	// rewrite. Used for the error-converting `?` on a `Result[_, E]`
+	// inside a function returning `Result[_, dyn Trait]` (E implements
+	// Trait): it lowers to a block-expr that maps the error to
+	// `dyn Trait` then applies an ordinary `?`. See #3234.
+	Lowered Expr
 }
 
 // IfExpr is `if (cond) { then_expr } else { else_expr }` in

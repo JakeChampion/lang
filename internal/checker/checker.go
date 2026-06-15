@@ -2271,6 +2271,10 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// hidden side channel. Runs on success only; it also runs inside
 	// monomorph's re-check, so cloned generic bodies desugar too.
 	ast.RewriteProgramExprs(prog, func(e ast.Expr) ast.Expr {
+		// Error-converting `?` → its block-expr desugar (#3234).
+		if t, ok := e.(*ast.TryOp); ok && t.Lowered != nil {
+			return t.Lowered
+		}
 		// Composite unary minus: `-v` → `v.neg()`.
 		if u, ok := e.(*ast.Unary); ok {
 			if u.NegCall != nil {
@@ -3866,6 +3870,9 @@ type checker struct {
 	current     *ast.FuncDecl
 	loopDepth   int
 	switchDepth int
+	// tryConvN uniquifies the temp-var name in the error-converting `?`
+	// desugar (TryOp.Lowered). See #3234.
+	tryConvN int
 	// inferReturns, when non-nil, accumulates the type of every
 	// `return EXPR` statement checked in the body of the CURRENT
 	// function — set up by checkFunction only for an unannotated
@@ -4455,6 +4462,57 @@ var arithOpMethod = map[string]string{
 // rewrite) and returning its result type. handled=false means the operands
 // aren't a matching composite pair, so the caller falls through to the
 // numeric path. A composite operand without the method is a clear E009.
+// tryConvertErrToDyn builds the desugar for an error-converting `?`: a
+// `Result[T, E]` propagated through a function returning `Result[_, dyn
+// Trait]` (E implements Trait) lowers to a block-expr that maps the error
+// to `dyn Trait` then applies an ordinary exact-match `?`:
+//
+//	{ var __t: Result[T, dyn Trait] = match (inner) {
+//	    Ok(__ok)  => Ok(__ok),
+//	    Err(__e)  => Err(__e as dyn Trait),
+//	  }; __t? }
+//
+// It type-checks the desugar so every later pass sees fully-typed nodes
+// (the cast's DynCoercion recorded, the inner `?` stamped). Returns
+// (nil, false) when the target error isn't a `dyn Trait` E implements.
+// See #3234.
+func (c *checker) tryConvertErrToDyn(n *ast.TryOp, srcEnum, retEnum ast.EnumType, s *scope) (ast.Expr, bool) {
+	dt, ok := retEnum.Args[1].(ast.DynTraitType)
+	if !ok || len(dt.Traits) != 1 {
+		// v1 handles single-trait `dyn Error`; a `dyn A + B` error target
+		// would need E to implement every trait (a follow-up).
+		return nil, false
+	}
+	trait := dt.Traits[0]
+	tn, ok := methodTypeName(srcEnum.Args[1])
+	if !ok {
+		return nil, false
+	}
+	if impls := c.info.Impls[trait]; impls == nil || !impls[tn] {
+		return nil, false
+	}
+	c.tryConvN++
+	tmp := fmt.Sprintf("__try_dyn_%d", c.tryConvN)
+	okBind := fmt.Sprintf("__try_ok_%d", c.tryConvN)
+	errBind := fmt.Sprintf("__try_err_%d", c.tryConvN)
+	p := n.P
+	resultDyn := ast.EnumType{Name: "Result", Args: []ast.Type{srcEnum.Args[0], dt}}
+	mapMatch := &ast.MatchExpr{P: p, Tag: n.Inner, Arms: []*ast.MatchExprArm{
+		{P: p, VariantName: "Ok", Bindings: []string{okBind},
+			Body: &ast.Call{P: p, Callee: &ast.Ident{P: p, Name: "Ok"}, Args: []ast.Expr{&ast.Ident{P: p, Name: okBind}}}},
+		{P: p, VariantName: "Err", Bindings: []string{errBind},
+			Body: &ast.Call{P: p, Callee: &ast.Ident{P: p, Name: "Err"}, Args: []ast.Expr{
+				&ast.CastExpr{P: p, Inner: &ast.Ident{P: p, Name: errBind}, Target: dt}}}},
+	}}
+	block := &ast.BlockExpr{P: p, Stmts: []ast.Stmt{
+		&ast.Var{P: p, Name: tmp, Type: resultDyn, Init: mapMatch},
+	}, Tail: &ast.TryOp{P: p, Inner: &ast.Ident{P: p, Name: tmp}}}
+	if t := c.checkExpr(block, s); t == nil {
+		return nil, false
+	}
+	return block, true
+}
+
 func (c *checker) compositeOpOverload(n *ast.Binary, lt, rt ast.Type, s *scope) (ast.Type, bool) {
 	if lt == nil || !ast.Equal(lt, rt) {
 		return nil, false
@@ -9068,8 +9126,19 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				return nil
 			}
 			if !ast.Equal(srcEnum.Args[1], retEnum.Args[1]) {
-				c.errfCode(n.P, "E042", "`?` on Result[_, %s] but the surrounding function returns Result[_, %s]; the error types must match",
-					srcEnum.Args[1], retEnum.Args[1])
+				// Error-converting `?`: a `Result[_, E]` propagated through a
+				// function returning `Result[_, dyn Trait]` boxes the concrete
+				// error `E` into `dyn Trait`, provided E implements Trait
+				// (the `Box<dyn Error>` + `?` idiom). Desugar to a block-expr
+				// that maps the error then applies an ordinary `?`. See #3234.
+				if lowered, ok := c.tryConvertErrToDyn(n, srcEnum, retEnum, s); ok {
+					n.Kind = ast.TryKindResult
+					n.Type = srcEnum.Args[0]
+					n.Lowered = lowered
+					return n.Type
+				}
+				c.errfCode(n.P, "E042", "`?` on Result[_, %s] but the surrounding function returns Result[_, %s]; the error types must match (or implement %s for the `dyn`-error conversion)",
+					srcEnum.Args[1], retEnum.Args[1], srcEnum.Args[1])
 				return nil
 			}
 			n.Kind = ast.TryKindResult

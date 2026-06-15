@@ -84,6 +84,33 @@ func TestTypeErrors(t *testing.T) {
 // not implement `Eq` is rejected (with a derive hint); arrays/slices/
 // tuples are rejected (no structural eq yet); a type that does
 // implement `Eq` type-checks (and desugars to `a.eq(b)`).
+// Error-converting `?`: a `Result[_, E]` propagated through a function
+// returning `Result[_, dyn Trait]` is accepted when E implements Trait
+// (boxing E into `dyn Trait`), and rejected otherwise. See #3234.
+func TestTryConvertErrToDyn(t *testing.T) {
+	const hdr = `trait Error { function message(self: Self): string; }
+struct NotFound { what: string }
+impl Error for NotFound { function message(self: Self): string { return self.what; } }
+function find(): Result[i32, NotFound] { return Err(NotFound { what: "x" }); }
+`
+	// Accepted: NotFound implements Error.
+	if err := checkSource(t, hdr+`function h(): Result[i32, dyn Error] {
+  var v: i32 = find()?;
+  return Ok(v);
+}`); err != nil {
+		t.Errorf("error-converting `?` (NotFound→dyn Error) should type-check, got: %v", err)
+	}
+	// Rejected: Plain does not implement Error.
+	err := checkSource(t, `trait Error { function message(self: Self): string; }
+struct Plain { x: i32 }
+function find(): Result[i32, Plain] { return Err(Plain { x: 1 }); }
+function h(): Result[i32, dyn Error] { var v: i32 = find()?; return Ok(v); }
+function main(): i32 { return 0; }`)
+	if err == nil || !strings.Contains(err.Error(), "error types must match") {
+		t.Errorf("`?` with a non-implementing error type should be rejected, got: %v", err)
+	}
+}
+
 // Arithmetic operators `+ - * /` on a composite type desugar to its
 // conventionally-named method (add/sub/mul/div); a composite without the
 // method is rejected with a clear E009. See #2706.
