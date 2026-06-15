@@ -248,6 +248,27 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-15 — nested tuples on the self-host IR path (widen IR subset)
+
+A tuple element that is itself a tuple — `(1, (2, 3))`, accessed `t.1.1` —
+bailed the whole module to AST. The tuple-element tag encoding
+(`local_tuple_elems`, comma-joined) was decoded by *naive* comma splitters, so
+any element whose own tag contained a comma (a nested tuple, also `Result[T,E]`)
+was rejected at construction (`return s.fail()`), and the legacy AST emitter even
+mis-compiled some of them (`(1, ("ab", 9))` gave the wrong answer). Fix, all in
+`irlower.fern`: (1) the two slot/kind decoders `tuple_elem_tag` and `csv_nth` are
+now **depth-aware** (count `(`/`[` … `)`/`]`, so inner commas don't split the
+outer tag — flat tuples never exceed depth 0, unchanged); (2) `elem_type_tag`
+gained an `ExprTuple` arm that returns the element's own `(t0,t1,…)` spelling
+recursively; (3) a tuple element is admitted at construction (it is a leak-only
+heap-tuple pointer — one slot, like a struct/string/array/Option element, needing
+no new op); (4) `expr_tuple_elem_tag` recovers `t.N.M` by reading element N's
+tuple tag then element M out of it; (5) a new `expr_is_tuple` classifier. Verified
+on x86-64, wasm, and arm64 (qemu) against the interpreter — right/left/triple
+nesting, a string inside a nested tuple, and an i64 sibling after a nested element
+(the depth-aware-kind-decode case). Fixpoint still converges byte-identically.
+Guarded by `TestSelfHostNestedTupleIR{X86_64,Wasm}`.
+
 ### 2026-06-15 — qualified Option/Result construction on the self-host IR path (widen IR subset)
 
 A routing-gap sweep (pathprobe) found that the **qualified** built-in

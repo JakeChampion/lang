@@ -401,36 +401,53 @@ pub function (s: LowerState) mark_tuple_elems(i: i32, t: string): LowerState {
     return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems.with(i, t), local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_arrarr: s.local_is_arrarr, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
 
-// tuple_elem_tag returns slot i's Nth tuple element-type tag, or "".
+// tuple_elem_tag returns slot i's Nth tuple element-type tag, or "". The split is
+// depth-aware (counting `(`/`[` … `)`/`]`) so a nested tuple element whose own tag
+// contains commas — `i32,(i32,i32)` → element 1 is `(i32,i32)` — is recovered
+// whole rather than mis-split. A flat encoding never goes above depth 0, so its
+// behaviour is unchanged.
 pub function (s: LowerState) tuple_elem_tag(i: i32, n: i32): string {
     if (i < 0 || i >= s.local_tuple_elems.len()) { return ""; }
     var enc: string = s.local_tuple_elems[i];
     if (enc.len() == 0) { return ""; }
+    var depth: i32 = 0;
     var idx: i32 = 0;
     var start: i32 = 0;
     var k: i32 = 0;
     while (k <= enc.len()) {
-        if (k == enc.len() || enc[k] == 44) {   // 44 = ','
+        if (k == enc.len() || (depth == 0 && enc[k] == 44)) {   // end, or top-level ','
             if (idx == n) { return enc[start : k]; }
             idx = idx + 1;
             start = k + 1;
+        } else {
+            var ch: i32 = enc[k];
+            if (ch == 91 || ch == 40) { depth = depth + 1; }       // '[' '('
+            else if (ch == 93 || ch == 41) { depth = depth - 1; }  // ']' ')'
         }
         k = k + 1;
     }
     return "";
 }
 
-// csv_nth returns the Nth comma-separated field of `enc` (0-based), or "".
+// csv_nth returns the Nth comma-separated field of `enc` (0-based), or "". The
+// split is depth-aware (counting `(`/`[` … `)`/`]`) so a nested tuple element tag
+// — `(i32,i32),i64` → field 0 is `(i32,i32)`, field 1 is `i64` — is recovered
+// whole. A flat encoding never exceeds depth 0, so its behaviour is unchanged.
 pub function csv_nth(enc: string, n: i32): string {
     if (enc.len() == 0) { return ""; }
+    var depth: i32 = 0;
     var idx: i32 = 0;
     var start: i32 = 0;
     var k: i32 = 0;
     while (k <= enc.len()) {
-        if (k == enc.len() || enc[k] == 44) {   // 44 = ','
+        if (k == enc.len() || (depth == 0 && enc[k] == 44)) {   // end, or top-level ','
             if (idx == n) { return enc[start : k]; }
             idx = idx + 1;
             start = k + 1;
+        } else {
+            var ch: i32 = enc[k];
+            if (ch == 91 || ch == 40) { depth = depth + 1; }       // '[' '('
+            else if (ch == 93 || ch == 41) { depth = depth - 1; }  // ']' ')'
         }
         k = k + 1;
     }
@@ -442,9 +459,15 @@ pub function csv_nth(enc: string, n: i32): string {
 pub function expr_tuple_elem_tag(e: parser.Expr, n: i32, s: LowerState): string {
     match (e) {
         parser.ExprIdent(id) => { return s.tuple_elem_tag(s.slot_of(id.name), n); },
-        // `p.t.N` where `t` is a tuple struct field — element n's tag from the
-        // field's tuple type string.
         parser.ExprFieldAccess(fa) => {
+            // `t.K.N` where `t.K` is itself a (nested) tuple element: recover the
+            // outer element K's tuple-type tag, then read element N out of it.
+            if (util.is_all_digits(fa.field)) {
+                var ot: string = expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s);
+                return tuple_type_elem_tag(ot, n);
+            }
+            // `p.t.N` where `t` is a tuple struct field — element n's tag from the
+            // field's tuple type string.
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return ""; }
             return tuple_type_elem_tag(decl_field_type(s.structs, oty, fa.field), n);
@@ -452,6 +475,26 @@ pub function expr_tuple_elem_tag(e: parser.Expr, n: i32, s: LowerState): string 
         _ => { return ""; }
     }
     return "";
+}
+
+// expr_is_tuple reports whether `e` evaluates to a tuple value: a tuple literal,
+// a tuple-tracked local/param, or a tuple-typed element of an enclosing tuple
+// (`t.N` whose element tag is itself `(…)`). Drives admitting a nested tuple as a
+// (leak-only, one-pointer) element of another tuple.
+pub function expr_is_tuple(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprTuple(_) => { return true; },
+        parser.ExprIdent(id) => { return s.tuple_elem_tag(s.slot_of(id.name), 0) != ""; },
+        parser.ExprFieldAccess(fa) => {
+            if (util.is_all_digits(fa.field)) {
+                var ot: string = expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s);
+                return ot.len() >= 2 && ot[0:1] == "(";
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
 }
 
 // literal_is_i64 reports whether a non-negative integer literal text is too big
@@ -662,6 +705,26 @@ pub function elem_type_tag(e: parser.Expr, s: LowerState): string {
     // expr is already caught by infer_expr_width above).
     match (e) {
         parser.ExprNumber(num) => { if (!num.is_float && literal_is_i64(num.text)) { return "i64"; } },
+        _ => {}
+    }
+    // A NESTED tuple element (`(1, (2, 3))`): tag it with its own tuple type
+    // spelling `(t0,t1,…)` (no spaces) built recursively, so the element reads
+    // back as a tuple for `t.N.M`. The element itself is a heap-tuple POINTER —
+    // one slot, like a struct/array/Option element — so it needs no new op; only
+    // the tag carries the nesting. The comma-joined slot encoding is decoded
+    // depth-aware (tuple_elem_tag / tuple_type_elem_tag), so the inner commas
+    // don't split the outer tag.
+    match (e) {
+        parser.ExprTuple(tl) => {
+            var nt: string = "(";
+            var ni: i32 = 0;
+            while (ni < tl.elements.len()) {
+                if (ni > 0) { nt = nt + ","; }
+                nt = nt + elem_type_tag(tl.elements[ni], s);
+                ni = ni + 1;
+            }
+            return nt + ")";
+        },
         _ => {}
     }
     return "i32";
@@ -3074,7 +3137,12 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 // one pointer slot, like a string / struct element — admit it (its
                 // "Option[T]" tag lets `match (t.N)` recover the payload). #3018.
                 var el_opt_ok: boolean = expr_opt_elem_tag(el, s) != "";
-                if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "" && !el_arr_ok && !el_opt_ok) { return s.fail(); }
+                // A NESTED tuple element (`(1, (2, 3))`) is itself a heap-tuple
+                // POINTER — one slot, like a struct/string/array/Option element —
+                // so admit it. Its `(t0,t1,…)` tag (elem_type_tag) round-trips
+                // through the depth-aware comma encoding for `t.N.M` typing.
+                var el_tuple_ok: boolean = expr_is_tuple(el, s);
+                if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "" && !el_arr_ok && !el_opt_ok && !el_tuple_ok) { return s.fail(); }
                 tei = tei + 1;
             }
             // Build the per-element KIND string (i32 / i64 / f64 / string / <struct>)
