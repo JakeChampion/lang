@@ -9494,13 +9494,26 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// "var X has no slot" when it tries to allocate slots
 		// for body-local vars.
 		synth := &ast.FuncDecl{
-			P:          n.P,
-			Params:     n.Params,
-			ReturnType: n.ReturnType,
-			Body:       n.Body,
+			P:                 n.P,
+			Params:            n.Params,
+			ReturnType:        n.ReturnType,
+			ReturnUnannotated: n.ReturnUnannotated,
+			Body:              n.Body,
 		}
 		n.Synthetic = synth
 		c.current = synth
+		// An unannotated arrow lambda (`(x) => expr`) infers its return type
+		// from the body, reusing the same inferReturns channel as an
+		// unannotated function. Point it at a lambda-local slice (so the
+		// returns don't leak into an enclosing unannotated function) and
+		// unify after the body check. An explicit-return lambda keeps the
+		// outer inferReturns untouched — its synth.ReturnUnannotated is
+		// false, so the return path validates against ReturnType as before.
+		prevInfer := c.inferReturns
+		var lamRets []ast.Type
+		if n.ReturnUnannotated {
+			c.inferReturns = &lamRets
+		}
 		c.loopDepth = 0
 		c.switchDepth = 0
 		c.captureSink = func(name string, t ast.Type) {
@@ -9523,6 +9536,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		c.captureOuter = prevOuter
 		c.loopDepth = prevLoop
 		c.switchDepth = prevSwitch
+		c.inferReturns = prevInfer
+		if n.ReturnUnannotated {
+			// Unify the body's return(s) into the lambda's return type
+			// (synth.ReturnType is updated in place; mirror it onto n).
+			c.inferReturnType(synth, lamRets)
+			n.ReturnType = synth.ReturnType
+		}
 		c.current = prev
 		// Fresh list, not append — see the matching note in checkFunc;
 		// re-analysis would otherwise duplicate captures.
