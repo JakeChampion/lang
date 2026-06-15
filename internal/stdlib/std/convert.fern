@@ -1,0 +1,32 @@
+// std/convert — value-conversion traits.
+//
+// `From[T]` and `Into[T]` are the conventional vocabulary for converting
+// between types. A type opts in with an impl; conversions then read
+// uniformly across libraries:
+//
+//     import "std/convert" as convert;
+//
+//     impl convert.From[i32] for Celsius {
+//         function from(v: i32): Self { return Celsius { deg: v }; }
+//     }
+//     impl convert.Into[Fahrenheit] for Celsius {
+//         function into(self: Self): Fahrenheit { … }
+//     }
+//
+//     var c: Celsius     = Celsius.from(20);   // From — associated function
+//     var f: Fahrenheit  = c.into();           // Into — receiver method
+//
+// By convention prefer implementing `From` (it gives the constructor a
+// home and is the more composable direction); `Into` is for the cases
+// where only the source type is yours.
+//
+// (Generic use over a bound — `function widen[T, U: convert.From[T]](x: T): U`
+// — awaits bounded-generics-over-generic-traits; today From/Into are used
+// at concrete types. See docs/TRAITS.md.)
+pub trait From[T] {
+    function from(v: T): Self;
+}
+
+pub trait Into[T] {
+    function into(self: Self): T;
+}
