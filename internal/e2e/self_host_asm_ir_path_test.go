@@ -206,6 +206,13 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// must match the AST runtime-helper path.
 		{"rawmem-i32", "function main(): i32 { var buf: u8[] = __alloc_u8(8); var p: usize = buf as usize; __store_i32(p, 1234567); return __load_i32(p); }"},
 		{"rawmem-ptr-i64", "function main(): i32 { var buf: u8[] = __alloc_u8(16); var p: usize = buf as usize; __store_ptr(p, 9999); __store_i32(p + 8, 4242); var c: usize = __load_ptr(p); var b: i64 = __load_i64(p + 8); if ((c as i32) == 9999 && (b % 100000) as i32 == 4242) { return 7; } return 1; }"},
+		// Array-receiver method call `arr.<m>(args)` -> the std/array auto-discovered
+		// helper `__method_Array_<m>(arr, args)`. Was BAIL (the array receiver fell
+		// through to the prim path and mis-dispatched to `i32.<m>`); now
+		// expr_recv_prim_type returns "" for arrays and find_arr_method resolves the
+		// helper. This is the shape std/array distinct/distinct_count/mode use
+		// (calling index_of via method syntax). dedup of [x,y,x,z,y] over i32 -> 3.
+		{"arr-method-dispatch", "function __method_Array_idx_i(arr: i32[], v: i32): i32 { var i = 0; while (i < arr.len()) { if (arr[i] == v) { return i; } i = i + 1; } return 0 - 1; } function distinct_n(arr: i32[]): i32 { var seen: i32[] = []; var i = 0; while (i < arr.len()) { if (seen.idx_i(arr[i]) < 0) { seen = seen.append(arr[i]); } i = i + 1; } return seen.len(); } function main(): i32 { var a: i32[] = []; a = a.append(3); a = a.append(7); a = a.append(3); a = a.append(9); a = a.append(7); return distinct_n(a); }"},
 		{"with-loop", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; while (i < 4) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3]; }"},
 		{"append-build", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a[0] + a[4]; }"},
 		// `.append(e)` as a general EXPRESSION (not the `out = out.append(e)`
