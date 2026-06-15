@@ -1493,3 +1493,66 @@ Tests: `TestSelfHostRcPreciseDropX86IR` gains
   single array *pointer*), so once the read-back lands they fire for free.
 - **String / nested-struct / struct-array / map / option / tuple payloads** remain out
   (items 4–5).
+
+## Item 1 — arrow-lambda syntax in the self-host parser (parse-level IR widening)
+
+### Diagnosis (the real gap vs. the characterised one)
+
+The characterisation that "lambdas fall back to AST" was an artifact of the probe
+inputs using arrow syntax `(x) => …`, which the **self-host parser did not support at
+all**. The verbose `function (params): R { … }` lambda form already lowers through
+the IR path for every shape — non-capturing binding, capturing binding (param-lift),
+lambda-as-call-argument (hoist to `__lam_N` const_func), lambda in a struct field, and
+the escaping `return <capturing lambda>` closure-box. All of those route `"ir"` and
+produce correct values end-to-end on the self-host x86-64 IR driver; the lambda-lift +
+closure machinery in `irlower.fern` is mature.
+
+The native compiler **does** accept arrow lambdas (`parser.go` `looksLikeArrowLambda` /
+`parseArrowLambda`, #2701), desugaring `(params): R => expr` to the same `ast.Lambda`
+the verbose form builds. The self-host parser had only the `function`-keyword form, so
+arrow source mis-parsed (the parens read as a grouping/tuple, the `=>` was left stray)
+and `main` carried no liftable lambda — bailing the module to AST.
+
+Exact bail point: **parse** (not lift, not lower, not an eligibility gate). With the
+verbose form the identical program already routes `"ir"`; only the arrow *surface
+syntax* was missing.
+
+### Fix (simplest sound slice)
+
+Port the native disambiguator + parser into `examples/self_host/parser.fern`:
+
+- `(Par).punct_at(idx)` / `(Par).ident_at(idx)` — absolute-index token lookahead.
+- `(Par).arrow_lambda_at()` — at a `(`, returns true for `() =>`/`():` or
+  `(IDENT: TYPE, …) [: R] =>` (scans to the balanced `)`, checks the following token),
+  which a grouping `(e)` / tuple `(e0, e1)` never matches.
+- `parse_arrow_lambda(p)` — parses `(params) [: R] => expr` into the SAME
+  `ExprLambda { params, ret_type, body: [return expr] }` the verbose `function (…)`
+  form produces, so it rides the existing lambda-lift + IR lowering with **zero**
+  codegen changes.
+- Wired into `parse_primary`'s `(` arm, checked before the grouping/tuple parse.
+
+Because the desugar target is the existing `ExprLambda`, every arrow shape inherits the
+verbose form's IR support: non-capturing bindings, capturing bindings, multi-param,
+empty-param, and lambda-as-argument all route `"ir"`.
+
+### Firing proof
+
+`asm_pathprobe_run` flips `(x: i32): i32 => x + 1` (and the capturing / multi-param /
+empty / as-arg forms) from `"ast"` → `"ir"`; the self-host x86-64 IR driver returns the
+oracle value (6 / 15 / 7 / 42 / 10), matching the native interpreter. Groupings
+`(a + b) * 2` and tuples `(1, 2)` are unaffected (the lookahead requires `IDENT :` or
+`() =>`/`():`). The lambda-free self-host sources contain no arrow syntax, so the
+byte-identical Stage-2 / LoadFixpoint bootstrap holds (gate green).
+
+Tests: `TestSelfHostRcPreciseDropX86IR` gains `arrow-lambda-noncap-binding`,
+`arrow-lambda-capturing-binding`, `arrow-lambda-multi-param`,
+`arrow-lambda-empty-params`, `arrow-lambda-as-arg`, and `arrow-lambda-vs-grouping`
+(each route-asserted `"ir"` + value-checked).
+
+### Note / benign divergence
+
+The self-host accepts an un-annotated arrow `(x: i32) => x + 1` (no return type) and
+computes the correct value, where the native compiler rejects it with E002 (the
+self-host lacks that strict void-return checker rule). The added tests use the
+annotated `: R =>` form both compilers accept; the unannotated form is a permissiveness
+gap on the checker side, not a codegen one — no wrong values, no fixpoint impact.

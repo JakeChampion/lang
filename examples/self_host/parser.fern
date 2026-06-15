@@ -927,6 +927,104 @@ function (p: Par) peek_member_name(): string {
     return "";
 }
 
+// punct_at returns the punctuation text of the token at absolute index
+// `idx` ("" when out of range or not a punct token). Used by the
+// arrow-lambda lookahead, which must peek several tokens ahead of the
+// cursor without advancing.
+function (p: Par) punct_at(idx: i32): string {
+    if (idx < 0 || idx >= p.toks.len()) { return ""; }
+    var t: lexer.Token = p.toks[idx];
+    match (t) {
+        lexer.TokPunct(x) => { return x.text; },
+        _ => { return ""; }
+    }
+    return "";
+}
+// ident_at returns the identifier name of the token at absolute index
+// `idx` ("" when out of range or not an ident token).
+function (p: Par) ident_at(idx: i32): string {
+    if (idx < 0 || idx >= p.toks.len()) { return ""; }
+    var t: lexer.Token = p.toks[idx];
+    match (t) {
+        lexer.TokIdent(x) => { return x.name; },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// arrow_lambda_at reports whether the cursor (sitting on `(`) begins an
+// arrow lambda — `() => …`, `(): R => …`, or `(IDENT: TYPE, …) [: R] => …`
+// — as opposed to a grouping `(e)` or tuple `(e0, e1)`. The disambiguator
+// (ported from the native parser's looksLikeArrowLambda, #2701): an arrow
+// lambda's parens are empty or start with a typed param `IDENT :`, which an
+// expression never does, and the matching `)` is followed by `=>` or `:`
+// (the return-type colon). It scans to the balanced `)` and checks the
+// token after it.
+function (p: Par) arrow_lambda_at(): boolean {
+    // p.pos is at "(".
+    var open: i32 = p.pos;
+    // Empty params: `(` `)` then `=>` / `:`.
+    if (p.punct_at(open + 1) == ")") {
+        var after: string = p.punct_at(open + 2);
+        return after == "=>" || after == ":";
+    }
+    // Non-empty: must start with a typed param `IDENT :`.
+    if (p.ident_at(open + 1).len() == 0 || p.punct_at(open + 2) != ":") {
+        return false;
+    }
+    // Scan to the matching `)` and check the token after it.
+    var depth: i32 = 0;
+    var j: i32 = open;
+    while (j < p.toks.len()) {
+        var pk: string = p.punct_at(j);
+        if (pk == "(") {
+            depth = depth + 1;
+        } else if (pk == ")") {
+            depth = depth - 1;
+            if (depth == 0) {
+                var aft: string = p.punct_at(j + 1);
+                return aft == "=>" || aft == ":";
+            }
+        }
+        j = j + 1;
+    }
+    return false;
+}
+
+// parse_arrow_lambda parses `(params) [: R] => expr` into an ExprLambda
+// whose body is the single statement `[return expr]` — exactly the AST the
+// verbose `function (params): R { return expr; }` form produces, so the
+// lambda-lift + IR-lowering machinery handles it with no further changes.
+// The cursor is on the opening `(`. Parameter types are required (as in the
+// verbose form); the return type is optional. Ported from the native
+// parser's parseArrowLambda (#2701).
+function parse_arrow_lambda(p: Par): ExprResult {
+    p = p.advance();  // consume `(`
+    var params: ParamDecl[] = [];
+    if (p.peek_punct() != ")") {
+        while (true) {
+            var pr: ParamResult = parse_param(p);
+            p = pr.par;
+            params = params.append(pr.param);
+            if (p.peek_punct() == ",") { p = p.advance(); continue; }
+            break;
+        }
+    }
+    if (p.peek_punct() == ")") { p = p.advance(); }
+    var ret_type: string = "";
+    if (p.peek_punct() == ":") {
+        p = p.advance();
+        var rtr: TypeNameResult = parse_type_name(p);
+        p = rtr.par;
+        ret_type = rtr.name;
+    }
+    if (p.peek_punct() == "=>") { p = p.advance(); }
+    var ber: ExprResult = parse_expr(p);
+    p = ber.par;
+    var body: Stmt[] = [s_return(ber.expr)];
+    return parse_postfix(p, e_lambda(params, ret_type, body));
+}
+
 // Result types — both pieces of the (new_parser, parsed_thing)
 // pair we need to thread through recursive-descent. Avoids a
 // stateful `var p: Par` shared across helpers.
@@ -1422,6 +1520,16 @@ function parse_primary(p: Par): ExprResult {
         },
         lexer.TokPunct(x) => {
             if (x.text == "(") {
+                // Arrow lambda `(params) [: R] => expr` — a concise anonymous
+                // function whose body is a single expression (desugared to
+                // `function (params): R { return expr; }`, the same ExprLambda
+                // the verbose form produces). Checked before the grouping /
+                // tuple parse: an arrow lambda's parens hold a parameter list
+                // (`IDENT : TYPE`, or empty), which a grouping (`(e)`) or tuple
+                // (`(e0, e1)`) never does. See #2701.
+                if (p.arrow_lambda_at()) {
+                    return parse_arrow_lambda(p);
+                }
                 // `(expr)` — grouping. `(e0, e1, …)` — tuple
                 // literal. The first expr decides whether we're
                 // grouping or building a tuple: a `,` follow-up
