@@ -8980,10 +8980,10 @@ function str_leaf_is_string(e: parser.Expr, funcs: parser.FuncDecl[], depth: i32
     return false;
 }
 
-// lam_leaf_array_elem returns the ELEMENT type ("string" / "i32") of a lifted
-// `__lam_`'s array return — its leaf return is an array LITERAL — or "" when it
-// is not an array literal (or an element type this focused recovery doesn't
-// handle, e.g. f64/i64, which stay on the AST path). Recurses through a nested
+// lam_leaf_array_elem returns the ELEMENT type ("string" / "i32" / "f64") of a
+// lifted `__lam_`'s array return — its leaf return is an array LITERAL — or ""
+// when it is not an array literal (or an element type this recovery doesn't
+// handle, e.g. i64, which is already correct on the IR path). Recurses through a nested
 // `__lam_` leaf. Mirrors fn_inferred_struct_ret for the array case: the lifted
 // lambda otherwise carries a default i32 ret_type, so `var xs = if (c) { [..] }
 // else { .. }` was mis-treated as a SCALAR i32 — the array tracking (is_arr) and
@@ -8999,7 +8999,7 @@ pub function lam_leaf_array_elem(fn: parser.FuncDecl, funcs: parser.FuncDecl[], 
             if (arr.elements.len() == 0) { return ""; }
             match (arr.elements[0]) {
                 parser.ExprString(_) => { return "string"; },
-                parser.ExprNumber(num) => { if (num.is_float) { return ""; } return "i32"; },
+                parser.ExprNumber(num) => { if (num.is_float) { return "f64"; } return "i32"; },
                 _ => { return ""; }
             }
         },
@@ -9307,6 +9307,11 @@ pub function f64arr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
             if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
             out = out.append(key);
         }
+        // A lifted `__lam_` whose branch is an f64-array literal carries a
+        // default i32 ret_type; register it so `(if (c) { [1.5] } else { … })[i]`
+        // reads its 8-byte f64 elements at the right width (#3224, f64 sibling
+        // of the string-array fix).
+        else if (funcs[k].name.len() >= 6 && funcs[k].name[0:6] == "__lam_" && lam_leaf_array_elem(funcs[k], funcs, 0) == "f64") { out = out.append(funcs[k].name); }
         k = k + 1;
     }
     return out;
