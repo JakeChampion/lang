@@ -146,8 +146,44 @@ consulted by the checker at two points:
   is read, so a method returning the trait param `T` types as the pinned
   type. `Self` is still substituted to the `dyn` type itself.
 
-A generic trait with **associated types** remains object-unsafe (§3); only
-type parameters are pinnable this way.
+### 2.2 Associated-type objects — `dyn Producer[Item = i32]`
+
+A trait with **associated types** is object-unsafe *unless* the `dyn` type
+**pins** every one — `dyn Producer[Item = i32]` (mirrors Rust's
+`dyn Iterator<Item = i32>`):
+
+```fern
+trait Producer {
+    type Item;
+    function get(self: Self): Self::Item;
+}
+struct IntBox { v: i32 }
+impl Producer for IntBox { type Item = i32; function get(self: Self): i32 { return self.v; } }
+
+function sum(d: dyn Producer[Item = i32]): i32 {
+    return d.get();   // Self::Item reads as i32
+}
+```
+
+The pin uses the same `[…]` bracket as positional generic arguments — a
+`Name = Type` entry is an associated-type binding, a bare `Type` a positional
+argument, and both may appear together (`dyn Foo[i32, Item = T]`). It is carried
+in `ast.DynTraitType.AssocBindings` (parallel to `Traits`, sorted by name), and
+drives three checker points:
+
+- **Object safety** (`objectSafe`): every associated type the trait declares
+  must be pinned, else the trait stays object-unsafe (the diagnostic names the
+  unpinned one and the `[Name = …]` fix).
+- **Coercion gate** (`implementsAllDynTraits`): the concrete type's impl
+  binding (`Info.AssocBindings`) must equal the pin — `IntBox` with
+  `type Item = i32` coerces to `dyn Producer[Item = i32]`, not
+  `dyn Producer[Item = string]`.
+- **`Self::Item` projection**: resolved to the pinned type in method signatures
+  (`checkDynMethodCall` for type-checking; `ir.dynSigResolver` for the
+  `OpCallDyn` signature, so the wasm seam sees a concrete type — not a bare
+  `ProjType`).
+
+As with generic arguments the binding is erased at runtime.
 
 ## 3. Object safety
 

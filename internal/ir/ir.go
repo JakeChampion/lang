@@ -1591,6 +1591,86 @@ func Lower(prog *ast.Program, info *checker.Info) (*Program, error) {
 	return LowerWith(prog, info, 4)
 }
 
+// dynSigResolver returns a type-rewriter that resolves a dyn-call signature's
+// generic type parameters (`T`) and pinned associated types (`Self::Item`)
+// against the receiver's pins — so OpCallDyn's signature is concrete (the wasm
+// seam can't classify a bare ParamType / ProjType). `dynTrait` is the owning
+// trait; `mcs` carries the receiver `DynTraitType` (with Args / AssocBindings).
+// A nil/empty-pin receiver yields an identity rewriter.
+func dynSigResolver(info *checker.Info, dynTrait string, mcs *ast.MethodCallSite) func(ast.Type) ast.Type {
+	typeParams := map[string]ast.Type{}
+	assoc := map[string]ast.Type{}
+	if mcs != nil {
+		if dt, ok := mcs.Receiver.(ast.DynTraitType); ok {
+			for i, tr := range dt.Traits {
+				if tr != dynTrait {
+					continue
+				}
+				if td, ok := info.Traits[tr]; ok {
+					args := dt.ArgsFor(i)
+					for k, tp := range td.TypeParams {
+						if k < len(args) {
+							typeParams[tp] = args[k]
+						}
+					}
+				}
+				for _, b := range dt.AssocFor(i) {
+					assoc[b.Name] = b.Type
+				}
+				break
+			}
+		}
+	}
+	if len(typeParams) == 0 && len(assoc) == 0 {
+		return func(t ast.Type) ast.Type { return t }
+	}
+	var rw func(ast.Type) ast.Type
+	rw = func(t ast.Type) ast.Type {
+		switch x := t.(type) {
+		case ast.ParamType:
+			if r, ok := typeParams[x.Name]; ok {
+				return r
+			}
+			return t
+		case ast.ProjType:
+			if r, ok := assoc[x.Name]; ok {
+				return r
+			}
+			return ast.ProjType{Base: rw(x.Base), Name: x.Name}
+		case ast.ArrayType:
+			return ast.ArrayType{Elem: rw(x.Elem)}
+		case ast.SliceType:
+			return ast.SliceType{Elem: rw(x.Elem)}
+		case ast.TupleType:
+			out := ast.TupleType{Elems: make([]ast.Type, len(x.Elems))}
+			for i := range x.Elems {
+				out.Elems[i] = rw(x.Elems[i])
+			}
+			return out
+		case ast.StructType:
+			if len(x.Args) == 0 {
+				return x
+			}
+			args := make([]ast.Type, len(x.Args))
+			for i := range x.Args {
+				args[i] = rw(x.Args[i])
+			}
+			return ast.StructType{Name: x.Name, Args: args}
+		case ast.EnumType:
+			if len(x.Args) == 0 {
+				return x
+			}
+			args := make([]ast.Type, len(x.Args))
+			for i := range x.Args {
+				args[i] = rw(x.Args[i])
+			}
+			return ast.EnumType{Name: x.Name, Args: args}
+		}
+		return t
+	}
+	return rw
+}
+
 // typeHasDynTrait reports whether a type is, or nests, a `dyn Trait`.
 func typeHasDynTrait(t ast.Type) bool {
 	switch x := t.(type) {
@@ -13589,12 +13669,16 @@ func (b *builder) call(n *ast.Call) error {
 		// i32). The remaining params + result come from the trait
 		// method (its self param dropped). Self never appears outside
 		// the receiver slot (object-safety guarantees it), so no Self
-		// substitution is needed.
+		// substitution is needed. A generic trait's type parameters
+		// (`get(): T`) and pinned associated types (`get(): Self::Item`)
+		// ARE resolved here from the receiver's pins — otherwise the wasm
+		// OpCallDyn seam can't classify a bare ParamType / ProjType.
+		resolve := dynSigResolver(b.info, n.DynTrait, n.Method)
 		params := []ast.Type{ast.StructType{}}
 		for _, p := range meth.Params[1:] {
-			params = append(params, p.Type)
+			params = append(params, resolve(p.Type))
 		}
-		sig := &ast.FuncType{Params: params, Result: meth.Result}
+		sig := &ast.FuncType{Params: params, Result: resolve(meth.Result)}
 		// OpCallDyn's stack contract is uniform across backends:
 		// `[data, args..., vtable]`. Only how `data` and `vtable` are
 		// obtained from the receiver differs by representation
