@@ -9851,7 +9851,10 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         if (ptn.len() >= 8 && (ptn[0:7] == "Option[" || ptn[0:7] == "Result[")) { poty = ptn; }
         optty = optty.append(poty);
         tupty = tupty.append("");
-        mapty = mapty.append("");
+        // A Map[K,V] param records the slot's map type so `m.get_or(...)` / etc.
+        // on the parameter dispatch as map ops (the local-var annotation path
+        // already does this; params lacked it). #map-param.
+        if (is_map_type_name(ptn)) { mapty = mapty.append(ptn); } else { mapty = mapty.append(""); }
         isi64 = isi64.append(fn.params[i].type_name == "i64");
         isf64 = isf64.append(is_f64_scalar_type_name(fn.params[i].type_name));
         // An f64[] param is element-width-tracked (a[i] reads an 8-byte f64);
