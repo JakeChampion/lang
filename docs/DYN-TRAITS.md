@@ -5,11 +5,15 @@ three compiled backends (slice 2: wasm 2b, x86-64 2c, arm64 2d), the
 self-host (slice 3: x86-64 + arm64 + wasm), and Perceus RC for trait
 objects on **all three backends** (slice 4: wasm 4a, x86-64 4b, arm64 4c,
 §4.4), now including `dyn` values held as **array elements**
-(`dyn Trait[]`). Dispatch is complete everywhere and standalone + array
-`dyn` values are RECLAIMED (no leak) on every backend. Remaining: other
-nested-container `dyn` on the natives (closure capture / enum payload /
-map value / tuple element — still leak on x86-64 + arm64, reclaim on
-wasm; see §7). This document is the design of record; implement against it and update it
+(`dyn Trait[]`, all backends) and as **enum payloads**
+(`enum Box { Wrap(dyn Shape) }`, x86-64 + arm64). Dispatch is complete
+everywhere; standalone + array `dyn` reclaim on every backend; enum-payload
+`dyn` reclaims on the natives (wasm keeps it leaking — its inline two-word
+`dyn` double-drops a matched-and-bound payload). A **closure-captured**
+plain `dyn` already reclaims on the natives via the source local's drop.
+Still flagged-leaking: **tuple element** + **map value** `dyn` (both
+pre-existing dispatch/codegen gaps, not RC gaps) and a `dyn Trait[]` array
+captured by a closure; see §7.8. This document is the design of record; implement against it and update it
 as slices land. It is the
 runtime-dispatch counterpart to the static trait system in
 [`TRAITS.md`](TRAITS.md) — read that first.
@@ -598,20 +602,64 @@ the worklist regenerates `__drop_arr_dyn_*` from the name and seeds
 no-underflow, heterogeneous `Circle`+`Rect` each owning a String, on
 x86-64 + arm64 + wasm).
 
-**§7.8 — still FLAGGED-LEAKING on the natives (follow-up).** Other
-container kinds that hold a `dyn` element still call
-`arrElemStructDropName` / `dropFnNameFor` / `appendChildDrop` with
-`dynRcSupported=false`, so a `dyn` (or a `dyn Trait[]`) held there leaks
-on the natives (correct-but-leaking, never a double-free / UAF). Left for
-a later slice: a **closure capture** of a `dyn` array
-(`genClosureDropThunk`); a **struct field / enum payload / tuple element**
-holding a `dyn` or a `dyn Trait[]` (`appendChildDrop` — its
-`arrElemIsRcTracked` gate excludes `DynTraitType` and its child load is
-one-word, wrong for wasm's two-word inline `dyn`, and its call+`OpDrop`
-form mismatches `__drop_dyn`'s void return); and a **map value** of a
-`dyn` (`mapValHasDrop` / `genMapValDropFn`). Wiring these correctly needs
-width-aware child loads + a void-return drop branch in the shared
-child-drop path — genuinely double-free-sensitive, hence deferred.
+**§7.8 follow-up — `dyn` as an ENUM PAYLOAD — SHIPPED on the natives.**
+An `enum` variant carrying a `dyn` payload (`enum Box { Wrap(dyn Shape),
+Empty }`) now reclaims its boxed `dyn` (cell + concrete + any String the
+concrete transitively owns) on **x86-64 + arm64**. The dyn-RC capability
+is threaded through the enum drop sites: `enumVariantDropPlan`'s
+`dropKind` admits a `DynTraitType` payload, and the shared child-drop
+helpers — the generated `appendChildDrop` (used by `genEnumDropFn` /
+`genTupleDropFn` / `genStructDropFn`) and the inline `dropStructField`
+(used by `emitEnumSlotDrop`'s variant-plan tier at the exit sweep) — gained
+a `DynTraitType` arm that calls the per-set `__drop_dyn_<set>` destructor
+on the boxed one-word cell ptr (argc 1, VOID return, so NO trailing
+`OpDrop`, mirroring `genArrDynDropFn`). The payload is loaded with
+`payloadLoadOpFor`, which is `WidthPtr` (one word) on the natives —
+matching the helper's argc. Both the per-iteration loop-var reinit drop
+(generated `__drop_enum_<N>` route, via `emitEnumDropViaGenFn` whose gate
+now passes `b.dynRcSupported`) and the once-per-call exit-sweep
+(`emitEnumSlotDrop`) reclaim the payload. Tests:
+`internal/e2e/rc_heap_bump_dyn_trait_nested_test.go` (bounded loop +
+no-over-release, the matched-and-bound `match (b) { Wrap(s) => … }` shape
+— the double-free-sensitive case — on x86-64 + arm64).
+
+**wasm is deliberately EXCLUDED for the enum-payload kind.** wasm's INLINE
+two-word `dyn` representation double-drops when the payload is
+matched-and-bound: the bound `s` and the container's payload drop both
+reclaim the same `data` (the inline value is copied, not shared via a
+cell), tripping a "pointer not aligned" freelist corruption. So the
+enum/struct/tuple child-drop dyn arms gate on **`dynRcSupported` ONLY**
+(natives, `ptrW==8`), not `ptrW==4 || dynRcSupported`. wasm keeps its
+prior correct-but-leaking behaviour for the enum-payload kind; the
+ARRAY-element kind is unaffected (it reclaims on wasm via the separate
+`genArrDynDropFn` path, whose dedicated per-element generator has no
+matched-and-bound aliasing).
+
+**§7.8 — already-reclaiming and still-FLAGGED kinds (follow-up).**
+
+- **Closure capture of a plain `dyn`** — ALREADY reclaims on the natives
+  with no extra work: a captured `dyn` is moved into the env *without an
+  inc* (`needsRcIncOnAlias` declines `dyn`, move-only first cut), but the
+  source local is still swept at scope exit through `emitDec`'s
+  `DynTraitType` arm, which reclaims the concrete + cell once. So the
+  `genClosureDropThunk` does NOT (and must not) also drop the capture — that
+  would double-free. (Verified bounded on x86-64 + arm64.) **wasm's**
+  closure-captured `dyn` still leaks (its inline-value copy isn't reclaimed
+  through the source local's drop) — left as-is.
+- **Tuple element** holding a `dyn` (`(dyn Shape, i32)`) — FLAGGED-LEAKING.
+  Pre-existing DISPATCH bug, not an RC gap: `t.0.area()` traps on wasm
+  ("indirect call type mismatch") and segfaults on the natives, so the
+  tuple-of-`dyn` cannot be exercised end-to-end. RC of a kind that doesn't
+  dispatch is moot/unsafe; deferred behind a tuple-`dyn` dispatch fix.
+- **Map value** of a `dyn` (`Map[K, dyn Shape]`) — FLAGGED-LEAKING.
+  `mapValHasDrop` calls `dropFnNameFor(v, …, dynRcSupported=false)`, so a
+  `dyn` value reads kind 1 (non-reclaimed) and never routes to a broken
+  drop — it stays leaking, never double-frees. Also pre-existing
+  dispatch/codegen gaps (wasm map-of-`dyn` fails core-module validation),
+  so out of scope this slice.
+- **`dyn Trait[]` array CAPTURED by a closure** (`genClosureDropThunk`'s
+  `arrElemStructDropName(…, false)` site) — still FLAGGED-LEAKING; the
+  capture inc/borrow accounting for a nested-array `dyn` isn't established.
 
 ## 5. Coercion (boxing) model
 
