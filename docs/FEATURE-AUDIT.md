@@ -250,6 +250,22 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-15 — Result with a tuple payload on the self-host IR path (bug fix)
+
+A `Result[T, E]` whose `T` or `E` is itself a tuple — e.g. `Result[(i32, i32),
+string]`, matched with `t.0`/`t.1` reads — bailed the module to AST. Root cause in
+`opt_payload_type`: its Result `T`-vs-`E` comma split counted only `[`/`]`, not
+`(`/`)`, so a tuple payload's inner comma was mistaken for the `T`-`E` separator
+(`T` parsed as `(i32` instead of `(i32, i32)`), failing payload-type recovery so
+the match arm bailed. (Option payloads were unaffected — `opt_payload_type`
+returns the whole inner type for Option without splitting; the match-side tuple
+binding via `tuple_elems_lowerable` already worked.) One-line fix: the Result
+split now counts `(`/`)` as well as `[`/`]`. Verified on x86-64, wasm, and arm64
+(qemu) against the interpreter — Ok-tuple payload, Err-string of the same type,
+and the mirror `Result[i32, (i32, i32)]` (Err tuple); scalar-Result and
+Option-tuple regressions hold. Fixpoint still converges byte-identically. Guarded
+by `TestSelfHostResultTuplePayloadIR{X86_64,Wasm}`.
+
 ### 2026-06-15 — nested-tuple / Option / Result struct fields on the self-host IR path (widen IR subset)
 
 A struct field whose type is a nested tuple (`(i32, (i32, i32))`), or a tuple

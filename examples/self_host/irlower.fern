@@ -10130,14 +10130,17 @@ pub function opt_payload_type(rettype: string, variant: string): string {
         return rettype[7 : n - 1];
     }
     if (n >= 8 && rettype[0:7] == "Result[" && rettype[n - 1] == 93) {
-        // Split the inside on the FIRST top-level comma: T , E.
+        // Split the inside on the FIRST top-level comma: T , E. Depth counts both
+        // `[`/`]` (a nested Option/Result/Map payload) AND `(`/`)` (a tuple
+        // payload, e.g. `Result[(i32, i32), string]`), so the comma inside a
+        // bracketed/parenthesised T is not mistaken for the T-E separator.
         var inside: string = rettype[7 : n - 1];
         var depth: i32 = 0;
         var ci: i32 = 0;
         while (ci < inside.len()) {
             var ch: i32 = inside[ci];
-            if (ch == 91) { depth = depth + 1; }        // '['
-            else if (ch == 93) { depth = depth - 1; }   // ']'
+            if (ch == 91 || ch == 40) { depth = depth + 1; }        // '[' '('
+            else if (ch == 93 || ch == 41) { depth = depth - 1; }   // ']' ')'
             else if (ch == 44 && depth == 0) {          // ',' at top level
                 if (variant == "Err") { return trim_spaces(inside[ci + 1 : inside.len()]); }
                 return trim_spaces(inside[0 : ci]);
