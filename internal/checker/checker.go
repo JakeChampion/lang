@@ -2218,9 +2218,22 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// docs/TRAITS.md.
 	for _, fn := range prog.Funcs {
 		for tp, traits := range fn.Bounds {
-			for _, traitName := range traits {
-				if _, ok := c.info.Traits[traitName]; !ok {
+			for i, traitName := range traits {
+				td, ok := c.info.Traits[traitName]
+				if !ok {
 					c.errfCode(fn.P, "E021", "unknown trait %q in bound on type parameter %s", demangle(traitName), tp)
+					continue
+				}
+				// A generic-trait bound must supply the right number of
+				// type arguments (`T: From[i32]` for `trait From[T]`); a
+				// non-generic trait must supply none. See docs/TRAITS.md.
+				var nargs int
+				if ba := fn.BoundArgs[tp]; i < len(ba) {
+					nargs = len(ba[i])
+				}
+				if nargs != len(td.TypeParams) {
+					c.errfCode(fn.P, "E021", "trait %s takes %d type argument(s), %d supplied in bound on type parameter %s",
+						demangle(traitName), len(td.TypeParams), nargs, tp)
 				}
 			}
 		}
@@ -3701,18 +3714,52 @@ func (c *checker) resolveTraitMethodForParam(paramName, field string) (ast.Trait
 	// Expand the bound traits with their supertraits: a `T: Ord` bound
 	// also exposes the methods of Ord's supertraits (e.g. Eq). See
 	// docs/TRAITS.md.
-	for _, traitName := range c.expandTraits(c.current.Bounds[paramName]) {
+	// A generic-trait bound (`T: From[i32]`) carries type args parallel to
+	// the direct bounds; map each direct trait to its args so the method
+	// signature can be specialised (`from(v: T)` → `from(v: i32)`).
+	direct := c.current.Bounds[paramName]
+	argsFor := map[string][]ast.Type{}
+	if ba := c.current.BoundArgs[paramName]; len(ba) == len(direct) {
+		for i, tn := range direct {
+			if len(ba[i]) > 0 {
+				argsFor[tn] = ba[i]
+			}
+		}
+	}
+	for _, traitName := range c.expandTraits(direct) {
 		td, ok := c.info.Traits[traitName]
 		if !ok {
 			continue
 		}
 		for _, m := range td.Methods {
 			if m.Name == field {
+				if args := argsFor[traitName]; len(args) > 0 && len(td.TypeParams) == len(args) {
+					sub := make(map[string]ast.Type, len(args))
+					for i, tp := range td.TypeParams {
+						sub[tp] = args[i]
+					}
+					m = substTraitMethodTypeParams(m, sub)
+				}
 				return m, traitName, true
 			}
 		}
 	}
 	return ast.TraitMethod{}, "", false
+}
+
+// substTraitMethodTypeParams returns a copy of trait method `m` with the
+// trait's type parameters substituted (via substByName) in its parameter
+// and result types — used to specialise a generic-trait bound's method to
+// the bound's type arguments. See docs/TRAITS.md.
+func substTraitMethodTypeParams(m ast.TraitMethod, sub map[string]ast.Type) ast.TraitMethod {
+	out := m
+	out.Params = make([]ast.Param, len(m.Params))
+	for i, p := range m.Params {
+		p.Type = substByName(p.Type, sub)
+		out.Params[i] = p
+	}
+	out.Result = substByName(m.Result, sub)
+	return out
 }
 
 // collectTraitSupers appends `name` and all its transitive supertraits to

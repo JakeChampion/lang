@@ -2451,6 +2451,37 @@ function main(): i32 { var d: Dog = Dog { age: 1 }; var s: string = announce(d);
 }
 
 // Associated types: a trait declares `type Item;`, an impl binds it, and
+// A generic-trait bound (`function f[T: From[i32]]`) substitutes the
+// bound's args into the trait method signature, so a `T.from(v)` call in
+// the body type-checks against `from(v: i32): T`. Wrong arity and a type
+// argument that doesn't implement the trait are rejected. See docs/TRAITS.md.
+func TestGenericTraitBound(t *testing.T) {
+	const hdr = `trait From[T] { function from(v: T): Self; }
+struct Celsius { deg: i32 }
+impl From[i32] for Celsius { function from(v: i32): Self { return Celsius { deg: v }; } }
+`
+	if err := checkSource(t, hdr+`function describe[T: From[i32]](proto: T, v: i32): T { return T.from(v); }
+function main(): i32 {
+  var z: Celsius = Celsius { deg: 0 };
+  return describe(z, 20).deg;
+}`); err != nil {
+		t.Errorf("bounded generic over a generic trait should type-check, got: %v", err)
+	}
+	// Wrong bound-arg arity.
+	err := checkSource(t, hdr+`function describe[T: From[i32, i64]](proto: T): T { return proto; }
+function main(): i32 { return 0; }`)
+	if err == nil || !strings.Contains(err.Error(), "takes 1 type argument") {
+		t.Errorf("wrong bound-arg arity should be rejected, got: %v", err)
+	}
+	// A type argument that doesn't implement the bound trait.
+	err = checkSource(t, hdr+`struct Plain { x: i32 }
+function describe[T: From[i32]](proto: T, v: i32): T { return T.from(v); }
+function main(): i32 { var p: Plain = Plain { x: 0 }; return describe(p, 5).x; }`)
+	if err == nil || !strings.Contains(err.Error(), "does not implement trait From") {
+		t.Errorf("non-implementing type argument should be rejected, got: %v", err)
+	}
+}
+
 // A generic trait (`trait Container[T]`) binds its type parameters per
 // impl (`impl Container[i32] for B`); the conformance check substitutes
 // them, so the impl's concrete method signature lines up. A wrong arity

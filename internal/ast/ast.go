@@ -2079,7 +2079,14 @@ type FuncDecl struct {
 	// concrete type argument implements the required traits at the
 	// call site. Nil when the function has no bounded type params.
 	// See docs/TRAITS.md.
-	Bounds     map[string][]string
+	Bounds map[string][]string
+	// BoundArgs carries the type arguments of a generic-trait bound,
+	// parallel to Bounds: `function f[T: From[i32]](…)` records
+	// BoundArgs["T"] = [[i32]] alongside Bounds["T"] = ["From"]. The
+	// checker substitutes them into the bound trait's method signatures
+	// (`from(v: T)` → `from(v: i32)`) when resolving a method on a
+	// `T`-typed value. Nil when no bound carries type args. See docs/TRAITS.md.
+	BoundArgs  map[string][][]Type
 	Params     []Param
 	ReturnType Type
 	// ReturnUnannotated records that the source wrote no `: Type` after
