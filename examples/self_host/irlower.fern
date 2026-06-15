@@ -2746,19 +2746,44 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // structs are lowered (leak-only). Every DECL field is produced in
             // decl order: an overridden field lowers its literal value; otherwise
             // (update only) it is copied from the base via struct_get. The base
-            // must be a simple ident of the same struct type, so re-reading its
-            // fields is side-effect-free (a complex base bails to the AST path).
+            // may be an ident (re-read per copied field, side-effect-free) or any
+            // struct-typed expression of the same type — a non-ident base is
+            // evaluated once into a scratch local and re-loaded per copied field.
             if (!decl_is_struct(s.structs, slit.type_name)) { return s.fail(); }
             if (!decl_is_leaksafe(s.structs, slit.type_name)) { return s.fail(); }
             if (slit.has_base) {
-                match (slit.base) {
-                    parser.ExprIdent(_) => {},
-                    _ => { return s.fail(); }
-                }
+                // The base may be an ident OR any struct-typed expression whose
+                // type resolves (a struct-returning call `mk()`, a struct field
+                // read `o.inner`, a struct-array element `arr[i]`). A non-ident
+                // base is spilled into a scratch local once below so each copied
+                // field re-reads the SAME evaluated value — never re-evaluating a
+                // side-effecting base (e.g. a call) per field.
                 if (expr_struct_type(slit.base, s) != slit.type_name) { return s.fail(); }
+            }
+            // base_is_ident: an ident base re-reads its own slot per copied field
+            // (free, side-effect-free), so its lowering stays byte-identical — only
+            // a non-ident base needs the scratch-local spill.
+            var base_is_ident: boolean = false;
+            if (slit.has_base) {
+                match (slit.base) {
+                    parser.ExprIdent(_) => { base_is_ident = true; },
+                    _ => {}
+                }
             }
             var ndecl: i32 = decl_field_count(s.structs, slit.type_name);
             var sm: LowerState = s;
+            // Spill a non-ident functional-update base into a scratch local once
+            // (composed of existing store/load_local ops, so every backend +
+            // eval_ops handle it for free — the same pattern as emit_arr_store).
+            var base_tmp: i32 = 0 - 1;
+            if (slit.has_base && !base_is_ident) {
+                var bscratch: string = "$fub" + util.i32_to_string(sm.local_names.len());
+                sm = sm.add_local(bscratch);
+                base_tmp = sm.slot_of(bscratch);
+                sm = lower_expr(slit.base, sm);
+                if (!sm.ok) { return sm; }
+                sm = sm.emit(ir.op_store_local(base_tmp));
+            }
             var di: i32 = 0;
             while (di < ndecl) {
                 // find the literal field whose decl index is di (an override)
@@ -2799,9 +2824,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     if (!sm.ok) { return sm; }
                 } else if (slit.has_base) {
                     // copy decl field di from the base: base then struct_get(di).
-                    // An i64 field copies 8 bytes (struct_get_i64).
-                    sm = lower_expr(slit.base, sm);
-                    if (!sm.ok) { return sm; }
+                    // An ident base re-reads its slot; a non-ident base loads the
+                    // scratch local it was spilled into. An i64 field copies 8
+                    // bytes (struct_get_i64).
+                    if (base_is_ident) {
+                        sm = lower_expr(slit.base, sm);
+                        if (!sm.ok) { return sm; }
+                    } else {
+                        sm = sm.emit(ir.op_load_local(base_tmp));
+                    }
                     if (struct_field_is_i64(s.structs, slit.type_name, di)) { sm = sm.emit(ir.op_struct_get_i64(di)); }
                     else { sm = sm.emit(ir.op_struct_get(di, struct_field_width(s.structs, slit.type_name, di))); }
                 } else {
