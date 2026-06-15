@@ -1229,6 +1229,31 @@ pub function scalar_arr_field_type(e: parser.Expr, s: LowerState): string {
     return "";
 }
 
+// struct_arr_field_read_type returns the field type of an ARRAY-OF-STRUCT struct
+// field read (`v.params` where params: P[], P a struct) — the struct-array twin
+// of scalar_arr_field_type. Returns "" for scalar-array / enum-array fields and
+// for anything that is NOT such a field read. Used to admit `var ps: P[] =
+// obj.params` BINDS onto the IR path: aliasing a struct-array field needs only a
+// Perceus dup (__fern_rc_inc) on the buffer POINTER — element-type-agnostic,
+// since the dup and the local exit-sweep's shallow arr_dec both act on the
+// buffer, never on its (source-struct-owned) elements. No deep-drop recursion is
+// involved for the bind: `ps` borrows + counts the buffer; the source struct
+// still owns and (later) reclaims the elements. Balance mirrors the scalar bind:
+// field rc N →dup N+1 →exit-sweep(ps) N, leaving the struct's reference intact.
+pub function struct_arr_field_read_type(e: parser.Expr, s: LowerState): string {
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return ""; }
+            var ft: string = decl_field_type(s.structs, oty, fa.field);
+            if (is_struct_array_field_type(s.structs, ft)) { return ft; }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 // field_access_arr_field_type returns the field type of an array-field struct
 // field read (`s.xs` where xs: i32[]/f64[]/i64[]/boolean[] — a scalar-element
 // array — OR xs: P[] — an array-of-struct), for use as a struct-literal field
@@ -5688,8 +5713,28 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 else if (vfft == "i64[]") { vfb = vfb.mark_i64arr(vfslot, true); }
                 return vfb.emit(ir.op_store_local(vfslot));
             }
-            // A non-scalar array field (struct-array P[] / enum-array C[]) still
-            // bails: aliasing it needs deep-drop recursion (a later slice).
+            // Binding an ARRAY-OF-STRUCT field (`var ps: P[] = obj.params`,
+            // params: P[]) aliases the array exactly like the scalar case above —
+            // the Perceus dup is on the buffer POINTER, element-type-agnostic, and
+            // the exit-sweep's shallow arr_dec balances it without touching the
+            // (source-struct-owned) elements. So it lowers via the same dup-then-
+            // bind. The slot is marked with the element struct type (P) so a later
+            // `ps[i].field` read resolves the element shape. No deep-drop recursion
+            // is needed for the bind: ps borrows + counts the buffer; the source
+            // struct still owns and reclaims the elements.
+            var vsaft: string = struct_arr_field_read_type(v.init, s);
+            if (vsaft != "") {
+                var sas: LowerState = lower_expr(v.init, s);   // struct_get -> array ptr on stack
+                if (!sas.ok) { return sas; }
+                sas = sas.emit(ir.op_call_direct("__fern_rc_inc", 1));   // Perceus dup (bare inc)
+                var sab: LowerState = sas.add_local(v.name);
+                var saslot: i32 = sab.slot_of(v.name);
+                sab = sab.mark_arr(saslot, true);
+                sab = sab.mark_struct_type(saslot, vsaft[0 : vsaft.len() - 2]);   // element struct type (strip "[]")
+                return sab.emit(ir.op_store_local(saslot));
+            }
+            // An enum-array field (C[]) still bails: aliasing it needs deep-drop
+            // recursion (a later slice).
             if (is_scalar_arr_field_access(v.init, s)) { return s.fail(); }
             // `var xs: dyn Trait[] = [ ... ]` — a `dyn Trait` ARRAY literal. Each
             // element coerces to `dyn Trait`: a struct/enum element flows unboxed

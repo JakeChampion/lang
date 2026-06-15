@@ -1944,26 +1944,57 @@ pub function eligibility_report(mod: parser.Module): string {
     var out: string = "";
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        var fd: parser.FuncDecl = mod.funcs[i];
-        var name: string = fd.name;
-        if (fd.receiver_type.len() > 0) { name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
-        var lower_ok: boolean = ir_eligible(fd, mod);
-        var calls_ok: boolean = calls_only_known(fd, mod);
-        var cfns_ok: boolean = const_funcs_only_known(fd, mod);
-        if (lower_ok && calls_ok && cfns_ok) {
-            out = out + name + ": ir\n";
-        } else {
-            var reasons: string = "";
-            if (!lower_ok) { reasons = reasons + " lower"; }
-            if (!calls_ok) { reasons = reasons + " call"; }
-            if (!cfns_ok) { reasons = reasons + " const_func"; }
-            out = out + name + ": BAIL" + reasons + "\n";
-        }
+        out = out + eligibility_line(mod.funcs[i], mod);
         i = i + 1;
     }
     var verdict: string = "module: AST";
     if (all_eligible(mod)) { verdict = "module: IR"; }
     return out + verdict + "\n";
+}
+
+// eligibility_line is the single-function verdict line ("<name>: ir\n" or
+// "<name>: BAIL <reasons>\n") shared by eligibility_report and its sharded
+// twin. A receiver method is reported as "<Type>.<method>".
+function eligibility_line(fd: parser.FuncDecl, mod: parser.Module): string {
+    var name: string = fd.name;
+    if (fd.receiver_type.len() > 0) { name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
+    var lower_ok: boolean = ir_eligible(fd, mod);
+    var calls_ok: boolean = calls_only_known(fd, mod);
+    var cfns_ok: boolean = const_funcs_only_known(fd, mod);
+    if (lower_ok && calls_ok && cfns_ok) {
+        return name + ": ir\n";
+    }
+    var reasons: string = "";
+    if (!lower_ok) { reasons = reasons + " lower"; }
+    if (!calls_ok) { reasons = reasons + " call"; }
+    if (!cfns_ok) { reasons = reasons + " const_func"; }
+    return name + ": BAIL" + reasons + "\n";
+}
+
+// eligibility_report_range is the sharded form of eligibility_report: it reports
+// only functions [start, start+count) of `mod`, one verdict line each, with NO
+// "module:" verdict (that requires re-lowering every function via all_eligible).
+// The whole-module report lowers every function up-front and accumulates the ops
+// in the bump heap, which exhausts it on the large self-host modules
+// (parser / checker / irlower); auditing a slice per process invocation keeps
+// each run's live set bounded, so the frontier of those modules stays
+// observable. The first shard (start == 0) prefixes a "funcs: <N>\n" header so a
+// caller can discover the function count and drive the sharding loop. A start
+// past the end yields just that header (or nothing); count <= 0 reports to the
+// module end.
+pub function eligibility_report_range(mod: parser.Module, start: i32, count: i32): string {
+    var out: string = "";
+    if (start <= 0) { out = "funcs: " + util.i32_to_string(mod.funcs.len()) + "\n"; }
+    var lo: i32 = start;
+    if (lo < 0) { lo = 0; }
+    var hi: i32 = mod.funcs.len();
+    if (count > 0 && lo + count < hi) { hi = lo + count; }
+    var i: i32 = lo;
+    while (i < hi) {
+        out = out + eligibility_line(mod.funcs[i], mod);
+        i = i + 1;
+    }
+    return out;
 }
 
 // const_funcs_only_known reports whether every function-value reference

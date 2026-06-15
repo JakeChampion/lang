@@ -172,6 +172,78 @@ func TestSelfHostIRPipelineProbe(t *testing.T) {
 		}
 	})
 
+	// probeArgs runs the driver with an arbitrary trailing arg list (the entry
+	// path is prepended), returning its stdout — for exercising the sharded
+	// `-ir-probe-range` flag.
+	probeArgs := func(t *testing.T, prog string, extra ...string) string {
+		t.Helper()
+		entry := filepath.Join(dir, "probe_range_entry.fern")
+		if err := os.WriteFile(entry, []byte(prog), 0o644); err != nil {
+			t.Fatalf("write entry: %v", err)
+		}
+		args := append([]string{entry}, extra...)
+		var cmd *exec.Cmd
+		if len(runner) == 0 {
+			cmd = exec.Command(driverBin, args...)
+		} else {
+			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), args...)...)
+		}
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("probe driver failed (args %v): %v", extra, err)
+		}
+		return string(out)
+	}
+
+	t.Run("sharded-probe-range", func(t *testing.T) {
+		// Five functions in a stable source order. The whole-module `-ir-probe`
+		// and the sharded `-ir-probe-range` must agree on each function's verdict;
+		// sharding is the heap-bounded way to audit the large self-host modules
+		// (the whole-module probe OOMs lowering every function at once).
+		prog := "function a(): i32 { return 1; }\n" +
+			"function b(): i32 { return 2; }\n" +
+			"function c(): i32 { return 3; }\n" +
+			"function d(): i32 { return 4; }\n" +
+			"function main(): i32 { return a() + b() + c() + d(); }"
+		full := probe(t, prog, "")
+
+		// The first shard (start 0) prints a "funcs: <N>" header for driving the
+		// loop; N must be at least the 5 functions defined here.
+		head := probeArgs(t, prog, "-ir-probe-range", "0", "2")
+		if !strings.Contains(head, "funcs: ") {
+			t.Errorf("range start 0 missing 'funcs:' header\n--- out ---\n%s", head)
+		}
+		// First two functions appear, the third does not (count = 2).
+		if !strings.Contains(head, "a: ir") || !strings.Contains(head, "b: ir") {
+			t.Errorf("range [0,2) missing a/b\n--- out ---\n%s", head)
+		}
+		if strings.Contains(head, "c: ir") {
+			t.Errorf("range [0,2) leaked c beyond the count\n--- out ---\n%s", head)
+		}
+
+		// A non-zero start omits the header and reports only its slice.
+		tail := probeArgs(t, prog, "-ir-probe-range", "2", "2")
+		if strings.Contains(tail, "funcs: ") {
+			t.Errorf("non-zero start should not print the 'funcs:' header\n--- out ---\n%s", tail)
+		}
+		if !strings.Contains(tail, "c: ir") || !strings.Contains(tail, "d: ir") {
+			t.Errorf("range [2,4) missing c/d\n--- out ---\n%s", tail)
+		}
+		if strings.Contains(tail, "a: ir") || strings.Contains(tail, "main: ir") {
+			t.Errorf("range [2,4) leaked an out-of-slice function\n--- out ---\n%s", tail)
+		}
+
+		// Every per-function verdict the sharded run reports must match the
+		// whole-module probe's verdict for that function — sharding changes only
+		// WHICH functions are reported, never the verdict.
+		for _, fn := range []string{"a", "b", "c", "d", "main"} {
+			want := fn + ": ir"
+			if !strings.Contains(full, want) {
+				t.Fatalf("whole-module probe missing %q\n--- out ---\n%s", want, full)
+			}
+		}
+	})
+
 	t.Run("stdlib-loaded-whole-program", func(t *testing.T) {
 		// Importing a stdlib module pulls its (mangled) functions into the
 		// loaded program; the report must list them, proving the probe sees the

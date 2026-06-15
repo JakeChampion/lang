@@ -767,6 +767,19 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"ifexpr-struct-arr-bind", `struct P { x: i32 } function main(): i32 { var c = 5; var ps = if (c > 3) { [P { x: 7 }] } else { [P { x: 1 }] }; return ps[0].x; }`},
 		{"ifexpr-struct-arr-len", `struct P { x: i32 } function main(): i32 { var c = 5; var ps = if (c > 3) { [P { x: 7 }, P { x: 8 }] } else { [P { x: 1 }] }; return ps.len() + ps[1].x; }`},
 		{"matchexpr-struct-arr-bind", `struct P { x: i32 } function main(): i32 { var k = 1; var ps = match (k) { 1 => [P { x: 9 }], _ => [P { x: 0 }] }; return ps[0].x; }`},
+		// Binding an ARRAY-OF-STRUCT field into a local (`var ps: P[] = obj.params`):
+		// aliases the field's buffer with a Perceus dup on the POINTER (element-
+		// type-agnostic), balanced by the exit-sweep's shallow arr_dec — no deep-drop
+		// is involved for the bind, since the source struct keeps owning the elements.
+		// The slot is marked with the element struct type so `ps[i].field` / ps.len()
+		// resolve. Mirrors the already-admitted scalar-array field bind.
+		{"struct-arr-field-bind", `struct P { x: i32 } struct H { ps: P[] } function main(): i32 { var h = H { ps: [P { x: 7 }, P { x: 3 }] }; var ps: P[] = h.ps; return ps[0].x * 10 + ps[1].x; }`},
+		{"struct-arr-field-bind-len", `struct P { x: i32 } struct H { ps: P[] } function main(): i32 { var h = H { ps: [P { x: 1 }, P { x: 2 }, P { x: 3 }] }; var ps: P[] = h.ps; return ps.len(); }`},
+		{"struct-arr-field-bind-param", `struct P { d: boolean } struct H { ps: P[] } function any_d(h: H): boolean { var ps: P[] = h.ps; var i = 0; while (i < ps.len()) { if (ps[i].d) { return true; } i = i + 1; } return false; } function main(): i32 { var yes = H { ps: [P { d: false }, P { d: true }] }; var no = H { ps: [P { d: false }] }; var r = 0; if (any_d(yes)) { r = r + 10; } if (any_d(no)) { r = r + 1; } return r; }`},
+		// The nested-array motivating shape (parser.module_has_default_params): an
+		// array-of-struct field read out of an element of an outer array-of-struct,
+		// bound in a loop, then indexed for a scalar field.
+		{"struct-arr-field-bind-nested", `struct Param { has_default: boolean } struct Func { params: Param[] } struct Mod { funcs: Func[] } function has_dp(mod: Mod): boolean { var fi = 0; while (fi < mod.funcs.len()) { var ps: Param[] = mod.funcs[fi].params; var pi = 0; while (pi < ps.len()) { if (ps[pi].has_default) { return true; } pi = pi + 1; } fi = fi + 1; } return false; } function main(): i32 { var m = Mod { funcs: [Func { params: [Param { has_default: false }, Param { has_default: true }] }] }; if (has_dp(m)) { return 10; } return 0; }`},
 		// for-in / .len() over an array bound from an if-/match-EXPRESSION: the StmtVar
 		// is_arr inference now marks the slot is_arr for an IIFE-array result, so the
 		// foreach lowers (indexing already worked without is_arr) (#3141).
