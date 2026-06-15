@@ -2603,10 +2603,10 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 			}
 		}
 		for name, caps := range closureCaps {
-			if !hasRcCapture(caps, ptrW) && !makeClosureTargets[name] {
+			if !hasRcCapture(caps, ptrW, lo.dynRcSupported) && !makeClosureTargets[name] {
 				continue
 			}
-			thunk := genClosureDropThunk(name, caps, ptrW, info, genEnumDrops, genTupleDrops)
+			thunk := genClosureDropThunk(name, caps, ptrW, info, genEnumDrops, genTupleDrops, lo.dynRcSupported)
 			if thunk == nil {
 				continue
 			}
@@ -5923,6 +5923,28 @@ func (b *builder) markConstructionMoves(val ast.Expr, identIdx map[*ast.Ident]in
 			if arrElemIsRcTracked(b.exprType(cap)) {
 				mark(cap)
 			}
+			// `dyn Trait` capture (docs/DYN-TRAITS.md §7.8 — closure-capture
+			// kind). A captured `dyn` is move-only (needsRcIncOnAlias declines
+			// it, so NO inc at MakeEnv), and the closure's drop thunk reclaims
+			// it (genClosureDropThunk's dyn arm), so the source local MUST be
+			// suppressed from the exit sweep — otherwise both the source-local
+			// drop AND the thunk reclaim the same cell (a use-after-free when
+			// the closure ESCAPES: the source drop frees the cell the returned
+			// closure still derefs). NATIVES ONLY (b.dynRcSupported → boxed
+			// one-word cell, single owner after the move); wasm's inline two-
+			// word `dyn` keeps its prior correct-but-leaking capture behaviour
+			// (its env copy isn't reclaimed, the thunk doesn't reclaim it, and
+			// the source local stays swept) — gating here on dynRcSupported (NOT
+			// dynReclaim, which includes wasm) keeps the suppress/reclaim pair
+			// consistent with hasRcCapture + the thunk. `mark` can't be reused —
+			// it gates on isOwnedRcLocal, which (deliberately) excludes `dyn` —
+			// so apply the last-use guard inline.
+			if _, isDyn := b.exprType(cap).(ast.DynTraitType); isDyn && b.dynRcSupported {
+				if id, ok := cap.(*ast.Ident); ok && identIdx[id] == maxIdx[id.Name] {
+					moved[id.Name] = true
+					b.moveSites[id] = true
+				}
+			}
 		}
 	case *ast.Call:
 		// Slice 1b: an enum variant constructor — emitEnumNew now inc's an
@@ -6315,7 +6337,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		if _, isFunc := t.(*ast.FuncType); isFunc && ast.RcFreeEnabled && eligible {
 			dropFn := "__fern_closure_drop"
 			tgt := b.closureTarget[name]
-			if tgt != "" && hasRcCapture(b.closureCaps[tgt], b.ptrW) {
+			if tgt != "" && hasRcCapture(b.closureCaps[tgt], b.ptrW, b.dynRcSupported) {
 				dropFn = "__closure_drop_" + tgt
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
@@ -6496,8 +6518,11 @@ func irCaptureSlotSize(t ast.Type, ptrW int) int32 {
 }
 
 // hasRcCapture reports whether any capture is rc-tracked (i.e. was
-// inc'd at MakeEnv and so needs dropping when the closure dies).
-func hasRcCapture(caps []ast.Param, ptrW int) bool {
+// inc'd at MakeEnv and so needs dropping when the closure dies). A
+// `dyn Trait` capture is move-only (no MakeEnv inc) but still needs the
+// thunk to reclaim it, so it counts on the natives (dynRcSupported);
+// docs/DYN-TRAITS.md §7.8 — closure-capture kind.
+func hasRcCapture(caps []ast.Param, ptrW int, dynRcSupported bool) bool {
 	for _, c := range caps {
 		if arrElemIsRcTracked(c.Type) {
 			return true
@@ -6509,6 +6534,13 @@ func hasRcCapture(caps []ast.Param, ptrW int) bool {
 		// the env slot holds a single ptr that needs __fern_rc_dec'ing
 		// on the closure's last reference.
 		if _, isStr := c.Type.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
+			return true
+		}
+		// `dyn Trait` capture — NATIVES ONLY (boxed one-word cell ptr in
+		// the env slot, reclaimed via __drop_dyn_<set> in the thunk). wasm
+		// (ptrW==4, inline two-word) is excluded: it has no thunk reclaim
+		// for `dyn` and keeps leaking the capture (correct-but-leaking).
+		if _, isDyn := c.Type.(ast.DynTraitType); isDyn && dynRcSupported {
 			return true
 		}
 	}
@@ -6524,7 +6556,7 @@ func hasRcCapture(caps []ast.Param, ptrW int) bool {
 // rc-tracked captures (the generic helper already handles those).
 // The thunk's env is a plain param (slot 0), not a closure-pair
 // local, so re-loading it freely doesn't perturb ElideClosurePair.
-func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.Info, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType) *Func {
+func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.Info, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, dynRcSupported bool) *Func {
 	// A no-rc-capture closure (scalar/i64/f64 captures only) still gets a
 	// thunk when it's MakeClosure'd: the pair's drop-fn pointer needs a
 	// callable target that frees the env block. Its body is just the
@@ -6576,6 +6608,25 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 				Op{Kind: OpLoad, Width: WidthPtr},
 				Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1},
 				Op{Kind: OpDrop})
+			off += slot
+			continue
+		}
+		// `dyn Trait` capture — NATIVES ONLY (dynRcSupported, boxed one-word
+		// cell ptr in the env slot). The capture was MOVED into the env (no
+		// MakeEnv inc — needsRcIncOnAlias declines `dyn`), and
+		// markConstructionMoves suppressed the source local's exit-sweep drop,
+		// so this thunk is the SOLE owner that reclaims the cell. Load the cell
+		// ptr from [env+off] and run __drop_dyn_<set> (argc 1, VOID return → NO
+		// trailing OpDrop, mirroring appendChildDrop's dyn arm). wasm (inline
+		// two-word) is excluded — it has no thunk reclaim for `dyn` and keeps
+		// leaking the capture; see docs/DYN-TRAITS.md §7.8.
+		if dt, isDyn := c.Type.(ast.DynTraitType); isDyn && dynRcSupported {
+			ops = append(ops,
+				Op{Kind: OpLoadLocal, I32: 0},
+				Op{Kind: OpConstI32, I32: off},
+				Op{Kind: OpAdd},
+				Op{Kind: OpLoad, Width: WidthPtr},
+				Op{Kind: OpCallDirect, Str: dynDropFnName(dt.Traits), I32: 1})
 			off += slot
 			continue
 		}

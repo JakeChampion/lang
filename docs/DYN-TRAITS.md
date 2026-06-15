@@ -5,15 +5,18 @@ three compiled backends (slice 2: wasm 2b, x86-64 2c, arm64 2d), the
 self-host (slice 3: x86-64 + arm64 + wasm), and Perceus RC for trait
 objects on **all three backends** (slice 4: wasm 4a, x86-64 4b, arm64 4c,
 §4.4), now including `dyn` values held as **array elements**
-(`dyn Trait[]`, all backends) and as **enum payloads**
-(`enum Box { Wrap(dyn Shape) }`, x86-64 + arm64). Dispatch is complete
+(`dyn Trait[]`, all backends), as **enum payloads / struct fields / tuple
+elements** (`enum Box { Wrap(dyn Shape) }`, x86-64 + arm64), and **captured
+by a closure** (x86-64 + arm64). Dispatch is complete
 everywhere; standalone + array `dyn` reclaim on every backend; enum-payload
-`dyn` reclaims on the natives (wasm keeps it leaking — its inline two-word
-`dyn` double-drops a matched-and-bound payload). A **closure-captured**
-plain `dyn` already reclaims on the natives via the source local's drop.
-Still flagged-leaking: **tuple element** + **map value** `dyn` (both
-pre-existing dispatch/codegen gaps, not RC gaps) and a `dyn Trait[]` array
-captured by a closure; see §7.8. This document is the design of record; implement against it and update it
+/ struct-field / tuple-element and closure-captured `dyn` reclaim on the
+natives (wasm keeps these leaking — its inline two-word `dyn` double-drops a
+matched-and-bound payload, and a captured copy isn't reclaimed). The
+closure-capture fix also closed a **use-after-free**: an escaping closure's
+captured `dyn` was both swept (incorrectly, via the source local) and held
+by the returned env — see §7.8. Still flagged-leaking: **map value** `dyn`
+(headerless boxed cell can't join the map's rc-header value-reclamation —
+§7.8) and a `dyn Trait[]` array captured by a closure; see §7.8. This document is the design of record; implement against it and update it
 as slices land. It is the
 runtime-dispatch counterpart to the static trait system in
 [`TRAITS.md`](TRAITS.md) — read that first.
@@ -637,26 +640,64 @@ matched-and-bound aliasing).
 
 **§7.8 — already-reclaiming and still-FLAGGED kinds (follow-up).**
 
-- **Closure capture of a plain `dyn`** — ALREADY reclaims on the natives
-  with no extra work: a captured `dyn` is moved into the env *without an
-  inc* (`needsRcIncOnAlias` declines `dyn`, move-only first cut), but the
-  source local is still swept at scope exit through `emitDec`'s
-  `DynTraitType` arm, which reclaims the concrete + cell once. So the
-  `genClosureDropThunk` does NOT (and must not) also drop the capture — that
-  would double-free. (Verified bounded on x86-64 + arm64.) **wasm's**
-  closure-captured `dyn` still leaks (its inline-value copy isn't reclaimed
-  through the source local's drop) — left as-is.
+- **Closure capture of a plain `dyn`** — SHIPPED on the natives
+  (x86-64 + arm64). A captured `dyn` is moved into the env *without an inc*
+  (`needsRcIncOnAlias` declines `dyn`, move-only). The first cut *assumed*
+  the source local's exit-sweep drop (`emitDec`'s `DynTraitType` arm)
+  reclaimed it once and the thunk must NOT — true ONLY for a NON-escaping
+  closure. For an **escaping** closure (`return function () { … d.m() … }`)
+  the source local is NOT swept (it escaped into the returned env), so the
+  capture leaked — worse, the standalone-`dyn` reclaim's sweep predicate did
+  not exclude an escaped capture, so the source-local drop **freed the cell
+  the returned closure still dereferenced** — a use-after-free that
+  SEGFAULTED. Now both halves are wired on the natives:
+  `markConstructionMoves`' MakeClosure arm marks a `dyn` capture MOVED
+  (suppressing the source-local exit-sweep drop on EVERY path, escaping or
+  not), and `genClosureDropThunk` reclaims the captured `dyn` via the per-set
+  `__drop_dyn_<set>` destructor (boxed one-word cell ptr → vtable's trailing
+  drop slot → concrete dtor → `__free` the cell; argc 1, VOID return, so NO
+  trailing `OpDrop`). Net: no MakeEnv inc + one suppressed source drop + one
+  thunk reclaim = exactly one reclaim. `hasRcCapture` counts a `dyn` capture
+  (so the named thunk is generated + selected by `emitDec`). NATIVES ONLY:
+  all three sites gate on `dynRcSupported` (NOT `dynReclaim`, which includes
+  wasm) so the suppress/reclaim pair stays consistent. **wasm's**
+  closure-captured `dyn` keeps its prior correct-but-leaking behaviour (its
+  inline two-word env copy isn't reclaimed, the thunk declines it, and the
+  source local stays swept) — and an escaping `dyn`-capturing closure on
+  wasm is a PRE-EXISTING dispatch bug (returns the wrong value), independent
+  of RC. Tests: `rc_heap_bump_dyn_trait_closure_test.go` (bounded loop +
+  no-underflow, an ESCAPING closure capturing a String-owning Circle behind
+  `dyn Shape` — the use-after-free-sensitive shape — on x86-64 + arm64).
 - **Tuple element** holding a `dyn` (`(dyn Shape, i32)`) — FLAGGED-LEAKING.
   Pre-existing DISPATCH bug, not an RC gap: `t.0.area()` traps on wasm
   ("indirect call type mismatch") and segfaults on the natives, so the
   tuple-of-`dyn` cannot be exercised end-to-end. RC of a kind that doesn't
   dispatch is moot/unsafe; deferred behind a tuple-`dyn` dispatch fix.
-- **Map value** of a `dyn` (`Map[K, dyn Shape]`) — FLAGGED-LEAKING.
-  `mapValHasDrop` calls `dropFnNameFor(v, …, dynRcSupported=false)`, so a
-  `dyn` value reads kind 1 (non-reclaimed) and never routes to a broken
-  drop — it stays leaking, never double-frees. Also pre-existing
-  dispatch/codegen gaps (wasm map-of-`dyn` fails core-module validation),
-  so out of scope this slice.
+- **Map value** of a `dyn` (`Map[K, dyn Shape]`) — FLAGGED-LEAKING
+  (DELIBERATE; a documented leak beats a double-free). Map-of-`dyn`
+  *dispatches* fine on the natives (`m.get(k).area()` works — verified), but
+  its boxed `dyn` value cannot safely join the map's value-reclamation
+  machinery. The blocker is the **headerless boxed `dyn` cell**: `OpBoxDyn`
+  allocates the `{data, vtable}` cell with plain `__fern_alloc` (NO rc
+  header — that is why standalone `__drop_dyn` uses `__free`, not
+  `__fern_rc_dec`). The map's value reclamation (`mapValKindTag` kind 4 →
+  `mapValHasDrop` → the `__drop_map_via_<perVal>` column walk) is built
+  around an **rc-headered** value: kind ≥ 2 makes the runtime
+  `__map_retain_val` call `__fern_rc_inc(v)` on every `get`/`get_or`/
+  `values`/`iter`, so bumping `dyn` to kind 4 would `__fern_rc_inc` a
+  headerless cell — heap corruption. Routing `dyn` as kind 1 with a
+  *drop-only* (no-retain) column walk avoids the corruption but reintroduces
+  a hazard: a `dyn` read out via `get` and kept past the map's life would be
+  freed by the map drop (no retain co-owns it) → use-after-free — and `dyn`
+  is move-only (`needsRcIncOnAlias` declines it), so it can't be retained out
+  of the map under the current model anyway. So `mapValHasDrop` keeps
+  `dynRcSupported=false` for a `dyn` value: it reads kind 1, the value
+  leaks, and NOTHING double-frees. Cleanly wiring it needs either an
+  rc-headered boxed `dyn` cell (a `__fern_alloc_rc1`-based representation —
+  a large change touching every standalone/array/enum `dyn` reclaim path) or
+  a dyn-specific drop-only map path with proven no get-escape; both are out
+  of scope for this slice. wasm map-of-`dyn` additionally fails core-module
+  validation (pre-existing dispatch gap), so it is doubly out of scope.
 - **`dyn Trait[]` array CAPTURED by a closure** (`genClosureDropThunk`'s
   `arrElemStructDropName(…, false)` site) — still FLAGGED-LEAKING; the
   capture inc/borrow accounting for a nested-array `dyn` isn't established.
