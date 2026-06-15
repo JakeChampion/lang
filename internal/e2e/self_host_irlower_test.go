@@ -188,6 +188,17 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		{"tuple-three", "function main(): i32 { var t = (10, 20, 12); return t.0 + t.1 + t.2; }", 42},
 		{"tuple-nested", "function main(): i32 { var t = ((1, 2), 3); return t.0.0 + t.0.1 + t.1; }", 6},
 		{"tuple-with-struct", "struct P { t: i32 } function main(): i32 { var t = (40, 2); var p = P { t: t.0 }; return p.t + t.1; }", 42},
+		// Built-in Option / Result: `Some(x)` lowers to opt_make (tag 0 + payload),
+		// `None` to opt_none (tag 1), and the built-in `match` reads them with
+		// opt_tag / opt_payload — distinct ops from the user-enum variant_is path.
+		// The evaluator now models the box as [rc, tag, payload]. Result shares the
+		// same ops (tag 0 = Ok, 1 = Err). Before this, opt_make fell into the
+		// binary-op default and SIGABRT'd.
+		{"option-some", "function main(): i32 { var o: Option[i32] = Some(42); match (o) { Some(v) => { return v; }, None => { return 0; } } }", 42},
+		{"option-none", "function main(): i32 { var o: Option[i32] = None; match (o) { Some(v) => { return v; }, None => { return 99; } } }", 99},
+		{"option-value-pos", "function main(): i32 { var o: Option[i32] = Some(20); var r = match (o) { Some(v) => v + 1, None => 0 }; return r * 2; }", 42},
+		{"result-ok", "function main(): i32 { var r: Result[i32, i32] = Ok(42); match (r) { Ok(v) => { return v; }, Err(e) => { return 0; } } }", 42},
+		{"result-err", "function main(): i32 { var r: Result[i32, i32] = Err(7); match (r) { Ok(v) => { return v; }, Err(e) => { return e * 6; } } }", 42},
 	}
 
 	for _, tc := range cases {
