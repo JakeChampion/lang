@@ -571,9 +571,12 @@ Deferred to a follow-up:
 > `docs/RC-PERCEUS-PLAN.md` and `docs/OWNERSHIP-INFERENCE-PLAN.md`).
 > The text below is retained for historical context; everywhere it
 > says "arena scope," read "the value's RC lifetime." The slice
-> non-escape contract still holds, but its enforcement boundary is
-> now RC ownership, not an arena reset (there is still no static
-> escape check — see the `[T]` slice lifetime issue in the tracker).
+> non-escape contract still holds, and its enforcement boundary is
+> now RC ownership, not an arena reset. As of #2677 a **static escape
+> check** (`E063`) backs the contract: returning a `[T]` slice that
+> views function-local storage is now a checker error, in both the
+> native compiler (`internal/checker` `checkSliceEscape`) and the
+> self-hosted checker (`examples/self_host/checker.fern` `slc_walk`).
 
 - **`arena { … }` block shipped.** Sugar for `arena_save() →
   body → arena_restore()` so the bump-allocator cursor snaps
@@ -614,11 +617,12 @@ Deferred to a follow-up:
   another slice, an `T[]` array, a `string`, or any heap
   buffer the bump allocator handed out. The slice **must
   not outlive its parent's arena scope.** Concretely:
-  - A slice taken inside an `arena { ... }` block is invalid
-    after the block exits (the storage it points at was
-    reclaimed by the matching `arena_restore`). Returning
-    such a slice from the block is undefined behaviour;
-    there's no static check today, just discipline.
+  - A slice taken from a function-local array must not be
+    **returned** from the function: the backing array's last
+    owning reference drops when the frame unwinds, so the
+    returned view dangles. This is now a **static checker
+    error** (`E063`) — see "Slice escape check" below — rather
+    than the discipline-only contract it used to be.
   - A slice taken from a function-local `string` / array
     must not be returned past the caller's arena unless
     the caller's arena is the same as (or wider than) the
@@ -626,12 +630,35 @@ Deferred to a follow-up:
     arena owns everything allocated during the request, so
     slices flow freely within that scope. They become
     invalid once the handler returns and the per-request
-    arena tears down.
+    arena tears down. (String slices are a special case: `s[a:b]`
+    copies into a fresh owned `string` via `__str_slice`, so a
+    returned string slice never dangles and `E063` ignores them.)
   - The bump allocator's "everything alive at scope exit
     until the arena resets" model means the borrow-checker
     story is purely scope-based: track which arena owns the
     parent, and confine slice usage to that arena's
     lifetime.
+- **Slice escape check (`E063`) — shipped (#2677).** The
+  contract above is now enforced at check time, closing the
+  "only real safety hole" the issue tracker flagged. A
+  `return` whose value is a `[T]` slice that **provably views
+  function-local storage** — a slice of an array literal, of a
+  locally-declared owned array, or of a local slice binding
+  that itself views local storage (chased through bindings and
+  sub-slices) — is rejected. The analysis is deliberately
+  conservative: anything it can't pin down to local storage is
+  assumed safe, so there are **no false positives**. In
+  particular it leaves alone (a) string slices, which copy into
+  a fresh owned `string`; (b) slices of a parameter or receiver,
+  whose backing array the caller owns and outlives the call; and
+  (c) returning the owned array (`T[]`) itself, which is a move.
+  The rule lives in both compilers — `checkSliceEscape` in
+  `internal/checker/checker.go` and `slc_walk` /
+  `slice_escape_diags` in `examples/self_host/checker.fern` —
+  and the self-host port is held to byte-for-byte code parity
+  with the native checker by the differential gate in
+  `internal/e2e/self_host_checker_codes_test.go`. `fern explain
+  E063` prints the full rationale.
 - (The `number` deprecation alias has already been dropped
   — see PR 1's status block.)
 

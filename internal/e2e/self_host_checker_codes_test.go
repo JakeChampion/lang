@@ -77,6 +77,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E022": true, // if-let / let-else source not an enum; let-else else must diverge
 	"E057": true, // cell_new(v) element type must be a scalar or string
 	"E056": true, // subscript assignment (arr[i] = v) is read-only
+	"E063": true, // returning a [T] slice that views function-local storage
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -759,6 +760,20 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cellnew-array-bad", "function main(): i32 { var a: i32[] = [1]; var c = cell_new(a); return 0; }\n", []string{"E057"}},
 		{"cellnew-tuple-bad", "function main(): i32 { var t = (1, 2); var c = cell_new(t); return 0; }\n", []string{"E057"}},
 		{"cellnew-nested-bad", "function main(): i32 { var c = cell_new(cell_new(5)); return 0; }\n", []string{"E057"}},
+		// E063: returning a `[T]` slice that views function-local storage is a
+		// use-after-free (the backing array dies with the frame). The check is
+		// conservative — only slices provably viewing local storage fire.
+		// String slices copy, slices of a parameter stay valid with the
+		// caller's owner, and returning the owned array itself is a move.
+		// Cross-checked against the Go checker.
+		{"e063-slice-local-array", "function f(): [i32] { var xs: i32[] = [1, 2, 3]; return xs[0:2]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-slice-array-literal", "function f(): [i32] { return [1, 2, 3][0:2]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-slice-local-bound", "function f(): [i32] { var xs: i32[] = [1, 2, 3]; var s = xs[0:2]; return s; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-slice-of-param-ok", "function f(xs: i32[]): [i32] { return xs[0:2]; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e063-slice-of-param-bound-ok", "function f(xs: i32[]): [i32] { var s = xs[0:2]; return s; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e063-string-slice-ok", "function f(s: string): string { return s[0:2]; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e063-return-owned-array-ok", "function f(): i32[] { var xs: i32[] = [1, 2, 3]; return xs; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e063-slice-local-not-returned-ok", "function f(): i32 { var xs: i32[] = [1, 2, 3]; var s = xs[0:2]; return s[0]; }\nfunction main(): i32 { return 0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
