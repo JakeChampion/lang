@@ -5874,6 +5874,21 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // this catches the other map-typed inits, e.g. binding a map struct
             // field (`var m: Map[K, V] = c.m`).
             if (is_map_type_name(v.type_name)) { sb = sb.mark_map_type(slot, v.type_name); }
+            else {
+                // UNANNOTATED map binding — `var m = Map { k: v, … }` (no
+                // `: Map[K,V]`). The literal desugars to a
+                // `map_new[_i32](n).insert(…)` chain whose key kind expr_map_kind
+                // recovers (1 = i32, 0 = string). Without this, local_map_type
+                // stays "" and a later `m.insert / .get_or / .has` emits key-kind
+                // 0 (string) for an i32-key map — the i32 key is then dereferenced
+                // as a string pointer and segfaults. Store the FULL `Map[K, V]`
+                // form map_key_kind_of expects (it keys on the `Map[i32,` prefix);
+                // the value tag defaults to i32 (the dominant case — string-value
+                // maps are a follow-up and currently bail anyway).
+                var umk: i32 = expr_map_kind(v.init, sb);
+                if (umk == 1) { sb = sb.mark_map_type(slot, "Map[i32, i32]"); }
+                else if (umk == 0) { sb = sb.mark_map_type(slot, "Map[string, i32]"); }
+            }
             // Record tuple element type tags for `var t = (e0, e1, ...)` so a
             // later `t.N` recovers each element's type.
             match (v.init) {
