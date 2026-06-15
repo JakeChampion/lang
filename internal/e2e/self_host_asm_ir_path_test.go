@@ -1025,6 +1025,12 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// parse_int_or (match (s.parse_int()) { … }) lowers. Both Some and None
 		// arms exercised; must match the AST path.
 		{"string-method-option-match", "function (s: string) firstlen(): Option[i32] { if (s.len() == 0) { return None; } return Some(s.len()); } function f(s: string): i32 { match (s.firstlen()) { Some(v) => { return v; }, None => { return 0 - 1; } } } function main(): i32 { return f(\"hello\") * 10 + (f(\"\") + 1); }"},
+		// match Some(p) binding a leak-safe TUPLE payload (`(string, string)`) from
+		// a method-call Option result — the std/string is_email_like shape
+		// (match (s.split_once(\"@\")) { Some(p) => … p.0 … p.1 … }). The bound
+		// slot is tagged with the tuple element types so p.0/p.1 read correctly;
+		// both Some and None arms exercised, must match the AST path.
+		{"option-tuple-payload-method-match", "function (s: string) halves(): Option[(string, string)] { if (s.len() < 2) { return None; } return Some((s[0:1], s[1:s.len()])); } function f(s: string): i32 { match (s.halves()) { Some(p) => { return p.0.len() * 100 + p.1.len(); }, None => { return 0 - 1; } } } function main(): i32 { if (f(\"hello\") == 104 && f(\"x\") == 0 - 1) { return 0; } return 1; }"},
 	}
 
 	for _, tc := range cases {
