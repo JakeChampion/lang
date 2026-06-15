@@ -1283,14 +1283,16 @@ func linkDarwin(asm, outPath, cc string) error {
 // code + direct svc 0 syscalls.
 // linkNative assembles and links arm64 assembly into a static ELF
 // executable entirely in-process, with no external assembler or linker
-// (the pure-Go internal/native backend). Unsupported instructions
-// surface as an error rather than a miscompile.
+// (the pure-Go internal/native backend). The output uses the W^X
+// two-segment layout (R+X code, R+W data) so no mapping is both writable
+// and executable — required by W^X-enforcing loaders such as Android's.
+// Unsupported instructions surface as an error rather than a miscompile.
 func linkNative(asm, outPath string) error {
-	text, rodata, err := nativearm64.AssembleProgram(asm, nativeelf.TextVAddr)
+	text, rodata, err := nativearm64.AssembleProgramWX(asm, nativeelf.TextVAddrWX)
 	if err != nil {
 		return fmt.Errorf("native assembler: %w", err)
 	}
-	bin := nativeelf.StaticExecutableData(text, rodata)
+	bin := nativeelf.StaticExecutableDataWX(text, rodata)
 	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 		return err
 	}
@@ -1304,13 +1306,14 @@ func linkNative(asm, outPath string) error {
 
 // linkNativeX86 is the x86-64 counterpart of linkNative: it assembles and
 // links x86-64 assembly into a static ELF executable entirely in-process
-// via the pure-Go internal/native/x86_64 backend.
+// via the pure-Go internal/native/x86_64 backend, using the same W^X
+// two-segment layout (R+X code, R+W data).
 func linkNativeX86(asm, outPath string) error {
-	text, rodata, err := nativex86.AssembleProgram(asm, nativeelf.TextVAddr)
+	text, rodata, err := nativex86.AssembleProgramWX(asm, nativeelf.TextVAddrWX)
 	if err != nil {
 		return fmt.Errorf("native assembler: %w", err)
 	}
-	bin := nativeelf.StaticExecutableDataX86(text, rodata)
+	bin := nativeelf.StaticExecutableDataX86WX(text, rodata)
 	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 		return err
 	}

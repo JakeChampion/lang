@@ -48,6 +48,119 @@ func TestStaticExecutableHeader(t *testing.T) {
 	}
 }
 
+// TestStaticExecutableDataWXHeader checks the W^X two-segment layout:
+// two PT_LOAD program headers (R+X code, R+W data), an entry just past
+// the two headers, and a data segment whose file offset and load address
+// both land on the first 16 KiB page boundary past .text (so the segment
+// is never both writable and executable, and the offset is congruent to
+// the vaddr mod the page size).
+func TestStaticExecutableDataWXHeader(t *testing.T) {
+	text := []byte{0x00, 0x00, 0x80, 0xd2} // movz x0,#0
+	data := []byte{1, 2, 3, 4, 5, 6, 7, 8} // one 8-byte datum
+	bin := elf.StaticExecutableDataWX(text, data)
+
+	const base = 0x400000
+	const headers = 64 + 2*56 // ehdr + two phdrs = 176
+	const page = 0x10000
+	dataOff := (uint64(headers+len(text)) + page - 1) &^ (page - 1)
+
+	if want := int(dataOff) + len(data); len(bin) != want {
+		t.Fatalf("len = %d, want %d", len(bin), want)
+	}
+	if e_type := u16(bin, 16); e_type != 2 { // ET_EXEC
+		t.Errorf("e_type = %d, want 2 (ET_EXEC)", e_type)
+	}
+	if e_phnum := u16(bin, 56); e_phnum != 2 {
+		t.Errorf("e_phnum = %d, want 2", e_phnum)
+	}
+	if e_entry := u64(bin, 24); e_entry != base+headers {
+		t.Errorf("e_entry = %#x, want %#x", e_entry, base+headers)
+	}
+
+	// Program header 0 (offset 64): R+X code covering headers + .text.
+	if p_type := u32(bin, 64); p_type != 1 {
+		t.Errorf("seg0 p_type = %d, want 1 (PT_LOAD)", p_type)
+	}
+	if p_flags := u32(bin, 68); p_flags != 5 { // PF_R|PF_X
+		t.Errorf("seg0 p_flags = %d, want 5 (R|X)", p_flags)
+	}
+	if p_offset := u64(bin, 72); p_offset != 0 {
+		t.Errorf("seg0 p_offset = %d, want 0", p_offset)
+	}
+	if p_filesz := u64(bin, 96); p_filesz != uint64(headers+len(text)) {
+		t.Errorf("seg0 p_filesz = %d, want %d", p_filesz, headers+len(text))
+	}
+
+	// Program header 1 (offset 120): R+W data on its own page.
+	if p_type := u32(bin, 120); p_type != 1 {
+		t.Errorf("seg1 p_type = %d, want 1 (PT_LOAD)", p_type)
+	}
+	if p_flags := u32(bin, 124); p_flags != 6 { // PF_R|PF_W
+		t.Errorf("seg1 p_flags = %d, want 6 (R|W)", p_flags)
+	}
+	if p_offset := u64(bin, 128); p_offset != dataOff {
+		t.Errorf("seg1 p_offset = %#x, want %#x", p_offset, dataOff)
+	}
+	if p_vaddr := u64(bin, 136); p_vaddr != base+dataOff {
+		t.Errorf("seg1 p_vaddr = %#x, want %#x", p_vaddr, base+dataOff)
+	}
+	if p_filesz := u64(bin, 152); p_filesz != uint64(len(data)) {
+		t.Errorf("seg1 p_filesz = %d, want %d", p_filesz, len(data))
+	}
+	// The two segments must not share a page (else one protection wins).
+	codeEndPage := (uint64(headers+len(text)) - 1) / page
+	if dataStartPage := dataOff / page; dataStartPage <= codeEndPage {
+		t.Errorf("data page %d overlaps code end page %d", dataStartPage, codeEndPage)
+	}
+}
+
+// TestAssembledDataWXRunsUnderQemu is the W^X symbol-addressing gate: the
+// same adrp + add #:lo12: rodata load as TestAssembledDataTextRunsUnderQemu,
+// but assembled with AssembleProgramWX and wrapped with
+// StaticExecutableDataWX (page-aligned data in a separate R+W segment).
+// Proves the page-aligned data resolution and two-segment load agree:
+// loading the .rodata constant 42 and exiting with it.
+func TestAssembledDataWXRunsUnderQemu(t *testing.T) {
+	qemu, err := exec.LookPath("qemu-aarch64")
+	if err != nil {
+		if qemu, err = exec.LookPath("qemu-aarch64-static"); err != nil {
+			t.Skip("qemu-aarch64 not on PATH")
+		}
+	}
+	src := "" +
+		"\t.text\n" +
+		"\tadrp x1, val\n" +
+		"\tadd x1, x1, :lo12:val\n" +
+		"\tldr x0, [x1]\n" + // x0 = *val = 42
+		"\tmov x8, #93\n" +
+		"\tsvc #0\n" +
+		"\t.section .rodata\n" +
+		"\t.balign 8\n" +
+		"val:\n" +
+		"\t.8byte 42\n"
+	text, rodata, err := arm64.AssembleProgramWX(src, elf.TextVAddrWX)
+	if err != nil {
+		t.Fatalf("AssembleProgramWX: %v", err)
+	}
+	bin := elf.StaticExecutableDataWX(text, rodata)
+	path := filepath.Join(t.TempDir(), "data42wx")
+	if err := os.WriteFile(path, bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err = exec.Command(qemu, path).Run()
+	got := 0
+	if err != nil {
+		ee, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("run failed: %v", err)
+		}
+		got = ee.ExitCode()
+	}
+	if got != 42 {
+		t.Fatalf("exit code = %d, want 42", got)
+	}
+}
+
 // TestExitCodeRunsUnderQemu is the end-to-end gate: encode a tiny
 // exit(42) program, wrap it in a static ELF via StaticExecutable,
 // and run it under qemu-aarch64. The whole pipeline — instruction

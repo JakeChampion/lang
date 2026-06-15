@@ -268,21 +268,40 @@ func (a *Assembler) Bytes() ([]byte, error) {
 
 // BytesProgram resolves branches AND symbol references (adrp / add
 // #:lo12:), laying .text at textVAddr and .rodata immediately after
-// (8-byte aligned). It returns the final .text and .rodata blobs.
+// (8-byte aligned). It returns the final .text and .rodata blobs. This is
+// the single-segment layout (elf.StaticExecutableData / R+W+X).
 func (a *Assembler) BytesProgram(textVAddr uint64) (text, rodata []byte, err error) {
-	// Flush any literals not yet placed by a .ltorg, then resolve each
-	// ldr-literal's PC-relative offset.
 	a.FlushLiterals()
+	rodataVAddr := textVAddr + uint64(len(a.insns)*4)
+	if rem := rodataVAddr % 8; rem != 0 {
+		rodataVAddr += 8 - rem
+	}
+	return a.bytesProgramAt(textVAddr, rodataVAddr)
+}
+
+// BytesProgramWX is BytesProgram for the W^X two-segment ELF layout
+// (elf.StaticExecutableDataWX): .rodata is placed on the first 16 KiB page
+// boundary at or after the end of .text — a separate R+W PT_LOAD — rather
+// than contiguously after it, so the code segment can be mapped R+X. The
+// page size matches elf.pageAlign; pass elf.TextVAddrWX as textVAddr.
+func (a *Assembler) BytesProgramWX(textVAddr uint64) (text, rodata []byte, err error) {
+	a.FlushLiterals()
+	const page = 0x10000 // must match elf.pageAlign
+	rodataVAddr := (textVAddr + uint64(len(a.insns)*4) + page - 1) &^ (page - 1)
+	return a.bytesProgramAt(textVAddr, rodataVAddr)
+}
+
+// bytesProgramAt resolves every vaddr-dependent fixup for a layout where
+// .text loads at textVAddr and the .rodata/.data blob loads at rodataVAddr
+// (contiguous for BytesProgram, page-aligned for BytesProgramWX). Literals
+// must already be flushed by the caller.
+func (a *Assembler) bytesProgramAt(textVAddr, rodataVAddr uint64) (text, rodata []byte, err error) {
+	// Resolve each ldr-literal's PC-relative offset.
 	for _, f := range a.litFixups {
 		insnAddr := textVAddr + uint64(f.at)*4
 		litAddr := textVAddr + uint64(f.poolIdx)*4
 		imm19 := uint32(int32(int64(litAddr)-int64(insnAddr)) / 4)
 		a.insns[f.at] |= (imm19 & 0x7ffff) << 5
-	}
-
-	rodataVAddr := textVAddr + uint64(len(a.insns)*4)
-	if rem := rodataVAddr % 8; rem != 0 {
-		rodataVAddr += 8 - rem
 	}
 
 	symVAddr := func(name string) (uint64, bool) {

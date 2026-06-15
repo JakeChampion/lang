@@ -31,6 +31,18 @@ func AssembleProgram(src string, textVAddr uint64) (text, rodata []byte, err err
 	return a.BytesProgram(textVAddr)
 }
 
+// AssembleProgramWX is AssembleProgram for the W^X two-segment ELF layout
+// (elf.StaticExecutableDataWX): .rodata is page-aligned into a separate
+// R+W segment instead of laid contiguously after .text. Pass
+// elf.TextVAddrWX as textVAddr.
+func AssembleProgramWX(src string, textVAddr uint64) (text, rodata []byte, err error) {
+	a, err := ParseProgram(src)
+	if err != nil {
+		return nil, nil, err
+	}
+	return a.BytesProgramWX(textVAddr)
+}
+
 // ParseProgram parses and encodes the program (instructions + data
 // directives + symbol/relocation bookkeeping) but does not resolve
 // vaddr-dependent fixups. The caller finishes with BytesProgram (ELF,
