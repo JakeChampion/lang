@@ -782,6 +782,14 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		{"tuple-structarr-elem-field", `struct P { x: i32 } function main(): i32 { var t = ([P{x:5}], 3); return t.0[0].x + t.1; }`, 8},
 		{"tuple-structarr-elem-multi", `struct P { x: i32, y: i32 } function main(): i32 { var t = ([P{x:5,y:6}, P{x:7,y:8}], 100); return t.0[0].x + t.0[1].y + t.1; }`, 113},
 		{"tuple-structarr-elem-method", `struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function main(): i32 { var t = ([P{x:5}], 3); return t.0[0].dbl() + t.1; }`, 13},
+		// A string[] tuple element (`(["a","b"], x)`): the element's recorded
+		// `string[]` tuple tag lets `t.0[i]` read as a string (`.len()`) and a
+		// rebind `var xs = t.0` recover the string[] type. The element is a heap
+		// pointer in one slot; the self-host AST path mishandled it (and refused it
+		// at construction), so these pin the absolute IR value. #3353.
+		{"tuple-strarr-elem-len", `function main(): i32 { var t = (["ab","cd"], 3); return t.0[1].len() + t.1; }`, 5},
+		{"tuple-strarr-elem-two", `function main(): i32 { var t = (["ab","cd"], 3); return t.0[0].len() + t.0[1].len() + t.1; }`, 7},
+		{"tuple-strarr-elem-rebind", `function main(): i32 { var t = (["ab","cd"], 3); var xs = t.0; return xs[1].len() + t.1; }`, 5},
 		{"random-i32-varies", `function main(): i32 { var a: i32 = random_i32(); var b: i32 = random_i32(); if (a == 0) { return 0; } if (a == b) { return 1; } return 7; }`, 7},
 		{"random-bytes-byte-range", `function main(): i32 { var s: string = random_bytes(4); var x: i32 = s[0]; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},
 		{"uuid-v4", uuidV4Program, 0},
