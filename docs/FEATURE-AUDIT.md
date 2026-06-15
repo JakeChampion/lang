@@ -248,6 +248,24 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-15 — qualified Option/Result construction on the self-host IR path (widen IR subset)
+
+A routing-gap sweep (pathprobe) found that the **qualified** built-in
+Option/Result construction spellings bailed the whole module to AST:
+`Option.Some(x)`, `Option.None`, `Result.Ok(x)`, `Result.Err(x)` routed `"ast"`
+while the bare forms (`Some(x)` / `Ok(x)` / `None`) already lowered through IR.
+The qualified `Enum.Variant` path only consulted `variant_enum_owner` for *user*
+enums (`s.structs`); the built-in Option/Result aren't in `s.structs`, so the
+qualified form fell through and the AST emitter mis-lowered it as
+`# unresolved ident: Option`. Fix: a shared `lower_opt_make_payload(tag, arg)`
+helper (extracted from the bare path, widening i64/f64 payloads) is now also
+called from the qualified `ExprCall` path for `Option.Some`/`Result.Ok` (tag 0)
+and `Result.Err` (tag 1); `Option.None` (a field-access, no call) lowers to
+`op_opt_none`. Both produce the identical box as the bare forms. Verified on
+x86-64, wasm, and arm64 (qemu) against the interpreter, including composition
+with the `?` operator; fixpoint still converges byte-identically. Guarded by
+`TestSelfHostQualifiedOptResultIR{X86_64,Wasm}`.
+
 ### 2026-06-14 — u8/i8/u16/i16 arithmetic not width-wrapped on the self-host IR path (bug fix)
 
 Follow-on from the u32 div/rem sweep: sub-32-bit integer arithmetic (`+` `-` `*`
