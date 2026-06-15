@@ -969,6 +969,27 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"replace-empty-old", `function main(): i32 { return "abc".replace("", "X").len(); }`},
 		{"replace-multichar", `function main(): i32 { return "axxbxxc".replace("xx", "-").len(); }`},
 		{"replace-param", `function rp(s: string): i32 { return s.replace("o", "0").len(); } function main(): i32 { return rp("foobar"); }`},
+		// Free-function spellings of the transform builtins (str_to_upper(s) /
+		// str_to_lower / str_trim / str_repeat(s, n) / str_replace(s, a, b) /
+		// str_contains(s, sub)) — the receiver is the first positional arg, the
+		// rest are the method args. These route through the SAME ops as the
+		// `.<field>()` method forms (lower_str_method), so AST and IR must agree.
+		// The self-host compiler's own source uses these spellings, so lowering
+		// them widens the IR subset for self-compilation. (str_split / the
+		// predicates already had free-call cases above.)
+		{"free-to-upper-len", `function main(): i32 { var t = str_to_upper("Hello"); return t.len(); }`},
+		{"free-to-upper-byte", `function main(): i32 { var t = str_to_upper("abc"); return t[0]; }`},
+		{"free-to-lower-byte", `function main(): i32 { var t = str_to_lower("ABC"); return t[2]; }`},
+		{"free-trim-len", `function main(): i32 { var t = str_trim("  hi  "); return t.len(); }`},
+		{"free-trim-byte", `function main(): i32 { var t = str_trim("  xy"); return t[0]; }`},
+		{"free-repeat-len", `function main(): i32 { var t = str_repeat("ab", 3); return t.len(); }`},
+		{"free-repeat-byte", `function main(): i32 { var t = str_repeat("xy", 4); return t[0] + t[7]; }`},
+		{"free-replace-len", `function main(): i32 { var t = str_replace("a-b-c", "-", "_"); return t.len(); }`},
+		{"free-replace-grow", `function main(): i32 { var t = str_replace("aaa", "a", "bb"); return t.len(); }`},
+		{"free-contains-true", `function main(): i32 { if (str_contains("hello world", "o w")) { return 7; } return 0; }`},
+		{"free-contains-false", `function main(): i32 { if (str_contains("hello", "xyz")) { return 7; } return 9; }`},
+		{"free-nested", `function main(): i32 { var t = str_trim(str_to_upper("  ab  ")); return t.len(); }`},
+		{"free-concat", `function main(): i32 { var t = str_to_upper("ab") + "Z"; return t.len(); }`},
 		// String chars -> string[] of 1-char strings (op_str_chars; result is_arr +
 		// is_strarr like split). AST emits __fern_str_chars; IR emits emit_ir_str_chars.
 		{"chars-len", `function main(): i32 { return "abcde".chars().len(); }`},
