@@ -1697,6 +1697,9 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     if (cid.name == "str_to_upper" || cid.name == "str_to_lower"
                             || cid.name == "str_trim" || cid.name == "str_repeat"
                             || cid.name == "str_replace") { return true; }
+                    // i32_to_string(n) yields a fresh decimal-text string box (the
+                    // free-function spelling of `n.to_string()`).
+                    if (cid.name == "i32_to_string") { return true; }
                     return s.is_str_ret_fn(cid.name);
                 },
                 // `X.to_string()` yields a string box (the i32 runtime helper or
@@ -3532,6 +3535,17 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!eis.ok) { return eis; }
                         eis = eis.emit(ir.op_call_direct("__fern_i32_to_string", 1));
                         return eis.emit(ir.op_eprint_str());
+                    }
+                    // Built-in `i32_to_string(n)` — the free-function spelling of
+                    // `n.to_string()` on an i32: route to the __fern_i32_to_string
+                    // runtime (a decimal-text string box). Same op as the method form
+                    // (above), so the call_direct need-gating + all three backends
+                    // already handle it; only the free spelling was missing. The
+                    // self-host source uses this form (emitting numeric asm/wat text).
+                    if (cid.name == "i32_to_string" && c.args.len() == 1) {
+                        var i2s: LowerState = lower_expr(c.args[0], s);
+                        if (!i2s.ok) { return i2s; }
+                        return i2s.emit(ir.op_call_direct("__fern_i32_to_string", 1));
                     }
                     // Built-in `exit(n)` — terminate the process with exit code n
                     // (an inline sys_exit / proc_exit per backend).

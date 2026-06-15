@@ -39,6 +39,17 @@ var toStringIRCases = []struct {
 	// multi-digit + boundary: (100).to_string() == "100", (9).to_string() == "9".
 	{"i32-multidigit",
 		`function main(): i32 { var a: string = (100).to_string(); var b: string = (9).to_string(); if (a.len() != 3) { return 40; } if (a[0] != 49) { return 41; } if (a[1] != 48) { return 42; } if (b.len() != 1) { return 43; } return a.len() + b.len(); }`, 4},
+	// Free-function spelling `i32_to_string(n)` — the same __fern_i32_to_string
+	// op as `(n).to_string()`, just the free-call form the self-host source uses.
+	// Same byte/length assertions as i32-basic, but via the free call.
+	{"free-i32-basic",
+		`function main(): i32 { var a: string = i32_to_string(42); if (a.len() != 2) { return 50; } if (a[0] != 52) { return 51; } if (a[1] != 50) { return 52; } return a.len(); }`, 2},
+	// Free call: 0 -> "0", negative -> leading '-' (matches i32-zero-and-negative).
+	{"free-i32-zero-and-negative",
+		`function main(): i32 { var z: string = i32_to_string(0); var n: string = i32_to_string(5 - 12); if (z.len() != 1) { return 60; } if (z[0] != 48) { return 61; } if (n.len() != 2) { return 62; } if (n[0] != 45) { return 63; } if (n[1] != 55) { return 64; } return z.len() + n.len(); }`, 3},
+	// Free call feeds `+` concat: "n=" + i32_to_string(7) == "n=7".
+	{"free-concat",
+		`function main(): i32 { var msg: string = "n=" + i32_to_string(7); if (msg.len() != 3) { return 80; } if (msg[0] != 110) { return 81; } if (msg[2] != 55) { return 82; } return msg.len(); }`, 3},
 }
 
 // TestSelfHostToStringIRX86_64 compiles each case through the self-hosted x86-64
