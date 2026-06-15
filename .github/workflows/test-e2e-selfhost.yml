@@ -42,10 +42,16 @@ name: Test e2e self-host
 # x86 shard ran 9m51s — 9 seconds under this job's 10-min timeout, so
 # one new test would tip CI over.
 #
-# Eight is the balance: ~23 min / 8 ≈ 3 min of tests + the ~2.5 min
-# build ≈ ~6 min worst-case shard (allowing for round-robin load
-# imbalance), a comfortable timeout margin and ~6 min wall-clock,
-# while halving the job count vs 16 so queue contention stays low.
+# Ten is the current balance. Eight had crept too close to the edge:
+# the heavy x86 self-host driver-build tests grew (and reshuffle as new
+# TestSelfHost* functions land), and under runner contention the worst
+# x86 shard was observed at ~9m9s with shard7 repeatedly tripping the
+# 10-min timeout — exactly the "creeps toward ~8 min" trigger below. At
+# N=10 the per-shard test work is ~23 min / 10 ≈ 2.3 min + the ~2.5 min
+# build ≈ ~5 min worst-case shard, restoring a comfortable margin so a
+# contention spike no longer tips a shard over the timeout, at the cost
+# of 4 more jobs (2 per arch) — still well short of the 16-shard
+# queue-contention regime.
 # Bump N (here and in NSHARD below) only if the worst x86 shard's
 # wall-clock creeps toward ~8 min; drop it only if all shards finish
 # well under ~4 min.
@@ -62,9 +68,9 @@ jobs:
         host:
           - { runner: ubuntu-latest,    name: x86_64  }
           - { runner: ubuntu-24.04-arm, name: aarch64 }
-        # Eight shards (16 jobs across the per-arch matrix). See the
-        # SHARD COUNT note above for why this is 8.
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+        # Ten shards (20 jobs across the per-arch matrix). See the
+        # SHARD COUNT note above for why this is 10.
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     name: test-e2e-selfhost-${{ matrix.host.name }}-shard${{ matrix.shard }}
     runs-on: ${{ matrix.host.runner }}
     timeout-minutes: 10
@@ -73,10 +79,10 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           gotestsum: "true"
-      - name: go test (self-host shard ${{ matrix.shard }}/8)
+      - name: go test (self-host shard ${{ matrix.shard }}/10)
         env:
           SHARD: "${{ matrix.shard }}"
-          NSHARD: "8"
+          NSHARD: "10"
         run: |
           set -euo pipefail
           # Sorted list of every TestSelfHost* function, partitioned
