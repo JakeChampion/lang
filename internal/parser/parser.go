@@ -1113,26 +1113,46 @@ func (p *parser) maybeQualify(first string) string {
 // impl (`impl[T: Bound] Trait for Box[T]`) parse paths so all three
 // accept the same bound syntax. See docs/TRAITS.md.
 func (p *parser) parseTypeParamList() ([]string, map[string][]string, error) {
+	tp, b, _, err := p.parseTypeParamListWithArgs()
+	return tp, b, err
+}
+
+// parseTypeParamListWithArgs is parseTypeParamList plus the per-bound type
+// arguments (`[T: From[i32]]`), parallel to the bounds map. See docs/TRAITS.md.
+func (p *parser) parseTypeParamListWithArgs() ([]string, map[string][]string, map[string][][]ast.Type, error) {
 	if _, err := p.expect(lexer.Punct, "["); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	var typeParams []string
 	var bounds map[string][]string
+	var boundArgs map[string][][]ast.Type
 	for {
 		pname, err := p.expect(lexer.Ident, "")
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		typeParams = append(typeParams, pname.Text)
-		bs, err := p.parseOptBounds()
+		bs, ba, err := p.parseOptBoundsWithArgs()
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if len(bs) > 0 {
 			if bounds == nil {
 				bounds = map[string][]string{}
 			}
 			bounds[pname.Text] = bs
+			hasArgs := false
+			for _, a := range ba {
+				if len(a) > 0 {
+					hasArgs = true
+				}
+			}
+			if hasArgs {
+				if boundArgs == nil {
+					boundArgs = map[string][][]ast.Type{}
+				}
+				boundArgs[pname.Text] = ba
+			}
 		}
 		if _, ok := p.accept(lexer.Punct, ","); ok {
 			continue
@@ -1140,31 +1160,59 @@ func (p *parser) parseTypeParamList() ([]string, map[string][]string, error) {
 		break
 	}
 	if _, err := p.expect(lexer.Punct, "]"); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return typeParams, bounds, nil
+	return typeParams, bounds, boundArgs, nil
 }
 
 // parseOptBounds parses an optional trait-bound list on a type
 // parameter: `: Display + Eq` (bounds may be qualified, `mod.Trait`).
 // Returns nil when no `:` follows. See docs/TRAITS.md.
 func (p *parser) parseOptBounds() ([]string, error) {
+	bs, _, err := p.parseOptBoundsWithArgs()
+	return bs, err
+}
+
+// parseOptBoundsWithArgs parses a `: Trait (+ Trait)*` bound clause, where
+// each trait may carry type arguments (`T: From[i32] + Eq`). Returns the
+// bound trait names and a parallel slice of their type-args (nil entry for
+// a bound with no args). See docs/TRAITS.md.
+func (p *parser) parseOptBoundsWithArgs() ([]string, [][]ast.Type, error) {
 	if _, ok := p.accept(lexer.Punct, ":"); !ok {
-		return nil, nil
+		return nil, nil, nil
 	}
 	var bounds []string
+	var args [][]ast.Type
 	for {
 		b, err := p.expect(lexer.Ident, "")
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		bounds = append(bounds, p.maybeQualify(b.Text))
+		var ta []ast.Type
+		if p.match(lexer.Punct, "[") {
+			p.advance()
+			for {
+				at, err := p.parseType()
+				if err != nil {
+					return nil, nil, err
+				}
+				ta = append(ta, at)
+				if _, ok := p.accept(lexer.Punct, ","); !ok {
+					break
+				}
+			}
+			if _, err := p.expect(lexer.Punct, "]"); err != nil {
+				return nil, nil, err
+			}
+		}
+		args = append(args, ta)
 		if _, ok := p.accept(lexer.Punct, "+"); ok {
 			continue
 		}
 		break
 	}
-	return bounds, nil
+	return bounds, args, nil
 }
 
 func (p *parser) parseFunction() (*ast.FuncDecl, error) {
@@ -1183,8 +1231,9 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	// `typeParams` slot.
 	var typeParams []string
 	var bounds map[string][]string
+	var boundArgs map[string][][]ast.Type
 	if p.match(lexer.Punct, "[") {
-		typeParams, bounds, err = p.parseTypeParamList()
+		typeParams, bounds, boundArgs, err = p.parseTypeParamListWithArgs()
 		if err != nil {
 			return nil, err
 		}
@@ -1230,7 +1279,7 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	// the post-name `[T]` is rejected here (would conflict with
 	// the call-site `[T1, T2](...)` shape).
 	if p.match(lexer.Punct, "[") && len(typeParams) == 0 {
-		typeParams, bounds, err = p.parseTypeParamList()
+		typeParams, bounds, boundArgs, err = p.parseTypeParamListWithArgs()
 		if err != nil {
 			return nil, err
 		}
@@ -1321,6 +1370,7 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 		NamePos:           funcNamePos,
 		TypeParams:        typeParams,
 		Bounds:            bounds,
+		BoundArgs:         boundArgs,
 		Params:            params,
 		ReturnType:        ret,
 		ReturnUnannotated: !retAnnotated && body != nil,

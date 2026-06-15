@@ -1131,6 +1131,15 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 				fn.Bounds[tp][k] = r.rewriteTraitNameAt(tn, fn.P)
 			}
 		}
+		// Generic-trait bound args (`T: From[mod.Foo]`) are types — mangle
+		// any struct/enum names so they line up with the trait signature.
+		for _, perBound := range fn.BoundArgs {
+			for _, args := range perBound {
+				for i := range args {
+					r.rewriteType(&args[i])
+				}
+			}
+		}
 	}
 	return r.errs
 }

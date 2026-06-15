@@ -1712,6 +1712,37 @@ func TestPathSepParse(t *testing.T) {
 	}
 }
 
+// A type-parameter bound may carry trait type arguments
+// (`function f[T: From[i32]]`), recorded on FuncDecl.BoundArgs parallel to
+// Bounds. A non-generic bound (`U: Eq`) records no args. See docs/TRAITS.md.
+func TestGenericTraitBoundParse(t *testing.T) {
+	prog, err := Parse(`function f[T: From[i32] + Eq, U: Eq](a: T, b: U): i32 { return 0; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := prog.Funcs[0]
+	if got := fn.Bounds["T"]; len(got) != 2 || got[0] != "From" || got[1] != "Eq" {
+		t.Errorf("T bounds = %v, want [From Eq]", fn.Bounds["T"])
+	}
+	ta := fn.BoundArgs["T"]
+	if len(ta) != 2 {
+		t.Fatalf("T BoundArgs = %v, want 2 entries (one per bound)", ta)
+	}
+	if len(ta[0]) != 1 {
+		t.Errorf("From bound args = %v, want [i32]", ta[0])
+	}
+	if _, ok := ta[0][0].(ast.NumberType); !ok {
+		t.Errorf("From arg = %#v, want i32", ta[0][0])
+	}
+	if len(ta[1]) != 0 {
+		t.Errorf("Eq bound should have no args, got %v", ta[1])
+	}
+	// A bound with no generic-trait args records nothing in BoundArgs.
+	if _, ok := fn.BoundArgs["U"]; ok {
+		t.Errorf("U (non-generic Eq bound) should not appear in BoundArgs")
+	}
+}
+
 // A trait may declare type parameters (`trait From[T]`), recorded on
 // TraitDecl.TypeParams, and an impl binds them via `impl From[i32] for T`,
 // recorded on ImplDecl.TraitArgs. See docs/TRAITS.md.

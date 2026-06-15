@@ -20,9 +20,9 @@
 // home and is the more composable direction); `Into` is for the cases
 // where only the source type is yours.
 //
-// (Generic use over a bound — `function widen[T, U: convert.From[T]](x: T): U`
-// — awaits bounded-generics-over-generic-traits; today From/Into are used
-// at concrete types. See docs/TRAITS.md.)
+// Generic use over a bound works too — `function widen[U: convert.From[i32]]
+// (proto: U, v: i32): U { return U.from(v); }` resolves `U.from` against the
+// bound. See docs/TRAITS.md.
 pub trait From[T] {
     function from(v: T): Self;
 }

@@ -199,10 +199,28 @@ the `impl`); modload mangles struct/enum names in `TraitArgs`; the checker
 substitutes them in the conformance pass. Dispatch is unchanged — calls
 resolve to the impl's concrete monomorphic method.
 
-**Scope:** concrete trait arguments (`From[i32]`, `From[mod.Foo]`).
-*Bounded generics over a generic trait* (`function f[T: From[i32]](…)`) and
-`dyn`-generic-traits are follow-ups (the bound grammar `T: Trait` doesn't
-yet parse `Trait[args]`).
+**Bounded generics over a generic trait** are supported too — a bound may
+carry the trait's type arguments:
+
+```fern
+function describe[T: From[i32]](proto: T, v: i32): T {
+    return T.from(v);   // resolves against `from(v: i32): T`
+}
+```
+
+`FuncDecl.BoundArgs` carries the bound's args parallel to `Bounds`
+(`Bounds["T"]=["From"]`, `BoundArgs["T"]=[[i32]]`); the parser reads
+`[Arg,…]` after each bound trait name, `resolveTraitMethodForParam`
+substitutes them into the bound trait's method signatures
+(`substTraitMethodTypeParams`), and modload mangles struct/enum names in
+the bound args. The bound's **arity** is validated against the trait's type
+parameters. Trait-bound *satisfaction* at the call site still checks only
+that the type argument implements the named trait (the args aren't matched
+against the impl's `TraitArgs` yet — a `From[i32]` bound is satisfied by
+any `impl From[_] for T`; refining that is a follow-up).
+
+**Remaining follow-ups:** `dyn`-generic-traits (`dyn Container[i32]`), and
+matching bound args against the impl's `TraitArgs` for precise satisfaction.
 
 ### Supertraits
 
