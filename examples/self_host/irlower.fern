@@ -756,6 +756,21 @@ pub function elem_type_tag(e: parser.Expr, s: LowerState): string {
     if (maptag != "") { return maptag; }
     var st: string = expr_struct_type(e, s);
     if (st != "") { return st; }
+    // A struct-ARRAY element (`([P { .. }], x)`): tag it `P[]` so a later
+    // `t.N[i].field` recovers the element struct type (the array sibling of the
+    // struct / map element tags). Scalar arrays (i32[]/…) keep the bare "i32"
+    // tag — they need no element typing (`t.N[i]` is a scalar read) and
+    // broadening them would disturb the shared destructure / kind-string
+    // consumers. #3353.
+    match (e) {
+        parser.ExprArray(sae) => {
+            if (sae.elements.len() > 0) {
+                var sel: string = expr_struct_type(iife_leaf_value(sae.elements[0]), s);
+                if (sel != "" && decl_is_struct(s.structs, sel)) { return sel + "[]"; }
+            }
+        },
+        _ => {}
+    }
     if (expr_is_f64(e, s)) { return "f64"; }
     if (infer_expr_width(e, s) == 64) { return "i64"; }
     // A bare integer literal too big for i32 is an i64 (an i64-typed local /
@@ -1523,6 +1538,19 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
                 // / `p.items[i].method()` resolve; an enum element dispatches to
                 // `<Enum>.<method>`, the field analog of the local enum-array case).
                 parser.ExprFieldAccess(fa) => {
+                    // `t.N[i]` where `t.N` is a struct-ARRAY tuple element
+                    // (`([P { .. }], x)`): the element's recorded tuple tag is
+                    // `P[]`, so `t.N[i].field` recovers the element struct type —
+                    // the tuple-element sibling of the struct-field-array case
+                    // below. #3353.
+                    if (util.is_all_digits(fa.field)) {
+                        var ttag: string = expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s);
+                        if (ttag.len() >= 3 && ttag[ttag.len() - 2 : ttag.len()] == "[]") {
+                            var telt: string = ttag[0 : ttag.len() - 2];
+                            if (decl_is_struct(s.structs, telt) || is_enum_like_name(telt, s.structs)) { return telt; }
+                        }
+                        return "";
+                    }
                     var oty: string = expr_struct_type(fa.obj, s);
                     if (oty != "") {
                         var ft: string = decl_field_type(s.structs, oty, fa.field);

@@ -773,6 +773,15 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		{"map-array-elem-rebind", `function main(): i32 { var ms = [Map { 1: 10 }, Map { 1: 20 }]; var m = ms[1]; return m.get_or(1, 0) + ms[0].get_or(1, 0); }`, 30},
 		{"map-array-elem-annotated", `function main(): i32 { var ms: Map[i32, i32][] = [Map { 1: 10 }]; return ms[0].get_or(1, 0); }`, 10},
 		{"map-array-elem-string-val", `function main(): i32 { var ms = [Map { 1: "abcd" }]; return ms[0].get_or(1, "z").len(); }`, 4},
+		// A struct-ARRAY tuple element (`([P { .. }], x)`): the element's recorded
+		// `P[]` tuple tag lets `t.0[i].field` / `t.0[i].method()` recover the
+		// element struct type (the array sibling of the struct-field-array case).
+		// The struct-array element constructs as a leak-only pointer slot. The
+		// self-host AST path also mishandled the indexed field read, so these pin
+		// the absolute IR value. #3353.
+		{"tuple-structarr-elem-field", `struct P { x: i32 } function main(): i32 { var t = ([P{x:5}], 3); return t.0[0].x + t.1; }`, 8},
+		{"tuple-structarr-elem-multi", `struct P { x: i32, y: i32 } function main(): i32 { var t = ([P{x:5,y:6}, P{x:7,y:8}], 100); return t.0[0].x + t.0[1].y + t.1; }`, 113},
+		{"tuple-structarr-elem-method", `struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function main(): i32 { var t = ([P{x:5}], 3); return t.0[0].dbl() + t.1; }`, 13},
 		{"random-i32-varies", `function main(): i32 { var a: i32 = random_i32(); var b: i32 = random_i32(); if (a == 0) { return 0; } if (a == b) { return 1; } return 7; }`, 7},
 		{"random-bytes-byte-range", `function main(): i32 { var s: string = random_bytes(4); var x: i32 = s[0]; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},
 		{"uuid-v4", uuidV4Program, 0},
