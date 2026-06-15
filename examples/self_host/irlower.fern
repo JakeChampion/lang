@@ -2391,6 +2391,14 @@ pub function expr_is_u64(e: parser.Expr, s: LowerState): boolean {
                 _ => { return false; }
             }
         },
+        parser.ExprFieldAccess(fa) => {
+            // A u64 tuple element `t.N` (tag carried from the tuple's annotated
+            // `(u64, …)` type) is a u64 value, so unsigned ops on it stay unsigned.
+            if (util.is_all_digits(fa.field)) {
+                return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "u64";
+            }
+            return false;
+        },
         parser.ExprUnary(u) => {
             if (u.op == "as_u64") { return true; }
             return false;
@@ -2518,9 +2526,10 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
             return 32;
         },
         parser.ExprFieldAccess(fa) => {
-            // An i64 tuple element `t.N` or i64 struct field `p.x` is an i64 value.
+            // An i64/u64 tuple element `t.N` or i64 struct field `p.x` is 64-bit.
             if (util.is_all_digits(fa.field)) {
-                if (expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "i64") { return 64; }
+                var tew: string = expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s);
+                if (tew == "i64" || tew == "u64") { return 64; }
                 return 32;
             }
             var oty: string = expr_struct_type(fa.obj, s);
@@ -2667,7 +2676,8 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
             // lower_expr).
             if (util.is_all_digits(fa.field)) {
                 var tn: i32 = util.digits_to_i32(fa.field);
-                if (expr_tuple_elem_tag(fa.obj, tn, s) != "i64") { return s.fail(); }
+                var tnt: string = expr_tuple_elem_tag(fa.obj, tn, s);
+                if (tnt != "i64" && tnt != "u64") { return s.fail(); }
                 var ts: LowerState = lower_expr(fa.obj, s);
                 if (!ts.ok) { return ts; }
                 return ts.emit(ir.op_tuple_get_w(tn, 64, true));
@@ -2955,7 +2965,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 // read routes through lower_i64). i32 / string / struct elements
                 // keep the 4-byte read.
                 var tgt: string = expr_tuple_elem_tag(fa.obj, tgi, s);
-                if (tgt == "i64") { return so0.emit(ir.op_tuple_get_w(tgi, 64, true)); }
+                if (tgt == "i64" || tgt == "u64") { return so0.emit(ir.op_tuple_get_w(tgi, 64, true)); }
                 if (tgt == "f64") { return so0.emit(ir.op_tuple_get_w(tgi, 64, false)); }
                 return so0.emit(ir.op_tuple_get(tgi));
             }
@@ -5431,12 +5441,13 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                     // element marks the slot i64 (so later uses route through
                     // lower_i64); an f64 element marks it f64.
                     dt = dt.emit(ir.op_load_local(tmp_slot));
-                    if (dtag == "i64") { dt = dt.emit(ir.op_tuple_get_w(dk, 64, true)); }
+                    if (dtag == "i64" || dtag == "u64") { dt = dt.emit(ir.op_tuple_get_w(dk, 64, true)); }
                     else if (dtag == "f64") { dt = dt.emit(ir.op_tuple_get_w(dk, 64, false)); }
                     else { dt = dt.emit(ir.op_tuple_get(dk)); }
                     dt = dt.emit(ir.op_store_local(dkslot));
                     if (dtag == "string") { dt = dt.mark_str(dkslot, true); }
                     else if (dtag == "i64") { dt = dt.mark_i64(dkslot, true); }
+                    else if (dtag == "u64") { dt = dt.mark_u64(dkslot, true); }
                     else if (dtag == "f64") { dt = dt.mark_f64(dkslot, true); }
                     else if (is_map_type_name(dtag)) { dt = dt.mark_map_type(dkslot, dtag); }
                     else if (dtag.len() >= 8 && (dtag[0:7] == "Option[" || dtag[0:7] == "Result[")) { dt = dt.mark_opt_type(dkslot, dtag); }
@@ -10528,9 +10539,11 @@ pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): bo
             // one i32 slot exactly like i32 — a sub-word cast wraps the value BEFORE
             // the tuple store, and construction/access need no width plumbing
             // (verified round-trip on x86-64 + wasm, incl. signed-i8 negatives). u64
-            // / f32 / usize are deliberately NOT here: they need real width handling
-            // (64-bit access / float / pointer-width), so they stay on the AST path.
-            var ok_elem: boolean = (t == "i32" || t == "bool" || t == "boolean" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || t == "string" || t == "i64" || t == "f64");
+            // rides the i64 8-byte slot: construction already tags it "i64"
+            // (elem_type_tag's infer_expr_width==64 path), and the `.N` / destructure
+            // reads route a "u64" type-annotation tag through tuple_get_w(64) below.
+            // f32 / usize are NOT here: they need float / pointer-width handling.
+            var ok_elem: boolean = (t == "i32" || t == "bool" || t == "boolean" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || t == "string" || t == "i64" || t == "u64" || t == "f64");
             if (!ok_elem && decl_is_struct(structs, t) && decl_is_leaksafe(structs, t)) { ok_elem = true; }
             // An Option[T] element is a leak-only box — one pointer slot, like a
             // string / struct element — so a tuple-returning fn can return it

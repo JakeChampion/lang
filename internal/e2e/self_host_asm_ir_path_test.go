@@ -421,6 +421,13 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"tuple-i16", `function f(): (i16, i32) { return (1000 as i16, 2); } function main(): i32 { var t = f(); return ((t.0 as i32) + t.1) % 200; }`},
 		{"tuple-i8-neg", `function f(): (i8, i32) { return (0 - 5 as i8, 10); } function main(): i32 { var t = f(); return t.1 - (t.0 as i32); }`},
 		{"tuple-u32-second", `function f(): (i32, u32) { return (3, 9 as u32); } function main(): i32 { var t = f(); return t.0 + (t.1 as i32); }`},
+		// A u64 tuple element rides the i64 8-byte slot (tuple_get_w(64)); `.N`
+		// access, destructure, and the 2nd-element position all preserve the full
+		// 64 bits, and the element stays UNSIGNED for shifts (bit-63-set >> case).
+		{"tuple-u64-access", `function f(): (u64, i32) { return (4294967296 as u64, 5); } function main(): i32 { var t = f(); var q: u64 = t.0 >> 32; return (q as i32) + t.1; }`},
+		{"tuple-u64-destr", `function f(): (u64, i32) { return (5000000000 as u64, 3); } function main(): i32 { var (hi, n) = f(); var q: u64 = hi / (1000000000 as u64); return (q as i32) + n; }`},
+		{"tuple-u64-second", `function f(): (i32, u64) { return (2, 8000000000 as u64); } function main(): i32 { var t = f(); var q: u64 = t.1 / (1000000000 as u64); return t.0 + (q as i32); }`},
+		{"tuple-u64-unsigned", `function f(): (u64, i32) { return (18000000000000000000 as u64, 1); } function main(): i32 { var t = f(); var q: u64 = t.0 >> 60; return (q as i32) + t.1; }`},
 		// Methods (receiver = arg 0, static dispatch).
 		{"method-field", `struct P { x: i32 } function (p: P) get(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.get(); }`},
 		{"method-with-arg", `struct B { v: i32 } function (b: B) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = B { v: 4 }; return x.scale(3); }`},
@@ -1289,6 +1296,11 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// A u64 struct field, pinned to the absolute IR value: 2^32 >> 32 == 1 proves
 		// the high 32 bits survive the field round-trip (a truncating read gives 5).
 		{"struct-u64-param-val", `struct B { hi: u64, n: i32 } function f(b: B): i32 { var q: u64 = b.hi >> 32; return (q as i32) + b.n; } function main(): i32 { return f(B { hi: 4294967296 as u64, n: 5 }); }`, 6},
+		// u64 tuple element, pinned to the absolute IR value. The unsigned case
+		// (18e18 has bit 63 set; `>> 60` unsigned == 15, a signed shift differs)
+		// proves both the 64-bit width and the unsigned tracking survive the slot.
+		{"tuple-u64-access-val", `function f(): (u64, i32) { return (4294967296 as u64, 5); } function main(): i32 { var t = f(); var q: u64 = t.0 >> 32; return (q as i32) + t.1; }`, 6},
+		{"tuple-u64-unsigned-val", `function f(): (u64, i32) { return (18000000000000000000 as u64, 1); } function main(): i32 { var t = f(); var q: u64 = t.0 >> 60; return (q as i32) + t.1; }`, 16},
 		// A string-ARRAY-valued if-/match-expression: the lifted `__lam` carries a
 		// default i32 ret_type, so the binding was mis-treated as a scalar and the
 		// 8-byte string elements were read at i32 width — a silent miscompile
