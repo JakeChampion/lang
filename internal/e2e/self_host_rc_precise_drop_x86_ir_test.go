@@ -226,6 +226,31 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// Detector 0 proves neither the box nor the array field over-releases.
 		{"struct-array-field-reclaim-value", `struct Buf { xs: i32[], n: i32 } function go(): i32 { var b = Buf { xs: [10, 20, 30], n: 3 }; return b.xs[1] + b.n; } function main(): i32 { return go(); }`, 23},
 		{"struct-array-field-reclaim-detector", `struct Buf { xs: i32[], n: i32 } function main(): i32 { var b = Buf { xs: [10, 20, 30], n: 3 }; var r = b.xs[1] + b.n; if (r != 23) { return 99; } return __rc_underflow(); }`, 0},
+		// Consumed scalar-payload enum free: a function-local `var x = V(scalar...)`
+		// of an all-scalar-variant enum consumed by exactly one `match (x)` where x
+		// is single-owner and DEAD after the match. The box (now rc-headered via
+		// struct_make) is freed right after its match statement (dec + zero the slot)
+		// — sound because the match read the scalar payloads as borrows before the
+		// free. Value correct, detector 0 (box freed exactly once).
+		{"consumed-enum-free-value", `enum Shape { Circle(i32), Square(i32) } function main(): i32 { var x = Circle(7); var total = 0; match (x) { Circle(r) => { total = r + r; }, Square(w) => { total = w * w; }, } return total; }`, 14},
+		{"consumed-enum-free-detector", `enum Shape { Circle(i32), Square(i32) } function main(): i32 { var x = Circle(7); var total = 0; match (x) { Circle(r) => { total = r + r; }, Square(w) => { total = w * w; }, } if (total != 14) { return 99; } return __rc_underflow(); }`, 0},
+		// i64-payload scalar enum is also a candidate (i64 is a flat scalar) — freed
+		// once, detector 0.
+		{"consumed-enum-i64-detector", `enum Big { L(i64), R(i32) } function main(): i32 { var x = L(100); var total = 0; match (x) { L(v) => { total = v as i32; }, R(n) => { total = n; }, } if (total != 100) { return 99; } return __rc_underflow(); }`, 0},
+		// NON-firing: x ESCAPES through a call (`area(x)`), so it must NOT be freed
+		// after the (different-function) match. The exit sweep doesn't sweep enum
+		// boxes either, so x leaks (sound). Detector 0 — no over-release.
+		{"escaping-enum-not-freed-detector", `enum Shape { Circle(i32), Square(i32) } function area(s: Shape): i32 { match (s) { Circle(r) => { return r + r; }, Square(w) => { return w * w; }, } return 0; } function main(): i32 { var x = Circle(7); var a = area(x); if (a != 14) { return 99; } return __rc_underflow(); }`, 0},
+		// NON-firing: x is RETURNED from mk (moved to caller), so mk must NOT free it.
+		// Detector 0.
+		{"returned-enum-not-freed-detector", `enum Shape { Circle(i32), Square(i32) } function mk(): Shape { var x = Circle(7); return x; } function main(): i32 { var s = mk(); var total = 0; match (s) { Circle(r) => { total = r; }, Square(w) => { total = w; }, } if (total != 7) { return 99; } return __rc_underflow(); }`, 0},
+		// NON-firing: a string-payload (non-scalar) variant means the box would need a
+		// per-variant deep-drop, so the consumed-free does NOT fire (left to leak).
+		// Detector 0.
+		{"nonscalar-enum-not-freed-detector", `enum Tok { Word(string), Num(i32) } function main(): i32 { var x = Num(7); var total = 0; match (x) { Word(s) => { total = s.len(); }, Num(n) => { total = n; }, } if (total != 7) { return 99; } return __rc_underflow(); }`, 0},
+		// NON-firing: x is used AFTER the match (`snd(x)`), so it is not dead — must
+		// NOT be freed. Detector 0.
+		{"enum-used-after-match-not-freed-detector", `enum Shape { Circle(i32), Square(i32) } function snd(s: Shape): i32 { return 1; } function main(): i32 { var x = Circle(7); var total = 0; match (x) { Circle(r) => { total = r; }, Square(w) => { total = w; }, } var g = snd(x); if (total + g != 8) { return 99; } return __rc_underflow(); }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
