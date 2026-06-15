@@ -1,0 +1,67 @@
+// examples/self_host/builtins.fern — the compiler's built-in types as a
+// REAL Fern module, instead of the hand-synthesised table in
+// parser.inject_builtin_enums / add_builtin_variant.
+//
+// Historically the self-host compiler conjured these decls in code: a
+// loop of `add_builtin_variant(structs, "JString", "string", "JsonValue")`
+// calls plus open-coded StructDecl literals for FileStat / ProcessResult /
+// HeaderMap / HttpRequest / HttpResponse. That "synthesise the AST by
+// hand" approach is exactly the `.wants/.needs`-style boilerplate we want
+// to retire: it duplicates, in Go-flavoured Fern, declarations the parser
+// already knows how to read from ordinary source.
+//
+// This file is that same set of types written as plain Fern. The
+// import-driven driver (asm_modload_run.fern) loads it like any other
+// module and merges its decls into the program before codegen. Because
+// `inject_builtin_enums` guards every entry with `struct_declared(...)`,
+// the synthetic table degrades to a no-op once these real decls are
+// present — so this module SUPERSEDES the hand-built table without any
+// change to the legacy bundle path (which simply doesn't load this file
+// and keeps falling back to the synthetic injection).
+//
+// Parsing an `enum` here lowers each variant to a `__ev`-payload struct
+// with `enum_owner` set (parse_enum_decl) — byte-for-byte the shape
+// add_builtin_variant produced — so the emitter's shape-pointer dispatch
+// and field-offset resolution are unchanged.
+//
+// Option / Result are NOT here: Some/None/Ok/Err are special-cased in the
+// emitter, never synthesised as variant structs.
+
+// JsonValue — the std/json document model. `JString(x)` / `match … JObject(m) …`
+// resolve against these variants.
+enum JsonValue {
+    JNull,
+    JBool(boolean),
+    JNumber(string),
+    JString(string),
+    JArray(JsonValue[]),
+    JObject(Map[string, JsonValue]),
+}
+
+// IoError — the error arm of filesystem / io Results.
+enum IoError {
+    NotFound(string),
+    PermissionDenied(string),
+    AlreadyExists(string),
+    InvalidUtf8(string),
+    Interrupted,
+    Unsupported,
+    Other(string),
+}
+
+// FileStat — returned by stat(path). The emitter resolves
+// is_file/is_dir/size to slot offsets from this layout, and interns the
+// shape pointer as the name "FileStat".
+struct FileStat { is_file: boolean, is_dir: boolean, size: i32 }
+
+// ProcessResult — returned by subprocess(cmd, args, stdin).
+struct ProcessResult { stdout: string, stderr: string, exit_code: i32 }
+
+// std/headers' HeaderMap + std/http's request/response records. The
+// stdlib builds these by record literal without an explicit `struct`
+// decl (so the Go checker keeps treating get_all(...) as a method, not a
+// field); the self-host shape dispatch needs the declaration to resolve
+// field offsets, so it lives here.
+struct HeaderMap { names: string[], values: string[] }
+struct HttpRequest { method: string, path: string, body: string, headers: HeaderMap }
+struct HttpResponse { status: i32, body: string, headers: HeaderMap }
