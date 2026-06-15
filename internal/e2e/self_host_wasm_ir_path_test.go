@@ -236,6 +236,11 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"tuple-three", `function main(): i32 { var t = (1, 2, 3); return t.0 * 100 + t.1 * 10 + t.2; }`},
 		{"tuple-destructure", `function main(): i32 { var (a, b) = (40, 2); return a + b; }`},
 		{"tuple-expr-elems", `function main(): i32 { var x = 5; var t = (x * 2, x + 1); return t.0 + t.1; }`},
+		// A tuple-returning function with a `boolean` element (was gated on the
+		// wrong `"bool"` spelling in tuple_elems_lowerable; type is `boolean`).
+		{"tuple-bool-first", `function f(): (boolean, i32) { return (true, 7); } function main(): i32 { var t = f(); if (t.0) { return t.1; } return 0; }`},
+		{"tuple-bool-second", `function f(): (i32, boolean) { return (9, true); } function main(): i32 { var t = f(); if (t.1) { return t.0; } return 0; }`},
+		{"tuple-bool-destructure", `function f(): (boolean, i32) { return (true, 42); } function main(): i32 { var (b, n) = f(); if (b) { return n; } return 0; }`},
 		// Methods (receiver = arg 0, static dispatch to $<Type>.<name>).
 		{"method-field", `struct P { x: i32 } function (p: P) get(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.get(); }`},
 		{"method-with-arg", `struct B { v: i32 } function (b: B) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = B { v: 4 }; return x.scale(3); }`},
