@@ -214,13 +214,13 @@ function describe[T: From[i32]](proto: T, v: i32): T {
 substitutes them into the bound trait's method signatures
 (`substTraitMethodTypeParams`), and modload mangles struct/enum names in
 the bound args. The bound's **arity** is validated against the trait's type
-parameters. Trait-bound *satisfaction* at the call site still checks only
-that the type argument implements the named trait (the args aren't matched
-against the impl's `TraitArgs` yet — a `From[i32]` bound is satisfied by
-any `impl From[_] for T`; refining that is a follow-up).
+parameters. Trait-bound *satisfaction* at the call site is **precise**: the
+type argument must have an impl of the trait whose `TraitArgs` match the
+bound's — a `T: From[i32]` bound is satisfied by `impl From[i32] for T` but
+not `impl From[f64] for T` (`Info.ImplTraitArgs` records each impl's args;
+`typeArgsEqual` compares). A non-generic bound (no args) is unaffected.
 
-**Remaining follow-ups:** `dyn`-generic-traits (`dyn Container[i32]`), and
-matching bound args against the impl's `TraitArgs` for precise satisfaction.
+**Remaining follow-up:** `dyn`-generic-traits (`dyn Container[i32]`).
 
 ### Supertraits
 

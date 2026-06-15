@@ -2480,6 +2480,16 @@ function main(): i32 { var p: Plain = Plain { x: 0 }; return describe(p, 5).x; }
 	if err == nil || !strings.Contains(err.Error(), "does not implement trait From") {
 		t.Errorf("non-implementing type argument should be rejected, got: %v", err)
 	}
+	// Mismatched bound args: the type implements From[i32] but the bound
+	// requires From[i64] — precise satisfaction rejects it.
+	err = checkSource(t, hdr+`function describe[T: From[i64]](proto: T, v: i64): T { return T.from(v); }
+function main(): i32 {
+  var z: Celsius = Celsius { deg: 0 };
+  return describe(z, 20).deg;
+}`)
+	if err == nil || !strings.Contains(err.Error(), "the bound requires From[i64]") {
+		t.Errorf("mismatched bound args should be rejected, got: %v", err)
+	}
 }
 
 // A generic trait (`trait Container[T]`) binds its type parameters per

@@ -126,6 +126,12 @@ type Info struct {
 	// `impl Trait for Type` exists. Phase 2's bound checking asks
 	// "does i32 implement Display?" against this.
 	Impls map[string]map[string]bool
+	// ImplTraitArgs records the type arguments a generic-trait impl bound
+	// (`impl From[i32] for Celsius` → ImplTraitArgs["From"]["Celsius"] =
+	// [i32]). Lets a generic-trait BOUND (`T: From[i32]`) check the args
+	// match, not just that some `impl From[_] for T` exists. Empty for a
+	// non-generic trait. See docs/TRAITS.md.
+	ImplTraitArgs map[string]map[string][]ast.Type
 	// AssocBindings records each impl's associated-type bindings:
 	// AssocBindings[typeName][assocName] = concrete type. Built during the
 	// conformance pass. resolveProj uses it to resolve a concrete-base
@@ -752,6 +758,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			Generics:            map[string]ast.GenericDecl{},
 			Traits:              map[string]*ast.TraitDecl{},
 			Impls:               map[string]map[string]bool{},
+			ImplTraitArgs:       map[string]map[string][]ast.Type{},
 			AssocBindings:       map[string]map[string]ast.Type{},
 		},
 		variantOf: map[string][]variantRef{},
@@ -2163,6 +2170,12 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		}
 		if conforms {
 			c.info.Impls[impl.Trait][typeName] = true
+			if len(impl.TraitArgs) > 0 {
+				if c.info.ImplTraitArgs[impl.Trait] == nil {
+					c.info.ImplTraitArgs[impl.Trait] = map[string][]ast.Type{}
+				}
+				c.info.ImplTraitArgs[impl.Trait][typeName] = impl.TraitArgs
+			}
 		}
 	}
 
@@ -4886,6 +4899,34 @@ func substByName(t ast.Type, sub map[string]ast.Type) ast.Type {
 		return ast.ProjType{Base: substByName(x.Base, sub), Name: x.Name}
 	}
 	return t
+}
+
+// typeArgsEqual reports whether two type-argument lists are element-wise
+// structurally equal (used to match a generic-trait bound's args against
+// an impl's TraitArgs). See docs/TRAITS.md.
+func typeArgsEqual(a, b []ast.Type) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !ast.Equal(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// traitArgsStr renders a trait's type-argument list as `[A, B]` (empty
+// string for none) for diagnostics like `From[i32]`.
+func traitArgsStr(args []ast.Type) string {
+	if len(args) == 0 {
+		return ""
+	}
+	parts := make([]string, len(args))
+	for i, a := range args {
+		parts[i] = demangle(a.String())
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
 }
 
 func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {
@@ -8714,19 +8755,35 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					if _, isParam := args[i].(ast.ParamType); isParam {
 						continue
 					}
-					for _, traitName := range genericFn.Bounds[tp] {
+					for bi, traitName := range genericFn.Bounds[tp] {
 						tn, ok := methodTypeName(args[i])
+						// Render `__method_Box_to_string` as the user-facing
+						// `Box.to_string` when the generic decl is a hoisted
+						// receiver method.
+						site := demangle(genericFn.Name)
+						if genericFn.MethodRecv != "" {
+							site = demangle(genericFn.MethodRecv) + "." + genericFn.MethodSimpleName
+						}
 						if !ok || !c.info.Impls[traitName][tn] {
-							// Render `__method_Box_to_string` as the
-							// user-facing `Box.to_string` when the generic
-							// decl is a hoisted receiver method.
-							site := demangle(genericFn.Name)
-							if genericFn.MethodRecv != "" {
-								site = demangle(genericFn.MethodRecv) + "." + genericFn.MethodSimpleName
-							}
 							c.errfCode(n.P, "E021",
 								"type argument %s = %s does not implement trait %s required by %s",
 								tp, demangle(args[i].String()), demangle(traitName), site)
+							continue
+						}
+						// Generic-trait bound (`T: From[i32]`): the impl's
+						// trait args must match the bound's, not merely exist.
+						var boundArgs []ast.Type
+						if ba := genericFn.BoundArgs[tp]; bi < len(ba) {
+							boundArgs = ba[bi]
+						}
+						if len(boundArgs) > 0 {
+							implArgs := c.info.ImplTraitArgs[traitName][tn]
+							if !typeArgsEqual(implArgs, boundArgs) {
+								c.errfCode(n.P, "E021",
+									"type argument %s = %s implements %s%s but the bound requires %s%s (in %s)",
+									tp, demangle(args[i].String()), demangle(traitName), traitArgsStr(implArgs),
+									demangle(traitName), traitArgsStr(boundArgs), site)
+							}
 						}
 					}
 				}
