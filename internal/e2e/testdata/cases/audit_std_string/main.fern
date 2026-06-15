@@ -1,5 +1,6 @@
 import "core/int";
 import "std/string";
+import "std/array";
 
 // Audit fixture: representative std/string methods across every native
 // backend. Result strings are compared directly; lengths gate the
@@ -20,6 +21,15 @@ function main(): i32 {
     var parts: string[] = "a,b,c".split(",");
     if (parts.len() != 3) { print("FAIL split-len"); return 20; }
     if (parts[0] != "a" || parts[2] != "c") { print("FAIL split-elem"); return 21; }
+
+    // Option-returning search family (find / rfind / find_ci / position):
+    // "not found" is None, a hit is Some(index).
+    match ("hello".find("ll")) { Some(i) => { if (i != 2) { print("FAIL find"); return 22; } }, None => { print("FAIL find-none"); return 23; } }
+    match ("hello".find("xyz")) { Some(_) => { print("FAIL find-miss"); return 24; }, None => {} }
+    match ("hello hello".rfind("hello")) { Some(i) => { if (i != 6) { print("FAIL rfind"); return 25; } }, None => { print("FAIL rfind-none"); return 26; } }
+    match ("Hello".find_ci("LLO")) { Some(i) => { if (i != 2) { print("FAIL findci"); return 27; } }, None => { print("FAIL findci-none"); return 28; } }
+    match (parts.position("c")) { Some(i) => { if (i != 2) { print("FAIL position"); return 29; } }, None => { print("FAIL position-none"); return 30; } }
+    match (parts.position("z")) { Some(_) => { print("FAIL position-miss"); return 31; }, None => {} }
 
     print("OK");
     return 0;

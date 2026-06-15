@@ -47,6 +47,36 @@ function test_split_yields_four_parts(): Option[string] {
     return test.assert_len_string(parts, 4);
 }
 
+// Option-returning search family: find / rfind / find_ci report a
+// hit as Some(byte-index) and a miss as None.
+function test_find_hit(): Option[string] {
+    match ("hello world".find("world")) {
+        Some(i) => { return test.assert_eq(i, 6); },
+        None => { return test.fail("find: expected Some, got None"); },
+    }
+}
+
+function test_find_miss(): Option[string] {
+    match ("hello".find("xyz")) {
+        Some(_) => { return test.fail("find: expected None, got Some"); },
+        None => { return None; },
+    }
+}
+
+function test_rfind_hit(): Option[string] {
+    match ("a/b/c".rfind("/")) {
+        Some(i) => { return test.assert_eq(i, 3); },
+        None => { return test.fail("rfind: expected Some, got None"); },
+    }
+}
+
+function test_find_ci_hit(): Option[string] {
+    match ("Hello World".find_ci("WORLD")) {
+        Some(i) => { return test.assert_eq(i, 6); },
+        None => { return test.fail("find_ci: expected Some, got None"); },
+    }
+}
+
 function test_empty_string(): Option[string] {
     return test.assert_empty_string("");
 }
@@ -66,6 +96,10 @@ function main(): i32 {
     r = r.it("concatenation", test_concat());
     r = r.it("split/join roundtrip", test_split_join_roundtrip());
     r = r.it("split yields 4 parts", test_split_yields_four_parts());
+    r = r.it("find hit", test_find_hit());
+    r = r.it("find miss", test_find_miss());
+    r = r.it("rfind hit", test_rfind_hit());
+    r = r.it("find_ci hit", test_find_ci_hit());
     r = r.it("empty string", test_empty_string());
     r = r.it("non-empty string", test_non_empty_string());
     return r.finish();
