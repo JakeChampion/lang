@@ -1042,6 +1042,11 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// slot is tagged with the tuple element types so p.0/p.1 read correctly;
 		// both Some and None arms exercised, must match the AST path.
 		{"option-tuple-payload-method-match", "function (s: string) halves(): Option[(string, string)] { if (s.len() < 2) { return None; } return Some((s[0:1], s[1:s.len()])); } function f(s: string): i32 { match (s.halves()) { Some(p) => { return p.0.len() * 100 + p.1.len(); }, None => { return 0 - 1; } } } function main(): i32 { if (f(\"hello\") == 104 && f(\"x\") == 0 - 1) { return 0; } return 1; }"},
+		// RETURNING a tuple-element array — `(i32, i32)[]` — the std/array
+		// enumerate/zip shape. The bare-tuple-return guard wrongly caught the
+		// `(...)[]` ret type; excluding array types lets it take the array
+		// move-on-return path. Build via append, return, read .0/.1 at the caller.
+		{"tuple-array-build-return", "function enum2(xs: i32[]): (i32, i32)[] { var out: (i32, i32)[] = []; var i = 0; for x in xs { out = out.append((i, x * x)); i = i + 1; } return out; } function main(): i32 { var e = enum2([5, 6, 7]); if (e.len() == 3 && e[1].0 == 1 && e[1].1 == 36 && e[2].1 == 49) { return 0; } return 1; }"},
 	}
 
 	for _, tc := range cases {

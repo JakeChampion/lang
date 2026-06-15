@@ -8197,7 +8197,11 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // Leaf-safe struct elements are allowed too (leak-only pointers, recovered by
     // type tag). Tuples with array / Option elements still bail — those would
     // need RC / payload threading through the return — keeping them local-only.
-    if (fn.ret_type.len() > 0 && fn.ret_type[0] == 40) {   // 40 = '('
+    // Only a BARE tuple return (`(A, B)`) is gated here. A tuple-ARRAY return
+    // (`(A, B)[]`) starts with '(' too but is an array — it takes the generic
+    // array move-on-return path (like P[] / string[]), so exclude array types
+    // (else tuple_elem_tags chokes on the trailing "[]" and wrongly bails).
+    if (fn.ret_type.len() > 0 && fn.ret_type[0] == 40 && !is_array_type_name(fn.ret_type)) {   // 40 = '('
         if (!tuple_elems_lowerable(fn.ret_type, structs)) {
             return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
         }
