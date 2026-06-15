@@ -5142,6 +5142,17 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 if (opt_ty == "") {
                                     match (oleaf) {
                                         parser.ExprIdent(olid) => { opt_ty = se.opt_type_of_slot(se.slot_of(olid.name)); },
+                                        // The leaf branch returns the result of an
+                                        // Option/Result-returning function call
+                                        // (`if (c) { mkO(7) } else { None }`): recover
+                                        // from the callee's registered opt return type
+                                        // so a later `match (o)` lowers.
+                                        parser.ExprCall(olc) => {
+                                            match (olc.callee) {
+                                                parser.ExprIdent(olcid) => { opt_ty = se.opt_ret_type(olcid.name); },
+                                                _ => {}
+                                            }
+                                        },
                                         _ => {}
                                     }
                                 }
