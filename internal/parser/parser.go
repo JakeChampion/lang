@@ -1848,6 +1848,7 @@ func (p *parser) parseType() (ast.Type, error) {
 		p.advance() // consume `dyn`
 		var traits []string
 		var traitArgs [][]ast.Type
+		var traitAssoc [][]ast.AssocBinding
 		for {
 			nameTok, err := p.expect(lexer.Ident, "")
 			if err != nil {
@@ -1855,14 +1856,27 @@ func (p *parser) parseType() (ast.Type, error) {
 			}
 			traits = append(traits, p.maybeQualify(nameTok.Text))
 			var args []ast.Type
+			var assoc []ast.AssocBinding
 			if p.match(lexer.Punct, "[") && p.i+1 < len(p.tokens) && !(p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == "]") {
 				p.advance() // consume `[`
 				for {
-					at, err := p.parseType()
-					if err != nil {
-						return nil, err
+					// `Name = Type` pins an associated type (`dyn Iterator[Item = i32]`);
+					// a bare `Type` is a positional generic argument (`dyn Container[i32]`).
+					if p.match(lexer.Ident, "") && p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == "=" {
+						nameT := p.advance() // assoc-type name
+						p.advance()          // `=`
+						bt, err := p.parseType()
+						if err != nil {
+							return nil, err
+						}
+						assoc = append(assoc, ast.AssocBinding{Name: nameT.Text, Type: bt})
+					} else {
+						at, err := p.parseType()
+						if err != nil {
+							return nil, err
+						}
+						args = append(args, at)
 					}
-					args = append(args, at)
 					if _, ok := p.accept(lexer.Punct, ","); ok {
 						continue
 					}
@@ -1873,12 +1887,13 @@ func (p *parser) parseType() (ast.Type, error) {
 				}
 			}
 			traitArgs = append(traitArgs, args)
+			traitAssoc = append(traitAssoc, assoc)
 			if _, ok := p.accept(lexer.Punct, "+"); ok {
 				continue
 			}
 			break
 		}
-		base = ast.NewDynTraitTypeArgs(traits, traitArgs)
+		base = ast.NewDynTraitTypeFull(traits, traitArgs, traitAssoc)
 	case (t.Kind == lexer.Ident) && (t.Text == "own" || t.Text == "borrow") &&
 		p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Ident:
 		// `own R` / `borrow R` — a WIT resource-handle type (P5 —

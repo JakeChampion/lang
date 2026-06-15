@@ -1838,8 +1838,24 @@ func (r *rewriter) rewriteType(slot *ast.Type) {
 			}
 			changed = true
 		}
+		var newAssoc [][]ast.AssocBinding
+		if len(t.AssocBindings) > 0 {
+			newAssoc = make([][]ast.AssocBinding, len(t.AssocBindings))
+			for i, binds := range t.AssocBindings {
+				if len(binds) == 0 {
+					continue
+				}
+				nb := make([]ast.AssocBinding, len(binds))
+				for j := range binds {
+					nb[j] = binds[j]
+					r.rewriteType(&nb[j].Type)
+				}
+				newAssoc[i] = nb
+			}
+			changed = true
+		}
 		if changed {
-			*slot = ast.NewDynTraitTypeArgs(newTraits, newArgs)
+			*slot = ast.NewDynTraitTypeFull(newTraits, newArgs, newAssoc)
 		}
 	}
 }

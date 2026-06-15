@@ -2631,12 +2631,14 @@ function main(): i32 { return 0; }`, "must bind associated type"},
 struct B { v: i32 }
 impl It for B { type Item = i32; type Extra = i32; function next(self: Self): Self::Item { return self.v; } }
 function main(): i32 { return 0; }`, "does not declare"},
-		// dyn over a trait with associated types is not object-safe
+		// dyn over a trait with an UNPINNED associated type is not
+		// object-safe (pinning it — `dyn It[Item = i32]` — is object-safe;
+		// see TestDynAssocTypeChecker).
 		{`trait It { type Item; function next(self: Self): Self::Item; }
 struct B { v: i32 }
 impl It for B { type Item = i32; function next(self: Self): Self::Item { return self.v; } }
 function take(x: dyn It): i32 { return 0; }
-function main(): i32 { return 0; }`, "associated types"},
+function main(): i32 { return 0; }`, "is not pinned"},
 	}
 	for _, c := range cases {
 		err := checkSource(t, c.src)
@@ -3177,6 +3179,41 @@ function main(): i32 { var d: dyn Container[string] = BoxS { v: 1 }; return 0; }
 				}
 				return
 			}
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("got %v, want containing %q", err, c.want)
+			}
+		})
+	}
+}
+
+// TestDynAssocTypeChecker exercises a `dyn` object over a trait with an
+// associated type pinned (`dyn Producer[Item = i32]`): pinning makes the
+// otherwise object-unsafe trait usable, `Self::Item` in a method signature
+// resolves to the pin, the coercion requires the impl's binding to match the
+// pin, and an unpinned associated type is still rejected.
+func TestDynAssocTypeChecker(t *testing.T) {
+	const prelude = `trait Producer { type Item; function get(self: Self): Self::Item; }
+struct IntBox { v: i32 }
+impl Producer for IntBox { type Item = i32; function get(self: Self): i32 { return self.v; } }
+`
+	// Accepted: pinned to the impl's binding; get() resolves to i32.
+	if err := checkSource(t, prelude+`
+function take(d: dyn Producer[Item = i32]): i32 { return d.get() + 1; }
+function main(): i32 { return take(IntBox { v: 7 }); }`); err != nil {
+		t.Fatalf("pinned dyn assoc type should check: %v", err)
+	}
+	cases := []struct{ name, src, want string }{
+		{"unpinned",
+			prelude + `function f(d: dyn Producer): i32 { return 0; }
+function main(): i32 { return 0; }`,
+			"is not pinned"},
+		{"wrong pin coercion",
+			prelude + `function main(): i32 { var d: dyn Producer[Item = string] = IntBox { v: 1 }; return 0; }`,
+			"cannot assign IntBox"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkSource(t, c.src)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Errorf("got %v, want containing %q", err, c.want)
 			}
