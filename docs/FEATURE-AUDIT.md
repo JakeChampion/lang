@@ -249,6 +249,22 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-15 — nested-tuple / Option / Result struct fields on the self-host IR path (widen IR subset)
+
+A struct field whose type is a nested tuple (`(i32, (i32, i32))`), or a tuple
+carrying an Option/Result element, bailed the whole struct (and module) to AST.
+Flat-tuple struct fields already lowered; the leak-safety gate
+`is_leaksafe_tuple_field` accepted only bare scalar/string elements, so any
+nested-tuple / Option / Result element made the field — and thus the struct —
+non-leaf-safe. Fix (one function in `irlower.fern`): the gate now also accepts an
+Option/Result element (`is_leaksafe_opt_field`) and **recurses** on a nested-tuple
+element (an inner array still bails, matching the construction guard). The field
+access `p.t.N.M` already typed correctly via the depth-aware `expr_tuple_elem_tag`,
+so no other change was needed. Verified on x86-64, wasm, and arm64 (qemu) against
+the interpreter — deep nested-tuple field read, sum across the nesting, and tuple
+fields carrying an Option and a Result; flat-tuple-field regression holds. Fixpoint
+still converges byte-identically. Guarded by `TestSelfHostStructTupleFieldIR{X86_64,Wasm}`.
+
 ### 2026-06-15 — `Result[T, E]` tuple elements on the self-host IR path (widen IR subset)
 
 Closes the comma-containing-tuple-element story (after nested tuples): a
