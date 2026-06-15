@@ -7600,8 +7600,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.errfCode(n.P, "E059", "'as?' downcast requires a 'dyn Trait' value on the left, got %s", inner)
 			return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
 		}
-		// Trait records the PRIMARY trait for the single-trait codegen
-		// path (multi-trait downcast is compiled-rejected). The impl gate
+		// Trait records the PRIMARY trait (the bare single-trait vtable
+		// key); Traits records the whole set. Compiled downcast codegen
+		// keys the vtable-pointer compare by the whole set (dynVtableSetKey),
+		// so a multi-trait `dyn A + B` downcast lowers via the MERGED
+		// `__vtable_<A+B>_<T>` cell (docs/DYN-TRAITS.md §10). The impl gate
 		// below checks the whole set.
 		n.Trait = dt.Trait0()
 		n.Traits = dt.Traits

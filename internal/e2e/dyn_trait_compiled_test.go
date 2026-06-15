@@ -825,3 +825,125 @@ function main(): i32 {
 	// a1=3, a2=4, b1=30, c1=300 → 337
 	dynAllBackends(t, src, "sum=337")
 }
+
+// --- Multi-trait `dyn A + B` DOWNCAST (`e as? T`) through the MERGED
+// vtable (docs/DYN-TRAITS.md §10). emitDowncast keys OpConstVtable by the
+// whole trait set (dynVtableSetKey), so the compare references the same
+// `__vtable_<A+B>_<T>` cell a multi-trait coercion of T stores — exact for
+// any trait set. Differential vs the interpreter (source of truth). ---
+
+// TestDowncastMultiTraitHitMiss: a `dyn Show + Weigh` value downcast to the
+// matching concrete (Some) and to a non-matching concrete that ALSO impls
+// both traits (None). Proves the merged-vtable compare distinguishes the two
+// concretes — the box was coerced with Apple's merged vtable, so `as? Apple`
+// hits and `as? Brick` misses, and vice-versa.
+func TestDowncastMultiTraitHitMiss(t *testing.T) {
+	src := `import "std/i32";
+trait Show  { function show(self: Self): string; }
+trait Weigh { function weight(self: Self): i32; }
+struct Apple { g: i32 }
+struct Brick { kg: i32 }
+impl Show  for Apple { function show(self: Self): string { return "apple"; } }
+impl Weigh for Apple { function weight(self: Self): i32 { return self.g; } }
+impl Show  for Brick { function show(self: Self): string { return "brick"; } }
+impl Weigh for Brick { function weight(self: Self): i32 { return self.kg * 1000; } }
+function describe(d: dyn Show + Weigh): string {
+    var a: Option[Apple] = d as? Apple;
+    match (a) {
+        Some(x) => { return "apple g=" + x.g.to_string(); },
+        None => {
+            var b: Option[Brick] = d as? Brick;
+            match (b) {
+                Some(y) => { return "brick kg=" + y.kg.to_string(); },
+                None => { return "other"; },
+            }
+        },
+    }
+}
+function main(): i32 {
+    var one: dyn Weigh + Show = Apple { g: 150 };
+    print(describe(one));
+    var two: dyn Show + Weigh = Brick { kg: 2 };
+    print(describe(two));
+    return 0;
+}
+`
+	dynAllBackends(t, src, "apple g=150\nbrick kg=2")
+}
+
+// TestDowncastMultiTraitOnlyTargetRooted: a multi-trait downcast target
+// (Brick) that is NEVER coerced to `dyn Show + Weigh` — only ever a downcast
+// target. The MERGED `__vtable_Show+Weigh_Brick` (which the compare
+// references) must still emit and ALL of Brick's __method_* (both traits)
+// must survive tree-shake, or the merged vtable cell references a dropped
+// symbol. Guards the multi-trait DowncastImplMethods rooting (rooting every
+// trait in the set, not just the primary).
+func TestDowncastMultiTraitOnlyTargetRooted(t *testing.T) {
+	src := `import "std/i32";
+trait Show  { function show(self: Self): string; }
+trait Weigh { function weight(self: Self): i32; }
+struct Apple { g: i32 }
+struct Brick { kg: i32 }
+impl Show  for Apple { function show(self: Self): string { return "apple"; } }
+impl Weigh for Apple { function weight(self: Self): i32 { return self.g; } }
+impl Show  for Brick { function show(self: Self): string { return "brick"; } }
+impl Weigh for Brick { function weight(self: Self): i32 { return self.kg * 1000; } }
+function main(): i32 {
+    // only Apple is ever coerced; Brick appears only as a downcast target
+    var d: dyn Show + Weigh = Apple { g: 7 };
+    var b: Option[Brick] = d as? Brick;
+    match (b) {
+        Some(x) => { print("brick=" + x.weight().to_string()); },
+        None => { print("not a brick"); },
+    }
+    var a: Option[Apple] = d as? Apple;
+    match (a) {
+        Some(x) => { print("apple=" + x.show() + ":" + x.weight().to_string()); },
+        None => { print("not an apple"); },
+    }
+    return 0;
+}
+`
+	dynAllBackends(t, src, "not a brick\napple=apple:7")
+}
+
+// TestDowncastThreeTrait: a THREE-trait `dyn A + B + C` downcast — the
+// merged key has three segments; the downcast still keys the (set, T) vtable
+// correctly. Hit on the matching concrete, miss on a different concrete that
+// also impls all three.
+func TestDowncastThreeTrait(t *testing.T) {
+	src := `import "std/i32";
+trait Aa { function a1(self: Self): i32; }
+trait Bb { function b1(self: Self): i32; }
+trait Cc { function c1(self: Self): i32; }
+struct S { x: i32 }
+struct Tee { y: i32 }
+impl Aa for S { function a1(self: Self): i32 { return self.x; } }
+impl Bb for S { function b1(self: Self): i32 { return self.x * 10; } }
+impl Cc for S { function c1(self: Self): i32 { return self.x * 100; } }
+impl Aa for Tee { function a1(self: Self): i32 { return self.y; } }
+impl Bb for Tee { function b1(self: Self): i32 { return self.y * 10; } }
+impl Cc for Tee { function c1(self: Self): i32 { return self.y * 100; } }
+function check(d: dyn Aa + Bb + Cc): i32 {
+    var s: Option[S] = d as? S;
+    match (s) {
+        Some(v) => { return v.x; },
+        None => {
+            var tt: Option[Tee] = d as? Tee;
+            match (tt) {
+                Some(w) => { return -w.y; },
+                None => { return 0; },
+            }
+        },
+    }
+}
+function main(): i32 {
+    var d: dyn Cc + Aa + Bb = S { x: 3 };
+    var e: dyn Aa + Bb + Cc = Tee { y: 9 };
+    print("d=" + check(d).to_string());
+    print("e=" + check(e).to_string());
+    return 0;
+}
+`
+	dynAllBackends(t, src, "d=3\ne=-9")
+}

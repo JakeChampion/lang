@@ -1659,7 +1659,6 @@ func rejectDynTrait(prog *ast.Program) error {
 func rejectDowncast(prog *ast.Program, info *checker.Info, dynSupported bool) error {
 	const unsupportedBackend = "'as?' downcast (dyn Trait → concrete) is not yet supported on this backend; run it on the interpreter (fern -interp)"
 	const primTarget = "'as?' downcast target must be a concrete struct or enum (slice 1); primitive targets are not yet supported on compiled backends"
-	const multiTrait = "'as?' downcast on a multi-trait `dyn A + B` value is not yet supported on compiled backends; run it on the interpreter (fern -interp). Single-trait `dyn A` downcast is supported."
 	var rejected error
 	ast.WalkProgram(prog, func(n ast.Node) bool {
 		dc, ok := n.(*ast.DowncastExpr)
@@ -1670,15 +1669,13 @@ func rejectDowncast(prog *ast.Program, info *checker.Info, dynSupported bool) er
 			rejected = fmt.Errorf("ir: %s", unsupportedBackend)
 			return false
 		}
-		// Multi-trait `dyn A + B` downcast: the merged-vtable address a
-		// multi-trait coercion stores differs from the per-trait
-		// `__vtable_<Trait>_<T>` cell the compare uses, so the
-		// vtable-pointer compare would never match. Dispatch on a
-		// multi-trait `dyn` is supported; downcast is a follow-up.
-		if len(dc.Traits) > 1 {
-			rejected = fmt.Errorf("ir: %s", multiTrait)
-			return false
-		}
+		// Multi-trait `dyn A + B` downcast lowers via the MERGED-vtable
+		// address (dynVtableSetKey(dc.Traits)) — the same merged cell a
+		// multi-trait coercion of T stores — so the vtable-pointer compare
+		// is exact for any trait set (docs/DYN-TRAITS.md §10). emitDowncast
+		// keys OpConstVtable by the set, byte-identical to single-trait for
+		// a 1-element set (dynVtableSetKey of a 1-element set is the bare
+		// trait name).
 		// Struct/enum target only (slice-1 scope). A primitive/string
 		// target carries no runtime type tag in the compiled
 		// representations, so the vtable-pointer compare can't recover it.
@@ -8659,9 +8656,19 @@ func (b *builder) emitDowncast(n *ast.DowncastExpr) error {
 	}
 	// Compare the receiver's vtable word against the target's static
 	// vtable address. OpConstVtable pushes the SAME address a coercion of
-	// T would pair with, so the pointer-identity compare is exact.
+	// T would pair with, so the pointer-identity compare is exact. Key by
+	// the whole trait SET (dynVtableSetKey): for a single-trait `dyn A`
+	// downcast this is the bare trait name — byte-identical to before — so
+	// it selects `__vtable_<A>_<T>`; for a multi-trait `dyn A + B` downcast
+	// it selects the MERGED vtable `__vtable_<A+B>_<T>` that a multi-trait
+	// coercion of T stores, so the compare matches exactly when the
+	// runtime concrete is T (docs/DYN-TRAITS.md §10).
+	setKey := n.Trait
+	if len(n.Traits) > 0 {
+		setKey = dynVtableSetKey(n.Traits)
+	}
 	b.emit(Op{Kind: OpLoadLocal, I32: vtSlot})
-	b.emit(Op{Kind: OpConstVtable, Str: n.Trait, Str2: concrete})
+	b.emit(Op{Kind: OpConstVtable, Str: setKey, Str2: concrete})
 	b.emit(Op{Kind: OpEq})
 	// Result Option[T] heap-box pointer, built in either arm into a
 	// shared scratch slot (a void if-block keeps the operand-stack model

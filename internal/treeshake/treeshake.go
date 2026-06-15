@@ -138,10 +138,6 @@ func DowncastImplMethods(prog *ast.Program, info *checker.Info) []string {
 		if !ok || dc.Trait == "" {
 			return true
 		}
-		td, ok := info.Traits[dc.Trait]
-		if !ok {
-			return true
-		}
 		concrete := ""
 		switch t := dc.Target.(type) {
 		case ast.StructType:
@@ -151,15 +147,33 @@ func DowncastImplMethods(prog *ast.Program, info *checker.Info) []string {
 		default:
 			return true
 		}
-		for _, m := range td.Methods {
-			if m.Assoc {
+		// Root the impl methods of EVERY trait in the set, not just the
+		// primary `dc.Trait`. The merged `(set, T)` vtable a multi-trait
+		// `dyn A + B` downcast compares against contains the concatenation
+		// of all the set's traits' methods over T (docs/DYN-TRAITS.md §10),
+		// so a downcast-only T (never coerced elsewhere) needs every one of
+		// them pinned or the merged vtable cell would reference a dropped
+		// symbol. For a single-trait `dyn A` downcast dc.Traits == [A], so
+		// this is byte-identical to rooting dc.Trait alone.
+		traits := dc.Traits
+		if len(traits) == 0 {
+			traits = []string{dc.Trait}
+		}
+		for _, tr := range traits {
+			td, ok := info.Traits[tr]
+			if !ok {
 				continue
 			}
-			fn := info.Methods[concrete+"."+m.Name]
-			if fn == "" {
-				fn = "__method_" + concrete + "_" + m.Name
+			for _, m := range td.Methods {
+				if m.Assoc {
+					continue
+				}
+				fn := info.Methods[concrete+"."+m.Name]
+				if fn == "" {
+					fn = "__method_" + concrete + "_" + m.Name
+				}
+				add(fn)
 			}
-			add(fn)
 		}
 		return true
 	})
