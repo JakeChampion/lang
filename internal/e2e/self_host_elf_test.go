@@ -158,6 +158,27 @@ function main(): i32 {
     if (b4[18] != 62 || b4[19] != 0) { return 40; }
     // phdr1 p_filesz = 8 @152, p_memsz = 24 (8 + 16) @160.
     if (b4[152] != 8 || b4[160] != 24 || b4[161] != 0) { return 41; }
+
+    // Large .bss (> 2^31) must zero-extend, not sign-extend, into p_memsz.
+    // The self-host arm64 heap is 2.5 GiB (0xA0000000), which overflows i32
+    // into a negative bit pattern; a plain (bss as i64) would sign-extend it
+    // to a garbage p_memsz the kernel cannot map. bss = 0 - 1610612736 is the
+    // i32 whose bit pattern is 0xA0000000 (== 2_684_354_560 unsigned).
+    var bigbss: i32 = 0 - 1610612736;
+    // W^X x86 data segment: p_memsz @160 = data.len()(8) + 0xA0000000 =
+    // 0xA0000008 (LE 8,0,0,0xA0=160,0,0,0,0) — high word stays 0.
+    var b5: i32[] = elf_static_executable_bss_x86_wx_at(t3, d3, bigbss, 0);
+    if (b5[160] != 8 || b5[161] != 0 || b5[162] != 0 || b5[163] != 160) { return 42; }
+    if (b5[164] != 0 || b5[165] != 0 || b5[166] != 0 || b5[167] != 0) { return 43; }
+    // Same guard on the single-segment contiguous path (production -target
+    // arm64 used elf_image_entry_bss): p_memsz @104. body = pad8(4)=8 + 8 data
+    // = 16; filesz = 64+56+16 = 136; memsz = 136 + 0xA0000000 = 0xA0000088
+    // (LE 0x88=136,0,0,0xA0,0,0,0,0).
+    var body6: i32[] = elf_pad_to_8(elf_cat([], t3));
+    body6 = elf_cat(body6, d3);
+    var b6: i32[] = elf_image_entry_bss(body6, 7, elf_em_aarch64(), 0, bigbss);
+    if (b6[104] != 136 || b6[105] != 0 || b6[106] != 0 || b6[107] != 160) { return 44; }
+    if (b6[108] != 0 || b6[109] != 0 || b6[110] != 0 || b6[111] != 0) { return 45; }
     return 0;
 }
 `

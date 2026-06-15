@@ -107,6 +107,21 @@ pub function elf_pad_to_8(b: i32[]): i32[] {
     return b;
 }
 
+// elf_u32_to_i64 zero-extends an i32 byte count to i64 (treating its bits
+// as unsigned). A .bss size can exceed 2^31 — the self-host arm64 heap is
+// 2.5 GiB — which overflows i32 into a negative bit pattern; a plain
+// `bss as i64` would SIGN-extend that to a garbage (huge) p_memsz that the
+// kernel cannot map. Masking off the sign-extended high word recovers the
+// intended unsigned size.
+function elf_u32_to_i64(v: i32): i64 {
+    var u: i64 = v as i64;
+    // `v as i64` SIGN-extends; for an overflowed (negative) byte count add
+    // 2^32 to recover the unsigned value. 2^32 is built via a shift because
+    // an integer *literal* that large is typed i32 and truncates to 0.
+    if (u < 0) { u = u + ((1 as i64) << 32); }
+    return u;
+}
+
 // ---- the image writer ----
 
 // elf_image emits the ELF header + one PT_LOAD (with the given p_flags)
@@ -131,7 +146,7 @@ function elf_image_entry(body: i32[], flags: i32, machine: i32, entry_off: i32):
 // (this is how asm.fern's 1 GB `__fern_heap` is reserved).
 pub function elf_image_entry_bss(body: i32[], flags: i32, machine: i32, entry_off: i32, bss: i32): i32[] {
     var filesz: i64 = (elf_eh_size() + elf_ph_size() + body.len()) as i64;
-    var memsz: i64 = filesz + (bss as i64);
+    var memsz: i64 = filesz + elf_u32_to_i64(bss);
     var entry: i64 = (elf_text_vaddr() + entry_off) as i64;
     var zero64: i64 = 0;
 
@@ -269,6 +284,15 @@ function elf_page_up(v: i32): i32 {
     return v + (pa - rem);
 }
 
+// elf_data_vaddr_wx is the load address of the R+W data segment for a W^X
+// image whose .text is `text_len` bytes: the first page boundary at or
+// after the end of .text. An assembler resolving data-symbol references
+// for a W^X image (e.g. arm64_gas_link's data vaddr) must use this so the
+// references line up with where elf_image_wx places the data blob.
+pub function elf_data_vaddr_wx(text_len: i32): i32 {
+    return elf_base_vaddr() + elf_page_up(elf_eh_size() + 2 * elf_ph_size() + text_len);
+}
+
 // elf_image_wx emits the ELF header (e_phnum = 2) + two PT_LOAD program
 // headers, then .text, then — on the first page boundary past .text — the
 // data blob. The code segment (headers + .text) is mapped R+X; the data
@@ -283,7 +307,7 @@ pub function elf_image_wx(text: i32[], data: i32[], machine: i32, entry_off: i32
     var data_off: i32 = elf_page_up(text_end);            // file offset == vaddr offset of data
     var code_sz: i64 = text_end as i64;                   // headers + .text in one segment
     var data_filesz: i64 = data.len() as i64;
-    var data_memsz: i64 = data_filesz + (bss as i64);
+    var data_memsz: i64 = data_filesz + elf_u32_to_i64(bss);
     var code_vaddr: i64 = elf_base_vaddr() as i64;
     var data_vaddr: i64 = (elf_base_vaddr() + data_off) as i64;
     var entry: i64 = (elf_text_vaddr_wx() + entry_off) as i64;
