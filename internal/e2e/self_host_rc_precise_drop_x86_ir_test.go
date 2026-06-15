@@ -486,6 +486,28 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		{"iife-match-arr-payload-detector", `enum E { V(i32[]), W(i32[]) } function go(): i32 { var x: E = E.V([10, 20, 30]); var r = match (x) { V(xs) => xs[0], W(ys) => ys[0] }; if (r != 10) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 		// boolean[] payload bound, read .len() (single-expr arm); result is i32.
 		{"iife-match-boolarr-payload-len-value", `enum E { V(boolean[]), N } function main(): i32 { var x: E = E.V([true, false, true]); var r = match (x) { V(xs) => xs.len(), N => 0 }; return r; }`, 3},
+		// ARROW LAMBDA (`(params): R => expr`) — the self-host parser now parses the
+		// concise arrow form into the SAME ExprLambda the verbose `function (params):
+		// R { return expr; }` produces, so it rides the existing lambda-lift + IR
+		// lowering with no codegen changes. Each case routes "ir" and is oracle-checked
+		// against the native interpreter. Previously the self-host parser had NO arrow
+		// syntax at all, so these mis-parsed and bailed to the AST emitter.
+		// Non-capturing binding, called once: __lam_N(5) = 6.
+		{"arrow-lambda-noncap-binding", `function main(): i32 { var f = (x: i32): i32 => x + 1; return f(5); }`, 6},
+		// Capturing binding (captures outer `n`): param-lifted with n threaded as an
+		// argument — (5)+10 = 15.
+		{"arrow-lambda-capturing-binding", `function main(): i32 { var n: i32 = 10; var f = (x: i32): i32 => x + n; return f(5); }`, 15},
+		// Multi-param arrow: add(3, 4) = 7.
+		{"arrow-lambda-multi-param", `function main(): i32 { var add = (a: i32, b: i32): i32 => a + b; return add(3, 4); }`, 7},
+		// Empty-param arrow: () => 42 → 42.
+		{"arrow-lambda-empty-params", `function main(): i32 { var f = (): i32 => 42; return f(); }`, 42},
+		// No-capture arrow passed as a CALL ARGUMENT — hoisted to a __lam_N function
+		// value (the slice-1 const_func path): ap((y) => y*2, 5) = 10.
+		{"arrow-lambda-as-arg", `function ap(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { return ap((y: i32): i32 => y * 2, 5); }`, 10},
+		// Verbose `function (...)` and arrow forms must still BOTH route ir — a
+		// grouping `(a + b)` next to an arrow lambda confirms the lookahead doesn't
+		// mis-class an ordinary parenthesised expression: (3 + 4) + ((x) => x)(1) = 8.
+		{"arrow-lambda-vs-grouping", `function main(): i32 { var a: i32 = 3; var b: i32 = 4; var id = (x: i32): i32 => x; return (a + b) + id(1); }`, 8},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
