@@ -8529,6 +8529,329 @@ function emit_enum_donor_reuse(y_name: string, init: parser.Expr, recip: string,
     }
 }
 
+// --- in-arm consuming-match box reuse (FBIP) ---------------------------------
+//
+// The marquee Perceus "functional but in-place" win: `var y = match (x) { ... }`
+// where x is a fresh, sole-owner, dead-after, non-escaping ALL-SCALAR-payload enum
+// box consumed by THIS match-EXPRESSION, and EVERY arm constructs a NEW same-size
+// variant `W(...)`. Instead of allocating a fresh box per arm result, REUSE x's box
+// IN PLACE: re-shape it to the arm's variant (op_struct_set_shape), write the arm's
+// constructed fields into it, and bind y to it. Net: one fewer __fern_arr_box per
+// arm; x's leak is fixed (the box now flows into y, freed once at y's reclamation).
+//
+// SOUNDNESS, in five parts (mirrors the hard-parts checklist):
+//   1. Reuse-token threading. No LowerState field / generic-path change: the whole
+//      lowering is done HERE by emit_inarm_match_reuse, dispatched from lower_func
+//      for a firing `var y = match(x)` statement (like emit_enum_donor_reuse). The
+//      donor box is x's OWN slot (the scrutinee is the bare ident x).
+//   2. Read-before-overwrite. Each arm reads its i32 payloads (__ev, __ev1, …) out
+//      of x's box into fresh temps at arm entry (struct_get → store_local) BEFORE
+//      the box is re-shaped/overwritten — so the arm's field expressions read the
+//      payload COPIES, never the box fields being overwritten.
+//   3. Same-size. The arm's constructed variant W has the SAME field count as x's
+//      consumed variant (checked per arm), so __fern_arr_box(nf+1) sizes match and
+//      the in-place box has room. EVERY arm must construct a same-size variant.
+//   4. Exactly-once free. EVERY arm reuses the box (constructs y from it), so on
+//      every path the box flows into y and is freed exactly once at y's reclamation
+//      — there is no post-match free to suppress (an in-arm scrutinee is NOT a
+//      top-level `match (x)`, so consumed_scalar_enum_frees never classified/freed
+//      it). x's slot is ZEROED after the reuse so the exit sweep (which never
+//      sweeps enum slots anyway) can't double-free via x.
+//   5. Old rc-field drop. Restricted to ALL-SCALAR-payload enums (donor + every
+//      constructed variant), so x's old box fields hold no rc value to release
+//      before the overwrite. Widening to rc payloads is deferred.
+
+// inarm_iife_match: if `e` is the value-position IIFE wrapping a match-EXPRESSION
+// (an ExprCall of a 0-param ExprLambda whose single body statement is a StmtMatch),
+// returns that StmtMatch via `out` (true), else false. Mirrors lower_iife's shape
+// gate (a 0-arg call of a 0-param lambda with a one-statement match body).
+function inarm_iife_match(e: parser.Expr, structs: parser.StructDecl[]): parser.MatchArm[] {
+    match (e) {
+        parser.ExprCall(c) => {
+            if (c.args.len() != 0) { return []; }
+            match (c.callee) {
+                parser.ExprLambda(lam) => {
+                    if (lam.params.len() != 0) { return []; }
+                    if (lam.body.len() != 1) { return []; }
+                    match (lam.body[0]) {
+                        parser.StmtMatch(mm) => { return mm.arms; },
+                        _ => { return []; }
+                    }
+                },
+                _ => { return []; }
+            }
+        },
+        _ => { return []; }
+    }
+    return [];
+}
+
+// inarm_iife_scrutinee: the bare-ident scrutinee name of `var x`-style IIFE match
+// `e`, or "" if `e` is not an IIFE match or its scrutinee is not a bare ident.
+function inarm_iife_scrutinee(e: parser.Expr): string {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprLambda(lam) => {
+                    if (lam.body.len() != 1) { return ""; }
+                    match (lam.body[0]) {
+                        parser.StmtMatch(mm) => {
+                            match (mm.scrutinee) {
+                                parser.ExprIdent(id) => { return id.name; },
+                                _ => { return ""; }
+                            }
+                        },
+                        _ => { return ""; }
+                    }
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// inarm_arm_ctor_variant: the result variant name of arm body `body` when its
+// terminal `return E` constructs a same-enum variant `W(args)` whose every payload
+// field is a flat scalar and whose field count equals `want` (the donor variant's
+// field count). Returns "" if the arm is not a same-size scalar-variant ctor.
+function inarm_arm_ctor_variant(body: parser.Stmt[], enum_name: string, want: i32, structs: parser.StructDecl[]): string {
+    if (body.len() != 1) { return ""; }
+    match (body[0]) {
+        parser.StmtReturn(r) => {
+            match (r.value) {
+                parser.ExprCall(c) => {
+                    match (c.callee) {
+                        parser.ExprIdent(id) => {
+                            if (variant_enum_owner(structs, id.name) != enum_name) { return ""; }
+                            if (!enum_variant_scalar_payload(structs, id.name)) { return ""; }
+                            if (decl_field_count(structs, id.name) != want) { return ""; }
+                            if (c.args.len() != want) { return ""; }
+                            return id.name;
+                        },
+                        _ => { return ""; }
+                    }
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// inarm_reuse_match_ok: every arm of the IIFE match is a plain variant pattern
+// (no guard) binding only i32 payloads, and constructs a same-size scalar variant
+// of the SAME enum. The donor variant's field count `want` is the box size; every
+// arm's pattern variant must have that field count (so reading payloads is in-range)
+// AND its constructed result must too. Bool/Option/wildcard arms bail.
+function inarm_reuse_match_ok(arms: parser.MatchArm[], enum_name: string, want: i32, structs: parser.StructDecl[]): boolean {
+    if (arms.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < arms.len()) {
+        var arm: parser.MatchArm = arms[i];
+        if (arm.has_guard) { return false; }
+        match (arm.pattern) {
+            parser.PatVariant(pv) => {
+                // No qualified names / builtin patterns in this slice.
+                var vld: i32 = 0;
+                while (vld < pv.type_name.len()) { if (pv.type_name[vld] == 46) { return false; } vld = vld + 1; }
+                if (is_builtin_pattern(pv.type_name)) { return false; }
+                if (variant_enum_owner(structs, pv.type_name) != enum_name) { return false; }
+                if (!enum_variant_scalar_payload(structs, pv.type_name)) { return false; }
+                // The matched variant's payload fields are read into temps; they
+                // must all be i32 (the temp-store path). decl_field_count gives the
+                // payload count; each field is scalar (checked above) — require i32.
+                var nf: i32 = decl_field_count(structs, pv.type_name);
+                var fi: i32 = 0;
+                while (fi < nf) {
+                    if (decl_field_type_at(structs, pv.type_name, fi) != "i32") { return false; }
+                    fi = fi + 1;
+                }
+                // The constructed result must be a same-size (== want) scalar variant.
+                if (inarm_arm_ctor_variant(arm.body, enum_name, want, structs) == "") { return false; }
+            },
+            _ => { return false; }
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// InArmReuseSites: parallel arrays — for each firing `var y = match(x)` reuse, the
+// body-statement index and the donor enum local name x whose box is reused.
+struct InArmReuseSites { idxs: i32[], donors: string[] }
+
+// consumed_inarm_reuse_sites finds every function-local `var y = match (x) { ... }`
+// where x is a fresh, sole-owner, dead-after, non-escaping ALL-SCALAR enum box and
+// EVERY arm constructs a same-size scalar variant of the SAME enum. x's box is
+// reused in place to build y (emit_inarm_match_reuse). Conservative: x must be the
+// bare-ident scrutinee, declared by a fresh scalar-enum init earlier, not
+// reassigned, used exactly ONCE (as this scrutinee) and DEAD after this statement,
+// and not escape anywhere. The match must reach lower_iife_match's enum path.
+function consumed_inarm_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[]): InArmReuseSites {
+    var idxs: i32[] = [];
+    var donors: string[] = [];
+    var reassigned: string[] = body_assign_targets(body);
+    var k: i32 = 0;
+    while (k < body.len()) {
+        match (body[k]) {
+            parser.StmtVar(yv) => {
+                var xname: string = inarm_iife_scrutinee(yv.init);
+                if (xname != "" && xname != yv.name) {
+                    var arms: parser.MatchArm[] = inarm_iife_match(yv.init, structs);
+                    if (arms.len() > 0) {
+                        // x must be a fresh scalar-enum init declared earlier, not
+                        // reassigned.
+                        var owner: string = "";
+                        var want: i32 = 0 - 1;
+                        var xi: i32 = 0;
+                        while (xi < body.len()) {
+                            match (body[xi]) {
+                                parser.StmtVar(xv) => {
+                                    if (xv.name == xname) {
+                                        owner = fresh_scalar_enum_init(xv.init, structs);
+                                        want = enum_init_box_fields(body, structs, xname);
+                                    }
+                                },
+                                _ => {}
+                            }
+                            xi = xi + 1;
+                        }
+                        if (owner != "" && want >= 0 && util.index_of_str(reassigned, xname) < 0) {
+                            // x is mentioned exactly once below its decl (this
+                            // scrutinee): dead after k and only consumed here. Use
+                            // name_used_after (any read past k) plus a single-mention
+                            // check across the whole body.
+                            var mentions: i32 = 0;
+                            var mi: i32 = 0;
+                            while (mi < body.len()) {
+                                var used: string[] = astwalk.collect_idents_stmt(body[mi], []);
+                                if (util.index_of_str(used, xname) >= 0) { mentions = mentions + 1; }
+                                mi = mi + 1;
+                            }
+                            var dead_after: boolean = !name_used_after(body, xname, k);
+                            // x's only mention is in body[k] (its decl statement does
+                            // not read x; the scrutinee is the single read). So a sole
+                            // owner consumed here has exactly ONE mention (at k).
+                            var escapes: boolean = name_escapes_outside_stmt(body, xname, k);
+                            if (mentions == 1 && dead_after && !escapes
+                                    && inarm_reuse_match_ok(arms, owner, want, structs)) {
+                                idxs = idxs.append(k);
+                                donors = donors.append(xname);
+                            }
+                        }
+                    }
+                }
+            },
+            _ => {}
+        }
+        k = k + 1;
+    }
+    return InArmReuseSites { idxs: idxs, donors: donors };
+}
+
+// emit_inarm_match_reuse lowers a firing `var y = match (x) { ... }` (the site found
+// by consumed_inarm_reuse_sites) with IN-PLACE reuse of x's box. It emits the same
+// block/br dispatch as the generic enum match, but each arm — after reading its i32
+// payloads into temps — re-shapes x's box to the arm's constructed variant
+// (op_struct_set_shape), writes the constructed fields, binds y to x's box, zeroes
+// x's slot, then br's out. Every arm reuses the box, so y owns it on every path and
+// it is freed exactly once at y's reclamation (no post-match free exists for an
+// in-arm scrutinee). Restricted to the inarm_reuse_match_ok shape (scalar enum,
+// i32 payloads, same-size scalar-variant results, no guards/wildcards).
+function emit_inarm_match_reuse(y_name: string, init: parser.Expr, donor_name: string, s: LowerState): LowerState {
+    var xslot: i32 = s.slot_of(donor_name);
+    if (xslot < 0) { return s.fail(); }
+    var arms: parser.MatchArm[] = inarm_iife_match(init, s.structs);
+    if (arms.len() == 0) { return s.fail(); }
+    // enum owner (TYPE) of the scrutinee / every arm result — recovered from the
+    // first arm's pattern variant. NOT the scrutinee ident name.
+    var enum_name: string = "";
+    match (arms[0].pattern) {
+        parser.PatVariant(pv0) => { enum_name = variant_enum_owner(s.structs, pv0.type_name); },
+        _ => {}
+    }
+    if (enum_name == "") { return s.fail(); }
+    // Bind y up front (a fresh local) and mark its enum type so a later `match (y)`
+    // resolves the payload. y holds the reused box pointer.
+    var st: LowerState = s.add_local(y_name);
+    var yslot: i32 = st.slot_of(y_name);
+    st = st.mark_struct_type(yslot, enum_name);
+    st = st.emit(ir.op_block(0));   // outer block: arms br out of it
+    var i: i32 = 0;
+    while (i < arms.len()) {
+        var arm: parser.MatchArm = arms[i];
+        match (arm.pattern) {
+            parser.PatVariant(pv) => {
+                var vname: string = pv.type_name;
+                st = st.emit(ir.op_block(0));   // arm block: br 0 = skip arm
+                st = st.emit(ir.op_load_local(xslot));
+                st = st.emit(ir.op_variant_is(vname));
+                st = st.emit(ir.op_bin("not", 0, false));   // 1 if NOT this variant
+                st = st.emit(ir.op_brif(0));                // -> skip arm on mismatch
+                // READ-BEFORE-OVERWRITE: read every i32 payload of the matched
+                // variant out of x's box into a fresh temp slot, BEFORE re-shaping.
+                var nbinds: i32 = 1 + pv.extra_bindings.len();
+                var bidx: i32 = 0;
+                while (bidx < nbinds) {
+                    var bname: string = pv.binding;
+                    if (bidx > 0) { bname = pv.extra_bindings[bidx - 1]; }
+                    if (bname.len() > 0 && bname != "_") {
+                        st = st.add_local(bname);
+                        var bslot: i32 = st.slot_of(bname);
+                        st = st.emit(ir.op_load_local(xslot));
+                        st = st.emit(ir.op_struct_get(bidx, 0));
+                        st = st.emit(ir.op_store_local(bslot));
+                    }
+                    bidx = bidx + 1;
+                }
+                // CONSTRUCT IN PLACE: re-shape x's box to the arm's result variant,
+                // then write the constructed fields (reading the payload temps, which
+                // are now safely copied). Mirrors emit_enum_donor_reuse.
+                var rvariant: string = inarm_arm_ctor_variant(arm.body, enum_name, decl_field_count(st.structs, vname), st.structs);
+                if (rvariant == "") { return s.fail(); }
+                // the arm's constructed ctor call (its return value).
+                var ctor_args: parser.Expr[] = [];
+                match (arm.body[0]) {
+                    parser.StmtReturn(r) => {
+                        match (r.value) {
+                            parser.ExprCall(rc) => { ctor_args = rc.args; },
+                            _ => { return s.fail(); }
+                        }
+                    },
+                    _ => { return s.fail(); }
+                }
+                st = st.emit(ir.op_load_local(xslot));
+                st = st.emit(ir.op_struct_set_shape(rvariant));
+                st = st.emit(ir.op_drop());
+                var di: i32 = 0;
+                while (di < ctor_args.len()) {
+                    st = st.emit(ir.op_load_local(xslot));
+                    st = lower_expr(ctor_args[di], st);
+                    if (!st.ok) { return st; }
+                    st = st.emit(ir.op_struct_set(di, struct_field_width(st.structs, rvariant, di)));
+                    di = di + 1;
+                }
+                // Bind y to the reused box; zero x's slot (y now owns the box, freed
+                // once at y's reclamation; the exit sweep never sweeps enum slots).
+                st = st.emit(ir.op_load_local(xslot));
+                st = st.emit(ir.op_store_local(yslot));
+                st = st.emit(ir.op_br(1));      // matched -> exit the match
+                st = st.emit(ir.op_end());      // end arm block
+            },
+            _ => { return s.fail(); }
+        }
+        i = i + 1;
+    }
+    st = st.emit(ir.op_end());   // end outer block
+    // x's box is now aliased by y; zero x's slot so no double-free via x.
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_store_local(xslot));
+    return st;
+}
+
 // lower_func lowers a whole function's body. Params take slots 0..n-1.
 // arr_ret_fns is the set of array-returning function names (for move tracking);
 // strarr_ret_fns is the string[]-returning subset (for element typing at calls).
@@ -8806,6 +9129,12 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // enum_donor_reuse_sites). The recipient is lowered by emit_enum_donor_reuse, and
     // the donor's post-match free is SUPPRESSED below (the reuse consumes the box).
     var edon: EnumDonorSites = enum_donor_reuse_sites(fn.body, structs, reuse, xreuse, enumfrees);
+    // In-arm consuming-match box reuse (FBIP): `var y = match (x) { ... }` where x is
+    // a fresh, sole-owner, dead-after, non-escaping scalar enum and EVERY arm builds
+    // a same-size scalar variant. x's box is reused in place to build y
+    // (emit_inarm_match_reuse). No post-match free exists for an in-arm scrutinee, so
+    // nothing to suppress; y owns the box on every path, freed once at its reclamation.
+    var inarm: InArmReuseSites = consumed_inarm_reuse_sites(fn.body, structs);
     var j: i32 = 0;
     while (j < fn.body.len()) {
         // Is statement j a self-overwrite reuse site? If so, lower it in place.
@@ -8830,7 +9159,20 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
             if (edon.idxs[edi] == j) { edon_i = edi; }
             edi = edi + 1;
         }
-        if (reuse_i >= 0) {
+        // Is statement j an in-arm consuming-match reuse site (`var y = match (x)`
+        // reusing x's box in place to build the arm result)?
+        var inarm_i: i32 = 0 - 1;
+        var ini: i32 = 0;
+        while (ini < inarm.idxs.len()) {
+            if (inarm.idxs[ini] == j) { inarm_i = ini; }
+            ini = ini + 1;
+        }
+        if (inarm_i >= 0) {
+            match (fn.body[j]) {
+                parser.StmtVar(rv) => { s = emit_inarm_match_reuse(rv.name, rv.init, inarm.donors[inarm_i], s); },
+                _ => { s = lower_stmt(fn.body[j], s); },
+            }
+        } else if (reuse_i >= 0) {
             match (fn.body[j]) {
                 parser.StmtVar(rv) => { s = emit_self_overwrite_reuse(rv.name, rv.init, reuse.bases[reuse_i], s); },
                 _ => { s = lower_stmt(fn.body[j], s); },
