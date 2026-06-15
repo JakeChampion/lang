@@ -299,6 +299,13 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// `.len()` + `match (b.o[i])` (field-array element) lower.
 		{"optarr-field-match", `struct B { o: Option[i32][] } function main(): i32 { var b = B { o: [Some(7), None] }; match (b.o[0]) { Some(x) => { return x; }, None => { return 0; } } return 0; }`},
 		{"resultarr-field-match", `struct B { o: Result[i32, i32][] } function main(): i32 { var b = B { o: [Ok(5), Err(3)] }; match (b.o[1]) { Ok(x) => { return x; }, Err(e) => { return e * 10; } } return 0; }`},
+		// A u32 Option/Result payload — a full i32 slot like i32 (no narrowing);
+		// verifies the wasm width handling agrees and the bound payload's u32
+		// logical `>>` matches the AST path. (Sub-word + u64 payloads bail.)
+		{"opt-u32-field-match", `struct S { o: Option[u32] } function main(): i32 { var s = S { o: Some(7) }; match (s.o) { Some(n) => { return n as i32; }, None => { return 1; } } return 0; }`},
+		{"result-u32-field-match", `struct S { r: Result[u32, i32] } function main(): i32 { var s = S { r: Ok(9) }; match (s.r) { Ok(n) => { return n as i32; }, Err(e) => { return e; } } return 0; }`},
+		{"opt-u32-payload-shift", `function main(): i32 { var o: Option[u32] = Some(4294967294 as u32); match (o) { Some(n) => { return (n >> 31) as i32; }, None => { return 0; } } return 0; }`},
+		{"opt-u32-tuple-field", `struct S { t: (Option[u32], i32) } function main(): i32 { var s = S { t: (Some(7), 3) }; return s.t.1; }`},
 		// `for o in optArray { match (o) }` — the foreach binds the loop var with
 		// the element Option/Result type so the body match recovers the payload.
 		{"foreach-optarr-match", `function main(): i32 { var a: Option[i32][] = [Some(1), Some(2), None]; var s = 0; for o in a { match (o) { Some(x) => { s = s + x; }, None => { s = s + 100; } } } return s; }`},
@@ -881,6 +888,11 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"opt-fncall-if-none-else", `function mkO(v: i32): Option[i32] { return Some(v); } function main(): i32 { var o = if (true) { mkO(7) } else { None }; match (o) { Some(n) => { return n; }, None => { return 0; } } return 0; }`, 7},
 		{"opt-fncall-if-call-else", `function mkO(v: i32): Option[i32] { return Some(v); } function main(): i32 { var o = if (true) { mkO(7) } else { mkO(2) }; match (o) { Some(n) => { return n; }, None => { return 0; } } return 0; }`, 7},
 		{"result-fncall-if-err-else", `function div(a: i32, b: i32): Result[i32, i32] { if (b == 0) { return Err(1); } return Ok(a / b); } function main(): i32 { var r = if (true) { div(20, 4) } else { Err(9) }; match (r) { Ok(n) => { return n; }, Err(e) => { return e; } } return 0; }`, 5},
+		// A u32 Option/Result payload, IR value pinned on wasm. The u32 `>> 31`
+		// is LOGICAL (4294967294 >> 31 = 1), so a wrong i32-arithmetic shift
+		// (-> -1) is caught — proof the bound payload is marked u32.
+		{"opt-u32-payload-shift-val", `function main(): i32 { var o: Option[u32] = Some(4294967294 as u32); match (o) { Some(n) => { return (n >> 31) as i32; }, None => { return 0; } } return 0; }`, 1},
+		{"result-u32-payload-val", `struct S { r: Result[u32, i32] } function main(): i32 { var s = S { r: Ok(42) }; match (s.r) { Ok(n) => { return n as i32; }, Err(e) => { return e; } } return 0; }`, 42},
 		// A struct-ARRAY-valued if-/match-expression (literal, or a P[]-returning
 		// call in the branch): the lifted __lam's element struct type is inferred
 		// so `ps[i].field` / `for p in ps { p.method() }` resolve. P[] sibling of

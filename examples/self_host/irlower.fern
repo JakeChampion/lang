@@ -1041,8 +1041,17 @@ pub function is_enum_array_field_type(structs: parser.StructDecl[], t: string): 
 }
 
 // is_leaksafe_payload reports whether a payload type is a leak-safe scalar/string.
+// u32 rides one full i32 slot exactly like i32 (no narrowing on read), so an
+// Option/Result box carrying a u32 stores / reads at the default 32-bit width
+// (op_opt_make / op_opt_payload) and the match binding marks the bound slot u32
+// so its `>>` is logical and its arithmetic wraps at 2^32. The sub-word ints
+// (u8/u16/i8/i16) are NOT here: their payload-box read needs sign/zero-extension
+// that currently differs across backends (a u8 read mis-extends on wasm), and
+// u64 needs the wide op_opt_make_w(64) / op_opt_payload_w(64) — each a separate
+// slice — so both keep an Option/Result-of-them field on the AST path.
 function is_leaksafe_payload(p: string): boolean {
-    return p == "i32" || p == "boolean" || p == "string" || p == "i64" || p == "f64";
+    return p == "i32" || p == "boolean" || p == "string" || p == "i64" || p == "f64"
+        || p == "u32";
 }
 
 // is_leaksafe_opt_field: an Option[T] / Result[T, E] field whose payload type(s)
@@ -7175,6 +7184,13 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 if (ptag == "string") { ms = ms.mark_str(pbslot, true); }
                                 else if (ptag == "i64") { ms = ms.mark_i64(pbslot, true); }
                                 else if (ptag == "f64") { ms = ms.mark_f64(pbslot, true); }
+                                // A u32 payload rode the default 32-bit op_opt_payload
+                                // load above (a full i32 slot, no narrowing); mark the
+                                // bound slot so its `>>` is logical and its arithmetic
+                                // wraps at 2^32 (the sibling of the StmtVar mark_u32 at
+                                // the binding site). Sub-word payloads stay on AST (see
+                                // is_leaksafe_payload).
+                                else if (ptag == "u32") { ms = ms.mark_u32(pbslot, true); }
                                 // A struct payload: tag the bound slot's struct type so
                                 // `p.field` resolves. It is BORROWED from the enum box
                                 // (not a fresh `var p = P{...}`), so it is never in
