@@ -260,6 +260,12 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"tuple-u64-access", `function f(): (u64, i32) { return (4294967296 as u64, 5); } function main(): i32 { var t = f(); var q: u64 = t.0 >> 32; return (q as i32) + t.1; }`},
 		{"tuple-u64-destr", `function f(): (u64, i32) { return (5000000000 as u64, 3); } function main(): i32 { var (hi, n) = f(); var q: u64 = hi / (1000000000 as u64); return (q as i32) + n; }`},
 		{"tuple-u64-unsigned", `function f(): (u64, i32) { return (18000000000000000000 as u64, 1); } function main(): i32 { var t = f(); var q: u64 = t.0 >> 60; return (q as i32) + t.1; }`},
+		// 4-byte scalar-array (i32[]/u32[]) tuple elements: a leak-only pointer in
+		// one slot like a string/struct element; destructure binds it as an array
+		// so `arr[i]` reads back (verifies the wasm path agrees).
+		{"tuple-i32arr-destr", `function f(): (i32[], i32) { return ([5, 10], 7); } function main(): i32 { var (arr, n) = f(); return arr[0] + arr[1] + n; }`},
+		{"tuple-u32arr-destr", `function f(): (u32[], i32) { return ([5, 10], 7); } function main(): i32 { var (arr, n) = f(); return (arr[0] as i32) + (arr[1] as i32) + n; }`},
+		{"tuple-i32arr-second", `function f(): (i32, i32[]) { return (3, [10, 20]); } function main(): i32 { var (n, arr) = f(); return n + arr[0] + arr[1]; }`},
 		// A tuple return with a ≤32-bit non-i32 integer element (u32 / sub-word
 		// u8/i16/i8) — same i32 slot; verifies the wasm width handling agrees.
 		{"tuple-u32", `function f(): (u32, i32) { return (4000000000 as u32, 7); } function main(): i32 { var t = f(); var hi: u32 = t.0 >> 30; return (hi as i32) + t.1; }`},
@@ -911,6 +917,8 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// u32[] struct-field round-trip pinned on wasm: three elements read back
 		// through the field array and sum.
 		{"struct-u32arr-field-val", `struct Vec { vals: u32[], n: i32 } function main(): i32 { var v = Vec { vals: [10, 20, 30], n: 3 }; var s = 0; var i = 0; while (i < v.n) { s = s + (v.vals[i] as i32); i = i + 1; } return s; }`, 60},
+		// scalar-array tuple element round-trip pinned on wasm (5+10+7).
+		{"tuple-i32arr-destr-val", `function f(): (i32[], i32) { return ([5, 10], 7); } function main(): i32 { var (arr, n) = f(); return arr[0] + arr[1] + n; }`, 22},
 		// A struct-ARRAY-valued if-/match-expression (literal, or a P[]-returning
 		// call in the branch): the lifted __lam's element struct type is inferred
 		// so `ps[i].field` / `for p in ps { p.method() }` resolve. P[] sibling of
