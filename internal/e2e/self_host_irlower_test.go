@@ -179,6 +179,15 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		{"enum-match-payload", "enum O { S(i32), N } function main(): i32 { var o = O.S(42); match (o) { S(v) => { return v; }, N => { return 0; } } }", 42},
 		{"enum-match-none-arm", "enum O { S(i32), N } function main(): i32 { var o = O.N; match (o) { S(v) => { return v; }, N => { return 99; } } }", 99},
 		{"enum-match-value-pos", "enum O { S(i32), N } function main(): i32 { var o = O.S(20); var r = match (o) { S(v) => v + 1, N => 0 }; return r * 2; }", 42},
+		// Tuples: a tuple literal lowers to tuple_make and `.0`/`.1` to tuple_get.
+		// The evaluator models a tuple box as [rc, e0, e1, …] (element i at slot i;
+		// no shape slot, unlike a struct). Before this, tuple_make / tuple_get fell
+		// into the binary-op default and SIGABRT'd.
+		{"tuple-pair", "function main(): i32 { var t = (3, 4); return t.0 + t.1; }", 7},
+		{"tuple-via-locals", "function main(): i32 { var t = (40, 2); var a = t.0; var b = t.1; return a + b; }", 42},
+		{"tuple-three", "function main(): i32 { var t = (10, 20, 12); return t.0 + t.1 + t.2; }", 42},
+		{"tuple-nested", "function main(): i32 { var t = ((1, 2), 3); return t.0.0 + t.0.1 + t.1; }", 6},
+		{"tuple-with-struct", "struct P { t: i32 } function main(): i32 { var t = (40, 2); var p = P { t: t.0 }; return p.t + t.1; }", 42},
 	}
 
 	for _, tc := range cases {
