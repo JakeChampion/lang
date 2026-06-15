@@ -4836,7 +4836,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     // to aarch64. Sets x0 = old ptr (return), advances the
     // ptr by x0 (the size arg).
     if (s.has_need("heap")) {
-        var heap_size: string = "2684354560";   // 2.5 GiB — arm64 emits longer asm per op than x86, so its self-compile live set runs higher; 1.75 GiB tipped the stage-2 fixpoint into the exit-137 alloc trap as the IR subset widened. Matches the native arm64 backend's heapBytes (lockstep). base 0x10000000 + 2.5 GiB = 0xB0000000 < 4 GiB (32-bit pointers round-trip).
+        var heap_size: string = "3758096384";   // 3.5 GiB — arm64 emits longer asm per op than x86, so its self-compile live set runs higher; widening the IR subset (enum-array Expr[]/Stmt[] aliasing) tipped the stage-2 fixpoint into the exit-137 alloc trap at 2.5 GiB. Matches the native arm64 backend's heapBytes (lockstep). base 0x10000000 + 3.5 GiB = 0xF0000000 < 4 GiB (32-bit pointers round-trip — at the ceiling, no further headroom without raising the base).
         s = s.write("    .bss\n");
         s = s.write("    .align 3\n");
         s = s.write("__fern_heap_ptr: .quad 0\n");

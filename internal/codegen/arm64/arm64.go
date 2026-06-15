@@ -837,10 +837,11 @@ func (g *generator) emitAllocRuntime() {
 	// fixpoint tipped into the exit-137 alloc trap as the IR subset widened.
 	// Matches asm_arm64.fern's own heap_size so the native (stage-0 mmc) and
 	// self-host (stage-1+ gen) arm64 heaps stay in lockstep. The region base
-	// is 0x10000000, so base+size = 0xB0000000 stays < 4 GiB and 32-bit
-	// pointers round-trip. Lazy-mapped via a literal-pool load, so the wider
+	// is 0x10000000, so base+size = 0xF0000000 stays < 4 GiB and 32-bit
+	// pointers round-trip (at the ceiling — no further headroom without
+	// raising the base). Lazy-mapped via a literal-pool load, so the wider
 	// window costs nothing until touched and has no 32-bit-immediate limit.
-	const heapBytes = 2684354560
+	const heapBytes = 3758096384
 	g.line("")
 	g.line(".global __fern_alloc")
 	g.typeDirective("__fern_alloc")
