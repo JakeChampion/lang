@@ -5199,7 +5199,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // each `__fern_alloc(size)` call. No deallocation — fine
     // for the small validation programs that exercise structs.
     if (s.has_need("heap")) {
-        var heap_size: string = "2013265920";   // ~1.875 GiB
+        var heap_size: string = "2684354560";   // 0xA0000000, 2.5 GiB
         s = s.write("    .section .bss\n");
         s = s.write("    .align 8\n");
         s = s.write("__fern_heap_ptr: .quad 0\n");
@@ -5213,8 +5213,15 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("__fern_rc_underflow: .quad 0\n");
         s = s.write("    .align 8\n");
         s = s.write("__fern_freelist: .skip 524288\n");
-        s = s.write("    .align 8\n");
-        s = s.write("__fern_heap: .skip " + heap_size + "\n");   // 0x78000000 (~1.875 GiB) — room for read_all_stdin + self-compiling a whole source bundle (zero-page .bss, no file-size cost); 1.75 GiB sat within ~30 MiB of the self-compile peak as the IR subset widened (alloc OOM exits 137). Ceiling: this is a STATIC .bss block addressed RIP-relative (`leaq __fern_heap(%rip)`), so heap_base + heap_size must stay < 0x80000000 for the small-code-model ±2 GiB displacement (INT32_MAX overflowed it); also the bounds-check `addq $heap_size, %rcx` needs a signed imm32 ≤ 0x7FFFFFFF
+        // NOTE: the multi-GiB `__fern_heap: .skip` reservation is NOT
+        // emitted here — it is emitted LAST in emit_runtime (just before
+        // `return s;`) so that __fern_heap is the final symbol in .bss.
+        // All other .bss symbols (strbuf / args / envp) thus land BELOW
+        // the heap (< 2 GiB) and keep cheap RIP-relative `leaq (%rip)`
+        // access; only __fern_heap's own base lives above 2 GiB and is
+        // reached via 64-bit-absolute `movabs $__fern_heap` (valid in the
+        // -no-pie static ELF). This is what keeps the heap's R_X86_64_PC32
+        // relocations from truncating when heap_base + heap_size > 2 GiB.
         s = s.write("    .section .text\n");
         s = s.write(".globl __fern_alloc\n");
         s = s.write(".type __fern_alloc, @function\n");
@@ -5245,7 +5252,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");
         s = s.write("    testq %rax, %rax\n");
         s = s.write("    jne .Lalloc_inited\n");
-        s = s.write("    leaq __fern_heap(%rip), %rax\n");
+        s = s.write("    movabs $__fern_heap, %rax\n");
         s = s.write("    movq %rax, __fern_heap_ptr(%rip)\n");
         s = s.write(".Lalloc_inited:\n");
         s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");
@@ -5259,9 +5266,12 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         // in other registers across the call (e.g. to_ascii_string keeps
         // the byte in %rcx). popq doesn't disturb the cmp's flags.
         s = s.write("    pushq %rcx\n");
-        s = s.write("    leaq __fern_heap(%rip), %rcx\n");
-        s = s.write("    addq $" + heap_size + ", %rcx\n");
+        s = s.write("    pushq %rdx\n");
+        s = s.write("    movabs $__fern_heap, %rcx\n");
+        s = s.write("    movabs $" + heap_size + ", %rdx\n"); // heap_size > imm32, so movabs not addq imm
+        s = s.write("    addq %rdx, %rcx\n");                 // %rcx = heap_base + heap_size (END)
         s = s.write("    cmpq %rcx, %rdi\n");
+        s = s.write("    popq %rdx\n");
         s = s.write("    popq %rcx\n");
         s = s.write("    ja .Lalloc_oom\n");
         s = s.write("    movq %rdi, __fern_heap_ptr(%rip)\n");
@@ -8064,6 +8074,17 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write(".Lai32_idx_notfound:\n");
         s = s.write("    movq $-1, %rax\n");
         s = s.write("    ret\n");
+    }
+    // The multi-GiB heap reservation is emitted LAST so __fern_heap is the
+    // final symbol in .bss — every other .bss symbol (strbuf / args / envp /
+    // freelist) lands below it (< 2 GiB) and keeps RIP-relative access; only
+    // __fern_heap's base lives above 2 GiB, reached via `movabs $__fern_heap`.
+    // (Linker concatenates .bss input sections in emission order, so emitting
+    // this last guarantees nothing follows the giant .skip into > 2 GiB land.)
+    if (s.has_need("heap")) {
+        s = s.write("    .section .bss\n");
+        s = s.write("    .align 8\n");
+        s = s.write("__fern_heap: .skip 2684354560\n");   // 0xA0000000 (2.5 GiB) — matches asm_ir.fern + the native x86-64 backend; addressed 64-bit-absolute (movabs) so heap_base + heap_size may exceed 2 GiB
     }
     return s;
 }

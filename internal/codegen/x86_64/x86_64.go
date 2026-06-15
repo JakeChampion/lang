@@ -3243,7 +3243,7 @@ func (g *generator) emitDataSections() {
 // persistent cursors were deleted. See the arm64 generator's
 // `emitAllocRuntime` comment for the full rationale.
 func (g *generator) emitAllocRuntime() {
-	const heapBytes = 2013265920 // 0x78000000 (~1.875 GiB) per region — sized so a cmd/fern-built self-host compiler can bootstrap-compile the WHOLE self-host source in one process. The self-host (stage-1+ gen) self-compile live set peaks ~1.78 GiB and sat within ~30 MiB of the previous 1.75 GiB cap, so any further IR-subset widening (which moves more compiler matches onto the alloc-heavier IR path) tipped mmc into the exit-137 alloc trap. Matches the self-host emitters' own `heap_size` (asm.fern / asm_ir.fern = 2013265920) — keeping the native (stage-0 mmc) and self-host heaps in lockstep. Lazy MAP_ANONYMOUS so it costs nothing until touched. Ceiling: the self-host emitters reserve the heap as a STATIC `.bss` block and address it RIP-relative (`leaq __fern_heap(%rip)`), so heap_base (≈ 0x7ED680 in a `-no-pie` static ELF) + heap_size must stay < 0x80000000 to keep within the small code model's ±2 GiB displacement (0x78000000 → end ≈ 0x787E_D680, safe; INT32_MAX overflowed it and segfaulted). heapBytes is also the `mov esi, heapBytes` mmap length and the `addq $heapBytes` / `lea [base + heapBytes]` signed imm32 displacement, both ≤ 0x7FFFFFFF.
+	const heapBytes = 2684354560 // 0xA0000000 (2.5 GiB) per region — sized so a cmd/fern-built self-host compiler can bootstrap-compile the WHOLE self-host source in one process. The self-host (stage-1+ gen) self-compile live set peaks ~1.78 GiB; 2.5 GiB matches the arm64 backend's CI-proven value and gives ample headroom. Matches the self-host emitters' own `heap_size` (asm.fern / asm_ir.fern = 2684354560) — keeping the native (stage-0 mmc) and self-host heaps in lockstep. Lazy MAP_ANONYMOUS so it costs nothing until touched. This native heap is an mmap region addressed via REGISTER (not a static `.bss` block), so it has no RIP-relative / imm32 displacement ceiling — heap_base + heap_size may exceed 2 GiB. heapBytes is the `mov esi, heapBytes` mmap length (u32 zero-extend, fits) and the heap-END is built `mov ecx, heapBytes` (u32) + `add rcx, rax` rather than a signed-disp32 `lea [base + heapBytes]` (which caps at 0x7FFFFFFF). The self-host emitters reach their `.bss` heap via 64-bit-absolute `movabs $__fern_heap` with __fern_heap emitted LAST in .bss so its > 2 GiB base never truncates a PC32 relocation.
 	g.line("")
 	g.line(".globl __fern_alloc")
 	g.line(".type __fern_alloc, @function")
@@ -3356,7 +3356,11 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("mov [rbx], rax")
 	// Phase 6: record the region base for __fern_heap_bump_bytes.
 	g.emit("mov [rip + __fern_heap_base], rax")
-	g.emit("lea rcx, [rax + " + fmt.Sprintf("%d", heapBytes) + "]")
+	// heap-END = base + heapBytes. Build via u32 zero-extend + add rather
+	// than `lea [rax + heapBytes]` (a signed disp32 that caps at 0x7FFFFFFF)
+	// so heapBytes may exceed 2 GiB.
+	g.emit(fmt.Sprintf("mov ecx, %d", heapBytes))
+	g.emit("add rcx, rax")
 	g.emit("mov [r12], rcx")
 	g.label(".Lalloc_have_heap")
 	g.emit("mov rax, [rbx]")

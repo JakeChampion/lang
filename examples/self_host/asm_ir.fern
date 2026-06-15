@@ -636,8 +636,11 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_rc_underflow: .quad 0\n");
     s = s.write("    .align 8\n");
     s = s.write("__fern_freelist: .skip 524288\n");
-    s = s.write("    .align 8\n");
-    s = s.write("__fern_heap: .skip 2013265920\n");   // 0x78000000 (~1.875 GiB) (matches asm.fern's AST heap + the native x86-64 backend; zero-page .bss; heap_base + size < 0x80000000 keeps the RIP-relative `leaq __fern_heap(%rip)` within the small-code-model ±2 GiB, and 0x78000000 fits the signed imm32 bounds-check addq)
+    // The multi-GiB `__fern_heap: .skip` is emitted LAST in emit_ir_runtime
+    // (just before `return s;`) so __fern_heap is the final .bss symbol — its
+    // base lives above 2 GiB and is reached via 64-bit-absolute `movabs
+    // $__fern_heap`, keeping its R_X86_64_PC32 relocations from truncating.
+    // Mirrors asm.fern's AST path. Keep in sync with asm.fern.
     s = s.write("    .section .text\n");
     // __fern_alloc(%rdi = bytes) -> %rax = block. Size-classed freelist reuse
     // (class = bytes/8 < 65536) then bump; OOM traps with exit 137.
@@ -668,15 +671,18 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");
     s = s.write("    testq %rax, %rax\n");
     s = s.write("    jne .Lalloc_inited\n");
-    s = s.write("    leaq __fern_heap(%rip), %rax\n");
+    s = s.write("    movabs $__fern_heap, %rax\n");
     s = s.write("    movq %rax, __fern_heap_ptr(%rip)\n");
     s = s.write(".Lalloc_inited:\n");
     s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");
     s = s.write("    addq %rax, %rdi\n");
     s = s.write("    pushq %rcx\n");
-    s = s.write("    leaq __fern_heap(%rip), %rcx\n");
-    s = s.write("    addq $2013265920, %rcx\n");
+    s = s.write("    pushq %rdx\n");
+    s = s.write("    movabs $__fern_heap, %rcx\n");
+    s = s.write("    movabs $2684354560, %rdx\n"); // 0xA0000000 heap_size > imm32, so movabs not addq imm
+    s = s.write("    addq %rdx, %rcx\n");           // %rcx = heap_base + heap_size (END)
     s = s.write("    cmpq %rcx, %rdi\n");
+    s = s.write("    popq %rdx\n");
     s = s.write("    popq %rcx\n");
     s = s.write("    ja .Lalloc_oom\n");
     s = s.write("    movq %rdi, __fern_heap_ptr(%rip)\n");
@@ -1866,6 +1872,15 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
+
+    // Emit the multi-GiB heap reservation LAST so __fern_heap is the final
+    // symbol in .bss (the IR path emits no other .bss symbols, but this keeps
+    // it byte-identical-in-structure to asm.fern and robust to future ones).
+    // Addressed 64-bit-absolute (movabs) so heap_base + heap_size > 2 GiB.
+    s = s.write("    .section .bss\n");
+    s = s.write("    .align 8\n");
+    s = s.write("__fern_heap: .skip 2684354560\n");   // 0xA0000000 (2.5 GiB) — matches asm.fern + the native x86-64 backend
+    s = s.write("    .section .text\n");
 
     return s;
 }
