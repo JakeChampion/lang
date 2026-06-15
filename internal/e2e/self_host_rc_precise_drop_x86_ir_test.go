@@ -385,6 +385,57 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// falls to lower_iife_match, whose match-EXPRESSION binding is itself i32-only
 		// — so no route=="ir" u64 case is expressible in this harness. The exclusion is
 		// covered structurally by the gate + the firing i64/f64 cases above.)
+		//
+		// ARRAY PAYLOAD WIDENING (FBIP in-arm reuse now admits leak-safe scalar-array
+		// payload fields — i32[]/i64[]/f64[]/boolean[] — alongside scalars). For each
+		// RESULT array field the reuse emits a COW-GUARDED write (mirror the cross-struct
+		// reuse / emit_arr_store guard): load the donor's OLD array at that slot, compare
+		// to the NEW value, `if (old != new) arr_dec(old)`, store new. Two sound shapes:
+		//   - MOVE: the arm moves a BOUND array payload into the same result slot
+		//     (`V(a, xs) => W(a+1, xs)`). The new value IS the old array pointer (the
+		//     binding temp aliases the box slot, unchanged since reshape), so old==new →
+		//     NO dec → the array is reused in place (the strongest FBIP win: no arr_box
+		//     for the array either).
+		//   - REPLACE: the arm builds a FRESH array (`V(a, xs) => W(a, [7,8])`). old!=new
+		//     → the donor's old array is dropped, the fresh one written and owned by the
+		//     reused box.
+		// The donor's array payloads in `var x = V(...)` must be fresh array literals
+		// (sole ownership), and the per-position array-ness must match between pattern
+		// and result variant; a permutation/swap or a stray borrow of the moved array is
+		// gated out (see inarm_reuse_match_ok). Read-before-overwrite holds: the array
+		// pointer is read into a temp at arm entry before any field write.
+		//
+		// FIRING MOVE: V(i32,i32[])→W(a+1, xs) — xs MOVED into the result, reused in
+		// place. y read back: W's array [10,20,30] sums 60, +tag 4 = 64. Detector 0.
+		{"inarm-reuse-array-move-value", `enum E { V(i32, i32[]), W(i32, i32[]) } function go(): i32 { var x = V(3, [10, 20, 30]); var y = match (x) { V(a, xs) => W(a + 1, xs), W(b, ys) => V(b, ys) }; var r = 0; match (y) { V(a, xs) => { r = a + xs[0] + xs[1] + xs[2]; }, W(c, ds) => { r = c + ds[0] + ds[1] + ds[2]; } } return r; } function main(): i32 { return go(); }`, 64},
+		{"inarm-reuse-array-move-detector", `enum E { V(i32, i32[]), W(i32, i32[]) } function go(): i32 { var x = V(3, [10, 20, 30]); var y = match (x) { V(a, xs) => W(a + 1, xs), W(b, ys) => V(b, ys) }; var r = 0; match (y) { V(a, xs) => { r = a + xs[0] + xs[1] + xs[2]; }, W(c, ds) => { r = c + ds[0] + ds[1] + ds[2]; } } if (r != 64) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// FIRING MOVE + heap-reuse corruption probe: a FRESH array allocated AFTER the
+		// reusing match reads back intact (the move didn't free the array early or
+		// clobber the heap; a stale free would let the fresh alloc recycle y's array).
+		{"inarm-reuse-array-move-corruption-probe-detector", `enum E { V(i32, i32[]), W(i32, i32[]) } function go(): i32 { var x = V(3, [10, 20, 30]); var y = match (x) { V(a, xs) => W(a + 1, xs), W(b, ys) => V(b, ys) }; var r = 0; match (y) { V(a, xs) => { r = a + xs[0] + xs[1] + xs[2]; }, W(c, ds) => { r = c + ds[0] + ds[1] + ds[2]; } } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (r != 64) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// FIRING REPLACE: the V arm builds a FRESH array result field (`W(a, [7, 8])`).
+		// The donor's old array [10,20,30] is dropped (old!=new), the fresh [7,8] written
+		// and owned by the reused box. y read back: tag 3 + 7 + 8 = 18. Detector 0 (old
+		// array freed once, fresh array freed once — no leak, no over-release).
+		{"inarm-reuse-array-replace-value", `enum E { V(i32, i32[]), W(i32, i32[]) } function go(): i32 { var x = V(3, [10, 20, 30]); var y = match (x) { V(a, xs) => W(a, [7, 8]), W(b, ys) => V(b, ys) }; var r = 0; match (y) { V(a, xs) => { r = a + xs[0] + xs[1]; }, W(c, ds) => { r = c + ds[0] + ds[1]; } } return r; } function main(): i32 { return go(); }`, 18},
+		{"inarm-reuse-array-replace-detector", `enum E { V(i32, i32[]), W(i32, i32[]) } function go(): i32 { var x = V(3, [10, 20, 30]); var y = match (x) { V(a, xs) => W(a, [7, 8]), W(b, ys) => V(b, ys) }; var r = 0; match (y) { V(a, xs) => { r = a + xs[0] + xs[1]; }, W(c, ds) => { r = c + ds[0] + ds[1]; } } if (r != 18) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// FIRING REPLACE corruption probe: a fresh array after the replacing match reads
+		// back intact (the dropped old array was freed exactly once; no double-free / no
+		// dangling slot the fresh alloc could recycle wrongly).
+		{"inarm-reuse-array-replace-corruption-probe-detector", `enum E { V(i32, i32[]), W(i32, i32[]) } function go(): i32 { var x = V(3, [10, 20, 30]); var y = match (x) { V(a, xs) => W(a, [7, 8]), W(b, ys) => V(b, ys) }; var r = 0; match (y) { V(a, xs) => { r = a + xs[0] + xs[1]; }, W(c, ds) => { r = c + ds[0] + ds[1]; } } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (r != 18) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// FIRING MOVE with a leading i64 scalar alongside the array field: the i64 scalar
+		// is written 8-byte (struct_set_i64), the array MOVED via the cow-guard. Mixed
+		// scalar+array reuse. y read back: (a+1) as i32 = 6 + 10+20 = 36. Detector 0.
+		{"inarm-reuse-array-mixed-i64-detector", `enum E { V(i64, i32[]), W(i64, i32[]) } function go(): i32 { var x = V(5, [10, 20]); var y = match (x) { V(a, xs) => W(a + 1, xs), W(b, ys) => V(b, ys) }; var r = 0; match (y) { V(a, xs) => { r = (a as i32) + xs[0] + xs[1]; }, W(c, ds) => { r = (c as i32) + ds[0] + ds[1]; } } if (r != 36) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// (A permutation/swap `V(p, q) => V(q, p)` and an i64[]/f64[] array payload are
+		// gated OUT of the firing path here: the swap is rejected by the per-position
+		// move gate — the arg at slot di is bound from a DIFFERENT slot, so a cow-guard
+		// would wrongly dec a still-needed array — and an i64[]/f64[] enum-payload
+		// program falls outside the IR subset for an orthogonal reason (the y read-back
+		// via the i32-only match-EXPRESSION / 8-byte-element enum-array path), so neither
+		// routes "ir" in this harness. The swap rejection is covered structurally by
+		// inarm_reuse_match_ok's per-position binding check; its non-firing is verified
+		// by an arr_box-count probe in the slice report.)
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
