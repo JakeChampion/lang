@@ -250,6 +250,19 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-15 — std/crypto, std/path, std/math via the self-host IR path (coverage)
+
+Same vehicle as the std/hex / std/base64 coverage: each REAL no-import std module
+is concatenated with a `main` (single-module, no modload), routing-pinned to `"ir"`
+and oracle-checked on x86-64 + wasm (verified on arm64 via qemu). **std/crypto** is
+the standout — `sha256_hex` / `sha256_bytes` / `hmac_sha256_hex` drive the entire
+u32-heavy SHA-256 message schedule + compression (rotr / `shr_u` / wrapping add)
+through the IR path end-to-end. **std/path** (`path_join` / `path_extension` /
+`path_file_name` / `path_parent`) and **std/math** (`range` / `range_step` /
+`pack_rgb` / `i32_max`) round out the batch. Coverage-only, no compiler change.
+Guarded by `TestSelfHost{Crypto,Path,Math}IR{X86_64,Wasm}` in
+`self_host_stdlib_concat_ir_test.go` (a shared concat-driver harness).
+
 ### 2026-06-15 — fully-matched `Option[Result[T, E]]` on the self-host IR path (bug fix)
 
 A fully-matched `Option[Result[T, E]]` (outer `Some` bound, then the inner Result
