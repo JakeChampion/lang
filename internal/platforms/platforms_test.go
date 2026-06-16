@@ -12,7 +12,7 @@ import (
 // landing a descriptor here surfaces immediately rather than
 // at the user-visible "platform has no capabilities" surface.
 func TestForTargetCoversEveryCanonicalTarget(t *testing.T) {
-	canonical := []string{"arm64", "arm64-darwin", "x86-64", "wasm", "wasi-http"}
+	canonical := []string{"arm64", "arm64-android", "arm64-darwin", "x86-64", "wasm", "wasi-http"}
 	for _, name := range canonical {
 		t.Run(name, func(t *testing.T) {
 			d := ForTarget(name)

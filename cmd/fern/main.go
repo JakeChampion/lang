@@ -526,7 +526,7 @@ func writeGeneratedFile(path, content string) error {
 
 func main() {
 	out := flag.String("o", "", "output binary path; if unset, assembly is written to stdout")
-	target := flag.String("target", "arm64", "code-generation backend: arm64 (default, Linux ELF), arm64-darwin (native Apple Silicon macOS), x86-64 (Linux ELF, in-process native backend by default), wasm (CLI component), wasi-http (HTTP handler component implementing wasi:http/incoming-handler), or wasm-ssa (experimental SSA-direct wasm core module; supports i32/i64/f32/f64, memory + alloc, string literals; pass -component-wrap-cli to lift as a wasi:cli/run component runnable via plain `wasmtime run`)")
+	target := flag.String("target", "arm64", "code-generation backend: arm64 (default, Linux ELF), arm64-android (arm64 Linux ELF as a static position-independent executable for Android), arm64-darwin (native Apple Silicon macOS), x86-64 (Linux ELF, in-process native backend by default), wasm (CLI component), wasi-http (HTTP handler component implementing wasi:http/incoming-handler), or wasm-ssa (experimental SSA-direct wasm core module; supports i32/i64/f32/f64, memory + alloc, string literals; pass -component-wrap-cli to lift as a wasi:cli/run component runnable via plain `wasmtime run`)")
 	cc := flag.String("cc", "", "external assembler/linker invoked when -o or --run is set. arm64/x86-64 Linux and arm64-darwin all default to the in-process native backend (no external toolchain); passing -cc opts out to it (e.g. aarch64-linux-gnu-gcc / x86_64-linux-gnu-gcc on Linux, clang on darwin).")
 	runIt := flag.Bool("run", false, "link to a temporary binary and execute it (arm64 Linux only; uses qemu-aarch64 when not on an arm64 host)")
 	native := flag.Bool("native", false, "force the in-process pure-Go assembler+linker (internal/native). Already the DEFAULT for arm64/x86-64 Linux and arm64-darwin, so the flag is only needed to override an explicit -cc. No external assembler or linker; errors clearly on any unsupported instruction (pass -cc to fall back to an external toolchain).")
@@ -547,7 +547,7 @@ func main() {
 	listTargets := flag.Bool("targets", false, "list the supported -target= values with their descriptions + capability surface, then exit. Surfaces the Platform-descriptor table (internal/platforms) as the canonical source of truth for what each target accepts.")
 	explain := flag.String("explain", "", "print the long-form explanation for an error code (e.g. -explain E001) and exit. Pass an empty string with no other args to list the available codes.")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: fern [-target arm64|arm64-darwin|x86-64|wasm] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.fern [-- ARGS...]")
+		fmt.Fprintln(os.Stderr, "usage: fern [-target arm64|arm64-android|arm64-darwin|x86-64|wasm] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.fern [-- ARGS...]")
 		fmt.Fprintln(os.Stderr, "       fern -fmt [-w | -d] FILE.fern")
 		fmt.Fprintln(os.Stderr, "       fern -check FILE.fern | fern -check -      (type-check only; stdin form)")
 		fmt.Fprintln(os.Stderr, "       fern -repl")
@@ -1064,17 +1064,22 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 		return 0, nil
 	}
 
-	if target != "arm64" && target != "arm64-darwin" && target != "x86-64" {
-		return 1, fmt.Errorf("unknown target %q (want arm64-darwin, arm64, x86-64, wasm, wasm-bin, or wasi-http)", target)
+	if target != "arm64" && target != "arm64-darwin" && target != "arm64-android" && target != "x86-64" {
+		return 1, fmt.Errorf("unknown target %q (want arm64-darwin, arm64, arm64-android, x86-64, wasm, wasm-bin, or wasi-http)", target)
 	}
 
 	darwin := target == "arm64-darwin"
+	// arm64-android is arm64 Linux ELF emitted as a static position-
+	// independent executable (ET_DYN): Android rejects non-PIE for normal
+	// exec, so the codegen emits the self-relocation prologue and the
+	// linker produces a .rela.dyn / PT_DYNAMIC image.
+	android := target == "arm64-android"
 	var asm string
 	switch target {
 	case "x86-64":
 		asm, err = x86_64codegen.EmitWithOptions(prog, info, x86_64codegen.Options{})
 	default:
-		asm, err = arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: darwin})
+		asm, err = arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: darwin, PIE: android})
 	}
 	if err != nil {
 		return 1, err
@@ -1114,16 +1119,21 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 			os.Remove(cleanupBin)
 		}
 	}()
-	if native && target != "arm64" && target != "x86-64" && target != "arm64-darwin" {
-		return 1, fmt.Errorf("-native is only supported with -target arm64, x86-64, or arm64-darwin (got %q)", target)
+	if native && target != "arm64" && target != "x86-64" && target != "arm64-darwin" && target != "arm64-android" {
+		return 1, fmt.Errorf("-native is only supported with -target arm64, arm64-android, x86-64, or arm64-darwin (got %q)", target)
 	}
-	// arm64/x86-64 Linux and arm64-darwin all use the pure-Go
-	// assembler+linker by default (no external toolchain). Pass -cc to opt
-	// out to an external assembler/linker (gcc on Linux, clang on darwin).
-	useNative := native || (!ccExplicit && (target == "arm64" || target == "x86-64" || darwin))
+	// arm64/x86-64 Linux, arm64-darwin, and arm64-android all use the
+	// pure-Go assembler+linker by default (no external toolchain). Pass -cc
+	// to opt out to an external assembler/linker (gcc on Linux, clang on
+	// darwin); arm64-android only supports the in-process PIE linker.
+	useNative := native || (!ccExplicit && (target == "arm64" || target == "x86-64" || darwin || android))
 	switch {
 	case useNative && darwin:
 		if err := linkNativeDarwin(asm, binPath); err != nil {
+			return 1, err
+		}
+	case useNative && android:
+		if err := linkNativePIE(asm, binPath); err != nil {
 			return 1, err
 		}
 	case useNative && target == "x86-64":
@@ -1155,7 +1165,7 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 	// Run the binary directly when its target matches the host
 	// architecture — no emulator (or qemu install) needed. Only fall back
 	// to a user-mode emulator for the cross case.
-	if (target == "arm64" && runtime.GOARCH == "arm64") ||
+	if ((target == "arm64" || target == "arm64-android") && runtime.GOARCH == "arm64") ||
 		(target == "x86-64" && runtime.GOARCH == "amd64") {
 		return execDirect(binPath, progArgs)
 	}
@@ -1302,6 +1312,29 @@ func linkNative(asm, outPath string) error {
 		return err
 	}
 	return nil
+}
+
+// linkNativePIE assembles arm64 assembly into a static position-independent
+// (ET_DYN) executable entirely in-process — the -target arm64-android path.
+// The codegen emitted the self-relocation prologue (Options.PIE); the
+// assembler returns the R_AARCH64_RELATIVE relocations for the
+// `.quad <symbol>` slots, which the ELF writer records in .rela.dyn /
+// .dynamic. Same W^X two-segment layout, but ET_DYN at a load base of 0 so
+// the kernel can map it at an arbitrary address (required by Android).
+func linkNativePIE(asm, outPath string) error {
+	text, rodata, relocs, err := nativearm64.AssembleProgramPIE(asm, nativeelf.TextVAddrPIE)
+	if err != nil {
+		return fmt.Errorf("native assembler: %w", err)
+	}
+	elfRelocs := make([]nativeelf.Reloc, len(relocs))
+	for i, r := range relocs {
+		elfRelocs[i] = nativeelf.Reloc{Offset: r.Offset, Addend: r.Addend}
+	}
+	bin := nativeelf.StaticPieExecutable(text, rodata, elfRelocs)
+	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
+		return err
+	}
+	return os.Chmod(outPath, 0o755)
 }
 
 // linkNativeX86 is the x86-64 counterpart of linkNative: it assembles and
