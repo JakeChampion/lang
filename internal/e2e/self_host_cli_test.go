@@ -1082,6 +1082,42 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("emit-target-arm64-android", func(t *testing.T) {
+		// -target arm64-android emits a static position-independent (ET_DYN)
+		// arm64 ELF (in-process via arm64_native + elf.fern). The mmap'd low
+		// heap lets it run at the kernel-chosen base; check ET_DYN + exit code
+		// under qemu.
+		_, qemu := arm64Tooling(t) // skips if qemu absent
+		srcPath := filepath.Join(dir, "android_prog.fern")
+		if err := os.WriteFile(srcPath, []byte("function main(): i32 { print(\"droid\"); return 6 * 7; }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		progBin := filepath.Join(dir, "android_prog.bin")
+		_, code := runDriver(t, "-target", "arm64-android", "-o", progBin, srcPath)
+		if code != 0 {
+			t.Fatalf("-target arm64-android emit exited %d, want 0", code)
+		}
+		raw, err := os.ReadFile(progBin)
+		if err != nil {
+			t.Fatalf("read emitted binary: %v", err)
+		}
+		f, err := elf.NewFile(bytes.NewReader(raw))
+		if err != nil {
+			t.Fatalf("-target arm64-android output is not a parseable ELF: %v", err)
+		}
+		if f.Machine != elf.EM_AARCH64 || f.Type != elf.ET_DYN {
+			t.Fatalf("got machine=%v type=%v, want AARCH64/DYN", f.Machine, f.Type)
+		}
+		if err := os.Chmod(progBin, 0o755); err != nil {
+			t.Fatalf("chmod: %v", err)
+		}
+		cmd := exec.Command(qemu, progBin)
+		out, _ := cmd.CombinedOutput()
+		if c := cmd.ProcessState.ExitCode(); c != 42 {
+			t.Errorf("arm64-android program exited %d, want 42 (out=%q)", c, out)
+		}
+	})
+
 	t.Run("emit-target-wasm", func(t *testing.T) {
 		// The driver emits a WASI WAT module under -target wasm; run it
 		// directly with wasmtime and check exit code + stdout.

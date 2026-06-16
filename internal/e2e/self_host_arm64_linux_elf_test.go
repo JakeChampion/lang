@@ -86,6 +86,36 @@ function main(): i32 {
 	}
 	drvBin := buildSelfHostBin(t, gcc, edir, "drv.fern", "drv")
 
+	// pieDriverMain mirrors driverMain but emits a static-PIE (ET_DYN) image
+	// via elf_image_pie at the base-0 PIE vaddrs — matches fern.fern's
+	// arm64_elf_binary_pie (-target arm64-android). With the arm64 heap now
+	// mmap'd at the low 0x10000000 hint, these run at the kernel-chosen base.
+	const pieDriverMain = `
+function to_u8(b: i32[]): u8[] { var o: u8[] = []; var i: i32 = 0; while (i < b.len()) { o = o.append(b[i] as u8); i = i + 1; } return o; }
+function main(): i32 {
+    var asm: string = ""; var ok: boolean = false;
+    match (read_file("in.s")) { Ok(s) => { asm = s; ok = true; }, Err(e) => { ok = false; } }
+    if (!ok) { write("ERR"); return 1; }
+    var p: Arm64GasProg = arm64_gas_program(asm);
+    if (p.unknown.len() > 0) { write("UNKNOWN:"); return 0; }
+    var pa: Arm64Asm = p.asm;
+    var tv: i64 = (elf_text_vaddr_pie()) as i64;
+    var dv: i64 = (elf_data_vaddr_pie(pa.code.len())) as i64;
+    p = arm64_gas_link(p, tv, dv);
+    var pa2: Arm64Asm = p.asm;
+    var entry_off: i32 = arm64_asm_label_off(pa2, "_start");
+    if (entry_off < 0) { entry_off = 0; }
+    var bin: i32[] = elf_image_pie(pa2.code, p.data, elf_em_aarch64(), entry_off, p.bss_size);
+    write(string_from_bytes(to_u8(bin)));
+    return 0;
+}
+`
+	pdir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(pdir, "drv.fern"), []byte(native+"\n"+elfsrc+"\n"+pieDriverMain), 0o644); err != nil {
+		t.Fatalf("write pie driver: %v", err)
+	}
+	drvPieBin := buildSelfHostBin(t, gcc, pdir, "drv.fern", "drvpie")
+
 	cases := []struct {
 		name string
 		src  string
@@ -149,6 +179,49 @@ function main(): i32 {
 			_ = run.Run()
 			if code := run.ProcessState.ExitCode(); code != c.want {
 				t.Errorf("%s: qemu exit = %d, want %d", c.name, code, c.want)
+			}
+
+			// Same program through the PIE driver (-target arm64-android):
+			// a position-independent ET_DYN with two non-W+X PT_LOAD segments
+			// that runs to the same exit code at the kernel-chosen base. With
+			// the mmap'd low heap, heap-using programs work as PIEs too.
+			pcmd := exec.Command(drvPieBin)
+			pcmd.Dir = rdir
+			pout, perr := pcmd.Output()
+			if perr != nil {
+				t.Fatalf("pie assemble driver failed: %v", perr)
+			}
+			if bytes.HasPrefix(pout, []byte("UNKNOWN:")) {
+				t.Fatalf("pie: arm64_native reported unknown instructions")
+			}
+			pf, err := elf.NewFile(bytes.NewReader(pout))
+			if err != nil {
+				t.Fatalf("pie output is not a parseable ELF: %v (len=%d)", err, len(pout))
+			}
+			if pf.Machine != elf.EM_AARCH64 || pf.Type != elf.ET_DYN {
+				t.Fatalf("pie: got machine=%v type=%v, want AARCH64/DYN", pf.Machine, pf.Type)
+			}
+			ploads := 0
+			for _, prog := range pf.Progs {
+				if prog.Type != elf.PT_LOAD {
+					continue
+				}
+				ploads++
+				if prog.Flags&elf.PF_W != 0 && prog.Flags&elf.PF_X != 0 {
+					t.Errorf("%s pie: PT_LOAD is W+X (%v)", c.name, prog.Flags)
+				}
+			}
+			if ploads != 2 {
+				t.Errorf("%s pie: got %d PT_LOAD segments, want 2", c.name, ploads)
+			}
+			pbinPath := filepath.Join(rdir, c.name+"-pie")
+			if err := os.WriteFile(pbinPath, pout, 0o755); err != nil {
+				t.Fatalf("write pie bin: %v", err)
+			}
+			prun := exec.Command("qemu-aarch64", pbinPath)
+			_ = prun.Run()
+			if code := prun.ProcessState.ExitCode(); code != c.want {
+				t.Errorf("%s pie: qemu exit = %d, want %d", c.name, code, c.want)
 			}
 		})
 	}

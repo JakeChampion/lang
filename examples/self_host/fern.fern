@@ -87,6 +87,34 @@ function arm64_elf_binary(asm: string): string {
     return string_from_bytes(to_u8(bin));
 }
 
+// arm64_elf_binary_pie is arm64_elf_binary as a static position-independent
+// executable (the -target arm64-android path): ET_DYN at a load base of 0 so
+// the kernel can map it anywhere (Android rejects non-PIE for normal exec).
+// Now that the arm64 heap is mmap'd at the low 0x10000000 hint (not reserved
+// as a giant .bss in the loaded image), the data segment is tiny and the
+// heap lives below 4 GiB regardless of the binary's load base — so the PIE
+// runs at any base. The self-host arm64 emitter embeds no absolute pointers
+// (function addresses via runtime adrp/:lo12:), so no dynamic relocations are
+// needed; only the ELF container (ET_DYN) and the base-0 layout differ.
+function arm64_elf_binary_pie(asm: string): string {
+    var p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(asm);
+    if (p.unknown.len() > 0) {
+        eprint("fern: -target arm64-android: in-process assembler hit an instruction it does not yet support: ");
+        eprint(p.unknown[0]);
+        eprint("\n");
+        return "";
+    }
+    var pa: arm64_native.Arm64Asm = p.asm;
+    var tv: i64 = (elf.elf_text_vaddr_pie()) as i64;
+    var dv: i64 = (elf.elf_data_vaddr_pie(pa.code.len())) as i64;
+    p = arm64_native.arm64_gas_link(p, tv, dv);
+    var pa2: arm64_native.Arm64Asm = p.asm;
+    var eoff: i32 = arm64_native.arm64_asm_label_off(pa2, "_start");
+    if (eoff < 0) { eoff = 0; }
+    var bin: i32[] = elf.elf_image_pie(pa2.code, p.data, elf.elf_em_aarch64(), eoff, p.bss_size);
+    return string_from_bytes(to_u8(bin));
+}
+
 // last_slash returns the index of the final '/' in p, or -1.
 function last_slash(p: string): i32 {
     var i: i32 = 0;
@@ -183,7 +211,7 @@ struct SsaResult { asm: string, ok: boolean }
 // and the wasm-bin / wasm-component targets always fall back. Register
 // allocation is always on for the native path.
 function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target: string): SsaResult {
-    if (target != "x86-64" && target != "arm64" && target != "wasm") { return SsaResult { asm: "", ok: false }; }
+    if (target != "x86-64" && target != "arm64" && target != "arm64-android" && target != "wasm") { return SsaResult { asm: "", ok: false }; }
     // The set of user-defined function names the SSA backend can `call`, and
     // the subset that return a pointer (so their call results are 64-bit).
     // Lambda bindings `var f = function(...){...}` lift to top-level functions
@@ -249,7 +277,7 @@ function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target:
     // wasm emitter rather than emitting broken WAT.
     if (target == "wasm" && !ssa_wasm.supported(sfuncs)) { return SsaResult { asm: "", ok: false }; }
     var asm: string = "";
-    if (target == "arm64") { asm = ssa_arm64.emit_program(sfuncs, true); }
+    if (target == "arm64" || target == "arm64-android") { asm = ssa_arm64.emit_program(sfuncs, true); }
     else if (target == "wasm") { asm = ssa_wasm.emit_program(sfuncs); }
     else { asm = ssa_x86.emit_program(sfuncs, true); }
     return SsaResult { asm: asm, ok: true };
@@ -380,7 +408,7 @@ function main(): i32 {
 
     if (!have_entry) { return usage(); }
 
-    if (target != "x86-64" && target != "arm64" && target != "arm64-darwin" && target != "wasm" && target != "wasm-bin" && target != "wasm-component") {
+    if (target != "x86-64" && target != "arm64" && target != "arm64-android" && target != "arm64-darwin" && target != "wasm" && target != "wasm-bin" && target != "wasm-component") {
         eprint("fern: unknown -target: ");
         eprint(target);
         eprint(" (want x86-64, arm64, arm64-darwin, wasm, wasm-bin, or wasm-component)\n");
@@ -550,6 +578,9 @@ function main(): i32 {
             if (target == "arm64") {
                 ssa_out = arm64_elf_binary(sr.asm);
                 if (ssa_out.len() == 0) { return 2; }
+            } else if (target == "arm64-android") {
+                ssa_out = arm64_elf_binary_pie(sr.asm);
+                if (ssa_out.len() == 0) { return 2; }
             }
             if (out_path.len() > 0) {
                 match (write_file(out_path, ssa_out)) {
@@ -574,6 +605,11 @@ function main(): i32 {
         // In-process ELF (arm64_native + elf.fern) — no `.s` + gcc/ld. The
         // SSA path above already flipped; this is the AST-emitter fallback.
         out_asm = arm64_elf_binary(asm_arm64.emit_module(full, false));
+        if (out_asm.len() == 0) { return 2; }
+    } else if (target == "arm64-android") {
+        // arm64-android is the arm64 emitter wrapped in a static-PIE (ET_DYN)
+        // image instead of the fixed-address W^X one (AST-emitter fallback).
+        out_asm = arm64_elf_binary_pie(asm_arm64.emit_module(full, false));
         if (out_asm.len() == 0) { return 2; }
     } else if (target == "arm64-darwin") {
         // Same arm64 code generator with the Darwin syscall builtins
