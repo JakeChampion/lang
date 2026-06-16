@@ -1,9 +1,7 @@
 package e2e
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -44,26 +42,16 @@ func TestSelfHostMathX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMathArm64 is the ARM64 counterpart (CI-gated, qemu).
+// TestSelfHostMathArm64 is the ARM64 counterpart (CI-gated, qemu),
+// compiled via the file-based arm64 driver (asm_arm64_modload_run).
 func TestSelfHostMathArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "asm_arm64.fern", "flatten.fern", "bundle_run_arm64.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "bundle_run_arm64.fern", "driver")
+	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
 
 	for _, tc := range mathCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, bytesModuleBundle(t, "math", tc.main))
-			progBin := buildBin(t, arm64gcc, dir, tc.name, string(asm))
+			asm, progDir := compileStdProgModload(t, x86runner, driverBin, []string{"math"}, tc.main)
+			progBin := buildBin(t, arm64gcc, progDir, tc.name, asm)
 			cmd := runArm64Bin(qemu, progBin)
 			_ = cmd.Run()
 			if code := cmd.ProcessState.ExitCode(); code != tc.exit {

@@ -39,6 +39,33 @@ func buildModloadDriverX86(t *testing.T) (gcc string, runner []string, driverBin
 	return gcc, runner, driverBin
 }
 
+// buildModloadArm64DriverX86 builds the arm64-emitting file-based driver
+// (asm_arm64_modload_run) as an x86 HOST binary — it runs on x86 and emits
+// aarch64 asm, the file-based successor to bundle_run_arm64. Returns the
+// x86 gcc/runner (for executing the driver) and the driver binary path.
+// The caller links the emitted arm64 asm with the aarch64 cross toolchain.
+func buildModloadArm64DriverX86(t *testing.T) (x86gcc string, x86runner []string, driverBin string) {
+	t.Helper()
+	x86gcc, x86runner = x86_64Tooling(t)
+	dir := writeSelfHostModloadProject(t)
+	prog, _, err := modload.Load(filepath.Join(dir, "asm_arm64_modload_run.fern"))
+	if err != nil {
+		t.Fatalf("modload arm64 driver: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := x86_64.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	return x86gcc, x86runner, buildBin(t, x86gcc, dir, "arm64driver", asm)
+}
+
 // compileStdProgModload compiles `mainSrc` — which imports each named
 // stdlib module by `./<mod>` — with the file-based driver, vendoring each
 // std/<mod>.fern as a flat <mod>.fern next to a generated main.fern (plus
