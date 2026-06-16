@@ -876,6 +876,13 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"enum-arr-field-bind-match", `enum E { A(i32), B } struct H { es: E[] } function sum(h: H): i32 { var es: E[] = h.es; var s = 0; var i = 0; while (i < es.len()) { match (es[i]) { A(n) => { s = s + n; }, B => { s = s + 100; } } i = i + 1; } return s; } function main(): i32 { var h = H { es: [A(5), B, A(9)] }; return sum(h); }`},
 		{"enum-arr-field-return", `enum E { A(i32), B } struct H { es: E[] } function get(h: H): E[] { return h.es; } function main(): i32 { var h = H { es: [A(3), B] }; var es = get(h); return match (es[0]) { A(n) => n, B => 0 } + es.len(); }`},
 		{"enum-arr-field-assign", `enum E { A(i32), B } struct H { es: E[] } function f(h: H): i32 { var es: E[] = []; es = h.es; var s = 0; var i = 0; while (i < es.len()) { match (es[i]) { A(n) => { s = s + n; }, B => {} } i = i + 1; } return s; } function main(): i32 { var h = H { es: [A(7), A(8), B] }; return f(h); }`},
+		// `.append` / `.with` on a struct/enum-array FIELD receiver, producing a
+		// fresh array (clone-then-grow / clone-then-set, sole-owned) — admits
+		// checker.Scope.bind's `var ts: Type[] = s.types.append(t)`. The clone form
+		// handles pointer elements at width 32 like the scalar case.
+		{"enum-arr-field-append", `enum E { A(i32), B } struct S { es: E[] } function grow(s: S, x: E): E[] { return s.es.append(x); } function main(): i32 { var s = S { es: [A(3), B] }; var g = grow(s, A(7)); var sum = 0; var i = 0; while (i < g.len()) { match (g[i]) { A(n) => { sum = sum + n; }, B => { sum = sum + 100; } } i = i + 1; } return sum; }`},
+		{"struct-arr-field-append", `struct P { x: i32 } struct S { ps: P[] } function grow(s: S): P[] { return s.ps.append(P { x: 9 }); } function main(): i32 { var s = S { ps: [P { x: 1 }, P { x: 2 }] }; var g = grow(s); return g.len() * 100 + g[2].x; }`},
+		{"struct-arr-field-with", `struct P { x: i32 } struct S { ps: P[] } function set1(s: S): P[] { return s.ps.with(1, P { x: 8 }); } function main(): i32 { var s = S { ps: [P { x: 1 }, P { x: 2 }, P { x: 3 }] }; var g = set1(s); return g[0].x * 100 + g[1].x * 10 + g[2].x; }`},
 		// A CALL returning an array-of-struct as a struct-literal field value
 		// (`S { es: build(...) }`) — owned/moved value, no alias-inc; a struct-array
 		// field is never deep-dropped so the missing inc only leaks, never over-frees.
