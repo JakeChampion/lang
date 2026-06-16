@@ -295,6 +295,14 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"f64-arr-tuple-elem", "function mk(): (f64[], i32) { var a: f64[] = []; a = a.append(2.5); a = a.append(4.5); return (a, 1); } function main(): i32 { var (xs, n) = mk(); return (xs[0] as i32) + (xs[1] as i32) + n; }"},
 		{"i64-arr-tuple-dotn", "function mk(): (i64[], i32) { var a: i64[] = []; a = a.append(100 as i64); return (a, 9); } function main(): i32 { var t = mk(); return (t.0[0] as i32) + t.1; }"},
 		{"strarr-tuple-elem", "function mk(): (string[], i32) { var a: string[] = []; a = a.append(\"hello\"); a = a.append(\"world!\"); return (a, 2); } function main(): i32 { var (ps, n) = mk(); return ps[0].len() + ps[1].len() + n; }"},
+		// A nominal-enum value as a TUPLE element — the (JsonValue, parser) cursor
+		// shape std/json's parsers use. The enum is a leak-only box in one pointer
+		// slot, like a struct/Option element: construction stores the box, the
+		// destructure / `.N` read carries the enum name (mark_struct_type) so
+		// `match (t.N)` dispatches. payload variant: A(3)+5 = 8; unit variant via
+		// `.N` direct access: Green -> t.1+10 = 15.
+		{"enum-tuple-elem", "enum E { A(i32), B } function mk(): (E, i32) { return (A(3), 5); } function main(): i32 { var (e, n) = mk(); match (e) { A(x) => { return x + n; }, B => { return n; } } return 0; }"},
+		{"enum-tuple-dotn", "enum Color { Red, Green, Blue } function mk(): (Color, i32) { return (Green, 5); } function main(): i32 { var t = mk(); match (t.0) { Red => { return 1; }, Green => { return t.1 + 10; }, Blue => { return 3; } } return 0; }"},
 		{"with-loop", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; while (i < 4) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3]; }"},
 		{"append-build", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a[0] + a[4]; }"},
 		// `.append(e)` as a general EXPRESSION (not the `out = out.append(e)`
