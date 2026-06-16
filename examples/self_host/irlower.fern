@@ -3782,7 +3782,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 // element — admit it. Its `Map[K, V]` tag (elem_type_tag) lets a
                 // later `t.N.get_or(…)` dispatch as a map op. #3317.
                 var el_map_ok: boolean = expr_map_type_tag(el, s) != "";
-                if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "" && !el_arr_ok && !el_typedarr_ok && !el_opt_ok && !el_tuple_ok && !el_result_ok && !el_map_ok) { return s.fail(); }
+                // A nominal-enum element (`(Green, 5)` / `(A(3), n)`) is a leak-only
+                // box in one pointer slot, like a struct / Option element — admit
+                // it. Its enum-name tag (elem_type_tag) lets `match (t.N)` /
+                // `t.N.method()` dispatch. The IR exit sweep never frees an enum
+                // box, so the box stored into the (leak-mode) tuple can't double-
+                // free. expr_enum_type recognises a variant construction / unit
+                // variant / enum-typed local.
+                var el_enum_ok: boolean = expr_enum_type(el, s) != "";
+                if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "" && !el_arr_ok && !el_typedarr_ok && !el_opt_ok && !el_tuple_ok && !el_result_ok && !el_map_ok && !el_enum_ok) { return s.fail(); }
                 tei = tei + 1;
             }
             // Build the per-element KIND string (i32 / i64 / f64 / string / <struct>)
@@ -6427,6 +6435,10 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                     else if (dtag == "i64[]") { dt = dt.mark_arr(dkslot, true); dt = dt.mark_i64arr(dkslot, true); }
                     else if (dtag == "string[]") { dt = dt.mark_arr(dkslot, true); dt = dt.mark_strarr(dkslot, true); }
                     else if (decl_is_struct(dt.structs, dtag)) { dt = dt.mark_struct_type(dkslot, dtag); }
+                    // A nominal-enum element carries its enum name in local_struct_
+                    // type (like an enum local/param) so `match (c)` / `c.method()`
+                    // on the bound slot dispatches to `<Enum>.<variant/method>`.
+                    else if (is_enum_like_name(dtag, dt.structs)) { dt = dt.mark_struct_type(dkslot, dtag); }
                     dk = dk + 1;
                 }
                 return dt;
@@ -11772,6 +11784,16 @@ pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): bo
             // f32 / usize are NOT here: they need float / pointer-width handling.
             var ok_elem: boolean = (t == "i32" || t == "bool" || t == "boolean" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || t == "string" || t == "i64" || t == "u64" || t == "f64" || t == "f32" || t == "float");
             if (!ok_elem && decl_is_struct(structs, t) && decl_is_leaksafe(structs, t)) { ok_elem = true; }
+            // A nominal-enum element (Color, Expr, …) is a leak-only box — one
+            // pointer slot, like a string / struct / Option element — so a tuple
+            // carrying it lowers: construction stores the box pointer, `.N` /
+            // destructure read it back and carry the enum name (mark_struct_type)
+            // so `match (t.N)` / `t.N.method()` dispatch. The IR exit sweep never
+            // frees an enum box (leak mode), so the borrowed-from-tuple box can't
+            // double-free. is_enum_like_name can over-match a bare nominal, but the
+            // only consequence is the construction site bailing via calls_only_known
+            // (never a miscompile).
+            if (!ok_elem && is_enum_like_name(t, structs)) { ok_elem = true; }
             // An Option[T] element is a leak-only box — one pointer slot, like a
             // string / struct element — so a tuple-returning fn can return it
             // (the ExprTuple construction admits it too). Only a comma-free tag
