@@ -767,6 +767,7 @@ pub function elem_type_tag(e: parser.Expr, s: LowerState): string {
     // type. (f64[]/i64[] tuple elements need width-aware `t.N[i]` reads — a
     // follow-up; they still bail.)
     if (expr_is_strarr(e, s)) { return "string[]"; }
+    if (expr_is_f64arr(e, s)) { return "f64[]"; }
     match (e) {
         parser.ExprArray(sae) => {
             if (sae.elements.len() > 0) {
@@ -1861,6 +1862,14 @@ pub function expr_is_f64arr(e: parser.Expr, s: LowerState): boolean {
             return false;
         },
         parser.ExprSlice(sl) => { return expr_is_f64arr(sl.array, s); },
+        // An `f64[]` TUPLE element `t.N` (`([1.5], x)`): its recorded tuple tag
+        // is `f64[]`, so `t.N` is an f64[] (drives a `var xs = t.N` rebind). #3353.
+        parser.ExprFieldAccess(fa) => {
+            if (util.is_all_digits(fa.field)) {
+                return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "f64[]";
+            }
+            return false;
+        },
         _ => { return false; }
     }
     return false;
@@ -2430,8 +2439,13 @@ pub function arr_index_is_f64(arr: parser.Expr, s: LowerState): boolean {
             }
             return false;
         },
-        // `p.vals[i]` where p's field `vals` is an f64[] struct field.
+        // `t.N[i]` where `t.N` is an f64[] TUPLE element (`([1.5], x)`): the
+        // element's recorded tuple tag is `f64[]`, so the read uses 8-byte
+        // (f64) width — the tuple-element sibling of the struct-field case. #3353.
         parser.ExprFieldAccess(fa) => {
+            if (util.is_all_digits(fa.field)) {
+                return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "f64[]";
+            }
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return false; }
             return decl_field_type(s.structs, oty, fa.field) == "f64[]";
@@ -3729,13 +3743,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 var el: parser.Expr = iife_leaf_value(tup.elements[tei]);
                 var el_arr_ok: boolean = expr_is_arr_src(el, s)
                     && !expr_is_strarr(el, s) && !expr_is_f64arr(el, s) && !expr_is_i64arr(el, s);
-                // A string[] element is a heap POINTER stored in one slot, like
-                // an i32[] element — admit it. Its `string[]` tuple tag
-                // (elem_type_tag) lets `t.N[i]` read as a string (the read-side
-                // recognition is in expr_is_strarr's tuple-element case). f64[] /
-                // i64[] elements still bail — their `t.N[i]` needs width-aware
-                // reads (a follow-up). #3353.
-                var el_typedarr_ok: boolean = expr_is_strarr(el, s);
+                // A typed-array element (string[]/f64[]) is a heap POINTER stored
+                // in one slot, like an i32[] element — admit it. Its element-typed
+                // tuple tag (elem_type_tag) lets `t.N[i]` read at the right
+                // type/width: a string[] element reads a string, an f64[] element
+                // an 8-byte f64. The read-side recognition is in expr_is_strarr /
+                // arr_index_is_f64's tuple-element cases. (i64[] elements still
+                // bail — i64[] arrays don't yet lower on the IR path at all, a
+                // separate prerequisite.) #3353.
+                var el_typedarr_ok: boolean = expr_is_strarr(el, s) || expr_is_f64arr(el, s);
                 // An Option element (`(Some(7), 3)`) is a leak-only box stored in
                 // one pointer slot, like a string / struct element — admit it (its
                 // "Option[T]" tag lets `match (t.N)` recover the payload). #3018.

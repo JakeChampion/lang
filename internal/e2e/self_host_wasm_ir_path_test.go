@@ -991,6 +991,14 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"tuple-strarr-elem-len", `function main(): i32 { var t = (["ab","cd"], 3); return t.0[1].len() + t.1; }`, 5},
 		{"tuple-strarr-elem-two", `function main(): i32 { var t = (["ab","cd"], 3); return t.0[0].len() + t.0[1].len() + t.1; }`, 7},
 		{"tuple-strarr-elem-rebind", `function main(): i32 { var t = (["ab","cd"], 3); var xs = t.0; return xs[1].len() + t.1; }`, 5},
+		// An f64[] tuple element (`([1.5, 2.5], x)`): the element's recorded `f64[]`
+		// tuple tag lets `t.0[i]` read an 8-byte f64 (arr_get width 64) and a rebind
+		// `var xs = t.0` recover the f64[] type. The element is a heap pointer in one
+		// slot; the self-host AST path mishandled it (and refused it at
+		// construction), so these pin the absolute IR value. #3353.
+		{"tuple-f64arr-elem-index", `function main(): i32 { var t = ([1.5, 2.5], 3); return (t.0[1] as i32) + t.1; }`, 5},
+		{"tuple-f64arr-elem-sum", `function main(): i32 { var t = ([1.5, 2.5, 4.0], 10); var s = 0.0; var i = 0; while (i < 3) { s = s + t.0[i]; i = i + 1; } return (s as i32) + t.1; }`, 18},
+		{"tuple-f64arr-elem-rebind", `function main(): i32 { var t = ([1.5, 2.5], 3); var xs = t.0; return (xs[1] as i32) + t.1; }`, 5},
 		{"random-bytes-len", `function main(): i32 { return random_bytes(8).len(); }`, 8},
 		{"random-bytes-byte-range", `function main(): i32 { var s: string = random_bytes(4); var x: i32 = s[0]; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},
 		{"random-i32-varies", `function main(): i32 { var a: i32 = random_i32(); var b: i32 = random_i32(); if (a == b) { return 1; } return 7; }`, 7},
