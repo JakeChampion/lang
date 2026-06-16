@@ -750,6 +750,28 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// REASSIGN frees the old rc-headered box: rebinding `p` to a new struct releases
 		// the previous box (a string-field struct) — exactly once, detector 0.
 		{"nonleaksafe-reassign-frees-old-detector", `struct P { name: string } function main(): i32 { var p = P { name: "first" }; p = P { name: "second" }; if (p.name.len() != 6) { return 99; } return __rc_underflow(); }`, 0},
+		// STRING-FIELD DEEP-DROP (this slice). A reclaimable struct's `string` field
+		// is now dec'd on reclamation (emit_struct_field_drops): a fresh string
+		// LITERAL field is sole-owned and FREED (leak shrunk); a non-literal value
+		// (a string local / param / field read / concat / call) is inc'd at
+		// construction so the field-drop only decs the dup — sound, never an
+		// over-release. Detector 0 across every shape proves no double-free.
+		//
+		// Fresh literal field, single struct: freed once (the win).
+		{"strdrop-literal-field-detector", `struct P { name: string, n: i32 } function go(): i32 { var p = P { name: "hello", n: 4 }; return p.n; } function main(): i32 { var r = go(); if (r != 4) { return 99; } return __rc_underflow(); }`, 0},
+		// ALIASED string local into a field: inc'd at construction → field-drop decs
+		// the dup, the local's reference survives (leaks, sound). No over-release.
+		{"strdrop-aliased-local-detector", `struct P { name: string } function go(): i32 { var s = "shared"; var p = P { name: s }; var r = s.len() + p.name.len(); return r; } function main(): i32 { var r = go(); if (r != 12) { return 99; } return __rc_underflow(); }`, 0},
+		// SAME string local aliased into TWO structs: each construction incs → rc
+		// reaches 3, two field-drops leave rc 1 (leaks) — no over-release.
+		{"strdrop-two-alias-detector", `struct P { name: string } function go(): i32 { var s = "x"; var a = P { name: s }; var b = P { name: s }; var r = a.name.len() + b.name.len(); return r; } function main(): i32 { var r = go(); if (r != 2) { return 99; } return __rc_underflow(); }`, 0},
+		// A field read OUT of a reclaimable struct, then RETURNED (escapes): the
+		// returned string must survive the field-drop. (If string-field read-out
+		// lowers on the IR path, this catches a use-after-free / over-release.)
+		{"strdrop-return-field-detector", `struct P { name: string } function mk(): string { var p = P { name: "hi" }; return p.name; } function main(): i32 { var s = mk(); if (s.len() != 2) { return 99; } return __rc_underflow(); }`, 0},
+		// A concat field value (a fresh string) inc'd conservatively (treated as
+		// non-literal): sound, leaks. The struct reads back correctly.
+		{"strdrop-concat-field-detector", `struct P { name: string } function go(): i32 { var a = "ab"; var p = P { name: a + "c" }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 3) { return 99; } return __rc_underflow(); }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
