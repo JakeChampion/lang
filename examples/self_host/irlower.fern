@@ -1592,6 +1592,48 @@ pub function decl_field_count(structs: parser.StructDecl[], struct_name: string)
     return 0;
 }
 
+// iife_lambda_composite_struct_type recovers the STRUCT / NOMINAL-ENUM result type
+// name of a match-EXPRESSION IIFE lambda whose body is a single StmtMatch — for an
+// UNANNOTATED `var p = match (e) { V(q) => q, .. }` where the leaf is a bare bound
+// payload (q not in scope at the binding site, so the leaf-based recovery returns
+// ""). Returns "" for a tuple result (the tuple path types `p` via mark_tuple_elems)
+// or any non-match / non-composite body. Defined ahead of expr_struct_type; the
+// composite-result scan it delegates to lives later in the file (forward reference).
+function iife_lambda_composite_struct_type(lam: parser.ExprLambda, s: LowerState): string {
+    if (lam.body.len() != 1) { return ""; }
+    match (lam.body[0]) {
+        parser.StmtMatch(mm) => {
+            var ct: string = iife_match_composite_result_type(mm, s);
+            if (ct == "") { return ""; }
+            // Only a struct / nominal-enum NAME types via expr_struct_type's result;
+            // a tuple tag list is handled by the mark_tuple_elems slot path.
+            if (decl_is_struct(s.structs, ct) || is_enum_like_name(ct, s.structs)) { return ct; }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// iife_lambda_composite_tuple_tags recovers the comma-joined TUPLE element TAGS
+// (mark_tuple_elems form) of a match-EXPRESSION IIFE lambda whose result is a tuple
+// returned whole — the tuple sibling of iife_lambda_composite_struct_type, for an
+// UNANNOTATED `var t = match (e) { V(p) => p, .. }`. Returns "" for a struct / enum
+// result (typed via mark_struct_type) or a non-match / non-composite body.
+function iife_lambda_composite_tuple_tags(lam: parser.ExprLambda, s: LowerState): string {
+    if (lam.body.len() != 1) { return ""; }
+    match (lam.body[0]) {
+        parser.StmtMatch(mm) => {
+            var ct: string = iife_match_composite_result_type(mm, s);
+            if (ct == "") { return ""; }
+            if (iife_result_is_tuple(ct, s)) { return ct; }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 // expr_struct_type returns the struct type name an expression evaluates to, or
 // "" — a struct literal's type, or a struct-tracked local/param slot.
 pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
@@ -1694,8 +1736,16 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
                 // An if-/match-EXPRESSION value (`(if (c) { P{..} } else { .. }).x`)
                 // — a 0-arg IIFE; its struct type is the leaf branch's struct type
                 // (iife_leaf_value unwraps any nesting), so a direct `.field` /
-                // `.method()` on it resolves.
-                parser.ExprLambda(_) => { return expr_struct_type(iife_leaf_value(e), s); },
+                // `.method()` on it resolves. When the leaf is a BARE bound payload
+                // (`match (e) { V(q) => q, .. }`, q not in scope at this site), fall
+                // back to the match's composite result type (struct / enum NAME) so an
+                // UNANNOTATED `var p = match … { V(q) => q, N => P {..} }` still types
+                // `p` for `p.field` / `match (p)`.
+                parser.ExprLambda(ilam) => {
+                    var lst: string = expr_struct_type(iife_leaf_value(e), s);
+                    if (lst != "") { return lst; }
+                    return iife_lambda_composite_struct_type(ilam, s);
+                },
                 _ => { return ""; }
             }
         },
@@ -5881,6 +5931,140 @@ function iife_payload_result_kind(m: parser.StmtMatch, s: LowerState): string {
     return found;
 }
 
+// iife_type_is_composite reports whether `t` names a COMPOSITE result type the
+// IIFE temp can carry as a single pointer slot: a leak-safe struct, a nominal
+// enum, or a lowerable tuple. A non-leak-safe struct (RC'd array fields) is
+// excluded — a payload borrowed from the enum box must leak cleanly, and a
+// constructed-then-returned struct of that shape needs reuse analysis the IIFE
+// path doesn't model. Scalars / strings / Option / arrays are NOT composite here
+// (they have their own kind-recovery / slot-typing paths).
+function iife_type_is_composite(t: string, s: LowerState): boolean {
+    if (t == "") { return false; }
+    if (decl_is_struct(s.structs, t) && !is_enum_like_name(t, s.structs)) { return decl_is_leaksafe(s.structs, t); }
+    if (is_enum_like_name(t, s.structs)) { return true; }
+    if (tuple_elems_lowerable(t, s.structs)) { return true; }
+    return false;
+}
+
+// iife_tuple_lit_tags builds the comma-joined element TAGS (mark_tuple_elems form)
+// for a tuple LITERAL `(e0, e1, ...)`, classifying each element with elem_type_tag —
+// the same encoding the `var t = (..)` binding path records. "" for a non-tuple.
+function iife_tuple_lit_tags(e: parser.Expr, s: LowerState): string {
+    match (e) {
+        parser.ExprTuple(tlit) => {
+            var enc: string = "";
+            var ti: i32 = 0;
+            while (ti < tlit.elements.len()) {
+                if (ti > 0) { enc = enc + ","; }
+                enc = enc + elem_type_tag(tlit.elements[ti], s);
+                ti = ti + 1;
+            }
+            return enc;
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// iife_arm_composite_result_type recovers the COMPOSITE RESULT TYPE of a single
+// arm of a match-EXPRESSION, when the arm's tail yields a struct / nominal-enum /
+// tuple value as a WHOLE (not a scalar borrow). Two shapes are recovered:
+//   - a BARE bound payload returned (`V(q) => q`): the type is the variant's
+//     payload FIELD TYPE (`__ev`), recovered from `s.structs` without the binding
+//     in scope — mirrors iife_arm_payload_result_kind's bare case, but for the
+//     composite kinds (struct / enum / tuple) instead of the scalar ones. The
+//     underlying StmtMatch arm-body lowering binds the payload and stores its
+//     pointer into the temp; the type names the slot for a later `p.field` /
+//     `match (p)` / `p.0`.
+//   - a fresh COMPOSITE construction (`N => P { x: 0 }`, `_ => Pt(1, 2)`,
+//     `_ => (a, b)`): a struct literal (expr_struct_type), an enum-variant
+//     construction (expr_enum_type), or a tuple literal — its type is named at the
+//     constructor, so it can be read directly from the tail expression.
+// Only a composite (iife_type_is_composite) is returned; "" for a scalar / string /
+// Option / array result, an unrecoverable shape, or a tail that isn't a return.
+// Tuple results carry the comma-joined element TAGS (mark_tuple_elems form); struct
+// / enum results carry the type NAME (mark_struct_type form).
+function iife_arm_composite_result_type(arm: parser.MatchArm, s: LowerState): string {
+    if (arm.body.len() == 0) { return ""; }
+    var last: parser.Stmt = arm.body[arm.body.len() - 1];
+    var rval: parser.Expr = parser.e_unknown("");
+    var have: boolean = false;
+    match (last) {
+        parser.StmtReturn(r) => { rval = r.value; have = true; },
+        _ => {}
+    }
+    if (!have) { return ""; }
+    // Bare bound payload returned whole: `V(q) => q`.
+    match (arm.pattern) {
+        parser.PatVariant(pv) => {
+            match (rval) {
+                parser.ExprIdent(rid) => {
+                    var ft: string = iife_variant_payload_field(pv, rid.name, s);
+                    if (iife_type_is_composite(ft, s)) {
+                        if (tuple_elems_lowerable(ft, s.structs) && !decl_is_struct(s.structs, ft) && !is_enum_like_name(ft, s.structs)) { return tuple_elem_tags(ft); }
+                        return ft;
+                    }
+                    return "";
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    // Fresh composite construction in the arm tail: a struct literal, an enum
+    // variant construction, or a tuple literal. The type is named at the
+    // constructor, so it's recoverable WITHOUT any payload binding in scope.
+    match (rval) {
+        parser.ExprTuple(_) => {
+            var tt: string = iife_tuple_lit_tags(rval, s);
+            if (tt != "" && tuple_elems_lowerable("(" + tt + ")", s.structs)) { return tt; }
+            return "";
+        },
+        _ => {}
+    }
+    var st: string = expr_struct_type(rval, s);
+    if (st != "" && iife_type_is_composite(st, s)) { return st; }
+    var et: string = expr_enum_type(rval, s);
+    if (et != "" && iife_type_is_composite(et, s)) { return et; }
+    return "";
+}
+
+// iife_match_composite_result_type scans every arm of a match-EXPRESSION for a
+// COMPOSITE result type and returns the consensus type — or "" if no arm yields a
+// composite, or if two arms recover DIFFERENT composite types (the match isn't
+// uniformly typed, so it bails to AST). EVERY arm must agree: a struct payload from
+// one arm and a constructed struct of the SAME type from the `N => P { x: 0 }` arm
+// is the admitted shape; an arm that can't be classified as the consensus composite
+// (a scalar tail, or a different composite) makes the whole match bail. The result is
+// the mark_struct_type type name (struct / enum) or the mark_tuple_elems comma-joined
+// tags (tuple); iife_result_is_tuple distinguishes the two.
+function iife_match_composite_result_type(m: parser.StmtMatch, s: LowerState): string {
+    var found: string = "";
+    var i: i32 = 0;
+    while (i < m.arms.len()) {
+        var t: string = iife_arm_composite_result_type(m.arms[i], s);
+        if (t == "") {
+            // An arm with no recoverable composite result — if ANY other arm DID
+            // recover one, the match isn't uniformly composite-typed, so bail.
+            if (found != "") { return ""; }
+        } else {
+            if (found != "" && found != t) { return ""; }
+            found = t;
+        }
+        i = i + 1;
+    }
+    return found;
+}
+
+// iife_result_is_tuple reports whether a recovered composite result type `t` is a
+// TUPLE (comma-joined element tags from iife_match_composite_result_type) rather
+// than a struct / enum NAME. Used to pick mark_tuple_elems vs mark_struct_type.
+function iife_result_is_tuple(t: string, s: LowerState): boolean {
+    if (t == "") { return false; }
+    if (decl_is_struct(s.structs, t) || is_enum_like_name(t, s.structs)) { return false; }
+    return tuple_elems_lowerable("(" + t + ")", s.structs);
+}
+
 // iife_user_enum_payload_type returns a user-enum variant's single payload field
 // type (`__ev`), stripping any `Enum.` qualifier. "" when the variant isn't a
 // known struct (so a non-user-enum / Option scrutinee is handled elsewhere).
@@ -5927,12 +6111,26 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
         // (a subset of the kind recovery); they agree, so this is purely additive.
         var pay_w: string = iife_payload_result_width(m, ts);
         var pay_k: string = iife_payload_result_kind(m, ts);
+        // A COMPOSITE result — a struct / nominal-enum / tuple value returned WHOLE
+        // by every arm (a bare bound payload `V(q) => q`, q a leak-safe struct /
+        // enum / tuple, and/or a fresh same-type construction `N => P { x: 0 }`).
+        // The result rides one pointer slot (store_local / load_local are pointer-
+        // width on every IR backend), so the i32 temp already round-trips it; the
+        // type tag here only NAMES the slot so a later `p.field` / `match (p)` /
+        // `p.0` resolves. Recovered from the variant payload field / constructor
+        // type (iife_match_composite_result_type), not from the bare ident — the
+        // binding isn't in scope yet, exactly like the scalar kind recovery above.
+        var comp_ty0: string = iife_match_composite_result_type(m, ts);
         if (expr_is_f64(mfre, ts)) { ts = ts.mark_f64(tslot, true); }
         else if (many_i64) { ts = ts.mark_i64(tslot, true); }
         else if (pay_w == "f64" || pay_k == "f64") { ts = ts.mark_f64(tslot, true); }
         else if (pay_w == "i64" || pay_k == "i64") { ts = ts.mark_i64(tslot, true); }
         else if (expr_is_str(mfre, ts)) { ts = ts.mark_str(tslot, true); }
         else if (pay_k == "string") { ts = ts.mark_str(tslot, true); }
+        else if (comp_ty0 != "") {
+            if (iife_result_is_tuple(comp_ty0, ts)) { ts = ts.mark_tuple_elems(tslot, comp_ty0); }
+            else { ts = ts.mark_struct_type(tslot, comp_ty0); }
+        }
     }
     // A payload-binding arm (`Some(n) => n`) is admitted only when the bound
     // payload is i32, so the i32 temp stays the right width. An Option/Result
@@ -5951,6 +6149,13 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
     // string-payload read is admissible (only into the matching string temp). Recovered
     // identically to the classification above so the gate agrees with the temp width.
     var res_kind: string = iife_payload_result_kind(m, ts);
+    // The COMPOSITE result type (struct / enum tags or tuple tags, "" otherwise) —
+    // recovered identically to the temp marking above. When non-"", a BARE bound
+    // composite payload arm (`V(q) => q`) is admitted (its pointer stores into the
+    // composite-typed temp); the underlying StmtMatch path already binds the payload
+    // and produces the pointer. Constructor arms (`N => P { x: 0 }`) pass the scalar
+    // guards below unchanged.
+    var comp_ty: string = iife_match_composite_result_type(m, ts);
     var scrut_is_ident: boolean = false;
     match (m.scrutinee) {
         parser.ExprIdent(sidc) => { scrut_is_ident = true; },
@@ -5978,7 +6183,16 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
                     // f64 payload returned directly into the matching-width temp, or a
                     // leak-safe scalar array payload bound and read as a BORROW
                     // (`V(xs) => xs[0]` / `.len()`) — never the array returned bare.
-                    if (!iife_payload_bindable(pv, m.arms[i], opt_srt, temp_is_i32, scrut_is_ident, res_kind, ts)) { return s.fail(); }
+                    // A BARE COMPOSITE payload returned whole (`V(q) => q`, q a leak-
+                    // safe struct / nominal enum / tuple) is admitted when the match's
+                    // composite result type is recovered (comp_ty) and THIS arm's bare
+                    // payload IS that composite — its pointer stores into the composite-
+                    // typed temp. The underlying StmtMatch path binds the payload and
+                    // produces the pointer; the iife_payload_bindable gate (which only
+                    // admits a BORROW read of a struct/enum payload, not a bare return)
+                    // would otherwise reject it.
+                    if (!iife_payload_bindable(pv, m.arms[i], opt_srt, temp_is_i32, scrut_is_ident, res_kind, ts)
+                        && !(comp_ty != "" && iife_arm_composite_result_type(m.arms[i], ts) == comp_ty)) { return s.fail(); }
                 }
             },
             _ => {}
@@ -7108,6 +7322,21 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                             if (mrty != "") {
                                 var mmtt: string = sb.tuple_ret_type(mrty + "." + mfa.field);
                                 if (mmtt.len() > 0) { sb = sb.mark_tuple_elems(slot, mmtt); }
+                            }
+                        },
+                        // `var t = match (e) { V(p) => p, .. }` where the result is a
+                        // TUPLE payload returned whole (an IIFE: ExprCall{callee:
+                        // ExprLambda}). The leaf is a bare bound payload not in scope at
+                        // this site, so recover the element tags from the match's
+                        // composite result type. Prefer a tuple TYPE annotation
+                        // (`var t: (i32, string) = …`) when present — it names a
+                        // Result[T,E] element's E that a bare construction can't.
+                        parser.ExprLambda(mlam) => {
+                            if (v.type_name.len() >= 2 && v.type_name[0:1] == "(") {
+                                sb = sb.mark_tuple_elems(slot, tuple_elem_tags(v.type_name));
+                            } else {
+                                var mltt: string = iife_lambda_composite_tuple_tags(mlam, sb);
+                                if (mltt != "") { sb = sb.mark_tuple_elems(slot, mltt); }
                             }
                         },
                         _ => {}
