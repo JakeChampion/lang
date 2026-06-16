@@ -1652,3 +1652,43 @@ trait-name param) — each a contained IIFE-result-typing / width-store / implic
 slice, not a broad capability hole. Closing a whole MODULE to IR (so the legacy AST
 emitter can retire) is then a question of the LAST per-module holdout function, best
 found with a FULL-context eligibility probe rather than the standalone form.
+
+### Goal-#2 deep-drop progress + the inlining wall (2026-06-16)
+
+The reclaimed-struct field deep-drop (shrinking the leak set noted above) was
+widened across several merged slices, all gated by the `__rc_underflow()`
+over-release detector + the byte-identical x86-64 fixpoint:
+
+- **scalar `string` fields** now FREE a fresh, sole-owned heap string on the
+  field-drop (`emit_struct_field_drops` shallow-decs the box; construction incs
+  an aliased value so the drop decs only the dup). The freeable set is
+  `expr_is_fresh_str`: `a + b` concat, the transforms `.to_upper()` /
+  `.to_lower()` / `.reverse()` / `.repeat(n)` (+ `str_to_upper` / `str_to_lower`
+  / `str_repeat` free-fns), and the alloc builtins `chr` / `string_from_bytes`.
+  EXCLUDED (alias live data → inc'd, leak): a string literal (`.rodata`), an
+  ident / field-read, `.trim()` (a zero-copy VIEW into the receiver), `.replace()`
+  / `.to_string()` (receiver-identity fast-paths). `i32_to_string` is excluded for
+  a different reason — its emitter returns a box whose `data` points into the
+  MIDDLE of a 32-byte scratch buffer (digits written backwards), not an allocation
+  boundary, so the box can't be cleanly reclaimed (an emitter fix — copy to a tight
+  buffer — would unblock it).
+
+- **`string[]` slab fields — ATTEMPTED, REVERTED (the inlining wall).** A
+  `string[]` field is a flat slab of string-box pointers marked `is_arr` (swept
+  as a local, shallow-dec'd like an `i32[]`/`f64[]` slab; elements leak). Adding it
+  to `emit_struct_field_drops` (shallow slab dec) + the construction alias-inc is
+  SOUND and the targeted detector cases pass — BUT it OOMs the stage-2 self-compile
+  (`exit 137`). Cause: the deep-drop is INLINED at every reclamation site, and the
+  compiler's OWN wide structs — `LowerState` carries ~20 `string[]` fields — emit a
+  ~20-field drop block per reclamation, blowing up the generated compiler's
+  compile-time memory. (The scalar-`string` arc above avoided this because the wide
+  structs carry `string[]`, not bare `string`, fields.)
+
+  **Prerequisite for any further deep-drop widening (`string[]`, nested-struct,
+  struct-array fields — all even larger inlined blocks):** emit one
+  `__drop_<StructType>` helper FUNCTION per type (as native `internal/ir/ir.go`
+  does — see the `__drop_arr_*` / `__drop_dyn_*` family) and CALL it at each
+  reclamation site, so the per-type drop code is emitted once, not inlined N times.
+  Until that mechanism exists in the self-host backend, the field-drop must stay
+  limited to the single-pointer scalar cases (`string`, the leaksafe scalar arrays)
+  whose inlined block is small.
