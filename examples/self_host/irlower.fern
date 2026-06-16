@@ -4436,7 +4436,27 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!mvs.ok) { return mvs; }
                             return mvs.emit(ir.op_map_values());
                         }
-                        return s.fail();
+                        // Not a built-in map op — a USER method on Map[K, V]
+                        // (`m.merge(other)`, `m.extend(...)`). Dispatch to the
+                        // "Map.<method>" label like a nominal-receiver method: the
+                        // receiver as arg 0, then the args (i64 / fn-value args
+                        // lowered specially, mirroring the prim-receiver path).
+                        // calls_only_known verifies the label resolves; otherwise
+                        // the module bails. Without this, map-tracking the receiver
+                        // (so built-in ops dispatch) would regress the user methods.
+                        var umm: LowerState = lower_expr(fa.obj, s);
+                        if (!umm.ok) { return umm; }
+                        var ummkey: string = "Map." + fa.field;
+                        var ummi: i32 = 0;
+                        while (ummi < c.args.len()) {
+                            var umfvn: string = fn_value_arg_name(c.args[ummi], umm);
+                            if (umfvn.len() > 0 && umm.callee_param_is_fn(ummkey, ummi)) { umm = umm.emit(ir.op_const_func(0, umfvn)); }
+                            else if (umm.param_is_i64(ummkey, ummi)) { umm = lower_i64(c.args[ummi], umm); }
+                            else { umm = lower_expr(c.args[ummi], umm); }
+                            if (!umm.ok) { return umm; }
+                            ummi = ummi + 1;
+                        }
+                        return umm.emit(ir.op_call_direct(ummkey, 1 + c.args.len()));
                     }
                     // `.insert(k, v)` on a map-typed EXPRESSION (not a local) — the
                     // chained construction a `Map { k: v, … }` literal desugars to:
@@ -11182,7 +11202,14 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         var rbase: string = util.base_type_name(fn.receiver_type);
         var r_is_struct: boolean = decl_is_struct(structs, rbase);
         var r_is_prim: boolean = rbase == "i32" || rbase == "boolean" || rbase == "string" || rbase == "i64" || is_f64_scalar_type_name(rbase);
-        var r_is_enum: boolean = is_enum_like_name(rbase, structs);
+        // A Map[K, V] receiver (`function (m: Map[K, V]) contains_value(...)`).
+        // base_type_name strips the generics to "Map", which is_enum_like_name
+        // would otherwise mis-accept as a bare nominal enum — so test r_is_map
+        // FIRST and exclude it from r_is_enum, then map-track the receiver slot
+        // (mapty) below so `m.values()` / `m.get(k)` / `m.iter()` dispatch as map
+        // ops (a Map receiver marked as an enum would mis-dispatch them).
+        var r_is_map: boolean = is_map_type_name(fn.receiver_type);
+        var r_is_enum: boolean = !r_is_map && is_enum_like_name(rbase, structs);
         // An Option[T] / Result[T, E] receiver (`function (o: Option[i32])
         // unwrap_or(...)`) binds slot 0 as a leak-only opt box carrying the full
         // receiver type, so `match (self)` recovers the payload — the same way an
@@ -11194,7 +11221,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
             if (!decl_is_leaksafe(structs, rbase)) {
                 return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: 0, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
             }
-        } else if (!r_is_prim && !r_is_enum && !r_is_opt) {
+        } else if (!r_is_prim && !r_is_enum && !r_is_opt && !r_is_map) {
             return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: 0, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
         }
         // A nominal receiver (struct or enum) carries its type name in
@@ -11211,7 +11238,9 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         structty = structty.append(rsty);
         optty = optty.append(ropt);
         tupty = tupty.append("");
-        mapty = mapty.append("");
+        // Map-track a Map receiver (the full Map[K, V] type) so map-op dispatch
+        // on `self` resolves the key/value kinds — exactly like a Map PARAM below.
+        if (r_is_map) { mapty = mapty.append(fn.receiver_type); } else { mapty = mapty.append(""); }
         isi64 = isi64.append(rbase == "i64");
         isf64 = isf64.append(is_f64_scalar_type_name(rbase));
         isf32 = isf32.append(rbase == "f32" || rbase == "float");
