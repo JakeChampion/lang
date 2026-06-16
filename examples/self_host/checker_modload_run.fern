@@ -1,0 +1,51 @@
+// examples/self_host/checker_modload_run.fern — import-driven checker
+// driver. The file-based successor to checker_codes_bundle_run.fern: where
+// that reads a `///MODULE`-marked bundle off stdin, this takes an ENTRY
+// file path on argv, resolves its imports off disk (the shared
+// ./modloader), merges them with flatten.bundle, runs the self-hosted type
+// checker over the merged module, and prints the diagnostic CODE of every
+// diagnostic, one per line. Exits 1 when any diagnostic was emitted, else 0.
+//
+//     $ checker_modload_run path/to/main.fern
+//
+// Module resolution + builtin merging are shared with asm_modload_run via
+// ./modloader, so this driver differs only in running check_module instead
+// of emitting asm. Uses only features the self-hosted emitter supports
+// (args, read_file → Result, match).
+
+import "./lexer";
+import "./parser";
+import "./flatten";
+import "./checker";
+import "./modloader";
+
+function main(): i32 {
+    var a: string[] = args();
+    if (a.len() < 2) {
+        eprint("usage: checker_modload_run <entry.fern>\n");
+        return 2;
+    }
+    var entry_path: string = a[1];
+    var dir: string = modloader.dirname(entry_path);
+    match (read_file(entry_path)) {
+        Ok(src) => {
+            var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
+            var loaded: flatten.LoadedModule[] = modloader.load_imports(dir, entry);
+            var merged: parser.Module = flatten.bundle(entry, loaded);
+            merged = modloader.merge_builtins(dir, merged);
+            var mt: checker.ModuleTypes = checker.check_module(merged);
+            var j: i32 = 0;
+            while (j < mt.diags.len()) {
+                print(mt.diags[j].code);
+                j = j + 1;
+            }
+            if (mt.diags.len() > 0) { return 1; }
+            return 0;
+        },
+        Err(e) => {
+            eprint("checker_modload_run: could not read entry file\n");
+            return 1;
+        },
+    }
+    return 3;
+}
