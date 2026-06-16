@@ -101,7 +101,7 @@ func (a *Assembler) emit32(v uint32) {
 // .text (8-byte aligned), matching the single-segment R+W+X image
 // (elf.StaticExecutableDataX86).
 func AssembleProgram(src string, textVAddr uint64) (text, rodata []byte, err error) {
-	text, rodata, _, err = assembleProgram(src, textVAddr, false, false)
+	text, rodata, _, err = assembleProgram(src, textVAddr, false, false, nil)
 	return text, rodata, err
 }
 
@@ -110,7 +110,7 @@ func AssembleProgram(src string, textVAddr uint64) (text, rodata []byte, err err
 // R+W segment instead of laid contiguously after .text, so the code
 // segment can be mapped R+X. Pass elf.TextVAddrWX as textVAddr.
 func AssembleProgramWX(src string, textVAddr uint64) (text, rodata []byte, err error) {
-	text, rodata, _, err = assembleProgram(src, textVAddr, true, false)
+	text, rodata, _, err = assembleProgram(src, textVAddr, true, false, nil)
 	return text, rodata, err
 }
 
@@ -129,14 +129,31 @@ type Reloc struct {
 // `.quad <symbol>` slots. rip-relative code is base-independent and needs
 // no relocation. Pass elf.TextVAddrPIE as textVAddr.
 func AssembleProgramPIE(src string, textVAddr uint64) (text, rodata []byte, relocs []Reloc, err error) {
-	return assembleProgram(src, textVAddr, true, true)
+	return assembleProgram(src, textVAddr, true, true, nil)
+}
+
+// AssembleProgramShared assembles for a shared object (.so): the same
+// base-0 PIE layout, but it also resolves each `.text` label in
+// exportNames to its load-base-relative virtual address (textVAddr +
+// offset) and returns them in exportVAddr — the addresses elf.SharedLibrary
+// records in .dynsym so a dynamic loader can resolve the exports. Pass
+// elf.TextVAddrPIE as textVAddr.
+func AssembleProgramShared(src string, textVAddr uint64, exportNames []string) (text, rodata []byte, relocs []Reloc, exportVAddr map[string]uint64, err error) {
+	exportVAddr = map[string]uint64{}
+	for _, n := range exportNames {
+		exportVAddr[n] = 0 // marker: resolve this label
+	}
+	text, rodata, relocs, err = assembleProgram(src, textVAddr, true, true, exportVAddr)
+	return text, rodata, relocs, exportVAddr, err
 }
 
 // assembleProgram is the shared body of AssembleProgram (wx=false,
 // contiguous .rodata), AssembleProgramWX (wx=true, page-aligned .rodata in
 // a separate R+W segment), and AssembleProgramPIE (pie=true: page-aligned,
-// base-0 layout, returning .quad-slot relocations).
-func assembleProgram(src string, textVAddr uint64, wx, pie bool) (text, rodata []byte, relocs []Reloc, err error) {
+// base-0 layout, returning .quad-slot relocations). When exportVAddr is
+// non-nil, each key is resolved to textVAddr + its .text-label offset (for
+// AssembleProgramShared).
+func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map[string]uint64) (text, rodata []byte, relocs []Reloc, err error) {
 	a := newAssembler()
 	sec := "text"
 	for lineno, raw := range strings.Split(src, "\n") {
@@ -248,6 +265,14 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool) (text, rodata [
 		if pie {
 			relocs = append(relocs, Reloc{Offset: rodataVAddr + uint64(f.at), Addend: abs})
 		}
+	}
+	// Resolve requested export symbols to their load-base-relative vaddrs.
+	for name := range exportVAddr {
+		off, ok := a.textLabels[name]
+		if !ok {
+			return nil, nil, nil, fmt.Errorf("export %q is not a defined .text symbol", name)
+		}
+		exportVAddr[name] = textVAddr + uint64(off)
 	}
 	return a.text, a.rodata, relocs, nil
 }
