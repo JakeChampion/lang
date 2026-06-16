@@ -111,4 +111,29 @@ func TestSelfHostModloadFixpointX86_64(t *testing.T) {
 	if code := pcmd.ProcessState.ExitCode(); code != 42 {
 		t.Errorf("gen2-compiled a.add(19,23) exited %d, want 42", code)
 	}
+
+	// Sanity 2 (folded from the retired multimodule test): a CROSS-MODULE
+	// qualified-type struct-update spread (`b.P { ...p, y: 40 }`) — guards
+	// the parser's qualified-postfix `...` look-ahead. 1 + 40 = 41.
+	spreadDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(spreadDir, "b.fern"),
+		[]byte("pub struct P { x: i32, y: i32 }\npub function mk(): P { return P { x: 1, y: 2 }; }\n"), 0o644); err != nil {
+		t.Fatalf("write b.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(spreadDir, "main.fern"),
+		[]byte("import \"./b\";\nfunction main(): i32 { var p: b.P = b.mk(); var q: b.P = b.P { ...p, y: 40 }; return q.x + q.y; }\n"), 0o644); err != nil {
+		t.Fatalf("write main.fern: %v", err)
+	}
+	spreadAsm := runDriverFile(t, runner, gen2Bin, filepath.Join(spreadDir, "main.fern"))
+	spreadBin := buildBin(t, gcc, spreadDir, "spread", string(spreadAsm))
+	var scmd *exec.Cmd
+	if len(runner) == 0 {
+		scmd = exec.Command(spreadBin)
+	} else {
+		scmd = exec.Command(runner[0], append(runner[1:], spreadBin)...)
+	}
+	_, _ = scmd.CombinedOutput()
+	if code := scmd.ProcessState.ExitCode(); code != 41 {
+		t.Errorf("gen2-compiled qualified-type struct-update spread exited %d, want 41", code)
+	}
 }
