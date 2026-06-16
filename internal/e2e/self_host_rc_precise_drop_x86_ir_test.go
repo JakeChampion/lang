@@ -666,6 +666,34 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// Struct-string-field result detector: the borrowed string field is returned
 		// and reclaimed exactly once (no over-release through the IIFE path).
 		{"iife-match-string-struct-field-detector", `struct P { name: string } enum E { V(P), N } function go(): i32 { var e: E = E.V(P { name: "world" }); var s: string = match (e) { V(p) => p.name, N => "zz" }; if (s.len() != 5) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// String-payload CONCAT result (`V(x) => x + "!"`): the bound string payload is
+		// read BORROW-ONLY inside a `+` that allocates a fresh string. The result temp
+		// classifies str (expr_is_str sees the string literal operand); the concat
+		// borrow gate (iife_string_concat_borrow_only) admits the borrow-only read.
+		// Result "hi!" has length 3.
+		{"iife-match-string-concat-suffix-value", `enum E { V(string), N } function main(): i32 { var e: E = E.V("hi"); var s: string = match (e) { V(x) => x + "!", N => "z" }; return s.len(); }`, 3},
+		// Prefix concat (`"k=" + x`): the literal is the LEFT operand; the payload the
+		// right. Result "k=hi" has length 4.
+		{"iife-match-string-concat-prefix-value", `enum E { V(string), N } function main(): i32 { var e: E = E.V("hi"); var s: string = match (e) { V(x) => "k=" + x, N => "z" }; return s.len(); }`, 4},
+		// Prefix + suffix (`">" + x + "<"`): a nested `+` tree, every payload-mentioning
+		// leaf a borrow-only read. Result ">hi<" has length 4.
+		{"iife-match-string-concat-wrap-value", `enum E { V(string), N } function main(): i32 { var e: E = E.V("hi"); var s: string = match (e) { V(x) => ">" + x + "<", N => "z" }; return s.len(); }`, 4},
+		// Struct string-FIELD concat (`V(p) => p.name + "!"`): the borrow leaf is a
+		// string field read of the leak-safe struct payload. Result "world!" length 6.
+		{"iife-match-string-concat-struct-field-value", `struct P { name: string } enum E { V(P), N } function main(): i32 { var e: E = E.V(P { name: "world" }); var s: string = match (e) { V(p) => p.name + "!", N => "zz" }; return s.len(); }`, 6},
+		// Tuple string-ELEMENT concat (`V(t) => t.0 + "!"`): the borrow leaf is a
+		// string tuple-element read. Result "hey!" length 4.
+		{"iife-match-string-concat-tuple-elem-value", `enum E { V((string, i32)), N } function main(): i32 { var e: E = E.V(("hey", 3)); var s: string = match (e) { V(t) => t.0 + "!", N => "z" }; return s.len(); }`, 4},
+		// The non-payload arm of a concat match is taken: the result is the N-arm
+		// literal "none" (length 4), unaffected by the V-arm concat shape.
+		{"iife-match-string-concat-other-arm", `enum E { V(string), N } function main(): i32 { var e: E = E.N; var s: string = match (e) { V(x) => x + "!", N => "none" }; return s.len(); }`, 4},
+		// Over-release detector for the concat shape: the borrowed payload is READ (a
+		// borrow) and the concat allocates a FRESH string bound to s — reclaimed exactly
+		// once. The detector reads 0 (no leak, no double-free of the payload or result).
+		{"iife-match-string-concat-detector", `enum E { V(string), N } function go(): i32 { var e: E = E.V("hi"); var s: string = match (e) { V(x) => x + "!", N => "z" }; if (s.len() != 3) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// Struct-field concat detector: the borrowed string field feeds a fresh concat;
+		// the field box and the result are each accounted exactly once (detector 0).
+		{"iife-match-string-concat-struct-field-detector", `struct P { name: string } enum E { V(P), N } function go(): i32 { var e: E = E.V(P { name: "world" }); var s: string = match (e) { V(p) => p.name + "!", N => "zz" }; if (s.len() != 6) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
