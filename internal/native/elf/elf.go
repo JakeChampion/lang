@@ -81,6 +81,36 @@ const (
 	phNumPIE    = 3  // PT_LOAD(R+X) + PT_LOAD(R+W) + PT_DYNAMIC
 )
 
+// Shared-object (.so) dynamic-symbol-table constants. A Fern .so is the
+// same ET_DYN image as a static PIE, plus a dynamic symbol table
+// (.dynsym/.dynstr), a SysV hash table (.hash), and the matching .dynamic
+// tags — so a dynamic loader (dlopen / Android's linker via
+// System.loadLibrary) can resolve the exported symbols. No section headers
+// are needed: the loader uses PT_DYNAMIC, not the section table.
+const (
+	dtHash    = 4  // DT_HASH:   .hash vaddr
+	dtStrtab  = 5  // DT_STRTAB: .dynstr vaddr
+	dtSymtab  = 6  // DT_SYMTAB: .dynsym vaddr
+	dtStrsz   = 10 // DT_STRSZ:  .dynstr size
+	dtSyment  = 11 // DT_SYMENT: Elf64_Sym size (24)
+	dtSoname  = 14 // DT_SONAME: soname offset in .dynstr
+
+	symEntSize     = 24   // ELF64 Elf64_Sym
+	stInfoGlobFunc = 0x12 // st_info = (STB_GLOBAL<<4) | STT_FUNC
+	shnText        = 1    // st_shndx: any non-UNDEF/non-ABS marks "defined" so
+	//                       the loader adds the load bias to st_value.
+)
+
+// Export is one exported symbol in a .so: Name resolves (via dlsym /
+// the dynamic linker) to load_base + Value. Value is the symbol's
+// link-time address relative to a load base of 0 (e.g. TextVAddrPIE +
+// its .text offset); Size is its byte size (may be 0).
+type Export struct {
+	Name  string
+	Value uint64
+	Size  uint64
+}
+
 // TextVAddrPIE is the .text address in the static-PIE image, measured from
 // a load base of 0 (just past the ELF header + three program headers).
 // Pass it to arm64.AssembleProgramPIE / x86_64.AssembleProgramPIE as the
@@ -332,6 +362,200 @@ func staticPie(text, data []byte, relocs []Reloc, machine uint16) []byte {
 	buf = le64(buf, uint64(len(relocs)))
 	buf = le64(buf, dtNull)
 	buf = le64(buf, 0)
+	return buf
+}
+
+// SharedLibrary wraps .text + data + relocations into a loadable arm64
+// shared object (.so): the ET_DYN PIE image plus a dynamic symbol table
+// (.dynsym/.dynstr), a SysV .hash, and the .dynamic tags a loader needs to
+// resolve `exports` (each Name -> load_base + Value). `soname` is recorded
+// as DT_SONAME (may be ""). This is the foundation for JNI: an Android app
+// loads it with System.loadLibrary and the JVM resolves the JNI entry
+// points from .dynsym. No section headers (the loader uses PT_DYNAMIC).
+func SharedLibrary(text, data []byte, relocs []Reloc, exports []Export, soname string) []byte {
+	return sharedLib(text, data, relocs, exports, soname, emAArch64)
+}
+
+// SharedLibraryX86 is the x86-64 counterpart of SharedLibrary.
+func SharedLibraryX86(text, data []byte, relocs []Reloc, exports []Export, soname string) []byte {
+	return sharedLib(text, data, relocs, exports, soname, emX86_64)
+}
+
+func align8(v uint64) uint64 { return (v + 7) &^ 7 }
+func align4(v uint64) uint64 { return (v + 3) &^ 3 }
+
+func sharedLib(text, data []byte, relocs []Reloc, exports []Export, soname string, machine uint16) []byte {
+	const headers = ehSize + phNumPIE*phSize // 232: ELF header + 3 program headers
+	textEnd := uint64(headers + len(text))
+	dataOff := pageUp(textEnd) // R+W segment starts on a page boundary
+
+	// Build .dynstr: index 0 is the empty string; then the soname (if any)
+	// and each export name, NUL-terminated. Record their offsets.
+	dynstr := []byte{0}
+	var sonameOff uint64
+	if soname != "" {
+		sonameOff = uint64(len(dynstr))
+		dynstr = append(dynstr, soname...)
+		dynstr = append(dynstr, 0)
+	}
+	nameOff := make([]uint64, len(exports))
+	for i, e := range exports {
+		nameOff[i] = uint64(len(dynstr))
+		dynstr = append(dynstr, e.Name...)
+		dynstr = append(dynstr, 0)
+	}
+
+	// Layout within the R+W segment (vaddr == file offset, base 0):
+	// data blob, .rela.dyn, .dynsym, .dynstr, .hash, .dynamic.
+	relaOff := align8(dataOff + uint64(len(data)))
+	relaSz := uint64(len(relocs) * relaEntSize)
+	symOff := align8(relaOff + relaSz)
+	nsym := uint64(1 + len(exports)) // index 0 is the reserved null symbol
+	symSz := nsym * symEntSize
+	strOff := symOff + symSz
+	strSz := uint64(len(dynstr))
+	hashOff := align4(strOff + strSz)
+	// SysV hash: nbucket=1 (one chain), nchain=nsym.
+	const nbucket = 1
+	hashSz := uint64((2 + nbucket + int(nsym)) * 4)
+	dynOff := align8(hashOff + hashSz)
+
+	// .dynamic entries.
+	type dyn struct{ tag, val uint64 }
+	dyns := []dyn{
+		{dtHash, hashOff},
+		{dtStrtab, strOff},
+		{dtSymtab, symOff},
+		{dtStrsz, strSz},
+		{dtSyment, symEntSize},
+	}
+	if soname != "" {
+		dyns = append(dyns, dyn{dtSoname, sonameOff})
+	}
+	if len(relocs) > 0 {
+		dyns = append(dyns,
+			dyn{dtRela, relaOff}, dyn{dtRelaSz, relaSz},
+			dyn{dtRelaEnt, relaEntSize}, dyn{dtRelaCount, uint64(len(relocs))})
+	}
+	dyns = append(dyns, dyn{dtNull, 0})
+	dynSz := uint64(len(dyns) * dynEntSize)
+	dataEnd := dynOff + dynSz
+	dataSegSz := dataEnd - dataOff
+
+	relType := uint64(relAArch64Relative)
+	if machine == emX86_64 {
+		relType = relX86_64Relative
+	}
+
+	buf := make([]byte, 0, dataEnd)
+
+	// ---- ELF-64 header (ET_DYN; e_entry 0 — a library has no entry) ----
+	buf = append(buf, 0x7f, 'E', 'L', 'F')
+	buf = append(buf, 2, 1, 1, 0)
+	buf = append(buf, 0, 0, 0, 0, 0, 0, 0, 0)
+	buf = le16(buf, etDyn)
+	buf = le16(buf, machine)
+	buf = le32(buf, 1)
+	buf = le64(buf, 0) // e_entry
+	buf = le64(buf, ehSize)
+	buf = le64(buf, 0)
+	buf = le32(buf, 0)
+	buf = le16(buf, ehSize)
+	buf = le16(buf, phSize)
+	buf = le16(buf, phNumPIE)
+	buf = le16(buf, 0)
+	buf = le16(buf, 0)
+	buf = le16(buf, 0)
+
+	// ---- PH 0: R+X code ----
+	buf = le32(buf, 1)
+	buf = le32(buf, 5)
+	buf = le64(buf, 0)
+	buf = le64(buf, 0)
+	buf = le64(buf, 0)
+	buf = le64(buf, textEnd)
+	buf = le64(buf, textEnd)
+	buf = le64(buf, pageAlign)
+
+	// ---- PH 1: R+W data (.rela.dyn / .dynsym / .dynstr / .hash / .dynamic) ----
+	buf = le32(buf, 1)
+	buf = le32(buf, 6)
+	buf = le64(buf, dataOff)
+	buf = le64(buf, dataOff)
+	buf = le64(buf, dataOff)
+	buf = le64(buf, dataSegSz)
+	buf = le64(buf, dataSegSz)
+	buf = le64(buf, pageAlign)
+
+	// ---- PH 2: PT_DYNAMIC ----
+	buf = le32(buf, ptDynamic)
+	buf = le32(buf, 6)
+	buf = le64(buf, dynOff)
+	buf = le64(buf, dynOff)
+	buf = le64(buf, dynOff)
+	buf = le64(buf, dynSz)
+	buf = le64(buf, dynSz)
+	buf = le64(buf, 8)
+
+	// ---- body ----
+	buf = append(buf, text...)
+	for uint64(len(buf)) < dataOff {
+		buf = append(buf, 0)
+	}
+	buf = append(buf, data...)
+	for uint64(len(buf)) < relaOff {
+		buf = append(buf, 0)
+	}
+	for _, r := range relocs {
+		buf = le64(buf, r.Offset)
+		buf = le64(buf, relType)
+		buf = le64(buf, r.Addend)
+	}
+	// .dynsym: null symbol, then one global STT_FUNC per export.
+	for uint64(len(buf)) < symOff {
+		buf = append(buf, 0)
+	}
+	buf = append(buf, make([]byte, symEntSize)...) // index 0: null symbol
+	for i, e := range exports {
+		buf = le32(buf, uint32(nameOff[i])) // st_name
+		buf = append(buf, stInfoGlobFunc)   // st_info
+		buf = append(buf, 0)                // st_other
+		buf = le16(buf, shnText)            // st_shndx (defined -> bias added)
+		buf = le64(buf, e.Value)            // st_value
+		buf = le64(buf, e.Size)             // st_size
+	}
+	// .dynstr.
+	buf = append(buf, dynstr...)
+	// .hash (SysV): nbucket, nchain, bucket[1], chain[nsym].
+	for uint64(len(buf)) < hashOff {
+		buf = append(buf, 0)
+	}
+	buf = le32(buf, nbucket)
+	buf = le32(buf, uint32(nsym))
+	if nsym > 1 {
+		buf = le32(buf, 1) // bucket[0] = first real symbol index
+	} else {
+		buf = le32(buf, 0) // no exports: empty bucket
+	}
+	// chain: index 0 unused; each real symbol points at the next, last -> 0.
+	for i := uint64(0); i < nsym; i++ {
+		next := i + 1
+		if next >= nsym {
+			next = 0
+		}
+		if i == 0 {
+			next = 0
+		}
+		buf = le32(buf, uint32(next))
+	}
+	// .dynamic.
+	for uint64(len(buf)) < dynOff {
+		buf = append(buf, 0)
+	}
+	for _, d := range dyns {
+		buf = le64(buf, d.tag)
+		buf = le64(buf, d.val)
+	}
 	return buf
 }
 
