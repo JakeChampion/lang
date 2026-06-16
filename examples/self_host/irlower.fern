@@ -6434,6 +6434,15 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                     else if (dtag == "f64[]") { dt = dt.mark_arr(dkslot, true); dt = dt.mark_f64arr(dkslot, true); }
                     else if (dtag == "i64[]") { dt = dt.mark_arr(dkslot, true); dt = dt.mark_i64arr(dkslot, true); }
                     else if (dtag == "string[]") { dt = dt.mark_arr(dkslot, true); dt = dt.mark_strarr(dkslot, true); }
+                    // A struct-array (X[]) or enum-array (E[]) element binds the slot
+                    // as an array AND carries the element struct/enum name (strip the
+                    // "[]") so `xs[i].field` / `match (xs[i])` resolve the element
+                    // shape — the read-side twin of the struct/enum-array admission
+                    // in tuple_elems_lowerable, mirroring the #3292 field-read bind.
+                    else if (is_struct_array_field_type(dt.structs, dtag) || is_enum_array_field_type(dt.structs, dtag)) {
+                        dt = dt.mark_arr(dkslot, true);
+                        dt = dt.mark_struct_type(dkslot, dtag[0 : dtag.len() - 2]);
+                    }
                     else if (decl_is_struct(dt.structs, dtag)) { dt = dt.mark_struct_type(dkslot, dtag); }
                     // A nominal-enum element carries its enum name in local_struct_
                     // type (like an enum local/param) so `match (c)` / `c.method()`
@@ -11821,6 +11830,15 @@ pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): bo
             // (u64[] stays deferred: it needs the "u64[]" field-tag plumbing, like
             // the u64 tuple scalar, a separate increment.)
             if (!ok_elem && (t == "f64[]" || t == "i64[]" || t == "string[]")) { ok_elem = true; }
+            // A struct-array (X[]) or enum-array (E[]) element is a heap pointer in
+            // one tuple slot, like any other array element — leak mode: the buffer
+            // AND its struct/enum-box elements leak with the (leak-only) tuple, so
+            // no per-element RC. Construction stores the buffer pointer (admitted
+            // via el_arr_ok — a struct-array source is an arr_src); the `.N` /
+            // destructure read binds the slot mark_arr + the element struct/enum
+            // name (mark_struct_type) so `t.N[i].field` / `match (t.N[i])` resolve
+            // the element shape — exactly the struct-array field-read bind (#3292).
+            if (!ok_elem && (is_struct_array_field_type(structs, t) || is_enum_array_field_type(structs, t))) { ok_elem = true; }
             // A NESTED tuple element `(…)` is itself a leak-only heap-tuple
             // pointer; admit it iff its own elements are all lowerable (recursion
             // bails on an inner array, matching the construction guard).
