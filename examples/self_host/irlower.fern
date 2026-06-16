@@ -8236,6 +8236,17 @@ pub function emit_arr_store(se: LowerState, slot: i32, alias_inc: boolean, do_de
 // non-escaping) struct is reclaimed cannot double-free. Guarded on a non-null box:
 // an untaken-branch slot is null (op_struct_get would deref it), while the box's
 // own rc-dec is null-safe. Emits nothing when the struct has no array field.
+// emit_struct_field_drops releases the rc-array FIELDS of a reclaimable struct
+// before its box is freed — Perceus deep-drop, one level (the BUFFER, not its
+// elements). Covers scalar-element arrays (i32[] / boolean[] / …) AND array-of-
+// struct / array-of-enum fields: the dec is a shallow __fern_arr_dec on the
+// field's buffer pointer, element-type-agnostic, so it reclaims the array SLAB
+// (the element boxes still leak — the safe-leak invariant for nested payloads).
+// This BALANCES the Perceus dup (__fern_rc_inc) the struct-lit / bind / return /
+// assign paths add when a struct/enum-array field aliases a local: rc 1 →inc 2
+// →source-owner dec 1 →this field-drop 0 (freed once). A fresh-literal field is
+// the sole owner (rc 1) → freed directly. Guarded on a non-null box. Emits
+// nothing when the struct has no rc-array field.
 function emit_struct_field_drops(s: LowerState, slot: i32): LowerState {
     var sty: string = s.struct_type_of_slot(slot);
     if (sty.len() == 0) { return s; }
@@ -8243,7 +8254,8 @@ function emit_struct_field_drops(s: LowerState, slot: i32): LowerState {
     var any: boolean = false;
     var fi: i32 = 0;
     while (fi < n) {
-        if (is_leaksafe_array_field(decl_field_type_at(s.structs, sty, fi))) { any = true; }
+        var fdt: string = decl_field_type_at(s.structs, sty, fi);
+        if (is_leaksafe_array_field(fdt) || is_struct_array_field_type(s.structs, fdt) || is_enum_array_field_type(s.structs, fdt)) { any = true; }
         fi = fi + 1;
     }
     if (!any) { return s; }
@@ -8256,7 +8268,8 @@ function emit_struct_field_drops(s: LowerState, slot: i32): LowerState {
     st = st.emit(ir.op_brif(0));               // -> skip on null
     var k: i32 = 0;
     while (k < n) {
-        if (is_leaksafe_array_field(decl_field_type_at(st.structs, sty, k))) {
+        var kdt: string = decl_field_type_at(st.structs, sty, k);
+        if (is_leaksafe_array_field(kdt) || is_struct_array_field_type(st.structs, kdt) || is_enum_array_field_type(st.structs, kdt)) {
             st = st.emit(ir.op_load_local(slot));
             st = st.emit(ir.op_struct_get(k, struct_field_width(st.structs, sty, k)));
             st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
