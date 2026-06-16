@@ -3756,11 +3756,10 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 // in one slot, like an i32[] element — admit it. Its element-typed
                 // tuple tag (elem_type_tag) lets `t.N[i]` read at the right
                 // type/width: a string[] element reads a string, an f64[] element
-                // an 8-byte f64. The read-side recognition is in expr_is_strarr /
-                // arr_index_is_f64's tuple-element cases. (i64[] elements still
-                // bail — i64[] arrays don't yet lower on the IR path at all, a
-                // separate prerequisite.) #3353.
-                var el_typedarr_ok: boolean = expr_is_strarr(el, s) || expr_is_f64arr(el, s);
+                // an 8-byte f64, an i64[] element an 8-byte i64. The read-side
+                // recognition is in expr_is_strarr / arr_index_is_f64 /
+                // expr_is_i64arr's tuple-element cases. #3353.
+                var el_typedarr_ok: boolean = expr_is_strarr(el, s) || expr_is_f64arr(el, s) || expr_is_i64arr(el, s);
                 // An Option element (`(Some(7), 3)`) is a leak-only box stored in
                 // one pointer slot, like a string / struct element — admit it (its
                 // "Option[T]" tag lets `match (t.N)` recover the payload). #3018.
@@ -6402,10 +6401,18 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                     // slot as an array (the op_tuple_get above read its pointer) so
                     // `arr[i]` rides the 4-byte arr_get; a u32[] also marks u32 so a
                     // read element's arithmetic wraps.
-                    else if (dtag == "i32[]" || dtag == "boolean[]" || dtag == "u32[]") {
+                    else if (dtag == "i32[]" || dtag == "boolean[]" || dtag == "u32[]" || is_subword_array_type(dtag)) {
                         dt = dt.mark_arr(dkslot, true);
                         if (dtag == "u32[]") { dt = dt.mark_u32(dkslot, true); }
                     }
+                    // An 8-byte-element (f64[]/i64[]) or string[] array element
+                    // binds the slot as an array AND marks its element kind so a
+                    // later `arr[i]` rides the width-marked arr_get(64) / arr_get_i64
+                    // (f64/i64) or the string read (string[]) — the read-side twin
+                    // of the f64[]/i64[]/string[] admission in tuple_elems_lowerable.
+                    else if (dtag == "f64[]") { dt = dt.mark_arr(dkslot, true); dt = dt.mark_f64arr(dkslot, true); }
+                    else if (dtag == "i64[]") { dt = dt.mark_arr(dkslot, true); dt = dt.mark_i64arr(dkslot, true); }
+                    else if (dtag == "string[]") { dt = dt.mark_arr(dkslot, true); dt = dt.mark_strarr(dkslot, true); }
                     else if (decl_is_struct(dt.structs, dtag)) { dt = dt.mark_struct_type(dkslot, dtag); }
                     dk = dk + 1;
                 }
@@ -11769,10 +11776,16 @@ pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): bo
             // representation) is a leak-only heap pointer stored in one tuple slot
             // — exactly like a string / struct element — so `.N` reads it via
             // op_tuple_get and the bind marks the slot an array (mark_arr), after
-            // which `t.N[i]` rides the 4-byte arr_get. The 8-byte-element arrays
-            // (f64[]/i64[]/u64[]) are NOT here: their element read needs the
-            // width-marked arr_get_i64 / arr_get(64), a separate slice.
+            // which `t.N[i]` rides the 4-byte arr_get.
             if (!ok_elem && (t == "i32[]" || t == "boolean[]" || t == "u32[]" || is_subword_array_type(t))) { ok_elem = true; }
+            // The 8-byte-element arrays (f64[]/i64[]) and string[] are ALSO just a
+            // heap pointer in the tuple slot — the element WIDTH/kind only matters
+            // when reading an element (`t.N[i]`), not the tuple slot itself. The
+            // destructure / `.N` bind marks the slot f64arr / i64arr / strarr so
+            // `t.N[i]` rides the width-marked arr_get(64) / arr_get_i64 / str read.
+            // (u64[] stays deferred: it needs the "u64[]" field-tag plumbing, like
+            // the u64 tuple scalar, a separate increment.)
+            if (!ok_elem && (t == "f64[]" || t == "i64[]" || t == "string[]")) { ok_elem = true; }
             // A NESTED tuple element `(…)` is itself a leak-only heap-tuple
             // pointer; admit it iff its own elements are all lowerable (recursion
             // bails on an inner array, matching the construction guard).
