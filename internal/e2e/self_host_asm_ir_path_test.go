@@ -285,6 +285,16 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// [10,20,35], reads it back through the (u8[], St) return: 10+20+35 + pos
 		// 3 = 68.
 		{"subword-arr-tuple-elem", "struct St { data: u8[], pos: i32 } function (s: St) read_all(): (u8[], St) { var out: u8[] = []; var i: i32 = s.pos; var end: i32 = s.data.len(); while (i < end) { out = out.append(s.data[i]); i = i + 1; } return (out, St { ...s, pos: end }); } function main(): i32 { var d: u8[] = []; d = d.append(10 as u8); d = d.append(20 as u8); d = d.append(35 as u8); var s: St = St { data: d, pos: 0 }; var (bytes, s2) = s.read_all(); var total: i32 = 0; var i: i32 = 0; while (i < bytes.len()) { total = total + (bytes[i] as i32); i = i + 1; } return total + s2.pos; }"},
+		// 8-byte-element (i64[]/f64[]) and string[] arrays as a TUPLE element,
+		// returned from a function + destructured. The buffer is a heap pointer in
+		// the tuple slot (width/kind-agnostic at construction); the destructure
+		// marks the bound slot i64arr / f64arr / strarr so `xs[i]` reads at the
+		// right width / as a string. i64: 7+11+3=21; f64: 2+4+1=7; string[]:
+		// len("hello")+len("world!")+2 = 13; `.N` direct access: 100+9=109.
+		{"i64-arr-tuple-elem", "function mk(): (i64[], i32) { var a: i64[] = []; a = a.append(7 as i64); a = a.append(11 as i64); return (a, 3); } function main(): i32 { var (xs, n) = mk(); return (xs[0] as i32) + (xs[1] as i32) + n; }"},
+		{"f64-arr-tuple-elem", "function mk(): (f64[], i32) { var a: f64[] = []; a = a.append(2.5); a = a.append(4.5); return (a, 1); } function main(): i32 { var (xs, n) = mk(); return (xs[0] as i32) + (xs[1] as i32) + n; }"},
+		{"i64-arr-tuple-dotn", "function mk(): (i64[], i32) { var a: i64[] = []; a = a.append(100 as i64); return (a, 9); } function main(): i32 { var t = mk(); return (t.0[0] as i32) + t.1; }"},
+		{"strarr-tuple-elem", "function mk(): (string[], i32) { var a: string[] = []; a = a.append(\"hello\"); a = a.append(\"world!\"); return (a, 2); } function main(): i32 { var (ps, n) = mk(); return ps[0].len() + ps[1].len() + n; }"},
 		{"with-loop", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; while (i < 4) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3]; }"},
 		{"append-build", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a[0] + a[4]; }"},
 		// `.append(e)` as a general EXPRESSION (not the `out = out.append(e)`
