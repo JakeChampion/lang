@@ -872,57 +872,6 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 	}
 }
 
-// selfHostImportRE matches an `import "…/name";` statement and captures the
-// trailing path segment (the module's bundle name). Greedy `(?:[^"]*/)?`
-// eats any `std/`, `core/`, or `./` prefix.
-var selfHostImportRE = regexp.MustCompile(`import\s+"(?:[^"]*/)?([A-Za-z0-9_]+)"\s*;`)
-
-// selfHostBundleFor resolves entrySrc's transitive imports through the Go
-// modload (the same loader goCheckerCodes uses) and renders the ///MODULE
-// bundle the bundle-checker driver consumes: one section per loaded module —
-// its basename as the module name, every `import "<pkg>/<name>";` rewritten
-// to `import "./<name>";` — with the entry section last. This lets the
-// self-host bundle driver see the same module set Go's checker does, so a
-// diagnostic that depends on the imported method/type table (e.g. a string
-// method defined in std/string) is checked identically on both sides.
-func selfHostBundleFor(t *testing.T, entrySrc string) []byte {
-	t.Helper()
-	_, srcs, err := modload.LoadSource(entrySrc)
-	if err != nil {
-		t.Fatalf("modload.LoadSource: %v", err)
-	}
-	const entryPath = "/__fern_source__/main.fern"
-	rewrite := func(s string) string {
-		return selfHostImportRE.ReplaceAllString(s, `import "./$1";`)
-	}
-	base := func(p string) string {
-		return strings.TrimSuffix(filepath.Base(p), ".fern")
-	}
-	var paths []string
-	seen := map[string]string{}
-	for p := range srcs {
-		if p == entryPath {
-			continue
-		}
-		b := base(p)
-		if prev, ok := seen[b]; ok {
-			t.Fatalf("bundle module-name collision: %q and %q both map to %q", prev, p, b)
-		}
-		seen[b] = p
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
-	var buf bytes.Buffer
-	for _, p := range paths {
-		buf.WriteString("///MODULE " + base(p) + "\n")
-		buf.WriteString(rewrite(srcs[p]))
-		buf.WriteString("\n")
-	}
-	buf.WriteString("///MODULE main\n")
-	buf.WriteString(rewrite(entrySrc))
-	return buf.Bytes()
-}
-
 // TestSelfHostCheckerBundleDifferentialX86_64 is the MULTI-MODULE differential
 // verification harness. Unlike TestSelfHostCheckerDifferentialX86_64 (which
 // checks a single self-contained module), it resolves each program's stdlib

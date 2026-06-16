@@ -2,9 +2,7 @@ package e2e
 
 import (
 	"bytes"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -58,27 +56,15 @@ func TestSelfHostArrayMethodSyntaxX86_64(t *testing.T) {
 // driver), linked + run under qemu.
 func TestSelfHostArrayMethodSyntaxArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "flatten.fern", "bundle_run_arm64.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "bundle_run_arm64.fern", "driver")
+	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
 
 	for _, tc := range arrayMethodSyntaxCases {
 		t.Run(tc.name, func(t *testing.T) {
-			bundle := selfHostBundleFor(t, tc.src)
-			asm := runCapture(t, x86gcc, x86runner, driverBin, bundle)
+			asm, progDir := compileSourceModload(t, x86runner, driverBin, tc.src)
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}
-			progBin := buildBin(t, arm64gcc, dir, "ams_"+tc.name, string(asm))
+			progBin := buildBin(t, arm64gcc, progDir, "ams_"+tc.name, asm)
 			cmd := runArm64Bin(qemu, progBin)
 			_ = cmd.Run()
 			if code := cmd.ProcessState.ExitCode(); code != tc.exit {

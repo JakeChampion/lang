@@ -113,22 +113,11 @@ func TestSelfHostCharMethodsArm64(t *testing.T) {
 // TestSelfHostSortArm64 — CI-gated arm64 counterpart.
 func TestSelfHostSortArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "flatten.fern", "bundle_run_arm64.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "bundle_run_arm64.fern", "driver")
+	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
 	main := "import \"./sort\";\n" +
 		"function main(): i32 { var xs: i32[] = [5, 2, 8, 1, 9, 3]; var r = sort.sort_i32_asc(xs); return r[0] * 100 + r[5]; }\n"
-	asm := runCapture(t, x86gcc, x86runner, driverBin, bytesModuleBundle(t, "sort", main))
-	progBin := buildBin(t, arm64gcc, dir, "sortprog", string(asm))
+	asm, progDir := compileStdProgModload(t, x86runner, driverBin, []string{"sort"}, main)
+	progBin := buildBin(t, arm64gcc, progDir, "sortprog", asm)
 	cmd := runArm64Bin(qemu, progBin)
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 109 {
