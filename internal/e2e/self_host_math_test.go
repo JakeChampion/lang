@@ -24,23 +24,12 @@ var mathCases = []struct {
 // real internal/stdlib/std/math.fern (which it couldn't before, lacking
 // the random_bytes builtin) and the resulting binaries run correctly.
 func TestSelfHostMathX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	for _, name := range []string{"flatten.fern", "bundle_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "bundle_run.fern", "driver")
+	gcc, runner, driverBin := buildModloadDriverX86(t)
 
 	for _, tc := range mathCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, bytesModuleBundle(t, "math", tc.main))
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
+			asm, progDir := compileStdProgModload(t, runner, driverBin, []string{"math"}, tc.main)
+			progBin := buildBin(t, gcc, progDir, tc.name, asm)
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
 				cmd = exec.Command(progBin)
@@ -60,7 +49,7 @@ func TestSelfHostMathArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "flatten.fern", "bundle_run_arm64.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "asm_arm64.fern", "flatten.fern", "bundle_run_arm64.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
