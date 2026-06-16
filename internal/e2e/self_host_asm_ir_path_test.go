@@ -334,6 +334,11 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// + strarr so `xs.len()` / `xs.append(v)` (clone) resolve. hit: n=2,
 		// more.len=3 -> 23; miss -> 7; total 30.
 		{"opt-array-payload", "function pick(o: Option[string[]], fallback: i32): i32 { match (o) { Some(xs) => { var n = xs.len(); var more = xs.append(\"z\"); return n * 10 + more.len(); }, None => { return fallback; } } return 0; } function main(): i32 { var a: string[] = []; a = a.append(\"p\"); a = a.append(\"q\"); var hit = pick(Some(a), 0); var miss = pick(None, 7); return hit + miss; }"},
+		// The checker-injected Url built-in (std/url), now injected into the IR
+		// path too, so `Url { … }` construction + `{...u, field}` spreads + an
+		// Option[Url] return lower (the url_parse shape). scheme("http")=4 +
+		// host("example.com")=11 + port 80 = 95.
+		{"builtin-url", "function up(s: string): Option[Url] { if (s.len() == 0) { return None; } var u: Url = Url { scheme: \"\", host: \"\", port: 0, path: \"\", query: \"\", fragment: \"\" }; u = Url { ...u, scheme: \"http\" }; u = Url { ...u, host: s, port: 80 }; return Some(u); } function main(): i32 { match (up(\"example.com\")) { Some(u) => { return u.scheme.len() + u.host.len() + u.port; }, None => { return 999; } } return 0; }"},
 		{"with-loop", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; while (i < 4) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3]; }"},
 		{"append-build", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a[0] + a[4]; }"},
 		// `.append(e)` as a general EXPRESSION (not the `out = out.append(e)`
