@@ -8456,7 +8456,17 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 // double-free. tuple_elems_lowerable is false for
                                 // non-tuples and for array/i64-element tuples (deferred).
                                 var ptag_is_tuple: boolean = tuple_elems_lowerable(ptag, ms.structs);
-                                if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && ptag != "f64" && !ptag_is_struct && !ptag_is_enum && !ptag_is_opt && !ptag_is_tuple) { return s.fail(); }
+                                // An ARRAY payload (`Some(xs)` where the Option's T is
+                                // an array — `m.get(k)` on a Map[K, V[]], the url query
+                                // shape) is a leak-only heap pointer at offset 8 like a
+                                // struct/tuple payload: read via op_opt_payload, bound
+                                // is_arr + element kind below so `xs[i]` / `xs.append(v)`
+                                // (clone) / `xs.len()` resolve. The 8-byte-element and
+                                // string/struct/enum-element arrays all ride one slot.
+                                var ptag_is_array: boolean = ptag == "i32[]" || ptag == "boolean[]" || ptag == "u32[]" || is_subword_array_type(ptag)
+                                    || ptag == "f64[]" || ptag == "i64[]" || ptag == "string[]"
+                                    || is_struct_array_field_type(ms.structs, ptag) || is_enum_array_field_type(ms.structs, ptag);
+                                if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && ptag != "f64" && !ptag_is_struct && !ptag_is_enum && !ptag_is_opt && !ptag_is_tuple && !ptag_is_array) { return s.fail(); }
                             }
                             var want: i32 = 0;
                             if (pv.type_name == "None" || pv.type_name == "Err") { want = 1; }
@@ -8507,6 +8517,25 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 // A tuple payload: tag the bound slot's element types
                                 // so `p.0` / `p.1` read the right element width / type.
                                 else if (tuple_elems_lowerable(ptag, ms.structs)) { ms = ms.mark_tuple_elems(pbslot, tuple_elem_tags(ptag)); }
+                                // An ARRAY payload (`Some(existing)` where the Option's
+                                // V is an array — e.g. `m.get(k)` on a Map[K, V[]], the
+                                // url_decode query-param shape). The array is BORROWED
+                                // from the Option box (leak-only, like the struct
+                                // payload above), so mark the slot is_arr + its element
+                                // kind so `existing[i]` / `existing.append(v)` (clone
+                                // form) / `existing.len()` resolve — mirroring the
+                                // tuple-destructure / user-enum payload array marks.
+                                else if (ptag == "i32[]" || ptag == "boolean[]" || ptag == "u32[]" || is_subword_array_type(ptag)) {
+                                    ms = ms.mark_arr(pbslot, true);
+                                    if (ptag == "u32[]") { ms = ms.mark_u32(pbslot, true); }
+                                }
+                                else if (ptag == "f64[]") { ms = ms.mark_arr(pbslot, true); ms = ms.mark_f64arr(pbslot, true); }
+                                else if (ptag == "i64[]") { ms = ms.mark_arr(pbslot, true); ms = ms.mark_i64arr(pbslot, true); }
+                                else if (ptag == "string[]") { ms = ms.mark_arr(pbslot, true); ms = ms.mark_strarr(pbslot, true); }
+                                else if (is_struct_array_field_type(ms.structs, ptag) || is_enum_array_field_type(ms.structs, ptag)) {
+                                    ms = ms.mark_arr(pbslot, true);
+                                    ms = ms.mark_struct_type(pbslot, ptag[0 : ptag.len() - 2]);
+                                }
                             }
                             if (arm.has_guard) {
                                 ms = lower_expr(arm.guard, ms);
