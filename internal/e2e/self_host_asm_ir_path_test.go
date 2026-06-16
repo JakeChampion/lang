@@ -303,6 +303,13 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// `.N` direct access: Green -> t.1+10 = 15.
 		{"enum-tuple-elem", "enum E { A(i32), B } function mk(): (E, i32) { return (A(3), 5); } function main(): i32 { var (e, n) = mk(); match (e) { A(x) => { return x + n; }, B => { return n; } } return 0; }"},
 		{"enum-tuple-dotn", "enum Color { Red, Green, Blue } function mk(): (Color, i32) { return (Green, 5); } function main(): i32 { var t = mk(); match (t.0) { Red => { return 1; }, Green => { return t.1 + 10; }, Blue => { return 3; } } return 0; }"},
+		// A struct-array (P[]) / enum-array (E[]) value as a TUPLE element. The
+		// buffer is a heap pointer in the slot (leak mode — elements leak with the
+		// leak-only tuple); the destructure binds mark_arr + the element struct/enum
+		// name so `xs[i].field` / `match (xs[i])` resolve the element shape. struct:
+		// 7+11+3=21; enum: A(7)->7 + B->100 + 3 = 110.
+		{"structarr-tuple-elem", "struct P { x: i32 } function mk(): (P[], i32) { var a: P[] = []; a = a.append(P { x: 7 }); a = a.append(P { x: 11 }); return (a, 3); } function main(): i32 { var (ps, n) = mk(); return ps[0].x + ps[1].x + n; }"},
+		{"enumarr-tuple-elem", "enum E { A(i32), B } function mk(): (E[], i32) { var a: E[] = []; a = a.append(A(7)); a = a.append(B); return (a, 3); } function main(): i32 { var (es, n) = mk(); var sum: i32 = n; var i: i32 = 0; while (i < es.len()) { match (es[i]) { A(x) => { sum = sum + x; }, B => { sum = sum + 100; } } i = i + 1; } return sum; }"},
 		{"with-loop", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; while (i < 4) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3]; }"},
 		{"append-build", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a[0] + a[4]; }"},
 		// `.append(e)` as a general EXPRESSION (not the `out = out.append(e)`
