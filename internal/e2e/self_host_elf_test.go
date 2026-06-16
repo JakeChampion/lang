@@ -179,6 +179,23 @@ function main(): i32 {
     var b6: i32[] = elf_image_entry_bss(body6, 7, elf_em_aarch64(), 0, bigbss);
     if (b6[104] != 136 || b6[105] != 0 || b6[106] != 0 || b6[107] != 160) { return 44; }
     if (b6[108] != 0 || b6[109] != 0 || b6[110] != 0 || b6[111] != 0) { return 45; }
+
+    // PIE (ET_DYN, base 0): elf_image_pie shares the W^X two-segment layout
+    // but with e_type = ET_DYN (3) and a load base of 0. 4-byte text + 8-byte
+    // data, no bss. headers = 176; data_off = page_up(180) = 65536.
+    var b7: i32[] = elf_image_pie(t3, d3, elf_em_aarch64(), 0, 0);
+    if (b7.len() != 65536 + 8) { return 46; }
+    // e_type = ET_DYN (3) @16.
+    if (b7[16] != 3 || b7[17] != 0) { return 47; }
+    // e_entry = 176 (base 0, past ehdr + 2 phdrs) @24 (LE 176,0,0,0).
+    if (b7[24] != 176 || b7[25] != 0 || b7[26] != 0 || b7[27] != 0) { return 48; }
+    // phdr0 R+X p_vaddr = 0 @80 (base 0).
+    if (b7[80] != 0 || b7[81] != 0 || b7[82] != 0 || b7[83] != 0) { return 49; }
+    // phdr1 R+W @120: p_flags = 6 @124, p_vaddr = 65536 @136 (LE 0,0,1,0).
+    if (b7[120] != 1 || b7[124] != 6) { return 50; }
+    if (b7[136] != 0 || b7[137] != 0 || b7[138] != 1 || b7[139] != 0) { return 51; }
+    // data blob at file offset 65536.
+    if (b7[65536] != 7 || b7[65543] != 7) { return 52; }
     return 0;
 }
 `
