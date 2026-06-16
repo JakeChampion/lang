@@ -5481,17 +5481,62 @@ function iife_payload_borrow_i32(ft: string, name: string, arm: parser.MatchArm,
 //     borrow result (string / i64 / f64 / tuple / array / struct field) is rejected
 //     because its temp would be mis-classified at the i32 width inferred before the
 //     binding is in scope (iife_payload_borrow_i32 / iife_expr_result_is_i32).
-function iife_payload_field_bindable(ft: string, name: string, arm: parser.MatchArm, s: LowerState): boolean {
+function iife_payload_field_bindable(ft: string, name: string, arm: parser.MatchArm, res_kind: string, s: LowerState): boolean {
     if (ft == "i32") { return true; }
     if (ft == "i64" || ft == "f64") { return iife_arm_returns_ident(arm, name); }
     if (is_scalar_array_type(ft)) { return !iife_arm_returns_ident(arm, name); }
+    // STRING result temp (res_kind == "string"): admit a string read of the bound
+    // payload — a BARE string payload (`V(x) => x`, ft string) or a string FIELD /
+    // ELEMENT read of a struct / tuple payload (`V(p) => p.name`, `V(t) => t.0`).
+    // The temp was classified str by iife_payload_result_kind, so the StmtMatch
+    // store/load is a string pointer (matching the value the binding loads).
+    if (res_kind == "string" && iife_payload_string_bindable(ft, name, arm, s)) { return true; }
+    // NOTE: an i64 / f64 result from a struct-FIELD / tuple-ELEMENT read of the bound
+    // payload (`V(p) => p.v`, v:i64) is NOT admitted here — the StmtMatch store of a
+    // width-64 field read into the i64 temp does not round-trip soundly (it segfaults),
+    // so it stays gated to AST. Only the BARE i64/f64 payload (`V(a) => a`, handled
+    // above via iife_arm_returns_ident) is admitted for the wide kinds.
     if (ft == "string" || decl_is_struct(s.structs, ft) || is_enum_like_name(ft, s.structs) || tuple_elems_lowerable(ft, s.structs)) {
         return iife_payload_borrow_i32(ft, name, arm, s);
     }
     return false;
 }
 
-function iife_payload_bindable(pv: parser.PatVariant, arm: parser.MatchArm, opt_srt: string, temp_is_i32: boolean, scrut_is_ident: boolean, s: LowerState): boolean {
+// iife_payload_string_bindable admits a STRING-result arm reading the bound payload
+// `name` of field type `ft`: a bare string payload returned (`ft == "string"` and the
+// arm returns `name`), or a string struct/enum field read (`name.field`, field type
+// string), or a string tuple element read (`name.<i>`, element tag string). A struct
+// payload must be leak-safe (borrowed from the enum box, never reclaimed — see
+// iife_payload_borrow_i32). The temp is a string slot (classified above), so the
+// StmtMatch path's string-pointer store/load lands correctly.
+function iife_payload_string_bindable(ft: string, name: string, arm: parser.MatchArm, s: LowerState): boolean {
+    var tail: parser.Expr = iife_arm_tail_expr(arm);
+    // Bare string payload returned: `V(x) => x`, x : string.
+    if (ft == "string") { return iife_arm_returns_ident(arm, name); }
+    // A struct payload field / tuple element read — struct must be leak-safe.
+    if (decl_is_struct(s.structs, ft) && !is_enum_like_name(ft, s.structs) && !decl_is_leaksafe(s.structs, ft)) { return false; }
+    match (tail) {
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIdent(oid) => {
+                    if (oid.name != name) { return false; }
+                    if (util.is_all_digits(fa.field)) {
+                        return tuple_type_elem_tag(ft, util.digits_to_i32(fa.field)) == "string";
+                    }
+                    if (decl_is_struct(s.structs, ft) || is_enum_like_name(ft, s.structs)) {
+                        return decl_field_type(s.structs, ft, fa.field) == "string";
+                    }
+                    return false;
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function iife_payload_bindable(pv: parser.PatVariant, arm: parser.MatchArm, opt_srt: string, temp_is_i32: boolean, scrut_is_ident: boolean, res_kind: string, s: LowerState): boolean {
     if (opt_srt != "") {
         var pt: string = opt_payload_type(opt_srt, pv.type_name);
         if (pt == "i32") { return true; }
@@ -5502,7 +5547,7 @@ function iife_payload_bindable(pv: parser.PatVariant, arm: parser.MatchArm, opt_
     // f64 / leak-safe scalar array per iife_payload_field_bindable.
     var ft: string = iife_user_enum_payload_type(pv, s);
     if (ft == "") { return false; }
-    return iife_payload_field_bindable(ft, pv.binding, arm, s);
+    return iife_payload_field_bindable(ft, pv.binding, arm, res_kind, s);
 }
 
 // iife_enum_payloads_bindable reports whether a MULTI-payload user-enum variant arm
@@ -5519,16 +5564,19 @@ function iife_enum_payloads_bindable(pv: parser.PatVariant, arm: parser.MatchArm
         vld = vld + 1;
     }
     if (!decl_is_struct(s.structs, vname)) { return false; }
+    // Multi-payload arms keep the existing i32 / direct-i64-f64 / borrow-only
+    // admission — a string result from a multi-binding arm isn't in scope here, so
+    // res_kind is left "" (no string admit for this shape).
     if (pv.binding.len() > 0 && pv.binding != "_") {
         var ft0: string = decl_field_type(s.structs, vname, "__ev");
-        if (!iife_payload_field_bindable(ft0, pv.binding, arm, s)) { return false; }
+        if (!iife_payload_field_bindable(ft0, pv.binding, arm, "", s)) { return false; }
     }
     var k: i32 = 0;
     while (k < pv.extra_bindings.len()) {
         var eb: string = pv.extra_bindings[k];
         if (eb.len() > 0 && eb != "_") {
             var ftk: string = decl_field_type(s.structs, vname, "__ev" + util.i32_to_string(k + 1));
-            if (!iife_payload_field_bindable(ftk, eb, arm, s)) { return false; }
+            if (!iife_payload_field_bindable(ftk, eb, arm, "", s)) { return false; }
         }
         k = k + 1;
     }
@@ -5607,6 +5655,98 @@ function iife_match_returns_i64_payload(st: parser.Stmt, s: LowerState): boolean
     return false;
 }
 
+// iife_payload_kind_of_type maps a payload field type to the IIFE result KIND the
+// temp can carry ("string" / "i64" / "f64"), else "" (i32 / boolean / composite —
+// handled by the i32 temp / the existing classifiers).
+function iife_payload_kind_of_type(ft: string, s: LowerState): string {
+    if (ft == "string") { return "string"; }
+    if (ft == "i64") { return "i64"; }
+    if (ft == "f64") { return "f64"; }
+    return "";
+}
+
+// iife_arm_payload_result_kind recovers the RESULT KIND of a single arm whose tail
+// reads the BOUND enum payload — when that read can't be classified by the ordinary
+// `s`-based predicates because the binding isn't in scope. Shapes recovered (all
+// purely from the variant's payload FIELD TYPE, recorded in `s.structs`):
+//   - bare payload returned (`V(x) => x`)        → the payload field type's kind.
+//   - struct/enum field read (`V(p) => p.name`)  → that field's type's kind, when p
+//                                                   is a struct/enum payload.
+//   - tuple element read (`V(t) => t.0`)         → that element tag's kind, when t
+//                                                   is a tuple payload.
+// "string" / "i64" / "f64" only (the scalar payload-derived kinds the IIFE temp can
+// carry); "" for an i32 / boolean / unrecoverable result (handled by the i32 temp /
+// the existing classifiers). The kind names the temp width the StmtMatch arm-body
+// lowering already produces for the same field read, so the temp lines up.
+function iife_arm_payload_result_kind(arm: parser.MatchArm, s: LowerState): string {
+    if (arm.body.len() == 0) { return ""; }
+    var last: parser.Stmt = arm.body[arm.body.len() - 1];
+    var rval: parser.Expr = parser.e_unknown("");
+    var have: boolean = false;
+    match (last) {
+        parser.StmtReturn(r) => { rval = r.value; have = true; },
+        _ => {}
+    }
+    if (!have) { return ""; }
+    match (arm.pattern) {
+        parser.PatVariant(pv) => {
+            match (rval) {
+                // Bare payload `V(x) => x` — kind is the payload field type's kind.
+                parser.ExprIdent(rid) => {
+                    var ft: string = iife_variant_payload_field(pv, rid.name, s);
+                    return iife_payload_kind_of_type(ft, s);
+                },
+                // `name.<field>` / `name.<digit>` — a field / tuple-element read of
+                // the bound payload `name` of field type `ft0`.
+                parser.ExprFieldAccess(fa) => {
+                    match (fa.obj) {
+                        parser.ExprIdent(oid) => {
+                            var ft0: string = iife_variant_payload_field(pv, oid.name, s);
+                            if (ft0 == "") { return ""; }
+                            // Tuple element `t.0`: recover the element tag's kind.
+                            if (util.is_all_digits(fa.field)) {
+                                var et: string = tuple_type_elem_tag(ft0, util.digits_to_i32(fa.field));
+                                return iife_payload_kind_of_type(et, s);
+                            }
+                            // Struct / enum field `p.name`: recover the field type's kind.
+                            if (decl_is_struct(s.structs, ft0) || is_enum_like_name(ft0, s.structs)) {
+                                var fdt: string = decl_field_type(s.structs, ft0, fa.field);
+                                return iife_payload_kind_of_type(fdt, s);
+                            }
+                            return "";
+                        },
+                        _ => { return ""; }
+                    }
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => {}
+    }
+    return "";
+}
+
+// iife_payload_result_kind scans the whole match for a payload-derived non-i32 RESULT
+// kind ("string" / "i64" / "f64"), returning the first arm's recovered kind. Only the
+// payload-binding arms contribute a kind; the i32 / non-payload arms return "" and are
+// skipped. Arms must not disagree — if two arms recover DIFFERENT non-"" kinds the
+// match is not uniformly typed, so "" is returned (it bails to AST). i64 / f64 are
+// already covered by iife_payload_result_width for the bare case; this adds string and
+// the struct-field / tuple-element shapes for all three kinds.
+function iife_payload_result_kind(m: parser.StmtMatch, s: LowerState): string {
+    var found: string = "";
+    var i: i32 = 0;
+    while (i < m.arms.len()) {
+        var k: string = iife_arm_payload_result_kind(m.arms[i], s);
+        if (k != "") {
+            if (found != "" && found != k) { return ""; }
+            found = k;
+        }
+        i = i + 1;
+    }
+    return found;
+}
+
 // iife_user_enum_payload_type returns a user-enum variant's single payload field
 // type (`__ev`), stripping any `Enum.` qualifier. "" when the variant isn't a
 // known struct (so a non-user-enum / Option scrutinee is handled elsewhere).
@@ -5643,17 +5783,22 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
             while (mj < m.arms[mi].body.len()) { if (iife_any_return_i64(m.arms[mi].body[mj], ts)) { many_i64 = true; } mj = mj + 1; }
             mi = mi + 1;
         }
-        // A directly-returned BOUND enum payload (`V(a) => a`) can't be classified
-        // by expr_is_f64 / iife_any_return_i64 — the binding isn't in scope at
-        // classify time, so the bare ident infers as i32. Recover the result width
-        // from the variant's payload field type (iife_payload_result_width) so an
-        // i64 / f64 payload returns into a matching-width temp instead of bailing.
+        // A BOUND enum payload read (`V(a) => a` bare, or `V(p) => p.name` /
+        // `V(t) => t.0` field/element) can't be classified by expr_is_f64 /
+        // iife_any_return_i64 / expr_is_str — the binding isn't in scope at classify
+        // time, so the read infers as i32. Recover the result KIND from the variant's
+        // payload field type (iife_payload_result_kind) so a string / i64 / f64
+        // payload-derived result returns into a matching-width temp instead of
+        // bailing. The bare i64/f64 case stays covered by iife_payload_result_width
+        // (a subset of the kind recovery); they agree, so this is purely additive.
         var pay_w: string = iife_payload_result_width(m, ts);
+        var pay_k: string = iife_payload_result_kind(m, ts);
         if (expr_is_f64(mfre, ts)) { ts = ts.mark_f64(tslot, true); }
         else if (many_i64) { ts = ts.mark_i64(tslot, true); }
-        else if (pay_w == "f64") { ts = ts.mark_f64(tslot, true); }
-        else if (pay_w == "i64") { ts = ts.mark_i64(tslot, true); }
+        else if (pay_w == "f64" || pay_k == "f64") { ts = ts.mark_f64(tslot, true); }
+        else if (pay_w == "i64" || pay_k == "i64") { ts = ts.mark_i64(tslot, true); }
         else if (expr_is_str(mfre, ts)) { ts = ts.mark_str(tslot, true); }
+        else if (pay_k == "string") { ts = ts.mark_str(tslot, true); }
     }
     // A payload-binding arm (`Some(n) => n`) is admitted only when the bound
     // payload is i32, so the i32 temp stays the right width. An Option/Result
@@ -5668,6 +5813,10 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
     // payload binding is admitted only into an i32 temp, and only for an ident
     // scrutinee (see iife_payload_bindable).
     var temp_is_i32: boolean = !ts.is_f64_slot(tslot) && !ts.is_i64_slot(tslot) && !ts.is_str_slot(tslot);
+    // The payload-derived result KIND ("string" / "i64" / "f64" / "") drives whether a
+    // string-payload read is admissible (only into the matching string temp). Recovered
+    // identically to the classification above so the gate agrees with the temp width.
+    var res_kind: string = iife_payload_result_kind(m, ts);
     var scrut_is_ident: boolean = false;
     match (m.scrutinee) {
         parser.ExprIdent(sidc) => { scrut_is_ident = true; },
@@ -5695,7 +5844,7 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
                     // f64 payload returned directly into the matching-width temp, or a
                     // leak-safe scalar array payload bound and read as a BORROW
                     // (`V(xs) => xs[0]` / `.len()`) — never the array returned bare.
-                    if (!iife_payload_bindable(pv, m.arms[i], opt_srt, temp_is_i32, scrut_is_ident, ts)) { return s.fail(); }
+                    if (!iife_payload_bindable(pv, m.arms[i], opt_srt, temp_is_i32, scrut_is_ident, res_kind, ts)) { return s.fail(); }
                 }
             },
             _ => {}

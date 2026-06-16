@@ -638,6 +638,34 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// Chained immutable updates: t = update(s), u = update(t). Each clones; all
 		// three structs independent. u.xs = [1,99,3] then [1,99,42]; s/t unmutated.
 		{"struct-field-with-chain-detector", `struct State { xs: i32[], n: i32 } function main(): i32 { var s = State { xs: [1, 2, 3], n: 3 }; var t = State { xs: s.xs.with(1, 99), n: s.n }; var u = State { xs: t.xs.with(2, 42), n: t.n }; if (u.xs[1] != 99) { return 98; } if (u.xs[2] != 42) { return 97; } if (s.xs[1] != 2) { return 96; } if (t.xs[2] != 3) { return 95; } return __rc_underflow(); }`, 0},
+
+		// STRING-RESULT match-EXPRESSION payload widening (lower_iife_match /
+		// iife_payload_result_kind + iife_payload_string_bindable): a `var s = match
+		// (e) { V(x) => x, ... }` IIFE that RETURNS a string value derived from the
+		// bound payload now routes "ir" (was "ast"). The result temp can't be
+		// classified by expr_is_str at classify time (the binding isn't in scope), so
+		// the string KIND is recovered from the variant's payload field type — a BARE
+		// string payload (`V(x) => x`), a string struct/enum FIELD (`V(p) => p.name`),
+		// or a string tuple ELEMENT (`V(t) => t.0`) — and the temp is marked a string
+		// slot so the StmtMatch arm-body store/load is a string pointer. (An i64/f64
+		// field/element result still bails to AST — the wide-field StmtMatch store
+		// doesn't round-trip; only the BARE i64/f64 payload is admitted, as before.)
+		// Each case oracle-checks the result string's length as the exit code.
+		// Bare string payload returned: result is the 5-char payload "hello".
+		{"iife-match-string-bare-payload-value", `enum E { V(string), N } function main(): i32 { var e: E = E.V("hello"); var s: string = match (e) { V(x) => x, N => "z" }; return s.len(); }`, 5},
+		// The non-payload arm (literal "zz") is taken: result is the 2-char "zz".
+		{"iife-match-string-bare-payload-other-arm", `enum E { V(string), N } function main(): i32 { var e: E = E.N; var s: string = match (e) { V(x) => x, N => "zz" }; return s.len(); }`, 2},
+		// Struct string FIELD read: result is the 5-char field value "world".
+		{"iife-match-string-struct-field-value", `struct P { name: string } enum E { V(P), N } function main(): i32 { var e: E = E.V(P { name: "world" }); var s: string = match (e) { V(p) => p.name, N => "zz" }; return s.len(); }`, 5},
+		// Tuple string ELEMENT read (`t.0`): result is the 3-char element "hey".
+		{"iife-match-string-tuple-elem-value", `enum E { V((string, i32)), N } function main(): i32 { var e: E = E.V(("hey", 3)); var s: string = match (e) { V(t) => t.0, N => "z" }; return s.len(); }`, 3},
+		// Leak-safety detector: the string-payload box is bound + returned through the
+		// IIFE path; the over-release detector reads 0 (the result string is reclaimed
+		// exactly once — no leak, no double-free through the inlined match path).
+		{"iife-match-string-bare-payload-detector", `enum E { V(string), N } function go(): i32 { var e: E = E.V("hello"); var s: string = match (e) { V(x) => x, N => "z" }; if (s.len() != 5) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// Struct-string-field result detector: the borrowed string field is returned
+		// and reclaimed exactly once (no over-release through the IIFE path).
+		{"iife-match-string-struct-field-detector", `struct P { name: string } enum E { V(P), N } function go(): i32 { var e: E = E.V(P { name: "world" }); var s: string = match (e) { V(p) => p.name, N => "zz" }; if (s.len() != 5) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
