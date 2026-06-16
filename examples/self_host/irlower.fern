@@ -11624,14 +11624,15 @@ pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): bo
             // opt_payload_type. (#3018 deferred this only because the old split
             // was comma-naive.)
             if (!ok_elem && t.len() >= 8 && t[0:7] == "Result[") { ok_elem = true; }
-            // A 4-byte scalar-array element (i32[] / boolean[] / u32[]) is a
-            // leak-only heap pointer stored in one tuple slot — exactly like a
-            // string / struct element — so `.N` reads it via op_tuple_get and the
-            // bind marks the slot an array (mark_arr), after which `t.N[i]` rides
-            // the 4-byte arr_get. The 8-byte-element arrays (f64[]/i64[]/u64[])
-            // are NOT here: their element read needs the width-marked arr_get_i64
-            // / arr_get(64), a separate slice.
-            if (!ok_elem && (t == "i32[]" || t == "boolean[]" || t == "u32[]")) { ok_elem = true; }
+            // A 4-byte scalar-array element (i32[] / boolean[] / u32[], plus the
+            // sub-word u8[]/u16[]/i8[]/i16[] which ride the SAME i32[] 4-byte-slot
+            // representation) is a leak-only heap pointer stored in one tuple slot
+            // — exactly like a string / struct element — so `.N` reads it via
+            // op_tuple_get and the bind marks the slot an array (mark_arr), after
+            // which `t.N[i]` rides the 4-byte arr_get. The 8-byte-element arrays
+            // (f64[]/i64[]/u64[]) are NOT here: their element read needs the
+            // width-marked arr_get_i64 / arr_get(64), a separate slice.
+            if (!ok_elem && (t == "i32[]" || t == "boolean[]" || t == "u32[]" || is_subword_array_type(t))) { ok_elem = true; }
             // A NESTED tuple element `(…)` is itself a leak-only heap-tuple
             // pointer; admit it iff its own elements are all lowerable (recursion
             // bails on an inner array, matching the construction guard).
