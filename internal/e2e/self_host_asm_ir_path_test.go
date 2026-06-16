@@ -317,6 +317,17 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// dispatch as a map op (previously `m` bound without its value type, so
 		// `m.get` bailed). Builds {k: JNumber("42")}, gets it back, reads len = 2.
 		{"map-enum-payload-get", "function jget(obj: JsonValue, key: string): Option[JsonValue] { match (obj) { JObject(m) => { match (m.get(key)) { Some(v) => { return Some(v); }, None => { return None; } } }, _ => { return None; } } return None; } function main(): i32 { var m: Map[string, JsonValue] = map_new(8); m = m.set(\"k\", JNumber(\"42\")); var o: JsonValue = JObject(m); match (jget(o, \"k\")) { Some(v) => { match (v) { JNumber(s) => { return s.len(); }, _ => { return 0; } } }, None => { return 99; } } return 0; }"},
+		// A Map[K, V]-RECEIVER method — the shape core/map's contains_value /
+		// get_or_insert / merge use. A Map receiver is now map-tracked (not
+		// mis-marked as an enum), so built-in map ops on `self` (m.has / m.get_or
+		// / m.len) dispatch as map ops, and a NON-builtin method on `self`
+		// (m.goi / m.total here, or core/map's m.merge) dispatches to the
+		// "Map.<method>" user-method label. goi("a")=10 + goi("z",5)=5 + total
+		// (len 2 *100)=200 = 215.
+		{"map-recv-method", "function (m: Map[string, i32]) goi(k: string, fallback: i32): i32 { if (m.has(k)) { return m.get_or(k, 0); } return fallback; } function (m: Map[string, i32]) total(): i32 { return m.len() * 100; } function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.set(\"a\", 10); m = m.set(\"b\", 20); return m.goi(\"a\", 0) + m.goi(\"z\", 5) + m.total(); }"},
+		// A Map-receiver method iterating m.values() with a generic `==` — the
+		// core/map contains_value shape. found(20)->+1, not-found(99)->no change.
+		{"map-recv-contains", "function (m: Map[string, i32]) cv(target: i32): boolean { for v in m.values() { if (v == target) { return true; } } return false; } function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.set(\"a\", 10); m = m.set(\"b\", 20); var r: i32 = 0; if (m.cv(20)) { r = r + 1; } if (m.cv(99)) { r = r + 100; } return r; }"},
 		{"with-loop", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; while (i < 4) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3]; }"},
 		{"append-build", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a[0] + a[4]; }"},
 		// `.append(e)` as a general EXPRESSION (not the `out = out.append(e)`
