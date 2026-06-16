@@ -1,0 +1,13 @@
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./asm_ir";
+
+function main(): i32 {
+    var src: string = io.read_all_stdin();
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var bm: parser.Module = parser.module_with_builtins(mod);
+    var lm: parser.Module = asm_ir.lift_lambdas(bm);
+    print(asm_ir.eligibility_report(lm));
+    return 0;
+}
