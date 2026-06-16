@@ -1794,7 +1794,12 @@ type Lambda struct {
 	P          Position
 	Params     []Param
 	ReturnType Type
-	Body       *Block
+	// ReturnUnannotated records that an arrow lambda was written without a
+	// `: R` return type (`(x) => expr`), so the checker infers ReturnType
+	// from the body expression instead of defaulting to void. Mirrors
+	// FuncDecl.ReturnUnannotated; see checker.inferReturns.
+	ReturnUnannotated bool
+	Body              *Block
 	// Captures gets filled by the checker, same shape as
 	// FuncDecl.Captures. closureconv reads it to size the env
 	// block.

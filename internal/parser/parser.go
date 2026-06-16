@@ -2320,12 +2320,14 @@ func (p *parser) parseArrowLambda() (ast.Expr, error) {
 		return nil, err
 	}
 	var ret ast.Type = ast.VoidType{}
+	unannotated := true
 	if _, ok := p.accept(lexer.Punct, ":"); ok {
 		t, err := p.parseType()
 		if err != nil {
 			return nil, err
 		}
 		ret = t
+		unannotated = false
 	}
 	if _, err := p.expect(lexer.Punct, "=>"); err != nil {
 		return nil, err
@@ -2337,7 +2339,7 @@ func (p *parser) parseArrowLambda() (ast.Expr, error) {
 		return nil, err
 	}
 	body := &ast.Block{P: open.Pos, Stmts: []ast.Stmt{&ast.Return{P: open.Pos, Value: bodyExpr}}}
-	return &ast.Lambda{P: open.Pos, Params: params, ReturnType: ret, Body: body}, nil
+	return &ast.Lambda{P: open.Pos, Params: params, ReturnType: ret, ReturnUnannotated: unannotated, Body: body}, nil
 }
 
 func (p *parser) parseLambda() (ast.Expr, error) {
