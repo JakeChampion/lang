@@ -89,23 +89,22 @@ var interpProgs = []struct {
 // all with field `v` — previously mis-inferred). The resulting binary
 // evaluates programs and exits with their result.
 func TestSelfHostInterpDriverX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t) // lexer, parser, asm
-	for _, name := range []string{"interp.fern", "flatten.fern", "bundle_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+	gcc, runner, driverBin := buildModloadDriverX86(t)
+	// The interp "driver" is just a program importing ./lexer + ./parser +
+	// ./interp, compiled by the file-based asm driver (no bundle_run).
+	files := map[string]string{"main.fern": interpDriverMod}
+	for _, m := range []string{"util", "lexer", "parser", "interp"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", m+".fern"))
 		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
+			t.Fatalf("read %s.fern: %v", m, err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
+		files[m+".fern"] = string(src)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "bundle_run.fern", "driver")
-	interpAsm := runCapture(t, gcc, runner, driverBin, interpBundle(t))
+	interpAsm, progDir := compileFilesModload(t, runner, driverBin, files)
 	if len(interpAsm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes for the interp driver")
 	}
-	interpBin := buildBin(t, gcc, dir, "interp", string(interpAsm))
+	interpBin := buildBin(t, gcc, progDir, "interp", interpAsm)
 
 	for _, tc := range interpProgs {
 		t.Run(tc.name, func(t *testing.T) {
