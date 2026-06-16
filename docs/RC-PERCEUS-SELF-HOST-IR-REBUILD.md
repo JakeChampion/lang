@@ -1624,3 +1624,31 @@ Genuinely-remaining gaps (niche or large):
    reclaims only leak-safe structs. Closing this (recursive per-field deep-drop, or a
    leak-only model for all structs like strings/enums) is the bulk of the remaining
    distance to retiring the legacy AST emitter, and is the natural next major arc.
+
+### CORRECTION (2026-06-16, same day): gap #4 above was overstated
+
+Direct pathprobe + a `__rc_underflow()`-gated run on current main show that
+NON-LEAKSAFE structs already LOWER and RECLAIM soundly on the IR path: constructing
+`Outer { inner: Inner { xs: [..] }, n }` (Inner non-leaksafe via an array field),
+returning one from a function, reading its fields (incl. `o.inner.xs[0]` and
+`o.items[i].v` for a nested struct-ARRAY field), and REASSIGNING a struct with a
+`string` / `string[]` field (which frees the old rc-headered box) all route `"ir"`,
+and the over-release detector reads 0. The box is reclaimed; the nested rc-tracked
+fields (strings / string[] / nested structs) LEAK — exactly the path's existing
+leak-only model for strings/enums — which is sound (no double-free), just not
+optimal.
+
+So "full non-leaksafe-struct reclamation" is NOT a goal-#1 correctness blocker (those
+modules lower today). What remains there is a goal-#2 OPTIMIZATION: precise deep-drop
+of a reclaimed struct's nested rc fields (recursive per-field drop) to shrink the
+leak set — valuable for long-running programs, irrelevant to whether the AST emitter
+can be retired.
+
+The standalone `-ir-probe BAIL lower` count on a single file (e.g. ~166 on
+irlower.fern) is therefore dominated by the missing-cross-module-context artifact,
+NOT by genuine lowering gaps. The real goal-#1 frontier is the three NARROW
+match-EXPRESSION / trait cases (composite result, i64/f64 struct-field result, bare
+trait-name param) — each a contained IIFE-result-typing / width-store / implicit-dyn
+slice, not a broad capability hole. Closing a whole MODULE to IR (so the legacy AST
+emitter can retire) is then a question of the LAST per-module holdout function, best
+found with a FULL-context eligibility probe rather than the standalone form.
