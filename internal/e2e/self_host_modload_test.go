@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
@@ -204,5 +205,76 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 				t.Errorf("%s: program exited %d, want %d", tc.name, code, tc.wantExit)
 			}
 		})
+	}
+}
+
+// TestSelfHostModloadIRProbeX86_64 exercises the import-driven driver's
+// `-ir-probe` flag (asm_modload_run.fern), which reports the IR-eligibility
+// frontier (asm_ir.eligibility_report) AFTER real import resolution + bundling.
+//
+// This is the import-AWARE counterpart to asm_ir_run's stdin probe
+// (TestSelfHostIREligibilityProbe). The stdin probe parses one source with no
+// modload, so a function that calls an IMPORTED helper is measured with its
+// callee ABSENT — calls_only_known sees an unknown call and reports an
+// artificial `BAIL call` even though the function lowers cleanly once the
+// import is present. The modload probe loads the `import` graph off disk first,
+// so `f` (which calls `helper.dbl`, mangled `helper__dbl`) is measured with the
+// real callee in the module and shows `ir`. The decisive assertion is exactly
+// that cross-module flip: a call to an imported function does NOT bail here.
+func TestSelfHostModloadIRProbeX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostModloadProject(t)
+
+	prog, _, err := modload.Load(filepath.Join(dir, "asm_modload_run.fern"))
+	if err != nil {
+		t.Fatalf("modload driver: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	asm, err := x86_64.Emit(prog, info)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	driverBin := buildBin(t, gcc, dir, "driver", asm)
+
+	progDir := t.TempDir()
+	files := map[string]string{
+		"helper.fern": "pub function dbl(n: i32): i32 { return n * 2; }\n",
+		// `f` calls the IMPORTED helper.dbl. Without modload (the stdin probe)
+		// helper__dbl is absent, so f bails `call`; with modload it is present,
+		// so f lowers (`f: ir`).
+		"main.fern": "" +
+			"import \"./helper\";\n" +
+			"function f(n: i32): i32 { return helper.dbl(n) + 1; }\n" +
+			"function main(): i32 { return f(20); }\n",
+	}
+	for name, src := range files {
+		if err := os.WriteFile(filepath.Join(progDir, name), []byte(src), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	entry := filepath.Join(progDir, "main.fern")
+
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(driverBin, entry, "-ir-probe")
+	} else {
+		args := append(append([]string{}, runner[1:]...), driverBin, entry, "-ir-probe")
+		cmd = exec.Command(runner[0], args...)
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("run -ir-probe driver: %v", err)
+	}
+	report := string(out)
+	for _, want := range []string{"f: ir", "main: ir", "module: IR"} {
+		if !strings.Contains(report, want) {
+			t.Errorf("import-aware probe report missing %q\n--- report ---\n%s", want, report)
+		}
 	}
 }
