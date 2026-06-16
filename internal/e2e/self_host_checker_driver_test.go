@@ -16,56 +16,11 @@ import (
 // a self-hosted type checker — over well-typed and ill-typed programs,
 // asserting it exits 0 / 1 respectively.
 func TestSelfHostCheckerDriverX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t) // lexer, parser, asm
-	for _, name := range []string{"flatten.fern", "util.fern", "checker.fern", "bundle_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "bundle_run.fern", "driver")
-
-	// Bundle: lexer + parser + checker + the unmodified std/io as the
-	// `io` module + a checker driver whose `import "std/io"` is
-	// retargeted to it. The driver reads stdin, type-checks, exits 0/1.
-	lexerSrc, _ := os.ReadFile(filepath.Join(dir, "lexer.fern"))
-	parserSrc, _ := os.ReadFile(filepath.Join(dir, "parser.fern"))
-	checkerSrc, _ := os.ReadFile(filepath.Join(dir, "checker.fern"))
-	utilSrc, _ := os.ReadFile(filepath.Join(dir, "util.fern"))
-	ioSrc, err := os.ReadFile("../../internal/stdlib/std/io.fern")
-	if err != nil {
-		t.Fatalf("read std/io.fern: %v", err)
-	}
-	// The committed checker_run.fern driver, with its `import "std/io"`
-	// retargeted to the bundled io module.
-	runSrc, err := os.ReadFile("../../examples/self_host/checker_run.fern")
-	if err != nil {
-		t.Fatalf("read checker_run.fern: %v", err)
-	}
-	driverMod := strings.ReplaceAll(string(runSrc), "import \"std/io\";", "import \"./io\";")
-	var bundle bytes.Buffer
-	bundle.WriteString("///MODULE util\n")
-	bundle.Write(utilSrc)
-	bundle.WriteString("///MODULE lexer\n")
-	bundle.Write(lexerSrc)
-	bundle.WriteString("\n///MODULE parser\n")
-	bundle.Write(parserSrc)
-	bundle.WriteString("\n///MODULE checker\n")
-	bundle.Write(checkerSrc)
-	bundle.WriteString("\n///MODULE io\n")
-	bundle.Write(ioSrc)
-	bundle.WriteString("\n///MODULE main\n")
-	bundle.WriteString(driverMod)
-
-	checkerAsm := runCapture(t, gcc, runner, driverBin, bundle.Bytes())
-	if len(checkerAsm) == 0 {
-		t.Fatal("self-host compiler emitted 0 bytes for the checker driver")
-	}
-	checkerBin := buildBin(t, gcc, dir, "checker", string(checkerAsm))
+	// Compile the self-hosted checker binary (checker_run, importing
+	// std/io + ./lexer + ./parser + ./checker) with the file-based asm
+	// driver via buildCheckerDriverBin — the loader resolves std/io to the
+	// vendored flat io.fern, so no ///MODULE bundle / import rewrite needed.
+	checkerBin, runner, _ := buildCheckerDriverBin(t, "checker_run.fern", false)
 
 	cases := []struct {
 		name     string
