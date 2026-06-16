@@ -3366,6 +3366,29 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         }
                         if (!fav_ok) { return s.fail(); }
                     }
+                    // A `string` field is rc-headered and deep-dropped on the
+                    // struct's reclamation (emit_struct_field_drops). The only value
+                    // safe to FREE is a fresh, sole-owned HEAP string: a direct
+                    // inline concat `a + b` (op_str_concat allocates a new rc=1 box
+                    // used only for this field). It is owned by the struct with no
+                    // inc, so the field-drop reclaims it — the actual heap-leak win.
+                    // EVERY other value is inc'd so the field-drop only decs the dup:
+                    //   - a string LITERAL is static (.rodata, not heap rc=1) — it
+                    //     must NOT be freed; the inc/dec round-trips its rc word
+                    //     soundly (an rc_dec WITHOUT a matching inc over-releases it);
+                    //   - a string local / param / field read may alias a live string
+                    //     the IR path never sweeps;
+                    //   - a string-returning CALL may return an aliased string (a
+                    //     getter), so it's retained conservatively.
+                    // Each non-concat case leaks (sound), never over-releases.
+                    if (cfft == "string") {
+                        var sfresh: boolean = false;
+                        match (slit.field_values[found]) {
+                            parser.ExprBinary(sbin) => { if (sbin.op == "+") { sfresh = true; } },
+                            _ => {}
+                        }
+                        if (!sfresh) { fav_alias_inc = true; }
+                    }
                     // An i64 field value is an 8-byte i64 (a bare integer literal
                     // isn't self-evidently i64), so lower it via lower_i64.
                     if (struct_field_is_i64(s.structs, slit.type_name, di)) {
@@ -8849,7 +8872,7 @@ function emit_struct_field_drops(s: LowerState, slot: i32): LowerState {
     var fi: i32 = 0;
     while (fi < n) {
         var fdt: string = decl_field_type_at(s.structs, sty, fi);
-        if (is_leaksafe_array_field(fdt)) { any = true; }
+        if (is_leaksafe_array_field(fdt) || fdt == "string") { any = true; }
         else if (is_struct_array_field_type(s.structs, fdt) || is_enum_array_field_type(s.structs, fdt)) { any = true; has_box_field = true; }
         fi = fi + 1;
     }
@@ -8876,7 +8899,12 @@ function emit_struct_field_drops(s: LowerState, slot: i32): LowerState {
         // they have no element BOXES, so only the buffer is dec'd — never the
         // element walk (which would mis-treat scalar values as pointers). Mirrors
         // the `any` detection loop above.
-        var k_scalar: boolean = is_leaksafe_array_field(kdt);
+        // A `string` field is a single rc-headered pointer — dec'd shallowly,
+        // exactly like a scalar-array buffer (a fresh sole-owned string field is
+        // freed; an aliased one was inc'd at construction so this only decs the
+        // dup → leaks, sound). It has no element boxes, so it never enters the
+        // box-element walk.
+        var k_scalar: boolean = is_leaksafe_array_field(kdt) || kdt == "string";
         var k_box: boolean = !k_scalar && (is_struct_array_field_type(st.structs, kdt) || is_enum_array_field_type(st.structs, kdt));
         if (k_box) {
             st = st.emit(ir.op_load_local(slot));
