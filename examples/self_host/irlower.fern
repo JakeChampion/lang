@@ -5502,19 +5502,105 @@ function iife_payload_field_bindable(ft: string, name: string, arm: parser.Match
     return false;
 }
 
+// iife_string_borrow_leaf reports whether `e` — a leaf that MENTIONS the bound
+// payload `name` (declared type `ft`) — is a BORROW-ONLY string read of the payload:
+// the bare string payload itself (`name`, ft string), a string struct/enum field read
+// (`name.field`, field type string), or a string tuple element read (`name.<i>`,
+// element tag string). These all READ the payload (a borrow from the enum box) and
+// yield a string value; they never store / alias the payload past the match. Any other
+// shape that mentions `name` is rejected (it could retain the payload).
+function iife_string_borrow_leaf(e: parser.Expr, name: string, ft: string, s: LowerState): boolean {
+    match (e) {
+        parser.ExprIdent(id) => {
+            // The bare payload string itself — only when the payload IS a string.
+            return id.name == name && ft == "string";
+        },
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIdent(oid) => {
+                    if (oid.name != name) { return false; }
+                    if (util.is_all_digits(fa.field)) {
+                        return tuple_type_elem_tag(ft, util.digits_to_i32(fa.field)) == "string";
+                    }
+                    if (decl_is_struct(s.structs, ft) || is_enum_like_name(ft, s.structs)) {
+                        return decl_field_type(s.structs, ft, fa.field) == "string";
+                    }
+                    return false;
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// iife_string_concat_operand classifies one operand of a borrow-only string concat:
+// a nested `+` concat (recurse), a borrow-only string read of the payload (the leaf),
+// or — when it does NOT mention `name` — any string-valued expression (a fresh string
+// to concat, irrelevant to the payload borrow). The non-payload string check reuses
+// expr_is_str (so a string literal, a string-returning call, etc. all pass) without
+// needing the binding in scope, since the expression doesn't reference it.
+function iife_string_concat_operand(e: parser.Expr, name: string, ft: string, s: LowerState): boolean {
+    match (e) {
+        parser.ExprBinary(b) => {
+            if (b.op == "+") {
+                return iife_string_concat_operand(b.left, name, ft, s) && iife_string_concat_operand(b.right, name, ft, s);
+            }
+            return false;
+        },
+        _ => {}
+    }
+    if (iife_expr_mentions_ident(e, name)) {
+        return iife_string_borrow_leaf(e, name, ft, s);
+    }
+    // The operand is independent of the payload — admit any string value (it
+    // contributes a fresh string the concat reads, no payload aliasing).
+    return expr_is_str(e, s);
+}
+
+// iife_string_concat_borrow_only reports whether `e` is a STRING-CONCAT expression
+// (`+` tree) whose result is a FRESH string and whose only contact with the bound
+// payload `name` is BORROW-ONLY reads. Each `+` operand is a borrow-only string read of
+// the payload (iife_string_borrow_leaf — the payload string, or a string field /
+// tuple-element of it), a nested string concat of such operands, or a sub-expression
+// that does NOT mention `name` and is a string value (a literal / a string-returning
+// call over non-payload data — a fresh string to concat in). Concat reads both operands
+// and allocates a NEW string box, so the payload is never retained / aliased past the
+// match: the borrow is sound, exactly like iife_payload_borrow_i32's i32 reads but with
+// a string result. To avoid admitting a degenerate single-leaf (no concat allocation,
+// already covered by the bare / field / element cases below), `e` must itself be a `+`.
+function iife_string_concat_borrow_only(e: parser.Expr, name: string, ft: string, s: LowerState): boolean {
+    match (e) {
+        parser.ExprBinary(b) => {
+            if (b.op != "+") { return false; }
+            return iife_string_concat_operand(b.left, name, ft, s) && iife_string_concat_operand(b.right, name, ft, s);
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // iife_payload_string_bindable admits a STRING-result arm reading the bound payload
 // `name` of field type `ft`: a bare string payload returned (`ft == "string"` and the
-// arm returns `name`), or a string struct/enum field read (`name.field`, field type
-// string), or a string tuple element read (`name.<i>`, element tag string). A struct
-// payload must be leak-safe (borrowed from the enum box, never reclaimed — see
-// iife_payload_borrow_i32). The temp is a string slot (classified above), so the
-// StmtMatch path's string-pointer store/load lands correctly.
+// arm returns `name`), a string struct/enum field read (`name.field`, field type
+// string), a string tuple element read (`name.<i>`, element tag string), or a
+// BORROW-ONLY string CONCAT over those reads (`name + "!"`, `"k=" + name.field`, …) —
+// the concat allocates a fresh string and only READS the payload, so the borrow is
+// sound (iife_string_concat_borrow_only). A struct payload must be leak-safe (borrowed
+// from the enum box, never reclaimed — see iife_payload_borrow_i32). The temp is a
+// string slot (classified above), so the StmtMatch path's string-pointer store/load
+// lands correctly.
 function iife_payload_string_bindable(ft: string, name: string, arm: parser.MatchArm, s: LowerState): boolean {
     var tail: parser.Expr = iife_arm_tail_expr(arm);
-    // Bare string payload returned: `V(x) => x`, x : string.
-    if (ft == "string") { return iife_arm_returns_ident(arm, name); }
     // A struct payload field / tuple element read — struct must be leak-safe.
     if (decl_is_struct(s.structs, ft) && !is_enum_like_name(ft, s.structs) && !decl_is_leaksafe(s.structs, ft)) { return false; }
+    // A BORROW-ONLY string concat over the payload (`name + "!"`, `"k=" + name`,
+    // `name.field + suffix`, …) — admitted for any payload type whose borrow leaves
+    // are string (string payload, string struct field, string tuple element).
+    if (iife_string_concat_borrow_only(tail, name, ft, s)) { return true; }
+    // Bare string payload returned: `V(x) => x`, x : string.
+    if (ft == "string") { return iife_arm_returns_ident(arm, name); }
     match (tail) {
         parser.ExprFieldAccess(fa) => {
             match (fa.obj) {
@@ -5717,6 +5803,22 @@ function iife_arm_payload_result_kind(arm: parser.MatchArm, s: LowerState): stri
                         },
                         _ => { return ""; }
                     }
+                },
+                // String CONCAT over the bound payload (`V(x) => x + "!"`,
+                // `"k=" + x`, `V(p) => p.name + "!"`): a `+` tree that reads the
+                // payload `pv.binding` (type `ftc`) borrow-only and yields a fresh
+                // string. The binding isn't in scope to classify by expr_is_str over a
+                // BARE payload ident, so recover "string" from the borrow-only concat
+                // shape (iife_string_concat_borrow_only). The StmtMatch arm-body
+                // lowering binds the payload at width and lowers the concat to a fresh
+                // string, matching the string temp this kind selects.
+                parser.ExprBinary(bc) => {
+                    if (bc.op != "+") { return ""; }
+                    if (pv.binding.len() == 0 || pv.binding == "_") { return ""; }
+                    var ftc: string = iife_variant_payload_field(pv, pv.binding, s);
+                    if (ftc == "") { return ""; }
+                    if (iife_string_concat_borrow_only(rval, pv.binding, ftc, s)) { return "string"; }
+                    return "";
                 },
                 _ => { return ""; }
             }
