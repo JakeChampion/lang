@@ -84,6 +84,7 @@ pub function array_ret_fns(mod: parser.Module): string[] {
 pub function is_fern_helper(name: string): boolean {
     return name == "__fern_rc_inc"
         || name == "__fern_rc_dec"
+        || name == "__fern_rc_is_unique"
         || name == "__fern_rc_underflow_get"
         // i32.to_string()'s decimal-text helper (emit_ir_runtime provides the
         // stack-arg body under __fn___fern_i32_to_string).
@@ -104,6 +105,7 @@ pub function is_fern_helper(name: string): boolean {
 pub function ir_helper_symbol(name: string): string {
     if (name == "__fern_rc_inc") { return "__fn___fern_rc_inc"; }
     if (name == "__fern_rc_dec") { return "__fn___fern_arr_dec"; }
+    if (name == "__fern_rc_is_unique") { return "__fn___fern_rc_is_unique"; }
     if (name == "__fern_rc_underflow_get") { return "__fn___fern_rc_underflow_count"; }
     return "__fn_" + name;
 }
@@ -759,6 +761,26 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rdi, (%rdx)\n");
     s = s.write("    movq %rdx, (%r8,%rcx,8)\n");
     s = s.write(".Larrdec_ret:\n");
+    s = s.write("    ret\n");
+    // __fern_rc_is_unique(ptr) -> i32 — 1 iff a live heap object with rc == 1.
+    // Gates the struct/enum-array field-drop's element walk (walk + free the
+    // element boxes only when THIS drop frees the buffer, i.e. the sole owner).
+    s = s.write("__fn___fern_rc_is_unique:\n");
+    s = s.write("    movq 8(%rsp), %rcx\n");
+    s = s.write("    movq $0, %rax\n");
+    s = s.write("    testq %rcx, %rcx\n");
+    s = s.write("    jz .Lshuniq_ret\n");
+    s = s.write("    testb $1, %cl\n");
+    s = s.write("    jnz .Lshuniq_ret\n");
+    s = s.write("    cmpq $0x10000, %rcx\n");
+    s = s.write("    jb .Lshuniq_ret\n");
+    s = s.write("    movl -8(%rcx), %edx\n");
+    s = s.write("    testl %edx, %edx\n");
+    s = s.write("    js .Lshuniq_ret\n");
+    s = s.write("    cmpl $1, %edx\n");
+    s = s.write("    jne .Lshuniq_ret\n");
+    s = s.write("    movq $1, %rax\n");
+    s = s.write(".Lshuniq_ret:\n");
     s = s.write("    ret\n");
     // __fern_print_int: the i32 in %rdi → decimal text in a stack buffer → stdout
     // (sys_write, fd 1, no newline). Transcribed verbatim from asm.fern's
