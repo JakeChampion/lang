@@ -310,6 +310,13 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// 7+11+3=21; enum: A(7)->7 + B->100 + 3 = 110.
 		{"structarr-tuple-elem", "struct P { x: i32 } function mk(): (P[], i32) { var a: P[] = []; a = a.append(P { x: 7 }); a = a.append(P { x: 11 }); return (a, 3); } function main(): i32 { var (ps, n) = mk(); return ps[0].x + ps[1].x + n; }"},
 		{"enumarr-tuple-elem", "enum E { A(i32), B } function mk(): (E[], i32) { var a: E[] = []; a = a.append(A(7)); a = a.append(B); return (a, 3); } function main(): i32 { var (es, n) = mk(); var sum: i32 = n; var i: i32 = 0; while (i < es.len()) { match (es[i]) { A(x) => { sum = sum + x; }, B => { sum = sum + 100; } } i = i + 1; } return sum; }"},
+		// A Map-typed enum-variant PAYLOAD (`JObject(Map[string, JsonValue])`) —
+		// the std/json `json_get` shape. The match binds `m` from the variant
+		// payload; marking the slot mark_map_type (the new is_map_type_name case in
+		// the payload-binding cascade) lets `m.get(k)` recover Option[V] and
+		// dispatch as a map op (previously `m` bound without its value type, so
+		// `m.get` bailed). Builds {k: JNumber("42")}, gets it back, reads len = 2.
+		{"map-enum-payload-get", "function jget(obj: JsonValue, key: string): Option[JsonValue] { match (obj) { JObject(m) => { match (m.get(key)) { Some(v) => { return Some(v); }, None => { return None; } } }, _ => { return None; } } return None; } function main(): i32 { var m: Map[string, JsonValue] = map_new(8); m = m.set(\"k\", JNumber(\"42\")); var o: JsonValue = JObject(m); match (jget(o, \"k\")) { Some(v) => { match (v) { JNumber(s) => { return s.len(); }, _ => { return 0; } } }, None => { return 99; } } return 0; }"},
 		{"with-loop", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; while (i < 4) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3]; }"},
 		{"append-build", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a[0] + a[4]; }"},
 		// `.append(e)` as a general EXPRESSION (not the `out = out.append(e)`

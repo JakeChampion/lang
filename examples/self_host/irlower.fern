@@ -8347,6 +8347,13 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                     ms = ms.mark_f64(bslot, true);
                                 } else if (decl_is_struct(ms.structs, ev_ty) || is_enum_like_name(ev_ty, ms.structs)) {
                                     ms = ms.mark_struct_type(bslot, ev_ty);
+                                } else if (is_map_type_name(ev_ty)) {
+                                    // A Map payload (`JObject(Map[string, JsonValue])`):
+                                    // the box pointer reads via struct_get like a
+                                    // struct; carry the full Map[K, V] type so
+                                    // `m.get(k)` / `m.len()` / `m.iter()` dispatch as
+                                    // map ops (m.get recovers Option[V] from map_type_of).
+                                    ms = ms.mark_map_type(bslot, ev_ty);
                                 } else if (is_scalar_array_type(ev_ty)) {
                                     ms = ms.mark_arr(bslot, true);
                                 } else if (ev_ty == "string[]") {
@@ -11839,6 +11846,14 @@ pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): bo
             // name (mark_struct_type) so `t.N[i].field` / `match (t.N[i])` resolve
             // the element shape — exactly the struct-array field-read bind (#3292).
             if (!ok_elem && (is_struct_array_field_type(structs, t) || is_enum_array_field_type(structs, t))) { ok_elem = true; }
+            // A Map[K, V] element is a leak-only heap box in one pointer slot, like
+            // a struct / array element — so a tuple-returning fn can return it (the
+            // `(Map, V)` shape of Map.get_or_insert / Map.without). Construction
+            // already admits it (el_map_ok); the destructure read binds the slot
+            // mark_map_type (the is_map_type_name case below) so `t.N.get(…)` /
+            // `t.N.len()` dispatch as map ops. The depth-aware split keeps the
+            // Map[K, V] tag whole (its internal comma is bracketed).
+            if (!ok_elem && is_map_type_name(t)) { ok_elem = true; }
             // A NESTED tuple element `(…)` is itself a leak-only heap-tuple
             // pointer; admit it iff its own elements are all lowerable (recursion
             // bails on an inner array, matching the construction guard).
