@@ -816,6 +816,22 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// `.replace(a, b)` returns the receiver box unchanged on no-match: inc'd (NOT
 		// freed) so an alias of the receiver is never over-released. Detector 0.
 		{"strdrop-replace-field-excluded-detector", `struct P { name: string } function go(): i32 { var s = "abXab"; var p = P { name: s.replace("X", "Y") }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 5) { return 99; } return __rc_underflow(); }`, 0},
+		// i64-RESULT match-EXPRESSION fed by a struct-FIELD read of the bound payload
+		// (`V(p) => p.v`, v:i64). The IIFE result temp is marked i64 (recovered from the
+		// payload field type since the binding isn't in scope at classify time); the
+		// rewritten `tmp = p.v` store routes through lower_i64 (op_struct_get_i64) into the
+		// i64 slot, then loads the i64 value as the match result. Value-checked via `as i32`.
+		{"iife-match-i64-struct-field-value", `struct P { v: i64 } enum E { V(P), N } function main(): i32 { var e: E = E.V(P { v: 42 }); var r: i64 = match (e) { V(p) => p.v, N => 0 }; return r as i32; }`, 42},
+		// The N (no-payload) arm taken: the i64 constant arm stores via the i64 path too.
+		{"iife-match-i64-struct-field-other-arm", `struct P { v: i64 } enum E { V(P), N } function main(): i32 { var e: E = E.N; var r: i64 = match (e) { V(p) => p.v, N => 7 }; return r as i32; }`, 7},
+		// Over-release detector: the borrowed struct payload is leak-only; neither arm
+		// over-releases. Detector reads 0.
+		{"iife-match-i64-struct-field-detector", `struct P { v: i64 } enum E { V(P), N } function go(): i32 { var e: E = E.V(P { v: 42 }); var r: i64 = match (e) { V(p) => p.v, N => 0 }; if (r as i32 != 42) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// f64-RESULT match-EXPRESSION fed by a struct-FIELD read (`V(p) => p.v`, v:f64).
+		// The temp is marked f64; the field read is struct_get width-64 stored into the
+		// f64 slot. `as i32` truncates 42.5 toward zero → 42.
+		{"iife-match-f64-struct-field-value", `struct P { v: f64 } enum E { V(P), N } function main(): i32 { var e: E = E.V(P { v: 42.5 }); var r: f64 = match (e) { V(p) => p.v, N => 0.0 }; return r as i32; }`, 42},
+		{"iife-match-f64-struct-field-detector", `struct P { v: f64 } enum E { V(P), N } function go(): i32 { var e: E = E.V(P { v: 42.5 }); var r: f64 = match (e) { V(p) => p.v, N => 0.0 }; if (r as i32 != 42) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
