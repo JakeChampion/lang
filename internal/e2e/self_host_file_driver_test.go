@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,14 +27,12 @@ func TestSelfHostFileDriverX86_64(t *testing.T) {
 		t.Skip("file-driven driver test runs only natively (argv path)")
 	}
 	dir := writeSelfHostAsmProject(t) // lexer.fern, parser.fern, asm.fern
-	for _, name := range []string{"asm_file_run.fern", "bundle_run.fern", "flatten.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
+	src, err := os.ReadFile("../../examples/self_host/asm_file_run.fern")
+	if err != nil {
+		t.Fatalf("read asm_file_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_file_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_file_run.fern: %v", err)
 	}
 
 	// Build asm_file_run with the Go backend.
@@ -84,69 +81,11 @@ func TestSelfHostFileDriverX86_64(t *testing.T) {
 		}
 	})
 
-	// Self-hostability: rebuild asm_file_run through the bundle
-	// pipeline (lexer+parser+asm+flatten+driver) with the Go-built
-	// bundle_run, producing the SELF-HOSTED driver, and assert it emits
-	// byte-identical asm to the Go-built driver for the same input.
-	t.Run("self-hostable", func(t *testing.T) {
-		bundleRunBin := buildSelfHostBin(t, gcc, dir, "bundle_run.fern", "bundle_run")
-		utilSrc, _ := os.ReadFile(filepath.Join(dir, "util.fern"))
-		lexerSrc, _ := os.ReadFile(filepath.Join(dir, "lexer.fern"))
-		parserSrc, _ := os.ReadFile(filepath.Join(dir, "parser.fern"))
-		asmcoreSrc, _ := os.ReadFile(filepath.Join(dir, "asmcore.fern"))
-		astwalkSrc, _ := os.ReadFile(filepath.Join(dir, "astwalk.fern"))
-		asmSrc, _ := os.ReadFile(filepath.Join(dir, "asm.fern"))
-		irSrc, _ := os.ReadFile(filepath.Join(dir, "ir.fern"))
-		irlowerSrc, _ := os.ReadFile(filepath.Join(dir, "irlower.fern"))
-		asmIrSrc, _ := os.ReadFile(filepath.Join(dir, "asm_ir.fern"))
-		driverSrc, _ := os.ReadFile(filepath.Join(dir, "asm_file_run.fern"))
-		var bundle bytes.Buffer
-		bundle.WriteString("///MODULE util\n")
-		bundle.Write(utilSrc)
-		bundle.WriteString("\n///MODULE astwalk\n")
-		bundle.Write(astwalkSrc)
-		bundle.WriteString("\n///MODULE asmcore\n")
-		bundle.Write(asmcoreSrc)
-		bundle.WriteString("\n///MODULE lexer\n")
-		bundle.Write(lexerSrc)
-		bundle.WriteString("\n///MODULE parser\n")
-		bundle.Write(parserSrc)
-		bundle.WriteString("\n///MODULE ir\n")
-		bundle.Write(irSrc)
-		bundle.WriteString("\n///MODULE irlower\n")
-		bundle.Write(irlowerSrc)
-		bundle.WriteString("\n///MODULE asm_ir\n")
-		bundle.Write(asmIrSrc)
-		bundle.WriteString("\n///MODULE asm\n")
-		bundle.Write(asmSrc)
-		bundle.WriteString("\n///MODULE main\n")
-		bundle.Write(driverSrc)
-		shDriverAsm := runCapture(t, gcc, runner, bundleRunBin, bundle.Bytes())
-		shDriverBin := buildBin(t, gcc, dir, "asm_file_run_sh", string(shDriverAsm))
-
-		srcPath := filepath.Join(dir, "fixpoint_input.fern")
-		if err := os.WriteFile(srcPath, []byte("function main(): i32 { return 42; }\n"), 0o644); err != nil {
-			t.Fatalf("write input: %v", err)
-		}
-		goAsm, err := exec.Command(driverBin, srcPath).Output()
-		if err != nil {
-			t.Fatalf("go-built driver: %v", err)
-		}
-		shAsm, err := exec.Command(shDriverBin, srcPath).Output()
-		if err != nil {
-			t.Fatalf("self-host-built driver: %v", err)
-		}
-		if !bytes.Equal(goAsm, shAsm) {
-			t.Errorf("self-host-built driver output differs from Go-built: %d vs %d bytes", len(shAsm), len(goAsm))
-		}
-		// And the emitted program must actually work.
-		progBin := buildBin(t, gcc, dir, "fixpoint_prog", string(shAsm))
-		cmd := exec.Command(progBin)
-		_ = cmd.Run()
-		if code := cmd.ProcessState.ExitCode(); code != 42 {
-			t.Errorf("self-host-driver-compiled program exited %d, want 42", code)
-		}
-	})
+	// (The former "self-hostable" subtest rebuilt asm_file_run through the
+	// bundle_run ///MODULE pipeline and asserted byte-identical output.
+	// bundle_run is retired; that file-driver-self-hosts-byte-identically
+	// property is now covered by TestSelfHostModloadFixpointX86_64, which
+	// self-hosts the asm_modload_run file driver to a 3-generation fixpoint.)
 }
 
 // buildSelfHostBin loads a self-host driver .fern (by file name in dir),
