@@ -2148,6 +2148,59 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
     return false;
 }
 
+// expr_is_fresh_str reports whether `e` evaluates to a FRESH, sole-owned heap
+// string box whose DATA buffer is exclusively owned — no aliasing of any live
+// string's data. It is the string analogue of expr_is_arr_src (the move-source
+// classifier): only such a value may be MOVED into a struct's `string` field
+// and FREED by the field-drop (emit_struct_field_drops) with no alias-inc.
+//
+// The admitted forms each allocate a fresh data buffer AND box via __fern_alloc
+// with NO identity / view fast-path (verified against the asm_ir.fern emitters):
+//   - `a + b` concat            (op_str_concat — fresh data + box)
+//   - `s.to_upper()` / `.to_lower()` / `.reverse()`  (always copy into a fresh
+//     buffer, min 1 byte; no already-cased identity short-circuit)
+//   - `s.repeat(n)`             (always a fresh buffer; n <= 0 → fresh empty box)
+//   - the free-function spellings `str_to_upper` / `str_to_lower` / `str_repeat`
+//
+// DELIBERATELY EXCLUDED — these alias live data and would OVER-RELEASE if freed:
+//   - `s.trim()` / `str_trim`   (returns a fresh box whose data pointer is a
+//     zero-copy VIEW into the receiver's buffer — freeing it frees the parent's
+//     data)
+//   - `s.replace(a, b)` / `str_replace`  (returns the receiver box UNCHANGED on
+//     an empty `old` / no match — an alias of the receiver)
+//   - `.to_string()` / `.to_debug()`     (the string-identity case returns the
+//     receiver box)
+//   - a string literal (.rodata static), a bare ident / field-read / slice
+//     (each aliases a live box the IR path never sweeps)
+// Every excluded form stays inc'd at construction → the field-drop only decs the
+// dup (sound, leaks, never an over-release).
+pub function expr_is_fresh_str(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprBinary(b) => {
+            if (b.op == "+") { return expr_is_str(b.left, s) || expr_is_str(b.right, s); }
+            return false;
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (cid.name == "str_to_upper" || cid.name == "str_to_lower"
+                            || cid.name == "str_repeat") { return true; }
+                    return false;
+                },
+                parser.ExprFieldAccess(cfa) => {
+                    if ((cfa.field == "to_upper" || cfa.field == "to_lower" || cfa.field == "reverse")
+                            && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return true; }
+                    if (cfa.field == "repeat" && c.args.len() == 1 && expr_is_str(cfa.obj, s)) { return true; }
+                    return false;
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // to_unsigned_kind maps a signed IR op kind to its unsigned variant, for u64
 // operands (#2904): comparisons, shift-right, and div/rem. Sign-agnostic kinds
 // (add/sub/mul/and/or/xor/shl/eq/ne) pass through unchanged.
@@ -3374,27 +3427,26 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!fav_ok) { return s.fail(); }
                     }
                     // A `string` field is rc-headered and deep-dropped on the
-                    // struct's reclamation (emit_struct_field_drops). The only value
-                    // safe to FREE is a fresh, sole-owned HEAP string: a direct
-                    // inline concat `a + b` (op_str_concat allocates a new rc=1 box
-                    // used only for this field). It is owned by the struct with no
-                    // inc, so the field-drop reclaims it — the actual heap-leak win.
+                    // struct's reclamation (emit_struct_field_drops). The values safe
+                    // to FREE are exactly the fresh, sole-owned HEAP strings whose data
+                    // buffer is exclusively owned — expr_is_fresh_str: a direct inline
+                    // concat `a + b`, the case/shape transforms `.to_upper()` /
+                    // `.to_lower()` / `.reverse()` / `.repeat(n)` (and their str_*
+                    // free-fn spellings), each allocating a fresh buffer + rc=1 box used
+                    // only for this field. Owned by the struct with no inc, so the
+                    // field-drop reclaims it — the actual heap-leak win.
                     // EVERY other value is inc'd so the field-drop only decs the dup:
                     //   - a string LITERAL is static (.rodata, not heap rc=1) — it
                     //     must NOT be freed; the inc/dec round-trips its rc word
                     //     soundly (an rc_dec WITHOUT a matching inc over-releases it);
                     //   - a string local / param / field read may alias a live string
                     //     the IR path never sweeps;
-                    //   - a string-returning CALL may return an aliased string (a
-                    //     getter), so it's retained conservatively.
-                    // Each non-concat case leaks (sound), never over-releases.
+                    //   - `.trim()` is a zero-copy VIEW into its receiver's buffer and
+                    //     `.replace()` / `.to_string()` have receiver-identity fast-paths,
+                    //     so each may alias a live box — retained conservatively.
+                    // Each non-fresh case leaks (sound), never over-releases.
                     if (cfft == "string") {
-                        var sfresh: boolean = false;
-                        match (slit.field_values[found]) {
-                            parser.ExprBinary(sbin) => { if (sbin.op == "+") { sfresh = true; } },
-                            _ => {}
-                        }
-                        if (!sfresh) { fav_alias_inc = true; }
+                        if (!expr_is_fresh_str(slit.field_values[found], s)) { fav_alias_inc = true; }
                     }
                     // An i64 field value is an 8-byte i64 (a bare integer literal
                     // isn't self-evidently i64), so lower it via lower_i64.

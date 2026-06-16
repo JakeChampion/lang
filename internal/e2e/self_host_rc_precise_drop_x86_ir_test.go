@@ -750,14 +750,21 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// REASSIGN frees the old rc-headered box: rebinding `p` to a new struct releases
 		// the previous box (a string-field struct) — exactly once, detector 0.
 		{"nonleaksafe-reassign-frees-old-detector", `struct P { name: string } function main(): i32 { var p = P { name: "first" }; p = P { name: "second" }; if (p.name.len() != 6) { return 99; } return __rc_underflow(); }`, 0},
-		// STRING-FIELD DEEP-DROP (this slice). A reclaimable struct's `string` field
-		// is now dec'd on reclamation (emit_struct_field_drops): a fresh string
-		// LITERAL field is sole-owned and FREED (leak shrunk); a non-literal value
-		// (a string local / param / field read / concat / call) is inc'd at
-		// construction so the field-drop only decs the dup — sound, never an
-		// over-release. Detector 0 across every shape proves no double-free.
+		// STRING-FIELD DEEP-DROP. A reclaimable struct's `string` field is dec'd on
+		// reclamation (emit_struct_field_drops). The values FREED (no construction
+		// inc → field-drop reclaims them, the heap-leak win) are exactly the fresh,
+		// sole-owned heap strings whose data buffer is exclusively owned
+		// (expr_is_fresh_str): a direct inline concat `a + b`, and the case/shape
+		// transforms `.to_upper()` / `.to_lower()` / `.reverse()` / `.repeat(n)`
+		// (+ their str_* free-fn spellings). Every OTHER value is inc'd at
+		// construction so the field-drop only decs the dup (sound, leaks, never an
+		// over-release): a string LITERAL (.rodata static), an aliased local / param
+		// / field read, and the aliasing transforms `.trim()` (a zero-copy view) /
+		// `.replace()` (receiver-identity on empty/no-match). Detector 0 across every
+		// shape proves no double-free.
 		//
-		// Fresh literal field, single struct: freed once (the win).
+		// Fresh LITERAL field: static .rodata, so inc'd (NOT freed) — the inc/dec
+		// round-trips its rc word soundly. Leaks, no over-release.
 		{"strdrop-literal-field-detector", `struct P { name: string, n: i32 } function go(): i32 { var p = P { name: "hello", n: 4 }; return p.n; } function main(): i32 { var r = go(); if (r != 4) { return 99; } return __rc_underflow(); }`, 0},
 		// ALIASED string local into a field: inc'd at construction → field-drop decs
 		// the dup, the local's reference survives (leaks, sound). No over-release.
@@ -769,9 +776,34 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// returned string must survive the field-drop. (If string-field read-out
 		// lowers on the IR path, this catches a use-after-free / over-release.)
 		{"strdrop-return-field-detector", `struct P { name: string } function mk(): string { var p = P { name: "hi" }; return p.name; } function main(): i32 { var s = mk(); if (s.len() != 2) { return 99; } return __rc_underflow(); }`, 0},
-		// A concat field value (a fresh string) inc'd conservatively (treated as
-		// non-literal): sound, leaks. The struct reads back correctly.
+		// A CONCAT field value (a fresh heap string, op_str_concat) is FREED: owned
+		// by the struct with no inc, reclaimed exactly once by the field-drop. The
+		// struct reads back correctly and the detector stays 0 (no over-release of
+		// the fresh box).
 		{"strdrop-concat-field-detector", `struct P { name: string } function go(): i32 { var a = "ab"; var p = P { name: a + "c" }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 3) { return 99; } return __rc_underflow(); }`, 0},
+		// FRESH-STRING TRANSFORMS (this slice) — each allocates a fresh, exclusively-
+		// owned data buffer + box, so the field-drop FREES it with no construction
+		// inc (the leak shrinks further). Value reads back correctly; detector 0
+		// proves the fresh box is reclaimed exactly once.
+		//
+		// `.to_upper()` field value: fresh cased buffer, freed once.
+		{"strdrop-toupper-field-value", `struct P { name: string } function go(): i32 { var s = "ab"; var p = P { name: s.to_upper() }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 2) { return 99; } return __rc_underflow(); }`, 0},
+		// `.to_lower()` field value: fresh cased buffer, freed once.
+		{"strdrop-tolower-field-detector", `struct P { name: string } function go(): i32 { var s = "AB"; var p = P { name: s.to_lower() }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 2) { return 99; } return __rc_underflow(); }`, 0},
+		// `.reverse()` field value: a real fresh copy, freed once.
+		{"strdrop-reverse-field-detector", `struct P { name: string } function go(): i32 { var s = "abc"; var p = P { name: s.reverse() }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 3) { return 99; } return __rc_underflow(); }`, 0},
+		// `.repeat(n)` field value: a fresh n-copy buffer, freed once.
+		{"strdrop-repeat-field-detector", `struct P { name: string } function go(): i32 { var s = "ab"; var p = P { name: s.repeat(3) }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 6) { return 99; } return __rc_underflow(); }`, 0},
+		// Free-function spelling `str_to_upper(s)`: same fresh op_str_to_upper, freed.
+		{"strdrop-str-to-upper-freefn-detector", `struct P { name: string } function go(): i32 { var s = "ab"; var p = P { name: str_to_upper(s) }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 2) { return 99; } return __rc_underflow(); }`, 0},
+		// EXCLUDED (aliasing) transforms stay inc'd → field-drop decs the dup only.
+		//
+		// `.trim()` is a zero-copy VIEW into the receiver's buffer: inc'd (NOT freed),
+		// so freeing the view never reaches the parent's data. Leaks, detector 0.
+		{"strdrop-trim-field-excluded-detector", `struct P { name: string } function go(): i32 { var s = "  ab  "; var p = P { name: s.trim() }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 2) { return 99; } return __rc_underflow(); }`, 0},
+		// `.replace(a, b)` returns the receiver box unchanged on no-match: inc'd (NOT
+		// freed) so an alias of the receiver is never over-released. Detector 0.
+		{"strdrop-replace-field-excluded-detector", `struct P { name: string } function go(): i32 { var s = "abXab"; var p = P { name: s.replace("X", "Y") }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 5) { return 99; } return __rc_underflow(); }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
