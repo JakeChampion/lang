@@ -117,9 +117,23 @@ function main(): i32 {
     // stdlib imports flattened in, so it reports the frontier real programs hit.
     var root: string = "";
     var probe: boolean = false;
+    var probe_start: i32 = 0 - 1;   // >= 0 selects the sharded probe
+    var probe_count: i32 = 0;
     var ag: i32 = 2;
     while (ag < av.len()) {
         if (av[ag] == "-ir-probe") { probe = true; }
+        // `-ir-probe-range START COUNT`: shard the probe over function indices
+        // [START, START+COUNT). Each invocation lowers only that slice, so the
+        // large self-host modules (which exhaust the bump heap when the whole-
+        // module probe lowers every function at once) stay auditable a shard at
+        // a time. The START==0 shard prints a "funcs: <N>" header for driving
+        // the loop. COUNT <= 0 means "to the end".
+        else if (av[ag] == "-ir-probe-range" && ag + 2 < av.len()) {
+            probe = true;
+            probe_start = util.digits_to_i32(av[ag + 1]);
+            probe_count = util.digits_to_i32(av[ag + 2]);
+            ag = ag + 2;
+        }
         else if (root == "") { root = av[ag]; }
         ag = ag + 1;
     }
@@ -174,7 +188,12 @@ function main(): i32 {
     // program (lambda-lifted to match what the emitter routes on) and stop —
     // no codegen, no checker gate.
     if (probe) {
-        write(asm_ir.eligibility_report(asm_ir.lift_lambdas(merged)));
+        var lifted: parser.Module = asm_ir.lift_lambdas(merged);
+        if (probe_start >= 0) {
+            write(asm_ir.eligibility_report_range(lifted, probe_start, probe_count));
+        } else {
+            write(asm_ir.eligibility_report(lifted));
+        }
         return 0;
     }
 

@@ -254,6 +254,28 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// constructing them + reading fields lowers. d.month*100 + d.day + s.days =
 		// 6*100 + 15 + 3 = 618 (exit 106 mod 256). Was BAIL (Date layout unknown).
 		{"builtin-struct-date", "function f(): i32 { var d = Date { year: 2026, month: 6, day: 15 }; var s = Span { years: 0, months: 0, weeks: 0, days: 3, hours: 0, minutes: 0, seconds: 0, nanos: 0 }; return d.month * 100 + d.day + s.days; } function main(): i32 { return f(); }"},
+		// Sub-word (u8[]) array as a STRUCT FIELD (is_leaksafe_array_field now
+		// admits u8[]/u16[]/i8[]/i16[]) — a byte-buffer struct (the BytesWriter
+		// shape from std/io_buffered). The field stores a pointer; elements ride
+		// the i32[] 4-byte-slot representation (op_arr_push / op_arr_get(32)), the
+		// sub-word value pre-wrapped by `as u8` at the push site. Binding the
+		// field to a local (`var data = w.data`) aliases via a Perceus dup,
+		// append grows the clone, struct-lit spread rebuilds. 10+20+33 = 63.
+		{"subword-arr-field", "struct BW { data: u8[] } function bw_new(): BW { var e: u8[] = []; return BW { data: e }; } function (w: BW) push(b: u8): BW { var data: u8[] = w.data; data = data.append(b); return BW { ...w, data: data }; } function (w: BW) sum(): i32 { var data: u8[] = w.data; var t: i32 = 0; var i: i32 = 0; while (i < data.len()) { t = t + (data[i] as i32); i = i + 1; } return t; } function main(): i32 { var w = bw_new(); w = w.push(10 as u8); w = w.push(20 as u8); w = w.push(33 as u8); return w.sum(); }"},
+		// The checker-injected BytesWriter built-in (std/io_buffered) reachable on
+		// the IR path: same u8[]-field shape, injected by inject_builtin_enums so
+		// its layout + leaf-safety resolve. write_byte spreads + appends; len()
+		// reads the buffer length. 3 bytes written -> len 3.
+		{"builtin-byteswriter", "function main(): i32 { var w: BytesWriter = BytesWriter { data: [] }; w = BytesWriter { ...w, data: w.data.append(65 as u8) }; w = BytesWriter { ...w, data: w.data.append(66 as u8) }; w = BytesWriter { ...w, data: w.data.append(67 as u8) }; return w.data.len(); }"},
+		// A FRESH scalar-array-returning CALL as a struct-lit field value (move):
+		// `S { data: gen() }` where gen(): i32[]. Previously only array literals /
+		// idents / field-copies / `.with`/`.append` clones were admitted; a plain
+		// array-returning call (expr_is_arr_src — an arr_ret_fn move source) now
+		// lowers, owned by the struct with no alias-inc. gen() = [3,4,5]; sum 12.
+		{"scalar-arr-call-field", "struct S { data: i32[] } function gen(): i32[] { var a: i32[] = []; a = a.append(3); a = a.append(4); a = a.append(5); return a; } function (x: S) sum(): i32 { var d: i32[] = x.data; var t: i32 = 0; var i: i32 = 0; while (i < d.len()) { t = t + d[i]; i = i + 1; } return t; } function main(): i32 { var x: S = S { data: gen() }; return x.sum(); }"},
+		// The std/stream `stream_from_string` shape: a string `.bytes()` call (a
+		// fresh u8[] move source) as a u8[] struct-lit field value. 65+66+67 = 198.
+		{"bytes-call-field", "struct S { data: u8[], pos: i32 } function mk(s: string): S { return S { data: s.bytes(), pos: 0 }; } function (x: S) sum(): i32 { var d: u8[] = x.data; var t: i32 = 0; var i: i32 = 0; while (i < d.len()) { t = t + (d[i] as i32); i = i + 1; } return t; } function main(): i32 { var x: S = mk(\"ABC\"); return x.sum(); }"},
 		{"with-loop", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; while (i < 4) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3]; }"},
 		{"append-build", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a[0] + a[4]; }"},
 		// `.append(e)` as a general EXPRESSION (not the `out = out.append(e)`
@@ -767,6 +789,54 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"ifexpr-struct-arr-bind", `struct P { x: i32 } function main(): i32 { var c = 5; var ps = if (c > 3) { [P { x: 7 }] } else { [P { x: 1 }] }; return ps[0].x; }`},
 		{"ifexpr-struct-arr-len", `struct P { x: i32 } function main(): i32 { var c = 5; var ps = if (c > 3) { [P { x: 7 }, P { x: 8 }] } else { [P { x: 1 }] }; return ps.len() + ps[1].x; }`},
 		{"matchexpr-struct-arr-bind", `struct P { x: i32 } function main(): i32 { var k = 1; var ps = match (k) { 1 => [P { x: 9 }], _ => [P { x: 0 }] }; return ps[0].x; }`},
+		// Binding an ARRAY-OF-STRUCT field into a local (`var ps: P[] = obj.params`):
+		// aliases the field's buffer with a Perceus dup on the POINTER (element-
+		// type-agnostic), balanced by the exit-sweep's shallow arr_dec — no deep-drop
+		// is involved for the bind, since the source struct keeps owning the elements.
+		// The slot is marked with the element struct type so `ps[i].field` / ps.len()
+		// resolve. Mirrors the already-admitted scalar-array field bind.
+		{"struct-arr-field-bind", `struct P { x: i32 } struct H { ps: P[] } function main(): i32 { var h = H { ps: [P { x: 7 }, P { x: 3 }] }; var ps: P[] = h.ps; return ps[0].x * 10 + ps[1].x; }`},
+		{"struct-arr-field-bind-len", `struct P { x: i32 } struct H { ps: P[] } function main(): i32 { var h = H { ps: [P { x: 1 }, P { x: 2 }, P { x: 3 }] }; var ps: P[] = h.ps; return ps.len(); }`},
+		{"struct-arr-field-bind-param", `struct P { d: boolean } struct H { ps: P[] } function any_d(h: H): boolean { var ps: P[] = h.ps; var i = 0; while (i < ps.len()) { if (ps[i].d) { return true; } i = i + 1; } return false; } function main(): i32 { var yes = H { ps: [P { d: false }, P { d: true }] }; var no = H { ps: [P { d: false }] }; var r = 0; if (any_d(yes)) { r = r + 10; } if (any_d(no)) { r = r + 1; } return r; }`},
+		// Returning / assigning an array-of-struct field — the alias-creating
+		// siblings of the bind above. Same buffer-pointer Perceus dup; the source
+		// struct keeps owning the elements (no deep-drop). Return covers a borrowed-
+		// param source and a reclaimable-local source; assign re-binds an existing
+		// P[] local.
+		{"struct-arr-field-return", `struct P { x: i32 } struct H { ps: P[] } function get(h: H): P[] { return h.ps; } function main(): i32 { var h = H { ps: [P { x: 4 }, P { x: 9 }] }; var got: P[] = get(h); return got[0].x * 10 + got[1].x; }`},
+		{"struct-arr-field-return-local", `struct P { x: i32 } struct H { ps: P[] } function mk(): P[] { var h = H { ps: [P { x: 6 }, P { x: 2 }] }; return h.ps; } function main(): i32 { var ps = mk(); return ps[0].x * 10 + ps[1].x; }`},
+		{"struct-arr-field-assign", `struct P { x: i32 } struct H { ps: P[] } function f(h: H): i32 { var ps: P[] = []; ps = h.ps; var s = 0; var i = 0; while (i < ps.len()) { s = s + ps[i].x; i = i + 1; } return s; } function main(): i32 { var h = H { ps: [P { x: 5 }, P { x: 7 }, P { x: 11 }] }; return f(h); }`},
+		// A struct-array IDENT / PARAM as a struct-literal FIELD VALUE
+		// (`S { es: xs }`) — the alias-creating sibling of the field-access form
+		// (`S { es: s.es }`, already lowered) and the bind/return/assign positions.
+		// Same buffer-pointer Perceus dup; admits the checker's new_scope* /
+		// Scope-construction shape (`Scope { sigs: fs, ... }`) and lexer.fstring_tok
+		// (`TokFString { parts: parts }`). Local-ident source, param source, and a
+		// fresh-empty-then-populate source.
+		{"struct-arr-into-lit-ident", `struct E { v: i32 } struct S { es: E[], tag: i32 } function main(): i32 { var xs: E[] = [E { v: 3 }, E { v: 5 }]; var s = S { es: xs, tag: 7 }; return s.es[0].v * 100 + s.es[1].v * 10 + s.tag; }`},
+		{"struct-arr-into-lit-param", `struct E { v: i32 } struct S { es: E[], tag: i32 } function mk(xs: E[], t: i32): S { return S { es: xs, tag: t }; } function main(): i32 { var s = mk([E { v: 2 }, E { v: 8 }], 4); return s.es[0].v * 100 + s.es[1].v * 10 + s.tag; }`},
+		{"struct-arr-into-lit-empty", `struct E { v: i32 } struct S { es: E[] } function empty(): S { var none: E[] = []; return S { es: none }; } function main(): i32 { var s = empty(); return s.es.len(); }`},
+		// Array-of-ENUM field aliasing (bind / return / assign) — the enum twin of
+		// the struct-array positions. Same buffer-pointer Perceus dup; the element
+		// ENUM name is marked on the slot so a later `match (es[i])` recovers the
+		// variant. `Expr[]` / `Stmt[]` field reads in the parser's AST walkers are
+		// exactly this shape (e.g. iter_range_args' `return c.args`).
+		{"enum-arr-field-bind-match", `enum E { A(i32), B } struct H { es: E[] } function sum(h: H): i32 { var es: E[] = h.es; var s = 0; var i = 0; while (i < es.len()) { match (es[i]) { A(n) => { s = s + n; }, B => { s = s + 100; } } i = i + 1; } return s; } function main(): i32 { var h = H { es: [A(5), B, A(9)] }; return sum(h); }`},
+		{"enum-arr-field-return", `enum E { A(i32), B } struct H { es: E[] } function get(h: H): E[] { return h.es; } function main(): i32 { var h = H { es: [A(3), B] }; var es = get(h); return match (es[0]) { A(n) => n, B => 0 } + es.len(); }`},
+		{"enum-arr-field-assign", `enum E { A(i32), B } struct H { es: E[] } function f(h: H): i32 { var es: E[] = []; es = h.es; var s = 0; var i = 0; while (i < es.len()) { match (es[i]) { A(n) => { s = s + n; }, B => {} } i = i + 1; } return s; } function main(): i32 { var h = H { es: [A(7), A(8), B] }; return f(h); }`},
+		// A CALL returning an array-of-struct as a struct-literal field value
+		// (`S { es: build(...) }`) — owned/moved value, no alias-inc; a struct-array
+		// field is never deep-dropped so the missing inc only leaks, never over-frees.
+		// Admits parser.module_with_builtins (`Module { structs: inject_builtin_enums
+		// (mono.structs), funcs: mono.funcs, ... }`) — a call value beside field-access
+		// values. Scalar-array call values stay restricted to .with/.append (deep-
+		// dropped, so they need the fresh guarantee).
+		{"struct-arr-call-into-lit", `struct E { v: i32 } struct S { es: E[], n: i32 } function build(seed: i32): E[] { return [E { v: seed }, E { v: seed + 1 }]; } function mk(seed: i32): S { return S { es: build(seed), n: seed + 5 }; } function main(): i32 { var s = mk(3); return s.es[0].v * 100 + s.es[1].v * 10 + s.n; }`},
+		{"struct-arr-call-and-fieldaccess-into-lit", `struct E { v: i32 } struct M { funcs: E[], structs: E[], n: i32 } function more(xs: E[]): E[] { return xs.append(E { v: 9 }); } function rebuild(m: M): M { return M { funcs: m.funcs, structs: more(m.structs), n: m.n + 1 }; } function main(): i32 { var m = M { funcs: [E { v: 1 }], structs: [E { v: 2 }], n: 10 }; var r = rebuild(m); return r.funcs.len() * 1000 + r.structs.len() * 100 + r.n; }`},
+		// The nested-array motivating shape (parser.module_has_default_params): an
+		// array-of-struct field read out of an element of an outer array-of-struct,
+		// bound in a loop, then indexed for a scalar field.
+		{"struct-arr-field-bind-nested", `struct Param { has_default: boolean } struct Func { params: Param[] } struct Mod { funcs: Func[] } function has_dp(mod: Mod): boolean { var fi = 0; while (fi < mod.funcs.len()) { var ps: Param[] = mod.funcs[fi].params; var pi = 0; while (pi < ps.len()) { if (ps[pi].has_default) { return true; } pi = pi + 1; } fi = fi + 1; } return false; } function main(): i32 { var m = Mod { funcs: [Func { params: [Param { has_default: false }, Param { has_default: true }] }] }; if (has_dp(m)) { return 10; } return 0; }`},
 		// for-in / .len() over an array bound from an if-/match-EXPRESSION: the StmtVar
 		// is_arr inference now marks the slot is_arr for an IIFE-array result, so the
 		// foreach lowers (indexing already worked without is_arr) (#3141).
@@ -1485,6 +1555,15 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"map-array-elem-rebind", `function main(): i32 { var ms = [Map { 1: 10 }, Map { 1: 20 }]; var m = ms[1]; return m.get_or(1, 0) + ms[0].get_or(1, 0); }`, 30},
 		{"map-array-elem-annotated", `function main(): i32 { var ms: Map[i32, i32][] = [Map { 1: 10 }]; return ms[0].get_or(1, 0); }`, 10},
 		{"map-array-elem-string-val", `function main(): i32 { var ms = [Map { 1: "abcd" }]; return ms[0].get_or(1, "z").len(); }`, 4},
+		// A struct-ARRAY tuple element (`([P { .. }], x)`): the element's recorded
+		// `P[]` tuple tag lets `t.0[i].field` / `t.0[i].method()` recover the
+		// element struct type (the array sibling of the struct-field-array case).
+		// The struct-array element constructs as a leak-only pointer slot. The
+		// self-host AST path also mishandled the indexed field read, so these pin
+		// the absolute IR value. #3353.
+		{"tuple-structarr-elem-field", `struct P { x: i32 } function main(): i32 { var t = ([P{x:5}], 3); return t.0[0].x + t.1; }`, 8},
+		{"tuple-structarr-elem-multi", `struct P { x: i32, y: i32 } function main(): i32 { var t = ([P{x:5,y:6}, P{x:7,y:8}], 100); return t.0[0].x + t.0[1].y + t.1; }`, 113},
+		{"tuple-structarr-elem-method", `struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function main(): i32 { var t = ([P{x:5}], 3); return t.0[0].dbl() + t.1; }`, 13},
 		// Two random_i32 draws differ (a stuck/zero generator returns 0/1).
 		{"random-i32-varies", `function main(): i32 { var a: i32 = random_i32(); var b: i32 = random_i32(); if (a == 0) { return 0; } if (a == b) { return 1; } return 7; }`, 7},
 		// A random byte is in 0..255.

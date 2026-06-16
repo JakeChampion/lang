@@ -124,6 +124,61 @@ function main(): i32 {
     if (b2[128] != 9 || b2[129] != 9) { return 26; }
     // p_filesz = 130 @96.
     if (b2[96] != 130 || b2[97] != 0) { return 27; }
+
+    // ---- W^X two-segment layout ----
+    // arm64 W^X: 4-byte text + 8-byte data. headers = 64 + 2*56 = 176;
+    // text_end = 180; data_off = page_up(180) = 65536; total = 65544.
+    var t3: i32[] = [0, 0, 128, 210];
+    var d3: i32[] = [7, 7, 7, 7, 7, 7, 7, 7];
+    var b3: i32[] = elf_static_executable_data_wx(t3, d3);
+    if (b3.len() != 65536 + 8) { return 28; }
+    // e_phnum = 2 @56.
+    if (b3[56] != 2 || b3[57] != 0) { return 29; }
+    // e_entry = 0x4000B0 (base + 176) @24 (LE 176,0,64,0).
+    if (b3[24] != 176 || b3[25] != 0 || b3[26] != 64 || b3[27] != 0) { return 30; }
+    // phdr0 @64: p_type = PT_LOAD (1), p_flags = 5 (R|X) @68.
+    if (b3[64] != 1 || b3[68] != 5) { return 31; }
+    // phdr0 p_offset = 0 @72; p_filesz = 180 (headers + text) @96.
+    if (b3[72] != 0 || b3[96] != 180 || b3[97] != 0) { return 32; }
+    // phdr1 @120: p_type = PT_LOAD (1), p_flags = 6 (R|W) @124.
+    if (b3[120] != 1 || b3[124] != 6) { return 33; }
+    // phdr1 p_offset = 65536 @128 (LE 0,0,1,0).
+    if (b3[128] != 0 || b3[129] != 0 || b3[130] != 1 || b3[131] != 0) { return 34; }
+    // phdr1 p_vaddr = 0x410000 @136 (LE 0,0,65,0).
+    if (b3[136] != 0 || b3[137] != 0 || b3[138] != 65 || b3[139] != 0) { return 35; }
+    // phdr1 p_filesz = 8 @152.
+    if (b3[152] != 8 || b3[153] != 0) { return 36; }
+    // .text @176..179; page padding zero; data blob @65536.
+    if (b3[176] != 0 || b3[177] != 0 || b3[178] != 128 || b3[179] != 210) { return 37; }
+    if (b3[180] != 0 || b3[1000] != 0 || b3[65535] != 0) { return 38; }
+    if (b3[65536] != 7 || b3[65543] != 7) { return 39; }
+    // x86-64 W^X with a 16-byte .bss past the data: p_memsz = p_filesz + bss.
+    var b4: i32[] = elf_static_executable_bss_x86_wx_at(t3, d3, 16, 0);
+    // e_machine = EM_X86_64 (62) @18.
+    if (b4[18] != 62 || b4[19] != 0) { return 40; }
+    // phdr1 p_filesz = 8 @152, p_memsz = 24 (8 + 16) @160.
+    if (b4[152] != 8 || b4[160] != 24 || b4[161] != 0) { return 41; }
+
+    // Large .bss (> 2^31) must zero-extend, not sign-extend, into p_memsz.
+    // The self-host arm64 heap is 2.5 GiB (0xA0000000), which overflows i32
+    // into a negative bit pattern; a plain (bss as i64) would sign-extend it
+    // to a garbage p_memsz the kernel cannot map. bss = 0 - 1610612736 is the
+    // i32 whose bit pattern is 0xA0000000 (== 2_684_354_560 unsigned).
+    var bigbss: i32 = 0 - 1610612736;
+    // W^X x86 data segment: p_memsz @160 = data.len()(8) + 0xA0000000 =
+    // 0xA0000008 (LE 8,0,0,0xA0=160,0,0,0,0) — high word stays 0.
+    var b5: i32[] = elf_static_executable_bss_x86_wx_at(t3, d3, bigbss, 0);
+    if (b5[160] != 8 || b5[161] != 0 || b5[162] != 0 || b5[163] != 160) { return 42; }
+    if (b5[164] != 0 || b5[165] != 0 || b5[166] != 0 || b5[167] != 0) { return 43; }
+    // Same guard on the single-segment contiguous path (production -target
+    // arm64 used elf_image_entry_bss): p_memsz @104. body = pad8(4)=8 + 8 data
+    // = 16; filesz = 64+56+16 = 136; memsz = 136 + 0xA0000000 = 0xA0000088
+    // (LE 0x88=136,0,0,0xA0,0,0,0,0).
+    var body6: i32[] = elf_pad_to_8(elf_cat([], t3));
+    body6 = elf_cat(body6, d3);
+    var b6: i32[] = elf_image_entry_bss(body6, 7, elf_em_aarch64(), 0, bigbss);
+    if (b6[104] != 136 || b6[105] != 0 || b6[106] != 0 || b6[107] != 160) { return 44; }
+    if (b6[108] != 0 || b6[109] != 0 || b6[110] != 0 || b6[111] != 0) { return 45; }
     return 0;
 }
 `
