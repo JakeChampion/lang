@@ -1066,19 +1066,36 @@ pub function is_scalar_array_type(t: string): boolean {
 }
 
 // is_leaksafe_array_field reports whether `t` is an array type that is leak-safe
-// AS A STRUCT FIELD: the scalar-element arrays (i32[]/boolean[]) plus the 4-byte
-// u32[] and the 8-byte-element f64[]/i64[]. All store a pointer in the field slot,
-// are owned by the struct (a fresh array literal at construction —
-// is_scalar_arr_field_access bails the aliasing forms), and are deep-dropped on
-// the struct's reclamation. u32[] rides the i32[] 4-byte element read unchanged;
-// its unsignedness only affects arithmetic ON a read element, not the field
-// round-trip. NOT here: u64[] (its 8-byte element read needs the i64-width
-// dispatch routed through the "u64[]" field tag — like the u64 tuple element
-// slice — a separate increment) and the sub-word arrays (u8[]/u16[]/i8[]/i16[],
-// whose element read needs sign/zero-extension). NOT used for enum payloads
-// (those need the element-width mark, not a plain mark_arr).
+// AS A STRUCT FIELD: the scalar-element arrays (i32[]/boolean[]), the 4-byte
+// u32[], the sub-word u8[]/u16[]/i8[]/i16[] (is_subword_array_type), and the
+// 8-byte-element f64[]/i64[]. All store a pointer in the field slot, are owned
+// by the struct (a fresh array literal at construction — is_scalar_arr_field_
+// access bails the aliasing forms), and are deep-dropped on the struct's
+// reclamation. u32[] / the sub-word arrays ride the i32[] 4-byte element read
+// unchanged (each element lives in a full 32-bit slot, pre-wrapped by the `as
+// u8` cast at the producing site); their narrowness only affects arithmetic ON
+// a read element, not the field round-trip. NOT here: u64[] (its 8-byte element
+// read needs the i64-width dispatch routed through the "u64[]" field tag — like
+// the u64 tuple element slice — a separate increment). NOT used for enum
+// payloads (those need the element-width mark, not a plain mark_arr).
 pub function is_leaksafe_array_field(t: string): boolean {
-    return is_scalar_array_type(t) || t == "f64[]" || t == "i64[]" || t == "u32[]";
+    return is_scalar_array_type(t) || t == "f64[]" || t == "i64[]" || t == "u32[]"
+        || is_subword_array_type(t);
+}
+
+// is_subword_array_type reports whether `t` is a sub-32-bit integer-element
+// array (u8[]/u16[]/i8[]/i16[]). These ride the SAME 4-byte-slot element
+// representation as i32[]: the self-host IR (like the AST emitter) stores each
+// element in a full 32-bit slot — op_arr_push / op_arr_get(32) round-trip the
+// value at 32-bit width, and a sub-word value is wrapped to its range by the
+// cast at the producing site BEFORE the push (the `b as u8` idiom), so the
+// stored slot already holds the in-range value. A read yields that same i32
+// (the consumer `data[i] as i32` is a no-op zero-extend). So as a struct field
+// they are leak-safe exactly like i32[] / u32[] — the buffer is a pointer in
+// the field slot, owned by the struct, deep-dropped on reclamation. This admits
+// byte-buffer structs (BytesWriter, Stream readers) onto the IR path.
+pub function is_subword_array_type(t: string): boolean {
+    return t == "u8[]" || t == "u16[]" || t == "i8[]" || t == "i16[]";
 }
 
 // is_map_type_name reports whether `t` is a Map[K, V] type. Maps are leak-only
@@ -1267,6 +1284,31 @@ pub function struct_arr_field_read_type(e: parser.Expr, s: LowerState): string {
             if (oty == "") { return ""; }
             var ft: string = decl_field_type(s.structs, oty, fa.field);
             if (is_struct_array_field_type(s.structs, ft)) { return ft; }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// enum_arr_field_read_type is the enum-array twin of struct_arr_field_read_type:
+// it returns the field type of an ARRAY-OF-ENUM struct field read (`v.args` where
+// args: Expr[], Expr an enum), else "". Aliasing an enum-array field is sound by
+// the same reasoning as the struct-array case — the Perceus dup (__fern_rc_inc)
+// is on the buffer POINTER, element-type-agnostic; the buffer's enum-box elements
+// are owned by the source struct and never deep-dropped (the safe-leak
+// invariant), so the dup can only ever leak, never over-free. The bound slot is
+// marked with the element ENUM name (mark_struct_type doubles as the element-type
+// slot for both struct and enum element arrays) so a later `match (es[i])`
+// recovers the variant. `Expr[]` / `Stmt[]` / `Token[]` field reads — pervasive
+// in the parser's AST walkers — are exactly this shape.
+pub function enum_arr_field_read_type(e: parser.Expr, s: LowerState): string {
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return ""; }
+            var ft: string = decl_field_type(s.structs, oty, fa.field);
+            if (is_enum_array_field_type(s.structs, ft)) { return ft; }
             return "";
         },
         _ => { return ""; }
@@ -3156,7 +3198,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         match (fav) {
                             parser.ExprArray(_) => { fav_ok = true; },
                             parser.ExprIdent(faid) => {
-                                if (is_leaksafe_array_field(cfft)
+                                // A bare ident naming an rc-tracked array local/param,
+                                // SCALAR-element (is_leaksafe_array_field) OR array-of-
+                                // struct (is_struct_array_field_type): the field aliases
+                                // the local's buffer, so retain it with a Perceus dup
+                                // (alias-inc) — the dup is on the buffer POINTER, element-
+                                // type-agnostic, exactly like the field-access arm below
+                                // (`S { xs: s.xs }`) and the struct-array bind/return/
+                                // assign positions. Enum-array idents stay bailing.
+                                if ((is_leaksafe_array_field(cfft) || is_struct_array_field_type(s.structs, cfft))
                                     && s.is_arr_slot(s.slot_of(faid.name))) {
                                     fav_ok = true;
                                     fav_alias_inc = true;
@@ -3201,6 +3251,42 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                                         },
                                         _ => {}
                                     }
+                                    // A FRESH/owned scalar-array-returning CALL as the
+                                    // field value — `S { data: s.bytes() }`, `S { xs:
+                                    // gen() }`, `S { xs: arr.reverse() }`. expr_is_arr_src
+                                    // (and the f64/i64 twins) classify exactly the
+                                    // move sources: a string `.bytes()`/`.split()`, an
+                                    // array-returning user fn (arr_ret_fns), __alloc_u8,
+                                    // or an array-method result — each a fresh, sole-
+                                    // owned buffer moved into the struct's field. Owned
+                                    // by the struct with NO alias-inc, exactly like the
+                                    // `[…]` literal: the callee moves the buffer out, so
+                                    // nothing else holds a counted handle to dec. Mirrors
+                                    // the unrestricted string[]-field-value path (string[]
+                                    // skips this gate entirely). Bails (fav_ok stays
+                                    // false) for any call the predicates don't recognise.
+                                    if (!fav_ok) {
+                                        if (cfft == "f64[]") {
+                                            if (expr_is_f64arr(fav, s)) { fav_ok = true; }
+                                        } else if (cfft == "i64[]") {
+                                            if (expr_is_i64arr(fav, s)) { fav_ok = true; }
+                                        } else if (expr_is_arr_src(fav, s)) {
+                                            fav_ok = true;
+                                        }
+                                    }
+                                } else if (is_struct_array_field_type(s.structs, cfft)) {
+                                    // A CALL returning an array-of-struct as the field value
+                                    // (`Module { structs: inject_builtin_enums(mono.structs) }`):
+                                    // the call's result is an array VALUE on the operand stack,
+                                    // stored straight into the field with NO alias-inc. A struct-
+                                    // array field is never deep-dropped (the safe-leak invariant),
+                                    // so even if the callee returned an aliased buffer the missing
+                                    // inc only leaks (the field never frees it), never over-frees —
+                                    // unlike a SCALAR-array field, which emit_struct_field_drops
+                                    // DOES dec, so a scalar call value stays restricted to the
+                                    // fresh-guaranteed .with/.append + expr_is_arr_src forms above.
+                                    // Mirrors the array-literal case (owned/moved, leaks).
+                                    fav_ok = true;
                                 }
                             },
                             _ => {}
@@ -5759,15 +5845,18 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 return vfb.emit(ir.op_store_local(vfslot));
             }
             // Binding an ARRAY-OF-STRUCT field (`var ps: P[] = obj.params`,
-            // params: P[]) aliases the array exactly like the scalar case above —
-            // the Perceus dup is on the buffer POINTER, element-type-agnostic, and
-            // the exit-sweep's shallow arr_dec balances it without touching the
-            // (source-struct-owned) elements. So it lowers via the same dup-then-
-            // bind. The slot is marked with the element struct type (P) so a later
-            // `ps[i].field` read resolves the element shape. No deep-drop recursion
-            // is needed for the bind: ps borrows + counts the buffer; the source
-            // struct still owns and reclaims the elements.
+            // params: P[]) OR an ARRAY-OF-ENUM field (`var es: E[] = obj.es`, E an
+            // enum) aliases the array exactly like the scalar case above — the
+            // Perceus dup is on the buffer POINTER, element-type-agnostic, and the
+            // exit-sweep's shallow arr_dec balances it without touching the (source-
+            // struct-owned) elements. So it lowers via the same dup-then-bind. The
+            // slot is marked with the element struct/enum NAME (mark_struct_type
+            // doubles as the element-type slot for both) so a later `ps[i].field` /
+            // `match (es[i])` resolves the element shape. No deep-drop recursion is
+            // needed for the bind: it borrows + counts the buffer; the source struct
+            // still owns and reclaims the elements.
             var vsaft: string = struct_arr_field_read_type(v.init, s);
+            if (vsaft == "") { vsaft = enum_arr_field_read_type(v.init, s); }
             if (vsaft != "") {
                 var sas: LowerState = lower_expr(v.init, s);   // struct_get -> array ptr on stack
                 if (!sas.ok) { return sas; }
@@ -5775,11 +5864,9 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 var sab: LowerState = sas.add_local(v.name);
                 var saslot: i32 = sab.slot_of(v.name);
                 sab = sab.mark_arr(saslot, true);
-                sab = sab.mark_struct_type(saslot, vsaft[0 : vsaft.len() - 2]);   // element struct type (strip "[]")
+                sab = sab.mark_struct_type(saslot, vsaft[0 : vsaft.len() - 2]);   // element struct/enum name (strip "[]")
                 return sab.emit(ir.op_store_local(saslot));
             }
-            // An enum-array field (C[]) still bails: aliasing it needs deep-drop
-            // recursion (a later slice).
             if (is_scalar_arr_field_access(v.init, s)) { return s.fail(); }
             // `var xs: dyn Trait[] = [ ... ]` — a `dyn Trait` ARRAY literal. Each
             // element coerces to `dyn Trait`: a struct/enum element flows unboxed
@@ -6876,6 +6963,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // invariant), never under-freeing a shared buffer (cow-guarded).
             var afft: string = scalar_arr_field_type(a.value, s);
             var asaft: string = struct_arr_field_read_type(a.value, s);
+            if (asaft == "") { asaft = enum_arr_field_read_type(a.value, s); }   // array-of-enum field too
             if (afft == "" && asaft == "" && is_scalar_arr_field_access(a.value, s)) { return s.fail(); }
             // Perceus reassignment `y = x`: retain the new ref if it aliases an
             // rc-tracked array, and release the OLD value the slot held
@@ -6886,9 +6974,9 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 parser.ExprIdent(id) => {
                     if (s.is_arr_slot(s.slot_of(id.name))) { reassign_inc = true; }
                 },
-                // `x = h.items` / `x = h.params` — the field read is an rc-tracked
-                // array (scalar OR array-of-struct); the new owner `x` retains it
-                // (the dup), mirroring the ident alias.
+                // `x = h.items` / `x = h.params` / `x = h.args` — the field read is
+                // an rc-tracked array (scalar, array-of-struct, OR array-of-enum);
+                // the new owner `x` retains it (the dup), mirroring the ident alias.
                 parser.ExprFieldAccess(_) => {
                     if (afft != "" || asaft != "") { reassign_inc = true; }
                 },
@@ -6986,14 +7074,16 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 rfs = emit_dec_sweep_except(rfs, 0 - 1);   // field NOT moved out; struct keeps its ref
                 return rfs.emit(ir.op_return());
             }
-            // Returning an ARRAY-OF-STRUCT field (`return h.params`) aliases it out
-            // to the caller exactly like the scalar case above — the Perceus dup is
-            // on the buffer POINTER (element-type-agnostic), and NO deep-drop
-            // recursion is involved: the struct keeps owning the elements, the
-            // caller receives a counted reference to the buffer. Same balance as the
-            // scalar field return (borrowed param: caller decs; reclaimable local:
-            // field-drop + caller dec).
+            // Returning an ARRAY-OF-STRUCT field (`return h.params`) or an ARRAY-OF-
+            // ENUM field (`return h.args`, args: Expr[]) aliases it out to the caller
+            // exactly like the scalar case above — the Perceus dup is on the buffer
+            // POINTER (element-type-agnostic), and NO deep-drop recursion is
+            // involved: the struct keeps owning the elements, the caller receives a
+            // counted reference to the buffer. Same balance as the scalar field
+            // return (borrowed param: caller decs; reclaimable local: field-drop +
+            // caller dec).
             var rsaft: string = struct_arr_field_read_type(r.value, s);
+            if (rsaft == "") { rsaft = enum_arr_field_read_type(r.value, s); }
             if (rsaft != "") {
                 var rss: LowerState = lower_expr(r.value, s);   // struct_get -> array ptr on stack
                 if (!rss.ok) { return rss; }

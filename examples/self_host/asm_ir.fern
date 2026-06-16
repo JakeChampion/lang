@@ -679,7 +679,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    pushq %rcx\n");
     s = s.write("    pushq %rdx\n");
     s = s.write("    movabs $__fern_heap, %rcx\n");
-    s = s.write("    movabs $2684354560, %rdx\n"); // 0xA0000000 heap_size > imm32, so movabs not addq imm
+    s = s.write("    movabs $3758096384, %rdx\n"); // 0xE0000000 (3.5 GiB) heap_size > imm32, so movabs not addq imm
     s = s.write("    addq %rdx, %rcx\n");           // %rcx = heap_base + heap_size (END)
     s = s.write("    cmpq %rcx, %rdi\n");
     s = s.write("    popq %rdx\n");
@@ -1879,7 +1879,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // Addressed 64-bit-absolute (movabs) so heap_base + heap_size > 2 GiB.
     s = s.write("    .section .bss\n");
     s = s.write("    .align 8\n");
-    s = s.write("__fern_heap: .skip 2684354560\n");   // 0xA0000000 (2.5 GiB) — matches asm.fern + the native x86-64 backend
+    s = s.write("__fern_heap: .skip 3758096384\n");   // 0xE0000000 (3.5 GiB) — matches asm.fern + the native x86-64 backend
     s = s.write("    .section .text\n");
 
     return s;

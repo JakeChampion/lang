@@ -1,17 +1,17 @@
-// Static position-independent (PIE / ET_DYN) native-backend tests — stage 1
-// of the arm64-android target. A Fern PIE is a static, no-PLT/GOT image
-// laid out from a load base of 0; the kernel maps it at an arbitrary base.
-// Every code reference is PC-relative (adrp/:lo12:), so it runs unchanged at
-// any base — the ONLY load-base-dependent values are the `.quad <symbol>`
-// function-pointer slots (vtables, closures), which carry R_AARCH64_RELATIVE
-// relocations.
+// Static position-independent (PIE / ET_DYN) native-backend tests for the
+// arm64-android target. A Fern PIE is a static, no-PLT/GOT image laid out
+// from a load base of 0; the kernel maps it at an arbitrary base. Every code
+// reference is PC-relative (adrp/:lo12:), so it runs unchanged at any base —
+// the ONLY load-base-dependent values are the `.quad <symbol>`
+// function-pointer slots (function values, vtables), which carry
+// R_AARCH64_RELATIVE relocations.
 //
-// This stage validates: (a) the ET_DYN container loads and runs reloc-free
-// programs at a shifted base under qemu, and (b) the assembler emits the
-// right relocations for programs that DO use function-pointer tables.
-// Applying those relocations at startup (the self-relocation prologue) is a
-// later slice; until then, closure/vtable programs are checked for the
-// presence of relocations but not executed.
+// Coverage: the ET_DYN container loads and runs reloc-free programs at a
+// shifted base (TestArm64NativePIERelocFree); the assembler emits well-formed
+// relocations for function-pointer slots (TestArm64NativePIEEmitsRelocs); and
+// the self-relocation prologue (Options.PIE) applies those relocations at
+// startup so programs that DO use function values / dyn-trait vtables run as
+// PIEs (TestArm64NativePIESelfReloc).
 package e2e
 
 import (
@@ -22,6 +22,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/checker"
+	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
+	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/monomorph"
 	na "github.com/jakechampion/lang/internal/native/arm64"
 	nativeelf "github.com/jakechampion/lang/internal/native/elf"
 )
@@ -88,9 +93,8 @@ function main(): i32 { return fib(10); }`, 55, ""},
 // must yield an R_AARCH64_RELATIVE relocation (Addend = the fn's
 // base-relative address, Offset = the cell slot in the data segment).
 // (Nested closures, by contrast, materialise the fn address PC-relatively
-// via adrp/:lo12: and need no relocation.) Executing a program with relocs
-// needs the self-relocation prologue (a later slice), so this only checks
-// the relocations are present and well-formed.
+// via adrp/:lo12: and need no relocation.) This checks the relocations are
+// present and well-formed; TestArm64NativePIESelfReloc covers running them.
 func TestArm64NativePIEEmitsRelocs(t *testing.T) {
 	src := `function apply(f: (i32) => i32, x: i32): i32 { return f(x); }
 function dbl(x: i32): i32 { return x * 2; }
@@ -105,7 +109,7 @@ function main(): i32 { return apply(dbl, 21); }`
 	}
 	// Each reloc Offset must land inside the data segment (>= the page after
 	// .text) and the binary must still be a well-formed ET_DYN.
-	dataStart := pageUpTest(uint64(64+3*56+len(text)))
+	dataStart := pageUpTest(uint64(64 + 3*56 + len(text)))
 	for i, r := range relocs {
 		if r.Offset < dataStart {
 			t.Errorf("reloc[%d].Offset %#x is before data segment start %#x", i, r.Offset, dataStart)
@@ -144,6 +148,101 @@ func assertPIELayout(t *testing.T, bin []byte) {
 	if !dyn {
 		t.Errorf("no PT_DYNAMIC segment")
 	}
+}
+
+// TestArm64NativePIESelfReloc is the stage-3 gate: programs that DO carry
+// relocations (function values → __closure_cell_<fn>: .quad <fn>) are
+// compiled with the PIE self-relocation prologue (Options.PIE) and run as
+// static PIEs under qemu-aarch64. The prologue applies .rela.dyn at startup,
+// so the function-pointer slots hold the correct runtime address despite the
+// kernel-chosen load base. Reloc-free programs are included to prove the
+// prologue's empty-loop path is harmless.
+func TestArm64NativePIESelfReloc(t *testing.T) {
+	qemu := ""
+	for _, c := range []string{"qemu-aarch64", "qemu-aarch64-static"} {
+		if p, err := exec.LookPath(c); err == nil {
+			qemu = p
+			break
+		}
+	}
+	if qemu == "" {
+		t.Skip("qemu-aarch64 not on PATH")
+	}
+	cases := []struct {
+		name      string
+		src       string
+		exit      int
+		wantReloc bool // expect >= 1 relocation (function-pointer slot)
+	}{
+		{"exit_relocfree", `function main(): i32 { return 42; }`, 42, false},
+		{"funcvalue", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); }
+function dbl(x: i32): i32 { return x * 2; }
+function main(): i32 { return apply(dbl, 21); }`, 42, true},
+		{"funcvalue_multi", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); }
+function dbl(x: i32): i32 { return x * 2; }
+function inc(x: i32): i32 { return x + 1; }
+function main(): i32 { return apply(dbl, 20) + apply(inc, 1); }`, 42, true},
+		{"dyntrait", `trait Shape { function area(self: Self): i32; }
+struct Sq { s: i32 }
+impl Shape for Sq { function area(self: Self): i32 { return self.s * self.s; } }
+function main(): i32 { var d: dyn Shape = Sq { s: 7 }; return d.area(); }`, 49, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			asm := compileToArm64AsmPIE(t, c.src)
+			text, rodata, relocs, err := na.AssembleProgramPIE(asm, nativeelf.TextVAddrPIE)
+			if err != nil {
+				t.Fatalf("AssembleProgramPIE: %v", err)
+			}
+			if c.wantReloc && len(relocs) == 0 {
+				t.Fatalf("expected relocations, got none")
+			}
+			if !c.wantReloc && len(relocs) != 0 {
+				t.Fatalf("expected reloc-free, got %d", len(relocs))
+			}
+			bin := nativeelf.StaticPieExecutable(text, rodata, toElfRelocs(relocs))
+			assertPIELayout(t, bin)
+			path := filepath.Join(t.TempDir(), "prog")
+			if err := os.WriteFile(path, bin, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(qemu, path)
+			out, _ := cmd.CombinedOutput()
+			if code := cmd.ProcessState.ExitCode(); code != c.exit {
+				t.Fatalf("PIE self-reloc run exit = %d, want %d (out=%q)", code, c.exit, out)
+			}
+		})
+	}
+}
+
+// compileToArm64AsmPIE compiles src to arm64 assembly with the PIE
+// self-relocation prologue enabled (Options.PIE).
+func compileToArm64AsmPIE(t *testing.T, src string) string {
+	t.Helper()
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prog, _, err := modload.Load(srcPath)
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	asm, err := arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{PIE: true})
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	return asm
 }
 
 func toElfRelocs(rs []na.Reloc) []nativeelf.Reloc {
