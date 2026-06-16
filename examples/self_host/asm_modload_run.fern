@@ -40,6 +40,7 @@ import "./lexer";
 import "./parser";
 import "./flatten";
 import "./asm";
+import "./asm_ir";
 
 // dirname returns everything up to and including the last '/', or "" when
 // the path has no directory part ("a/b/c.fern" → "a/b/", "main.fern" → "").
@@ -188,11 +189,27 @@ function merge_builtins(dir: string, merged: parser.Module): parser.Module {
 
 function main(): i32 {
     var a: string[] = args();
-    if (a.len() < 2) {
-        eprint("usage: asm_modload_run <entry.fern>\n");
+    // `-ir-probe`: after real import resolution + bundling, report the IR-
+    // eligibility frontier (asm_ir.eligibility_report) instead of emitting asm.
+    // Unlike asm_ir_run's stdin probe, this loads imports off disk, so a
+    // function that calls an IMPORTED helper (`s.split_once()`,
+    // `int.__int_to_string_u64()`) is measured with its callee actually
+    // present — the stdin probe reports an artificial bail for those because
+    // the import is never loaded. Point it at an entry sitting at the stdlib
+    // root so `import "std/u64"` and its transitive `import "core/int"` both
+    // resolve: `asm_modload_run internal/stdlib/_probe.fern -ir-probe`.
+    var probe: boolean = false;
+    var entry_path: string = "";
+    var ai: i32 = 1;
+    while (ai < a.len()) {
+        if (a[ai] == "-ir-probe") { probe = true; }
+        else if (entry_path == "") { entry_path = a[ai]; }
+        ai = ai + 1;
+    }
+    if (entry_path == "") {
+        eprint("usage: asm_modload_run <entry.fern> [-ir-probe]\n");
         return 2;
     }
-    var entry_path: string = a[1];
     var dir: string = dirname(entry_path);
     match (read_file(entry_path)) {
         Ok(src) => {
@@ -200,6 +217,10 @@ function main(): i32 {
             var loaded: flatten.LoadedModule[] = load_imports(dir, entry);
             var merged: parser.Module = flatten.bundle(entry, loaded);
             merged = merge_builtins(dir, merged);
+            if (probe) {
+                write(asm_ir.eligibility_report(asm_ir.lift_lambdas(merged)));
+                return 0;
+            }
             write(asm.emit_module(parser.module_with_builtins(merged)));
             return 0;
         },
