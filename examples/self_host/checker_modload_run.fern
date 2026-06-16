@@ -32,7 +32,11 @@ function main(): i32 {
             var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
             var loaded: flatten.LoadedModule[] = modloader.load_imports(dir, entry);
             var merged: parser.Module = flatten.bundle(entry, loaded);
-            merged = modloader.merge_builtins(dir, merged);
+            // NB: no merge_builtins here — the checker knows the built-in
+            // types itself (is_builtin_variant / built-in enum table), and
+            // injecting real JsonValue/IoError decls would be flagged as
+            // E010 "reserved built-in name redeclared". (The asm driver
+            // merges them because the EMITTER needs their field layout.)
             var mt: checker.ModuleTypes = checker.check_module(merged);
             var j: i32 = 0;
             while (j < mt.diags.len()) {
