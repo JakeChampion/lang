@@ -6,80 +6,32 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
 )
 
 // TestSelfHostStage2Bootstrap is the capstone of the self-host effort:
 // a genuine TWO-STAGE bootstrap.
 //
-//	stage 0: the Go compiler builds bundle_run (the multi-module
-//	         self-host driver).
-//	stage 1: bundle_run is fed the compiler's OWN front end + back end
-//	         — lexer.fern + parser.fern + asm.fern — plus a small entry
-//	         that lexes → parses → emits a program. flatten.bundle
-//	         merges all four into one flat Module; asm.emit_module
-//	         lowers it to x86-64 asm; gcc links it into a SELF-HOSTED
-//	         COMPILER binary (every compiler stage now Fern-authored).
+//	stage 0: the Go compiler builds the file-based asm driver
+//	         (asm_modload_run, via buildModloadDriverX86).
+//	stage 1: that driver compiles the compiler's OWN front end + back end
+//	         — lexer.fern + parser.fern + asm.fern (+ deps) — plus a small
+//	         entry that lexes → parses → emits a program, loaded from FILES
+//	         off disk (no ///MODULE bundle). asm.emit_module lowers the
+//	         merged module to x86-64 asm; gcc links it into a SELF-HOSTED
+//	         COMPILER binary (every compiler stage Fern-authored).
 //	stage 2: that self-hosted compiler is run. It emits asm for its
 //	         embedded program `function main(): i32 { return 7; }`,
 //	         which is assembled, linked, and run — and must exit 7.
 //
 // So a compiler written entirely in Fern (lexer + parser + x86-64
-// emitter), compiled through its own module-flattening pipeline,
-// compiles a program to a correct working binary.
+// emitter), compiled through its own import-driven pipeline, compiles a
+// program to a correct working binary.
 func TestSelfHostStage2Bootstrap(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "flatten.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern", "bundle_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	gcc, runner, driverBin := buildModloadDriverX86(t)
 
-	// stage 0: build bundle_run.
-	prog, _, err := modload.Load(filepath.Join(dir, "bundle_run.fern"))
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	driverAsm := filepath.Join(dir, "driver.s")
-	driverBin := filepath.Join(dir, "driver")
-	if err := os.WriteFile(driverAsm, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write driver asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", driverAsm, "-o", driverBin).CombinedOutput(); err != nil {
-		t.Fatalf("driver gcc: %v\n%s", err, out)
-	}
-
-	// stage 1: bundle lexer + parser + asm + an emitting entry into a
-	// self-hosted compiler binary.
-	asmcoreSrc, _ := os.ReadFile("../../examples/self_host/asmcore.fern")
-	astwalkSrc, _ := os.ReadFile("../../examples/self_host/astwalk.fern")
-	utilSrc, _ := os.ReadFile("../../examples/self_host/util.fern")
-	lexerSrc, _ := os.ReadFile("../../examples/self_host/lexer.fern")
-	parserSrc, _ := os.ReadFile("../../examples/self_host/parser.fern")
-	asmSrc, _ := os.ReadFile("../../examples/self_host/asm.fern")
-	irSrc, _ := os.ReadFile("../../examples/self_host/ir.fern")
-	irlowerSrc, _ := os.ReadFile("../../examples/self_host/irlower.fern")
-	asmIrSrc, _ := os.ReadFile("../../examples/self_host/asm_ir.fern")
+	// The compiler's own front+back end plus a small entry that lexes →
+	// parses → emits an embedded program, compiled from FILES by the
+	// file-based asm driver.
 	entry := "import \"./lexer\";\n" +
 		"import \"./parser\";\n" +
 		"import \"./asm\";\n" +
@@ -89,44 +41,20 @@ func TestSelfHostStage2Bootstrap(t *testing.T) {
 		"    print(out);\n" +
 		"    return 0;\n" +
 		"}\n"
-
-	var bundle bytes.Buffer
-	bundle.WriteString("///MODULE util\n")
-	bundle.Write(utilSrc)
-	bundle.WriteString("///MODULE astwalk\n")
-	bundle.Write(astwalkSrc)
-	bundle.WriteString("///MODULE asmcore\n")
-	bundle.Write(asmcoreSrc)
-	bundle.WriteString("\n")
-	bundle.WriteString("///MODULE lexer\n")
-	bundle.Write(lexerSrc)
-	bundle.WriteString("\n///MODULE parser\n")
-	bundle.Write(parserSrc)
-	bundle.WriteString("\n///MODULE ir\n")
-	bundle.Write(irSrc)
-	bundle.WriteString("\n///MODULE irlower\n")
-	bundle.Write(irlowerSrc)
-	bundle.WriteString("\n///MODULE asm_ir\n")
-	bundle.Write(asmIrSrc)
-	bundle.WriteString("\n///MODULE asm\n")
-	bundle.Write(asmSrc)
-	bundle.WriteString("\n///MODULE main\n")
-	bundle.WriteString(entry)
-
-	compilerAsm := runCapture(t, gcc, runner, driverBin, bundle.Bytes())
+	files := map[string]string{"main.fern": entry}
+	for _, m := range []string{"util", "astwalk", "asmcore", "lexer", "parser", "ir", "irlower", "asm_ir", "asm"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", m+".fern"))
+		if err != nil {
+			t.Fatalf("read %s.fern: %v", m, err)
+		}
+		files[m+".fern"] = string(src)
+	}
+	compilerAsm, progDir := compileFilesModload(t, runner, driverBin, files)
 	if len(compilerAsm) == 0 {
-		t.Fatal("stage 1: bundler produced 0 bytes for the self-hosted compiler")
+		t.Fatal("stage 1: produced 0 bytes for the self-hosted compiler")
 	}
 	t.Logf("stage 1: self-hosted compiler asm = %d bytes", len(compilerAsm))
-
-	compilerAsmPath := filepath.Join(dir, "selfcc.s")
-	compilerBin := filepath.Join(dir, "selfcc")
-	if err := os.WriteFile(compilerAsmPath, compilerAsm, 0o644); err != nil {
-		t.Fatalf("write compiler asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", compilerAsmPath, "-o", compilerBin).CombinedOutput(); err != nil {
-		t.Fatalf("stage 1: gcc on self-hosted compiler: %v\n%s", err, out)
-	}
+	compilerBin := buildBin(t, gcc, progDir, "selfcc", compilerAsm)
 
 	// stage 2: run the self-hosted compiler; it emits asm for its
 	// embedded `return 7` program.
@@ -135,15 +63,7 @@ func TestSelfHostStage2Bootstrap(t *testing.T) {
 		t.Fatal("stage 2: self-hosted compiler produced 0 bytes")
 	}
 	t.Logf("stage 2: emitted program asm = %d bytes", len(stage2Asm))
-
-	stage2AsmPath := filepath.Join(dir, "prog.s")
-	stage2Bin := filepath.Join(dir, "prog")
-	if err := os.WriteFile(stage2AsmPath, stage2Asm, 0o644); err != nil {
-		t.Fatalf("write stage-2 asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", stage2AsmPath, "-o", stage2Bin).CombinedOutput(); err != nil {
-		t.Fatalf("stage 2: gcc on emitted program: %v\n%s", err, out)
-	}
+	stage2Bin := buildBin(t, gcc, progDir, "prog", string(stage2Asm))
 	var pcmd *exec.Cmd
 	if len(runner) == 0 {
 		pcmd = exec.Command(stage2Bin)
