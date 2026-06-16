@@ -119,55 +119,19 @@ func TestSelfHostReaderX86_64(t *testing.T) {
 // not just a hand-written reduction of it, so a program can use std/io
 // through the self-hosted toolchain.
 func TestSelfHostStdIoBundleX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "flatten.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern", "bundle_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	gcc, runner, driverBin := buildModloadDriverX86(t)
 
-	// Build the bundle_run driver as an x86 host binary.
-	prog, _, err := modload.Load(filepath.Join(dir, "bundle_run.fern"))
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	driverBin := buildBin(t, gcc, dir, "driver", asm)
-
-	// Bundle: the unmodified std/io source as module "io", plus a main
-	// that imports it and echoes stdin through io.read_all_stdin().
-	ioSrc, err := os.ReadFile("../../internal/stdlib/std/io.fern")
-	if err != nil {
-		t.Fatalf("read std/io.fern: %v", err)
-	}
+	// The unmodified std/io source vendored as module "io", plus a main
+	// that imports it and echoes stdin through io.read_all_stdin(). The
+	// loader vendors std/io.fern as ./io and skips its own unresolved
+	// std/ imports — the exact set the ///MODULE bundle hand-picked.
 	mainMod := "import \"./io\";\n" +
 		"function main(): i32 { write(io.read_all_stdin()); return 0; }\n"
-	var bundle bytes.Buffer
-	bundle.WriteString("///MODULE io\n")
-	bundle.Write(ioSrc)
-	bundle.WriteString("\n///MODULE main\n")
-	bundle.WriteString(mainMod)
-
-	progAsm := runCapture(t, gcc, runner, driverBin, bundle.Bytes())
+	progAsm, progDir := compileStdProgModload(t, runner, driverBin, []string{"io"}, mainMod)
 	if len(progAsm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes for the std/io bundle")
 	}
-	progBin := buildBin(t, gcc, dir, "ioprog", string(progAsm))
+	progBin := buildBin(t, gcc, progDir, "ioprog", progAsm)
 
 	const input = "compiled real std/io.read_all_stdin via the self-hosted compiler\n"
 	var cmd *exec.Cmd
