@@ -153,58 +153,46 @@ func buildCheckerCodesBin(t *testing.T) (checkerBin string, runner []string, dir
 // expensive self-host bundle compile happens once per driver.
 func buildCheckerDriverBin(t *testing.T, driverFile string, withFlatten bool) (checkerBin string, runner []string, dir string) {
 	t.Helper()
-	gcc, run := x86_64Tooling(t)
+	gcc, run, modDriverBin := buildModloadDriverX86(t)
 	runner = run
-	dir = writeSelfHostAsmProject(t) // lexer, parser, asm
-	for _, name := range []string{"flatten.fern", "util.fern", "checker.fern", "bundle_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "bundle_run.fern", "driver")
 
-	lexerSrc, _ := os.ReadFile(filepath.Join(dir, "lexer.fern"))
-	parserSrc, _ := os.ReadFile(filepath.Join(dir, "parser.fern"))
-	checkerSrc, _ := os.ReadFile(filepath.Join(dir, "checker.fern"))
-	utilSrc, _ := os.ReadFile(filepath.Join(dir, "util.fern"))
-	flattenSrc, _ := os.ReadFile(filepath.Join(dir, "flatten.fern"))
+	// Compile the self-hosted checker binary (driverFile = checker_run /
+	// checker_codes_run, importing std/io + ./lexer + ./parser + ./checker)
+	// with the file-based asm driver. The loader resolves `import "std/io"`
+	// to the vendored flat io.fern (basename fallback), so the driver source
+	// is used unmodified — no ///MODULE bundle, no import rewrite.
+	files := map[string]string{}
+	for _, m := range []string{"util", "lexer", "parser", "checker"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", m+".fern"))
+		if err != nil {
+			t.Fatalf("read %s.fern: %v", m, err)
+		}
+		files[m+".fern"] = string(src)
+	}
+	if withFlatten {
+		src, err := os.ReadFile("../../examples/self_host/flatten.fern")
+		if err != nil {
+			t.Fatalf("read flatten.fern: %v", err)
+		}
+		files["flatten.fern"] = string(src)
+	}
 	ioSrc, err := os.ReadFile("../../internal/stdlib/std/io.fern")
 	if err != nil {
 		t.Fatalf("read std/io.fern: %v", err)
 	}
+	files["io.fern"] = string(ioSrc)
 	runSrc, err := os.ReadFile(filepath.Join("../../examples/self_host", driverFile))
 	if err != nil {
 		t.Fatalf("read %s: %v", driverFile, err)
 	}
-	driverMod := strings.ReplaceAll(string(runSrc), "import \"std/io\";", "import \"./io\";")
-	var bundle bytes.Buffer
-	bundle.WriteString("///MODULE util\n")
-	bundle.Write(utilSrc)
-	bundle.WriteString("///MODULE lexer\n")
-	bundle.Write(lexerSrc)
-	bundle.WriteString("\n///MODULE parser\n")
-	bundle.Write(parserSrc)
-	bundle.WriteString("\n///MODULE checker\n")
-	bundle.Write(checkerSrc)
-	if withFlatten {
-		bundle.WriteString("\n///MODULE flatten\n")
-		bundle.Write(flattenSrc)
-	}
-	bundle.WriteString("\n///MODULE io\n")
-	bundle.Write(ioSrc)
-	bundle.WriteString("\n///MODULE main\n")
-	bundle.WriteString(driverMod)
+	files["main.fern"] = string(runSrc)
 
-	checkerAsm := runCapture(t, gcc, runner, driverBin, bundle.Bytes())
+	checkerAsm, progDir := compileFilesModload(t, runner, modDriverBin, files)
 	if len(checkerAsm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes for the codes driver")
 	}
-	checkerBin = buildBin(t, gcc, dir, "codes", string(checkerAsm))
-	return checkerBin, runner, dir
+	checkerBin = buildBin(t, gcc, progDir, "codes", checkerAsm)
+	return checkerBin, runner, progDir
 }
 
 func TestSelfHostCheckerCodesX86_64(t *testing.T) {
