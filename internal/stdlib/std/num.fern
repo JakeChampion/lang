@@ -24,8 +24,8 @@
 //
 // `Num` is the supertrait of the four binary operators — the common bound for
 // generic numeric code (`T: num.Num` ⇒ add/sub/mul/div all available). `Neg` is
-// separate (signed/float only). First slice: i32 / i64 / f64; the unsigned
-// (u32/u64) and f32 impls are a follow-up.
+// separate and implemented for the signed/float types only (i32/i64/f32/f64);
+// the unsigned u32/u64 get Add/Sub/Mul/Div/Num but no Neg.
 
 pub trait Add { function add(self: Self, o: Self): Self; }
 pub trait Sub { function sub(self: Self, o: Self): Self; }
@@ -60,3 +60,25 @@ impl Mul for f64 { function mul(self: Self, o: Self): Self { return self * o; } 
 impl Div for f64 { function div(self: Self, o: Self): Self { return self / o; } }
 impl Neg for f64 { function neg(self: Self): Self { return 0.0 - self; } }
 impl Num for f64 {}
+
+// ---- f32 ----
+impl Add for f32 { function add(self: Self, o: Self): Self { return self + o; } }
+impl Sub for f32 { function sub(self: Self, o: Self): Self { return self - o; } }
+impl Mul for f32 { function mul(self: Self, o: Self): Self { return self * o; } }
+impl Div for f32 { function div(self: Self, o: Self): Self { return self / o; } }
+impl Neg for f32 { function neg(self: Self): Self { return 0.0 - self; } }
+impl Num for f32 {}
+
+// ---- u32 ---- (unsigned: no Neg)
+impl Add for u32 { function add(self: Self, o: Self): Self { return self + o; } }
+impl Sub for u32 { function sub(self: Self, o: Self): Self { return self - o; } }
+impl Mul for u32 { function mul(self: Self, o: Self): Self { return self * o; } }
+impl Div for u32 { function div(self: Self, o: Self): Self { return self / o; } }
+impl Num for u32 {}
+
+// ---- u64 ---- (unsigned: no Neg)
+impl Add for u64 { function add(self: Self, o: Self): Self { return self + o; } }
+impl Sub for u64 { function sub(self: Self, o: Self): Self { return self - o; } }
+impl Mul for u64 { function mul(self: Self, o: Self): Self { return self * o; } }
+impl Div for u64 { function div(self: Self, o: Self): Self { return self / o; } }
+impl Num for u64 {}
