@@ -796,6 +796,18 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		{"strdrop-repeat-field-detector", `struct P { name: string } function go(): i32 { var s = "ab"; var p = P { name: s.repeat(3) }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 6) { return 99; } return __rc_underflow(); }`, 0},
 		// Free-function spelling `str_to_upper(s)`: same fresh op_str_to_upper, freed.
 		{"strdrop-str-to-upper-freefn-detector", `struct P { name: string } function go(): i32 { var s = "ab"; var p = P { name: str_to_upper(s) }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 2) { return 99; } return __rc_underflow(); }`, 0},
+		// FRESH ALLOC BUILTINS (this slice) — fixed fresh-allocating semantics, no user
+		// override, so the field-drop FREES the result with no construction inc.
+		//
+		// `chr(n)`: fresh 1-char box, freed once.
+		{"strdrop-chr-field-detector", `struct P { name: string } function go(): i32 { var p = P { name: chr(65) }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 1) { return 99; } return __rc_underflow(); }`, 0},
+		// `string_from_bytes(arr)`: packs bytes into a fresh box, freed once.
+		{"strdrop-string-from-bytes-field-detector", `struct P { name: string } function go(): i32 { var b: u8[] = [104, 105]; var p = P { name: string_from_bytes(b) }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 2) { return 99; } return __rc_underflow(); }`, 0},
+		// `i32_to_string(n)` is deliberately EXCLUDED (stays inc'd → leaks): its box's
+		// `data` points into the MIDDLE of a 32-byte scratch buffer, not at an alloc
+		// boundary, so reclaiming it over-releases. This case proves the EXCLUSION is
+		// sound — inc'd, detector 0 (no over-release despite the un-freeable box).
+		{"strdrop-i32-to-string-excluded-detector", `struct P { name: string } function go(): i32 { var p = P { name: i32_to_string(425) }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 3) { return 99; } return __rc_underflow(); }`, 0},
 		// EXCLUDED (aliasing) transforms stay inc'd → field-drop decs the dup only.
 		//
 		// `.trim()` is a zero-copy VIEW into the receiver's buffer: inc'd (NOT freed),

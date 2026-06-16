@@ -2161,6 +2161,15 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
 //     buffer, min 1 byte; no already-cased identity short-circuit)
 //   - `s.repeat(n)`             (always a fresh buffer; n <= 0 → fresh empty box)
 //   - the free-function spellings `str_to_upper` / `str_to_lower` / `str_repeat`
+//   - the alloc BUILTINS `chr(n)` (fresh 1-char box) and `string_from_bytes(arr)`
+//     (packs into a fresh box) — fixed fresh-allocating semantics, no user override
+//     (unlike `.to_string()`, whose derived/hand-written body may return an aliased
+//     field, so it stays excluded).
+// NOTE `i32_to_string(n)` is deliberately NOT here: its emitter returns a box whose
+// `data` points into the MIDDLE of a 32-byte scratch buffer (digits written
+// backwards), not at an allocation boundary, so the box cannot be cleanly reclaimed
+// (the over-release detector fires). Freeing it would need an emitter fix (copy the
+// digits to a tight fresh buffer) across all backends — a separate slice.
 //
 // DELIBERATELY EXCLUDED — these alias live data and would OVER-RELEASE if freed:
 //   - `s.trim()` / `str_trim`   (returns a fresh box whose data pointer is a
@@ -2185,6 +2194,7 @@ pub function expr_is_fresh_str(e: parser.Expr, s: LowerState): boolean {
                 parser.ExprIdent(cid) => {
                     if (cid.name == "str_to_upper" || cid.name == "str_to_lower"
                             || cid.name == "str_repeat") { return true; }
+                    if (cid.name == "chr" || cid.name == "string_from_bytes") { return true; }
                     return false;
                 },
                 parser.ExprFieldAccess(cfa) => {
@@ -3432,8 +3442,9 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // buffer is exclusively owned — expr_is_fresh_str: a direct inline
                     // concat `a + b`, the case/shape transforms `.to_upper()` /
                     // `.to_lower()` / `.reverse()` / `.repeat(n)` (and their str_*
-                    // free-fn spellings), each allocating a fresh buffer + rc=1 box used
-                    // only for this field. Owned by the struct with no inc, so the
+                    // free-fn spellings), and the alloc builtins `chr` /
+                    // `string_from_bytes` — each allocating a fresh buffer + rc=1 box
+                    // used only for this field. Owned by the struct with no inc, so the
                     // field-drop reclaims it — the actual heap-leak win.
                     // EVERY other value is inc'd so the field-drop only decs the dup:
                     //   - a string LITERAL is static (.rodata, not heap rc=1) — it
