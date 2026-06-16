@@ -2046,6 +2046,9 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     if (cid.name == "i32_to_string") { return true; }
                     // chr(n) yields a fresh 1-char string box.
                     if (cid.name == "chr") { return true; }
+                    // strbuf_take() snapshots the global string-builder into a fresh
+                    // string box (so `return strbuf_take()` str-tracks the result).
+                    if (cid.name == "strbuf_take" && c.args.len() == 0) { return true; }
                     return s.is_str_ret_fn(cid.name);
                 },
                 // `X.to_string()` yields a string box (the i32 runtime helper or
@@ -4295,6 +4298,26 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!eis.ok) { return eis; }
                         eis = eis.emit(ir.op_call_direct("__fern_i32_to_string", 1));
                         return eis.emit(ir.op_eprint_str());
+                    }
+                    // Built-in global string-builder primitives — the amortised-O(1)
+                    // output accumulator the self-host emitters use (asmcore's
+                    // EmitState.write → strbuf_append, emit_module_ir →
+                    // strbuf_reset/strbuf_take). `strbuf_reset()` / `strbuf_append(s)`
+                    // are statement ops (push a dummy so the statement-level drop
+                    // balances, like putchar/print_str); `strbuf_take()` is a value op
+                    // returning a fresh string box (str-tracked via expr_is_str). They
+                    // were the last bail in asmcore.EmitState.write (an unknown
+                    // call_direct); dedicated ops make that function IR-eligible.
+                    if (cid.name == "strbuf_reset" && c.args.len() == 0) {
+                        return s.emit(ir.op_strbuf_reset());
+                    }
+                    if (cid.name == "strbuf_append" && c.args.len() == 1) {
+                        var sba: LowerState = lower_expr(c.args[0], s);
+                        if (!sba.ok) { return sba; }
+                        return sba.emit(ir.op_strbuf_append());
+                    }
+                    if (cid.name == "strbuf_take" && c.args.len() == 0) {
+                        return s.emit(ir.op_strbuf_take());
                     }
                     // Built-in `i32_to_string(n)` — the free-function spelling of
                     // `n.to_string()` on an i32: route to the __fern_i32_to_string

@@ -5199,7 +5199,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // each `__fern_alloc(size)` call. No deallocation — fine
     // for the small validation programs that exercise structs.
     if (s.has_need("heap")) {
-        var heap_size: string = "3758096384";   // 0xE0000000, 3.5 GiB — widening the IR subset (enum-array Expr[]/Stmt[] aliasing) pushed the stage-2 self-compile live set past 2.5 GiB (exit-137 alloc trap); 3.5 GiB restores headroom. Lockstep with the .bss .skip below, asm_arm64.fern, and the native backends. base 0x10000000 + 3.5 GiB = 0xF0000000 < 4 GiB (arm64 32-bit pointer round-trip).
+        var heap_size: string = "4160749568";   // 0xF8000000, 3.875 GiB — widening the IR subset + adding compiler source (most recently the strbuf_* IR ops) pushed the stage-2 x86 self-compile live set past 3.5 GiB (exit-137 alloc trap); 3.875 GiB restores headroom. x86-ONLY: lockstep with the .bss .skip below + asm_ir.fern + the native x86-64 backend. arm64 (asm_arm64.fern) stays at 3.5 GiB (0xE0000000), pinned by base 0x10000000 + size < 4 GiB. 0xF8000000 < 0xFFFFFFFF, so the native mmap u32 length still fits.
         s = s.write("    .section .bss\n");
         s = s.write("    .align 8\n");
         s = s.write("__fern_heap_ptr: .quad 0\n");
@@ -8084,7 +8084,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("heap")) {
         s = s.write("    .section .bss\n");
         s = s.write("    .align 8\n");
-        s = s.write("__fern_heap: .skip 3758096384\n");   // 0xE0000000 (3.5 GiB) — matches the heap_size var above + asm_ir.fern + the native x86-64 backend; addressed 64-bit-absolute (movabs) so heap_base + heap_size may exceed 2 GiB
+        s = s.write("__fern_heap: .skip 4160749568\n");   // 0xF8000000 (3.875 GiB) — matches the heap_size var above + asm_ir.fern + the native x86-64 backend; addressed 64-bit-absolute (movabs) so heap_base + heap_size may exceed 2 GiB
     }
     return s;
 }

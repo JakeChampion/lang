@@ -439,6 +439,20 @@ pub function op_read_line(): Op { return op0("read_line"); }
 // Lowers to each backend's __fern_putchar helper — the byte-level twin of
 // print_str. Mirrors the native compiler's `putchar` builtin (issue #2839).
 pub function op_putchar(): Op { return op0("putchar"); }
+// The global string-builder primitives — the amortised-O(1) output accumulator
+// the self-host emitters write through (asmcore.EmitState.write → strbuf_append;
+// emit_module_ir → strbuf_reset / strbuf_take). A single .bss buffer + length:
+//   `strbuf_reset` clears the length (no args; pushes a dummy for stmt drop).
+//   `strbuf_append` pops a string box and copies its bytes onto the buffer (a
+//      statement op; pushes a dummy so a statement-level drop balances).
+//   `strbuf_take` snapshots the buffer into a fresh string box and resets the
+//      length (a VALUE op — no args, leaves the box on the stack; allocates).
+// Lower to each register backend's __fern_strbuf_* helpers (byte-for-byte the
+// AST path's, so the IR + AST emitters agree). No wasm IR support yet, so a
+// strbuf module is wasm-ineligible (wasm_eligible) and stays on the wasm AST path.
+pub function op_strbuf_reset(): Op { return op0("strbuf_reset"); }
+pub function op_strbuf_append(): Op { return op0("strbuf_append"); }
+pub function op_strbuf_take(): Op { return op0("strbuf_take"); }
 // `sleep_ms` pops an i32 (milliseconds) and pauses via nanosleep (ms <= 0 is a
 // no-op), pushing a dummy result (the syscall return) so a statement-level drop
 // balances — the same void-with-drop shape as putchar. Lowers to the x86-64 /

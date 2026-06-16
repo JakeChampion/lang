@@ -535,13 +535,19 @@ pub function wasm_eligible(mod: parser.Module): boolean {
     // element i at offset i*4) matching the register backends, so the IR
     // tuple-destructure reads it correctly (#2933 — previously it returned just
     // the box, a different ABI, so a delete module was pinned to the AST path).
+    // The global string-builder ops (strbuf_reset / strbuf_append / strbuf_take)
+    // have no wasm IR runtime yet — a strbuf module stays on the wasm AST path
+    // (where the legacy emitter handles it), while x86 / arm64 lower it via the IR.
     return asm_ir.eligible_core(mod)
         && !module_emits_op(mod, "read_int")
         && !module_emits_op(mod, "read_line")
         && !module_emits_op(mod, "monotonic_ns")
         && !module_emits_op(mod, "now_unix_ms")
         && !module_emits_op(mod, "now_ns")
-        && !module_emits_op(mod, "sleep_ms");
+        && !module_emits_op(mod, "sleep_ms")
+        && !module_emits_op(mod, "strbuf_reset")
+        && !module_emits_op(mod, "strbuf_append")
+        && !module_emits_op(mod, "strbuf_take");
 }
 
 // should_use_ir: the use_ir default is on AND the module is wasm-eligible — the
