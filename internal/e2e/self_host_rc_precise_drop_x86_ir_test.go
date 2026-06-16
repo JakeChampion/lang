@@ -731,6 +731,25 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// Tuple-payload over-release detector: the borrowed tuple is leak-only; neither
 		// arm over-releases. Detector reads 0.
 		{"iife-match-tuple-payload-detector", `enum E { V((i32, i32)), N } function go(): i32 { var e: E = E.V((3, 4)); var p: (i32, i32) = match (e) { V(q) => q, N => (0, 0) }; if (p.0 + p.1 != 7) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// NON-LEAKSAFE-STRUCT reclamation soundness (goal-#2 deep-drop GATE). A struct
+		// carrying rc-tracked fields (string / string[] / nested-struct / struct-array)
+		// CONSTRUCTS, field-accesses, and RECLAIMS on the IR path today: its rc-headered
+		// box is freed exactly once, while the nested rc fields LEAK (the path's
+		// leak-only model) — sound (no double-free), just not optimal. These detector
+		// cases pin that soundness (`__rc_underflow() == 0`): a regression guard for the
+		// current behaviour AND the gate a future precise per-field deep-drop must keep
+		// at 0 while it shrinks the leak set (it must never over-release a freed field).
+		{"nonleaksafe-string-field-reclaim-detector", `struct P { name: string, n: i32 } function go(): i32 { var p = P { name: "hello", n: 7 }; return p.n; } function main(): i32 { var r = go(); if (r != 7) { return 99; } return __rc_underflow(); }`, 0},
+		{"nonleaksafe-strarr-field-reclaim-detector", `struct Doc { lines: string[], n: i32 } function go(): i32 { var d = Doc { lines: ["a", "b", "c"], n: 3 }; return d.n; } function main(): i32 { var r = go(); if (r != 3) { return 99; } return __rc_underflow(); }`, 0},
+		// Nested-struct field (the doc's `Outer { inner: Inner { xs: [..] }, n }` shape):
+		// `o.inner.xs[i]` reads through two box levels; both boxes reclaim soundly.
+		{"nonleaksafe-nested-struct-reclaim-detector", `struct Inner { xs: i32[] } struct Outer { inner: Inner, n: i32 } function go(): i32 { var o = Outer { inner: Inner { xs: [10, 20, 30] }, n: 5 }; return o.inner.xs[1] + o.n; } function main(): i32 { var r = go(); if (r != 25) { return 99; } return __rc_underflow(); }`, 0},
+		// Struct-ARRAY field (the doc's `o.items[i].v` shape): the array slab + element
+		// struct boxes reclaim soundly (slab freed once, element boxes leak-only).
+		{"nonleaksafe-struct-array-reclaim-detector", `struct Item { v: i32 } struct Bag { items: Item[], n: i32 } function go(): i32 { var b = Bag { items: [Item { v: 10 }, Item { v: 20 }], n: 2 }; return b.items[0].v + b.items[1].v + b.n; } function main(): i32 { var r = go(); if (r != 32) { return 99; } return __rc_underflow(); }`, 0},
+		// REASSIGN frees the old rc-headered box: rebinding `p` to a new struct releases
+		// the previous box (a string-field struct) — exactly once, detector 0.
+		{"nonleaksafe-reassign-frees-old-detector", `struct P { name: string } function main(): i32 { var p = P { name: "first" }; p = P { name: "second" }; if (p.name.len() != 6) { return 99; } return __rc_underflow(); }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
