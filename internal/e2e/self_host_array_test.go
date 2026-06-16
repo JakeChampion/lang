@@ -35,17 +35,9 @@ func arrayBundle(t *testing.T) []byte {
 // TestSelfHostArrayX86_64 — the self-hosted compiler compiles real
 // std/array (needed i32.gcd/lcm); gcd_all([12,18,24]) == 6.
 func TestSelfHostArrayX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	for _, name := range []string{"flatten.fern", "bundle_run.fern"} {
-		src, _ := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "bundle_run.fern", "driver")
-	asm := runCapture(t, gcc, runner, driverBin, arrayBundle(t))
-	progBin := buildBin(t, gcc, dir, "arrprog", string(asm))
+	gcc, runner, driverBin := buildModloadDriverX86(t)
+	asm, progDir := compileStdProgModload(t, runner, driverBin, []string{"array", "sort"}, arrayMain)
+	progBin := buildBin(t, gcc, progDir, "arrprog", asm)
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
 		cmd = exec.Command(progBin)

@@ -31,18 +31,7 @@ func bytesModuleBundle(t *testing.T, mod, mainSrc string) []byte {
 // and convert back with string_from_bytes. Each module's encode is
 // checked against a known vector and round-tripped through decode.
 func TestSelfHostBytesX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t) // lexer, parser, asm
-	for _, name := range []string{"flatten.fern", "bundle_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "bundle_run.fern", "driver")
+	gcc, runner, driverBin := buildModloadDriverX86(t)
 
 	cases := []struct {
 		mod, input, encoded string
@@ -60,8 +49,8 @@ func TestSelfHostBytesX86_64(t *testing.T) {
 				"    write(" + tc.mod + "." + tc.mod + "_decode(e));\n" +
 				"    return 0;\n" +
 				"}\n"
-			asm := runCapture(t, gcc, runner, driverBin, bytesModuleBundle(t, tc.mod, mainSrc))
-			progBin := buildBin(t, gcc, dir, tc.mod, string(asm))
+			asm, progDir := compileStdProgModload(t, runner, driverBin, []string{tc.mod}, mainSrc)
+			progBin := buildBin(t, gcc, progDir, tc.mod, asm)
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
 				cmd = exec.Command(progBin)
