@@ -6289,7 +6289,20 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // on wasm), and mark the slot as an i64 array (is_arr for RC, is_i64arr
             // for element typing). Aliasing / params go through the generic array
             // path below (which now also marks is_i64arr).
-            if (comma < 0 && v.type_name == "i64[]") {
+            // An UNANNOTATED `var a = [e0, …]` whose first element is i64-WIDE but
+            // not f64 (e.g. `[10 as i64, 20 as i64]`) is an i64[] too — infer it so
+            // the unannotated form lowers the same as the annotated one (without
+            // this it bailed to AST). #3353.
+            var i64arr_unannot: boolean = false;
+            if (v.type_name == "") {
+                match (v.init) {
+                    parser.ExprArray(i64lit0) => {
+                        if (i64lit0.elements.len() > 0 && infer_expr_width(i64lit0.elements[0], s) == 64 && !expr_is_f64(i64lit0.elements[0], s)) { i64arr_unannot = true; }
+                    },
+                    _ => {}
+                }
+            }
+            if (comma < 0 && (v.type_name == "i64[]" || i64arr_unannot)) {
                 var i64lit: boolean = false;
                 match (v.init) {
                     parser.ExprArray(_) => { i64lit = true; },
