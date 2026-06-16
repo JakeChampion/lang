@@ -3656,6 +3656,22 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         mpf = mpf.append(StructFieldDecl { name: "calls", type_name: "MockCall[]" });
         structs = structs.append(StructDecl { name: "MockPlatform", fields: mpf, type_params: [], line: 0, col: 0, enum_owner: "" });
     }
+    // std/url's Url is a compiler built-in (registered in the Go checker, not
+    // `struct`-declared in std/url), so the IR path needs its layout to lower
+    // `Url { … }` construction / field reads — the same pattern as Stream /
+    // BytesWriter / the time types. Fields mirror internal/checker/checker.go
+    // exactly; all scalar/string, so leaf-safe (url_parse's Url-spread builder
+    // and `Option[Url]` return lower).
+    if (!struct_declared(structs, "Url")) {
+        var urlf: StructFieldDecl[] = [];
+        urlf = urlf.append(StructFieldDecl { name: "scheme", type_name: "string" });
+        urlf = urlf.append(StructFieldDecl { name: "host", type_name: "string" });
+        urlf = urlf.append(StructFieldDecl { name: "port", type_name: "i32" });
+        urlf = urlf.append(StructFieldDecl { name: "path", type_name: "string" });
+        urlf = urlf.append(StructFieldDecl { name: "query", type_name: "string" });
+        urlf = urlf.append(StructFieldDecl { name: "fragment", type_name: "string" });
+        structs = structs.append(StructDecl { name: "Url", fields: urlf, type_params: [], line: 0, col: 0, enum_owner: "" });
+    }
     return structs;
 }
 
