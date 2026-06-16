@@ -1344,17 +1344,26 @@ pub function field_access_arr_field_type(e: parser.Expr, s: LowerState): string 
 }
 
 pub function decl_is_leaksafe(structs: parser.StructDecl[], struct_name: string): boolean {
-    return decl_is_leaksafe_d(structs, struct_name, 0);
+    var seen: string[] = [];
+    return decl_is_leaksafe_d(structs, struct_name, 0, seen);
 }
 
-// decl_is_leaksafe_d is the depth-bounded recursion: a struct is leak-safe if
-// every field is a scalar (i32/boolean/string/scalar-array) OR a struct that is
-// itself leak-safe (composite struct fields, leak mode — the pointer is stored
-// in one slot, no RC). The depth cap conservatively bails on deeply nested /
-// cyclic type graphs (a cycle would otherwise loop forever); bailing is safe (it
-// just routes the module to the AST path).
-function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, depth: i32): boolean {
+// decl_is_leaksafe_d is the recursion: a struct is leak-safe if every field is a
+// scalar (i32/boolean/string/scalar-array) OR a struct that is itself leak-safe
+// (composite struct fields, leak mode — the pointer is stored in one slot, no
+// RC). `visiting` is the set of struct names on the current proof path: a field
+// whose (element) type is already being proven is a leak-only BACK-EDGE in the
+// type graph — a self-referential `next: Node[]` or a mutually-recursive
+// `A.b: B[]` / `B.a: A[]` — and in leak mode that back-pointer is just a slot
+// that leaks with the struct (no RC), so the cycle introduces no unsafe field.
+// We short-circuit such an edge as leak-safe (the OUTER struct's own fields are
+// still each validated), which admits linked lists / trees / ASTs onto the IR
+// path. The depth cap stays as a backstop for pathological non-cyclic graphs.
+function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, depth: i32, visiting: string[]): boolean {
     if (depth > 16) { return false; }
+    // Back-edge to a struct already on the proof path: leak-only, so safe.
+    if (util.has_str(visiting, struct_name)) { return true; }
+    var nv: string[] = visiting.append(struct_name);
     var i: i32 = 0;
     while (i < structs.len()) {
         if (structs[i].name == struct_name) {
@@ -1372,7 +1381,7 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
                     continue;
                 }
                 // A struct-typed field is allowed if its struct is leak-safe too.
-                if (decl_is_struct(structs, t) && decl_is_leaksafe_d(structs, t, depth + 1)) {
+                if (decl_is_struct(structs, t) && decl_is_leaksafe_d(structs, t, depth + 1, nv)) {
                     fi = fi + 1;
                     continue;
                 }
@@ -1394,7 +1403,7 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
                 // hits the cap and bails to AST.
                 if (t.len() >= 3 && t[t.len() - 2 : t.len()] == "[]") {
                     var elt: string = t[0 : t.len() - 2];
-                    if (decl_is_struct(structs, elt) && decl_is_leaksafe_d(structs, elt, depth + 1)) {
+                    if (decl_is_struct(structs, elt) && decl_is_leaksafe_d(structs, elt, depth + 1, nv)) {
                         fi = fi + 1;
                         continue;
                     }

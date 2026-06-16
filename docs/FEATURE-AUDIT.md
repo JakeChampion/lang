@@ -250,6 +250,34 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-16 — self-referential / mutually-recursive structs on the self-host IR path (widen IR subset)
+
+`struct Node { v: i32, next: Node[] }` (and mutually-recursive `A { bs: B[] }` /
+`B { peers: A[] }`) — the shape behind linked lists, trees, and ASTs — now route
+the self-host IR path. Previously a self-referential struct fell to the AST emitter.
+
+- **Root cause.** The leak-safety gate `irlower.decl_is_leaksafe_d` walks a
+  struct's field type graph to admit it to the IR path in *leak mode* (no RC; the
+  boxes leak with the struct, matching the AST path's exit codes). It used a
+  depth cap (`depth > 16`) purely to avoid looping on cyclic type graphs — but
+  that same cap rejected legitimate self-reference: a `next: Node[]` field
+  recurses into `Node` forever until the cap trips, bailing the whole module.
+- **Fix.** Thread a `visiting` set of struct names on the current proof path. A
+  field whose (element) type is already being proven is a leak-only *back-edge* —
+  a self- or mutually-recursive pointer slot that leaks with the struct, so it
+  introduces no unsafe field. Short-circuit such an edge as leak-safe; the outer
+  struct's own fields are each still validated. The depth cap stays as a backstop.
+- **Soundness.** Leak mode only (no deep drop), exactly as the existing
+  non-recursive array-of-struct field (`is_struct_array_field_type`) already
+  rides; values match the interpreter oracle. The self-host's *own* recursive
+  types go through the `Ty` **union** (`TyOption { inner: Ty }`), handled as a
+  nominal-enum field — not a struct back-edge — so no self-host source struct
+  changes classification and the Stage-2 byte-identical fixpoint holds.
+- **Tests.** `internal/e2e/self_host_selfref_struct_ir_test.go` —
+  `TestSelfHostSelfrefStructIR{X86_64,Wasm}`, 7 cases (bind + scalar read, empty /
+  filled `Node[]` length, element field read, children-sum loop, struct as
+  param/return, mutual recursion), each routing-pinned `"ir"` and oracle-checked.
+
 ### 2026-06-15 — labeled break / continue on the self-host IR path (widen IR subset)
 
 `outer: while/for { … break outer; … continue outer; … }` now parses, resolves,
