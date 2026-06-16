@@ -27,24 +27,6 @@ const interpDriverMod = "import \"./lexer\";\n" +
 	"    return 254;\n" +
 	"}\n"
 
-func interpBundle(t *testing.T) []byte {
-	t.Helper()
-	var b bytes.Buffer
-	for _, m := range []struct{ name, file string }{
-		{"util", "util.fern"}, {"lexer", "lexer.fern"}, {"parser", "parser.fern"}, {"interp", "interp.fern"},
-	} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", m.file))
-		if err != nil {
-			t.Fatalf("read %s: %v", m.file, err)
-		}
-		b.WriteString("///MODULE " + m.name + "\n")
-		b.Write(src)
-		b.WriteString("\n")
-	}
-	b.WriteString("///MODULE main\n")
-	b.WriteString(interpDriverMod)
-	return b.Bytes()
-}
 
 var interpProgs = []struct {
 	name string
@@ -126,20 +108,17 @@ func TestSelfHostInterpDriverX86_64(t *testing.T) {
 // TestSelfHostInterpDriverArm64 — CI-gated arm64 counterpart.
 func TestSelfHostInterpDriverArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "interp.fern", "flatten.fern", "bundle_run_arm64.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
+	files := map[string]string{"main.fern": interpDriverMod}
+	for _, m := range []string{"util", "lexer", "parser", "interp"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", m+".fern"))
 		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
+			t.Fatalf("read %s.fern: %v", m, err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
+		files[m+".fern"] = string(src)
 	}
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "bundle_run_arm64.fern", "driver")
-	interpAsm := runCapture(t, x86gcc, x86runner, driverBin, interpBundle(t))
-	interpBin := buildBin(t, arm64gcc, dir, "interp", string(interpAsm))
+	interpAsm, progDir := compileFilesModload(t, x86runner, driverBin, files)
+	interpBin := buildBin(t, arm64gcc, progDir, "interp", interpAsm)
 
 	for _, tc := range interpProgs {
 		t.Run(tc.name, func(t *testing.T) {
