@@ -756,12 +756,17 @@ pub function elem_type_tag(e: parser.Expr, s: LowerState): string {
     if (maptag != "") { return maptag; }
     var st: string = expr_struct_type(e, s);
     if (st != "") { return st; }
-    // A struct-ARRAY element (`([P { .. }], x)`): tag it `P[]` so a later
-    // `t.N[i].field` recovers the element struct type (the array sibling of the
-    // struct / map element tags). Scalar arrays (i32[]/…) keep the bare "i32"
-    // tag — they need no element typing (`t.N[i]` is a scalar read) and
-    // broadening them would disturb the shared destructure / kind-string
-    // consumers. #3353.
+    // A typed-ARRAY element (`(["a","b"], x)` / `([P{..}], x)`): tag it with the
+    // element-typed array spelling so a later `t.N[i]` reads at the right type —
+    // `string[]` for the string-pointer element reads, `P[]` to recover the
+    // element struct type for `t.N[i].field`. Scalar i32[]/u32[]/boolean[]
+    // arrays keep the bare "i32" tag — they need no element typing (`t.N[i]` is
+    // a 4-byte scalar read) and broadening them would disturb the shared
+    // destructure / kind-string consumers. The array element itself is a
+    // POINTER stored in one slot (#3353), so only the tag carries the element
+    // type. (f64[]/i64[] tuple elements need width-aware `t.N[i]` reads — a
+    // follow-up; they still bail.)
+    if (expr_is_strarr(e, s)) { return "string[]"; }
     match (e) {
         parser.ExprArray(sae) => {
             if (sae.elements.len() > 0) {
@@ -1808,6 +1813,11 @@ pub function expr_is_strarr(e: parser.Expr, s: LowerState): boolean {
             return false;
         },
         parser.ExprFieldAccess(fa) => {
+            // A `string[]` TUPLE element `t.N` (`(["a","b"], x)`): the element's
+            // recorded tuple tag is `string[]`, so `t.N[i]` reads as a string. #3353.
+            if (util.is_all_digits(fa.field)) {
+                return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "string[]";
+            }
             // A string[]-typed struct field read `p.items` is a string[].
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return false; }
@@ -3719,6 +3729,13 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 var el: parser.Expr = iife_leaf_value(tup.elements[tei]);
                 var el_arr_ok: boolean = expr_is_arr_src(el, s)
                     && !expr_is_strarr(el, s) && !expr_is_f64arr(el, s) && !expr_is_i64arr(el, s);
+                // A string[] element is a heap POINTER stored in one slot, like
+                // an i32[] element — admit it. Its `string[]` tuple tag
+                // (elem_type_tag) lets `t.N[i]` read as a string (the read-side
+                // recognition is in expr_is_strarr's tuple-element case). f64[] /
+                // i64[] elements still bail — their `t.N[i]` needs width-aware
+                // reads (a follow-up). #3353.
+                var el_typedarr_ok: boolean = expr_is_strarr(el, s);
                 // An Option element (`(Some(7), 3)`) is a leak-only box stored in
                 // one pointer slot, like a string / struct element — admit it (its
                 // "Option[T]" tag lets `match (t.N)` recover the payload). #3018.
@@ -3741,7 +3758,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 // element — admit it. Its `Map[K, V]` tag (elem_type_tag) lets a
                 // later `t.N.get_or(…)` dispatch as a map op. #3317.
                 var el_map_ok: boolean = expr_map_type_tag(el, s) != "";
-                if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "" && !el_arr_ok && !el_opt_ok && !el_tuple_ok && !el_result_ok && !el_map_ok) { return s.fail(); }
+                if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "" && !el_arr_ok && !el_typedarr_ok && !el_opt_ok && !el_tuple_ok && !el_result_ok && !el_map_ok) { return s.fail(); }
                 tei = tei + 1;
             }
             // Build the per-element KIND string (i32 / i64 / f64 / string / <struct>)
