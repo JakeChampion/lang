@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/native/arm64"
@@ -250,6 +251,90 @@ func TestStaticPieExecutableLayout(t *testing.T) {
 	}
 	if got := u64(binX, int(relaOff)+8); got != 8 { // r_info type
 		t.Errorf("x86 rela r_info = %d, want 8 (R_X86_64_RELATIVE)", got)
+	}
+}
+
+// TestSharedLibraryX86Dlopen is the end-to-end gate for the .so emitter:
+// build an x86-64 shared object exporting a C-ABI function `fern_answer`
+// (mov eax, 42; ret), then dlopen + dlsym + call it from a gcc-compiled
+// loader on the host. The exit code (42) proves the loader accepts the
+// ET_DYN, resolves the export from .dynsym/.hash, and the code runs at the
+// loader-chosen base — the prerequisite for JNI / System.loadLibrary.
+func TestSharedLibraryX86Dlopen(t *testing.T) {
+	gcc, err := exec.LookPath("gcc")
+	if err != nil {
+		t.Skip("gcc not on PATH; skipping .so dlopen test")
+	}
+	if runtime.GOARCH != "amd64" {
+		t.Skip("host is not amd64; the x86-64 .so can't be dlopen'd natively")
+	}
+	// fern_answer: mov eax, 42 ; ret  (position-independent, no relocations).
+	text := []byte{0xb8, 0x2a, 0x00, 0x00, 0x00, 0xc3}
+	// .text loads at file offset = ELF header + 3 program headers = 232, and
+	// the R+X segment has p_vaddr 0, so the function's base-relative address
+	// is 232.
+	const headers = 64 + 3*56
+	exports := []elf.Export{{Name: "fern_answer", Value: headers, Size: uint64(len(text))}}
+	so := elf.SharedLibraryX86(text, nil, nil, exports, "libfern.so")
+
+	dir := t.TempDir()
+	soPath := filepath.Join(dir, "libfern.so")
+	if err := os.WriteFile(soPath, so, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	loader := `#include <dlfcn.h>
+#include <stdio.h>
+int main(int argc, char** argv) {
+    void* h = dlopen(argv[1], RTLD_NOW);
+    if (!h) { fprintf(stderr, "dlopen: %s\n", dlerror()); return 2; }
+    int (*f)(void) = (int(*)(void)) dlsym(h, "fern_answer");
+    if (!f) { fprintf(stderr, "dlsym: %s\n", dlerror()); return 3; }
+    return f();
+}`
+	cPath := filepath.Join(dir, "loader.c")
+	if err := os.WriteFile(cPath, []byte(loader), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	binPath := filepath.Join(dir, "loader")
+	out, err := exec.Command(gcc, cPath, "-ldl", "-o", binPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("gcc loader: %v\n%s", err, out)
+	}
+	cmd := exec.Command(binPath, soPath)
+	out, _ = cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 42 {
+		t.Fatalf("dlopen+call fern_answer = %d, want 42 (out=%q)", code, out)
+	}
+}
+
+// TestSharedLibraryArm64Structure checks the arm64 .so shares the same
+// loadable structure (ET_DYN, three program headers incl. PT_DYNAMIC) and
+// records the export name in .dynstr. The x86 dlopen test above exercises
+// the format end-to-end; the emitter is machine-generic apart from
+// e_machine, so this confirms the arm64 variant produces the same shape.
+func TestSharedLibraryArm64Structure(t *testing.T) {
+	text := []byte{0x40, 0x05, 0x80, 0xd2, 0xc0, 0x03, 0x5f, 0xd6} // mov x0,#42 ; ret
+	const headers = 64 + 3*56
+	so := elf.SharedLibrary(text, nil, nil,
+		[]elf.Export{{Name: "fern_answer", Value: headers, Size: uint64(len(text))}}, "libfern.so")
+	if e_type := u16(so, 16); e_type != 3 {
+		t.Errorf("e_type = %d, want 3 (ET_DYN)", e_type)
+	}
+	if m := u16(so, 18); m != 183 {
+		t.Errorf("e_machine = %d, want 183 (EM_AARCH64)", m)
+	}
+	if n := u16(so, 56); n != 3 {
+		t.Errorf("e_phnum = %d, want 3", n)
+	}
+	// PH 2 (offset 64 + 2*56 = 176) is PT_DYNAMIC.
+	if pt := u32(so, 176); pt != 2 {
+		t.Errorf("PH2 p_type = %d, want 2 (PT_DYNAMIC)", pt)
+	}
+	if !bytes.Contains(so, []byte("fern_answer\x00")) {
+		t.Errorf(".dynstr does not contain the export name")
+	}
+	if !bytes.Contains(so, []byte("libfern.so\x00")) {
+		t.Errorf(".dynstr does not contain the soname")
 	}
 }
 
