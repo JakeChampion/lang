@@ -1556,3 +1556,71 @@ computes the correct value, where the native compiler rejects it with E002 (the
 self-host lacks that strict void-return checker rule). The added tests use the
 annotated `: R =>` form both compilers accept; the unannotated form is a permissiveness
 gap on the checker side, not a codegen one — no wrong values, no fixpoint impact.
+
+---
+
+## STATUS UPDATE (2026-06-16): IIFE match-EXPRESSION result types, the x86-64 heap-ceiling lift, and the IR-subset frontier
+
+A further arc of goal-#1 widening (shrink the AST fallback) plus the infra change that
+unblocks it. All gated on the byte-identical self-compile fixpoint + the gcc-linking
+`TestSelfHostBootstrapsItself` + (for the heap change) the large-program-link
+`TestSelfHostStdTestE2E`.
+
+### Landed
+
+- **#3335 — struct / string / tuple / enum payload bindings in match-EXPRESSIONS.**
+  A `var r = match (e) { V(p) => p.x, … }` (the IIFE form) bound only scalar / array
+  payloads before; widened to leak-safe-struct / string / tuple / nominal-enum
+  payloads, BORROW-only, i32-result (the underlying StmtMatch path already binds them;
+  only the IIFE gate `iife_payload_field_bindable` rejected them). Coupled with the
+  first x86-64 heap bump (1.875 GiB) the widening's extra IR-path working set needed.
+- **#3350 — lift the x86-64 heap ceiling past 2 GiB.** The static-`.bss` `__fern_heap`
+  was addressed RIP-relative (`leaq (%rip)`, disp32), capping heap_base+size < 2 GiB,
+  and the self-compile peaked ~1.78 GiB (≈95 MiB from OOM). Fix: address the heap base
+  with `movabs $__fern_heap` (64-bit absolute, valid `-no-pie`) and emit `__fern_heap`
+  as the LAST `.bss` symbol (a giant heap otherwise pushes `__fern_strbuf_data` /
+  `__fern_argc/argv/envp` — still on `leaq (%rip)` — past 2 GiB → `R_X86_64_PC32`
+  truncation → LARGE programs fail to LINK; small ones don't, so only StdTestE2E caught
+  it). Lockstep 2.5 GiB across asm.fern / asm_ir.fern / native x86_64.go.
+- **#3357 — string-RESULT match-EXPRESSIONS.** Recover the result-temp KIND
+  (`iife_payload_result_kind`) from the payload field type so a string result (bare
+  payload `V(x)=>x`, struct/enum string field, tuple string element) classifies the
+  temp `str`. (i64/f64 struct-FIELD results NOT admitted — the width-64 field read
+  into the i64 temp segfaults; a pre-existing AST-backend segfault too. Composite
+  results returned whole still bail — the temp can't carry the type.)
+- **#3374 — string-CONCAT-result match-EXPRESSIONS.** `V(x) => x + "!"` /
+  `"k=" + x` / `p.name + "!"`: `iife_string_concat_borrow_only` admits a `+`-tail whose
+  operands are each a borrow-leaf of the payload or an independent string. Sound
+  because strings are leak-only (no reclamation), so the only requirement is correct
+  temp typing.
+- **ci(selfhost) — 8→12 shards (#3362 / merged into the matrix).** The cumulative IR
+  widening slowed the bootstrap/fixpoint self-compiles; the round-robin clustered the
+  heavy ones and shard 7 hit the 10-min job timeout. 12 shards (24 jobs/arch) restores
+  the margin.
+
+### The IR-subset frontier (where it stands)
+
+`asm_ir_run.fern -ir-probe` prints `eligibility_report(mod)` — a per-function IR-vs-AST
+breakdown (see `TestSelfHostIREligibilityProbe`). Two caveats when reading it: run
+STANDALONE on a single file it OVER-reports bails (a function whose param/return types
+live in another module can't resolve them without the full import context, so it shows
+`BAIL lower` spuriously); the accurate frontier is the FULL-context compile. Most common
+constructs now lower (verified by direct pathprobe): scalar / array / struct / string /
+tuple / enum / Option / Result / map (incl. untyped-local) / nested-match / generics
+(unbounded + bounded `[T: Trait]`) / `dyn` dispatch / closures incl. escaping + arrow
+lambdas / recursion / tuple returns / for-in / break-continue / try `?`.
+
+Genuinely-remaining gaps (niche or large):
+1. **Composite RESULTS from a match-EXPRESSION** (`var p = match(e){ V(q) => q }` returning
+   a struct/tuple/enum/array whole) — the IIFE result temp can't carry a composite type.
+2. **i64 / f64 struct-FIELD / tuple-ELEMENT results** in a match-EXPRESSION — the width-64
+   field-read → i64-temp store doesn't round-trip (segfaults); also a pre-existing
+   AST-path segfault. A real bug to fix, not just a gate.
+3. **Bare trait-NAME param** (`function f(x: Trait)` without `dyn`) — `dyn Trait` and
+   `[T: Trait]` already lower; the implicit-dyn spelling bails. Niche.
+4. **Full non-leaksafe-struct RECLAMATION on the IR path.** Field READS of non-leaksafe
+   structs (params, array elements) already lower; what bails is CONSTRUCTING + reclaiming
+   a struct with rc-tracked (nested-struct / string[] / nested-array) fields — the IR path
+   reclaims only leak-safe structs. Closing this (recursive per-field deep-drop, or a
+   leak-only model for all structs like strings/enums) is the bulk of the remaining
+   distance to retiring the legacy AST emitter, and is the natural next major arc.
