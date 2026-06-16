@@ -3,6 +3,7 @@ package e2e
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
@@ -66,6 +67,48 @@ func compileStdProgModload(t *testing.T, runner []string, driverBin string, mods
 		}
 	}
 	if err := os.WriteFile(filepath.Join(progDir, "main.fern"), []byte(mainSrc), 0o644); err != nil {
+		t.Fatalf("write main.fern: %v", err)
+	}
+	return string(runDriverFile(t, runner, driverBin, filepath.Join(progDir, "main.fern"))), progDir
+}
+
+// compileSourceModload compiles `entrySrc` and its FULL transitive stdlib
+// closure (resolved by the real Go modload, exactly like selfHostBundleFor)
+// with the file-based driver: each resolved module is written as a flat
+// <base>.fern next to main.fern, and the loader's basename fallback
+// resolves their std/-qualified imports. The closure counterpart of
+// compileStdProgModload, for programs whose imports pull in more than a
+// hand-picked module or two. Returns the emitted asm and the program dir.
+func compileSourceModload(t *testing.T, runner []string, driverBin, entrySrc string) (asm string, progDir string) {
+	t.Helper()
+	const entryPath = "/__fern_source__/main.fern"
+	_, srcs, err := modload.LoadSource(entrySrc)
+	if err != nil {
+		t.Fatalf("modload.LoadSource: %v", err)
+	}
+	progDir = t.TempDir()
+	bsrc, err := os.ReadFile("../../examples/self_host/builtins.fern")
+	if err != nil {
+		t.Fatalf("read builtins.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(progDir, "builtins.fern"), bsrc, 0o644); err != nil {
+		t.Fatalf("write builtins.fern: %v", err)
+	}
+	seen := map[string]string{}
+	for p, src := range srcs {
+		if p == entryPath {
+			continue
+		}
+		b := strings.TrimSuffix(filepath.Base(p), ".fern")
+		if prev, ok := seen[b]; ok {
+			t.Fatalf("module-name collision: %q and %q both map to %q", prev, p, b)
+		}
+		seen[b] = p
+		if err := os.WriteFile(filepath.Join(progDir, b+".fern"), []byte(src), 0o644); err != nil {
+			t.Fatalf("write %s.fern: %v", b, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(progDir, "main.fern"), []byte(entrySrc), 0o644); err != nil {
 		t.Fatalf("write main.fern: %v", err)
 	}
 	return string(runDriverFile(t, runner, driverBin, filepath.Join(progDir, "main.fern"))), progDir

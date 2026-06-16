@@ -28,27 +28,15 @@ var arrayMethodSyntaxCases = []struct {
 }
 
 func TestSelfHostArrayMethodSyntaxX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t) // lexer, parser, asm
-	for _, name := range []string{"flatten.fern", "util.fern", "bundle_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "bundle_run.fern", "driver")
+	gcc, runner, driverBin := buildModloadDriverX86(t)
 
 	for _, tc := range arrayMethodSyntaxCases {
 		t.Run(tc.name, func(t *testing.T) {
-			bundle := selfHostBundleFor(t, tc.src)
-			asm := runCapture(t, gcc, runner, driverBin, bundle)
+			asm, progDir := compileSourceModload(t, runner, driverBin, tc.src)
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
-			progBin := buildBin(t, gcc, dir, "ams_"+tc.name, string(asm))
+			progBin := buildBin(t, gcc, progDir, "ams_"+tc.name, asm)
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
 				cmd = exec.Command(progBin)
