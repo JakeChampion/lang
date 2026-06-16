@@ -794,12 +794,18 @@ func TestSelfHostRcStructArrayFieldDropX86_64(t *testing.T) {
 	}
 
 	// Emission: a reclaimable struct whose ONLY rc field is a struct-array
-	// releases that field's buffer (__fern_arr_dec) at the struct's reclamation.
+	// releases that field's buffer (__fern_arr_dec) at the struct's reclamation,
+	// AND deep-drops the element boxes — the walk is gated on __fern_rc_is_unique
+	// (free the elements only when this drop frees the buffer, i.e. the sole
+	// owner), then rc_dec's each element before the buffer dec.
 	t.Run("emits-struct-array-field-drop", func(t *testing.T) {
 		asm := string(runCapture(t, gcc, runner, driverBin,
 			[]byte("struct E { v: i32 } struct H { es: E[] } function main(): i32 { var h = H { es: [E { v: 1 }] }; return h.es[0].v; }")))
 		if !strings.Contains(asm, "call __fn___fern_arr_dec") {
 			t.Errorf("expected a struct-array field buffer drop (__fern_arr_dec) at struct reclamation; not found")
+		}
+		if !strings.Contains(asm, "call __fn___fern_rc_is_unique") {
+			t.Errorf("expected the element-walk sole-owner gate (__fern_rc_is_unique) at the struct-array field drop; not found")
 		}
 	})
 }
