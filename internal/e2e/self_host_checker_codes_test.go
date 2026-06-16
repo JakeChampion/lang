@@ -938,8 +938,8 @@ func selfHostBundleFor(t *testing.T, entrySrc string) []byte {
 // TestSelfHostCheckerBundleDifferentialX86_64 is the MULTI-MODULE differential
 // verification harness. Unlike TestSelfHostCheckerDifferentialX86_64 (which
 // checks a single self-contained module), it resolves each program's stdlib
-// imports into a ///MODULE bundle and runs it through the bundle-checker
-// driver (checker_codes_bundle_run.fern → flatten.bundle → check_module),
+// imports off disk and runs it through the file-based checker driver
+// (checker_modload_run.fern → ./modloader → flatten.bundle → check_module),
 // then asserts the self-host code set matches the Go checker's (modload +
 // check) — restricted to implemented codes, with the Go checker as the sole
 // oracle (no hardcoded expectations).
@@ -950,7 +950,7 @@ func selfHostBundleFor(t *testing.T, entrySrc string) []byte {
 // before it ships. Seed it with valid stdlib-method programs; extend it when
 // teaching the checker a rule that consults the imported table.
 func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
-	checkerBin, runner, dir := buildCheckerDriverBin(t, "checker_codes_bundle_run.fern", true)
+	_, runner, driverBin := buildCheckerModloadDriverX86(t)
 
 	progs := []struct{ name, src string }{
 		// Valid string-method calls (user-defined methods in std/string, not
@@ -991,19 +991,11 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 
 	for _, tc := range progs {
 		t.Run(tc.name, func(t *testing.T) {
-			bundle := selfHostBundleFor(t, tc.src)
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(checkerBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], checkerBin)...)
-			}
-			cmd.Stdin = bytes.NewReader(bundle)
-			out, _ := cmd.Output()
-			got := uniqueSortedCodes(strings.Fields(string(out)))
-			want := filterImplemented(goCheckerCodes(t, dir, tc.src))
+			out := checkSourceModload(t, runner, driverBin, tc.src)
+			got := uniqueSortedCodes(strings.Fields(out))
+			want := filterImplemented(goCheckerCodes(t, t.TempDir(), tc.src))
 			if !equalStrings(got, want) {
-				t.Errorf("%s: self-host bundle codes %v disagree with Go checker %v (implemented subset)\nsrc: %s", tc.name, got, want, tc.src)
+				t.Errorf("%s: self-host file-loader codes %v disagree with Go checker %v (implemented subset)\nsrc: %s", tc.name, got, want, tc.src)
 			}
 		})
 	}
