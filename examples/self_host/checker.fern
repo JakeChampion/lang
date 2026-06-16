@@ -5144,9 +5144,14 @@ function ow_stmt(st: parser.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
             var rc: OwnWalk = ru_expr(f.cond, moved, ctx);
             var rt: OwnWalk = ow_stmts(f.then_body, rc.moved, ctx);
             var re: OwnWalk = ow_stmts(f.else_body, rc.moved, ctx);
-            var m: MovedEntry[] = ow_moved_join(rc.moved, rt.moved, block_exits(f.then_body));
-            m = ow_moved_join(m, re.moved, f.else_body.len() > 0 && block_exits(f.else_body));
-            return OwnWalk { moved: m, diags: append_diags(append_diags(rc.diags, rt.diags), re.diags) };
+            // `mj`, not `m`: the StmtMatch arm below binds `m` (the match payload,
+            // a struct), and the IR lowerer's slots are scope-blind — a same-named
+            // local of a DIFFERENT type in a sibling arm collapses onto one slot and
+            // bails lowering (see irlower.fern's ExprSlice `slc`-not-`sl` note). A
+            // distinct name keeps ow_stmt on the IR path.
+            var mj: MovedEntry[] = ow_moved_join(rc.moved, rt.moved, block_exits(f.then_body));
+            mj = ow_moved_join(mj, re.moved, f.else_body.len() > 0 && block_exits(f.else_body));
+            return OwnWalk { moved: mj, diags: append_diags(append_diags(rc.diags, rt.diags), re.diags) };
         },
         parser.StmtWhile(w) => {
             var rc: OwnWalk = ru_expr(w.cond, moved, ctx);
