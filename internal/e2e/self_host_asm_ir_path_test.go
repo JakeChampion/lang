@@ -328,6 +328,12 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// A Map-receiver method iterating m.values() with a generic `==` — the
 		// core/map contains_value shape. found(20)->+1, not-found(99)->no change.
 		{"map-recv-contains", "function (m: Map[string, i32]) cv(target: i32): boolean { for v in m.values() { if (v == target) { return true; } } return false; } function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.set(\"a\", 10); m = m.set(\"b\", 20); var r: i32 = 0; if (m.cv(20)) { r = r + 1; } if (m.cv(99)) { r = r + 100; } return r; }"},
+		// An ARRAY payload in an Option (`Some(xs)` where xs: string[]) — the
+		// `m.get(k)` shape on a Map[K, V[]] (std/url's query-param parse). The
+		// array is a leak-only pointer borrowed from the Option box: bound is_arr
+		// + strarr so `xs.len()` / `xs.append(v)` (clone) resolve. hit: n=2,
+		// more.len=3 -> 23; miss -> 7; total 30.
+		{"opt-array-payload", "function pick(o: Option[string[]], fallback: i32): i32 { match (o) { Some(xs) => { var n = xs.len(); var more = xs.append(\"z\"); return n * 10 + more.len(); }, None => { return fallback; } } return 0; } function main(): i32 { var a: string[] = []; a = a.append(\"p\"); a = a.append(\"q\"); var hit = pick(Some(a), 0); var miss = pick(None, 7); return hit + miss; }"},
 		{"with-loop", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; while (i < 4) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3]; }"},
 		{"append-build", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a[0] + a[4]; }"},
 		// `.append(e)` as a general EXPRESSION (not the `out = out.append(e)`
