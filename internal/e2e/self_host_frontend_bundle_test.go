@@ -1,16 +1,9 @@
 package e2e
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
 )
 
 // Real-frontend self-host milestone: bundle the ACTUAL lexer.fern +
@@ -26,41 +19,7 @@ import (
 // string, … }, Par { toks: lexer.Token[], … }) — the case that
 // required the infer_expr_type struct-field-read fix in asm.fern.
 func TestSelfHostFrontendBundleX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "flatten.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern", "bundle_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
-
-	prog, _, err := modload.Load(filepath.Join(dir, "bundle_run.fern"))
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	driverAsm := filepath.Join(dir, "driver.s")
-	driverBin := filepath.Join(dir, "driver")
-	if err := os.WriteFile(driverAsm, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write driver asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", driverAsm, "-o", driverBin).CombinedOutput(); err != nil {
-		t.Fatalf("driver gcc: %v\n%s", err, out)
-	}
+	gcc, runner, driverBin := buildModloadDriverX86(t)
 
 	lexerSrc, _ := os.ReadFile("../../examples/self_host/lexer.fern")
 	parserSrc, _ := os.ReadFile("../../examples/self_host/parser.fern")
@@ -73,40 +32,21 @@ func TestSelfHostFrontendBundleX86_64(t *testing.T) {
 		"    return mod.funcs.len();\n" +
 		"}\n"
 
-	var bundle bytes.Buffer
-	bundle.WriteString("///MODULE util\n")
-	bundle.Write(utilSrc)
-	bundle.WriteString("///MODULE lexer\n")
-	bundle.Write(lexerSrc)
-	bundle.WriteString("\n///MODULE parser\n")
-	bundle.Write(parserSrc)
-	bundle.WriteString("\n///MODULE main\n")
-	bundle.WriteString(entry)
-
-	var dcmd *exec.Cmd
-	if len(runner) == 0 {
-		dcmd = exec.Command(driverBin)
-	} else {
-		dcmd = exec.Command(runner[0], append(runner[1:], driverBin)...)
-	}
-	dcmd.Stdin = bytes.NewReader(bundle.Bytes())
-	mergedAsm, err := dcmd.Output()
-	if err != nil {
-		t.Fatalf("run driver: %v", err)
-	}
+	// The loader follows main's ./lexer + ./parser imports (parser pulls
+	// in lexer + util) and merges them — the file-based equivalent of the
+	// hand-built ///MODULE util+lexer+parser bundle.
+	mergedAsm, progDir := compileFilesModload(t, runner, driverBin, map[string]string{
+		"util.fern":   string(utilSrc),
+		"lexer.fern":  string(lexerSrc),
+		"parser.fern": string(parserSrc),
+		"main.fern":   entry,
+	})
 	if len(mergedAsm) == 0 {
 		t.Fatal("driver emitted 0 bytes for the frontend bundle")
 	}
 	t.Logf("merged frontend asm: %d bytes", len(mergedAsm))
 
-	mergedAsmPath := filepath.Join(dir, "merged.s")
-	mergedBin := filepath.Join(dir, "merged")
-	if err := os.WriteFile(mergedAsmPath, mergedAsm, 0o644); err != nil {
-		t.Fatalf("write merged asm: %v", err)
-	}
-	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", mergedAsmPath, "-o", mergedBin).CombinedOutput(); err != nil {
-		t.Fatalf("merged gcc: %v\n%s", err, out)
-	}
+	mergedBin := buildBin(t, gcc, progDir, "merged", mergedAsm)
 	var mcmd *exec.Cmd
 	if len(runner) == 0 {
 		mcmd = exec.Command(mergedBin)

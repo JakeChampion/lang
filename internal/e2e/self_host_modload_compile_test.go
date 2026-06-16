@@ -72,6 +72,30 @@ func compileStdProgModload(t *testing.T, runner []string, driverBin string, mods
 	return string(runDriverFile(t, runner, driverBin, filepath.Join(progDir, "main.fern"))), progDir
 }
 
+// compileFilesModload compiles a program from an explicit set of module
+// files (`files` maps a `<name>.fern` filename to its source, and MUST
+// include "main.fern" as the entry) with the file-based driver. The
+// general counterpart of compileStdProgModload / compileSourceModload for
+// programs built from specific self-host modules (e.g. lexer + parser).
+// Returns the emitted asm and the program dir.
+func compileFilesModload(t *testing.T, runner []string, driverBin string, files map[string]string) (asm string, progDir string) {
+	t.Helper()
+	progDir = t.TempDir()
+	bsrc, err := os.ReadFile("../../examples/self_host/builtins.fern")
+	if err != nil {
+		t.Fatalf("read builtins.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(progDir, "builtins.fern"), bsrc, 0o644); err != nil {
+		t.Fatalf("write builtins.fern: %v", err)
+	}
+	for name, src := range files {
+		if err := os.WriteFile(filepath.Join(progDir, name), []byte(src), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	return string(runDriverFile(t, runner, driverBin, filepath.Join(progDir, "main.fern"))), progDir
+}
+
 // compileSourceModload compiles `entrySrc` and its FULL transitive stdlib
 // closure (resolved by the real Go modload, exactly like selfHostBundleFor)
 // with the file-based driver: each resolved module is written as a flat
