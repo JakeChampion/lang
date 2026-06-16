@@ -4836,10 +4836,23 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     // to aarch64. Sets x0 = old ptr (return), advances the
     // ptr by x0 (the size arg).
     if (s.has_need("heap")) {
-        var heap_size: string = "3758096384";   // 3.5 GiB — arm64 emits longer asm per op than x86, so its self-compile live set runs higher; widening the IR subset (enum-array Expr[]/Stmt[] aliasing) tipped the stage-2 fixpoint into the exit-137 alloc trap at 2.5 GiB. Matches the native arm64 backend's heapBytes (lockstep). base 0x10000000 + 3.5 GiB = 0xF0000000 < 4 GiB (32-bit pointers round-trip — at the ceiling, no further headroom without raising the base).
+        // 3.5 GiB heap arena, lazily mmap'd at hint 0x10000000 on the first
+        // allocation (mirrors the native arm64 emitAllocRuntime) rather than
+        // reserved as a 3.5 GiB `.bss` in the loaded image. Two payoffs: the
+        // R+W data segment stays tiny (so the binary can be a position-
+        // independent ET_DYN loaded at any base — `-target arm64-android`),
+        // and the arena lives at the low 0x10000000 hint regardless of where
+        // the binary itself loads, so base + 3.5 GiB = 0xF0000000 < 4 GiB and
+        // heap pointers round-trip through 32-bit-safe ranges. Matches the
+        // native arm64 backend's heapBytes (lockstep). The size (3.5 GiB =
+        // 0xE0000000) is built in-asm via `mov #14; lsl #28` below, not a
+        // `ldr =N` literal — the in-process assembler's literal parser is
+        // 32-bit and would sign-extend a >2^31 constant.
         s = s.write("    .bss\n");
         s = s.write("    .align 3\n");
-        s = s.write("__fern_heap_ptr: .quad 0\n");
+        s = s.write("__fern_heap_ptr: .quad 0\n");       // bump cursor (0 until first mmap)
+        s = s.write("    .align 3\n");
+        s = s.write("__fern_heap_end: .quad 0\n");        // arena end (base + heap_size)
         s = s.write("    .align 3\n");
         // RC over-release (underflow) detector — Phase 0c. Bumped by
         // __fern_rc_dec when it sees rc <= 0 before decrementing; read
@@ -4851,8 +4864,6 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         // indexed by idx = roundup8(size)/8; <= 8 KiB classes. Pushed by
         // __fern_arr_dec, popped by __fern_alloc before bumping.
         s = s.write("__fern_freelist: .skip 524288\n");
-        s = s.write("    .align 3\n");
-        s = s.write("__fern_heap: .skip " + heap_size + "\n");   // 1.75 GiB — room for read_all_stdin + self-compiling a whole source bundle (zero-page .bss); 1 GiB was nearly exhausted as the bundle grew
         s = s.write("    .text\n");
         s = s.write(".globl __fern_alloc\n");
         s = s.write(".type __fern_alloc, %function\n");
@@ -4882,26 +4893,57 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    add x1, x1, :lo12:__fern_heap_ptr\n");
         s = s.write("    ldr x2, [x1]\n");
         s = s.write("    cbnz x2, .Lalloc_inited\n");
-        s = s.write("    adrp x2, __fern_heap\n");
-        s = s.write("    add x2, x2, :lo12:__fern_heap\n");
-        s = s.write("    str x2, [x1]\n");
+        // First allocation: lazily mmap the arena at hint 0x10000000
+        // (MAP_PRIVATE|MAP_ANONYMOUS, R+W). This runs once. The syscall
+        // clobbers x0..x5/x8 plus x9 (size save), so save/restore those
+        // beyond the x0..x3 contract callers rely on.
+        s = s.write("    stp x4, x5, [sp, #-16]!\n");
+        s = s.write("    stp x8, x9, [sp, #-16]!\n");
+        s = s.write("    mov x9, x0\n");                  // save rounded size
+        s = s.write("    mov x0, #1\n");
+        s = s.write("    lsl x0, x0, #28\n");             // hint = 0x10000000
+        // length = 3.5 GiB = 0xE0000000 = 14 << 28. Built with mov+lsl, not a
+        // `ldr =N` literal: the in-process assembler's literal parser is
+        // 32-bit (arm64_gas_atoi), so a >2^31 constant would sign-extend to a
+        // negative length and mmap would fail with ENOMEM.
+        s = s.write("    mov x1, #14\n");
+        s = s.write("    lsl x1, x1, #28\n");             // length = 0xE0000000 (3.5 GiB)
+        s = s.write("    mov x2, #3\n");                  // PROT_READ | PROT_WRITE
+        s = s.write("    mov x3, #0x22\n");               // MAP_PRIVATE | MAP_ANONYMOUS
+        s = s.write("    mov x4, #0\n");
+        s = s.write("    sub x4, x4, #1\n");              // x4 = -1 (fd)
+        s = s.write("    mov x5, #0\n");                  // offset
+        s = s.write("    mov x8, #222\n");               // __NR_mmap
+        s = s.write("    svc #0\n");
+        s = s.write("    cmn x0, #0\n");                  // mmap returns -errno on failure
+        s = s.write("    b.mi .Lalloc_oom\n");
+        s = s.write("    adrp x1, __fern_heap_ptr\n");
+        s = s.write("    add x1, x1, :lo12:__fern_heap_ptr\n");
+        s = s.write("    str x0, [x1]\n");                // heap_ptr = arena base
+        s = s.write("    mov x2, #14\n");
+        s = s.write("    lsl x2, x2, #28\n");             // 3.5 GiB
+        s = s.write("    add x2, x0, x2\n");              // arena end
+        s = s.write("    adrp x3, __fern_heap_end\n");
+        s = s.write("    add x3, x3, :lo12:__fern_heap_end\n");
+        s = s.write("    str x2, [x3]\n");                // heap_end = base + heap_size
+        s = s.write("    mov x0, x9\n");                  // restore rounded size
+        s = s.write("    ldp x8, x9, [sp], #16\n");
+        s = s.write("    ldp x4, x5, [sp], #16\n");
+        s = s.write("    adrp x1, __fern_heap_ptr\n");    // x1 was clobbered
+        s = s.write("    add x1, x1, :lo12:__fern_heap_ptr\n");
         s = s.write(".Lalloc_inited:\n");
-        s = s.write("    ldr x2, [x1]\n");
-        s = s.write("    add x3, x2, x0\n");
-        // Bounds check: a bump heap has no GC, so an overflow would
-        // silently run past the buffer into adjacent .bss (e.g. the
-        // strbuf output accumulator) and corrupt it. Trap with a clean,
-        // recognisable exit code (137) instead of corrupting memory.
-        // x0 is free now (size consumed into x3); x4 is saved/restored
-        // so __fern_alloc keeps its original clobber contract (x0..x3) —
-        // callers hold live values in higher registers across the call.
-        // The ldr restoring x4 doesn't disturb the cmp's flags.
+        s = s.write("    ldr x2, [x1]\n");                // x2 = heap_ptr
+        s = s.write("    add x3, x2, x0\n");              // x3 = new cursor
+        // Bounds check against the mmap'd arena end (a bump heap has no GC,
+        // so overflowing would run past the arena and segfault; trap with a
+        // clean, recognisable exit code 137 instead). x4 is saved/restored so
+        // __fern_alloc keeps its x0..x3 clobber contract; the ldr restoring
+        // x4 doesn't disturb the cmp's flags.
         s = s.write("    str x4, [sp, #-16]!\n");
-        s = s.write("    ldr x4, =" + heap_size + "\n");
-        s = s.write("    adrp x0, __fern_heap\n");
-        s = s.write("    add x0, x0, :lo12:__fern_heap\n");
-        s = s.write("    add x0, x0, x4\n");
-        s = s.write("    cmp x3, x0\n");
+        s = s.write("    adrp x4, __fern_heap_end\n");
+        s = s.write("    add x4, x4, :lo12:__fern_heap_end\n");
+        s = s.write("    ldr x4, [x4]\n");                // x4 = heap_end
+        s = s.write("    cmp x3, x4\n");
         s = s.write("    ldr x4, [sp], #16\n");
         s = s.write("    b.hi .Lalloc_oom\n");
         s = s.write("    str x3, [x1]\n");
@@ -5122,10 +5164,10 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         // arm64 backend, internal/codegen/arm64/arm64.go). The rc word
         // is a 32-bit count at [data-8]; data is the value pointer
         // callers hold. Guard chain: null -> SSO inline-tag (low bit) ->
-        // low-address (< 0x10000) -> static sentinel (rc high bit). The
-        // native backend's below-heap guard is the mmap hint
-        // 0x10000000; the self-host heap is the __fern_heap .bss buffer
-        // (low static address), so < 0x10000 is the right cutoff.
+        // low-address (< 0x10000) -> static sentinel (rc high bit). Static /
+        // immortal cells are distinguished by the rc high-bit sentinel (not by
+        // address), so the < 0x10000 guard only filters null-ish / sub-page
+        // values; the heap now lives at the 0x10000000 mmap hint and passes it.
         // Frameless: param[0] at [sp]; result in x0 (the input ptr).
         // No free path yet (safe-leak); __fern_arr_dec /
         // __fern_drop_arr_ptr stay no-ops until the layout migration.
