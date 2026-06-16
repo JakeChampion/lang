@@ -1044,10 +1044,21 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 		// `case "map_new"` / `case "__map_get_impl"` / etc.
 		// switches resolve targets by their bare name; prefixing
 		// here would leave every call site dangling.
-		if fn.Receiver == nil && !isRuntimeHelperName(fn.Name) {
+		if fn.Receiver == nil && fn.AssocType == "" && !isRuntimeHelperName(fn.Name) {
 			fn.Name = selfPrefix + fn.Name
 		} else if fn.Receiver != nil {
 			r.rewriteType(&fn.Receiver.Type)
+		} else if fn.AssocType != "" {
+			// Associated-function impl member (`impl Trait for T { function f() }`):
+			// exempt from the module prefix exactly like a receiver method. The
+			// checker hoists it to `__assoc_<T>_<f>` from AssocType + the BARE
+			// name, and conformance + `T.f()` dispatch look up that bare form;
+			// prefixing the name here produced `__assoc_<T>_<mod>__<f>`, which no
+			// conformance check or call site resolved (a primitive impl like
+			// `impl num.Zero for i32` then failed "missing method"). Rewrite the
+			// AssocType so a user-type impl in this module hoists under the type's
+			// mangled name; a primitive (i32/f64/…) is left unchanged.
+			fn.AssocType = r.rewriteStructName(fn.AssocType)
 		}
 		for i := range fn.Params {
 			r.rewriteType(&fn.Params[i].Type)
