@@ -238,9 +238,9 @@ func TestStaticPieExecutableLayout(t *testing.T) {
 	}
 
 	// The x86-64 PIE container shares the layout but differs in e_machine
-	// (EM_X86_64) and relocation type (R_X86_64_RELATIVE = 8). The x86
-	// assembler's PIE path is a later slice; the container is exercised
-	// here at the byte level.
+	// (EM_X86_64) and relocation type (R_X86_64_RELATIVE = 8); exercised
+	// end-to-end by e2e's TestX86_64NativePIESelfReloc, and at the byte
+	// level here.
 	binX := elf.StaticPieExecutableX86(text, data, relocs)
 	if e_machine := u16(binX, 18); e_machine != 62 { // EM_X86_64
 		t.Errorf("x86 e_machine = %d, want 62", e_machine)

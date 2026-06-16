@@ -77,11 +77,15 @@ const (
 	sysNanosleep = 35
 )
 
-// Options tunes the emit. Currently empty; reserved for the
-// future `Darwin bool` flip when (if) a Mach-O variant
-// arrives. Kept as a struct rather than a sentinel value so
-// adding fields doesn't change call sites.
-type Options struct{}
+// Options tunes the emit.
+type Options struct {
+	// PIE emits a static position-independent (ET_DYN) executable: a
+	// self-relocation prologue at `_start` applies the R_X86_64_RELATIVE
+	// entries in .rela.dyn (the `.quad <symbol>` slots) before the program
+	// runs, so it is correct at the arbitrary base the kernel loads it at.
+	// Pair with x86_64.AssembleProgramPIE + elf.StaticPieExecutableX86.
+	PIE bool
+}
 
 // Emit produces assembly text for prog targeting x86-64 Linux.
 func Emit(prog *ast.Program, info *checker.Info) (string, error) {
@@ -156,7 +160,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// `lea rax, [rip + __closure_cell_<name>]` against a static
 	// `.rodata` cell instead of a 16-byte heap-allocated pair.
 	ir.InlineZeroCaptureClosures(ip)
-	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, vtables: ip.Vtables}
+	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, vtables: ip.Vtables, pie: opts.PIE}
 	// Pre-scan call sites for runtime-helper use-flags before
 	// touching any code emission, so emitDataSections + the
 	// runtime emitters below know which helpers to include
@@ -385,6 +389,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 type generator struct {
 	info *checker.Info
 	out  strings.Builder
+	// pie emits the static-PIE self-relocation prologue at `_start`
+	// (see Options.PIE).
+	pie bool
 	// labelCounter generates unique branch / scope labels
 	// (`.Lret_main_0`, `.Lif_3` etc.). Per-program rather
 	// than per-function so labels stay globally unique even
@@ -782,10 +789,38 @@ func (g *generator) callReturnsVoid(name string) bool {
 }
 
 // invariant the rest of the code expects.
+// emitPieSelfReloc emits the static-PIE self-relocation prologue at the top
+// of `_start`. It derives the kernel-chosen load base via __ehdr_start
+// (vaddr 0, so [rip+__ehdr_start] yields base), then walks the
+// R_X86_64_RELATIVE entries in [__rela_start, __rela_end) — the
+// `.quad <symbol>` slots — applying each as *(base + r_offset) =
+// base + r_addend. rip-relative code needs no relocation, so reloc-free
+// programs run an empty loop. Uses rax/rsi/rdi/rcx/rdx (the entry-time
+// rdx atexit pointer is unused under -nostdlib) and leaves rsp untouched,
+// so the argv-reading startup that follows is unchanged.
+func (g *generator) emitPieSelfReloc() {
+	g.emit("lea rax, [rip + __ehdr_start]") // rax = load base
+	g.emit("lea rsi, [rip + __rela_start]") // rsi = &.rela.dyn (cursor)
+	g.emit("lea rdi, [rip + __rela_end]")   // rdi = end
+	g.label(".Lfern_reloc_loop")
+	g.emit("cmp rsi, rdi")
+	g.emit("jae .Lfern_reloc_done")
+	g.emit("mov rcx, [rsi]")       // r_offset
+	g.emit("mov rdx, [rsi + 16]")  // r_addend (r_info at +8 is RELATIVE)
+	g.emit("add rdx, rax")         // base + addend
+	g.emit("mov [rax + rcx], rdx") // *(base + r_offset) = base + addend
+	g.emit("add rsi, 24")          // advance one Elf64_Rela (24 bytes)
+	g.emit("jmp .Lfern_reloc_loop")
+	g.label(".Lfern_reloc_done")
+}
+
 func (g *generator) emitStartRuntime() {
 	g.line("")
 	g.line(".globl _start")
 	g.label("_start")
+	if g.pie {
+		g.emitPieSelfReloc()
+	}
 	// argc is at [rsp+0]; argv starts at [rsp+8]; envp at
 	// [rsp + 8 + (argc+1)*8] (NULL-terminator after argv).
 	// Stash whichever of (argc, argv, envp) the program
