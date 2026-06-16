@@ -694,6 +694,43 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// Struct-field concat detector: the borrowed string field feeds a fresh concat;
 		// the field box and the result are each accounted exactly once (detector 0).
 		{"iife-match-string-concat-struct-field-detector", `struct P { name: string } enum E { V(P), N } function go(): i32 { var e: E = E.V(P { name: "world" }); var s: string = match (e) { V(p) => p.name + "!", N => "zz" }; if (s.len() != 6) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// COMPOSITE match-EXPRESSION result (the IIFE composite-result slice). A
+		// match-expression whose result is a struct / nominal-enum / tuple value
+		// returned WHOLE — a bare bound payload `V(q) => q` and/or a fresh same-type
+		// construction in another arm — now types the result temp + the bound local
+		// so a later `p.field` / `match (p)` / `p.0` resolves on the IR path. Each
+		// arm must agree on the composite type (mismatched arms still bail to AST).
+		//
+		// BARE STRUCT payload returned whole, used via `p.field`. The leak-safe
+		// struct pointer rides one slot; the temp + `p` are marked struct P.
+		{"iife-match-struct-payload-field-value", `struct P { x: i32 } enum E { V(P), N } function main(): i32 { var e: E = E.V(P { x: 7 }); var p: P = match (e) { V(q) => q, N => P { x: 0 } }; return p.x; }`, 7},
+		// The OTHER (constructor) arm is taken: the N-arm builds a fresh P, same type.
+		{"iife-match-struct-payload-other-arm", `struct P { x: i32 } enum E { V(P), N } function main(): i32 { var e: E = E.N; var p: P = match (e) { V(q) => q, N => P { x: 42 } }; return p.x; }`, 42},
+		// UNANNOTATED struct binding, payload arm FIRST (`iife_leaf_value` sees a bare
+		// ident not in scope, so `p` is typed via the composite-result fallback).
+		{"iife-match-struct-payload-unannotated-value", `struct P { x: i32 } enum E { V(P), N } function main(): i32 { var e: E = E.V(P { x: 5 }); var p = match (e) { V(q) => q, N => P { x: 0 } }; return p.x; }`, 5},
+		// Over-release detector: the struct payload is BORROWED from the enum box (a
+		// leak-only struct, never reclaimed), the constructed N-arm struct leaks too —
+		// neither over-releases. Detector reads 0.
+		{"iife-match-struct-payload-detector", `struct P { x: i32 } enum E { V(P), N } function go(): i32 { var e: E = E.V(P { x: 7 }); var p: P = match (e) { V(q) => q, N => P { x: 0 } }; if (p.x != 7) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// BARE ENUM payload returned whole, used via a nested `match (p)`. The inner
+		// enum pointer rides one slot; the temp + `p` are marked enum Inner.
+		{"iife-match-enum-payload-match-value", `enum Inner { A(i32), B } enum Outer { W(Inner), Z } function main(): i32 { var o: Outer = Outer.W(Inner.A(5)); var p: Inner = match (o) { W(q) => q, Z => Inner.B }; return match (p) { A(n) => n, B => 99 }; }`, 5},
+		// The Z-arm constructs a fresh Inner.B of the same enum type; nested match on it.
+		{"iife-match-enum-payload-other-arm", `enum Inner { A(i32), B } enum Outer { W(Inner), Z } function main(): i32 { var o: Outer = Outer.Z; var p: Inner = match (o) { W(q) => q, Z => Inner.B }; return match (p) { A(n) => n, B => 8 }; }`, 8},
+		// Enum-payload over-release detector: enum boxes are leak-only on this IR path
+		// (the exit sweep never frees them), so neither the borrowed payload nor the
+		// constructed arm over-releases. Detector reads 0.
+		{"iife-match-enum-payload-detector", `enum Inner { A(i32), B } enum Outer { W(Inner), Z } function go(): i32 { var o: Outer = Outer.W(Inner.A(5)); var p: Inner = match (o) { W(q) => q, Z => Inner.B }; var r = match (p) { A(n) => n, B => 99 }; if (r != 5) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// BARE TUPLE payload returned whole, used via `p.0` / `p.1`. The tuple pointer
+		// rides one slot; the temp + `p` are marked with the element tags.
+		{"iife-match-tuple-payload-elem-value", `enum E { V((i32, i32)), N } function main(): i32 { var e: E = E.V((3, 4)); var p: (i32, i32) = match (e) { V(q) => q, N => (0, 0) }; return p.0 + p.1; }`, 7},
+		// UNANNOTATED tuple binding (the element tags come from the composite-result
+		// fallback, payload arm first).
+		{"iife-match-tuple-payload-unannotated-value", `enum E { V((i32, i32)), N } function main(): i32 { var e: E = E.V((10, 20)); var p = match (e) { V(q) => q, N => (0, 0) }; return p.0 + p.1; }`, 30},
+		// Tuple-payload over-release detector: the borrowed tuple is leak-only; neither
+		// arm over-releases. Detector reads 0.
+		{"iife-match-tuple-payload-detector", `enum E { V((i32, i32)), N } function go(): i32 { var e: E = E.V((3, 4)); var p: (i32, i32) = match (e) { V(q) => q, N => (0, 0) }; if (p.0 + p.1 != 7) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
