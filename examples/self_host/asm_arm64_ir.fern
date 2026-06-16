@@ -491,6 +491,22 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // __fern_putchar, reused via the putchar need). Push x0 for the drop.
             s = s.need("putchar");
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_putchar\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "strbuf_reset") {
+            // no args -> clear the global string-builder length. The strbuf runtime
+            // is emitted alongside the heap (mark_heap), so pull it in. Push x0 for
+            // the statement-level drop (same shape as putchar).
+            s = s.mark_heap();
+            s = s.write("    bl __fern_strbuf_reset\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "strbuf_append") {
+            // [strbox] -> copy its bytes onto the global string-builder. Push x0 for
+            // the drop.
+            s = s.mark_heap();
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_strbuf_append\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "strbuf_take") {
+            // no args -> snapshot the builder into a fresh string box and reset it
+            // (a value op; allocates via __fern_alloc in the heap runtime).
+            s = s.mark_heap();
+            s = s.write("    bl __fern_strbuf_take\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "sleep_ms") {
             // [ms] -> nanosleep(ms) (asm_arm64.emit_runtime emits __fern_sleep_ms
             // unconditionally, so no need is set). Push x0 for the drop.
