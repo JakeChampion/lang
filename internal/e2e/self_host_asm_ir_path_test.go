@@ -276,6 +276,15 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// The std/stream `stream_from_string` shape: a string `.bytes()` call (a
 		// fresh u8[] move source) as a u8[] struct-lit field value. 65+66+67 = 198.
 		{"bytes-call-field", "struct S { data: u8[], pos: i32 } function mk(s: string): S { return S { data: s.bytes(), pos: 0 }; } function (x: S) sum(): i32 { var d: u8[] = x.data; var t: i32 = 0; var i: i32 = 0; while (i < d.len()) { t = t + (d[i] as i32); i = i + 1; } return t; } function main(): i32 { var x: S = mk(\"ABC\"); return x.sum(); }"},
+		// A sub-word (u8[]) array as a TUPLE element — the std/stream
+		// `(s: Stream) read_all(): (u8[], Stream)` cursor-idiom shape. u8[]/u16[]/
+		// i8[]/i16[] ride the same i32[] 4-byte-slot tuple representation as
+		// i32[]/u32[], so tuple_elems_lowerable now admits them: construction
+		// stores the buffer pointer in one slot, the destructure binds it as an
+		// array local (mark_arr), and `bytes[i]` rides the 4-byte arr_get. Builds
+		// [10,20,35], reads it back through the (u8[], St) return: 10+20+35 + pos
+		// 3 = 68.
+		{"subword-arr-tuple-elem", "struct St { data: u8[], pos: i32 } function (s: St) read_all(): (u8[], St) { var out: u8[] = []; var i: i32 = s.pos; var end: i32 = s.data.len(); while (i < end) { out = out.append(s.data[i]); i = i + 1; } return (out, St { ...s, pos: end }); } function main(): i32 { var d: u8[] = []; d = d.append(10 as u8); d = d.append(20 as u8); d = d.append(35 as u8); var s: St = St { data: d, pos: 0 }; var (bytes, s2) = s.read_all(); var total: i32 = 0; var i: i32 = 0; while (i < bytes.len()) { total = total + (bytes[i] as i32); i = i + 1; } return total + s2.pos; }"},
 		{"with-loop", "function main(): i32 { var a = [0, 0, 0, 0]; var i = 0; while (i < 4) { a = a.with(i, i * i); i = i + 1; } return a[0] + a[1] + a[2] + a[3]; }"},
 		{"append-build", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a[0] + a[4]; }"},
 		// `.append(e)` as a general EXPRESSION (not the `out = out.append(e)`
