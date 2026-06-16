@@ -250,6 +250,36 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-16 — u64[] arrays on the self-host IR path (widen IR subset)
+
+`u64[]` locals / params / aliases — bind from a literal, index, iterate, and
+8-byte round-trip — now route the self-host IR path on **both x86-64 and wasm**.
+i64[] / f64[] already rode the 8-byte-element path (`op_arr_make_i64` + the
+`is_i64arr` element-width mark); u64[] was deferred.
+
+- **irlower.** The `var xs: u64[] = [...]` literal binding takes the same dedicated
+  8-byte branch as i64[] (`op_arr_make_i64`), and the binding annotation marks the
+  slot `is_i64arr` (8-byte element reads). The slot is additionally marked `is_u64`
+  so a read element gets UNSIGNED arithmetic (`is_arr && is_u64` — the only
+  u64-vs-i64 difference).
+- **The cross-backend fix.** `is_i64_slot` previously returned true for *any*
+  u64-marked slot — including a u64[] array slot — so the wasm backend declared the
+  local `(local i64)` though it holds an i32 array pointer, and the wasm verifier
+  rejected the array-make ("expected i64, found i32"). `is_i64_slot` now excludes
+  ARRAY (pointer) slots: a u64[] slot is an i32 pointer; its u64-ness is about its
+  ELEMENTS, handled at the element read. (i64[] was unaffected — it uses the
+  separate `is_i64arr` mark, never `is_i64`, so its slot was already i32.)
+- **Soundness / scope.** Element storage + reads are 8-byte; values match the
+  interpreter oracle (incl. a >2³² round-trip). u64[] as a STRUCT FIELD and a
+  u64[]-RETURNING function stay on the AST path for now (field-tag width dispatch
+  and the return-type registry — separate increments). The change only affects
+  slots that are `is_arr && is_u64` (i.e. u64[]), which never reached IR before, so
+  no self-host source changes classification and the Stage-2 fixpoint holds.
+- **Tests.** `internal/e2e/self_host_u64_array_ir_test.go` —
+  `TestSelfHostU64ArrayIR{X86_64,Wasm}`, 7 cases each routing-pinned `"ir"` and
+  oracle-checked (len, index, iterate, alias, 8-byte wide-value, u64[] param, plus
+  an i64[] regression guard).
+
 ### 2026-06-16 — self-referential / mutually-recursive structs on the self-host IR path (widen IR subset)
 
 `struct Node { v: i32, next: Node[] }` (and mutually-recursive `A { bs: B[] }` /

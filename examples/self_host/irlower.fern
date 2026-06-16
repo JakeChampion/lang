@@ -893,9 +893,16 @@ pub function (s: LowerState) mark_i64(i: i32, v: boolean): LowerState {
 }
 pub function (s: LowerState) is_i64_slot(i: i32): boolean {
     if (i < 0) { return false; }
-    // u64 lives in the i64 64-bit domain: a u64 slot is i64-wide (its unsigned
-    // ops are selected separately via is_u64_slot / expr_is_u64). So a slot is
-    // "i64" for width/lowering purposes if it's marked i64 OR u64.
+    // u64 lives in the i64 64-bit domain: a u64 SCALAR slot is i64-wide (its
+    // unsigned ops are selected separately via is_u64_slot / expr_is_u64). So a
+    // slot is "i64" for width/lowering purposes if it's marked i64 OR u64 — but
+    // NOT when it is an ARRAY slot: a u64[] slot holds an array POINTER (i32 on
+    // wasm32), not a 64-bit scalar, and its u64-ness is about its ELEMENTS (read
+    // 8-byte via is_i64arr, unsigned via is_arr && is_u64). Declaring such a slot
+    // a 64-bit local would type the pointer as i64 and the wasm verifier rejects
+    // the array-make (i32 pointer into an i64 local). The element width/signedness
+    // is handled at the element read, independent of the slot's own width.
+    if (i < s.local_is_arr.len() && s.local_is_arr[i]) { return false; }
     if (i < s.local_is_u64.len() && s.local_is_u64[i]) { return true; }
     if (i >= s.local_is_i64.len()) { return false; }
     return s.local_is_i64[i];
@@ -6523,7 +6530,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                     _ => {}
                 }
             }
-            if (comma < 0 && (v.type_name == "i64[]" || i64arr_unannot)) {
+            if (comma < 0 && (v.type_name == "i64[]" || i64arr_unannot || v.type_name == "u64[]")) {
                 var i64lit: boolean = false;
                 match (v.init) {
                     parser.ExprArray(_) => { i64lit = true; },
@@ -6544,6 +6551,11 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                             var iaslot: i32 = iab.slot_of(v.name);
                             iab = iab.mark_arr(iaslot, true);
                             iab = iab.mark_i64arr(iaslot, true);
+                            // u64[] rides the i64[] 8-byte storage/read path; the
+                            // extra u64 mark drives UNSIGNED arithmetic on a read
+                            // element (is_arr && is_u64) — is_i64_slot excludes the
+                            // (pointer) array slot, so the local stays i32-wide.
+                            if (v.type_name == "u64[]") { iab = iab.mark_u64(iaslot, true); }
                             return iab.emit(ir.op_store_local(iaslot));
                         },
                         _ => {}
@@ -6952,7 +6964,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // i64[] tracking (element WIDTH + i64 value typing for a[i]). The
             // literal form is handled by a dedicated branch above; here this
             // catches aliasing (`var b = a`) and the `i64[]` annotation.
-            var is_i64arr: boolean = expr_is_i64arr(v.init, se) || v.type_name == "i64[]";
+            var is_i64arr: boolean = expr_is_i64arr(v.init, se) || v.type_name == "i64[]" || v.type_name == "u64[]";
             // bind AFTER lowering the init (the init can't see the new name)
             // Option/Result tracking: `var r = f()` of an Option/Result-returning
             // call (or a `var r: Option[T] = …` annotation) records the slot's
