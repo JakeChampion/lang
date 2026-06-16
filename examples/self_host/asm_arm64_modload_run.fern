@@ -1,0 +1,45 @@
+// examples/self_host/asm_arm64_modload_run.fern — the arm64 counterpart
+// of asm_modload_run: an import-driven self-host compiler driver that
+// reads an ENTRY file off argv, resolves its imports off disk (the shared
+// ./modloader), merges them with flatten.bundle, loads the built-in types
+// from a real builtins.fern, and emits aarch64 assembly via
+// asm_arm64.emit_module. The file-based successor to bundle_run_arm64.fern
+// (no `///MODULE` stdin bundle).
+//
+//     $ asm_arm64_modload_run path/to/main.fern > main.s
+//
+// Module resolution + builtin merging are shared with the x86 driver via
+// ./modloader; this driver differs only in emitting arm64 asm. Uses only
+// features the self-hosted emitter supports (args, read_file → Result,
+// match).
+
+import "./lexer";
+import "./parser";
+import "./flatten";
+import "./asm_arm64";
+import "./modloader";
+
+function main(): i32 {
+    var a: string[] = args();
+    if (a.len() < 2) {
+        eprint("usage: asm_arm64_modload_run <entry.fern>\n");
+        return 2;
+    }
+    var entry_path: string = a[1];
+    var dir: string = modloader.dirname(entry_path);
+    match (read_file(entry_path)) {
+        Ok(src) => {
+            var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
+            var loaded: flatten.LoadedModule[] = modloader.load_imports(dir, entry);
+            var merged: parser.Module = flatten.bundle(entry, loaded);
+            merged = modloader.merge_builtins(dir, merged);
+            write(asm_arm64.emit_module(parser.module_with_builtins(merged), false));
+            return 0;
+        },
+        Err(e) => {
+            eprint("asm_arm64_modload_run: could not read entry file\n");
+            return 1;
+        },
+    }
+    return 3;
+}
