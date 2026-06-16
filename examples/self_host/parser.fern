@@ -3633,6 +3633,29 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         spf = spf.append(StructFieldDecl { name: "nanos", type_name: "i32" });
         structs = structs.append(StructDecl { name: "Span", fields: spf, type_params: [], line: 0, col: 0, enum_owner: "" });
     }
+    // std/io_buffered + std/stream + std/mock_platform built-ins (registered
+    // in the Go checker, not `struct`-declared in source) — same injection
+    // pattern as the time types. Field lists mirror checker.go exactly:
+    //   Stream       { data: u8[], pos: i32 }       — byte cursor reader
+    //   BytesWriter  { data: u8[] }                 — in-memory write buffer
+    //   MockCall     { name: string, args: string } — recorded call entry
+    //   MockPlatform { calls: MockCall[] }           — call-recording mock
+    // Stream / BytesWriter carry a sub-word (u8[]) array field, now leak-safe
+    // (is_leaksafe_array_field), so their constructors / methods lower on the
+    // IR path. MockPlatform's `calls: MockCall[]` is an array-of-leaf-struct
+    // field (leak mode). MockCall is two strings (leaf-safe).
+    structs = add_builtin_struct2(structs, "MockCall", "name", "string", "args", "string");
+    structs = add_builtin_struct2(structs, "Stream", "data", "u8[]", "pos", "i32");
+    if (!struct_declared(structs, "BytesWriter")) {
+        var bwf: StructFieldDecl[] = [];
+        bwf = bwf.append(StructFieldDecl { name: "data", type_name: "u8[]" });
+        structs = structs.append(StructDecl { name: "BytesWriter", fields: bwf, type_params: [], line: 0, col: 0, enum_owner: "" });
+    }
+    if (!struct_declared(structs, "MockPlatform")) {
+        var mpf: StructFieldDecl[] = [];
+        mpf = mpf.append(StructFieldDecl { name: "calls", type_name: "MockCall[]" });
+        structs = structs.append(StructDecl { name: "MockPlatform", fields: mpf, type_params: [], line: 0, col: 0, enum_owner: "" });
+    }
     return structs;
 }
 
