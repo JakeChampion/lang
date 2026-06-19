@@ -1549,6 +1549,17 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"matchexpr-opt-f64-cast", `function main(): i32 { var o: Option[f64] = Some(2.5); var y = match (o) { Some(n) => (n as i32), None => 0 }; return y; }`, 2},
 		{"matchexpr-result-i64-cast", `function main(): i32 { var r: Result[i64, i32] = Ok(7 as i64); var y = match (r) { Ok(n) => (n as i32), Err(e) => e }; return y; }`, 7},
 		{"matchexpr-uenum-i64-cast", `enum E { Big(i64), Nil } function main(): i32 { var e: E = Big(5 as i64); var y = match (e) { Big(n) => (n as i32), Nil => 0 }; return y; }`, 5},
+		// Value-position match-EXPRESSION reading a bound i64/f64 payload via
+		// ARITHMETIC (`Some(n) => n + 1`, `Some(p) => p.v + 1`, `Some(n) => n + 1.5`).
+		// The result temp is classified to the payload's wide kind by the arithmetic
+		// shape (iife_payload_arith_kind), and the StmtMatch arm-body store routes the
+		// wide RHS through lower_i64 / the f64 path — statement-position already lowers
+		// these, so only the value-position IIFE admission/classification was the gap.
+		{"matchexpr-opt-i64-arith", `function main(): i64 { var o: Option[i64] = Some(5 as i64); return match (o) { Some(n) => n + 1, None => 0 as i64 }; }`, 6},
+		{"matchexpr-result-i64-arith", `function main(): i64 { var r: Result[i64, i32] = Ok(5 as i64); return match (r) { Ok(n) => n + 1, Err(e) => 0 as i64 }; }`, 6},
+		{"matchexpr-uenum-i64-arith", `enum E { V(i64), W } function main(): i64 { var e: E = V(5 as i64); return match (e) { V(n) => n + 1, W => 0 as i64 }; }`, 6},
+		{"matchexpr-opt-f64-arith", `function main(): i32 { var o: Option[f64] = Some(4.5); return (match (o) { Some(n) => n + 1.5, None => 0.0 } as i32); }`, 6},
+		{"matchexpr-opt-struct-i64-arith", `struct P { v: i64 } function main(): i64 { var o: Option[P] = Some(P{v: 5 as i64}); return match (o) { Some(p) => p.v + 1, None => 0 as i64 }; }`, 6},
 		// f-string interpolation, pinned to the absolute IR-path value (the
 		// AST==IR differential above is blind to a both-paths-wrong desugar). The
 		// returned byte proves the interpolant text actually landed: `f"n={7}!"`
