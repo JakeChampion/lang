@@ -5574,6 +5574,30 @@ function iife_arm_returns_ident(arm: parser.MatchArm, name: string): boolean {
     return false;
 }
 
+// iife_arm_returns_narrowed_payload reports whether the arm's TAIL is
+// `return (name as <i32-width>)` — a narrowing cast of the BARE bound i64/f64
+// payload to an i32-width integer type (i32/u32/u8/i8), which yields an i32 result.
+// The i64/f64 payload slot is marked at width by the StmtMatch path (so the cast
+// reads the wide value and narrows, exactly as a statement-position `return (n as
+// i32)` does), but the RESULT temp stays i32 — letting an i64/f64-payload match-
+// EXPRESSION whose arms narrow the payload ride the i32 temp instead of bailing.
+function iife_arm_returns_narrowed_payload(arm: parser.MatchArm, name: string): boolean {
+    var t: parser.Expr = iife_arm_tail_expr(arm);
+    match (t) {
+        parser.ExprUnary(u) => {
+            if (u.op == "as_i32" || u.op == "as_u32" || u.op == "as_u8" || u.op == "as_i8") {
+                match (u.operand) {
+                    parser.ExprIdent(id) => { return id.name == name; },
+                    _ => { return false; }
+                }
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // iife_arm_tail_expr returns the arm's TAIL `return E` value expression, or an
 // e_unknown when the arm's last statement is not a return. Used to classify the
 // arm's RESULT for the borrow-only payload gate below.
@@ -5790,7 +5814,7 @@ function iife_payload_borrow_i32(ft: string, name: string, arm: parser.MatchArm,
 //     binding is in scope (iife_payload_borrow_i32 / iife_expr_result_is_i32).
 function iife_payload_field_bindable(ft: string, name: string, arm: parser.MatchArm, res_kind: string, s: LowerState): boolean {
     if (ft == "i32") { return true; }
-    if (ft == "i64" || ft == "f64") { return iife_arm_returns_ident(arm, name); }
+    if (ft == "i64" || ft == "f64") { return iife_arm_returns_ident(arm, name) || iife_arm_returns_narrowed_payload(arm, name); }
     if (is_scalar_array_type(ft)) { return !iife_arm_returns_ident(arm, name); }
     // STRING result temp (res_kind == "string"): admit a string read of the bound
     // payload — a BARE string payload (`V(x) => x`, ft string) or a string FIELD /
