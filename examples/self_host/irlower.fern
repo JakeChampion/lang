@@ -5968,6 +5968,17 @@ function iife_payload_bindable(pv: parser.PatVariant, arm: parser.MatchArm, opt_
         // with the dyn type so `e.method()` dispatches via op_dyn_dispatch.
         if (temp_is_i32 && pt.len() > 4 && pt[0:4] == "dyn ") { return true; }
         if (temp_is_i32 && scrut_is_ident && pt.len() >= 8 && pt[0:7] == "Option[") { return true; }
+        // A STRING / STRUCT / TUPLE / ENUM Some/Ok/Err payload BORROW-read into the
+        // result (`Some(s) => s.len()`, `Some(p) => p.x`, `Err(s) => s.len()`):
+        // admit via the SAME leak-safe borrow machinery the user-enum branch below
+        // uses (iife_payload_field_bindable → iife_payload_borrow_i32 /
+        // iife_payload_string_bindable). The underlying StmtMatch Option/Result
+        // lowering already binds the payload at its type (statement-position
+        // string/struct payload matches lower), so the borrow reads resolve; the
+        // payload is borrowed from the box (leak-safe, never reclaimed). A bare
+        // payload returned whole still bails inside field_bindable (no i32/typed
+        // temp for it), and an unrecoverable pt ("") keeps the strict reject.
+        if (pt != "") { return iife_payload_field_bindable(pt, pv.binding, arm, res_kind, s); }
         return false;
     }
     // User-enum variant: read its single payload field type, then admit i32 / i64 /
