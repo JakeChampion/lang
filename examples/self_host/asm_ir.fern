@@ -2282,11 +2282,19 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
     // the ops we just lowered keeps it to a SINGLE lowering pass; the tail reads
     // the accumulated needs (has_need) instead of re-lowering. Byte-identical
     // output: the runtime is still emitted at the tail gated on the same needs.
+    //
+    // Read `.kind` off the bound Op struct INLINE rather than via a `var dk:
+    // string = ...kind` local: a named string local aliasing a struct field and
+    // dec'd at each loop-iteration boundary rides arm64's deferred native heap-
+    // string reclamation path (RC-PERCEUS slice 5g), which over-releases under
+    // allocation pressure and crashed the arm64-compiled driver. The inline read
+    // (matching the op-emission loop below, which never binds `.kind` to its own
+    // local) keeps the string a transient the comparison consumes immediately.
     var dop: i32 = 0;
     while (dop < r.ops.len()) {
-        var dk: string = r.ops[dop].kind;
-        if (dk == "map_new" || dk == "map_set" || dk == "map_len") { s = s.need("maps"); }
-        if (ir.op_allocates(dk)) { s = s.need("heap"); }
+        var dopop: ir.Op = r.ops[dop];
+        if (dopop.kind == "map_new" || dopop.kind == "map_set" || dopop.kind == "map_len") { s = s.need("maps"); }
+        if (ir.op_allocates(dopop.kind)) { s = s.need("heap"); }
         dop = dop + 1;
     }
 
