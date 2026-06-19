@@ -6959,7 +6959,12 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 parser.ExprLambda(_) => { clo_init = true; },
                 parser.ExprCall(cc) => {
                     match (cc.callee) {
-                        parser.ExprIdent(cid) => { if (util.index_of_str(s.closure_fns, cid.name) >= 0) { clo_init = true; } },
+                        // A `__mkclo$<wrapN>()` env-box constructor marker — the
+                        // lift pass's boxed fn-value local binding `var g = dbl`
+                        // (slice #3445 follow-up). Its lowering (the ExprCall →
+                        // __mkclo$ arm) builds the env box, so bind g a closure
+                        // local: `g(args)` / passing g dispatch env-first.
+                        parser.ExprIdent(cid) => { if ((cid.name.len() > 8 && cid.name[0:8] == "__mkclo$") || util.index_of_str(s.closure_fns, cid.name) >= 0) { clo_init = true; } },
                         _ => { }
                     }
                 },
@@ -12215,6 +12220,34 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // free at scope exit / loop-rebind (conservative escape analysis above).
     var reclaim: string[] = reclaimable_names_of(fn.body, structs);
     var s: LowerState = LowerState { ops: empty, local_names: names, local_is_arr: isarr, local_is_str: isstr, local_is_strarr: isstrarr, local_struct_type: structty, local_opt_type: optty, local_tuple_elems: tupty, local_map_type: mapty, local_is_i64: isi64, local_is_f64: isf64, local_is_f32: isf32, local_is_f64arr: isf64arr, local_is_i64arr: isi64arr, local_is_closurearr: isclosurearr, local_is_arrarr: isarrarr, local_is_u32: isu32, local_is_u64: isu64, local_subword: subword, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_is_i64arr: ret_i64arr, ret_is_dyn: ret_dyn, i64_ret_fns: i64_ret_fns, fn_param_sigs: fn_param_sigs, cur_fn: fn.name, closure_fns: closure_fns, const_fns: const_fns, closure_locals: noclos, f64_ret_fns: f64_ret_fns, f64arr_ret_fns: f64arr_ret_fns, i64arr_ret_fns: i64arr_ret_fns, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns_aug, strarr_ret_fns: strarr_ret_fns, arr_method_fns: arr_method_fns, opt_ret_fns: opt_ret_fns, tuple_ret_fns: tuple_ret_fns, struct_ret_fns: struct_ret_fns, map_ret_fns: map_ret_fns, reclaimable_names: reclaim, n_params: names.len(), ok: true };
+    // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
+    // UNIFORM env box [funcval, caps…] — the same shape a closure local /
+    // closure-array element / fn-typed struct field carries (slice #3445
+    // follow-up). Mark each such param slot a closure LOCAL so a call `f(args)`
+    // through it dispatches env-first (push the box as __env, the args, then
+    // box[0] as the call target, call_indirect(arity+1)) — unifying EVERY
+    // fn-value call on the env-box ABI. The call-ARGUMENT side (the lift pass,
+    // lift_inline_closures_expr's ExprCall arm) wraps every fn-typed argument
+    // into the matching box; a fn-value LOCAL `var g = dbl` is likewise wrapped
+    // at its binding (the StmtVar fn-value-box path below) and marked a closure
+    // local, so the value flowing into the slot is always an env box. The
+    // self-host compiler's own source uses NO fn-typed params, so this marking
+    // never fires there — the byte-identical fixpoint is undisturbed.
+    // Only RECEIVER-LESS (free) functions: the call-argument wrapping in the lift
+    // pass (lift_inline_closures_expr's ExprCall arm) fires for ident callees =
+    // free functions, NOT method calls (`o.m(fnval)`, a FieldAccess callee). So a
+    // METHOD fn-param's argument is never wrapped — marking the method param a
+    // closure local would env-first-dispatch an UNWRAPPED bare pointer and crash.
+    // Leaving method fn-params unmarked keeps `o.m(fn)` on the pre-existing bare
+    // dispatch (unchanged), while a capturing closure to a method still bails to
+    // AST (correctness preserved); free-function fn-params get the uniform env box.
+    var fpm: i32 = 0;
+    if (fn.receiver_type.len() == 0) {
+        while (fpm < fn.params.len()) {
+            if (fn.params[fpm].type_name == "fn") { s = s.mark_closure_local(fn.params[fpm].name); }
+            fpm = fpm + 1;
+        }
+    }
     // Perceus precise drops: release each linear, owned array-literal local right
     // after its last top-level use (drop-on-last-use), instead of at the exit
     // sweep — bounding the live set so its block recycles for later allocations.
@@ -14880,13 +14913,82 @@ function try_fn_field_value(e: parser.Expr, fd: parser.FuncDecl, funcs: parser.F
     return InlineCloRes { expr: e, funcs: funcs, counter: counter };
 }
 
+// lift_callee_param_is_fn reports whether free function / method `callee`'s
+// param `idx` is fn-typed (coarse type_name "fn"). The lift-pass mirror of
+// LowerState.callee_param_is_fn / asmcore.callee_param_is_fn, reading the module
+// funcs directly (no fn_param_sigs registry available at lift time).
+function lift_callee_param_is_fn(mfuncs: parser.FuncDecl[], callee: string, idx: i32): boolean {
+    var i: i32 = 0;
+    while (i < mfuncs.len()) {
+        if (mfuncs[i].name == callee && idx < mfuncs[i].params.len() && mfuncs[i].params[idx].type_name == "fn") {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// lift_module_fn_arity returns the parameter count of receiver-less module
+// function `name`, or -1 if no such function exists. Used to recognise a bare
+// fn-VALUE ident (a function name with >= 1 param, distinct from a zero-arg
+// `const`) so it can be env-boxed at a fn-value binding / argument position.
+function lift_module_fn_arity(mfuncs: parser.FuncDecl[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < mfuncs.len()) {
+        if (mfuncs[i].name == name && mfuncs[i].receiver_type.len() == 0) { return mfuncs[i].params.len(); }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
 // lift_inline_closures_expr walks an expression, hoisting capturing inline
-// lambdas in array-element and struct-field-value positions. Non-aggregate forms
-// recurse so an array/struct nested inside them is still reached; a bare lambda
-// in any other position is left untouched (handled by the other lift passes or
-// kept on AST). Returns the rewritten expr plus the accumulated hoisted funcs.
+// lambdas in array-element and struct-field-value positions, AND wrapping
+// fn-typed CALL ARGUMENTS into uniform env boxes (slice #3445 follow-up). A call
+// `g(a0, a1, …)` whose callee `g` has a fn-typed param at position i has its
+// argument ai routed through try_fn_field_value — the SAME env-box wrapper the
+// struct-field path uses: a capturing inline lambda → `__mkclo$<fd>$cloN(caps…)`
+// box [funcval, caps…]; a no-capture lambda / bare module-fn-name → a `$wrapN`
+// env-ignoring trampoline → box [funcval]; an already-boxed value (a boxed
+// fn-value local ident, a closure param/local, a `mk()` call returning a
+// closure) flows UNWRAPPED. This makes EVERY fn-value argument an env box so the
+// callee's fn-typed param (marked a closure local in lower_func) dispatches it
+// env-first. Running BEFORE the no-capture __lam_N lift means a no-capture
+// lambda / fn-name arg becomes a `__mkclo$…` marker the later lift leaves alone,
+// so the two arg representations never fight — there is one fn-arg shape, the box.
+// Non-aggregate forms recurse so an array/struct nested inside them is still
+// reached; a bare lambda in any other position is left untouched (handled by the
+// other lift passes or kept on AST). Returns the rewritten expr plus the
+// accumulated hoisted funcs.
 function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): InlineCloRes {
     match (e) {
+        parser.ExprCall(call) => {
+            // Wrap each fn-typed-param argument into an env box; recurse the rest
+            // (so a nested aggregate / fn-arg call inside a non-fn argument is
+            // still reached). A bare-ident callee names the function whose param
+            // types we consult; a `__mkclo$…` marker callee (this pass's own
+            // output) has no fn-typed-param signature, so its args just recurse.
+            var cnm: string = "";
+            match (call.callee) {
+                parser.ExprIdent(cid) => { cnm = cid.name; },
+                _ => {}
+            }
+            var is_mkclo: boolean = cnm.len() > 8 && cnm[0:8] == "__mkclo$";
+            var fs: parser.FuncDecl[] = funcs;
+            var ct: i32 = counter;
+            var nargs: parser.Expr[] = [];
+            var ai: i32 = 0;
+            while (ai < call.args.len()) {
+                if (!is_mkclo && cnm.len() > 0 && lift_callee_param_is_fn(mfuncs, cnm, ai)) {
+                    var fr: InlineCloRes = try_fn_field_value(call.args[ai], fd, fs, ct, gfns, mfuncs);
+                    fs = fr.funcs; ct = fr.counter; nargs = nargs.append(fr.expr);
+                } else {
+                    var er: InlineCloRes = lift_inline_closures_expr(call.args[ai], fd, fs, ct, gfns, structs, mfuncs);
+                    fs = er.funcs; ct = er.counter; nargs = nargs.append(er.expr);
+                }
+                ai = ai + 1;
+            }
+            return InlineCloRes { expr: parser.ExprCall { callee: call.callee, args: nargs, line: call.line, col: call.col, type_argc: call.type_argc }, funcs: fs, counter: ct };
+        },
         parser.ExprArray(arr) => {
             var fs: parser.FuncDecl[] = funcs;
             var ct: i32 = counter;
@@ -14971,9 +15073,39 @@ function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, f
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtVar(v) => {
-                var er: InlineCloRes = lift_inline_closures_expr(v.init, fd, fs, ct, gfns, structs, mfuncs);
-                fs = er.funcs; ct = er.counter;
-                out = out.append(parser.StmtVar { name: v.name, type_name: v.type_name, init: er.expr, line: v.line, col: v.col });
+                // A fn-VALUE local binding `var g = dbl` (the init a bare module
+                // fn-name with >= 1 param — a function value, not a zero-arg
+                // const) is env-boxed into a `__mkclo$<fd>$wrapN()` trampoline box
+                // so the slot holds the SAME uniform env box every fn-value carries
+                // (slice #3445 follow-up). Then `g(args)` / passing `g` as a
+                // fn-arg both ride the env-first call path (the slot is marked a
+                // closure local at lowering, recognising the `__mkclo$` init). A
+                // non-fn-value init falls through to the ordinary aggregate walk.
+                var boxed: boolean = false;
+                var bn: string = v.name;
+                var bty: string = v.type_name;
+                var bln: i32 = v.line;
+                var bco: i32 = v.col;
+                match (v.init) {
+                    parser.ExprIdent(vid) => {
+                        if (lift_module_fn_arity(mfuncs, vid.name) >= 1) {
+                            var wn: string = fd.name + "$wrap" + util.i32_to_string(ct);
+                            var hr: HoistResult = make_wrap_named_func(vid.name, wn, mfuncs);
+                            if (hr.ok) {
+                                var marker: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "__mkclo$" + wn, line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
+                                fs = fs.append(hr.func); ct = ct + 1;
+                                out = out.append(parser.StmtVar { name: bn, type_name: bty, init: marker, line: bln, col: bco });
+                                boxed = true;
+                            }
+                        }
+                    },
+                    _ => {}
+                }
+                if (!boxed) {
+                    var er: InlineCloRes = lift_inline_closures_expr(v.init, fd, fs, ct, gfns, structs, mfuncs);
+                    fs = er.funcs; ct = er.counter;
+                    out = out.append(parser.StmtVar { name: v.name, type_name: v.type_name, init: er.expr, line: v.line, col: v.col });
+                }
             },
             parser.StmtReturn(r) => {
                 var er: InlineCloRes = lift_inline_closures_expr(r.value, fd, fs, ct, gfns, structs, mfuncs);
@@ -14986,9 +15118,41 @@ function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, f
                 out = out.append(parser.StmtExpr { value: er.expr });
             },
             parser.StmtAssign(a) => {
-                var er: InlineCloRes = lift_inline_closures_expr(a.value, fd, fs, ct, gfns, structs, mfuncs);
-                fs = er.funcs; ct = er.counter;
-                out = out.append(parser.StmtAssign { target: a.target, value: er.expr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col });
+                // A fn-value REASSIGNMENT `f = <lambda>` / `f = dbl` must be
+                // env-boxed the SAME way the fn-value BINDING `var f = …` is
+                // (#3445 follow-up): `f` was marked a closure local at its boxed
+                // binding, so `f(args)` / passing `f` dispatch env-first — an
+                // UNBOXED reassigned value (a bare lambda / fn pointer) in that
+                // slot would env-first-dispatch a non-box and crash. A capturing
+                // lambda → __mkclo box; a no-capture lambda / bare module-fn-name
+                // → a $wrapN trampoline box (try_fn_field_value); any other RHS
+                // (a call returning a box, an already-boxed local, a non-fn value)
+                // recurses through the ordinary walk. The RHS being a fn-value
+                // implies a fn-typed target (type-checked), so this never boxes a
+                // non-fn assignment.
+                var asg_boxed: boolean = false;
+                match (a.value) {
+                    parser.ExprLambda(_) => {
+                        var asgr: InlineCloRes = try_fn_field_value(a.value, fd, fs, ct, gfns, mfuncs);
+                        fs = asgr.funcs; ct = asgr.counter;
+                        out = out.append(parser.StmtAssign { target: a.target, value: asgr.expr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col });
+                        asg_boxed = true;
+                    },
+                    parser.ExprIdent(avid) => {
+                        if (lift_module_fn_arity(mfuncs, avid.name) >= 1) {
+                            var asgr2: InlineCloRes = try_fn_field_value(a.value, fd, fs, ct, gfns, mfuncs);
+                            fs = asgr2.funcs; ct = asgr2.counter;
+                            out = out.append(parser.StmtAssign { target: a.target, value: asgr2.expr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col });
+                            asg_boxed = true;
+                        }
+                    },
+                    _ => {}
+                }
+                if (!asg_boxed) {
+                    var er: InlineCloRes = lift_inline_closures_expr(a.value, fd, fs, ct, gfns, structs, mfuncs);
+                    fs = er.funcs; ct = er.counter;
+                    out = out.append(parser.StmtAssign { target: a.target, value: er.expr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col });
+                }
             },
             parser.StmtIf(f) => {
                 var tb: InlineCloStmts = lift_inline_closures_stmts(f.then_body, fd, fs, ct, gfns, structs, mfuncs);

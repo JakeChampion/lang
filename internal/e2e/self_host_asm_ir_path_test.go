@@ -1796,6 +1796,40 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// A capturing field PLUS a separate non-fn (i32) field: the i32 field is
 		// stored normally, the fn field as the env box. n=10: f(7)=17, base=100; 117.
 		{"clo-cap-struct-field-with-nonfn", `struct Box { f: (i32) => i32, base: i32 } function main(): i32 { var n = 10; var b = Box { f: function(x: i32): i32 { return x + n; }, base: 100 }; return b.f(7) + b.base; }`, 117},
+		// CAPTURING inline lambda passed as a CALL ARGUMENT (slice #3445 follow-up).
+		// The lift pass wraps the fn-typed argument into an env box [funcval, caps…]
+		// and the callee's fn-typed param `f` is a closure local (lower_func), so
+		// `f(x)` dispatches env-first. n=10: apply(λx.x+n, 5) = 5 + 10 = 15.
+		{"clo-cap-fn-arg", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var n = 10; return apply(function(x: i32): i32 { return x + n; }, 5); }`, 15},
+		// Capturing lambda argument with TWO captures: box [funcval, a, b]. a=8,
+		// b=100: apply(λx.x+a+b, 0) = 0 + 8 + 100 = 108.
+		{"clo-cap-fn-arg-two-caps", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var a = 8; var b = 100; return apply(function(x: i32): i32 { return x + a + b; }, 0); }`, 108},
+		// A capturing lambda arg AND a no-capture lambda arg into a TWO-fn-param
+		// call: the capturing one is a [funcval, caps…] box, the no-capture one a
+		// [$wrapN] trampoline box; both dispatch env-first. n=10:
+		// combine(λx.x+n, λx.x*2, 5) = (5+10) + (5*2) = 15 + 10 = 25.
+		{"clo-cap-fn-arg-plus-nocap", `function combine(f: (i32) => i32, g: (i32) => i32, x: i32): i32 { return f(x) + g(x); } function main(): i32 { var n = 10; return combine(function(x: i32): i32 { return x + n; }, function(x: i32): i32 { return x * 2; }, 5); }`, 25},
+		// Capturing closures collected in an array, then each APPLIED through a
+		// fn-arg helper inside a `for f in fs` loop: the loop binds `f` a closure
+		// local and `apply(f, 10)` passes it unwrapped (already a box) to apply's
+		// fn-typed param. a=1, b=10: apply(fs[0],10)=10+a=11, apply(fs[1],10)=100;
+		// 11 + 100 = 111.
+		{"clo-cap-fn-arg-forin", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var a = 1; var b = 10; var fs = [function(x: i32): i32 { return x + a; }, function(x: i32): i32 { return x * b; }]; var s = 0; for f in fs { s = s + apply(f, 10); } return s; }`, 111},
+		// NO-CAPTURE lambda argument (regression guard for the env-box arg path):
+		// wrapped in a [$wrapN] env-ignoring trampoline. apply(λx.x+1, 5) = 6.
+		{"clo-nocap-fn-arg", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { return apply(function(x: i32): i32 { return x + 1; }, 5); }`, 6},
+		// BARE fn-name argument (regression guard): wrapped in a [$wrapN] trampoline
+		// that forwards to the named fn. apply(inc, 5) = inc(5) = 6.
+		{"clo-named-fn-arg", `function inc(x: i32): i32 { return x + 1; } function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { return apply(inc, 5); }`, 6},
+		// A CLOSURE returned from a call, passed as an argument (regression guard):
+		// `mk(10)` is already an env box, so it flows UNWRAPPED to apply's fn-typed
+		// param. apply(mk(10), 5) = 5 + 10 = 15.
+		{"clo-from-call-fn-arg", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function mk(n: i32): (i32) => i32 { return function(x: i32): i32 { return x + n; }; } function main(): i32 { return apply(mk(10), 5); }`, 15},
+		// A fn-VALUE LOCAL `var g = dbl` is env-boxed at its binding into a [$wrapN]
+		// trampoline box and marked a closure local, so passing it to apply's
+		// fn-typed param flows the box unwrapped (env-first). apply(g, 21) = 42.
+		{"clo-fnval-local-arg", `function dbl(n: i32): i32 { return n * 2; } function apply(f: (i32) => i32, n: i32): i32 { return f(n); } function main(): i32 { var g = dbl; return apply(g, 21); }`, 42},
+		{"method-fn-param-named", `struct Obj { k: i32 } function inc(x: i32): i32 { return x + 1; } function (o: Obj) ap(f: (i32) => i32, x: i32): i32 { return f(x) + o.k; } function main(): i32 { var o = Obj{k:100}; return o.ap(inc, 5); }`, 106},
 	}
 	for _, tc := range irOnly {
 		t.Run(tc.name, func(t *testing.T) {
