@@ -1964,6 +1964,20 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
 // register-backend restriction on top (they don't emit the closure ops yet).
 pub function eligible_core(mod: parser.Module): boolean {
     if (mod.funcs.len() == 0) { return false; }
+    // Module-size budget. emit_module_ir lowers every function into ir.Op
+    // lists built by repeated `.append`, which grow past the native runtime's
+    // 2048 B "large" freelist tier — and that tier currently does NOT recycle
+    // (a freed large block never returns to its size class), so each large
+    // buffer leaks for the duration of the emit. On a small module that waste
+    // is bounded and harmless, but the WHOLE self-host compiler, merged into
+    // one ~1000-function module (asm_*_run.fern's flatten.bundle feeds a single
+    // emit_module call), leaks enough to march the bump heap past its 3.875 GiB
+    // ceiling and exit-137 (#3425). Until the native large-tier freelist is
+    // fixed, cap IR routing at a function count that comfortably holds the
+    // largest real module (irlower, ~350) yet rejects the merged whole-compiler
+    // bundle, so a normal program / module compiles through IR while the
+    // bootstrap self-compile of the merged compiler stays on the AST emitter.
+    if (mod.funcs.len() > 512) { return false; }
     // emit_module_ir is a WHOLE-PROGRAM emitter: it writes a `_start` that
     // calls `__fn_main` and exits with its return. A module with no `main`
     // (a library compiled standalone, e.g. util.fern under the bootstrap
