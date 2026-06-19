@@ -1540,6 +1540,15 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"matchexpr-uenum-nested-field", `struct P { x: i32 } struct Q { p: P } enum E { Has(Q), Nil } function main(): i32 { var e: E = Has(Q { p: P { x: 6 } }); var y = match (e) { Has(q) => q.p.x, Nil => 0 }; return y; }`, 6},
 		{"matchexpr-opt-nested-3deep", `struct A { v: i32 } struct B { a: A } struct C { b: B } function main(): i32 { var o: Option[C] = Some(C { b: B { a: A { v: 8 } } }); var y = match (o) { Some(c) => c.b.a.v, None => 0 }; return y; }`, 8},
 		{"matchexpr-opt-nested-arith", `struct P { x: i32 } struct Q { p: P, k: i32 } function main(): i32 { var o: Option[Q] = Some(Q { p: P { x: 5 }, k: 6 }); var y = match (o) { Some(q) => q.p.x + q.k, None => 0 }; return y; }`, 11},
+		// NARROWING CAST of an i64/f64 match-EXPRESSION payload to an i32 result
+		// (`Some(n) => (n as i32)`): iife_arm_returns_narrowed_payload admits the
+		// `name as i32/u32/u8/i8` shape — the i64/f64 payload slot is marked at width
+		// by the StmtMatch path so the cast reads the wide value and narrows, but the
+		// result temp stays i32 (the old gate only admitted a BARE i64/f64 return).
+		{"matchexpr-opt-i64-cast", `function main(): i32 { var o: Option[i64] = Some(5 as i64); var y = match (o) { Some(n) => (n as i32), None => 0 }; return y; }`, 5},
+		{"matchexpr-opt-f64-cast", `function main(): i32 { var o: Option[f64] = Some(2.5); var y = match (o) { Some(n) => (n as i32), None => 0 }; return y; }`, 2},
+		{"matchexpr-result-i64-cast", `function main(): i32 { var r: Result[i64, i32] = Ok(7 as i64); var y = match (r) { Ok(n) => (n as i32), Err(e) => e }; return y; }`, 7},
+		{"matchexpr-uenum-i64-cast", `enum E { Big(i64), Nil } function main(): i32 { var e: E = Big(5 as i64); var y = match (e) { Big(n) => (n as i32), Nil => 0 }; return y; }`, 5},
 		// f-string interpolation, pinned to the absolute IR-path value (the
 		// AST==IR differential above is blind to a both-paths-wrong desugar). The
 		// returned byte proves the interpolant text actually landed: `f"n={7}!"`
