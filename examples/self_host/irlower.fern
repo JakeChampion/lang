@@ -15100,9 +15100,41 @@ function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, f
                 out = out.append(parser.StmtExpr { value: er.expr });
             },
             parser.StmtAssign(a) => {
-                var er: InlineCloRes = lift_inline_closures_expr(a.value, fd, fs, ct, gfns, structs, mfuncs);
-                fs = er.funcs; ct = er.counter;
-                out = out.append(parser.StmtAssign { target: a.target, value: er.expr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col });
+                // A fn-value REASSIGNMENT `f = <lambda>` / `f = dbl` must be
+                // env-boxed the SAME way the fn-value BINDING `var f = …` is
+                // (#3445 follow-up): `f` was marked a closure local at its boxed
+                // binding, so `f(args)` / passing `f` dispatch env-first — an
+                // UNBOXED reassigned value (a bare lambda / fn pointer) in that
+                // slot would env-first-dispatch a non-box and crash. A capturing
+                // lambda → __mkclo box; a no-capture lambda / bare module-fn-name
+                // → a $wrapN trampoline box (try_fn_field_value); any other RHS
+                // (a call returning a box, an already-boxed local, a non-fn value)
+                // recurses through the ordinary walk. The RHS being a fn-value
+                // implies a fn-typed target (type-checked), so this never boxes a
+                // non-fn assignment.
+                var asg_boxed: boolean = false;
+                match (a.value) {
+                    parser.ExprLambda(_) => {
+                        var asgr: InlineCloRes = try_fn_field_value(a.value, fd, fs, ct, gfns, mfuncs);
+                        fs = asgr.funcs; ct = asgr.counter;
+                        out = out.append(parser.StmtAssign { target: a.target, value: asgr.expr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col });
+                        asg_boxed = true;
+                    },
+                    parser.ExprIdent(avid) => {
+                        if (lift_module_fn_arity(mfuncs, avid.name) >= 1) {
+                            var asgr2: InlineCloRes = try_fn_field_value(a.value, fd, fs, ct, gfns, mfuncs);
+                            fs = asgr2.funcs; ct = asgr2.counter;
+                            out = out.append(parser.StmtAssign { target: a.target, value: asgr2.expr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col });
+                            asg_boxed = true;
+                        }
+                    },
+                    _ => {}
+                }
+                if (!asg_boxed) {
+                    var er: InlineCloRes = lift_inline_closures_expr(a.value, fd, fs, ct, gfns, structs, mfuncs);
+                    fs = er.funcs; ct = er.counter;
+                    out = out.append(parser.StmtAssign { target: a.target, value: er.expr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col });
+                }
             },
             parser.StmtIf(f) => {
                 var tb: InlineCloStmts = lift_inline_closures_stmts(f.then_body, fd, fs, ct, gfns, structs, mfuncs);
