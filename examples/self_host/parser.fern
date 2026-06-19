@@ -3075,20 +3075,33 @@ function parse_type_name(p: Par): TypeNameResult {
     p = p.advance();  // consume opening `[`
     var inner: string = "";
     var depth: i32 = 1;
+    // Two ident/keyword tokens are only ever adjacent inside a generic arg
+    // for a `dyn Trait` object type (`Result[i32, dyn Error]`). Every other
+    // separator (`,` `[` `(` …) inserts its own delimiter, but two bare
+    // idents have none — so reinsert the space to keep the canonical
+    // `"dyn Error"` spelling. Without it the payload type is stored as
+    // `"dynError"` and the dyn-dispatch guard (`rty[0:4] == "dyn "`) misses.
+    var prev_ident: boolean = false;
     while (depth > 0 && !p.at_end()) {
         var pk: string = p.peek_punct();
-        if (pk == "[") { depth = depth + 1; inner = inner + "["; p = p.advance(); continue; }
-        if (pk == "]") { depth = depth - 1; if (depth == 0) { break; } inner = inner + "]"; p = p.advance(); continue; }
-        if (pk == ",") { inner = inner + ", "; p = p.advance(); continue; }
+        if (pk == "[") { depth = depth + 1; inner = inner + "["; p = p.advance(); prev_ident = false; continue; }
+        if (pk == "]") { depth = depth - 1; if (depth == 0) { break; } inner = inner + "]"; p = p.advance(); prev_ident = false; continue; }
+        if (pk == ",") { inner = inner + ", "; p = p.advance(); prev_ident = false; continue; }
+        // Multi-trait object `dyn A + B` nested in a generic arg — match the
+        // top-level `parse_type` spelling (` + ` joined) so the dyn payload
+        // type round-trips identically.
+        if (pk == "+") { inner = inner + " + "; p = p.advance(); prev_ident = false; continue; }
         // Tuple types nested inside a generic arg, e.g.
         // `Option[(string, string)]` — pass parens through verbatim.
-        if (pk == "(") { inner = inner + "("; p = p.advance(); continue; }
-        if (pk == ")") { inner = inner + ")"; p = p.advance(); continue; }
+        if (pk == "(") { inner = inner + "("; p = p.advance(); prev_ident = false; continue; }
+        if (pk == ")") { inner = inner + ")"; p = p.advance(); prev_ident = false; continue; }
         var seg: string = p.peek_ident();
         if (seg.len() == 0) { seg = p.peek_keyword(); }
         if (seg.len() == 0) { break; }
+        if (prev_ident) { inner = inner + " "; }
         inner = inner + seg;
         p = p.advance();
+        prev_ident = true;
     }
     if (p.peek_punct() == "]") { p = p.advance(); }
     var nm: string = base + "[" + inner + "]";
