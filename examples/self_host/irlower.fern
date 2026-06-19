@@ -3509,9 +3509,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     //     `.replace()` / `.to_string()` have receiver-identity fast-paths,
                     //     so each may alias a live box — retained conservatively.
                     // Each non-fresh case leaks (sound), never over-releases.
-                    if (cfft == "string") {
-                        if (!expr_is_fresh_str(slit.field_values[found], s)) { fav_alias_inc = true; }
-                    }
+                    // String fields are NOT rc-tracked in the IR path: const_str
+                    // allocates a header-less 16-byte box [data@0,len@8] (every IR
+                    // backend leaks strings — "not RC'd"), so __fern_rc_inc on a
+                    // string box would write [box-8] = the PREVIOUS heap block's word,
+                    // corrupting it. (Found via the resolve_labels_module FuncDecl
+                    // rebuild: a non-fresh `receiver_name` field-copy's rc_inc clobbered
+                    // the adjacent funcs array's length, so parse_module returned the
+                    // wrong function count / crashed.) Strings leak instead (sound);
+                    // matched by the string skip in emit_struct_field_drops.
                     // An i64 field value is an 8-byte i64 (a bare integer literal
                     // isn't self-evidently i64), so lower it via lower_i64.
                     if (struct_field_is_i64(s.structs, slit.type_name, di)) {
@@ -9174,7 +9180,7 @@ function emit_struct_field_drops(s: LowerState, slot: i32): LowerState {
     var fi: i32 = 0;
     while (fi < n) {
         var fdt: string = decl_field_type_at(s.structs, sty, fi);
-        if (is_leaksafe_array_field(fdt) || fdt == "string") { any = true; }
+        if (is_leaksafe_array_field(fdt)) { any = true; }   // strings: header-less in IR (leak), never inc'd/dec'd
         else if (is_struct_array_field_type(s.structs, fdt) || is_enum_array_field_type(s.structs, fdt)) { any = true; has_box_field = true; }
         fi = fi + 1;
     }
@@ -9201,12 +9207,12 @@ function emit_struct_field_drops(s: LowerState, slot: i32): LowerState {
         // they have no element BOXES, so only the buffer is dec'd — never the
         // element walk (which would mis-treat scalar values as pointers). Mirrors
         // the `any` detection loop above.
-        // A `string` field is a single rc-headered pointer — dec'd shallowly,
-        // exactly like a scalar-array buffer (a fresh sole-owned string field is
-        // freed; an aliased one was inc'd at construction so this only decs the
-        // dup → leaks, sound). It has no element boxes, so it never enters the
-        // box-element walk.
-        var k_scalar: boolean = is_leaksafe_array_field(kdt) || kdt == "string";
+        // A `string` field is NOT dec'd here: IR string boxes are header-less
+        // (const_str: [data@0,len@8] via __fern_alloc, "not RC'd" — strings leak
+        // on every IR backend), so __fern_rc_dec on one would write [box-8] = the
+        // adjacent heap block's word, corrupting it. Strings are excluded from
+        // both this drop and the struct-lit alias-inc (they leak; sound).
+        var k_scalar: boolean = is_leaksafe_array_field(kdt);   // NOT strings — header-less in IR; rc_dec would corrupt [box-8]
         var k_box: boolean = !k_scalar && (is_struct_array_field_type(st.structs, kdt) || is_enum_array_field_type(st.structs, kdt));
         if (k_box) {
             st = st.emit(ir.op_load_local(slot));
