@@ -1505,6 +1505,19 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"str-concat-if-expr-var", `function main(): i32 { var s = if (true) { "ab" + "cd" } else { "x" }; return s.len(); }`, 4},
 		{"str-concat-if-expr-else", `function main(): i32 { var s = if (false) { "x" } else { "ab" + "cdef" }; return s.len(); }`, 6},
 		{"str-concat-match-expr", `function main(): i32 { return (match (1) { 1 => "aa" + "bb", _ => "z" }).len(); }`, 4},
+		// Value-position match-EXPRESSION binding a NON-i32 Option/Result payload and
+		// BORROW-reading it to an i32 result (#2994-sibling IR-subset gap): the
+		// iife_payload_bindable Option/Result branch now routes the payload through
+		// iife_payload_field_bindable (the leak-safe borrow machinery the user-enum
+		// branch already used) instead of hard-rejecting it. The payload is borrowed
+		// from the box (leak-safe), and the i32 borrow read lands in the result temp.
+		// Pinned to the absolute IR value (the AST==IR differential is blind to a
+		// both-paths-wrong case for value-position match payloads).
+		{"matchexpr-opt-str-len", `function main(): i32 { var o: Option[string] = Some("hi"); var y = match (o) { Some(s) => s.len(), None => 0 }; return y; }`, 2},
+		{"matchexpr-opt-struct-field", `struct P { x: i32 } function main(): i32 { var o: Option[P] = Some(P { x: 9 }); var y = match (o) { Some(p) => p.x, None => 0 }; return y; }`, 9},
+		{"matchexpr-result-err-str-len", `function main(): i32 { var r: Result[i32, string] = Err("bad"); var y = match (r) { Ok(n) => n, Err(s) => s.len() }; return y; }`, 3},
+		{"matchexpr-opt-tuple-elem", `function main(): i32 { var o: Option[(i32, i32)] = Some((2, 3)); var y = match (o) { Some(t) => t.0 + t.1, None => 0 }; return y; }`, 5},
+		{"matchexpr-result-ok-struct", `struct P { x: i32 } function main(): i32 { var r: Result[P, i32] = Ok(P { x: 8 }); var y = match (r) { Ok(p) => p.x + 4, Err(e) => e }; return y; }`, 12},
 		// f-string interpolation, pinned to the absolute IR-path value (the
 		// AST==IR differential above is blind to a both-paths-wrong desugar). The
 		// returned byte proves the interpolant text actually landed: `f"n={7}!"`
