@@ -1971,11 +1971,43 @@ pub function eligible_core(mod: parser.Module): boolean {
     // would emit a dangling reference. Such modules stay on the AST emitter,
     // which handles the no-main case (top-level stmts + fallback exit).
     if (!asmcore.has_main(mod)) { return false; }
+    // Per-function eligibility lowers fd ONCE and runs all three checks (body
+    // lowers / calls-only-known / const-funcs-only-known) on that single
+    // LowerResult, rather than re-lowering it three times (ir_eligible +
+    // calls_only_known + const_funcs_only_known each lowered independently). On a
+    // large all-eligible module the per-function `LowerResult.ops` is retained
+    // (the native catch-all dec only decrements, never frees — #3425), so three
+    // lowerings per function held ~3x the ops; this single pass + emit_module_ir's
+    // own pass keeps the eligibility-check + emit live set to ~2x instead of ~4x.
+    var arf: string[] = array_ret_fns(mod);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (!ir_eligible(mod.funcs[i], mod)) { return false; }
-        if (!calls_only_known(mod.funcs[i], mod)) { return false; }
-        if (!const_funcs_only_known(mod.funcs[i], mod)) { return false; }
+        if (!func_eligible(mod.funcs[i], mod, arf)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// func_eligible is eligible_core's per-function check, folded into ONE lowering:
+// the body must lower (r.ok), every direct call must target a module function or
+// an IR runtime helper (calls_only_known), and every function-value reference
+// must name a module function (const_funcs_only_known). Lowering once with the
+// real return-type registries (lower_func_for, as ir_eligible does) is at least
+// as accurate as the prior noret scan for call / const_func detection — those op
+// kinds carry the callee name regardless of return-type tagging — so the module
+// verdict is unchanged, at a third of the lowering cost. `arf` (array_ret_fns) is
+// hoisted by the caller so it is derived once per module, not once per function.
+function func_eligible(fd: parser.FuncDecl, mod: parser.Module, arf: string[]): boolean {
+    var r: irlower.LowerResult = irlower.lower_func_for(fd, arf, mod.structs, mod.funcs);
+    if (!r.ok) { return false; }
+    var i: i32 = 0;
+    while (i < r.ops.len()) {
+        var o: ir.Op = r.ops[i];
+        if (o.kind == "call_direct") {
+            if (!is_fern_helper(o.str) && !module_has_func(mod, o.str)) { return false; }
+        } else if (o.kind == "const_func") {
+            if (!module_has_func(mod, o.str)) { return false; }
+        }
         i = i + 1;
     }
     return true;
