@@ -1985,6 +1985,23 @@ pub function eligible_core(mod: parser.Module): boolean {
 // cross-module call is already local in the merged module), so the merged path
 // is byte-for-byte unchanged.
 pub function eligible_core_known(mod: parser.Module, known: string[]): boolean {
+    return eligible_core_known_main(mod, known, true);
+}
+
+// all_eligible_lib_known is the per-module LIBRARY eligibility check (#3456): a
+// non-entry unit legitimately has no `main` (it exposes only its `__fn_*`
+// definitions; the entry owns `_start`/`__fn_main`), so the require_main gate is
+// dropped. Otherwise identical to all_eligible_known — every function lowers and
+// every call/function-value resolves against the program-wide known set.
+pub function all_eligible_lib_known(mod: parser.Module, known: string[]): boolean {
+    return eligible_core_known_main(mod, known, false);
+}
+
+// eligible_core_known_main is eligible_core_known with the `main`-required gate
+// made optional: require_main=true is the whole-program / entry path (emits
+// `_start` → `call __fn_main`, so a module with no main would dangle);
+// require_main=false is a per-module library unit, which has no main by design.
+pub function eligible_core_known_main(mod: parser.Module, known: string[], require_main: boolean): boolean {
     if (mod.funcs.len() == 0) { return false; }
     // Module-size budget. emit_module_ir lowers every function into ir.Op
     // lists built by repeated `.append`, which grow past the native runtime's
@@ -2005,8 +2022,9 @@ pub function eligible_core_known(mod: parser.Module, known: string[]): boolean {
     // (a library compiled standalone, e.g. util.fern under the bootstrap
     // self-compile) has no `__fn_main`, so routing it through the IR path
     // would emit a dangling reference. Such modules stay on the AST emitter,
-    // which handles the no-main case (top-level stmts + fallback exit).
-    if (!asmcore.has_main(mod)) { return false; }
+    // which handles the no-main case (top-level stmts + fallback exit). A
+    // per-module library unit (require_main=false) has no main by design.
+    if (require_main && !asmcore.has_main(mod)) { return false; }
     // Per-function eligibility lowers fd ONCE and runs all three checks (body
     // lowers / calls-only-known / const-funcs-only-known) on that single
     // LowerResult, rather than re-lowering it three times (ir_eligible +
