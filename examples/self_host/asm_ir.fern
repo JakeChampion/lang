@@ -1963,6 +1963,22 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
 // the wasm backend lowers them (a funcref table). all_eligible adds the
 // register-backend restriction on top (they don't emit the closure ops yet).
 pub function eligible_core(mod: parser.Module): boolean {
+    var none: string[] = [];
+    return eligible_core_known(mod, none);
+}
+
+// eligible_core_known is eligible_core threaded with the program-wide
+// known-symbol set (`known`) — the per-module-compilation foundation
+// (#3451 step 1 / #3453). `known` is the set of function symbols defined
+// SOMEWHERE in the loaded import graph (every module's `__fn_*`), distinct from
+// "defined in THIS module" (module_has_func). Per-module, a call from module A
+// to an imported function in B targets `B__foo`, which is not in A's own
+// `mod.funcs` but IS in the program-wide set; eligibility must accept it as an
+// extern (resolved at link) instead of bailing the module to AST. Passing an
+// empty `known` recovers the whole-program merged behaviour exactly (every
+// cross-module call is already local in the merged module), so the merged path
+// is byte-for-byte unchanged.
+pub function eligible_core_known(mod: parser.Module, known: string[]): boolean {
     if (mod.funcs.len() == 0) { return false; }
     // Module-size budget. emit_module_ir lowers every function into ir.Op
     // lists built by repeated `.append`, which grow past the native runtime's
@@ -2022,10 +2038,25 @@ pub function eligible_core(mod: parser.Module): boolean {
     var cnf: string[] = irlower.const_fns_of(mod.funcs);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (!func_eligible(mod.funcs[i], mod, arf, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf)) { return false; }
+        if (!func_eligible(mod.funcs[i], mod, known, arf, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf)) { return false; }
         i = i + 1;
     }
     return true;
+}
+
+// known_includes reports whether `name` is in the program-wide known-symbol
+// set — a function defined SOMEWHERE in the loaded import graph (any module),
+// not necessarily in the current one. It is the cross-module twin of
+// module_has_func: together they let per-module eligibility admit a call whose
+// target is a sibling module's `__fn_*` symbol (resolved at link) while still
+// bailing on a truly-unknown / builtin-only name.
+function known_includes(known: string[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < known.len()) {
+        if (known[i] == name) { return true; }
+        i = i + 1;
+    }
+    return false;
 }
 
 // func_eligible is eligible_core's per-function check, folded into ONE lowering:
@@ -2037,7 +2068,7 @@ pub function eligible_core(mod: parser.Module): boolean {
 // kinds carry the callee name regardless of return-type tagging — so the module
 // verdict is unchanged, at a third of the lowering cost. `arf` (array_ret_fns) is
 // hoisted by the caller so it is derived once per module, not once per function.
-function func_eligible(fd: parser.FuncDecl, mod: parser.Module, arf: string[], bparams: string[], srf: string[], sarf: string[], amf: string[], orf: string[], irf: string[], trf: string[], srtf: string[], mrtf: string[], frf: string[], farf: string[], iarf: string[], fps: string[], cfs: string[], cnf: string[]): boolean {
+function func_eligible(fd: parser.FuncDecl, mod: parser.Module, known: string[], arf: string[], bparams: string[], srf: string[], sarf: string[], amf: string[], orf: string[], irf: string[], trf: string[], srtf: string[], mrtf: string[], frf: string[], farf: string[], iarf: string[], fps: string[], cfs: string[], cnf: string[]): boolean {
     // lower_func with the hoisted side-tables (the same set lower_func_for would
     // derive, but computed once by eligible_core — see the hoist note there).
     var r: irlower.LowerResult = irlower.lower_func(fd, arf, mod.structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, bparams);
@@ -2046,9 +2077,9 @@ function func_eligible(fd: parser.FuncDecl, mod: parser.Module, arf: string[], b
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
         if (o.kind == "call_direct") {
-            if (!is_fern_helper(o.str) && !module_has_func(mod, o.str)) { return false; }
+            if (!is_fern_helper(o.str) && !module_has_func(mod, o.str) && !known_includes(known, o.str)) { return false; }
         } else if (o.kind == "const_func") {
-            if (!module_has_func(mod, o.str)) { return false; }
+            if (!module_has_func(mod, o.str) && !known_includes(known, o.str)) { return false; }
         }
         i = i + 1;
     }
@@ -2062,6 +2093,16 @@ function func_eligible(fd: parser.FuncDecl, mod: parser.Module, arf: string[], b
 // slice and still bail via lower_func.)
 pub function all_eligible(mod: parser.Module): boolean {
     return eligible_core(mod);
+}
+
+// all_eligible_known is all_eligible with the program-wide known-symbol set
+// threaded in (#3451 step 1): a module whose only "unknown" direct calls /
+// function values target functions defined in a SIBLING module of the loaded
+// import set is eligible (those become externs at link), where the bare
+// all_eligible would bail it to AST. An empty `known` is identical to
+// all_eligible.
+pub function all_eligible_known(mod: parser.Module, known: string[]): boolean {
+    return eligible_core_known(mod, known);
 }
 
 // eligibility_report returns a per-function IR-eligibility breakdown for `mod`:
@@ -2079,26 +2120,36 @@ pub function all_eligible(mod: parser.Module): boolean {
 // IR subset (goal 1) can see WHICH function, and which category, forces a module
 // to the AST fallback, and prove a construct moved onto the IR path.
 pub function eligibility_report(mod: parser.Module): string {
+    var none: string[] = [];
+    return eligibility_report_known(mod, none);
+}
+
+// eligibility_report_known is eligibility_report with the program-wide
+// known-symbol set threaded in (#3451 step 1): a direct call / function value
+// to a sibling module's function reports `ir` (extern, resolved at link)
+// instead of `BAIL call` / `BAIL const_func`, and the module verdict reflects
+// all_eligible_known. An empty `known` reproduces eligibility_report exactly.
+pub function eligibility_report_known(mod: parser.Module, known: string[]): string {
     var out: string = "";
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        out = out + eligibility_line(mod.funcs[i], mod);
+        out = out + eligibility_line(mod.funcs[i], mod, known);
         i = i + 1;
     }
     var verdict: string = "module: AST";
-    if (all_eligible(mod)) { verdict = "module: IR"; }
+    if (all_eligible_known(mod, known)) { verdict = "module: IR"; }
     return out + verdict + "\n";
 }
 
 // eligibility_line is the single-function verdict line ("<name>: ir\n" or
 // "<name>: BAIL <reasons>\n") shared by eligibility_report and its sharded
 // twin. A receiver method is reported as "<Type>.<method>".
-function eligibility_line(fd: parser.FuncDecl, mod: parser.Module): string {
+function eligibility_line(fd: parser.FuncDecl, mod: parser.Module, known: string[]): string {
     var name: string = fd.name;
     if (fd.receiver_type.len() > 0) { name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
     var lower_ok: boolean = ir_eligible(fd, mod);
-    var calls_ok: boolean = calls_only_known(fd, mod);
-    var cfns_ok: boolean = const_funcs_only_known(fd, mod);
+    var calls_ok: boolean = calls_only_known(fd, mod, known);
+    var cfns_ok: boolean = const_funcs_only_known(fd, mod, known);
     if (lower_ok && calls_ok && cfns_ok) {
         return name + ": ir\n";
     }
@@ -2128,8 +2179,9 @@ pub function eligibility_report_range(mod: parser.Module, start: i32, count: i32
     var hi: i32 = mod.funcs.len();
     if (count > 0 && lo + count < hi) { hi = lo + count; }
     var i: i32 = lo;
+    var none: string[] = [];
     while (i < hi) {
-        out = out + eligibility_line(mod.funcs[i], mod);
+        out = out + eligibility_line(mod.funcs[i], mod, none);
         i = i + 1;
     }
     return out;
@@ -2139,11 +2191,11 @@ pub function eligibility_report_range(mod: parser.Module, start: i32, count: i32
 // (const_func) in fd names a function defined in the module — the function-value
 // twin of calls_only_known. A const_func to an unknown name can't resolve to a
 // funcref table slot, so such modules fall back to AST.
-function const_funcs_only_known(fd: parser.FuncDecl, mod: parser.Module): boolean {
+function const_funcs_only_known(fd: parser.FuncDecl, mod: parser.Module, known: string[]): boolean {
     var r: irlower.LowerResult = irlower.lower_func_for_noret(fd, mod.structs, mod.funcs);
     var i: i32 = 0;
     while (i < r.ops.len()) {
-        if (r.ops[i].kind == "const_func" && !module_has_func(mod, r.ops[i].str)) { return false; }
+        if (r.ops[i].kind == "const_func" && !module_has_func(mod, r.ops[i].str) && !known_includes(known, r.ops[i].str)) { return false; }
         i = i + 1;
     }
     return true;
@@ -2166,13 +2218,13 @@ function module_has_func(mod: parser.Module, name: string): boolean {
 
 // calls_only_known reports whether every direct call in fd targets a module
 // function or an IR runtime helper (not a builtin).
-function calls_only_known(fd: parser.FuncDecl, mod: parser.Module): boolean {
+function calls_only_known(fd: parser.FuncDecl, mod: parser.Module, known: string[]): boolean {
     var r: irlower.LowerResult = irlower.lower_func_for_noret(fd, mod.structs, mod.funcs);
     var i: i32 = 0;
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
         if (o.kind == "call_direct") {
-            if (!is_fern_helper(o.str) && !module_has_func(mod, o.str)) { return false; }
+            if (!is_fern_helper(o.str) && !module_has_func(mod, o.str) && !known_includes(known, o.str)) { return false; }
         }
         i = i + 1;
     }
