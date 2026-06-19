@@ -5941,6 +5941,10 @@ function iife_payload_bindable(pv: parser.PatVariant, arm: parser.MatchArm, opt_
     if (opt_srt != "") {
         var pt: string = opt_payload_type(opt_srt, pv.type_name);
         if (pt == "i32") { return true; }
+        // A `dyn Trait` error payload (`Err(e)` where e: dyn Error) is admitted
+        // into an i32-result temp: the underlying StmtMatch path marks the slot
+        // with the dyn type so `e.method()` dispatches via op_dyn_dispatch.
+        if (temp_is_i32 && pt.len() > 4 && pt[0:4] == "dyn ") { return true; }
         if (temp_is_i32 && scrut_is_ident && pt.len() >= 8 && pt[0:7] == "Option[") { return true; }
         return false;
     }
@@ -8672,7 +8676,12 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 var ptag_is_array: boolean = ptag == "i32[]" || ptag == "boolean[]" || ptag == "u32[]" || is_subword_array_type(ptag)
                                     || ptag == "f64[]" || ptag == "i64[]" || ptag == "string[]"
                                     || is_struct_array_field_type(ms.structs, ptag) || is_enum_array_field_type(ms.structs, ptag);
-                                if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && ptag != "f64" && !ptag_is_struct && !ptag_is_enum && !ptag_is_opt && !ptag_is_tuple && !ptag_is_array) { return s.fail(); }
+                                // A `dyn Trait` error payload (`Err(e)` where e: dyn Error):
+                                // stored by pointer at offset 8 (same as a struct), read via
+                                // op_opt_payload and marked with the dyn type so `e.method()`
+                                // routes through op_dyn_dispatch at the call site.
+                                var ptag_is_dyn: boolean = ptag.len() > 4 && ptag[0:4] == "dyn ";
+                                if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && ptag != "f64" && !ptag_is_struct && !ptag_is_enum && !ptag_is_opt && !ptag_is_tuple && !ptag_is_array && !ptag_is_dyn) { return s.fail(); }
                             }
                             var want: i32 = 0;
                             if (pv.type_name == "None" || pv.type_name == "Err") { want = 1; }
@@ -8742,6 +8751,10 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                     ms = ms.mark_arr(pbslot, true);
                                     ms = ms.mark_struct_type(pbslot, ptag[0 : ptag.len() - 2]);
                                 }
+                                // A `dyn Trait` payload: tag the bound slot with the dyn
+                                // type so `e.method()` at the call site is recognised as
+                                // a dyn receiver and routes through op_dyn_dispatch.
+                                else if (ptag.len() > 4 && ptag[0:4] == "dyn ") { ms = ms.mark_struct_type(pbslot, ptag); }
                             }
                             if (arm.has_guard) {
                                 ms = lower_expr(arm.guard, ms);
