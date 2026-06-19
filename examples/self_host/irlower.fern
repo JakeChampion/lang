@@ -6044,6 +6044,25 @@ function iife_variant_payload_field(pv: parser.PatVariant, name: string, s: Lowe
     return "";
 }
 
+// iife_bound_payload_type resolves the payload TYPE bound by `name` in a PatVariant
+// arm, covering BOTH a user-enum variant (the `__ev` / `__ev<k>` struct field, via
+// iife_variant_payload_field) AND an Option/Result Some/Ok/Err variant whose payload
+// type isn't a user struct (recovered from the scrutinee's Option/Result spelling
+// `opt_srt` via opt_payload_type). When the user-enum lookup succeeds it is returned
+// unchanged, so user-enum behaviour is byte-identical; the Option/Result fall-through
+// only fires for the single MAIN binding (`Some(v)` / `Ok(v)` / `Err(v)` are single-
+// payload variants), keeping multi-binding arms on the user-enum field path. "" when
+// neither resolves (an unannotated scrutinee, a `_` binding, or a name that doesn't
+// bind this variant's payload).
+function iife_bound_payload_type(pv: parser.PatVariant, name: string, opt_srt: string, s: LowerState): string {
+    var ft: string = iife_variant_payload_field(pv, name, s);
+    if (ft != "") { return ft; }
+    if (opt_srt != "" && pv.binding.len() > 0 && pv.binding != "_" && pv.binding == name) {
+        return opt_payload_type(opt_srt, pv.type_name);
+    }
+    return "";
+}
+
 // iife_payload_result_width classifies a match-EXPRESSION's RESULT temp when an arm
 // directly returns a BOUND enum payload (`V(a) => a`). The width can't be inferred
 // from the bare ident at classify time (the binding isn't in scope yet), so it is
@@ -6120,7 +6139,7 @@ function iife_payload_kind_of_type(ft: string, s: LowerState): string {
 // carry); "" for an i32 / boolean / unrecoverable result (handled by the i32 temp /
 // the existing classifiers). The kind names the temp width the StmtMatch arm-body
 // lowering already produces for the same field read, so the temp lines up.
-function iife_arm_payload_result_kind(arm: parser.MatchArm, s: LowerState): string {
+function iife_arm_payload_result_kind(arm: parser.MatchArm, opt_srt: string, s: LowerState): string {
     if (arm.body.len() == 0) { return ""; }
     var last: parser.Stmt = arm.body[arm.body.len() - 1];
     var rval: parser.Expr = parser.e_unknown("");
@@ -6135,7 +6154,7 @@ function iife_arm_payload_result_kind(arm: parser.MatchArm, s: LowerState): stri
             match (rval) {
                 // Bare payload `V(x) => x` — kind is the payload field type's kind.
                 parser.ExprIdent(rid) => {
-                    var ft: string = iife_variant_payload_field(pv, rid.name, s);
+                    var ft: string = iife_bound_payload_type(pv, rid.name, opt_srt, s);
                     return iife_payload_kind_of_type(ft, s);
                 },
                 // `name.<field>` / `name.<digit>` — a field / tuple-element read of
@@ -6143,7 +6162,7 @@ function iife_arm_payload_result_kind(arm: parser.MatchArm, s: LowerState): stri
                 parser.ExprFieldAccess(fa) => {
                     match (fa.obj) {
                         parser.ExprIdent(oid) => {
-                            var ft0: string = iife_variant_payload_field(pv, oid.name, s);
+                            var ft0: string = iife_bound_payload_type(pv, oid.name, opt_srt, s);
                             if (ft0 == "") { return ""; }
                             // Tuple element `t.0`: recover the element tag's kind.
                             if (util.is_all_digits(fa.field)) {
@@ -6171,7 +6190,7 @@ function iife_arm_payload_result_kind(arm: parser.MatchArm, s: LowerState): stri
                 parser.ExprBinary(bc) => {
                     if (bc.op != "+") { return ""; }
                     if (pv.binding.len() == 0 || pv.binding == "_") { return ""; }
-                    var ftc: string = iife_variant_payload_field(pv, pv.binding, s);
+                    var ftc: string = iife_bound_payload_type(pv, pv.binding, opt_srt, s);
                     if (ftc == "") { return ""; }
                     if (iife_string_concat_borrow_only(rval, pv.binding, ftc, s)) { return "string"; }
                     return "";
@@ -6192,10 +6211,11 @@ function iife_arm_payload_result_kind(arm: parser.MatchArm, s: LowerState): stri
 // already covered by iife_payload_result_width for the bare case; this adds string and
 // the struct-field / tuple-element shapes for all three kinds.
 function iife_payload_result_kind(m: parser.StmtMatch, s: LowerState): string {
+    var opt_srt: string = try_opt_type(m.scrutinee, s);
     var found: string = "";
     var i: i32 = 0;
     while (i < m.arms.len()) {
-        var k: string = iife_arm_payload_result_kind(m.arms[i], s);
+        var k: string = iife_arm_payload_result_kind(m.arms[i], opt_srt, s);
         if (k != "") {
             if (found != "" && found != k) { return ""; }
             found = k;
@@ -6258,7 +6278,7 @@ function iife_tuple_lit_tags(e: parser.Expr, s: LowerState): string {
 // Option / array result, an unrecoverable shape, or a tail that isn't a return.
 // Tuple results carry the comma-joined element TAGS (mark_tuple_elems form); struct
 // / enum results carry the type NAME (mark_struct_type form).
-function iife_arm_composite_result_type(arm: parser.MatchArm, s: LowerState): string {
+function iife_arm_composite_result_type(arm: parser.MatchArm, opt_srt: string, s: LowerState): string {
     if (arm.body.len() == 0) { return ""; }
     var last: parser.Stmt = arm.body[arm.body.len() - 1];
     var rval: parser.Expr = parser.e_unknown("");
@@ -6273,7 +6293,7 @@ function iife_arm_composite_result_type(arm: parser.MatchArm, s: LowerState): st
         parser.PatVariant(pv) => {
             match (rval) {
                 parser.ExprIdent(rid) => {
-                    var ft: string = iife_variant_payload_field(pv, rid.name, s);
+                    var ft: string = iife_bound_payload_type(pv, rid.name, opt_srt, s);
                     if (iife_type_is_composite(ft, s)) {
                         if (tuple_elems_lowerable(ft, s.structs) && !decl_is_struct(s.structs, ft) && !is_enum_like_name(ft, s.structs)) { return tuple_elem_tags(ft); }
                         return ft;
@@ -6313,10 +6333,11 @@ function iife_arm_composite_result_type(arm: parser.MatchArm, s: LowerState): st
 // the mark_struct_type type name (struct / enum) or the mark_tuple_elems comma-joined
 // tags (tuple); iife_result_is_tuple distinguishes the two.
 function iife_match_composite_result_type(m: parser.StmtMatch, s: LowerState): string {
+    var opt_srt: string = try_opt_type(m.scrutinee, s);
     var found: string = "";
     var i: i32 = 0;
     while (i < m.arms.len()) {
-        var t: string = iife_arm_composite_result_type(m.arms[i], s);
+        var t: string = iife_arm_composite_result_type(m.arms[i], opt_srt, s);
         if (t == "") {
             // An arm with no recoverable composite result — if ANY other arm DID
             // recover one, the match isn't uniformly composite-typed, so bail.
@@ -6466,7 +6487,7 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState): LowerState {
                     // admits a BORROW read of a struct/enum payload, not a bare return)
                     // would otherwise reject it.
                     if (!iife_payload_bindable(pv, m.arms[i], opt_srt, temp_is_i32, scrut_is_ident, res_kind, ts)
-                        && !(comp_ty != "" && iife_arm_composite_result_type(m.arms[i], ts) == comp_ty)) { return s.fail(); }
+                        && !(comp_ty != "" && iife_arm_composite_result_type(m.arms[i], opt_srt, ts) == comp_ty)) { return s.fail(); }
                 }
             },
             _ => {}
