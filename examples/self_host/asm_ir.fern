@@ -1980,9 +1980,35 @@ pub function eligible_core(mod: parser.Module): boolean {
     // lowerings per function held ~3x the ops; this single pass + emit_module_ir's
     // own pass keeps the eligibility-check + emit live set to ~2x instead of ~4x.
     var arf: string[] = array_ret_fns(mod);
+    // The fourteen return-type / signature side-tables lower_func consults are
+    // derived ONCE here and threaded into every func_eligible — mirroring
+    // emit_module_ir's #3422 hoist. Previously func_eligible called
+    // lower_func_for, which re-derives all fourteen (each an O(n) scan of
+    // mod.funcs) on EVERY call, so eligible_core's per-function loop was
+    // O(n^2) side-table derivation. On the large self-host modules (parser,
+    // ~300 funcs; the flattened compiler, ~1000) that quadratic allocation
+    // churned the bump heap hard enough to corrupt it (a freed block reused
+    // while still referenced), crashing the self-host-emitted compiler in
+    // __fern_str_eq under decl_is_leaksafe during its OWN eligibility pass
+    // (#3425). Deriving them once keeps the verdict byte-identical at O(n).
+    var bparams: string[] = irlower.borrowable_params_of(mod.funcs);
+    var srf: string[] = irlower.str_ret_fns_of(mod.funcs);
+    var sarf: string[] = irlower.strarr_ret_fns_of(mod.funcs);
+    var amf: string[] = irlower.arr_method_fns_of(mod.funcs);
+    var orf: string[] = irlower.opt_ret_fns_of(mod.funcs);
+    var irf: string[] = irlower.i64_ret_fns_of(mod.funcs);
+    var trf: string[] = irlower.tuple_ret_fns_of(mod.funcs);
+    var srtf: string[] = irlower.struct_ret_fns_of(mod.funcs, mod.structs);
+    var mrtf: string[] = irlower.map_ret_fns_of(mod.funcs);
+    var frf: string[] = irlower.f64_ret_fns_of(mod.funcs);
+    var farf: string[] = irlower.f64arr_ret_fns_of(mod.funcs);
+    var iarf: string[] = irlower.i64arr_ret_fns_of(mod.funcs);
+    var fps: string[] = irlower.fn_param_sigs_of(mod.funcs);
+    var cfs: string[] = irlower.closure_ret_fns_of(mod.funcs);
+    var cnf: string[] = irlower.const_fns_of(mod.funcs);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (!func_eligible(mod.funcs[i], mod, arf)) { return false; }
+        if (!func_eligible(mod.funcs[i], mod, arf, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf)) { return false; }
         i = i + 1;
     }
     return true;
@@ -1997,8 +2023,10 @@ pub function eligible_core(mod: parser.Module): boolean {
 // kinds carry the callee name regardless of return-type tagging — so the module
 // verdict is unchanged, at a third of the lowering cost. `arf` (array_ret_fns) is
 // hoisted by the caller so it is derived once per module, not once per function.
-function func_eligible(fd: parser.FuncDecl, mod: parser.Module, arf: string[]): boolean {
-    var r: irlower.LowerResult = irlower.lower_func_for(fd, arf, mod.structs, mod.funcs);
+function func_eligible(fd: parser.FuncDecl, mod: parser.Module, arf: string[], bparams: string[], srf: string[], sarf: string[], amf: string[], orf: string[], irf: string[], trf: string[], srtf: string[], mrtf: string[], frf: string[], farf: string[], iarf: string[], fps: string[], cfs: string[], cnf: string[]): boolean {
+    // lower_func with the hoisted side-tables (the same set lower_func_for would
+    // derive, but computed once by eligible_core — see the hoist note there).
+    var r: irlower.LowerResult = irlower.lower_func(fd, arf, mod.structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, bparams);
     if (!r.ok) { return false; }
     var i: i32 = 0;
     while (i < r.ops.len()) {
