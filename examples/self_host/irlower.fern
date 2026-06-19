@@ -4992,26 +4992,38 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         return dm.emit(ir.op_dyn_dispatch(fa.field, dbase, dargc));
                     }
                     // A function-VALUE struct field call `h.f(args)` — `f` is a
-                    // "fn"-typed field (a plain fn pointer stored at construction,
-                    // e.g. `H { f: dbl }`), NOT a method. Lower the args, then the
-                    // field access (struct_get → the fn pointer on TOS), and
-                    // call_indirect — the same shape a fn-value local uses. Without
-                    // this the `<Type>.method` dispatch below names a nonexistent
-                    // "H.f" and the module bails to AST.
+                    // "fn"-typed field, NOT a method. The lift pass (#3445) stores
+                    // EVERY fn-typed field as an env BOX `[funcval, caps…]`: a
+                    // capturing inline lambda → [$cloN, caps…], a no-capture lambda
+                    // / bare fn-name → a [$wrapN] env-taking trampoline (slot 0
+                    // only). So the call is UNIFORMLY env-first — the same sequence
+                    // a closure local / closure-array element uses: stash the field
+                    // box in a temp, push it as the `__env` first arg, lower the
+                    // declared args, push box[0] as the call target, and
+                    // call_indirect(arity+1). Without this the `<Type>.method`
+                    // dispatch below names a nonexistent "H.f" and the module bails.
                     if (rty != "" && decl_field_type(s.structs, rty, fa.field) == "fn") {
                         var ffidx: i32 = s.field_index_in(rty, fa.field);
                         if (ffidx < 0) { return s.fail(); }
-                        var ffs: LowerState = s;
+                        // Evaluate the receiver, read the field box, stash it.
+                        var ffs: LowerState = lower_expr(fa.obj, s);
+                        if (!ffs.ok) { return ffs; }
+                        ffs = ffs.emit(ir.op_struct_get(ffidx, struct_field_width(s.structs, rty, ffidx)));
+                        var fbtmp: string = "$fnfield" + util.i32_to_string(ffs.local_names.len());
+                        ffs = ffs.add_local(fbtmp);
+                        var fbslot: i32 = ffs.slot_of(fbtmp);
+                        ffs = ffs.emit(ir.op_store_local(fbslot));
+                        ffs = ffs.emit(ir.op_load_local(fbslot));   // __env (the box)
                         var ffi: i32 = 0;
                         while (ffi < c.args.len()) {
                             ffs = lower_expr(c.args[ffi], ffs);
                             if (!ffs.ok) { return ffs; }
                             ffi = ffi + 1;
                         }
-                        ffs = lower_expr(fa.obj, ffs);
-                        if (!ffs.ok) { return ffs; }
-                        ffs = ffs.emit(ir.op_struct_get(ffidx, struct_field_width(s.structs, rty, ffidx)));
-                        return ffs.emit(ir.op_call_indirect(c.args.len()));
+                        ffs = ffs.emit(ir.op_load_local(fbslot));
+                        ffs = ffs.emit(ir.op_const_i32(0));
+                        ffs = ffs.emit(ir.op_arr_get(32));   // box[0] -> funcval
+                        return ffs.emit(ir.op_call_indirect(c.args.len() + 1));
                     }
                     if (rty != "") {
                         // A receiver whose tracked type is an enum VARIANT (a
@@ -14757,12 +14769,105 @@ function try_inline_closure(lam: parser.ExprLambda, fd: parser.FuncDecl, funcs: 
     return InlineCloRes { expr: marker, funcs: funcs.append(hr.func), counter: counter + 1 };
 }
 
+// ---- uniform env-box fn-typed STRUCT FIELDS (slice #3445 / #3435 follow-up) --
+//
+// A fn-typed struct field (`struct Box { f: (i32) => i32 }`) must store a value
+// the field-call path can invoke UNIFORMLY. The capturing inline lambda case
+// needs an env box `[funcval, caps…]` whose funcval (`<fd>$cloN`) takes an
+// `__env` first param; but a no-capture lambda / bare fn-name field stores a
+// plain fn pointer that takes NO `__env`. To make `h.f(args)` dispatch the SAME
+// way for every fn-field, EVERY fn-typed field value is wrapped into an env box:
+//   * capturing inline lambda  → `__mkclo$<fd>$cloN(caps…)` (try_inline_closure)
+//     → box [const_func(<fd>$cloN), caps…], the $cloN reads caps from __env.
+//   * no-capture lambda / bare  → a `<fd>$wrapN(__env: i32[], origparams…)`
+//     fn-name field                TRAMPOLINE that ignores __env and runs the
+//                                  real work, wrapped as `__mkclo$<fd>$wrapN()`
+//                                  → box [const_func(<fd>$wrapN)] (slot 0 only).
+// The call side (`decl_field_type(...) == "fn"`) then always pushes the box as
+// __env, the args, then box[0], and call_indirect(arity+1). Captures must be
+// i32 (make_clo_func declines otherwise); a fn-name whose FuncDecl isn't found,
+// or any other field-value shape, declines (ok:false) so the field stays as-is
+// and the module bails to AST (correctness preserved).
+
+// make_wrap_lambda_func builds the env-taking trampoline for a NO-CAPTURE inline
+// lambda field value: `<wrapname>(__env: i32[], origparams…) { <lambda body> }`
+// (the lambda body inlined verbatim; __env is unused). Always succeeds — a
+// no-capture lambda needs no env reads.
+function make_wrap_lambda_func(lam: parser.ExprLambda, wrapname: string): parser.FuncDecl {
+    var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false }];
+    var pj: i32 = 0;
+    while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
+    var notp: string[] = [];
+    return parser.FuncDecl { name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
+}
+
+// make_wrap_named_func builds the env-taking trampoline for a BARE FN-NAME field
+// value (`Box { f: dbl }`): `<wrapname>(__env: i32[], p0, p1…) { return dbl(p0,
+// p1…); }`, reusing the target function's parameter list / return type (looked
+// up by name in `mfuncs`). Declines (ok:false) if no receiver-less function of
+// that name is found — the field then stays as-is and the module bails to AST.
+function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: parser.FuncDecl[]): HoistResult {
+    var none: parser.FuncDecl = parser.FuncDecl { name: "", receiver_name: "", receiver_type: "", type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
+    var fi: i32 = 0;
+    while (fi < mfuncs.len()) {
+        if (mfuncs[fi].name == fnname && mfuncs[fi].receiver_type.len() == 0) {
+            var tgt: parser.FuncDecl = mfuncs[fi];
+            var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false }];
+            var args: parser.Expr[] = [];
+            var pj: i32 = 0;
+            while (pj < tgt.params.len()) {
+                ps = ps.append(tgt.params[pj]);
+                args = args.append(parser.ExprIdent { name: tgt.params[pj].name, line: 0, col: 0 });
+                pj = pj + 1;
+            }
+            var call: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: fnname, line: 0, col: 0 }, args: args, line: 0, col: 0, type_argc: 0 };
+            var bd: parser.Stmt[] = [parser.StmtReturn { value: call, line: 0, col: 0 }];
+            var notp: string[] = [];
+            return HoistResult { func: parser.FuncDecl { name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 }, ok: true };
+        }
+        fi = fi + 1;
+    }
+    return HoistResult { func: none, ok: false };
+}
+
+// try_fn_field_value lifts ONE fn-typed struct-field value into a `__mkclo$…`
+// env-box marker. Capturing inline lambda → try_inline_closure (box [funcval,
+// caps…]). No-capture inline lambda → a `$wrapN` trampoline, marker with no cap
+// args (box [funcval]). Bare fn-name → a `$wrapN` trampoline calling the named
+// fn, marker with no cap args. Any other value shape (or an unresolvable fn-name
+// / non-i32-capture lambda) declines: the value is returned unchanged so the
+// module bails to AST (correctness preserved). The marker arg list is empty for
+// the wrap cases, so __mkclo$ lowering emits a 1-slot box [const_func($wrapN)].
+function try_fn_field_value(e: parser.Expr, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: parser.FuncDecl[]): InlineCloRes {
+    match (e) {
+        parser.ExprLambda(lam) => {
+            var caps: string[] = lambda_captures(lam, gfns);
+            if (caps.len() > 0) { return try_inline_closure(lam, fd, funcs, counter, gfns); }
+            // No-capture lambda → wrap trampoline (body inlined, __env ignored).
+            var wn: string = fd.name + "$wrap" + util.i32_to_string(counter);
+            var wf: parser.FuncDecl = make_wrap_lambda_func(lam, wn);
+            var marker: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "__mkclo$" + wn, line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
+            return InlineCloRes { expr: marker, funcs: funcs.append(wf), counter: counter + 1 };
+        },
+        parser.ExprIdent(id) => {
+            // Bare fn-name field (`Box { f: dbl }`): build a trampoline calling it.
+            var wn2: string = fd.name + "$wrap" + util.i32_to_string(counter);
+            var hr: HoistResult = make_wrap_named_func(id.name, wn2, mfuncs);
+            if (!hr.ok) { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
+            var marker2: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "__mkclo$" + wn2, line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
+            return InlineCloRes { expr: marker2, funcs: funcs.append(hr.func), counter: counter + 1 };
+        },
+        _ => { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
+    }
+    return InlineCloRes { expr: e, funcs: funcs, counter: counter };
+}
+
 // lift_inline_closures_expr walks an expression, hoisting capturing inline
 // lambdas in array-element and struct-field-value positions. Non-aggregate forms
 // recurse so an array/struct nested inside them is still reached; a bare lambda
 // in any other position is left untouched (handled by the other lift passes or
 // kept on AST). Returns the rewritten expr plus the accumulated hoisted funcs.
-function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[]): InlineCloRes {
+function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): InlineCloRes {
     match (e) {
         parser.ExprArray(arr) => {
             var fs: parser.FuncDecl[] = funcs;
@@ -14776,7 +14881,7 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                         fs = tr.funcs; ct = tr.counter; nelems = nelems.append(tr.expr);
                     },
                     _ => {
-                        var er: InlineCloRes = lift_inline_closures_expr(arr.elements[i], fd, fs, ct, gfns);
+                        var er: InlineCloRes = lift_inline_closures_expr(arr.elements[i], fd, fs, ct, gfns, structs, mfuncs);
                         fs = er.funcs; ct = er.counter; nelems = nelems.append(er.expr);
                     }
                 }
@@ -14785,45 +14890,50 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
             return InlineCloRes { expr: parser.ExprArray { elements: nelems }, funcs: fs, counter: ct };
         },
         parser.ExprStructLit(sl) => {
-            // A capturing inline lambda in a struct FIELD value is deliberately NOT
-            // hoisted here (scoped out of #2994's first slice): unlike an array
-            // element — whose `is_closurearr` slot already routes `fs[i](args)`
-            // through the env-first closure-call path — a struct field holding a
-            // closure box would need `b.f(args)` to dispatch env-first, which the
-            // "fn"-typed-field call path (lower_expr ExprFieldAccess) does not do.
-            // Wiring that up needs new per-field closure-box tracking threaded
-            // through LowerState (fixpoint-regression risk), so a struct-field
-            // capturing lambda is LEFT as an ExprLambda and the module bails to
-            // AST (correctness preserved). A nested array INSIDE a field value is
-            // still reached by recursing each field value below.
+            // Every fn-typed struct FIELD value is lifted to a `__mkclo$…` env-box
+            // marker (slice #3445): a capturing inline lambda → `[funcval, caps…]`
+            // (try_inline_closure), a no-capture lambda / bare fn-name → a `$wrapN`
+            // env-taking trampoline → `[funcval]` (try_fn_field_value). This makes
+            // `h.f(args)` dispatch uniformly env-first for EVERY fn-field shape.
+            // A field whose declared type isn't `fn`, or whose value can't be
+            // wrapped (e.g. an unresolvable fn-name, a non-i32-capture lambda),
+            // recurses / is left unchanged so a nested array INSIDE a field value
+            // is still reached and the module bails to AST when it must.
             var fs: parser.FuncDecl[] = funcs;
             var ct: i32 = counter;
             var nvals: parser.Expr[] = [];
             var i: i32 = 0;
             while (i < sl.field_values.len()) {
-                var er: InlineCloRes = lift_inline_closures_expr(sl.field_values[i], fd, fs, ct, gfns);
-                fs = er.funcs; ct = er.counter; nvals = nvals.append(er.expr);
+                var is_fn_field: boolean = (sl.type_name.len() > 0 && i < sl.field_names.len()
+                    && decl_field_type(structs, sl.type_name, sl.field_names[i]) == "fn");
+                if (is_fn_field) {
+                    var fr: InlineCloRes = try_fn_field_value(sl.field_values[i], fd, fs, ct, gfns, mfuncs);
+                    fs = fr.funcs; ct = fr.counter; nvals = nvals.append(fr.expr);
+                } else {
+                    var er: InlineCloRes = lift_inline_closures_expr(sl.field_values[i], fd, fs, ct, gfns, structs, mfuncs);
+                    fs = er.funcs; ct = er.counter; nvals = nvals.append(er.expr);
+                }
                 i = i + 1;
             }
             var nbase: parser.Expr = sl.base;
             if (sl.has_base) {
-                var br: InlineCloRes = lift_inline_closures_expr(sl.base, fd, fs, ct, gfns);
+                var br: InlineCloRes = lift_inline_closures_expr(sl.base, fd, fs, ct, gfns, structs, mfuncs);
                 fs = br.funcs; ct = br.counter; nbase = br.expr;
             }
             return InlineCloRes { expr: parser.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nvals, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col }, funcs: fs, counter: ct };
         },
         parser.ExprBinary(b) => {
-            var lr: InlineCloRes = lift_inline_closures_expr(b.left, fd, funcs, counter, gfns);
-            var rr: InlineCloRes = lift_inline_closures_expr(b.right, fd, lr.funcs, lr.counter, gfns);
+            var lr: InlineCloRes = lift_inline_closures_expr(b.left, fd, funcs, counter, gfns, structs, mfuncs);
+            var rr: InlineCloRes = lift_inline_closures_expr(b.right, fd, lr.funcs, lr.counter, gfns, structs, mfuncs);
             return InlineCloRes { expr: parser.ExprBinary { op: b.op, left: lr.expr, right: rr.expr, line: b.line, col: b.col }, funcs: rr.funcs, counter: rr.counter };
         },
         parser.ExprUnary(u) => {
-            var ur: InlineCloRes = lift_inline_closures_expr(u.operand, fd, funcs, counter, gfns);
+            var ur: InlineCloRes = lift_inline_closures_expr(u.operand, fd, funcs, counter, gfns, structs, mfuncs);
             return InlineCloRes { expr: parser.ExprUnary { op: u.op, operand: ur.expr, line: u.line, col: u.col }, funcs: ur.funcs, counter: ur.counter };
         },
         parser.ExprIndex(ix) => {
-            var ar: InlineCloRes = lift_inline_closures_expr(ix.array, fd, funcs, counter, gfns);
-            var ir2: InlineCloRes = lift_inline_closures_expr(ix.index, fd, ar.funcs, ar.counter, gfns);
+            var ar: InlineCloRes = lift_inline_closures_expr(ix.array, fd, funcs, counter, gfns, structs, mfuncs);
+            var ir2: InlineCloRes = lift_inline_closures_expr(ix.index, fd, ar.funcs, ar.counter, gfns, structs, mfuncs);
             return InlineCloRes { expr: parser.ExprIndex { array: ar.expr, index: ir2.expr }, funcs: ir2.funcs, counter: ir2.counter };
         },
         _ => { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
@@ -14835,7 +14945,7 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
 // accumulator + per-function counter through the expression positions that can
 // hold an array / struct literal (var-init, return, expr-stmt, assign) and
 // recursing nested bodies.
-function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[]): InlineCloStmts {
+function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): InlineCloStmts {
     var fs: parser.FuncDecl[] = funcs;
     var ct: i32 = counter;
     var out: parser.Stmt[] = [];
@@ -14843,39 +14953,39 @@ function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, f
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtVar(v) => {
-                var er: InlineCloRes = lift_inline_closures_expr(v.init, fd, fs, ct, gfns);
+                var er: InlineCloRes = lift_inline_closures_expr(v.init, fd, fs, ct, gfns, structs, mfuncs);
                 fs = er.funcs; ct = er.counter;
                 out = out.append(parser.StmtVar { name: v.name, type_name: v.type_name, init: er.expr, line: v.line, col: v.col });
             },
             parser.StmtReturn(r) => {
-                var er: InlineCloRes = lift_inline_closures_expr(r.value, fd, fs, ct, gfns);
+                var er: InlineCloRes = lift_inline_closures_expr(r.value, fd, fs, ct, gfns, structs, mfuncs);
                 fs = er.funcs; ct = er.counter;
                 out = out.append(parser.StmtReturn { value: er.expr, line: r.line, col: r.col });
             },
             parser.StmtExpr(es) => {
-                var er: InlineCloRes = lift_inline_closures_expr(es.value, fd, fs, ct, gfns);
+                var er: InlineCloRes = lift_inline_closures_expr(es.value, fd, fs, ct, gfns, structs, mfuncs);
                 fs = er.funcs; ct = er.counter;
                 out = out.append(parser.StmtExpr { value: er.expr });
             },
             parser.StmtAssign(a) => {
-                var er: InlineCloRes = lift_inline_closures_expr(a.value, fd, fs, ct, gfns);
+                var er: InlineCloRes = lift_inline_closures_expr(a.value, fd, fs, ct, gfns, structs, mfuncs);
                 fs = er.funcs; ct = er.counter;
                 out = out.append(parser.StmtAssign { target: a.target, value: er.expr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col });
             },
             parser.StmtIf(f) => {
-                var tb: InlineCloStmts = lift_inline_closures_stmts(f.then_body, fd, fs, ct, gfns);
+                var tb: InlineCloStmts = lift_inline_closures_stmts(f.then_body, fd, fs, ct, gfns, structs, mfuncs);
                 fs = tb.funcs; ct = tb.counter;
-                var eb: InlineCloStmts = lift_inline_closures_stmts(f.else_body, fd, fs, ct, gfns);
+                var eb: InlineCloStmts = lift_inline_closures_stmts(f.else_body, fd, fs, ct, gfns, structs, mfuncs);
                 fs = eb.funcs; ct = eb.counter;
                 out = out.append(parser.StmtIf { cond: f.cond, then_body: tb.stmts, else_body: eb.stmts });
             },
             parser.StmtWhile(w) => {
-                var b: InlineCloStmts = lift_inline_closures_stmts(w.body, fd, fs, ct, gfns);
+                var b: InlineCloStmts = lift_inline_closures_stmts(w.body, fd, fs, ct, gfns, structs, mfuncs);
                 fs = b.funcs; ct = b.counter;
                 out = out.append(parser.StmtWhile { cond: w.cond, body: b.stmts, label: w.label });
             },
             parser.StmtFor(fr) => {
-                var b: InlineCloStmts = lift_inline_closures_stmts(fr.body, fd, fs, ct, gfns);
+                var b: InlineCloStmts = lift_inline_closures_stmts(fr.body, fd, fs, ct, gfns, structs, mfuncs);
                 fs = b.funcs; ct = b.counter;
                 out = out.append(parser.StmtFor { var_name: fr.var_name, iter: fr.iter, body: b.stmts, label: fr.label });
             },
@@ -14892,8 +15002,8 @@ struct InlineCloStmts { stmts: parser.Stmt[], funcs: parser.FuncDecl[], counter:
 // aggregate position to `<fd>$cloN` funcs (returned in `funcs`). When nothing is
 // hoisted, fd is returned unchanged and funcs is empty so lambda-free / unaffected
 // functions serialize byte-identically (fixpoint-safe).
-function lift_inline_closures(fd: parser.FuncDecl, gfns: string[]): InlineCloStmts {
-    var r: InlineCloStmts = lift_inline_closures_stmts(fd.body, fd, [], 0, gfns);
+function lift_inline_closures(fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): InlineCloStmts {
+    var r: InlineCloStmts = lift_inline_closures_stmts(fd.body, fd, [], 0, gfns, structs, mfuncs);
     if (r.funcs.len() == 0) { return InlineCloStmts { stmts: fd.body, funcs: [], counter: 0 }; }
     return r;
 }
@@ -15084,7 +15194,7 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
         // not a bare ExprLambda they'd skip. The hoisted funcs join `acc` so the
         // drain below re-processes them (their own nested lambdas lift in a later
         // round); a body with no such closure is returned unchanged (fixpoint-safe).
-        var ic: InlineCloStmts = lift_inline_closures(fd, gfns);
+        var ic: InlineCloStmts = lift_inline_closures(fd, gfns, mod.structs, mod.funcs);
         if (ic.funcs.len() > 0) {
             fd = parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: ic.stmts, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count };
             var ici: i32 = 0;

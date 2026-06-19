@@ -1776,6 +1776,26 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// gets its own `$cloN` and reads its own env box. With a=1, b=10:
 		// fs[0](10) = 10 + a = 11, fs[1](10) = 10 * b = 100; 11 + 100 = 111.
 		{"clo-cap-arr-multi-forin", `function main(): i32 { var a = 1; var b = 10; var fs = [function(x: i32): i32 { return x + a; }, function(x: i32): i32 { return x * b; }]; var s = 0; for f in fs { s = s + f(10); } return s; }`, 111},
+		// A CAPTURING inline lambda in a STRUCT FIELD value (#3445). The lift pass
+		// now wraps EVERY fn-typed field into an env box: a capturing lambda →
+		// [funcval($cloN), caps…], a no-capture lambda / bare fn-name → a [$wrapN]
+		// env-taking trampoline (slot 0 only); `b.f(args)` dispatches uniformly
+		// env-first. Single capturing field: b.f(7) = 7 + n = 7 + 10 = 17.
+		{"clo-cap-struct-field", `struct Box { f: (i32) => i32 } function main(): i32 { var n = 10; var b = Box { f: function(x: i32): i32 { return x + n; } }; return b.f(7); }`, 17},
+		// Two distinct capturing fields, each its own `$cloN` env box. With n=5,
+		// m=3: o.add(10)=10+5=15, o.mul(10)=10*3=30; 15 + 30 = 45.
+		{"clo-cap-struct-field-2cap", `struct Ops { add: (i32) => i32, mul: (i32) => i32 } function main(): i32 { var n = 5; var m = 3; var o = Ops { add: function(x: i32): i32 { return x + n; }, mul: function(x: i32): i32 { return x * m; } }; return o.add(10) + o.mul(10); }`, 45},
+		// A capturing field PLUS a no-capture lambda field in the same struct: the
+		// capturing field is a [$cloN, caps…] box, the no-capture field a [$wrapN]
+		// trampoline box; both call env-first. n=100: cap(7)=107, plain(7)=14; 121.
+		{"clo-cap-struct-field-mixed-nocap", `struct Ops { cap: (i32) => i32, plain: (i32) => i32 } function main(): i32 { var n = 100; var o = Ops { cap: function(x: i32): i32 { return x + n; }, plain: function(x: i32): i32 { return x * 2; } }; return o.cap(7) + o.plain(7); }`, 121},
+		// A capturing field PLUS a bare fn-name field: the fn-name field is wrapped
+		// in a [$wrapN] trampoline that calls the named fn. n=1: cap(7)=8,
+		// named(7)=trip(7)=21; 8 + 21 = 29.
+		{"clo-cap-struct-field-mixed-named", `struct Ops { cap: (i32) => i32, named: (i32) => i32 } function trip(x: i32): i32 { return x * 3; } function main(): i32 { var n = 1; var o = Ops { cap: function(x: i32): i32 { return x + n; }, named: trip }; return o.cap(7) + o.named(7); }`, 29},
+		// A capturing field PLUS a separate non-fn (i32) field: the i32 field is
+		// stored normally, the fn field as the env box. n=10: f(7)=17, base=100; 117.
+		{"clo-cap-struct-field-with-nonfn", `struct Box { f: (i32) => i32, base: i32 } function main(): i32 { var n = 10; var b = Box { f: function(x: i32): i32 { return x + n; }, base: 100 }; return b.f(7) + b.base; }`, 117},
 	}
 	for _, tc := range irOnly {
 		t.Run(tc.name, func(t *testing.T) {
