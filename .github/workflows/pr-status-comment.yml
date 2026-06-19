@@ -8,9 +8,10 @@ name: PR Status Comment
 #   ⚠️  the PR has merge conflicts with its base branch
 #   ⏳  a transient "checks still running" baseline
 #
-# The comment is an upsert — a hidden marker (MARKER below) lets us find the
-# comment we wrote last time and edit it in place rather than spamming the
-# thread on every event.
+# A NEW comment is posted each time the status changes (it never edits an
+# existing comment). A hidden status marker on each comment lets us skip
+# posting when the status is unchanged, so the thread isn't spammed with
+# identical comments as each watched workflow finishes.
 #
 # Triggers:
 #   workflow_run: completed  — re-evaluate every time one of the PR's CI
@@ -83,7 +84,13 @@ jobs:
       - uses: actions/github-script@v7
         with:
           script: |
-            const MARKER = '<!-- pr-status-comment -->';
+            // Each status comment is tagged with its status so we can tell when
+            // the state actually changed. We post a NEW comment on every change
+            // (never edit an existing one), but skip when the most recent status
+            // comment already reflects the same status — otherwise every watched
+            // workflow finishing while others are still pending would spam an
+            // identical "checks running" comment.
+            const MARKER_PREFIX = '<!-- pr-status-comment:';
             // The check-run name this workflow contributes to a PR (== the job
             // name below). Excluded from the tally so we never wait on / report
             // ourselves. Compared against check_run.name, which is the *job*
@@ -172,12 +179,14 @@ jobs:
               const anyPending = pendingChecks.length > 0 || pendingStatuses.length > 0;
 
               // --- Compose the comment body ------------------------------------
-              let body;
+              let body, status;
               if (hasConflicts) {
+                status = 'conflict';
                 body = `### ⚠️ Merge conflicts\n\n`
                   + `This pull request has conflicts with its base branch (\`${pr.base.ref}\`) `
                   + `and can't be merged as-is. Please rebase or merge \`${pr.base.ref}\` and resolve the conflicts.`;
               } else if (anyFailed) {
+                status = 'failed';
                 const names = [
                   ...failedChecks.map(r => `\`${r.name}\` (${r.conclusion})`),
                   ...failedStatuses.map(s => `\`${s.context}\` (${s.state})`),
@@ -187,40 +196,36 @@ jobs:
                   + names.map(n => `- ${n}`).join('\n')
                   + `\n\nPush a fix and they'll re-run automatically.`;
               } else if (anyPending) {
+                status = 'running';
                 const n = pendingChecks.length + pendingStatuses.length;
                 body = `### ⏳ Checks running\n\n`
                   + `${n} check${n === 1 ? ' is' : 's are'} still in progress. `
-                  + `I'll update this comment once everything settles.`;
+                  + `I'll post an update once everything settles.`;
               } else if (tracked.length === 0 && combined.statuses.length === 0) {
                 core.info(`PR #${prNumber}: no other checks reported yet; skipping.`);
                 return;
               } else {
+                status = 'passed';
                 body = `### ✅ All checks passed\n\n`
                   + `Every check on this pull request is green and there are no merge conflicts. `
                   + `This PR is ready to go. 🚀`;
               }
-              body += `\n\n${MARKER}`;
+              const marker = `${MARKER_PREFIX}${status} -->`;
+              body += `\n\n${marker}`;
 
-              // --- Upsert: edit our previous comment, or create a new one ------
+              // --- Post a new comment, but only when the status changed --------
               const comments = await github.paginate(github.rest.issues.listComments, {
                 owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, per_page: 100,
               });
-              const existing = comments.find(c => c.body && c.body.includes(MARKER));
-              if (existing) {
-                if (existing.body === body) {
-                  core.info(`PR #${prNumber}: status comment already up to date.`);
-                  return;
-                }
-                await github.rest.issues.updateComment({
-                  owner: context.repo.owner, repo: context.repo.repo,
-                  comment_id: existing.id, body,
-                });
-                core.info(`PR #${prNumber}: updated status comment.`);
-              } else {
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner, repo: context.repo.repo,
-                  issue_number: prNumber, body,
-                });
-                core.info(`PR #${prNumber}: created status comment.`);
+              const prior = comments.filter(c => c.body && c.body.includes(MARKER_PREFIX));
+              const last = prior[prior.length - 1];
+              if (last && last.body.includes(marker)) {
+                core.info(`PR #${prNumber}: status unchanged (${status}); not posting a duplicate.`);
+                return;
               }
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: prNumber, body,
+              });
+              core.info(`PR #${prNumber}: posted ${status} status comment.`);
             }
