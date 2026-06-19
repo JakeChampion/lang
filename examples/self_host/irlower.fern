@@ -3436,6 +3436,25 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                                                 || (favfa.field == "append" && favc.args.len() == 1)) {
                                                 if (scalar_arr_field_type(favfa.obj, s) != "") {
                                                     fav_ok = true;
+                                                } else {
+                                                    // `.with` / `.append` on a bare scalar-array
+                                                    // LOCAL / PARAM receiver (`State { flags:
+                                                    // flags.append(v) }` — parser.dl_collect_stmt's
+                                                    // `i32[]` flags), not only a field read. Sound
+                                                    // for the same reason as the field-read case: a
+                                                    // scalar field's drop is the rc-gated buffer-only
+                                                    // __fern_arr_dec, so an in-place grow (which bumps
+                                                    // the buffer rc to 2, shared with the receiver) is
+                                                    // dec'd-not-freed (leak) while a copy-grow yields a
+                                                    // sole-owned rc=1 buffer that frees — no over-
+                                                    // release either way. No alias-inc, like the
+                                                    // field-read / array-literal forms.
+                                                    match (favfa.obj) {
+                                                        parser.ExprIdent(rid) => {
+                                                            if (s.is_arr_slot(s.slot_of(rid.name))) { fav_ok = true; }
+                                                        },
+                                                        _ => {}
+                                                    }
                                                 }
                                             }
                                         },
