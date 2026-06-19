@@ -2286,6 +2286,53 @@ pub function br_target(ops: ir.Op[], lp: string, i: i32, d: i32): string {
 // emit_function_via_ir's dispatch — see ir.is_str_op_kind). Each pops its box
 // operand(s), calls the matching __fern_str_* runtime, and pushes the result;
 // the mark_* needs pull in the helper bodies (emit_ir_runtime / emit_ir_str_search).
+// str_lit_label builds the `.rodata` label for string-literal `idx`, honouring
+// the per-module namespace (`s.str_ns`): empty → `.S<idx>` (byte-identical to
+// the whole-program emitter), non-empty → `.S<ns>_<idx>` so separately-emitted
+// modules' string pools don't collide at link (#3451 step 3 / #3455). The SAME
+// label is used at the definition site (.rodata) and every `leaq` reference, so
+// the box's data pointer resolves within the module.
+function str_lit_label(s: asmcore.EmitState, idx: i32): string {
+    if (s.str_ns.len() == 0) { return ".S" + util.i32_to_string(idx); }
+    return ".S" + s.str_ns + "_" + util.i32_to_string(idx);
+}
+
+// emit_runtime_globls exports the shared `__fern_*` / `__fn___fern_*` runtime
+// entry points `.globl` so a library module's `call __fern_alloc` (etc.) — an
+// unresolved extern in that module — links against the single copy the entry
+// module emits (#3451 step 3 / #3455). Only the entry calls this (it owns the
+// runtime). A `.globl` for a symbol the entry doesn't actually define (its need
+// wasn't present) is a harmless UND entry as long as nothing references it; a
+// symbol the entry DOES define is exported. This is emitted only in per-module
+// mode (globl_defs) — the whole-program emitter never calls it, so its output
+// is unchanged.
+function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
+    var names: string[] = [
+        "__fern_alloc", "__fern_alloc_u8", "__fern_arr_box", "__fern_arr_push",
+        "__fern_arr_slice", "__fern_str_concat", "__fern_str_eq", "__fern_str_cmp",
+        "__fern_string_from_bytes", "__fern_str_bytes", "__fern_str_chars",
+        "__fern_str_lines", "__fern_str_split", "__fern_str_repeat",
+        "__fern_str_replace", "__fern_str_reverse", "__fern_str_trim",
+        "__fern_str_to_lower", "__fern_str_to_upper", "__fern_str_starts_with",
+        "__fern_str_ends_with", "__fern_str_index_of", "__fern_print_str",
+        "__fern_print_int", "__fern_eprint_str", "__fern_putchar",
+        "__fern_read_int", "__fern_read_line", "__fern_strbuf_append",
+        "__fern_strbuf_reset", "__fern_strbuf_take", "__fern_random_i32",
+        "__fern_random_bytes", "__fern_monotonic_ns", "__fern_now_ns",
+        "__fern_now_unix_ms", "__fern_sleep_ms", "__fern_map_new",
+        "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fern_map_delete",
+        "__fn___fern_rc_inc", "__fn___fern_arr_dec", "__fn___fern_rc_is_unique",
+        "__fn___fern_rc_underflow_count", "__fn___fern_i32_to_string",
+        "__fn___fern_str_to_i32", "__fn___fern_chr"
+    ];
+    var i: i32 = 0;
+    while (i < names.len()) {
+        s = s.write(".globl " + names[i] + "\n");
+        i = i + 1;
+    }
+    return s;
+}
+
 function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     if (o.kind == "str_len") {
         // pop string box; length is at box+8.
@@ -2601,7 +2648,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = lo.state;
             s = s.write("    movq $16, %rdi\n");
             s = s.write("    call __fern_alloc\n");
-            s = s.write("    leaq .S" + util.i32_to_string(lo.idx) + "(%rip), %rcx\n");
+            s = s.write("    leaq " + str_lit_label(s, lo.idx) + "(%rip), %rcx\n");
             s = s.write("    movq %rcx, (%rax)\n");
             s = s.write("    movq $" + util.i32_to_string(o.str.len()) + ", %rcx\n");
             s = s.write("    movq %rcx, 8(%rax)\n");
@@ -2655,7 +2702,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = lo.state;
             s = s.write("    movq $" + util.i32_to_string(nf + 1) + ", %rdi\n");
             s = s.write("    call __fern_arr_box\n");
-            s = s.write("    leaq .S" + util.i32_to_string(lo.idx) + "(%rip), %rcx\n");
+            s = s.write("    leaq " + str_lit_label(s, lo.idx) + "(%rip), %rcx\n");
             s = s.write("    movq %rcx, (%rax)\n");
             var em: i32 = nf - 1;
             while (em >= 0) {
@@ -2776,7 +2823,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             var sslo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
             s = sslo.state;
             s = s.write("    movq (%rsp), %rax\n");
-            s = s.write("    leaq .S" + util.i32_to_string(sslo.idx) + "(%rip), %rcx\n");
+            s = s.write("    leaq " + str_lit_label(s, sslo.idx) + "(%rip), %rcx\n");
             s = s.write("    movq %rcx, (%rax)\n");
         } else if (o.kind == "variant_is") {
             // pop variant box; shape ptr @0; compare to the interned variant name
@@ -2785,7 +2832,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             var vlo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
             s = vlo.state;
             s = s.write("    popq %rax\n    movq (%rax), %rax\n");
-            s = s.write("    leaq .S" + util.i32_to_string(vlo.idx) + "(%rip), %rcx\n");
+            s = s.write("    leaq " + str_lit_label(s, vlo.idx) + "(%rip), %rcx\n");
             s = s.write("    cmpq %rcx, %rax\n    sete %al\n    movzbq %al, %rax\n    pushq %rax\n");
         } else if (o.kind == "tuple_make") {
             // n element values on the operand stack (element n-1 on top). Box =
@@ -2868,7 +2915,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
                     var dlit: asmcore.StringLitOut = asmcore.add_string_lit(s, dbn);
                     s = dlit.state;
                     var dnext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
-                    s = s.write("    leaq .S" + util.i32_to_string(dlit.idx) + "(%rip), %rdx\n");
+                    s = s.write("    leaq " + str_lit_label(s, dlit.idx) + "(%rip), %rdx\n");
                     s = s.write("    cmpq %rdx, %rcx\n");
                     s = s.write("    jne " + dnext + "\n");
                     var dk: i32 = dargc - 1;
@@ -2904,7 +2951,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             var dbl: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
             s = dbl.state;
             s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
-            s = s.write("    leaq .S" + util.i32_to_string(dbl.idx) + "(%rip), %rcx\n");
+            s = s.write("    leaq " + str_lit_label(s, dbl.idx) + "(%rip), %rcx\n");
             s = s.write("    movq %rcx, (%rax)\n");
             s = s.write("    popq %rcx\n    movq %rcx, 8(%rax)\n    pushq %rax\n");
         } else if (o.kind == "dyn_downcast") {
@@ -2922,7 +2969,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             var dcend: string = lp + "dcend" + util.i32_to_string(i);
             s = s.write("    movq (%rsp), %rax\n");        // peek dyn ptr (left on stack)
             s = s.write("    movq (%rax), %rcx\n");        // shape @0
-            s = s.write("    leaq .S" + util.i32_to_string(dcl.idx) + "(%rip), %rdx\n");
+            s = s.write("    leaq " + str_lit_label(s, dcl.idx) + "(%rip), %rdx\n");
             s = s.write("    cmpq %rdx, %rcx\n    jne " + dcmiss + "\n");
             // hit: Some(value) — pop the dyn ptr as payload.
             s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
@@ -3068,7 +3115,7 @@ pub function lift_lambdas(mod: parser.Module): parser.Module {
 // function via the IR, then a `_start` that calls __fn_main and exits with
 // its result. Caller must ensure all_eligible(mod).
 pub function emit_module_ir(mod: parser.Module): string {
-    return emit_module_ir_unit(mod, true, false);
+    return emit_module_ir_unit(mod, true, false, "");
 }
 
 // emit_module_ir_unit is emit_module_ir parameterised for per-module
@@ -3089,21 +3136,27 @@ pub function emit_module_ir(mod: parser.Module): string {
 //
 // emit_module_ir delegates with is_entry=true, globl_defs=false, which
 // reproduces the whole-program merged output byte-for-byte (no per-function
-// `.globl`, the `_start` + runtime present), so the existing single-unit path
-// is unchanged. NOTE: string-literal `.rodata` labels (`.S<idx>`) are NOT yet
-// namespaced per module, so two STRING-using modules would collide at link;
-// a string-free module emits no `.rodata`, so scalar units already co-link.
-// Per-module string namespacing is the other step-3 piece.
-pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_defs: boolean): string {
+// `.globl`, the `_start` + runtime present, `str_ns` empty so string labels
+// stay `.S<idx>`), so the existing single-unit path is unchanged.
+//
+//   str_ns — per-module namespace for string-literal `.rodata` labels. Empty
+//            keeps `.S<idx>`; a non-empty ns makes each module's pool
+//            `.S<ns>_<idx>`, so two STRING-using modules co-link without
+//            label collision. A string-free module emits no `.rodata` either
+//            way, so a "" ns there is harmless.
+pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string): string {
     // Infer return types for unannotated functions so the IR path's
     // ret-type-keyed call tagging (str_ret_fns_of / opt_ret_fns_of / …)
     // matches the AST path, which gets the same via module_with_builtins.
     mod = parser.infer_ret_types_module(mod);
     strbuf_reset();
     var s: asmcore.EmitState = asmcore.new_state();
-    s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
+    s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs, str_ns: str_ns };
     if (is_entry) { s = s.write("    .globl _start\n"); }
     s = s.write("    .text\n");
+    // Per-module: the entry exports its shared runtime entry points so sibling
+    // library modules can link their `call __fern_*` externs against them.
+    if (is_entry && globl_defs) { s = emit_runtime_globls(s); }
     var arf: string[] = array_ret_fns(mod);
     // Inter-procedural borrowability computed ONCE per module (not per function —
     // that OOMs the arm64 self-compile); threaded into every emit_function_via_ir.
@@ -3159,7 +3212,7 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
         s = s.write("    .section .rodata\n");
         var li: i32 = 0;
         while (li < s.string_lits.len()) {
-            s = s.write(".S" + util.i32_to_string(li) + ": .ascii \"" + asmcore.escape_for_ascii(s.string_lits[li]) + "\"\n");
+            s = s.write(str_lit_label(s, li) + ": .ascii \"" + asmcore.escape_for_ascii(s.string_lits[li]) + "\"\n");
             li = li + 1;
         }
     }

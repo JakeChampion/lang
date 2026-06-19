@@ -34,12 +34,17 @@ function main(): i32 {
     // is_entry=false (a library module: only its `.globl __fn_*` definitions,
     // no `_start`/runtime). "" keeps the default whole-program emit.
     var unit: string = "";
+    // `ns` namespaces this unit's string-literal `.rodata` labels (.S<ns>_<idx>)
+    // so two per-module units' string pools don't collide at link. Empty keeps
+    // the whole-program `.S<idx>` labels.
+    var ns: string = "";
     var ai: i32 = 1;
     while (ai < av.len()) {
         if (av[ai] == "-ir") { use_ir = true; }
         if (av[ai] == "-ir-probe") { probe = true; }
         if (av[ai] == "-ir-extern" && ai + 1 < av.len()) { known = known.append(av[ai + 1]); ai = ai + 1; }
         if (av[ai] == "-ir-unit" && ai + 1 < av.len()) { unit = av[ai + 1]; ai = ai + 1; }
+        if (av[ai] == "-ir-ns" && ai + 1 < av.len()) { ns = av[ai + 1]; ai = ai + 1; }
         ai = ai + 1;
     }
     var src: string = io.read_all_stdin();
@@ -54,8 +59,8 @@ function main(): i32 {
     // `-ir-unit entry|lib`: emit a single per-module translation unit (defs
     // exported `.globl`; `_start`/runtime only for the entry). Separately-
     // emitted units of a multi-module program link into one binary.
-    if (unit == "entry") { print(asm_ir.emit_module_ir_unit(lm, true, true)); return 0; }
-    if (unit == "lib") { print(asm_ir.emit_module_ir_unit(lm, false, true)); return 0; }
+    if (unit == "entry") { print(asm_ir.emit_module_ir_unit(lm, true, true, ns)); return 0; }
+    if (unit == "lib") { print(asm_ir.emit_module_ir_unit(lm, false, true, ns)); return 0; }
     var emitted: string = "";
     if (use_ir && asm_ir.all_eligible_known(lm, known)) {
         emitted = asm_ir.emit_module_ir(lm);

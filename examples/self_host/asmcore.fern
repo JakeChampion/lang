@@ -107,7 +107,13 @@ pub struct EmitState {
     // (strings, structs, methods, …) fall back to the AST emitter, so the
     // compiler itself still compiles via AST and the byte-identical fixpoint
     // holds. Only asm.fern reads this — arm64 / wasm keep their AST paths.
-    use_ir: boolean
+    use_ir: boolean,
+    // str_ns: per-module namespace for string-literal `.rodata` labels, for
+    // per-module translation-unit emit (#3451 step 3 / #3455). Empty (the
+    // default / whole-program case) keeps the label `.S<idx>`; a non-empty ns
+    // makes it `.S<ns>_<idx>` so two separately-emitted modules' string pools
+    // don't collide at link. The IR backend reads this via str_lit_label.
+    str_ns: string
 }
 
 pub function new_state(): EmitState {
@@ -142,7 +148,11 @@ pub function new_state(): EmitState {
         // array RC (the self_host_rc_runtime asm patterns match). The compiler
         // is not all_eligible (it is full of strings/structs), so it still
         // compiles via AST and the byte-identical fixpoint holds.
-        use_ir: true
+        use_ir: true,
+        // Whole-program default: no namespace, so string labels stay `.S<idx>`
+        // (byte-identical to the pre-per-module emitter). Per-module unit emit
+        // sets this to keep each module's `.rodata` pool collision-free.
+        str_ns: ""
     };
 }
 
