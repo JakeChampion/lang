@@ -1518,6 +1518,18 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"matchexpr-result-err-str-len", `function main(): i32 { var r: Result[i32, string] = Err("bad"); var y = match (r) { Ok(n) => n, Err(s) => s.len() }; return y; }`, 3},
 		{"matchexpr-opt-tuple-elem", `function main(): i32 { var o: Option[(i32, i32)] = Some((2, 3)); var y = match (o) { Some(t) => t.0 + t.1, None => 0 }; return y; }`, 5},
 		{"matchexpr-result-ok-struct", `struct P { x: i32 } function main(): i32 { var r: Result[P, i32] = Ok(P { x: 8 }); var y = match (r) { Ok(p) => p.x + 4, Err(e) => e }; return y; }`, 12},
+		// Value-position match-EXPRESSION binding a NON-i32 Option/Result payload and
+		// returning it WHOLE (bare `Some(v) => v`) or as a composite — the result-temp
+		// typing recovery functions (iife_arm_payload_result_kind /
+		// iife_arm_composite_result_type) now resolve the Some/Ok/Err payload type from
+		// the scrutinee's Option/Result spelling (iife_bound_payload_type), not just the
+		// user-enum `__ev` field, so the bare string/struct/tuple payload return types
+		// the temp instead of bailing to AST. Pinned to the absolute IR value (the
+		// AST==IR differential is blind to a both-paths-wrong case for these payloads).
+		{"matchexpr-opt-str-bare", `function main(): i32 { var o: Option[string] = Some("hi"); var s = match (o) { Some(v) => v, None => "" }; return s.len(); }`, 2},
+		{"matchexpr-opt-struct-bare", `struct P { x: i32 } function main(): i32 { var o: Option[P] = Some(P { x: 7 }); var p = match (o) { Some(v) => v, None => P { x: 0 } }; return p.x; }`, 7},
+		{"matchexpr-result-ok-str-bare", `function main(): i32 { var r: Result[string, i32] = Ok("abcd"); var s = match (r) { Ok(v) => v, Err(e) => "" }; return s.len(); }`, 4},
+		{"matchexpr-result-ok-struct-bare", `struct P { x: i32 } function main(): i32 { var r: Result[P, i32] = Ok(P { x: 6 }); var p = match (r) { Ok(v) => v, Err(e) => P { x: 0 } }; return p.x; }`, 6},
 		// f-string interpolation, pinned to the absolute IR-path value (the
 		// AST==IR differential above is blind to a both-paths-wrong desugar). The
 		// returned byte proves the interpolant text actually landed: `f"n={7}!"`
