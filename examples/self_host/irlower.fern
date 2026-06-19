@@ -5690,6 +5690,70 @@ function iife_payload_chain_type(e: parser.Expr, name: string, ft: string, s: Lo
     return "";
 }
 
+// iife_payload_arith_leaf_kind reports whether a LEAF expression `e` (one that is NOT
+// an arithmetic `+,-,*,/,%` composition) provably yields a value of the wide kind
+// `kind` ("i64" or "f64") given the bound payload `name` (declared type `ft`) is in
+// scope. A leaf that MENTIONS the payload must be a wide READ of it: the BARE payload
+// (`name`, ft == kind) or a struct-field / tuple-element chain whose terminal type is
+// `kind` (iife_payload_chain_type). A leaf that does NOT mention the payload must be
+// provably `kind` by the ordinary `s`-based classifiers (infer_expr_width == 64 for
+// i64 / expr_is_f64 for f64) or — for i64 only — an integer literal (a bare numeric
+// literal participating in i64 arithmetic). Anything else returns false (the whole
+// tree then bails to the AST path — correctness preserved).
+function iife_payload_arith_leaf_kind(e: parser.Expr, name: string, ft: string, kind: string, s: LowerState): boolean {
+    if (iife_expr_mentions_ident(e, name)) {
+        // A wide READ of the payload — the bare payload itself, or a field / element
+        // chain rooted at it whose terminal type is the wanted kind.
+        match (e) {
+            parser.ExprIdent(id) => { return id.name == name && ft == kind; },
+            parser.ExprFieldAccess(_) => { return iife_payload_chain_type(e, name, ft, s) == kind; },
+            _ => { return false; }
+        }
+        return false;
+    }
+    // Independent of the payload — classify with the ordinary wide predicates.
+    if (kind == "f64") { return expr_is_f64(e, s); }
+    // i64: a provably-i64 sub-expression, or an integer literal (a bare numeric
+    // literal contributes a constant to i64 arithmetic).
+    match (e) {
+        parser.ExprNumber(n) => { return !n.is_float; },
+        _ => {}
+    }
+    return infer_expr_width(e, s) == 64;
+}
+
+// iife_payload_arith_kind reports whether `e` is an ARITHMETIC composition (only
+// `+,-,*,/,%` compose) whose value is the wide kind `kind` ("i64" or "f64"), where
+// every leaf that MENTIONS the bound payload `name` is a wide READ of it (the bare
+// payload of type `kind`, or a struct-field / tuple-element chain whose terminal type
+// is `kind`) and every leaf that does NOT mention the payload is itself provably `kind`
+// (or an integer literal, for i64). This lets a value-position match-EXPRESSION arm
+// whose tail computes `n + 1`, `p.v * 2`, `n + 1.5`, etc. over a bound i64/f64 payload
+// lower through the IR path: the StmtMatch arm-body store routes the wide arithmetic
+// RHS through lower_i64 / the f64 path (it already does — statement-position works),
+// so this gate only certifies the value-position result temp is the wide width. Any
+// non-arithmetic shape, or a leaf that isn't a provable wide read / value, returns
+// false so the arm stays on the AST path (conservative — correctness preserved).
+function iife_payload_arith_kind(e: parser.Expr, name: string, ft: string, kind: string, s: LowerState): boolean {
+    if (kind != "i64" && kind != "f64") { return false; }
+    match (e) {
+        parser.ExprBinary(b) => {
+            if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/" || b.op == "%") {
+                return iife_payload_arith_kind(b.left, name, ft, kind, s) && iife_payload_arith_kind(b.right, name, ft, kind, s);
+            }
+            return false;
+        },
+        parser.ExprUnary(u) => {
+            // Unary negation preserves the wide kind; any other unary (a cast, `!`)
+            // is rejected so the value-position temp stays the wanted width.
+            if (u.op == "-") { return iife_payload_arith_kind(u.operand, name, ft, kind, s); }
+            return iife_payload_arith_leaf_kind(e, name, ft, kind, s);
+        },
+        _ => { return iife_payload_arith_leaf_kind(e, name, ft, kind, s); }
+    }
+    return false;
+}
+
 function iife_borrow_leaf_i32(e: parser.Expr, name: string, ft: string, s: LowerState): boolean {
     match (e) {
         parser.ExprIdent(id) => { return false; },   // bare payload — not i32
@@ -5820,7 +5884,17 @@ function iife_payload_borrow_i32(ft: string, name: string, arm: parser.MatchArm,
 //     binding is in scope (iife_payload_borrow_i32 / iife_expr_result_is_i32).
 function iife_payload_field_bindable(ft: string, name: string, arm: parser.MatchArm, res_kind: string, s: LowerState): boolean {
     if (ft == "i32") { return true; }
-    if (ft == "i64" || ft == "f64") { return iife_arm_returns_ident(arm, name) || iife_arm_returns_narrowed_payload(arm, name); }
+    if (ft == "i64" || ft == "f64") {
+        if (iife_arm_returns_ident(arm, name) || iife_arm_returns_narrowed_payload(arm, name)) { return true; }
+        // An i64/f64 ARITHMETIC composition over the BARE wide payload (`V(n) => n + 1`,
+        // `V(n) => n + 1.5`): the result temp was classified i64/f64 by the matching
+        // iife_payload_arith_kind shape (iife_arm_payload_result_kind), and the
+        // StmtMatch arm-body store routes the wide RHS through lower_i64 / the f64 path
+        // (statement-position already lowers `return n + 1`). res_kind names the wide
+        // width; admit when the arm tail is that wide-arith shape over the payload.
+        if ((res_kind == "i64" || res_kind == "f64") && iife_payload_arith_kind(iife_arm_tail_expr(arm), name, ft, res_kind, s)) { return true; }
+        return false;
+    }
     if (is_scalar_array_type(ft)) { return !iife_arm_returns_ident(arm, name); }
     // STRING result temp (res_kind == "string"): admit a string read of the bound
     // payload — a BARE string payload (`V(x) => x`, ft string) or a string FIELD /
@@ -5979,6 +6053,15 @@ function iife_payload_wide_bindable(ft: string, name: string, arm: parser.MatchA
     // A struct payload field read — struct must be leak-safe.
     if (decl_is_struct(s.structs, ft) && !is_enum_like_name(ft, s.structs) && !decl_is_leaksafe(s.structs, ft)) { return false; }
     var tail: parser.Expr = iife_arm_tail_expr(arm);
+    // An i64/f64 ARITHMETIC composition over the bound payload (`V(n) => n + 1`,
+    // `V(p) => p.v * 2`, `V(n) => n + 1.5`): every payload-mentioning leaf is a wide
+    // read of the payload (the bare wide payload, or an i64/f64 field / element chain)
+    // and the tree's value is the wanted kind. The result-kind recovery classified the
+    // temp i64/f64 via the same iife_payload_arith_kind shape; the StmtMatch arm-body
+    // store routes the wide RHS through lower_i64 / the f64 path (statement-position
+    // already lowers this), so the width round-trips. This subsumes the bare wide
+    // payload (a degenerate single-leaf arith), so it is tried first.
+    if (iife_payload_arith_kind(tail, name, ft, want, s)) { return true; }
     match (tail) {
         parser.ExprFieldAccess(fa) => {
             match (fa.obj) {
@@ -6236,6 +6319,21 @@ function iife_arm_payload_result_kind(arm: parser.MatchArm, opt_srt: string, s: 
                     var ftc: string = iife_bound_payload_type(pv, pv.binding, opt_srt, s);
                     if (ftc == "") { return ""; }
                     if (iife_string_concat_borrow_only(rval, pv.binding, ftc, s)) { return "string"; }
+                    // i64 / f64 ARITHMETIC over the bound wide payload (`V(n) => n + 1`,
+                    // `V(p) => p.v * 2`, `V(n) => n + 1.5`): a `+,-,*,/,%` tree whose
+                    // every payload-mentioning leaf is a wide READ of the payload (the
+                    // bare i64/f64 payload itself, or an i64/f64 struct-field / tuple-
+                    // element chain rooted at it) and whose value is that wide kind. The
+                    // binding isn't in scope to infer the width from the bare read, so the
+                    // kind is recovered from the payload field type (`ftc`) + the
+                    // arithmetic shape (iife_payload_arith_kind). For a BARE i64/f64
+                    // payload (`ftc` == i64/f64) the leaf reads the payload itself; for a
+                    // STRUCT/TUPLE payload (`ftc` a struct/tuple) the wide kind comes from
+                    // a field/element read (`p.v`), so try both wide kinds. The StmtMatch
+                    // arm-body store routes the wide RHS through lower_i64 / the f64 path,
+                    // matching the wide temp this kind selects.
+                    if (iife_payload_arith_kind(rval, pv.binding, ftc, "i64", s)) { return "i64"; }
+                    if (iife_payload_arith_kind(rval, pv.binding, ftc, "f64", s)) { return "f64"; }
                     return "";
                 },
                 _ => { return ""; }
