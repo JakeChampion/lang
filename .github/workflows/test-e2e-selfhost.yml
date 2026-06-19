@@ -39,23 +39,25 @@ name: Test e2e self-host
 # runner skips them for lack of qemu-x86_64, and the x86 runner skips
 # the arm64 backend tests, so each arch concentrates its native
 # backend's heavy self-host driver builds). Split 4 ways the worst
-# x86 shard ran 9m51s — 9 seconds under this job's 10-min timeout, so
+# x86 shard ran 9m51s — 9 seconds under the then-10-min job timeout, so
 # one new test would tip CI over.
 #
-# Twelve is the current balance. Eight had crept too close to the edge
-# (worst x86 shard ~9m51s) and #3362 moved to 10; then widening the IR
-# subset (the self-host compiler now lowers far more of itself through
-# the IR path, so the compile-heavy fixpoint / bootstrap / frontend-
-# bundle tests run longer) tipped shard 7 back over the 10-min timeout
-# (cancelled mid-run) even at 10. Twelve restores the margin: ~23 min /
-# 12 ≈ 1.9 min of tests + the ~2.5 min build ≈ ~4.5 min nominal (~6 min
-# worst-case with round-robin imbalance + the qemu-arm64 fixpoint long
-# pole), well under the 10-min timeout, at the cost of 4 more jobs (2
-# per arch) vs 10 — still well short of the 16-shard queue-contention
-# regime.
+# Fourteen is the current balance. Eight had crept too close to the
+# edge (worst x86 shard ~9m51s) and #3362 moved to 10; then widening
+# the IR subset (the self-host compiler now lowers far more of itself
+# through the IR path, so the compile-heavy fixpoint / bootstrap /
+# frontend-bundle tests run longer) repeatedly tipped shard 7 over the
+# timeout (cancelled mid-run) even at 12. Two changes restored the
+# margin: #3432 raised the per-job `timeout-minutes` 10 -> 20, and the
+# shard count moved 12 -> 14 to cut the worst-shard wall-clock. At 14:
+# ~23 min / 14 ≈ 1.6 min of tests + the ~2.5 min build ≈ ~4 min nominal
+# (~9 min worst-case with round-robin imbalance + the qemu-arm64
+# fixpoint long pole), comfortably inside the 20-min timeout, at the
+# cost of 4 more jobs (2 per arch) vs 12 — still short of the 16-shard
+# queue-contention regime.
 # Bump N (here and in NSHARD below) only if the worst x86 shard's
-# wall-clock creeps toward ~8 min; drop it only if all shards finish
-# well under ~4 min.
+# wall-clock creeps toward the timeout; drop it only if all shards
+# finish well under ~4 min.
 #
 # TIMEOUT vs more shards. At 12, widening the IR subset further (enum-array
 # struct fields, #3431 — the self-host compiler lowers still more of itself
@@ -81,9 +83,9 @@ jobs:
         host:
           - { runner: ubuntu-latest,    name: x86_64  }
           - { runner: ubuntu-24.04-arm, name: aarch64 }
-        # Twelve shards (24 jobs across the per-arch matrix). See the
-        # SHARD COUNT note above for why this is 12.
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        # Fourteen shards (28 jobs across the per-arch matrix). See the
+        # SHARD COUNT note above for why this is 14.
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
     name: test-e2e-selfhost-${{ matrix.host.name }}-shard${{ matrix.shard }}
     runs-on: ${{ matrix.host.runner }}
     # 20, not 10: the IR-subset migration keeps making the compile-heavy
@@ -95,10 +97,10 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           gotestsum: "true"
-      - name: go test (self-host shard ${{ matrix.shard }}/12)
+      - name: go test (self-host shard ${{ matrix.shard }}/14)
         env:
           SHARD: "${{ matrix.shard }}"
-          NSHARD: "12"
+          NSHARD: "14"
         run: |
           set -euo pipefail
           # Sorted list of every TestSelfHost* function, partitioned
