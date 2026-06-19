@@ -3114,49 +3114,15 @@ pub function lift_lambdas(mod: parser.Module): parser.Module {
 // program is self-contained (pure i32 uses no runtime helpers): every
 // function via the IR, then a `_start` that calls __fn_main and exits with
 // its result. Caller must ensure all_eligible(mod).
-pub function emit_module_ir(mod: parser.Module): string {
-    return emit_module_ir_unit(mod, true, false, "");
-}
-
-// emit_module_ir_unit is emit_module_ir parameterised for per-module
-// translation units (the per-module-compilation epic, #3451 — step 1's emit
-// side / #3453, step 3 / #3455). Two knobs:
-//
-//   is_entry   — the entry module emits `_start` (→ call __fn_main + exit) AND
-//                the single shared `__fern_*` runtime. Non-entry (library)
-//                modules omit both: they expose only their `__fn_*` definitions
-//                and reference the runtime helpers / sibling `__fn_*` symbols as
-//                externs, resolved at link. (Aggregating runtime "needs" across
-//                ALL modules so the entry's single runtime covers every helper
-//                any module uses is the remaining step-3 piece; until then a
-//                non-entry module that itself allocates must be linked with an
-//                entry that pulls the heap runtime in.)
-//   globl_defs — mark each emitted `__fn_<label>` `.globl` so a sibling module
-//                can `call` into it across the translation-unit boundary.
-//
-// emit_module_ir delegates with is_entry=true, globl_defs=false, which
-// reproduces the whole-program merged output byte-for-byte (no per-function
-// `.globl`, the `_start` + runtime present, `str_ns` empty so string labels
-// stay `.S<idx>`), so the existing single-unit path is unchanged.
-//
-//   str_ns — per-module namespace for string-literal `.rodata` labels. Empty
-//            keeps `.S<idx>`; a non-empty ns makes each module's pool
-//            `.S<ns>_<idx>`, so two STRING-using modules co-link without
-//            label collision. A string-free module emits no `.rodata` either
-//            way, so a "" ns there is harmless.
-pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string): string {
-    // Infer return types for unannotated functions so the IR path's
-    // ret-type-keyed call tagging (str_ret_fns_of / opt_ret_fns_of / …)
-    // matches the AST path, which gets the same via module_with_builtins.
-    mod = parser.infer_ret_types_module(mod);
-    strbuf_reset();
-    var s: asmcore.EmitState = asmcore.new_state();
-    s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs, str_ns: str_ns };
-    if (is_entry) { s = s.write("    .globl _start\n"); }
-    s = s.write("    .text\n");
-    // Per-module: the entry exports its shared runtime entry points so sibling
-    // library modules can link their `call __fern_*` externs against them.
-    if (is_entry && globl_defs) { s = emit_runtime_globls(s); }
+// emit_module_funcs derives the per-module side-tables ONCE and emits every
+// function through the IR (asm into the strbuf), marking each function's runtime
+// needs (the maps/heap op-scan + the str_*/print mark_* calls all live inside
+// emit_function_via_ir). globl_defs marks each `__fn_<label>` `.globl` for
+// per-module linking. Shared by emit_module_ir_unit (which then writes _start /
+// .rodata / the runtime) and module_runtime_needs (which discards the asm and
+// reads the accumulated `needed`). Factoring it out keeps the two callers from
+// drifting on which functions / side-tables drive need detection.
+function emit_module_funcs(mod: parser.Module, s: asmcore.EmitState, globl_defs: boolean): asmcore.EmitState {
     var arf: string[] = array_ret_fns(mod);
     // Inter-procedural borrowability computed ONCE per module (not per function —
     // that OOMs the arm64 self-compile); threaded into every emit_function_via_ir.
@@ -3194,6 +3160,79 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
         s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf);
         fi = fi + 1;
     }
+    return s;
+}
+
+// module_runtime_needs returns the runtime helpers a module requires (the
+// closed need-set: "heap", "maps", "str_concat", …), for whole-program runtime
+// aggregation in per-module emit (#3451 step 3 / #3455). The entry module emits
+// the single shared runtime, but on its OWN it only knows its own needs — a
+// library module that uses a helper the entry doesn't (e.g. str_concat) would
+// reference an undefined symbol at link. The driver unions module_runtime_needs
+// across every loaded module and passes the result as emit_module_ir_unit's
+// extra_needs, so the entry's runtime covers every module. It runs the same
+// per-function emit as the real path (so the need-set is exact) but discards
+// the asm (strbuf_reset) and reads `needed`.
+pub function module_runtime_needs(mod: parser.Module): string[] {
+    mod = parser.infer_ret_types_module(mod);
+    strbuf_reset();
+    var s: asmcore.EmitState = asmcore.new_state();
+    s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
+    s = emit_module_funcs(mod, s, false);
+    s = s.close_needs();
+    strbuf_reset();
+    return s.needed;
+}
+
+pub function emit_module_ir(mod: parser.Module): string {
+    return emit_module_ir_unit(mod, true, false, "", []);
+}
+
+// emit_module_ir_unit is emit_module_ir parameterised for per-module
+// translation units (the per-module-compilation epic, #3451 — step 1's emit
+// side / #3453, step 3 / #3455). Two knobs:
+//
+//   is_entry   — the entry module emits `_start` (→ call __fn_main + exit) AND
+//                the single shared `__fern_*` runtime. Non-entry (library)
+//                modules omit both: they expose only their `__fn_*` definitions
+//                and reference the runtime helpers / sibling `__fn_*` symbols as
+//                externs, resolved at link. (Aggregating runtime "needs" across
+//                ALL modules so the entry's single runtime covers every helper
+//                any module uses is the remaining step-3 piece; until then a
+//                non-entry module that itself allocates must be linked with an
+//                entry that pulls the heap runtime in.)
+//   globl_defs — mark each emitted `__fn_<label>` `.globl` so a sibling module
+//                can `call` into it across the translation-unit boundary.
+//
+// emit_module_ir delegates with is_entry=true, globl_defs=false, which
+// reproduces the whole-program merged output byte-for-byte (no per-function
+// `.globl`, the `_start` + runtime present, `str_ns` empty so string labels
+// stay `.S<idx>`), so the existing single-unit path is unchanged.
+//
+//   str_ns — per-module namespace for string-literal `.rodata` labels. Empty
+//            keeps `.S<idx>`; a non-empty ns makes each module's pool
+//            `.S<ns>_<idx>`, so two STRING-using modules co-link without
+//            label collision. A string-free module emits no `.rodata` either
+//            way, so a "" ns there is harmless.
+//   extra_needs — additional runtime needs to fold into the entry's single
+//            runtime (the whole-program union of every module's
+//            module_runtime_needs), so the entry emits the helpers a sibling
+//            library uses even when the entry itself doesn't. Empty for the
+//            whole-program path and for non-entry units.
+pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[]): string {
+    // Infer return types for unannotated functions so the IR path's
+    // ret-type-keyed call tagging (str_ret_fns_of / opt_ret_fns_of / …)
+    // matches the AST path, which gets the same via module_with_builtins.
+    mod = parser.infer_ret_types_module(mod);
+    strbuf_reset();
+    var s: asmcore.EmitState = asmcore.new_state();
+    s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs, str_ns: str_ns };
+    if (is_entry) { s = s.write("    .globl _start\n"); }
+    s = s.write("    .text\n");
+    // Per-module: the entry exports its shared runtime entry points so sibling
+    // library modules can link their `call __fern_*` externs against them.
+    if (is_entry && globl_defs) { s = emit_runtime_globls(s); }
+    s = emit_module_funcs(mod, s, globl_defs);
     // _start belongs only to the entry module (one program entry point). A
     // non-entry library module exposes its `__fn_*` definitions and nothing else.
     if (is_entry) {
@@ -3218,8 +3257,15 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     }
     // The "maps" / "heap" needs were marked per-function during the emit loop
     // above (off the ops each lower_func already produced), so there is no need to
-    // re-lower the module here. close_needs() pulls in maps' declared deps
-    // (str_eq, arr_push, heap) so the runtime links — no hand-marking.
+    // re-lower the module here. The whole-program extra_needs (sibling modules'
+    // needs, for the entry's single shared runtime) are folded in BEFORE
+    // close_needs so their declared deps resolve too. close_needs() pulls in
+    // maps' declared deps (str_eq, arr_push, heap) so the runtime links.
+    var en: i32 = 0;
+    while (en < extra_needs.len()) {
+        s = s.need(extra_needs[en]);
+        en = en + 1;
+    }
     s = s.close_needs();
     // The shared `__fern_*` runtime is emitted ONCE, by the entry module — a
     // non-entry library module references these helpers as externs (resolved at
