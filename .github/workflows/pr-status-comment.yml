@@ -1,0 +1,188 @@
+name: PR Status Comment
+
+# Posts (and keeps updated) a single status comment on a pull request that
+# reflects the aggregate state of *all other* checks plus the PR's mergeability:
+#
+#   ✅  every other check on the head commit finished green
+#   ❌  one or more checks failed / errored / timed out / were cancelled
+#   ⚠️  the PR has merge conflicts with its base branch
+#
+# The comment is an upsert — a hidden marker (PR_STATUS_MARKER below) lets us
+# find the comment we wrote last time and edit it in place rather than spamming
+# the thread on every check_suite completion.
+#
+# Triggers:
+#   check_suite: completed   — re-evaluate every time a batch of checks finishes
+#   pull_request             — catch conflicts (and a "checks running" baseline)
+#                              as soon as the PR opens / is pushed to / reopens
+#
+# check_suite runs in the context of the *base* repo, so the GITHUB_TOKEN has
+# write scope even for pull requests opened from forks.
+
+on:
+  check_suite:
+    types: [completed]
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: PR number to evaluate
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: read
+
+# Only one evaluation per PR at a time; cancel an in-flight run when a newer
+# event for the same PR arrives so we never race two comment upserts.
+concurrency:
+  group: pr-status-comment-${{ github.event.pull_request.number || github.event.check_suite.head_branch || github.event.inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const MARKER = '<!-- pr-status-comment -->';
+            const SELF = context.workflow; // this workflow's name; excluded from the tally
+
+            // --- Resolve the target PR(s) for this event ----------------------
+            // pull_request: the PR is on the payload.
+            // check_suite:  map the head SHA back to its open PR(s).
+            // workflow_dispatch: explicit pr_number input.
+            let prNumbers = [];
+            if (context.eventName === 'pull_request') {
+              prNumbers = [context.payload.pull_request.number];
+            } else if (context.eventName === 'workflow_dispatch') {
+              prNumbers = [Number(context.payload.inputs.pr_number)];
+            } else if (context.eventName === 'check_suite') {
+              const cs = context.payload.check_suite;
+              const fromPayload = (cs.pull_requests || []).map(p => p.number);
+              if (fromPayload.length) {
+                prNumbers = fromPayload;
+              } else {
+                // Forks: check_suite.pull_requests is empty — look the PR up by SHA.
+                const assoc = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  commit_sha: cs.head_sha,
+                });
+                prNumbers = assoc.data
+                  .filter(p => p.state === 'open')
+                  .map(p => p.number);
+              }
+            }
+            prNumbers = [...new Set(prNumbers)].filter(Boolean);
+            if (!prNumbers.length) {
+              core.info('No open PR associated with this event; nothing to do.');
+              return;
+            }
+
+            const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+            for (const prNumber of prNumbers) {
+              await evaluatePR(prNumber);
+            }
+
+            async function evaluatePR(prNumber) {
+              // GitHub computes mergeable_state asynchronously; it can come back
+              // as "unknown" right after a push. Poll a few times before giving up.
+              let pr;
+              for (let i = 0; i < 5; i++) {
+                pr = (await github.rest.pulls.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: prNumber,
+                })).data;
+                if (pr.mergeable_state && pr.mergeable_state !== 'unknown') break;
+                await sleep(2000);
+              }
+              if (pr.state !== 'open') {
+                core.info(`PR #${prNumber} is ${pr.state}; skipping.`);
+                return;
+              }
+
+              const headSha = pr.head.sha;
+
+              // --- Gather all check runs + commit statuses on the head SHA -----
+              const checkRuns = await github.paginate(
+                github.rest.checks.listForRef,
+                { owner: context.repo.owner, repo: context.repo.repo, ref: headSha, per_page: 100 },
+              );
+              // Exclude this workflow's own runs from the tally so we don't wait
+              // on / report ourselves.
+              const tracked = checkRuns.filter(r => r.name !== SELF);
+
+              // Legacy commit statuses (e.g. some external CI) count too.
+              const combined = (await github.rest.repos.getCombinedStatusForRef({
+                owner: context.repo.owner, repo: context.repo.repo, ref: headSha,
+              })).data;
+
+              const FAIL = new Set(['failure', 'timed_out', 'cancelled', 'action_required', 'stale']);
+              const failedChecks = tracked.filter(r => r.status === 'completed' && FAIL.has(r.conclusion));
+              const pendingChecks = tracked.filter(r => r.status !== 'completed');
+              const failedStatuses = combined.statuses.filter(s => s.state === 'failure' || s.state === 'error');
+              const pendingStatuses = combined.statuses.filter(s => s.state === 'pending');
+
+              const hasConflicts = pr.mergeable === false || pr.mergeable_state === 'dirty';
+              const anyFailed = failedChecks.length > 0 || failedStatuses.length > 0;
+              const anyPending = pendingChecks.length > 0 || pendingStatuses.length > 0;
+
+              // --- Compose the comment body ------------------------------------
+              let body;
+              if (hasConflicts) {
+                body = `### ⚠️ Merge conflicts\n\n`
+                  + `This pull request has conflicts with its base branch (\`${pr.base.ref}\`) `
+                  + `and can't be merged as-is. Please rebase or merge \`${pr.base.ref}\` and resolve the conflicts.`;
+              } else if (anyFailed) {
+                const names = [
+                  ...failedChecks.map(r => `\`${r.name}\` (${r.conclusion})`),
+                  ...failedStatuses.map(s => `\`${s.context}\` (${s.state})`),
+                ];
+                body = `### ❌ Checks failing\n\n`
+                  + `The following check(s) did not pass:\n\n`
+                  + names.map(n => `- ${n}`).join('\n')
+                  + `\n\nPush a fix and they'll re-run automatically.`;
+              } else if (anyPending) {
+                const n = pendingChecks.length + pendingStatuses.length;
+                body = `### ⏳ Checks running\n\n`
+                  + `${n} check${n === 1 ? ' is' : 's are'} still in progress. `
+                  + `I'll update this comment once everything settles.`;
+              } else if (tracked.length === 0 && combined.statuses.length === 0) {
+                core.info(`PR #${prNumber}: no other checks reported yet; skipping.`);
+                return;
+              } else {
+                body = `### ✅ All checks passed\n\n`
+                  + `Every check on this pull request is green and there are no merge conflicts. `
+                  + `This PR is ready to go. 🚀`;
+              }
+              body += `\n\n${MARKER}`;
+
+              // --- Upsert: edit our previous comment, or create a new one ------
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, per_page: 100,
+              });
+              const existing = comments.find(c => c.body && c.body.includes(MARKER));
+              if (existing) {
+                if (existing.body === body) {
+                  core.info(`PR #${prNumber}: status comment already up to date.`);
+                  return;
+                }
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  comment_id: existing.id, body,
+                });
+                core.info(`PR #${prNumber}: updated status comment.`);
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  issue_number: prNumber, body,
+                });
+                core.info(`PR #${prNumber}: created status comment.`);
+              }
+            }
