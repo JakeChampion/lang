@@ -46,6 +46,13 @@ function main(): i32 {
     // `extra` accumulates -ir-extra-need <name>: the whole-program runtime-need
     // union folded into the entry unit's shared runtime.
     var extra: string[] = [];
+    // `-ir-sigs <file>` (repeatable): parse a SIBLING module's source for its
+    // signatures only (functions + structs), folded into the whole-program
+    // signature view (#3454) so this unit tags a cross-module call to one of
+    // those functions by the callee's real return type. Models what the
+    // per-module driver supplies from the loaded import set; the named module's
+    // bodies are NOT emitted here (it is emitted as its own unit).
+    var sig_paths: string[] = [];
     var ai: i32 = 1;
     while (ai < av.len()) {
         if (av[ai] == "-ir") { use_ir = true; }
@@ -55,11 +62,39 @@ function main(): i32 {
         if (av[ai] == "-ir-unit" && ai + 1 < av.len()) { unit = av[ai + 1]; ai = ai + 1; }
         if (av[ai] == "-ir-ns" && ai + 1 < av.len()) { ns = av[ai + 1]; ai = ai + 1; }
         if (av[ai] == "-ir-extra-need" && ai + 1 < av.len()) { extra = extra.append(av[ai + 1]); ai = ai + 1; }
+        if (av[ai] == "-ir-sigs" && ai + 1 < av.len()) { sig_paths = sig_paths.append(av[ai + 1]); ai = ai + 1; }
         ai = ai + 1;
     }
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
     var lm: parser.Module = asm_ir.lift_lambdas(mod);
+    // Build the whole-program signature view: this module's own funcs/structs
+    // plus every -ir-sigs sibling's. Each module is run through
+    // infer_ret_types_module FIRST so the side-tables (derived over all_funcs)
+    // see inferred (unannotated) return types — emit_module_ir_unit emits from
+    // an inferred module too, so the two stay consistent. Defaults to just this
+    // module (single-unit / no siblings), byte-identical to the whole-program
+    // path.
+    var lm_inf: parser.Module = parser.infer_ret_types_module(lm);
+    var all_funcs: parser.FuncDecl[] = lm_inf.funcs;
+    var all_structs: parser.StructDecl[] = lm_inf.structs;
+    var sp: i32 = 0;
+    while (sp < sig_paths.len()) {
+        var ssrc: string = "";
+        var sok: boolean = false;
+        match (read_file(sig_paths[sp])) {
+            Ok(s) => { ssrc = s; sok = true; },
+            Err(e) => { sok = false; },
+        }
+        if (sok) {
+            var smod: parser.Module = parser.infer_ret_types_module(asm_ir.lift_lambdas(parser.parse_module(lexer.tokenize(ssrc))));
+            var sf: i32 = 0;
+            while (sf < smod.funcs.len()) { all_funcs = all_funcs.append(smod.funcs[sf]); sf = sf + 1; }
+            var sc: i32 = 0;
+            while (sc < smod.structs.len()) { all_structs = all_structs.append(smod.structs[sc]); sc = sc + 1; }
+        }
+        sp = sp + 1;
+    }
     // `-ir-probe`: report the IR-eligibility frontier instead of emitting asm —
     // a per-function breakdown of what lowers vs what bails to the AST path.
     if (probe) {
@@ -77,8 +112,8 @@ function main(): i32 {
     // exported `.globl`; `_start`/runtime only for the entry). Separately-
     // emitted units of a multi-module program link into one binary. The entry
     // folds -ir-extra-need (the whole-program need union) into its runtime.
-    if (unit == "entry") { print(asm_ir.emit_module_ir_unit(lm, true, true, ns, extra)); return 0; }
-    if (unit == "lib") { print(asm_ir.emit_module_ir_unit(lm, false, true, ns, [])); return 0; }
+    if (unit == "entry") { print(asm_ir.emit_module_ir_unit(lm_inf, true, true, ns, extra, all_funcs, all_structs)); return 0; }
+    if (unit == "lib") { print(asm_ir.emit_module_ir_unit(lm_inf, false, true, ns, [], all_funcs, all_structs)); return 0; }
     var emitted: string = "";
     if (use_ir && asm_ir.all_eligible_known(lm, known)) {
         emitted = asm_ir.emit_module_ir(lm);

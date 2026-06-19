@@ -59,15 +59,21 @@ function is_array_type(t: string): boolean {
 // array_ret_fns collects the names of functions whose return type is an array,
 // so move-on-return / move-from-call fire (mirrors irlower.lower_module).
 pub function array_ret_fns(mod: parser.Module): string[] {
+    return array_ret_fns_of(mod.funcs);
+}
+
+// array_ret_fns_of is array_ret_fns over an explicit funcs array, so it can be
+// derived over the WHOLE-PROGRAM function set (#3454) rather than one module's.
+pub function array_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var i: i32 = 0;
-    while (i < mod.funcs.len()) {
-        if (is_array_type(mod.funcs[i].ret_type)) { out = out.append(mod.funcs[i].name); }
+    while (i < funcs.len()) {
+        if (is_array_type(funcs[i].ret_type)) { out = out.append(funcs[i].name); }
         // A lifted if-/match-expression `__lam_` whose branch is an array literal
         // carries a default i32 ret_type, so `var xs = if (c) { [..] } else { .. }`
         // was mis-treated as a scalar. Register it (a fresh owned-array move, like
         // any array-returning fn) so the binding tracks as an array (#3224).
-        else if (mod.funcs[i].name.len() >= 6 && mod.funcs[i].name[0:6] == "__lam_" && irlower.lam_leaf_array_elem(mod.funcs[i], mod.funcs, 0) != "") { out = out.append(mod.funcs[i].name); }
+        else if (funcs[i].name.len() >= 6 && funcs[i].name[0:6] == "__lam_" && irlower.lam_leaf_array_elem(funcs[i], funcs, 0) != "") { out = out.append(funcs[i].name); }
         i = i + 1;
     }
     return out;
@@ -3122,30 +3128,41 @@ pub function lift_lambdas(mod: parser.Module): parser.Module {
 // .rodata / the runtime) and module_runtime_needs (which discards the asm and
 // reads the accumulated `needed`). Factoring it out keeps the two callers from
 // drifting on which functions / side-tables drive need detection.
-function emit_module_funcs(mod: parser.Module, s: asmcore.EmitState, globl_defs: boolean): asmcore.EmitState {
-    var arf: string[] = array_ret_fns(mod);
+// all_funcs / all_structs are the WHOLE-PROGRAM signature view (#3451 step 2 /
+// #3454): the union of every loaded module's functions and structs. The
+// return-type / signature side-tables are derived over them so a cross-module
+// call to an imported function whose return type is non-i32 (string / struct /
+// i64 / array / …) is tagged by the CALLEE's real signature — the callee lives
+// in a sibling module and would otherwise be invisible, mis-tagging the call as
+// i32 and miscompiling a chained method on its result. Only `mod.funcs` are
+// EMITTED; all_funcs/all_structs drive analysis only. For the whole-program
+// single-unit path all_funcs==mod.funcs / all_structs==mod.structs, so the
+// derived tables — and the emitted asm — are byte-identical.
+function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], s: asmcore.EmitState, globl_defs: boolean): asmcore.EmitState {
+    var arf: string[] = array_ret_fns_of(all_funcs);
     // Inter-procedural borrowability computed ONCE per module (not per function —
     // that OOMs the arm64 self-compile); threaded into every emit_function_via_ir.
-    var bparams: string[] = irlower.borrowable_params_interproc(mod.funcs);
+    var bparams: string[] = irlower.borrowable_params_interproc(all_funcs);
     // The fourteen return-type / signature side-tables lower_func consults are
-    // derived ONCE per module here (each scans all of mod.funcs), then threaded
-    // into every emit_function_via_ir — recomputing them per function is O(n^2)
-    // and OOMs the bump heap on a large module (parser, ~300 funcs). This mirrors
-    // bparams above and the wasm backend's emit_module, which already hoists them.
-    var srf: string[] = irlower.str_ret_fns_of(mod.funcs);
-    var sarf: string[] = irlower.strarr_ret_fns_of(mod.funcs);
-    var amf: string[] = irlower.arr_method_fns_of(mod.funcs);
-    var orf: string[] = irlower.opt_ret_fns_of(mod.funcs);
-    var irf: string[] = irlower.i64_ret_fns_of(mod.funcs);
-    var trf: string[] = irlower.tuple_ret_fns_of(mod.funcs);
-    var srtf: string[] = irlower.struct_ret_fns_of(mod.funcs, mod.structs);
-    var mrtf: string[] = irlower.map_ret_fns_of(mod.funcs);
-    var frf: string[] = irlower.f64_ret_fns_of(mod.funcs);
-    var farf: string[] = irlower.f64arr_ret_fns_of(mod.funcs);
-    var iarf: string[] = irlower.i64arr_ret_fns_of(mod.funcs);
-    var fps: string[] = irlower.fn_param_sigs_of(mod.funcs);
-    var cfs: string[] = irlower.closure_ret_fns_of(mod.funcs);
-    var cnf: string[] = irlower.const_fns_of(mod.funcs);
+    // derived ONCE here (each scans all of all_funcs — the WHOLE-PROGRAM
+    // signature view, #3454), then threaded into every emit_function_via_ir —
+    // recomputing them per function is O(n^2) and OOMs the bump heap on a large
+    // module (parser, ~300 funcs). This mirrors bparams above and the wasm
+    // backend's emit_module, which already hoists them.
+    var srf: string[] = irlower.str_ret_fns_of(all_funcs);
+    var sarf: string[] = irlower.strarr_ret_fns_of(all_funcs);
+    var amf: string[] = irlower.arr_method_fns_of(all_funcs);
+    var orf: string[] = irlower.opt_ret_fns_of(all_funcs);
+    var irf: string[] = irlower.i64_ret_fns_of(all_funcs);
+    var trf: string[] = irlower.tuple_ret_fns_of(all_funcs);
+    var srtf: string[] = irlower.struct_ret_fns_of(all_funcs, all_structs);
+    var mrtf: string[] = irlower.map_ret_fns_of(all_funcs);
+    var frf: string[] = irlower.f64_ret_fns_of(all_funcs);
+    var farf: string[] = irlower.f64arr_ret_fns_of(all_funcs);
+    var iarf: string[] = irlower.i64arr_ret_fns_of(all_funcs);
+    var fps: string[] = irlower.fn_param_sigs_of(all_funcs);
+    var cfs: string[] = irlower.closure_ret_fns_of(all_funcs);
+    var cnf: string[] = irlower.const_fns_of(all_funcs);
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         // Per-module: mark the definition `.globl` so a sibling module's
@@ -3178,14 +3195,24 @@ pub function module_runtime_needs(mod: parser.Module): string[] {
     strbuf_reset();
     var s: asmcore.EmitState = asmcore.new_state();
     s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
-    s = emit_module_funcs(mod, s, false);
+    // Needs depend only on this module's own ops, so the single-module
+    // signature view suffices (a cross-module call's NEED set is the callee's,
+    // aggregated separately via module_runtime_needs over each module).
+    s = emit_module_funcs(mod, mod.funcs, mod.structs, s, false);
     s = s.close_needs();
     strbuf_reset();
     return s.needed;
 }
 
 pub function emit_module_ir(mod: parser.Module): string {
-    return emit_module_ir_unit(mod, true, false, "", []);
+    // Infer return types BEFORE snapshotting all_funcs: the side-tables are
+    // derived over all_funcs, so they must see the inferred (unannotated)
+    // return types — otherwise a function with an inferred string/struct/…
+    // return is mis-tagged i32 and a chained method on its result miscompiles.
+    // emit_module_ir_unit re-infers `mod` (idempotent), keeping the emitted
+    // module and the analysis set consistent.
+    var im: parser.Module = parser.infer_ret_types_module(mod);
+    return emit_module_ir_unit(im, true, false, "", [], im.funcs, im.structs);
 }
 
 // emit_module_ir_unit is emit_module_ir parameterised for per-module
@@ -3219,20 +3246,28 @@ pub function emit_module_ir(mod: parser.Module): string {
 //            module_runtime_needs), so the entry emits the helpers a sibling
 //            library uses even when the entry itself doesn't. Empty for the
 //            whole-program path and for non-entry units.
-pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[]): string {
+//   all_funcs / all_structs — the WHOLE-PROGRAM signature view (#3454): the
+//            union of every loaded module's functions / structs, over which the
+//            return-type side-tables + struct layouts are derived so a
+//            cross-module call is tagged by the callee's real signature. Only
+//            `mod.funcs` are emitted. For the single-unit path pass mod.funcs /
+//            mod.structs (byte-identical).
+pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[]): string {
     // Infer return types for unannotated functions so the IR path's
     // ret-type-keyed call tagging (str_ret_fns_of / opt_ret_fns_of / …)
     // matches the AST path, which gets the same via module_with_builtins.
     mod = parser.infer_ret_types_module(mod);
     strbuf_reset();
     var s: asmcore.EmitState = asmcore.new_state();
-    s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs, str_ns: str_ns };
+    // struct_decls is the WHOLE-PROGRAM struct set so a function emitting an
+    // imported struct's layout (field offsets / sizes) resolves it.
+    s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: mod.funcs, str_ns: str_ns };
     if (is_entry) { s = s.write("    .globl _start\n"); }
     s = s.write("    .text\n");
     // Per-module: the entry exports its shared runtime entry points so sibling
     // library modules can link their `call __fern_*` externs against them.
     if (is_entry && globl_defs) { s = emit_runtime_globls(s); }
-    s = emit_module_funcs(mod, s, globl_defs);
+    s = emit_module_funcs(mod, all_funcs, all_structs, s, globl_defs);
     // _start belongs only to the entry module (one program entry point). A
     // non-entry library module exposes its `__fn_*` definitions and nothing else.
     if (is_entry) {
