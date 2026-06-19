@@ -38,13 +38,23 @@ function main(): i32 {
     // so two per-module units' string pools don't collide at link. Empty keeps
     // the whole-program `.S<idx>` labels.
     var ns: string = "";
+    // `-ir-needs`: print this module's runtime needs (one per line) instead of
+    // emitting asm — the per-module driver unions these across all modules and
+    // feeds them to the entry as -ir-extra-need so the entry's single runtime
+    // covers every module's helpers (#3451 step 3 / #3455).
+    var needs_probe: boolean = false;
+    // `extra` accumulates -ir-extra-need <name>: the whole-program runtime-need
+    // union folded into the entry unit's shared runtime.
+    var extra: string[] = [];
     var ai: i32 = 1;
     while (ai < av.len()) {
         if (av[ai] == "-ir") { use_ir = true; }
         if (av[ai] == "-ir-probe") { probe = true; }
+        if (av[ai] == "-ir-needs") { needs_probe = true; }
         if (av[ai] == "-ir-extern" && ai + 1 < av.len()) { known = known.append(av[ai + 1]); ai = ai + 1; }
         if (av[ai] == "-ir-unit" && ai + 1 < av.len()) { unit = av[ai + 1]; ai = ai + 1; }
         if (av[ai] == "-ir-ns" && ai + 1 < av.len()) { ns = av[ai + 1]; ai = ai + 1; }
+        if (av[ai] == "-ir-extra-need" && ai + 1 < av.len()) { extra = extra.append(av[ai + 1]); ai = ai + 1; }
         ai = ai + 1;
     }
     var src: string = io.read_all_stdin();
@@ -56,11 +66,19 @@ function main(): i32 {
         print(asm_ir.eligibility_report_known(lm, known));
         return 0;
     }
+    // `-ir-needs`: report the module's closed runtime-need set, one per line.
+    if (needs_probe) {
+        var nds: string[] = asm_ir.module_runtime_needs(lm);
+        var ni: i32 = 0;
+        while (ni < nds.len()) { print(nds[ni] + "\n"); ni = ni + 1; }
+        return 0;
+    }
     // `-ir-unit entry|lib`: emit a single per-module translation unit (defs
     // exported `.globl`; `_start`/runtime only for the entry). Separately-
-    // emitted units of a multi-module program link into one binary.
-    if (unit == "entry") { print(asm_ir.emit_module_ir_unit(lm, true, true, ns)); return 0; }
-    if (unit == "lib") { print(asm_ir.emit_module_ir_unit(lm, false, true, ns)); return 0; }
+    // emitted units of a multi-module program link into one binary. The entry
+    // folds -ir-extra-need (the whole-program need union) into its runtime.
+    if (unit == "entry") { print(asm_ir.emit_module_ir_unit(lm, true, true, ns, extra)); return 0; }
+    if (unit == "lib") { print(asm_ir.emit_module_ir_unit(lm, false, true, ns, [])); return 0; }
     var emitted: string = "";
     if (use_ir && asm_ir.all_eligible_known(lm, known)) {
         emitted = asm_ir.emit_module_ir(lm);
