@@ -110,42 +110,6 @@ pub function ir_helper_symbol(name: string): string {
     return "__fn_" + name;
 }
 
-// module_uses_heap reports whether any function allocates (so the runtime +
-// heap need emitting).
-// module_uses_maps reports whether any function uses a map op (so the map
-// runtime + its __fern_str_eq / __fern_arr_push deps need emitting).
-function module_uses_maps(mod: parser.Module): boolean {
-    var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func_for_noret(mod.funcs[fi], mod.structs, mod.funcs);
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            var k: string = r.ops[i].kind;
-            if (k == "map_new" || k == "map_set" || k == "map_len") { return true; }
-            i = i + 1;
-        }
-        fi = fi + 1;
-    }
-    return false;
-}
-
-function module_uses_heap(mod: parser.Module): boolean {
-    var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func_for_noret(mod.funcs[fi], mod.structs, mod.funcs);
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            // Any allocating op pulls in the heap/allocator + RC runtime.
-            // ir.op_allocates is the shared list (see ir.fern), so a new
-            // allocating op is taught to this gate and wasm's at once.
-            if (ir.op_allocates(r.ops[i].kind)) { return true; }
-            i = i + 1;
-        }
-        fi = fi + 1;
-    }
-    return false;
-}
-
 // emit_ir_str_search appends the scalar string search predicates
 // (__fern_str_starts_with / _ends_with / _index_of), transcribed verbatim from
 // asm.fern's str_search block. All three only read the two string boxes — no
@@ -2308,6 +2272,24 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState, borrowable_params: string[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[], map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[]): asmcore.EmitState {
     var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls, str_ret_fns, strarr_ret_fns, arr_method_fns, opt_ret_fns, i64_ret_fns, tuple_ret_fns, struct_ret_fns, map_ret_fns, f64_ret_fns, f64arr_ret_fns, i64arr_ret_fns, fn_param_sigs, closure_fns, const_fns, borrowable_params);
 
+    // Runtime-need detection, folded into the per-function lowering the emit loop
+    // ALREADY performs. The tail used to re-derive these by re-lowering the WHOLE
+    // module twice (module_uses_maps / module_uses_heap, each a full second/third
+    // lower_func_for_noret pass over all funcs) — on a large module (the whole
+    // self-host compiler, ~1000 funcs) those redundant passes blew the bump heap
+    // (#3425: each retained pass's per-function ops pushed peak live set past the
+    // ~3.875 GiB ceiling and OOM'd the self-compile). Marking the needs here off
+    // the ops we just lowered keeps it to a SINGLE lowering pass; the tail reads
+    // the accumulated needs (has_need) instead of re-lowering. Byte-identical
+    // output: the runtime is still emitted at the tail gated on the same needs.
+    var dop: i32 = 0;
+    while (dop < r.ops.len()) {
+        var dk: string = r.ops[dop].kind;
+        if (dk == "map_new" || dk == "map_set" || dk == "map_len") { s = s.need("maps"); }
+        if (ir.op_allocates(dk)) { s = s.need("heap"); }
+        dop = dop + 1;
+    }
+
     // Methods get the receiver-type-qualified label `__fn_<Type>.<name>` (matching
     // asm.fern + irlower's dispatch); free functions stay `__fn_<name>`.
     var label_name: string = fd.name;
@@ -3007,14 +2989,15 @@ pub function emit_module_ir(mod: parser.Module): string {
             li = li + 1;
         }
     }
-    // A map-using module marks the top-level "maps" need; close_needs() pulls in
-    // its declared deps (str_eq, arr_push) so the runtime links — no hand-marking.
-    if (module_uses_maps(mod)) { s = s.need("maps"); }
+    // The "maps" / "heap" needs were marked per-function during the emit loop
+    // above (off the ops each lower_func already produced), so there is no need to
+    // re-lower the module here. close_needs() pulls in maps' declared deps
+    // (str_eq, arr_push, heap) so the runtime links — no hand-marking.
     s = s.close_needs();
     // The freestanding allocator + RC runtime, only when the program allocates.
     // i32.to_string() allocates its box even in an otherwise heap-free program,
     // so its emit-time need pulls the runtime in too (its body calls __fern_alloc).
-    if (module_uses_heap(mod) || s.has_need("i32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("print_int") || s.has_need("read_int") || s.has_need("str_read_line") || s.has_need("putchar") || s.has_need("strbuf")) { s = emit_ir_runtime(s); }
+    if (s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("print_int") || s.has_need("read_int") || s.has_need("str_read_line") || s.has_need("putchar") || s.has_need("strbuf")) { s = emit_ir_runtime(s); }
     // String search predicates (starts_with / ends_with / index_of) are
     // allocation-free + self-contained, so they're emitted in their own helper
     // — kept OUT of emit_ir_runtime, whose size is near the self-host's

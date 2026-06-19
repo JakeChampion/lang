@@ -689,9 +689,10 @@ pub function render_op(o: Op): string {
 // op_allocates reports whether an op of `kind` allocates on the heap (a box via
 // __fern_alloc / __fern_arr_box / __fern_str_box, or one of the string helpers
 // that builds a fresh box). It is the single source of truth for the
-// "does this module need the heap + RC runtime?" gate that each backend's
-// module-level scan runs: asm_ir.module_uses_heap and wasm_ir.module_allocates
-// both walk the lowered op stream and ask this. Keeping the list here means a
+// "does this module need the heap + RC runtime?" gate that each backend runs
+// over the lowered op stream: the x86 IR path (asm_ir.emit_module_ir) marks the
+// "heap" need per-function off the ops it already lowered, and wasm_ir's
+// module_allocates walks the stream the same way. Keeping the list here means a
 // newly-added allocating op is taught to every backend's heap gate at once,
 // rather than silently routing modules to the AST fallback because one backend's
 // hand-maintained copy of the list fell behind.

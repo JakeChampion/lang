@@ -12881,8 +12881,8 @@ pub function lower_func_for(fn: parser.FuncDecl, arr_ret_fns: string[], structs:
 }
 
 // lower_func_for_noret is lower_func_for with the array- and string-return name
-// sets left empty. The module-level op scanners (module_uses_heap /
-// module_uses_maps) lower every function only to inspect the resulting op
+// sets left empty. The IR-eligibility scanners (asm_ir's calls_only_known /
+// const_funcs_only_known) lower a function only to inspect the resulting op
 // kinds, so the move-tracking name sets that the array/string return args feed
 // are irrelevant there; passing them empty keeps those scans matching their
 // previous behaviour while sharing the side-table derivation.
