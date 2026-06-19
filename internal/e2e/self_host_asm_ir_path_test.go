@@ -1560,6 +1560,14 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"matchexpr-uenum-i64-arith", `enum E { V(i64), W } function main(): i64 { var e: E = V(5 as i64); return match (e) { V(n) => n + 1, W => 0 as i64 }; }`, 6},
 		{"matchexpr-opt-f64-arith", `function main(): i32 { var o: Option[f64] = Some(4.5); return (match (o) { Some(n) => n + 1.5, None => 0.0 } as i32); }`, 6},
 		{"matchexpr-opt-struct-i64-arith", `struct P { v: i64 } function main(): i64 { var o: Option[P] = Some(P{v: 5 as i64}); return match (o) { Some(p) => p.v + 1, None => 0 as i64 }; }`, 6},
+		// METHOD CALL on a struct/enum match-EXPRESSION payload returning i64/f64
+		// (`Some(p) => p.get()`, get(): i64): iife_method_ret_kind recovers the wide
+		// result kind (typing the temp i64/f64) and iife_payload_wide_bindable admits
+		// the call — the old gate only admitted bare/field/arith reads, so a wide-
+		// returning payload method bailed. The i32-returning method case already rode
+		// the i32 borrow path; this is its wide sibling.
+		{"matchexpr-opt-method-i64", `struct P { v: i64 } function (p: P) get(): i64 { return p.v; } function main(): i64 { var o: Option[P] = Some(P { v: 7 as i64 }); return match (o) { Some(p) => p.get(), None => 0 as i64 }; }`, 7},
+		{"matchexpr-uenum-method-i64", `struct P { v: i64 } enum E { Has(P), Nil } function (p: P) g(): i64 { return p.v + 2 as i64; } function main(): i64 { var e: E = Has(P { v: 7 as i64 }); return match (e) { Has(p) => p.g(), Nil => 0 as i64 }; }`, 9},
 		// f-string interpolation, pinned to the absolute IR-path value (the
 		// AST==IR differential above is blind to a both-paths-wrong desugar). The
 		// returned byte proves the interpolant text actually landed: `f"n={7}!"`

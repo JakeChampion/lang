@@ -5657,6 +5657,18 @@ function iife_method_ret_i32(recv: string, method: string, s: LowerState): boole
     return true;
 }
 
+// iife_method_ret_kind reports the WIDE result kind ("i64" / "f64") of method
+// `method` on a struct / enum receiver `recv`, or "" if it isn't registered as
+// returning that width. The qualified "<recv>.<method>" key mirrors iife_method_
+// ret_i32; this is its wide sibling, for a value-position match-EXPRESSION arm whose
+// tail is `V(p) => p.get()` (get(): i64/f64) — the wide method result types the temp.
+function iife_method_ret_kind(recv: string, method: string, s: LowerState): string {
+    var key: string = recv + "." + method;
+    if (s.is_i64_ret_fn(key)) { return "i64"; }
+    if (s.is_f64_ret_fn(key)) { return "f64"; }
+    return "";
+}
+
 // iife_borrow_leaf_i32 reports whether `e` — a borrow READ of the bound payload
 // `name` (declared type `ft`) — provably yields an i32 value, WITHOUT constructing a
 // trial scope (the type is recovered directly from `ft`). The admitted shapes:
@@ -6080,6 +6092,29 @@ function iife_payload_wide_bindable(ft: string, name: string, arm: parser.MatchA
                 _ => { return false; }
             }
         },
+        // Method call on a struct / enum payload returning the wanted wide kind
+        // (`V(p) => p.get()`, get(): i64/f64). The result-kind recovery classified the
+        // temp via the same iife_method_ret_kind lookup; the StmtMatch arm-body store
+        // routes the wide method result through lower_i64 / the f64 path.
+        parser.ExprCall(mc) => {
+            match (mc.callee) {
+                parser.ExprFieldAccess(mcf) => {
+                    match (mcf.obj) {
+                        parser.ExprIdent(rcv) => {
+                            if (rcv.name != name) { return false; }
+                            // i64 only (see iife_arm_payload_result_kind): the f64
+                            // method-result path mis-lowers in value position.
+                            if ((decl_is_struct(s.structs, ft) || is_enum_like_name(ft, s.structs)) && want == "i64") {
+                                return iife_method_ret_kind(ft, mcf.field, s) == "i64";
+                            }
+                            return false;
+                        },
+                        _ => { return false; }
+                    }
+                },
+                _ => { return false; }
+            }
+        },
         _ => { return false; }
     }
     return false;
@@ -6335,6 +6370,33 @@ function iife_arm_payload_result_kind(arm: parser.MatchArm, opt_srt: string, s: 
                     if (iife_payload_arith_kind(rval, pv.binding, ftc, "i64", s)) { return "i64"; }
                     if (iife_payload_arith_kind(rval, pv.binding, ftc, "f64", s)) { return "f64"; }
                     return "";
+                },
+                // Method call on a STRUCT / ENUM payload returning i64/f64
+                // (`V(p) => p.get()`, get(): i64): recover the wide kind from the
+                // method's registered return type. The StmtMatch arm-body store routes
+                // the wide method result through lower_i64 / the f64 path (statement-
+                // position `return p.get()` already lowers).
+                parser.ExprCall(mc) => {
+                    match (mc.callee) {
+                        parser.ExprFieldAccess(mcf) => {
+                            match (mcf.obj) {
+                                parser.ExprIdent(rcv) => {
+                                    var ft0: string = iife_bound_payload_type(pv, rcv.name, opt_srt, s);
+                                    if (ft0 == "") { return ""; }
+                                    // i64 only: a wide i64-returning payload method
+                                    // round-trips through the value-position temp; the
+                                    // f64 method result does NOT (it mis-lowers to 0),
+                                    // so an f64-returning method stays on the AST path.
+                                    if (decl_is_struct(s.structs, ft0) || is_enum_like_name(ft0, s.structs)) {
+                                        if (iife_method_ret_kind(ft0, mcf.field, s) == "i64") { return "i64"; }
+                                    }
+                                    return "";
+                                },
+                                _ => { return ""; }
+                            }
+                        },
+                        _ => { return ""; }
+                    }
                 },
                 _ => { return ""; }
             }
