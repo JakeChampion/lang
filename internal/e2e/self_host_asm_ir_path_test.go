@@ -1530,6 +1530,16 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"matchexpr-opt-struct-bare", `struct P { x: i32 } function main(): i32 { var o: Option[P] = Some(P { x: 7 }); var p = match (o) { Some(v) => v, None => P { x: 0 } }; return p.x; }`, 7},
 		{"matchexpr-result-ok-str-bare", `function main(): i32 { var r: Result[string, i32] = Ok("abcd"); var s = match (r) { Ok(v) => v, Err(e) => "" }; return s.len(); }`, 4},
 		{"matchexpr-result-ok-struct-bare", `struct P { x: i32 } function main(): i32 { var r: Result[P, i32] = Ok(P { x: 6 }); var p = match (r) { Ok(v) => v, Err(e) => P { x: 0 } }; return p.x; }`, 6},
+		// NESTED struct/tuple-field borrow read of a match-EXPRESSION payload
+		// (`Some(q) => q.p.x`): iife_payload_chain_type walks each struct-field /
+		// tuple-element step from the payload type, so a multi-level i32 borrow read
+		// classifies (the old single-level `name.field` check bailed). The store side
+		// (the StmtMatch arm-body lowering of the nested field read) already lowered
+		// in statement position; this admits it into the value-position IIFE temp.
+		{"matchexpr-opt-nested-field", `struct P { x: i32 } struct Q { p: P } function main(): i32 { var o: Option[Q] = Some(Q { p: P { x: 5 } }); var y = match (o) { Some(q) => q.p.x, None => 0 }; return y; }`, 5},
+		{"matchexpr-uenum-nested-field", `struct P { x: i32 } struct Q { p: P } enum E { Has(Q), Nil } function main(): i32 { var e: E = Has(Q { p: P { x: 6 } }); var y = match (e) { Has(q) => q.p.x, Nil => 0 }; return y; }`, 6},
+		{"matchexpr-opt-nested-3deep", `struct A { v: i32 } struct B { a: A } struct C { b: B } function main(): i32 { var o: Option[C] = Some(C { b: B { a: A { v: 8 } } }); var y = match (o) { Some(c) => c.b.a.v, None => 0 }; return y; }`, 8},
+		{"matchexpr-opt-nested-arith", `struct P { x: i32 } struct Q { p: P, k: i32 } function main(): i32 { var o: Option[Q] = Some(Q { p: P { x: 5 }, k: 6 }); var y = match (o) { Some(q) => q.p.x + q.k, None => 0 }; return y; }`, 11},
 		// f-string interpolation, pinned to the absolute IR-path value (the
 		// AST==IR differential above is blind to a both-paths-wrong desugar). The
 		// returned byte proves the interpolant text actually landed: `f"n={7}!"`

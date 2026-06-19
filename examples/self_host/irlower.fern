@@ -5636,27 +5636,40 @@ function iife_method_ret_i32(recv: string, method: string, s: LowerState): boole
 //   - `name[idx]`     : string payload (a char code) or i32[]/boolean[] element.
 // A BARE `name` (the payload itself) is NOT i32 — it is rejected so the arm bails
 // (it would need a payload-typed result temp). Any other read is rejected.
+// iife_payload_chain_type resolves the TYPE of a field / tuple-access CHAIN rooted
+// at the bound payload `name` (declared type `ft`): `name` → ft, `name.f` → field
+// f's type, `name.f.g` → the nested field's type, `name.0` → tuple element 0's tag,
+// recursing through each struct / enum / tuple step. "" when the chain isn't rooted
+// at `name` or any step isn't a resolvable struct/enum field or tuple element. This
+// is what lets a NESTED borrow read (`q.p.x`) classify, where the old single-level
+// `match (fa.obj) { ExprIdent }` check bailed.
+function iife_payload_chain_type(e: parser.Expr, name: string, ft: string, s: LowerState): string {
+    match (e) {
+        parser.ExprIdent(id) => { if (id.name == name) { return ft; } return ""; },
+        parser.ExprFieldAccess(fa) => {
+            var base: string = iife_payload_chain_type(fa.obj, name, ft, s);
+            if (base == "") { return ""; }
+            if (util.is_all_digits(fa.field)) { return tuple_type_elem_tag(base, util.digits_to_i32(fa.field)); }
+            if (decl_is_struct(s.structs, base) || is_enum_like_name(base, s.structs)) {
+                return decl_field_type(s.structs, base, fa.field);
+            }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 function iife_borrow_leaf_i32(e: parser.Expr, name: string, ft: string, s: LowerState): boolean {
     match (e) {
         parser.ExprIdent(id) => { return false; },   // bare payload — not i32
         parser.ExprFieldAccess(fa) => {
-            match (fa.obj) {
-                parser.ExprIdent(oid) => {
-                    if (oid.name != name) { return false; }
-                    // `name.<digit>` — a tuple element read; i32 iff that element is i32 / boolean.
-                    if (util.is_all_digits(fa.field)) {
-                        var et: string = tuple_type_elem_tag(ft, util.digits_to_i32(fa.field));
-                        return et == "i32" || et == "boolean";
-                    }
-                    // `name.<field>` — a struct / enum field read; i32 iff the field is i32 / boolean.
-                    if (decl_is_struct(s.structs, ft) || is_enum_like_name(ft, s.structs)) {
-                        var fdt: string = decl_field_type(s.structs, ft, fa.field);
-                        return fdt == "i32" || fdt == "boolean";
-                    }
-                    return false;
-                },
-                _ => { return false; }
-            }
+            // A field / tuple-access CHAIN rooted at the bound payload — `name.f`,
+            // `name.0`, or a NESTED `name.f.g` / `name.0.x` — is an i32 borrow read
+            // iff the terminal type resolves to i32 / boolean. iife_payload_chain_type
+            // walks each struct-field / tuple-element step from the payload type `ft`.
+            var ct: string = iife_payload_chain_type(e, name, ft, s);
+            return ct == "i32" || ct == "boolean";
         },
         parser.ExprIndex(ix) => {
             match (ix.array) {
