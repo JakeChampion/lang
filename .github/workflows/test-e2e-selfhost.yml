@@ -56,6 +56,18 @@ name: Test e2e self-host
 # Bump N (here and in NSHARD below) only if the worst x86 shard's
 # wall-clock creeps toward ~8 min; drop it only if all shards finish
 # well under ~4 min.
+#
+# TIMEOUT vs more shards. At 12, widening the IR subset further (enum-array
+# struct fields, #3431 — the self-host compiler lowers still more of itself
+# through the compile-heavy IR path) tipped shard 7 over the 10-min timeout
+# again (cancelled mid-run). Past ~12 shards the 16-shard regime's runner-queue
+# contention + the unshareable ~2.5-min per-job test-binary build dominate, so
+# adding shards stops helping. The IR migration is still in flight (the heaviest
+# fixpoint / bootstrap tests keep getting slower until the whole compiler routes
+# through IR), so the robust lever is a generous per-job timeout: 20 min sits
+# well above the worst shard's real ~10-11 min yet well under a hung-test
+# pathology. Drop it back toward 10 once the IR migration settles and shards
+# finish well under ~5 min.
 
 on:
   pull_request:
@@ -74,7 +86,10 @@ jobs:
         shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     name: test-e2e-selfhost-${{ matrix.host.name }}-shard${{ matrix.shard }}
     runs-on: ${{ matrix.host.runner }}
-    timeout-minutes: 10
+    # 20, not 10: the IR-subset migration keeps making the compile-heavy
+    # self-host shards slower (shard 7 hit the old 10-min limit even at 12
+    # shards). See the TIMEOUT note above. Revisit once the migration settles.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-fern
