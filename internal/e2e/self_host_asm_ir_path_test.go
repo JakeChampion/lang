@@ -1688,6 +1688,31 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"match-expr-multi-bind", `enum E { Pair(i32, i32) } function main(): i32 { var e = E.Pair(3, 4); return match (e) { Pair(a, b) => a + b }; }`, 7},
 		{"match-expr-multi-2var", `enum E { Pair(i32, i32), Single(i32) } function main(): i32 { var e = E.Single(9); return match (e) { Pair(a, b) => a + b, Single(x) => x }; }`, 9},
 		{"match-expr-multi-wildcard", `enum E { Pair(i32, i32) } function main(): i32 { var e = E.Pair(3, 4); return match (e) { Pair(_, b) => b }; }`, 4},
+		// CAPTURING inline lambdas in ARRAY-element position (#2994). lift_inline_
+		// closures hoists each to a unique `<fd>$cloN` and replaces the lambda with
+		// a `__mkclo$<fd>$cloN(caps…)` env-box marker; the array's `is_closurearr`
+		// slot routes `fs[i](args)` through the existing env-first closure-call path
+		// (push box, args, box[0] funcval, call_indirect arity+1). The legacy AST
+		// x86-64 emitter bails on these (a first-class closure box), so they ride the
+		// IR-only gate against the absolute value. (A capturing lambda in a struct
+		// FIELD is scoped out of this slice — see lift_inline_closures_expr — and
+		// stays on AST.) Single capturing lambda; fs[0](7) = 7 + 10 = 17.
+		{"clo-cap-arr-elem", `function main(): i32 { var n = 10; var fs = [function(x: i32): i32 { return x + n; }]; return fs[0](7); }`, 17},
+		// Capture used twice in the body (x*n + n with n=3, x=5): 15 + 3 = 18.
+		{"clo-cap-arr-body-twice", `function main(): i32 { var n = 3; var fs = [function(x: i32): i32 { return x * n + n; }]; return fs[0](5); }`, 18},
+		// Two captures in one lambda (a + b with a=4, b=100, x=7): 7 + 4 + 100 = 111.
+		{"clo-cap-arr-two-caps", `function main(): i32 { var a = 4; var b = 100; var fs = [function(x: i32): i32 { return x + a + b; }]; return fs[0](7); }`, 111},
+		// Multiple distinct capturing lambdas in ONE array — each gets its own
+		// `$cloN`. fs[0](5)=5+1=6, fs[1](5)=5*10=50; 6 + 50 = 56.
+		{"clo-cap-arr-multi", `function main(): i32 { var a = 1; var b = 10; var fs = [function(x: i32): i32 { return x + a; }, function(x: i32): i32 { return x * b; }]; return fs[0](5) + fs[1](5); }`, 56},
+		// A capturing array element bound to a local first, then called (`var g =
+		// fs[0]; g(args)`) — the closure-array element binds a closure LOCAL whose
+		// call also unpacks the box. g(5) = 5 + n = 5 + 100 = 105.
+		{"clo-cap-arr-bind-call", `function main(): i32 { var n = 100; var fs = [function(x: i32): i32 { return x + n; }]; var g = fs[0]; return g(5); }`, 105},
+		// Two distinct capturing lambdas summed via a `for f in fs` loop — each
+		// gets its own `$cloN` and reads its own env box. With a=1, b=10:
+		// fs[0](10) = 10 + a = 11, fs[1](10) = 10 * b = 100; 11 + 100 = 111.
+		{"clo-cap-arr-multi-forin", `function main(): i32 { var a = 1; var b = 10; var fs = [function(x: i32): i32 { return x + a; }, function(x: i32): i32 { return x * b; }]; var s = 0; for f in fs { s = s + f(10); } return s; }`, 111},
 	}
 	for _, tc := range irOnly {
 		t.Run(tc.name, func(t *testing.T) {
