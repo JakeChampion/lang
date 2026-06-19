@@ -119,9 +119,20 @@ function main(): i32 {
     var probe: boolean = false;
     var probe_start: i32 = 0 - 1;   // >= 0 selects the sharded probe
     var probe_count: i32 = 0;
+    // Per-module compilation modes (#3451 step 4 / #3456). One emit per process
+    // (native strbuf limit), so the build is driven across invocations:
+    //   -per-module-count / -per-module-needs / -per-module-emit <N>
+    // with -extra-need <name> supplying the entry's whole-program need union.
+    var pm_mode: string = "";
+    var pm_index: i32 = 0 - 1;
+    var pm_extra: string[] = [];
     var ag: i32 = 2;
     while (ag < av.len()) {
         if (av[ag] == "-ir-probe") { probe = true; }
+        else if (av[ag] == "-per-module-count") { pm_mode = "count"; }
+        else if (av[ag] == "-per-module-needs") { pm_mode = "needs"; }
+        else if (av[ag] == "-per-module-emit" && ag + 1 < av.len()) { pm_mode = "emit"; pm_index = util.digits_to_i32(av[ag + 1]); ag = ag + 1; }
+        else if (av[ag] == "-extra-need" && ag + 1 < av.len()) { pm_extra = pm_extra.append(av[ag + 1]); ag = ag + 1; }
         // `-ir-probe-range START COUNT`: shard the probe over function indices
         // [START, START+COUNT). Each invocation lowers only that slice, so the
         // large self-host modules (which exhaust the bump heap when the whole-
@@ -180,6 +191,93 @@ function main(): i32 {
             loaded = loaded.append(flatten.LoadedModule { name: module_name(ipath), mod: m });
             paths = add_imports(paths, m, root);
         }
+    }
+
+    // Per-module compilation (#3451 step 4 / #3456). Run BEFORE flatten.bundle
+    // (which mangles entry_mod / loaded in place) so bundle_per_module sees the
+    // un-mangled modules. The native runtime's global string buffer can hold
+    // only ONE emit per process (its len is reset by process start, not by an
+    // in-process strbuf_reset/take), so — exactly like a real build system —
+    // per-module compilation is driven across SEPARATE invocations:
+    //   -per-module-count        → print the module count N
+    //   -per-module-needs        → print the whole-program runtime-need union
+    //   -per-module-emit N [-extra-need X...]
+    //                            → emit module N's translation unit (the entry
+    //                              folds the supplied -extra-need union into its
+    //                              single shared runtime)
+    // bundle_per_module + the whole-program signature view are recomputed each
+    // invocation (cheap: parse + analysis, no codegen) so every per-module emit
+    // tags cross-module calls by the callee's real signature.
+    if (pm_mode.len() > 0) {
+        var parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded);
+        if (pm_mode == "count") {
+            print(util.i32_to_string(parts.len()) + "\n");
+            return 0;
+        }
+        // Whole-program signature view + program-wide known-symbol set.
+        var infmods: parser.Module[] = [];
+        var all_funcs: parser.FuncDecl[] = [];
+        var all_structs: parser.StructDecl[] = [];
+        var known: string[] = [];
+        var pi: i32 = 0;
+        while (pi < parts.len()) {
+            var im: parser.Module = parser.infer_ret_types_module(asm_ir.lift_lambdas(parts[pi].mod));
+            infmods = infmods.append(im);
+            var fk: i32 = 0;
+            while (fk < im.funcs.len()) {
+                all_funcs = all_funcs.append(im.funcs[fk]);
+                known = known.append(im.funcs[fk].name);
+                if (im.funcs[fk].receiver_type.len() > 0) {
+                    known = known.append(util.base_type_name(im.funcs[fk].receiver_type) + "." + im.funcs[fk].name);
+                }
+                fk = fk + 1;
+            }
+            var sk: i32 = 0;
+            while (sk < im.structs.len()) { all_structs = all_structs.append(im.structs[sk]); sk = sk + 1; }
+            pi = pi + 1;
+        }
+        if (pm_mode == "needs") {
+            // The runtime-need union over every module. module_runtime_needs
+            // dirties the strbuf, but we only read its `needed` result and emit
+            // nothing here, so that is harmless — the union is printed, one
+            // need per line, for the entry's -extra-need on a later invocation.
+            var needs: string[] = [];
+            var ni: i32 = 0;
+            while (ni < infmods.len()) {
+                var mn: string[] = asm_ir.module_runtime_needs(infmods[ni]);
+                var mk: i32 = 0;
+                while (mk < mn.len()) {
+                    if (!util.has_str(needs, mn[mk])) { needs = needs.append(mn[mk]); }
+                    mk = mk + 1;
+                }
+                ni = ni + 1;
+            }
+            var no: i32 = 0;
+            while (no < needs.len()) { print(needs[no] + "\n"); no = no + 1; }
+            return 0;
+        }
+        // pm_mode == "emit": emit exactly module pm_index (the ONLY strbuf-emit
+        // in this process, so the buffer is clean).
+        if (pm_index < 0 || pm_index >= parts.len()) {
+            eprint("per-module: emit index out of range\n");
+            return 1;
+        }
+        // Entry requires a main (it emits `_start` → `call __fn_main`); a
+        // library unit has none by design (all_eligible_lib_known).
+        var elig: boolean = asm_ir.all_eligible_lib_known(infmods[pm_index], known);
+        if (parts[pm_index].is_entry) { elig = asm_ir.all_eligible_known(infmods[pm_index], known); }
+        if (!elig) {
+            eprint("per-module: module not IR-eligible: ");
+            eprint(parts[pm_index].ns);
+            eprint("\n");
+            return 1;
+        }
+        // The entry folds the whole-program runtime-need union (-extra-need,
+        // from the -per-module-needs invocation) into its single shared runtime.
+        var extra: string[] = [];
+        if (parts[pm_index].is_entry) { extra = pm_extra; }
+        write(asm_ir.emit_module_ir_unit(infmods[pm_index], parts[pm_index].is_entry, true, parts[pm_index].ns, extra, all_funcs, all_structs));
+        return 0;
     }
 
     var merged: parser.Module = flatten.bundle(entry_mod, loaded);

@@ -684,6 +684,52 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
     };
 }
 
+// PerModule is one separately-emittable translation unit of a per-module
+// build (#3451 step 4 / #3456): the mangled-but-NOT-merged module plus its
+// namespace (`ns`, used for the per-module string-literal `.rodata` labels and
+// the symbol-prefix bookkeeping) and whether it is the program entry. ns is
+// label-safe (it is the same bundle name mangle_module folds into `ns__decl`).
+pub struct PerModule { ns: string, mod: parser.Module, is_entry: boolean }
+
+// bundle_per_module is bundle's per-module twin: it applies the SAME mangling
+// (each import's own decls → `name__decl`, every internal reference rewritten;
+// the entry qualified-flattened so `name.X` resolves to the mangled decls) but
+// returns each module SEPARATELY instead of concatenating them into one. The
+// imported-enum-variant map is built once over all imports and threaded into
+// every module's rewrite, exactly as bundle does, so a bare variant reference
+// resolves identically whether the program is merged or emitted per-module.
+// The result is the input to per-module emit + link (#3456): each PerModule is
+// emitted as its own translation unit (entry → `_start` + the shared runtime;
+// imports → library units exposing their `.globl __fn_*`), and the units link
+// into one binary. The entry is the LAST element.
+pub function bundle_per_module(entry: parser.Module, imports: LoadedModule[]): PerModule[] {
+    var ivar_names: string[] = [];
+    var ivar_mangled: string[] = [];
+    var iv: i32 = 0;
+    while (iv < imports.len()) {
+        var isd: i32 = 0;
+        while (isd < imports[iv].mod.structs.len()) {
+            var sd: parser.StructDecl = imports[iv].mod.structs[isd];
+            if (sd.enum_owner.len() > 0) {
+                ivar_names = ivar_names.append(sd.name);
+                ivar_mangled = ivar_mangled.append(imports[iv].name + "__" + sd.name);
+            }
+            isd = isd + 1;
+        }
+        iv = iv + 1;
+    }
+    var out: PerModule[] = [];
+    var i: i32 = 0;
+    while (i < imports.len()) {
+        var m: parser.Module = mangle_module(imports[i].mod, imports[i].name, ivar_names, ivar_mangled);
+        out = out.append(PerModule { ns: imports[i].name, mod: m, is_entry: false });
+        i = i + 1;
+    }
+    var e: parser.Module = flatten_qualified(entry, ivar_names, ivar_mangled);
+    out = out.append(PerModule { ns: "__entry", mod: e, is_entry: true });
+    return out;
+}
+
 // append_enum_decls concatenates two enum-decl lists (bundle merging).
 function append_enum_decls(into: parser.EnumDecl[], more: parser.EnumDecl[]): parser.EnumDecl[] {
     var out: parser.EnumDecl[] = into;
