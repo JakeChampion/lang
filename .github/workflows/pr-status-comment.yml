@@ -6,21 +6,51 @@ name: PR Status Comment
 #   ✅  every other check on the head commit finished green
 #   ❌  one or more checks failed / errored / timed out / were cancelled
 #   ⚠️  the PR has merge conflicts with its base branch
+#   ⏳  a transient "checks still running" baseline
 #
-# The comment is an upsert — a hidden marker (PR_STATUS_MARKER below) lets us
-# find the comment we wrote last time and edit it in place rather than spamming
-# the thread on every check_suite completion.
+# The comment is an upsert — a hidden marker (MARKER below) lets us find the
+# comment we wrote last time and edit it in place rather than spamming the
+# thread on every event.
 #
 # Triggers:
-#   check_suite: completed   — re-evaluate every time a batch of checks finishes
-#   pull_request             — catch conflicts (and a "checks running" baseline)
-#                              as soon as the PR opens / is pushed to / reopens
+#   workflow_run: completed  — re-evaluate every time one of the PR's CI
+#                              workflows finishes. This is the trigger that
+#                              actually fires reliably: `check_suite`/`check_run`
+#                              do NOT trigger workflows for suites created by
+#                              GitHub Actions itself (recursion prevention), so
+#                              they're useless for "react after CI finishes".
+#   pull_request             — surface conflicts (and a "checks running"
+#                              baseline) as soon as the PR opens / is pushed
+#                              to / reopens.
 #
-# check_suite runs in the context of the *base* repo, so the GITHUB_TOKEN has
+# NOTE: the `workflows:` list below must name every workflow that runs on
+# pull_request. When you add a new PR-triggered workflow, add its `name:` here
+# too, otherwise this comment won't re-evaluate when that workflow finishes.
+# (`workflow_run` has no wildcard.) This workflow deliberately does NOT list
+# itself, so it can't trigger itself recursively.
+#
+# workflow_run runs in the context of the base repo, so the GITHUB_TOKEN has
 # write scope even for pull requests opened from forks.
 
 on:
-  check_suite:
+  workflow_run:
+    workflows:
+      - Lint
+      - Examples
+      - Docs build
+      - macOS arm64
+      - Playground E2E
+      - Fuzz differential execution
+      - Fuzz parse round-trip
+      - Test units
+      - Test fernsmith
+      - VS Code Extension
+      - Test e2e arm64
+      - Test e2e differential
+      - Test e2e other
+      - Test e2e self-host
+      - Test e2e wasm
+      - Test e2e x86_64
     types: [completed]
   pull_request:
     types: [opened, synchronize, reopened]
@@ -36,41 +66,50 @@ permissions:
   checks: read
 
 # Only one evaluation per PR at a time; cancel an in-flight run when a newer
-# event for the same PR arrives so we never race two comment upserts.
+# event for the same head arrives so we never race two comment upserts.
 concurrency:
-  group: pr-status-comment-${{ github.event.pull_request.number || github.event.check_suite.head_branch || github.event.inputs.pr_number }}
+  group: >-
+    pr-status-comment-${{
+      github.event.pull_request.number
+      || github.event.workflow_run.head_sha
+      || github.event.inputs.pr_number
+    }}
   cancel-in-progress: true
 
 jobs:
-  comment:
+  status-comment:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/github-script@v7
         with:
           script: |
             const MARKER = '<!-- pr-status-comment -->';
-            const SELF = context.workflow; // this workflow's name; excluded from the tally
+            // The check-run name this workflow contributes to a PR (== the job
+            // name below). Excluded from the tally so we never wait on / report
+            // ourselves. Compared against check_run.name, which is the *job*
+            // name — NOT context.workflow.
+            const SELF_CHECK = 'status-comment';
 
             // --- Resolve the target PR(s) for this event ----------------------
-            // pull_request: the PR is on the payload.
-            // check_suite:  map the head SHA back to its open PR(s).
+            // pull_request:      the PR is on the payload.
+            // workflow_run:      map head SHA -> open PR(s) (payload list first).
             // workflow_dispatch: explicit pr_number input.
             let prNumbers = [];
             if (context.eventName === 'pull_request') {
               prNumbers = [context.payload.pull_request.number];
             } else if (context.eventName === 'workflow_dispatch') {
               prNumbers = [Number(context.payload.inputs.pr_number)];
-            } else if (context.eventName === 'check_suite') {
-              const cs = context.payload.check_suite;
-              const fromPayload = (cs.pull_requests || []).map(p => p.number);
+            } else if (context.eventName === 'workflow_run') {
+              const run = context.payload.workflow_run;
+              const fromPayload = (run.pull_requests || []).map(p => p.number);
               if (fromPayload.length) {
                 prNumbers = fromPayload;
               } else {
-                // Forks: check_suite.pull_requests is empty — look the PR up by SHA.
+                // Forks: workflow_run.pull_requests is empty — look up by SHA.
                 const assoc = await github.rest.repos.listPullRequestsAssociatedWithCommit({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  commit_sha: cs.head_sha,
+                  commit_sha: run.head_sha,
                 });
                 prNumbers = assoc.data
                   .filter(p => p.state === 'open')
@@ -114,9 +153,8 @@ jobs:
                 github.rest.checks.listForRef,
                 { owner: context.repo.owner, repo: context.repo.repo, ref: headSha, per_page: 100 },
               );
-              // Exclude this workflow's own runs from the tally so we don't wait
-              // on / report ourselves.
-              const tracked = checkRuns.filter(r => r.name !== SELF);
+              // Exclude this workflow's own check run from the tally.
+              const tracked = checkRuns.filter(r => r.name !== SELF_CHECK);
 
               // Legacy commit statuses (e.g. some external CI) count too.
               const combined = (await github.rest.repos.getCombinedStatusForRef({
