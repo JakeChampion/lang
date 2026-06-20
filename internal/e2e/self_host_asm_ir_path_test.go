@@ -1904,6 +1904,13 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// return i32 by exclusion — the same admission the free-function case uses.
 		{"match-expr-method-other-recv-payload-arg", `struct S { v: i32 } struct W { } enum E { A(S), N } function (w: W) take(s: S): i32 { return s.v; } function f(e: E): i32 { var w = W {}; return match (e) { A(s) => w.take(s), N => 0 }; } function main(): i32 { return f(A(S { v: 5 })); }`, 5},
 		{"match-expr-method-other-recv-scalar-arg", `struct W { } enum E { A(i32), N } function (w: W) dbl(x: i32): i32 { return x * 2; } function f(e: E): i32 { var w = W {}; return match (e) { A(x) => w.dbl(x), N => 0 }; } function main(): i32 { return f(A(7)); }`, 14},
+		// A borrow-DERIVED value in a match-EXPRESSION arm (#3498 follow-up): a
+		// call that BORROWS the payload and returns a fresh value is itself
+		// borrow-safe, so `.len()` over a payload string-method result
+		// (`s.trim().len()`) and a NESTED-call argument (`sum(id(t))`, `id` returns
+		// the recursive enum) ride the i32 result temp instead of bailing.
+		{"match-expr-payload-strmethod-len", `function f(o: Option[string]): i32 { return match (o) { Some(s) => s.trim().len(), None => 0 }; } function main(): i32 { return f(Some("hi ")); }`, 2},
+		{"match-expr-nested-call-arg", `enum L { C(i32, L), N } function id(l: L): L { return l; } function sum(l: L): i32 { return match (l) { C(h, t) => h + sum(id(t)), N => 0 }; } function main(): i32 { return sum(C(1, C(2, C(3, N)))); }`, 6},
 	}
 	for _, tc := range irOnly {
 		t.Run(tc.name, func(t *testing.T) {
