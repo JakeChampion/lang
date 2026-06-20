@@ -201,7 +201,7 @@ per-function bugs in the audit log.
 |--------|---|---|---|---|---|--------|-------|
 | `std/i32` (~80 methods) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | representative set (abs/min/max/clamp/pow/gcd/lcm/is_prime/is_even/signum) — `audit_std_numeric`; self-host via array bundle |
 | `std/i64` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | abs/min/max — `audit_std_path_numeric`; self-host abs/min/max/clamp via the x86-64 IR path (`TestSelfHostNumericMethodsIRX86_64`) |
-| `std/u32` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | max — `audit_std_path_numeric`; self-host unsigned min/max via the x86-64 IR path (`TestSelfHostNumericMethodsIRX86_64`); wasm IR unsigned-compare gap tracked in [#2917](https://github.com/JakeChampion/lang/issues/2917) |
+| `std/u32` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | max/min — `audit_std_path_numeric`; self-host unsigned min/max on the x86-64 IR path (`TestSelfHostNumericMethodsIRX86_64`) and the wasm IR path — the `#2917` wasm unsigned-compare gap is **closed** (`irlower` flags an ordering compare `unsigned` when an operand is u32, `wasm_ir` emits `i32.*_u`; `TestSelfHostUnsignedCompareWasmIR` incl. the `u32_max(big,one)` repro with `big > 2^31`) |
 | `std/u64` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | clamp — `audit_std_path_numeric`; self-host via the IR path: u64 unsigned compare / `>>` / `/` / `%` ([#2904](https://github.com/JakeChampion/lang/issues/2904); `TestSelfHostU64UnsignedIR`) + the `min`/`max`/`clamp` methods incl. high-bit-set bounds (`TestSelfHostU64IR`, oracle-checked) — the i64-domain analog of the u32 wrapping fix; `to_string` routes via the AST path (core/int `__int_to_string_u64`'s `u8[]`/`usize`/`__memcpy`) |
 | `std/float` | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | sqrt/floor/ceil/abs/is_finite — `audit_std_path_numeric`; self-host IR path: the `sqrt`/`floor`/`ceil`/`trunc`/`abs`/`round` intrinsics lower via `op_funary` (routing-pinned `TestSelfHostFloatMathIR`; `round` is `frinta` on arm64, `trunc(x+copysign(0.5,x))` on x86/wasm); `min`/`max`/`clamp`/`is_nan`/`is_finite`/`is_inf` are ordinary f64 compares that already lower. Only the transcendentals (`log`/`exp`/`sin`/`cos`/`pow`) still route AST |
 | `std/string` (~120 methods) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | core set (upper/lower/trim/contains/starts_with/ends_with/index_of/replace/repeat/pad/split) — `audit_std_string` + `self_host_string_test`; `prop_string_involution` laws; full ~120 set pending |
@@ -249,6 +249,20 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-20 — `std/u32` self-host row → ✅ (the #2917 wasm unsigned-compare gap is closed)
+
+Re-audited the `std/u32` row, which carried a self-host `⚠️` citing the wasm IR
+unsigned-compare gap as still-open ([#2917](https://github.com/JakeChampion/lang/issues/2917)).
+That gap is **closed**: a u32 ≥ 2³¹ is a signed-negative i32, so a signed wasm
+compare (`i32.lt_s`/`gt_s`/…) answers it wrong; `irlower` now flags an ordering
+compare `unsigned` when an operand is u32 and `wasm_ir` emits the `i32.*_u`
+opcode (the same `to_unsigned_kind` mechanism u64 uses). The fix and its gate
+(`TestSelfHostUnsignedCompareWasmIR` — incl. the exact `u32_max(big, one)` repro
+with `big = 4e9`, plus `>`/`<`/`>=`/`<=` directly) are in tree and green, so the
+self-host column now matches the x86-64/arm64 reality (those keep u32 positive in
+their 64-bit slots, so a signed compare already matched). Row flipped `⚠️ → ✅`;
+the unsigned-compare gap was the only documented self-host caveat on this row.
 
 ### 2026-06-20 — compound assignment (wider types) on the self-host IR path + native audit
 
