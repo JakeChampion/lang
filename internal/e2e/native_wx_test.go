@@ -186,6 +186,13 @@ func runWXBin(t *testing.T, runner []string, binPath string) (string, int) {
 // compileToX86Asm compiles src to x86-64 assembly with the real code
 // generator (the x86 counterpart of compileToArm64Asm).
 func compileToX86Asm(t *testing.T, src string) string {
+	return compileToX86AsmExports(t, src, nil)
+}
+
+// compileToX86AsmExports is compileToX86Asm with extra tree-shake roots
+// (Options.Exports) so functions the program never calls itself survive —
+// e.g. a `-shared` .so export.
+func compileToX86AsmExports(t *testing.T, src string, exports []string) string {
 	t.Helper()
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
@@ -206,7 +213,7 @@ func compileToX86Asm(t *testing.T, src string) string {
 	if err := monomorph.Run(prog, info); err != nil {
 		t.Fatalf("monomorph: %v", err)
 	}
-	asm, err := x86codegen.Emit(prog, info)
+	asm, err := x86codegen.EmitWithOptions(prog, info, x86codegen.Options{Exports: exports})
 	if err != nil {
 		t.Fatalf("x86_64 emit: %v", err)
 	}
