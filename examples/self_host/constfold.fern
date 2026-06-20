@@ -26,7 +26,6 @@
 //     elements, Index, If cond/branches, While cond/body, etc.)
 //     so nested foldings cascade in a single pass.
 
-import "core/no_prelude";
 import "./lexer";
 import "./parser";
 import "./util";
@@ -52,7 +51,7 @@ function lit_string(s: string): parser.Expr {
     return parser.ExprString { value: s, line: 0, col: 0 };
 }
 
-// Optional-Int sentinel: lang-port has no Option in the stdlib
+// Optional-Int sentinel: Fern-port has no Option in the stdlib
 // (no generics in our parser stub). Encode "absent" as the
 // boolean `ok` field; consumers check that first.
 struct OptInt { ok: boolean, v: i32 }
@@ -229,7 +228,7 @@ function fold_unary(op: string, operand: parser.Expr): parser.Expr {
 function fold_stmt(st: parser.Stmt): parser.Stmt {
     match (st) {
         parser.StmtSwitch(_) => { return fold_stmt(parser.desugar_switch_in_stmt(st)); },
-        parser.StmtDefer(d) => { return parser.StmtDefer { action: fold_stmt(d.action) }; },
+        parser.StmtDefer(d) => { return parser.StmtDefer { action: fold_stmt(d.action), on_error: d.on_error }; },
         parser.StmtVar(v) => { return parser.StmtVar { name: v.name, type_name: v.type_name, init: fold_expr(v.init), line: v.line, col: v.col }; },
         parser.StmtReturn(r) => { return parser.StmtReturn { value: fold_expr(r.value), line: r.line, col: r.col }; },
         parser.StmtExpr(x) => { return parser.StmtExpr { value: fold_expr(x.value) }; },
@@ -242,7 +241,7 @@ function fold_stmt(st: parser.Stmt): parser.Stmt {
             };
         },
         parser.StmtWhile(w) => {
-            return parser.StmtWhile { cond: fold_expr(w.cond), body: fold_block(w.body) };
+            return parser.StmtWhile { cond: fold_expr(w.cond), body: fold_block(w.body), label: w.label };
         },
         parser.StmtMatch(m) => {
             var arms: parser.MatchArm[] = [];
@@ -254,7 +253,7 @@ function fold_stmt(st: parser.Stmt): parser.Stmt {
             return parser.StmtMatch { scrutinee: fold_expr(m.scrutinee), arms: arms, line: m.line, col: m.col, origin: m.origin };
         },
         parser.StmtFor(f) => {
-            return parser.StmtFor { var_name: f.var_name, iter: fold_expr(f.iter), body: fold_block(f.body) };
+            return parser.StmtFor { var_name: f.var_name, iter: fold_expr(f.iter), body: fold_block(f.body), label: f.label };
         },
         parser.StmtBreak(_) => { return st; },
         parser.StmtContinue(_) => { return st; },

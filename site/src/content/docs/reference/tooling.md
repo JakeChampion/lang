@@ -2,7 +2,7 @@
 title: Tooling
 description: Compiler flags, formatter, language server, editor extensions.
 sidebar:
-  order: 3
+  order: 6
 ---
 
 ## Compiler — `fern`
@@ -106,3 +106,27 @@ runner (`prove`, `tape`, `tap-junit`) works without further config.
 
 See the [Testing tutorial](../../tutorial/testing/) for the
 authoring shape and assertion catalogue.
+
+## Literate programming
+
+Fern supports Knuth-style literate programming: a `.fern.md` document
+interleaves prose and code in named chunks, and the toolchain extracts
+(*tangles*) the compilable source or renders (*weaves*) a cross-referenced
+document.
+
+```bash
+fern -tangle prog.fern.md -o prog.fern   # extract Fern source
+fern -weave  prog.fern.md -o prog.html -html   # render the document
+```
+
+A `.fern.md` entry compiles directly — `fern prog.fern.md` tangles it in
+memory and runs the normal pipeline, with diagnostics mapped back onto
+the document's source lines. A single-root `.fern.md` can also be
+`import`ed as a library from ordinary `.fern` code.
+
+The chunk grammar, multi-file `file=` directives, and the provenance
+model are documented in [`docs/LITERATE.md`][lit]; runnable examples live
+under [`examples/literate/`][ex].
+
+[lit]: https://github.com/JakeChampion/lang/blob/main/docs/LITERATE.md
+[ex]: https://github.com/JakeChampion/lang/tree/main/examples/literate

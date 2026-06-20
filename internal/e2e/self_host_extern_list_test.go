@@ -34,7 +34,7 @@ func TestSelfHostExternListResultRunsUnderWasmtime(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "wasm.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -43,7 +43,7 @@ func TestSelfHostExternListResultRunsUnderWasmtime(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	const driver = `import "core/no_prelude";
+	const driver = `
 import "std/io";
 import "./lexer";
 import "./parser";
@@ -137,7 +137,7 @@ func TestSelfHostExternU8ArrayResultRunsUnderWasmtime(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "wasm.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -146,7 +146,7 @@ func TestSelfHostExternU8ArrayResultRunsUnderWasmtime(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	const driver = `import "core/no_prelude";
+	const driver = `
 import "std/io";
 import "./lexer";
 import "./parser";

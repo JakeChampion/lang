@@ -1,5 +1,9 @@
 # Porting the type checker to the self-host (retiring the Go checker)
 
+> **Open follow-ups tracked in GitHub:** [#2857](https://github.com/JakeChampion/lang/issues/2857).
+> This doc is a living progress log — verify the latest slice before picking up
+> an item.
+
 Goal: grow `examples/self_host/checker.fern` to parity with the Go
 checker (`internal/checker/checker.go`, ~6700 LOC, 50 stable diagnostic
 codes E001–E051) so the Go checker can be retired as the strict gate.

@@ -65,6 +65,56 @@ test("embedded playground iframe loads on the first-steps tutorial", async ({
   );
 });
 
+test("minimal playground embed is wired read-only + autorun on the home page", async ({
+  page,
+}) => {
+  await page.goto("./");
+  // The landing "Hello, world" embed uses <FernPlayground minimal/>,
+  // which renders <figure data-fern-minimal="1"> and a header reading
+  // "▸ snippet" (not "▸ live snippet").
+  const figure = page
+    .locator("figure.fern-playground[data-fern-minimal='1']")
+    .first();
+  await expect(figure).toBeVisible();
+  await expect(figure.locator("header")).toContainText("▸ snippet");
+  const iframe = figure.locator("iframe");
+  // Both the minimal flag and the forced autorun must reach the embed
+  // URL — minimal snippets have no Run button, so autorun is mandatory.
+  await expect(iframe).toHaveAttribute(
+    "src",
+    /\/lang\/playground\/\?[^#]*minimal=1[^#]*#src=/,
+  );
+  await expect(iframe).toHaveAttribute(
+    "src",
+    /\/lang\/playground\/\?[^#]*autorun=1[^#]*#src=/,
+  );
+});
+
+test("embedded playground actually boots — the staged bundle is complete", async ({
+  page,
+}) => {
+  await page.goto("./");
+  // Enter the minimal "Hello, world" embed iframe and wait for the
+  // playground to boot end-to-end. This guards the *staged* bundle:
+  // index.html statically imports ./wasi-shim.js + ./wasi-http-shim.js,
+  // so if the Pages/docs staging drops an asset the ES module aborts
+  // and the status hangs forever on "loading runtime…". The other
+  // embed tests only inspect the iframe's src attribute and would miss
+  // that — this one loads the iframe.
+  const frame = page.frameLocator(
+    "figure.fern-playground[data-fern-minimal='1'] iframe",
+  );
+  // Boot sentinel: status flips to a "ready" prefix once wasm + LSP
+  // init complete (mirrors web/test/playwright).
+  await expect(frame.locator("#status")).toContainText("ready", {
+    timeout: 30_000,
+  });
+  // The minimal embed autoruns, so its output renders with no click.
+  await expect(frame.locator("#out")).toContainText("hello, world", {
+    timeout: 30_000,
+  });
+});
+
 test("search modal opens via Ctrl/Cmd-K", async ({ page }) => {
   await page.goto("./");
   // Starlight ships pagefind-backed search; the trigger is

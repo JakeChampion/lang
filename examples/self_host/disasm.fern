@@ -20,10 +20,9 @@
 //
 // Why a separate layer: debugging the VM was awkward without a
 // readable view of what compile_module emitted. This file
-// gives us that view in ~150 lines of lang, validating that
+// gives us that view in ~150 lines of Fern, validating that
 // the bytecode shape is stable + observable from a third party.
 
-import "core/no_prelude";
 import "./lexer";
 import "./parser";
 import "./vm";

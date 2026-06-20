@@ -4575,6 +4575,41 @@ func TestEmitExternU8ArrayResult(t *testing.T) {
 	}
 }
 
+// TestEmitExternBoolArrayResult — a bool[] result (canonical list<bool>) is
+// accepted and lowers through the byte-expanding wrapper (the raw import gains a
+// trailing return-area pointer; cabi_realloc is exported for the host).
+func TestEmitExternBoolArrayResult(t *testing.T) {
+	prog := &ir.Program{
+		Externs: []*ir.ExternFunc{{
+			Name:       "get_bits",
+			Iface:      "local:test/src@0.1.0",
+			WITName:    "bits",
+			Params:     []ast.Param{{Name: "n", Type: ast.NumberType{Width: 32}}},
+			ReturnType: ast.ArrayType{Elem: ast.BoolType{}},
+		}},
+		Funcs: []*ir.Func{{
+			Name:       "main",
+			ReturnType: i32(),
+			Ops: []ir.Op{
+				{Kind: ir.OpConstI32, I32: 4},
+				{Kind: ir.OpCallDirect, Str: "get_bits"},
+				{Kind: ir.OpDrop},
+				{Kind: ir.OpConstI32, I32: 0},
+			},
+		}},
+	}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if !bytes.Contains(bin, []byte("bits")) {
+		t.Fatalf("emitted module missing the extern import")
+	}
+	if !bytes.Contains(bin, []byte("cabi_realloc")) {
+		t.Fatalf("bool[]-result extern must export cabi_realloc")
+	}
+}
+
 // TestEmitExternCompositeRejected — extern types beyond the supported set
 // (composite parameters, array/record results) need canonical-ABI marshalling
 // that isn't built yet, so they're rejected up front with a clear P4c message
@@ -4598,10 +4633,10 @@ func TestEmitExternCompositeRejected(t *testing.T) {
 	}
 	cases := map[string]*ir.Program{
 		// Numeric arrays of any width (u8[]…i64[]/f64[]) ARE accepted now (P4c),
-		// and so are bool[] *params* (byte-repacked). A bool[] *result* stays
-		// rejected: the canonical list<bool> lowers through the world composer in
-		// a way that isn't supported yet, so it's a follow-up.
-		"bool array result":         mk(nil, ast.ArrayType{Elem: ast.BoolType{}}),
+		// and so are bool[] params (byte-repacked) AND bool[] *results*
+		// (byte-expanded — buildExternBoolListResultWrapper). What's still
+		// rejected: a string parameter alongside a composite (string) result,
+		// which would need both marshalling directions at once.
 		"string param + str result": mk([]ast.Param{{Name: "s", Type: ast.StringType{}}}, ast.StringType{}),
 	}
 	for name, prog := range cases {

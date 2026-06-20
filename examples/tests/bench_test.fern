@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/test";
 // examples/tests/bench_test.fern — exercises the bench
 // harness added to std/test.

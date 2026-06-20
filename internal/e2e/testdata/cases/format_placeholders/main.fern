@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/format";
 // format.format() substitutes positional `{}` placeholders from a string[].
 function main(): i32 {

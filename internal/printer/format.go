@@ -65,7 +65,24 @@ func Format(prog *ast.Program) string {
 			f.b.WriteByte('\n')
 		}
 	}
-	written := len(prog.Imports) > 0
+	// `pub use` re-exports cluster with the imports at the top of the
+	// file — same dependency-introduction role.
+	for _, pu := range prog.PubUses {
+		f.drainLeading(pu.P.Line, 0)
+		f.b.WriteString(`pub use "`)
+		f.b.WriteString(pu.Path)
+		f.b.WriteString(`".{`)
+		for i, name := range pu.Names {
+			if i > 0 {
+				f.b.WriteString(", ")
+			}
+			f.b.WriteString(name)
+		}
+		f.b.WriteString(`};`)
+		f.emitTrailing(pu.P.Line)
+		f.b.WriteByte('\n')
+	}
+	written := len(prog.Imports) > 0 || len(prog.PubUses) > 0
 	for _, sd := range prog.Structs {
 		if written {
 			f.b.WriteByte('\n')
@@ -197,7 +214,9 @@ func (f *formatter) indent(n int) {
 // one and elided when it didn't, matching the parser's optional
 // shape so format → parse → format stays stable.
 func (f *formatter) formatConstDecl(cd *ast.ConstDecl) {
-	if cd.Public {
+	if cd.PackageScoped {
+		f.b.WriteString("pub(package) ")
+	} else if cd.Public {
 		f.b.WriteString("pub ")
 	}
 	f.b.WriteString("const ")
@@ -217,7 +236,9 @@ func (f *formatter) formatConstDecl(cd *ast.ConstDecl) {
 // shape and keeps round-trips byte-stable for short enums.
 func (f *formatter) formatEnumDecl(ed *ast.EnumDecl) {
 	f.writeDeriveAttr(ed.Derives)
-	if ed.Public {
+	if ed.PackageScoped {
+		f.b.WriteString("pub(package) ")
+	} else if ed.Public {
 		f.b.WriteString("pub ")
 	}
 	f.b.WriteString("enum ")
@@ -238,7 +259,18 @@ func (f *formatter) formatEnumDecl(ed *ast.EnumDecl) {
 			f.b.WriteString(", ")
 		}
 		f.b.WriteString(v.Name)
-		if len(v.Payloads) > 0 {
+		if len(v.FieldNames) > 0 {
+			f.b.WriteString(" { ")
+			for j, fn := range v.FieldNames {
+				if j > 0 {
+					f.b.WriteString(", ")
+				}
+				f.b.WriteString(fn)
+				f.b.WriteString(": ")
+				f.b.WriteString(formatType(v.Payloads[j]))
+			}
+			f.b.WriteString(" }")
+		} else if len(v.Payloads) > 0 {
 			f.b.WriteByte('(')
 			for j, p := range v.Payloads {
 				if j > 0 {
@@ -260,7 +292,9 @@ func (f *formatter) formatEnumDecl(ed *ast.EnumDecl) {
 // yet (see the punted-follow-up note on UnionDecl); when they
 // land this needs to spell the `[T, U]` parameter list too.
 func (f *formatter) formatUnionDecl(ud *ast.UnionDecl) {
-	if ud.Public {
+	if ud.PackageScoped {
+		f.b.WriteString("pub(package) ")
+	} else if ud.Public {
 		f.b.WriteString("pub ")
 	}
 	f.b.WriteString("type ")
@@ -294,7 +328,9 @@ func (f *formatter) writeDeriveAttr(derives []string) {
 
 func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
 	f.writeDeriveAttr(sd.Derives)
-	if sd.Public {
+	if sd.PackageScoped {
+		f.b.WriteString("pub(package) ")
+	} else if sd.Public {
 		f.b.WriteString("pub ")
 	}
 	f.b.WriteString("struct ")
@@ -322,7 +358,9 @@ func (f *formatter) formatResourceDecl(rd *ast.ResourceDecl) {
 		f.b.WriteString(rd.ImportWITName)
 		f.b.WriteString("\")\n")
 	}
-	if rd.Public {
+	if rd.PackageScoped {
+		f.b.WriteString("pub(package) ")
+	} else if rd.Public {
 		f.b.WriteString("pub ")
 	}
 	f.b.WriteString("resource ")
@@ -357,7 +395,9 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 		f.b.WriteString("\")\n")
 	}
 	f.indent(depth)
-	if fn.Public {
+	if fn.PackageScoped {
+		f.b.WriteString("pub(package) ")
+	} else if fn.Public {
 		f.b.WriteString("pub ")
 	}
 	f.b.WriteString("function ")
@@ -447,6 +487,51 @@ func isSingleLineStmt(s ast.Stmt) bool {
 		return true
 	}
 	return false
+}
+
+// formatBranch renders an `if`-expression branch — always brace-wrapped
+// (`{ … }`), since an `if`-expr branch is syntactically a block. A bare
+// expression branch renders `{ e }` (byte-identical to the pre-block-expr
+// formatter, which wrote the braces itself); a BlockExpr renders its
+// statements + trailing value compactly via formatBlockExpr.
+func (f *formatter) formatBranch(e ast.Expr) {
+	if be, ok := e.(*ast.BlockExpr); ok {
+		f.formatBlockExpr(be)
+		return
+	}
+	f.b.WriteString("{ ")
+	f.formatExpr(e, 0)
+	f.b.WriteString(" }")
+}
+
+// formatArmBody renders a `match`-expression arm body. A BlockExpr body
+// is brace-wrapped (`{ stmts; tail }`); a bare expression body stays
+// unbraced — keeping existing single-expr arms byte-identical.
+func (f *formatter) formatArmBody(e ast.Expr) {
+	if be, ok := e.(*ast.BlockExpr); ok {
+		f.formatBlockExpr(be)
+		return
+	}
+	f.formatExpr(e, precLowest)
+}
+
+// formatBlockExpr renders a block-expression `{ stmt; …; tail }` in a
+// compact one-line shape: each statement followed by `;`, then the
+// trailing value expression with no `;`. Used for `if`/`match`
+// expression branches (slice 1). Statements here are the simple forms
+// the branch grammar admits (var / expr-stmt / nested control), emitted
+// via formatStmtInline so no newlines / indentation are introduced.
+func (f *formatter) formatBlockExpr(be *ast.BlockExpr) {
+	f.b.WriteString("{ ")
+	for _, s := range be.Stmts {
+		f.formatStmt(s, 0)
+		f.b.WriteByte(' ')
+	}
+	if be.Tail != nil {
+		f.formatExpr(be.Tail, 0)
+		f.b.WriteByte(' ')
+	}
+	f.b.WriteByte('}')
 }
 
 func (f *formatter) formatStmt(s ast.Stmt, depth int) {
@@ -561,7 +646,11 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		f.formatExpr(x.Expr, precLowest)
 		f.b.WriteByte(';')
 	case *ast.Defer:
-		f.b.WriteString("defer ")
+		if x.OnError {
+			f.b.WriteString("errdefer ")
+		} else {
+			f.b.WriteString("defer ")
+		}
 		f.formatExpr(x.Expr, precLowest)
 		f.b.WriteByte(';')
 	case *ast.Switch:
@@ -603,7 +692,16 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 					f.b.WriteByte('.')
 				}
 				f.b.WriteString(arm.VariantName)
-				if len(arm.Bindings) > 0 {
+				if arm.NamedFields {
+					f.b.WriteString(" { ")
+					for j, b := range arm.Bindings {
+						if j > 0 {
+							f.b.WriteString(", ")
+						}
+						f.b.WriteString(b)
+					}
+					f.b.WriteString(" }")
+				} else if len(arm.Bindings) > 0 {
 					f.b.WriteByte('(')
 					for j, b := range arm.Bindings {
 						if j > 0 {
@@ -722,6 +820,17 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		}
 		f.formatExpr(x.Inner, precCast)
 		f.b.WriteString(" as ")
+		f.b.WriteString(x.Target.String())
+		if needsParens {
+			f.b.WriteByte(')')
+		}
+	case *ast.DowncastExpr:
+		needsParens := parentPrec >= precCast
+		if needsParens {
+			f.b.WriteByte('(')
+		}
+		f.formatExpr(x.Inner, precCast)
+		f.b.WriteString(" as? ")
 		f.b.WriteString(x.Target.String())
 		if needsParens {
 			f.b.WriteByte(')')
@@ -954,11 +1063,10 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		}
 		f.b.WriteString("if (")
 		f.formatExpr(x.Cond, 0)
-		f.b.WriteString(") { ")
-		f.formatExpr(x.Then, 0)
-		f.b.WriteString(" } else { ")
-		f.formatExpr(x.Else, 0)
-		f.b.WriteString(" }")
+		f.b.WriteString(") ")
+		f.formatBranch(x.Then)
+		f.b.WriteString(" else ")
+		f.formatBranch(x.Else)
 		if needsParens {
 			f.b.WriteByte(')')
 		}
@@ -982,13 +1090,27 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			}
 			if arm.IsWildcard {
 				f.b.WriteByte('_')
+			} else if arm.Literal != nil {
+				// Literal-pattern arm (`0 => …`, `"yes" => …`). Without
+				// this the pattern was dropped and the formatter emitted
+				// `=> …`, which failed to re-parse.
+				f.formatExpr(arm.Literal, precLowest)
 			} else {
 				if arm.VariantModule != "" {
 					f.b.WriteString(arm.VariantModule)
 					f.b.WriteByte('.')
 				}
 				f.b.WriteString(arm.VariantName)
-				if len(arm.Bindings) > 0 {
+				if arm.NamedFields {
+					f.b.WriteString(" { ")
+					for j, bind := range arm.Bindings {
+						if j > 0 {
+							f.b.WriteString(", ")
+						}
+						f.b.WriteString(bind)
+					}
+					f.b.WriteString(" }")
+				} else if len(arm.Bindings) > 0 {
 					f.b.WriteByte('(')
 					for j, bind := range arm.Bindings {
 						if j > 0 {
@@ -1004,7 +1126,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 				f.formatExpr(arm.Guard, precLowest)
 			}
 			f.b.WriteString(" => ")
-			f.formatExpr(arm.Body, precLowest)
+			f.formatArmBody(arm.Body)
 		}
 		f.b.WriteString(" }")
 	case *ast.StructLit:
@@ -1038,7 +1160,11 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.b.WriteByte(')')
 	case *ast.FieldAccess:
 		f.formatExpr(x.Target, precPrimary)
-		f.b.WriteByte('.')
+		if x.PathSep {
+			f.b.WriteString("::")
+		} else {
+			f.b.WriteByte('.')
+		}
 		f.b.WriteString(x.Field)
 	case *ast.Lambda:
 		// Anonymous function expression: `function(p: T): R { ... }`.
@@ -1072,6 +1198,12 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		} else {
 			f.formatBlock(x.Body, 0)
 		}
+	case *ast.BlockExpr:
+		// Reached only if a BlockExpr appears outside an if/match branch
+		// (the dedicated formatBranch / formatArmBody paths handle those).
+		// Slice 1 doesn't produce that, but render it compactly so the
+		// formatter never silently drops the node.
+		f.formatBlockExpr(x)
 	}
 }
 
@@ -1140,7 +1272,7 @@ func formatType(t ast.Type) string {
 	case ast.SelfType:
 		return "Self"
 	case ast.DynTraitType:
-		return "dyn " + x.Trait
+		return x.String()
 	case ast.HandleType:
 		if x.Borrowed {
 			return "borrow " + x.Resource

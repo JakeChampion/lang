@@ -240,7 +240,7 @@ func TestX86_64StringLiteralLen(t *testing.T) {
 // keyword-basename module's free function be reached via the alias
 // qualifier, alongside an aliased receiver-method module.
 func TestX86_64ImportAlias(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/string" as s;
 import "std/i32" as nums;
 function main(): i32 {
@@ -254,7 +254,7 @@ function main(): i32 {
 }
 
 func TestX86_64StringRepeatChar(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/string";
 function main(): i32 {
     if (string.repeat_char(120, 4) != "xxxx") { return 1; }
@@ -358,7 +358,7 @@ function main(): i32 {
 // identical results on the third backend, picking up the same
 // per-byte index + slice paths as wasm / arm64.
 func TestX86_64StringLines(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/string";
 function main(): i32 {
     var lf: string[] = "a\nb\nc".lines();
@@ -467,9 +467,9 @@ func TestX86_64SsoInline(t *testing.T) {
 		// string_from_bytes: u8[] → string. Inline when ≤ 7.
 		{"sfb-inline", `function main(): i32 {
     var bs: u8[] = __alloc_u8(3);
-    bs[0] = 65 as u8; // 'A'
-    bs[1] = 66 as u8; // 'B'
-    bs[2] = 67 as u8; // 'C'
+    bs = bs.with(0, 65 as u8); // 'A'
+    bs = bs.with(1, 66 as u8); // 'B'
+    bs = bs.with(2, 67 as u8); // 'C'
     var s: string = string_from_bytes(bs);
     if (s == "ABC") { return 1; }
     return 0;
@@ -528,7 +528,7 @@ func TestX86_64EmptyU8Sentinel(t *testing.T) {
     var s: string = string_from_bytes(bs);
     return s.len();
 }`, 0},
-		{"to-lower-empty-string", `import "core/no_prelude";
+		{"to-lower-empty-string", `
 import "std/string";
 function main(): i32 {
     var s: string = "".to_lower();
@@ -931,7 +931,7 @@ func TestX86_64HttpHandler(t *testing.T) {
 	port := probe.Addr().(*net.TCPAddr).Port
 	probe.Close()
 
-	src := `import "core/no_prelude";
+	src := `
 import "std/http";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
@@ -1044,7 +1044,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 // docs/STDLIB-DESIGN-RESEARCH.md Rec §4 Phase 2.x on this
 // backend.
 func TestX86_64InstantNow(t *testing.T) {
-	_, code := compileAndRunX86_64(t, `import "core/no_prelude";
+	_, code := compileAndRunX86_64(t, `
 import "std/time";
 function main(): i32 {
     var ts: Instant = time.instant_now();
@@ -1233,6 +1233,48 @@ func TestX86_64RandomBytes(t *testing.T) {
 	}
 	if allZero {
 		t.Errorf("random_bytes returned all zeros — getrandom likely failed silently")
+	}
+}
+
+// random_i32() — single CSPRNG i32 via a 4-byte getrandom(2)
+// read. Cross-backend companion to the interp / arm64 / wasm
+// random_i32 paths (issue #2747). We can't assert a specific
+// value, so the program folds many draws into a "saw a non-zero
+// AND saw two differing draws" signal — exit 7 means the source
+// is live and varying, exit 0/1 flags a stuck generator.
+func TestX86_64RandomI32(t *testing.T) {
+	_, code := compileAndRunX86_64(t, `function main(): i32 {
+    var a: i32 = random_i32();
+    var b: i32 = random_i32();
+    if (a == 0) { return 0; }
+    if (a == b) { return 1; }
+    return 7;
+}`)
+	if code != 7 {
+		t.Errorf("random_i32: exit = %d, want 7 (0=stuck-zero, 1=non-varying)", code)
+	}
+}
+
+// s.as_bytes() — non-copying (data, len) → slice<u8> view.
+// Was `undefined label "__method_string_as_bytes"` on x86-64
+// before #2747. Verifies the slice length matches the source
+// string and that indexing the view reads back the original
+// bytes. Covers both the SSO inline form ("ABC", ≤7 bytes) and
+// the heap form ("ABCDEFGHIJ", >7 bytes).
+func TestX86_64StringAsBytes(t *testing.T) {
+	// Inline string: 'A'+'B'+'C' = 65+66+67 = 198.
+	if _, code := compileAndRunX86_64(t, `function main(): i32 {
+    var b = "ABC".as_bytes();
+    return b.len() + (b[0] as i32) + (b[1] as i32) + (b[2] as i32);
+}`); code != 201 {
+		t.Errorf("inline as_bytes: exit = %d, want 201 (3 + 65+66+67)", code)
+	}
+	// Heap string: len 10 + last byte 'J' (74) = 84.
+	if _, code := compileAndRunX86_64(t, `function main(): i32 {
+    var b = "ABCDEFGHIJ".as_bytes();
+    return b.len() + (b[9] as i32);
+}`); code != 84 {
+		t.Errorf("heap as_bytes: exit = %d, want 84 (10 + 'J')", code)
 	}
 }
 
@@ -1642,7 +1684,7 @@ func TestX86_64LambdaWithBodyLocals(t *testing.T) {
 // (closureconv hoists it later), so `__method_string_trim`
 // got pruned and link died on the undefined reference.
 func TestX86_64LambdaCallsMethodOnCapturedString(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/string";
 function main(): i32 {
     var s: string = "  hi  ";
@@ -1736,7 +1778,7 @@ function main(): i32 {
 // recurses through FString.Desugared so captured-name idents
 // inside `f"…{cap}…"` get rewritten to CaptureRef nodes.
 func TestX86_64ClosureFStringCapture(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/string";
 function makeNamer(name: string): () => string {
     function build(): string { return f"hello, {name}!"; }
@@ -1831,7 +1873,7 @@ func TestX86_64Map(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"basic_set_get", `import "core/no_prelude";
+		{"basic_set_get", `
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
@@ -1839,7 +1881,7 @@ function main(): i32 {
     m = m.insert(2, 200);
     return m.get_or(2, 0);
 }`, 200},
-		{"grow_past_capacity", `import "core/no_prelude";
+		{"grow_past_capacity", `
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
@@ -1852,7 +1894,7 @@ function main(): i32 {
     if (m.get_or(7, 0 - 1) != 70) { return 2; }
     return 42;
 }`, 42},
-		{"string_keys", `import "core/no_prelude";
+		{"string_keys", `
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
@@ -1861,7 +1903,7 @@ function main(): i32 {
     m = m.insert("gamma", 3);
     return m.get_or("beta", 0 - 1) + m.len();
 }`, 5},
-		{"iter_after_delete", `import "core/no_prelude";
+		{"iter_after_delete", `
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
@@ -1896,7 +1938,7 @@ func TestX86_64MapGetMatch(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"some_branch", `import "core/no_prelude";
+		{"some_branch", `
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
@@ -1907,7 +1949,7 @@ function main(): i32 {
     }
     return 1;
 }`, 42},
-		{"none_branch", `import "core/no_prelude";
+		{"none_branch", `
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(4);
@@ -1917,7 +1959,7 @@ function main(): i32 {
     }
     return 1;
 }`, 0},
-		{"string_key", `import "core/no_prelude";
+		{"string_key", `
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
@@ -1947,7 +1989,7 @@ func TestX86_64I64CmpDivWidth(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"to_string_round_trip", `import "core/no_prelude";
+		{"to_string_round_trip", `
 import "std/i64";
 function main(): i32 {
     var n: i64 = 1234567890123;
@@ -1955,7 +1997,7 @@ function main(): i32 {
     if (s == "1234567890123") { return 0; }
     return 1;
 }`, 0},
-		{"i64_max_to_string", `import "core/no_prelude";
+		{"i64_max_to_string", `
 import "std/i64";
 function main(): i32 {
     var n: i64 = 9223372036854775807;
@@ -2009,16 +2051,16 @@ func TestX86_64Defer(t *testing.T) {
     return x;
 }
 function main(): i32 { return inner(); }`, 2},
-		{"multiple defers run LIFO", `function check(arr: i32[]): i32 {
-    arr[0] = 1;
-    defer arr[0] = 10;
-    defer arr[0] = 20;
-    return arr[0];
+		{"multiple defers run LIFO", `function check(c: Cell[i32]): i32 {
+    c.set(1);
+    defer c.set(10);
+    defer c.set(20);
+    return c.get();
 }
 function main(): i32 {
-    var a: i32[] = [0];
-    check(a);
-    return a[0];
+    var c: Cell[i32] = cell_new(0);
+    check(c);
+    return c.get();
 }`, 10},
 	} {
 		_, code := compileAndRunX86_64(t, c.src)
@@ -2073,14 +2115,14 @@ func TestX86_64FStringInterpolation(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"interpolated i32", `import "core/no_prelude";
+		{"interpolated i32", `
 import "std/i32";
 function main(): i32 {
     var n: i32 = 42;
     var s: string = f"n is {n}";
     return s.len();
 }`, 7},
-		{"interpolated string", `import "core/no_prelude";
+		{"interpolated string", `
 import "std/i32";
 function main(): i32 {
     var who: string = "world";
@@ -2281,42 +2323,42 @@ func TestX86_64WideScalarMap(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"Map[i64, i32]", `import "core/no_prelude";
+		{"Map[i64, i32]", `
 import "core/map";
 function main(): i32 {
     var m: Map[i64, i32] = map_new(4);
     m = m.insert(1i64, 100);
     return m.get_or(1i64, 0);
 }`, 100},
-		{"Map[i32, f64]", `import "core/no_prelude";
+		{"Map[i32, f64]", `
 import "core/map";
 function main(): i32 {
     var m: Map[i32, f64] = map_new(4);
     m = m.insert(1, 3.14);
     return m.get_or(1, 0.0) as i32;
 }`, 3},
-		{"Map[i64, string]", `import "core/no_prelude";
+		{"Map[i64, string]", `
 import "core/map";
 function main(): i32 {
     var m: Map[i64, string] = map_new(4);
     m = m.insert(1i64, "hello");
     return (m.get_or(1i64, "")).len();
 }`, 5},
-		{"Map[string, i64]", `import "core/no_prelude";
+		{"Map[string, i64]", `
 import "core/map";
 function main(): i32 {
     var m: Map[string, i64] = map_new(4);
     m = m.insert("hello", 42i64);
     return m.get_or("hello", 0i64) as i32;
 }`, 42},
-		{"Map[u64, i32]", `import "core/no_prelude";
+		{"Map[u64, i32]", `
 import "core/map";
 function main(): i32 {
     var m: Map[u64, i32] = map_new(4);
     m = m.insert(1u64, 100);
     return m.get_or(1u64, 0);
 }`, 100},
-		{"distinct high-bit i64 keys", `import "core/no_prelude";
+		{"distinct high-bit i64 keys", `
 import "core/map";
 function main(): i32 {
     var m: Map[i64, i32] = map_new(8);
@@ -2338,7 +2380,7 @@ function main(): i32 {
 		// result. Without it, every key gets its upper 32 bits
 		// dropped — distinct high-bit keys collide into the same
 		// snapshot value.
-		{"keys() preserves 8-byte values", `import "core/no_prelude";
+		{"keys() preserves 8-byte values", `
 import "core/map";
 function main(): i32 {
     var m: Map[i64, i32] = map_new(4);
@@ -2613,29 +2655,11 @@ func TestX86_64SliceMake(t *testing.T) {
     var s: [i32] = arr[1:4];
     return s[1];
 }`, 30},
-		{"i32 slice write propagates", `function main(): i32 {
-    var arr: i32[] = [1, 2, 3, 4, 5];
-    var s: [i32] = arr[1:4];
-    s[0] = 99;
-    return arr[1];
-}`, 99},
 		{"u8 slice read", `function main(): i32 {
     var arr: u8[] = [10, 20, 30, 40, 50];
     var s: [u8] = arr[1:4];
     return s[1] as i32;
 }`, 30},
-		{"u8 slice write propagates", `function main(): i32 {
-    var arr: u8[] = [1, 2, 3, 4, 5];
-    var s: [u8] = arr[1:4];
-    s[0] = 99;
-    return arr[1] as i32;
-}`, 99},
-		{"u16 slice round-trip", `function main(): i32 {
-    var arr: u16[] = [100, 200, 300, 400];
-    var s: [u16] = arr[1:3];
-    s[0] = 50;
-    return arr[1] as i32;
-}`, 50},
 		{"i64 slice read", `function main(): i32 {
     var arr: i64[] = [(1i64 << 40), (1i64 << 41), (1i64 << 42)];
     var s: [i64] = arr[1:3];
@@ -2891,7 +2915,7 @@ func TestX86_64FeatureParity(t *testing.T) {
 		name string
 		src  string
 	}{
-		{"defer_basic", `import "core/no_prelude";
+		{"defer_basic", `
 import "core/map";
 function inner(trace: Map[string, i32]): i32 {
     trace = trace.insert("body-start", 1);
@@ -2936,7 +2960,7 @@ function main(): i32 {
     if (sum == 8) { return 0; }
     return 1;
 }`},
-		{"fstring_interp", `import "core/no_prelude";
+		{"fstring_interp", `
 import "std/i32";
 function main(): i32 {
     var x: i32 = 42;
@@ -2993,14 +3017,14 @@ func TestX86_64NoPreludeStdlibImports(t *testing.T) {
 		name string
 		src  string
 	}{
-		{"i32_string_cycle", `import "core/no_prelude";
+		{"i32_string_cycle", `
 import "std/i32";
 function main(): i32 {
     var s: string = (42).to_string_padded(6);
     if (s == "000042") { return 0; }
     return 1;
 }`},
-		{"array_method_chain", `import "core/no_prelude";
+		{"array_method_chain", `
 import "std/array";
 function main(): i32 {
     var xs: i32[] = [0 - 3, 4, 0 - 1];
@@ -3008,14 +3032,14 @@ function main(): i32 {
     if (ys[0] + ys[1] + ys[2] == 8) { return 0; }
     return 1;
 }`},
-		{"qualified_int_call", `import "core/no_prelude";
+		{"qualified_int_call", `
 import "core/int";
 function main(): i32 {
     var s: string = int.int_to_string_radix(255, 16);
     if (s == "ff") { return 0; }
     return 1;
 }`},
-		{"mixed_stdlib", `import "core/no_prelude";
+		{"mixed_stdlib", `
 import "std/i32";
 import "std/string";
 import "std/array";
@@ -3042,7 +3066,7 @@ function main(): i32 {
 // don't corrupt the rc word). The program returns 0 iff the
 // observed rc progression is exactly 1 → 2 → 1.
 func TestX86_64RcBuiltins(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function main(): i32 {
     var arr: u8[] = __alloc_u8(10);
     var r1: i32 = __rc_get(arr);
@@ -3061,7 +3085,7 @@ function main(): i32 {
 // bumps the refcount via __fern_rc_inc, so both x and y own
 // references. Returns 0 iff the post-alias rc is exactly 2.
 func TestX86_64RcAliasInc(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function main(): i32 {
     var arr: u8[] = __alloc_u8(8);
     var alias: u8[] = arr;
@@ -3081,7 +3105,7 @@ func TestX86_64RcAliasIncFieldAndIndex(t *testing.T) {
 		name string
 		src  string
 	}{
-		{"field_access", `import "core/no_prelude";
+		{"field_access", `
 struct Holder { items: u8[] }
 function main(): i32 {
     var inner: u8[] = __alloc_u8(8);
@@ -3093,7 +3117,7 @@ function main(): i32 {
     // h.items.len()-8 == 0, so the result is unchanged.
     return __rc_get(inner) - 3 + h.items.len() - 8;
 }`},
-		{"index_load", `import "core/no_prelude";
+		{"index_load", `
 function main(): i32 {
     var inner: u8[] = __alloc_u8(8);
     var matrix: u8[][] = [inner];
@@ -3116,7 +3140,7 @@ function main(): i32 {
 
 // Phase 1d-iii: `y = x;` reassignment bumps the rc on x.
 func TestX86_64RcAliasIncReassign(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function main(): i32 {
     var arr: u8[] = __alloc_u8(8);
     var other: u8[] = __alloc_u8(8);
@@ -3132,7 +3156,7 @@ function main(): i32 {
 // no caller-side inc, no callee-side exit dec. The rc is
 // untouched across the call and stays at 1.
 func TestX86_64RcAliasIncCallArg(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function f(arr: u8[]): i32 { return 0; }
 function main(): i32 {
     var arr: u8[] = __alloc_u8(8);
@@ -3152,7 +3176,7 @@ function main(): i32 {
 // IR-side drift fixes hold on x86_64: idiomatic `m = m.insert(...)`
 // self-assignment reports 0 over-releases, same as wasm.
 func TestX86_64RcUnderflowDetector(t *testing.T) {
-	selfAssign := `import "core/no_prelude";
+	selfAssign := `
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(8);
@@ -3342,7 +3366,7 @@ function main(): i32 {
 // Phase 1d-vi: dec on overwrite. See TestArm64RcDecOnOverwrite
 // for the trace.
 func TestX86_64RcDecOnOverwrite(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function main(): i32 {
     var arr1: u8[] = __alloc_u8(8);
     var arr2: u8[] = __alloc_u8(8);
@@ -3404,7 +3428,7 @@ func TestX86_64ArrayIndexSetInPlaceFastPath(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i32[] = [10, 20, 30];
     var addr_before: usize = xs as usize;
-    xs[1] = 999;
+    xs = xs.with(1, 999);
     var addr_after: usize = xs as usize;
     if (addr_before != addr_after) { return 1; }
     if (xs[1] != 999) { return 2; }
@@ -3422,7 +3446,7 @@ func TestX86_64ArrayIndexSetAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i32[] = [10, 20, 30];
     var ys = xs;
-    ys[0] = 999;
+    ys = ys.with(0, 999);
     if (xs[0] != 10) { return 1; }
     if (xs[1] != 20) { return 2; }
     if (xs[2] != 30) { return 3; }
@@ -3444,10 +3468,10 @@ func TestX86_64ArrayIndexSetAliasedCopies(t *testing.T) {
 func TestX86_64ArrayIndexSetU8Stride(t *testing.T) {
 	src := `function main(): i32 {
     var buf: u8[] = __alloc_u8(4);
-    buf[0] = 65 as u8;
-    buf[1] = 66 as u8;
-    buf[2] = 67 as u8;
-    buf[3] = 68 as u8;
+    buf = buf.with(0, 65 as u8);
+    buf = buf.with(1, 66 as u8);
+    buf = buf.with(2, 67 as u8);
+    buf = buf.with(3, 68 as u8);
     return (buf[0] as i32) + (buf[1] as i32) + (buf[2] as i32) + (buf[3] as i32) - 266;
 }`
 	if _, code := compileAndRunX86_64(t, src); code != 0 {
@@ -3460,7 +3484,7 @@ func TestX86_64ArrayIndexSetStructField(t *testing.T) {
 	src := `struct State { items: i32[] }
 function main(): i32 {
     var s: State = State{items: [10, 20, 30]};
-    s.items[1] = 999;
+    s = State { ...s, items: s.items.with(1, 999) };
     if (s.items[0] != 10) { return 1; }
     if (s.items[1] != 999) { return 2; }
     if (s.items[2] != 30) { return 3; }
@@ -3477,7 +3501,7 @@ func TestX86_64ArrayIndexSetStructFieldAliasedCopies(t *testing.T) {
 function main(): i32 {
     var arr: i32[] = [10, 20, 30];
     var s: State = State{items: arr};
-    s.items[1] = 999;
+    s = State { ...s, items: s.items.with(1, 999) };
     if (arr[0] != 10) { return 1; }
     if (arr[1] != 20) { return 2; }
     if (arr[2] != 30) { return 3; }
@@ -3497,7 +3521,7 @@ func TestX86_64ArrayIndexSetNestedStructField(t *testing.T) {
 struct Outer { inner: Inner }
 function main(): i32 {
     var o: Outer = Outer{inner: Inner{items: [10, 20, 30]}};
-    o.inner.items[1] = 999;
+    o = Outer { ...o, inner: Inner { ...o.inner, items: o.inner.items.with(1, 999) } };
     if (o.inner.items[0] != 10) { return 1; }
     if (o.inner.items[1] != 999) { return 2; }
     if (o.inner.items[2] != 30) { return 3; }
@@ -3515,7 +3539,7 @@ struct Outer { inner: Inner }
 function main(): i32 {
     var arr: i32[] = [10, 20, 30];
     var o: Outer = Outer{inner: Inner{items: arr}};
-    o.inner.items[1] = 999;
+    o = Outer { ...o, inner: Inner { ...o.inner, items: o.inner.items.with(1, 999) } };
     if (arr[1] != 20) { return 1; }
     if (o.inner.items[1] != 999) { return 2; }
     return 0;
@@ -3529,7 +3553,7 @@ function main(): i32 {
 func TestX86_64ArrayIndexSetMat(t *testing.T) {
 	src := `function main(): i32 {
     var mat: i32[][] = [[1, 2, 3], [4, 5, 6]];
-    mat[0][1] = 999;
+    mat = mat.with(0, mat[0].with(1, 999));
     if (mat[0][0] != 1) { return 1; }
     if (mat[0][1] != 999) { return 2; }
     if (mat[0][2] != 3) { return 3; }
@@ -3546,7 +3570,7 @@ func TestX86_64ArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
     var mat: i32[][] = [[1, 2], [3, 4]];
     var inner = mat[0];
-    mat[0][1] = 999;
+    mat = mat.with(0, mat[0].with(1, 999));
     if (inner[1] != 2) { return 1; }
     if (mat[0][1] != 999) { return 2; }
     return 0;
@@ -3558,7 +3582,7 @@ func TestX86_64ArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
 
 // Mirror of TestArm64MapSetReturnsMap.
 func TestX86_64MapSetReturnsMap(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(8);
@@ -3582,7 +3606,7 @@ func TestX86_64ArrayIndexSetObjMatInnerAliasedCopies(t *testing.T) {
 function main(): i32 {
     var inner: i32[] = [1, 2, 3];
     var s: State = State{mat: [inner, [4, 5, 6]]};
-    s.mat[0][1] = 999;
+    s = State { ...s, mat: s.mat.with(0, s.mat[0].with(1, 999)) };
     if (inner[1] != 2) { return 1; }
     if (s.mat[0][1] != 999) { return 2; }
     if (s.mat[0][0] != 1) { return 3; }
@@ -3625,7 +3649,7 @@ func TestX86_64ArraySetAliasedCopies(t *testing.T) {
 
 // Mirror of TestArm64MapDeleteReturnsMapBool.
 func TestX86_64MapDeleteReturnsMapBool(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(8);
@@ -3648,7 +3672,7 @@ function main(): i32 {
 
 // Mirror of TestArm64MapClearReturnsMap.
 func TestX86_64MapClearReturnsMap(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(8);
@@ -3675,7 +3699,7 @@ function main(): i32 {
 // statement-form set (no reassign) so m1's rc stays 1 before the
 // alias; under the borrowed-parameter model that set is in-place.
 func TestX86_64MapSetAliasedCopies(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "core/map";
 function main(): i32 {
     var m1: Map[string, i32] = map_new(8);
@@ -3696,7 +3720,7 @@ function main(): i32 {
 // source alias intact. The cow is threaded at the IR wrapper so
 // the (bool/void)-returning impls hand the new handle back.
 func TestX86_64MapDeleteClearAliasedCopies(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "core/map";
 function main(): i32 {
     var m1: Map[string, i32] = map_new(8);
@@ -3784,7 +3808,7 @@ func TestX86_64LexerChainedTupleNumericAccess(t *testing.T) {
 
 // Mirror of TestArm64EmptyMapDestinationInference.
 func TestX86_64EmptyMapDestinationInference(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "core/map";
 function take(m: Map[string, i32]): i32 { return m.len(); }
 function mkEmpty(): Map[i32, string] { return Map {}; }
@@ -3841,7 +3865,7 @@ function main(): i32 {
 
 // Mirror of TestArm64MapPointerShapedValues.
 func TestX86_64MapPointerShapedValues(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "core/map";
 struct P { x: i32, y: i32 }
 function main(): i32 {

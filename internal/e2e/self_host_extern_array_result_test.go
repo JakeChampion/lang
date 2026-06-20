@@ -108,7 +108,7 @@ func TestSelfHostExternArrayResultCustomProvider(t *testing.T) {
 	}
 
 	// --- Self-host backend: emit the core from the array-result program. ---
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "wasm.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -117,7 +117,7 @@ func TestSelfHostExternArrayResultCustomProvider(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	const driver = `import "core/no_prelude";
+	const driver = `
 import "std/io";
 import "./lexer";
 import "./parser";

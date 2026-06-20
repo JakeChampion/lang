@@ -27,25 +27,6 @@ const interpDriverMod = "import \"./lexer\";\n" +
 	"    return 254;\n" +
 	"}\n"
 
-func interpBundle(t *testing.T) []byte {
-	t.Helper()
-	var b bytes.Buffer
-	for _, m := range []struct{ name, file string }{
-		{"util", "util.fern"}, {"lexer", "lexer.fern"}, {"parser", "parser.fern"}, {"interp", "interp.fern"},
-	} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", m.file))
-		if err != nil {
-			t.Fatalf("read %s: %v", m.file, err)
-		}
-		b.WriteString("///MODULE " + m.name + "\n")
-		b.Write(src)
-		b.WriteString("\n")
-	}
-	b.WriteString("///MODULE main\n")
-	b.WriteString(interpDriverMod)
-	return b.Bytes()
-}
-
 var interpProgs = []struct {
 	name string
 	src  string
@@ -56,6 +37,10 @@ var interpProgs = []struct {
 	{"locals", "function main(): i32 { var x: i32 = 10; var y: i32 = 32; return x + y; }", 42},
 	{"if", "function main(): i32 { if (5 > 3) { return 1; } return 0; }", 1},
 	{"call", "function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return add(19, 23); }", 42},
+	// Default parameter values — fill_default_args_module (run in
+	// interp.eval_module) completes the omitted trailing argument.
+	{"default-one", "function inc(n: i32, by: i32 = 1): i32 { return n + by; } function main(): i32 { return inc(41); }", 42},
+	{"default-multi", "function box(w: i32, h: i32 = 2, d: i32 = 3): i32 { return w * 100 + h * 10 + d; } function main(): i32 { return box(1) - 81; }", 42},
 	{"float", "function main(): i32 { var f: f64 = 3.5; var g: f64 = 2.5; if (f + g > 5.0) { return 7; } return 0; }", 7},
 	// `as` numeric casts — the interp's unary evaluator previously errored
 	// on every `as_<Type>` op ("unknown unary op"); now an integer-target
@@ -65,6 +50,23 @@ var interpProgs = []struct {
 	{"cast-f64-to-i32", "function main(): i32 { var f: f64 = 3.9; return f as i32; }", 3},
 	{"cast-i32-to-f64", "function main(): i32 { var n: i32 = 5; var f: f64 = n as f64; return (f + 0.5) as i32; }", 5},
 	{"cast-in-i64-array-sum", "function main(): i32 { var xs: i64[] = [3, 5, 90]; var s: i64 = 0; for v in xs { s = s + v; } return s as i32; }", 98},
+	// Non-numeric `as <Type>` ascription (#2669) — `as_i32[]` is a zero-cost
+	// identity on the value. eval_unary previously errored ("unknown unary op:
+	// as_i32[]") on every non-numeric cast; it now passes the operand through
+	// unchanged, matching the AST/IR emitters.
+	{"asc-array-identity", "function main(): i32 { var a = [3, 4] as i32[]; return a[0] + a[1]; }", 7},
+	// Range-for `for i in LOW..HIGH`: the parser emits a synthetic
+	// __range(LOW, HIGH) for-iter that the IR path lowers (irlower) but the
+	// interpreter doesn't understand — parser.desugar_ranges_module (run in
+	// interp.eval_module) rewrites it to a counting while-loop so the interp
+	// evaluates it. Without that, an undesugared __range iter mis-evaluates
+	// (a 254 non-i32 result). Covers continue/break (the increment is at the
+	// top of the desugared loop) and empty/reversed (zero iterations).
+	{"range-sum", "function main(): i32 { var s = 0; for i in 0..5 { s = s + i; } return s; }", 10},
+	{"range-continue", "function main(): i32 { var s = 0; for i in 0..10 { if (i % 2 == 1) { continue; } s = s + i; } return s; }", 20},
+	{"range-break", "function main(): i32 { var s = 0; for i in 0..100 { if (i == 5) { break; } s = s + i; } return s; }", 10},
+	{"range-empty", "function main(): i32 { var c = 7; for i in 5..5 { c = c + 1; } return c; }", 7},
+	{"range-nested", "function main(): i32 { var t = 0; for i in 0..3 { for j in 0..3 { t = t + 1; } } return t; }", 9},
 }
 
 // TestSelfHostInterpDriverX86_64 is the keystone of the inference
@@ -73,23 +75,22 @@ var interpProgs = []struct {
 // all with field `v` — previously mis-inferred). The resulting binary
 // evaluates programs and exits with their result.
 func TestSelfHostInterpDriverX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t) // lexer, parser, asm
-	for _, name := range []string{"interp.fern", "flatten.fern", "bundle_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+	gcc, runner, driverBin := buildModloadDriverX86(t)
+	// The interp "driver" is just a program importing ./lexer + ./parser +
+	// ./interp, compiled by the file-based asm driver (no bundle_run).
+	files := map[string]string{"main.fern": interpDriverMod}
+	for _, m := range []string{"util", "lexer", "parser", "interp"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", m+".fern"))
 		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
+			t.Fatalf("read %s.fern: %v", m, err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
+		files[m+".fern"] = string(src)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "bundle_run.fern", "driver")
-	interpAsm := runCapture(t, gcc, runner, driverBin, interpBundle(t))
+	interpAsm, progDir := compileFilesModload(t, runner, driverBin, files)
 	if len(interpAsm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes for the interp driver")
 	}
-	interpBin := buildBin(t, gcc, dir, "interp", string(interpAsm))
+	interpBin := buildBin(t, gcc, progDir, "interp", interpAsm)
 
 	for _, tc := range interpProgs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -111,20 +112,17 @@ func TestSelfHostInterpDriverX86_64(t *testing.T) {
 // TestSelfHostInterpDriverArm64 — CI-gated arm64 counterpart.
 func TestSelfHostInterpDriverArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "asmcore.fern", "lexer.fern", "parser.fern", "asm_arm64.fern", "interp.fern", "flatten.fern", "bundle_run_arm64.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
+	files := map[string]string{"main.fern": interpDriverMod}
+	for _, m := range []string{"util", "lexer", "parser", "interp"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", m+".fern"))
 		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
+			t.Fatalf("read %s.fern: %v", m, err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
+		files[m+".fern"] = string(src)
 	}
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "bundle_run_arm64.fern", "driver")
-	interpAsm := runCapture(t, x86gcc, x86runner, driverBin, interpBundle(t))
-	interpBin := buildBin(t, arm64gcc, dir, "interp", string(interpAsm))
+	interpAsm, progDir := compileFilesModload(t, x86runner, driverBin, files)
+	interpBin := buildBin(t, arm64gcc, progDir, "interp", interpAsm)
 
 	for _, tc := range interpProgs {
 		t.Run(tc.name, func(t *testing.T) {

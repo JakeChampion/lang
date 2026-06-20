@@ -1,0 +1,20 @@
+// Ordering (`< <= > >=`) on a struct/enum is structural comparison
+// via the type's `Ord` impl — `a.cmp(b) <op> 0` (cmp returns -1/0/1).
+trait Ord { function cmp(self: Self, other: Self): i32; }
+impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }
+
+@derive(Ord) struct P { x: i32, y: i32 }
+
+function main(): i32 {
+    var a: P = P { x: 1, y: 2 };
+    var b: P = P { x: 1, y: 5 };   // a < b on the y field
+    var c: P = P { x: 1, y: 2 };   // a == c structurally
+    var r: i32 = 0;
+    if (a < b)  { r = r + 1; }
+    if (b > a)  { r = r + 2; }
+    if (a <= c) { r = r + 4; }
+    if (a >= c) { r = r + 8; }
+    if (b >= a) { r = r + 16; }
+    if (a < c)  { r = r + 64; }    // false: a == c, must NOT add
+    return r;                       // 31
+}

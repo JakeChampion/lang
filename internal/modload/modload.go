@@ -144,7 +144,7 @@ func loadCoreLit(entryPath string, overrides map[string]string) (*ast.Program, m
 // flat bare calls (`foo()`, `find(s, ...)`) so the call resolves
 // against the bare-named decls in the same combined Program.
 //
-// Used by the checker's auto-prelude injection path: stdlib
+// Used by `LoadStdlibFlat`: stdlib
 // modules can now use qualified imports for cross-module calls
 // without each importer module having to be loaded through the
 // normal mangling path. Safe because every free-function /
@@ -168,13 +168,13 @@ func LoadStdlibFlat(paths []string) (*ast.Program, error) {
 // metadata stays consistent with the full graph), but the
 // combine step skips the modules whose path is in skipPaths.
 //
-// Used by the checker's auto-prelude injection path: the entry
+// Used by `LoadStdlibFlat`: the entry
 // program may have already loaded some stdlib modules through the
 // regular `modload.Load` mangling path, and re-loading them
 // flat-namespace here would surface duplicate decls — receiver
 // method `__method_<Type>_<Name>` names land bare under both
 // modes and the checker's redeclaration gate fires. skipPaths
-// lets the caller exclude those modules from the auto-prelude
+// lets the caller exclude those modules from the flat-load
 // contribution.
 func LoadStdlibFlatSkipping(paths []string, skipPaths map[string]bool) (*ast.Program, error) {
 	loaded := map[string]*module{}
@@ -208,8 +208,8 @@ func LoadStdlibFlatSkipping(paths []string, skipPaths map[string]bool) (*ast.Pro
 	if firstErr != nil {
 		return nil, firstErr
 	}
-	// Auto-prelude semantics: stdlib decls injected by the auto-
-	// prelude path are universally visible to every other module.
+	// Flat-load semantics: stdlib decls loaded flat are
+	// universally visible to every other module.
 	// `methodVisibleHere` reads that off an empty `SourceModule` on
 	// the FuncDecl, so we clear the stamp `loadRecursive` set.
 	// Without this, a stdlib body that calls into another stdlib
@@ -287,6 +287,49 @@ type module struct {
 	// to decide whether `mod.X` should suggest `pub function X`
 	// (default) or `pub const X` (when X is a known private const).
 	allConsts map[string]bool
+	// reexports maps a `pub use`-re-exported name to the flat mangled
+	// name it ultimately resolves to (e.g. "split" → "helpers__split").
+	// A consumer's `thismod.split` rewrites to that mangled name rather
+	// than `thismod__split`. Filled by resolveReexports after mangle
+	// prefixes are assigned. See docs/PRELUDE-TO-MODULES.md.
+	reexports map[string]string
+	// reexportTypes is the type/trait counterpart of reexports: a
+	// `pub use`-re-exported struct / enum / trait name → the original
+	// module's mangled type name. Consumed by the type-name rewriters
+	// (rewriteStructNameAt / rewriteTraitNameAt) so a consumer's
+	// `facade.SomeType` resolves to `orig__SomeType`, not `facade__SomeType`.
+	// See docs/PRELUDE-TO-MODULES.md.
+	reexportTypes map[string]string
+	// pubUses records this module's `pub use` directives (resolved
+	// target path + names) so resolveReexports can build the reexports
+	// table once every module + its prefix is known.
+	pubUses []pubUseEntry
+	// packageScoped holds the pre-mangle names of this module's
+	// `pub(package)` decls (across kinds). A cross-module reference to
+	// one is allowed only from a module in the SAME package (same
+	// directory; the stdlib is one package) — see samePackage. Distinct
+	// from publicFuncs/etc. so cross-package refs still fail. See
+	// docs/PUB-PACKAGE.md.
+	packageScoped map[string]bool
+}
+
+// samePackage reports whether two module paths belong to the same
+// package for `pub(package)` visibility: the same directory, or both
+// inside the embedded stdlib (which is treated as a single package).
+func samePackage(a, b string) bool {
+	aStd := strings.HasPrefix(a, stdlibPrefix)
+	bStd := strings.HasPrefix(b, stdlibPrefix)
+	if aStd || bStd {
+		return aStd && bStd
+	}
+	return filepath.Dir(a) == filepath.Dir(b)
+}
+
+// pubUseEntry is one resolved `pub use "path".{names…};` directive.
+type pubUseEntry struct {
+	childPath string
+	names     []string
+	pos       ast.Position
 }
 
 // loadRecursive parses path (if not already loaded), then recurses
@@ -354,6 +397,17 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 			return err
 		}
 	}
+	// `pub use "path".{…};` re-export targets are loaded like imports so
+	// the target module's decls are in the combined program; the actual
+	// re-export table is built later (resolveReexports), once mangle
+	// prefixes are known.
+	pubUsePaths := make([]string, len(prog.PubUses))
+	for i, pu := range prog.PubUses {
+		pubUsePaths[i] = resolveImportPath(dir, pu.Path)
+		if err := loadRecursive(pubUsePaths[i], loaded, stack, srcs, overrides, lit); err != nil {
+			return err
+		}
+	}
 
 	mod := &module{
 		path:          path,
@@ -367,6 +421,9 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		publicConsts:  map[string]bool{},
 		publicEnums:   map[string]bool{},
 		allConsts:     map[string]bool{},
+		reexports:     map[string]string{},
+		reexportTypes: map[string]string{},
+		packageScoped: map[string]bool{},
 	}
 	for _, fn := range prog.Funcs {
 		// Stamp every FuncDecl with the path of the module that
@@ -378,6 +435,9 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		if fn.Public {
 			mod.publicFuncs[fn.Name] = true
 		}
+		if fn.PackageScoped {
+			mod.packageScoped[fn.Name] = true
+		}
 	}
 	for _, sd := range prog.Structs {
 		// Same source-module stamping as FuncDecl — used by the
@@ -387,11 +447,17 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		if sd.Public {
 			mod.publicStructs[sd.Name] = true
 		}
+		if sd.PackageScoped {
+			mod.packageScoped[sd.Name] = true
+		}
 	}
 	for _, ed := range prog.Enums {
 		ed.SourceModule = path
 		if ed.Public {
 			mod.publicEnums[ed.Name] = true
+		}
+		if ed.PackageScoped {
+			mod.packageScoped[ed.Name] = true
 		}
 	}
 	for _, ud := range prog.Unions {
@@ -402,11 +468,17 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 			// across that pass.
 			mod.publicEnums[ud.Name] = true
 		}
+		if ud.PackageScoped {
+			mod.packageScoped[ud.Name] = true
+		}
 	}
 	for _, cd := range prog.Consts {
 		mod.allConsts[cd.Name] = true
 		if cd.Public {
 			mod.publicConsts[cd.Name] = true
+		}
+		if cd.PackageScoped {
+			mod.packageScoped[cd.Name] = true
 		}
 	}
 	for _, td := range prog.Traits {
@@ -416,6 +488,9 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		td.SourceModule = path
 		if td.Public {
 			mod.publicStructs[td.Name] = true
+		}
+		if td.PackageScoped {
+			mod.packageScoped[td.Name] = true
 		}
 	}
 	for _, impl := range prog.Impls {
@@ -438,6 +513,9 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		// pointer in a second pass once every module is loaded.
 		mod.imports[imp.LocalName] = child
 		mod.importPaths[imp.LocalName] = childPaths[i]
+	}
+	for i, pu := range prog.PubUses {
+		mod.pubUses = append(mod.pubUses, pubUseEntry{childPath: pubUsePaths[i], names: pu.Names, pos: pu.P})
 	}
 	loaded[path] = mod
 	return nil
@@ -644,6 +722,9 @@ func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) 
 		}
 	}
 	assignManglePrefixes(loaded, entryPath)
+	if err := resolveReexports(loaded); err != nil {
+		return nil, err
+	}
 	var firstErr error
 	for _, mod := range loaded {
 		errs := mod.rewriteAll(mod.manglePrefix)
@@ -738,6 +819,95 @@ func assignManglePrefixes(loaded map[string]*module, entryPath string) {
 	}
 }
 
+// exportedMangled resolves a name in this module to the flat mangled
+// name a consumer would call, if the name is part of this module's
+// public surface. Re-exports are checked first (so a re-exported name
+// resolves to its *original* module's mangled name, not this module's),
+// then this module's own public funcs/consts (values) and structs/enums/
+// traits (types). isType marks the latter.
+func (m *module) exportedMangled(name string) (mangled string, isType bool, ok bool) {
+	if mg, ok := m.reexports[name]; ok {
+		return mg, false, true
+	}
+	if mg, ok := m.reexportTypes[name]; ok {
+		return mg, true, true
+	}
+	if m.publicFuncs[name] || m.publicConsts[name] {
+		return m.manglePrefix + name, false, true
+	}
+	if m.publicStructs[name] || m.publicEnums[name] {
+		return m.manglePrefix + name, true, true
+	}
+	return "", false, false
+}
+
+// resolveReexports builds every module's `reexports` table from its
+// `pub use` directives, now that mangle prefixes are assigned. A
+// re-exported name is also added to the re-exporting module's public
+// funcs so a consumer's visibility check passes. Resolution iterates to
+// a fixpoint so a re-export of a name that the target itself re-exports
+// resolves once the target's entry is filled. Values (function / const)
+// land in the `reexports` table; types (struct / enum / trait) in
+// `reexportTypes`.
+func resolveReexports(loaded map[string]*module) error {
+	paths := make([]string, 0, len(loaded))
+	for p := range loaded {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+
+	type pending struct {
+		mod     *module
+		child   *module
+		name    string
+		pos     ast.Position
+		modPath string
+	}
+	var work []pending
+	for _, p := range paths {
+		mod := loaded[p]
+		for _, pu := range mod.pubUses {
+			child := loaded[pu.childPath]
+			for _, name := range pu.names {
+				work = append(work, pending{mod: mod, child: child, name: name, pos: pu.pos, modPath: p})
+			}
+		}
+	}
+
+	for len(work) > 0 {
+		progress := false
+		remaining := work[:0]
+		for _, w := range work {
+			if w.child == nil {
+				return fmt.Errorf("%s: `pub use` target module was not loaded", w.modPath)
+			}
+			mangled, isType, ok := w.child.exportedMangled(w.name)
+			if !ok {
+				remaining = append(remaining, w)
+				continue
+			}
+			if isType {
+				// Type / trait re-export: record it in the type table and
+				// add the name to the re-exporting module's public structs
+				// (traits register there too) so a consumer's visibility
+				// check passes for `facade.SomeType`.
+				w.mod.reexportTypes[w.name] = mangled
+				w.mod.publicStructs[w.name] = true
+			} else {
+				w.mod.reexports[w.name] = mangled
+				w.mod.publicFuncs[w.name] = true
+			}
+			progress = true
+		}
+		work = remaining
+		if len(work) > 0 && !progress {
+			w := work[0]
+			return fmt.Errorf("%s:%s: module %q does not export %q (cannot `pub use` it)", w.modPath, w.pos, importLocalName(w.child.path), w.name)
+		}
+	}
+	return nil
+}
+
 // isRuntimeHelperName reports whether a function name should be
 // exempt from modload's `<mod>__` prefix mangling. The set covers:
 //
@@ -794,7 +964,7 @@ func (m *module) rewriteAll(selfPrefix string) []error {
 // true, cross-module references rewrite without the `<mod>__`
 // prefix (`int.foo()` → `foo()`) and the own-decl selfPrefix is
 // expected to be empty too. Used by `LoadStdlibFlat` so the
-// auto-prelude path can rewrite qualified imports inside stdlib
+// flat loader can rewrite qualified imports inside stdlib
 // bodies while keeping stdlib decl names bare.
 //
 // `skipPaths` is consulted only in flat-namespace mode: a cross-
@@ -874,10 +1044,21 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 		// `case "map_new"` / `case "__map_get_impl"` / etc.
 		// switches resolve targets by their bare name; prefixing
 		// here would leave every call site dangling.
-		if fn.Receiver == nil && !isRuntimeHelperName(fn.Name) {
+		if fn.Receiver == nil && fn.AssocType == "" && !isRuntimeHelperName(fn.Name) {
 			fn.Name = selfPrefix + fn.Name
 		} else if fn.Receiver != nil {
 			r.rewriteType(&fn.Receiver.Type)
+		} else if fn.AssocType != "" {
+			// Associated-function impl member (`impl Trait for T { function f() }`):
+			// exempt from the module prefix exactly like a receiver method. The
+			// checker hoists it to `__assoc_<T>_<f>` from AssocType + the BARE
+			// name, and conformance + `T.f()` dispatch look up that bare form;
+			// prefixing the name here produced `__assoc_<T>_<mod>__<f>`, which no
+			// conformance check or call site resolved (a primitive impl like
+			// `impl num.Zero for i32` then failed "missing method"). Rewrite the
+			// AssocType so a user-type impl in this module hoists under the type's
+			// mangled name; a primitive (i32/f64/…) is left unchanged.
+			fn.AssocType = r.rewriteStructName(fn.AssocType)
 		}
 		for i := range fn.Params {
 			r.rewriteType(&fn.Params[i].Type)
@@ -939,15 +1120,35 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 			}
 			r.rewriteType(&td.Methods[i].Result)
 		}
+		// Supertrait references mangle the same way a `[T: mod.Trait]`
+		// bound or an `impl mod.Trait for …` does, so they line up with
+		// the mangled TraitDecl.Name they point at.
+		for k, sup := range td.Supertraits {
+			td.Supertraits[k] = r.rewriteTraitNameAt(sup, td.NamePos)
+		}
 	}
 	for _, impl := range m.prog.Impls {
 		r.rewriteType(&impl.Type)
 		impl.Trait = r.rewriteTraitNameAt(impl.Trait, impl.TraitPos)
+		// Generic-trait args (`impl From[mod.Foo] for …`) are types too —
+		// mangle any struct/enum names so they line up with the trait sig.
+		for i := range impl.TraitArgs {
+			r.rewriteType(&impl.TraitArgs[i])
+		}
 	}
 	for _, fn := range m.prog.Funcs {
 		for tp, traits := range fn.Bounds {
 			for k, tn := range traits {
 				fn.Bounds[tp][k] = r.rewriteTraitNameAt(tn, fn.P)
+			}
+		}
+		// Generic-trait bound args (`T: From[mod.Foo]`) are types — mangle
+		// any struct/enum names so they line up with the trait signature.
+		for _, perBound := range fn.BoundArgs {
+			for _, args := range perBound {
+				for i := range args {
+					r.rewriteType(&args[i])
+				}
 			}
 		}
 	}
@@ -977,7 +1178,7 @@ type rewriter struct {
 	// flatNamespace, when true, drops the `<mod>__` prefix on
 	// cross-module references — `int.foo()` becomes `foo()`
 	// instead of `int__foo()`. Used by `LoadStdlibFlat` so the
-	// auto-prelude path can rewrite qualified imports inside
+	// flat loader can rewrite qualified imports inside
 	// stdlib bodies without mangling stdlib decls (decls stay
 	// at their bare names, which user code calls directly).
 	// Safe for stdlib because every free-function name there is
@@ -996,15 +1197,36 @@ type rewriter struct {
 	skipPaths map[string]bool
 }
 
+// packageScopedOK reports whether `name` is a `pub(package)` decl of
+// `mod` that the current module may use (i.e. is in the same package).
+// `handled` is true when `name` is package-scoped at all — so the caller
+// knows not to fall through to the generic "not exported" error. When
+// handled but not same-package, it records the package-scope error.
+func (r *rewriter) packageScopedOK(mod *module, name string, pos ast.Position) (ok, handled bool) {
+	if !mod.packageScoped[name] {
+		return false, false
+	}
+	if samePackage(r.modPath, mod.path) {
+		return true, true
+	}
+	r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is `pub(package)` — only modules in the same package as %s may use it",
+		r.modPath, pos, mod.name, name, mod.name))
+	return false, true
+}
+
 // checkPublicFunc records an error if `fn` isn't exported from
 // `mod`. Cross-module function references go through this gate;
 // same-module references skip it because internal calls aren't
 // visibility-restricted.
 func (r *rewriter) checkPublicFunc(mod *module, fn string, pos ast.Position) {
-	if !mod.publicFuncs[fn] {
-		r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is not exported (declare it as `pub function %s …` to make it accessible from other modules)",
-			r.modPath, pos, mod.name, fn, fn))
+	if mod.publicFuncs[fn] {
+		return
 	}
+	if _, handled := r.packageScopedOK(mod, fn, pos); handled {
+		return
+	}
+	r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is not exported (declare it as `pub function %s …` to make it accessible from other modules)",
+		r.modPath, pos, mod.name, fn, fn))
 }
 
 // checkPublicStruct records an error if `name` isn't an exported
@@ -1016,6 +1238,9 @@ func (r *rewriter) checkPublicFunc(mod *module, fn string, pos ast.Position) {
 // them apart pre-checker.
 func (r *rewriter) checkPublicStruct(mod *module, name string, pos ast.Position) {
 	if mod.publicStructs[name] || mod.publicEnums[name] {
+		return
+	}
+	if _, handled := r.packageScopedOK(mod, name, pos); handled {
 		return
 	}
 	r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is not exported (declare it as `pub struct %s …` to make it accessible from other modules)",
@@ -1033,6 +1258,9 @@ func (r *rewriter) checkPublicStruct(mod *module, name string, pos ast.Position)
 // later in the checker either way.
 func (r *rewriter) checkPublicValue(mod *module, name string, pos ast.Position) {
 	if mod.publicFuncs[name] || mod.publicConsts[name] {
+		return
+	}
+	if _, handled := r.packageScopedOK(mod, name, pos); handled {
 		return
 	}
 	hint := "function"
@@ -1057,7 +1285,7 @@ func (r *rewriter) importedModule(localName string) (*module, string, bool) {
 		// In flat-namespace mode, references to OWN-pass modules
 		// rewrite to bare names (the decls land bare-named in the
 		// combined Program). References to skipped modules — i.e.
-		// modules the auto-prelude path is skipping because the
+		// modules the flat loader is skipping because the
 		// entry program already loaded them through modload's
 		// regular mangling path — need to use the same mangled
 		// prefix `Load`+`combine` would produce, since the
@@ -1280,6 +1508,11 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 				if mod, prefix, ok := r.importedModule(id.Name); ok {
 					r.checkPublicFunc(mod, fa.Field, fa.P)
 					mangled := prefix + fa.Field
+					// A `pub use`-re-exported name resolves to its original
+					// module's mangled name, not this module's prefix.
+					if rx, ok := mod.reexports[fa.Field]; ok {
+						mangled = rx
+					}
 					// Preserve the source-level call site so the
 					// LSP can resolve hover / goto-def on `fn` in
 					// `mod.fn()` after we rewrite the AST to a
@@ -1311,7 +1544,11 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 		if id, ok := x.Target.(*ast.Ident); ok {
 			if mod, prefix, ok := r.importedModule(id.Name); ok {
 				r.checkPublicValue(mod, x.Field, x.P)
-				*slot = &ast.Ident{P: id.P, Name: prefix + x.Field}
+				target := prefix + x.Field
+				if rx, ok := mod.reexports[x.Field]; ok {
+					target = rx
+				}
+				*slot = &ast.Ident{P: id.P, Name: target}
 				return
 			}
 		}
@@ -1338,6 +1575,9 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 	case *ast.TryOp:
 		r.rewriteExpr(&x.Inner)
 	case *ast.CastExpr:
+		r.rewriteExpr(&x.Inner)
+		r.rewriteType(&x.Target)
+	case *ast.DowncastExpr:
 		r.rewriteExpr(&x.Inner)
 		r.rewriteType(&x.Target)
 	case *ast.SliceExpr:
@@ -1369,6 +1609,13 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 				r.rewriteExpr(&arm.Guard)
 			}
 			r.rewriteExpr(&arm.Body)
+		}
+	case *ast.BlockExpr:
+		for _, st := range x.Stmts {
+			r.rewriteStmt(st)
+		}
+		if x.Tail != nil {
+			r.rewriteExpr(&x.Tail)
 		}
 	case *ast.StructLit:
 		// Three shapes here:
@@ -1458,6 +1705,11 @@ func (r *rewriter) rewriteStructNameAt(name string, pos ast.Position) string {
 		modName, structName := name[:dot], name[dot+1:]
 		if mod, prefix, ok := r.importedModule(modName); ok {
 			r.checkPublicStruct(mod, structName, pos)
+			// A `pub use`-re-exported type resolves to its original
+			// module's mangled name, not this facade's prefix.
+			if rx, ok := mod.reexportTypes[structName]; ok {
+				return rx
+			}
 			return prefix + structName
 		}
 		// Unrecognised module — leave as-is so the checker can
@@ -1485,6 +1737,11 @@ func (r *rewriter) rewriteTraitNameAt(name string, pos ast.Position) string {
 			// set as struct/enum names (see the `pub trait` handling
 			// in loadRecursive), so reuse that gate.
 			r.checkPublicStruct(mod, traitName, pos)
+			// A `pub use`-re-exported trait resolves to its declaring
+			// module's mangled name, not this facade's prefix.
+			if rx, ok := mod.reexportTypes[traitName]; ok {
+				return rx
+			}
 			return prefix + traitName
 		}
 		return name
@@ -1555,6 +1812,62 @@ func (r *rewriter) rewriteType(slot *ast.Type) {
 			r.rewriteType(&t.Params[i])
 		}
 		r.rewriteType(&t.Result)
+	case ast.DynTraitType:
+		// `dyn mod.Trait` (or `dyn mod.A + B`) — mangle EVERY trait name
+		// in the set the same way bounds and impls do, so the dyn type's
+		// traits line up with the mangled TraitDecl.Name in Info.Traits.
+		// Without this a qualified `dyn cmp.Display` keeps its dotted name
+		// and fails the `unknown trait` check in validateDynTraitTypes.
+		// DynTraitType carries no position; the public-visibility check
+		// reports at the zero position, which is acceptable for the rare
+		// non-pub case. Re-normalise (sort+dedup) via NewDynTraitTypeFull
+		// since mangling can reorder names. Any generic trait-arguments
+		// (`dyn Container[mod.Foo]`) are themselves rewritten and carried
+		// through, kept paired with their trait across the re-sort.
+		changed := false
+		newTraits := make([]string, len(t.Traits))
+		for i, tr := range t.Traits {
+			nt := r.rewriteTraitNameAt(tr, ast.Position{})
+			newTraits[i] = nt
+			if nt != tr {
+				changed = true
+			}
+		}
+		var newArgs [][]ast.Type
+		if len(t.Args) > 0 {
+			newArgs = make([][]ast.Type, len(t.Args))
+			for i, args := range t.Args {
+				if len(args) == 0 {
+					continue
+				}
+				na := make([]ast.Type, len(args))
+				for j := range args {
+					na[j] = args[j]
+					r.rewriteType(&na[j])
+				}
+				newArgs[i] = na
+			}
+			changed = true
+		}
+		var newAssoc [][]ast.AssocBinding
+		if len(t.AssocBindings) > 0 {
+			newAssoc = make([][]ast.AssocBinding, len(t.AssocBindings))
+			for i, binds := range t.AssocBindings {
+				if len(binds) == 0 {
+					continue
+				}
+				nb := make([]ast.AssocBinding, len(binds))
+				for j := range binds {
+					nb[j] = binds[j]
+					r.rewriteType(&nb[j].Type)
+				}
+				newAssoc[i] = nb
+			}
+			changed = true
+		}
+		if changed {
+			*slot = ast.NewDynTraitTypeFull(newTraits, newArgs, newAssoc)
+		}
 	}
 }
 

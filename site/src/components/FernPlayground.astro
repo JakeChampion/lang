@@ -20,21 +20,35 @@
 //              first paint without the reader clicking Run.
 //              Opt out with `autoRun={false}` for snippets where
 //              the reader is meant to predict the output first.
+//   minimal  — boolean (default false). Read-only variant for docs
+//              that just want to show code + its output: the editor
+//              is frozen (highlighted but not editable), the Run
+//              buttons and the Assembly tab are dropped, the snippet
+//              always autoruns, and the iframe auto-grows to fit its
+//              content (the `height` prop becomes just the initial
+//              size before the first height report).
 //   title    — accessibility title for the iframe.
 
 interface Props {
   code: string;
   height?: string;
   autoRun?: boolean;
+  minimal?: boolean;
   title?: string;
 }
 
 const {
   code,
-  height = "420px",
+  height,
   autoRun = true,
+  minimal = false,
   title = "Fern playground",
 } = Astro.props;
+
+// Minimal embeds auto-grow, so they only need a small initial height
+// before the first `fern:height` message lands; editable embeds keep
+// the roomier default that fits the stacked source + output panes.
+const resolvedHeight = height ?? (minimal ? "180px" : "420px");
 
 // URL-safe base64 (RFC 4648 §5), '=' padding stripped — matches
 // the encodeHash() helper in web/index.html so a copy-pasted hash
@@ -54,13 +68,19 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 const fullSrc = `${base}/playground/#src=${encodeHash(code)}`;
 const params = new URLSearchParams();
 params.set("embed", "1");
-if (autoRun) params.set("autorun", "1");
+if (minimal) params.set("minimal", "1");
+// Minimal snippets must autorun (there's no Run button), so force it
+// even if autoRun={false} was passed.
+if (autoRun || minimal) params.set("autorun", "1");
 const embedSrc = `${base}/playground/?${params.toString()}#src=${encodeHash(code)}`;
 ---
 
-<figure class="fern-playground" data-fern-playground>
+<figure
+  class="fern-playground"
+  data-fern-playground
+  data-fern-minimal={minimal ? "1" : undefined}>
   <header>
-    <span aria-hidden="true">▸ live snippet</span>
+    <span aria-hidden="true">{minimal ? "▸ snippet" : "▸ live snippet"}</span>
     <a href={fullSrc} target="_blank" rel="noopener">
       open in playground &rarr;
     </a>
@@ -68,7 +88,7 @@ const embedSrc = `${base}/playground/?${params.toString()}#src=${encodeHash(code
   <iframe
     src={embedSrc}
     title={title}
-    style={`height: ${height};`}
+    style={`height: ${resolvedHeight};`}
     loading="lazy"></iframe>
 </figure>
 
@@ -122,6 +142,29 @@ const embedSrc = `${base}/playground/?${params.toString()}#src=${encodeHash(code
     new MutationObserver(syncAll).observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["data-theme"],
+    });
+  })();
+</script>
+
+<script is:inline>
+  // Auto-grow minimal playground embeds to their content height. The
+  // embedded playground posts `{ type: "fern:height", height }` on
+  // first paint and whenever its content reflows; match the message to
+  // its iframe via the event source and apply the height so short
+  // snippets don't get an inner scrollbar and long ones aren't clipped.
+  (function () {
+    window.addEventListener("message", function (e) {
+      var d = e.data;
+      if (!d || d.type !== "fern:height" || typeof d.height !== "number") return;
+      var frames = document.querySelectorAll("[data-fern-playground] iframe");
+      for (var i = 0; i < frames.length; i++) {
+        if (frames[i].contentWindow === e.source) {
+          // Clamp to a sane band so a runaway report can't blow up the
+          // page layout.
+          frames[i].style.height = Math.max(80, Math.min(d.height, 2000)) + "px";
+          break;
+        }
+      }
     });
   })();
 </script>

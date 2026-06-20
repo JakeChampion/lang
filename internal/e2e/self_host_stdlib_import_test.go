@@ -24,7 +24,7 @@ func TestSelfHostStdlibImportX86_64(t *testing.T) {
 		t.Skip("file-loading driver test runs only natively (argv paths)")
 	}
 	dir := writeSelfHostAsmProject(t) // lexer, parser, asm
-	for _, name := range []string{"util.fern", "asmcore.fern", "flatten.fern", "asm.fern", "asm_load_run.fern"} {
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "flatten.fern", "checker.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern", "asm_load_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -57,7 +57,7 @@ func TestSelfHostStdlibImportX86_64(t *testing.T) {
 		// __store_* / __ptr_width / __memset) and the RC intrinsics. Before
 		// the self-host provided those symbols the bundle failed to link.
 		// The program itself uses the native Map[K,V] runtime (10+32=42).
-		{"std-json-intrinsics", "import \"std/json\";\nfunction main(): i32 {\n var m: Map[string,i32] = map_new(8);\n m.insert(\"a\", 10);\n m.insert(\"b\", 32);\n var r: i32 = 0;\n match (m.get(\"a\")) { Some(v) => { r = r + v; }, None => { } }\n match (m.get(\"b\")) { Some(v) => { r = r + v; }, None => { } }\n return r;\n}\n", 42},
+		{"std-json-intrinsics", "import \"std/json\";\nfunction main(): i32 {\n var m: Map[string,i32] = map_new(8);\n m = m.insert(\"a\", 10);\n m = m.insert(\"b\", 32);\n var r: i32 = 0;\n match (m.get(\"a\")) { Some(v) => { r = r + v; }, None => { } }\n match (m.get(\"b\")) { Some(v) => { r = r + v; }, None => { } }\n return r;\n}\n", 42},
 	}
 
 	for _, tc := range cases {

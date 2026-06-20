@@ -14,7 +14,6 @@
 // AST shape. Exit code 0 means every assertion passed; non-
 // zero codes identify which arm failed.
 
-import "core/no_prelude";
 import "./lexer";
 import "./parser";
 
@@ -22,7 +21,7 @@ import "./parser";
 
 // quote_string wraps a string value in `"`-delimited form, with
 // the same escape set scan_string in the lexer recognises (so
-// the result re-parses). The lang strings here don't carry the
+// the result re-parses). The Fern strings here don't carry the
 // surrounding `"`s — they store decoded bytes — so we re-encode
 // on emit.
 function quote_string(s: string): string {
@@ -206,7 +205,7 @@ function print_stmt(st: parser.Stmt, depth: i32): string {
             }
             return out + pad + "}\n";
         },
-        parser.StmtDefer(d) => { return pad + "defer " + print_stmt(d.action, 0); },
+        parser.StmtDefer(d) => { if (d.on_error != 0) { return pad + "errdefer " + print_stmt(d.action, 0); } return pad + "defer " + print_stmt(d.action, 0); },
         parser.StmtVar(v) => {
             var ann: string = "";
             if (v.type_name.len() > 0) { ann = ": " + v.type_name; }

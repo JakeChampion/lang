@@ -16,9 +16,9 @@ import (
 // Go-side TestExternRecordResultSubwordCustomProvider). The canonical
 // return-area packs s8/u16 at their natural 1-/2-byte size + offset (a@0, b@2,
 // c@4), which differs from the self-host struct's 4-byte slots. So the wrapper
-// reads each field at its canonical offset (extern_canon_field_off) with a
+// reads each field at its canonical offset (extern_canon_top_off) with a
 // width+sign-aware load (extern_field_load_op) and stores it into the wider
-// self-host slot; the return area is sized by extern_canon_record_size.
+// self-host slot; the return area is sized by extern_canon_record_size_nested.
 //
 // The provider exports `make-mix: func() -> record { a: s8, b: u16, c: s32 }`
 // returning fixed {-5, 300, 1000} at canonical offsets. The self-host program
@@ -103,7 +103,7 @@ func TestSelfHostExternRecordResultSubwordCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "wasm.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -112,7 +112,7 @@ func TestSelfHostExternRecordResultSubwordCustomProvider(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	const driver = `import "core/no_prelude";
+	const driver = `
 import "std/io";
 import "./lexer";
 import "./parser";

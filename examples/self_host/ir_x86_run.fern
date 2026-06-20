@@ -1,0 +1,22 @@
+// examples/self_host/ir_x86_run.fern — driver for the IR -> x86-64 backend
+// (ir_x86.fern, slice 3). Reads a program on stdin, lowers `main` to the
+// stack IR (irlower), emits a complete freestanding x86-64 program from the
+// Op[] (ir_x86.emit_program), and prints the AT&T assembly to stdout. The
+// companion Go test gcc-assembles the output (-static -nostdlib -no-pie),
+// runs it, and asserts the inner exit code — end-to-end proof that
+// AST -> IR -> x86-64 produces a working executable whose value matches the
+// IR interpreter (and the AST emit path) on the i32 subset.
+
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./irlower";
+import "./ir_x86";
+
+function main(): i32 {
+    var src: string = io.read_all_stdin();
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var fns: irlower.LoweredFn[] = irlower.lower_module(mod.funcs, mod.structs);
+    print(ir_x86.emit_module(fns));
+    return 0;
+}

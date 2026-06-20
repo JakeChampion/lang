@@ -2,7 +2,6 @@
 // literal -> owned), permuted in place, and the SAME buffer returned. The own
 // transfer (no copy, no freed-then-reused output buffer) is differentially
 // pinned: free-on == free-off and reuse-on == reuse-off byte-identical.
-import "core/no_prelude";
 import "std/sort";
 
 function main(): i32 {

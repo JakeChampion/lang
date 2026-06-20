@@ -423,7 +423,10 @@
    * the View assembly button.
    */
   .pane-tabs {
-    display: none; /* default; embed mode flips to flex below */
+    /* Hidden everywhere now: it was the embed-mode entry point to the
+     * assembly view, which embeds no longer surface (output only).
+     * Standalone reaches asm via the toolbar's "View assembly" button. */
+    display: none;
     align-items: stretch;
     gap: 0.25rem;
     margin: 0 0 0.4em;
@@ -485,33 +488,14 @@
   body.embed .problems {
     display: none;
   }
-  /* The "output" pane heading is redundant in embed mode — the
-   * tab strip labels what's below. */
-  body.embed .pane-output h2 { display: none; }
-  /* Tab strip visible in embed only — see comment on .pane-tabs above. */
-  body.embed .pane-tabs { display: flex; }
-  /* Tab-driven content switch. Default state shows output; the
-   * `body.tab-asm` class swaps to the assembly panel. The tab
-   * strip itself lives inside .pane-output and must stay visible
-   * across both tabs — only the output content (h2 + pre + meta)
-   * hides when Asm is active. The asm panel lives outside
-   * .pane-output (it spans both columns in standalone) so the
-   * embed-mode override below also narrows it to the single-
-   * column embed grid.
-   */
-  body.embed.tab-asm .pane-output > h2,
-  body.embed.tab-asm .pane-output > #out,
-  body.embed.tab-asm .pane-output > .out-info {
-    display: none;
-  }
-  body.embed.tab-asm .asm-panel { display: block; margin-top: 0; }
+  /* Embeds show output only. The Assembly view is a power-user
+   * feature that's noise inside a docs iframe, so the in-pane tab
+   * strip (its only entry point in embed mode) and the asm panel
+   * both stay hidden; the small "output" heading labels the pane
+   * instead. The standalone playground still exposes assembly via
+   * the toolbar's "View assembly" button — a separate path. */
+  body.embed .pane-tabs { display: none; }
   body.embed .asm-panel { display: none; }
-  body.embed .asm-panel pre {
-    height: clamp(140px, calc((100vh - 4em) / 2), 360px);
-    max-height: none;
-  }
-  body.embed .asm-panel header { padding: 0.3em 0.6em; }
-  body.embed .asm-panel header h2 { display: none; }
   body.embed .toolbar {
     margin-bottom: 0.4em;
     gap: 0.5em;
@@ -548,6 +532,41 @@
   body.embed #srcMount,
   body.embed pre {
     height: clamp(140px, calc((100vh - 4em) / 2), 360px);
+  }
+
+  /* ---------------- Minimal (read-only) embed ----------------
+   *
+   * Activated by `?minimal=1` (implies embed). The snippet is a
+   * frozen, autorun-only rendering: no Run buttons, no editing
+   * affordances, and the panes size to their content rather than the
+   * iframe viewport — the embedding page grows the iframe to fit via
+   * the `fern:height` postMessage, so there are no inner scrollbars
+   * on short snippets and no clipping on long ones.
+   *
+   * These rules sit after the `body.embed` block so they win on
+   * equal specificity (same id+class+type count).
+   */
+  body.minimal #run,
+  body.minimal #runWasm,
+  body.minimal #buildComponent,
+  body.minimal #worldSelect {
+    display: none;
+  }
+  /* Content-sized panes (no 100vh dependency → no resize feedback
+   * loop with the auto-grown iframe). */
+  body.minimal #srcMount,
+  body.minimal .cm-editor {
+    height: auto;
+  }
+  body.minimal .cm-scroller { overflow: visible; }
+  body.minimal pre {
+    height: auto;
+    max-height: none;
+  }
+  /* A read-only editor has no caret or active-line affordance. */
+  body.minimal .cm-activeLine,
+  body.minimal .cm-activeLineGutter {
+    background: transparent;
   }
 </style>
 </head>
@@ -628,9 +647,11 @@
     <div id="srcMount"></div>
   </div>
   <div class="pane pane-output">
-    <!-- Tab strip — visible only in embed mode (CSS-gated). Lets
-         docs readers swap the bottom content area between Output
-         and Assembly without leaving the page. -->
+    <!-- Output/Assembly tab strip. Formerly the embed-mode entry
+         point to the assembly view; embeds now show output only, so
+         this is CSS-hidden everywhere (the standalone playground uses
+         the toolbar's "View assembly" button). Markup + its JS
+         handlers are retained, inert, for a possible future opt-in. -->
     <div class="pane-tabs" role="tablist" aria-label="View">
       <button class="tab active" data-tab="output" role="tab"
               aria-selected="true">Output</button>
@@ -667,7 +688,7 @@ const examples = {
     print("hello, world");
     return 0;
 }`,
-  fact: `import "core/no_prelude";
+  fact: `
 import "std/i32";
 function fact(n: i32): i32 {
     if (n == 0) { return 1; }
@@ -678,7 +699,7 @@ function main(): i32 {
     print("5! = " + f.to_string());
     return f;
 }`,
-  strings: `import "core/no_prelude";
+  strings: `
 import "std/string";
 import "std/i32";
 function main(): i32 {
@@ -695,7 +716,7 @@ function main(): i32 {
     print("replace:    " + "hello world".replace("world", "Fern"));
     return s.len();
 }`,
-  sort: `import "core/no_prelude";
+  sort: `
 import "std/sort";
 import "std/i32";
 import "std/array";
@@ -719,7 +740,7 @@ function main(): i32 {
     print("desc:   [" + join_i32s(desc) + "]");
     return asc.len();
 }`,
-  union: `import "core/no_prelude";
+  union: `
 import "std/i32";
 struct Add { l: i32, r: i32 }
 struct Mul { l: i32, r: i32 }
@@ -741,7 +762,7 @@ function main(): i32 {
     print("(2+3) * 4 = " + v.to_string());
     return v;
 }`,
-  result: `import "core/no_prelude";
+  result: `
 import "std/i32";
 struct ParseError { message: string, pos: i32 }
 
@@ -769,7 +790,7 @@ function main(): i32 {
         Err(e) => { print("error at " + e.pos.to_string() + ": " + e.message); return 1; },
     }
 }`,
-  interp: `import "core/no_prelude";
+  interp: `
 import "std/i32";
 import "std/array";
 // Tiny arithmetic interpreter — lexer + parser + eval in Fern.
@@ -836,12 +857,12 @@ function eval(e: Expr): i32 {
 function parse_factor(toks: Token[], cur: i32[]): Expr {
     var pos: i32 = cur[0];
     if (peek_kind(toks, pos) == 0) {
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         return Num { value: peek_int(toks, pos) };
     }
-    cur[0] = pos + 1;
+    cur = cur.with(0, pos + 1);
     var inner: Expr = parse_expr(toks, cur);
-    cur[0] = cur[0] + 1;
+    cur = cur.with(0, cur[0] + 1);
     return inner;
 }
 
@@ -852,7 +873,7 @@ function parse_term(toks: Token[], cur: i32[]): Expr {
         if (peek_kind(toks, pos) != 1) { return lhs; }
         var op: i32 = peek_punct(toks, pos);
         if (op != 42 && op != 47) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -866,7 +887,7 @@ function parse_expr(toks: Token[], cur: i32[]): Expr {
         if (peek_kind(toks, pos) != 1) { return lhs; }
         var op: i32 = peek_punct(toks, pos);
         if (op != 43 && op != 45) { return lhs; }
-        cur[0] = pos + 1;
+        cur = cur.with(0, pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -882,7 +903,7 @@ function main(): i32 {
     print(src + " = " + v.to_string());
     return v;
 }`,
-  format: `import "core/no_prelude";
+  format: `
 import "std/format";
 import "std/i32";
 // format(fmt, args) — runtime template substitution. Walks
@@ -925,7 +946,7 @@ function main(): i32 {
 
     return 0;
 }`,
-  http: `import "core/no_prelude";
+  http: `
 import "std/http";
 import "std/tcp";
 // An HTTP handler. Pick the "wasi:http/incoming-handler" world,
@@ -983,14 +1004,27 @@ const paneTabs = document.querySelectorAll(".pane-tabs .tab");
 // Bonus: an `?autorun=1` flag runs the snippet automatically after
 // boot — handy for "look at this output" docs embeds.
 const urlParams = new URLSearchParams(location.search);
-const embedMode = ["1", "true", "yes"].includes(
-  (urlParams.get("embed") ?? "").toLowerCase(),
-);
-const autoRun = ["1", "true", "yes"].includes(
-  (urlParams.get("autorun") ?? "").toLowerCase(),
-);
+function urlFlag(name) {
+  return ["1", "true", "yes"].includes(
+    (urlParams.get(name) ?? "").toLowerCase(),
+  );
+}
+// `?minimal=1` is the read-only docs variant: the editor is frozen
+// (still syntax-highlighted, but not editable), the Run buttons and
+// the Output/Assembly tab strip are dropped, the panes size to their
+// content, and the snippet always autoruns so the output is visible
+// without interaction. It implies embed mode (the chrome-stripped
+// layout) and reports its content height to the embedding page so the
+// iframe can grow to fit.
+const minimalMode = urlFlag("minimal");
+const embedMode = urlFlag("embed") || minimalMode;
+// Minimal snippets must autorun — there's no Run button to click.
+const autoRun = urlFlag("autorun") || minimalMode;
 if (embedMode) {
   document.body.classList.add("embed");
+}
+if (minimalMode) {
+  document.body.classList.add("minimal");
 }
 
 // ---- Theme (dark / light) ----
@@ -1061,6 +1095,25 @@ window.addEventListener("message", (e) => {
     applyTheme(e.data.theme);
   }
 });
+
+// ---- Auto-height: report content height to the embedding page ----
+//
+// Minimal embeds size to their content (see the body.minimal CSS), so
+// the docs <FernPlayground> component grows the iframe to whatever we
+// post here — short snippets get no inner scrollbar, long ones aren't
+// clipped. Posted on first paint, after every run, and whenever the
+// body reflows (theme change, output growth). Scoped to minimal mode:
+// regular embeds derive their pane height from the iframe's own 100vh,
+// so auto-growing them would feed back on itself.
+function reportHeight() {
+  if (!minimalMode) return;
+  const h = Math.ceil(document.body.getBoundingClientRect().height + 2);
+  try { parent.postMessage({ type: "fern:height", height: h }, "*"); }
+  catch (e) { /* not framed; ignore */ }
+}
+if (minimalMode && typeof ResizeObserver === "function") {
+  new ResizeObserver(() => reportHeight()).observe(document.body);
+}
 
 // URL-hash codec. Source is UTF-8 encoded, then base64'd with
 // URL-safe alphabet (RFC 4648 §5) and stripped of '=' padding so
@@ -1798,6 +1851,11 @@ function makeEditorState(initial) {
   return EditorState.create({
     doc: initial,
     extensions: [
+      // Minimal (docs read-only) embeds freeze the editor: the source
+      // stays highlighted and selectable but can't be edited, so the
+      // snippet is a faithful, un-break-able rendering of the docs code.
+      EditorState.readOnly.of(minimalMode),
+      EditorView.editable.of(!minimalMode),
       lineNumbers(),
       drawSelection(),
       dropCursor(),

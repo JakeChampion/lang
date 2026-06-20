@@ -28,7 +28,6 @@
 // sibling files; resolve `std/…` / `core/…` under an optional stdlib
 // root).
 
-import "core/no_prelude";
 import "./util";
 import "./lexer";
 import "./parser";
@@ -74,15 +73,45 @@ function arm64_elf_binary(asm: string): string {
         return "";
     }
     var pa: arm64_native.Arm64Asm = p.asm;
-    var tv: i64 = (elf.elf_text_vaddr()) as i64;
-    var dv: i64 = tv + ((((pa.code.len() + 7) & (0 - 8))) as i64); // data 8-aligned after .text
+    // W^X two-segment layout: .text loads R+X at elf_text_vaddr_wx() and the
+    // data blob (.rodata + globals + the .bss heap) loads R+W on the first
+    // page boundary past .text, so no mapping is both writable and
+    // executable (required by W^X-enforcing loaders such as Android's).
+    var tv: i64 = (elf.elf_text_vaddr_wx()) as i64;
+    var dv: i64 = (elf.elf_data_vaddr_wx(pa.code.len())) as i64;
     p = arm64_native.arm64_gas_link(p, tv, dv);
     var pa2: arm64_native.Arm64Asm = p.asm;
     var eoff: i32 = arm64_native.arm64_asm_label_off(pa2, "_start");
     if (eoff < 0) { eoff = 0; }
-    var body: i32[] = elf.elf_pad_to_8(pa2.code);
-    body = elf.elf_cat(body, p.data);
-    var bin: i32[] = elf.elf_image_entry_bss(body, 7, elf.elf_em_aarch64(), eoff, p.bss_size);
+    var bin: i32[] = elf.elf_image_wx(pa2.code, p.data, elf.elf_em_aarch64(), eoff, p.bss_size);
+    return string_from_bytes(to_u8(bin));
+}
+
+// arm64_elf_binary_pie is arm64_elf_binary as a static position-independent
+// executable (the -target arm64-android path): ET_DYN at a load base of 0 so
+// the kernel can map it anywhere (Android rejects non-PIE for normal exec).
+// Now that the arm64 heap is mmap'd at the low 0x10000000 hint (not reserved
+// as a giant .bss in the loaded image), the data segment is tiny and the
+// heap lives below 4 GiB regardless of the binary's load base — so the PIE
+// runs at any base. The self-host arm64 emitter embeds no absolute pointers
+// (function addresses via runtime adrp/:lo12:), so no dynamic relocations are
+// needed; only the ELF container (ET_DYN) and the base-0 layout differ.
+function arm64_elf_binary_pie(asm: string): string {
+    var p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(asm);
+    if (p.unknown.len() > 0) {
+        eprint("fern: -target arm64-android: in-process assembler hit an instruction it does not yet support: ");
+        eprint(p.unknown[0]);
+        eprint("\n");
+        return "";
+    }
+    var pa: arm64_native.Arm64Asm = p.asm;
+    var tv: i64 = (elf.elf_text_vaddr_pie()) as i64;
+    var dv: i64 = (elf.elf_data_vaddr_pie(pa.code.len())) as i64;
+    p = arm64_native.arm64_gas_link(p, tv, dv);
+    var pa2: arm64_native.Arm64Asm = p.asm;
+    var eoff: i32 = arm64_native.arm64_asm_label_off(pa2, "_start");
+    if (eoff < 0) { eoff = 0; }
+    var bin: i32[] = elf.elf_image_pie(pa2.code, p.data, elf.elf_em_aarch64(), eoff, p.bss_size);
     return string_from_bytes(to_u8(bin));
 }
 
@@ -130,12 +159,11 @@ function join_path(dir: string, name: string): string {
 
 // should_load decides whether an import path names a module file to
 // load. Local (`./…`) imports always load; `std/…` / `core/…` load only
-// when a stdlib root is given; `core/no_prelude` is a directive.
+// when a stdlib root is given.
 function should_load(import_path: string, root: string): boolean {
     if (import_path.len() == 0) { return false; }
     if (is_local(import_path)) { return true; }
     if (root.len() == 0) { return false; }
-    if (import_path == "core/no_prelude") { return false; }
     return true;
 }
 
@@ -183,7 +211,7 @@ struct SsaResult { asm: string, ok: boolean }
 // and the wasm-bin / wasm-component targets always fall back. Register
 // allocation is always on for the native path.
 function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target: string): SsaResult {
-    if (target != "x86-64" && target != "arm64" && target != "wasm") { return SsaResult { asm: "", ok: false }; }
+    if (target != "x86-64" && target != "arm64" && target != "arm64-android" && target != "wasm") { return SsaResult { asm: "", ok: false }; }
     // The set of user-defined function names the SSA backend can `call`, and
     // the subset that return a pointer (so their call results are 64-bit).
     // Lambda bindings `var f = function(...){...}` lift to top-level functions
@@ -249,10 +277,74 @@ function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target:
     // wasm emitter rather than emitting broken WAT.
     if (target == "wasm" && !ssa_wasm.supported(sfuncs)) { return SsaResult { asm: "", ok: false }; }
     var asm: string = "";
-    if (target == "arm64") { asm = ssa_arm64.emit_program(sfuncs, true); }
+    if (target == "arm64" || target == "arm64-android") { asm = ssa_arm64.emit_program(sfuncs, true); }
     else if (target == "wasm") { asm = ssa_wasm.emit_program(sfuncs); }
     else { asm = ssa_x86.emit_program(sfuncs, true); }
     return SsaResult { asm: asm, ok: true };
+}
+
+// ssa_scan is the non-bailing twin of try_ssa: it runs build_func over EVERY
+// function in the merged program (plus lifted lambdas), and instead of
+// returning on the first failure it records ALL build_func failures and ALL
+// unknown callees across the whole program in one pass — the measurement that
+// `try_ssa` (first-bail, all-or-nothing) can't give. Used by `-ssa-scan` to
+// prove the self-host compiler's per-function SSA coverage (zero failures +
+// zero unknown callees = the whole compiler is in the subset; the only
+// remaining blocker to a full SSA self-compile is then memory, not coverage).
+function ssa_scan(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): i32 {
+    var lifted: parser.FuncDecl[] = ssa.collect_lambdas(funcs);
+    var allfuncs: parser.FuncDecl[] = funcs;
+    var lai: i32 = 0;
+    while (lai < lifted.len()) { allfuncs = allfuncs.append(lifted[lai]); lai = lai + 1; }
+    // The same known set try_ssa builds: every user/lifted function symbol plus
+    // the injected runtime-helper names (so map/push/slice calls resolve).
+    var known: string[] = [];
+    var ni: i32 = 0;
+    while (ni < allfuncs.len()) { known = known.append(ssa.fn_sym(allfuncs[ni])); ni = ni + 1; }
+    var hmod: parser.Module = parser.parse_module(lexer.tokenize(ssa.ssa_helpers_src()));
+    var hk: i32 = 0;
+    while (hk < hmod.funcs.len()) { known = known.append(hmod.funcs[hk].name); hk = hk + 1; }
+    var seed: ssa.Seed = ssa.build_seed(allfuncs);
+
+    var fails: string[] = [];
+    var unknown: string[] = [];
+    var i: i32 = 0;
+    while (i < allfuncs.len()) {
+        var r: ssa.BResult = ssa.build_func_seeded(allfuncs[i], structs, seed);
+        if (!r.ok) {
+            fails = fails.append(ssa.fn_sym(allfuncs[i]));
+        } else {
+            // Collect every call / funcaddr target this function emits that
+            // isn't a known function (dedup) — the calls_all_known bail set.
+            var bi: i32 = 0;
+            while (bi < r.func.blocks.len()) {
+                var blk: ssa.SBlock = r.func.blocks[bi];
+                var k: i32 = 0;
+                while (k < blk.insts.len()) {
+                    var ins: ssa.SInst = blk.insts[k];
+                    if (ins.kind == "call" || ins.kind == "funcaddr") {
+                        if (!util.has_str(known, ins.str) && !util.has_str(unknown, ins.str)) {
+                            unknown = unknown.append(ins.str);
+                        }
+                    }
+                    k = k + 1;
+                }
+                bi = bi + 1;
+            }
+        }
+        i = i + 1;
+    }
+
+    write("functions scanned: " + checker.itoa_nn(allfuncs.len()) + "\n");
+    write("build_func failures: " + checker.itoa_nn(fails.len()) + "\n");
+    var fi: i32 = 0;
+    while (fi < fails.len()) { write("  FAIL " + fails[fi] + "\n"); fi = fi + 1; }
+    write("unknown callees: " + checker.itoa_nn(unknown.len()) + "\n");
+    var ui: i32 = 0;
+    while (ui < unknown.len()) { write("  UNKNOWN " + unknown[ui] + "\n"); ui = ui + 1; }
+    if (fails.len() == 0 && unknown.len() == 0) { write("RESULT: full per-function SSA coverage (0 failures, 0 unknown callees)\n"); }
+    else { write("RESULT: coverage gaps remain\n"); }
+    return 0;
 }
 
 function main(): i32 {
@@ -266,6 +358,7 @@ function main(): i32 {
     var mode_interp: boolean = false;
     var mode_fmt: boolean = false;
     var no_ssa: boolean = false;
+    var mode_scan: boolean = false;
     var optimize: boolean = false;
     var have_entry: boolean = false;
 
@@ -282,6 +375,11 @@ function main(): i32 {
             // SSA is the default now; accept -ssa as a no-op for back-compat.
         } else if (a == "-no-ssa") {
             no_ssa = true;
+        } else if (a == "-ssa-scan") {
+            // Diagnostic: report every build_func failure + unknown callee across
+            // the whole merged program (non-bailing), then exit. Measures
+            // per-function SSA coverage without the all-or-nothing try_ssa bail.
+            mode_scan = true;
         } else if (a == "-O") {
             optimize = true;
         } else if (a == "-target") {
@@ -310,7 +408,7 @@ function main(): i32 {
 
     if (!have_entry) { return usage(); }
 
-    if (target != "x86-64" && target != "arm64" && target != "arm64-darwin" && target != "wasm" && target != "wasm-bin" && target != "wasm-component") {
+    if (target != "x86-64" && target != "arm64" && target != "arm64-android" && target != "arm64-darwin" && target != "wasm" && target != "wasm-bin" && target != "wasm-component") {
         eprint("fern: unknown -target: ");
         eprint(target);
         eprint(" (want x86-64, arm64, arm64-darwin, wasm, wasm-bin, or wasm-component)\n");
@@ -382,6 +480,11 @@ function main(): i32 {
         }
     }
     var merged: parser.Module = flatten.bundle(entry_mod, loaded);
+    // Fill omitted trailing args from default parameter values up front, so the
+    // checker, SSA, interpreter, and AST fallback all see complete calls.
+    merged = parser.fill_default_args_module(merged);
+
+    if (mode_scan) { return ssa_scan(merged.funcs, merged.structs); }
 
     if (mode_check) {
         var mt: checker.ModuleTypes = checker.check_module(merged);
@@ -422,6 +525,32 @@ function main(): i32 {
         return 254;
     }
 
+    // Immutability gate: reject the immutable-data cycle rules (E048 field
+    // assign / E049 reference-capture write-back / E055 discarded pure-
+    // collection result / E056 subscript assign) BEFORE codegen, so the
+    // compiler is not MORE permissive than the native compiler / `-check`
+    // (issue #2825 — the SSA / IR / AST codegen paths previously compiled
+    // forbidden field mutation like `p.x = v` straight to a working binary).
+    // Native always type-checks ahead of codegen; this is the matching gate
+    // for the self-host CLI's compile path. Filtered to the cycle rules so
+    // the partial checker's other rules can't false-positive-reject a valid
+    // program (or this very source under fixpoint), and reported with the
+    // same `line:col: error[CODE]: message` shape as `-check`.
+    var imm: checker.Diag[] = checker.filter_immutability(checker.check_module(merged).diags);
+    if (imm.len() > 0) {
+        var ii: i32 = 0;
+        while (ii < imm.len()) {
+            var idg: checker.Diag = imm[ii];
+            if (idg.line > 0) {
+                eprint(checker.itoa_nn(idg.line) + ":" + checker.itoa_nn(idg.col) + ": error[" + idg.code + "]: " + idg.message + "\n");
+            } else {
+                eprint("error[" + idg.code + "]: " + idg.message + "\n");
+            }
+            ii = ii + 1;
+        }
+        return 1;
+    }
+
     // -O: constant-fold the program before codegen (constfold.fold_module),
     // matching the native compiler's constant folding. Compile-only — applied
     // after -check / -interp / -fmt (which return above and want the original
@@ -449,6 +578,9 @@ function main(): i32 {
             if (target == "arm64") {
                 ssa_out = arm64_elf_binary(sr.asm);
                 if (ssa_out.len() == 0) { return 2; }
+            } else if (target == "arm64-android") {
+                ssa_out = arm64_elf_binary_pie(sr.asm);
+                if (ssa_out.len() == 0) { return 2; }
             }
             if (out_path.len() > 0) {
                 match (write_file(out_path, ssa_out)) {
@@ -473,6 +605,11 @@ function main(): i32 {
         // In-process ELF (arm64_native + elf.fern) — no `.s` + gcc/ld. The
         // SSA path above already flipped; this is the AST-emitter fallback.
         out_asm = arm64_elf_binary(asm_arm64.emit_module(full, false));
+        if (out_asm.len() == 0) { return 2; }
+    } else if (target == "arm64-android") {
+        // arm64-android is the arm64 emitter wrapped in a static-PIE (ET_DYN)
+        // image instead of the fixed-address W^X one (AST-emitter fallback).
+        out_asm = arm64_elf_binary_pie(asm_arm64.emit_module(full, false));
         if (out_asm.len() == 0) { return 2; }
     } else if (target == "arm64-darwin") {
         // Same arm64 code generator with the Darwin syscall builtins

@@ -5,7 +5,6 @@
 // and interp_run.fern (evaluation): the same front end feeding the
 // self-hosted type checker.
 
-import "core/no_prelude";
 import "std/io";
 import "./lexer";
 import "./parser";
@@ -16,5 +15,8 @@ function main(): i32 {
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
     var mt: checker.ModuleTypes = checker.check_module(mod);
     if (mt.all_well_typed) { return 0; }
+    // Surface the rejection to stderr before exiting non-zero — the
+    // bootstrap error-reporting path (the self-host `fern -check`).
+    eprint(checker.format_diags(mt.diags));
     return 1;
 }

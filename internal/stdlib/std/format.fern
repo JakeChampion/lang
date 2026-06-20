@@ -1,7 +1,8 @@
 // std/format — human-readable formatting helpers.
 //
 // `format(fmt, args)` — runtime template substitution with `{}`
-// placeholders. `format_bytes(n)` / `format_duration_ms(ms)` —
+// placeholders and Rust-style `{:fill|align|width.precision}`
+// format specs. `format_bytes(n)` / `format_duration_ms(ms)` —
 // pre-canned shapes for byte sizes and elapsed durations.
 //
 // Migrated from the auto-injected prelude per
@@ -16,11 +17,27 @@
 import "std/i32";
 
 // `format(fmt, args)` — runtime template substitution. Walks
-// fmt byte-by-byte, replacing each `{}` placeholder with the
-// next element of args. Extra args (more args than `{}`s) are
-// silently dropped; missing args (more `{}`s than args) emit
-// the placeholder unchanged. Mirrors Python's `str.format()` /
-// Rust's `format!()` minimal subset.
+// fmt byte-by-byte, replacing each `{}` / `{:spec}` placeholder
+// with the next element of args. Extra args (more args than
+// placeholders) are silently dropped; missing args (more
+// placeholders than args) emit the placeholder unchanged.
+// Mirrors Python's `str.format()` / Rust's `format!()` minimal
+// subset.
+//
+// Format specs (the bit after the `:`) follow Rust's
+// `[[fill]align][width][.precision]` grammar, applied to the
+// already-stringified arg:
+//   - align: `<` left, `>` right, `^` center (default left).
+//   - fill: any char immediately before an align char, e.g.
+//     `{:*>8}` pads with `*`. Defaults to a space.
+//   - width: minimum field width; the value is padded (never
+//     truncated) up to it.
+//   - precision: `.N` truncates the string to at most N bytes
+//     (Rust's string-precision semantics), applied before
+//     padding — so `{:>8.3}` of "hello" is "     hel".
+// A spec whose content doesn't start with `:` (e.g. `{abc}`) is
+// not a placeholder and renders literally, so JSON-ish braces
+// pass through untouched.
 //
 // Use cases the f-string sugar doesn't cover:
 //   - Dynamic templates (read from a config file, locale
@@ -29,32 +46,131 @@ import "std/i32";
 //     a checker emitting "expected {}, got {}" where the
 //     template lives in a const-table rather than at every
 //     call site.
+//   - Column-aligned CLI / table output via width + fill.
 //
 // Caller pre-stringifies args (`to_string()` for i32 / i64 /
-// f32 / f64 / boolean). A typed-overload story would need
-// trait dispatch which lang doesn't have yet; the string[]
-// signature keeps the type story trivial.
+// f32 / f64 / boolean; `to_string_prec()` for fixed-precision
+// floats). A generic-`Display` overload story would need trait
+// dispatch which lang doesn't have yet; the string[] signature
+// keeps the type story trivial.
 pub function format(fmt: string, args: string[]): string {
     var n: i32 = fmt.len();
     var out: string = "";
     var i: i32 = 0;
     var argi: i32 = 0;
     while (i < n) {
-        if (i + 1 < n && fmt[i] == 123 && fmt[i + 1] == 125) {
-            if (argi < args.len()) {
-                out = out + args[argi];
-                argi = argi + 1;
-            } else {
-                // Missing arg — emit the literal "{}" so callers
-                // can spot the underflow at runtime.
-                out = out + "{}";
-            }
+        // Escaped braces: `{{` -> literal `{`, `}}` -> literal `}` (the
+        // Python str.format() / Rust format!() convention this mirrors). Checked
+        // before the `{}` placeholder so `{{}}` renders the literal "{}" rather
+        // than consuming an arg, and `{{{}}}` renders "{<arg>}".
+        if (i + 1 < n && fmt[i] == 123 && fmt[i + 1] == 123) {
+            out = out + "{";
             i = i + 2;
+        } else if (i + 1 < n && fmt[i] == 125 && fmt[i + 1] == 125) {
+            out = out + "}";
+            i = i + 2;
+        } else if (fmt[i] == 123) {
+            // Opening brace: scan for the matching `}` and decide whether the
+            // run is a placeholder. The content is a placeholder spec only when
+            // it is empty (`{}`) or starts with `:` (`{:>8}`); anything else
+            // (`{abc}`, JSON `{"k":1}`) renders literally and consumes no arg.
+            var j: i32 = i + 1;
+            while (j < n && fmt[j] != 125) { j = j + 1; }
+            var isPlaceholder: boolean = false;
+            var spec: string = "";
+            if (j < n) {
+                spec = fmt[i + 1:j];
+                if (spec.len() == 0) { isPlaceholder = true; }
+                else if (spec[0] == 58) { isPlaceholder = true; }
+            }
+            if (isPlaceholder) {
+                if (argi < args.len()) {
+                    out = out + __format_apply_spec(args[argi], spec);
+                    argi = argi + 1;
+                } else {
+                    // Missing arg — emit the placeholder verbatim so callers
+                    // can spot the underflow at runtime.
+                    out = out + "{" + spec + "}";
+                }
+                i = j + 1;
+            } else {
+                out = out + fmt[i:i + 1];
+                i = i + 1;
+            }
         } else {
             out = out + fmt[i:i + 1];
             i = i + 1;
         }
     }
+    return out;
+}
+
+// __format_apply_spec applies a `:`-prefixed format spec to an
+// already-stringified value. `spec` is either "" (plain `{}`,
+// returned unchanged) or starts with ':' followed by the
+// `[[fill]align][width][.precision]` grammar. Precision truncates
+// first, then width pads — matching Rust's ordering.
+function __format_apply_spec(s: string, spec: string): string {
+    if (spec.len() == 0) { return s; }
+    var m: i32 = spec.len();
+    var p: i32 = 1; // skip the leading ':'
+    // [fill]align — a fill char only counts when an align char (`<>^`)
+    // follows it; a bare align char takes the default space fill.
+    var fill: string = " ";
+    var align: i32 = 1; // 1=left, 2=right, 3=center; strings default left.
+    if (p + 1 < m && __is_align(spec[p + 1])) {
+        fill = spec[p:p + 1];
+        align = __align_code(spec[p + 1]);
+        p = p + 2;
+    } else if (p < m && __is_align(spec[p])) {
+        align = __align_code(spec[p]);
+        p = p + 1;
+    }
+    // width — run of decimal digits.
+    var width: i32 = 0;
+    while (p < m && spec[p] >= 48 && spec[p] <= 57) {
+        width = width * 10 + (spec[p] - 48);
+        p = p + 1;
+    }
+    // .precision — truncate the value to at most `prec` bytes.
+    var val: string = s;
+    if (p < m && spec[p] == 46) {
+        p = p + 1;
+        var prec: i32 = 0;
+        while (p < m && spec[p] >= 48 && spec[p] <= 57) {
+            prec = prec * 10 + (spec[p] - 48);
+            p = p + 1;
+        }
+        if (val.len() > prec) { val = val[0:prec]; }
+    }
+    // width padding — never truncates.
+    var vlen: i32 = val.len();
+    if (vlen >= width) { return val; }
+    var pad: i32 = width - vlen;
+    if (align == 2) {
+        return __repeat_char(fill, pad) + val;
+    }
+    if (align == 3) {
+        var left: i32 = pad / 2;
+        return __repeat_char(fill, left) + val + __repeat_char(fill, pad - left);
+    }
+    return val + __repeat_char(fill, pad);
+}
+
+function __is_align(c: i32): boolean {
+    return c == 60 || c == 62 || c == 94; // '<' '>' '^'
+}
+
+function __align_code(c: i32): i32 {
+    if (c == 60) { return 1; } // '<' left
+    if (c == 62) { return 2; } // '>' right
+    return 3;                  // '^' center
+}
+
+function __repeat_char(s: string, count: i32): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < count) { out = out + s; i = i + 1; }
     return out;
 }
 

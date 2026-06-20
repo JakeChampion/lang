@@ -370,8 +370,12 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__fern_tcp_recv":
 					// (conn, max) → (data, len) — heap-form
 					// string with the bytes read. Empty on
-					// stream-error / EOF.
+					// stream-error / EOF. The result string is
+					// rc-headered (alloc_rc1) so __fern_str_dec
+					// reclaims it correctly (#2817 class); the
+					// retptr scratch uses plain alloc.
 					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_rc1")
 					needs.add("__fern_tcp_recv")
 				case "__fern_tcp_send":
 					// (conn, data) → i32 — bytes sent, -1 on
@@ -1199,9 +1203,10 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		// (n) → i32 — allocates a length-prefixed u8[] of
 		// length n. Layout: 4-byte i32 length prefix at
 		// [base - 4], then n bytes of payload starting at
-		// base. Returns the data pointer (base). The bump
-		// allocator zeroes fresh pages, so the payload starts
-		// out zero.
+		// base. Returns the data pointer (base). The payload is
+		// explicitly zero-filled (a reused freelist block may
+		// carry stale bytes) so it matches the interpreter's
+		// zero-initialised u8[] — issue #2768.
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildAllocU8Body,
@@ -3481,6 +3486,14 @@ func buildAllocU8Body(helperIdxs map[string]uint32) []byte {
 	body = numeric.InstI32Sub(body)
 	body = inst.InstLocalGet(body, 0)
 	body = memory.InstI32Store(body, 2, 0)
+	// Zero the n payload bytes via memory.fill($base, 0, n). __fern_alloc may
+	// reuse a freelist block carrying stale bytes; the interpreter returns a
+	// zero-filled `u8[]`, so this backend must too (issue #2768) — read-before-
+	// write callers (e.g. SHA padding) depend on it.
+	body = inst.InstLocalGet(body, 1) // dst = $base
+	body = inst.InstI32Const(body, 0) // value 0
+	body = inst.InstLocalGet(body, 0) // n
+	body = memory.InstMemoryFill(body)
 	// return $base
 	body = inst.InstLocalGet(body, 1)
 	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
@@ -4218,9 +4231,20 @@ func buildReadLineBody(helperIdxs map[string]uint32) []byte {
 func buildStdinBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
 	var body []byte
-	body = inst.InstI32Const(body, 4)
+	// 12-byte Reader struct: rc sentinel @ +0, {fd} @ +8 — matching the
+	// file Reader (buildOpenReaderBodyP2). The leading static rc sentinel
+	// keeps __fern_retain / __fern_drop (which mutate mem[ptr-8]) off the
+	// preceding static data segment — see issue #2550.
+	body = inst.InstI32Const(body, 12)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 0)
+	body = inst.InstI32Const(body, -0x80000000) // static rc sentinel
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 0) // data pointer = base + 8
+	body = inst.InstLocalGet(body, 0)
 	body = inst.InstI32Const(body, 0) // fd = 0 (stdin)
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, 0)
@@ -4236,9 +4260,20 @@ func buildStdinBodyP2(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
 	getStdin := idxs["wasi_get_stdin_p2"]
 	var body []byte
-	body = inst.InstI32Const(body, 4)
+	// 12-byte Reader struct: rc sentinel @ +0, {handle} @ +8 — matching
+	// the file Reader (buildOpenReaderBodyP2). The leading static rc
+	// sentinel keeps __fern_retain / __fern_drop (which mutate mem[ptr-8])
+	// off the preceding static data segment — see issue #2550.
+	body = inst.InstI32Const(body, 12)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 0)
+	body = inst.InstI32Const(body, -0x80000000) // static rc sentinel
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 0) // data pointer = base + 8
+	body = inst.InstLocalGet(body, 0)
 	body = inst.InstCall(body, getStdin) // handle = get-stdin()
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, 0)

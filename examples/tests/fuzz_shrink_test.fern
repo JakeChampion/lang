@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/fuzz";
 import "std/test";
 // examples/tests/fuzz_shrink_test.fern — `r.fuzz_shrink`
@@ -16,9 +15,9 @@ import "std/test";
 // `len(input) >= 0` always. This shouldn't ever fire — the
 // shrinker still runs the mutation pass but never gets to
 // minimise anything.
-function check_len_nonneg(input: string): Option[string] {
-    if (input.len() >= 0) { return None; }
-    return Some("len returned negative");
+function check_len_nonneg(input: string): test.TestOutcome {
+    if (input.len() >= 0) { return test.pass(); }
+    return test.fail("len returned negative");
 }
 
 // Property that holds: `s.reverse_bytes().reverse_bytes() == s`
@@ -26,26 +25,26 @@ function check_len_nonneg(input: string): Option[string] {
 // loop puts the byte-level mutator through its paces; if
 // the round-trip ever broke, the shrinker would localise
 // the trigger to a minimal byte sequence.
-function check_reverse_idempotent(input: string): Option[string] {
+function check_reverse_idempotent(input: string): test.TestOutcome {
     var twice: string = input.reverse_bytes().reverse_bytes();
-    if (twice == input) { return None; }
-    return Some("reverse_bytes is not idempotent");
+    if (twice == input) { return test.pass(); }
+    return test.fail("reverse_bytes is not idempotent");
 }
 
 // Property that holds: every byte in `to_lower(s)` is
 // outside the uppercase range [65, 90].
-function check_to_lower_no_upper(input: string): Option[string] {
+function check_to_lower_no_upper(input: string): test.TestOutcome {
     var lowered: string = input.to_lower();
     var i: i32 = 0;
     while (i < lowered.len()) {
         var b: i32 = lowered[i];
         if (b >= 65 && b <= 90) {
-            return Some("uppercase byte " + b.to_string() +
+            return test.fail("uppercase byte " + b.to_string() +
                         " at " + i.to_string() + " after to_lower");
         }
         i = i + 1;
     }
-    return None;
+    return test.pass();
 }
 
 function main(): i32 {

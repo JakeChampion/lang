@@ -184,14 +184,31 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		helpers.add("__http_entry")
 	}
 	// P6: a string-result `@export` function's wrapper SSO-normalizes the Fern
-	// (data,len) pair into a heap return area, so pin emitStrNormalize's deps
-	// (docs/WIT-BRING-YOUR-OWN.md).
+	// (data,len) pair into a heap return area, so pin emitStrNormalize's deps; a
+	// numeric-array (`list<T>`) result's wrapper allocates the [ptr,len] return
+	// area, so it needs __fern_alloc (docs/WIT-BRING-YOUR-OWN.md).
 	for _, exp := range prog.Exports {
+		if exp.ResultEnum != nil || exp.ResultTuple != nil {
+			// The Option/Result / tuple RESULT wrapper allocates the canonical
+			// return area via __fern_alloc.
+			helpers.add("__fern_alloc")
+		}
 		for _, fn := range prog.Funcs {
-			if fn.Name == exp.Name && isStringType(fn.ReturnType) {
+			if fn.Name != exp.Name {
+				continue
+			}
+			if isStringType(fn.ReturnType) {
 				helpers.add("__fern_alloc")
 				helpers.add("__fern_str_len")
 				helpers.add("__fern_str_byte")
+			}
+			if isScalarArrayParamType(fn.ReturnType) {
+				helpers.add("__fern_alloc")
+			}
+			if funcHasNumericArrayParam(fn) {
+				// The list-PARAM wrapper builds a length-prefixed Fern array from
+				// the canonical (ptr,len) via __fern_alloc + memory.copy.
+				helpers.add("__fern_alloc")
 			}
 		}
 	}
@@ -391,6 +408,59 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		return off
 	}
 
+	// `dyn Trait` vtable interning. Each (trait, concrete) pair gets one
+	// table in the data segment: an array of i32 function-TABLE indices
+	// (positions in prog.Funcs), one slot per non-associated trait method
+	// in declaration order. No rc header — vtables are static and never
+	// inc/dec'd. OpConstVtable emits `i32.const <returned address>` and
+	// OpCallDyn loads slot k (`+ slot*4`) then call_indirect's through it.
+	// See docs/DYN-TRAITS.md §4.2.1.
+	vtablePool := map[string]int{}
+	internVtable := func(trait, concrete string) (int, error) {
+		key := trait + "\x00" + concrete
+		if off, ok := vtablePool[key]; ok {
+			return off, nil
+		}
+		var decl *ir.VtableDecl
+		for i := range prog.Vtables {
+			if prog.Vtables[i].Trait == trait && prog.Vtables[i].Concrete == concrete {
+				decl = &prog.Vtables[i]
+				break
+			}
+		}
+		if decl == nil {
+			return 0, fmt.Errorf("OpConstVtable: no vtable for (trait %q, concrete %q)", trait, concrete)
+		}
+		off := stringNextOff
+		for _, mth := range decl.Methods {
+			idx, ok := progFuncTableIdx[mth.Func]
+			if !ok {
+				return 0, fmt.Errorf("OpConstVtable: impl method %q not in prog.Funcs", mth.Func)
+			}
+			dataBytes = append(dataBytes,
+				byte(idx), byte(idx>>8), byte(idx>>16), byte(idx>>24))
+		}
+		// Trailing drop slot at index len(Methods) (docs/DYN-TRAITS.md
+		// §4.4): the concrete type's drop fn as a function-table index, or
+		// a null sentinel (0) when it needs none. The __drop_dyn_<set>
+		// helper reads this slot and call_indirects it to run the erased
+		// concrete destructor. Appended trailing so the method slot indices
+		// (0..n-1) are unchanged — OpCallDyn's slot math is untouched.
+		dropIdx := uint32(0)
+		if decl.Drop != "" {
+			idx, ok := progFuncTableIdx[decl.Drop]
+			if !ok {
+				return 0, fmt.Errorf("OpConstVtable: drop fn %q not in prog.Funcs", decl.Drop)
+			}
+			dropIdx = idx
+		}
+		dataBytes = append(dataBytes,
+			byte(dropIdx), byte(dropIdx>>8), byte(dropIdx>>16), byte(dropIdx>>24))
+		stringNextOff = off + 4*(len(decl.Methods)+1)
+		vtablePool[key] = off
+		return off, nil
+	}
+
 	closureTargets := closureTargetSet(prog)
 	ctx := &emitCtx{
 		funcIdx:            funcIdx,
@@ -399,17 +469,23 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		internClosure:      internClosure,
 		closuresBaseAddr:   closuresBase,
 		internEnumSentinel: internEnumSentinel,
+		internVtable:       internVtable,
 		closureTargets:     closureTargets,
 		funcByName:         funcByName,
 		addRawType:         addType,
 		addSigType: func(sig *ast.FuncType) (uint32, error) {
 			params := make([]byte, 0, len(sig.Params))
 			for _, pt := range sig.Params {
-				vt, err := valtypeFor(pt)
+				// slotValtypes (not valtypeFor) so a two-word string param
+				// fans out to [i32, i32] — matching paramValtypes, which
+				// types the call_indirect target the same way. A `dyn`
+				// method with a string arg dispatches through this seam
+				// (docs/DYN-TRAITS.md §4.2.3).
+				vts, err := slotValtypes(pt)
 				if err != nil {
 					return 0, err
 				}
-				params = append(params, vt)
+				params = append(params, vts...)
 			}
 			results, err := resultValtypes(sig.Result)
 			if err != nil {
@@ -740,12 +816,12 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		mainResults := m.TypeResults[m.FunctionTypeidxs[mainPosInFnSection]]
 		printed := false
 		if opts.PrintMainResult && len(mainResults) == 1 && mainResults[0] == encode.ValtypeI32 {
-			// `int_to_string` resolves to the auto-prelude bare
-			// name; `int__int_to_string` covers an explicit
+			// `int_to_string` resolves to the bare name (flat-load);
+			// `int__int_to_string` covers an explicit
 			// `import "core/int"` whose mangling pass appends
 			// the module name. Pick whichever survived
 			// tree-shake + dead-function elimination. If
-			// neither is present (no-prelude program without
+			// neither is present (a program that doesn't import
 			// core/int) fall back to drop so the wrapper still
 			// links.
 			intToStrName := ""
@@ -791,13 +867,23 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 			return nil, fmt.Errorf("wasmbin: @export %q: function not found", exp.Name)
 		}
 		fn := exportFuncByName[exp.Name]
+		// A numeric-array (`list<T>`) PARAMETER means the canonical ABI calls the
+		// export with (ptr,len) per array, which doesn't line up with the Fern
+		// function's single-pointer array param — so it needs a wrapper, and the
+		// scalar/composite-RESULT branches below (which forward params straight to
+		// the user func) would mis-call it. Reject the array-param + composite-result
+		// combination (a later slice) and route the array-param + scalar/void case
+		// to the dedicated param wrapper.
+		arrParam := fn != nil && funcHasNumericArrayParam(fn)
+		if arrParam && (isStringType(fn.ReturnType) || isScalarArrayParamType(fn.ReturnType) || exp.ResultEnum != nil || exp.ResultTuple != nil) {
+			return nil, fmt.Errorf("wasmbin: @export %q: a numeric-array parameter with a composite result is not supported yet", exp.Name)
+		}
 		// A string-RESULT export needs the canonical return-area shape: the Fern
 		// function returns a two-word (data,len) pair, but the world-driven
 		// composer's memory lift expects a core func returning a single i32
 		// pointer to [data,len]. Surface a wrapper that repacks it; scalar-result
-		// exports surface the function directly. (String/list PARAMS are P6's
-		// next sub-slice and are rejected by the composer for now.)
-		if fn != nil && isStringType(fn.ReturnType) {
+		// exports surface the function directly.
+		if fn != nil && !arrParam && isStringType(fn.ReturnType) {
 			if _, ok := funcIdx["__fern_alloc"]; !ok {
 				return nil, fmt.Errorf("wasmbin: @export %q: string result needs __fern_alloc (not pinned)", exp.Name)
 			}
@@ -809,6 +895,101 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 			wrapFuncIdx := nextFuncIdx
 			nextFuncIdx++
 			body, locals := buildExportStringResultWrapper(funcIdx, idx, len(pvts))
+			m.FunctionTypeidxs = append(m.FunctionTypeidxs, wrapTIdx)
+			m.CodeBodies = append(m.CodeBodies, inst.PutFunctionBody(nil, locals, body))
+			m.ExportNames = append(m.ExportNames, exp.Iface+"#"+exp.WITName)
+			m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
+			m.ExportIdxs = append(m.ExportIdxs, wrapFuncIdx)
+			continue
+		}
+		// A numeric-array (`list<T>`) RESULT export: the Fern function returns a
+		// single i32 element pointer, but the composer's memory lift expects a
+		// core func returning a pointer to the [data,len] canonical return area.
+		// Surface a wrapper that writes it (no copy — the Fern array is already
+		// contiguous at the canonical stride). docs/WIT-BRING-YOUR-OWN.md.
+		if fn != nil && isScalarArrayParamType(fn.ReturnType) {
+			if _, ok := funcIdx["__fern_alloc"]; !ok {
+				return nil, fmt.Errorf("wasmbin: @export %q: list result needs __fern_alloc (not pinned)", exp.Name)
+			}
+			pvts, err := paramValtypes(fn.Params)
+			if err != nil {
+				return nil, fmt.Errorf("wasmbin: @export %q: %w", exp.Name, err)
+			}
+			wrapTIdx := addType(pvts, []byte{encode.ValtypeI32})
+			wrapFuncIdx := nextFuncIdx
+			nextFuncIdx++
+			body, locals := buildExportListResultWrapper(funcIdx, idx, len(pvts))
+			m.FunctionTypeidxs = append(m.FunctionTypeidxs, wrapTIdx)
+			m.CodeBodies = append(m.CodeBodies, inst.PutFunctionBody(nil, locals, body))
+			m.ExportNames = append(m.ExportNames, exp.Iface+"#"+exp.WITName)
+			m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
+			m.ExportIdxs = append(m.ExportIdxs, wrapFuncIdx)
+			continue
+		}
+		// An Option/Result (WIT `option` / `result`) RESULT export: the Fern
+		// function returns an enum box pointer, but the canonical sum returns
+		// indirectly through a (disc, payload) return area. Surface a wrapper that
+		// writes it (docs/WIT-BRING-YOUR-OWN.md).
+		if exp.ResultEnum != nil {
+			if _, ok := funcIdx["__fern_alloc"]; !ok {
+				return nil, fmt.Errorf("wasmbin: @export %q: sum-type result needs __fern_alloc (not pinned)", exp.Name)
+			}
+			pvts, err := paramValtypes(fn.Params)
+			if err != nil {
+				return nil, fmt.Errorf("wasmbin: @export %q: %w", exp.Name, err)
+			}
+			wrapTIdx := addType(pvts, []byte{encode.ValtypeI32})
+			wrapFuncIdx := nextFuncIdx
+			nextFuncIdx++
+			body, locals := buildExportSumTypeResultWrapper(funcIdx, idx, len(pvts), exp.ResultEnum, prog.PairForm[exp.Name])
+			m.FunctionTypeidxs = append(m.FunctionTypeidxs, wrapTIdx)
+			m.CodeBodies = append(m.CodeBodies, inst.PutFunctionBody(nil, locals, body))
+			m.ExportNames = append(m.ExportNames, exp.Iface+"#"+exp.WITName)
+			m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
+			m.ExportIdxs = append(m.ExportIdxs, wrapFuncIdx)
+			continue
+		}
+		// A tuple `(A, B, …)` RESULT export: the Fern function returns a tuple
+		// value pointer, but the canonical tuple returns indirectly through a
+		// return area. Surface a wrapper that copies each element to it.
+		if exp.ResultTuple != nil {
+			if _, ok := funcIdx["__fern_alloc"]; !ok {
+				return nil, fmt.Errorf("wasmbin: @export %q: tuple result needs __fern_alloc (not pinned)", exp.Name)
+			}
+			pvts, err := paramValtypes(fn.Params)
+			if err != nil {
+				return nil, fmt.Errorf("wasmbin: @export %q: %w", exp.Name, err)
+			}
+			wrapTIdx := addType(pvts, []byte{encode.ValtypeI32})
+			wrapFuncIdx := nextFuncIdx
+			nextFuncIdx++
+			body, locals := buildExportTupleResultWrapper(funcIdx, idx, len(pvts), exp.ResultTuple)
+			m.FunctionTypeidxs = append(m.FunctionTypeidxs, wrapTIdx)
+			m.CodeBodies = append(m.CodeBodies, inst.PutFunctionBody(nil, locals, body))
+			m.ExportNames = append(m.ExportNames, exp.Iface+"#"+exp.WITName)
+			m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
+			m.ExportIdxs = append(m.ExportIdxs, wrapFuncIdx)
+			continue
+		}
+		// A numeric-array (`list<T>`) PARAMETER export (scalar/void result): the
+		// canonical ABI hands the export (ptr,len) per array, so surface a wrapper
+		// that rebuilds the length-prefixed Fern array and calls the user func.
+		if arrParam {
+			if _, ok := funcIdx["__fern_alloc"]; !ok {
+				return nil, fmt.Errorf("wasmbin: @export %q: list param needs __fern_alloc (not pinned)", exp.Name)
+			}
+			pvts, err := canonicalExportParamVts(fn.Params)
+			if err != nil {
+				return nil, fmt.Errorf("wasmbin: @export %q: %w", exp.Name, err)
+			}
+			rvts, err := resultValtypes(fn.ReturnType)
+			if err != nil {
+				return nil, fmt.Errorf("wasmbin: @export %q: %w", exp.Name, err)
+			}
+			wrapTIdx := addType(pvts, rvts)
+			wrapFuncIdx := nextFuncIdx
+			nextFuncIdx++
+			body, locals := buildExportListParamWrapper(funcIdx, idx, fn.Params)
 			m.FunctionTypeidxs = append(m.FunctionTypeidxs, wrapTIdx)
 			m.CodeBodies = append(m.CodeBodies, inst.PutFunctionBody(nil, locals, body))
 			m.ExportNames = append(m.ExportNames, exp.Iface+"#"+exp.WITName)
@@ -939,6 +1120,9 @@ func valtypeFor(t ast.Type) (byte, error) {
 		return encode.ValtypeF32, nil
 	case ast.ArrayType, ast.SliceType, ast.TupleType, ast.StructType, ast.EnumType:
 		return encode.ValtypeI32, nil
+	case ast.HandleType:
+		// own/borrow R — a resource handle is an opaque i32 (P5).
+		return encode.ValtypeI32, nil
 	case *ast.FuncType:
 		return encode.ValtypeI32, nil
 	}
@@ -956,12 +1140,25 @@ func isStringType(t ast.Type) bool {
 	return ok
 }
 
+// isTwoWordType reports whether t occupies two adjacent i32 wasm slots:
+// a string `(data, len)` or a `dyn Trait` fat pointer `[data, vtable]`.
+// Both fan out identically at the param / local / result / load / store
+// seams — the second word is just another i32 — so the two-word string
+// machinery serves dyn values unchanged. See docs/DYN-TRAITS.md §4.2.1.
+func isTwoWordType(t ast.Type) bool {
+	if isStringType(t) {
+		return true
+	}
+	_, ok := t.(ast.DynTraitType)
+	return ok
+}
+
 // slotValtypes returns the wasm valtype sequence for an ast.Type
 // used as a slot (param / local / result). Strings fan out to
 // `[i32, i32]` for the two-word ABI; everything else maps to a
 // single valtype via valtypeFor.
 func slotValtypes(t ast.Type) ([]byte, error) {
-	if isStringType(t) {
+	if isTwoWordType(t) {
 		return []byte{encode.ValtypeI32, encode.ValtypeI32}, nil
 	}
 	vt, err := valtypeFor(t)
@@ -986,6 +1183,28 @@ func paramValtypes(params []ast.Param) ([]byte, error) {
 	return out, nil
 }
 
+// canonicalExportParamVts flattens an `@export` function's parameters to the
+// core valtypes the canonical ABI passes the lifted export (the wrapper-facing
+// shape, vs paramValtypes's Fern-side flattening): a string or numeric array is
+// `(ptr, len)` — two i32s — and a scalar keeps its slot. Used to type the
+// export PARAM wrapper that materialises arrays before calling the user func.
+func canonicalExportParamVts(params []ast.Param) ([]byte, error) {
+	var out []byte
+	for _, p := range params {
+		switch {
+		case isStringType(p.Type) || isScalarArrayParamType(p.Type):
+			out = append(out, encode.ValtypeI32, encode.ValtypeI32)
+		default:
+			vts, err := slotValtypes(p.Type)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, vts...)
+		}
+	}
+	return out, nil
+}
+
 // canonicalExternParamValtypes flattens an `@import` extern's parameters to the
 // core valtypes the *raw* component import carries (the host-facing canonical
 // ABI), as opposed to paramValtypes, which gives the Fern-side flattening that
@@ -1005,8 +1224,18 @@ func canonicalExternParamValtypes(ex *ir.ExternFunc) ([]byte, error) {
 				out = append(out, externRecordFieldValtype(f.Type))
 			}
 		case ex.ParamEnums[i] != nil:
-			// option/result flattens to (disc:i32, payload).
-			out = append(out, encode.ValtypeI32, externRecordFieldValtype(ex.ParamEnums[i].PayloadType))
+			// variant flattens to (disc:i32, payload-join). A multi-field variant
+			// joins to SlotCount slots, each its canonical join valtype (i32/i64/f32/
+			// f64); a single-field one to one payload slot.
+			ep := ex.ParamEnums[i]
+			out = append(out, encode.ValtypeI32)
+			if ep.SlotCount > 0 {
+				for s := int32(0); s < ep.SlotCount; s++ {
+					out = append(out, externRecordFieldValtype(ep.SlotTypes[s]))
+				}
+			} else {
+				out = append(out, externRecordFieldValtype(ep.PayloadType))
+			}
 		case ex.ParamPlainEnums[i]:
 			// plain enum → WIT enum: a single i32 discriminant.
 			out = append(out, encode.ValtypeI32)
@@ -1170,6 +1399,11 @@ func localValtypes(fn *ir.Func, funcByName map[string]*ir.Func) ([]byte, error) 
 			out = append(out, encode.ValtypeI32)
 		}
 	}
+	if fnNeedsCallDynScratch(fn) {
+		for i := 0; i < callDynScratchSlots; i++ {
+			out = append(out, encode.ValtypeI32)
+		}
+	}
 	return out, nil
 }
 
@@ -1178,6 +1412,21 @@ const callIndirectScratchSlots = 1
 func fnNeedsCallIndirectScratch(fn *ir.Func) bool {
 	for _, op := range fn.Ops {
 		if op.Kind == ir.OpCallIndirect {
+			return true
+		}
+	}
+	return false
+}
+
+// callDynScratchSlots is the count of extra wasm locals appended when a
+// function uses OpCallDyn. The single scratch holds the vtable address
+// while the receiver's vtable word is popped off the top of the stack
+// (so the i32.load of slot k can fetch the function-table index).
+const callDynScratchSlots = 1
+
+func fnNeedsCallDynScratch(fn *ir.Func) bool {
+	for _, op := range fn.Ops {
+		if op.Kind == ir.OpCallDyn {
 			return true
 		}
 	}
@@ -1274,6 +1523,13 @@ type emitCtx struct {
 	// scratch i32 used by OpCallIndirect to stash closure_ptr
 	// while loading env_ptr + fn_idx from the pair cell.
 	callIndirectScratchIdx uint32
+	// callDynScratchIdx is the wasm-slot index of the scratch i32
+	// used by OpCallDyn to stash the vtable address while it loads
+	// the function-table index of the dispatched method slot.
+	callDynScratchIdx uint32
+	// internVtable returns the data-segment address of the (trait,
+	// concrete) vtable, interning per pair. Used by OpConstVtable.
+	internVtable func(trait, concrete string) (int, error)
 	// closureTargets is the set of function names whose wasm
 	// signature has env_ptr (i32) appended as the last param.
 	// emitBody consults this when computing wasm-slot indices
@@ -1324,7 +1580,7 @@ func wasmSlotIdx(fn *ir.Func, irIdx int32) uint32 {
 	wasm := 0
 	for j := int32(0); j < irIdx; j++ {
 		wasm++
-		if isStringType(slotType(fn, j)) {
+		if isTwoWordType(slotType(fn, j)) {
 			wasm++
 		}
 	}
@@ -1377,6 +1633,12 @@ func emitBody(fn *ir.Func, ctx *emitCtx) (body, locals []byte, err error) {
 	// callIndirect scratch sits AFTER closureMake.
 	callIndBase := closureBase + uint32(len(closureScratch))
 	ctx.callIndirectScratchIdx = callIndBase
+	// callDyn scratch sits AFTER callIndirect.
+	callDynBase := callIndBase
+	if fnNeedsCallIndirectScratch(fn) {
+		callDynBase += callIndirectScratchSlots
+	}
+	ctx.callDynScratchIdx = callDynBase
 	defer func() {
 		ctx.fn = nil
 		ctx.strPairScratchBase = 0
@@ -1384,6 +1646,7 @@ func emitBody(fn *ir.Func, ctx *emitCtx) (body, locals []byte, err error) {
 		ctx.closureSites = nil
 		ctx.closureSiteCursor = 0
 		ctx.callIndirectScratchIdx = 0
+		ctx.callDynScratchIdx = 0
 	}()
 
 	for opIdx, op := range fn.Ops {
@@ -1485,7 +1748,7 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 
 	case ir.OpLoadLocal:
 		idx := wasmSlotIdx(ctx.fn, op.I32)
-		if isStringType(slotType(ctx.fn, op.I32)) {
+		if isTwoWordType(slotType(ctx.fn, op.I32)) {
 			// Two-word ABI: push (data, len) in low-to-high
 			// order so the stack mirrors a fresh OpConstStr.
 			body = inst.InstLocalGet(body, idx)
@@ -1495,7 +1758,7 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		return inst.InstLocalGet(body, idx), nil
 	case ir.OpStoreLocal:
 		idx := wasmSlotIdx(ctx.fn, op.I32)
-		if isStringType(slotType(ctx.fn, op.I32)) {
+		if isTwoWordType(slotType(ctx.fn, op.I32)) {
 			// Stack: [..., data, len]. Pop len first (top of
 			// stack), then data, into adjacent locals.
 			body = inst.InstLocalSet(body, idx+1)
@@ -1505,7 +1768,7 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		return inst.InstLocalSet(body, idx), nil
 	case ir.OpTeeLocal:
 		idx := wasmSlotIdx(ctx.fn, op.I32)
-		if isStringType(slotType(ctx.fn, op.I32)) {
+		if isTwoWordType(slotType(ctx.fn, op.I32)) {
 			// Same as store-then-load: pop len, tee data
 			// (leaves data on stack), push len back.
 			body = inst.InstLocalSet(body, idx+1)
@@ -1927,6 +2190,45 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		body = memory.InstI32Load(body, 2, 0) // push fn_idx
 		return inst.InstCallIndirect(body, tIdx, 0), nil
 
+	// ---- `dyn Trait` runtime dispatch ----
+	case ir.OpConstVtable:
+		// Push the static address of the (trait, concrete) vtable —
+		// an array of i32 function-table indices in the data segment.
+		off, err := ctx.internVtable(op.Str, op.Str2)
+		if err != nil {
+			return nil, err
+		}
+		return inst.InstI32Const(body, int32(off)), nil
+	case ir.OpCallDyn:
+		if op.Sig == nil {
+			return nil, fmt.Errorf("OpCallDyn: missing op.Sig")
+		}
+		// The dyn receiver ABI is a plain i32 pointer (no env append),
+		// so dispatch through the no-env signature.
+		tIdx, err := ctx.addSigType(op.Sig)
+		if err != nil {
+			return nil, fmt.Errorf("OpCallDyn: resolving signature: %w", err)
+		}
+		// Stack: [data, args..., vtable]. Pop the vtable into a scratch
+		// local, load slot `op.I32` (`+ slot*4`) to get the function-
+		// table index, push it, and call_indirect — leaving [data,
+		// args...] as the callee's arguments under the table index.
+		idx := ctx.callDynScratchIdx
+		body = inst.InstLocalSet(body, idx) // pop vtable → scratch
+		body = inst.InstLocalGet(body, idx)
+		if op.I32 != 0 {
+			body = inst.InstI32Const(body, op.I32*4)
+			body = numeric.InstI32Add(body)
+		}
+		body = memory.InstI32Load(body, 2, 0) // push fn_table_idx
+		return inst.InstCallIndirect(body, tIdx, 0), nil
+
+	case ir.OpBoxDyn:
+		// OpBoxDyn is the BOXED native (`dyn Trait`) representation
+		// (docs/DYN-TRAITS.md §4.2.2); wasm uses the inline two-word
+		// fat pointer and never emits it. Reaching here is an IR bug.
+		return nil, fmt.Errorf("OpBoxDyn is native-only; wasm uses the inline two-word dyn representation")
+
 	// ---- String runtime helpers ----
 	case ir.OpStrLen:
 		// Stack: (data, len). The synthetic __fern_str_len helper
@@ -2106,7 +2408,7 @@ var CallDirectAliases = map[string]string{
 	"udp_send":   "__fern_udp_send",
 
 	// Map / MapIter generic-method dispatch — the lang doesn't yet
-	// support generic methods on a generic struct, so the prelude
+	// support generic methods on a generic struct, so the stdlib
 	// declares concrete `_impl` counterparts and call sites route
 	// through these aliases. Mirrors codegenAliasMap in the WAT
 	// path verbatim.
@@ -2183,6 +2485,12 @@ func anyTableOp(prog *ir.Program) bool {
 		for _, op := range fn.Ops {
 			switch op.Kind {
 			case ir.OpCallIndirect, ir.OpConstFunc:
+				return true
+			case ir.OpConstVtable, ir.OpCallDyn:
+				// `dyn Trait` dispatch loads function-table indices
+				// from a vtable and call_indirect's through them, so
+				// the table + element segment must be present (the
+				// impl methods are already in prog.Funcs → the table).
 				return true
 			}
 		}

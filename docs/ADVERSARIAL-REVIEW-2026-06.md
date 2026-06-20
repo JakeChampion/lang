@@ -1,5 +1,13 @@
 # Adversarial codebase review — 2026-06
 
+> **Status:** all 17 findings are fixed (each with a regression test). The last
+> one, **M1** (Map copy-on-write interp divergence,
+> [#2851](https://github.com/JakeChampion/lang/issues/2851)), is now implemented —
+> the interpreter does rc-based COW matching every backend (see
+> `INTERP-MAP-COW-PLAN.md` and the `map_cow_*` differential cases in
+> `internal/e2e/feature_differential_test.go`). The fixed findings below are
+> retained as bug-fix history.
+
 A whole-codebase adversarial review of the Fern compiler. The goal was
 to **break the code**: find real correctness bugs, type-system
 soundness holes, backend-parity divergences, and reference-oracle
@@ -13,29 +21,31 @@ build is clean (`go build ./...`) and all non-e2e unit packages pass.
 
 ## Status (updated after the fix pass)
 
-16 of the 17 findings are **fixed** (each with a regression test and the
+All 17 findings are **fixed** (each with a regression test and the
 full non-e2e suite + native e2e corpus re-run green): F1, B1, B2, I1, I2,
-F3, F4, M2, M3, F2, L1, L2, L3, L4, L5, B3, I3.
+F3, F4, M1, M2, M3, F2, L1, L2, L3, L4, L5, B3, I3.
 
-The one remaining finding, **M1** (Map copy-on-write interp divergence),
-is **deferred**: a faithful fix requires reference-count tracking in the
-interpreter. The compiled backends' COW is rc-based — they mutate a map
-in place when it is unshared (rc==1) and copy only when aliased (rc>1),
-so a bare `m.set(k,v)` statement mutates in place. The interpreter does
-not track reference counts, and there is no safe approximation: an
-always-copy interp would lose bare-statement mutations (a *new* interp↔
-backend divergence), while never-copying keeps the original bug. Closing
-M1 correctly means giving the interpreter the runtime's Perceus-style RC
-discipline — a substantial, invasive change scoped as its own effort, not
-a point fix. M3 (delete order) was fixed independently of M1. The full
-design + value-flow hook points + validation strategy are scoped in
+The last finding, **M1** (Map copy-on-write interp divergence), is now
+**implemented**: the interpreter does the runtime's Perceus-style rc-based
+COW. The compiled backends' COW is rc-based — they mutate a map in place
+when it is unshared (rc==1) and copy only when aliased (rc>1), so a bare
+`m.set(k,v)` statement mutates in place. The interpreter now tracks the
+same reference count (`Map.rc`, with `retain` / `release` at the
+value-flow hook points and `clone()` on the shared path), so it mutates in
+place when unshared and copies when aliased — matching every backend. The
+validation gate is met: the `map_cow_alias_isolation` / `map_cow_func_arg`
+/ `map_cow_returned` / `map_cow_alias_then_scope_exit` differential cases
+(`internal/e2e/feature_differential_test.go`) run the interp against every
+backend and pass, with no new divergence. M3 (delete order) was fixed
+independently. The full design + value-flow hook points are in
 `docs/INTERP-MAP-COW-PLAN.md`.
 
 The fix decisions for the three originally-deferred items were:
 **F2** → require an explicit `as` cast in user code (the implicit usize
 escape hatch is now gated to stdlib context); **M3** → force a single
 stable cross-backend order (interp now mirrors the runtime's
-swap-with-last); **M1** → make the interp match COW (deferred, see above).
+swap-with-last); **M1** → make the interp match COW (now implemented, see
+above).
 
 ## Summary
 

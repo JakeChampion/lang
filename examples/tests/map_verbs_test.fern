@@ -1,0 +1,157 @@
+import "core/map";
+import "std/test";
+// examples/tests/map_verbs_test.fern — higher-level Map verbs added
+// to core/map (#2685): `entries`, `merge` / `extend`, `from`,
+// `get_or_insert`, `update`, and `contains_value`. Covered over both
+// i32 and string keys.
+//
+// These verbs use Option (`get`) + tuples + generic map ops, which the
+// self-host compiler can't lower yet (Option/tuple IR is a pending
+// slice), so this suite is exercised through the native compiler /
+// interpreter — mirroring how the closure combinators are interp-only.
+
+function test_entries_sum(): test.TestOutcome {
+    var m: Map[i32, i32] = map_new(8);
+    m = m.insert(1, 10);
+    m = m.insert(2, 20);
+    m = m.insert(3, 30);
+    var s: i32 = 0;
+    for e in m.entries() { s = s + e.0 + e.1; }
+    return test.assert_eq(s, 66);
+}
+
+function test_entries_len(): test.TestOutcome {
+    var m: Map[string, i32] = map_new(4);
+    m = m.insert("a", 1);
+    m = m.insert("b", 2);
+    return test.assert_eq(m.entries().len(), 2);
+}
+
+function test_entries_empty(): test.TestOutcome {
+    var m: Map[i32, i32] = map_new(4);
+    return test.assert_eq(m.entries().len(), 0);
+}
+
+function test_from(): test.TestOutcome {
+    var m: Map[i32, i32] = map.from([(5, 50), (6, 60), (7, 70)]);
+    if (m.len() != 3) { return test.fail("from() wrong length"); }
+    return test.assert_eq(m.get_or(6, 0), 60);
+}
+
+function test_from_dup_last_wins(): test.TestOutcome {
+    // Later pair overwrites an earlier duplicate key.
+    var m: Map[i32, i32] = map.from([(1, 10), (1, 99)]);
+    if (m.len() != 1) { return test.fail("duplicate key should collapse"); }
+    return test.assert_eq(m.get_or(1, 0), 99);
+}
+
+function test_from_string_keys(): test.TestOutcome {
+    var m: Map[string, i32] = map.from([("x", 1), ("y", 2)]);
+    return test.assert_eq(m.get_or("y", 0), 2);
+}
+
+function test_merge_other_wins(): test.TestOutcome {
+    var a: Map[i32, i32] = map.from([(1, 100), (2, 200)]);
+    var b: Map[i32, i32] = map.from([(2, 999), (5, 500)]);
+    var m: Map[i32, i32] = a.merge(b);
+    if (m.len() != 3) { return test.fail("merge length wrong"); }
+    if (m.get_or(1, 0) != 100) { return test.fail("merge dropped a's unique key"); }
+    return test.assert_eq(m.get_or(2, 0), 999);
+}
+
+function test_merge_empty(): test.TestOutcome {
+    var a: Map[i32, i32] = map.from([(1, 1)]);
+    var e: Map[i32, i32] = map_new(2);
+    if (a.merge(e).len() != 1) { return test.fail("merge with empty wrong"); }
+    return test.assert_eq(e.merge(a).get_or(1, 0), 1);
+}
+
+function test_extend_alias(): test.TestOutcome {
+    var a: Map[i32, i32] = map.from([(1, 1)]);
+    var b: Map[i32, i32] = map.from([(2, 2)]);
+    return test.assert_eq(a.extend(b).len(), 2);
+}
+
+function test_get_or_insert_present(): test.TestOutcome {
+    var m: Map[i32, i32] = map_new(4);
+    m = m.insert(1, 10);
+    var r: (Map[i32, i32], i32) = m.get_or_insert(1, 99);
+    if (r.0.len() != 1) { return test.fail("present key should not grow the map"); }
+    return test.assert_eq(r.1, 10);
+}
+
+function test_get_or_insert_absent(): test.TestOutcome {
+    var m: Map[i32, i32] = map_new(4);
+    var r: (Map[i32, i32], i32) = m.get_or_insert(7, 70);
+    if (r.0.len() != 1) { return test.fail("absent key should insert"); }
+    if (r.0.get_or(7, 0) != 70) { return test.fail("absent key inserted wrong value"); }
+    return test.assert_eq(r.1, 70);
+}
+
+function test_get_or_insert_word_count(): test.TestOutcome {
+    // The motivating use case: count occurrences in one lookup per word.
+    var counts: Map[string, i32] = map_new(8);
+    var words: string[] = ["a", "b", "a", "c", "a", "b"];
+    for w in words {
+        var r: (Map[string, i32], i32) = counts.get_or_insert(w, 0);
+        counts = r.0.insert(w, r.1 + 1);
+    }
+    if (counts.get_or("a", 0) != 3) { return test.fail("count(a) should be 3"); }
+    if (counts.get_or("b", 0) != 2) { return test.fail("count(b) should be 2"); }
+    return test.assert_eq(counts.get_or("c", 0), 1);
+}
+
+function test_update_word_count(): test.TestOutcome {
+    // The one-pass shape of the word-count loop: insert-or-modify per word.
+    var counts: Map[string, i32] = map_new(8);
+    var words: string[] = ["a", "b", "a", "c", "a", "b"];
+    for w in words {
+        counts = counts.update(w, 0, function (c: i32): i32 { return c + 1; });
+    }
+    if (counts.get_or("a", 0) != 3) { return test.fail("count(a) should be 3"); }
+    if (counts.get_or("b", 0) != 2) { return test.fail("count(b) should be 2"); }
+    return test.assert_eq(counts.get_or("c", 0), 1);
+}
+
+function test_update_present_and_absent(): test.TestOutcome {
+    var m: Map[i32, i32] = map_new(4);
+    // absent: seed from init (100), then apply fn -> 101.
+    m = m.update(1, 100, function (v: i32): i32 { return v + 1; });
+    if (m.get_or(1, 0) != 101) { return test.fail("absent update should seed from init"); }
+    // present: 101 -> 102.
+    m = m.update(1, 100, function (v: i32): i32 { return v + 1; });
+    return test.assert_eq(m.get_or(1, 0), 102);
+}
+
+function test_contains_value(): test.TestOutcome {
+    var m: Map[string, i32] = map.from([("a", 10), ("b", 20)]);
+    if (!m.contains_value(20)) { return test.fail("20 should be present as a value"); }
+    if (m.contains_value(99)) { return test.fail("99 should not be a value"); }
+    return test.assert_eq(m.contains_value(10), true);
+}
+
+function test_contains_value_empty(): test.TestOutcome {
+    var m: Map[i32, i32] = map_new(4);
+    return test.assert_eq(m.contains_value(0), false);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("map verbs");
+    r = r.it("entries sum k+v",            test_entries_sum());
+    r = r.it("entries len (string keys)",  test_entries_len());
+    r = r.it("entries empty",              test_entries_empty());
+    r = r.it("from pairs",                 test_from());
+    r = r.it("from duplicate last wins",   test_from_dup_last_wins());
+    r = r.it("from string keys",           test_from_string_keys());
+    r = r.it("merge other wins",           test_merge_other_wins());
+    r = r.it("merge with empty",           test_merge_empty());
+    r = r.it("extend aliases merge",       test_extend_alias());
+    r = r.it("get_or_insert present",      test_get_or_insert_present());
+    r = r.it("get_or_insert absent",       test_get_or_insert_absent());
+    r = r.it("get_or_insert word count",   test_get_or_insert_word_count());
+    r = r.it("update word count",          test_update_word_count());
+    r = r.it("update present and absent",   test_update_present_and_absent());
+    r = r.it("contains_value",             test_contains_value());
+    r = r.it("contains_value empty",       test_contains_value_empty());
+    return r.finish();
+}

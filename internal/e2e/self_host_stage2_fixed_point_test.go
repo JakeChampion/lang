@@ -39,7 +39,7 @@ func TestSelfHostStage2FixedPoint(t *testing.T) {
 	}
 
 	dir := writeSelfHostAsmProject(t)
-	for _, name := range []string{"flatten.fern", "util.fern", "asm_load_run.fern"} {
+	for _, name := range []string{"flatten.fern", "checker.fern", "util.fern", "asm_load_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -94,6 +94,11 @@ func TestSelfHostStage2FixedPoint(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			// mmc1 / mmc2 are already built; each case just runs both
+			// stage binaries over an input and diffs the asm, so the
+			// cases are independent. Parallelize to spread the per-case
+			// subprocess compiles across the runner's cores.
+			t.Parallel()
 			asm1, err := exec.Command(mmc1, tc.args...).Output()
 			if err != nil {
 				t.Fatalf("mmc1: %v", err)

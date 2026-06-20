@@ -31,6 +31,7 @@ package ir
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -191,6 +192,38 @@ const (
 	// Calls.
 	OpCallDirect   // (args...)        → result | ()
 	OpCallIndirect // (args..., idx)   → result | ()
+
+	// `dyn Trait` runtime dispatch (docs/DYN-TRAITS.md §4.2.1).
+	//
+	// OpConstVtable pushes the i32 address of the static vtable for
+	// a (Trait, Concrete) pair — an array of i32 function-table
+	// indices, one slot per non-associated trait method in
+	// declaration order. The boxing of a concrete value into a
+	// `dyn Trait` lowers the concrete value (one word = data), then
+	// emits OpConstVtable, leaving the inline two-word `[data,
+	// vtable]` fat pointer on the stack. Trait/Concrete in Op.Str /
+	// Op.Str2.
+	OpConstVtable // () → i32 (vtable address)
+
+	// OpCallDyn dispatches a `dyn Trait` method call. Stack on entry
+	// is `[data, args..., vtable]`: the receiver data word, the
+	// (already-lowered) method args, and the receiver's vtable word
+	// on top. The backend pops the vtable, loads slot `Op.I32` (the
+	// method's index among the trait's non-associated methods,
+	// `+ slot*4`), and `call_indirect`s through the resulting table
+	// index with `[data, args...]`. Op.Sig is the receiver-first
+	// method signature (receiver = i32 concrete pointer, uniform
+	// across concrete types).
+	OpCallDyn // (data, args..., vtable) → result | ()
+
+	// OpBoxDyn packs a boxed one-word `dyn Trait` value on the native
+	// (ptrW==8) backends (docs/DYN-TRAITS.md §4.2.2). Stack on entry is
+	// `[data, vtable]` (vtable on top, just like the wasm inline form);
+	// the backend allocates a `2*ptrW`-byte heap cell via the normal
+	// `__fern_alloc` path, stores `data` at +0 and `vtable` at +ptrW,
+	// and pushes the single cell pointer. Never emitted on wasm, which
+	// keeps the inline two-word fat pointer instead.
+	OpBoxDyn // (data, vtable) → i32 (cell ptr)
 
 	// OpCallClosureDirect is the defunctionalised form of an
 	// OpCallIndirect whose receiver slot was provably mono-
@@ -462,6 +495,12 @@ func (k OpKind) String() string {
 		return "call"
 	case OpCallIndirect:
 		return "call_indirect"
+	case OpConstVtable:
+		return "const.vtable"
+	case OpCallDyn:
+		return "call_dyn"
+	case OpBoxDyn:
+		return "box_dyn"
 	case OpCallClosureDirect:
 		return "call_closure_direct"
 	case OpDrop:
@@ -548,8 +587,12 @@ type Op struct {
 	// signedness-agnostic — the flag has no effect there.
 	Unsigned bool
 	// Str carries OpConstStr's string value and OpCallDirect's callee
-	// name. Empty otherwise.
+	// name. For OpConstVtable it carries the Trait name. Empty otherwise.
 	Str string
+	// Str2 carries OpConstVtable's Concrete type name (Str holds the
+	// Trait); together they key the (Trait, Concrete) vtable. Empty
+	// for every other op.
+	Str2 string
 	// Sig is set on OpCallIndirect to the static signature of the
 	// function-typed local being dispatched through. Codegen uses it
 	// to resolve the right `(type $tN)` clause in the WAT output.
@@ -658,6 +701,44 @@ type ExternEnumParam struct {
 	RemapDisc     bool
 	PayloadType   ast.Type
 	PayloadOffset int32
+	// Variants is set for a MIXED-WIDTH variant (some payloaded arm is 32-bit
+	// core, another 64-bit — join i64, per-arm coerce) OR a MULTI-FIELD variant
+	// (some arm carries ≥2 payloads — join is SlotCount i32 slots). Indexed by
+	// variant/disc index. When nil the single-slot path applies (PayloadType is
+	// the join slot, PayloadOffset its box/area offset).
+	Variants []ExternEnumVariant
+	// SlotCount > 0 marks a MULTI-FIELD variant: the canonical join is SlotCount
+	// slots, one per payload position. Each arm's Fields give its payload box
+	// offsets (field j → slot j; arms with < SlotCount fields pad the trailing
+	// slots with 0). 0 ⇒ single-field (BoxOffset/Type) or non-Variants.
+	SlotCount int32
+	// SlotTypes is the per-slot canonical *join* type of a MULTI-FIELD variant
+	// (len == SlotCount): each slot j's type is the position-wise canonical join
+	// of every arm's field j (i32/f32 → i32; otherwise unequal → i64; equal → that
+	// type), which decides the slot's flat valtype + the param wrapper's load/coerce.
+	// For an all-i32 multi-field variant every slot is i32 (the original shape).
+	SlotTypes []ast.Type
+	// AreaSize is the canonical return-area size (bytes) of a MULTI-FIELD variant
+	// *result* — the variant memory layout `[disc][pad][payload]`, sized to the
+	// widest arm's tuple and 8-rounded for the alloc. 0 for non-multi-field.
+	AreaSize int32
+}
+
+// ExternEnumVariant is one arm's box payload descriptor for a mixed-width or
+// multi-field variant (see ExternEnumParam.Variants). For a mixed-width
+// (single-payload) variant, BoxOffset is the payload's box byte offset and Type
+// its scalar type (nil ⇒ payloadless). For a multi-field variant, Fields holds
+// the arm's payload box offsets in order (empty ⇒ payloadless), FieldTypes the
+// matching field types (for the width-aware load/coerce), and FieldAreaOffsets
+// the field's byte offset in the canonical result return-area (the arm's tuple
+// memory layout shifted past the discriminant). The wrapper branches on the disc
+// to load/store at the right offset(s).
+type ExternEnumVariant struct {
+	BoxOffset        int32
+	Type             ast.Type
+	Fields           []int32
+	FieldTypes       []ast.Type
+	FieldAreaOffsets []int32
 }
 
 // ExternRecordResult is the flattened layout of a record (struct) `@import`
@@ -694,12 +775,12 @@ type ExternRecordField struct {
 	Offset          int32
 	CanonicalOffset int32
 	Type            ast.Type
-	// DerefOffset supports a nested-record PARAM leaf: when ≥0, the leaf lives
-	// inside a nested composite whose value pointer is stored at this byte offset
-	// from the outer struct — the param wrapper loads `[[struct+DerefOffset]+
-	// Offset]` (deref then leaf load). -1 (the default for a direct field, and
-	// for every record-result field) means the leaf is at `[struct+Offset]`.
-	DerefOffset int32
+	// DerefPath supports a nested-record PARAM leaf to arbitrary depth: each entry
+	// is a byte offset to dereference, in order, before the final leaf load. An
+	// empty/nil path means a direct field (load at `[struct+Offset]`); a path of
+	// `[o0, o1, …]` loads `[[[…[struct+o0]+o1]…]+Offset]` (deref each offset, then
+	// the leaf at Offset). nil for a direct field and for every record-result field.
+	DerefPath []int32
 	// Nested supports a nested-record RESULT field (one level): when non-nil,
 	// this outer field is itself a record. Nested.Fields are the inner scalar
 	// leaves (their CanonicalOffset is the ABSOLUTE offset in the outer return
@@ -716,27 +797,6 @@ type ExternRecordField struct {
 // memory, which this slice doesn't lower. Each supported field flattens to one
 // core value, so the field count is the flat count.
 const maxFlatExternRecordFields = 16
-
-// externCompositeFieldTypes returns the in-order field/element types of a
-// record (struct) or tuple type — the composites the canonical ABI flattens to
-// their fields — or ok=false if t is neither, the struct is unknown, or any
-// field/element isn't a flattenable scalar (32-/64-bit integer or float;
-// sub-word ints, bool, strings, arrays, and nested composites are deferred).
-// A Fern tuple is laid out exactly like a struct (rc header + elements at
-// tupleElemLayout offsets, value = base + rc header), so both flatten the same
-// way; the elements are structural so no info lookup is needed for tuples.
-func externCompositeFieldTypes(t ast.Type, info *checker.Info) ([]ast.Type, bool) {
-	types, ok := compositeFieldTypes(t, info)
-	if !ok {
-		return nil, false
-	}
-	for _, ft := range types {
-		if !externRecordFieldSupported(ft) {
-			return nil, false
-		}
-	}
-	return types, true
-}
 
 // compositeFieldTypes returns the in-order field/element types of a record
 // (struct) or tuple type, WITHOUT the flattenable-scalar check — so a field that
@@ -762,14 +822,26 @@ func compositeFieldTypes(t ast.Type, info *checker.Info) ([]ast.Type, bool) {
 }
 
 // externRecordParamLeaves flattens a record/tuple `@import` PARAMETER to its
-// scalar leaves, recursing **one level** into a nested record/tuple field (the
-// canonical ABI flattens a nested record inline). Each leaf carries its load
-// path: a direct field is `{DerefOffset:-1, Offset}` (load at struct+Offset); a
-// field of a nested composite is `{DerefOffset:outerOff, Offset:innerOff}` (load
-// the inner value pointer at struct+outerOff, then the leaf at +innerOff). The
-// nested composite must itself be all flattenable scalars (a second level of
-// nesting is rejected). Total leaves capped at maxFlatExternRecordFields.
+// scalar leaves, recursing into nested record/tuple fields to **arbitrary depth**
+// (the canonical ABI flattens a nested record inline). Each leaf carries its load
+// path: a direct field is `{DerefPath:nil, Offset}` (load at struct+Offset); a
+// field nested N levels deep is `{DerefPath:[o0,…,o(N-1)], Offset:leaf}` (deref
+// each offset in turn from the outer struct, then load the leaf at +Offset).
+// Total leaves capped at maxFlatExternRecordFields.
 func externRecordParamLeaves(t ast.Type, info *checker.Info) ([]ExternRecordField, bool) {
+	leaves, ok := externParamLeavesRec(t, info, nil)
+	if !ok || len(leaves) == 0 || len(leaves) > maxFlatExternRecordFields {
+		return nil, false
+	}
+	return leaves, true
+}
+
+// externParamLeavesRec collects the scalar leaves of composite type `t`, with
+// `prefix` the chain of deref offsets reaching `t` from the outermost struct. A
+// scalar field becomes a leaf carrying `prefix` as its DerefPath; a nested
+// composite field extends the prefix by the field's offset and recurses. ok=false
+// if any field is neither a flattenable scalar nor a known composite.
+func externParamLeavesRec(t ast.Type, info *checker.Info, prefix []int32) ([]ExternRecordField, bool) {
 	top, ok := compositeFieldTypes(t, info)
 	if !ok || len(top) == 0 {
 		return nil, false
@@ -778,20 +850,17 @@ func externRecordParamLeaves(t ast.Type, info *checker.Info) ([]ExternRecordFiel
 	var leaves []ExternRecordField
 	for i, ft := range top {
 		if externRecordFieldSupported(ft) {
-			leaves = append(leaves, ExternRecordField{DerefOffset: -1, Offset: topOffs[i], Type: ft})
+			leaves = append(leaves, ExternRecordField{DerefPath: prefix, Offset: topOffs[i], Type: ft})
 			continue
 		}
-		inner, innerOK := externCompositeFieldTypes(ft, info) // requires all-scalar (one level)
-		if !innerOK || len(inner) == 0 {
+		// Nested composite: extend the deref path by this field's offset (a fresh
+		// slice so siblings/leaves never alias) and recurse.
+		childPrefix := append(append([]int32{}, prefix...), topOffs[i])
+		sub, subOK := externParamLeavesRec(ft, info, childPrefix)
+		if !subOK {
 			return nil, false
 		}
-		innerOffs, _ := tupleElemLayout(inner, 4)
-		for j, it := range inner {
-			leaves = append(leaves, ExternRecordField{DerefOffset: topOffs[i], Offset: innerOffs[j], Type: it})
-		}
-	}
-	if len(leaves) == 0 || len(leaves) > maxFlatExternRecordFields {
-		return nil, false
+		leaves = append(leaves, sub...)
 	}
 	return leaves, true
 }
@@ -834,16 +903,32 @@ func externEnumParamLayout(t ast.Type, info *checker.Info, ptrW int) (*ExternEnu
 // externVariantParamLayout describes a general user-enum `@import` PARAMETER
 // that flattens like Result: (disc, payload). It accepts a user enum (named in
 // info.Enums) with at least one payloaded variant, where every payloaded variant
-// carries exactly one scalar payload and all those payloads are the same
-// kind+width T; payloadless variants are allowed. The canonical `variant`
-// flattens to (disc:i32, payload-join), and with a uniform T the join is T — so
-// it reuses the (disc, payload) param wrapper with no discriminant remap (the
-// user-enum variant index is the WIT case order). Option/Result are handled by
-// externEnumParamLayout; an all-payloadless enum by externPlainEnumParam (this
-// requires ≥1 payloaded variant). Non-uniform / multi-payload variants are
-// deferred. The wrapper reads the tag at +0 and the payload at PayloadOffset;
-// for a payloadless-case value (a sentinel) the payload read yields ignored
-// garbage (the host drops it for that disc), so it's harmless.
+// carries exactly one scalar payload; payloadless variants are allowed. The
+// canonical `variant` flattens to (disc:i32, payload-join).
+//
+// Three payload shapes are lowered:
+//   - Uniform: every payload is the same kind+width T, so the canonical join is
+//     T and PayloadType is T (an f32 payload passes as an f32, etc.).
+//   - Non-uniform but same core WIDTH (e.g. `{ i(s32), f(f32) }` — both 32-bit,
+//     or `{ l(s64), d(f64) }` — both 64-bit): the canonical join is the integer
+//     bit-container of that width (i32 or i64), so PayloadType is that synthetic
+//     int. Lowering just moves the payload's bits (`i32.load`/`i64.load` of the
+//     box slot); the consumer reinterprets per the disc. This works without any
+//     per-arm branch because same-width payloads sit at the same box offset and
+//     a bit-load is value-preserving for both int and float arms.
+//   - Mixed core WIDTH (a 32-bit and a 64-bit arm, e.g. `{ i(s32), l(s64) }`):
+//     the canonical join is i64, and each arm lives at its OWN box offset and
+//     needs coercion (a 32-bit arm extends to / wraps from i64). PayloadType is
+//     i64 and Variants carries each arm's box offset + type; the wrapper branches
+//     on the disc to load/store at the right offset+width (appendVariantParam-
+//     PayloadI64 / appendVariantResultStore).
+//
+// Multi-payload (multi-field) variants are still deferred. Option/Result are
+// handled by externEnumParamLayout; an all-payloadless enum by externPlainEnumParam
+// (this requires ≥1 payloaded variant). The wrapper reads the tag at +0; for a
+// payloadless-case
+// value (a sentinel) the payload read yields ignored garbage (the host drops it
+// for that disc), so it's harmless.
 func externVariantParamLayout(t ast.Type, info *checker.Info, ptrW int) (*ExternEnumParam, bool) {
 	et, ok := t.(ast.EnumType)
 	if !ok {
@@ -853,31 +938,137 @@ func externVariantParamLayout(t ast.Type, info *checker.Info, ptrW int) (*Extern
 	if !ok || len(ed.Variants) == 0 {
 		return nil, false
 	}
-	var payload ast.Type
+	maxFields := 0
 	anyPayloaded := false
 	for _, v := range ed.Variants {
-		switch len(v.Payloads) {
-		case 0:
-			// payloadless — allowed
-		case 1:
-			if !externRecordFieldSupported(v.Payloads[0]) {
-				return nil, false
-			}
-			if payload == nil {
-				payload = v.Payloads[0]
-			} else if !externScalarTypeEq(payload, v.Payloads[0]) {
-				return nil, false // non-uniform payloads — deferred
-			}
+		if len(v.Payloads) > maxFields {
+			maxFields = len(v.Payloads)
+		}
+		if len(v.Payloads) >= 1 {
 			anyPayloaded = true
-		default:
-			return nil, false // multi-payload variant — deferred
 		}
 	}
 	if !anyPayloaded {
 		return nil, false // all-payloadless ⇒ a plain enum (externPlainEnumParam)
 	}
-	offs, _ := payloadLayout([]ast.Type{payload}, 1, ptrW)
-	return &ExternEnumParam{RemapDisc: false, PayloadType: payload, PayloadOffset: offs[0]}, true
+	if maxFields >= 2 {
+		// Multi-field variant: a WIT case wraps ≥2 values in a tuple, which the
+		// canonical ABI joins position-wise into maxFields flat slots. Each slot j's
+		// join type is the fold of join(field-j) over every arm (i32/f32 → i32;
+		// other unequal pairs → i64; equal → that type), so a slot may be i32, i64,
+		// f32, or f64. The param side pushes each slot from the matched arm's box
+		// field, coercing to the slot type; the result side reads the canonical
+		// variant *memory* layout (each arm's tuple packed past the discriminant).
+		// Scoped to 32-/64-bit numeric/float fields (sub-word fields would pack at
+		// 1-/2-byte canonical sizes — a separate slice). Each arm: field j → slot j;
+		// shorter arms pad trailing slots with 0.
+		variants := make([]ExternEnumVariant, len(ed.Variants))
+		slots := make([]ast.Type, maxFields)
+		haveSlot := make([]bool, maxFields)
+		payloadAlign := int32(1)
+		for i, v := range ed.Variants {
+			for _, p := range v.Payloads {
+				if !externMultiFieldVariantFieldOK(p) {
+					return nil, false // sub-word / unsupported field in a multi-field arm
+				}
+			}
+			if len(v.Payloads) == 0 {
+				continue
+			}
+			boxOffs, _ := payloadLayout(v.Payloads, len(v.Payloads), ptrW)
+			variants[i] = ExternEnumVariant{
+				Fields:     boxOffs,
+				FieldTypes: append([]ast.Type{}, v.Payloads...),
+			}
+			for j, p := range v.Payloads {
+				if a := externCanonicalFieldSizeAlign(p); a > payloadAlign {
+					payloadAlign = a
+				}
+				ft := externCanonicalFlatType(p)
+				if !haveSlot[j] {
+					slots[j], haveSlot[j] = ft, true
+				} else {
+					slots[j] = externCanonicalFlatJoin(slots[j], ft)
+				}
+			}
+		}
+		// Canonical variant memory layout (result side): a 1-byte discriminant
+		// (≤256 cases — the multi-field scope), then the payload aligned to the
+		// widest field. Each arm's fields sit at its own tuple offsets past there.
+		payloadOff := alignUp(1, payloadAlign)
+		areaSize := payloadOff
+		for i, v := range ed.Variants {
+			if len(v.Payloads) == 0 {
+				continue
+			}
+			areaOffs := make([]int32, len(v.Payloads))
+			pos := payloadOff
+			for j, p := range v.Payloads {
+				sz := externCanonicalFieldSizeAlign(p)
+				pos = alignUp(pos, sz)
+				areaOffs[j] = pos
+				pos += sz
+			}
+			variants[i].FieldAreaOffsets = areaOffs
+			if pos > areaSize {
+				areaSize = pos
+			}
+		}
+		areaSize = alignUp(areaSize, 8) // __fern_alloc is 8-aligned; covers a max-width load
+		return &ExternEnumParam{
+			RemapDisc:   false,
+			PayloadType: ast.NumberType{Width: 32, Signed: true},
+			SlotCount:   int32(maxFields),
+			SlotTypes:   slots,
+			AreaSize:    areaSize,
+			Variants:    variants,
+		}, true
+	}
+	// Single-field arms (0 or 1 payload each).
+	var firstPayload ast.Type
+	uniform := true
+	mixedWidth := false
+	for _, v := range ed.Variants {
+		if len(v.Payloads) != 1 {
+			continue
+		}
+		p := v.Payloads[0]
+		if !externRecordFieldSupported(p) {
+			return nil, false
+		}
+		if firstPayload == nil {
+			firstPayload = p
+		} else {
+			if externCanonicalCoreWidth(firstPayload) != externCanonicalCoreWidth(p) {
+				mixedWidth = true // 32-bit and 64-bit arms — join is i64, per-arm coerce
+			}
+			if !externScalarTypeEq(firstPayload, p) {
+				uniform = false // non-uniform — join is a bit-container
+			}
+		}
+	}
+	if mixedWidth {
+		// The canonical join of a mixed-width arm set is i64; each arm is coerced
+		// to/from it (a 32-bit arm extends/wraps) and lives at its own box offset.
+		i64Slot := ast.NumberType{Width: 64, Signed: true}
+		areaOffs, _ := payloadLayout([]ast.Type{i64Slot}, 1, ptrW)
+		variants := make([]ExternEnumVariant, len(ed.Variants))
+		for i, v := range ed.Variants {
+			if len(v.Payloads) == 1 {
+				boxOffs, _ := payloadLayout([]ast.Type{v.Payloads[0]}, 1, ptrW)
+				variants[i] = ExternEnumVariant{BoxOffset: boxOffs[0], Type: v.Payloads[0]}
+			}
+		}
+		return &ExternEnumParam{RemapDisc: false, PayloadType: i64Slot, PayloadOffset: areaOffs[0], Variants: variants}, true
+	}
+	// Single-slot path: the canonical join slot is the payload type itself when
+	// uniform, else the integer bit-container of the shared core width.
+	slot := firstPayload
+	if !uniform {
+		slot = ast.NumberType{Width: int(externCanonicalCoreWidth(firstPayload)), Signed: true}
+	}
+	offs, _ := payloadLayout([]ast.Type{slot}, 1, ptrW)
+	return &ExternEnumParam{RemapDisc: false, PayloadType: slot, PayloadOffset: offs[0]}, true
 }
 
 // externVariantResultLayout describes a general user-enum `@import` RESULT that
@@ -937,6 +1128,109 @@ func externScalarTypeEq(a, b ast.Type) bool {
 	return false
 }
 
+// externCanonicalCoreWidth returns the canonical core width (32 or 64) a scalar
+// flattens to: 64 for a 64-bit integer or f64, 32 for everything narrower (i8…i32,
+// bool, f32). Two scalars of the same core width share a single canonical flat
+// slot — and, since a Fern enum box lays out same-width payloads at the same
+// offset, a single box payload offset — which is what lets a non-uniform variant
+// with same-width arms reuse the one-slot (disc, payload) wrapper.
+func externCanonicalCoreWidth(t ast.Type) int32 {
+	switch x := t.(type) {
+	case ast.NumberType:
+		if x.NormalWidth() == 64 {
+			return 64
+		}
+	case ast.FloatType:
+		if x.NormalWidth() == 64 {
+			return 64
+		}
+	}
+	return 32
+}
+
+// externMultiFieldVariantFieldOK gates a field type a multi-field `variant` arm
+// may carry: a 32-/64-bit integer or a float. Each flattens to a single core
+// value (i32/i64/f32/f64) and packs at its natural 4-/8-byte size + alignment in
+// the canonical memory layout, so the join + return-area offset arithmetic stays
+// width-only. Sub-word integers (s8/s16/u8/u16) — which the canonical ABI packs
+// at 1/2 bytes — are deferred for multi-field arms.
+func externMultiFieldVariantFieldOK(t ast.Type) bool {
+	switch x := t.(type) {
+	case ast.NumberType:
+		w := x.NormalWidth()
+		return w == 32 || w == 64
+	case ast.FloatType:
+		return true
+	}
+	return false
+}
+
+// externCanonicalFlatType returns the canonical flat type a scalar lowers to:
+// i64 for a 64-bit integer, f64 for an f64, f32 for an f32, and i32 for every
+// narrower integer. It is the per-position input to externCanonicalFlatJoin.
+func externCanonicalFlatType(t ast.Type) ast.Type {
+	switch x := t.(type) {
+	case ast.FloatType:
+		if x.NormalWidth() == 64 {
+			return ast.FloatType{Width: 64}
+		}
+		return ast.FloatType{Spelling: "f32"}
+	case ast.NumberType:
+		if x.NormalWidth() == 64 {
+			return ast.NumberType{Width: 64, Signed: true}
+		}
+	}
+	return ast.NumberType{Width: 32, Signed: true}
+}
+
+// externCanonicalFlatJoin computes the Component-Model `join` of two canonical
+// flat types (each already i32/i64/f32/f64 from externCanonicalFlatType): equal
+// types join to themselves; an {i32, f32} pair joins to i32 (a 32-bit bit
+// container); every other unequal pair joins to i64.
+func externCanonicalFlatJoin(a, b ast.Type) ast.Type {
+	ka, kb := externFlatKind(a), externFlatKind(b)
+	if ka == kb {
+		return a
+	}
+	if (ka == flatI32 && kb == flatF32) || (ka == flatF32 && kb == flatI32) {
+		return ast.NumberType{Width: 32, Signed: true}
+	}
+	return ast.NumberType{Width: 64, Signed: true}
+}
+
+// flatKind enumerates the four canonical flat core types.
+const (
+	flatI32 = iota
+	flatI64
+	flatF32
+	flatF64
+)
+
+// externFlatKind classifies a canonical flat type into one of the four core
+// kinds (flatI32/flatI64/flatF32/flatF64).
+func externFlatKind(t ast.Type) int {
+	switch x := t.(type) {
+	case ast.FloatType:
+		if x.NormalWidth() == 64 {
+			return flatF64
+		}
+		return flatF32
+	case ast.NumberType:
+		if x.NormalWidth() == 64 {
+			return flatI64
+		}
+	}
+	return flatI32
+}
+
+// alignUp rounds x up to the next multiple of a (a power of two ≥ 1).
+func alignUp(x, a int32) int32 {
+	if a <= 1 {
+		return x
+	}
+	return (x + a - 1) / a * a
+}
+
 // externRecordFieldSupported reports whether a record/tuple field type is one
 // this slice flattens as a PARAMETER: an 8-/16-/32-/64-bit integer or a float.
 // Each flattens to a single core value — i64 for a 64-bit int, f32/f64 for
@@ -990,62 +1284,24 @@ func externRecordLayout(t ast.Type, info *checker.Info) ([]ExternRecordField, bo
 // `p.field` read finds it) and its CanonicalOffset (the canonical memory layout
 // of the return area, where sub-word fields pack tighter). For word-only records
 // the two coincide.
+// externFieldsAllFlat reports whether every field is a direct scalar (no nested
+// composite) — the shape the P6 tuple-result export wrapper handles.
+func externFieldsAllFlat(fields []ExternRecordField) bool {
+	for i := range fields {
+		if fields[i].Nested != nil {
+			return false
+		}
+	}
+	return true
+}
+
 func externRecordResultLayout(t ast.Type, info *checker.Info) (*ExternRecordResult, bool) {
 	top, ok := compositeFieldTypes(t, info)
 	if !ok || len(top) < 1 || len(top) > maxFlatExternRecordFields {
 		return nil, false
 	}
-	fernOffs, fernSize := tupleElemLayout(top, 4)
-	fields := make([]ExternRecordField, 0, len(top))
-	canonPos := int32(0)
-	maxAlign := int32(1)
-	leaves := 0
-	for i, ft := range top {
-		if externRecordFieldSupported(ft) { // direct scalar leaf
-			sz := externCanonicalFieldSizeAlign(ft)
-			if sz > maxAlign {
-				maxAlign = sz
-			}
-			canonPos = alignUpI32(canonPos, sz)
-			fields = append(fields, ExternRecordField{Offset: fernOffs[i], CanonicalOffset: canonPos, Type: ft, DerefOffset: -1})
-			canonPos += sz
-			leaves++
-			continue
-		}
-		// Nested record (one level): its scalar fields are laid out inline in the
-		// canonical area at the nested record's alignment; on the Fern side they
-		// live in a separate inner struct whose pointer is the outer field.
-		inner, innerOK := externCompositeFieldTypes(ft, info)
-		if !innerOK || len(inner) == 0 {
-			return nil, false
-		}
-		innerFernOffs, innerFernSize := tupleElemLayout(inner, 4)
-		innerAlign := int32(1)
-		for _, it := range inner {
-			if a := externCanonicalFieldSizeAlign(it); a > innerAlign {
-				innerAlign = a
-			}
-		}
-		if innerAlign > maxAlign {
-			maxAlign = innerAlign
-		}
-		canonPos = alignUpI32(canonPos, innerAlign)
-		innerLeaves := make([]ExternRecordField, len(inner))
-		for j, it := range inner {
-			sz := externCanonicalFieldSizeAlign(it)
-			canonPos = alignUpI32(canonPos, sz)
-			innerLeaves[j] = ExternRecordField{Offset: innerFernOffs[j], CanonicalOffset: canonPos, Type: it, DerefOffset: -1}
-			canonPos += sz
-			leaves++
-		}
-		canonPos = alignUpI32(canonPos, innerAlign)
-		fields = append(fields, ExternRecordField{
-			Offset:      fernOffs[i],
-			DerefOffset: -1,
-			Nested:      &ExternRecordResult{Fields: innerLeaves, Size: innerFernSize},
-		})
-	}
-	if leaves < 1 || leaves > maxFlatExternRecordFields {
+	fields, fernSize, canonEnd, maxAlign, leaves, ok := externResultLayoutRec(top, info, 0)
+	if !ok || leaves < 1 || leaves > maxFlatExternRecordFields {
 		return nil, false
 	}
 	directScalar := len(fields) == 1 && fields[0].Nested == nil
@@ -1055,8 +1311,84 @@ func externRecordResultLayout(t ast.Type, info *checker.Info) (*ExternRecordResu
 		// struct, so reject a single-leaf-via-nested record (a niche shape).
 		return nil, false
 	}
-	csize := alignUpI32(canonPos, maxAlign)
+	csize := alignUpI32(canonEnd, maxAlign)
 	return &ExternRecordResult{Fields: fields, Size: fernSize, CanonicalSize: csize, Direct: directScalar && leaves == 1}, true
+}
+
+// externResultLayoutRec lays out the in-order field/element types `top` of a
+// composite result into the canonical return area starting at byte `canonStart`,
+// returning the per-field layout, the composite's Fern struct size (4-byte
+// slots), the end canonical position, the composite's max field alignment, the
+// total scalar-leaf count, and ok. A scalar field is placed directly (Fern slot
+// Offset + CanonicalOffset). A nested composite field recurses **to arbitrary
+// depth**: the canonical ABI inlines the nested record's leaves at the nested
+// record's alignment, while on the Fern side it lives in a separate inner struct
+// (ExternRecordField.Nested) whose pointer is the outer field. ok=false if any
+// field is neither a flattenable scalar nor a known composite.
+func externResultLayoutRec(top []ast.Type, info *checker.Info, canonStart int32) (fields []ExternRecordField, fernSize, canonEnd, maxAlign int32, leaves int, ok bool) {
+	fernOffs, fernSize := tupleElemLayout(top, 4)
+	fields = make([]ExternRecordField, 0, len(top))
+	canonPos := canonStart
+	maxAlign = 1
+	for i, ft := range top {
+		if externRecordFieldSupported(ft) { // direct scalar leaf
+			sz := externCanonicalFieldSizeAlign(ft)
+			if sz > maxAlign {
+				maxAlign = sz
+			}
+			canonPos = alignUpI32(canonPos, sz)
+			fields = append(fields, ExternRecordField{Offset: fernOffs[i], CanonicalOffset: canonPos, Type: ft})
+			canonPos += sz
+			leaves++
+			continue
+		}
+		// Nested composite: align to its own alignment, recurse to lay out its
+		// leaves inline, then round its end up to its alignment (canonical struct
+		// tail padding).
+		inner, innerOK := compositeFieldTypes(ft, info)
+		if !innerOK || len(inner) == 0 {
+			return nil, 0, 0, 0, 0, false
+		}
+		innerAlign := externCompositeAlign(ft, info)
+		if innerAlign > maxAlign {
+			maxAlign = innerAlign
+		}
+		canonPos = alignUpI32(canonPos, innerAlign)
+		innerFields, innerFernSize, innerEnd, _, innerLeaves, innerRecOK := externResultLayoutRec(inner, info, canonPos)
+		if !innerRecOK {
+			return nil, 0, 0, 0, 0, false
+		}
+		canonPos = alignUpI32(innerEnd, innerAlign)
+		leaves += innerLeaves
+		fields = append(fields, ExternRecordField{
+			Offset: fernOffs[i],
+			Nested: &ExternRecordResult{Fields: innerFields, Size: innerFernSize},
+		})
+	}
+	return fields, fernSize, canonPos, maxAlign, leaves, true
+}
+
+// externCompositeAlign returns the canonical-ABI alignment of a composite type:
+// the max alignment of its fields, recursing into nested composites. Returns 1
+// for a non-composite (the caller only uses it on composite fields).
+func externCompositeAlign(t ast.Type, info *checker.Info) int32 {
+	types, ok := compositeFieldTypes(t, info)
+	if !ok {
+		return 1
+	}
+	a := int32(1)
+	for _, ft := range types {
+		var fa int32
+		if externRecordFieldSupported(ft) {
+			fa = externCanonicalFieldSizeAlign(ft)
+		} else {
+			fa = externCompositeAlign(ft, info)
+		}
+		if fa > a {
+			a = fa
+		}
+	}
+	return a
 }
 
 // alignUpI32 rounds n up to a multiple of a (a a power of two ≥ 1).
@@ -1102,6 +1434,22 @@ type ExternExport struct {
 	Name    string
 	Iface   string
 	WITName string
+	// ResultEnum is the option/result layout when an `@export` returns an
+	// Option[T] / Result[T,E] (a WIT `option` / `result`), else nil. The
+	// canonical sum flattens to (disc, payload) > 1 core value, so the result is
+	// returned indirectly through a return area; the wasm backend surfaces a
+	// wrapper that reads the Fern enum box and writes (disc:u8@0, payload@off),
+	// with the option discriminant remapped (P6 — docs/WIT-BRING-YOUR-OWN.md).
+	// Resolved here during lowering, where checker.Info is in scope.
+	ResultEnum *ExternEnumParam
+	// ResultTuple is the layout when an `@export` returns a tuple `(A, B, …)` (a
+	// WIT `tuple`), else nil. A multi-element tuple flattens to > 1 core value, so
+	// it returns indirectly through a return area; the wasm backend surfaces a
+	// wrapper that reads the Fern tuple's elements and writes them at the
+	// canonical offsets (P6). Records (named WIT types) are deferred — they need
+	// the exported-instance type-export machinery — so this is set only for
+	// tuples. Resolved here during lowering, where checker.Info is in scope.
+	ResultTuple *ExternRecordResult
 }
 
 // Program is the lowered form of an entire ast.Program.
@@ -1133,6 +1481,48 @@ type Program struct {
 	// passes (Inline / FlattenBranches / codegen) don't have to
 	// re-derive target-awareness from configuration.
 	PtrW int
+	// Vtables lists the per-(trait, concrete-type) method dispatch
+	// tables a `dyn Trait` value's vtable word points at — one entry
+	// per concrete type that implements a trait used in a `dyn` type
+	// anywhere in the program. Each backend emits these as static data
+	// (a pointer/table-index array of the impl methods in trait
+	// declaration order) and a `dyn` method call loads slot k from the
+	// receiver's vtable word. Populated by collectVtables once the
+	// compiled-backend `dyn` slices wire it in; nil until then (the IR
+	// still rejects `dyn` on compiled backends — docs/DYN-TRAITS.md §4.2).
+	Vtables []VtableDecl
+}
+
+// VtableDecl is the static dispatch table for one (trait, concrete-type)
+// pair: the concrete type's implementations of the trait's methods, in
+// the trait's declaration order, so slot k is always the same method for
+// every type implementing the trait. A `dyn Trait` fat pointer's vtable
+// word points at the emitted table for its boxed concrete type.
+type VtableDecl struct {
+	Trait    string         // trait name (mangled, as in Info.Traits)
+	Concrete string         // concrete type name (mangled, as in Info.Impls)
+	Methods  []VtableMethod // dispatchable methods, trait declaration order
+	// Drop is the concrete type's recursive-drop function name
+	// (dropFnNameFor(C) → __drop_struct_<C> / __drop_enum_<…> /
+	// __drop_tuple_<…>), or "" when C needs no drop (a flat scalar
+	// struct). The RC slices (docs/DYN-TRAITS.md §4.4) emit this as a
+	// TRAILING vtable slot at index len(Methods) — a backend's drop
+	// helper reads vtable[len(Methods)] and call_indirects it (or
+	// skips on a null sentinel) to run the erased concrete destructor.
+	// Trailing keeps the method slot indices (0..n-1) unchanged, so
+	// OpCallDyn's slot math is untouched and a backend that hasn't
+	// wired RC yet simply omits the slot (harmless). For a merged
+	// `dyn A + B` vtable the drop slot is at the MERGED method count
+	// (len(Methods) across the whole set).
+	Drop string
+}
+
+// VtableMethod is one slot of a VtableDecl: the trait method name and the
+// mangled concrete function that implements it (the `recv`-taking flat
+// function every backend already emits for a receiver method).
+type VtableMethod struct {
+	Method string // trait method name (slot identity)
+	Func   string // mangled impl function, e.g. "__method_Circle_area"
 }
 
 // String prints the program in a textual form useful for tests and
@@ -1177,6 +1567,10 @@ func formatOp(op Op) string {
 		return fmt.Sprintf("%s %s argc=%d", op.Kind, op.Str, op.I32)
 	case OpCallIndirect:
 		return fmt.Sprintf("%s argc=%d", op.Kind, op.I32)
+	case OpConstVtable:
+		return fmt.Sprintf("%s %s/%s", op.Kind, op.Str, op.Str2)
+	case OpCallDyn:
+		return fmt.Sprintf("%s slot=%d", op.Kind, op.I32)
 	case OpMakeClosure, OpMakeEnv:
 		return fmt.Sprintf("%s %s caps=%d", op.Kind, op.Str, op.I32)
 	}
@@ -1195,6 +1589,86 @@ func formatOp(op Op) string {
 // has to deal with a flat program of top-level functions.
 func Lower(prog *ast.Program, info *checker.Info) (*Program, error) {
 	return LowerWith(prog, info, 4)
+}
+
+// dynSigResolver returns a type-rewriter that resolves a dyn-call signature's
+// generic type parameters (`T`) and pinned associated types (`Self::Item`)
+// against the receiver's pins — so OpCallDyn's signature is concrete (the wasm
+// seam can't classify a bare ParamType / ProjType). `dynTrait` is the owning
+// trait; `mcs` carries the receiver `DynTraitType` (with Args / AssocBindings).
+// A nil/empty-pin receiver yields an identity rewriter.
+func dynSigResolver(info *checker.Info, dynTrait string, mcs *ast.MethodCallSite) func(ast.Type) ast.Type {
+	typeParams := map[string]ast.Type{}
+	assoc := map[string]ast.Type{}
+	if mcs != nil {
+		if dt, ok := mcs.Receiver.(ast.DynTraitType); ok {
+			for i, tr := range dt.Traits {
+				if tr != dynTrait {
+					continue
+				}
+				if td, ok := info.Traits[tr]; ok {
+					args := dt.ArgsFor(i)
+					for k, tp := range td.TypeParams {
+						if k < len(args) {
+							typeParams[tp] = args[k]
+						}
+					}
+				}
+				for _, b := range dt.AssocFor(i) {
+					assoc[b.Name] = b.Type
+				}
+				break
+			}
+		}
+	}
+	if len(typeParams) == 0 && len(assoc) == 0 {
+		return func(t ast.Type) ast.Type { return t }
+	}
+	var rw func(ast.Type) ast.Type
+	rw = func(t ast.Type) ast.Type {
+		switch x := t.(type) {
+		case ast.ParamType:
+			if r, ok := typeParams[x.Name]; ok {
+				return r
+			}
+			return t
+		case ast.ProjType:
+			if r, ok := assoc[x.Name]; ok {
+				return r
+			}
+			return ast.ProjType{Base: rw(x.Base), Name: x.Name}
+		case ast.ArrayType:
+			return ast.ArrayType{Elem: rw(x.Elem)}
+		case ast.SliceType:
+			return ast.SliceType{Elem: rw(x.Elem)}
+		case ast.TupleType:
+			out := ast.TupleType{Elems: make([]ast.Type, len(x.Elems))}
+			for i := range x.Elems {
+				out.Elems[i] = rw(x.Elems[i])
+			}
+			return out
+		case ast.StructType:
+			if len(x.Args) == 0 {
+				return x
+			}
+			args := make([]ast.Type, len(x.Args))
+			for i := range x.Args {
+				args[i] = rw(x.Args[i])
+			}
+			return ast.StructType{Name: x.Name, Args: args}
+		case ast.EnumType:
+			if len(x.Args) == 0 {
+				return x
+			}
+			args := make([]ast.Type, len(x.Args))
+			for i := range x.Args {
+				args[i] = rw(x.Args[i])
+			}
+			return ast.EnumType{Name: x.Name, Args: args}
+		}
+		return t
+	}
+	return rw
 }
 
 // typeHasDynTrait reports whether a type is, or nests, a `dyn Trait`.
@@ -1263,20 +1737,781 @@ func rejectDynTrait(prog *ast.Program) error {
 	return nil
 }
 
+// rejectDowncast scans a program for any `e as? T` downcast
+// (DowncastExpr) that this backend cannot lower. The fallible downcast
+// lowers to a runtime vtable-pointer compare reusing the slice-2 vtable
+// infrastructure (docs/DYN-TRAITS.md §9), so it is supported on every
+// backend that supports `dyn` (dynSupported). Two cases still reject
+// cleanly rather than miscompiling:
+//
+//   - a backend that has NOT lifted its `dyn` gate (!dynSupported) — the
+//     vtable infrastructure the compare needs isn't emitted there;
+//   - a non-struct/enum (primitive/string) downcast target — slice-1
+//     scope is struct/enum only (the checker already blocks primitives
+//     with E060; this is a defensive belt-and-braces guard).
+func rejectDowncast(prog *ast.Program, info *checker.Info, dynSupported bool) error {
+	const unsupportedBackend = "'as?' downcast (dyn Trait → concrete) is not yet supported on this backend; run it on the interpreter (fern -interp)"
+	const primTarget = "'as?' downcast target must be a concrete struct or enum (slice 1); primitive targets are not yet supported on compiled backends"
+	var rejected error
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		dc, ok := n.(*ast.DowncastExpr)
+		if !ok {
+			return true
+		}
+		if !dynSupported {
+			rejected = fmt.Errorf("ir: %s", unsupportedBackend)
+			return false
+		}
+		// Multi-trait `dyn A + B` downcast lowers via the MERGED-vtable
+		// address (dynVtableSetKey(dc.Traits)) — the same merged cell a
+		// multi-trait coercion of T stores — so the vtable-pointer compare
+		// is exact for any trait set (docs/DYN-TRAITS.md §10). emitDowncast
+		// keys OpConstVtable by the set, byte-identical to single-trait for
+		// a 1-element set (dynVtableSetKey of a 1-element set is the bare
+		// trait name).
+		// Struct/enum target only (slice-1 scope). A primitive/string
+		// target carries no runtime type tag in the compiled
+		// representations, so the vtable-pointer compare can't recover it.
+		if name, ok := downcastTargetName(dc.Target); !ok || isPrimitiveConcrete(info, name) {
+			rejected = fmt.Errorf("ir: %s", primTarget)
+			return false
+		}
+		return true
+	})
+	return rejected
+}
+
+// downcastTargetName returns the concrete type-name string for a
+// struct/enum downcast target (the `T` in `e as? T`), matching the
+// spelling collectVtables / OpConstVtable use for the (trait,concrete)
+// vtable. Returns ("", false) for any non-struct/enum target.
+func downcastTargetName(t ast.Type) (string, bool) {
+	switch x := t.(type) {
+	case ast.StructType:
+		return x.Name, true
+	case ast.EnumType:
+		return x.Name, true
+	}
+	return "", false
+}
+
+// dynVtableSetKey returns the canonical key string for a (possibly
+// multi-trait) `dyn` trait set, used as the `VtableDecl.Trait` /
+// `OpConstVtable.Str` identity for a MERGED vtable. The traits are
+// joined in their already-sorted set order with '+' (which can never
+// appear in a Fern identifier or a mangled name, so the join is
+// unambiguous). A single-trait set returns the bare trait name
+// UNCHANGED — so single-trait vtable keys, OpConstVtable emission, and
+// backend lookups are byte-for-byte identical to before merged vtables
+// existed (docs/DYN-TRAITS.md §10).
+func dynVtableSetKey(traits []string) string {
+	if len(traits) == 1 {
+		return traits[0]
+	}
+	return strings.Join(traits, "+")
+}
+
+// dynDropFnName returns the per-trait-set `__drop_dyn_<set>` destructor
+// helper symbol for a `dyn` value (docs/DYN-TRAITS.md §4.4). The set key
+// can contain '+' (the multi-trait join, e.g. "A+B"); '+' is fine as a
+// wasm function name but is NOT a valid GAS assembler-label character, so
+// it is sanitized to "_x_" here — the SAME transform dynVtableLabel applies
+// to native vtable cell labels. The transform is applied at every site that
+// names the helper (the definition in buildDynDropHelpers and the
+// OpCallDirect targets in the dec/drop arms), so the symbol is consistent.
+// A single-trait set is a bare trait name (no '+'), so single-trait helper
+// names are byte-for-byte unchanged.
+func dynDropFnName(traits []string) string {
+	return "__drop_dyn_" + strings.ReplaceAll(dynVtableSetKey(traits), "+", "_x_")
+}
+
+// dynTraitSetsUsed collects every `dyn` trait SET (the whole sorted
+// trait list) named in a `dyn Trait` / `dyn A + B` type anywhere in the
+// program — function signatures, local-var annotations, struct fields,
+// enum-variant payloads, cast targets, and nested inside composite types
+// (a `dyn Trait` type-argument like `Result[_, dyn E]`, or a `dyn Trait`
+// field/payload). The result maps the set key (dynVtableSetKey) → the
+// sorted trait list, so collectVtables can emit one merged vtable per
+// multi-trait set actually used. Single-trait sets are included too (key
+// == the trait name). Missing one makes its vtable cell emit empty and a
+// dispatch on such a value calls a garbage pointer (see #3213).
+func dynTraitSetsUsed(prog *ast.Program) map[string][]string {
+	sets := map[string][]string{}
+	record := func(traits []string) {
+		if len(traits) == 0 {
+			return
+		}
+		sets[dynVtableSetKey(traits)] = traits
+	}
+	var walk func(t ast.Type)
+	walk = func(t ast.Type) {
+		switch x := t.(type) {
+		case ast.DynTraitType:
+			record(x.Traits)
+		case ast.ArrayType:
+			walk(x.Elem)
+		case ast.SliceType:
+			walk(x.Elem)
+		case ast.TupleType:
+			for _, e := range x.Elems {
+				walk(e)
+			}
+		case ast.StructType:
+			// `dyn` nested in a generic struct's type-argument, e.g.
+			// `Holder[dyn Shape]`.
+			for _, a := range x.Args {
+				walk(a)
+			}
+		case ast.EnumType:
+			// `dyn` nested in an enum's type-argument — the common case
+			// being `Result[_, dyn Error]` / `Option[dyn Shape]`.
+			for _, a := range x.Args {
+				walk(a)
+			}
+		case *ast.FuncType:
+			for _, p := range x.Params {
+				walk(p)
+			}
+			walk(x.Result)
+		}
+	}
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.FuncDecl:
+			for _, p := range x.Params {
+				walk(p.Type)
+			}
+			walk(x.ReturnType)
+			if x.Receiver != nil {
+				walk(x.Receiver.Type)
+			}
+		case *ast.Var:
+			walk(x.Type)
+		case *ast.StructDecl:
+			// A `dyn Trait` stored in a struct field — the field may be
+			// the only place a trait appears (#3213).
+			for _, f := range x.Fields {
+				walk(f.Type)
+			}
+		case *ast.EnumDecl:
+			for _, v := range x.Variants {
+				for _, p := range v.Payloads {
+					walk(p)
+				}
+			}
+		case *ast.ConstDecl:
+			walk(x.Type)
+		case *ast.CastExpr:
+			// `x as dyn Trait` — the coercion target names the trait.
+			walk(x.Target)
+		}
+		return true
+	})
+	return sets
+}
+
+// dynTraitMethodPrefix returns the number of vtable slots that precede
+// trait `owner`'s method block in the MERGED vtable for trait set
+// `traits` (sorted set order). For a single-trait set this is always 0
+// (the owner is the only trait), so single-trait slot math is unchanged.
+// For `dyn A + B`, a method owned by B sits after all of A's
+// non-associated methods, so its global slot = prefix(B) + index-in-B.
+func dynTraitMethodPrefix(info *checker.Info, traits []string, owner string) int {
+	prefix := 0
+	for _, tr := range traits {
+		if tr == owner {
+			break
+		}
+		td, ok := info.Traits[tr]
+		if !ok {
+			continue
+		}
+		for i := range td.Methods {
+			if !td.Methods[i].Assoc {
+				prefix++
+			}
+		}
+	}
+	return prefix
+}
+
+// isPrimitiveConcrete reports whether a `dyn` coercion's concrete
+// type-name string names a primitive / `string` type rather than a
+// struct or enum. A struct/enum value is already a heap pointer (so its
+// `data` word can hold it directly); a primitive/string value is not, so
+// it is uniformly heap-boxed into a value cell and dispatched through an
+// unboxing wrapper (docs/DYN-TRAITS.md §4.2.3). The check is purely "not
+// a known struct and not a known enum" — every other concrete an impl
+// can name (i32/i64/u32/u64/f32/f64/boolean/string) is primitive.
+func isPrimitiveConcrete(info *checker.Info, concrete string) bool {
+	if info == nil {
+		return false
+	}
+	if _, isStruct := info.Structs[concrete]; isStruct {
+		return false
+	}
+	if _, isEnum := info.Enums[concrete]; isEnum {
+		return false
+	}
+	return true
+}
+
+// astTypeForConcreteName maps a primitive/`string` concrete type-name
+// string (as recorded in DynCoercion.Concrete / VtableDecl.Concrete) to
+// the ast.Type the IR layout helpers (payloadSlotSize / payloadStoreOpFor
+// / payloadLoadOpFor) expect. Mirrors checker.methodTypeName's spellings.
+// Returns nil for an unrecognised name (a struct/enum concrete — callers
+// gate on isPrimitiveConcrete before calling).
+func astTypeForConcreteName(name string) ast.Type {
+	switch name {
+	case "i32":
+		return ast.NumberType{Width: 32, Signed: true}
+	case "i64":
+		return ast.NumberType{Width: 64, Signed: true}
+	case "u32":
+		return ast.NumberType{Width: 32, Signed: false}
+	case "u64":
+		return ast.NumberType{Width: 64, Signed: false}
+	case "usize":
+		return ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: "usize"}
+	case "f32":
+		return ast.FloatType{Width: 32}
+	case "f64":
+		return ast.FloatType{Width: 64}
+	case "boolean":
+		return ast.BoolType{}
+	case "string":
+		return ast.StringType{}
+	}
+	return nil
+}
+
+// dynboxWrapperName is the synthesized unboxing-wrapper function name for
+// a (primitive concrete, trait method) pair. The wrapper's dispatch-facing
+// signature is `(boxptr, args...) -> result`: it loads the concrete value
+// from the value-box and calls the real `__method_<C>_<m>` with the
+// unboxed receiver (docs/DYN-TRAITS.md §4.2.3).
+func dynboxWrapperName(concrete, method string) string {
+	return "__dynbox_" + concrete + "_" + method
+}
+
+// traitVtableSlots returns the vtable slots for ONE trait's
+// non-associated methods (declaration order) over `concrete`. A
+// struct/enum slot points at the real receiver method; a
+// primitive/string slot points at the unboxing wrapper
+// (docs/DYN-TRAITS.md §4.2.3). This is the per-trait building block both
+// single-trait and merged (`dyn A + B`) vtables concatenate.
+func traitVtableSlots(info *checker.Info, td *ast.TraitDecl, concrete string, prim bool) []VtableMethod {
+	var methods []VtableMethod
+	for _, m := range td.Methods {
+		if m.Assoc {
+			continue
+		}
+		if prim {
+			methods = append(methods, VtableMethod{Method: m.Name, Func: dynboxWrapperName(concrete, m.Name)})
+			continue
+		}
+		fn := info.Methods[concrete+"."+m.Name]
+		if fn == "" {
+			// Fall back to the conventional mangled name the
+			// receiver-hoist produces; an empty entry would make
+			// the slot un-dispatchable.
+			fn = "__method_" + concrete + "_" + m.Name
+		}
+		methods = append(methods, VtableMethod{Method: m.Name, Func: fn})
+	}
+	return methods
+}
+
+// collectVtables builds one VtableDecl per (dyn trait SET, concrete-type)
+// pair where the set is used in a `dyn Trait` / `dyn A + B` type
+// somewhere in the program and the concrete type implements EVERY trait
+// in the set. For a single-trait set the table is the trait's methods in
+// declaration order (slot k names the same method for every implementing
+// type — byte-identical to the pre-merged behaviour, since the key is the
+// bare trait name). For a multi-trait set `dyn A + B` the table is the
+// CONCATENATION of the per-trait tables in the set's sorted order
+// (`[ A-methods…, B-methods… ]`), so a method owned by B sits at global
+// slot len(A.methods)+idx — the merged-vtable design (docs/DYN-TRAITS.md
+// §10). The result is deterministically ordered (set key, then concrete,
+// both by name) so codegen emits identical static data run to run.
+//
+// This intentionally over-approximates: it emits a vtable for every
+// implementor (of all traits in the set), not only the concrete types
+// that actually flow into a `dyn` value. Unused vtables are dead static
+// data the linker/backend can drop. See docs/DYN-TRAITS.md §4.2.
+func collectVtables(prog *ast.Program, info *checker.Info) []VtableDecl {
+	sets := dynTraitSetsUsed(prog)
+	if len(sets) == 0 {
+		return nil
+	}
+	// Deterministic order over set keys.
+	keys := make([]string, 0, len(sets))
+	for k := range sets {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var out []VtableDecl
+	for _, key := range keys {
+		traits := sets[key]
+		// Every trait in the set must be known; skip the whole set if any
+		// is missing (a malformed program the checker already errored on).
+		ok := true
+		for _, tr := range traits {
+			if _, found := info.Traits[tr]; !found {
+				ok = false
+				break
+			}
+		}
+		if !ok {
+			continue
+		}
+		// Concrete types: the intersection of every trait's implementors
+		// (a concrete coerces to `dyn A + B` only if it impls A AND B).
+		// For a single-trait set this is just that trait's implementors.
+		concreteSet := map[string]bool{}
+		for c, impld := range info.Impls[traits[0]] {
+			if impld {
+				concreteSet[c] = true
+			}
+		}
+		for _, tr := range traits[1:] {
+			impls := info.Impls[tr]
+			for c := range concreteSet {
+				if !impls[c] {
+					delete(concreteSet, c)
+				}
+			}
+		}
+		concretes := make([]string, 0, len(concreteSet))
+		for c := range concreteSet {
+			concretes = append(concretes, c)
+		}
+		sort.Strings(concretes)
+		for _, concrete := range concretes {
+			prim := isPrimitiveConcrete(info, concrete)
+			var methods []VtableMethod
+			for _, tr := range traits {
+				methods = append(methods, traitVtableSlots(info, info.Traits[tr], concrete, prim)...)
+			}
+			// Record the concrete type's drop fn for the trailing drop slot
+			// (docs/DYN-TRAITS.md §4.4). A primitive concrete carries its
+			// value inline (no separate heap box behind `data`), so it has
+			// no destructor — leave Drop empty (null sentinel). For a
+			// struct/enum concrete, dropFnNameFor names its recursive drop
+			// (or returns "" for a flat scalar struct that needs none); nil
+			// registries are fine here — a `dyn` concrete is always a
+			// non-generic struct/enum, neither of which needs the
+			// generic-enum / tuple registry, and the worklist regenerates
+			// the body from info.Structs / info.Enums by name.
+			drop := ""
+			if !prim {
+				var ct ast.Type
+				if _, ok := info.Structs[concrete]; ok {
+					ct = ast.StructType{Name: concrete}
+				} else if _, ok := info.Enums[concrete]; ok {
+					ct = ast.EnumType{Name: concrete}
+				}
+				if ct != nil {
+					// ct is always a concrete struct/enum here, so the
+					// DynTraitType arm is never reached — ptrW==0 / dynSupported
+					// false are both moot (the struct/enum drop names don't gate
+					// on ptrW).
+					if name, ok := dropFnNameFor(ct, info, nil, nil, 0, false); ok {
+						drop = name
+					}
+				}
+			}
+			out = append(out, VtableDecl{Trait: key, Concrete: concrete, Methods: methods, Drop: drop})
+		}
+	}
+	return out
+}
+
+// realImplMethodName resolves the mangled receiver-method a (concrete,
+// method) slot dispatches to — `info.Methods[C.m]`, falling back to the
+// conventional `__method_<C>_<m>` (mirrors collectVtables' resolution).
+func realImplMethodName(info *checker.Info, concrete, method string) string {
+	if fn := info.Methods[concrete+"."+method]; fn != "" {
+		return fn
+	}
+	return "__method_" + concrete + "_" + method
+}
+
+// buildDynboxWrappers synthesizes the unboxing-wrapper `Func`s that a
+// primitive/string concrete's vtable slots point at (docs/DYN-TRAITS.md
+// §4.2.3). For every (primitive concrete, trait method) pair that
+// collectVtables routed through `dynboxWrapperName`, it emits a function
+//
+//	__dynbox_<C>_<m>(boxptr: i32, args...) -> result {
+//	    return __method_<C>_<m>(load_concrete(boxptr), args...);
+//	}
+//
+// The wrapper loads the concrete value from the heap value-box (using the
+// concrete type's own load width — two words for a wasm string, 8 bytes
+// for i64/f64) and calls the real method with the unboxed value as the
+// receiver. The dispatch-facing signature is (boxptr, args...) -> result,
+// so OpCallDyn's receiver-first contract lines up: it passes the box
+// pointer (the `dyn` value's `data` word) as arg 0, and the wrapper does
+// the unbox. Deterministically ordered for stable codegen.
+func buildDynboxWrappers(info *checker.Info, ptrW int, vtables []VtableDecl) ([]*Func, error) {
+	if info == nil {
+		return nil, nil
+	}
+	seen := map[string]bool{}
+	var out []*Func
+	for _, vt := range vtables {
+		if !isPrimitiveConcrete(info, vt.Concrete) {
+			continue
+		}
+		concreteType := astTypeForConcreteName(vt.Concrete)
+		if concreteType == nil {
+			return nil, fmt.Errorf("ir: dyn over %q: no value-box layout for concrete type %q", vt.Trait, vt.Concrete)
+		}
+		td, ok := info.Traits[vt.Trait]
+		if !ok {
+			continue
+		}
+		// Trait method declarations carry the receiver-first param list +
+		// result, the source of truth for the wrapper's signature and the
+		// real method's arg types.
+		methByName := map[string]*ast.TraitMethod{}
+		for i := range td.Methods {
+			methByName[td.Methods[i].Name] = &td.Methods[i]
+		}
+		for _, vm := range vt.Methods {
+			wname := dynboxWrapperName(vt.Concrete, vm.Method)
+			if seen[wname] {
+				continue
+			}
+			seen[wname] = true
+			tm, ok := methByName[vm.Method]
+			if !ok || len(tm.Params) == 0 {
+				return nil, fmt.Errorf("ir: dyn wrapper for %s.%s: trait method missing or has no receiver", vt.Concrete, vm.Method)
+			}
+			// Method args after the receiver (tm.Params[0] is `self`).
+			argTypes := make([]ast.Type, 0, len(tm.Params)-1)
+			for _, p := range tm.Params[1:] {
+				argTypes = append(argTypes, p.Type)
+			}
+			// Wrapper params: boxptr (i32) + the method args, in order.
+			params := make([]ast.Param, 0, 1+len(argTypes))
+			params = append(params, ast.Param{Name: "__boxptr", Type: ast.NumberType{Width: 32, Signed: true}})
+			for i, at := range argTypes {
+				params = append(params, ast.Param{Name: fmt.Sprintf("__a%d", i), Type: at})
+			}
+			fn := &Func{Name: wname, Params: params, ReturnType: tm.Result}
+			emit := func(op Op) { fn.Ops = append(fn.Ops, op) }
+			// value = load(boxptr) with the concrete type's load width
+			// (two-word for wasm string; 8 bytes for i64/f64).
+			emit(Op{Kind: OpLoadLocal, I32: 0})
+			emit(payloadLoadOpFor(concreteType, ptrW))
+			// Push the method args (param slots 1..n).
+			for i := range argTypes {
+				emit(Op{Kind: OpLoadLocal, I32: int32(i + 1)})
+			}
+			// call __method_<C>_<m>(value, args...). The real method's
+			// param types are (concreteReceiver, args...): ArgTypes drives
+			// the backend's operand-stack slot accounting (a string
+			// receiver / arg occupies two slots).
+			callArgTypes := make([]ast.Type, 0, 1+len(argTypes))
+			callArgTypes = append(callArgTypes, concreteType)
+			callArgTypes = append(callArgTypes, argTypes...)
+			emit(Op{
+				Kind:     OpCallDirect,
+				Str:      realImplMethodName(info, vt.Concrete, vm.Method),
+				I32:      int32(1 + len(argTypes)),
+				ArgTypes: callArgTypes,
+			})
+			if tm.Result == nil {
+				emit(Op{Kind: OpReturnVoid})
+			} else {
+				if _, isVoid := tm.Result.(ast.VoidType); isVoid {
+					emit(Op{Kind: OpReturnVoid})
+				} else {
+					emit(Op{Kind: OpReturn})
+				}
+			}
+			out = append(out, fn)
+		}
+	}
+	return out, nil
+}
+
+// buildDynDropHelpers synthesizes the per-trait-set `__drop_dyn_<set>`
+// destructor helpers that reclaim a `dyn Trait` value's erased concrete
+// `data` object (docs/DYN-TRAITS.md §4.4). Two representations, selected
+// by ptrW; the IR ops are shared, only the operand-stack shape and the
+// cell-free differ:
+//
+//	wasm (ptrW==4, slice 4a — INLINE two-word). A `dyn` value is the
+//	inline `[data, vtable]` fat pointer, so the helper takes both words:
+//
+//	    __drop_dyn_<set>(data: i32, vtable: i32) {
+//	        let d = vtable[methodCount*4];            // function-table index
+//	        if (d != 0) { call_indirect[d](data); }   // run concrete dtor
+//	    }
+//
+//	There is no separate cell, so the helper stops after the concrete drop.
+//
+//	natives (ptrW==8, DynSupported — x86-64 slice 4b — BOXED one-word).
+//	A `dyn` value is a single pointer to a `{data@0, vtable@ptrW}` cell, so
+//	the helper takes the cell ptr, RELOADS data+vtable from it (before any
+//	free!), dispatches the dtor, then frees the 16-byte cell:
+//
+//	    __drop_dyn_<set>(cell: i64) {
+//	        let data   = cell[0];
+//	        let vtable = cell[ptrW];
+//	        let d = vtable[methodCount*ptrW];         // absolute fn pointer
+//	        if (d != 0) { d(data); }                  // run concrete dtor
+//	        __free(cell, 2*ptrW);                     // reclaim the box cell
+//	    }
+//
+// The drop slot is TRAILING at index `methodCount` (= the merged method
+// count for the set), so OpCallDyn's method slot math is untouched. A null
+// sentinel (0) means the concrete needs no drop (a flat scalar struct, or
+// a primitive concrete whose value lives inline behind `data`). The
+// concrete drop (`__drop_struct_<C>` / `__drop_enum_<C>`) frees `data` and
+// everything it transitively owns (e.g. a String field) and self-guards on
+// rc==1; the vtable word is static data — never inc/dec'd. Reload-before-
+// free is load-bearing on the natives: freeing the cell first would read a
+// reclaimed (possibly reused) cell for data/vtable — a use-after-free.
+//
+// Dispatch reuses OpCallDyn (slot = methodCount, sig (ptr)->ptr — every
+// generated drop fn returns the box pointer): it rebuilds the same
+// `[data, vtable]` stack OpCallDyn expects, pops the vtable, loads the slot
+// (wasm: table index + call_indirect; natives: absolute ptr + direct call).
+// The returned box pointer is dropped.
+//
+// One helper per trait SET actually used (dynTraitSetsUsed); a set with no
+// implementors still emits a helper (its method count is well-defined and
+// a no-implementor set is unreachable at runtime, but the symbol must
+// resolve where a `dyn` of that set is dec'd). Declines on a native
+// backend that hasn't opted in (arm64, slice 4c): no helper, no drop slot
+// read, `dyn` keeps leaking — no dangling call.
+func buildDynDropHelpers(prog *ast.Program, info *checker.Info, ptrW int, dynRcSupported bool) []*Func {
+	if (ptrW != 4 && !dynRcSupported) || info == nil {
+		return nil
+	}
+	boxed := ptrW != 4 // natives: a `dyn` value is the boxed cell ptr.
+	sets := dynTraitSetsUsed(prog)
+	if len(sets) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(sets))
+	for k := range sets {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	// OpCallDyn dispatches the concrete dtor; the dtor sig is (ptr)->ptr
+	// (every generated drop fn takes the heap ptr and returns it).
+	// NumberType is the right one-word shape for the receiver/result on
+	// both targets.
+	dropSig := &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	var out []*Func
+	for _, key := range keys {
+		traits := sets[key]
+		// Merged method count = total non-associated methods across the
+		// set, in sorted order — the same count collectVtables uses for
+		// len(Methods), so the drop slot lands at exactly that index.
+		methodCount := 0
+		known := true
+		for _, tr := range traits {
+			td, ok := info.Traits[tr]
+			if !ok {
+				known = false
+				break
+			}
+			for i := range td.Methods {
+				if !td.Methods[i].Assoc {
+					methodCount++
+				}
+			}
+		}
+		if !known {
+			continue // malformed set the checker already errored on
+		}
+		fn := &Func{Name: dynDropFnName(traits), ReturnType: ast.VoidType{}}
+		emit := func(op Op) { fn.Ops = append(fn.Ops, op) }
+		if boxed {
+			// natives (boxed): one param = the cell ptr. Reload data (cell+0)
+			// and vtable (cell+ptrW) into fresh locals BEFORE any free, then
+			// dispatch + free the cell. Slots: 0 = cell (param), 1 = data,
+			// 2 = vtable.
+			fn.Params = []ast.Param{{Name: "__dcell", Type: ast.NumberType{}}}
+			// NULL-guard the cell pointer. The drop sites zero-init a `dyn`
+			// slot (Phase 1d-v), so the first loop-iteration reinit drop and a
+			// never-assigned slot at exit pass cell==0; on the natives that
+			// would segfault on the cell[0] deref below (wasm address 0 reads
+			// 0 harmlessly, so the inline helper needs no guard). `if (cell !=
+			// 0) { ... }` makes a null drop a no-op — the same NULL-guard the
+			// other native rc drops rely on (__fern_rc_dec / __fern_arr_dec).
+			emit(Op{Kind: OpLoadLocal, I32: 0})
+			emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+			// data = cell[0]
+			emit(Op{Kind: OpLoadLocal, I32: 0})
+			emit(Op{Kind: OpLoad, Width: WidthPtr})
+			emit(Op{Kind: OpStoreLocal, I32: 1})
+			// vtable = cell[ptrW]
+			emit(Op{Kind: OpLoadLocal, I32: 0})
+			emit(Op{Kind: OpConstI32, I32: int32(ptrW)})
+			emit(Op{Kind: OpAdd})
+			emit(Op{Kind: OpLoad, Width: WidthPtr})
+			emit(Op{Kind: OpStoreLocal, I32: 2})
+			// d = vtable[methodCount*ptrW] (absolute fn pointer of the dtor).
+			emit(Op{Kind: OpLoadLocal, I32: 2})
+			emit(Op{Kind: OpConstI32, I32: int32(methodCount * ptrW)})
+			emit(Op{Kind: OpAdd})
+			emit(Op{Kind: OpLoad, Width: WidthPtr})
+			// if (d != 0) run the concrete destructor on `data`.
+			emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+			emit(Op{Kind: OpLoadLocal, I32: 1}) // data
+			emit(Op{Kind: OpLoadLocal, I32: 2}) // vtable
+			emit(Op{Kind: OpCallDyn, I32: int32(methodCount), Sig: dropSig})
+			emit(Op{Kind: OpDrop}) // discard the ptr the dtor returns
+			emit(Op{Kind: OpEnd})
+			// __free(cell, 2*ptrW) — reclaim the box cell itself. __free is
+			// (base, size); the pushed result is meaningless, so drop it to
+			// keep the operand stack balanced.
+			emit(Op{Kind: OpLoadLocal, I32: 0})
+			emit(Op{Kind: OpConstI32, I32: int32(2 * ptrW)})
+			emit(Op{Kind: OpCallDirect, Str: "__free", I32: 2})
+			emit(Op{Kind: OpDrop})
+			emit(Op{Kind: OpEnd}) // close the cell != 0 guard
+			emit(Op{Kind: OpReturnVoid})
+			out = append(out, fn)
+			continue
+		}
+		// wasm (inline two-word): two params = data, vtable.
+		fn.Params = []ast.Param{
+			{Name: "__ddata", Type: ast.NumberType{}},
+			{Name: "__dvtbl", Type: ast.NumberType{}},
+		}
+		// d = vtable[methodCount*4] (function-table index of the dtor).
+		emit(Op{Kind: OpLoadLocal, I32: 1})
+		emit(Op{Kind: OpConstI32, I32: int32(methodCount * 4)})
+		emit(Op{Kind: OpAdd})
+		emit(Op{Kind: OpLoad}) // 4-byte word
+		// if (d != 0) run the concrete destructor on `data`.
+		emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+		emit(Op{Kind: OpLoadLocal, I32: 0}) // data
+		emit(Op{Kind: OpLoadLocal, I32: 1}) // vtable
+		emit(Op{Kind: OpCallDyn, I32: int32(methodCount), Sig: dropSig})
+		emit(Op{Kind: OpDrop}) // discard the box ptr the dtor returns
+		emit(Op{Kind: OpEnd})
+		emit(Op{Kind: OpReturnVoid})
+		out = append(out, fn)
+	}
+	return out
+}
+
+// LowerOption tweaks LowerWith's behaviour for a particular backend.
+// The zero set of options is the historical default (used by every
+// existing caller): `dyn Trait` is supported only on wasm (ptrW==4).
+type LowerOption func(*lowerOpts)
+
+type lowerOpts struct {
+	// dynSupported lets a ptrW==8 native backend opt into boxed
+	// `dyn Trait` DISPATCH lowering. ptrW alone cannot discriminate
+	// x86-64 from arm64 (both are 8), so the backend threads its
+	// capability in explicitly. BOTH natives pass it (slices 2c + 2d);
+	// see docs/DYN-TRAITS.md §4.2.2.
+	dynSupported bool
+	// dynRcSupported lets a ptrW==8 native backend opt into Perceus RC
+	// of boxed `dyn Trait` values (the per-set __drop_dyn_<set> helper,
+	// the trailing vtable drop slot, and the dec/drop sweep arms —
+	// docs/DYN-TRAITS.md §4.4). A STRICT subset of dynSupported: dispatch
+	// shipped on both natives (2c/2d) but RC lands one backend at a time
+	// (x86-64 = slice 4b passes it; arm64 = slice 4c does not yet, so
+	// arm64 keeps leaking `dyn` — harmless). wasm RC (slice 4a) keys on
+	// ptrW==4 and never needs this.
+	dynRcSupported bool
+}
+
+// DynSupported marks the calling backend as able to lower `dyn Trait`
+// DISPATCH (boxed one-word on natives, §4.2.2). Both x86-64 and arm64
+// pass it (slices 2c + 2d). wasm never needs it — its ptrW==4 gate
+// already lifts on its own.
+func DynSupported() LowerOption { return func(o *lowerOpts) { o.dynSupported = true } }
+
+// DynRcSupported marks the calling backend as able to RECLAIM boxed
+// `dyn Trait` values via Perceus RC (the __drop_dyn_<set> helper + the
+// trailing vtable drop slot, §4.4). A strict subset of DynSupported:
+// x86-64 passes it (slice 4b); arm64 does not yet (slice 4c — it keeps
+// leaking `dyn`, which is harmless). wasm RC keys on ptrW==4 directly.
+func DynRcSupported() LowerOption { return func(o *lowerOpts) { o.dynRcSupported = true } }
+
 // LowerWith is the pointer-width-aware variant. `ptrW` is 4 on
 // wasm32 and 8 on arm64; it sizes pointer-typed enum payloads,
 // struct fields, array elements, and closure captures so heap
 // addresses survive arm64-darwin's >= 4 GiB heap.
-func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error) {
-	// `dyn Trait` (runtime trait objects) is interpreter-only in its
-	// first slice — the compiled backends need a fat-pointer + vtable
-	// representation that isn't built yet (docs/DYN-TRAITS.md §4.2). The
-	// IR layer is the single choke point for every compiled backend, so
-	// reject `dyn` here with a clear message rather than letting it fall
-	// through to a cryptic "indirect call from non-identifier" later.
-	if err := rejectDynTrait(prog); err != nil {
+func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOption) (*Program, error) {
+	var lo lowerOpts
+	for _, opt := range opts {
+		opt(&lo)
+	}
+	// `dyn Trait` (runtime trait objects) representation by target
+	// (docs/DYN-TRAITS.md §4.2):
+	//   - wasm (ptrW==4): inline two-word `[data, vtable]` fat pointer
+	//     + per-(trait,concrete) vtable data segments (§4.2.1).
+	//   - x86-64 (ptrW==8, DynSupported): BOXED one-word — a single
+	//     heap pointer to a `{data, vtable}` cell, dispatched through a
+	//     vtable of absolute function pointers (§4.2.2).
+	//   - arm64 / any other ptrW==8 backend without DynSupported: no
+	//     lowering yet, so reject `dyn` here with a clear message
+	//     rather than miscompiling it.
+	// The IR layer is the single choke point for every compiled
+	// backend. collectVtables (below) populates prog.Vtables for the
+	// backends that lifted their gate.
+	dynSupported := ptrW == 4 || lo.dynSupported
+	// RC of `dyn` is a strict subset of dispatch: wasm (slice 4a) + a
+	// native that opted in via DynRcSupported (x86-64 slice 4b). arm64
+	// (slice 4c) lifts dispatch but not RC, so it still leaks `dyn`.
+	dynRcSupported := ptrW == 4 || lo.dynRcSupported
+	if !dynSupported {
+		if err := rejectDynTrait(prog); err != nil {
+			return nil, err
+		}
+	}
+	// Multi-trait trait objects (`dyn A + B`) lower through the MERGED
+	// vtable on every backend that supports `dyn`: collectVtables emits a
+	// concatenated (trait-set, concrete) table and OpCallDyn indexes the
+	// global slot (per-trait prefix + index-in-trait) — docs/DYN-TRAITS.md
+	// §10. A backend that has NOT lifted its single-trait `dyn` gate
+	// (a future ptrW==8 backend, or a test harness omitting DynSupported())
+	// still rejects ALL `dyn` (including multi-trait) via rejectDynTrait
+	// above. The one multi-trait sub-case still rejected on supporting
+	// backends is the `as? T` downcast (rejectDowncast, below) — its
+	// per-trait vtable-pointer compare doesn't yet understand the merged
+	// table.
+	// The `e as? T` fallible downcast (DowncastExpr) now lowers to a
+	// runtime vtable-pointer compare on every backend that supports `dyn`
+	// (the (trait,concrete) vtable that uniquely tags the concrete type is
+	// the slice-2 infrastructure — docs/DYN-TRAITS.md §9). A backend that
+	// has NOT lifted its `dyn` gate (a hypothetical future ptrW==8 backend,
+	// or a test harness omitting DynSupported()) still rejects it cleanly,
+	// and — defensively — a non-struct/enum target (the checker already
+	// blocks primitives with E060) is rejected too.
+	if err := rejectDowncast(prog, info, dynSupported); err != nil {
 		return nil, err
 	}
+	// Block-expressions (`if`/`match` value branches `{ stmts; tail }`)
+	// now lower on every compiled backend (slice 2): the builder lowers
+	// the leading statements through the normal statement-lowering path
+	// (in a fresh shadowrename frame so block-local `var`s get their own
+	// slots) and then lowers the trailing expression as the block's
+	// value. Block-local RC is handled by the existing function-exit dec
+	// sweep — every block-local `var` is registered in `info.Locals[fn]`
+	// (checkBlockExpr → checkStmt), gets a zero-init'd slot, and is
+	// dec'd at scope exit exactly like a top-level local; the Tail value
+	// is produced after the leading stmts and (when it references a
+	// block-local) is alias-inc'd / moved by the normal Var/Ident rules,
+	// so it survives the exit sweep without double-free. No reject gate
+	// here anymore — see the *ast.BlockExpr arm in (*builder).expr.
 	// Automatic drop for owned WIT resource handles (P5 slice 3): insert
 	// `defer <drop>(h);` for each kept `own R` local and synthesize the
 	// `[resource-drop]` import functions. Runs before eraseHandleTypes because
@@ -1297,6 +2532,13 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 	// store's value. Runs before closureconv so the closure
 	// pass sees post-rename names everywhere.
 	shadowrename.Rename(prog, info)
+	// Box captured-and-mutated scalar locals into 1-element array cells so a
+	// closure's write to a captured outer i32/bool/f64 is shared by reference
+	// (the interpreter's closures-as-counters semantics; #2896). Runs after
+	// shadowrename (names are unique, so a closure's reference to a boxed name
+	// is unambiguous) and before closureconv (which then captures the cell
+	// pointer by reference). No-op for functions without such a capture.
+	closureconv.BoxMutatedScalarCaptures(prog, info)
 	if err := closureconv.ConvertWith(prog, info, ptrW); err != nil {
 		return nil, err
 	}
@@ -1317,7 +2559,13 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 			closureCaps[fn.Name] = fn.Captures
 		}
 	}
-	out := &Program{PairForm: pairForm, PtrW: ptrW}
+	// Per-(trait,type) dispatch tables for `dyn Trait` values. Empty for
+	// every program today: the rejectDynTrait gate above returns before
+	// this point whenever `dyn` is used, so only non-dyn programs reach
+	// here (collectVtables returns nil for them). The wiring is in place
+	// so lifting the gate per backend (docs/DYN-TRAITS.md §4.2) populates
+	// the field with no further plumbing.
+	out := &Program{PairForm: pairForm, PtrW: ptrW, Vtables: collectVtables(prog, info)}
 	// Registry of generic-enum-instantiation drops discovered while
 	// routing nested fields/payloads/captures (see builder.genEnumDrops).
 	// Shared across lowering and the post-pass drop worklist below.
@@ -1388,7 +2636,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 			out.Externs = append(out.Externs, ef)
 			continue
 		}
-		f, err := lowerFunc(fn, info, ptrW, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, trmcFuncs, trmcConsumeSafe, paramEscapes)
+		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, trmcFuncs, trmcConsumeSafe, paramEscapes)
 		if err != nil {
 			return nil, err
 		}
@@ -1396,7 +2644,22 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 		if fn.ExportIface != "" {
 			// `@export` function: lowered normally (it has a body), with the
 			// world-export binding recorded for the wasm backend / composer (P6).
-			out.Exports = append(out.Exports, ExternExport{Name: fn.Name, Iface: fn.ExportIface, WITName: fn.ExportWITName})
+			// An Option/Result result needs a wrapper (Fern enum box → canonical
+			// (disc, payload) return area), resolved here where checker.Info is in
+			// scope. Only the single-payload form (no general variant) is surfaced.
+			exp := ExternExport{Name: fn.Name, Iface: fn.ExportIface, WITName: fn.ExportWITName}
+			if re, ok := externEnumParamLayout(fn.ReturnType, info, ptrW); ok && re.Variants == nil && re.SlotCount == 0 {
+				exp.ResultEnum = re
+			} else if _, isTuple := fn.ReturnType.(ast.TupleType); isTuple {
+				// A tuple result returns indirectly; a record (named WIT type) needs
+				// the exported-instance type-export machinery, so only tuples here.
+				// Scoped to flat (no nested-tuple element) tuples, matching the
+				// composer's all-primitive element requirement.
+				if rr, ok := externRecordResultLayout(fn.ReturnType, info); ok && !rr.Direct && externFieldsAllFlat(rr.Fields) {
+					exp.ResultTuple = rr
+				}
+			}
+			out.Exports = append(out.Exports, exp)
 		}
 	}
 	// Closure reclamation Stage 3: emit a per-closure
@@ -1420,10 +2683,10 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 			}
 		}
 		for name, caps := range closureCaps {
-			if !hasRcCapture(caps, ptrW) && !makeClosureTargets[name] {
+			if !hasRcCapture(caps, ptrW, lo.dynRcSupported) && !makeClosureTargets[name] {
 				continue
 			}
-			thunk := genClosureDropThunk(name, caps, ptrW, info, genEnumDrops, genTupleDrops)
+			thunk := genClosureDropThunk(name, caps, ptrW, info, genEnumDrops, genTupleDrops, lo.dynRcSupported)
 			if thunk == nil {
 				continue
 			}
@@ -1478,6 +2741,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 					strings.HasPrefix(op.Str, "__drop_arr_enum_") ||
 					strings.HasPrefix(op.Str, "__drop_arr_tuple_") ||
 					strings.HasPrefix(op.Str, "__drop_arr_arr_") ||
+					strings.HasPrefix(op.Str, "__drop_arr_dyn_") ||
 					strings.HasPrefix(op.Str, "__drop_arr_of_") ||
 					strings.HasPrefix(op.Str, "__drop_map_via_") ||
 					op.Str == "__drop_map_str_values" ||
@@ -1492,6 +2756,26 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 		for _, fn := range out.Funcs {
 			enqueueCalls(fn.Ops)
 		}
+		// Seed the worklist with the concrete-destructor drop fns named in
+		// the `dyn` vtable drop slots (docs/DYN-TRAITS.md §4.4). The
+		// __drop_dyn_<set> helper reaches these by an indirect call through
+		// the vtable, not a named OpCallDirect, so enqueueCalls above never
+		// sees them — without this seeding a struct/enum behind `dyn` whose
+		// __drop_struct_/__drop_enum_ body is reached ONLY via the vtable
+		// would be referenced (by name in the vtable cell) but never
+		// generated. wasm (slice 4a) + x86-64 (slice 4b, DynRcSupported)
+		// both append the drop slot and need this seeding; arm64 lifts
+		// dispatch but not RC yet (slice 4c), so it records no Drop and
+		// needs no seeding.
+		if dynRcSupported {
+			for _, vt := range out.Vtables {
+				if vt.Drop == "" || queued[vt.Drop] {
+					continue
+				}
+				queued[vt.Drop] = true
+				work = append(work, vt.Drop)
+			}
+		}
 		for i := 0; i < len(work); i++ {
 			name := work[i]
 			if generated[name] {
@@ -1503,6 +2787,14 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 				// env (generically, through the embedded drop-fn pointer) +
 				// the pair block, then free the outer buffer.
 				fn = genArrClosureDropFn(ptrW)
+			} else if dynDrop := strings.TrimPrefix(name, "__drop_arr_dyn_"); dynDrop != name {
+				// `dyn Trait[]` outer drop (docs/DYN-TRAITS.md §7.8): per
+				// element run the per-set `__drop_dyn_<set>` destructor
+				// (embedded in the name; always emitted by
+				// buildDynDropHelpers), then free the outer buffer. The
+				// helper is representation-aware (native one-word cell ptr
+				// vs wasm two-word inline) and the per-element drop is void.
+				fn = genArrDynDropFn(dynDrop, ptrW)
 			} else if perElem := strings.TrimPrefix(name, "__drop_arr_of_"); perElem != name {
 				// Array-of-(rc-inner-array) outer drop: per element call the
 				// inner array's own deep-drop `perElem` (regenerated by the
@@ -1563,7 +2855,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 				if !ok {
 					continue
 				}
-				fn = genEnumDropFn(en, ed, info, ptrW, genEnumDrops, genTupleDrops)
+				fn = genEnumDropFn(en, ed, info, ptrW, genEnumDrops, genTupleDrops, lo.dynRcSupported)
 				if fn == nil {
 					continue // plan failed — routing shouldn't have named it
 				}
@@ -1576,7 +2868,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 				if !ok {
 					continue
 				}
-				fn = genTupleDropFn(mangled, tt, info, ptrW, genEnumDrops, genTupleDrops)
+				fn = genTupleDropFn(mangled, tt, info, ptrW, genEnumDrops, genTupleDrops, lo.dynRcSupported)
 				if fn == nil {
 					continue
 				}
@@ -1586,7 +2878,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 				if !ok {
 					continue // routing only names structs it verified exist
 				}
-				fn = genStructDropFn(sn, sd, info, ptrW, genEnumDrops, genTupleDrops)
+				fn = genStructDropFn(sn, sd, info, ptrW, genEnumDrops, genTupleDrops, lo.dynRcSupported)
 			}
 			generated[name] = true
 			enqueueCalls(fn.Ops) // a generated body may call further drop fns
@@ -1602,6 +2894,41 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 			})
 			out.Funcs = append(out.Funcs, fn)
 		}
+	}
+	// `dyn` over a primitive/string: synthesize the unboxing wrappers the
+	// vtable slots point at (docs/DYN-TRAITS.md §4.2.3). Each loads the
+	// boxed concrete value and calls the real `__method_<C>_<m>`. Appended
+	// in lockstep — an AST stub into prog.Funcs (codegen pairs prog.Funcs[i]
+	// with out.Funcs[i] by index) and the IR Func into out.Funcs.
+	dynWrappers, wrErr := buildDynboxWrappers(info, ptrW, out.Vtables)
+	if wrErr != nil {
+		return nil, wrErr
+	}
+	for _, fn := range dynWrappers {
+		prog.Funcs = append(prog.Funcs, &ast.FuncDecl{
+			Name:       fn.Name,
+			Params:     fn.Params,
+			ReturnType: fn.ReturnType,
+			Body:       &ast.Block{},
+		})
+		out.Funcs = append(out.Funcs, fn)
+	}
+	// `dyn Trait` RC: synthesize the per-trait-set `__drop_dyn_<set>`
+	// destructor helpers the Perceus dec/drop sweep calls at a `dyn`
+	// value's last use / scope exit (docs/DYN-TRAITS.md §4.4). wasm
+	// (ptrW==4, slice 4a — inline) + x86-64 (DynRcSupported, slice 4b —
+	// boxed) + arm64 (DynRcSupported, slice 4c — boxed, the structural
+	// mirror of x86-64). buildDynDropHelpers no-ops only when a ptrW==8
+	// backend omits DynRcSupported (none today). Appended in lockstep
+	// like the other synthesized helpers.
+	for _, fn := range buildDynDropHelpers(prog, info, ptrW, lo.dynRcSupported) {
+		prog.Funcs = append(prog.Funcs, &ast.FuncDecl{
+			Name:       fn.Name,
+			Params:     fn.Params,
+			ReturnType: fn.ReturnType,
+			Body:       &ast.Block{},
+		})
+		out.Funcs = append(out.Funcs, fn)
 	}
 	return out, nil
 }
@@ -1638,10 +2965,53 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int) (*Program, error
 // pointer-shaped payloads) is tracked as a follow-up.
 func findPairFormFuncs(prog *ast.Program, info *checker.Info, ptrW int) map[string]bool {
 	out := map[string]bool{}
+	// A function taken as a value (a MakeClosure / indirect-call
+	// target) must NOT use the two-word (tag, payload) pair-form
+	// return ABI: indirect calls go through the single-word heap-box
+	// ABI (addClosureSigType / the native indirect-call seam thread
+	// one slot per result), so a pair-form return would mismatch the
+	// call-site signature and corrupt the stack (segfault on natives,
+	// validation error on wasm). Heap-form keeps the function's return
+	// shape and the indirect-call ABI in agreement. See #2753.
+	// Address-taken functions: a function whose name appears as a
+	// value rather than only as a direct call. closureconv leaves a
+	// top-level function passed as a value as a bare Ident (it does
+	// NOT wrap it in a MakeClosure), so detect both forms: a
+	// MakeClosure target, or an Ident naming a function that is not a
+	// Call's callee. Over-detecting here only forgoes the pair-form
+	// optimization (heap-form is always correct), so it's safe.
+	calleeIdents := map[*ast.Ident]bool{}
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		if c, ok := n.(*ast.Call); ok {
+			if id, ok := c.Callee.(*ast.Ident); ok {
+				calleeIdents[id] = true
+			}
+		}
+		return true
+	})
+	closureTargets := map[string]bool{}
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.MakeClosure:
+			if x.FuncName != "" {
+				closureTargets[x.FuncName] = true
+			}
+		case *ast.Ident:
+			if !calleeIdents[x] {
+				if _, isFunc := info.FuncSigs[x.Name]; isFunc {
+					closureTargets[x.Name] = true
+				}
+			}
+		}
+		return true
+	})
 	for {
 		grew := false
 		for _, fn := range prog.Funcs {
 			if out[fn.Name] {
+				continue
+			}
+			if closureTargets[fn.Name] {
 				continue
 			}
 			if !isPairFormEligible(fn, info, ptrW, out) {
@@ -2696,6 +4066,26 @@ func (b *builder) emitPairFormPushValue(e ast.Expr) error {
 	return fmt.Errorf("ir: emitPairFormPushValue: unrecognised shape %T (eligibility check / emitter out of sync)", e)
 }
 
+// loopFrame records one enclosing loop's label and its break/continue
+// target depths, so a labeled `break`/`continue` can resolve past
+// intervening loops and switches.
+type loopFrame struct {
+	label  string
+	breakD int32
+	contD  int32
+}
+
+// findLoopFrame returns the innermost enclosing loop frame whose label
+// matches, or nil if none does.
+func (b *builder) findLoopFrame(label string) *loopFrame {
+	for i := len(b.loopFrames) - 1; i >= 0; i-- {
+		if b.loopFrames[i].label == label {
+			return &b.loopFrames[i]
+		}
+	}
+	return nil
+}
+
 // builder is the per-function lowering state.
 type builder struct {
 	info *checker.Info
@@ -2787,6 +4177,12 @@ type builder struct {
 	// per-site so only the local's LAST alias moves — earlier aliases
 	// of the same local keep their inc.
 	moveSites map[ast.Node]bool
+	// arraySetInc[call] is true for a `__method_Array_set` (`.with`) call
+	// whose receiver is LIVE after the call (read again, and not a
+	// reassign-to-self), so emitArraySet must rc-inc the receiver buffer
+	// before __fern_arr_cow_inplace to force the copy path — otherwise the
+	// rc==1 in-place reuse aliases/mutates the still-live receiver (#2832).
+	arraySetInc map[*ast.Call]bool
 	// reuseSources pairs a construction site C (the *ast.StructLit or
 	// *ast.TupleLit node) with the name of a dead, owned struct/tuple local D
 	// whose box C reuses in place — the general FBIP win (Perceus reuse
@@ -2832,6 +4228,14 @@ type builder struct {
 	// depth M, `br (M - stored)` lands at the right scope.
 	breakStack []int32
 	contStack  []int32
+	// loopFrames mirrors the loop (while/for) nesting — one entry per
+	// enclosing loop, innermost last — carrying each loop's label (empty
+	// when unlabeled) and its break/continue target depths. A labeled
+	// `break`/`continue` resolves by scanning this for the named loop.
+	// Switch pushes breakStack but NOT a loopFrame, so an unlabeled
+	// break in a switch still targets the switch, while `break label`
+	// reaches past it to the loop.
+	loopFrames []loopFrame
 	// curPos is the source position of the AST node currently being
 	// lowered. emit() stamps it onto every op so backends can drive
 	// per-statement DWARF / .loc directives.
@@ -2851,6 +4255,15 @@ type builder struct {
 	// captures so pointer-typed values survive arm64-darwin's
 	// >= 4 GiB heap.
 	ptrW int
+	// dynRcSupported is the backend's `dyn Trait` RC capability flag
+	// (LowerOption DynRcSupported, threaded from LowerWith). Only matters
+	// for ptrW==8: x86-64 (slice 4b) reclaims boxed `dyn` values, arm64
+	// (slice 4c, not landed) still leaks them — even though BOTH natives
+	// pass DynSupported for dispatch. On ptrW==4 (wasm, slice 4a) the
+	// `dyn` RC arms fire via ptrW==4 and ignore this. The builder-side
+	// Perceus arms key on b.dynReclaim() (= ptrW==4 || dynRcSupported) —
+	// docs/DYN-TRAITS.md §4.4.
+	dynRcSupported bool
 	// pairForm maps function name → whether that function is
 	// lowered with the pair-form (tag, payload) return ABI.
 	// Populated once per program by findPairFormFuncs, shared
@@ -2872,6 +4285,13 @@ type builder struct {
 	// (rebox to heap so existing consumers see the legacy
 	// shape).
 	suppressPairRebox bool
+	// dynCoerceDone guards the `dyn Trait` coercion-boxing check at the
+	// top of `expr`: when an expression is a key in info.DynCoercions,
+	// the first visit lowers the concrete value (one word = data) and
+	// appends OpConstVtable. To avoid re-triggering on the recursive
+	// lowering of the same expression, the expr is marked here before
+	// recursing. See docs/DYN-TRAITS.md §4.2.1.
+	dynCoerceDone map[ast.Expr]bool
 }
 
 // twoWordStrings reports whether the current target carries
@@ -2885,6 +4305,26 @@ type builder struct {
 // every consumer.
 func (b *builder) twoWordStrings() bool {
 	return ast.UseTwoWordStrings(b.ptrW)
+}
+
+// dynBoxed reports whether `dyn Trait` values use the BOXED one-word
+// native representation (a single heap pointer to a `{data, vtable}`
+// cell) rather than the wasm inline two-word `[data, vtable]` fat
+// pointer. True on natives (ptrW==8), false on wasm (ptrW==4). See
+// docs/DYN-TRAITS.md §4.2.2.
+func (b *builder) dynBoxed() bool {
+	return b.ptrW != 4
+}
+
+// dynReclaim reports whether the current backend reclaims `dyn Trait`
+// values (Perceus RC, docs/DYN-TRAITS.md §4.4). True on wasm (ptrW==4,
+// slice 4a) and on a native backend that opted in via DynSupported
+// (x86-64, slice 4b). arm64 (ptrW==8, no DynSupported, slice 4c) is
+// false and keeps leaking `dyn`. The builder-side Perceus arms key on
+// this so a backend without a `__drop_dyn_<set>` helper never emits a
+// dangling call to one.
+func (b *builder) dynReclaim() bool {
+	return b.ptrW == 4 || b.dynRcSupported
 }
 
 // collectDefers walks `s` recursively and appends every
@@ -2939,10 +4379,31 @@ func collectDefers(s ast.Stmt, out *[]*ast.Defer) {
 
 // emitDeferCleanup walks the registered defers in reverse
 // source order and emits `if active[i] { <expr>; }` for each.
-// Called from `Return` lowering and from the implicit-return
-// path at the end of `lowerFunc`.
+// Called from `Return` lowering, the `?` error path, and the
+// implicit-return path at the end of `lowerFunc`. Plain `defer`s
+// run on EVERY exit; `errdefer`s (OnError) are skipped here and
+// replayed separately by emitErrDeferCleanup on the error paths.
 func (b *builder) emitDeferCleanup() error {
+	return b.emitDeferCleanupKind(false)
+}
+
+// emitErrDeferCleanup replays only the `errdefer`s (OnError) —
+// in reverse source order, each guarded by its active flag. It
+// runs in ADDITION to emitDeferCleanup, and only on error exits:
+// the `?` operator's None/Err propagation and a `return` of a
+// failure variant from an Option/Result-returning function.
+func (b *builder) emitErrDeferCleanup() error {
+	return b.emitDeferCleanupKind(true)
+}
+
+// emitDeferCleanupKind is the shared body: replay the registered
+// defers in reverse source order, restricted to those whose
+// OnError matches `onError`.
+func (b *builder) emitDeferCleanupKind(onError bool) error {
 	for i := len(b.defers) - 1; i >= 0; i-- {
+		if b.defers[i].OnError != onError {
+			continue
+		}
 		b.emit(Op{Kind: OpLoadLocal, I32: b.deferSlots[i]})
 		b.openIf(BlockTypeVoid)
 		// Evaluate the deferred expression. Drop the result
@@ -2956,6 +4417,26 @@ func (b *builder) emitDeferCleanup() error {
 		b.closeScope()
 	}
 	return nil
+}
+
+// hasErrDefers reports whether any registered defer is an
+// `errdefer`. Gating every errdefer-specific emission on this
+// keeps functions without an errdefer byte-identical to before.
+func (b *builder) hasErrDefers() bool {
+	for _, d := range b.defers {
+		if d.OnError {
+			return true
+		}
+	}
+	return false
+}
+
+// isOptionOrResultType reports whether t is `Option[...]` or
+// `Result[...]` — the return types whose failure variant
+// (None / Err, tag 1) triggers an errdefer on `return`.
+func isOptionOrResultType(t ast.Type) bool {
+	et, ok := t.(ast.EnumType)
+	return ok && (et.Name == "Option" || et.Name == "Result")
 }
 
 // emitRcDecLocalsAtExit emits __fern_rc_dec for every
@@ -3150,6 +4631,18 @@ func (b *builder) computeFreeEligible() map[string]bool {
 					if len(s.Args) == 2 {
 						escape(s.Args[1])
 					}
+				case id.Name == "__method_Array_set":
+					// `arr.with(i, v)` — Args[0] is the receiver array
+					// (threaded / reassigned into the buffer, not retained),
+					// Args[1] is the scalar index; Args[2] is the element
+					// moved into the buffer. Taint the element so a local
+					// flowing in isn't freed at scope exit while the array
+					// still references it (the `.append` analogue — without
+					// this, `arr = arr.with(i, ptrElem)` self-assign UAF'd
+					// on a pointer-element array).
+					if len(s.Args) == 3 {
+						escape(s.Args[2])
+					}
 				default:
 					// Variant constructor (`Arr(xs)`): under the move model
 					// emitEnumNew stores the payload without an inc, so a local
@@ -3292,6 +4785,19 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			if ast.UseTwoWordStrings(b.ptrW) {
 				elig[v.Name] = true
 			}
+		case ast.DynTraitType:
+			// An owned `dyn Trait` local reclaims its erased concrete
+			// `data` object through the per-set __drop_dyn_<set> helper at
+			// its last reference (emitDec / emitVarReinitDropOld's
+			// DynTraitType arm) — docs/DYN-TRAITS.md §4.4. Same borrow-
+			// aware taint: a `dyn` that escapes (stored into a container,
+			// returned, passed as a retained arg) is tainted above and
+			// falls back. wasm (ptrW==4, slice 4a) + x86-64 (DynSupported,
+			// slice 4b) reclaim; arm64 leaks `dyn` and never sets rcTracked
+			// for it, so eligibility there is moot.
+			if b.dynReclaim() {
+				elig[v.Name] = true
+			}
 		}
 	}
 	// Owned (`own`) params get the SAME borrow-aware eligibility as an owned
@@ -3318,6 +4824,17 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			}
 		case ast.StringType:
 			if ast.UseTwoWordStrings(b.ptrW) {
+				elig[p.Name] = true
+			}
+		case ast.DynTraitType:
+			// An OWNED `dyn` param (one that escapes — stored / returned /
+			// retained, so paramOwnedByDefault held above) reclaims through
+			// __drop_dyn_<set> at exit, like an owned `dyn` local. A
+			// dispatched-only `dyn` param is borrowed (paramOwnedByDefault
+			// false), never reaches this switch, and is never dropped — the
+			// borrow contract of docs/DYN-TRAITS.md §4.4 (no double-free).
+			// wasm (slice 4a) + x86-64 (slice 4b).
+			if b.dynReclaim() {
 				elig[p.Name] = true
 			}
 		}
@@ -3419,6 +4936,14 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				return false
 			case "__method_Map_set", "__method_Map_clear":
 				// Aliases the receiver (Args[0]) only.
+				return len(x.Args) > 0 && b.rhsTainted(x.Args[0], tainted)
+			case "__method_Array_set":
+				// `arr.with(i, v)` returns the receiver buffer (cow), aliasing
+				// Args[0] only — never the index/value args. The generic
+				// any-arg-tainted rule below would taint the result via a
+				// tainted scalar-binary value (`b.with(0, i % 200)`), leaving
+				// the buffer permanently ineligible and unreclaimed at loop
+				// scope (the wasm LiteralAllocReclaim / OwnInplaceSort leak).
 				return len(x.Args) > 0 && b.rhsTainted(x.Args[0], tainted)
 			case "random_bytes":
 				// random_bytes returns a string the two-word backends
@@ -3662,7 +5187,7 @@ func (b *builder) emitOwnedTempStackDrop(t ast.Type) {
 		// its buffer via __fern_arr_dec(ptr, elemSize). Same dispatch the
 		// exit sweep / reinit use (arrElemStructDropName), so element
 		// reclamation matches the bound-var case.
-		if dropName, ok := arrElemStructDropName(ty.Elem, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
+		if dropName, ok := arrElemStructDropName(ty.Elem, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok {
 			b.emit(Op{Kind: OpCallDirect, Str: dropName, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 		} else {
@@ -3675,7 +5200,7 @@ func (b *builder) emitOwnedTempStackDrop(t ast.Type) {
 		// fn (1 arg); types dropFnNameFor declines (Map handles can't be a
 		// literal temp, non-uniform generics) fall back to the flat one-level
 		// rc_dec — leak-but-never-UAF, exactly as the slot-drop sibling.
-		if name, ok := dropFnNameFor(ty, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
+		if name, ok := dropFnNameFor(ty, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok {
 			b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 		} else {
@@ -3688,7 +5213,7 @@ func (b *builder) emitOwnedTempStackDrop(t ast.Type) {
 		// box pointer twice, so stash it in a scratch slot and route through
 		// the shared emitTupleSlotDrop (single-word box pointer → a normal
 		// i32 scratch slot is exact).
-		if name, ok := dropFnNameFor(ty, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
+		if name, ok := dropFnNameFor(ty, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok {
 			b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 		} else {
@@ -4198,6 +5723,80 @@ func (b *builder) isOwnedRcLocal(name string) bool {
 // `var x` definition isn't an Ident node, so the count covers reads
 // plus assign-target writes — the alias being the last occurrence
 // therefore also rules out any later read OR reassignment of x.
+// isArraySetCall reports whether c is a desugared `arr.with(i, v)` —
+// `__method_Array_set(arr, i, v)`.
+func isArraySetCall(c *ast.Call) bool {
+	id, ok := c.Callee.(*ast.Ident)
+	return ok && id.Name == "__method_Array_set" && len(c.Args) == 3
+}
+
+// computeArraySetIncs decides, for each `.with` call, whether emitArraySet
+// must rc-inc the receiver before __fern_arr_cow_inplace (forcing a copy).
+// The inc is needed exactly when the receiver is a bare local that is read
+// AGAIN after this call and is NOT the target of a reassign-to-self
+// (`a = a.with(...)`), where the old buffer is overwritten by the result.
+// A receiver at its last use, a non-ident receiver (a fresh temp), or a
+// reassign-to-self is a MOVE — left to the in-place rc==1 fast path, so the
+// canonical allocation-free idiom is unaffected (#2832).
+func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
+	incs := map[*ast.Call]bool{}
+	if b.fn.Body == nil {
+		return incs
+	}
+	idx := 0
+	identIdx := map[*ast.Ident]int{}
+	maxIdx := map[string]int{}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok {
+			idx++
+			identIdx[id] = idx
+			if idx > maxIdx[id.Name] {
+				maxIdx[id.Name] = idx
+			}
+		}
+		return true
+	})
+	// reassign-to-self: `A = A.with(...)` — the receiver's old value is
+	// overwritten by the result, so reuse is sound (no inc).
+	reassignSelf := map[*ast.Call]bool{}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		a, ok := n.(*ast.Assign)
+		if !ok {
+			return true
+		}
+		tid, tok := a.Target.(*ast.Ident)
+		c, cok := a.Value.(*ast.Call)
+		if tok && cok && isArraySetCall(c) {
+			if rid, rok := c.Args[0].(*ast.Ident); rok && rid.Name == tid.Name {
+				reassignSelf[c] = true
+			}
+		}
+		return true
+	})
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		c, ok := n.(*ast.Call)
+		if !ok || !isArraySetCall(c) {
+			return true
+		}
+		if reassignSelf[c] {
+			incs[c] = false
+			return true
+		}
+		rid, rok := c.Args[0].(*ast.Ident)
+		if !rok {
+			// Non-ident receiver (a fresh temp, e.g. `f().with(...)`): dead
+			// after the call, so reuse is sound.
+			incs[c] = false
+			return true
+		}
+		// Live after the call iff this occurrence is NOT the receiver
+		// name's last use.
+		incs[c] = identIdx[rid] != maxIdx[rid.Name]
+		return true
+	})
+	return incs
+}
+
 func (b *builder) computeMovedLocals() map[string]bool {
 	moved := map[string]bool{}
 	if b.fn.Body == nil {
@@ -4404,6 +6003,28 @@ func (b *builder) markConstructionMoves(val ast.Expr, identIdx map[*ast.Ident]in
 			if arrElemIsRcTracked(b.exprType(cap)) {
 				mark(cap)
 			}
+			// `dyn Trait` capture (docs/DYN-TRAITS.md §7.8 — closure-capture
+			// kind). A captured `dyn` is move-only (needsRcIncOnAlias declines
+			// it, so NO inc at MakeEnv), and the closure's drop thunk reclaims
+			// it (genClosureDropThunk's dyn arm), so the source local MUST be
+			// suppressed from the exit sweep — otherwise both the source-local
+			// drop AND the thunk reclaim the same cell (a use-after-free when
+			// the closure ESCAPES: the source drop frees the cell the returned
+			// closure still derefs). NATIVES ONLY (b.dynRcSupported → boxed
+			// one-word cell, single owner after the move); wasm's inline two-
+			// word `dyn` keeps its prior correct-but-leaking capture behaviour
+			// (its env copy isn't reclaimed, the thunk doesn't reclaim it, and
+			// the source local stays swept) — gating here on dynRcSupported (NOT
+			// dynReclaim, which includes wasm) keeps the suppress/reclaim pair
+			// consistent with hasRcCapture + the thunk. `mark` can't be reused —
+			// it gates on isOwnedRcLocal, which (deliberately) excludes `dyn` —
+			// so apply the last-use guard inline.
+			if _, isDyn := b.exprType(cap).(ast.DynTraitType); isDyn && b.dynRcSupported {
+				if id, ok := cap.(*ast.Ident); ok && identIdx[id] == maxIdx[id.Name] {
+					moved[id.Name] = true
+					b.moveSites[id] = true
+				}
+			}
 		}
 	case *ast.Call:
 		// Slice 1b: an enum variant constructor — emitEnumNew now inc's an
@@ -4526,6 +6147,32 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
 				b.emit(Op{Kind: OpDrop}) // drop the returned ptr
 			}
+			return
+		}
+		// `dyn Trait` reclamation (docs/DYN-TRAITS.md §4.4). The per-set
+		// __drop_dyn_<set> helper reads the vtable's trailing drop slot and
+		// dispatches the concrete destructor on `data` (freeing it + anything
+		// it transitively owns, e.g. a String field). The concrete dtor
+		// self-guards on rc==1 and the drop slot null-guards, so this is safe
+		// whether the concrete is shared or unique; the static vtable word is
+		// never dec'd. Borrowed `dyn` params never reach here (the param sweep
+		// skips non-owned params), so a dispatched-only borrow is never
+		// dropped — no double-free. Two representations:
+		//   - wasm (ptrW==4, slice 4a): the slot is the inline two-word
+		//     `[data, vtable]`; OpLoadLocal fans both words out (isTwoWordType)
+		//     and the helper takes 2 args.
+		//   - x86-64 (boxed, slice 4b): the slot is one word (the cell ptr);
+		//     OpLoadLocal pushes it and the helper takes 1 arg, reloading
+		//     data/vtable from the cell and freeing the cell.
+		// arm64 leaks `dyn` (no helper, slice 4c) and never sets rcTracked,
+		// so this arm is unreached there.
+		if dt, ok := t.(ast.DynTraitType); ok && b.dynReclaim() {
+			b.emit(Op{Kind: OpLoadLocal, I32: slot}) // wasm: [data, vtable]; native: cell ptr
+			argc := int32(1)
+			if b.ptrW == 4 {
+				argc = 2
+			}
+			b.emit(Op{Kind: OpCallDirect, Str: dynDropFnName(dt.Traits), I32: argc})
 			return
 		}
 		// Tuple reclamation: an OWNED tuple local drops its pointer-shaped
@@ -4770,7 +6417,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		if _, isFunc := t.(*ast.FuncType); isFunc && ast.RcFreeEnabled && eligible {
 			dropFn := "__fern_closure_drop"
 			tgt := b.closureTarget[name]
-			if tgt != "" && hasRcCapture(b.closureCaps[tgt], b.ptrW) {
+			if tgt != "" && hasRcCapture(b.closureCaps[tgt], b.ptrW, b.dynRcSupported) {
 				dropFn = "__closure_drop_" + tgt
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
@@ -4846,6 +6493,16 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		// Tuple values are always pointer-shaped headered boxes
 		// (TupleLit lowering); rc_inc/dec + box_free apply.
 		if _, isTuple := t.(ast.TupleType); isTuple {
+			return true
+		}
+		// `dyn Trait` values own their erased concrete `data` object
+		// (docs/DYN-TRAITS.md §4.4). On wasm (inline two-word) the slot's
+		// `data` word, and on x86-64 (boxed one-word) the cell + its data,
+		// are dropped through the per-set __drop_dyn_<set> helper at scope
+		// exit (emitDec's DynTraitType arm). wasm (slice 4a) + x86-64
+		// (slice 4b). arm64 still leaks `dyn` (no __drop_dyn helper, slice
+		// 4c), so don't sweep it or the dec would call a missing fn.
+		if _, isDyn := t.(ast.DynTraitType); isDyn && b.dynReclaim() {
 			return true
 		}
 		return false
@@ -4941,8 +6598,11 @@ func irCaptureSlotSize(t ast.Type, ptrW int) int32 {
 }
 
 // hasRcCapture reports whether any capture is rc-tracked (i.e. was
-// inc'd at MakeEnv and so needs dropping when the closure dies).
-func hasRcCapture(caps []ast.Param, ptrW int) bool {
+// inc'd at MakeEnv and so needs dropping when the closure dies). A
+// `dyn Trait` capture is move-only (no MakeEnv inc) but still needs the
+// thunk to reclaim it, so it counts on the natives (dynRcSupported);
+// docs/DYN-TRAITS.md §7.8 — closure-capture kind.
+func hasRcCapture(caps []ast.Param, ptrW int, dynRcSupported bool) bool {
 	for _, c := range caps {
 		if arrElemIsRcTracked(c.Type) {
 			return true
@@ -4954,6 +6614,13 @@ func hasRcCapture(caps []ast.Param, ptrW int) bool {
 		// the env slot holds a single ptr that needs __fern_rc_dec'ing
 		// on the closure's last reference.
 		if _, isStr := c.Type.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
+			return true
+		}
+		// `dyn Trait` capture — NATIVES ONLY (boxed one-word cell ptr in
+		// the env slot, reclaimed via __drop_dyn_<set> in the thunk). wasm
+		// (ptrW==4, inline two-word) is excluded: it has no thunk reclaim
+		// for `dyn` and keeps leaking the capture (correct-but-leaking).
+		if _, isDyn := c.Type.(ast.DynTraitType); isDyn && dynRcSupported {
 			return true
 		}
 	}
@@ -4969,7 +6636,7 @@ func hasRcCapture(caps []ast.Param, ptrW int) bool {
 // rc-tracked captures (the generic helper already handles those).
 // The thunk's env is a plain param (slot 0), not a closure-pair
 // local, so re-loading it freely doesn't perturb ElideClosurePair.
-func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.Info, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType) *Func {
+func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.Info, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, dynRcSupported bool) *Func {
 	// A no-rc-capture closure (scalar/i64/f64 captures only) still gets a
 	// thunk when it's MakeClosure'd: the pair's drop-fn pointer needs a
 	// callable target that frees the env block. Its body is just the
@@ -5024,6 +6691,25 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 			off += slot
 			continue
 		}
+		// `dyn Trait` capture — NATIVES ONLY (dynRcSupported, boxed one-word
+		// cell ptr in the env slot). The capture was MOVED into the env (no
+		// MakeEnv inc — needsRcIncOnAlias declines `dyn`), and
+		// markConstructionMoves suppressed the source local's exit-sweep drop,
+		// so this thunk is the SOLE owner that reclaims the cell. Load the cell
+		// ptr from [env+off] and run __drop_dyn_<set> (argc 1, VOID return → NO
+		// trailing OpDrop, mirroring appendChildDrop's dyn arm). wasm (inline
+		// two-word) is excluded — it has no thunk reclaim for `dyn` and keeps
+		// leaking the capture; see docs/DYN-TRAITS.md §7.8.
+		if dt, isDyn := c.Type.(ast.DynTraitType); isDyn && dynRcSupported {
+			ops = append(ops,
+				Op{Kind: OpLoadLocal, I32: 0},
+				Op{Kind: OpConstI32, I32: off},
+				Op{Kind: OpAdd},
+				Op{Kind: OpLoad, Width: WidthPtr},
+				Op{Kind: OpCallDirect, Str: dynDropFnName(dt.Traits), I32: 1})
+			off += slot
+			continue
+		}
 		if arrElemIsRcTracked(c.Type) {
 			// Load the capture pointer from [env+off]. The thunk only
 			// runs when every rc-tracked capture was inc'd at MakeEnv
@@ -5038,7 +6724,13 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 				Op{Kind: OpAdd},
 				Op{Kind: OpLoad, Width: WidthPtr})
 			if at, isArr := c.Type.(ast.ArrayType); isArr {
-				if drop, ok := arrElemStructDropName(at.Elem, info, reg, tupleReg, ptrW); ok {
+				// dynRcSupported=false here: a `dyn Trait[]` CAPTURED by a
+				// closure stays flagged-leaking on the natives this slice
+				// (docs/DYN-TRAITS.md §7.8). The dedicated array-of-dyn drop
+				// is wired for the value/field/element drop sites; routing it
+				// from the closure capture sweep is a follow-up (the capture
+				// inc/borrow accounting for a nested dyn isn't established).
+				if drop, ok := arrElemStructDropName(at.Elem, info, reg, tupleReg, ptrW, false); ok {
 					// Array of concrete structs: deep-drop each element
 					// box + the buffer (Stage B loop).
 					ops = append(ops, Op{Kind: OpCallDirect, Str: drop, I32: 1})
@@ -5058,7 +6750,7 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 				ops = append(ops,
 					Op{Kind: OpCallDirect, Str: "__map_drop_values", I32: 1},
 					Op{Kind: OpCallDirect, Str: "__fern_map_drop", I32: 1})
-			} else if drop, ok := dropFnNameFor(c.Type, info, reg, tupleReg, ptrW); ok {
+			} else if drop, ok := dropFnNameFor(c.Type, info, reg, tupleReg, ptrW, false); ok {
 				// Concrete-struct (or boxed generic-enum) capture: free its
 				// box + nested children.
 				ops = append(ops, Op{Kind: OpCallDirect, Str: drop, I32: 1})
@@ -5101,7 +6793,7 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 // closures, and generic enum instantiations (Args != nil; their
 // box-vs-pair-form shape needs the type args, handled inline for locals)
 // return ("", false) so the caller falls back to a flat one-level dec.
-func dropFnNameFor(t ast.Type, info *checker.Info, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, ptrW int) (string, bool) {
+func dropFnNameFor(t ast.Type, info *checker.Info, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, ptrW int, dynRcSupported bool) (string, bool) {
 	switch v := t.(type) {
 	case ast.StructType:
 		if v.Name == "Map" {
@@ -5160,6 +6852,29 @@ func dropFnNameFor(t ast.Type, info *checker.Info, reg map[string]*ast.EnumDecl,
 		mangled := mangleTupleInst(v)
 		tupleReg[mangled] = v
 		return "__drop_tuple_" + mangled, true
+	case ast.DynTraitType:
+		// A `dyn Trait` value owns its concrete `data` object (the erased
+		// type), reclaimed through a per-trait-set drop helper that reads
+		// the vtable's trailing drop slot and dispatches the concrete
+		// destructor (docs/DYN-TRAITS.md §4.4). Per-SET (not per-trait) so
+		// the drop-slot index (= the merged method count) is baked into
+		// the helper; a single-trait set keys by the bare trait name.
+		// wasm (ptrW==4, slice 4a), x86-64 (ptrW==8 + dynRcSupported,
+		// slice 4b — boxed), and arm64 (ptrW==8 + dynRcSupported, slice
+		// 4c — boxed, structural mirror) all have a __drop_dyn_<set>
+		// helper (buildDynDropHelpers emits the right shape per ptrW). A
+		// hypothetical ptrW==8 backend that lifts dispatch (DynSupported)
+		// but NOT RC (!dynRcSupported) would still leak `dyn` — its vtable
+		// emitter wouldn't append the drop slot and buildDynDropHelpers
+		// would decline, so routing a `dyn` drop through a non-existent
+		// __drop_dyn_ helper there would be a dangling call; the gate keeps
+		// it correct-but-leaking. ptrW==0 (the collectVtables Drop probe)
+		// only asks struct/enum, never reaching this arm, so its argument
+		// is moot.
+		if ptrW != 4 && !dynRcSupported {
+			return "", false
+		}
+		return dynDropFnName(v.Traits), true
 	}
 	return "", false
 }
@@ -5326,7 +7041,30 @@ func substituteEnumDecl(ed *ast.EnumDecl, args []ast.Type) *ast.EnumDecl {
 // statically exact (no union ambiguity), so it's safe to dispatch a
 // type-specific per-element drop. Array-of-array / array-of-enum /
 // array-of-closure return ("", false) and keep __fern_drop_arr_ptr.
-func arrElemStructDropName(elem ast.Type, info *checker.Info, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, ptrW int) (string, bool) {
+func arrElemStructDropName(elem ast.Type, info *checker.Info, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, ptrW int, dynRcSupported bool) (string, bool) {
+	// `dyn Trait[]` element (docs/DYN-TRAITS.md §7.8 — RC of `dyn` NESTED
+	// in a container). Each element is a `dyn` value in the backend's
+	// native shape: on the natives (boxed) a one-word cell ptr, on wasm
+	// (inline) a two-word `[data, vtable]`. The dedicated
+	// `__drop_arr_dyn_<set>` loop walks each element and runs the per-set
+	// `__drop_dyn_<set>` destructor on it (which reads the vtable's
+	// trailing drop slot, dispatches the erased concrete dtor, and on the
+	// natives frees the 16-byte cell), then frees the outer buffer. Gated
+	// on the backend's dyn-RC capability (ptrW==4 wasm slice 4a, or a
+	// ptrW==8 native that opted into DynRcSupported): a backend that lifts
+	// dispatch but not RC has no `__drop_dyn_<set>` helper, so it keeps the
+	// flat buffer-only free (leak-but-never-UAF). genArrDynDropFn builds
+	// the right-shaped loop per ptrW.
+	if dt, ok := elem.(ast.DynTraitType); ok {
+		if ptrW != 4 && !dynRcSupported {
+			return "", false
+		}
+		// Embed the full per-element `__drop_dyn_<set>` symbol so the
+		// worklist recovers it from the name alone (mirrors
+		// `__drop_arr_of_<perElem>`); the '+'→"_x_" sanitisation in
+		// dynDropFnName keeps the composite name a valid GAS label.
+		return "__drop_arr_dyn_" + dynDropFnName(dt.Traits), true
+	}
 	if v, ok := elem.(ast.StructType); ok {
 		if v.Name == "Map" {
 			return "", false
@@ -5391,7 +7129,7 @@ func arrElemStructDropName(elem ast.Type, info *checker.Info, reg map[string]*as
 	// flat path. A generic instantiation registers its substituted decl into
 	// `reg` so the worklist regenerates the __drop_enum_<mangled> body.
 	if _, ok := elem.(ast.EnumType); ok {
-		if perElem, ok := dropFnNameFor(elem, info, reg, tupleReg, ptrW); ok {
+		if perElem, ok := dropFnNameFor(elem, info, reg, tupleReg, ptrW, false); ok {
 			return "__drop_arr_of_" + perElem, true
 		}
 		return "", false
@@ -5428,7 +7166,7 @@ func arrElemStructDropName(elem ast.Type, info *checker.Info, reg map[string]*as
 		// rc-tracked inner element (struct / array / tuple / enum): recurse to
 		// the inner array's drop (also registers any tuple / generic-enum
 		// shape it discovers).
-		if perElem, ok := arrElemStructDropName(inner.Elem, info, reg, tupleReg, ptrW); ok {
+		if perElem, ok := arrElemStructDropName(inner.Elem, info, reg, tupleReg, ptrW, dynRcSupported); ok {
 			return "__drop_arr_of_" + perElem, true
 		}
 	}
@@ -5918,6 +7656,82 @@ func genArrOfArrDropFn(perElemDrop string, ptrW int) *Func {
 	}
 }
 
+// genArrDynDropFn builds __drop_arr_dyn_<__drop_dyn_<set>>(ptr) — the
+// outer drop for a `dyn Trait[]` array (docs/DYN-TRAITS.md §7.8). On the
+// array's last reference (rc==1) it walks every element and runs the
+// per-set `dynDrop` destructor on it, then frees the outer buffer.
+// Representation-divergent in TWO ways the generic genArrOfArrDropFn
+// can't express, hence a dedicated generator:
+//   - element WIDTH: a `dyn` element is one word (the boxed cell ptr) on
+//     the natives but TWO words ([data, vtable]) inline on wasm — so the
+//     per-element stride is ptrW (native) vs 2*ptrW (wasm) and the load
+//     fans out two words on wasm (WidthString) vs one (WidthPtr) native.
+//   - the per-element drop RETURN: `__drop_dyn_<set>` returns VOID (it
+//     dispatches the concrete dtor through the vtable and, on the
+//     natives, frees the cell), so there is NO trailing OpDrop — unlike
+//     genArrOfArrDropFn whose perElem returns the i32 box ptr.
+//
+// `dynDrop` is the full `__drop_dyn_<set>` symbol (embedded in this fn's
+// name so the worklist recovers it). The concrete dtor self-guards on
+// rc==1, so a shared element only dec's. Slots: 0=ptr, 1=i, 2=len.
+func genArrDynDropFn(dynDrop string, ptrW int) *Func {
+	stride := int32(ptrW)
+	elemLoad := Op{Kind: OpLoad, Width: WidthPtr} // native: one-word cell ptr
+	argc := int32(1)
+	if ptrW == 4 {
+		stride = int32(2 * ptrW)                        // wasm: two-word inline
+		elemLoad = Op{Kind: OpLoad, Width: WidthString} // fans out [data, vtable]
+		argc = 2
+	}
+	ops := []Op{
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpIf, I32: BlockTypeVoid},
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpConstI32, I32: 4},
+		{Kind: OpSub},
+		{Kind: OpLoad},
+		{Kind: OpStoreLocal, I32: 2},
+		{Kind: OpConstI32, I32: 0},
+		{Kind: OpStoreLocal, I32: 1},
+		{Kind: OpBlock, I32: BlockTypeVoid},
+		{Kind: OpLoop, I32: BlockTypeVoid},
+		{Kind: OpLoadLocal, I32: 1},
+		{Kind: OpLoadLocal, I32: 2},
+		{Kind: OpGeS},
+		{Kind: OpBrIf, I32: 1},
+		// dynDrop(mem[ptr + i*stride]) — void, no trailing OpDrop.
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpLoadLocal, I32: 1},
+		{Kind: OpConstI32, I32: stride},
+		{Kind: OpMul},
+		{Kind: OpAdd},
+		elemLoad,
+		{Kind: OpCallDirect, Str: dynDrop, I32: argc},
+		{Kind: OpLoadLocal, I32: 1},
+		{Kind: OpConstI32, I32: 1},
+		{Kind: OpAdd},
+		{Kind: OpStoreLocal, I32: 1},
+		{Kind: OpBr, I32: 0},
+		{Kind: OpEnd}, // loop
+		{Kind: OpEnd}, // block
+		{Kind: OpEnd}, // if rc==1
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpConstI32, I32: stride},
+		{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2},
+		{Kind: OpDrop},
+		{Kind: OpLoadLocal, I32: 0},
+		{Kind: OpReturn},
+	}
+	return &Func{
+		Name:         "__drop_arr_dyn_" + dynDrop,
+		Params:       []ast.Param{{Name: "__ad", Type: ast.NumberType{}}},
+		ScratchTypes: []ast.Type{ast.NumberType{}, ast.NumberType{}},
+		ReturnType:   ast.NumberType{},
+		Ops:          ops,
+	}
+}
+
 // mapValDropName returns the column-walk drop function name for a Map
 // whose VALUE type has a generated recursive drop (concrete struct or
 // enum), plus whether one applies. The name embeds the per-value drop fn
@@ -6149,7 +7963,27 @@ func genMapStrColDropFn(name string, colOff int32, ptrW int) *Func {
 // enum-payload, and map-key reclamation are later slices). Used by the
 // generated __drop_struct_ bodies; the inline (builder) struct-field
 // sweep delegates equivalently.
-func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType) []Op {
+func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, dynRcSupported bool) []Op {
+	// `dyn Trait` child (enum payload / tuple element / struct field): the
+	// per-set __drop_dyn_<set> destructor reads the vtable's trailing drop
+	// slot, dispatches the concrete dtor on `data`, and frees the boxed cell
+	// (docs/DYN-TRAITS.md §4.4 + §7.8). The caller loaded the dyn via
+	// payloadLoadOpFor (ONE word boxed cell ptr on the natives); the call's
+	// argc is 1 and — unlike the other branches — __drop_dyn_<set> returns
+	// VOID, so there is NO trailing OpDrop.
+	//
+	// NATIVES ONLY (dynRcSupported, ptrW==8). wasm (ptrW==4, inline two-word
+	// `dyn`) is deliberately EXCLUDED here: a `dyn` nested in an enum /
+	// struct / tuple that is then matched-and-bound (`match (e) { V(s) => …
+	// }`) double-drops on the inline representation (the bound `s` and the
+	// container payload both reclaim the same `data` → "pointer not
+	// aligned"). wasm keeps its prior correct-but-leaking behaviour for
+	// these container kinds (the array-element kind reclaims via the
+	// dedicated genArrDynDropFn path, unaffected). See §7.8.
+	if dt, isDyn := t.(ast.DynTraitType); isDyn && dynRcSupported {
+		return append(ops,
+			Op{Kind: OpCallDirect, Str: dynDropFnName(dt.Traits), I32: 1})
+	}
 	// Two-word string value (wasm + arm64-TwoWordOverride): the
 	// caller loaded (data, len) via a string-aware load
 	// (payloadLoadOpFor), so reclaim via __fern_str_dec. Reached from
@@ -6173,7 +8007,7 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 	if isMapType(t) {
 		return appendMapDrop(ops)
 	}
-	if name, ok := dropFnNameFor(t, info, reg, tupleReg, ptrW); ok {
+	if name, ok := dropFnNameFor(t, info, reg, tupleReg, ptrW, false); ok {
 		return append(ops,
 			Op{Kind: OpCallDirect, Str: name, I32: 1},
 			Op{Kind: OpDrop})
@@ -6182,7 +8016,7 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 		// Any array field frees its buffer (see dropStructField for the
 		// rationale): array-of-struct deep-drops elements + buffer,
 		// array-of-rc frees the outer buffer, plain arrays arr_dec.
-		if name, ok := arrElemStructDropName(at.Elem, info, reg, tupleReg, ptrW); ok {
+		if name, ok := arrElemStructDropName(at.Elem, info, reg, tupleReg, ptrW, false); ok {
 			return append(ops,
 				Op{Kind: OpCallDirect, Str: name, I32: 1},
 				Op{Kind: OpDrop})
@@ -6226,7 +8060,7 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 // filtered upstream by tupleNeedsDrop before the routing fires, so
 // genTupleDropFn assumes at least one element drop is emitted; the
 // box_free + dec arms are always emitted.
-func genTupleDropFn(mangled string, tt ast.TupleType, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType) *Func {
+func genTupleDropFn(mangled string, tt ast.TupleType, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, dynRcSupported bool) *Func {
 	offs, size := tupleElemLayout(tt.Elems, ptrW)
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
@@ -6272,7 +8106,7 @@ func genTupleDropFn(mangled string, tt ast.TupleType, info *checker.Info, ptrW i
 			ops = append(ops, Op{Kind: OpConstI32, I32: offs[i]}, Op{Kind: OpAdd})
 		}
 		ops = append(ops, Op{Kind: OpLoad, Width: WidthPtr})
-		ops = appendChildDrop(ops, et, info, ptrW, reg, tupleReg)
+		ops = appendChildDrop(ops, et, info, ptrW, reg, tupleReg, dynRcSupported)
 	}
 	ops = append(ops,
 		Op{Kind: OpLoadLocal, I32: 0},
@@ -6302,7 +8136,7 @@ func genTupleDropFn(mangled string, tt ast.TupleType, info *checker.Info, ptrW i
 // frees base = data-8, size+8 (structFieldLayout's size already
 // accounts for the header). Works for a childless struct too: the
 // field loop is empty, so it just is_unique-gates and frees the box.
-func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType) *Func {
+func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, dynRcSupported bool) *Func {
 	offs, size := structFieldLayout(sd.Fields, ptrW)
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
@@ -6353,7 +8187,7 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 			continue
 		}
 		ops = append(ops, Op{Kind: OpLoad, Width: WidthPtr})
-		ops = appendChildDrop(ops, f.Type, info, ptrW, reg, tupleReg)
+		ops = appendChildDrop(ops, f.Type, info, ptrW, reg, tupleReg, dynRcSupported)
 	}
 	ops = append(ops,
 		Op{Kind: OpLoadLocal, I32: 0},
@@ -6384,8 +8218,8 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 // gate and take the dec path. Mirrors the inline non-uniform enum drop
 // (emitDec), but as a standalone fn so a nested enum field / payload /
 // capture can route to it. Slots: 0=ptr (param), 1=tag (scratch).
-func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType) *Func {
-	plan, ok := enumVariantDropPlan(ed, ptrW)
+func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, dynRcSupported bool) *Func {
+	plan, ok := enumVariantDropPlan(ed, ptrW, dynRcSupported)
 	if !ok {
 		return nil
 	}
@@ -6411,7 +8245,7 @@ func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, 
 				ops = append(ops, Op{Kind: OpConstI32, I32: ld.off}, Op{Kind: OpAdd})
 			}
 			ops = append(ops, payloadLoadOpFor(ld.typ, ptrW))
-			ops = appendChildDrop(ops, ld.typ, info, ptrW, reg, tupleReg)
+			ops = appendChildDrop(ops, ld.typ, info, ptrW, reg, tupleReg, dynRcSupported)
 		}
 		ops = append(ops,
 			Op{Kind: OpLoadLocal, I32: 0},
@@ -6566,7 +8400,7 @@ type variantDrop struct {
 // ParamType payload — its drop-kind / size isn't statically known, so
 // the enum keeps leaking its box (safe). Mirrors uniformEnumDropLoads'
 // dropKind classification.
-func enumVariantDropPlan(ed *ast.EnumDecl, ptrW int) ([]variantDrop, bool) {
+func enumVariantDropPlan(ed *ast.EnumDecl, ptrW int, dynRcSupported bool) ([]variantDrop, bool) {
 	dropKind := func(t ast.Type) (int, bool) {
 		if _, isParam := t.(ast.ParamType); isParam {
 			return 0, false
@@ -6582,6 +8416,15 @@ func enumVariantDropPlan(ed *ast.EnumDecl, ptrW int) ([]variantDrop, bool) {
 		}
 		if _, isStr := t.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
 			return 4, true // single-word native string dec (__fern_rc_dec)
+		}
+		// `dyn Trait` payload (docs/DYN-TRAITS.md §7.8): the per-set
+		// __drop_dyn_<set> destructor reclaims the concrete + boxed cell.
+		// NATIVES ONLY (dynRcSupported, ptrW==8) — wasm's inline two-word
+		// `dyn` double-drops when the payload is matched-and-bound, so it
+		// stays scalar-leaking here (correct-but-never-double-free); see
+		// appendChildDrop's dyn arm + §7.8.
+		if _, isDyn := t.(ast.DynTraitType); isDyn && dynRcSupported {
+			return 5, true // dyn drop (__drop_dyn_<set>, void)
 		}
 		return 0, false // scalar — nothing to drop
 	}
@@ -6609,7 +8452,7 @@ func enumVariantDropPlan(ed *ast.EnumDecl, ptrW int) ([]variantDrop, bool) {
 	return plan, true
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -6624,6 +8467,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		locals:               map[string]int32{},
 		scratchType:          map[int32]ast.Type{},
 		ptrW:                 ptrW,
+		dynRcSupported:       dynRcSupported,
 		pairForm:             pairForm,
 		closureCaps:          closureCaps,
 		genEnumDrops:         genEnumDrops,
@@ -6633,6 +8477,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		trmcConsumeSafe:      trmcConsumeSafe,
 		paramEscapes:         paramEscapes,
 		thisIsPair:           pairForm[fn.Name],
+		dynCoerceDone:        map[ast.Expr]bool{},
 	}
 	if b.thisIsPair {
 		if enumT, ok := fn.ReturnType.(ast.EnumType); ok {
@@ -6658,6 +8503,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 	b.freeEligible = b.computeFreeEligible()
 	b.moveSites = map[ast.Node]bool{}
 	b.movedLocals = b.computeMovedLocals()
+	b.arraySetInc = b.computeArraySetIncs()
 	b.reuseSources, b.reuseConsumed = b.computeReuseSources()
 	b.consumingMatchReuse = map[*ast.Call]bool{}
 	b.closureTarget = map[string]string{}
@@ -6751,6 +8597,20 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 		b.emit(Op{Kind: OpConstI32, I32: 0})
 		b.emit(Op{Kind: OpStoreLocal, I32: slot})
 	}
+	// Zero-init every defer / errdefer active flag. The flag is set
+	// to 1 only when its statement is reached at runtime; the per-
+	// exit cleanup reads it to skip a defer registered inside a
+	// branch that didn't run. The slot is otherwise uninitialised
+	// stack space on the natives, and in a function that builds an
+	// enum return value (e.g. `return Err(...)`) that slot can hold
+	// non-zero garbage — spuriously firing an unreached defer. (The
+	// wasm locals are zero by spec, so this only corrects the
+	// natives, but emitting unconditionally keeps the backends in
+	// lockstep.) Pre-zero so the active-flag guard is sound.
+	for _, slot := range b.deferSlots {
+		b.emit(Op{Kind: OpConstI32, I32: 0})
+		b.emit(Op{Kind: OpStoreLocal, I32: slot})
+	}
 	// Consumed-threaded param entry-inc: a promoted consumed param (see
 	// computeConsumedParams) is reclaimed callee-side — its reassignment-
 	// overwrites and the exit sweep deep-drop it — but the caller passes it
@@ -6795,34 +8655,16 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 			}
 		}
 	}
-	// Record the type of every synthetic slot the lowering pass
-	// conjured beyond the user-visible params + locals — ArrayLit
-	// / StructLit / Switch / closure helpers each added entries to
-	// the locals map. Most are i32 (heap pointers or integer tags);
-	// match-arm bindings of float-typed payloads register a
-	// FloatType in scratchType so wasm declares the local as f32.
-	//
-	// Use the standalone nextSlot counter (rather than
-	// `len(b.locals)`) so two match arms that share a binding
-	// name don't fool the count by overwriting the same map
-	// entry — both still consume distinct slot indices.
-	scratchBase := int32(len(fn.Params) + len(info.Locals[fn]))
-	scratchCount := int(b.nextSlot - scratchBase)
-	if scratchCount < 0 {
-		scratchCount = 0
-	}
-	out.ScratchTypes = make([]ast.Type, scratchCount)
-	for i := range out.ScratchTypes {
-		if t, ok := b.scratchType[scratchBase+int32(i)]; ok && t != nil {
-			out.ScratchTypes[i] = t
-		} else {
-			out.ScratchTypes[i] = ast.NumberType{}
-		}
-	}
 	// If the body falls off the end, emit an implicit return so the
 	// downstream consumer doesn't have to check. Run any
 	// registered defers first — same shape as the explicit
 	// Return path.
+	//
+	// This MUST run before ScratchTypes is sized below: its
+	// emitRcDecLocalsAtExit can allocate fresh scratch slots (e.g. the
+	// tag stash of an enum-param exit-drop on a fall-off path), and a
+	// slot allocated after the count is taken would be referenced but
+	// never declared — an out-of-bounds local on wasm (#2828).
 	if needsImplicitReturn(out.Ops) {
 		if err := b.emitDeferCleanup(); err != nil {
 			return nil, err
@@ -6862,6 +8704,32 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm map[stri
 				b.emitRcDecLocalsAtExit()
 				b.emit(Op{Kind: OpReturn})
 			}
+		}
+	}
+	// Record the type of every synthetic slot the lowering pass
+	// conjured beyond the user-visible params + locals — ArrayLit
+	// / StructLit / Switch / closure helpers each added entries to
+	// the locals map. Most are i32 (heap pointers or integer tags);
+	// match-arm bindings of float-typed payloads register a
+	// FloatType in scratchType so wasm declares the local as f32.
+	//
+	// Use the standalone nextSlot counter (rather than
+	// `len(b.locals)`) so two match arms that share a binding
+	// name don't fool the count by overwriting the same map
+	// entry — both still consume distinct slot indices. Sized AFTER
+	// the implicit-return emission above, which can allocate the last
+	// scratch slot (the enum-param fall-off drop's tag stash, #2828).
+	scratchBase := int32(len(fn.Params) + len(info.Locals[fn]))
+	scratchCount := int(b.nextSlot - scratchBase)
+	if scratchCount < 0 {
+		scratchCount = 0
+	}
+	out.ScratchTypes = make([]ast.Type, scratchCount)
+	for i := range out.ScratchTypes {
+		if t, ok := b.scratchType[scratchBase+int32(i)]; ok && t != nil {
+			out.ScratchTypes[i] = t
+		} else {
+			out.ScratchTypes[i] = ast.NumberType{}
 		}
 	}
 	return out, nil
@@ -7381,6 +9249,182 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
 	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
 	b.emit(Op{Kind: OpAdd})
+	return nil
+}
+
+// emitDowncast lowers `e as? T` (DowncastExpr) where `e: dyn Trait` and
+// `T` is a struct/enum implementing the trait, to `Option[T]`
+// (docs/DYN-TRAITS.md §9). The (trait,concrete) vtable pointer uniquely
+// tags the concrete type, so the runtime test is a vtable-pointer
+// compare against the static `__vtable_<Trait>_<T>` address: equal →
+// Some(data) (data is the concrete heap pointer, which IS the T value —
+// no unbox for a struct/enum target); else → None.
+//
+// The `data`/`vtable` extraction reuses exactly the dispatch lowering's
+// pattern (see (*builder).call's DynTrait branch), branching on
+// b.dynBoxed(): boxed natives deref a `{data@0, vtable@ptrW}` cell;
+// inline wasm pops the high word of the two-word `[data, vtable]` value.
+// The Some/None construction reuses the ordinary heap-box enum
+// representation (Some via emitOptionSomeFromSlot, None via the shared
+// payloadless OpEnumSentinel), so the result is an ordinary Option value
+// a `match` reads with the same tag-at-[ptr+0] load as any other.
+func (b *builder) emitDowncast(n *ast.DowncastExpr) error {
+	if b.info == nil {
+		return fmt.Errorf("ir: 'as?' downcast lowering requires checker info")
+	}
+	if n.Trait == "" {
+		return fmt.Errorf("ir: 'as?' downcast missing trait (checker did not stamp DowncastExpr.Trait)")
+	}
+	concrete, ok := downcastTargetName(n.Target)
+	if !ok {
+		return fmt.Errorf("ir: 'as?' downcast target %v is not a struct/enum type", n.Target)
+	}
+	// Extract the receiver's `data` and `vtable` words into i32 scratch
+	// slots. Representation-dependent (docs/DYN-TRAITS.md §4.2), mirroring
+	// the dispatch lowering's extraction exactly.
+	dataSlot := b.allocSlot()
+	b.scratchType[dataSlot] = ast.NumberType{Width: 32}
+	vtSlot := b.allocSlot()
+	b.scratchType[vtSlot] = ast.NumberType{Width: 32}
+	if b.dynBoxed() {
+		// Boxed one-word (natives, §4.2.2): receiver is a pointer to a
+		// `{data @0, vtable @ptrW}` cell. Stash the cell, deref both words.
+		if err := b.expr(n.Inner); err != nil {
+			return err
+		}
+		cellTmp := b.allocSlot()
+		b.scratchType[cellTmp] = ast.NumberType{Width: 32}
+		b.emit(Op{Kind: OpStoreLocal, I32: cellTmp})
+		// data = load(cell + 0)
+		b.emit(Op{Kind: OpLoadLocal, I32: cellTmp})
+		b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+		b.emit(Op{Kind: OpStoreLocal, I32: dataSlot})
+		// vtable = load(cell + ptrW)
+		b.emit(Op{Kind: OpLoadLocal, I32: cellTmp})
+		b.emit(Op{Kind: OpConstI32, I32: int32(b.ptrW)})
+		b.emit(Op{Kind: OpAdd})
+		b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+		b.emit(Op{Kind: OpStoreLocal, I32: vtSlot})
+	} else {
+		// Inline two-word (wasm, §4.2.1): receiver lowers to `[data,
+		// vtable]`. OpStoreLocal pops one word at a time: pop vtable
+		// (high), then data (low).
+		if err := b.expr(n.Inner); err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpStoreLocal, I32: vtSlot})
+		b.emit(Op{Kind: OpStoreLocal, I32: dataSlot})
+	}
+	// Compare the receiver's vtable word against the target's static
+	// vtable address. OpConstVtable pushes the SAME address a coercion of
+	// T would pair with, so the pointer-identity compare is exact. Key by
+	// the whole trait SET (dynVtableSetKey): for a single-trait `dyn A`
+	// downcast this is the bare trait name — byte-identical to before — so
+	// it selects `__vtable_<A>_<T>`; for a multi-trait `dyn A + B` downcast
+	// it selects the MERGED vtable `__vtable_<A+B>_<T>` that a multi-trait
+	// coercion of T stores, so the compare matches exactly when the
+	// runtime concrete is T (docs/DYN-TRAITS.md §10).
+	setKey := n.Trait
+	if len(n.Traits) > 0 {
+		setKey = dynVtableSetKey(n.Traits)
+	}
+	b.emit(Op{Kind: OpLoadLocal, I32: vtSlot})
+	b.emit(Op{Kind: OpConstVtable, Str: setKey, Str2: concrete})
+	b.emit(Op{Kind: OpEq})
+	// Result Option[T] heap-box pointer, built in either arm into a
+	// shared scratch slot (a void if-block keeps the operand-stack model
+	// simple across backends; the result is loaded after OpEnd).
+	resultSlot := b.allocSlot()
+	b.scratchType[resultSlot] = ast.NumberType{Width: 32}
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+	// hit → Some(data): data is the concrete heap pointer == the T value.
+	if err := b.emitOptionSomeFromSlot(n.Target, dataSlot); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+	b.emit(Op{Kind: OpElse})
+	// miss → None (payloadless variant 1 — the shared static sentinel).
+	b.emit(Op{Kind: OpEnumSentinel, I32: 1})
+	b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
+	b.emit(Op{Kind: OpEnd})
+	b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
+	return nil
+}
+
+// emitOptionSomeFromSlot builds an `Option[T].Some(v)` heap box where the
+// payload value `v` is already lowered into the i32 scratch slot
+// `dataSlot` (rather than an ast.Expr). It mirrors emitEnumNew's box
+// layout for the single-payload Some variant (varIdx 0): an 8-byte rc
+// header, the tag at [base+rcHeader], the payload at
+// [base+rcHeader+offset]. Used by the downcast lowering, whose `data`
+// word is the concrete heap pointer recovered from the `dyn` value. No
+// payload inc is emitted (leak-mode dyn, like the rest of the dyn
+// lowering — docs/DYN-TRAITS.md §4.4 RC follow-up).
+func (b *builder) emitOptionSomeFromSlot(payloadType ast.Type, dataSlot int32) error {
+	const rcHeaderBytes = 8
+	offsets, size := payloadLayout([]ast.Type{payloadType}, 1, b.ptrW)
+	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
+	b.emit(Op{Kind: OpAlloc})
+	baseSlot := b.allocSlot()
+	b.scratchType[baseSlot] = ast.NumberType{Width: 32}
+	b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
+	// rc = 1 at [base+0].
+	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpConstI32, I32: 1})
+	b.emit(Op{Kind: OpStore})
+	// tag = 0 (Some) at [base+rcHeader].
+	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpConstI32, I32: 0})
+	b.emit(Op{Kind: OpStore})
+	// payload = data at [base+rcHeader+offset].
+	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offsets[0]})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpLoadLocal, I32: dataSlot})
+	b.emit(payloadStoreOpFor(payloadType, b.ptrW))
+	// Push the user-visible data pointer (= base + rc header).
+	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+	b.emit(Op{Kind: OpAdd})
+	return nil
+}
+
+// boxPrimitiveDynValue heap-boxes the primitive/string value currently on
+// top of the operand stack into a fresh value cell, leaving the cell
+// POINTER on the stack as the `dyn` fat pointer's `data` word
+// (docs/DYN-TRAITS.md §4.2.3). The cell is sized + stored via the concrete
+// type's own layout helpers, so a two-word wasm string boxes as two words,
+// an i64/f64 as 8 bytes, etc. The cell carries no rc header (leak-mode,
+// like the existing dyn box). `concrete` is the primitive type-name string
+// from the coercion site; the caller has already gated isPrimitiveConcrete.
+func (b *builder) boxPrimitiveDynValue(concrete string) error {
+	ct := astTypeForConcreteName(concrete)
+	if ct == nil {
+		return fmt.Errorf("ir: dyn coercion of %q: no value-box layout for primitive concrete", concrete)
+	}
+	size := payloadSlotSize(ct, b.ptrW)
+	// Stash the value (one or two words) into a typed scratch so the
+	// subsequent alloc — which may trigger heap init/grow and clobber the
+	// operand stack model — doesn't strand it.
+	valSlot := b.allocSlot()
+	b.scratchType[valSlot] = ct
+	b.locals[fmt.Sprintf("__dynbox_val_%d", valSlot)] = valSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: valSlot})
+	// Allocate the value cell (no rc header — leak-mode dyn box).
+	b.emit(Op{Kind: OpConstI32, I32: size})
+	b.emit(Op{Kind: OpAlloc})
+	cellSlot := b.allocSlot()
+	b.scratchType[cellSlot] = ast.NumberType{Width: 32}
+	b.locals[fmt.Sprintf("__dynbox_cell_%d", cellSlot)] = cellSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: cellSlot})
+	// cell[0] = value (concrete store width: two-word for a wasm string).
+	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: valSlot})
+	b.emit(payloadStoreOpFor(ct, b.ptrW))
+	// Leave the cell pointer on the stack as `data`.
+	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
 	return nil
 }
 
@@ -7908,9 +9952,11 @@ func (b *builder) stmt(s ast.Stmt) error {
 		b.brTo(breakD, true)
 		b.breakStack = append(b.breakStack, breakD)
 		b.contStack = append(b.contStack, loopD)
+		b.loopFrames = append(b.loopFrames, loopFrame{label: n.Label, breakD: breakD, contD: loopD})
 		if err := b.stmt(n.Body); err != nil {
 			return err
 		}
+		b.loopFrames = b.loopFrames[:len(b.loopFrames)-1]
 		b.breakStack = b.breakStack[:len(b.breakStack)-1]
 		b.contStack = b.contStack[:len(b.contStack)-1]
 		b.brTo(loopD, false) // unconditional back-edge
@@ -7939,9 +9985,11 @@ func (b *builder) stmt(s ast.Stmt) error {
 		contD := b.depth
 		b.breakStack = append(b.breakStack, breakD)
 		b.contStack = append(b.contStack, contD)
+		b.loopFrames = append(b.loopFrames, loopFrame{label: n.Label, breakD: breakD, contD: contD})
 		if err := b.stmt(n.Body); err != nil {
 			return err
 		}
+		b.loopFrames = b.loopFrames[:len(b.loopFrames)-1]
 		b.breakStack = b.breakStack[:len(b.breakStack)-1]
 		b.contStack = b.contStack[:len(b.contStack)-1]
 		b.closeScope() // close continue-block
@@ -7954,11 +10002,27 @@ func (b *builder) stmt(s ast.Stmt) error {
 		b.closeScope() // close loop
 		b.closeScope() // close break-block
 	case *ast.Break:
+		if n.Label != "" {
+			fr := b.findLoopFrame(n.Label)
+			if fr == nil {
+				return fmt.Errorf("ir: break label %q not found (compiler bug — should be checker-rejected)", n.Label)
+			}
+			b.brTo(fr.breakD, false)
+			break
+		}
 		if len(b.breakStack) == 0 {
 			return fmt.Errorf("ir: break outside of a loop (compiler bug — should be checker-rejected)")
 		}
 		b.brTo(b.breakStack[len(b.breakStack)-1], false)
 	case *ast.Continue:
+		if n.Label != "" {
+			fr := b.findLoopFrame(n.Label)
+			if fr == nil {
+				return fmt.Errorf("ir: continue label %q not found (compiler bug — should be checker-rejected)", n.Label)
+			}
+			b.brTo(fr.contD, false)
+			break
+		}
 		if len(b.contStack) == 0 {
 			return fmt.Errorf("ir: continue outside of a loop (compiler bug — should be checker-rejected)")
 		}
@@ -8008,6 +10072,25 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.emit(Op{Kind: OpStoreLocal, I32: slot})
 			if err := b.emitDeferCleanup(); err != nil {
 				return err
+			}
+			// errdefer: a `return` is an error exit only when the
+			// returned value is the failure variant (None / Err,
+			// tag 1) of an Option/Result. Functions with an
+			// errdefer are kept out of the pair-form ABI (see the
+			// pair-form eligibility check), so the stashed value is
+			// always a heap box with its tag at offset 0 — read it
+			// and replay the errdefers under that branch. Gated on
+			// hasErrDefers so non-errdefer functions are unchanged.
+			if b.hasErrDefers() && isOptionOrResultType(b.fn.ReturnType) {
+				b.emit(Op{Kind: OpLoadLocal, I32: slot})
+				b.emit(Op{Kind: OpLoad})             // tag @ box+0
+				b.emit(Op{Kind: OpConstI32, I32: 1}) // failure variant idx
+				b.emit(Op{Kind: OpEq})
+				b.openIf(BlockTypeVoid)
+				if err := b.emitErrDeferCleanup(); err != nil {
+					return err
+				}
+				b.closeScope()
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 		}
@@ -8401,7 +10484,16 @@ func (b *builder) stmt(s ast.Stmt) error {
 		}
 		b.openBlock(BlockTypeVoid)
 		matchEndD := b.depth
-		b.breakStack = append(b.breakStack, matchEndD)
+		// NB: matchEndD is NOT pushed onto b.breakStack. A `match` is
+		// not a `break` target — a user `break` inside an arm must
+		// exit the enclosing loop (or switch), matching the
+		// interpreter and the checker (which rejects `break` whose
+		// only enclosing construct is a match). The arms reach the
+		// match end via the explicit `brTo(matchEndD, …)` calls below,
+		// not through the break stack; pushing it here would shadow
+		// the loop's break target and turn `break` into a no-op that
+		// only falls out of the match (an infinite loop for
+		// `while (true) { match … { … => break } }`).
 		for _, arm := range n.Arms {
 			if arm.IsWildcard {
 				// Guarded wildcard arm: the guard runs in the
@@ -8530,7 +10622,6 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.brTo(matchEndD, false) // jump past remaining arms
 			b.closeScope()           // end outer per-arm block
 		}
-		b.breakStack = b.breakStack[:len(b.breakStack)-1]
 		b.closeScope() // end of match
 		if reclaimScrut {
 			b.emitOwnedEnumDrop(ptrSlot, scrutEnum, true)
@@ -8543,6 +10634,46 @@ func (b *builder) stmt(s ast.Stmt) error {
 
 func (b *builder) expr(e ast.Expr) error {
 	b.curPos = e.Pos()
+	// `dyn Trait` coercion (boxing): when this expression is a recorded
+	// concrete→`dyn Trait` site, lower the concrete value (one word =
+	// data), then push the vtable address. The dynCoerceDone guard
+	// prevents the recursive lower of the same expression from
+	// re-triggering. Representation (docs/DYN-TRAITS.md §4.2):
+	//   - wasm (inline two-word): leave `[data, vtable]` on the stack —
+	//     the slot itself holds the fat pointer (§4.2.1).
+	//   - natives (boxed one-word): emit OpBoxDyn to pop `[data,
+	//     vtable]`, allocate a `{data, vtable}` heap cell, and push the
+	//     single cell pointer (§4.2.2).
+	if b.info != nil && b.info.DynCoercions != nil && b.dynCoerceDone != nil && !b.dynCoerceDone[e] {
+		if dc, ok := b.info.DynCoercions[e]; ok {
+			b.dynCoerceDone[e] = true
+			if err := b.expr(e); err != nil {
+				return err
+			}
+			// Uniform primitive boxing (docs/DYN-TRAITS.md §4.2.3): a
+			// struct/enum concrete's value is already a heap pointer, so it
+			// is the `data` word directly. A primitive/string concrete's
+			// value is not pointer-shaped (and may be wider than one slot —
+			// i64/f64, or a two-word string), so heap-box it into a value
+			// cell: `data` becomes a one-word pointer to the cell, and the
+			// vtable slots point at unboxing wrappers that reload it.
+			if isPrimitiveConcrete(b.info, dc.Concrete) {
+				if err := b.boxPrimitiveDynValue(dc.Concrete); err != nil {
+					return err
+				}
+			}
+			// Key the vtable by the whole trait SET: for a single-trait
+			// coercion dynVtableSetKey(dc.Traits) == dc.Trait, so this is
+			// byte-identical to before; for a multi-trait `dyn A + B`
+			// coercion it selects the MERGED (concatenated) vtable
+			// collectVtables emitted for the set (docs/DYN-TRAITS.md §10).
+			b.emit(Op{Kind: OpConstVtable, Str: dynVtableSetKey(dc.Traits), Str2: dc.Concrete})
+			if b.dynBoxed() {
+				b.emit(Op{Kind: OpBoxDyn})
+			}
+			return nil
+		}
+	}
 	switch n := e.(type) {
 	case *ast.NumberLit:
 		// The checker stamps Width on the literal once a concrete
@@ -8572,6 +10703,8 @@ func (b *builder) expr(e ast.Expr) error {
 		} else {
 			b.emit(Op{Kind: OpConstI32, I32: int32(n.Value)})
 		}
+	case *ast.DowncastExpr:
+		return b.emitDowncast(n)
 	case *ast.CastExpr:
 		if err := b.expr(n.Inner); err != nil {
 			return err
@@ -9157,6 +11290,11 @@ func (b *builder) expr(e ast.Expr) error {
 		if err := b.emitDeferCleanup(); err != nil {
 			return err
 		}
+		// `?` always leaves via the error path (None/Err propagation),
+		// so this is exactly where `errdefer` rollbacks fire.
+		if err := b.emitErrDeferCleanup(); err != nil {
+			return err
+		}
 		// Decide how the dec sweep treats the value THIS path returns,
 		// mirroring the Return lowering's transfer rules so the sweep
 		// never frees the value being handed to the caller:
@@ -9358,6 +11496,16 @@ func (b *builder) expr(e ast.Expr) error {
 			// calls (data @ +0, len @ +4). On natives this stays
 			// as a single ptr-width load via the LSB-tagged form.
 			if _, isString := elemType.(ast.StringType); isString && b.twoWordStrings() {
+				loadWidth = WidthString
+			}
+			// On wasm (ptrW==4) `dyn Trait` elements are inline two-word
+			// `[data, vtable]` fat pointers (docs/DYN-TRAITS.md §4.2.1):
+			// load both words via the WidthString fan-out, the same as a
+			// two-word string. (IsPointerType is true for dyn, so this
+			// must override the WidthPtr branch above.) On natives
+			// (ptrW==8) a `dyn` element is a boxed one-word pointer
+			// (§4.2.2) — the WidthPtr branch above already handles it.
+			if _, isDyn := elemType.(ast.DynTraitType); isDyn && b.ptrW == 4 {
 				loadWidth = WidthString
 			}
 		}
@@ -9916,6 +12064,20 @@ func (b *builder) expr(e ast.Expr) error {
 			if needsRcIncOnAlias(f.Value, b) && !b.moveSites[f.Value] {
 				b.emitAliasInc(f.Value)
 			}
+			// Issue #2763: a Map-typed field initialised by a COW mutator
+			// result (`Struct { m: s.m.insert(...) }`) may be the SAME handle
+			// the borrowed source still owns — the COW mutates in place at
+			// rc<=1. needsRcIncOnAlias is false for a Call, so the value is
+			// stored as a move with no retain; the new container would then
+			// alias the source's buffer and a later drop of either frees it
+			// out from under the other (use-after-free → segfault). Clone the
+			// map so the container owns an independent buffer. A fresh
+			// `map_new()` result is NOT a mutator call, so it still moves in
+			// (no needless copy / no leak). The fast ownership-flow-aware
+			// inc-only path is the Perceus port's job (roadmap goal 2).
+			if isMapType(fieldType(sd.Fields, f.Name)) && isMapMutatorCall(f.Value) {
+				b.emit(Op{Kind: OpCallDirect, Str: "__map_clone", I32: 1})
+			}
 			// Reuse payloadStoreOp so the store is correctly
 			// sized for the field's declared type: i32 / f32
 			// / sub-i32 → 4 bytes, i64 / f64 → 8 bytes, and
@@ -10073,6 +12235,44 @@ func (b *builder) expr(e ast.Expr) error {
 		if faContainerSlot >= 0 {
 			b.emitOwnedSlotDrop(faContainerSlot, b.scratchType[faContainerSlot])
 		}
+	case *ast.BlockExpr:
+		// A block-expression `{ stmts; tail }` (an `if`/`match` value
+		// branch) runs its leading statements, then yields `tail`'s value.
+		// Lower it by composing the EXISTING statement- and expression-
+		// lowering machinery — no new IR op:
+		//
+		//   1. Lower each leading statement through `b.stmt` — the same
+		//      path a normal `{ }` block's statements take. Block-local
+		//      `var`s already have their own pre-allocated, zero-init'd
+		//      slots: shadowrename gave the block its own frame (so a `k`
+		//      here doesn't collide with a `k` in a sibling branch), and
+		//      checkBlockExpr → checkStmt registered each in
+		//      `info.Locals[fn]`, which `lowerFunc` turned into a slot.
+		//   2. Lower `Tail` as an expression, leaving its value on the
+		//      operand stack as the BlockExpr's result.
+		//
+		// RC / ownership: block-local `var`s are dropped by the existing
+		// function-exit dec sweep (`emitRcDecLocalsAtExit`) exactly like
+		// any other local — there's no separate scope-exit drop here, so
+		// there's nothing to order against the Tail value. When `Tail`
+		// references a block-local (e.g. `{ var s = a + b; s }`), the
+		// normal Ident-load rules apply: a bare-ident tail is the value
+		// being returned, and the slot's exit dec is balanced against the
+		// reference the caller now holds (the result is consumed by the
+		// enclosing if/match-expr's result slot / block, which is itself
+		// covered by the surrounding lowering). This mirrors how a normal
+		// block whose final action produces the result interacts with the
+		// exit sweep. The checker (E061) guarantees a non-nil Tail in
+		// value position; guard defensively all the same.
+		if n.Tail == nil {
+			return fmt.Errorf("ir: block-expression has no trailing value (compiler bug — checker E061 should have rejected this)")
+		}
+		for _, st := range n.Stmts {
+			if err := b.stmt(st); err != nil {
+				return err
+			}
+		}
+		return b.expr(n.Tail)
 	default:
 		return fmt.Errorf("ir: unsupported expression %T", e)
 	}
@@ -10326,7 +12526,7 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		// outputs cascade through `$string_from_bytes`'s
 		// inline-output path. The callee's return type comes
 		// off `info.FuncSigs` (populated by the checker for
-		// every user fn + every prelude / builtin signature).
+		// every user fn + every stdlib / builtin signature).
 		if id, ok := x.Callee.(*ast.Ident); ok {
 			// Generic Map methods carry TypeArgs (K, V) on the
 			// Call. The FuncSigs entry stores the generic
@@ -11364,7 +13564,7 @@ func mapValHasDrop(v ast.Type, info *checker.Info, genEnumDrops map[string]*ast.
 	// applies), so this changes the DROP, not the retain. Other arrays
 	// (plain / nested / enum-elem) keep __map_drop_values.
 	if at, ok := v.(ast.ArrayType); ok {
-		return arrElemStructDropName(at.Elem, info, genEnumDrops, genTupleDrops, ptrW)
+		return arrElemStructDropName(at.Elem, info, genEnumDrops, genTupleDrops, ptrW, false)
 	}
 	// Every other value with a generated recursive drop — concrete user
 	// struct (__drop_struct_<V>), concrete enum (__drop_enum_<V>), or a
@@ -11372,7 +13572,7 @@ func mapValHasDrop(v ast.Type, info *checker.Info, genEnumDrops map[string]*ast.
 	// in genEnumDrops) — routes through dropFnNameFor, the same dispatch
 	// the struct/enum field drops use. Strings / tuples / slices / runtime
 	// handles / pair-form generic enums read false and stay non-reclaimed.
-	return dropFnNameFor(v, info, genEnumDrops, genTupleDrops, ptrW)
+	return dropFnNameFor(v, info, genEnumDrops, genTupleDrops, ptrW, false)
 }
 
 // mapValTag is what map_new actually stores at buf+12: the low
@@ -11416,6 +13616,121 @@ func callArgTypesFromSig(params []ast.Type, argc int) []ast.Type {
 }
 
 func (b *builder) call(n *ast.Call) error {
+	// `dyn Trait` runtime dispatch. The checker marked this call with
+	// the trait name and left the callee a FieldAccess (`d.area()` where
+	// `d: dyn Shape`). Lower the receiver to its inline two-word `[data,
+	// vtable]` fat pointer, stash the vtable word, lower the args, push
+	// the vtable back, and emit OpCallDyn{Sig, slot}. The receiver ABI is
+	// a plain i32 concrete pointer, uniform across concrete types, so one
+	// signature serves every implementor. See docs/DYN-TRAITS.md §4.2.1.
+	if n.DynTrait != "" {
+		fa, ok := n.Callee.(*ast.FieldAccess)
+		if !ok {
+			return fmt.Errorf("ir: dyn %s call without a field-access callee", n.DynTrait)
+		}
+		td, ok := b.info.Traits[n.DynTrait]
+		if !ok {
+			return fmt.Errorf("ir: dyn %s call references an unknown trait", n.DynTrait)
+		}
+		// Slot index = position of fa.Field among the trait's non-
+		// associated methods, in declaration order. Build the receiver-
+		// first method signature at the same time.
+		slot := -1
+		var meth *ast.TraitMethod
+		k := 0
+		for i := range td.Methods {
+			if td.Methods[i].Assoc {
+				continue
+			}
+			if td.Methods[i].Name == fa.Field {
+				slot = k
+				meth = &td.Methods[i]
+				break
+			}
+			k++
+		}
+		if slot < 0 || meth == nil {
+			return fmt.Errorf("ir: method %q not found on trait %s", fa.Field, n.DynTrait)
+		}
+		// Global slot in the MERGED vtable: a `dyn A + B` receiver's vtable
+		// concatenates the per-trait tables in sorted-set order, so a method
+		// owned by a non-first trait sits after every earlier trait's method
+		// block. The static trait set is the receiver type the checker
+		// stamped on Method.Receiver; n.DynTrait is the owning trait. For a
+		// single-trait receiver the prefix is 0 → `slot` is unchanged
+		// (docs/DYN-TRAITS.md §10).
+		if n.Method != nil {
+			if dt, ok := n.Method.Receiver.(ast.DynTraitType); ok && len(dt.Traits) > 1 {
+				slot += dynTraitMethodPrefix(b.info, dt.Traits, n.DynTrait)
+			}
+		}
+		// Receiver-first signature: param[0] is the concrete-receiver
+		// pointer (an i32 on wasm — any pointer-shaped type lowers to
+		// i32). The remaining params + result come from the trait
+		// method (its self param dropped). Self never appears outside
+		// the receiver slot (object-safety guarantees it), so no Self
+		// substitution is needed. A generic trait's type parameters
+		// (`get(): T`) and pinned associated types (`get(): Self::Item`)
+		// ARE resolved here from the receiver's pins — otherwise the wasm
+		// OpCallDyn seam can't classify a bare ParamType / ProjType.
+		resolve := dynSigResolver(b.info, n.DynTrait, n.Method)
+		params := []ast.Type{ast.StructType{}}
+		for _, p := range meth.Params[1:] {
+			params = append(params, resolve(p.Type))
+		}
+		sig := &ast.FuncType{Params: params, Result: resolve(meth.Result)}
+		// OpCallDyn's stack contract is uniform across backends:
+		// `[data, args..., vtable]`. Only how `data` and `vtable` are
+		// obtained from the receiver differs by representation
+		// (docs/DYN-TRAITS.md §4.2):
+		if b.dynBoxed() {
+			// Boxed one-word (natives, §4.2.2): the receiver is a single
+			// pointer to a `{data @0, vtable @ptrW}` cell. Stash the cell
+			// pointer, deref `data` (+0), lower args, deref `vtable`
+			// (+ptrW), then dispatch.
+			if err := b.expr(fa.Target); err != nil {
+				return err
+			}
+			cellTmp := b.allocSlot()
+			b.scratchType[cellTmp] = ast.NumberType{Width: 32}
+			b.emit(Op{Kind: OpStoreLocal, I32: cellTmp})
+			// data = load(cell + 0)  → [data]
+			b.emit(Op{Kind: OpLoadLocal, I32: cellTmp})
+			b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+			// args → [data, args...]
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			// vtable = load(cell + ptrW)  → [data, args..., vtable]
+			b.emit(Op{Kind: OpLoadLocal, I32: cellTmp})
+			b.emit(Op{Kind: OpConstI32, I32: int32(b.ptrW)})
+			b.emit(Op{Kind: OpAdd})
+			b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+			b.emit(Op{Kind: OpCallDyn, I32: int32(slot), Sig: sig})
+			return nil
+		}
+		// Inline two-word (wasm, §4.2.1): lower the receiver →
+		// [data, vtable]; pop the vtable word into a fresh i32 temp
+		// (OpStoreLocal pops one word, leaving [data]).
+		if err := b.expr(fa.Target); err != nil {
+			return err
+		}
+		vtmp := b.allocSlot()
+		b.scratchType[vtmp] = ast.NumberType{Width: 32}
+		b.emit(Op{Kind: OpStoreLocal, I32: vtmp})
+		// Lower the args → [data, args...].
+		for _, a := range n.Args {
+			if err := b.expr(a); err != nil {
+				return err
+			}
+		}
+		// Push the vtable back → [data, args..., vtable], then dispatch.
+		b.emit(Op{Kind: OpLoadLocal, I32: vtmp})
+		b.emit(Op{Kind: OpCallDyn, I32: int32(slot), Sig: sig})
+		return nil
+	}
 	// Captured-closure callee: closureconv rewrote a captured
 	// function-typed name (param / outer var) inside this body
 	// to a CaptureRef. Treat it as a function-typed value coming
@@ -11659,11 +13974,11 @@ func (b *builder) callBody(n *ast.Call) error {
 	// `__method_Array_push(arr, v)` with the receiver's element
 	// type stamped on `n.TypeArgs[0]`. Lower inline here — emit
 	// alloc + memcpy + a width-correct tail store — instead of
-	// dispatching through one of N per-stride lang-prelude
+	// dispatching through one of N per-stride stdlib
 	// functions. The IR already knows the stride from
 	// `ast.ElemSizeBytes(elemType)` and the right store op from
 	// `payloadStoreOp(elemType)`; the previous shape compounded
-	// boilerplate (5 prelude bodies + 5 mangled FuncSigs +
+	// boilerplate (5 stdlib bodies + 5 mangled FuncSigs +
 	// 5 codegen aliases + 5 treeshake aliases) per array
 	// method. Inline lowering scales to one block of code per
 	// method.
@@ -11793,11 +14108,11 @@ func (b *builder) callBody(n *ast.Call) error {
 	// `m.values()` on `Map[K, V]` where V is wide (i64 / u64 /
 	// f64). Narrow V falls through to the normal
 	// `__method_Map_values` call (codegen-aliased to the
-	// `__map_values_impl` lang prelude function). Wide V needs
+	// `__map_values_impl` stdlib function). Wide V needs
 	// to follow each entry's cell pointer and copy the 8
 	// payload bytes into a wide-stride result — emitted inline
 	// here for the same reason as emitArrayPush: a single
-	// codepath instead of a per-stride lang-prelude clone.
+	// codepath instead of a per-stride stdlib clone.
 	if id.Name == "__method_Map_values" && len(n.Args) == 1 {
 		recvType := b.exprType(n.Args[0])
 		if st, ok := recvType.(ast.StructType); ok && len(st.Args) >= 2 {
@@ -11808,7 +14123,7 @@ func (b *builder) callBody(n *ast.Call) error {
 		}
 	}
 	// `m.keys()` on `Map[K, V]` where K is wide (i64 / u64 /
-	// f64). The prelude's `__map_keys_impl` uses a 4-byte
+	// f64). The stdlib's `__map_keys_impl` uses a 4-byte
 	// destStride which works for i32-K but truncates wide-K
 	// values into the low 32 bits. We mirror emitWideMapValues
 	// here, walking entries and producing a real wide-stride
@@ -12367,7 +14682,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	}
 	argCount := int32(len(n.Args))
 	// `map_new(cap)` is a generic builtin: the runtime helper
-	// takes two extra runtime-tag args so the prelude can branch
+	// takes two extra runtime-tag args so the stdlib can branch
 	// without per-K/V monomorphisation. `keyKind` (i32-scalar vs
 	// string) picks i32.eq vs strcmp on lookup; `valKind`
 	// (i32-scalar vs pointer-shaped) sizes the .values()
@@ -13625,7 +15940,7 @@ func (b *builder) emitOwnedSlotDrop(idx int32, t ast.Type) {
 		// element buffers (array-of-rc whose element isn't deep-droppable
 		// here) still leak their elements via the plain arr_dec — safe under
 		// no-double-free.
-		if dropName, ok := arrElemStructDropName(ty.Elem, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
+		if dropName, ok := arrElemStructDropName(ty.Elem, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok {
 			b.emit(Op{Kind: OpLoadLocal, I32: idx})
 			b.emit(Op{Kind: OpCallDirect, Str: dropName, I32: 1})
 			b.emit(Op{Kind: OpDrop})
@@ -13728,6 +16043,27 @@ func (b *builder) emitOwnedSlotDrop(idx int32, t ast.Type) {
 		// between OpMakeClosure and OpStoreLocal breaks the defunctionalise /
 		// closure-pair-elide pattern match, and a flat closure dec leaks
 		// captures anyway — it keeps its prior safe-leak behaviour.
+	case ast.DynTraitType:
+		// `dyn Trait` reclamation on loop-body re-declaration
+		// (docs/DYN-TRAITS.md §4.4) — mirrors the exit sweep's DynTraitType
+		// branch. Without this a `var d: dyn Shape = C{...}` re-declared each
+		// iteration leaks the prior iteration's concrete `data` object (and
+		// anything it transitively owns) — the exit sweep only reclaims the
+		// final iteration. The per-set __drop_dyn_<set> helper reads the
+		// vtable drop slot and dispatches the concrete destructor; the
+		// concrete dtor self-guards on rc==1. wasm (ptrW==4, slice 4a) passes
+		// the inline two-word `[data, vtable]` (2 args); x86-64 (boxed, slice
+		// 4b) passes the cell ptr (1 arg). arm64 leaks `dyn` (slice 4c) and
+		// never reaches here (rcTracked is false for it, so the slot is never
+		// an owned rc-tracked local the reinit path drops).
+		if b.dynReclaim() {
+			b.emit(Op{Kind: OpLoadLocal, I32: idx}) // wasm: [data, vtable]; native: cell ptr
+			argc := int32(1)
+			if b.ptrW == 4 {
+				argc = 2
+			}
+			b.emit(Op{Kind: OpCallDirect, Str: dynDropFnName(ty.Traits), I32: argc})
+		}
 	}
 }
 
@@ -13744,7 +16080,7 @@ func (b *builder) emitOwnedSlotDrop(idx int32, t ast.Type) {
 // is left untouched. Callers gate on RcFreeEnabled + freeEligible +
 // localNameUnique + !movedLocals before invoking.
 func (b *builder) emitTupleSlotDrop(idx int32, tt ast.TupleType) {
-	if name, ok := dropFnNameFor(tt, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
+	if name, ok := dropFnNameFor(tt, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok {
 		b.emit(Op{Kind: OpLoadLocal, I32: idx})
 		b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
 		b.emit(Op{Kind: OpDrop})
@@ -13822,7 +16158,7 @@ func (b *builder) decValueOnStack(t ast.Type, mayFree bool) {
 		// __drop_struct_<Elem> per element) before freeing the buffer, instead
 		// of the flat per-element rc_dec __fern_drop_arr_ptr does. Gated on
 		// RcFreeEnabled to match the genfn post-pass.
-		if name, ok := arrElemStructDropName(at.Elem, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok && ast.RcFreeEnabled {
+		if name, ok := arrElemStructDropName(at.Elem, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok && ast.RcFreeEnabled {
 			b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			return
@@ -13874,7 +16210,18 @@ func (b *builder) dropStructField(t ast.Type) {
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
-	if name, ok := dropFnNameFor(t, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
+	// `dyn Trait` payload (enum variant-plan / inline struct field): the caller
+	// loaded the boxed one-word cell ptr via payloadLoadOpFor. __drop_dyn_<set>
+	// returns VOID, so argc is 1 and there is NO trailing OpDrop (unlike the
+	// dropFnNameFor branch below, whose drop fns return the ptr). NATIVES ONLY
+	// (b.dynRcSupported): wasm's inline two-word `dyn` double-drops when the
+	// payload is matched-and-bound, so it stays correct-but-leaking there;
+	// see appendChildDrop's dyn arm + docs/DYN-TRAITS.md §7.8.
+	if dt, isDyn := t.(ast.DynTraitType); isDyn && b.dynRcSupported {
+		b.emit(Op{Kind: OpCallDirect, Str: dynDropFnName(dt.Traits), I32: 1})
+		return
+	}
+	if name, ok := dropFnNameFor(t, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok {
 		b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
 		b.emit(Op{Kind: OpDrop})
 		return
@@ -13885,7 +16232,7 @@ func (b *builder) dropStructField(t ast.Type) {
 		// the array, so a shared one only dec's). Array-of-struct also
 		// deep-drops each element box (Stage B loop); array-of-rc frees the
 		// outer buffer + flat-dec's inner; plain arrays free the buffer.
-		if name, ok := arrElemStructDropName(at.Elem, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
+		if name, ok := arrElemStructDropName(at.Elem, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok {
 			b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			return
@@ -13920,7 +16267,7 @@ func (b *builder) emitStructEnumSlotDrop(idx int32, ty ast.Type) {
 		b.emitCellDropOnStack(cellElemOf(ty), true)
 		return
 	}
-	if name, ok := dropFnNameFor(ty, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
+	if name, ok := dropFnNameFor(ty, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok {
 		b.emit(Op{Kind: OpLoadLocal, I32: idx})
 		b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
 		b.emit(Op{Kind: OpDrop})
@@ -13965,7 +16312,7 @@ func (b *builder) emitEnumDropViaGenFn(slot int32, et ast.EnumType) bool {
 	if !ok {
 		return false
 	}
-	if _, ok := enumVariantDropPlan(ed, b.ptrW); !ok {
+	if _, ok := enumVariantDropPlan(ed, b.ptrW, b.dynRcSupported); !ok {
 		return false
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: slot})
@@ -14178,7 +16525,12 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 		// read it from the stack, never from the (possibly freed) box.
 		// Concrete enums take the wasm-correct generated-fn route above before
 		// reaching here; this inline path serves generic instantiations.
-		if plan, ok := enumVariantDropPlan(ed, b.ptrW); ok {
+		// This inline tag-switch drops each variant's payloads via
+		// b.dropStructField, which now has a `dyn` arm (right argc + void, no
+		// trailing drop) — so an enum-with-dyn-payload reclaims its `dyn` here
+		// too on a dyn-RC backend (docs/DYN-TRAITS.md §7.8). The generated
+		// __drop_enum_ route handles the per-iteration loop-var reinit drop.
+		if plan, ok := enumVariantDropPlan(ed, b.ptrW, b.dynRcSupported); ok {
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
@@ -14258,7 +16610,7 @@ func (b *builder) emitFieldDropOnStack(t ast.Type) {
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
-	if name, ok := dropFnNameFor(t, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
+	if name, ok := dropFnNameFor(t, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok {
 		b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
 		b.emit(Op{Kind: OpDrop})
 		return
@@ -14362,6 +16714,38 @@ func (b *builder) constructionMovesIdent(e ast.Expr, name string) bool {
 	return false
 }
 
+// callConsumesIdent reports whether `e` is a direct call to an `own`-parameter
+// function that passes `name` to one of its `own` positions — i.e. the call
+// CONSUMES `name`, moving it into the callee, which deep-drops it at its own
+// exit. A `name = f(.., name, ..)` self-reassign must then NOT also
+// overwrite-drop the old `name`: the callee already owns and frees it, so a
+// second deep-drop here frees the box twice (the own-struct-param
+// move-and-rebind double-free). The mirror of constructionMovesIdent for plain
+// function calls. (Method calls are conservatively excluded — receiver-consume
+// shape differs; revisit when an own-self method threads a struct.)
+func (b *builder) callConsumesIdent(e ast.Expr, name string) bool {
+	call, ok := e.(*ast.Call)
+	if !ok || call.Method != nil {
+		return false
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	flags, isOwn := b.info.OwnFuncs[id.Name]
+	if !isOwn {
+		return false
+	}
+	for i, a := range call.Args {
+		if i < len(flags) && flags[i] {
+			if aid, ok := a.(*ast.Ident); ok && aid.Name == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (b *builder) assign(n *ast.Assign) error {
 	switch t := n.Target.(type) {
 	case *ast.Ident:
@@ -14441,7 +16825,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpDrop})
 				b.emit(Op{Kind: OpEnd})
 				b.emit(Op{Kind: OpLoadLocal, I32: newTmp}) // restore new for the store
-			} else if at, isArr := localArrayType(t.Name, b); isArr && ast.RcFreeEnabled && b.freeEligible[t.Name] {
+			} else if at, isArr := localArrayType(t.Name, b); isArr && ast.RcFreeEnabled && (b.freeEligible[t.Name] || b.selfReassignOwnedLocal(n.Value, t.Name, at) || b.isSelfArrayPushLocal(n.Value, t.Name)) {
 				// Phase 3 step-4: free the OLD array buffer at rc==0.
 				// On a push copy-grow the old buffer's pointer elements
 				// were transferred to the new buffer (no inc), so freeing
@@ -14449,14 +16833,26 @@ func (b *builder) assign(n *ast.Assign) error {
 				// in-place push (rc bumped to 2) dec's to 1 and doesn't
 				// free. This is the O(N²)→O(N) push-loop reclamation.
 				//
-				// Gated on freeEligible: only OWNED array locals free
-				// here. Borrowed / borrowed-derived locals (params, and
-				// anything aliased from them - e.g. the self-host VM's
-				// `ops` threaded through compile_stmt/compile_block) keep
-				// the plain dec: the owner upstream still references the
-				// buffer (the borrow model gives no caller-side inc, so
-				// the rc undercounts the borrow - freeing would be a
-				// use-after-free). See computeFreeEligible.
+				// Gated on freeEligible OR selfReassignOwnedLocal: only
+				// OWNED array locals free here. Borrowed / borrowed-derived
+				// locals (params, and anything aliased from them - e.g. the
+				// self-host VM's `ops` threaded through compile_stmt/
+				// compile_block) keep the plain dec: the owner upstream
+				// still references the buffer (the borrow model gives no
+				// caller-side inc, so the rc undercounts the borrow -
+				// freeing would be a use-after-free). See computeFreeEligible.
+				//
+				// The selfReassignOwnedLocal escape mirrors the struct /
+				// enum branch below: a self-reassign `a = a.append(x)` /
+				// `a = f(a)` taints `a` out of the conservative freeEligible
+				// set (the call result may alias it), but the rc-gated buffer
+				// free is balanced anyway — __fern_arr_dec only reclaims at
+				// rc==0, and typeSelfDropSafe restricts this to arrays whose
+				// elements are inc'd at construction (no bare strings / Maps).
+				// Without it `a = a.append(x)` in a loop leaked the OLD buffer
+				// on every grow (the copy path orphans it; the flat
+				// __fern_rc_dec the catch-all else emits never frees) — the
+				// dominant churn in the self-host SSA build_func loops.
 				b.emit(Op{Kind: OpLoadLocal, I32: idx})
 				b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
 				b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})
@@ -14473,6 +16869,14 @@ func (b *builder) assign(n *ast.Assign) error {
 				// the overwrite dec is REQUIRED to balance that inc — this skip
 				// is disabled there and the normal enum-overwrite drop below
 				// fires.
+			} else if b.callConsumesIdent(n.Value, t.Name) {
+				// `s = f(.., s, ..)` where f takes s by `own`: s is MOVED into f,
+				// which deep-drops it at its own exit. Dropping it here too frees
+				// the box twice — the own-struct-param move-and-rebind double-free.
+				// No drop: the callee owns it. (Array targets took the rc-gated
+				// __fern_arr_dec branch above, which is double-free-safe; this
+				// guards the struct / enum case that the flat / deep drop below
+				// would over-release.)
 			} else if sety, isSE := structOrEnumTypeOfLocal(t.Name, b); isSE && ast.RcFreeEnabled && (b.freeEligible[t.Name] || b.selfReassignOwnedLocal(n.Value, t.Name, sety)) {
 				// Struct / enum reassignment-overwrite — `s = Other{...}` /
 				// `e = Variant(...)` ends the old binding's ownership exactly
@@ -14827,7 +17231,14 @@ func isSelfMapMutation(value ast.Expr, targetName string) bool {
 	if !ok {
 		return false
 	}
-	if callee.Name != "__method_Map_set" && callee.Name != "__method_Map_clear" {
+	// `__method_Array_set` is `arr.with(i, v)` — like the map mutators it
+	// goes through a `*_cow_inplace` helper that returns the SAME handle on
+	// rc==1 (no reference released) and a fresh copy on rc>1. So `arr =
+	// arr.with(...)` needs the same COW-aware dec (dec the old handle iff a
+	// copy happened) as `m = m.set(...)`; an unconditional dec over-releases
+	// the in-place handle (the rc-underflow / unbounded-leak the wasm
+	// OwnInplaceSort + LiteralAllocReclaim tests caught).
+	if callee.Name != "__method_Map_set" && callee.Name != "__method_Map_clear" && callee.Name != "__method_Array_set" {
 		return false
 	}
 	if len(call.Args) == 0 {
@@ -14835,6 +17246,30 @@ func isSelfMapMutation(value ast.Expr, targetName string) bool {
 	}
 	recv, ok := call.Args[0].(*ast.Ident)
 	return ok && recv.Name == targetName
+}
+
+// isMapMutatorCall reports whether e is a call to one of the Map COW
+// mutators (`m.insert` / `.without` / `.cleared`, mangled to
+// __method_Map_set / _delete / _clear). These go through __map_cow_inplace
+// and, when the receiver map is uniquely owned (rc<=1 — the borrow case),
+// mutate it IN PLACE and return the SAME handle rather than a fresh copy.
+// Storing such a result into a freshly-constructed container therefore
+// aliases the receiver's buffer; the container must clone it to stay
+// independent (issue #2763 — Map field in a value-type struct double-freed).
+func isMapMutatorCall(e ast.Expr) bool {
+	call, ok := e.(*ast.Call)
+	if !ok {
+		return false
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	switch id.Name {
+	case "__method_Map_set", "__method_Map_delete", "__method_Map_clear":
+		return true
+	}
+	return false
 }
 
 func isArrayTypeOfLocal(name string, b *builder) bool {
@@ -14953,6 +17388,55 @@ func (b *builder) selfReassignOwnedLocal(rhs ast.Expr, name string, ty ast.Type)
 		return !mentions
 	})
 	return mentions
+}
+
+// isSelfArrayPushLocal reports whether `rhs` is `name.append(x)` — lowered to
+// `__method_Array_push(name, x)` — for a LOCAL `name` (not a param). This is the
+// rc-SAFE subset of an array self-reassign overwrite, and the one that lets the
+// array branch's buffer-only __fern_arr_dec reclaim the OLD buffer for element
+// types selfReassignOwnedLocal's typeSelfDropSafe rejects (string[] / struct[] /
+// nested arrays) — e.g. the self-host SSA builder's `vn = vn.append(..)` over
+// `string[]`, which otherwise orphans every grow's buffer.
+//
+// Why append is safe where the general `x = f(x)` is NOT: __fern_arr_push_grow
+// is rc-gated. A uniquely-owned buffer (rc==1) either mutates in place (no old
+// buffer to free) or, when full, allocates a fresh buffer and leaves the old at
+// rc==1 — so the overwrite's __fern_arr_dec frees exactly the orphan. A
+// borrowed-DERIVED local (`var x = param`, alias-inc'd to rc≥2) takes the COPY
+// path and the overwrite dec only lowers rc to ≥1 — never freeing the param's
+// still-live buffer. A general `x = f(x)` has no such guarantee (f may return a
+// borrowed buffer at rc==1 that the result still aliases → buffer-UAF), which is
+// why the broad form segfaulted the self-compile; the push form does not.
+// __fern_arr_dec is buffer-only (never walks elements), so a shared string /
+// struct element is never over-released either.
+func (b *builder) isSelfArrayPushLocal(value ast.Expr, name string) bool {
+	// Locals qualify. A BORROWED param never does — its buffer belongs to the
+	// caller and is still live, so an in-place grow / orphan-free would UAF the
+	// caller's value. An `own` param, by contrast, is callee-owned: the caller
+	// transferred it (no entry-inc, freeEligible, uniquely owned at rc==1 when
+	// the E051 guard's owned arg was fresh / moved). Its self-append is therefore
+	// rc-gated exactly like an owned local — in-place at rc==1, orphan freed on
+	// grow — so it reclaims grow intermediates instead of orphaning one buffer
+	// per iteration. This is the runtime half of move semantics for threaded
+	// array params (docs/RC-ARRAY-MOVE-SEMANTICS-PLAN.md step 3).
+	for _, p := range b.fn.Params {
+		if p.Name == name && !p.Own {
+			return false
+		}
+	}
+	call, ok := value.(*ast.Call)
+	if !ok {
+		return false
+	}
+	callee, ok := call.Callee.(*ast.Ident)
+	if !ok || callee.Name != "__method_Array_push" {
+		return false
+	}
+	if len(call.Args) == 0 {
+		return false
+	}
+	recv, ok := call.Args[0].(*ast.Ident)
+	return ok && recv.Name == name
 }
 
 // typeSelfDropSafe reports whether a value of type `t` can be deep-dropped on a
@@ -15414,6 +17898,15 @@ func payloadSlotSize(t ast.Type, ptrW int) int32 {
 	if _, isString := t.(ast.StringType); isString {
 		return stringSlotSize(ptrW)
 	}
+	// On wasm (ptrW==4) a `dyn Trait` value is an inline two-word
+	// `[data, vtable]` fat pointer — two pointer-width slots, like a
+	// two-word string (docs/DYN-TRAITS.md §4.2.1). On natives
+	// (ptrW==8) it is BOXED one-word: a single heap pointer to a
+	// `{data, vtable}` cell (§4.2.2), so it falls through to the
+	// one-word pointer branch below.
+	if _, isDyn := t.(ast.DynTraitType); isDyn && ptrW == 4 {
+		return int32(2 * ptrW)
+	}
 	if ast.IsPointerType(t) {
 		return int32(ptrW)
 	}
@@ -15585,6 +18078,14 @@ func payloadStoreOpFor(t ast.Type, ptrW int) Op {
 		}
 		return Op{Kind: OpStore, Width: WidthPtr}
 	}
+	// On wasm (ptrW==4) `dyn Trait` is an inline two-word `[data,
+	// vtable]`; store it with the same two-word fan-out as a string
+	// (representation-agnostic — two adjacent i32s). On natives it is
+	// a boxed one-word pointer (§4.2.2), handled by the pointer branch
+	// below.
+	if _, isDyn := t.(ast.DynTraitType); isDyn && ptrW == 4 {
+		return Op{Kind: OpStore, Width: WidthString}
+	}
 	if ast.IsPointerType(t) {
 		return Op{Kind: OpStore, Width: WidthPtr}
 	}
@@ -15607,6 +18108,13 @@ func arrayElemStoreOpFor(t ast.Type, ptrW int) Op {
 			return Op{Kind: OpStore, Width: WidthString}
 		}
 		return Op{Kind: OpStore, Width: WidthPtr}
+	}
+	// On wasm (ptrW==4) `dyn Trait` array elements are inline two-word
+	// `[data, vtable]` fat pointers — two-word fan-out, same as
+	// strings. On natives (ptrW==8) they are boxed one-word pointers
+	// (§4.2.2), handled by the pointer branch below.
+	if _, isDyn := t.(ast.DynTraitType); isDyn && ptrW == 4 {
+		return Op{Kind: OpStore, Width: WidthString}
 	}
 	if ast.IsPointerType(t) {
 		return Op{Kind: OpStore, Width: WidthPtr}
@@ -15639,6 +18147,13 @@ func payloadLoadOpFor(t ast.Type, ptrW int) Op {
 			return Op{Kind: OpLoad, Width: WidthString}
 		}
 		return Op{Kind: OpLoad, Width: WidthPtr}
+	}
+	// On wasm (ptrW==4) `dyn Trait` is an inline two-word `[data,
+	// vtable]`; load it with the same two-word fan-out as a string.
+	// On natives (ptrW==8) it is a boxed one-word pointer (§4.2.2),
+	// handled by the pointer branch below.
+	if _, isDyn := t.(ast.DynTraitType); isDyn && ptrW == 4 {
+		return Op{Kind: OpLoad, Width: WidthString}
 	}
 	if n, ok := t.(ast.NumberType); ok && n.Width == 64 {
 		return Op{Kind: OpLoad, Width: 64}
@@ -15726,7 +18241,7 @@ func (b *builder) emitWideMapValues(n *ast.Call, vType ast.Type) error {
 	// Per-entry stride + V-slot offset come from __ptr_width()
 	// so the same IR works on wasm32 (4-byte ptr → stride 8,
 	// V-offset 4) and arm64 (8-byte ptr → stride 16, V-offset
-	// 8). Matches the prelude Map runtime's layout exactly.
+	// 8). Matches the stdlib Map runtime's layout exactly.
 	ptrWSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__mv_ptrw_%d", ptrWSlot)] = ptrWSlot
 	b.emit(Op{Kind: OpCallDirect, Str: "__ptr_width", I32: 0})
@@ -16249,6 +18764,16 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 	// buf = __fern_arr_cow_inplace(arr, stride)
 	if err := b.expr(n.Args[0]); err != nil {
 		return err
+	}
+	// Receiver live after the call (#2832): rc-inc the buffer so
+	// cow_inplace sees rc >= 2 and takes the COPY path, leaving the
+	// receiver's buffer untouched. __fern_rc_inc returns its argument, so
+	// the pointer stays on the stack for cow_inplace. (cow_inplace's copy
+	// path decs back, so the balance is: receiver keeps rc 1, the fresh
+	// copy is rc 1.) A move receiver (last use / reassign-self / temp)
+	// skips this and keeps the rc==1 in-place fast path.
+	if b.arraySetInc[n] {
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
 	}
 	b.emit(Op{Kind: OpConstI32, I32: stride})
 	b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_cow_inplace", I32: 2})

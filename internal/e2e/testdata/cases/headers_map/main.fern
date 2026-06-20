@@ -1,0 +1,42 @@
+import "core/int";
+import "std/headers";
+
+// std/headers HeaderMap: case-insensitive get, multi-valued get_all,
+// position-stable set, duplicate-preserving append. `set`/`append` are
+// functional (return a new map), so we rebind. Verified across all backends.
+function main(): i32 {
+    var h: HeaderMap = headers.header_map_new();
+    // set then append the same name keeps both (set is replace, append adds).
+    h = h.set("Set-Cookie", "a");
+    h = h.append("Set-Cookie", "b");
+    if (h.len() != 2) { print("FAIL len"); return 11; }
+
+    // case-insensitive get against the case-folded stored name.
+    h = h.append("Content-Type", "text/html");
+    match (h.get("content-TYPE")) {
+        Some(v) => { if (v != "text/html") { print("FAIL get-ci"); return 12; } },
+        None => { print("FAIL get-none"); return 13; },
+    }
+
+    // set replaces in place and drops further duplicates.
+    h = h.set("set-cookie", "z");
+    if (h.len() != 2) { print("FAIL set-replace-len"); return 14; }
+    match (h.get("Set-Cookie")) {
+        Some(v) => { if (v != "z") { print("FAIL set-replace-val"); return 15; } },
+        None => { print("FAIL set-replace-none"); return 16; },
+    }
+
+    // get_all collects duplicates regardless of case.
+    h = h.append("Accept", "text");
+    h = h.append("accept", "json");
+    if (h.get_all("ACCEPT").len() != 2) { print("FAIL get-all"); return 17; }
+
+    // a missing name is None.
+    match (h.get("missing")) {
+        Some(v) => { print("FAIL missing"); return 18; },
+        None => { },
+    }
+
+    print("OK");
+    return 0;
+}

@@ -22,6 +22,35 @@ func TestEmptyFunction(t *testing.T) {
 	}
 }
 
+// `defer EXPR;` and `errdefer EXPR;` both parse to *ast.Defer; the
+// `errdefer` form sets OnError so the IR / interp restrict its cleanup
+// to error exits.
+func TestParseDeferAndErrDefer(t *testing.T) {
+	prog, err := Parse(`function f(): Result[i32, i32] {
+		defer a();
+		errdefer b();
+		return Ok(0);
+	}`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	stmts := prog.Funcs[0].Body.Stmts
+	d0, ok := stmts[0].(*ast.Defer)
+	if !ok {
+		t.Fatalf("stmt 0: expected *ast.Defer, got %T", stmts[0])
+	}
+	if d0.OnError {
+		t.Errorf("`defer` should have OnError=false")
+	}
+	d1, ok := stmts[1].(*ast.Defer)
+	if !ok {
+		t.Fatalf("stmt 1: expected *ast.Defer, got %T", stmts[1])
+	}
+	if !d1.OnError {
+		t.Errorf("`errdefer` should have OnError=true")
+	}
+}
+
 // A type-name keyword that's also a stdlib module basename
 // (`string`, `i32`, …) parses as a module qualifier in expression
 // position when followed by `.` — `string.repeat_char(...)`. Without
@@ -220,6 +249,172 @@ func TestForEachOverArrayDesugars(t *testing.T) {
 	if loop.Step == nil {
 		t.Errorf("desugared For must carry a step so `continue` advances the index")
 	}
+}
+
+// `for x in b.items { body }` — the iterator is a struct field access, so the
+// trailing `{` opens the loop body, NOT a `b.items { … }` qualified struct
+// literal. Regression for the struct-lit clash: a `.field` postfix followed by
+// `{` was parsed as a qualified struct literal even in a `noStructLit` (for /
+// if / while header) position, mis-reading the body brace.
+func TestForEachOverStructFieldDesugars(t *testing.T) {
+	prog, err := Parse(`struct Bag { items: i32[] }
+	function f(): i32 {
+		var b = Bag { items: [1, 2, 3] };
+		var sum: i32 = 0;
+		for x in b.items {
+			sum = sum + x;
+		}
+		return sum;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := prog.Funcs[0].Body.Stmts
+	blk, ok := body[2].(*ast.Block)
+	if !ok {
+		t.Fatalf("foreach over a struct field should desugar to Block, got %T", body[2])
+	}
+	// The iter (first synthetic var) binds the field access `b.items`, not a
+	// struct literal.
+	iterVar, ok := blk.Stmts[0].(*ast.Var)
+	if !ok {
+		t.Fatalf("first inner stmt should bind the iter, got %T", blk.Stmts[0])
+	}
+	if _, ok := iterVar.Init.(*ast.FieldAccess); !ok {
+		t.Fatalf("foreach iter should be a FieldAccess (b.items), got %T", iterVar.Init)
+	}
+}
+
+// `for i in LOW..HIGH { body }` desugars to a Block of `{ var
+// __range_hi = HIGH; for (var i = LOW; i < __range_hi; i = i + 1)
+// { body } }` — HIGH bound once, a For (not While) so `continue`
+// advances via the step.
+func TestForInRangeDesugars(t *testing.T) {
+	prog, err := Parse(`function f(): i32 {
+		var sum: i32 = 0;
+		for i in 0..5 {
+			sum = sum + i;
+		}
+		return sum;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blk, ok := prog.Funcs[0].Body.Stmts[1].(*ast.Block)
+	if !ok {
+		t.Fatalf("range-for should desugar to Block, got %T", prog.Funcs[0].Body.Stmts[1])
+	}
+	if len(blk.Stmts) != 2 {
+		t.Fatalf("expected 2 inner stmts (hi-bind / for), got %d", len(blk.Stmts))
+	}
+	if _, ok := blk.Stmts[0].(*ast.Var); !ok {
+		t.Errorf("first stmt should bind HIGH once (Var), got %T", blk.Stmts[0])
+	}
+	loop, ok := blk.Stmts[1].(*ast.For)
+	if !ok {
+		t.Fatalf("second stmt should be a For (so continue advances), got %T", blk.Stmts[1])
+	}
+	if loop.Init == nil || loop.Cond == nil || loop.Step == nil {
+		t.Errorf("desugared For must have Init/Cond/Step; got %+v", loop)
+	}
+	if b, ok := loop.Cond.(*ast.Binary); !ok || b.Op != "<" {
+		t.Errorf("range loop cond should be `i < hi`, got %T %v", loop.Cond, loop.Cond)
+	}
+}
+
+// `for i in LOW..=HIGH { body }` is the inclusive (closed-interval)
+// range: same desugar as the half-open form bar the loop condition,
+// which becomes `i <= hi` so HIGH is itself visited.
+func TestForInInclusiveRangeDesugars(t *testing.T) {
+	prog, err := Parse(`function f(): i32 {
+		var sum: i32 = 0;
+		for i in 0..=5 {
+			sum = sum + i;
+		}
+		return sum;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blk, ok := prog.Funcs[0].Body.Stmts[1].(*ast.Block)
+	if !ok {
+		t.Fatalf("inclusive range-for should desugar to Block, got %T", prog.Funcs[0].Body.Stmts[1])
+	}
+	if len(blk.Stmts) != 2 {
+		t.Fatalf("expected 2 inner stmts (hi-bind / for), got %d", len(blk.Stmts))
+	}
+	loop, ok := blk.Stmts[1].(*ast.For)
+	if !ok {
+		t.Fatalf("second stmt should be a For, got %T", blk.Stmts[1])
+	}
+	if b, ok := loop.Cond.(*ast.Binary); !ok || b.Op != "<=" {
+		t.Errorf("inclusive range loop cond should be `i <= hi`, got %T %v", loop.Cond, loop.Cond)
+	}
+}
+
+// `loop { ... }` desugars to `while (true) { ... }` — a While with a
+// literal-true Cond — so every backend handles it with no new node.
+func TestLoopDesugarsToWhileTrue(t *testing.T) {
+	prog, err := Parse(`function f(): i32 {
+		var i: i32 = 0;
+		loop { i = i + 1; if (i >= 3) { break; } }
+		return i;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, ok := prog.Funcs[0].Body.Stmts[1].(*ast.While)
+	if !ok {
+		t.Fatalf("loop should desugar to While, got %T", prog.Funcs[0].Body.Stmts[1])
+	}
+	if b, ok := w.Cond.(*ast.BoolLit); !ok || !b.Value {
+		t.Errorf("loop Cond should be literal `true`, got %T %v", w.Cond, w.Cond)
+	}
+}
+
+// A label before a loop is parsed onto the loop node, and labeled
+// `break`/`continue` carry the target label.
+func TestLabeledLoopsAndBreakContinue(t *testing.T) {
+	prog, err := Parse(`function f(): i32 {
+		outer: while (true) {
+			inner: loop {
+				break outer;
+				continue inner;
+			}
+		}
+		return 0;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outer, ok := prog.Funcs[0].Body.Stmts[0].(*ast.While)
+	if !ok || outer.Label != "outer" {
+		t.Fatalf("expected labeled While `outer`, got %T %q", prog.Funcs[0].Body.Stmts[0], labelOf(prog.Funcs[0].Body.Stmts[0]))
+	}
+	innerBody := outer.Body.(*ast.Block).Stmts
+	inner, ok := innerBody[0].(*ast.While)
+	if !ok || inner.Label != "inner" {
+		t.Fatalf("expected labeled loop->While `inner`, got %T", innerBody[0])
+	}
+	stmts := inner.Body.(*ast.Block).Stmts
+	br, ok := stmts[0].(*ast.Break)
+	if !ok || br.Label != "outer" {
+		t.Errorf("expected `break outer`, got %T %+v", stmts[0], stmts[0])
+	}
+	cont, ok := stmts[1].(*ast.Continue)
+	if !ok || cont.Label != "inner" {
+		t.Errorf("expected `continue inner`, got %T %+v", stmts[1], stmts[1])
+	}
+}
+
+func labelOf(s ast.Stmt) string {
+	switch n := s.(type) {
+	case *ast.While:
+		return n.Label
+	case *ast.For:
+		return n.Label
+	}
+	return ""
 }
 
 // `for c in "hi"` works the same way — strings support `len()` and
@@ -717,6 +912,123 @@ func TestMatchExprParses(t *testing.T) {
 	}
 }
 
+// Block-expressions (slice 1): an `if`-expression branch with leading
+// statements followed by a trailing value expression (no `;`) parses to
+// a *ast.BlockExpr whose Stmts hold the statements and Tail the value.
+func TestBlockExprIfBranch(t *testing.T) {
+	prog, err := Parse(`function f(e: i32): i32 {
+		return if (e > 0) { var k = e + 1; k } else { 0 };
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ie := prog.Funcs[0].Body.Stmts[0].(*ast.Return).Value.(*ast.IfExpr)
+	be, ok := ie.Then.(*ast.BlockExpr)
+	if !ok {
+		t.Fatalf("then branch should be *BlockExpr, got %T", ie.Then)
+	}
+	if len(be.Stmts) != 1 {
+		t.Fatalf("expected 1 leading stmt, got %d", len(be.Stmts))
+	}
+	if _, ok := be.Stmts[0].(*ast.Var); !ok {
+		t.Errorf("stmt 0 should be *Var, got %T", be.Stmts[0])
+	}
+	if be.Tail == nil {
+		t.Fatal("tail should be non-nil (the trailing `k`)")
+	}
+	if id, ok := be.Tail.(*ast.Ident); !ok || id.Name != "k" {
+		t.Errorf("tail should be Ident `k`, got %T %v", be.Tail, be.Tail)
+	}
+	// The else branch is a bare single-expr — decision 3: keeps the
+	// no-statement single-expr case as a plain expr, NOT a BlockExpr.
+	if _, ok := ie.Else.(*ast.BlockExpr); ok {
+		t.Errorf("else `{ 0 }` (single expr, no stmts) should stay a bare expr, got *BlockExpr")
+	}
+}
+
+// A single-expression branch stays byte-identical to the pre-block-expr
+// behaviour: `{ 1 }` is a bare NumberLit, not a BlockExpr.
+func TestBlockExprSingleExprUnchanged(t *testing.T) {
+	prog, err := Parse(`function f(b: boolean): i32 { return if (b) { 1 } else { 2 }; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ie := prog.Funcs[0].Body.Stmts[0].(*ast.Return).Value.(*ast.IfExpr)
+	if _, ok := ie.Then.(*ast.NumberLit); !ok {
+		t.Errorf("then `{ 1 }` should be a bare NumberLit, got %T", ie.Then)
+	}
+	if _, ok := ie.Else.(*ast.NumberLit); !ok {
+		t.Errorf("else `{ 2 }` should be a bare NumberLit, got %T", ie.Else)
+	}
+}
+
+// A branch whose final element is a `;`-terminated statement has NO
+// trailing value — BlockExpr.Tail is nil (the checker reports E061 when
+// it's used in value position).
+func TestBlockExprNoTail(t *testing.T) {
+	prog, err := Parse(`function f(b: boolean): i32 {
+		return if (b) { var k = 1; } else { 0 };
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ie := prog.Funcs[0].Body.Stmts[0].(*ast.Return).Value.(*ast.IfExpr)
+	be, ok := ie.Then.(*ast.BlockExpr)
+	if !ok {
+		t.Fatalf("then branch should be *BlockExpr, got %T", ie.Then)
+	}
+	if be.Tail != nil {
+		t.Errorf("a `;`-terminated final stmt means no tail; got Tail=%v", be.Tail)
+	}
+	if len(be.Stmts) != 1 {
+		t.Errorf("expected 1 stmt, got %d", len(be.Stmts))
+	}
+}
+
+// `else if` chaining still parses with the block-expr branch path: the
+// nested IfExpr lives in the outer's Else slot.
+func TestBlockExprElseIfChain(t *testing.T) {
+	prog, err := Parse(`function f(n: i32): i32 {
+		return if (n == 1) { var a = 10; a } else if (n == 2) { 20 } else { 30 };
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ie := prog.Funcs[0].Body.Stmts[0].(*ast.Return).Value.(*ast.IfExpr)
+	if _, ok := ie.Then.(*ast.BlockExpr); !ok {
+		t.Errorf("then should be *BlockExpr, got %T", ie.Then)
+	}
+	if _, ok := ie.Else.(*ast.IfExpr); !ok {
+		t.Fatalf("else should be a nested IfExpr (else-if chain), got %T", ie.Else)
+	}
+}
+
+// A `match`-expression arm body can be a block-expression: the `{ stmts;
+// tail }` form parses to a *ast.BlockExpr on the arm, while a bare-expr
+// arm body stays unchanged.
+func TestBlockExprMatchArm(t *testing.T) {
+	prog, err := Parse(`function f(tag: i32): i32 {
+		return match (tag) {
+			0 => { var s = tag + 5; s },
+			_ => 99
+		};
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	me := prog.Funcs[0].Body.Stmts[0].(*ast.Return).Value.(*ast.MatchExpr)
+	be, ok := me.Arms[0].Body.(*ast.BlockExpr)
+	if !ok {
+		t.Fatalf("arm 0 body should be *BlockExpr, got %T", me.Arms[0].Body)
+	}
+	if len(be.Stmts) != 1 || be.Tail == nil {
+		t.Errorf("arm 0 block: want 1 stmt + tail, got %d stmts, tail=%v", len(be.Stmts), be.Tail)
+	}
+	if _, ok := me.Arms[1].Body.(*ast.NumberLit); !ok {
+		t.Errorf("arm 1 body `99` should stay a bare NumberLit, got %T", me.Arms[1].Body)
+	}
+}
+
 func TestStructDecl(t *testing.T) {
 	prog, err := Parse(`struct Point { x: i32, y: i32 }`)
 	if err != nil {
@@ -875,6 +1187,39 @@ struct PrivPoint { x: i32 }`)
 	}
 }
 
+// `pub(package) function f` sets PackageScoped (not Public). See
+// docs/PUB-PACKAGE.md.
+func TestPubPackageSetsPackageScoped(t *testing.T) {
+	prog, err := Parse(`pub(package) function helper(): i32 { return 1; }
+pub function exposed(): i32 { return 2; }
+pub(package) const K: i32 = 3;`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var helper, exposed *ast.FuncDecl
+	for _, fn := range prog.Funcs {
+		switch fn.Name {
+		case "helper":
+			helper = fn
+		case "exposed":
+			exposed = fn
+		}
+	}
+	if helper == nil || !helper.PackageScoped || helper.Public {
+		t.Errorf("helper should be PackageScoped and not Public; got %+v", helper)
+	}
+	if exposed == nil || exposed.PackageScoped || !exposed.Public {
+		t.Errorf("exposed should be Public and not PackageScoped; got %+v", exposed)
+	}
+	if len(prog.Consts) != 1 || !prog.Consts[0].PackageScoped || prog.Consts[0].Public {
+		t.Errorf("const K should be PackageScoped; got %+v", prog.Consts)
+	}
+	// `pub(foo)` (anything but package) is a parse error.
+	if _, err := Parse(`pub(crate) function f(): i32 { return 1; }`); err == nil {
+		t.Error("`pub(crate)` should be a parse error")
+	}
+}
+
 // `pub` is only valid in front of `function`, `struct`, or `const`.
 // `pub var` (or any other kind of decl) should be rejected with a
 // clear message rather than silently swallowed.
@@ -965,6 +1310,67 @@ pub enum Direction { N, S, E, W }`)
 	}
 	if !prog.Enums[1].Public {
 		t.Errorf("Direction should be public; got %+v", prog.Enums[1])
+	}
+}
+
+// A named-field variant (`Rect { w: i32, h: i32 }`) parses with
+// FieldNames parallel to Payloads; the positional form leaves FieldNames
+// empty. See docs/NAMED-FIELD-VARIANTS.md.
+func TestNamedFieldEnumVariantParses(t *testing.T) {
+	prog, err := Parse(`enum Shape { Circle { r: i32 }, Rect { w: i32, h: i32 }, Unit, Pair(i32, i32) }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vs := prog.Enums[0].Variants
+	if len(vs) != 4 {
+		t.Fatalf("expected 4 variants, got %d", len(vs))
+	}
+	if len(vs[0].FieldNames) != 1 || vs[0].FieldNames[0] != "r" || len(vs[0].Payloads) != 1 {
+		t.Errorf("Circle = %+v, want field r", vs[0])
+	}
+	if len(vs[1].FieldNames) != 2 || vs[1].FieldNames[0] != "w" || vs[1].FieldNames[1] != "h" {
+		t.Errorf("Rect = %+v, want fields w, h", vs[1])
+	}
+	if len(vs[2].FieldNames) != 0 || len(vs[2].Payloads) != 0 {
+		t.Errorf("Unit should be payloadless, got %+v", vs[2])
+	}
+	if len(vs[3].FieldNames) != 0 || len(vs[3].Payloads) != 2 {
+		t.Errorf("Pair should stay positional, got %+v", vs[3])
+	}
+	// Empty named-field body is a parse error.
+	if _, err := Parse(`enum E { V {} }`); err == nil {
+		t.Error("`V {}` (empty named-field body) should be a parse error")
+	}
+}
+
+// A named-field match pattern `Rect { w, h }` sets NamedFields with the
+// field names as bindings.
+func TestNamedFieldMatchPatternParses(t *testing.T) {
+	prog, err := Parse(`enum Shape { Rect { w: i32, h: i32 } }
+function f(s: Shape): i32 {
+    match (s) {
+        Rect { w, h } => { return w + h; },
+    }
+    return 0;
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m *ast.Match
+	for _, st := range prog.Funcs[0].Body.Stmts {
+		if mm, ok := st.(*ast.Match); ok {
+			m = mm
+		}
+	}
+	if m == nil {
+		t.Fatal("no match stmt found")
+	}
+	arm := m.Arms[0]
+	if !arm.NamedFields {
+		t.Errorf("arm should be NamedFields")
+	}
+	if len(arm.Bindings) != 2 || arm.Bindings[0] != "w" || arm.Bindings[1] != "h" {
+		t.Errorf("arm bindings = %v, want [w h]", arm.Bindings)
 	}
 }
 
@@ -1168,6 +1574,32 @@ function main(): i32 { return 0; }`)
 	}
 }
 
+// `pub use "path".{a, b};` parses into Program.PubUses with the path
+// and re-exported names. See docs/PRELUDE-TO-MODULES.md.
+func TestPubUseParses(t *testing.T) {
+	prog, err := Parse(`pub use "std/string".{split, trim};
+pub use "./helpers".{add5};
+function main(): i32 { return 0; }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(prog.PubUses) != 2 {
+		t.Fatalf("expected 2 pub uses, got %d", len(prog.PubUses))
+	}
+	if prog.PubUses[0].Path != "std/string" ||
+		len(prog.PubUses[0].Names) != 2 ||
+		prog.PubUses[0].Names[0] != "split" || prog.PubUses[0].Names[1] != "trim" {
+		t.Errorf("pub use[0] = %+v, want std/string {split, trim}", prog.PubUses[0])
+	}
+	if prog.PubUses[1].Path != "./helpers" || len(prog.PubUses[1].Names) != 1 || prog.PubUses[1].Names[0] != "add5" {
+		t.Errorf("pub use[1] = %+v, want ./helpers {add5}", prog.PubUses[1])
+	}
+	// Empty name list is a parse error.
+	if _, err := Parse(`pub use "x".{};`); err == nil {
+		t.Error("`pub use \"x\".{};` with no names should be a parse error")
+	}
+}
+
 // `arena` is no longer a reserved word. The `arena { … }` block
 // construct and the arena_save / arena_restore builtins it
 // desugared to were all removed; per-request memory is now
@@ -1210,6 +1642,203 @@ func TestTraitDeclParses(t *testing.T) {
 	}
 	if td.Methods[1].Name != "debug" || len(td.Methods[1].Params) != 2 {
 		t.Errorf("debug method = %+v", td.Methods[1])
+	}
+}
+
+// A trait method may carry a `{ … }` default body; an abstract one
+// still ends at `;`. The default body is retained on TraitMethod.Body
+// for the checker to materialise per impl. See docs/TRAITS.md.
+func TestTraitDefaultMethodParses(t *testing.T) {
+	prog, err := Parse(`trait Greet {
+    function name(self: Self): string;
+    function greeting(self: Self): string { return "hi " + self.name(); }
+}`)
+	if err != nil {
+		t.Fatalf("trait with default method should parse: %v", err)
+	}
+	td := prog.Traits[0]
+	if len(td.Methods) != 2 {
+		t.Fatalf("expected 2 methods, got %d", len(td.Methods))
+	}
+	if td.Methods[0].Body != nil {
+		t.Errorf("abstract method `name` should have nil Body, got %+v", td.Methods[0].Body)
+	}
+	if td.Methods[1].Name != "greeting" || td.Methods[1].Body == nil {
+		t.Errorf("default method `greeting` should retain its Body, got %+v", td.Methods[1])
+	}
+	if n := len(td.Methods[1].Body.Stmts); n != 1 {
+		t.Errorf("default body should have 1 statement, got %d", n)
+	}
+}
+
+// The path separator `::` in expression position parses to the same
+// FieldAccess node as `.`, with PathSep set so the printer round-trips it.
+// `Type::method(args)`, `mod::func()`, and `mod::CONST` all work. See #2700.
+func TestPathSepParse(t *testing.T) {
+	prog, err := Parse(`function main(): i32 {
+    var a: i32 = Point::origin().x;
+    var b: i32 = helpers::add5(10);
+    var c: i32 = helpers::BONUS;
+    return a + b + c;
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := prog.Funcs[0].Body.Stmts
+	fieldOf := func(e ast.Expr) *ast.FieldAccess {
+		switch x := e.(type) {
+		case *ast.FieldAccess:
+			return x
+		case *ast.Call:
+			if fa, ok := x.Callee.(*ast.FieldAccess); ok {
+				return fa
+			}
+		}
+		return nil
+	}
+	// a = Point::origin().x → outer `.x` (dot) on Call(Point::origin()).
+	ax := body[0].(*ast.Var).Init.(*ast.FieldAccess)
+	if ax.PathSep {
+		t.Errorf("`.x` should not be a path separator")
+	}
+	if origin := fieldOf(ax.Target); origin == nil || origin.Field != "origin" || !origin.PathSep {
+		t.Errorf("Point::origin should be FieldAccess{Field:origin, PathSep:true}, got %#v", ax.Target)
+	}
+	if fa := fieldOf(body[1].(*ast.Var).Init); fa == nil || !fa.PathSep || fa.Field != "add5" {
+		t.Errorf("helpers::add5 should be a PathSep FieldAccess, got %#v", body[1].(*ast.Var).Init)
+	}
+	if fa := fieldOf(body[2].(*ast.Var).Init); fa == nil || !fa.PathSep || fa.Field != "BONUS" {
+		t.Errorf("helpers::BONUS should be a PathSep FieldAccess, got %#v", body[2].(*ast.Var).Init)
+	}
+}
+
+// A type-parameter bound may carry trait type arguments
+// (`function f[T: From[i32]]`), recorded on FuncDecl.BoundArgs parallel to
+// Bounds. A non-generic bound (`U: Eq`) records no args. See docs/TRAITS.md.
+func TestGenericTraitBoundParse(t *testing.T) {
+	prog, err := Parse(`function f[T: From[i32] + Eq, U: Eq](a: T, b: U): i32 { return 0; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := prog.Funcs[0]
+	if got := fn.Bounds["T"]; len(got) != 2 || got[0] != "From" || got[1] != "Eq" {
+		t.Errorf("T bounds = %v, want [From Eq]", fn.Bounds["T"])
+	}
+	ta := fn.BoundArgs["T"]
+	if len(ta) != 2 {
+		t.Fatalf("T BoundArgs = %v, want 2 entries (one per bound)", ta)
+	}
+	if len(ta[0]) != 1 {
+		t.Errorf("From bound args = %v, want [i32]", ta[0])
+	}
+	if _, ok := ta[0][0].(ast.NumberType); !ok {
+		t.Errorf("From arg = %#v, want i32", ta[0][0])
+	}
+	if len(ta[1]) != 0 {
+		t.Errorf("Eq bound should have no args, got %v", ta[1])
+	}
+	// A bound with no generic-trait args records nothing in BoundArgs.
+	if _, ok := fn.BoundArgs["U"]; ok {
+		t.Errorf("U (non-generic Eq bound) should not appear in BoundArgs")
+	}
+}
+
+// A trait may declare type parameters (`trait From[T]`), recorded on
+// TraitDecl.TypeParams, and an impl binds them via `impl From[i32] for T`,
+// recorded on ImplDecl.TraitArgs. See docs/TRAITS.md.
+func TestGenericTraitParse(t *testing.T) {
+	prog, err := Parse(`trait From[T] { function from(v: T): Self; }
+struct Celsius { deg: i32 }
+impl From[i32] for Celsius { function from(v: i32): Self { return Celsius { deg: v }; } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := prog.Traits[0]
+	if len(tr.TypeParams) != 1 || tr.TypeParams[0] != "T" {
+		t.Errorf("trait TypeParams = %v, want [T]", tr.TypeParams)
+	}
+	impl := prog.Impls[0]
+	if len(impl.TraitArgs) != 1 {
+		t.Fatalf("impl TraitArgs = %v, want 1 arg", impl.TraitArgs)
+	}
+	if nt, ok := impl.TraitArgs[0].(ast.NumberType); !ok || nt.NormalWidth() != 32 {
+		t.Errorf("impl TraitArgs[0] = %#v, want i32", impl.TraitArgs[0])
+	}
+}
+
+// A trait may declare associated types (`type Item;`), an impl binds them
+// (`type Item = i32;`), and signatures reference them as `Self::Item` /
+// `T::Item` (parsed to ast.ProjType). See docs/ASSOCIATED-TYPES.md.
+func TestAssociatedTypesParse(t *testing.T) {
+	prog, err := Parse(`trait Iterator {
+    type Item;
+    function next(self: Self): Self::Item;
+}
+struct B { v: i32 }
+impl Iterator for B {
+    type Item = i32;
+    function next(self: Self): Self::Item { return self.v; }
+}
+function first[I: Iterator](it: I): I::Item { return it.next(); }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := prog.Traits[0]
+	if len(tr.AssocTypes) != 1 || tr.AssocTypes[0] != "Item" {
+		t.Errorf("trait AssocTypes = %v, want [Item]", tr.AssocTypes)
+	}
+	pj, ok := tr.Methods[0].Result.(ast.ProjType)
+	if !ok || pj.Name != "Item" {
+		t.Fatalf("next result = %T %v, want ProjType …::Item", tr.Methods[0].Result, tr.Methods[0].Result)
+	}
+	if _, ok := pj.Base.(ast.SelfType); !ok {
+		t.Errorf("projection base = %T, want SelfType", pj.Base)
+	}
+	impl := prog.Impls[0]
+	if impl.AssocTypeBindings == nil || impl.AssocTypeBindings["Item"] == nil {
+		t.Fatalf("impl AssocTypeBindings missing Item: %v", impl.AssocTypeBindings)
+	}
+	var first *ast.FuncDecl
+	for _, fn := range prog.Funcs {
+		if fn.Name == "first" {
+			first = fn
+		}
+	}
+	if first == nil {
+		t.Fatal("first not found")
+	}
+	if pj, ok := first.ReturnType.(ast.ProjType); !ok || pj.Name != "Item" {
+		t.Errorf("first return = %T %v, want ProjType …::Item", first.ReturnType, first.ReturnType)
+	}
+}
+
+// A trait may declare supertraits with `trait Ord: Eq + Hash { … }`;
+// they're recorded on TraitDecl.Supertraits (qualifiers preserved). A
+// trait with no `:` clause has an empty list. See docs/TRAITS.md.
+func TestTraitSupertraitsParse(t *testing.T) {
+	prog, err := Parse(`trait Eq { function eq(self: Self, other: Self): boolean; }
+trait Hash { function hash(self: Self): i32; }
+trait Ord: Eq + Hash { function lt(self: Self, other: Self): boolean; }`)
+	if err != nil {
+		t.Fatalf("trait with supertraits should parse: %v", err)
+	}
+	var ord, eq *ast.TraitDecl
+	for _, td := range prog.Traits {
+		switch td.Name {
+		case "Ord":
+			ord = td
+		case "Eq":
+			eq = td
+		}
+	}
+	if ord == nil || eq == nil {
+		t.Fatalf("expected Ord and Eq traits, got %d traits", len(prog.Traits))
+	}
+	if len(eq.Supertraits) != 0 {
+		t.Errorf("Eq should have no supertraits, got %v", eq.Supertraits)
+	}
+	if len(ord.Supertraits) != 2 || ord.Supertraits[0] != "Eq" || ord.Supertraits[1] != "Hash" {
+		t.Errorf("Ord supertraits = %v, want [Eq Hash]", ord.Supertraits)
 	}
 }
 
@@ -1283,15 +1912,139 @@ function many(ds: dyn Shape[]): i32 { return 0; }`)
 		t.Fatal("functions not parsed")
 	}
 	dt, ok := one.Params[0].Type.(ast.DynTraitType)
-	if !ok || dt.Trait != "Shape" {
+	if !ok || len(dt.Traits) != 1 || dt.Traits[0] != "Shape" {
 		t.Errorf("one param type = %#v, want dyn Shape", one.Params[0].Type)
 	}
 	at, ok := many.Params[0].Type.(ast.ArrayType)
 	if !ok {
 		t.Fatalf("many param type = %#v, want array", many.Params[0].Type)
 	}
-	if edt, ok := at.Elem.(ast.DynTraitType); !ok || edt.Trait != "Shape" {
+	if edt, ok := at.Elem.(ast.DynTraitType); !ok || len(edt.Traits) != 1 || edt.Traits[0] != "Shape" {
 		t.Errorf("many element type = %#v, want dyn Shape", at.Elem)
+	}
+}
+
+// `dyn Container[i32]` parses to a DynTraitType carrying the trait's
+// pinned generic arguments (parallel Args). See docs/DYN-TRAITS.md.
+func TestDynGenericTraitTypeParse(t *testing.T) {
+	prog, err := Parse(`trait Container[T] { function get(self: Self): T; }
+function take(d: dyn Container[i32]): i32 { return d.get(); }`)
+	if err != nil {
+		t.Fatalf("dyn generic type should parse: %v", err)
+	}
+	var take *ast.FuncDecl
+	for _, fn := range prog.Funcs {
+		if fn.Name == "take" {
+			take = fn
+		}
+	}
+	if take == nil {
+		t.Fatal("function not parsed")
+	}
+	dt, ok := take.Params[0].Type.(ast.DynTraitType)
+	if !ok || len(dt.Traits) != 1 || dt.Traits[0] != "Container" {
+		t.Fatalf("take param type = %#v, want dyn Container[i32]", take.Params[0].Type)
+	}
+	args := dt.ArgsFor(0)
+	if len(args) != 1 {
+		t.Fatalf("Container args = %#v, want one (i32)", args)
+	}
+	if n, ok := args[0].(ast.NumberType); !ok || n.String() != "i32" {
+		t.Errorf("Container arg[0] = %#v, want i32", args[0])
+	}
+	if got := dt.String(); got != "dyn Container[i32]" {
+		t.Errorf("String() = %q, want %q", got, "dyn Container[i32]")
+	}
+}
+
+// `dyn Producer[Item = i32]` parses to a DynTraitType carrying a pinned
+// associated-type binding (AssocBindings), distinct from a positional generic
+// argument. See docs/DYN-TRAITS.md.
+func TestDynAssocTypeParse(t *testing.T) {
+	prog, err := Parse(`trait Producer { type Item; function get(self: Self): Self::Item; }
+function take(d: dyn Producer[Item = i32]): i32 { return 0; }`)
+	if err != nil {
+		t.Fatalf("dyn assoc-pin type should parse: %v", err)
+	}
+	var take *ast.FuncDecl
+	for _, fn := range prog.Funcs {
+		if fn.Name == "take" {
+			take = fn
+		}
+	}
+	if take == nil {
+		t.Fatal("function not parsed")
+	}
+	dt, ok := take.Params[0].Type.(ast.DynTraitType)
+	if !ok || len(dt.Traits) != 1 || dt.Traits[0] != "Producer" {
+		t.Fatalf("take param type = %#v, want dyn Producer[Item = i32]", take.Params[0].Type)
+	}
+	if len(dt.ArgsFor(0)) != 0 {
+		t.Errorf("Producer should have no positional args, got %#v", dt.ArgsFor(0))
+	}
+	binds := dt.AssocFor(0)
+	if len(binds) != 1 || binds[0].Name != "Item" {
+		t.Fatalf("Producer assoc bindings = %#v, want one (Item)", binds)
+	}
+	if n, ok := binds[0].Type.(ast.NumberType); !ok || n.String() != "i32" {
+		t.Errorf("Item binding = %#v, want i32", binds[0].Type)
+	}
+	if got := dt.String(); got != "dyn Producer[Item = i32]" {
+		t.Errorf("String() = %q, want %q", got, "dyn Producer[Item = i32]")
+	}
+}
+
+// `dyn A + B` parses to a DynTraitType carrying the SORTED + DEDUPED
+// trait set (so `dyn A + B` ≡ `dyn B + A`), `dyn A + B + C` keeps all
+// three, `dyn A+B[]` is an array of multi-trait objects, and a trailing
+// `+` is a parse error. See docs/DYN-TRAITS.md.
+func TestDynMultiTraitParse(t *testing.T) {
+	prog, err := Parse(`trait A { function a(self: Self): i32; }
+trait B { function b(self: Self): i32; }
+trait C { function c(self: Self): i32; }
+function f(d: dyn B + A): i32 { return 0; }
+function g(d: dyn C + A + B): i32 { return 0; }
+function h(ds: dyn A + B[]): i32 { return 0; }`)
+	if err != nil {
+		t.Fatalf("multi-trait dyn should parse: %v", err)
+	}
+	byName := map[string]*ast.FuncDecl{}
+	for _, fn := range prog.Funcs {
+		byName[fn.Name] = fn
+	}
+	// `dyn B + A` normalises to the sorted set [A, B].
+	dt, ok := byName["f"].Params[0].Type.(ast.DynTraitType)
+	if !ok || len(dt.Traits) != 2 || dt.Traits[0] != "A" || dt.Traits[1] != "B" {
+		t.Errorf("f param = %#v, want sorted dyn A + B", byName["f"].Params[0].Type)
+	}
+	if dt.String() != "dyn A + B" {
+		t.Errorf("String() = %q, want %q", dt.String(), "dyn A + B")
+	}
+	// `dyn C + A + B` → [A, B, C].
+	dt3, ok := byName["g"].Params[0].Type.(ast.DynTraitType)
+	if !ok || len(dt3.Traits) != 3 || dt3.Traits[0] != "A" || dt3.Traits[1] != "B" || dt3.Traits[2] != "C" {
+		t.Errorf("g param = %#v, want sorted dyn A + B + C", byName["g"].Params[0].Type)
+	}
+	// `dyn A + B[]` → array of dyn A + B.
+	at, ok := byName["h"].Params[0].Type.(ast.ArrayType)
+	if !ok {
+		t.Fatalf("h param = %#v, want array", byName["h"].Params[0].Type)
+	}
+	if edt, ok := at.Elem.(ast.DynTraitType); !ok || len(edt.Traits) != 2 {
+		t.Errorf("h element = %#v, want dyn A + B array", at.Elem)
+	}
+	// Order-insensitive Equal: `dyn A + B` ≡ `dyn B + A`.
+	if !ast.Equal(ast.NewDynTraitType("A", "B"), ast.NewDynTraitType("B", "A")) {
+		t.Errorf("dyn A + B should equal dyn B + A")
+	}
+	// Dedup: `dyn A + A` → single-element [A].
+	if d := ast.NewDynTraitType("A", "A"); len(d.Traits) != 1 {
+		t.Errorf("dyn A + A should dedup to [A], got %#v", d.Traits)
+	}
+	// Trailing `+` is a parse error.
+	if _, err := Parse(`trait A { function a(self: Self): i32; }
+function bad(d: dyn A +): i32 { return 0; }`); err == nil {
+		t.Errorf("trailing `+` in dyn type should be a parse error")
 	}
 }
 
@@ -1415,8 +2168,12 @@ impl[A] T for Box[A] { function [B] (self: Self) f(): void {} }`); err == nil {
 // Error cases: trait method without a `self` first param, and `impl`
 // missing the `for` clause.
 func TestTraitImplParseErrors(t *testing.T) {
-	if _, err := Parse(`trait T { function f(x: i32): i32; }`); err == nil {
-		t.Error("trait method without `self` first param should be a parse error")
+	// A trait method without a leading `self` is now an associated
+	// function (e.g. a `Type.new()` constructor), not a parse error.
+	if prog, err := Parse(`trait T { function f(x: i32): i32; }`); err != nil {
+		t.Errorf("receiver-less trait method (associated function) should parse: %v", err)
+	} else if m := prog.Traits[0].Methods[0]; !m.Assoc {
+		t.Error("receiver-less trait method should be marked Assoc")
 	}
 	if _, err := Parse(`impl T Point { }`); err == nil {
 		t.Error("`impl T Point` without `for` should be a parse error")
@@ -1634,6 +2391,54 @@ func TestOpaqueStructParses(t *testing.T) {
 	}
 }
 
+// Arrow lambdas `(params): R => expr` desugar to an ast.Lambda whose body
+// is `{ return expr; }`. Parens that hold a parameter list are an arrow
+// lambda; ordinary grouping `(e)` and tuples `(e1, e2)` are unaffected.
+// See #2701.
+func TestArrowLambdaParse(t *testing.T) {
+	prog, err := Parse(`function f(): i32 {
+  var g: (i32, i32) => i32 = (a: i32, b: i32): i32 => a + b;
+  var h: () => i32 = (): i32 => 42;
+  var grouped: i32 = (1 + 2) * 3;
+  var pair: (i32, i32) = (4, 5);
+  return g(grouped, pair.0) + h();
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmts := prog.Funcs[0].Body.Stmts
+	// `g` is a 2-param arrow lambda → Lambda{Body: {return a+b}}.
+	g := stmts[0].(*ast.Var)
+	lam, ok := g.Init.(*ast.Lambda)
+	if !ok {
+		t.Fatalf("g init should be a Lambda, got %T", g.Init)
+	}
+	if len(lam.Params) != 2 || lam.Params[0].Name != "a" || lam.Params[1].Name != "b" {
+		t.Errorf("lambda params = %v, want [a b]", lam.Params)
+	}
+	if _, ok := lam.ReturnType.(ast.NumberType); !ok {
+		t.Errorf("lambda return type = %T, want NumberType(i32)", lam.ReturnType)
+	}
+	if len(lam.Body.Stmts) != 1 {
+		t.Fatalf("arrow body should be one stmt, got %d", len(lam.Body.Stmts))
+	}
+	if _, ok := lam.Body.Stmts[0].(*ast.Return); !ok {
+		t.Errorf("arrow body stmt should be a Return, got %T", lam.Body.Stmts[0])
+	}
+	// `h` is a zero-param arrow lambda.
+	if hl, ok := stmts[1].(*ast.Var).Init.(*ast.Lambda); !ok || len(hl.Params) != 0 {
+		t.Errorf("h should be a zero-param Lambda, got %T", stmts[1].(*ast.Var).Init)
+	}
+	// Grouping is NOT a lambda.
+	if _, ok := stmts[2].(*ast.Var).Init.(*ast.Lambda); ok {
+		t.Errorf("(1 + 2) * 3 should not parse as a lambda")
+	}
+	// Tuple is NOT a lambda.
+	if _, ok := stmts[3].(*ast.Var).Init.(*ast.TupleLit); !ok {
+		t.Errorf("(4, 5) should parse as a TupleLit, got %T", stmts[3].(*ast.Var).Init)
+	}
+}
+
 // Array.build desugars to a unique-local IIFE: a `var b: T[] = []`, the
 // body with statement-position `b.append(x);` rewritten to `b = b.append(x)`,
 // and a trailing `return b`. ArrayBuilder[T] is surface-only — it never
@@ -1747,5 +2552,95 @@ func TestMapBuildDesugars(t *testing.T) {
 	}
 	if _, ok := es.Expr.(*ast.Assign); !ok {
 		t.Errorf("b.insert should desugar to an Assign, got %T", es.Expr)
+	}
+}
+
+// TestDefaultParam covers parsing default parameter values
+// (`function f(a: i32, b: i32 = 128)`) and the rule that a required
+// parameter may not follow a defaulted one.
+func TestDefaultParam(t *testing.T) {
+	prog, err := Parse(`function f(a: i32, b: i32 = 128): i32 { return a + b; }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	fn := prog.Funcs[0]
+	if len(fn.Params) != 2 {
+		t.Fatalf("want 2 params, got %d", len(fn.Params))
+	}
+	if fn.Params[0].Default != nil {
+		t.Errorf("param a should have no default")
+	}
+	def, ok := fn.Params[1].Default.(*ast.NumberLit)
+	if !ok || def.Value != 128 {
+		t.Errorf("param b default should be NumberLit 128, got %#v", fn.Params[1].Default)
+	}
+}
+
+func TestDefaultParamRequiredAfterOptional(t *testing.T) {
+	_, err := Parse(`function f(a: i32 = 1, b: i32): i32 { return a + b; }`)
+	if err == nil {
+		t.Fatal("expected an error: required param after a defaulted one")
+	}
+}
+
+// TestNamedArgs covers parsing named call arguments (`f(a, b = 2)`): ArgNames
+// is parallel to Args, "" for positional, and nil when all positional.
+func TestNamedArgs(t *testing.T) {
+	prog, err := Parse(`function f(a: i32, b: i32, c: i32): i32 { return a; } function main(): i32 { return f(1, c = 3, b = 2); }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	body := prog.Funcs[1].Body
+	ret := body.Stmts[0].(*ast.Return)
+	call := ret.Value.(*ast.Call)
+	if len(call.Args) != 3 {
+		t.Fatalf("want 3 args, got %d", len(call.Args))
+	}
+	if len(call.ArgNames) != 3 || call.ArgNames[0] != "" || call.ArgNames[1] != "c" || call.ArgNames[2] != "b" {
+		t.Errorf("ArgNames = %#v, want [\"\", \"c\", \"b\"]", call.ArgNames)
+	}
+
+	// All-positional call leaves ArgNames nil.
+	prog2, err := Parse(`function f(a: i32): i32 { return a; } function main(): i32 { return f(1); }`)
+	if err != nil {
+		t.Fatalf("parse2: %v", err)
+	}
+	call2 := prog2.Funcs[1].Body.Stmts[0].(*ast.Return).Value.(*ast.Call)
+	if call2.ArgNames != nil {
+		t.Errorf("all-positional call should have nil ArgNames, got %#v", call2.ArgNames)
+	}
+}
+
+// `e as? T` parses to a DowncastExpr (the fallible dyn-Trait downcast),
+// while plain `e as T` stays a CastExpr (numeric cast / ascription).
+// docs/DYN-TRAITS.md §9.
+func TestParseDowncastVsCast(t *testing.T) {
+	prog, err := Parse(`function f(s: dyn Shape): i32 { var c: Option[Circle] = s as? Circle; return 0; }`)
+	if err != nil {
+		t.Fatalf("parse downcast: %v", err)
+	}
+	v := prog.Funcs[0].Body.Stmts[0].(*ast.Var)
+	dc, ok := v.Init.(*ast.DowncastExpr)
+	if !ok {
+		t.Fatalf("expected *ast.DowncastExpr, got %T", v.Init)
+	}
+	if _, ok := dc.Inner.(*ast.Ident); !ok {
+		t.Errorf("downcast inner = %T, want *ast.Ident", dc.Inner)
+	}
+	if st, ok := dc.Target.(ast.StructType); !ok || st.Name != "Circle" {
+		t.Errorf("downcast target = %v, want Circle struct", dc.Target)
+	}
+
+	// Plain `as` stays a CastExpr.
+	prog2, err := Parse(`function g(n: i32): i64 { return n as i64; }`)
+	if err != nil {
+		t.Fatalf("parse cast: %v", err)
+	}
+	ret := prog2.Funcs[0].Body.Stmts[0].(*ast.Return)
+	if _, ok := ret.Value.(*ast.CastExpr); !ok {
+		t.Fatalf("expected *ast.CastExpr, got %T", ret.Value)
+	}
+	if _, ok := ret.Value.(*ast.DowncastExpr); ok {
+		t.Fatalf("plain `as` must not parse to DowncastExpr")
 	}
 }

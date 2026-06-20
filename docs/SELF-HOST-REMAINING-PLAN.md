@@ -1,5 +1,10 @@
 # Self-hosting: remaining work plan
 
+> **Open follow-ups tracked in GitHub:** [#2857](https://github.com/JakeChampion/lang/issues/2857)
+> surfaces the still-open frontiers across this and the sibling RC/checker plan
+> docs. This doc is a living progress log — verify the latest slice before
+> picking up an item.
+
 Tracks the modules / features the self-hosted compiler
 (`examples/self_host/`) cannot yet compile, with a concrete plan per
 item. Ordered roughly easiest → hardest. Each item ships as its own PR
@@ -343,6 +348,26 @@ planned order:
 - ✅ **`switch` / `case`** — desugars in the parser to a nested
   if/else-if chain (multi-value cases OR their `==` comparisons; no
   fall-through) (`self_host_switch_test.go`).
+- ✅ **`match` on a non-enum scrutinee** — `match (n) { 1 => …,
+  "yes" => …, _ => … }` on an i32 / string value. The self-host's
+  `Pattern` grammar is variant-only, so the match-arm parsers
+  (`parse_match_stmt` / `parse_match_expr`) now recognise a literal at
+  the pattern position (`peek_is_literal`) and, when any arm is a
+  literal, desugar the whole match to an if/else-if chain
+  (`build_literal_match`) — the same shape `switch` and the native
+  `emitLiteralMatch` produce. A guard folds in as `scrut == lit &&
+  guard`; the `_` arm becomes the final else. Lives entirely in the
+  parser (no new AST node, no `Pattern`-union ripple), so every backend
+  — including the IR path — inherits it; this also widened the SSA
+  emit subset (an int-literal match now lowers through SSA instead of
+  falling back to the AST emitter). The native **interpreter** had the
+  matching gap (it rejected non-enum scrutinees as "expected enum
+  value" while the compiled backends already lowered them) — fixed in
+  `internal/interp` so the reference oracle agrees with codegen
+  (`self_host_match_literal_ir_test.go`,
+  `TestInterpMatchLiteralNonEnum`). Diagnostic note: a variant pattern
+  on a non-enum scrutinee still parses as a variant and draws E035, as
+  before.
 - ✅ **i32-keyed maps** — `Map[i32, V]` tags as `mapI:<V>`; the
   dispatch passes a key-kind flag and the runtime takes an integer
   (`==`) key-compare path instead of `__fern_str_eq`
@@ -438,7 +463,7 @@ planned order:
   (`<root>/std/foo.fern`), loading them transitively through the same
   worklist + `flatten.bundle` machinery it already used for local
   `./…` imports (the worklist tracks full import paths, not just
-  basenames). `core/no_prelude` is treated as a directive, not a file.
+  basenames).
   With no root given, std/core imports are skipped — identical to the
   prior behaviour, so the file-driven fixpoint is untouched. Proven
   end-to-end by `self_host_stdlib_import_test.go`: a program
@@ -708,7 +733,7 @@ planned order:
     AsmRun case (uses an inline `Wrap.try_get(): Option[i32]` so the
     fixture is self-contained); `json_field_eq_test` joins the
     differential gate.
-  - ✅ **`Map.get_or(k, default)`.** core/map's pure-Lang
+  - ✅ **`Map.get_or(k, default)`.** core/map's pure-Fern
     `__map_get_or_impl` body uses an open-addressed layout that doesn't
     match the self-host's native `__fern_map_*` runtime, so falling
     through to it (via the generic method-call path) read garbage and

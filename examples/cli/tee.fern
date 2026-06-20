@@ -1,0 +1,71 @@
+// tee.fern — copy stdin to stdout and to each named file, like
+// `tee(1)`.
+//
+//   -a   append to the files instead of truncating
+//
+//   $ echo hi | ./tee a.txt b.txt        # writes hi to stdout, a, b
+//   $ printf 'more\n' | ./tee -a a.txt    # appends to a.txt
+//
+// `tee` buffers all of stdin and then fans it out, so it uses the
+// one-shot `read_file` / `write_file` builtins rather than a
+// streaming Writer: append is just "read what's there, concatenate,
+// write it back". For a short-lived filter that's simpler and avoids
+// holding extra descriptors open.
+//
+// Showcases: reading all of stdin, fanning one buffer out to stdout
+// plus N files, `read_file` + `write_file`, and reporting per-file
+// errors without aborting the whole run.
+import "std/string";
+import "std/io";
+import "std/array";
+
+function existing(path: string): string {
+  match (read_file(path)) {
+    Ok(contents) => {
+      return contents;
+    },
+    Err(_) => {
+      return "";
+    }
+  }
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var append: boolean = false;
+  var files: string[] = [];
+
+  var i: i32 = 1;
+  while (i < argv.len()) {
+    var a: string = argv[i];
+    if (a == "-a" || a == "--append") {
+      append = true;
+    } else {
+      files = files.append(a);
+    }
+    i = i + 1;
+  }
+
+  var data: string = io.read_all_stdin();
+  // Always echo to stdout first.
+  write(data);
+
+  var status: i32 = 0;
+  var j: i32 = 0;
+  while (j < files.len()) {
+    var path: string = files[j];
+    var payload: string = data;
+    if (append) {
+      payload = existing(path) + data;
+    }
+    match (write_file(path, payload)) {
+      Some(_) => {
+        eprint("tee: " + path + ": cannot write");
+        status = 1;
+      },
+      None => {}
+    }
+    j = j + 1;
+  }
+  return status;
+}

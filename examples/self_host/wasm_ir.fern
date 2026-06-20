@@ -1,0 +1,1344 @@
+// examples/self_host/wasm_ir.fern — the WebAssembly instruction-selector for
+// the target-agnostic stack IR (irlower.fern's Op[]). The wasm sibling of
+// asm_ir / asm_arm64_ir: it lowers the SAME lowered op stream to textual WAT.
+//
+// wasm is the most natural target of the three: the IR is a stack machine with
+// structured control flow (block / loop / if / else / end / br / br_if) and
+// wasm IS that machine, so the lowering is a near-direct transliteration to
+// FLAT WAT instructions — const_i32 -> i32.const, load_local i -> local.get i,
+// add -> i32.add, the structured ops keep their names, and `br depth` /
+// `br_if depth` carry the SAME relative depth the IR already encodes (no label
+// generation). A user `call` needs no arg reversal either: the IR pushes args
+// arg0-deepest and wasm's `call` consumes them arg0-deepest.
+//
+// Arrays use wasm's linear-memory layout (matching wasm.fern's __fern_arr_box:
+// a = base+8, so rc@[a-8], len@[a], cap@[a+4], element i @ [a+8+i*4], 4-byte
+// stride) and reuse wasm.fern's heap/RC runtime verbatim (heap_alloc_helpers +
+// rc_runtime_helpers — the size-class freelist allocator, __fern_arr_box,
+// __fern_arr_dec, and the rc inc/dec helpers). The Perceus array RC (alias-inc,
+// move-on-return, exit dec-sweep, reassignment retain/cow-release) all comes
+// from irlower's shared lowering, so wasm gets it for free — the helper calls
+// lower to `call $__fern_rc_inc` / `call $__fern_arr_dec`.
+//
+// Like asm_ir, this is a SEPARATE module imported only by its differential
+// driver (wasm_ir_run) — wasm.fern stays untouched until a later fold/flip.
+
+import "./parser";
+import "./util";
+import "./ir";
+import "./irlower";
+import "./asm_ir";
+import "./asmcore";
+
+// Linear-memory layout for the no-string array subset, computed exactly as
+// wasm.emit_module does for an empty string table (tab.next = 24, heap_extra =
+// 0): fl_base = roundup8(24 + 16) = 40, the 65536-class freelist, then the
+// bump heap at heap_base. heap_base is also the rc helpers' low-address guard.
+pub function fl_base(): i32 { return 40; }
+pub function fl_cells(): i32 { return 65536; }
+pub function heap_base(): i32 { return 40 + 65536 * 4; }
+
+// ---- string literals (data section) -----------------------------------------
+// In the IR subset, string literals live in the data section exactly as
+// wasm.fern's StrTable lays them out: one `[len:i32 LE][bytes]` block per
+// distinct literal, the first at offset 24, each `4 + len` bytes. A string
+// VALUE is a pointer to its block; `.len()` reads the i32 at offset 0. Literals
+// are static (no heap) — only str_concat allocates (via $__fern_str_box). The
+// blocks sit below the freelist/heap, so any literal shifts fl_base/heap_base
+// off the empty-table defaults: fl_base_for / heap_base_for recompute them (and
+// equal fl_base() / heap_base() when there are no literals). The data section
+// and the $__fern_strcat / $__fern_streq helpers are emitted CALLER-side (in
+// wasm.fern, which owns le32_escape / wat_escape / strcat_helpers) because
+// wasm_ir cannot import wasm without a cycle — same split as the heap runtime.
+
+// str_values collects the module's distinct string literals (first-seen order,
+// deduped) from the lowered IR. Both the caller's data-section emission and the
+// per-function const_str offset lookup walk this same list, so offsets agree.
+pub function str_values(mod: parser.Module): string[] {
+    var vals: string[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == "const_str") {
+                var v: string = r.ops[i].str;
+                var seen: boolean = false;
+                var k: i32 = 0;
+                while (k < vals.len()) {
+                    if (vals[k] == v) { seen = true; }
+                    k = k + 1;
+                }
+                if (!seen) { vals = vals.append(v); }
+            }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return vals;
+}
+
+// str_offset returns the data-section offset of literal index `idx`: 24 + the
+// summed block sizes (4 + len) of all prior literals.
+pub function str_offset(vals: string[], idx: i32): i32 {
+    var off: i32 = 24;
+    var i: i32 = 0;
+    while (i < idx) {
+        off = off + 4 + vals[i].len();
+        i = i + 1;
+    }
+    return off;
+}
+
+// offset_of_value returns the data-section offset of literal value `v`.
+function offset_of_value(vals: string[], v: string): i32 {
+    var i: i32 = 0;
+    while (i < vals.len()) {
+        if (vals[i] == v) { return str_offset(vals, i); }
+        i = i + 1;
+    }
+    return 24;
+}
+
+// fl_base_for / heap_base_for recompute the freelist + heap bases including the
+// literal blocks (heap_extra = 0 in the IR subset — no i64 / print buffers).
+pub function fl_base_for(mod: parser.Module): i32 {
+    return (str_offset(str_values(mod), str_values(mod).len()) + 16 + 7) / 8 * 8;
+}
+pub function heap_base_for(mod: parser.Module): i32 {
+    return fl_base_for(mod) + fl_cells() * 4;
+}
+
+// module_uses_strings reports whether any function uses a string op (literal,
+// len, concat, eq) — gates the data section + strcat/streq helper emission.
+pub function module_uses_strings(mod: parser.Module): boolean {
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            var k: string = r.ops[i].kind;
+            if (k == "const_str" || k == "str_len" || k == "str_concat" || k == "str_eq" || k == "str_cmp") { return true; }
+            if (k == "str_index" || k == "str_slice") { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// module_uses_str_cmp reports whether any function emits a str_cmp op (string
+// ordering < <= > >=). Such modules need the FULL string-helper bundle, which
+// includes $__fern_strcmp (the narrow strcat_streq bundle omits it).
+pub function module_uses_str_cmp(mod: parser.Module): boolean {
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == "str_cmp") { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// module_uses_str_slice reports whether any function uses `s[start:end]` (the
+// str_slice op), gating emission of the $__fern_substr copy helper.
+pub function module_uses_maps(mod: parser.Module): boolean {
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            var k: string = r.ops[i].kind;
+            if (k == "map_new" || k == "map_set" || k == "map_len") { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+pub function module_uses_str_slice(mod: parser.Module): boolean {
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == "str_slice") { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// wasm_binop renders the wasm instruction for one IR i32 binary op. 64-bit
+// values never appear in the i32 subset, so every op is the i32.* form.
+function wasm_binop(kind: string): string {
+    if (kind == "add") { return "i32.add"; }
+    if (kind == "sub") { return "i32.sub"; }
+    if (kind == "mul") { return "i32.mul"; }
+    // Non-trapping div/rem, matching wasm.fern's AST path: x/0 = 0, x%0 = x,
+    // INT_MIN/-1 = INT_MIN (wasm's native i32.div_s / i32.rem_s TRAP on those).
+    // The helpers ($__fern_idiv / $__fern_irem) are emitted when the module
+    // uses div/rem (module_uses_divrem). As a flat instruction the operands are
+    // prior on the stack, so `call` consumes them exactly like the op would.
+    if (kind == "div_s") { return "call $__fern_idiv"; }
+    if (kind == "rem_s") { return "call $__fern_irem"; }
+    if (kind == "and") { return "i32.and"; }
+    if (kind == "or") { return "i32.or"; }
+    if (kind == "xor") { return "i32.xor"; }
+    if (kind == "shl") { return "i32.shl"; }
+    if (kind == "shr_s") { return "i32.shr_s"; }
+    if (kind == "shr_u") { return "i32.shr_u"; }
+    // Unsigned u32 div/rem (#3204+): wasm's native i32.div_u/rem_u — irlower
+    // remaps div_s/rem_s -> div_u/rem_u when an operand is u32, so a u32
+    // numerator >= 2^31 divides as unsigned (signed div gave the wrong answer).
+    if (kind == "div_u") { return "i32.div_u"; }
+    if (kind == "rem_u") { return "i32.rem_u"; }
+    if (kind == "eq") { return "i32.eq"; }
+    if (kind == "ne") { return "i32.ne"; }
+    if (kind == "lt_s") { return "i32.lt_s"; }
+    if (kind == "le_s") { return "i32.le_s"; }
+    if (kind == "gt_s") { return "i32.gt_s"; }
+    if (kind == "ge_s") { return "i32.ge_s"; }
+    // Unsigned u32 compares (#2917): a u32 >= 2^31 is a signed-negative i32, so
+    // lt_s/gt_s give wrong answers — irlower remaps the kind via to_unsigned_kind
+    // (the same mechanism u64 uses). Mirrors the i64.*_u forms in wasm_binop_w.
+    if (kind == "lt_u") { return "i32.lt_u"; }
+    if (kind == "le_u") { return "i32.le_u"; }
+    if (kind == "gt_u") { return "i32.gt_u"; }
+    if (kind == "ge_u") { return "i32.ge_u"; }
+    return ";; ir: unsupported bin " + kind + "\n";
+}
+
+// wasm_binop_w selects the i64 instruction variant when the operand width is 64
+// (i64 div/rem is bailed in irlower, so no i64 div/rem helper is needed). A
+// comparison still pushes an i32 result — only the operands are i64.
+function wasm_binop_w(kind: string, width: i32): string {
+    if (width != 64) { return wasm_binop(kind); }
+    if (kind == "add") { return "i64.add"; }
+    if (kind == "sub") { return "i64.sub"; }
+    if (kind == "mul") { return "i64.mul"; }
+    // Non-trapping i64 div/rem (x/0=0, x%0=x, INT64_MIN/-1=INT64_MIN), matching
+    // wasm.fern's AST path; emitted by divrem_helpers (module_uses_divrem).
+    if (kind == "div_s") { return "call $__fern_idiv64"; }
+    if (kind == "rem_s") { return "call $__fern_irem64"; }
+    // Unsigned 64-bit div/rem (u64, #2904): wasm's native i64.div_u/rem_u (they
+    // trap only on divide-by-zero — the signed INT64_MIN/-1 overflow that the
+    // $__fern_*64 helpers neutralise can't arise unsigned).
+    if (kind == "div_u") { return "i64.div_u"; }
+    if (kind == "rem_u") { return "i64.rem_u"; }
+    if (kind == "and") { return "i64.and"; }
+    if (kind == "or") { return "i64.or"; }
+    if (kind == "xor") { return "i64.xor"; }
+    if (kind == "shl") { return "i64.shl"; }
+    if (kind == "shr_s") { return "i64.shr_s"; }
+    if (kind == "shr_u") { return "i64.shr_u"; }
+    if (kind == "eq") { return "i64.eq"; }
+    if (kind == "ne") { return "i64.ne"; }
+    if (kind == "lt_s") { return "i64.lt_s"; }
+    if (kind == "le_s") { return "i64.le_s"; }
+    if (kind == "gt_s") { return "i64.gt_s"; }
+    if (kind == "ge_s") { return "i64.ge_s"; }
+    // Unsigned 64-bit compares (u64, #2904) — push an i32 bool like the signed
+    // forms, but read the value as unsigned.
+    if (kind == "lt_u") { return "i64.lt_u"; }
+    if (kind == "le_u") { return "i64.le_u"; }
+    if (kind == "gt_u") { return "i64.gt_u"; }
+    if (kind == "ge_u") { return "i64.ge_u"; }
+    // f64 arithmetic / comparison (op_fbin carries width 64). wasm's f64
+    // compares are natively NaN-correct (return 0 for unordered) and yield i32.
+    if (kind == "fadd") { return "f64.add"; }
+    if (kind == "fsub") { return "f64.sub"; }
+    if (kind == "fmul") { return "f64.mul"; }
+    if (kind == "fdiv") { return "f64.div"; }
+    // f64 unary math intrinsics (op_funary) — single wasm instructions.
+    if (kind == "fsqrt") { return "f64.sqrt"; }
+    if (kind == "ffloor") { return "f64.floor"; }
+    if (kind == "fceil") { return "f64.ceil"; }
+    if (kind == "ftrunc") { return "f64.trunc"; }
+    if (kind == "fabs") { return "f64.abs"; }
+    if (kind == "feq") { return "f64.eq"; }
+    if (kind == "fne") { return "f64.ne"; }
+    if (kind == "flt") { return "f64.lt"; }
+    if (kind == "fle") { return "f64.le"; }
+    if (kind == "fgt") { return "f64.gt"; }
+    if (kind == "fge") { return "f64.ge"; }
+    return ";; ir: unsupported i64 bin " + kind + "\n";
+}
+
+// slot_in_list reports membership of slot x in an i32 list (the LowerResult's
+// i64_slots / arr_slots are sorted-but-membership is all we need).
+function slot_in_list(list: i32[], x: i32): boolean {
+    var i: i32 = 0;
+    while (i < list.len()) {
+        if (list[i] == x) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// wasm_helper_symbol maps an IR runtime-helper name to the wasm.fern symbol the
+// IR path calls. The exit-sweep / reassign release (__fern_rc_dec) maps to
+// $__fern_arr_dec (the array release that frees at rc==1 via the size-class
+// freelist), so the wasm IR path reclaims exactly as wasm.fern's AST path.
+function wasm_helper_symbol(name: string): string {
+    if (name == "__fern_rc_inc") { return "$__fern_rc_inc"; }
+    if (name == "__fern_rc_dec") { return "$__fern_arr_dec"; }
+    if (name == "__fern_rc_underflow_get") { return "$__fern_rc_underflow_count"; }
+    // i32.to_string()'s decimal helper — wasm.fern's to_string_helpers emits it
+    // as $__fern_i32_to_str (param i32 -> i32 box), gated on module_uses_tostring
+    // (an AST walk, so it fires on the IR path too).
+    if (name == "__fern_i32_to_string") { return "$__fern_i32_to_str"; }
+    return "$" + name;
+}
+
+// module_allocates reports whether any function uses an array/alloc op (so the
+// heap + RC runtime needs emitting).
+pub function module_allocates(mod: parser.Module): boolean {
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            // Any allocating op needs the heap + RC runtime. ir.op_allocates is
+            // the shared list (see ir.fern), identical to asm_ir's heap gate.
+            if (ir.op_allocates(r.ops[i].kind)) { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    // String programs need the heap too: $__fern_strcat allocates via
+    // $__fern_str_box, and strcat_helpers references it even for a str_eq-only
+    // program, so $__fern_str_box (in heap_alloc_helpers) must be present. This
+    // also covers the str_len/str_eq/str_cmp/str_index ops that don't allocate
+    // themselves but still pull the heap in via $__fern_strcat.
+    return module_uses_strings(mod);
+}
+
+// module_emits_op reports whether any lowered function emits an op of `kind` —
+// the shared scanner the random/byte-source helper gates use (issue #2747).
+pub function module_emits_op(mod: parser.Module, kind: string): boolean {
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == kind) { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// module_uses_str_predicate reports whether any function emits a scalar string
+// search predicate op (starts_with / ends_with / index_of, the latter also
+// backing `contains`), so wasm.str_predicate_helpers is emitted for the IR path.
+pub function module_uses_str_predicate(mod: parser.Module): boolean {
+    return module_emits_op(mod, "str_starts_with")
+        || module_emits_op(mod, "str_ends_with")
+        || module_emits_op(mod, "str_index_of");
+}
+
+// module_uses_str_case reports whether any function emits an ASCII case-transform
+// op (to_upper / to_lower), so wasm.str_case_helpers is emitted for the IR path.
+pub function module_uses_str_case(mod: parser.Module): boolean {
+    return module_emits_op(mod, "str_to_upper") || module_emits_op(mod, "str_to_lower");
+}
+
+// module_uses_str_repeat reports whether any function emits the str_repeat op, so
+// wasm.str_repeat_helper is emitted for the IR path.
+pub function module_uses_str_repeat(mod: parser.Module): boolean {
+    return module_emits_op(mod, "str_repeat");
+}
+
+// module_uses_str_trim reports whether any function emits the str_trim op, so
+// wasm.str_trim_helper is emitted for the IR path. (wasm's AST path has no trim,
+// so this is IR-only — no AST counterpart to differential-test against.)
+pub function module_uses_str_trim(mod: parser.Module): boolean {
+    return module_emits_op(mod, "str_trim");
+}
+
+// module_uses_str_reverse reports whether any function emits the str_reverse op,
+// so wasm.str_reverse_helper is emitted for the IR path. (IR-only, like trim.)
+pub function module_uses_str_reverse(mod: parser.Module): boolean {
+    return module_emits_op(mod, "str_reverse");
+}
+
+// module_uses_str_replace reports whether any function emits the str_replace op,
+// so wasm.str_replace_helper is emitted for the IR path. (IR-only, like trim.)
+pub function module_uses_str_replace(mod: parser.Module): boolean {
+    return module_emits_op(mod, "str_replace");
+}
+
+// module_uses_str_chars reports whether any function emits the str_chars op, so
+// wasm.str_chars_helper is emitted for the IR path. (IR-only, like trim.)
+pub function module_uses_str_chars(mod: parser.Module): boolean {
+    return module_emits_op(mod, "str_chars");
+}
+
+// module_uses_str_lines reports whether any function emits the str_lines op, so
+// wasm.str_lines_helper (and the str_split/substr it depends on) are emitted.
+pub function module_uses_str_lines(mod: parser.Module): boolean {
+    return module_emits_op(mod, "str_lines");
+}
+
+// module_uses_i32_to_string reports whether any function emits the i32.to_string()
+// runtime call (a call_direct to __fern_i32_to_string) — so the heap allocator +
+// $__fern_i32_to_str helper (wasm.to_string_helpers) are emitted, even for an
+// otherwise alloc-free module. (module_emits_op keys on op.kind, not the
+// call_direct symbol, so this needs its own scan.)
+pub function module_uses_i32_to_string(mod: parser.Module): boolean {
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == "call_direct" && r.ops[i].str == "__fern_i32_to_string") { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// module_uses_str_to_i32 reports whether any function emits the str_to_i32(s)
+// runtime call (a call_direct to __fern_str_to_i32) — so wasm.str_to_i32_helper
+// is emitted. Allocation-free, so it has no heap dependency. (module_emits_op
+// keys on op.kind, not the call_direct symbol, so this needs its own scan.)
+pub function module_uses_str_to_i32(mod: parser.Module): boolean {
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == "call_direct" && r.ops[i].str == "__fern_str_to_i32") { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// module_uses_chr reports whether any function emits the chr(n) runtime call (a
+// call_direct to __fern_chr) — so wasm.chr_helper + the heap allocator are
+// emitted. chr allocates its 1-char box, so the chr gate also pulls the heap in.
+pub function module_uses_chr(mod: parser.Module): boolean {
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == "call_direct" && r.ops[i].str == "__fern_chr") { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// module_uses_random reports whether the module calls random_bytes or random_i32
+// (so the wasi random_get import is emitted).
+pub function module_uses_random(mod: parser.Module): boolean {
+    return module_emits_op(mod, "random_bytes") || module_emits_op(mod, "random_i32");
+}
+
+// module_uses_divrem reports whether any function uses i32 div/rem (so the
+// non-trapping $__fern_idiv / $__fern_irem helpers need emitting).
+pub function module_uses_divrem(mod: parser.Module): boolean {
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == "div_s" || r.ops[i].kind == "rem_s") { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// module_uses_i64_divrem reports whether any div/rem op runs at 64-bit width, so
+// the $__fern_idiv64 / $__fern_irem64 helpers (divrem64_helpers) need emitting.
+// module_uses_arr_slice reports whether any function emits a 4-byte-element
+// arr_slice op (width 32), so the $__fern_arr_slice helper needs emitting.
+pub function module_uses_arr_slice(mod: parser.Module): boolean {
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == "arr_slice" && r.ops[i].width != 64) { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+// module_uses_arr_slice8 reports whether any function emits an 8-byte-element
+// arr_slice op (width 64, f64[]), so the $__fern_arr_slice8 helper needs
+// emitting. Distinct from module_uses_arr_slice so a program slicing only one
+// element width pulls in only the helper it calls.
+pub function module_uses_arr_slice8(mod: parser.Module): boolean {
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == "arr_slice" && r.ops[i].width == 64) { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+pub function module_uses_i64_divrem(mod: parser.Module): boolean {
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if ((r.ops[i].kind == "div_s" || r.ops[i].kind == "rem_s") && r.ops[i].width == 64) { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// wasm_eligible: the whole module is in the IR's i32 + arrays subset (the same
+// backend-independent gate the asm backends use — rejects non-lowerable
+// functions and builtin calls). wasm covers everything that gate admits.
+// wasm_eligible is the WASM eligibility gate — eligible_core, the same gate the
+// register backends now use (all_eligible). Plain function values (const_func /
+// call_indirect) are admitted on every backend; wasm lowers them through a
+// funcref table (fn_support_section), the register backends through the
+// function's code address.
+pub function wasm_eligible(mod: parser.Module): boolean {
+    // read_int / read_line read stdin, read_file reads a file, and args() reads
+    // the process argv — none supported by the wasm runtime here, so such modules
+    // stay on the AST path on wasm (where they are likewise unsupported), while
+    // x86 / arm64 lower them via the IR path.
+    // The clock builtins (monotonic_ns / now_unix_ms) are not yet lowered on the
+    // wasm IR path either (they need a WASI clock import rather than a syscall),
+    // so a clock module also stays on the wasm AST path; x86 / arm64 lower it
+    // via the IR. sleep_ms likewise has no wasm runtime (a WASI poll-based sleep
+    // is the deferred #2843 item), so a sleep module stays off the wasm IR path.
+    // `m.without(k)` (map_delete) now lowers via the IR: wasm's
+    // $__fern_map_delete returns a [map, existed] tuple box (the wasm tuple ABI,
+    // element i at offset i*4) matching the register backends, so the IR
+    // tuple-destructure reads it correctly (#2933 — previously it returned just
+    // the box, a different ABI, so a delete module was pinned to the AST path).
+    // The global string-builder ops (strbuf_reset / strbuf_append / strbuf_take)
+    // have no wasm IR runtime yet — a strbuf module stays on the wasm AST path
+    // (where the legacy emitter handles it), while x86 / arm64 lower it via the IR.
+    return asm_ir.eligible_core(mod)
+        && !module_emits_op(mod, "read_int")
+        && !module_emits_op(mod, "read_line")
+        && !module_emits_op(mod, "read_file")
+        && !module_emits_op(mod, "args")
+        && !module_emits_op(mod, "monotonic_ns")
+        && !module_emits_op(mod, "now_unix_ms")
+        && !module_emits_op(mod, "now_ns")
+        && !module_emits_op(mod, "sleep_ms")
+        && !module_emits_op(mod, "strbuf_reset")
+        && !module_emits_op(mod, "strbuf_append")
+        && !module_emits_op(mod, "strbuf_take");
+}
+
+// should_use_ir: the use_ir default is on AND the module is wasm-eligible — the
+// dispatch wasm.emit_module consults to route eligible modules through the IR.
+// Uses wasm_eligible (not all_eligible) so function-value modules lower on wasm.
+pub function should_use_ir(mod: parser.Module): boolean {
+    return asmcore.new_state().use_ir && wasm_eligible(mod);
+}
+
+// lift_lambdas re-exports irlower's lambda-lift pre-pass (closures slice 2a) so
+// the wasm dispatch sites can hoist no-capture lambda arguments before the
+// eligibility check + emit. A lambda-free module is returned unchanged.
+pub function lift_lambdas(mod: parser.Module): parser.Module {
+    return irlower.lift_lambdas(mod);
+}
+
+// fn_value_table collects the module's address-taken functions (the targets of
+// const_func ops) in first-seen, deduped order. The position of a name here is
+// its funcref-table slot index — both the const_func `i32.const <idx>` and the
+// elem segment in fn_support_section index into this list, so they agree.
+pub function fn_value_table(mod: parser.Module): string[] {
+    var out: string[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == "const_func" && util.index_of_str(out, r.ops[i].str) < 0) {
+                out = out.append(r.ops[i].str);
+            }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return out;
+}
+
+// indirect_arities collects the distinct argument counts used by call_indirect
+// ops across the module (deduped), so fn_support_section declares one
+// `$fn<argc>` signature type per arity actually dispatched.
+function indirect_arities(mod: parser.Module): i32[] {
+    var out: i32[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == "call_indirect" && !slot_in_list(out, r.ops[i].i32_imm)) {
+                out = out.append(r.ops[i].i32_imm);
+            }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return out;
+}
+
+// fn_support_section emits the WAT module items that back plain function values:
+// one `(type $fn<N> (func (param i32)×N (result i32)))` per dispatched arity, a
+// `(table <M> funcref)` sized to the address-taken set, and an `(elem (i32.const
+// 0) $f0 $f1 …)` filling it in fn_value_table order. Empty string when the
+// module has no function values, so non-closure modules are byte-unchanged.
+pub function fn_support_section(mod: parser.Module): string {
+    var ft: string[] = fn_value_table(mod);
+    if (ft.len() == 0) { return ""; }
+    var out: string = "";
+    var arities: i32[] = indirect_arities(mod);
+    var ai: i32 = 0;
+    while (ai < arities.len()) {
+        out = out + "  (type $fn" + util.i32_to_string(arities[ai]) + " (func";
+        var pj: i32 = 0;
+        while (pj < arities[ai]) { out = out + " (param i32)"; pj = pj + 1; }
+        out = out + " (result i32)))\n";
+        ai = ai + 1;
+    }
+    out = out + "  (table " + util.i32_to_string(ft.len()) + " funcref)\n";
+    out = out + "  (elem (i32.const 0)";
+    var ei: i32 = 0;
+    while (ei < ft.len()) {
+        out = out + " $" + ft[ei];
+        ei = ei + 1;
+    }
+    out = out + ")\n";
+    return out;
+}
+
+// emit_function_ir renders one IR-eligible function as a WAT (func ...). Locals
+// are numeric: slots 0..n_params-1 the params, n_params..n_locals-1 the body
+// locals, plus TWO scratch locals (indices n_locals, n_locals+1) the array ops
+// use to hold a base pointer / popped element while reordering the wasm stack.
+function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: parser.StructDecl[], arr_ret: string[], str_ret: string[], strarr_ret: string[], opt_ret: string[], i64_ret: string[], tuple_ret: string[], struct_ret: string[], map_ret: string[], f64_ret: string[], f64arr_ret: string[], i64arr_ret: string[], fn_table: string[], fn_param_sigs: string[], closure_fns: string[], funcs: parser.FuncDecl[], borrowable_params: string[]): string {
+    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret, structs, str_ret, strarr_ret, irlower.arr_method_fns_of(funcs), opt_ret, i64_ret, tuple_ret, struct_ret, map_ret, f64_ret, f64arr_ret, i64arr_ret, fn_param_sigs, closure_fns, irlower.const_fns_of(funcs), borrowable_params);
+    var arrtmp: i32 = r.n_locals;
+    var eltmp: i32 = r.n_locals + 1;
+    // f64tmp: an f64-typed scratch local for reordering 64-bit struct field
+    // values (struct_make / struct_set) through the typed wasm stack — the i32
+    // eltmp can't hold an f64.
+    var f64tmp: i32 = r.n_locals + 2;
+    // i64tmp: an i64-typed scratch local for reordering 8-byte INTEGER array
+    // elements (i64[] arr_make / arr_set) through the typed wasm stack — the i32
+    // eltmp can't hold an i64, and f64tmp is float-typed.
+    var i64tmp: i32 = r.n_locals + 3;
+    // Methods get the receiver-type-qualified name `$<Type>.<name>` (matching
+    // irlower's call_direct dispatch); free functions stay `$<name>`. WAT idents
+    // allow `.`. r.n_params already counts the receiver as the first param.
+    var fn_name: string = fd.name;
+    if (fd.receiver_type.len() > 0) { fn_name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
+    var out: string = "  (func $" + fn_name;
+    var p: i32 = 0;
+    while (p < r.n_params) {
+        // An i64 param is in r.i64_slots, an f64 param in r.f64_slots (lower_func
+        // marks them); the receiver slot 0 of a method never is.
+        if (slot_in_list(r.i64_slots, p)) { out = out + " (param i64)"; }
+        else if (slot_in_list(r.f64_slots, p)) { out = out + " (param f64)"; }
+        else { out = out + " (param i32)"; }
+        p = p + 1;
+    }
+    // u64 returns ride the i64 result type (8-byte; only signedness of the
+    // value's own ops differs, handled at the producing expression) (#2904).
+    if (fd.ret_type == "i64" || fd.ret_type == "u64") { out = out + " (result i64)\n"; }
+    else if (irlower.is_f64_scalar_type_name(fd.ret_type)) { out = out + " (result f64)\n"; }
+    else { out = out + " (result i32)\n"; }
+    // body locals + 4 scratch locals. A body local in r.i64_slots is declared
+    // (local i64), one in r.f64_slots (local f64); the trailing scratch locals
+    // are two i32 (arrtmp/eltmp), one f64 (f64tmp), one i64 (i64tmp).
+    var nbody: i32 = r.n_locals - r.n_params;
+    var nloc: i32 = nbody + 4;
+    out = out + "    (local";
+    var l: i32 = 0;
+    while (l < nloc) {
+        if (l == nbody + 2) {
+            out = out + " f64";
+        } else if (l == nbody + 3) {
+            out = out + " i64";
+        } else if (l < nbody && slot_in_list(r.i64_slots, r.n_params + l)) {
+            out = out + " i64";
+        } else if (l < nbody && slot_in_list(r.f64_slots, r.n_params + l)) {
+            out = out + " f64";
+        } else {
+            out = out + " i32";
+        }
+        l = l + 1;
+    }
+    out = out + ")\n";
+    var i: i32 = 0;
+    while (i < r.ops.len()) {
+        var o: ir.Op = r.ops[i];
+        if (o.kind == "const_i32") {
+            out = out + "    i32.const " + util.i32_to_string(o.i32_imm) + "\n";
+        } else if (o.kind == "const_i32_text") {
+            // Integer literal source text — the wasm text parser handles the base
+            // (hex `0x..`) and the full i32/u32 immediate range.
+            out = out + "    i32.const " + o.str + "\n";
+        } else if (o.kind == "const_i64") {
+            // 64-bit immediate (source text). load_local / store_local on i64
+            // slots use the same local.get/local.set — the local's declared i64
+            // type carries the stack type.
+            out = out + "    i64.const " + o.str + "\n";
+        } else if (o.kind == "const_f64") {
+            // Float literal: wasm assembles the source text directly. f64 locals
+            // are declared (local f64), so local.get/set carry the stack type.
+            out = out + "    f64.const " + o.str + "\n";
+        } else if (o.kind == "i32_to_f64") {
+            out = out + "    f64.convert_i32_s\n";
+        } else if (o.kind == "f64_to_i32") {
+            out = out + "    i32.trunc_f64_s\n";
+        } else if (o.kind == "f64_to_i64") {
+            out = out + "    i64.trunc_f64_s\n";
+        } else if (o.kind == "f64_bits") {
+            // f64 -> i64 bit reinterpret (typed stack flips f64 -> i64).
+            out = out + "    i64.reinterpret_f64\n";
+        } else if (o.kind == "f64_from_bits") {
+            // i64 -> f64 bit reinterpret (typed stack flips i64 -> f64).
+            out = out + "    f64.reinterpret_i64\n";
+        } else if (o.kind == "f32_bits") {
+            // f64 -> f32 (demote), reinterpret to its i32 bit pattern.
+            out = out + "    f32.demote_f64\n    i32.reinterpret_f32\n";
+        } else if (o.kind == "f32_from_bits") {
+            // reinterpret the i32 bits as an f32, promote to f64.
+            out = out + "    f32.reinterpret_i32\n    f64.promote_f32\n";
+        } else if (o.kind == "fround") {
+            // round-half-away-from-zero (Go's math.Round). wasm's f64.nearest is
+            // ties-to-EVEN, so emulate via trunc(x + copysign(0.5, x)): stash x in
+            // the f64 scratch local, then add copysign(0.5, x) and truncate. (The
+            // other op_funary kinds are single instructions routed via wasm_binop_w;
+            // this one needs the scratch to reuse x twice.)
+            out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(f64tmp) + "\n";
+            out = out + "    f64.const 0.5\n";
+            out = out + "    local.get " + util.i32_to_string(f64tmp) + "\n    f64.copysign\n";
+            out = out + "    f64.add\n    f64.trunc\n";
+        } else if (o.kind == "int_extend") {
+            // i32 -> i64: distinct wasm types, so an explicit widen.
+            if (o.unsigned) { out = out + "    i64.extend_i32_u\n"; }
+            else { out = out + "    i64.extend_i32_s\n"; }
+        } else if (o.kind == "int_wrap") {
+            // i64 -> i32: drop the high 32 bits.
+            out = out + "    i32.wrap_i64\n";
+        } else if (o.kind == "u32_wrap") {
+            // No-op: wasm i32 ops are natively 32-bit (already wrap at 2^32), so
+            // a u32 arithmetic result needs no extra mask here (unlike the 64-bit
+            // register backends). The op exists so the IR is backend-uniform.
+        } else if (o.kind == "int_cast") {
+            // `x as <ty>` int→int width mask/extend. u32/i32 are identity (the
+            // i32 value's bit pattern is already the result); the narrowing /
+            // sign-extending casts use and / extend8_s / extend16_s.
+            if (o.str == "u8") { out = out + "    i32.const 255\n    i32.and\n"; }
+            else if (o.str == "u16") { out = out + "    i32.const 65535\n    i32.and\n"; }
+            else if (o.str == "i8") { out = out + "    i32.extend8_s\n"; }
+            else if (o.str == "i16") { out = out + "    i32.extend16_s\n"; }
+            // u32 / i32: no-op (value already a 32-bit i32).
+        } else if (o.kind == "arr_push") {
+            // stack: arr, val -> $__fern_arr_push(arr, val) -> grown array.
+            out = out + "    call $__fern_arr_push\n";
+        } else if (o.kind == "arr_push_i64") {
+            // stack: arr, i64 val -> the 8-byte-stride push (wasm32 packs i32[] at
+            // 4-byte but i64[]/u64[] at 8-byte, so this needs its own helper).
+            out = out + "    call $__fern_arr_push_i64\n";
+        } else if (o.kind == "arr_push_f64") {
+            // stack: arr, f64 val -> the 8-byte-stride push for an f64[] (its own
+            // helper takes an f64-typed value, mirroring f64.store in arr_set).
+            out = out + "    call $__fern_arr_push_f64\n";
+        } else if (o.kind == "str_from_bytes") {
+            // stack: arr -> $__fern_string_from_bytes(arr) -> string block.
+            out = out + "    call $__fern_string_from_bytes\n";
+        } else if (o.kind == "heap_bump_bytes") {
+            // bump high-water mark = $heap − heap_base. The $heap global is
+            // initialised to heap_base (heap_alloc_helpers), so this reads 0
+            // before the first allocation — matching the register backends and
+            // native's __fern_heap_bump_bytes. heap_base is recomputed from the
+            // data-section layout (identical to heap_base_for(mod), since
+            // str_vals == str_values(mod)).
+            out = out + "    global.get $heap\n    i32.const " + util.i32_to_string((str_offset(str_vals, str_vals.len()) + 16 + 7) / 8 * 8 + fl_cells() * 4) + "\n    i32.sub\n";
+        } else if (o.kind == "memcpy") {
+            // stack: dst, src, n -> copy n bytes src->dst via the bulk-memory
+            // memory.copy (operand order [dest, src, size] matches the lowering
+            // push order), then push a dummy 0 (value discarded). This is the
+            // wasm sibling of rep movsb / the arm64 byte loop.
+            out = out + "    memory.copy\n    i32.const 0\n";
+        } else if (o.kind == "load_i32" || o.kind == "load_ptr") {
+            // stack: addr -> 4-byte load (ptr is i32-width on wasm32).
+            out = out + "    i32.load\n";
+        } else if (o.kind == "load_i64") {
+            // stack: addr -> 8-byte i64 load.
+            out = out + "    i64.load\n";
+        } else if (o.kind == "store_i32" || o.kind == "store_ptr") {
+            // stack: addr, val (val on top) -> i32.store, then push dummy 0.
+            out = out + "    i32.store\n    i32.const 0\n";
+        } else if (o.kind == "alloc_u8") {
+            // stack: n -> a fresh n-element array. wasm has no $__fern_alloc_u8;
+            // synthesize via $__fern_arr_box(n*4) + the [len@0, cap@4] header
+            // (matching arr_make). Contents are not zeroed (callers zero
+            // explicitly), like the register backends' __fern_alloc_u8.
+            out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(eltmp) + "\n    i32.const 4\n    i32.mul\n    call $__fern_arr_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        } else if (o.kind == "load_local") {
+            out = out + "    local.get " + util.i32_to_string(o.i32_imm) + "\n";
+        } else if (o.kind == "store_local") {
+            out = out + "    local.set " + util.i32_to_string(o.i32_imm) + "\n";
+        } else if (o.kind == "not") {
+            out = out + "    i32.eqz\n";
+        } else if (o.kind == "return") {
+            out = out + "    return\n";
+        } else if (o.kind == "if") {
+            out = out + "    if\n";
+        } else if (o.kind == "else") {
+            out = out + "    else\n";
+        } else if (o.kind == "block") {
+            out = out + "    block\n";
+        } else if (o.kind == "loop") {
+            out = out + "    loop\n";
+        } else if (o.kind == "end") {
+            out = out + "    end\n";
+        } else if (o.kind == "br") {
+            out = out + "    br " + util.i32_to_string(o.i32_imm) + "\n";
+        } else if (o.kind == "brif") {
+            out = out + "    br_if " + util.i32_to_string(o.i32_imm) + "\n";
+        } else if (o.kind == "drop") {
+            out = out + "    drop\n";
+        } else if (o.kind == "arr_make") {
+            // n element values on the wasm stack (element n-1 on top).
+            // __fern_arr_box(n*esz) -> a; store len@a, cap@a+4, then the
+            // elements at a+8+i*esz (top-down, popping each into a scratch so the
+            // store sees [addr, value]). $arrtmp holds a across the pops. An
+            // f64-element array (width 64) uses an 8-byte stride and f64.store
+            // through $f64tmp; everything else is the 4-byte i32 path.
+            var n: i32 = o.i32_imm;
+            var esz: i32 = 4;
+            if (o.width == 64) { esz = 8; }
+            out = out + "    i32.const " + util.i32_to_string(n * esz) + "\n    call $__fern_arr_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(n) + "\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    i32.const " + util.i32_to_string(n) + "\n    i32.store\n";
+            var em: i32 = n - 1;
+            while (em >= 0) {
+                if (o.width == 64 && o.unsigned) {
+                    out = out + "    local.set " + util.i32_to_string(i64tmp) + "\n";
+                    out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(8 + em * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n";
+                } else if (o.width == 64) {
+                    out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n";
+                    out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(8 + em * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n";
+                } else {
+                    out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
+                    out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(8 + em * 4) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+                }
+                em = em - 1;
+            }
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        } else if (o.kind == "arr_get") {
+            // stack: base, idx -> load(base + 8 + idx*esz). 8-byte elements (width
+            // 64) use an 8-byte stride: i64.load for an i64[] (unsigned flag),
+            // f64.load for an f64[]; i32 elements the 4-byte path.
+            if (o.width == 64 && o.unsigned) {
+                out = out + "    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    i64.load\n";
+            } else if (o.width == 64) {
+                out = out + "    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    f64.load\n";
+            } else {
+                out = out + "    i32.const 4\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    i32.load\n";
+            }
+        } else if (o.kind == "arr_set") {
+            // stack: base, idx, val -> store val at base+8+idx*esz. 8-byte elements
+            // stash through the matching scratch (i64tmp for i64[], f64tmp for
+            // f64[]) and i64.store / f64.store at 8-byte stride.
+            if (o.width == 64 && o.unsigned) {
+                out = out + "    local.set " + util.i32_to_string(i64tmp) + "\n    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n";
+            } else if (o.width == 64) {
+                out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n";
+            } else {
+                out = out + "    local.set " + util.i32_to_string(eltmp) + "\n    i32.const 4\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+            }
+        } else if (o.kind == "arr_len") {
+            // stack: base -> i32.load(base)  (len @ a+0)
+            out = out + "    i32.load\n";
+        } else if (o.kind == "arr_rc") {
+            // stack: base -> i32.load(base - 8)  (rc @ a-8)
+            out = out + "    i32.const 8\n    i32.sub\n    i32.load\n";
+        } else if (o.kind == "const_str") {
+            // String literal -> the data-section block pointer (its interned
+            // offset). The block is `[len@0][bytes@4]`; static, no allocation.
+            out = out + "    i32.const " + util.i32_to_string(offset_of_value(str_vals, o.str)) + "\n";
+        } else if (o.kind == "str_len") {
+            // stack: block ptr -> i32.load(ptr)  (len @ +0)
+            out = out + "    i32.load\n";
+        } else if (o.kind == "str_index") {
+            // stack: block ptr, idx -> i32.load8_u(ptr + 4 + idx)  (bytes @ +4)
+            out = out + "    i32.const 4\n    i32.add\n    i32.add\n    i32.load8_u\n";
+        } else if (o.kind == "str_slice") {
+            // stack: src, start, end -> $__fern_substr(src, start, end) copies the
+            // bytes into a fresh block (wasm strings are inline, so no view).
+            out = out + "    call $__fern_substr\n";
+        } else if (o.kind == "arr_slice") {
+            // stack: arr, start, end -> fresh array block. An f64[] slice (width
+            // 64) copies 8-byte elements via $__fern_arr_slice8; i32[] / string[]
+            // copy 4-byte elements via $__fern_arr_slice. The chosen helper is
+            // emitted conditionally (module_uses_arr_slice / _arr_slice8).
+            if (o.width == 64) { out = out + "    call $__fern_arr_slice8\n"; }
+            else { out = out + "    call $__fern_arr_slice\n"; }
+        } else if (o.kind == "random_bytes") {
+            // stack: n -> $__fern_random_bytes(n) -> fresh string block [len][bytes].
+            out = out + "    call $__fern_random_bytes\n";
+        } else if (o.kind == "random_i32") {
+            // -> $__fern_random_i32() -> i32.
+            out = out + "    call $__fern_random_i32\n";
+        } else if (o.kind == "str_bytes") {
+            // stack: s -> $__fern_str_bytes(s) -> fresh u8[] block.
+            out = out + "    call $__fern_str_bytes\n";
+        } else if (o.kind == "str_split") {
+            // stack: haystack, sep -> $__fern_str_split(haystack, sep) -> fresh
+            // string[] block. The helper (str_split_helper in wasm.fern, emitted
+            // when module_uses_str_split) builds the result via $__fern_arr_push +
+            // $__fern_substr.
+            out = out + "    call $__fern_str_split\n";
+        } else if (o.kind == "str_to_upper") {
+            // stack: s -> $__fern_str_upper(s) -> fresh upper-cased block
+            // (str_case_helpers, gated on module_uses_str_case).
+            out = out + "    call $__fern_str_upper\n";
+        } else if (o.kind == "str_to_lower") {
+            out = out + "    call $__fern_str_lower\n";
+        } else if (o.kind == "str_repeat") {
+            // stack: s, n -> $__fern_str_repeat(s, n) -> fresh block (n copies of s).
+            out = out + "    call $__fern_str_repeat\n";
+        } else if (o.kind == "str_trim") {
+            // stack: s -> $__fern_str_trim(s) -> fresh block (whitespace stripped).
+            out = out + "    call $__fern_str_trim\n";
+        } else if (o.kind == "str_reverse") {
+            // stack: s -> $__fern_str_reverse(s) -> fresh block (bytes reversed).
+            out = out + "    call $__fern_str_reverse\n";
+        } else if (o.kind == "str_replace") {
+            // stack: h, old, new -> $__fern_str_replace(...) -> fresh block.
+            out = out + "    call $__fern_str_replace\n";
+        } else if (o.kind == "str_chars") {
+            // stack: s -> $__fern_str_chars(s) -> fresh string[] of 1-char blocks.
+            out = out + "    call $__fern_str_chars\n";
+        } else if (o.kind == "str_lines") {
+            // stack: s -> $__fern_str_lines(s) -> fresh string[] (split \n, trimmed).
+            out = out + "    call $__fern_str_lines\n";
+        } else if (o.kind == "str_starts_with") {
+            // stack: s, p -> $__fern_str_startswith(s, p) -> 0/1. Self-contained
+            // predicate emitted by str_predicate_helpers (module_emits_op gate).
+            out = out + "    call $__fern_str_startswith\n";
+        } else if (o.kind == "str_ends_with") {
+            out = out + "    call $__fern_str_endswith\n";
+        } else if (o.kind == "str_index_of") {
+            // -> first index, or -1.
+            out = out + "    call $__fern_str_indexof\n";
+        } else if (o.kind == "str_concat") {
+            // stack: a, b (arg0-deepest) -> $__fern_strcat(a, b) -> fresh block.
+            out = out + "    call $__fern_strcat\n";
+        } else if (o.kind == "str_eq") {
+            // stack: a, b -> $__fern_streq(a, b) -> 0/1.
+            out = out + "    call $__fern_streq\n";
+        } else if (o.kind == "str_cmp") {
+            // stack: a, b -> $__fern_strcmp(a, b) -> signed -/0/+.
+            out = out + "    call $__fern_strcmp\n";
+        } else if (o.kind == "opt_make" && o.width == 64) {
+            // 8-byte-payload Option/Result box [tag@0, payload@8], 16 bytes — so an
+            // i64/f64 payload fits. Distinct from the i32 box below (and from the
+            // runtime's map-get box) BY the payload type: the match reads the same
+            // width, so the offsets agree. Store the payload via i64/f64.store.
+            if (o.unsigned) { out = out + "    local.set " + util.i32_to_string(i64tmp) + "\n"; }
+            else { out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n"; }
+            out = out + "    i32.const 16\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(o.i32_imm) + "\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 8\n    i32.add\n";
+            if (o.unsigned) { out = out + "    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n"; }
+            else { out = out + "    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n"; }
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        } else if (o.kind == "opt_make") {
+            // i32-payload Option/Result box [tag@0, payload@4], 8 bytes (matches
+            // the runtime's map-get box). Payload on the stack; stash, alloc, store.
+            out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
+            out = out + "    i32.const 8\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(o.i32_imm) + "\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        } else if (o.kind == "opt_none") {
+            // Payloadless box with tag 1 (None), 8 bytes (no payload read on None).
+            out = out + "    i32.const 8\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 1\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    i32.const 0\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        } else if (o.kind == "opt_tag") {
+            // pop box; tag is the i32 at offset 0.
+            out = out + "    i32.load\n";
+        } else if (o.kind == "opt_payload" && o.width == 64) {
+            // 8-byte payload at offset 8: i64.load (unsigned) or f64.load.
+            out = out + "    i32.const 8\n    i32.add\n";
+            if (o.unsigned) { out = out + "    i64.load\n"; }
+            else { out = out + "    f64.load\n"; }
+        } else if (o.kind == "opt_payload") {
+            // i32 payload at offset 4 (matches opt_make + the runtime map-get box).
+            out = out + "    i32.const 4\n    i32.add\n    i32.load\n";
+        } else if (o.kind == "map_new") {
+            // stack: hint -> fresh map. i32 keys vs string keys.
+            if (o.i32_imm == 1) { out = out + "    call $__fern_map_new\n"; }
+            else { out = out + "    call $__fern_map_new_str\n"; }
+        } else if (o.kind == "print_int") {
+            // stack: n -> write n's decimal text to stdout (no newline). The helper
+            // returns void, so push a dummy i32 for the statement-level drop.
+            out = out + "    call $__fern_print_int\n    i32.const 0\n";
+        } else if (o.kind == "print_i64") {
+            // stack: n(i64) -> write n's decimal text to stdout (no newline) via the
+            // i64 helper. Void return, so push a dummy i32 for the statement drop.
+            out = out + "    call $__fern_print_int64\n    i32.const 0\n";
+        } else if (o.kind == "print_str") {
+            // stack: strblock ptr -> write its bytes to stdout (no newline). The
+            // helper returns void, so push a dummy i32 for the statement-level drop.
+            out = out + "    call $__fern_print_str\n    i32.const 0\n";
+        } else if (o.kind == "eprint_str") {
+            // stack: strblock ptr -> write its bytes to stderr (no newline). The
+            // helper returns void, so push a dummy i32 for the statement-level drop.
+            out = out + "    call $__fern_eprint_str\n    i32.const 0\n";
+        } else if (o.kind == "exit") {
+            // stack: n -> proc_exit(n) (already imported for _start). Never returns;
+            // push a dummy i32 for the statement-level drop.
+            out = out + "    call $proc_exit\n    i32.const 0\n";
+        } else if (o.kind == "putchar") {
+            // stack: byte -> write its low byte to stdout. Inlines the same scratch
+            // iovec + $fd_write path the AST backend uses (wasm.fern's putchar): the
+            // byte is on the operand stack, so stash it in the eltmp scratch local to
+            // store it at scratch addr 16, point the iovec (base@0, len@4) at it, and
+            // fd_write fd 1. Push a dummy i32 for the statement-level drop (#2839).
+            out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
+            out = out + "    i32.const 16\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store8\n";
+            out = out + "    i32.const 0\n    i32.const 16\n    i32.store\n";
+            out = out + "    i32.const 4\n    i32.const 1\n    i32.store\n";
+            out = out + "    i32.const 1\n    i32.const 0\n    i32.const 1\n    i32.const 8\n    call $fd_write\n    drop\n";
+            out = out + "    i32.const 0\n";
+        } else if (o.kind == "map_set") {
+            // stack: map, k, v -> push vis -> map_set -> map. `vis` (value-is-
+            // RC-pointer) comes from op_map_set's `unsigned` flag, set by
+            // irlower from the map's VALUE type. A pointer value (string /
+            // array / struct / …) MUST set vis=1 so __fern_map_set retains it;
+            // otherwise the caller's dec frees it under the map → use-after-free
+            // / sibling-key aliasing (#3495). i32/scalar values stay vis=0.
+            var vis: string = "0";
+            if (o.unsigned) { vis = "1"; }
+            out = out + "    i32.const " + vis + "\n    call $__fern_map_set\n";
+        } else if (o.kind == "map_len") {
+            // stack: map -> i32.load(map) (length at offset 0, wasm map layout).
+            out = out + "    i32.load\n";
+        } else if (o.kind == "map_get") {
+            // stack: map, key -> $__fern_map_get (keykind read from the box) -> Option box.
+            out = out + "    call $__fern_map_get\n";
+        } else if (o.kind == "map_has") {
+            out = out + "    call $__fern_map_has\n";
+        } else if (o.kind == "map_delete") {
+            // stack: map, k -> $__fern_map_delete -> [map, existed] tuple box
+            // (the wasm helper reads the keykind from the box, so the op's
+            // keykind imm — used by the register backends — is unneeded here).
+            // The tuple-destructure that consumes `.without`'s result reads
+            // element i at offset i*4, matching $__fern_map_delete's box. #2933.
+            out = out + "    call $__fern_map_delete\n";
+        } else if (o.kind == "map_get_or") {
+            // stack: map, k, default -> $__fern_map_get_or -> value.
+            out = out + "    call $__fern_map_get_or\n";
+        } else if (o.kind == "map_keys") {
+            // hash map: snapshot the live keys into a fresh array (probe order).
+            out = out + "    call $__fern_map_keys\n";
+        } else if (o.kind == "map_values") {
+            // hash map: snapshot the live values into a fresh array (probe order).
+            out = out + "    call $__fern_map_values\n";
+        } else if (o.kind == "struct_make") {
+            // nf field values on the stack (field nf-1 on top, decl order). Box =
+            // [type_id@0, f0@8, f1@16, …] via $__fern_str_box (rc-headered), an
+            // 8-byte stride so an f64 field fits — header 8 + nf*8 bytes, field i
+            // at 8+i*8 (matching the register backends). An f64 field stores via
+            // f64.store through the f64 scratch; others via i32.store. $arrtmp
+            // holds the base across the field pops.
+            var nf: i32 = o.i32_imm;
+            out = out + "    i32.const " + util.i32_to_string(8 + nf * 8) + "\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(struct_type_id(structs, o.str)) + "\n    i32.store\n";
+            var em: i32 = nf - 1;
+            while (em >= 0) {
+                var emoff: i32 = 8 + em * 8;
+                var emft: string = irlower.decl_field_type_at(structs, o.str, em);
+                if (emft == "i64") {
+                    out = out + "    local.set " + util.i32_to_string(i64tmp) + "\n";
+                    out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(emoff) + "\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n";
+                } else if (emft == "f64") {
+                    out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n";
+                    out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(emoff) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n";
+                } else {
+                    out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
+                    out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(emoff) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+                }
+                em = em - 1;
+            }
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        } else if (o.kind == "struct_get") {
+            // stack: struct ptr -> load(ptr + 8 + index*8). An 8-byte field
+            // (width 64) reads via i64.load for an i64 field (unsigned) or
+            // f64.load for an f64 field; i32 fields the 4-byte path.
+            out = out + "    i32.const " + util.i32_to_string(8 + o.i32_imm * 8) + "\n    i32.add\n";
+            if (o.width == 64 && o.unsigned) { out = out + "    i64.load\n"; }
+            else if (o.width == 64) { out = out + "    f64.load\n"; }
+            else { out = out + "    i32.load\n"; }
+        } else if (o.kind == "struct_set") {
+            // stack: box, val -> store val at box + 8 + index*8. Stash val in the
+            // matching scratch (i64tmp for an i64 field, f64tmp for an f64 field,
+            // else eltmp), recompute the address, then store.
+            var soff: i32 = 8 + o.i32_imm * 8;
+            if (o.width == 64 && o.unsigned) {
+                out = out + "    local.set " + util.i32_to_string(i64tmp) + "\n    i32.const " + util.i32_to_string(soff) + "\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n";
+            } else if (o.width == 64) {
+                out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n    i32.const " + util.i32_to_string(soff) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n";
+            } else {
+                out = out + "    local.set " + util.i32_to_string(eltmp) + "\n    i32.const " + util.i32_to_string(soff) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+            }
+        } else if (o.kind == "struct_set_shape") {
+            // stack: box (kept). Write o.str's type-id (the SAME id struct_make
+            // stores at offset 0 / variant_is compares) at box+0, leaving the box
+            // on the stack. Used by the enum-donor in-place reuse to re-shape a
+            // dead scalar-enum box as a same-size struct.
+            out = out + "    local.tee " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(struct_type_id(structs, o.str)) + "\n    i32.store\n";
+        } else if (o.kind == "variant_is") {
+            // stack: variant box -> i32.load (type_id @0) == struct_type_id(name)
+            out = out + "    i32.load\n    i32.const " + util.i32_to_string(struct_type_id(structs, o.str)) + "\n    i32.eq\n";
+        } else if (o.kind == "tuple_make") {
+            // n elements on the stack (element n-1 on top). Box = [e0@0, e1@8, …]
+            // via $__fern_str_box (rc-headered), n*8 bytes (uniform 8-byte slots,
+            // matching the register backends so an i64/f64 element fits), no
+            // type-id slot. Each element stores with the instruction its KIND
+            // (o.str = "k0,k1,…") selects: i64.store / f64.store / i32.store.
+            var tn: i32 = o.i32_imm;
+            out = out + "    i32.const " + util.i32_to_string(tn * 8) + "\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
+            var tem: i32 = tn - 1;
+            while (tem >= 0) {
+                var tk: string = irlower.csv_nth(o.str, tem);
+                if (tk == "i64") {
+                    out = out + "    local.set " + util.i32_to_string(i64tmp) + "\n";
+                    out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(tem * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n";
+                } else if (tk == "f64") {
+                    out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n";
+                    out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(tem * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n";
+                } else {
+                    out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
+                    out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(tem * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+                }
+                tem = tem - 1;
+            }
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        } else if (o.kind == "tuple_get") {
+            // stack: tuple box -> load(box + index*8). An 8-byte element (width 64)
+            // reads via i64.load (unsigned) or f64.load; i32 elements i32.load.
+            out = out + "    i32.const " + util.i32_to_string(o.i32_imm * 8) + "\n    i32.add\n";
+            if (o.width == 64 && o.unsigned) { out = out + "    i64.load\n"; }
+            else if (o.width == 64) { out = out + "    f64.load\n"; }
+            else { out = out + "    i32.load\n"; }
+        } else if (o.kind == "call_direct" && asm_ir.is_fern_helper(o.str)) {
+            // Runtime RC helper: the arg is already on the wasm stack; the
+            // helper takes it as a param and returns the ptr / count.
+            out = out + "    call " + wasm_helper_symbol(o.str) + "\n";
+        } else if (o.kind == "call_direct") {
+            out = out + "    call $" + o.str + "\n";
+        } else if (o.kind == "dyn_dispatch") {
+            // `dyn Trait` method call. Receiver (arg0) + args are in argc
+            // consecutive locals from base_slot. Read the receiver's type id
+            // (i32.load @0) and dispatch via a nested if/else chain over every
+            // module method named o.str with a struct receiver, each arm
+            // reloading the argc locals and calling. Mirrors the register
+            // backends' compare-branch chain; the result flows as the if result.
+            var dbase: i32 = o.i32_imm;
+            var dargc: i32 = o.width;
+            var drt: string = "i32";
+            var nimpl: i32 = 0;
+            var df0: i32 = 0;
+            while (df0 < funcs.len()) {
+                var dbn0: string = util.base_type_name(funcs[df0].receiver_type);
+                // Count BOTH struct receivers and primitive/string receivers
+                // (heap-boxed at coercion — docs/DYN-TRAITS.md §4.2.3): each is an
+                // `if` arm needing a matching `end`.
+                if (funcs[df0].name == o.str && funcs[df0].receiver_type.len() > 0
+                        && (irlower.decl_is_struct(structs, dbn0) || irlower.decl_is_prim_recv(structs, dbn0))) {
+                    if (nimpl == 0) {
+                        if (funcs[df0].ret_type == "i64" || funcs[df0].ret_type == "u64") { drt = "i64"; }
+                        else if (irlower.is_f64_scalar_type_name(funcs[df0].ret_type)) { drt = "f64"; }
+                    }
+                    nimpl = nimpl + 1;
+                }
+                df0 = df0 + 1;
+            }
+            var dfi: i32 = 0;
+            while (dfi < funcs.len()) {
+                var dbn: string = util.base_type_name(funcs[dfi].receiver_type);
+                var dprim: boolean = funcs[dfi].receiver_type.len() > 0 && irlower.decl_is_prim_recv(structs, dbn);
+                if (funcs[dfi].name == o.str && funcs[dfi].receiver_type.len() > 0
+                        && (irlower.decl_is_struct(structs, dbn) || dprim)) {
+                    // Shape compare: a struct value carries its type id @0; a
+                    // primitive `dyn` box stores prim_type_id @0 (op_dyn_box).
+                    var dsid: i32 = struct_type_id(structs, dbn);
+                    if (dprim) { dsid = irlower.prim_type_id(structs, dbn); }
+                    out = out + "    local.get " + util.i32_to_string(dbase) + "\n    i32.load\n    i32.const " + util.i32_to_string(dsid) + "\n    i32.eq\n";
+                    out = out + "    if (result " + drt + ")\n";
+                    var dk: i32 = 0;
+                    while (dk < dargc) {
+                        if (dk == 0 && dprim) {
+                            // arg0 is the receiver: UNBOX the value from box+8.
+                            out = out + "    local.get " + util.i32_to_string(dbase) + "\n    i32.const 8\n    i32.add\n    i32.load\n";
+                        } else {
+                            out = out + "    local.get " + util.i32_to_string(dbase + dk) + "\n";
+                        }
+                        dk = dk + 1;
+                    }
+                    out = out + "    call $" + dbn + "." + funcs[dfi].name + "\n";
+                    out = out + "    else\n";
+                }
+                dfi = dfi + 1;
+            }
+            if (drt == "i64") { out = out + "    i64.const 0\n"; }
+            else if (drt == "f64") { out = out + "    f64.const 0\n"; }
+            else { out = out + "    i32.const 0\n"; }
+            var de: i32 = 0;
+            while (de < nimpl) { out = out + "    end\n"; de = de + 1; }
+        } else if (o.kind == "dyn_box") {
+            // Heap-box a primitive/string value coerced into a `dyn Trait` slot
+            // (docs/DYN-TRAITS.md §4.2.3). Cell = [shape@0, value@8] via
+            // $__fern_str_box (rc-headered, like struct_make), 16 bytes; shape =
+            // the primitive type id (prim_type_id, never colliding with a struct
+            // id). The value (one i32 word — an i32 OR a string box pointer) is on
+            // the operand stack: stash it in $eltmp, alloc into $arrtmp, store
+            // id@0 + value@8, push the cell pointer. op_dyn_dispatch reads @0 and
+            // unboxes @8.
+            out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
+            out = out + "    i32.const 16\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(irlower.prim_type_id(structs, o.str)) + "\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 8\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        } else if (o.kind == "dyn_downcast") {
+            // `e as? T` downcast (docs/DYN-TRAITS.md §9). The `dyn` value (a heap
+            // pointer carrying its concrete type id @0) is on the stack. Stash it,
+            // read the id @0 and compare to T's struct_type_id (the SAME id
+            // struct_make stores / dyn_dispatch compares): equal → Some(value)
+            // box [tag0@0, payload@4]; else → None box [tag1@0, 0@4] — the 8-byte
+            // i32-payload Option box (matching opt_make/opt_none) a downstream
+            // `match` reads with opt_tag/opt_payload.
+            out = out + "    local.set " + util.i32_to_string(eltmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(eltmp) + "\n    i32.load\n    i32.const " + util.i32_to_string(struct_type_id(structs, o.str)) + "\n    i32.eq\n";
+            out = out + "    if (result i32)\n";
+            // hit: Some(value) — 8-byte box [tag0@0, payload(dyn ptr)@4].
+            out = out + "    i32.const 8\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 0\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    else\n";
+            // miss: None — 8-byte box [tag1@0, 0@4].
+            out = out + "    i32.const 8\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 1\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    i32.const 0\n    i32.store\n";
+            out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+            out = out + "    end\n";
+        } else if (o.kind == "const_func") {
+            // A function VALUE is its slot index in the module's funcref table
+            // (fn_table). The table is built over the address-taken functions in
+            // first-seen order (fn_value_table), so the index here matches the
+            // elem segment fn_support_section emits.
+            out = out + "    i32.const " + util.i32_to_string(util.index_of_str(fn_table, o.str)) + "\n";
+        } else if (o.kind == "call_indirect") {
+            // Indirect call: args + the table index are already on the stack
+            // (the index pushed last, on top). Dispatch through the per-arity
+            // signature `$fn<argc>` (all-i32 params/result this slice).
+            out = out + "    call_indirect (type $fn" + util.i32_to_string(o.i32_imm) + ")\n";
+        } else {
+            out = out + "    " + wasm_binop_w(o.kind, o.width) + "\n";
+        }
+        i = i + 1;
+    }
+    // Fallthrough result. Subset functions end in `return`, so this lands in the
+    // unreachable continuation — but a concrete value pushed there must still
+    // type-match the declared result when the implicit end pops it (wasm's
+    // stack-polymorphic typing accepts an underflow, not a wrong-typed top), so
+    // the default's type tracks the result: i64 / f64 / i32.
+    if (fd.ret_type == "i64" || fd.ret_type == "u64") { out = out + "    i64.const 0)\n"; }
+    else if (irlower.is_f64_scalar_type_name(fd.ret_type)) { out = out + "    f64.const 0)\n"; }
+    else { out = out + "    i32.const 0)\n"; }
+    return out;
+}
+
+// emit_functions renders the user functions of an all-eligible module as WAT
+// (func ...) blocks — and ONLY the functions. The module wrapper (imports +
+// memory), the heap/RC runtime (heap_alloc_helpers + rc_runtime_helpers, which
+// live in wasm.fern), and the `_start` + exports are emitted by the CALLER
+// (wasm.emit_module, or the differential driver). Keeping the runtime on the
+// caller side lets wasm.fern import this module for the use_ir dispatch without
+// a cycle: wasm_ir never imports wasm. Caller must ensure wasm_eligible(mod).
+pub function emit_functions(mod: parser.Module): string {
+    // Infer return types for unannotated functions so the IR path's
+    // ret-type-keyed call tagging matches the AST path (parity with the
+    // x86 IR path in asm_ir.emit_module_ir).
+    mod = parser.infer_ret_types_module(mod);
+    var str_vals: string[] = str_values(mod);
+    var srf: string[] = irlower.str_ret_fns_of(mod.funcs);
+    var sarf: string[] = irlower.strarr_ret_fns_of(mod.funcs);
+    var orf: string[] = irlower.opt_ret_fns_of(mod.funcs);
+    var irf: string[] = irlower.i64_ret_fns_of(mod.funcs);
+    var trf: string[] = irlower.tuple_ret_fns_of(mod.funcs);
+    var srtf: string[] = irlower.struct_ret_fns_of(mod.funcs, mod.structs);
+    var mrtf: string[] = irlower.map_ret_fns_of(mod.funcs);
+    var frf: string[] = irlower.f64_ret_fns_of(mod.funcs);
+    var farf: string[] = irlower.f64arr_ret_fns_of(mod.funcs);
+    var iarf: string[] = irlower.i64arr_ret_fns_of(mod.funcs);
+    var ft: string[] = fn_value_table(mod);
+    var fps: string[] = irlower.fn_param_sigs_of(mod.funcs);
+    var cfs: string[] = irlower.closure_ret_fns_of(mod.funcs);
+    var arf: string[] = asm_ir.array_ret_fns(mod);
+    var out: string = "";
+    // Inter-procedural borrowability computed ONCE per module (not per function —
+    // that OOMs the arm64 self-compile); threaded into every emit_function_ir.
+    var bparams: string[] = irlower.borrowable_params_interproc(mod.funcs);
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        out = out + emit_function_ir(mod.funcs[fi], str_vals, mod.structs, arf, srf, sarf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, ft, fps, cfs, mod.funcs, bparams);
+        fi = fi + 1;
+    }
+    return out;
+}
+
+// struct_type_id returns a struct's runtime type id = its index in the module's
+// struct table. (For scalar-field structs with static field access it is never
+// read, but it occupies the 8-byte header slot so fields land at 8 + i*8.)
+function struct_type_id(structs: parser.StructDecl[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == name) { return i; }
+        i = i + 1;
+    }
+    return 0;
+}

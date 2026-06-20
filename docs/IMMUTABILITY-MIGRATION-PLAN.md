@@ -1,7 +1,16 @@
 # Immutability migration plan — scope + struct-update design
 
 Date: 2026-06-01.
-Status: planning. No compiler or `.fern` code changed by this doc.
+Status: **shipped (Go reference compiler); self-host enforcement partial.**
+The immutability rules described here are live and tested in the native
+checker — `E048` (struct fields immutable after construction), `E056`
+(`arr[i] = v` subscripts read-only), `E049` (reference-typed closure-capture
+write-back rejected), `E055` (discarded value-returning collection result),
+`E057` (`Cell[T]` restricted to cycle-free scalar/string `T`). The
+sanctioned mutable escape hatch is `Cell[T]` (see `docs/CELL-TYPE-PLAN.md`).
+Remaining work is **self-host parity**: not all self-host drivers gate on
+these rules yet and `checker.fern` does not enforce `E057` — see the
+"cycle-freedom enforcement is compiler-dependent" issue in the tracker.
 
 ## Purpose
 
@@ -32,23 +41,46 @@ The decision's 4-step sequencing is:
      cycle vector is closed). The detection keys off the
      `captureChain` + `ast.IsPointerType`.
 
-   **Remaining (deferred):** the self-host compiler's own
-   enforcement. The self-host parser still desugars `obj.field = v`
-   to `__set_field` and the emitter lowers it, so the bootstrap
-   compiler *accepts* field assignment for programs it compiles. It
-   does NOT reject — and can't cleanly yet: the asm_run / asm_arm64_run
-   drivers run lexer → parser → asm with no checker pass, and the
-   emitter turns an unknown statement into a `# unsupported` comment
-   rather than failing the build, so there is no error-exit path to
-   surface a rejection. Full self-host rejection waits on
-   error-reporting infrastructure in the bootstrap compiler. In the
-   meantime the self-host compiler fully supports the replacement
-   idiom — struct-update (`T { ...old, f: v }`) parses, emits, and
-   runs (verified end-to-end by `self_host_struct_update_test.go` and
-   `self_host_functional_update_test.go`, the latter being the
-   functional rewrite of the old field-assignment cases) — so it
-   compiles modern Fern; the residual `__set_field` lowering is dead
-   for code that doesn't use it.
+   **Self-host enforcement — error-reporting groundwork now in place,
+   compile-driver wiring still to come.** The self-host *checker*
+   (`checker.fern`) already detects the cycle rules — **E048** (field
+   assign, via the `__set_field` desugar), **E056** (subscript assign,
+   via `__set_index`), **E055** (discarded pure result), **E049**
+   (reference-capture write-back) — and the bootstrap now has an
+   error-reporting path: `checker.format_diags` renders
+   `Diag{code,message,line,col}` as `error[CODE]: message (line:col)`,
+   and `checker_run.fern` (the self-host `fern -check`) surfaces it to
+   stderr and exits non-zero. `checker.is_immutability_code` /
+   `filter_immutability` isolate the cycle rules from the rest of the
+   (still-partial) checker, so a build gate can enforce just these
+   without risking false positives from unported rules. Verified by
+   `self_host_checker_driver_test.go` (the driver prints `error[E048]`
+   / `error[E056]` and exits 1) and the `index-assign-e056` differential
+   case (self-host E056 matches the Go checker).
+
+   **Compile-driver gate — DONE for the file-loading drivers.** The
+   x86-64 and arm64 file-loading drivers (`asm_load_run.fern`,
+   `asm_arm64_load_run.fern`) now run
+   `filter_immutability(check_module(merged).diags)` after flattening and,
+   on any hit, `eprint(format_diags(...))` + `return 1` — so codegen itself
+   rejects a cycle-rule violation instead of silently lowering it. Filtered
+   to the cycle rules so the rest of the partial checker can't
+   false-positive-reject (confirmed: the *full* merged self-host source
+   passes the gate under fixpoint, and `check_module` is fast enough on it).
+   Verified by `self_host_immutability_gate_test.go` (the driver emits
+   `error[E048]` / `error[E055]` / `error[E056]` + exits non-zero on the
+   violating forms, and compiles the functional-update forms cleanly), with
+   fixpoint / stdtest / CLI / stdlib-import still green. The gate caught one
+   real latent violation — a self-host test program using the old
+   discarded-result `m.insert(...)` idiom — now fixed to `m = m.insert(...)`.
+
+   **Still to do:** the stdin drivers (`asm_run` / `asm_arm64_run`, used for
+   small single-file programs) and the wasm/ssa drivers don't gate yet — a
+   mechanical follow-up applying the same three lines. The replacement
+   idioms — struct-update (`T { ...old, f: v }`) and `arr = arr.with(i, v)`
+   — parse, emit, and run on every backend (verified by
+   `self_host_struct_update_test.go`, `self_host_functional_update_test.go`,
+   and the `array_build` / `map_build` differentials).
 
 This doc covers **step-3 scoping** plus a concrete **step-2 design
 sketch**. Every code claim below was verified against the file at the

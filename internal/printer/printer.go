@@ -27,7 +27,9 @@ func Print(prog *ast.Program) string {
 }
 
 func printConstDecl(b *strings.Builder, cd *ast.ConstDecl) {
-	if cd.Public {
+	if cd.PackageScoped {
+		b.WriteString("pub(package) ")
+	} else if cd.Public {
 		b.WriteString("pub ")
 	}
 	b.WriteString("const ")
@@ -52,7 +54,9 @@ func printStructDecl(b *strings.Builder, sd *ast.StructDecl) {
 		}
 		b.WriteString(")\n")
 	}
-	if sd.Public {
+	if sd.PackageScoped {
+		b.WriteString("pub(package) ")
+	} else if sd.Public {
 		b.WriteString("pub ")
 	}
 	b.WriteString("struct ")
@@ -79,7 +83,9 @@ func printFunc(b *strings.Builder, fn *ast.FuncDecl) {
 		b.WriteString(fn.ImportWITName)
 		b.WriteString("\")\n")
 	}
-	if fn.Public {
+	if fn.PackageScoped {
+		b.WriteString("pub(package) ")
+	} else if fn.Public {
 		b.WriteString("pub ")
 	}
 	b.WriteString("function ")
@@ -350,6 +356,12 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 		b.WriteByte(' ')
 		printExpr(b, x.Inner)
 		b.WriteByte(')')
+	case *ast.DowncastExpr:
+		b.WriteString("(as? ")
+		b.WriteString(x.Target.String())
+		b.WriteByte(' ')
+		printExpr(b, x.Inner)
+		b.WriteByte(')')
 	case *ast.Ident:
 		b.WriteString(x.Name)
 	case *ast.Unary:
@@ -453,6 +465,17 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 			printExpr(b, arm.Body)
 		}
 		b.WriteString(" }")
+	case *ast.BlockExpr:
+		b.WriteString("{ ")
+		for _, st := range x.Stmts {
+			printStmt(b, st)
+			b.WriteByte(' ')
+		}
+		if x.Tail != nil {
+			printExpr(b, x.Tail)
+			b.WriteByte(' ')
+		}
+		b.WriteByte('}')
 	case *ast.StructLit:
 		b.WriteString(x.TypeName)
 		b.WriteString(" { ")
@@ -483,7 +506,11 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 		b.WriteByte(')')
 	case *ast.FieldAccess:
 		printExpr(b, x.Target)
-		b.WriteByte('.')
+		if x.PathSep {
+			b.WriteString("::")
+		} else {
+			b.WriteByte('.')
+		}
 		b.WriteString(x.Field)
 	}
 }

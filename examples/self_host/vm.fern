@@ -33,9 +33,9 @@
 // + indexing (need separate VArr handling in stack ops),
 // constfold integration.
 
-import "core/no_prelude";
 import "./lexer";
 import "./parser";
+import "./astwalk";
 import "./util";
 
 // =================== VALUE ====================
@@ -404,211 +404,14 @@ pub struct CompileResult { ops: Op[], lt: LocalsTable }
 // need to be captured. Assignment targets (StmtAssign.target,
 // pattern bindings, var-decl LHS) are collected separately by
 // the stmt walker — they're not reads.
-function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
-    match (e) {
-        parser.ExprIdent(id) => { return acc.append(id.name); },
-        parser.ExprNumber(_) => { return acc; },
-        parser.ExprString(_) => { return acc; },
-        parser.ExprBool(_) => { return acc; },
-        parser.ExprBinary(b) => {
-            acc = collect_idents_expr(b.left, acc);
-            return collect_idents_expr(b.right, acc);
-        },
-        parser.ExprUnary(u) => { return collect_idents_expr(u.operand, acc); },
-        parser.ExprCall(c) => {
-            acc = collect_idents_expr(c.callee, acc);
-            var i: i32 = 0;
-            while (i < c.args.len()) {
-                acc = collect_idents_expr(c.args[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprArray(a) => {
-            var i: i32 = 0;
-            while (i < a.elements.len()) {
-                acc = collect_idents_expr(a.elements[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) {
-                acc = collect_idents_expr(t.elements[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprIndex(x) => {
-            acc = collect_idents_expr(x.array, acc);
-            return collect_idents_expr(x.index, acc);
-        },
-        parser.ExprSlice(sl) => {
-            acc = collect_idents_expr(sl.array, acc);
-            acc = collect_idents_expr(sl.start, acc);
-            return collect_idents_expr(sl.end, acc);
-        },
-        parser.ExprStructLit(sl) => {
-            if (sl.has_base) { acc = collect_idents_expr(sl.base, acc); }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) {
-                acc = collect_idents_expr(sl.field_values[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprFieldAccess(fa) => { return collect_idents_expr(fa.obj, acc); },
-        parser.ExprLambda(lm) => {
-            // Nested lambda: its free vars in the OUTER scope
-            // are exactly the names it reads that aren't bound
-            // by its own params or body. We collect everything
-            // it references (params will be filtered out by the
-            // outer lambda's own local-binding subtraction).
-            var i: i32 = 0;
-            while (i < lm.body.len()) {
-                acc = collect_idents_stmt(lm.body[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprUnknown(_) => { return acc; }
-    }
-    return acc;
-}
+// collect_idents_expr -> astwalk.collect_idents_expr (SH-022).
 
-function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
-    match (st) {
-        parser.StmtSwitch(_) => { return collect_idents_stmt(parser.desugar_switch_in_stmt(st), acc); },
-        parser.StmtDefer(d) => { return collect_idents_stmt(d.action, acc); },
-        parser.StmtVar(v) => { return collect_idents_expr(v.init, acc); },
-        parser.StmtReturn(r) => { return collect_idents_expr(r.value, acc); },
-        parser.StmtExpr(e) => { return collect_idents_expr(e.value, acc); },
-        parser.StmtIf(i) => {
-            acc = collect_idents_expr(i.cond, acc);
-            var ti: i32 = 0;
-            while (ti < i.then_body.len()) {
-                acc = collect_idents_stmt(i.then_body[ti], acc);
-                ti = ti + 1;
-            }
-            var ei: i32 = 0;
-            while (ei < i.else_body.len()) {
-                acc = collect_idents_stmt(i.else_body[ei], acc);
-                ei = ei + 1;
-            }
-            return acc;
-        },
-        parser.StmtWhile(w) => {
-            acc = collect_idents_expr(w.cond, acc);
-            var i: i32 = 0;
-            while (i < w.body.len()) {
-                acc = collect_idents_stmt(w.body[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.StmtAssign(a) => {
-            // Targets are writes — but the assignment's `value`
-            // is a read. The target itself isn't collected; if
-            // the surrounding scope captures it as a write, the
-            // current cut doesn't model that (captures are
-            // read-only).
-            return collect_idents_expr(a.value, acc);
-        },
-        parser.StmtMatch(m) => {
-            acc = collect_idents_expr(m.scrutinee, acc);
-            var ai: i32 = 0;
-            while (ai < m.arms.len()) {
-                var bi: i32 = 0;
-                while (bi < m.arms[ai].body.len()) {
-                    acc = collect_idents_stmt(m.arms[ai].body[bi], acc);
-                    bi = bi + 1;
-                }
-                ai = ai + 1;
-            }
-            return acc;
-        },
-        parser.StmtFor(f) => {
-            acc = collect_idents_expr(f.iter, acc);
-            var i: i32 = 0;
-            while (i < f.body.len()) {
-                acc = collect_idents_stmt(f.body[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.StmtBreak(_) => { return acc; },
-        parser.StmtContinue(_) => { return acc; },
-        parser.StmtUnknown(_) => { return acc; }
-    }
-    return acc;
-}
+// collect_idents_stmt -> astwalk.collect_idents_stmt (SH-022).
 
 // collect_bound_stmt walks `st` collecting every name introduced
 // by a StmtVar / StmtFor / StmtMatch binding. Used to subtract
 // inner-scope names from the free-var candidate set.
-function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
-    match (st) {
-        parser.StmtSwitch(_) => { return collect_bound_stmt(parser.desugar_switch_in_stmt(st), acc); },
-        parser.StmtDefer(d) => { return collect_bound_stmt(d.action, acc); },
-        parser.StmtVar(v) => { return acc.append(v.name); },
-        parser.StmtReturn(_) => { return acc; },
-        parser.StmtExpr(_) => { return acc; },
-        parser.StmtIf(i) => {
-            var ti: i32 = 0;
-            while (ti < i.then_body.len()) {
-                acc = collect_bound_stmt(i.then_body[ti], acc);
-                ti = ti + 1;
-            }
-            var ei: i32 = 0;
-            while (ei < i.else_body.len()) {
-                acc = collect_bound_stmt(i.else_body[ei], acc);
-                ei = ei + 1;
-            }
-            return acc;
-        },
-        parser.StmtWhile(w) => {
-            var i: i32 = 0;
-            while (i < w.body.len()) {
-                acc = collect_bound_stmt(w.body[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.StmtAssign(_) => { return acc; },
-        parser.StmtMatch(m) => {
-            var ai: i32 = 0;
-            while (ai < m.arms.len()) {
-                match (m.arms[ai].pattern) {
-                    parser.PatVariant(pv) => {
-                        if (pv.binding.len() > 0) { acc = acc.append(pv.binding); }
-                    },
-                    parser.PatWildcard(_) => { }
-                }
-                var bi: i32 = 0;
-                while (bi < m.arms[ai].body.len()) {
-                    acc = collect_bound_stmt(m.arms[ai].body[bi], acc);
-                    bi = bi + 1;
-                }
-                ai = ai + 1;
-            }
-            return acc;
-        },
-        parser.StmtFor(f) => {
-            acc = acc.append(f.var_name);
-            var i: i32 = 0;
-            while (i < f.body.len()) {
-                acc = collect_bound_stmt(f.body[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.StmtBreak(_) => { return acc; },
-        parser.StmtContinue(_) => { return acc; },
-        parser.StmtUnknown(_) => { return acc; }
-    }
-    return acc;
-}
+// collect_bound_stmt -> astwalk.collect_bound_stmt (SH-022).
 
 // has_str: linear-scan membership for the small subtract steps
 // in the free-var pipeline.
@@ -863,7 +666,7 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             var refs: string[] = [];
             var bri: i32 = 0;
             while (bri < lm.body.len()) {
-                refs = collect_idents_stmt(lm.body[bri], refs);
+                refs = astwalk.collect_idents_stmt(lm.body[bri], refs);
                 bri = bri + 1;
             }
             var bound: string[] = [];
@@ -874,7 +677,7 @@ function compile_expr(e: parser.Expr, ops: Op[], lt: LocalsTable): CompileResult
             }
             var bsi: i32 = 0;
             while (bsi < lm.body.len()) {
-                bound = collect_bound_stmt(lm.body[bsi], bound);
+                bound = astwalk.collect_bound_stmt(lm.body[bsi], bound);
                 bsi = bsi + 1;
             }
             // Build capture list: dedup, keep insertion order,
@@ -2099,7 +1902,7 @@ pub function exec_program(prog: CompiledProgram): Value {
                             var bi: i32 = 0;
                             while (bi < unames.len()) {
                                 if (unames[bi] == oname) {
-                                    uvals[bi] = oval;
+                                    uvals = uvals.with(bi, oval);
                                     replaced = true;
                                 }
                                 bi = bi + 1;

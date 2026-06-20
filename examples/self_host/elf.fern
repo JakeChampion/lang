@@ -107,6 +107,21 @@ pub function elf_pad_to_8(b: i32[]): i32[] {
     return b;
 }
 
+// elf_u32_to_i64 zero-extends an i32 byte count to i64 (treating its bits
+// as unsigned). A .bss size can exceed 2^31 — the self-host arm64 heap is
+// 2.5 GiB — which overflows i32 into a negative bit pattern; a plain
+// `bss as i64` would SIGN-extend that to a garbage (huge) p_memsz that the
+// kernel cannot map. Masking off the sign-extended high word recovers the
+// intended unsigned size.
+function elf_u32_to_i64(v: i32): i64 {
+    var u: i64 = v as i64;
+    // `v as i64` SIGN-extends; for an overflowed (negative) byte count add
+    // 2^32 to recover the unsigned value. 2^32 is built via a shift because
+    // an integer *literal* that large is typed i32 and truncates to 0.
+    if (u < 0) { u = u + ((1 as i64) << 32); }
+    return u;
+}
+
 // ---- the image writer ----
 
 // elf_image emits the ELF header + one PT_LOAD (with the given p_flags)
@@ -131,7 +146,7 @@ function elf_image_entry(body: i32[], flags: i32, machine: i32, entry_off: i32):
 // (this is how asm.fern's 1 GB `__fern_heap` is reserved).
 pub function elf_image_entry_bss(body: i32[], flags: i32, machine: i32, entry_off: i32, bss: i32): i32[] {
     var filesz: i64 = (elf_eh_size() + elf_ph_size() + body.len()) as i64;
-    var memsz: i64 = filesz + (bss as i64);
+    var memsz: i64 = filesz + elf_u32_to_i64(bss);
     var entry: i64 = (elf_text_vaddr() + entry_off) as i64;
     var zero64: i64 = 0;
 
@@ -237,4 +252,192 @@ function elf_static_executable_bss_x86_at(text: i32[], data: i32[], bss: i32, en
     body = elf_pad_to_8(body);
     body = elf_cat(body, data);
     return elf_image_entry_bss(body, 7, elf_em_x86_64(), entry_off, bss); // PF_R | PF_W | PF_X
+}
+
+// ---- W^X two-segment layout ----
+//
+// The images above map a single PT_LOAD R+W+X — simple, but a
+// writable+executable mapping is rejected by W^X-enforcing loaders
+// (notably Android's SELinux policy). The W^X layout splits code and data
+// into two PT_LOAD segments: an R+X segment for the headers + .text and a
+// separate R+W segment for the data blob (.rodata + writable globals +
+// .bss), so no mapping is ever both writable and executable. The data
+// segment starts on the first page boundary past .text; an assembler must
+// resolve data-symbol references against that page-aligned address (the
+// Go reference does this in arm64.BytesProgramWX / x86_64.AssembleProgramWX).
+
+// elf_text_vaddr_wx is the .text virtual address for the W^X image: past
+// the ELF header + TWO program headers (code + data), so one elf_ph_size()
+// further in than elf_text_vaddr(). An assembler resolving PC-relative
+// fixups for a W^X image uses this as its textVAddr.
+pub function elf_text_vaddr_wx(): i32 {
+    return elf_base_vaddr() + elf_eh_size() + 2 * elf_ph_size();
+}
+
+// elf_page_up rounds `v` up to the next elf_page_align() (16 KiB)
+// boundary — where the R+W data segment begins so it never shares a page
+// (and thus page protections) with the R+X code segment.
+function elf_page_up(v: i32): i32 {
+    var pa: i32 = elf_page_align();
+    var rem: i32 = v % pa;
+    if (rem == 0) { return v; }
+    return v + (pa - rem);
+}
+
+// elf_data_vaddr_wx is the load address of the R+W data segment for a W^X
+// image whose .text is `text_len` bytes: the first page boundary at or
+// after the end of .text. An assembler resolving data-symbol references
+// for a W^X image (e.g. arm64_gas_link's data vaddr) must use this so the
+// references line up with where elf_image_wx places the data blob.
+pub function elf_data_vaddr_wx(text_len: i32): i32 {
+    return elf_base_vaddr() + elf_page_up(elf_eh_size() + 2 * elf_ph_size() + text_len);
+}
+
+// elf_image_wx emits the ELF header (e_phnum = 2) + two PT_LOAD program
+// headers, then .text, then — on the first page boundary past .text — the
+// data blob. The code segment (headers + .text) is mapped R+X; the data
+// segment is mapped R+W and may extend `bss` zero-filled bytes past its
+// file content (p_memsz > p_filesz). `entry_off` is the entry's offset
+// within .text. File offsets equal virtual-address offsets (both measured
+// from elf_base_vaddr()), so the page-aligned data offset is congruent to
+// its load address mod the page size — what the loader requires.
+pub function elf_image_wx(text: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32): i32[] {
+    return elf_image_two_seg(text, data, machine, entry_off, bss, elf_base_vaddr(), 2); // ET_EXEC
+}
+
+// elf_image_two_seg is the shared W^X / PIE two-segment writer: an R+X code
+// segment (headers + .text) and an R+W data segment (.rodata + globals +
+// `bss` zero-fill), with the data blob on the first page boundary past
+// .text. `base` is the load address (elf_base_vaddr() for the fixed-address
+// W^X image, 0 for the position-independent ET_DYN image) and `e_type` is
+// ET_EXEC (2) or ET_DYN (3). All vaddrs are base + offset, so the
+// page-aligned data offset stays congruent to its load address mod the page.
+function elf_image_two_seg(text: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, base: i32, e_type: i32): i32[] {
+    var headers: i32 = elf_eh_size() + 2 * elf_ph_size(); // 176
+    var text_end: i32 = headers + text.len();             // end of R+X segment
+    var data_off: i32 = elf_page_up(text_end);            // file offset == vaddr offset of data
+    var code_sz: i64 = text_end as i64;                   // headers + .text in one segment
+    var data_filesz: i64 = data.len() as i64;
+    var data_memsz: i64 = data_filesz + elf_u32_to_i64(bss);
+    var code_vaddr: i64 = base as i64;
+    var data_vaddr: i64 = (base + data_off) as i64;
+    var entry: i64 = (base + headers + entry_off) as i64;
+    var zero64: i64 = 0;
+
+    var buf: i32[] = [];
+
+    // ---- ELF-64 header (64 bytes) ----
+    buf = buf.append(127);  // 0x7f  EI_MAG0
+    buf = buf.append(69);   // 'E'
+    buf = buf.append(76);   // 'L'
+    buf = buf.append(70);   // 'F'
+    buf = buf.append(2);    // EI_CLASS = ELFCLASS64
+    buf = buf.append(1);    // EI_DATA  = ELFDATA2LSB
+    buf = buf.append(1);    // EI_VERSION = EV_CURRENT
+    buf = buf.append(0);    // EI_OSABI = SysV
+    var p: i32 = 0;       // EI_PAD (8 bytes)
+    while (p < 8) {
+        buf = buf.append(0);
+        p = p + 1;
+    }
+    buf = elf_le16(buf, e_type);                  // e_type (ET_EXEC / ET_DYN)
+    buf = elf_le16(buf, machine);                 // e_machine
+    buf = elf_le32(buf, 1);                       // e_version = EV_CURRENT
+    buf = elf_le64(buf, entry);                   // e_entry
+    buf = elf_le64(buf, elf_eh_size() as i64);    // e_phoff (PHs follow the EH)
+    buf = elf_le64(buf, zero64);                  // e_shoff (no section headers)
+    buf = elf_le32(buf, 0);                       // e_flags
+    buf = elf_le16(buf, elf_eh_size());           // e_ehsize
+    buf = elf_le16(buf, elf_ph_size());           // e_phentsize
+    buf = elf_le16(buf, 2);                       // e_phnum (code + data)
+    buf = elf_le16(buf, 0);                       // e_shentsize
+    buf = elf_le16(buf, 0);                       // e_shnum
+    buf = elf_le16(buf, 0);                       // e_shstrndx
+
+    // ---- Program header 0 (56 bytes): R+X code (headers + .text) ----
+    buf = elf_le32(buf, 1);          // p_type  = PT_LOAD
+    buf = elf_le32(buf, 5);          // p_flags = PF_R | PF_X
+    buf = elf_le64(buf, zero64);     // p_offset
+    buf = elf_le64(buf, code_vaddr); // p_vaddr
+    buf = elf_le64(buf, code_vaddr); // p_paddr
+    buf = elf_le64(buf, code_sz);    // p_filesz
+    buf = elf_le64(buf, code_sz);    // p_memsz
+    buf = elf_le64(buf, elf_page_align() as i64); // p_align
+
+    // ---- Program header 1 (56 bytes): R+W data (.rodata + globals + .bss) ----
+    buf = elf_le32(buf, 1);          // p_type  = PT_LOAD
+    buf = elf_le32(buf, 6);          // p_flags = PF_R | PF_W
+    buf = elf_le64(buf, data_off as i64); // p_offset
+    buf = elf_le64(buf, data_vaddr); // p_vaddr
+    buf = elf_le64(buf, data_vaddr); // p_paddr
+    buf = elf_le64(buf, data_filesz);// p_filesz
+    buf = elf_le64(buf, data_memsz); // p_memsz (incl. .bss)
+    buf = elf_le64(buf, elf_page_align() as i64); // p_align
+
+    // ---- body: .text, then page padding, then the data blob ----
+    buf = elf_cat(buf, text);
+    while (buf.len() < data_off) {
+        buf = buf.append(0);
+    }
+    return elf_cat(buf, data);
+}
+
+// elf_text_vaddr_pie is the .text vaddr for the position-independent
+// (ET_DYN) image, measured from a load base of 0 (past the ELF header + two
+// program headers). The self-host arm64 emitter materialises function
+// addresses via runtime adrp/:lo12: and embeds no absolute pointers, so the
+// PIE needs NO dynamic relocations: the kernel maps the ET_DYN at an
+// arbitrary base and the PC-relative code runs unchanged.
+pub function elf_text_vaddr_pie(): i32 {
+    return elf_eh_size() + 2 * elf_ph_size(); // 176, base 0
+}
+
+// elf_data_vaddr_pie is the R+W data segment's base-0 vaddr for the PIE
+// image: the first page boundary past a `text_len`-byte .text.
+pub function elf_data_vaddr_pie(text_len: i32): i32 {
+    return elf_page_up(elf_eh_size() + 2 * elf_ph_size() + text_len);
+}
+
+// elf_image_pie is elf_image_wx as a static position-independent executable:
+// the same two-segment W^X layout but ET_DYN with a load base of 0 (and no
+// dynamic relocations, since the self-host arm64 emitter materialises every
+// function address via runtime adrp/:lo12: rather than absolute `.quad`
+// slots). Lay .text / data out at elf_text_vaddr_pie() / elf_data_vaddr_pie()
+// so the PC-relative fixups line up.
+//
+// NOT YET WIRED to a -target. The self-host arm64 backend stores heap
+// pointers in 32 bits (the heap is sized to keep base + 3.5 GiB < 4 GiB —
+// see asm_arm64.fern's heap_size), so the image must load in the low 4 GiB.
+// A PIE is mapped at a high randomized base (on qemu AND real Android), which
+// truncates those pointers and trips the alloc trap on the first allocation.
+// Wiring this up needs the self-host backend to use 64-bit pointers (or an
+// mmap heap that maps low), the way the native arm64 backend already does;
+// until then this is a tested container only (see TestSelfHostELF). The
+// native compiler's -target arm64-android (cmd/fern) is unaffected — it uses
+// 64-bit pointers + an mmap heap and runs at any base.
+pub function elf_image_pie(text: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32): i32[] {
+    return elf_image_two_seg(text, data, machine, entry_off, bss, 0, 3); // base 0, ET_DYN
+}
+
+// elf_static_executable_data_wx is the W^X counterpart of
+// elf_static_executable_data: arm64 (EM_AARCH64), entry at the first
+// instruction, no .bss. Pair it with an assembler that page-aligns
+// .rodata (textVAddr = elf_text_vaddr_wx()).
+function elf_static_executable_data_wx(text: i32[], data: i32[]): i32[] {
+    return elf_image_wx(text, data, elf_em_aarch64(), 0, 0);
+}
+
+// elf_static_executable_data_x86_wx is the x86-64 counterpart of
+// elf_static_executable_data_wx (EM_X86_64).
+function elf_static_executable_data_x86_wx(text: i32[], data: i32[]): i32[] {
+    return elf_image_wx(text, data, elf_em_x86_64(), 0, 0);
+}
+
+// elf_static_executable_bss_x86_wx_at is the W^X counterpart of
+// elf_static_executable_bss_x86_at — the form a real program needs: an
+// explicit entry offset within .text plus a trailing zero-init .bss of
+// `bss` bytes in the R+W data segment (p_memsz = p_filesz + bss). This is
+// what asm.fern's mmap-free heap reservation lowers to under W^X.
+pub function elf_static_executable_bss_x86_wx_at(text: i32[], data: i32[], bss: i32, entry_off: i32): i32[] {
+    return elf_image_wx(text, data, elf_em_x86_64(), entry_off, bss);
 }

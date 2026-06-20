@@ -260,6 +260,19 @@ func valueTypeName(v Value) (string, bool) {
 	return "", false
 }
 
+// downcastTargetName returns the runtime type-name key for a downcast
+// target type (`e as? T`). Slice 1 targets are struct/enum types, whose
+// names line up with the TypeName/EnumName carried on the boxed value.
+func downcastTargetName(t ast.Type) string {
+	switch x := t.(type) {
+	case ast.StructType:
+		return x.Name
+	case ast.EnumType:
+		return x.Name
+	}
+	return ""
+}
+
 func (n Number) String() string { return fmt.Sprintf("%d", int64(n)) }
 func (f Float) String() string {
 	if f.Width == 32 {
@@ -379,7 +392,9 @@ type Interp struct {
 	// (`return val`, falloff to Void) iterate the frame in
 	// reverse before popping it. Nested calls get their own
 	// frame — defers inside a callee don't run in the caller.
-	deferStack [][]ast.Expr
+	// `onError` marks an `errdefer`: it runs only on an error
+	// exit (`?` propagation or a `return` of None/Err).
+	deferStack [][]deferEntry
 	// tcpListeners / tcpConns are the interpreter's analogue
 	// of OS socket fds. The AOT backends return raw kernel
 	// fds; the interpreter returns opaque integer IDs into
@@ -463,9 +478,9 @@ func New() *Interp {
 	i.Builtins["__method_MapIter_key"] = &Builtin{Fn: builtinMapIterKey}
 	i.Builtins["__method_MapIter_value"] = &Builtin{Fn: builtinMapIterValue}
 	i.Builtins["__method_MapIter_advance"] = &Builtin{Fn: builtinMapIterAdvance}
-	// Low-level prelude primitives the codegen lowers to inline
+	// Low-level stdlib primitives the codegen lowers to inline
 	// alloc / memcpy / store-byte sequences. The interpreter
-	// implements them directly so prelude functions that lean
+	// implements them directly so stdlib functions that lean
 	// on them (`__string_case_fold` for `to_upper`/`to_lower`,
 	// `s.bytes()`, `string_from_bytes`, etc.) round-trip
 	// through the script-mode + playground path. Map runtime
@@ -477,7 +492,7 @@ func New() *Interp {
 	i.Builtins["__alloc_u8"] = &Builtin{Fn: builtinAllocU8}
 	i.Builtins["string_from_bytes"] = &Builtin{Fn: builtinStringFromBytes}
 	// `s.bytes()` and `s.as_bytes()` round-trip bytes through
-	// raw memory in the prelude / wat-emitted helper (the
+	// raw memory in the stdlib / wat-emitted helper (the
 	// former does `__memcpy(out as i32, s.as_bytes() as i32, n)`,
 	// the latter aliases the string payload via a slice header).
 	// Both are unrepresentable in the interp's value-tree heap,
@@ -496,6 +511,7 @@ func New() *Interp {
 	i.Builtins["stderr"] = &Builtin{Fn: builtinStderr}
 	i.Builtins["exit"] = &Builtin{Fn: builtinExit}
 	i.Builtins["random_bytes"] = &Builtin{Fn: builtinRandomBytes}
+	i.Builtins["random_i32"] = &Builtin{Fn: builtinRandomI32}
 	// `f32_bits(x)` / `f32_from_bits(n)` — reinterpret-cast pair.
 	// The checker exposes them for raw-IEEE manipulation in user
 	// code (Float-to-byte buffer encoders, NaN bit-pattern tests).
@@ -537,6 +553,7 @@ func New() *Interp {
 	// right trade for the migration: tests run under
 	// `fern -interp` regardless of which backend they exercise.
 	i.Builtins["now_unix_ms"] = &Builtin{Fn: builtinNowUnixMS}
+	i.Builtins["now_ns"] = &Builtin{Fn: builtinNowNS}
 	i.Builtins["monotonic_ns"] = &Builtin{Fn: builtinMonotonicNS}
 	i.Builtins["sleep_ms"] = &Builtin{Fn: builtinSleepMS}
 	i.Builtins["temp_dir"] = &Builtin{Fn: builtinTempDir}
@@ -550,7 +567,7 @@ func New() *Interp {
 	// like `scratch as i32` that the interp can't model). Two
 	// keys cover both load paths:
 	//
-	//   - bare `int_to_string` — auto-prelude flat-load path, the
+	//   - bare `int_to_string` — the flat-load (LoadStdlibFlat) path, the
 	//     usual single-file case.
 	//   - mangled `int__int_to_string` — modload's name-mangling
 	//     prefix when the user (or a transitively-imported stdlib
@@ -723,6 +740,24 @@ func builtinRandomBytes(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("random_bytes: %v", err)
 	}
 	return String(buf), nil
+}
+
+// builtinRandomI32 returns a single cryptographic-quality random
+// i32 from `crypto/rand`. Mirrors the AOT backends'
+// `getrandom(2)` / WASI `random_get` behaviour (read 4 bytes,
+// reinterpret as a little-endian signed i32). Use when a single
+// small random value is needed without the heap-allocation
+// overhead of random_bytes.
+func builtinRandomI32(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("random_i32: expected 0 args, got %d", len(args))
+	}
+	var buf [4]byte
+	if _, err := cryptorand.Read(buf[:]); err != nil {
+		return nil, fmt.Errorf("random_i32: %v", err)
+	}
+	v := uint32(buf[0]) | uint32(buf[1])<<8 | uint32(buf[2])<<16 | uint32(buf[3])<<24
+	return Number(int64(int32(v))), nil
 }
 
 // builtinF32Bits reinterprets a 32-bit float's bit pattern as
@@ -1207,7 +1242,7 @@ func builtinMapIterAdvance(_ *Interp, args []Value) (Value, error) {
 
 // `__alloc_u8(n: i32): u8[]` — codegen lowers to `__fern_alloc(n)
 // + length-prefix poke`; the interp returns a fresh Array of n
-// Number(0) values. The prelude uses this as the staging buffer
+// Number(0) values. The stdlib uses this as the staging buffer
 // for `__string_case_fold`, `string_from_bytes`'s round-trip
 // counterpart, and any user code that wants a zero-initialised
 // byte slab.
@@ -1257,7 +1292,7 @@ func builtinStringFromBytes(_ *Interp, args []Value) (Value, error) {
 
 // `__method_string_bytes` / `__method_string_as_bytes` —
 // String → Array<Number> conversion, one Number per UTF-8
-// byte. Sidesteps the prelude's `__memcpy(out as i32,
+// byte. Sidesteps the stdlib's `__memcpy(out as i32,
 // s.as_bytes() as i32, n)` path which can't be modelled
 // without a flat byte address space.
 func builtinStringBytes(_ *Interp, args []Value) (Value, error) {
@@ -1364,6 +1399,17 @@ func builtinNowUnixMS(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("now_unix_ms: expected 0 args, got %d", len(args))
 	}
 	return Number(time.Now().UnixMilli()), nil
+}
+
+// builtinNowNS returns wall-clock nanoseconds since 1970-01-01
+// UTC — the nanosecond-resolution twin of now_unix_ms (same
+// realtime clock). NTP-adjustable; use `monotonic_ns` for
+// timing. Wraps `time.Now().UnixNano()`.
+func builtinNowNS(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("now_ns: expected 0 args, got %d", len(args))
+	}
+	return Number(time.Now().UnixNano()), nil
 }
 
 // builtinMonotonicNS returns nanoseconds from a monotonic
@@ -2060,6 +2106,11 @@ const (
 type result struct {
 	flow flowKind
 	val  Value
+	// label carries the target loop label of a `break`/`continue` (empty
+	// for the unlabeled form). A loop consumes the signal only when the
+	// label is empty or matches its own; otherwise it propagates so an
+	// outer labeled loop handles it.
+	label string
 }
 
 func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
@@ -2084,32 +2135,69 @@ func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
 		// (None / Err) into a function-level early return. The
 		// expression evaluator can't unwind statements on its
 		// own, so it raises this sentinel error type and the
-		// call wrapper here catches it.
+		// call wrapper here catches it. That's an error exit, so
+		// errdefers fire.
 		if early, ok := err.(*tryOpEarlyReturn); ok {
-			i.runDefers(defers, e)
+			i.runDefers(defers, e, true)
 			return early.val, nil
 		}
-		i.runDefers(defers, e)
+		i.runDefers(defers, e, false)
 		return nil, err
 	}
-	i.runDefers(defers, e)
+	i.runDefers(defers, e, r.flow == flowReturn && isErrReturnValue(r.val))
 	if r.flow == flowReturn {
 		return r.val, nil
 	}
 	return Void{}, nil
 }
 
+// deferEntry is one scheduled cleanup: the expression to
+// evaluate and whether it came from an `errdefer` (runs only on
+// an error exit) rather than a plain `defer` (runs on every
+// exit).
+type deferEntry struct {
+	expr    ast.Expr
+	onError bool
+}
+
 // runDefers evaluates the LIFO list of expressions a callee
-// accumulated via `defer expr;` statements. Each one runs
+// accumulated via `defer` / `errdefer` statements. Each one runs
 // against the env at function exit — closures already capture
 // any local bindings they read; deferred expressions just read
 // the same env. Errors from a deferred expression are dropped
 // (defer is "fire and forget" at function exit) — matching
 // codegen which doesn't propagate them either.
-func (i *Interp) runDefers(defers []ast.Expr, e *env) {
+//
+// Plain defers run on every exit. errdefers run only when
+// errorExit is set (the `?` operator propagating, or a `return`
+// of a None/Err value), and after the plain defers — matching
+// the codegen emit order (emitDeferCleanup then
+// emitErrDeferCleanup).
+func (i *Interp) runDefers(defers []deferEntry, e *env, errorExit bool) {
 	for k := len(defers) - 1; k >= 0; k-- {
-		_, _ = i.evalExpr(defers[k], e)
+		if defers[k].onError {
+			continue
+		}
+		_, _ = i.evalExpr(defers[k].expr, e)
 	}
+	if !errorExit {
+		return
+	}
+	for k := len(defers) - 1; k >= 0; k-- {
+		if !defers[k].onError {
+			continue
+		}
+		_, _ = i.evalExpr(defers[k].expr, e)
+	}
+}
+
+// isErrReturnValue reports whether a returned value is the
+// failure variant of an Option/Result — `None` or `Err` (variant
+// index 1) — i.e. whether a plain `return v` of it counts as an
+// error exit for `errdefer`.
+func isErrReturnValue(v Value) bool {
+	ev, ok := v.(*Enum)
+	return ok && ev.Index == 1 && (ev.EnumName == "Option" || ev.EnumName == "Result")
 }
 
 func (i *Interp) execBlock(b *ast.Block, parent *env) (result, error) {
@@ -2205,7 +2293,13 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 				return r, nil
 			}
 			if r.flow == flowBreak {
+				if r.label != "" && r.label != x.Label {
+					return r, nil // targets an outer labeled loop
+				}
 				break
+			}
+			if r.flow == flowContinue && r.label != "" && r.label != x.Label {
+				return r, nil // targets an outer labeled loop
 			}
 			// flowContinue or flowNormal: re-test the condition.
 		}
@@ -2233,7 +2327,13 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 				return r, nil
 			}
 			if r.flow == flowBreak {
+				if r.label != "" && r.label != x.Label {
+					return r, nil // targets an outer labeled loop
+				}
 				break
+			}
+			if r.flow == flowContinue && r.label != "" && r.label != x.Label {
+				return r, nil // targets an outer labeled loop
 			}
 			// flowContinue or flowNormal: run step and re-test.
 			if x.Step != nil {
@@ -2244,9 +2344,9 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 		}
 		return result{flow: flowNormal}, nil
 	case *ast.Break:
-		return result{flow: flowBreak}, nil
+		return result{flow: flowBreak, label: x.Label}, nil
 	case *ast.Continue:
-		return result{flow: flowContinue}, nil
+		return result{flow: flowContinue, label: x.Label}, nil
 	case *ast.Return:
 		if x.Value == nil {
 			return result{flow: flowReturn, val: Void{}}, nil
@@ -2309,7 +2409,10 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 				if r.flow == flowReturn || r.flow == flowContinue {
 					return r, nil
 				}
-				// flowBreak / flowNormal: leave the switch.
+				if r.flow == flowBreak && r.label != "" {
+					return r, nil // labeled break targets an enclosing loop, not this switch
+				}
+				// unlabeled flowBreak / flowNormal: leave the switch.
 				return result{flow: flowNormal}, nil
 			}
 		}
@@ -2320,6 +2423,9 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 			}
 			if r.flow == flowReturn || r.flow == flowContinue {
 				return r, nil
+			}
+			if r.flow == flowBreak && r.label != "" {
+				return r, nil // labeled break targets an enclosing loop
 			}
 		}
 		return result{flow: flowNormal}, nil
@@ -2337,46 +2443,93 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 		if err != nil {
 			return result{}, err
 		}
-		ev, ok := tag.(*Enum)
-		if !ok {
-			return result{}, fmt.Errorf("interp: match scrutinee is %T, expected enum value", tag)
-		}
-		for _, arm := range x.Arms {
-			if arm.IsWildcard || arm.VariantName == ev.VariantName {
-				armEnv := newEnv(e)
-				if !arm.IsWildcard {
-					for j, name := range arm.Bindings {
-						if j < len(ev.Payloads) {
-							armEnv.declare(name, ev.Payloads[j])
+		if ev, ok := tag.(*Enum); ok {
+			for _, arm := range x.Arms {
+				if arm.IsWildcard || arm.VariantName == ev.VariantName {
+					armEnv := newEnv(e)
+					if !arm.IsWildcard {
+						for j, name := range arm.Bindings {
+							if j < len(ev.Payloads) {
+								armEnv.declare(name, ev.Payloads[j])
+							}
 						}
 					}
-				}
-				// Guard runs with bindings in scope; on false,
-				// fall through to the next arm.
-				if arm.Guard != nil {
-					gv, err := i.evalExpr(arm.Guard, armEnv)
+					// Guard runs with bindings in scope; on false,
+					// fall through to the next arm.
+					if arm.Guard != nil {
+						gv, err := i.evalExpr(arm.Guard, armEnv)
+						if err != nil {
+							return result{}, err
+						}
+						gb, ok := gv.(Bool)
+						if !ok {
+							return result{}, fmt.Errorf("interp: match guard yielded %T, expected boolean", gv)
+						}
+						if !bool(gb) {
+							continue
+						}
+					}
+					r, err := i.execBlock(arm.Body, armEnv)
 					if err != nil {
 						return result{}, err
 					}
-					gb, ok := gv.(Bool)
-					if !ok {
-						return result{}, fmt.Errorf("interp: match guard yielded %T, expected boolean", gv)
+					if r.flow == flowReturn || r.flow == flowContinue || r.flow == flowBreak {
+						return r, nil
 					}
-					if !bool(gb) {
-						continue
-					}
+					return result{flow: flowNormal}, nil
 				}
-				r, err := i.execBlock(arm.Body, armEnv)
+			}
+			return result{}, fmt.Errorf("interp: match did not cover variant %s (this should have been a checker error)", ev.VariantName)
+		}
+		// Non-enum scrutinee (i32 / string / bool): literal-pattern
+		// match, mirroring the compiled backend's emitLiteralMatch.
+		// Each arm is a literal (dispatched by `==`) or the `_`
+		// fall-through; the checker (E035/E030) guarantees an
+		// unguarded `_` arm exists, so a match is always found. Any
+		// other value type reaching here is a type error the checker
+		// should have caught — keep the diagnostic.
+		switch tag.(type) {
+		case Number, Bool, String:
+		default:
+			return result{}, fmt.Errorf("interp: match scrutinee is %T, expected enum value", tag)
+		}
+		for _, arm := range x.Arms {
+			if !arm.IsWildcard {
+				if arm.Literal == nil {
+					continue
+				}
+				lv, err := i.evalExpr(arm.Literal, e)
 				if err != nil {
 					return result{}, err
 				}
-				if r.flow == flowReturn || r.flow == flowContinue || r.flow == flowBreak {
-					return r, nil
+				if !valuesEqual(tag, lv) {
+					continue
 				}
-				return result{flow: flowNormal}, nil
 			}
+			armEnv := newEnv(e)
+			if arm.Guard != nil {
+				gv, err := i.evalExpr(arm.Guard, armEnv)
+				if err != nil {
+					return result{}, err
+				}
+				gb, ok := gv.(Bool)
+				if !ok {
+					return result{}, fmt.Errorf("interp: match guard yielded %T, expected boolean", gv)
+				}
+				if !bool(gb) {
+					continue
+				}
+			}
+			r, err := i.execBlock(arm.Body, armEnv)
+			if err != nil {
+				return result{}, err
+			}
+			if r.flow == flowReturn || r.flow == flowContinue || r.flow == flowBreak {
+				return r, nil
+			}
+			return result{flow: flowNormal}, nil
 		}
-		return result{}, fmt.Errorf("interp: match did not cover variant %s (this should have been a checker error)", ev.VariantName)
+		return result{flow: flowNormal}, nil
 	case *ast.Defer:
 		// Push onto the enclosing call's defer frame. The frame
 		// is unwound LIFO at function exit by callFunc /
@@ -2384,7 +2537,7 @@ func (i *Interp) execStmt(s ast.Stmt, e *env) (result, error) {
 		// call (REPL top level) — treat as a no-op since
 		// there's no exit point to run the deferred expr at.
 		if n := len(i.deferStack); n > 0 {
-			i.deferStack[n-1] = append(i.deferStack[n-1], x.Expr)
+			i.deferStack[n-1] = append(i.deferStack[n-1], deferEntry{expr: x.Expr, onError: x.OnError})
 		}
 		return result{flow: flowNormal}, nil
 	}
@@ -2405,6 +2558,47 @@ func valuesEqual(a, b Value) bool {
 	case String:
 		bx, ok := b.(String)
 		return ok && ax == bx
+	case Float:
+		bx, ok := b.(Float)
+		return ok && ax.V == bx.V && ax.Width == bx.Width
+	case Array:
+		// Tuples are represented as Array, so this also covers tuple keys.
+		// Element-wise by value — the recursion bottoms out on scalars
+		// (Fern forbids reference cycles via E048/E049/E057, so no infinite
+		// descent).
+		bx, ok := b.(Array)
+		if !ok || len(ax) != len(bx) {
+			return false
+		}
+		for i := range ax {
+			if !valuesEqual(ax[i], bx[i]) {
+				return false
+			}
+		}
+		return true
+	case *Struct:
+		bx, ok := b.(*Struct)
+		if !ok || ax.TypeName != bx.TypeName || len(ax.Fields) != len(bx.Fields) {
+			return false
+		}
+		for k, v := range ax.Fields {
+			bv, ok := bx.Fields[k]
+			if !ok || !valuesEqual(v, bv) {
+				return false
+			}
+		}
+		return true
+	case *Enum:
+		bx, ok := b.(*Enum)
+		if !ok || ax.EnumName != bx.EnumName || ax.Index != bx.Index || len(ax.Payloads) != len(bx.Payloads) {
+			return false
+		}
+		for i := range ax.Payloads {
+			if !valuesEqual(ax.Payloads[i], bx.Payloads[i]) {
+				return false
+			}
+		}
+		return true
 	}
 	return a == b
 }
@@ -2428,6 +2622,22 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			v = float64(float32(v))
 		}
 		return Float{V: v, Width: w}, nil
+	case *ast.DowncastExpr:
+		// `e as? T` — fallible downcast of a `dyn Trait` value (which is
+		// just the concrete boxed value, already carrying its TypeName)
+		// to the concrete type T. Evaluate the inner, recover its runtime
+		// type name, and produce Some(value) iff it matches T exactly,
+		// else None. The bound value is the concrete value itself, so a
+		// `Some(x)` arm sees x as the concrete type (docs/DYN-TRAITS.md §9).
+		v, err := i.evalExpr(x.Inner, env)
+		if err != nil {
+			return nil, err
+		}
+		want := downcastTargetName(x.Target)
+		if got, ok := valueTypeName(v); ok && want != "" && got == want {
+			return optionSome(v), nil
+		}
+		return optionNone(), nil
 	case *ast.CastExpr:
 		// Numeric casts: integer → integer, float → float (width
 		// change), and the cross-family int↔float conversions.
@@ -2725,6 +2935,34 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		return nil, fmt.Errorf("interp: unsupported unary %q", x.Op)
 	case *ast.Assign:
 		return i.evalAssign(x, env)
+	case *ast.BlockExpr:
+		// Block-expression `{ stmts; tail }` (slice 1): run the
+		// statements in a fresh child env, then the trailing expression
+		// is the block's value. Locals bound by the statements are
+		// visible to Tail but the child env is dropped afterwards, so
+		// they don't leak out of the block.
+		blockEnv := newEnv(env)
+		defer blockEnv.releaseScope()
+		for _, s := range x.Stmts {
+			r, err := i.execStmt(s, blockEnv)
+			if err != nil {
+				return nil, err
+			}
+			if r.flow != flowNormal {
+				// A `return` / `break` / `continue` inside a
+				// value-position block-expr would need control flow
+				// threaded through expression evaluation, which slice 1
+				// doesn't do. The examples don't need it; surface a
+				// clear error rather than silently dropping the value.
+				return nil, fmt.Errorf("interp: control-flow statement (return/break/continue) inside a block-expression is not supported in slice 1")
+			}
+		}
+		if x.Tail == nil {
+			// Value-less block in value position — the checker reports
+			// E061; if it slipped through, fail loudly.
+			return nil, fmt.Errorf("interp: block-expression has no trailing value")
+		}
+		return i.evalExpr(x.Tail, blockEnv)
 	case *ast.IfExpr:
 		c, err := i.evalExpr(x.Cond, env)
 		if err != nil {
@@ -2743,22 +2981,60 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		if err != nil {
 			return nil, err
 		}
-		ev, ok := tag.(*Enum)
-		if !ok {
+		if ev, ok := tag.(*Enum); ok {
+			for _, arm := range x.Arms {
+				if !arm.IsWildcard && arm.VariantName != ev.VariantName {
+					continue
+				}
+				armEnv := newEnv(env)
+				if !arm.IsWildcard {
+					for j, name := range arm.Bindings {
+						if j < len(ev.Payloads) {
+							armEnv.declare(name, ev.Payloads[j])
+						}
+					}
+				}
+				if arm.Guard != nil {
+					gv, err := i.evalExpr(arm.Guard, armEnv)
+					if err != nil {
+						return nil, err
+					}
+					gb, ok := gv.(Bool)
+					if !ok {
+						return nil, fmt.Errorf("interp: match guard yielded %T, expected boolean", gv)
+					}
+					if !bool(gb) {
+						continue
+					}
+				}
+				return i.evalExpr(arm.Body, armEnv)
+			}
+			return nil, fmt.Errorf("interp: match-expression non-exhaustive at runtime (variant %q unhandled)", ev.VariantName)
+		}
+		// Non-enum scrutinee (i32 / string / bool): literal-pattern
+		// match expression, mirroring emitLiteralMatchExpr. Each arm
+		// dispatches via `==` against its literal, or the `_`
+		// fall-through. Any other value type is a type error the
+		// checker should have caught — keep the diagnostic.
+		switch tag.(type) {
+		case Number, Bool, String:
+		default:
 			return nil, fmt.Errorf("interp: match scrutinee is %T, expected enum value", tag)
 		}
 		for _, arm := range x.Arms {
-			if !arm.IsWildcard && arm.VariantName != ev.VariantName {
-				continue
-			}
-			armEnv := newEnv(env)
 			if !arm.IsWildcard {
-				for j, name := range arm.Bindings {
-					if j < len(ev.Payloads) {
-						armEnv.declare(name, ev.Payloads[j])
-					}
+				if arm.Literal == nil {
+					continue
+				}
+				lv, err := i.evalExpr(arm.Literal, env)
+				if err != nil {
+					return nil, err
+				}
+				if !valuesEqual(tag, lv) {
+					continue
 				}
 			}
+			armEnv := newEnv(env)
 			if arm.Guard != nil {
 				gv, err := i.evalExpr(arm.Guard, armEnv)
 				if err != nil {
@@ -2774,7 +3050,7 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			}
 			return i.evalExpr(arm.Body, armEnv)
 		}
-		return nil, fmt.Errorf("interp: match-expression non-exhaustive at runtime (variant %q unhandled)", ev.VariantName)
+		return nil, fmt.Errorf("interp: match-expression non-exhaustive at runtime (no literal arm matched)")
 	case *ast.TryOp:
 		// `expr?` desugars to:
 		//   match (expr) {
@@ -2999,10 +3275,11 @@ func (i *Interp) callClosure(c *Closure, args []Value) (Value, error) {
 	defers := i.deferStack[len(i.deferStack)-1]
 	i.deferStack = i.deferStack[:len(i.deferStack)-1]
 	if err != nil {
-		i.runDefers(defers, e)
+		_, early := err.(*tryOpEarlyReturn)
+		i.runDefers(defers, e, early)
 		return nil, err
 	}
-	i.runDefers(defers, e)
+	i.runDefers(defers, e, r.flow == flowReturn && isErrReturnValue(r.val))
 	if r.flow == flowReturn {
 		return r.val, nil
 	}

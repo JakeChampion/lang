@@ -1,0 +1,96 @@
+// nl.fern — number lines of input, like `nl(1)`.
+//
+// More configurable than `cat -n`:
+//
+//   -b a    number all lines       (default for nl is `t`)
+//   -b t    number only non-empty lines (default)
+//   -b n    number no lines
+//   -w N    number field width      (default 6)
+//   -s STR  separator between number and text (default a tab)
+//   -v N    starting line number     (default 1)
+//   -i N    line-number increment    (default 1)
+//
+//   $ printf 'a\n\nb\n' | ./nl
+//        1\ta
+//          \t
+//        2\tb
+//
+// Showcases: multiple option arguments, right-aligned numeric
+// formatting via `pad_start`.
+import "std/string";
+import "std/i32";
+import "std/io";
+
+// `body` selects which lines get numbered: "a" all, "t" non-empty
+// (default), "n" none.
+struct Opts { body: string, width: i32, sep: string, start: i32, incr: i32 }
+
+function slurp(path: string): string {
+  match (io.read_input(path)) {
+    Ok(contents) => {
+      return contents;
+    },
+    Err(_) => {
+      return "";
+    }
+  }
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var o: Opts = Opts { body: "t", width: 6, sep: "\t", start: 1, incr: 1 };
+  var inputs: string[] = [];
+
+  var i: i32 = 1;
+  while (i < argv.len()) {
+    var a: string = argv[i];
+    if (a == "-b" && i + 1 < argv.len()) {
+      o = Opts { ...o, body: argv[i + 1] };
+      i = i + 1;
+    } else if (a == "-w" && i + 1 < argv.len()) {
+      o = Opts { ...o, width: argv[i + 1].parse_int_or(6) };
+      i = i + 1;
+    } else if (a == "-s" && i + 1 < argv.len()) {
+      o = Opts { ...o, sep: argv[i + 1] };
+      i = i + 1;
+    } else if (a == "-v" && i + 1 < argv.len()) {
+      o = Opts { ...o, start: argv[i + 1].parse_int_or(1) };
+      i = i + 1;
+    } else if (a == "-i" && i + 1 < argv.len()) {
+      o = Opts { ...o, incr: argv[i + 1].parse_int_or(1) };
+      i = i + 1;
+    } else {
+      inputs = inputs.append(a);
+    }
+    i = i + 1;
+  }
+  if (inputs.len() == 0) {
+    inputs = inputs.append("-");
+  }
+
+  var num: i32 = o.start;
+  var blanks: string = "".pad_start(o.width, " ");
+  var j: i32 = 0;
+  while (j < inputs.len()) {
+    var lines: string[] = slurp(inputs[j]).lines();
+    var k: i32 = 0;
+    while (k < lines.len()) {
+      var line: string = lines[k];
+      var number_it: boolean = false;
+      if (o.body == "a") {
+        number_it = true;
+      } else if (o.body == "t") {
+        number_it = !line.is_empty();
+      }
+      if (number_it) {
+        print(num.to_string().pad_start(o.width, " ") + o.sep + line);
+        num = num + o.incr;
+      } else {
+        print(blanks + o.sep + line);
+      }
+      k = k + 1;
+    }
+    j = j + 1;
+  }
+  return 0;
+}

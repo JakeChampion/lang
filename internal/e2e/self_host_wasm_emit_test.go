@@ -29,7 +29,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "wasm.fern", "wasm_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -159,6 +159,128 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// String values: literals flow through locals / params / returns
 		// / reassignment as i32 pointers to [len][bytes] blocks.
 		{"string-local", "function main(): i32 { var s = \"hello\"; write(s); return 0; }", 0, "hello"},
+		// Scalar-field structs via the IR path (struct_make / struct_get, leak-
+		// only): construction + field read, field-order independence, params,
+		// boolean fields. wasm box is [type_id@0, f0@4, …] rc-headered; exit codes
+		// must match. (Update / mutation fall back to AST.)
+		{"ir-struct-lit-fields", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 3, y: 4 }; return p.x + p.y; }", 7, ""},
+		{"ir-struct-field-order", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { y: 40, x: 2 }; return p.x + p.y; }", 42, ""},
+		{"ir-struct-three-fields", "struct V { a: i32, b: i32, c: i32 } function main(): i32 { var v = V { a: 1, b: 2, c: 3 }; return v.a * 100 + v.b * 10 + v.c; }", 123, ""},
+		{"ir-struct-param", "struct P { x: i32, y: i32 } function sum(p: P): i32 { return p.x + p.y; } function main(): i32 { var p = P { x: 30, y: 12 }; return sum(p); }", 42, ""},
+		{"ir-struct-bool-field", "struct F { on: boolean, n: i32 } function main(): i32 { var f = F { on: true, n: 7 }; if (f.on) { return f.n; } return 0; }", 7, ""},
+		{"ir-struct-two-instances", "struct P { x: i32, y: i32 } function main(): i32 { var a = P { x: 1, y: 2 }; var b = P { x: 10, y: 20 }; return a.x + b.y; }", 21, ""},
+		{"ir-struct-in-loop", "struct P { x: i32, y: i32 } function main(): i32 { var s = 0; var i = 0; while (i < 4) { var p = P { x: i, y: i * 2 }; s = s + p.x + p.y; i = i + 1; } return s; }", 18, ""},
+		// Functional struct update `P { ...base, f: v }`.
+		{"ir-struct-update-one", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; var q = P { ...p, y: 9 }; return q.x + q.y; }", 10, ""},
+		{"ir-struct-update-keeps-base", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 5, y: 6 }; var q = P { ...p, x: 50 }; return p.x + q.x; }", 55, ""},
+		// Field mutation `p.x = v`.
+		{"ir-field-mutate", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; p.x = 40; return p.x + p.y; }", 42, ""},
+		{"ir-field-mutate-loop", "struct C { n: i32 } function main(): i32 { var c = C { n: 0 }; var i = 0; while (i < 5) { c.n = c.n + i; i = i + 1; } return c.n; }", 10, ""},
+		{"ir-field-mutate-alias", "struct P { x: i32 } function main(): i32 { var p = P { x: 1 }; var q = p; q.x = 9; return p.x; }", 9, ""},
+		{"ir-str-return", "function greet(): string { return \"hi\"; } function main(): i32 { var s = greet(); return s.len(); }", 2, ""},
+		{"ir-str-index-local", "function main(): i32 { var s = \"hello\"; return s[0]; }", 104, ""},
+		{"ir-str-index-loop", "function main(): i32 { var s = \"abc\"; var sum = 0; var i = 0; while (i < 3) { sum = sum + s[i]; i = i + 1; } return sum % 200; }", 94, ""},
+		{"ir-str-index-param", "function first(s: string): i32 { return s[0]; } function main(): i32 { return first(\"Z\"); }", 90, ""},
+		{"ir-str-slice-len", "function main(): i32 { var s = \"hello\"; var t = s[1:4]; return t.len(); }", 3, ""},
+		{"ir-str-slice-idx0", "function main(): i32 { var s = \"hello\"; var t = s[1:4]; return t[0]; }", 101, ""},
+		{"ir-str-slice-param", "function tok(s: string): i32 { return s[0:2].len(); } function main(): i32 { return tok(\"abcd\"); }", 2, ""},
+		{"ir-str-return-concat", "function shout(s: string): string { return s + \"!\"; } function main(): i32 { var g = shout(\"hey\"); return g.len(); }", 4, ""},
+		{"ir-struct-str-field", "struct Token { text: string, kind: i32 } function main(): i32 { var t = Token { text: \"hello\", kind: 7 }; return t.text.len() + t.kind; }", 12, ""},
+		{"ir-enum-str-payload", "enum T { Word(string), Eof } function g(t: T): i32 { match (t) { Word(w) => { return w.len(); }, Eof => { return 3; } } return 0; } function main(): i32 { return g(Word(\"hello\")) + g(Eof); }", 8, ""},
+		{"ir-match-guard-fallthrough", "enum E { Pos(i32), Neg(i32), Zero } function f(e: E): i32 { match (e) { Pos(n) when n > 10 => { return 1; }, Pos(n) => { return 2; }, _ => { return 3; } } return 0; } function main(): i32 { return f(Pos(20)) * 100 + f(Pos(5)) * 10 + f(Zero); }", 123, ""},
+		{"ir-match-guard-wildcard", "enum E { V(i32) } function f(e: E): i32 { match (e) { _ when false => { return 5; }, V(n) => { return n; } } return 0; } function main(): i32 { return f(V(42)); }", 42, ""},
+		{"ir-opt-some-none", "function classify(n: i32): Option[i32] { if (n > 0) { return Some(n); } return None; } function f(n: i32): i32 { match (classify(n)) { Some(_) => { return 1; }, None => { return 0; } } return 9; } function main(): i32 { return f(5) * 10 + f(0); }", 10, ""},
+		{"ir-opt-ok-err", "function chk(n: i32): Result[i32, i32] { if (n > 0) { return Ok(n); } return Err(n); } function f(n: i32): i32 { match (chk(n)) { Ok(_) => { return 7; }, Err(_) => { return 3; } } return 9; } function main(): i32 { return f(2) * 10 + f(0); }", 73, ""},
+		{"ir-opt-bind-some", "function g(n: i32): Option[i32] { if (n > 0) { return Some(n + 100); } return None; } function f(n: i32): i32 { match (g(n)) { Some(x) => { return x; }, None => { return 0; } } return 0; } function main(): i32 { return f(5); }", 105, ""},
+		{"ir-opt-bind-string", "function name(n: i32): Option[string] { if (n > 0) { return Some(\"hello\"); } return None; } function f(n: i32): i32 { match (name(n)) { Some(s) => { return s.len(); }, None => { return 0; } } return 0; } function main(): i32 { return f(1); }", 5, ""},
+		{"ir-opt-bind-result-strerr", "function chk(n: i32): Result[i32, string] { if (n > 0) { return Ok(n); } return Err(\"fail\"); } function f(n: i32): i32 { match (chk(n)) { Ok(x) => { return x; }, Err(e) => { return e.len(); } } return 0; } function main(): i32 { return f(7) * 10 + f(0); }", 74, ""},
+		{"ir-opt-bind-local", "function g(n: i32): Option[i32] { if (n > 0) { return Some(n + 100); } return None; } function f(n: i32): i32 { var r = g(n); match (r) { Some(x) => { return x; }, None => { return 0; } } return 0; } function main(): i32 { return f(5); }", 105, ""},
+		{"ir-opt-bind-param", "function f(o: Option[i32]): i32 { match (o) { Some(x) => { return x * 2; }, None => { return 0; } } return 0; } function main(): i32 { return f(Some(21)) + f(None); }", 42, ""},
+		{"ir-struct-field-nested", "struct Point { x: i32, y: i32 } struct Box { p: Point } function bx(b: Box): i32 { return b.p.x + b.p.y; } function main(): i32 { var b = Box { p: Point { x: 30, y: 12 } }; return bx(b); }", 42, ""},
+		{"ir-struct-field-deep", "struct Inner { v: i32 } struct Mid { inner: Inner, n: i32 } struct Outer { mid: Mid } function f(o: Outer): i32 { return o.mid.inner.v + o.mid.n; } function main(): i32 { var o = Outer { mid: Mid { inner: Inner { v: 100 }, n: 5 } }; return f(o); }", 105, ""},
+		{"ir-forin-i32", "function main(): i32 { var xs = [10, 20, 30, 40]; var sum = 0; for x in xs { sum = sum + x; } return sum; }", 100, ""},
+		{"ir-forin-string", "function main(): i32 { var ss: string[] = [\"a\", \"bb\", \"ccc\", \"dddd\"]; var n = 0; for s in ss { n = n + s.len(); } return n; }", 10, ""},
+		{"ir-enum-struct-payload", "struct BinExpr { left: i32, right: i32 } enum Expr { Lit(i32), Binary(BinExpr) } function eval(e: Expr): i32 { match (e) { Lit(n) => { return n; }, Binary(b) => { return b.left + b.right; } } return 0; } function main(): i32 { return eval(Lit(7)) + eval(Binary(BinExpr { left: 3, right: 9 })); }", 19, ""},
+		{"ir-enum-struct-payload-guard", "struct P { x: i32, y: i32 } enum Shape { Rect(P), Dot } function area(s: Shape): i32 { match (s) { Rect(p) when p.x > 0 => { return p.x * p.y; }, _ => { return 0; } } return 0; } function main(): i32 { return area(Rect(P { x: 4, y: 5 })); }", 20, ""},
+		{"ir-enum-arr-payload-len", "enum E { Items(i32[]), Empty } function f(e: E): i32 { match (e) { Items(xs) => { return xs.len(); }, Empty => { return 0; } } return 0; } function main(): i32 { return f(Items([10, 20, 30])) * 10 + f(Empty); }", 30, ""},
+		{"ir-enum-arr-payload-forin", "enum E { Items(i32[]), Empty } function sum(e: E): i32 { match (e) { Items(xs) => { var t = 0; for x in xs { t = t + x; } return t; }, Empty => { return 0; } } return 0; } function main(): i32 { return sum(Items([5, 10, 15])); }", 30, ""},
+		{"ir-enum-strarr-payload-len", "enum E { Words(string[]), None } function f(e: E): i32 { match (e) { Words(w) => { return w.len(); }, None => { return 0; } } return 0; } function main(): i32 { return f(Words([\"a\", \"bb\", \"ccc\"])) * 10 + f(None); }", 30, ""},
+		{"ir-struct-strarr-field-index", "struct Doc { lines: string[] } function f(d: Doc): i32 { return d.lines[1].len(); } function main(): i32 { var d = Doc { lines: [\"a\", \"bb\", \"ccc\"] }; return f(d); }", 2, ""},
+		{"ir-tuple-str-i32-dotn", "function main(): i32 { var t = (\"hello\", 7); return t.0.len() + t.1; }", 12, ""},
+		{"ir-tuple-struct-dotn", "struct P { x: i32, y: i32 } function main(): i32 { var t = (P { x: 4, y: 5 }, 2); return t.0.x * t.0.y + t.1; }", 22, ""},
+		{"ir-map-i32-len3", "function main(): i32 { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 100); m = m.insert(2, 200); m = m.insert(3, 300); return m.len(); }", 3, ""},
+		{"ir-map-str-keys", "function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert(\"a\", 1); m = m.insert(\"bb\", 2); m = m.insert(\"a\", 9); return m.len(); }", 2, ""},
+		{"ir-map-get-hit", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); match (m.get(7)) { Some(v) => { return v; }, None => { return 0; } } return 9; }", 42, ""},
+		{"ir-map-get-miss", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); match (m.get(999)) { Some(v) => { return v; }, None => { return 5; } } return 9; }", 5, ""},
+		{"ir-map-has", "function main(): i32 { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 1); var r = 0; if (m.has(1)) { r = r + 1; } if (m.has(2)) { r = r + 10; } return r; }", 1, ""},
+		{"ir-map-get-or-hit", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); return m.get_or(7, 0); }", 42, ""},
+		{"ir-map-get-or-miss", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); return m.get_or(999, 5); }", 5, ""},
+		{"ir-map-get-or-strhit", "function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert(\"hi\", 11); return m.get_or(\"hi\", 0); }", 11, ""},
+		{"ir-map-get-or-strmiss", "function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert(\"hi\", 11); return m.get_or(\"no\", 7); }", 7, ""},
+		{"ir-map-keys-sum", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); var ks: i32[] = m.keys(); var s = 0; var i = 0; while (i < ks.len()) { s = s + ks[i]; i = i + 1; } return s; }", 6, ""},
+		{"ir-map-values-sum", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); var vs: i32[] = m.values(); var s = 0; var i = 0; while (i < vs.len()) { s = s + vs[i]; i = i + 1; } return s; }", 60, ""},
+		{"ir-map-forkv-values", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); var s = 0; for (k, v) in m { s = s + v; } return s; }", 60, ""},
+		{"ir-map-forkv-keys", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); var s = 0; for (k, v) in m { s = s + k; } return s; }", 6, ""},
+		{"ir-map-forkv-pair", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); m = m.insert(2, 3); m = m.insert(3, 4); var s = 0; for (k, v) in m { s = s + k * v; } return s; }", 20, ""},
+		{"ir-map-forkv-strkey", "function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert(\"ab\", 1); m = m.insert(\"cde\", 2); var s = 0; for (k, v) in m { s = s + k.len() + v; } return s; }", 8, ""},
+		{"ir-i64-cmp", "function main(): i32 { var x: i64 = 5000000000; var y: i64 = 4000000000; if (x > y) { return 7; } return 0; }", 7, ""},
+		{"ir-i64-add", "function main(): i32 { var a: i64 = 3000000000; var b: i64 = 3000000000; var c: i64 = a + b; if (c > 5000000000) { return 11; } return 0; }", 11, ""},
+		{"ir-i64-mul", "function main(): i32 { var a: i64 = 100000; var b: i64 = 100000; var c: i64 = a * b; if (c > 4000000000) { return 5; } return 0; }", 5, ""},
+		{"ir-i64-sub-neg", "function main(): i32 { var a: i64 = 1000000000; var b: i64 = 2000000000; var c: i64 = a - b; if (c < 0) { return 9; } return 0; }", 9, ""},
+		{"ir-i64-loop", "function main(): i32 { var s: i64 = 0; var i: i32 = 0; while (i < 100000) { s = s + 100000; i = i + 1; } if (s > 4000000000) { return 13; } return 0; }", 13, ""},
+		{"ir-and-true", "function main(): i32 { var x = 5; if (x > 0 && x < 10) { return 7; } return 0; }", 7, ""},
+		{"ir-and-false", "function main(): i32 { var x = 15; if (x > 0 && x < 10) { return 7; } return 0; }", 0, ""},
+		{"ir-or-true", "function main(): i32 { var x = 15; if (x < 0 || x > 0) { return 3; } return 0; }", 3, ""},
+		{"ir-and-or-nest", "function main(): i32 { var a = 1; var b = 0; var c = 5; if (a > 0 && b > 0 || c > 0) { return 9; } return 0; }", 9, ""},
+		{"ir-and-not-operand", "function main(): i32 { var x = 5; if (!(x > 10) && x > 0) { return 4; } return 0; }", 4, ""},
+		{"ir-and-bool-vars", "function main(): i32 { var f = 5 > 3; var g = 2 > 8; if (f && !g) { return 6; } return 0; }", 6, ""},
+		{"ir-strcmp-lt", "function main(): i32 { var a = \"apple\"; var b = \"banana\"; if (a < b) { return 7; } return 0; }", 7, ""},
+		{"ir-strcmp-gt", "function main(): i32 { var a = \"banana\"; var b = \"apple\"; if (a > b) { return 3; } return 0; }", 3, ""},
+		{"ir-strcmp-le-eq", "function main(): i32 { var a = \"abc\"; var b = \"abc\"; if (a <= b) { return 5; } return 0; }", 5, ""},
+		{"ir-strcmp-prefix", "function main(): i32 { var a = \"ab\"; var b = \"abc\"; if (a < b) { return 9; } return 0; }", 9, ""},
+		{"ir-strcmp-ge-false", "function main(): i32 { var a = \"a\"; var b = \"b\"; if (a >= b) { return 11; } return 0; }", 0, ""},
+		{"ir-while-break", "function main(): i32 { var s = 0; var i = 0; while (i < 10) { if (i == 5) { break; } s = s + i; i = i + 1; } return s; }", 10, ""},
+		{"ir-while-continue", "function main(): i32 { var s = 0; var i = 0; while (i < 10) { i = i + 1; if (i % 2 == 1) { continue; } s = s + i; } return s; }", 30, ""},
+		{"ir-while-break-nested", "function main(): i32 { var t = 0; var i = 0; while (i < 3) { var j = 0; while (j < 5) { if (j == 2) { break; } t = t + j; j = j + 1; } i = i + 1; } return t; }", 3, ""},
+		{"ir-while-break-deep-if", "function main(): i32 { var s = 0; var i = 0; while (i < 10) { if (i > 3) { if (i == 4) { break; } } s = s + i; i = i + 1; } return s; }", 6, ""},
+		{"ir-cast-widen", "function main(): i32 { var n = 100000; var x: i64 = n as i64; var y: i64 = x * x; if (y > 4000000000) { return 5; } return 0; }", 5, ""},
+		{"ir-cast-narrow", "function main(): i32 { var big: i64 = 5000000007; var lo = (big as i32); return lo % 100; }", 11, ""},
+		{"ir-cast-mixed", "function main(): i32 { var base: i64 = 4000000000; var i = 5; var s: i64 = base + (i as i64); if (s > 4000000000) { return 7; } return 0; }", 7, ""},
+		{"ir-cast-roundtrip", "function main(): i32 { var n = 42; var x: i64 = n as i64; return (x as i32); }", 42, ""},
+		{"ir-call-8-args", "function add8(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32): i32 { return a+b+c+d+e+f+g+h; } function main(): i32 { return add8(1,2,3,4,5,6,7,8); }", 36, ""},
+		{"ir-method-7-args", "struct P { base: i32 } function (p: P) sum7(a:i32,b:i32,c:i32,d:i32,e:i32,f:i32,g:i32): i32 { return p.base + a+b+c+d+e+f+g; } function main(): i32 { var p = P { base: 10 }; return p.sum7(1,2,3,4,5,6,7); }", 38, ""},
+		{"ir-i64-param", "function dbl(x: i64): i64 { return x * 2; } function main(): i32 { var r: i64 = dbl(3000000000); if (r > 5000000000) { return 7; } return 0; }", 7, ""},
+		{"ir-i64-return", "function big(): i64 { return 4000000000; } function main(): i32 { var x: i64 = big() + 1000000000; if (x > 4000000000) { return 5; } return 0; }", 5, ""},
+		{"ir-i64-param-mixed", "function f(a: i64, b: i32): i64 { return a + (b as i64); } function main(): i32 { var r: i64 = f(4000000000, 5); if (r > 4000000000) { return 9; } return 0; }", 9, ""},
+		{"ir-i64-return-recursion", "function pow2(n: i32): i64 { if (n <= 0) { return 1; } return pow2(n - 1) * 2; } function main(): i32 { if (pow2(33) > 4000000000) { return 13; } return 0; }", 13, ""},
+		{"ir-i64-div", "function main(): i32 { var a: i64 = 12000000000; var b: i64 = 4; var c: i64 = a / b; if (c > 2000000000) { return 7; } return 0; }", 7, ""},
+		{"ir-i64-rem", "function main(): i32 { var a: i64 = 12000000007; var r = (a % 10) as i32; return r; }", 7, ""},
+		{"ir-i64-div-signed", "function main(): i32 { var a: i64 = 0 - 12000000000; var c: i64 = a / 4; if (c < 0) { return 9; } return 0; }", 9, ""},
+		{"ir-arr-slice", "function main(): i32 { var a = [10, 20, 30, 40, 50]; var b = a[1:4]; return b[0] + b[2]; }", 60, ""},
+		{"ir-arr-slice-strarr", "function main(): i32 { var a = [\"x\", \"yy\", \"zzz\", \"w\"]; var b = a[1:3]; return b[0].len() + b[1].len(); }", 5, ""},
+		{"ir-struct-arr-field", "struct Buf { data: i32[], n: i32 } function main(): i32 { var b = Buf { data: [10, 20, 30], n: 3 }; var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; }", 60, ""},
+		{"ir-struct-arr-survives", "struct Buf { data: i32[] } function main(): i32 { var b = Buf { data: [10, 20, 30] }; var other = [99, 99, 99, 99, 99]; return b.data[0] + b.data[2]; }", 40, ""},
+		{"ir-struct-arr-param", "struct Buf { data: i32[], n: i32 } function sum(b: Buf): i32 { var s = 0; var i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; } function main(): i32 { var b = Buf { data: [5, 10, 15], n: 3 }; return sum(b); }", 30, ""},
+		{"ir-strarr-index", "function main(): i32 { var names = [\"foo\", \"bar\", \"hello\"]; return names[0].len() + names[2].len(); }", 8, ""},
+		{"ir-strarr-param", "function f(names: string[]): i32 { return names[0].len(); } function main(): i32 { return f([\"abcd\"]); }", 4, ""},
+		{"ir-strarr-loop", "function main(): i32 { var names = [\"a\", \"bb\", \"ccc\"]; var s = 0; var i = 0; while (i < 3) { s = s + names[i].len(); i = i + 1; } return s; }", 6, ""},
+		// string[]-returning functions (move-on-return; call-site element typing).
+		{"ir-strarr-ret", "function names(): string[] { return [\"a\", \"bb\", \"ccc\"]; } function main(): i32 { var xs = names(); return xs[1].len(); }", 2, ""},
+		{"ir-strarr-ret-direct-index", "function names(): string[] { return [\"a\", \"bb\", \"ccc\"]; } function main(): i32 { return names()[2].len(); }", 3, ""},
+		{"ir-strarr-ret-loop", "function names(): string[] { return [\"a\", \"bb\", \"ccc\", \"dddd\"]; } function main(): i32 { var xs = names(); var i = 0; var s = 0; while (i < xs.len()) { s = s + xs[i].len(); i = i + 1; } return s; }", 10, ""},
+		{"ir-strarr-ret-param", "function id(a: string[]): string[] { return a; } function main(): i32 { var xs = [\"q\", \"ww\", \"eee\"]; var ys = id(xs); return ys[1].len() + ys.len(); }", 5, ""},
+		// Enums + match: scalar-payload + no-payload variant construction and
+		// match dispatch (variant_is on the type-id @0) with payload binding +
+		// wildcard. Non-scalar payloads (string) bail to AST.
+		{"ir-enum-payload", "enum E { A(i32), B } function f(e: E): i32 { match (e) { A(n) => { return n * 2; }, B => { return 9; } } return 0; } function main(): i32 { return f(A(21)); }", 42, ""},
+		{"ir-enum-unit", "enum E { A(i32), B } function f(e: E): i32 { match (e) { A(n) => { return n * 2; }, B => { return 9; } } return 0; } function main(): i32 { return f(B); }", 9, ""},
+		{"ir-enum-three", "enum Shape { Circle(i32), Square(i32), Empty } function area(s: Shape): i32 { match (s) { Circle(r) => { return r + 1; }, Square(w) => { return w * 2; }, Empty => { return 7; } } return 99; } function main(): i32 { return area(Circle(4)) + area(Square(5)) + area(Empty); }", 22, ""},
+		{"ir-enum-wildcard", "enum E { A(i32), B, C } function f(e: E): i32 { match (e) { A(n) => { return n; }, _ => { return 100; } } return 0; } function main(): i32 { return f(B); }", 100, ""},
+		// Methods (receiver = arg 0, static dispatch to $<Type>.<name>).
+		{"ir-method-field", "struct P { x: i32 } function (p: P) get(): i32 { return p.x; } function main(): i32 { var p = P { x: 42 }; return p.get(); }", 42, ""},
+		{"ir-method-with-arg", "struct B { v: i32 } function (b: B) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = B { v: 4 }; return x.scale(3); }", 12, ""},
+		{"ir-method-self-dispatch", "struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function (p: P) quad(): i32 { return p.dbl() * 2; } function main(): i32 { var p = P { x: 5 }; return p.quad(); }", 20, ""},
+		{"ir-method-same-name-two-types", "struct A { n: i32 } struct B { n: i32 } function (a: A) get(): i32 { return a.n + 1; } function (b: B) get(): i32 { return b.n + 100; } function main(): i32 { var a = A { n: 5 }; var b = B { n: 5 }; return a.get() + b.get(); }", 111, ""},
 		{"string-local-print", "function main(): i32 { var s = \"hi\"; print(s); return 0; }", 0, "hi\n"},
 		{"string-reassign", "function main(): i32 { var s = \"a\"; s = \"b\"; write(s); return 0; }", 0, "b"},
 		{"string-two-locals", "function main(): i32 { var a = \"foo\"; var b = \"bar\"; write(a); write(b); return 0; }", 0, "foobar"},
@@ -312,6 +434,10 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"opt-some-payload-add", "function mk(): Option[i32] { return Some(40); } function main(): i32 { match (mk()) { Some(v) => { return v + 2; }, None => { return 0; } } return 1; }", 42, ""},
 		{"result-ok", "function run(): Result[i32, i32] { return Ok(40); } function main(): i32 { match (run()) { Ok(v) => { return v + 2; }, Err(e) => { return e; } } return 1; }", 42, ""},
 		{"result-err", "function run(): Result[i32, i32] { return Err(13); } function main(): i32 { match (run()) { Ok(v) => { return v; }, Err(e) => { return e; } } return 1; }", 13, ""},
+		// errdefer (parse-time desugar, shared by every backend): cleanup runs
+		// only on a `return None`/`Err`, observed via a 1-element i32[] cell.
+		{"errdefer-err-fires", "function f(out: i32[], x: i32): Result[i32, i32] { errdefer out[0] = 9; if (x < 0) { return Err(1); } return Ok(x); } function main(): i32 { var a: i32[] = [0]; match (f(a, -1)) { Ok(v) => {}, Err(e) => {} } return a[0]; }", 9, ""},
+		{"errdefer-ok-no-fire", "function f(out: i32[], x: i32): Result[i32, i32] { errdefer out[0] = 9; if (x < 0) { return Err(1); } return Ok(x); } function main(): i32 { var a: i32[] = [0]; match (f(a, 5)) { Ok(v) => {}, Err(e) => {} } return a[0]; }", 0, ""},
 		{"opt-wildcard", "function mk(): Option[i32] { return None; } function main(): i32 { match (mk()) { Some(v) => { return v; }, _ => { return 99; } } return 1; }", 99, ""},
 		// Match-arm guards (`Pat when <expr> =>`): a true guard runs the arm; a
 		// false guard falls through to the next arm (the guard reads the binding).
@@ -532,17 +658,21 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"strval-built-value", "function main(): i32 { var m = map_new_i32(8); m = m.insert(1, \"x\" + \"y\"); write(m.get_or(1, \"?\")); return 0; }", 0, "xy"},
 		{"strval-len", "function main(): i32 { var m = Map { 1: \"a\", 2: \"b\" }; print_int(m.len()); return 0; }", 0, "2"},
 
-		// Map .delete — tombstone deletion (used slot → 2; the probe skips
-		// past it, set reclaims it, grow drops it).
-		{"map-delete-has", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; m = m.without(1); if (m.has(1)) { print_int(1); } else { print_int(0); } return 0; }", 0, "0"},
-		{"map-delete-keeps-other", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; m = m.without(1); print_int(m.get_or(2, -1)); return 0; }", 0, "20"},
-		{"map-delete-len", "function main(): i32 { var m = Map { 1: 1, 2: 2, 3: 3 }; m = m.without(2); print_int(m.len()); return 0; }", 0, "2"},
-		{"map-delete-missing-noop", "function main(): i32 { var m = Map { 1: 1 }; m = m.without(99); print_int(m.len()); print_int(m.get_or(1, -1)); return 0; }", 0, "11"},
-		{"map-delete-get-none", "function main(): i32 { var m = Map { 1: 10 }; m = m.without(1); match (m.get(1)) { Some(v) => { print_int(v); }, None => { print_int(7); } } return 0; }", 0, "7"},
-		{"map-delete-reinsert", "function main(): i32 { var m = Map { 1: 10 }; m = m.without(1); m = m.insert(1, 99); print_int(m.get_or(1, -1)); print_int(m.len()); return 0; }", 0, "991"},
-		{"map-delete-mid-chain", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 10) { m = m.insert(i, i); i = i + 1; } m = m.without(5); print_int(m.get_or(4, -1)); print_int(m.get_or(6, -1)); print_int(m.has(5)); print_int(m.len()); return 0; }", 0, "4609"},
-		{"map-delete-all-then-reuse", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 30) { m = m.insert(i, i); i = i + 1; } i = 0; while (i < 30) { m = m.without(i); i = i + 1; } print_int(m.len()); m = m.insert(100, 7); print_int(m.get_or(100, -1)); return 0; }", 0, "07"},
-		{"strmap-delete", "function main(): i32 { var m = Map { \"a\": 1, \"b\": 2 }; m = m.without(\"a\"); print_int(m.has(\"a\")); print_int(m.get_or(\"b\", -1)); return 0; }", 0, "02"},
+		// Map .without — tombstone deletion (used slot → 2; the probe skips
+		// past it, set reclaims it, grow drops it). `.without(k)` is typed
+		// `(Map[K,V], boolean)` (the map + whether the key existed), so these
+		// destructure `var (mw, we) = m.without(k)` and keep the map element —
+		// the conforming form the native compiler and register backends require
+		// (`m = m.without(k)` is an E003 type error: tuple ≠ map). #2933.
+		{"map-delete-has", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; var (mw, we) = m.without(1); m = mw; if (m.has(1)) { print_int(1); } else { print_int(0); } return 0; }", 0, "0"},
+		{"map-delete-keeps-other", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; var (mw, we) = m.without(1); m = mw; print_int(m.get_or(2, -1)); return 0; }", 0, "20"},
+		{"map-delete-len", "function main(): i32 { var m = Map { 1: 1, 2: 2, 3: 3 }; var (mw, we) = m.without(2); m = mw; print_int(m.len()); return 0; }", 0, "2"},
+		{"map-delete-missing-noop", "function main(): i32 { var m = Map { 1: 1 }; var (mw, we) = m.without(99); m = mw; print_int(m.len()); print_int(m.get_or(1, -1)); return 0; }", 0, "11"},
+		{"map-delete-get-none", "function main(): i32 { var m = Map { 1: 10 }; var (mw, we) = m.without(1); m = mw; match (m.get(1)) { Some(v) => { print_int(v); }, None => { print_int(7); } } return 0; }", 0, "7"},
+		{"map-delete-reinsert", "function main(): i32 { var m = Map { 1: 10 }; var (mw, we) = m.without(1); m = mw; m = m.insert(1, 99); print_int(m.get_or(1, -1)); print_int(m.len()); return 0; }", 0, "991"},
+		{"map-delete-mid-chain", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 10) { m = m.insert(i, i); i = i + 1; } var (mw, we) = m.without(5); m = mw; print_int(m.get_or(4, -1)); print_int(m.get_or(6, -1)); print_int(m.has(5)); print_int(m.len()); return 0; }", 0, "4609"},
+		{"map-delete-all-then-reuse", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 30) { m = m.insert(i, i); i = i + 1; } i = 0; while (i < 30) { var (mw, we) = m.without(i); m = mw; i = i + 1; } print_int(m.len()); m = m.insert(100, 7); print_int(m.get_or(100, -1)); return 0; }", 0, "07"},
+		{"strmap-delete", "function main(): i32 { var m = Map { \"a\": 1, \"b\": 2 }; var (mw, we) = m.without(\"a\"); m = mw; print_int(m.has(\"a\")); print_int(m.get_or(\"b\", -1)); return 0; }", 0, "02"},
 
 		// Map .keys() / .values() — snapshot arrays (probe order, so tests
 		// assert order-independent facts: lengths and sums).
@@ -550,7 +680,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"map-values-len", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; print_int(m.values().len()); return 0; }", 0, "2"},
 		{"map-values-sum", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; var s: i32 = 0; for v in m.values() { s = s + v; } print_int(s); return 0; }", 0, "60"},
 		{"map-keys-sum", "function main(): i32 { var m = Map { 4: 1, 5: 1, 6: 1 }; var s: i32 = 0; for k in m.keys() { s = s + k; } print_int(s); return 0; }", 0, "15"},
-		{"map-values-sum-after-delete", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; m = m.without(2); var s: i32 = 0; for v in m.values() { s = s + v; } print_int(s); return 0; }", 0, "40"},
+		{"map-values-sum-after-delete", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; var (mw, we) = m.without(2); m = mw; var s: i32 = 0; for v in m.values() { s = s + v; } print_int(s); return 0; }", 0, "40"},
 		{"map-empty-keys-len", "function main(): i32 { var m = map_new_i32(8); print_int(m.keys().len()); return 0; }", 0, "0"},
 		{"map-keys-sum-grow", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 1; while (i <= 20) { m = m.insert(i, i); i = i + 1; } var s: i32 = 0; for k in m.keys() { s = s + k; } print_int(s); return 0; }", 0, "210"},
 		{"strmap-keys-charcount", "function main(): i32 { var m = Map { \"ab\": 1, \"cde\": 2 }; var n: i32 = 0; for k in m.keys() { n = n + k.len(); } print_int(n); return 0; }", 0, "5"},
@@ -561,7 +691,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"map-forkv-sum-both", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; var s: i32 = 0; for (k, v) in m { s = s + k + v; } print_int(s); return 0; }", 0, "66"},
 		{"map-forkv-keys-only", "function main(): i32 { var m = Map { 4: 100, 5: 100, 6: 100 }; var s: i32 = 0; for (k, v) in m { s = s + k; } print_int(s); return 0; }", 0, "15"},
 		{"map-forkv-count", "function main(): i32 { var m = Map { 1: 1, 2: 2, 3: 3, 4: 4 }; var n: i32 = 0; for (k, v) in m { n = n + 1; } print_int(n); return 0; }", 0, "4"},
-		{"map-forkv-after-delete", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; m = m.without(2); var s: i32 = 0; for (k, v) in m { s = s + v; } print_int(s); return 0; }", 0, "40"},
+		{"map-forkv-after-delete", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; var (mw, we) = m.without(2); m = mw; var s: i32 = 0; for (k, v) in m { s = s + v; } print_int(s); return 0; }", 0, "40"},
 		{"map-forkv-empty", "function main(): i32 { var m = map_new_i32(8); var n: i32 = 0; for (k, v) in m { n = n + 1; } print_int(n); return 0; }", 0, "0"},
 		{"map-forkv-grow", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 1; while (i <= 20) { m = m.insert(i, i * 2); i = i + 1; } var s: i32 = 0; for (k, v) in m { s = s + v; } print_int(s); return 0; }", 0, "420"},
 		{"map-forkv-break", "function main(): i32 { var m = Map { 1: 1, 2: 2, 3: 3 }; var n: i32 = 0; for (k, v) in m { n = n + 1; if (n == 2) { break; } } print_int(n); return 0; }", 0, "2"},
@@ -683,6 +813,21 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"enum-construct-match", "enum Shape { Circle(i32), Square(i32) } function main(): i32 { var a: Shape = Circle(3); match (a) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } return 0; }", 27, ""},
 		{"enum-second-variant", "enum Shape { Circle(i32), Square(i32) } function main(): i32 { var a: Shape = Square(4); match (a) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } return 0; }", 16, ""},
 		{"enum-unit-variant", "enum Opt { Has(i32), Nil } function main(): i32 { var n: Opt = Nil; match (n) { Has(v) => { return v; }, Nil => { return 9; } } return 0; }", 9, ""},
+		// Wide enum payload slots (S1): a single i64 / f64 variant payload
+		// stores + binds at full width (8-byte slot), so a value above 2^31 (or
+		// a float's fractional bits) round-trips — a 4-byte i32 slot would
+		// truncate it. The bound `x` is a 64-bit local (declared i64/f64,
+		// recognised by is_i64_expr / is_f64_expr).
+		{"enum-i64-payload", "enum Box { Big(i64) } function main(): i32 { var b: Box = Big(5000000000); match (b) { Big(x) => { if (x == 5000000000) { return 42; } return 1; } } return 0; }", 42, ""},
+		{"enum-i64-payload-arith", "enum Box { Big(i64) } function main(): i32 { var b: Box = Big(4200000000); match (b) { Big(x) => { return (x / 100000000) as i32; } } return 0; }", 42, ""},
+		{"enum-f64-payload", "enum FBox { F(f64) } function main(): i32 { var b: FBox = F(3.5); match (b) { F(x) => { return (x * 4.0) as i32; } } return 0; }", 14, ""},
+		// Multi-payload variants (S4): a case carries >1 payload, stored at
+		// successive 4-byte slots and bound by a multi-binding match `V(a, b, …)`.
+		// The parser keeps every payload (`__ev`, `__ev1`, …); the checker's E015
+		// allows the matching arity; codegen binds each field at struct_field_off(j).
+		{"enum-multi-payload-2", "enum Ev { Pair(i32, i32), Single(i32), Stop } function main(): i32 { var p: Ev = Pair(3, 4); match (p) { Pair(a, b) => { return a * 10 + b; }, Single(x) => { return x; }, Stop => { return 0; } } return 0; }", 34, ""},
+		{"enum-multi-payload-3", "enum T3 { Tri(i32, i32, i32), Z } function main(): i32 { var t: T3 = Tri(1, 2, 3); match (t) { Tri(a, b, c) => { return a * 100 + b * 10 + c; }, Z => { return 0; } } return 0; }", 123, ""},
+		{"enum-multi-payload-second-arm", "enum Ev { Pair(i32, i32), Single(i32), Stop } function main(): i32 { var p: Ev = Single(9); match (p) { Pair(a, b) => { return a + b; }, Single(x) => { return x * 5; }, Stop => { return 0; } } return 0; }", 45, ""},
 		// Enum receiver method — dispatches via the enum type (a var typed
 		// `Shape` now records `Shape`, so its methods resolve).
 		{"enum-method", "enum Shape { Circle(i32), Square(i32) } function (s: Shape) area(): i32 { match (s) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } } function main(): i32 { var a: Shape = Circle(3); var b: Shape = Square(4); return a.area() + b.area(); }", 43, ""},

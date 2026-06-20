@@ -51,7 +51,7 @@ until step 5.
 
 ### Step 1 — Component Model scaffolding
 
-- Add `--wasi-preview2` flag to the `lang` CLI (off by default).
+- Add `--wasi-preview2` flag to the `fern` CLI (off by default).
 - When the flag is on, post-process the existing preview-1 module
   with `wasm-tools component new --adapt
   wasi_snapshot_preview1=$ADAPTER` to produce a Component Model
@@ -170,7 +170,7 @@ wasmtime allows `create-tcp-socket` and `start-bind`.
 
 A new compile mode: `fern -target wasi-http prog.fern` produces
 a component implementing `wasi:http/incoming-handler.handle`.
-The lang program declares:
+The Fern program declares:
 
 ```
 function handle(req: HttpRequest): HttpResponse {
@@ -196,8 +196,8 @@ Auto-injected struct shape:
   is the i32 HTTP status code; `body` is written verbatim.
 
 Headers, query parameters, and trailers are deferred — they
-need a `fields`-shaped multi-map at the lang level, which is
-its own design decision (lang doesn't have a `map` type yet).
+need a `fields`-shaped multi-map at the Fern level, which is
+its own design decision (Fern doesn't have a `map` type yet).
 For the targeted use cases (Fastly-Compute-style edge handlers
 that mostly consume the body, route by path, and emit JSON or
 HTML), this surface is enough to ship real programs.
@@ -299,7 +299,7 @@ Two latent bugs surfaced and got fixed in passing:
   (the checker forgot to set `BinaryExpr.IsFloat` on equality
   ops). Never hit before because the preview-1 path observed
   floats via `wasmtime --invoke main`, never compared them in
-  lang.
+  Fern.
 - `cabi_realloc` referenced `$__fern_alloc` unconditionally but
   the alloc helper was gated on `needsArrays || needsStructs`.
   Tiny programs that didn't use arrays / structs failed to
@@ -329,7 +329,7 @@ Two latent bugs surfaced and got fixed in passing:
 - `runWasm`-style helpers parse main's i32 return value off the
   trailing line of stdout — `_start` formats it via
   `int_to_string` + `print` when `PrintMainResult` is set.
-- Float-arithmetic tests express the assertion in lang itself
+- Float-arithmetic tests express the assertion in Fern itself
   (return 1 on match, 0 otherwise) since float values can't ride
   the i32 stdout channel.
 
@@ -337,7 +337,7 @@ Two latent bugs surfaced and got fixed in passing:
 
 - **Adapter sourcing.** Vendoring the adapter binary in-repo keeps
   builds offline-friendly but bloats clones. Alternative: have the
-  `lang` CLI download it on first preview-2 build and cache in
+  `fern` CLI download it on first preview-2 build and cache in
   `~/.cache/lang/`. Decision deferred to step 2.
 - **Multi-target binary names.** Currently
   `fern -o prog prog.fern` produces a single output. Preview 2 mode

@@ -12,6 +12,64 @@ name: Test e2e self-host
 # both runners means each backend-specific test exercises its
 # native toolchain rather than skipping for lack of qemu /
 # cross-gcc.
+#
+# SHARDED by test name. There are ~450 TestSelfHost* functions and
+# many build a full self-host driver (compiling the ~35k-line
+# self-host compiler through the production backend, then linking),
+# so the unsharded job was the CI long pole (~9.5 min on x86, where
+# the arm64-backed tests additionally run under qemu). Each shard
+# claims `index % N == shard` over the sorted `go test -list` output,
+# so the set splits ~evenly and new tests are picked up
+# automatically. Crossed with the per-arch matrix this gives 2×N
+# parallel jobs vs the previous single ~9.5 min job. `go test -list`
+# builds the test binary once; the gotestsum run reuses that cached
+# build.
+#
+# SHARD COUNT — why 8, not 16 or 4. An earlier revision used 16
+# shards (32 jobs). Measured per-job timing showed that was past the
+# point of diminishing returns: with 32 jobs all dispatched at once,
+# runner-queue wait dominated (jobs on the arm64 lane ran in ~30s but
+# queued ~4-5 min) and each job *also* re-paid a fixed cost it can't
+# share — the test-binary build (`go test -list` recompiles the e2e
+# package; ~2.5 min, paid once per job). Net: ~50 billable job-minutes
+# and a 5-13 min wall-clock long pole for <10 min of real testing.
+#
+# Going the other way (4 shards) over-corrected: the x86_64 self-host
+# backend tests are the entire long pole (~23 min of work — the arm64
+# runner skips them for lack of qemu-x86_64, and the x86 runner skips
+# the arm64 backend tests, so each arch concentrates its native
+# backend's heavy self-host driver builds). Split 4 ways the worst
+# x86 shard ran 9m51s — 9 seconds under the then-10-min job timeout, so
+# one new test would tip CI over.
+#
+# Fourteen is the current balance. Eight had crept too close to the
+# edge (worst x86 shard ~9m51s) and #3362 moved to 10; then widening
+# the IR subset (the self-host compiler now lowers far more of itself
+# through the IR path, so the compile-heavy fixpoint / bootstrap /
+# frontend-bundle tests run longer) repeatedly tipped shard 7 over the
+# timeout (cancelled mid-run) even at 12. Two changes restored the
+# margin: #3432 raised the per-job `timeout-minutes` 10 -> 20, and the
+# shard count moved 12 -> 14 to cut the worst-shard wall-clock. At 14:
+# ~23 min / 14 ≈ 1.6 min of tests + the ~2.5 min build ≈ ~4 min nominal
+# (~9 min worst-case with round-robin imbalance + the qemu-arm64
+# fixpoint long pole), comfortably inside the 20-min timeout, at the
+# cost of 4 more jobs (2 per arch) vs 12 — still short of the 16-shard
+# queue-contention regime.
+# Bump N (here and in NSHARD below) only if the worst x86 shard's
+# wall-clock creeps toward the timeout; drop it only if all shards
+# finish well under ~4 min.
+#
+# TIMEOUT vs more shards. At 12, widening the IR subset further (enum-array
+# struct fields, #3431 — the self-host compiler lowers still more of itself
+# through the compile-heavy IR path) tipped shard 7 over the 10-min timeout
+# again (cancelled mid-run). Past ~12 shards the 16-shard regime's runner-queue
+# contention + the unshareable ~2.5-min per-job test-binary build dominate, so
+# adding shards stops helping. The IR migration is still in flight (the heaviest
+# fixpoint / bootstrap tests keep getting slower until the whole compiler routes
+# through IR), so the robust lever is a generous per-job timeout: 20 min sits
+# well above the worst shard's real ~10-11 min yet well under a hung-test
+# pathology. Drop it back toward 10 once the IR migration settles and shards
+# finish well under ~5 min.
 
 on:
   pull_request:
@@ -22,14 +80,50 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { runner: ubuntu-latest,    host: x86_64  }
-          - { runner: ubuntu-24.04-arm, host: aarch64 }
-    name: test-e2e-selfhost-${{ matrix.host }}
-    runs-on: ${{ matrix.runner }}
+        host:
+          - { runner: ubuntu-latest,    name: x86_64  }
+          - { runner: ubuntu-24.04-arm, name: aarch64 }
+        # Fourteen shards (28 jobs across the per-arch matrix). See the
+        # SHARD COUNT note above for why this is 14.
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+    name: test-e2e-selfhost-${{ matrix.host.name }}-shard${{ matrix.shard }}
+    runs-on: ${{ matrix.host.runner }}
+    # 20, not 10: the IR-subset migration keeps making the compile-heavy
+    # self-host shards slower (shard 7 hit the old 10-min limit even at 12
+    # shards). See the TIMEOUT note above. Revisit once the migration settles.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-fern
         with:
           gotestsum: "true"
-      - run: gotestsum --format pkgname-and-test-fails -- -run '^TestSelfHost' ./internal/e2e/
+      - name: go test (self-host shard ${{ matrix.shard }}/14)
+        env:
+          SHARD: "${{ matrix.shard }}"
+          NSHARD: "14"
+        run: |
+          set -euo pipefail
+          # Sorted list of every TestSelfHost* function, partitioned
+          # round-robin by list index so each shard runs a disjoint
+          # ~1/N slice. Sorting makes the partition deterministic.
+          mapfile -t ALL < <(go test ./internal/e2e/ -list '^TestSelfHost' | grep '^TestSelfHost' | sort)
+          SEL=()
+          for i in "${!ALL[@]}"; do
+            if [ $(( i % NSHARD )) -eq "$SHARD" ]; then SEL+=("${ALL[$i]}"); fi
+          done
+          if [ ${#SEL[@]} -eq 0 ]; then
+            echo "no TestSelfHost tests for shard $SHARD/$NSHARD"; exit 0
+          fi
+          # Anchored alternation: ^(A|B|C)$ matches each top-level test
+          # exactly (and runs all of its subtests).
+          PAT="^($(IFS='|'; echo "${SEL[*]}"))\$"
+          echo "shard $SHARD/$NSHARD: ${#SEL[@]} tests: ${SEL[*]}"
+          # -timeout 18m, NOT the Go default 600s. timeout-minutes (20) is the
+          # JOB budget, but `go test`'s own default test timeout is 10m, so a
+          # shard whose real work runs ~10-11 min (the IR-subset migration keeps
+          # pushing the compile-heavy self-host shards slower — see the TIMEOUT
+          # note above) gets killed at 600s with `panic: test timed out after
+          # 10m0s` even though the job had 20 min to spend. Set the test timeout
+          # under the job budget so a genuine hang still fails cleanly (~18m)
+          # while legitimately slow shards run to completion.
+          gotestsum --format pkgname-and-test-fails -- -run "$PAT" -timeout 18m ./internal/e2e/

@@ -34,8 +34,8 @@ func literalAllocBumpSrc(n string) string {
     var acc: i32 = 0;
     while (i < ` + n + `) {
         var b: u8[] = __alloc_u8(8);
-        b[0] = (i % 200) as u8;
-        b[1] = ((i + 1) % 200) as u8;
+        b = b.with(0, (i % 200) as u8);
+        b = b.with(1, ((i + 1) % 200) as u8);
         acc = acc + (b[0] as i32) + (b[1] as i32);
         i = i + 1;
     }

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -56,6 +57,27 @@ func TestSelfHostMapLiteralX86_64(t *testing.T) {
 			}
 		})
 	}
+
+	// Path probe: a `Map { … }` literal now routes through the IR path (the
+	// chained map_new().insert()… expression lowers via expr_map_kind), not the
+	// AST fallback. Exit-code correctness alone wouldn't prove this — the AST
+	// path produced the same values — so assert the routing directly.
+	probeSrc, err := os.ReadFile("../../examples/self_host/asm_pathprobe_run.fern")
+	if err != nil {
+		t.Fatalf("read asm_pathprobe_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_pathprobe_run.fern"), probeSrc, 0o644); err != nil {
+		t.Fatalf("write asm_pathprobe_run.fern: %v", err)
+	}
+	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "probe")
+	for _, tc := range mapLiteralCases {
+		t.Run("routes-ir/"+tc.name, func(t *testing.T) {
+			out := runCapture(t, gcc, runner, probeBin, []byte(tc.src))
+			if got := strings.TrimSpace(string(out)); got != "ir" {
+				t.Errorf("%s: path probe = %q, want \"ir\" (map literal bailed to the AST path)", tc.name, got)
+			}
+		})
+	}
 }
 
 // TestSelfHostMapLiteralArm64 — CI-gated arm64 counterpart.
@@ -63,7 +85,7 @@ func TestSelfHostMapLiteralArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "asmcore.fern", "lexer.fern", "parser.fern", "asm_arm64.fern", "asm_arm64_run.fern"} {
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm_arm64_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

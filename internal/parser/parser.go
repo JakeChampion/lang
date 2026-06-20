@@ -264,8 +264,49 @@ func (p *parser) parseProgram() *ast.Program {
 		// Public flag after the decl is built. A bare `pub` without
 		// a following decl is a parse error.
 		isPub := false
+		isPackage := false
 		if p.match(lexer.Keyword, "pub") {
 			pubTok := p.advance()
+			// `pub(package) <decl>` — package-scoped visibility: exported to
+			// other modules in the same package (directory / stdlib) but not
+			// to outside consumers. `package` is a contextual ident.
+			if _, ok := p.accept(lexer.Punct, "("); ok {
+				if _, err := p.expect(lexer.Ident, "package"); err != nil {
+					p.errors = append(p.errors, p.errorf(pubTok.Pos, "`pub(...)` only supports `pub(package)`"))
+					p.syncToTopLevel()
+					if p.i == before {
+						p.advance()
+					}
+					continue
+				}
+				if _, err := p.expect(lexer.Punct, ")"); err != nil {
+					p.errors = append(p.errors, err)
+					p.syncToTopLevel()
+					if p.i == before {
+						p.advance()
+					}
+					continue
+				}
+				isPackage = true
+			}
+			// `pub use "path".{name, …};` — a re-export. Handled here
+			// rather than as a normal `pub <decl>` because it produces a
+			// PubUse, not a Public-flagged declaration.
+			if p.match(lexer.Keyword, "use") {
+				pu, err := p.parsePubUse(pubTok.Pos)
+				if err != nil {
+					p.errors = append(p.errors, err)
+					p.syncToTopLevel()
+					if p.i == before {
+						p.advance()
+					}
+					continue
+				}
+				if pu != nil {
+					prog.PubUses = append(prog.PubUses, pu)
+				}
+				continue
+			}
 			if !p.match(lexer.Keyword, "function") &&
 				!p.match(lexer.Keyword, "struct") &&
 				!p.match(lexer.Keyword, "enum") &&
@@ -282,7 +323,9 @@ func (p *parser) parseProgram() *ast.Program {
 				}
 				continue
 			}
-			isPub = true
+			// `pub` exports; `pub(package)` is package-scoped (isPackage set
+			// above) and is NOT also Public.
+			isPub = !isPackage
 		}
 		// `fip` is a contextual modifier on a function decl (`pub fip
 		// function …` / `fip function …`): the checker (E053) verifies the
@@ -323,6 +366,7 @@ func (p *parser) parseProgram() *ast.Program {
 			}
 			if rd != nil {
 				rd.Public = isPub
+				rd.PackageScoped = isPackage
 				rd.ImportIface = importIface
 				rd.ImportWITName = importWIT
 				if len(derives) > 0 {
@@ -372,6 +416,7 @@ func (p *parser) parseProgram() *ast.Program {
 			}
 			if sd != nil {
 				sd.Public = isPub
+				sd.PackageScoped = isPackage
 				sd.Derives = derives
 				sd.Opaque = isOpaque
 				prog.Structs = append(prog.Structs, sd)
@@ -398,6 +443,7 @@ func (p *parser) parseProgram() *ast.Program {
 			}
 			if cd != nil {
 				cd.Public = isPub
+				cd.PackageScoped = isPackage
 				prog.Consts = append(prog.Consts, cd)
 			}
 			continue
@@ -414,6 +460,7 @@ func (p *parser) parseProgram() *ast.Program {
 			}
 			if ed != nil {
 				ed.Public = isPub
+				ed.PackageScoped = isPackage
 				ed.Derives = derives
 				prog.Enums = append(prog.Enums, ed)
 			}
@@ -440,6 +487,7 @@ func (p *parser) parseProgram() *ast.Program {
 			}
 			if ud != nil {
 				ud.Public = isPub
+				ud.PackageScoped = isPackage
 				prog.Unions = append(prog.Unions, ud)
 			}
 			continue
@@ -456,6 +504,7 @@ func (p *parser) parseProgram() *ast.Program {
 			}
 			if td != nil {
 				td.Public = isPub
+				td.PackageScoped = isPackage
 				prog.Traits = append(prog.Traits, td)
 			}
 			continue
@@ -490,6 +539,7 @@ func (p *parser) parseProgram() *ast.Program {
 		}
 		if fn != nil {
 			fn.Public = isPub
+			fn.PackageScoped = isPackage
 			fn.Fip = isFip
 			if importIface != "" {
 				if fn.Body != nil {
@@ -553,6 +603,45 @@ func (p *parser) parseImport() (*ast.Import, error) {
 	}, nil
 }
 
+// parsePubUse parses `pub use "<path>" . { name1, name2, … } ;` — a
+// re-export of the named public symbols from the target module. The
+// leading `pub` is already consumed (its position is pubPos); the `use`
+// keyword is at the cursor. See docs/PRELUDE-TO-MODULES.md.
+func (p *parser) parsePubUse(pubPos ast.Position) (*ast.PubUse, error) {
+	p.advance() // use
+	pathTok, err := p.expect(lexer.String, "")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, "."); err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, "{"); err != nil {
+		return nil, err
+	}
+	var names []string
+	for !p.match(lexer.Punct, "}") {
+		nameTok, err := p.expectMemberName()
+		if err != nil {
+			return nil, err
+		}
+		names = append(names, nameTok.Text)
+		if _, ok := p.accept(lexer.Punct, ","); !ok {
+			break
+		}
+	}
+	if _, err := p.expect(lexer.Punct, "}"); err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, ";"); err != nil {
+		return nil, err
+	}
+	if len(names) == 0 {
+		return nil, p.errorf(pubPos, "`pub use` must name at least one symbol, e.g. `pub use \"std/string\".{split};`")
+	}
+	return &ast.PubUse{P: pubPos, Path: pathTok.Text, Names: names}, nil
+}
+
 // importLocalName returns the binding name a qualified call uses
 // for an imported module — `import "./math/vec";` → `vec`. Drops
 // any directory prefix and a trailing `.fern` extension.
@@ -614,16 +703,47 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Optional trait type parameters: `trait From[T] { … }`. Bound to the
+	// trait's method signatures; each `impl From[Arg] for T` supplies the
+	// arg. Names only for now (bounds parsed but ignored). See docs/TRAITS.md.
+	var typeParams []string
+	if p.match(lexer.Punct, "[") {
+		typeParams, _, err = p.parseTypeParamList()
+		if err != nil {
+			return nil, err
+		}
+	}
+	// Optional supertraits: `trait Ord: Eq + Hash { … }`. Same `: Trait
+	// (+ Trait)*` grammar as a type-parameter bound (qualifiers allowed).
+	supertraits, err := p.parseOptBounds()
+	if err != nil {
+		return nil, err
+	}
 	if _, err := p.expect(lexer.Punct, "{"); err != nil {
 		return nil, err
 	}
-	td := &ast.TraitDecl{P: kw.Pos, Name: name.Text, NamePos: name.Pos}
+	td := &ast.TraitDecl{P: kw.Pos, Name: name.Text, NamePos: name.Pos, Supertraits: supertraits, TypeParams: typeParams}
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
+		// Associated type declaration: `type Item;`. Referenced in method
+		// signatures as `Self::Item`; each impl binds it with
+		// `type Item = …`. See docs/ASSOCIATED-TYPES.md.
+		if p.match(lexer.Keyword, "type") {
+			p.advance()
+			atName, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, err
+			}
+			if _, err := p.expect(lexer.Punct, ";"); err != nil {
+				return nil, err
+			}
+			td.AssocTypes = append(td.AssocTypes, atName.Text)
+			continue
+		}
 		mkw, err := p.expect(lexer.Keyword, "function")
 		if err != nil {
 			return nil, err
 		}
-		mname, err := p.expect(lexer.Ident, "")
+		mname, err := p.expectMemberName()
 		if err != nil {
 			return nil, err
 		}
@@ -661,10 +781,11 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 		if _, err := p.expect(lexer.Punct, ")"); err != nil {
 			return nil, err
 		}
-		if len(params) == 0 || params[0].Name != "self" {
-			return nil, p.errorf(mkw.Pos,
-				"trait method %q must take `self: Self` as its first parameter", mname.Text)
-		}
+		// A method whose first parameter isn't `self` is an *associated
+		// function* (`Type.f(args)`, no receiver) — typically a
+		// constructor returning `Self`. Ordinary methods still require a
+		// leading `self`.
+		assoc := len(params) == 0 || params[0].Name != "self"
 		var ret ast.Type = ast.VoidType{}
 		if _, ok := p.accept(lexer.Punct, ":"); ok {
 			t, err := p.parseType()
@@ -673,11 +794,21 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 			}
 			ret = t
 		}
-		if _, err := p.expect(lexer.Punct, ";"); err != nil {
+		// A trait method either ends at `;` (an abstract signature every
+		// impl must provide) or carries a `{ … }` default body that impls
+		// inherit when they omit it (see docs/TRAITS.md).
+		var body *ast.Block
+		if p.match(lexer.Punct, "{") {
+			b, err := p.parseBlock()
+			if err != nil {
+				return nil, err
+			}
+			body = b
+		} else if _, err := p.expect(lexer.Punct, ";"); err != nil {
 			return nil, err
 		}
 		td.Methods = append(td.Methods, ast.TraitMethod{
-			P: mkw.Pos, Name: mname.Text, Params: params, Result: ret,
+			P: mkw.Pos, Name: mname.Text, Params: params, Result: ret, Assoc: assoc, Body: body,
 		})
 	}
 	if _, err := p.expect(lexer.Punct, "}"); err != nil {
@@ -716,6 +847,25 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 		return nil, nil, err
 	}
 	tname := p.maybeQualify(tnameTok.Text)
+	// Optional trait type arguments: `impl From[i32] for Celsius`. Bound
+	// positionally to the trait's type parameters. See docs/TRAITS.md.
+	var traitArgs []ast.Type
+	if p.match(lexer.Punct, "[") {
+		p.advance() // consume `[`
+		for {
+			at, err := p.parseType()
+			if err != nil {
+				return nil, nil, err
+			}
+			traitArgs = append(traitArgs, at)
+			if _, ok := p.accept(lexer.Punct, ","); !ok {
+				break
+			}
+		}
+		if _, err := p.expect(lexer.Punct, "]"); err != nil {
+			return nil, nil, err
+		}
+	}
 	if _, err := p.expect(lexer.Keyword, "for"); err != nil {
 		return nil, nil, err
 	}
@@ -730,9 +880,34 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 	if _, err := p.expect(lexer.Punct, "{"); err != nil {
 		return nil, nil, err
 	}
-	id := &ast.ImplDecl{P: kw.Pos, Trait: tname, TraitPos: tnameTok.Pos, Type: implType, TypePos: typePos, TypeParams: implTypeParams}
+	id := &ast.ImplDecl{P: kw.Pos, Trait: tname, TraitPos: tnameTok.Pos, Type: implType, TypePos: typePos, TypeParams: implTypeParams, Bounds: implBounds, TraitArgs: traitArgs}
 	var methods []*ast.FuncDecl
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
+		// Associated-type binding: `type Item = T;`. Records the concrete
+		// type the impl fixes for the trait's associated type. `Self` in T
+		// resolves to the impl type. See docs/ASSOCIATED-TYPES.md.
+		if p.match(lexer.Keyword, "type") {
+			p.advance()
+			atName, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, nil, err
+			}
+			if _, err := p.expect(lexer.Punct, "="); err != nil {
+				return nil, nil, err
+			}
+			atType, err := p.parseType()
+			if err != nil {
+				return nil, nil, err
+			}
+			if _, err := p.expect(lexer.Punct, ";"); err != nil {
+				return nil, nil, err
+			}
+			if id.AssocTypeBindings == nil {
+				id.AssocTypeBindings = map[string]ast.Type{}
+			}
+			id.AssocTypeBindings[atName.Text] = ast.SubstSelf(atType, implType)
+			continue
+		}
 		fn, err := p.parseFunction()
 		if err != nil {
 			return nil, nil, err
@@ -741,22 +916,33 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 			return nil, nil, p.errorf(fn.P,
 				"impl method %q must not declare a receiver clause; its first parameter is `self: Self`", fn.Name)
 		}
-		if len(fn.Params) == 0 || fn.Params[0].Name != "self" {
-			return nil, nil, p.errorf(fn.P,
-				"impl method %q must take `self: Self` as its first parameter", fn.Name)
-		}
+		// A receiver-less impl method is an *associated function*: no
+		// `self`, called as `Type.f(args)`. Substitute Self across the
+		// signature and stamp AssocType so the checker hoists it to
+		// `__assoc_<Type>_<name>` and resolves type-qualified call sites.
+		assoc := len(fn.Params) == 0 || fn.Params[0].Name != "self"
 		// Substitute Self -> the concrete impl type across the whole
-		// signature, then peel `self` off as the receiver so the
-		// checker's receiver-hoist mangles it to
+		// signature, then (for an ordinary method) peel `self` off as the
+		// receiver so the checker's receiver-hoist mangles it to
 		// __method_<Type>_<name> exactly like a hand-written method.
 		for i := range fn.Params {
 			fn.Params[i].Type = ast.SubstSelf(fn.Params[i].Type, implType)
 		}
 		fn.ReturnType = ast.SubstSelf(fn.ReturnType, implType)
-		recv := fn.Params[0]
-		recv.Type = implType
-		fn.Receiver = &recv
-		fn.Params = fn.Params[1:]
+		if assoc {
+			if st, ok := implType.(ast.StructType); ok {
+				fn.AssocType = st.Name
+			} else if et, ok := implType.(ast.EnumType); ok {
+				fn.AssocType = et.Name
+			} else {
+				fn.AssocType = implType.String()
+			}
+		} else {
+			recv := fn.Params[0]
+			recv.Type = implType
+			fn.Receiver = &recv
+			fn.Params = fn.Params[1:]
+		}
 		// A parametric impl makes every method generic over the impl's
 		// type params: the receiver type (`Box[T]`), the other params,
 		// and the body all reference `T`, so the method must carry the
@@ -892,6 +1078,20 @@ func (p *parser) parseResourceDecl() (*ast.ResourceDecl, error) {
 	return &ast.ResourceDecl{P: kw.Pos, Name: nameTok.Text}, nil
 }
 
+// expectMemberName parses a member name (a function/method name, a trait
+// method name, or a field/method after `.`). It accepts a normal Ident
+// and also the handful of reserved words that are usable as member names
+// in these positions without ambiguity — currently just `default`, so
+// `Type.default()` (the `@derive(Default)` constructor) and a hand-written
+// `function default(): Self` both work even though `default` is a switch
+// keyword. The keyword stays reserved everywhere else.
+func (p *parser) expectMemberName() (lexer.Token, error) {
+	if tok, ok := p.accept(lexer.Keyword, "default"); ok {
+		return tok, nil
+	}
+	return p.expect(lexer.Ident, "")
+}
+
 // maybeQualify consumes an optional `.ident` suffix and returns the
 // possibly-qualified name (`mod.Trait`). modload rewrites the qualifier
 // to the imported module's mangled prefix. The leading identifier has
@@ -913,26 +1113,46 @@ func (p *parser) maybeQualify(first string) string {
 // impl (`impl[T: Bound] Trait for Box[T]`) parse paths so all three
 // accept the same bound syntax. See docs/TRAITS.md.
 func (p *parser) parseTypeParamList() ([]string, map[string][]string, error) {
+	tp, b, _, err := p.parseTypeParamListWithArgs()
+	return tp, b, err
+}
+
+// parseTypeParamListWithArgs is parseTypeParamList plus the per-bound type
+// arguments (`[T: From[i32]]`), parallel to the bounds map. See docs/TRAITS.md.
+func (p *parser) parseTypeParamListWithArgs() ([]string, map[string][]string, map[string][][]ast.Type, error) {
 	if _, err := p.expect(lexer.Punct, "["); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	var typeParams []string
 	var bounds map[string][]string
+	var boundArgs map[string][][]ast.Type
 	for {
 		pname, err := p.expect(lexer.Ident, "")
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		typeParams = append(typeParams, pname.Text)
-		bs, err := p.parseOptBounds()
+		bs, ba, err := p.parseOptBoundsWithArgs()
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if len(bs) > 0 {
 			if bounds == nil {
 				bounds = map[string][]string{}
 			}
 			bounds[pname.Text] = bs
+			hasArgs := false
+			for _, a := range ba {
+				if len(a) > 0 {
+					hasArgs = true
+				}
+			}
+			if hasArgs {
+				if boundArgs == nil {
+					boundArgs = map[string][][]ast.Type{}
+				}
+				boundArgs[pname.Text] = ba
+			}
 		}
 		if _, ok := p.accept(lexer.Punct, ","); ok {
 			continue
@@ -940,31 +1160,59 @@ func (p *parser) parseTypeParamList() ([]string, map[string][]string, error) {
 		break
 	}
 	if _, err := p.expect(lexer.Punct, "]"); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return typeParams, bounds, nil
+	return typeParams, bounds, boundArgs, nil
 }
 
 // parseOptBounds parses an optional trait-bound list on a type
 // parameter: `: Display + Eq` (bounds may be qualified, `mod.Trait`).
 // Returns nil when no `:` follows. See docs/TRAITS.md.
 func (p *parser) parseOptBounds() ([]string, error) {
+	bs, _, err := p.parseOptBoundsWithArgs()
+	return bs, err
+}
+
+// parseOptBoundsWithArgs parses a `: Trait (+ Trait)*` bound clause, where
+// each trait may carry type arguments (`T: From[i32] + Eq`). Returns the
+// bound trait names and a parallel slice of their type-args (nil entry for
+// a bound with no args). See docs/TRAITS.md.
+func (p *parser) parseOptBoundsWithArgs() ([]string, [][]ast.Type, error) {
 	if _, ok := p.accept(lexer.Punct, ":"); !ok {
-		return nil, nil
+		return nil, nil, nil
 	}
 	var bounds []string
+	var args [][]ast.Type
 	for {
 		b, err := p.expect(lexer.Ident, "")
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		bounds = append(bounds, p.maybeQualify(b.Text))
+		var ta []ast.Type
+		if p.match(lexer.Punct, "[") {
+			p.advance()
+			for {
+				at, err := p.parseType()
+				if err != nil {
+					return nil, nil, err
+				}
+				ta = append(ta, at)
+				if _, ok := p.accept(lexer.Punct, ","); !ok {
+					break
+				}
+			}
+			if _, err := p.expect(lexer.Punct, "]"); err != nil {
+				return nil, nil, err
+			}
+		}
+		args = append(args, ta)
 		if _, ok := p.accept(lexer.Punct, "+"); ok {
 			continue
 		}
 		break
 	}
-	return bounds, nil
+	return bounds, args, nil
 }
 
 func (p *parser) parseFunction() (*ast.FuncDecl, error) {
@@ -983,8 +1231,9 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	// `typeParams` slot.
 	var typeParams []string
 	var bounds map[string][]string
+	var boundArgs map[string][][]ast.Type
 	if p.match(lexer.Punct, "[") {
-		typeParams, bounds, err = p.parseTypeParamList()
+		typeParams, bounds, boundArgs, err = p.parseTypeParamListWithArgs()
 		if err != nil {
 			return nil, err
 		}
@@ -1019,7 +1268,7 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 		}
 		receiver = &ast.Param{Name: rname.Text, NamePos: rname.Pos, Type: rtype, Own: rOwn}
 	}
-	name, err := p.expect(lexer.Ident, "")
+	name, err := p.expectMemberName()
 	if err != nil {
 		return nil, err
 	}
@@ -1030,7 +1279,7 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	// the post-name `[T]` is rejected here (would conflict with
 	// the call-site `[T1, T2](...)` shape).
 	if p.match(lexer.Punct, "[") && len(typeParams) == 0 {
-		typeParams, bounds, err = p.parseTypeParamList()
+		typeParams, bounds, boundArgs, err = p.parseTypeParamListWithArgs()
 		if err != nil {
 			return nil, err
 		}
@@ -1061,7 +1310,18 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 			if err != nil {
 				return nil, err
 			}
-			params = append(params, ast.Param{Name: pname.Text, NamePos: pname.Pos, Type: ptype, Own: own})
+			// Optional default value: `function f(a: i32, b: i32 = 128)`.
+			// The defaultargs pass fills it at call sites that omit the
+			// trailing argument. A defaulted param may not be followed by
+			// a required one (enforced just below).
+			var def ast.Expr
+			if _, ok := p.accept(lexer.Punct, "="); ok {
+				def, err = p.parseExpr()
+				if err != nil {
+					return nil, err
+				}
+			}
+			params = append(params, ast.Param{Name: pname.Text, NamePos: pname.Pos, Type: ptype, Own: own, Default: def})
 			if _, ok := p.accept(lexer.Punct, ","); !ok {
 				break
 			}
@@ -1070,14 +1330,26 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	if _, err := p.expect(lexer.Punct, ")"); err != nil {
 		return nil, err
 	}
+	// A required parameter may not follow a defaulted one — otherwise a
+	// trailing-args fill is ambiguous.
+	seenDefault := false
+	for _, prm := range params {
+		if prm.Default != nil {
+			seenDefault = true
+		} else if seenDefault {
+			return nil, p.errorf(funcNamePos, "required parameter %q cannot follow a parameter with a default value", prm.Name)
+		}
+	}
 
 	var ret ast.Type = ast.VoidType{}
+	retAnnotated := false
 	if _, ok := p.accept(lexer.Punct, ":"); ok {
 		t, err := p.parseType()
 		if err != nil {
 			return nil, err
 		}
 		ret = t
+		retAnnotated = true
 	}
 
 	// A body-less function (`function f(): T;`) is an import declaration —
@@ -1093,15 +1365,17 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 		}
 	}
 	return &ast.FuncDecl{
-		P:          kw.Pos,
-		Name:       name.Text,
-		NamePos:    funcNamePos,
-		TypeParams: typeParams,
-		Bounds:     bounds,
-		Params:     params,
-		ReturnType: ret,
-		Body:       body,
-		Receiver:   receiver,
+		P:                 kw.Pos,
+		Name:              name.Text,
+		NamePos:           funcNamePos,
+		TypeParams:        typeParams,
+		Bounds:            bounds,
+		BoundArgs:         boundArgs,
+		Params:            params,
+		ReturnType:        ret,
+		ReturnUnannotated: !retAnnotated && body != nil,
+		Body:              body,
+		Receiver:          receiver,
 	}, nil
 }
 
@@ -1149,11 +1423,13 @@ func (p *parser) looksLikeReceiverClause() bool {
 		}
 		p.i++
 	}
-	// After the receiver `)`, we expect `name(`.
+	// After the receiver `)`, we expect `name(` — or `name[` for a
+	// method with its own type parameters (`(b: Box[T]) map[U](...)`),
+	// whose `[U]` list the post-name parse picks up.
 	ok := p.peek().Kind == lexer.Ident
 	if ok {
 		p.i++
-		ok = p.match(lexer.Punct, "(")
+		ok = p.peek().Kind == lexer.Punct && (p.peek().Text == "(" || p.peek().Text == "[")
 	}
 	p.i = start
 	return ok
@@ -1339,6 +1615,41 @@ func (p *parser) parseEnumDecl() (*ast.EnumDecl, error) {
 				if _, err := p.expect(lexer.Punct, ")"); err != nil {
 					return nil, err
 				}
+			} else if _, ok := p.accept(lexer.Punct, "{"); ok {
+				// Named-field variant: `Rect { w: f64, h: f64 }`. Field
+				// names parallel Payloads; the runtime layout is the same
+				// declaration-ordered tagged union as the positional form.
+				variant.FieldNames = []string{}
+				if !p.match(lexer.Punct, "}") {
+					for {
+						fname, err := p.expect(lexer.Ident, "")
+						if err != nil {
+							return nil, err
+						}
+						if _, err := p.expect(lexer.Punct, ":"); err != nil {
+							return nil, err
+						}
+						ft, err := p.parseType()
+						if err != nil {
+							return nil, err
+						}
+						variant.FieldNames = append(variant.FieldNames, fname.Text)
+						variant.Payloads = append(variant.Payloads, ft)
+						if _, ok := p.accept(lexer.Punct, ","); ok {
+							if p.match(lexer.Punct, "}") {
+								break
+							}
+							continue
+						}
+						break
+					}
+				}
+				if _, err := p.expect(lexer.Punct, "}"); err != nil {
+					return nil, err
+				}
+				if len(variant.FieldNames) == 0 {
+					return nil, p.errorf(vname.Pos, "named-field variant %s must declare at least one field", vname.Text)
+				}
 			}
 			variants = append(variants, variant)
 			if _, ok := p.accept(lexer.Punct, ","); ok {
@@ -1522,18 +1833,67 @@ func (p *parser) parseType() (ast.Type, error) {
 			return nil, p.errorf(t.Pos, "expected `=>` after parameter list (function type) or 2+ comma-separated types (tuple type)")
 		}
 	case t.Kind == lexer.Keyword && t.Text == "dyn":
-		// `dyn Trait` — a runtime trait-object type. The trait name is
-		// a bare (optionally module-qualified) identifier; no generic
-		// args or bounds. Falls through to the trailing-`[]` suffix
-		// loop, so `dyn Shape[]` is an array of trait objects. See
+		// `dyn Trait` (single) or `dyn A + B` (multi-trait object) — a
+		// runtime trait-object type. Each trait name is a bare
+		// (optionally module-qualified) identifier, optionally followed
+		// by generic arguments (`dyn Container[i32]`). Additional traits
+		// after the first are joined with `+` (mirroring trait-bound
+		// syntax, parseOptBounds). The set is normalised (sorted +
+		// deduped) by NewDynTraitTypeFull so `dyn A + B` ≡ `dyn B + A`.
+		// Falls through to the trailing-`[]` suffix loop, so `dyn Shape[]`
+		// / `dyn A + B[]` is an array of trait objects. A trailing/empty
+		// `+` is a parse error. The `[` immediately followed by `]` is the
+		// array suffix (handled below), not an empty generic-arg list. See
 		// docs/DYN-TRAITS.md.
 		p.advance() // consume `dyn`
-		nameTok, err := p.expect(lexer.Ident, "")
-		if err != nil {
-			return nil, err
+		var traits []string
+		var traitArgs [][]ast.Type
+		var traitAssoc [][]ast.AssocBinding
+		for {
+			nameTok, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, err
+			}
+			traits = append(traits, p.maybeQualify(nameTok.Text))
+			var args []ast.Type
+			var assoc []ast.AssocBinding
+			if p.match(lexer.Punct, "[") && p.i+1 < len(p.tokens) && !(p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == "]") {
+				p.advance() // consume `[`
+				for {
+					// `Name = Type` pins an associated type (`dyn Iterator[Item = i32]`);
+					// a bare `Type` is a positional generic argument (`dyn Container[i32]`).
+					if p.match(lexer.Ident, "") && p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == "=" {
+						nameT := p.advance() // assoc-type name
+						p.advance()          // `=`
+						bt, err := p.parseType()
+						if err != nil {
+							return nil, err
+						}
+						assoc = append(assoc, ast.AssocBinding{Name: nameT.Text, Type: bt})
+					} else {
+						at, err := p.parseType()
+						if err != nil {
+							return nil, err
+						}
+						args = append(args, at)
+					}
+					if _, ok := p.accept(lexer.Punct, ","); ok {
+						continue
+					}
+					break
+				}
+				if _, err := p.expect(lexer.Punct, "]"); err != nil {
+					return nil, err
+				}
+			}
+			traitArgs = append(traitArgs, args)
+			traitAssoc = append(traitAssoc, assoc)
+			if _, ok := p.accept(lexer.Punct, "+"); ok {
+				continue
+			}
+			break
 		}
-		name := p.maybeQualify(nameTok.Text)
-		base = ast.DynTraitType{Trait: name}
+		base = ast.NewDynTraitTypeFull(traits, traitArgs, traitAssoc)
 	case (t.Kind == lexer.Ident) && (t.Text == "own" || t.Text == "borrow") &&
 		p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Ident:
 		// `own R` / `borrow R` — a WIT resource-handle type (P5 —
@@ -1615,6 +1975,18 @@ func (p *parser) parseType() (ast.Type, error) {
 	default:
 		return nil, p.errorfCode(t.Pos, "P001", "expected type, got %q", t.Text)
 	}
+	// Associated-type projection `Base::Name` (`Self::Item`, `T::Item`,
+	// `Foo::Item`), repeatable for chained projections. Binds tighter
+	// than the `[]` suffix so `T::Item[]` is an array of the projection.
+	// See docs/ASSOCIATED-TYPES.md.
+	for p.match(lexer.Punct, "::") {
+		p.advance()
+		nameTok, err := p.expect(lexer.Ident, "")
+		if err != nil {
+			return nil, err
+		}
+		base = ast.ProjType{Base: base, Name: nameTok.Text}
+	}
 	// Trailing `[]` makes it an array type, repeatable.
 	for {
 		if _, ok := p.accept(lexer.Punct, "["); !ok {
@@ -1678,21 +2050,45 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 	if t.Kind == lexer.Punct && t.Text == "{" {
 		return p.parseBlock()
 	}
+	// Labeled loop: `IDENT : (while|loop|for) …`. The label names the
+	// loop so a nested `break IDENT` / `continue IDENT` can target it.
+	// `:` after a bare identifier only occurs here (object/map literals
+	// and slices live in expression position), so the three-token
+	// lookahead is unambiguous.
+	if t.Kind == lexer.Ident && p.i+2 < len(p.tokens) {
+		c, n := p.tokens[p.i+1], p.tokens[p.i+2]
+		if c.Kind == lexer.Punct && c.Text == ":" && n.Kind == lexer.Keyword &&
+			(n.Text == "while" || n.Text == "loop" || n.Text == "for") {
+			label := t.Text
+			p.advance() // IDENT
+			p.advance() // :
+			switch n.Text {
+			case "while":
+				return p.parseWhile(label)
+			case "loop":
+				return p.parseLoop(label)
+			default:
+				return p.parseFor(label)
+			}
+		}
+	}
 	if t.Kind == lexer.Keyword {
 		switch t.Text {
 		case "if":
 			return p.parseIf()
 		case "while":
-			return p.parseWhile()
+			return p.parseWhile("")
+		case "loop":
+			return p.parseLoop("")
 		case "for":
-			return p.parseFor()
+			return p.parseFor("")
 		case "break":
 			return p.parseBreakContinue(true)
 		case "continue":
 			return p.parseBreakContinue(false)
 		case "return":
 			return p.parseReturn()
-		case "defer":
+		case "defer", "errdefer":
 			return p.parseDefer()
 		case "var":
 			return p.parseVar()
@@ -1807,7 +2203,7 @@ func (p *parser) parseIf() (ast.Stmt, error) {
 	return &ast.If{P: kw.Pos, Cond: cond, Then: then, Else: els}, nil
 }
 
-func (p *parser) parseWhile() (ast.Stmt, error) {
+func (p *parser) parseWhile(label string) (ast.Stmt, error) {
 	kw := p.advance()
 	if _, err := p.expect(lexer.Punct, "("); err != nil {
 		return nil, err
@@ -1823,7 +2219,21 @@ func (p *parser) parseWhile() (ast.Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ast.While{P: kw.Pos, Cond: cond, Body: body}, nil
+	return &ast.While{P: kw.Pos, Cond: cond, Body: body, Label: label}, nil
+}
+
+// parseLoop handles the `loop { ... }` canonical infinite loop. It
+// desugars to `while (true) { ... }` — a While with a literal-true
+// Cond — so every backend, the IR lowering, and the interpreter handle
+// it with no new machinery; `break` / `continue` (and their labeled
+// forms) work as in any while loop.
+func (p *parser) parseLoop(label string) (ast.Stmt, error) {
+	kw := p.advance()
+	body, err := p.parseStmt()
+	if err != nil {
+		return nil, err
+	}
+	return &ast.While{P: kw.Pos, Cond: &ast.BoolLit{P: kw.Pos, Value: true}, Body: body, Label: label}, nil
 }
 
 // parseLambda parses `function (params): R { body }` in
@@ -1833,6 +2243,105 @@ func (p *parser) parseWhile() (ast.Stmt, error) {
 // parsed inside the parser's standard return-type stack so
 // `use` desugaring inside the lambda body picks up the right
 // callback return type.
+// looksLikeArrowLambda reports whether the `(` at the cursor begins an
+// arrow lambda — `() => …`, `(): R => …`, or `(IDENT: TYPE, …) [: R] => …`.
+// The disambiguator from a grouping/tuple is the parameter shape: an arrow
+// lambda's parens are either empty or start with `IDENT :` (a typed param),
+// which an expression never does, and the matching `)` is followed by `=>`
+// or `:` (the return-type colon). See #2701.
+func (p *parser) looksLikeArrowLambda() bool {
+	// p.i is at "(".
+	if p.i+1 >= len(p.tokens) {
+		return false
+	}
+	followedByArrowOrColon := func(idx int) bool {
+		if idx >= len(p.tokens) {
+			return false
+		}
+		t := p.tokens[idx]
+		return t.Kind == lexer.Punct && (t.Text == "=>" || t.Text == ":")
+	}
+	// Empty params: `(` `)` then `=>` / `:`.
+	if p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == ")" {
+		return followedByArrowOrColon(p.i + 2)
+	}
+	// Non-empty: must start with a typed param `IDENT :`.
+	if p.i+2 >= len(p.tokens) ||
+		p.tokens[p.i+1].Kind != lexer.Ident ||
+		!(p.tokens[p.i+2].Kind == lexer.Punct && p.tokens[p.i+2].Text == ":") {
+		return false
+	}
+	// Scan to the matching `)` and check the token after it.
+	depth := 0
+	for j := p.i; j < len(p.tokens); j++ {
+		t := p.tokens[j]
+		if t.Kind == lexer.EOF {
+			return false
+		}
+		if t.Kind == lexer.Punct && t.Text == "(" {
+			depth++
+		} else if t.Kind == lexer.Punct && t.Text == ")" {
+			depth--
+			if depth == 0 {
+				return followedByArrowOrColon(j + 1)
+			}
+		}
+	}
+	return false
+}
+
+// parseArrowLambda parses `(params) [: R] => expr` into an ast.Lambda whose
+// body is `{ return expr; }`. Parameter types are required (as in the
+// verbose `function (…)` form); the return type is optional and defaults to
+// void. See #2701.
+func (p *parser) parseArrowLambda() (ast.Expr, error) {
+	open := p.advance() // "("
+	var params []ast.Param
+	if !p.match(lexer.Punct, ")") {
+		for {
+			pname, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, err
+			}
+			if _, err := p.expect(lexer.Punct, ":"); err != nil {
+				return nil, err
+			}
+			ptype, err := p.parseType()
+			if err != nil {
+				return nil, err
+			}
+			params = append(params, ast.Param{Name: pname.Text, NamePos: pname.Pos, Type: ptype})
+			if _, ok := p.accept(lexer.Punct, ","); !ok {
+				break
+			}
+		}
+	}
+	if _, err := p.expect(lexer.Punct, ")"); err != nil {
+		return nil, err
+	}
+	var ret ast.Type = ast.VoidType{}
+	unannotated := true
+	if _, ok := p.accept(lexer.Punct, ":"); ok {
+		t, err := p.parseType()
+		if err != nil {
+			return nil, err
+		}
+		ret = t
+		unannotated = false
+	}
+	if _, err := p.expect(lexer.Punct, "=>"); err != nil {
+		return nil, err
+	}
+	p.returnTypeStack = append(p.returnTypeStack, ret)
+	bodyExpr, err := p.parseExpr()
+	p.returnTypeStack = p.returnTypeStack[:len(p.returnTypeStack)-1]
+	if err != nil {
+		return nil, err
+	}
+	body := &ast.Block{P: open.Pos, Stmts: []ast.Stmt{&ast.Return{P: open.Pos, Value: bodyExpr}}}
+	return &ast.Lambda{P: open.Pos, Params: params, ReturnType: ret, ReturnUnannotated: unannotated, Body: body}, nil
+}
+
 func (p *parser) parseLambda() (ast.Expr, error) {
 	kw := p.advance() // function
 	if _, err := p.expect(lexer.Punct, "("); err != nil {
@@ -1897,14 +2406,8 @@ func (p *parser) parseIfExpr() (ast.Expr, error) {
 	if _, err := p.expect(lexer.Punct, ")"); err != nil {
 		return nil, err
 	}
-	if _, err := p.expect(lexer.Punct, "{"); err != nil {
-		return nil, err
-	}
-	thenE, err := p.parseExpr()
+	thenE, err := p.parseBranchBody()
 	if err != nil {
-		return nil, err
-	}
-	if _, err := p.expect(lexer.Punct, "}"); err != nil {
 		return nil, err
 	}
 	if _, err := p.expect(lexer.Keyword, "else"); err != nil {
@@ -1923,17 +2426,114 @@ func (p *parser) parseIfExpr() (ast.Expr, error) {
 		}
 		return &ast.IfExpr{P: kw.Pos, Cond: cond, Then: thenE, Else: elseE}, nil
 	}
-	if _, err := p.expect(lexer.Punct, "{"); err != nil {
-		return nil, err
-	}
-	elseE, err := p.parseExpr()
+	elseE, err := p.parseBranchBody()
 	if err != nil {
 		return nil, err
+	}
+	return &ast.IfExpr{P: kw.Pos, Cond: cond, Then: thenE, Else: elseE}, nil
+}
+
+// parseBranchBody parses the `{ … }` body of an `if`/`match` expression
+// branch (slice 1 of block-expressions). The body is a sequence of
+// `;`-terminated statements run in a fresh child scope, optionally
+// followed by a trailing expression written WITHOUT a `;` — that
+// trailing expression is the block's value.
+//
+//   - `{ e }`                  → the bare expression `e` (single-expr
+//     branch, kept byte-identical to the pre-block-expr behaviour so
+//     existing `if`/`match` expressions don't regress).
+//   - `{ s; s; tail }`         → `BlockExpr{Stmts:[s,s], Tail:tail}`.
+//   - `{ s; }`                 → `BlockExpr{Stmts:[s], Tail:nil}` — a
+//     value-less block; the checker reports E060 when it's used where a
+//     value is required.
+//
+// Statement-led forms (keyword statements: `var`/`if`/`while`/… and a
+// nested `{`-block) always parse as statements via parseStmt, which
+// consumes its own terminator. A non-keyword item parses as an
+// expression: if a `;` follows it's an ExprStmt, if `}` follows it's
+// the trailing value expression. This keeps the new grammar form
+// confined to branch position — general value-position blocks are a
+// later slice.
+func (p *parser) parseBranchBody() (ast.Expr, error) {
+	open, err := p.expect(lexer.Punct, "{")
+	if err != nil {
+		return nil, err
+	}
+	var stmts []ast.Stmt
+	var tail ast.Expr
+	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
+		if p.branchStmtStart() {
+			s, err := p.parseStmt()
+			if err != nil {
+				return nil, err
+			}
+			if s != nil {
+				stmts = append(stmts, s)
+			}
+			continue
+		}
+		// Non-keyword item: an expression that is either an ExprStmt
+		// (followed by `;`) or the trailing value (followed by `}`).
+		e, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := p.accept(lexer.Punct, ";"); ok {
+			stmts = append(stmts, &ast.ExprStmt{P: e.Pos(), Expr: e})
+			continue
+		}
+		// No `;` — this must be the trailing tail expression, so `}`
+		// has to follow. The expect below surfaces a clear error if a
+		// statement is missing its `;`.
+		tail = e
+		break
 	}
 	if _, err := p.expect(lexer.Punct, "}"); err != nil {
 		return nil, err
 	}
-	return &ast.IfExpr{P: kw.Pos, Cond: cond, Then: thenE, Else: elseE}, nil
+	// A single trailing expression with no leading statements stays a
+	// bare expr — keeps existing single-expr branches byte-identical.
+	if len(stmts) == 0 && tail != nil {
+		return tail, nil
+	}
+	return &ast.BlockExpr{P: open.Pos, Stmts: stmts, Tail: tail}, nil
+}
+
+// branchStmtStart reports whether the next token begins a statement
+// that parseStmt handles directly (and which consumes its own
+// terminator) inside a branch body. These are the keyword-led
+// statements plus a nested `{`-block and a labeled loop. Everything
+// else is parsed as an expression (ExprStmt or the trailing tail).
+func (p *parser) branchStmtStart() bool {
+	t := p.peek()
+	if t.Kind == lexer.Punct && t.Text == "{" {
+		return true
+	}
+	// Labeled loop: `IDENT : (while|loop|for)` — same three-token
+	// lookahead parseStmt uses.
+	if t.Kind == lexer.Ident && p.i+2 < len(p.tokens) {
+		c, n := p.tokens[p.i+1], p.tokens[p.i+2]
+		if c.Kind == lexer.Punct && c.Text == ":" && n.Kind == lexer.Keyword &&
+			(n.Text == "while" || n.Text == "loop" || n.Text == "for") {
+			return true
+		}
+	}
+	if t.Kind == lexer.Keyword {
+		switch t.Text {
+		// `if` / `match` / `switch` are deliberately NOT listed: they
+		// can stand as the trailing value expression (`{ …; if (c) { a }
+		// else { b } }`), and the existing single-expr branch form
+		// `if (a) { … } else { if (c) { … } else { … } }` relies on the
+		// inner `if`/`match` parsing as an expression. The expr path in
+		// parseBranchBody then decides statement-vs-tail by the trailing
+		// `;` / `}`, so they still work as ExprStmts when followed by `;`.
+		case "while", "loop", "for", "break", "continue",
+			"return", "defer", "errdefer", "var", "let",
+			"function", "use":
+			return true
+		}
+	}
+	return false
 }
 
 // parseFor produces a real For node so that `continue` can jump to the
@@ -1946,7 +2546,7 @@ func (p *parser) parseIfExpr() (ast.Expr, error) {
 //     C-style loop with synthetic length / index slots, so the
 //     rest of the pipeline (checker, IR, codegen) never has to
 //     know foreach exists.
-func (p *parser) parseFor() (ast.Stmt, error) {
+func (p *parser) parseFor(label string) (ast.Stmt, error) {
 	kw := p.advance()
 
 	// Foreach shape: `for IDENT in expr body`. Detect by looking at
@@ -1955,7 +2555,7 @@ func (p *parser) parseFor() (ast.Stmt, error) {
 	// match on text rather than kind.
 	if p.match(lexer.Ident, "") && p.i+1 < len(p.tokens) {
 		if next := p.tokens[p.i+1]; next.Kind == lexer.Ident && next.Text == "in" {
-			return p.parseForEach(kw)
+			return p.parseForEach(kw, label)
 		}
 	}
 
@@ -1971,7 +2571,7 @@ func (p *parser) parseFor() (ast.Stmt, error) {
 			t3.Kind == lexer.Ident &&
 			t4.Kind == lexer.Punct && t4.Text == ")" &&
 			t5.Kind == lexer.Ident && t5.Text == "in" {
-			return p.parseForEachMapTuple(kw)
+			return p.parseForEachMapTuple(kw, label)
 		}
 	}
 
@@ -2024,7 +2624,7 @@ func (p *parser) parseFor() (ast.Stmt, error) {
 		return nil, err
 	}
 
-	return &ast.For{P: kw.Pos, Init: init, Cond: cond, Step: step, Body: body}, nil
+	return &ast.For{P: kw.Pos, Init: init, Cond: cond, Step: step, Body: body, Label: label}, nil
 }
 
 // foreachCounter gives each desugared foreach loop's synthetic vars
@@ -2064,7 +2664,7 @@ func (p *parser) nextForeachID() int {
 // Works for both arrays (any element type) and strings (each
 // element a number = byte). The IDENT's type is inferred from the
 // indexed expression by the checker.
-func (p *parser) parseForEach(kw lexer.Token) (ast.Stmt, error) {
+func (p *parser) parseForEach(kw lexer.Token, label string) (ast.Stmt, error) {
 	nameTok := p.advance() // IDENT
 	p.advance()            // `in`
 	// Suppress trailing struct-literal parsing while reading the
@@ -2076,6 +2676,47 @@ func (p *parser) parseForEach(kw lexer.Token) (ast.Stmt, error) {
 	p.noStructLit = prevNS
 	if err != nil {
 		return nil, err
+	}
+	// Range form: `for IDENT in LOW..HIGH body` — desugar to a
+	// C-style for over the half-open interval [LOW, HIGH). HIGH is
+	// bound once (so `for i in 0..f()` calls f() a single time), and
+	// the loop variable IS the user binding, so `continue` — which
+	// runs the For step — still increments. parseExpr stops at `..`
+	// (not a binary operator), so `expr` is LOW. The inclusive form
+	// `LOW..=HIGH` is identical bar the loop condition: `i <= hi`
+	// covers the closed interval [LOW, HIGH].
+	if p.match(lexer.Punct, "..") || p.match(lexer.Punct, "..=") {
+		rangeTok := p.advance() // `..` or `..=`
+		inclusive := rangeTok.Text == "..="
+		prevNS2 := p.noStructLit
+		p.noStructLit = true
+		high, err := p.parseExpr()
+		p.noStructLit = prevNS2
+		if err != nil {
+			return nil, err
+		}
+		body, err := p.parseStmt()
+		if err != nil {
+			return nil, err
+		}
+		rid := p.nextForeachID()
+		hiName := fmt.Sprintf("__range_hi_%d", rid)
+		mkI := func(name string) *ast.Ident { return &ast.Ident{P: kw.Pos, Name: name} }
+		declHi := &ast.Var{P: kw.Pos, Name: hiName, Init: high}
+		cmpOp := "<"
+		if inclusive {
+			cmpOp = "<="
+		}
+		loop := &ast.For{
+			P:    kw.Pos,
+			Init: &ast.Var{P: nameTok.Pos, Name: nameTok.Text, Init: expr},
+			Cond: &ast.Binary{P: kw.Pos, Op: cmpOp, Left: mkI(nameTok.Text), Right: mkI(hiName)},
+			Step: &ast.ExprStmt{P: kw.Pos, Expr: &ast.Assign{P: kw.Pos, Target: mkI(nameTok.Text),
+				Value: &ast.Binary{P: kw.Pos, Op: "+", Left: mkI(nameTok.Text), Right: &ast.NumberLit{P: kw.Pos, Value: 1}}}},
+			Body:  body,
+			Label: label,
+		}
+		return &ast.Block{P: kw.Pos, Stmts: []ast.Stmt{declHi, loop}}, nil
 	}
 	body, err := p.parseStmt()
 	if err != nil {
@@ -2146,8 +2787,9 @@ func (p *parser) parseForEach(kw lexer.Token) (ast.Stmt, error) {
 			Left:  mkIdent(idxName),
 			Right: mkIdent(lenName),
 		},
-		Step: stepStmt,
-		Body: innerBlock,
+		Step:  stepStmt,
+		Body:  innerBlock,
+		Label: label,
 	}
 
 	return &ast.Block{
@@ -2177,7 +2819,7 @@ func (p *parser) parseForEach(kw lexer.Token) (ast.Stmt, error) {
 //
 // Like the array foreach, K / V are inferred from the iterator's
 // method return types — no annotation needed at the loop site.
-func (p *parser) parseForEachMapTuple(kw lexer.Token) (ast.Stmt, error) {
+func (p *parser) parseForEachMapTuple(kw lexer.Token, label string) (ast.Stmt, error) {
 	p.advance() // `(`
 	keyTok := p.advance()
 	p.advance() // `,`
@@ -2229,10 +2871,11 @@ func (p *parser) parseForEachMapTuple(kw lexer.Token) (ast.Stmt, error) {
 	innerBlock := &ast.Block{P: kw.Pos, Stmts: innerStmts}
 
 	forLoop := &ast.For{
-		P:    kw.Pos,
-		Cond: callOnIter("has_next"),
-		Step: stepStmt,
-		Body: innerBlock,
+		P:     kw.Pos,
+		Cond:  callOnIter("has_next"),
+		Step:  stepStmt,
+		Body:  innerBlock,
+		Label: label,
 	}
 
 	return &ast.Block{
@@ -2431,6 +3074,37 @@ func (p *parser) parseMatch() (ast.Stmt, error) {
 	return m, nil
 }
 
+// parseNamedFieldPattern parses a named-field variant pattern body
+// `{ f1, f2 }` — shorthand where each field binds a local of the same
+// name — with the cursor just after the variant name. Returns ok=true
+// (and the field-name bindings) when a `{` was present; ok=false with no
+// error when the next token isn't `{` (a positional or payloadless arm).
+func (p *parser) parseNamedFieldPattern() (bindings []string, ok bool, err error) {
+	if _, isBrace := p.accept(lexer.Punct, "{"); !isBrace {
+		return nil, false, nil
+	}
+	if !p.match(lexer.Punct, "}") {
+		for {
+			nameTok, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, false, err
+			}
+			bindings = append(bindings, nameTok.Text)
+			if _, c := p.accept(lexer.Punct, ","); c {
+				if p.match(lexer.Punct, "}") {
+					break
+				}
+				continue
+			}
+			break
+		}
+	}
+	if _, e := p.expect(lexer.Punct, "}"); e != nil {
+		return nil, false, e
+	}
+	return bindings, true, nil
+}
+
 func (p *parser) parseMatchArm() (*ast.MatchArm, error) {
 	t := p.peek()
 	arm := &ast.MatchArm{P: t.Pos}
@@ -2491,6 +3165,11 @@ func (p *parser) parseMatchArm() (*ast.MatchArm, error) {
 			if _, err := p.expect(lexer.Punct, ")"); err != nil {
 				return nil, err
 			}
+		} else if bindings, ok, err := p.parseNamedFieldPattern(); err != nil {
+			return nil, err
+		} else if ok {
+			arm.NamedFields = true
+			arm.Bindings = bindings
 		}
 	} else {
 		return nil, p.errorfCode(t.Pos, "P001", "expected variant pattern, literal, or `_` in match arm, got %s", t.Text)
@@ -2610,6 +3289,11 @@ func (p *parser) parseMatchExprArm() (*ast.MatchExprArm, error) {
 			if _, err := p.expect(lexer.Punct, ")"); err != nil {
 				return nil, err
 			}
+		} else if bindings, ok, err := p.parseNamedFieldPattern(); err != nil {
+			return nil, err
+		} else if ok {
+			arm.NamedFields = true
+			arm.Bindings = bindings
 		}
 	} else {
 		return nil, p.errorfCode(t.Pos, "P001", "expected variant pattern, literal, or `_` in match arm, got %s", t.Text)
@@ -2625,7 +3309,18 @@ func (p *parser) parseMatchExprArm() (*ast.MatchExprArm, error) {
 	if _, err := p.expect(lexer.Punct, "=>"); err != nil {
 		return nil, err
 	}
-	body, err := p.parseExpr()
+	// A `{ … }` arm body is a block-expression (slice 1): statements
+	// then an optional trailing value. A bare expression body stays the
+	// pre-block-expr single-expr form. parseBranchBody collapses the
+	// no-statement single-expr `{ e }` back to `e`, so existing
+	// brace-wrapped single-expr arms are byte-identical.
+	var body ast.Expr
+	var err error
+	if p.match(lexer.Punct, "{") {
+		body, err = p.parseBranchBody()
+	} else {
+		body, err = p.parseExpr()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -2661,13 +3356,20 @@ func (p *parser) parseCaseBody() (*ast.Block, error) {
 
 func (p *parser) parseBreakContinue(isBreak bool) (ast.Stmt, error) {
 	kw := p.advance()
+	// Optional loop label: `break outer;` / `continue outer;`. A bare
+	// identifier before the `;` names an enclosing labeled loop.
+	label := ""
+	if t := p.peek(); t.Kind == lexer.Ident {
+		label = t.Text
+		p.advance()
+	}
 	if _, err := p.expect(lexer.Punct, ";"); err != nil {
 		return nil, err
 	}
 	if isBreak {
-		return &ast.Break{P: kw.Pos}, nil
+		return &ast.Break{P: kw.Pos, Label: label}, nil
 	}
-	return &ast.Continue{P: kw.Pos}, nil
+	return &ast.Continue{P: kw.Pos, Label: label}, nil
 }
 
 func (p *parser) parseReturn() (ast.Stmt, error) {
@@ -2686,12 +3388,14 @@ func (p *parser) parseReturn() (ast.Stmt, error) {
 	return &ast.Return{P: kw.Pos, Value: val}, nil
 }
 
-// parseDefer parses `defer EXPR;`. The IR collects every Defer
-// statement in the function body and emits the deferred
-// expressions in LIFO order before each return + at the end of
-// the function. Conditional defers (registered inside a branch
-// that didn't run at runtime) are skipped via per-defer
-// "active" flags the IR builder synthesises.
+// parseDefer parses `defer EXPR;` and `errdefer EXPR;`. The IR
+// collects every Defer statement in the function body and emits
+// the deferred expressions in LIFO order before each return + at
+// the end of the function. Conditional defers (registered inside
+// a branch that didn't run at runtime) are skipped via per-defer
+// "active" flags the IR builder synthesises. An `errdefer` sets
+// `OnError`, which restricts its cleanup to the error-exit paths
+// (see ast.Defer.OnError).
 func (p *parser) parseDefer() (ast.Stmt, error) {
 	kw := p.advance()
 	expr, err := p.parseExpr()
@@ -2701,7 +3405,7 @@ func (p *parser) parseDefer() (ast.Stmt, error) {
 	if _, err := p.expect(lexer.Punct, ";"); err != nil {
 		return nil, err
 	}
-	return &ast.Defer{P: kw.Pos, Expr: expr}, nil
+	return &ast.Defer{P: kw.Pos, Expr: expr, OnError: kw.Text == "errdefer"}, nil
 }
 
 func (p *parser) parseVar() (ast.Stmt, error) {
@@ -3151,6 +3855,17 @@ func (p *parser) parseCast() (ast.Expr, error) {
 	}
 	for p.match(lexer.Keyword, "as") {
 		kw := p.advance()
+		// `as?` is the fallible downcast of a `dyn Trait` value to a
+		// concrete type; plain `as` is the numeric cast / ascription.
+		// Peek after the `as` keyword: a `?` punct selects the downcast.
+		if _, ok := p.accept(lexer.Punct, "?"); ok {
+			target, err := p.parseType()
+			if err != nil {
+				return nil, err
+			}
+			expr = &ast.DowncastExpr{P: kw.Pos, Inner: expr, Target: target}
+			continue
+		}
 		target, err := p.parseType()
 		if err != nil {
 			return nil, err
@@ -3158,6 +3873,44 @@ func (p *parser) parseCast() (ast.Expr, error) {
 		expr = &ast.CastExpr{P: kw.Pos, Inner: expr, Target: target}
 	}
 	return expr, nil
+}
+
+// parseCallArgs parses a comma-separated argument list up to (but not
+// consuming) the closing `)`. An argument of the form `name = expr` (a single
+// `=`, not `==`) is a named argument; its name is recorded in the parallel
+// `names` slice ("" for positional). `names` is nil when every argument is
+// positional (the common case), so all-positional calls are unchanged.
+func (p *parser) parseCallArgs() ([]ast.Expr, []string, error) {
+	var args []ast.Expr
+	var names []string
+	anyNamed := false
+	if p.match(lexer.Punct, ")") {
+		return args, nil, nil
+	}
+	for {
+		name := ""
+		// `ident =` (and not `==`) introduces a named argument.
+		if p.peek().Kind == lexer.Ident && p.i+1 < len(p.tokens) &&
+			p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == "=" {
+			name = p.peek().Text
+			p.advance() // name
+			p.advance() // =
+			anyNamed = true
+		}
+		a, err := p.parseExpr()
+		if err != nil {
+			return nil, nil, err
+		}
+		args = append(args, a)
+		names = append(names, name)
+		if _, ok := p.accept(lexer.Punct, ","); !ok {
+			break
+		}
+	}
+	if !anyNamed {
+		return args, nil, nil
+	}
+	return args, names, nil
 }
 
 func (p *parser) parseCall() (ast.Expr, error) {
@@ -3169,23 +3922,14 @@ func (p *parser) parseCall() (ast.Expr, error) {
 		switch {
 		case p.match(lexer.Punct, "("):
 			open := p.advance()
-			var args []ast.Expr
-			if !p.match(lexer.Punct, ")") {
-				for {
-					a, err := p.parseExpr()
-					if err != nil {
-						return nil, err
-					}
-					args = append(args, a)
-					if _, ok := p.accept(lexer.Punct, ","); !ok {
-						break
-					}
-				}
+			args, names, err := p.parseCallArgs()
+			if err != nil {
+				return nil, err
 			}
 			if _, err := p.expect(lexer.Punct, ")"); err != nil {
 				return nil, err
 			}
-			expr = &ast.Call{P: open.Pos, Callee: expr, Args: args}
+			expr = &ast.Call{P: open.Pos, Callee: expr, Args: args, ArgNames: names}
 			if db, err := p.maybeDesugarBuild(expr.(*ast.Call)); err != nil {
 				return nil, err
 			} else if db != nil {
@@ -3224,23 +3968,14 @@ func (p *parser) parseCall() (ast.Expr, error) {
 				if _, err := p.expect(lexer.Punct, "("); err != nil {
 					return nil, err
 				}
-				var args []ast.Expr
-				if !p.match(lexer.Punct, ")") {
-					for {
-						a, err := p.parseExpr()
-						if err != nil {
-							return nil, err
-						}
-						args = append(args, a)
-						if _, ok := p.accept(lexer.Punct, ","); !ok {
-							break
-						}
-					}
+				args, names, err := p.parseCallArgs()
+				if err != nil {
+					return nil, err
 				}
 				if _, err := p.expect(lexer.Punct, ")"); err != nil {
 					return nil, err
 				}
-				expr = &ast.Call{P: open.Pos, Callee: expr, Args: args, TypeArgs: typeArgs}
+				expr = &ast.Call{P: open.Pos, Callee: expr, Args: args, ArgNames: names, TypeArgs: typeArgs}
 				continue
 			}
 			open := p.advance()
@@ -3303,7 +4038,7 @@ func (p *parser) parseCall() (ast.Expr, error) {
 				expr = &ast.FieldAccess{P: dot.Pos, Target: expr, Field: numTok.Text, FieldPos: numTok.Pos}
 				continue
 			}
-			fname, err := p.expect(lexer.Ident, "")
+			fname, err := p.expectMemberName()
 			if err != nil {
 				return nil, err
 			}
@@ -3313,10 +4048,34 @@ func (p *parser) parseCall() (ast.Expr, error) {
 			// modload rewrites `mod.Foo` to `mod__Foo` before the
 			// checker runs, so the StructLit.TypeName carries the
 			// dotted form temporarily.
-			if id, ok := expr.(*ast.Ident); ok && p.match(lexer.Punct, "{") {
+			// Suppressed in `noStructLit` positions (a for-iter / if- /
+			// while-condition), where the trailing `{` opens the loop or
+			// branch body, not a struct literal — so `for x in b.items {`
+			// reads `b.items` as a field access, not `b.items { … }`.
+			// Mirrors the bare-`Ident { … }` guard below.
+			if id, ok := expr.(*ast.Ident); ok && !p.noStructLit && p.match(lexer.Punct, "{") {
 				return p.parseStructLit(id.P, id.Name+"."+fname.Text)
 			}
 			expr = &ast.FieldAccess{P: dot.Pos, Target: expr, Field: fname.Text, FieldPos: fname.Pos}
+		case p.match(lexer.Punct, "::"):
+			// `Type::method` / `mod::func` / `Type::CONST` — the
+			// path-style namespaced access. Produces the SAME FieldAccess
+			// node as the `.` form, so an associated-function call
+			// (`Point::origin()`), a module-qualified call (`json::encode()`),
+			// and a qualified const all resolve through the existing
+			// modload + checker paths. `::` is pure surface syntax; the AST
+			// carries no record of which separator was written. See #2700.
+			colons := p.advance()
+			fname, err := p.expectMemberName()
+			if err != nil {
+				return nil, err
+			}
+			// `mod::Foo { … }` is a path-qualified struct literal, mirroring
+			// the `mod.Foo { … }` form (suppressed in noStructLit positions).
+			if id, ok := expr.(*ast.Ident); ok && !p.noStructLit && p.match(lexer.Punct, "{") {
+				return p.parseStructLit(id.P, id.Name+"."+fname.Text)
+			}
+			expr = &ast.FieldAccess{P: colons.Pos, Target: expr, Field: fname.Text, FieldPos: fname.Pos, PathSep: true}
 		case p.match(lexer.Punct, "?"):
 			// Postfix `?` — Option-try operator. `expr?` evaluates
 			// to the Some payload and early-returns None when the
@@ -3853,6 +4612,15 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 	case lexer.Punct:
 		switch t.Text {
 		case "(":
+			// Arrow lambda `(params): R => expr` / `(params) => expr` — a
+			// concise anonymous function whose body is a single expression
+			// (desugared to `function (params): R { return expr; }`). Checked
+			// before the grouping/tuple parse: an arrow lambda's parens hold a
+			// parameter list (`IDENT : TYPE`, or empty), which a grouping
+			// (`(e)`) or tuple (`(e1, e2)`) never does. See #2701.
+			if p.looksLikeArrowLambda() {
+				return p.parseArrowLambda()
+			}
 			// `(e)` is grouping; `(e1, e2, ...)` (>=2 elements) is
 			// a tuple literal. Single-element "tuples" don't exist
 			// as a syntactic form — `(e)` always groups.

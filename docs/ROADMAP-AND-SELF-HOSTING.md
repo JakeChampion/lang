@@ -3,7 +3,7 @@
 Captures the state of the codebase as of 2026-05-15. Combines
 two audits — current tech debt (what's wrong / behind / risky)
 and self-hosting readiness (what's missing to rewrite the
-compiler in lang itself). Companion to `BACKEND-PARITY.md`,
+compiler in Fern itself). Companion to `BACKEND-PARITY.md`,
 `SSO-PLAN.md`, `MAP-SPECIALIZATION.md`.
 
 ## Part 1 — Tech debt
@@ -142,7 +142,7 @@ the audit history is preserved.
 
 The compiler is written in Go (`cmd/fern/main.go` +
 `internal/{lexer,parser,ast,checker,monomorph,closureconv,ir,codegen,interp,treeshake,diag,modload,prelude}`).
-Self-hosting means rewriting it in lang itself and
+Self-hosting means rewriting it in Fern itself and
 bootstrapping from a previous version. Rough estimate:
 **~60% portable today** at the time of this audit. The hard
 blocker (union types) has since landed — see the resolved
@@ -1174,7 +1174,7 @@ Type-system extension; ~1-2 weeks design + implementation.
 
 ### Realistic first-port milestone
 
-The lexer. ~400 Go LOC → ~600 lang LOC. Pure procedural,
+The lexer. ~400 Go LOC → ~600 Fern LOC. Pure procedural,
 produces simple Token structs, validates string indexing /
 slicing / struct-lit creation under real workload.
 **Estimated 1 week.**
@@ -1229,7 +1229,7 @@ the port completes.
 
 **Used at**: `cmd/fern/main.go:311,347` via `exec.Command`.
 
-The lang compiler does **not** include an assembler. After
+The Fern compiler does **not** include an assembler. After
 emitting `.s` it shells out to a C toolchain driver, passing
 flags like `-static -nostdlib -s prog.s -o binary`. Clang /
 gcc:

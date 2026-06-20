@@ -1,0 +1,114 @@
+import "std/array";
+import "std/test";
+// examples/tests/array_structural_verbs_test.fern — generic
+// structural array verbs added to std/array (#2689): `reverse`,
+// `take`, `drop`, `concat` over an arbitrary `T[]`.
+//
+// Unlike the combinators (map/filter/fold), these take NO callback,
+// so they lower cleanly on the AOT + self-host backends (no
+// indirect-call limitation) — hence this file is also exercised
+// through the self-host compiler, not just the interpreter.
+
+function test_reverse(): test.TestOutcome {
+    var xs: i32[] = [1, 2, 3, 4, 5];
+    var r: i32[] = array.reverse(xs);
+    if (r.len() != 5) { return test.fail("reverse changed length"); }
+    if (r[0] != 5) { return test.fail("reverse[0] should be the last element"); }
+    return test.assert_eq(r[4], 1);
+}
+
+function test_reverse_empty(): test.TestOutcome {
+    var xs: i32[] = [];
+    return test.assert_eq(array.reverse(xs).len(), 0);
+}
+
+function test_reverse_single(): test.TestOutcome {
+    var xs: i32[] = [42];
+    return test.assert_eq(array.reverse(xs)[0], 42);
+}
+
+function test_take(): test.TestOutcome {
+    var xs: i32[] = [1, 2, 3, 4, 5];
+    var t: i32[] = array.take(xs, 2);
+    if (t.len() != 2) { return test.fail("take(2) should yield 2 elements"); }
+    return test.assert_eq(t[1], 2);
+}
+
+function test_take_zero(): test.TestOutcome {
+    var xs: i32[] = [1, 2, 3];
+    return test.assert_eq(array.take(xs, 0).len(), 0);
+}
+
+function test_take_over_len(): test.TestOutcome {
+    // n >= len clamps to a full copy.
+    var xs: i32[] = [1, 2, 3];
+    return test.assert_eq(array.take(xs, 99).len(), 3);
+}
+
+function test_drop(): test.TestOutcome {
+    var xs: i32[] = [1, 2, 3, 4, 5];
+    var d: i32[] = array.drop(xs, 3);
+    if (d.len() != 2) { return test.fail("drop(3) should leave 2 elements"); }
+    return test.assert_eq(d[0], 4);
+}
+
+function test_drop_over_len(): test.TestOutcome {
+    var xs: i32[] = [1, 2, 3];
+    return test.assert_eq(array.drop(xs, 99).len(), 0);
+}
+
+function test_drop_zero(): test.TestOutcome {
+    var xs: i32[] = [1, 2, 3];
+    return test.assert_eq(array.drop(xs, 0).len(), 3);
+}
+
+function test_take_drop_complement(): test.TestOutcome {
+    // take(xs, n) ++ drop(xs, n) == xs, for any n.
+    var xs: i32[] = [10, 20, 30, 40];
+    var joined: i32[] = array.concat(array.take(xs, 1), array.drop(xs, 1));
+    if (joined.len() != 4) { return test.fail("take ++ drop changed length"); }
+    if (joined[0] != 10) { return test.fail("take ++ drop reordered head"); }
+    return test.assert_eq(joined[3], 40);
+}
+
+function test_concat(): test.TestOutcome {
+    var a: i32[] = [1, 2];
+    var b: i32[] = [3, 4, 5];
+    var c: i32[] = array.concat(a, b);
+    if (c.len() != 5) { return test.fail("concat length wrong"); }
+    if (c[1] != 2) { return test.fail("concat head wrong"); }
+    return test.assert_eq(c[2], 3);
+}
+
+function test_concat_empty(): test.TestOutcome {
+    var e: i32[] = [];
+    var a: i32[] = [7, 8];
+    if (array.concat(e, a).len() != 2) { return test.fail("concat([], a) wrong"); }
+    return test.assert_eq(array.concat(a, e).len(), 2);
+}
+
+function test_concat_method(): test.TestOutcome {
+    // Receiver-method form (no collision with a type-specific name).
+    var a: i32[] = [1, 2];
+    var b: i32[] = [3];
+    var c: i32[] = a.concat(b);
+    return test.assert_eq(c.len(), 3);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("array structural verbs");
+    r = r.it("reverse",                  test_reverse());
+    r = r.it("reverse empty",            test_reverse_empty());
+    r = r.it("reverse single",           test_reverse_single());
+    r = r.it("take",                     test_take());
+    r = r.it("take zero",                test_take_zero());
+    r = r.it("take over length clamps",  test_take_over_len());
+    r = r.it("drop",                     test_drop());
+    r = r.it("drop over length clamps",  test_drop_over_len());
+    r = r.it("drop zero",                test_drop_zero());
+    r = r.it("take ++ drop complement",  test_take_drop_complement());
+    r = r.it("concat",                   test_concat());
+    r = r.it("concat empty",             test_concat_empty());
+    r = r.it("concat method form",       test_concat_method());
+    return r.finish();
+}

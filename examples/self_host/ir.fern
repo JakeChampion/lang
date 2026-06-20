@@ -1,0 +1,785 @@
+// examples/self_host/ir.fern — the stack-machine IR for the self-hosted
+// compiler, mirroring native's internal/ir (`ir.Op` / `[]Op`). This is the
+// layer the native PRODUCTION backends (arm64 / x86-64 / wasmbin) consume,
+// and the layer where Perceus reference counting lives (alias-inc, the
+// exit dec sweep, drop specialization, reuse tokens are all emitted here as
+// `call_direct` to `__fern_rc_*` helpers during AST -> IR lowering).
+//
+// The self-host previously had NO equivalent of this layer — it lowered
+// AST -> asm directly in each backend, so every RC emission had to be
+// hand-written three times. This module is slice 0 of the IR rebuild
+// (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md): once the backends emit from
+// `Op[]` instead of the AST, RC is lowered to IR ONCE and each backend just
+// instruction-selects an opcode. (The existing ssa.fern mirrors the
+// DOWNSTREAM optimiser `internal/ssa`, which native lifts FROM this IR; it
+// is a different, higher layer.)
+//
+// Representation (mirrors internal/ir/ir.go, but pointer-free — the
+// self-host's value-semantics style, matching ssa.fern: a function body is
+// an `Op[]` flat stack-machine stream; structured control flow is the
+// block/loop/if/end/br/brif scope discipline, exactly as native and wasm).
+// Kinds are string-tagged (like ssa.fern's SInst) rather than an int enum:
+// printable, diff-friendly, and the native `OpKind` names map 1:1 to these
+// tags ("const_i32", "add", "call_direct", ...).
+//
+import "./util";
+
+// SCOPE (slice 0): the `Op` value + its constructor helpers for a
+// representative spine of opcodes — constants, local load/store, integer
+// arithmetic / comparison, memory load/store, alloc, the call forms,
+// structured control flow, drop, and return. AST -> IR lowering
+// (mirroring the native `builder`), the AST-referencing fields
+// (Sig / ArgTypes / Pos), and the backend IR consumers land in later
+// slices. Nothing imports this yet, so it is additive and bootstrap-inert.
+
+// ---- Op ----------------------------------------------------------------
+
+// Op is one stack-machine instruction. Field meanings mirror native's
+// `ir.Op` (internal/ir/ir.go:515):
+//   kind     — the opcode tag (see the constructors below).
+//   i32      — the immediate for "const_i32"; the local index for
+//              load_local / store_local / tee_local; the block-type for
+//              block / loop / if; the relative depth for br / brif; the
+//              arg count for call_direct / call_indirect / call_closure;
+//              the table index for const_func.
+//   i64      — the immediate for "const_i64".
+//   f64      — the immediate for "const_f64" (f32 reuses this until the
+//              self-host grows a distinct f32 slot).
+//   width    — operand bit-width for ops that exist in multiple widths
+//              (add/sub/.../eq/.../load/store). 0 means 32; 64 selects i64;
+//              -1 is WidthPtr, the backend-resolved pointer width (4 on
+//              wasm32, 8 on arm64) — the same sentinel native uses so
+//              arm64's >4 GiB heap pointers round-trip.
+//   unsigned — selects the `_u` variant of div / rem / shr / comparisons.
+//   str      — "const_str"'s value and "call_direct"'s callee name.
+pub struct Op {
+    kind: string,
+    i32_imm: i32,
+    i64_imm: i64,
+    f64_imm: f64,
+    width: i32,
+    unsigned: boolean,
+    str: string,
+}
+
+// WidthPtr is the backend-resolved pointer-width sentinel (native's
+// ir.WidthPtr). Stored in Op.width for load / store of heap-pointer-typed
+// values; each backend resolves it (wasm32 -> 4, arm64 -> 8).
+pub function width_ptr(): i32 { return 0 - 1; }
+
+// ---- constructors ------------------------------------------------------
+//
+// One helper per opcode, mirroring the names native gives its OpKind
+// constants. Every field the opcode does not use is zeroed, so an Op is
+// always fully initialised (the value-semantics discipline ssa.fern uses).
+
+function op0(kind: string): Op {
+    return Op { kind: kind, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+
+// constants
+pub function op_const_i32(v: i32): Op {
+    return Op { kind: "const_i32", i32_imm: v, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+// op_const_i32_text carries an integer literal's SOURCE TEXT (in `str`) so the
+// backends splice it straight into a 32-bit immediate (`movq $TEXT` /
+// `ldr x0, =TEXT` / `i32.const TEXT`) without a Fern-side parse — exactly as the
+// AST backends do for `ExprNumber`. This is how HEX literals (`0x61626380`) and
+// full-u32-range values (`0xffffffff`) load correctly: the assembler / wasm
+// text parser handles the base and the unsigned range, where the IR's prior
+// `util.digits_to_i32` (decimal-only) zeroed every hex literal.
+pub function op_const_i32_text(t: string): Op {
+    return Op { kind: "const_i32_text", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: t };
+}
+pub function op_const_i64(v: i64): Op {
+    return Op { kind: "const_i64", i32_imm: 0, i64_imm: v, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+// int_extend widens an i32 to i64 (`as i64` / `as u64`); int_wrap narrows an
+// i64 to i32 (`as i32` / `as u32`). `unsigned` picks zero- vs sign-extension on
+// the register backends (wasm uses i64.extend_i32_s/u and i32.wrap_i64).
+pub function op_int_extend(unsigned: boolean): Op { return Op { kind: "int_extend", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: unsigned, str: "" }; }
+pub function op_int_wrap(unsigned: boolean): Op { return Op { kind: "int_wrap", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: unsigned, str: "" }; }
+// op_const_i64_text carries the literal's SOURCE TEXT (in `str`) rather than a
+// parsed i64, so the backends can splice it straight into a 64-bit immediate
+// (`movabsq $TEXT` / `ldr x0, =TEXT` / `i64.const TEXT`) without an i64
+// parse+format round-trip. width=64 marks it an i64 value.
+pub function op_const_i64_text(t: string): Op {
+    return Op { kind: "const_i64", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: t };
+}
+pub function op_const_f64(v: f64): Op {
+    return Op { kind: "const_f64", i32_imm: 0, i64_imm: 0, f64_imm: v, width: 0, unsigned: false, str: "" };
+}
+pub function op_const_str(s: string): Op {
+    return Op { kind: "const_str", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: s };
+}
+// op_const_func pushes a plain (capture-free) function VALUE — a function
+// pointer. `str` carries the function's name; `i32_imm` is a table-index slot
+// the backend fills (wasm resolves the name to its funcref-table index at emit
+// time, so irlower can pass 0 here). The value is consumed by op_call_indirect.
+pub function op_const_func(table_idx: i32, name: string): Op {
+    return Op { kind: "const_func", i32_imm: table_idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
+}
+
+// locals
+pub function op_load_local(idx: i32): Op {
+    return Op { kind: "load_local", i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+pub function op_store_local(idx: i32): Op {
+    return Op { kind: "store_local", i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+pub function op_tee_local(idx: i32): Op {
+    return Op { kind: "tee_local", i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+
+// integer arithmetic / comparison (width selects i32 vs i64)
+pub function op_bin(kind: string, width: i32, unsigned: boolean): Op {
+    return Op { kind: kind, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: unsigned, str: "" };
+}
+
+// f64 arithmetic / comparison. `kind` is the float opcode ("fadd"/"fsub"/
+// "fmul"/"fdiv" or a float compare "flt"/"fgt"/"fle"/"fge"/"feq"/"fne"); the
+// operands flow on the rt-stack as their 8-byte IEEE bit pattern (like i64), so
+// only the op differs from the integer path — the backend pops into float
+// registers (xmm / d-regs / wasm f64). Arithmetic yields an f64; a compare
+// yields an i32 0/1.
+pub function op_fbin(kind: string): Op {
+    return Op { kind: kind, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
+}
+
+// f64 unary math intrinsic. `kind` is the float opcode ("fsqrt"/"ffloor"/
+// "fceil"/"ftrunc"/"fabs") for std/float's single-operand __*_f64 builtins.
+// Like op_fbin the operand + result are f64 (one value popped, one pushed); each
+// backend selects the single hardware instruction (sqrtsd / roundsd / and-mask
+// on x86, fsqrt / frint* / fabs on arm64, f64.sqrt / floor / ceil / trunc / abs
+// on wasm). Round-half-away (__round_f64) and the libm transcendentals
+// (log/exp/sin/cos/pow) need multi-instruction emulation / external calls and
+// stay on the AST path for now.
+pub function op_funary(kind: string): Op {
+    return Op { kind: kind, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
+}
+
+// f64 <-> i32 conversions. i32_to_f64 widens a signed i32 to f64 (cvtsi2sd /
+// scvtf / f64.convert_i32_s); f64_to_i32 truncates an f64 toward zero to a
+// signed i32 (cvttsd2si / fcvtzs / i32.trunc_f64_s). The value rides the stack
+// as bits on the register backends; wasm's typed stack flips i32<->f64 here.
+pub function op_i32_to_f64(): Op { return op0("i32_to_f64"); }
+pub function op_f64_to_i32(): Op { return op0("f64_to_i32"); }
+// f64_to_i64 truncates an f64 toward zero to a signed i64 (cvttsd2si to a
+// 64-bit reg / fcvtzs x / i64.trunc_f64_s). Distinct from f64_to_i32 only on
+// wasm, where i32 and i64 are different value types; the register backends
+// emit the same 64-bit-dest instruction for both.
+pub function op_f64_to_i64(): Op { return op0("f64_to_i64"); }
+
+// f64_bits / f64_from_bits — IEEE-754 bit reinterpret between an f64 and its
+// i64 bit pattern. On the register backends the 8-byte rt-stack slot already
+// holds the bits, so both are no-ops; wasm's typed stack needs a real
+// `i64.reinterpret_f64` / `f64.reinterpret_i64`. f32_bits / f32_from_bits are
+// the 32-bit pair: they additionally narrow (f64->f32) / widen (f32->f64),
+// since the self-host stack carries every float as f64. f64_bits / f32_bits
+// produce an integer (i64 / i32); f64_from_bits / f32_from_bits produce an f64.
+pub function op_f64_bits(): Op { return op0("f64_bits"); }
+pub function op_f64_from_bits(): Op { return op0("f64_from_bits"); }
+pub function op_f32_bits(): Op { return op0("f32_bits"); }
+pub function op_f32_from_bits(): Op { return op0("f32_from_bits"); }
+
+// op_const_f64_text carries the float literal's SOURCE TEXT (in `str`) so the
+// backends can hand it straight to the assembler (`.double TEXT` in .rodata /
+// `f64.const TEXT`) without a float parse+format round-trip — mirroring
+// op_const_i64_text. width=64 marks it a 64-bit (float) value.
+pub function op_const_f64_text(t: string): Op {
+    return Op { kind: "const_f64", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: t };
+}
+
+// memory: width carries 8/16/32/64 or width_ptr() for pointer-typed slots
+pub function op_load(width: i32): Op {
+    return Op { kind: "load", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+}
+pub function op_store(width: i32): Op {
+    return Op { kind: "store", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+}
+pub function op_alloc(): Op { return op0("alloc"); }
+
+// high-level array ops — layout-agnostic. The IR carries array SEMANTICS
+// (make / index / index-store / length / refcount read), not a byte layout;
+// each backend instruction-selects them into its OWN array memory layout
+// (the standalone ir_x86 backend's 4-byte freestanding header, asm.fern's
+// 8-byte `__fern_arr_box` rc/cap/len header, …). This is what lets the
+// production IR path emit asm.fern-compatible arrays without irlower baking
+// a single layout into the op stream (the target-agnostic-IR discipline:
+// layout lives in the backend, not the IR). `arr_make`'s i32_imm is the
+// element count; it pops that many i32 values (element 0 deepest) and pushes
+// the new array's data pointer. `arr_get` pops [base, idx] → element;
+// `arr_set` pops [base, idx, val]; `arr_len` / `arr_rc` pop [base] → len / rc.
+// `arr_make`'s `width` is the element slot width: 32 for i32 / wasm32-pointer
+// elements (4-byte wasm stride) or 64 for f64 elements (8-byte wasm stride,
+// f64.load/store). The register backends already use 8-byte slots regardless,
+// so width only steers the wasm backend; `arr_get` / `arr_set` carry the same
+// element width so they select the matching load/store on wasm.
+pub function op_arr_make(n: i32, width: i32): Op {
+    return Op { kind: "arr_make", i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+}
+pub function op_arr_get(width: i32): Op { return Op { kind: "arr_get", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
+pub function op_arr_set(width: i32): Op { return Op { kind: "arr_set", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
+// i64-element array ops: an 8-byte stride like f64, but the wasm backend uses
+// i64.load / i64.store (an INTEGER 8-byte slot) instead of f64.load/store. The
+// `unsigned` flag carries that "8-byte element is i64, not f64" distinction
+// (width 64 + unsigned => i64; width 64 + !unsigned => f64). The register
+// backends move 8-byte slots regardless and ignore it.
+pub function op_arr_make_i64(n: i32): Op {
+    return Op { kind: "arr_make", i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+}
+pub function op_arr_get_i64(): Op { return Op { kind: "arr_get", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" }; }
+pub function op_arr_set_i64(): Op { return Op { kind: "arr_set", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" }; }
+pub function op_arr_len(): Op { return op0("arr_len"); }
+pub function op_arr_rc(): Op { return op0("arr_rc"); }
+// `arr_push` pops [arr, val] → a (possibly grown) array with `val` appended via
+// __fern_arr_push (the helper the AST `.append` and the map runtime use).
+// Lowered from a reassign-self `a = a.append(v)`; the result re-binds the slot.
+pub function op_arr_push(): Op { return op0("arr_push"); }
+
+// `arr_push_i64` is `arr_push` for an 8-byte-element array (i64[] / u64[]): the
+// value is an i64 (i64.store / 8-byte slot). On the register backends every
+// array slot is already 8 bytes, so this reuses __fern_arr_push; on wasm32,
+// where i32[] packs 4-byte slots, it lowers to the 8-byte-stride
+// $__fern_arr_push_i64. Lowered from `a = a.append(v)` on a u64[] / i64[].
+pub function op_arr_push_i64(): Op { return op0("arr_push_i64"); }
+
+// `arr_push_f64` is `arr_push` for an f64[] (8-byte float element): the value
+// is an f64 (f64.store / 8-byte slot). On the register backends every array
+// slot is already 8 bytes and the f64 value rides the value stack as raw 8
+// bytes, so this reuses __fern_arr_push exactly like arr_push_i64; on wasm32
+// the operand stack is typed, so it lowers to the 8-byte-stride
+// $__fern_arr_push_f64. Lowered from `a = a.append(v)` on an f64[].
+pub function op_arr_push_f64(): Op { return op0("arr_push_f64"); }
+// `alloc_u8` pops [n] → a fresh n-element array (8-byte slots, len = n) via
+// __fern_alloc_u8 (the `__alloc_u8(n)` byte-buffer builtin). Contents are NOT
+// zeroed (a reused freelist block keeps stale bytes — callers zero explicitly).
+pub function op_alloc_u8(): Op { return op0("alloc_u8"); }
+// `str_from_bytes` pops [arr] → a fresh string box packing each slot's low byte
+// via __fern_string_from_bytes (the `string_from_bytes(arr)` builtin).
+pub function op_str_from_bytes(): Op { return op0("str_from_bytes"); }
+// `memcpy` pops [dst, src, n] (raw usize pointers + a byte count) → copies n
+// bytes src→dst and pushes a dummy 0 (the `__memcpy(dst, src, n)` builtin is
+// used statement-position, its value discarded). x86-64 emits `rep movsb`,
+// arm64 a byte-copy loop, wasm `memory.copy` — matching the AST emitters. This
+// is what lets core/int's int_to_string / __int_to_string_u64 (and everything
+// transitively calling them) lower on the IR path instead of BAIL call.
+pub function op_memcpy(): Op { return op0("memcpy"); }
+// Raw-memory load/store intrinsics — the `__load_i32` / `__load_i64` /
+// `__load_ptr` / `__store_i32` / `__store_ptr` builtins the core/map runtime
+// uses to read/write its packed entry buffer. The AST backends emit these as
+// __fn___load_* runtime helper CALLS; the IR path inlines them as single
+// load/store instructions (the IR sibling of arr_get/arr_set, but at a raw
+// usize address rather than an array slot). Loads pop [addr] and push the
+// value; stores pop [addr, val] and push a dummy 0 (used statement-position,
+// discarded). i32 loads sign-extend (movslq); ptr is heap-pointer-width
+// (8 bytes on x86-64/arm64, 4 on wasm32). Unblocks core/map's __map_hash /
+// __map_dec_value (and the wider Map subsystem) on the IR path.
+pub function op_load_i32(): Op { return op0("load_i32"); }
+pub function op_load_i64(): Op { return op0("load_i64"); }
+pub function op_load_ptr(): Op { return op0("load_ptr"); }
+pub function op_store_i32(): Op { return op0("store_i32"); }
+pub function op_store_ptr(): Op { return op0("store_ptr"); }
+// `int_cast` masks / extends a 32-bit integer to a narrower int type's range:
+// `as u8` (and 255), `as u16` (and 65535), `as i8`/`as i16` (sign-extend),
+// `as i32` (sign-extend low 32 — movslq), `as u32` (zero-extend low 32 — movl).
+// The target type name rides `str`. Mirrors asm.fern's `as_<ty>` int→int masking.
+pub function op_int_cast(ty: string): Op { return Op { kind: "int_cast", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: ty }; }
+// `u32_wrap` reduces a value on the operand stack to its u32 range (zero-extend
+// low 32 bits). Emitted after a u32 arithmetic op (add/sub/mul/shl) on the
+// 64-bit REGISTER backends so u32 semantics wrap at 2^32 like native (and like
+// wasm's native 32-bit i32 ops); on wasm it is a no-op (the value is already a
+// 32-bit i32). This is what makes u32-heavy code (std/crypto's SHA-256) correct.
+pub function op_u32_wrap(): Op { return op0("u32_wrap"); }
+
+// high-level string ops — layout-agnostic, like the array ops. The IR carries
+// string SEMANTICS (length read, concat, equality); each backend selects its
+// own string box layout (asm.fern's 16-byte `[data@0, len@8]` heap box, wasm's
+// `[len@0, bytes@4]` data-section block). `const_str` (see op_const_str) pushes
+// a string value; `str_len` pops [str] → length; `str_concat` pops [a, b] → the
+// concatenated string (a fresh box); `str_eq` pops [a, b] → 1 if byte-equal
+// else 0. Strings are NOT reference-counted (they leak, matching asm.fern's AST
+// path — fine for short-lived CLI / edge programs), so no RC ops accompany them.
+pub function op_str_len(): Op { return op0("str_len"); }
+pub function op_str_concat(): Op { return op0("str_concat"); }
+pub function op_str_eq(): Op { return op0("str_eq"); }
+// `str_cmp` pops [a, b] → a signed i32: <0 if a<b, 0 if equal, >0 if a>b
+// (lexicographic byte compare, length tiebreak). Ordering compares (< <= > >=)
+// lower to str_cmp followed by the relational op against 0.
+pub function op_str_cmp(): Op { return op0("str_cmp"); }
+// `str_index` pops [str, i] → the i32 byte value at index i (`s[i]`). Each
+// backend reads the byte from its own string layout (x86/arm64 16-byte box
+// [data@0,len@8] → byte at [data+i]; wasm data-section [len@0,bytes@4] → byte at
+// [s+4+i]). No bounds check (matches the AST path).
+pub function op_str_index(): Op { return op0("str_index"); }
+// `str_slice` pops [str, start, end] → a fresh string for `s[start:end]`. On
+// x86/arm64 this is a zero-copy VIEW: a new 16-byte box [data = src.data+start,
+// len = end-start] sharing the source bytes. On wasm, strings are inline blocks
+// (no separate data pointer), so it COPIES via $__fern_substr. No bounds check.
+pub function op_str_slice(): Op { return op0("str_slice"); }
+// `arr_slice` pops [arr, start, end] → a fresh array holding arr[start:end]
+// (end exclusive), COPYING the 8-byte (x86/arm64) / 4-byte (wasm) element
+// payloads via __fern_arr_slice. No bounds check (matches the AST path).
+// `arr_slice`'s `width` is the element width (32 for i32 / wasm32-pointer
+// elements, 64 for f64): the wasm backend selects the 4-byte or 8-byte copy
+// helper. The register backends copy 8-byte slots regardless and ignore it.
+pub function op_arr_slice(width: i32): Op { return Op { kind: "arr_slice", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
+
+// Random / byte-source builtins (issue #2747) — the cross-backend byte source
+// uuid (#2682) and a future std/crypto build on. Each lowers to a runtime
+// helper the IR backends emit (no `__fn_` body), so the eligibility gate treats
+// them as known ops rather than disqualifying call_directs.
+//
+// `random_bytes` pops [n] → a fresh string of n cryptographic-quality random
+// bytes (Linux getrandom / WASI random_get). Result is a string box; the bytes
+// have no encoding, so `s[i]` reads a 0..255 value (str_index).
+pub function op_random_bytes(): Op { return op0("random_bytes"); }
+// `random_i32` takes no operands → a single CSPRNG i32. A 4-byte random read
+// reinterpreted as an i32 (cheaper than random_bytes for one small value).
+pub function op_random_i32(): Op { return op0("random_i32"); }
+// `monotonic_ns` / `now_unix_ms` take no operands → an i64 clock reading.
+// monotonic_ns is a monotonically non-decreasing nanosecond counter (elapsed
+// timing); now_unix_ms is wall-clock milliseconds since the Unix epoch. Both
+// reinterpret a `clock_gettime` timespec; the IR backends emit the
+// __fern_monotonic_ns / __fern_now_unix_ms helpers (no allocation).
+pub function op_monotonic_ns(): Op { return op0("monotonic_ns"); }
+pub function op_now_unix_ms(): Op { return op0("now_unix_ms"); }
+// `now_ns` — wall-clock nanoseconds since the Unix epoch (the i64 nanosecond
+// twin of now_unix_ms); 0-arg, allocation-free. Lowers to __fern_now_ns.
+pub function op_now_ns(): Op { return op0("now_ns"); }
+// `__heap_bump_bytes` takes no operands → an i32: the bump allocator's
+// high-water mark (cursor − region base; 0 before the first allocation). It
+// reads the heap runtime's cursor + base — so it does NOT allocate, but it
+// DOES need the heap runtime present (op_allocates admits it for the gate). The
+// register backends compute cursor − base inline (base is the static
+// __fern_heap symbol on x86, __fern_heap_end − heap_size on arm64); wasm reads
+// `$heap − heap_base`. Mirrors native's __fern_heap_bump_bytes.
+pub function op_heap_bump_bytes(): Op { return op0("heap_bump_bytes"); }
+// `str_bytes` pops [str] → a fresh u8[] (one i32 slot per byte). Backs both
+// `s.bytes()` (copying) and `s.as_bytes()` — the self-host's slot-array model
+// has no separate zero-copy slice view, so as_bytes returns the same fresh
+// array (correct, just not zero-copy; mirrors the AST path).
+pub function op_str_bytes(): Op { return op0("str_bytes"); }
+// `str_starts_with` / `str_ends_with` pop [s, p] → i32 1/0 (whether `s` begins
+// / ends with `p`; empty `p` → 1). `str_index_of` pops [s, sub] → the first
+// byte index of `sub` in `s`, or -1 (empty `sub` → 0). All three are scalar,
+// allocation-free string predicates backed by the __fern_str_* search runtime;
+// `s.contains(sub)` lowers as `str_index_of(...) >= 0` (no dedicated op).
+// `str_to_upper` / `str_to_lower` pop [s] → a fresh string box that is `s` with
+// each ASCII letter cased up / down (non-letters copied verbatim). They allocate
+// the new char buffer + box, so they pull in the heap runtime; leak-only (no RC).
+pub function op_str_to_upper(): Op { return op0("str_to_upper"); }
+pub function op_str_to_lower(): Op { return op0("str_to_lower"); }
+// `str_repeat` pops [s, n] → a fresh string box holding `s` concatenated `n`
+// times (n <= 0 → empty). Allocates the n*len buffer + box; leak-only.
+pub function op_str_repeat(): Op { return op0("str_repeat"); }
+// `str_trim` pops [s] → a fresh string box with leading/trailing ASCII
+// whitespace (space / tab / '\n' / '\r') removed. Leak-only.
+pub function op_str_trim(): Op { return op0("str_trim"); }
+// `str_reverse` pops [s] → a fresh string box with `s`'s bytes in reverse
+// order. Leak-only.
+pub function op_str_reverse(): Op { return op0("str_reverse"); }
+// `str_replace` pops [haystack, old, new] → a fresh string box with every
+// (non-overlapping) occurrence of `old` in `haystack` replaced by `new`. An
+// empty `old`, or no match, returns `haystack` unchanged. Leak-only.
+pub function op_str_replace(): Op { return op0("str_replace"); }
+// `str_chars` pops [s] → a fresh string[] whose i-th element is the 1-char
+// string s[i:i+1]. Result is is_arr + is_strarr (like str_split). Leak-only.
+pub function op_str_chars(): Op { return op0("str_chars"); }
+// `str_lines` pops [s] → a fresh string[] of s split on newline, with a
+// trailing empty segment dropped when s is empty or ends with a newline (so
+// "a\nb\n" is 2 lines, not 3 — matching Rust/Python). is_arr + is_strarr.
+pub function op_str_lines(): Op { return op0("str_lines"); }
+pub function op_str_starts_with(): Op { return op0("str_starts_with"); }
+pub function op_str_ends_with(): Op { return op0("str_ends_with"); }
+pub function op_str_index_of(): Op { return op0("str_index_of"); }
+// `str_split` pops [haystack, sep] → a fresh string[] of the segments of
+// `haystack` split on `sep`. An empty separator yields a single-element
+// `[haystack]`. Backs both the `s.split(sep)` method and the `str_split(s, sep)`
+// free call. The result array is RC-tracked; the segment string boxes leak
+// (mirrors the AST path's __fern_str_split).
+pub function op_str_split(): Op { return op0("str_split"); }
+
+// Built-in Option / Result ops. The value is a heap box [tag@0, payload@8]
+// (Some/Ok = tag 0, None/Err = tag 1) — distinct from user enums/structs, which
+// carry a shape pointer at offset 0. `opt_make` pops [payload] and builds the
+// box with `i32_imm` as the tag (Some/Ok=0, Err=1); `opt_none` builds a
+// payloadless box with tag 1; `opt_tag` pops [box] → the i32 tag at offset 0
+// (drives Some/None/Ok/Err discrimination in match).
+pub function op_opt_make(tag: i32): Op { return Op { kind: "opt_make", i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
+// 8-byte (i64 / f64) payload variant: width 64 selects an 8-byte store, and
+// `unsigned` picks i64.store (set) vs f64.store (clear). The wasm box widens its
+// payload slot to 8 bytes (matching the register backends, which already do).
+pub function op_opt_make_w(tag: i32, width: i32, is_i64: boolean): Op { return Op { kind: "opt_make", i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" }; }
+pub function op_opt_none(): Op { return op0("opt_none"); }
+pub function op_opt_tag(): Op { return op0("opt_tag"); }
+// `opt_payload` pops [box] → the payload at offset 8 (x86/arm64) / 4 (wasm);
+// used to bind a Some/Ok/Err pattern's payload.
+pub function op_opt_payload(): Op { return op0("opt_payload"); }
+// 8-byte payload read: width 64 + the i64 flag select i64.load vs f64.load.
+pub function op_opt_payload_w(width: i32, is_i64: boolean): Op { return Op { kind: "opt_payload", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" }; }
+pub function op_map_new(keykind: i32): Op { return Op { kind: "map_new", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
+// op_map_set: `i32_imm` is the KEY kind (0 = string, 1 = i32 — the x86-64
+// runtime's string-eq-vs-int loop selector); `unsigned` carries the VALUE
+// pointerness (the wasm runtime's `vis` RC-retain flag — true when the value
+// is a heap pointer: string / array / struct / enum / tuple / fn / unknown).
+// Without the value flag the wasm map_set leaves vis=0, never retaining a
+// pointer value, so the caller's dec frees it under the map → use-after-free /
+// sibling-key aliasing (#3495). x86-64 ignores `unsigned` (its runtime never
+// RC-manages values; its arr_dec is leak-only).
+pub function op_map_set(keykind: i32, valptr: boolean): Op { return Op { kind: "map_set", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: valptr, str: "" }; }
+pub function op_map_len(): Op { return op0("map_len"); }
+// `print_int` pops an i32 and writes its decimal text to stdout (no newline),
+// pushing a dummy result (the syscall return) so a statement-level drop balances.
+// Lowers to a call into each backend's __fern_print_int runtime helper — the same
+// helper + symbol the AST path emits, so behaviour is identical.
+pub function op_print_int(): Op { return op0("print_int"); }
+// `print_i64` is the i64 companion of `print_int`: it pops an i64 (not i32)
+// and writes its decimal text via the wider $__fern_print_int64 helper. The
+// lowering picks it over print_int when the argument is i64-typed.
+pub function op_print_i64(): Op { return op0("print_i64"); }
+// `print_str` pops a string value and writes its bytes to stdout (no newline),
+// pushing a dummy result so a statement-level drop balances. `print(s)` desugars
+// to `print_str(s + "\n")` (str_concat with a "\n" literal); `write(s)` is a bare
+// print_str. Lowers to each backend's __fern_print_str helper.
+pub function op_print_str(): Op { return op0("print_str"); }
+// `read_int` reads a line from stdin and parses a leading optional-sign decimal,
+// pushing the i32 (a VALUE op — no args, leaves the result on the stack). Lowers
+// to each backend's __fern_read_int helper. No wasm support (no stdin read), so a
+// read_int module is wasm-ineligible (wasm_eligible) and stays on the AST path.
+pub function op_read_int(): Op { return op0("read_int"); }
+// `eprint_str` pops a string value and writes its bytes to STDERR (fd 2, no
+// newline), pushing a dummy result so a statement-level drop balances. `eprint(s)`
+// is a bare eprint_str; `eprint_int(n)` is i32_to_string(n) then eprint_str.
+// Lowers to each backend's __fern_eprint_str helper.
+pub function op_eprint_str(): Op { return op0("eprint_str"); }
+// `exit` pops an i32 and terminates the process with it as the exit code (an
+// inline sys_exit / proc_exit per backend — no runtime helper). It never returns;
+// the pushed dummy keeps the operand-stack shape for a surrounding statement drop.
+pub function op_exit(): Op { return op0("exit"); }
+// `read_line` reads up to 256 bytes (one line) from stdin and returns a fresh
+// string box `{data, len}` (a VALUE op — no args, leaves the box on the stack).
+// Lowers to each backend's __fern_read_line helper. No wasm stdin, so a read_line
+// module is wasm-ineligible (wasm_eligible) and stays on the AST path there.
+pub function op_read_line(): Op { return op0("read_line"); }
+// `read_file` pops a path string value and reads the whole named file, pushing a
+// fresh Result[string, IoError] box: Ok(contents) on success, Err(_) on any I/O
+// error (a VALUE op — one arg consumed, the box left on the stack). Lowers to
+// each backend's __fern_read_file helper. No wasm file I/O here, so a read_file
+// module is wasm-ineligible (wasm_eligible) and stays on the AST path there.
+pub function op_read_file(): Op { return op0("read_file"); }
+// `args` reads the process command-line arguments, pushing a fresh string[]
+// (argv[0] first) — a VALUE op with no args, leaving the array box on the stack.
+// Lowers to each backend's __fern_args helper (which reads the __fern_argc /
+// __fern_argv globals the entry's _start saves from the initial stack). No wasm
+// argv in this runtime, so an args module is wasm-ineligible (wasm_eligible) and
+// stays on the AST path there.
+pub function op_args(): Op { return op0("args"); }
+// `putchar` pops an i32 and writes its low byte to stdout (write(1, &byte, 1)),
+// pushing a dummy result (the syscall return) so a statement-level drop balances.
+// Lowers to each backend's __fern_putchar helper — the byte-level twin of
+// print_str. Mirrors the native compiler's `putchar` builtin (issue #2839).
+pub function op_putchar(): Op { return op0("putchar"); }
+// The global string-builder primitives — the amortised-O(1) output accumulator
+// the self-host emitters write through (asmcore.EmitState.write → strbuf_append;
+// emit_module_ir → strbuf_reset / strbuf_take). A single .bss buffer + length:
+//   `strbuf_reset` clears the length (no args; pushes a dummy for stmt drop).
+//   `strbuf_append` pops a string box and copies its bytes onto the buffer (a
+//      statement op; pushes a dummy so a statement-level drop balances).
+//   `strbuf_take` snapshots the buffer into a fresh string box and resets the
+//      length (a VALUE op — no args, leaves the box on the stack; allocates).
+// Lower to each register backend's __fern_strbuf_* helpers (byte-for-byte the
+// AST path's, so the IR + AST emitters agree). No wasm IR support yet, so a
+// strbuf module is wasm-ineligible (wasm_eligible) and stays on the wasm AST path.
+pub function op_strbuf_reset(): Op { return op0("strbuf_reset"); }
+pub function op_strbuf_append(): Op { return op0("strbuf_append"); }
+pub function op_strbuf_take(): Op { return op0("strbuf_take"); }
+// `sleep_ms` pops an i32 (milliseconds) and pauses via nanosleep (ms <= 0 is a
+// no-op), pushing a dummy result (the syscall return) so a statement-level drop
+// balances — the same void-with-drop shape as putchar. Lowers to the x86-64 /
+// arm64 __fern_sleep_ms helper the AST path / native compiler use (no wasm: the
+// WASI poll-based sleep is a separate item, #2843). Mirrors the native builtin.
+pub function op_sleep_ms(): Op { return op0("sleep_ms"); }
+// `map_get` pops [map, key] → an Option box [tag@0, payload@8] (Some(value) on a
+// hit, None on a miss) — the SAME layout as opt_make, so it plugs into the
+// built-in Option match. `map_has` pops [map, key] → i32 0/1. Both carry the key
+// kind in i32_imm.
+pub function op_map_get(keykind: i32): Op { return Op { kind: "map_get", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
+pub function op_map_has(keykind: i32): Op { return Op { kind: "map_has", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
+// `map_get_or` pops [map, key, default] → the value at key, or default on a miss.
+pub function op_map_get_or(keykind: i32): Op { return Op { kind: "map_get_or", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
+// `map_delete` pops [map, key] → the map with that key removed (Fern's functional
+// `m.without(k)`); reuses the same `__fern_map_delete` runtime as the AST path.
+// Key kind in i32_imm.
+pub function op_map_delete(keykind: i32): Op { return Op { kind: "map_delete", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
+// `map_keys` / `map_values` pop [map] → the array of live keys / values. On the
+// parallel-array backends (x86-64 / arm64) this is the map's internal keys[] /
+// values[] pointer (box @0 / @8); on wasm it snapshots the hash map into a fresh
+// array. Order is backend-defined, so consumers must be order-independent.
+pub function op_map_keys(): Op { return op0("map_keys"); }
+pub function op_map_values(): Op { return op0("map_values"); }
+
+// high-level struct ops — layout-agnostic, like the array/string ops. `str`
+// carries the struct's type name, `i32_imm` the field count (struct_make) or
+// the field index in DECL order (struct_get). `struct_make` pops `i32_imm`
+// field values (field 0 deepest, already reordered by irlower into decl order)
+// and pushes the new struct box; each backend selects its own layout
+// (x86/arm64: `[shape_ptr, f0, f1, …]` 8-byte slots, field i at (i+1)*8; wasm:
+// `[type_id, f0@4, f1@8, …]` 4-byte slots + an rc header). `struct_get` pops
+// [struct] and pushes field `i32_imm`. This first slice covers scalar-field
+// (i32/boolean) structs only and is leak-only (no RC / drop) — exit-code-
+// equivalent to every backend's AST path since the value is read before any
+// free; rc-tracked fields + drop specialization are later slices.
+pub function op_struct_make(type_name: string, nfields: i32): Op {
+    return Op { kind: "struct_make", i32_imm: nfields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
+}
+// width selects the field's load/store size on width-typed backends (wasm): 64
+// for an f64 field, 0 (i32-shaped) otherwise. The register backends use 8-byte
+// slots for every field and ignore it.
+pub function op_struct_get(field_index: i32, width: i32): Op {
+    return Op { kind: "struct_get", i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+}
+
+// struct_set pops [struct, value] and stores value into field `field_index`
+// (the in-place `p.x = v` mutation). Scalar fields only (leak-only structs);
+// the box is shared by reference, so aliases observe the write — matching the
+// AST path. Layout-agnostic: each backend writes at its own field offset.
+pub function op_struct_set(field_index: i32, width: i32): Op {
+    return Op { kind: "struct_set", i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+}
+// i64-field struct ops: an 8-byte field like f64, but the wasm backend uses
+// i64.load / i64.store (an INTEGER 8-byte slot). The `unsigned` flag carries the
+// "8-byte field is i64, not f64" distinction (width 64 + unsigned => i64). The
+// register backends use 8-byte slots for every field and ignore it.
+pub function op_struct_get_i64(field_index: i32): Op {
+    return Op { kind: "struct_get", i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+}
+pub function op_struct_set_i64(field_index: i32): Op {
+    return Op { kind: "struct_set", i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+}
+
+// struct_set_shape pops [box] and writes `type_name`'s interned shape (the SAME
+// .S<idx> label / numeric type-id struct_make stores at offset 0, that variant_is
+// / dyn_dispatch compare pointer/id-equal against), then pushes [box] back. Used
+// by the enum-donor cross-reuse: a dead scalar-enum box is overwritten IN PLACE
+// as a different same-size shape (a struct W of equal field count), so its slot 0
+// must change from the donor variant's shape to W's. Layout-agnostic — each
+// backend writes its own offset-0 identity (.S label on x86/arm64, type-id i32 on
+// wasm), reusing exactly the struct_make shape-write.
+pub function op_struct_set_shape(type_name: string): Op {
+    return Op { kind: "struct_set_shape", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
+}
+
+// high-level tuple ops — layout-agnostic, like the struct ops, but a tuple box
+// has NO shape/type-id slot (field access is the numeric `.0` / `.1` spelling,
+// resolved at the access site): element i sits at the box's slot i. `tuple_make`
+// pops `i32_imm` element values (element 0 deepest) and pushes the new box;
+// `tuple_get` pops [tuple] and pushes element `i32_imm`. Scalar elements only
+// (leak-only), so no RC.
+pub function op_tuple_make(n: i32): Op {
+    return Op { kind: "tuple_make", i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+// op_tuple_make_k carries the comma-joined element KINDS (e.g. "i32,i64,f64") in
+// `str` so the wasm backend uses a uniform 8-byte slot per element and stores
+// each with the matching instruction (i64.store for "i64", f64.store for "f64",
+// else i32.store). The register backends already use 8-byte slots and ignore it.
+pub function op_tuple_make_k(n: i32, kinds: string): Op {
+    return Op { kind: "tuple_make", i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: kinds };
+}
+pub function op_tuple_get(idx: i32): Op {
+    return Op { kind: "tuple_get", i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+// 8-byte tuple element reads: width 64 selects an 8-byte load; `unsigned` picks
+// i64.load (set) vs f64.load (clear). Offsets are a uniform 8-byte stride.
+pub function op_tuple_get_w(idx: i32, width: i32, is_i64: boolean): Op {
+    return Op { kind: "tuple_get", i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
+}
+
+// variant_is pops an enum-variant box and pushes 1 if it is the variant named
+// `str`, else 0 — the discriminant test that drives `match` arm dispatch. A
+// variant box is built by struct_make (the variant struct's name is its shape /
+// type id, its payload is field 0), so the test reads the box's slot-0 tag and
+// compares it to the named variant's identity: the interned shape-name pointer
+// on x86/arm64, the struct type id on wasm. Layout-agnostic, like the other
+// high-level ops — each backend resolves the identity for its own layout.
+pub function op_variant_is(name: string): Op {
+    return Op { kind: "variant_is", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
+}
+
+// calls — i32_imm is the arg count; str is the callee for call_direct
+pub function op_call_direct(callee: string, argc: i32): Op {
+    return Op { kind: "call_direct", i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: callee };
+}
+// op_dyn_dispatch is a `dyn Trait` method call. The receiver (arg 0) + args
+// have been spilled into argc CONSECUTIVE local slots starting at `base_slot`
+// (so every backend can reload them per dispatch arm — wasm can't index a deep
+// operand-stack slot). The backend reads the receiver's runtime shape pointer
+// and dispatches to the matching `<ConcreteType>.<method>` — a compare-branch
+// chain over the trait's impl types, mirroring the AST emitter. `str` is the
+// method name; `i32_imm` is base_slot; `width` is argc (1 + nargs).
+pub function op_dyn_dispatch(method: string, base_slot: i32, argc: i32): Op {
+    return Op { kind: "dyn_dispatch", i32_imm: base_slot, i64_imm: 0, f64_imm: 0.0, width: argc, unsigned: false, str: method };
+}
+// op_dyn_box heap-boxes a PRIMITIVE/string value coerced into a `dyn Trait`
+// slot (docs/DYN-TRAITS.md §4.2.3). A struct/enum value already carries its
+// shape at offset 0, so it is the `dyn` fat pointer directly and needs no box;
+// a primitive value has no shape pointer, so it is boxed into a cell
+// `[shape@0, value@8]` whose offset-0 shape is the concrete type's interned
+// type-name (the SAME `.S<idx>` / type-id mechanism struct shapes use, keyed by
+// the primitive type name e.g. "i32"/"string"). The boxed value (one word — an
+// i32/i64/f64 scalar OR a `string`'s heap-box pointer) is stored at offset 8.
+// The value is on top of the operand stack; the op leaves the cell pointer.
+// `str` is the primitive type name. Dispatch (op_dyn_dispatch) reads offset 0,
+// matches a primitive arm, and reloads the value from offset 8 (UNBOX).
+pub function op_dyn_box(type_name: string): Op {
+    return Op { kind: "dyn_box", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
+}
+// op_dyn_downcast is the `e as? T` fallible downcast (docs/DYN-TRAITS.md §9).
+// The `dyn Trait` value (a heap pointer carrying its concrete shape at offset 0)
+// is on top of the operand stack. The op reads that offset-0 shape and compares
+// it to T's interned shape (the SAME `.S<idx>` label / numeric type-id the
+// op_dyn_dispatch arms and struct_make use, so pointer/id identity holds) — on
+// an exact match it builds `Some(value)` (the value IS the concrete `T`
+// pointer), else `None`, leaving an ordinary Option box (tag@0, payload@) a
+// downstream `match` reads with the same opt_tag/opt_payload it reads any
+// Option with. `str` is the target concrete type name T. No new shape metadata:
+// the downcast is a single shape read + compare, mirroring the dispatch chain.
+pub function op_dyn_downcast(target: string): Op {
+    return Op { kind: "dyn_downcast", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: target };
+}
+pub function op_call_indirect(argc: i32): Op {
+    return Op { kind: "call_indirect", i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+pub function op_call_closure(argc: i32): Op {
+    return Op { kind: "call_closure_direct", i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+
+// structured control flow — i32_imm is the block-type (block/loop/if) or
+// the relative branch depth (br/brif), mirroring native exactly.
+pub function op_block(blocktype: i32): Op {
+    return Op { kind: "block", i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+pub function op_loop(blocktype: i32): Op {
+    return Op { kind: "loop", i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+pub function op_if(blocktype: i32): Op {
+    return Op { kind: "if", i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+pub function op_else(): Op { return op0("else"); }
+pub function op_end(): Op { return op0("end"); }
+pub function op_br(depth: i32): Op {
+    return Op { kind: "br", i32_imm: depth, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+pub function op_brif(depth: i32): Op {
+    return Op { kind: "brif", i32_imm: depth, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+
+pub function op_drop(): Op { return op0("drop"); }
+pub function op_return(): Op { return op0("return"); }
+
+// ---- printing ----------------------------------------------------------
+//
+// render_op gives a stable one-line textual form (the basis for a future
+// IR golden / disassembly test, mirroring ssa.fern's printer). Only the
+// fields an opcode uses are shown.
+pub function render_op(o: Op): string {
+    if (o.kind == "const_i32") { return "const_i32 " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "const_i32_text") { return "const_i32_text " + o.str; }
+    if (o.kind == "const_i64") { return "const_i64 " + o.str; }
+    if (o.kind == "int_extend") { return "int_extend"; }
+    if (o.kind == "int_wrap") { return "int_wrap"; }
+    if (o.kind == "const_str") { return "const_str " + o.str; }
+    if (o.kind == "load_local") { return "load_local " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "store_local") { return "store_local " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "tee_local") { return "tee_local " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "call_direct") { return "call_direct " + o.str + "/" + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "br") { return "br " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "brif") { return "brif " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "load") { return "load w" + util.i32_to_string(o.width); }
+    if (o.kind == "store") { return "store w" + util.i32_to_string(o.width); }
+    if (o.kind == "arr_make") { return "arr_make " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "str_len") { return "str_len"; }
+    if (o.kind == "str_concat") { return "str_concat"; }
+    if (o.kind == "str_eq") { return "str_eq"; }
+    if (o.kind == "str_cmp") { return "str_cmp"; }
+    if (o.kind == "str_index") { return "str_index"; }
+    if (o.kind == "str_slice") { return "str_slice"; }
+    if (o.kind == "arr_slice") { return "arr_slice"; }
+    if (o.kind == "opt_make") { return "opt_make " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "opt_none") { return "opt_none"; }
+    if (o.kind == "opt_tag") { return "opt_tag"; }
+    if (o.kind == "opt_payload") { return "opt_payload"; }
+    if (o.kind == "map_new") { return "map_new " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "map_set") { return "map_set " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "map_len") { return "map_len"; }
+    if (o.kind == "map_get") { return "map_get " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "map_has") { return "map_has " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "map_get_or") { return "map_get_or " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "map_delete") { return "map_delete " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "map_keys") { return "map_keys"; }
+    if (o.kind == "map_values") { return "map_values"; }
+    if (o.kind == "struct_make") { return "struct_make " + o.str + "/" + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "struct_get") { return "struct_get " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "struct_set") { return "struct_set " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "variant_is") { return "variant_is " + o.str; }
+    if (o.kind == "tuple_make") { return "tuple_make " + util.i32_to_string(o.i32_imm); }
+    if (o.kind == "tuple_get") { return "tuple_get " + util.i32_to_string(o.i32_imm); }
+    return o.kind;
+}
+
+// op_allocates reports whether an op of `kind` allocates on the heap (a box via
+// __fern_alloc / __fern_arr_box / __fern_str_box, or one of the string helpers
+// that builds a fresh box). It is the single source of truth for the
+// "does this module need the heap + RC runtime?" gate that each backend runs
+// over the lowered op stream: the x86 IR path (asm_ir.emit_module_ir) marks the
+// "heap" need per-function off the ops it already lowered, and wasm_ir's
+// module_allocates walks the stream the same way. Keeping the list here means a
+// newly-added allocating op is taught to every backend's heap gate at once,
+// rather than silently routing modules to the AST fallback because one backend's
+// hand-maintained copy of the list fell behind.
+//
+// (wasm_ir.module_allocates additionally ORs in module_uses_strings for the
+// non-allocating string ops — str_len/str_eq/str_cmp/str_index — that still
+// pull the heap in via $__fern_strcat; the const_str/str_concat/str_slice
+// members below are a subset of that, so listing them here does not change its
+// result.)
+pub function op_allocates(kind: string): boolean {
+    // Low-level + literal allocations.
+    if (kind == "alloc" || kind == "alloc_u8" || kind == "arr_make" || kind == "arr_push" || kind == "arr_push_i64" || kind == "arr_push_f64") { return true; }
+    if (kind == "const_str" || kind == "str_concat" || kind == "str_slice" || kind == "str_from_bytes") { return true; }
+    // Composite boxes.
+    if (kind == "struct_make" || kind == "tuple_make") { return true; }
+    if (kind == "opt_make" || kind == "opt_none") { return true; }
+    if (kind == "map_new" || kind == "map_set") { return true; }
+    // Byte/string builders that materialise a fresh box.
+    if (kind == "random_bytes" || kind == "str_bytes" || kind == "str_split") { return true; }
+    if (kind == "str_to_upper" || kind == "str_to_lower") { return true; }
+    if (kind == "str_repeat" || kind == "str_trim" || kind == "str_reverse") { return true; }
+    if (kind == "str_replace" || kind == "str_chars" || kind == "str_lines") { return true; }
+    // dyn_box allocates the 16-byte primitive `dyn` cell; dyn_downcast allocates
+    // the Some/None Option box (docs/DYN-TRAITS.md §4.2.3, §9).
+    if (kind == "dyn_box" || kind == "dyn_downcast") { return true; }
+    // heap_bump_bytes does NOT allocate, but it reads the heap runtime's cursor
+    // + base, so it needs that runtime emitted — fold it into the same gate
+    // (the predicate's contract per the doc above is "needs the heap runtime").
+    if (kind == "heap_bump_bytes") { return true; }
+    return false;
+}
+
+// is_str_op_kind reports whether `k` is one of the string operand-stack ops
+// that each native backend dispatches to a __fern_str_* runtime helper (rather
+// than inline instruction selection). The asm + arm64 IR backends both factor
+// these out of their giant op-dispatch chain into an emit_str_op helper, gated
+// on this predicate (keeping that dispatch under the self-host backend's
+// oversized-function miscompile threshold, #2720). The membership is a property
+// of the IR op set — not of any one target — so it lives here and both backends
+// share it; a new string op is taught to every backend's dispatch at once.
+pub function is_str_op_kind(k: string): boolean {
+    return k == "str_len" || k == "str_index" || k == "str_slice"
+        || k == "str_bytes" || k == "str_split" || k == "str_to_upper"
+        || k == "str_to_lower" || k == "str_repeat" || k == "str_trim"
+        || k == "str_reverse" || k == "str_replace" || k == "str_chars" || k == "str_lines"
+        || k == "str_starts_with"
+        || k == "str_ends_with" || k == "str_index_of" || k == "str_concat"
+        || k == "str_eq" || k == "str_cmp";
+}

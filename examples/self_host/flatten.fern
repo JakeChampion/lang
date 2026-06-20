@@ -24,15 +24,73 @@
 //   prefix    — own-module mangle prefix ("" = entry, no mangling)
 //   declnames — own top-level decl names; a bare ref to one → prefix__name
 //
-// no_prelude file: string handling is hand-rolled over the byte
+// Imports nothing: string handling is hand-rolled over the byte
 // builtins (s[i], s[i:j], .len(), ==, +), matching the rest of the
 // self-host sources.
 
-import "core/no_prelude";
 import "./lexer";
 import "./parser";
 
-pub struct RewriteCtx { modnames: string[], prefix: string, declnames: string[] }
+// `locals` lists the value-binding names in scope for the body being
+// rewritten (params + every `var` / `for` / match-arm binding in the
+// function). A bare ident matching one of these is a LOCAL variable, so
+// it must NOT be mangled even when it shares a name with a module-level
+// decl (e.g. a local `range` shadowing the `range()` function). Without
+// this, a shadowing local was rewritten to the decl's mangled name and
+// the codegen resolved it to the function value — see std/math.random_int.
+// `ivar_names` / `ivar_mangled` are parallel arrays mapping a bare
+// imported-enum variant name (e.g. `Fail`, a variant of `std/test`'s
+// `TestOutcome`) to its bundled, prefix-mangled struct name
+// (`test__Fail`). The reference front-end resolves a bare variant
+// reference to its owning import; the self-host bundler must do the
+// same so a downstream module can `match`/construct an imported user
+// enum's variants by their bare names — exactly how `Some`/`None`
+// (Option) and `JString`/`NotFound` (the globally-injected builtin
+// enums) already resolve. Without this, only the variant's OWN module
+// could name it bare; a `match (test.assert_eq(...)) { Fail(m) => … }`
+// in a test file would silently fail to match (issue #2666's
+// TestOutcome). The self-host compiler's own modules sidestep this by
+// always qualifying (`parser.ExprIdent`), so this only widens what
+// downstream code can spell, never changing existing resolution.
+pub struct RewriteCtx { modnames: string[], prefix: string, declnames: string[], locals: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[] }
+
+// lookup_reexport redirects a naively-mangled qualified reference
+// (`facade__name`) to the original module's mangled symbol
+// (`helpers__name`) when `facade` re-exported `name` via `pub use`.
+// Returns `mangled` unchanged when no re-export applies. Chained
+// re-exports (`a` re-exports `b`'s re-export of `c`) are followed to the
+// end; the bounded loop guards against a cyclic table. See bundle.
+function lookup_reexport(mangled: string, ctx: RewriteCtx): string {
+    var cur: string = mangled;
+    var steps: i32 = 0;
+    while (steps < ctx.reexport_keys.len() + 1) {
+        var i: i32 = 0;
+        var hit: boolean = false;
+        while (i < ctx.reexport_keys.len()) {
+            if (ctx.reexport_keys[i] == cur) {
+                cur = ctx.reexport_targets[i];
+                hit = true;
+                i = ctx.reexport_keys.len();
+            } else {
+                i = i + 1;
+            }
+        }
+        if (!hit) { return cur; }
+        steps = steps + 1;
+    }
+    return cur;
+}
+
+// lookup_ivar returns the bundled mangled name for a bare imported
+// enum-variant reference, or "" when `name` isn't an imported variant.
+function lookup_ivar(name: string, ctx: RewriteCtx): string {
+    var i: i32 = 0;
+    while (i < ctx.ivar_names.len()) {
+        if (ctx.ivar_names[i] == name) { return ctx.ivar_mangled[i]; }
+        i = i + 1;
+    }
+    return "";
+}
 
 // first_dot / first_bracket: byte index of the first '.' / '[' in s,
 // or -1. Used to split a type spelling into its qualifier / base.
@@ -90,6 +148,11 @@ pub function mod_names(mod: parser.Module): string[] {
 // form when it names one of this module's top-level decls.
 function mangle_bare(name: string, ctx: RewriteCtx): string {
     if (is_in(name, ctx.declnames)) { return ctx.prefix + "__" + name; }
+    // A bare reference to one of this module's imported enum variants
+    // resolves to its bundled (prefix-mangled) struct name. Checked
+    // after own decls so a same-named local decl still wins.
+    var iv: string = lookup_ivar(name, ctx);
+    if (iv.len() > 0) { return iv; }
     return name;
 }
 
@@ -104,7 +167,16 @@ pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
     if (dot >= 0) {
         var prefix: string = tn[0:dot];
         if (is_in(prefix, ctx.modnames)) {
-            return prefix + "__" + tn[dot + 1:tn.len()];
+            // Split any generic/array suffix off the base name so a
+            // re-exported `facade.Point[]` redirects on `Point` and
+            // re-attaches the `[]`.
+            var rest: string = tn[dot + 1:tn.len()];
+            var rb: i32 = first_bracket(rest);
+            if (rb < 0) {
+                return lookup_reexport(prefix + "__" + rest, ctx);
+            }
+            var rbase: string = rest[0:rb];
+            return lookup_reexport(prefix + "__" + rbase, ctx) + rest[rb:rest.len()];
         }
         return tn;
     }
@@ -143,13 +215,19 @@ function rewrite_pattern(p: parser.Pattern, ctx: RewriteCtx): parser.Pattern {
 pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
     match (e) {
         parser.ExprIdent(id) => {
+            // A local variable shadowing a module-level decl keeps its bare
+            // name (don't mangle it into the decl's reference).
+            if (is_in(id.name, ctx.locals)) {
+                return parser.ExprIdent { name: id.name, line: id.line, col: id.col };
+            }
             return parser.ExprIdent { name: mangle_bare(id.name, ctx), line: id.line, col: id.col };
         },
         parser.ExprFieldAccess(fa) => {
             match (fa.obj) {
                 parser.ExprIdent(id) => {
                     if (is_in(id.name, ctx.modnames)) {
-                        return parser.ExprIdent { name: id.name + "__" + fa.field, line: id.line, col: id.col };
+                        var mangled: string = lookup_reexport(id.name + "__" + fa.field, ctx);
+                        return parser.ExprIdent { name: mangled, line: id.line, col: id.col };
                     }
                 },
                 _ => { }
@@ -280,13 +358,14 @@ function rewrite_stmt(st: parser.Stmt, ctx: RewriteCtx): parser.Stmt {
             };
         },
         parser.StmtWhile(w) => {
-            return parser.StmtWhile { cond: rewrite_expr(w.cond, ctx), body: rewrite_block(w.body, ctx) };
+            return parser.StmtWhile { cond: rewrite_expr(w.cond, ctx), body: rewrite_block(w.body, ctx), label: w.label };
         },
         parser.StmtFor(f) => {
             return parser.StmtFor {
                 var_name: f.var_name,
                 iter: rewrite_expr(f.iter, ctx),
-                body: rewrite_block(f.body, ctx)
+                body: rewrite_block(f.body, ctx),
+                label: f.label
             };
         },
         parser.StmtMatch(m) => {
@@ -301,7 +380,7 @@ function rewrite_stmt(st: parser.Stmt, ctx: RewriteCtx): parser.Stmt {
         // Rewrite the deferred action's cross-module references before
         // lower_defers (module_with_builtins) schedules it at the exits.
         parser.StmtDefer(d) => {
-            return parser.StmtDefer { action: rewrite_stmt(d.action, ctx) };
+            return parser.StmtDefer { action: rewrite_stmt(d.action, ctx), on_error: d.on_error };
         },
         _ => { return st; }
     }
@@ -315,7 +394,10 @@ function rewrite_params(params: parser.ParamDecl[], ctx: RewriteCtx): parser.Par
         out = out.append(parser.ParamDecl {
             name: params[i].name,
             type_name: rewrite_type_name(params[i].type_name, ctx),
-            own: params[i].own
+            own: params[i].own,
+            has_default: params[i].has_default,
+            default_value: params[i].default_value,
+            ret_arr: params[i].ret_arr
         });
         i = i + 1;
     }
@@ -340,6 +422,81 @@ function rewrite_struct_fields(fields: parser.StructFieldDecl[], ctx: RewriteCtx
 // keeps them; mangle renames them); this rewrites the bodies + type
 // spellings + the receiver type, plus mangles each non-receiver
 // function name and struct/alias name when ctx.prefix is set.
+// add_split appends each comma-separated, space-trimmed piece of `name`
+// to `into` (tuple-destructure `var (a, b)` arrives as one "a,b" name).
+function add_split(into: string[], name: string): string[] {
+    var out: string[] = into;
+    var cur: string = "";
+    var i: i32 = 0;
+    while (i < name.len()) {
+        if (name[i] == 44) {                       // ','
+            if (cur.len() > 0) { out = out.append(cur); }
+            cur = "";
+        } else if (name[i] != 32) {                // skip spaces
+            cur = cur + name[i:i + 1];
+        }
+        i = i + 1;
+    }
+    if (cur.len() > 0) { out = out.append(cur); }
+    return out;
+}
+
+// collect_locals_stmt / collect_locals_stmts gather every value-binding
+// name introduced anywhere in a statement list (over-approximating scope:
+// a name bound anywhere in the function is treated as a local throughout,
+// which is what shadowing means for bare references).
+function collect_locals_stmts(stmts: parser.Stmt[], into: string[]): string[] {
+    var out: string[] = into;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        out = collect_locals_stmt(stmts[i], out);
+        i = i + 1;
+    }
+    return out;
+}
+
+function collect_locals_stmt(st: parser.Stmt, into: string[]): string[] {
+    var out: string[] = into;
+    match (st) {
+        parser.StmtVar(v) => { out = add_split(out, v.name); },
+        parser.StmtFor(f) => { out = add_split(out, f.var_name); out = collect_locals_stmts(f.body, out); },
+        parser.StmtIf(f) => { out = collect_locals_stmts(f.then_body, out); out = collect_locals_stmts(f.else_body, out); },
+        parser.StmtWhile(w) => { out = collect_locals_stmts(w.body, out); },
+        parser.StmtMatch(m) => {
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                match (m.arms[i].pattern) {
+                    parser.PatVariant(pv) => {
+                        if (pv.binding.len() > 0) { out = out.append(pv.binding); }
+                        var e: i32 = 0;
+                        while (e < pv.extra_bindings.len()) { out = out.append(pv.extra_bindings[e]); e = e + 1; }
+                    },
+                    parser.PatWildcard(_) => { },
+                }
+                out = collect_locals_stmts(m.arms[i].body, out);
+                i = i + 1;
+            }
+        },
+        parser.StmtSwitch(sw) => {
+            var i: i32 = 0;
+            while (i < sw.cases.len()) { out = collect_locals_stmts(sw.cases[i].body, out); i = i + 1; }
+            out = collect_locals_stmts(sw.default_body, out);
+        },
+        _ => { },
+    }
+    return out;
+}
+
+// collect_local_names — all value-binding names in a function (receiver +
+// params + body bindings).
+function collect_local_names(fd: parser.FuncDecl): string[] {
+    var out: string[] = [];
+    if (fd.receiver_name.len() > 0) { out = out.append(fd.receiver_name); }
+    var i: i32 = 0;
+    while (i < fd.params.len()) { out = out.append(fd.params[i].name); i = i + 1; }
+    return collect_locals_stmts(fd.body, out);
+}
+
 function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Module {
     var funcs: parser.FuncDecl[] = [];
     var i: i32 = 0;
@@ -352,14 +509,22 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         if (fd.receiver_type == "") {
             new_name = mangle_bare(fd.name, ctx);
         }
+        // Body/params rewrite under a ctx that knows this function's local
+        // bindings, so a local shadowing a module decl is left unmangled.
+        var bctx: RewriteCtx = RewriteCtx {
+            modnames: ctx.modnames, prefix: ctx.prefix,
+            declnames: ctx.declnames, locals: collect_local_names(fd),
+            ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled,
+            reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets
+        };
         funcs = funcs.append(parser.FuncDecl {
             name: new_name,
             receiver_name: fd.receiver_name,
             receiver_type: rewrite_type_name(fd.receiver_type, ctx),
             type_params: fd.type_params,
-            params: rewrite_params(fd.params, ctx),
+            params: rewrite_params(fd.params, bctx),
             ret_type: rewrite_type_name(fd.ret_type, ctx),
-            body: rewrite_block(fd.body, ctx),
+            body: rewrite_block(fd.body, bctx),
             line: fd.line, col: fd.col,
             import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count
         });
@@ -373,7 +538,8 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
             fields: rewrite_struct_fields(mod.structs[j].fields, ctx),
             type_params: mod.structs[j].type_params,
             line: mod.structs[j].line,
-            col: mod.structs[j].col
+            col: mod.structs[j].col,
+            enum_owner: mod.structs[j].enum_owner
         });
         j = j + 1;
     }
@@ -399,7 +565,12 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         structs: structs,
         aliases: aliases,
         imports: mod.imports,
-        top_stmts: rewrite_block(mod.top_stmts, ctx),
+        top_stmts: rewrite_block(mod.top_stmts, RewriteCtx {
+            modnames: ctx.modnames, prefix: ctx.prefix, declnames: ctx.declnames,
+            locals: collect_locals_stmts(mod.top_stmts, []),
+            ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled,
+            reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets
+        }),
         enums: mod.enums,
         resources: mod.resources,
         exports: mod.exports
@@ -409,9 +580,9 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
 // flatten_qualified rewrites only QUALIFIED cross-module references
 // (`mod.X` → `mod__X`) in a module — no own-decl mangling. Used on
 // the entry module (whose own decls keep their bare names).
-pub function flatten_qualified(mod: parser.Module): parser.Module {
+pub function flatten_qualified(mod: parser.Module, ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[]): parser.Module {
     var empty: string[] = [];
-    var ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), prefix: "", declnames: empty };
+    var ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), prefix: "", declnames: empty, locals: empty, ivar_names: ivar_names, ivar_mangled: ivar_mangled, reexport_keys: reexport_keys, reexport_targets: reexport_targets };
     return rewrite_module_bodies(mod, ctx);
 }
 
@@ -444,11 +615,16 @@ pub function collect_decl_names(mod: parser.Module): string[] {
 // mangle_module renames a non-entry module's own decls to
 // `prefix__name` and rewrites every internal reference to match, plus
 // flattens any qualified refs it makes to other modules.
-pub function mangle_module(mod: parser.Module, prefix: string): parser.Module {
+pub function mangle_module(mod: parser.Module, prefix: string, ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[]): parser.Module {
     var ctx: RewriteCtx = RewriteCtx {
         modnames: mod_names(mod),
         prefix: prefix,
-        declnames: collect_decl_names(mod)
+        declnames: collect_decl_names(mod),
+        locals: [],
+        ivar_names: ivar_names,
+        ivar_mangled: ivar_mangled,
+        reexport_keys: reexport_keys,
+        reexport_targets: reexport_targets
     };
     return rewrite_module_bodies(mod, ctx);
 }
@@ -492,9 +668,34 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
     var enums: parser.EnumDecl[] = [];
     var resources: parser.ResourceDecl[] = [];
     var exports: parser.ExportBinding[] = [];
+    // Build the imported-enum-variant → mangled-name map once, from
+    // every import's parsed (pre-mangle) variant structs. A variant is
+    // an enum-member struct decl (`enum_owner != ""`); its bundled name
+    // is `<importname>__<variant>`, matching what mangle_module renames
+    // the owning module's decl to. Threaded into every module's rewrite
+    // so a bare variant reference (`Fail`) from any module resolves the
+    // same way the reference front-end resolves it (issue #2666).
+    var ivar_names: string[] = [];
+    var ivar_mangled: string[] = [];
+    var iv: i32 = 0;
+    while (iv < imports.len()) {
+        var isd: i32 = 0;
+        while (isd < imports[iv].mod.structs.len()) {
+            var sd: parser.StructDecl = imports[iv].mod.structs[isd];
+            if (sd.enum_owner.len() > 0) {
+                ivar_names = ivar_names.append(sd.name);
+                ivar_mangled = ivar_mangled.append(imports[iv].name + "__" + sd.name);
+            }
+            isd = isd + 1;
+        }
+        iv = iv + 1;
+    }
+    // `pub use` re-export table: redirects a consumer's `facade.name`
+    // (which mangles to `facade__name`) to the original `origin__name`.
+    var rx: ReexportTable = build_reexports(imports);
     var i: i32 = 0;
     while (i < imports.len()) {
-        var m: parser.Module = mangle_module(imports[i].mod, imports[i].name);
+        var m: parser.Module = mangle_module(imports[i].mod, imports[i].name, ivar_names, ivar_mangled, rx.keys, rx.targets);
         funcs = append_funcs(funcs, m.funcs);
         structs = append_structs(structs, m.structs);
         aliases = append_aliases(aliases, m.aliases);
@@ -505,7 +706,7 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
         while (mxi < m.exports.len()) { exports = exports.append(m.exports[mxi]); mxi = mxi + 1; }
         i = i + 1;
     }
-    var e: parser.Module = flatten_qualified(entry);
+    var e: parser.Module = flatten_qualified(entry, ivar_names, ivar_mangled, rx.keys, rx.targets);
     funcs = append_funcs(funcs, e.funcs);
     structs = append_structs(structs, e.structs);
     aliases = append_aliases(aliases, e.aliases);
@@ -527,6 +728,93 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
     };
 }
 
+// ReexportTable is the parallel-array re-export map threaded into every
+// module's rewrite: keys[i] is a naively-mangled qualified reference
+// (`facade__name`) and targets[i] the original module's mangled symbol
+// (`helpers__name`). Built by build_reexports from each import's `pub use`
+// directives. See lookup_reexport.
+pub struct ReexportTable { keys: string[], targets: string[] }
+
+// build_reexports scans every imported module for `pub use` directives
+// (re-export Import entries) and records, for each re-exported name, the
+// redirect from the re-exporting module's namespace to the target's. A
+// consumer's `facade.name` first mangles to `facade__name`; this table
+// then redirects it to the original `helpers__name`, which is the symbol
+// the bundled program actually defines. Mirrors the native compiler's
+// modload.resolveReexports (see internal/modload/modload.go).
+pub function build_reexports(imports: LoadedModule[]): ReexportTable {
+    var keys: string[] = [];
+    var targets: string[] = [];
+    var i: i32 = 0;
+    while (i < imports.len()) {
+        var ns: string = imports[i].name;
+        var imps: parser.Import[] = imports[i].mod.imports;
+        var j: i32 = 0;
+        while (j < imps.len()) {
+            if (imps[j].is_reexport) {
+                var origin: string = basename(imps[j].path);
+                var names: string[] = imps[j].reexport_names;
+                var n: i32 = 0;
+                while (n < names.len()) {
+                    keys = keys.append(ns + "__" + names[n]);
+                    targets = targets.append(origin + "__" + names[n]);
+                    n = n + 1;
+                }
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return ReexportTable { keys: keys, targets: targets };
+}
+
+// PerModule is one separately-emittable translation unit of a per-module
+// build (#3451 step 4 / #3456): the mangled-but-NOT-merged module plus its
+// namespace (`ns`, used for the per-module string-literal `.rodata` labels and
+// the symbol-prefix bookkeeping) and whether it is the program entry. ns is
+// label-safe (it is the same bundle name mangle_module folds into `ns__decl`).
+pub struct PerModule { ns: string, mod: parser.Module, is_entry: boolean }
+
+// bundle_per_module is bundle's per-module twin: it applies the SAME mangling
+// (each import's own decls → `name__decl`, every internal reference rewritten;
+// the entry qualified-flattened so `name.X` resolves to the mangled decls) but
+// returns each module SEPARATELY instead of concatenating them into one. The
+// imported-enum-variant map is built once over all imports and threaded into
+// every module's rewrite, exactly as bundle does, so a bare variant reference
+// resolves identically whether the program is merged or emitted per-module.
+// The result is the input to per-module emit + link (#3456): each PerModule is
+// emitted as its own translation unit (entry → `_start` + the shared runtime;
+// imports → library units exposing their `.globl __fn_*`), and the units link
+// into one binary. The entry is the LAST element.
+pub function bundle_per_module(entry: parser.Module, imports: LoadedModule[]): PerModule[] {
+    var ivar_names: string[] = [];
+    var ivar_mangled: string[] = [];
+    var iv: i32 = 0;
+    while (iv < imports.len()) {
+        var isd: i32 = 0;
+        while (isd < imports[iv].mod.structs.len()) {
+            var sd: parser.StructDecl = imports[iv].mod.structs[isd];
+            if (sd.enum_owner.len() > 0) {
+                ivar_names = ivar_names.append(sd.name);
+                ivar_mangled = ivar_mangled.append(imports[iv].name + "__" + sd.name);
+            }
+            isd = isd + 1;
+        }
+        iv = iv + 1;
+    }
+    var rx: ReexportTable = build_reexports(imports);
+    var out: PerModule[] = [];
+    var i: i32 = 0;
+    while (i < imports.len()) {
+        var m: parser.Module = mangle_module(imports[i].mod, imports[i].name, ivar_names, ivar_mangled, rx.keys, rx.targets);
+        out = out.append(PerModule { ns: imports[i].name, mod: m, is_entry: false });
+        i = i + 1;
+    }
+    var e: parser.Module = flatten_qualified(entry, ivar_names, ivar_mangled, rx.keys, rx.targets);
+    out = out.append(PerModule { ns: "__entry", mod: e, is_entry: true });
+    return out;
+}
+
 // append_enum_decls concatenates two enum-decl lists (bundle merging).
 function append_enum_decls(into: parser.EnumDecl[], more: parser.EnumDecl[]): parser.EnumDecl[] {
     var out: parser.EnumDecl[] = into;
@@ -536,11 +824,13 @@ function append_enum_decls(into: parser.EnumDecl[], more: parser.EnumDecl[]): pa
 }
 
 function flatten_source(src: string): parser.Module {
-    return flatten_qualified(parser.parse_module(lexer.tokenize(src)));
+    var none: string[] = [];
+    return flatten_qualified(parser.parse_module(lexer.tokenize(src)), none, none, none, none);
 }
 
 function mangle_source(src: string, prefix: string): parser.Module {
-    return mangle_module(parser.parse_module(lexer.tokenize(src)), prefix);
+    var none: string[] = [];
+    return mangle_module(parser.parse_module(lexer.tokenize(src)), prefix, none, none, none, none);
 }
 
 function main(): i32 {
@@ -680,13 +970,35 @@ function main(): i32 {
     mn = mn.append("lexer");
     var dn: string[] = [];
     dn = dn.append("Token");
-    var ctx: RewriteCtx = RewriteCtx { modnames: mn, prefix: "lx", declnames: dn };
+    var ivn: string[] = [];
+    ivn = ivn.append("Fail");
+    var ivm: string[] = [];
+    ivm = ivm.append("test__Fail");
+    var rxk: string[] = [];
+    var rxt: string[] = [];
+    var ctx: RewriteCtx = RewriteCtx { modnames: mn, prefix: "lx", declnames: dn, locals: [], ivar_names: ivn, ivar_mangled: ivm, reexport_keys: rxk, reexport_targets: rxt };
     if (rewrite_type_name("lexer.Token[]", ctx) != "lexer__Token[]") { return 90; }
     if (rewrite_type_name("Token[]", ctx) != "lx__Token[]") { return 91; }
     if (rewrite_type_name("Token", ctx) != "lx__Token") { return 92; }
     if (rewrite_type_name("Map[string, i32]", ctx) != "Map[string, i32]") { return 93; }
     if (rewrite_type_name("i32", ctx) != "i32") { return 94; }
     if (rewrite_type_name("other.Thing", ctx) != "other.Thing") { return 95; }
+    // Bare imported-enum variant resolves to its bundled mangled name;
+    // a same-named own decl still wins (declnames checked first).
+    if (rewrite_type_name("Fail", ctx) != "test__Fail") { return 96; }
+
+    // --- `pub use` re-export redirection (type position) ---
+    // A facade re-exports lexer's Token; a consumer's `lexer.Token`
+    // (which mangles to `lexer__Token`) redirects to `orig__Token`.
+    var rxk2: string[] = [];
+    rxk2 = rxk2.append("lexer__Token");
+    var rxt2: string[] = [];
+    rxt2 = rxt2.append("orig__Token");
+    var rctx: RewriteCtx = RewriteCtx { modnames: mn, prefix: "lx", declnames: dn, locals: [], ivar_names: ivn, ivar_mangled: ivm, reexport_keys: rxk2, reexport_targets: rxt2 };
+    if (rewrite_type_name("lexer.Token", rctx) != "orig__Token") { return 97; }
+    if (rewrite_type_name("lexer.Token[]", rctx) != "orig__Token[]") { return 98; }
+    // A non-re-exported qualified type still mangles normally.
+    if (rewrite_type_name("lexer.Span", rctx) != "lexer__Span") { return 99; }
 
     // --- Brick 3: bundle (merge entry + mangled imports) ---
     var amod: parser.Module = parser.parse_module(lexer.tokenize(
@@ -720,6 +1032,45 @@ function main(): i32 {
         },
         _ => { return 108; }
     }
+
+    // --- Brick 4: `pub use` re-export through bundle ---
+    // helpers defines add5; facade re-exports it; entry calls facade.add5.
+    // The qualified call must flatten to `helpers__add5` (the real decl),
+    // NOT `facade__add5` (which has no decl).
+    var hmod: parser.Module = parser.parse_module(lexer.tokenize(
+        "pub function add5(n: i32): i32 { return n + 5; }"));
+    var fmod: parser.Module = parser.parse_module(lexer.tokenize(
+        "pub use \"./helpers\".{add5};"));
+    var rxmod: parser.Module = parser.parse_module(lexer.tokenize(
+        "import \"./facade\"; function main(): i32 { return facade.add5(10); }"));
+    var rxloaded: LoadedModule[] = [];
+    rxloaded = rxloaded.append(LoadedModule { name: "facade", mod: fmod });
+    rxloaded = rxloaded.append(LoadedModule { name: "helpers", mod: hmod });
+    var rxmerged: parser.Module = bundle(rxmod, rxloaded);
+    // Find entry main and confirm its call resolved to helpers__add5.
+    var fi: i32 = 0;
+    var found_main: boolean = false;
+    while (fi < rxmerged.funcs.len()) {
+        if (rxmerged.funcs[fi].name == "main") {
+            found_main = true;
+            match (rxmerged.funcs[fi].body[0]) {
+                parser.StmtReturn(r) => {
+                    match (r.value) {
+                        parser.ExprCall(c) => {
+                            match (c.callee) {
+                                parser.ExprIdent(id) => { if (id.name != "helpers__add5") { return 110; } },
+                                _ => { return 111; }
+                            }
+                        },
+                        _ => { return 112; }
+                    }
+                },
+                _ => { return 113; }
+            }
+        }
+        fi = fi + 1;
+    }
+    if (!found_main) { return 114; }
 
     return 0;
 }

@@ -39,7 +39,7 @@ func TestX86_64NativeIsCLIDefault(t *testing.T) {
 	qemu := x86QemuOrEmpty(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "prog.fern")
-	if err := os.WriteFile(src, []byte("import \"core/no_prelude\";\nfunction main(): i32 { return 42; }\n"), 0o644); err != nil {
+	if err := os.WriteFile(src, []byte("function main(): i32 { return 42; }\n"), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
 

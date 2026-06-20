@@ -39,7 +39,7 @@ Replace the magic prelude with two explicit module trees:
 
 Programs declare what they need:
 
-```lang
+```Fern
 import "std/string";
 import "std/array";
 
@@ -174,7 +174,7 @@ Tasks:
    "explicit imports". One PR per logical group of tests so
    review stays sane. Each test program prepends the imports
    it needs:
-   ```lang
+   ```Fern
    import "std/i32";
    import "std/array";
    ```
@@ -232,8 +232,7 @@ Tasks:
       and the `internal/prelude` package are gone (#1561);
       programs declare their `std/` + `core/` imports
       explicitly. Foundation that landed first:
-      `import "core/no_prelude";` is the opt-out sentinel
-      (#498). `modload.LoadStdlibFlat` /
+      `import "core/no_prelude";` was the opt-out sentinel (#498, later retired). `modload.LoadStdlibFlat` /
       `LoadStdlibFlatSkipping` route the auto-prelude through
       modload's rewriter in flat-namespace mode — qualified
       imports inside stdlib bodies (`int.foo(...)`) rewrite
@@ -279,3 +278,75 @@ Tasks:
       test pins that an unimported `.split` is a clean type
       error rather than silently resolving.
 - [x] Phase 6 — docs (`docs/STDLIB.md`).
+
+## `pub use` re-exports
+
+With explicit imports, a library that wants to present a curated public
+surface — or a project that wants a small facade/prelude module — can
+**re-export** symbols from other modules with `pub use`:
+
+```fern
+// facade.fern — a curated public API assembled from focused modules
+pub use "./helpers".{add5, clamp};
+pub use "core/int".{int_to_string};
+```
+
+A consumer then imports the facade and uses the re-exported names through
+the facade's qualifier; they resolve to the *original* module's
+definition (no copy is made):
+
+```fern
+import "./facade";
+function main(): i32 { return facade.add5(10); }   // → helpers__add5(10)
+```
+
+Semantics:
+
+- Only **public** symbols can be re-exported (re-exporting a private name
+  errors: `module "helpers" does not export "secret"`).
+- A re-exported name becomes part of the re-exporting module's public
+  surface, so it can be re-exported again (transitive chains resolve to
+  the ultimate original).
+- This is the intended fix for the stdlib's `__`-helper leak: a module can
+  keep its internals out of its public qualifier and re-export only the
+  curated names (pairs with a future `pub(package)` visibility level).
+
+**Types and traits** re-export the same way — a re-exported `struct` /
+`enum` / `trait` resolves through the facade in every type position
+(annotation, struct literal, `match` on a re-exported enum, `impl`, and
+`dyn facade.Trait`):
+
+```fern
+// facade.fern
+pub use "./shapes".{Point, Shape, Area};
+// consumer
+import "./facade";
+function dynArea(a: dyn facade.Area): i32 { return a.area(); }   // → shapes__Area
+var p: facade.Point = facade.Point { x: 6, y: 7 };               // → shapes__Point
+```
+
+Implementation (`internal/modload/modload.go`): `pub use` targets are
+loaded like imports; after mangle prefixes are assigned,
+`resolveReexports` builds two per-module tables — `reexports` (values:
+function / const) and `reexportTypes` (types: struct / enum / trait), each
+name → original mangled name — and adds the names to the module's public
+set. The rewriter resolves a consumer's `facade.name` to the original flat
+name: the value path through `rewriteExpr`, the type path through
+`rewriteStructNameAt` / `rewriteTraitNameAt` (the latter also covers
+`dyn facade.Trait`). Parsed by `parsePubUse` into `ast.PubUse`.
+
+**Self-host parity** (#3136 part 2): the self-hosted compiler resolves
+`pub use` too. `examples/self_host/parser.fern` parses `pub use
+"path".{names…};` into a re-export `Import` (`is_reexport` + the
+`reexport_names`), so the on-disk module loaders (`modloader.fern`,
+`fern.fern`) pull the target module into the graph like any import.
+`examples/self_host/flatten.fern`'s `build_reexports` then walks every
+imported module's `pub use` directives into a parallel-array re-export
+table (`facade__name` → `origin__name`), threaded through `RewriteCtx`;
+`lookup_reexport` redirects a consumer's `facade.name` at the same two
+points the native rewriter does — qualified value refs in `rewrite_expr`
+and qualified type refs in `rewrite_type_name` (chained re-exports are
+followed to the end). Covered end-to-end by the self-host IR e2e gates
+`TestSelfHostPubUseModloadX86_64` (x86-64) and
+`TestWasmSelfHostPubUseReexport` (wasm), mirroring the native
+`internal/e2e/pub_use_test.go`.

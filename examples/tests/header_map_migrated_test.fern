@@ -1,32 +1,31 @@
-import "core/no_prelude";
 import "core/map";
 import "std/test";
 import "std/headers";
 
 // examples/tests/header_map_migrated_test.fern —
-// Lang port of `TestInterpScriptHeaderMap` from
+// Fern port of `TestInterpScriptHeaderMap` from
 // `internal/e2e/interp_script_test.go`.
 //
 // The Go original was a 5-case table-driven test where
 // each subcase spawned a `fern -interp` subprocess, ran
 // a different inline program, and grep-asserted exit
 // code + stdout. The migrated form folds all 5 cases
-// into one Lang file: each `r.it(...)` exercises the
+// into one Fern file: each `r.it(...)` exercises the
 // same surface but asserts on the returned value
 // directly via `assert_eq` / `_i32` / the new
 // `assert_is_some_eq_string` (no subprocess, no
 // print-then-grep).
 //
-// Needs `import "std/headers";` — not in the auto-prelude.
+// Needs `import "std/headers";`.
 
-function test_case_insensitive_get(): Option[string] {
+function test_case_insensitive_get(): test.TestOutcome {
     var h: HeaderMap = headers.header_map_new();
     h = h.set("Content-Type", "application/json");
     return test.assert_is_some_eq_string(h.get("CONTENT-TYPE"),
                                     "application/json");
 }
 
-function test_get_all_preserves_insertion_order(): Option[string] {
+function test_get_all_preserves_insertion_order(): test.TestOutcome {
     var h: HeaderMap = headers.header_map_new();
     h = h.append("Set-Cookie", "a=1");
     h = h.append("Set-Cookie", "b=2");
@@ -39,7 +38,7 @@ function test_get_all_preserves_insertion_order(): Option[string] {
                                   ["a=1", "b=2", "c=3"]);
 }
 
-function test_set_replaces_then_size_2(): Option[string] {
+function test_set_replaces_then_size_2(): test.TestOutcome {
     var h: HeaderMap = headers.header_map_new();
     h = h.append("X", "first");
     h = h.append("Y", "y1");
@@ -50,7 +49,7 @@ function test_set_replaces_then_size_2(): Option[string] {
     return test.assert_eq(h.len(), 2);
 }
 
-function test_set_replaces_get_returns_new(): Option[string] {
+function test_set_replaces_get_returns_new(): test.TestOutcome {
     var h: HeaderMap = headers.header_map_new();
     h = h.append("X", "first");
     h = h.append("Y", "y1");
@@ -59,13 +58,13 @@ function test_set_replaces_get_returns_new(): Option[string] {
     return test.assert_is_some_eq_string(h.get("x"), "replaced");
 }
 
-function test_set_on_absent_appends(): Option[string] {
+function test_set_on_absent_appends(): test.TestOutcome {
     var h: HeaderMap = headers.header_map_new();
     h = h.set("X-First", "1");
     return test.assert_eq(h.len(), 1);
 }
 
-function test_get_all_on_missing_is_empty(): Option[string] {
+function test_get_all_on_missing_is_empty(): test.TestOutcome {
     var h: HeaderMap = headers.header_map_new();
     h = h.append("X", "1");
     return test.assert_eq((h.get_all("Y")).len(), 0);

@@ -1,0 +1,174 @@
+// cut.fern — extract selected fields or characters, like `cut(1)`.
+//
+//   -f LIST      select fields (1-based), split on the delimiter
+//   -d DELIM     field delimiter (default tab); single byte
+//   -c LIST      select characters (1-based byte positions)
+//
+// LIST is a comma-separated set of single positions and `lo-hi`
+// ranges, e.g. `1,3,5-7`. Open ranges `-N` (from start) and `N-`
+// (to end) are supported.
+//
+//   $ printf 'a:b:c\n' | ./cut -d : -f 1,3   ->  a:c
+//   $ printf 'hello\n' | ./cut -c 1-3         ->  hel
+//
+// Showcases: parsing a numeric range LIST, field vs character
+// selection, custom delimiters.
+import "std/string";
+import "std/i32";
+import "std/io";
+import "std/array";
+
+// A selection is a list of (lo, hi) inclusive 1-based ranges; hi == 0
+// means "open to the end".
+function parse_list(spec: string): (i32, i32)[] {
+  var out: (i32, i32)[] = [];
+  var parts: string[] = spec.split(",");
+  var i: i32 = 0;
+  while (i < parts.len()) {
+    var p: string = parts[i];
+    match (p.split_once("-")) {
+      Some(bounds) => {
+        var los: string = bounds.0;
+        var his: string = bounds.1;
+        var lo: i32 = 1;
+        var hi: i32 = 0;  // open
+        if (!los.is_empty()) {
+          match (los.parse_int()) {
+            Some(n) => {
+              lo = n;
+            },
+            None => {}
+          }
+        }
+        if (!his.is_empty()) {
+          match (his.parse_int()) {
+            Some(n) => {
+              hi = n;
+            },
+            None => {}
+          }
+        }
+        out = out.append((lo, hi));
+      },
+      None => {
+        match (p.parse_int()) {
+          Some(n) => {
+            out = out.append((n, n));
+          },
+          None => {}
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// Is 1-based position `pos` inside any selected range?
+function selected(pos: i32, ranges: (i32, i32)[]): boolean {
+  var i: i32 = 0;
+  while (i < ranges.len()) {
+    var r: (i32, i32) = ranges[i];
+    var lo: i32 = r.0;
+    var hi: i32 = r.1;
+    if (pos >= lo && (hi == 0 || pos <= hi)) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+function cut_fields(line: string, delim: string, ranges: (i32, i32)[]): string {
+  // Lines without the delimiter are passed through unchanged, as
+  // GNU cut does by default.
+  if (!line.contains(delim)) {
+    return line;
+  }
+  var fields: string[] = line.split(delim);
+  var picked: string[] = [];
+  var i: i32 = 0;
+  while (i < fields.len()) {
+    if (selected(i + 1, ranges)) {
+      picked = picked.append(fields[i]);
+    }
+    i = i + 1;
+  }
+  return picked.join(delim);
+}
+
+function cut_chars(line: string, ranges: (i32, i32)[]): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < line.len()) {
+    if (selected(i + 1, ranges)) {
+      out = out + line[i:i + 1];
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function slurp(path: string): string {
+  match (io.read_input(path)) {
+    Ok(contents) => {
+      return contents;
+    },
+    Err(_) => {
+      return "";
+    }
+  }
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var delim: string = "\t";
+  var spec: string = "";
+  var mode: string = "";  // "f" or "c"
+  var inputs: string[] = [];
+
+  var i: i32 = 1;
+  while (i < argv.len()) {
+    var a: string = argv[i];
+    if (a == "-d" && i + 1 < argv.len()) {
+      delim = argv[i + 1];
+      i = i + 1;
+    } else if (a == "-f" && i + 1 < argv.len()) {
+      mode = "f";
+      spec = argv[i + 1];
+      i = i + 1;
+    } else if (a == "-c" && i + 1 < argv.len()) {
+      mode = "c";
+      spec = argv[i + 1];
+      i = i + 1;
+    } else {
+      inputs = inputs.append(a);
+    }
+    i = i + 1;
+  }
+
+  if (mode == "") {
+    eprint("usage: cut -f LIST [-d DELIM] | -c LIST [FILE...]");
+    return 2;
+  }
+  if (inputs.len() == 0) {
+    inputs = inputs.append("-");
+  }
+  var ranges: (i32, i32)[] = parse_list(spec);
+
+  var j: i32 = 0;
+  while (j < inputs.len()) {
+    var lines: string[] = slurp(inputs[j]).lines();
+    var k: i32 = 0;
+    while (k < lines.len()) {
+      if (mode == "f") {
+        print(cut_fields(lines[k], delim, ranges));
+      } else {
+        print(cut_chars(lines[k], ranges));
+      }
+      k = k + 1;
+    }
+    j = j + 1;
+  }
+  return 0;
+}

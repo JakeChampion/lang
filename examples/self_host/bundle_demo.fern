@@ -7,11 +7,10 @@
 //
 // The companion Go test assembles that asm and runs it: the entry's
 // `main` returns `a.add(2, 3)` == 5, so the produced binary exits 5.
-// That's the proof that multi-module Lang source — the shape the
+// That's the proof that multi-module Fern source — the shape the
 // compiler itself has — now lowers to a single working binary through
 // the self-host pipeline.
 
-import "core/no_prelude";
 import "std/io";
 import "./lexer";
 import "./parser";

@@ -16,7 +16,7 @@ var arrayBuilderCases = []struct {
 	{
 		// append in a while loop: [0,2,4,6,8]; sum = 20.
 		name: "append-while",
-		src: `import "core/no_prelude";
+		src: `
 import "core/int";
 function main(): i32 {
   var out: i32[] = Array.build(function(b: ArrayBuilder[i32]): void {
@@ -31,7 +31,7 @@ function main(): i32 {
 		// append over a for-in loop (the canonical map-like use): builds
 		// [1,4,9] from [1,2,3]; sum = 14.
 		name: "append-for-in",
-		src: `import "core/no_prelude";
+		src: `
 import "core/int";
 function main(): i32 {
   var xs: i32[] = [1, 2, 3];
@@ -46,7 +46,7 @@ function main(): i32 {
 		// b.with(i, v) — in-place element set inside the builder. Build
 		// [0,0,0] then overwrite index 1 with 99; return out[1].
 		name: "with-elem-set",
-		src: `import "core/no_prelude";
+		src: `
 import "core/int";
 function main(): i32 {
   var out: i32[] = Array.build(function(b: ArrayBuilder[i32]): void {
@@ -61,7 +61,7 @@ function main(): i32 {
 		// b.len() read inside the builder drives a conditional: append 1..=n
 		// but stop appending once len reaches 3. Result [1,2,3]; sum 6.
 		name: "len-read",
-		src: `import "core/no_prelude";
+		src: `
 import "core/int";
 function main(): i32 {
   var out: i32[] = Array.build(function(b: ArrayBuilder[i32]): void {
@@ -80,7 +80,7 @@ function main(): i32 {
 		// 200x. Exercises the in-place fast path + per-iteration reclaim
 		// of the builder local. sum over c in 0..199 of (c + c) = 2*19900.
 		name: "churn",
-		src: `import "core/no_prelude";
+		src: `
 import "core/int";
 function main(): i32 {
   var acc: i32 = 0;

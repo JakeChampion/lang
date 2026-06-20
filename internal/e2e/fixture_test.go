@@ -38,9 +38,9 @@
 // that gives exit-code parity on wasm too. Two consequences for the
 // wasm leg: a fixture's `main` must return i32 (not void), and
 // `int_to_string` must be reachable so the result line can be
-// formatted — i.e. don't opt out of the prelude (`core/no_prelude`)
-// in a wasm-targeting exact-match fixture, or drop "wasm" from the
-// fixture's `backends` file.
+// formatted — i.e. a wasm-targeting exact-match fixture must
+// `import "core/int";`, or drop "wasm" from the fixture's
+// `backends` file.
 package e2e
 
 import (

@@ -30,8 +30,8 @@ func runDoctest(t *testing.T, doc string) (string, int) {
 func TestLiterateDoctestPassAndFail(t *testing.T) {
 	doc := "# d\n" +
 		"```fern\n<<greet>>=\npub function greet(): string { return \"hi\"; }\n```\n" +
-		"```fern test name=ok-case\nimport \"core/no_prelude\";\n<<greet>>\nfunction main(): i32 { if (greet() != \"hi\") { return 1; } return 0; }\n```\n" +
-		"```fern test name=fail-case\nimport \"core/no_prelude\";\n<<greet>>\nfunction main(): i32 { return 1; }\n```\n"
+		"```fern test name=ok-case\n<<greet>>\nfunction main(): i32 { if (greet() != \"hi\") { return 1; } return 0; }\n```\n" +
+		"```fern test name=fail-case\n<<greet>>\nfunction main(): i32 { return 1; }\n```\n"
 	out, code := runDoctest(t, doc)
 	if !strings.Contains(out, "1..2") {
 		t.Errorf("missing TAP plan:\n%s", out)
@@ -49,7 +49,7 @@ func TestLiterateDoctestPassAndFail(t *testing.T) {
 
 // All-passing examples exit 0.
 func TestLiterateDoctestAllPass(t *testing.T) {
-	doc := "```fern test\nimport \"core/no_prelude\";\nfunction main(): i32 { return 0; }\n```\n"
+	doc := "```fern test\nfunction main(): i32 { return 0; }\n```\n"
 	out, code := runDoctest(t, doc)
 	if code != 0 {
 		t.Errorf("expected exit 0, got %d\n%s", code, out)
@@ -63,15 +63,14 @@ func TestLiterateDoctestAllPass(t *testing.T) {
 func TestLiterateDoctestDiagnosticRemap(t *testing.T) {
 	doc := "# t\n" + // 1
 		"```fern test\n" + // 2
-		"import \"core/no_prelude\";\n" + // 3
-		"function main(): i32 { return \"nope\"; }\n" + // 4 <- error
-		"```\n" // 5
+		"function main(): i32 { return \"nope\"; }\n" + // 3 <- error
+		"```\n" // 4
 	out, code := runDoctest(t, doc)
 	if code == 0 {
 		t.Fatalf("expected failure:\n%s", out)
 	}
-	if !strings.Contains(out, "p.fern.md:4:") {
-		t.Errorf("compile error should remap to p.fern.md line 4:\n%s", out)
+	if !strings.Contains(out, "p.fern.md:3:") {
+		t.Errorf("compile error should remap to p.fern.md line 3:\n%s", out)
 	}
 }
 

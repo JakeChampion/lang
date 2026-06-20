@@ -2,8 +2,8 @@
 // self-host port. Imports lexer + parser and evaluates the
 // Stmt[] tree directly, producing a runtime value rather than a
 // static type or compiled artifact. Completes the
-// lexer → parser → interpreter vertical slice in lang —
-// the lang-port pipeline can now actually run lang code, end to
+// lexer → parser → interpreter vertical slice in Fern —
+// the Fern-port pipeline can now actually run Fern code, end to
 // end, from a thin self-validating driver.
 //
 // Scope (matches the parser's): i32 / bool / string runtime
@@ -17,7 +17,6 @@
 // flow (`if` / `while` / `for`), structs / unions, generics. The
 // parser stub doesn't emit those yet either.
 
-import "core/no_prelude";
 import "./lexer";
 import "./parser";
 import "./util";
@@ -379,6 +378,11 @@ function eval_unary(op: string, ov: Value): Value {
             _ => { return v_err("`as` float cast operand not numeric"); }
         }
     }
+    // A non-numeric `as <Type>` (`as_i32[]`, `as_string`, `as_Option[i32]`,
+    // …) is a zero-cost type ascription — identity on the runtime value.
+    // Pass the operand through unchanged (matching the AST/IR emitters, which
+    // treat every non-numeric `as_<T>` as a no-op).
+    if (op.len() > 3 && op[0:3] == "as_") { return ov; }
     return v_err("unknown unary op: " + op);
 }
 
@@ -530,7 +534,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                 },
                 VString(s) => {
                     // String indexing returns the byte at the
-                    // given position as i32 — matches the lang
+                    // given position as i32 — matches the Fern
                     // semantics in the Go pipeline. Useful for
                     // any text-processing code (the lexer's
                     // own implementation reads bytes this way).
@@ -606,7 +610,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                             var bi: i32 = 0;
                             while (bi < bnames.len()) {
                                 if (bnames[bi] == oname) {
-                                    bvals[bi] = ov2;
+                                    bvals = bvals.with(bi, ov2);
                                     replaced = true;
                                 }
                                 bi = bi + 1;
@@ -1309,7 +1313,12 @@ function eval_program(prog: parser.Stmt[]): Value {
 // functions. If `main` exists, call it with no args. Otherwise
 // fall back to running the top-level stmts in a fresh env that
 // still has access to the function table.
-pub function eval_module(mod: parser.Module): Value {
+pub function eval_module(raw_mod: parser.Module): Value {
+    // Lower `for i in LOW..HIGH` range-loops (iter = the synthetic `__range`
+    // call) to counting while-loops up front — the interpreter's StmtFor only
+    // iterates arrays, so an undesugared `__range` iter would mis-evaluate.
+    // (The IR path keeps the `__range` shape for irlower.lower_range_for.)
+    var mod: parser.Module = parser.fill_default_args_module(parser.desugar_ranges_module(raw_mod));
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].name == "main") {

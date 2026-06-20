@@ -1,9 +1,8 @@
-import "core/no_prelude";
 import "std/test";
 import "std/http";
 
 // examples/tests/http_response_headers_migrated_test.fern
-// — Lang port of `TestInterpScriptHttpResponseHeaders`
+// — Fern port of `TestInterpScriptHttpResponseHeaders`
 // from `internal/e2e/interp_script_test.go`. Pins the
 // HeaderMap → HttpResponse wiring +
 // `http_serialize_response` emission behaviour
@@ -17,13 +16,13 @@ import "std/http";
 //     response.
 //
 // The Go original was 4 table-driven subprocess cases.
-// Migrated to one Lang file: instead of print-then-grep
+// Migrated to one Fern file: instead of print-then-grep
 // the serialized wire, we assert directly on it via
 // `assert_eq` (whole-wire compare) and the new
 // `assert_contains` / `assert_not_contains` for
 // invariants that span multiple cases.
 
-function test_user_headers_before_auto_block(): Option[string] {
+function test_user_headers_before_auto_block(): test.TestOutcome {
     var r: HttpResponse = http.http_response_ok("hello");
     r = r.with_header("X-Trace-Id", "abc123");
     r = r.with_header("Cache-Control", "no-store");
@@ -38,13 +37,13 @@ function test_user_headers_before_auto_block(): Option[string] {
         "hello");
 }
 
-function test_redirect_sets_location_header(): Option[string] {
+function test_redirect_sets_location_header(): test.TestOutcome {
     var r: HttpResponse = http.http_response_redirect("/login");
     return test.assert_is_some_eq_string(r.headers.get("location"),
                                     "/login");
 }
 
-function test_user_content_length_is_ignored(): Option[string] {
+function test_user_content_length_is_ignored(): test.TestOutcome {
     var r: HttpResponse = http.http_response_ok("hi");
     // Handler tries to claim 9999 bytes — the auto block
     // must override with the real length (2).
@@ -58,7 +57,7 @@ function test_user_content_length_is_ignored(): Option[string] {
         "hi");
 }
 
-function test_user_content_length_does_not_leak_into_wire(): Option[string] {
+function test_user_content_length_does_not_leak_into_wire(): test.TestOutcome {
     // Stronger negative form: the bogus "9999" must NOT
     // appear anywhere in the serialized output.
     var r: HttpResponse = http.http_response_ok("hi");
@@ -67,7 +66,7 @@ function test_user_content_length_does_not_leak_into_wire(): Option[string] {
     return test.assert_not_contains(wire, "9999");
 }
 
-function test_duplicate_set_cookie_via_append(): Option[string] {
+function test_duplicate_set_cookie_via_append(): test.TestOutcome {
     var r: HttpResponse = http.http_response_ok("hi");
     r = r.with_appended_header("Set-Cookie", "a=1");
     r = r.with_appended_header("Set-Cookie", "b=2");
@@ -82,7 +81,7 @@ function test_duplicate_set_cookie_via_append(): Option[string] {
         "hi");
 }
 
-function test_duplicate_set_cookie_both_in_order(): Option[string] {
+function test_duplicate_set_cookie_both_in_order(): test.TestOutcome {
     // Order invariant: a=1 must come before b=2.
     var r: HttpResponse = http.http_response_ok("hi");
     r = r.with_appended_header("Set-Cookie", "a=1");

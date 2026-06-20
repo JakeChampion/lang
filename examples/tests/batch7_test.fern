@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/test";
 // examples/tests/batch7_test.fern — exercises the additions
 // from the seventh test-runner-migration tranche:
@@ -10,38 +9,38 @@ import "std/test";
 
 // ---------- wider-int relational ----------
 
-function test_i64_lt(): Option[string] { return test.assert_lt(5000000000 as i64, 9000000000 as i64); }
-function test_i64_le(): Option[string] { return test.assert_le(5000000000 as i64, 5000000000 as i64); }
-function test_i64_gt(): Option[string] { return test.assert_gt(9000000000 as i64, 5000000000 as i64); }
-function test_i64_ge(): Option[string] { return test.assert_ge(5000000000 as i64, 5000000000 as i64); }
+function test_i64_lt(): test.TestOutcome { return test.assert_lt(5000000000 as i64, 9000000000 as i64); }
+function test_i64_le(): test.TestOutcome { return test.assert_le(5000000000 as i64, 5000000000 as i64); }
+function test_i64_gt(): test.TestOutcome { return test.assert_gt(9000000000 as i64, 5000000000 as i64); }
+function test_i64_ge(): test.TestOutcome { return test.assert_ge(5000000000 as i64, 5000000000 as i64); }
 
-function test_u32_lt(): Option[string] { return test.assert_lt(1u32, 4294967295u32); }
-function test_u64_gt(): Option[string] { return test.assert_gt(18446744073709551615u64, 0u64); }
+function test_u32_lt(): test.TestOutcome { return test.assert_lt(1u32, 4294967295u32); }
+function test_u64_gt(): test.TestOutcome { return test.assert_gt(18446744073709551615u64, 0u64); }
 
-function test_i64_lt_failure_message(): Option[string] {
+function test_i64_lt_failure_message(): test.TestOutcome {
     // Confirm the failure message names the violation.
     match (test.assert_lt(10 as i64, 5 as i64)) {
-        Some(msg) => {
+        Fail(msg) => {
             if (!msg.contains("expected 10")) {
                 return test.fail("missing actual value: " + msg);
             }
-            return None;
+            return test.pass();
         },
-        None => { return test.fail("expected lt_i64(10, 5) to fail"); }
+        Pass => { return test.fail("expected lt_i64(10, 5) to fail"); }
     }
-    return None;
+    return test.pass();
 }
 
 // ---------- f64 bits ----------
 
-function test_f64_bits_round_trip(): Option[string] {
+function test_f64_bits_round_trip(): test.TestOutcome {
     // 1.0 as f64 = 0x3FF0000000000000 = 4607182418800017408
     var x: f64 = 1.0;
     var bits: i64 = f64_bits(x);
     return test.assert_eq(bits, 4607182418800017408 as i64);
 }
 
-function test_f64_from_bits_round_trips(): Option[string] {
+function test_f64_from_bits_round_trips(): test.TestOutcome {
     var x: f64 = 3.14;
     var bits: i64 = f64_bits(x);
     var back: f64 = f64_from_bits(bits);
@@ -74,37 +73,37 @@ function test_stat_workflow(r: test.TestRunner): test.TestRunner {
 // into a passing case. Used so the failure messages on the
 // negative cases stay in the example file rather than the
 // test harness.
-function match_invert_to_pass(result: Option[string]): Option[string] {
+function match_invert_to_pass(result: test.TestOutcome): test.TestOutcome {
     match (result) {
-        Some(_) => { return None; },
-        None => { return test.fail("expected the assertion to fail"); }
+        Fail(_) => { return test.pass(); },
+        Pass => { return test.fail("expected the assertion to fail"); }
     }
-    return None;
+    return test.pass();
 }
 
 // ---------- assert_json_eq ----------
 
-function test_json_simple_equal(): Option[string] {
+function test_json_simple_equal(): test.TestOutcome {
     return test.assert_json_eq("{\"a\":1}", "{\"a\":1}");
 }
 
-function test_json_key_order_independent(): Option[string] {
+function test_json_key_order_independent(): test.TestOutcome {
     return test.assert_json_eq(
         "{\"a\":1,\"b\":2,\"c\":3}",
         "{\"c\":3,\"a\":1,\"b\":2}");
 }
 
-function test_json_nested_arrays(): Option[string] {
+function test_json_nested_arrays(): test.TestOutcome {
     return test.assert_json_eq(
         "{\"items\":[1,2,{\"x\":\"y\"}]}",
         "{\"items\":[1,2,{\"x\":\"y\"}]}");
 }
 
-function test_json_differing_values_fails(): Option[string] {
+function test_json_differing_values_fails(): test.TestOutcome {
     return match_invert_to_pass(test.assert_json_eq("[1,2,3]", "[1,2,4]"));
 }
 
-function test_json_invalid_actual_fails(): Option[string] {
+function test_json_invalid_actual_fails(): test.TestOutcome {
     return match_invert_to_pass(test.assert_json_eq("{not json", "{}"));
 }
 

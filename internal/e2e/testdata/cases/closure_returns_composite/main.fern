@@ -1,0 +1,20 @@
+// Regression for #2753: a function taken as a value (indirect-call
+// target) that returns a two-word Option/Result must use the heap-box
+// ABI, not the pair-form, so the indirect-call signature agrees. (A
+// struct return already worked; Option/Result segfaulted.)
+struct Pt { x: i32, y: i32 }
+function apply_o(f: (i32) => Option[i32], x: i32): Option[i32] { return f(x); }
+function apply_p(f: (i32) => Pt, x: i32): Pt { return f(x); }
+function half(x: i32): Option[i32] { if (x % 2 == 0) { return Some(x / 2); } return None; }
+function mk(x: i32): Pt { return Pt { x: x, y: x + 1 }; }
+
+function main(): i32 {
+    var o: Option[i32] = apply_o(half, 10);   // Some(5)
+    var p: Pt = apply_p(mk, 7);                // {7,8}
+    var r: i32 = 0;
+    match (o) { Some(v) => { r = r + v; }, None => { r = r + 100; } }   // 5
+    r = r + p.x + p.y;                                                   // 15 -> 20
+    var none: Option[i32] = apply_o(half, 7);  // odd -> None
+    match (none) { Some(v) => { r = r + v; }, None => { r = r + 1; } }   // 21
+    return r;                                                            // 21
+}

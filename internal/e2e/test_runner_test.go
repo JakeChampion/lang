@@ -107,14 +107,14 @@ func TestRunnerStringsExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	if !strings.Contains(out, "# pass 11") || !strings.Contains(out, "# fail 0") {
-		t.Errorf("expected 11 passes, 0 fails\noutput:\n%s", out)
+	if !strings.Contains(out, "# pass 15") || !strings.Contains(out, "# fail 0") {
+		t.Errorf("expected 15 passes, 0 fails\noutput:\n%s", out)
 	}
 }
 
 // `examples/tests/runner_self_test.fern` is the runner's own
 // meta-test — confirms that every assertion helper returns the
-// expected Option[string] shape on both pass and fail paths.
+// expected TestOutcome shape on both pass and fail paths.
 // If THIS regresses, the rest of the suite reports false
 // positives.
 func TestRunnerSelfTestPasses(t *testing.T) {
@@ -158,14 +158,14 @@ func TestRunnerAsyncRuntimeExamplePasses(t *testing.T) {
 func TestRunnerFailingSuiteExitsOne(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
-	cmd.Stdin = strings.NewReader(`import "core/no_prelude";
+	cmd.Stdin = strings.NewReader(`
 import "std/test";
 
-function test_passing(): Option[string] {
+function test_passing(): test.TestOutcome {
     return test.assert_eq(1 + 1, 2);
 }
 
-function test_failing(): Option[string] {
+function test_failing(): test.TestOutcome {
     return test.assert_eq(2 + 2, 5);
 }
 
@@ -267,13 +267,13 @@ func TestRunnerFuzzExample(t *testing.T) {
 func TestRunnerFuzzFailureSurfacesInputReproducer(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
-	cmd.Stdin = strings.NewReader(`import "core/no_prelude";
+	cmd.Stdin = strings.NewReader(`
 import "std/fuzz";
 import "std/test";
 
-function detect_bad(input: string): Option[string] {
-    if (input.contains("BAD")) { return Some("forbidden pattern"); }
-    return None;
+function detect_bad(input: string): test.TestOutcome {
+    if (input.contains("BAD")) { return test.fail("forbidden pattern"); }
+    return test.pass();
 }
 
 function main(): i32 {
@@ -415,7 +415,7 @@ func TestRunnerFilesystemOpsExample(t *testing.T) {
 func TestRunnerDeferCleanupRunsAtFinish(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
-	cmd.Stdin = strings.NewReader(`import "core/no_prelude";
+	cmd.Stdin = strings.NewReader(`
 import "std/test";
 
 function main(): i32 {
@@ -667,13 +667,13 @@ func TestRunnerFuzzShrinkExample(t *testing.T) {
 func TestRunnerFuzzShrinkSurfacesMinimisedInput(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
-	cmd.Stdin = strings.NewReader(`import "core/no_prelude";
+	cmd.Stdin = strings.NewReader(`
 import "std/fuzz";
 import "std/test";
 
-function detect_bad(input: string): Option[string] {
-    if (input.contains("BAD")) { return Some("forbidden"); }
-    return None;
+function detect_bad(input: string): test.TestOutcome {
+    if (input.contains("BAD")) { return test.fail("forbidden"); }
+    return test.pass();
 }
 
 function main(): i32 {
@@ -1001,6 +1001,96 @@ func TestRunnerArrayCombinatorsExample(t *testing.T) {
 		"ok 18 - enumerate",
 		"ok 20 - map then fold",
 		"# pass 20",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/array_structural_verbs_test.fern` exercises the
+// generic structural array verbs added to std/array (#2689):
+// `reverse` / `take` / `drop` / `concat` over an arbitrary `T[]`.
+// Thirteen cases cover the happy path, empty / single-element inputs,
+// the clamping behaviour of take/drop (n <= 0 and n >= len), the
+// `take(n) ++ drop(n) == xs` complement law, and the `.concat()`
+// receiver-method form. These verbs take no callback, so (unlike the
+// combinators) they are also gated through the self-host compiler —
+// see TestSelfHostStdTestE2E.
+func TestRunnerArrayStructuralVerbsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_structural_verbs_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - reverse",
+		"ok 6 - take over length clamps",
+		"ok 8 - drop over length clamps",
+		"ok 10 - take ++ drop complement",
+		"ok 13 - concat method form",
+		"# pass 13",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/log_test.fern` exercises the leveled `Logger`
+// added to std/log (#2683): min-level threshold filtering, the five
+// levels TRACE..ERROR, structured key/value fields, and the JSON-line
+// output mode. Assertions target the pure `render(msg)` output. The
+// logger is structs + strings only, so it also runs through the
+// self-host stdtest gate (TestSelfHostStdTestE2E case "log").
+func TestRunnerLogExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/log_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - text basic",
+		"ok 3 - threshold filters below",
+		"ok 6 - json fields",
+		"ok 7 - json escaping",
+		"ok 9 - at explicit level",
+		"# pass 9",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/map_verbs_test.fern` exercises the higher-level
+// Map verbs added to core/map (#2685): `entries`, `merge` / `extend`,
+// `from`, `get_or_insert`, `update`, and `contains_value`, over both i32
+// and string keys (including the word-count use case via both
+// get_or_insert and the one-pass update). Sixteen cases. These verbs use
+// Option + tuples + closures + generic map ops which the self-host
+// compiler can't lower yet, so — like the closure combinators — they are
+// gated through the interpreter rather than the self-host stdtest gate.
+func TestRunnerMapVerbsExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/map_verbs_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"ok 1 - entries sum k+v",
+		"ok 4 - from pairs",
+		"ok 7 - merge other wins",
+		"ok 12 - get_or_insert word count",
+		"ok 13 - update word count",
+		"ok 15 - contains_value",
+		"# pass 16",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {
@@ -1997,7 +2087,7 @@ func TestRunnerQuietModeExample(t *testing.T) {
 func TestRunnerEmptySuiteIsValidTAP(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
-	cmd.Stdin = strings.NewReader(`import "core/no_prelude";
+	cmd.Stdin = strings.NewReader(`
 import "std/test";
 
 function main(): i32 {

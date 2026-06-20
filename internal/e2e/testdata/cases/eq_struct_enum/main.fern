@@ -1,0 +1,21 @@
+// Composite `==` / `!=` is STRUCTURAL equality via the type's `Eq`
+// impl (it desugars to `a.eq(b)`), not heap-pointer identity.
+trait Eq { function eq(self: Self, other: Self): boolean; }
+impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } }
+
+@derive(Eq) struct Point { x: i32, y: i32 }
+@derive(Eq) enum Shape { Dot, Line(i32), Box(i32, i32) }
+
+function main(): i32 {
+    var a: Point = Point { x: 3, y: 4 };
+    var b: Point = Point { x: 3, y: 4 };   // distinct heap object, equal value
+    var c: Point = Point { x: 3, y: 9 };
+    var r: i32 = 0;
+    if (a == b) { r = r + 1; }              // structural: equal
+    if (a != c) { r = r + 2; }              // structural: differ
+    if (Dot == Dot) { r = r + 4; }
+    if (Line(7) == Line(7)) { r = r + 8; }
+    if (Line(7) != Box(1, 2)) { r = r + 16; }
+    if (Box(1, 2) == Box(1, 2)) { r = r + 32; }
+    return r;                                // 63
+}

@@ -32,7 +32,7 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		t.Skip("CLI driver test runs only natively (argv paths)")
 	}
 	dir := writeSelfHostAsmProject(t) // lexer.fern, parser.fern, asm.fern
-	for _, name := range []string{"asmcore.fern", "util.fern", "flatten.fern", "asm_arm64.fern", "wasm.fern", "checker.fern", "interp.fern", "printer.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern", "ssa_wasm.fern", "watbin.fern", "constfold.fern", "arm64_native.fern", "elf.fern", "fern.fern"} {
+	for _, name := range []string{"asmcore.fern", "util.fern", "flatten.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "checker.fern", "interp.fern", "printer.fern", "astwalk.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern", "ssa_wasm.fern", "watbin.fern", "constfold.fern", "arm64_native.fern", "elf.fern", "fern.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -203,11 +203,11 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		// A program outside the SSA subset falls back to the AST emitter
 		// transparently: the default output is byte-identical to the -no-ssa
 		// (AST) output, so the default never emits wrong code for programs SSA
-		// can't yet lower. A `match` on int-literal patterns is one such
-		// construct build_func still declines (floats and struct spread now
-		// lower through SSA).
+		// can't yet lower. An `enum` match is one such construct build_func
+		// still declines (floats, struct spread, and int-literal match — the
+		// latter desugared to if/else by the parser — now lower through SSA).
 		srcPath := filepath.Join(dir, "fallback.fern")
-		if err := os.WriteFile(srcPath, []byte("function main(): i32 { var n = 2; match (n) { 1 => { return 10; }, 2 => { return 20; }, _ => { return 0; } } }\n"), 0o644); err != nil {
+		if err := os.WriteFile(srcPath, []byte("enum Color { Red, Green } function main(): i32 { var c: Color = Green; match (c) { Red => { return 1; }, Green => { return 2; }, _ => { return 0; } } }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
 		def, code1 := runDriver(t, srcPath)
@@ -425,7 +425,7 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		// is a false positive. This is the bundle-wide FP guard the
 		// differential corpus can't express, mirroring the manual
 		// "fern -check over every module" validation prior slices used.
-		for _, m := range []string{"asmcore.fern", "lexer.fern", "parser.fern", "checker.fern", "flatten.fern", "interp.fern", "printer.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern", "ssa_wasm.fern", "asm.fern", "asm_arm64.fern", "util.fern", "wasm.fern", "arm64_native.fern", "elf.fern", "fern.fern"} {
+		for _, m := range []string{"asmcore.fern", "lexer.fern", "parser.fern", "checker.fern", "flatten.fern", "interp.fern", "printer.fern", "astwalk.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern", "ssa_wasm.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "arm64_native.fern", "elf.fern", "fern.fern"} {
 			combined, _ := exec.Command(fernBin, "-check", filepath.Join(dir, m)).CombinedOutput()
 			if strings.Contains(string(combined), "error[E001]") {
 				t.Errorf("-check on self-host module %s reported a spurious E001:\n%s", m, combined)
@@ -845,6 +845,50 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
+	t.Run("compile-rejects-immutable-mutation", func(t *testing.T) {
+		// The COMPILE path (not just `-check`) must reject the immutable-data
+		// cycle rules before codegen, so the self-host compiler is not MORE
+		// permissive than native — which always type-checks ahead of codegen
+		// (issue #2825: `p.x = v` previously compiled+ran on the self-host).
+		// A rejection exits non-zero with the coded diagnostic on stderr and
+		// emits NO asm; the sanctioned functional-update form still compiles.
+		for _, c := range []struct {
+			name   string
+			src    string
+			reject string // non-empty ⇒ expect rejection with this on stderr
+		}{
+			{"field-assign", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x = 9; return p.x; }\n", "error[E048]"},
+			{"field-compound", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x += 5; return p.x; }\n", "error[E048]"},
+			{"subscript-assign", "function main(): i32 { var a: i32[] = [1, 2, 3]; a[0] = 9; return a[0]; }\n", "error[E056]"},
+			// Sanctioned replacements compile cleanly (no rejection).
+			{"functional-update-ok", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p = P { ...p, x: 9 }; return p.x; }\n", ""},
+			{"with-ok", "function main(): i32 { var a: i32[] = [1, 2, 3]; a = a.with(0, 9); return a[0]; }\n", ""},
+		} {
+			sp := filepath.Join(dir, "compile_"+c.name+".fern")
+			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
+				t.Fatalf("write %s: %v", c.name, err)
+			}
+			cmd := exec.Command(fernBin, sp)
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+			_ = cmd.Run()
+			code := cmd.ProcessState.ExitCode()
+			if c.reject == "" {
+				if code != 0 || stdout.Len() == 0 {
+					t.Errorf("%s: valid program rejected (exit %d, %d bytes asm)\nstderr: %s", c.name, code, stdout.Len(), stderr.String())
+				}
+				continue
+			}
+			if code == 0 {
+				t.Errorf("%s: forbidden mutation compiled (exit 0, %d bytes asm) — should be rejected", c.name, stdout.Len())
+			}
+			if !strings.Contains(stderr.String(), c.reject) {
+				t.Errorf("%s: stderr = %q, want %q", c.name, stderr.String(), c.reject)
+			}
+		}
+	})
+
 	t.Run("check-position-field", func(t *testing.T) {
 		// E043 (no such struct field) and E046 (bad tuple index) are
 		// reported at the field-access dot.
@@ -1035,6 +1079,42 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		_ = cmd.Run()
 		if c := cmd.ProcessState.ExitCode(); c != 42 {
 			t.Errorf("arm64-emitted program exited %d, want 42", c)
+		}
+	})
+
+	t.Run("emit-target-arm64-android", func(t *testing.T) {
+		// -target arm64-android emits a static position-independent (ET_DYN)
+		// arm64 ELF (in-process via arm64_native + elf.fern). The mmap'd low
+		// heap lets it run at the kernel-chosen base; check ET_DYN + exit code
+		// under qemu.
+		_, qemu := arm64Tooling(t) // skips if qemu absent
+		srcPath := filepath.Join(dir, "android_prog.fern")
+		if err := os.WriteFile(srcPath, []byte("function main(): i32 { print(\"droid\"); return 6 * 7; }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		progBin := filepath.Join(dir, "android_prog.bin")
+		_, code := runDriver(t, "-target", "arm64-android", "-o", progBin, srcPath)
+		if code != 0 {
+			t.Fatalf("-target arm64-android emit exited %d, want 0", code)
+		}
+		raw, err := os.ReadFile(progBin)
+		if err != nil {
+			t.Fatalf("read emitted binary: %v", err)
+		}
+		f, err := elf.NewFile(bytes.NewReader(raw))
+		if err != nil {
+			t.Fatalf("-target arm64-android output is not a parseable ELF: %v", err)
+		}
+		if f.Machine != elf.EM_AARCH64 || f.Type != elf.ET_DYN {
+			t.Fatalf("got machine=%v type=%v, want AARCH64/DYN", f.Machine, f.Type)
+		}
+		if err := os.Chmod(progBin, 0o755); err != nil {
+			t.Fatalf("chmod: %v", err)
+		}
+		cmd := exec.Command(qemu, progBin)
+		out, _ := cmd.CombinedOutput()
+		if c := cmd.ProcessState.ExitCode(); c != 42 {
+			t.Errorf("arm64-android program exited %d, want 42 (out=%q)", c, out)
 		}
 	})
 

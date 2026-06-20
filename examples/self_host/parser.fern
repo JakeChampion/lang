@@ -1,5 +1,5 @@
 // examples/self_host/parser.fern — recursive-descent parser
-// layered on the lang-port lexer (`./lexer`). Together they form
+// layered on the Fern-port lexer (`./lexer`). Together they form
 // the second concrete step of the self-host port (after the
 // standalone lexer in `lexer.fern`). Now that cross-module
 // qualified variant patterns work (`lexer.TokIdent(x) => …`),
@@ -23,7 +23,6 @@
 //     stub treats them as opaque ExprUnknown)
 //   - Receivers, type-params, `pub`, `import`
 
-import "core/no_prelude";
 import "./util";
 import "./lexer";
 
@@ -58,7 +57,7 @@ pub struct ExprLambda { params: ParamDecl[], ret_type: string, body: Stmt[] }
 // ExprTuple holds a parenthesised comma-separated list:
 // `(a, b, c)`. Distinct from arrays because tuple shape is
 // fixed-arity / heterogeneous; arrays are homogeneous and
-// dynamic. Field access in lang uses `.0`, `.1`, etc. but
+// dynamic. Field access in Fern uses `.0`, `.1`, etc. but
 // that's a later milestone — this slice only adds parsing.
 pub struct ExprTuple { elements: Expr[] }
 // Postfix indexing `a[i]`. `a` can be any Expr that evaluates to
@@ -116,7 +115,7 @@ pub struct StmtIf { cond: Expr, then_body: Stmt[], else_body: Stmt[] }
 // repeatedly as long as cond evaluates to a true VBool; an
 // in-body `return` short-circuits the loop the same way it
 // short-circuits an if-branch.
-pub struct StmtWhile { cond: Expr, body: Stmt[] }
+pub struct StmtWhile { cond: Expr, body: Stmt[], label: string }
 // StmtAssign models a re-assignment to an existing var: `x = expr;`.
 // The target is an ident name — full lvalue syntax (field /
 // index / tuple) is a later port milestone. The checker verifies
@@ -155,14 +154,14 @@ pub struct StmtMatch { scrutinee: Expr, arms: MatchArm[], line: i32, col: i32, o
 // loop binds `var_name` to each element in turn. break /
 // continue inside the body aren't modeled yet — a future
 // slice can add them as StmtBreak / StmtContinue.
-pub struct StmtFor { var_name: string, iter: Expr, body: Stmt[] }
+pub struct StmtFor { var_name: string, iter: Expr, body: Stmt[], label: string }
 // StmtBreak / StmtContinue model `break;` and `continue;`. The
 // tag fields are placeholder payload — variants need a shape
 // in the union and these stmts have no other state. The
 // surrounding while / for body handles the actual control
 // transfer.
-pub struct StmtBreak { tag: i32, line: i32, col: i32 }
-pub struct StmtContinue { tag: i32, line: i32, col: i32 }
+pub struct StmtBreak { tag: i32, line: i32, col: i32, label: string }
+pub struct StmtContinue { tag: i32, line: i32, col: i32, label: string }
 pub struct StmtUnknown { kind: string }
 
 // StmtDefer holds an action statement to run when the enclosing function
@@ -170,7 +169,11 @@ pub struct StmtUnknown { kind: string }
 // parser and the lower_defers pass (module_with_builtins) — that pass
 // eliminates every StmtDefer before any backend emits, so the emitters
 // never lower one at runtime (their arms are there for exhaustiveness).
-pub struct StmtDefer { action: Stmt }
+//
+// `on_error` is 1 for an `errdefer` — cleanup that runs only on an error
+// exit (a `return` of a None/Err value), not on success or falloff. 0 for
+// a plain `defer`. lower_defers schedules the two kinds at the right exits.
+pub struct StmtDefer { action: Stmt, on_error: i32 }
 
 // StmtSwitch models `switch (scrut) { case v0, v1: …  default: … }`. Like
 // StmtDefer it is a TRANSIENT node: the parser builds it (instead of
@@ -193,7 +196,7 @@ pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile
 // Top-level function decl: `function name(p1: T1, p2: T2): RT { body }`.
 // type names are captured as bare strings — full type-syntax
 // parsing (arrays / generics / unions) is a later milestone.
-pub struct ParamDecl { name: string, type_name: string, own: boolean }
+pub struct ParamDecl { name: string, type_name: string, own: boolean, has_default: boolean, default_value: Expr, ret_arr: boolean }
 // Receiver fields capture `function (recv: RecvType) name(…)`
 // — the self-host source uses them heavily for struct methods
 // like `function (p: Par) advance(): Par`. Both fields are
@@ -223,7 +226,7 @@ pub struct StructFieldDecl { name: string, type_name: string }
 // `struct Box[T]`); empty for a non-generic struct. The monomorphiser
 // uses it to clone `Box[i32]` → a concrete `Box__i32` with the field
 // types substituted, so primitive/string payloads resolve their methods.
-pub struct StructDecl { name: string, fields: StructFieldDecl[], type_params: string[], line: i32, col: i32 }
+pub struct StructDecl { name: string, fields: StructFieldDecl[], type_params: string[], line: i32, col: i32, enum_owner: string }
 
 // Top-level union type alias: `type Name = V1 | V2 | V3;`.
 // Variants are captured as bare type-name strings — they
@@ -239,7 +242,14 @@ pub struct TypeAlias { name: string, variants: string[], line: i32, col: i32 }
 // across files is a later milestone — for now the parser
 // just gathers them into the Module so the rest of the
 // pipeline can see what dependencies a source declares.
-pub struct Import { path: string }
+// `is_reexport` distinguishes a plain `import "path";` (false) from a
+// `pub use "path".{names…};` re-export directive (true). A re-export
+// import carries the re-exported names in `reexport_names`; the module
+// loader still treats it as an import (so the target module is loaded +
+// bundled), and the bundler reads the names to build the re-export table
+// that redirects a consumer's `facade.name` to the original module's
+// mangled symbol. See flatten.bundle / docs/PRELUDE-TO-MODULES.md.
+pub struct Import { path: string, is_reexport: boolean, reexport_names: string[] }
 
 // A whole compilation unit: the funcs declared at top level and
 // any stmts that appear outside a function decl. The interp /
@@ -336,7 +346,7 @@ function e_field_access_at(obj: Expr, field: string, line: i32, col: i32): Expr 
 function e_lambda(params: ParamDecl[], ret_type: string, body: Stmt[]): Expr {
     return ExprLambda { params: params, ret_type: ret_type, body: body };
 }
-function e_unknown(kind: string): Expr { return ExprUnknown { kind: kind }; }
+pub function e_unknown(kind: string): Expr { return ExprUnknown { kind: kind }; }
 
 function s_var(name: string, type_name: string, init: Expr): Stmt {
     return StmtVar { name: name, type_name: type_name, init: init, line: 0, col: 0 };
@@ -355,15 +365,27 @@ function s_if(cond: Expr, then_body: Stmt[], else_body: Stmt[]): Stmt {
     return StmtIf { cond: cond, then_body: then_body, else_body: else_body };
 }
 function s_while(cond: Expr, body: Stmt[]): Stmt {
-    return StmtWhile { cond: cond, body: body };
+    return StmtWhile { cond: cond, body: body, label: "" };
 }
 function s_for(var_name: string, iter: Expr, body: Stmt[]): Stmt {
-    return StmtFor { var_name: var_name, iter: iter, body: body };
+    return StmtFor { var_name: var_name, iter: iter, body: body, label: "" };
 }
-function s_break(): Stmt { return StmtBreak { tag: 0, line: 0, col: 0 }; }
-function s_break_at(line: i32, col: i32): Stmt { return StmtBreak { tag: 0, line: line, col: col }; }
-function s_continue(): Stmt { return StmtContinue { tag: 0, line: 0, col: 0 }; }
-function s_continue_at(line: i32, col: i32): Stmt { return StmtContinue { tag: 0, line: line, col: col }; }
+// with_loop_label stamps a parsed loop label onto a freshly-built while/for loop
+// (a no-op for the empty label or a non-loop stmt). `loop`/for-range parse helpers
+// return a StmtWhile/StmtFor; this re-wraps it carrying the label.
+function with_loop_label(st: Stmt, label: string): Stmt {
+    if (label.len() == 0) { return st; }
+    match (st) {
+        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: w.body, label: label }; },
+        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: fr.iter, body: fr.body, label: label }; },
+        _ => { return st; }
+    }
+    return st;
+}
+function s_break(): Stmt { return StmtBreak { tag: 0, line: 0, col: 0, label: "" }; }
+function s_break_at(line: i32, col: i32): Stmt { return StmtBreak { tag: 0, line: line, col: col, label: "" }; }
+function s_continue(): Stmt { return StmtContinue { tag: 0, line: 0, col: 0, label: "" }; }
+function s_continue_at(line: i32, col: i32): Stmt { return StmtContinue { tag: 0, line: line, col: col, label: "" }; }
 function s_assign(target: string, value: Expr): Stmt {
     return StmtAssign { target: target, value: value, line: 0, col: 0, target_line: 0, target_col: 0 };
 }
@@ -398,12 +420,13 @@ function array_builder_elem(t: string): string {
     return t[pl : t.len() - 1];
 }
 
-// is_builder_mutation is true when `c` is `b.append(...)` / `b.with(...)` —
-// an in-place builder mutation that becomes a reassignment.
+// is_builder_mutation is true when `c` is `b.append(...)` / `b.with(...)` /
+// `b.insert(...)` — an in-place builder mutation that becomes a reassignment.
+// `insert` covers the Map.build builder (`b.insert(k, v)`).
 function is_builder_mutation(c: ExprCall, b: string): boolean {
     match (c.callee) {
         ExprFieldAccess(fa) => {
-            if (fa.field != "append" && fa.field != "with") { return false; }
+            if (fa.field != "append" && fa.field != "with" && fa.field != "insert") { return false; }
             match (fa.obj) {
                 ExprIdent(id) => { return id.name == b; },
                 _ => { return false; },
@@ -435,10 +458,10 @@ function rewrite_builder_stmt(s: Stmt, b: string): Stmt {
             return StmtIf { cond: f.cond, then_body: rewrite_builder_stmts(f.then_body, b), else_body: rewrite_builder_stmts(f.else_body, b) };
         },
         StmtWhile(w) => {
-            return StmtWhile { cond: w.cond, body: rewrite_builder_stmts(w.body, b) };
+            return StmtWhile { cond: w.cond, body: rewrite_builder_stmts(w.body, b), label: w.label };
         },
         StmtFor(fr) => {
-            return StmtFor { var_name: fr.var_name, iter: fr.iter, body: rewrite_builder_stmts(fr.body, b) };
+            return StmtFor { var_name: fr.var_name, iter: fr.iter, body: rewrite_builder_stmts(fr.body, b), label: fr.label };
         },
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
@@ -521,6 +544,73 @@ function maybe_desugar_array_build(base: Expr): Expr {
     }
     return base;
 }
+
+// map_builder_inner extracts "K, V" from a "MapBuilder[K, V]" type spelling
+// (kept as a string by the self-host parser). Returns "" when the spelling
+// isn't MapBuilder[...]. The map sibling of array_builder_elem.
+function map_builder_inner(t: string): string {
+    var prefix: string = "MapBuilder[";
+    var pl: i32 = prefix.len();
+    if (t.len() < pl + 1) { return ""; }
+    if (t[t.len() - 1] != 93) { return ""; }  // 93 = ']'
+    var i: i32 = 0;
+    while (i < pl) {
+        if (t[i] != prefix[i]) { return ""; }
+        i = i + 1;
+    }
+    return t[pl : t.len() - 1];
+}
+
+// maybe_desugar_map_build lowers `Map.build(function(b: MapBuilder[K, V]):
+// void { BODY })` into a unique-local IIFE — the map sibling of
+// maybe_desugar_array_build (docs/ARRAY-BUILDER-PLAN.md). `b` is a fresh
+// non-escaping map so every `b.insert(k, v)` (rewritten to `b = b.insert(...)`)
+// is the in-place fast path. Returns `base` unchanged when it isn't a
+// well-formed Map.build call.
+function maybe_desugar_map_build(base: Expr): Expr {
+    match (base) {
+        ExprCall(call) => {
+            match (call.callee) {
+                ExprFieldAccess(fa) => {
+                    if (fa.field != "build") { return base; }
+                    match (fa.obj) {
+                        ExprIdent(id) => {
+                            if (id.name != "Map") { return base; }
+                            if (call.args.len() != 1) { return base; }
+                            match (call.args[0]) {
+                                ExprLambda(lam) => {
+                                    if (lam.params.len() != 1) { return base; }
+                                    var inner: string = map_builder_inner(lam.params[0].type_name);
+                                    if (inner.len() == 0) { return base; }
+                                    var bname: string = lam.params[0].name;
+                                    var mapty: string = "Map[" + inner + "]";
+                                    var cargs: Expr[] = [];
+                                    cargs = cargs.append(e_number("8", "", false));
+                                    var stmts: Stmt[] = [];
+                                    stmts = stmts.append(s_var(bname, mapty, e_call(e_ident("map_new"), cargs)));
+                                    var rewritten: Stmt[] = rewrite_builder_stmts(lam.body, bname);
+                                    var ri: i32 = 0;
+                                    while (ri < rewritten.len()) {
+                                        stmts = stmts.append(rewritten[ri]);
+                                        ri = ri + 1;
+                                    }
+                                    stmts = stmts.append(s_return(e_ident(bname)));
+                                    var iife: Expr = ExprLambda { params: [], ret_type: mapty, body: stmts };
+                                    return ExprCall { callee: iife, args: [], line: call.line, col: call.col, type_argc: 0 };
+                                },
+                                _ => { return base; },
+                            }
+                        },
+                        _ => { return base; },
+                    }
+                },
+                _ => { return base; },
+            }
+        },
+        _ => { return base; },
+    }
+    return base;
+}
 // s_match_origin is s_match_at tagged with the desugar that produced it
 // ("if_let" / "let_else"); see StmtMatch.origin.
 function s_match_origin(scrutinee: Expr, arms: MatchArm[], line: i32, col: i32, origin: string): Stmt {
@@ -532,7 +622,8 @@ function p_variant(type_name: string, binding: string): Pattern {
 }
 function p_wildcard(): Pattern { return PatWildcard { tag: 0 }; }
 function s_unknown(kind: string): Stmt { return StmtUnknown { kind: kind }; }
-function s_defer(action: Stmt): Stmt { return StmtDefer { action: action }; }
+function s_defer(action: Stmt): Stmt { return StmtDefer { action: action, on_error: 0 }; }
+function s_errdefer(action: Stmt): Stmt { return StmtDefer { action: action, on_error: 1 }; }
 
 // desugar_switch lowers a StmtSwitch to the nested if/else-if chain the
 // backends consume — each `case v0, v1: body` becomes
@@ -589,8 +680,8 @@ pub function desugar_switch_in_stmt(st: Stmt): Stmt {
             return desugar_switch(lowered);
         },
         StmtIf(f) => { return StmtIf { cond: f.cond, then_body: desugar_switch_block(f.then_body), else_body: desugar_switch_block(f.else_body) }; },
-        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: desugar_switch_block(w.body) }; },
-        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: fr.iter, body: desugar_switch_block(fr.body) }; },
+        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: desugar_switch_block(w.body), label: w.label }; },
+        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: fr.iter, body: desugar_switch_block(fr.body), label: fr.label }; },
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
             var a: i32 = 0;
@@ -600,10 +691,107 @@ pub function desugar_switch_in_stmt(st: Stmt): Stmt {
             }
             return StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin };
         },
-        StmtDefer(d) => { return StmtDefer { action: desugar_switch_in_stmt(d.action) }; },
+        StmtDefer(d) => { return StmtDefer { action: desugar_switch_in_stmt(d.action), on_error: d.on_error }; },
         _ => { return st; }
     }
     return st;
+}
+
+// label_depth returns the relative loop depth of `name` in the enclosing-loop
+// label stack (the last entry is the innermost loop), or -1 if absent. Depth 0 is
+// the innermost loop, 1 its enclosing loop, and so on.
+function label_depth(labels: string[], name: string): i32 {
+    var i: i32 = labels.len() - 1;
+    while (i >= 0) {
+        if (labels[i] == name) { return (labels.len() - 1) - i; }
+        i = i - 1;
+    }
+    return 0 - 1;
+}
+
+// resolve_labels_stmt rewrites a labeled `break`/`continue`'s `tag` to the
+// relative loop depth of its target label, recursing through every statement
+// container (if / while / for / match / switch / defer) so a break/continue
+// anywhere in the nest is resolved against the live enclosing-loop label stack
+// (`labels`; "" for an unlabeled loop). An unlabeled break/continue keeps tag 0
+// (the innermost loop). This runs on the RAW parsed module before any desugar
+// pass, so the loop labels are still in place and every downstream pass only has
+// to carry the already-resolved `tag` (which break/continue stmts preserve by
+// identity through those passes).
+function resolve_labels_stmt(st: Stmt, labels: string[]): Stmt {
+    match (st) {
+        StmtBreak(b) => {
+            if (b.label.len() == 0) { return st; }
+            var d: i32 = label_depth(labels, b.label);
+            if (d < 0) { d = 0; }
+            return StmtBreak { tag: d, line: b.line, col: b.col, label: b.label };
+        },
+        StmtContinue(c) => {
+            if (c.label.len() == 0) { return st; }
+            var d2: i32 = label_depth(labels, c.label);
+            if (d2 < 0) { d2 = 0; }
+            return StmtContinue { tag: d2, line: c.line, col: c.col, label: c.label };
+        },
+        StmtWhile(w) => {
+            return StmtWhile { cond: w.cond, body: resolve_labels_block(w.body, labels.append(w.label)), label: w.label };
+        },
+        StmtFor(fr) => {
+            return StmtFor { var_name: fr.var_name, iter: fr.iter, body: resolve_labels_block(fr.body, labels.append(fr.label)), label: fr.label };
+        },
+        StmtIf(f) => {
+            return StmtIf { cond: f.cond, then_body: resolve_labels_block(f.then_body, labels), else_body: resolve_labels_block(f.else_body, labels) };
+        },
+        StmtMatch(m) => {
+            var arms2: MatchArm[] = [];
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var a: MatchArm = m.arms[ai];
+                arms2 = arms2.append(MatchArm { pattern: a.pattern, body: resolve_labels_block(a.body, labels), line: a.line, col: a.col, guard: a.guard, has_guard: a.has_guard });
+                ai = ai + 1;
+            }
+            return StmtMatch { scrutinee: m.scrutinee, arms: arms2, line: m.line, col: m.col, origin: m.origin };
+        },
+        StmtSwitch(sw) => {
+            var cases2: SwitchCase[] = [];
+            var ci: i32 = 0;
+            while (ci < sw.cases.len()) {
+                var sc: SwitchCase = sw.cases[ci];
+                cases2 = cases2.append(SwitchCase { values: sc.values, body: resolve_labels_block(sc.body, labels) });
+                ci = ci + 1;
+            }
+            return StmtSwitch { scrutinee: sw.scrutinee, cases: cases2, has_default: sw.has_default, default_body: resolve_labels_block(sw.default_body, labels), line: sw.line, col: sw.col };
+        },
+        StmtDefer(dd) => {
+            return StmtDefer { action: resolve_labels_stmt(dd.action, labels), on_error: dd.on_error };
+        },
+        _ => { return st; }
+    }
+    return st;
+}
+
+function resolve_labels_block(stmts: Stmt[], labels: string[]): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        out = out.append(resolve_labels_stmt(stmts[i], labels));
+        i = i + 1;
+    }
+    return out;
+}
+
+// resolve_labels_module bakes each labeled break/continue's relative loop depth
+// into its `tag` (see resolve_labels_stmt). Runs first in the prepare pipeline,
+// on the freshly parsed module.
+pub function resolve_labels_module(mod: Module): Module {
+    var funcs: FuncDecl[] = [];
+    var none: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var fd: FuncDecl = mod.funcs[i];
+        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: resolve_labels_block(fd.body, none), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count });
+        i = i + 1;
+    }
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: resolve_labels_block(mod.top_stmts, none), enums: mod.enums, resources: mod.resources, exports: mod.exports };
 }
 
 pub function desugar_switches_module(mod: Module): Module {
@@ -715,6 +903,133 @@ function (p: Par) peek_ident(): string {
         _ => { return ""; }
     }
     return "";
+}
+// peek_is_literal reports whether the cursor sits on a number or
+// string literal token. Used by the match-arm parser to recognise a
+// literal-pattern arm (`0 => …`, `"yes" => …`) — a match on a
+// non-enum (i32 / string) scrutinee — and desugar the whole match to
+// an if/else-if chain (see build_literal_match), mirroring the native
+// compiler's emitLiteralMatch.
+function (p: Par) peek_is_literal(): boolean {
+    var t: lexer.Token = p.peek();
+    match (t) {
+        lexer.TokNumber(x) => { return true; },
+        lexer.TokString(x) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// peek_member_name returns the identifier at the cursor, OR a reserved
+// keyword that is nonetheless allowed in MEMBER position — currently only
+// `default` (a `switch` keyword that doubles as the `Default` trait's
+// method name `Type.default()`). Returns "" otherwise. Mirrors the Go
+// parser's expectMemberName; used for function/method names and field
+// access so `function default()` and `obj.default()` parse while the
+// keyword stays reserved everywhere else.
+function (p: Par) peek_member_name(): string {
+    var nm: string = p.peek_ident();
+    if (nm.len() > 0) { return nm; }
+    if (p.peek_keyword() == "default") { return "default"; }
+    return "";
+}
+
+// punct_at returns the punctuation text of the token at absolute index
+// `idx` ("" when out of range or not a punct token). Used by the
+// arrow-lambda lookahead, which must peek several tokens ahead of the
+// cursor without advancing.
+function (p: Par) punct_at(idx: i32): string {
+    if (idx < 0 || idx >= p.toks.len()) { return ""; }
+    var t: lexer.Token = p.toks[idx];
+    match (t) {
+        lexer.TokPunct(x) => { return x.text; },
+        _ => { return ""; }
+    }
+    return "";
+}
+// ident_at returns the identifier name of the token at absolute index
+// `idx` ("" when out of range or not an ident token).
+function (p: Par) ident_at(idx: i32): string {
+    if (idx < 0 || idx >= p.toks.len()) { return ""; }
+    var t: lexer.Token = p.toks[idx];
+    match (t) {
+        lexer.TokIdent(x) => { return x.name; },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// arrow_lambda_at reports whether the cursor (sitting on `(`) begins an
+// arrow lambda — `() => …`, `(): R => …`, or `(IDENT: TYPE, …) [: R] => …`
+// — as opposed to a grouping `(e)` or tuple `(e0, e1)`. The disambiguator
+// (ported from the native parser's looksLikeArrowLambda, #2701): an arrow
+// lambda's parens are empty or start with a typed param `IDENT :`, which an
+// expression never does, and the matching `)` is followed by `=>` or `:`
+// (the return-type colon). It scans to the balanced `)` and checks the
+// token after it.
+function (p: Par) arrow_lambda_at(): boolean {
+    // p.pos is at "(".
+    var open: i32 = p.pos;
+    // Empty params: `(` `)` then `=>` / `:`.
+    if (p.punct_at(open + 1) == ")") {
+        var after: string = p.punct_at(open + 2);
+        return after == "=>" || after == ":";
+    }
+    // Non-empty: must start with a typed param `IDENT :`.
+    if (p.ident_at(open + 1).len() == 0 || p.punct_at(open + 2) != ":") {
+        return false;
+    }
+    // Scan to the matching `)` and check the token after it.
+    var depth: i32 = 0;
+    var j: i32 = open;
+    while (j < p.toks.len()) {
+        var pk: string = p.punct_at(j);
+        if (pk == "(") {
+            depth = depth + 1;
+        } else if (pk == ")") {
+            depth = depth - 1;
+            if (depth == 0) {
+                var aft: string = p.punct_at(j + 1);
+                return aft == "=>" || aft == ":";
+            }
+        }
+        j = j + 1;
+    }
+    return false;
+}
+
+// parse_arrow_lambda parses `(params) [: R] => expr` into an ExprLambda
+// whose body is the single statement `[return expr]` — exactly the AST the
+// verbose `function (params): R { return expr; }` form produces, so the
+// lambda-lift + IR-lowering machinery handles it with no further changes.
+// The cursor is on the opening `(`. Parameter types are required (as in the
+// verbose form); the return type is optional. Ported from the native
+// parser's parseArrowLambda (#2701).
+function parse_arrow_lambda(p: Par): ExprResult {
+    p = p.advance();  // consume `(`
+    var params: ParamDecl[] = [];
+    if (p.peek_punct() != ")") {
+        while (true) {
+            var pr: ParamResult = parse_param(p);
+            p = pr.par;
+            params = params.append(pr.param);
+            if (p.peek_punct() == ",") { p = p.advance(); continue; }
+            break;
+        }
+    }
+    if (p.peek_punct() == ")") { p = p.advance(); }
+    var ret_type: string = "";
+    if (p.peek_punct() == ":") {
+        p = p.advance();
+        var rtr: TypeNameResult = parse_type_name(p);
+        p = rtr.par;
+        ret_type = rtr.name;
+    }
+    if (p.peek_punct() == "=>") { p = p.advance(); }
+    var ber: ExprResult = parse_expr(p);
+    p = ber.par;
+    var body: Stmt[] = [s_return(ber.expr)];
+    return parse_postfix(p, e_lambda(params, ret_type, body));
 }
 
 // Result types — both pieces of the (new_parser, parsed_thing)
@@ -870,6 +1185,7 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
             p = p.advance();
             base = ExprCall { callee: base, args: args, line: oline, col: ocol, type_argc: pending_type_argc };
             base = maybe_desugar_array_build(base);
+            base = maybe_desugar_map_build(base);
             pending_type_argc = 0;
         } else if (pk == "[") {
             p = p.advance();
@@ -951,7 +1267,7 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
             var dline: i32 = p.peek_line();
             var dcol: i32 = p.peek_col();
             p = p.advance();
-            var fname: string = p.peek_ident();
+            var fname: string = p.peek_member_name();
             if (fname.len() == 0) {
                 match (p.peek()) {
                     lexer.TokNumber(n) => { fname = n.text; },
@@ -1012,10 +1328,36 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
             var asline: i32 = p.peek_line();
             var ascol: i32 = p.peek_col();
             p = p.advance();
-            var tyname: string = p.peek_ident();
-            if (tyname.len() == 0) { tyname = p.peek_keyword(); }
-            if (tyname.len() > 0) { p = p.advance(); }
-            base = e_unary_at("as_" + tyname, base, asline, ascol);
+            // `expr as? Type` downcast (docs/DYN-TRAITS.md §9): an `as`
+            // immediately followed by `?` is the fallible `dyn Trait`
+            // downcast, NOT the numeric/ascription cast. Disambiguate by
+            // peeking the `?` here and tagging the unary op `as?_<Type>`
+            // (vs the plain `as_<Type>`); irlower lowers it to a shape
+            // read + compare yielding Option[T]. Consume the `?` now so it
+            // binds to `as` and isn't mis-read as the postfix `?` try op.
+            var is_downcast: boolean = false;
+            if (p.peek_punct() == "?") { is_downcast = true; p = p.advance(); }
+            // Read the full target type spelling via parse_type_name so the
+            // cast op name carries any generic args / array `[]` / qualified
+            // `pkg.Type` suffix (`e as i32[]` → `as_i32[]`, `e as Option[i32]`
+            // → `as_Option[i32]`) instead of stalling on the brackets or
+            // mis-reading them as a postfix index. Earlier this dropped the
+            // generic args, so a binding `var x = None as Option[i32]` rebound
+            // to the payload-less `var x: Option = None` — which the self-host
+            // IR path can't size (a bare `None` has no statically-known payload
+            // type), bailing the whole module to the AST backend (#2669). The
+            // generic suffix only matters for a payload-less operand like
+            // `None` (a `Some(e)` / `[e]` operand carries its own type), but
+            // preserving it is uniformly correct and the cast still lowers as a
+            // zero-cost identity. Numeric targets (`as i32`, `as f64`) come
+            // back as the bare name, so is_numeric_cast_op still recognises
+            // them. parse_type_name also folds a trailing `[]` and a qualified
+            // `pkg.Type` chain the old single-ident read left on the cursor.
+            var castty: TypeNameResult = parse_type_name(p);
+            p = castty.par;
+            var tyname: string = castty.name;
+            if (is_downcast) { base = e_unary_at("as?_" + tyname, base, asline, ascol); }
+            else { base = e_unary_at("as_" + tyname, base, asline, ascol); }
         } else if (p.peek_punct() == "?") {
             // `expr?` try operator. Desugar to the unary op `try_`
             // (operand = base); the emitter unwraps a Some/Ok payload
@@ -1179,6 +1521,16 @@ function parse_primary(p: Par): ExprResult {
         },
         lexer.TokPunct(x) => {
             if (x.text == "(") {
+                // Arrow lambda `(params) [: R] => expr` — a concise anonymous
+                // function whose body is a single expression (desugared to
+                // `function (params): R { return expr; }`, the same ExprLambda
+                // the verbose form produces). Checked before the grouping /
+                // tuple parse: an arrow lambda's parens hold a parameter list
+                // (`IDENT : TYPE`, or empty), which a grouping (`(e)`) or tuple
+                // (`(e0, e1)`) never does. See #2701.
+                if (p.arrow_lambda_at()) {
+                    return parse_arrow_lambda(p);
+                }
                 // `(expr)` — grouping. `(e0, e1, …)` — tuple
                 // literal. The first expr decides whether we're
                 // grouping or building a tuple: a `,` follow-up
@@ -1339,6 +1691,136 @@ function if_expr_rt(e: Expr): string {
     }
 }
 
+// LitArm is one arm of a match on a non-enum (i32 / string) scrutinee:
+// a literal to compare against (`lit`, dispatched via `==`) or the `_`
+// catch-all (`is_wild`), plus an optional guard and the arm body. The
+// match-arm parsers (parse_match_stmt / parse_match_expr) collect these
+// only when the first arm is a literal, then hand them to
+// build_literal_match instead of emitting a StmtMatch.
+struct LitArm { is_wild: boolean, lit: Expr, guard: Expr, has_guard: boolean, body: Stmt[] }
+
+// build_literal_match lowers a match on a non-enum scrutinee to a nested
+// if/else-if chain — the same shape desugar_switch produces, and what
+// the native compiler's emitLiteralMatch emits. The chain is built
+// backwards: the `_` arm's body is the base else; each literal arm wraps
+// it as `if (scrut == lit) { body } else { rest }` (a guard folds in as
+// `scrut == lit && guard`). The caller only routes here when at least
+// one literal arm exists, so the result is always an if statement.
+function build_literal_match(scrut: Expr, arms: LitArm[]): Stmt {
+    var else_body: Stmt[] = [];
+    var i: i32 = arms.len() - 1;
+    while (i >= 0) {
+        var a: LitArm = arms[i];
+        if (a.is_wild) {
+            if (a.has_guard) {
+                else_body = [s_if(a.guard, a.body, else_body)];
+            } else {
+                else_body = a.body;
+            }
+        } else {
+            var cond: Expr = e_binary("==", scrut, a.lit);
+            if (a.has_guard) { cond = e_binary("&&", cond, a.guard); }
+            else_body = [s_if(cond, a.body, else_body)];
+        }
+        i = i - 1;
+    }
+    if (else_body.len() == 0) { return s_unknown("empty literal match"); }
+    return else_body[0];
+}
+
+// BranchBodyResult carries a parsed if/match value-branch body: the
+// Stmt[] (leading statements followed by `s_return(tail)`) plus the
+// return-type tag derived from the TAIL expression (the block's value).
+struct BranchBodyResult { par: Par, body: Stmt[], rt: string }
+
+// branch_stmt_start reports whether the next token begins a STATEMENT
+// inside an if/match value-branch body (block-expressions slice 1). These
+// are the keyword-led statements parse_stmt handles directly (each
+// consumes its own terminator) plus a nested `{`-block. `if` / `match`
+// are deliberately EXCLUDED: they stand as the trailing value expression
+// (`{ …; if (c) { a } else { b } }`) and the single-expr branch form
+// `else { if (c) { … } else { … } }` relies on the inner if/match parsing
+// as a value-expression. `switch` IS a statement here (the self-host has
+// no value-position switch). Everything else parses as an expression
+// (an ExprStmt when a `;` follows, else the trailing tail). Mirrors the
+// Go parser's branchStmtStart.
+function branch_stmt_start(p: Par): boolean {
+    if (p.peek_punct() == "{") { return true; }
+    var kw: string = p.peek_keyword();
+    if (kw == "while" || kw == "loop" || kw == "for" || kw == "break"
+        || kw == "continue" || kw == "return" || kw == "defer"
+        || kw == "errdefer" || kw == "var" || kw == "let"
+        || kw == "function" || kw == "switch") { return true; }
+    return false;
+}
+
+// parse_branch_body parses the `{ … }` body of an if/match value-branch
+// (block-expressions slice 1), mirroring the Go parser's parseBranchBody.
+// The body is a sequence of `;`-terminated statements run before an
+// optional trailing expression written WITHOUT a `;` — that trailing
+// expression is the branch's value. The cursor is expected on `{`.
+//
+//   - `{ e }`          → `[s_return(e)]` (single-expr branch, kept
+//     byte-identical to the pre-block-expr behaviour so existing
+//     if/match expressions don't regress).
+//   - `{ s; …; tail }` → `[<leading stmts…>, s_return(tail)]`, which
+//     irlower's lower_value_tail already lowers (leading statements +
+//     a final value-producing statement).
+//
+// A keyword-led item (var/let/while/… or a nested `{`-block) parses as a
+// statement via parse_stmt. A non-keyword item parses as an expression:
+// an ExprStmt if a `;` follows, otherwise the trailing TAIL (which must
+// be followed by `}`). The `rt` tag is derived from the TAIL expression
+// (the value), not a leading statement, so the desugared IIFE / value-
+// lowering gets the right return type.
+function parse_branch_body(p: Par): BranchBodyResult {
+    var ebody: Stmt[] = [];
+    var rt: string = "i32";
+    if (p.peek_punct() != "{") {
+        ebody = ebody.append(s_unknown("missing { in branch body"));
+        return BranchBodyResult { par: p, body: ebody, rt: rt };
+    }
+    p = p.advance();  // consume `{`
+    var leading: Stmt[] = [];
+    var have_tail: boolean = false;
+    var tail: Expr = e_unknown("empty branch");
+    while (p.peek_punct() != "}" && !p.at_end()) {
+        if (branch_stmt_start(p)) {
+            var sr: StmtResult = parse_stmt(p);
+            // Progress guard: a malformed statement that consumed no token
+            // would otherwise spin forever — skip it instead.
+            if (sr.par.pos == p.pos) { p = p.advance(); continue; }
+            p = sr.par;
+            leading = leading.append(sr.stmt);
+            continue;
+        }
+        // Non-keyword item: an expression that is either an ExprStmt
+        // (followed by `;`) or the trailing value (followed by `}`).
+        var er: ExprResult = parse_expr(p);
+        p = er.par;
+        if (p.peek_punct() == ";") {
+            p = p.advance();
+            leading = leading.append(s_expr(er.expr));
+            continue;
+        }
+        // No `;` — this is the trailing tail expression; `}` must follow.
+        tail = er.expr;
+        have_tail = true;
+        break;
+    }
+    if (p.peek_punct() == "}") { p = p.advance(); }
+    if (have_tail) { rt = if_expr_rt(tail); }
+    // A value-less block (no trailing tail) in value position has no
+    // result — yield a StmtUnknown so the branch surfaces an error rather
+    // than silently miscompiling (the Go checker reports E061).
+    if (!have_tail) {
+        leading = leading.append(s_unknown("value branch has no trailing expression"));
+        return BranchBodyResult { par: p, body: leading, rt: rt };
+    }
+    leading = leading.append(s_return(tail));
+    return BranchBodyResult { par: p, body: leading, rt: rt };
+}
+
 // parse_if_chain parses `if (c) { E1 } else { E2 }` (and `else if`
 // chains, via recursion through the else arm) into a StmtIf whose arms
 // `return` the branch expressions. parse_primary wraps the result in an
@@ -1346,20 +1828,22 @@ function if_expr_rt(e: Expr): string {
 // ExprLambda the rest of the pipeline already handles — no new AST node,
 // so every backend supports if-expressions at once. The IIFE captures
 // any referenced locals automatically (the lambda machinery computes
-// captures). Mirrors the Go parser's parseIfExpr: then/else are single
-// expressions and a final `else` is required (the if-expression is total).
+// captures). Mirrors the Go parser's parseIfExpr: then/else are
+// block-with-tail bodies (block-expressions slice 1) — a multi-statement
+// branch (`{ var k = …; k }`) runs the leading statements then yields the
+// trailing tail — and a final `else` is required (the if-expression is
+// total). A lone trailing expression with no leading statements stays
+// `[s_return(expr)]`, byte-identical to the pre-block-expr behaviour.
 function parse_if_chain(p: Par): IfChain {
     p = p.advance();                              // `if`
     if (p.peek_punct() == "(") { p = p.advance(); }
     var condr: ExprResult = parse_expr(p);
     p = condr.par;
     if (p.peek_punct() == ")") { p = p.advance(); }
-    if (p.peek_punct() == "{") { p = p.advance(); }
-    var thenr: ExprResult = parse_expr(p);
-    p = thenr.par;
-    if (p.peek_punct() == "}") { p = p.advance(); }
-    var then_body: Stmt[] = [s_return(thenr.expr)];
-    var rt: string = if_expr_rt(thenr.expr);
+    var thenb: BranchBodyResult = parse_branch_body(p);
+    p = thenb.par;
+    var then_body: Stmt[] = thenb.body;
+    var rt: string = thenb.rt;
     if (p.peek_keyword() == "else") { p = p.advance(); }
     var else_body: Stmt[] = [];
     if (p.peek_keyword() == "if") {
@@ -1368,11 +1852,9 @@ function parse_if_chain(p: Par): IfChain {
         p = nested.par;
         else_body = [nested.stmt];
     } else {
-        if (p.peek_punct() == "{") { p = p.advance(); }
-        var elser: ExprResult = parse_expr(p);
-        p = elser.par;
-        if (p.peek_punct() == "}") { p = p.advance(); }
-        else_body = [s_return(elser.expr)];
+        var elseb: BranchBodyResult = parse_branch_body(p);
+        p = elseb.par;
+        else_body = elseb.body;
     }
     return IfChain { par: p, stmt: s_if(condr.expr, then_body, else_body), rt: rt };
 }
@@ -1391,10 +1873,64 @@ function parse_match_expr(p: Par): IfChain {
     var sr: ExprResult = parse_expr(p);
     p = sr.par;
     if (p.peek_punct() == ")") { p = p.advance(); }
-    var arms: MatchArm[] = [];
     var rt: string = "i32";
-    var first: boolean = true;
     if (p.peek_punct() == "{") { p = p.advance(); }
+    // A literal at the FIRST arm's pattern position marks a match on a
+    // non-enum (i32 / string) scrutinee: parse every arm as a literal /
+    // `_` and desugar to an if/else-if chain (build_literal_match). The
+    // decision is made once, up front, so the common enum/variant match
+    // takes the normal StmtMatch path below with no extra allocation.
+    if (p.peek_is_literal()) {
+        var lit_arms: LitArm[] = [];
+        var lfirst: boolean = true;
+        while (p.peek_punct() != "}" && !p.at_end()) {
+            var llit: Expr = e_bool(true);
+            var lwild: boolean = false;
+            if (p.peek_is_literal()) {
+                var lle: ExprResult = parse_expr(p);
+                p = lle.par;
+                llit = lle.expr;
+            } else {
+                var lpr: PatternResult = parse_pattern(p);
+                p = lpr.par;
+                lwild = true;
+            }
+            var lguard: Expr = e_bool(true);
+            var lhas_guard: boolean = false;
+            if (p.peek_keyword() == "when") {
+                p = p.advance();
+                var lgr: ExprResult = parse_expr(p);
+                p = lgr.par;
+                lguard = lgr.expr;
+                lhas_guard = true;
+            }
+            if (p.peek_punct() == "=>") { p = p.advance(); }
+            // A `{ … }` arm body is a block-with-tail (block-expressions
+            // slice 1): leading statements then the trailing value. A bare
+            // expression arm body stays the pre-block-expr single-expr form.
+            var lbody: Stmt[] = [];
+            var lrt: string = "i32";
+            if (p.peek_punct() == "{") {
+                var lbb: BranchBodyResult = parse_branch_body(p);
+                p = lbb.par;
+                lbody = lbb.body;
+                lrt = lbb.rt;
+            } else {
+                var ler: ExprResult = parse_expr(p);
+                p = ler.par;
+                lbody = [s_return(ler.expr)];
+                lrt = if_expr_rt(ler.expr);
+            }
+            if (lfirst) { rt = lrt; lfirst = false; }
+            lit_arms = lit_arms.append(LitArm { is_wild: lwild, lit: llit, guard: lguard, has_guard: lhas_guard, body: lbody });
+            if (p.peek_punct() == ",") { p = p.advance(); continue; }
+            break;
+        }
+        if (p.peek_punct() == "}") { p = p.advance(); }
+        return IfChain { par: p, stmt: build_literal_match(sr.expr, lit_arms), rt: rt };
+    }
+    var arms: MatchArm[] = [];
+    var first: boolean = true;
     while (p.peek_punct() != "}" && !p.at_end()) {
         var aline: i32 = p.peek_line();
         var acol: i32 = p.peek_col();
@@ -1410,10 +1946,24 @@ function parse_match_expr(p: Par): IfChain {
             arm_has_guard = true;
         }
         if (p.peek_punct() == "=>") { p = p.advance(); }
-        var er: ExprResult = parse_expr(p);
-        p = er.par;
-        if (first) { rt = if_expr_rt(er.expr); first = false; }
-        arms = arms.append(MatchArm { pattern: pr.pattern, body: [s_return(er.expr)], line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard });
+        // A `{ … }` arm body is a block-with-tail (block-expressions slice
+        // 1): leading statements then the trailing value. A bare expression
+        // arm body stays the pre-block-expr single-expr form.
+        var abody: Stmt[] = [];
+        var art: string = "i32";
+        if (p.peek_punct() == "{") {
+            var abb: BranchBodyResult = parse_branch_body(p);
+            p = abb.par;
+            abody = abb.body;
+            art = abb.rt;
+        } else {
+            var er: ExprResult = parse_expr(p);
+            p = er.par;
+            abody = [s_return(er.expr)];
+            art = if_expr_rt(er.expr);
+        }
+        if (first) { rt = art; first = false; }
+        arms = arms.append(MatchArm { pattern: pr.pattern, body: abody, line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard });
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }
@@ -1582,6 +2132,44 @@ function parse_match_stmt(p: Par): MatchStmtResult {
         return MatchStmtResult { par: p, stmt: s_match_at(sr.expr, empty_arms, mkline, mkcol) };
     }
     p = p.advance();
+    // A literal at the FIRST arm's pattern position marks a match on a
+    // non-enum (i32 / string) scrutinee: parse every arm as a literal /
+    // `_` and desugar to an if/else-if chain (build_literal_match). The
+    // decision is made once, up front, so the common enum/variant match
+    // takes the normal StmtMatch path below with no extra allocation.
+    if (p.peek_is_literal()) {
+        var lit_arms: LitArm[] = [];
+        while (p.peek_punct() != "}" && !p.at_end()) {
+            var llit: Expr = e_bool(true);
+            var lwild: boolean = false;
+            if (p.peek_is_literal()) {
+                var lle: ExprResult = parse_expr(p);
+                p = lle.par;
+                llit = lle.expr;
+            } else {
+                var lpr: PatternResult = parse_pattern(p);
+                p = lpr.par;
+                lwild = true;
+            }
+            var lguard: Expr = e_bool(true);
+            var lhas_guard: boolean = false;
+            if (p.peek_keyword() == "when") {
+                p = p.advance();
+                var lgr: ExprResult = parse_expr(p);
+                p = lgr.par;
+                lguard = lgr.expr;
+                lhas_guard = true;
+            }
+            if (p.peek_punct() == "=>") { p = p.advance(); }
+            var lbb: BlockResult = parse_block(p);
+            p = lbb.par;
+            lit_arms = lit_arms.append(LitArm { is_wild: lwild, lit: llit, guard: lguard, has_guard: lhas_guard, body: lbb.body });
+            if (p.peek_punct() == ",") { p = p.advance(); continue; }
+            break;
+        }
+        if (p.peek_punct() == "}") { p = p.advance(); }
+        return MatchStmtResult { par: p, stmt: build_literal_match(sr.expr, lit_arms) };
+    }
     var arms: MatchArm[] = [];
     while (p.peek_punct() != "}" && !p.at_end()) {
         // E026 / E028 are reported at the arm (Go's `arm.P`), which is the
@@ -1756,7 +2344,166 @@ function stmts_mention(stmts: Stmt[], name: string): boolean {
     return false;
 }
 
+// parse_loop_stmt parses `loop { body }` — the canonical infinite loop —
+// and desugars it to `while (true) { body }` so it rides the existing
+// StmtWhile IR lowering (block/loop/br_if) with no new node or emitter
+// arm. Kept in its own function so parse_stmt (already very large) doesn't
+// grow — an oversized function miscompiles on the native backend (#2720).
+function parse_loop_stmt(p: Par): StmtResult {
+    var p2: Par = p.advance();
+    var lb: BlockResult = parse_block(p2);
+    return StmtResult { par: lb.par, stmt: s_while(e_bool(true), lb.body) };
+}
+
+// parse_for_stmt parses a `for` statement (`p` is positioned at the
+// `for` keyword). Split out of parse_stmt's keyword dispatch so that
+// already-large function stays under the native backend's per-function
+// size limit (oversized functions miscompile — cf. #2720). Three forms:
+// `for (k, v) in m { body }` (map destructuring), `for x in EXPR { body }`
+// (array / range foreach), and the range form `for i in LOW..HIGH` /
+// `for i in LOW..=HIGH` — the latter two encode the interval as a
+// synthetic `__range` / `__range_incl` call (see below).
+function parse_for_stmt(p: Par): StmtResult {
+    // `for VAR in EXPR { body }`. `in` arrives as a plain
+    // TokIdent (not in the lexer's keyword set), so peek
+    // it through peek_ident rather than peek_keyword.
+    p = p.advance();  // consume `for`
+    // `for (k, v) in m { body }` — map destructuring iteration. The
+    // two names are encoded as "k,v" in the for-var; the emitter
+    // detects the comma + a map iter and emits an iterator loop.
+    if (p.peek_punct() == "(") {
+        var cfl: i32 = p.peek_line();
+        var cfc: i32 = p.peek_col();
+        p = p.advance();
+        // C-style `for (var i = INIT; COND; STEP) { BODY }` — distinguished
+        // from the `for (k, v) in m` map form by a `var` init. The self-host
+        // Stmt union has no C-style-for node, so desugar to a scoped while
+        // loop with a first-iteration flag, so a `continue` re-runs STEP
+        // (matching C semantics) instead of skipping it. Reuses if / while /
+        // break (no new node). (#2820)
+        if (p.peek_keyword() == "var") {
+            var fcinit: StmtResult = parse_stmt(p);   // `var i = INIT;` (eats `;`)
+            p = fcinit.par;
+            var fccond: ExprResult = parse_expr(p);   // `COND`
+            p = fccond.par;
+            if (p.peek_punct() == ";") { p = p.advance(); }
+            var stepone: Stmt[] = [];                 // STEP (no `;`, stops at `)`)
+            if (p.peek_punct() != ")") {
+                var fcstep: StmtResult = parse_stmt(p);
+                p = fcstep.par;
+                stepone = [fcstep.stmt];
+            }
+            if (p.peek_punct() == ")") { p = p.advance(); }
+            var fcbody: BlockResult = parse_block(p);
+            p = fcbody.par;
+            var flag: string = "__forc_" + util.i32_to_string(cfl) + "_" + util.i32_to_string(cfc);
+            var noelse: Stmt[] = [];
+            var wbody: Stmt[] = [];
+            // if (!first) { STEP }   -- runs STEP before every iteration but
+            //                           the first, so a `continue` runs it too.
+            wbody = wbody.append(s_if(e_unary("!", e_ident(flag)), stepone, noelse));
+            // first = false
+            wbody = wbody.append(s_assign(flag, e_bool(false)));
+            // if (!(COND)) { break }
+            var breakone: Stmt[] = [s_break()];
+            wbody = wbody.append(s_if(e_unary("!", fccond.expr), breakone, noelse));
+            var fbi: i32 = 0;
+            while (fbi < fcbody.body.len()) { wbody = wbody.append(fcbody.body[fbi]); fbi = fbi + 1; }
+            // { INIT; var first = true; while (true) { <wbody> } }  (scoped via if-true)
+            var outer: Stmt[] = [];
+            outer = outer.append(fcinit.stmt);
+            outer = outer.append(s_var(flag, "", e_bool(true)));
+            outer = outer.append(s_while(e_bool(true), wbody));
+            return StmtResult { par: p, stmt: s_if(e_bool(true), outer, noelse) };
+        }
+        var kvk: string = p.peek_ident();
+        if (kvk.len() > 0) { p = p.advance(); }
+        if (p.peek_punct() == ",") { p = p.advance(); }
+        var kvv: string = p.peek_ident();
+        if (kvv.len() > 0) { p = p.advance(); }
+        if (p.peek_punct() == ")") { p = p.advance(); }
+        if (p.peek_ident() == "in") { p = p.advance(); }
+        // Suppress trailing struct-literal parsing — the `{` that
+        // follows the iter opens the loop body, not a struct lit.
+        var kv_saved: boolean = p.no_struct;
+        var kvi: ExprResult = parse_expr(p.with_no_struct(true));
+        p = (kvi.par).with_no_struct(kv_saved);
+        var kvb: BlockResult = parse_block(p);
+        p = kvb.par;
+        return StmtResult { par: p, stmt: s_for(kvk + "," + kvv, kvi.expr, kvb.body) };
+    }
+    var fvar: string = p.peek_ident();
+    if (fvar.len() == 0) {
+        return StmtResult { par: p, stmt: s_unknown("missing for-var name") };
+    }
+    p = p.advance();
+    if (p.peek_ident() != "in") {
+        return StmtResult { par: p, stmt: s_unknown("missing `in` in for") };
+    }
+    p = p.advance();  // consume `in`
+    // Suppress trailing struct-literal parsing on the iter so that
+    // `for x in a {}` reads `a` + an empty block, not `a {}`.
+    var f_saved: boolean = p.no_struct;
+    var fiter = parse_expr(p.with_no_struct(true));
+    p = (fiter.par).with_no_struct(f_saved);
+    var iter_expr: Expr = fiter.expr;
+    // Range form `for IDENT in LOW..HIGH { body }`. parse_expr stops
+    // at `..` (not a binary operator), so `fiter.expr` is LOW; read
+    // `..` + HIGH and encode the half-open interval as a synthetic
+    // `__range(LOW, HIGH)` call — the same parser-internal-builtin
+    // idiom as `__set_index` / `__set_field`. The checker binds the
+    // loop var to i32 and irlower lowers it to a counted loop; the
+    // call shape rides through constfold / substitution / printing
+    // for free (LOW, HIGH are ordinary i32 sub-expressions). The
+    // inclusive form `LOW..=HIGH` emits `__range_incl(LOW, HIGH)`
+    // instead, which irlower lowers with a `<=` (closed-interval)
+    // condition.
+    var range_punct: string = p.peek_punct();
+    if (range_punct == ".." || range_punct == "..=") {
+        p = p.advance();   // consume `..` or `..=`
+        var hi_saved: boolean = p.no_struct;
+        var fhi = parse_expr(p.with_no_struct(true));
+        p = (fhi.par).with_no_struct(hi_saved);
+        var rargs: Expr[] = [fiter.expr, fhi.expr];
+        var range_fn: string = "__range";
+        if (range_punct == "..=") { range_fn = "__range_incl"; }
+        iter_expr = e_call(e_ident(range_fn), rargs);
+    }
+    var fb: BlockResult = parse_block(p);
+    p = fb.par;
+    return StmtResult { par: p, stmt: s_for(fvar, iter_expr, fb.body) };
+}
+
 function parse_stmt(p: Par): StmtResult {
+    // A bare block `{ ... }` in statement position is its own scope. The
+    // self-host Stmt union has no StmtBlock node, so desugar it to
+    // `if (true) { ... }` — reusing the scoped if-body (the same trick
+    // `loop` uses for `while (true)`). Map / struct literals only appear in
+    // expression position, so a leading `{` here is unambiguously a block.
+    if (p.peek_punct() == "{") {
+        var bb: BlockResult = parse_block(p);
+        var noelse: Stmt[] = [];
+        return StmtResult { par: bb.par, stmt: s_if(e_bool(true), bb.body, noelse) };
+    }
+    // Loop label `outer: while (…) { … }` / `outer: for … ` / `outer: loop { … }`.
+    // A leading `IDENT :` immediately before a loop keyword is a label (a bare
+    // `IDENT :` at statement start has no other meaning). Capture it, consume the
+    // `IDENT :`, and attach it to the loop below via with_loop_label; a labeled
+    // `break outer` / `continue outer` targets it (resolve_labels bakes the
+    // relative depth into the break/continue tag).
+    var loop_label: string = "";
+    var llid: string = p.peek_ident();
+    if (llid.len() > 0) {
+        var lp1: Par = p.advance();
+        if (lp1.peek_punct() == ":") {
+            var lp2: Par = lp1.advance();
+            var lkw: string = lp2.peek_keyword();
+            if (lkw == "while" || lkw == "for" || lkw == "loop") {
+                loop_label = llid;
+                p = lp2;
+            }
+        }
+    }
     var kw: string = p.peek_keyword();
     if (kw == "defer") {
         // `defer ACTION;` — the deferred action is an ordinary statement
@@ -1765,6 +2512,13 @@ function parse_stmt(p: Par): StmtResult {
         p = p.advance();  // consume `defer`
         var da: StmtResult = parse_stmt(p);
         return StmtResult { par: da.par, stmt: s_defer(da.stmt) };
+    }
+    if (kw == "errdefer") {
+        // `errdefer ACTION;` — like `defer`, but lower_defers schedules it
+        // only on an error exit (a `return` of a None/Err value).
+        p = p.advance();  // consume `errdefer`
+        var ea: StmtResult = parse_stmt(p);
+        return StmtResult { par: ea.par, stmt: s_errdefer(ea.stmt) };
     }
     if (kw == "function") {
         // Local (nested) function declaration: desugar to a closure-valued
@@ -1869,52 +2623,10 @@ function parse_stmt(p: Par): StmtResult {
         if (p.peek_punct() == ")") { p = p.advance(); }
         var wb: BlockResult = parse_block(p);
         p = wb.par;
-        return StmtResult { par: p, stmt: s_while(wc.expr, wb.body) };
+        return StmtResult { par: p, stmt: with_loop_label(s_while(wc.expr, wb.body), loop_label) };
     }
-    if (kw == "for") {
-        // `for VAR in EXPR { body }`. `in` arrives as a plain
-        // TokIdent (not in the lexer's keyword set), so peek
-        // it through peek_ident rather than peek_keyword.
-        p = p.advance();  // consume `for`
-        // `for (k, v) in m { body }` — map destructuring iteration. The
-        // two names are encoded as "k,v" in the for-var; the emitter
-        // detects the comma + a map iter and emits an iterator loop.
-        if (p.peek_punct() == "(") {
-            p = p.advance();
-            var kvk: string = p.peek_ident();
-            if (kvk.len() > 0) { p = p.advance(); }
-            if (p.peek_punct() == ",") { p = p.advance(); }
-            var kvv: string = p.peek_ident();
-            if (kvv.len() > 0) { p = p.advance(); }
-            if (p.peek_punct() == ")") { p = p.advance(); }
-            if (p.peek_ident() == "in") { p = p.advance(); }
-            // Suppress trailing struct-literal parsing — the `{` that
-            // follows the iter opens the loop body, not a struct lit.
-            var kv_saved: boolean = p.no_struct;
-            var kvi: ExprResult = parse_expr(p.with_no_struct(true));
-            p = (kvi.par).with_no_struct(kv_saved);
-            var kvb: BlockResult = parse_block(p);
-            p = kvb.par;
-            return StmtResult { par: p, stmt: s_for(kvk + "," + kvv, kvi.expr, kvb.body) };
-        }
-        var fvar: string = p.peek_ident();
-        if (fvar.len() == 0) {
-            return StmtResult { par: p, stmt: s_unknown("missing for-var name") };
-        }
-        p = p.advance();
-        if (p.peek_ident() != "in") {
-            return StmtResult { par: p, stmt: s_unknown("missing `in` in for") };
-        }
-        p = p.advance();  // consume `in`
-        // Suppress trailing struct-literal parsing on the iter so that
-        // `for x in a {}` reads `a` + an empty block, not `a {}`.
-        var f_saved: boolean = p.no_struct;
-        var fiter = parse_expr(p.with_no_struct(true));
-        p = (fiter.par).with_no_struct(f_saved);
-        var fb: BlockResult = parse_block(p);
-        p = fb.par;
-        return StmtResult { par: p, stmt: s_for(fvar, fiter.expr, fb.body) };
-    }
+    if (kw == "loop") { var lr: StmtResult = parse_loop_stmt(p); return StmtResult { par: lr.par, stmt: with_loop_label(lr.stmt, loop_label) }; }
+    if (kw == "for") { var fr0: StmtResult = parse_for_stmt(p); return StmtResult { par: fr0.par, stmt: with_loop_label(fr0.stmt, loop_label) }; }
     // `let` and `var` introduce a binding the same way here — the
     // self-host compiler doesn't track the immutability distinction
     // (the Go checker enforces it), so both parse to the same StmtVar.
@@ -1929,22 +2641,27 @@ function parse_stmt(p: Par): StmtResult {
         var vline: i32 = p.peek_line();
         var vcol: i32 = p.peek_col();
         p = p.advance();
-        // `var (x, y) = E` / `let (x, y) = E` — tuple destructuring.
-        // The two names are encoded as "x,y"; the emitter splits them
-        // and binds from the tuple's element slots.
+        // `var (x, y, …) = E` / `let (x, y, …) = E` — tuple destructuring of
+        // ANY arity. The names are encoded comma-joined ("x,y,z"); the emitter
+        // splits them and binds from the tuple's element slots.
         if (p.peek_punct() == "(") {
             p = p.advance();
-            var tdx: string = p.peek_ident();
-            if (tdx.len() > 0) { p = p.advance(); }
-            if (p.peek_punct() == ",") { p = p.advance(); }
-            var tdy: string = p.peek_ident();
-            if (tdy.len() > 0) { p = p.advance(); }
+            var tdnames: string = "";
+            var tdfirst: boolean = true;
+            while (p.peek_punct() != ")" && !p.at_end()) {
+                var tdn: string = p.peek_ident();
+                if (tdn.len() > 0) { p = p.advance(); }
+                if (!tdfirst) { tdnames = tdnames + ","; }
+                tdnames = tdnames + tdn;
+                tdfirst = false;
+                if (p.peek_punct() == ",") { p = p.advance(); }
+            }
             if (p.peek_punct() == ")") { p = p.advance(); }
             if (p.peek_punct() == "=") { p = p.advance(); }
             var tdinit: ExprResult = parse_expr(p);
             p = tdinit.par;
             if (p.peek_punct() == ";") { p = p.advance(); }
-            return StmtResult { par: p, stmt: s_var_at(tdx + "," + tdy, "", tdinit.expr, vline, vcol) };
+            return StmtResult { par: p, stmt: s_var_at(tdnames, "", tdinit.expr, vline, vcol) };
         }
         var name: string = p.peek_ident();
         if (name.len() == 0) {
@@ -2042,25 +2759,42 @@ function parse_stmt(p: Par): StmtResult {
         var bkline: i32 = p.peek_line();
         var bkcol: i32 = p.peek_col();
         p = p.advance();
+        // Optional target label: `break outer;`. resolve_labels turns it into a
+        // relative loop depth in the tag. Only treat a trailing ident as the label
+        // when it is immediately followed by `;` — otherwise a `break` with no
+        // trailing semicolon followed by an identifier-led statement would wrongly
+        // swallow that statement's leading ident.
+        var blbl: string = "";
+        var bid: string = p.peek_ident();
+        if (bid.len() > 0 && p.advance().peek_punct() == ";") { blbl = bid; p = p.advance(); }
         if (p.peek_punct() == ";") { p = p.advance(); }
-        return StmtResult { par: p, stmt: s_break_at(bkline, bkcol) };
+        return StmtResult { par: p, stmt: StmtBreak { tag: 0, line: bkline, col: bkcol, label: blbl } };
     }
     if (kw == "continue") {
         // E011 is reported at the `continue` keyword (Go's `Continue{P}`).
         var ckline: i32 = p.peek_line();
         var ckcol: i32 = p.peek_col();
         p = p.advance();
+        // Optional target label: `continue outer;` (only when followed by `;`; see
+        // the break case for why).
+        var clbl: string = "";
+        var cid: string = p.peek_ident();
+        if (cid.len() > 0 && p.advance().peek_punct() == ";") { clbl = cid; p = p.advance(); }
         if (p.peek_punct() == ";") { p = p.advance(); }
-        return StmtResult { par: p, stmt: s_continue_at(ckline, ckcol) };
+        return StmtResult { par: p, stmt: StmtContinue { tag: 0, line: ckline, col: ckcol, label: clbl } };
     }
     // Expression statement — or (compound) assignment if `=`,
-    // `+=`, `-=`, `*=`, `/=`, `%=` follows. The parser doesn't
-    // accept any of these as binary operators (none of them are
-    // in the precedence table), so parse_expr stops at the
-    // ident; we peek for the assign-op here and either build a
-    // plain StmtAssign or desugar a compound to
+    // `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`
+    // follows. The parser doesn't accept any of these as binary
+    // operators (none of them are in the precedence table), so
+    // parse_expr stops at the ident; we peek for the assign-op
+    // here and either build a plain StmtAssign or desugar a
+    // compound to
     //   StmtAssign { target, ExprBinary(<op>, ExprIdent(target), rhs) }
-    // so the rest of the pipeline sees only plain assigns.
+    // so the rest of the pipeline sees only plain assigns. The
+    // bitwise / shift compound set (`&= |= ^= <<= >>=`) mirrors
+    // the native parser's compoundOps map exactly, so both
+    // front-ends desugar the same operators to the same binary op.
     //
     // Only bare-ident targets are supported in this cut — full
     // lvalue syntax (field / index / tuple) is a later
@@ -2075,7 +2809,9 @@ function parse_stmt(p: Par): StmtResult {
     var is_assign: boolean = assign_op == "=";
     var is_compound: boolean = assign_op == "+=" || assign_op == "-="
                             || assign_op == "*=" || assign_op == "/="
-                            || assign_op == "%=";
+                            || assign_op == "%=" || assign_op == "&="
+                            || assign_op == "|=" || assign_op == "^="
+                            || assign_op == "<<=" || assign_op == ">>=";
     if (is_assign || is_compound) {
         p = p.advance(); // consume the assign-op token
         var av = parse_expr(p);
@@ -2153,7 +2889,10 @@ pub function parse_program(toks: lexer.Token[]): Stmt[] {
 }
 
 // parse_param consumes `ident: type_name` and returns a fresh Par +
-// the ParamDecl. The type position is a bare ident in this cut —
+// the ParamDecl. ret_arr records, for a closure-typed param `(T) => U[]`
+// (coarsed to type_name "fn"), that the closure RETURNS an array — the one
+// bit lower_func needs to admit `for y in f(x)` (flat_map's shape) onto the
+// IR path. The type position is a bare ident in this cut —
 // no array / generic / union syntax.
 pub struct ParamResult { par: Par, param: ParamDecl }
 
@@ -2165,7 +2904,7 @@ pub struct ParamResult { par: Par, param: ParamDecl }
 // inner `[…]` substring is captured verbatim by counting the
 // matching `]`. Returns (par, name) — empty name means
 // the parser saw nothing useful.
-pub struct TypeNameResult { par: Par, name: string }
+pub struct TypeNameResult { par: Par, name: string, ret_arr: boolean }
 
 // consume_array_suffix swallows trailing `[]` suffix(es) after a type and
 // appends them to `name`. Needed for the parenthesized type forms — a
@@ -2180,22 +2919,46 @@ function consume_array_suffix(p: Par, name: string): TypeNameResult {
             name = name + "[]";
         }
     }
-    return TypeNameResult { par: p, name: name };
+    return TypeNameResult { par: p, name: name, ret_arr: false };
 }
 
 function parse_type_name(p: Par): TypeNameResult {
     var base: string = p.peek_ident();
     if (base.len() == 0) { base = p.peek_keyword(); }
-    // `dyn Trait` runtime trait-object type. The self-host erases it to
-    // a coarse `"dyn <trait>"` spelling and dispatches method calls by
-    // the value's runtime shape (a struct/enum value carries its own
-    // shape pointer), so no special dispatch path is needed — only the
-    // type parse. Recurse so `dyn Shape[]` / `dyn mod.Shape` reuse the
-    // generic-arg + trailing-`[]` handling. See docs/DYN-TRAITS.md.
+    // `dyn Trait` (single) or `dyn A + B + …` (multi-trait object) — a
+    // runtime trait-object type. The self-host erases it to a coarse
+    // `"dyn <trait>"` / `"dyn A + B"` spelling and dispatches method
+    // calls by the value's runtime shape (a struct/enum value carries
+    // its own shape pointer); op_dyn_dispatch enumerates EVERY module
+    // method of the called name over its struct/prim receivers, so a
+    // method from ANY trait in the set lands on the concrete impl with
+    // no trait-specific dispatch path — only the type parse changes for
+    // the multi-trait case. Recurse per trait so `dyn Shape[]` /
+    // `dyn mod.Shape` / `dyn A + B[]` reuse the generic-arg +
+    // trailing-`[]` handling; the `[]` falls on the last trait and so on
+    // the whole `"dyn …"` spelling, which is what is_array_type_name +
+    // the element-strip (name[0:len-2]) expect. Traits are joined in
+    // source order with " + " (matching the native String() separator);
+    // dispatch is set-agnostic, so no sort/dedup is needed for the
+    // coarse self-host model. A trailing/empty `+` is a parse error.
+    // See docs/DYN-TRAITS.md §4.3 + §10.
     if (base == "dyn") {
         p = p.advance(); // consume `dyn`
         var dinner: TypeNameResult = parse_type_name(p);
-        return TypeNameResult { par: dinner.par, name: "dyn " + dinner.name };
+        p = dinner.par;
+        var dynname: string = dinner.name;
+        // Collect any `+ Trait` continuations (multi-trait `dyn A + B`).
+        while (p.peek_punct() == "+") {
+            p = p.advance(); // consume `+`
+            var dmore: TypeNameResult = parse_type_name(p);
+            p = dmore.par;
+            if (dmore.name.len() == 0) {
+                // Trailing / empty `+` — no trait name followed it.
+                return TypeNameResult { par: p, name: "", ret_arr: false };
+            }
+            dynname = dynname + " + " + dmore.name;
+        }
+        return TypeNameResult { par: p, name: "dyn " + dynname, ret_arr: false };
     }
     // WIT resource-handle type `own R` / `borrow R` (P5 —
     // docs/WIT-BRING-YOUR-OWN.md). A handle is an opaque i32 at the canonical
@@ -2212,7 +2975,7 @@ function parse_type_name(p: Par): TypeNameResult {
         // handles and tell own from borrow for its move analysis.
         p = p.advance(); // consume `own` / `borrow`
         var hinner: TypeNameResult = parse_type_name(p);
-        return TypeNameResult { par: hinner.par, name: base + " " + hinner.name };
+        return TypeNameResult { par: hinner.par, name: base + " " + hinner.name, ret_arr: false };
     }
     if (base.len() == 0) {
         // Tuple type `(T1, T2, …)`. The self-host stores types
@@ -2261,8 +3024,13 @@ function parse_type_name(p: Par): TypeNameResult {
                 var rr: TypeNameResult = parse_type_name(p);
                 p = rr.par;
                 // `(…) => R` — coarse "fn"; a trailing `[]` makes it an
-                // array of closures.
-                return consume_array_suffix(p, "fn");
+                // array of closures. Record ret_arr when R is itself an
+                // array (`(T) => U[]`): the tag stays the plain "fn" all
+                // consumers expect, but the bit rides along so lower_func can
+                // admit `for y in f(x)` (flat_map) onto the IR path.
+                var fnr: TypeNameResult = consume_array_suffix(p, "fn");
+                var r_is_arr: boolean = rr.name.len() >= 2 && rr.name[rr.name.len() - 2 : rr.name.len()] == "[]";
+                return TypeNameResult { par: fnr.par, name: fnr.name, ret_arr: r_is_arr };
             }
             // Tuple type — return the reconstructed precise spelling
             // (e.g. "(string, TestRunner)") so tuple-destructure
@@ -2283,9 +3051,9 @@ function parse_type_name(p: Par): TypeNameResult {
             var bracketed: TypeNameResult = parse_type_name(p);
             p = bracketed.par;
             if (p.peek_punct() == "]") { p = p.advance(); }
-            return TypeNameResult { par: p, name: bracketed.name + "[]" };
+            return TypeNameResult { par: p, name: bracketed.name + "[]", ret_arr: false };
         }
-        return TypeNameResult { par: p, name: "" };
+        return TypeNameResult { par: p, name: "", ret_arr: false };
     }
     p = p.advance();
     // Qualified type name: `pkg.Name` (e.g. `lexer.Token`). Consume
@@ -2305,7 +3073,7 @@ function parse_type_name(p: Par): TypeNameResult {
         p = p.advance();
     }
     if (p.peek_punct() != "[") {
-        return TypeNameResult { par: p, name: base };
+        return TypeNameResult { par: p, name: base, ret_arr: false };
     }
     // Consume `[T1, T2, …]` by tracking bracket depth so nested
     // generics survive verbatim. Token text reconstructed from
@@ -2314,20 +3082,40 @@ function parse_type_name(p: Par): TypeNameResult {
     p = p.advance();  // consume opening `[`
     var inner: string = "";
     var depth: i32 = 1;
+    // Two ident/keyword tokens are only ever adjacent inside a generic arg
+    // for a `dyn Trait` object type (`Result[i32, dyn Error]`). Every other
+    // separator (`,` `[` `(` …) inserts its own delimiter, but two bare
+    // idents have none — so reinsert the space to keep the canonical
+    // `"dyn Error"` spelling. Without it the payload type is stored as
+    // `"dynError"` and the dyn-dispatch guard (`rty[0:4] == "dyn "`) misses.
+    var prev_ident: boolean = false;
     while (depth > 0 && !p.at_end()) {
         var pk: string = p.peek_punct();
-        if (pk == "[") { depth = depth + 1; inner = inner + "["; p = p.advance(); continue; }
-        if (pk == "]") { depth = depth - 1; if (depth == 0) { break; } inner = inner + "]"; p = p.advance(); continue; }
-        if (pk == ",") { inner = inner + ", "; p = p.advance(); continue; }
+        if (pk == "[") { depth = depth + 1; inner = inner + "["; p = p.advance(); prev_ident = false; continue; }
+        if (pk == "]") { depth = depth - 1; if (depth == 0) { break; } inner = inner + "]"; p = p.advance(); prev_ident = false; continue; }
+        if (pk == ",") { inner = inner + ", "; p = p.advance(); prev_ident = false; continue; }
+        // Multi-trait object `dyn A + B` nested in a generic arg — match the
+        // top-level `parse_type` spelling (` + ` joined) so the dyn payload
+        // type round-trips identically.
+        if (pk == "+") { inner = inner + " + "; p = p.advance(); prev_ident = false; continue; }
         // Tuple types nested inside a generic arg, e.g.
         // `Option[(string, string)]` — pass parens through verbatim.
-        if (pk == "(") { inner = inner + "("; p = p.advance(); continue; }
-        if (pk == ")") { inner = inner + ")"; p = p.advance(); continue; }
+        if (pk == "(") { inner = inner + "("; p = p.advance(); prev_ident = false; continue; }
+        if (pk == ")") { inner = inner + ")"; p = p.advance(); prev_ident = false; continue; }
+        // FN-typed generic arg, e.g. `Option[() => i32]`, `Map[i32, (A) => B]`,
+        // `Result[(i32) => i32, E]` — pass the `=>` arrow through verbatim (joined
+        // with surrounding spaces) so the fn-type spelling round-trips inside the
+        // brackets. Without this the loop breaks on `=>`, truncating the type to
+        // `Option[()]` and leaving `=> i32` on the cursor — which then corrupts the
+        // enclosing decl body into a StmtUnknown.
+        if (pk == "=>") { inner = inner + " => "; p = p.advance(); prev_ident = false; continue; }
         var seg: string = p.peek_ident();
         if (seg.len() == 0) { seg = p.peek_keyword(); }
         if (seg.len() == 0) { break; }
+        if (prev_ident) { inner = inner + " "; }
         inner = inner + seg;
         p = p.advance();
+        prev_ident = true;
     }
     if (p.peek_punct() == "]") { p = p.advance(); }
     var nm: string = base + "[" + inner + "]";
@@ -2346,13 +3134,13 @@ function parse_type_name(p: Par): TypeNameResult {
             break;
         }
     }
-    return TypeNameResult { par: p, name: nm };
+    return TypeNameResult { par: p, name: nm, ret_arr: false };
 }
 
 function parse_param(p: Par): ParamResult {
     var name: string = p.peek_ident();
     if (name.len() == 0) {
-        return ParamResult { par: p, param: ParamDecl { name: "", type_name: "", own: false } };
+        return ParamResult { par: p, param: ParamDecl { name: "", type_name: "", own: false, has_default: false, default_value: e_unknown(""), ret_arr: false } };
     }
     // `own NAME: TYPE` — the affine-ownership modifier (move-checked by
     // the checker's E050/E051). `own` is a plain ident to the lexer, so it
@@ -2370,11 +3158,23 @@ function parse_param(p: Par): ParamResult {
     }
     p = p.advance();
     if (p.peek_punct() != ":") {
-        return ParamResult { par: p, param: ParamDecl { name: name, type_name: "", own: is_own } };
+        return ParamResult { par: p, param: ParamDecl { name: name, type_name: "", own: is_own, has_default: false, default_value: e_unknown(""), ret_arr: false } };
     }
     p = p.advance();
     var tr: TypeNameResult = parse_type_name(p);
-    return ParamResult { par: tr.par, param: ParamDecl { name: name, type_name: tr.name, own: is_own } };
+    p = tr.par;
+    // Optional default value: `function f(a: i32, b: i32 = 128)`.
+    // fill_default_args_module fills it at call sites that omit the argument.
+    var has_def: boolean = false;
+    var def_val: Expr = e_unknown("");
+    if (p.peek_punct() == "=") {
+        p = p.advance();
+        var de: ExprResult = parse_expr(p);
+        p = de.par;
+        has_def = true;
+        def_val = de.expr;
+    }
+    return ParamResult { par: p, param: ParamDecl { name: name, type_name: tr.name, own: is_own, has_default: has_def, default_value: def_val, ret_arr: tr.ret_arr } };
 }
 
 // parse_func_decl consumes `function name(params): ret_type { body }`
@@ -2420,7 +3220,7 @@ function parse_func_decl(p: Par): FuncResult {
         }
         if (p.peek_punct() == ")") { p = p.advance(); }
     }
-    var name: string = p.peek_ident();
+    var name: string = p.peek_member_name();
     if (name.len() == 0) {
         return FuncResult { par: p, func: FuncDecl { name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: 0 } };
     }
@@ -2533,7 +3333,7 @@ function parse_struct_decl(p: Par): StructResult {
     var notp0: string[] = [];
     if (name.len() == 0) {
         var empty: StructFieldDecl[] = [];
-        return StructResult { par: p, decl: StructDecl { name: "", fields: empty, type_params: notp0, line: sline, col: scol } };
+        return StructResult { par: p, decl: StructDecl { name: "", fields: empty, type_params: notp0, line: sline, col: scol, enum_owner: "" } };
     }
     p = p.advance();
     // Optional generic type parameters: `struct Box[T] { … }`. Captured
@@ -2557,7 +3357,7 @@ function parse_struct_decl(p: Par): StructResult {
     }
     if (p.peek_punct() != "{") {
         var empty: StructFieldDecl[] = [];
-        return StructResult { par: p, decl: StructDecl { name: name, fields: empty, type_params: tparams, line: sline, col: scol } };
+        return StructResult { par: p, decl: StructDecl { name: name, fields: empty, type_params: tparams, line: sline, col: scol, enum_owner: "" } };
     }
     p = p.advance();
     var fields: StructFieldDecl[] = [];
@@ -2577,7 +3377,7 @@ function parse_struct_decl(p: Par): StructResult {
         }
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    return StructResult { par: p, decl: StructDecl { name: name, fields: fields, type_params: tparams, line: sline, col: scol } };
+    return StructResult { par: p, decl: StructDecl { name: name, fields: fields, type_params: tparams, line: sline, col: scol, enum_owner: "" } };
 }
 
 // parse_type_alias consumes `type Name = V1 | V2 | … ;` starting
@@ -2651,15 +3451,22 @@ function parse_enum_decl(p: Par): EnumResult {
             p = p.advance();
             var tr: TypeNameResult = parse_type_name(p);
             p = tr.par;
+            // A multi-payload variant `V(A, B, …)` keeps every payload as a field
+            // `__ev`, `__ev1`, `__ev2`, … (the first stays `__ev` so the existing
+            // "is this a payloaded variant?" checks that look for `__ev` still
+            // fire). Codegen indexes them by position (struct_field_off).
             fields = fields.append(StructFieldDecl { name: "__ev", type_name: tr.name });
+            var pnum: i32 = 1;
             while (p.peek_punct() == ",") {
                 p = p.advance();
                 var tr2: TypeNameResult = parse_type_name(p);
                 p = tr2.par;
+                fields = fields.append(StructFieldDecl { name: "__ev" + dl_itoa(pnum), type_name: tr2.name });
+                pnum = pnum + 1;
             }
             if (p.peek_punct() == ")") { p = p.advance(); }
         }
-        out = out.append(StructDecl { name: vname, fields: fields, type_params: [], line: 0, col: 0 });
+        out = out.append(StructDecl { name: vname, fields: fields, type_params: [], line: 0, col: 0, enum_owner: name });
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }
@@ -2683,7 +3490,39 @@ function parse_import(p: Par): ImportResult {
         _ => { }
     }
     if (p.peek_punct() == ";") { p = p.advance(); }
-    return ImportResult { par: p, imp: Import { path: path } };
+    return ImportResult { par: p, imp: Import { path: path, is_reexport: false, reexport_names: [] } };
+}
+
+// parse_pubuse consumes `use "path".{name1, name2, …};` (cursor on the
+// `use` keyword; a leading `pub` is stripped by the caller). It returns
+// an Import flagged `is_reexport` carrying the re-exported names, so the
+// loader pulls in the target module and the bundler can redirect a
+// consumer's `facade.name` to the target's mangled symbol. Malformed
+// input degrades to an empty re-export the caller can recover from.
+function parse_pubuse(p: Par): ImportResult {
+    p = p.advance();  // consume `use`
+    var path: string = "";
+    var t: lexer.Token = p.peek();
+    match (t) {
+        lexer.TokString(s) => { path = s.value; p = p.advance(); },
+        _ => { }
+    }
+    if (p.peek_punct() == ".") { p = p.advance(); }
+    var names: string[] = [];
+    if (p.peek_punct() == "{") {
+        p = p.advance();
+        while (!p.at_end() && p.peek_punct() != "}") {
+            var nm: string = p.peek_ident();
+            if (nm.len() > 0) { names = names.append(nm); p = p.advance(); }
+            if (p.peek_punct() == ",") { p = p.advance(); continue; }
+            if (p.peek_punct() == "}") { continue; }
+            // Unexpected token — bail to avoid spinning.
+            if (nm.len() == 0) { p = p.advance(); }
+        }
+        if (p.peek_punct() == "}") { p = p.advance(); }
+    }
+    if (p.peek_punct() == ";") { p = p.advance(); }
+    return ImportResult { par: p, imp: Import { path: path, is_reexport: true, reexport_names: names } };
 }
 
 // parse_const_decl consumes `const NAME[: T] = EXPR;` (cursor on the
@@ -2728,13 +3567,13 @@ function struct_declared(structs: StructDecl[], name: string): boolean {
 // payload variant carries the marker field "__ev"; a no-payload variant
 // has zero fields — same lowering as parse_enum_decl) unless a struct of
 // that name is already declared.
-function add_builtin_variant(acc: StructDecl[], name: string, payload_type: string): StructDecl[] {
+function add_builtin_variant(acc: StructDecl[], name: string, payload_type: string, enum_name: string): StructDecl[] {
     if (struct_declared(acc, name)) { return acc; }
     var fields: StructFieldDecl[] = [];
     if (payload_type.len() > 0) {
         fields = fields.append(StructFieldDecl { name: "__ev", type_name: payload_type });
     }
-    return acc.append(StructDecl { name: name, fields: fields, type_params: [], line: 0, col: 0 });
+    return acc.append(StructDecl { name: name, fields: fields, type_params: [], line: 0, col: 0, enum_owner: enum_name });
 }
 
 // inject_builtin_enums adds the variant structs for the enums the
@@ -2745,19 +3584,19 @@ function add_builtin_variant(acc: StructDecl[], name: string, payload_type: stri
 // declaration. Option / Result are handled separately (Some/Ok/None/Err
 // are special-cased in the emitter).
 pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
-    structs = add_builtin_variant(structs, "JNull", "");
-    structs = add_builtin_variant(structs, "JBool", "boolean");
-    structs = add_builtin_variant(structs, "JNumber", "string");
-    structs = add_builtin_variant(structs, "JString", "string");
-    structs = add_builtin_variant(structs, "JArray", "JsonValue[]");
-    structs = add_builtin_variant(structs, "JObject", "Map[string, JsonValue]");
-    structs = add_builtin_variant(structs, "NotFound", "string");
-    structs = add_builtin_variant(structs, "PermissionDenied", "string");
-    structs = add_builtin_variant(structs, "AlreadyExists", "string");
-    structs = add_builtin_variant(structs, "InvalidUtf8", "string");
-    structs = add_builtin_variant(structs, "Interrupted", "");
-    structs = add_builtin_variant(structs, "Unsupported", "");
-    structs = add_builtin_variant(structs, "Other", "string");
+    structs = add_builtin_variant(structs, "JNull", "", "JsonValue");
+    structs = add_builtin_variant(structs, "JBool", "boolean", "JsonValue");
+    structs = add_builtin_variant(structs, "JNumber", "string", "JsonValue");
+    structs = add_builtin_variant(structs, "JString", "string", "JsonValue");
+    structs = add_builtin_variant(structs, "JArray", "JsonValue[]", "JsonValue");
+    structs = add_builtin_variant(structs, "JObject", "Map[string, JsonValue]", "JsonValue");
+    structs = add_builtin_variant(structs, "NotFound", "string", "IoError");
+    structs = add_builtin_variant(structs, "PermissionDenied", "string", "IoError");
+    structs = add_builtin_variant(structs, "AlreadyExists", "string", "IoError");
+    structs = add_builtin_variant(structs, "InvalidUtf8", "string", "IoError");
+    structs = add_builtin_variant(structs, "Interrupted", "", "IoError");
+    structs = add_builtin_variant(structs, "Unsupported", "", "IoError");
+    structs = add_builtin_variant(structs, "Other", "string", "IoError");
     // FileStat: the builtin struct returned by stat(path). Injected so
     // the emitter knows its field layout ([shape, is_file@8, is_dir@16,
     // size@24]) — the __fern_stat runtime helper builds a struct whose
@@ -2768,7 +3607,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         fsf = fsf.append(StructFieldDecl { name: "is_file", type_name: "boolean" });
         fsf = fsf.append(StructFieldDecl { name: "is_dir", type_name: "boolean" });
         fsf = fsf.append(StructFieldDecl { name: "size", type_name: "i32" });
-        structs = structs.append(StructDecl { name: "FileStat", fields: fsf, type_params: [], line: 0, col: 0 });
+        structs = structs.append(StructDecl { name: "FileStat", fields: fsf, type_params: [], line: 0, col: 0, enum_owner: "" });
     }
     // ProcessResult — returned by `subprocess(cmd, args, stdin)`.
     // Same injection pattern as FileStat: the __fern_subprocess
@@ -2781,7 +3620,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         prf = prf.append(StructFieldDecl { name: "stdout", type_name: "string" });
         prf = prf.append(StructFieldDecl { name: "stderr", type_name: "string" });
         prf = prf.append(StructFieldDecl { name: "exit_code", type_name: "i32" });
-        structs = structs.append(StructDecl { name: "ProcessResult", fields: prf, type_params: [], line: 0, col: 0 });
+        structs = structs.append(StructDecl { name: "ProcessResult", fields: prf, type_params: [], line: 0, col: 0, enum_owner: "" });
     }
     // std/headers' HeaderMap + std/http's HttpRequest / HttpResponse
     // are constructed via record literals (e.g. `HeaderMap { names: …,
@@ -2797,7 +3636,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         var hmf: StructFieldDecl[] = [];
         hmf = hmf.append(StructFieldDecl { name: "names", type_name: "string[]" });
         hmf = hmf.append(StructFieldDecl { name: "values", type_name: "string[]" });
-        structs = structs.append(StructDecl { name: "HeaderMap", fields: hmf, type_params: [], line: 0, col: 0 });
+        structs = structs.append(StructDecl { name: "HeaderMap", fields: hmf, type_params: [], line: 0, col: 0, enum_owner: "" });
     }
     if (!struct_declared(structs, "HttpRequest")) {
         var hrf: StructFieldDecl[] = [];
@@ -2805,16 +3644,104 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         hrf = hrf.append(StructFieldDecl { name: "path", type_name: "string" });
         hrf = hrf.append(StructFieldDecl { name: "body", type_name: "string" });
         hrf = hrf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap" });
-        structs = structs.append(StructDecl { name: "HttpRequest", fields: hrf, type_params: [], line: 0, col: 0 });
+        structs = structs.append(StructDecl { name: "HttpRequest", fields: hrf, type_params: [], line: 0, col: 0, enum_owner: "" });
     }
     if (!struct_declared(structs, "HttpResponse")) {
         var hsf: StructFieldDecl[] = [];
         hsf = hsf.append(StructFieldDecl { name: "status", type_name: "i32" });
         hsf = hsf.append(StructFieldDecl { name: "body", type_name: "string" });
         hsf = hsf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap" });
-        structs = structs.append(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], line: 0, col: 0 });
+        structs = structs.append(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], line: 0, col: 0, enum_owner: "" });
+    }
+    // std/time's seven date/time types are compiler built-ins (registered in
+    // the Go checker, not `struct`-declared in std/time), so the self-host's
+    // shape-pointer dispatch + field-offset resolution need their layouts here
+    // — the same pattern as FileStat / HeaderMap above. Field lists mirror
+    // internal/checker/checker.go's registration exactly. All are leaf-safe
+    // (scalar / string / nested leaf-safe struct fields), so their constructors
+    // (date_make / span_days / …) and field reads lower on the IR path.
+    structs = add_builtin_struct2(structs, "Instant", "sec", "i64", "nsec", "i32");
+    structs = add_builtin_struct2(structs, "Duration", "sec", "i64", "nsec", "i32");
+    structs = add_builtin_struct2(structs, "TimeZone", "name", "string", "offset_seconds", "i32");
+    structs = add_builtin_struct2(structs, "DateTime", "date", "Date", "time", "Time");
+    structs = add_builtin_struct2(structs, "Zoned", "instant", "Instant", "zone", "TimeZone");
+    if (!struct_declared(structs, "Date")) {
+        var df: StructFieldDecl[] = [];
+        df = df.append(StructFieldDecl { name: "year", type_name: "i32" });
+        df = df.append(StructFieldDecl { name: "month", type_name: "i32" });
+        df = df.append(StructFieldDecl { name: "day", type_name: "i32" });
+        structs = structs.append(StructDecl { name: "Date", fields: df, type_params: [], line: 0, col: 0, enum_owner: "" });
+    }
+    if (!struct_declared(structs, "Time")) {
+        var tf: StructFieldDecl[] = [];
+        tf = tf.append(StructFieldDecl { name: "hour", type_name: "i32" });
+        tf = tf.append(StructFieldDecl { name: "minute", type_name: "i32" });
+        tf = tf.append(StructFieldDecl { name: "second", type_name: "i32" });
+        tf = tf.append(StructFieldDecl { name: "nsec", type_name: "i32" });
+        structs = structs.append(StructDecl { name: "Time", fields: tf, type_params: [], line: 0, col: 0, enum_owner: "" });
+    }
+    if (!struct_declared(structs, "Span")) {
+        var spf: StructFieldDecl[] = [];
+        spf = spf.append(StructFieldDecl { name: "years", type_name: "i32" });
+        spf = spf.append(StructFieldDecl { name: "months", type_name: "i32" });
+        spf = spf.append(StructFieldDecl { name: "weeks", type_name: "i32" });
+        spf = spf.append(StructFieldDecl { name: "days", type_name: "i32" });
+        spf = spf.append(StructFieldDecl { name: "hours", type_name: "i32" });
+        spf = spf.append(StructFieldDecl { name: "minutes", type_name: "i32" });
+        spf = spf.append(StructFieldDecl { name: "seconds", type_name: "i32" });
+        spf = spf.append(StructFieldDecl { name: "nanos", type_name: "i32" });
+        structs = structs.append(StructDecl { name: "Span", fields: spf, type_params: [], line: 0, col: 0, enum_owner: "" });
+    }
+    // std/io_buffered + std/stream + std/mock_platform built-ins (registered
+    // in the Go checker, not `struct`-declared in source) — same injection
+    // pattern as the time types. Field lists mirror checker.go exactly:
+    //   Stream       { data: u8[], pos: i32 }       — byte cursor reader
+    //   BytesWriter  { data: u8[] }                 — in-memory write buffer
+    //   MockCall     { name: string, args: string } — recorded call entry
+    //   MockPlatform { calls: MockCall[] }           — call-recording mock
+    // Stream / BytesWriter carry a sub-word (u8[]) array field, now leak-safe
+    // (is_leaksafe_array_field), so their constructors / methods lower on the
+    // IR path. MockPlatform's `calls: MockCall[]` is an array-of-leaf-struct
+    // field (leak mode). MockCall is two strings (leaf-safe).
+    structs = add_builtin_struct2(structs, "MockCall", "name", "string", "args", "string");
+    structs = add_builtin_struct2(structs, "Stream", "data", "u8[]", "pos", "i32");
+    if (!struct_declared(structs, "BytesWriter")) {
+        var bwf: StructFieldDecl[] = [];
+        bwf = bwf.append(StructFieldDecl { name: "data", type_name: "u8[]" });
+        structs = structs.append(StructDecl { name: "BytesWriter", fields: bwf, type_params: [], line: 0, col: 0, enum_owner: "" });
+    }
+    if (!struct_declared(structs, "MockPlatform")) {
+        var mpf: StructFieldDecl[] = [];
+        mpf = mpf.append(StructFieldDecl { name: "calls", type_name: "MockCall[]" });
+        structs = structs.append(StructDecl { name: "MockPlatform", fields: mpf, type_params: [], line: 0, col: 0, enum_owner: "" });
+    }
+    // std/url's Url is a compiler built-in (registered in the Go checker, not
+    // `struct`-declared in std/url), so the IR path needs its layout to lower
+    // `Url { … }` construction / field reads — the same pattern as Stream /
+    // BytesWriter / the time types. Fields mirror internal/checker/checker.go
+    // exactly; all scalar/string, so leaf-safe (url_parse's Url-spread builder
+    // and `Option[Url]` return lower).
+    if (!struct_declared(structs, "Url")) {
+        var urlf: StructFieldDecl[] = [];
+        urlf = urlf.append(StructFieldDecl { name: "scheme", type_name: "string" });
+        urlf = urlf.append(StructFieldDecl { name: "host", type_name: "string" });
+        urlf = urlf.append(StructFieldDecl { name: "port", type_name: "i32" });
+        urlf = urlf.append(StructFieldDecl { name: "path", type_name: "string" });
+        urlf = urlf.append(StructFieldDecl { name: "query", type_name: "string" });
+        urlf = urlf.append(StructFieldDecl { name: "fragment", type_name: "string" });
+        structs = structs.append(StructDecl { name: "Url", fields: urlf, type_params: [], line: 0, col: 0, enum_owner: "" });
     }
     return structs;
+}
+
+// add_builtin_struct2 injects a 2-field built-in struct (guarded by name) —
+// the common shape for the injected time types (sec/nsec, name/offset, …).
+function add_builtin_struct2(structs: StructDecl[], name: string, f0: string, t0: string, f1: string, t1: string): StructDecl[] {
+    if (struct_declared(structs, name)) { return structs; }
+    var fields: StructFieldDecl[] = [];
+    fields = fields.append(StructFieldDecl { name: f0, type_name: t0 });
+    fields = fields.append(StructFieldDecl { name: f1, type_name: t1 });
+    return structs.append(StructDecl { name: name, fields: fields, type_params: [], line: 0, col: 0, enum_owner: "" });
 }
 
 // module_with_builtins returns `mod` with the auto-injected builtin
@@ -3048,7 +3975,21 @@ function infer_inst(fd: FuncDecl, args: Expr[], env: MEnv, funcs: FuncDecl[]): s
 function func_ret_of(funcs: FuncDecl[], name: string): string {
     var i: i32 = 0;
     while (i < funcs.len()) {
-        if (funcs[i].name == name && funcs[i].receiver_name.len() == 0) { return funcs[i].ret_type; }
+        if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && funcs[i].receiver_type.len() == 0) { return funcs[i].ret_type; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// assoc_ret_of returns the return type of the associated function (or method)
+// `<tyname>.<method>` — a receiver-LESS impl method keyed by its receiver type,
+// like a derived `default()`. Lets mono_infer type an associated call
+// `Inner.default()` so a generic constructor body `Box { v: Inner.default() }`
+// infers its instantiation key (Box[Inner]) from the field value.
+function assoc_ret_of(funcs: FuncDecl[], tyname: string, method: string): string {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].name == method && funcs[i].receiver_type == tyname) { return funcs[i].ret_type; }
         i = i + 1;
     }
     return "";
@@ -3089,6 +4030,17 @@ function mono_infer(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
         ExprCall(c) => {
             match (c.callee) {
                 ExprIdent(cid) => { return func_ret_of(funcs, cid.name); },
+                ExprFieldAccess(cfa) => {
+                    // Associated call `Type.method()` (e.g. `Inner.default()`):
+                    // the object is a bare type name, so infer the method's
+                    // return type — lets a generic constructor body infer its
+                    // instantiation key from a defaulted field value.
+                    match (cfa.obj) {
+                        ExprIdent(oid) => { return assoc_ret_of(funcs, oid.name, cfa.field); },
+                        _ => { return ""; }
+                    }
+                    return "";
+                },
                 _ => { return ""; }
             }
             return "";
@@ -3251,13 +4203,13 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts): RStmtOne
         StmtWhile(w) => {
             var cv: RExpr = mono_expr(w.cond, env, funcs, ins);
             var wb: RStmts = mono_stmts(w.body, env, funcs, cv.rins);
-            return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts }, renv: env, rins2: wb.rins3 };
+            return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label }, renv: env, rins2: wb.rins3 };
         },
         StmtFor(fr) => {
             var it: RExpr = mono_expr(fr.iter, env, funcs, ins);
             var benv: MEnv = env.ebind(fr.var_name, "");
             var fb: RStmts = mono_stmts(fr.body, benv, funcs, it.rins);
-            return RStmtOne { rstmt: StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts }, renv: env, rins2: fb.rins3 };
+            return RStmtOne { rstmt: StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label }, renv: env, rins2: fb.rins3 };
         },
         StmtMatch(m) => {
             var sv: RExpr = mono_expr(m.scrutinee, env, funcs, ins);
@@ -3331,27 +4283,90 @@ function subst_ty(name: string, tparams: string[], cts: string[]): string {
     return name;
 }
 
-// subst_stmts rewrites `var x: T` annotations to the concrete type in a
-// cloned body (the only type annotations a body carries). Exprs hold no
-// open type annotations, so they're passed through.
+// subst_expr substitutes a type-parameter NAME used as a value-level
+// identifier with its concrete type. The only place a type parameter `T`
+// appears as an expression is the OBJECT of an associated call — `T.default()`
+// in a monomorphised generic body — so substituting any matching ExprIdent
+// rewrites it to `Concrete.default()`, which then resolves like any associated
+// call (issue #2779 item 3). Recurses through the expression shapes a generic
+// body can carry; other leaves pass through. Struct-literal TYPE names are left
+// alone (the struct-literal monomorphiser, ms_expr, mangles `Box` → `Box__C`).
+function subst_expr(e: Expr, tparams: string[], cts: string[]): Expr {
+    match (e) {
+        ExprIdent(id) => {
+            var k: i32 = tp_index(id.name, tparams);
+            if (k >= 0) { return ExprIdent { name: cts[k], line: id.line, col: id.col }; }
+            return e;
+        },
+        ExprFieldAccess(fa) => { return ExprFieldAccess { obj: subst_expr(fa.obj, tparams, cts), field: fa.field, line: fa.line, col: fa.col }; },
+        ExprCall(c) => {
+            // A defaulted generic field `T.default()` where `T` substitutes to a
+            // PRIMITIVE has no associated impl to dispatch to in the IR path —
+            // emit the primitive's zero literal directly (i32→0, string→"",
+            // boolean→false, f64→0.0), exactly as the concrete struct-default
+            // path does for a scalar field. This lets a generic `@derive(Default)`
+            // over a primitive (`Box[i32].default()`) lower through the IR path
+            // (the native compiler resolves the same `T.default()` via the
+            // primitive `Default` impl — see #2864).
+            match (c.callee) {
+                ExprFieldAccess(cfa) => {
+                    match (cfa.obj) {
+                        ExprIdent(oid) => {
+                            if (cfa.field == "default" && c.args.len() == 0) {
+                                var pk: i32 = tp_index(oid.name, tparams);
+                                if (pk >= 0 && dv_is_scalar(cts[pk])) { return dv_default_expr(cts[pk]); }
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+            var na: Expr[] = [];
+            var ci: i32 = 0;
+            while (ci < c.args.len()) { na = na.append(subst_expr(c.args[ci], tparams, cts)); ci = ci + 1; }
+            return ExprCall { callee: subst_expr(c.callee, tparams, cts), args: na, line: c.line, col: c.col, type_argc: c.type_argc };
+        },
+        ExprStructLit(sl) => {
+            var nv: Expr[] = [];
+            var si: i32 = 0;
+            while (si < sl.field_values.len()) { nv = nv.append(subst_expr(sl.field_values[si], tparams, cts)); si = si + 1; }
+            var nb: Expr = sl.base;
+            if (sl.has_base) { nb = subst_expr(sl.base, tparams, cts); }
+            return ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nb, line: sl.line, col: sl.col };
+        },
+        ExprBinary(b) => { return ExprBinary { op: b.op, left: subst_expr(b.left, tparams, cts), right: subst_expr(b.right, tparams, cts), line: b.line, col: b.col }; },
+        ExprUnary(u) => { return ExprUnary { op: u.op, operand: subst_expr(u.operand, tparams, cts), line: u.line, col: u.col }; },
+        ExprIndex(ix) => { return ExprIndex { array: subst_expr(ix.array, tparams, cts), index: subst_expr(ix.index, tparams, cts) }; },
+        _ => { return e; }
+    }
+    return e;
+}
+
+// subst_stmts rewrites `var x: T` type annotations to the concrete type in a
+// cloned generic body, AND substitutes type-parameter names appearing as
+// expression objects (`T.default()` → `Concrete.default()`, via subst_expr).
 function subst_stmts(stmts: Stmt[], tparams: string[], cts: string[]): Stmt[] {
     var out: Stmt[] = [];
     var i: i32 = 0;
     while (i < stmts.len()) {
         var st: Stmt = stmts[i];
         match (st) {
-            StmtVar(v) => { out = out.append(StmtVar { name: v.name, type_name: subst_ty(v.type_name, tparams, cts), init: v.init, line: v.line, col: v.col }); },
-            StmtIf(f) => { out = out.append(StmtIf { cond: f.cond, then_body: subst_stmts(f.then_body, tparams, cts), else_body: subst_stmts(f.else_body, tparams, cts) }); },
-            StmtWhile(w) => { out = out.append(StmtWhile { cond: w.cond, body: subst_stmts(w.body, tparams, cts) }); },
-            StmtFor(fr) => { out = out.append(StmtFor { var_name: fr.var_name, iter: fr.iter, body: subst_stmts(fr.body, tparams, cts) }); },
+            StmtVar(v) => { out = out.append(StmtVar { name: v.name, type_name: subst_ty(v.type_name, tparams, cts), init: subst_expr(v.init, tparams, cts), line: v.line, col: v.col }); },
+            StmtReturn(r) => { out = out.append(StmtReturn { value: subst_expr(r.value, tparams, cts), line: r.line, col: r.col }); },
+            StmtExpr(x) => { out = out.append(StmtExpr { value: subst_expr(x.value, tparams, cts) }); },
+            StmtAssign(a) => { out = out.append(StmtAssign { target: a.target, value: subst_expr(a.value, tparams, cts), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }); },
+            StmtIf(f) => { out = out.append(StmtIf { cond: subst_expr(f.cond, tparams, cts), then_body: subst_stmts(f.then_body, tparams, cts), else_body: subst_stmts(f.else_body, tparams, cts) }); },
+            StmtWhile(w) => { out = out.append(StmtWhile { cond: subst_expr(w.cond, tparams, cts), body: subst_stmts(w.body, tparams, cts), label: w.label }); },
+            StmtFor(fr) => { out = out.append(StmtFor { var_name: fr.var_name, iter: subst_expr(fr.iter, tparams, cts), body: subst_stmts(fr.body, tparams, cts), label: fr.label }); },
             StmtMatch(m) => {
                 var arms: MatchArm[] = [];
                 var j: i32 = 0;
                 while (j < m.arms.len()) {
-                    arms = arms.append(MatchArm { pattern: m.arms[j].pattern, body: subst_stmts(m.arms[j].body, tparams, cts), line: m.arms[j].line, col: m.arms[j].col, guard: m.arms[j].guard, has_guard: m.arms[j].has_guard });
+                    arms = arms.append(MatchArm { pattern: m.arms[j].pattern, body: subst_stmts(m.arms[j].body, tparams, cts), line: m.arms[j].line, col: m.arms[j].col, guard: subst_expr(m.arms[j].guard, tparams, cts), has_guard: m.arms[j].has_guard });
                     j = j + 1;
                 }
-                out = out.append(StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin });
+                out = out.append(StmtMatch { scrutinee: subst_expr(m.scrutinee, tparams, cts), arms: arms, line: m.line, col: m.col, origin: m.origin });
             },
             _ => { out = out.append(st); }
         }
@@ -3370,7 +4385,7 @@ function clone_bg(fd: FuncDecl, key: string): FuncDecl {
     var nparams: ParamDecl[] = [];
     var i: i32 = 0;
     while (i < fd.params.len()) {
-        nparams = nparams.append(ParamDecl { name: fd.params[i].name, type_name: subst_ty(fd.params[i].type_name, tparams, cts), own: fd.params[i].own });
+        nparams = nparams.append(ParamDecl { name: fd.params[i].name, type_name: subst_ty(fd.params[i].type_name, tparams, cts), own: fd.params[i].own, has_default: fd.params[i].has_default, default_value: fd.params[i].default_value, ret_arr: fd.params[i].ret_arr });
         i = i + 1;
     }
     var notp: string[] = [];
@@ -3680,7 +4695,7 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
             while (pi < lm.params.len()) {
                 var pt: TyIns = mg_ty(lm.params[pi].type_name, gstructs, pcur);
                 pcur = pt.mins;
-                nparams = nparams.append(ParamDecl { name: lm.params[pi].name, type_name: pt.ty, own: lm.params[pi].own });
+                nparams = nparams.append(ParamDecl { name: lm.params[pi].name, type_name: pt.ty, own: lm.params[pi].own, has_default: lm.params[pi].has_default, default_value: lm.params[pi].default_value, ret_arr: lm.params[pi].ret_arr });
                 pi = pi + 1;
             }
             return RExpr { rexpr: ExprLambda { params: nparams, ret_type: rt.ty, body: bodyr.rstmts }, rins: pcur };
@@ -3690,6 +4705,39 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
     return RExpr { rexpr: e, rins: ins };
 }
 
+// retype_assoc_ctor rewrites a receiver-less associated call on a GENERIC
+// struct base — `Box.default()` — to its monomorphised name
+// `Box__Inner.default()` when the binding's annotation pins the instantiation
+// (`var b: Box[Inner] = Box.default()`). A receiver-less constructor has no
+// arguments to infer its type params from, so the instantiation is taken from
+// the annotation (`concrete` = the mangled struct name `Box__Inner`); the
+// matching method clone is `<concrete>.<method>`. The generic-struct guard
+// keeps a plain `mod.func()` untouched. Other inits pass through.
+function retype_assoc_ctor(init: Expr, concrete: string, gstructs: StructDecl[]): Expr {
+    match (init) {
+        ExprCall(c) => {
+            match (c.callee) {
+                ExprFieldAccess(fa) => {
+                    match (fa.obj) {
+                        ExprIdent(oid) => {
+                            if (gstruct_index(gstructs, oid.name) >= 0) {
+                                var pfx: string = oid.name + "__";
+                                if (concrete.len() > pfx.len() && concrete[0 : pfx.len()] == pfx) {
+                                    return ExprCall { callee: ExprFieldAccess { obj: ExprIdent { name: concrete, line: oid.line, col: oid.col }, field: fa.field, line: fa.line, col: fa.col }, args: c.args, line: c.line, col: c.col, type_argc: c.type_argc };
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return init;
+}
+
 // ms_stmt rewrites one statement: generic-struct annotations on a `var`
 // go through mg_ty, struct literals through ms_expr, threading env+ins.
 function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], ins: Insts): RStmtOne {
@@ -3697,7 +4745,11 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
         StmtVar(v) => {
             var iv: RExpr = ms_expr(v.init, env, gstructs, funcs, ins);
             var ta: TyIns = mg_ty(v.type_name, gstructs, iv.rins);
-            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: ta.ty, init: iv.rexpr, line: v.line, col: v.col }, renv: env.ebind(v.name, ta.ty), rins2: ta.mins };
+            // A receiver-less associated constructor `Box.default()` bound to a
+            // generic-struct annotation takes its instantiation from that
+            // annotation: rewrite it to `Box__Inner.default()`.
+            var ninit: Expr = retype_assoc_ctor(iv.rexpr, ta.ty, gstructs);
+            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col }, renv: env.ebind(v.name, ta.ty), rins2: ta.mins };
         },
         StmtReturn(r) => {
             var rv: RExpr = ms_expr(r.value, env, gstructs, funcs, ins);
@@ -3720,13 +4772,13 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
         StmtWhile(w) => {
             var cv: RExpr = ms_expr(w.cond, env, gstructs, funcs, ins);
             var wb: RStmts = ms_stmts(w.body, env, gstructs, funcs, cv.rins);
-            return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts }, renv: env, rins2: wb.rins3 };
+            return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label }, renv: env, rins2: wb.rins3 };
         },
         StmtFor(fr) => {
             var it: RExpr = ms_expr(fr.iter, env, gstructs, funcs, ins);
             var benv: MEnv = env.ebind(fr.var_name, "");
             var fb: RStmts = ms_stmts(fr.body, benv, gstructs, funcs, it.rins);
-            return RStmtOne { rstmt: StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts }, renv: env, rins2: fb.rins3 };
+            return RStmtOne { rstmt: StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label }, renv: env, rins2: fb.rins3 };
         },
         StmtMatch(m) => {
             var sv: RExpr = ms_expr(m.scrutinee, env, gstructs, funcs, ins);
@@ -3771,7 +4823,7 @@ function ms_func(fn: FuncDecl, gstructs: StructDecl[], funcs: FuncDecl[], ins: I
     while (i < fn.params.len()) {
         var pt: TyIns = mg_ty(fn.params[i].type_name, gstructs, cur);
         cur = pt.mins;
-        nparams = nparams.append(ParamDecl { name: fn.params[i].name, type_name: pt.ty, own: fn.params[i].own });
+        nparams = nparams.append(ParamDecl { name: fn.params[i].name, type_name: pt.ty, own: fn.params[i].own, has_default: fn.params[i].has_default, default_value: fn.params[i].default_value, ret_arr: fn.params[i].ret_arr });
         i = i + 1;
     }
     var rt: TyIns = mg_ty(fn.ret_type, gstructs, cur);
@@ -3799,13 +4851,21 @@ function ms_func(fn: FuncDecl, gstructs: StructDecl[], funcs: FuncDecl[], ins: I
 // struct's name at synth time) stay intact.
 function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: StructDecl[]): FuncDecl {
     var cts: string[] = split_dunder(key);
+    // Substitute with the generic STRUCT's type params (not the method's, which
+    // a synthesized method like default() leaves empty). The struct's params are
+    // the ones a method body refers to — e.g. a derived default()'s
+    // `T.default()`; subst_stmts rewrites both `var x: T` annotations and the
+    // `T.default()` object. A parametric-impl method's own type params match the
+    // struct's, so this is equivalent for those.
+    var gsi: i32 = gstruct_index(gstructs, base);
     var tparams: string[] = m.type_params;
+    if (gsi >= 0) { tparams = gstructs[gsi].type_params; }
     var mang: string = base + "__" + key;
     var nparams: ParamDecl[] = [];
     var i: i32 = 0;
     while (i < m.params.len()) {
         var pt: string = to_concrete_struct_ty(subst_ty(m.params[i].type_name, tparams, cts), base, mang, gstructs);
-        nparams = nparams.append(ParamDecl { name: m.params[i].name, type_name: pt, own: m.params[i].own });
+        nparams = nparams.append(ParamDecl { name: m.params[i].name, type_name: pt, own: m.params[i].own, has_default: m.params[i].has_default, default_value: m.params[i].default_value, ret_arr: m.params[i].ret_arr });
         i = i + 1;
     }
     var rt: string = to_concrete_struct_ty(subst_ty(m.ret_type, tparams, cts), base, mang, gstructs);
@@ -3847,7 +4907,7 @@ pub function monomorphize_structs(mod: Module): Module {
                 nf = nf.append(StructFieldDecl { name: sd.fields[fj].name, type_name: ft.ty });
                 fj = fj + 1;
             }
-            nstructs = nstructs.append(StructDecl { name: sd.name, fields: nf, type_params: [], line: sd.line, col: sd.col });
+            nstructs = nstructs.append(StructDecl { name: sd.name, fields: nf, type_params: [], line: sd.line, col: sd.col, enum_owner: sd.enum_owner });
         }
         si = si + 1;
     }
@@ -3857,8 +4917,9 @@ pub function monomorphize_structs(mod: Module): Module {
     while (fi2 < mod.funcs.len()) {
         var fn: FuncDecl = mod.funcs[fi2];
         var rbase: string = strip_struct_base(fn.receiver_type);
-        if (fn.receiver_name.len() > 0 && gstruct_index(gstructs, rbase) >= 0) {
-            // generic-struct method — dropped here, cloned in phase 2.
+        if (fn.receiver_type.len() > 0 && gstruct_index(gstructs, rbase) >= 0) {
+            // generic-struct method OR receiver-less associated fn (a derived
+            // `default()`, receiver_name "") — dropped here, cloned in phase 2.
         } else {
             var fr: FRes = ms_func(fn, gstructs, mod.funcs, ins);
             ins = fr.fins;
@@ -3894,11 +4955,11 @@ pub function monomorphize_structs(mod: Module): Module {
                 cf = cf.append(StructFieldDecl { name: gd.fields[cfi].name, type_name: ft2.ty });
                 cfi = cfi + 1;
             }
-            nstructs = nstructs.append(StructDecl { name: mang, fields: cf, type_params: [], line: gd.line, col: gd.col });
+            nstructs = nstructs.append(StructDecl { name: mang, fields: cf, type_params: [], line: gd.line, col: gd.col, enum_owner: gd.enum_owner });
             var mi: i32 = 0;
             while (mi < mod.funcs.len()) {
                 var mm: FuncDecl = mod.funcs[mi];
-                if (mm.receiver_name.len() > 0 && strip_struct_base(mm.receiver_type) == base) {
+                if (mm.receiver_type.len() > 0 && strip_struct_base(mm.receiver_type) == base) {
                     var clm: FuncDecl = clone_struct_method(mm, base, key, gstructs);
                     var br2: RStmts = ms_stmts(clm.body, env_from_params(clm.params), gstructs, mod.funcs, ins);
                     ins = br2.rins3;
@@ -3949,90 +5010,121 @@ function dl_itoa(n: i32): string {
     return s;
 }
 
-struct DeferAcc { stmts: Stmt[], actions: Stmt[] }
+struct DeferAcc { stmts: Stmt[], actions: Stmt[], flags: i32[] }
 
 // dl_collect_stmt(s) rebuild the body with each `defer ACTION` replaced by
-// `__dfa<i> = 1`, accumulating the actions (index = position in the list).
-// Recurses through nested blocks so a conditional defer gets its flag set
-// only when its branch runs.
-function dl_collect_stmts(stmts: Stmt[], actions: Stmt[]): DeferAcc {
+// `__dfa<i> = 1`, accumulating the actions (index = position in the list)
+// and a parallel `flags` list (0 = plain defer, 1 = errdefer). Recurses
+// through nested blocks so a conditional defer gets its flag set only when
+// its branch runs.
+function dl_collect_stmts(stmts: Stmt[], actions: Stmt[], flags: i32[]): DeferAcc {
     var out: Stmt[] = [];
     var acc: Stmt[] = actions;
+    var afl: i32[] = flags;
     var i: i32 = 0;
     while (i < stmts.len()) {
-        var r: DeferAcc = dl_collect_stmt(stmts[i], acc);
+        var r: DeferAcc = dl_collect_stmt(stmts[i], acc, afl);
         var j: i32 = 0;
         while (j < r.stmts.len()) { out = out.append(r.stmts[j]); j = j + 1; }
         acc = r.actions;
+        afl = r.flags;
         i = i + 1;
     }
-    return DeferAcc { stmts: out, actions: acc };
+    return DeferAcc { stmts: out, actions: acc, flags: afl };
 }
 
-function dl_collect_stmt(st: Stmt, actions: Stmt[]): DeferAcc {
+function dl_collect_stmt(st: Stmt, actions: Stmt[], flags: i32[]): DeferAcc {
     match (st) {
         StmtDefer(d) => {
             var setflag: Stmt = s_assign("__dfa" + dl_itoa(actions.len()), e_number("1", "", false));
             var one: Stmt[] = [setflag];
-            return DeferAcc { stmts: one, actions: actions.append(d.action) };
+            return DeferAcc { stmts: one, actions: actions.append(d.action), flags: flags.append(d.on_error) };
         },
         StmtIf(f) => {
-            var tr: DeferAcc = dl_collect_stmts(f.then_body, actions);
-            var er: DeferAcc = dl_collect_stmts(f.else_body, tr.actions);
+            var tr: DeferAcc = dl_collect_stmts(f.then_body, actions, flags);
+            var er: DeferAcc = dl_collect_stmts(f.else_body, tr.actions, tr.flags);
             var one: Stmt[] = [s_if(f.cond, tr.stmts, er.stmts)];
-            return DeferAcc { stmts: one, actions: er.actions };
+            return DeferAcc { stmts: one, actions: er.actions, flags: er.flags };
         },
         StmtWhile(w) => {
-            var br: DeferAcc = dl_collect_stmts(w.body, actions);
+            var br: DeferAcc = dl_collect_stmts(w.body, actions, flags);
             var one: Stmt[] = [s_while(w.cond, br.stmts)];
-            return DeferAcc { stmts: one, actions: br.actions };
+            return DeferAcc { stmts: one, actions: br.actions, flags: br.flags };
         },
         StmtFor(fr) => {
-            var br: DeferAcc = dl_collect_stmts(fr.body, actions);
+            var br: DeferAcc = dl_collect_stmts(fr.body, actions, flags);
             var one: Stmt[] = [s_for(fr.var_name, fr.iter, br.stmts)];
-            return DeferAcc { stmts: one, actions: br.actions };
+            return DeferAcc { stmts: one, actions: br.actions, flags: br.flags };
         },
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
             var acc: Stmt[] = actions;
+            var afl: i32[] = flags;
             var i: i32 = 0;
             while (i < m.arms.len()) {
-                var ar: DeferAcc = dl_collect_stmts(m.arms[i].body, acc);
+                var ar: DeferAcc = dl_collect_stmts(m.arms[i].body, acc, afl);
                 arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ar.stmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
                 acc = ar.actions;
+                afl = ar.flags;
                 i = i + 1;
             }
             var one: Stmt[] = [s_match(m.scrutinee, arms)];
-            return DeferAcc { stmts: one, actions: acc };
+            return DeferAcc { stmts: one, actions: acc, flags: afl };
         },
         _ => {
             var one: Stmt[] = [st];
-            return DeferAcc { stmts: one, actions: actions };
+            return DeferAcc { stmts: one, actions: actions, flags: flags };
         }
     }
 }
 
-// dl_cleanup builds the LIFO cleanup: for i = n-1 .. 0, `if (__dfa<i>) { action_i }`.
-function dl_cleanup(actions: Stmt[]): Stmt[] {
+// dl_cleanup_kind builds the LIFO cleanup for one kind: for i = n-1 .. 0,
+// `if (__dfa<i>) { action_i }`, restricted to actions whose on_error flag
+// equals `want` (0 = plain defer, 1 = errdefer). With every flag 0 (no
+// errdefer) `want = 0` reproduces the original all-actions cleanup, so a
+// defer-only function lowers byte-identically.
+function dl_cleanup_kind(actions: Stmt[], flags: i32[], want: i32): Stmt[] {
     var out: Stmt[] = [];
     var i: i32 = actions.len() - 1;
     while (i >= 0) {
-        var body1: Stmt[] = [actions[i]];
-        var noelse: Stmt[] = [];
-        out = out.append(s_if(e_ident("__dfa" + dl_itoa(i)), body1, noelse));
+        if (flags[i] == want) {
+            var body1: Stmt[] = [actions[i]];
+            var noelse: Stmt[] = [];
+            out = out.append(s_if(e_ident("__dfa" + dl_itoa(i)), body1, noelse));
+        }
         i = i - 1;
     }
     return out;
 }
 
+// dl_is_err_value reports whether a return value is statically a None/Err —
+// the failure variant — so an `errdefer` should fire on this return. `None`
+// is a bare ident; `Err(x)` is a call to the `Err` constructor. (`?`
+// propagation is not visible to this parse-time pass — same scope as the
+// self-host's plain `defer`, which also only fires on explicit returns.)
+function dl_is_err_value(e: Expr): boolean {
+    match (e) {
+        ExprIdent(id) => { return id.name == "None"; },
+        ExprCall(c) => {
+            match (c.callee) {
+                ExprIdent(cid) => { return cid.name == "Err"; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+}
+
 // dl_expand_returns replaces each `return E` with
-// `__defret = E; <cleanup>; return __defret;` (the value is captured before
-// the deferred actions run). A bare/void return just runs cleanup first.
-function dl_expand_returns(stmts: Stmt[], cleanup: Stmt[]): Stmt[] {
+// `__defret = E; <cleanup_all>; [<cleanup_err> if E is None/Err]; return __defret;`
+// (the value is captured before the deferred actions run). cleanup_all (plain
+// defers) runs on every return; cleanup_err (errdefers) runs only when the
+// returned value is a None/Err. A bare/void return runs cleanup_all only.
+function dl_expand_returns(stmts: Stmt[], cleanup_all: Stmt[], cleanup_err: Stmt[]): Stmt[] {
     var out: Stmt[] = [];
     var i: i32 = 0;
     while (i < stmts.len()) {
-        var ex: Stmt[] = dl_expand_return_stmt(stmts[i], cleanup);
+        var ex: Stmt[] = dl_expand_return_stmt(stmts[i], cleanup_all, cleanup_err);
         var j: i32 = 0;
         while (j < ex.len()) { out = out.append(ex[j]); j = j + 1; }
         i = i + 1;
@@ -4040,7 +5132,7 @@ function dl_expand_returns(stmts: Stmt[], cleanup: Stmt[]): Stmt[] {
     return out;
 }
 
-function dl_expand_return_stmt(st: Stmt, cleanup: Stmt[]): Stmt[] {
+function dl_expand_return_stmt(st: Stmt, cleanup_all: Stmt[], cleanup_err: Stmt[]): Stmt[] {
     match (st) {
         StmtReturn(r) => {
             var isvoid: boolean = false;
@@ -4051,28 +5143,32 @@ function dl_expand_return_stmt(st: Stmt, cleanup: Stmt[]): Stmt[] {
             var out: Stmt[] = [];
             if (!isvoid) { out = out.append(s_assign("__defret", r.value)); }
             var i: i32 = 0;
-            while (i < cleanup.len()) { out = out.append(cleanup[i]); i = i + 1; }
+            while (i < cleanup_all.len()) { out = out.append(cleanup_all[i]); i = i + 1; }
+            if (!isvoid && dl_is_err_value(r.value)) {
+                var k: i32 = 0;
+                while (k < cleanup_err.len()) { out = out.append(cleanup_err[k]); k = k + 1; }
+            }
             if (isvoid) { out = out.append(s_return(r.value)); }
             else { out = out.append(s_return(e_ident("__defret"))); }
             return out;
         },
         StmtIf(f) => {
-            var one: Stmt[] = [s_if(f.cond, dl_expand_returns(f.then_body, cleanup), dl_expand_returns(f.else_body, cleanup))];
+            var one: Stmt[] = [s_if(f.cond, dl_expand_returns(f.then_body, cleanup_all, cleanup_err), dl_expand_returns(f.else_body, cleanup_all, cleanup_err))];
             return one;
         },
         StmtWhile(w) => {
-            var one: Stmt[] = [s_while(w.cond, dl_expand_returns(w.body, cleanup))];
+            var one: Stmt[] = [s_while(w.cond, dl_expand_returns(w.body, cleanup_all, cleanup_err))];
             return one;
         },
         StmtFor(fr) => {
-            var one: Stmt[] = [s_for(fr.var_name, fr.iter, dl_expand_returns(fr.body, cleanup))];
+            var one: Stmt[] = [s_for(fr.var_name, fr.iter, dl_expand_returns(fr.body, cleanup_all, cleanup_err))];
             return one;
         },
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
             var i: i32 = 0;
             while (i < m.arms.len()) {
-                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: dl_expand_returns(m.arms[i].body, cleanup), line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
+                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: dl_expand_returns(m.arms[i].body, cleanup_all, cleanup_err), line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
                 i = i + 1;
             }
             var one: Stmt[] = [s_match(m.scrutinee, arms)];
@@ -4332,7 +5428,7 @@ function hl_rewrite(stmts: Stmt[], enclosing: string[], hoisted: FuncDecl[]): Ho
                             var caps: string[] = hl_capture_list(lam, v.name, enclosing);
                             var new_params: ParamDecl[] = lam.params;
                             var ci: i32 = 0;
-                            while (ci < caps.len()) { new_params = new_params.append(ParamDecl { name: caps[ci], type_name: "", own: false }); ci = ci + 1; }
+                            while (ci < caps.len()) { new_params = new_params.append(ParamDecl { name: caps[ci], type_name: "", own: false, has_default: false, default_value: e_unknown(""), ret_arr: false }); ci = ci + 1; }
                             // Hoist nested recursive locals first; inside the
                             // lifted function the captures are in scope as params.
                             var inner_encl: string[] = hl_param_names(new_params);
@@ -4445,10 +5541,15 @@ pub function hoist_local_funcs_module(mod: Module): Module {
 
 function lower_defers_func(fn: FuncDecl): FuncDecl {
     var empty: Stmt[] = [];
-    var cr: DeferAcc = dl_collect_stmts(fn.body, empty);
+    var emptyf: i32[] = [];
+    var cr: DeferAcc = dl_collect_stmts(fn.body, empty, emptyf);
     if (cr.actions.len() == 0) { return fn; }
-    var cleanup: Stmt[] = dl_cleanup(cr.actions);
-    var expanded: Stmt[] = dl_expand_returns(cr.stmts, cleanup);
+    // cleanup_all = plain defers (every return + falloff); cleanup_err =
+    // errdefers (only on a None/Err return). For a defer-only function
+    // cleanup_err is empty and this is byte-identical to the old lowering.
+    var cleanup: Stmt[] = dl_cleanup_kind(cr.actions, cr.flags, 0);
+    var cleanup_err: Stmt[] = dl_cleanup_kind(cr.actions, cr.flags, 1);
+    var expanded: Stmt[] = dl_expand_returns(cr.stmts, cleanup, cleanup_err);
     var body: Stmt[] = [];
     // Shared return temp + per-defer flags, all i32, initialised to 0.
     body = body.append(s_var("__defret", "", e_number("0", "", false)));
@@ -4664,7 +5765,7 @@ pub function insert_resource_drops(mod: Module): Module {
         var rn: string = needed[k];
         var iface2: string = resource_binding_iface(mod.resources, rn);
         var wit2: string = resource_binding_wit(mod.resources, rn);
-        var hp: ParamDecl[] = [ParamDecl { name: "h", type_name: "own " + rn, own: true }];
+        var hp: ParamDecl[] = [ParamDecl { name: "h", type_name: "own " + rn, own: true, has_default: false, default_value: e_unknown(""), ret_arr: false }];
         out_funcs = out_funcs.append(FuncDecl {
             name: resource_drop_fn_name(rn), receiver_name: "", receiver_type: "",
             type_params: no_tp, params: hp, ret_type: "void", body: no_body,
@@ -4673,6 +5774,436 @@ pub function insert_resource_drops(mod: Module): Module {
         k = k + 1;
     }
     return Module { funcs: out_funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
+}
+
+// ---------------------------------------------------------------------------
+// Range-for desugaring for the NON-IR consumers.
+//
+// `for i in LOW..HIGH` parses to a StmtFor whose iter is the synthetic
+// `__range(LOW, HIGH)` call (see parse_stmt). The IR path lowers that directly
+// (irlower.lower_range_for); but the AST emitters, the SSA backend, and the
+// tree-walking interpreter don't know `__range` — left untouched, they emit a
+// `call __fn___range` (a link error) or mis-evaluate the iter. So for those
+// consumers we desugar the `__range` for-iter into a counting while-loop built
+// from existing nodes:
+//
+//     var i = LOW - 1;
+//     var $hi_<var> = HIGH;          // HIGH evaluated once (`0..f()` calls f once)
+//     while (true) {
+//         i = i + 1;                 // increment at the TOP so a user `continue`
+//         if (i >= $hi_<var>) break; // (which jumps to the while header) still
+//         <body>                     // advances the counter — break/continue work
+//     }
+//
+// Empty / reversed ranges (`5..5`, `9..3`) run zero iterations. The helpers
+// return BARE Stmt[] (never a struct wrapping a fresh array) to avoid the
+// native RC free-list reclaim that corrupts a freshly-built array placed in a
+// struct-literal field (cf. #2759), mirroring desugar_switch_block.
+//
+// This runs in module_with_builtins (AST emitters), interp.eval_module, and
+// ssa.build_func — NOT on the IR path (lift_lambdas), which keeps the
+// `__range` shape for lower_range_for.
+function iter_range_args(iter: Expr): Expr[] {
+    match (iter) {
+        ExprCall(c) => {
+            if (c.args.len() != 2) { return []; }
+            match (c.callee) {
+                ExprIdent(id) => { if (id.name == "__range") { return c.args; } },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return [];
+}
+
+pub function desugar_ranges_block(body: Stmt[]): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < body.len()) {
+        var r: Stmt[] = desugar_ranges_one(body[i]);
+        var j: i32 = 0;
+        while (j < r.len()) { out = out.append(r[j]); j = j + 1; }
+        i = i + 1;
+    }
+    return out;
+}
+
+function desugar_ranges_one(st: Stmt): Stmt[] {
+    match (st) {
+        StmtFor(fr) => {
+            var dbody: Stmt[] = desugar_ranges_block(fr.body);
+            var rargs: Expr[] = iter_range_args(fr.iter);
+            if (rargs.len() == 2) {
+                var hi_name: string = "$hi_" + fr.var_name;
+                var ivar: Stmt = s_var(fr.var_name, "i32", e_binary("-", rargs[0], e_number("1", "", false)));
+                var hivar: Stmt = s_var(hi_name, "i32", rargs[1]);
+                var incr: Stmt = s_assign(fr.var_name, e_binary("+", e_ident(fr.var_name), e_number("1", "", false)));
+                var brk: Stmt = s_if(e_binary(">=", e_ident(fr.var_name), e_ident(hi_name)), [s_break()], []);
+                var wbody: Stmt[] = [incr, brk];
+                var k: i32 = 0;
+                while (k < dbody.len()) { wbody = wbody.append(dbody[k]); k = k + 1; }
+                return [ivar, hivar, s_while(e_bool(true), wbody)];
+            }
+            return [StmtFor { var_name: fr.var_name, iter: fr.iter, body: dbody, label: fr.label }];
+        },
+        StmtIf(f) => {
+            return [StmtIf { cond: f.cond, then_body: desugar_ranges_block(f.then_body), else_body: desugar_ranges_block(f.else_body) }];
+        },
+        StmtWhile(w) => {
+            return [StmtWhile { cond: w.cond, body: desugar_ranges_block(w.body), label: w.label }];
+        },
+        StmtMatch(m) => {
+            var arms: MatchArm[] = [];
+            var a: i32 = 0;
+            while (a < m.arms.len()) {
+                arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: desugar_ranges_block(m.arms[a].body), line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard });
+                a = a + 1;
+            }
+            return [StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin }];
+        },
+        StmtSwitch(sw) => {
+            var cases: SwitchCase[] = [];
+            var ci: i32 = 0;
+            while (ci < sw.cases.len()) {
+                cases = cases.append(SwitchCase { values: sw.cases[ci].values, body: desugar_ranges_block(sw.cases[ci].body) });
+                ci = ci + 1;
+            }
+            return [StmtSwitch { scrutinee: sw.scrutinee, cases: cases, has_default: sw.has_default, default_body: desugar_ranges_block(sw.default_body), line: sw.line, col: sw.col }];
+        },
+        StmtDefer(d) => {
+            var r: Stmt[] = desugar_ranges_one(d.action);
+            if (r.len() == 1) { return [StmtDefer { action: r[0], on_error: d.on_error }]; }
+            return [st];
+        },
+        _ => { return [st]; }
+    }
+    return [st];
+}
+
+pub function desugar_ranges_func(fd: FuncDecl): FuncDecl {
+    return FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: desugar_ranges_block(fd.body), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count };
+}
+
+pub function desugar_ranges_module(mod: Module): Module {
+    var funcs: FuncDecl[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        funcs = funcs.append(desugar_ranges_func(mod.funcs[i]));
+        i = i + 1;
+    }
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: desugar_ranges_block(mod.top_stmts), enums: mod.enums, resources: mod.resources, exports: mod.exports };
+}
+
+// ---------------------------------------------------------------------------
+// Default-argument filling.
+//
+// `function f(a: i32, b: i32 = 128)` declares an optional parameter. A call
+// that omits the trailing argument — `f(5)` — is rewritten to the complete
+// positional call `f(5, 128)` here, so the checker, the IR lowering, the SSA
+// backend, and the interpreter all see a full argument list and need no
+// knowledge of defaults. Mirrors the native compiler's internal/defaultargs.
+//
+// The rewriter follows rw_call_expr / rw_call_stmts exactly — only the
+// ExprCall arm differs: instead of appending captured names, it appends the
+// callee's declared defaults for the omitted trailing parameters. A module
+// with no defaulted parameter is returned verbatim (the precheck), so
+// default-free programs — including the self-host's own sources — are
+// byte-identical and the fixpoint holds.
+function module_has_default_params(mod: Module): boolean {
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var ps: ParamDecl[] = mod.funcs[fi].params;
+        var pi: i32 = 0;
+        while (pi < ps.len()) {
+            if (ps[pi].has_default) { return true; }
+            pi = pi + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// fda_lookup_params returns the parameter list of the free function named
+// `name`, or an empty list (a method — called via field access, not a bare
+// ident — or a builtin never matches).
+function fda_lookup_params(name: string, funcs: FuncDecl[]): ParamDecl[] {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].receiver_type.len() == 0 && funcs[i].name == name) {
+            return funcs[i].params;
+        }
+        i = i + 1;
+    }
+    var none: ParamDecl[] = [];
+    return none;
+}
+
+function fda_expr(e: Expr, funcs: FuncDecl[]): Expr {
+    match (e) {
+        ExprCall(c) => {
+            var new_callee: Expr = fda_expr(c.callee, funcs);
+            var new_args: Expr[] = [];
+            var i: i32 = 0;
+            while (i < c.args.len()) { new_args = new_args.append(fda_expr(c.args[i], funcs)); i = i + 1; }
+            match (c.callee) {
+                ExprIdent(id) => {
+                    var params: ParamDecl[] = fda_lookup_params(id.name, funcs);
+                    if (params.len() > new_args.len()) {
+                        var ok: boolean = true;
+                        var k: i32 = new_args.len();
+                        while (k < params.len()) { if (!params[k].has_default) { ok = false; } k = k + 1; }
+                        if (ok) {
+                            var j: i32 = new_args.len();
+                            while (j < params.len()) { new_args = new_args.append(params[j].default_value); j = j + 1; }
+                        }
+                    }
+                },
+                _ => {}
+            }
+            return ExprCall { callee: new_callee, args: new_args, line: c.line, col: c.col, type_argc: c.type_argc };
+        },
+        ExprBinary(b) => { return e_binary(b.op, fda_expr(b.left, funcs), fda_expr(b.right, funcs)); },
+        ExprUnary(u) => { return e_unary(u.op, fda_expr(u.operand, funcs)); },
+        ExprArray(a) => {
+            var els: Expr[] = [];
+            var i: i32 = 0;
+            while (i < a.elements.len()) { els = els.append(fda_expr(a.elements[i], funcs)); i = i + 1; }
+            return e_array(els);
+        },
+        ExprTuple(t) => {
+            var els: Expr[] = [];
+            var i: i32 = 0;
+            while (i < t.elements.len()) { els = els.append(fda_expr(t.elements[i], funcs)); i = i + 1; }
+            return e_tuple(els);
+        },
+        ExprIndex(ix) => { return e_index(fda_expr(ix.array, funcs), fda_expr(ix.index, funcs)); },
+        ExprSlice(sl) => { return e_slice(fda_expr(sl.array, funcs), fda_expr(sl.start, funcs), fda_expr(sl.end, funcs)); },
+        ExprFieldAccess(fa) => { return e_field_access(fda_expr(fa.obj, funcs), fa.field); },
+        ExprStructLit(s) => {
+            var vals: Expr[] = [];
+            var i: i32 = 0;
+            while (i < s.field_values.len()) { vals = vals.append(fda_expr(s.field_values[i], funcs)); i = i + 1; }
+            var nb: Expr = s.base;
+            if (s.has_base) { nb = fda_expr(s.base, funcs); }
+            return ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: nb, line: s.line, col: s.col };
+        },
+        ExprLambda(lm) => { return e_lambda(lm.params, lm.ret_type, fda_stmts(lm.body, funcs)); },
+        _ => { return e; }
+    }
+}
+
+function fda_stmts(stmts: Stmt[], funcs: FuncDecl[]): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            StmtVar(v) => { out = out.append(s_var_at(v.name, v.type_name, fda_expr(v.init, funcs), v.line, v.col)); },
+            StmtReturn(r) => { out = out.append(s_return_at(fda_expr(r.value, funcs), r.line, r.col)); },
+            StmtExpr(e) => { out = out.append(s_expr(fda_expr(e.value, funcs))); },
+            StmtAssign(a) => { out = out.append(s_assign_at(a.target, fda_expr(a.value, funcs), a.line, a.col, a.target_line, a.target_col)); },
+            StmtIf(f) => { out = out.append(s_if(fda_expr(f.cond, funcs), fda_stmts(f.then_body, funcs), fda_stmts(f.else_body, funcs))); },
+            StmtWhile(w) => { out = out.append(s_while(fda_expr(w.cond, funcs), fda_stmts(w.body, funcs))); },
+            StmtFor(fr) => { out = out.append(s_for(fr.var_name, fda_expr(fr.iter, funcs), fda_stmts(fr.body, funcs))); },
+            StmtMatch(m) => {
+                var arms: MatchArm[] = [];
+                var a: i32 = 0;
+                while (a < m.arms.len()) {
+                    arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: fda_stmts(m.arms[a].body, funcs), line: m.arms[a].line, col: m.arms[a].col, guard: fda_expr(m.arms[a].guard, funcs), has_guard: m.arms[a].has_guard });
+                    a = a + 1;
+                }
+                out = out.append(s_match_at(fda_expr(m.scrutinee, funcs), arms, m.line, m.col));
+            },
+            StmtDefer(d) => {
+                var one: Stmt[] = [d.action];
+                var rd: Stmt[] = fda_stmts(one, funcs);
+                if (rd.len() >= 1) { out = out.append(s_defer(rd[0])); }
+            },
+            _ => { out = out.append(stmts[i]); },
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+pub function fill_default_args_module(mod: Module): Module {
+    if (!module_has_default_params(mod)) { return mod; }
+    var funcs: FuncDecl[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var fd: FuncDecl = mod.funcs[i];
+        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: fda_stmts(fd.body, mod.funcs), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count });
+        i = i + 1;
+    }
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: fda_stmts(mod.top_stmts, mod.funcs), enums: mod.enums, resources: mod.resources, exports: mod.exports };
+}
+
+// ---- return-type inference -----------------------------------------
+// An unannotated function (ret_type == "") gets its return type inferred
+// from its `return` expressions, so call sites tag the result correctly
+// (e.g. `greet().len()` needs `greet` to be known to return string).
+// Mirrors the native checker's inferReturnType. The self-host's own
+// sources are fully annotated, so every function keeps ret_type != ""
+// and this pass is byte-identical for them (fixpoint-safe). It BAILS
+// (leaves "") on anything it can't pin down — locals, recursion,
+// conflicting or complex returns — preserving the prior behaviour for
+// those rather than guessing.
+
+function irt_param_type(params: ParamDecl[], name: string): string {
+    var i: i32 = 0;
+    while (i < params.len()) {
+        if (params[i].name == name) { return params[i].type_name; }
+        i = i + 1;
+    }
+    return "";
+}
+
+function irt_func_ret(funcs: FuncDecl[], name: string): string {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].name == name && funcs[i].receiver_type.len() == 0) { return funcs[i].ret_type; }
+        i = i + 1;
+    }
+    return "";
+}
+
+function irt_is_cmp(op: string): boolean {
+    return op == "<" || op == "<=" || op == ">" || op == ">="
+        || op == "==" || op == "!=" || op == "&&" || op == "||";
+}
+
+function irt_is_option(s: string): boolean {
+    return s.len() >= 7 && s[0:7] == "Option[";
+}
+
+// irt_guess returns the inferred type-name string for a return expression,
+// or "" if it can't be determined.
+function irt_guess(e: Expr, params: ParamDecl[], funcs: FuncDecl[]): string {
+    match (e) {
+        ExprNumber(n) => { if (n.is_float) { return "f64"; } return "i32"; },
+        ExprString(_) => { return "string"; },
+        ExprBool(_) => { return "boolean"; },
+        ExprIdent(id) => { return irt_param_type(params, id.name); },
+        ExprBinary(b) => {
+            if (irt_is_cmp(b.op)) { return "boolean"; }
+            return irt_guess(b.left, params, funcs);
+        },
+        ExprStructLit(s) => { return s.type_name; },
+        ExprCall(c) => {
+            match (c.callee) {
+                ExprIdent(cid) => {
+                    if (cid.name == "Some") {
+                        if (c.args.len() == 1) {
+                            var inner: string = irt_guess(c.args[0], params, funcs);
+                            if (inner != "") { return "Option[" + inner + "]"; }
+                        }
+                        return "Option";
+                    }
+                    if (cid.name == "None") { return "Option"; }
+                    // Result needs both type arguments which a single Ok/Err
+                    // return can't supply; leave it to an annotation.
+                    if (cid.name == "Ok" || cid.name == "Err") { return ""; }
+                    return irt_func_ret(funcs, cid.name);
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+}
+
+function irt_unify(a: string, b: string): string {
+    if (a == b) { return a; }
+    if (irt_is_option(a) && b == "Option") { return a; }
+    if (irt_is_option(b) && a == "Option") { return b; }
+    return "";
+}
+
+function irt_collect_returns(stmts: Stmt[], acc: Expr[]): Expr[] {
+    var out: Expr[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        out = irt_collect_stmt(stmts[i], out);
+        i = i + 1;
+    }
+    return out;
+}
+
+function irt_collect_stmt(st: Stmt, acc: Expr[]): Expr[] {
+    match (st) {
+        StmtReturn(r) => { return acc.append(r.value); },
+        StmtIf(f) => {
+            var a: Expr[] = irt_collect_returns(f.then_body, acc);
+            return irt_collect_returns(f.else_body, a);
+        },
+        StmtWhile(w) => { return irt_collect_returns(w.body, acc); },
+        StmtFor(fr) => { return irt_collect_returns(fr.body, acc); },
+        StmtMatch(m) => {
+            var a: Expr[] = acc;
+            var i: i32 = 0;
+            while (i < m.arms.len()) { a = irt_collect_returns(m.arms[i].body, a); i = i + 1; }
+            return a;
+        },
+        _ => { return acc; }
+    }
+}
+
+// irt_infer_func unifies the inferred types of every return in fd, or "" if
+// any return can't be determined or they conflict (a bare `return;` value is
+// ExprUnknown -> "" -> bail, so void / mixed functions keep their void type).
+function irt_infer_func(fd: FuncDecl, funcs: FuncDecl[]): string {
+    var empty: Expr[] = [];
+    var rets: Expr[] = irt_collect_returns(fd.body, empty);
+    if (rets.len() == 0) { return ""; }
+    var unified: string = "";
+    var i: i32 = 0;
+    while (i < rets.len()) {
+        var g: string = irt_guess(rets[i], fd.params, funcs);
+        if (g == "") { return ""; }
+        if (unified == "") { unified = g; }
+        else {
+            unified = irt_unify(unified, g);
+            if (unified == "") { return ""; }
+        }
+        i = i + 1;
+    }
+    return unified;
+}
+
+function irt_set_ret(funcs: FuncDecl[], idx: i32, rt: string): FuncDecl[] {
+    var out: FuncDecl[] = [];
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (i == idx) {
+            var f: FuncDecl = funcs[i];
+            out = out.append(FuncDecl { name: f.name, receiver_name: f.receiver_name, receiver_type: f.receiver_type, type_params: f.type_params, params: f.params, ret_type: rt, body: f.body, line: f.line, col: f.col, import_iface: f.import_iface, import_wit: f.import_wit, type_param_count: f.type_param_count });
+        } else {
+            out = out.append(funcs[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// infer_ret_types_module stamps an inferred ret_type on each unannotated
+// plain (non-method, non-generic) function. A few passes let a call to a
+// function inferred later in the list resolve.
+pub function infer_ret_types_module(mod: Module): Module {
+    var funcs: FuncDecl[] = mod.funcs;
+    var pass: i32 = 0;
+    while (pass < 3) {
+        var i: i32 = 0;
+        while (i < funcs.len()) {
+            var fd: FuncDecl = funcs[i];
+            if (fd.ret_type == "" && fd.body.len() > 0 && fd.receiver_type.len() == 0 && fd.type_param_count == 0) {
+                var inferred: string = irt_infer_func(fd, funcs);
+                if (inferred != "") { funcs = irt_set_ret(funcs, i, inferred); }
+            }
+            i = i + 1;
+        }
+        pass = pass + 1;
+    }
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
 }
 
 pub function module_with_builtins(mod: Module): Module {
@@ -4684,7 +6215,7 @@ pub function module_with_builtins(mod: Module): Module {
     // Lower switches to if/else-if chains first (the type checker has
     // already run on the StmtSwitch shape for E025), so no later pass or
     // backend sees a StmtSwitch at runtime.
-    var mono: Module = monomorphize_structs(monomorphize_module(lower_defers_module(insert_resource_drops(hoist_local_funcs_module(desugar_switches_module(mod))))));
+    var mono: Module = monomorphize_structs(monomorphize_module(lower_defers_module(insert_resource_drops(infer_ret_types_module(hoist_local_funcs_module(desugar_switches_module(desugar_ranges_module(fill_default_args_module(resolve_labels_module(mod))))))))));
     return Module {
         funcs: mono.funcs,
         structs: inject_builtin_enums(mono.structs),
@@ -4698,8 +6229,35 @@ pub function module_with_builtins(mod: Module): Module {
 }
 
 // ImplResult carries the parser plus the desugared receiver-method
-// FuncDecls produced from an `impl Trait for Type { … }` block.
-pub struct ImplResult { par: Par, funcs: FuncDecl[] }
+// FuncDecls produced from an `impl Trait for Type { … }` block, along
+// with the metadata parse_module needs to synthesise inherited trait
+// default methods after every trait declaration has been seen:
+// trait_name (simple, qualifier stripped), impl_type, the impl's bounded
+// type params, and the method names the impl explicitly provided.
+pub struct ImplResult { par: Par, funcs: FuncDecl[], trait_name: string, impl_type: string, type_params: string[], method_names: string[] }
+
+// TraitDefault is one trait method that carries a `{ … }` default body
+// (abstract signatures are dropped). `trait_name` is the simple trait
+// name; `method` is the parsed method (params[0] = self for a receiver
+// method, `Self` still spelled in its types). An impl of the trait that
+// omits the method inherits a copy via finalize_impl_method.
+pub struct TraitDefault { trait_name: string, method: FuncDecl }
+pub struct TraitParseResult { par: Par, defaults: TraitDefault[] }
+
+// ImplInfo is the per-impl metadata parse_module retains so it can
+// synthesise inherited defaults after the full module is parsed (a trait
+// may be declared after the impl that depends on it).
+pub struct ImplInfo { trait_name: string, impl_type: string, type_params: string[], method_names: string[] }
+
+// str_list_contains reports whether `xs` holds `want`.
+function str_list_contains(xs: string[], want: string): boolean {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] == want) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
 
 // ============ @derive synthesis (structs) ============
 // Mirrors the Go checker's synthEq / synthDisplay / synthOrd so a
@@ -4757,6 +6315,57 @@ function synth_struct_display(sd: StructDecl): FuncDecl {
     return FuncDecl { name: "to_string", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
 }
 
+// dv_debug_render builds the Debug rendering of a single value of static
+// type `t`. Unlike the native checker — which routes every field through a
+// `Debug` trait method — the self-host has no trait-impl methods on
+// primitives (it discards `impl` bodies; `__fn_i32__to_debug` would be
+// undefined), so it renders type-directed, matching the native output:
+//   * `string`  → quoted: `"\"" + v + "\""` (so a dump is unambiguous).
+//   * numeric / boolean scalar → `v.to_string()` (a built-in, as derived
+//     Display uses).
+//   * anything else (a nominal struct/enum) → `v.to_debug()`, composing
+//     through its own derived Debug.
+// (Strings with embedded quotes/backslashes aren't escaped here — the
+// native `impl Debug for string` does, a small self-host fidelity gap.)
+function dv_is_debug_scalar(t: string): boolean {
+    return t == "i32" || t == "i64" || t == "u32" || t == "u64"
+        || t == "f32" || t == "f64" || t == "boolean";
+}
+function dv_debug_render(value: Expr, t: string): Expr {
+    if (t == "string") {
+        return e_binary("+", e_binary("+", e_string("\""), value), e_string("\""));
+    }
+    if (dv_is_debug_scalar(t)) {
+        return dv_call0(value, "to_string");
+    }
+    return dv_call0(value, "to_debug");
+}
+
+// synth_struct_debug: `to_debug` rendering the structural `Name { f: …, …
+// }` form — the Debug sibling of synth_struct_display. The one difference
+// from the derived Display is that a string field renders QUOTED
+// (`name: "hi"`), via dv_debug_render. Mirrors the Go synthDebug output.
+function synth_struct_debug(sd: StructDecl): FuncDecl {
+    var expr: Expr = e_string(sd.name + " {");
+    var i: i32 = 0;
+    while (i < sd.fields.len()) {
+        var sep: string = " ";
+        if (i > 0) { sep = ", "; }
+        expr = e_binary("+", expr, e_string(sep + sd.fields[i].name + ": "));
+        expr = e_binary("+", expr, dv_debug_render(dv_self_field(sd.fields[i].name), sd.fields[i].type_name));
+        i = i + 1;
+    }
+    if (sd.fields.len() == 0) {
+        expr = e_binary("+", expr, e_string("}"));
+    } else {
+        expr = e_binary("+", expr, e_string(" }"));
+    }
+    var body: Stmt[] = [s_return(expr)];
+    var notp: string[] = [];
+    var noparams: ParamDecl[] = [];
+    return FuncDecl { name: "to_debug", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
+}
+
 // synth_struct_eq: field-wise `self.f.eq(other.f) && …` (true for an
 // empty struct).
 function synth_struct_eq(sd: StructDecl): FuncDecl {
@@ -4769,7 +6378,7 @@ function synth_struct_eq(sd: StructDecl): FuncDecl {
     }
     var body: Stmt[] = [s_return(expr)];
     var notp: string[] = [];
-    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: sd.name, own: false }];
+    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: sd.name, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false }];
     return FuncDecl { name: "eq", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "boolean", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
 }
 
@@ -4789,8 +6398,46 @@ function synth_struct_ord(sd: StructDecl): FuncDecl {
     }
     stmts = stmts.append(s_return(e_number("0", "", false)));
     var notp: string[] = [];
-    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: sd.name, own: false }];
+    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: sd.name, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false }];
     return FuncDecl { name: "cmp", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "i32", body: stmts, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
+}
+
+// synth_struct_hash: field-wise `h = h * 31 + self.f.hash()` fold from a
+// seed of 17, mirroring the Go synthHash so the differential oracle
+// agrees. Pairs with the derived `eq` under `a == b ⇒ a.hash() ==
+// b.hash()`.
+function synth_struct_hash(sd: StructDecl): FuncDecl {
+    var stmts: Stmt[] = [s_var("__h", "i32", e_number("17", "", false))];
+    var i: i32 = 0;
+    while (i < sd.fields.len()) {
+        var fold: Expr = e_binary("+", e_binary("*", e_ident("__h"), e_number("31", "", false)), dv_call0(dv_self_field(sd.fields[i].name), "hash"));
+        stmts = stmts.append(s_assign("__h", fold));
+        i = i + 1;
+    }
+    stmts = stmts.append(s_return(e_ident("__h")));
+    var notp: string[] = [];
+    var noparams: ParamDecl[] = [];
+    return FuncDecl { name: "hash", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "i32", body: stmts, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
+}
+
+// synth_struct_json: field-wise `to_json` rendering a struct as a JSON
+// object `{"f":<f.to_json()>,...}`, mirroring the Go synthJson so the
+// differential oracle agrees. Field names need no escaping (identifiers).
+function synth_struct_json(sd: StructDecl): FuncDecl {
+    var expr: Expr = e_string("{");
+    var i: i32 = 0;
+    while (i < sd.fields.len()) {
+        var sep: string = "";
+        if (i > 0) { sep = ","; }
+        expr = e_binary("+", expr, e_string(sep + "\"" + sd.fields[i].name + "\":"));
+        expr = e_binary("+", expr, dv_call0(dv_self_field(sd.fields[i].name), "to_json"));
+        i = i + 1;
+    }
+    expr = e_binary("+", expr, e_string("}"));
+    var body: Stmt[] = [s_return(expr)];
+    var notp: string[] = [];
+    var noparams: ParamDecl[] = [];
+    return FuncDecl { name: "to_json", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
 }
 
 // synth_enum_display: variant-wise `to_string` rendering `Variant(p)` /
@@ -4818,6 +6465,32 @@ function synth_enum_display(ename: string, variants: StructDecl[]): FuncDecl {
     return FuncDecl { name: "to_string", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
 }
 
+// synth_enum_debug: `to_debug` rendering `Variant` / `Variant(<debug
+// payload>)` — the Debug sibling of synth_enum_display. The payload is
+// rendered type-directed (a string payload is quoted) via dv_debug_render.
+// Like synth_enum_display this covers payload-less and single-payload
+// variants. Mirrors the Go synthEnumDebug output.
+function synth_enum_debug(ename: string, variants: StructDecl[]): FuncDecl {
+    var arms: MatchArm[] = [];
+    var i: i32 = 0;
+    while (i < variants.len()) {
+        var v: StructDecl = variants[i];
+        if (v.fields.len() > 0) {
+            var e: Expr = e_string(v.name + "(");
+            e = e_binary("+", e, dv_debug_render(e_ident("__p0"), v.fields[0].type_name));
+            e = e_binary("+", e, e_string(")"));
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, "__p0"), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+        } else {
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string(v.name))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+        }
+        i = i + 1;
+    }
+    var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_string(""))];
+    var notp: string[] = [];
+    var noparams: ParamDecl[] = [];
+    return FuncDecl { name: "to_debug", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
+}
+
 // synth_enum_eq: match self, then match other — same variant compares
 // the payload (`__s0.eq(__o0)`), any other variant is unequal. Mirrors
 // the Go synthEnumEq.
@@ -4841,7 +6514,7 @@ function synth_enum_eq(ename: string, variants: StructDecl[]): FuncDecl {
     }
     var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_bool(false))];
     var notp: string[] = [];
-    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: ename, own: false }];
+    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: ename, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false }];
     return FuncDecl { name: "eq", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "boolean", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
 }
 
@@ -4888,36 +6561,223 @@ function synth_enum_ord(ename: string, variants: StructDecl[]): FuncDecl {
     }
     var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_number("0", "", false))];
     var notp: string[] = [];
-    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: ename, own: false }];
+    var params: ParamDecl[] = [ParamDecl { name: "other", type_name: ename, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false }];
     return FuncDecl { name: "cmp", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "i32", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
 }
 
+// synth_enum_hash: variant-wise `hash` — seed the accumulator with the
+// variant's tag (17 + declaration index) so distinct variants hash
+// apart, then fold the single payload (`__p0`) through `h = h * 31 +
+// __p0.hash()`. Mirrors the Go synthEnumHash (self-host enum variants
+// carry at most one payload).
+function synth_enum_hash(ename: string, variants: StructDecl[]): FuncDecl {
+    var arms: MatchArm[] = [];
+    var i: i32 = 0;
+    while (i < variants.len()) {
+        var v: StructDecl = variants[i];
+        var stmts: Stmt[] = [s_var("__h", "i32", e_number(dl_itoa(17 + i), "", false))];
+        var pat: string = "";
+        if (v.fields.len() > 0) {
+            pat = "__p0";
+            var fold: Expr = e_binary("+", e_binary("*", e_ident("__h"), e_number("31", "", false)), dv_call0(e_ident("__p0"), "hash"));
+            stmts = stmts.append(s_assign("__h", fold));
+        }
+        stmts = stmts.append(s_return(e_ident("__h")));
+        arms = arms.append(MatchArm { pattern: p_variant(v.name, pat), body: stmts, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+        i = i + 1;
+    }
+    var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_number("0", "", false))];
+    var notp: string[] = [];
+    var noparams: ParamDecl[] = [];
+    return FuncDecl { name: "hash", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "i32", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
+}
+
+// synth_enum_json: variant-wise `to_json` — a unit variant renders as
+// its name as a JSON string (`"Empty"`); a payload variant as a single-
+// key object (`{"Circle":<__p0.to_json()>}`). Externally-tagged, matching
+// the Go synthEnumJson (self-host enum variants carry at most one payload).
+function synth_enum_json(ename: string, variants: StructDecl[]): FuncDecl {
+    var arms: MatchArm[] = [];
+    var i: i32 = 0;
+    while (i < variants.len()) {
+        var v: StructDecl = variants[i];
+        if (v.fields.len() > 0) {
+            var e: Expr = e_string("{\"" + v.name + "\":");
+            e = e_binary("+", e, dv_call0(e_ident("__p0"), "to_json"));
+            e = e_binary("+", e, e_string("}"));
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, "__p0"), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+        } else {
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string("\"" + v.name + "\""))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+        }
+        i = i + 1;
+    }
+    var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_string(""))];
+    var notp: string[] = [];
+    var noparams: ParamDecl[] = [];
+    return FuncDecl { name: "to_json", receiver_name: "self", receiver_type: ename, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
+}
+
+// enum_default_derivable reports whether an enum has a derivable default: it
+// has at least one variant, and every payload of its FIRST variant is itself
+// default-derivable. Mirrors the Go synthEnumDefault's gate.
+function enum_default_derivable(variants: StructDecl[]): boolean {
+    if (variants.len() == 0) { return false; }
+    var v0: StructDecl = variants[0];
+    var i: i32 = 0;
+    while (i < v0.fields.len()) {
+        if (!dv_default_derivable(v0.fields[i].type_name)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// synth_enum_default: the associated function `function default(): Self {
+// return <FirstVariant>(<dv>, …); }` — an enum defaults to its first variant,
+// each payload defaulted. Receiver-less (empty receiver_name), so it lowers
+// via the associated-function IR path; a unit first variant builds a bare
+// variant value, a payload one a variant construction. Mirrors the Go
+// synthEnumDefault.
+function synth_enum_default(ename: string, variants: StructDecl[]): FuncDecl {
+    var v0: StructDecl = variants[0];
+    var value: Expr = e_ident(v0.name);
+    if (v0.fields.len() > 0) {
+        var args: Expr[] = [];
+        var i: i32 = 0;
+        while (i < v0.fields.len()) {
+            args = args.append(dv_default_expr(v0.fields[i].type_name));
+            i = i + 1;
+        }
+        value = e_call(e_ident(v0.name), args);
+    }
+    var body: Stmt[] = [s_return(value)];
+    var notp: string[] = [];
+    var noparams: ParamDecl[] = [];
+    return FuncDecl { name: "default", receiver_name: "", receiver_type: ename, type_params: notp, params: noparams, ret_type: ename, body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
+}
+
 // synth_enum_derives appends the derivable enum methods. Display, Eq,
-// and Ord are supported (Ord uses variant-declaration order then a
-// lexicographic payload compare).
+// Ord, Hash, Json, and Default are supported (Ord uses variant-declaration
+// order then a lexicographic payload compare; Hash seeds with the variant
+// tag; Json is externally tagged; Default is the first variant defaulted —
+// the only associated/receiver-less one).
 function synth_enum_derives(ename: string, variants: StructDecl[], derives: string[], funcs: FuncDecl[]): FuncDecl[] {
     var di: i32 = 0;
     while (di < derives.len()) {
         var kind: string = derive_simple_name(derives[di]);
         if (kind == "Display") { funcs = funcs.append(synth_enum_display(ename, variants)); }
+        if (kind == "Debug") { funcs = funcs.append(synth_enum_debug(ename, variants)); }
         if (kind == "Eq") { funcs = funcs.append(synth_enum_eq(ename, variants)); }
         if (kind == "Ord") { funcs = funcs.append(synth_enum_ord(ename, variants)); }
+        if (kind == "Hash") { funcs = funcs.append(synth_enum_hash(ename, variants)); }
+        if (kind == "Json") { funcs = funcs.append(synth_enum_json(ename, variants)); }
+        if (kind == "Default") { if (enum_default_derivable(variants)) { funcs = funcs.append(synth_enum_default(ename, variants)); } }
         di = di + 1;
     }
     return funcs;
 }
 
+// ---- @derive(Default) -------------------------------------------------
+// `Default.default()` is an ASSOCIATED function (no `self`): `Type.default()`
+// builds a type's zero value. For a concrete struct the field types are
+// concrete, so each field's default is either a scalar zero literal or a
+// nominal field's own `Type.default()` (a plain associated call — item 1's
+// IR path resolves it). Mirrors the Go synthDefault / defaultDeriveExpr.
+
+// dv_is_scalar reports whether a type is a primitive scalar whose default
+// is a zero literal: i32/i64/u32/u64 → 0, f32/f64 → 0.0, boolean → false,
+// string → "".
+function dv_is_scalar(t: string): boolean {
+    return t == "i32" || t == "i64" || t == "u32" || t == "u64"
+        || t == "f32" || t == "f64" || t == "boolean" || t == "string";
+}
+
+// dv_default_derivable reports whether a field type has a derivable
+// default: a scalar, or a bare NOMINAL name (a struct/enum whose own
+// `default()` supplies the value). An array / map / generic / tuple /
+// function shape — anything carrying `[`, `]`, `(`, `)`, `,` or a space —
+// has no derived default (mirroring the Go defaultDeriveExpr's ok=false).
+function dv_default_derivable(t: string): boolean {
+    if (dv_is_scalar(t)) { return true; }
+    if (t.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < t.len()) {
+        var c: i32 = t[i];
+        // [ ] ( ) , space → a non-nominal shape.
+        if (c == 91 || c == 93 || c == 40 || c == 41 || c == 44 || c == 32) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// dv_default_expr builds the default value for a field of type `t`: a
+// scalar zero literal, or `T.default()` (an associated call, no receiver)
+// for a nominal type that delegates to its own derived default.
+function dv_default_expr(t: string): Expr {
+    if (t == "string") { return e_string(""); }
+    if (t == "boolean") { return e_bool(false); }
+    if (t == "f32" || t == "f64") { return e_number("0.0", "", true); }
+    if (dv_is_scalar(t)) { return e_number("0", "", false); }
+    var noargs: Expr[] = [];
+    return e_call(e_field_access(e_ident(t), "default"), noargs);
+}
+
+// struct_default_derivable reports whether EVERY field of `sd` has a
+// derivable default (so the whole struct does). The Go checker is the
+// strict gate; here we simply skip synthesis when a field isn't
+// derivable, leaving `Type.default()` unresolved — the same end state as
+// the Go path's error (no default method synthesised).
+function struct_default_derivable(sd: StructDecl): boolean {
+    var i: i32 = 0;
+    while (i < sd.fields.len()) {
+        if (!dv_default_derivable(sd.fields[i].type_name)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// synth_struct_default: the associated function `function default(): Self
+// { return Name { f0: <dv>, … }; }` — receiver-less (empty receiver_name),
+// so it lowers via the associated-function IR path (item 1). Mirrors the
+// Go synthDefault.
+function synth_struct_default(sd: StructDecl): FuncDecl {
+    var fnames: string[] = [];
+    var fvals: Expr[] = [];
+    var i: i32 = 0;
+    while (i < sd.fields.len()) {
+        fnames = fnames.append(sd.fields[i].name);
+        fvals = fvals.append(dv_default_expr(sd.fields[i].type_name));
+        i = i + 1;
+    }
+    var lit: Expr = e_struct_lit(sd.name, fnames, fvals, 0, 0);
+    var body: Stmt[] = [s_return(lit)];
+    var notp: string[] = [];
+    var noparams: ParamDecl[] = [];
+    // Like the other derived struct methods, default() carries NO function-level
+    // type params (an empty list keeps monomorphize_module from treating it as a
+    // generic free function). When the struct is generic, the struct-method
+    // monomorphiser clones it per instantiation and substitutes `T` using the
+    // STRUCT's type params (clone_struct_method) — so a generic body's
+    // `T.default()` becomes `Concrete.default()`.
+    return FuncDecl { name: "default", receiver_name: "", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: sd.name, body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
+}
+
 // synth_derives appends the synthesised methods for each derivable trait
-// (`Eq` / `Display` / `Ord`) named in `derives` for struct `sd` onto
-// `funcs`. Non-derivable / unknown trait names are ignored (the Go
-// checker is the strict gate).
+// (`Eq` / `Display` / `Ord` / `Hash` / `Json` / `Default`) named in
+// `derives` for struct `sd` onto `funcs`. Non-derivable / unknown trait
+// names are ignored (the Go checker is the strict gate). `Default` is the
+// only associated (receiver-less) one — and only synthesised when every
+// field is itself default-derivable.
 function synth_derives(sd: StructDecl, derives: string[], funcs: FuncDecl[]): FuncDecl[] {
     var di: i32 = 0;
     while (di < derives.len()) {
         var kind: string = derive_simple_name(derives[di]);
         if (kind == "Display") { funcs = funcs.append(synth_struct_display(sd)); }
+        if (kind == "Debug") { funcs = funcs.append(synth_struct_debug(sd)); }
         if (kind == "Eq") { funcs = funcs.append(synth_struct_eq(sd)); }
         if (kind == "Ord") { funcs = funcs.append(synth_struct_ord(sd)); }
+        if (kind == "Hash") { funcs = funcs.append(synth_struct_hash(sd)); }
+        if (kind == "Json") { funcs = funcs.append(synth_struct_json(sd)); }
+        if (kind == "Default") { if (struct_default_derivable(sd)) { funcs = funcs.append(synth_struct_default(sd)); } }
         di = di + 1;
     }
     return funcs;
@@ -5034,6 +6894,7 @@ function parse_resource_decl_name(p: Par): ResourceNameResult {
 // trait. Mirrors the Go parser's impl desugaring (docs/TRAITS.md).
 function parse_impl_decl(p: Par): ImplResult {
     var out: FuncDecl[] = [];
+    var method_names: string[] = [];
     p = p.advance(); // `impl`
     // Parametric impl: `impl[T: Bound] Trait for Box[T] { … }`. Collect
     // the impl's type-parameter names (bounded ones drive
@@ -5068,9 +6929,11 @@ function parse_impl_decl(p: Par): ImplResult {
         }
         if (p.peek_punct() == "]") { p = p.advance(); }
     }
-    // Trait name (possibly `mod.Trait`) — discarded.
+    // Trait name (possibly `mod.Trait`) — retained so parse_module can
+    // match the impl against the trait's default methods.
     var tnr: TypeNameResult = parse_type_name(p);
     p = tnr.par;
+    var trait_name: string = tnr.name;
     if (p.peek_keyword() == "for") { p = p.advance(); }
     var ity: TypeNameResult = parse_type_name(p);
     p = ity.par;
@@ -5088,71 +6951,141 @@ function parse_impl_decl(p: Par): ImplResult {
         var fr: FuncResult = parse_func_decl(p);
         p = fr.par;
         var m: FuncDecl = fr.func;
-        // Peel the first param (`self`) into the receiver and rewrite
-        // `Self` -> impl_type across the remaining params + return.
-        var rname: string = "self";
-        var newparams: ParamDecl[] = [];
-        var i: i32 = 0;
-        while (i < m.params.len()) {
-            if (i == 0) {
-                rname = m.params[i].name;
-            } else {
-                var pt: string = m.params[i].type_name;
-                if (pt == "Self") { pt = impl_type; }
-                newparams = newparams.append(ParamDecl { name: m.params[i].name, type_name: pt, own: m.params[i].own });
-            }
-            i = i + 1;
+        // finalize_impl_method does the receiver-peel / associated-function
+        // encoding, the `Self` -> impl_type rewrite, and the bounded-type-
+        // param merge (shared with trait default-method synthesis).
+        out = out.append(finalize_impl_method(m, impl_type, impl_tps));
+        method_names = method_names.append(m.name);
+    }
+    if (p.peek_punct() == "}") { p = p.advance(); }
+    return ImplResult { par: p, funcs: out, trait_name: derive_simple_name(trait_name), impl_type: impl_type, type_params: impl_tps, method_names: method_names };
+}
+
+// finalize_impl_method turns a parsed impl/trait-default method `m` into
+// the receiver-method (or associated-function) FuncDecl the rest of the
+// pipeline consumes: `Self` -> impl_type across params + return, the
+// leading `self` peeled into the receiver (a method whose first param
+// isn't `self` is an associated function with an empty receiver_name),
+// and the impl's bounded type params merged in. Shared by parse_impl_decl
+// (written methods) and trait default-method synthesis in parse_module.
+function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]): FuncDecl {
+    var rt: string = m.ret_type;
+    if (rt == "Self") { rt = impl_type; }
+    var mtps: string[] = m.type_params;
+    var ti: i32 = 0;
+    while (ti < impl_tps.len()) { mtps = mtps.append(impl_tps[ti]); ti = ti + 1; }
+    var has_self: boolean = false;
+    if (m.params.len() > 0) {
+        if (m.params[0].name == "self") { has_self = true; }
+    }
+    if (!has_self) {
+        // Associated function: keep ALL params (none is a receiver),
+        // rewrite `Self` -> impl_type across them, emit with empty receiver.
+        var aparams: ParamDecl[] = [];
+        var ai: i32 = 0;
+        while (ai < m.params.len()) {
+            var apt: string = m.params[ai].type_name;
+            if (apt == "Self") { apt = impl_type; }
+            aparams = aparams.append(ParamDecl { name: m.params[ai].name, type_name: apt, own: m.params[ai].own, has_default: m.params[ai].has_default, default_value: m.params[ai].default_value, ret_arr: m.params[ai].ret_arr });
+            ai = ai + 1;
         }
-        var rt: string = m.ret_type;
-        if (rt == "Self") { rt = impl_type; }
-        // A parametric impl makes every method generic over the impl's
-        // type params (so the monomorphiser — once it grows generic-
-        // receiver-method support — can clone per instantiation; until
-        // then a method whose generic field is a heap value dispatches
-        // dynamically and works as-is). Merge the impl's params with any
-        // the method declared itself.
-        var mtps: string[] = m.type_params;
-        var ti: i32 = 0;
-        while (ti < impl_tps.len()) { mtps = mtps.append(impl_tps[ti]); ti = ti + 1; }
-        out = out.append(FuncDecl {
+        return FuncDecl {
             name: m.name,
-            receiver_name: rname,
+            receiver_name: "",
             receiver_type: impl_type,
             type_params: mtps,
-            params: newparams,
+            params: aparams,
             ret_type: rt,
             body: m.body, line: m.line, col: m.col,
             import_iface: m.import_iface, import_wit: m.import_wit, type_param_count: m.type_param_count
-        });
+        };
     }
-    if (p.peek_punct() == "}") { p = p.advance(); }
-    return ImplResult { par: p, funcs: out };
+    // Receiver method: peel the first param (`self`) into the receiver
+    // and rewrite `Self` -> impl_type across the remaining params.
+    var rname: string = "self";
+    var newparams: ParamDecl[] = [];
+    var i: i32 = 0;
+    while (i < m.params.len()) {
+        if (i == 0) {
+            rname = m.params[i].name;
+        } else {
+            var pt: string = m.params[i].type_name;
+            if (pt == "Self") { pt = impl_type; }
+            newparams = newparams.append(ParamDecl { name: m.params[i].name, type_name: pt, own: m.params[i].own, has_default: m.params[i].has_default, default_value: m.params[i].default_value, ret_arr: m.params[i].ret_arr });
+        }
+        i = i + 1;
+    }
+    return FuncDecl {
+        name: m.name,
+        receiver_name: rname,
+        receiver_type: impl_type,
+        type_params: mtps,
+        params: newparams,
+        ret_type: rt,
+        body: m.body, line: m.line, col: m.col,
+        import_iface: m.import_iface, import_wit: m.import_wit, type_param_count: m.type_param_count
+    };
 }
 
-// skip_trait_decl consumes a `trait Name { <sig>; … }` block whole.
-// The self-host doesn't validate conformance (dispatch is by
-// receiver type), so trait declarations carry no semantic weight
-// here — they're parsed and discarded.
-function skip_trait_decl(p: Par): Par {
+// parse_trait_decl consumes a `trait Name { <method>; … }` block. The
+// self-host doesn't validate conformance (dispatch is by receiver type),
+// so abstract signatures carry no weight and are dropped — but a method
+// with a `{ … }` DEFAULT body is retained: parse_module synthesises a
+// copy onto every impl of the trait that omits it (Self-host parity with
+// the Go checker's synthesizeTraitDefaults — see docs/TRAITS.md). Each
+// method parses with the ordinary parse_func_decl machinery (no receiver
+// clause; its first parameter is `self: Self`); an abstract one ends at
+// `;` and so comes back with an empty body, which we skip.
+function parse_trait_decl(p: Par): TraitParseResult {
+    var defaults: TraitDefault[] = [];
     p = p.advance(); // `trait`
-    if (p.peek_ident().len() > 0) { p = p.advance(); } // name
-    if (p.peek_punct() == "{") {
+    var tname: string = p.peek_ident();
+    if (tname.len() > 0) { p = p.advance(); } // name
+    var simple: string = derive_simple_name(tname);
+    // Optional supertrait clause `: Trait (+ Trait)*` (each possibly
+    // `mod.Trait`). The self-host dispatches by receiver type and doesn't
+    // validate conformance, so supertraits carry no weight here — they're
+    // parsed and discarded. See docs/TRAITS.md.
+    if (p.peek_punct() == ":") {
         p = p.advance();
-        var depth: i32 = 1;
-        while (!p.at_end()) {
-            if (depth <= 0) { break; }
-            var pk: string = p.peek_punct();
-            if (pk == "{") { depth = depth + 1; }
-            if (pk == "}") { depth = depth - 1; }
-            p = p.advance();
+        var go_sup: boolean = true;
+        while (go_sup && !p.at_end()) {
+            if (p.peek_ident().len() > 0) { p = p.advance(); }
+            if (p.peek_punct() == ".") {
+                p = p.advance();
+                if (p.peek_ident().len() > 0) { p = p.advance(); }
+            }
+            if (p.peek_punct() == "+") { p = p.advance(); } else { go_sup = false; }
         }
     }
-    return p;
+    if (p.peek_punct() == "{") {
+        p = p.advance();
+        while (!p.at_end()) {
+            if (p.peek_punct() == "}") { break; }
+            if (p.peek_keyword() == "function") {
+                var fr: FuncResult = parse_func_decl(p);
+                p = fr.par;
+                // A non-empty body marks a default method. (An empty `{}`
+                // body is indistinguishable from an abstract `;` here and
+                // is treated as abstract — it would synthesise a no-op.)
+                if (fr.func.body.len() > 0) {
+                    defaults = defaults.append(TraitDefault { trait_name: simple, method: fr.func });
+                }
+            } else {
+                // Defensive: don't stall on an unexpected token.
+                p = p.advance();
+            }
+        }
+        if (p.peek_punct() == "}") { p = p.advance(); }
+    }
+    return TraitParseResult { par: p, defaults: defaults };
 }
 
 pub function parse_module(toks: lexer.Token[]): Module {
     var p: Par = Par { toks: toks, pos: 0, no_struct: false };
     var funcs: FuncDecl[] = [];
+    var trait_defaults: TraitDefault[] = [];
+    var impl_infos: ImplInfo[] = [];
     var structs: StructDecl[] = [];
     var aliases: TypeAlias[] = [];
     var imports: Import[] = [];
@@ -5290,8 +7223,23 @@ pub function parse_module(toks: lexer.Token[]): Module {
             imports = imports.append(ir.imp);
             continue;
         }
+        // `pub use "path".{names…};` — a re-export directive. Recorded as a
+        // re-export Import so the loader pulls in the target module and the
+        // bundler redirects `facade.name` to the target's mangled symbol.
+        if (kw == "use") {
+            var ur: ImportResult = parse_pubuse(p);
+            p = ur.par;
+            imports = imports.append(ur.imp);
+            continue;
+        }
         if (kw == "trait") {
-            p = skip_trait_decl(p);
+            var tpr: TraitParseResult = parse_trait_decl(p);
+            p = tpr.par;
+            var tdi: i32 = 0;
+            while (tdi < tpr.defaults.len()) {
+                trait_defaults = trait_defaults.append(tpr.defaults[tdi]);
+                tdi = tdi + 1;
+            }
             continue;
         }
         if (kw == "impl") {
@@ -5302,6 +7250,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 funcs = funcs.append(imr.funcs[mi]);
                 mi = mi + 1;
             }
+            impl_infos = impl_infos.append(ImplInfo { trait_name: imr.trait_name, impl_type: imr.impl_type, type_params: imr.type_params, method_names: imr.method_names });
             continue;
         }
         // `resource Name;` — a top-level WIT resource-handle declaration (P5).
@@ -5328,7 +7277,32 @@ pub function parse_module(toks: lexer.Token[]): Module {
         p = stmtR.par;
         top_stmts = top_stmts.append(stmtR.stmt);
     }
-    return Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports };
+    // Synthesise inherited trait default methods now that the whole module
+    // is parsed (a trait may be declared after the impl that uses it). For
+    // each impl, every default of its trait that the impl did not provide
+    // becomes a receiver method on the impl type — the same desugaring a
+    // written method gets. Self-host parity with the Go checker's
+    // synthesizeTraitDefaults (see docs/TRAITS.md); same-module only.
+    var iii: i32 = 0;
+    while (iii < impl_infos.len()) {
+        var info: ImplInfo = impl_infos[iii];
+        var ddi: i32 = 0;
+        while (ddi < trait_defaults.len()) {
+            var td: TraitDefault = trait_defaults[ddi];
+            if (td.trait_name == info.trait_name) {
+                if (!str_list_contains(info.method_names, td.method.name)) {
+                    funcs = funcs.append(finalize_impl_method(td.method, info.impl_type, info.type_params));
+                }
+            }
+            ddi = ddi + 1;
+        }
+        iii = iii + 1;
+    }
+    // Resolve loop labels here, at the single shared parse entry, so every
+    // driver/backend pipeline sees break/continue tags already baked in (the
+    // per-driver prep pipelines diverge, so doing it here is the universal spot).
+    // Idempotent: re-running on already-resolved tags recomputes the same depth.
+    return resolve_labels_module(Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports });
 }
 
 // merge_module flat-concatenates `into`'s decls with `from`'s:
@@ -5393,7 +7367,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
     var si: i32 = 0;
     while (si < from.structs.len()) {
         var sd: StructDecl = from.structs[si];
-        nstructs = nstructs.append(StructDecl { name: prefix + "." + sd.name, fields: sd.fields, type_params: sd.type_params, line: sd.line, col: sd.col });
+        nstructs = nstructs.append(StructDecl { name: prefix + "." + sd.name, fields: sd.fields, type_params: sd.type_params, line: sd.line, col: sd.col, enum_owner: sd.enum_owner });
         si = si + 1;
     }
     var naliases: TypeAlias[] = into.aliases;
@@ -5601,6 +7575,29 @@ function main(): i32 {
             }
         },
         _ => { return 722; }
+    }
+
+    // Bitwise / shift compounds desugar the same way: `m &= 6;` → op `&`,
+    // `f <<= 3;` → op `<<`. Mirrors the native parser's compoundOps set.
+    var srcBwAnd: string = "m &= 6;";
+    match (parse_program(lexer.tokenize(srcBwAnd))[0]) {
+        StmtAssign(a) => {
+            match (a.value) {
+                ExprBinary(b) => { if (b.op != "&") { return 730; } },
+                _ => { return 731; }
+            }
+        },
+        _ => { return 732; }
+    }
+    var srcBwShl: string = "f <<= 3;";
+    match (parse_program(lexer.tokenize(srcBwShl))[0]) {
+        StmtAssign(a) => {
+            match (a.value) {
+                ExprBinary(b) => { if (b.op != "<<") { return 733; } },
+                _ => { return 734; }
+            }
+        },
+        _ => { return 735; }
     }
 
     // Slice parsing: `s[1:4]` → ExprSlice with three subtrees.

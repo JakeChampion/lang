@@ -19,6 +19,7 @@ package wasmbin
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
@@ -98,7 +99,7 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	// PrintMainResult's _start wrapper calls int_to_string from
 	// a synthesised position that isn't an AST reference, so
 	// pin it (and its modload-qualified twin) past tree-shake.
-	// Either variant covers the auto-prelude case vs the
+	// Either variant covers the flat-load case vs the
 	// explicit-`import "core/int"` case; the emitter picks
 	// whichever survives.
 	var treeshakeExtras []string
@@ -116,6 +117,25 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 		}
 	}
 	treeshakeExtras = append(treeshakeExtras, exportRoots...)
+	// `dyn Trait` impl methods are reached only through the runtime
+	// vtable (OpConstVtable names them by string), never via a static
+	// call the AST walker / IR reachability can see. Pin every impl
+	// method of a concrete type that coerces to a `dyn Trait` so it
+	// survives tree-shake and IR dead-function elimination. See
+	// docs/DYN-TRAITS.md §4.2.1.
+	dynImplMethods := treeshake.DynCoercionImplMethods(info)
+	treeshakeExtras = append(treeshakeExtras, dynImplMethods...)
+	// Same rooting for `e as? T` downcast targets: the (Trait,T) vtable
+	// the compare references holds those impl methods, and a downcast-only
+	// target (never coerced) is absent from DynCoercions
+	// (docs/DYN-TRAITS.md §9). Kept in its own slice so it can also be fed
+	// to the IR-level dead-function elimination below (LiveFunctions),
+	// which culls separately from the AST tree-shaker — without that, a
+	// downcast-only target's __method_* would survive tree-shake but be
+	// dropped at the IR layer and the vtable cell would reference a
+	// missing func (OpConstVtable: impl method not in prog.Funcs).
+	downcastImplMethods := treeshake.DowncastImplMethods(prog, info)
+	treeshakeExtras = append(treeshakeExtras, downcastImplMethods...)
 	if opts.HttpHandler {
 		// `handle` is called by the wrapper but the treeshake
 		// walker doesn't see the call (the wrapper lives in
@@ -123,7 +143,7 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 		// `__method_HeaderMap_append` — the wrapper calls it
 		// per header entry from the canonical-ABI fields list.
 		treeshakeExtras = append(treeshakeExtras, "handle", "__method_HeaderMap_append")
-		// The auto-synthesised `main()` (in std/tcp's prelude)
+		// The auto-synthesised `main()` (synthesised by the checker)
 		// calls `tcp_serve` and pulls in wasi:sockets imports
 		// the http world's WIT doesn't have. Drop it before
 		// tree-shake so it doesn't hold tcp_serve / tcp_listen
@@ -161,8 +181,8 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	// IR-level dead-function elimination: drop top-level
 	// functions whose body the optimiser left without any
 	// remaining callers. Critical for the binary path since
-	// the auto-injected stdlib drags in ~250 helpers most of
-	// which never get called from user code.
+	// the stdlib a program imports drags in ~250 helpers most
+	// of which never get called from user code.
 	//
 	// Pass CallDirectAliases so the reachability walker knows
 	// about emit-time rewrites — without this, a user-code
@@ -176,6 +196,27 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 		liveExtras = append(liveExtras, "handle", "__method_HeaderMap_append")
 	}
 	liveExtras = append(liveExtras, exportRoots...)
+	liveExtras = append(liveExtras, dynImplMethods...)
+	liveExtras = append(liveExtras, downcastImplMethods...)
+	// `dyn Trait` RC drop fns (docs/DYN-TRAITS.md §4.4) are reached only
+	// through the vtable's trailing drop slot (an indirect call_indirect
+	// the IR reachability walker can't follow), so root them explicitly so
+	// they survive IR dead-function elimination. The vtable cell embeds
+	// each Drop fn by table index; a culled drop fn would make
+	// OpConstVtable reference a missing func. The per-set __drop_dyn_<set>
+	// helpers are called by name (OpCallDirect) from the exit sweep, but
+	// rooting them too is harmless and keeps a no-coercion-but-typed-dyn
+	// program linking.
+	for _, vt := range ip.Vtables {
+		if vt.Drop != "" {
+			liveExtras = append(liveExtras, vt.Drop)
+		}
+	}
+	for _, fn := range ip.Funcs {
+		if strings.HasPrefix(fn.Name, "__drop_dyn_") {
+			liveExtras = append(liveExtras, fn.Name)
+		}
+	}
 	if live := ir.LiveFunctionsWithAliases(ip, CallDirectAliases, liveExtras...); live != nil {
 		out := ip.Funcs[:0]
 		for _, irFn := range ip.Funcs {

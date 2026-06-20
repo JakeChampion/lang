@@ -206,9 +206,20 @@ func buildStderrBody(idxs map[string]uint32) []byte {
 func buildFixedFdWriterBody(idxs map[string]uint32, fd int32) []byte {
 	alloc := idxs["__fern_alloc"]
 	var body []byte
-	body = inst.InstI32Const(body, 4)
+	// 12-byte Writer struct: rc sentinel @ +0, {fd} @ +8. The leading
+	// static rc sentinel keeps __fern_retain / __fern_drop (which touch
+	// mem[ptr-8]) off the preceding static data — see issue #2550 and
+	// buildCachedHandleWriterBodyP2.
+	body = inst.InstI32Const(body, 12)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 0)
+	body = inst.InstI32Const(body, -0x80000000) // static rc sentinel
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 0) // data pointer = base + 8
+	body = inst.InstLocalGet(body, 0)
 	body = inst.InstI32Const(body, fd)
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, 0)
@@ -249,10 +260,22 @@ func buildCachedHandleWriterBodyP2(idxs map[string]uint32, get uint32, initAddr,
 	body = inst.InstI32Const(body, 1)
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstEnd(body)
-	// w = alloc(4); mem[w] = mem[handleAddr]; return w.
-	body = inst.InstI32Const(body, 4)
+	// Writer struct: 12 bytes (rc sentinel @ +0, {handle} @ +8) — the
+	// same layout open_writer's Writer uses. The leading static rc
+	// sentinel (0x80000000) is mandatory: the Writer is a refcounted
+	// heap value, so __fern_retain / __fern_drop read & mutate
+	// mem[ptr-8]. Without the header, the first heap object's ptr-8
+	// underflows into the preceding static data segment and retain
+	// corrupts a string literal (issue #2550).
+	body = inst.InstI32Const(body, 12)
 	body = inst.InstCall(body, alloc)
-	body = inst.InstLocalSet(body, 0)
+	body = inst.InstLocalTee(body, 0)
+	body = inst.InstI32Const(body, -0x80000000) // static rc sentinel
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 0) // data pointer = base + 8
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstI32Const(body, handleAddr)
 	body = memory.InstI32Load(body, 2, 0)

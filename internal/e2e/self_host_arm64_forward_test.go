@@ -22,7 +22,7 @@ func TestSelfHostArm64ForwardRefs(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "wasm.fern", "wasm_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -66,7 +66,7 @@ func TestSelfHostArm64DarwinMachOMaxRuns(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	for _, n := range []string{"lexer.fern", "parser.fern", "util.fern", "wasm.fern", "wasm_run.fern"} {
+	for _, n := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", n))
 		if err != nil {
 			t.Fatalf("read %s: %v", n, err)
@@ -152,9 +152,10 @@ function main(): i32 {
 `
 
 // arm64MachOMaxDriverMain assembles max(42, 17) with a forward b.ge:
-//   0 movz x0,#42 (a); 4 movz x1,#17 (b); 8 cmp x0,x1;
-//   12 b.ge done (placeholder, patched); 16 mov x0,x1; 20 (done) movz
-//   x16,#1; 24 svc #0x80. a >= b so the branch is taken, skipping the mov.
+//
+//	0 movz x0,#42 (a); 4 movz x1,#17 (b); 8 cmp x0,x1;
+//	12 b.ge done (placeholder, patched); 16 mov x0,x1; 20 (done) movz
+//	x16,#1; 24 svc #0x80. a >= b so the branch is taken, skipping the mov.
 const arm64MachOMaxDriverMain = `
 function main(): i32 {
     var code: i32[] = [];

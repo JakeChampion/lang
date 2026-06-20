@@ -189,7 +189,7 @@ func TestWASMReuseMatchesNoReuse(t *testing.T) {
 // tests across backends: same-size reuse, different-class
 // non-aliasing, and LIFO order. Each program returns 0 on success.
 var freelistReuseSrc = struct{ reuse, wrongClass, lifo string }{
-	reuse: `import "core/no_prelude";
+	reuse: `
 function main(): i32 {
     var a: usize = __alloc(64);
     __free(a, 64);
@@ -197,7 +197,7 @@ function main(): i32 {
     if (a == b) { return 0; }
     return 1;
 }`,
-	wrongClass: `import "core/no_prelude";
+	wrongClass: `
 function main(): i32 {
     var a: usize = __alloc(64);
     __free(a, 64);
@@ -205,7 +205,7 @@ function main(): i32 {
     if (a == b) { return 1; }
     return 0;
 }`,
-	lifo: `import "core/no_prelude";
+	lifo: `
 function main(): i32 {
     var a: usize = __alloc(48);
     var b: usize = __alloc(48);
@@ -511,9 +511,8 @@ func TestWASMStringReassignFree(t *testing.T) {
 // Wasm mirror of TestX86_64FreelistReuse. Sets ast.RcFreeEnabled
 // around runWasm (buildComponent reads it at emit time; wasm
 // codegen doesn't take CodegenMu, and this test isn't parallel).
-// SKIPs without wasmtime (rides CI). Uses the auto-prelude (no
-// core/no_prelude import) to dodge the wasm harness's
-// no_prelude output-parsing quirk.
+// SKIPs without wasmtime (rides CI). The fixtures use only the
+// `__alloc` / `__free` builtins, so they need no imports.
 func TestWASMFreelistReuse(t *testing.T) {
 	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
@@ -589,18 +588,17 @@ func TestArm64FreelistReuse(t *testing.T) {
 //     freed token then reappears from its own class's freelist on the
 //     next same-class __alloc (c == a) — the slow-not-wrong backstop.
 //
-// Each program returns 0 on success. Natives import core/no_prelude
-// (matching freelistReuseSrc); the wasm variants omit it (the wasm
-// harness uses the auto-prelude).
+// Each program returns 0 on success. The fixtures use only the
+// `__alloc` / `__free` builtins, so they need no imports.
 var allocReuseSrc = struct{ sameClass, nullToken, mismatch string }{
-	sameClass: `import "core/no_prelude";
+	sameClass: `
 function main(): i32 {
     var a: usize = __alloc(64);
     var b: usize = __alloc_reuse(a, 64, 64);
     if (a == b) { return 0; }
     return 1;
 }`,
-	nullToken: `import "core/no_prelude";
+	nullToken: `
 function main(): i32 {
     var z: usize = 0;
     var a: usize = __alloc(64);
@@ -609,7 +607,7 @@ function main(): i32 {
     if (b == a) { return 2; }
     return 0;
 }`,
-	mismatch: `import "core/no_prelude";
+	mismatch: `
 function main(): i32 {
     var a: usize = __alloc(64);
     var b: usize = __alloc_reuse(a, 64, 32);

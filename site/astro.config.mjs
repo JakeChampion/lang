@@ -18,10 +18,30 @@
 // subpath (https://<user>.github.io/lang/) without absolute-URL
 // breakage; override via `SITE_BASE` env if deploying elsewhere.
 
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
 
 const base = process.env.SITE_BASE ?? "/lang";
+
+// Load the real Fern TextMate grammar (the same one the VS Code
+// extension ships) so ```fern code fences highlight as actual Fern
+// rather than borrowing TypeScript's grammar. Read from the repo
+// source so the grammar has a single source of truth — editing the
+// extension's grammar updates the docs colours too.
+const fernGrammar = JSON.parse(
+  readFileSync(
+    fileURLToPath(
+      new URL(
+        "../editors/vscode/syntaxes/fern.tmLanguage.json",
+        import.meta.url,
+      ),
+    ),
+    "utf8",
+  ),
+);
 
 export default defineConfig({
   site: process.env.SITE_URL ?? "https://jakechampion.github.io",
@@ -36,12 +56,14 @@ export default defineConfig({
       },
       description:
         "Fern — a small, fast-startup language with native arm64 / x86-64 / wasm backends.",
-      // Fern has no dedicated Shiki grammar yet; it started TS-flavoured,
-      // so alias ```fern code fences to TypeScript highlighting. Keeps
-      // the snippets coloured and silences the "language not found" warn.
+      // Register Fern's own TextMate grammar (loaded above) so ```fern
+      // fences get language-accurate highlighting — method receivers,
+      // `match`, sized integer types, generics, f-strings, and the
+      // pipe operator all colour correctly instead of being approximated
+      // by TypeScript's grammar.
       expressiveCode: {
         shiki: {
-          langAlias: { fern: "typescript" },
+          langs: [fernGrammar],
         },
       },
       social: [
@@ -68,6 +90,7 @@ export default defineConfig({
           label: "Standard library",
           items: [{ autogenerate: { directory: "stdlib" } }],
         },
+        { label: "Contributing", link: "/contributing/" },
         {
           label: "Playground",
           // Bare `/playground/` — Starlight prepends `base` to

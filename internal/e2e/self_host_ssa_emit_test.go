@@ -26,7 +26,7 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		t.Skip("emitted x86-64 runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "ssa.fern", "util.fern", "ssa_x86.fern", "ssa_arm64.fern", "ssa_emit_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "astwalk.fern", "ssa.fern", "util.fern", "ssa_x86.fern", "ssa_arm64.fern", "ssa_emit_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -83,8 +83,23 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		{"while-factorial", "function main(): i32 { var i = 1; var f = 1; while (i <= 5) { f = f * i; i = i + 1; } return f; }", 120},
 		{"if-in-loop", "function main(): i32 { var i = 0; var c = 0; while (i < 10) { if (i > 4) { c = c + 1; } i = i + 1; } return c; }", 5},
 		{"nested-loop", "function main(): i32 { var i = 0; var t = 0; while (i < 3) { var j = 0; while (j < 3) { t = t + 1; j = j + 1; } i = i + 1; } return t; }", 9},
+		// Range-for `for i in LOW..HIGH`: the parser emits a synthetic
+		// __range(LOW, HIGH) for-iter that the IR path lowers, but the SSA
+		// backend's StmtFor builder only iterates arrays — an undesugared
+		// __range iter emitted `call __fn___range` (a link error).
+		// parser.desugar_ranges_func (run in ssa.build_func_seeded) rewrites
+		// it to a counting while-loop. Covers continue/break/empty/nested.
+		{"range-sum", "function main(): i32 { var s = 0; for i in 0..5 { s = s + i; } return s; }", 10},
+		{"range-continue", "function main(): i32 { var s = 0; for i in 0..10 { if (i % 2 == 1) { continue; } s = s + i; } return s; }", 20},
+		{"range-break", "function main(): i32 { var s = 0; for i in 0..100 { if (i == 5) { break; } s = s + i; } return s; }", 10},
+		{"range-empty", "function main(): i32 { var c = 7; for i in 5..5 { c = c + 1; } return c; }", 7},
+		{"range-nested", "function main(): i32 { var t = 0; for i in 0..3 { for j in 0..3 { t = t + 1; } } return t; }", 9},
 		// Multi-function: System V argument passing + call/return.
 		{"call", "function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return add(3, 4); }", 7},
+		// Default parameter values — fill_default_args_module (run in the SSA
+		// driver) completes the omitted trailing argument.
+		{"default-one", "function inc(n: i32, by: i32 = 1): i32 { return n + by; } function main(): i32 { return inc(6); }", 7},
+		{"default-multi", "function box(w: i32, h: i32 = 2, d: i32 = 3): i32 { return w * 100 + h * 10 + d; } function main(): i32 { return box(1); }", 123},
 		{"call-expr", "function sq(x: i32): i32 { return x * x; } function main(): i32 { return sq(5) + sq(3); }", 34},
 		{"recursion", "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { return fact(5); }", 120},
 		// break / continue lower to extra loop edges; codegen must handle the
@@ -107,6 +122,11 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		// backend, so the slot is one word like i32. "ab" overwritten to
 		// "xyz"; get().len() = 3.
 		{"cell-string", "function main(): i32 { var c: Cell[string] = cell_new(\"ab\"); c.set(\"xyz\"); return c.get().len(); }", 3},
+		// A Cell-typed STRUCT FIELD: `b.ctr.get()` / `.set()` must resolve the
+		// field's "Cell[i32]" to the normalized "cell" type so the cell method
+		// path fires (a type_of_expr field-normalisation gap that made
+		// wasm__emit_expr — the last whole-compiler build_func holdout — bail).
+		{"cell-struct-field", "struct Box { ctr: Cell[i32], label: string } function main(): i32 { var b = Box { ctr: cell_new(10), label: \"x\" }; b.ctr.set(b.ctr.get() + 5); return b.ctr.get() + b.label.len(); }", 16},
 		{"arr-with-chain", "function main(): i32 { var a = [0, 0, 0]; a = a.with(0, 5); a = a.with(2, 7); return a[0] * 10 + a[2]; }", 57},
 		{"arr-len-loop", "function main(): i32 { var a = [4, 8, 12, 16]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }", 40},
 		// for-in loops (build_for desugar → counted while). Index advance at
@@ -426,4 +446,60 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		}
 		run(t, "scaling-large-function", sum%256, asm)
 	})
+
+	// File I/O — read_file / write_file lowered to the syscall runtime. These
+	// run through both the default driver and -regalloc (the CLI path), since
+	// the helpers clobber caller-saved registers around the call and the
+	// allocator must spill live values across it.
+	emitFileIO := func(t *testing.T, src string, args ...string) []byte {
+		t.Helper()
+		emit := exec.Command(bin, args...)
+		emit.Stdin = strings.NewReader(src)
+		asm, err := emit.Output()
+		if err != nil {
+			t.Fatalf("emit driver failed for %q: %v", src, err)
+		}
+		return asm
+	}
+	for _, mode := range []struct {
+		name string
+		args []string
+	}{{"default", nil}, {"regalloc", []string{"-regalloc"}}} {
+		mode := mode
+		// Round-trip: write "hello, fern" to an absolute path under the test's
+		// temp dir, read it back, and compare via streq — exercising the SSA
+		// [len, byte-per-word] string layout end-to-end. Returns 42 on a clean
+		// match; a Go-side read confirms write_file produced the exact bytes.
+		t.Run("file-io-roundtrip/"+mode.name, func(t *testing.T) {
+			ioPath := filepath.Join(dir, "io_roundtrip_"+mode.name+".txt")
+			_ = os.Remove(ioPath)
+			const content = "hello, fern"
+			src := fmt.Sprintf("function main(): i32 { match (write_file(%q, %q)) { Some(e) => { return 1; }, None => {} } match (read_file(%q)) { Ok(s) => { if (s == %q) { return 42; } return 2; }, Err(e) => { return 3; } } }", ioPath, content, ioPath, content)
+			run(t, "file-io-roundtrip", 42, emitFileIO(t, src, mode.args...))
+			got, err := os.ReadFile(ioPath)
+			if err != nil {
+				t.Fatalf("write_file did not create %s: %v", ioPath, err)
+			}
+			if string(got) != content {
+				t.Errorf("write_file wrote %q, want %q", got, content)
+			}
+		})
+		// read_file on a file the test pre-wrote (externally-produced bytes):
+		// returns len + first byte = 10 + 'a'.
+		t.Run("file-io-read-external/"+mode.name, func(t *testing.T) {
+			ioPath := filepath.Join(dir, "io_external_"+mode.name+".txt")
+			const content = "abcdefghij" // 10 bytes
+			if err := os.WriteFile(ioPath, []byte(content), 0o644); err != nil {
+				t.Fatalf("seed file: %v", err)
+			}
+			src := fmt.Sprintf("function main(): i32 { match (read_file(%q)) { Ok(s) => { return s.len() + s[0]; }, Err(e) => { return 0; } } }", ioPath)
+			run(t, "file-io-read-external", 10+int('a'), emitFileIO(t, src, mode.args...))
+		})
+		// read_file on a missing path → Err.
+		t.Run("file-io-read-missing/"+mode.name, func(t *testing.T) {
+			ioPath := filepath.Join(dir, "does_not_exist.txt")
+			src := fmt.Sprintf("function main(): i32 { match (read_file(%q)) { Ok(s) => { return 0; }, Err(e) => { return 7; } } }", ioPath)
+			run(t, "file-io-read-missing", 7, emitFileIO(t, src, mode.args...))
+		})
+	}
 }

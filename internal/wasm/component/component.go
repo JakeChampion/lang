@@ -397,6 +397,17 @@ func InnerTypeBorrow(resourceTypeidx uint32) []byte {
 	return out
 }
 
+// InnerTypeOwn returns the defvaltype body bytes for an `own<typeidx>` handle
+// type (the owned counterpart of InnerTypeBorrow). Used by the P6 export lift
+// for a handle-typed export parameter (docs/WIT-BRING-YOUR-OWN.md).
+//
+// Encoding: 69 <typeidx> (own form 0x69 + uleb resource typeidx).
+func InnerTypeOwn(resourceTypeidx uint32) []byte {
+	out := []byte{0x69}
+	out = leb128.UlebU64(out, uint64(resourceTypeidx))
+	return out
+}
+
 // InnerTypeListU8 is the defvaltype body bytes for `list<u8>` —
 // the canonical-ABI byte-buffer shape used by wasi:io/streams's
 // `blocking-write-and-flush(contents: list<u8>)` and similar.
@@ -2702,6 +2713,91 @@ func PutTypeSectionOneFunc(buf []byte, paramNames []string, paramValtypes []byte
 	}
 	body = append(body, 0x00) // resultlist: single anonymous
 	body = append(body, resultValtype)
+	return wrapSection(buf, SectionType, body)
+}
+
+// PutTypeSectionOneDefined emits a component-level type section containing one
+// defined value type whose body is `defBody` (e.g. InnerTypeList(CValtypeS32)
+// for `list<s32>`). The new type lands at the next component type index. Used by
+// the P6 export lift to declare a `list<T>` result/param type before the
+// functype that references it (docs/WIT-BRING-YOUR-OWN.md).
+func PutTypeSectionOneDefined(buf []byte, defBody []byte) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1) types
+	body = append(body, defBody...)
+	return wrapSection(buf, SectionType, body)
+}
+
+// PutTypeSectionOneFuncResultIdx is PutTypeSectionOneFunc for a function whose
+// single anonymous result is a *defined* type referenced by index (e.g. a
+// `list<T>`), not a primitive. The result valtype is encoded as a signed LEB128
+// (`s33`) — a type index ≥ 64 needs more than one byte (its high payload bit
+// must stay clear so it isn't read as a negative primitive code), which the
+// single-byte append in PutTypeSectionOneFunc gets wrong. P6 composite exports.
+func PutTypeSectionOneFuncResultIdx(buf []byte, paramNames []string, paramValtypes []byte, resultIdx uint32) []byte {
+	if len(paramNames) != len(paramValtypes) {
+		panic("component: paramNames and paramValtypes must have equal length")
+	}
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1) types
+	body = append(body, 0x40)      // functype form
+	body = leb128.UlebU64(body, uint64(len(paramNames)))
+	for i := range paramNames {
+		body = putName(body, paramNames[i])
+		body = append(body, paramValtypes[i])
+	}
+	body = append(body, 0x00)                     // resultlist: single anonymous
+	body = leb128.SlebI64(body, int64(resultIdx)) // valtype = typeidx (s33)
+	return wrapSection(buf, SectionType, body)
+}
+
+// leb128SlebBytes returns the sleb-encoded (s33) bytes of a defined-type index
+// — the valtype form a functype param/result uses to reference a list/record
+// type by index. (≥ 64 needs more than one byte.)
+func leb128SlebBytes(idx uint32) []byte { return leb128.SlebI64(nil, int64(idx)) }
+
+// PutTypeSectionOneFuncGeneral emits a functype where each parameter and the
+// single anonymous result is supplied as pre-encoded valtype bytes — either a
+// primitive's single byte (CValtype*) or the sleb-encoded (s33) index of a
+// defined type emitted earlier (a `list<T>`, record, …). It generalises
+// PutTypeSectionOneFunc (all-prim) and PutTypeSectionOneFuncResultIdx
+// (index result): the P6 composite param/result exports need a mix. The caller
+// emits any referenced defined types first so the indices resolve.
+func PutTypeSectionOneFuncGeneral(buf []byte, paramNames []string, paramVals [][]byte, resultVal []byte) []byte {
+	if len(paramNames) != len(paramVals) {
+		panic("component: paramNames and paramVals must have equal length")
+	}
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1) types
+	body = append(body, 0x40)      // functype form
+	body = leb128.UlebU64(body, uint64(len(paramNames)))
+	for i := range paramNames {
+		body = putName(body, paramNames[i])
+		body = append(body, paramVals[i]...)
+	}
+	body = append(body, 0x00) // resultlist: single anonymous
+	body = append(body, resultVal...)
+	return wrapSection(buf, SectionType, body)
+}
+
+// PutTypeSectionOneFuncGeneralVoid emits a functype with the given pre-encoded
+// params and NO result (the WIT `func(...)` shape — a named-results list of
+// length zero). The P6 export lift uses it for a void export such as
+// `wasi:http`'s `incoming-handler#handle` (docs/WIT-BRING-YOUR-OWN.md).
+func PutTypeSectionOneFuncGeneralVoid(buf []byte, paramNames []string, paramVals [][]byte) []byte {
+	if len(paramNames) != len(paramVals) {
+		panic("component: paramNames and paramVals must have equal length")
+	}
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1) types
+	body = append(body, 0x40)      // functype form
+	body = leb128.UlebU64(body, uint64(len(paramNames)))
+	for i := range paramNames {
+		body = putName(body, paramNames[i])
+		body = append(body, paramVals[i]...)
+	}
+	body = append(body, 0x01)      // resultlist: named
+	body = leb128.UlebU64(body, 0) // vec(0) results
 	return wrapSection(buf, SectionType, body)
 }
 

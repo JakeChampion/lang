@@ -95,12 +95,12 @@ which requires mutation.
 The RC plan assumes there isn't. `docs/RC-PERCEUS-PLAN.md:71-77`
 (the "Garbage cycles" non-goal) says:
 
-> Lang already has this property [no cycles] by accident (no
+> Fern already has this property [no cycles] by accident (no
 > mutable struct fields, no mutable closure captures).
 
 and `RC-PERCEUS-PLAN.md:2003-2004` (Open Question #9) repeats:
 
-> Currently lang's types are tree-shaped at the type level (no
+> Currently Fern's types are tree-shaped at the type level (no
 > cycles).
 
 **Both statements are now stale.** Mutable struct fields exist and

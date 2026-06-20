@@ -1,0 +1,49 @@
+import "core/int";
+
+// Audit fixture: sized integer types + floats on every native backend
+// (interp / x86-64 / arm64 / wasm). Each failing check prints "FAIL <id>"
+// and returns a distinct non-zero code; success prints "OK".
+//
+// Covers (docs/FEATURE-AUDIT.md §A): i64 arithmetic, u8/u16/u32 cast +
+// wrapping, narrowing casts, f32/f64 arithmetic + comparison.
+
+function main(): i32 {
+    // --- i64 arithmetic (values past the i32 range) ---
+    var big: i64 = 5000000000;
+    var big1: i64 = big + 1;
+    if ((big1 - big) as i32 != 1) { print("FAIL i64-add"); return 11; }
+    var prod: i64 = 1000000 * 3;
+    if ((prod / 1000000) as i32 != 3) { print("FAIL i64-mul"); return 12; }
+
+    // --- unsigned wrapping via cast (runtime values; a literal out of
+    //     range is a static checker error, so wrap is tested on values) ---
+    var v8: i32 = 250 + 10;               // 260
+    var w8: u8 = v8 as u8;                // 260 mod 256 = 4
+    if (w8 as i32 != 4) { print("FAIL u8-wrap"); return 13; }
+    var v16: i32 = 65530 + 10;            // 65540
+    var w16: u16 = v16 as u16;            // 65540 mod 65536 = 4
+    if (w16 as i32 != 4) { print("FAIL u16-wrap"); return 14; }
+
+    // --- narrowing cast (runtime value) ---
+    var nv: i32 = 300;
+    var narrow: u8 = nv as u8;            // 300 mod 256 = 44
+    if (narrow as i32 != 44) { print("FAIL cast-narrow"); return 15; }
+
+    // --- f64 arithmetic + comparison ---
+    var fx: f64 = 3.5;
+    var fy: f64 = fx * 2.0;               // 7.0
+    if (fy as i32 != 7) { print("FAIL f64-mul"); return 16; }
+    var fd: f64 = 7.0 / 2.0;              // 3.5
+    if ((fd * 2.0) as i32 != 7) { print("FAIL f64-div"); return 17; }
+    var a: f64 = 1.5;
+    var b: f64 = 2.5;
+    if (!(a < b) || !(b > a) || (a >= b)) { print("FAIL f64-cmp"); return 18; }
+
+    // --- f32 arithmetic ---
+    var g: f32 = 2.5;
+    var h: f32 = g + 1.5;                 // 4.0
+    if (h as i32 != 4) { print("FAIL f32-add"); return 19; }
+
+    print("OK");
+    return 0;
+}

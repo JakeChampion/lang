@@ -562,15 +562,210 @@ function main(): i32 {
 			t.Errorf("interp output missing %q; got:\n%s", want, out.String())
 		}
 	}
-	// Compiled backend: clean unsupported-feature diagnostic, no crash.
-	gen := exec.Command(bin, "-target", "x86-64", "-o", filepath.Join(dir, "out"), src)
+	// All three compiled backends now LOWER `dyn` via the boxed
+	// one-word representation (wasm: inline two-word, slice 2b; x86-64:
+	// slice 2c; arm64: slice 2d — docs/DYN-TRAITS.md §4.2/§7). No
+	// compiled backend rejects `dyn` anymore. Assert arm64 compiles
+	// CLEANLY (no unsupported-feature diagnostic, no crash); the
+	// differential run-vs-interp coverage lives in TestArm64DynTrait* /
+	// TestX86_64DynTrait* / TestWASMDynTrait* in dyn_trait_compiled_test.go.
+	gen := exec.Command(bin, "-target", "arm64", "-o", filepath.Join(dir, "out"), src)
 	var gerr bytes.Buffer
 	gen.Stderr = &gerr
-	if err := gen.Run(); err == nil {
-		t.Errorf("compiling dyn Trait to x86-64 should fail with a clean error, but it succeeded")
+	if err := gen.Run(); err != nil {
+		t.Errorf("compiling dyn Trait to arm64 should now succeed, but it failed: %v\nstderr: %s", err, gerr.String())
 	}
-	if !strings.Contains(gerr.String(), "dyn Trait is not yet supported on compiled backends") {
-		t.Errorf("compiled-backend diagnostic missing; got: %s", gerr.String())
+	if strings.Contains(gerr.String(), "dyn Trait is not yet supported on compiled backends") {
+		t.Errorf("arm64 should no longer reject dyn; got the stale unsupported-feature diagnostic: %s", gerr.String())
+	}
+}
+
+// TestInterpDynMultiTrait exercises a MULTI-trait trait object
+// (`dyn Show + Eq`, slice 1 of multi-trait `dyn` — docs/DYN-TRAITS.md):
+// a struct implementing BOTH traits coerces to `dyn Show + Eq` and can
+// call a method from EACH trait, dispatched by the value's runtime
+// concrete type. A heterogeneous `dyn Show + Eq[]` iterates + dispatches.
+// The compiled backends REJECT multi-trait `dyn` cleanly (merged-vtable
+// codegen is a later slice) — assert each target rejects with the clean
+// message, no panic.
+func TestInterpDynMultiTrait(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	prog := `import "std/i32";
+trait Show { function show(self: Self): string; }
+trait Weigh { function weight(self: Self): i32; }
+struct Apple { g: i32 }
+struct Brick { kg: i32 }
+impl Show for Apple { function show(self: Self): string { return "apple"; } }
+impl Weigh for Apple { function weight(self: Self): i32 { return self.g; } }
+impl Show for Brick { function show(self: Self): string { return "brick"; } }
+impl Weigh for Brick { function weight(self: Self): i32 { return self.kg * 1000; } }
+function describe(d: dyn Show + Weigh): string {
+    // a method from EACH trait, on the same multi-trait object
+    return d.show() + "=" + d.weight().to_string();
+}
+function main(): i32 {
+    // order-insensitive: dyn Weigh + Show is the same type
+    var one: dyn Weigh + Show = Apple { g: 150 };
+    print(describe(one));
+    var items: dyn Show + Weigh[] = [Apple { g: 120 }, Brick { kg: 2 }];
+    var total: i32 = 0;
+    for it in items {
+        print(describe(it));
+        total = total + it.weight();
+    }
+    print("total=" + total.to_string());
+    return 0;
+}
+`
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	// Interpreter: multi-trait dispatch from both traits works.
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("interp exit = %d, want 0\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	for _, want := range []string{"apple=150", "apple=120", "brick=2000", "total=2120"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("interp output missing %q; got:\n%s", want, out.String())
+		}
+	}
+	// Compiled backends now LOWER multi-trait `dyn A + B` dispatch through
+	// the merged vtable (docs/DYN-TRAITS.md §10) — codegen must succeed (no
+	// reject, no panic). The differential correctness tests against the
+	// interpreter live in dyn_trait_compiled_test.go (dynAllBackends).
+	for _, target := range []string{"arm64", "x86-64", "wasm"} {
+		gen := exec.Command(bin, "-target", target, "-o", filepath.Join(dir, "out_"+target), src)
+		var gerr bytes.Buffer
+		gen.Stderr = &gerr
+		err := gen.Run()
+		if err != nil {
+			t.Errorf("compiling multi-trait `dyn` dispatch to %s should now succeed, got error:\n%s", target, gerr.String())
+		}
+		if strings.Contains(gerr.String(), "panic") {
+			t.Errorf("%s multi-trait codegen panicked: %s", target, gerr.String())
+		}
+	}
+}
+
+// TestInterpDowncast exercises the `e as? T` fallible downcast
+// (docs/DYN-TRAITS.md §9) on the interpreter: a `dyn Shape` holding a
+// Circle downcasts to Some(circle) (and the bound value is usable as the
+// concrete Circle), and to None for Rect. A heterogeneous `dyn Shape[]`
+// downcasts each element. The compiled backends now LOWER the downcast
+// (vtable-pointer compare); this test asserts each target compiles
+// without error — the per-backend differential-vs-interp behaviour lives
+// in TestDowncast* (dyn_trait_compiled_test.go).
+func TestInterpDowncast(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	prog := `import "std/i32";
+trait Shape { function area(self: Self): i32; }
+struct Circle { r: i32 }
+struct Rect { w: i32, h: i32 }
+impl Shape for Circle { function area(self: Self): i32 { return self.r; } }
+impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } }
+function describe(s: dyn Shape): string {
+    // hit binds the concrete value, usable as a Circle (reads .r)
+    var c: Option[Circle] = s as? Circle;
+    return match (c) {
+        Some(x) => "circle r=" + x.r.to_string(),
+        None => "other",
+    };
+}
+function main(): i32 {
+    var shapes: dyn Shape[] = [Circle { r: 5 }, Rect { w: 2, h: 3 }, Circle { r: 9 }];
+    for s in shapes {
+        print(describe(s));
+    }
+    return 0;
+}
+`
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("interp exit = %d, want 0\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	for _, want := range []string{"circle r=5", "other", "circle r=9"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("interp output missing %q; got:\n%s", want, out.String())
+		}
+	}
+
+	// Compiled backends now LOWER the downcast (vtable-pointer compare) —
+	// compiling to each target must succeed (no error, no panic). The
+	// runtime-behaviour differential vs the interpreter is in TestDowncast*
+	// (dyn_trait_compiled_test.go).
+	for _, target := range []string{"arm64", "x86-64", "wasm"} {
+		gen := exec.Command(bin, "-target", target, "-o", filepath.Join(dir, "out_"+target), src)
+		var gerr bytes.Buffer
+		gen.Stderr = &gerr
+		err := gen.Run()
+		if err != nil {
+			t.Errorf("compiling `as?` downcast to %s should now succeed, but failed: %v\nstderr: %s", target, err, gerr.String())
+		}
+		if strings.Contains(gerr.String(), "panic") {
+			t.Errorf("%s downcast codegen panicked: %s", target, gerr.String())
+		}
+	}
+}
+
+// A `dyn` type may name a *module-qualified* imported trait
+// (`dyn cmp.Display`), not just a locally-declared one. Before the
+// modload fix, the qualified trait name in the `dyn` type kept its
+// dotted form and never matched the mangled `cmp__Display` key in
+// Info.Traits, so it failed with "unknown trait". A heterogeneous
+// `dyn cmp.Display[]` of scalars dispatches `to_string()` by runtime
+// type on the interpreter.
+func TestInterpDynTraitQualifiedTraitName(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	prog := `import "std/i32";
+import "std/string";
+import "core/cmp";
+function render(args: dyn cmp.Display[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < args.len()) {
+        out = out + args[i].to_string();
+        if (i + 1 < args.len()) { out = out + ", "; }
+        i = i + 1;
+    }
+    return out;
+}
+function main(): i32 {
+    var xs: dyn cmp.Display[] = [42, "hi", true];
+    print(render(xs));
+    return 0;
+}
+`
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("interp exit = %d, want 0\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	if got := strings.TrimSpace(out.String()); got != "42, hi, true" {
+		t.Errorf("dyn cmp.Display dispatch = %q, want %q", got, "42, hi, true")
 	}
 }
 
@@ -739,6 +934,250 @@ function main(): i32 {
 	for _, want := range []string{"Box(5)", "Box(hi)", "Has(9)", "Nil", "has-eq"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("arm64 output missing %q; got:\n%s", want, out)
+		}
+	}
+}
+
+// A trait method with a default body is inherited by an impl that omits
+// it and may be overridden by one that provides its own. Both forms
+// dispatch through the interpreter, including when reached via a
+// trait-bounded generic. See docs/TRAITS.md.
+const traitDefaultMethodSrc = `import "std/i32";
+
+trait Greet {
+    function name(self: Self): string;
+    function greeting(self: Self): string { return "hello, " + self.name(); }
+}
+
+struct Dog { age: i32 }
+impl Greet for Dog { function name(self: Self): string { return "rex"; } }
+
+struct Cat { age: i32 }
+impl Greet for Cat {
+    function name(self: Self): string { return "felix"; }
+    function greeting(self: Self): string { return "meow from " + self.name(); }
+}
+
+function announce[T: Greet](x: T): string { return x.greeting(); }
+
+function main(): i32 {
+    var d: Dog = Dog { age: 3 };
+    var c: Cat = Cat { age: 5 };
+    print(d.greeting());       // inherited default
+    print(c.greeting());       // overridden
+    print(announce(d));        // default via bound
+    return 0;
+}
+`
+
+func TestInterpTraitDefaultMethod(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(src, []byte(traitDefaultMethodSrc), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	got := out.String()
+	for _, want := range []string{"hello, rex", "meow from felix"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("stdout missing %q; got: %q (stderr: %s)", want, got, errb.String())
+		}
+	}
+	// `announce(d)` reuses the inherited default → "hello, rex" appears twice.
+	if strings.Count(got, "hello, rex") != 2 {
+		t.Errorf("expected inherited default reached twice (direct + via bound), got: %q", got)
+	}
+}
+
+// Default methods compile + run natively: they desugar to ordinary
+// receiver methods, so codegen needs no trait awareness. The x86-64 e2e
+// helper doesn't run the monomorph pass, so this variant uses direct
+// dispatch (inherited default + override); the bounded-generic path is
+// covered natively by the arm64 test below and on the interpreter.
+const traitDefaultMethodDirectSrc = `import "std/i32";
+
+trait Greet {
+    function name(self: Self): string;
+    function greeting(self: Self): string { return "hello, " + self.name(); }
+}
+
+struct Dog { age: i32 }
+impl Greet for Dog { function name(self: Self): string { return "rex"; } }
+
+struct Cat { age: i32 }
+impl Greet for Cat {
+    function name(self: Self): string { return "felix"; }
+    function greeting(self: Self): string { return "meow from " + self.name(); }
+}
+
+function main(): i32 {
+    var d: Dog = Dog { age: 3 };
+    var c: Cat = Cat { age: 5 };
+    print(d.greeting());       // inherited default
+    print(c.greeting());       // overridden
+    return 0;
+}
+`
+
+func TestX86_64TraitDefaultMethod(t *testing.T) {
+	out, code := compileAndRunX86_64(t, traitDefaultMethodDirectSrc)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, out)
+	}
+	for _, want := range []string{"hello, rex", "meow from felix"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("x86-64 output missing %q; got:\n%s", want, out)
+		}
+	}
+}
+
+// arm64 native default-method coverage, including the bounded-generic
+// path (`announce[T: Greet]` → inherited default) which the arm64 helper
+// monomorphises like the production driver.
+func TestArm64TraitDefaultMethod(t *testing.T) {
+	out, code := compileAndRunArm64(t, traitDefaultMethodSrc)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, out)
+	}
+	for _, want := range []string{"hello, rex", "meow from felix"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("arm64 output missing %q; got:\n%s", want, out)
+		}
+	}
+	if strings.Count(out, "hello, rex") != 2 {
+		t.Errorf("expected inherited default reached twice (direct + via bound), got:\n%s", out)
+	}
+}
+
+// wasm default-method coverage, including the bounded-generic path — the
+// wasm component builder monomorphises like the production driver.
+func TestWASMTraitDefaultMethod(t *testing.T) {
+	got := runWasmCapturingStdout(t, traitDefaultMethodSrc)
+	for _, want := range []string{"hello, rex", "meow from felix"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("wasm output missing %q; got:\n%s", want, got)
+		}
+	}
+	if strings.Count(got, "hello, rex") != 2 {
+		t.Errorf("expected inherited default reached twice (direct + via bound), got:\n%s", got)
+	}
+}
+
+// Supertraits (`trait Ord: Eq`): a `T: Ord` bound can call the
+// supertrait Eq's method on T, and the impl-time check requires every
+// `impl Ord for P` to also have `impl Eq for P`. The generic `rank`
+// exercises supertrait dispatch through monomorphisation. See
+// docs/TRAITS.md.
+const traitSupertraitSrc = `import "std/i32";
+
+trait Eq { function eq(self: Self, other: Self): boolean; }
+trait Ord: Eq { function lt(self: Self, other: Self): boolean; }
+
+struct P { x: i32 }
+impl Eq for P { function eq(self: Self, other: Self): boolean { return self.x == other.x; } }
+impl Ord for P { function lt(self: Self, other: Self): boolean { return self.x < other.x; } }
+
+function rank[T: Ord](a: T, b: T): string {
+    if (a.eq(b)) { return "eq"; }   // Eq method via the Ord supertrait bound
+    if (a.lt(b)) { return "lt"; }
+    return "gt";
+}
+
+function main(): i32 {
+    var p: P = P { x: 3 };
+    var q: P = P { x: 5 };
+    print(rank(p, q));   // lt
+    print(rank(q, p));   // gt
+    print(rank(p, p));   // eq
+    return 0;
+}
+`
+
+func TestInterpTraitSupertrait(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(src, []byte(traitSupertraitSrc), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	got := out.String()
+	for _, want := range []string{"lt", "gt", "eq"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("stdout missing %q; got: %q (stderr: %s)", want, got, errb.String())
+		}
+	}
+}
+
+// arm64 native supertrait coverage (the arm64 helper monomorphises the
+// `rank[T: Ord]` generic like the production driver).
+func TestArm64TraitSupertrait(t *testing.T) {
+	out, code := compileAndRunArm64(t, traitSupertraitSrc)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, out)
+	}
+	for _, want := range []string{"lt", "gt", "eq"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("arm64 output missing %q; got:\n%s", want, out)
+		}
+	}
+}
+
+// wasm supertrait coverage (the wasm component builder monomorphises).
+func TestWASMTraitSupertrait(t *testing.T) {
+	got := runWasmCapturingStdout(t, traitSupertraitSrc)
+	for _, want := range []string{"lt", "gt", "eq"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("wasm output missing %q; got:\n%s", want, got)
+		}
+	}
+}
+
+// Direct (non-generic) supertrait dispatch, for the x86-64 e2e helper
+// (which doesn't run the monomorph pass). Still exercises supertrait
+// conformance (`impl Ord for P` requires `impl Eq for P`) and dispatch of
+// both the trait's own and the supertrait's methods on a concrete value.
+const traitSupertraitDirectSrc = `import "std/i32";
+
+trait Eq { function eq(self: Self, other: Self): boolean; }
+trait Ord: Eq { function lt(self: Self, other: Self): boolean; }
+
+struct P { x: i32 }
+impl Eq for P { function eq(self: Self, other: Self): boolean { return self.x == other.x; } }
+impl Ord for P { function lt(self: Self, other: Self): boolean { return self.x < other.x; } }
+
+function main(): i32 {
+    var p: P = P { x: 3 };
+    var q: P = P { x: 5 };
+    if (p.eq(q)) { print("eq"); } else { print("neq"); }   // neq
+    if (p.lt(q)) { print("lt"); }                          // lt
+    return 0;
+}
+`
+
+func TestX86_64TraitSupertrait(t *testing.T) {
+	out, code := compileAndRunX86_64(t, traitSupertraitDirectSrc)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s", code, out)
+	}
+	for _, want := range []string{"neq", "lt"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("x86-64 output missing %q; got:\n%s", want, out)
 		}
 	}
 }

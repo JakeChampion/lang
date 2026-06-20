@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/test";
 // examples/tests/helpers_test.fern — exercises the
 // multi-substring / string-diff / numeric-range / file-state
@@ -9,95 +8,95 @@ import "std/test";
 // shape; this file covers the layered convenience helpers
 // that fold common patterns into one-liners.
 
-function test_contains_all_pass(): Option[string] {
+function test_contains_all_pass(): test.TestOutcome {
     return test.assert_contains_all(
         "error: function `foo` undefined at line 5",
         ["error:", "foo", "line 5"]);
 }
 
-function test_contains_all_localises_missing(): Option[string] {
+function test_contains_all_localises_missing(): test.TestOutcome {
     // `assert_contains_all` should surface the FIRST missing
     // needle in its failure message, not say "something didn't
     // match" — we invert the assertion and check the message
     // mentions the right needle.
     match (test.assert_contains_all("error: foo", ["error:", "xyzzy"])) {
-        Some(msg) => {
+        Fail(msg) => {
             if (!msg.contains("xyzzy")) {
                 return test.fail("failure message did not name the missing needle: " + msg);
             }
-            return None;
+            return test.pass();
         },
-        None => { return test.fail("expected assert_contains_all to fail"); }
+        Pass => { return test.fail("expected assert_contains_all to fail"); }
     }
-    return None;
+    return test.pass();
 }
 
-function test_contains_any_one_matches(): Option[string] {
+function test_contains_any_one_matches(): test.TestOutcome {
     return test.assert_contains_any("connection refused",
                                ["timeout", "refused", "reset"]);
 }
 
-function test_contains_in_order(): Option[string] {
+function test_contains_in_order(): test.TestOutcome {
     return test.assert_contains_in_order(
         "expected X at line 5, got Y",
         ["expected", "line 5", "got"]);
 }
 
-function test_contains_in_order_rejects_wrong_order(): Option[string] {
+function test_contains_in_order_rejects_wrong_order(): test.TestOutcome {
     // The needles appear in the haystack but in the wrong
     // order — `in_order` must reject this.
     match (test.assert_contains_in_order("got Y at line 5 expected X",
                                     ["expected", "line 5", "got"])) {
-        Some(_) => { return None; },
-        None => { return test.fail("expected in-order check to reject reversed sequence"); }
+        Fail(_) => { return test.pass(); },
+        Pass => { return test.fail("expected in-order check to reject reversed sequence"); }
     }
-    return None;
+    return test.pass();
 }
 
-function test_in_range_i32_pass(): Option[string] {
+function test_in_range_i32_pass(): test.TestOutcome {
     return test.assert_in_range_i32(50, 0, 100);
 }
 
-function test_in_range_i32_boundary_pass(): Option[string] {
+function test_in_range_i32_boundary_pass(): test.TestOutcome {
     return test.assert_in_range_i32(0, 0, 100);
 }
 
-function test_in_range_i32_below_fails(): Option[string] {
+function test_in_range_i32_below_fails(): test.TestOutcome {
     match (test.assert_in_range_i32(0 - 1, 0, 100)) {
-        Some(msg) => {
+        Fail(msg) => {
             if (!msg.contains("< lower bound")) {
                 return test.fail("failure msg should name lower-bound side");
             }
-            return None;
+            return test.pass();
         },
-        None => { return test.fail("expected below-range to fail"); }
+        Pass => { return test.fail("expected below-range to fail"); }
     }
-    return None;
+    return test.pass();
 }
 
-function test_in_range_i64_pass(): Option[string] {
+function test_in_range_i64_pass(): test.TestOutcome {
     return test.assert_in_range_i64(5000000000 as i64,
                                1000000000 as i64,
                                9999999999 as i64);
 }
 
-function test_string_diff_equal_strings(): Option[string] {
+function test_string_diff_equal_strings(): test.TestOutcome {
     return test.assert_eq_string_diff("a\nb\nc\n", "a\nb\nc\n");
 }
 
-function test_string_diff_localises_line(): Option[string] {
+function test_string_diff_localises_line(): test.TestOutcome {
     // Two strings differ at line 3 (foo vs FOO). The failure
     // message must name line 3 and show both values.
     match (test.assert_eq_string_diff("a\nb\nfoo\nd\n", "a\nb\nFOO\nd\n")) {
-        Some(msg) => {
+        Fail(msg) => {
             if (!msg.contains("line 3")) {
                 return test.fail("failure msg should pin line 3: " + msg);
             }
-            return None;
+            return test.pass();
         },
-        None => { return test.fail("expected string diff to fail"); }
+        Pass => { return test.fail("expected string diff to fail"); }
     }
-    return None;
+    return test.pass();
 }
 
 function test_file_helpers(r: test.TestRunner): test.TestRunner {

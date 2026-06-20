@@ -14,14 +14,15 @@ Reserved across all syntactic positions:
 
 ```
 function var let use as
-if else while for break continue return
+if else while for loop break continue return
 true false boolean void string
 i8 i16 i32 i64 u8 u16 u32 u64 usize f32 f64
 switch case default
 struct enum type
 import pub const
 match when
-defer arena
+defer errdefer
+trait impl dyn
 ```
 
 ## Comments
@@ -67,11 +68,16 @@ isn't significant.
 - **`if (cond) { ... } else { ... }`** — statement or expression.
 - **`while (cond) { ... }`** — pre-test loop.
 - **`for (init; cond; step) { ... }`** — three-part loop.
+- **`loop { ... }`** — infinite loop; exit with `break` / `return`.
 - **`match (expr) { Pat(b) => { ... }, ... }`** — pattern dispatch.
 - **`switch (expr) { case 1: ...; default: ... }`** — value dispatch.
-- **`defer expr;`** — schedule expr to run on function exit (LIFO).
-- **`arena { ... }`** — bump-allocator scope; allocations inside
-  reclaim on exit.
+- **`let Pat(b) = expr else { ... };`** — refutable binding; the `else`
+  block must diverge.
+- **`defer expr;`** / **`errdefer expr;`** — schedule expr to run on
+  function exit (LIFO); `errdefer` runs only on an error exit.
+
+See [Language features](../language-features/) for `defer` / `errdefer`,
+`let … else`, `loop`, the pipe operator, and `use`.
 
 ## String literals
 

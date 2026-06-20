@@ -1,0 +1,233 @@
+// Block-expressions: `if`/`match` expression branches accept a
+// `{ stmts; tail }` body whose statements run in a fresh child scope and
+// whose trailing expression (no `;`) is the branch's value. The
+// interpreter is the source of truth; slice 2 lowers them on all three
+// compiled backends (wasm / x86-64 / arm64) via the target-agnostic IR.
+// The TestBlockExprInterp cases below run on the interpreter and assert
+// main()'s exit code; the differential tests further down run real
+// programs on every backend and assert each backend's stdout matches the
+// interpreter's. See docs/BLOCK-EXPRESSIONS.md.
+package e2e
+
+import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+)
+
+// blockExprInterpExit runs src on the interpreter and returns (exitCode, stdout,
+// stderr) without failing the test — callers assert on the values
+// (slice-1 reject paths expect a non-zero exit, the happy paths expect a
+// specific code).
+func blockExprInterpExit(t *testing.T, src string) (int, string, string) {
+	t.Helper()
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", p)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	return cmd.ProcessState.ExitCode(), out.String(), errb.String()
+}
+
+func TestBlockExprInterp(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			// `if`-branch block: a leading statement then a trailing
+			// value. The block evaluates to `e + 1` = 6.
+			"if-block-tail",
+			`function main(): i32 {
+				var e = 5;
+				var x: i32 = if (e > 0) { var k = e + 1; k } else { 0 };
+				return x;
+			}`,
+			6,
+		},
+		{
+			// The other branch is taken — value-less branch isn't
+			// reached, the single-expr `else` value flows.
+			"if-block-else-taken",
+			`function main(): i32 {
+				var e = 0;
+				var x: i32 = if (e > 0) { var k = e + 1; k } else { var z = 9; z };
+				return x;
+			}`,
+			9,
+		},
+		{
+			// `match`-arm block-expression: arm 0 runs `var s = tag +
+			// 5; s` → 5; the wildcard arm is a bare expr.
+			"match-arm-block",
+			`function main(): i32 {
+				var tag = 0;
+				var r: i32 = match (tag) { 0 => { var s = tag + 5; s }, _ => 99 };
+				return r;
+			}`,
+			5,
+		},
+		{
+			// Multiple leading statements; the tail sees them all.
+			"multi-leading-statements",
+			`function main(): i32 {
+				var x: i32 = if (true) { var a = 2; var b = a * 3; var c = b + 1; c } else { 0 };
+				return x;
+			}`,
+			7,
+		},
+		{
+			// Composition: a block-expr `if` nested inside a `match`
+			// scrutinee. `match (if (c) { var k = 7; k } else { 0 }) {
+			// ... }` → matches 7.
+			"compose-through-match",
+			`function main(): i32 {
+				var c = true;
+				var r: i32 = match (if (c) { var k = 7; k } else { 0 }) {
+					7 => { var hit = 1; hit },
+					_ => 0
+				};
+				return r;
+			}`,
+			1,
+		},
+		{
+			// Block locals don't leak: the same name `k` is rebound in
+			// a later block-expr without collision, proving each block
+			// gets its own scope.
+			"locals-confined-to-block",
+			`function main(): i32 {
+				var a: i32 = if (true) { var k = 10; k } else { 0 };
+				var b: i32 = if (true) { var k = 20; k } else { 0 };
+				return a + b;
+			}`,
+			30,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			code, out, errb := blockExprInterpExit(t, c.src)
+			if code != c.want {
+				t.Errorf("exit = %d, want %d\nstdout: %s\nstderr: %s", code, c.want, out, errb)
+			}
+		})
+	}
+}
+
+// Slice 2: block-expressions COMPILE + run correctly on all three native
+// backends (wasm / x86-64 / arm64), checked differentially against the
+// interpreter. This was the slice-1 reject test — flipped, like the `as?`
+// downcast codegen PR flipped its reject test, to assert correct
+// compilation + execution rather than a clean reject. `dynAllBackends`
+// (defined in dyn_trait_compiled_test.go) runs src on the interpreter and
+// every compiled backend and asserts each compiled stdout matches the
+// interpreter's, and that the interpreter's matches the expected string.
+
+// An `if`-expression branch block whose value flows into a `var`, printed
+// so each backend's stdout is differentially compared. The taken branch
+// runs a leading `var k = e + 1;` and yields `k`; e=5 → 6.
+func TestBlockExprCompiledIfBranch(t *testing.T) {
+	src := `import "std/i32";
+function main(): i32 {
+	var e = 5;
+	var x: i32 = if (e > 0) { var k = e + 1; k } else { 0 };
+	print("x=" + x.to_string());
+	return 0;
+}
+`
+	dynAllBackends(t, src, "x=6")
+}
+
+// A `match`-arm block-expression: arm 0 runs `var v = t + 10; v * 2`.
+// t=0 → v=10 → 20.
+func TestBlockExprCompiledMatchArm(t *testing.T) {
+	src := `import "std/i32";
+function main(): i32 {
+	var t = 0;
+	var r: i32 = match (t) { 0 => { var v = t + 10; v * 2 }, _ => 0 };
+	print("r=" + r.to_string());
+	return 0;
+}
+`
+	dynAllBackends(t, src, "r=20")
+}
+
+// A STRING-producing block tail: `{ var s = a + b; s }`. The block-local
+// `s` is a heap value; it's the block's result, so it must survive the
+// function-exit dec sweep (its reference flows out to the printed
+// result) — no double-free / leak-induced wrongness. Differential across
+// all backends confirms RC correctness end to end.
+func TestBlockExprCompiledStringTail(t *testing.T) {
+	src := `function main(): i32 {
+	var a = "foo";
+	var b = "bar";
+	var s: string = if (true) { var joined = a + b; joined } else { "" };
+	print("s=" + s);
+	return 0;
+}
+`
+	dynAllBackends(t, src, "s=foobar")
+}
+
+// Nested: a block-expr whose tail is itself an `if`-expression. The outer
+// block runs `var base = 3;` then yields `if (base > 0) { base * 7 } else
+// { -1 }` → 21.
+func TestBlockExprCompiledNestedIfTail(t *testing.T) {
+	src := `import "std/i32";
+function main(): i32 {
+	var x: i32 = if (true) {
+		var base = 3;
+		if (base > 0) { base * 7 } else { 0 - 1 }
+	} else { 0 };
+	print("x=" + x.to_string());
+	return 0;
+}
+`
+	dynAllBackends(t, src, "x=21")
+}
+
+// Nested: a block-expr whose tail is itself a `match`-expression, and
+// whose tail-match has a block arm too. Exercises composition of the new
+// lowering with the existing match-expr lowering.
+func TestBlockExprCompiledNestedMatchTail(t *testing.T) {
+	src := `import "std/i32";
+function main(): i32 {
+	var sel = 1;
+	var r: i32 = if (true) {
+		var bump = 100;
+		match (sel) {
+			1 => { var hit = bump + 5; hit },
+			_ => 0
+		}
+	} else { 0 };
+	print("r=" + r.to_string());
+	return 0;
+}
+`
+	dynAllBackends(t, src, "r=105")
+}
+
+// Block-locals don't leak and each block gets its own scope: the same
+// name `k` is rebound in two sibling block-exprs without collision, and
+// both contribute to the result (10 + 20 = 30). Confirms the
+// shadowrename frame + per-slot allocation works through codegen.
+func TestBlockExprCompiledLocalsConfined(t *testing.T) {
+	src := `import "std/i32";
+function main(): i32 {
+	var a: i32 = if (true) { var k = 10; k } else { 0 };
+	var b: i32 = if (true) { var k = 20; k } else { 0 };
+	print("sum=" + (a + b).to_string());
+	return 0;
+}
+`
+	dynAllBackends(t, src, "sum=30")
+}

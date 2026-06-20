@@ -25,7 +25,7 @@ func TestRunRewritesGenericCallSitesInsideEveryExprShape(t *testing.T) {
 	}{
 		{
 			name: "MapLit value position",
-			src: `import "core/no_prelude";
+			src: `
 import "core/map";
 function id[T](x: T): T { return x; }
 function main(): i32 {
@@ -35,7 +35,7 @@ function main(): i32 {
 		},
 		{
 			name: "MapLit key position",
-			src: `import "core/no_prelude";
+			src: `
 import "core/map";
 function id[T](x: T): T { return x; }
 function main(): i32 {
@@ -45,7 +45,7 @@ function main(): i32 {
 		},
 		{
 			name: "FString interpolant",
-			src: `import "core/no_prelude";
+			src: `
 import "std/i32";
 function id[T](x: T): T { return x; }
 function main(): i32 {
@@ -336,14 +336,14 @@ function main(): i32 {
     var p: P = P { x: id(1), y: id(2) };
     return p.x + p.y;
 }`},
-		{node: "MapLit.Key+Value", src: `import "core/no_prelude";
+		{node: "MapLit.Key+Value", src: `
 import "core/map";
 function id[T](x: T): T { return x; }
 function main(): i32 {
     var m: Map[i32, i32] = Map { id(1): id(10) };
     return m.len();
 }`},
-		{node: "FString.Interpolant", src: `import "core/no_prelude";
+		{node: "FString.Interpolant", src: `
 import "std/i32";
 function id[T](x: T): T { return x; }
 function main(): i32 {
@@ -698,7 +698,7 @@ function main(): i32 {
 // must substitute the concrete instantiation into the argument's
 // ElemType at the call site.
 func TestRunSubstitutesArrayLiteralElemTypeAtCallSite(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 struct Box { v: i32 }
 function len_of[T](xs: T[]): i32 { return xs.len(); }
@@ -748,7 +748,7 @@ function main(): i32 {
 // generic `id` (which gets removed after the pass), and the
 // post-monomorph re-check failed with "expected T, got i32".
 func TestRunTransitiveInstantiation(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 function id[T](x: T): T { return x; }
 function wrap[T](x: T): T { return id(x); }
@@ -785,5 +785,50 @@ function main(): i32 { return wrap(5); }`
 	}
 	if wraps == 0 {
 		t.Errorf("no wrap__* clone")
+	}
+}
+
+// TestGenericDeriveDefaultMonomorphises guards the fix for the
+// "re-check failed: undefined identifier T/i32" crash: a generic struct's
+// derived `default()` is a receiver-less associated function whose call site
+// `Box.default()` must (a) get its type args inferred from the binding's
+// destination type and (b) have its `T.default()` body rewritten to the
+// concrete type — including a PRIMITIVE type param resolving onto a primitive
+// `impl Default for i32`. Each case must check + monomorphise without error
+// and leave no generic decl behind.
+func TestGenericDeriveDefaultMonomorphises(t *testing.T) {
+	cases := []struct{ name, src string }{
+		{"struct-param", `trait Default { function default(): Self; }
+@derive(Default) struct Inner { n: i32 }
+@derive(Default) struct Box[T] { v: T }
+function main(): i32 { var b: Box[Inner] = Box.default(); return b.v.n; }`},
+		{"primitive-param", `trait Default { function default(): Self; }
+impl Default for i32 { function default(): i32 { return 0; } }
+@derive(Default) struct Box[T] { v: T }
+function main(): i32 { var b: Box[i32] = Box.default(); return b.v; }`},
+		{"string-param", `trait Default { function default(): Self; }
+impl Default for string { function default(): string { return ""; } }
+@derive(Default) struct Box[T] { v: T }
+function main(): i32 { var b: Box[string] = Box.default(); return b.v.len(); }`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			prog, _, err := modload.LoadSource(c.src)
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			info, err := checker.Check(prog)
+			if err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			if err := monomorph.Run(prog, info); err != nil {
+				t.Fatalf("monomorph: %v", err)
+			}
+			for _, fn := range prog.Funcs {
+				if len(fn.TypeParams) > 0 {
+					t.Errorf("generic decl %q survived monomorph", fn.Name)
+				}
+			}
+		})
 	}
 }

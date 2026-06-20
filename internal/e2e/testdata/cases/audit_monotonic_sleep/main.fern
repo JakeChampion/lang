@@ -1,0 +1,19 @@
+// monotonic_ns() + sleep_ms() builtin runtimes (#2843). Both
+// type-check and run on the interpreter; this fixture locks in the
+// NATIVE x86-64 / arm64 code-generation backends, which previously
+// emitted a call to an undefined `monotonic_ns` / `sleep_ms` symbol
+// (assemble/link failure). monotonic_ns is a monotonically
+// non-decreasing nanosecond clock, so the second reading is >= the
+// first; sleep_ms simply has to run without dangling. Exit 7 proves
+// both runtimes are present and the clock is well-ordered.
+//
+// wasm is excluded for now: native wasm sleep_ms (a WASI
+// poll-based sleep) is a separate follow-up; monotonic_ns already
+// works there. See the issue's backend table.
+function main(): i32 {
+    var a: i64 = monotonic_ns();
+    sleep_ms(1);
+    var b: i64 = monotonic_ns();
+    if (b >= a) { return 7; }
+    return 1;
+}

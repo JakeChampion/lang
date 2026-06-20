@@ -27,8 +27,13 @@ func wantOK(t *testing.T, name, src string) {
 	}
 }
 
+// `sink` CONSUMES its argument (`own`), so passing an owned value to it is a
+// move — the consume tests below rely on that. `peek` BORROWS, so passing an
+// owned value to it is a read, not a move (the precise affine model: only an
+// `own` position consumes).
 const ownPrelude = `enum Lst { Cons(i32), Nil }
-function sink(xs: i32[]): i32 { return xs[0]; }
+function sink(own xs: i32[]): i32 { return xs[0]; }
+function peek(xs: i32[]): i32 { return xs[0]; }
 function lsink(l: Lst): i32 { return 0; }
 `
 
@@ -121,6 +126,45 @@ function f(own xs: i32[]): i32 {
 }`)
 }
 
+// Precise affine model: passing an owned value to a BORROWED parameter is a
+// read, not a move — so it can be passed to a borrowing helper repeatedly and
+// still consumed at the end. (Strict-affine over-approximation would have
+// flagged the second `peek(xs)` as a use-after-move.) This is the idiom the
+// self-host's `own`-threaded builders rely on (`contains_str(out, x)` then
+// `out = out.append(x)`).
+func TestOwnedBorrowArgIsNotConsumeOK(t *testing.T) {
+	wantOK(t, "borrow-arg-not-consume", ownPrelude+`
+function f(own xs: i32[]): i32 {
+    var a: i32 = peek(xs);   // borrow (arg to a borrowed param)
+    var b: i32 = peek(xs);   // still a borrow — not use-after-move
+    return a + b + sink(xs); // consume at the end
+}`)
+}
+
+// Read-form borrows: an `own` value READ through a slice, a comparison, a cast,
+// etc. is borrowed (not consumed), so it can still be consumed at the end. The
+// affine walk now classifies those read positions as borrows; without it each
+// was a false use-after-move E050 (the gap that blocked tracking owned locals,
+// which are read through casts / comparisons / slices pervasively).
+func TestOwnedReadFormsAreBorrows(t *testing.T) {
+	wantOK(t, "slice-and-compare-reads", ownPrelude+`
+function takesl(s: [i32]): i32 { return s.len(); }
+function f(own xs: i32[]): i32 {
+    var n: i32 = takesl(xs[0:1]);     // slice read (borrow)
+    var c: boolean = xs.len() == 3;   // method-then-compare (reads)
+    if (c) { return n; }
+    return n + sink(xs);              // consume at the end
+}`)
+	wantOK(t, "string-concat-read", ownPrelude+`
+function slen(s: string): i32 { return 0; }
+function f(own s: string): i32 {
+    var t: i32 = slen(s + "!");       // string-concat operand read (borrow)
+    var u: boolean = s == "x";        // comparison read (borrow)
+    if (u) { return t; }
+    return t + slen(s);
+}`)
+}
+
 // --- E051: call-site ownership guard -------------------------------------
 
 const ownConsumer = `enum Box { Wrap(i32[]) }
@@ -180,6 +224,30 @@ func TestOwnGuardAllowsVariantCall(t *testing.T) {
 	wantOK(t, "variant-call-arg", ownConsumer+`
 function f(): i32 {
     return consumeBox(Wrap([1, 2]));   // fresh enum value → owned
+}`)
+}
+
+// A call to a function whose EVERY pointer parameter is `own` returns a
+// freshly-owned result (the callee consumed each pointer input, so it can't
+// hand back a borrowed one) — so it passes the E051 transfer guard. This is
+// the self-host `consume(build(own ops, s))` shape: a threaded `own` array
+// param grown and returned is owned by the caller, transferable onward.
+func TestOwnGuardAllowsAllOwnPtrParamCallResult(t *testing.T) {
+	wantOK(t, "all-own-ptr-param-result", ownConsumer+`
+function build(own ops: i32[], x: i32): i32[] { return ops.append(x); }
+function f(): i32 {
+    return consume(build([1, 2], 3));   // build's result is freshly owned → transfer OK
+}`)
+}
+
+// The dual: a function with a BORROWED pointer parameter could return it
+// (`id(xs) -> xs`), so its result is NOT provably owned — transferring it stays
+// E051.
+func TestOwnGuardRejectsBorrowedPtrParamCallResult(t *testing.T) {
+	wantE051(t, "borrowed-ptr-param-result", ownConsumer+`
+function pick(a: i32[], b: i32[]): i32[] { return a; }
+function f(): i32 {
+    return consume(pick([1, 2], [3, 4]));   // pick may return a borrowed input → E051
 }`)
 }
 

@@ -1,0 +1,17 @@
+// `for i in LOW..=HIGH` iterates the closed interval [LOW, HIGH].
+// HIGH is evaluated once; `continue` still advances (runs the step).
+// Mirrors range_for (half-open) with the inclusive `..=` operator.
+function hi(): i32 { return 6; }
+function main(): i32 {
+    var sum: i32 = 0;
+    for i in 0..=5 { sum = sum + i; }            // 0+1+2+3+4+5 = 15
+    for j in 2..=hi() {                           // hi() called once
+        if (j == 4) { continue; }                // skip 4
+        sum = sum + j;                            // 2+3+5+6 = 16 -> 31
+    }
+    for k in 5..=5 { sum = sum + 100; }          // single iter -> +100 -> 131
+    for m in 9..=3 { sum = sum + 1000; }         // reversed -> empty
+    var n: i32 = 2;
+    for p in 0..=n { sum = sum + 7; }            // 0,1,2 -> +21 -> 152
+    return sum;                                   // 152
+}

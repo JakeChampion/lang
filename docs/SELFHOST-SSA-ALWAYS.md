@@ -352,13 +352,9 @@ type before the local binding, so a local var named like a function/method
 whole `fern.fern` has **zero unknown callees** and exactly **one**
 `build_func` blocker left: **`main`**.
 
-**The last coverage blocker is `main` — a feature *cluster*, not a one-liner.**
-`main` is the CLI driver, and its remaining SSA gaps are all I/O / sum-type:
-- **File-I/O builtins** `read_file` / `write_file` — these are *builtins*
-  (syscall sequences the AST backend emits inline; no `function read_file`
-  exists), so the SSA backends would emit `call read_file` → unknown. They
-  need dedicated SSA ops + an open/read(/write)/close syscall runtime on
-  x86-64 / arm64 (wasm via WASI `path_open` etc., or fall back).
+**The last coverage blocker was `main` — a feature *cluster*, not a one-liner
+(now ✅ fully closed).** `main` is the CLI driver, and its remaining SSA gaps
+were all I/O / sum-type:
 - **Option / Result** (`Some`/`None`/`Ok`/`Err`) — ✅ **landed.**
   `build_func` now constructs the fixed 2-word box `{tag@0, payload@1}`
   (Some/Ok = 0, None/Err = 1, mirroring `asm.fern`), `None` is an `ExprIdent`
@@ -368,18 +364,121 @@ whole `fern.fern` has **zero unknown callees** and exactly **one**
   which binds the whole box). All heap ops, so wasm gets it for free.
   Payload typing is best-effort. Gated by an `option-result` case on the
   x86-64 / arm64 / wasm SSA emit matrices.
-- **File-I/O builtins** `read_file` / `write_file` — still open; the only
-  remaining `main` blocker. With Option/Result in, `main`'s `build_func`
-  now *succeeds*, but `calls_all_known` still rejects the `read_file` /
-  `write_file` builtin calls (no SSA runtime for them).
+- **File-I/O builtins** `read_file` / `write_file` — ✅ **landed.**
+  Dedicated SSA ops (`build_func` recognises the builtin calls, like `exit` /
+  `strbuf_*`) lowering to a syscall runtime on x86-64 + arm64:
+  `__fern_ssa_read_file` (openat O_RDONLY → lseek-size → read-to-EOF → a fresh
+  `[tag=0, payload=string]` Ok box, or `[tag=1, 0]` Err on error) and
+  `__fern_ssa_write_file` (openat O_WRONLY|O_CREAT|O_TRUNC → write → a
+  `[tag=1, 0]` None box, or `[tag=0, 0]` Some on error). The key wrinkle vs the
+  AST backend: SSA strings are `[len, byte-per-8-byte-word]` (not the AST
+  `{ptr,len}` over packed bytes), so both helpers pack/unpack between that
+  layout and the raw byte buffers the syscalls work on. Allocation is a shared
+  `__fern_ssa_alloc` bump off `__fern_ssa_hp`. wasm rejects them via
+  `ssa_wasm.inst_supported` → AST fallback (its WASI `path_open` path). Gated
+  by `file-io-roundtrip` / `-read-external` / `-read-missing` cases (default +
+  `-regalloc`) on the x86-64 + arm64 SSA emit matrices.
 
-So `main` is now down to file I/O, which is the most Perceus-adjacent
-remaining work (a syscall runtime) and warrants deliberate implementation.
+  Surfaced and fixed on the way: an all-arms-`return` `match` used as the last
+  statement (the idiomatic `match (read_file(p)) { Ok(s) => return …, Err(e)
+  => return … }`) failed `build_func`. `synth_match_chain` always emitted an
+  empty trailing `else` after the final variant arm, whose dead-but-reachable
+  un-terminated fall-through tripped `build_func`'s "missing return" bail. Fix:
+  the textually-last variant arm of an (exhaustive) match is now an
+  unconditional catch-all — like a wildcard — so no empty `else` is generated.
+  Behaviour-preserving for exhaustive matches (the only kind the checker
+  admits), and a strict IR simplification for the rest.
 
-Still open: the *linear* per-function retention (build + emit, freed by
-nothing) — Perceus RC (the native backend already has it; the self-host
-runtime stubs it to no-ops — `asm.fern`: "leak-everything bump heap") or a
-streaming/arena scheme; and `main`'s I/O + sum-type cluster above.
+With this, **`main`'s `build_func` succeeds** and file I/O is off the blocker
+list. But — true to the "each fix unmasks the next" pattern above — file I/O was
+*not* the last coverage gap.
+
+**Measured (the `-ssa-scan` diagnostic).** `fern.fern` grew a `-ssa-scan` flag:
+the non-bailing twin of `try_ssa` that runs `build_func` over every function in
+the merged program and records *all* failures + *all* unknown callees in one
+pass (vs `try_ssa`'s first-bail, all-or-nothing). Run over the whole compiler
+(1499 functions after lambda lifting) on current `main` + this PR, the true
+remaining coverage set is **small and enumerated**:
+
+- **`build_func` failure (1):** `wasm__emit_expr` — one unhandled construct in
+  the AST wasm emitter's expression lowering.
+- **Unknown callees (2):** `write` (raw stdout write — `print` *without* the
+  trailing newline; the driver's output primitive) and `args` (the argv
+  builtin returning `string[]`). Both are builtins with no `function` body, so
+  the SSA backends emit `call write` / `call args` → unknown. They need
+  dedicated ops + runtime, exactly like `read_file` / `write_file` / `exit` /
+  `print` before them (`write` is trivial — `print` with a no-newline flag;
+  `args` needs an argv→`string[]` materialiser over the `_start`-saved vector).
+
+Those three holdouts have since been closed:
+
+- **`write`** ✅ — a dedicated op → `__fern_ssa_write` (`print` minus the
+  trailing newline).
+- **`args`** ✅ — a dedicated op → `__fern_ssa_args`, materialising the SSA
+  `[argc, strptr…]` array of SSA strings from the argv pointer the SSA
+  `_start` now saves.
+- **`wasm__emit_expr`** ✅ — *not* a missing feature but a `type_of_expr`
+  field-normalisation gap: a Cell-typed **struct field** (`cx.lam_ctr:
+  Cell[i32]`) accessed as `cx.lam_ctr.get()` reported its raw declared type
+  `"Cell[i32]"`, which the cell-method path's `urt == "cell"` check missed →
+  `build_func` bail. `type_of_expr`'s field arm now normalises a field's type
+  the same way params are (`Cell[…]` → `"cell"`, `Map[…]` → `"Map"`/`"SMap"`),
+  so Cell / Map struct fields dispatch their methods. Gated by a
+  `cell-struct-field` case on the x86-64 + arm64 SSA emit matrices.
+
+**`-ssa-scan` over the whole compiler (1505 functions) now reports
+`0 failures, 0 unknown callees` — per-function SSA coverage is genuinely 100%.**
+Every function the self-host compiler defines lowers through `build_func`.
+
+The *only* thing now between here and a byte-stable SSA self-compile fixpoint
+(Phase 4's success criterion) is the **memory wall**.
+
+#### Measured (current `main`, x86-64, RSS of a full whole-compiler compile)
+
+| path | result | peak RSS |
+|------|--------|----------|
+| `-no-ssa` (AST emitter) | ✅ completes, 28 MB asm | **726 MB** |
+| default (SSA pipeline)  | ✗ **traps (exit 137)** | **~1 GiB** (overruns the `cmd/fern` bootstrap heap; needs **>2 GiB** — a 1.9 GiB heap still trapped) |
+
+Note the *behaviour change* 100% coverage brought: previously the default path
+bailed **early** (a coverage gap → `try_ssa` returns `ok=false` cheaply → AST
+fallback). Now that every function is in-subset, `try_ssa` proceeds through the
+**entire** build of all ~1500 functions before it could fall back — and OOMs
+mid-build. (Users are unaffected: only a ~1500-function in-subset program — i.e.
+the self-compile itself — reaches this; ordinary small programs compile fine.)
+
+#### What the wall is NOT (measured, not assumed)
+
+The intuitive culprit — `try_ssa` holding **all** the final `SFunc`s in
+`sfuncs[]` until `emit_program` — was **tested and ruled out**. A streaming
+rewrite (build → `emit_one` → drop each function, so RC could reclaim it; the
+backends split into `emit_prologue`/`emit_one`/`emit_epilogue`) moved peak RSS
+by **3 MB** (982 → 979) and still trapped. The reason: `try_ssa` is
+all-or-nothing, so even a streaming driver must **build every function once** up
+front to verify the whole program is in-subset — and *that first build pass
+alone* overruns the heap.
+
+So the wall is **transient allocation inside `build_func` + `optimize`**, not
+retained output. Those passes churn `.append` / functional-update garbage per
+function, and **nothing is freed**: the `cmd/fern`-built compiler is at RC
+"free OFF" (the Perceus self-host port is mid-flight — see #2491 "string RC
+counting milestone (free OFF)" and `docs/RC-PERCEUS-SELF-HOST-PORT.md`). With
+freeing off, total transient allocation across ~1500 builds exceeds the arena
+regardless of how the output is streamed. The AST path fits only because its
+total churn happens to stay under 1 GiB.
+
+#### The actual unblock (two viable levers)
+
+1. **Turn RC freeing ON** (the Perceus track already in progress). Once dead
+   per-function build garbage is reclaimed, the streaming-emit structure above
+   becomes worthwhile and the self-compile should fit. This is the project's
+   chosen direction.
+2. **Cut `build_func` / `optimize` transient allocation** (the seed-overlay and
+   pass early-out fixes already did this once, removing an O(functions²) term).
+   A further reduction could get total churn under the arena even with free off.
+
+Streaming the emit is *necessary but not sufficient* — keep it for after
+freeing lands; on its own it does nothing.
 
 ### Phase 5 — retire the AST emitters
 

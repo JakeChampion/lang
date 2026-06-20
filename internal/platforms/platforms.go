@@ -87,6 +87,15 @@ var table = map[string]Descriptor{
 		HandlerKinds: []string{"handle"},
 		Bindings:     nil,
 	},
+	"arm64-android": {
+		Name: "arm64-android",
+		Description: "ARM64 Android — Linux ELF as a static position-independent " +
+			"executable (ET_DYN, W^X), so it loads at an arbitrary base under " +
+			"Android's loader. Same syscalls / AAPCS64 as the arm64 target.",
+		Capabilities: []string{"log", "now", "env"},
+		HandlerKinds: []string{"handle"},
+		Bindings:     nil,
+	},
 	"x86-64": {
 		Name:         "x86-64",
 		Description:  "x86-64 Linux ELF (native exec on x86_64 hosts, qemu-x86_64 elsewhere).",

@@ -154,7 +154,7 @@ Added `(g *generator) slotType(idx int32) ast.Type` and
 `(g *generator) slotIsString(idx int32) bool` to arm64
 codegen. Mirrors wasm's `slotType` / `slotIsString` —
 walks Params → Locals → ScratchTypes to resolve the
-lang-level type of an IR slot index against the currently
+Fern-level type of an IR slot index against the currently
 emitting function (`g.current` + `g.currentIR`, both
 already set by `emitFunc`).
 

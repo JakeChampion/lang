@@ -28,7 +28,7 @@ func TestSelfHostRcRuntimeWasm(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "wasm.fern", "wasm_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -71,7 +71,7 @@ func TestSelfHostRcFreeWasm(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "wasm.fern", "wasm_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -136,7 +136,7 @@ func TestSelfHostRcCallResultWasm(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "wasm.fern", "wasm_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -163,6 +163,17 @@ func TestSelfHostRcCallResultWasm(t *testing.T) {
 		// A self-append (method call, in-place receiver) result is NOT swept,
 		// so it never double-frees the receiver's buffer.
 		{"self-append-not-double-freed", "function main(): i32 { var xs: i32[] = [1, 2]; var ys = xs.append(3); return ys[2] + __fern_rc_underflow_count(); }", 3},
+		// Fresh-array builtins/methods bound to a local are reclaimed too.
+		{"freshbuiltin-random-swept", "function main(): i32 { var b: i32[] = random_bytes(4); return b.len() + __fern_rc_underflow_count(); }", 4},
+		{"freshbuiltin-mapkeys-swept", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; var ks: i32[] = m.keys(); return ks.len() + __fern_rc_underflow_count(); }", 2},
+		// A .values() snapshot re-bound each loop iteration: fresh + swept +
+		// per-iteration dec-on-overwrite, value-correct + detector clean.
+		{"freshbuiltin-values-loop", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; var s = 0; var k = 0; while (k < 100) { var vs: i32[] = m.values(); s = s + vs[0]; k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 6},
+		// A declared-array local inited from a USER method returning an array
+		// is counted/swept (the method's return-retain makes it safe).
+		{"method-result-swept", "struct Box { n: i32 } function (b: Box) make(): i32[] { var xs: i32[] = []; var i = 0; while (i < b.n) { xs = xs.append(i); i = i + 1; } return xs; } function main(): i32 { var box = Box { n: 5 }; var r: i32[] = box.make(); return r[4] + __fern_rc_underflow_count(); }", 4},
+		// Same, re-bound each loop iteration: per-iteration release, clean.
+		{"method-result-loop", "struct Box { n: i32 } function (b: Box) make(): i32[] { var xs: i32[] = []; var i = 0; while (i < b.n) { xs = xs.append(i); i = i + 1; } return xs; } function main(): i32 { var box = Box { n: 6 }; var s = 0; var k = 0; while (k < 50) { var r: i32[] = box.make(); s = s + r[5]; k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -199,7 +210,7 @@ func TestSelfHostRcConstructWasm(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "wasm.fern", "wasm_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -270,7 +281,7 @@ func TestSelfHostRcCountingWasm(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "wasm.fern", "wasm_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -300,6 +311,10 @@ func TestSelfHostRcCountingWasm(t *testing.T) {
 		// Array local declared in a not-taken branch: zero-inited slot, the
 		// sweep's dec(0) is a no-op, detector clean.
 		{"branch-local-balanced", "function main(): i32 { var xs: i32[] = [5, 6]; if (xs[0] > 100) { var ys: i32[] = [1, 2]; return ys[0] + __fern_rc_underflow_count(); } return xs[1] + __fern_rc_underflow_count(); }", 6},
+		// A loop-local array re-bound each iteration is released per-iteration
+		// (StmtVar cow-guarded dec-on-overwrite), not just at function exit —
+		// 1000 rebinds stay value-correct and over-release-detector clean.
+		{"loop-local-rebind-clean", "function gen(n: i32): i32[] { var xs: i32[] = []; var i = 0; while (i < n) { xs = xs.append(i); i = i + 1; } return xs; } function main(): i32 { var s = 0; var k = 0; while (k < 1000) { var r: i32[] = gen(8); s = s + r[7]; k = k + 1; } return (s % 100) + __fern_rc_underflow_count(); }", 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -336,7 +351,7 @@ func TestSelfHostRcArrayLayoutWasm(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "wasm.fern", "wasm_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

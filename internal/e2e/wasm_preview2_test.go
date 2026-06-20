@@ -1283,7 +1283,7 @@ func TestWasmPreview2HttpHandler(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "router.fern")
-	src := `import "core/no_prelude";
+	src := `
 import "std/http";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
@@ -1421,7 +1421,7 @@ func TestWasmPreview2HttpHandlerResponseHeaders(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "router.fern")
-	src := `import "core/no_prelude";
+	src := `
 import "std/headers";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
@@ -1522,7 +1522,7 @@ func TestWasmPreview2HttpHandlerRequestHeaders(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "router.fern")
-	src := `import "core/no_prelude";
+	src := `
 import "std/http";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
@@ -1624,7 +1624,7 @@ func TestWasmPreview2HttpHandlerLoggingAdapterFree(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "logger.fern")
-	src := `import "core/no_prelude";
+	src := `
 import "std/http";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
@@ -1731,7 +1731,7 @@ func TestWasmPreview2HttpHandlerClockAdapterFree(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "clock.fern")
-	src := `import "core/no_prelude";
+	src := `
 import "std/http";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
@@ -1798,7 +1798,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 	// env() is not granted by the wasi:http/proxy world `wasmtime serve`
 	// runs, so an env-using handler must be rejected with a clear message
 	// (rather than composing a component that fails at serve-link time).
-	envSrc := `import "core/no_prelude";
+	envSrc := `
 import "std/http";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
@@ -1847,7 +1847,7 @@ func TestWasmPreview2HttpHandlerAdapterFree(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "router.fern")
-	src := `import "core/no_prelude";
+	src := `
 import "std/http";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {

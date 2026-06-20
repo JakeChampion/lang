@@ -1,0 +1,27 @@
+// `@derive(Hash)` synthesises a field/variant-wise `hash(): i32` that
+// composes through each field's own `Hash` impl, paired with `Eq` under
+// the law `a == b ⇒ a.hash() == b.hash()`. Structs fold their fields;
+// enums seed with the variant tag then fold payloads, so distinct
+// variants (and same-shaped payloads across variants) hash apart.
+import "core/cmp";
+import "core/int";
+
+@derive(cmp.Eq, cmp.Hash)
+struct Point { x: i32, y: i32 }
+
+@derive(cmp.Hash)
+enum Shape { Dot, Circle(i32), Rect(i32, i32) }
+
+function main(): i32 {
+    var r: i32 = 0;
+    var a: Point = Point { x: 3, y: 4 };
+    var b: Point = Point { x: 3, y: 4 };   // equal value, distinct object
+    var c: Point = Point { x: 5, y: 4 };
+    if (a.hash() == b.hash()) { r = r + 1; }   // Eq ⇒ equal hashes
+    if (a.hash() != c.hash()) { r = r + 2; }   // differ (very likely)
+    if ("hello".hash() != 0) { r = r + 4; }    // string FNV-1a
+    if (Dot.hash() != Circle(0).hash()) { r = r + 8; }      // tag-seeded
+    if (Circle(7).hash() == Circle(7).hash()) { r = r + 16; }
+    if (Circle(7).hash() != Rect(7, 0).hash()) { r = r + 32; }
+    return r;                                   // 63
+}

@@ -1,0 +1,978 @@
+// examples/self_host/asm_arm64_ir.fern — the arm64 instruction-selector for
+// the target-agnostic stack IR (irlower.fern's Op[]). The arm64 sibling of
+// asm_ir.fern: it lowers the SAME lowered op stream to arm64 in asm_arm64's
+// dialect (__fn_<name> labels, the 16-byte operand rt-stack, x29 frame), so a
+// fully-IR-eligible module gets a native-parity Perceus array RC backend on
+// arm64 too. The array layout + RC runtime are IDENTICAL to x86's
+// (__fern_arr_box: base = [cap, rc, len, e0..], data = base+16, element i at
+// data+(i+1)*8) — arm64's heap is the same 8-byte-slot shape — so the SAME
+// Op[] produces a compatible layout; only the instruction selection differs.
+//
+// Reuse: the backend-INDEPENDENT analysis (eligibility, array-return tracking,
+// the helper-name map, the control-flow label resolver) lives in asm_ir and is
+// shared from there (asm_ir.all_eligible / ir_eligible / array_ret_fns /
+// is_fern_helper / ir_helper_symbol / br_target). The heap / RC / alloc runtime
+// is reused verbatim from asm_arm64.emit_runtime (asm_arm64 does NOT import
+// this file, so there is no cycle — unlike x86, where asm.fern imports asm_ir
+// and the runtime had to be duplicated). This file is therefore ONLY the arm64
+// codegen for the op stream.
+//
+// Like asm_ir, this is a SEPARATE module imported only by its differential
+// driver (asm_arm64_ir_run) — asm_arm64.fern and the arm64 bootstrap stay
+// untouched until a later fold/flip slice.
+
+import "./parser";
+import "./asmcore";
+import "./util";
+import "./ir";
+import "./irlower";
+import "./asm_ir";
+
+// fr_ldr / fr_str load/store `reg` at the x29-relative frame offset `off`
+// (always <= 0 — locals live below the frame pointer). Inlined copies of
+// asm_arm64's frame_ldr/frame_str (this module can't import asm_arm64 without a
+// cycle): a scaled ldr/str can't encode a negative offset and ldur/stur only
+// reach -256, so for a frame with >32 slots materialise the address in x16
+// (AAPCS scratch, dead across a frame access here) via sub first.
+// fr_sub_imm emits `dst = base - imm`, materialising the immediate in x17 (IP1,
+// AAPCS scratch, dead at every caller here) when it exceeds arm64's 12-bit
+// add/sub immediate ceiling (#4095). The IR path's large functions blow past it
+// — irlower.lower_stmt has ~590 locals → a 4736-byte frame and frame-relative
+// offsets to match — which the AST emitter never hits (its frames stay under
+// 4 KiB). A single MOVZ covers up to 65535 (>8000 locals), far beyond any real
+// function; a frame past that would fail loudly at assembly.
+function fr_sub_imm(s: asmcore.EmitState, dst: string, base: string, imm: i32): asmcore.EmitState {
+    if (imm <= 4095) {
+        return s.write("    sub " + dst + ", " + base + ", #" + util.i32_to_string(imm) + "\n");
+    }
+    s = s.write("    mov x17, #" + util.i32_to_string(imm) + "\n");
+    return s.write("    sub " + dst + ", " + base + ", x17\n");
+}
+
+function fr_ldr(s: asmcore.EmitState, reg: string, off: i32): asmcore.EmitState {
+    if (off >= 0 - 256) {
+        return s.write("    ldr " + reg + ", [x29, #" + util.i32_to_string(off) + "]\n");
+    }
+    s = fr_sub_imm(s, "x16", "x29", 0 - off);
+    return s.write("    ldr " + reg + ", [x16]\n");
+}
+
+function fr_str(s: asmcore.EmitState, reg: string, off: i32): asmcore.EmitState {
+    if (off >= 0 - 256) {
+        return s.write("    str " + reg + ", [x29, #" + util.i32_to_string(off) + "]\n");
+    }
+    s = fr_sub_imm(s, "x16", "x29", 0 - off);
+    return s.write("    str " + reg + ", [x16]\n");
+}
+
+// ir_bin_asm renders the arm64 for one IR binary op: lhs in x0, rhs in x1,
+// result in x0 — mirroring asm_arm64's own ExprBinary sequences (64-bit ops,
+// signed i32 div/rem via sdiv/msub) so the IR and AST paths agree.
+function ir_bin_asm(kind: string): string {
+    if (kind == "add") { return "    add x0, x0, x1\n"; }
+    if (kind == "sub") { return "    sub x0, x0, x1\n"; }
+    if (kind == "mul") { return "    mul x0, x0, x1\n"; }
+    if (kind == "div_s") { return "    sdiv x0, x0, x1\n"; }
+    if (kind == "rem_s") { return "    sdiv x2, x0, x1\n    msub x0, x2, x1, x0\n"; }
+    // Unsigned 64-bit div/rem (u64, #2904): udiv instead of sdiv.
+    if (kind == "div_u") { return "    udiv x0, x0, x1\n"; }
+    if (kind == "rem_u") { return "    udiv x2, x0, x1\n    msub x0, x2, x1, x0\n"; }
+    if (kind == "and") { return "    and x0, x0, x1\n"; }
+    if (kind == "or") { return "    orr x0, x0, x1\n"; }
+    if (kind == "xor") { return "    eor x0, x0, x1\n"; }
+    if (kind == "shl") { return "    lsl x0, x0, x1\n"; }
+    if (kind == "shr_s") { return "    asr x0, x0, x1\n"; }
+    if (kind == "shr_u") { return "    lsr x0, x0, x1\n"; }
+    if (kind == "eq") { return "    cmp x0, x1\n    cset x0, eq\n"; }
+    if (kind == "ne") { return "    cmp x0, x1\n    cset x0, ne\n"; }
+    if (kind == "lt_s") { return "    cmp x0, x1\n    cset x0, lt\n"; }
+    if (kind == "le_s") { return "    cmp x0, x1\n    cset x0, le\n"; }
+    if (kind == "gt_s") { return "    cmp x0, x1\n    cset x0, gt\n"; }
+    if (kind == "ge_s") { return "    cmp x0, x1\n    cset x0, ge\n"; }
+    // Unsigned 64-bit compares (u64, #2904): the lo/ls/hi/hs condition codes
+    // read CF instead of the signed N/V flags — correct once bit 63 is set.
+    if (kind == "lt_u") { return "    cmp x0, x1\n    cset x0, lo\n"; }
+    if (kind == "le_u") { return "    cmp x0, x1\n    cset x0, ls\n"; }
+    if (kind == "gt_u") { return "    cmp x0, x1\n    cset x0, hi\n"; }
+    if (kind == "ge_u") { return "    cmp x0, x1\n    cset x0, hs\n"; }
+    return "    // ir: unsupported bin " + kind + "\n";
+}
+
+// emit_str_op emits one string operand-stack op (the bodies factored out of
+// emit_function_via_ir's dispatch — see ir.is_str_op_kind). The runtime helpers
+// come from asm_arm64.emit_runtime, gated by the mark_* needs set here.
+function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+    if (o.kind == "str_len") {
+        // pop string box; length is at box+8.
+        return s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #8]\n    str x0, [sp, #-16]!\n");
+    }
+    if (o.kind == "str_index") {
+        // pop index (top), string box; box = [data@0, len@8], byte at
+        // [data + i]; ldrb zero-extends into w0.
+        return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x0, [x0]\n    ldrb w0, [x0, x1]\n    str x0, [sp, #-16]!\n");
+    }
+    if (o.kind == "str_slice") {
+        // operand stack [src box, start, end] (end on top). Zero-copy view:
+        // fresh 16-byte box [data = src.data + start, len = end - start].
+        // x19/x20/x21 (callee-saved) hold end/start/src across __fern_alloc.
+        s = s.mark_heap();
+        s = s.write("    ldr x3, [sp], #16\n    ldr x4, [sp], #16\n    ldr x5, [sp], #16\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n    str x21, [sp, #-16]!\n");
+        s = s.write("    mov x19, x3\n    mov x20, x4\n    mov x21, x5\n");
+        s = s.write("    mov x0, #16\n    bl __fern_alloc\n");
+        s = s.write("    ldr x1, [x21]\n    add x1, x1, x20\n    str x1, [x0]\n");
+        s = s.write("    sub x1, x19, x20\n    str x1, [x0, #8]\n");
+        return s.write("    ldr x21, [sp], #16\n    ldp x19, x20, [sp], #16\n    str x0, [sp, #-16]!\n");
+    }
+    if (o.kind == "str_bytes") {
+        // operand stack [str box]; __fern_str_bytes(x0=box) -> fresh u8[] in x0.
+        s = s.mark_str_bytes();
+        return s.write("    ldr x0, [sp], #16\n    bl __fern_str_bytes\n    str x0, [sp, #-16]!\n");
+    }
+    if (o.kind == "str_split") {
+        // operand stack [haystack box, sep box] (sep top); __fern_str_split(
+        // x0=haystack, x1=sep) -> fresh string[] in x0. asm_arm64.emit_runtime
+        // emits the helper inside its str_search-need block, so set both needs.
+        s = s.mark_str_search();
+        s = s.mark_heap();
+        return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_str_split\n    str x0, [sp, #-16]!\n");
+    }
+    if (o.kind == "str_to_upper" || o.kind == "str_to_lower") {
+        // operand stack [s box]; __fern_str_to_upper/_lower(x0=s) -> fresh cased
+        // string box in x0. asm_arm64.emit_runtime emits the bodies in its
+        // str_search block (they allocate), so set str_search + heap.
+        var cfn: string = "__fern_str_to_upper";
+        if (o.kind == "str_to_lower") { cfn = "__fern_str_to_lower"; }
+        s = s.mark_str_search();
+        s = s.mark_heap();
+        return s.write("    ldr x0, [sp], #16\n    bl " + cfn + "\n    str x0, [sp, #-16]!\n");
+    }
+    if (o.kind == "str_repeat") {
+        // operand stack [s box, n] (n top); __fern_str_repeat(x0=s, x1=n) -> fresh
+        // string box in x0. asm_arm64.emit_runtime emits the body in its str_search
+        // block (it allocates), so set str_search + heap.
+        s = s.mark_str_search();
+        s = s.mark_heap();
+        return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_str_repeat\n    str x0, [sp, #-16]!\n");
+    }
+    if (o.kind == "str_trim") {
+        // operand stack [s box]; __fern_str_trim(x0=s) -> fresh string box in x0.
+        // asm_arm64.emit_runtime emits the body in its str_search block (it
+        // allocates), so set str_search + heap.
+        s = s.mark_str_search();
+        s = s.mark_heap();
+        return s.write("    ldr x0, [sp], #16\n    bl __fern_str_trim\n    str x0, [sp, #-16]!\n");
+    }
+    if (o.kind == "str_reverse") {
+        // operand stack [s box]; __fern_str_reverse(x0=s) -> fresh reversed string
+        // box in x0. asm_arm64.emit_runtime emits the body gated on the str_reverse
+        // need (it allocates), which mark_str_reverse sets along with heap.
+        s = s.mark_str_reverse();
+        return s.write("    ldr x0, [sp], #16\n    bl __fern_str_reverse\n    str x0, [sp, #-16]!\n");
+    }
+    if (o.kind == "str_replace") {
+        // operand stack [haystack, old, new] (new top); __fern_str_replace(
+        // x0=haystack, x1=old, x2=new) -> fresh string box in x0. asm_arm64.emit_
+        // runtime emits the body in its str_search block (it allocates), so set
+        // str_search + heap.
+        s = s.mark_str_search();
+        s = s.mark_heap();
+        return s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_str_replace\n    str x0, [sp, #-16]!\n");
+    }
+    if (o.kind == "str_chars") {
+        // operand stack [s box]; __fern_str_chars(x0=s) -> fresh string[] in x0.
+        // asm_arm64.emit_runtime emits the body gated on the str_chars need (it
+        // allocates), which mark_str_chars sets along with heap.
+        s = s.mark_str_chars();
+        return s.write("    ldr x0, [sp], #16\n    bl __fern_str_chars\n    str x0, [sp, #-16]!\n");
+    }
+    if (o.kind == "str_lines") {
+        // operand stack [s box]; __fern_str_lines(x0=s) -> fresh string[] in x0.
+        // asm_arm64.emit_runtime emits the body gated on str_lines; it calls
+        // __fern_str_split (str_search) and allocates, so set all three needs.
+        s = s.mark_str_lines();
+        s = s.mark_str_search();
+        s = s.mark_heap();
+        return s.write("    ldr x0, [sp], #16\n    bl __fern_str_lines\n    str x0, [sp, #-16]!\n");
+    }
+    if (o.kind == "str_starts_with" || o.kind == "str_ends_with" || o.kind == "str_index_of") {
+        // operand stack [s, p] (p top); __fern_str_<pred>(x0=s, x1=p) -> 0/1
+        // (starts/ends) or first index / -1 (index_of) in x0. Allocation-free
+        // str_search predicates (asm_arm64.emit_runtime's str_search block).
+        var pfn: string = "__fern_str_starts_with";
+        if (o.kind == "str_ends_with") { pfn = "__fern_str_ends_with"; }
+        if (o.kind == "str_index_of") { pfn = "__fern_str_index_of"; }
+        s = s.mark_str_search();
+        return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl " + pfn + "\n    str x0, [sp, #-16]!\n");
+    }
+    if (o.kind == "str_concat") {
+        // operand stack [A, B] (B on top); __fern_str_concat(x0=A, x1=B) -> x0.
+        s = s.mark_heap();
+        s = s.mark_str_concat();
+        return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_str_concat\n    str x0, [sp, #-16]!\n");
+    }
+    if (o.kind == "str_eq") {
+        // operand stack [A, B]; __fern_str_eq(x0=A, x1=B) -> 0/1 in x0.
+        s = s.mark_str_eq();
+        return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_str_eq\n    str x0, [sp, #-16]!\n");
+    }
+    // str_cmp: operand stack [A, B]; __fern_str_cmp(x0=A, x1=B) -> signed -/0/+.
+    s = s.mark_str_cmp();
+    return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_str_cmp\n    str x0, [sp, #-16]!\n");
+}
+
+// emit_function_via_ir emits one IR-eligible function as arm64. The frame +
+// operand discipline mirrors asm_arm64's emit_function: x29 frame pointer,
+// local slot i at [x29, #-8*(i+1)], the operand stack on sp in 16-byte slots
+// (str x0,[sp,#-16]! / ldr x0,[sp],#16), params copied from the caller rt-stack
+// at [x29, #16+i*16]. Structured control flow → per-function indexed labels
+// (.Lira_<fn>_<opidx>), the same OP-STREAM-INDEX scheme asm_ir uses.
+pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState, borrowable_params: string[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[], map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[]): asmcore.EmitState {
+    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls, str_ret_fns, strarr_ret_fns, arr_method_fns, opt_ret_fns, i64_ret_fns, tuple_ret_fns, struct_ret_fns, map_ret_fns, f64_ret_fns, f64arr_ret_fns, i64arr_ret_fns, fn_param_sigs, closure_fns, const_fns, borrowable_params);
+
+    // Methods get the receiver-type-qualified label `__fn_<Type>.<name>`.
+    var label_name: string = fd.name;
+    if (fd.receiver_type.len() > 0) { label_name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
+    s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");
+    s = s.write("    mov x29, sp\n");
+    var frame: i32 = r.n_locals * 8;
+    if (frame % 16 != 0) { frame = frame + 8; }
+    if (frame > 0) { s = fr_sub_imm(s, "sp", "sp", frame); }
+
+    // Zero-init the body-local slots (Perceus exit-sweep safety): slots
+    // [n_params, n_locals) at [x29, #-8*(i+1)] — the contiguous range from
+    // -8*n_locals(x29) up, holding (n_locals - n_params) quadwords. x9/x10 are
+    // AAPCS scratch, dead here (before the param copy).
+    var nbody: i32 = r.n_locals - r.n_params;
+    if (nbody > 0) {
+        s = fr_sub_imm(s, "x9", "x29", r.n_locals * 8);
+        s = s.write("    mov x10, #" + util.i32_to_string(nbody) + "\n");
+        s = s.write(".Lira_zi_" + asmcore.sanitize_label(fd.name) + ":\n");
+        s = s.write("    cbz x10, .Lira_zd_" + asmcore.sanitize_label(fd.name) + "\n");
+        s = s.write("    str xzr, [x9], #8\n");
+        s = s.write("    sub x10, x10, #1\n");
+        s = s.write("    b .Lira_zi_" + asmcore.sanitize_label(fd.name) + "\n");
+        s = s.write(".Lira_zd_" + asmcore.sanitize_label(fd.name) + ":\n");
+    }
+
+    // Copy params from the caller rt-stack into local slots: param[i] sits at
+    // [x29, #16+i*16] (16-byte operand slots, arg0 closest to the saved fp);
+    // the IR's load_local i reads [x29, #-8*(i+1)]. r.n_params counts the
+    // receiver (slot 0) for a method — the caller passes it as arg 0, so it
+    // copies in uniformly.
+    var pidx: i32 = 0;
+    while (pidx < r.n_params) {
+        s = s.write("    ldr x0, [x29, #" + util.i32_to_string(16 + pidx * 16) + "]\n");
+        s = fr_str(s, "x0", 0 - 8 * (pidx + 1));
+        pidx = pidx + 1;
+    }
+
+    var lp: string = ".Lira_" + asmcore.sanitize_label(label_name) + "_";
+    var i: i32 = 0;
+    while (i < r.ops.len()) {
+        var o: ir.Op = r.ops[i];
+        if (o.kind == "const_i32") {
+            // ldr x0, =N uses a literal pool — any 64-bit value, like asm_arm64.
+            s = s.write("    ldr x0, =" + util.i32_to_string(o.i32_imm) + "\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "const_i32_text") {
+            // Integer literal source text via the literal pool — the assembler
+            // parses the base / range (hex `0x..`, full u32), like asm_arm64.
+            s = s.write("    ldr x0, =" + o.str + "\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "const_i64") {
+            // 64-bit immediate (source text) via the literal pool — same form as
+            // const_i32. i64 add/sub/mul/cmp/bitwise reuse the 64-bit x-register
+            // bin ops unchanged.
+            s = s.write("    ldr x0, =" + o.str + "\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "int_extend" || o.kind == "int_wrap") {
+            // i32<->i64: signed -> sxtw (sign-extend low word); unsigned -> mov
+            // w0,w0 (writing w0 zeroes x0's upper 32).
+            s = s.write("    ldr x0, [sp], #16\n");
+            if (o.unsigned) { s = s.write("    mov w0, w0\n"); }
+            else { s = s.write("    sxtw x0, w0\n"); }
+            s = s.write("    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "u32_wrap") {
+            // Reduce to the u32 range (writing w0 zeroes x0's upper 32) — wraps a
+            // u32 arith result at 2^32 on this 64-bit-register backend.
+            s = s.write("    ldr x0, [sp], #16\n    mov w0, w0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "int_cast") {
+            // `x as <ty>` int→int width mask/extend — matches asm_arm64's as_<ty>.
+            s = s.write("    ldr x0, [sp], #16\n");
+            if (o.str == "u8") { s = s.write("    and x0, x0, #255\n"); }
+            else if (o.str == "u16") { s = s.write("    and x0, x0, #65535\n"); }
+            else if (o.str == "u32") { s = s.write("    mov w0, w0\n"); }
+            else if (o.str == "i8") { s = s.write("    sxtb x0, w0\n"); }
+            else if (o.str == "i16") { s = s.write("    sxth x0, w0\n"); }
+            else if (o.str == "i32") { s = s.write("    sxtw x0, w0\n"); }
+            s = s.write("    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "arr_push" || o.kind == "arr_push_i64" || o.kind == "arr_push_f64") {
+            // [arr, val] -> grown array. __fern_arr_push(x0=arr, x1=val) -> x0.
+            // arm64 array slots are 8 bytes, so i64/u64/f64 elements ride the SAME
+            // helper (x1 holds the full 8-byte value); only wasm needs a distinct
+            // 8-byte-stride push.
+            s = s.mark_arr_push();
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_arr_push\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "alloc_u8") {
+            // [n] -> fresh n-element array. __fern_alloc_u8(x0=n) -> x0 (in heap
+            // block of asm_arm64.emit_runtime).
+            s = s.mark_heap();
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_alloc_u8\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "str_from_bytes") {
+            // [arr] -> string box. __fern_string_from_bytes(x0=arr) -> x0.
+            s = s.mark_heap();
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_string_from_bytes\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "memcpy") {
+            // [dst, src, n] -> copy n bytes src->dst (byte loop), push dummy 0.
+            // n on top (x2), then src (x1), then dst (x0). Mirrors the AST
+            // __memcpy emitter in asm_arm64.fern; labels are op-index-unique.
+            s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+            s = s.write(lp + "mc" + util.i32_to_string(i) + ":\n");
+            s = s.write("    cbz x2, " + lp + "mcd" + util.i32_to_string(i) + "\n");
+            s = s.write("    ldrb w3, [x1], #1\n    strb w3, [x0], #1\n    sub x2, x2, #1\n");
+            s = s.write("    b " + lp + "mc" + util.i32_to_string(i) + "\n");
+            s = s.write(lp + "mcd" + util.i32_to_string(i) + ":\n");
+            s = s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "load_i32") {
+            // [addr] -> sign-extended 4-byte load.
+            s = s.write("    ldr x0, [sp], #16\n    ldrsw x0, [x0]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "load_i64" || o.kind == "load_ptr") {
+            // [addr] -> 8-byte load (ptr is heap-pointer width = 8 on arm64).
+            s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "store_i32") {
+            // [addr, val] -> store low 4 bytes (val on top); push dummy 0.
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str w1, [x0]\n    mov x0, #0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "store_ptr") {
+            // [addr, val] -> store 8 bytes; push dummy 0.
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [x0]\n    mov x0, #0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "load_local") {
+            s = fr_ldr(s, "x0", 0 - 8 * (o.i32_imm + 1));
+            s = s.write("    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "store_local") {
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = fr_str(s, "x0", 0 - 8 * (o.i32_imm + 1));
+        } else if (o.kind == "not") {
+            s = s.write("    ldr x0, [sp], #16\n    cmp x0, #0\n    cset x0, eq\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "return") {
+            s = s.write("    ldr x0, [sp], #16\n    mov sp, x29\n    ldp x29, x30, [sp], #16\n    ret\n");
+        } else if (o.kind == "if") {
+            var elseidx: i32 = irlower.find_matching_else(r.ops, i + 1);
+            var tgt: string = "";
+            if (elseidx >= 0) { tgt = lp + util.i32_to_string(elseidx); }
+            else { tgt = lp + util.i32_to_string(irlower.find_matching_end(r.ops, i + 1)); }
+            s = s.write("    ldr x0, [sp], #16\n    cbz x0, " + tgt + "\n");
+        } else if (o.kind == "else") {
+            s = s.write("    b " + lp + util.i32_to_string(irlower.find_matching_end(r.ops, i + 1)) + "\n");
+            s = s.write(lp + util.i32_to_string(i) + ":\n");
+        } else if (o.kind == "block") {
+            // forward scope: exit label defined at the matching `end`.
+        } else if (o.kind == "loop") {
+            s = s.write(lp + util.i32_to_string(i) + ":\n");
+        } else if (o.kind == "br") {
+            s = s.write("    b " + asm_ir.br_target(r.ops, lp, i, o.i32_imm) + "\n");
+        } else if (o.kind == "brif") {
+            s = s.write("    ldr x0, [sp], #16\n    cbnz x0, " + asm_ir.br_target(r.ops, lp, i, o.i32_imm) + "\n");
+        } else if (o.kind == "arr_make") {
+            // n element values on the operand stack (element n-1 on top).
+            // __fern_arr_box(cap=n) → data ptr in x0; element i at [data+(i+1)*8].
+            // Pop top-down; x0 (base) stays live across the pops (they touch
+            // only the rt-stack), then push it.
+            s = s.mark_heap();
+            var n: i32 = o.i32_imm;
+            s = s.write("    mov x0, #" + util.i32_to_string(n) + "\n    bl __fern_arr_box\n");
+            var em: i32 = n - 1;
+            while (em >= 0) {
+                s = s.write("    ldr x1, [sp], #16\n    str x1, [x0, #" + util.i32_to_string((em + 1) * 8) + "]\n");
+                em = em - 1;
+            }
+            s = s.write("    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "arr_get") {
+            // pop idx (top), base; element at [data + (idx+1)*8].
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    add x1, x1, #1\n    ldr x0, [x0, x1, lsl #3]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "arr_set") {
+            // pop val (top), idx, base; store at [data + (idx+1)*8].
+            s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    add x1, x1, #1\n    str x2, [x0, x1, lsl #3]\n");
+        } else if (o.kind == "arr_len") {
+            // pop base; length header at [data].
+            s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "arr_rc") {
+            // pop base; 32-bit refcount field at [data-8] (ldur — unscaled neg).
+            s = s.write("    ldr x0, [sp], #16\n    ldur w0, [x0, #-8]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "const_str") {
+            // String literal: intern in .rodata, allocate a 16-byte box
+            // `[data@0, len@8]`, push box ptr — identical to asm_arm64's
+            // ExprString so __fern_str_concat / _eq see the same layout. Not RC'd.
+            s = s.mark_heap();
+            var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
+            s = lo.state;
+            var lolbl: string = asm_ir.str_lit_label(s, lo.idx);
+            s = s.write("    mov x0, #16\n");
+            s = s.write("    bl __fern_alloc\n");
+            s = s.write("    adrp x1, " + lolbl + "\n");
+            s = s.write("    add x1, x1, :lo12:" + lolbl + "\n");
+            s = s.write("    str x1, [x0]\n");
+            s = s.write("    mov x1, #" + util.i32_to_string(o.str.len()) + "\n");
+            s = s.write("    str x1, [x0, #8]\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+        } else if (ir.is_str_op_kind(o.kind)) {
+            // All string operand-stack ops (len/index/slice/bytes/split/
+            // predicates/concat/eq/cmp) are emitted by emit_str_op — factored out
+            // to keep this dispatch under the oversized-function threshold (#2720).
+            s = emit_str_op(o, s);
+        } else if (o.kind == "arr_slice") {
+            // operand stack [arr, start, end] (end top); __fern_arr_slice(x0=arr,
+            // x1=start, x2=end) -> fresh array in x0. asm_arm64.emit_runtime emits
+            // the helper when arr_slice is needed.
+            s = s.mark_heap();
+            s = s.mark_arr_slice();
+            s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_arr_slice\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "random_bytes") {
+            // operand stack [n]; __fern_random_bytes(x0=n) -> string box in x0.
+            // asm_arm64.emit_runtime emits the helper inside its heap block.
+            s = s.mark_heap();
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_random_bytes\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "random_i32") {
+            // no operands; __fern_random_i32() -> i32 in x0. Helper is gated by
+            // the random_i32 need (asm_arm64.emit_runtime), heap-independent.
+            s = s.need("random_i32");
+            s = s.write("    bl __fern_random_i32\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "monotonic_ns") {
+            // no operands; __fern_monotonic_ns() -> i64 in x0. asm_arm64.emit_
+            // runtime emits the helper unconditionally (heap-independent), so no
+            // need is set here.
+            s = s.write("    bl __fern_monotonic_ns\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "now_unix_ms") {
+            // no operands; __fern_now_unix_ms() -> i64 in x0. Unconditional
+            // helper (asm_arm64.emit_runtime), same as monotonic_ns.
+            s = s.write("    bl __fern_now_unix_ms\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "heap_bump_bytes") {
+            // bump high-water mark = (__fern_heap_ptr == 0) ? 0 : ptr − base.
+            // The arena is mmap'd lazily; its base is recoverable from the
+            // recorded end (__fern_heap_end = base + heap_size), so base =
+            // end − heap_size and ptr − base = ptr − end + heap_size. The
+            // cursor is 0 until the first alloc, so guard that to report 0.
+            s = s.mark_heap();
+            s = s.write("    adrp x0, __fern_heap_ptr\n    add x0, x0, :lo12:__fern_heap_ptr\n    ldr x0, [x0]\n");   // cursor (0 if uninit)
+            s = s.write("    adrp x1, __fern_heap_end\n    add x1, x1, :lo12:__fern_heap_end\n    ldr x1, [x1]\n");   // arena end
+            s = s.write("    sub x2, x0, x1\n");                  // ptr − end
+            s = s.write("    mov x3, #14\n    lsl x3, x3, #28\n");// heap_size = 0xE0000000 (3.5 GiB), built via mov+lsl (32-bit literal parser)
+            s = s.write("    add x2, x2, x3\n");                  // ptr − base
+            s = s.write("    cmp x0, #0\n");
+            s = s.write("    csel x2, x2, xzr, ne\n");            // 0 if uninit, else ptr−base
+            s = s.write("    str x2, [sp, #-16]!\n");
+        } else if (o.kind == "now_ns") {
+            // no operands; __fern_now_ns() -> i64 in x0. Unconditional helper.
+            s = s.write("    bl __fern_now_ns\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "opt_make") {
+            // Option/Result box [tag@0, payload@8], 16 bytes. Payload is on the
+            // operand stack; alloc first (it survives, like struct_make), then
+            // store tag + payload.
+            s = s.mark_heap();
+            s = s.write("    mov x0, #16\n    bl __fern_alloc\n");
+            s = s.write("    mov x1, #" + util.i32_to_string(o.i32_imm) + "\n    str x1, [x0]\n");
+            s = s.write("    ldr x1, [sp], #16\n    str x1, [x0, #8]\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "opt_none") {
+            // Payloadless box with tag 1 (None).
+            s = s.mark_heap();
+            s = s.write("    mov x0, #16\n    bl __fern_alloc\n");
+            s = s.write("    mov x1, #1\n    str x1, [x0]\n    str xzr, [x0, #8]\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "opt_tag") {
+            // pop box; tag is the i32 at offset 0.
+            s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "opt_payload") {
+            // pop box; payload is at offset 8.
+            s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #8]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "map_new") {
+            // pop capacity (ignored), fresh map box. Mark the map runtime + its
+            // str_eq/arr_push/heap deps (close_needs in asm_arm64_ir_run expands).
+            s = s.need("maps");
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_map_new\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "print_int") {
+            // [n] -> write n's decimal text to stdout (the AST path's helper +
+            // symbol). Push x0 (the write return) so the statement-level drop balances.
+            s = s.need("print_int");
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_print_int\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "print_str") {
+            // [strbox] -> write its bytes to stdout (asm_arm64.emit_runtime's
+            // __fern_print_str, reused via the str_print need). Push x0 for the drop.
+            s = s.need("str_print");
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_print_str\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "read_int") {
+            // no args -> read an i32 from stdin (asm_arm64.emit_runtime's
+            // __fern_read_int, reused via the read_int need). Push x0 (the value).
+            s = s.need("read_int");
+            s = s.write("    bl __fern_read_int\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "read_line") {
+            // no args -> read one line from stdin into a fresh string box
+            // (asm_arm64.emit_runtime's __fern_read_line, reused via str_read_line).
+            s = s.need("heap").need("str_read_line");
+            s = s.write("    bl __fern_read_line\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "read_file") {
+            // [pathbox] -> read the whole named file, push a fresh Result[string,
+            // IoError] box (asm_arm64.emit_runtime's __fern_read_file, emitted in
+            // its heap block). Pop the path box into x0, push the result box.
+            s = s.need("heap").need("read_file");
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_read_file\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "args") {
+            // no args -> build a fresh string[] of the command-line arguments
+            // (asm_arm64.emit_runtime's __fern_args, emitted in its args block).
+            // The args need also makes _start save argc/argv from the initial stack.
+            s = s.need("heap").need("args");
+            s = s.write("    bl __fern_args\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "eprint_str") {
+            // [strbox] -> write its bytes to stderr (asm_arm64.emit_runtime's
+            // __fern_eprint_str, reused via the eprint need). Push x0 for the drop.
+            s = s.need("eprint");
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_eprint_str\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "exit") {
+            // [n] -> sys_exit(n) (#93 on aarch64). Never returns; the pushed dummy
+            // keeps the operand-stack shape for the statement-level drop.
+            s = s.write("    ldr x0, [sp], #16\n    mov x8, #93\n    svc #0\n    mov x0, #0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "putchar") {
+            // [byte] -> write the low byte to stdout (asm_arm64.emit_runtime's
+            // __fern_putchar, reused via the putchar need). Push x0 for the drop.
+            s = s.need("putchar");
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_putchar\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "strbuf_reset") {
+            // no args -> clear the global string-builder length. The strbuf runtime
+            // is emitted alongside the heap (mark_heap), so pull it in. Push x0 for
+            // the statement-level drop (same shape as putchar).
+            s = s.mark_heap();
+            s = s.write("    bl __fern_strbuf_reset\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "strbuf_append") {
+            // [strbox] -> copy its bytes onto the global string-builder. Push x0 for
+            // the drop.
+            s = s.mark_heap();
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_strbuf_append\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "strbuf_take") {
+            // no args -> snapshot the builder into a fresh string box and reset it
+            // (a value op; allocates via __fern_alloc in the heap runtime).
+            s = s.mark_heap();
+            s = s.write("    bl __fern_strbuf_take\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "sleep_ms") {
+            // [ms] -> nanosleep(ms) (asm_arm64.emit_runtime emits __fern_sleep_ms
+            // unconditionally, so no need is set). Push x0 for the drop.
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_sleep_ms\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "map_set") {
+            // [map, key, val] (val on top) -> __fern_map_set(x0=map,x1=k,x2=v,x3=keykind).
+            s = s.need("maps");
+            s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+            s = s.write("    mov x3, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_set\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "map_len") {
+            // pop map; len = keys-array length ([[map]]).
+            s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "map_get") {
+            s = s.need("maps");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_get\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "map_has") {
+            s = s.need("maps");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_has\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "map_delete") {
+            // [map, key] -> __fern_map_delete(x0=map, x1=key, x2=keykind) -> the
+            // [map, existed] tuple box (`m.without(k)`); runtime in asm_arm64.
+            s = s.need("maps");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_delete\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "map_get_or") {
+            s = s.need("maps");
+            var golbl: string = lp + "go" + util.i32_to_string(i);
+            // [map, k, default] (default top) -> __fern_map_get, payload or default.
+            s = s.write("    ldr x3, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");   // default(x3), k(x1), map(x0)
+            s = s.write("    str x3, [sp, #-16]!\n");   // save default across the call (x3 is caller-saved)
+            s = s.write("    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_get\n");
+            s = s.write("    ldr x3, [sp], #16\n");      // restore default
+            s = s.write("    ldr x4, [x0]\n    cbnz x4, " + golbl + "_d\n");   // tag != 0 -> default
+            s = s.write("    ldr x0, [x0, #8]\n    b " + golbl + "_e\n");
+            s = s.write(golbl + "_d:\n    mov x0, x3\n" + golbl + "_e:\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "map_keys") {
+            // parallel-array map: keys[] pointer at box+0.
+            s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "map_values") {
+            // parallel-array map: values[] pointer at box+8.
+            s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #8]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "struct_make") {
+            // nf field values on the operand stack (field nf-1 on top, decl
+            // order). Box = [shape_ptr@0, f0@8, …]; shape = the interned
+            // struct-name string (asm_arm64's layout). The box is rc-HEADERED so
+            // the exit dec-sweep (__fern_rc_dec → __fn___fern_arr_dec) can
+            // refcount AND free it at the right size: allocate via __fern_arr_box
+            // with cap=(nf+1) words, which returns data=base+16 with rc=1 at
+            // data-8 and the block size (cap+3 words) recoverable from cap at
+            // data-16 — exactly the array layout __fern_arr_dec frees. The slot
+            // offsets are unchanged (data+0=shape, data+(i+1)*8=field i), so every
+            // struct/enum reader (struct_get/_set, variant_is, dyn dispatch's
+            // shape@0) stays correct. __fern_arr_box writes len=cap at data+0; we
+            // overwrite it with the shape pointer, leaving cap@data-16 intact.
+            s = s.mark_heap();
+            var nf: i32 = o.i32_imm;
+            var smlo: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, o.str);
+            s = smlo.state;
+            s = s.write("    mov x0, #" + util.i32_to_string(nf + 1) + "\n    bl __fern_arr_box\n");
+            s = s.write("    adrp x1, " + smlo.label + "\n");
+            s = s.write("    add x1, x1, :lo12:" + smlo.label + "\n");
+            s = s.write("    str x1, [x0]\n");
+            var em: i32 = nf - 1;
+            while (em >= 0) {
+                s = s.write("    ldr x1, [sp], #16\n    str x1, [x0, #" + util.i32_to_string((em + 1) * 8) + "]\n");
+                em = em - 1;
+            }
+            s = s.write("    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "struct_get") {
+            // pop struct box; field at (index+1)*8.
+            s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #" + util.i32_to_string((o.i32_imm + 1) * 8) + "]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "struct_set") {
+            // pop val (top), box; store val at field (index+1)*8.
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [x0, #" + util.i32_to_string((o.i32_imm + 1) * 8) + "]\n");
+        } else if (o.kind == "struct_set_shape") {
+            // peek box (top of rt-stack); write o.str's interned shape pointer (the
+            // SAME .S label struct_make writes / variant_is compares) at offset 0.
+            // Leaves the box on the stack. Used by the enum-donor in-place reuse to
+            // re-shape a dead scalar-enum box as a same-size struct.
+            var sslo: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, o.str);
+            s = sslo.state;
+            s = s.write("    ldr x0, [sp]\n");
+            s = s.write("    adrp x1, " + sslo.label + "\n");
+            s = s.write("    add x1, x1, :lo12:" + sslo.label + "\n");
+            s = s.write("    str x1, [x0]\n");
+        } else if (o.kind == "variant_is") {
+            // pop variant box; shape ptr @0; compare to the interned variant name
+            // (pointer equality). Push 1 if equal, else 0.
+            var vlo: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, o.str);
+            s = vlo.state;
+            s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n");
+            s = s.write("    adrp x1, " + vlo.label + "\n");
+            s = s.write("    add x1, x1, :lo12:" + vlo.label + "\n");
+            s = s.write("    cmp x0, x1\n    cset x0, eq\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "tuple_make") {
+            // n elements on the operand stack (element n-1 on top). Box =
+            // [e0@0, e1@8, …], n*8 bytes, no shape slot. x0 (box) stays live.
+            s = s.mark_heap();
+            var tn: i32 = o.i32_imm;
+            s = s.write("    mov x0, #" + util.i32_to_string(tn * 8) + "\n    bl __fern_alloc\n");
+            var tem: i32 = tn - 1;
+            while (tem >= 0) {
+                s = s.write("    ldr x1, [sp], #16\n    str x1, [x0, #" + util.i32_to_string(tem * 8) + "]\n");
+                tem = tem - 1;
+            }
+            s = s.write("    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "tuple_get") {
+            // pop tuple box; element at index*8.
+            s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #" + util.i32_to_string(o.i32_imm * 8) + "]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "drop") {
+            s = s.write("    add sp, sp, #16\n");
+        } else if (o.kind == "call_direct" && asm_ir.is_fern_helper(o.str)) {
+            // Runtime RC helper — asm_arm64's stack-arg ABI + symbols (drop-in):
+            // the arg(s) are already on the rt-stack (the helper reads [sp]);
+            // call, caller-clean the args, push the result (helpers return the
+            // ptr / count in x0).
+            s = s.mark_heap();
+            // i32.to_string()'s decimal helper needs its body emitted (the
+            // stack-ABI __fn___fern_i32_to_string wrapper in asm_arm64.emit_runtime,
+            // gated on this need).
+            if (o.str == "__fern_i32_to_string") { s = s.mark_i32_to_string(); }
+            // str_to_i32(s)'s decimal-parse helper — gated on this need (the
+            // stack-ABI __fn___fern_str_to_i32 wrapper in asm_arm64.emit_runtime).
+            if (o.str == "__fern_str_to_i32") { s = s.mark_str_to_i32(); }
+            // chr(n)'s 1-char-box helper — gated on this need (the self-contained
+            // stack-ABI __fn___fern_chr in asm_arm64.emit_runtime).
+            if (o.str == "__fern_chr") { s = s.mark_chr(); }
+            s = s.write("    bl " + asm_ir.ir_helper_symbol(o.str) + "\n");
+            if (o.i32_imm > 0) { s = s.write("    add sp, sp, #" + util.i32_to_string(o.i32_imm * 16) + "\n"); }
+            s = s.write("    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "call_direct") {
+            // User call: the IR pushes args left-to-right (arg0 deepest);
+            // asm_arm64's ABI wants arg0 on TOP (param[i] at [x29,#16+i*16]).
+            // Reverse the argc 16-byte rt-stack slots, call, pop the args, push x0.
+            var argc: i32 = o.i32_imm;
+            var h: i32 = 0;
+            while (h < argc / 2) {
+                var lo: i32 = h * 16;
+                var hi: i32 = (argc - 1 - h) * 16;
+                s = s.write("    ldr x0, [sp, #" + util.i32_to_string(lo) + "]\n");
+                s = s.write("    ldr x1, [sp, #" + util.i32_to_string(hi) + "]\n");
+                s = s.write("    str x0, [sp, #" + util.i32_to_string(hi) + "]\n");
+                s = s.write("    str x1, [sp, #" + util.i32_to_string(lo) + "]\n");
+                h = h + 1;
+            }
+            s = s.write("    bl __fn_" + asmcore.sanitize_label(o.str) + "\n");
+            if (argc > 0) { s = s.write("    add sp, sp, #" + util.i32_to_string(argc * 16) + "\n"); }
+            s = s.write("    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "dyn_dispatch") {
+            // `dyn Trait` method call. Receiver (arg0) + args are in argc
+            // consecutive locals from base_slot. Read the receiver's shape
+            // pointer (x1) and dispatch to the matching `<Type>.<method>` — a
+            // compare-branch chain over every module method named o.str with a
+            // struct receiver, mirroring asm_arm64.fern. Each matched arm pushes
+            // the argc locals (arg0/receiver on top, the arm64 ABI) and calls.
+            var dbase: i32 = o.i32_imm;
+            var dargc: i32 = o.width;
+            s = fr_ldr(s, "x0", 0 - 8 * (dbase + 1));
+            s = s.write("    ldr x1, [x0]\n");
+            var dend: string = lp + "dynend" + util.i32_to_string(i);
+            var dfi: i32 = 0;
+            var darmn: i32 = 0;
+            while (dfi < s.funcs.len()) {
+                var dfd: parser.FuncDecl = s.funcs[dfi];
+                var ddbn: string = util.base_type_name(dfd.receiver_type);
+                // Dispatch arms: struct receivers (value carries its shape) AND
+                // primitive/string receivers (value heap-boxed at coercion —
+                // docs/DYN-TRAITS.md §4.2.3). A primitive arm UNBOXES: the receiver
+                // local holds the box pointer, so arg0 is reloaded from box+8.
+                var dprim: boolean = dfd.receiver_type.len() > 0 && asmcore.is_prim_recv_name(ddbn, s);
+                if (dfd.name == o.str && dfd.receiver_type.len() > 0
+                        && (asmcore.is_struct_decl_name(ddbn, s) || dprim)) {
+                    var dbn: string = ddbn;
+                    var dlit: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, dbn);
+                    s = dlit.state;
+                    var dnext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
+                    s = s.write("    adrp x2, " + dlit.label + "\n");
+                    s = s.write("    add x2, x2, :lo12:" + dlit.label + "\n");
+                    s = s.write("    cmp x1, x2\n    b.ne " + dnext + "\n");
+                    var dk: i32 = dargc - 1;
+                    while (dk >= 0) {
+                        if (dk == 0 && dprim) {
+                            // arg0 is the receiver: unbox the value from box+8.
+                            s = fr_ldr(s, "x0", 0 - 8 * (dbase + 1));
+                            s = s.write("    ldr x0, [x0, #8]\n");
+                            s = s.write("    str x0, [sp, #-16]!\n");
+                        } else {
+                            s = fr_ldr(s, "x0", 0 - 8 * (dbase + dk + 1));
+                            s = s.write("    str x0, [sp, #-16]!\n");
+                        }
+                        dk = dk - 1;
+                    }
+                    s = s.write("    bl __fn_" + asmcore.sanitize_label(dbn + "." + dfd.name) + "\n");
+                    s = s.write("    add sp, sp, #" + util.i32_to_string(dargc * 16) + "\n");
+                    s = s.write("    str x0, [sp, #-16]!\n");
+                    s = s.write("    b " + dend + "\n");
+                    s = s.write(dnext + ":\n");
+                    darmn = darmn + 1;
+                }
+                dfi = dfi + 1;
+            }
+            s = s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");   // fallback (unreachable)
+            s = s.write(dend + ":\n");
+        } else if (o.kind == "dyn_box") {
+            // Heap-box a primitive/string value coerced into a `dyn Trait` slot
+            // (docs/DYN-TRAITS.md §4.2.3). Cell = [shape@0, value@8], 16 bytes;
+            // shape = the interned primitive type name (the SAME .S label struct
+            // shapes use). The value (one word) is on the operand stack. arm64's
+            // __fern_alloc clobbers x0..x14, so pop the value into the callee-saved
+            // x19 (saved/restored around the call) before alloc; then store shape
+            // (x2 = .S addr) + value, push the cell pointer. Mirrors opt_make's
+            // alloc-then-store, with x19 carrying the value across the call.
+            var dbl: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, o.str);
+            s = dbl.state;
+            s = s.write("    ldr x9, [sp], #16\n");                  // pop value -> x9
+            s = s.write("    str x19, [sp, #-16]!\n");               // save callee-saved x19
+            s = s.write("    mov x19, x9\n");                        // x19 = value (survives alloc)
+            s = s.write("    mov x0, #16\n    bl __fern_alloc\n");   // x0 = cell ptr
+            s = s.write("    adrp x2, " + dbl.label + "\n");
+            s = s.write("    add x2, x2, :lo12:" + dbl.label + "\n");
+            s = s.write("    str x2, [x0]\n");                       // shape @0
+            s = s.write("    str x19, [x0, #8]\n");                  // value @8
+            s = s.write("    ldr x19, [sp], #16\n");                 // restore x19
+            s = s.write("    str x0, [sp, #-16]!\n");                // push cell ptr
+        } else if (o.kind == "dyn_downcast") {
+            // `e as? T` downcast (docs/DYN-TRAITS.md §9). The `dyn` value (a heap
+            // pointer carrying its concrete shape @0) is on top of the operand
+            // stack. Read its shape and compare to T's interned shape (the SAME
+            // .S label struct_make / dyn_dispatch use, so pointer identity
+            // holds): equal → Some(value) box [tag0@0, payload@8]; else → None
+            // box [tag1@0, 0@8] — the ordinary Option box `match` reads. The dyn
+            // value rides the operand stack (which __fern_alloc preserves)
+            // across the alloc, so the hit path reloads it as the Some payload.
+            s = s.mark_heap();
+            var dcl: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, o.str);
+            s = dcl.state;
+            var dcmiss: string = lp + "dcmiss" + util.i32_to_string(i);
+            var dcend: string = lp + "dcend" + util.i32_to_string(i);
+            s = s.write("    ldr x0, [sp]\n");                       // peek dyn ptr (left on stack)
+            s = s.write("    ldr x1, [x0]\n");                       // shape @0
+            s = s.write("    adrp x2, " + dcl.label + "\n");
+            s = s.write("    add x2, x2, :lo12:" + dcl.label + "\n");
+            s = s.write("    cmp x1, x2\n    b.ne " + dcmiss + "\n");
+            // hit: Some(value) — alloc, tag 0, reload+store the dyn ptr payload.
+            s = s.write("    mov x0, #16\n    bl __fern_alloc\n");
+            s = s.write("    mov x1, #0\n    str x1, [x0]\n");
+            s = s.write("    ldr x1, [sp], #16\n    str x1, [x0, #8]\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.write("    b " + dcend + "\n");
+            // miss: None — discard the dyn ptr, build a payloadless tag-1 box.
+            s = s.write(dcmiss + ":\n");
+            s = s.write("    add sp, sp, #16\n");
+            s = s.write("    mov x0, #16\n    bl __fern_alloc\n");
+            s = s.write("    mov x1, #1\n    str x1, [x0]\n    str xzr, [x0, #8]\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.write(dcend + ":\n");
+        } else if (o.kind == "const_func") {
+            // A function VALUE is the function's code address (adrp/add of its
+            // label) — push it. No funcref table (the address is the value);
+            // call_indirect dispatches through it with blr.
+            var cfl: string = "__fn_" + asmcore.sanitize_label(o.str);
+            s = s.write("    adrp x0, " + cfl + "\n    add x0, x0, :lo12:" + cfl + "\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "call_indirect") {
+            // Indirect call: the rt-stack holds [arg0(deepest) … argN-1,
+            // fn_addr(top)]. Pop the target into x9 (scratch), reverse the args so
+            // arg0 is on TOP (param[i] at [x29,#16+i*16]), blr through it, pop the
+            // args, push x0. Same arg discipline as call_direct.
+            var icargc: i32 = o.i32_imm;
+            s = s.write("    ldr x9, [sp], #16\n");
+            var ih: i32 = 0;
+            while (ih < icargc / 2) {
+                var ilo: i32 = ih * 16;
+                var ihi: i32 = (icargc - 1 - ih) * 16;
+                s = s.write("    ldr x0, [sp, #" + util.i32_to_string(ilo) + "]\n");
+                s = s.write("    ldr x1, [sp, #" + util.i32_to_string(ihi) + "]\n");
+                s = s.write("    str x0, [sp, #" + util.i32_to_string(ihi) + "]\n");
+                s = s.write("    str x1, [sp, #" + util.i32_to_string(ilo) + "]\n");
+                ih = ih + 1;
+            }
+            s = s.write("    blr x9\n");
+            if (icargc > 0) { s = s.write("    add sp, sp, #" + util.i32_to_string(icargc * 16) + "\n"); }
+            s = s.write("    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "const_f64") {
+            // Float literal: GAS assembles the text to an IEEE double in .rodata;
+            // load its bits and push them (floats flow as their 8-byte pattern).
+            var flb: asmcore.LabelOut = asmcore.fresh_label(s);
+            s = flb.state;
+            s = s.write("    .section .rodata\n" + flb.name + ": .double " + o.str + "\n    .text\n");
+            s = s.write("    adrp x0, " + flb.name + "\n    add x0, x0, :lo12:" + flb.name + "\n    ldr d0, [x0]\n    fmov x0, d0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "i32_to_f64") {
+            // signed i32 -> f64 (scvtf); value rides the stack as bits.
+            s = s.write("    ldr x0, [sp], #16\n    scvtf d0, x0\n    fmov x0, d0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "f64_to_i32") {
+            // f64 -> signed i32, truncating toward zero (fcvtzs).
+            s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n    fcvtzs x0, d0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "f64_to_i64") {
+            // f64 -> signed i64, truncating toward zero. fcvtzs x0, d0 already
+            // produces the full 64-bit result, so it is the same instruction as
+            // f64_to_i32 (which only keeps the low 32 bits).
+            s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n    fcvtzs x0, d0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "f64_bits" || o.kind == "f64_from_bits") {
+            // No-op reinterpret: the 8-byte rt-stack slot already holds the
+            // IEEE-754 bit pattern, identical to the i64 bits.
+        } else if (o.kind == "f32_bits") {
+            // f64 -> f32 (fcvt s,d), take the 32-bit pattern, sign-extend into
+            // the 64-bit slot.
+            s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n    fcvt s0, d0\n    fmov w0, s0\n    sxtw x0, w0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "f32_from_bits") {
+            // interpret the low 32 bits as an IEEE-754 f32 and widen to f64.
+            s = s.write("    ldr x0, [sp], #16\n    fmov s0, w0\n    fcvt d0, s0\n    fmov x0, d0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "fadd" || o.kind == "fsub" || o.kind == "fmul" || o.kind == "fdiv") {
+            // f64 arithmetic: pop rhs (x0) / lhs (x1) into d0/d1, op, push.
+            s = s.write("    ldr x0, [sp], #16\n    ldr x1, [sp], #16\n    fmov d0, x0\n    fmov d1, x1\n");
+            if (o.kind == "fadd") { s = s.write("    fadd d0, d1, d0\n"); }
+            else if (o.kind == "fsub") { s = s.write("    fsub d0, d1, d0\n"); }
+            else if (o.kind == "fmul") { s = s.write("    fmul d0, d1, d0\n"); }
+            else { s = s.write("    fdiv d0, d1, d0\n"); }
+            s = s.write("    fmov x0, d0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "fsqrt" || o.kind == "ffloor" || o.kind == "fceil" || o.kind == "ftrunc" || o.kind == "fabs" || o.kind == "fround") {
+            // f64 unary math (op_funary): pop the operand into d0, apply the single
+            // FP instruction, push. frintm/frintp/frintz are round toward -inf /
+            // +inf / zero; frinta is round-to-nearest ties-AWAY (= Go's math.Round,
+            // so __round_f64 is one instruction here — no emulation needed, unlike
+            // x86/wasm). Mirrors asm_arm64.fern.
+            s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n");
+            if (o.kind == "fsqrt") { s = s.write("    fsqrt d0, d0\n"); }
+            else if (o.kind == "ffloor") { s = s.write("    frintm d0, d0\n"); }
+            else if (o.kind == "fceil") { s = s.write("    frintp d0, d0\n"); }
+            else if (o.kind == "ftrunc") { s = s.write("    frintz d0, d0\n"); }
+            else if (o.kind == "fround") { s = s.write("    frinta d0, d0\n"); }
+            else { s = s.write("    fabs d0, d0\n"); }
+            s = s.write("    fmov x0, d0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "flt" || o.kind == "fle" || o.kind == "fgt" || o.kind == "fge" || o.kind == "feq" || o.kind == "fne") {
+            // f64 compare → i32 0/1. fcmp's condition codes are NaN-aware (mi/ls
+            // are false when unordered); mirrors asm_arm64.fern.
+            s = s.write("    ldr x0, [sp], #16\n    ldr x1, [sp], #16\n    fmov d0, x0\n    fmov d1, x1\n    fcmp d1, d0\n");
+            if (o.kind == "flt") { s = s.write("    cset w0, mi\n"); }
+            else if (o.kind == "fle") { s = s.write("    cset w0, ls\n"); }
+            else if (o.kind == "fgt") { s = s.write("    cset w0, gt\n"); }
+            else if (o.kind == "fge") { s = s.write("    cset w0, ge\n"); }
+            else if (o.kind == "feq") { s = s.write("    cset w0, eq\n"); }
+            else { s = s.write("    cset w0, ne\n"); }
+            s = s.write("    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "end") {
+            s = s.write(lp + util.i32_to_string(i) + ":\n");
+        } else {
+            // binary op: pop rhs (x1), lhs (x0), combine, push.
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+            s = s.write(ir_bin_asm(o.kind));
+            s = s.write("    str x0, [sp, #-16]!\n");
+        }
+        i = i + 1;
+    }
+
+    // Fallback (subset functions always end in `return`).
+    s = s.write("    mov x0, #0\n    mov sp, x29\n    ldp x29, x30, [sp], #16\n    ret\n");
+    return s;
+}
+
+// emit_body emits the arm64 program body for an all-i32-eligible module via
+// the IR path: the .text header, each function from the stack IR, and a
+// `_start` that calls __fn_main and exits with its result. It does NOT emit
+// the heap/RC runtime and does NOT reset/take the strbuf — the CALLER
+// (asm_arm64.emit_module, or the differential driver) appends asm_arm64's own
+// emit_runtime and materialises the output. Keeping the runtime on the caller
+// side is what lets asm_arm64 import this module (for the use_ir dispatch)
+// without a cycle: asm_arm64_ir never imports asm_arm64. Caller must ensure
+// asm_ir.all_eligible(mod) and have seeded `s` (struct_decls / funcs).
+pub function emit_body(mod: parser.Module, s: asmcore.EmitState): asmcore.EmitState {
+    // Infer return types for unannotated functions so the IR path's
+    // ret-type-keyed call tagging matches the AST path (parity with the
+    // x86 IR path in asm_ir.emit_module_ir).
+    mod = parser.infer_ret_types_module(mod);
+    s = asmcore.EmitState { ...s, funcs: mod.funcs };
+    s = s.write("    .globl _start\n");
+    s = s.write("    .text\n");
+    var arf: string[] = asm_ir.array_ret_fns(mod);
+    // Inter-procedural borrowability computed ONCE per module (not per function —
+    // that OOMs the arm64 self-compile); threaded into every emit_function_via_ir.
+    var bparams: string[] = irlower.borrowable_params_interproc(mod.funcs);
+    // The fourteen return-type / signature side-tables lower_func consults are
+    // derived ONCE per module here (each scans all of mod.funcs), then threaded
+    // into every emit_function_via_ir — recomputing them per function is O(n^2)
+    // and OOMs the bump heap on a large module. Mirrors bparams above, the x86
+    // emit_module_ir, and the wasm backend's emit_module.
+    var srf: string[] = irlower.str_ret_fns_of(mod.funcs);
+    var sarf: string[] = irlower.strarr_ret_fns_of(mod.funcs);
+    var amf: string[] = irlower.arr_method_fns_of(mod.funcs);
+    var orf: string[] = irlower.opt_ret_fns_of(mod.funcs);
+    var irf: string[] = irlower.i64_ret_fns_of(mod.funcs);
+    var trf: string[] = irlower.tuple_ret_fns_of(mod.funcs);
+    var srtf: string[] = irlower.struct_ret_fns_of(mod.funcs, s.struct_decls);
+    var mrtf: string[] = irlower.map_ret_fns_of(mod.funcs);
+    var frf: string[] = irlower.f64_ret_fns_of(mod.funcs);
+    var farf: string[] = irlower.f64arr_ret_fns_of(mod.funcs);
+    var iarf: string[] = irlower.i64arr_ret_fns_of(mod.funcs);
+    var fps: string[] = irlower.fn_param_sigs_of(mod.funcs);
+    var cfs: string[] = irlower.closure_ret_fns_of(mod.funcs);
+    var cnf: string[] = irlower.const_fns_of(mod.funcs);
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf);
+        fi = fi + 1;
+    }
+    s = s.write("_start:\n");
+    // args() reads __fern_argc / __fern_argv; save them from the SysV entry stack
+    // (argc at [sp], argv at sp+8) BEFORE the frame push. Linux ELF, matching
+    // asm_arm64.emit_module's _start. Gated on the args need so a non-args program
+    // is byte-identical. __fern_args / __fern_arg_at come from the caller-appended
+    // asm_arm64.emit_runtime (also gated on the args need).
+    if (s.has_need("args")) {
+        s = s.write("    ldr x0, [sp]\n");
+        s = s.write("    adrp x1, __fern_argc\n");
+        s = s.write("    add x1, x1, :lo12:__fern_argc\n");
+        s = s.write("    str x0, [x1]\n");
+        s = s.write("    add x0, sp, #8\n");
+        s = s.write("    adrp x1, __fern_argv\n");
+        s = s.write("    add x1, x1, :lo12:__fern_argv\n");
+        s = s.write("    str x0, [x1]\n");
+    }
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");
+    s = s.write("    mov x29, sp\n");
+    s = s.write("    bl __fn_main\n");
+    s = s.write("    mov x8, #93\n");      // sys_exit (Linux arm64); x0 = main's result
+    s = s.write("    svc #0\n");
+    return s;
+}

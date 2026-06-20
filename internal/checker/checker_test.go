@@ -79,6 +79,305 @@ func TestTypeErrors(t *testing.T) {
 	}
 }
 
+// Composite `==` / `!=` must be structural equality via the type's
+// `Eq` impl, not silent heap-pointer identity. A struct/enum that does
+// not implement `Eq` is rejected (with a derive hint); arrays/slices/
+// tuples are rejected (no structural eq yet); a type that does
+// implement `Eq` type-checks (and desugars to `a.eq(b)`).
+// Error-converting `?`: a `Result[_, E]` propagated through a function
+// returning `Result[_, dyn Trait]` is accepted when E implements Trait
+// (boxing E into `dyn Trait`), and rejected otherwise. See #3234.
+func TestTryConvertErrToDyn(t *testing.T) {
+	const hdr = `trait Error { function message(self: Self): string; }
+struct NotFound { what: string }
+impl Error for NotFound { function message(self: Self): string { return self.what; } }
+function find(): Result[i32, NotFound] { return Err(NotFound { what: "x" }); }
+`
+	// Accepted: NotFound implements Error.
+	if err := checkSource(t, hdr+`function h(): Result[i32, dyn Error] {
+  var v: i32 = find()?;
+  return Ok(v);
+}`); err != nil {
+		t.Errorf("error-converting `?` (NotFound→dyn Error) should type-check, got: %v", err)
+	}
+	// Rejected: Plain does not implement Error.
+	err := checkSource(t, `trait Error { function message(self: Self): string; }
+struct Plain { x: i32 }
+function find(): Result[i32, Plain] { return Err(Plain { x: 1 }); }
+function h(): Result[i32, dyn Error] { var v: i32 = find()?; return Ok(v); }
+function main(): i32 { return 0; }`)
+	if err == nil || !strings.Contains(err.Error(), "error types must match") {
+		t.Errorf("`?` with a non-implementing error type should be rejected, got: %v", err)
+	}
+	// Accepted (multi-trait dyn error): Both implements EVERY trait in
+	// `dyn A + B`, so the error converts via the impl-all gate.
+	if err := checkSource(t, `trait A { function a(self: Self): i32; }
+trait B { function b(self: Self): i32; }
+struct Both { n: i32 }
+impl A for Both { function a(self: Self): i32 { return self.n; } }
+impl B for Both { function b(self: Self): i32 { return 0; } }
+function find(): Result[i32, Both] { return Err(Both { n: 1 }); }
+function h(): Result[i32, dyn A + B] { var v: i32 = find()?; return Ok(v); }
+function main(): i32 { return 0; }`); err != nil {
+		t.Errorf("error-converting `?` into a multi-trait `dyn A + B` should type-check, got: %v", err)
+	}
+	// Rejected (multi-trait, missing one): OnlyA implements A but not B, so it
+	// does not convert into `dyn A + B`.
+	err = checkSource(t, `trait A { function a(self: Self): i32; }
+trait B { function b(self: Self): i32; }
+struct OnlyA { n: i32 }
+impl A for OnlyA { function a(self: Self): i32 { return self.n; } }
+function find(): Result[i32, OnlyA] { return Err(OnlyA { n: 1 }); }
+function h(): Result[i32, dyn A + B] { var v: i32 = find()?; return Ok(v); }
+function main(): i32 { return 0; }`)
+	if err == nil || !strings.Contains(err.Error(), "error types must match") {
+		t.Errorf("`?` into `dyn A + B` with an error implementing only A should be rejected, got: %v", err)
+	}
+}
+
+// From-based error-converting `?`: a `Result[_, E1]` propagated through a
+// function returning `Result[_, E2]` is accepted when E2 has an associated
+// `from(E1): E2` (`impl From[E1] for E2`), mapping `Err(e)` to
+// `Err(E2.from(e))`. Rejected when no such `from` (and no `dyn`) exists.
+// See #2674.
+func TestTryConvertErrViaFrom(t *testing.T) {
+	const hdr = `trait From[T] { function from(v: T): Self; }
+struct IoErr { code: i32 }
+struct AppErr { msg: i32 }
+impl From[IoErr] for AppErr { function from(e: IoErr): Self { return AppErr { msg: e.code }; } }
+function read(): Result[i32, IoErr] { return Err(IoErr { code: 1 }); }
+`
+	if err := checkSource(t, hdr+`function run(): Result[i32, AppErr] {
+  var v: i32 = read()?;
+  return Ok(v);
+}`); err != nil {
+		t.Errorf("From-based error-converting `?` should type-check, got: %v", err)
+	}
+	// No `from(IoErr)` on the target and no dyn → rejected.
+	err := checkSource(t, `struct IoErr { code: i32 }
+struct AppErr { msg: i32 }
+function read(): Result[i32, IoErr] { return Err(IoErr { code: 1 }); }
+function run(): Result[i32, AppErr] { var v: i32 = read()?; return Ok(v); }
+function main(): i32 { return 0; }`)
+	if err == nil || !strings.Contains(err.Error(), "error types must match") {
+		t.Errorf("`?` with no conversion should be rejected, got: %v", err)
+	}
+}
+
+// Arithmetic operators `+ - * /` on a composite type desugar to its
+// conventionally-named method (add/sub/mul/div); a composite without the
+// method is rejected with a clear E009. See #2706.
+func TestCompositeArithmeticOverload(t *testing.T) {
+	const ops = `struct V { x: i32 }
+function (self: V) add(o: V): V { return V { x: self.x + o.x }; }
+function (self: V) sub(o: V): V { return V { x: self.x - o.x }; }
+function (self: V) mul(o: V): V { return V { x: self.x * o.x }; }
+function (self: V) div(o: V): V { return V { x: self.x / o.x }; }
+`
+	if err := checkSource(t, ops+`function main(): i32 {
+  var a: V = V { x: 6 };
+  var b: V = V { x: 7 };
+  var r: V = ((a + b) - a) * b;
+  return (r / b).x;
+}`); err != nil {
+		t.Errorf("composite arithmetic with add/sub/mul/div should type-check, got: %v", err)
+	}
+	// The remaining binary operators overload too: `%`→rem, `&`→bitand,
+	// `|`→bitor, `^`→bitxor, `<<`→shl, `>>`→shr. See #2706.
+	const bitOps = `struct F { b: i32 }
+function (self: F) rem(o: F): F { return F { b: self.b % o.b }; }
+function (self: F) bitand(o: F): F { return F { b: self.b & o.b }; }
+function (self: F) bitor(o: F): F { return F { b: self.b | o.b }; }
+function (self: F) bitxor(o: F): F { return F { b: self.b ^ o.b }; }
+function (self: F) shl(o: F): F { return F { b: self.b << o.b }; }
+function (self: F) shr(o: F): F { return F { b: self.b >> o.b }; }
+`
+	if err := checkSource(t, bitOps+`function main(): i32 {
+  var a: F = F { b: 12 };
+  var b: F = F { b: 10 };
+  var r: F = ((((a & b) | a) ^ b) << F{b:1}) >> F{b:1};
+  return (r % F{b:7}).b;
+}`); err != nil {
+		t.Errorf("composite %% & | ^ << >> should type-check, got: %v", err)
+	}
+	// A composite without the operator method is rejected.
+	err := checkSource(t, `struct W { x: i32 }
+function main(): i32 { var a: W = W{x:1}; var b: W = W{x:2}; var c: W = a + b; return c.x; }`)
+	if err == nil || !strings.Contains(err.Error(), `operator "+" is not defined for W`) {
+		t.Errorf("struct without `add` should be rejected with an operator-overload hint, got: %v", err)
+	}
+	// Numeric arithmetic is unaffected (the overload path only fires for
+	// struct/enum operands).
+	if err := checkSource(t, `function main(): i32 { return 2 + 3 * 4 - 1; }`); err != nil {
+		t.Errorf("numeric arithmetic should still type-check, got: %v", err)
+	}
+	// Unary `-` on a composite routes to `neg`; `ops` has no `neg`, so it
+	// is rejected; a type WITH `neg` type-checks; numeric unary minus is
+	// unaffected. See #2706.
+	if err := checkSource(t, ops+`function main(): i32 { var a: V = V{x:5}; var b: V = -a; return b.x; }`); err == nil ||
+		!strings.Contains(err.Error(), "unary `-` is not defined for V") {
+		t.Errorf("unary `-` on a struct without `neg` should be rejected with a hint, got: %v", err)
+	}
+	if err := checkSource(t, `struct V { x: i32 }
+function (self: V) neg(): V { return V { x: 0 - self.x }; }
+function main(): i32 { var a: V = V{x:5}; var b: V = -a; return b.x; }`); err != nil {
+		t.Errorf("unary `-` with a `neg` method should type-check, got: %v", err)
+	}
+	if err := checkSource(t, `function main(): i32 { var x: i32 = 7; return -x; }`); err != nil {
+		t.Errorf("numeric unary minus should still type-check, got: %v", err)
+	}
+}
+
+func TestCompositeEqualityRoutesToEq(t *testing.T) {
+	const eqI32 = `trait Eq { function eq(self: Self, other: Self): boolean; }
+impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } }
+`
+	reject := []struct {
+		src  string
+		want string
+	}{
+		{`struct P { x: i32 }
+function main(): i32 { var a: P = P{x:1}; var b: P = P{x:1}; if (a == b) { return 1; } return 0; }`,
+			"does not implement `Eq`"},
+		{`function main(): i32 { var a: i32[] = [1,2]; var b: i32[] = [1,2]; if (a == b) { return 1; } return 0; }`,
+			"structural equality for arrays"},
+	}
+	for _, c := range reject {
+		err := checkSource(t, c.src)
+		if err == nil {
+			t.Errorf("%q: expected rejection, got nil", c.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%q: error %q does not contain %q", c.src, err.Error(), c.want)
+		}
+	}
+	// Ordering operators on composites route to `Ord::cmp`; without
+	// an Ord impl they're rejected, arrays/tuples are rejected, and a
+	// type with Ord type-checks.
+	const ordI32 = `trait Ord { function cmp(self: Self, other: Self): i32; }
+impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }
+`
+	ordReject := []struct {
+		src  string
+		want string
+	}{
+		{`struct P { x: i32 }
+function main(): i32 { var a: P = P{x:1}; var b: P = P{x:2}; if (a < b) { return 1; } return 0; }`,
+			"does not implement `Ord`"},
+	}
+	for _, c := range ordReject {
+		err := checkSource(t, c.src)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%q: want error containing %q, got %v", c.src, c.want, err)
+		}
+	}
+	if err := checkSource(t, ordI32+`@derive(Ord) struct P { x: i32 }
+function main(): i32 { var a: P = P{x:1}; var b: P = P{x:2}; if (a < b) { if (b >= a) { return 0; } } return 1; }`); err != nil {
+		t.Errorf("composite ordering with derived Ord should type-check, got: %v", err)
+	}
+
+	// With Eq derived, composite == type-checks cleanly.
+	ok := eqI32 + `@derive(Eq) struct P { x: i32, y: i32 }
+@derive(Eq) enum E { A, B(i32) }
+function main(): i32 {
+    var a: P = P{x:1, y:2}; var b: P = P{x:1, y:2};
+    if (a == b) { if (A == A) { if (B(1) != B(2)) { return 0; } } }
+    return 1;
+}`
+	if err := checkSource(t, ok); err != nil {
+		t.Errorf("composite == with derived Eq should type-check, got: %v", err)
+	}
+}
+
+// Methods declared on a generic struct / enum receiver bind the
+// receiver's type variables implicitly (`T` in `Box[T]`), so they
+// type-check and dispatch per instantiation. A receiver type-arg that
+// names a real type stays concrete.
+func TestGenericReceiverMethods(t *testing.T) {
+	ok := []string{
+		`struct Box[T] { v: T }
+function (b: Box[T]) get(): T { return b.v; }
+function main(): i32 { var b: Box[i32] = Box { v: 7 }; return b.get(); }`,
+		`struct Pair[A, B] { fst: A, snd: B }
+function (p: Pair[A, B]) first(): A { return p.fst; }
+function main(): i32 { var p: Pair[i32, i32] = Pair { fst: 3, snd: 4 }; return p.first(); }`,
+		`enum Opt[T] { Nil, Has(T) }
+function (o: Opt[T]) unwrap_or(d: T): T { match (o) { Has(x) => { return x; }, Nil => { return d; } } }
+function main(): i32 { var o: Opt[i32] = Has(9); return o.unwrap_or(0); }`,
+		// A receiver type-arg naming a real struct is a concrete
+		// instantiation, not a type variable.
+		`struct Foo { v: i32 }
+struct Box[T] { v: T }
+function (b: Box[Foo]) deep(): i32 { return b.v.v; }
+function main(): i32 { var b: Box[Foo] = Box { v: Foo { v: 5 } }; return b.deep(); }`,
+		// Element-polymorphic receivers: owned array `T[]` and slice `[T]`.
+		`function (xs: T[]) first(): T { return xs[0]; }
+function main(): i32 { var a: i32[] = [3, 4]; return a.first(); }`,
+		`function (xs: [T]) head(): T { return xs[0]; }
+function main(): i32 { var a: i32[] = [7, 8]; var s: [i32] = a[0:2]; return s.head(); }`,
+		`function (xs: T[]) count_where(p: (T) => boolean): i32 {
+    var n: i32 = 0; var i: i32 = 0;
+    while (i < xs.len()) { if (p(xs[i])) { n = n + 1; } i = i + 1; } return n; }
+function pos(x: i32): boolean { return x > 0; }
+function main(): i32 { var a: i32[] = [1, 0 - 1, 2]; return a.count_where(pos); }`,
+		// Method-level type param: `map[U]` introduces U (inferred from
+		// the argument) alongside the receiver's T.
+		`struct Box[T] { v: T }
+function (b: Box[T]) map[U](f: (T) => U): Box[U] { return Box { v: f(b.v) }; }
+function (b: Box[T]) get(): T { return b.v; }
+function big(x: i32): boolean { return x > 3; }
+function main(): i32 { var b: Box[i32] = Box { v: 7 }; var c: Box[boolean] = b.map(big); if (c.get()) { return 0; } return 1; }`,
+	}
+	for _, src := range ok {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("generic-receiver method should type-check, got: %v\nsrc: %s", err, src)
+		}
+	}
+}
+
+// Return-position type inference (#2668): a generic function whose type
+// parameter appears only in its result type (not in any argument) can
+// have that parameter inferred from the destination — the `var x: T =`
+// annotation or the enclosing `return`'s declared type. Without a
+// destination there's nothing to infer from, so it must still error.
+func TestReturnPositionInference(t *testing.T) {
+	ok := []string{
+		// T bound from a `var` annotation.
+		`function empty[T](): T[] { return []; }
+function main(): i32 { var xs: i32[] = empty(); return xs.len(); }`,
+		// T bound through a `return` whose function result is concrete.
+		`function empty[T](): T[] { return []; }
+function strs(): string[] { return empty(); }
+function main(): i32 { return strs().len(); }`,
+		// Argument-driven binding still wins when both are present; the
+		// destination is merely consulted for *unbound* parameters.
+		`function wrap[T](x: T): T[] { return [x]; }
+function main(): i32 { var xs: i32[] = wrap(5); return xs.len(); }`,
+		// Generic struct result inferred from the destination.
+		`struct Box[T] { v: T }
+function make_box[T](v: T): Box[T] { return Box { v: v }; }
+function main(): i32 { var b: Box[i32] = make_box(3); return b.v; }`,
+	}
+	for _, src := range ok {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("return-position inference should type-check, got: %v\nsrc: %s", err, src)
+		}
+	}
+
+	// No destination to infer from → the unbound parameter must still be
+	// reported as un-inferable.
+	bad := `function empty[T](): T[] { return []; }
+function main(): i32 { empty(); return 0; }`
+	err := checkSource(t, bad)
+	if err == nil {
+		t.Fatal("expected E040 for un-inferable return-only type parameter, got nil")
+	}
+	if !strings.Contains(err.Error(), "could not infer type parameter") {
+		t.Errorf("error %q does not mention the inference failure", err.Error())
+	}
+}
+
 // Phase 5 of docs/PRELUDE-TO-MODULES.md retired the auto-injected
 // prelude: stdlib methods are no longer in scope unless their module
 // is imported. A program that calls `.split` without `import
@@ -630,6 +929,32 @@ func TestContinueInSwitchOutsideLoopRejected(t *testing.T) {
 	}`
 	if err := checkSource(t, src); err == nil {
 		t.Error("expected `continue outside of a loop`")
+	}
+}
+
+func TestLabeledBreakContinueAccepted(t *testing.T) {
+	src := `function f(): i32 {
+		outer: for i in 0..3 {
+			inner: loop {
+				if (i == 1) { break outer; }
+				continue inner;
+			}
+		}
+		return 0;
+	}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("unexpected error for valid labeled break/continue: %v", err)
+	}
+}
+
+func TestUnknownLoopLabelRejected(t *testing.T) {
+	for _, src := range []string{
+		`function f(): i32 { outer: for i in 0..3 { break nope; } return 0; }`,
+		`function f(): i32 { outer: while (true) { continue nope; } return 0; }`,
+	} {
+		if err := checkSource(t, src); err == nil {
+			t.Errorf("expected E058 for unknown loop label in: %s", src)
+		}
 	}
 }
 
@@ -1233,13 +1558,21 @@ func TestMethodTypechecksAndRewritesCall(t *testing.T) {
 }
 
 func TestMethodRejectsNonStructReceiver(t *testing.T) {
-	// `i32` (a built-in numeric receiver) is now permitted —
-	// it's how the prelude declares `i32.to_string()` etc.
-	// What's rejected is receivers that aren't a struct,
-	// enum, or built-in scalar — eg an array type.
+	// `i32` (a built-in numeric receiver) is permitted — it's how the
+	// prelude declares `i32.to_string()` etc. An array receiver is
+	// permitted only when it's element-polymorphic (`(xs: T[])`); a
+	// CONCRETE element type is rejected, because the "Array" method
+	// namespace can't distinguish element types — a `(xs: i32[]) sum()`
+	// would wrongly apply to `string[]` too.
 	src := `function (xs: i32[]) sum(): i32 { return 0; }`
 	if err := checkSource(t, src); err == nil {
-		t.Error("expected error for array receiver")
+		t.Error("expected error for concrete-element array receiver")
+	}
+	// The element-polymorphic form is accepted (see
+	// TestGenericReceiverMethods for the positive cases).
+	if err := checkSource(t, `function (xs: T[]) first(): T { return xs[0]; }
+function main(): i32 { var a: i32[] = [1]; return a.first(); }`); err != nil {
+		t.Errorf("element-polymorphic array receiver should be accepted, got: %v", err)
 	}
 }
 
@@ -1255,6 +1588,54 @@ func TestMethodCallOnUnknownMethodErrors(t *testing.T) {
 }
 
 // Variant constructors type-check argument count + payload types.
+// A named-field variant can be matched with `Rect { w, h }` (any field
+// order), binding each field by name; the checker validates the names and
+// reorders to declaration order. See docs/NAMED-FIELD-VARIANTS.md.
+func TestNamedFieldVariantMatch(t *testing.T) {
+	good := `enum Shape { Circle { r: i32 }, Rect { w: i32, h: i32 } }
+function area(s: Shape): i32 {
+    match (s) {
+        Circle { r } => { return r * r; },
+        Rect { h, w } => { return w * h; },
+    }
+    return 0;
+}
+function main(): i32 { return area(Rect(3, 4)); }`
+	if err := checkSource(t, good); err != nil {
+		t.Errorf("named-field match should type-check: %v", err)
+	}
+}
+
+func TestNamedFieldVariantMatchErrors(t *testing.T) {
+	cases := []struct {
+		src  string
+		want string
+	}{
+		// unknown field in pattern
+		{`enum E { V { a: i32 } }
+function f(e: E): i32 { match (e) { V { b } => { return b; }, } return 0; }
+function main(): i32 { return 0; }`, "has no field"},
+		// missing a field
+		{`enum E { V { a: i32, b: i32 } }
+function f(e: E): i32 { match (e) { V { a } => { return a; }, } return 0; }
+function main(): i32 { return 0; }`, "must bind all"},
+		// named pattern on a positional variant
+		{`enum E { V(i32) }
+function f(e: E): i32 { match (e) { V { a } => { return a; }, } return 0; }
+function main(): i32 { return 0; }`, "positional payloads"},
+	}
+	for _, c := range cases {
+		err := checkSource(t, c.src)
+		if err == nil {
+			t.Errorf("%q: expected error", c.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("error %q does not contain %q", err.Error(), c.want)
+		}
+	}
+}
+
 func TestEnumVariantConstructorTypeChecks(t *testing.T) {
 	good := `enum E { Pair(i32, i32) }
 		function main(): i32 {
@@ -2061,6 +2442,269 @@ function main(): i32 { var p: Point = Point { x: 1, y: 2 }; var s: string = p.to
 	}
 }
 
+// A trait method with a default body is inherited by an impl that omits
+// it: the impl conforms even though it only provides the abstract
+// method, and the default is materialised as a receiver method on the
+// impl type. An impl may still override the default. See docs/TRAITS.md.
+func TestTraitDefaultMethodConformance(t *testing.T) {
+	src := `trait Greet {
+    function name(self: Self): string;
+    function greeting(self: Self): string { return "hi " + self.name(); }
+}
+struct Dog { age: i32 }
+impl Greet for Dog { function name(self: Self): string { return "rex"; } }
+struct Cat { age: i32 }
+impl Greet for Cat {
+    function name(self: Self): string { return "felix"; }
+    function greeting(self: Self): string { return "meow"; }
+}
+function main(): i32 {
+    var d: Dog = Dog { age: 1 };
+    var c: Cat = Cat { age: 2 };
+    var a: string = d.greeting();
+    var b: string = c.greeting();
+    return 0;
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := Check(prog)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !info.Impls["Greet"]["Dog"] || !info.Impls["Greet"]["Cat"] {
+		t.Errorf("both impls should conform, got %+v", info.Impls)
+	}
+	// Dog inherits the default `greeting`; it must be hoisted as a method.
+	if info.Methods["Dog.greeting"] == "" {
+		t.Errorf("inherited default `greeting` should be registered for Dog, got %+v", info.Methods["Dog.greeting"])
+	}
+	// Cat's explicit override must still be the registered method.
+	if info.Methods["Cat.greeting"] == "" {
+		t.Errorf("overriding `greeting` should be registered for Cat")
+	}
+}
+
+// A default method whose body references a still-abstract trait method
+// works through a bounded generic: `announce[T: Greet]` calls
+// `x.greeting()`, which monomorphises to the inherited default.
+func TestTraitDefaultMethodViaBound(t *testing.T) {
+	src := `trait Greet {
+    function name(self: Self): string;
+    function greeting(self: Self): string { return "hi " + self.name(); }
+}
+struct Dog { age: i32 }
+impl Greet for Dog { function name(self: Self): string { return "rex"; } }
+function announce[T: Greet](x: T): string { return x.greeting(); }
+function main(): i32 { var d: Dog = Dog { age: 1 }; var s: string = announce(d); return 0; }`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("default method via bound should typecheck: %v", err)
+	}
+}
+
+// Associated types: a trait declares `type Item;`, an impl binds it, and
+// A generic-trait bound (`function f[T: From[i32]]`) substitutes the
+// bound's args into the trait method signature, so a `T.from(v)` call in
+// the body type-checks against `from(v: i32): T`. Wrong arity and a type
+// argument that doesn't implement the trait are rejected. See docs/TRAITS.md.
+func TestGenericTraitBound(t *testing.T) {
+	const hdr = `trait From[T] { function from(v: T): Self; }
+struct Celsius { deg: i32 }
+impl From[i32] for Celsius { function from(v: i32): Self { return Celsius { deg: v }; } }
+`
+	if err := checkSource(t, hdr+`function describe[T: From[i32]](proto: T, v: i32): T { return T.from(v); }
+function main(): i32 {
+  var z: Celsius = Celsius { deg: 0 };
+  return describe(z, 20).deg;
+}`); err != nil {
+		t.Errorf("bounded generic over a generic trait should type-check, got: %v", err)
+	}
+	// Wrong bound-arg arity.
+	err := checkSource(t, hdr+`function describe[T: From[i32, i64]](proto: T): T { return proto; }
+function main(): i32 { return 0; }`)
+	if err == nil || !strings.Contains(err.Error(), "takes 1 type argument") {
+		t.Errorf("wrong bound-arg arity should be rejected, got: %v", err)
+	}
+	// A type argument that doesn't implement the bound trait.
+	err = checkSource(t, hdr+`struct Plain { x: i32 }
+function describe[T: From[i32]](proto: T, v: i32): T { return T.from(v); }
+function main(): i32 { var p: Plain = Plain { x: 0 }; return describe(p, 5).x; }`)
+	if err == nil || !strings.Contains(err.Error(), "does not implement trait From") {
+		t.Errorf("non-implementing type argument should be rejected, got: %v", err)
+	}
+	// Mismatched bound args: the type implements From[i32] but the bound
+	// requires From[i64] — precise satisfaction rejects it.
+	err = checkSource(t, hdr+`function describe[T: From[i64]](proto: T, v: i64): T { return T.from(v); }
+function main(): i32 {
+  var z: Celsius = Celsius { deg: 0 };
+  return describe(z, 20).deg;
+}`)
+	if err == nil || !strings.Contains(err.Error(), "the bound requires From[i64]") {
+		t.Errorf("mismatched bound args should be rejected, got: %v", err)
+	}
+}
+
+// A generic trait (`trait Container[T]`) binds its type parameters per
+// impl (`impl Container[i32] for B`); the conformance check substitutes
+// them, so the impl's concrete method signature lines up. A wrong arity
+// is rejected. See docs/TRAITS.md.
+func TestGenericTraitConformance(t *testing.T) {
+	ok := []string{
+		// receiver method returning the trait param
+		`trait Container[T] { function get(self: Self): T; }
+struct B { v: i32 }
+impl Container[i32] for B { function get(self: Self): i32 { return self.v; } }
+function main(): i32 { var b: B = B { v: 7 }; return b.get(); }`,
+		// associated function taking the trait param, returning Self
+		`trait From[T] { function from(v: T): Self; }
+struct C { d: i32 }
+impl From[i32] for C { function from(v: i32): Self { return C { d: v }; } }
+function main(): i32 { return C.from(9).d; }`,
+		// two type parameters
+		`trait Pair[A, B] { function fst(self: Self): A; function snd(self: Self): B; }
+struct P { a: i32, b: i32 }
+impl Pair[i32, i32] for P { function fst(self: Self): i32 { return self.a; } function snd(self: Self): i32 { return self.b; } }
+function main(): i32 { var p: P = P { a: 1, b: 2 }; return p.fst() + p.snd(); }`,
+	}
+	for _, src := range ok {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("generic-trait program should type-check, got: %v\nsrc:\n%s", err, src)
+		}
+	}
+	// Wrong arity: impl omits the trait's type argument.
+	err := checkSource(t, `trait Container[T] { function get(self: Self): T; }
+struct B { v: i32 }
+impl Container for B { function get(self: Self): i32 { return self.v; } }
+function main(): i32 { return 0; }`)
+	if err == nil || !strings.Contains(err.Error(), "takes 1 type argument") {
+		t.Errorf("generic-trait impl with wrong arity should be rejected, got: %v", err)
+	}
+	// Mismatched binding: impl's method type doesn't match the substituted
+	// trait param (Container[i32] but get returns boolean).
+	err = checkSource(t, `trait Container[T] { function get(self: Self): T; }
+struct B { v: i32 }
+impl Container[i32] for B { function get(self: Self): boolean { return true; } }
+function main(): i32 { return 0; }`)
+	if err == nil || !strings.Contains(err.Error(), "wrong signature") {
+		t.Errorf("generic-trait impl with a mismatched method should be rejected, got: %v", err)
+	}
+}
+
+// the projection `Self::Item` / `T::Item` resolves to the binding — both
+// for a concrete method call and through a bounded generic. See
+// docs/ASSOCIATED-TYPES.md.
+func TestAssociatedTypesAccepted(t *testing.T) {
+	src := `trait Iterator {
+    type Item;
+    function next(self: Self): Self::Item;
+}
+struct B { v: i32 }
+impl Iterator for B {
+    type Item = i32;
+    function next(self: Self): Self::Item { return self.v; }
+}
+function first[I: Iterator](it: I): I::Item { return it.next(); }
+function main(): i32 {
+    var b: B = B { v: 9 };
+    var x: i32 = b.next();
+    var y: i32 = first(b);
+    return x + y;
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("associated-types program should type-check: %v", err)
+	}
+}
+
+func TestAssociatedTypesErrors(t *testing.T) {
+	cases := []struct {
+		src  string
+		want string
+	}{
+		// impl omits the associated-type binding
+		{`trait It { type Item; function next(self: Self): Self::Item; }
+struct B { v: i32 }
+impl It for B { function next(self: Self): Self::Item { return self.v; } }
+function main(): i32 { return 0; }`, "must bind associated type"},
+		// impl binds an undeclared associated type
+		{`trait It { type Item; function next(self: Self): Self::Item; }
+struct B { v: i32 }
+impl It for B { type Item = i32; type Extra = i32; function next(self: Self): Self::Item { return self.v; } }
+function main(): i32 { return 0; }`, "does not declare"},
+		// dyn over a trait with an UNPINNED associated type is not
+		// object-safe (pinning it — `dyn It[Item = i32]` — is object-safe;
+		// see TestDynAssocTypeChecker).
+		{`trait It { type Item; function next(self: Self): Self::Item; }
+struct B { v: i32 }
+impl It for B { type Item = i32; function next(self: Self): Self::Item { return self.v; } }
+function take(x: dyn It): i32 { return 0; }
+function main(): i32 { return 0; }`, "is not pinned"},
+	}
+	for _, c := range cases {
+		err := checkSource(t, c.src)
+		if err == nil {
+			t.Errorf("%q: expected error", c.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("error %q does not contain %q", err.Error(), c.want)
+		}
+	}
+}
+
+// A supertrait (`trait Ord: Eq`) lets a `T: Ord` bound call the
+// supertrait's methods on T, and requires every `impl Ord for X` to also
+// have `impl Eq for X`. See docs/TRAITS.md.
+func TestTraitSupertraitAccepted(t *testing.T) {
+	src := `trait Eq { function eq(self: Self, other: Self): boolean; }
+trait Ord: Eq { function lt(self: Self, other: Self): boolean; }
+struct P { x: i32 }
+impl Eq for P { function eq(self: Self, other: Self): boolean { return self.x == other.x; } }
+impl Ord for P { function lt(self: Self, other: Self): boolean { return self.x < other.x; } }
+function cmp[T: Ord](a: T, b: T): boolean { if (a.eq(b)) { return true; } return a.lt(b); }
+function main(): i32 { var p: P = P { x: 1 }; if (cmp(p, p)) { return 1; } return 0; }`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("supertrait program should typecheck: %v", err)
+	}
+}
+
+func TestTraitSupertraitErrors(t *testing.T) {
+	cases := []struct {
+		src  string
+		want string
+	}{
+		// impl Ord for P without impl Eq for P.
+		{`trait Eq { function eq(self: Self, other: Self): boolean; }
+trait Ord: Eq { function lt(self: Self, other: Self): boolean; }
+struct P { x: i32 }
+impl Ord for P { function lt(self: Self, other: Self): boolean { return self.x < other.x; } }
+function main(): i32 { return 0; }`, "supertrait of Ord"},
+		// supertrait names a nonexistent trait.
+		{`trait Ord: Nope { function lt(self: Self, other: Self): boolean; }
+struct P { x: i32 }
+impl Ord for P { function lt(self: Self, other: Self): boolean { return true; } }
+function main(): i32 { return 0; }`, "unknown supertrait"},
+		// cyclic supertrait graph.
+		{`trait A: B { function fa(self: Self): i32; }
+trait B: A { function fb(self: Self): i32; }
+function main(): i32 { return 0; }`, "cyclic supertrait"},
+	}
+	for _, c := range cases {
+		err := checkSource(t, c.src)
+		if err == nil {
+			t.Errorf("%q: expected error, got nil", c.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("error %q does not contain %q", err.Error(), c.want)
+		}
+	}
+}
+
 // Implementing a trait for a built-in numeric type is allowed when the
 // trait is local (orphan rule satisfied by the trait being local).
 func TestTraitImplForBuiltinType(t *testing.T) {
@@ -2180,7 +2824,7 @@ func TestDeriveErrors(t *testing.T) {
 		{`trait Foo { function bar(self: Self): i32; }
 @derive(Foo)
 struct S { x: i32 }
-function main(): i32 { return 0; }`, "only Eq, Display, and Ord are derivable"},
+function main(): i32 { return 0; }`, "only Eq, Display, Debug, Ord, Hash, Json, and Default are derivable"},
 		// Unknown trait in derive.
 		{`@derive(Nope)
 struct S { x: i32 }
@@ -2206,7 +2850,7 @@ func TestDeriveEnumErrors(t *testing.T) {
 		{`trait Foo { function foo(self: Self): boolean; }
 @derive(Foo)
 enum E { A, B }
-function main(): i32 { return 0; }`, "only Eq, Display, and Ord are derivable"},
+function main(): i32 { return 0; }`, "only Eq, Display, Debug, Ord, Hash, Json, and Default are derivable"},
 	}
 	for _, c := range cases {
 		err := checkSource(t, c.src)
@@ -2232,6 +2876,209 @@ function main(): i32 {
 }`
 	if err := checkSource(t, src); err != nil {
 		t.Fatalf("generic-enum @derive should check: %v", err)
+	}
+}
+
+// `@derive(Hash)` synthesises a field/variant-wise `hash(): i32`,
+// composing through each field's own `Hash` impl. A struct, an enum, and
+// a generic struct all derive; a field whose type doesn't implement Hash
+// is a clean error (the derived method's `[T: Hash]` bound, or the
+// missing primitive impl, is unsatisfied). See docs/TRAITS.md.
+func TestDeriveHash(t *testing.T) {
+	const hashTrait = `trait Hash { function hash(self: Self): i32; }
+impl Hash for i32 { function hash(self: Self): i32 { return self; } }
+`
+	ok := []string{
+		// Plain struct.
+		hashTrait + `@derive(Hash) struct P { x: i32, y: i32 }
+function main(): i32 { var p: P = P { x: 1, y: 2 }; return p.hash(); }`,
+		// Enum (tag-seeded, payload-folded).
+		hashTrait + `@derive(Hash) enum E { A, B(i32), C(i32, i32) }
+function main(): i32 { var e: E = C(1, 2); return e.hash(); }`,
+		// Generic struct: parametric `impl[T: Hash] Hash for Box[T]`.
+		hashTrait + `@derive(Hash) struct Box[T] { v: T }
+function main(): i32 { var b: Box[i32] = Box { v: 7 }; return b.hash(); }`,
+	}
+	for _, src := range ok {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("@derive(Hash) should type-check, got: %v\nsrc: %s", err, src)
+		}
+	}
+
+	// A field whose type has no Hash impl cannot derive Hash.
+	bad := hashTrait + `struct NoHash { z: i32 }
+@derive(Hash) struct S { n: NoHash }
+function main(): i32 { return 0; }`
+	if err := checkSource(t, bad); err == nil {
+		t.Error("expected an error deriving Hash for a struct with a non-Hash field, got nil")
+	}
+}
+
+// `@derive(Default)` synthesises a `default()` associated function that
+// builds a type's zero value, called as `Type.default()`. Scalars use
+// their zero literal; nominal fields delegate to their own `default()`
+// (composition); a generic field uses the bound `T.default()`; an enum
+// defaults to its first variant. A field type with no default is a clean
+// error. See docs/TRAITS.md.
+func TestDeriveDefault(t *testing.T) {
+	const defTrait = `trait Default { function default(): Self; }
+`
+	ok := []string{
+		// Plain struct of scalars.
+		defTrait + `@derive(Default) struct P { x: i32, y: string, f: boolean }
+function main(): i32 { var p: P = P.default(); return p.x + p.y.len(); }`,
+		// Composition: a nominal field delegates to its own default().
+		defTrait + `@derive(Default) struct Inner { n: i32 }
+@derive(Default) struct Outer { i: Inner, k: i32 }
+function main(): i32 { var o: Outer = Outer.default(); return o.i.n + o.k; }`,
+		// Enum defaults to its first variant.
+		defTrait + `@derive(Default) enum E { A, B(i32) }
+function main(): i32 { var e: E = E.default(); match (e) { A => { return 0; }, B(n) => { return n; } } }`,
+		// Enum whose first variant carries payloads (each defaulted).
+		defTrait + `@derive(Default) enum E { First(i32, i32), Second }
+function main(): i32 { var e: E = E.default(); match (e) { First(a, b) => { return a + b; }, Second => { return 9; } } }`,
+		// Generic struct: parametric `impl[T: Default] Default for Box[T]`.
+		defTrait + `@derive(Default) struct Inner { n: i32 }
+@derive(Default) struct Box[T] { v: T }
+function main(): i32 { var b: Box[Inner] = Box.default(); return b.v.n; }`,
+	}
+	for _, src := range ok {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("@derive(Default) should type-check, got: %v\nsrc: %s", err, src)
+		}
+	}
+
+	bad := []struct{ src, want string }{
+		// A field whose type has no derivable default (array).
+		{defTrait + `@derive(Default) struct S { xs: i32[] }
+function main(): i32 { return 0; }`, "no default"},
+		// An enum whose first variant has a non-defaultable payload.
+		{defTrait + `@derive(Default) enum E { A([i32]), B }
+function main(): i32 { return 0; }`, "no default"},
+	}
+	for _, c := range bad {
+		err := checkSource(t, c.src)
+		if err == nil {
+			t.Errorf("expected error containing %q, got nil\nsrc: %s", c.want, c.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("error %q does not contain %q", err.Error(), c.want)
+		}
+	}
+}
+
+// `@derive(Json)` synthesises a field/variant-wise `to_json(): string`
+// (canonical JSON text), composing through each field's own `Json` impl.
+// A struct, an enum (externally tagged), a generic struct, and a nested
+// struct all derive; a field whose type doesn't implement Json is a clean
+// error. See docs/TRAITS.md.
+func TestDeriveJson(t *testing.T) {
+	const jsonTrait = `trait Json { function to_json(self: Self): string; }
+impl Json for i32 { function to_json(self: Self): string { return "0"; } }
+impl Json for string { function to_json(self: Self): string { return self; } }
+`
+	ok := []string{
+		// Plain struct.
+		jsonTrait + `@derive(Json) struct P { x: i32, y: i32 }
+function main(): i32 { var p: P = P { x: 1, y: 2 }; var s: string = p.to_json(); return 0; }`,
+		// Enum: unit, single-payload, multi-payload arms all synthesise.
+		jsonTrait + `@derive(Json) enum E { A, B(i32), C(i32, i32) }
+function main(): i32 { var e: E = C(1, 2); var s: string = e.to_json(); return 0; }`,
+		// Generic struct: parametric impl[T: Json] Json for Box[T].
+		jsonTrait + `@derive(Json) struct Box[T] { v: T }
+function main(): i32 { var b: Box[string] = Box { v: "hi" }; var s: string = b.to_json(); return 0; }`,
+		// Nested derived struct composes through the field's to_json.
+		jsonTrait + `@derive(Json) struct Inner { n: i32 }
+@derive(Json) struct Outer { a: Inner, tag: string }
+function main(): i32 { var o: Outer = Outer { a: Inner { n: 5 }, tag: "x" }; var s: string = o.to_json(); return 0; }`,
+	}
+	for _, src := range ok {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("@derive(Json) should type-check, got: %v\nsrc: %s", err, src)
+		}
+	}
+
+	// A field whose type has no Json impl cannot derive Json.
+	bad := jsonTrait + `struct NoJson { z: i32 }
+@derive(Json) struct S { n: NoJson }
+function main(): i32 { return 0; }`
+	if err := checkSource(t, bad); err == nil {
+		t.Error("expected an error deriving Json for a struct with a non-Json field, got nil")
+	}
+}
+
+// Associated functions: a trait method with no `self` receiver
+// (`function f(): Self`) is called as `Type.f(args)` rather than
+// `value.f(args)` — the constructor / static-method shape. The impl
+// provides it; `Self` resolves to the impl type.
+func TestAssociatedFunctions(t *testing.T) {
+	ok := []string{
+		// Zero-arg constructor on a struct.
+		`trait Zero { function zero(): Self; }
+struct Point { x: i32, y: i32 }
+impl Zero for Point { function zero(): Self { return Point { x: 0, y: 0 }; } }
+function main(): i32 { var p: Point = Point.zero(); return p.x + p.y; }`,
+		// Constructor with arguments.
+		`trait Ctor { function make(a: i32, b: i32): Self; }
+struct Point { x: i32, y: i32 }
+impl Ctor for Point { function make(a: i32, b: i32): Self { return Point { x: a, y: b }; } }
+function main(): i32 { var p: Point = Point.make(3, 4); return p.x + p.y; }`,
+		// Associated function on an enum.
+		`trait Empty { function empty(): Self; }
+enum Opt { Nothing, Just(i32) }
+impl Empty for Opt { function empty(): Self { return Nothing; } }
+function main(): i32 { var o: Opt = Opt.empty(); match (o) { Nothing => { return 0; }, Just(n) => { return n; } } }`,
+		// Result chains directly: `T.f().field`.
+		`trait Zero { function zero(): Self; }
+struct P { x: i32 }
+impl Zero for P { function zero(): Self { return P { x: 9 }; } }
+function main(): i32 { return P.zero().x; }`,
+		// Generic associated dispatch: `T.f()` on a bounded type param,
+		// resolved per monomorphisation.
+		`trait Zero { function zero(): Self; }
+struct P { x: i32 }
+impl Zero for P { function zero(): Self { return P { x: 0 }; } }
+function mk[T: Zero](): T { return T.zero(); }
+function main(): i32 { var p: P = mk(); return p.x; }`,
+		// Generic associated dispatch with an argument.
+		`trait From { function of(n: i32): Self; }
+struct Box { v: i32 }
+impl From for Box { function of(n: i32): Self { return Box { v: n }; } }
+function build[T: From](n: i32): T { return T.of(n); }
+function main(): i32 { var b: Box = build(7); return b.v; }`,
+	}
+	for _, src := range ok {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("associated function should type-check, got: %v\nsrc: %s", err, src)
+		}
+	}
+
+	bad := []struct{ src, want string }{
+		// Calling a `self`-taking method as `Type.method()`.
+		{`struct Point { x: i32 }
+function (p: Point) getx(): i32 { return p.x; }
+function main(): i32 { return Point.getx(); }`, "is a method; call it on a value"},
+		// An impl missing the trait's associated function.
+		{`trait Zero { function zero(): Self; }
+struct Point { x: i32 }
+impl Zero for Point { }
+function main(): i32 { return 0; }`, "missing method"},
+		// Associated-function signature mismatch.
+		{`trait Ctor { function make(a: i32): Self; }
+struct Point { x: i32 }
+impl Ctor for Point { function make(a: string): Self { return Point { x: 0 }; } }
+function main(): i32 { return 0; }`, "wrong signature"},
+	}
+	for _, c := range bad {
+		err := checkSource(t, c.src)
+		if err == nil {
+			t.Errorf("expected error containing %q, got nil\nsrc: %s", c.want, c.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("error %q does not contain %q", err.Error(), c.want)
+		}
 	}
 }
 
@@ -2281,6 +3128,313 @@ function main(): i32 { var ds: dyn Shape[] = [Circle { r: 1 }, NoShape { z: 2 }]
 				t.Errorf("got %v, want containing %q", err, c.want)
 			}
 		})
+	}
+}
+
+// TestDynGenericTraitChecker exercises generic dyn-trait objects
+// (`dyn Container[i32]`, #2691 trait-spine): a concrete type coerces in
+// iff it impls the trait at the PINNED arguments; the method signature is
+// read with the trait's type params substituted (so `get(): T` returns
+// i32); and the negative cases — argument mismatch, an unpinned generic
+// trait, and a method-result type check against the pinned arg — are
+// rejected.
+func TestDynGenericTraitChecker(t *testing.T) {
+	const prelude = `trait Container[T] { function get(self: Self): T; }
+struct BoxI { v: i32 }
+impl Container[i32] for BoxI { function get(self: Self): i32 { return self.v; } }
+struct BoxS { v: i32 }
+impl Container[string] for BoxS { function get(self: Self): string { return "x"; } }
+`
+	// Accepted: BoxI coerces to dyn Container[i32]; get() returns i32, so
+	// it composes in an i32 context.
+	if err := checkSource(t, prelude+`
+function take(d: dyn Container[i32]): i32 { return d.get(); }
+function main(): i32 { var d: dyn Container[i32] = BoxI { v: 7 }; return take(d); }`); err != nil {
+		t.Fatalf("valid generic dyn use should check: %v", err)
+	}
+
+	cases := []struct{ name, src, want string }{
+		{"argument mismatch",
+			prelude + `function main(): i32 { var d: dyn Container[string] = BoxI { v: 1 }; return 0; }`,
+			"cannot assign BoxI"},
+		{"unpinned generic trait",
+			prelude + `function f(d: dyn Container): i32 { return 0; }
+function main(): i32 { return 0; }`,
+			"must pin its type parameter"},
+		{"pinned result type respected",
+			prelude + `function f(d: dyn Container[i32]): string { return d.get(); }
+function main(): i32 { return 0; }`,
+			"string"},
+		{"string-pinned accepted",
+			prelude + `function f(d: dyn Container[string]): string { return d.get(); }
+function main(): i32 { var d: dyn Container[string] = BoxS { v: 1 }; return 0; }`,
+			""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkSource(t, c.src)
+			if c.want == "" {
+				if err != nil {
+					t.Errorf("expected to type-check, got %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("got %v, want containing %q", err, c.want)
+			}
+		})
+	}
+}
+
+// TestDynAssocTypeChecker exercises a `dyn` object over a trait with an
+// associated type pinned (`dyn Producer[Item = i32]`): pinning makes the
+// otherwise object-unsafe trait usable, `Self::Item` in a method signature
+// resolves to the pin, the coercion requires the impl's binding to match the
+// pin, and an unpinned associated type is still rejected.
+func TestDynAssocTypeChecker(t *testing.T) {
+	const prelude = `trait Producer { type Item; function get(self: Self): Self::Item; }
+struct IntBox { v: i32 }
+impl Producer for IntBox { type Item = i32; function get(self: Self): i32 { return self.v; } }
+`
+	// Accepted: pinned to the impl's binding; get() resolves to i32.
+	if err := checkSource(t, prelude+`
+function take(d: dyn Producer[Item = i32]): i32 { return d.get() + 1; }
+function main(): i32 { return take(IntBox { v: 7 }); }`); err != nil {
+		t.Fatalf("pinned dyn assoc type should check: %v", err)
+	}
+	cases := []struct{ name, src, want string }{
+		{"unpinned",
+			prelude + `function f(d: dyn Producer): i32 { return 0; }
+function main(): i32 { return 0; }`,
+			"is not pinned"},
+		{"wrong pin coercion",
+			prelude + `function main(): i32 { var d: dyn Producer[Item = string] = IntBox { v: 1 }; return 0; }`,
+			"cannot assign IntBox"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkSource(t, c.src)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("got %v, want containing %q", err, c.want)
+			}
+		})
+	}
+}
+
+// TestDynMultiTraitChecker exercises multi-trait trait objects
+// (`dyn A + B`, docs/DYN-TRAITS.md): a concrete coerces in iff it impls
+// EVERY trait; a method resolves across the UNION of the traits' method
+// sets; a method declared by two traits is ambiguous; a non-object-safe
+// or unknown trait anywhere in the set errors. Single-trait `dyn A` is
+// unaffected (covered by TestDynTraitChecker).
+func TestDynMultiTraitChecker(t *testing.T) {
+	const prelude = `trait Show { function show(self: Self): i32; }
+trait Sized { function size(self: Self): i32; }
+struct Both { v: i32 }
+impl Show for Both { function show(self: Self): i32 { return self.v; } }
+impl Sized for Both { function size(self: Self): i32 { return 1; } }
+struct OnlyShow { v: i32 }
+impl Show for OnlyShow { function show(self: Self): i32 { return self.v; } }
+`
+	// Accepted: Both impls Show AND Sized → coerces to `dyn Show + Sized`,
+	// and a method from EACH trait resolves.
+	if err := checkSource(t, prelude+`
+function f(d: dyn Show + Sized): i32 { return d.show() + d.size(); }
+function main(): i32 { var d: dyn Show + Sized = Both { v: 3 }; return f(d); }`); err != nil {
+		t.Fatalf("valid multi-trait dyn use should check: %v", err)
+	}
+	// Order-insensitive: `dyn Sized + Show` is the same type.
+	if err := checkSource(t, prelude+`
+function main(): i32 { var d: dyn Sized + Show = Both { v: 3 }; return d.show() + d.size(); }`); err != nil {
+		t.Fatalf("order-insensitive multi-trait dyn should check: %v", err)
+	}
+
+	cases := []struct{ name, src, want string }{
+		{"missing one trait",
+			prelude + `function main(): i32 { var d: dyn Show + Sized = OnlyShow { v: 1 }; return 0; }`,
+			"Sized"},
+		{"ambiguous method across traits",
+			`trait A { function m(self: Self): i32; }
+trait B { function m(self: Self): i32; }
+struct C { v: i32 }
+impl A for C { function m(self: Self): i32 { return 1; } }
+impl B for C { function m(self: Self): i32 { return 2; } }
+function f(d: dyn A + B): i32 { return d.m(); }
+function main(): i32 { return 0; }`,
+			"ambiguous method"},
+		{"unknown trait in set",
+			`trait Show { function show(self: Self): i32; }
+function f(d: dyn Show + Bogus): i32 { return 0; }
+function main(): i32 { return 0; }`,
+			"unknown trait"},
+		{"non-object-safe trait in set",
+			`trait Show { function show(self: Self): i32; }
+trait Eq { function eq(self: Self, other: Self): boolean; }
+function f(d: dyn Show + Eq): i32 { return 0; }
+function main(): i32 { return 0; }`,
+			"not object-safe"},
+		{"method on neither trait",
+			prelude + `function f(d: dyn Show + Sized): i32 { return d.nope(); }
+function main(): i32 { return 0; }`,
+			`no method "nope"`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkSource(t, c.src)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("got %v, want containing %q", err, c.want)
+			}
+		})
+	}
+}
+
+// TestDowncastChecker exercises the `e as? T` fallible downcast
+// (docs/DYN-TRAITS.md §9): a valid downcast of a `dyn Trait` value to a
+// concrete struct/enum that implements the trait checks to `Option[T]`;
+// a non-dyn LHS and a target that doesn't implement the trait error.
+func TestDowncastChecker(t *testing.T) {
+	const prelude = `trait Shape { function area(self: Self): i32; }
+struct Circle { r: i32 }
+struct Rect { w: i32, h: i32 }
+impl Shape for Circle { function area(self: Self): i32 { return self.r; } }
+impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } }
+`
+	// Valid downcast: result type Option[Circle], usable through match.
+	if err := checkSource(t, prelude+`
+function describe(s: dyn Shape): i32 {
+    var c: Option[Circle] = s as? Circle;
+    return match (c) { Some(x) => x.r, None => 0 };
+}
+function main(): i32 { return describe(Circle { r: 7 }); }`); err != nil {
+		t.Fatalf("valid downcast should check: %v", err)
+	}
+
+	// Result type flows: the downcast expression IS Option[Circle].
+	prog, err := parser.Parse(prelude + `
+function describe(s: dyn Shape): Option[Circle] { return s as? Circle; }
+function main(): i32 { return 0; }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("downcast result-type flow should check: %v", err)
+	}
+	// The checker stamped DowncastExpr.Trait for later codegen.
+	ret := prog.Funcs[len(prog.Funcs)-2].Body.Stmts[0].(*ast.Return)
+	if dc, ok := ret.Value.(*ast.DowncastExpr); !ok {
+		t.Fatalf("expected DowncastExpr, got %T", ret.Value)
+	} else if dc.Trait != "Shape" {
+		t.Errorf("DowncastExpr.Trait = %q, want Shape", dc.Trait)
+	}
+
+	// Enum target: the parser wraps a bare `as? Color` name as a
+	// StructType, but the checker rewrites it to EnumType so the result
+	// `Option[Color]` matches a `var c: Option[Color]` annotation (whose
+	// Color resolveType already canonicalised to EnumType). Without the
+	// rewrite this assignment would spuriously E003 ("cannot assign
+	// Option[Color] to Option[Color]" — same spelling, different node).
+	const enumPrelude = `trait Describe { function tag(self: Self): i32; }
+enum Color { Red, Green }
+impl Describe for Color { function tag(self: Self): i32 { return 0; } }
+`
+	enumProg, err := parser.Parse(enumPrelude + `
+function check(d: dyn Describe): Option[Color] { return d as? Color; }
+function main(): i32 { return 0; }`)
+	if err != nil {
+		t.Fatalf("parse enum-target: %v", err)
+	}
+	if _, err := Check(enumProg); err != nil {
+		t.Fatalf("enum-target downcast should check: %v", err)
+	}
+	enumRet := enumProg.Funcs[len(enumProg.Funcs)-2].Body.Stmts[0].(*ast.Return)
+	dc, ok := enumRet.Value.(*ast.DowncastExpr)
+	if !ok {
+		t.Fatalf("expected DowncastExpr, got %T", enumRet.Value)
+	}
+	if et, isEnum := dc.Target.(ast.EnumType); !isEnum || et.Name != "Color" {
+		t.Errorf("enum downcast Target = %#v, want ast.EnumType{Name:\"Color\"}", dc.Target)
+	}
+
+	cases := []struct{ name, src, want string }{
+		{"non-dyn LHS",
+			prelude + `function main(): i32 { var c: i32 = 1; var d: Option[Circle] = c as? Circle; return 0; }`,
+			"requires a 'dyn Trait' value on the left"},
+		{"target does not implement trait",
+			prelude + `struct NoShape { z: i32 }
+function describe(s: dyn Shape): i32 { var c: Option[NoShape] = s as? NoShape; return 0; }
+function main(): i32 { return 0; }`,
+			"does not implement Shape"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkSource(t, c.src)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("got %v, want containing %q", err, c.want)
+			}
+		})
+	}
+}
+
+// TestDynCoercionRecorded: the checker records each concrete→`dyn Trait`
+// boxing site in Info.DynCoercions with the right (trait, concrete)
+// pair, so compiled-backend IR lowering can box the value with the
+// correct vtable (docs/DYN-TRAITS.md §4.2.1). Covers a var-init
+// coercion and an argument-passing coercion; both must be recorded with
+// Trait="Shape", Concrete="Circle".
+func TestDynCoercionRecorded(t *testing.T) {
+	const src = `trait Shape { function area(self: Self): i32; }
+struct Circle { r: i32 }
+impl Shape for Circle { function area(self: Self): i32 { return self.r; } }
+function f(d: dyn Shape): i32 { return d.area(); }
+function main(): i32 {
+    var d: dyn Shape = Circle { r: 3 };
+    return f(Circle { r: 4 });
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if len(info.DynCoercions) != 2 {
+		t.Fatalf("want 2 recorded dyn coercions (var-init + arg), got %d: %+v", len(info.DynCoercions), info.DynCoercions)
+	}
+	for holder, dc := range info.DynCoercions {
+		if dc.Trait != "Shape" || dc.Concrete != "Circle" {
+			t.Errorf("coercion = %+v, want {Shape Circle}", dc)
+		}
+		// The holder is the concrete struct literal, not a dyn value.
+		if _, ok := holder.(*ast.StructLit); !ok {
+			t.Errorf("holder = %T, want *ast.StructLit (the Circle literal)", holder)
+		}
+	}
+}
+
+// A dyn→dyn assignment (no boxing) and a non-dyn destination record
+// nothing — only concrete→dyn sites are coercions.
+func TestDynCoercionNotRecordedForNonBoxing(t *testing.T) {
+	const src = `trait Shape { function area(self: Self): i32; }
+struct Circle { r: i32 }
+impl Shape for Circle { function area(self: Self): i32 { return self.r; } }
+function passthrough(d: dyn Shape): i32 {
+    var e: dyn Shape = d;
+    return e.area();
+}
+function main(): i32 { return passthrough(Circle { r: 1 }); }`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	// Only the `Circle{r:1}` argument to passthrough is a real coercion;
+	// `var e: dyn Shape = d` (dyn→dyn) records nothing.
+	if len(info.DynCoercions) != 1 {
+		t.Fatalf("want exactly 1 coercion (the Circle arg), got %d: %+v", len(info.DynCoercions), info.DynCoercions)
 	}
 }
 
@@ -2426,13 +3580,15 @@ func TestUnusedCollectionResultE055(t *testing.T) {
 }`); err != nil {
 		t.Errorf("var _ discard should check, got %v", err)
 	}
-	// `arr[i] = v` is subscript assignment, not a bare method call — exempt.
+	// `arr = arr.with(i, v)` (the value-returning replacement for the removed
+	// `arr[i] = v`) is an assignment, not a discarded result — exempt from
+	// E055 (and it is not subscript assignment, so no E056 either).
 	if err := checkSource(t, `function main(): i32 {
 	var a: i32[] = [1, 2];
-	a[0] = 9;
+	a = a.with(0, 9);
 	return a[0];
 }`); err != nil {
-		t.Errorf("subscript assignment must not trip E055, got %v", err)
+		t.Errorf("a = a.with(...) must check clean, got %v", err)
 	}
 	// Using the result in a larger expression is fine (not a bare statement).
 	if err := checkSource(t, `function main(): i32 {
@@ -2440,6 +3596,39 @@ func TestUnusedCollectionResultE055(t *testing.T) {
 	return a.append(2)[0];
 }`); err != nil {
 		t.Errorf("used append result must not trip E055, got %v", err)
+	}
+}
+
+// E056: array elements are immutable after construction — the subscript
+// counterpart of E048 (field immutability). `arr[i] = v` is rejected; the
+// replacement is the value-returning `arr = arr.with(i, v)`. This completes
+// the immutable-data surface (docs/PURE-COLLECTION-API-PLAN.md §3a).
+func TestArrayElementImmutabilityE056(t *testing.T) {
+	// Plain subscript assignment is rejected.
+	err := checkSource(t, `function main(): i32 {
+	var a: i32[] = [1, 2, 3];
+	a[0] = 9;
+	return a[0];
+}`)
+	if err == nil || !strings.Contains(err.Error(), "subscripts are read-only after construction") {
+		t.Errorf("expected E056 for subscript assignment, got: %v", err)
+	}
+	// Compound subscript assignment (`arr[i] += v` desugars to `arr[i] = arr[i] + v`).
+	err = checkSource(t, `function main(): i32 {
+	var a: i32[] = [1, 2, 3];
+	a[1] += 5;
+	return a[1];
+}`)
+	if err == nil || !strings.Contains(err.Error(), "subscripts are read-only after construction") {
+		t.Errorf("expected E056 for compound subscript assignment, got: %v", err)
+	}
+	// The replacement form checks clean.
+	if err := checkSource(t, `function main(): i32 {
+	var a: i32[] = [1, 2, 3];
+	a = a.with(0, 9);
+	return a[0];
+}`); err != nil {
+		t.Errorf("a = a.with(...) must check clean, got: %v", err)
 	}
 }
 
@@ -2458,7 +3647,7 @@ func TestCellElemTypeE057(t *testing.T) {
 	}
 	// Cell[string] — string is cycle-free (a buffer of bytes, references no
 	// other value) and its owning slot is rc-tracked, so it's allowed.
-	if err := checkSource(t, `import "core/no_prelude";
+	if err := checkSource(t, `
 import "std/string";
 function main(): i32 {
 	var c: Cell[string] = cell_new("x");
@@ -2468,7 +3657,7 @@ function main(): i32 {
 		t.Errorf("Cell[string] should check, got %v", err)
 	}
 	// Inferred Cell[string] from the cell_new arg — also allowed.
-	if err := checkSource(t, `import "core/no_prelude";
+	if err := checkSource(t, `
 import "std/string";
 function main(): i32 { var c = cell_new("x"); return c.get().len(); }`); err != nil {
 		t.Errorf("inferred Cell[string] should check, got %v", err)
@@ -2497,4 +3686,298 @@ function main(): i32 {
 	if err == nil {
 		t.Fatal("calling extern @import with a mistyped argument should error")
 	}
+}
+
+// TestNamedArgs covers named-argument resolution: valid reorderings check
+// clean, and the misuse cases produce the right diagnostics.
+func TestNamedArgs(t *testing.T) {
+	good := []string{
+		`function f(a: i32, b: i32, c: i32): i32 { return a; } function main(): i32 { return f(1, c = 3, b = 2); }`,
+		`function f(a: i32, b: i32 = 2): i32 { return a + b; } function main(): i32 { return f(a = 1); }`,
+		`function f(a: i32, b: i32 = 2, c: i32 = 3): i32 { return a; } function main(): i32 { return f(1, c = 9); }`,
+	}
+	for _, src := range good {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("%q: unexpected error %v", src, err)
+		}
+	}
+
+	bad := []struct{ src, want string }{
+		{`function f(a: i32, b: i32): i32 { return a; } function main(): i32 { return f(1, z = 2); }`, "no parameter named"},
+		{`function f(a: i32, b: i32): i32 { return a; } function main(): i32 { return f(1, a = 2); }`, "duplicate argument"},
+		{`function f(a: i32, b: i32): i32 { return a; } function main(): i32 { return f(a = 1, 2); }`, "positional argument after named"},
+		{`function f(a: i32, b: i32): i32 { return a; } function main(): i32 { return f(a = 1); }`, "missing argument for parameter"},
+	}
+	for _, c := range bad {
+		err := checkSource(t, c.src)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%q: want error containing %q, got %v", c.src, c.want, err)
+		}
+	}
+}
+
+// Display spine (#2696): `print` / `write` / `eprint` accept any value whose
+// type carries a `to_string(): string` (the Display spine), not just string.
+// A non-string argument is rewritten to `arg.to_string()` so it stringifies
+// through the trait before reaching the string-only runtime helper.
+func TestCheckPrintDisplayAccepted(t *testing.T) {
+	// Concrete struct with an inline Display-shaped impl.
+	srcStruct := `trait Display { function to_string(self: Self): string; }
+struct Point { x: i32, y: i32 }
+impl Display for Point { function to_string(self: Self): string { return "p"; } }
+function main(): i32 {
+    var p: Point = Point { x: 1, y: 2 };
+    print(p);
+    write(p);
+    eprint(p);
+    return 0;
+}`
+	if err := checkSource(t, srcStruct); err != nil {
+		t.Errorf("print(struct: Display) should typecheck: %v", err)
+	}
+	// A plain string argument still type-checks unchanged.
+	srcStr := `function main(): i32 { print("hi"); write("x"); eprint("y"); return 0; }`
+	if err := checkSource(t, srcStr); err != nil {
+		t.Errorf("print(string) should still typecheck: %v", err)
+	}
+}
+
+// A bounded generic `T: Display` may forward its parameter straight to
+// `print`; the trait bound supplies the `to_string` the rewrite needs.
+func TestCheckPrintDisplayGeneric(t *testing.T) {
+	src := `trait Display { function to_string(self: Self): string; }
+function show[T: Display](v: T): void { print(v); }
+struct Point { x: i32 }
+impl Display for Point { function to_string(self: Self): string { return "p"; } }
+function main(): i32 { show(Point { x: 1 }); return 0; }`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("print(v: T) under T: Display should typecheck: %v", err)
+	}
+}
+
+// A value whose type has no `to_string` is rejected with a Display-specific
+// diagnostic, and an unbounded generic parameter is rejected the same way
+// (no trait bound supplies the method).
+func TestCheckPrintNonDisplayRejected(t *testing.T) {
+	cases := []struct{ src, want string }{
+		{`struct Point { x: i32 }
+function main(): i32 { var p: Point = Point { x: 1 }; print(p); return 0; }`,
+			"does not implement `Display`"},
+		{`trait Display { function to_string(self: Self): string; }
+function show[T](v: T): void { print(v); }
+function main(): i32 { return 0; }`,
+			"does not implement `Display`"},
+	}
+	for _, c := range cases {
+		err := checkSource(t, c.src)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%q: want error containing %q, got %v", c.src, c.want, err)
+		}
+	}
+}
+
+// Block-expressions (slice 1): an `if`-expr branch with leading
+// statements + a trailing value type-checks to the tail's type; block
+// locals don't leak; a value-less block in value position errors E061;
+// branch-tail types unify (or mismatch → E031).
+func TestBlockExprChecker(t *testing.T) {
+	// Tail type flows: `if (c) { var k = e + 1; k } else { 0 }` is i32.
+	if err := checkSource(t, `function main(): i32 {
+		var e = 5;
+		var x: i32 = if (e > 0) { var k = e + 1; k } else { 0 };
+		return x;
+	}`); err != nil {
+		t.Errorf("if-block tail-type: unexpected error: %v", err)
+	}
+
+	// String tails unify across branches: one branch `{ ...; "a" }`, the
+	// other a bare `"b"` → string.
+	if err := checkSource(t, `function main(): i32 {
+		var t = 0;
+		var label: string = if (t == 0) { var s = "a"; s } else { "b" };
+		return label.len();
+	}`); err != nil {
+		t.Errorf("string-tail unification: unexpected error: %v", err)
+	}
+
+	// match-arm block-expr tail type flows.
+	if err := checkSource(t, `function main(): i32 {
+		var tag = 0;
+		var r: i32 = match (tag) { 0 => { var s = tag + 5; s }, _ => 99 };
+		return r;
+	}`); err != nil {
+		t.Errorf("match-arm block tail: unexpected error: %v", err)
+	}
+}
+
+func TestBlockExprCheckerErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{
+			"local-does-not-escape",
+			`function main(): i32 {
+				var x: i32 = if (true) { var k = 1; k } else { 0 };
+				return k;
+			}`,
+			"undefined identifier",
+		},
+		{
+			"value-less-block-in-value-position",
+			`function main(): i32 {
+				var x: i32 = if (true) { var k = 1; } else { 0 };
+				return x;
+			}`,
+			"block-expression has no trailing value",
+		},
+		{
+			"mismatched-branch-tails",
+			`function main(): i32 {
+				var x = if (true) { var k = 1; k } else { var s = "x"; s };
+				return 0;
+			}`,
+			"branches differ",
+		},
+	}
+	for _, c := range cases {
+		err := checkSource(t, c.src)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: want error containing %q, got %v", c.name, c.want, err)
+		}
+	}
+}
+
+// TestDynMethodCallNoSelfParamNoPanic guards against a checker crash on a
+// `dyn Trait` method call where the trait method signature has no leading
+// `self` param. checkDynMethodCall unconditionally sliced `tm.Params[1:]` to
+// "drop the self receiver", which panicked (`slice bounds out of range [1:0]`)
+// on the common `function area(): i32;` form and silently dropped the first
+// real argument of a method that had params but no explicit self. The call must
+// now type-check (resolving the no-arg method) rather than panic.
+func TestDynMethodCallNoSelfParamNoPanic(t *testing.T) {
+	// No explicit self in the trait method; calling it through `dyn` must not
+	// panic. (Whether the bare receiver method conforms is a separate, cleanly
+	// reported concern; here we only require the checker to survive.)
+	src := `trait Sh { function area(): i32; }
+struct Sq { s: i32 }
+function (x: Sq) area(): i32 { return x.s * x.s; }
+function via(sh: dyn Sh): i32 { return sh.area(); }
+function main(): i32 { return 0; }`
+	// Must return normally (nil or a diagnostic) — the bug made Check panic.
+	_ = checkSource(t, src)
+
+	// A trait method WITH a param but no explicit self: the call must see the
+	// real argument count (the old `[1:]` dropped it, reporting "0 arguments").
+	srcParam := `trait Sh { function scaled(f: i32): i32; }
+struct Sq { s: i32 }
+function (x: Sq) scaled(f: i32): i32 { return x.s * f; }
+function via(sh: dyn Sh): i32 { return sh.scaled(); }
+function main(): i32 { return 0; }`
+	err := checkSource(t, srcParam)
+	if err == nil || !strings.Contains(err.Error(), "expects 1 argument") {
+		t.Errorf("no-self dyn method with a param: want a 1-argument arity error, got %v", err)
+	}
+}
+
+// TestDynMethodCallProperPattern confirms the canonical `dyn Trait` shape
+// (explicit `self: Self` + an `impl` block) still type-checks after the
+// self-stripping fix, including a method that takes an extra argument.
+func TestDynMethodCallProperPattern(t *testing.T) {
+	for _, src := range []string{
+		`trait Shape { function area(self: Self): i32; }
+struct Circle { r: i32 }
+impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } }
+function describe(s: dyn Shape): i32 { return s.area(); }
+function main(): i32 { return describe(Circle { r: 5 }); }`,
+		`trait Shape { function scaled(self: Self, f: i32): i32; }
+struct Circle { r: i32 }
+impl Shape for Circle { function scaled(self: Self, f: i32): i32 { return self.r * f; } }
+function describe(s: dyn Shape): i32 { return s.scaled(3); }
+function main(): i32 { return describe(Circle { r: 5 }); }`,
+	} {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("proper dyn pattern: unexpected error %v", err)
+		}
+	}
+}
+
+// TestSliceEscapeRejected (E063): returning a `[T]` slice that views
+// function-local storage is a use-after-free — the backing array is
+// reclaimed when the frame unwinds. The checker rejects the cases it
+// can prove are local; see docs/LANGUAGE-DIRECTION.md's slice lifetime
+// contract.
+func TestSliceEscapeRejected(t *testing.T) {
+	for _, src := range []string{
+		// slice of a locally-declared owned array
+		`function f(): [i32] { var xs: i32[] = [1, 2, 3]; return xs[0:2]; }`,
+		// slice of an array literal
+		`function f(): [i32] { return [1, 2, 3][0:2]; }`,
+		// slice bound to a local, then returned
+		`function f(): [i32] { var xs: i32[] = [1, 2, 3]; var s = xs[0:2]; return s; }`,
+		// sub-slice of a local slice that views a local array
+		`function f(): [i32] { var xs: i32[] = [1, 2, 3]; var s = xs[0:3]; return s[0:2]; }`,
+	} {
+		err := checkSource(t, src)
+		if err == nil {
+			t.Errorf("%q: expected E063, got nil", src)
+			continue
+		}
+		if !strings.Contains(err.Error(), "dangling view") || !strings.Contains(err.Error(), "function-local storage") {
+			t.Errorf("%q: want dangling-view error, got %v", src, err)
+		}
+		if !hasCode(err, "E063") {
+			t.Errorf("%q: want diagnostic stamped E063, got %v", src, err)
+		}
+	}
+}
+
+// TestSliceEscapeAllowed: slices the checker can't prove are local must
+// not be flagged. Slices of a parameter / receiver stay valid as long as
+// the caller's owner does; string slices copy; returning the owned array
+// itself is a move, not a view.
+func TestSliceEscapeAllowed(t *testing.T) {
+	for _, src := range []string{
+		// slice of a parameter — caller owns the backing array
+		`function f(xs: i32[]): [i32] { return xs[0:2]; }`,
+		// slice of a parameter, bound through a local first
+		`function f(xs: i32[]): [i32] { var s = xs[0:2]; return s; }`,
+		// string slice copies into a fresh owned string
+		`function f(s: string): string { return s[0:2]; }`,
+		// returning the owned array itself is a move
+		`function f(): i32[] { var xs: i32[] = [1, 2, 3]; return xs; }`,
+		// receiver-backed slice (element-polymorphic method): caller owns
+		// the receiver, so the view is valid.
+		`function (xs: T[]) head(): [T] { return xs[0:2]; }
+function main(): i32 { var a: i32[] = [1,2,3]; return a.head()[0]; }`,
+	} {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("%q: unexpected error %v", src, err)
+		}
+	}
+}
+
+// hasCode reports whether err (or any aggregated sub-error) carries the
+// given stable diagnostic code.
+func hasCode(err error, code string) bool {
+	type coded interface{ Code() string }
+	var walk func(error) bool
+	walk = func(e error) bool {
+		if e == nil {
+			return false
+		}
+		if c, ok := e.(coded); ok && c.Code() == code {
+			return true
+		}
+		if errs, ok := e.(diag.Errors); ok {
+			for _, sub := range errs {
+				if walk(sub) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return walk(err)
 }

@@ -1,0 +1,164 @@
+---
+title: Build an HTTP handler
+description: Write an edge-function-style HTTP handler that compiles to a native server or a WASI component.
+sidebar:
+  order: 6
+---
+
+import FernPlayground from "../../../components/FernPlayground.astro";
+
+Fern's second headline use case is **edge-function-style HTTP servers** —
+short-lived handlers that take a request, do a little work, and return a
+response. You write one function; Fern gives you both a standalone native
+server *and* a WASI HTTP component from the same source.
+
+## The handler signature
+
+Define a function named `handle` that takes an `HttpRequest` and a
+`Platform`, and returns an `HttpResponse`:
+
+```fern
+import "std/http";
+import "std/tcp";
+
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return http.http_response_ok("hello, world");
+}
+```
+
+That's a complete program — there's no `main`. When Fern sees a `handle`
+function and no `main`, it **synthesises one for you**:
+
+- For a **native** target it generates `main` that calls
+  `tcp_serve(port, handle)`, listening on `$PORT` (default `8080`).
+- For the **`wasi-http`** target it drops the synthesised `main` and
+  exports `wasi:http/incoming-handler` instead — the standard component
+  interface that `wasmtime serve` and edge hosts speak.
+
+Each invocation runs inside an implicit arena, so every string the
+handler allocates is reclaimed when it returns — no leaks across a
+long-running deployment, no GC pauses.
+
+## Try it: a routed handler
+
+The playground runs HTTP handlers in-browser. Pick the **`wasi:http`**
+world in the playground's world selector when you open this in a full
+tab; here it's already wired up. This handler routes on path and method,
+echoes a POST body, and sets a response header.
+
+<FernPlayground
+  code={`import "std/http";
+import "std/tcp";
+
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    if (req.path == "/hello") {
+        // with_header returns a NEW response with the header set —
+        // responses are immutable, like every value in Fern.
+        return http.http_response_ok("hello, world")
+            .with_header("x-served-by", "fern");
+    }
+    if (req.method == "POST") {
+        return http.http_response_ok(req.body_string());
+    }
+    return http.http_response_text(404, "not found");
+}`}
+  autoRun={false}
+/>
+
+## Reading the request
+
+`HttpRequest` exposes the parts you need directly:
+
+| Access                | Type     | What it is                          |
+| --------------------- | -------- | ----------------------------------- |
+| `req.method`          | `string` | `"GET"`, `"POST"`, …                |
+| `req.path`            | `string` | Path **and** query, e.g. `/s?q=hi`  |
+| `req.body_string()`   | `string` | The request body as a string        |
+| `req.body_len()`      | `i32`    | Body length in bytes                |
+
+## Building the response
+
+`std/http` has constructors for the common cases, so you rarely write an
+`HttpResponse { ... }` literal by hand:
+
+| Constructor                              | Result                  |
+| ---------------------------------------- | ----------------------- |
+| `http.http_response_ok(body)`            | `200 OK` with `body`    |
+| `http.http_response_text(status, body)`  | any status + body       |
+| `http.http_response_not_found()`         | `404 Not Found`         |
+| `http.http_response_bad_request(body)`   | `400` + body            |
+| `http.http_response_redirect(location)`  | `302` + `Location`      |
+
+Set headers functionally with `.with_header(name, value)`, which returns
+a new response — chain as many as you like.
+
+## Parsing the query string and returning JSON
+
+Real handlers parse query parameters and emit structured output.
+`std/url` gives you `url_parse` and `query_parse`; `std/json` builds and
+encodes a `JsonValue`. Query parsing is multi-valued — `?tag=a&tag=b`
+collects both into a `string[]`.
+
+```fern
+import "std/http";
+import "std/tcp";
+import "std/url";
+import "std/json";
+import "core/map";
+
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    // req.path is path+query; anchor it against a host so url_parse
+    // has something to chew on.
+    match (url.url_parse("http://x.local" + req.path)) {
+        None => { return http.http_response_bad_request("bad URL\n"); },
+        Some(u) => {
+            var q: Map[string, string[]] = url.query_parse(u.query);
+            var out: Map[string, JsonValue] = map_new(2);
+            out = out.insert("path", JString(u.path));
+            match (q.get("q")) {
+                Some(vs) => {
+                    if (vs.len() > 0) { out = out.insert("q", JString(vs[0])); }
+                },
+                None => {}
+            }
+            // `|>` pipes the left value into the right function.
+            var body: string = JObject(out) |> json.json_encode;
+            return http.http_response_ok(body);
+        }
+    }
+}
+```
+
+## Compile and serve
+
+The same file builds two ways. As a WASI HTTP component:
+
+```bash
+fern -target wasi-http -o handler.wasm handler.fern
+wasmtime serve handler.wasm
+# → curl http://localhost:8080/hello
+```
+
+Or as a native standalone server:
+
+```bash
+fern -target arm64 -o handler handler.fern   # or -target x86-64
+PORT=8080 ./handler &
+curl -X POST -d 'hi' http://localhost:8080/echo
+```
+
+Both start instantly and ship as a single artifact — the wasm component
+is self-contained (no adapter), and the native binary is statically
+linked with no runtime.
+
+## Where to go from here
+
+- The repository's [`examples/wasm/`][wasm] directory has full handlers:
+  a URL router, a CSV-to-JSON converter, an echo server, and more.
+- The [Standard library reference](../../stdlib/) documents `std/http`,
+  `std/url`, `std/json`, and `std/tcp`.
+- Wrap up the tutorial with [Testing →](../testing/).
+
+[wasm]: https://github.com/JakeChampion/lang/tree/main/examples/wasm
+
+[Next: Testing →](../testing/)

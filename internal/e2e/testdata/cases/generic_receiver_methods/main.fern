@@ -1,0 +1,26 @@
+// Methods on a generic struct / enum receiver: the type variable in
+// the receiver (`T` in `Box[T]`) is an implicit method type parameter,
+// inferred from the receiver at the call site, so one method body
+// serves every instantiation.
+struct Box[T] { v: T }
+function (b: Box[T]) get(): T { return b.v; }
+
+struct Pair[A, B] { fst: A, snd: B }
+function (p: Pair[A, B]) first(): A { return p.fst; }
+function (p: Pair[A, B]) second(): B { return p.snd; }
+
+enum Opt[T] { Nil, Has(T) }
+function (o: Opt[T]) unwrap_or(d: T): T {
+    match (o) { Has(x) => { return x; }, Nil => { return d; } }
+}
+
+function main(): i32 {
+    var bi: Box[i32] = Box { v: 42 };
+    var p: Pair[i32, i32] = Pair { fst: 10, snd: 20 };
+    var some: Opt[i32] = Has(5);
+    var none: Opt[i32] = Nil;
+    return bi.get()                       // 42
+         + p.first() + p.second()         // 30
+         + some.unwrap_or(0)              // 5
+         + none.unwrap_or(7);             // 7  -> 84
+}

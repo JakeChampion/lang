@@ -44,7 +44,7 @@ func TestInterpHandlesEveryASTNode(t *testing.T) {
 		{node: "CastExpr", src: `function main(): i64 { var n: i32 = 7; return n as i64; }`},
 		{node: "BoolLit", src: `function main(): boolean { return true; }`},
 		{node: "StringLit", src: `function main(): string { return "hi"; }`},
-		{node: "FString", src: `import "core/no_prelude";
+		{node: "FString", src: `
 import "std/i32";
 function main(): string { return f"x={42}"; }`},
 		{node: "FloatLit",
@@ -70,7 +70,7 @@ function main(): i32 {
 		{node: "StructLit", src: `struct P { x: i32, y: i32 }
 function main(): i32 { var p: P = P { x: 3, y: 4 }; return p.x; }`},
 		{node: "TupleLit", src: `function main(): i32 { var t: (i32, i32) = (3, 4); var (a, b) = t; return a + b; }`},
-		{node: "MapLit", src: `import "core/no_prelude";
+		{node: "MapLit", src: `
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = Map { 1: 10 };

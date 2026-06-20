@@ -1,0 +1,31 @@
+import "core/int";
+import "std/format";
+import "std/float";
+
+// std/format Rust-style `{:fill|align|width.precision}` specs plus the
+// precision-controlled float formatter (std/float to_string_prec) — issue #2684.
+// Verified byte-for-byte across interp / x86-64 / arm64 / wasm.
+function main(): i32 {
+    // Plain `{}` substitution still works.
+    print(format.format("{} + {} = {}", [(40).to_string(), (2).to_string(), (42).to_string()]));
+    // Alignment + width.
+    print(format.format("[{:>8}]", ["hi"]));
+    print(format.format("[{:<8}]", ["hi"]));
+    print(format.format("[{:^8}]", ["hi"]));
+    // Custom fill char.
+    print(format.format("[{:*>6}]", ["ab"]));
+    print(format.format("[{:0>5}]", ["42"]));
+    // Precision (string truncation), and precision + width together.
+    print(format.format("[{:.3}]", ["hello"]));
+    print(format.format("[{:>8.3}]", ["hello"]));
+    // A `{...}` run that isn't a spec renders literally (no arg consumed).
+    print(format.format("json {\"k\":1} ok", []));
+    // Underflow emits the placeholder verbatim.
+    print(format.format("miss {:>4} here", []));
+    // Fixed-precision floats.
+    print((3.14159 as f64).to_string_prec(2));
+    print((2.5 as f64).to_string_prec(0));
+    print((1.0 as f64).to_string_prec(3));
+    print((0.0 as f64 - 3.14159).to_string_prec(2));
+    return 0;
+}

@@ -73,7 +73,7 @@ func buildFromSource(t *testing.T, src string) ([]byte, error) {
 // `main` to compile. Then wasmtime runs the binary and asserts
 // the return value.
 func TestBuildMinimalReturnConst(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function main(): i32 { return 42; }
 `
 	bin, err := buildFromSource(t, src)
@@ -106,7 +106,7 @@ function main(): i32 { return 42; }
 // so the obvious fold-to-result would still leave the arithmetic
 // observable via wasmtime's printed return).
 func TestBuildArithmeticReturn(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function main(): i32 {
     var a: i32 = 7;
     var b: i32 = 11;
@@ -141,7 +141,7 @@ function main(): i32 {
 // that the parser → IR → wasmbin path lowers an if-expression
 // the same way the synthetic-IR tests do.
 func TestBuildIfElseReal(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function pick(a: i32, b: i32): i32 {
     if (a > b) { return a; } else { return b; }
 }
@@ -176,7 +176,7 @@ function main(): i32 { return pick(7, 11); }
 // end must keep `fact` alive even though it's only reachable
 // transitively from `main`.
 func TestBuildRecursionReal(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function fact(n: i32): i32 {
     if (n <= 1) { return 1; }
     return n * fact(n - 1);
@@ -440,7 +440,7 @@ func TestBuildWriteFileRoundtrip(t *testing.T) {
 func TestBuildPrintMainResult(t *testing.T) {
 	// PrintMainResult's _start calls int_to_string (core/int); with
 	// the auto-prelude gone the program must import it explicitly.
-	src := `import "core/no_prelude";
+	src := `
 import "core/int";
 function main(): i32 { return 42; }`
 	prog, info := loadAndCheckModule(t, src)
@@ -488,7 +488,7 @@ func TestBuildPreview2Wrap(t *testing.T) {
 	if _, err := exec.LookPath("wasm-tools"); err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	src := `import "core/no_prelude";
+	src := `
 function main(): i32 { return 0; }
 `
 	prog, err := parser.Parse(src)
@@ -599,7 +599,7 @@ func exportExists(t *testing.T, bin []byte, want string) bool {
 // surfaces an "unknown callee" / "unsupported" failure. As
 // each gap closes, update this test to point at the next.
 func TestBuildReportsUnsupported(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function main(): i32 {
     var r = subprocess("/bin/echo", [], "");
     return r.exit_code;
@@ -625,7 +625,7 @@ function main(): i32 {
 // compile check; runtime exercise lives in the e2e suite under
 // `wasmtime serve`.
 func TestBuildTcpHelpersCompile(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function main(): i32 {
     var srv: i32 = tcp_listen(8080);
     if (srv < 0) { return -1; }
@@ -670,7 +670,7 @@ function main(): i32 {
 // check; runtime exercise under `wasmtime serve` lives in the
 // e2e suite (TestWasmPreview2HttpHandler).
 func TestBuildHttpHandlerCompiles(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "std/http";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
@@ -714,7 +714,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 // + WASI fd_write import + the helper chain, end-to-end output
 // flows from `.fern` source to stdout.
 func TestBuildPrintReal(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function main(): i32 {
     print("hello from wasmbin\n");
     return 0;
@@ -754,7 +754,7 @@ function main(): i32 {
 // __map_get_or_impl + __map_hash (int key path) + the stdlib
 // load/store/alloc shims.
 func TestBuildMapReal(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = (Map { 1i32: 10i32 });
@@ -866,7 +866,7 @@ func importExists(t *testing.T, bin []byte, wantModule, wantName string) bool {
 // adjustment. Foundation for wiring the wrap.go preview-2
 // pipeline into the default driver path.
 func TestBuildPreview2WASIRenamesProcExit(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function main(): i32 {
     exit(0);
     return 0;
@@ -897,7 +897,7 @@ function main(): i32 {
 // `wasi:cli/environment@0.2.0::get-arguments` instead of the
 // preview-1 `args_sizes_get` / `args_get`.
 func TestBuildPreview2ArgsUsesEnvironment(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function main(): i32 {
     return args().len();
 }
@@ -927,7 +927,7 @@ function main(): i32 {
 // (Preview2WASI=false) path still reads argv via the preview-1
 // args_sizes_get / args_get imports.
 func TestBuildPreview2ArgsDefaultUsesPreview1(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function main(): i32 {
     return args().len();
 }
@@ -949,7 +949,7 @@ function main(): i32 {
 // `wasi:cli/environment@0.2.0::get-environment` instead of the
 // preview-1 `environ_sizes_get` / `environ_get`.
 func TestBuildPreview2EnvUsesEnvironment(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function main(): i32 {
     match (env("PATH")) {
         Some(v) => { return 0; },
@@ -983,7 +983,7 @@ function main(): i32 {
 // (Preview2WASI=false) path still reads env vars via the preview-1
 // environ imports.
 func TestBuildPreview2EnvDefaultUsesPreview1(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function main(): i32 {
     match (env("PATH")) {
         Some(v) => { return 0; },
@@ -1008,7 +1008,7 @@ function main(): i32 {
 // (Preview2WASI=false) path still emits the preview-1
 // proc_exit import. Pins the opt-in shape of the migration.
 func TestBuildPreview2WASIDefaultLeavesProcExit(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 function main(): i32 {
     exit(0);
     return 0;
@@ -1031,7 +1031,7 @@ function main(): i32 {
 // composer lifts as the named world export), in addition to the plain-name
 // export. docs/WIT-BRING-YOUR-OWN.md.
 func TestBuildExportSurfacesCoreExport(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 @export("local:test/math@0.1.0", "add")
 function add(a: i32, b: i32): i32 { return a + b; }
 function main(): i32 { return add(2, 3); }

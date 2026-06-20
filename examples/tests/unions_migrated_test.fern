@@ -1,7 +1,6 @@
-import "core/no_prelude";
 import "std/test";
 // examples/tests/unions_migrated_test.fern —
-// Lang port of `TestInterpScriptUnions` from
+// Fern port of `TestInterpScriptUnions` from
 // `internal/e2e/interp_script_test.go`.
 //
 // The original Go test pinned the union-desugar +
@@ -31,37 +30,37 @@ function eval(e: Expr): i32 {
     }
 }
 
-function test_add_two_positives(): Option[string] {
+function test_add_two_positives(): test.TestOutcome {
     var e: Expr = Add { l: 10, r: 32 };
     return test.assert_eq(eval(e), 42);
 }
 
-function test_add_left_identity_zero(): Option[string] {
+function test_add_left_identity_zero(): test.TestOutcome {
     var e: Expr = Add { l: 0, r: 7 };
     return test.assert_eq(eval(e), 7);
 }
 
-function test_add_right_identity_zero(): Option[string] {
+function test_add_right_identity_zero(): test.TestOutcome {
     var e: Expr = Add { l: 7, r: 0 };
     return test.assert_eq(eval(e), 7);
 }
 
-function test_add_negatives_cancel(): Option[string] {
+function test_add_negatives_cancel(): test.TestOutcome {
     var e: Expr = Add { l: 5, r: 0 - 5 };
     return test.assert_eq(eval(e), 0);
 }
 
-function test_lit_positive(): Option[string] {
+function test_lit_positive(): test.TestOutcome {
     var e: Expr = Lit { v: 99 };
     return test.assert_eq(eval(e), 99);
 }
 
-function test_lit_zero(): Option[string] {
+function test_lit_zero(): test.TestOutcome {
     var e: Expr = Lit { v: 0 };
     return test.assert_eq(eval(e), 0);
 }
 
-function test_lit_negative(): Option[string] {
+function test_lit_negative(): test.TestOutcome {
     var e: Expr = Lit { v: 0 - 100 };
     return test.assert_eq(eval(e), 0 - 100);
 }

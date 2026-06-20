@@ -65,7 +65,7 @@ func TestInterpScriptFile(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "prog.fern")
-	if err := os.WriteFile(src, []byte(`import "core/no_prelude";
+	if err := os.WriteFile(src, []byte(`
 import "std/i32";
 function fact(n: i32): i32 {
     if (n == 0) { return 1; }
@@ -125,7 +125,7 @@ func TestInterpScriptReadAllStdin(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "prog.fern")
-	if err := os.WriteFile(src, []byte(`import "core/no_prelude";
+	if err := os.WriteFile(src, []byte(`
 import "std/io";
 function main(): i32 {
     var s: string = io.read_all_stdin();
@@ -223,7 +223,7 @@ function main(): i32 {
 func TestInterpScriptStringPrelude(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
-	cmd.Stdin = strings.NewReader(`import "core/no_prelude";
+	cmd.Stdin = strings.NewReader(`
 import "std/string";
 function main(): i32 {
     var s: string = "Hello";
@@ -254,6 +254,94 @@ function main(): i32 {
 	want := "Hello\nHELLO\nhello\n"
 	if out.String() != want {
 		t.Errorf("stdout = %q, want %q", out.String(), want)
+	}
+}
+
+// Random / byte builtins on the interpreter (issue #2747). The
+// interp historically lacked `random_i32` entirely (`undefined
+// function "random_i32"`); this locks in the fix and asserts
+// cross-backend agreement on the shapes the native + wasm
+// backends already support:
+//
+//   - random_i32() is callable and varies across draws.
+//   - random_bytes(n).len() == n even when the random payload
+//     contains embedded NUL bytes (the interp String is length-
+//     prefixed, not NUL-terminated).
+//   - s.as_bytes().len() / indexing match the source string.
+func TestInterpScriptRandomAndBytes(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cmd := exec.Command(bin, "-interp", "-")
+	cmd.Stdin = strings.NewReader(`
+function main(): i32 {
+    // random_i32 is live and varying.
+    var a: i32 = random_i32();
+    var b: i32 = random_i32();
+    if (a == b) { return 1; }
+    // random_bytes length is exact regardless of NUL bytes.
+    if (random_bytes(8).len() != 8) { return 2; }
+    if (random_bytes(0).len() != 0) { return 3; }
+    // as_bytes view length + byte values match the source.
+    var bs: [u8] = "ABC".as_bytes();
+    if (bs.len() != 3) { return 4; }
+    if ((bs[0] as i32) != 65) { return 5; }
+    if ((bs[2] as i32) != 67) { return 6; }
+    return 0;
+}`)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+}
+
+// std/crypto (#2681): SHA-256 + HMAC-SHA256 against standard
+// known-answer vectors on the interpreter. (x86-64 + wasm have their
+// own crypto tests; arm64 is skipped pending the #2768 freelist bug.)
+func TestInterpScriptCrypto(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cmd := exec.Command(bin, "-interp", "-")
+	cmd.Stdin = strings.NewReader(cryptoVectorsProgram)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("exit = %d, want 0 (failed crypto vector)\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+}
+
+// std/uuid (#2682): uuid_v4 / uuid_v7 generation, built on the
+// cross-backend random_bytes byte source (#2747). Asserts the
+// canonical 36-char 8-4-4-4-12 shape, the version + variant
+// nibbles, that it validates via string.is_uuid(), and that two
+// draws differ.
+func TestInterpScriptUuid(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cmd := exec.Command(bin, "-interp", "-")
+	cmd.Stdin = strings.NewReader(`
+import "std/uuid";
+import "std/string";
+function main(): i32 {
+    var a: string = uuid.uuid_v4();
+    if (a.len() != 36) { return 1; }
+    if (!a.is_uuid()) { return 2; }
+    if (a[14] != 52) { return 3; }          // version '4'
+    if (a[8] != 45 || a[13] != 45 || a[18] != 45 || a[23] != 45) { return 4; }
+    var b: string = uuid.uuid_v7();
+    if (b.len() != 36) { return 5; }
+    if (!b.is_uuid()) { return 6; }
+    if (b[14] != 55) { return 7; }          // version '7'
+    if (uuid.uuid_v4() == uuid.uuid_v4()) { return 8; }
+    return 0;
+}`)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
 	}
 }
 
@@ -293,7 +381,7 @@ func TestInterpScriptInteropIntToStringViaMangling(t *testing.T) {
 	}{
 		{
 			name: "explicit core/int + method dispatch",
-			source: `import "core/no_prelude";
+			source: `
 import "std/i32";
 import "core/int";
 
@@ -325,7 +413,7 @@ function main(): i32 {
 		},
 		{
 			name: "auto-prelude flat-load path (regression sanity)",
-			source: `import "core/no_prelude";
+			source: `
 import "std/i32";
 function main(): i32 {
     var x: i32 = 42;
@@ -684,7 +772,7 @@ func TestInterpScriptTimeTypes(t *testing.T) {
 	}{
 		{
 			name: "Instant from unix seconds",
-			source: `import "core/no_prelude";
+			source: `
 import "std/i64";
 import "std/time";
 function main(): i32 {
@@ -727,7 +815,7 @@ function main(): i32 {
 		},
 		{
 			name: "Duration milliseconds splits sec + nsec",
-			source: `import "core/no_prelude";
+			source: `
 import "std/i64";
 import "std/time";
 function main(): i32 {
@@ -815,7 +903,7 @@ function main(): i32 {
 // mistakes without baking in a brittle exact value.
 func TestInterpScriptInstantNow(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := `import "core/no_prelude";
+	src := `
 import "std/string";
 import "std/time";
 
@@ -1386,7 +1474,7 @@ function main(): i32 {
 		},
 		{
 			name: "Instant.add_duration handles nsec carry",
-			source: `import "core/no_prelude";
+			source: `
 import "std/i64";
 import "std/time";
 function main(): i32 {
@@ -1404,7 +1492,7 @@ function main(): i32 {
 		},
 		{
 			name: "Instant.add_duration with negative shifts backward",
-			source: `import "core/no_prelude";
+			source: `
 import "std/i64";
 import "std/time";
 function main(): i32 {
@@ -1417,7 +1505,7 @@ function main(): i32 {
 		},
 		{
 			name: "Instant.duration_since computes signed delta with borrow",
-			source: `import "core/no_prelude";
+			source: `
 import "std/i64";
 import "std/time";
 function main(): i32 {
@@ -1754,7 +1842,7 @@ func TestInterpScriptMockPlatform(t *testing.T) {
 	}{
 		{
 			name: "record + call_count + indexed access",
-			source: `import "core/no_prelude";
+			source: `
 import "std/i32";
 import "std/mock_platform";
 function main(): i32 {

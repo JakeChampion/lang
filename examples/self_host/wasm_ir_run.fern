@@ -1,0 +1,142 @@
+// examples/self_host/wasm_ir_run.fern — differential driver for the wasm IR
+// code path (the wasm sibling of asm_ir_run / asm_arm64_ir_run). With a `-ir`
+// flag: when set AND the module is in the pure-i32 IR subset, it emits via the
+// IR path (wasm_ir.emit_module_ir: AST -> stack IR -> WAT); otherwise it uses
+// the unchanged AST backend (wasm.emit_module). The companion Go test pipes
+// each program through both ways, runs the WAT under wasmtime, and asserts
+// identical exit codes — proving the wasm IR path is behaviour-equivalent to
+// the production AST path on the shared i32 subset.
+//
+// A SEPARATE driver so wasm.fern + the wasm_run bootstrap stay untouched.
+
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./util";
+import "./wasm";
+import "./wasm_ir";
+
+function main(): i32 {
+    var av: string[] = args();
+    var use_ir: boolean = false;
+    var ai: i32 = 1;
+    while (ai < av.len()) {
+        if (av[ai] == "-ir") { use_ir = true; }
+        ai = ai + 1;
+    }
+    var src: string = io.read_all_stdin();
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var emitted: string = "";
+    var lm: parser.Module = wasm_ir.lift_lambdas(mod);
+    if (use_ir && wasm_ir.wasm_eligible(lm)) {
+        // Hoist no-capture lambda arguments to top-level functions (closures
+        // slice 2a) so callback-style lambdas ride the slice-1 function-value
+        // path; lambda-free modules are unchanged. The AST fallback keeps the
+        // original `mod`.
+        mod = lm;
+        // Force the IR path: orchestrate the module wrapper + wasm's heap/RC
+        // runtime + wasm_ir.emit_functions (the same orchestration
+        // wasm.emit_module's use_ir dispatch does).
+        var o: string = "(module\n";
+        o = o + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
+        // wasi random_get import (issue #2747) — must precede the function
+        // section. Emitted when the module uses random_bytes / random_i32.
+        if (wasm_ir.module_uses_random(mod)) { o = o + wasm.random_get_import(); }
+        // print_int / print_str / eprint_str / putchar write via WASI fd_write
+        // — import it only when the module writes to stdout or stderr.
+        if (wasm_ir.module_emits_op(mod, "print_int") || wasm_ir.module_emits_op(mod, "print_str") || wasm_ir.module_emits_op(mod, "eprint_str") || wasm_ir.module_emits_op(mod, "putchar")) {
+            o = o + "  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n";
+        }
+        o = o + "  (memory (export \"memory\") 16)\n";
+        // String literals -> data-section blocks `[len:i32 LE][bytes]`. Emitted
+        // caller-side (wasm owns le32_escape/wat_escape); wasm_ir supplies the
+        // distinct values + their offsets so the data + const_str ptrs agree.
+        var sv: string[] = wasm_ir.str_values(mod);
+        var di: i32 = 0;
+        while (di < sv.len()) {
+            o = o + "  (data (i32.const " + util.i32_to_string(wasm_ir.str_offset(sv, di)) + ") \""
+                + wasm.le32_escape(sv[di].len()) + wasm.wat_escape(sv[di]) + "\")\n";
+            di = di + 1;
+        }
+        if (wasm_ir.module_allocates(mod) || wasm_ir.module_uses_i32_to_string(mod) || wasm_ir.module_uses_chr(mod)) {
+            o = o + wasm.heap_alloc_helpers(wasm_ir.heap_base_for(mod), wasm_ir.fl_base_for(mod), wasm_ir.fl_cells());
+            o = o + wasm.rc_runtime_helpers(wasm_ir.heap_base_for(mod));
+        }
+        if (wasm_ir.module_uses_divrem(mod)) { o = o + wasm.divrem_helpers(); }
+        if (wasm_ir.module_uses_i64_divrem(mod)) { o = o + wasm.divrem64_helpers(); }
+        // $__fern_strcat + $__fern_streq (concat / equality); references
+        // $__fern_str_box from heap_alloc_helpers, which module_allocates pulls
+        // in for any string program.
+        if (wasm_ir.module_uses_strings(mod) || wasm_ir.module_uses_maps(mod)) { o = o + wasm.strcat_streq_helpers(); }
+        // $__fern_i32_to_str backs i32.to_string() (wasm_helper_symbol maps the
+        // IR call_direct to it).
+        if (wasm_ir.module_uses_i32_to_string(mod)) { o = o + wasm.to_string_helpers(); }
+        // $__fern_str_to_i32 backs str_to_i32(s); allocation-free, own gate.
+        if (wasm_ir.module_uses_str_to_i32(mod)) { o = o + wasm.str_to_i32_helper(); }
+        // $__fern_chr backs chr(n); allocates (heap gate ORs in module_uses_chr).
+        if (wasm_ir.module_uses_chr(mod)) { o = o + wasm.chr_helper(); }
+        if (wasm_ir.module_uses_str_cmp(mod)) { o = o + wasm.strcmp_helper(); }
+        // $__fern_substr backs str_slice AND str_split (split slices each
+        // segment), so emit it for either — but only ONCE.
+        if (wasm_ir.module_uses_str_slice(mod) || wasm_ir.module_emits_op(mod, "str_split") || wasm_ir.module_uses_str_lines(mod)) { o = o + wasm.substr_helper(); }
+        // $__fern_str_split (+ its private $__fern_arr_push) for the IR path.
+        if (wasm_ir.module_emits_op(mod, "str_split") || wasm_ir.module_uses_str_lines(mod)) { o = o + wasm.str_split_helper(); }
+        // Scalar string search predicates (starts_with / ends_with / index_of /
+        // contains) — self-contained, emitted only when used.
+        if (wasm_ir.module_uses_str_predicate(mod)) { o = o + wasm.str_predicate_helpers(); }
+        // ASCII case transforms (to_upper / to_lower) — self-contained, emitted
+        // only when used.
+        if (wasm_ir.module_uses_str_case(mod)) { o = o + wasm.str_case_helpers(); }
+        // String repeat — self-contained, emitted only when used.
+        if (wasm_ir.module_uses_str_repeat(mod)) { o = o + wasm.str_repeat_helper(); }
+        // String trim — self-contained, emitted only when used (IR-only on wasm).
+        if (wasm_ir.module_uses_str_trim(mod)) { o = o + wasm.str_trim_helper(); }
+        // String reverse — self-contained, emitted only when used (IR-only on wasm).
+        if (wasm_ir.module_uses_str_reverse(mod)) { o = o + wasm.str_reverse_helper(); }
+        // String replace — self-contained, emitted only when used (IR-only on wasm).
+        if (wasm_ir.module_uses_str_replace(mod)) { o = o + wasm.str_replace_helper(); }
+        // String chars — self-contained, emitted only when used (IR-only on wasm).
+        if (wasm_ir.module_uses_str_chars(mod)) { o = o + wasm.str_chars_helper(); }
+        // String lines — split on \n + trailing-empty trim (IR-only on wasm).
+        if (wasm_ir.module_uses_str_lines(mod)) { o = o + wasm.str_lines_helper(); }
+        if (wasm_ir.module_uses_arr_slice(mod)) { o = o + wasm.arr_slice_helper(); }
+        if (wasm_ir.module_uses_arr_slice8(mod)) { o = o + wasm.arr_slice8_helper(); }
+        // `.append` (op_arr_push) emits a call to $__fern_arr_push; the IR path
+        // needs the standalone push helper (the AST path's arr_helpers bundle —
+        // which also defines arr_slice/slice8 — would double-define those, so use
+        // the push-only emitter). Depends on $__fern_arr_box (module_allocates).
+        if (wasm_ir.module_emits_op(mod, "arr_push")) { o = o + wasm.arr_push_helper(); }
+        if (wasm_ir.module_emits_op(mod, "arr_push_i64")) { o = o + wasm.arr_push_i64_helper(); }
+        if (wasm_ir.module_emits_op(mod, "arr_push_f64")) { o = o + wasm.arr_push_f64_helper(); }
+        if (wasm_ir.module_uses_maps(mod)) { o = o + wasm.map_helpers(); }
+        // Byte-source helpers (issue #2747). random_bytes returns a [len][bytes]
+        // string block; str_bytes returns a u8[]; both reference the heap runtime
+        // ($__fern_str_box / $__fern_arr_box) that module_allocates pulls in.
+        // random_i32 is heap-free. The import is emitted above.
+        if (wasm_ir.module_emits_op(mod, "random_bytes")) { o = o + wasm.random_bytes_ir_func(); }
+        if (wasm_ir.module_emits_op(mod, "random_i32")) { o = o + wasm.random_i32_func(); }
+        // print_int's $__fern_print_int: digit buffer in the 16-byte scratch past
+        // the string blocks (the `+16` in fl_base_for); iovec in the low-24 scratch.
+        if (wasm_ir.module_emits_op(mod, "print_int")) { o = o + wasm.print_int_helper(wasm_ir.str_offset(sv, sv.len())); }
+        if (wasm_ir.module_emits_op(mod, "print_str")) { o = o + wasm.print_str_helper(); }
+        if (wasm_ir.module_emits_op(mod, "eprint_str")) { o = o + wasm.eprint_str_helper(); }
+        if (wasm_ir.module_emits_op(mod, "str_bytes")) { o = o + wasm.str_bytes_func(); }
+        // string_from_bytes(arr) packs a u8[] into a string block via
+        // $__fern_string_from_bytes; op_str_from_bytes emits the call, so the
+        // helper must be present (its absence left a dangling call -> the wasm
+        // module failed to link). Depends on $__fern_alloc / $__fern_str_box,
+        // which module_allocates pulls in via heap_alloc_helpers.
+        if (wasm_ir.module_emits_op(mod, "str_from_bytes")) { o = o + wasm.string_from_bytes_helper(); }
+        // Function-value support: the $fn<N> call_indirect signature types, the
+        // funcref table, and its elem segment (empty for non-closure modules).
+        o = o + wasm_ir.fn_support_section(mod);
+        o = o + wasm_ir.emit_functions(mod);
+        o = o + "  (func $_start (call $proc_exit (call $main)))\n";
+        o = o + "  (export \"_start\" (func $_start)))\n";
+        emitted = o;
+    } else {
+        emitted = wasm.emit_module(parser.module_with_builtins(mod));
+    }
+    write(emitted);
+    return 0;
+}

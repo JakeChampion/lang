@@ -529,20 +529,37 @@ function local_names(fnode: SExpr): string[] {
     i = 2;
     while (i < fnode.items.len()) {
         var c2: SExpr = fnode.items[i];
-        if (node_head(c2) == "local") { out = out.append(c2.items[1].text); }
+        // Only NAMED locals (`(local $name type)`) enter the name space; the
+        // abbreviated unnamed form is referenced by numeric index (the flat
+        // encoder uses the index directly, never the name table).
+        if (node_head(c2) == "local" && c2.items.len() >= 2 && c2.items[1].text.len() > 0 && c2.items[1].text[0] == 36) {
+            out = out.append(c2.items[1].text);
+        }
         i = i + 1;
     }
     return out;
 }
 
 // local_decl_types lists the types of the `(local …)` decls (for the code
-// section's locals vec).
+// section's locals vec). Handles both WAT forms: `(local $name type)` — one
+// named local — and the abbreviated `(local type type …)` — N unnamed locals
+// in one node (the stack-IR emitter's form, which uses numeric local indices).
 function local_decl_types(fnode: SExpr): string[] {
     var out: string[] = [];
     var i: i32 = 2;
     while (i < fnode.items.len()) {
         var c: SExpr = fnode.items[i];
-        if (node_head(c) == "local") { out = out.append(c.items[2].text); }
+        if (node_head(c) == "local") {
+            if (c.items.len() >= 3 && c.items[1].text.len() > 0 && c.items[1].text[0] == 36) {
+                out = out.append(c.items[2].text);          // (local $name type)
+            } else {
+                var k: i32 = 1;
+                while (k < c.items.len()) {                  // (local type type …)
+                    out = out.append(c.items[k].text);
+                    k = k + 1;
+                }
+            }
+        }
         i = i + 1;
     }
     return out;
@@ -886,6 +903,110 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
 
 // ---- section builders ----------------------------------------------------
 
+// flat_idx resolves a local index operand: a numeric index (the IR emitter's
+// form) is used directly; a `$name` resolves through lnames.
+function flat_idx(text: string, names: string[]): i32 {
+    if (text.len() > 0 && text[0] == 36) { return index_of_str(names, text); }   // '$'
+    return parse_dec(text);
+}
+
+// enc_flat_body encodes a FLAT instruction body — a linear sequence of bare
+// instruction atoms (the stack-IR emitter's output: `i32.const 5`, `local.get
+// 0`, `i32.add`, `block`, `br_if 1`, …) — as opposed to enc_instr's folded
+// S-expression form. This is the natural match for the wasm binary format,
+// which is itself flat post-order: each instruction emits ONLY its opcode +
+// immediates (operands are prior instructions on the implicit operand stack,
+// NOT nested), numeric local indices and numeric `br` depths go straight to
+// LEB (no name/label resolution), and block/loop/if use the empty blocktype
+// (0x40). Reuses watbin's opcode tables (mem_*_opcode / arith_opcode) so the
+// two paths agree byte-for-byte. The caller still appends the function-level
+// `end` (0x0b).
+function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnames: string[]): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < instrs.len()) {
+        var op: string = instrs[i].text;
+        if (op == "i32.const") {
+            out = out.append(65);
+            out = leb_i32(out, parse_dec(instrs[i + 1].text));
+            i = i + 2;
+        } else if (op == "local.get") {
+            out = out.append(32);
+            out = leb_u32(out, flat_idx(instrs[i + 1].text, lnames));
+            i = i + 2;
+        } else if (op == "local.set") {
+            out = out.append(33);
+            out = leb_u32(out, flat_idx(instrs[i + 1].text, lnames));
+            i = i + 2;
+        } else if (op == "local.tee") {
+            out = out.append(34);
+            out = leb_u32(out, flat_idx(instrs[i + 1].text, lnames));
+            i = i + 2;
+        } else if (op == "global.get") {
+            out = out.append(35);
+            out = leb_u32(out, index_of_str(gnames, instrs[i + 1].text));
+            i = i + 2;
+        } else if (op == "global.set") {
+            out = out.append(36);
+            out = leb_u32(out, index_of_str(gnames, instrs[i + 1].text));
+            i = i + 2;
+        } else if (op == "call") {
+            out = out.append(16);
+            out = leb_u32(out, index_of_str(fnames, instrs[i + 1].text));
+            i = i + 2;
+        } else if (op == "br") {
+            out = out.append(12);
+            out = leb_u32(out, parse_dec(instrs[i + 1].text));   // numeric depth, used directly
+            i = i + 2;
+        } else if (op == "br_if") {
+            out = out.append(13);
+            out = leb_u32(out, parse_dec(instrs[i + 1].text));
+            i = i + 2;
+        } else if (op == "block") {
+            out = out.append(2);
+            out = out.append(64);   // 0x40 empty blocktype
+            i = i + 1;
+        } else if (op == "loop") {
+            out = out.append(3);
+            out = out.append(64);
+            i = i + 1;
+        } else if (op == "if") {
+            out = out.append(4);
+            out = out.append(64);
+            i = i + 1;
+        } else if (op == "else") {
+            out = out.append(5);
+            i = i + 1;
+        } else if (op == "end") {
+            out = out.append(11);
+            i = i + 1;
+        } else if (op == "return") {
+            out = out.append(15);
+            i = i + 1;
+        } else if (op == "drop") {
+            out = out.append(26);
+            i = i + 1;
+        } else {
+            var ml: i32 = mem_load_opcode(op);
+            var ms: i32 = mem_store_opcode(op);
+            var ao: i32 = arith_opcode(op);
+            if (ml != 0) {
+                out = out.append(ml);
+                out = leb_u32(out, memarg_align(op));
+                out = leb_u32(out, 0);   // offset 0
+            } else if (ms != 0) {
+                out = out.append(ms);
+                out = leb_u32(out, memarg_align(op));
+                out = leb_u32(out, 0);
+            } else if (ao != 0) {
+                out = out.append(ao);   // arithmetic / comparison (no immediate)
+            }
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
 // enc_locals_vec compresses a func's `(local …)` types into runs of
 // (count, valtype), the code section's locals encoding.
 function enc_locals_vec(types: string[]): i32[] {
@@ -1080,10 +1201,19 @@ function emit_binary(mod: SExpr): i32[] {
         var lnames: string[] = local_names(fnode);
         var fbody: i32[] = enc_locals_vec(local_decl_types(fnode));
         var instrs: SExpr[] = body_instrs(fnode);
-        var k: i32 = 0;
-        while (k < instrs.len()) {
-            fbody = wcat(fbody, enc_instr(instrs[k], lnames, fnames, gnames, [], tnames));
-            k = k + 1;
+        if (instrs.len() > 0 && instrs[0].kind != 0) {
+            // FLAT body: a linear sequence of bare instruction atoms (the
+            // stack-IR emitter's output). Encode it directly — flat WAT is the
+            // natural shape of the wasm binary format.
+            fbody = wcat(fbody, enc_flat_body(instrs, lnames, fnames, gnames));
+        } else {
+            // FOLDED body: nested S-expression instructions (the AST emitter's
+            // output), encoded post-order.
+            var k: i32 = 0;
+            while (k < instrs.len()) {
+                fbody = wcat(fbody, enc_instr(instrs[k], lnames, fnames, gnames, [], tnames));
+                k = k + 1;
+            }
         }
         fbody = fbody.append(11);                // end
         codeBody = leb_u32(codeBody, fbody.len());
@@ -1910,10 +2040,10 @@ function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32
     i = 0;
     while (i < n) {
         if (imp_kind[i] == 1 || imp_kind[i] == 2) {
-            tramp_mod[i] = n_mod;
+            tramp_mod = tramp_mod.with(i, n_mod);
             n_mod = n_mod + 1;
             o = wcat(o, comp_core_module_section(shim_trampoline_core(imp_params[i], none)));
-            fixup_mod[i] = n_mod;
+            fixup_mod = fixup_mod.with(i, n_mod);
             n_mod = n_mod + 1;
             o = wcat(o, comp_core_module_section(shim_tablefill_core(imp_params[i], none)));
         }
@@ -1923,7 +2053,7 @@ function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32
     i = 0;
     while (i < n) {
         if (imp_kind[i] == 1 || imp_kind[i] == 2) {
-            tramp_inst[i] = n_coreinst;
+            tramp_inst = tramp_inst.with(i, n_coreinst);
             n_coreinst = n_coreinst + 1;
             o = wcat(o, comp_core_instance_instantiate(tramp_mod[i]));
         }
@@ -1960,8 +2090,8 @@ function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32
             group_names = group_names.append([imp_name[i]]);
             group_idxs = group_idxs.append([idx]);
         } else {
-            group_names[gi] = group_names[gi].append(imp_name[i]);
-            group_idxs[gi] = group_idxs[gi].append(idx);
+            group_names = group_names.with(gi, group_names[gi].append(imp_name[i]));
+            group_idxs = group_idxs.with(gi, group_idxs[gi].append(idx));
         }
         i = i + 1;
     }
@@ -2010,7 +2140,7 @@ function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32
     i = 0;
     while (i < n) {
         if (imp_kind[i] == 1 || imp_kind[i] == 2) {
-            tbl[i] = n_coretab;
+            tbl = tbl.with(i, n_coretab);
             n_coretab = n_coretab + 1;
             o = wcat(o, comp_alias_core_export(1, tramp_inst[i], "$imports"));
         }
@@ -2023,14 +2153,14 @@ function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32
             o = wcat(o, comp_alias_inst_func(imp_inst[i], imp_name[i]));
             var cfg: i32 = n_cfunc;
             n_cfunc = n_cfunc + 1;
-            coref[i] = n_corefunc;
+            coref = coref.with(i, n_corefunc);
             o = wcat(o, comp_canon_lower_mem(cfg, 0));
             n_corefunc = n_corefunc + 1;
         } else if (imp_kind[i] == 2) {
             o = wcat(o, comp_alias_inst_func(imp_inst[i], imp_name[i]));
             var cfr: i32 = n_cfunc;
             n_cfunc = n_cfunc + 1;
-            coref[i] = n_corefunc;
+            coref = coref.with(i, n_corefunc);
             o = wcat(o, comp_canon_lower_mem_realloc(cfr, 0, realloc_f));
             n_corefunc = n_corefunc + 1;
         }

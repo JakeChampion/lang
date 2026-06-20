@@ -14,7 +14,7 @@ import (
 // returned array IS the input box (the own param escapes via `return`, so the
 // exit sweep must not free it).
 
-const ownInplaceSortSrc = `import "core/no_prelude";
+const ownInplaceSortSrc = `
 import "std/sort";
 function main(): i32 {
     var acc: i32 = 0;
@@ -57,7 +57,7 @@ func TestWASMOwnInplaceSort(t *testing.T) {
 	// the input box), so a sort loop holds a flat high-water rather than leaking
 	// a fresh sorted array per iteration.
 	bump := func(n string) string {
-		return `import "core/no_prelude";
+		return `
 import "std/sort";
 function main(): i32 {
     var before: i32 = __heap_bump_bytes();

@@ -264,6 +264,8 @@ func walkExprForNames(e ast.Expr, selfName string, siblings map[string]*ast.Func
 		walkExprForNames(n.Operand, selfName, siblings, seen)
 	case *ast.CastExpr:
 		walkExprForNames(n.Inner, selfName, siblings, seen)
+	case *ast.DowncastExpr:
+		walkExprForNames(n.Inner, selfName, siblings, seen)
 	case *ast.SliceExpr:
 		walkExprForNames(n.Source, selfName, siblings, seen)
 		walkExprForNames(n.Low, selfName, siblings, seen)
@@ -298,6 +300,11 @@ func walkExprForNames(e ast.Expr, selfName string, siblings map[string]*ast.Func
 			walkExprForNames(arm.Guard, selfName, siblings, seen)
 			walkExprForNames(arm.Body, selfName, siblings, seen)
 		}
+	case *ast.BlockExpr:
+		for _, st := range n.Stmts {
+			walkStmtForNames(st, selfName, siblings, seen)
+		}
+		walkExprForNames(n.Tail, selfName, siblings, seen)
 	case *ast.StructLit:
 		for _, f := range n.Fields {
 			walkExprForNames(f.Value, selfName, siblings, seen)
@@ -775,6 +782,13 @@ func (c *converter) rewriteExpr(e ast.Expr, ctx *captureCtx) (ast.Expr, error) {
 		}
 		n.Inner = ni
 		return n, nil
+	case *ast.DowncastExpr:
+		ni, err := c.rewriteExpr(n.Inner, ctx)
+		if err != nil {
+			return nil, err
+		}
+		n.Inner = ni
+		return n, nil
 	case *ast.SliceExpr:
 		ns, err := c.rewriteExpr(n.Source, ctx)
 		if err != nil {
@@ -941,6 +955,22 @@ func (c *converter) rewriteExpr(e ast.Expr, ctx *captureCtx) (ast.Expr, error) {
 				return nil, err
 			}
 			arm.Body = nb
+		}
+		return n, nil
+	case *ast.BlockExpr:
+		for idx, st := range n.Stmts {
+			ns, err := c.rewriteStmt(st, ctx)
+			if err != nil {
+				return nil, err
+			}
+			n.Stmts[idx] = ns
+		}
+		if n.Tail != nil {
+			nt, err := c.rewriteExpr(n.Tail, ctx)
+			if err != nil {
+				return nil, err
+			}
+			n.Tail = nt
 		}
 		return n, nil
 	case *ast.StructLit:

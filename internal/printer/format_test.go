@@ -154,6 +154,25 @@ function (p: Point) sum(): i32 { return p.x + p.y; }`)
 	}
 }
 
+// The `::` path separator (`Type::method`, `mod::func`, `mod::CONST`)
+// round-trips through Format — it is not normalised to `.`. See #2700.
+func TestFormatPathSep(t *testing.T) {
+	got := formatSrc(t, `import "./helpers";
+function main(): i32 {
+    var a: i32 = Point::origin().x;
+    return a + helpers::add5(10) + helpers::BONUS;
+}`)
+	for _, want := range []string{"Point::origin()", "helpers::add5(10)", "helpers::BONUS"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q preserved in:\n%s", want, got)
+		}
+	}
+	// The ordinary `.x` field access stays a dot.
+	if !strings.Contains(got, "Point::origin().x") {
+		t.Errorf("`.x` should stay a dot:\n%s", got)
+	}
+}
+
 // Switch statements indent each case and the optional default; the
 // case bodies use the same multi-line block formatting.
 func TestFormatSwitch(t *testing.T) {
@@ -211,6 +230,38 @@ function main(): i32 {
 	}
 }
 
+// A single-expression `if`/`match` branch must stay byte-identical to
+// the pre-block-expr formatting (`{ a }` / bare arm body), and a
+// block-expression branch (`{ stmts; tail }`) renders compactly without
+// double-bracing.
+func TestFormatBlockExprBranches(t *testing.T) {
+	// Single-expr `if`-branch — unchanged.
+	if got := formatSrc(t, `function f(a: i32, b: i32): i32 { return if (a < b) { a } else { b }; }`); !strings.Contains(got, "if (a < b) { a } else { b }") {
+		t.Errorf("single-expr if-branch changed:\n%s", got)
+	}
+	// Block-expr `if`-branch — leading stmt + tail, no double braces.
+	if got := formatSrc(t, `function f(e: i32): i32 { return if (e > 0) { var k = e + 1; k } else { 0 }; }`); !strings.Contains(got, "if (e > 0) { var k = e + 1; k } else { 0 }") {
+		t.Errorf("block-expr if-branch mis-rendered:\n%s", got)
+	}
+	// Block-expr `match`-arm body; bare wildcard arm unchanged.
+	if got := formatSrc(t, `function f(tag: i32): i32 { return match (tag) { 0 => { var s = tag + 5; s }, _ => 99 }; }`); !strings.Contains(got, "0 => { var s = tag + 5; s }, _ => 99") {
+		t.Errorf("block-expr match-arm mis-rendered:\n%s", got)
+	}
+}
+
+// Drive-by regression: a literal-pattern arm in a `match`-EXPRESSION
+// (`0 => …`, `"yes" => …`) must format its pattern. The formatter used
+// to drop it, emitting `=> …`, which then failed to re-parse.
+func TestFormatMatchExprLiteralArm(t *testing.T) {
+	got := formatSrc(t, `function f(n: i32): i32 { return match (n) { 0 => 10, 1 => 20, _ => 30 }; }`)
+	if !strings.Contains(got, "0 => 10, 1 => 20, _ => 30") {
+		t.Errorf("literal-pattern match-expr arm mis-rendered:\n%s", got)
+	}
+	if _, err := parser.Parse(got); err != nil {
+		t.Errorf("formatted literal-arm match-expr failed to reparse:\n%s\nerror: %v", got, err)
+	}
+}
+
 // parse → Format → parse must round-trip the AST shape (modulo the
 // known comments-and-blank-lines limitation). The check is "does
 // the formatted output reparse without errors".
@@ -218,6 +269,9 @@ func TestFormatRoundTripsThroughParser(t *testing.T) {
 	srcs := []string{
 		`function f(): i32 { return 1 + 2 * 3; }`,
 		`function f(a: i32, b: i32): i32 { return if (a < b) { a } else { b }; }`,
+		// Block-expression branches (slice 1): leading statement + tail.
+		`function f(e: i32): i32 { return if (e > 0) { var k = e + 1; k } else { 0 }; }`,
+		`function f(tag: i32): i32 { return match (tag) { 0 => { var s = tag + 5; s }, _ => 99 }; }`,
 		// Typed numeric literal suffixes — formatter must round-trip.
 		`function f(): i64 { return 42i64; }`,
 		`function f(): u8 { return 7u8; }`,
@@ -493,6 +547,30 @@ defer w.close();
 	}
 }
 
+// `errdefer` statements round-trip through the formatter and keep the
+// `errdefer` keyword (not silently rewritten to `defer`). The printer
+// branches on ast.Defer.OnError.
+func TestFormatErrDeferRoundTrip(t *testing.T) {
+	srcs := []string{
+		`function f(): Result[i32, i32] { errdefer cleanup(); return Ok(0); }`,
+		`function f(r: Reader): Result[i32, i32] {
+errdefer r.close();
+defer log();
+return Ok(0);
+}`,
+	}
+	for _, src := range srcs {
+		got := formatSrc(t, src)
+		if !strings.Contains(got, "errdefer ") {
+			t.Errorf("`errdefer` keyword stripped from output for input %q:\n%s", src, got)
+		}
+		again := formatSrc(t, got)
+		if got != again {
+			t.Errorf("format not idempotent for input %q:\nfirst:\n%s\nsecond:\n%s", src, got, again)
+		}
+	}
+}
+
 // An anonymous function expression (lambda) used as a call argument
 // must survive formatting. Before the fix formatExpr had no
 // `*ast.Lambda` case, so it fell through to the empty default and
@@ -551,17 +629,15 @@ return 0;
 
 // Imports round-trip through the formatter — previously
 // dropped silently because the Format loop only walked
-// structs / enums / unions / consts / funcs. As the
-// prelude-to-modules migration moves test programs and
-// examples to `import "core/no_prelude";`-style explicit
-// declarations, `fern -fmt -w` would have stripped every
-// import line and the fmt-check CI gate would fail.
+// structs / enums / unions / consts / funcs. Without this,
+// `fern -fmt -w` would have stripped every import line and
+// the fmt-check CI gate would fail.
 func TestFormatImportsRoundTrip(t *testing.T) {
-	got := formatSrc(t, `import "core/no_prelude";
+	got := formatSrc(t, `import "std/string";
 import "std/i32";
 function main(): i32 { return 0; }`)
 	for _, want := range []string{
-		`import "core/no_prelude";`,
+		`import "std/string";`,
 		`import "std/i32";`,
 	} {
 		if !strings.Contains(got, want) {

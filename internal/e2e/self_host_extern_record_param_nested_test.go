@@ -17,8 +17,9 @@ import (
 // nested record inline, so `record line { p: point, q: point }` flattens to
 // (p.x, p.y, q.x, q.y). A self-host struct field of struct type is a pointer, so
 // a nested leaf loads the inner value pointer at struct+outerOff then the leaf at
-// +innerOff (extern_record_param_supported now recurses one level via
-// extern_record_all_scalar / extern_record_leaf_count).
+// +innerOff (extern_record_param_supported recurses via extern_record_nestable /
+// extern_record_leaf_count; extern_emit_record_param_leaves emits the loads —
+// to arbitrary depth, see the deep-nested test).
 //
 // The provider exports `sum-line: func(l: line) -> s32` summing the 4 flattened
 // coords; the self-host program passes Line{p:{1,2}, q:{3,4}} and expects 10.
@@ -88,7 +89,7 @@ func TestSelfHostExternRecordParamNestedCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "wasm.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -97,7 +98,7 @@ func TestSelfHostExternRecordParamNestedCustomProvider(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	const driver = `import "core/no_prelude";
+	const driver = `
 import "std/io";
 import "./lexer";
 import "./parser";

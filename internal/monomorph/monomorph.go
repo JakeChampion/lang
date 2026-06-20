@@ -512,6 +512,11 @@ func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {
 			out.Params = append(out.Params, substituteType(p, sub))
 		}
 		return out
+	case ast.ProjType:
+		// Associated-type projection: substitute inside the base
+		// (`T::Item` → `IntBox::Item`); the checker re-check resolves the
+		// now-concrete projection to its binding. See docs/ASSOCIATED-TYPES.md.
+		return ast.ProjType{Base: substituteType(x.Base, sub), Name: x.Name}
 	}
 	return t
 }
@@ -641,6 +646,43 @@ func containsParamType(t ast.Type) bool {
 	return false
 }
 
+// concreteTypeNameOf returns the nominal name of a struct/enum type (the
+// receiver name used to resolve an associated function). Reports false
+// for non-nominal types (a still-parametric arg, a scalar, etc.).
+func concreteTypeNameOf(t ast.Type) (string, bool) {
+	switch x := t.(type) {
+	case ast.StructType:
+		return x.Name, true
+	case ast.EnumType:
+		return x.Name, true
+	// Primitive type params resolve associated calls onto a primitive impl
+	// (`impl Default for i32` → `__assoc_i32_default`): name them the same way
+	// the checker names a primitive method receiver, so `T.f()` with `T=i32`
+	// rewrites to `i32.f()`.
+	case ast.StringType:
+		return "string", true
+	case ast.BoolType:
+		return "boolean", true
+	case ast.NumberType:
+		switch {
+		case x.NormalWidth() == 64 && x.IsSigned():
+			return "i64", true
+		case x.NormalWidth() == 64 && !x.IsSigned():
+			return "u64", true
+		case !x.IsSigned():
+			return "u32", true
+		default:
+			return "i32", true
+		}
+	case ast.FloatType:
+		if x.NormalWidth() == 64 {
+			return "f64", true
+		}
+		return "f32", true
+	}
+	return "", false
+}
+
 func substituteExpr(e ast.Expr, sub map[string]ast.Type) {
 	if e == nil {
 		return
@@ -659,6 +701,25 @@ func substituteExpr(e ast.Expr, sub map[string]ast.Type) {
 		if len(x.TypeArgs) > 0 {
 			for i := range x.TypeArgs {
 				x.TypeArgs[i] = substituteType(x.TypeArgs[i], sub)
+			}
+		}
+		// Generic associated dispatch `T.f(args)`: the checker stamps the
+		// call with Method.Receiver = ParamType(T) and leaves the callee a
+		// FieldAccess whose target Ident *is* the type-param name (that's
+		// what distinguishes it from a value-receiver `x.m()`, whose target
+		// is a value). Rewrite the target to the concrete type so the
+		// re-check resolves `Concrete.f()` → `__assoc_<Concrete>_f`.
+		if x.Method != nil {
+			if pt, ok := x.Method.Receiver.(ast.ParamType); ok {
+				if fa, ok := x.Callee.(*ast.FieldAccess); ok {
+					if tid, ok := fa.Target.(*ast.Ident); ok && tid.Name == pt.Name {
+						if ct, ok := sub[pt.Name]; ok {
+							if name, ok2 := concreteTypeNameOf(ct); ok2 {
+								fa.Target = &ast.Ident{P: tid.P, Name: name}
+							}
+						}
+					}
+				}
 			}
 		}
 		substituteExpr(x.Callee, sub)
@@ -694,6 +755,9 @@ func substituteExpr(e ast.Expr, sub map[string]ast.Type) {
 	case *ast.CastExpr:
 		x.Target = substituteType(x.Target, sub)
 		substituteExpr(x.Inner, sub)
+	case *ast.DowncastExpr:
+		x.Target = substituteType(x.Target, sub)
+		substituteExpr(x.Inner, sub)
 	case *ast.Binary:
 		substituteExpr(x.Left, sub)
 		substituteExpr(x.Right, sub)
@@ -722,6 +786,13 @@ func substituteExpr(e ast.Expr, sub map[string]ast.Type) {
 				substituteExpr(arm.Guard, sub)
 			}
 			substituteExpr(arm.Body, sub)
+		}
+	case *ast.BlockExpr:
+		for _, st := range x.Stmts {
+			substituteStmt(st, sub)
+		}
+		if x.Tail != nil {
+			substituteExpr(x.Tail, sub)
 		}
 	case *ast.ArrayLit:
 		// Substitute the literal's element-type annotation too — it
@@ -763,234 +834,12 @@ func substituteExpr(e ast.Expr, sub map[string]ast.Type) {
 // generic source decl.
 func cloneFuncDecl(fn *ast.FuncDecl) *ast.FuncDecl {
 	c := *fn
+	// An instantiation drops the generic's type params (it's concrete now);
+	// the rest of the deep copy is the shared ast cloner.
 	c.TypeParams = nil
 	c.Params = append([]ast.Param(nil), fn.Params...)
-	c.Body = cloneBlock(fn.Body)
+	c.Body = ast.CloneBlock(fn.Body)
 	return &c
-}
-
-func cloneBlock(b *ast.Block) *ast.Block {
-	if b == nil {
-		return nil
-	}
-	out := &ast.Block{P: b.P, Stmts: make([]ast.Stmt, len(b.Stmts))}
-	for i, s := range b.Stmts {
-		out.Stmts[i] = cloneStmt(s)
-	}
-	return out
-}
-
-func cloneStmt(s ast.Stmt) ast.Stmt {
-	switch x := s.(type) {
-	case *ast.Var:
-		c := *x
-		c.Init = cloneExpr(x.Init)
-		return &c
-	case *ast.Destructure:
-		c := *x
-		c.Names = append([]string(nil), x.Names...)
-		c.Init = cloneExpr(x.Init)
-		return &c
-	case *ast.ExprStmt:
-		c := *x
-		c.Expr = cloneExpr(x.Expr)
-		return &c
-	case *ast.Return:
-		c := *x
-		c.Value = cloneExpr(x.Value)
-		return &c
-	case *ast.Block:
-		return cloneBlock(x)
-	case *ast.If:
-		c := *x
-		c.Cond = cloneExpr(x.Cond)
-		c.Then = cloneStmt(x.Then).(*ast.Block)
-		if x.Else != nil {
-			c.Else = cloneStmt(x.Else)
-		}
-		return &c
-	case *ast.IfLet:
-		c := *x
-		c.Source = cloneExpr(x.Source)
-		c.Bindings = append([]string(nil), x.Bindings...)
-		c.BindingTypes = append([]ast.Type(nil), x.BindingTypes...)
-		c.Then = cloneStmt(x.Then)
-		if x.Else != nil {
-			c.Else = cloneStmt(x.Else)
-		}
-		return &c
-	case *ast.LetElse:
-		c := *x
-		c.Source = cloneExpr(x.Source)
-		c.Bindings = append([]string(nil), x.Bindings...)
-		c.BindingTypes = append([]ast.Type(nil), x.BindingTypes...)
-		c.Else = cloneBlock(x.Else)
-		return &c
-	case *ast.While:
-		c := *x
-		c.Cond = cloneExpr(x.Cond)
-		if b, ok := x.Body.(*ast.Block); ok {
-			c.Body = cloneBlock(b)
-		} else {
-			c.Body = cloneStmt(x.Body)
-		}
-		return &c
-	case *ast.For:
-		c := *x
-		if x.Init != nil {
-			c.Init = cloneStmt(x.Init)
-		}
-		c.Cond = cloneExpr(x.Cond)
-		if x.Step != nil {
-			c.Step = cloneStmt(x.Step)
-		}
-		if b, ok := x.Body.(*ast.Block); ok {
-			c.Body = cloneBlock(b)
-		} else {
-			c.Body = cloneStmt(x.Body)
-		}
-		return &c
-	case *ast.Match:
-		c := *x
-		c.Tag = cloneExpr(x.Tag)
-		c.Arms = make([]*ast.MatchArm, len(x.Arms))
-		for i, arm := range x.Arms {
-			ac := *arm
-			ac.Guard = cloneExpr(arm.Guard)
-			ac.Body = cloneBlock(arm.Body)
-			c.Arms[i] = &ac
-		}
-		return &c
-	}
-	return s
-}
-
-// cloneExpr deep-copies an expression so the original generic
-// function's body stays untouched when substituteExpr mutates
-// the clone's TypeArgs / target Type. Most node kinds are
-// shallow-cloneable structs whose only pointer fields are
-// sub-expressions or sub-statement slices.
-func cloneExpr(e ast.Expr) ast.Expr {
-	if e == nil {
-		return nil
-	}
-	switch x := e.(type) {
-	case *ast.Ident, *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.StringLit:
-		// Leaf types — no sub-expressions to clone, but we do a
-		// pointer-level shallow copy so callers can swap fields
-		// without aliasing.
-		switch v := x.(type) {
-		case *ast.Ident:
-			c := *v
-			return &c
-		case *ast.NumberLit:
-			c := *v
-			return &c
-		case *ast.FloatLit:
-			c := *v
-			return &c
-		case *ast.BoolLit:
-			c := *v
-			return &c
-		case *ast.StringLit:
-			c := *v
-			return &c
-		}
-	case *ast.Binary:
-		c := *x
-		c.Left = cloneExpr(x.Left)
-		c.Right = cloneExpr(x.Right)
-		return &c
-	case *ast.Unary:
-		c := *x
-		c.Operand = cloneExpr(x.Operand)
-		return &c
-	case *ast.Call:
-		c := *x
-		c.Callee = cloneExpr(x.Callee)
-		c.Args = make([]ast.Expr, len(x.Args))
-		for i, a := range x.Args {
-			c.Args[i] = cloneExpr(a)
-		}
-		c.TypeArgs = append([]ast.Type(nil), x.TypeArgs...)
-		return &c
-	case *ast.Index:
-		c := *x
-		c.Array = cloneExpr(x.Array)
-		c.Idx = cloneExpr(x.Idx)
-		return &c
-	case *ast.SliceExpr:
-		c := *x
-		c.Source = cloneExpr(x.Source)
-		c.Low = cloneExpr(x.Low)
-		c.High = cloneExpr(x.High)
-		return &c
-	case *ast.FieldAccess:
-		c := *x
-		c.Target = cloneExpr(x.Target)
-		return &c
-	case *ast.TryOp:
-		c := *x
-		c.Inner = cloneExpr(x.Inner)
-		return &c
-	case *ast.IfExpr:
-		c := *x
-		c.Cond = cloneExpr(x.Cond)
-		c.Then = cloneExpr(x.Then)
-		c.Else = cloneExpr(x.Else)
-		return &c
-	case *ast.MatchExpr:
-		c := *x
-		c.Tag = cloneExpr(x.Tag)
-		c.Arms = make([]*ast.MatchExprArm, len(x.Arms))
-		for i, arm := range x.Arms {
-			a := *arm
-			if arm.Guard != nil {
-				a.Guard = cloneExpr(arm.Guard)
-			}
-			a.Body = cloneExpr(arm.Body)
-			c.Arms[i] = &a
-		}
-		return &c
-	case *ast.ArrayLit:
-		c := *x
-		c.Elems = make([]ast.Expr, len(x.Elems))
-		for i, e := range x.Elems {
-			c.Elems[i] = cloneExpr(e)
-		}
-		return &c
-	case *ast.TupleLit:
-		c := *x
-		c.Elems = make([]ast.Expr, len(x.Elems))
-		for i, e := range x.Elems {
-			c.Elems[i] = cloneExpr(e)
-		}
-		return &c
-	case *ast.Lambda:
-		c := *x
-		c.Params = append([]ast.Param(nil), x.Params...)
-		c.Captures = append([]ast.Param(nil), x.Captures...)
-		c.Body = cloneBlock(x.Body)
-		return &c
-	case *ast.StructLit:
-		c := *x
-		c.Fields = make([]ast.FieldInit, len(x.Fields))
-		for i, f := range x.Fields {
-			c.Fields[i] = ast.FieldInit{Name: f.Name, Value: cloneExpr(f.Value)}
-		}
-		c.TypeArgs = append([]ast.Type(nil), x.TypeArgs...)
-		return &c
-	case *ast.CastExpr:
-		c := *x
-		c.Inner = cloneExpr(x.Inner)
-		return &c
-	case *ast.Assign:
-		c := *x
-		c.Target = cloneExpr(x.Target)
-		c.Value = cloneExpr(x.Value)
-		return &c
-	}
-	return e
 }
 
 // walkBlockStructLits is the StructLit analogue of walkBlock —
@@ -1102,6 +951,13 @@ func walkExprStructLits(e ast.Expr, fn func(*ast.StructLit)) {
 			}
 			walkExprStructLits(arm.Body, fn)
 		}
+	case *ast.BlockExpr:
+		for _, st := range x.Stmts {
+			walkStmtStructLits(st, fn)
+		}
+		if x.Tail != nil {
+			walkExprStructLits(x.Tail, fn)
+		}
 	case *ast.ArrayLit:
 		for _, e := range x.Elems {
 			walkExprStructLits(e, fn)
@@ -1111,6 +967,8 @@ func walkExprStructLits(e ast.Expr, fn func(*ast.StructLit)) {
 			walkExprStructLits(e, fn)
 		}
 	case *ast.CastExpr:
+		walkExprStructLits(x.Inner, fn)
+	case *ast.DowncastExpr:
 		walkExprStructLits(x.Inner, fn)
 	}
 }
@@ -1395,6 +1253,13 @@ func walkExpr(e ast.Expr, fn func(*ast.Call)) {
 			}
 			walkExpr(arm.Body, fn)
 		}
+	case *ast.BlockExpr:
+		for _, st := range x.Stmts {
+			walkStmt(st, fn)
+		}
+		if x.Tail != nil {
+			walkExpr(x.Tail, fn)
+		}
 	case *ast.ArrayLit:
 		for _, e := range x.Elems {
 			walkExpr(e, fn)
@@ -1438,6 +1303,8 @@ func walkExpr(e ast.Expr, fn func(*ast.Call)) {
 		// body.
 		walkBlock(x.Body, fn)
 	case *ast.CastExpr:
+		walkExpr(x.Inner, fn)
+	case *ast.DowncastExpr:
 		walkExpr(x.Inner, fn)
 	}
 }

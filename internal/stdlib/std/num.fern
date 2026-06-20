@@ -1,0 +1,95 @@
+// std/num — arithmetic operator traits + a `Num` supertrait, with impls for
+// the built-in numeric types.
+//
+// These give generic code the vocabulary to bound a type parameter on
+// arithmetic and dispatch the operation by method:
+//
+//     import "std/num" as num;
+//
+//     function (a: T[]) total[T: num.Num](init: T): T {
+//         var s = init;
+//         var i = 0;
+//         while (i < a.len()) { s = s.add(a[i]); i = i + 1; }
+//         return s;
+//     }
+//     var xs: i64[] = [40, 2];
+//     var t: i64 = xs.total(0);            // works for ANY Num element type
+//
+// The method names match the operator-overload convention (#2706: `+` -> add,
+// `-` -> sub, `*` -> mul, `/` -> div, unary `-` -> neg), so a user struct that
+// `impl`s these gets BOTH the `+`/`-`/… operators on the concrete type AND the
+// `T: Add` / `T: Num` bound for generic use. On the built-in numeric types the
+// operators stay native (operator overloading only intercepts composite types);
+// these impls just expose the same operation as a method + satisfy the bound.
+//
+// `Num` is the supertrait of the four binary operators — the common bound for
+// generic numeric code (`T: num.Num` ⇒ add/sub/mul/div all available). `Neg` is
+// separate and implemented for the signed/float types only (i32/i64/f32/f64);
+// the unsigned u32/u64 get Add/Sub/Mul/Div/Num but no Neg.
+
+pub trait Add { function add(self: Self, o: Self): Self; }
+pub trait Sub { function sub(self: Self, o: Self): Self; }
+pub trait Mul { function mul(self: Self, o: Self): Self; }
+pub trait Div { function div(self: Self, o: Self): Self; }
+pub trait Neg { function neg(self: Self): Self; }
+// Zero is the additive identity (0) as an associated function, so generic
+// reducers can seed an accumulator without a caller-supplied init
+// (`var s = T.zero();`). Kept a STANDALONE trait — not folded into Num — so its
+// primitive impls register across module imports the same way Add/Sub/… do.
+pub trait Zero { function zero(): Self; }
+
+// Num bundles the four binary arithmetic operators — the conventional bound for
+// "any number". Implementors get it for free once they impl Add/Sub/Mul/Div.
+pub trait Num: Add + Sub + Mul + Div {}
+
+// ---- i32 ----
+impl Add for i32 { function add(self: Self, o: Self): Self { return self + o; } }
+impl Sub for i32 { function sub(self: Self, o: Self): Self { return self - o; } }
+impl Mul for i32 { function mul(self: Self, o: Self): Self { return self * o; } }
+impl Div for i32 { function div(self: Self, o: Self): Self { return self / o; } }
+impl Neg for i32 { function neg(self: Self): Self { return 0 - self; } }
+impl Zero for i32 { function zero(): Self { return 0; } }
+impl Num for i32 {}
+
+// ---- i64 ----
+impl Add for i64 { function add(self: Self, o: Self): Self { return self + o; } }
+impl Sub for i64 { function sub(self: Self, o: Self): Self { return self - o; } }
+impl Mul for i64 { function mul(self: Self, o: Self): Self { return self * o; } }
+impl Div for i64 { function div(self: Self, o: Self): Self { return self / o; } }
+impl Neg for i64 { function neg(self: Self): Self { return 0 - self; } }
+impl Zero for i64 { function zero(): Self { return 0; } }
+impl Num for i64 {}
+
+// ---- f64 ----
+impl Add for f64 { function add(self: Self, o: Self): Self { return self + o; } }
+impl Sub for f64 { function sub(self: Self, o: Self): Self { return self - o; } }
+impl Mul for f64 { function mul(self: Self, o: Self): Self { return self * o; } }
+impl Div for f64 { function div(self: Self, o: Self): Self { return self / o; } }
+impl Neg for f64 { function neg(self: Self): Self { return 0.0 - self; } }
+impl Zero for f64 { function zero(): Self { return 0.0; } }
+impl Num for f64 {}
+
+// ---- f32 ----
+impl Add for f32 { function add(self: Self, o: Self): Self { return self + o; } }
+impl Sub for f32 { function sub(self: Self, o: Self): Self { return self - o; } }
+impl Mul for f32 { function mul(self: Self, o: Self): Self { return self * o; } }
+impl Div for f32 { function div(self: Self, o: Self): Self { return self / o; } }
+impl Neg for f32 { function neg(self: Self): Self { return 0.0 - self; } }
+impl Zero for f32 { function zero(): Self { return 0.0; } }
+impl Num for f32 {}
+
+// ---- u32 ---- (unsigned: no Neg)
+impl Add for u32 { function add(self: Self, o: Self): Self { return self + o; } }
+impl Sub for u32 { function sub(self: Self, o: Self): Self { return self - o; } }
+impl Mul for u32 { function mul(self: Self, o: Self): Self { return self * o; } }
+impl Div for u32 { function div(self: Self, o: Self): Self { return self / o; } }
+impl Zero for u32 { function zero(): Self { return 0; } }
+impl Num for u32 {}
+
+// ---- u64 ---- (unsigned: no Neg)
+impl Add for u64 { function add(self: Self, o: Self): Self { return self + o; } }
+impl Sub for u64 { function sub(self: Self, o: Self): Self { return self - o; } }
+impl Mul for u64 { function mul(self: Self, o: Self): Self { return self * o; } }
+impl Div for u64 { function div(self: Self, o: Self): Self { return self / o; } }
+impl Zero for u64 { function zero(): Self { return 0; } }
+impl Num for u64 {}

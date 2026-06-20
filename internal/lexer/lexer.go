@@ -87,6 +87,7 @@ var keywords = map[string]bool{
 	"else":     true,
 	"while":    true,
 	"for":      true,
+	"loop":     true,
 	"break":    true,
 	"continue": true,
 	"return":   true,
@@ -131,6 +132,10 @@ var keywords = map[string]bool{
 	"match": true,
 	"when":  true,
 	"defer": true,
+	// `errdefer EXPR;` — like `defer`, but runs only on an error
+	// exit (`?` propagation or a `return` of None / Err). See
+	// ast.Defer.OnError.
+	"errdefer": true,
 	// `trait` declares a named set of method signatures; `impl
 	// Trait for Type { … }` provides bodies. See docs/TRAITS.md.
 	// `Self` stays a contextual type name (handled in the parser),
@@ -162,8 +167,10 @@ func Keywords() []string {
 // longest-prefix rule picks the right one.
 var multiPunct = []string{
 	"<<=", ">>=", "...",
+	"..=", "..",
 	"==", "!=", "<=", ">=", "&&", "||", "<<", ">>", "=>", "|>",
 	"+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
+	"::",
 }
 
 type Error struct {

@@ -7,6 +7,8 @@ package ast
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 )
 
@@ -175,14 +177,197 @@ type ParamType struct{ Name string }
 // by the conformance check). See docs/TRAITS.md.
 type SelfType struct{}
 
-// DynTraitType is a runtime trait-object type, written `dyn Trait` in
-// type position. A concrete value whose type implements `Trait` coerces
+// ProjType is an associated-type projection `Base::Name` — `Self::Item`
+// inside a trait or impl, `T::Item` in a bounded generic, or a concrete
+// `Foo::Item`. The checker resolves a concrete-base projection to the
+// impl's `type Item = …` binding immediately; a `Self`/`ParamType`-based
+// one stays abstract until the impl method is conformance-checked or the
+// generic is monomorphised, at which point Base becomes concrete and the
+// binding is looked up. See docs/ASSOCIATED-TYPES.md.
+type ProjType struct {
+	Base Type
+	Name string
+}
+
+// DynTraitType is a runtime trait-object type, written `dyn Trait` (a
+// single trait) or `dyn A + B` (a multi-trait object) in type position.
+// A concrete value whose type implements EVERY trait in the set coerces
 // to it (the checker's assignability gate); a method call on a
-// `dyn Trait` value dispatches at runtime by the value's concrete type
+// `dyn …` value resolves the method across the UNION of the traits'
+// method sets and dispatches at runtime by the value's concrete type
 // rather than being statically rewritten. `dyn` is the open,
 // runtime-dispatched counterpart to the static `impl`/bounded-generic
 // path — see docs/DYN-TRAITS.md.
-type DynTraitType struct{ Trait string }
+//
+// Traits is kept SORTED and DEDUPED at construction (see NewDynTraitType)
+// so the set is canonical: `dyn A + B` ≡ `dyn B + A`, `Equal` is a plain
+// slice compare, and `String()` is deterministic. A single-trait
+// `dyn A` is the 1-element case. Use Trait0() for genuinely
+// single-trait-only contexts; multi-trait-aware code iterates Traits.
+type DynTraitType struct {
+	Traits []string
+	// Args carries the generic trait-arguments for each trait, parallel
+	// to Traits (Args[i] are the arguments for Traits[i]). It is nil for
+	// the common non-generic case, and an entry is nil/empty for any
+	// individual non-generic trait in a mixed set. `dyn Container[i32]`
+	// is Traits=["Container"], Args=[[i32]]; the runtime erases the
+	// arguments (the vtable is keyed by trait name), so Args drives only
+	// the checker's coercion gate and method-signature substitution.
+	Args [][]Type
+	// AssocBindings carries the pinned associated-type bindings for each
+	// trait, parallel to Traits (AssocBindings[i] are the `Name = Type`
+	// pins for Traits[i]). A trait with associated types is object-unsafe
+	// UNLESS the `dyn` type pins every one — `dyn Producer[Item = i32]` is
+	// Traits=["Producer"], AssocBindings=[[{Item, i32}]]. Like Args, the
+	// runtime erases them; they drive only the checker's object-safety
+	// gate, coercion gate, and the `Self::Item` projection resolution in
+	// method signatures. Each trait's bindings are kept sorted by name at
+	// construction so Equal is an elementwise compare.
+	AssocBindings [][]AssocBinding
+}
+
+// AssocBinding is one pinned associated type in a `dyn` object: `Item = i32`.
+type AssocBinding struct {
+	Name string
+	Type Type
+}
+
+// ArgsFor returns the generic trait-arguments for the i-th trait, or nil
+// when the trait is non-generic (or Args is short / absent).
+func (d DynTraitType) ArgsFor(i int) []Type {
+	if i < 0 || i >= len(d.Args) {
+		return nil
+	}
+	return d.Args[i]
+}
+
+// AssocFor returns the pinned associated-type bindings for the i-th trait, or
+// nil when the trait pins none (or AssocBindings is short / absent).
+func (d DynTraitType) AssocFor(i int) []AssocBinding {
+	if i < 0 || i >= len(d.AssocBindings) {
+		return nil
+	}
+	return d.AssocBindings[i]
+}
+
+// NewDynTraitType builds a DynTraitType from a trait-name set, normalising
+// it to the canonical sorted+deduped form. Callers (the parser, modload,
+// any code synthesising a `dyn` type) should go through this so the
+// invariant holds everywhere. Use NewDynTraitTypeFull for generic traits /
+// pinned associated types.
+func NewDynTraitType(traits ...string) DynTraitType {
+	if len(traits) <= 1 {
+		return DynTraitType{Traits: append([]string(nil), traits...)}
+	}
+	cp := append([]string(nil), traits...)
+	sort.Strings(cp)
+	out := cp[:0]
+	var prev string
+	for i, t := range cp {
+		if i == 0 || t != prev {
+			out = append(out, t)
+			prev = t
+		}
+	}
+	return DynTraitType{Traits: out}
+}
+
+// NewDynTraitTypeFull builds a DynTraitType carrying per-trait generic
+// arguments (args) and pinned associated-type bindings (assoc), both parallel
+// to traits, normalising to canonical sorted + deduped form. The (trait, args,
+// assoc) triples sort
+// together by trait name, with the args' and assoc' string forms breaking
+// ties. Each trait's assoc bindings are sorted by name so Equal is an
+// elementwise compare. When both args and assoc are all-empty this is
+// equivalent to NewDynTraitType.
+func NewDynTraitTypeFull(traits []string, args [][]Type, assoc [][]AssocBinding) DynTraitType {
+	if len(args) != len(traits) {
+		na := make([][]Type, len(traits))
+		copy(na, args)
+		args = na
+	}
+	if len(assoc) != len(traits) {
+		nb := make([][]AssocBinding, len(traits))
+		copy(nb, assoc)
+		assoc = nb
+	}
+	any := false
+	for _, a := range args {
+		if len(a) > 0 {
+			any = true
+		}
+	}
+	for i := range assoc {
+		if len(assoc[i]) > 0 {
+			// Canonicalise each trait's bindings by name.
+			sort.SliceStable(assoc[i], func(x, y int) bool { return assoc[i][x].Name < assoc[i][y].Name })
+			any = true
+		}
+	}
+	if !any {
+		return NewDynTraitType(traits...)
+	}
+	idx := make([]int, len(traits))
+	for i := range idx {
+		idx[i] = i
+	}
+	key := func(i int) string {
+		return traits[i] + "\x00" + typeArgsString(args[i]) + "\x00" + assocString(assoc[i])
+	}
+	sort.SliceStable(idx, func(a, b int) bool { return key(idx[a]) < key(idx[b]) })
+	outT := make([]string, 0, len(traits))
+	outA := make([][]Type, 0, len(traits))
+	outB := make([][]AssocBinding, 0, len(traits))
+	var prev string
+	for n, i := range idx {
+		k := key(i)
+		if n == 0 || k != prev {
+			outT = append(outT, traits[i])
+			outA = append(outA, args[i])
+			outB = append(outB, assoc[i])
+			prev = k
+		}
+	}
+	return DynTraitType{Traits: outT, Args: outA, AssocBindings: outB}
+}
+
+// assocString renders pinned associated-type bindings as `[Name = T, …]`
+// (empty string for none) — used for canonical ordering + String().
+func assocString(bs []AssocBinding) string {
+	if len(bs) == 0 {
+		return ""
+	}
+	parts := make([]string, len(bs))
+	for i, b := range bs {
+		parts[i] = b.Name + " = " + b.Type.String()
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+// typeArgsString renders a generic-argument list as `[a, b]` (empty string
+// for none) — used for the canonical ordering of dyn-trait sets.
+func typeArgsString(args []Type) string {
+	if len(args) == 0 {
+		return ""
+	}
+	parts := make([]string, len(args))
+	for i, a := range args {
+		parts[i] = a.String()
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+// Trait0 returns the first (and, for a single-trait object, only) trait
+// name. It is for genuinely single-trait contexts (e.g. the compiled
+// backends, which currently only lower single-trait `dyn`). Multi-trait
+// aware code must iterate Traits instead. Returns "" for an empty set
+// (should never happen for a validly-parsed type).
+func (d DynTraitType) Trait0() string {
+	if len(d.Traits) == 0 {
+		return ""
+	}
+	return d.Traits[0]
+}
 
 // HandleType is a WIT resource-handle type (P5 — docs/WIT-BRING-YOUR-OWN.md),
 // written `own R` / `borrow R` in type position where R names a top-level
@@ -216,6 +401,7 @@ func (EnumType) isType()     {}
 func (ParamType) isType()    {}
 func (DynTraitType) isType() {}
 func (HandleType) isType()   {}
+func (ProjType) isType()     {}
 func (n NumberType) String() string {
 	if n.IsPointerWidth() {
 		return "usize"
@@ -285,14 +471,40 @@ func (e EnumType) String() string {
 	}
 	return out + "]"
 }
-func (p ParamType) String() string    { return p.Name }
-func (SelfType) String() string       { return "Self" }
-func (d DynTraitType) String() string { return "dyn " + d.Trait }
+func (p ParamType) String() string { return p.Name }
+func (SelfType) String() string    { return "Self" }
+func (d DynTraitType) String() string {
+	parts := make([]string, len(d.Traits))
+	for i, t := range d.Traits {
+		// Positional generic args and pinned associated-type bindings share
+		// one bracket: `Foo[i32]`, `Producer[Item = i32]`, or both.
+		var inner []string
+		for _, a := range d.ArgsFor(i) {
+			inner = append(inner, a.String())
+		}
+		for _, b := range d.AssocFor(i) {
+			inner = append(inner, b.Name+" = "+b.Type.String())
+		}
+		if len(inner) > 0 {
+			parts[i] = t + "[" + strings.Join(inner, ", ") + "]"
+		} else {
+			parts[i] = t
+		}
+	}
+	return "dyn " + strings.Join(parts, " + ")
+}
 func (h HandleType) String() string {
 	if h.Borrowed {
 		return "borrow " + h.Resource
 	}
 	return "own " + h.Resource
+}
+func (p ProjType) String() string {
+	base := "<nil>"
+	if p.Base != nil {
+		base = p.Base.String()
+	}
+	return base + "::" + p.Name
 }
 
 // SubstSelf recursively replaces every SelfType in t with self. Used
@@ -334,10 +546,234 @@ func SubstSelf(t Type, self Type) Type {
 			params[i] = SubstSelf(pt, self)
 		}
 		return &FuncType{Params: params, Result: SubstSelf(tt.Result, self)}
+	case ProjType:
+		return ProjType{Base: SubstSelf(tt.Base, self), Name: tt.Name}
 	default:
 		return t
 	}
 }
+
+// CloneBlock / CloneStmt / CloneExpr deep-copy a statement tree so an
+// in-place rewrite of the copy (type substitution, dispatch resolution,
+// numeric-literal settling) never leaks into the original. Leaf
+// expressions are still pointer-copied so a caller can swap fields
+// without aliasing the source node. The checker uses CloneBlock to
+// materialise a trait's default method body once per implementing type
+// (see docs/TRAITS.md); monomorph uses all three to instantiate a
+// generic function's body per type-argument set.
+func CloneBlock(b *Block) *Block {
+	if b == nil {
+		return nil
+	}
+	out := &Block{P: b.P, Stmts: make([]Stmt, len(b.Stmts))}
+	for i, s := range b.Stmts {
+		out.Stmts[i] = CloneStmt(s)
+	}
+	return out
+}
+
+func CloneStmt(s Stmt) Stmt {
+	switch x := s.(type) {
+	case *Var:
+		c := *x
+		c.Init = CloneExpr(x.Init)
+		return &c
+	case *Destructure:
+		c := *x
+		c.Names = append([]string(nil), x.Names...)
+		c.Init = CloneExpr(x.Init)
+		return &c
+	case *ExprStmt:
+		c := *x
+		c.Expr = CloneExpr(x.Expr)
+		return &c
+	case *Return:
+		c := *x
+		c.Value = CloneExpr(x.Value)
+		return &c
+	case *Block:
+		return CloneBlock(x)
+	case *If:
+		c := *x
+		c.Cond = CloneExpr(x.Cond)
+		c.Then = CloneStmt(x.Then).(*Block)
+		if x.Else != nil {
+			c.Else = CloneStmt(x.Else)
+		}
+		return &c
+	case *IfLet:
+		c := *x
+		c.Source = CloneExpr(x.Source)
+		c.Bindings = append([]string(nil), x.Bindings...)
+		c.BindingTypes = append([]Type(nil), x.BindingTypes...)
+		c.Then = CloneStmt(x.Then)
+		if x.Else != nil {
+			c.Else = CloneStmt(x.Else)
+		}
+		return &c
+	case *LetElse:
+		c := *x
+		c.Source = CloneExpr(x.Source)
+		c.Bindings = append([]string(nil), x.Bindings...)
+		c.BindingTypes = append([]Type(nil), x.BindingTypes...)
+		c.Else = CloneBlock(x.Else)
+		return &c
+	case *While:
+		c := *x
+		c.Cond = CloneExpr(x.Cond)
+		if b, ok := x.Body.(*Block); ok {
+			c.Body = CloneBlock(b)
+		} else {
+			c.Body = CloneStmt(x.Body)
+		}
+		return &c
+	case *For:
+		c := *x
+		if x.Init != nil {
+			c.Init = CloneStmt(x.Init)
+		}
+		c.Cond = CloneExpr(x.Cond)
+		if x.Step != nil {
+			c.Step = CloneStmt(x.Step)
+		}
+		if b, ok := x.Body.(*Block); ok {
+			c.Body = CloneBlock(b)
+		} else {
+			c.Body = CloneStmt(x.Body)
+		}
+		return &c
+	case *Match:
+		c := *x
+		c.Tag = CloneExpr(x.Tag)
+		c.Arms = make([]*MatchArm, len(x.Arms))
+		for i, arm := range x.Arms {
+			ac := *arm
+			ac.Guard = CloneExpr(arm.Guard)
+			ac.Body = CloneBlock(arm.Body)
+			c.Arms[i] = &ac
+		}
+		return &c
+	}
+	return s
+}
+
+func CloneExpr(e Expr) Expr {
+	if e == nil {
+		return nil
+	}
+	switch x := e.(type) {
+	case *Ident:
+		c := *x
+		return &c
+	case *NumberLit:
+		c := *x
+		return &c
+	case *FloatLit:
+		c := *x
+		return &c
+	case *BoolLit:
+		c := *x
+		return &c
+	case *StringLit:
+		c := *x
+		return &c
+	case *Binary:
+		c := *x
+		c.Left = CloneExpr(x.Left)
+		c.Right = CloneExpr(x.Right)
+		return &c
+	case *Unary:
+		c := *x
+		c.Operand = CloneExpr(x.Operand)
+		return &c
+	case *Call:
+		c := *x
+		c.Callee = CloneExpr(x.Callee)
+		c.Args = make([]Expr, len(x.Args))
+		for i, a := range x.Args {
+			c.Args[i] = CloneExpr(a)
+		}
+		c.TypeArgs = append([]Type(nil), x.TypeArgs...)
+		return &c
+	case *Index:
+		c := *x
+		c.Array = CloneExpr(x.Array)
+		c.Idx = CloneExpr(x.Idx)
+		return &c
+	case *SliceExpr:
+		c := *x
+		c.Source = CloneExpr(x.Source)
+		c.Low = CloneExpr(x.Low)
+		c.High = CloneExpr(x.High)
+		return &c
+	case *FieldAccess:
+		c := *x
+		c.Target = CloneExpr(x.Target)
+		return &c
+	case *TryOp:
+		c := *x
+		c.Inner = CloneExpr(x.Inner)
+		return &c
+	case *IfExpr:
+		c := *x
+		c.Cond = CloneExpr(x.Cond)
+		c.Then = CloneExpr(x.Then)
+		c.Else = CloneExpr(x.Else)
+		return &c
+	case *MatchExpr:
+		c := *x
+		c.Tag = CloneExpr(x.Tag)
+		c.Arms = make([]*MatchExprArm, len(x.Arms))
+		for i, arm := range x.Arms {
+			a := *arm
+			if arm.Guard != nil {
+				a.Guard = CloneExpr(arm.Guard)
+			}
+			a.Body = CloneExpr(arm.Body)
+			c.Arms[i] = &a
+		}
+		return &c
+	case *ArrayLit:
+		c := *x
+		c.Elems = make([]Expr, len(x.Elems))
+		for i, el := range x.Elems {
+			c.Elems[i] = CloneExpr(el)
+		}
+		return &c
+	case *TupleLit:
+		c := *x
+		c.Elems = make([]Expr, len(x.Elems))
+		for i, el := range x.Elems {
+			c.Elems[i] = CloneExpr(el)
+		}
+		return &c
+	case *Lambda:
+		c := *x
+		c.Params = append([]Param(nil), x.Params...)
+		c.Captures = append([]Param(nil), x.Captures...)
+		c.Body = CloneBlock(x.Body)
+		return &c
+	case *StructLit:
+		c := *x
+		c.Fields = make([]FieldInit, len(x.Fields))
+		for i, f := range x.Fields {
+			c.Fields[i] = FieldInit{Name: f.Name, Value: CloneExpr(f.Value)}
+		}
+		c.TypeArgs = append([]Type(nil), x.TypeArgs...)
+		return &c
+	case *CastExpr:
+		c := *x
+		c.Inner = CloneExpr(x.Inner)
+		return &c
+	case *Assign:
+		c := *x
+		c.Target = CloneExpr(x.Target)
+		c.Value = CloneExpr(x.Value)
+		return &c
+	}
+	return e
+}
+
 func (f *FuncType) String() string {
 	out := "("
 	for i, p := range f.Params {
@@ -461,6 +897,19 @@ func ElemSizeBytesFor(t Type, ptrW int) int {
 		return 4
 	case StringType:
 		if UseTwoWordStrings(ptrW) {
+			return 2 * ptrW
+		}
+		return ptrW
+	case DynTraitType:
+		// `dyn Trait` representation is target-dependent
+		// (docs/DYN-TRAITS.md §4.2.1/§4.2.2):
+		//   - wasm (ptrW==4): inline two-word `[data, vtable]` fat
+		//     pointer, so an element occupies two pointer-width slots —
+		//     same stride as a two-word string.
+		//   - natives (ptrW==8): boxed one-word — a `dyn` value is a
+		//     single heap pointer to a `{data, vtable}` cell, so it
+		//     strides one pointer width like any other pointer.
+		if ptrW == 4 {
 			return 2 * ptrW
 		}
 		return ptrW
@@ -752,10 +1201,46 @@ func Equal(a, b Type) bool {
 		return ok
 	case DynTraitType:
 		y, ok := b.(DynTraitType)
-		return ok && x.Trait == y.Trait
+		if !ok || len(x.Traits) != len(y.Traits) {
+			return false
+		}
+		// Both are kept sorted+deduped at construction, so an
+		// element-wise compare is order-insensitive: `dyn A + B` ≡
+		// `dyn B + A`. Generic trait-args (parallel Args) must match
+		// too, so `dyn Container[i32]` ≠ `dyn Container[string]`.
+		for i := range x.Traits {
+			if x.Traits[i] != y.Traits[i] {
+				return false
+			}
+			xa, ya := x.ArgsFor(i), y.ArgsFor(i)
+			if len(xa) != len(ya) {
+				return false
+			}
+			for j := range xa {
+				if !Equal(xa[j], ya[j]) {
+					return false
+				}
+			}
+			// Pinned associated-type bindings (sorted by name at
+			// construction) must match too: `dyn P[Item = i32]` ≠
+			// `dyn P[Item = string]` ≠ `dyn P` (unpinned).
+			xb, yb := x.AssocFor(i), y.AssocFor(i)
+			if len(xb) != len(yb) {
+				return false
+			}
+			for j := range xb {
+				if xb[j].Name != yb[j].Name || !Equal(xb[j].Type, yb[j].Type) {
+					return false
+				}
+			}
+		}
+		return true
 	case HandleType:
 		y, ok := b.(HandleType)
 		return ok && x.Resource == y.Resource && x.Borrowed == y.Borrowed
+	case ProjType:
+		y, ok := b.(ProjType)
+		return ok && x.Name == y.Name && Equal(x.Base, y.Base)
 	}
 	return false
 }
@@ -810,6 +1295,52 @@ type CastExpr struct {
 	// op without re-checking. Zero value means the checker didn't
 	// resolve it (treat as the legacy i32 default).
 	InnerType Type
+}
+
+// DowncastExpr is `expr as? Type` — a fallible downcast of a
+// `dyn Trait` value to a concrete type. `Inner` must be a
+// `dyn Trait`; `Target` a concrete struct/enum that implements that
+// trait. It evaluates to `Option[Target]`: `Some(v)` when `Inner`'s
+// runtime concrete type is exactly `Target`, else `None`. This is the
+// runtime-checked counterpart to coercion (docs/DYN-TRAITS.md §9), and
+// is deliberately a separate node from CastExpr (which is specialised
+// for numeric truncate/extend) so the two never share lowering paths.
+type DowncastExpr struct {
+	P      Position
+	Inner  Expr
+	Target Type
+	// Trait is the PRIMARY trait name of `Inner`'s `dyn Trait` type,
+	// filled by the checker for the single-trait (vtable-pointer-compare)
+	// codegen. Empty before checking.
+	Trait string
+	// Traits is the WHOLE trait set of `Inner`'s `dyn Trait` type (sorted,
+	// == Trait for a single-trait dyn). Compiled downcast codegen keys the
+	// vtable-pointer compare by this whole set (dynVtableSetKey): a
+	// single-trait `dyn A` selects `__vtable_<A>_<T>` (byte-identical to
+	// before), a multi-trait `dyn A + B` selects the MERGED
+	// `__vtable_<A+B>_<T>` cell a multi-trait coercion of T stores, so the
+	// compare is exact for any trait set (docs/DYN-TRAITS.md §10). The
+	// interpreter handles any set by runtime concrete-type tag.
+	Traits []string
+}
+
+// BlockExpr is a block used in value position: `{ stmt; stmt; …; tailExpr }`.
+// The statements run first, in a fresh child scope, then the trailing
+// expression `Tail` (written WITHOUT a `;`) is the block's value. A block
+// whose final element is a `;`-terminated statement has no trailing
+// expression (`Tail == nil`) and therefore no value (type `void`); using
+// such a block where a value is required is a checker error.
+//
+// Slice 1 scope: this node is produced ONLY for `if`/`match` *expression*
+// branches (the `{ … }` after `if (cond)` / `else` / a match arm `=>`).
+// General value-position blocks, compiled codegen, and the self-hosted
+// compiler are later slices — see docs/BLOCK-EXPRESSIONS.md. The compiled
+// backends reject this node cleanly (interp-only, like the `as?` downcast
+// slice 1).
+type BlockExpr struct {
+	P     Position
+	Stmts []Stmt
+	Tail  Expr // value expression; nil for a value-less (void) block
 }
 type BoolLit struct {
 	P     Position
@@ -935,6 +1466,13 @@ type Call struct {
 	P      Position
 	Callee Expr
 	Args   []Expr
+	// ArgNames, when non-nil, is parallel to Args: ArgNames[i] is the
+	// parameter name a named argument `name = expr` targets, or "" for a
+	// positional argument. nil when the call is all-positional (the common
+	// case). The internal/defaultargs pass reorders named arguments into
+	// positional order and fills defaults, then clears ArgNames — so the
+	// checker and every later pass only ever see a positional Args list.
+	ArgNames []string
 	// IsPipe is set by the parser when this Call was synthesised
 	// from a `LHS |> Callee(args...)` pipe expression: Args[0] is
 	// the original LHS, Args[1:] are the original explicit args.
@@ -1039,6 +1577,27 @@ type Binary struct {
 	// uses it to pick the `_u` variant of div / rem / shr /
 	// comparison operators.
 	IsUnsigned bool
+	// EqCall is set by the checker when `==` / `!=` is applied to a
+	// composite type (struct / enum) that implements `Eq`: the
+	// operator desugars to the type's structural `eq` method. The
+	// IR lowers this Call instead of an identity-comparing OpEq, so
+	// `a == b` means value equality, not heap-pointer equality.
+	// EqNegate is set for `!=` (lower as `!a.eq(b)`).
+	EqCall   *Call
+	EqNegate bool
+	// CmpCall is set by the checker when an ordering operator
+	// (`<` `<=` `>` `>=`) is applied to a composite type that
+	// implements `Ord`: the operator desugars to `a.cmp(b) <op> 0`
+	// (cmp returns -1/0/1). The post-check rewrite replaces the
+	// Binary with that scalar comparison; Op is preserved.
+	CmpCall *Call
+	// ArithCall is set by the checker when an arithmetic operator
+	// (`+` `-` `*` `/`) is applied to a composite type (struct / enum)
+	// whose conventionally-named method exists (`+`→add, `-`→sub,
+	// `*`→mul, `/`→div) — operator overloading. The post-check rewrite
+	// replaces the Binary with this method call, so every later pass
+	// sees an ordinary call. See #2706.
+	ArithCall *Call
 }
 type Unary struct {
 	P       Position
@@ -1047,6 +1606,11 @@ type Unary struct {
 	// IsFloat is set by the checker when the operand is a float,
 	// so codegen can pick the f32 form of the operation.
 	IsFloat bool
+	// NegCall is set by the checker when unary `-` is applied to a
+	// composite type (struct / enum) with a `neg` method — operator
+	// overloading (`-v` → `v.neg()`). The post-check rewrite replaces the
+	// Unary with this call. See #2706.
+	NegCall *Call
 }
 type Assign struct {
 	P      Position
@@ -1090,6 +1654,13 @@ type TryOp struct {
 	// Ok(T) → T). Lets the IR pick `OpLoad` vs `OpFLoad` for
 	// the success-path payload load.
 	Type Type
+	// Lowered, when non-nil, is a desugared replacement for this `?`
+	// built + checked by the checker and swapped in by the post-check
+	// rewrite. Used for the error-converting `?` on a `Result[_, E]`
+	// inside a function returning `Result[_, dyn Trait]` (E implements
+	// Trait): it lowers to a block-expr that maps the error to
+	// `dyn Trait` then applies an ordinary `?`. See #3234.
+	Lowered Expr
 }
 
 // IfExpr is `if (cond) { then_expr } else { else_expr }` in
@@ -1202,6 +1773,11 @@ type FieldAccess struct {
 	Target   Expr
 	Field    string
 	FieldPos Position
+	// PathSep records that the source used the path separator `::`
+	// (`Type::method`, `mod::func`) rather than `.`. Purely cosmetic — the
+	// checker / modload treat both identically; it only lets the printer
+	// round-trip the separator the author wrote. See #2700.
+	PathSep bool
 }
 
 // Lambda is an anonymous function expression: `function (x: i32):
@@ -1218,7 +1794,12 @@ type Lambda struct {
 	P          Position
 	Params     []Param
 	ReturnType Type
-	Body       *Block
+	// ReturnUnannotated records that an arrow lambda was written without a
+	// `: R` return type (`(x) => expr`), so the checker infers ReturnType
+	// from the body expression instead of defaulting to void. Mirrors
+	// FuncDecl.ReturnUnannotated; see checker.inferReturns.
+	ReturnUnannotated bool
+	Body              *Block
 	// Captures gets filled by the checker, same shape as
 	// FuncDecl.Captures. closureconv reads it to size the env
 	// block.
@@ -1258,34 +1839,58 @@ type MakeClosure struct {
 	Captures  []Expr
 }
 
-func (e *NumberLit) Pos() Position   { return e.P }
-func (e *CastExpr) Pos() Position    { return e.P }
-func (e *BoolLit) Pos() Position     { return e.P }
-func (e *StringLit) Pos() Position   { return e.P }
-func (e *FString) Pos() Position     { return e.P }
-func (e *FloatLit) Pos() Position    { return e.P }
-func (e *Ident) Pos() Position       { return e.P }
-func (e *ArrayLit) Pos() Position    { return e.P }
-func (e *Index) Pos() Position       { return e.P }
-func (e *SliceExpr) Pos() Position   { return e.P }
-func (e *Call) Pos() Position        { return e.P }
-func (e *Binary) Pos() Position      { return e.P }
-func (e *Unary) Pos() Position       { return e.P }
-func (e *Assign) Pos() Position      { return e.P }
-func (e *IfExpr) Pos() Position      { return e.P }
-func (e *MatchExpr) Pos() Position   { return e.P }
-func (e *TryOp) Pos() Position       { return e.P }
-func (e *StructLit) Pos() Position   { return e.P }
-func (e *TupleLit) Pos() Position    { return e.P }
-func (e *MapLit) Pos() Position      { return e.P }
-func (e *FieldAccess) Pos() Position { return e.P }
-func (e *EnumLit) Pos() Position     { return e.P }
-func (e *CaptureRef) Pos() Position  { return e.P }
-func (e *MakeClosure) Pos() Position { return e.P }
-func (e *Lambda) Pos() Position      { return e.P }
+func (e *NumberLit) Pos() Position    { return e.P }
+func (e *CastExpr) Pos() Position     { return e.P }
+func (e *DowncastExpr) Pos() Position { return e.P }
+func (e *BlockExpr) Pos() Position    { return e.P }
+func (e *BoolLit) Pos() Position      { return e.P }
+func (e *StringLit) Pos() Position    { return e.P }
+func (e *FString) Pos() Position      { return e.P }
+func (e *FloatLit) Pos() Position     { return e.P }
+func (e *Ident) Pos() Position        { return e.P }
+func (e *ArrayLit) Pos() Position     { return e.P }
+func (e *Index) Pos() Position        { return e.P }
+func (e *SliceExpr) Pos() Position    { return e.P }
+func (e *Call) Pos() Position         { return e.P }
+func (e *Binary) Pos() Position       { return e.P }
+func (e *Unary) Pos() Position        { return e.P }
+func (e *Assign) Pos() Position       { return e.P }
+func (e *IfExpr) Pos() Position       { return e.P }
+func (e *MatchExpr) Pos() Position    { return e.P }
+func (e *TryOp) Pos() Position        { return e.P }
+func (e *StructLit) Pos() Position    { return e.P }
+func (e *TupleLit) Pos() Position     { return e.P }
+func (e *MapLit) Pos() Position       { return e.P }
+func (e *FieldAccess) Pos() Position  { return e.P }
+func (e *EnumLit) Pos() Position      { return e.P }
+func (e *CaptureRef) Pos() Position   { return e.P }
+func (e *MakeClosure) Pos() Position  { return e.P }
+func (e *Lambda) Pos() Position       { return e.P }
 
-func (*NumberLit) isExpr()   {}
-func (*CastExpr) isExpr()    {}
+func (*NumberLit) isExpr()    {}
+func (*CastExpr) isExpr()     {}
+func (*DowncastExpr) isExpr() {}
+
+// String renders the downcast in source form, `<inner> as? <Target>`.
+func (e *DowncastExpr) String() string {
+	return fmt.Sprintf("%v as? %s", e.Inner, e.Target)
+}
+
+func (*BlockExpr) isExpr() {}
+
+// String renders the block in source form, `{ <N stmts> <tail> }`.
+// Statements aren't Stringers, so they're summarised by count; the tail
+// (an Expr) renders in full.
+func (e *BlockExpr) String() string {
+	tail := "void"
+	if e.Tail != nil {
+		tail = fmt.Sprintf("%v", e.Tail)
+	}
+	if len(e.Stmts) == 0 {
+		return fmt.Sprintf("{ %s }", tail)
+	}
+	return fmt.Sprintf("{ <%d stmt(s)>; %s }", len(e.Stmts), tail)
+}
 func (*BoolLit) isExpr()     {}
 func (*StringLit) isExpr()   {}
 func (*FString) isExpr()     {}
@@ -1366,6 +1971,11 @@ type While struct {
 	P    Position
 	Cond Expr
 	Body Stmt
+	// Label is the optional loop label (`outer: while (...) { ... }`),
+	// empty when unlabeled. A labeled `break`/`continue` names it to
+	// target this loop from a nested one. `loop { ... }` desugars to a
+	// While with a `true` Cond, carrying its label here.
+	Label string
 }
 
 // For preserves the C/JS-style three-part for loop so that `continue`
@@ -1376,13 +1986,19 @@ type For struct {
 	Cond Expr // required
 	Step Stmt // may be nil
 	Body Stmt
+	// Label is the optional loop label (see While.Label).
+	Label string
 }
 
+// Break / Continue carry an optional Label naming an enclosing labeled
+// loop to target; empty means the innermost loop (the existing behaviour).
 type Break struct {
-	P Position
+	P     Position
+	Label string
 }
 type Continue struct {
-	P Position
+	P     Position
+	Label string
 }
 
 type Return struct {
@@ -1398,9 +2014,20 @@ type Return struct {
 // per-exit cleanup block only runs the deferred expression
 // when the local is set. That makes a defer reached inside a
 // conditional a no-op when the conditional didn't fire.
+//
+// When OnError is set the statement is an `errdefer`: the
+// cleanup runs only on an ERROR exit — the `?` operator
+// propagating a None/Err, or a `return` whose value is a
+// failure variant (None / Err) of an Option/Result-returning
+// function. A plain success return or fall-off the end does
+// NOT run it. (`errdefer` is Zig's rollback primitive: undo a
+// partially-built value when init fails partway.) Everything
+// else about the node — the active-flag machinery, LIFO order,
+// the conditional-reached no-op — is identical to `defer`.
 type Defer struct {
-	P    Position
-	Expr Expr
+	P       Position
+	Expr    Expr
+	OnError bool
 }
 
 type Var struct {
@@ -1488,10 +2115,17 @@ type MatchArm struct {
 	VariantModule string
 	Bindings      []string // payload binding names, in payload order
 	BindingTypes  []Type   // resolved by the checker; same length as Bindings
-	IsWildcard    bool     // `_ => …`
-	Literal       Expr     // `0 => …` / `"yes" => …` / `true => …`; nil otherwise
-	Guard         Expr     // optional `when <expr>`; nil for unconditional arms
-	Body          *Block
+	// NamedFields marks a named-field pattern (`Rect { w, h }`): each
+	// Bindings entry is a field name (the bound local takes that name).
+	// The checker validates the names against the variant's FieldNames
+	// and reorders Bindings + BindingTypes into declaration order, so
+	// every later stage treats them positionally like a `Rect(w, h)`
+	// pattern. False for the positional form.
+	NamedFields bool
+	IsWildcard  bool // `_ => …`
+	Literal     Expr // `0 => …` / `"yes" => …` / `true => …`; nil otherwise
+	Guard       Expr // optional `when <expr>`; nil for unconditional arms
+	Body        *Block
 }
 
 // MatchExpr is `match (e) { Variant(b1, …) => EXPR, _ => EXPR }`
@@ -1522,6 +2156,7 @@ type MatchExprArm struct {
 	VariantModule string // optional `mod.` qualifier — same semantics as MatchArm.VariantModule
 	Bindings      []string
 	BindingTypes  []Type
+	NamedFields   bool // named-field pattern `Rect { w, h }` — see MatchArm.NamedFields
 	IsWildcard    bool
 	Literal       Expr // literal pattern; mutually exclusive with VariantName / IsWildcard
 	Guard         Expr
@@ -1584,6 +2219,15 @@ type Param struct {
 	// checkOwnedParams); the runtime ownership transfer + reuse it unlocks are
 	// later slices. Always false for struct fields / borrowed params.
 	Own bool
+	// Default is the default value for an optional parameter —
+	// `function listen(port: i32, backlog: i32 = 128)`. nil for a
+	// required parameter (the common case) and for struct fields /
+	// receivers. The `internal/defaultargs` pass fills it in at call
+	// sites that omit the trailing argument, so the checker and every
+	// later pass see a complete positional call. A parameter with a
+	// Default may not be followed by a required (Default == nil)
+	// parameter — the parser rejects that.
+	Default Expr
 }
 
 type FuncDecl struct {
@@ -1612,10 +2256,26 @@ type FuncDecl struct {
 	// concrete type argument implements the required traits at the
 	// call site. Nil when the function has no bounded type params.
 	// See docs/TRAITS.md.
-	Bounds     map[string][]string
+	Bounds map[string][]string
+	// BoundArgs carries the type arguments of a generic-trait bound,
+	// parallel to Bounds: `function f[T: From[i32]](…)` records
+	// BoundArgs["T"] = [[i32]] alongside Bounds["T"] = ["From"]. The
+	// checker substitutes them into the bound trait's method signatures
+	// (`from(v: T)` → `from(v: i32)`) when resolving a method on a
+	// `T`-typed value. Nil when no bound carries type args. See docs/TRAITS.md.
+	BoundArgs  map[string][][]Type
 	Params     []Param
 	ReturnType Type
-	Body       *Block
+	// ReturnUnannotated records that the source wrote no `: Type` after
+	// the parameter list, so ReturnType was defaulted to void by the
+	// parser. The checker uses it to INFER the return type from the
+	// function's `return` expressions (when they unify to a single
+	// type) instead of forcing void — an explicit `: void` keeps
+	// ReturnUnannotated false. Synthetic decls (monomorph clones,
+	// closure hoists, derive synth) leave it false, so they are never
+	// re-inferred. See checker.inferReturns.
+	ReturnUnannotated bool
+	Body              *Block
 	// ImportIface / ImportWITName bind a body-less `function` to a WIT
 	// import via an `@import("wasi:iface@x.y.z", "wit-func-name")` attribute
 	// (bring-your-own WIT, P4 — docs/WIT-BRING-YOUR-OWN.md). ImportIface is
@@ -1639,6 +2299,11 @@ type FuncDecl struct {
 	// Default false (private) — modload rejects cross-module
 	// references to non-public decls before the checker runs.
 	Public bool
+	// PackageScoped marks a `pub(package)` declaration — visible to other
+	// modules in the same package (same directory; the stdlib is one
+	// package) but not exported to outside consumers. Mutually exclusive
+	// with Public. See docs/PUB-PACKAGE.md.
+	PackageScoped bool
 	// Receiver, when non-nil, marks this declaration as a method on
 	// the struct type Receiver.Type.(StructType).Name. The checker
 	// hoists methods into top-level functions under the mangled name
@@ -1655,6 +2320,15 @@ type FuncDecl struct {
 	// empty for non-methods. See docs/TRAITS.md.
 	MethodRecv       string
 	MethodSimpleName string
+	// AssocType, when non-empty, marks this as an associated function
+	// of that (mangled) type name — a receiver-less `impl` method like
+	// `function origin(): Self` in `impl … for Point`. Receiver stays
+	// nil; the checker hoists it to `__assoc_<AssocType>_<Name>` and
+	// resolves `Point.origin()` call sites (a FieldAccess on a type
+	// name) to that flat name with no receiver argument. `Self` in the
+	// signature is substituted to the impl type at parse time, exactly
+	// like an ordinary impl method.
+	AssocType string
 	// IsLocal is true for functions declared as a statement inside
 	// another function's body. Closure conversion at codegen time
 	// hoists these to top-level entries and rewrites captured-var
@@ -1700,7 +2374,7 @@ type FuncDecl struct {
 	// checker reads this to scope method dispatch to the call
 	// site's import closure (module-scoped methods per
 	// docs/PRELUDE-TO-MODULES.md). Single-file programs and
-	// prelude-injected decls leave this empty.
+	// checker-synthesised decls leave this empty.
 	SourceModule string
 }
 
@@ -1741,6 +2415,11 @@ type StructDecl struct {
 	// Same semantics as FuncDecl.Public — private structs can't be
 	// referenced from other modules.
 	Public bool
+	// PackageScoped marks a `pub(package)` declaration — visible to other
+	// modules in the same package (same directory; the stdlib is one
+	// package) but not exported to outside consumers. Mutually exclusive
+	// with Public. See docs/PUB-PACKAGE.md.
+	PackageScoped bool
 	// Opaque marks a `pub opaque struct` — the type name is exported
 	// but its fields are private outside the declaring module: other
 	// modules can hold/pass values and call methods, but cannot read
@@ -1757,7 +2436,7 @@ type StructDecl struct {
 	// LSP can answer cross-module goto-definition queries (jump
 	// from `util.Point` use site to `Point`'s declaration in
 	// util.fern). Empty for parser-only single-file programs and
-	// prelude-injected decls.
+	// checker-synthesised decls.
 	SourceModule string
 }
 
@@ -1788,20 +2467,33 @@ type EnumDecl struct {
 	// other modules name `Foo`, including its variants in match
 	// patterns and constructors.
 	Public bool
+	// PackageScoped marks a `pub(package)` declaration — visible to other
+	// modules in the same package (same directory; the stdlib is one
+	// package) but not exported to outside consumers. Mutually exclusive
+	// with Public. See docs/PUB-PACKAGE.md.
+	PackageScoped bool
 	// SourceModule mirrors FuncDecl.SourceModule. See StructDecl
 	// for the cross-module-LSP rationale.
 	SourceModule string
 }
 
-// EnumVariant is one constructor in an EnumDecl. Payloads are
-// positional; we don't yet have named-field variants. An empty
-// Payloads slice means the variant is constructed by bare name
-// (`Red`); a non-empty one means it's called like a function
-// (`Square(2.0, 3.0)`).
+// EnumVariant is one constructor in an EnumDecl. An empty Payloads
+// slice means the variant is constructed by bare name (`Red`).
+//
+// A variant is either POSITIONAL — `Square(f64, f64)`, constructed
+// `Square(2.0, 3.0)` and matched `Square(w, h)` — or NAMED-FIELD —
+// `Rect { w: f64, h: f64 }`, constructed `Rect { w: 2.0, h: 3.0 }` and
+// matched `Rect { w, h }`. FieldNames is empty for the positional form
+// and, for the named form, parallel to Payloads (FieldNames[i] is the
+// name of the field whose type is Payloads[i]). The runtime layout is
+// identical either way — payloads are laid out in declaration order — so
+// names are purely a parse/check concern; the checker reorders named
+// match bindings + constructor args into declaration order before codegen.
 type EnumVariant struct {
-	P        Position
-	Name     string
-	Payloads []Type
+	P          Position
+	Name       string
+	Payloads   []Type
+	FieldNames []string
 }
 
 // ResourceDecl is a top-level `resource Name;` — a nominal WIT resource-handle
@@ -1820,6 +2512,11 @@ type ResourceDecl struct {
 	// Public marks the resource as exported across modules — same semantics
 	// as FuncDecl.Public.
 	Public bool
+	// PackageScoped marks a `pub(package)` declaration — visible to other
+	// modules in the same package (same directory; the stdlib is one
+	// package) but not exported to outside consumers. Mutually exclusive
+	// with Public. See docs/PUB-PACKAGE.md.
+	PackageScoped bool
 	// SourceModule mirrors FuncDecl.SourceModule (modload stamps the
 	// declaring module path). Empty for parser-only single-file programs.
 	SourceModule string
@@ -1863,6 +2560,11 @@ type UnionDecl struct {
 	// Public marks the union as exported across modules — same
 	// semantics as EnumDecl.Public.
 	Public bool
+	// PackageScoped marks a `pub(package)` declaration — visible to other
+	// modules in the same package (same directory; the stdlib is one
+	// package) but not exported to outside consumers. Mutually exclusive
+	// with Public. See docs/PUB-PACKAGE.md.
+	PackageScoped bool
 	// SourceModule is the canonical module path that declared this
 	// union. modload stamps it during loadRecursive; the checker
 	// propagates it to the synthesised EnumDecl so cross-module
@@ -1881,9 +2583,33 @@ type TraitDecl struct {
 	Name    string
 	NamePos Position
 	Methods []TraitMethod
+	// TypeParams names the trait's own type parameters (`trait From[T]`).
+	// A method signature refers to them; each `impl From[Arg] for Type`
+	// binds them via ImplDecl.TraitArgs, and the conformance check
+	// substitutes them when comparing the impl's methods to the trait's.
+	// Empty for a non-generic trait. See docs/TRAITS.md.
+	TypeParams []string
+	// Supertraits names the traits this trait requires (`trait Ord: Eq +
+	// Hash { … }`): an `impl Ord for T` is legal only if `T` also
+	// implements every supertrait (transitively), and a `T: Ord` bound
+	// grants access to the supertraits' methods too. Empty for a trait
+	// with no supertraits. modload mangles these names like any other
+	// trait reference. See docs/TRAITS.md.
+	Supertraits []string
+	// AssocTypes names the trait's associated types (`type Item;`), in
+	// declaration order. A method signature refers to one as
+	// `Self::Item` (a ProjType); each impl must bind it via
+	// `type Item = …`. Empty for a trait with no associated types.
+	// See docs/ASSOCIATED-TYPES.md.
+	AssocTypes []string
 	// Public marks the trait as exported — same semantics as
 	// FuncDecl.Public / StructDecl.Public.
 	Public bool
+	// PackageScoped marks a `pub(package)` declaration — visible to other
+	// modules in the same package (same directory; the stdlib is one
+	// package) but not exported to outside consumers. Mutually exclusive
+	// with Public. See docs/PUB-PACKAGE.md.
+	PackageScoped bool
 	// SourceModule mirrors StructDecl.SourceModule — modload stamps
 	// the declaring module so the coherence (orphan-rule) check can
 	// tell a local trait from an imported one. Empty for single-file
@@ -1891,14 +2617,25 @@ type TraitDecl struct {
 	SourceModule string
 }
 
-// TraitMethod is one signature in a TraitDecl. Params[0] is always
-// `self: Self` (ast.SelfType{}); the remaining params + Result use
-// SelfType wherever the source wrote `Self`.
+// TraitMethod is one signature in a TraitDecl. For an ordinary method
+// Params[0] is `self: Self` (ast.SelfType{}); the remaining params +
+// Result use SelfType wherever the source wrote `Self`. An *associated
+// function* (`Assoc` true) has no `self` receiver — it's called as
+// `Type.f(args)` rather than `value.f(args)` and typically constructs a
+// `Self` (e.g. `function default(): Self`).
 type TraitMethod struct {
 	P      Position
 	Name   string
 	Params []Param
 	Result Type
+	Assoc  bool
+	// Body, when non-nil, is a default implementation: the trait method
+	// was written `function f(self: Self): T { … }` rather than ending
+	// at a `;`. An `impl` that omits a defaulted method inherits a copy
+	// of this body (with `Self` substituted to the impl type) — see the
+	// checker's synthesizeTraitDefaults and docs/TRAITS.md. nil = an
+	// abstract signature every impl must provide.
+	Body *Block
 }
 
 // ImplDecl is a top-level `impl Trait for Type { <function>… }`. The
@@ -1916,6 +2653,12 @@ type ImplDecl struct {
 	Type        Type
 	TypePos     Position
 	MethodNames []string
+	// TraitArgs are the type arguments applied to a generic trait in
+	// `impl From[i32] for Celsius` — bound positionally to the trait's
+	// TraitDecl.TypeParams. The conformance check substitutes them into
+	// the trait's method signatures. Empty for a non-generic trait. See
+	// docs/TRAITS.md.
+	TraitArgs []Type
 	// TypeParams names the impl's own type parameters for a parametric
 	// impl (`impl[T: Bound] Trait for Box[T]`). Empty for a plain
 	// `impl Trait for ConcreteType`. The checker resolves occurrences
@@ -1923,6 +2666,19 @@ type ImplDecl struct {
 	// signature comparison lines up with the (generic) hoisted
 	// methods. See docs/TRAITS.md.
 	TypeParams []string
+	// Bounds maps each impl type parameter to its trait bounds (from
+	// `impl[T: Bound] …`). The parser passes these straight onto each
+	// desugared method, so ImplDecl only needs them for methods the
+	// checker synthesises later — a trait's default method inherited by
+	// a parametric impl (synthesizeTraitDefaults). Nil for a plain impl.
+	Bounds map[string][]string
+	// AssocTypeBindings maps each of the trait's associated-type names to
+	// the concrete type this impl binds it to (`type Item = i32;`). The
+	// conformance check requires one entry per trait associated type; the
+	// checker/monomorph resolve `Self::Item` / `T::Item` projections
+	// through it. Nil for an impl of a trait with no associated types.
+	// See docs/ASSOCIATED-TYPES.md.
+	AssocTypeBindings map[string]Type
 	// SourceModule is the module that wrote the impl — used by the
 	// orphan-rule check (the impl is legal only if Trait or Type is
 	// declared in this same module). Empty for single-file programs.
@@ -1974,6 +2730,8 @@ type Program struct {
 	// stitches the combined program before the checker runs.
 	// Single-file programs leave this empty.
 	Imports []*Import
+	// PubUses holds the module's `pub use "path".{…};` re-exports.
+	PubUses []*PubUse
 	// ModuleImports records each loaded module's transitive import
 	// closure. The map is keyed by module path; each entry is the
 	// set of module paths reachable via `import` chains starting
@@ -1987,12 +2745,9 @@ type Program struct {
 	// LoadedStdlibPaths records every `std/…` / `core/…` canonical
 	// path modload pulled in (keyed by the `stdlib://…` path form
 	// modload uses internally — see `internal/modload/modload.go`).
-	// The checker's auto-prelude path consults this set so a
-	// prelude file declaring `import "std/foo";` doesn't re-inject
-	// `std/foo` when the user's entry program already imported the
-	// same module via modload. Transitional plumbing for the
-	// prelude-to-modules migration; goes away once auto-prelude
-	// injection does (Phase 5 in docs/PRELUDE-TO-MODULES.md).
+	// The checker consults this set to dedup stdlib loads — e.g. it
+	// won't re-register `core/map`'s helpers when modload already
+	// pulled the module in (directly or transitively).
 	LoadedStdlibPaths map[string]bool
 	// Comments lists every `//` line comment the lexer collected,
 	// in source order. Most consumers (checker, IR lowering,
@@ -2044,6 +2799,11 @@ type ConstDecl struct {
 	Type   Type
 	Value  Expr
 	Public bool
+	// PackageScoped marks a `pub(package)` declaration — visible to other
+	// modules in the same package (same directory; the stdlib is one
+	// package) but not exported to outside consumers. Mutually exclusive
+	// with Public. See docs/PUB-PACKAGE.md.
+	PackageScoped bool
 }
 
 // Import is a top-level `import "<path>";` declaration. Path is the
@@ -2063,6 +2823,21 @@ type Import struct {
 	// LocalName so the printer can round-trip the `as` clause.
 	Alias string
 }
+
+// PubUse is a `pub use "path".{name1, name2};` re-export: the named
+// public symbols of the target module become part of *this* module's
+// public surface, so an importer of this module can reference them as
+// `thismod.name` and they resolve to the original module's definition
+// (no copy is made). modload loads the target like an import and records
+// a per-module re-export table; the rewriter resolves a re-exported
+// `mod.name` to the original mangled flat name. See docs/PRELUDE-TO-MODULES.md.
+type PubUse struct {
+	P     Position
+	Path  string   // import path of the module being re-exported from
+	Names []string // the public names re-exported (in source order)
+}
+
+func (d *PubUse) Pos() Position { return d.P }
 
 // Pos accessors for top-level declarations that aren't also Stmts.
 // FuncDecl already has Pos() via its Stmt role; the rest need their

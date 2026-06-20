@@ -1,0 +1,13 @@
+import "core/int";
+import "std/crypto";
+
+// Audit fixture: std/crypto SHA-256 against the canonical test vectors,
+// across every native backend. (The self-hosted compiler miscompiles this
+// — see #2861 — so self-host crypto is held out.)
+
+function main(): i32 {
+    if (crypto.sha256_hex("abc") != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") { print("FAIL abc"); return 11; }
+    if (crypto.sha256_hex("") != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855") { print("FAIL empty"); return 12; }
+    print("OK");
+    return 0;
+}

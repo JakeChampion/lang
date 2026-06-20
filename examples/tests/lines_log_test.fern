@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/test";
 // examples/tests/lines_log_test.fern — exercises the
 // `assert_lines_eq` multi-line comparison helper + the
@@ -15,38 +14,38 @@ import "std/test";
 // recording a test outcome. Useful for debug breadcrumbs
 // between cases.
 
-function test_lines_match(): Option[string] {
+function test_lines_match(): test.TestOutcome {
     var actual: string = "line 1\nline 2\nline 3\n";
     return test.assert_lines_eq(actual, ["line 1", "line 2", "line 3"]);
 }
 
-function test_lines_line_count_mismatch(): Option[string] {
+function test_lines_line_count_mismatch(): test.TestOutcome {
     match (test.assert_lines_eq("a\nb\nc\n", ["a", "b"])) {
-        Some(msg) => {
+        Fail(msg) => {
             if (!msg.contains("line count differs")) {
                 return test.fail("missing reason in: " + msg);
             }
-            return None;
+            return test.pass();
         },
-        None => { return test.fail("expected line-count mismatch to fail"); }
+        Pass => { return test.fail("expected line-count mismatch to fail"); }
     }
-    return None;
+    return test.pass();
 }
 
-function test_lines_first_diff_localised(): Option[string] {
+function test_lines_first_diff_localised(): test.TestOutcome {
     match (test.assert_lines_eq("a\nB\nc\n", ["a", "b", "c"])) {
-        Some(msg) => {
+        Fail(msg) => {
             if (!msg.contains("line 2")) {
                 return test.fail("missing line 2 in: " + msg);
             }
-            return None;
+            return test.pass();
         },
-        None => { return test.fail("expected mismatch on line 2"); }
+        Pass => { return test.fail("expected mismatch on line 2"); }
     }
-    return None;
+    return test.pass();
 }
 
-function test_lines_empty_input(): Option[string] {
+function test_lines_empty_input(): test.TestOutcome {
     return test.assert_lines_eq("", []);
 }
 

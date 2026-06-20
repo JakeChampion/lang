@@ -1,0 +1,38 @@
+import "core/int";
+import "std/i32";
+
+// Audit fixture: slice views `[T]` — a borrowed window `a[i:j]` over an owned
+// array, with `.len()`, indexing, iteration, slice-of-slice, empty slices, and
+// `[string]` element slices. Run across interp / x86-64 / arm64 / wasm.
+function sum(s: [i32]): i32 {
+    var t: i32 = 0;
+    for x in s { t = t + x; }
+    return t;
+}
+
+function main(): i32 {
+    var a: i32[] = [10, 20, 30, 40, 50];
+    var s: [i32] = a[1:4];                 // window [20, 30, 40]
+    print((s.len()).to_string());         // 3
+    print((s[0]).to_string());            // 20
+    print((s[2]).to_string());            // 40
+    print((sum(s)).to_string());          // 90
+
+    var s2: [i32] = s[0:2];                // slice of a slice -> [20, 30]
+    print((s2.len()).to_string());        // 2
+
+    var empty: [i32] = a[2:2];             // empty window
+    print((empty.len()).to_string());     // 0
+
+    var strs: string[] = ["ab", "cde", "f"];
+    var ss: [string] = strs[0:2];          // ["ab", "cde"]
+    print((ss[1].len()).to_string());     // 3
+
+    // Assertions (return nonzero on mismatch).
+    if (s.len() != 3) { return 11; }
+    if (s[1] != 30) { return 12; }
+    if (sum(a[0:5]) != 150) { return 13; }
+    if (a[2:2].len() != 0) { return 14; }
+    if (s[s.len() - 1] != 40) { return 15; }
+    return 0;
+}

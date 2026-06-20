@@ -24,7 +24,7 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "ssa.fern", "util.fern", "ssa_x86.fern", "ssa_arm64.fern", "ssa_emit_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "astwalk.fern", "ssa.fern", "util.fern", "ssa_x86.fern", "ssa_arm64.fern", "ssa_emit_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -155,6 +155,10 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 		// Receiver methods `function (r: T) m(...)` — receiver as implicit
 		// param 0, `recv.m(args)` → call "T__m" with the receiver first.
 		{"method-basic", "struct Counter { n: i32 } function (c: Counter) get(): i32 { return c.n; } function (c: Counter) plus(d: i32): i32 { return c.n + d; } function main(): i32 { var c = Counter { n: 40 }; return c.get() + c.plus(2) - c.n; }", 42},
+		// A Cell-typed struct field: b.ctr.get()/.set() resolves the "Cell[i32]"
+		// field type to "cell" (the type_of_expr field-normalisation fix that
+		// closed the last whole-compiler build_func holdout, wasm__emit_expr).
+		{"cell-struct-field", "struct Box { ctr: Cell[i32], label: string } function main(): i32 { var b = Box { ctr: cell_new(10), label: \"x\" }; b.ctr.set(b.ctr.get() + 5); return b.ctr.get() + b.label.len(); }", 16},
 		{"method-calls-method", "struct Lex { s: string, i: i32 } function (l: Lex) at_end(): boolean { return l.i >= l.s.len(); } function (l: Lex) cur(): i32 { if (l.at_end()) { return 0 - 1; } return l.s[l.i]; } function main(): i32 { var l = Lex { s: \"AB\", i: 0 }; return l.cur(); }", 65},
 		{"method-chained", "struct Box { v: i32 } function (b: Box) bump(): Box { return Box { v: b.v + 1 }; } function main(): i32 { var b = Box { v: 10 }; var c = b.bump().bump(); return c.v; }", 12},
 		{"method-loop", "struct Lex { s: string, i: i32 } function (l: Lex) at_end(): boolean { return l.i >= l.s.len(); } function (l: Lex) peek(): i32 { return l.s[l.i]; } function (l: Lex) adv(): Lex { return Lex { s: l.s, i: l.i + 1 }; } function main(): i32 { var l = Lex { s: \"hello\", i: 0 }; var sum = 0; while (!l.at_end()) { sum = sum + l.peek(); l = l.adv(); } return sum; }", 532 % 256},
@@ -330,4 +334,47 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 		}
 		run(t, "scaling-large-function", sum%256, asm)
 	})
+
+	// File I/O — read_file / write_file lowered to the arm64 Linux syscall
+	// runtime, run under qemu through both the default and -regalloc paths.
+	// (qemu-aarch64 user-mode forwards file syscalls to the host FS.)
+	for _, mode := range []struct {
+		name string
+		args []string
+	}{{"default", []string{"-target", "arm64"}}, {"regalloc", []string{"-regalloc", "-target", "arm64"}}} {
+		mode := mode
+		// Round-trip: write then read back and compare via streq, exercising the
+		// SSA [len, byte-per-word] string layout end-to-end; a Go-side read
+		// confirms the on-disk bytes.
+		t.Run("file-io-roundtrip/"+mode.name, func(t *testing.T) {
+			ioPath := filepath.Join(dir, "io_roundtrip_"+mode.name+".txt")
+			_ = os.Remove(ioPath)
+			const content = "hello, fern"
+			src := fmt.Sprintf("function main(): i32 { match (write_file(%q, %q)) { Some(e) => { return 1; }, None => {} } match (read_file(%q)) { Ok(s) => { if (s == %q) { return 42; } return 2; }, Err(e) => { return 3; } } }", ioPath, content, ioPath, content)
+			run(t, "file-io-roundtrip", 42, runDriver(t, src, mode.args...))
+			got, err := os.ReadFile(ioPath)
+			if err != nil {
+				t.Fatalf("write_file did not create %s: %v", ioPath, err)
+			}
+			if string(got) != content {
+				t.Errorf("write_file wrote %q, want %q", got, content)
+			}
+		})
+		// read_file on a file the test pre-wrote: len + first byte = 10 + 'a'.
+		t.Run("file-io-read-external/"+mode.name, func(t *testing.T) {
+			ioPath := filepath.Join(dir, "io_external_"+mode.name+".txt")
+			const content = "abcdefghij"
+			if err := os.WriteFile(ioPath, []byte(content), 0o644); err != nil {
+				t.Fatalf("seed file: %v", err)
+			}
+			src := fmt.Sprintf("function main(): i32 { match (read_file(%q)) { Ok(s) => { return s.len() + s[0]; }, Err(e) => { return 0; } } }", ioPath)
+			run(t, "file-io-read-external", 10+int('a'), runDriver(t, src, mode.args...))
+		})
+		// read_file on a missing path → Err.
+		t.Run("file-io-read-missing/"+mode.name, func(t *testing.T) {
+			ioPath := filepath.Join(dir, "does_not_exist.txt")
+			src := fmt.Sprintf("function main(): i32 { match (read_file(%q)) { Ok(s) => { return 0; }, Err(e) => { return 7; } } }", ioPath)
+			run(t, "file-io-read-missing", 7, runDriver(t, src, mode.args...))
+		})
+	}
 }

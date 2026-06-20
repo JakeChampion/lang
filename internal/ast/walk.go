@@ -59,6 +59,230 @@ func WalkProgram(p *Program, fn func(Node) bool) {
 	}
 }
 
+// RewriteProgramExprs post-order rewrites every expression slot in p.
+// For each expression — after its own children have been rewritten —
+// fn is called and its return value replaces the expression in its
+// parent slot. Statement / declaration structure is traversed but not
+// replaced. This is the building block for type-directed desugars that
+// must run after the checker yet be visible to every later pass
+// (monomorph, treeshake, codegen): replacing the node in place means
+// no pass needs to learn about a hidden side-channel field.
+func RewriteProgramExprs(p *Program, fn func(Expr) Expr) {
+	if p == nil {
+		return
+	}
+	for _, d := range p.Funcs {
+		if d.Body != nil {
+			rewriteStmtChildren(d.Body, fn)
+		}
+	}
+	for _, d := range p.Consts {
+		if d.Value != nil {
+			d.Value = rewriteExpr(d.Value, fn)
+		}
+	}
+}
+
+// rewriteExpr rewrites e's children, then applies fn to e itself.
+func rewriteExpr(e Expr, fn func(Expr) Expr) Expr {
+	if e == nil {
+		return nil
+	}
+	rewriteExprChildren(e, fn)
+	return fn(e)
+}
+
+// rewriteExprChildren reassigns every Expr-typed child slot of e with
+// its rewritten form. Mirrors walkChildren's expression coverage.
+func rewriteExprChildren(n Node, fn func(Expr) Expr) {
+	switch x := n.(type) {
+	case *NumberLit, *BoolLit, *StringLit, *FloatLit, *Ident, *CaptureRef:
+		// leaves
+	case *CastExpr:
+		x.Inner = rewriteExpr(x.Inner, fn)
+	case *DowncastExpr:
+		x.Inner = rewriteExpr(x.Inner, fn)
+	case *FString:
+		for i := range x.Parts {
+			if x.Parts[i].Expr != nil {
+				x.Parts[i].Expr = rewriteExpr(x.Parts[i].Expr, fn)
+			}
+		}
+	case *ArrayLit:
+		for i := range x.Elems {
+			x.Elems[i] = rewriteExpr(x.Elems[i], fn)
+		}
+	case *Index:
+		x.Array = rewriteExpr(x.Array, fn)
+		x.Idx = rewriteExpr(x.Idx, fn)
+	case *SliceExpr:
+		x.Source = rewriteExpr(x.Source, fn)
+		if x.Low != nil {
+			x.Low = rewriteExpr(x.Low, fn)
+		}
+		if x.High != nil {
+			x.High = rewriteExpr(x.High, fn)
+		}
+	case *Call:
+		x.Callee = rewriteExpr(x.Callee, fn)
+		for i := range x.Args {
+			x.Args[i] = rewriteExpr(x.Args[i], fn)
+		}
+	case *Binary:
+		// A composite `==`/`!=` (EqCall) or ordering op (CmpCall)
+		// carries its desugared method call; rewrite inside that (its
+		// operands), not Left/Right (which the replacement discards).
+		switch {
+		case x.EqCall != nil:
+			rewriteExprChildren(x.EqCall, fn)
+		case x.CmpCall != nil:
+			rewriteExprChildren(x.CmpCall, fn)
+		default:
+			x.Left = rewriteExpr(x.Left, fn)
+			x.Right = rewriteExpr(x.Right, fn)
+		}
+	case *Unary:
+		x.Operand = rewriteExpr(x.Operand, fn)
+	case *Assign:
+		x.Target = rewriteExpr(x.Target, fn)
+		x.Value = rewriteExpr(x.Value, fn)
+	case *IfExpr:
+		x.Cond = rewriteExpr(x.Cond, fn)
+		x.Then = rewriteExpr(x.Then, fn)
+		x.Else = rewriteExpr(x.Else, fn)
+	case *TryOp:
+		x.Inner = rewriteExpr(x.Inner, fn)
+	case *StructLit:
+		if x.Base != nil {
+			x.Base = rewriteExpr(x.Base, fn)
+		}
+		for i := range x.Fields {
+			x.Fields[i].Value = rewriteExpr(x.Fields[i].Value, fn)
+		}
+	case *TupleLit:
+		for i := range x.Elems {
+			x.Elems[i] = rewriteExpr(x.Elems[i], fn)
+		}
+	case *MapLit:
+		for i := range x.Entries {
+			x.Entries[i].Key = rewriteExpr(x.Entries[i].Key, fn)
+			x.Entries[i].Value = rewriteExpr(x.Entries[i].Value, fn)
+		}
+	case *FieldAccess:
+		x.Target = rewriteExpr(x.Target, fn)
+	case *EnumLit:
+		for i := range x.Args {
+			x.Args[i] = rewriteExpr(x.Args[i], fn)
+		}
+	case *MakeClosure:
+		for i := range x.Captures {
+			x.Captures[i] = rewriteExpr(x.Captures[i], fn)
+		}
+	case *MatchExpr:
+		x.Tag = rewriteExpr(x.Tag, fn)
+		for i := range x.Arms {
+			if x.Arms[i].Guard != nil {
+				x.Arms[i].Guard = rewriteExpr(x.Arms[i].Guard, fn)
+			}
+			x.Arms[i].Body = rewriteExpr(x.Arms[i].Body, fn)
+		}
+	case *BlockExpr:
+		for _, s := range x.Stmts {
+			rewriteStmtChildren(s, fn)
+		}
+		if x.Tail != nil {
+			x.Tail = rewriteExpr(x.Tail, fn)
+		}
+	// Statements — traverse, don't replace.
+	case Stmt:
+		rewriteStmtChildren(x, fn)
+	}
+}
+
+// rewriteStmtChildren reassigns Expr slots and recurses into nested
+// statements / blocks. Mirrors walkChildren's statement coverage.
+func rewriteStmtChildren(n Node, fn func(Expr) Expr) {
+	switch x := n.(type) {
+	case *Block:
+		for _, s := range x.Stmts {
+			rewriteStmtChildren(s, fn)
+		}
+	case *If:
+		x.Cond = rewriteExpr(x.Cond, fn)
+		rewriteStmtChildren(x.Then, fn)
+		if x.Else != nil {
+			rewriteStmtChildren(x.Else, fn)
+		}
+	case *IfLet:
+		x.Source = rewriteExpr(x.Source, fn)
+		rewriteStmtChildren(x.Then, fn)
+		if x.Else != nil {
+			rewriteStmtChildren(x.Else, fn)
+		}
+	case *LetElse:
+		x.Source = rewriteExpr(x.Source, fn)
+		if x.Else != nil {
+			rewriteStmtChildren(x.Else, fn)
+		}
+	case *While:
+		x.Cond = rewriteExpr(x.Cond, fn)
+		rewriteStmtChildren(x.Body, fn)
+	case *For:
+		if x.Init != nil {
+			rewriteStmtChildren(x.Init, fn)
+		}
+		if x.Cond != nil {
+			x.Cond = rewriteExpr(x.Cond, fn)
+		}
+		if x.Step != nil {
+			rewriteStmtChildren(x.Step, fn)
+		}
+		rewriteStmtChildren(x.Body, fn)
+	case *Return:
+		if x.Value != nil {
+			x.Value = rewriteExpr(x.Value, fn)
+		}
+	case *Defer:
+		x.Expr = rewriteExpr(x.Expr, fn)
+	case *Var:
+		if x.Init != nil {
+			x.Init = rewriteExpr(x.Init, fn)
+		}
+	case *Destructure:
+		x.Init = rewriteExpr(x.Init, fn)
+	case *ExprStmt:
+		x.Expr = rewriteExpr(x.Expr, fn)
+	case *Assign:
+		x.Target = rewriteExpr(x.Target, fn)
+		x.Value = rewriteExpr(x.Value, fn)
+	case *Switch:
+		x.Tag = rewriteExpr(x.Tag, fn)
+		for ci := range x.Cases {
+			for vi := range x.Cases[ci].Values {
+				x.Cases[ci].Values[vi] = rewriteExpr(x.Cases[ci].Values[vi], fn)
+			}
+			if x.Cases[ci].Body != nil {
+				rewriteStmtChildren(x.Cases[ci].Body, fn)
+			}
+		}
+		if x.Default != nil {
+			rewriteStmtChildren(x.Default, fn)
+		}
+	case *Match:
+		x.Tag = rewriteExpr(x.Tag, fn)
+		for ai := range x.Arms {
+			if x.Arms[ai].Guard != nil {
+				x.Arms[ai].Guard = rewriteExpr(x.Arms[ai].Guard, fn)
+			}
+			if x.Arms[ai].Body != nil {
+				rewriteStmtChildren(x.Arms[ai].Body, fn)
+			}
+		}
+	case *Break, *Continue:
+		// leaves
+	}
+}
+
 func walkChildren(n Node, fn func(Node) bool) {
 	switch x := n.(type) {
 
@@ -68,6 +292,8 @@ func walkChildren(n Node, fn func(Node) bool) {
 
 	// ---------- Expressions ----------
 	case *CastExpr:
+		Walk(x.Inner, fn)
+	case *DowncastExpr:
 		Walk(x.Inner, fn)
 	case *FString:
 		for _, p := range x.Parts {
@@ -144,6 +370,13 @@ func walkChildren(n Node, fn func(Node) bool) {
 				Walk(a.Guard, fn)
 			}
 			Walk(a.Body, fn)
+		}
+	case *BlockExpr:
+		for _, s := range x.Stmts {
+			Walk(s, fn)
+		}
+		if x.Tail != nil {
+			Walk(x.Tail, fn)
 		}
 
 	// ---------- Statements ----------

@@ -35,7 +35,6 @@ program, so every literate program has one:
 ````markdown
 ```fern
 <<*>>=
-import "core/no_prelude";
 <<greeting>>
 function main(): i32 { print(greeting()); return 0; }
 ```
@@ -184,7 +183,6 @@ around it changes.
 
 ````markdown
 ```fern test name=greeting-says-hi
-import "core/no_prelude";
 <<greeting>>
 function main(): i32 {
     if (greeting() != "hello") { return 1; }

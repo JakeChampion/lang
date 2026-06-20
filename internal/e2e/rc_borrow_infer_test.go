@@ -43,8 +43,21 @@ func TestArm64BorrowInferMatchesOwned(t *testing.T) {
 	})
 }
 
+// wasmBorrowInferKnownDivergent lists fixtures with a KNOWN owned-model
+// (borrow-inference-off) RC divergence on wasm, tracked by an issue. They
+// still run under the production (borrow-on) model via TestFernFixtures on
+// all four backends — only the owned-vs-borrow differential is skipped here.
+//
+// (Empty — #2828 fixed: the owned-model enum-param fall-off drop's tag stash
+// was allocated after the function's scratch-local count was taken, leaving
+// it undeclared on wasm. audit_types_match now matches across both models.)
+var wasmBorrowInferKnownDivergent = map[string]bool{}
+
 func TestWASMBorrowInferMatchesOwned(t *testing.T) {
 	forEachRunnableFixture(t, "wasm", func(t *testing.T, f *fixtureSpec) {
+		if wasmBorrowInferKnownDivergent[f.name] {
+			t.Skip("known owned-model RC divergence on wasm — #2828")
+		}
 		prev := ast.RcFreeEnabled
 		ast.RcFreeEnabled = true
 		pb := ast.BorrowInferEnabled

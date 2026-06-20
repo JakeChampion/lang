@@ -107,11 +107,14 @@ func TestInterpDeferOnEarlyReturn(t *testing.T) {
 // to 99, but helper already evaluated `a[0]` (== 5) for its return
 // slot, so main observes 5, not 99.
 func TestInterpDeferReturnValueComputedFirst(t *testing.T) {
-	v, _ := evalProgramCapture(t, `function set0(a: i32[]): void { a[0] = 99; }
+	// Uses a Cell (the sanctioned mutable box) for the observable side
+	// effect — arrays are immutable after construction (E056), so a deferred
+	// call can no longer mutate a shared array in place.
+	v, _ := evalProgramCapture(t, `function set0(c: Cell[i32]): void { c.set(99); }
 	function helper(): i32 {
-		var a: i32[] = [5];
-		defer set0(a);
-		return a[0];
+		var c: Cell[i32] = cell_new(5);
+		defer set0(c);
+		return c.get();
 	}
 	function main(): i32 {
 		return helper();

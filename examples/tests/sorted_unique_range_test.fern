@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/test";
 // examples/tests/sorted_unique_range_test.fern — exercises
 // the batch-19 additions to std/test:
@@ -11,134 +10,134 @@ import "std/test";
 //   * `test.assert_unique(arr)` / `test.assert_unique(arr)`
 //     — every element appears at most once.
 
-function test_in_range_f64_pass(): Option[string] {
+function test_in_range_f64_pass(): test.TestOutcome {
     return test.assert_in_range_f64(2.5, 1.0, 3.0);
 }
 
-function test_in_range_f64_inclusive_lo(): Option[string] {
+function test_in_range_f64_inclusive_lo(): test.TestOutcome {
     return test.assert_in_range_f64(1.0, 1.0, 3.0);
 }
 
-function test_in_range_f64_inclusive_hi(): Option[string] {
+function test_in_range_f64_inclusive_hi(): test.TestOutcome {
     return test.assert_in_range_f64(3.0, 1.0, 3.0);
 }
 
-function test_in_range_f64_below(): Option[string] {
+function test_in_range_f64_below(): test.TestOutcome {
     match (test.assert_in_range_f64(0.5, 1.0, 3.0)) {
-        None => { return test.fail("expected below-range fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("expected below-range fail"); },
+        Fail(msg) => {
             // Verify the diagnostic names the offending side.
             if (!msg.contains("lower bound")) {
-                return Some("expected 'lower bound' in failure: " + msg);
+                return test.fail("expected 'lower bound' in failure: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_in_range_f64_above(): Option[string] {
+function test_in_range_f64_above(): test.TestOutcome {
     match (test.assert_in_range_f64(3.5, 1.0, 3.0)) {
-        None => { return test.fail("expected above-range fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("expected above-range fail"); },
+        Fail(msg) => {
             if (!msg.contains("upper bound")) {
-                return Some("expected 'upper bound' in failure: " + msg);
+                return test.fail("expected 'upper bound' in failure: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_in_range_f64_nan_fails(): Option[string] {
+function test_in_range_f64_nan_fails(): test.TestOutcome {
     var z: f64 = 0.0;
     var nan: f64 = z / z;
     match (test.assert_in_range_f64(nan, 0.0, 1.0)) {
-        None => { return test.fail("NaN should fail range check"); },
-        Some(_) => { return None; }
+        Pass => { return test.fail("NaN should fail range check"); },
+        Fail(_) => { return test.pass(); }
     }
 }
 
-function test_sorted_i32_pass(): Option[string] {
+function test_sorted_i32_pass(): test.TestOutcome {
     return test.assert_sorted_asc([1, 2, 3, 5, 8]);
 }
 
-function test_sorted_i32_empty(): Option[string] {
+function test_sorted_i32_empty(): test.TestOutcome {
     var empty: i32[] = [];
     return test.assert_sorted_asc(empty);
 }
 
-function test_sorted_i32_single(): Option[string] {
+function test_sorted_i32_single(): test.TestOutcome {
     return test.assert_sorted_asc([42]);
 }
 
-function test_sorted_i32_equal_runs(): Option[string] {
+function test_sorted_i32_equal_runs(): test.TestOutcome {
     // Non-decreasing — equal adjacent pairs are OK.
     return test.assert_sorted_asc([1, 1, 2, 2, 3]);
 }
 
-function test_sorted_i32_inversion(): Option[string] {
+function test_sorted_i32_inversion(): test.TestOutcome {
     match (test.assert_sorted_asc([1, 3, 2, 4])) {
-        None => { return test.fail("inversion missed"); },
-        Some(msg) => {
+        Pass => { return test.fail("inversion missed"); },
+        Fail(msg) => {
             // The diagnostic should embed the index so the
             // first violation is locatable.
             if (!msg.contains("index 2")) {
-                return Some("expected 'index 2': " + msg);
+                return test.fail("expected 'index 2': " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_sorted_string_pass(): Option[string] {
+function test_sorted_string_pass(): test.TestOutcome {
     return test.assert_sorted_asc(["alpha", "beta", "gamma"]);
 }
 
-function test_sorted_string_inversion(): Option[string] {
+function test_sorted_string_inversion(): test.TestOutcome {
     match (test.assert_sorted_asc(["b", "a"])) {
-        None => { return test.fail("inversion missed"); },
-        Some(_) => { return None; }
+        Pass => { return test.fail("inversion missed"); },
+        Fail(_) => { return test.pass(); }
     }
 }
 
-function test_unique_i32_pass(): Option[string] {
+function test_unique_i32_pass(): test.TestOutcome {
     return test.assert_unique([1, 2, 3, 5, 8]);
 }
 
-function test_unique_i32_unsorted_input(): Option[string] {
+function test_unique_i32_unsorted_input(): test.TestOutcome {
     // Uniqueness is order-independent — the helper sorts
     // internally, so a scrambled input still works.
     return test.assert_unique([7, 2, 9, 4]);
 }
 
-function test_unique_i32_duplicate_fails(): Option[string] {
+function test_unique_i32_duplicate_fails(): test.TestOutcome {
     match (test.assert_unique([1, 2, 3, 2, 5])) {
-        None => { return test.fail("duplicate 2 should fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("duplicate 2 should fail"); },
+        Fail(msg) => {
             if (!msg.contains("2")) {
-                return Some("expected duplicate value in failure: " + msg);
+                return test.fail("expected duplicate value in failure: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_unique_string_pass(): Option[string] {
+function test_unique_string_pass(): test.TestOutcome {
     return test.assert_unique(["alpha", "beta", "gamma"]);
 }
 
-function test_unique_string_duplicate_fails(): Option[string] {
+function test_unique_string_duplicate_fails(): test.TestOutcome {
     match (test.assert_unique(["alpha", "beta", "alpha"])) {
-        None => { return test.fail("duplicate alpha should fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("duplicate alpha should fail"); },
+        Fail(msg) => {
             if (!msg.contains("alpha")) {
-                return Some("expected 'alpha' in failure: " + msg);
+                return test.fail("expected 'alpha' in failure: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_unique_empty_is_vacuous(): Option[string] {
+function test_unique_empty_is_vacuous(): test.TestOutcome {
     var empty: i32[] = [];
     return test.assert_unique(empty);
 }

@@ -44,7 +44,7 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
 
 	dir := writeSelfHostAsmProject(t) // lexer, parser, asm
-	for _, name := range []string{"flatten.fern", "util.fern", "asm_load_run.fern"} {
+	for _, name := range []string{"flatten.fern", "checker.fern", "util.fern", "asm_load_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -65,7 +65,7 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 	// below are all green suites (exit 0).
 	failing := filepath.Join(t.TempDir(), "synthetic_fail_test.fern")
 	failSrc := "import \"std/test\";\n" +
-		"function bad(): Option[string] { return test.assert_eq(1, 2); }\n" +
+		"function bad(): test.TestOutcome { return test.assert_eq(1, 2); }\n" +
 		"function main(): i32 {\n" +
 		"    var r: test.TestRunner = test.test_new(\"synthetic\");\n" +
 		"    r = r.it(\"one is two\", bad());\n" +
@@ -136,7 +136,7 @@ func TestSelfHostStdTestE2EArm64(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
 
 	dir := writeSelfHostAsmProject(t) // lexer, parser, asm
-	for _, name := range []string{"util.fern", "asmcore.fern", "flatten.fern", "asm_arm64.fern", "asm_arm64_load_run.fern"} {
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "flatten.fern", "checker.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm_arm64_load_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -159,7 +159,7 @@ func TestSelfHostStdTestE2EArm64(t *testing.T) {
 
 	failing := filepath.Join(t.TempDir(), "synthetic_fail_test.fern")
 	failSrc := "import \"std/test\";\n" +
-		"function bad(): Option[string] { return test.assert_eq(1, 2); }\n" +
+		"function bad(): test.TestOutcome { return test.assert_eq(1, 2); }\n" +
 		"function main(): i32 {\n" +
 		"    var r: test.TestRunner = test.test_new(\"synthetic\");\n" +
 		"    r = r.it(\"one is two\", bad());\n" +
@@ -254,6 +254,8 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"lang_binary_e2e", langSrcAbs(t, "examples/tests/lang_binary_e2e_test.fern"), ""},
 		{"sort_wider", langSrcAbs(t, "examples/tests/sort_wider_test.fern"), ""},
 		{"array_reductions", langSrcAbs(t, "examples/tests/array_reductions_test.fern"), ""},
+		{"array_structural_verbs", langSrcAbs(t, "examples/tests/array_structural_verbs_test.fern"), ""},
+		{"log", langSrcAbs(t, "examples/tests/log_test.fern"), ""},
 		{"wide_numerics", langSrcAbs(t, "examples/tests/wide_numerics_test.fern"), ""},
 		{"wider_array_contains_count", langSrcAbs(t, "examples/tests/wider_array_contains_count_test.fern"), ""},
 		{"sorted_unique_range", langSrcAbs(t, "examples/tests/sorted_unique_range_test.fern"), ""},

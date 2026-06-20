@@ -1,0 +1,269 @@
+// bc.fern — a small arbitrary-expression calculator, in the spirit
+// of `bc(1)` (the "basic calculator").
+//
+// Evaluates one arithmetic expression per input line and prints the
+// result. Expressions can also be passed on the command line:
+//
+//   $ echo '2 + 3 * 4' | ./bc        ->  14
+//   $ ./bc '(1 + 2) ^ 3'             ->  27
+//   $ echo '10 / 4' | ./bc           ->  2.5
+//   $ echo '7 % 3' | ./bc            ->  1
+//
+// Supported: + - * / % (remainder) and ^ (power, integer exponent,
+// right-associative), unary +/-, parentheses, decimals, and
+// arbitrary whitespace. Computation is in f64.
+//
+// Showcases: a hand-written recursive-descent parser/evaluator that
+// threads (value, position, ok) state through `Eval` structs — the
+// idiomatic shape for parsers in a language with immutable structs
+// and no exceptions.
+import "std/string";
+import "std/i32";
+import "std/i64";
+import "std/float";
+import "std/io";
+
+// Parser state carried out of every parse function: the value parsed
+// so far, the position we stopped at, and whether parsing succeeded.
+struct Eval { val: f64, pos: i32, ok: boolean }
+
+function fail(pos: i32): Eval {
+  return Eval { val: 0.0, pos: pos, ok: false };
+}
+
+function skip_ws(s: string, pos: i32): i32 {
+  var p: i32 = pos;
+  while (p < s.len() && (s[p] == 32 || s[p] == 9)) {
+    p = p + 1;
+  }
+  return p;
+}
+
+// primary := number | '(' expr ')'
+function parse_primary(s: string, pos: i32): Eval {
+  var p: i32 = skip_ws(s, pos);
+  if (p >= s.len()) {
+    return fail(p);
+  }
+  if (s[p] == 40) {
+    // '('
+    var inner: Eval = parse_expr(s, p + 1);
+    if (!inner.ok) {
+      return inner;
+    }
+    var q: i32 = skip_ws(s, inner.pos);
+    if (q >= s.len() || s[q] != 41) {
+      return fail(q);  // ')'
+    }
+    return Eval { val: inner.val, pos: q + 1, ok: true };
+  }
+  // number: digits with an optional fractional part.
+  var start: i32 = p;
+  var v: f64 = 0.0;
+  var saw_digit: boolean = false;
+  while (p < s.len() && s[p].is_digit()) {
+    v = v * 10.0 + (s[p] - 48) as f64;
+    saw_digit = true;
+    p = p + 1;
+  }
+  if (p < s.len() && s[p] == 46) {
+    // '.'
+    p = p + 1;
+    var scale: f64 = 0.1;
+    while (p < s.len() && s[p].is_digit()) {
+      v = v + (s[p] - 48) as f64 * scale;
+      scale = scale / 10.0;
+      saw_digit = true;
+      p = p + 1;
+    }
+  }
+  if (!saw_digit) {
+    return fail(start);
+  }
+  return Eval { val: v, pos: p, ok: true };
+}
+
+// unary := ('+' | '-') unary | primary
+function parse_unary(s: string, pos: i32): Eval {
+  var p: i32 = skip_ws(s, pos);
+  if (p < s.len() && s[p] == 45) {
+    // '-'
+    var e: Eval = parse_unary(s, p + 1);
+    if (!e.ok) {
+      return e;
+    }
+    return Eval { val: 0.0 - e.val, pos: e.pos, ok: true };
+  }
+  if (p < s.len() && s[p] == 43) {
+    // '+'
+    return parse_unary(s, p + 1);
+  }
+  return parse_primary(s, p);
+}
+
+// power := unary ('^' power)?   (right-associative, integer exponent)
+function parse_power(s: string, pos: i32): Eval {
+  var base: Eval = parse_unary(s, pos);
+  if (!base.ok) {
+    return base;
+  }
+  var p: i32 = skip_ws(s, base.pos);
+  if (p < s.len() && s[p] == 94) {
+    // '^'
+    var exp: Eval = parse_power(s, p + 1);
+    if (!exp.ok) {
+      return exp;
+    }
+    // bc truncates the exponent to an integer.
+    var n: i32 = exp.val as i32;
+    var result: f64 = 1.0;
+    var b: f64 = base.val;
+    var k: i32 = n;
+    if (k < 0) {
+      k = 0 - k;
+    }
+    var i: i32 = 0;
+    while (i < k) {
+      result = result * b;
+      i = i + 1;
+    }
+    if (n < 0) {
+      result = 1.0 / result;
+    }
+    return Eval { val: result, pos: exp.pos, ok: true };
+  }
+  return base;
+}
+
+// term := power (('*' | '/' | '%') power)*
+function parse_term(s: string, pos: i32): Eval {
+  var left: Eval = parse_power(s, pos);
+  if (!left.ok) {
+    return left;
+  }
+  var acc: f64 = left.val;
+  var p: i32 = left.pos;
+  while (true) {
+    var q: i32 = skip_ws(s, p);
+    if (q >= s.len()) {
+      break;
+    }
+    var op: i32 = s[q];
+    if (op != 42 && op != 47 && op != 37) {
+      break;  // * / %
+    }
+    var rhs: Eval = parse_power(s, q + 1);
+    if (!rhs.ok) {
+      return rhs;
+    }
+    if (op == 42) {
+      acc = acc * rhs.val;
+    } else if (op == 47) {
+      if (rhs.val == 0.0) {
+        return fail(q);
+      }
+      acc = acc / rhs.val;
+    } else {
+      if (rhs.val == 0.0) {
+        return fail(q);
+      }
+      // a % b = a - trunc(a / b) * b
+      var t: f64 = (acc / rhs.val).trunc();
+      acc = acc - t * rhs.val;
+    }
+    p = rhs.pos;
+  }
+  return Eval { val: acc, pos: p, ok: true };
+}
+
+// expr := term (('+' | '-') term)*
+function parse_expr(s: string, pos: i32): Eval {
+  var left: Eval = parse_term(s, pos);
+  if (!left.ok) {
+    return left;
+  }
+  var acc: f64 = left.val;
+  var p: i32 = left.pos;
+  while (true) {
+    var q: i32 = skip_ws(s, p);
+    if (q >= s.len()) {
+      break;
+    }
+    var op: i32 = s[q];
+    if (op != 43 && op != 45) {
+      break;  // + -
+    }
+    var rhs: Eval = parse_term(s, q + 1);
+    if (!rhs.ok) {
+      return rhs;
+    }
+    if (op == 43) {
+      acc = acc + rhs.val;
+    } else {
+      acc = acc - rhs.val;
+    }
+    p = rhs.pos;
+  }
+  return Eval { val: acc, pos: p, ok: true };
+}
+
+// Render an f64 result: integral values print without a fractional
+// part (bc with scale 0); otherwise fall back to the float printer.
+function format_result(v: f64): string {
+  var t: f64 = v.trunc();
+  if (t == v && v < 9e+15 && v > 0.0 - 9e+15) {
+    return (v as i64).to_string();
+  }
+  return v.to_string();
+}
+
+function eval_line(line: string): boolean {
+  var t: string = line.trim();
+  if (t.is_empty()) {
+    return true;
+  }
+  var e: Eval = parse_expr(t, 0);
+  var end: i32 = skip_ws(t, e.pos);
+  if (!e.ok || end != t.len()) {
+    // A `fail` can come from a syntax error or a division by zero —
+    // both surface here as an invalid expression.
+    eprint("bc: invalid expression: " + line);
+    return false;
+  }
+  print(format_result(e.val));
+  return true;
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var ok: boolean = true;
+
+  // Expressions given as command-line operands are each evaluated.
+  if (argv.len() > 1) {
+    var i: i32 = 1;
+    while (i < argv.len()) {
+      if (!eval_line(argv[i])) {
+        ok = false;
+      }
+      i = i + 1;
+    }
+    if (ok) {
+      return 0;
+    }
+    return 1;
+  }
+
+  // Otherwise read expressions from stdin, one per line.
+  var lines: string[] = io.read_all_stdin().lines();
+  var j: i32 = 0;
+  while (j < lines.len()) {
+    if (!eval_line(lines[j])) {
+      ok = false;
+    }
+    j = j + 1;
+  }
+  if (ok) {
+    return 0;
+  }
+  return 1;
+}

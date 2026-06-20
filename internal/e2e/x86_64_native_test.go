@@ -109,11 +109,11 @@ func TestX86_64NativeStrings(t *testing.T) {
 		src  string
 		want string
 	}{
-		{`import "core/no_prelude";
+		{`
 function main(): i32 { print("Hello, world!"); return 0; }`, "Hello, world!\n"},
-		{`import "core/no_prelude";
+		{`
 function main(): i32 { print("one"); print("two"); return 0; }`, "one\ntwo\n"},
-		{`import "core/no_prelude";
+		{`
 import "std/string";
 function main(): i32 {
   var a: string = "foo";
@@ -156,7 +156,7 @@ function main(): i32 { return apply(dbl, 21); }`, 42},
 // Maps exercise heap allocation, hashing, base+index addressing, and
 // Option-returning get via match.
 func TestX86_64NativeMap(t *testing.T) {
-	src := `import "core/no_prelude";
+	src := `
 import "core/map";
 function main(): i32 {
   var m: Map[i32, i32] = map_new(8);
@@ -175,6 +175,33 @@ function main(): i32 {
 	}
 }
 
+// Issue #2763: a value-type struct with a Map field, reconstructed
+// through a method (`return IntSet { m: s.m.insert(...) }`), used to
+// SIGSEGV on x86-64 (and corrupt on arm64) — the COW mutator returns the
+// borrowed receiver's handle in place, so the new struct aliased the
+// caller's map and dropping the old struct freed it out from under the
+// new one. The StructLit lowering now clones a Map field initialised by a
+// COW mutator result, giving the new container its own buffer. main()
+// returns the set size (2), which doubles as a no-crash check.
+func TestX86_64NativeMapFieldStructRebind(t *testing.T) {
+	src := `
+import "core/map";
+struct IntSet { m: Map[i32, i32] }
+function (s: IntSet) insert(x: i32): IntSet { return IntSet { m: s.m.insert(x, 1) }; }
+function (s: IntSet) len(): i32 { return s.m.len(); }
+function main(): i32 {
+    var m0: Map[i32, i32] = map_new(4);
+    var s: IntSet = IntSet { m: m0 };
+    s = s.insert(10);
+    s = s.insert(20);
+    s = s.insert(10);   // duplicate — set size stays 2
+    return s.len();
+}`
+	if _, code := compileAndRunX86Native(t, src); code != 2 {
+		t.Errorf("IntSet rebind → exit = %d, want 2 (issue #2763)", code)
+	}
+}
+
 // SSE scalar f64: arithmetic (movq GPR<->xmm, mulsd/addsd/subsd/divsd),
 // ordered compare (ucomisd), and int<->float conversion (cvtsi2sd /
 // cvttsd2si via the `as` casts).
@@ -183,22 +210,22 @@ func TestX86_64NativeFloat(t *testing.T) {
 		src  string
 		want int
 	}{
-		{`import "core/no_prelude";
+		{`
 function main(): i32 {
   var a: f64 = 3.0; var b: f64 = 4.0;
   return ((a * a + b * b) as i32);
 }`, 25},
-		{`import "core/no_prelude";
+		{`
 function main(): i32 {
   var a: f64 = 10.0; var b: f64 = 4.0;
   return ((a - b) as i32);
 }`, 6},
-		{`import "core/no_prelude";
+		{`
 function main(): i32 {
   var a: f64 = 84.0; var b: f64 = 2.0;
   return ((a / b) as i32);
 }`, 42},
-		{`import "core/no_prelude";
+		{`
 function main(): i32 {
   var a: f64 = 1.5; var b: f64 = 2.5;
   if (a < b) { return 7; }

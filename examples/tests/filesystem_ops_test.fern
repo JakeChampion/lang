@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/sort";
 import "std/test";
 // examples/tests/filesystem_ops_test.fern — exercises the
@@ -8,32 +7,32 @@ import "std/test";
 // fixture tree, walk it, point a subprocess at it, then
 // scrub everything at the end of the run.
 
-function test_temp_dir_returns_abs_path(): Option[string] {
+function test_temp_dir_returns_abs_path(): test.TestOutcome {
     match (temp_dir("fs-ops")) {
         Ok(dir) => {
             // Best-effort absolute-path check: every supported
             // OS roots its temp dir under `/`. (Windows isn't
-            // a Lang target; on POSIX-likes the prefix holds.)
+            // a Fern target; on POSIX-likes the prefix holds.)
             var ok: boolean = dir.starts_with("/") || dir.starts_with("\\");
             // Don't leak: remove the directory we just made.
             match (remove_dir_all(dir)) { None => { }, Some(_) => { } }
-            if (ok) { return None; }
-            return Some("temp_dir returned non-absolute path \"" + dir + "\"");
+            if (ok) { return test.pass(); }
+            return test.fail("temp_dir returned non-absolute path \"" + dir + "\"");
         },
-        Err(_) => { return Some("temp_dir returned Err"); }
+        Err(_) => { return test.fail("temp_dir returned Err"); }
     }
-    return None;
+    return test.pass();
 }
 
-function test_read_dir_lists_what_we_wrote(): Option[string] {
+function test_read_dir_lists_what_we_wrote(): test.TestOutcome {
     match (temp_dir("readdir-fixture")) {
         Ok(dir) => {
             // Write three files, then list. Sort the output so
             // the comparison is order-independent (read_dir
             // promises only the set of names, not the order).
-            match (write_file(dir + "/a.txt", "a")) { None => {}, Some(_) => { return Some("write a failed"); } }
-            match (write_file(dir + "/b.txt", "b")) { None => {}, Some(_) => { return Some("write b failed"); } }
-            match (write_file(dir + "/c.txt", "c")) { None => {}, Some(_) => { return Some("write c failed"); } }
+            match (write_file(dir + "/a.txt", "a")) { None => {}, Some(_) => { return test.fail("write a failed"); } }
+            match (write_file(dir + "/b.txt", "b")) { None => {}, Some(_) => { return test.fail("write b failed"); } }
+            match (write_file(dir + "/c.txt", "c")) { None => {}, Some(_) => { return test.fail("write c failed"); } }
             match (read_dir(dir)) {
                 Ok(names) => {
                     var sorted: string[] = sort.sort_strings_asc(names);
@@ -42,25 +41,25 @@ function test_read_dir_lists_what_we_wrote(): Option[string] {
                 },
                 Err(_) => {
                     match (remove_dir_all(dir)) { None => {}, Some(_) => {} }
-                    return Some("read_dir returned Err");
+                    return test.fail("read_dir returned Err");
                 }
             }
         },
-        Err(_) => { return Some("temp_dir setup failed"); }
+        Err(_) => { return test.fail("temp_dir setup failed"); }
     }
-    return None;
+    return test.pass();
 }
 
-function test_remove_file_removes_a_single_file(): Option[string] {
+function test_remove_file_removes_a_single_file(): test.TestOutcome {
     match (temp_dir("rmfile-fixture")) {
         Ok(dir) => {
             var keep: string = dir + "/keep.txt";
             var doomed: string = dir + "/doomed.txt";
-            match (write_file(keep, "keep")) { None => {}, Some(_) => { return Some("write keep failed"); } }
-            match (write_file(doomed, "doomed")) { None => {}, Some(_) => { return Some("write doomed failed"); } }
+            match (write_file(keep, "keep")) { None => {}, Some(_) => { return test.fail("write keep failed"); } }
+            match (write_file(doomed, "doomed")) { None => {}, Some(_) => { return test.fail("write doomed failed"); } }
             match (remove_file(doomed)) { None => {}, Some(_) => {
                 match (remove_dir_all(dir)) { None => {}, Some(_) => {} }
-                return Some("remove_file returned Err");
+                return test.fail("remove_file returned Err");
             } }
             // After the targeted unlink, only keep.txt is left.
             match (read_dir(dir)) {
@@ -70,35 +69,35 @@ function test_remove_file_removes_a_single_file(): Option[string] {
                 },
                 Err(_) => {
                     match (remove_dir_all(dir)) { None => {}, Some(_) => {} }
-                    return Some("post-rm read_dir failed");
+                    return test.fail("post-rm read_dir failed");
                 }
             }
         },
-        Err(_) => { return Some("temp_dir setup failed"); }
+        Err(_) => { return test.fail("temp_dir setup failed"); }
     }
-    return None;
+    return test.pass();
 }
 
-function test_remove_file_on_missing_target_is_an_error(): Option[string] {
+function test_remove_file_on_missing_target_is_an_error(): test.TestOutcome {
     // Match Go's `os.Remove` semantics: removing a path that
     // doesn't exist returns an error. Callers that don't care
     // about that distinction should ignore the return value.
     match (remove_file("/tmp/lang-this-file-definitely-does-not-exist-83274")) {
-        None => { return Some("expected error on missing target, got None"); },
-        Some(_) => { return None; }
+        None => { return test.fail("expected error on missing target, got None"); },
+        Some(_) => { return test.pass(); }
     }
-    return None;
+    return test.pass();
 }
 
-function test_remove_dir_all_silently_ok_on_missing_target(): Option[string] {
+function test_remove_dir_all_silently_ok_on_missing_target(): test.TestOutcome {
     // Mirrors Go's `os.RemoveAll`: missing target is fine —
     // the postcondition (path does not exist) is already
     // satisfied.
     match (remove_dir_all("/tmp/lang-this-dir-definitely-does-not-exist-83274")) {
-        None => { return None; },
-        Some(_) => { return Some("expected None on missing target, got Err"); }
+        None => { return test.pass(); },
+        Some(_) => { return test.fail("expected None on missing target, got Err"); }
     }
-    return None;
+    return test.pass();
 }
 
 function main(): i32 {

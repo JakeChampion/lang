@@ -1,0 +1,67 @@
+// std/result — combinators for the built-in `Result[T, E]` enum.
+//
+// `Result[T, E]` (`Ok(T)` / `Err(E)`) is available everywhere without
+// an import; these methods are not — `import "std/result";` to use
+// them. Like std/option, each is an ordinary generic method (a small
+// `match`), enabled by the generic-methods support (#2692).
+//
+//   var parsed: Result[Config, string] = Config::from_json(body);
+//   var cfg: Config = parsed.unwrap_or(default_config());
+//
+// NOTE: callback combinators invoke their function through an indirect
+// call. Composite callback parameter / return types (struct, enum,
+// `Option` / `Result`) work on every backend; a two-word `string`
+// callback parameter / return is still limited at the indirect-call
+// seam (#2753), so keep `string`-typed callbacks out of these for now.
+// Non-callback combinators work for every type on every backend.
+
+import "core/cmp";
+
+// is_ok reports whether the result is `Ok`.
+pub function (r: Result[T, E]) is_ok(): boolean {
+    match (r) { Ok(x) => { return true; }, Err(e) => { return false; } }
+}
+
+// is_err reports whether the result is `Err`.
+pub function (r: Result[T, E]) is_err(): boolean {
+    match (r) { Ok(x) => { return false; }, Err(e) => { return true; } }
+}
+
+// unwrap_or returns the `Ok` value, or `fallback` on `Err`.
+pub function (r: Result[T, E]) unwrap_or(fallback: T): T {
+    match (r) { Ok(x) => { return x; }, Err(e) => { return fallback; } }
+}
+
+// unwrap_or_else returns the `Ok` value, or computes a fallback from
+// the error.
+pub function (r: Result[T, E]) unwrap_or_else(f: (E) => T): T {
+    match (r) { Ok(x) => { return x; }, Err(e) => { return f(e); } }
+}
+
+// map transforms the `Ok` value, leaving an `Err` untouched.
+pub function (r: Result[T, E]) map[U](f: (T) => U): Result[U, E] {
+    match (r) { Ok(x) => { return Ok(f(x)); }, Err(e) => { return Err(e); } }
+}
+
+// and_then chains a result-returning function on the `Ok` value
+// (flat-map / `?`-style), short-circuiting on `Err`.
+pub function (r: Result[T, E]) and_then[U](f: (T) => Result[U, E]): Result[U, E] {
+    match (r) { Ok(x) => { return f(x); }, Err(e) => { return Err(e); } }
+}
+
+// map_err transforms the `Err` value, leaving an `Ok` untouched.
+pub function (r: Result[T, E]) map_err[F](f: (E) => F): Result[T, F] {
+    match (r) { Ok(x) => { return Ok(x); }, Err(e) => { return Err(f(e)); } }
+}
+
+// ok converts to an `Option`, discarding the error: `Ok(v)` ->
+// `Some(v)`, `Err(_)` -> `None`.
+pub function (r: Result[T, E]) ok(): Option[T] {
+    match (r) { Ok(x) => { return Some(x); }, Err(e) => { return None; } }
+}
+
+// err converts to an `Option` of the error: `Err(e)` -> `Some(e)`,
+// `Ok(_)` -> `None`.
+pub function (r: Result[T, E]) err(): Option[E] {
+    match (r) { Ok(x) => { return None; }, Err(e) => { return Some(e); } }
+}

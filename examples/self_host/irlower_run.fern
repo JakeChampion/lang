@@ -1,0 +1,46 @@
+// examples/self_host/irlower_run.fern — driver for the AST -> stack-IR
+// lowering (irlower.fern). Reads a program on stdin, lowers the whole module
+// to the stack IR (irlower.lower_module), evaluates `main` with the IR
+// interpreter (which dispatches direct calls across the module), and returns
+// the result as the process exit code — end-to-end proof that AST -> IR ->
+// eval preserves the program's value, now including multi-function programs
+// and recursion. With `-dump`, prints `main`'s lowered op stream instead.
+// A `main` outside the lowered subset makes lowering bail -> exit 200.
+
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./ir";
+import "./irlower";
+
+function main(): i32 {
+    var av: string[] = args();
+    var want_dump: boolean = false;
+    var ai: i32 = 1;
+    while (ai < av.len()) {
+        if (av[ai] == "-dump") { want_dump = true; }
+        ai = ai + 1;
+    }
+
+    var src: string = io.read_all_stdin();
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var fns: irlower.LoweredFn[] = irlower.lower_module(mod.funcs, mod.structs);
+
+    var mi: i32 = irlower.find_fn(fns, "main");
+    if (mi < 0) { return 201; }
+    var mainfn: irlower.LoweredFn = fns[mi];
+    if (!mainfn.ok) { return 200; }
+
+    if (want_dump) {
+        var out: string = "";
+        var k: i32 = 0;
+        while (k < mainfn.ops.len()) {
+            if (k > 0) { out = out + "\n"; }
+            out = out + ir.render_op(mainfn.ops[k]);
+            k = k + 1;
+        }
+        print(out);
+        return mainfn.ops.len();
+    }
+    return irlower.eval_program(fns);
+}

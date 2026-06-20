@@ -97,8 +97,63 @@ func (a *Assembler) emit32(v uint32) {
 
 // AssembleProgram assembles the Intel-syntax program text into .text and
 // .rodata blobs. textVAddr is where .text will be loaded (used to resolve
-// branch targets); pass elf.TextVAddr.
+// branch targets); pass elf.TextVAddr. .rodata is laid contiguously after
+// .text (8-byte aligned), matching the single-segment R+W+X image
+// (elf.StaticExecutableDataX86).
 func AssembleProgram(src string, textVAddr uint64) (text, rodata []byte, err error) {
+	text, rodata, _, err = assembleProgram(src, textVAddr, false, false, nil)
+	return text, rodata, err
+}
+
+// AssembleProgramWX is AssembleProgram for the W^X two-segment ELF layout
+// (elf.StaticExecutableDataX86WX): .rodata is page-aligned into a separate
+// R+W segment instead of laid contiguously after .text, so the code
+// segment can be mapped R+X. Pass elf.TextVAddrWX as textVAddr.
+func AssembleProgramWX(src string, textVAddr uint64) (text, rodata []byte, err error) {
+	text, rodata, _, err = assembleProgram(src, textVAddr, true, false, nil)
+	return text, rodata, err
+}
+
+// Reloc is one R_X86_64_RELATIVE entry: at load time `*(base + Offset) =
+// base + Addend`. Both fields are relative to a load base of 0, matching
+// the ET_DYN image elf.StaticPieExecutableX86 produces. Mirrors
+// arm64.Reloc; callers map them onto elf.Reloc.
+type Reloc struct {
+	Offset uint64
+	Addend uint64
+}
+
+// AssembleProgramPIE is AssembleProgram for a static position-independent
+// executable (elf.StaticPieExecutableX86): the W^X layout laid out from a
+// load base of 0, returning the R_X86_64_RELATIVE relocations for the
+// `.quad <symbol>` slots. rip-relative code is base-independent and needs
+// no relocation. Pass elf.TextVAddrPIE as textVAddr.
+func AssembleProgramPIE(src string, textVAddr uint64) (text, rodata []byte, relocs []Reloc, err error) {
+	return assembleProgram(src, textVAddr, true, true, nil)
+}
+
+// AssembleProgramShared assembles for a shared object (.so): the same
+// base-0 PIE layout, but it also resolves each `.text` label in
+// exportNames to its load-base-relative virtual address (textVAddr +
+// offset) and returns them in exportVAddr — the addresses elf.SharedLibrary
+// records in .dynsym so a dynamic loader can resolve the exports. Pass
+// elf.TextVAddrPIE as textVAddr.
+func AssembleProgramShared(src string, textVAddr uint64, exportNames []string) (text, rodata []byte, relocs []Reloc, exportVAddr map[string]uint64, err error) {
+	exportVAddr = map[string]uint64{}
+	for _, n := range exportNames {
+		exportVAddr[n] = 0 // marker: resolve this label
+	}
+	text, rodata, relocs, err = assembleProgram(src, textVAddr, true, true, exportVAddr)
+	return text, rodata, relocs, exportVAddr, err
+}
+
+// assembleProgram is the shared body of AssembleProgram (wx=false,
+// contiguous .rodata), AssembleProgramWX (wx=true, page-aligned .rodata in
+// a separate R+W segment), and AssembleProgramPIE (pie=true: page-aligned,
+// base-0 layout, returning .quad-slot relocations). When exportVAddr is
+// non-nil, each key is resolved to textVAddr + its .text-label offset (for
+// AssembleProgramShared).
+func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map[string]uint64) (text, rodata []byte, relocs []Reloc, err error) {
 	a := newAssembler()
 	sec := "text"
 	for lineno, raw := range strings.Split(src, "\n") {
@@ -123,45 +178,78 @@ func AssembleProgram(src string, textVAddr uint64) (text, rodata []byte, err err
 		if strings.HasPrefix(line, ".") {
 			sec, err = a.directive(line, sec)
 			if err != nil {
-				return nil, nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), err)
+				return nil, nil, nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), err)
 			}
 			continue
 		}
 		if sec != "text" {
-			return nil, nil, fmt.Errorf("line %d: %q: instruction outside .text", lineno+1, strings.TrimSpace(raw))
+			return nil, nil, nil, fmt.Errorf("line %d: %q: instruction outside .text", lineno+1, strings.TrimSpace(raw))
 		}
 		if err := a.insn(line); err != nil {
-			return nil, nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), err)
+			return nil, nil, nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), err)
 		}
 	}
 	// Resolve rel32 branch/call targets now that all labels are placed.
 	for _, f := range a.relFixups {
 		dst, ok := a.textLabels[f.sym]
 		if !ok {
-			return nil, nil, fmt.Errorf("undefined label %q", f.sym)
+			return nil, nil, nil, fmt.Errorf("undefined label %q", f.sym)
 		}
 		rel := int32(dst - (f.at + 4))
 		putLE32(a.text, f.at, uint32(rel))
 	}
-	// Resolve rip-relative data references. StaticExecutableDataX86 pads
-	// .text to 8 bytes and appends .rodata, so .rodata begins at
-	// align8(len(text)) within the segment; the textVAddr base cancels
-	// in (symVAddr - ripEnd), leaving a layout-only computation.
+	// Resolve rip-relative data references. In the single-segment image
+	// StaticExecutableDataX86 pads .text to 8 bytes and appends .rodata,
+	// so .rodata begins at align8(len(text)) within the segment. In the
+	// W^X / PIE images .rodata moves to the first 16 KiB page boundary past
+	// .text (a separate R+W segment), so its segment-relative base is
+	// pageUp(textVAddr+len(text)) - textVAddr. Either way rodataBase is the
+	// data blob's offset from textVAddr, so the textVAddr base still cancels
+	// in (symVAddr - ripEnd).
 	rodataBase := align8(len(a.text))
+	if wx || pie {
+		const page = 0x10000 // must match elf.pageAlign
+		rodataBase = int((textVAddr+uint64(len(a.text))+page-1)&^(page-1) - textVAddr)
+	}
+	rodataVAddr := textVAddr + uint64(rodataBase)
+
+	// PIE self-relocation symbols the prologue references via [rip+sym].
+	// Their base-relative vaddrs MUST match where elf.StaticPieExecutableX86
+	// lays the bytes: .rela.dyn is 8-aligned after the data blob, one
+	// Elf64_Rela (24 bytes) per `.quad` slot; __ehdr_start is the ELF header
+	// at vaddr 0 (so [rip+__ehdr_start] yields the runtime load base).
+	var pieSyms map[string]uint64
+	if pie {
+		relaStart := rodataVAddr + uint64(len(a.rodata))
+		if rem := relaStart % 8; rem != 0 {
+			relaStart += 8 - rem
+		}
+		pieSyms = map[string]uint64{
+			"__ehdr_start": 0,
+			"__rela_start": relaStart,
+			"__rela_end":   relaStart + uint64(len(a.quadSyms))*24,
+		}
+	}
+
 	for _, f := range a.ripFixups {
 		var symOff int
-		if off, ok := a.rodataLabels[f.sym]; ok {
+		if v, ok := pieSyms[f.sym]; ok {
+			// Synthetic base-relative symbol: its offset from .text is
+			// (vaddr - textVAddr), so [rip+sym] resolves to base + vaddr.
+			symOff = int(v) - int(textVAddr)
+		} else if off, ok := a.rodataLabels[f.sym]; ok {
 			symOff = rodataBase + off
 		} else if off, ok := a.textLabels[f.sym]; ok {
 			symOff = off // text symbol: a function address (e.g. a closure body)
 		} else {
-			return nil, nil, fmt.Errorf("undefined rip-relative symbol %q", f.sym)
+			return nil, nil, nil, fmt.Errorf("undefined rip-relative symbol %q", f.sym)
 		}
 		disp := int32(symOff - (f.at + 4))
 		putLE32(a.text, f.at, uint32(disp))
 	}
-	// Fill ".quad <symbol>" pointer-table slots with absolute addresses.
-	rodataVAddr := textVAddr + uint64(rodataBase)
+	// Fill ".quad <symbol>" pointer-table slots. In a PIE these values are
+	// base-relative (textVAddr/rodataVAddr are laid out from base 0) and the
+	// slot also gets an R_X86_64_RELATIVE entry so the loader adds the base.
 	for _, f := range a.quadSyms {
 		var abs uint64
 		if off, ok := a.textLabels[f.sym]; ok {
@@ -169,13 +257,24 @@ func AssembleProgram(src string, textVAddr uint64) (text, rodata []byte, err err
 		} else if off, ok := a.rodataLabels[f.sym]; ok {
 			abs = rodataVAddr + uint64(off)
 		} else {
-			return nil, nil, fmt.Errorf("undefined .quad symbol %q", f.sym)
+			return nil, nil, nil, fmt.Errorf("undefined .quad symbol %q", f.sym)
 		}
 		for i := 0; i < 8; i++ {
 			a.rodata[f.at+i] = byte(abs >> (8 * i))
 		}
+		if pie {
+			relocs = append(relocs, Reloc{Offset: rodataVAddr + uint64(f.at), Addend: abs})
+		}
 	}
-	return a.text, a.rodata, nil
+	// Resolve requested export symbols to their load-base-relative vaddrs.
+	for name := range exportVAddr {
+		off, ok := a.textLabels[name]
+		if !ok {
+			return nil, nil, nil, fmt.Errorf("export %q is not a defined .text symbol", name)
+		}
+		exportVAddr[name] = textVAddr + uint64(off)
+	}
+	return a.text, a.rodata, relocs, nil
 }
 
 func putLE32(b []byte, at int, v uint32) {
@@ -319,6 +418,10 @@ func (a *Assembler) insn(line string) error {
 		return a.test(ops)
 	case "imul":
 		return a.imul(ops)
+	case "bsr":
+		return a.bitscan(ops, 0xBD)
+	case "bsf":
+		return a.bitscan(ops, 0xBC)
 	case "idiv":
 		return a.unaryF7(ops, 7)
 	case "div":
@@ -737,6 +840,34 @@ func (a *Assembler) imul(ops []operand) error {
 		return nil
 	}
 	return fmt.Errorf("unsupported imul form")
+}
+
+// bitscan encodes "bsr reg, r/m" (op 0xBD) / "bsf reg, r/m" (op 0xBC):
+// REX.W? 0F <op> /r, dst = reg, src = r/m. Same shape as the two-operand
+// imul, differing only in the second opcode byte.
+func (a *Assembler) bitscan(ops []operand, op byte) error {
+	if len(ops) != 2 || ops[0].kind != opReg {
+		return fmt.Errorf("bsr/bsf expects reg, r/m")
+	}
+	dst := ops[0]
+	w := dst.size == 64
+	if ops[1].kind == opReg {
+		if rex := rexFor(w, dst.reg, ops[1].reg, false); rex != 0 {
+			a.emit(rex)
+		}
+		a.emit(0x0F, op)
+		a.emit(modrmReg(dst.reg, ops[1].reg))
+		return nil
+	}
+	if ops[1].kind == opMem {
+		if rex := memRex(w, dst.reg, ops[1], false); rex != 0 {
+			a.emit(rex)
+		}
+		a.emit(0x0F, op)
+		a.encodeMem(dst.reg, ops[1])
+		return nil
+	}
+	return fmt.Errorf("unsupported bsr/bsf form")
 }
 
 // imul3 encodes the three-operand "imul reg, r/m, imm" (multiply by a

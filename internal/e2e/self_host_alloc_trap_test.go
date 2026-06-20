@@ -9,11 +9,16 @@ import (
 
 // allocTrapSrc allocates without bound (string concat reallocates the
 // whole string each iteration, so cumulative allocation grows
-// quadratically and blows past the 1 GiB bump heap). The self-host's
+// quadratically and blows past the 2.5 GiB bump heap). The self-host's
 // __fern_alloc bounds check must trap with a clean, recognisable exit
 // code (137) rather than silently running past the heap into adjacent
 // .bss (the strbuf output accumulator) and corrupting it.
-const allocTrapSrc = "function main(): i32 { var s: string = \"\"; var i: i32 = 0; while (i < 60000) { s = s + \"x\"; i = i + 1; } return s.len(); }"
+//
+// 100000 iterations is ~4.66 GiB cumulative (n²/2), robustly past the
+// 2.5 GiB heap (and any heap ≤ 4 GiB) so it traps mid-loop on every
+// backend. (60000 ≈ 1.80 GiB was marginally UNDER the older 1.75 GiB heap,
+// so the program completed and returned 60000 → exit 96 instead of trapping.)
+const allocTrapSrc = "function main(): i32 { var s: string = \"\"; var i: i32 = 0; while (i < 100000) { s = s + \"x\"; i = i + 1; } return s.len(); }"
 
 // TestSelfHostAllocTrapX86_64 — heap-overflow trap, self-hosted x86-64.
 func TestSelfHostAllocTrapX86_64(t *testing.T) {
@@ -50,7 +55,7 @@ func TestSelfHostAllocTrapArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "asmcore.fern", "lexer.fern", "parser.fern", "asm_arm64.fern", "asm_arm64_run.fern"} {
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm_arm64_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

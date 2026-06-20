@@ -358,10 +358,17 @@ Deferred to a follow-up:
   `Pair[i32, string] { … }`). Needs lookahead to
   disambiguate from `arr[i]`. Inference covers the
   ergonomic baseline.
-- Generic constraints (`T: Eq`, `T: Hash`). Probably never —
-  the lang doesn't have a trait system; users pass functions
-  explicitly when they need polymorphism beyond what's
-  captured by the type variable alone (Gleam's posture).
+- ~~Generic constraints (`T: Eq`, `T: Hash`). Probably never —
+  the Fern doesn't have a trait system.~~ **Reversed — shipped.**
+  Fern now has a real trait system (`trait` / `impl Trait for
+  Type`, nominal, statically dispatched via monomorphisation;
+  see `docs/TRAITS.md`). Bounded generics `[T: Display + Eq]`
+  are in (`FuncDecl.Bounds`), `core/cmp.fern` defines
+  `Display` / `Eq` / `Ord`, and `@derive(Eq | Ord | Display)`
+  synthesizes the methods. Explicit type args at call sites
+  are still deferred (`E040`); inference covers the baseline.
+  Users can still pass functions explicitly (Gleam's posture)
+  where a trait would be overkill.
 
 ### PR 4 — Built-in `Map<K, V>` + ergonomics layer
 
@@ -465,17 +472,17 @@ Deferred to a follow-up:
     entries, follows each cell pointer, and `__memcpy`s the
     8 payload bytes into a real wide-stride `i64[]` / `f64[]`
     result; narrow V falls through to the existing
-    `__map_values_impl` lang-prelude function.
+    `__map_values_impl` Fern-prelude function.
     Trade-off: one extra alloc per insert + one extra
     indirection per read; acceptable under the bump
     allocator's per-arena reset and avoids a
     per-instantiation monomorph of the entire 1200-line
     map runtime. The longer-term direction is to migrate
-    the map runtime itself to the lang prelude (matching
+    the map runtime itself to the Fern prelude (matching
     the json / url / parse_int trajectory) so the IR's
     Width-aware Store / Load picks the right ops without
     boxing — that requires a few prelude primitives the
-    lang doesn't yet expose (raw byte-buffer alloc, manual
+    Fern doesn't yet expose (raw byte-buffer alloc, manual
     byte-stride pokes for the bucket / entries arrays),
     so the boxing shape ships first.
   - Wide K (i64 / u64 / f64 keys) is still deferred —
@@ -555,6 +562,22 @@ Deferred to a follow-up:
 
 ### PR 5 — Memory model first-class
 
+> **⚠️ Superseded (2026-06-01): arenas were removed.** The
+> `arena { … }` block, `arena_save`/`arena_restore`, the implicit
+> per-handler arena, and the native two-cursor allocator described
+> in this section have all been **deleted** — see
+> `docs/ARENA-DECISION.md`. Per-request / per-scope memory is now
+> reclaimed solely by **reference counting** (Perceus-style; see
+> `docs/RC-PERCEUS-PLAN.md` and `docs/OWNERSHIP-INFERENCE-PLAN.md`).
+> The text below is retained for historical context; everywhere it
+> says "arena scope," read "the value's RC lifetime." The slice
+> non-escape contract still holds, and its enforcement boundary is
+> now RC ownership, not an arena reset. As of #2677 a **static escape
+> check** (`E063`) backs the contract: returning a `[T]` slice that
+> views function-local storage is now a checker error, in both the
+> native compiler (`internal/checker` `checkSliceEscape`) and the
+> self-hosted checker (`examples/self_host/checker.fern` `slc_walk`).
+
 - **`arena { … }` block shipped.** Sugar for `arena_save() →
   body → arena_restore()` so the bump-allocator cursor snaps
   back when the block exits. Every allocation made inside
@@ -594,11 +617,12 @@ Deferred to a follow-up:
   another slice, an `T[]` array, a `string`, or any heap
   buffer the bump allocator handed out. The slice **must
   not outlive its parent's arena scope.** Concretely:
-  - A slice taken inside an `arena { ... }` block is invalid
-    after the block exits (the storage it points at was
-    reclaimed by the matching `arena_restore`). Returning
-    such a slice from the block is undefined behaviour;
-    there's no static check today, just discipline.
+  - A slice taken from a function-local array must not be
+    **returned** from the function: the backing array's last
+    owning reference drops when the frame unwinds, so the
+    returned view dangles. This is now a **static checker
+    error** (`E063`) — see "Slice escape check" below — rather
+    than the discipline-only contract it used to be.
   - A slice taken from a function-local `string` / array
     must not be returned past the caller's arena unless
     the caller's arena is the same as (or wider than) the
@@ -606,12 +630,35 @@ Deferred to a follow-up:
     arena owns everything allocated during the request, so
     slices flow freely within that scope. They become
     invalid once the handler returns and the per-request
-    arena tears down.
+    arena tears down. (String slices are a special case: `s[a:b]`
+    copies into a fresh owned `string` via `__str_slice`, so a
+    returned string slice never dangles and `E063` ignores them.)
   - The bump allocator's "everything alive at scope exit
     until the arena resets" model means the borrow-checker
     story is purely scope-based: track which arena owns the
     parent, and confine slice usage to that arena's
     lifetime.
+- **Slice escape check (`E063`) — shipped (#2677).** The
+  contract above is now enforced at check time, closing the
+  "only real safety hole" the issue tracker flagged. A
+  `return` whose value is a `[T]` slice that **provably views
+  function-local storage** — a slice of an array literal, of a
+  locally-declared owned array, or of a local slice binding
+  that itself views local storage (chased through bindings and
+  sub-slices) — is rejected. The analysis is deliberately
+  conservative: anything it can't pin down to local storage is
+  assumed safe, so there are **no false positives**. In
+  particular it leaves alone (a) string slices, which copy into
+  a fresh owned `string`; (b) slices of a parameter or receiver,
+  whose backing array the caller owns and outlives the call; and
+  (c) returning the owned array (`T[]`) itself, which is a move.
+  The rule lives in both compilers — `checkSliceEscape` in
+  `internal/checker/checker.go` and `slc_walk` /
+  `slice_escape_diags` in `examples/self_host/checker.fern` —
+  and the self-host port is held to byte-for-byte code parity
+  with the native checker by the differential gate in
+  `internal/e2e/self_host_checker_codes_test.go`. `fern explain
+  E063` prints the full rationale.
 - (The `number` deprecation alias has already been dropped
   — see PR 1's status block.)
 
@@ -803,7 +850,7 @@ to smallest. Status pending unless marked.
   in `internal/ir/ir.go`) — one block of code emits the
   alloc + memcpy + width-correct tail store for every stride
   class (1 / 2 / 4 / 8 bytes; integer + float). Earlier
-  shape used 5 nearly-identical lang-prelude functions
+  shape used 5 nearly-identical Fern-prelude functions
   (`__array_append_string` / `_i64` / `_f64` / `_u8` /
   `_u16`), 5 mangled FuncSigs, 5 codegen aliases, 5
   treeshake aliases, and a per-stride dispatch switch in the
@@ -999,9 +1046,9 @@ tests.
     embedded whitespace, and out-of-range values
     (overflow, `+`-prefixed). Internal accumulator is i64
     so the bound check against the signed-i32 range
-    (`-2^31..=2^31-1`) is exact. **Migrated to the lang
+    (`-2^31..=2^31-1`) is exact. **Migrated to the Fern
     prelude** in PR 174 — was ~190 lines of hand-written
-    wat, now ~25 lines of lang code in
+    wat, now ~25 lines of Fern code in
     `internal/prelude/prelude.fern`.
   - **`s.parse_float()` shipped.** `string` method returning
     `Option[f32]`. Grammar: `[-]<digits>[.<digits>]
@@ -1109,7 +1156,7 @@ Two flavours of stdlib helper coexist:
    call sites (`OpCallDirect "name"`); helper bodies bypass
    the IR entirely.
 
-2. **Lang prelude (IR-routed).** `internal/prelude/prelude.fern`
+2. **Fern prelude (IR-routed).** `internal/prelude/prelude.fern`
    — a small embedded source file parsed at checker startup
    and prepended to the user's program. Goes through the
    regular parser → checker → IR → codegen pipeline like any
@@ -1124,13 +1171,13 @@ Two flavours of stdlib helper coexist:
 Migration is incremental: each high-level helper moves from
 wat to prelude on its own; the runtime core stays in wat
 because the operations needed (memory.copy, memory.grow, raw
-loads/stores, hash mixing) aren't expressible at the lang
+loads/stores, hash mixing) aren't expressible at the Fern
 level today.
 
 **Performance comparison** (rough, based on the existing
 helpers):
 
-| Aspect                          | Hand-written wat   | IR-routed lang    |
+| Aspect                          | Hand-written wat   | IR-routed Fern    |
 |---------------------------------|--------------------|-------------------|
 | Tight loops (memcpy, scan, hash) | optimal           | within 10%, maybe |
 | Tiny helpers (`s.is_empty()`)    | direct one-op     | call overhead     |
@@ -1144,7 +1191,7 @@ portability**, not raw performance. For most helpers the
 generated code is comparable; for hot paths (the Map runtime,
 hash mixing, the bump allocator) hand-written wat is meaningfully
 faster because we control the exact ops without going through
-the lang's abstraction layers.
+the Fern's abstraction layers.
 
 **Migration path** (split into per-helper PRs):
 
@@ -1158,7 +1205,7 @@ the lang's abstraction layers.
    and `f32/f64` receivers — built-in scalar receivers go
    through the same hoisting + dispatch as struct / enum
    methods. First migration: `s.is_empty()` — was 11 lines
-   of hand-written wat, now 3 lines of lang.
+   of hand-written wat, now 3 lines of Fern.
 2. **Phase B: migrate higher-level stdlib.** `parse_int`,
    `parse_float`, `s.repeat`, `url_encode`, `url_decode`,
    `query_parse`, `url_parse`, `json_encode`, `json_parse`,
@@ -1182,10 +1229,10 @@ the lang's abstraction layers.
    tiny `__fern_alloc` + length-prefix sealer. Signatures
    registered in the checker so the prelude can call them
    like any builtin. Drives buffer-management code that
-   doesn't yet have a clean lang-level shape — the
+   doesn't yet have a clean Fern-level shape — the
    remaining wat string methods (`to_lower`, `to_upper`,
    `bytes`) migrated using these primitives, then the Map
-   runtime followed (~1184 wat lines → ~280 lang lines).
+   runtime followed (~1184 wat lines → ~280 Fern lines).
    The map's `__method_Map_*` calls keep their type-rich
    FuncSigs registrations (the language doesn't yet have
    generic methods on a generic struct), with a codegen
@@ -1203,11 +1250,11 @@ the lang's abstraction layers.
    no-op since an owned-array value already IS the data
    pointer (length lives at data-4). Together with the
    bulk-memory shims this is enough to express growable-
-   buffer scratch code in lang without dropping into wat.
+   buffer scratch code in Fern without dropping into wat.
 
 **Why not migrate everything at once:**
 
-- Lang is missing some primitives the prelude would want
+- Fern is missing some primitives the prelude would want
   for the most aggressive helpers: `i32 ↔ f32` bit-cast (for
   the float formatter's exponent bit pattern), `memory.copy`
   shim (for the json buffer). Add these incrementally.
@@ -1224,7 +1271,7 @@ the lang's abstraction layers.
   call overhead per use.
 - Each migration removes per-PR risk: the migrated helper is
   validated against the existing test suite (no behavior
-  change), so the wat → lang transition is observable only
+  change), so the wat → Fern transition is observable only
   in the wasm size + readability of the source, not in the
   user-visible behavior.
 
@@ -1296,7 +1343,7 @@ TigerStyle is a tight engineering culture — NASA Power of
 Ten, zero-tech-debt, statically-allocated, assertion-rich.
 Not all of it transplants to a tree-walking Go compiler, but
 the heart of it (proactive design, limits-on-everything,
-named-with-meaning) maps cleanly onto the lang's own
+named-with-meaning) maps cleanly onto the Fern's own
 runtime + the prelude. We're already accidentally Tiger-
 flavoured in several places — codifying the matches makes
 future contributors arrive at the same shape without
@@ -1326,7 +1373,7 @@ guessing.
 
 **Adopting:**
 
-- *Limits-on-everything pushed into user lang.* Add an
+- *Limits-on-everything pushed into user Fern.* Add an
   `assert(cond, "msg")` builtin that traps with a source-
   positioned message in debug builds (and elides under
   `-O`). Encourages handler authors to assert preconditions
@@ -1376,7 +1423,7 @@ guessing.
   with the per-request arena model — handler code allocates
   freely, the arena resets at request end. Cheaper and
   simpler than reserving fixed-size buffers up-front.
-- *No recursion.* Lang user code is fine with recursion
+- *No recursion.* Fern user code is fine with recursion
   (matches every modern language). The IR layer avoids
   recursion in code paths that need bounded execution (the
   tail-call optimiser exists for that), but the AST walk
@@ -1416,14 +1463,14 @@ pure function can't suspend."
 **What translates well:**
 
 - *Pending effects as a row.* Already overlap with what
-  Roc and Koka do. For lang, a return type like
+  Roc and Koka do. For Fern, a return type like
   `function handle(req): HttpResponse <io, throws[Bad
   Request]>` reads cleanly and the checker can verify
   call-site effect closure. We already track `void` vs
   result types; this is the same idea at finer
   granularity.
 - *Auto-widening pure → effectful.* No need for explicit
-  `pure(x)` wrapping. Already the lang's posture —
+  `pure(x)` wrapping. Already the Fern's posture —
   `i32` values flow through `Option`/`Result` without
   ceremony, and an effect row should follow the same
   rule: any `T` is `T <>` (empty row), widens up to any

@@ -24,8 +24,8 @@
 // pipeline is optimise (copy-prop, const-fold, CSE, DCE, branch-simplify,
 // block-merge) → regalloc (linear scan) → emit (ssa_x86 / ssa_arm64).
 
-import "core/no_prelude";
 import "./parser";
+import "./astwalk";
 import "./util";
 
 // digits_to_i32 parses a decimal literal's text (non-negative; unary minus
@@ -284,7 +284,19 @@ function type_of_expr(e: parser.Expr, s: BState): string {
             var sd: parser.StructDecl = s.structs[si];
             var f: i32 = 0;
             while (f < sd.fields.len()) {
-                if (sd.fields[f].name == fa.field) { return sd.fields[f].type_name; }
+                if (sd.fields[f].name == fa.field) {
+                    // Normalise the field's declared type the same way params
+                    // are (build_func_seeded), so a Cell / Map struct field
+                    // dispatches its .get/.set / map methods: a Cell[T] field
+                    // accessed as `s.f.get()` must read back as "cell", not the
+                    // raw "Cell[T]" (which the cell path's `urt == "cell"` check
+                    // would miss → build_func bail). Same for Map[...] fields.
+                    var ftn: string = sd.fields[f].type_name;
+                    if (ftn.len() >= 5 && ftn[0:5] == "Cell[") { return "cell"; }
+                    if (ftn.len() >= 10 && ftn[0:10] == "Map[string") { return "SMap"; }
+                    if (ftn.len() >= 3 && ftn[0:3] == "Map") { return "Map"; }
+                    return ftn;
+                }
                 f = f + 1;
             }
             return "";
@@ -554,6 +566,29 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var pa: i32[] = [sv];
                         return s.emit(SInst { kind: "print", result: s.cur_id(), args: pa, imm: fd, str: "" });
                     }
+                    // write(s) — like print but WITHOUT the trailing newline:
+                    // the driver's raw-output primitive (Fern's print == println,
+                    // so the self-hosted emitter uses `write` to stay byte-
+                    // identical to the Go-built compiler). A dedicated op →
+                    // __fern_ssa_write (fd 1, no newline); not a generic call.
+                    if (cid.name == "write" && c.args.len() == 1) {
+                        s = build_expr(c.args[0], s);
+                        if (!s.ok) { return s; }
+                        var wv: i32 = s.cur_id();
+                        s = s.fresh();
+                        var wa: i32[] = [wv];
+                        return s.emit(SInst { kind: "write", result: s.cur_id(), args: wa, imm: 0, str: "" });
+                    }
+                    // args() — the argv accessor: returns a string[] of every
+                    // command-line argument (argv[0] first). A dedicated op →
+                    // __fern_ssa_args, which materialises the SSA array
+                    // [len, strptr…] of SSA [len, byte-per-word] strings from the
+                    // argv pointer the SSA `_start` saves. wasm falls back.
+                    if (cid.name == "args" && c.args.len() == 0) {
+                        s = s.fresh();
+                        var aa: i32[] = [];
+                        return s.emit(SInst { kind: "args", result: s.cur_id(), args: aa, imm: 0, str: "" });
+                    }
                     // exit(code) — terminate the process with the given i32
                     // exit code. A dedicated op (the native backends emit the
                     // exit syscall directly), so calls_all_known doesn't bail
@@ -605,6 +640,35 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         s = s.fresh();
                         var sbta: i32[] = [];
                         return s.emit(SInst { kind: "strbuf_take", result: s.cur_id(), args: sbta, imm: 0, str: "" });
+                    }
+                    // read_file(path) / write_file(path, content) — the file-I/O
+                    // builtins (the AST backends emit inline open/read/write/close
+                    // syscall sequences). Dedicated SSA ops, each lowering to a
+                    // syscall runtime helper on x86-64 / arm64; wasm has no SSA
+                    // lowering (ssa_wasm.inst_supported rejects them → AST
+                    // fallback). Both results are heap-box pointers:
+                    // read_file → Result[string, IoError] (Ok/Err box),
+                    // write_file → Option[IoError] (None/Some box), matched via
+                    // the fixed-tag chain like Some/Ok/Err. As dedicated ops they
+                    // are not generic calls, so calls_all_known doesn't bail.
+                    if (cid.name == "read_file" && c.args.len() == 1) {
+                        s = build_expr(c.args[0], s);
+                        if (!s.ok) { return s; }
+                        var rfv: i32 = s.cur_id();
+                        s = s.fresh();
+                        var rfa: i32[] = [rfv];
+                        return s.emit(SInst { kind: "read_file", result: s.cur_id(), args: rfa, imm: 0, str: "" });
+                    }
+                    if (cid.name == "write_file" && c.args.len() == 2) {
+                        s = build_expr(c.args[0], s);
+                        if (!s.ok) { return s; }
+                        var wfp: i32 = s.cur_id();
+                        s = build_expr(c.args[1], s);
+                        if (!s.ok) { return s; }
+                        var wfc: i32 = s.cur_id();
+                        s = s.fresh();
+                        var wfa: i32[] = [wfp, wfc];
+                        return s.emit(SInst { kind: "write_file", result: s.cur_id(), args: wfa, imm: 0, str: "" });
                     }
                     // Option / Result construction: Some(x) / Ok(x) / Err(x) →
                     // a 2-word box { tag@0, payload@1 } (Some/Ok tag 0, Err
@@ -1345,8 +1409,19 @@ function synth_match_chain(arms: parser.MatchArm[], structs: parser.StructDecl[]
                 }
                 var bi: i32 = 0;
                 while (bi < arm.body.len()) { then_body = then_body.append(arm.body[bi]); bi = bi + 1; }
-                var theif: parser.Stmt = parser.StmtIf { cond: cond, then_body: then_body, else_body: chain };
-                chain = [theif];
+                if (i == arms.len() - 1) {
+                    // The textually-last variant arm is the catch-all of an
+                    // exhaustive match (Option/Result, struct-unions), so it
+                    // needs no tag check — like a wildcard (chain = body). This
+                    // also avoids an empty trailing `else`, whose dead but
+                    // reachable un-terminated fall-through would make an
+                    // all-arms-return match (e.g. `match (read_file(p)) { Ok(s)
+                    // => return …, Err(e) => return … }`) fail build_func.
+                    chain = then_body;
+                } else {
+                    var theif: parser.Stmt = parser.StmtIf { cond: cond, then_body: then_body, else_body: chain };
+                    chain = [theif];
+                }
             }
         }
         i = i - 1;
@@ -1466,9 +1541,9 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
     var bi: i32 = 0;
     while (bi < fr.body.len()) { wbody = wbody.append(fr.body[bi]); bi = bi + 1; }
 
-    var loop: parser.Stmt = parser.StmtWhile { cond: guard, body: wbody };
+    var lp: parser.Stmt = parser.StmtWhile { cond: guard, body: wbody, label: "" };
 
-    var chain: parser.Stmt[] = [decl_arr, decl_i, loop];
+    var chain: parser.Stmt[] = [decl_arr, decl_i, lp];
     return build_stmts(chain, s);
 }
 
@@ -1586,7 +1661,7 @@ function env_set_at(vals: i32[], i: i32, v: i32): i32[] {
 // tables). Arrays are reference-typed and index assignment is in place, so
 // the caller's `x = env_put(x, …)` and the mutation refer to the same array.
 function env_put(vals: i32[], i: i32, v: i32): i32[] {
-    vals[i] = v;
+    vals = vals.with(i, v);
     return vals;
 }
 
@@ -1620,15 +1695,17 @@ function index_of_i32(xs: i32[], n: i32): i32 {
 // assignment anywhere in `body` (recursing through nested if / while) —
 // these are the loop-carried variables that need a header phi.
 function collect_assigned(body: parser.Stmt[]): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < body.len()) {
-        out = collect_assigned_stmt(body[i], out);
-        i = i + 1;
-    }
-    return out;
+    // Thread the accumulator as an `own` parameter (collect_assigned_loop) so
+    // every grow + merge reclaims in place — the move-semantics threading shape
+    // (docs/RC-ARRAY-MOVE-SEMANTICS-PLAN.md). A fresh `[]` is the owned seed.
+    return collect_assigned_loop(body, [], 0);
 }
-function collect_assigned_stmt(st: parser.Stmt, out: string[]): string[] {
+function collect_assigned_loop(body: parser.Stmt[], own out: string[], i: i32): string[] {
+    if (i >= body.len()) { return out; }
+    out = collect_assigned_stmt(body[i], out);   // own-param move-and-rebind
+    return collect_assigned_loop(body, out, i + 1); // self-tail-call: O(1) stack via TCO
+}
+function collect_assigned_stmt(st: parser.Stmt, own out: string[]): string[] {
     match (st) {
         parser.StmtAssign(a) => {
             if (!contains_str(out, a.target)) { out = out.append(a.target); }
@@ -1661,7 +1738,7 @@ function collect_assigned_stmt(st: parser.Stmt, out: string[]): string[] {
         _ => { return out; }
     }
 }
-function merge_names(a: string[], b: string[]): string[] {
+function merge_names(own a: string[], b: string[]): string[] {
     var i: i32 = 0;
     while (i < b.len()) {
         if (!contains_str(a, b[i])) { a = a.append(b[i]); }
@@ -1841,149 +1918,11 @@ function build_while(w: parser.StmtWhile, s: BState): BState {
 // collect_assigned_stmt gathers reassignment targets (used to reject capturing
 // a mutated outer var — by-value-at-call would then diverge from by-value-at-
 // creation). Captures are reads that resolve to an enclosing local.
-function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
-    match (e) {
-        parser.ExprIdent(id) => { return acc.append(id.name); },
-        parser.ExprNumber(_) => { return acc; },
-        parser.ExprString(_) => { return acc; },
-        parser.ExprBool(_) => { return acc; },
-        parser.ExprBinary(b) => {
-            acc = collect_idents_expr(b.left, acc);
-            return collect_idents_expr(b.right, acc);
-        },
-        parser.ExprUnary(u) => { return collect_idents_expr(u.operand, acc); },
-        parser.ExprCall(c) => {
-            acc = collect_idents_expr(c.callee, acc);
-            var i: i32 = 0;
-            while (i < c.args.len()) { acc = collect_idents_expr(c.args[i], acc); i = i + 1; }
-            return acc;
-        },
-        parser.ExprArray(a) => {
-            var i: i32 = 0;
-            while (i < a.elements.len()) { acc = collect_idents_expr(a.elements[i], acc); i = i + 1; }
-            return acc;
-        },
-        parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { acc = collect_idents_expr(t.elements[i], acc); i = i + 1; }
-            return acc;
-        },
-        parser.ExprIndex(x) => {
-            acc = collect_idents_expr(x.array, acc);
-            return collect_idents_expr(x.index, acc);
-        },
-        parser.ExprSlice(sl) => {
-            acc = collect_idents_expr(sl.array, acc);
-            acc = collect_idents_expr(sl.start, acc);
-            return collect_idents_expr(sl.end, acc);
-        },
-        parser.ExprStructLit(sl) => {
-            if (sl.has_base) { acc = collect_idents_expr(sl.base, acc); }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { acc = collect_idents_expr(sl.field_values[i], acc); i = i + 1; }
-            return acc;
-        },
-        parser.ExprFieldAccess(fa) => { return collect_idents_expr(fa.obj, acc); },
-        parser.ExprLambda(lm) => {
-            var i: i32 = 0;
-            while (i < lm.body.len()) { acc = collect_idents_stmt(lm.body[i], acc); i = i + 1; }
-            return acc;
-        },
-        parser.ExprUnknown(_) => { return acc; }
-    }
-    return acc;
-}
+// collect_idents_expr -> astwalk.collect_idents_expr (SH-022).
 
-function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
-    match (st) {
-        parser.StmtSwitch(_) => { return collect_idents_stmt(parser.desugar_switch_in_stmt(st), acc); },
-        parser.StmtDefer(d) => { return collect_idents_stmt(d.action, acc); },
-        parser.StmtVar(v) => { return collect_idents_expr(v.init, acc); },
-        parser.StmtReturn(r) => { return collect_idents_expr(r.value, acc); },
-        parser.StmtExpr(e) => { return collect_idents_expr(e.value, acc); },
-        parser.StmtIf(i) => {
-            acc = collect_idents_expr(i.cond, acc);
-            var ti: i32 = 0;
-            while (ti < i.then_body.len()) { acc = collect_idents_stmt(i.then_body[ti], acc); ti = ti + 1; }
-            var ei: i32 = 0;
-            while (ei < i.else_body.len()) { acc = collect_idents_stmt(i.else_body[ei], acc); ei = ei + 1; }
-            return acc;
-        },
-        parser.StmtWhile(w) => {
-            acc = collect_idents_expr(w.cond, acc);
-            var i: i32 = 0;
-            while (i < w.body.len()) { acc = collect_idents_stmt(w.body[i], acc); i = i + 1; }
-            return acc;
-        },
-        parser.StmtAssign(a) => { return collect_idents_expr(a.value, acc); },
-        parser.StmtMatch(m) => {
-            acc = collect_idents_expr(m.scrutinee, acc);
-            var ai: i32 = 0;
-            while (ai < m.arms.len()) {
-                var bi: i32 = 0;
-                while (bi < m.arms[ai].body.len()) { acc = collect_idents_stmt(m.arms[ai].body[bi], acc); bi = bi + 1; }
-                ai = ai + 1;
-            }
-            return acc;
-        },
-        parser.StmtFor(f) => {
-            acc = collect_idents_expr(f.iter, acc);
-            var i: i32 = 0;
-            while (i < f.body.len()) { acc = collect_idents_stmt(f.body[i], acc); i = i + 1; }
-            return acc;
-        },
-        parser.StmtBreak(_) => { return acc; },
-        parser.StmtContinue(_) => { return acc; },
-        parser.StmtUnknown(_) => { return acc; }
-    }
-    return acc;
-}
+// collect_idents_stmt -> astwalk.collect_idents_stmt (SH-022).
 
-function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
-    match (st) {
-        parser.StmtSwitch(_) => { return collect_bound_stmt(parser.desugar_switch_in_stmt(st), acc); },
-        parser.StmtDefer(d) => { return collect_bound_stmt(d.action, acc); },
-        parser.StmtVar(v) => { return acc.append(v.name); },
-        parser.StmtReturn(_) => { return acc; },
-        parser.StmtExpr(_) => { return acc; },
-        parser.StmtIf(i) => {
-            var ti: i32 = 0;
-            while (ti < i.then_body.len()) { acc = collect_bound_stmt(i.then_body[ti], acc); ti = ti + 1; }
-            var ei: i32 = 0;
-            while (ei < i.else_body.len()) { acc = collect_bound_stmt(i.else_body[ei], acc); ei = ei + 1; }
-            return acc;
-        },
-        parser.StmtWhile(w) => {
-            var i: i32 = 0;
-            while (i < w.body.len()) { acc = collect_bound_stmt(w.body[i], acc); i = i + 1; }
-            return acc;
-        },
-        parser.StmtAssign(_) => { return acc; },
-        parser.StmtMatch(m) => {
-            var ai: i32 = 0;
-            while (ai < m.arms.len()) {
-                match (m.arms[ai].pattern) {
-                    parser.PatVariant(pv) => { if (pv.binding.len() > 0) { acc = acc.append(pv.binding); } },
-                    parser.PatWildcard(_) => { }
-                }
-                var bi: i32 = 0;
-                while (bi < m.arms[ai].body.len()) { acc = collect_bound_stmt(m.arms[ai].body[bi], acc); bi = bi + 1; }
-                ai = ai + 1;
-            }
-            return acc;
-        },
-        parser.StmtFor(f) => {
-            acc = acc.append(f.var_name);
-            var i: i32 = 0;
-            while (i < f.body.len()) { acc = collect_bound_stmt(f.body[i], acc); i = i + 1; }
-            return acc;
-        },
-        parser.StmtBreak(_) => { return acc; },
-        parser.StmtContinue(_) => { return acc; },
-        parser.StmtUnknown(_) => { return acc; }
-    }
-    return acc;
-}
+// collect_bound_stmt -> astwalk.collect_bound_stmt (SH-022).
 
 // lambda_free_caps returns the names a lambda reads that resolve to an
 // enclosing local (`locals`), minus its own params + body-bound names — its
@@ -1992,12 +1931,12 @@ function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
 function lambda_free_caps(lm: parser.ExprLambda, locals: string[]): string[] {
     var refs: string[] = [];
     var bi: i32 = 0;
-    while (bi < lm.body.len()) { refs = collect_idents_stmt(lm.body[bi], refs); bi = bi + 1; }
+    while (bi < lm.body.len()) { refs = astwalk.collect_idents_stmt(lm.body[bi], refs); bi = bi + 1; }
     var bound: string[] = [];
     var pi: i32 = 0;
     while (pi < lm.params.len()) { bound = bound.append(lm.params[pi].name); pi = pi + 1; }
     var si: i32 = 0;
-    while (si < lm.body.len()) { bound = collect_bound_stmt(lm.body[si], bound); si = si + 1; }
+    while (si < lm.body.len()) { bound = astwalk.collect_bound_stmt(lm.body[si], bound); si = si + 1; }
     var caps: string[] = [];
     var ri: i32 = 0;
     while (ri < refs.len()) {
@@ -2133,7 +2072,7 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                                 var eparams: parser.ParamDecl[] = [];
                                 var ep: i32 = 0;
                                 while (ep < lam.params.len()) { eparams = eparams.append(lam.params[ep]); ep = ep + 1; }
-                                eparams = eparams.append(parser.ParamDecl { name: "__env", type_name: "fn", own: false });
+                                eparams = eparams.append(parser.ParamDecl { name: "__env", type_name: "fn", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false });
                                 var ebody: parser.Stmt[] = [];
                                 var cj: i32 = 0;
                                 while (cj < caps.len()) {
@@ -2259,7 +2198,13 @@ pub function build_func(fd: parser.FuncDecl, structs: parser.StructDecl[], funcs
     return build_func_seeded(fd, structs, build_seed(funcs));
 }
 
-pub function build_func_seeded(fd: parser.FuncDecl, structs: parser.StructDecl[], seed: Seed): BResult {
+pub function build_func_seeded(raw_fd: parser.FuncDecl, structs: parser.StructDecl[], seed: Seed): BResult {
+    // Lower `for i in LOW..HIGH` range-loops (iter = the synthetic `__range`
+    // call) to counting while-loops before SSA construction — the SSA StmtFor
+    // builder iterates arrays, so an undesugared `__range` iter would emit a
+    // `call __fn___range` (a link error). The IR path keeps the `__range`
+    // shape for irlower.lower_range_for; this only affects the SSA backend.
+    var fd: parser.FuncDecl = parser.desugar_ranges_func(raw_fd);
     var sym: string = fn_sym(fd);
     var f0: SFunc = SFunc { name: sym, nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
     // Params occupy value ids 0..nparams-1, defined by "param" insts in the
@@ -2959,6 +2904,9 @@ pub function compute_widths(f: SFunc): i32[] {
                 else if (ins.kind == "call" && ins.imm == 2) { make64 = true; }   // f64-returning call (8-byte)
                 else if (ins.kind == "unary" && (ins.str == "f64_bits" || ins.str == "f64_from_bits")) { make64 = true; }   // f64/i64 bit reinterpret — 8-byte value
                 else if (ins.kind == "strbuf_take") { make64 = true; }   // a string pointer
+                else if (ins.kind == "read_file") { make64 = true; }   // a Result box pointer
+                else if (ins.kind == "write_file") { make64 = true; }   // an Option box pointer
+                else if (ins.kind == "args") { make64 = true; }   // a string[] array pointer
                 else if (ins.kind == "load_elem" && ins.imm == 64) { make64 = true; }   // pointer element
                 else if (ins.kind == "concat") { make64 = true; }   // concat yields a string pointer
                 else if (ins.kind == "copy") { if (w[ins.args[0]] == 64) { make64 = true; } }
@@ -3242,7 +3190,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
                 lo = upd_lo(lo, ins.args[a], pos); hi = upd_hi(hi, ins.args[a], pos);
                 a = a + 1;
             }
-            if (ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "print" || ins.kind == "exit" || ins.kind == "strbuf_reset" || ins.kind == "strbuf_append" || ins.kind == "strbuf_take" || ins.kind == "concat" || ins.kind == "streq") { calls = calls.append(pos); }
+            if (ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "print" || ins.kind == "write" || ins.kind == "args" || ins.kind == "exit" || ins.kind == "strbuf_reset" || ins.kind == "strbuf_append" || ins.kind == "strbuf_take" || ins.kind == "read_file" || ins.kind == "write_file" || ins.kind == "concat" || ins.kind == "streq") { calls = calls.append(pos); }
             pos = pos + 1;
             k = k + 1;
         }
@@ -3407,7 +3355,7 @@ function dead_code_elim(f: SFunc): SFunc {
             var k: i32 = 0;
             while (k < blk.insts.len()) {
                 var ins: SInst = blk.insts[k];
-                var keep: boolean = ins.kind == "param" || ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "alloc" || ins.kind == "store_elem" || ins.kind == "print" || ins.kind == "exit" || ins.kind == "strbuf_reset" || ins.kind == "strbuf_append" || ins.kind == "strbuf_take" || ins.kind == "concat" || used[ins.result] == 1;
+                var keep: boolean = ins.kind == "param" || ins.kind == "call" || ins.kind == "call_indirect" || ins.kind == "alloc" || ins.kind == "store_elem" || ins.kind == "print" || ins.kind == "write" || ins.kind == "exit" || ins.kind == "strbuf_reset" || ins.kind == "strbuf_append" || ins.kind == "strbuf_take" || ins.kind == "read_file" || ins.kind == "write_file" || ins.kind == "concat" || used[ins.result] == 1;
                 if (keep) { ninsts = ninsts.append(ins); } else { changed = true; }
                 k = k + 1;
             }

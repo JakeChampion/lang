@@ -70,16 +70,22 @@ const (
 	sysExitGroup = 231
 	sysGetrandom = 318
 	// clock_gettime(2): x86-64 syscall 228.
-	// Used by `__fern_now_unix_ms` for the wall-clock-now
-	// surface (docs/STDLIB-DESIGN-RESEARCH.md Rec §4 Phase 2).
+	// Used by `__fern_now_unix_ms` / `__fern_monotonic_ns` for the
+	// clock-now surface (docs/STDLIB-DESIGN-RESEARCH.md Rec §4 Phase 2).
 	sysClockGettime = 228
+	// nanosleep(2): x86-64 syscall 35. Used by `__fern_sleep_ms`.
+	sysNanosleep = 35
 )
 
-// Options tunes the emit. Currently empty; reserved for the
-// future `Darwin bool` flip when (if) a Mach-O variant
-// arrives. Kept as a struct rather than a sentinel value so
-// adding fields doesn't change call sites.
-type Options struct{}
+// Options tunes the emit.
+type Options struct {
+	// PIE emits a static position-independent (ET_DYN) executable: a
+	// self-relocation prologue at `_start` applies the R_X86_64_RELATIVE
+	// entries in .rela.dyn (the `.quad <symbol>` slots) before the program
+	// runs, so it is correct at the arbitrary base the kernel loads it at.
+	// Pair with x86_64.AssembleProgramPIE + elf.StaticPieExecutableX86.
+	PIE bool
+}
 
 // Emit produces assembly text for prog targeting x86-64 Linux.
 func Emit(prog *ast.Program, info *checker.Info) (string, error) {
@@ -107,8 +113,21 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// into x86_64's lowering — producing mixed-ABI code.
 	ast.CodegenMu.Lock()
 	defer ast.CodegenMu.Unlock()
-	treeshake.Run(prog)
-	ip, err := ir.LowerWith(prog, info, 8)
+	// `dyn Trait` vtable impl methods are reachable only through the
+	// runtime vtable (OpConstVtable names them by string), never via a
+	// static call the AST walker / IR reachability can see — pin them as
+	// tree-shake roots so they survive (mirrors the wasm build path).
+	// See docs/DYN-TRAITS.md §4.2.2.
+	dynRoots := append(treeshake.DynCoercionImplMethods(info), treeshake.DowncastImplMethods(prog, info)...)
+	treeshake.Run(prog, dynRoots...)
+	// x86-64 supports boxed one-word `dyn Trait` values
+	// (docs/DYN-TRAITS.md §4.2.2): DynSupported lifts the dispatch gate.
+	// It ALSO reclaims them (Perceus RC, slice 4b — docs/DYN-TRAITS.md
+	// §4.4): DynRcSupported lifts the RC path (the trailing vtable drop
+	// slot + the per-set __drop_dyn_<set> helper + the dec/drop sweep
+	// arms). arm64 passes only DynSupported (dispatch) — its RC slice 4c
+	// hasn't landed, so it keeps leaking `dyn` (harmless).
+	ip, err := ir.LowerWith(prog, info, 8, ir.DynSupported(), ir.DynRcSupported())
 	if err != nil {
 		return "", err
 	}
@@ -141,7 +160,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// `lea rax, [rip + __closure_cell_<name>]` against a static
 	// `.rodata` cell instead of a 16-byte heap-allocated pair.
 	ir.InlineZeroCaptureClosures(ip)
-	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}}
+	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, vtables: ip.Vtables, pie: opts.PIE}
 	// Pre-scan call sites for runtime-helper use-flags before
 	// touching any code emission, so emitDataSections + the
 	// runtime emitters below know which helpers to include
@@ -168,6 +187,11 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 			if op.Kind == ir.OpMakeClosure || op.Kind == ir.OpMakeEnv {
 				// Closure env block + (optional) pair both
 				// come from __fern_alloc.
+				g.usesAlloc = true
+			}
+			if op.Kind == ir.OpBoxDyn {
+				// The boxed `dyn Trait` cell is a normal heap object
+				// allocated via __fern_alloc (docs/DYN-TRAITS.md §4.2.2).
 				g.usesAlloc = true
 			}
 		}
@@ -282,6 +306,15 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesNowUnixMs {
 		g.emitNowUnixMsRuntime()
 	}
+	if g.usesMonotonicNs {
+		g.emitMonotonicNsRuntime()
+	}
+	if g.usesNowNs {
+		g.emitNowNsRuntime()
+	}
+	if g.usesSleepMs {
+		g.emitSleepMsRuntime()
+	}
 	if g.usesTcp {
 		g.emitTcpListenRuntime()
 		g.emitTcpAcceptRuntime()
@@ -297,6 +330,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesRandomBytes {
 		g.emitRandomBytesRuntime()
+	}
+	if g.usesRandomI32 {
+		g.emitRandomI32Runtime()
+	}
+	if g.usesAsBytes {
+		g.emitStringAsBytesRuntime()
 	}
 	if g.usesReadLine {
 		g.emitReadLineRuntime()
@@ -350,6 +389,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 type generator struct {
 	info *checker.Info
 	out  strings.Builder
+	// pie emits the static-PIE self-relocation prologue at `_start`
+	// (see Options.PIE).
+	pie bool
 	// labelCounter generates unique branch / scope labels
 	// (`.Lret_main_0`, `.Lif_3` etc.). Per-program rather
 	// than per-function so labels stay globally unique even
@@ -398,7 +440,20 @@ type generator struct {
 	// &ts)` syscall (#228). Returns
 	// `tv_sec * 1000 + tv_nsec / 1_000_000` in rax as i64.
 	// Backs `time.instant_now()` on x86_64 Linux.
-	usesNowUnixMs       bool
+	usesNowUnixMs bool
+	// usesMonotonicNs pulls in `__fern_monotonic_ns()` — monotonic
+	// nanoseconds via `clock_gettime(CLOCK_MONOTONIC, &ts)` (#228),
+	// returning `tv_sec * 1e9 + tv_nsec` in rax as i64.
+	usesMonotonicNs bool
+	// usesNowNs pulls in `__fern_now_ns()` — wall-clock nanoseconds since
+	// the Unix epoch via `clock_gettime(CLOCK_REALTIME, &ts)` (#228),
+	// returning `tv_sec * 1e9 + tv_nsec` in rax as i64. The nanosecond
+	// counterpart of `now_unix_ms`.
+	usesNowNs bool
+	// usesSleepMs pulls in `__fern_sleep_ms(ms)` — best-effort sleep
+	// for `ms` milliseconds via `nanosleep(&req, NULL)` (#35); ms <= 0
+	// returns immediately. Void.
+	usesSleepMs         bool
 	usesTcp             bool
 	usesEnv             bool
 	usesArgs            bool
@@ -407,6 +462,8 @@ type generator struct {
 	usesStrSlice        bool
 	usesSliceMake       bool
 	usesRandomBytes     bool
+	usesRandomI32       bool
+	usesAsBytes         bool
 	usesReadLine        bool
 	// usesStrIdx tracks whether any code emits the SSO-aware
 	// inlined __str_idx helper, which spills inline-tagged
@@ -429,6 +486,16 @@ type generator struct {
 	// (top-level fn value, runtime-built closure) through a
 	// uniform pair shape.
 	constFuncCells map[string]bool
+	// vtables holds the per-(trait,concrete) dispatch tables for
+	// `dyn Trait` values (ir.collectVtables). OpConstVtable looks up
+	// the method list here to emit the .rodata vtable cell. See
+	// docs/DYN-TRAITS.md §4.2.2.
+	vtables []ir.VtableDecl
+	// dynVtableCells tracks the (trait, concrete) pairs referenced via
+	// OpConstVtable. Each gets a `.rodata` symbol holding `len(methods)`
+	// 8-byte absolute function pointers (interned per pair). Key is
+	// "<trait>/<concrete>".
+	dynVtableCells map[string]bool
 	// usesArrEmpty gates the `.LArr_Empty` sentinel — a shared
 	// static 4-byte `[length=0]` buffer that __alloc_u8(0)
 	// returns instead of allocating a fresh length-only block.
@@ -615,6 +682,12 @@ func (g *generator) recordUse(target string) {
 		}
 	case "now_unix_ms":
 		g.usesNowUnixMs = true
+	case "monotonic_ns":
+		g.usesMonotonicNs = true
+	case "now_ns":
+		g.usesNowNs = true
+	case "sleep_ms":
+		g.usesSleepMs = true
 	case "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close":
 		g.usesTcp = true
 		// tcp_recv allocates a string buffer for the read.
@@ -642,6 +715,12 @@ func (g *generator) recordUse(target string) {
 		g.usesMemcpy = true
 	case "random_bytes":
 		g.usesRandomBytes = true
+		g.usesAlloc = true
+	case "random_i32":
+		g.usesRandomI32 = true
+	case "__method_string_as_bytes":
+		g.usesAsBytes = true
+		g.usesSliceMake = true
 		g.usesAlloc = true
 	case "read_line":
 		g.usesReadLine = true
@@ -710,10 +789,38 @@ func (g *generator) callReturnsVoid(name string) bool {
 }
 
 // invariant the rest of the code expects.
+// emitPieSelfReloc emits the static-PIE self-relocation prologue at the top
+// of `_start`. It derives the kernel-chosen load base via __ehdr_start
+// (vaddr 0, so [rip+__ehdr_start] yields base), then walks the
+// R_X86_64_RELATIVE entries in [__rela_start, __rela_end) — the
+// `.quad <symbol>` slots — applying each as *(base + r_offset) =
+// base + r_addend. rip-relative code needs no relocation, so reloc-free
+// programs run an empty loop. Uses rax/rsi/rdi/rcx/rdx (the entry-time
+// rdx atexit pointer is unused under -nostdlib) and leaves rsp untouched,
+// so the argv-reading startup that follows is unchanged.
+func (g *generator) emitPieSelfReloc() {
+	g.emit("lea rax, [rip + __ehdr_start]") // rax = load base
+	g.emit("lea rsi, [rip + __rela_start]") // rsi = &.rela.dyn (cursor)
+	g.emit("lea rdi, [rip + __rela_end]")   // rdi = end
+	g.label(".Lfern_reloc_loop")
+	g.emit("cmp rsi, rdi")
+	g.emit("jae .Lfern_reloc_done")
+	g.emit("mov rcx, [rsi]")       // r_offset
+	g.emit("mov rdx, [rsi + 16]")  // r_addend (r_info at +8 is RELATIVE)
+	g.emit("add rdx, rax")         // base + addend
+	g.emit("mov [rax + rcx], rdx") // *(base + r_offset) = base + addend
+	g.emit("add rsi, 24")          // advance one Elf64_Rela (24 bytes)
+	g.emit("jmp .Lfern_reloc_loop")
+	g.label(".Lfern_reloc_done")
+}
+
 func (g *generator) emitStartRuntime() {
 	g.line("")
 	g.line(".globl _start")
 	g.label("_start")
+	if g.pie {
+		g.emitPieSelfReloc()
+	}
 	// argc is at [rsp+0]; argv starts at [rsp+8]; envp at
 	// [rsp + 8 + (argc+1)*8] (NULL-terminator after argv).
 	// Stash whichever of (argc, argv, envp) the program
@@ -1598,6 +1705,91 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.emitCallArgsCleanup(argc + 1)
 		g.push()
 
+	case ir.OpConstVtable:
+		// Materialise the address of the static (trait, concrete)
+		// vtable into rax. The vtable is a `.rodata` array of absolute
+		// `__method_*` function pointers, one per non-associated trait
+		// method in declaration order (docs/DYN-TRAITS.md §4.2.2). On
+		// natives the vtable holds POINTERS, not table indices (the wasm
+		// form): OpCallDyn loads slot k and `call`s it directly.
+		key := op.Str + "/" + op.Str2
+		if g.dynVtableCells == nil {
+			g.dynVtableCells = map[string]bool{}
+		}
+		g.dynVtableCells[key] = true
+		g.emit(fmt.Sprintf("lea rax, [rip + %s]", dynVtableLabel(op.Str, op.Str2)))
+		g.push()
+
+	case ir.OpBoxDyn:
+		// Pack a boxed one-word `dyn Trait` value (docs/DYN-TRAITS.md
+		// §4.2.2). Operand stack on entry: [data, vtable] (vtable on
+		// top). Allocate a 16-byte {data @0, vtable @8} cell via the
+		// normal __fern_alloc path, store both words, and push the cell
+		// pointer. The cell is a plain heap object; precise RC of the
+		// box is out of scope (it leaks — the interp doesn't RC trait
+		// objects either).
+		//
+		// data/vtable must survive `call __fern_alloc`, which on its
+		// heap-init / heap-grow path does an mmap `syscall` — that
+		// clobbers r11 (the CPU stashes RFLAGS there) and uses r10 as a
+		// syscall arg. So caller-save scratch (the old r10/r11) is NOT
+		// safe across the call: when the box is the allocation that
+		// triggers the grow (e.g. a `dyn` over a primitive, whose value
+		// isn't separately heap-allocated, so the box is the program's
+		// first alloc) the stored words came back as RFLAGS garbage and
+		// the trait object segfaulted on first dispatch. Park them in
+		// callee-saved rbx/r12 across the call instead (the x86-64 mirror
+		// of arm64's x19/x20 choice in OpBoxDyn). Pop BOTH operands
+		// first, into caller-save rax/rcx, BEFORE pushing rbx/r12 — a
+		// push between the pops would shift rsp under the operand stack
+		// and the second pop would read the saved register.
+		g.pop()                // rax = vtable (top)
+		g.emit("mov rcx, rax") // rcx = vtable (caller-save; no call before the save)
+		g.pop()                // rax = data
+		g.emit("push rbx")     // save callee-saved (2 pushes keep rsp 16-aligned)
+		g.emit("push r12")
+		g.emit("mov r12, rax") // r12 = data
+		g.emit("mov rbx, rcx") // rbx = vtable
+		g.emit("mov rdi, 16")  // cell size = 2 * ptrW
+		g.emit("call __fern_alloc")
+		g.emit("mov [rax], r12")     // cell[0] = data  (survived the call)
+		g.emit("mov [rax + 8], rbx") // cell[8] = vtable
+		g.emit("pop r12")            // restore callee-saved
+		g.emit("pop rbx")
+		g.push()
+
+	case ir.OpCallDyn:
+		// Dispatch a `dyn Trait` method call (docs/DYN-TRAITS.md
+		// §4.2.2). Operand stack on entry: [data, args..., vtable]
+		// (vtable on top). Pop the vtable, load slot `op.I32`'s 8-byte
+		// function pointer (`vtable + slot*8`), then do an indirect call
+		// with [data, args...] as the SysV args (receiver-first, plain —
+		// no closure env). op.Sig is the receiver-first method
+		// signature; argc = len(params) (= 1 receiver + method args),
+		// void iff Result == nil.
+		if op.Sig == nil {
+			return fmt.Errorf("x86_64: OpCallDyn missing op.Sig")
+		}
+		argc := len(op.Sig.Params)
+		g.pop()                // rax = vtable (top)
+		g.emit("mov r10, rax") // r10 = vtable base
+		if op.I32 != 0 {
+			g.emit(fmt.Sprintf("mov r11, [r10 + %d]", int(op.I32)*8))
+		} else {
+			g.emit("mov r11, [r10]")
+		}
+		// r11 = fn pointer. Stash it below the args while we load arg
+		// registers (emitCallArgsLoad consumes operand-stack slots, so
+		// r11 — a caller-save scratch the loader doesn't touch — is safe
+		// to hold across it).
+		g.emitCallArgsLoad(argc)
+		g.emit("call r11")
+		g.emitCallArgsCleanup(argc)
+		if op.Sig.Result == nil {
+			break
+		}
+		g.push()
+
 	case ir.OpCallDirect:
 		target := op.Str
 		// Cheap f64 math intrinsics lower inline — no libm. The f64
@@ -1641,6 +1833,12 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_strbuf_take"
 		case "now_unix_ms":
 			target = "__fern_now_unix_ms"
+		case "monotonic_ns":
+			target = "__fern_monotonic_ns"
+		case "now_ns":
+			target = "__fern_now_ns"
+		case "sleep_ms":
+			target = "__fern_sleep_ms"
 		case "tcp_listen":
 			target = "__fern_tcp_listen"
 		case "tcp_accept":
@@ -1661,6 +1859,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_write_file"
 		case "random_bytes":
 			target = "__fern_random_bytes"
+		case "random_i32":
+			target = "__fern_random_i32"
 		case "read_line":
 			target = "__fern_read_line"
 		case "__method_Reader_read_line":
@@ -1696,7 +1896,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			// don't reach a bad index.
 			return g.emitInlineIdxHelper(target)
 		// Map / MapIter — the lang Map runtime lives entirely
-		// in the lang prelude under `_impl`-suffixed names;
+		// in the stdlib under `_impl`-suffixed names;
 		// user-facing call sites use the unsuffixed mangled
 		// name and codegen rewrites here. Mirrors arm64.
 		case "map_new":
@@ -2782,6 +2982,25 @@ func (g *generator) internString(s string) string {
 	return lbl
 }
 
+// dynVtableLabel returns the GAS symbol for the (trait-set, concrete)
+// `dyn Trait` vtable cell. Single-trait keys are Fern identifiers, so the
+// joined symbol is a valid assembler label as-is. A merged multi-trait
+// key (ir.dynVtableSetKey joins with '+', e.g. "A+B") is sanitized: '+' →
+// "_x_" so the label stays a valid GAS identifier. The IR's
+// OpConstVtable.Str carries the same key, so coercion (which stores the
+// vtable address) and dispatch / downcast (which reference it) agree.
+func dynVtableLabel(trait, concrete string) string {
+	return "__vtable_" + strings.ReplaceAll(trait, "+", "_x_") + "_" + concrete
+}
+
+// splitPair undoes the "<trait>/<concrete>" key used by dynVtableCells.
+func splitPair(key string) (string, string) {
+	if i := strings.IndexByte(key, '/'); i >= 0 {
+		return key[:i], key[i+1:]
+	}
+	return key, ""
+}
+
 // emitDataSections writes `.rodata` (interned string
 // literals) and `.bss` (the bump-allocator cursor +
 // heap-end sentinel). All entries are gated on usage so
@@ -2793,6 +3012,52 @@ func (g *generator) emitDataSections() {
 	// 16 bytes: 8 bytes fn_ptr + 8 bytes env=0. OpCallIndirect
 	// derefs these cells to recover (fn, env) just like it does
 	// for heap-allocated OpMakeClosure pairs.
+	// Static `dyn Trait` vtables: one `.rodata` cell per (trait,
+	// concrete) pair referenced via OpConstVtable, holding
+	// `len(methods)` absolute `__method_*` function pointers in trait
+	// declaration order (docs/DYN-TRAITS.md §4.2.2). OpCallDyn loads
+	// slot k (`vtable + k*8`) and calls through it.
+	if len(g.dynVtableCells) > 0 {
+		g.line("")
+		g.line(".section .rodata")
+		keys := make([]string, 0, len(g.dynVtableCells))
+		for k := range g.dynVtableCells {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		byPair := map[string]ir.VtableDecl{}
+		for _, vt := range g.vtables {
+			byPair[vt.Trait+"/"+vt.Concrete] = vt
+		}
+		for _, key := range keys {
+			vt, ok := byPair[key]
+			if !ok {
+				// Should not happen: OpConstVtable only names pairs that
+				// collectVtables produced. Emit an empty (but labelled)
+				// cell so the link doesn't fail with an undefined symbol.
+				g.line(".align 8")
+				g.label(dynVtableLabel(splitPair(key)))
+				continue
+			}
+			g.line(".align 8")
+			g.label(dynVtableLabel(vt.Trait, vt.Concrete))
+			for _, m := range vt.Methods {
+				g.line(fmt.Sprintf("\t.quad %s", m.Func))
+			}
+			// Trailing drop slot at index len(Methods) (docs/DYN-TRAITS.md
+			// §4.4, slice 4b): the concrete type's drop fn as an absolute
+			// pointer, or a null sentinel (0) when it needs none. The boxed
+			// __drop_dyn_<set> helper reads this slot and calls it to run the
+			// erased concrete destructor before freeing the cell. Appended
+			// trailing so the method slot indices (0..n-1) are unchanged —
+			// OpCallDyn's slot math is untouched. Mirrors wasm internVtable.
+			if vt.Drop != "" {
+				g.line(fmt.Sprintf("\t.quad %s", vt.Drop))
+			} else {
+				g.line("\t.quad 0")
+			}
+		}
+	}
 	if len(g.constFuncCells) > 0 {
 		g.line("")
 		g.line(".section .rodata")
@@ -2979,14 +3244,17 @@ func (g *generator) emitDataSections() {
 			g.line("\t.quad 0")
 		}
 		if ast.RcFreeEnabled && g.usesAlloc {
-			// Phase 3 step-4 segregated freelist. 128 heads, one per
-			// 16-byte size class (16, 32, …, 2048); head i is the
-			// freelist for blocks of size (i+1)*16. Each free block
-			// stores its successor's pointer in its first 8 bytes.
-			// Zero = empty class.
+			// Two-tier segregated freelist heads (256 slots).
+			//   0..127  — small tier: 16-byte exact-fit classes; head i is
+			//             the freelist for blocks of size (i+1)*16 (16..2048).
+			//   128+b   — large tier: power-of-two class; head 128+b holds
+			//             freed blocks of capacity 2^b (b = 12..30, i.e.
+			//             4 KiB..1 GiB). See __fern_alloc for the binning.
+			// Each free block stores its successor's pointer in its first 8
+			// bytes; zero = empty class.
 			g.line(".align 8")
 			g.label("__fern_freelist_heads")
-			g.line("\t.space 1024")
+			g.line("\t.space 2048")
 		}
 	}
 }
@@ -3010,7 +3278,7 @@ func (g *generator) emitDataSections() {
 // persistent cursors were deleted. See the arm64 generator's
 // `emitAllocRuntime` comment for the full rationale.
 func (g *generator) emitAllocRuntime() {
-	const heapBytes = 1024 * 1024 * 1024 // 1 GiB per region — sized so a cmd/fern-built self-host compiler can bootstrap-compile the WHOLE self-host source (the unified fern.fern + all modules) in one process; that needs ~0.75 GiB live (512 MiB, the old size, only fit lexer.fern). Lazy MAP_ANONYMOUS so it costs nothing until touched. Kept ≤ INT32_MAX so the `lea [base + heapBytes]` disp32 / `mov esi, heapBytes` size stay valid.
+	const heapBytes = 4160749568 // 0xF8000000 (3.875 GiB) per region — sized so a cmd/fern-built self-host compiler can bootstrap-compile the WHOLE self-host source in one process. As the IR subset widened (enum-array Expr[]/Stmt[] aliasing), the stage-2 self-compile live set crossed 2.5 GiB (exit-137 alloc trap), then 3.5 GiB as more compiler source was added (the strbuf_* IR ops grew the binary again); 3.875 GiB restores headroom on x86-64. This is x86-ONLY: the arm64 backend stays at 3.5 GiB (0xE0000000), pinned by its 0x10000000-base + size < 4 GiB 32-bit-pointer ceiling, and its CI self-compile still fits there. Matches the self-host emitters' own `heap_size` (asm.fern / asm_ir.fern = 4160749568) — keeping the native (stage-0 mmc) and self-host x86 heaps in lockstep. Lazy MAP_ANONYMOUS so it costs nothing until touched. This native heap is an mmap region addressed via REGISTER (not a static `.bss` block), so it has no RIP-relative / imm32 displacement ceiling — heap_base + heap_size may exceed 2 GiB. heapBytes is the `mov esi, heapBytes` mmap length (u32 zero-extend; 0xF8000000 < 0xFFFFFFFF, so it still fits) and the heap-END is built `mov ecx, heapBytes` (u32) + `add rcx, rax` rather than a signed-disp32 `lea [base + heapBytes]` (which caps at 0x7FFFFFFF). The self-host emitters reach their `.bss` heap via 64-bit-absolute `movabs $__fern_heap` with __fern_heap emitted LAST in .bss so its > 2 GiB base never truncates a PC32 relocation.
 	g.line("")
 	g.line(".globl __fern_alloc")
 	g.line(".type __fern_alloc, @function")
@@ -3028,16 +3296,62 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("add rdi, 15")
 	g.emit("and rdi, -16")
 	if ast.RcFreeEnabled {
-		// Phase 3 step-4: reuse a freed block of the same size class
-		// before bumping. rdi is the 16-byte-rounded request; classes
-		// cover 16..2048. idx = (rdi>>4)-1; if heads[idx] != 0, pop it.
+		// Two-tier segregated freelist — reuse a freed block before bumping.
+		//
+		// Small tier (16..2048 B): 16-byte exact-fit classes 0..127,
+		// idx = (rdi>>4)-1. Perfect reuse for the many identically-sized
+		// small structs / strings / boxes — unchanged from the original
+		// Phase-3 design.
+		//
+		// Large tier (>2048 B): power-of-two classes. The request is
+		// rounded UP to the next power of two — the bytes actually bumped —
+		// and binned by that power's bit position + 128. Because every
+		// block in a class is bumped at the class's power-of-two capacity, a
+		// popped block always fits any later same-class request, so reuse
+		// tolerates the size *variance* that exact-fit cannot: a 12 KiB and
+		// a 13 KiB array both land in the 16 KiB class and recycle each
+		// other. This is what lets a whole-compiler self-compile reclaim its
+		// per-function array churn (instruction / block / value lists grow
+		// past 2 KiB and vary per function) instead of leaking it. Cost is
+		// ≤2x internal waste on large blocks — bounded, demand-paged, and
+		// vastly cheaper than the exact-fit alternative, which reclaims none
+		// of it. Blocks >1 GiB skip the freelist (bump-only) so the class
+		// index can never run off the heads array.
 		g.emit("cmp rdi, 16")
 		g.emit("jb .Lalloc_bump")
 		g.emit("cmp rdi, 2048")
-		g.emit("ja .Lalloc_bump")
+		g.emit("ja .Lalloc_large")
 		g.emit("mov rax, rdi")
 		g.emit("shr rax, 4")
-		g.emit("sub rax, 1") // class index
+		g.emit("sub rax, 1") // small class index 0..127
+		g.emit("jmp .Lalloc_fltry")
+		g.label(".Lalloc_large")
+		g.emit("cmp rdi, 0x40000000") // >1 GiB: bump-only, never freelisted
+		g.emit("ja .Lalloc_bump")
+		// Round the request UP to 3 significant bits (1 leading + 2 mantissa)
+		// instead of the next power of two — ≤25% internal waste vs ≤2x. The
+		// grid spacing at magnitude 2^e is 2^(e-2): round rdi up to a multiple
+		// of that, giving the bytes to bump (rdi), then derive the class from
+		// the rounded capacity so alloc and free agree.
+		g.emit("bsr rcx, rdi")      // rcx = e = floor(log2(size)) >= 11
+		g.emit("lea r8, [rcx - 2]") // r8 = e-2 = grid-spacing exponent
+		g.emit("mov r9, 1")
+		g.emit("mov rcx, r8")
+		g.emit("shl r9, cl") // r9 = gran = 1<<(e-2)
+		g.emit("lea rax, [rdi + r9 - 1]")
+		g.emit("neg r9")
+		g.emit("and rax, r9")  // rax = cap = roundup(size, gran)
+		g.emit("mov rdi, rax") // rdi = cap = bytes to bump
+		// class = (e2-11)*4 + (mant-4) + 128, where e2 = bsr(cap) (recomputed
+		// so a round-up that carried into a new power of two is binned right)
+		// and mant = cap>>(e2-2) ∈ {4,5,6,7}. Folds to 4*(e2-2) + mant + 88.
+		g.emit("bsr rcx, rax")      // rcx = e2 = floor(log2(cap))
+		g.emit("lea r8, [rcx - 2]") // r8 = e2-2
+		g.emit("mov rdx, rax")
+		g.emit("mov rcx, r8")
+		g.emit("shr rdx, cl")                // rdx = mant = cap>>(e2-2)
+		g.emit("lea rax, [rdx + r8*4 + 88]") // large class index
+		g.label(".Lalloc_fltry")
 		g.emit("lea rcx, [rip + __fern_freelist_heads]")
 		g.emit("mov rdx, [rcx + rax*8]") // head
 		g.emit("test rdx, rdx")
@@ -3077,7 +3391,11 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("mov [rbx], rax")
 	// Phase 6: record the region base for __fern_heap_bump_bytes.
 	g.emit("mov [rip + __fern_heap_base], rax")
-	g.emit("lea rcx, [rax + " + fmt.Sprintf("%d", heapBytes) + "]")
+	// heap-END = base + heapBytes. Build via u32 zero-extend + add rather
+	// than `lea [rax + heapBytes]` (a signed disp32 that caps at 0x7FFFFFFF)
+	// so heapBytes may exceed 2 GiB.
+	g.emit(fmt.Sprintf("mov ecx, %d", heapBytes))
+	g.emit("add rcx, rax")
 	g.emit("mov [r12], rcx")
 	g.label(".Lalloc_have_heap")
 	g.emit("mov rax, [rbx]")
@@ -3098,14 +3416,14 @@ func (g *generator) emitAllocRuntime() {
 }
 
 // emitFreeRuntime emits `__fern_free(base: i64, size: i64)` — the
-// Phase 3 step-4 freelist return path. When the freelist is enabled
-// it pushes the `size`-byte block at `base` onto its size class's
-// intrusive freelist (the successor pointer lives in the block's
-// first 8 bytes). Blocks outside the 16..2048 class range are
-// dropped (the bump region keeps them — they're reclaimed only by
-// the eventual large-alloc unmap path, not yet built). When the
-// freelist is disabled the helper is a no-op so a stray `__free`
-// call in a non-step-4 build is harmless.
+// freelist return path. When the freelist is enabled it pushes the
+// `size`-byte block at `base` onto its size class's intrusive
+// freelist (the successor pointer lives in the block's first 8
+// bytes), using the same two-tier classing as __fern_alloc: 16-byte
+// exact-fit for 16..2048 B, next-power-of-two for 2048 B..1 GiB.
+// Blocks <16 B or >1 GiB are dropped (the bump region keeps them).
+// When the freelist is disabled the helper is a no-op so a stray
+// `__free` call in a non-freeing build is harmless.
 //
 // System V: rdi = base, rsi = size. Leaf; no frame.
 func (g *generator) emitFreeRuntime() {
@@ -3119,10 +3437,33 @@ func (g *generator) emitFreeRuntime() {
 		g.emit("cmp rsi, 16")
 		g.emit("jb .Lfree_ret")
 		g.emit("cmp rsi, 2048")
-		g.emit("ja .Lfree_ret")
+		g.emit("ja .Lfree_large")
 		g.emit("mov rax, rsi")
 		g.emit("shr rax, 4")
-		g.emit("sub rax, 1") // class index
+		g.emit("sub rax, 1") // small class index 0..127
+		g.emit("jmp .Lfree_push")
+		g.label(".Lfree_large")
+		// Mirror __fern_alloc's large tier exactly: round the logical size up
+		// to 3 significant bits and bin by the rounded capacity, so a block
+		// returns to the class whose capacity it was bumped at. >1 GiB is
+		// dropped (alloc never freelisted it).
+		g.emit("cmp rsi, 0x40000000")
+		g.emit("ja .Lfree_ret")
+		g.emit("bsr rcx, rsi")
+		g.emit("lea r8, [rcx - 2]")
+		g.emit("mov r9, 1")
+		g.emit("mov rcx, r8")
+		g.emit("shl r9, cl") // r9 = gran
+		g.emit("lea rax, [rsi + r9 - 1]")
+		g.emit("neg r9")
+		g.emit("and rax, r9") // rax = cap
+		g.emit("bsr rcx, rax")
+		g.emit("lea r8, [rcx - 2]")
+		g.emit("mov rdx, rax")
+		g.emit("mov rcx, r8")
+		g.emit("shr rdx, cl")                // rdx = mant
+		g.emit("lea rax, [rdx + r8*4 + 88]") // class
+		g.label(".Lfree_push")
 		g.emit("lea rcx, [rip + __fern_freelist_heads]")
 		g.emit("mov rdx, [rcx + rax*8]") // old head
 		g.emit("mov [rdi], rdx")         // base.next = old head
@@ -4434,6 +4775,105 @@ func (g *generator) emitNowUnixMsRuntime() {
 	g.line(".size __fern_now_unix_ms, .-__fern_now_unix_ms")
 }
 
+// emitMonotonicNsRuntime emits `__fern_monotonic_ns()` —
+// monotonic nanoseconds via x86_64
+// `clock_gettime(CLOCK_MONOTONIC, &ts)` (syscall 228). The
+// kernel writes `struct timespec { i64 tv_sec; i64 tv_nsec }`;
+// we return `tv_sec * 1e9 + tv_nsec` in rax. The monotonic
+// clock counts from an unspecified fixed reference, so only
+// the DELTA between two readings is meaningful — exactly what
+// benchmark timing wants (NTP-jump-immune, unlike now_unix_ms).
+//
+// Stack frame mirrors now_unix_ms: sub rsp,24 = 16 timespec +
+// 8 alignment. Errno ignored (we control clock id + buffer).
+func (g *generator) emitMonotonicNsRuntime() {
+	g.line("")
+	g.line(".globl __fern_monotonic_ns")
+	g.line(".type __fern_monotonic_ns, @function")
+	g.label("__fern_monotonic_ns")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 24")  // 16 timespec + 8 alignment
+	g.emit("mov edi, 1")   // CLOCK_MONOTONIC = 1
+	g.emit("mov rsi, rsp") // &timespec
+	g.emit(fmt.Sprintf("mov eax, %d", sysClockGettime))
+	g.emit("syscall")
+	g.emit("mov rax, [rsp]")            // rax = tv_sec
+	g.emit("imul rax, rax, 1000000000") // sec * 1e9
+	g.emit("add rax, [rsp + 8]")        // + tv_nsec
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_monotonic_ns, .-__fern_monotonic_ns")
+}
+
+// emitNowNsRuntime emits `__fern_now_ns()` — wall-clock
+// nanoseconds since the Unix epoch via x86_64
+// `clock_gettime(CLOCK_REALTIME, &ts)` (syscall 228); returns
+// `tv_sec * 1e9 + tv_nsec` in rax. The nanosecond-resolution
+// twin of now_unix_ms (same realtime clock). Stack frame +
+// errno handling identical to monotonic_ns; only the clock id
+// (CLOCK_REALTIME = 0) differs.
+func (g *generator) emitNowNsRuntime() {
+	g.line("")
+	g.line(".globl __fern_now_ns")
+	g.line(".type __fern_now_ns, @function")
+	g.label("__fern_now_ns")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 24")  // 16 timespec + 8 alignment
+	g.emit("xor edi, edi") // CLOCK_REALTIME = 0
+	g.emit("mov rsi, rsp") // &timespec
+	g.emit(fmt.Sprintf("mov eax, %d", sysClockGettime))
+	g.emit("syscall")
+	g.emit("mov rax, [rsp]")            // rax = tv_sec
+	g.emit("imul rax, rax, 1000000000") // sec * 1e9
+	g.emit("add rax, [rsp + 8]")        // + tv_nsec
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_now_ns, .-__fern_now_ns")
+}
+
+// emitSleepMsRuntime emits `__fern_sleep_ms(ms)` — pause for
+// `ms` milliseconds (System V arg 1 in rdi, an i64). ms <= 0
+// returns immediately. Splits ms into a `struct timespec
+// { tv_sec = ms / 1000; tv_nsec = (ms % 1000) * 1e6 }` on the
+// stack and calls `nanosleep(&req, NULL)` (syscall 35). Void —
+// the operand stack push is gated off by callReturnsVoid.
+//
+// Stack frame: sub rsp,32 = 16 timespec + 16 alignment/pad.
+// Errno / early-wake remainder ignored (best-effort sleep —
+// matches the self-host __fern_sleep_ms and the interpreter).
+func (g *generator) emitSleepMsRuntime() {
+	g.line("")
+	g.line(".globl __fern_sleep_ms")
+	g.line(".type __fern_sleep_ms, @function")
+	g.label("__fern_sleep_ms")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 32")
+	g.emit("cmp rdi, 0")
+	g.emit("jle .Lsleep_ms_done")
+	g.emit("mov rax, rdi")
+	g.emit("xor edx, edx") // clear high for div
+	g.emit("mov rcx, 1000")
+	g.emit("div rcx")        // rax = ms/1000 (sec), rdx = ms%1000 (rem)
+	g.emit("mov [rsp], rax") // tv_sec
+	g.emit("mov rax, 1000000")
+	g.emit("imul rax, rdx") // rem * 1e6 = tv_nsec
+	g.emit("mov [rsp + 8], rax")
+	g.emit("mov rdi, rsp") // &req
+	g.emit("xor esi, esi") // rem = NULL
+	g.emit(fmt.Sprintf("mov eax, %d", sysNanosleep))
+	g.emit("syscall")
+	g.label(".Lsleep_ms_done")
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_sleep_ms, .-__fern_sleep_ms")
+}
+
 // emitPutcharRuntime emits `__fern_putchar(c)` — write a
 // single byte to stdout. Stash on the stack, write(1, &c, 1).
 func (g *generator) emitPutcharRuntime() {
@@ -4841,6 +5281,87 @@ func (g *generator) emitRandomBytesRuntime() {
 	g.line(".size __fern_random_bytes, .-__fern_random_bytes")
 }
 
+// emitRandomI32Runtime emits `__fern_random_i32()` — returns a
+// single cryptographic-quality i32 via one `getrandom(buf, 4, 0)`
+// syscall into a 4-byte stack slot, reloaded as a sign-extended
+// i32 in eax. Mirrors the interp's `crypto/rand` 4-byte read and
+// the wasm `random_get` path. Pointer-clean: the buffer lives in
+// the red zone below rsp so no frame setup is needed beyond the
+// syscall.
+func (g *generator) emitRandomI32Runtime() {
+	g.line("")
+	g.line(".globl __fern_random_i32")
+	g.line(".type __fern_random_i32, @function")
+	g.label("__fern_random_i32")
+	// getrandom(buf=rsp-8, n=4, flags=0). The 128-byte red zone
+	// below rsp is ours; getrandom won't write past n=4 bytes.
+	g.emit("lea rdi, [rsp - 8]")
+	g.emit("mov esi, 4")
+	g.emit("xor edx, edx")
+	g.emit(fmt.Sprintf("mov eax, %d", sysGetrandom))
+	g.emit("syscall")
+	g.emit("mov eax, [rsp - 8]") // sign-extends into rax via 32-bit load semantics
+	g.emit("ret")
+	g.line(".size __fern_random_i32, .-__fern_random_i32")
+}
+
+// emitStringAsBytesRuntime emits `__method_string_as_bytes(s)` —
+// builds an 8-byte slice header `(data_ptr, len)` aliasing the
+// receiver string's bytes (the non-copying `.as_bytes()` view).
+// Heap-form strings (LSB tag 0) reuse their data pointer directly;
+// SSO inline strings (LSB tag 1) are first promoted to a fresh
+// heap buffer so the slice header points at real linear memory
+// that outlives the call. Returns the slice header pointer in rax.
+// Mirrors wasm's buildStringAsBytesBody.
+func (g *generator) emitStringAsBytesRuntime() {
+	g.line("")
+	g.line(".globl __method_string_as_bytes")
+	g.line(".type __method_string_as_bytes, @function")
+	g.label("__method_string_as_bytes")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 32") // scratch: [rbp-8] inline spill, [rbp-16] len, [rbp-24] data
+	g.emit("push rbx")    // callee-saved scratch (preserve 16-byte alignment via even pushes below)
+	g.emit("push r12")
+	g.emit("mov rbx, rdi") // rbx = string value (inline or heap ptr)
+	id := g.labelCounter
+	g.labelCounter++
+	g.emit("test bl, 1")
+	g.emit(fmt.Sprintf("jnz .Lasbytes_inline_%d", id))
+	// Heap form: data ptr = value, len = [value-4].
+	g.emit("mov r12, rbx")       // data ptr
+	g.emit("mov esi, [rbx - 4]") // len
+	g.emit(fmt.Sprintf("jmp .Lasbytes_make_%d", id))
+	g.label(fmt.Sprintf(".Lasbytes_inline_%d", id))
+	// Inline form: length in bits 1..3, bytes 1..7 of the value.
+	g.emit("mov rax, rbx")
+	g.emit("shr rax, 1")
+	g.emit("and eax, 7")
+	g.emit("mov [rbp - 16], eax") // stash len
+	// Promote: alloc(len), copy the inline bytes in.
+	g.emit("mov edi, eax")
+	g.emit("call __fern_alloc")
+	g.emit("mov r12, rax")       // r12 = fresh buffer
+	g.emit("mov [rbp - 8], rbx") // spill the 8-byte inline value
+	// Copy len bytes from [rbp-8 + 1] (skip the tag/len byte) to r12.
+	g.emit("mov rdi, r12")
+	g.emit("lea rsi, [rbp - 7]")  // &inline_value + 1
+	g.emit("mov ecx, [rbp - 16]") // count
+	g.emit("cld")
+	g.emit("rep movsb")
+	g.emit("mov esi, [rbp - 16]") // len for the slice header
+	g.label(fmt.Sprintf(".Lasbytes_make_%d", id))
+	// __fern_slice_make(data=r12, len=esi) -> header in rax.
+	g.emit("mov rdi, r12")
+	g.emit("call __fern_slice_make")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __method_string_as_bytes, .-__method_string_as_bytes")
+}
+
 // emitReadLineRuntime emits `__fern_read_line()` — reads
 // stdin one byte at a time into the 4 KiB
 // `__fern_read_line_buf` (.bss), stops at '\n' (kept in
@@ -4970,6 +5491,19 @@ func (g *generator) emitAllocU8Runtime() {
 	g.emit("mov dword ptr [rax - 12], ebx") // cap = n (Phase 2-prep)
 	g.emit("mov dword ptr [rax - 8], 1")    // rc = 1 (phase 1 of RC rollout)
 	g.emitArrayLenStore("ebx", "rax")
+	// Zero the n data bytes. __fern_alloc may hand back a reused freelist
+	// block carrying stale bytes; the interpreter returns a zero-filled
+	// `u8[]`, so the AOT backends must too (issue #2768) — code that reads
+	// before writing (e.g. SHA padding) depends on it. `rep stosb` from the
+	// data pointer; save/restore rax since it's both the cursor seed and the
+	// return value.
+	g.emit("mov rdx, rax") // save data ptr (return value)
+	g.emit("mov rdi, rax")
+	g.emit("mov ecx, ebx") // count = n
+	g.emit("xor eax, eax") // store byte 0
+	g.emit("cld")
+	g.emit("rep stosb")
+	g.emit("mov rax, rdx") // restore data ptr
 	g.label(".Lallocu8_ret")
 	g.emit("add rsp, 8")
 	g.emit("pop rbx")
@@ -5179,7 +5713,7 @@ func (g *generator) emitRawIntPokesRuntime() {
 	// from a heap cell. On x86-64 a usize is already 8 bytes
 	// so the lang-level Map[i64, _] path stays on keyKind=0
 	// without these — the symbols still need linkable
-	// bodies because the prelude references them by name
+	// bodies because the stdlib references them by name
 	// regardless of target.
 	g.line("")
 	g.line(".globl __load_i64")
@@ -5778,9 +6312,17 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("push r12")       // s data ptr
 	g.emit("push r13")       // remaining bytes
 	g.emit("push r14")       // bytes_written
+	g.emit("sub rsp, 16")    // 8-byte scratch for emitStrDataPtr SSO spill + 8 align
 	g.emit("mov ebx, [rdi]") // fd
-	g.emit("mov r12, rsi")
-	g.emitStrLen("r13d", "r12") // len
+	// Length comes from the ORIGINAL tagged value (rsi) — emitStrLen
+	// is SSO-aware. Only then convert to a real byte pointer: for an
+	// inline (SSO) string the bytes live in the register, so
+	// emitStrDataPtr spills them to the frame scratch slot and hands
+	// back a pointer into it. Treating the raw inline value as an
+	// address (the old `mov r12, rsi`) wrote from a garbage pointer
+	// and trapped EFAULT for every <=7-byte string.
+	g.emitStrLen("r13d", "rsi")                  // len (SSO-aware)
+	g.emitStrDataPtr("r12", "rsi", "[rbp - 40]") // r12 = data byte ptr
 	g.emit("xor r14, r14")
 	g.label(".Lww_loop")
 	g.emit("cmp r14, r13")
@@ -5811,6 +6353,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("mov dword ptr [rax], 0") // Some
 	g.emit("mov [rax + 8], r12")
 	g.label(".Lww_ret")
+	g.emit("add rsp, 16") // drop SSO scratch
 	g.emit("pop r14")
 	g.emit("pop r13")
 	g.emit("pop r12")

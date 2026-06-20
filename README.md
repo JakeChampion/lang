@@ -36,27 +36,50 @@ Inspired by Vladimir Keleshev's *Compiling to Assembly from Scratch*
 (https://keleshev.com/compiling-to-assembly-from-scratch), but designed
 independently in idiomatic Go — no source from the book was copied.
 
-## Build & run
+## Install
+
+Three ways to get `fern`, easiest first (see the
+[install guide](https://jakechampion.github.io/lang/tutorial/install/)
+for details):
 
 ```
+# 1. Prebuilt binary — grab the asset for your platform from the rolling
+#    nightly release: https://github.com/JakeChampion/lang/releases/tag/nightly
+#    (fern-linux-x86_64 / fern-linux-arm64 / fern-darwin-arm64).tar.gz
+
+# 2. go install (needs Go 1.24+)
+go install github.com/jakechampion/lang/cmd/fern@latest
+
+# 3. Build from a checkout
 go build ./cmd/fern
+```
 
-# ARM64 Linux (default target)
-./fern examples/factorial.fern > factorial.s
-aarch64-linux-gnu-gcc -static -nostdlib factorial.s -o factorial
-qemu-aarch64 factorial
+## Build & run
 
-# ARM64 macOS (Apple Silicon)
-#   Run natively on a Mac with clang:
+The native backends assemble **and** link in-process, so producing an
+executable needs no external toolchain:
+
+```
+# ARM64 Linux (the default target)
+./fern -o factorial examples/factorial.fern
+qemu-aarch64 factorial          # or run natively on arm64 hardware
+
+# ARM64 macOS (Apple Silicon) — runs natively on a Mac
 ./fern -target arm64-darwin -o factorial examples/factorial.fern
 ./factorial
-#   ...or cross-compile from Linux with clang + lld (the binary
-#   ships unchanged; copy to a Mac to run):
+#   ...or cross-compile from Linux (the binary ships unchanged; copy to a Mac):
 ./fern -target arm64-darwin -cc clang -o factorial examples/factorial.fern
 
+# x86-64 Linux
+./fern -target x86-64 -o factorial examples/factorial.fern
+./factorial
+
 # WASM (self-contained preview-2 component, no external adapter)
-./fern -target wasm-bin -component-wrap -o factorial.wasm examples/factorial.fern
-wasmtime run --invoke 'main()' factorial.wasm   # prints 720
+./fern -target wasm -o factorial.wasm examples/factorial.fern
+wasmtime run factorial.wasm
+
+# Run straight through the interpreter (no binary emitted)
+./fern -interp examples/factorial.fern
 
 # Formatter
 ./fern -fmt examples/factorial.fern        # writes idiomatic source to stdout
@@ -69,6 +92,9 @@ wasmtime run --invoke 'main()' factorial.wasm   # prints 720
 ./fern -tangle examples/literate/fizzbuzz.fern.md   # emit plain Fern source
 ./fern -weave  examples/literate/fizzbuzz.fern.md   # emit cross-referenced Markdown
 ```
+
+To opt out to an external assembler/linker, pass `-cc` (e.g. `-cc
+aarch64-linux-gnu-gcc` on Linux, `-cc clang` on Darwin).
 
 The formatter re-emits from the parsed tree, so `//` comments and blank lines
 are dropped; format → parse → format is byte-stable.
@@ -137,17 +163,21 @@ Supported:
   erased at runtime.
 - **Methods** on structs via the `function (p: Point) name(): T` receiver
   clause.
-- **Nested functions** with closure-by-value over scalar outer-scope variables.
+- **Nested functions** with closures that capture outer-scope
+  variables by value — scalars and pointer-shaped values (strings,
+  arrays, structs) alike. Reference-typed captures are read-only
+  inside the closure (reassigning one is rejected, since it could
+  close a reference cycle); return the new value instead.
 - `var x: T = expr;` (annotation optional — inferred from the initialiser).
 - Statements: `if` / `else`, `while`, `for(init; cond; step)`,
   `for x in arr / "string"`, `switch` (comma-separated cases, `default`),
   `return`, `break`, `continue`, blocks, expression statements.
 - Types: sized integers `i8` / `i16` / `i32` / `i64` / `u8` / `u16` /
-  `u32` / `u64` (with `isize` / `usize` aliases; `i32` is the default
-  literal type), `boolean`, `void`, `f32` / `f64` (IEEE, `float` is an
-  alias for `f32`), `string`, owned arrays (`i32[]`), non-owning slice
-  views (`[i32]`), tuples (`(i32, string)`), `Map[K, V]`, nominal
-  structs, generic structs/enums, and function types (`(T, U) => V`).
+  `u32` / `u64` plus `usize` (target-aware native pointer width; `i32`
+  is the default literal type), `boolean`, `void`, `f32` / `f64`
+  (IEEE), `string`, owned arrays (`i32[]`), non-owning slice views
+  (`[i32]`), tuples (`(i32, string)`), `Map[K, V]`, nominal structs,
+  generic structs/enums, and function types (`(T, U) => V`).
 - Operators: `+ - * / %`, `== != < > <= >=`, `&& || !`, bitwise
   `& | ^ << >>`, unary `-`. String `+` concatenates, `==` / `!=` compare
   contents, indexing returns the byte at a position.
@@ -173,11 +203,13 @@ Built-ins:
 WASM builds need a preopened directory — pass `wasmtime --dir=...`; paths are
 relative to that preopen.
 
-`Option[T]`, `Result[T, E]`, and `IoError` are built in, auto-injected as
-enums on every program with the canonical Rust-shaped variants. `IoError`
-carries the offending path where it makes sense (`NotFound(path)`,
-`PermissionDenied(path)`, `Other(path, message)`, etc.). Use them anywhere
-user-defined enums work.
+`Option[T]`, `Result[T, E]`, and `IoError` are built into the language —
+always in scope, no import needed — as enums with the canonical
+Rust-shaped variants. `IoError` carries the offending path where it makes
+sense (`NotFound(path)`, `PermissionDenied(path)`, `Other(path, message)`,
+etc.). Use them anywhere user-defined enums work. See the
+[error-handling reference](https://jakechampion.github.io/lang/reference/error-handling/)
+for the `?` operator and the combinator methods.
 
 ## Optimisation
 

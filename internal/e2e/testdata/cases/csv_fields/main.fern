@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/csv";
 // csv_parse_line splits one CSV record into fields.
 function main(): i32 {

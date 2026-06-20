@@ -822,8 +822,36 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 		// scalar/void result is supported alongside memory params for now (a
 		// composite result there would need both marshalling directions at once).
 		if hasMemParam {
+			// A composite (option/result) result alongside the memory param(s): the
+			// import returns indirectly through a trailing canonical retptr, and the
+			// wrapper both normalizes the mem params and reads the return area into a
+			// Fern enum box (both marshalling directions at once). Other composite
+			// results (records/tuples) here are still unsupported.
+			if ex.ResultEnum != nil {
+				rawParams, err := canonicalExternParamValtypes(ex)
+				if err != nil {
+					return nil, nil, fmt.Errorf("@import %q (%s/%s): %w", ex.Name, ex.Iface, ex.WITName, err)
+				}
+				rawParams = append(rawParams, encode.ValtypeI32) // trailing retptr
+				rawName := ex.Name + "$import"
+				specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: rawParams, results: nil}
+				in.add(rawName)
+				wrappers[ex.Name] = runtimeHelperSpec{
+					params:  params,
+					results: []byte{encode.ValtypeI32},
+					body:    buildExternMemParamWrapper(ex, rawName, ex.ResultEnum),
+				}
+				helpers.add(ex.Name)
+				helpers.add("__fern_alloc")
+				helpers.add("cabi_realloc")
+				if hasStringParam {
+					helpers.add("__fern_str_len")
+					helpers.add("__fern_str_byte")
+				}
+				continue
+			}
 			if !(isVoid || externScalarType(ret)) {
-				return nil, nil, fmt.Errorf("@import %q (%s/%s): a string/u8[] parameter with a composite result is not supported yet (P4c)", ex.Name, ex.Iface, ex.WITName)
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): a string/u8[] parameter with a non-option/result composite result is not supported yet (P4c)", ex.Name, ex.Iface, ex.WITName)
 			}
 			results, err := resultValtypes(ret)
 			if err != nil {
@@ -839,7 +867,7 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			wrappers[ex.Name] = runtimeHelperSpec{
 				params:  params,
 				results: results,
-				body:    buildExternMemParamWrapper(ex, rawName),
+				body:    buildExternMemParamWrapper(ex, rawName, nil),
 			}
 			helpers.add(ex.Name)
 			helpers.add("__fern_alloc")
@@ -894,6 +922,23 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 				params:  params,
 				results: []byte{encode.ValtypeI32},
 				body:    buildExternListResultWrapper(len(ex.Params), rawName, scalarArrayElemStride(ret)),
+			}
+			helpers.add(ex.Name)
+			helpers.add("__fern_alloc")
+			helpers.add("cabi_realloc")
+		case isBoolArrayParamType(ret):
+			// list<bool> result lifted into a Fern bool[] (P4c): the canonical
+			// element is 1 byte but a Fern bool array slot is 4 bytes, so the
+			// wrapper byte-EXPANDS each host byte into a 4-byte i32 element
+			// (vs the straight memory.copy the numeric-array wrapper uses).
+			rawName := ex.Name + "$import"
+			rawParams := append(append([]byte{}, params...), encode.ValtypeI32)
+			specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: rawParams, results: nil}
+			in.add(rawName)
+			wrappers[ex.Name] = runtimeHelperSpec{
+				params:  params,
+				results: []byte{encode.ValtypeI32},
+				body:    buildExternBoolListResultWrapper(len(ex.Params), rawName),
 			}
 			helpers.add(ex.Name)
 			helpers.add("__fern_alloc")

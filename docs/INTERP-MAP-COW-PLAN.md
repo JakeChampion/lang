@@ -1,8 +1,41 @@
 # Plan: copy-on-write Maps in the interpreter (M1)
 
-Scoping document for the deferred **M1** finding from
-`docs/ADVERSARIAL-REVIEW-2026-06.md`. Status: **planned, not yet
-implemented.**
+Scoping document for the **M1** finding from
+`docs/ADVERSARIAL-REVIEW-2026-06.md`. Status: **IMPLEMENTED** (this was
+the original design doc; the rc-based COW it scopes now ships).
+
+## Implementation status (done)
+
+The mechanism below is implemented in `internal/interp/interp.go`:
+
+- `Map` carries an `rc int` (the COW reference count); `(*Map).clone()`
+  makes an independent copy.
+- `builtinMapSet` / `builtinMapDelete` / `builtinMapClear` mutate in place
+  when `rc <= 1` and `clone()` when `rc > 1`, mirroring the compiled
+  runtime's `__map_cow_inplace`.
+- `retain` / `release` (via `adjustRC`, which recurses through map
+  keys/values so nested `Map[K, Map[…]]` counts flow through) are wired at
+  the value-flow hook points the table below lists: `var` bind + block-end
+  scope exit, `=` reassignment of an ident / index / field slot
+  (release-old + retain-new), and function param bind + return-escape.
+
+The validation gate is met: the differential cases
+`map_cow_alias_isolation`, `map_cow_func_arg`, `map_cow_returned`, and
+`map_cow_alias_then_scope_exit` in
+`internal/e2e/feature_differential_test.go` run the interp against every
+backend and pass, and the full differential + interp suites stay green
+(no new divergence). The original M1 repro — `fern -interp` agreeing with
+the compiled backends on alias isolation — now holds.
+
+The remaining closure-capture interaction (a map read through a closure
+after the outer binding is reassigned) is governed by the **by-reference
+capture** semantics, where the interpreter is already the correct oracle;
+the native compiled backend's by-value capture of that case is tracked
+separately as the in-progress **#2896**, not an interp-COW gap.
+
+The original design follows (retained for reference).
+
+---
 
 ## Problem
 

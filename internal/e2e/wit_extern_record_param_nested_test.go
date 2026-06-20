@@ -19,7 +19,8 @@ import (
 // `record line { p: point, q: point }` flattens to (p.x, p.y, q.x,
 // q.y). A Fern struct field of struct type is a pointer, so a nested leaf is
 // reached by loading the inner value pointer at the outer field offset then the
-// leaf at the inner offset (ir.ExternRecordField.DerefOffset).
+// leaf at the inner offset (ir.ExternRecordField.DerefPath, a one-element chain
+// here; deeper nesting extends the chain — see the deep-nested test).
 //
 // The provider exports `sum-line: func(l: line) -> s32` summing the 4 flattened
 // coords; the Fern side passes Line{p:{1,2}, q:{3,4}} and expects 10.

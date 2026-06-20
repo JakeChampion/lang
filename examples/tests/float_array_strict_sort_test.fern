@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/test";
 // examples/tests/float_array_strict_sort_test.fern — batch
 // 20 additions to std/test:
@@ -10,13 +9,13 @@ import "std/test";
 //   * `assert_strictly_sorted_asc` / `_string` — strict
 //     monotonic (sorted AND unique in one helper).
 
-function test_f64_array_pass(): Option[string] {
+function test_f64_array_pass(): test.TestOutcome {
     var actual: f64[] = [1.0, 2.5, 3.7];
     var expected: f64[] = [1.0, 2.5, 3.7];
     return test.assert_eq_f64_array_near(actual, expected, 0.0001);
 }
 
-function test_f64_array_within_tolerance(): Option[string] {
+function test_f64_array_within_tolerance(): test.TestOutcome {
     // Cumulative-rounding-style drift the tolerance must
     // absorb.
     var actual: f64[] = [1.0 + 0.0001, 2.5, 3.7 - 0.0001];
@@ -24,111 +23,111 @@ function test_f64_array_within_tolerance(): Option[string] {
     return test.assert_eq_f64_array_near(actual, expected, 0.001);
 }
 
-function test_f64_array_outside_tolerance(): Option[string] {
+function test_f64_array_outside_tolerance(): test.TestOutcome {
     var actual: f64[] = [1.0, 5.0, 3.0];
     var expected: f64[] = [1.0, 2.5, 3.0];
     match (test.assert_eq_f64_array_near(actual, expected, 0.1)) {
-        None => { return test.fail("expected mismatch"); },
-        Some(msg) => {
+        Pass => { return test.fail("expected mismatch"); },
+        Fail(msg) => {
             if (!msg.contains("index 1")) {
-                return Some("expected 'index 1' in failure: " + msg);
+                return test.fail("expected 'index 1' in failure: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_f64_array_length_mismatch(): Option[string] {
+function test_f64_array_length_mismatch(): test.TestOutcome {
     var actual: f64[] = [1.0, 2.0];
     var expected: f64[] = [1.0, 2.0, 3.0];
     match (test.assert_eq_f64_array_near(actual, expected, 0.001)) {
-        None => { return test.fail("expected length-mismatch fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("expected length-mismatch fail"); },
+        Fail(msg) => {
             if (!msg.contains("length differs")) {
-                return Some("expected 'length differs': " + msg);
+                return test.fail("expected 'length differs': " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_f64_array_nan_fails(): Option[string] {
+function test_f64_array_nan_fails(): test.TestOutcome {
     var z: f64 = 0.0;
     var nan: f64 = z / z;
     var actual: f64[] = [1.0, nan, 3.0];
     var expected: f64[] = [1.0, 2.0, 3.0];
     match (test.assert_eq_f64_array_near(actual, expected, 100.0)) {
-        None => { return test.fail("NaN should fail array compare"); },
-        Some(msg) => {
+        Pass => { return test.fail("NaN should fail array compare"); },
+        Fail(msg) => {
             if (!msg.contains("NaN")) {
-                return Some("expected 'NaN' in failure: " + msg);
+                return test.fail("expected 'NaN' in failure: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_f32_array_pass(): Option[string] {
+function test_f32_array_pass(): test.TestOutcome {
     var actual: f32[] = [(1.0 as f32), (2.0 as f32)];
     var expected: f32[] = [(1.0 as f32), (2.0 as f32)];
     return test.assert_eq_f32_array_near(actual, expected, 0.0001 as f32);
 }
 
-function test_sorted_desc_i32_pass(): Option[string] {
+function test_sorted_desc_i32_pass(): test.TestOutcome {
     return test.assert_sorted_desc([9, 5, 3, 1]);
 }
 
-function test_sorted_desc_i32_equal_runs_ok(): Option[string] {
+function test_sorted_desc_i32_equal_runs_ok(): test.TestOutcome {
     return test.assert_sorted_desc([5, 5, 3, 3, 1]);
 }
 
-function test_sorted_desc_i32_fails_on_inversion(): Option[string] {
+function test_sorted_desc_i32_fails_on_inversion(): test.TestOutcome {
     match (test.assert_sorted_desc([9, 3, 5, 1])) {
-        None => { return test.fail("inversion missed"); },
-        Some(msg) => {
+        Pass => { return test.fail("inversion missed"); },
+        Fail(msg) => {
             if (!msg.contains("index 2")) {
-                return Some("expected 'index 2': " + msg);
+                return test.fail("expected 'index 2': " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_sorted_desc_string_pass(): Option[string] {
+function test_sorted_desc_string_pass(): test.TestOutcome {
     return test.assert_sorted_desc(["gamma", "beta", "alpha"]);
 }
 
-function test_strict_asc_i32_pass(): Option[string] {
+function test_strict_asc_i32_pass(): test.TestOutcome {
     return test.assert_strictly_sorted_asc([1, 2, 3, 5, 8]);
 }
 
-function test_strict_asc_i32_fails_on_dupe(): Option[string] {
+function test_strict_asc_i32_fails_on_dupe(): test.TestOutcome {
     // Non-strict assert_sorted_asc would accept [1, 2, 2, 3]
     // — the strict variant must reject it.
     match (test.assert_strictly_sorted_asc([1, 2, 2, 3])) {
-        None => { return test.fail("strict sort should reject equal pair"); },
-        Some(msg) => {
+        Pass => { return test.fail("strict sort should reject equal pair"); },
+        Fail(msg) => {
             if (!msg.contains("not strict")) {
-                return Some("expected 'not strict' in msg: " + msg);
+                return test.fail("expected 'not strict' in msg: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_strict_asc_i32_empty_vacuous(): Option[string] {
+function test_strict_asc_i32_empty_vacuous(): test.TestOutcome {
     var empty: i32[] = [];
     return test.assert_strictly_sorted_asc(empty);
 }
 
-function test_strict_asc_string_pass(): Option[string] {
+function test_strict_asc_string_pass(): test.TestOutcome {
     return test.assert_strictly_sorted_asc(["alpha", "beta", "gamma"]);
 }
 
-function test_strict_asc_string_fails_on_dupe(): Option[string] {
+function test_strict_asc_string_fails_on_dupe(): test.TestOutcome {
     match (test.assert_strictly_sorted_asc(["alpha", "alpha", "beta"])) {
-        None => { return test.fail("strict string sort should reject equal pair"); },
-        Some(_) => { return None; }
+        Pass => { return test.fail("strict string sort should reject equal pair"); },
+        Fail(_) => { return test.pass(); }
     }
 }
 

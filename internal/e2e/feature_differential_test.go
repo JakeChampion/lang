@@ -155,6 +155,18 @@ function main(): i32 {
     print((p2.x + p2.y).to_string());
     return 0;
 }`},
+		// `for x in b.items { … }` — iterating a struct's array field. The
+		// field-access iter must NOT be mis-parsed as a `b.items { … }`
+		// qualified struct literal (the trailing `{` opens the loop body).
+		{"struct_field_array_foreach", `import "std/i32";
+struct Bag { items: i32[] }
+function main(): i32 {
+    var b: Bag = Bag{ items: [10, 20, 30] };
+    var sum: i32 = 0;
+    for x in b.items { sum = sum + x; }
+    print(sum.to_string());
+    return 0;
+}`},
 
 		// ---- enums + match ----
 		{"enum_match", `import "std/i32";
@@ -530,6 +542,65 @@ function main(): i32 {
     });
     print(out.len().to_string());
     print(out[3].to_string());
+    return 0;
+}`},
+		// Map.build (docs/ARRAY-BUILDER-PLAN.md): the parser desugar now runs in
+		// both the Go and self-host parsers, so the built map is identical.
+		{"map_build", `import "std/i32";
+import "core/map";
+function main(): i32 {
+    var m: Map[i32, i32] = Map.build(function(b: MapBuilder[i32, i32]): void {
+        var i: i32 = 0;
+        while (i < 4) { b.insert(i, i * i); i = i + 1; }
+    });
+    print(m.len().to_string());
+    print(m.get_or(3, -1).to_string());
+    return 0;
+}`},
+		// ---- Display spine (#2696): print/write/eprint take any T: Display ----
+		// `print(x)` auto-stringifies through Display instead of forcing
+		// `print(x.to_string())`. The desugared `.to_string()` call must
+		// lower identically on every backend, so the rendered scalars must
+		// agree with the interp oracle.
+		{"display_print_scalars", `import "std/i32";
+import "std/i64";
+import "core/cmp";
+function main(): i32 {
+    var a: i32 = 42;
+    var b: i64 = 9000000000;
+    var ok: boolean = true;
+    print(a);
+    print(b);
+    print(ok);
+    write("x=");
+    print(a);
+    return 0;
+}`},
+		// A `@derive(Display)` struct passed straight to `print` renders via
+		// the synthesised `to_string`, same bytes on every backend.
+		{"display_print_struct", `import "std/i32";
+import "core/cmp";
+@derive(cmp.Display)
+struct Point { x: i32, y: i32 }
+function main(): i32 {
+    var p: Point = Point { x: 1, y: 2 };
+    print(p);
+    return 0;
+}`},
+		// (Bounded-generic `T: Display` forwarded to `print` is covered by
+		// the checker test TestCheckPrintDisplayGeneric — this differential
+		// oracle doesn't run the monomorphiser, so a generic case is skipped
+		// here.)
+		// A derived enum routed through print renders its variant form.
+		{"display_print_enum", `import "std/i32";
+import "core/cmp";
+@derive(cmp.Display)
+enum Shape { Circle(i32), Empty }
+function main(): i32 {
+    var c: Shape = Circle(5);
+    var e: Shape = Empty;
+    print(c);
+    print(e);
     return 0;
 }`},
 	}

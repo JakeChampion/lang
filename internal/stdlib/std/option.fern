@@ -1,0 +1,70 @@
+// std/option — combinators for the built-in `Option[T]` enum.
+//
+// `Option[T]` (`Some(T)` / `None`) is available everywhere without an
+// import; these methods are not — `import "std/option";` to use them.
+// They are ordinary generic methods on the `Option` receiver, enabled
+// by the generic-methods support (#2692), so there's no runtime magic:
+// each is a small `match`.
+//
+//   var name: Option[string] = headers.get("name");
+//   var greeting: string = name.map(greet).unwrap_or("hello, stranger");
+//
+// NOTE: callback combinators invoke their function through an indirect
+// call. Composite callback parameter / return types (struct, enum,
+// another `Option` / `Result`) work on every backend. A two-word
+// `string` callback parameter / return is still limited at the
+// indirect-call seam on the native + wasm backends (#2753) — keep
+// `string`-typed callbacks out of these for now. Non-callback
+// combinators work for every `T` on every backend.
+
+import "core/cmp";
+
+// is_some reports whether the option holds a value.
+pub function (o: Option[T]) is_some(): boolean {
+    match (o) { Some(x) => { return true; }, None => { return false; } }
+}
+
+// is_none reports whether the option is empty.
+pub function (o: Option[T]) is_none(): boolean {
+    match (o) { Some(x) => { return false; }, None => { return true; } }
+}
+
+// unwrap_or returns the contained value, or `fallback` if empty.
+pub function (o: Option[T]) unwrap_or(fallback: T): T {
+    match (o) { Some(x) => { return x; }, None => { return fallback; } }
+}
+
+// unwrap_or_else returns the contained value, or the result of `f` if
+// empty (use when the fallback is expensive to compute).
+pub function (o: Option[T]) unwrap_or_else(f: () => T): T {
+    match (o) { Some(x) => { return x; }, None => { return f(); } }
+}
+
+// map applies `f` to the contained value, or propagates `None`.
+pub function (o: Option[T]) map[U](f: (T) => U): Option[U] {
+    match (o) { Some(x) => { return Some(f(x)); }, None => { return None; } }
+}
+
+// and_then chains an option-returning function (flat-map / `?`-style),
+// short-circuiting on `None`.
+pub function (o: Option[T]) and_then[U](f: (T) => Option[U]): Option[U] {
+    match (o) { Some(x) => { return f(x); }, None => { return None; } }
+}
+
+// or_else returns this option if present, else the result of `f`.
+pub function (o: Option[T]) or_else(f: () => Option[T]): Option[T] {
+    match (o) { Some(x) => { return Some(x); }, None => { return f(); } }
+}
+
+// filter keeps the value only when `pred` holds, else yields `None`.
+pub function (o: Option[T]) filter(pred: (T) => boolean): Option[T] {
+    match (o) {
+        Some(x) => { if (pred(x)) { return Some(x); } return None; },
+        None => { return None; }
+    }
+}
+
+// ok_or converts to a `Result`: `Some(v)` -> `Ok(v)`, `None` -> `Err(e)`.
+pub function (o: Option[T]) ok_or[E](e: E): Result[T, E] {
+    match (o) { Some(x) => { return Ok(x); }, None => { return Err(e); } }
+}

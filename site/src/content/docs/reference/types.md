@@ -47,6 +47,9 @@ Generic calls infer `T` from the argument types when possible. The
 compiler monomorphises every distinct instantiation before codegen,
 so there's no runtime cost.
 
+A type parameter can carry a **trait bound** (`[T: Display]`) to
+constrain it to types implementing a trait — see [Traits](../traits/).
+
 ## Union types
 
 A union is a closed sum over struct types:
@@ -75,8 +78,8 @@ enum Option[T] { Some(T), None }
 enum Result[T, E] { Ok(T), Err(E) }
 ```
 
-Both are injected by the prelude — declare them yourself only to
-shadow them.
+Both are built into the language — always in scope, no import
+required. Declare them yourself only if you want to shadow them.
 
 The postfix `?` operator unwraps the success variant and early-
 returns the failure variant:

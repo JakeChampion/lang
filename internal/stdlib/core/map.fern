@@ -187,6 +187,33 @@ pub function __map_cow_inplace(m: usize): usize {
     return nm;
 }
 
+// __map_clone unconditionally deep-copies a Map handle — the rc>1 branch
+// of __map_cow_inplace, but always taken. It produces a fresh handle (rc=1)
+// over a freshly-copied kv buffer, fully independent of the source.
+//
+// Used by container construction (issue #2763): when a struct field of Map
+// type is initialised by a COW mutator result (`Struct { m: s.m.insert(...) }`),
+// that result may be the SAME handle the borrowed source still owns (the COW
+// mutates in place at rc==1). Storing it into the new container without copying
+// makes the two structs alias one buffer; dropping the old one then frees it
+// out from under the new one — a use-after-free. Cloning gives the new
+// container its own buffer so the lifetimes are independent. (The buffer copy
+// is shallow over pointer-shaped values, matching __map_cow_inplace; precise
+// per-value retain is the Perceus port's job — roadmap goal 2.)
+pub function __map_clone(m: usize): usize {
+    var buf: usize = __load_ptr(m);
+    var cap: i32 = __load_i32(buf);
+    var entryStride: i32 = 2 * __ptr_width();
+    var bufBytes: i32 = 16 + cap * (4 + entryStride);
+    var newBuf: usize = __alloc(bufBytes);
+    __memcpy(newBuf, buf, bufBytes);
+    var base: usize = __alloc(16);
+    __store_i32(base, 1);
+    var nm: usize = base + 8;
+    __store_ptr(nm, newBuf);
+    return nm;
+}
+
 pub function __map_len_impl(m: usize): i32 {
     var buf: usize = __load_ptr(m);
     return __load_i32(buf + 4);
@@ -469,6 +496,14 @@ pub function __map_column(m: usize, kvOffset: i32, destStride: i32): usize {
     return arr + hdr;
 }
 
+// __map_keys_impl / __map_values_impl back `m.keys()` / `m.values()`.
+// COST: each call ALLOCATES a fresh length-prefixed array snapshot of the
+// column and retains every element — O(n) time + memory PER CALL. Calling
+// either in a loop (or re-evaluating `for k in m.keys()`) re-snapshots each
+// time. For the common "visit every entry" case use `for (k, v) in m`, which
+// rides the MapIter cursor (__map_iter_impl) with NO per-iteration allocation.
+// Use keys()/values() only when a materialised K[]/V[] is actually needed
+// (sort / index / outlive the map). #2688; snapshot-free general protocol: #2686.
 pub function __map_keys_impl(m: usize): usize {
     var buf: usize = __load_ptr(m);
     var keyKind: i32 = __load_i32(buf + 8);
@@ -717,4 +752,104 @@ pub function __mapiter_value_impl(it: usize): usize {
 
 pub function __mapiter_advance_impl(it: usize) {
     __store_i32(it + 8, __load_i32(it + 8) + 1);
+}
+
+// === higher-level Map verbs (#2685) =============================
+//
+// Built on the core builtins above (`keys` / `get` / `insert` /
+// `len` / `map_new`). These are ordinary element-polymorphic Fern —
+// they work for every K / V the map supports and need no codegen
+// support — so they live alongside the runtime that backs them
+// rather than in a separate module (which would double-bind the
+// `map` import name against `core/map`).
+
+// `m.entries()` — every key/value pair as a fresh `(K, V)[]`, in the
+// map's iteration order. One call instead of zipping `keys()` with a
+// per-key `get()` (or driving the `iter()` cursor by hand). Empty map
+// → empty array.
+pub function (m: Map[K, V]) entries(): (K, V)[] {
+    var out: (K, V)[] = [];
+    for k in m.keys() {
+        match (m.get(k)) {
+            Some(v) => { out = out.append((k, v)); },
+            None => {}
+        }
+    }
+    return out;
+}
+
+// `m.merge(other)` — a fresh map with all of `m`'s entries plus all of
+// `other`'s; on a key present in both, `other`'s value wins (last-write
+// semantics, matching a left-to-right `insert` fold). Neither input is
+// mutated.
+pub function (m: Map[K, V]) merge(other: Map[K, V]): Map[K, V] {
+    var out: Map[K, V] = m;
+    for k in other.keys() {
+        match (other.get(k)) {
+            Some(v) => { out = out.insert(k, v); },
+            None => {}
+        }
+    }
+    return out;
+}
+
+// `m.extend(other)` — synonym for `merge`, named for the in-place
+// "add all of other" intuition even though (like every map op) it
+// returns a fresh value rather than mutating.
+pub function (m: Map[K, V]) extend(other: Map[K, V]): Map[K, V] {
+    return m.merge(other);
+}
+
+// `from(pairs)` — build a `Map[K, V]` from a `(K, V)[]`. Later pairs
+// overwrite earlier ones on a duplicate key. (A free function rather
+// than `Map::from` until associated-function namespacing lands, #2700;
+// call it qualified: `map.from(pairs)`.)
+pub function from[K, V](pairs: (K, V)[]): Map[K, V] {
+    var m: Map[K, V] = map_new(pairs.len());
+    for p in pairs {
+        m = m.insert(p.0, p.1);
+    }
+    return m;
+}
+
+// `m.get_or_insert(k, fallback)` — insert-if-absent in a single lookup,
+// the value-type-friendly shape of Roc's `Dict.update` for the common
+// "default then use" case. Returns `(map, value)`: if `k` is present,
+// the map is unchanged and its existing value is returned; otherwise
+// `fallback` is inserted and returned. Threading the map back out keeps
+// the map's value semantics (`insert` yields a fresh map) explicit:
+//
+//     var (m2, n) = counts.get_or_insert(key, 0);
+//     m = m2.insert(key, n + 1);
+pub function (m: Map[K, V]) get_or_insert(k: K, fallback: V): (Map[K, V], V) {
+    match (m.get(k)) {
+        Some(v) => { return (m, v); },
+        None => {
+            var m2: Map[K, V] = m.insert(k, fallback);
+            return (m2, fallback);
+        }
+    }
+}
+
+// `m.update(k, init, fn)` — insert-or-modify in a single pass, the
+// counting/grouping shape of Roc's `Dict.update`. The slot's current value
+// (or `init` when `k` is absent) is fed through `fn`, and the result is
+// stored under `k`. Returns the fresh map (map ops yield a new value). The
+// classic word-count loop collapses to:
+//
+//     for w in words { counts = counts.update(w, 0, function (c: i32): i32 { return c + 1; }); }
+pub function (m: Map[K, V]) update(k: K, init: V, fn: (V) => V): Map[K, V] {
+    var cur: V = m.get_or(k, init);
+    return m.insert(k, fn(cur));
+}
+
+// `m.contains_value(target)` — true iff some key maps to `target`. The value
+// counterpart of `has` (which tests keys). Linear scan over the value column;
+// `target` is compared with `==`, so V must be an equatable type (i32 /
+// string — the value types the map supports). Empty map → false.
+pub function (m: Map[K, V]) contains_value(target: V): boolean {
+    for v in m.values() {
+        if (v == target) { return true; }
+    }
+    return false;
 }

@@ -1,5 +1,10 @@
 # Self-Host Implementation — Code-Quality Audit
 
+> **Tracked in GitHub:** the open items below are mirrored as a checklist in
+> [#2849](https://github.com/JakeChampion/lang/issues/2849); the confirmed
+> SH-057 miscompile has its own issue [#2850](https://github.com/JakeChampion/lang/issues/2850).
+> This doc stays the detailed reference (file:line, repro, fix sketch).
+
 Audit of the self-hosted Fern compiler under `examples/self_host/` (~62k lines of
 Fern across 47 files), compared where useful against the Go reference in
 `internal/`. The goal is a worklist we can resolve **one item at a time**: every
@@ -7,7 +12,7 @@ finding has a stable ID (`SH-NNN`), a severity, the affected `file:line`, and a
 concrete remediation. Check items off as they land.
 
 > Scope note: the self-host tree is a deliberately constrained bootstrap subset
-> (every file imports only `core/no_prelude`, siblings, and `std/io`). That
+> (every file imports only siblings and `std/io`). That
 > constraint is real, but it does **not** explain most of the duplication below
 > — receiver methods, struct-update spread, and sibling imports are all already
 > used in this tree, so a shared sibling `util.fern` / `value.fern` /
@@ -139,8 +144,8 @@ findings. Ranked by leverage.
 ### T1 — No shared utility module (→ 156 redundant defs)
 - [~] **SH-020 — Create `examples/self_host/util.fern`** (sibling, import-friendly)
   and move the copy-pasted leaf helpers into it, then import everywhere.
-  _In progress (staged rollout):_ `util.fern` now exists (imports only
-  `core/no_prelude`) and is seeded with the canonical `i32_to_string`;
+  _In progress (staged rollout):_ `util.fern` now exists (imports nothing but
+  siblings) and is seeded with the canonical `i32_to_string`;
   all 9 `i32_to_string` copies are now retired (`disasm`, `vm`, `constfold`, `printer` (dead), `ssa_x86`/`ssa_arm64`/`ssa_wasm`, `wasm`, `asmcore` — the last also dropped the `pub` cross-module copy used by `asm.fern`/`asm_arm64.fern`).
   The `i32_to_string` strand is **done**. Remaining for SH-020: fold in the OTHER duplicated helpers and the
   rest of the helpers below, one file per PR — each conversion must add
@@ -187,12 +192,16 @@ findings. Ranked by leverage.
   fragility findings.
 
 ### T3 — No generic AST visitor / fold (→ ~40 hand-written walkers)
-- [ ] **SH-022 — Add `walk_expr`/`walk_stmt` (or a fold) once.** _Note (investigated):_
-  the most-duplicated walker, `collect_idents_expr`, has **semantically diverged**
-  across copies — `wasm`'s dedups idents (`if (!contains_str(acc, …))`) while
-  `asmcore`/`ssa` append unconditionally — so it is NOT a safe mechanical merge;
-  a real `fold` must reconcile these behaviours deliberately. (`asmcore` ≡ `ssa`
-  modulo whitespace; `wasm`/`vm` differ.) Every analysis
+- [~] **SH-022 — Add `walk_expr`/`walk_stmt` (or a fold) once.** _In progress
+  (`astwalk.fern` started; see appendix for the corrected analysis):_ the
+  free-variable collectors (`collect_idents_expr`/`_stmt`/`collect_bound_stmt`) are
+  byte-identical across `asmcore`/`ssa`/`vm` and now live once in `astwalk.fern`;
+  all three are converted (asmcore carried the `///MODULE astwalk` bundle cascade +
+  a 73-list staging sweep). The `expr` collector
+  also converges with `wasm`'s (wasm's accumulator-dedup is **redundant** — every
+  consumer dedups again). wasm's **stmt** collector genuinely diverges, but the
+  real reason is its `StmtAssign` arm collecting the assign **target** name
+  (`a.target`) which astwalk/asmcore/ssa/vm do NOT — see appendix; wasm is deferred. Every analysis
   re-enumerates all Expr/Stmt variants by hand: `parser.fern` ~10 walkers
   (`expr_mentions:1574`, `mono_*`, `ms_*`, `rw_call_*`, …); `checker.fern` ~15
   scope-threading passes (`ret_diags`, `lret_*`, `mx_*`, `slit_diags`,
@@ -381,13 +390,40 @@ variants. Current hand-written Expr-variant arm counts: **wasm 180, checker 89,
 asmcore 30, ssa 28** (plus the parser's own ~10 rewrite passes). Adding a field or
 variant to the AST means touching all of them; a missed arm is a silent bug.
 
-### Key constraint discovered
-The walkers are **not** mechanically mergeable — they've semantically diverged.
-The clearest case: `collect_idents_expr` exists in `asmcore`, `ssa`, `vm`, `wasm`;
-`asmcore` ≡ `ssa` (modulo whitespace), but **`wasm` dedups** idents
-(`if (!contains_str(acc, id.name))`) while the others append unconditionally, and
-`vm` differs again. So a single `fold` must make that policy a parameter, not
-assume one behaviour. This is why SH-022 is design work, not a sweep.
+### What actually converges (corrected after closer analysis)
+An earlier draft of this appendix claimed the walkers had "semantically diverged"
+and couldn't be merged. That was over-cautious — the real picture:
+
+- **`collect_idents_expr` converges across all four** (`asmcore`/`ssa`/`vm` are
+  byte-identical modulo whitespace; `wasm` matches too). The apparent difference —
+  `wasm` dedups into the accumulator (`if (!contains_str(acc, …))`) — is
+  **redundant**: every consumer (`lambda_captures` and the ssa/vm equivalents)
+  dedups *again* when building the capture list (`!has_str(caps, nm)`), so a `refs`
+  list with duplicates yields an identical capture set + first-seen order. wasm's
+  `_ => {}` wildcard over the literal leaves is equivalent to the others' explicit
+  no-op arms. So one **non-deduping** collector serves all four with zero behaviour
+  change.
+- **`collect_idents_stmt` converges across `asmcore`/`ssa`/`vm`** (identical, all 13
+  Stmt variants) but **wasm genuinely diverges**. The `StmtSwitch`/`StmtDefer`
+  difference I first cited turns out to be a no-op (`module_with_builtins` runs
+  `desugar_switches_module` + `lower_defers_module` before `wasm.emit_module`, so
+  those nodes never reach any collector). The **real** divergence: wasm's
+  `StmtAssign` arm collects the assign **target** name (`if (!contains_str(acc,
+  a.target)) acc.append(a.target)`), which astwalk/asmcore/ssa/vm do **not**. So for
+  a lambda that *writes* an outer var without reading it (`{ x = 5; }`), wasm
+  captures `x` and the others wouldn't. Converging wasm is therefore **not** a safe
+  no-op — wasm stays separate.
+
+  **Open question (worth its own investigation):** this discrepancy is either a
+  **latent capture bug in `asmcore`/`ssa`/`vm`** (they miss capturing a
+  write-only-assigned outer var) or **redundant work in `wasm`** (if such captures
+  aren't needed — e.g. captures are read-only). Resolve before any wasm merge.
+
+**Status:** `astwalk.fern` holds the canonical (non-deduping, full-coverage)
+`collect_idents_expr`/`_stmt`/`collect_bound_stmt`; **`asmcore`, `ssa`, and `vm` are
+all converted** (asmcore's bundle cascade + 73-list sweep done). The only remaining
+backend is **`wasm`**, whose *stmt* collector genuinely diverges (skips
+`StmtSwitch`/`StmtDefer`) — a deliberate bugfix-vs-regression call, not a sweep.
 
 ### What the bootstrap language supports
 Closures/lambdas with captures lower on every backend (`OpMakeClosure` etc.), and
@@ -434,3 +470,62 @@ ident/var-name walkers). The diverged dedup policy becomes the caller's `f`
   and `"///MODULE " +` builders.
 - Verify locally on x86 (cli/fixpoint/stage2/cross-validation) + wasm via
   wasmtime; arm64/macOS via CI, as throughout SH-020.
+
+---
+
+## SH-057 — self-host miscompiles a lambda that *writes* a captured outer var (confirmed bug)
+
+_Surfaced while resolving the SH-022 wasm-collector question; pre-existing (not
+caused by SH-022 — astwalk's collectors are byte-identical to the old copies)._
+
+**Repro:** `function main(): i32 { var x = 1; var f = function (): i32 { x = 42; return 7; }; var r = f(); return r + x; }`
+
+| engine | result | |
+|---|---|---|
+| Go reference (`fern -interp`) | **49** ✓ correct | `x` mutated to 42 → by-reference scalar capture; `7 + 42` |
+| self-host interp | **8** (bug) | captured **by value** → the write doesn't propagate → `7 + 1` |
+| self-host vm | **254**/VErr (bug) | write-only scalar never captured → `x = 42` → assign-to-undefined sentinel |
+
+**Root cause:** the free-variable collector's `collect_idents_stmt` `StmtAssign` arm
+(now in `astwalk.fern`, inherited identically from asmcore/ssa/vm) collects only
+`a.value`, **not** the assign target `a.target`. So a lambda that assigns to an
+outer var *without reading it* never lists that var as a free reference →
+`lambda_captures` doesn't capture it. `wasm`'s collector is the only one that
+collects `a.target`, so wasm is the lone correct backend here. (This is why SH-022
+left wasm un-converged.)
+
+**Why CI misses it:** the cross-validation suite's closure cases capture vars they
+*read*; none assign a captured var write-only.
+
+**Confirmed semantics (from the authoritative Go reference).** The language has a
+principled, deliberate split — not an undecided one:
+- **Scalar captures (`i32`/`bool`/`f64`) are mutable, by-reference.** A closure may
+  read *and* write a captured scalar and the writes persist/propagate — closures-as-
+  counters are a supported feature. Verified: `var x = 0; var inc = function (): i32
+  { x = x + 1; return x; }; inc(); inc(); return x;` → **2** under the Go reference,
+  and `fern -check` accepts it (exit 0). The repro above is **49** (by-ref) in the
+  reference.
+- **Reference captures (`string`/array/struct) are read-only — E049.** Writing one
+  back could close an RC reference cycle (Perceus), so it's a compile error. This is
+  why E049 (`checker.go:7067`, `checker.fern:4475`) is intentionally
+  *reference-typed only*.
+
+So **E049 must stay reference-only — do _not_ extend it to scalars** (that would
+reject the intentionally-supported mutable-scalar-capture feature).
+
+**The actual bug:** the self-host doesn't implement mutable scalar captures
+correctly. The reference says the repro is 49 (and the counter is 2); the self-host
+gives interp **8** (captured by value → the write is lost) and vm **254** (the
+write-only scalar is never captured → assign-to-undefined). CLAUDE.md notes the
+self-host stores captures "by value" — so this is an unimplemented-semantics gap,
+not a missing checker rule.
+
+**Fix (deferred — substantial, multi-PR; scope before starting):** make self-host
+scalar captures by-reference/mutable to match the reference. That means: (1) the
+collector must capture write-assigned scalars (collect `a.target` in
+`astwalk.collect_idents_stmt`), and (2) the capture *codegen* must make scalar
+captures writable-and-shared rather than by-value snapshots — across interp's env,
+vm's `OpMakeClosure`/capture slots, and the asm/wasm closure boxes — with a
+cross-engine test that the repro → 49 and the counter → 2 on x86/arm64/wasm.
+`wasm`'s collector already collects `a.target`, so its capture analysis is ahead of
+the others here.

@@ -111,10 +111,48 @@ impl Eq for Point {
   first parameter must be `self: Self`. `Self` is a contextual type that
   stands for the implementing type.
 - An **impl** provides bodies for exactly the trait's methods, with `Self`
-  bound to the `for` type. Every method must be present; signatures must
-  match (modulo `Self` → `Type`); no extra methods are allowed.
+  bound to the `for` type. Every *abstract* method must be present;
+  signatures must match (modulo `Self` → `Type`); no extra methods are
+  allowed.
 - `trait` may be `pub`. Impls inherit visibility from the type/trait;
   there is no `pub impl`.
+
+### Default methods
+
+A trait method may carry a `{ … }` body instead of ending at `;`. That
+body is a **default**: an impl that omits the method inherits a copy
+(with `Self` substituted to the impl type); an impl may still provide its
+own to override it.
+
+```fern
+trait Greet {
+    function name(self: Self): string;                 // abstract — every impl must provide it
+    function greeting(self: Self): string {            // default, expressed via the abstract method
+        return "hello, " + self.name();
+    }
+}
+
+struct Dog { age: i32 }
+impl Greet for Dog { function name(self: Self): string { return "rex"; } }   // greeting inherited
+
+struct Cat { age: i32 }
+impl Greet for Cat {
+    function name(self: Self): string { return "felix"; }
+    function greeting(self: Self): string { return "meow from " + self.name(); }   // override
+}
+```
+
+This is the single-required-method-plus-derived-helpers shape that makes
+Rust's `Iterator` usable. It is a pure front-end feature: the checker
+materialises each inherited default as an ordinary receiver method on the
+impl type (`synthesizeTraitDefaults`, run right after `@derive`
+synthesis), so the hoist, conformance, dispatch, monomorphisation and
+codegen paths are unchanged — a default reached through a `T: Greet`
+bound monomorphises exactly like a written method. Defaults work on the
+interpreter and every native/wasm backend; `Self` *as a value type
+inside* a default body is treated the same as inside a hand-written impl
+method. The self-hosted compiler has matching support (same-module) —
+see §7a, self-host slice 10.
 
 Once `impl Display for Point` exists, **`p.to_string()` works for a
 `Point` value through the ordinary method-dispatch path** — an impl
@@ -125,12 +163,133 @@ Bounded generics (Phase 2) let a function abstract over any `T` that
 implements a trait:
 
 ```fern
-pub function assert_eq[T: Display + Eq](actual: T, expected: T): Option[string] {
-    if actual.eq(expected) { return None; }
-    return Some("expected " + expected.to_string()
+pub function assert_eq[T: Display + Eq](actual: T, expected: T): TestOutcome {
+    if actual.eq(expected) { return Pass; }
+    return Fail("expected " + expected.to_string()
                 + " but got " + actual.to_string());
 }
 ```
+
+### Generic traits
+
+A trait may take type parameters, written `trait Name[T, …]`, referenced in
+its method signatures. Each impl binds them positionally with
+`impl Name[Arg, …] for Type`:
+
+```fern
+trait From[T] { function from(v: T): Self; }
+struct Celsius { deg: i32 }
+impl From[i32] for Celsius { function from(v: i32): Self { return Celsius { deg: v }; } }
+
+var c: Celsius = Celsius.from(20);   // associated function, T=i32
+
+trait Container[T] { function get(self: Self): T; }
+impl Container[i32] for IntBox { function get(self: Self): i32 { return self.v; } }
+```
+
+The conformance check binds the trait's `TypeParams` to the impl's
+`TraitArgs` (`From[i32]` → `T=i32`) and substitutes them into the trait's
+method signatures before comparing against the impl's concrete methods
+(`substByName` + the usual `Self`→impl-type substitution). A wrong arity
+(`impl From for …`) or a mismatched method binding is rejected.
+
+Implementation: `TraitDecl.TypeParams` (parser: `[T,…]` after the trait
+name) and `ImplDecl.TraitArgs` (parser: `[Arg,…]` after the trait name in
+the `impl`); modload mangles struct/enum names in `TraitArgs`; the checker
+substitutes them in the conformance pass. Dispatch is unchanged — calls
+resolve to the impl's concrete monomorphic method.
+
+**Bounded generics over a generic trait** are supported too — a bound may
+carry the trait's type arguments:
+
+```fern
+function describe[T: From[i32]](proto: T, v: i32): T {
+    return T.from(v);   // resolves against `from(v: i32): T`
+}
+```
+
+`FuncDecl.BoundArgs` carries the bound's args parallel to `Bounds`
+(`Bounds["T"]=["From"]`, `BoundArgs["T"]=[[i32]]`); the parser reads
+`[Arg,…]` after each bound trait name, `resolveTraitMethodForParam`
+substitutes them into the bound trait's method signatures
+(`substTraitMethodTypeParams`), and modload mangles struct/enum names in
+the bound args. The bound's **arity** is validated against the trait's type
+parameters. Trait-bound *satisfaction* at the call site is **precise**: the
+type argument must have an impl of the trait whose `TraitArgs` match the
+bound's — a `T: From[i32]` bound is satisfied by `impl From[i32] for T` but
+not `impl From[f64] for T` (`Info.ImplTraitArgs` records each impl's args;
+`typeArgsEqual` compares). A non-generic bound (no args) is unaffected.
+
+**Remaining follow-up:** `dyn`-generic-traits (`dyn Container[i32]`).
+
+### Supertraits
+
+A trait may require other traits with a `: Trait + Trait` clause after its
+name. `trait Ord: Eq` means **Eq is a supertrait of Ord**:
+
+```fern
+trait Eq  { function eq(self: Self, other: Self): boolean; }
+trait Ord: Eq { function lt(self: Self, other: Self): boolean; }
+```
+
+Two consequences (Rust's semantics):
+
+- **Conformance**: `impl Ord for P` is legal only if `impl Eq for P` also
+  exists (checked transitively, and independent of impl order). The error
+  reads `impl Ord for P also requires \`impl Eq for P\` (supertrait of Ord)`.
+- **Bound expansion**: a `T: Ord` bound also exposes the supertraits'
+  methods, so a generic over `Ord` can call `eq`:
+
+  ```fern
+  function rank[T: Ord](a: T, b: T): i32 {
+      if a.eq(b) { return 0; }       // Eq method, reached via Ord's supertrait
+      if a.lt(b) { return -1; }
+      return 1;
+  }
+  ```
+
+Supertrait names may be qualified (`mod.Trait`) and are mangled like any
+other trait reference. The supertrait graph must be acyclic and each
+supertrait must name a real trait (both are checked: `cyclic supertrait`
+/ `unknown supertrait`). Implemented in the checker
+(`expandTraits` / `collectTraitSupers` drive bound expansion;
+`traitInItsOwnSupers` the cycle check) — `core/cmp`'s traits stay flat for
+now, so no existing impl is forced to gain a supertrait. The self-host
+parser skips the supertrait clause (it dispatches by receiver type and
+carries no conformance), so supertrait programs still compile there.
+
+## 3a. Display spine: `print` / `write` / `eprint` (#2696)
+
+`Display` is the language's stringification spine: a type implements it by
+providing `to_string(self: Self): string`. The output builtins route
+through it, so any `Display` value can be printed directly — no
+stringify-first dance:
+
+```fern
+import "std/i32";
+import "core/cmp";
+
+@derive(cmp.Display)
+struct Point { x: i32, y: i32 }
+
+function main(): i32 {
+    var p: Point = Point { x: 1, y: 2 };
+    print(42);   // was: print((42).to_string())
+    print(p);    // was: print(p.to_string())  →  "Point { x: 1, y: 2 }"
+    return 0;
+}
+```
+
+`print(x)` / `write(x)` / `eprint(x)` accept any `T` whose type carries a
+`to_string(): string` in scope — a `@derive(Display)` / `impl Display`
+type, a scalar with its stdlib `to_string` imported, or a bounded generic
+`T: Display`. A plain `string` argument is passed through unchanged; a
+non-string argument is rewritten by the checker to `arg.to_string()` (the
+same desugar f-strings use), so the value stringifies through the trait
+before reaching the string-only runtime helper. A type with no `to_string`
+in scope is rejected with a `Display`-specific diagnostic. This is a
+checker-stage rewrite only — the formatter still renders the source
+`print(x)` form, and every backend sees an ordinary `print(string)` call.
 
 ## 4. Dispatch model
 
@@ -272,10 +431,73 @@ runtime.
   multi-file e2e tests (`internal/e2e/traits_test.go`).
 
 ### 6.7 `derive` (Phase 4)
-`@derive(Display, Eq)` on a struct/enum synthesises field-wise impls. The
-checker already walks field layouts; generation is mechanical. This is
-what makes traits *ergonomic* and is the lever that finally collapses the
-`assert_eq_*` family.
+`@derive(Trait, …)` on a struct/enum synthesises field-/variant-wise
+impls. The checker already walks field layouts; generation is mechanical.
+This is what makes traits *ergonomic* and is the lever that finally
+collapses the `assert_eq_*` family.
+
+Seven traits are derivable today (`deriveKind`, `synthesizeDerives`):
+
+| Trait     | Synthesised method      | Shape |
+|-----------|-------------------------|-------|
+| `Eq`      | `eq(self, other)`       | field-wise `&&` / variant match |
+| `Ord`     | `cmp(self, other): i32` | lexicographic fields; variant-declaration order |
+| `Display` | `to_string(self)`       | `Name { f: …, … }` / `Variant(p)` |
+| `Debug`   | `to_debug(self): string`| structural like `Display`, but strings render QUOTED (`label: "hi"`, `Tag("ab")`) — the `{:?}` half of the Display/Debug split |
+| `Hash`    | `hash(self): i32`       | `h = h*31 + f.hash()`; enum seeds with the variant tag |
+| `Json`    | `to_json(self): string` | JSON object; enums externally tagged |
+| `Default` | `default(): Self`       | zero value — scalars' zero literal, nominal fields delegate to *their* `default()`; an enum defaults to its first variant (payloads defaulted) |
+
+Each composes through the same trait on every field/payload, so a type is
+`@derive`-able as soon as its fields are — and a generic type derives a
+*parametric* impl (`@derive(Hash) struct Box[T]` → `impl[T: Hash] Hash for
+Box[T]`). `Eq`/`Ord`/`Display`/`Debug`/`Hash`/`Default` live in `core/cmp`;
+`Json` in `std/json` (it returns canonical JSON text and reuses the
+`JsonValue` encoder's string escaper). `Eq`/`Ord`/`Display`/`Debug`/`Hash`/
+`Json` are mirrored in the self-hosted compiler's `synth_*`; `Default` is
+native-only so far (its trait method is an *associated function* — see §6.8
+— which the self-host frontend doesn't parse yet).
+
+`Debug`'s self-host `synth_*` renders **type-directed** (numeric/boolean
+scalars via `to_string`, strings quoted inline, nominal fields via their
+own `to_debug`) rather than routing primitives through a `Debug` trait
+method — the self-host discards `impl` bodies, so `(i32).to_debug()` has no
+target there. The native checker instead resolves the primitive
+`impl Debug for {i32,…,string,boolean}` impls in `core/cmp` (and quotes /
+escapes strings); both produce identical output.
+
+### 6.8 Associated functions
+A trait method declared with **no `self` receiver** is an *associated
+function*, called on the type rather than a value — the constructor /
+static-method shape. It can be called either dot-qualified (`Type.f(args)`,
+like `Color.Red`) or with the path separator `Type::f(args)` (#2700); both
+parse to the same `FieldAccess` (`PathSep` records which separator was
+written so the printer round-trips it) and resolve identically:
+
+```fern
+trait Default { function default(): Self; }
+impl Default for Point { function default(): Self { return Point { x: 0, y: 0 }; } }
+var p: Point = Point::default();         // `Self` resolves to Point (`::` or `.`)
+function mk[T: Default](): T { return T::default(); }  // generic constructor
+```
+
+The `::` separator works for any namespaced reference, not just associated
+functions: a module-qualified call (`helpers::add5(10)`) or const
+(`helpers::BONUS`) is the path-style spelling of `helpers.add5(10)` /
+`helpers.BONUS`. It's pure surface syntax — the checker / modload are
+separator-agnostic. (The library-wide `Type::ctor` *convention* + the
+`json.json_encode` stutter cleanup from #2700 are follow-ups; this lands
+the mechanism.)
+
+The parser marks a receiver-less trait/impl method (`TraitMethod.Assoc` /
+`FuncDecl.AssocType`); the checker hoists it to `__assoc_<Type>_<name>`
+(registered under the `Type.name` key), resolves a `Type.f()` call (a
+`FieldAccess` on a type name, not a value) to the flat name with no
+receiver prepended, and — for a `T.f()` on a bounded type parameter —
+defers like a bounded method, with monomorph rewriting the target to the
+concrete type. `default` is usable as a member name even though it's a
+switch keyword (`expectMemberName`). This is what `@derive(Default)` builds
+on. Native-only so far; self-host parity is a follow-up.
 
 ## 7. Phasing
 
@@ -598,6 +820,29 @@ regressing the self-host gates. It needs traits in two slices:
   With this, **the full trait surface — traits/impls, parametric impls,
   `@derive` on structs + enums (incl. generic structs), enum methods, and
   `dyn Trait` — works on all three self-host backends.**
+
+- **Self-host slice 10 (shipped): default trait methods.** Before this,
+  `skip_trait_decl` consumed a `trait` block whole — the self-host had no
+  trait method bodies to inherit, so a program relying on an inherited
+  default failed to resolve the method. `parse_trait_decl` now replaces
+  the skipper: it parses each trait method with the ordinary
+  `parse_func_decl` machinery (a method with a non-empty body is a
+  default; an abstract `;` signature comes back body-less and is dropped)
+  and returns the defaults tagged with the simple trait name.
+  `parse_impl_decl` retains the trait name + impl type + bounded type
+  params + the method names the impl provides, and the receiver-peel /
+  `Self`→type / type-param-merge desugar it shared inline with default
+  synthesis is factored into `finalize_impl_method`. After the whole
+  module is parsed (so a trait declared *after* its impl still resolves),
+  `parse_module` synthesises, for each impl, every default of its trait
+  that the impl omitted — `finalize_impl_method(default, impl_type,
+  impl_tps)` — exactly the desugaring a written method gets. Mirrors the
+  Go checker's `synthesizeTraitDefaults`. **Same-module only**: a trait
+  and an impl in *different* modules don't yet inherit (the synthesis runs
+  per `parse_module`, before `merge_module`); cross-module defaults are a
+  follow-up. Tested on x86-64 + wasm IR
+  (`internal/e2e/self_host_default_method_ir_test.go`): inherited,
+  overridden, default-calls-abstract, and two-impls-inherit-independently.
 
 ## 7b. The `std/test` collapse (landed)
 

@@ -285,7 +285,16 @@ func ComposeExportsFromWorld(core []byte, w *componenttype.World) ([]byte, error
 			return nil, fmt.Errorf("component: core imports interface %q not declared by the world", imp.module)
 		}
 		if hasResourceDropPrefix(imp.name) {
-			return nil, fmt.Errorf("component: resource-drop in a reactor export is not supported yet (%q)", imp.name)
+			// `[resource-drop]<res>` — the handler consumed an owned handle and the
+			// auto-drop pass emitted the drop import. Wire it as a gDrop (the
+			// resource is surfaced + resourceT filled once `g` exists, below),
+			// mirroring ComposeFromWorldAuto.
+			res := imp.name[len("[resource-drop]"):]
+			if !ifaceHasResource(wi, res) {
+				return nil, fmt.Errorf("component: world interface %q has no resource %q to drop", imp.module, res)
+			}
+			imports = append(imports, gImport{iface: imp.module, name: imp.name, kind: gDrop})
+			continue
 		}
 		f, ok := worldFunc(wi, imp.name)
 		if !ok {
@@ -319,6 +328,26 @@ func ComposeExportsFromWorld(core []byte, w *componenttype.World) ([]byte, error
 			g.inst[iface.Name] = uint32(idx)
 		}
 	}
+	// Surface each dropped resource as a component-level type and thread its
+	// index into the gDrop lowering (the canon resource.drop needs it) — the same
+	// additive surfacing ComposeFromWorld does, shared with the export lifts via
+	// g.surfaced (P5/P6, docs/WIT-BRING-YOUR-OWN.md).
+	for i := range imports {
+		if imports[i].kind != gDrop {
+			continue
+		}
+		res := imports[i].name[len("[resource-drop]"):]
+		t, ok := g.surfaced[res]
+		if !ok {
+			instIdx, ok := g.inst[imports[i].iface]
+			if !ok {
+				return nil, fmt.Errorf("component: resource-drop import %q: interface %q not imported by the world", imports[i].name, imports[i].iface)
+			}
+			t = g.c.aliasType(instIdx, res)
+			g.surfaced[res] = t
+		}
+		imports[i].resourceT = t
+	}
 	g.add(imports...)
 	userInst := g.lower(core)
 
@@ -340,10 +369,10 @@ func ComposeExportsFromWorld(core []byte, w *componenttype.World) ([]byte, error
 			if !coreExports[wi.Name+"#"+f.Name] {
 				continue
 			}
-			if exportNeedsMemory(f.Sig) {
+			if exportNeedsMemory(wi, f.Sig) {
 				needMem = true
 			}
-			if exportNeedsRealloc(f.Sig) {
+			if exportNeedsRealloc(wi, f.Sig) {
 				needMem = true
 				needRealloc = true
 			}
@@ -361,13 +390,23 @@ func ComposeExportsFromWorld(core []byte, w *componenttype.World) ([]byte, error
 	}
 
 	emitted := 0
+	// resourceInst maps each imported resource name to its instance index, so a
+	// handle-typed export param can surface the right imported resource (P6).
+	resourceInst := map[string]uint32{}
+	for _, wi := range w.Interfaces() {
+		if idx, ok := g.inst[wi.Name]; ok {
+			for _, r := range wi.Resources {
+				resourceInst[r] = idx
+			}
+		}
+	}
 	for _, wi := range w.ExportedInterfaces() {
 		for _, f := range wi.FuncSigs {
 			coreName := wi.Name + "#" + f.Name
 			if !coreExports[coreName] {
 				continue
 			}
-			if err := g.liftExport(userInst, wi.Name, f.Name, coreName, f.Sig, memIdx, reallocIdx); err != nil {
+			if err := g.liftExport(userInst, wi, f.Name, coreName, f.Sig, memIdx, reallocIdx, resourceInst); err != nil {
 				return nil, err
 			}
 			emitted++
@@ -385,82 +424,239 @@ const cValtypeString = 0x73
 
 // exportNeedsMemory reports whether lifting `sig` needs the core memory aliased
 // — true when any parameter or the result is a string/list (which the lift
-// reads from / writes to linear memory). Scalars need no memory.
-func exportNeedsMemory(sig *componenttype.FuncType) bool {
+// reads from / writes to linear memory). Scalars need no memory. A `list<T>`
+// result resolves through `wi` (its element-type index).
+func exportNeedsMemory(wi componenttype.WorldInterface, sig *componenttype.FuncType) bool {
 	if sig == nil {
 		return false
 	}
 	for i := range sig.Params {
-		if sig.Params[i].Ty.IsPrim && sig.Params[i].Ty.Prim == cValtypeString {
+		if isStringOrList(wi, sig.Params[i].Ty) {
 			return true
 		}
 	}
-	return !sig.NamedResults && sig.Result.IsPrim && sig.Result.Prim == cValtypeString
+	if sig.NamedResults {
+		return false
+	}
+	if isStringOrList(wi, sig.Result) {
+		return true
+	}
+	// An option/result/tuple result flattens to > 1 core value, so it returns
+	// indirectly through the core memory — the lift reads it.
+	if _, ok := wi.OptionElemPrim(sig.Result); ok {
+		return true
+	}
+	if _, _, ok := wi.ResultArmPrims(sig.Result); ok {
+		return true
+	}
+	_, isTuple := wi.TupleElemPrims(sig.Result)
+	return isTuple
 }
 
 // exportNeedsRealloc reports whether lifting `sig` needs cabi_realloc — true
 // when any parameter is a string/list, which the canonical ABI materialises in
 // the core's memory before the call.
-func exportNeedsRealloc(sig *componenttype.FuncType) bool {
+func exportNeedsRealloc(wi componenttype.WorldInterface, sig *componenttype.FuncType) bool {
 	if sig == nil {
 		return false
 	}
 	for i := range sig.Params {
-		if sig.Params[i].Ty.IsPrim && sig.Params[i].Ty.Prim == cValtypeString {
+		if isStringOrList(wi, sig.Params[i].Ty) {
 			return true
 		}
 	}
 	return false
 }
 
+// isStringOrList reports whether `v` is a `string` or a `list<T>` — the value
+// types that carry linear-memory data across the canonical ABI (and so drive
+// the memory/realloc lift options for an export).
+func isStringOrList(wi componenttype.WorldInterface, v componenttype.Valtype) bool {
+	if v.IsPrim {
+		return v.Prim == cValtypeString
+	}
+	_, isList := wi.ListElemPrim(v)
+	return isList
+}
+
 // liftExport lifts one world export: alias the surfaced core func, build its
 // component functype from the WIT signature, canon-lift it, and export it as
-// `iface` exposing `witName`. A scalar result uses the no-opts lift; a string
-// result uses the memory lift (the core returns a pointer to the (ptr,len)
-// return area, which the lift reads from `memIdx`). String/list PARAMETERS and
-// other composites are not handled yet.
-func (g *gComposer) liftExport(userInst uint32, iface, witName, coreName string, sig *componenttype.FuncType, memIdx, reallocIdx uint32) error {
+// `wi.Name` exposing `witName`. A scalar result uses the no-opts lift; a string
+// or `list<T>` result uses the memory lift (the core returns a pointer to the
+// (ptr,len) return area, which the lift reads from `memIdx`). A `list<T>` result
+// emits the `list<elem>` defined type first and references it from the functype.
+// String/list PARAMETERS beyond `string` are not handled yet.
+func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface, witName, coreName string, sig *componenttype.FuncType, memIdx, reallocIdx uint32, resourceInst map[string]uint32) error {
+	iface := wi.Name
 	if sig == nil {
 		return fmt.Errorf("component: export %s#%s has no resolved signature", iface, witName)
 	}
 	c := g.c
 	coreF := c.aliasCoreFunc(userInst, coreName)
+
+	// Surface any imported resource a handle param/result references *before*
+	// capturing `nextIdx`: aliasType emits an alias section immediately and bumps
+	// c.nType, so it must happen before the defined-type index mirror is taken.
+	// (A handle is an i32 at the canonical ABI; the own/borrow defined type just
+	// names the resource.) P6 — docs/WIT-BRING-YOUR-OWN.md.
+	surfaceHandle := func(v componenttype.Valtype) error {
+		rname, _, ok := wi.HandleResource(v)
+		if !ok {
+			return nil
+		}
+		if _, done := g.surfaced[rname]; done {
+			return nil
+		}
+		instIdx, found := resourceInst[rname]
+		if !found {
+			return fmt.Errorf("component: export %s#%s: resource %q for a handle parameter is not imported by the world", iface, witName, rname)
+		}
+		g.surfaced[rname] = g.c.aliasType(instIdx, rname)
+		return nil
+	}
+	for i := range sig.Params {
+		if err := surfaceHandle(sig.Params[i].Ty); err != nil {
+			return err
+		}
+	}
+	if !sig.NamedResults {
+		if err := surfaceHandle(sig.Result); err != nil {
+			return err
+		}
+	}
+
+	// Each defined type a param/result references (a `list<T>` or a handle's
+	// own/borrow) must be emitted before the functype so its index resolves.
+	// Collect the type sections to emit, then the per-slot valtype encodings (a
+	// primitive's single byte, or the sleb-encoded index of a list/handle type).
+	// `nextIdx` mirrors c.nType as those types are appended.
+	var defs [][]byte // defined-type bodies, in emit order
+	nextIdx := c.nType
+	// encodeSlot encodes one param/result valtype, emitting any referenced
+	// defined type into `defs`. The bool result reports whether the slot carries
+	// linear-memory data (string / list / sum-type), which drives the memory /
+	// realloc lift option. `allowSum` enables option/result encoding (results
+	// only this slice — a sum-type *param* would need a param wrapper the wasm
+	// backend doesn't build yet).
+	encodeSlot := func(v componenttype.Valtype, what string, allowSum bool) ([]byte, bool, error) {
+		if v.IsPrim {
+			return []byte{v.Prim}, v.Prim == cValtypeString, nil
+		}
+		if e, ok := wi.ListElemPrim(v); ok {
+			idx := nextIdx
+			nextIdx++
+			defs = append(defs, InnerTypeList(e))
+			return leb128SlebBytes(idx), true, nil
+		}
+		if rname, owned, ok := wi.HandleResource(v); ok {
+			// own<R> / borrow<R>: a handle is an i32 at the canonical ABI (no
+			// memory). The resource type was surfaced in the pre-pass; reference it
+			// from the own/borrow defined type.
+			rt, surfaced := g.surfaced[rname]
+			if !surfaced {
+				return nil, false, fmt.Errorf("component: export %s#%s: resource %q not surfaced", iface, witName, rname)
+			}
+			idx := nextIdx
+			nextIdx++
+			if owned {
+				defs = append(defs, InnerTypeOwn(rt))
+			} else {
+				defs = append(defs, InnerTypeBorrow(rt))
+			}
+			return leb128SlebBytes(idx), false, nil
+		}
+		if allowSum {
+			if elems, ok := wi.TupleElemPrims(v); ok {
+				// tuple<...> flattens to its elements (> 1 for a multi-element
+				// tuple) → indirect result, memory lift. Each prim's CValtype byte
+				// is < 64, so InnerTypeTuple's single-byte elements are correct.
+				idx := nextIdx
+				nextIdx++
+				defs = append(defs, InnerTypeTuple(elems))
+				return leb128SlebBytes(idx), true, nil
+			}
+			if e, ok := wi.OptionElemPrim(v); ok {
+				// option<prim> flattens to (disc, payload) > 1 → indirect result,
+				// memory lift. A prim's CValtype byte is < 64, so InnerTypeOption's
+				// single inner byte is correct.
+				idx := nextIdx
+				nextIdx++
+				defs = append(defs, InnerTypeOption(e))
+				return leb128SlebBytes(idx), true, nil
+			}
+			if okB, errB, ok := wi.ResultArmPrims(v); ok {
+				// result<okPrim, errPrim>: each arm's CValtype byte is < 128, so the
+				// uleb InnerTypeResultOkErr writes equals the prim valtype byte.
+				idx := nextIdx
+				nextIdx++
+				defs = append(defs, InnerTypeResultOkErr(uint32(okB), uint32(errB)))
+				return leb128SlebBytes(idx), true, nil
+			}
+		}
+		return nil, false, fmt.Errorf("component: export %s#%s: non-scalar / unsupported %s", iface, witName, what)
+	}
+
 	var pnames []string
-	var pvals []byte
-	hasStringParam := false
+	var pvals [][]byte
+	hasMemParam := false
 	for i := range sig.Params {
 		p := sig.Params[i]
-		if !p.Ty.IsPrim {
-			return fmt.Errorf("component: export %s#%s: non-scalar parameter (unsupported in this slice)", iface, witName)
+		enc, isMem, err := encodeSlot(p.Ty, "parameter", false)
+		if err != nil {
+			return err
 		}
-		if p.Ty.Prim == cValtypeString {
-			hasStringParam = true
+		if isMem {
+			hasMemParam = true
 		}
 		name := p.Name
 		if name == "" {
 			name = fmt.Sprintf("p%d", i)
 		}
 		pnames = append(pnames, name)
-		pvals = append(pvals, p.Ty.Prim)
+		pvals = append(pvals, enc)
 	}
-	if sig.NamedResults || !sig.Result.IsPrim {
-		return fmt.Errorf("component: export %s#%s: non-scalar / multi result (unsupported in this slice)", iface, witName)
+	// A void function is encoded as a named-results list of length zero (the WIT
+	// `func(...)` shape — e.g. incoming-handler#handle). A non-empty named-results
+	// list (multi result) is still unsupported.
+	isVoid := sig.NamedResults && len(sig.Results) == 0
+	if sig.NamedResults && !isVoid {
+		return fmt.Errorf("component: export %s#%s: multi result (unsupported in this slice)", iface, witName)
 	}
-	hasStringResult := sig.Result.Prim == cValtypeString
+	var rval []byte
+	hasMemResult := false
+	if !isVoid {
+		var err error
+		rval, hasMemResult, err = encodeSlot(sig.Result, "result", true)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Emit the referenced defined types (in index order), then the functype.
+	for _, d := range defs {
+		c.buf = PutTypeSectionOneDefined(c.buf, d)
+		c.nType++
+	}
 	funcType := c.nType
-	c.buf = PutTypeSectionOneFunc(c.buf, pnames, pvals, sig.Result.Prim)
+	if isVoid {
+		c.buf = PutTypeSectionOneFuncGeneralVoid(c.buf, pnames, pvals)
+	} else {
+		c.buf = PutTypeSectionOneFuncGeneral(c.buf, pnames, pvals, rval)
+	}
 	c.nType++
+
 	switch {
-	case hasStringParam:
-		// A string parameter: the canonical ABI materialises the incoming bytes
-		// in the core's memory via cabi_realloc, then passes (ptr,len) to the
-		// core func. The realloc lift carries both memory + realloc (it also
-		// covers a string result, whose return-area read needs memory).
+	case hasMemParam:
+		// A string / list<T> parameter: the canonical ABI materialises the
+		// incoming bytes in the core's memory via cabi_realloc, then passes
+		// (ptr,len) to the core func. The realloc lift carries both memory +
+		// realloc (it also covers a string/list result, whose return-area read
+		// needs memory).
 		c.buf = PutCanonSectionLiftWithMemoryRealloc(c.buf, coreF, funcType, memIdx, reallocIdx)
-	case hasStringResult:
-		// A string result flattens to (ptr,len) — more than one core value, so
-		// the core func returns a pointer to the [ptr,len] return area, which
-		// the memory lift reads from the core's linear memory.
+	case hasMemResult:
+		// A string / list<T> result flattens to (ptr,len) — more than one core
+		// value, so the core func returns a pointer to the [ptr,len] return
+		// area, which the memory lift reads from the core's linear memory.
 		c.buf = PutCanonSectionLiftWithMemory(c.buf, coreF, funcType, memIdx)
 	default:
 		c.buf = PutCanonSectionLiftNoOpts(c.buf, coreF, funcType)

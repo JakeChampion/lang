@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/fuzz";
 import "std/test";
 // examples/tests/fuzz_corpus_test.fern — exercises the
@@ -9,7 +8,7 @@ import "std/test";
 // found over time live in `testdata/<target>_corpus/` rather
 // than inline arrays.
 
-function check_no_x(input: string): Option[string] {
+function check_no_x(input: string): test.TestOutcome {
     // Trivially-true property. We use this purely to exercise
     // the corpus-loading / mutation / shrinking plumbing — the
     // property itself is "len(input) >= 0", which holds for
@@ -24,8 +23,8 @@ function check_no_x(input: string): Option[string] {
     // ONLY by genuine bugs, not by the mutation strategy
     // landing in an unrelated character class — otherwise the
     // run is flaky.)
-    if (input.len() < 0) { return Some("len negative"); }
-    return None;
+    if (input.len() < 0) { return test.fail("len negative"); }
+    return test.pass();
 }
 
 function test_corpus_loads_and_runs(r: test.TestRunner): test.TestRunner {
@@ -57,7 +56,7 @@ function test_corpus_loads_and_runs(r: test.TestRunner): test.TestRunner {
     return rr;
 }
 
-function test_corpus_dir_missing_uses_fallback(): Option[string] {
+function test_corpus_dir_missing_uses_fallback(): test.TestOutcome {
     var seeds: string[] = fuzz.fuzz_corpus_from_dir_or(
         "/tmp/lang-corpus-definitely-does-not-exist-83472",
         ["one", "two", "three"]);
@@ -72,7 +71,7 @@ function test_corpus_dir_empty_uses_fallback(r: test.TestRunner): test.TestRunne
     return rr.it("empty corpus falls back", test.assert_len_string(seeds, 1));
 }
 
-function test_new_mutators_dont_crash(): Option[string] {
+function test_new_mutators_dont_crash(): test.TestOutcome {
     // Smoke test: drive a noop fuzz target through every
     // mutator (default iterations covers each at least
     // 200/8 = 25 times in expectation). A regression in any
@@ -81,7 +80,7 @@ function test_new_mutators_dont_crash(): Option[string] {
     // failure here.
     return fuzz.fuzz_run(["", "abc", "Hello World"],
                     fuzz.fuzz_default_iterations(),
-                    function(_: string): Option[string] { return None; });
+                    check_no_x);
 }
 
 function main(): i32 {

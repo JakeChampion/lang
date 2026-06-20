@@ -369,23 +369,24 @@ world-driven composer (P2) wires it.
      `canonicalExternParamValtypes` flattens it to the same `(i32, i32)` as the
      other arrays. Gated by `TestExternBoolArrayParamCustomProvider` (a
      `count-true: func(b: list<bool>) -> s32` provider; `[true,false,true]` → 2).
-     **bool[] *results* stay rejected** — and the reason turns out to be broader
-     than bool: a `list<T>` *result* with a **sub-4-byte element** (`u8`/`bool`)
-     traps at runtime inside the generated `canon lower` adapter when wired
-     through the world composer (`ComposeFromWorldAuto`) + a custom provider,
-     while the same shape with a 4-/8-byte element (`list<i32>`/`list<f64>`)
-     works, and *every* list *param* (including `list<u8>`/`list<bool>`) works.
-     Ruled out: the emitted result wrapper (the trap fires in the import adapter
-     *before* it runs), the WIT type encoding (`wasm-tools component wit` shows
-     `func(n: s32) -> list<u8>` correctly), the core import shape (identical to
-     the working `list<i32>` case), and our `cabi_realloc`/`__fern_alloc` (every
-     size is 8-rounded, so the bump cursor stays 8-aligned for 1- and 4-byte
-     elements alike). So this is a subtle composer/runtime interaction in the
-     `gMemRealloc` lowering path for sub-4-byte list-result elements — a
-     follow-up that also blocks `u8[]` results via a *custom* provider (the
-     existing `u8[]`-result coverage runs through the legacy registry composer
-     for `wasi:random`, not `ComposeFromWorldAuto`). The self-host port of bool[]
-     params is done (see below).
+     **Sub-4-byte `list<T>` *results* (`u8`/`bool`) via a custom provider — ✅
+     done (Go).** This was previously deferred on a suspected `gMemRealloc`
+     trap, but the `ComposeFromWorldAuto` + custom-provider path now composes and
+     runs cleanly (an intervening composer/realloc fix resolved it): a
+     `func(n: u32) -> list<u8>` lifts into a Fern `u8[]` (the numeric-array result
+     wrapper at stride 1), and a `func(n: u32) -> list<bool>` lifts into a Fern
+     `boolean[]` — here the canonical element is 1 byte but a Fern bool array slot
+     is 4, so `buildExternBoolListResultWrapper` **byte-EXPANDS** each host byte
+     into a 4-byte i32 element (the inverse of the bool[]-param byte-repack).
+     Gated by `TestExternListU8ResultCustomProvider` and
+     `TestExternBoolArrayResultCustomProvider` (both `ComposeFromWorldAuto` +
+     custom provider, run under wasmtime), plus the wasmbin unit
+     `TestEmitExternBoolArrayResult`. The self-host port of bool[] params is done
+     (see below); the self-host **bool[]-result port is done** too — the self-host
+     stores u8 and boolean array elements identically (one per 4-byte slot), so a
+     `boolean[]` result reuses the u8[]-result byte-expansion wrapper verbatim
+     (only the `is_extern_composite_ret` gate + the wrapper's ret-type check
+     accept `"boolean[]"`). Gated by `TestSelfHostExternBoolArrayResultCustomProvider`.
    - **Record (struct) parameters — ✅ done (Go).** A Fern struct passed to an
      `@import` extern whose WIT signature takes a `record` flattens to its
      fields' core types (the canonical ABI passes a small record inline). The
@@ -402,27 +403,31 @@ world-driven composer (P2) wires it.
      sub-word field with a width+sign-aware load (`i32.load8_s/u`,
      `i32.load16_s/u` via `appendExternFieldLoad`) to produce the correct i32
      (`externRecordFieldValtype` keeps the flat valtype i32). **A nested record
-     field is also flattened (one level)**: the canonical ABI inlines a nested
-     record, so `externRecordParamLeaves` recurses into a (flattenable) struct
-     field, emitting one leaf per inner scalar. A Fern struct field of struct
-     type is a *pointer*, so a nested leaf carries `DerefOffset` (the outer field
-     offset): the wrapper loads the inner value pointer there, then the leaf at
-     its inner offset. A **`bool` field** is also supported (both directions),
-     treated as an unsigned 8-bit: the Fern bool is 0/1 in a 4-byte slot, read
-     with `i32.load8_u` (low byte) and sized at 1 byte in the canonical memory
-     layout (`externCanonicalFieldSizeAlign`) — see the bool-field test below.
-     strings, arrays, and a *second* level of nesting are
-     still deferred — a struct param outside this shape is rejected with a clear
-     message. Gated by `TestExternRecordParamCustomProvider` (a `record point
-     { x: s32, y: s32 }` summed), `TestExternRecordParamWideCustomProvider` (a
-     mixed `record mix { a: s32, b: s64 }`, exercising the i64 field's 8-byte
-     offset + i64 flat valtype), `TestExternRecordParamSubwordCustomProvider` (a
-     `record { a: s8, b: u16, c: s32 }` with `a = -5`, `b = 300` — values that
-     fail under the wrong-width or wrong-sign load), and
-     `TestExternRecordParamNestedCustomProvider` (a `record line { p: point,
-     q: point }` flattened to its 4 inner coords). The `bool`-field round-trip
-     (param + result) is gated by `TestExternBoolRecordFieldCustomProvider` (a
-     `record flag { on: bool, n: s32 }` via `mk`/`rd`).
+     field is also flattened, to *arbitrary depth***: the canonical ABI inlines a
+     nested record, so `externParamLeavesRec` recurses into (flattenable) struct
+     fields, emitting one leaf per inner scalar. A Fern struct field of struct
+     type is a *pointer*, so a leaf nested N levels deep carries a `DerefPath`
+     (the chain of N outer field offsets): the wrapper deref-s each in turn (load
+     the inner value pointer) then loads the leaf at its innermost offset. A
+     **`bool` field** is also supported (both directions), treated as an unsigned
+     8-bit: the Fern bool is 0/1 in a 4-byte slot, read with `i32.load8_u` (low
+     byte) and sized at 1 byte in the canonical memory layout
+     (`externCanonicalFieldSizeAlign`) — see the bool-field test below. Strings
+     and arrays as fields are still deferred — a struct param outside this shape
+     is rejected with a clear message. Gated by
+     `TestExternRecordParamCustomProvider` (a `record point { x: s32, y: s32 }`
+     summed), `TestExternRecordParamWideCustomProvider` (a mixed `record mix {
+     a: s32, b: s64 }`, exercising the i64 field's 8-byte offset + i64 flat
+     valtype), `TestExternRecordParamSubwordCustomProvider` (a `record { a: s8,
+     b: u16, c: s32 }` with `a = -5`, `b = 300` — values that fail under the
+     wrong-width or wrong-sign load), `TestExternRecordParamNestedCustomProvider`
+     (one level — a `record line { p: point, q: point }` flattened to its 4 inner
+     coords), and `TestExternRecordParamDeepNestedCustomProvider` (three levels —
+     `outer { l: mid, r: mid }` / `mid { p: point, n: s32 }` / `point { x, y }`,
+     the six leaves weighted so the deref chains are checked). The `bool`-field
+     round-trip (param + result) is gated by
+     `TestExternBoolRecordFieldCustomProvider` (a `record flag { on: bool, n: s32
+     }` via `mk`/`rd`).
    - **Record (struct) results — ✅ done (Go).** An `@import` extern returning a
      `record` lifts into a Fern struct. A multi-field record flattens to > 1
      core value, so the canonical ABI returns it indirectly through a
@@ -455,15 +460,21 @@ world-driven composer (P2) wires it.
      `TestExternRecordResultSubwordCustomProvider` (a `make-mix: func() -> record
      { a: s8, b: u16, c: s32 }` with `{-5, 300, 1000}` packed at canonical
      offsets 0/2/4 — values that fail under the wrong-width/sign load). **A
-     nested-record field is also lifted (one level)**: the canonical area inlines
-     the nested record's leaves (at the nested record's alignment), and the
-     wrapper materializes a separate inner Fern struct per nested field
-     (`ExternRecordField.Nested`), fills it from the area, and stores its pointer
-     in the outer slot — recursively bottom-up. A single-leaf-via-nested result
-     (which the canonical returns by value) is rejected (the by-value Direct
-     wrapper can't reconstruct nesting). Gated by
-     `TestExternRecordResultNestedCustomProvider` (a `make-line: func(...) ->
-     record line { p: point, q: point }`; the Fern side reads `l.p.x`/`l.q.y`).
+     nested-record field is also lifted, to *arbitrary depth***: the canonical
+     area inlines every nested record's leaves (each at its own alignment), and
+     the wrapper materializes a separate inner Fern struct per node, wiring child
+     pointers into their parents bottom-up. `externResultLayoutRec` recurses the
+     canonical layout (building the `ExternRecordField.Nested` subtree;
+     `externCompositeAlign` gives each nested record's alignment), and
+     `buildExternRecordResultWrapper` recurses the materialization with one
+     scratch local per nesting level (`rrNestDepth` sizes them). A
+     single-leaf-via-nested result (which the canonical returns by value) is
+     rejected (the by-value Direct wrapper can't reconstruct nesting). Gated by
+     `TestExternRecordResultNestedCustomProvider` (one level — a `make-line:
+     func(...) -> record line { p: point, q: point }`; reads `l.p.x`/`l.q.y`) and
+     `TestExternRecordResultDeepNestedCustomProvider` (three levels —
+     `outer { l: mid, r: mid }` / `mid { p: point, n: s32 }` / `point { x, y }`;
+     reads `o.l.p.x` … `o.r.n`).
    - **Tuple params + results — ✅ done (Go).** A Fern tuple is laid out exactly
      like a struct (rc header + elements at the same packing), so the record
      machinery generalises to tuples for free: `externCompositeFieldTypes`
@@ -525,22 +536,70 @@ world-driven composer (P2) wires it.
      func(n: s32) -> color` returning `disc = n`; `rank(0/1/2)` → `Red/Green/Blue`
      — a full disc→sentinel→tag round-trip). General payload-carrying `variant`s
      are deferred.
-   - **General `variant` params (uniform payload) — ✅ done (Go).** A Fern user
-     enum with *payload-carrying* variants passed to an `@import` extern whose
-     WIT takes a `variant`. Scoped to a **uniform** payload: every payloaded
-     variant carries exactly one scalar of the same kind+width T (payloadless
-     variants allowed; ≥1 must be payloaded — else it's a plain enum). The
-     canonical `variant` flattens to (disc, payload-join), and with uniform T the
-     join is T — i.e. exactly `Result`'s (disc, payload) shape — so
-     `externVariantParamLayout` reuses the existing enum-param wrapper with no
-     discriminant remap (the user-enum variant index is the WIT case order). The
-     wrapper reads the tag at +0 and the payload at the box offset; for a
-     payloadless-case value (a sentinel) the payload read yields ignored garbage
-     (the host drops it for that disc), so it's harmless. Gated by
-     `TestExternVariantParamCustomProvider` (a `describe: func(s: shape) -> s32`
-     over `variant shape { circle(s32), square(s32), empty }`:
-     `Circle(7)`→7, `Square(7)`→70, `Empty`→999). Non-uniform / multi-payload
-     variants are deferred (the *result* direction landed — see below).
+   - **General `variant` params (uniform + non-uniform same-width payload) — ✅
+     done (Go).** A Fern user enum with *payload-carrying* variants passed to an
+     `@import` extern whose WIT takes a `variant`. Every payloaded variant carries
+     exactly one scalar (payloadless variants allowed; ≥1 must be payloaded — else
+     it's a plain enum). The canonical `variant` flattens to (disc, payload-join);
+     two payload shapes lower (`externVariantParamLayout`, shared with the result
+     side):
+       - **Uniform** — all payloads the same kind+width T: the join is T, so the
+         existing (disc, payload) enum-param wrapper is reused verbatim
+         (`PayloadType = T`; an f32 payload passes as an f32).
+       - **Non-uniform but same core WIDTH** — e.g. `{ i(s32), f(f32) }` (both
+         32-bit) or `{ l(s64), d(f64) }` (both 64-bit): the canonical join is the
+         integer bit-container of that width (i32 / i64). `PayloadType` is set to
+         that synthetic int, so the wrapper moves the payload's *bits*
+         (`i32.load`/`i64.load` of the box slot) and each side reinterprets per
+         the disc. No per-arm branch is needed — same-width payloads sit at the
+         same box offset (the per-variant `payloadLayout` is width-determined) and
+         a bit-load is value-preserving for both int and float arms.
+       - **Mixed core WIDTH** — a 32-bit and a 64-bit arm, e.g. `{ i(s32),
+         l(s64) }`: the canonical join is i64, and each arm lives at its OWN box
+         offset and needs coercion (a 32-bit arm `i64.extend_i32_u` to / `i32.wrap_i64`
+         from the i64 slot). `PayloadType` is i64 and `ExternEnumParam.Variants`
+         carries each arm's box offset + type; the wrapper branches on the disc
+         (`appendVariantParamPayloadI64` / `appendVariantResultStore`) to
+         load/store at the right offset+width. (Float bits ride the int loads, so
+         f64 / f32 arms work too.)
+     A fourth shape — **MULTI-FIELD** arms (a case carrying ≥2 payloads; in WIT a
+     case wraps multiple values in a `tuple<…>`, which flattens identically to a
+     Fern multi-field variant `Click(i32, i32)`) — joins **position-wise** to
+     `SlotCount` slots, each slot j's type the canonical join of every arm's field
+     j (the full general join: `join(i32, f32) = i32`; any other unequal pair →
+     i64; equal → that type — so a slot may be i32 / i64 / f32 / f64). `ExternEnum-
+     Param.SlotCount` + `SlotTypes` (per-slot join valtype) + `Variants[k].{Fields,
+     FieldTypes,FieldAreaOffsets}` drive the wrappers. The **param** side pushes
+     each slot by branching on the disc — the arm's field j loaded from its box
+     offset and coerced to the slot type (a 32-bit field rides an i32 slot as its
+     raw bits, an f32 likewise; a 32-bit field under an i64 slot zero-extends; an
+     f64 rides an i64 slot as its bits), or the slot's zero to pad shorter arms
+     (`appendVariantParamMultiField`). The **result** side reads the canonical
+     variant *memory* layout — a 1-byte disc, then the payload aligned to the
+     widest field, so each arm's fields sit at its own tuple offsets
+     (`FieldAreaOffsets`, precomputed in `externVariantParamLayout`) — and copies
+     each by field width (i64 for an 8-byte field, i32 for a 4-byte one) into the
+     box, the float bits surviving the integer move
+     (`appendVariantResultStoreMultiField`). Scoped to 32-/64-bit numeric/float
+     fields (`externMultiFieldVariantFieldOK`; sub-word s8/s16, which pack at
+     1-/2-byte canonical sizes, are a separate slice). No discriminant remap (the
+     user-enum variant index is the WIT case order); a payloadless-case sentinel's
+     payload read is ignored garbage (the host drops it for that disc). Gated by
+     `TestExternVariantParamCustomProvider` (uniform —
+     `describe: func(s: shape) -> s32` over `variant shape { circle(s32),
+     square(s32), empty }`: `Circle(7)`→7, `Square(7)`→70, `Empty`→999),
+     `TestExternVariantNonUniformParamCustomProvider` (`{ i(s32), f(f32) }`, the
+     f32 arm's bits round-tripping through the i32 join),
+     `TestExternVariantMixedWidthParamCustomProvider` (`{ i(s32), l(s64) }`, the
+     i64 arm carrying a value that needs 64 bits),
+     `TestExternVariantMultiFieldParamCustomProvider` (`{ click(tuple<u32,u32>),
+     key(u32), close }` ↔ `Ev { Click(i32,i32), Key(i32), Close }`), and
+     `TestExternVariantMultiFieldMixedParamCustomProvider` (the general join —
+     `{ move(tuple<s32,s64>), spin(tuple<f32,f64>), stop }` ↔ `Ev { Move(i32,i64),
+     Spin(f32,f64), Stop }`: slot0 = join(s32,f32) = i32, slot1 = join(s64,f64) =
+     i64, the f32/f64 bits riding the int slots). The result direction mirrors all
+     five via `TestExternVariant{,NonUniform,MixedWidth,MultiField,MultiFieldMixed}
+     Result…`.
    - **General `variant` results (uniform payload) — ✅ done (Go).** An `@import`
      extern returning a WIT `variant` with a uniform scalar payload (every case
      payloaded, same type T), lifted into a Fern user enum. The canonical variant
@@ -559,7 +618,12 @@ world-driven composer (P2) wires it.
      over `variant grade { low(s32), mid(s32), high(s32) }`; recovers (tag,
      payload) for all three cases) and `TestExternVariantResultMixedCustomProvider`
      (a `lookup: func(n: s32) -> opt-num` over `variant opt-num { some(s32),
-     none }`, exercising a payloaded + a payloadless case).
+     none }`, exercising a payloaded + a payloadless case). **Non-uniform
+     same-width payloads** are also lifted (the same `externVariantParamLayout`
+     join — the i32/i64 bit-container): gated by
+     `TestExternVariantNonUniformResultCustomProvider` (a `classify: func(n: s32)
+     -> num` over `variant num { i(s32), f(f32) }`, the f32 arm's bits surviving
+     the i32 join slot bit-exactly).
    - **Self-host port — numeric array params — ✅ started.** The self-hosted
      compiler (`examples/self_host/wasm.fern`) gained the first BYOW data-type
      beyond strings: a numeric array (`i32[]`/`i64[]`/`f32[]`/`f64[]`/…) `@import`
@@ -598,24 +662,24 @@ world-driven composer (P2) wires it.
      so the wrapper reads each with a width+sign-aware load
      (`extern_field_load_op` → `i32.load8_s/u`, `i32.load16_s/u`) to get the
      correctly extended canonical i32; word fields use plain `i32.load`. **A
-     nested record field is flattened one level** (mirroring the Go side): a
-     field that is itself an all-scalar struct (`extern_record_all_scalar`)
-     expands to one leaf per inner field; since a self-host struct-of-struct field
-     is a pointer, the wrapper loads the inner value pointer at `struct+outerOff`
-     then each leaf at `+innerOff`. `extern_record_leaf_count` sizes the import's
-     `(param i32)` list (a second level of nesting is rejected). `mod` is
-     threaded into `has_extern_mem_param` / `extern_needs_wrapper` for the
-     struct-decl lookup. Sub-word *result* fields stay rejected
-     (`extern_record_result_supported`, the result-side gate, stays i32/u32-only)
-     — the canonical return-area packs them tightly, a dual-layout slice, same as
-     the Go side. Gated by `TestSelfHostExternRecordParamCustomProvider` (a
-     `sum-point: func(p: record { x, y: s32 }) -> s32`, x+y) and
-     `TestSelfHostExternRecordParamSubwordCustomProvider` (a `record { a: s8,
-     b: u16, c: s32 }` with `a = -5`, `b = 300` — values that fail under the
-     wrong-width or wrong-sign load) and
-     `TestSelfHostExternRecordParamNestedCustomProvider` (a `sum-line: func(l:
-     line) -> s32` over `record line { p: point, q: point }`,
-     `Line{p:{1,2},q:{3,4}}` → 10). **`bool` fields** are also supported (both
+     nested record field is flattened, to *arbitrary depth*** (mirroring the Go
+     side): a field that is itself a record (`extern_record_nestable`) expands to
+     one leaf per inner scalar; since a self-host struct-of-struct field is a
+     pointer, the recursive `extern_emit_record_param_leaves` deref-s the inner
+     value pointer at `struct+outerOff` and recurses with that as the new base, to
+     any depth. `extern_record_leaf_count` (recursive) sizes the import's
+     `(param i32)` list. `mod` is threaded into `has_extern_mem_param` /
+     `extern_needs_wrapper` for the struct-decl lookup. Gated by
+     `TestSelfHostExternRecordParamCustomProvider` (a `sum-point: func(p: record {
+     x, y: s32 }) -> s32`, x+y), `TestSelfHostExternRecordParamSubwordCustomProvider`
+     (a `record { a: s8, b: u16, c: s32 }` with `a = -5`, `b = 300` — values that
+     fail under the wrong-width or wrong-sign load),
+     `TestSelfHostExternRecordParamNestedCustomProvider` (one level — a `sum-line:
+     func(l: line) -> s32` over `record line { p: point, q: point }`,
+     `Line{p:{1,2},q:{3,4}}` → 10), and
+     `TestSelfHostExternRecordParamDeepNestedCustomProvider` (three levels —
+     `outer { l: mid, r: mid }` / `mid { p: point, n: s32 }` / `point { x, y }`,
+     the six leaves weighted so the deref recursion's ordering is checked). **`bool` fields** are also supported (both
      directions), treated as an unsigned 8-bit (`extern_field_is_scalar` accepts
      `boolean`, `extern_field_load_op` → `i32.load8_u`, `extern_canon_field_size`
      → 1), gated by `TestSelfHostExternBoolRecordFieldCustomProvider` (a `record
@@ -637,22 +701,27 @@ world-driven composer (P2) wires it.
      the self-host struct's 4-byte slots, so the wrapper reads each with a
      width+sign-aware load (`extern_field_load_op`) and stores it into the wider
      slot; for word-only records the layouts coincide. **A nested-record field is
-     also lifted (one level)** (mirroring the Go side): the canonical area inlines
-     the nested record's leaves at the nested record's alignment
-     (`extern_canon_field_align` / `extern_canon_field_csize` / nesting-aware
-     `extern_canon_top_off` + `extern_canon_record_size_nested`), and the wrapper
-     allocs a separate inner self-host struct per nested field, fills it from the
-     inlined canonical offsets, and stores its pointer in the outer slot. A
-     single-leaf-via-nested result (returned by value) is rejected — only a single
-     *scalar* field is `extern_record_ret_direct`-eligible (the by-value Direct
-     wrapper can't reconstruct nesting). Gated by
+     also lifted, to *arbitrary depth*** (mirroring the Go side): the canonical
+     area inlines every nested record's leaves at each level's alignment
+     (recursive `extern_canon_field_align` / `extern_canon_field_csize` /
+     `extern_canon_top_off` / `extern_canon_record_size_nested`), the gate recurses
+     (`extern_record_nestable` / `extern_record_leaf_count`), and
+     `extern_emit_record_fill` recurses the materialization — allocating one inner
+     self-host struct per node and wiring child pointers into their parents
+     bottom-up, with one `$inner<depth>` scratch local per nesting level
+     (`extern_record_depth` sizes them). A single-leaf-via-nested result (returned
+     by value) is rejected — only a single *scalar* field is
+     `extern_record_ret_direct`-eligible (the by-value Direct wrapper can't
+     reconstruct nesting). Gated by
      `TestSelfHostExternRecordResultCustomProvider` (a `make-point: func(a, b:
      s32) -> record { x, y: s32 }`, fields read back),
      `TestSelfHostExternRecordResultSubwordCustomProvider` (a `make-mix: func()
      -> record { a: s8, b: u16, c: s32 }` with `{-5, 300, 1000}` at canonical
-     offsets 0/2/4), and `TestSelfHostExternRecordResultNestedCustomProvider` (a
-     `make-line: func(...) -> record line { p: point, q: point }`; the Fern side
-     reads `l.p.x`/`l.q.y`).
+     offsets 0/2/4), `TestSelfHostExternRecordResultNestedCustomProvider` (one
+     level — a `make-line: func(...) -> record line { p: point, q: point }`; reads
+     `l.p.x`/`l.q.y`), and `TestSelfHostExternRecordResultDeepNestedCustomProvider`
+     (three levels — `outer { l: mid, r: mid }` / `mid { p: point, n: s32 }` /
+     `point { x, y }`; reads `o.l.p.x` … `o.r.n`).
    - **Self-host port — sum-type (option/result) params — ✅ done.** An
      Option/Result `@import` parameter flattens to (disc, payload). A self-host
      enum is a heap box `[tag:i32 @0][payload:i32 @4]` (Some/Ok=0, None/Err=1) —
@@ -769,11 +838,20 @@ world-driven composer (P2) wires it.
      }`, all-payloaded) and `TestSelfHostExternVariantResultMixedCustomProvider`
      (a `lookup: func(n: s32) -> opt-num` over `variant opt-num { some(s32),
      none }`, exercising a payloaded + a payloadless case).
-   - Still rejected (next slices): the self-host port of nested-record results;
-     second-level / deeper nesting; non-uniform /
-     multi-payload `variant`s; sub-4-byte-element `list<T>` *results*
-     (`u8[]`/`bool[]`) via a custom provider (the `ComposeFromWorldAuto`
-     `gMemRealloc` trap analysed above). The
+   - Still rejected (next slices): the self-host port of the variant-payload
+     generalisations (non-uniform / mixed-width / multi-field) — **blocked on the
+     self-host backend itself**: its enum-box payload is a single i32 slot, and a
+     payload-bearing variant `V(T)` is desugared (parser.fern) to a struct with a
+     *single* `__ev` field — multi-payload variants drop the extra payloads and a
+     multi-binding match is an `E015` arity error. So 64-bit / float / multi-field
+     variant payloads need a self-host backend slice (real multi-payload variants +
+     wide enum slots) *before* the extern marshalling can be ported. The Go-side
+     **general multi-field variant join** (mixed-width / float fields,
+     position-wise) is now **done** — see the multi-field entry above. So are the
+     sub-4-byte-element `list<T>` *results* (`u8`/`boolean`) via a custom provider
+     (the suspected `gMemRealloc` trap turned out to be already resolved — see the
+     bool[]/u8[]-result entry above). Still deferred: sub-word (s8/s16) fields
+     inside a multi-field variant arm (the tight 1-/2-byte canonical packing). The
      multi-component harness (`TestExternImportCustomProvider`) is the test
      vehicle for these.
    - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
@@ -1036,11 +1114,243 @@ world-driven composer (P2) wires it.
      Go composer lifts with realloc, consumer's `len_of("hello")==5` runs under
      wasmtime). **P6 string param+result exports are now complete in both
      compilers.**
-   - **Slice 6 (next) — resource-typed exports**: lift an export taking/returning
+   - **Slice 5e — numeric-array (`list<T>`) result export from Fern (Go). ✅
+     Done.** The first composite EXPORT beyond strings: a Fern reactor
+     `@export iota(): i32[]` (or any `u8[]`/`i32[]`/`f32[]`/`i64[]`/`f64[]`/…
+     numeric element) lifts into a WIT `list<T>` result. The composer
+     (`liftExport`) resolves the list element through the world
+     (`WorldInterface.ListElemPrim`), emits the `list<elem>` defined type
+     (`PutTypeSectionOneDefined` + `InnerTypeList`) → `listIdx`, builds the
+     functype referencing it (`PutTypeSectionOneFuncResultIdx`, which
+     sleb-encodes the result type index so `listIdx ≥ 64` is correct — unlike
+     `PutTypeSectionOneFunc`'s single-byte append), and lifts with the same
+     memory lift the string result uses (`PutCanonSectionLiftWithMemory`; both
+     return indirectly via a `(ptr,len)` return area). The wasmbin wrapper
+     (`buildExportListResultWrapper`) is the simpler sibling of the
+     string-result one: a Fern numeric array is already contiguous at the
+     canonical element stride (the count lives at `ptr-4`), so it reads the
+     count and writes a 4-byte-aligned `[ptr,count]` return area with no
+     SSO-normalize / copy. Byte-pinned by `TestPutTypeSectionOneDefined_Bytes`
+     and `TestPutTypeSectionOneFuncResultIdx_Bytes` (the latter gates the
+     `≥ 64` two-byte s33 case), and run end-to-end by
+     `TestExportListResultRunsViaConsumer` (a Fern exporter returns
+     `[10,20,30,40]`, a Fern consumer `@import`s `iota() -> list<s32>` and reads
+     it back, linked + run under wasmtime).
+   - **Slice 5e self-host — numeric-array (`list<T>`) result export. ✅ Done.**
+     `wasm.fern`'s `build_export_wrapper` now emits the array-result branch. A
+     self-host array value is the block base (`[len@0]`, elements at +8 in
+     native slots), and the self-host heap isn't aligned, so — like the import
+     array *param* wrapper, not the zero-copy Go side — the wrapper **copies**
+     the elements into a fresh 8-aligned buffer (`extern_array_param_supported`
+     element kinds: i32/u32/f32 slot 4, i64/u64/f64 slot 8) before writing the
+     4-byte-aligned `[buf,len]` canonical return area the Go composer's memory
+     lift reads. `extern_exports` surfaces the wrapper and `export_needs_heap`
+     pins `__fern_alloc` for an array-result export (no `cabi_realloc` — the
+     memory lift needs no realloc). u8/i16 arrays (slot ≠ canonical size) stay
+     deferred, as on the import side. Gated by
+     `TestSelfHostExportListResultRunsViaConsumer` (the self-host emits the
+     `iota(): i32[]` exporter core, the Go composer lifts it, and a Fern consumer
+     reads `[10,20,30,40]` back under wasmtime); the self-compile + printer +
+     checker oracles stay green (the self-host source has no array `@export`, so
+     the shared paths are unchanged). **P6 numeric-array result exports are now
+     complete in both compilers.**
+   - **Slice 5f — numeric-array (`list<T>`) parameter export from Fern (Go). ✅
+     Done.** The inverse of the list-result export: a Fern reactor
+     `@export sum(xs: i32[]): i32` takes a WIT `list<T>` parameter. The composer
+     lifts it with the realloc lift (`PutCanonSectionLiftWithMemoryRealloc` — the
+     canonical ABI materialises the incoming list in the core memory via
+     `cabi_realloc`, then passes `(ptr,len)`), emitting the `list<elem>` param
+     component type. `liftExport` was generalised to build the functype from
+     per-slot valtype encodings (`PutTypeSectionOneFuncGeneral` — each param /
+     result is a primitive byte *or* a sleb-encoded defined-type index), so a
+     mix of scalar and list params/results encodes correctly; the string/list
+     param + result detection moved to a shared `isStringOrList` helper. The
+     wasmbin wrapper (`buildExportListParamWrapper`) rebuilds the length-prefixed
+     Fern array from each canonical `(ptr,len)` (`alloc 4+len*stride`, store the
+     count, `memory.copy` the elements) and calls the user func with the element
+     pointer — strings forward their `(ptr,len)` directly, scalars pass through.
+     A numeric-array param combined with a composite *result* is rejected for now
+     (a later slice). Byte-pinned by `TestPutTypeSectionOneFuncGeneral_Bytes`;
+     run end-to-end by `TestExportListParamRunsViaConsumer` (a Fern exporter sums
+     an `i32[]`, a Fern consumer `@import`s `sum(xs: list<s32>) -> s32` and gets
+     `100` from `[10,20,30,40]`, linked + run under wasmtime).
+   - **Slice 5f self-host — numeric-array (`list<T>`) parameter export. ✅ Done.**
+     `wasm.fern`'s `build_export_wrapper` gained the array-param case. The
+     canonical realloc lift passes `(ptr,len)` with the elements contiguous at
+     their stride; the wrapper rebuilds the self-host array (`__fern_arr_box`,
+     `[len@0]`, elements at +8 in native slots — mirroring the import array-result
+     wrapper) and passes its block base to the Fern func. The slot/local
+     accounting was generalised so a string *or* numeric-array param takes two
+     wrapper slots + one block local (`nblk`). `extern_exports` /
+     `export_needs_heap` / `export_needs_realloc` now fire for an array param, and
+     the `arr_helpers` (→ `__fern_arr_box`) emission is gated on
+     `module_has_array_param_export`. Gated by
+     `TestSelfHostExportListParamRunsViaConsumer` (the self-host emits the
+     `sum(xs: i32[])` exporter core, the Go composer lifts it with the realloc
+     lift, and a Fern consumer gets `100` from `[10,20,30,40]` under wasmtime);
+     the self-compile / printer / checker oracles stay green (the self-host source
+     has no array-param `@export`, so the shared paths are unchanged). **P6
+     numeric-array param exports are now complete in both compilers.**
+   - **Slice 5g — sum-type (`option` / `result`) result export from Fern (Go). ✅
+     Done.** The first *structural* composite export beyond lists: a Fern reactor
+     `@export half(n): Option[i32]` / `@export checked_div(a,b): Result[i32,i32]`
+     returns a Fern enum box, lifted into a WIT `option` / `result`. The canonical
+     sum flattens to `(disc, payload)` > 1 core value, so it returns indirectly
+     (memory lift). The composer's `liftExport` `encodeSlot` gained an `allowSum`
+     path (results only — a sum-type *param* would need a param wrapper) that
+     emits `InnerTypeOption` / `InnerTypeResultOkErr` (prim arms, whose CValtype
+     byte < 128 makes the uleb arm-encoding equal the valtype byte) and the
+     `WorldInterface.OptionElemPrim` / `ResultArmPrims` accessors. The wasmbin
+     wrapper (`buildExportSumTypeResultWrapper`) writes the `(disc:u8@0,
+     payload@off)` return area — the discriminant remapped `1-tag` for option
+     (Fern Some=0/None=1 ↔ canonical none=0/some=1; result's Ok=0/Err=1 matches) —
+     handling **both** the **pair-form** `(tag, payload)` register return and the
+     heap-box value-pointer return (`ir.ExternExport.ResultEnum`, resolved during
+     lowering via `externEnumParamLayout`). Run end-to-end by
+     `TestExportOptionResultRunsViaConsumer` (the remap path) and
+     `TestExportResultResultRunsViaConsumer` (the no-remap path), each a Fern
+     exporter + a Fern consumer matching every arm, linked + run under wasmtime.
+     Scoped to single-scalar-payload Option/Result; the general-variant join and
+     sum-type *params* are later slices. (Two findings surfaced, both orthogonal
+     composer limitations deferred: a single exported interface can hold only one
+     `@export` function, and a world can export only one interface — the existing
+     tests never exercised either; the sum-type cases use one interface / one
+     function each.)
+   - **Slice 5g self-host — sum-type (`option` / `result`) result export. ✅ Done.**
+     `wasm.fern`'s `build_export_wrapper` gained the sum-result branch. The
+     self-host has no pair-form (an Option/Result function always returns a heap
+     enum box `[tag:i32@0][payload:i32@4]`), so the wrapper reads the box and
+     writes the canonical `(disc:u8@0, payload:i32@4)` return area — the disc
+     remapped `1-tag` for option (`extern_sum_param_is_option`), straight through
+     for result — over-allocating the 8-byte area by 7 and 8-aligning it (the
+     heap bump isn't aligned), exactly the inverse of the import sum-result
+     wrapper. `extern_exports` / `export_needs_heap` now fire for a sum-type
+     result (`extern_sum_param_supported`); no `cabi_realloc` (memory lift only).
+     Gated by `TestSelfHostExportOptionResultRunsViaConsumer` (remap) and
+     `TestSelfHostExportResultResultRunsViaConsumer` (no remap) — the self-host
+     emits the exporter core, the Go composer lifts it, and a Fern consumer
+     matches every arm under wasmtime; the self-compile / printer / checker
+     oracles stay green. **P6 sum-type result exports are now complete in both
+     compilers.**
+   - **Slice 5h — tuple (`(A, B, …)`) result export from Fern (Go). ✅ Done.**
+     Another structural composite export: a Fern reactor
+     `@export make_pair(a, b): (i32, i32)` returns a tuple value, lifted into a
+     WIT `tuple`. A multi-element tuple flattens to > 1 core value, so it returns
+     indirectly (memory lift). The composer's `liftExport` `encodeSlot` gained a
+     tuple path (`InnerTypeTuple` + the `WorldInterface.TupleElemPrims` accessor,
+     all-primitive elements). `ir.ExternExport.ResultTuple` carries the layout —
+     reusing `externRecordResultLayout` (which already handles tuples), gated to
+     `ast.TupleType` and flat (`externFieldsAllFlat`) so named records (which need
+     the exported-instance type-export machinery) and nested tuples stay deferred.
+     The wasmbin wrapper (`buildExportTupleResultWrapper`) copies each element
+     from the Fern tuple value (`V+field.Offset`) into the canonical return area
+     (`field.CanonicalOffset`). Run end-to-end by
+     `TestExportTupleResultRunsViaConsumer` (a Fern exporter returns `(a+1, b*2)`,
+     a Fern consumer reads `p.0`/`p.1`, linked + run under wasmtime).
+   - **Slice 5h self-host — tuple (`(A, B, …)`) result export. ✅ Done.**
+     `wasm.fern`'s `build_export_wrapper` gained the tuple-result branch. A
+     self-host tuple value is a heap block of N consecutive 4-byte slots (element
+     i @ `i*4`, no header), and the canonical `tuple<s32,…>` returns indirectly
+     with element i at the same `i*4` offset (all i32), so the wrapper copies each
+     element into the 8-aligned return area. `extern_exports` / `export_needs_heap`
+     now fire for a tuple result (`extern_tuple_param_supported`, 2..16 i32/u32
+     elements); no `cabi_realloc` (memory lift only). Gated by
+     `TestSelfHostExportTupleResultRunsViaConsumer` (the self-host emits the
+     exporter core, the Go composer lifts it, a Fern consumer reads `p.0`/`p.1`
+     under wasmtime); the self-compile / printer / checker oracles stay green.
+     **P6 tuple result exports are now complete in both compilers** — with this
+     the structural composite-result set (list / option / result / tuple) is done
+     both directions on both compilers; named-type results (enum / record /
+     variant) await the exported-instance type-export foundation, and resources
+     are Slice 6.
+   - **Slice 6 — resource-typed exports**: lift an export taking/returning
      `own<T>` (the inverse of the import resource handling) — the piece that lets
      `wasi:http`'s `incoming-handler#handle` (which takes `own<incoming-request>`
      / `own<response-outparam>`) become a plain `@export`, unblocking retiring
      the built-in HTTP world.
+     - **Slice 6a — handle export PARAMS (composer, Go). ✅ Done.** The composer
+       lifts an `@export` whose parameter is a handle (`own<R>` / `borrow<R>`) to
+       an *imported* resource. A handle is an i32 at the canonical ABI, so the
+       Fern core function is unchanged (the P5 `resource`/`own`/`borrow`
+       vocabulary already erases to i32) — the work is composer-side: the decoder
+       now records each interface type slot's WIT name (`LocalTypeNames`) so
+       `WorldInterface.HandleResource` can recover a handle param's resource name;
+       `liftExport` surfaces that imported resource (a pre-pass `aliasType`, as
+       the `[resource-drop]` path does — sharing `g.surfaced`) and references it
+       from an `own`/`borrow` defined type (`InnerTypeOwn` / `InnerTypeBorrow`) in
+       the export functype (no-opts lift, no memory). `resourceInst` maps each
+       imported resource name → instance index. Gated by
+       `TestExportResourceHandleParamComposes` (a Fern reactor
+       `@export("local:test/handler", "handle") on_request(t: borrow Thing): u32`
+       over an `@import`ed `resource Thing` composes; `wasm-tools validate` + the
+       component WIT declares `borrow<thing>`). Running it needs a resource-
+       provider harness (the host/another component constructs the resource and
+       calls the export) — a later slice, exactly as the scalar export slice
+       first shipped validate-only. **Next**: the runnable handle-param path (a
+       resource-provider harness), then own/borrow handle *results*, then the
+       full `wasi:http` `incoming-handler#handle` (two `own<...>` params + the
+       handler body calling resource methods via `@import` externs).
+     - **Slice 6b — void export taking MULTIPLE handle params (composer, Go). ✅
+       Done.** Extends 6a to the exact `incoming-handler#handle` shape:
+       `func(own<incoming-request>, own<response-outparam>)` — **no result**, two
+       handle params. A void function is encoded as a named-results list of
+       length zero, which `liftExport` previously rejected; it now lifts it via
+       the new `PutTypeSectionOneFuncGeneralVoid` (functype with `0x01` named +
+       `vec(0)` results), surfacing each handle param's imported resource as in
+       6a. Gated by `TestExportHandleVoidComposes` (a Fern reactor
+       `@export("local:test/handler","handle") on_request(r: borrow Req, o: borrow
+       Resp): void` over two `@import`ed resources composes; `wasm-tools validate`
+       + the WIT declares the void two-handle export). Uses `borrow` (never
+       auto-dropped); the `own`-consume path needs `[resource-drop]` wired in a
+       reactor export (`ComposeExportsFromWorld` currently rejects it) — the next
+       slice — together with the handler body calling resource methods via
+       `@import` externs (the P5 import side), which then composes the real
+       `wasi:http` handler.
+     - **Slice 6c — `[resource-drop]` in a reactor export (composer, Go). ✅
+       Done.** A handler that holds an owned handle (`var t: own Thing =
+       new_thing();`) auto-drops it at scope exit, so the reactor core imports
+       `[resource-drop]thing`. `ComposeExportsFromWorld` no longer rejects that —
+       it classifies it as a `gDrop` and surfaces the resource + threads its type
+       index into the canon `resource.drop`, the same additive surfacing
+       `ComposeFromWorld` does (shared with the export lifts via `g.surfaced`).
+       Gated by `TestExportOwnedHandleDropComposes` (a reactor `@export handle()`
+       creates a `thing` via an `@import`ed `[constructor]thing` and lets it drop;
+       the core imports `[resource-drop]thing`, the composed component validates
+       and prints a `resource.drop`). With 6a/6b/6c the composer handles the full
+       `incoming-handler#handle` surface — handle params (own/borrow), void
+       results, and owned-handle drops; what remains for the real `wasi:http`
+       handler is a program that calls the request/response **resource methods**
+       (`@import` externs — the P5 import side already lowers these) and a
+       run-harness (the host drives `incoming-handler`).
+     - **Slice 6 self-host parity — ✅ Done (test-only).** The composer is Go-only
+       (the self-host composer was retired), so the self-host's role for 6a/6b/6c
+       is emitting a compatible `@export` *core*: handles erase to i32, void is a
+       normal void function, and an owned local handle's auto-drop emits the
+       `[resource-drop]` import (the P5 self-host drop port). No `wasm.fern` change
+       was needed — `TestSelfHostExportResourceHandleComposes` confirms the
+       self-hosted compiler emits a void handler core taking a `borrow Thing`
+       param that also constructs + drops a local `own Thing` (so the core carries
+       `[resource-drop]thing`), and the Go composer lifts it: surfaces the handle
+       param's resource, wires the drop, and the component validates with
+       `borrow<thing>` + a `resource.drop`.
+     - **Slice 6 capstone — the REAL `wasi:http/incoming-handler` exports +
+       composes. ✅ Done (compose-gated).** The headline bring-your-own-WIT
+       demonstration: a Fern reactor `@export("wasi:http/incoming-handler@0.2.0",
+       "handle") on_request(request: own IncomingRequest, response_out: own
+       ResponseOutparam): void` compiles, and the world-driven composer produces a
+       valid `wasi:http` component against the repo's actual `wasi:http` WIT (the
+       `cmd/fern/wit` `http` world, supplied as *input* via
+       `wasm-tools component embed -w http` — **not** the compiler's embedded HTTP
+       world, and with no HTTP-specific knowledge in `ComposeExportsFromWorld`).
+       The composer surfaces `incoming-request` + `response-outparam` from the
+       imported `wasi:http/types` instance and lifts the void two-`own`-handle
+       export across the full preview-2 + http world prefix. Gated by
+       `TestExportWasiHttpIncomingHandlerComposes` (`wasm-tools validate` + the
+       component WIT exports `wasi:http/incoming-handler@0.2.0`). This proves the
+       compile+compose path end-to-end; what remains for a *running* server is a
+       response-producing handler body (calling the request/response resource
+       methods via `@import` externs — the P5 import side already lowers them) and
+       a `wasmtime serve` run harness.
 
 Each slice ships in both compilers (the per-phase parity rule above) and is
 gated by a running component.
@@ -1129,3 +1439,105 @@ type-import sections from a decoded world.
 2. Defvaltype + func-type decoder (the value-type grammar above).
 3. Instance/component type + import/export/alias decoder; assemble the
    world model; round-trip `fern.bin` / `http.bin` byte-for-byte.
+
+### P6 — toward a *running* `wasi:http` handler (post-capstone)
+
+The capstone proved a do-nothing `incoming-handler#handle` compiles + composes
+against the real `wasi:http` WIT. The increments toward a handler that actually
+produces a response:
+
+- **Handler body calls `wasi:http` resource constructors. ✅ Done (compose-gated).**
+  The exported `incoming-handler#handle` body calls `[constructor]fields` and
+  `[constructor]outgoing-response` (`@import` externs returning / taking owned
+  handles) and lets the constructed response auto-drop — integrating the P5
+  import resource-method path INSIDE a P6 resource-handle export. The composer
+  wires the constructor imports (handle in/out, no memory) + the owned-handle
+  `[resource-drop]` and lifts the void two-handle export, composed against the
+  real `wasi:http` world. Gated by
+  `TestExportWasiHttpHandlerCallsConstructorsComposes` (`wasm-tools validate` +
+  the component exports `wasi:http/incoming-handler`). No new marshalling — it's
+  the P5 import + P6 export paths meeting.
+- **A `wasi:http` handler RUNS under `wasmtime serve`. ✅ Done — the running-server
+  capstone.** A bring-your-own Fern handler now answers a real HTTP request with
+  the 200 it sets, with NO embedded HTTP world. The handler calls the response
+  primitives — `[constructor]fields`, `[constructor]outgoing-response`,
+  `[static]response-outparam.set` — as `@import` externs, and is composed against
+  a minimal proxy world (`import wasi:http/types; export
+  wasi:http/incoming-handler`, which pulls in exactly the transitive io/clocks
+  proxy imports `wasmtime serve` links — not filesystem/sockets). **No compiler /
+  composer change was needed**: `response-outparam.set`'s `result<own<outgoing-
+  response>, error-code>` param flattens to 9 core values
+  `[i32 i32 i32 i32 i64 i32 i32 i32 i32]` (the i64 from error-code's `option<u64>`
+  arm, error-code carries heap → `Classify` = `KindMem`), and the existing `gMem`
+  trampoline lowers it straight off the core import's own params. The handler
+  declares `set` with those 9 flattened params and passes `Ok` (disc 0, the
+  response handle, the rest zero). Gated by `TestExportWasiHttpHandlerServes`
+  (`wasmtime serve` the composed component, `GET /` → 200) +
+  `TestExportWasiHttpHandlerSetResponseComposes` (`wasm-tools validate`).
+- **Ergonomic helpers + a richer (status-setting) response. ✅ Done.** The
+  9-param `response-outparam.set` flattening is hidden behind a pure-Fern helper
+  `set_response_ok(out, resp)` (no compiler change — the Ok-wrap is just a
+  one-line wrapper over the raw extern), alongside a `new_response()` helper. A
+  handler then reads as: `var resp = new_response(); set_status(resp, 404);
+  set_response_ok(out, resp);`. `[method]outgoing-response.set-status-code`
+  (`status-code` = `u16` param + `result<_,_>` return, both flattening to i32) is
+  a plain scalar method extern — declared `set_status(resp: borrow
+  OutgoingResponse, status: i32): i32` (the i32 result is the result disc, which
+  the handler ignores). Gated by `TestExportWasiHttpHandlerStatusServes`
+  (`wasmtime serve`, `GET /` → **404**). The serve harness is now a shared helper
+  (`serveHttpHandlerStatus` / `buildHttpHandlerComponent`) across the serve tests.
+  - **Still open (genuine follow-ups, not blockers):**
+    1. **Reusable cross-module HTTP lib.** The externs + helpers can't yet live in
+       an imported module because **`pub resource` is unsupported** (`pub` rejects
+       `resource`; resource types are module-local). A `pub resource` language
+       feature (parser/checker + modload aliasing of exported resource types)
+       would let a 5-line handler `import` an `http` lib. Until then the externs
+       live in the handler module.
+    2. **Response bodies — a handler writes the body. ✅ Done.** `outgoing-
+       response.body() -> result<own<outgoing-body>>` and `outgoing-body.write()
+       -> result<own<output-stream>>` lower because a resource handle is a valid
+       single-scalar `result` payload (`valtypeFor` maps `ast.HandleType` to i32),
+       and `output-stream.blocking-write-and-flush(list<u8>) -> result<_,
+       stream-error>` now lowers too: a `u8[]` parameter **combined with** a
+       composite (option/result) result is handled by a merged wrapper —
+       `buildExternMemParamWrapper` gained an optional result layout, allocating
+       the canonical return area up front, passing it as the trailing retptr,
+       normalizing the mem param(s), then reading the area into a Fern enum box
+       (the area-read logic is now the shared `appendEnumResultAreaToBox`). The
+       variant `stream-error` is read **discriminant-only** by modeling the return
+       as `Result[i64, i64]`, whose 16-byte same-width-scalar area safely covers
+       the canonical `result<_, stream-error>` (~12 bytes) — no under-allocation.
+       Gated by `TestExportWasiHttpHandlerBodyWriteServes`: a handler writes "hi"
+       and `wasmtime serve` returns **200 + body "hi"**.
+    2a. **`outgoing-body.finish` — the full response path. ✅ Done.** A handler now
+       writes the body AND calls `[static]outgoing-body.finish(own<outgoing-body>,
+       option<own<trailers>>) -> result<_, error-code>` to seal it. Two pieces:
+       (i) the `option<own<trailers>>` param lowers as-is (`Option[own Trailers]`,
+       passed `None`) — a handle is a single-scalar option payload; (ii) the wide
+       `error-code` result. `error-code` is a 39-case variant whose canonical
+       return area exceeds the 16 bytes a same-width-scalar `Result` models, so
+       the result-return wrapper now **floors the canonical return area at 64
+       bytes** — the canonical-ABI retptr bound the embedded path already relies
+       on (`wasi_http.go`: "Each canonical-ABI retptr fits in 64 bytes"). The box
+       is unchanged; only the scratch area grows, so the host can never overrun it
+       however wide the real variant is. The handler reads `finish`'s result
+       discriminant-only (`Result[i64, i64]`). wasi:http traps finishing a body
+       with a live child stream, so the handler drops the output-stream first via
+       a manual `[resource-drop]output-stream` `@import` (the P5 manual-drop path;
+       match-bound handles aren't auto-dropped — the move analysis can't tell a
+       handle owned by a parent resource, like a response's body, from a leaked
+       one, so auto-dropping them is unsound). Gated by
+       `TestExportWasiHttpHandlerFinishServes`: writes "hi", finishes the body,
+       serves **200 + body "hi"**. Reading a `result<_, variant>`'s *error
+       details* (vs. discriminant-only) still needs faithful variant modelling — a
+       follow-on, not a blocker.
+    3. **A composer Ok-wrap** (so even the raw `set` extern could take just the
+       response handle) remains possible but is now lower-value, since the Fern
+       helper already gives the clean call site.
+
+> **Note on the embedded HTTP path:** `-target wasi-http`
+> (`emitIncomingHandlerExport` / `compose_http.go` / `wasi_http.go`) is still the
+> live CLI feature and is **not** dead code — the bring-your-own path above is
+> currently test-only. A future consolidation could migrate `-target wasi-http`
+> onto the generic world-driven composer once the body/header marshalling and a
+> `pub resource` HTTP lib exist; until then both coexist.

@@ -1,0 +1,135 @@
+// sort.fern — sort lines of text, like `sort(1)`.
+//
+//   -r   reverse the result order
+//   -n   compare as leading integers (numeric sort)
+//   -u   drop duplicate lines after sorting
+//   -f   fold case (case-insensitive compare)
+//
+//   $ printf 'banana\napple\ncherry\n' | ./sort
+//   apple
+//   banana
+//   cherry
+//
+// Showcases: the std/sort helpers (`sort_strings_asc`,
+// `sort_i32_asc`, `string_cmp`), and post-sort dedupe.
+import "std/string";
+import "std/i32";
+import "std/io";
+import "std/sort";
+import "std/array";
+
+struct Opts { reverse: boolean, numeric: boolean, uniq: boolean, fold: boolean }
+
+function slurp(path: string): string {
+  match (io.read_input(path)) {
+    Ok(contents) => {
+      return contents;
+    },
+    Err(_) => {
+      return "";
+    }
+  }
+}
+
+function leading_int(s: string): i32 {
+  var t: string = s.trim_start();
+  match (t.parse_int()) {
+    Some(n) => {
+      return n;
+    },
+    None => {
+      return 0;
+    }
+  }
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var o: Opts = Opts { reverse: false, numeric: false, uniq: false, fold: false };
+  var inputs: string[] = [];
+
+  var i: i32 = 1;
+  while (i < argv.len()) {
+    var a: string = argv[i];
+    if (a == "-r") {
+      o = Opts { ...o, reverse: true };
+    } else if (a == "-n") {
+      o = Opts { ...o, numeric: true };
+    } else if (a == "-u") {
+      o = Opts { ...o, uniq: true };
+    } else if (a == "-f") {
+      o = Opts { ...o, fold: true };
+    } else {
+      inputs = inputs.append(a);
+    }
+    i = i + 1;
+  }
+  if (inputs.len() == 0) {
+    inputs = inputs.append("-");
+  }
+
+  // Gather every line from every input.
+  var lines: string[] = [];
+  var j: i32 = 0;
+  while (j < inputs.len()) {
+    var ls: string[] = slurp(inputs[j]).lines();
+    var k: i32 = 0;
+    while (k < ls.len()) {
+      lines = lines.append(ls[k]);
+      k = k + 1;
+    }
+    j = j + 1;
+  }
+
+  var sorted: string[] = [];
+  if (o.numeric) {
+    // Key on the leading integer, but emit the original lines. We
+    // do a simple selection by stably pairing keys to lines.
+    var keys: i32[] = [];
+    var m: i32 = 0;
+    while (m < lines.len()) {
+      keys = keys.append(leading_int(lines[m]));
+      m = m + 1;
+    }
+    // Insertion sort keeping lines in step with keys (stable).
+    var a: i32 = 1;
+    while (a < lines.len()) {
+      var kv: i32 = keys[a];
+      var lv: string = lines[a];
+      var b: i32 = a - 1;
+      while (b >= 0 && keys[b] > kv) {
+        keys = keys.with(b + 1, keys[b]);
+        lines = lines.with(b + 1, lines[b]);
+        b = b - 1;
+      }
+      keys = keys.with(b + 1, kv);
+      lines = lines.with(b + 1, lv);
+      a = a + 1;
+    }
+    sorted = lines;
+  } else if (o.fold) {
+    sorted = sort.sort_strings_asc_ci(lines);
+  } else {
+    sorted = sort.sort_strings_asc(lines);
+  }
+
+  if (o.reverse) {
+    sorted = sorted.reverse();
+  }
+
+  var prev: string = "";
+  var have_prev: boolean = false;
+  var p: i32 = 0;
+  while (p < sorted.len()) {
+    var line: string = sorted[p];
+    if (o.uniq && have_prev && line == prev) {
+      p = p + 1;
+      continue;
+    }
+    print(line);
+    prev = line;
+    have_prev = true;
+    p = p + 1;
+  }
+  return 0;
+}

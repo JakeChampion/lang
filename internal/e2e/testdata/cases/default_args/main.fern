@@ -1,0 +1,18 @@
+// Default parameter values: an omitted trailing argument is filled from the
+// parameter's declared default. Defaults may be literals or constant
+// expressions; explicit arguments override them left-to-right. `main` returns
+// the number of checks that passed (6 = all), keeping it within an exit code.
+function inc(n: i32, by: i32 = 1): i32 { return n + by; }
+function box(w: i32, h: i32 = 2, d: i32 = 3): i32 { return w * 100 + h * 10 + d; }
+function tag(n: i32, label: string = "ab"): i32 { return n + label.len(); }
+
+function main(): i32 {
+    var ok: i32 = 0;
+    if (inc(10) == 11) { ok = ok + 1; }        // by defaults to 1
+    if (inc(10, 5) == 15) { ok = ok + 1; }     // explicit override
+    if (box(1) == 123) { ok = ok + 1; }        // h=2, d=3
+    if (box(1, 9) == 193) { ok = ok + 1; }     // h=9, d=3
+    if (box(1, 9, 8) == 198) { ok = ok + 1; }  // all explicit
+    if (tag(4) == 6) { ok = ok + 1; }          // label "ab" (len 2)
+    return ok;                                  // 6
+}

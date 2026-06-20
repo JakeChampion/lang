@@ -28,11 +28,14 @@
 // bytes per push but keeps sp 16-aligned for any nested
 // syscalls / function calls that follow.
 
-import "core/no_prelude";
 import "./lexer";
 import "./parser";
 import "./asmcore";
 import "./util";
+import "./ir";
+import "./irlower";
+import "./asm_ir";
+import "./asm_arm64_ir";
 
 
 
@@ -423,6 +426,14 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
     // measurement, not wall-clock. Returns an i64 in x0.
     if (name == "monotonic_ns" && c.args.len() == 0) {
         s = s.write("    bl __fern_monotonic_ns\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        return CallOut { state: s, done: true };
+    }
+    // now_ns() — wall-clock nanoseconds since the Unix epoch
+    // (clock_gettime(CLOCK_REALTIME)). The i64 nanosecond twin of
+    // now_unix_ms. Returns an i64 in x0; no heap.
+    if (name == "now_ns" && c.args.len() == 0) {
+        s = s.write("    bl __fern_now_ns\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         return CallOut { state: s, done: true };
     }
@@ -2013,6 +2024,24 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
         s = s.write("    str x0, [sp, #-16]!\n");
         return s;
     }
+    // Array auto-discovered method (mirror of asm.fern): `a.<field>(args)` on an
+    // array with a std/array `__method_Array_<field>` helper in scope desugars
+    // to `__method_Array_<field>(a, args)` and reuses emit_call. Intercepted
+    // fast paths returned above; this catches the rest (sum_squared, reversed,
+    // sorted_asc, …).
+    if (asmcore.ty_is_array(prim_recv) || asmcore.is_int_array_tag(prim_recv) || asmcore.ty_is_array_string(prim_recv)) {
+        var amf: string = asmcore.find_array_method_func(fa.field, s);
+        if (amf.len() > 0) {
+            var new_args: parser.Expr[] = [fa.obj];
+            var nai: i32 = 0;
+            while (nai < c.args.len()) { new_args = new_args.append(c.args[nai]); nai = nai + 1; }
+            var rewritten: parser.ExprCall = parser.ExprCall {
+                callee: parser.ExprIdent { name: amf, line: fa.line, col: fa.col },
+                args: new_args, line: c.line, col: c.col, type_argc: 0
+            };
+            return emit_call(rewritten, s);
+        }
+    }
     // Method call mirror of asm.fern. Push args
     // right-to-left then push the receiver, so
     // receiver lands at +16(x29) and arg[0] at
@@ -2040,6 +2069,7 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
         // enum-type receiver method is handled in the
         // fallback below. See the x86-64 backend.
         if (fd_m.name == fa.field && fd_m.receiver_type.len() > 0
+                && !asmcore.recv_is_array(fd_m.receiver_type)
                 && asmcore.is_struct_decl_name(util.base_type_name(fd_m.receiver_type), s)) {
             var arm_lit: asmcore.StringLitOut = asmcore.add_string_lit(s, util.base_type_name(fd_m.receiver_type));
             s = arm_lit.state;
@@ -2065,6 +2095,7 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
     while (efi < s.funcs.len()) {
         var efd: parser.FuncDecl = s.funcs[efi];
         if (enum_recv.len() == 0 && efd.name == fa.field && efd.receiver_type.len() > 0
+                && !asmcore.recv_is_array(efd.receiver_type)
                 && asmcore.is_enum_recv(util.base_type_name(efd.receiver_type), s)) {
             enum_recv = util.base_type_name(efd.receiver_type);
         }
@@ -3184,28 +3215,35 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
             return s;
         },
         parser.StmtVar(v) => {
-            // `var (a, b) = E` tuple destructuring (name "a,b"): eval the
-            // tuple box, bind a = box[0], b = box[8]. See asm.fern.
-            var tdc: i32 = 0 - 1;
+            // `var (a, b, …) = E` tuple destructuring (name "a,b,c"): eval
+            // the tuple box, bind name[i] = box[i*8] for any arity. The box
+            // pointer stays in x0 across the loop (frame_str scratches x16,
+            // not x0). See asm.fern.
+            var td_has_comma: boolean = false;
             var tdci: i32 = 0;
             while (tdci < v.name.len()) {
-                if (v.name[tdci] == 44 && tdc < 0) { tdc = tdci; }
+                if (v.name[tdci] == 44) { td_has_comma = true; }
                 tdci = tdci + 1;
             }
-            if (tdc >= 0) {
-                var tda: string = v.name[0 : tdc];
-                var tdb: string = v.name[tdc + 1 : v.name.len()];
-                var tdtags: asmcore.TwoTags = asmcore.tuple_destructure_tags(v.init, s);
+            if (td_has_comma) {
                 s = emit_expr(v.init, s);
                 s = s.write("    ldr x0, [sp], #16\n");   // tuple box
-                s = s.bind_local_typed(tda, tdtags.a);
-                var tda_off: i32 = s.lookup_local(tda);
-                s = s.write("    ldr x1, [x0]\n");         // box.0
-                s = s.frame_str("x1", tda_off);
-                s = s.bind_local_typed(tdb, tdtags.b);
-                var tdb_off: i32 = s.lookup_local(tdb);
-                s = s.write("    ldr x1, [x0, #8]\n");     // box.1
-                s = s.frame_str("x1", tdb_off);
+                var td_seg: i32 = 0;
+                var td_idx: i32 = 0;
+                var td_pos: i32 = 0;
+                while (td_pos <= v.name.len()) {
+                    if (td_pos == v.name.len() || v.name[td_pos] == 44) {
+                        var td_nm: string = v.name[td_seg : td_pos];
+                        var td_tag: asmcore.Ty = asmcore.tuple_destructure_tag_at(v.init, td_idx, s);
+                        s = s.bind_local_typed(td_nm, td_tag);
+                        var td_off: i32 = s.lookup_local(td_nm);
+                        s = s.write("    ldr x1, [x0, #" + util.i32_to_string(td_idx * 8) + "]\n");
+                        s = s.frame_str("x1", td_off);
+                        td_idx = td_idx + 1;
+                        td_seg = td_pos + 1;
+                    }
+                    td_pos = td_pos + 1;
+                }
                 return s;
             }
             // Infer init type for string-aware dispatch.
@@ -3226,6 +3264,26 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
                 s = s.write("    str x0, [sp, #-16]!\n");   // arg for __fern_rc_inc ([sp])
                 s = s.write("    bl __fn___fern_rc_inc\n");  // returns the ptr in x0
                 s = s.write("    add sp, sp, #16\n");
+            }
+            // Perceus dec-on-overwrite at a re-bound array slot: a loop
+            // body's `var r = …` maps to ONE frame slot (zero-init at entry,
+            // so the first binding releases null — a no-op), so releasing the
+            // slot's prior buffer here frees each iteration's value instead
+            // of leaking all but the last. Cow-guarded; balanced with the
+            // alias-inc above. (Mirror of the x86-64 StmtVar release.)
+            if (asmcore.ty_is_array_like(ity)) {
+                s = s.mark_heap();
+                var dvov: asmcore.LabelOut = asmcore.fresh_label(s);
+                s = dvov.state;
+                s = s.frame_ldr("x1", off);                  // OLD slot value
+                s = s.write("    cmp x0, x1\n");
+                s = s.write("    b.eq " + dvov.name + "\n");
+                s = s.write("    str x0, [sp, #-16]!\n");     // save new value across the dec
+                s = s.write("    str x1, [sp, #-16]!\n");     // dec arg = OLD value
+                s = s.write("    bl __fn___fern_arr_dec\n");
+                s = s.write("    add sp, sp, #16\n");         // pop dec arg
+                s = s.write("    ldr x0, [sp], #16\n");       // restore new value
+                s = s.write(dvov.name + ":\n");
             }
             s = s.frame_str("x0", off);
             return s;
@@ -3586,7 +3644,134 @@ function emit_function(fd: parser.FuncDecl, s: asmcore.EmitState): asmcore.EmitS
 // orchestration (type-check, function bodies, _start) stays
 // readable; the relative emission order is unchanged.
 // darwin selects Mach-O vs ELF sections/syscalls in the bodies.
-function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
+// emit_rodata_pools_arm64 writes this unit's .rodata constant pools: the
+// interned string literals (str_lit_label — str_ns-namespaced per-module,
+// `.S<idx>` on the merged path) and, per-module only, the enum/struct SHAPE
+// names as `.weak` global symbols (shape_sym) so the SAME shape merges to one
+// linker address across translation units — pointer-equality shape
+// discrimination then holds across the module boundary (the arm64 mirror of
+// asm_ir's #3451-step-3 shape sharing). On the merged path shape_lits is empty
+// (shape_ref interns shapes as ordinary string lits when str_ns==""), so the
+// shape block is inert and the string pool stays byte-identical to the
+// pre-refactor `.S<idx>` emission.
+pub function emit_rodata_pools_arm64(s: asmcore.EmitState): asmcore.EmitState {
+    if (s.string_lits.len() > 0) {
+        s = s.write("    .section .rodata\n");
+        var li: i32 = 0;
+        while (li < s.string_lits.len()) {
+            s = s.write(asm_ir.str_lit_label(s, li) + ": .ascii \"" + asmcore.escape_for_ascii(s.string_lits[li]) + "\"\n");
+            li = li + 1;
+        }
+    }
+    if (s.shape_lits.len() > 0) {
+        s = s.write("    .section .rodata\n");
+        var shi: i32 = 0;
+        while (shi < s.shape_lits.len()) {
+            var shsym: string = asmcore.shape_sym(s.shape_lits[shi]);
+            s = s.write(".weak " + shsym + "\n");
+            s = s.write(shsym + ": .ascii \"" + asmcore.escape_for_ascii(s.shape_lits[shi]) + "\"\n");
+            shi = shi + 1;
+        }
+    }
+    return s;
+}
+
+// emit_module_ir_unit_arm64 is the arm64 mirror of asm_ir.emit_module_ir_unit
+// (the per-module-compilation epic, #3451 / #3457 step 0a): it emits ONE
+// translation unit's worth of arm64 asm from the IR path. The four knobs match
+// x86's: is_entry (emit `_start` + the single shared __fern_* runtime),
+// globl_defs (mark each emitted `__fn_<label>` `.globl` so a sibling unit's
+// `bl __fn_...` extern resolves at link), str_ns (per-module .rodata namespace
+// so two units' string + shape pools co-link without collision), and
+// extra_needs (the whole-program runtime-need union, folded into the entry's
+// single runtime so a sibling's helper is present). all_funcs/all_structs are
+// the whole-program signature view (#3454) driving call/return tagging + struct
+// layout; only mod.funcs are EMITTED. The _start is copied verbatim from
+// emit_body (the proven single-unit IR path). Caller must have established
+// asm_ir.all_eligible_*_known_view(mod) and seeded nothing (we reset here).
+pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[]): string {
+    mod = parser.infer_ret_types_module(mod);
+    strbuf_reset();
+    var s: asmcore.EmitState = asmcore.new_state();
+    // struct_decls is the WHOLE-PROGRAM struct set so a function emitting an
+    // imported struct's layout resolves it; str_ns namespaces this unit's pools.
+    s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: mod.funcs, str_ns: str_ns };
+    if (is_entry) { s = s.write("    .globl _start\n"); }
+    s = s.write("    .text\n");
+    // The entry exports its shared runtime entry points (__fern_alloc /
+    // __fern_arr_box / …) `.globl` so sibling library units' `bl __fern_*`
+    // externs resolve against the single copy it emits. Target-independent
+    // symbol list — reused from asm_ir.
+    if (is_entry && globl_defs) { s = asm_ir.emit_runtime_globls(s); }
+    // Side-tables derived ONCE over the whole-program all_funcs (#3454) — per-fn
+    // derivation is O(n^2) and OOMs the bump heap (mirrors emit_body / x86
+    // emit_module_funcs). struct_ret over all_structs.
+    var arf: string[] = asm_ir.array_ret_fns_of(all_funcs);
+    var bparams: string[] = irlower.borrowable_params_interproc(all_funcs);
+    var srf: string[] = irlower.str_ret_fns_of(all_funcs);
+    var sarf: string[] = irlower.strarr_ret_fns_of(all_funcs);
+    var amf: string[] = irlower.arr_method_fns_of(all_funcs);
+    var orf: string[] = irlower.opt_ret_fns_of(all_funcs);
+    var irf: string[] = irlower.i64_ret_fns_of(all_funcs);
+    var trf: string[] = irlower.tuple_ret_fns_of(all_funcs);
+    var srtf: string[] = irlower.struct_ret_fns_of(all_funcs, all_structs);
+    var mrtf: string[] = irlower.map_ret_fns_of(all_funcs);
+    var frf: string[] = irlower.f64_ret_fns_of(all_funcs);
+    var farf: string[] = irlower.f64arr_ret_fns_of(all_funcs);
+    var iarf: string[] = irlower.i64arr_ret_fns_of(all_funcs);
+    var fps: string[] = irlower.fn_param_sigs_of(all_funcs);
+    var cfs: string[] = irlower.closure_ret_fns_of(all_funcs);
+    var cnf: string[] = irlower.const_fns_of(all_funcs);
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        if (globl_defs) {
+            var gname: string = mod.funcs[fi].name;
+            if (mod.funcs[fi].receiver_type.len() > 0) { gname = util.base_type_name(mod.funcs[fi].receiver_type) + "." + mod.funcs[fi].name; }
+            s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
+        }
+        s = asm_arm64_ir.emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf);
+        fi = fi + 1;
+    }
+    // Fold the whole-program need union (sibling modules' needs) into the entry's
+    // single runtime BEFORE _start, so _start's args gating sees a sibling's
+    // args() need. Inert (empty) on the single-unit path.
+    var en: i32 = 0;
+    while (en < extra_needs.len()) { s = s.need(extra_needs[en]); en = en + 1; }
+    // _start belongs only to the entry (one program entry point). Copied verbatim
+    // from emit_body: save argc/argv from the SysV entry stack (gated on args),
+    // frame push, call __fn_main, exit with its result.
+    if (is_entry) {
+        s = s.write("_start:\n");
+        if (s.has_need("args")) {
+            s = s.write("    ldr x0, [sp]\n");
+            s = s.write("    adrp x1, __fern_argc\n");
+            s = s.write("    add x1, x1, :lo12:__fern_argc\n");
+            s = s.write("    str x0, [x1]\n");
+            s = s.write("    add x0, sp, #8\n");
+            s = s.write("    adrp x1, __fern_argv\n");
+            s = s.write("    add x1, x1, :lo12:__fern_argv\n");
+            s = s.write("    str x0, [x1]\n");
+        }
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    bl __fn_main\n");
+        s = s.write("    mov x8, #93\n");
+        s = s.write("    svc #0\n");
+    }
+    s = s.close_needs();
+    // The entry emits the single shared __fern_* runtime (its helpers are already
+    // `.globl`, so sibling `bl __fern_*` externs resolve against it) AND its own
+    // .rodata pools (emit_runtime calls emit_rodata_pools_arm64). A non-entry
+    // module emits ONLY its own pools — no runtime, no _start.
+    if (is_entry) {
+        s = emit_runtime(s, false);
+    } else {
+        s = emit_rodata_pools_arm64(s);
+    }
+    return strbuf_take();
+}
+
+pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     // __fern_print_int helper: converts the i64 in x0 to
     // decimal text in a stack buffer and writes to stdout.
     if (s.has_need("print_int")) {
@@ -3719,6 +3904,39 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
+    // now_ns: CLOCK_REALTIME=0 → tv_sec*1e9 + tv_nsec (the
+    // nanosecond-resolution twin of now_unix_ms). Same frame as
+    // now_unix_ms; Darwin uses gettimeofday scaled to ns.
+    s = s.write("__fern_now_ns:\n");
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");
+    s = s.write("    mov x29, sp\n");
+    s = s.write("    sub sp, sp, #16\n");        // time buffer
+    if (darwin) {
+        s = s.write("    mov x0, sp\n");             // &timeval
+        s = s.write("    mov x1, #0\n");             // tz = NULL
+        s = s.write("    mov x16, #116\n");          // gettimeofday
+        s = s.write("    svc #0x80\n");
+        s = s.write("    ldr x9, [sp]\n");           // tv_sec
+        s = s.write("    ldr x10, =1000000000\n");
+        s = s.write("    mul x9, x9, x10\n");        // sec * 1e9
+        s = s.write("    ldr w11, [sp, #8]\n");      // tv_usec (i32)
+        s = s.write("    mov x12, #1000\n");
+        s = s.write("    mul x11, x11, x12\n");      // usec * 1000 = ns
+        s = s.write("    add x0, x9, x11\n");
+    } else {
+        s = s.write("    mov x0, #0\n");             // CLOCK_REALTIME
+        s = s.write("    mov x1, sp\n");             // &timespec
+        s = s.write("    mov x8, #113\n");           // clock_gettime
+        s = s.write("    svc #0\n");
+        s = s.write("    ldr x9, [sp]\n");           // tv_sec
+        s = s.write("    ldr x10, =1000000000\n");
+        s = s.write("    mul x9, x9, x10\n");        // sec * 1e9
+        s = s.write("    ldr x11, [sp, #8]\n");      // tv_nsec
+        s = s.write("    add x0, x9, x11\n");
+    }
+    s = s.write("    mov sp, x29\n");
+    s = s.write("    ldp x29, x30, [sp], #16\n");
+    s = s.write("    ret\n");
     // __fern_sleep_ms(x0 = ms) — nanosleep wrapper, no heap. Same
     // shape as the x86 mirror but arm64 syscall numbers: nanosleep=101.
     s = s.write(".globl __fern_sleep_ms\n");
@@ -3818,6 +4036,22 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    mov x0, #1\n");        // fd
         s = s.write("    mov x8, #64\n");       // sys_write
         s = s.write("    svc #0\n");
+        s = s.write("    ret\n");
+    }
+    // __fern_putchar: x0 = i32 byte value → write(1, &byte, 1). Materialise the
+    // byte on the stack so the kernel has a real address to read (the byte-level
+    // twin of __fern_print_str). Gated on the putchar need the IR backend marks
+    // (issue #2839); the AST path doesn't mark it, so this is inert there.
+    if (s.has_need("putchar")) {
+        s = s.write("__fern_putchar:\n");
+        s = s.write("    sub sp, sp, #16\n");    // 16-byte slot (sp alignment)
+        s = s.write("    strb w0, [sp]\n");      // store the byte
+        s = s.write("    mov x1, sp\n");         // buf
+        s = s.write("    mov x2, #1\n");         // len
+        s = s.write("    mov x0, #1\n");         // fd = stdout
+        s = s.write("    mov x8, #64\n");        // sys_write
+        s = s.write("    svc #0\n");
+        s = s.write("    add sp, sp, #16\n");
         s = s.write("    ret\n");
     }
     // __fern_str_concat: x0 = box A, x1 = box B → x0 = new box.
@@ -4062,6 +4296,13 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    ldp x19, x20, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
+        // Stack-ABI wrapper for the IR path: the value is on the rt-stack at
+        // [sp] (the IR helper-call ABI), not in x0. Load it, then tail-call the
+        // register-ABI body above (lr still points at the IR call site, so its
+        // `ret` returns there). Mirrors the __fn___fern_rc_inc stack wrapper.
+        s = s.write("__fn___fern_i32_to_string:\n");
+        s = s.write("    ldr x0, [sp]\n");
+        s = s.write("    b __fern_i32_to_string\n");
     }
     // __fern_str_to_i32: x0 = string box → x0 = parsed i32.
     // Optional leading '-', decimal digits, stops at first
@@ -4098,6 +4339,36 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    cbz x4, .Ls2i_no_neg\n");
         s = s.write("    neg x0, x0\n");
         s = s.write(".Ls2i_no_neg:\n");
+        s = s.write("    ret\n");
+        // Stack-ABI wrapper for the IR path: the string box is on the rt-stack
+        // at [sp], not in x0. Load it, then tail-call the register-ABI body above
+        // (lr still points at the IR call site). Mirrors __fn___fern_i32_to_string.
+        s = s.write("__fn___fern_str_to_i32:\n");
+        s = s.write("    ldr x0, [sp]\n");
+        s = s.write("    b __fern_str_to_i32\n");
+    }
+    // __fn___fern_chr — STACK-arg ABI for the IR path (the i32 byte sits at
+    // [sp]). Self-contained (only __fern_alloc), so no dependency on the
+    // str_search-bundled register-ABI __fern_chr: alloc 1 byte for the char +
+    // a 16-byte box, store the low byte + length 1, return the box in x0.
+    if (s.has_need("chr")) {
+        s = s.write("__fn___fern_chr:\n");
+        s = s.write("    ldr x0, [sp]\n");               // stack arg -> x0 (byte value)
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");                // save value
+        s = s.write("    mov x0, #1\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x20, x0\n");                // buf ptr
+        s = s.write("    strb w19, [x20]\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    str x20, [x0]\n");
+        s = s.write("    mov x1, #1\n");
+        s = s.write("    str x1, [x0, #8]\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
     // __fern_eprint_str: x0 = string box. write(2, data, len).
@@ -4669,9 +4940,9 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
     // programs that never mention stat() themselves. Same for the
     // __fern_subprocess helper's "ProcessResult" shape name.
     if (s.has_need("heap")) {
-        var fsPre: asmcore.StringLitOut = asmcore.add_string_lit(s, "FileStat");
+        var fsPre: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "FileStat");
         s = fsPre.state;
-        var prPre: asmcore.StringLitOut = asmcore.add_string_lit(s, "ProcessResult");
+        var prPre: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "ProcessResult");
         s = prPre.state;
     }
     // .rodata: emit each interned string literal as a
@@ -4679,23 +4950,29 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
     // sequences in the quoted string, so a `\n` byte in the
     // source string lands as a single LF in the resulting
     // .rodata bytes.
-    if (s.string_lits.len() > 0) {
-        s = s.write("    .section .rodata\n");
-        var li: i32 = 0;
-        while (li < s.string_lits.len()) {
-            s = s.write(".S" + util.i32_to_string(li) + ": .ascii \"" + asmcore.escape_for_ascii(s.string_lits[li]) + "\"\n");
-            li = li + 1;
-        }
-    }
+    s = emit_rodata_pools_arm64(s);
     // Heap allocator (arm64): 1 MiB .bss buffer + bump pointer.
     // Same shape as the x86-64 backend; instructions translated
     // to aarch64. Sets x0 = old ptr (return), advances the
     // ptr by x0 (the size arg).
     if (s.has_need("heap")) {
-        var heap_size: string = "1073741824";   // 1 GiB
+        // 3.5 GiB heap arena, lazily mmap'd at hint 0x10000000 on the first
+        // allocation (mirrors the native arm64 emitAllocRuntime) rather than
+        // reserved as a 3.5 GiB `.bss` in the loaded image. Two payoffs: the
+        // R+W data segment stays tiny (so the binary can be a position-
+        // independent ET_DYN loaded at any base — `-target arm64-android`),
+        // and the arena lives at the low 0x10000000 hint regardless of where
+        // the binary itself loads, so base + 3.5 GiB = 0xF0000000 < 4 GiB and
+        // heap pointers round-trip through 32-bit-safe ranges. Matches the
+        // native arm64 backend's heapBytes (lockstep). The size (3.5 GiB =
+        // 0xE0000000) is built in-asm via `mov #14; lsl #28` below, not a
+        // `ldr =N` literal — the in-process assembler's literal parser is
+        // 32-bit and would sign-extend a >2^31 constant.
         s = s.write("    .bss\n");
         s = s.write("    .align 3\n");
-        s = s.write("__fern_heap_ptr: .quad 0\n");
+        s = s.write("__fern_heap_ptr: .quad 0\n");       // bump cursor (0 until first mmap)
+        s = s.write("    .align 3\n");
+        s = s.write("__fern_heap_end: .quad 0\n");        // arena end (base + heap_size)
         s = s.write("    .align 3\n");
         // RC over-release (underflow) detector — Phase 0c. Bumped by
         // __fern_rc_dec when it sees rc <= 0 before decrementing; read
@@ -4707,8 +4984,6 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         // indexed by idx = roundup8(size)/8; <= 8 KiB classes. Pushed by
         // __fern_arr_dec, popped by __fern_alloc before bumping.
         s = s.write("__fern_freelist: .skip 524288\n");
-        s = s.write("    .align 3\n");
-        s = s.write("__fern_heap: .skip " + heap_size + "\n");   // 1 GiB — room for read_all_stdin + self-compiling a whole source bundle (zero-page .bss)
         s = s.write("    .text\n");
         s = s.write(".globl __fern_alloc\n");
         s = s.write(".type __fern_alloc, %function\n");
@@ -4738,26 +5013,57 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    add x1, x1, :lo12:__fern_heap_ptr\n");
         s = s.write("    ldr x2, [x1]\n");
         s = s.write("    cbnz x2, .Lalloc_inited\n");
-        s = s.write("    adrp x2, __fern_heap\n");
-        s = s.write("    add x2, x2, :lo12:__fern_heap\n");
-        s = s.write("    str x2, [x1]\n");
+        // First allocation: lazily mmap the arena at hint 0x10000000
+        // (MAP_PRIVATE|MAP_ANONYMOUS, R+W). This runs once. The syscall
+        // clobbers x0..x5/x8 plus x9 (size save), so save/restore those
+        // beyond the x0..x3 contract callers rely on.
+        s = s.write("    stp x4, x5, [sp, #-16]!\n");
+        s = s.write("    stp x8, x9, [sp, #-16]!\n");
+        s = s.write("    mov x9, x0\n");                  // save rounded size
+        s = s.write("    mov x0, #1\n");
+        s = s.write("    lsl x0, x0, #28\n");             // hint = 0x10000000
+        // length = 3.5 GiB = 0xE0000000 = 14 << 28. Built with mov+lsl, not a
+        // `ldr =N` literal: the in-process assembler's literal parser is
+        // 32-bit (arm64_gas_atoi), so a >2^31 constant would sign-extend to a
+        // negative length and mmap would fail with ENOMEM.
+        s = s.write("    mov x1, #14\n");
+        s = s.write("    lsl x1, x1, #28\n");             // length = 0xE0000000 (3.5 GiB)
+        s = s.write("    mov x2, #3\n");                  // PROT_READ | PROT_WRITE
+        s = s.write("    mov x3, #0x22\n");               // MAP_PRIVATE | MAP_ANONYMOUS
+        s = s.write("    mov x4, #0\n");
+        s = s.write("    sub x4, x4, #1\n");              // x4 = -1 (fd)
+        s = s.write("    mov x5, #0\n");                  // offset
+        s = s.write("    mov x8, #222\n");               // __NR_mmap
+        s = s.write("    svc #0\n");
+        s = s.write("    cmn x0, #0\n");                  // mmap returns -errno on failure
+        s = s.write("    b.mi .Lalloc_oom\n");
+        s = s.write("    adrp x1, __fern_heap_ptr\n");
+        s = s.write("    add x1, x1, :lo12:__fern_heap_ptr\n");
+        s = s.write("    str x0, [x1]\n");                // heap_ptr = arena base
+        s = s.write("    mov x2, #14\n");
+        s = s.write("    lsl x2, x2, #28\n");             // 3.5 GiB
+        s = s.write("    add x2, x0, x2\n");              // arena end
+        s = s.write("    adrp x3, __fern_heap_end\n");
+        s = s.write("    add x3, x3, :lo12:__fern_heap_end\n");
+        s = s.write("    str x2, [x3]\n");                // heap_end = base + heap_size
+        s = s.write("    mov x0, x9\n");                  // restore rounded size
+        s = s.write("    ldp x8, x9, [sp], #16\n");
+        s = s.write("    ldp x4, x5, [sp], #16\n");
+        s = s.write("    adrp x1, __fern_heap_ptr\n");    // x1 was clobbered
+        s = s.write("    add x1, x1, :lo12:__fern_heap_ptr\n");
         s = s.write(".Lalloc_inited:\n");
-        s = s.write("    ldr x2, [x1]\n");
-        s = s.write("    add x3, x2, x0\n");
-        // Bounds check: a bump heap has no GC, so an overflow would
-        // silently run past the buffer into adjacent .bss (e.g. the
-        // strbuf output accumulator) and corrupt it. Trap with a clean,
-        // recognisable exit code (137) instead of corrupting memory.
-        // x0 is free now (size consumed into x3); x4 is saved/restored
-        // so __fern_alloc keeps its original clobber contract (x0..x3) —
-        // callers hold live values in higher registers across the call.
-        // The ldr restoring x4 doesn't disturb the cmp's flags.
+        s = s.write("    ldr x2, [x1]\n");                // x2 = heap_ptr
+        s = s.write("    add x3, x2, x0\n");              // x3 = new cursor
+        // Bounds check against the mmap'd arena end (a bump heap has no GC,
+        // so overflowing would run past the arena and segfault; trap with a
+        // clean, recognisable exit code 137 instead). x4 is saved/restored so
+        // __fern_alloc keeps its x0..x3 clobber contract; the ldr restoring
+        // x4 doesn't disturb the cmp's flags.
         s = s.write("    str x4, [sp, #-16]!\n");
-        s = s.write("    ldr x4, =" + heap_size + "\n");
-        s = s.write("    adrp x0, __fern_heap\n");
-        s = s.write("    add x0, x0, :lo12:__fern_heap\n");
-        s = s.write("    add x0, x0, x4\n");
-        s = s.write("    cmp x3, x0\n");
+        s = s.write("    adrp x4, __fern_heap_end\n");
+        s = s.write("    add x4, x4, :lo12:__fern_heap_end\n");
+        s = s.write("    ldr x4, [x4]\n");                // x4 = heap_end
+        s = s.write("    cmp x3, x4\n");
         s = s.write("    ldr x4, [sp], #16\n");
         s = s.write("    b.hi .Lalloc_oom\n");
         s = s.write("    str x3, [x1]\n");
@@ -4810,7 +5116,7 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    .align 3\n");
         s = s.write("__fern_strbuf_len: .quad 0\n");
         s = s.write("    .align 3\n");
-        s = s.write("__fern_strbuf_data: .skip 16777216\n");   // 16 MiB
+        s = s.write("__fern_strbuf_data: .skip 67108864\n");   // 64 MiB (was 16 MiB — the self-host self-compile output is ~16.7 MB and was overflowing it)
         s = s.write("    .text\n");
         // reset: len = 0
         s = s.write(".globl __fern_strbuf_reset\n");
@@ -4836,6 +5142,17 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    add x4, x4, :lo12:__fern_strbuf_len\n");
         s = s.write("    ldr x5, [x4]\n");
         s = s.write("    add x3, x3, x5\n");                    // dst = data + len
+        // Bounds check: trap (exit 137, like __fern_alloc) if this append would
+        // run past the 64 MiB buffer, rather than silently corrupting adjacent
+        // .bss and segfaulting later. x5 = strbuf_len, x2 = src len.
+        s = s.write("    add x6, x5, x2\n");                    // new total len
+        s = s.write("    movz x5, #0x400, lsl #16\n");          // 0x4000000 = 64 MiB
+        s = s.write("    cmp x6, x5\n");
+        s = s.write("    b.ls .Lsbapp_inbounds\n");
+        s = s.write("    mov x0, #137\n");
+        s = s.write("    mov x8, #93\n");                       // exit
+        s = s.write("    svc #0\n");
+        s = s.write(".Lsbapp_inbounds:\n");
         s = s.write(".Lsbapp_loop:\n");
         s = s.write("    ldrb w6, [x1], #1\n");
         s = s.write("    strb w6, [x3], #1\n");
@@ -4967,10 +5284,10 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         // arm64 backend, internal/codegen/arm64/arm64.go). The rc word
         // is a 32-bit count at [data-8]; data is the value pointer
         // callers hold. Guard chain: null -> SSO inline-tag (low bit) ->
-        // low-address (< 0x10000) -> static sentinel (rc high bit). The
-        // native backend's below-heap guard is the mmap hint
-        // 0x10000000; the self-host heap is the __fern_heap .bss buffer
-        // (low static address), so < 0x10000 is the right cutoff.
+        // low-address (< 0x10000) -> static sentinel (rc high bit). Static /
+        // immortal cells are distinguished by the rc high-bit sentinel (not by
+        // address), so the < 0x10000 guard only filters null-ish / sub-page
+        // values; the heap now lives at the 0x10000000 mmap hint and passes it.
         // Frameless: param[0] at [sp]; result in x0 (the input ptr).
         // No free path yet (safe-leak); __fern_arr_dec /
         // __fern_drop_arr_ptr stay no-ops until the layout migration.
@@ -5542,7 +5859,7 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         // into a stack buffer; st_mode is at offset 16 on arm64 (vs 24
         // on x86-64), st_size at 48. Builds the FileStat struct whose
         // shape pointer is the interned "FileStat" name.
-        var fsLit: asmcore.StringLitOut = asmcore.add_string_lit(s, "FileStat");
+        var fsLit: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "FileStat");
         s = fsLit.state;
         s = s.write(".globl __fern_stat\n");
         s = s.write(".type __fern_stat, %function\n");
@@ -5617,8 +5934,8 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         }
         s = s.write("    mov x0, #32\n");            // FileStat struct
         s = s.write("    bl __fern_alloc\n");
-        s = s.write("    adrp x9, .S" + util.i32_to_string(fsLit.idx) + "\n");
-        s = s.write("    add x9, x9, :lo12:.S" + util.i32_to_string(fsLit.idx) + "\n");
+        s = s.write("    adrp x9, " + fsLit.label + "\n");
+        s = s.write("    add x9, x9, :lo12:" + fsLit.label + "\n");
         s = s.write("    str x9, [x0]\n");           // shape
         s = s.write("    str x23, [x0, #8]\n");      // is_file
         s = s.write("    str x24, [x0, #16]\n");     // is_dir
@@ -6120,7 +6437,7 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         // x0 with x1=child-flag, normalised to the Linux x0=0-in-child
         // shape). The BSD WIFEXITED/WTERMSIG status encoding matches
         // Linux, so the decode below is shared.
-        var prLitA: asmcore.StringLitOut = asmcore.add_string_lit(s, "ProcessResult");
+        var prLitA: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "ProcessResult");
         s = prLitA.state;
         s = s.write(".globl __fern_subprocess\n");
         s = s.write(".type __fern_subprocess, %function\n");
@@ -6463,8 +6780,8 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         // Build ProcessResult struct: [shape, stdout, stderr, exit_code].
         s = s.write("    mov x0, #32\n");
         s = s.write("    bl __fern_alloc\n");
-        s = s.write("    adrp x9, .S" + util.i32_to_string(prLitA.idx) + "\n");
-        s = s.write("    add x9, x9, :lo12:.S" + util.i32_to_string(prLitA.idx) + "\n");
+        s = s.write("    adrp x9, " + prLitA.label + "\n");
+        s = s.write("    add x9, x9, :lo12:" + prLitA.label + "\n");
         s = s.write("    str x9, [x0]\n");
         s = s.write("    str x25, [x0, #8]\n");
         s = s.write("    str x27, [x0, #16]\n");
@@ -7957,6 +8274,34 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
+    // __fern_random_i32() → a single CSPRNG i32: read 4 random bytes into a
+    // stack slot and reload them as an i32. Linux getrandom (syscall 278);
+    // Darwin getentropy (BSD 500). Heap-independent — gated by its own need
+    // (NOT the heap block) so a random_i32-only program still links it. New
+    // for the IR path; no legacy AST caller marks this need.
+    if (s.has_need("random_i32")) {
+        s = s.write(".globl __fern_random_i32\n");
+        s = s.write(".type __fern_random_i32, %function\n");
+        s = s.write("__fern_random_i32:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    sub sp, sp, #16\n");        // 4-byte landing buffer
+        s = s.write("    mov x0, sp\n");
+        s = s.write("    mov x1, #4\n");
+        if (darwin) {
+            s = s.write("    mov x16, #500\n");      // getentropy(buf, 4)
+            s = s.write("    svc #0x80\n");
+        } else {
+            s = s.write("    mov x2, #0\n");
+            s = s.write("    mov x8, #278\n");        // sys_getrandom(buf, 4, 0)
+            s = s.write("    svc #0\n");
+        }
+        s = s.write("    ldr w0, [sp]\n");           // 4 random bytes -> i32
+        s = s.write("    add sp, sp, #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_random_i32, .-__fern_random_i32\n");
+    }
     // __fern_str_chars: x0 = source string box. Returns
     // x0 = string[] of 1-byte string boxes. Each box reuses
     // the source's data pointer at the appropriate offset
@@ -7996,6 +8341,47 @@ function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
         s = s.write("    mov x0, x22\n");
         s = s.write("    ldp x23, x24, [sp], #16\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+    }
+    // __fern_str_lines: x0 = source string box. Splits on '\n' then drops a
+    // trailing empty segment when s is empty or ends with '\n' (so "a\nb\n" is
+    // 2 lines). Builds a "\n" delim box (two allocs, no static data) and calls
+    // __fern_str_split, then decrements the result array's len by the trim flag.
+    // IR-path only (the AST path inlines lines); gated on the str_lines need.
+    if (s.has_need("str_lines")) {
+        s = s.write("__fern_str_lines:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");
+        s = s.write("    ldr x1, [x0, #8]\n");
+        s = s.write("    mov x20, #1\n");
+        s = s.write("    cbz x1, .Llines_box\n");
+        s = s.write("    ldr x2, [x0]\n");
+        s = s.write("    sub x1, x1, #1\n");
+        s = s.write("    ldrb w3, [x2, x1]\n");
+        s = s.write("    cmp w3, #10\n");
+        s = s.write("    cset x20, eq\n");
+        s = s.write(".Llines_box:\n");
+        s = s.write("    mov x0, #1\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov w1, #10\n");
+        s = s.write("    strb w1, [x0]\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.write("    mov x0, #16\n");
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    ldr x1, [sp], #16\n");
+        s = s.write("    str x1, [x0]\n");
+        s = s.write("    mov x1, #1\n");
+        s = s.write("    str x1, [x0, #8]\n");
+        s = s.write("    mov x1, x0\n");
+        s = s.write("    mov x0, x19\n");
+        s = s.write("    bl __fern_str_split\n");
+        s = s.write("    ldr x1, [x0]\n");
+        s = s.write("    sub x1, x1, x20\n");
+        s = s.write("    str x1, [x0]\n");
         s = s.write("    ldp x19, x20, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
@@ -8119,6 +8505,34 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         eprint(check_errs);
         exit(1);
         return "";
+    }
+    // IR path (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md §3): when use_ir is set
+    // (default on) AND the whole module is in the IR's i32 + arrays subset,
+    // emit each function body from the target-agnostic stack IR
+    // (asm_arm64_ir.emit_body — the arm64 mirror of asm_ir, with asm_arm64's
+    // own array layout + RC, proven behaviour-equivalent via the differential
+    // gate) and append THIS module's runtime. Out-of-subset modules (strings,
+    // structs, methods, …) fall through to the AST emitter below, so the
+    // self-host compiler itself still compiles via AST and the bootstrap is
+    // unaffected. asm_arm64_ir does NOT import asm_arm64 (no cycle); the
+    // runtime is reused from here, not duplicated.
+    var lm: parser.Module = asm_ir.lift_lambdas(mod);
+    if (asmcore.new_state().use_ir && asm_ir.all_eligible(lm)) {
+        // Hoist no-capture lambda call-args (closures slice 2a); lambda-free
+        // modules are unchanged. Re-seed s with the lifted funcs (the earlier
+        // seeding used the original mod) so the IR path sees __lam_<k>.
+        mod = lm;
+        s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
+        s = asm_arm64_ir.emit_body(mod, s);
+        // Expand the declarative runtime-dependency closure (e.g. a map op
+        // marks need("maps"), which pulls in arr_push / str_eq / heap) before
+        // emit_runtime gates each helper on has_need — the standalone IR
+        // driver (asm_arm64_ir_run) does the same. Without this, map programs
+        // mark "maps" but never its transitive deps, so the map runtime is
+        // gated out and the program fails to link.
+        s = s.close_needs();
+        s = emit_runtime(s, darwin);
+        return strbuf_take();
     }
     s = s.write("    .globl _start\n");
     s = s.write("    .text\n");

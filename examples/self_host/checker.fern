@@ -36,14 +36,19 @@
 //   - Float types (the parser flags `is_float` but the checker
 //     just lumps both into a numeric kind for now)
 
-import "core/no_prelude";
 import "./util";
 import "./lexer";
 import "./parser";
 
 // =================== TYPE SYSTEM ====================
 
-pub struct TypeI32 { tag: i32 }       // tag fields are placeholder
+// TypeI32 models EVERY integer width — i32 / i64 / u32 / u64 — distinguished
+// by (width, unsigned). The checker stays width-LENIENT for assignability
+// (type_eq treats all integer types as interchangeable, matching the port's
+// long-standing loose-int behaviour), but width is carried so method DISPATCH
+// keys (which compare the declared receiver-type spelling) can recover "i64" /
+// "u32" / "u64" at a call site. Actual codegen width lives in asmcore's `Ty`.
+pub struct TypeI32 { tag: i32, width: i32, unsigned: boolean }
 pub struct TypeBool { tag: i32 }      // payload — variants need a
 pub struct TypeString { tag: i32 }    // shape; the field is unused.
 pub struct TypeFloat { tag: i32 }     // f64 — `f32` aliases the same
@@ -89,7 +94,20 @@ pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeArray | TypeSt
 // the struct literal in return-position lets the implicit
 // struct→union wrap fire. Inline `var t: Type = TypeI32 { ... };`
 // inside a non-return position doesn't always trigger the wrap.
-function t_i32(): Type { return TypeI32 { tag: 0 }; }
+function t_i32(): Type { return TypeI32 { tag: 0, width: 32, unsigned: false }; }
+function t_i64(): Type { return TypeI32 { tag: 0, width: 64, unsigned: false }; }
+function t_u32(): Type { return TypeI32 { tag: 0, width: 32, unsigned: true }; }
+function t_u64(): Type { return TypeI32 { tag: 0, width: 64, unsigned: true }; }
+// int_label recovers the source spelling of an integer TypeI32 from its
+// (width, unsigned) so method dispatch + diagnostics name the right type.
+function int_label(t: TypeI32): string {
+    if (t.unsigned) {
+        if (t.width == 64) { return "u64"; }
+        return "u32";
+    }
+    if (t.width == 64) { return "i64"; }
+    return "i32";
+}
 function t_bool(): Type { return TypeBool { tag: 0 }; }
 function t_string(): Type { return TypeString { tag: 0 }; }
 function t_float(): Type { return TypeFloat { tag: 0 }; }
@@ -215,6 +233,24 @@ function type_eq(a: Type, b: Type): boolean {
 function is_unknown(t: Type): boolean {
     match (t) {
         TypeUnknown(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// is_composite_type reports whether `t` is a struct / enum (union) /
+// array / tuple — a heap value whose `==` would otherwise mean
+// pointer identity. The native compiler routes composite `==` to the
+// type's structural `Eq` impl; the self-host compiler has no trait /
+// derive support yet, so it rejects composite `==` (matching the
+// native E041 the way the scalar-mismatch case already does) rather
+// than silently comparing heap pointers.
+function is_composite_type(t: Type): boolean {
+    match (t) {
+        TypeStruct(_) => { return true; },
+        TypeUnion(_) => { return true; },
+        TypeArray(_) => { return true; },
+        TypeTuple(_) => { return true; },
         _ => { return false; }
     }
     return false;
@@ -434,7 +470,15 @@ function is_resolvable_value(name: string, s: Scope): boolean {
     if (s.lookup_sig(name).name.len() > 0) { return true; }
     if (variant_in_unions(name, s.unions)) { return true; }
     if (is_builtin_variant(name)) { return true; }
-    if (s.lookup_struct(name).name.len() > 0) { return true; }
+    // A bare STRUCT type name is NOT a value — `return P` / `var x = P` for a
+    // standalone struct P is E001 in the Go checker (you construct with the
+    // `P { … }` literal, an ExprStructLit, which never reaches here). Union
+    // members and enum-variant constructors are caught above by
+    // variant_in_unions / is_builtin_variant, so dropping the struct-name case
+    // only rejects pure type names — matching Go, with no new false positive
+    // (Go flags the same bare names). Struct CALLS (none exist — there's no
+    // `P(...)` form) go through is_resolvable_callee, which never consulted
+    // lookup_struct either.
     // A function — user or builtin — may also be referenced as a bare
     // value (e.g. `var w = write;` or passing a function by name).
     if (name.len() >= 2 && name[0:2] == "__") { return true; }
@@ -502,6 +546,24 @@ function is_resolvable_callee(name: string, s: Scope): boolean {
     return false;
 }
 
+// for_iter_is_range reports whether a for-loop iter is the synthetic
+// `__range(LOW, HIGH)` / `__range_incl(LOW, HIGH)` call the parser emits
+// for `for i in LOW..HIGH` / `for i in LOW..=HIGH`. The checker uses it
+// to bind the loop var to i32; irlower carries its own copy (different
+// module) to drive the counted-loop lowering (half-open vs closed).
+function for_iter_is_range(iter: parser.Expr): boolean {
+    match (iter) {
+        parser.ExprCall(c) => {
+            if (c.args.len() != 2) { return false; }
+            match (c.callee) {
+                parser.ExprIdent(id) => { return id.name == "__range" || id.name == "__range_incl"; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+}
+
 function (s: Scope) enter_loop(): Scope {
     return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth + 1, ret_type: s.ret_type };
 }
@@ -531,6 +593,56 @@ function (s: Scope) lookup_sig(name: string): FuncSig {
     // tells callers the name isn't a function.
     var empty: Type[] = [];
     return FuncSig { name: "", param_types: empty, ret_type: t_unknown("undefined function:" + name), type_param_count: 0 };
+}
+
+// has_array_method reports whether an auto-discovered std/array method
+// `__method_Array_<field>` is in scope. The function is in scope only when
+// std/array is imported; the bundler (flatten.bundle) mangles it to
+// `<mod>__` + `__method_Array_<field>`, so the in-scope sig is either the bare
+// convention name (the native modload path, which keeps `__method_` bare) or a
+// mangled name ENDING in it. Match both so the array-method-existence check
+// resolves an imported method whichever loader built the table.
+function (s: Scope) has_array_method(field: string): boolean {
+    var target: string = "__method_Array_" + field;
+    var tn: i32 = target.len();
+    var i: i32 = 0;
+    while (i < s.sigs.len()) {
+        var nm: string = s.sigs[i].name;
+        if (nm == target) { return true; }
+        if (nm.len() > tn && nm[nm.len() - tn : nm.len()] == target) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// try_array_method_type resolves the result type of an array method call
+// `a.<field>(...)` where `a` is an array. The std/array helpers are free
+// functions named `__method_Array_<field>` (or the `<mod>__`-mangled form
+// the bundler emits, which still ends in that convention name), discovered
+// the same suffix-matching way has_array_method finds them. Returns the
+// helper's declared return type, or t_unknown when no such helper is in
+// scope — at which point check_call_expr falls through to its normal
+// "receiver isn't a typed value" handling so a genuine unknown array
+// method still surfaces as unknown rather than a wrong concrete type.
+// `append` / `with` are the built-in array growers and return the array
+// itself (the receiver type), short-circuited ahead of the sig scan.
+function (s: Scope) array_method_ret_type(recv_ty: Type, field: string): Type {
+    match (recv_ty) {
+        TypeArray(_) => {
+            if (field == "append" || field == "with") { return recv_ty; }
+            var target: string = "__method_Array_" + field;
+            var tn: i32 = target.len();
+            var i: i32 = 0;
+            while (i < s.sigs.len()) {
+                var nm: string = s.sigs[i].name;
+                if (nm == target) { return s.sigs[i].ret_type; }
+                if (nm.len() > tn && nm[nm.len() - tn : nm.len()] == target) { return s.sigs[i].ret_type; }
+                i = i + 1;
+            }
+            return t_unknown("no array method `" + field + "`");
+        },
+        _ => { return t_unknown("array_method_ret_type: receiver isn't an array"); }
+    }
 }
 
 function (s: Scope) lookup_struct(name: string): StructSig {
@@ -653,6 +765,25 @@ function type_assignable(from: Type, to: Type, unions: UnionSig[]): boolean {
                 _ => { return false; }
             }
         },
+        TypeTuple(te) => {
+            match (from) {
+                TypeTuple(fe) => {
+                    // Same arity, element-wise assignable. An unknown source
+                    // element is a wildcard (mirrors the array / map rule) so a
+                    // generic tuple `(T, U)` — whose params erase to `unknown` —
+                    // flows into any concrete tuple slot, and a literal whose
+                    // element infers `unknown` doesn't false-positive.
+                    if (fe.elements.len() != te.elements.len()) { return false; }
+                    var i: i32 = 0;
+                    while (i < te.elements.len()) {
+                        if (!is_unknown(fe.elements[i]) && !type_assignable(fe.elements[i], te.elements[i], unions)) { return false; }
+                        i = i + 1;
+                    }
+                    return true;
+                },
+                _ => { return false; }
+            }
+        },
         TypeUnion(un) => {
             match (from) {
                 TypeStruct(sn) => { return is_variant_of(sn.name, un.name, unions); },
@@ -684,8 +815,16 @@ function type_assignable(from: Type, to: Type, unions: UnionSig[]): boolean {
 // type_from_name resolves a parser-side bare type-name string to
 // a Type. Unrecognised names surface as TypeUnknown so the checker
 // can flag bogus signatures without hard-failing the whole check.
+// Every type-name resolver below maps i32 / i64 / u32 / u64 to a width-tagged
+// TypeI32 (see the struct comment). Before this, the wider widths resolved to
+// t_unknown, so a receiver method on one (`function (x: i64) …`) tripped the
+// E021 "method receiver references unknown struct" gate, and a call site
+// couldn't recover the width to dispatch.
 function type_from_name(name: string): Type {
     if (name == "i32") { return t_i32(); }
+    if (name == "i64") { return t_i64(); }
+    if (name == "u32") { return t_u32(); }
+    if (name == "u64") { return t_u64(); }
     if (name == "bool" || name == "boolean") { return t_bool(); }
     if (name == "string") { return t_string(); }
     if (name == "f64" || name == "f32" || name == "float") { return t_float(); }
@@ -697,6 +836,219 @@ function type_from_name(name: string): Type {
 // check_expr returns the inferred type. Errors surface as
 // TypeUnknown with a `reason` string so callers can inspect them
 // without an exception channel.
+// check_call_expr types an ExprCall (plain / closure / method call).
+// Extracted verbatim from check_expr's ExprCall arm to keep check_expr
+// under the self-host oversized-function compile threshold (#2720); the
+// body is self-contained on c + s.
+function check_call_expr(c: parser.ExprCall, s: Scope): Type {
+    // A desugared value if/match-expression is a 0-arg call of a
+    // 0-param lambda whose single-statement body is a StmtIf / StmtMatch
+    // returning each branch's value. Its value type is the branches'
+    // common type. Return it (instead of `unknown`) so assignment /
+    // return / argument checks see the real type — closing E003/E002
+    // on `var x: string = if (…) { 1 } else { 2 }` and the match form.
+    // Only when EVERY branch agrees (type_eq); a mixed-type set (e.g. a
+    // numeric i32/f64 widening, which the Go checker unifies but this
+    // port's type_assignable doesn't) falls back to `unknown` so it
+    // can't false-positive. Arm-type *consistency* itself is E031,
+    // checked separately.
+    if (c.args.len() == 0) {
+        match (c.callee) {
+            parser.ExprLambda(lm) => {
+                if (lm.params.len() == 0 && lm.body.len() == 1) {
+                    var bts: Type[] = [];
+                    match (lm.body[0]) {
+                        parser.StmtIf(f) => { bts = mx_if_branch_types(f, s); },
+                        parser.StmtMatch(m) => { bts = mx_match_arm_types(m, s); },
+                        _ => { }
+                    }
+                    if (bts.len() > 0) {
+                        var all_same: boolean = true;
+                        var bi: i32 = 1;
+                        while (bi < bts.len()) {
+                            if (!type_eq(bts[bi], bts[0])) { all_same = false; }
+                            bi = bi + 1;
+                        }
+                        if (all_same && !is_unknown(bts[0])) { return bts[0]; }
+                    }
+                }
+            },
+            _ => { }
+        }
+    }
+    // Bare-ident callee → plain function call.
+    // FieldAccess callee → method call: type-check the
+    // receiver, look up the method by (name, recv_type).
+    var name: string = "";
+    var is_method: boolean = false;
+    var recv_type_name: string = "";
+    var recv_ty: Type = t_unknown("__noreceiver__");
+    match (c.callee) {
+        parser.ExprIdent(id) => { name = id.name; },
+        parser.ExprFieldAccess(fa) => {
+            // Qualified-name call: `Ns.func(…)` resolves
+            // to a plain function named "Ns.func" when
+            // such a sig exists. Otherwise fall through
+            // to method-dispatch semantics.
+            var qhandled: boolean = false;
+            match (fa.obj) {
+                parser.ExprIdent(ns_id) => {
+                    var qname: string = ns_id.name + "." + fa.field;
+                    var qsig: FuncSig = s.lookup_sig(qname);
+                    if (qsig.name.len() > 0) {
+                        name = qname;
+                        qhandled = true;
+                    }
+                },
+                _ => { }
+            }
+            if (!qhandled) {
+                name = fa.field;
+                is_method = true;
+                recv_ty = check_expr(fa.obj, s);
+                // Array method-syntax dispatch: `a.<field>(...)` on an
+                // array resolves to the std/array `__method_Array_<field>`
+                // helper's return type (or the built-in append/with growers).
+                // Done ahead of the recv_type_name match below because an
+                // array receiver has no nominal type-name and would
+                // otherwise fall into the `_` "isn't a typed value" arm.
+                var arr_mt: Type = s.array_method_ret_type(recv_ty, name);
+                if (!is_unknown(arr_mt)) { return arr_mt; }
+                // Receiver type-name comes from the receiver
+                // expression's static type. Primitive types
+                // use their type-keyword spelling so methods
+                // declared on them dispatch correctly.
+                match (recv_ty) {
+                    TypeStruct(sn) => { recv_type_name = sn.name; },
+                    TypeString(_) => { recv_type_name = "string"; },
+                    TypeI32(it) => { recv_type_name = int_label(it); },
+                    TypeBool(_) => { recv_type_name = "bool"; },
+                    TypeFloat(_) => { recv_type_name = "f64"; },
+                    TypeMap(_) => { recv_type_name = "Map"; },
+                    _ => { return t_unknown("method call: receiver isn't a typed value"); }
+                }
+            }
+        },
+        _ => { return t_unknown("call target is not an identifier"); }
+    }
+    // Builtins: `len(x)` returns i32 for any array or
+    // string. Checked separately because the sig table
+    // doesn't enumerate them.
+    if (!is_method && name == "len") {
+        if (c.args.len() != 1) { return t_unknown("len takes 1 argument"); }
+        var at: Type = check_expr(c.args[0], s);
+        match (at) {
+            TypeArray(_) => { return t_i32(); },
+            TypeString(_) => { return t_i32(); },
+            TypeMap(_) => { return t_i32(); },
+            _ => { return t_unknown("len: argument must be array, string, or map"); }
+        }
+        return t_unknown("unreachable len arm");
+    }
+    // map_new(cap) builtin — returns a TypeMap with
+    // TypeUnknown key/value types since the call site
+    // has no inference for them. The surrounding
+    // type-annotation (e.g. `var m: Map[K, V] = …`)
+    // pins them via assignability.
+    if (!is_method && name == "map_new") {
+        return t_map(t_unknown("map_new key"), t_unknown("map_new value"));
+    }
+    // cell_new(v) builtin — the Cell[T] constructor
+    // (docs/CELL-TYPE-PLAN.md). T is the argument's type; the
+    // result is modelled as a nominal `Cell` struct handle. Typing
+    // it (rather than leaving it unknown) lets a nested
+    // `cell_new(cell_new(x))` see the inner cell as a composite
+    // element, which is the E057 case the call-diag walk flags.
+    if (!is_method && name == "cell_new") {
+        return t_struct("Cell");
+    }
+    // Built-in VMap method dispatch — handled ahead of
+    // the user MethodSig lookup.
+    if (is_method) {
+        match (recv_ty) {
+            TypeMap(mt) => {
+                if (name == "insert") {
+                    if (c.args.len() != 2) { return t_unknown("map.set: 2 args"); }
+                    return recv_ty;
+                }
+                if (name == "get_or") {
+                    if (c.args.len() != 2) { return t_unknown("map.get_or: 2 args"); }
+                    return mt.value;
+                }
+                if (name == "has") {
+                    if (c.args.len() != 1) { return t_unknown("map.has: 1 arg"); }
+                    return t_bool();
+                }
+                if (name == "without") {
+                    if (c.args.len() != 1) { return t_unknown("map.delete: 1 arg"); }
+                    return t_tuple([recv_ty, t_bool()]);
+                }
+                if (name == "len") {
+                    if (c.args.len() != 0) { return t_unknown("map.len: 0 args"); }
+                    return t_i32();
+                }
+                if (name == "keys") { return t_array(mt.key); }
+                if (name == "values") { return t_array(mt.value); }
+            },
+            _ => { }
+        }
+        var msig: MethodSig = s.lookup_method(name, recv_type_name);
+        if (msig.name.len() == 0) {
+            return t_unknown("undefined method `" + name + "` on `" + recv_type_name + "`");
+        }
+        if (c.args.len() != msig.param_types.len()) {
+            return t_unknown("arity mismatch calling method `" + name + "`");
+        }
+        var mi: i32 = 0;
+        while (mi < c.args.len()) {
+            var mat: Type = check_expr(c.args[mi], s);
+            if (!type_assignable(mat, msig.param_types[mi], s.unions)) {
+                return t_unknown("arg-type mismatch calling method `" + name + "`");
+            }
+            mi = mi + 1;
+        }
+        return msig.ret_type;
+    }
+    // If the ident is bound in scope to a TypeFunc,
+    // dispatch as a closure call rather than a plain
+    // function lookup. Otherwise fall through to the
+    // function-sig table.
+    var bound_ty: Type = s.lookup(name);
+    match (bound_ty) {
+        TypeFunc(tf) => {
+            if (c.args.len() != tf.param_types.len()) {
+                return t_unknown("arity mismatch calling closure `" + name + "`");
+            }
+            var ci: i32 = 0;
+            while (ci < c.args.len()) {
+                var cat: Type = check_expr(c.args[ci], s);
+                if (!type_assignable(cat, tf.param_types[ci], s.unions)) {
+                    return t_unknown("arg-type mismatch calling closure `" + name + "`");
+                }
+                ci = ci + 1;
+            }
+            return tf.ret_type;
+        },
+        _ => { }
+    }
+    var sig: FuncSig = s.lookup_sig(name);
+    if (sig.name.len() == 0) {
+        return t_unknown("undefined function: " + name);
+    }
+    if (c.args.len() != sig.param_types.len()) {
+        return t_unknown("arity mismatch calling `" + name + "`");
+    }
+    var i: i32 = 0;
+    while (i < c.args.len()) {
+        var at: Type = check_expr(c.args[i], s);
+        if (!type_assignable(at, sig.param_types[i], s.unions)) {
+            return t_unknown("arg-type mismatch calling `" + name + "`");
+        }
+        i = i + 1;
+    }
+    return sig.ret_type;
+}
+
 function check_expr(e: parser.Expr, s: Scope): Type {
     match (e) {
         parser.ExprNumber(n) => {
@@ -778,171 +1130,7 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             }
             return t_unknown("unknown unary op:" + u.op);
         },
-        parser.ExprCall(c) => {
-            // Bare-ident callee → plain function call.
-            // FieldAccess callee → method call: type-check the
-            // receiver, look up the method by (name, recv_type).
-            var name: string = "";
-            var is_method: boolean = false;
-            var recv_type_name: string = "";
-            var recv_ty: Type = t_unknown("__noreceiver__");
-            match (c.callee) {
-                parser.ExprIdent(id) => { name = id.name; },
-                parser.ExprFieldAccess(fa) => {
-                    // Qualified-name call: `Ns.func(…)` resolves
-                    // to a plain function named "Ns.func" when
-                    // such a sig exists. Otherwise fall through
-                    // to method-dispatch semantics.
-                    var qhandled: boolean = false;
-                    match (fa.obj) {
-                        parser.ExprIdent(ns_id) => {
-                            var qname: string = ns_id.name + "." + fa.field;
-                            var qsig: FuncSig = s.lookup_sig(qname);
-                            if (qsig.name.len() > 0) {
-                                name = qname;
-                                qhandled = true;
-                            }
-                        },
-                        _ => { }
-                    }
-                    if (!qhandled) {
-                        name = fa.field;
-                        is_method = true;
-                        recv_ty = check_expr(fa.obj, s);
-                        // Receiver type-name comes from the receiver
-                        // expression's static type. Primitive types
-                        // use their type-keyword spelling so methods
-                        // declared on them dispatch correctly.
-                        match (recv_ty) {
-                            TypeStruct(sn) => { recv_type_name = sn.name; },
-                            TypeString(_) => { recv_type_name = "string"; },
-                            TypeI32(_) => { recv_type_name = "i32"; },
-                            TypeBool(_) => { recv_type_name = "bool"; },
-                            TypeFloat(_) => { recv_type_name = "f64"; },
-                            TypeMap(_) => { recv_type_name = "Map"; },
-                            _ => { return t_unknown("method call: receiver isn't a typed value"); }
-                        }
-                    }
-                },
-                _ => { return t_unknown("call target is not an identifier"); }
-            }
-            // Builtins: `len(x)` returns i32 for any array or
-            // string. Checked separately because the sig table
-            // doesn't enumerate them.
-            if (!is_method && name == "len") {
-                if (c.args.len() != 1) { return t_unknown("len takes 1 argument"); }
-                var at: Type = check_expr(c.args[0], s);
-                match (at) {
-                    TypeArray(_) => { return t_i32(); },
-                    TypeString(_) => { return t_i32(); },
-                    TypeMap(_) => { return t_i32(); },
-                    _ => { return t_unknown("len: argument must be array, string, or map"); }
-                }
-                return t_unknown("unreachable len arm");
-            }
-            // map_new(cap) builtin — returns a TypeMap with
-            // TypeUnknown key/value types since the call site
-            // has no inference for them. The surrounding
-            // type-annotation (e.g. `var m: Map[K, V] = …`)
-            // pins them via assignability.
-            if (!is_method && name == "map_new") {
-                return t_map(t_unknown("map_new key"), t_unknown("map_new value"));
-            }
-            // cell_new(v) builtin — the Cell[T] constructor
-            // (docs/CELL-TYPE-PLAN.md). T is the argument's type; the
-            // result is modelled as a nominal `Cell` struct handle. Typing
-            // it (rather than leaving it unknown) lets a nested
-            // `cell_new(cell_new(x))` see the inner cell as a composite
-            // element, which is the E057 case the call-diag walk flags.
-            if (!is_method && name == "cell_new") {
-                return t_struct("Cell");
-            }
-            // Built-in VMap method dispatch — handled ahead of
-            // the user MethodSig lookup.
-            if (is_method) {
-                match (recv_ty) {
-                    TypeMap(mt) => {
-                        if (name == "insert") {
-                            if (c.args.len() != 2) { return t_unknown("map.set: 2 args"); }
-                            return recv_ty;
-                        }
-                        if (name == "get_or") {
-                            if (c.args.len() != 2) { return t_unknown("map.get_or: 2 args"); }
-                            return mt.value;
-                        }
-                        if (name == "has") {
-                            if (c.args.len() != 1) { return t_unknown("map.has: 1 arg"); }
-                            return t_bool();
-                        }
-                        if (name == "without") {
-                            if (c.args.len() != 1) { return t_unknown("map.delete: 1 arg"); }
-                            return t_tuple([recv_ty, t_bool()]);
-                        }
-                        if (name == "len") {
-                            if (c.args.len() != 0) { return t_unknown("map.len: 0 args"); }
-                            return t_i32();
-                        }
-                        if (name == "keys") { return t_array(mt.key); }
-                        if (name == "values") { return t_array(mt.value); }
-                    },
-                    _ => { }
-                }
-                var msig: MethodSig = s.lookup_method(name, recv_type_name);
-                if (msig.name.len() == 0) {
-                    return t_unknown("undefined method `" + name + "` on `" + recv_type_name + "`");
-                }
-                if (c.args.len() != msig.param_types.len()) {
-                    return t_unknown("arity mismatch calling method `" + name + "`");
-                }
-                var mi: i32 = 0;
-                while (mi < c.args.len()) {
-                    var mat: Type = check_expr(c.args[mi], s);
-                    if (!type_assignable(mat, msig.param_types[mi], s.unions)) {
-                        return t_unknown("arg-type mismatch calling method `" + name + "`");
-                    }
-                    mi = mi + 1;
-                }
-                return msig.ret_type;
-            }
-            // If the ident is bound in scope to a TypeFunc,
-            // dispatch as a closure call rather than a plain
-            // function lookup. Otherwise fall through to the
-            // function-sig table.
-            var bound_ty: Type = s.lookup(name);
-            match (bound_ty) {
-                TypeFunc(tf) => {
-                    if (c.args.len() != tf.param_types.len()) {
-                        return t_unknown("arity mismatch calling closure `" + name + "`");
-                    }
-                    var ci: i32 = 0;
-                    while (ci < c.args.len()) {
-                        var cat: Type = check_expr(c.args[ci], s);
-                        if (!type_assignable(cat, tf.param_types[ci], s.unions)) {
-                            return t_unknown("arg-type mismatch calling closure `" + name + "`");
-                        }
-                        ci = ci + 1;
-                    }
-                    return tf.ret_type;
-                },
-                _ => { }
-            }
-            var sig: FuncSig = s.lookup_sig(name);
-            if (sig.name.len() == 0) {
-                return t_unknown("undefined function: " + name);
-            }
-            if (c.args.len() != sig.param_types.len()) {
-                return t_unknown("arity mismatch calling `" + name + "`");
-            }
-            var i: i32 = 0;
-            while (i < c.args.len()) {
-                var at: Type = check_expr(c.args[i], s);
-                if (!type_assignable(at, sig.param_types[i], s.unions)) {
-                    return t_unknown("arg-type mismatch calling `" + name + "`");
-                }
-                i = i + 1;
-            }
-            return sig.ret_type;
-        },
+        parser.ExprCall(c) => { return check_call_expr(c, s); },
         parser.ExprTuple(t) => {
             var elems: Type[] = [];
             var i: i32 = 0;
@@ -979,7 +1167,7 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             match (at) {
                 TypeArray(ta) => { return ta.elem; },
                 // String indexing returns the byte as i32 — same
-                // semantics as the production lang pipeline.
+                // semantics as the production Fern pipeline.
                 TypeString(_) => { return t_i32(); },
                 _ => { return t_unknown("can only index into an array or string"); }
             }
@@ -1357,12 +1545,22 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
             // a scope where var_name is bound to the array's
             // elem type, and loop_depth+1 so inner break /
             // continue type-check.
-            var it: Type = check_expr(f.iter, s);
+            //
+            // Range form `for i in LOW..HIGH` arrives as a synthetic
+            // `__range(LOW, HIGH)` call (parser desugar). The loop var
+            // is an i32 over the half-open interval; bind it directly
+            // instead of typing the (function-less) `__range` callee.
+            // LOW / HIGH are still walked for E001 etc. by call_diags.
             var elem_ty: Type = t_unknown("for-in iter not an array");
             var ok: boolean = true;
-            match (it) {
-                TypeArray(ta) => { elem_ty = ta.elem; },
-                _ => { ok = false; }
+            if (for_iter_is_range(f.iter)) {
+                elem_ty = t_i32();
+            } else {
+                var it: Type = check_expr(f.iter, s);
+                match (it) {
+                    TypeArray(ta) => { elem_ty = ta.elem; },
+                    _ => { ok = false; }
+                }
             }
             var body_scope: Scope = s.enter_loop().bind(f.var_name, elem_ty);
             var fOk: boolean = check_block(f.body, body_scope);
@@ -1519,6 +1717,9 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
 // takes the full StructSig[] for callers that already have it.
 function type_from_name_with_structs(name: string, structs: StructSig[]): Type {
     if (name == "i32") { return t_i32(); }
+    if (name == "i64") { return t_i64(); }
+    if (name == "u32") { return t_u32(); }
+    if (name == "u64") { return t_u64(); }
     if (name == "bool" || name == "boolean") { return t_bool(); }
     if (name == "string") { return t_string(); }
     if (name == "f64" || name == "f32" || name == "float") { return t_float(); }
@@ -1535,6 +1736,9 @@ function type_from_name_with_structs(name: string, structs: StructSig[]): Type {
 
 function type_from_name_with_struct_names(name: string, struct_names: string[]): Type {
     if (name == "i32") { return t_i32(); }
+    if (name == "i64") { return t_i64(); }
+    if (name == "u32") { return t_u32(); }
+    if (name == "u64") { return t_u64(); }
     if (name == "bool" || name == "boolean") { return t_bool(); }
     if (name == "string") { return t_string(); }
     if (name == "f64" || name == "f32" || name == "float") { return t_float(); }
@@ -1559,6 +1763,9 @@ function type_from_name_with_struct_names(name: string, struct_names: string[]):
 // collect_union_sigs rejects the overlap at module build time.
 function type_from_name_with_structs_unions(name: string, structs: StructSig[], unions: UnionSig[]): Type {
     if (name == "i32") { return t_i32(); }
+    if (name == "i64") { return t_i64(); }
+    if (name == "u32") { return t_u32(); }
+    if (name == "u64") { return t_u64(); }
     if (name == "bool" || name == "boolean") { return t_bool(); }
     if (name == "string") { return t_string(); }
     if (name == "f64" || name == "f32" || name == "float") { return t_float(); }
@@ -1570,6 +1777,24 @@ function type_from_name_with_structs_unions(name: string, structs: StructSig[], 
     if (name.len() >= 2 && name[name.len() - 2] == 91 && name[name.len() - 1] == 93) {
         var elem_name: string = name[0:name.len() - 2];
         return t_array(type_from_name_with_structs_unions(elem_name, structs, unions));
+    }
+    // Tuple `(A, B, …)` → TypeTuple of the recursively-resolved elements.
+    // Needs at least one top-level comma (a single `(T)` is just a
+    // parenthesised type, not a tuple). A function type `(A, B) => R` does
+    // NOT end in `)` so it never reaches here; a tuple-array `(A, B)[]` is
+    // peeled by the array branch above first.
+    if (name.len() >= 2 && name[0] == 40 && name[name.len() - 1] == 41) {
+        var inner: string = name[1:name.len() - 1];
+        var parts: string[] = split_top_commas(inner);
+        if (parts.len() >= 2) {
+            var elems: Type[] = [];
+            var pi: i32 = 0;
+            while (pi < parts.len()) {
+                elems = elems.append(type_from_name_with_structs_unions(parts[pi], structs, unions));
+                pi = pi + 1;
+            }
+            return t_tuple(elems);
+        }
     }
     // Generic-instantiated `Map[K, V]` arrives as a single
     // string spelling from parse_type_name. Strip the prefix
@@ -1614,6 +1839,29 @@ function split_top_comma(s: string): i32 {
     return 0 - 1;
 }
 
+// split_top_commas splits `s` on every top-level comma — one not nested
+// inside `[…]` or `(…)` — returning the trimmed parts. Used to parse a
+// tuple type spelling `A, B, C` (the inner of `(A, B, C)`) into its element
+// names. A string with no top-level comma yields a single part.
+function split_top_commas(s: string): string[] {
+    var out: string[] = [];
+    var depth: i32 = 0;
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var b: i32 = s[i];
+        if (b == 91 || b == 40) { depth = depth + 1; }
+        else if (b == 93 || b == 41) { depth = depth - 1; }
+        else if (b == 44 && depth == 0) {
+            out = out.append(trim_spaces(s[start:i]));
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    out = out.append(trim_spaces(s[start:s.len()]));
+    return out;
+}
+
 // trim_spaces removes leading + trailing space (byte 32) chars.
 function trim_spaces(s: string): string {
     var n: i32 = s.len();
@@ -1626,6 +1874,9 @@ function trim_spaces(s: string): string {
 
 function type_from_name_with_names_and_unions(name: string, struct_names: string[], union_names: string[]): Type {
     if (name == "i32") { return t_i32(); }
+    if (name == "i64") { return t_i64(); }
+    if (name == "u32") { return t_u32(); }
+    if (name == "u64") { return t_u64(); }
     if (name == "bool" || name == "boolean") { return t_bool(); }
     if (name == "string") { return t_string(); }
     if (name == "f64" || name == "f32" || name == "float") { return t_float(); }
@@ -1742,7 +1993,7 @@ function check_func_body(fd: parser.FuncDecl, sigs: FuncSig[], structs: StructSi
 // best-effort).
 function type_label(t: Type): string {
     match (t) {
-        TypeI32(_) => { return "i32"; },
+        TypeI32(it) => { return int_label(it); },
         TypeBool(_) => { return "bool"; },
         TypeString(_) => { return "string"; },
         TypeFloat(_) => { return "f64"; },
@@ -1820,6 +2071,154 @@ function ret_diags(stmts: parser.Stmt[], s: Scope, ret_ty: Type, unions: UnionSi
         i = i + 1;
     }
     return out;
+}
+
+// void_ret_diags is the `void`-return counterpart of ret_diags: a function
+// declared `: void` must not return a value, so every `return <expr>;` with
+// a real value is E002 (a bare `return;` is fine). Mirrors the Go checker,
+// which rejects a value returned from a void function. Recurses into nested
+// blocks the same way ret_diags does; the scope is threaded so a returned
+// expression sees earlier `var` bindings (it's still type-checked for the
+// message, though any concrete type is a mismatch against void).
+function void_ret_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]): Diag[] {
+    var out: Diag[] = [];
+    var cur: Scope = s;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var st: parser.Stmt = stmts[i];
+        match (st) {
+            parser.StmtReturn(r) => {
+                var bare: boolean = false;
+                match (r.value) {
+                    parser.ExprUnknown(u) => { if (u.kind == "punct:;") { bare = true; } },
+                    _ => { }
+                }
+                if (!bare) {
+                    var t: Type = check_expr(r.value, cur);
+                    out = out.append(dg_at("E002", "return type mismatch: function returns void but expression is " + type_label(t), r.line, r.col));
+                }
+            },
+            parser.StmtIf(f) => {
+                out = append_diags(out, void_ret_diags(f.then_body, cur, unions));
+                out = append_diags(out, void_ret_diags(f.else_body, cur, unions));
+            },
+            parser.StmtWhile(w) => { out = append_diags(out, void_ret_diags(w.body, cur, unions)); },
+            parser.StmtFor(fr) => { out = append_diags(out, void_ret_diags(fr.body, cur, unions)); },
+            parser.StmtMatch(m) => {
+                var a: i32 = 0;
+                while (a < m.arms.len()) { out = append_diags(out, void_ret_diags(m.arms[a].body, cur, unions)); a = a + 1; }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                out = append_diags(out, void_ret_diags(one, cur, unions));
+            },
+            _ => { }
+        }
+        cur = check_stmt(st, cur).scope;
+        i = i + 1;
+    }
+    return out;
+}
+
+// name_in reports whether `name` appears in `list` — the membership test
+// the slice-escape walk uses to classify identifiers.
+function name_in(name: string, list: string[]): boolean {
+    var i: i32 = 0;
+    while (i < list.len()) { if (list[i] == name) { return true; } i = i + 1; }
+    return false;
+}
+
+// slc_src_is_local reports whether `e` names storage owned by the current
+// function (so a slice of it dangles once the frame is reclaimed): an
+// array literal, a local owned-array binding (`localarr`), or a local
+// slice binding that itself views local storage (`tainted`). A sub-slice
+// inherits its source's origin. Parameters / receivers are never added to
+// either list, so membership alone excludes them — the caller owns them.
+function slc_src_is_local(e: parser.Expr, localarr: string[], tainted: string[]): boolean {
+    match (e) {
+        parser.ExprArray(_) => { return true; },
+        parser.ExprSlice(s2) => { return slc_src_is_local(s2.array, localarr, tainted); },
+        parser.ExprIdent(id) => { return name_in(id.name, localarr) || name_in(id.name, tainted); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// slc_expr_escapes reports whether `e` evaluates to a `[T]` slice that
+// views function-local storage. A string slice copies into a fresh owned
+// string (`__str_slice`) so it never dangles; a bare reference to a
+// tainted local slice does.
+function slc_expr_escapes(e: parser.Expr, cur: Scope, localarr: string[], tainted: string[]): boolean {
+    match (e) {
+        parser.ExprSlice(sl) => {
+            match (check_expr(sl.array, cur)) {
+                TypeString(_) => { return false; },
+                _ => { }
+            }
+            return slc_src_is_local(sl.array, localarr, tainted);
+        },
+        parser.ExprIdent(id) => { return name_in(id.name, tainted); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// slc_walk is the E063 body walk: it threads the scope (so a slice's
+// source type resolves) plus two name sets — `localarr` (locals bound to
+// an owned array literal) and `tainted` (locals bound to a slice that
+// views local storage) — and flags every `return` of a slice viewing
+// local storage. Conservative and false-positive-free: a local whose
+// init is a slice of a *parameter* lands in neither set, so returning it
+// (or a sub-slice of it) is not flagged. Mirrors the native checker's
+// checkSliceEscape (internal/checker/checker.go).
+function slc_walk(stmts: parser.Stmt[], s: Scope, localarr: string[], tainted: string[]): Diag[] {
+    var out: Diag[] = [];
+    var cur: Scope = s;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var st: parser.Stmt = stmts[i];
+        match (st) {
+            parser.StmtVar(v) => {
+                match (v.init) {
+                    parser.ExprArray(_) => { localarr = localarr.append(v.name); },
+                    _ => {
+                        if (slc_expr_escapes(v.init, cur, localarr, tainted)) { tainted = tainted.append(v.name); }
+                    }
+                }
+            },
+            parser.StmtReturn(r) => {
+                if (slc_expr_escapes(r.value, cur, localarr, tainted)) {
+                    out = out.append(dg_at("E063", "returning a `[T]` slice that views function-local storage: the backing array is reclaimed when the function returns, leaving a dangling view", r.line, r.col));
+                }
+            },
+            parser.StmtIf(f) => {
+                out = append_diags(out, slc_walk(f.then_body, cur, localarr, tainted));
+                out = append_diags(out, slc_walk(f.else_body, cur, localarr, tainted));
+            },
+            parser.StmtWhile(w) => { out = append_diags(out, slc_walk(w.body, cur, localarr, tainted)); },
+            parser.StmtFor(fr) => { out = append_diags(out, slc_walk(fr.body, cur, localarr, tainted)); },
+            parser.StmtMatch(m) => {
+                var a: i32 = 0;
+                while (a < m.arms.len()) { out = append_diags(out, slc_walk(m.arms[a].body, cur, localarr, tainted)); a = a + 1; }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                out = append_diags(out, slc_walk(one, cur, localarr, tainted));
+            },
+            _ => { }
+        }
+        cur = check_stmt(st, cur).scope;
+        i = i + 1;
+    }
+    return out;
+}
+
+// slice_escape_diags is the E063 entry point: seed empty name sets and
+// walk a function body. See slc_walk.
+function slice_escape_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
+    var localarr: string[] = [];
+    var tainted: string[] = [];
+    return slc_walk(stmts, s, localarr, tainted);
 }
 
 // lret_expr walks an expression looking for lambdas and, for each one
@@ -2224,7 +2623,10 @@ function mx_expr(e: parser.Expr, s: Scope, unions: UnionSig[], enums: parser.Enu
 
 // mx_stmts walks a statement list, threading scope (so a match/if-
 // expression sees earlier locals and a match arm sees its payload binding)
-// and dispatching every contained expression through mx_expr.
+// and dispatching every contained expression through mx_expr. It also emits
+// E061 for a value-position block with no trailing value (the marker
+// StmtUnknown parse_branch_body leaves), reached here because the walk
+// descends into the value-if/match IIFE lambda bodies where that marker lives.
 function mx_stmts(stmts: parser.Stmt[], s: Scope, unions: UnionSig[], enums: parser.EnumDecl[]): Diag[] {
     var out: Diag[] = [];
     var cur: Scope = s;
@@ -2270,6 +2672,18 @@ function mx_stmts(stmts: parser.Stmt[], s: Scope, unions: UnionSig[], enums: par
                 var one: parser.Stmt[] = [d.action];
                 out = append_diags(out, mx_stmts(one, cur, unions, enums));
             },
+            parser.StmtUnknown(u) => {
+                // E061: a value-position block (an if/match value-branch) whose
+                // last element is a `;`-terminated statement has no trailing
+                // value. parse_branch_body tags exactly that case with this
+                // marker StmtUnknown (the only producer of this kind), so
+                // detecting it here — inside the same value-if/match IIFE walk
+                // that drives E031 — matches the Go checker, which reports E061
+                // when a value-position block has no tail expression.
+                if (u.kind == "value branch has no trailing expression") {
+                    out = out.append(dg("E061", "block-expression has no trailing value"));
+                }
+            },
             _ => { }
         }
         cur = check_stmt(st, cur).scope;
@@ -2307,6 +2721,21 @@ function slit_diags(e: parser.Expr, structs: StructSig[]): Diag[] {
         parser.ExprStructLit(sl) => {
             var fv: i32 = 0;
             while (fv < sl.field_values.len()) { out = append_diags(out, slit_diags(sl.field_values[fv], structs)); fv = fv + 1; }
+            // E043: a struct-literal field whose name isn't declared on the
+            // struct. Mirrors the Go checker (per-literal-field "struct S has no
+            // field f"). Runs for update literals too (`S { ...b, bad: 1 }`) —
+            // you can't set an unknown field. A non-struct / unknown type name
+            // (generic instantiation, variant) finds no sig and is skipped.
+            var usig: StructSig = find_struct_sig(structs, sl.type_name);
+            if (usig.name.len() > 0) {
+                var uf: i32 = 0;
+                while (uf < sl.field_names.len()) {
+                    if (!util.has_str(usig.field_names, sl.field_names[uf])) {
+                        out = out.append(dg_at("E043", "struct " + sl.type_name + " has no field \"" + sl.field_names[uf] + "\"", sl.line, sl.col));
+                    }
+                    uf = uf + 1;
+                }
+            }
             if (sl.has_base) {
                 out = append_diags(out, slit_diags(sl.base, structs));
             } else {
@@ -2394,7 +2823,9 @@ function stmts_slit_diags(stmts: parser.Stmt[], structs: StructSig[]): Diag[] {
 }
 
 // loop_diags emits E011 for a `break` / `continue` that isn't inside a
-// loop. It's purely structural (no scope): `while` / `for` bodies recurse
+// loop, and E058 for a labeled `break L` / `continue L` whose `L` names no
+// enclosing loop. It threads only the enclosing-loop label stack (no value
+// scope): `while` / `for` bodies recurse with in_loop = true.
 // block_exits reports whether a statement block is guaranteed to leave
 // its function (return) on every path — an under-approximation mirroring
 // the Go checker's funcBodyExits, used by E052. Only the LAST statement
@@ -2556,8 +2987,8 @@ function switch_diag_block(stmts: parser.Stmt[]): parser.Stmt[] {
                 }
             },
             parser.StmtIf(f) => { out = out.append(parser.StmtIf { cond: f.cond, then_body: switch_diag_block(f.then_body), else_body: switch_diag_block(f.else_body) }); },
-            parser.StmtWhile(w) => { out = out.append(parser.StmtWhile { cond: w.cond, body: switch_diag_block(w.body) }); },
-            parser.StmtFor(fr) => { out = out.append(parser.StmtFor { var_name: fr.var_name, iter: fr.iter, body: switch_diag_block(fr.body) }); },
+            parser.StmtWhile(w) => { out = out.append(parser.StmtWhile { cond: w.cond, body: switch_diag_block(w.body), label: w.label }); },
+            parser.StmtFor(fr) => { out = out.append(parser.StmtFor { var_name: fr.var_name, iter: fr.iter, body: switch_diag_block(fr.body), label: fr.label }); },
             parser.StmtMatch(m) => {
                 var arms: parser.MatchArm[] = [];
                 var a: i32 = 0;
@@ -2570,7 +3001,7 @@ function switch_diag_block(stmts: parser.Stmt[]): parser.Stmt[] {
             parser.StmtDefer(d) => {
                 var one: parser.Stmt[] = [d.action];
                 var rec: parser.Stmt[] = switch_diag_block(one);
-                out = out.append(parser.StmtDefer { action: rec[0] });
+                out = out.append(parser.StmtDefer { action: rec[0], on_error: d.on_error });
             },
             _ => { out = out.append(st); }
         }
@@ -2579,33 +3010,66 @@ function switch_diag_block(stmts: parser.Stmt[]): parser.Stmt[] {
     return out;
 }
 
+// label_in_scope reports whether `name` is one of the enclosing loop
+// labels (mirrors the Go checker's labelInScope over its loopLabels stack).
+// A labeled `break`/`continue` may only target a loop it is nested inside.
+function label_in_scope(labels: string[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < labels.len()) {
+        if (labels[i] == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // with in_loop = true, while `if` / `match` / `defer` pass the flag
 // through unchanged — so a `break` in a match arm is legal only when that
 // match is itself inside a loop (matching the Go checker).
-function loop_diags(stmts: parser.Stmt[], in_loop: boolean): Diag[] {
+//
+// `labels` is the stack of enclosing loop labels (a labeled `while`/`for`
+// pushes its label onto the stack for its body). A labeled `break L` /
+// `continue L` whose `L` names no enclosing loop is E058 — but only when
+// it IS inside a loop, since an out-of-loop break is already E011 (the Go
+// checker reports E058 in the `else` branch after the E011 check, so the
+// two never both fire on one statement).
+function loop_diags(stmts: parser.Stmt[], in_loop: boolean, labels: string[]): Diag[] {
     var out: Diag[] = [];
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtBreak(bk) => {
                 if (!in_loop) { out = out.append(dg_at("E011", "break outside of a loop or switch", bk.line, bk.col)); }
+                else if (bk.label.len() > 0 && !label_in_scope(labels, bk.label)) {
+                    out = out.append(dg_at("E058", "break label does not match any enclosing loop", bk.line, bk.col));
+                }
             },
             parser.StmtContinue(ck) => {
                 if (!in_loop) { out = out.append(dg_at("E011", "continue outside of a loop", ck.line, ck.col)); }
+                else if (ck.label.len() > 0 && !label_in_scope(labels, ck.label)) {
+                    out = out.append(dg_at("E058", "continue label does not match any enclosing loop", ck.line, ck.col));
+                }
             },
-            parser.StmtWhile(w) => { out = append_diags(out, loop_diags(w.body, true)); },
-            parser.StmtFor(fr) => { out = append_diags(out, loop_diags(fr.body, true)); },
+            parser.StmtWhile(w) => {
+                var wl: string[] = labels;
+                if (w.label.len() > 0) { wl = labels.append(w.label); }
+                out = append_diags(out, loop_diags(w.body, true, wl));
+            },
+            parser.StmtFor(fr) => {
+                var fl: string[] = labels;
+                if (fr.label.len() > 0) { fl = labels.append(fr.label); }
+                out = append_diags(out, loop_diags(fr.body, true, fl));
+            },
             parser.StmtIf(f) => {
-                out = append_diags(out, loop_diags(f.then_body, in_loop));
-                out = append_diags(out, loop_diags(f.else_body, in_loop));
+                out = append_diags(out, loop_diags(f.then_body, in_loop, labels));
+                out = append_diags(out, loop_diags(f.else_body, in_loop, labels));
             },
             parser.StmtMatch(m) => {
                 var a: i32 = 0;
-                while (a < m.arms.len()) { out = append_diags(out, loop_diags(m.arms[a].body, in_loop)); a = a + 1; }
+                while (a < m.arms.len()) { out = append_diags(out, loop_diags(m.arms[a].body, in_loop, labels)); a = a + 1; }
             },
             parser.StmtDefer(d) => {
                 var one: parser.Stmt[] = [d.action];
-                out = append_diags(out, loop_diags(one, in_loop));
+                out = append_diags(out, loop_diags(one, in_loop, labels));
             },
             _ => { }
         }
@@ -2716,7 +3180,19 @@ function variant_payload_count(name: string, structs: StructSig[]): i32 {
     var i: i32 = 0;
     while (i < structs.len()) {
         if (structs[i].name == name) {
-            if (util.has_str(structs[i].field_names, "__ev")) { return 1; }
+            if (util.has_str(structs[i].field_names, "__ev")) {
+                // A multi-payload variant carries `__ev`, `__ev1`, … — count every
+                // `__ev`-prefixed field so the E015 arity check allows a matching
+                // multi-binding `V(a, b)`.
+                var c: i32 = 0;
+                var j: i32 = 0;
+                while (j < structs[i].field_names.len()) {
+                    var fn: string = structs[i].field_names[j];
+                    if (fn.len() >= 4 && fn[0:4] == "__ev") { c = c + 1; }
+                    j = j + 1;
+                }
+                return c;
+            }
             return 0 - 1;
         }
         i = i + 1;
@@ -2943,6 +3419,28 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             }
             var i: i32 = 0;
             while (i < c.args.len()) { out = append_diags(out, call_diags(c.args[i], s)); i = i + 1; }
+            // E038: calling a NON-FUNCTION value (`x(3)` where x is an i32 /
+            // string / etc.). The callee's type, when known and not a function
+            // type, isn't callable. Mirrors the Go checker (callee type not a
+            // FuncType -> E038 at the call). A free function / variant
+            // constructor / builtin callee types as unknown here (it's not a
+            // scope binding), so only a value-typed callee is flagged. A
+            // FieldAccess callee (a method, or a function-valued field) is left
+            // to the method path — a method on a non-struct is E043, not E038.
+            match (c.callee) {
+                parser.ExprFieldAccess(_) => { },
+                _ => {
+                    var calleet: Type = check_expr(c.callee, s);
+                    var callee_is_fn: boolean = false;
+                    match (calleet) {
+                        TypeFunc(_) => { callee_is_fn = true; },
+                        _ => { }
+                    }
+                    if (!is_unknown(calleet) && !callee_is_fn) {
+                        out = out.append(dg_at("E038", "calling non-function value of type " + type_label(calleet), c.line, c.col));
+                    }
+                }
+            }
             match (c.callee) {
                 parser.ExprIdent(id) => {
                     // E048: a field assignment `obj.field = v` is desugared
@@ -2961,6 +3459,17 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                             _ => { }
                         }
                         out = out.append(dg_at("E048", "cannot assign to field \"" + fld + "\": fields are immutable after construction; rebuild with a struct-update literal", expr_line(c.args[1]), expr_col(c.args[1])));
+                    }
+                    // E056: `arr[i] = v` is desugared by the parser to
+                    // `__set_index(arr, idx, rhs)`. Array elements are
+                    // immutable after construction (the subscript counterpart
+                    // of E048), so any such call is E056, reported at the
+                    // array. Same no-false-positives argument as E048:
+                    // __set_index is parser-internal and the self-host +
+                    // stdlib were migrated off subscript assignment to
+                    // `arr = arr.with(i, v)`.
+                    if (id.name == "__set_index" && c.args.len() == 3) {
+                        out = out.append(dg_at("E056", "cannot assign to an array element: subscripts are read-only after construction; use `arr = arr.with(i, value)`", expr_line(c.args[0]), expr_col(c.args[0])));
                     }
                     // E057: cell_new(v) — a Cell's element type must be
                     // cycle-free, i.e. a scalar (i32/i64/f64/bool) or string.
@@ -3005,6 +3514,12 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                                     if (!is_unknown(at) && !is_unknown(sig.param_types[ai]) && !type_assignable(at, sig.param_types[ai], s.unions)) {
                                         out = out.append(dg_at("E038", "argument " + itoa_nn(ai + 1) + ": expected " + type_label(sig.param_types[ai]) + ", got " + type_label(at), expr_line(c.args[ai]), expr_col(c.args[ai])));
                                     }
+                                    // E034: a composite-array literal argument's
+                                    // elements checked against the parameter's
+                                    // declared element type (the array as a whole
+                                    // is assignable, so the E038 above stays
+                                    // silent — this catches a bad element).
+                                    out = append_diags(out, array_elem_check(array_elem_type_of(sig.param_types[ai]), c.args[ai], s));
                                     ai = ai + 1;
                                 }
                             }
@@ -3022,6 +3537,78 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     // lookup returns empty and they're left alone.
                     var recv: Type = check_expr(mfa.obj, s);
                     match (recv) {
+                        // E043: a method call on a numeric scalar receiver
+                        // (`x.m(...)` where x is i32 or f64) for which no method
+                        // `m` is declared on that type. Fern allows user-defined
+                        // methods on primitives (`function (n: i32) twice()`), so
+                        // we only flag the call when the method table has no such
+                        // method — then it's a field access on a non-struct,
+                        // mirroring the Go checker, which resolves the method,
+                        // finds none, and reports E043. The lookup keys on the
+                        // receiver's width-aware label (int_label) so a method
+                        // declared on i64 / u32 / u64 resolves too, not just i32.
+                        // A declared method, and string / array / map receivers
+                        // (whose builtin methods route elsewhere), stay clean.
+                        TypeI32(it) => {
+                            if (s.lookup_method(mfa.field, int_label(it)).name.len() == 0) {
+                                out = out.append(dg_at("E043", "field access on non-struct value of type " + type_label(recv), mfa.line, mfa.col));
+                            }
+                        },
+                        TypeFloat(_) => {
+                            if (s.lookup_method(mfa.field, "f64").name.len() == 0) {
+                                out = out.append(dg_at("E043", "field access on non-struct value of type " + type_label(recv), mfa.line, mfa.col));
+                            }
+                        },
+                        TypeString(_) => {
+                            // E043: a string carries exactly two builtin methods
+                            // — `len` and `as_bytes` (mirrors registerStringMethod
+                            // in the Go checker). Any other method must be
+                            // user-defined (in scope via a `function (s: string)
+                            // m()` decl, typically from std/string); when it's
+                            // neither builtin nor user-defined, it's a call to a
+                            // non-existent method — same shape as the numeric-
+                            // scalar case above.
+                            if (mfa.field != "len" && mfa.field != "as_bytes" && s.lookup_method(mfa.field, "string").name.len() == 0) {
+                                out = out.append(dg_at("E043", "field access on non-struct value of type " + type_label(recv), mfa.line, mfa.col));
+                            }
+                        },
+                        TypeArray(ar) => {
+                            // E038: a built-in array method whose argument must
+                            // match the element type. `append(elem)` takes the
+                            // element; `with(i32, elem)` replaces at an index, so
+                            // its second argument is the element. Mirrors the Go
+                            // checker, which types these builtins and reports a
+                            // per-argument mismatch. An unknown element type
+                            // (uninferred receiver) or unknown arg is skipped.
+                            if (mfa.field == "append" && c.args.len() == 1 && !is_unknown(ar.elem)) {
+                                var aat: Type = check_expr(c.args[0], s);
+                                if (!is_unknown(aat) && !type_assignable(aat, ar.elem, s.unions)) {
+                                    out = out.append(dg_at("E038", "argument 1 to \"append\": expected " + type_label(ar.elem) + ", got " + type_label(aat), expr_line(c.args[0]), expr_col(c.args[0])));
+                                }
+                            }
+                            if (mfa.field == "with" && c.args.len() == 2 && !is_unknown(ar.elem)) {
+                                var wvt: Type = check_expr(c.args[1], s);
+                                if (!is_unknown(wvt) && !type_assignable(wvt, ar.elem, s.unions)) {
+                                    out = out.append(dg_at("E038", "argument 2 to \"with\": expected " + type_label(ar.elem) + ", got " + type_label(wvt), expr_line(c.args[1]), expr_col(c.args[1])));
+                                }
+                            }
+                            // E043 (array method existence): only `append` / `with`
+                            // / `len` are unconditional array builtins. Every other
+                            // method is an auto-discovered std/array function —
+                            // `__method_Array_<name>`, in scope only when std/array
+                            // is imported — or a user-defined array method. When the
+                            // call is none of those it names a non-existent method.
+                            // Mirrors the Go checker, which registers append/with/len
+                            // unconditionally and resolves the rest from the imported
+                            // module (so `a.sum()` without `import "std/array"` is
+                            // E043, but resolves with it). User methods on a raw
+                            // array type aren't a case — Go forbids them (E021) — so
+                            // only the builtins + auto-discovered functions count.
+                            if (mfa.field != "append" && mfa.field != "with" && mfa.field != "len"
+                                    && !s.has_array_method(mfa.field)) {
+                                out = out.append(dg_at("E043", "field access on non-struct value of type " + type_label(recv), mfa.line, mfa.col));
+                            }
+                        },
                         TypeStruct(sn) => {
                             var msig: MethodSig = s.lookup_method(mfa.field, sn.name);
                             if (msig.name.len() > 0) {
@@ -3044,7 +3631,40 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                                         if (!is_unknown(mat) && !is_unknown(msig.param_types[mi]) && !type_assignable(mat, msig.param_types[mi], s.unions)) {
                                             out = out.append(dg_at("E038", "argument " + itoa_nn(mi + 1) + " to \"" + mfa.field + "\": expected " + type_label(msig.param_types[mi]) + ", got " + type_label(mat), expr_line(c.args[mi]), expr_col(c.args[mi])));
                                         }
+                                        // E034: composite-array method argument
+                                        // elements vs the parameter element type.
+                                        out = append_diags(out, array_elem_check(array_elem_type_of(msig.param_types[mi]), c.args[mi], s));
                                         mi = mi + 1;
+                                    }
+                                }
+                            } else {
+                                // A call `obj.m(...)` on a known struct with no
+                                // method `m`. Resolve `m` as a field (mirroring
+                                // the Go checker, which falls through to the
+                                // field after the method lookup misses):
+                                //   - not a field        → E043 (no such member)
+                                //   - field, function-typed → ok (closure-field
+                                //     call: `p.handler()` where handler: () => T)
+                                //   - field, non-function → E038 (calling a
+                                //     non-function value)
+                                // A present, function-typed field is the only
+                                // valid case, so neither diagnostic false-fires
+                                // on real method or closure-field calls.
+                                var fsig: StructSig = s.lookup_struct(sn.name);
+                                if (fsig.name.len() > 0) {
+                                    var fldi: i32 = field_index(fsig, mfa.field);
+                                    if (fldi < 0) {
+                                        out = out.append(dg_at("E043", "struct " + sn.name + " has no field \"" + mfa.field + "\"", mfa.line, mfa.col));
+                                    } else {
+                                        var fldt: Type = fsig.field_types[fldi];
+                                        var fld_is_fn: boolean = false;
+                                        match (fldt) {
+                                            TypeFunc(_) => { fld_is_fn = true; },
+                                            _ => { }
+                                        }
+                                        if (!fld_is_fn) {
+                                            out = out.append(dg_at("E038", "calling non-function value of type " + type_label(fldt), mfa.line, mfa.col));
+                                        }
                                     }
                                 }
                             }
@@ -3076,6 +3696,12 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                 var ert: Type = check_expr(b.right, s);
                 if (!is_unknown(elt) && !is_unknown(ert) && !type_eq(elt, ert)) {
                     out = out.append(dg_at("E041", "cannot compare " + type_label(elt) + " and " + type_label(ert), b.line, b.col));
+                } else if (!is_unknown(elt) && type_eq(elt, ert) && is_composite_type(elt)) {
+                    // Composite `==` / `!=` would mean heap-pointer identity,
+                    // not value equality. Reject it (the native compiler
+                    // routes it to a structural `Eq` impl; the self-host has
+                    // no traits yet).
+                    out = out.append(dg_at("E041", "cannot compare " + type_label(elt) + " values with \"" + b.op + "\": composite (struct / enum / array / tuple) equality is not supported", b.line, b.col));
                 }
             }
             // E009: `+` is overloaded — both string (concat), both i32, or
@@ -3106,6 +3732,45 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     }
                 }
             }
+            // E009: shift / bitwise ops (`<<` `>>` `&` `|` `^`) require both
+            // operands to be integers. Mirrors the Go checker's requireInteger
+            // for `case "%", "&", "|", "^", "<<", ">>"` (`%` is in the numeric
+            // group above). `&&` / `||` are the logical ops, handled separately.
+            if (b.op == "<<" || b.op == ">>" || b.op == "&" || b.op == "|" || b.op == "^") {
+                var slt: Type = check_expr(b.left, s);
+                var srt: Type = check_expr(b.right, s);
+                if (!is_unknown(slt) && !type_eq(slt, t_i32())) {
+                    out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires an integer type, got " + type_label(slt), b.line, b.col));
+                } else if (!is_unknown(srt) && !type_eq(srt, t_i32())) {
+                    out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires an integer type, got " + type_label(srt), b.line, b.col));
+                }
+            }
+            // E009: ordering ops (`<` `>` `<=` `>=`) require both operands to be
+            // the same numeric type (both i32 or both f64). Mirrors the Go
+            // checker (requireInteger, or requireFloat when either side is
+            // float). `==` / `!=` (equality, E041) are handled above.
+            if (b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=") {
+                var olt: Type = check_expr(b.left, s);
+                var ort: Type = check_expr(b.right, s);
+                if (!is_unknown(olt) && !is_unknown(ort)) {
+                    var oki_o: boolean = type_eq(olt, t_i32()) && type_eq(ort, t_i32());
+                    var okf_o: boolean = type_eq(olt, t_float()) && type_eq(ort, t_float());
+                    if (!oki_o && !okf_o) {
+                        if (type_eq(olt, ort) && is_composite_type(olt)) {
+                            // E041: ordering two values of the SAME composite
+                            // type (struct / enum / array / tuple) would mean a
+                            // structural comparison the self-host has no `Ord`
+                            // for. Mirrors the Go checker, which routes
+                            // same-composite ordering to E041 — mixed
+                            // composite/scalar operands, or two differing types,
+                            // stay E009 (verified against the Go checker).
+                            out = out.append(dg_at("E041", "cannot order " + type_label(olt) + " values with \"" + b.op + "\": composite (struct / enum / array / tuple) ordering is not supported", b.line, b.col));
+                        } else {
+                            out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching numeric operands, got " + type_label(olt) + " and " + type_label(ort), b.line, b.col));
+                        }
+                    }
+                }
+            }
         },
         parser.ExprUnary(u) => {
             out = call_diags(u.operand, s);
@@ -3114,6 +3779,15 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                 var ot: Type = check_expr(u.operand, s);
                 if (!is_unknown(ot) && !type_eq(ot, t_bool())) {
                     out = out.append(dg_at("E009", "operator \"!\" requires boolean, got " + type_label(ot), u.line, u.col));
+                }
+            }
+            // E009: unary `-` (negation) requires a numeric (i32 / f64) operand.
+            // Mirrors the Go checker (requireInteger / requireFloat for unary
+            // minus); a string / bool / composite operand is rejected.
+            if (u.op == "-") {
+                var nt: Type = check_expr(u.operand, s);
+                if (!is_unknown(nt) && !type_eq(nt, t_i32()) && !type_eq(nt, t_float())) {
+                    out = out.append(dg_at("E009", "operator \"-\" requires a numeric type, got " + type_label(nt), u.line, u.col));
                 }
             }
             // E033: an invalid `as` cast. `x as T` desugars to the
@@ -3136,6 +3810,19 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     if (!as_cast_allowed(cot, tgt)) {
                         out = out.append(dg_at("E033", "cannot cast " + type_label(cot) + " to " + type_label(tgt) + "; only numeric casts (and [u8]/u8[]/string ↔ i32 data-pointer hops, plus i32 → T[]) are supported", u.line, u.col));
                     }
+                }
+            }
+            // E059: an `as?` downcast (`x as? T`, parsed as the unary op
+            // `as?_<T>`) requires a `dyn Trait` value on the left. The self-
+            // host has no dyn-trait Type — a real `dyn Trait` value resolves
+            // to `unknown` here — so a CONCRETE scalar primitive operand
+            // (i32 / f64 / bool / string) can never be a dyn value and is
+            // flagged, while an unknown (possibly-dyn) operand is left alone.
+            // Same sound, zero-false-positive conservatism as E033 / E042.
+            if (u.op.len() > 4 && u.op[0:4] == "as?_") {
+                var aot: Type = check_expr(u.operand, s);
+                if (is_primitive_type(aot)) {
+                    out = out.append(dg_at("E059", "`as?` downcast requires a `dyn Trait` value on the left, got " + type_label(aot), u.line, u.col));
                 }
             }
             // E042: the `?` try operator (parsed as the unary op `try_`)
@@ -3182,7 +3869,29 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             var i: i32 = 0;
             while (i < t.elements.len()) { out = append_diags(out, call_diags(t.elements[i], s)); i = i + 1; }
         },
-        parser.ExprIndex(ix) => { out = append_diags(call_diags(ix.array, s), call_diags(ix.index, s)); },
+        parser.ExprIndex(ix) => {
+            out = append_diags(call_diags(ix.array, s), call_diags(ix.index, s));
+            // E034: an array / string index must be an i32. Mirrors the Go
+            // checker's Index case (index type != i32 -> E034 at the index
+            // position). A missing / unknown index type is skipped (no cascade).
+            var ixt: Type = check_expr(ix.index, s);
+            if (!is_unknown(ixt) && !type_eq(ixt, t_i32())) {
+                out = out.append(dg_at("E034", "index must be an integer, got " + type_label(ixt), expr_line(ix.index), expr_col(ix.index)));
+            }
+            // E034: the indexed value must be an array or string. Mirrors the Go
+            // checker ("indexing non-array value"); a non-array/string (i32 /
+            // struct / map / …) operand is rejected. Unknown is skipped.
+            var iarrt: Type = check_expr(ix.array, s);
+            var idxable: boolean = false;
+            match (iarrt) {
+                TypeArray(_) => { idxable = true; },
+                TypeString(_) => { idxable = true; },
+                _ => { }
+            }
+            if (!is_unknown(iarrt) && !idxable) {
+                out = out.append(dg_at("E034", "indexing non-array value of type " + type_label(iarrt), expr_line(ix.array), expr_col(ix.array)));
+            }
+        },
         parser.ExprSlice(s2) => {
             out = append_diags(call_diags(s2.array, s), append_diags(call_diags(s2.start, s), call_diags(s2.end, s)));
             // E037: a present slice bound must be i32. A missing bound
@@ -3195,8 +3904,53 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             if (!is_unknown(ebt) && !type_eq(ebt, t_i32())) {
                 out = out.append(dg_at("E037", "slice high bound must be i32, got " + type_label(ebt), expr_line(s2.end), expr_col(s2.end)));
             }
+            // E037: the sliced value must be an array or string. Mirrors the Go
+            // checker ("cannot slice value of type T").
+            var sarrt: Type = check_expr(s2.array, s);
+            var sliceable: boolean = false;
+            match (sarrt) {
+                TypeArray(_) => { sliceable = true; },
+                TypeString(_) => { sliceable = true; },
+                _ => { }
+            }
+            if (!is_unknown(sarrt) && !sliceable) {
+                out = out.append(dg_at("E037", "cannot slice value of type " + type_label(sarrt), expr_line(s2.array), expr_col(s2.array)));
+            }
         },
         parser.ExprFieldAccess(fa) => {
+            // A qualified reference `Enum.Variant` — the object names a declared
+            // enum/union (registered as a UnionSig) or a built-in enum (Option /
+            // Result / …). This is NOT a value field-read: the object is a type
+            // qualifier, not a resolvable value, so recursing into it would
+            // mis-fire E001 ("undefined name"). When the field IS one of the
+            // enum's variants the reference is well-formed and silent (the Go
+            // checker accepts `O.None` / `Color.Red`); when it ISN'T, it's a
+            // bad qualified variant — E036, matching Go ("enum X has no variant
+            // Y"). Either way the object recursion is skipped. A name bound as a
+            // local shadows the enum, so it's a genuine field access — left to
+            // the normal path. (Module-qualified names like `parser.Foo` never
+            // reach here — modload mangles them to bare names before checking.)
+            var is_qual_ref: boolean = false;
+            match (fa.obj) {
+                parser.ExprIdent(oid) => {
+                    if (is_unknown(s.lookup(oid.name))) {
+                        var ou: UnionSig = s.lookup_union(oid.name);
+                        if (ou.name.len() > 0) {
+                            is_qual_ref = true;
+                            if (!util.has_str(ou.variants, fa.field)) {
+                                out = out.append(dg_at("E036", "enum " + oid.name + " has no variant \"" + fa.field + "\"", fa.line, fa.col));
+                            }
+                        } else if (is_reserved_enum_name(oid.name)) {
+                            is_qual_ref = true;
+                            if (mx_builtin_enum_of(fa.field) != oid.name) {
+                                out = out.append(dg_at("E036", "enum " + oid.name + " has no variant \"" + fa.field + "\"", fa.line, fa.col));
+                            }
+                        }
+                    }
+                },
+                _ => { }
+            }
+            if (is_qual_ref) { return out; }
             out = call_diags(fa.obj, s);
             // E043: a field READ on a struct that has no such field (and no
             // method of that name). Method-call callees never reach here
@@ -3221,7 +3975,17 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                         out = out.append(dg_at("E046", "tuple has " + itoa_nn(tt.elements.len()) + " elements; index " + itoa_nn(idx) + " is out of range", fa.line, fa.col));
                     }
                 },
-                _ => { }
+                // E043: a field READ on a non-struct, non-tuple value (an i32 /
+                // string / array / … has no fields). Mirrors the Go checker
+                // (`tt` not a StructType -> "field access on non-struct value").
+                // An unknown object type is skipped (no cascade). This is a
+                // genuine read; method calls (`x.m()`) are an ExprCall callee and
+                // never reach here.
+                _ => {
+                    if (!is_unknown(ot)) {
+                        out = out.append(dg_at("E043", "field access on non-struct value of type " + type_label(ot), fa.line, fa.col));
+                    }
+                }
             }
         },
         parser.ExprStructLit(sl) => {
@@ -3243,6 +4007,14 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                         if (!is_unknown(ft) && !is_unknown(vt) && !type_assignable(vt, ft, s.unions)) {
                             out = out.append(dg_at("E043", "field \"" + sl.field_names[fi] + "\": expected " + type_label(ft) + ", got " + type_label(vt), expr_line(sl.field_values[fi]), expr_col(sl.field_values[fi])));
                         }
+                        // E034: a struct-literal field of composite-array type
+                        // whose value is an array literal — its elements checked
+                        // against the field's declared element type. The array as
+                        // a whole is assignable to the field type, so the E043
+                        // above stays silent; this catches a bad element. Same
+                        // composite-only + union-widening discipline as the other
+                        // positions; runs for plain and update (`...base`) literals.
+                        out = append_diags(out, array_elem_check(array_elem_type_of(ft), sl.field_values[fi], s));
                     }
                     fi = fi + 1;
                 }
@@ -3261,14 +4033,27 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             out = stmts_call_diags(lm.body, lsc);
         },
         parser.ExprIdent(id) => {
-            // E001: a bare identifier in VALUE position that resolves to
-            // nothing — not a local / param / loop / match binding, a free
-            // function or const, an enum/union variant (declared or
-            // builtin), or a struct name. Call callees are handled in the
-            // ExprCall arm (a bare-ident callee is skipped here), so this
-            // fires only on value reads, matching where the Go checker's
-            // errIdent reports E001.
-            if (!is_resolvable_value(id.name, s)) {
+            // E036: a payload-bearing variant referenced bare — a union member
+            // (`type U = P | Q`, P a struct) or an enum variant with a payload
+            // (`A(i32)`) used as a value WITHOUT calling its constructor. Both
+            // are registered as a union variant whose backing struct has >= 1
+            // field, so `variant_in_unions` is true and the struct has fields;
+            // a nullary variant has no backing fields and stays a valid bare
+            // value. The constructor CALL form (`P(...)` / `A(5)`) is an
+            // ExprCall callee handled elsewhere, so it isn't flagged. Mirrors
+            // the Go checker ("variant X expects a payload; call it as X(...)").
+            // Checked before E001 — these names DO resolve (as variants), so
+            // is_resolvable_value would otherwise let them pass silently.
+            if (variant_in_unions(id.name, s.unions) && s.lookup_struct(id.name).field_names.len() > 0) {
+                out = out.append(dg_at("E036", "variant " + id.name + " expects a payload; call it as " + id.name + "(...)", id.line, id.col));
+            } else if (!is_resolvable_value(id.name, s)) {
+                // E001: a bare identifier in VALUE position that resolves to
+                // nothing — not a local / param / loop / match binding, a free
+                // function or const, an enum/union variant (declared or
+                // builtin), or any other value. Call callees are handled in the
+                // ExprCall arm (a bare-ident callee is skipped here), so this
+                // fires only on value reads, matching where the Go checker's
+                // errIdent reports E001.
                 out = out.append(dg_at("E001", "undefined name \"" + id.name + "\"", id.line, id.col));
             }
         },
@@ -3322,6 +4107,64 @@ function e055_diag(e: parser.Expr, s: Scope): Diag[] {
 // stmts_call_diags walks a statement list, threading scope (so a callee
 // name shadowed by a local `var` is recognised as a local, not the
 // function) and collecting the E004s from every expression.
+// typed_array_elem_diags reports E034 for a typed array-literal binding
+// `var x: Elem[] = [ ... ]` whose declared element type is a COMPOSITE
+// (struct / enum / union / array / tuple / map) and some element isn't
+// assignable to it. Primitive-element arrays (`i32[]`, `string[]`, …) are
+// already covered by the first-element-anchored E034 in call_diags, so we
+// skip them here to avoid a duplicate diagnostic; this fills the composite
+// gap that anchor check deliberately left open. The annotation's element
+// type is matched with the union-widening `type_assignable`, so a
+// heterogeneous-but-widening literal — e.g. `var xs: Stmt[] = [StmtVar{…},
+// StmtReturn{…}]`, ubiquitous in this very compiler — stays clean. Mirrors
+// the Go checker, which checks each element against the expected element
+// type and reports at the offending element.
+// array_elem_type_of returns t's array element type, or `unknown` when t
+// isn't an array — the "expected element" feeding array_elem_check.
+function array_elem_type_of(t: Type): Type {
+    match (t) {
+        TypeArray(ad) => { return ad.elem; },
+        _ => { return t_unknown("not an array"); }
+    }
+    return t_unknown("not an array");
+}
+
+// array_elem_check is the position-independent core of the typed
+// composite-array E034: given the EXPECTED element type and an expression
+// that may be an array literal, flag (E034) every element not assignable
+// to it. Scoped to COMPOSITE element types — primitive-element arrays are
+// covered by the first-element-anchored E034 in call_diags, so they're
+// skipped here to avoid a duplicate. Uses the union-widening
+// type_assignable, so a heterogeneous-but-widening literal (a `Stmt[]` of
+// distinct variant structs) stays clean. Reused from every position where
+// the expected element type is statically known: a `: T[]` var binding, a
+// `T[]`-returning function's `return`, an assignment to a `T[]` variable,
+// and a `T[]` call argument.
+function array_elem_check(elem_ty: Type, init: parser.Expr, s: Scope): Diag[] {
+    var out: Diag[] = [];
+    if (is_unknown(elem_ty) || is_primitive_type(elem_ty)) { return out; }
+    match (init) {
+        parser.ExprArray(arr) => {
+            var k: i32 = 0;
+            while (k < arr.elements.len()) {
+                var ekt: Type = check_expr(arr.elements[k], s);
+                if (!is_unknown(ekt) && !type_assignable(ekt, elem_ty, s.unions)) {
+                    out = out.append(dg_at("E034", "array element type " + type_label(ekt) + ", expected " + type_label(elem_ty), expr_line(arr.elements[k]), expr_col(arr.elements[k])));
+                }
+                k = k + 1;
+            }
+        },
+        _ => { }
+    }
+    return out;
+}
+
+function typed_array_elem_diags(type_name: string, init: parser.Expr, s: Scope): Diag[] {
+    if (type_name.len() == 0) { return []; }
+    var declared: Type = type_from_name_with_structs_unions(type_name, s.structs, s.unions);
+    return array_elem_check(array_elem_type_of(declared), init, s);
+}
+
 function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
     var out: Diag[] = [];
     var cur: Scope = s;
@@ -3351,13 +4194,25 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                     _ => { }
                 }
                 out = append_diags(out, call_diags(v.init, vsc));
+                out = append_diags(out, typed_array_elem_diags(v.type_name, v.init, vsc));
             },
-            parser.StmtReturn(r) => { out = append_diags(out, call_diags(r.value, cur)); },
+            parser.StmtReturn(r) => {
+                out = append_diags(out, call_diags(r.value, cur));
+                // E034: a composite-array `return` value's elements checked
+                // against the function's declared element type (top-level
+                // stmts carry an unknown ret_type sentinel and are skipped).
+                out = append_diags(out, array_elem_check(array_elem_type_of(cur.ret_type), r.value, cur));
+            },
             parser.StmtExpr(x) => {
                 out = append_diags(out, call_diags(x.value, cur));
                 out = append_diags(out, e055_diag(x.value, cur));
             },
-            parser.StmtAssign(a) => { out = append_diags(out, call_diags(a.value, cur)); },
+            parser.StmtAssign(a) => {
+                out = append_diags(out, call_diags(a.value, cur));
+                // E034: reassigning a composite-array literal — its elements
+                // checked against the target variable's declared element type.
+                out = append_diags(out, array_elem_check(array_elem_type_of(cur.lookup(a.target)), a.value, cur));
+            },
             parser.StmtIf(f) => {
                 out = append_diags(out, call_diags(f.cond, cur));
                 out = append_diags(out, stmts_call_diags(f.then_body, cur));
@@ -3577,7 +4432,15 @@ function ambiguous_variants(enums: parser.EnumDecl[]): string[] {
                 if (util.has_str(enums[j].variant_names, vn[k])) { cnt = cnt + 1; }
                 j = j + 1;
             }
-            if (cnt >= 2 && !util.has_str(out, vn[k])) { out = out.append(vn[k]); }
+            // Ambiguous if the name is declared in 2+ USER enums, OR in a user
+            // enum AND a BUILT-IN enum (Option / Result / JsonValue / IoError):
+            // e.g. `enum O { Some(i32), None }` collides with Option's
+            // Some / None, so a bare `None` must be qualified. Mirrors the Go
+            // checker, which carries the built-in enums in the same variant
+            // table the user enums register into. (cnt is >= 1 here — the
+            // current enum contains vn[k].)
+            var also_builtin: boolean = mx_builtin_enum_of(vn[k]).len() > 0;
+            if ((cnt >= 2 || also_builtin) && !util.has_str(out, vn[k])) { out = out.append(vn[k]); }
             k = k + 1;
         }
         i = i + 1;
@@ -3816,6 +4679,42 @@ pub struct ModuleTypes { sigs: FuncSig[], top_tys: Type[], all_well_typed: boole
 // render `error[E0XX]: …`. See docs/SELFHOST-CHECKER-PORT.md.
 pub struct Diag { code: string, message: string, line: i32, col: i32 }
 
+// is_immutability_code reports whether `code` is one of the immutable-data
+// cycle rules — E048 (field assign), E049 (reference-capture write-back),
+// E055 (discarded pure-collection result), E056 (subscript assign). These
+// are the diagnostics the self-host compiler enforces at the build gate
+// (the rest of the checker is a partial port and may false-positive, so the
+// gate filters to this set). See docs/IMMUTABILITY-MIGRATION-PLAN.md §4.
+pub function is_immutability_code(code: string): boolean {
+    return code == "E048" || code == "E049" || code == "E055" || code == "E056";
+}
+
+// filter_immutability keeps only the immutable-data cycle diagnostics.
+pub function filter_immutability(diags: Diag[]): Diag[] {
+    var out: Diag[] = [];
+    var i: i32 = 0;
+    while (i < diags.len()) {
+        if (is_immutability_code(diags[i].code)) { out = out.append(diags[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// format_diags renders diagnostics one-per-line as
+// `error[CODE]: message (line:col)` — the self-host counterpart of the Go
+// driver's diag.Format. Used by the checking drivers to surface a rejection
+// to stderr before exiting non-zero (bootstrap error-reporting).
+pub function format_diags(diags: Diag[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < diags.len()) {
+        var d: Diag = diags[i];
+        out = out + "error[" + d.code + "]: " + d.message + " (" + itoa_nn(d.line) + ":" + itoa_nn(d.col) + ")\n";
+        i = i + 1;
+    }
+    return out;
+}
+
 // dg builds a position-less diagnostic; dg_at attaches a 1-based source
 // position. Most emitters use dg today and migrate to dg_at as their AST
 // node gains a position.
@@ -3875,7 +4774,7 @@ function dup_name_before(names: string[], idx: i32): boolean {
 // port resolves coarsely). The base name is taken modulo `[...]`.
 function receiver_type_ok(rt: string, mod: parser.Module): boolean {
     if (rt.len() == 0) { return true; }
-    if (rt == "i32" || rt == "bool" || rt == "boolean" || rt == "string" || rt == "f64" || rt == "f32" || rt == "float") { return true; }
+    if (rt == "i32" || rt == "i64" || rt == "u32" || rt == "u64" || rt == "bool" || rt == "boolean" || rt == "string" || rt == "f64" || rt == "f32" || rt == "float") { return true; }
     var bi: i32 = 0;
     while (bi < rt.len()) { if (rt[bi] == 91) { return true; } bi = bi + 1; }   // '[' → generic/Map/array
     if (rt.len() >= 4 && rt[0:4] == "dyn ") { return true; }
@@ -4147,6 +5046,21 @@ function ow_guard_call(c: parser.ExprCall, ctx: OwnCtx): Diag[] {
     return out;
 }
 
+// ow_call_arg_flags returns the callee's per-parameter `own` flags for a
+// plain (ident-callee) call, or an empty list when the callee is not an
+// own-func or not a plain ident (a method / closure callee borrows its args).
+// Drives the precise affine model: an argument is consumed only at an `own`
+// position.
+function ow_call_arg_flags(callee: parser.Expr, ctx: OwnCtx): boolean[] {
+    match (callee) {
+        parser.ExprIdent(id) => {
+            if (ow_is_own_func(ctx.ofuncs, id.name)) { return ow_func_flags(ctx.ofuncs, id.name); }
+            return [];
+        },
+        _ => { return []; }
+    }
+}
+
 // ru_borrow processes a borrow-position expression: a bare owned ident is
 // a borrow (no consume) but using it after a move is still E050; anything
 // else is processed as an ordinary (consume-position) expression.
@@ -4210,9 +5124,15 @@ function ru_expr(e: parser.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
             var rc: OwnWalk = ru_borrow(c.callee, moved, ctx);
             var m: MovedEntry[] = rc.moved;
             var d: Diag[] = append_diags(d0, rc.diags);
+            // Precise affine model: an owned value is CONSUMED only when passed
+            // to an `own` parameter; an argument to a borrowed parameter is a
+            // read (borrow), not a move — so a borrowing helper can be passed an
+            // owned value and the value still used / consumed afterwards.
+            var flags: boolean[] = ow_call_arg_flags(c.callee, ctx);
             var i: i32 = 0;
             while (i < c.args.len()) {
-                var ra: OwnWalk = ru_expr(c.args[i], m, ctx);
+                var ra: OwnWalk = ru_borrow(c.args[i], m, ctx);
+                if (i < flags.len() && flags[i]) { ra = ru_expr(c.args[i], m, ctx); }
                 m = ra.moved;
                 d = append_diags(d, ra.diags);
                 i = i + 1;
@@ -4611,7 +5531,14 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         var dbody: parser.Stmt[] = switch_diag_block(mod.funcs[i].body);
         // E002: return-type mismatch, per function (recursing into nested
         // blocks). Only meaningful when a return type is declared.
-        if (mod.funcs[i].ret_type.len() > 0) {
+        if (mod.funcs[i].ret_type == "void") {
+            // A `void` function returns nothing: it needs no `return` (so no
+            // E052 — falling off the end is the normal exit) and must not
+            // return a value (E002 on any `return <expr>;`). Matches the Go
+            // checker, which treats void specially on both fronts.
+            var vsc: Scope = build_func_scope(mod.funcs[i], sigs, structs, unions, methods);
+            body_diags = append_diags(body_diags, void_ret_diags(dbody, vsc, unions));
+        } else if (mod.funcs[i].ret_type.len() > 0) {
             var fsc: Scope = build_func_scope(mod.funcs[i], sigs, structs, unions, methods);
             body_diags = append_diags(body_diags, ret_diags(dbody, fsc, fsc.ret_type, unions));
             // E052: a non-void function whose body can fall off the end
@@ -4620,6 +5547,10 @@ pub function check_module(mod: parser.Module): ModuleTypes {
                 body_diags = body_diags.append(dg_at("E052", "missing return: \"" + mod.funcs[i].name + "\" has return type " + mod.funcs[i].ret_type + " but can fall off the end without returning a value", mod.funcs[i].line, mod.funcs[i].col));
             }
         }
+        // E063: returning a `[T]` slice that views function-local storage
+        // (a use-after-free once the frame is reclaimed). Runs for every
+        // function — a slice can escape from an inferred-return body too.
+        body_diags = append_diags(body_diags, slice_escape_diags(dbody, build_func_scope(mod.funcs[i], sigs, structs, unions, methods)));
         // E002 (lambda bodies): return-type mismatch inside a lambda is
         // checked against the lambda's own declared return type, not the
         // enclosing function's. Runs for every function (even void ones —
@@ -4639,8 +5570,9 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         body_diags = append_diags(body_diags, stmts_call_diags(dbody, build_func_scope(mod.funcs[i], sigs, structs, unions, methods)));
         // E003: assignment / annotated-var type mismatch (scope-threaded).
         body_diags = append_diags(body_diags, stmts_assign_diags(dbody, build_func_scope(mod.funcs[i], sigs, structs, unions, methods), unions));
-        // E011: break / continue outside a loop (structural, no scope).
-        body_diags = append_diags(body_diags, loop_diags(dbody, false));
+        // E011 / E058: break / continue outside a loop, and a labeled
+        // break/continue whose label names no enclosing loop (structural).
+        body_diags = append_diags(body_diags, loop_diags(dbody, false, []));
         // E013: duplicate `var` in the same block (structural, no scope).
         body_diags = append_diags(body_diags, dupvar_diags(dbody));
         // E026 / E028: structural match-arm errors (wildcard order, dup
@@ -4681,7 +5613,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     if (ambig.len() > 0) {
         body_diags = append_diags(body_diags, vref_stmts(dtop, new_scope_full(sigs, structs, unions, methods), ambig));
     }
-    body_diags = append_diags(body_diags, loop_diags(dtop, false));
+    body_diags = append_diags(body_diags, loop_diags(dtop, false, []));
     body_diags = append_diags(body_diags, dupvar_diags(dtop));
     body_diags = append_diags(body_diags, match_diags(dtop, structs));
     // E019: generic-struct type-argument arity in struct field types.

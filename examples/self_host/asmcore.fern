@@ -1,6 +1,6 @@
-import "core/no_prelude";
 import "./lexer";
 import "./parser";
+import "./astwalk";
 import "./util";
 
 // asmcore — the target-independent frontend shared by the x86-64
@@ -34,205 +34,17 @@ pub function sanitize_label(name: string): string {
 
 // has_str -> util.has_str (SH-020).
 
-pub function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
-    match (e) {
-        parser.ExprIdent(id) => { return acc.append(id.name); },
-        parser.ExprNumber(_) => { return acc; },
-        parser.ExprString(_) => { return acc; },
-        parser.ExprBool(_) => { return acc; },
-        parser.ExprBinary(b) => {
-            acc = collect_idents_expr(b.left, acc);
-            return collect_idents_expr(b.right, acc);
-        },
-        parser.ExprUnary(u) => { return collect_idents_expr(u.operand, acc); },
-        parser.ExprCall(c) => {
-            acc = collect_idents_expr(c.callee, acc);
-            var i: i32 = 0;
-            while (i < c.args.len()) {
-                acc = collect_idents_expr(c.args[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprArray(a) => {
-            var i: i32 = 0;
-            while (i < a.elements.len()) {
-                acc = collect_idents_expr(a.elements[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) {
-                acc = collect_idents_expr(t.elements[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprIndex(x) => {
-            acc = collect_idents_expr(x.array, acc);
-            return collect_idents_expr(x.index, acc);
-        },
-        parser.ExprSlice(sl) => {
-            acc = collect_idents_expr(sl.array, acc);
-            acc = collect_idents_expr(sl.start, acc);
-            return collect_idents_expr(sl.end, acc);
-        },
-        parser.ExprStructLit(sl) => {
-            if (sl.has_base) { acc = collect_idents_expr(sl.base, acc); }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) {
-                acc = collect_idents_expr(sl.field_values[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprFieldAccess(fa) => { return collect_idents_expr(fa.obj, acc); },
-        parser.ExprLambda(lm) => {
-            var i: i32 = 0;
-            while (i < lm.body.len()) {
-                acc = collect_idents_stmt(lm.body[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprUnknown(_) => { return acc; }
-    }
-    return acc;
-}
+// collect_idents_expr -> astwalk.collect_idents_expr (SH-022).
 
-pub function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
-    match (st) {
-        // StmtDefer / StmtSwitch are eliminated before emit (lower_defers /
-        // desugar_switches); the arms are here for exhaustiveness and recurse
-        // defensively on the lowered form.
-        parser.StmtSwitch(_) => { return collect_idents_stmt(parser.desugar_switch_in_stmt(st), acc); },
-        parser.StmtDefer(d) => { return collect_idents_stmt(d.action, acc); },
-        parser.StmtVar(v) => { return collect_idents_expr(v.init, acc); },
-        parser.StmtReturn(r) => { return collect_idents_expr(r.value, acc); },
-        parser.StmtExpr(e) => { return collect_idents_expr(e.value, acc); },
-        parser.StmtIf(i) => {
-            acc = collect_idents_expr(i.cond, acc);
-            var ti: i32 = 0;
-            while (ti < i.then_body.len()) {
-                acc = collect_idents_stmt(i.then_body[ti], acc);
-                ti = ti + 1;
-            }
-            var ei: i32 = 0;
-            while (ei < i.else_body.len()) {
-                acc = collect_idents_stmt(i.else_body[ei], acc);
-                ei = ei + 1;
-            }
-            return acc;
-        },
-        parser.StmtWhile(w) => {
-            acc = collect_idents_expr(w.cond, acc);
-            var i: i32 = 0;
-            while (i < w.body.len()) {
-                acc = collect_idents_stmt(w.body[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.StmtAssign(a) => { return collect_idents_expr(a.value, acc); },
-        parser.StmtMatch(m) => {
-            acc = collect_idents_expr(m.scrutinee, acc);
-            var ai: i32 = 0;
-            while (ai < m.arms.len()) {
-                var bi: i32 = 0;
-                while (bi < m.arms[ai].body.len()) {
-                    acc = collect_idents_stmt(m.arms[ai].body[bi], acc);
-                    bi = bi + 1;
-                }
-                ai = ai + 1;
-            }
-            return acc;
-        },
-        parser.StmtFor(f) => {
-            acc = collect_idents_expr(f.iter, acc);
-            var i: i32 = 0;
-            while (i < f.body.len()) {
-                acc = collect_idents_stmt(f.body[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.StmtBreak(_) => { return acc; },
-        parser.StmtContinue(_) => { return acc; },
-        parser.StmtUnknown(_) => { return acc; }
-    }
-    return acc;
-}
+// collect_idents_stmt -> astwalk.collect_idents_stmt (SH-022).
 
-pub function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
-    match (st) {
-        parser.StmtSwitch(_) => { return collect_bound_stmt(parser.desugar_switch_in_stmt(st), acc); },
-        parser.StmtDefer(d) => { return collect_bound_stmt(d.action, acc); },
-        parser.StmtVar(v) => { return acc.append(v.name); },
-        parser.StmtReturn(_) => { return acc; },
-        parser.StmtExpr(_) => { return acc; },
-        parser.StmtIf(i) => {
-            var ti: i32 = 0;
-            while (ti < i.then_body.len()) {
-                acc = collect_bound_stmt(i.then_body[ti], acc);
-                ti = ti + 1;
-            }
-            var ei: i32 = 0;
-            while (ei < i.else_body.len()) {
-                acc = collect_bound_stmt(i.else_body[ei], acc);
-                ei = ei + 1;
-            }
-            return acc;
-        },
-        parser.StmtWhile(w) => {
-            var i: i32 = 0;
-            while (i < w.body.len()) {
-                acc = collect_bound_stmt(w.body[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.StmtAssign(_) => { return acc; },
-        parser.StmtMatch(m) => {
-            var ai: i32 = 0;
-            while (ai < m.arms.len()) {
-                match (m.arms[ai].pattern) {
-                    parser.PatVariant(pv) => {
-                        if (pv.binding.len() > 0) { acc = acc.append(pv.binding); }
-                    },
-                    parser.PatWildcard(_) => { }
-                }
-                var bi: i32 = 0;
-                while (bi < m.arms[ai].body.len()) {
-                    acc = collect_bound_stmt(m.arms[ai].body[bi], acc);
-                    bi = bi + 1;
-                }
-                ai = ai + 1;
-            }
-            return acc;
-        },
-        parser.StmtFor(f) => {
-            acc = acc.append(f.var_name);
-            var i: i32 = 0;
-            while (i < f.body.len()) {
-                acc = collect_bound_stmt(f.body[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.StmtBreak(_) => { return acc; },
-        parser.StmtContinue(_) => { return acc; },
-        parser.StmtUnknown(_) => { return acc; }
-    }
-    return acc;
-}
+// collect_bound_stmt -> astwalk.collect_bound_stmt (SH-022).
 
 pub function lambda_captures(lm: parser.ExprLambda, outer: EmitState): string[] {
     var refs: string[] = [];
     var bi: i32 = 0;
     while (bi < lm.body.len()) {
-        refs = collect_idents_stmt(lm.body[bi], refs);
+        refs = astwalk.collect_idents_stmt(lm.body[bi], refs);
         bi = bi + 1;
     }
     var bound: string[] = [];
@@ -243,7 +55,7 @@ pub function lambda_captures(lm: parser.ExprLambda, outer: EmitState): string[] 
     }
     var si: i32 = 0;
     while (si < lm.body.len()) {
-        bound = collect_bound_stmt(lm.body[si], bound);
+        bound = astwalk.collect_bound_stmt(lm.body[si], bound);
         si = si + 1;
     }
     var caps: string[] = [];
@@ -285,7 +97,33 @@ pub struct EmitState {
     // The Perceus function-exit dec sweep skips these — parameters are
     // BORROWED (the caller still owns them), so the callee must not
     // release them. Set per function after the params are bound.
-    n_params: i32
+    n_params: i32,
+    // use_ir: when set, emit_module (x86-64) routes a fully-IR-eligible module
+    // through the stack-IR code path (asm_ir.emit_module_ir) instead of the
+    // AST emitter — the IR rebuild's parallel-path migration
+    // (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md §3). Now DEFAULT ON: the x86-64
+    // self-host default emits from the IR (with asm.fern's array layout + full
+    // Perceus RC) for the i32 + arrays subset; mixed / out-of-subset modules
+    // (strings, structs, methods, …) fall back to the AST emitter, so the
+    // compiler itself still compiles via AST and the byte-identical fixpoint
+    // holds. Only asm.fern reads this — arm64 / wasm keep their AST paths.
+    use_ir: boolean,
+    // str_ns: per-module namespace for string-literal `.rodata` labels, for
+    // per-module translation-unit emit (#3451 step 3 / #3455). Empty (the
+    // default / whole-program case) keeps the label `.S<idx>`; a non-empty ns
+    // makes it `.S<ns>_<idx>` so two separately-emitted modules' string pools
+    // don't collide at link. The IR backend reads this via str_lit_label.
+    str_ns: string,
+    // shape_lits: the distinct enum/struct SHAPE names this unit references as a
+    // shape pointer (struct_make / variant_is / dyn dispatch). Per-module
+    // (str_ns != ""), a shape is emitted as a `.weak` global symbol
+    // (`__fern_shp_<sanitized>`) instead of a unit-local `.S<ns>_<idx>` string, so
+    // the SAME shape interned in two units resolves to ONE linker-merged address —
+    // pointer-equality shape discrimination then works across the module boundary
+    // (a token constructed in lexer matches in parser). Empty / unused on the
+    // whole-program (str_ns == "") path, which keeps interning shapes as ordinary
+    // string literals (byte-identical).
+    shape_lits: string[]
 }
 
 pub function new_state(): EmitState {
@@ -308,8 +146,46 @@ pub function new_state(): EmitState {
         loop_cont_labels: lcn,
         funcs: fns,
         local_types: lts,
-        n_params: 0
+        n_params: 0,
+        // Default ON (x86-64): a fully-IR-eligible module (i32 + arrays, full
+        // Perceus RC) compiles through asm_ir.emit_module_ir; everything else
+        // (strings/structs/methods/maps/floats/closures) falls back to the AST
+        // emitter. The IR path now uses asm.fern's OWN array layout + RC
+        // helpers (8-byte __fern_arr_box, __fn___fern_rc_inc/__fn___fern_arr_dec)
+        // and implements the full array Perceus lifecycle — alias-inc,
+        // move-on-return, borrowed params, the exit dec-sweep, and reassignment
+        // retain + cow-guarded release — so it is a drop-in for asm.fern's
+        // array RC (the self_host_rc_runtime asm patterns match). The compiler
+        // is not all_eligible (it is full of strings/structs), so it still
+        // compiles via AST and the byte-identical fixpoint holds.
+        use_ir: true,
+        // Whole-program default: no namespace, so string labels stay `.S<idx>`
+        // (byte-identical to the pre-per-module emitter). Per-module unit emit
+        // sets this to keep each module's `.rodata` pool collision-free.
+        str_ns: "",
+        shape_lits: []
     };
+}
+
+// add_shape_lit records `name` as a shape this unit references (deduped), for the
+// per-module weak-symbol shape emission (#3451). The returned symbol — the SAME
+// for `name` in every unit — is what struct_make / variant_is / dyn dispatch leaq
+// instead of a unit-local string label; emit_module_ir_unit emits each recorded
+// shape once as `.weak __fern_shp_<sanitized>` so the linker merges the copies.
+pub function add_shape_lit(s: EmitState, name: string): EmitState {
+    var i: i32 = 0;
+    while (i < s.shape_lits.len()) {
+        if (s.shape_lits[i] == name) { return s; }
+        i = i + 1;
+    }
+    return EmitState { ...s, shape_lits: s.shape_lits.append(name) };
+}
+
+// shape_sym is the deterministic global symbol for a shape name (the linker-merged
+// weak symbol the per-module path uses for shape pointers). Stable across units so
+// two units' references to the same shape resolve to one address.
+pub function shape_sym(name: string): string {
+    return "__fern_shp_" + sanitize_label(name);
 }
 
 pub function (s: EmitState) write(text: string): EmitState {
@@ -370,6 +246,11 @@ pub function (s: EmitState) mark_str_to_i32(): EmitState {
     return s.need("str_to_i32");
 }
 
+// chr(n): i32 byte -> 1-char string box. Allocates, so pull in the heap.
+pub function (s: EmitState) mark_chr(): EmitState {
+    return s.need("heap").need("chr");
+}
+
 pub function (s: EmitState) mark_eprint(): EmitState {
     return s.need("eprint");
 }
@@ -426,12 +307,36 @@ pub function (s: EmitState) mark_str_chars(): EmitState {
     return s.need("heap").need("str_chars");
 }
 
+pub function (s: EmitState) mark_str_lines(): EmitState {
+    return s.need("heap").need("str_lines");
+}
+
 pub function (s: EmitState) mark_str_bytes(): EmitState {
     return s.need("heap").need("str_bytes");
 }
 
+pub function (s: EmitState) mark_str_split(): EmitState {
+    return s.need("heap").need("str_split");
+}
+
+pub function (s: EmitState) mark_str_case(): EmitState {
+    return s.need("heap").need("str_case");
+}
+
+pub function (s: EmitState) mark_str_repeat(): EmitState {
+    return s.need("heap").need("str_repeat");
+}
+
+pub function (s: EmitState) mark_str_trim(): EmitState {
+    return s.need("heap").need("str_trim");
+}
+
 pub function (s: EmitState) mark_str_reverse(): EmitState {
     return s.need("heap").need("str_reverse");
+}
+
+pub function (s: EmitState) mark_str_replace(): EmitState {
+    return s.need("heap").need("str_replace");
 }
 
 pub function (s: EmitState) mark_i32_pow(): EmitState {
@@ -517,55 +422,6 @@ pub function match_payload_type(scrut: parser.Expr, s: EmitState): Ty {
     return ty_unknown();
 }
 
-pub function tuple_destructure_tags(init: parser.Expr, s: EmitState): TwoTags {
-    match (init) {
-        parser.ExprTuple(t) => {
-            if (t.elements.len() >= 2) {
-                return TwoTags { a: infer_expr_type(t.elements[0], s), b: infer_expr_type(t.elements[1], s) };
-            }
-        },
-        parser.ExprCall(c) => {
-            match (c.callee) {
-                parser.ExprIdent(id) => {
-                    var fi: i32 = 0;
-                    while (fi < s.funcs.len()) {
-                        if (s.funcs[fi].name == id.name && s.funcs[fi].receiver_type.len() == 0) {
-                            return split_tuple_ret(s.funcs[fi].ret_type);
-                        }
-                        fi = fi + 1;
-                    }
-                },
-                parser.ExprFieldAccess(fa) => {
-                    // A method call whose result is a tuple. The builtin map
-                    // `delete` / `without` returns `(Map, bool)` — bind the
-                    // first element to the receiver's own map tag so the
-                    // resulting map dispatches its methods correctly (rather
-                    // than mis-mangling as `__fn_i32__<method>`); the bool is
-                    // i32-shaped. A user receiver method that returns a tuple is
-                    // split from its declared return type, mirroring the
-                    // free-function case above.
-                    var rcv: Ty = infer_expr_type(fa.obj, s);
-                    if ((fa.field == "without") && is_map(rcv)) {
-                        return TwoTags { a: rcv, b: ty_i32() };
-                    }
-                    if (!ty_is_unknown(rcv)) {
-                        var mfi: i32 = 0;
-                        while (mfi < s.funcs.len()) {
-                            if (s.funcs[mfi].name == fa.field && ty_eq(ty_from_name(s.funcs[mfi].receiver_type), rcv)) {
-                                return split_tuple_ret(s.funcs[mfi].ret_type);
-                            }
-                            mfi = mfi + 1;
-                        }
-                    }
-                },
-                _ => { }
-            }
-        },
-        _ => { }
-    }
-    return TwoTags { a: ty_i32(), b: ty_i32() };
-}
-
 pub function is_enum_variant(name: string, s: EmitState): boolean {
     var di: i32 = 0;
     while (di < s.struct_decls.len()) {
@@ -603,12 +459,67 @@ pub function is_struct_decl_name(name: string, s: EmitState): boolean {
     return false;
 }
 
+// is_prim_recv_name reports whether a method-receiver type spelling names a
+// PRIMITIVE / `string` type (i32/i64/u32/u64/usize/f64/f32/boolean/string) —
+// the receivers that `impl Trait for <prim>` can name and that a `dyn` value
+// boxes (docs/DYN-TRAITS.md §4.2.3). A primitive has no runtime shape pointer,
+// so a `dyn` over it is heap-boxed at coercion; the dispatch chain matches the
+// box's offset-0 shape (the interned primitive type name) and unboxes. Distinct
+// from is_struct_decl_name (structs) and is_enum_recv (enums); an array
+// receiver (recv_is_array) is excluded.
+pub function is_prim_recv_name(name: string, s: EmitState): boolean {
+    if (recv_is_array(name)) { return false; }
+    if (is_struct_decl_name(name, s)) { return false; }
+    if (is_int_tag(ty_from_name(name))) { return true; }
+    if (name == "string" || name == "bool" || name == "boolean") { return true; }
+    if (name == "f64" || name == "f32" || name == "float") { return true; }
+    return false;
+}
+
 pub function is_enum_recv(name: string, s: EmitState): boolean {
     if (is_struct_decl_name(name, s)) { return false; }
     if (is_int_tag(ty_from_name(name))) { return false; }
     if (name == "string" || name == "bool" || name == "boolean") { return false; }
     if (name == "f64" || name == "f32" || name == "float") { return false; }
     return true;
+}
+
+// recv_is_array reports whether a method receiver type spelling is an ARRAY
+// (`T[]`, `i32[]`, …). Such a method (e.g. std/json's element-poly
+// `(xs: T[]) to_json[T: Json]()`) is NOT a concrete struct/enum dispatch
+// candidate — a value's runtime shape pointer never names an array method —
+// so the runtime shape-dispatch in the AST backends must skip it. Without this
+// the array `to_json`, whose base receiver name `T` (a type parameter) passes
+// is_enum_recv's permissive default, would be picked as the enum fallback for
+// EVERY `.to_json()` call and corrupt non-array receivers (#2766). Distinct
+// from a generic struct receiver like `Box[T]`, which ends in `]` but not `[]`.
+pub function recv_is_array(rt: string): boolean {
+    var n: i32 = rt.len();
+    if (n < 2) { return false; }
+    return rt[n - 2 : n] == "[]";
+}
+
+// find_array_method_func returns the exact in-scope name of the std/array
+// auto-discovered helper backing `a.<field>()` — `__method_Array_<field>` when
+// the program imports std/array as a single file, or the `<mod>__`-mangled name
+// the bundler produced (which ends in the bare convention name) — or "" when no
+// such function is in scope (then `a.<field>()` is a genuine unknown method).
+// Only free functions (no receiver) qualify; the `__method_Array_` suffix is
+// specific enough that no other decl collides. Shared by both asm backends so
+// the array-method-syntax dispatch can't drift between them.
+pub function find_array_method_func(field: string, s: EmitState): string {
+    var target: string = "__method_Array_" + field;
+    var tn: i32 = target.len();
+    var i: i32 = 0;
+    while (i < s.funcs.len()) {
+        var nm: string = s.funcs[i].name;
+        if (s.funcs[i].receiver_type.len() == 0) {
+            if (nm == target) { return nm; }
+            if (nm.len() > tn && nm[nm.len() - tn : nm.len()] == target) { return nm; }
+        }
+        i = i + 1;
+    }
+    return "";
 }
 
 pub function field_type_tag_in(struct_name: string, field: string, s: EmitState): Ty {
@@ -1279,6 +1190,14 @@ pub function ty_from_name(name: string): Ty {
     if (name == "string[]") { return ty_array_string(); }
     if (name == "i32[]") { return ty_array_i32(); }
     if (name == "bool[]" || name == "boolean[]") { return ty_array_i32(); }
+    // A generic-ELEMENT array (`Option[T][]`, `Result[…][]`, `Map[…][]`, `P[]`)
+    // whose trailing top-level `[]` is the array suffix collapses to the coarse
+    // ty_array() (the asmcore Ty tracks element types only for the scalar arrays
+    // handled above). Checked BEFORE the Option[/Result[/Map[ prefixes below,
+    // which would otherwise strip the inner `]` from INSIDE the element and
+    // mis-read `Option[i32][]` as `Option[i32]]` → Option[unknown] (the spurious
+    // E003 on `var a: Option[i32][] = […]` when its loop body matches an element).
+    if (name.len() >= 2 && name[name.len() - 2 : name.len()] == "[]") { return ty_array(); }
     if (name.len() >= 8 && name[0:8] == "MapIter[") {
         return ty_mapiter(generic_value_ty(name, 8));
     }
@@ -1322,6 +1241,90 @@ pub function split_tuple_ret(tt: string): TwoTags {
     if (bstart < inner.len() && inner[bstart] == 32) { bstart = bstart + 1; }
     var b: string = inner[bstart : inner.len()];
     return TwoTags { a: ty_from_name(a), b: ty_from_name(b) };
+}
+
+// The tag of the idx-th component of a tuple-return type string
+// `(t0, t1, …)`, splitting on top-level commas (brackets / nested
+// parens don't count). Out-of-range falls back to i32. Generalises
+// `split_tuple_ret` to any arity for N-element destructuring.
+pub function tuple_ret_tag_at(tt: string, idx: i32): Ty {
+    if (tt.len() < 3 || tt[0] != 40) { return ty_i32(); }
+    var inner: string = tt[1 : tt.len() - 1];
+    var depth: i32 = 0;
+    var i: i32 = 0;
+    var comp: i32 = 0;
+    var start: i32 = 0;
+    while (i < inner.len()) {
+        var ch: i32 = inner[i];
+        if (ch == 91 || ch == 40) { depth = depth + 1; }
+        else if (ch == 93 || ch == 41) { depth = depth - 1; }
+        else if (ch == 44 && depth == 0) {
+            if (comp == idx) {
+                var seg: string = inner[start : i];
+                if (seg.len() > 0 && seg[0] == 32) { seg = seg[1 : seg.len()]; }
+                return ty_from_name(seg);
+            }
+            comp = comp + 1;
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    if (comp == idx) {
+        var last: string = inner[start : inner.len()];
+        if (last.len() > 0 && last[0] == 32) { last = last[1 : last.len()]; }
+        return ty_from_name(last);
+    }
+    return ty_i32();
+}
+
+// The tag to bind for the idx-th name of a `var (a, b, …) = init`
+// destructure, for any arity. A tuple literal reads element idx
+// directly; a tuple-returning free function / method splits its
+// declared return type at idx.
+pub function tuple_destructure_tag_at(init: parser.Expr, idx: i32, s: EmitState): Ty {
+    match (init) {
+        parser.ExprTuple(t) => {
+            if (idx < t.elements.len()) {
+                return infer_expr_type(t.elements[idx], s);
+            }
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    var fi: i32 = 0;
+                    while (fi < s.funcs.len()) {
+                        if (s.funcs[fi].name == id.name && s.funcs[fi].receiver_type.len() == 0) {
+                            return tuple_ret_tag_at(s.funcs[fi].ret_type, idx);
+                        }
+                        fi = fi + 1;
+                    }
+                },
+                parser.ExprFieldAccess(fa) => {
+                    // The builtin map `without` returns `(Map, bool)`: bind
+                    // element 0 to the receiver's own map tag so the resulting
+                    // map dispatches its methods correctly (rather than
+                    // mis-mangling as `__fn_i32__<method>`); the bool is i32.
+                    var rcv: Ty = infer_expr_type(fa.obj, s);
+                    if ((fa.field == "without") && is_map(rcv)) {
+                        if (idx == 0) { return rcv; }
+                        return ty_i32();
+                    }
+                    if (!ty_is_unknown(rcv)) {
+                        var mfi: i32 = 0;
+                        while (mfi < s.funcs.len()) {
+                            if (s.funcs[mfi].name == fa.field && ty_eq(ty_from_name(s.funcs[mfi].receiver_type), rcv)) {
+                                return tuple_ret_tag_at(s.funcs[mfi].ret_type, idx);
+                            }
+                            mfi = mfi + 1;
+                        }
+                    }
+                },
+                _ => { }
+            }
+        },
+        _ => { }
+    }
+    return ty_i32();
 }
 
 pub function ty_friendly(t: Ty): string {
@@ -1751,7 +1754,18 @@ pub function name_has_comma(name: string): boolean {
 pub function count_locals_in_stmt(stmt: parser.Stmt): i32 {
     match (stmt) {
         parser.StmtVar(v) => {
-            if (name_has_comma(v.name)) { return 2; }
+            // `var (a, b, …) = E` destructure binds one frame slot per name;
+            // count the comma-joined names (commas + 1) so the prologue
+            // reserves enough — undercounting writes a binding below %rsp.
+            if (name_has_comma(v.name)) {
+                var cnt: i32 = 1;
+                var ci: i32 = 0;
+                while (ci < v.name.len()) {
+                    if (v.name[ci] == 44) { cnt = cnt + 1; }
+                    ci = ci + 1;
+                }
+                return cnt;
+            }
             return 1;
         },
         parser.StmtIf(ifs) => { return count_locals(ifs.then_body) + count_locals(ifs.else_body); },
@@ -1806,6 +1820,48 @@ pub function add_string_lit(s: EmitState, v: string): StringLitOut {
 pub function (s: EmitState) need(name: string): EmitState {
     if (s.has_need(name)) { return s; }
     return EmitState { ...s, needed: s.needed.append(name) };
+}
+
+// runtime_need_deps is the DECLARATIVE dependency table for runtime helpers: the
+// direct deps of `name` are the other needs whose helpers `name`'s helper calls
+// (links against). This is the single source of truth replacing the old, fragile
+// "remember to mark every transitively-needed helper by hand" — a backend marks
+// only the top-level need (e.g. "maps") and close_needs() pulls in the rest. Add
+// an edge here whenever a helper gains a `call __fern_*` to another helper.
+// (End goal: when the runtime moves into Fern — issue #2649 — this table and
+// close_needs disappear, replaced by the real call graph + the deadcode pass.)
+pub function runtime_need_deps(name: string): string[] {
+    if (name == "maps") {
+        // __fern_map_set calls __fern_str_eq (string-key path) and __fern_arr_push.
+        var d: string[] = ["str_eq", "arr_push", "heap"];
+        return d;
+    }
+    var none: string[] = [];
+    return none;
+}
+
+// close_needs expands `needed` to its transitive closure over runtime_need_deps,
+// so emitting the runtime after this is guaranteed to have every helper a marked
+// need links against. Iterates to a fixpoint (the dependency graph is small and
+// acyclic). Call it once, right before runtime emission.
+pub function (s: EmitState) close_needs(): EmitState {
+    var cur: EmitState = s;
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        var snap: string[] = cur.needed;
+        var i: i32 = 0;
+        while (i < snap.len()) {
+            var deps: string[] = runtime_need_deps(snap[i]);
+            var j: i32 = 0;
+            while (j < deps.len()) {
+                if (!cur.has_need(deps[j])) { cur = cur.need(deps[j]); changed = true; }
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+    }
+    return cur;
 }
 
 pub function (s: EmitState) has_need(name: string): boolean {

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/defaultargs"
 	"github.com/jakechampion/lang/internal/diag"
 )
 
@@ -73,16 +74,15 @@ type Info struct {
 	// universally visible — that's the case for synthetic methods
 	// the checker registers itself (Reader / Writer / Map /
 	// MapIter, the inline-IR `Array.push`, and the built-in string
-	// methods) plus anything sourced from the auto-injected magic
-	// prelude.
+	// methods).
 	//
 	// The dispatch path filters method resolutions against the
 	// call site's enclosing module + the program's `ModuleImports`
 	// closure so that methods declared in a module are only callable
 	// from files whose import closure reaches that module
 	// (`docs/PRELUDE-TO-MODULES.md`). Empty entries on either side
-	// skip the filter (transitional accommodation for prelude-
-	// injected decls and single-file programs).
+	// skip the filter (accommodation for checker-synthesised decls
+	// and single-file programs).
 	MethodSources map[string]string
 	// ModuleImports mirrors `ast.Program.ModuleImports` — the per-
 	// module transitive import closure modload computes during
@@ -126,6 +126,48 @@ type Info struct {
 	// `impl Trait for Type` exists. Phase 2's bound checking asks
 	// "does i32 implement Display?" against this.
 	Impls map[string]map[string]bool
+	// ImplTraitArgs records the type arguments a generic-trait impl bound
+	// (`impl From[i32] for Celsius` → ImplTraitArgs["From"]["Celsius"] =
+	// [i32]). Lets a generic-trait BOUND (`T: From[i32]`) check the args
+	// match, not just that some `impl From[_] for T` exists. Empty for a
+	// non-generic trait. See docs/TRAITS.md.
+	ImplTraitArgs map[string]map[string][]ast.Type
+	// AssocBindings records each impl's associated-type bindings:
+	// AssocBindings[typeName][assocName] = concrete type. Built during the
+	// conformance pass. resolveProj uses it to resolve a concrete-base
+	// `Foo::Item` projection to its bound type. See docs/ASSOCIATED-TYPES.md.
+	AssocBindings map[string]map[string]ast.Type
+	// DynCoercions records every concrete→`dyn Trait` boxing site,
+	// keyed by the holder expression the checker saw flow into a `dyn`
+	// slot (var init, assignment, argument, return, array element,
+	// struct field — all route through maybeWrapForUnion). Compiled-
+	// backend IR lowering reads this to box the concrete value into the
+	// `{data, vtable}` fat pointer with the named concrete type's vtable
+	// (docs/DYN-TRAITS.md §4.2.1). The interpreter ignores it (it
+	// dispatches by the receiver's runtime type). Empty for programs
+	// with no `dyn` coercions.
+	//
+	// Keyed by the *unrewritten* holder expression pointer, which flows
+	// unchanged to the IR for non-generic code. (A coercion inside a
+	// generic body is cloned to a fresh pointer by monomorph and so is
+	// not found — out of scope for the first compiled `dyn` slice.)
+	DynCoercions map[ast.Expr]DynCoercion
+}
+
+// DynCoercion identifies one concrete→`dyn …` boxing site: the trait(s)
+// being coerced to and the concrete type flowing in. The IR uses the
+// (trait, concrete) pair to select the vtable to pair with the boxed
+// value. See checker.Info.DynCoercions and docs/DYN-TRAITS.md.
+//
+// Trait is the PRIMARY (single) trait — `Traits[0]` — kept for the
+// single-trait compiled codegen path (the only one that lowers today;
+// multi-trait is compiled-rejected). Traits holds the WHOLE set, so
+// set-aware consumers (tree-shaking, which must root the impl methods of
+// EVERY trait in the set) iterate it rather than reading only Trait.
+type DynCoercion struct {
+	Trait    string
+	Traits   []string
+	Concrete string
 }
 
 // builtinEnumDecls returns the synthetic enum declarations the
@@ -612,7 +654,7 @@ func Check(prog *ast.Program) (*Info, error) {
 //
 // On cancel, returns (nil, ctx.Err()) — same convention as
 // ParseContext. The body-check loop is by far the dominant
-// cost in Check; the preceding builtin / prelude injection
+// cost in Check; the preceding builtin registration
 // + first-pass collection runs are O(decl-count) walks with
 // no recursive descent, so a single up-front ctx check
 // suffices for them.
@@ -625,13 +667,13 @@ func CheckContext(ctx context.Context, prog *ast.Program) (*Info, error) {
 
 func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// Prepend the built-in Option / Result / IoError /
-	// JsonValue enums so user code (and the lang prelude)
+	// JsonValue enums so user code (and the stdlib)
 	// can reference them without an explicit declaration.
 	// Each is injected individually if the user hasn't
 	// already declared the same name — earlier the
 	// "auto-inject only when prog.Enums[0].Name != Option"
 	// heuristic skipped EVERY builtin if the user declared
-	// their own Option, which broke the prelude's json_encode
+	// their own Option, which broke the stdlib's json_encode
 	// (uses JsonValue).
 	//
 	// Builtin names are RESERVED: if the user declared one
@@ -716,6 +758,8 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			Generics:            map[string]ast.GenericDecl{},
 			Traits:              map[string]*ast.TraitDecl{},
 			Impls:               map[string]map[string]bool{},
+			ImplTraitArgs:       map[string]map[string][]ast.Type{},
+			AssocBindings:       map[string]map[string]ast.Type{},
 		},
 		variantOf: map[string][]variantRef{},
 	}
@@ -727,6 +771,13 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// so they're exempt.
 	if prog.LoadedStdlibPaths != nil && !prog.LoadedStdlibPaths["stdlib://core/map.fern"] {
 		c.requireMapImport = true
+	}
+	// Resolve named arguments + fill default parameter values before any
+	// type-checking, so the rest of the checker (and every later pass) sees a
+	// complete positional call. Resolution diagnostics surface as checker
+	// errors. Idempotent — safe across LSP re-checks.
+	for _, fe := range defaultargs.Fill(prog) {
+		c.errfCode(fe.Pos, fe.Code, "%s", fe.Msg)
 	}
 
 	// Surface shadow-attempts on reserved built-in type names
@@ -878,6 +929,34 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			continue
 		}
 		c.info.Resources[rd.Name] = rd
+	}
+
+	// Bind receiver type-variables for generic-receiver methods. A
+	// method like `function (b: Box[T]) get(): T` introduces T as an
+	// implicit type parameter, inferred from the receiver at the call
+	// site — unless the name resolves to a concrete struct / enum /
+	// built-in. This mirrors how `@derive` methods on a generic type
+	// get their type params bound (bindDeriveTypeParams); once
+	// fn.TypeParams carries T, resolveTypeNames below rewrites T to a
+	// ParamType across the receiver / params / return / body, and the
+	// ordinary generic-method inference + monomorph path takes over.
+	// Runs before resolveTypeNames so the rewrite sees the params; the
+	// struct / enum sets are already populated above.
+	for _, fn := range prog.Funcs {
+		if fn.Receiver == nil {
+			continue
+		}
+		var vars []string
+		seen := map[string]bool{}
+		for _, tp := range fn.TypeParams {
+			seen[tp] = true
+		}
+		c.collectFreeTypeVars(fn.Receiver.Type, &vars, seen)
+		// Receiver type-vars go FIRST: the call site seeds them
+		// positionally from the receiver's type args (a method like
+		// `(b: Box[T]) map[U](...)` gets T from the receiver and infers
+		// U from the arguments), so T must precede any post-name `[U]`.
+		fn.TypeParams = append(vars, fn.TypeParams...)
 	}
 
 	// Now that the enum set is known, walk every type position in
@@ -1088,9 +1167,6 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.NumberType{},
 	}
-	// `int_to_string(n)` migrated to the lang prelude
-	// (internal/prelude/prelude.fern); its signature is
-	// registered via the prelude's FuncDecl.
 	// TCP socket builtins. C-style API: each returns a raw
 	// fd or a negative errno. A Result-wrapped layer can sit
 	// on top in a follow-up.
@@ -1395,12 +1471,12 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	c.info.Methods["Map.cleared"] = "__method_Map_clear"  // m.cleared() — value-returning clear
 
 	// `arr.push(v)` is the one Array method that DOESN'T have a
-	// prelude function declaration — the IR intercepts the
+	// stdlib function declaration — the IR intercepts the
 	// rewritten `__method_Array_push(arr, v)` call and emits the
 	// alloc + memcpy + width-correct tail store inline (see
 	// `emitArrayPush` in `internal/ir/ir.go`). One codepath covers
 	// every stride class — no per-stride mangled names, no
-	// per-stride prelude functions. Because there's no source-
+	// per-stride stdlib functions. Because there's no source-
 	// level decl, the auto-discovery loop below can't see push:
 	// we register it manually here along with its generic
 	// signature so dispatch + type-checking work.
@@ -1491,12 +1567,12 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	}
 
 	// Auto-discover the remaining Array methods from the
-	// `__method_Array_<name>` naming convention. Every prelude
+	// `__method_Array_<name>` naming convention. Every stdlib
 	// function (and, post-migration, every `std/array` module
 	// function) that follows the convention registers itself for
 	// the `arr.<name>(…)` dispatch path without a hand-written
 	// line per method. The receiver-element constraint stays
-	// inside the prelude function signature (e.g.
+	// inside the stdlib function signature (e.g.
 	// `function __method_Array_join(arr: string[], …)`); the
 	// checker's type unification surfaces a clean
 	// "cannot match i32[] to string[]" diagnostic when callers
@@ -1545,17 +1621,6 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		fullParams := append([]ast.Type{ast.StringType{}}, params...)
 		c.info.FuncSigs[mangled] = &ast.FuncType{Params: fullParams, Result: result}
 	}
-	// `starts_with` / `ends_with` / `contains` / `index_of`
-	// / `trim` / `to_lower` / `to_upper` / `bytes` / `split`
-	// / `replace` migrated to the lang prelude
-	// (internal/prelude/prelude.fern); their signatures are
-	// registered via the prelude's FuncDecls.
-	// `s.is_empty()` lives in the lang prelude
-	// (internal/prelude/prelude.fern); the receiver-hoisting
-	// machinery + builtin-receivers extension wires it
-	// through automatically.
-	// `s.repeat(n)` lives in the lang prelude
-	// (internal/prelude/prelude.fern).
 	// `s.as_bytes()` — non-copying companion to `s.bytes()`. Returns
 	// a `[u8]` slice header whose data_ptr aliases the string's
 	// payload and whose len is `len(s)`. Sharing the parent's
@@ -1566,38 +1631,18 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// `__method_string_len(s)` call and emits OpStrLen so a
 	// future SSO pass can change the encoding in one place.
 	registerStringMethod("len", nil, ast.NumberType{})
-	// `s.parse_int()` lives in the lang prelude
-	// (internal/prelude/prelude.fern). The receiver-hoisting
-	// + dispatch wires it through the same way as any
-	// `__method_string_*`.
-	// `s.parse_float()` lives in the lang prelude.
 
 	c.info.FuncSigs["string_from_bytes"] = &ast.FuncType{
 		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 		Result: ast.StringType{},
 	}
 
-	// `base64_encode` / `base64_decode` migrated to the
-	// lang prelude (internal/prelude/prelude.fern); their
-	// signatures are registered via the prelude's FuncDecls.
-
-	// `hex_encode` / `hex_decode` migrated to the lang
-	// prelude (internal/prelude/prelude.fern); their
-	// signatures are registered via the prelude's FuncDecls.
-
-	// `url_parse(s)` lives in the lang prelude
-	// (internal/prelude/prelude.fern).
-
-	// `__array_append_string(arr, v)` migrated to the lang
-	// prelude (internal/prelude/prelude.fern); its
-	// signature is registered via the prelude's FuncDecl.
-
 	// `__memcpy(dst, src, n)` / `__memset(dst, b, n)` —
 	// thin lang-callable wrappers around wasm's bulk-memory
 	// `memory.copy` / `memory.fill`. The doc-roadmap calls
 	// them out as the unlock for moving the json buffer
 	// family + the Map runtime from hand-written wat into
-	// the lang prelude (every growable-byte-buffer pattern
+	// the stdlib (every growable-byte-buffer pattern
 	// needs them). All three params are i32 byte counts /
 	// pointers; the helpers return void. arm64 inlines them
 	// via plain loads/stores; wat uses memory.copy.
@@ -1612,19 +1657,19 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	}
 	// `__alloc_u8(n)` returns a fresh `u8[]` of length n,
 	// zero-initialised. Pairs with `__memcpy` / `__memset` /
-	// the `[u8] → i32` data-pointer cast so prelude code can
+	// the `[u8] → i32` data-pointer cast so stdlib code can
 	// build a single-pass byte buffer.
 	c.info.FuncSigs["__alloc_u8"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
 	}
-	// Raw-memory escape hatches for prelude code that
+	// Raw-memory escape hatches for stdlib code that
 	// builds typed-pointer arrays (`__array_append_string`)
 	// or runtime structures (the Map runtime migration).
 	// `__alloc(n)` returns a raw n-byte block, no length
 	// prefix; `__load_i32` / `__store_i32` peek and poke a
 	// 4-byte word at any address. Out-of-bounds traps at
-	// the wasm level — the prelude is expected to bounds-
+	// the wasm level — the stdlib is expected to bounds-
 	// check at the lang level.
 	// `__alloc(n)` returns a fresh n-byte block on the bump heap.
 	// Returns `usize` so the full address survives on arm64-darwin
@@ -1732,32 +1777,13 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// were removed when `arr.push(v)` moved to inline IR
 	// lowering — the IR emits the typed wasm store ops
 	// directly, no callable wat shim needed. Reintroduce here
-	// next to `__store_i32` if a future lang-prelude helper
+	// next to `__store_i32` if a future stdlib helper
 	// needs them.
-
-	// `url_encode(s)` / `url_decode(s)` live in the lang
-	// prelude (internal/prelude/prelude.fern).
-
-	// `query_parse(s)` lives in the lang prelude.
-
-	// `json_encode(v)` lives in the lang prelude.
-	// `json_parse` migrated to the lang prelude
-	// (internal/prelude/prelude.fern); its signature is
-	// registered via the prelude's FuncDecl.
 
 	// Built-in numeric methods. The receiver type is `NumberType`
 	// keyed by width + signedness; the dispatch path above maps
 	// `i32` / `u32` / `i64` / `u64` value types to the
 	// corresponding `__method_<typename>_<method>` mangled name.
-	// `i32.to_string()` / `u32.to_string()` /
-	// `i64.to_string()` / `u64.to_string()` migrated to the
-	// lang prelude (internal/prelude/prelude.fern) — its
-	// receiver-method declarations register the
-	// `string.*_to_string` mangled names automatically via
-	// the receiver-hoisting pass below.
-
-	// `f32.to_string()` / `f64.to_string()` migrated to the
-	// lang prelude (internal/prelude/prelude.fern).
 
 	// Register trait declarations so the conformance check (after the
 	// receiver-hoist loop below) and Phase 2 bound resolution can look
@@ -1783,13 +1809,43 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// before the receiver-hoist and conformance passes pick them up.
 	c.synthesizeDerives(prog)
 
+	// A trait method written with a `{ … }` body is a default: any impl
+	// that omits it inherits a copy (with `Self` substituted to the impl
+	// type). Synthesise those receiver-method FuncDecls now — after
+	// derives, before the receiver-hoist — so they flow through the
+	// existing hoist + conformance + dispatch paths unchanged. See
+	// docs/TRAITS.md.
+	c.synthesizeTraitDefaults(prog)
+
 	// First pass: gather all top-level signatures so functions can call
 	// each other in any order. Methods are hoisted to mangled
 	// top-level names (`__method_<Type>_<Name>`) with the receiver
 	// prepended to the parameter list, so codegen never has to know
 	// about methods.
 	for _, fn := range prog.Funcs {
-		if fn.Receiver != nil {
+		if fn.AssocType != "" {
+			// Associated function (`impl … for T { function f(): Self }`):
+			// no receiver, called as `T.f(args)`. Hoist to a flat
+			// `__assoc_<T>_<f>` and register under the `T.f` key so the
+			// Call-case resolves `T.f(args)` (a FieldAccess on a *type*
+			// name) to it with no receiver argument. Stamp MethodRecv /
+			// MethodSimpleName so the monomorph re-check re-registers it
+			// from the `else if fn.MethodRecv != ""` branch below after
+			// Name has been rewritten. Then fall through to the common
+			// FuncSig / GenericFuncs registration.
+			typeName := fn.AssocType
+			methodKey := typeName + "." + fn.Name
+			if _, dup := c.info.Methods[methodKey]; dup {
+				c.errfCode(fn.P, "E006", "associated function %q on %s redeclared", fn.Name, typeName)
+				continue
+			}
+			fn.MethodRecv = typeName
+			fn.MethodSimpleName = fn.Name
+			fn.Name = "__assoc_" + typeName + "_" + fn.Name
+			fn.AssocType = ""
+			c.info.Methods[methodKey] = fn.Name
+			c.info.MethodSources[fn.Name] = fn.SourceModule
+		} else if fn.Receiver != nil {
 			var typeName string
 			switch rt := fn.Receiver.Type.(type) {
 			case ast.StructType:
@@ -1828,8 +1884,32 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 				}
 			case ast.BoolType:
 				typeName = "boolean"
+			case ast.ArrayType:
+				// Element-polymorphic method on an owned array,
+				// `function (xs: T[]) first(): T`. Registered under the
+				// same "Array" namespace the built-in array methods +
+				// the call-site dispatch use; `collectFreeTypeVars`
+				// already bound the element type-var, so it's a generic
+				// method inferred from the receiver's element type.
+				// The element MUST be a type variable: the "Array"
+				// namespace can't distinguish element types, so a
+				// concrete `(xs: i32[]) ...` would wrongly apply to every
+				// array — reject it.
+				if _, ok := rt.Elem.(ast.ParamType); !ok {
+					c.errfCode(fn.P, "E021", "array-receiver method must be element-polymorphic (e.g. `(xs: T[])`); a concrete element type like %s is not supported", fn.Receiver.Type)
+					continue
+				}
+				typeName = "Array"
+			case ast.SliceType:
+				// Same for a slice view, `function (xs: [T]) head(): T`,
+				// under the "slice" namespace.
+				if _, ok := rt.Elem.(ast.ParamType); !ok {
+					c.errfCode(fn.P, "E021", "slice-receiver method must be element-polymorphic (e.g. `(xs: [T])`); a concrete element type like %s is not supported", fn.Receiver.Type)
+					continue
+				}
+				typeName = "slice"
 			default:
-				c.errfCode(fn.P, "E021", "method receiver type must be a struct, enum, or built-in type, got %s", fn.Receiver.Type)
+				c.errfCode(fn.P, "E021", "method receiver type must be a struct, enum, array, slice, or built-in type, got %s", fn.Receiver.Type)
 				continue
 			}
 			methodKey := typeName + "." + fn.Name
@@ -1923,6 +2003,13 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			c.errfCode(impl.TraitPos, "E021", "unknown trait %q in impl", demangle(impl.Trait))
 			continue
 		}
+		// Generic-trait arity: `impl From[i32] for T` must supply exactly
+		// one type argument per the trait's type parameters. See docs/TRAITS.md.
+		if len(impl.TraitArgs) != len(td.TypeParams) {
+			c.errfCode(impl.TraitPos, "E021", "trait %s takes %d type argument(s), %d supplied",
+				demangle(impl.Trait), len(td.TypeParams), len(impl.TraitArgs))
+			continue
+		}
 		// Orphan rule: legal only if the trait or the type is declared
 		// in the impl's own module. Single-file programs leave every
 		// SourceModule empty, so the rule is vacuous there.
@@ -1963,7 +2050,16 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		// Every trait method must be present with a matching signature.
 		conforms := true
 		for _, m := range td.Methods {
-			mangled := "__method_" + typeName + "_" + m.Name
+			// Associated trait methods (no `self`) hoist to `__assoc_…`;
+			// ordinary methods to `__method_…`. The expected signature is
+			// built from m.Params directly either way — an assoc method has
+			// no leading `self`, and its hoisted form has no receiver, so
+			// they align without a prepended receiver slot.
+			prefix := "__method_"
+			if m.Assoc {
+				prefix = "__assoc_"
+			}
+			mangled := prefix + typeName + "_" + m.Name
 			sig, ok := c.info.FuncSigs[mangled]
 			if !ok {
 				c.errfCode(impl.P, "E021", "%s does not implement %s: missing method %q", demangle(typeName), demangle(impl.Trait), m.Name)
@@ -1973,11 +2069,31 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			// Expected signature: the trait method with Self -> the
 			// concrete type. m.Params[0] is `self: Self`, which lines
 			// up with the hoisted method's prepended receiver.
+			// Resolve associated-type projections on both sides via the
+			// impl's own bindings, so `Self::Item` (expected, after
+			// Self→impl-type) and the impl method's `Self::Item` both
+			// collapse to the bound type before the structural compare.
+			// Generic trait: bind the trait's type parameters to this
+			// impl's TraitArgs (`impl From[i32] for …` → T=i32) before the
+			// Self substitution, so `(self: Self): T` becomes `(IntBox): i32`
+			// for the structural compare. See docs/TRAITS.md.
+			traitSub := map[string]ast.Type{}
+			if len(td.TypeParams) == len(impl.TraitArgs) {
+				for i, tp := range td.TypeParams {
+					traitSub[tp] = impl.TraitArgs[i]
+				}
+			}
+			subTrait := func(t ast.Type) ast.Type {
+				if len(traitSub) > 0 {
+					t = substByName(t, traitSub)
+				}
+				return c.resolveProjWith(c.normalizeEnumKinds(ast.SubstSelf(t, impl.Type)), impl.AssocTypeBindings)
+			}
 			want := make([]ast.Type, len(m.Params))
 			for i, p := range m.Params {
-				want[i] = c.normalizeEnumKinds(ast.SubstSelf(p.Type, impl.Type))
+				want[i] = subTrait(p.Type)
 			}
-			wantRet := c.normalizeEnumKinds(ast.SubstSelf(m.Result, impl.Type))
+			wantRet := subTrait(m.Result)
 			// Normalize the impl side to the same nominal kinds. The parser
 			// defaults every bare type name to StructType (no symbol table), so a
 			// trait signature naming an enum — `Self` on an enum impl, or a
@@ -1985,9 +2101,9 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			// method's real signature carries EnumType(E); without reconciling the
 			// kinds, sigMatches saw a spurious mismatch (the E021 "expected
 			// (E)=>E, got (E)=>E" that blocked every enum-returning trait method).
-			gotSig := &ast.FuncType{Params: make([]ast.Type, len(sig.Params)), Result: c.normalizeEnumKinds(sig.Result)}
+			gotSig := &ast.FuncType{Params: make([]ast.Type, len(sig.Params)), Result: c.resolveProjWith(c.normalizeEnumKinds(sig.Result), impl.AssocTypeBindings)}
 			for i, pt := range sig.Params {
-				gotSig.Params[i] = c.normalizeEnumKinds(pt)
+				gotSig.Params[i] = c.resolveProjWith(c.normalizeEnumKinds(pt), impl.AssocTypeBindings)
 			}
 			if !sigMatches(gotSig, want, wantRet) {
 				c.errfCode(impl.P, "E021",
@@ -2020,10 +2136,94 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 				}
 			}
 		}
+		// Associated types: the impl must bind exactly the trait's
+		// associated types (no missing, no extras). Record the bindings so
+		// resolveProj can resolve `Foo::Item` projections. See
+		// docs/ASSOCIATED-TYPES.md.
+		if td2, ok := c.info.Traits[impl.Trait]; ok {
+			declared := map[string]bool{}
+			for _, at := range td2.AssocTypes {
+				declared[at] = true
+			}
+			for name := range impl.AssocTypeBindings {
+				if !declared[name] {
+					c.errfCode(impl.P, "E021", "impl of %s for %s binds associated type %q which the trait does not declare",
+						demangle(impl.Trait), demangle(typeName), name)
+					conforms = false
+				}
+			}
+			for _, at := range td2.AssocTypes {
+				if _, ok := impl.AssocTypeBindings[at]; !ok {
+					c.errfCode(impl.P, "E021", "impl of %s for %s must bind associated type %q (`type %s = …;`)",
+						demangle(impl.Trait), demangle(typeName), at, at)
+					conforms = false
+				}
+			}
+			if conforms && len(impl.AssocTypeBindings) > 0 {
+				if c.info.AssocBindings[typeName] == nil {
+					c.info.AssocBindings[typeName] = map[string]ast.Type{}
+				}
+				for name, bt := range impl.AssocTypeBindings {
+					c.info.AssocBindings[typeName][name] = bt
+				}
+			}
+		}
 		if conforms {
 			c.info.Impls[impl.Trait][typeName] = true
+			if len(impl.TraitArgs) > 0 {
+				if c.info.ImplTraitArgs[impl.Trait] == nil {
+					c.info.ImplTraitArgs[impl.Trait] = map[string][]ast.Type{}
+				}
+				c.info.ImplTraitArgs[impl.Trait][typeName] = impl.TraitArgs
+			}
 		}
 	}
+
+	// Supertrait references must name real traits, and the supertrait
+	// graph must be acyclic (a cyclic graph would still terminate via the
+	// `seen` guard in collectTraitSupers, but it's a user error). See
+	// docs/TRAITS.md.
+	for _, td := range prog.Traits {
+		for _, sup := range td.Supertraits {
+			if _, ok := c.info.Traits[sup]; !ok {
+				c.errfCode(td.P, "E021", "unknown supertrait %q in trait %s", demangle(sup), demangle(td.Name))
+			}
+		}
+		if c.traitInItsOwnSupers(td.Name) {
+			c.errfCode(td.P, "E021", "cyclic supertrait: %s is (transitively) its own supertrait", demangle(td.Name))
+		}
+	}
+
+	// Supertrait satisfaction: an `impl Trait for T` requires T to also
+	// implement every (transitive) supertrait of Trait. Run after the loop
+	// above has registered all conforming impls, so impl order within the
+	// program doesn't matter. See docs/TRAITS.md.
+	for _, impl := range prog.Impls {
+		typeName, ok := methodTypeName(impl.Type)
+		if !ok {
+			continue
+		}
+		if !c.info.Impls[impl.Trait][typeName] {
+			continue // impl didn't conform; the missing-method error already fired
+		}
+		td, ok := c.info.Traits[impl.Trait]
+		if !ok {
+			continue
+		}
+		for _, sup := range c.expandTraits(td.Supertraits) {
+			if !c.info.Impls[sup][typeName] {
+				c.errfCode(impl.P, "E021",
+					"impl %s for %s also requires `impl %s for %s` (supertrait of %s)",
+					demangle(impl.Trait), demangle(typeName), demangle(sup), demangle(typeName), demangle(impl.Trait))
+			}
+		}
+	}
+
+	// Resolve concrete-base associated-type projections (`Foo::Item` →
+	// the impl's binding) across signatures + bodies, now that the
+	// conformance pass has recorded every impl's bindings. See
+	// docs/ASSOCIATED-TYPES.md.
+	c.resolveProjections(prog)
 
 	// Validate that every trait named in a function's type-parameter
 	// bounds actually exists. Catches typos / unknown traits before
@@ -2031,9 +2231,22 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// docs/TRAITS.md.
 	for _, fn := range prog.Funcs {
 		for tp, traits := range fn.Bounds {
-			for _, traitName := range traits {
-				if _, ok := c.info.Traits[traitName]; !ok {
+			for i, traitName := range traits {
+				td, ok := c.info.Traits[traitName]
+				if !ok {
 					c.errfCode(fn.P, "E021", "unknown trait %q in bound on type parameter %s", demangle(traitName), tp)
+					continue
+				}
+				// A generic-trait bound must supply the right number of
+				// type arguments (`T: From[i32]` for `trait From[T]`); a
+				// non-generic trait must supply none. See docs/TRAITS.md.
+				var nargs int
+				if ba := fn.BoundArgs[tp]; i < len(ba) {
+					nargs = len(ba[i])
+				}
+				if nargs != len(td.TypeParams) {
+					c.errfCode(fn.P, "E021", "trait %s takes %d type argument(s), %d supplied in bound on type parameter %s",
+						demangle(traitName), len(td.TypeParams), nargs, tp)
 				}
 			}
 		}
@@ -2098,6 +2311,57 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	if len(c.errors) > 0 {
 		return c.info, diag.Errors(c.errors)
 	}
+
+	// Composite-type `==` / `!=` was type-checked into a structural
+	// `eq` method call stashed on `Binary.EqCall`. Replace each such
+	// Binary in place with that call (`!a.eq(b)` for `!=`) so every
+	// later pass — monomorph instantiation, treeshake liveness,
+	// codegen, interp — sees an ordinary method call rather than a
+	// hidden side channel. Runs on success only; it also runs inside
+	// monomorph's re-check, so cloned generic bodies desugar too.
+	ast.RewriteProgramExprs(prog, func(e ast.Expr) ast.Expr {
+		// Error-converting `?` → its block-expr desugar (#3234).
+		if t, ok := e.(*ast.TryOp); ok && t.Lowered != nil {
+			return t.Lowered
+		}
+		// Composite unary minus: `-v` → `v.neg()`.
+		if u, ok := e.(*ast.Unary); ok {
+			if u.NegCall != nil {
+				return u.NegCall
+			}
+			return e
+		}
+		b, ok := e.(*ast.Binary)
+		if !ok {
+			return e
+		}
+		if b.EqCall != nil {
+			if b.EqNegate {
+				return &ast.Unary{P: b.P, Op: "!", Operand: b.EqCall}
+			}
+			return b.EqCall
+		}
+		// Composite ordering: `a <op> b` → `a.cmp(b) <op> 0`. The
+		// resulting comparison is a plain signed-i32 Binary (cmp
+		// returns -1/0/1); stamp IntWidth so codegen picks i32.lt_s
+		// etc. (this node is created post-check, so the checker's
+		// width stamping never ran on it).
+		if b.CmpCall != nil {
+			return &ast.Binary{
+				P:        b.P,
+				Op:       b.Op,
+				Left:     b.CmpCall,
+				Right:    &ast.NumberLit{P: b.P, Value: 0, Width: 32},
+				IntWidth: 32,
+			}
+		}
+		// Composite arithmetic: `a <op> b` → `a.<add|sub|mul|div>(b)`.
+		if b.ArithCall != nil {
+			return b.ArithCall
+		}
+		return e
+	})
+
 	return c.info, nil
 }
 
@@ -2107,11 +2371,9 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 // is callable from a file F only if M ∈ closure(F).
 //
 // Empty source modules on either side skip the check —
-// transitional accommodation for prelude-injected decls,
-// checker-synthetic methods (Reader / Writer / Map / MapIter /
-// the inline-IR `Array.push`), and single-file programs that
-// bypass modload. Both sides go away once Phase 5 removes the
-// magic prelude and every method lives in a module.
+// accommodation for checker-synthesised methods (Reader /
+// Writer / Map / MapIter / the inline-IR `Array.push`) and
+// single-file programs that bypass modload.
 //
 // Same-module always passes (a module can always call its own
 // methods regardless of import graph). Cross-module visibility
@@ -2124,11 +2386,10 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 // natural cycles (std/string's bodies call (i32) byte methods
 // from std/i32; std/i32's bodies call (string) methods from
 // std/string) that modload's cycle-detector would otherwise
-// reject, and the auto-prelude path already side-steps the
-// gate by clearing `SourceModule` on every loaded fn. The
-// shortcut keeps no-prelude semantically identical to auto-
-// prelude for stdlib internals — only USER → stdlib visibility
-// still requires an explicit import.
+// reject; modload clears `SourceModule` on every stdlib-loaded
+// fn, so the shortcut lets stdlib internals call each other
+// freely — only USER → stdlib visibility still requires an
+// explicit import.
 // methodTypeName maps a type to the canonical name used in the
 // `__method_<Type>_<name>` mangling and the Info.Methods keys. It
 // mirrors the receiver-hoist switch so impl-conformance lookups land
@@ -2186,7 +2447,12 @@ func (c *checker) setElemHintFor(e ast.Expr, dst ast.Type) {
 func forEachDynTrait(t ast.Type, fn func(string)) {
 	switch x := t.(type) {
 	case ast.DynTraitType:
-		fn(x.Trait)
+		// Multi-trait-aware: validate EVERY trait in the set so
+		// `dyn Bogus + Eq` reports both the unknown and the
+		// non-object-safe trait.
+		for _, tr := range x.Traits {
+			fn(tr)
+		}
 	case ast.ArrayType:
 		forEachDynTrait(x.Elem, fn)
 	case ast.SliceType:
@@ -2207,6 +2473,43 @@ func forEachDynTrait(t ast.Type, fn func(string)) {
 	case ast.EnumType:
 		for _, a := range x.Args {
 			forEachDynTrait(a, fn)
+		}
+	}
+}
+
+// forEachDynTraitObj invokes fn on every DynTraitType nested in t (itself,
+// or inside an array / slice / tuple / func / generic argument). Unlike
+// forEachDynTrait it surfaces the whole object so callers can inspect the
+// per-trait generic arguments (e.g. arity validation of `dyn Container[i32]`).
+func forEachDynTraitObj(t ast.Type, fn func(ast.DynTraitType)) {
+	switch x := t.(type) {
+	case ast.DynTraitType:
+		fn(x)
+		for _, args := range x.Args {
+			for _, a := range args {
+				forEachDynTraitObj(a, fn)
+			}
+		}
+	case ast.ArrayType:
+		forEachDynTraitObj(x.Elem, fn)
+	case ast.SliceType:
+		forEachDynTraitObj(x.Elem, fn)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			forEachDynTraitObj(e, fn)
+		}
+	case *ast.FuncType:
+		for _, p := range x.Params {
+			forEachDynTraitObj(p, fn)
+		}
+		forEachDynTraitObj(x.Result, fn)
+	case ast.StructType:
+		for _, a := range x.Args {
+			forEachDynTraitObj(a, fn)
+		}
+	case ast.EnumType:
+		for _, a := range x.Args {
+			forEachDynTraitObj(a, fn)
 		}
 	}
 }
@@ -2307,12 +2610,44 @@ func (c *checker) validateDynTraitTypes(prog *ast.Program) {
 			if _, ok := c.info.Traits[trait]; !ok {
 				reported[trait] = true
 				c.errfCode(pos, "E021", "unknown trait %q in `dyn` type", demangle(trait))
-				return
 			}
-			if safe, reason := c.objectSafe(trait); !safe {
-				reported[trait] = true
-				c.errfCode(pos, "E021", "trait %s is not object-safe: %s, so it cannot be used as `dyn %s`",
-					demangle(trait), reason, demangle(trait))
+		})
+		// Per-object checks (object-safety + generic-arg arity), which need
+		// the dyn type's pinned arguments / associated types. A generic
+		// trait must PIN its type parameters (`dyn Container[i32]`, not bare
+		// `dyn Container`); a trait with associated types must pin every one
+		// (`dyn Producer[Item = i32]`) to be object-safe — the concrete type
+		// is erased, so an unpinned `T` / `Self::Item` can't be resolved at
+		// the call site. Reported once per trait.
+		forEachDynTraitObj(t, func(dt ast.DynTraitType) {
+			for i, trait := range dt.Traits {
+				td, ok := c.info.Traits[trait]
+				if !ok {
+					continue
+				}
+				pinned := map[string]bool{}
+				for _, b := range dt.AssocFor(i) {
+					pinned[b.Name] = true
+				}
+				if safe, reason := c.objectSafe(trait, pinned); !safe {
+					if !reported[trait] {
+						reported[trait] = true
+						c.errfCode(pos, "E021", "trait %s is not object-safe: %s, so it cannot be used as `dyn %s`",
+							demangle(trait), reason, demangle(trait))
+					}
+					continue
+				}
+				if len(td.TypeParams) > 0 {
+					if got := len(dt.ArgsFor(i)); got != len(td.TypeParams) {
+						key := trait + "!arity"
+						if reported[key] {
+							continue
+						}
+						reported[key] = true
+						c.errfCode(pos, "E021", "generic trait %s used as `dyn` must pin its type parameter(s): expected %d argument(s) (e.g. `dyn %s[...]`), got %d",
+							demangle(trait), len(td.TypeParams), demangle(trait), got)
+					}
+				}
 			}
 		})
 	}
@@ -2405,10 +2740,20 @@ func mentionsSelf(t ast.Type) bool {
 // concrete type is erased behind the object, so the compiler can
 // neither supply nor name a second value of it. Returns the offending
 // reason for the diagnostic. See docs/DYN-TRAITS.md §3.
-func (c *checker) objectSafe(traitName string) (bool, string) {
+func (c *checker) objectSafe(traitName string, pinned map[string]bool) (bool, string) {
 	td, ok := c.info.Traits[traitName]
 	if !ok {
 		return false, ""
+	}
+	// A trait with associated types is object-safe ONLY when the `dyn` type
+	// PINS every one (`dyn Producer[Item = i32]`): the concrete type is
+	// erased, so an unpinned associated type — and any `Self::Item`
+	// projection in a method signature — can't be resolved at the call
+	// site. See docs/ASSOCIATED-TYPES.md.
+	for _, at := range td.AssocTypes {
+		if !pinned[at] {
+			return false, fmt.Sprintf("associated type %q is not pinned — write `dyn %s[%s = ...]`", at, demangle(traitName), at)
+		}
 	}
 	for _, m := range td.Methods {
 		for i := 1; i < len(m.Params); i++ { // params[0] is self: Self
@@ -2428,28 +2773,116 @@ func (c *checker) objectSafe(traitName string) (bool, string) {
 // dispatch (Call.DynTrait), leaving the callee a FieldAccess. Returns
 // the call's result type (nil on a hard error). See docs/DYN-TRAITS.md.
 func (c *checker) checkDynMethodCall(n *ast.Call, fa *ast.FieldAccess, dt ast.DynTraitType, s *scope) ast.Type {
-	td, ok := c.info.Traits[dt.Trait]
-	if !ok {
-		// Unknown / non-object-safe traits are reported once by
-		// validateDynTraitTypes over type positions; bail silently
-		// here so the same error isn't repeated per call site.
-		return nil
-	}
-	if safe, _ := c.objectSafe(dt.Trait); !safe {
-		return nil
-	}
-	var tm *ast.TraitMethod
-	for i := range td.Methods {
-		if td.Methods[i].Name == fa.Field {
-			tm = &td.Methods[i]
-			break
+	// Method resolution searches the UNION of the traits' method sets.
+	// Each trait must be known + object-safe (validateDynTraitTypes
+	// reports those errors once over type positions; bail silently here
+	// so per-call sites don't repeat them).
+	for i, tr := range dt.Traits {
+		if _, ok := c.info.Traits[tr]; !ok {
+			return nil
+		}
+		pinned := map[string]bool{}
+		for _, b := range dt.AssocFor(i) {
+			pinned[b.Name] = true
+		}
+		if safe, _ := c.objectSafe(tr, pinned); !safe {
+			return nil
 		}
 	}
-	if tm == nil {
-		c.errfCode(fa.FieldPos, "E021", "no method %q on `dyn %s`", fa.Field, demangle(dt.Trait))
+	// Find the method across all traits in the set. Exactly one trait
+	// declaring it → use it. Two+ → an ambiguity error (disambiguation
+	// syntax is a follow-up; docs/DYN-TRAITS.md §N). None → no-method.
+	var tm *ast.TraitMethod
+	var ownerTrait string
+	var collidingTraits []string
+	for _, tr := range dt.Traits {
+		td := c.info.Traits[tr]
+		for i := range td.Methods {
+			if td.Methods[i].Name == fa.Field {
+				if tm != nil && ownerTrait != tr {
+					collidingTraits = append(collidingTraits, tr)
+				} else {
+					tm = &td.Methods[i]
+					ownerTrait = tr
+				}
+				break
+			}
+		}
+	}
+	if len(collidingTraits) > 0 {
+		all := append([]string{ownerTrait}, collidingTraits...)
+		for i := range all {
+			all[i] = demangle(all[i])
+		}
+		c.errfCode(fa.FieldPos, "E062", "ambiguous method %q on `%s`: declared by traits %s",
+			fa.Field, dt.String(), strings.Join(all, ", "))
 		return nil
 	}
-	wantParams := tm.Params[1:] // drop the `self` receiver
+	if tm == nil {
+		c.errfCode(fa.FieldPos, "E021", "no method %q on `%s`", fa.Field, dt.String())
+		return nil
+	}
+	// Pin the owner trait's generic type parameters to the dyn object's
+	// arguments before reading the signature: `dyn Container[i32]` makes
+	// `get(): T` read as `get(): i32`. Self is still substituted to the
+	// dyn type itself (below) so the receiver keeps its object type.
+	if td := c.info.Traits[ownerTrait]; td != nil && len(td.TypeParams) > 0 {
+		var args []ast.Type
+		for i, tr := range dt.Traits {
+			if tr == ownerTrait {
+				args = dt.ArgsFor(i)
+				break
+			}
+		}
+		if len(args) == len(td.TypeParams) {
+			sub := make(map[string]ast.Type, len(args))
+			for i, tp := range td.TypeParams {
+				sub[tp] = args[i]
+			}
+			pinned := substTraitMethodTypeParams(*tm, sub)
+			tm = &pinned
+		}
+	}
+	// Resolve `Self::Item` projections in the signature to the dyn object's
+	// pinned associated types: `dyn Producer[Item = i32]` makes
+	// `get(): Self::Item` read as `get(): i32`. The bindings come from the
+	// owner trait's AssocFor; resolveProjWith rewrites every ProjType.
+	if td := c.info.Traits[ownerTrait]; td != nil && len(td.AssocTypes) > 0 {
+		var binds []ast.AssocBinding
+		for i, tr := range dt.Traits {
+			if tr == ownerTrait {
+				binds = dt.AssocFor(i)
+				break
+			}
+		}
+		if len(binds) > 0 {
+			bindings := make(map[string]ast.Type, len(binds))
+			for _, b := range binds {
+				bindings[b.Name] = b.Type
+			}
+			resolved := *tm
+			resolved.Params = make([]ast.Param, len(tm.Params))
+			for i, p := range tm.Params {
+				p.Type = c.resolveProjWith(p.Type, bindings)
+				resolved.Params[i] = p
+			}
+			resolved.Result = c.resolveProjWith(tm.Result, bindings)
+			tm = &resolved
+		}
+	}
+	// Trait method signatures are stored as written: a `self` receiver is
+	// present in Params only when the author spelled it (`function area(self:
+	// Self): i32`); the common `function area(): i32;` form has none. Strip a
+	// leading self when present so the remainder are the call arguments —
+	// indexing `Params[1:]` unconditionally panicked on the no-self form (and
+	// silently dropped the first real argument when a method had params but no
+	// explicit self).
+	wantParams := tm.Params
+	if len(wantParams) > 0 {
+		if _, isSelf := wantParams[0].Type.(ast.SelfType); isSelf || wantParams[0].Name == "self" {
+			wantParams = wantParams[1:]
+		}
+	}
 	if len(n.Args) != len(wantParams) {
 		c.errfCode(n.P, "E004", "method %q expects %d argument(s), got %d", fa.Field, len(wantParams), len(n.Args))
 		return ast.SubstSelf(tm.Result, dt)
@@ -2462,7 +2895,11 @@ func (c *checker) checkDynMethodCall(n *ast.Call, fa *ast.FieldAccess, dt ast.Dy
 		}
 	}
 	n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: dt}
-	n.DynTrait = dt.Trait
+	// DynTrait records the trait that OWNS the resolved method (not the
+	// whole set) — that's what the IR vtable lookup and the interp's
+	// error messages key on. Runtime dispatch is still by the receiver's
+	// concrete type, so for the single-trait case this is unchanged.
+	n.DynTrait = ownerTrait
 	return ast.SubstSelf(tm.Result, dt)
 }
 
@@ -2524,15 +2961,15 @@ func sigMatches(sig *ast.FuncType, want []ast.Type, wantRet ast.Type) bool {
 // `mod__Name`. A no-op for single-file / same-module names. See
 // docs/TRAITS.md (Phase 3).
 // deriveKind classifies a (possibly module-mangled) derived-trait name
-// by its simple name: "Eq", "Display", or "Ord". Returns "" for any
-// other trait — only these three are derivable.
+// by its simple name: "Eq", "Display", "Ord", "Hash", "Json", "Default",
+// or "Debug". Returns "" for any other trait — only these are derivable.
 func deriveKind(name string) string {
 	simple := name
 	if i := strings.LastIndex(simple, "__"); i >= 0 {
 		simple = simple[i+2:]
 	}
 	switch simple {
-	case "Eq", "Display", "Ord":
+	case "Eq", "Display", "Ord", "Hash", "Json", "Default", "Debug":
 		return simple
 	}
 	return ""
@@ -2573,7 +3010,7 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 			_ = td
 			kind := deriveKind(dn)
 			if kind == "" {
-				c.errfCode(sd.P, "E021", "cannot @derive(%s): only Eq, Display, and Ord are derivable", demangle(dn))
+				c.errfCode(sd.P, "E021", "cannot @derive(%s): only Eq, Display, Debug, Ord, Hash, Json, and Default are derivable", demangle(dn))
 				continue
 			}
 			var method *ast.FuncDecl
@@ -2582,8 +3019,21 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				method = synthEq(sd, recvType)
 			case "Display":
 				method = synthDisplay(sd, recvType)
+			case "Debug":
+				method = synthDebug(sd, recvType)
 			case "Ord":
 				method = synthOrd(sd, recvType)
+			case "Hash":
+				method = synthHash(sd, recvType)
+			case "Json":
+				method = synthJson(sd, recvType)
+			case "Default":
+				m, badField, badType := synthDefault(sd, recvType)
+				if m == nil {
+					c.errfCode(sd.P, "E021", "cannot @derive(Default) for %s: field %q has type %s, which has no default; implement Default by hand", demangle(sd.Name), badField, badType)
+					continue
+				}
+				method = m
 			}
 			method.SourceModule = sd.SourceModule
 			bindDeriveTypeParams(method, implTypeParams, dn)
@@ -2617,10 +3067,23 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				method = synthEnumEq(ed, recvType)
 			case "Display":
 				method = synthEnumDisplay(ed, recvType)
+			case "Debug":
+				method = synthEnumDebug(ed, recvType)
 			case "Ord":
 				method = synthEnumOrd(ed, recvType)
+			case "Hash":
+				method = synthEnumHash(ed, recvType)
+			case "Json":
+				method = synthEnumJson(ed, recvType)
+			case "Default":
+				m, badType := synthEnumDefault(ed, recvType)
+				if m == nil {
+					c.errfCode(ed.P, "E021", "cannot @derive(Default) for enum %s: first variant has a payload of type %s, which has no default; implement Default by hand", demangle(ed.Name), badType)
+					continue
+				}
+				method = m
 			default:
-				c.errfCode(ed.P, "E021", "cannot @derive(%s): only Eq, Display, and Ord are derivable for enums", demangle(dn))
+				c.errfCode(ed.P, "E021", "cannot @derive(%s): only Eq, Display, Debug, Ord, Hash, Json, and Default are derivable for enums", demangle(dn))
 				continue
 			}
 			method.SourceModule = ed.SourceModule
@@ -2633,6 +3096,84 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 			})
 		}
 	}
+}
+
+// synthesizeTraitDefaults materialises a trait's default methods for
+// every impl that omits them. A trait method written with a `{ … }`
+// body is a default: an impl that doesn't provide its own copy inherits
+// one here. We deep-clone the default body (so each impl gets an
+// isolated copy the checker can rewrite in place), substitute `Self` to
+// the impl type across the signature, build a receiver-method (or
+// associated-function) FuncDecl, append it to prog.Funcs, and record it
+// in impl.MethodNames so the conformance pass sees the method as
+// present. Idempotent across the monomorph re-check: the synthesised
+// FuncDecl is a plain method (no trait default attached) and
+// MethodNames already lists it, so a second pass adds nothing. See
+// docs/TRAITS.md.
+func (c *checker) synthesizeTraitDefaults(prog *ast.Program) {
+	for _, impl := range prog.Impls {
+		td, ok := c.info.Traits[impl.Trait]
+		if !ok {
+			continue // unknown trait — the conformance pass reports it
+		}
+		provided := map[string]bool{}
+		for _, mn := range impl.MethodNames {
+			provided[mn] = true
+		}
+		for _, m := range td.Methods {
+			if m.Body == nil || provided[m.Name] {
+				continue
+			}
+			method := &ast.FuncDecl{
+				Name:         m.Name,
+				ReturnType:   ast.SubstSelf(m.Result, impl.Type),
+				Body:         ast.CloneBlock(m.Body),
+				SourceModule: impl.SourceModule,
+			}
+			if m.Assoc {
+				// Associated default (no `self`): hoists to
+				// `__assoc_<Type>_<name>`. Use methodTypeName so the hoist
+				// key matches what the conformance pass looks up.
+				method.Params = substSelfParams(m.Params, impl.Type)
+				if tn, ok := methodTypeName(impl.Type); ok {
+					method.AssocType = tn
+				} else {
+					method.AssocType = impl.Type.String()
+				}
+			} else {
+				// Ordinary default: m.Params[0] is `self: Self` → the
+				// receiver the hoist prepends as Params[0].
+				recv := m.Params[0]
+				method.Receiver = &ast.Param{Name: recv.Name, Type: impl.Type, Own: recv.Own}
+				method.Params = substSelfParams(m.Params[1:], impl.Type)
+			}
+			// A parametric impl (`impl[T: Bound] Trait for Box[T]`) makes
+			// every method generic over the impl's type params — a default
+			// body may reference T — so carry the params + bounds exactly as
+			// the parser does for written methods.
+			if len(impl.TypeParams) > 0 {
+				method.TypeParams = append([]string(nil), impl.TypeParams...)
+				method.Bounds = impl.Bounds
+			}
+			prog.Funcs = append(prog.Funcs, method)
+			impl.MethodNames = append(impl.MethodNames, m.Name)
+		}
+	}
+}
+
+// substSelfParams copies params with `Self` substituted to self in each
+// type, preserving names + `own` flags. Used when materialising a trait
+// default method for a concrete impl.
+func substSelfParams(params []ast.Param, self ast.Type) []ast.Param {
+	if len(params) == 0 {
+		return nil
+	}
+	out := make([]ast.Param, len(params))
+	for i, p := range params {
+		out[i] = p
+		out[i].Type = ast.SubstSelf(p.Type, self)
+	}
+	return out
 }
 
 // deriveRecvStruct builds the receiver type + impl type-parameter list
@@ -2660,6 +3201,44 @@ func deriveRecvEnum(ed *ast.EnumDecl) (ast.EnumType, []string) {
 		args[i] = ast.ParamType{Name: tp}
 	}
 	return ast.EnumType{Name: ed.Name, Args: args}, ed.TypeParams
+}
+
+// collectFreeTypeVars walks a method-receiver type and collects the
+// names that are NOT known structs / enums — i.e. the implicit type
+// variables a generic-receiver method binds (the `T` in `Box[T]`).
+// Built-in scalar types are NumberType / FloatType / BoolType /
+// StringType, not named StructType, so they're excluded naturally; a
+// name that happens to match a real struct / enum is treated as a
+// concrete instantiation, not a variable. Dedupes via `seen`.
+func (c *checker) collectFreeTypeVars(t ast.Type, out *[]string, seen map[string]bool) {
+	named := func(name string, args []ast.Type) {
+		_, isStruct := c.info.Structs[name]
+		_, isEnum := c.info.Enums[name]
+		if !isStruct && !isEnum {
+			if !seen[name] {
+				seen[name] = true
+				*out = append(*out, name)
+			}
+			return
+		}
+		for i := range args {
+			c.collectFreeTypeVars(args[i], out, seen)
+		}
+	}
+	switch x := t.(type) {
+	case ast.StructType:
+		named(x.Name, x.Args)
+	case ast.EnumType:
+		named(x.Name, x.Args)
+	case ast.ArrayType:
+		c.collectFreeTypeVars(x.Elem, out, seen)
+	case ast.SliceType:
+		c.collectFreeTypeVars(x.Elem, out, seen)
+	case ast.TupleType:
+		for i := range x.Elems {
+			c.collectFreeTypeVars(x.Elems[i], out, seen)
+		}
+	}
 }
 
 // bindDeriveTypeParams turns a synthesised derive method into a generic
@@ -2725,7 +3304,19 @@ func synthEnumDisplay(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
 			bind[i] = fmt.Sprintf("__p%d", i)
 		}
 		var expr ast.Expr = &ast.StringLit{Value: v.Name}
-		if len(v.Payloads) > 0 {
+		if len(v.FieldNames) > 0 {
+			// Named-field variant renders `Rect { w: …, h: … }`.
+			add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
+			add(&ast.StringLit{Value: " { "})
+			for i, fn := range v.FieldNames {
+				if i > 0 {
+					add(&ast.StringLit{Value: ", "})
+				}
+				add(&ast.StringLit{Value: fn + ": "})
+				add(methodCall(&ast.Ident{Name: bind[i]}, "to_string"))
+			}
+			add(&ast.StringLit{Value: " }"})
+		} else if len(v.Payloads) > 0 {
 			add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
 			add(&ast.StringLit{Value: "("})
 			for i := range v.Payloads {
@@ -2744,6 +3335,52 @@ func synthEnumDisplay(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
 	}}
 	return &ast.FuncDecl{
 		Name: "to_string", Receiver: &ast.Param{Name: "self", Type: recv},
+		ReturnType: ast.StringType{}, Body: body,
+	}
+}
+
+// synthEnumDebug builds a variant-wise `to_debug` rendering `Variant` /
+// `Variant(<debug payload>, …)`, the Debug sibling of synthEnumDisplay —
+// each payload is rendered through its own `Debug` (so a string payload is
+// quoted). Identical shape to the derived Display otherwise.
+func synthEnumDebug(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
+	arms := make([]*ast.MatchArm, 0, len(ed.Variants))
+	for _, v := range ed.Variants {
+		bind := make([]string, len(v.Payloads))
+		for i := range v.Payloads {
+			bind[i] = fmt.Sprintf("__p%d", i)
+		}
+		var expr ast.Expr = &ast.StringLit{Value: v.Name}
+		if len(v.FieldNames) > 0 {
+			add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
+			add(&ast.StringLit{Value: " { "})
+			for i, fn := range v.FieldNames {
+				if i > 0 {
+					add(&ast.StringLit{Value: ", "})
+				}
+				add(&ast.StringLit{Value: fn + ": "})
+				add(methodCall(&ast.Ident{Name: bind[i]}, "to_debug"))
+			}
+			add(&ast.StringLit{Value: " }"})
+		} else if len(v.Payloads) > 0 {
+			add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
+			add(&ast.StringLit{Value: "("})
+			for i := range v.Payloads {
+				if i > 0 {
+					add(&ast.StringLit{Value: ", "})
+				}
+				add(methodCall(&ast.Ident{Name: bind[i]}, "to_debug"))
+			}
+			add(&ast.StringLit{Value: ")"})
+		}
+		arms = append(arms, &ast.MatchArm{VariantName: v.Name, Bindings: bind, Body: &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: expr}}}})
+	}
+	body := &ast.Block{Stmts: []ast.Stmt{
+		&ast.Match{Tag: &ast.Ident{Name: "self"}, Arms: arms},
+		&ast.Return{Value: &ast.StringLit{Value: ""}},
+	}}
+	return &ast.FuncDecl{
+		Name: "to_debug", Receiver: &ast.Param{Name: "self", Type: recv},
 		ReturnType: ast.StringType{}, Body: body,
 	}
 }
@@ -2868,6 +3505,37 @@ func synthDisplay(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
 	}
 }
 
+// synthDebug builds a `to_debug` that renders the structural `Name { f: …,
+// … }` form, like synthDisplay, but composes through each field's `Debug`
+// (`self.f.to_debug()`) rather than `Display`. The practical difference is
+// that a string field renders QUOTED (`name: "hi"` vs Display's `name: hi`)
+// via `impl Debug for string` in core/cmp. The generated method delegates
+// to the primitive Debug impls / nested derived Debug methods, so it
+// composes exactly as the derived Display does.
+func synthDebug(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
+	var expr ast.Expr = &ast.StringLit{Value: demangle(sd.Name) + " {"}
+	add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
+	for i, f := range sd.Fields {
+		sep := " "
+		if i > 0 {
+			sep = ", "
+		}
+		add(&ast.StringLit{Value: sep + f.Name + ": "})
+		add(methodCall(selfField(f.Name), "to_debug"))
+	}
+	if len(sd.Fields) == 0 {
+		add(&ast.StringLit{Value: "}"})
+	} else {
+		add(&ast.StringLit{Value: " }"})
+	}
+	return &ast.FuncDecl{
+		Name:       "to_debug",
+		Receiver:   &ast.Param{Name: "self", Type: recv},
+		ReturnType: ast.StringType{},
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: expr}}},
+	}
+}
+
 // synthOrd builds a lexicographic `cmp`: compare each field in turn,
 // returning the first non-zero result, else 0.
 func synthOrd(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
@@ -2895,6 +3563,249 @@ func synthOrd(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
 	}
 }
 
+// hashSeed is the field-wise hash combiner's starting value (a small
+// odd prime); hashMul is the per-field multiplier — the textbook
+// `h = h * 31 + field.hash()` fold. Distinct fields/variants of equal
+// content stay distinguished because the multiply rotates earlier
+// contributions into higher bits before each new field is mixed in.
+const (
+	hashSeed = 17
+	hashMul  = 31
+)
+
+// hashFold appends `h = h * 31 + <e>.hash();` to stmts, where `e` is a
+// field/payload accessor expression. The combiner is shared by the
+// struct and enum synthesizers.
+func hashFold(stmts []ast.Stmt, e ast.Expr) []ast.Stmt {
+	return append(stmts, &ast.ExprStmt{Expr: &ast.Assign{
+		Target: &ast.Ident{Name: "__h"},
+		Value: &ast.Binary{
+			Op:    "+",
+			Left:  &ast.Binary{Op: "*", Left: &ast.Ident{Name: "__h"}, Right: &ast.NumberLit{Value: hashMul}},
+			Right: methodCall(e, "hash"),
+		},
+	}})
+}
+
+// synthHash builds a field-wise `hash`: seed an accumulator, fold each
+// field's `.hash()` through `h = h * 31 + f.hash()`, and return it. The
+// seed-only result for a field-less struct is a fine constant hash. Pairs
+// with the derived `Eq` so `a == b ⇒ a.hash() == b.hash()`.
+func synthHash(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
+	stmts := []ast.Stmt{
+		&ast.Var{Name: "__h", Type: ast.NumberType{}, Init: &ast.NumberLit{Value: hashSeed}},
+	}
+	for _, f := range sd.Fields {
+		stmts = hashFold(stmts, selfField(f.Name))
+	}
+	stmts = append(stmts, &ast.Return{Value: &ast.Ident{Name: "__h"}})
+	return &ast.FuncDecl{
+		Name:       "hash",
+		Receiver:   &ast.Param{Name: "self", Type: recv},
+		ReturnType: ast.NumberType{},
+		Body:       &ast.Block{Stmts: stmts},
+	}
+}
+
+// synthEnumHash builds a variant-wise `hash`: match self, seed the
+// accumulator with the variant's tag (its declaration index) so distinct
+// variants with identical payloads hash differently, then fold each
+// payload's `.hash()` through the same combiner.
+func synthEnumHash(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
+	arms := make([]*ast.MatchArm, 0, len(ed.Variants))
+	for i, v := range ed.Variants {
+		bind := make([]string, len(v.Payloads))
+		for k := range v.Payloads {
+			bind[k] = fmt.Sprintf("__p%d", k)
+		}
+		// Seed with the tag so payload-less variants (and same-shaped
+		// payloads across variants) stay distinct.
+		stmts := []ast.Stmt{
+			&ast.Var{Name: "__h", Type: ast.NumberType{}, Init: &ast.NumberLit{Value: int64(hashSeed + i)}},
+		}
+		for k := range v.Payloads {
+			stmts = hashFold(stmts, &ast.Ident{Name: bind[k]})
+		}
+		stmts = append(stmts, &ast.Return{Value: &ast.Ident{Name: "__h"}})
+		arms = append(arms, &ast.MatchArm{VariantName: v.Name, Bindings: bind, Body: &ast.Block{Stmts: stmts}})
+	}
+	body := &ast.Block{Stmts: []ast.Stmt{
+		&ast.Match{Tag: &ast.Ident{Name: "self"}, Arms: arms},
+		&ast.Return{Value: &ast.NumberLit{Value: 0}},
+	}}
+	return &ast.FuncDecl{
+		Name: "hash", Receiver: &ast.Param{Name: "self", Type: recv},
+		ReturnType: ast.NumberType{}, Body: body,
+	}
+}
+
+// defaultDeriveExpr returns the default value for a field/payload of type
+// t, used by `@derive(Default)`. Scalars get their zero literal; a nominal
+// type (struct / enum / bound type-param) delegates to *its* `default()`
+// associated function so derivation composes. Reports false for a type
+// with no obvious default (array, map, tuple, slice, function) — the
+// caller turns that into a "implement Default by hand" diagnostic.
+func defaultDeriveExpr(t ast.Type) (ast.Expr, bool) {
+	switch ft := t.(type) {
+	case ast.NumberType:
+		return &ast.NumberLit{}, true
+	case ast.FloatType:
+		return &ast.FloatLit{}, true
+	case ast.BoolType:
+		return &ast.BoolLit{Value: false}, true
+	case ast.StringType:
+		return &ast.StringLit{Value: ""}, true
+	case ast.StructType:
+		return defaultAssocCall(ft.Name), true
+	case ast.EnumType:
+		return defaultAssocCall(ft.Name), true
+	case ast.ParamType:
+		return defaultAssocCall(ft.Name), true
+	}
+	return nil, false
+}
+
+// defaultAssocCall builds `Type.default()` — the associated-function call
+// the derived Default delegates to for a nominal field type.
+func defaultAssocCall(typeName string) ast.Expr {
+	return &ast.Call{Callee: &ast.FieldAccess{Target: &ast.Ident{Name: typeName}, Field: "default"}}
+}
+
+// synthDefault builds a struct's derived `default()` associated function:
+// `function default(): Self { return Name { f0: <zero>, f1: <zero>, … }; }`.
+// Returns (nil, fieldName, fieldType) if a field has no derivable default.
+func synthDefault(sd *ast.StructDecl, recv ast.StructType) (*ast.FuncDecl, string, ast.Type) {
+	fields := make([]ast.FieldInit, 0, len(sd.Fields))
+	for _, f := range sd.Fields {
+		dv, ok := defaultDeriveExpr(f.Type)
+		if !ok {
+			return nil, f.Name, f.Type
+		}
+		fields = append(fields, ast.FieldInit{Name: f.Name, Value: dv})
+	}
+	lit := &ast.StructLit{TypeName: recv.Name, Fields: fields, TypeArgs: recv.Args}
+	return &ast.FuncDecl{
+		Name:       "default",
+		AssocType:  recv.Name,
+		ReturnType: recv,
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: lit}}},
+	}, "", nil
+}
+
+// synthEnumDefault builds an enum's derived `default()` associated
+// function: the FIRST variant, with each payload defaulted. Returns
+// (nil, payloadType) if a first-variant payload has no derivable default.
+func synthEnumDefault(ed *ast.EnumDecl, recv ast.EnumType) (*ast.FuncDecl, ast.Type) {
+	if len(ed.Variants) == 0 {
+		return nil, nil
+	}
+	v0 := ed.Variants[0]
+	var value ast.Expr
+	if len(v0.Payloads) == 0 {
+		value = &ast.Ident{Name: v0.Name, EnumName: recv.Name}
+	} else {
+		args := make([]ast.Expr, len(v0.Payloads))
+		for i, pt := range v0.Payloads {
+			dv, ok := defaultDeriveExpr(pt)
+			if !ok {
+				return nil, pt
+			}
+			args[i] = dv
+		}
+		value = &ast.Call{Callee: &ast.Ident{Name: v0.Name, EnumName: recv.Name}, Args: args}
+	}
+	return &ast.FuncDecl{
+		Name:       "default",
+		AssocType:  recv.Name,
+		ReturnType: recv,
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: value}}},
+	}, nil
+}
+
+// synthJson builds a field-wise `to_json` rendering a struct as a JSON
+// object: `{"f1":<f1.to_json()>,"f2":<f2.to_json()>}`. Each field
+// composes through its own `Json` impl, so a type serialises as soon as
+// its fields do. Field names are identifiers, so they need no escaping
+// (string *values* are escaped by `impl Json for string`). Returns the
+// canonical JSON text directly — `json_encode` is unnecessary.
+func synthJson(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
+	var expr ast.Expr = &ast.StringLit{Value: "{"}
+	add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
+	for i, f := range sd.Fields {
+		sep := ""
+		if i > 0 {
+			sep = ","
+		}
+		add(&ast.StringLit{Value: sep + "\"" + f.Name + "\":"})
+		add(methodCall(selfField(f.Name), "to_json"))
+	}
+	add(&ast.StringLit{Value: "}"})
+	return &ast.FuncDecl{
+		Name:       "to_json",
+		Receiver:   &ast.Param{Name: "self", Type: recv},
+		ReturnType: ast.StringType{},
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: expr}}},
+	}
+}
+
+// synthEnumJson builds a variant-wise `to_json` using the externally-
+// tagged convention: a unit variant renders as the JSON string of its
+// name (`"Empty"`); a payload variant renders as a single-key object
+// (`{"Circle":<p0.to_json()>}`), with multiple payloads collected into a
+// JSON array (`{"Rect":[<p0>,<p1>]}`). Mirrors the Go synthEnumDisplay
+// shape; composes through each payload's `Json` impl.
+func synthEnumJson(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
+	arms := make([]*ast.MatchArm, 0, len(ed.Variants))
+	for _, v := range ed.Variants {
+		bind := make([]string, len(v.Payloads))
+		for k := range v.Payloads {
+			bind[k] = fmt.Sprintf("__p%d", k)
+		}
+		var expr ast.Expr
+		add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
+		if len(v.FieldNames) > 0 {
+			// Named-field variant encodes as a nested object:
+			// `{"Rect":{"w":<p0>,"h":<p1>}}`.
+			expr = &ast.StringLit{Value: "{\"" + v.Name + "\":{"}
+			for k, fn := range v.FieldNames {
+				if k > 0 {
+					add(&ast.StringLit{Value: ","})
+				}
+				add(&ast.StringLit{Value: "\"" + fn + "\":"})
+				add(methodCall(&ast.Ident{Name: bind[k]}, "to_json"))
+			}
+			add(&ast.StringLit{Value: "}}"})
+		} else {
+			switch len(v.Payloads) {
+			case 0:
+				expr = &ast.StringLit{Value: "\"" + v.Name + "\""}
+			case 1:
+				expr = &ast.StringLit{Value: "{\"" + v.Name + "\":"}
+				add(methodCall(&ast.Ident{Name: bind[0]}, "to_json"))
+				add(&ast.StringLit{Value: "}"})
+			default:
+				expr = &ast.StringLit{Value: "{\"" + v.Name + "\":["}
+				for k := range v.Payloads {
+					if k > 0 {
+						add(&ast.StringLit{Value: ","})
+					}
+					add(methodCall(&ast.Ident{Name: bind[k]}, "to_json"))
+				}
+				add(&ast.StringLit{Value: "]}"})
+			}
+		}
+		arms = append(arms, &ast.MatchArm{VariantName: v.Name, Bindings: bind, Body: &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: expr}}}})
+	}
+	body := &ast.Block{Stmts: []ast.Stmt{
+		&ast.Match{Tag: &ast.Ident{Name: "self"}, Arms: arms},
+		&ast.Return{Value: &ast.StringLit{Value: ""}},
+	}}
+	return &ast.FuncDecl{
+		Name: "to_json", Receiver: &ast.Param{Name: "self", Type: recv},
+		ReturnType: ast.StringType{}, Body: body,
+	}
+}
+
 func demangle(s string) string {
 	return strings.Replace(s, "__", ".", 1)
 }
@@ -2917,6 +3828,16 @@ func (c *checker) checkOpaqueAccess(sd *ast.StructDecl, pos ast.Position, what s
 	}
 }
 
+// containsString reports whether `xs` contains `s`.
+func containsString(xs []string, s string) bool {
+	for _, x := range xs {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
 // resolveTraitMethodForParam looks up method `field` among the traits
 // bound on type parameter `paramName` in the function currently being
 // checked. Returns the matching trait-method signature and the trait
@@ -2926,18 +3847,109 @@ func (c *checker) resolveTraitMethodForParam(paramName, field string) (ast.Trait
 	if c.current == nil {
 		return ast.TraitMethod{}, "", false
 	}
-	for _, traitName := range c.current.Bounds[paramName] {
+	// Expand the bound traits with their supertraits: a `T: Ord` bound
+	// also exposes the methods of Ord's supertraits (e.g. Eq). See
+	// docs/TRAITS.md.
+	// A generic-trait bound (`T: From[i32]`) carries type args parallel to
+	// the direct bounds; map each direct trait to its args so the method
+	// signature can be specialised (`from(v: T)` → `from(v: i32)`).
+	direct := c.current.Bounds[paramName]
+	argsFor := map[string][]ast.Type{}
+	if ba := c.current.BoundArgs[paramName]; len(ba) == len(direct) {
+		for i, tn := range direct {
+			if len(ba[i]) > 0 {
+				argsFor[tn] = ba[i]
+			}
+		}
+	}
+	for _, traitName := range c.expandTraits(direct) {
 		td, ok := c.info.Traits[traitName]
 		if !ok {
 			continue
 		}
 		for _, m := range td.Methods {
 			if m.Name == field {
+				if args := argsFor[traitName]; len(args) > 0 && len(td.TypeParams) == len(args) {
+					sub := make(map[string]ast.Type, len(args))
+					for i, tp := range td.TypeParams {
+						sub[tp] = args[i]
+					}
+					m = substTraitMethodTypeParams(m, sub)
+				}
 				return m, traitName, true
 			}
 		}
 	}
 	return ast.TraitMethod{}, "", false
+}
+
+// substTraitMethodTypeParams returns a copy of trait method `m` with the
+// trait's type parameters substituted (via substByName) in its parameter
+// and result types — used to specialise a generic-trait bound's method to
+// the bound's type arguments. See docs/TRAITS.md.
+func substTraitMethodTypeParams(m ast.TraitMethod, sub map[string]ast.Type) ast.TraitMethod {
+	out := m
+	out.Params = make([]ast.Param, len(m.Params))
+	for i, p := range m.Params {
+		p.Type = substByName(p.Type, sub)
+		out.Params[i] = p
+	}
+	out.Result = substByName(m.Result, sub)
+	return out
+}
+
+// collectTraitSupers appends `name` and all its transitive supertraits to
+// *acc (deduped via seen, which also breaks cycles), following
+// TraitDecl.Supertraits.
+func (c *checker) collectTraitSupers(name string, seen map[string]bool, acc *[]string) {
+	if seen[name] {
+		return
+	}
+	seen[name] = true
+	*acc = append(*acc, name)
+	if td, ok := c.info.Traits[name]; ok {
+		for _, sup := range td.Supertraits {
+			c.collectTraitSupers(sup, seen, acc)
+		}
+	}
+}
+
+// traitInItsOwnSupers reports whether `name` is reachable from its own
+// supertraits — i.e. the supertrait graph has a cycle through `name`
+// (`trait A: A`, or `A: B` with `B: A`).
+func (c *checker) traitInItsOwnSupers(name string) bool {
+	seen := map[string]bool{}
+	var stack []string
+	if td, ok := c.info.Traits[name]; ok {
+		stack = append(stack, td.Supertraits...)
+	}
+	for len(stack) > 0 {
+		cur := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if cur == name {
+			return true
+		}
+		if seen[cur] {
+			continue
+		}
+		seen[cur] = true
+		if td, ok := c.info.Traits[cur]; ok {
+			stack = append(stack, td.Supertraits...)
+		}
+	}
+	return false
+}
+
+// expandTraits returns `traits` plus all their transitive supertraits,
+// deduplicated. Each trait is followed by its supertraits, so the order
+// is deterministic. See docs/TRAITS.md.
+func (c *checker) expandTraits(traits []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range traits {
+		c.collectTraitSupers(t, seen, &out)
+	}
+	return out
 }
 
 func (c *checker) methodVisibleHere(mangled string) bool {
@@ -2961,12 +3973,125 @@ func (c *checker) methodVisibleHere(mangled string) bool {
 	return c.info.ModuleImports[c.current.SourceModule][methodSrc]
 }
 
+// methodImplementsTrait reports whether calling `methodName` on receiver
+// type `typeName` resolves to a *trait-impl* method — i.e. some trait
+// declares a method of that name and `typeName` implements that trait.
+// Trait-impl methods are part of the public trait contract (coherent +
+// orphan-checked), so unlike a module's *inherent* methods (which
+// methodVisibleHere gates by the import graph) they are callable wherever
+// the receiver type flows. This is what lets a bounded generic method
+// defined in one module — e.g. std/json's `(xs: T[]) to_json[T: Json]()`
+// — dispatch `xs[i].to_json()` to a *user* type's derived impl after the
+// monomorphiser substitutes T and re-checks the clone from the defining
+// module's context (where the user module isn't imported).
+func (c *checker) methodImplementsTrait(typeName, methodName string) bool {
+	for traitName, td := range c.info.Traits {
+		if !c.info.Impls[traitName][typeName] {
+			continue
+		}
+		for _, m := range td.Methods {
+			if m.Name == methodName {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// displayDispatchTypeName maps a concrete value type to the receiver name
+// `to_string` (and other trait methods) dispatch under — mirroring the
+// scalar/struct/enum mapping in the method-call path. Returns "" for types
+// that can't carry a `to_string` (void, tuples, raw arrays, …).
+func displayDispatchTypeName(t ast.Type) string {
+	switch x := t.(type) {
+	case ast.StructType:
+		return x.Name
+	case ast.EnumType:
+		return x.Name
+	case ast.StringType:
+		return "string"
+	case ast.BoolType:
+		return "boolean"
+	case ast.NumberType:
+		switch {
+		case x.NormalWidth() == 64 && x.IsSigned():
+			return "i64"
+		case x.NormalWidth() == 64 && !x.IsSigned():
+			return "u64"
+		case !x.IsSigned():
+			return "u32"
+		default:
+			return "i32"
+		}
+	case ast.FloatType:
+		if x.NormalWidth() == 64 {
+			return "f64"
+		}
+		return "f32"
+	}
+	return ""
+}
+
+// typeImplementsDisplay reports whether a value of type t can be rendered via
+// the Display spine — i.e. `t.to_string(): string` resolves in the current
+// context. Drives the auto-`.to_string()` rewrite for `print` / `write` /
+// `eprint` (issue #2696): a bounded type parameter (`T: Display`), a
+// `dyn Display`-style trait object, or a concrete struct/enum/scalar with a
+// visible (or trait-impl) `to_string` method all qualify.
+func (c *checker) typeImplementsDisplay(t ast.Type) bool {
+	switch x := t.(type) {
+	case ast.ParamType:
+		_, _, found := c.resolveTraitMethodForParam(x.Name, "to_string")
+		return found
+	case ast.DynTraitType:
+		// Display via any trait in the set — `to_string` may be declared
+		// by any of the traits the object spans.
+		for _, tr := range x.Traits {
+			td, ok := c.info.Traits[tr]
+			if !ok {
+				continue
+			}
+			for _, m := range td.Methods {
+				if m.Name == "to_string" {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	tn := displayDispatchTypeName(t)
+	if tn == "" {
+		return false
+	}
+	mangled, ok := c.info.Methods[tn+".to_string"]
+	if !ok {
+		return false
+	}
+	return c.methodVisibleHere(mangled) || c.methodImplementsTrait(tn, "to_string")
+}
+
 type checker struct {
 	info        *Info
 	errors      []error
 	current     *ast.FuncDecl
 	loopDepth   int
 	switchDepth int
+	// tryConvN uniquifies the temp-var name in the error-converting `?`
+	// desugar (TryOp.Lowered). See #3234.
+	tryConvN int
+	// inferReturns, when non-nil, accumulates the type of every
+	// `return EXPR` statement checked in the body of the CURRENT
+	// function — set up by checkFunction only for an unannotated
+	// function (current.ReturnUnannotated) so its return type can be
+	// inferred from the unified return-expression types. A nil entry
+	// records a bare `return;`. It is pointer-saved/restored around
+	// each checkFunction so nested function/lambda checks (which set
+	// their own current) don't cross-contaminate. See inferReturnType.
+	inferReturns *[]ast.Type
+	// loopLabels is the stack of in-scope loop labels (innermost last),
+	// pushed while checking a labeled `while`/`for`/`loop` body so a
+	// `break label` / `continue label` can be validated against it.
+	loopLabels []string
 
 	// ownFuncs maps a function name to its per-parameter `own` flags (only
 	// recorded for functions that have at least one owned parameter). Built
@@ -2983,6 +4108,17 @@ type checker struct {
 	// used to let `[Circle{}, Rect{}]` coerce its (differently-typed)
 	// elements to a `dyn Trait[]` destination. See docs/DYN-TRAITS.md.
 	elemHint ast.Type
+
+	// expectedType is the destination/result type a generic call's
+	// return-position type parameters can be inferred from when the
+	// arguments don't pin them. Set around `checkExpr` of a `var x:
+	// T = call(...)` initializer and a `return call(...)` value;
+	// the generic-call completion seeds its substitution from this
+	// (return type ↔ expectedType) before reporting "could not
+	// infer". A call clears it before checking its own arguments so
+	// it never leaks into nested calls. Enables return-position
+	// inference like `var s: Set[i32] = set_new();` (#2668).
+	expectedType ast.Type
 
 	// requireMapImport is set when the program was loaded through
 	// modload (LoadedStdlibPaths != nil) but `core/map` isn't in the
@@ -3339,6 +4475,15 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 		return
 	}
 	switch t := (*slot).(type) {
+	case ast.ProjType:
+		// Resolve the base so `T::Item`'s base StructType{T} becomes
+		// ParamType{T} and `Self::Item` stays SelfType. The projection
+		// itself is resolved to its binding later (resolveProjections),
+		// once impl conformance has recorded the bindings.
+		base := t.Base
+		c.resolveType(&base, params)
+		*slot = ast.ProjType{Base: base, Name: t.Name}
+		return
 	case ast.StructType:
 		if params[t.Name] {
 			*slot = ast.ParamType{Name: t.Name}
@@ -3508,6 +4653,453 @@ func (c *checker) variantEnumList(name string) string {
 // "couldn't fully resolve" cases. Recurses into composite types
 // (arrays, function types, generic enum args) so a payload like
 // `Option[T]` resolves to `Option[number]` when T=number.
+// arithOpMethod maps a binary arithmetic / bitwise operator to the
+// conventionally-named method that overloads it on a composite type,
+// mirroring `==`→eq / `<`→cmp. See compositeOpOverload / #2706.
+var arithOpMethod = map[string]string{
+	"+": "add", "-": "sub", "*": "mul", "/": "div", "%": "rem",
+	"&": "bitand", "|": "bitor", "^": "bitxor", "<<": "shl", ">>": "shr",
+}
+
+// compositeOpOverload handles operator overloading for a binary operator
+// whose operands are the same composite (struct / enum) type: it desugars
+// `a <op> b` to the type's conventionally-named method (`arithOpMethod`),
+// stashing the checked call on n.ArithCall (swapped in by the post-check
+// rewrite) and returning its result type. handled=false means the operands
+// aren't a matching composite pair, so the caller falls through to the
+// numeric path. A composite operand without the method is a clear E009.
+// tryConvertErrToDyn builds the desugar for an error-converting `?`: a
+// `Result[T, E]` propagated through a function returning `Result[_, dyn
+// Trait]` (E implements Trait) lowers to a block-expr that maps the error
+// to `dyn Trait` then applies an ordinary exact-match `?`:
+//
+//	{ var __t: Result[T, dyn Trait] = match (inner) {
+//	    Ok(__ok)  => Ok(__ok),
+//	    Err(__e)  => Err(__e as dyn Trait),
+//	  }; __t? }
+//
+// It type-checks the desugar so every later pass sees fully-typed nodes
+// (the cast's DynCoercion recorded, the inner `?` stamped). Returns
+// (nil, false) when the target error isn't a `dyn Trait` E implements.
+// See #3234.
+func (c *checker) tryConvertErrToDyn(n *ast.TryOp, srcEnum, retEnum ast.EnumType, s *scope) (ast.Expr, bool) {
+	dt, ok := retEnum.Args[1].(ast.DynTraitType)
+	if !ok {
+		return nil, false
+	}
+	tn, ok := methodTypeName(srcEnum.Args[1])
+	if !ok {
+		return nil, false
+	}
+	// E must implement EVERY trait in the dyn-error set — `dyn A + B` ⇐ E iff
+	// E impls A AND B (the same impl-all gate the multi-trait coercion uses).
+	// A single-trait `dyn Error` is the 1-element case.
+	if !c.implementsAllDynTraits(dt, tn) {
+		return nil, false
+	}
+	c.tryConvN++
+	tmp := fmt.Sprintf("__try_dyn_%d", c.tryConvN)
+	okBind := fmt.Sprintf("__try_ok_%d", c.tryConvN)
+	errBind := fmt.Sprintf("__try_err_%d", c.tryConvN)
+	p := n.P
+	resultDyn := ast.EnumType{Name: "Result", Args: []ast.Type{srcEnum.Args[0], dt}}
+	mapMatch := &ast.MatchExpr{P: p, Tag: n.Inner, Arms: []*ast.MatchExprArm{
+		{P: p, VariantName: "Ok", Bindings: []string{okBind},
+			Body: &ast.Call{P: p, Callee: &ast.Ident{P: p, Name: "Ok"}, Args: []ast.Expr{&ast.Ident{P: p, Name: okBind}}}},
+		{P: p, VariantName: "Err", Bindings: []string{errBind},
+			Body: &ast.Call{P: p, Callee: &ast.Ident{P: p, Name: "Err"}, Args: []ast.Expr{
+				&ast.CastExpr{P: p, Inner: &ast.Ident{P: p, Name: errBind}, Target: dt}}}},
+	}}
+	block := &ast.BlockExpr{P: p, Stmts: []ast.Stmt{
+		&ast.Var{P: p, Name: tmp, Type: resultDyn, Init: mapMatch},
+	}, Tail: &ast.TryOp{P: p, Inner: &ast.Ident{P: p, Name: tmp}}}
+	if t := c.checkExpr(block, s); t == nil {
+		return nil, false
+	}
+	return block, true
+}
+
+// tryConvertErrViaFrom builds the desugar for a `From`-based error-converting
+// `?`: when the function's error type `E2` has an associated `from(E1): E2`
+// (i.e. `impl From[E1] for E2`), a `Result[_, E1]` propagated through it maps
+// `Err(e)` to `Err(E2.from(e))`. Structural by the `from` constructor's
+// signature (so it's module-agnostic). Returns (nil, false) when E2 isn't a
+// struct/enum with a matching `from`. See #2674.
+func (c *checker) tryConvertErrViaFrom(n *ast.TryOp, srcEnum, retEnum ast.EnumType, s *scope) (ast.Expr, bool) {
+	srcErr := srcEnum.Args[1]
+	fnErr := retEnum.Args[1]
+	tn, ok := methodTypeName(fnErr)
+	if !ok {
+		return nil, false
+	}
+	switch fnErr.(type) {
+	case ast.StructType, ast.EnumType:
+	default:
+		return nil, false
+	}
+	// E2 must have an associated `from(E1): E2`.
+	sig, ok := c.info.FuncSigs["__assoc_"+tn+"_from"]
+	if !ok || len(sig.Params) != 1 || !ast.Equal(sig.Params[0], srcErr) || !ast.Equal(sig.Result, fnErr) {
+		return nil, false
+	}
+	c.tryConvN++
+	tmp := fmt.Sprintf("__try_from_%d", c.tryConvN)
+	okBind := fmt.Sprintf("__try_ok_%d", c.tryConvN)
+	errBind := fmt.Sprintf("__try_err_%d", c.tryConvN)
+	p := n.P
+	resultConv := ast.EnumType{Name: "Result", Args: []ast.Type{srcEnum.Args[0], fnErr}}
+	// `E2.from(__e)` — an associated-function call (FieldAccess on the type name).
+	fromCall := &ast.Call{P: p,
+		Callee: &ast.FieldAccess{P: p, Target: &ast.Ident{P: p, Name: tn}, Field: "from"},
+		Args:   []ast.Expr{&ast.Ident{P: p, Name: errBind}}}
+	mapMatch := &ast.MatchExpr{P: p, Tag: n.Inner, Arms: []*ast.MatchExprArm{
+		{P: p, VariantName: "Ok", Bindings: []string{okBind},
+			Body: &ast.Call{P: p, Callee: &ast.Ident{P: p, Name: "Ok"}, Args: []ast.Expr{&ast.Ident{P: p, Name: okBind}}}},
+		{P: p, VariantName: "Err", Bindings: []string{errBind},
+			Body: &ast.Call{P: p, Callee: &ast.Ident{P: p, Name: "Err"}, Args: []ast.Expr{fromCall}}},
+	}}
+	block := &ast.BlockExpr{P: p, Stmts: []ast.Stmt{
+		&ast.Var{P: p, Name: tmp, Type: resultConv, Init: mapMatch},
+	}, Tail: &ast.TryOp{P: p, Inner: &ast.Ident{P: p, Name: tmp}}}
+	if t := c.checkExpr(block, s); t == nil {
+		return nil, false
+	}
+	return block, true
+}
+
+func (c *checker) compositeOpOverload(n *ast.Binary, lt, rt ast.Type, s *scope) (ast.Type, bool) {
+	if lt == nil || !ast.Equal(lt, rt) {
+		return nil, false
+	}
+	switch lt.(type) {
+	case ast.StructType, ast.EnumType:
+	default:
+		return nil, false
+	}
+	opMethod := arithOpMethod[n.Op]
+	tn, _ := methodTypeName(lt)
+	if mangled, ok := c.info.Methods[tn+"."+opMethod]; ok && c.methodVisibleHere(mangled) {
+		call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: opMethod}, Args: []ast.Expr{n.Right}}
+		rtt := c.checkExpr(call, s)
+		n.ArithCall = call
+		return rtt, true
+	}
+	c.errfCode(n.P, "E009", "operator %q is not defined for %s — implement `function (self: %s) %s(other: %s): %s` to overload it", n.Op, lt, tn, opMethod, tn, tn)
+	return lt, true
+}
+
+// resolveProj resolves an associated-type projection whose base is a
+// concrete type (`Foo::Item`) to the type the impl binds it to, recursing
+// into composite types. A projection with an abstract base (`Self::Item`,
+// `T::Item`) is left intact (its base is still resolved) — those resolve
+// once the base becomes concrete (impl conformance / monomorph re-check).
+// Requires c.info.AssocBindings, so it's only meaningful after the
+// conformance pass. See docs/ASSOCIATED-TYPES.md.
+func (c *checker) resolveProj(t ast.Type) ast.Type {
+	switch x := t.(type) {
+	case ast.ProjType:
+		base := c.resolveProj(x.Base)
+		if tn, ok := methodTypeName(base); ok {
+			if m, ok := c.info.AssocBindings[tn]; ok {
+				if bound, ok := m[x.Name]; ok {
+					return c.resolveProj(bound)
+				}
+			}
+		}
+		return ast.ProjType{Base: base, Name: x.Name}
+	case ast.ArrayType:
+		return ast.ArrayType{Elem: c.resolveProj(x.Elem)}
+	case ast.SliceType:
+		return ast.SliceType{Elem: c.resolveProj(x.Elem)}
+	case ast.TupleType:
+		out := ast.TupleType{Elems: make([]ast.Type, len(x.Elems))}
+		for i := range x.Elems {
+			out.Elems[i] = c.resolveProj(x.Elems[i])
+		}
+		return out
+	case ast.StructType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = c.resolveProj(x.Args[i])
+		}
+		return ast.StructType{Name: x.Name, Args: args}
+	case ast.EnumType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = c.resolveProj(x.Args[i])
+		}
+		return ast.EnumType{Name: x.Name, Args: args}
+	case *ast.FuncType:
+		out := &ast.FuncType{Result: c.resolveProj(x.Result)}
+		for _, p := range x.Params {
+			out.Params = append(out.Params, c.resolveProj(p))
+		}
+		return out
+	}
+	return t
+}
+
+// resolveProjWith resolves associated-type projections using an explicit
+// per-impl bindings map (assoc name → type), resolving any ProjType whose
+// Name is bound regardless of base. Used in conformance comparison, where
+// every projection refers to the impl's own associated types (the trait
+// signature's `Self::Item` after Self→impl-type, and the impl method's
+// own `Self::Item`). See docs/ASSOCIATED-TYPES.md.
+func (c *checker) resolveProjWith(t ast.Type, bindings map[string]ast.Type) ast.Type {
+	switch x := t.(type) {
+	case ast.ProjType:
+		if b, ok := bindings[x.Name]; ok {
+			return c.resolveProjWith(b, bindings)
+		}
+		return ast.ProjType{Base: c.resolveProjWith(x.Base, bindings), Name: x.Name}
+	case ast.ArrayType:
+		return ast.ArrayType{Elem: c.resolveProjWith(x.Elem, bindings)}
+	case ast.SliceType:
+		return ast.SliceType{Elem: c.resolveProjWith(x.Elem, bindings)}
+	case ast.TupleType:
+		out := ast.TupleType{Elems: make([]ast.Type, len(x.Elems))}
+		for i := range x.Elems {
+			out.Elems[i] = c.resolveProjWith(x.Elems[i], bindings)
+		}
+		return out
+	case ast.StructType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = c.resolveProjWith(x.Args[i], bindings)
+		}
+		return ast.StructType{Name: x.Name, Args: args}
+	case ast.EnumType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = c.resolveProjWith(x.Args[i], bindings)
+		}
+		return ast.EnumType{Name: x.Name, Args: args}
+	case *ast.FuncType:
+		out := &ast.FuncType{Result: c.resolveProjWith(x.Result, bindings)}
+		for _, p := range x.Params {
+			out.Params = append(out.Params, c.resolveProjWith(p, bindings))
+		}
+		return out
+	}
+	return t
+}
+
+// resolveProjections rewrites every concrete-base associated-type
+// projection in the program's function signatures + bodies to its bound
+// type, now that the conformance pass has filled c.info.AssocBindings.
+// Runs each Check (incl. the monomorph re-check, which is what resolves a
+// `T::Item` that monomorph substituted to a concrete `Foo::Item`).
+func (c *checker) resolveProjections(prog *ast.Program) {
+	if len(c.info.AssocBindings) == 0 {
+		return
+	}
+	for name, sig := range c.info.FuncSigs {
+		c.info.FuncSigs[name] = c.resolveProj(sig).(*ast.FuncType)
+	}
+	for _, fn := range prog.Funcs {
+		fn.ReturnType = c.resolveProj(fn.ReturnType)
+		for i := range fn.Params {
+			fn.Params[i].Type = c.resolveProj(fn.Params[i].Type)
+		}
+		if fn.Receiver != nil {
+			fn.Receiver.Type = c.resolveProj(fn.Receiver.Type)
+		}
+		if fn.Body != nil {
+			c.resolveProjInBlock(fn.Body)
+		}
+	}
+}
+
+// resolveProjInBlock walks a body applying resolveProj to every type
+// annotation slot (var decls, match binding types, lambda params/return,
+// cast targets) so projections written inside bodies (a generic's
+// `var x: T::Item`, concrete after monomorph) resolve too.
+func (c *checker) resolveProjInBlock(b *ast.Block) {
+	if b == nil {
+		return
+	}
+	for _, st := range b.Stmts {
+		c.resolveProjInStmt(st)
+	}
+}
+
+func (c *checker) resolveProjInStmt(s ast.Stmt) {
+	switch x := s.(type) {
+	case *ast.Var:
+		if x.Type != nil {
+			x.Type = c.resolveProj(x.Type)
+		}
+		c.resolveProjInExpr(x.Init)
+	case *ast.ExprStmt:
+		c.resolveProjInExpr(x.Expr)
+	case *ast.Return:
+		c.resolveProjInExpr(x.Value)
+	case *ast.Block:
+		c.resolveProjInBlock(x)
+	case *ast.If:
+		c.resolveProjInExpr(x.Cond)
+		c.resolveProjInStmt(x.Then)
+		if x.Else != nil {
+			c.resolveProjInStmt(x.Else)
+		}
+	case *ast.While:
+		c.resolveProjInExpr(x.Cond)
+		c.resolveProjInStmt(x.Body)
+	case *ast.For:
+		if x.Init != nil {
+			c.resolveProjInStmt(x.Init)
+		}
+		c.resolveProjInExpr(x.Cond)
+		if x.Step != nil {
+			c.resolveProjInStmt(x.Step)
+		}
+		c.resolveProjInStmt(x.Body)
+	case *ast.Match:
+		c.resolveProjInExpr(x.Tag)
+		for _, arm := range x.Arms {
+			for i := range arm.BindingTypes {
+				if arm.BindingTypes[i] != nil {
+					arm.BindingTypes[i] = c.resolveProj(arm.BindingTypes[i])
+				}
+			}
+			c.resolveProjInBlock(arm.Body)
+		}
+	}
+}
+
+func (c *checker) resolveProjInExpr(e ast.Expr) {
+	switch x := e.(type) {
+	case nil:
+		return
+	case *ast.CastExpr:
+		x.Target = c.resolveProj(x.Target)
+		c.resolveProjInExpr(x.Inner)
+	case *ast.Assign:
+		c.resolveProjInExpr(x.Target)
+		c.resolveProjInExpr(x.Value)
+	case *ast.Lambda:
+		for i := range x.Params {
+			x.Params[i].Type = c.resolveProj(x.Params[i].Type)
+		}
+		x.ReturnType = c.resolveProj(x.ReturnType)
+		c.resolveProjInBlock(x.Body)
+	case *ast.Binary:
+		c.resolveProjInExpr(x.Left)
+		c.resolveProjInExpr(x.Right)
+	case *ast.Unary:
+		c.resolveProjInExpr(x.Operand)
+	case *ast.Call:
+		c.resolveProjInExpr(x.Callee)
+		for _, a := range x.Args {
+			c.resolveProjInExpr(a)
+		}
+	case *ast.Index:
+		c.resolveProjInExpr(x.Array)
+		c.resolveProjInExpr(x.Idx)
+	case *ast.FieldAccess:
+		c.resolveProjInExpr(x.Target)
+	}
+}
+
+// substByName substitutes a type whose bare name (StructType / EnumType
+// with no args, or ParamType) is a key in `sub` — used to bind a generic
+// trait's type parameters to an impl's TraitArgs during conformance. A
+// trait method signature spells a trait param `T` as an unresolved
+// `StructType{Name:"T"}` (trait methods aren't resolved against the
+// trait's params), so plain ParamType substitution wouldn't catch it.
+func substByName(t ast.Type, sub map[string]ast.Type) ast.Type {
+	switch x := t.(type) {
+	case ast.StructType:
+		if len(x.Args) == 0 {
+			if v, ok := sub[x.Name]; ok {
+				return v
+			}
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = substByName(x.Args[i], sub)
+		}
+		return ast.StructType{Name: x.Name, Args: args}
+	case ast.EnumType:
+		if len(x.Args) == 0 {
+			if v, ok := sub[x.Name]; ok {
+				return v
+			}
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = substByName(x.Args[i], sub)
+		}
+		return ast.EnumType{Name: x.Name, Args: args}
+	case ast.ParamType:
+		if v, ok := sub[x.Name]; ok {
+			return v
+		}
+		return x
+	case ast.ArrayType:
+		return ast.ArrayType{Elem: substByName(x.Elem, sub)}
+	case ast.SliceType:
+		return ast.SliceType{Elem: substByName(x.Elem, sub)}
+	case ast.TupleType:
+		out := ast.TupleType{Elems: make([]ast.Type, len(x.Elems))}
+		for i := range x.Elems {
+			out.Elems[i] = substByName(x.Elems[i], sub)
+		}
+		return out
+	case *ast.FuncType:
+		out := &ast.FuncType{Result: substByName(x.Result, sub)}
+		for _, p := range x.Params {
+			out.Params = append(out.Params, substByName(p, sub))
+		}
+		return out
+	case ast.ProjType:
+		return ast.ProjType{Base: substByName(x.Base, sub), Name: x.Name}
+	}
+	return t
+}
+
+// typeArgsEqual reports whether two type-argument lists are element-wise
+// structurally equal (used to match a generic-trait bound's args against
+// an impl's TraitArgs). See docs/TRAITS.md.
+func typeArgsEqual(a, b []ast.Type) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !ast.Equal(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// traitArgsStr renders a trait's type-argument list as `[A, B]` (empty
+// string for none) for diagnostics like `From[i32]`.
+func traitArgsStr(args []ast.Type) string {
+	if len(args) == 0 {
+		return ""
+	}
+	parts := make([]string, len(args))
+	for i, a := range args {
+		parts[i] = demangle(a.String())
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
 func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {
 	if t == nil {
 		return nil
@@ -3552,6 +5144,11 @@ func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {
 			out.Params = append(out.Params, substituteType(p, sub))
 		}
 		return out
+	case ast.ProjType:
+		// Substitute inside the base (`T::Item` → `IntBox::Item` when
+		// T→IntBox); the concrete-base projection is resolved to its
+		// binding by resolveProj. See docs/ASSOCIATED-TYPES.md.
+		return ast.ProjType{Base: substituteType(x.Base, sub), Name: x.Name}
 	}
 	return t
 }
@@ -3786,6 +5383,33 @@ func (c *checker) maybeWrapForUnion(dst ast.Type, holder *ast.Expr, srcType ast.
 	if holder == nil || *holder == nil {
 		return srcType
 	}
+	// dyn-trait coercion recording. Every concrete→`dyn Trait` boxing
+	// site routes through here (this is the implicit-coercion chokepoint
+	// the assignable() callers funnel through), so recording the
+	// (trait, concrete) pair against the holder expression here covers
+	// var init / assignment / argument / return / array-element /
+	// struct-field uniformly. Recording-only — unlike the union case
+	// below it does not rewrite the holder; the IR boxes it later. The
+	// gate mirrors assignable()'s dyn branch (concrete impls the trait,
+	// src is not already dyn). See docs/DYN-TRAITS.md §4.2.1.
+	if dt, ok := dst.(ast.DynTraitType); ok {
+		if _, isDyn := srcType.(ast.DynTraitType); !isDyn {
+			// Coercion gate: the concrete must implement EVERY trait in
+			// the set (`dyn A + B` ⇐ C iff C impls A AND B). Record the
+			// whole set so tree-shaking roots all the impl methods.
+			if tn, ok := methodTypeName(srcType); ok && c.implementsAllDynTraits(dt, tn) {
+				if c.info.DynCoercions == nil {
+					c.info.DynCoercions = map[ast.Expr]DynCoercion{}
+				}
+				c.info.DynCoercions[*holder] = DynCoercion{
+					Trait:    dt.Trait0(),
+					Traits:   dt.Traits,
+					Concrete: tn,
+				}
+			}
+		}
+		return srcType
+	}
 	du, dok := dst.(ast.EnumType)
 	if !dok {
 		return srcType
@@ -3824,12 +5448,67 @@ func (c *checker) maybeWrapForUnion(dst ast.Type, holder *ast.Expr, srcType ast.
 }
 
 // inStdlibContext reports whether the checker is currently inside a
-// stdlib/prelude function body, where the low-level usize escape-hatch
+// stdlib/stdlib function body, where the low-level usize escape-hatch
 // conversions in assignable are permitted. User code (c.current nil or a
 // non-stdlib module) must use an explicit `as` cast instead. See
 // docs/ADVERSARIAL-REVIEW-2026-06.md (F2).
 func (c *checker) inStdlibContext() bool {
 	return c.current != nil && strings.HasPrefix(c.current.SourceModule, "stdlib://")
+}
+
+// implementsAllDynTraits reports whether the concrete type named `tn`
+// implements EVERY trait in the `dyn` set — the impl-all coercion gate
+// for `dyn A + B` (a concrete coerces in iff it impls A AND B). The
+// single-trait case is just the 1-element loop.
+func (c *checker) implementsAllDynTraits(dt ast.DynTraitType, tn string) bool {
+	for i, tr := range dt.Traits {
+		if !c.info.Impls[tr][tn] {
+			return false
+		}
+		// For a generic trait the impl must match the pinned arguments:
+		// `BoxI: Container[i32]` coerces to `dyn Container[i32]` but not
+		// to `dyn Container[string]`. ImplTraitArgs records what the
+		// impl bound; an empty dyn-arg list (non-generic trait) skips it.
+		if want := dt.ArgsFor(i); len(want) > 0 {
+			if !typeArgsEqual(c.info.ImplTraitArgs[tr][tn], want) {
+				return false
+			}
+		}
+		// Pinned associated types must match the impl's binding too:
+		// `IntBox: Producer<Item=i32>` coerces to `dyn Producer[Item = i32]`
+		// but not `dyn Producer[Item = string]`. Info.AssocBindings records
+		// what the impl bound (keyed by concrete type then assoc name).
+		for _, b := range dt.AssocFor(i) {
+			got, ok := c.info.AssocBindings[tn][b.Name]
+			if !ok || !ast.Equal(got, b.Type) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// missingDynTraits returns a human-readable description of which trait(s)
+// in the `dyn` set the concrete type `src` fails to implement — used to
+// name the offending trait(s) in coercion-failure diagnostics. Returns
+// the single trait spelling for a 1-element gap (so the single-trait
+// message reads exactly as before).
+func (c *checker) missingDynTraits(dt ast.DynTraitType, src ast.Type) string {
+	tn, ok := methodTypeName(src)
+	if !ok {
+		return demangle(dt.Trait0())
+	}
+	var missing []string
+	for _, tr := range dt.Traits {
+		if !c.info.Impls[tr][tn] {
+			missing = append(missing, demangle(tr))
+		}
+	}
+	if len(missing) == 0 {
+		// Shouldn't happen on the failure path, but fall back to the set.
+		return demangle(dt.Trait0())
+	}
+	return strings.Join(missing, " + ")
 }
 
 func (c *checker) assignable(dst, src ast.Type) bool {
@@ -3848,7 +5527,9 @@ func (c *checker) assignable(dst, src ast.Type) bool {
 			return false // distinct dyn types: only Equal (handled above) assigns
 		}
 		if tn, ok := methodTypeName(src); ok {
-			return c.info.Impls[dt.Trait][tn]
+			// Impl-ALL: a concrete coerces to `dyn A + B` iff it impls
+			// every trait in the set.
+			return c.implementsAllDynTraits(dt, tn)
 		}
 		return false
 	}
@@ -3904,8 +5585,8 @@ func (c *checker) assignable(dst, src ast.Type) bool {
 	// Option[usize] / Option[V] cross-assign for the codegen
 	// alias boundary. `__method_Map_get(Map[K, V]): Option[V]`
 	// (user-facing) routes to `__map_get_impl(m: usize):
-	// Option[usize]` (prelude). The user-code Option[V] flows
-	// through the prelude's Option[usize] return without an
+	// Option[usize]` (stdlib). The user-code Option[V] flows
+	// through the stdlib's Option[usize] return without an
 	// explicit cast — same pointer, different type-level view.
 	if de, dok := dst.(ast.EnumType); dok {
 		if se, sok := src.(ast.EnumType); sok && de.Name == se.Name && len(de.Args) == len(se.Args) {
@@ -4115,6 +5796,17 @@ func (c *checker) checkFipFunctions(prog *ast.Program) {
 					return true
 				}
 				if x.Method != nil {
+					// `recv.with(i, v)` on an `own` array is the in-place
+					// element set (no size change → the COW unique-in-place
+					// branch, no allocation). It is the method-call form of
+					// the `arr[i] = v` write already allowed below, so it
+					// carries the same `own`-root uniqueness assumption. This
+					// is what lets the value-returning collection API
+					// (`arr = arr.with(i, v)`, post-E056) stay fip — e.g. the
+					// in-place insertion sorts.
+					if x.Method.Field == "with" && len(x.Args) > 0 && own[fipRootIdent(x.Args[0])] {
+						return true
+					}
 					if !fipNonAllocMethods[x.Method.Field] {
 						c.errfCode(x.Pos(), "E053", "`fip` function %q may not call method %q (not proven allocation-free)", fn.Name, x.Method.Field)
 					}
@@ -4237,7 +5929,7 @@ func (c *checker) collectNames(s *scope) []string {
 }
 
 // isUserFuncOrLocal reports whether `name` is bound by an in-scope
-// variable or a user-declared (or prelude-injected) function. Callers
+// variable or a user-declared (or checker-synthesised) function. Callers
 // use it to disambiguate bare identifiers from same-named enum
 // variants — a user-defined `Red` should win over `Color.Red`.
 func (c *checker) isUserFuncOrLocal(name string, s *scope) bool {
@@ -4305,6 +5997,21 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 		return
 	}
 
+	// Return-type inference: a plain (non-method, non-generic) function
+	// that wrote no `: Type` accumulates its return-expression types
+	// while the body is checked, then unifies them into a concrete
+	// return type (replacing the defaulted void). Methods / generics /
+	// associated functions are out of scope for now and keep void.
+	infer := fn.ReturnUnannotated && fn.Receiver == nil && fn.MethodRecv == "" && fn.AssocType == "" && len(fn.TypeParams) == 0
+	prevInfer := c.inferReturns
+	var rets []ast.Type
+	if infer {
+		c.inferReturns = &rets
+	} else {
+		c.inferReturns = nil
+	}
+	defer func() { c.inferReturns = prevInfer }()
+
 	root := newScope(nil)
 	for _, p := range fn.Params {
 		if _, dup := root.names[p.Name]; dup {
@@ -4313,7 +6020,11 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 		root.names[p.Name] = p.Type
 	}
 	c.checkBlock(fn.Body, root)
+	if infer {
+		c.inferReturnType(fn, rets)
+	}
 	c.checkOwnedParams(fn)
+	c.checkSliceEscape(fn)
 	// A value-returning function must return on every path. Falling off
 	// the end leaves the result undefined (the interpreter yields Void
 	// where a real value is expected and crashes downstream; a scalar
@@ -4322,6 +6033,168 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	if fn.Body != nil && !isVoidReturn(fn.ReturnType) && !funcBodyExits(fn.Body) {
 		c.errfCode(fn.P, "E052", "missing return: %q has return type %s but can fall off the end without returning a value", fn.Name, fn.ReturnType.String())
 	}
+}
+
+// checkSliceEscape implements E063: a non-owning `[T]` slice must not
+// outlive the storage it views. A slice is a `{data_ptr, len}` pair
+// that holds no RC reference to its parent, so returning a slice whose
+// backing array is function-local is a use-after-free the moment the
+// frame's last owning reference drops — the documented dangling case
+// in docs/LANGUAGE-DIRECTION.md's "Slice / view lifetime contract".
+//
+// The rule is conservative and low-false-positive: a return is rejected
+// only when we can *prove* the slice views storage owned by this
+// function — an array literal or a locally-declared owned array (chased
+// through slice-typed local bindings and sub-slices). String slices are
+// copies (`__str_slice` yields a fresh owned string), and slices of a
+// parameter / receiver stay valid as long as the caller's owner does, so
+// neither is flagged. Anything whose origin we can't pin down (a call
+// result, a global, a field read) is assumed safe rather than rejected.
+func (c *checker) checkSliceEscape(fn *ast.FuncDecl) {
+	if fn.Body == nil {
+		return
+	}
+	params := map[string]bool{}
+	for _, p := range fn.Params {
+		params[p.Name] = true
+	}
+	locals := map[string]*ast.Var{}
+	for _, v := range c.info.Locals[fn] {
+		locals[v.Name] = v
+	}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		ret, ok := n.(*ast.Return)
+		if !ok || ret.Value == nil {
+			return true
+		}
+		if c.sliceBorrowsLocal(ret.Value, locals, params, map[string]bool{}) {
+			c.errfCode(ret.P, "E063", "returning a `[T]` slice that views function-local storage: the backing array is reclaimed when %q returns, leaving a dangling view — return an owned array (`T[]`) or slice a parameter instead", fn.Name)
+		}
+		return true
+	})
+}
+
+// sliceBorrowsLocal reports whether expr evaluates to a `[T]` slice
+// whose backing storage is local to the current function (so it dies
+// when the function returns). `visiting` guards the binding-chase
+// recursion against cycles. See checkSliceEscape.
+func (c *checker) sliceBorrowsLocal(expr ast.Expr, locals map[string]*ast.Var, params, visiting map[string]bool) bool {
+	switch e := expr.(type) {
+	case *ast.SliceExpr:
+		if e.IsString {
+			// String slicing copies into a fresh owned string.
+			return false
+		}
+		return c.sourceIsLocalStorage(e.Source, locals, params, visiting)
+	case *ast.Ident:
+		if params[e.Name] {
+			return false
+		}
+		v, ok := locals[e.Name]
+		if !ok || v.Init == nil || visiting[e.Name] {
+			return false
+		}
+		visiting[e.Name] = true
+		defer delete(visiting, e.Name)
+		return c.sliceBorrowsLocal(v.Init, locals, params, visiting)
+	}
+	return false
+}
+
+// sourceIsLocalStorage reports whether src names storage owned by the
+// current function — an array literal, a locally-declared owned array,
+// or a (sub)slice that itself views such storage. Parameters and
+// receivers are caller-owned, so a slice of them is excluded.
+func (c *checker) sourceIsLocalStorage(src ast.Expr, locals map[string]*ast.Var, params, visiting map[string]bool) bool {
+	switch s := src.(type) {
+	case *ast.ArrayLit:
+		return true
+	case *ast.SliceExpr:
+		if s.IsString {
+			return false
+		}
+		return c.sourceIsLocalStorage(s.Source, locals, params, visiting)
+	case *ast.Ident:
+		if params[s.Name] || visiting[s.Name] {
+			return false
+		}
+		v, ok := locals[s.Name]
+		if !ok {
+			return false
+		}
+		if _, isArr := v.Type.(ast.ArrayType); isArr {
+			// A locally-declared owned array is the backing storage.
+			return true
+		}
+		if _, isSlice := v.Type.(ast.SliceType); isSlice && v.Init != nil {
+			// A local slice borrows whatever its initializer views.
+			visiting[s.Name] = true
+			defer delete(visiting, s.Name)
+			return c.sliceBorrowsLocal(v.Init, locals, params, visiting)
+		}
+		return false
+	}
+	return false
+}
+
+// inferReturnType folds the return-expression types collected while
+// checking an unannotated function's body (rets; a nil entry is a bare
+// `return;`) into a single return type and stamps it on the FuncDecl +
+// its registered signature. Only fires for functions that defaulted to
+// void, which currently error if they return a value — so this never
+// changes the meaning of already-valid code.
+func (c *checker) inferReturnType(fn *ast.FuncDecl, rets []ast.Type) {
+	var unified ast.Type
+	hasVoid := false
+	for _, t := range rets {
+		if t == nil {
+			hasVoid = true
+			continue
+		}
+		if unified == nil {
+			unified = t
+			continue
+		}
+		if u, ok := unifyReturnType(unified, t); ok {
+			unified = u
+		} else {
+			c.errfCode(fn.P, "E002", "cannot infer return type for %q: conflicting return types %s and %s; add an explicit return type", fn.Name, unified, t)
+			// Keep the first type so downstream has something concrete.
+		}
+	}
+	if unified == nil {
+		// No value returns (only bare `return;` or none): stays void.
+		return
+	}
+	if hasVoid {
+		c.errfCode(fn.P, "E012", "function %q returns a value on some paths but not others; add an explicit return type", fn.Name)
+	}
+	fn.ReturnType = unified
+	if sig, ok := c.info.FuncSigs[fn.Name]; ok {
+		sig.Result = unified
+	}
+}
+
+// unifyReturnType merges two inferred return-expression types into one.
+// Beyond exact equality it bridges an under-specified enum constructor
+// against a specified one — `return None;` types as a payload-less
+// `Option`, which adopts the `Option[i32]` from a sibling `return
+// Some(n);` (and the same for `Result`). Anything else is a conflict.
+func unifyReturnType(a, b ast.Type) (ast.Type, bool) {
+	if ast.Equal(a, b) {
+		return a, true
+	}
+	ea, aok := a.(ast.EnumType)
+	eb, bok := b.(ast.EnumType)
+	if aok && bok && ea.Name == eb.Name {
+		if len(ea.Args) == 0 && len(eb.Args) > 0 {
+			return eb, true
+		}
+		if len(eb.Args) == 0 && len(ea.Args) > 0 {
+			return ea, true
+		}
+	}
+	return a, false
 }
 
 // methodConsumesReceiver reports whether the method named by a call's
@@ -4336,13 +6209,17 @@ func (c *checker) methodConsumesReceiver(m *ast.MethodCallSite) bool {
 		return false
 	}
 	if dt, ok := m.Receiver.(ast.DynTraitType); ok {
-		td, ok := c.info.Traits[dt.Trait]
-		if !ok {
-			return false
-		}
-		for i := range td.Methods {
-			if td.Methods[i].Name == m.Field {
-				return len(td.Methods[i].Params) > 0 && td.Methods[i].Params[0].Own
+		// The method may be declared by any trait in the set — search
+		// the union, matching checkDynMethodCall's resolution.
+		for _, tr := range dt.Traits {
+			td, ok := c.info.Traits[tr]
+			if !ok {
+				continue
+			}
+			for i := range td.Methods {
+				if td.Methods[i].Name == m.Field {
+					return len(td.Methods[i].Params) > 0 && td.Methods[i].Params[0].Own
+				}
 			}
 		}
 		return false
@@ -4425,20 +6302,30 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
 					return true // variant-constructor call → fresh enum value
 				}
-				// A user function with ONLY scalar (non-pointer) parameters and
-				// a pointer result must construct that result fresh — it has no
-				// borrowed pointer argument to return — so the result is owned.
-				// Conservative: a function with a pointer parameter could return
-				// it (`id(x) -> x`), so its result isn't provably owned here.
+				// A user function with a pointer result whose every pointer
+				// parameter it could return is provably not BORROWED returns a
+				// freshly-owned value. Two such cases:
+				//   - no pointer parameters at all: the result is constructed fresh
+				//     (it has no borrowed pointer argument to hand back);
+				//   - every pointer parameter is `own`: the callee consumed each one
+				//     (took ownership), so the result — whether freshly built or a
+				//     threaded-and-returned `own` param — is owned by the caller, not
+				//     a borrow of a caller-still-held value. (`build_stmt(own ops, s)
+				//     -> Op[]` returning the grown `ops` is the self-host shape.)
+				// Conservative: a BORROWED pointer parameter could be returned
+				// (`id(x) -> x`), so a function with one isn't provably owned here.
 				if sig, ok := c.info.FuncSigs[id.Name]; ok && sig.Result != nil && ast.IsPointerType(sig.Result) {
-					anyPtrParam := false
-					for _, pt := range sig.Params {
+					flags := c.ownFuncs[id.Name]
+					anyPtrParam, allPtrOwn := false, true
+					for i, pt := range sig.Params {
 						if pt != nil && ast.IsPointerType(pt) {
 							anyPtrParam = true
-							break
+							if i >= len(flags) || !flags[i] {
+								allPtrOwn = false
+							}
 						}
 					}
-					if !anyPtrParam {
+					if !anyPtrParam || allPtrOwn {
 						return true
 					}
 				}
@@ -4497,11 +6384,83 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				if id, ok := x.Array.(*ast.Ident); ok {
 					borrow[id] = true
 				}
+				if id, ok := x.Idx.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+			case *ast.CastExpr:
+				// `x as T` READS x's value (e.g. pointer→usize for a runtime
+				// call) — a borrow, never a transfer.
+				if id, ok := x.Inner.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+			case *ast.DowncastExpr:
+				// `x as? T` inspects the `dyn` value's runtime tag — a READ,
+				// never a transfer.
+				if id, ok := x.Inner.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+			case *ast.Binary:
+				// Operands of `+`, `==`, `&&`, string-concat, … are READS.
+				// (`sink(x) + sink(x)` keeps the x's as call-arg consumes — those
+				// operands are Calls, not bare idents, so they aren't marked here.)
+				if id, ok := x.Left.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+				if id, ok := x.Right.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+			case *ast.Unary:
+				if id, ok := x.Operand.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+			case *ast.SliceExpr:
+				// `s[lo:hi]` reads s (and the bounds) — a borrow.
+				if id, ok := x.Source.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+				if id, ok := x.Low.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+				if id, ok := x.High.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+			case *ast.StructLit:
+				// `S { ...base, f: v }`: the spread READS base's fields (the new
+				// struct co-owns its pointer fields via the construction
+				// alias-inc) — a borrow, not a transfer. The named field VALUES
+				// below are still consumes (moved into the new struct).
+				if x.Base != nil {
+					if id, ok := x.Base.(*ast.Ident); ok {
+						borrow[id] = true
+					}
+				}
 			case *ast.Call:
 				guardCallArgs(x)
 				// The callee position is a borrow (function ref / closure call).
 				if id, ok := x.Callee.(*ast.Ident); ok {
 					borrow[id] = true
+					// An owned value is CONSUMED only when passed to an `own`
+					// parameter; an argument to a BORROWED parameter (or any param
+					// of a callee with no `own` flags) is a read — a borrow — not a
+					// move. (`contains_str(out, x)` borrows `out`, so a following
+					// `out = out.append(..)` is not a use-after-move.) Without this
+					// the affine walk over-approximates every whole-value argument
+					// as a consume, which both rejects natural `own`-threaded
+					// builder code and blocks tracking owned locals. The method
+					// receiver (Args[0] when Method is set) keeps its own
+					// consume/borrow classification below.
+					flags := c.ownFuncs[id.Name]
+					for ai, arg := range x.Args {
+						if x.Method != nil && ai == 0 {
+							continue
+						}
+						if ai < len(flags) && flags[ai] {
+							continue // `own` position: a genuine consume
+						}
+						if aid, ok := arg.(*ast.Ident); ok {
+							borrow[aid] = true
+						}
+					}
 				}
 				// A method call (`xs.len()`) is rewritten by the checker to a
 				// plain Call with the receiver as Args[0] and Method set; a
@@ -4735,6 +6694,29 @@ func (c *checker) checkBlock(b *ast.Block, parent *scope) {
 	c.mutualRecSiblings = prevMutualRec
 }
 
+// checkBlockExpr type-checks a block-expression `{ stmts; tail }` used
+// in an `if`/`match` expression branch (slice 1). The statements run in
+// a fresh child scope so locals they bind are visible to Tail but do
+// NOT leak into the enclosing expression; the block's type is Tail's
+// type checked in that scope. A value-less block (Tail == nil — its
+// final element was a `;`-terminated statement) is `void`; the caller
+// (if/match arm-type unification) rejects `void` where a value is
+// required (see E061), so we surface the diagnostic here too.
+func (c *checker) checkBlockExpr(n *ast.BlockExpr, parent *scope) ast.Type {
+	s := newScope(parent)
+	prevMutualRec := c.mutualRecSiblings
+	c.mutualRecSiblings = nil
+	for _, st := range n.Stmts {
+		c.checkStmt(st, s)
+	}
+	c.mutualRecSiblings = prevMutualRec
+	if n.Tail == nil {
+		c.errfCode(n.P, "E061", "block-expression has no trailing value (its last element is a `;`-terminated statement); a value is required here — drop the trailing `;` to make the final expression the block's value")
+		return ast.VoidType{}
+	}
+	return c.checkExpr(n.Tail, s)
+}
+
 // detectMutualRecSCCs computes the names that participate in a
 // mutual-recursion SCC among `localFns`. A name is in an SCC of
 // size ≥ 2 iff there's a cycle of references through other
@@ -4896,6 +6878,8 @@ func walkExprForNames(e ast.Expr, selfName string, siblings map[string]*ast.Func
 		walkExprForNames(n.Operand, selfName, siblings, seen)
 	case *ast.CastExpr:
 		walkExprForNames(n.Inner, selfName, siblings, seen)
+	case *ast.DowncastExpr:
+		walkExprForNames(n.Inner, selfName, siblings, seen)
 	case *ast.SliceExpr:
 		walkExprForNames(n.Source, selfName, siblings, seen)
 		walkExprForNames(n.Low, selfName, siblings, seen)
@@ -4930,6 +6914,11 @@ func walkExprForNames(e ast.Expr, selfName string, siblings map[string]*ast.Func
 			walkExprForNames(arm.Guard, selfName, siblings, seen)
 			walkExprForNames(arm.Body, selfName, siblings, seen)
 		}
+	case *ast.BlockExpr:
+		for _, st := range n.Stmts {
+			walkStmtForNames(st, selfName, siblings, seen)
+		}
+		walkExprForNames(n.Tail, selfName, siblings, seen)
 	case *ast.StructLit:
 		if n.Base != nil {
 			walkExprForNames(n.Base, selfName, siblings, seen)
@@ -4956,6 +6945,16 @@ func walkExprForNames(e ast.Expr, selfName string, siblings map[string]*ast.Func
 	case *ast.Lambda:
 		walkBodyForNames(n.Body, selfName, siblings, seen)
 	}
+}
+
+// labelInScope reports whether `label` names an enclosing labeled loop.
+func (c *checker) labelInScope(label string) bool {
+	for _, l := range c.loopLabels {
+		if l == label {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *checker) checkStmt(st ast.Stmt, s *scope) {
@@ -5106,7 +7105,13 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			c.errfCode(n.Cond.Pos(), "E008", "while condition must be boolean, got %s", t)
 		}
 		c.loopDepth++
+		if n.Label != "" {
+			c.loopLabels = append(c.loopLabels, n.Label)
+		}
 		c.checkStmt(n.Body, s)
+		if n.Label != "" {
+			c.loopLabels = c.loopLabels[:len(c.loopLabels)-1]
+		}
 		c.loopDepth--
 	case *ast.For:
 		// Init runs in a new scope so a `for (var i = 0; ...)` doesn't
@@ -5120,9 +7125,15 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			c.errfCode(n.Cond.Pos(), "E008", "for condition must be boolean, got %s", ct)
 		}
 		c.loopDepth++
+		if n.Label != "" {
+			c.loopLabels = append(c.loopLabels, n.Label)
+		}
 		c.checkStmt(n.Body, inner)
 		if n.Step != nil {
 			c.checkStmt(n.Step, inner)
+		}
+		if n.Label != "" {
+			c.loopLabels = c.loopLabels[:len(c.loopLabels)-1]
 		}
 		c.loopDepth--
 	case *ast.Break:
@@ -5130,13 +7141,31 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		// or inside a `switch` case (exits the switch).
 		if c.loopDepth == 0 && c.switchDepth == 0 {
 			c.errfCode(n.P, "E011", "break outside of a loop or switch")
+		} else if n.Label != "" && !c.labelInScope(n.Label) {
+			c.errfCode(n.P, "E058", "break label %q does not match any enclosing loop", n.Label)
 		}
 	case *ast.Continue:
 		if c.loopDepth == 0 {
 			c.errfCode(n.P, "E011", "continue outside of a loop")
+		} else if n.Label != "" && !c.labelInScope(n.Label) {
+			c.errfCode(n.P, "E058", "continue label %q does not match any enclosing loop", n.Label)
 		}
 	case *ast.Return:
 		want := c.current.ReturnType
+		// Return-type inference: in an unannotated function we don't yet
+		// know `want`, so instead of checking against void we record each
+		// return's type (nil for a bare `return;`) and let checkFunction
+		// unify them into the function's return type afterward.
+		if c.inferReturns != nil && c.current.ReturnUnannotated {
+			if n.Value == nil {
+				*c.inferReturns = append(*c.inferReturns, nil)
+				return
+			}
+			got := c.checkExpr(n.Value, s)
+			got = postSettleType(n.Value, got)
+			*c.inferReturns = append(*c.inferReturns, got)
+			return
+		}
 		if n.Value == nil {
 			if !ast.Equal(want, ast.VoidType{}) {
 				c.errfCode(n.P, "E012", "return without value in function returning %s", want)
@@ -5144,7 +7173,9 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			return
 		}
 		c.setElemHintFor(n.Value, want)
+		c.expectedType = want
 		got := c.checkExpr(n.Value, s)
+		c.expectedType = nil
 		c.elemHint = nil
 		c.settleNumeric(n.Value, want)
 		// Refresh `got` from the post-settle AST — the
@@ -5173,7 +7204,9 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			c.errfCode(n.P, "E013", "variable %q already declared in this scope", n.Name)
 		}
 		c.setElemHintFor(n.Init, n.Type)
+		c.expectedType = n.Type
 		got := c.checkExpr(n.Init, s)
+		c.expectedType = nil
 		c.elemHint = nil
 		if n.Type != nil {
 			c.settleNumeric(n.Init, n.Type)
@@ -5296,6 +7329,63 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 // be an enum value; each arm's pattern variant must belong to
 // that enum and supply the right number of binding names; the
 // arm list must cover every variant of the enum (or end in a
+// resolveVariantBindings validates a variant pattern's bindings and
+// returns them, with their (type-substituted) types, in declaration
+// (payload) order — ready to declare in a per-arm scope and to drive the
+// position-based IR lowering. For a positional pattern it checks arity
+// and pairs binding[i] with payload[i]. For a named-field pattern
+// (named=true) each binding is a field name: every field must be named
+// exactly once (any order), and the result is the variant's fields in
+// declaration order. Errors report at pos. See docs/NAMED-FIELD-VARIANTS.md.
+func (c *checker) resolveVariantBindings(pos ast.Position, variant *ast.EnumVariant, bindings []string, named bool, sub map[string]ast.Type) ([]string, []ast.Type) {
+	if named && len(variant.FieldNames) > 0 {
+		outNames := make([]string, len(variant.FieldNames))
+		outTypes := make([]ast.Type, len(variant.FieldNames))
+		copy(outNames, variant.FieldNames)
+		for i := range variant.FieldNames {
+			outTypes[i] = substituteType(variant.Payloads[i], sub)
+		}
+		seen := map[string]bool{}
+		for _, b := range bindings {
+			idx := -1
+			for i, fn := range variant.FieldNames {
+				if fn == b {
+					idx = i
+					break
+				}
+			}
+			if idx < 0 {
+				c.errfCode(pos, "E015", "variant %s has no field %q", variant.Name, b)
+				continue
+			}
+			if seen[b] {
+				c.errfCode(pos, "E015", "field %q bound more than once in pattern for %s", b, variant.Name)
+			}
+			seen[b] = true
+		}
+		if len(seen) != len(variant.FieldNames) {
+			c.errfCode(pos, "E015", "named-field pattern for %s must bind all %d field(s) (%s)",
+				variant.Name, len(variant.FieldNames), strings.Join(variant.FieldNames, ", "))
+		}
+		return outNames, outTypes
+	}
+	if named && len(variant.FieldNames) == 0 {
+		c.errfCode(pos, "E015", "variant %s has positional payloads; match it as %s(...), not %s { ... }",
+			variant.Name, variant.Name, variant.Name)
+	}
+	if len(bindings) != len(variant.Payloads) {
+		c.errfCode(pos, "E015", "variant %s has %d payload(s), got %d binding(s)",
+			variant.Name, len(variant.Payloads), len(bindings))
+	}
+	outTypes := make([]ast.Type, len(bindings))
+	for k := range bindings {
+		if k < len(variant.Payloads) {
+			outTypes[k] = substituteType(variant.Payloads[k], sub)
+		}
+	}
+	return bindings, outTypes
+}
+
 // wildcard). Bindings are typed against the matching variant's
 // payload list and bound in a fresh per-arm scope.
 func (c *checker) checkMatch(n *ast.Match, s *scope) {
@@ -5399,23 +7489,16 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		if arm.Guard == nil {
 			covered[arm.VariantName] = true
 		}
-		if len(arm.Bindings) != len(variant.Payloads) {
-			c.errfCode(arm.P, "E015", "variant %s has %d payload(s), got %d binding(s)",
-				arm.VariantName, len(variant.Payloads), len(arm.Bindings))
-		}
 		// Bind names in a fresh scope so they don't leak into
 		// sibling arms. Payload types get the type-parameter
 		// substitution applied so `Some(v)` on `Option[number]`
-		// types `v` as `number`, not the abstract `T`.
+		// types `v` as `number`, not the abstract `T`. A named-field
+		// pattern (`Rect { w, h }`) is validated + reordered into
+		// declaration order here.
+		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, variant, arm.Bindings, arm.NamedFields, sub)
 		armScope := newScope(s)
-		arm.BindingTypes = make([]ast.Type, len(arm.Bindings))
 		for k, name := range arm.Bindings {
-			var bt ast.Type
-			if k < len(variant.Payloads) {
-				bt = substituteType(variant.Payloads[k], sub)
-			}
-			arm.BindingTypes[k] = bt
-			armScope.names[name] = bt
+			armScope.names[name] = arm.BindingTypes[k]
 		}
 		// Guard runs in the bindings-in-scope frame so it can
 		// reference the payload names. Required to be bool.
@@ -5650,19 +7733,10 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 		if arm.Guard == nil {
 			covered[arm.VariantName] = true
 		}
-		if len(arm.Bindings) != len(variant.Payloads) {
-			c.errfCode(arm.P, "E015", "variant %s has %d payload(s), got %d binding(s)",
-				arm.VariantName, len(variant.Payloads), len(arm.Bindings))
-		}
+		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, variant, arm.Bindings, arm.NamedFields, sub)
 		armScope := newScope(s)
-		arm.BindingTypes = make([]ast.Type, len(arm.Bindings))
 		for k, name := range arm.Bindings {
-			var bt ast.Type
-			if k < len(variant.Payloads) {
-				bt = substituteType(variant.Payloads[k], sub)
-			}
-			arm.BindingTypes[k] = bt
-			armScope.names[name] = bt
+			armScope.names[name] = arm.BindingTypes[k]
 		}
 		if arm.Guard != nil {
 			gt := c.checkExpr(arm.Guard, armScope)
@@ -5962,13 +8036,63 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			return ast.NumberType{Width: n.Width, Signed: !n.IsUnsigned}
 		}
 		return ast.NumberType{Polymorphic: true}
+	case *ast.DowncastExpr:
+		// `e as? T` — fallible downcast of a `dyn Trait` value to a
+		// concrete type (docs/DYN-TRAITS.md §9). The LHS must be a
+		// `dyn Trait`; the target must be a struct/enum that implements
+		// that trait (slice 1 scope — primitive targets are a follow-up).
+		// Result type is `Option[T]`. The runtime check + Some/None
+		// construction lives in the interpreter; compiled backends reject
+		// the node until a later codegen slice.
+		inner := c.checkExpr(n.Inner, s)
+		// The parser optimistically wraps a bare type name (`as? Color`)
+		// as a StructType because it can't tell structs from enums. If the
+		// name resolves to an enum, rewrite the target to an EnumType so
+		// the result `Option[T]` matches a `var c: Option[Color]`
+		// annotation (which resolveType already canonicalised to
+		// EnumType). Without this, an enum downcast target would diverge —
+		// `Option[StructType{Color}]` vs `Option[EnumType{Color}]` — and
+		// fail an otherwise-correct assignment (E003).
+		if st, isBareStruct := n.Target.(ast.StructType); isBareStruct && len(st.Args) == 0 {
+			if _, isEnum := c.info.Enums[st.Name]; isEnum {
+				n.Target = ast.EnumType{Name: st.Name}
+			}
+		}
+		dt, ok := inner.(ast.DynTraitType)
+		if !ok {
+			c.errfCode(n.P, "E059", "'as?' downcast requires a 'dyn Trait' value on the left, got %s", inner)
+			return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
+		}
+		// Trait records the PRIMARY trait (the bare single-trait vtable
+		// key); Traits records the whole set. Compiled downcast codegen
+		// keys the vtable-pointer compare by the whole set (dynVtableSetKey),
+		// so a multi-trait `dyn A + B` downcast lowers via the MERGED
+		// `__vtable_<A+B>_<T>` cell (docs/DYN-TRAITS.md §10). The impl gate
+		// below checks the whole set.
+		n.Trait = dt.Trait0()
+		n.Traits = dt.Traits
+		// The target must be a struct or enum (slice 1 scope).
+		tn, hasName := methodTypeName(n.Target)
+		_, isStruct := n.Target.(ast.StructType)
+		_, isEnum := n.Target.(ast.EnumType)
+		if !hasName || !(isStruct || isEnum) {
+			c.errfCode(n.P, "E060", "'as?' downcast target must be a concrete struct or enum type (slice 1), got %s", n.Target)
+			return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
+		}
+		// The target must implement EVERY trait in the set — mirror the
+		// coercion gate (only a type that could have been coerced in can
+		// be recovered).
+		if !c.implementsAllDynTraits(dt, tn) {
+			c.errfCode(n.P, "E060", "%s does not implement %s, so a '%s' cannot downcast to it", n.Target, c.missingDynTraits(dt, n.Target), dt.String())
+		}
+		return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
 	case *ast.CastExpr:
 		// Numeric ↔ numeric is the common case. The one
 		// exception: a `[u8]` slice or `u8[]` array can cast
 		// to `i32` to recover its data-pointer for the
 		// bulk-memory primitives (__memcpy / __memset). It's
 		// an explicit low-level escape hatch — useful inside
-		// prelude buffer-management helpers, marked by the
+		// stdlib buffer-management helpers, marked by the
 		// cast at the source level.
 		inner := c.checkExpr(n.Inner, s)
 		// `1 as u64`: settle the literal at the cast target's
@@ -6012,7 +8136,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// recover the data / wrapper pointer for the bulk-
 		// memory primitives. All four lower to a single pointer
 		// at runtime; the cast is the source-level escape hatch
-		// the prelude uses to call __memcpy / __store_ptr against
+		// the stdlib uses to call __memcpy / __store_ptr against
 		// the underlying memory. i32 stays the historical hop
 		// (truncates to 32 bits on natives — fine until heap
 		// > 4 GiB); usize is the target-aware shape that
@@ -6029,7 +8153,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// arrays/strings is "value = data pointer, length prefix
 		// at base-4"; for structs, "value = base pointer, fields
 		// at constant offsets") — only the type-level view
-		// changes. Used by the prelude when a builtin returns a
+		// changes. Used by the stdlib when a builtin returns a
 		// freshly allocated raw block that the caller wants to
 		// expose as a typed collection (`__array_append_string`'s
 		// rebuild loop) or as a wrapper struct (`map_new`'s
@@ -6191,12 +8315,19 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		hint := c.elemHint
 		c.elemHint = nil
 		if dt, ok := hint.(ast.DynTraitType); ok {
-			for _, el := range n.Elems {
-				t := c.checkExpr(el, s)
+			for i := range n.Elems {
+				t := c.checkExpr(n.Elems[i], s)
+				// Record the concrete→`dyn Trait` coercion against the
+				// element holder (compiled backends box it into the
+				// `[data, vtable]` fat pointer via Info.DynCoercions —
+				// docs/DYN-TRAITS.md §4.2.1). This mirrors the per-
+				// element maybeWrapForUnion call the union-array branch
+				// below makes, and is a no-op on the interpreter.
+				t = c.maybeWrapForUnion(dt, &n.Elems[i], t, s)
 				if t != nil && !c.assignable(dt, t) {
-					c.errfCode(el.Pos(), "E034",
-						"array element of type %s does not implement %s, so it cannot be a `dyn %s`",
-						t, demangle(dt.Trait), demangle(dt.Trait))
+					c.errfCode(n.Elems[i].Pos(), "E034",
+						"array element of type %s does not implement %s, so it cannot be a `%s`",
+						t, c.missingDynTraits(dt, t), dt.String())
 				}
 			}
 			n.ElemType = dt
@@ -6311,6 +8442,50 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		return nil
 	case *ast.Call:
+		// Snapshot the destination type this call's result flows into
+		// (set by `var x: T = …` / `return …`) and clear the field so
+		// it can't leak into the argument sub-expressions we check
+		// below — only *this* call's generic completion may consult it
+		// for return-position inference (#2668).
+		callExpected := c.expectedType
+		c.expectedType = nil
+		// Display spine (#2696): `print` / `write` / `eprint` accept any
+		// `T: Display`, not just `string`. When the sole argument isn't
+		// already a string, rewrite it to `arg.to_string()` (the same
+		// desugar f-strings use) so the value is stringified through the
+		// Display trait before it reaches the string-only runtime helper.
+		// This removes the stringify-first dance (`print(x.to_string())`)
+		// at every call site. Wrong arg counts fall through to the normal
+		// path, which reports the arity error.
+		if id, ok := n.Callee.(*ast.Ident); ok && len(n.Args) == 1 {
+			switch id.Name {
+			case "print", "write", "eprint":
+				at := c.checkExpr(n.Args[0], s)
+				at = postSettleType(n.Args[0], at)
+				if at == nil {
+					return ast.VoidType{}
+				}
+				if _, isStr := at.(ast.StringType); isStr {
+					return ast.VoidType{}
+				}
+				if !c.typeImplementsDisplay(at) {
+					c.errfCode(n.Args[0].Pos(), "E038",
+						"argument 1 to %s: %s does not implement `Display` (no `to_string(): string` in scope) — add `@derive(Display)`, `impl Display for %s`, or import the module that provides it",
+						id.Name, at, at)
+					return ast.VoidType{}
+				}
+				n.Args[0] = &ast.Call{
+					P: n.Args[0].Pos(),
+					Callee: &ast.FieldAccess{
+						P:      n.Args[0].Pos(),
+						Target: n.Args[0],
+						Field:  "to_string",
+					},
+				}
+				_ = c.checkExpr(n.Args[0], s)
+				return ast.VoidType{}
+			}
+		}
 		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "map_new" {
 			c.needCoreMap(n.P)
 		}
@@ -6360,6 +8535,67 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// form. Only fires when the target is a known enum name —
 		// every other FieldAccess (struct field, method call) flows
 		// down the usual path.
+		// Associated-function call: `Point.origin(args)` — a FieldAccess
+		// whose target is a known struct/enum TYPE name (not shadowed by a
+		// value) and whose field is a registered associated function
+		// (`__assoc_<T>_<f>`). Rewrite the callee to the flat assoc name so
+		// the ordinary function-call path handles it with no receiver
+		// prepended. Checked before the qualified-variant rewrite below,
+		// which would otherwise claim every `Enum.x(...)` shape.
+		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
+			if tid, ok := fa.Target.(*ast.Ident); ok {
+				if _, shadowed := s.lookup(tid.Name); !shadowed {
+					// Generic associated dispatch: `T.f(args)` where `T` is
+					// a bounded type parameter of the current function whose
+					// trait declares an associated function `f`. Type via
+					// the trait signature (`Self` -> `ParamType(T)`) but
+					// leave the Callee a FieldAccess — `T` is still abstract.
+					// Monomorph substitutes `T` -> the concrete type in the
+					// target Ident and re-check resolves the now-concrete
+					// `Concrete.f()` to `__assoc_<Concrete>_f`. Mirrors the
+					// deferred bounded-*method* path below.
+					if c.current != nil && containsString(c.current.TypeParams, tid.Name) {
+						if tm, _, found := c.resolveTraitMethodForParam(tid.Name, fa.Field); found && tm.Assoc {
+							tp := ast.ParamType{Name: tid.Name}
+							if len(n.Args) != len(tm.Params) {
+								c.errfCode(n.P, "E004", "associated function %q expects %d argument(s), got %d", fa.Field, len(tm.Params), len(n.Args))
+								return ast.SubstSelf(tm.Result, tp)
+							}
+							for i, arg := range n.Args {
+								at := c.checkExpr(arg, s)
+								want := ast.SubstSelf(tm.Params[i].Type, tp)
+								if at != nil && !c.assignable(want, at) {
+									c.errfCode(arg.Pos(), "E038", "argument %d to %q: expected %s, got %s", i+1, fa.Field, want, at)
+								}
+							}
+							n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: tp}
+							return ast.SubstSelf(tm.Result, tp)
+						}
+					}
+					_, isStruct := c.info.Structs[tid.Name]
+					_, isEnum := c.info.Enums[tid.Name]
+					// A PRIMITIVE type name can be an associated-call target too
+					// (`i32.default()` -> `__assoc_i32_default`, from `impl Default
+					// for i32`) -- how a monomorphised `T.default()` with `T=i32`
+					// resolves after the type-param rewrite.
+					isPrim := isPrimitiveTypeName(tid.Name)
+					if isStruct || isEnum || isPrim {
+						if mangled, ok := c.info.Methods[tid.Name+"."+fa.Field]; ok {
+							if strings.HasPrefix(mangled, "__assoc_") {
+								n.Callee = &ast.Ident{P: fa.P, Name: mangled}
+							} else {
+								// A type-qualified call onto a method that
+								// takes a `self` receiver — the user meant
+								// `value.m()`, not `Type.m()`.
+								c.errfCode(n.P, "E043", "%s.%s is a method; call it on a value (`v.%s(...)`), not on the type — only associated functions (no `self`) use `%s.%s(...)`",
+									demangle(tid.Name), fa.Field, fa.Field, demangle(tid.Name), fa.Field)
+								return nil
+							}
+						}
+					}
+				}
+			}
+		}
 		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
 			if tid, ok := fa.Target.(*ast.Ident); ok {
 				if _, isEnum := c.info.Enums[tid.Name]; isEnum {
@@ -6555,7 +8791,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			if typeName != "" {
 				key := typeName + "." + fa.Field
-				if mangled, ok := c.info.Methods[key]; ok && c.methodVisibleHere(mangled) {
+				if mangled, ok := c.info.Methods[key]; ok && (c.methodVisibleHere(mangled) || c.methodImplementsTrait(typeName, fa.Field)) {
 					// Preserve the source-level call site so the LSP
 					// can resolve hover / goto-def on `area` in
 					// `p.area()` after we rewrite the AST to a
@@ -6596,7 +8832,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// Wide-V Map: `m.values()` is intercepted by
 					// the IR (emitMapValues) which dispatches by
 					// V stride — narrow V routes to the existing
-					// `__map_values_impl` lang prelude function,
+					// `__map_values_impl` stdlib function,
 					// wide V (i64 / u64 / f64) follows each entry's
 					// cell pointer + `__memcpy`s the 8 payload
 					// bytes into a real wide-stride result. Both
@@ -6687,7 +8923,18 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				genericFn = fn
 				sub = make(map[string]ast.Type, len(fn.TypeParams))
 				if len(n.TypeArgs) > 0 {
-					if len(n.TypeArgs) != len(fn.TypeParams) {
+					// Too MANY type args is always wrong. Too FEW is an
+					// error for an explicit call-site `f[i32](x)` (the
+					// `type-arg-too-few` contract), but ALLOWED for a
+					// method call (`n.Method != nil`): a generic-method
+					// call seeds only the receiver's type-vars here (they
+					// come first in fn.TypeParams) and the remaining
+					// method-level params are inferred from the arguments
+					// below. The "could not infer" check afterwards still
+					// catches a param that nothing binds.
+					tooMany := len(n.TypeArgs) > len(fn.TypeParams)
+					tooFew := len(n.TypeArgs) < len(fn.TypeParams)
+					if tooMany || (tooFew && n.Method == nil) {
 						c.errfCode(n.P, "E040", "%s expects %d type argument(s), got %d",
 							fn.Name, len(fn.TypeParams), len(n.TypeArgs))
 					}
@@ -6767,6 +9014,17 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 		}
 		if genericFn != nil {
+			// Return-position inference (#2668): if the arguments
+			// didn't pin every type parameter, fold in the call's
+			// destination type. `var s: Set[i32] = set_new();` and
+			// `return set_new();` leave T unbound from the (empty)
+			// args, but the `Set[i32]` / declared-return type unifies
+			// against the function's result `Set[T]` to bind T = i32.
+			// Only the still-unbound params are filled; argument-driven
+			// bindings already in `sub` win.
+			if callExpected != nil && sub != nil {
+				c.unifyType(ft.Result, callExpected, sub)
+			}
 			// Substitute the inferred sub through the result so
 			// callers see a concrete type, AND record TypeArgs in
 			// declaration order for the monomorphiser.
@@ -6790,24 +9048,43 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					if _, isParam := args[i].(ast.ParamType); isParam {
 						continue
 					}
-					for _, traitName := range genericFn.Bounds[tp] {
+					for bi, traitName := range genericFn.Bounds[tp] {
 						tn, ok := methodTypeName(args[i])
+						// Render `__method_Box_to_string` as the user-facing
+						// `Box.to_string` when the generic decl is a hoisted
+						// receiver method.
+						site := demangle(genericFn.Name)
+						if genericFn.MethodRecv != "" {
+							site = demangle(genericFn.MethodRecv) + "." + genericFn.MethodSimpleName
+						}
 						if !ok || !c.info.Impls[traitName][tn] {
-							// Render `__method_Box_to_string` as the
-							// user-facing `Box.to_string` when the generic
-							// decl is a hoisted receiver method.
-							site := demangle(genericFn.Name)
-							if genericFn.MethodRecv != "" {
-								site = demangle(genericFn.MethodRecv) + "." + genericFn.MethodSimpleName
-							}
 							c.errfCode(n.P, "E021",
 								"type argument %s = %s does not implement trait %s required by %s",
 								tp, demangle(args[i].String()), demangle(traitName), site)
+							continue
+						}
+						// Generic-trait bound (`T: From[i32]`): the impl's
+						// trait args must match the bound's, not merely exist.
+						var boundArgs []ast.Type
+						if ba := genericFn.BoundArgs[tp]; bi < len(ba) {
+							boundArgs = ba[bi]
+						}
+						if len(boundArgs) > 0 {
+							implArgs := c.info.ImplTraitArgs[traitName][tn]
+							if !typeArgsEqual(implArgs, boundArgs) {
+								c.errfCode(n.P, "E021",
+									"type argument %s = %s implements %s%s but the bound requires %s%s (in %s)",
+									tp, demangle(args[i].String()), demangle(traitName), traitArgsStr(implArgs),
+									demangle(traitName), traitArgsStr(boundArgs), site)
+							}
 						}
 					}
 				}
 				n.TypeArgs = args
-				return substituteType(ft.Result, sub)
+				// Resolve any associated-type projection the result picked up
+				// once the type args made its base concrete (`I::Item` →
+				// `IntBox::Item` → the binding). See docs/ASSOCIATED-TYPES.md.
+				return c.resolveProj(substituteType(ft.Result, sub))
 			}
 			return nil
 		}
@@ -6845,6 +9122,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			fallthrough
 		case "-", "*", "/":
+			// Composite-type arithmetic operator overloading (`+`→add,
+			// `-`→sub, `*`→mul, `/`→div). See compositeOpOverload / #2706.
+			if rtt, handled := c.compositeOpOverload(n, lt, rt, s); handled {
+				return rtt
+			}
 			if isFloat(lt) || isFloat(rt) {
 				c.requireFloat(n.P, lt, n.Op)
 				c.requireFloat(n.P, rt, n.Op)
@@ -6874,7 +9156,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// resolved sides differ in width (same signedness
 			// already enforced by commonIntegerWidth). This
 			// keeps pointer-arithmetic-style code in the
-			// prelude — `buf64 + 16` where `buf64` is i64 and
+			// stdlib — `buf64 + 16` where `buf64` is i64 and
 			// `16` is the default i32 NumberLit — type-correct
 			// without an explicit `as i64`.
 			if ln, ok := lt.(ast.NumberType); ok {
@@ -6889,6 +9171,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			return common
 		case "%", "&", "|", "^", "<<", ">>":
+			// Composite-type operator overloading (`%`→rem, `&`→bitand,
+			// `|`→bitor, `^`→bitxor, `<<`→shl, `>>`→shr). See #2706.
+			if rtt, handled := c.compositeOpOverload(n, lt, rt, s); handled {
+				return rtt
+			}
 			c.requireInteger(n.P, lt, n.Op)
 			c.requireInteger(n.P, rt, n.Op)
 			common, ok := commonIntegerWidth(lt, rt)
@@ -6910,6 +9197,32 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			return common
 		case "<", ">", "<=", ">=":
+			// Composite-type ordering. `<` / `<=` / `>` / `>=` on a
+			// struct or enum desugars to the type's `Ord` impl —
+			// `a.cmp(b) <op> 0` (cmp returns -1/0/1). Without this the
+			// operator hit requireInteger and errored. Arrays / slices
+			// / tuples have no Ord yet.
+			if lt != nil && rt != nil && ast.Equal(lt, rt) {
+				switch lt.(type) {
+				case ast.StructType, ast.EnumType:
+					tn, _ := methodTypeName(lt)
+					if mangled, ok := c.info.Methods[tn+".cmp"]; ok && c.methodVisibleHere(mangled) {
+						cmpCall := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: "cmp"}, Args: []ast.Expr{n.Right}}
+						if rt2 := c.checkExpr(cmpCall, s); rt2 != nil {
+							if nt, isNum := rt2.(ast.NumberType); !isNum || nt.NormalWidth() != 32 {
+								c.errfCode(n.P, "E041", "cannot order values of type %s with %q: its `cmp` method must return i32", lt, n.Op)
+							}
+						}
+						n.CmpCall = cmpCall
+						return ast.BoolType{}
+					}
+					c.errfCode(n.P, "E041", "cannot order values of type %s with %q: type does not implement `Ord` — add `@derive(Ord)` (or `impl Ord for %s`) so ordering can use structural comparison", lt, n.Op, tn)
+					return ast.BoolType{}
+				case ast.ArrayType, ast.SliceType, ast.TupleType:
+					c.errfCode(n.P, "E041", "cannot order values of type %s with %q: structural ordering for arrays / slices / tuples is not supported", lt, n.Op)
+					return ast.BoolType{}
+				}
+			}
 			if isFloat(lt) || isFloat(rt) {
 				c.requireFloat(n.P, lt, n.Op)
 				c.requireFloat(n.P, rt, n.Op)
@@ -6961,6 +9274,36 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			if lt != nil && rt != nil && !ast.Equal(lt, rt) {
 				c.errfCode(n.P, "E041", "cannot compare %s and %s", lt, rt)
 			}
+			// Composite-type equality. `==` / `!=` on a struct or
+			// enum is STRUCTURAL equality via the type's `Eq` impl —
+			// it desugars to `a.eq(b)` (and `!a.eq(b)` for `!=`), not
+			// heap-pointer identity. Without this, the operator
+			// silently lowered to `i32.eq` on the two pointers, so
+			// structurally-equal values compared unequal. Scalars /
+			// strings / bools keep their fast native compare below;
+			// arrays / slices / tuples have no structural eq yet.
+			if lt != nil && rt != nil && ast.Equal(lt, rt) {
+				switch lt.(type) {
+				case ast.StructType, ast.EnumType:
+					tn, _ := methodTypeName(lt)
+					if mangled, ok := c.info.Methods[tn+".eq"]; ok && c.methodVisibleHere(mangled) {
+						eqCall := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: "eq"}, Args: []ast.Expr{n.Right}}
+						if rt2 := c.checkExpr(eqCall, s); rt2 != nil {
+							if _, isBool := rt2.(ast.BoolType); !isBool {
+								c.errfCode(n.P, "E041", "cannot compare values of type %s with %q: its `eq` method must return boolean", lt, n.Op)
+							}
+						}
+						n.EqCall = eqCall
+						n.EqNegate = n.Op == "!="
+						return ast.BoolType{}
+					}
+					c.errfCode(n.P, "E041", "cannot compare values of type %s with %q: type does not implement `Eq` — add `@derive(Eq)` (or `impl Eq for %s`) so `==` can use structural equality", lt, n.Op, tn)
+					return ast.BoolType{}
+				case ast.ArrayType, ast.SliceType, ast.TupleType:
+					c.errfCode(n.P, "E041", "cannot compare values of type %s with %q: structural equality for arrays / slices / tuples is not supported — compare elements individually", lt, n.Op)
+					return ast.BoolType{}
+				}
+			}
 			// String-vs-string equality compares contents; flag so
 			// codegen lowers to a runtime call rather than i32.eq.
 			if _, ok := lt.(ast.StringType); ok {
@@ -7006,6 +9349,22 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				// be polymorphic so it can settle to f32 / f64.
 				return ft
 			}
+			// Composite-type unary minus: `-v` on a struct / enum with a
+			// `neg` method desugars to `v.neg()` — operator overloading,
+			// mirroring the binary `+ - * /` (add/sub/mul/div) overloads.
+			// See #2706.
+			switch t.(type) {
+			case ast.StructType, ast.EnumType:
+				tn, _ := methodTypeName(t)
+				if mangled, ok := c.info.Methods[tn+".neg"]; ok && c.methodVisibleHere(mangled) {
+					call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Operand, Field: "neg"}, Args: nil}
+					rtt := c.checkExpr(call, s)
+					n.NegCall = call
+					return rtt
+				}
+				c.errfCode(n.P, "E009", "unary `-` is not defined for %s — implement `function (self: %s) neg(): %s` to overload it", t, tn, tn)
+				return t
+			}
 			// Unary minus applies to any integer width, not just
 			// i32 — `-5i64`, `-x` on an i8, etc. requireNumber
 			// only accepted the bare i32 NumberType, so negating
@@ -7043,12 +9402,22 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// unconstructible, so RC stays garbage-free with no cycle
 		// collector. The fix is a functional struct-update:
 		// `p = Foo { ...p, field: v }`. (Local variable reassignment
-		// and array-element assignment `arr[i] = v` — a CoW path —
-		// stay legal; only `*ast.FieldAccess` targets are banned.)
+		// stays legal; only `*ast.FieldAccess` targets are banned.)
 		if fa, ok := n.Target.(*ast.FieldAccess); ok {
 			c.errfCode(fa.Pos(), "E048",
 				"cannot assign to field %q: fields are immutable after construction; rebuild with `T { ...old, %s: value }`",
 				fa.Field, fa.Field)
+		}
+		// Array elements are immutable after construction too (E056) —
+		// the subscript counterpart of E048, completing the immutable-
+		// data-structures surface (docs/PURE-COLLECTION-API-PLAN.md §3a).
+		// `arr[i] = v` becomes the value-returning `arr = arr.with(i, v)`,
+		// which is the CoW unique-in-place branch on an unowned/`fip`
+		// array (allocation-free — see E053's `.with`-on-`own` rule), so
+		// subscripts are read-only just like struct fields.
+		if idx, ok := n.Target.(*ast.Index); ok {
+			c.errfCode(idx.Pos(), "E056",
+				"cannot assign to an array element: subscripts are read-only after construction; use `arr = arr.with(i, value)`")
 		}
 		// A closure may not write back a REFERENCE-shaped captured
 		// variable. This is the other half of immutability
@@ -7125,13 +9494,26 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// "var X has no slot" when it tries to allocate slots
 		// for body-local vars.
 		synth := &ast.FuncDecl{
-			P:          n.P,
-			Params:     n.Params,
-			ReturnType: n.ReturnType,
-			Body:       n.Body,
+			P:                 n.P,
+			Params:            n.Params,
+			ReturnType:        n.ReturnType,
+			ReturnUnannotated: n.ReturnUnannotated,
+			Body:              n.Body,
 		}
 		n.Synthetic = synth
 		c.current = synth
+		// An unannotated arrow lambda (`(x) => expr`) infers its return type
+		// from the body, reusing the same inferReturns channel as an
+		// unannotated function. Point it at a lambda-local slice (so the
+		// returns don't leak into an enclosing unannotated function) and
+		// unify after the body check. An explicit-return lambda keeps the
+		// outer inferReturns untouched — its synth.ReturnUnannotated is
+		// false, so the return path validates against ReturnType as before.
+		prevInfer := c.inferReturns
+		var lamRets []ast.Type
+		if n.ReturnUnannotated {
+			c.inferReturns = &lamRets
+		}
 		c.loopDepth = 0
 		c.switchDepth = 0
 		c.captureSink = func(name string, t ast.Type) {
@@ -7154,6 +9536,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		c.captureOuter = prevOuter
 		c.loopDepth = prevLoop
 		c.switchDepth = prevSwitch
+		c.inferReturns = prevInfer
+		if n.ReturnUnannotated {
+			// Unify the body's return(s) into the lambda's return type
+			// (synth.ReturnType is updated in place; mirror it onto n).
+			c.inferReturnType(synth, lamRets)
+			n.ReturnType = synth.ReturnType
+		}
 		c.current = prev
 		// Fresh list, not append — see the matching note in checkFunc;
 		// re-analysis would otherwise duplicate captures.
@@ -7166,6 +9555,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			ft.Params = append(ft.Params, p.Type)
 		}
 		return ft
+	case *ast.BlockExpr:
+		return c.checkBlockExpr(n, s)
 	case *ast.IfExpr:
 		ct := c.checkExpr(n.Cond, s)
 		if ct != nil && !ast.Equal(ct, ast.BoolType{}) {
@@ -7237,8 +9628,29 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				return nil
 			}
 			if !ast.Equal(srcEnum.Args[1], retEnum.Args[1]) {
-				c.errfCode(n.P, "E042", "`?` on Result[_, %s] but the surrounding function returns Result[_, %s]; the error types must match",
-					srcEnum.Args[1], retEnum.Args[1])
+				// Error-converting `?`: a `Result[_, E]` propagated through a
+				// function returning `Result[_, dyn Trait]` boxes the concrete
+				// error `E` into `dyn Trait`, provided E implements Trait
+				// (the `Box<dyn Error>` + `?` idiom). Desugar to a block-expr
+				// that maps the error then applies an ordinary `?`. See #3234.
+				if lowered, ok := c.tryConvertErrToDyn(n, srcEnum, retEnum, s); ok {
+					n.Kind = ast.TryKindResult
+					n.Type = srcEnum.Args[0]
+					n.Lowered = lowered
+					return n.Type
+				}
+				// Or convert via a `from` constructor: if the function's
+				// error type `E2` has an associated `from(E1): E2` (e.g.
+				// `impl From[E1] for E2`), `?` maps `Err(e)` to
+				// `Err(E2.from(e))` — the `From`-based `?` idiom. See #2674.
+				if lowered, ok := c.tryConvertErrViaFrom(n, srcEnum, retEnum, s); ok {
+					n.Kind = ast.TryKindResult
+					n.Type = srcEnum.Args[0]
+					n.Lowered = lowered
+					return n.Type
+				}
+				c.errfCode(n.P, "E042", "`?` on Result[_, %s] but the surrounding function returns Result[_, %s]; the error types must match (implement %s for a `dyn`-error, or a `from(%s)` constructor on %s for the conversion)",
+					srcEnum.Args[1], retEnum.Args[1], srcEnum.Args[1], srcEnum.Args[1], retEnum.Args[1])
 				return nil
 			}
 			n.Kind = ast.TryKindResult
@@ -7304,6 +9716,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				c.errfCode(n.P, "E007", "duplicate field %q in struct literal", f.Name)
 			}
 			seen[f.Name] = true
+			// Propagate the field's element type into a direct array-literal
+			// value so its elements coerce to the field's element type — the
+			// same hint the Var / Return / call-argument positions set. Without
+			// it, `Wrap { items: [Leaf{...}] }` (field type `Node[]`, an enum
+			// array) leaves each inline variant literal unwrapped: it lowers as a
+			// bare struct with no variant tag, and reads back as the wrong
+			// variant. maybeWrapForUnion below only widens a DIRECT variant field
+			// value, not the elements of an array field.
+			c.setElemHintFor(f.Value, expected)
 			vt := c.checkExpr(f.Value, s)
 			if vt == nil {
 				continue
@@ -7623,16 +10044,47 @@ func (c *checker) refineCallTypeArgsFromDest(e ast.Expr, dst ast.Type) {
 
 // refineSingleCallTypeArgs is the leaf case of
 // refineCallTypeArgsFromDest — picks up a Call directly.
-func (c *checker) refineSingleCallTypeArgs(call *ast.Call, dst ast.Type) {
-	if len(call.TypeArgs) == 0 {
-		return
+// isPrimitiveTypeName reports whether `name` is a built-in scalar type that
+// can carry associated functions via `impl Trait for <prim>` (hoisted to
+// `__assoc_<prim>_<f>`).
+func isPrimitiveTypeName(name string) bool {
+	switch name {
+	case "i32", "i64", "u32", "u64", "f32", "f64", "string", "boolean":
+		return true
 	}
+	return false
+}
+
+func (c *checker) refineSingleCallTypeArgs(call *ast.Call, dst ast.Type) {
 	id, ok := call.Callee.(*ast.Ident)
 	if !ok {
 		return
 	}
 	fn, isGen := c.info.GenericFuncs[id.Name]
-	if !isGen || len(call.TypeArgs) != len(fn.TypeParams) {
+	if !isGen || len(fn.TypeParams) == 0 {
+		return
+	}
+	// A generic call with NO type args (a receiver-less associated call on a
+	// generic struct — `Box.default()` rewritten to `__assoc_Box_default()` —
+	// has no arguments to pin its type params): infer them entirely from the
+	// destination type so the monomorphiser can instantiate a concrete clone.
+	// Without this the generic `__assoc_…` body keeps its `T` and the
+	// post-monomorph re-check fails with "undefined identifier T".
+	if len(call.TypeArgs) == 0 {
+		sub := make(map[string]ast.Type, len(fn.TypeParams))
+		refineParamSubFromDest(fn.ReturnType, dst, sub)
+		args := make([]ast.Type, len(fn.TypeParams))
+		for i, tp := range fn.TypeParams {
+			v, ok := sub[tp]
+			if !ok || v == nil {
+				return // couldn't infer every param — leave the call untouched
+			}
+			args[i] = v
+		}
+		call.TypeArgs = args
+		return
+	}
+	if len(call.TypeArgs) != len(fn.TypeParams) {
 		return
 	}
 	sub := make(map[string]ast.Type, len(fn.TypeParams))
@@ -8079,6 +10531,13 @@ func (c *checker) settleInt(e ast.Expr, hn ast.NumberType) {
 			}
 			c.settleInt(arm.Body, hn)
 		}
+	case *ast.BlockExpr:
+		// Block-expression branch (`{ …; tail }`): the value is the
+		// trailing expression, so settle it against the destination
+		// width — `var n: i64 = if (c) { var k = 1; k } else { 0 }`.
+		if x.Tail != nil {
+			c.settleInt(x.Tail, hn)
+		}
 	case *ast.Call:
 		// Generic-function call whose result type substitutes
 		// to the hint's T. The initial check ran with sub[T]
@@ -8185,6 +10644,11 @@ func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
 				continue
 			}
 			c.settleFloat(arm.Body, hf)
+		}
+	case *ast.BlockExpr:
+		// Block-expression branch: settle the trailing value.
+		if x.Tail != nil {
+			c.settleFloat(x.Tail, hf)
 		}
 	case *ast.Call:
 		// Generic-function call returning T against a float
@@ -8312,6 +10776,14 @@ func postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 				continue
 			}
 			if t := postSettleType(arm.Body, prior); t != nil {
+				return t
+			}
+		}
+	case *ast.BlockExpr:
+		// Block-expression branch: the value is the trailing
+		// expression, so its post-settle type is the block's type.
+		if x.Tail != nil {
+			if t := postSettleType(x.Tail, prior); t != nil {
 				return t
 			}
 		}
@@ -8477,7 +10949,7 @@ func commonFloatWidth(lt, rt ast.Type) (ast.FloatType, bool) {
 // resolved operand type's width doesn't match `target`'s. Lang
 // requires explicit `as` casts between integer widths in user
 // code, but the checker auto-inserts them for binop operands so
-// `i64 + i32` (mixed-width pointer arithmetic in the prelude,
+// `i64 + i32` (mixed-width pointer arithmetic in the stdlib,
 // for example) doesn't require sprinkling `as i64` everywhere.
 // Signedness must already match — see commonIntegerWidth.
 func (c *checker) widenIntOperand(slot *ast.Expr, srcT, targetT ast.NumberType) {
@@ -8519,11 +10991,11 @@ func commonIntegerWidth(lt, rt ast.Type) (ast.NumberType, bool) {
 		return ln, true
 	}
 	// Pointer-width arithmetic: `usize + i32` (or `i32 + usize`)
-	// auto-widens to usize so prelude pointer math stays
+	// auto-widens to usize so stdlib pointer math stays
 	// readable. usize is unsigned and i32 is signed, so the
 	// signedness check below would otherwise reject. The
 	// 2's-complement representation makes the result identical
-	// to what the prelude computed before via explicit
+	// to what the stdlib computed before via explicit
 	// `as i64 / as usize` casts.
 	if ln.IsPointerWidth() || rn.IsPointerWidth() {
 		if ln.IsPointerWidth() {
@@ -8625,10 +11097,10 @@ func hasInitDecl(prog *ast.Program) bool {
 // alongside it costs nothing (wasi-http's _start is an empty
 // stub anyway).
 //
-// Under the auto-prelude, both `tcp_serve` and `__port_from_env`
-// live at their bare names (LoadStdlibFlat doesn't mangle).
-// Under no-prelude with `import "std/tcp";` they get the
-// modload `tcp__` prefix instead. We probe `prog.Funcs` for
+// Loaded flat via `LoadStdlibFlat` (e.g. in tests), both
+// `tcp_serve` and `__port_from_env` live at their bare names
+// (no mangling). Loaded via modload with `import "std/tcp";`
+// they get the `tcp__` prefix instead. We probe `prog.Funcs` for
 // whichever name exists and stamp the Ident accordingly so the
 // synthesised main resolves cleanly through both load paths.
 func synthesiseHandleMain(prog *ast.Program) *ast.FuncDecl {
@@ -8669,9 +11141,8 @@ func synthesiseHandleMain(prog *ast.Program) *ast.FuncDecl {
 	// (docs/PLATFORM-RESEARCH.md Rec §3). The return value is
 	// currently dropped — Phase 1 init() is side-effect-only;
 	// Phase 2 will thread the result as a `state` parameter
-	// to handle. `init` is the BARE name; if the user
-	// `import "core/no_prelude";`s and qualifies it, modload
-	// rewrites the call separately.
+	// to handle. `init` is the BARE name; if a module import
+	// qualifies it, modload rewrites the call separately.
 	var stmts []ast.Stmt
 	if hasInitDecl(prog) {
 		stmts = append(stmts, &ast.ExprStmt{

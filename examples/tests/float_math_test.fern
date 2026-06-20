@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/test";
 // examples/tests/float_math_test.fern — float math primitives
 // (sqrt, pow, abs, floor, ceil, round, trunc, log, exp, sin,
@@ -6,69 +5,69 @@ import "std/test";
 // IEEE-754 classification helpers (is_nan / is_finite /
 // is_inf) and min / max / clamp.
 //
-// Float literals default to f32 in lang, so the f64 cases
+// Float literals default to f32 in Fern, so the f64 cases
 // either declare the value with an explicit `var x: f64 = …`
 // or annotate with `as f64`. f32 receiver methods exist too;
 // each wraps the f64 primitive (promote, apply, demote).
 
-function test_abs_negative(): Option[string] {
+function test_abs_negative(): test.TestOutcome {
     var x: f64 = 0.0 - 3.5;
     return test.assert_eq_f64_near(x.abs(), 3.5, 0.0);
 }
 
-function test_floor(): Option[string] {
+function test_floor(): test.TestOutcome {
     var x: f64 = 3.7;
     return test.assert_eq_f64_near(x.floor(), 3.0, 0.0);
 }
 
-function test_ceil(): Option[string] {
+function test_ceil(): test.TestOutcome {
     var x: f64 = 3.2;
     return test.assert_eq_f64_near(x.ceil(), 4.0, 0.0);
 }
 
-function test_round(): Option[string] {
+function test_round(): test.TestOutcome {
     var x: f64 = 3.5;
     return test.assert_eq_f64_near(x.round(), 4.0, 0.0);
 }
 
-function test_trunc_positive(): Option[string] {
+function test_trunc_positive(): test.TestOutcome {
     var x: f64 = 3.7;
     return test.assert_eq_f64_near(x.trunc(), 3.0, 0.0);
 }
 
-function test_trunc_negative(): Option[string] {
+function test_trunc_negative(): test.TestOutcome {
     var x: f64 = 0.0 - 3.7;
     return test.assert_eq_f64_near(x.trunc(), 0.0 - 3.0, 0.0);
 }
 
-function test_sqrt(): Option[string] {
+function test_sqrt(): test.TestOutcome {
     var x: f64 = 2.0;
     return test.assert_eq_f64_near(x.sqrt(), 1.41421356, 0.00001);
 }
 
-function test_pow(): Option[string] {
+function test_pow(): test.TestOutcome {
     var x: f64 = 2.0;
     return test.assert_eq_f64_near(x.pow(10.0), 1024.0, 0.0);
 }
 
-function test_log_exp_round_trip(): Option[string] {
+function test_log_exp_round_trip(): test.TestOutcome {
     // exp(log(x)) == x for x > 0.
     var x: f64 = 42.0;
     return test.assert_eq_f64_near(x.log().exp(), x, 0.000001);
 }
 
-function test_sin_pi(): Option[string] {
+function test_sin_pi(): test.TestOutcome {
     // sin(π) ≈ 0
     var pi: f64 = 3.14159265358979;
     return test.assert_eq_f64_near(pi.sin(), 0.0, 0.000001);
 }
 
-function test_cos_zero(): Option[string] {
+function test_cos_zero(): test.TestOutcome {
     var x: f64 = 0.0;
     return test.assert_eq_f64_near(x.cos(), 1.0, 0.0);
 }
 
-function test_sin_cos_pythagoras(): Option[string] {
+function test_sin_cos_pythagoras(): test.TestOutcome {
     // sin² + cos² = 1 for every angle. Sample at a non-axis
     // angle so neither term is trivially 0 / 1.
     var theta: f64 = 1.23;
@@ -77,7 +76,7 @@ function test_sin_cos_pythagoras(): Option[string] {
     return test.assert_eq_f64_near(s * s + c * c, 1.0, 0.000001);
 }
 
-function test_is_nan(): Option[string] {
+function test_is_nan(): test.TestOutcome {
     var z: f64 = 0.0;
     var nan: f64 = z / z;
     if (!nan.is_nan()) {
@@ -87,45 +86,45 @@ function test_is_nan(): Option[string] {
     if ((3.14 as f64).is_nan()) {
         return test.fail("is_nan flagged a finite value");
     }
-    return None;
+    return test.pass();
 }
 
-function test_is_finite(): Option[string] {
+function test_is_finite(): test.TestOutcome {
     var x: f64 = 1.5;
     var inf: f64 = 1.0 / 0.0;
     if (!x.is_finite()) { return test.fail("is_finite missed a finite value"); }
     if (inf.is_finite())  { return test.fail("is_finite accepted Inf"); }
-    return None;
+    return test.pass();
 }
 
-function test_is_inf(): Option[string] {
+function test_is_inf(): test.TestOutcome {
     var inf: f64 = 1.0 / 0.0;
     var ninf: f64 = (0.0 - 1.0) / 0.0;
     if (!inf.is_inf()) { return test.fail("is_inf missed +Inf"); }
     if (!ninf.is_inf()) { return test.fail("is_inf missed -Inf"); }
     if ((0.0 as f64).is_inf()) { return test.fail("is_inf flagged 0.0"); }
-    return None;
+    return test.pass();
 }
 
-function test_min_max(): Option[string] {
+function test_min_max(): test.TestOutcome {
     var a: f64 = 3.0;
     var b: f64 = 7.0;
     if (a.min(b) != 3.0) { return test.fail("min wrong"); }
     if (a.max(b) != 7.0) { return test.fail("max wrong"); }
-    return None;
+    return test.pass();
 }
 
-function test_clamp(): Option[string] {
+function test_clamp(): test.TestOutcome {
     var x_below: f64 = 0.0 - 1.0;
     var x_in:    f64 = 5.0;
     var x_above: f64 = 99.0;
     if (x_below.clamp(0.0, 10.0) != 0.0)  { return test.fail("clamp below"); }
     if (x_in.clamp(0.0, 10.0)    != 5.0)  { return test.fail("clamp inside"); }
     if (x_above.clamp(0.0, 10.0) != 10.0) { return test.fail("clamp above"); }
-    return None;
+    return test.pass();
 }
 
-function test_f32_sqrt(): Option[string] {
+function test_f32_sqrt(): test.TestOutcome {
     // f32 receiver path: bare `2.0` is f32, calling `.sqrt()`
     // dispatches to the f32 wrapper which promotes to f64,
     // runs the primitive, demotes back to f32.

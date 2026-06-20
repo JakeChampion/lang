@@ -133,17 +133,32 @@ takes the pragmatic, low-risk path.
    on every backend. Verified: `array-build` in the self-host prog
    (x86/arm64) + wasm-run suites, and an `array_build` differential case
    (Go vs self-host, x86-64 / arm64 / wasm — identical output).
-3. **`Map.build` / `MapBuilder`** — ✅ **done (Go).** Same desugar
-   (`maybeDesugarMapBuild`): `b.insert(k, v);` → `b = b.insert(k, v)` on a
-   fresh `map_new(8)`-backed local. `insert` + `len` (the value-returning
-   `without` returns a tuple, so it's deferred). Parser test + e2e
+3. **`Map.build` / `MapBuilder`** — ✅ **done (Go + self-host).** Same
+   desugar (`maybeDesugarMapBuild`): `b.insert(k, v);` → `b = b.insert(k, v)`
+   on a fresh `map_new(8)`-backed local. `insert` + `len` (the value-
+   returning `without` returns a tuple, so it's deferred). Parser test + e2e
    (insert-while / insert-for-in / len-read / string-keys-overwrite /
-   churn on x86-64 / wasm / interp). *Self-host `parser.fern` parity:
-   follow-up* (mirrors the Array.build self-host port).
-4. **Migrate the genuine `arr[i] = v` sites** (x86_encode / arm64_native
-   `buf[at]=`, the `word_freq` sort, `interp` `bvals[bi]=`) to builders or
-   `arr.with`, then land **E056** (subscript assignment is read-only),
-   finishing `docs/PURE-COLLECTION-API-PLAN.md` §3a.
+   churn on x86-64 / wasm / interp). **Self-host `parser.fern` parity done:**
+   `maybe_desugar_map_build` + `map_builder_inner` mirror the Array.build
+   port, and `is_builder_mutation` now also rewrites `b.insert(...)`.
+   Verified by the `map_build` feature-differential case (Go vs self-host
+   identical output on x86-64 / arm64 / wasm), with the self-host
+   fixpoint/CLI confirming the compiler still bootstraps itself.
+4. **Migrate every `arr[i] = v` site + land E056** — ✅ **done.** All ~83
+   indexed-assignment statements (stdlib base64 / hex / sort / string / i32
+   / core/int / task / test; self-host asm encoders / ssa / interp / vm /
+   watbin; examples word_freq) rewritten to `arr = arr.with(i, v)` — the
+   CoW unique-in-place fast path on an rc=1 local, same perf as the old
+   write. **E056** (`*ast.Assign` with an `*ast.Index` target rejected;
+   compound `arr[i] += v` too) makes subscripts read-only, the counterpart
+   of E048. The genuine in-place mutators (`fip` insertion sorts) stay
+   allocation-free: **E053 accepts `.with` on an `own` receiver** as the
+   method-call form of the in-place write. Tests: `TestArrayElement-
+   ImmutabilityE056`, fip `.with`-on-`own`/non-`own`, e2e. (Go reference
+   compiler; self-host E056 enforcement is deferred with E048/E049 —
+   `IMMUTABILITY-MIGRATION-PLAN.md` §4 "Remaining" — but the self-host
+   *source* is fully migrated and `.with` works on every backend.)
+   Finishes `docs/PURE-COLLECTION-API-PLAN.md` §3a.
 
 ## What this doc IS / IS NOT
 

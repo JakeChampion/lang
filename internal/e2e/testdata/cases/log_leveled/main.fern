@@ -1,0 +1,20 @@
+import "core/int";
+import "std/log";
+
+// std/log leveled Logger / LogEntry (#2683): plain-text + JSON-lines render,
+// structured fields, and the min-level threshold filter. `render` is pure, so
+// this is byte-for-byte verifiable across interp / x86-64 / arm64 / wasm.
+function main(): i32 {
+    var lg: log.Logger = log.new_logger(log.level_info());
+    // chained string / int / bool fields, plain-text mode.
+    print(lg.info_().str("user", "alice").int("id", 7).bool("ok", true).render("login"));
+    // below the info threshold → "" (filtered); print a marker so the empty
+    // line is observable.
+    print("filtered=[" + lg.debug_().str("k", "v").render("noisy") + "]");
+    // JSON-lines mode with an int field + a message needing escaping.
+    var jl: log.Logger = log.new_json_logger(log.level_warn());
+    print(jl.error_().int("code", 42).render("a\"b"));
+    // at-threshold boundary (warn == warn) emits; level_name picks WARN.
+    print(jl.warn_().render("edge"));
+    return 0;
+}

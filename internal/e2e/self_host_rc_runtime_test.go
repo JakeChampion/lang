@@ -78,7 +78,7 @@ func TestSelfHostRcRuntimeArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "asmcore.fern", "lexer.fern", "parser.fern", "asm_arm64.fern", "asm_arm64_run.fern"} {
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm_arm64_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -409,7 +409,7 @@ func TestSelfHostRcArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "asmcore.fern", "lexer.fern", "parser.fern", "asm_arm64.fern", "asm_arm64_run.fern"} {
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm_arm64_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -703,6 +703,11 @@ func TestSelfHostRcFreeReclaimX86_64(t *testing.T) {
 		// source local going out of scope does not free it (would UAF
 		// once free is on -- the JSON nested-structure gap).
 		{"enum-holds-array", "enum Box { Arr(i32[]), Empty } function mk(): Box { var xs: i32[] = [3, 4, 5]; return Arr(xs); } function main(): i32 { var b = mk(); match (b) { Arr(a) => { return a[1] + a[2] + __fern_rc_underflow_count(); }, Empty => { return 0; } } }", 9},
+		// Loop-local array rebind: `var r = build(n)` re-bound each iteration
+		// is released per-iteration (StmtVar cow-guarded dec-on-overwrite),
+		// not leaked until function exit. 100k rebinds stay value-correct and
+		// over-release-detector clean.
+		{"loop-local-rebind", "function build(n: i32): i32[] { var xs: i32[] = []; var i = 0; while (i < n) { xs = xs.append(i); i = i + 1; } return xs; } function main(): i32 { var s = 0; var k = 0; while (k < 100000) { var r: i32[] = build(32); s = s + r[31]; k = k + 1; } return (s % 5) + __fern_rc_underflow_count(); }", 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -723,4 +728,84 @@ func TestSelfHostRcFreeReclaimX86_64(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSelfHostRcStructArrayFieldDropX86_64 covers the Perceus deep-drop (one
+// level) of array-of-struct / array-of-enum FIELDS: when a reclaimable struct
+// is dropped, emit_struct_field_drops releases its struct/enum-array field
+// BUFFERS via a shallow __fern_arr_dec (the element boxes still leak — the
+// safe-leak invariant for nested payloads). This BALANCES the alias-inc the
+// struct-lit / bind / return / assign paths add when such a field aliases a
+// local, so the over-release detector must stay 0 across all construction
+// shapes — fresh literal (sole owner), aliased ident/param (inc'd), and a fresh
+// call value (sole owner). A double-free here would trip the detector or crash.
+func TestSelfHostRcStructArrayFieldDropX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
+	if err != nil {
+		t.Fatalf("read asm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_run.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+
+	cases := []struct {
+		name string
+		src  string
+		exit int
+	}{
+		// A reclaimable struct with a struct-array field built from a FRESH
+		// literal (sole owner): dropped 2000x, the field buffer is reclaimed
+		// each time, detector clean.
+		{"struct-arr-field-fresh-no-underflow", "struct E { v: i32 } struct H { es: E[] } function step(n: i32): i32 { var h = H { es: [E { v: n }, E { v: n + 1 }] }; return h.es[0].v; } function main(): i32 { var s = 0; var i = 0; while (i < 2000) { s = s + step(i); i = i + 1; } return s - s + __fern_rc_underflow_count(); }", 0},
+		// Struct-array field ALIASED from a borrowed param ident: construction
+		// incs the buffer, the struct's reclamation field-drop decs it, the
+		// borrowed param is not swept — balanced, detector clean across 2000 calls.
+		{"struct-arr-field-alias-no-underflow", "struct E { v: i32 } struct H { es: E[] } function use(src: E[]): i32 { var h = H { es: src }; return h.es[0].v; } function main(): i32 { var shared: E[] = [E { v: 3 }, E { v: 4 }]; var s = 0; var i = 0; while (i < 2000) { s = s + use(shared); i = i + 1; } return s - s + __fern_rc_underflow_count(); }", 0},
+		// Struct-array field from a fresh CALL value (sole owner, no inc): the
+		// field-drop frees it; a non-fresh callee would over-free here.
+		{"struct-arr-field-callvalue-no-underflow", "struct E { v: i32 } struct H { es: E[] } function mk(n: i32): E[] { return [E { v: n }, E { v: n * 2 }]; } function step(n: i32): i32 { var h = H { es: mk(n) }; return h.es[1].v; } function main(): i32 { var s = 0; var i = 0; while (i < 2000) { s = s + step(i); i = i + 1; } return s - s + __fern_rc_underflow_count(); }", 0},
+		// Array-of-ENUM field: the buffer is reclaimed the same shallow way.
+		{"enum-arr-field-no-underflow", "enum K { A(i32), B } struct G { ks: K[] } function step(n: i32): i32 { var g = G { ks: [A(n), B] }; return match (g.ks[0]) { A(x) => x, B => 0 }; } function main(): i32 { var s = 0; var i = 0; while (i < 2000) { s = s + step(i); i = i + 1; } return s - s + __fern_rc_underflow_count(); }", 0},
+		// Value-correctness: the reclamation does not disturb the field reads
+		// before the drop.
+		{"struct-arr-field-value", "struct E { v: i32 } struct H { es: E[] } function main(): i32 { var h = H { es: [E { v: 5 }, E { v: 9 }] }; return h.es[0].v * 10 + h.es[1].v; }", 59},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			if len(asm) == 0 {
+				t.Fatal("self-host compiler emitted 0 bytes")
+			}
+			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(progBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+			}
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			}
+		})
+	}
+
+	// Emission: a reclaimable struct whose ONLY rc field is a struct-array
+	// releases that field's buffer (__fern_arr_dec) at the struct's reclamation,
+	// AND deep-drops the element boxes — the walk is gated on __fern_rc_is_unique
+	// (free the elements only when this drop frees the buffer, i.e. the sole
+	// owner), then rc_dec's each element before the buffer dec.
+	t.Run("emits-struct-array-field-drop", func(t *testing.T) {
+		asm := string(runCapture(t, gcc, runner, driverBin,
+			[]byte("struct E { v: i32 } struct H { es: E[] } function main(): i32 { var h = H { es: [E { v: 1 }] }; return h.es[0].v; }")))
+		if !strings.Contains(asm, "call __fn___fern_arr_dec") {
+			t.Errorf("expected a struct-array field buffer drop (__fern_arr_dec) at struct reclamation; not found")
+		}
+		if !strings.Contains(asm, "call __fn___fern_rc_is_unique") {
+			t.Errorf("expected the element-walk sole-owner gate (__fern_rc_is_unique) at the struct-array field drop; not found")
+		}
+	})
 }

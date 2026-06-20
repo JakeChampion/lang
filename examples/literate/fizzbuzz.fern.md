@@ -23,7 +23,6 @@ definitions appear:
 
 ```fern
 <<*>>=
-import "core/no_prelude";
 
 <<the divisibility test>>
 
@@ -31,8 +30,8 @@ import "core/no_prelude";
 ```
 
 `putchar` is a built-in and the divisibility check is pure
-arithmetic, so the only thing we need is the `core/no_prelude`
-opt-out declaring we won't pull anything from `std/`.
+arithmetic, so this program needs no imports at all — nothing
+from `std/`.
 
 ## Is a number divisible?
 

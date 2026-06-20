@@ -22,6 +22,12 @@ type WorldInterface struct {
 	// i.e. an imported resource handle, which lowers as a scalar).
 	FuncSigs   []WorldFunc
 	LocalTypes []*TypeDef
+	// LocalTypeNames is parallel to LocalTypes: the WIT name of a type slot when
+	// it was introduced by a named type export (`export "thing" (type …)`), else
+	// "". A handle param's `own/borrow <Resource>` indexes here to recover the
+	// resource's name (e.g. "thing"), which the P6 export lift needs to surface
+	// the imported resource (docs/WIT-BRING-YOUR-OWN.md).
+	LocalTypeNames []string
 }
 
 // WorldFunc is an exported function with its decoded signature. Resolve a
@@ -100,9 +106,16 @@ func liftInterface(name string, inst *TypeDef) WorldInterface {
 		switch {
 		case d.Kind == 0x01:
 			wi.LocalTypes = append(wi.LocalTypes, d.Type)
+			wi.LocalTypeNames = append(wi.LocalTypeNames, "")
 		case d.Kind == 0x02 && d.Alias != nil && d.Alias.Sort == 0x03:
 			wi.LocalTypes = append(wi.LocalTypes, nil)
+			wi.LocalTypeNames = append(wi.LocalTypeNames, "")
 		case (d.Kind == 0x03 || d.Kind == 0x04) && d.Extern != nil && d.Extern.Kind == 0x03:
+			// A named type export/import (`export "thing" (type (eq N))`) records
+			// the name for the slot so a handle param's `own/borrow <slot>` can
+			// recover the resource name (P6 export lift). The eq/sub resolution of
+			// the slot's def is unchanged below.
+			wi.LocalTypeNames = append(wi.LocalTypeNames, d.Name)
 			// A type externdesc binds an index. `(type (eq N))` re-exports an
 			// earlier type — e.g. `export "datetime" (type (eq 0))` aliases the
 			// record at index 0 — so resolve the slot to that target def. A
@@ -203,4 +216,82 @@ func (wi WorldInterface) ResolveDef(v Valtype) *DefinedType {
 		return nil
 	}
 	return td.Def // nil unless td is a defvaltype
+}
+
+// HandleResource reports, when `v` resolves to an `own<R>` / `borrow<R>` handle,
+// the resource's WIT name and whether it's owned (own vs borrow). Returns
+// ("", false, false) otherwise. The P6 export lift uses it to surface the
+// imported resource type for a handle-typed export parameter (a WIT
+// `incoming-handler#handle` takes `own<incoming-request>` —
+// docs/WIT-BRING-YOUR-OWN.md).
+func (wi WorldInterface) HandleResource(v Valtype) (name string, owned bool, ok bool) {
+	d := wi.ResolveDef(v)
+	if d == nil || (d.Tag != tagOwn && d.Tag != tagBorrow) {
+		return "", false, false
+	}
+	if int(d.Resource) >= len(wi.LocalTypeNames) {
+		return "", false, false
+	}
+	name = wi.LocalTypeNames[d.Resource]
+	if name == "" {
+		return "", false, false
+	}
+	return name, d.Tag == tagOwn, true
+}
+
+// ListElemPrim reports, when `v` resolves to a `list<P>` whose element `P` is a
+// primitive, that primitive's CValtype byte (the single-byte code, which is
+// also the component-model valtype byte). Returns (0, false) otherwise. The P6
+// export lift (docs/WIT-BRING-YOUR-OWN.md) uses it to build the `list<T>`
+// component type for a numeric-array export result without exposing the
+// internal tag constants.
+func (wi WorldInterface) ListElemPrim(v Valtype) (byte, bool) {
+	d := wi.ResolveDef(v)
+	if d == nil || d.Tag != tagList || !d.Elem.IsPrim {
+		return 0, false
+	}
+	return d.Elem.Prim, true
+}
+
+// OptionElemPrim reports, when `v` resolves to an `option<P>` whose element is a
+// primitive, that primitive's CValtype byte. The P6 export lift uses it to emit
+// the `option` component type for an Option export result without exposing the
+// internal tag constants.
+func (wi WorldInterface) OptionElemPrim(v Valtype) (byte, bool) {
+	d := wi.ResolveDef(v)
+	if d == nil || d.Tag != tagOption || !d.Elem.IsPrim {
+		return 0, false
+	}
+	return d.Elem.Prim, true
+}
+
+// ResultArmPrims reports, when `v` resolves to a `result<ok, err>` with both
+// arms present and primitive, the two arms' CValtype bytes. Returns (0,0,false)
+// otherwise. The P6 export lift uses it to emit the `result` component type for
+// a Result export result; Fern's Result[T,E] always carries both arms.
+func (wi WorldInterface) ResultArmPrims(v Valtype) (ok byte, err byte, both bool) {
+	d := wi.ResolveDef(v)
+	if d == nil || d.Tag != tagResult || !d.HasOk || !d.HasErr || !d.Ok.IsPrim || !d.Err.IsPrim {
+		return 0, 0, false
+	}
+	return d.Ok.Prim, d.Err.Prim, true
+}
+
+// TupleElemPrims reports, when `v` resolves to a `tuple<...>` whose elements are
+// all primitive, their CValtype bytes in order. Returns (nil, false) otherwise.
+// The P6 export lift uses it to emit the `tuple` component type for a tuple
+// export result without exposing the internal tag constants.
+func (wi WorldInterface) TupleElemPrims(v Valtype) ([]byte, bool) {
+	d := wi.ResolveDef(v)
+	if d == nil || d.Tag != tagTuple || len(d.Elems) == 0 {
+		return nil, false
+	}
+	out := make([]byte, len(d.Elems))
+	for i, e := range d.Elems {
+		if !e.IsPrim {
+			return nil, false
+		}
+		out[i] = e.Prim
+	}
+	return out, true
 }

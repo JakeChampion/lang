@@ -76,6 +76,11 @@ var selfHostImplementedCodes = map[string]bool{
 	"E025": true, // switch on float / case value type mismatch
 	"E022": true, // if-let / let-else source not an enum; let-else else must diverge
 	"E057": true, // cell_new(v) element type must be a scalar or string
+	"E056": true, // subscript assignment (arr[i] = v) is read-only
+	"E063": true, // returning a [T] slice that views function-local storage
+	"E058": true, // labeled break/continue names no enclosing loop
+	"E061": true, // value-position block has no trailing value
+	"E059": true, // `as?` downcast requires a `dyn Trait` value on the left
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -134,52 +139,67 @@ func filterImplemented(codes []string) []string {
 // same source — restricted to the codes the port has implemented so far
 // (selfHostImplementedCodes). As later slices teach checker.fern more
 // codes, the corpus + that set grow together.
-func TestSelfHostCheckerCodesX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t) // lexer, parser, asm
-	for _, name := range []string{"flatten.fern", "util.fern", "checker.fern", "bundle_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "bundle_run.fern", "driver")
+// buildCheckerCodesBin builds the single-module checker-codes driver
+// (checker_codes_run.fern). See buildCheckerDriverBin.
+func buildCheckerCodesBin(t *testing.T) (checkerBin string, runner []string, dir string) {
+	return buildCheckerDriverBin(t, "checker_codes_run.fern", false)
+}
 
-	lexerSrc, _ := os.ReadFile(filepath.Join(dir, "lexer.fern"))
-	parserSrc, _ := os.ReadFile(filepath.Join(dir, "parser.fern"))
-	checkerSrc, _ := os.ReadFile(filepath.Join(dir, "checker.fern"))
-	utilSrc, _ := os.ReadFile(filepath.Join(dir, "util.fern"))
+// buildCheckerDriverBin builds a self-host checker-codes driver binary: it
+// compiles driverFile (bundled with lexer / parser / checker / util / io, plus
+// flatten when withFlatten) with the Go-built self-host compiler, producing a
+// binary that reads stdin and prints the diagnostic CODE of every diagnostic
+// the self-host checker emits. Returns the binary path, the (possibly empty)
+// qemu/exec runner prefix, and the temp project dir (which also holds
+// goCheckerCodes' scratch input). The single-module driver reads one program;
+// the bundle driver (withFlatten) reads a ///MODULE bundle. Shared so the
+// expensive self-host bundle compile happens once per driver.
+func buildCheckerDriverBin(t *testing.T, driverFile string, withFlatten bool) (checkerBin string, runner []string, dir string) {
+	t.Helper()
+	gcc, run, modDriverBin := buildModloadDriverX86(t)
+	runner = run
+
+	// Compile the self-hosted checker binary (driverFile = checker_run /
+	// checker_codes_run, importing std/io + ./lexer + ./parser + ./checker)
+	// with the file-based asm driver. The loader resolves `import "std/io"`
+	// to the vendored flat io.fern (basename fallback), so the driver source
+	// is used unmodified — no ///MODULE bundle, no import rewrite.
+	files := map[string]string{}
+	for _, m := range []string{"util", "lexer", "parser", "checker"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", m+".fern"))
+		if err != nil {
+			t.Fatalf("read %s.fern: %v", m, err)
+		}
+		files[m+".fern"] = string(src)
+	}
+	if withFlatten {
+		src, err := os.ReadFile("../../examples/self_host/flatten.fern")
+		if err != nil {
+			t.Fatalf("read flatten.fern: %v", err)
+		}
+		files["flatten.fern"] = string(src)
+	}
 	ioSrc, err := os.ReadFile("../../internal/stdlib/std/io.fern")
 	if err != nil {
 		t.Fatalf("read std/io.fern: %v", err)
 	}
-	runSrc, err := os.ReadFile("../../examples/self_host/checker_codes_run.fern")
+	files["io.fern"] = string(ioSrc)
+	runSrc, err := os.ReadFile(filepath.Join("../../examples/self_host", driverFile))
 	if err != nil {
-		t.Fatalf("read checker_codes_run.fern: %v", err)
+		t.Fatalf("read %s: %v", driverFile, err)
 	}
-	driverMod := strings.ReplaceAll(string(runSrc), "import \"std/io\";", "import \"./io\";")
-	var bundle bytes.Buffer
-	bundle.WriteString("///MODULE util\n")
-	bundle.Write(utilSrc)
-	bundle.WriteString("///MODULE lexer\n")
-	bundle.Write(lexerSrc)
-	bundle.WriteString("\n///MODULE parser\n")
-	bundle.Write(parserSrc)
-	bundle.WriteString("\n///MODULE checker\n")
-	bundle.Write(checkerSrc)
-	bundle.WriteString("\n///MODULE io\n")
-	bundle.Write(ioSrc)
-	bundle.WriteString("\n///MODULE main\n")
-	bundle.WriteString(driverMod)
+	files["main.fern"] = string(runSrc)
 
-	checkerAsm := runCapture(t, gcc, runner, driverBin, bundle.Bytes())
+	checkerAsm, progDir := compileFilesModload(t, runner, modDriverBin, files)
 	if len(checkerAsm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes for the codes driver")
 	}
-	checkerBin := buildBin(t, gcc, dir, "codes", string(checkerAsm))
+	checkerBin = buildBin(t, gcc, progDir, "codes", checkerAsm)
+	return checkerBin, runner, progDir
+}
+
+func TestSelfHostCheckerCodesX86_64(t *testing.T) {
+	checkerBin, runner, dir := buildCheckerCodesBin(t)
 
 	cases := []struct {
 		name string
@@ -189,6 +209,71 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"clean", "function main(): i32 { return 1 + 2; }\n", nil},
 		{"rec-local-ok", "function main(): i32 { function f(n: i32): i32 { if (n <= 0) { return 0; } return f(n - 1); } return f(3); }\n", nil},
 		{"rec-local-capture-ok", "function main(): i32 { var base: i32 = 10; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }\n", nil},
+		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice): the loop
+		// var is an i32 over the half-open interval. A clean program draws no
+		// codes from EITHER checker — the differential proves the self-host
+		// checker binds the range var to i32 (no spurious E001 / E008) the
+		// same way the Go checker does (it desugars to a C-style for).
+		{"range-clean", "function main(): i32 { var s = 0; for i in 0..5 { s = s + i; } return s; }\n", nil},
+		{"range-nested-clean", "function main(): i32 { var t = 0; for i in 0..3 { for j in 0..3 { t = t + i + j; } } return t; }\n", nil},
+		{"range-expr-bounds-clean", "function main(): i32 { var n = 4; var s = 0; for i in 1..n + 1 { s = s + i; } return s; }\n", nil},
+		// Type ascription `e as T` (#2669): a zero-cost annotation. An array /
+		// string ascription draws no diagnostic from EITHER checker — the
+		// self-host only flags E033 when both sides are scalar primitives, and
+		// the Go checker accepts the cast as an upcast assignable to the target.
+		{"asc-arr-clean", "function main(): i32 { var a = [] as i32[]; a = [1, 2]; return a[0] + a[1]; }\n", nil},
+		{"asc-str-clean", "function main(): i32 { var s = \"x\" as string; return s.len(); }\n", nil},
+		// Non-binding-position ascription (#2669) — arg / return / nested — is
+		// also clean from both checkers.
+		{"asc-arg-clean", "function id(a: i32[]): i32 { return a.len(); }\nfunction main(): i32 { var a = [1, 2]; return id(a as i32[]); }\n", nil},
+		{"asc-ret-clean", "function mk(): i32[] { var a = [1, 2]; return a as i32[]; }\nfunction main(): i32 { return mk()[0]; }\n", nil},
+		// break / continue inside `for` loops (#2788) — clean from both checkers.
+		{"for-continue-clean", "function main(): i32 { var s = 0; for i in 0..5 { if (i == 2) { continue; } s = s + i; } return s; }\n", nil},
+		{"for-break-clean", "function main(): i32 { var a = [1, 2, 3]; var s = 0; for x in a { if (x == 3) { break; } s = s + x; } return s; }\n", nil},
+		// E058 (labeled break/continue names no enclosing loop, #2857): a
+		// labeled `break L` / `continue L` whose `L` matches no enclosing loop
+		// label is E058. A valid label (the enclosing loop's, or an outer one
+		// from a nested loop) draws no code — matching the Go checker, which
+		// tracks the enclosing-loop label stack.
+		{"break-bad-label", "function main(): i32 { var c = 0; outer: while (c < 5) { c = c + 1; if (c == 2) { break nope; } } return c; }\n", []string{"E058"}},
+		{"continue-bad-label", "function main(): i32 { var c = 0; outer: while (c < 5) { c = c + 1; if (c == 2) { continue nope; } } return c; }\n", []string{"E058"}},
+		{"break-good-label-clean", "function main(): i32 { var c = 0; outer: while (c < 5) { c = c + 1; var j = 0; while (j < 5) { j = j + 1; if (j == 2) { break outer; } } } return c; }\n", nil},
+		{"continue-good-label-clean", "function main(): i32 { var c = 0; outer: while (c < 3) { c = c + 1; var j = 0; while (j < 3) { j = j + 1; if (j == 1) { continue outer; } } } return c; }\n", nil},
+		// A labeled break that targets the INNERMOST loop's own label is in
+		// scope (depth 0) — clean.
+		{"break-self-label-clean", "function main(): i32 { var c = 0; inner: while (c < 5) { c = c + 1; if (c == 2) { break inner; } } return c; }\n", nil},
+		// E011 still wins for an out-of-loop labeled break (the two never both
+		// fire) — a labeled break with no enclosing loop at all is E011.
+		{"labeled-break-no-loop", "function main(): i32 { break nope; return 0; }\n", []string{"E011"}},
+		// E061 (value-position block has no trailing value, #2857): an if/match
+		// used as a value whose branch ends in a `;`-terminated statement (no
+		// tail expression) has no result. parse_branch_body tags that branch
+		// with a marker the checker turns into E061 — matching the Go checker.
+		// Both branches value-less (so they agree as void → no E031) and an
+		// un-annotated var (→ no E003) isolate E061 as the only code.
+		{"if-branch-no-tail", "function f(): i32 { return 0; }\nfunction main(): i32 { var x = if (true) { f(); } else { f(); }; return 0; }\n", []string{"E061"}},
+		{"match-arm-no-tail", "function f(): i32 { return 0; }\nfunction main(): i32 { var a = match (1) { 1 => { f(); }, _ => { f(); } }; return 0; }\n", []string{"E061"}},
+		// A value if/match WITH trailing values (incl. leading statements before
+		// the tail) draws no E061 from either checker.
+		{"if-branch-tail-ok", "function main(): i32 { var x = if (true) { 1 } else { 2 }; return x; }\n", nil},
+		{"if-branch-leading-then-tail-ok", "function main(): i32 { var x = if (true) { var k = 1; k + 1 } else { 0 }; return x; }\n", nil},
+		// E059 (`as?` downcast requires a `dyn Trait` value on the left, #2857):
+		// the operand of `x as? T` must be a `dyn Trait` value. A concrete
+		// scalar (i32 / string) on the left can never be dyn, so it's E059 —
+		// matching the Go checker. (A real dyn value types to `unknown` in the
+		// self-host and is left alone, like the E033/E042 conservatism.) The
+		// regular `as` cast is unaffected (it's the `as_` op, not `as?_`).
+		{"as-downcast-i32-left", "struct P { x: i32 }\nfunction main(): i32 { var a = 5; var b = a as? P; return 0; }\n", []string{"E059"}},
+		{"as-downcast-string-left", "struct P { x: i32 }\nfunction main(): i32 { var s = \"hi\"; var b = s as? P; return 0; }\n", []string{"E059"}},
+		{"regular-as-cast-ok", "function main(): i32 { var a = 5; var b = a as i32; return b; }\n", nil},
+		// `for x in <EXPR>` over a non-ident array iterable — clean from both checkers.
+		{"for-literal-clean", "function main(): i32 { var s = 0; for x in [1, 2, 3] { s = s + x; } return s; }\n", nil},
+		{"for-call-clean", "function mk(): i32[] { return [1, 2]; }\nfunction main(): i32 { var s = 0; for x in mk() { s = s + x; } return s; }\n", nil},
+		// Unannotated struct-array literal (`var ps = [P{..}, ..]`) — element type
+		// inferred, clean from both checkers.
+		{"inferred-struct-array-clean", "struct P { v: i32 }\nfunction main(): i32 { var ps = [P { v: 3 }, P { v: 4 }]; return ps[0].v + ps[1].v; }\n", nil},
+		// Tuple literal with an i32[] element — clean from both checkers.
+		{"tuple-arr-elem-clean", "function main(): i32 { var t = ([10, 20], 9); var a = t.0; return a[0] + t.1; }\n", nil},
 		{"dup-field", "struct P { x: i32, x: i32 }\nfunction main(): i32 { return 0; }\n", []string{"E007"}},
 		{"dup-param", "function f(a: i32, a: i32): i32 { return a; }\nfunction main(): i32 { return 0; }\n", []string{"E018"}},
 		{"dup-field-and-param", "struct P { y: i32, y: i32 }\nfunction g(b: i32, b: i32): i32 { return b; }\nfunction main(): i32 { return 0; }\n", []string{"E007", "E018"}},
@@ -201,11 +286,79 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"return-ok", "function f(): string { var s: string = \"x\"; return s; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"struct-missing-field", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; return p.x; }\n", []string{"E005"}},
 		{"struct-nested-missing", "struct Q { a: i32 }\nstruct P { q: Q }\nfunction main(): i32 { var p: P = P { q: Q {} }; return 0; }\n", []string{"E005"}},
+		// E043 (unknown-field-in-literal): a struct literal naming a field the
+		// struct doesn't declare (incl. update literals). All-declared is clean.
+		{"struct-extra-field", "struct P { x: i32 }\nfunction main(): i32 { var p = P { x: 1, y: 2 }; return p.x; }\n", []string{"E043"}},
+		{"struct-extra-update", "struct P { x: i32, y: i32 }\nfunction f(p: P): P { return P { ...p, z: 9 }; }\nfunction main(): i32 { return 0; }\n", []string{"E043"}},
+		{"struct-all-fields-ok", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p = P { x: 1, y: 2 }; return p.x + p.y; }\n", nil},
 		{"struct-complete-ok", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1, y: 2 }; return p.x; }\n", nil},
 		{"struct-field-type-mismatch", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1, y: \"no\" }; return 0; }\n", []string{"E043"}},
 		{"struct-field-type-string-ok", "struct P { x: i32, name: string }\nfunction main(): i32 { var p: P = P { x: 1, name: \"hi\" }; return p.x; }\n", nil},
 		{"struct-field-array-mismatch", "struct P { xs: i32[] }\nfunction main(): i32 { var p: P = P { xs: 5 }; return 0; }\n", []string{"E043"}},
 		{"struct-field-array-ok", "struct P { xs: i32[] }\nfunction main(): i32 { var p: P = P { xs: [1, 2, 3] }; return 0; }\n", nil},
+		// E034 (typed composite-array element): an element of a `var x: Elem[]`
+		// literal must be assignable to Elem. A union element type widens
+		// (members ok); a non-member, a wrong struct, or a primitive is E034.
+		{"typed-arr-struct-bad-prim", "struct P { x: i32 }\nfunction main(): i32 { var a: P[] = [P { x: 1 }, 5]; return 0; }\n", []string{"E034"}},
+		{"typed-arr-struct-bad-struct", "struct P { x: i32 }\nstruct Q { y: i32 }\nfunction main(): i32 { var a: P[] = [P { x: 1 }, Q { y: 2 }]; return 0; }\n", []string{"E034"}},
+		{"typed-arr-struct-ok", "struct P { x: i32 }\nfunction main(): i32 { var a: P[] = [P { x: 1 }, P { x: 2 }]; return 0; }\n", nil},
+		{"typed-arr-union-ok", "struct P { x: i32 }\nstruct Q { y: i32 }\ntype U = P | Q;\nfunction main(): i32 { var a: U[] = [P { x: 1 }, Q { y: 2 }]; return 0; }\n", nil},
+		{"typed-arr-union-bad", "struct P { x: i32 }\nstruct Q { y: i32 }\nstruct R { z: i32 }\ntype U = P | Q;\nfunction main(): i32 { var a: U[] = [P { x: 1 }, R { z: 3 }]; return 0; }\n", []string{"E034"}},
+		// E034 in non-var positions: the same composite-array element check at
+		// a `T[]` return, a `T[]` call argument, and a reassignment to a `T[]`
+		// variable. Union element types still widen (members ok).
+		{"arr-elem-return-bad", "struct P { x: i32 }\nfunction f(): P[] { return [P { x: 1 }, 5]; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"arr-elem-return-ok", "struct P { x: i32 }\nstruct Q { y: i32 }\ntype U = P | Q;\nfunction f(): U[] { return [P { x: 1 }, Q { y: 2 }]; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"arr-elem-arg-bad", "struct P { x: i32 }\nfunction f(a: P[]): i32 { return 0; }\nfunction main(): i32 { return f([P { x: 1 }, 5]); }\n", []string{"E034"}},
+		{"arr-elem-assign-bad", "struct P { x: i32 }\nfunction main(): i32 { var a: P[] = [P { x: 1 }]; a = [P { x: 1 }, 5]; return 0; }\n", []string{"E034"}},
+		// E034 at a struct-literal field of composite-array type: the field
+		// value's elements are checked against the field's element type (plain
+		// and `...base` literals). Union fields widen; the whole-value scalar
+		// mismatch stays E043.
+		{"arr-elem-field-bad", "struct Q { n: i32 }\nstruct P { xs: Q[] }\nfunction main(): i32 { var p = P { xs: [Q { n: 1 }, 5] }; return 0; }\n", []string{"E034"}},
+		{"arr-elem-field-update-bad", "struct Q { n: i32 }\nstruct P { xs: Q[] }\nfunction f(p: P): P { return P { ...p, xs: [Q { n: 1 }, 5] }; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"arr-elem-field-union-ok", "struct A { a: i32 }\nstruct B { b: i32 }\ntype U = A | B;\nstruct P { xs: U[] }\nfunction main(): i32 { var p = P { xs: [A { a: 1 }, B { b: 2 }] }; return 0; }\n", nil},
+		// E038 (builtin array-method arg type): `.append(elem)` and the value of
+		// `.with(i32, elem)` must match the array's element type. A union
+		// element widens; a correctly-typed call stays clean.
+		{"arr-append-arg-bad", "function main(): i32 { var a: i32[] = [1]; a = a.append(\"x\"); return 0; }\n", []string{"E038"}},
+		{"arr-append-arg-ok", "function main(): i32 { var a: i32[] = [1]; a = a.append(2); return 0; }\n", nil},
+		{"arr-with-arg-bad", "function main(): i32 { var a: i32[] = [1]; a = a.with(0, \"x\"); return 0; }\n", []string{"E038"}},
+		{"arr-append-union-ok", "struct P { x: i32 }\nstruct Q { y: i32 }\ntype U = P | Q;\nfunction main(): i32 { var a: U[] = [P { x: 1 }]; a = a.append(Q { y: 2 }); return 0; }\n", nil},
+		// E043 (method-call on a numeric scalar): i32 / f64 carry no methods,
+		// so any `x.m(...)` on one is a field access on a non-struct. Valid
+		// string / array / struct method calls stay clean (no false positive).
+		{"method-on-i32", "function main(): i32 { var x: i32 = 3; x.foo(); return 0; }\n", []string{"E043"}},
+		{"method-on-f64", "function main(): i32 { var f: f64 = 1.0; f.foo(); return 0; }\n", []string{"E043"}},
+		{"method-on-string-ok", "function main(): i32 { var s: string = \"a\"; return s.len(); }\n", nil},
+		{"method-on-i32-user-method-ok", "function (n: i32) twice(): i32 { return n * 2; }\nfunction main(): i32 { var x: i32 = 21; return x.twice(); }\n", nil},
+		// E043 (array method existence): only append / with / len are
+		// unconditional array builtins; everything else is an auto-discovered
+		// std/array function, so `a.sum()` / `a.bogus()` without `import
+		// "std/array"` is a call to a non-existent method. append / with / len
+		// stay clean. (The import path — where the std/array functions ARE in
+		// scope — is covered by TestSelfHostCheckerBundleDifferentialX86_64.)
+		{"method-on-array-sum-noimp", "function main(): i32 { var a: i32[] = [1]; return a.sum(); }\n", []string{"E043"}},
+		{"method-on-array-bogus", "function main(): i32 { var a: i32[] = [1]; return a.bogus(); }\n", []string{"E043"}},
+		{"method-on-array-append-ok", "function main(): i32 { var a: i32[] = []; a = a.append(1); return a.len(); }\n", nil},
+		{"method-on-array-with-ok", "function main(): i32 { var a: i32[] = [1, 2]; a = a.with(0, 9); return a.len(); }\n", nil},
+		// E043 (string method existence): a string carries only the `len` /
+		// `as_bytes` builtins; any other method must be user-defined (here,
+		// none is in scope), else it's a call to a non-existent method.
+		{"method-on-string-missing", "function main(): i32 { var s: string = \"a\"; var t = s.bogus(); return 0; }\n", []string{"E043"}},
+		{"method-on-string-substr-missing", "function main(): i32 { var s: string = \"abc\"; var t = s.substr(0, 1); return 0; }\n", []string{"E043"}},
+		{"method-on-string-as-bytes-ok", "function main(): i32 { var s: string = \"a\"; var b = s.as_bytes(); return 0; }\n", nil},
+		{"method-on-string-user-method-ok", "function (s: string) shout(): string { return s; }\nfunction main(): i32 { var s = \"a\"; var t = s.shout(); return 0; }\n", nil},
+		// E043 (struct method/field both missing): `p.m()` where struct P has
+		// no method m and no field m. A declared method, or a present field
+		// (closure-field call), is excluded — no false positive.
+		{"method-on-struct-missing", "struct P { x: i32 }\nfunction main(): i32 { var p = P { x: 1 }; return p.nope(); }\n", []string{"E043"}},
+		{"method-on-struct-defined-ok", "struct P { x: i32 }\nfunction (p: P) m(): i32 { return p.x; }\nfunction main(): i32 { var p = P { x: 1 }; return p.m(); }\n", nil},
+		// E038 (struct non-function field called): `p.x()` where x is a field
+		// whose type isn't a function. A function-typed field (closure call)
+		// stays clean; a missing member is E043 (above), not E038.
+		{"call-struct-field-i32", "struct P { x: i32 }\nfunction main(): i32 { var p = P { x: 1 }; return p.x(); }\n", []string{"E038"}},
+		{"call-struct-field-string", "struct P { s: string }\nfunction main(): i32 { var p = P { s: \"a\" }; p.s(); return 0; }\n", []string{"E038"}},
 		{"call-too-few-args", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1); }\n", []string{"E004"}},
 		{"call-too-many-args", "function id(a: i32): i32 { return a; }\nfunction main(): i32 { return id(1, 2); }\n", []string{"E004"}},
 		{"call-correct-arity-ok", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, 2); }\n", nil},
@@ -222,6 +375,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"assign-ok", "function main(): i32 { var x: i32 = 1; x = 2; return x; }\n", nil},
 		{"arg-type-mismatch", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, \"no\"); }\n", []string{"E038"}},
 		{"arg-type-ok", "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, 2); }\n", nil},
+		// E038 (call-non-function variant): calling a value whose type isn't a
+		// function. A free function / closure / fn-value local / method call is
+		// fine; only a scalar / non-fn local callee is flagged.
+		{"call-nonfn-i32", "function main(): i32 { var x = 5; return x(3); }\n", []string{"E038"}},
+		{"call-nonfn-string", "function main(): i32 { var s = \"a\"; return s(3); }\n", []string{"E038"}},
+		{"call-nonfn-noargs", "function main(): i32 { var x = 5; return x(); }\n", []string{"E038"}},
+		{"call-closure-ok", "function main(): i32 { var g = function(x: i32): i32 { return x + 1; }; return g(41); }\n", nil},
+		{"call-fnval-named-ok", "function dbl(n: i32): i32 { return n * 2; }\nfunction main(): i32 { var f = dbl; return f(21); }\n", nil},
 		{"if-nonbool-cond", "function main(): i32 { if (5) { return 1; } return 0; }\n", []string{"E008"}},
 		{"while-nonbool-cond", "function main(): i32 { while (\"x\") { return 1; } return 0; }\n", []string{"E008"}},
 		{"if-bool-cond-ok", "function main(): i32 { if (1 < 2) { return 1; } return 0; }\n", nil},
@@ -242,14 +403,37 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"not-on-int", "function main(): i32 { if (!5) { return 1; } return 0; }\n", []string{"E009"}},
 		{"and-on-bools-ok", "function main(): i32 { if ((1 < 2) && (2 < 3)) { return 1; } return 0; }\n", nil},
 		{"not-on-bool-ok", "function main(): i32 { if (!(1 < 2)) { return 1; } return 0; }\n", nil},
+		// E009 (extended ops): unary `-`, shift / bitwise, and ordering on a
+		// non-numeric operand. Numeric (i32 / f64) operands stay clean.
+		{"neg-on-string", "function main(): i32 { var s = \"a\"; var n = -s; return 0; }\n", []string{"E009"}},
+		{"shift-on-string", "function main(): i32 { var s = \"a\"; return s << 2; }\n", []string{"E009"}},
+		{"bitand-on-string", "function main(): i32 { var s = \"a\"; return s & 1; }\n", []string{"E009"}},
+		{"order-on-strings", "function main(): i32 { if (\"a\" < \"b\") { return 1; } return 0; }\n", []string{"E009"}},
+		{"order-mismatch", "function main(): i32 { if (5 < \"x\") { return 1; } return 0; }\n", []string{"E009"}},
+		{"order-i32-ok", "function main(): i32 { if (3 < 5) { return 1; } return 0; }\n", nil},
+		{"order-f64-ok", "function main(): i32 { if (1.5 < 2.5) { return 1; } return 0; }\n", nil},
+		{"neg-i32-ok", "function main(): i32 { var x = 5; return -x; }\n", nil},
+		{"shift-i32-ok", "function main(): i32 { return 1 << 4; }\n", nil},
 		{"eq-i32-string", "function main(): i32 { if (1 == \"x\") { return 1; } return 0; }\n", []string{"E041"}},
 		{"eq-bool-i32", "function main(): i32 { if ((1 < 2) == 3) { return 1; } return 0; }\n", []string{"E041"}},
 		{"eq-i32-i32-ok", "function main(): i32 { if (1 == 2) { return 1; } return 0; }\n", nil},
 		{"eq-string-string-ok", "function main(): i32 { if (\"a\" == \"b\") { return 1; } return 0; }\n", nil},
+		// E041 (composite ordering): `<` / `>` / `<=` / `>=` on two values of
+		// the SAME composite type (struct / array / tuple) is E041, not E009.
+		// Mixed composite/scalar or differing types stay E009; scalars are ok.
+		{"order-struct-struct", "struct P { x: i32 }\nfunction main(): i32 { var a = P { x: 1 }; var b = P { x: 2 }; if (a < b) { return 1; } return 0; }\n", []string{"E041"}},
+		{"order-array-array", "function main(): i32 { var a = [1]; var b = [2]; if (a <= b) { return 1; } return 0; }\n", []string{"E041"}},
+		{"order-struct-i32-mixed", "struct P { x: i32 }\nfunction main(): i32 { var a = P { x: 1 }; if (a < 3) { return 1; } return 0; }\n", []string{"E009"}},
 		{"field-unknown", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; return p.y; }\n", []string{"E043"}},
 		{"field-known-ok", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; return p.x; }\n", nil},
 		{"method-call-not-field-ok", "struct P { x: i32 }\nfunction (p: P) getx(): i32 { return p.x; }\nfunction main(): i32 { var p: P = P { x: 1 }; return p.getx(); }\n", nil},
 		{"field-nested-unknown", "struct Q { a: i32 }\nstruct P { q: Q }\nfunction main(): i32 { var p: P = P { q: Q { a: 1 } }; return p.q.z; }\n", []string{"E043"}},
+		// E043 (non-struct-value variant): a field READ on an i32 / string /
+		// array (no fields). Method calls and struct/tuple field access stay ok.
+		{"field-on-i32", "function main(): i32 { var x = 5; return x.foo; }\n", []string{"E043"}},
+		{"field-on-string", "function main(): i32 { var s = \"a\"; return s.foo; }\n", []string{"E043"}},
+		{"field-on-array", "function main(): i32 { var a = [1, 2, 3]; return a.foo; }\n", []string{"E043"}},
+		{"str-method-not-field-ok", "function main(): i32 { var s = \"abc\"; return s.len(); }\n", nil},
 		{"slice-low-non-i32", "function main(): i32 { var s: string = \"hello\"; var t: string = s[\"x\":3]; return 0; }\n", []string{"E037"}},
 		{"slice-high-non-i32", "function main(): i32 { var s: string = \"hello\"; var t: string = s[1:\"y\"]; return 0; }\n", []string{"E037"}},
 		{"slice-bounds-ok", "function main(): i32 { var s: string = \"hello\"; var t: string = s[1:3]; return 0; }\n", nil},
@@ -257,6 +441,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"tuple-field-non-numeric", "function main(): i32 { var t = (1, 2); return t.foo; }\n", []string{"E046"}},
 		{"tuple-field-out-of-range", "function main(): i32 { var t = (1, 2); return t.5; }\n", []string{"E046"}},
 		{"tuple-field-ok", "function main(): i32 { var t = (1, 2); return t.0; }\n", nil},
+		// E003 (tuple var annotation): a tuple-literal init must match the
+		// annotation element-wise (and in arity). Matching tuples — including
+		// nested, union-element, and struct-element — stay clean.
+		{"tuple-annot-elem-bad", "function main(): i32 { var t: (i32, string) = (1, 2); return 0; }\n", []string{"E003"}},
+		{"tuple-annot-order-bad", "function main(): i32 { var t: (string, i32) = (1, 2); return 0; }\n", []string{"E003"}},
+		{"tuple-annot-arity-bad", "function main(): i32 { var t: (i32, string) = (1, \"a\", 3); return 0; }\n", []string{"E003"}},
+		{"tuple-annot-ok", "function main(): i32 { var t: (i32, string) = (1, \"a\"); return t.0; }\n", nil},
+		{"tuple-annot-nested-ok", "function main(): i32 { var t: (i32, (string, i32)) = (1, (\"a\", 2)); return t.0; }\n", nil},
+		{"tuple-annot-union-ok", "enum E { A, B }\nfunction main(): i32 { var t: (E, i32) = (A, 1); return 0; }\n", nil},
 		{"arith-sub-string", "function main(): i32 { var n: i32 = 1 - \"x\"; return n; }\n", []string{"E009"}},
 		{"arith-add-mismatch", "function main(): i32 { var s = 1 + \"x\"; return 0; }\n", []string{"E009"}},
 		{"arith-mul-ok", "function main(): i32 { return 3 * 4; }\n", nil},
@@ -271,6 +464,24 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"variant-multi-enum-ref", "enum A { X, Y }\nenum B { X, Z }\nfunction main(): i32 { var a: A = X; return 0; }\n", []string{"E036"}},
 		{"variant-multi-enum-unref-ok", "enum A { X, Y }\nenum B { X, Z }\nfunction main(): i32 { return 0; }\n", nil},
 		{"variant-disjoint-ref-ok", "enum A { P, Q }\nenum B { R, S }\nfunction main(): i32 { var a: A = P; return 0; }\n", nil},
+		// E036 also covers a user-enum variant that collides with a BUILT-IN
+		// enum variant (Option / Result / …): `enum O { Some(i32), None }`
+		// shadows Option's Some / None, so a bare reference must be qualified.
+		// Plain Option usage (no colliding user enum) stays clean.
+		{"variant-builtin-collide-none", "enum O { Some(i32), None }\nfunction get(): O { return None; }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
+		{"variant-builtin-collide-result", "enum E { Ok(i32), Bad }\nfunction get(): E { return Ok(1); }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
+		{"variant-builtin-no-collide-ok", "function get(): Option[i32] { return None; }\nfunction main(): i32 { return 0; }\n", nil},
+		// A QUALIFIED variant reference `Enum.Variant` is valid — the enum-name
+		// qualifier is not a bare value, so it must not trip E001. Covers a
+		// user enum, a collision resolved by qualifying, and a built-in enum.
+		{"qualified-variant-user-ok", "enum Color { Red, Green }\nfunction get(): Color { return Color.Red; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"qualified-variant-collide-ok", "enum A { X, Y }\nenum B { X, Z }\nfunction get(): A { return A.X; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"qualified-variant-builtin-ok", "enum O { Some(i32), None }\nfunction get(): O { return O.None; }\nfunction main(): i32 { return 0; }\n", nil},
+		// A qualified reference to a NON-existent variant is E036 ("enum X has
+		// no variant Y") — for a user enum, a union alias, and a built-in enum.
+		{"qualified-variant-enum-bad", "enum Color { Red, Green }\nfunction main(): i32 { return Color.Blue; }\n", []string{"E036"}},
+		{"qualified-variant-union-bad", "struct A { x: i32 }\nstruct B { y: i32 }\ntype U = A | B;\nfunction main(): i32 { var u: U = U.Nope; return 0; }\n", []string{"E036"}},
+		{"qualified-variant-builtin-bad", "function main(): i32 { var o: Option[i32] = Option.Foo; return 0; }\n", []string{"E036"}},
 		{"match-wildcard-not-last", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { _ => { return 0; }, Has(n) => { return n; } } }\n", []string{"E026"}},
 		{"match-variant-twice", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { Has(n) => { return n; }, Has(m) => { return m; }, Nil => { return 0; } } }\n", []string{"E028"}},
 		{"match-clean-ok", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { Has(n) => { return n; }, Nil => { return 0; } } }\n", nil},
@@ -282,6 +493,19 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"array-elem-i32-in-string", "function main(): i32 { var a = [\"a\", 1]; return 0; }\n", []string{"E034"}},
 		{"array-elem-homogeneous-i32-ok", "function main(): i32 { var a = [1, 2, 3]; return a[0]; }\n", nil},
 		{"array-elem-homogeneous-string-ok", "function main(): i32 { var a = [\"p\", \"q\"]; return 0; }\n", nil},
+		// E034 (index variant): an array / string index must be an i32.
+		{"index-string", "function main(): i32 { var a = [1, 2, 3]; return a[\"x\"]; }\n", []string{"E034"}},
+		{"index-string-on-string", "function main(): i32 { var s = \"abc\"; return s[\"x\"]; }\n", []string{"E034"}},
+		{"index-bool", "function main(): i32 { var a = [1, 2, 3]; var b = true; return a[b]; }\n", []string{"E034"}},
+		{"index-i32-ok", "function main(): i32 { var a = [1, 2, 3]; var i = 1; return a[i]; }\n", nil},
+		// E034 / E037 (non-array/string source): indexing or slicing a value
+		// that isn't an array or string. Arrays / strings stay ok.
+		{"index-non-array", "function main(): i32 { var x = 5; return x[0]; }\n", []string{"E034"}},
+		{"index-struct", "struct P { x: i32 }\nfunction main(): i32 { var p = P { x: 1 }; return p[0]; }\n", []string{"E034"}},
+		{"slice-non-array", "function main(): i32 { var x = 5; var y = x[1:2]; return 0; }\n", []string{"E037"}},
+		{"index-string-source-ok", "function main(): i32 { var s = \"ab\"; return s[0]; }\n", nil},
+		{"slice-array-source-ok", "function main(): i32 { var a = [1, 2, 3, 4]; var b = a[1:3]; return b[0]; }\n", nil},
+		{"slice-string-source-ok", "function main(): i32 { var s = \"abcd\"; var t = s[1:3]; return t.len(); }\n", nil},
 		{"match-variant-on-i32", "enum E { A, B }\nfunction main(): i32 { var n: i32 = 5; match (n) { A => { return 1; }, _ => { return 0; } } }\n", []string{"E035"}},
 		{"match-variant-on-string", "enum E { A, B }\nfunction main(): i32 { var s: string = \"x\"; match (s) { A => { return 1; }, _ => { return 0; } } }\n", []string{"E035"}},
 		{"match-i32-wildcard-only-ok", "function main(): i32 { var n: i32 = 5; match (n) { _ => { return 0; } } }\n", nil},
@@ -302,6 +526,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"missing-return-one-armed-if", "function f(c: boolean): i32 { if (c) { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
 		{"return-while-true-ok", "function f(): i32 { while (true) { return 1; } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"return-if-else-ok", "function f(c: boolean): i32 { if (c) { return 1; } else { return 2; } }\nfunction main(): i32 { return 0; }\n", nil},
+		// void return type: an empty body is fine (no E052 — falling off the
+		// end is the normal exit), a bare `return;` is fine, and returning a
+		// value is E002. Mirrors the Go checker's special handling of void.
+		{"void-empty-ok", "function f(): void { }\nfunction main(): i32 { return 0; }\n", nil},
+		{"void-bare-return-ok", "function f(): void { return; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"void-returns-value", "function f(): void { return 3; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
 		{"method-unknown-receiver", "function (r: Nope) m(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"method-struct-receiver-ok", "struct P { x: i32 }\nfunction (p: P) m(): i32 { return p.x; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"method-builtin-receiver-ok", "function (n: i32) twice(): i32 { return n * 2; }\nfunction main(): i32 { return 0; }\n", nil},
@@ -322,11 +552,23 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"field-assign", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x = 5; return p.x; }\n", []string{"E048"}},
 		{"field-compound-assign", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x += 5; return p.x; }\n", []string{"E048"}},
 		{"nested-field-assign", "struct Q { a: i32 }\nstruct P { q: Q }\nfunction main(): i32 { var p: P = P { q: Q { a: 1 } }; p.q.a = 9; return 0; }\n", []string{"E048"}},
-		{"index-assign-ok", "function main(): i32 { var a = [1, 2, 3]; a[0] = 9; return a[0]; }\n", nil},
+		{"index-assign-e056", "function main(): i32 { var a = [1, 2, 3]; a[0] = 9; return a[0]; }\n", []string{"E056"}},
 		{"local-reassign-ok", "function main(): i32 { var x: i32 = 1; x = 5; return x; }\n", nil},
 		{"struct-update-ok", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p = P { ...p, x: 5 }; return p.x; }\n", nil},
 		{"value-undefined", "function main(): i32 { return z; }\n", []string{"E001"}},
 		{"value-defined-ok", "function main(): i32 { var z: i32 = 5; return z; }\n", nil},
+		// A bare STRUCT type name in value position is E001 (you construct with
+		// `P { … }`); the struct literal and a field read stay clean.
+		{"struct-name-as-value", "struct P { x: i32 }\nfunction main(): i32 { return P; }\n", []string{"E001"}},
+		{"struct-name-as-value-var", "struct P { x: i32 }\nfunction main(): i32 { var q = P; return 0; }\n", []string{"E001"}},
+		{"struct-literal-not-value-ok", "struct P { x: i32 }\nfunction main(): i32 { var p = P { x: 1 }; return p.x; }\n", nil},
+		// A payload-bearing variant referenced bare (a union member, or an enum
+		// variant with a payload) is E036 — it must be constructed/called. A
+		// nullary variant, a constructor call, and a struct literal stay clean.
+		{"payload-variant-bare", "enum E { A(i32), B }\nfunction f(): E { return A; }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
+		{"union-member-bare", "struct P { x: i32 }\nstruct Q { y: i32 }\ntype U = P | Q;\nfunction f(): U { return P; }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
+		{"payload-variant-call-ok", "enum E { A(i32), B }\nfunction f(): E { return A(5); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"nullary-variant-bare-ok", "enum E { A, B }\nfunction f(): E { return A; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"value-param-ok", "function f(a: i32): i32 { return a; }\nfunction main(): i32 { return f(1); }\n", nil},
 		{"value-function-as-value-ok", "function g(): i32 { return 1; }\nfunction run(fn: () => i32): i32 { return fn(); }\nfunction main(): i32 { return run(g); }\n", nil},
 		{"value-enum-variant-ok", "enum E { A, B }\nfunction main(): i32 { var e: E = A; return 0; }\n", nil},
@@ -378,11 +620,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"export-method", "struct P { x: i32 }\n@export(\"example:app/run\", \"run\") function (p: P) run(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E054"}},
 		{"export-plain-ok", "@export(\"example:app/run\", \"run\") function run(x: i32): i32 { return x; }\nfunction main(): i32 { return 0; }\n", nil},
 		// E050: use of an owned parameter after it was consumed (moved).
-		{"own-call-then-use", "function sink(xs: i32[]): i32 { return xs[0]; }\nfunction f(own xs: i32[]): i32 { var a: i32 = sink(xs); return sink(xs); }\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
-		{"own-double-in-stmt", "function sink(xs: i32[]): i32 { return xs[0]; }\nfunction f(own xs: i32[]): i32 { return sink(xs) + sink(xs); }\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
+		{"own-call-then-use", "function sink(own xs: i32[]): i32 { return xs[0]; }\nfunction f(own xs: i32[]): i32 { var a: i32 = sink(xs); return sink(xs); }\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
+		{"own-double-in-stmt", "function sink(own xs: i32[]): i32 { return xs[0]; }\nfunction f(own xs: i32[]): i32 { return sink(xs) + sink(xs); }\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
 		{"own-match-then-use", "enum Lst { Cons(i32), Nil }\nfunction lsink(l: Lst): i32 { return 0; }\nfunction f(own l: Lst): i32 { var r: i32 = match (l) { Cons(h) => h, Nil => 0 }; return r + lsink(l); }\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
-		{"own-consume-in-loop", "function sink(xs: i32[]): i32 { return xs[0]; }\nfunction f(own xs: i32[]): i32 { var i: i32 = 0; while (i < 3) { var a: i32 = sink(xs); i = i + 1; } return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
+		{"own-consume-in-loop", "function sink(own xs: i32[]): i32 { return xs[0]; }\nfunction f(own xs: i32[]): i32 { var i: i32 = 0; while (i < 3) { var a: i32 = sink(xs); i = i + 1; } return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
 		{"own-borrow-only-ok", "function f(own xs: i32[]): i32 { return xs[0] + xs[1]; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"own-borrow-arg-ok", "function peek(xs: i32[]): i32 { return xs[0]; }\nfunction f(own xs: i32[]): i32 { var a: i32 = peek(xs); return a + peek(xs); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"own-single-consume-ok", "function sink(xs: i32[]): i32 { return xs[0]; }\nfunction f(own xs: i32[]): i32 { return sink(xs); }\nfunction main(): i32 { return 0; }\n", nil},
 		// E051: argument to an owned parameter must be an owned value.
 		{"own-arg-borrowed-param", "function consume(own xs: i32[]): i32 { return xs[0]; }\nfunction f(xs: i32[]): i32 { return consume(xs); }\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
@@ -456,6 +699,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e031-match-bool-i32", "enum O { A, B }\nfunction main(): i32 { var o: O = A; var r = match (o) { A => true, B => 1 }; return 0; }\n", []string{"E031"}},
 		{"e031-match-payload-arm-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; var r = match (o) { Has(n) => n, Nil => 0 }; return r; }\n", nil},
 		{"e031-match-three-arms-last-bad", "enum O { A, B, C }\nfunction main(): i32 { var o: O = A; var r = match (o) { A => 1, B => 2, C => \"x\" }; return 0; }\n", []string{"E031"}},
+		// A value if/match-expression has a real result type (the branches'
+		// common type): a mismatched var annotation is E003, a mismatched
+		// `return` is E002. A matching annotation, and a numeric-mix set (which
+		// this port doesn't unify), stay clean.
+		{"if-expr-value-assign-bad", "function main(): i32 { var x: string = if (1 < 2) { 1 } else { 2 }; return 0; }\n", []string{"E003"}},
+		{"match-expr-value-assign-bad", "enum E { A, B }\nfunction main(): i32 { var e: E = A; var x: string = match (e) { A => 1, B => 2 }; return 0; }\n", []string{"E003"}},
+		{"if-expr-value-assign-ok", "function main(): i32 { var x: i32 = if (1 < 2) { 1 } else { 2 }; return x; }\n", nil},
+		{"if-expr-value-return-bad", "function f(): string { return if (1 < 2) { 1 } else { 2 }; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
 		// Same-enum-family / element-wise compatible arms are NOT flagged (Go
 		// also reports nothing): Option Some/None, enum variants, a nested
 		// if-expression arm, tuple arms with matching element types.
@@ -536,6 +787,20 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cellnew-array-bad", "function main(): i32 { var a: i32[] = [1]; var c = cell_new(a); return 0; }\n", []string{"E057"}},
 		{"cellnew-tuple-bad", "function main(): i32 { var t = (1, 2); var c = cell_new(t); return 0; }\n", []string{"E057"}},
 		{"cellnew-nested-bad", "function main(): i32 { var c = cell_new(cell_new(5)); return 0; }\n", []string{"E057"}},
+		// E063: returning a `[T]` slice that views function-local storage is a
+		// use-after-free (the backing array dies with the frame). The check is
+		// conservative — only slices provably viewing local storage fire.
+		// String slices copy, slices of a parameter stay valid with the
+		// caller's owner, and returning the owned array itself is a move.
+		// Cross-checked against the Go checker.
+		{"e063-slice-local-array", "function f(): [i32] { var xs: i32[] = [1, 2, 3]; return xs[0:2]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-slice-array-literal", "function f(): [i32] { return [1, 2, 3][0:2]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-slice-local-bound", "function f(): [i32] { var xs: i32[] = [1, 2, 3]; var s = xs[0:2]; return s; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-slice-of-param-ok", "function f(xs: i32[]): [i32] { return xs[0:2]; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e063-slice-of-param-bound-ok", "function f(xs: i32[]): [i32] { var s = xs[0:2]; return s; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e063-string-slice-ok", "function f(s: string): string { return s[0:2]; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e063-return-owned-array-ok", "function f(): i32[] { var xs: i32[] = [1, 2, 3]; return xs; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e063-slice-local-not-returned-ok", "function f(): i32 { var xs: i32[] = [1, 2, 3]; var s = xs[0:2]; return s[0]; }\nfunction main(): i32 { return 0; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -574,4 +839,140 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// TestSelfHostCheckerDifferentialX86_64 is the pure-differential verification
+// harness for the self-host checker. For each program it runs BOTH the
+// self-host checker (the codes driver) and the production Go checker, and
+// asserts they agree on the diagnostic code SET (restricted to the codes the
+// port implements). Unlike TestSelfHostCheckerCodesX86_64 it carries NO
+// hardcoded expected codes — the Go checker is the sole oracle — so it catches
+// a self-host FALSE POSITIVE (or missing diagnostic) on any construct in the
+// corpus without the test author having to predict the codes.
+//
+// It is seeded with the real-world tuple / generic / union / method-chain
+// constructs the stdlib leans on (annotated tuples, tuple-of-union, nested
+// tuples, generic tuple containers, …). The whole-compiler fixpoint/bundle
+// gate never runs the self-host CHECKER over the stdlib, so before teaching
+// checker.fern a rule that touches these shapes (e.g. tuple-type assignability,
+// builtin-method return types) add the relevant valid programs here: a
+// regression then fails loudly in this differential instead of lurking as a
+// latent false positive only triggered when someone runs the self-host checker
+// over real code.
+func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
+	checkerBin, runner, dir := buildCheckerCodesBin(t)
+
+	progs := []struct{ name, src string }{
+		// Annotated tuple shapes — var binding, parameter, return, nested, and
+		// a tuple whose element is a (builtin) enum/union. All well-typed: the
+		// self-host must not invent a diagnostic the Go checker doesn't report.
+		{"tuple-return", "function pair(): (i32, string) { return (1, \"a\"); }\nfunction main(): i32 { return 0; }\n"},
+		{"tuple-var-annot", "function main(): i32 { var t: (i32, string) = (1, \"a\"); return t.0; }\n"},
+		{"tuple-array-annot", "function main(): i32 { var out: (i32, string)[] = []; return 0; }\n"},
+		{"tuple-nested", "function main(): i32 { var t: (i32, (string, i32)) = (1, (\"a\", 2)); return t.0; }\n"},
+		{"tuple-union-elem", "enum E { A, B }\nfunction f(): (E, i32) { return (A, 1); }\nfunction main(): i32 { return 0; }\n"},
+		{"tuple-param", "function f(p: (i32, string)): i32 { return p.0; }\nfunction main(): i32 { return f((1, \"a\")); }\n"},
+		{"tuple-struct-elem", "struct P { x: i32 }\nfunction f(): (P, i32) { return (P { x: 1 }, 2); }\nfunction main(): i32 { return 0; }\n"},
+		{"tuple-reassign", "function main(): i32 { var t: (i32, string) = (1, \"a\"); t = (2, \"b\"); return t.0; }\n"},
+		// Generic tuple container (the std/array `zip` shape).
+		{"tuple-generic-array", "function zip(a: i32[], b: string[]): (i32, string)[] { var out: (i32, string)[] = []; return out; }\nfunction main(): i32 { return 0; }\n"},
+		// Method chains on string / array builtins (valid).
+		{"method-chain-len", "function main(): i32 { var s = \"abc\"; var n = s.len(); return n; }\n"},
+		{"method-chain-array", "function main(): i32 { var a = [1, 2, 3]; return a.len(); }\n"},
+		// if/match-expression values flowing into typed positions (post-#3137).
+		{"if-expr-typed-ok", "function main(): i32 { var x: i32 = if (1 < 2) { 1 } else { 2 }; return x; }\n"},
+		{"match-expr-typed-ok", "enum E { A, B }\nfunction main(): i32 { var e: E = A; var x: i32 = match (e) { A => 1, B => 2 }; return x; }\n"},
+		// Builtin array-method calls with element-typed args (valid): the
+		// self-host uses .append / .with pervasively, so an arg-type rule over
+		// them must not false-positive on a correctly-typed call.
+		{"array-append-prim-ok", "function main(): i32 { var a: i32[] = [1]; a = a.append(2); return a.len(); }\n"},
+		{"array-append-struct-ok", "struct P { x: i32 }\nfunction main(): i32 { var a: P[] = [P { x: 1 }]; a = a.append(P { x: 2 }); return 0; }\n"},
+		{"array-append-union-ok", "struct P { x: i32 }\nstruct Q { y: i32 }\ntype U = P | Q;\nfunction main(): i32 { var a: U[] = [P { x: 1 }]; a = a.append(Q { y: 2 }); return 0; }\n"},
+		{"array-with-ok", "function main(): i32 { var a: i32[] = [1, 2]; a = a.with(0, 9); return a.len(); }\n"},
+		{"array-append-tuple-ok", "function main(): i32 { var a: (i32, string)[] = []; a = a.append((1, \"x\")); return 0; }\n"},
+	}
+
+	for _, tc := range progs {
+		t.Run(tc.name, func(t *testing.T) {
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(checkerBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], checkerBin)...)
+			}
+			cmd.Stdin = bytes.NewReader([]byte(tc.src))
+			out, _ := cmd.Output()
+			got := uniqueSortedCodes(strings.Fields(string(out)))
+			want := filterImplemented(goCheckerCodes(t, dir, tc.src))
+			if !equalStrings(got, want) {
+				t.Errorf("%s: self-host codes %v disagree with Go checker %v (implemented subset)\nsrc: %s", tc.name, got, want, tc.src)
+			}
+		})
+	}
+}
+
+// TestSelfHostCheckerBundleDifferentialX86_64 is the MULTI-MODULE differential
+// verification harness. Unlike TestSelfHostCheckerDifferentialX86_64 (which
+// checks a single self-contained module), it resolves each program's stdlib
+// imports off disk and runs it through the file-based checker driver
+// (checker_modload_run.fern → ./modloader → flatten.bundle → check_module),
+// then asserts the self-host code set matches the Go checker's (modload +
+// check) — restricted to implemented codes, with the Go checker as the sole
+// oracle (no hardcoded expectations).
+//
+// This is the harness the method-table-dependent diagnostics need: it lets a
+// rule keyed off an IMPORTED module's methods/types (string methods from
+// std/string, etc.) be verified false-positive-free against real stdlib code
+// before it ships. Seed it with valid stdlib-method programs; extend it when
+// teaching the checker a rule that consults the imported table.
+func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
+	_, runner, driverBin := buildCheckerModloadDriverX86(t)
+
+	progs := []struct{ name, src string }{
+		// Valid string-method calls (user-defined methods in std/string, not
+		// builtins): both checkers must agree they are well-typed.
+		{"string-contains-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"abc\"; if (s.contains(\"b\")) { return 1; } return 0; }\n"},
+		{"string-starts-with-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"abc\"; if (s.starts_with(\"a\")) { return 1; } return 0; }\n"},
+		{"string-is-empty-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"\"; if (s.is_empty()) { return 1; } return 0; }\n"},
+		{"string-trim-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"  a \"; var t = s.trim(); return 0; }\n"},
+		{"string-to-lower-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"AB\"; var t = s.to_lower(); return 0; }\n"},
+		// Auto-discovered std/array methods (__method_Array_*) must resolve once
+		// std/array is imported — the import-side companion to the single-module
+		// E043 corpus (a.sum() without import → E043). A codegen-intercepted
+		// method (sum) and a non-intercepted one (sum_squared) both stay clean;
+		// an unknown method (bogus) is still E043 even with std/array in scope.
+		{"array-sum-import-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; return a.sum(); }\n"},
+		{"array-sum-squared-import-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; return a.sum_squared(); }\n"},
+		{"array-bogus-import-e043", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; return a.bogus(); }\n"},
+		// Array method RETURN-TYPING: `a.<m>()` resolves to the std/array
+		// helper's declared return type, not `unknown`. So a result used in a
+		// type-incompatible context surfaces the same E002/E003 the Go checker
+		// reports (before, the unknown result was conservatively accepted and
+		// the self-host stayed silent — a divergence). Scalar (sum→i32),
+		// array (reversed→i32[]), bool (every_positive→boolean) and string
+		// (join→string) returns are each covered on a clean and a mismatch path.
+		{"array-sum-ret-i32-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; var x: i32 = a.sum(); return x; }\n"},
+		{"array-sum-ret-string-mismatch", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; var x: string = a.sum(); return 0; }\n"},
+		{"array-reversed-ret-array-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; var b: i32[] = a.reversed(); return b[0]; }\n"},
+		{"array-reversed-ret-string-mismatch", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; var c: string = a.reversed(); return 0; }\n"},
+		{"array-every-positive-ret-bool-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; if (a.every_positive()) { return 1; } return 0; }\n"},
+		{"array-join-ret-string-ok", "import \"std/array\";\nfunction main(): i32 { var a: string[] = [\"x\", \"y\"]; var s: string = a.join(\",\"); return 0; }\n"},
+		{"array-join-ret-i32-mismatch", "import \"std/array\";\nfunction main(): i32 { var a: string[] = [\"x\", \"y\"]; var n: i32 = a.join(\",\"); return 0; }\n"},
+		// The string-method-existence E043 rule must still fire for a method
+		// that no imported module defines, even WITH std/string in scope —
+		// the bundle harness's reason for existing. `substr` isn't a std/string
+		// method, so both checkers report E043.
+		{"string-unknown-method-e043", "import \"std/string\";\nfunction main(): i32 { var s = \"abc\"; var t = s.substr(0, 1); return 0; }\n"},
+	}
+
+	for _, tc := range progs {
+		t.Run(tc.name, func(t *testing.T) {
+			out := checkSourceModload(t, runner, driverBin, tc.src)
+			got := uniqueSortedCodes(strings.Fields(out))
+			want := filterImplemented(goCheckerCodes(t, t.TempDir(), tc.src))
+			if !equalStrings(got, want) {
+				t.Errorf("%s: self-host file-loader codes %v disagree with Go checker %v (implemented subset)\nsrc: %s", tc.name, got, want, tc.src)
+			}
+		})
+	}
 }

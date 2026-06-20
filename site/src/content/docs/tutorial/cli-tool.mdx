@@ -1,0 +1,205 @@
+---
+title: Build a CLI tool
+description: A complete grep-style command-line filter — argv, stdin/files, flags, and exit codes.
+sidebar:
+  order: 5
+---
+
+import FernPlayground from "../../../components/FernPlayground.astro";
+
+Fast-startup CLI tools are one of Fern's two headline use cases. This
+page walks the full shape of a Unix-style filter: read `argv`, accept
+input from stdin *or* files, parse flags, and return a meaningful exit
+code. By the end you'll have a working `grep`.
+
+## The anatomy of a CLI program
+
+Every program starts at `main`, which returns the process exit code as
+an `i32`. Three builtins cover the basics of a command-line tool:
+
+| Builtin              | Purpose                                  |
+| -------------------- | ---------------------------------------- |
+| `args()`             | The argument vector, `string[]`. `args()[0]` is the program name. |
+| `print(s)`           | Write a line to **stdout** (adds a newline). |
+| `eprint(s)`          | Write a line to **stderr** — for errors and usage. |
+
+Returning `0` signals success; any non-zero value signals failure. By
+convention, `2` means a usage error.
+
+<FernPlayground
+  code={`import "std/i32";
+
+function main(): i32 {
+    var argv: string[] = args();
+    print("got " + argv.len().to_string() + " arg(s)");
+    return 0;
+}`}
+/>
+
+## Reading input: stdin or a file
+
+A good filter works in a pipeline (`cat in | tool`) *and* on named files
+(`tool in.txt`). The standard library's `io.read_input` collapses that
+branch: pass `"-"` (or `""`) to read all of stdin, or a path to read a
+file. It returns a `Result[string, IoError]`, so you handle the
+can't-open case explicitly instead of crashing.
+
+```fern
+import "std/io";
+
+match (io.read_input(path)) {
+    Ok(text) => { /* use text */ },
+    Err(_)   => { eprint("tool: cannot open " + path); },
+}
+```
+
+This is the single most important idiom for fallible I/O in Fern: the
+error is a *value* you `match` on, not an exception that unwinds the
+stack.
+
+## Parsing flags
+
+There's no argument-parsing framework — and for small tools you don't
+need one. Walk `argv` yourself. The pattern below recognises bundled
+single-character flags (`-in` is `-i` plus `-n`), the standard shape for
+classic tools.
+
+We'll collect the recognised flags into a small `struct` and use the
+`{ ...o, field: value }` spread-update form to flip one field
+immutably — structs are immutable, so an update produces a new value.
+
+```fern
+struct Opts { ignore_case: boolean, show_num: boolean }
+
+// ... inside the argv loop, for an argument like "-in":
+var f: i32 = 1;
+while (f < a.len()) {
+    var c: i32 = a[f];              // a byte, compared by code point
+    if (c == 105) {                 // 'i'
+        o = Opts { ...o, ignore_case: true };
+    } else if (c == 110) {          // 'n'
+        o = Opts { ...o, show_num: true };
+    } else {
+        eprint("grep: invalid option");
+        return 2;
+    }
+    f = f + 1;
+}
+```
+
+:::note
+Indexing a `string` yields a **byte** as an `i32`, not a one-character
+string — so `a[f]` is compared against ASCII code points (`'i'` is
+`105`). Use `a[f:f+1]` to slice out a one-byte substring when you need a
+`string`.
+:::
+
+## Putting it together: a working grep
+
+Here's a compact `grep` with `-i` (case-insensitive) and `-n` (line
+numbers). It reads stdin, prints matching lines, and follows grep's exit
+convention — `0` if anything matched, `1` if nothing did. Edit the
+program and the input is whatever you'd pipe in; try changing the
+pattern or the flags.
+
+<FernPlayground
+  code={`import "std/string";
+import "std/io";
+
+struct Opts { ignore_case: boolean, show_num: boolean }
+
+function matches(line: string, pat: string, ci: boolean): boolean {
+    if (ci) { return line.contains_ci(pat); }
+    return line.contains(pat);
+}
+
+function run(argv: string[]): i32 {
+    var o: Opts = Opts { ignore_case: false, show_num: false };
+    var pat: string = "";
+    var have_pat: boolean = false;
+
+    var i: i32 = 1;
+    while (i < argv.len()) {
+        var a: string = argv[i];
+        if (a.starts_with("-") && a.len() > 1 && !have_pat) {
+            var f: i32 = 1;
+            while (f < a.len()) {
+                var c: i32 = a[f];
+                if (c == 105) { o = Opts { ...o, ignore_case: true }; }
+                else if (c == 110) { o = Opts { ...o, show_num: true }; }
+                else { eprint("grep: invalid option"); return 2; }
+                f = f + 1;
+            }
+        } else if (!have_pat) {
+            pat = a;
+            have_pat = true;
+        }
+        i = i + 1;
+    }
+    if (!have_pat) { eprint("usage: grep [-in] PATTERN"); return 2; }
+
+    match (io.read_input("-")) {
+        Ok(text) => {
+            var any: boolean = false;
+            var lines: string[] = text.lines();
+            var ln: i32 = 0;
+            while (ln < lines.len()) {
+                if (matches(lines[ln], pat, o.ignore_case)) {
+                    any = true;
+                    if (o.show_num) {
+                        print((ln + 1).to_string() + ":" + lines[ln]);
+                    } else {
+                        print(lines[ln]);
+                    }
+                }
+                ln = ln + 1;
+            }
+            return if (any) { 0 } else { 1 };
+        },
+        Err(_) => { eprint("grep: read error"); return 2; }
+    }
+}
+
+function main(): i32 {
+    // In the playground there's no real argv, so we simulate one.
+    // On the command line this would just be: return run(args());
+    var fake_argv: string[] = ["grep", "-n", "fern"];
+    return run(fake_argv);
+}`}
+  autoRun={false}
+/>
+
+On a real terminal the `main` is a one-liner — `return run(args());` —
+and you'd invoke it as `./grep -n fern file.txt` or
+`cat log | ./grep -i error`.
+
+## Compile and run it for real
+
+Save the program as `grep.fern` and either interpret it directly or
+compile a native binary:
+
+```bash
+# Quick loop — no binary, runs under the interpreter:
+printf 'one\ntwo Fern\nthree\n' | fern -interp grep.fern
+
+# Native binary (no external toolchain needed on Linux):
+fern -target x86-64 -o grep grep.fern    # or -target arm64
+printf 'one\ntwo Fern\nthree\n' | ./grep -i fern
+```
+
+Because there's no runtime to boot, the compiled binary starts
+instantly — exactly what you want for a tool invoked thousands of times
+in a shell loop.
+
+## Where to go from here
+
+- The repository's [`examples/cli/`][cli] directory has full, idiomatic
+  reimplementations of `cat`, `wc`, `head`, `tail`, `sort`, `cut`, `tr`,
+  and more — each a single self-contained `.fern` file.
+- The [Standard library reference](../../stdlib/) documents `std/string`,
+  `std/io`, `std/sort`, and the rest of the toolbox.
+- Ready for the other use case? [Build an HTTP handler →](../http-server/)
+
+[cli]: https://github.com/JakeChampion/lang/tree/main/examples/cli
+
+[Next: Build an HTTP handler →](../http-server/)

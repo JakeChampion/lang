@@ -1,0 +1,146 @@
+import "std/i32";
+
+// Audit fixture: foundational built-in language features, exercised on
+// every native backend (interp / x86-64 / arm64 / wasm). Each check that
+// fails prints "FAIL <id>" and returns a distinct non-zero code so a
+// diverging backend points straight at the broken feature. On success
+// the program prints "OK" and returns 0.
+//
+// Covers (see docs/FEATURE-AUDIT.md §A):
+//   integer arithmetic / comparison / bitwise / unary minus, operator
+//   precedence, boolean logic incl. short-circuit non-evaluation,
+//   compound assignment, if/else, if-expression, while, C-style for,
+//   for-in array, for-in string, inclusive + half-open ranges, switch
+//   (comma cases + default), break / continue, nested blocks, return.
+
+// A right-hand side that traps (divide by zero). Short-circuit must
+// ensure this never runs when the left operand decides the result.
+function trap_rhs(): boolean {
+    var z: i32 = 0;
+    return (10 / z) == 0;
+}
+
+function classify(n: i32): i32 {
+    switch (n) {
+        case 0: return 100;
+        case 1, 2, 3: return 42;
+        default: return 7;
+    }
+}
+
+function main(): i32 {
+    // --- integer arithmetic ---
+    if (7 + 3 != 10) { print("FAIL add"); return 11; }
+    if (7 - 3 != 4) { print("FAIL sub"); return 12; }
+    if (7 * 3 != 21) { print("FAIL mul"); return 13; }
+    if (7 / 3 != 2) { print("FAIL div"); return 14; }
+    if (7 % 3 != 1) { print("FAIL mod"); return 15; }
+    // truncation toward zero for negative operands
+    if ((0 - 7) / 3 != (0 - 2)) { print("FAIL divneg"); return 16; }
+    if ((0 - 7) % 3 != (0 - 1)) { print("FAIL modneg"); return 17; }
+
+    // --- unary minus ---
+    var u: i32 = 5;
+    if (-u + 8 != 3) { print("FAIL unary"); return 18; }
+    if (-(3 * 2) != (0 - 6)) { print("FAIL unary2"); return 19; }
+
+    // --- comparison ---
+    if (!(3 == 3) || !(3 != 4)) { print("FAIL eq"); return 20; }
+    if (!(3 < 4) || !(4 > 3)) { print("FAIL lt"); return 21; }
+    if (!(3 <= 3) || !(4 >= 4)) { print("FAIL le"); return 22; }
+    if ((4 < 3) || (3 > 4) || (4 <= 3) || (3 >= 4)) { print("FAIL cmpfalse"); return 23; }
+
+    // --- operator precedence ---
+    if (2 + 3 * 4 != 14) { print("FAIL prec1"); return 24; }
+    if ((2 + 3) * 4 != 20) { print("FAIL prec2"); return 25; }
+    if (10 - 2 - 3 != 5) { print("FAIL prec3"); return 26; } // left assoc
+
+    // --- bitwise ---
+    if ((6 & 3) != 2) { print("FAIL band"); return 27; }
+    if ((6 | 1) != 7) { print("FAIL bor"); return 28; }
+    if ((6 ^ 3) != 5) { print("FAIL bxor"); return 29; }
+    if ((1 << 4) != 16) { print("FAIL shl"); return 30; }
+    if ((240 >> 4) != 15) { print("FAIL shr"); return 31; }
+
+    // --- boolean logic + short-circuit (RHS must NOT run / trap) ---
+    if (!(true && true) || (true && false)) { print("FAIL and"); return 32; }
+    if (!(false || true) || (false || false)) { print("FAIL or"); return 33; }
+    if (!(!false) || !true) { print("FAIL not"); return 34; }
+    if (false && trap_rhs()) { print("FAIL sc-and"); return 35; }
+    if (true || trap_rhs()) { } else { print("FAIL sc-or"); return 36; }
+
+    // --- compound assignment ---
+    var c: i32 = 10;
+    c += 5; if (c != 15) { print("FAIL cadd"); return 37; }
+    c -= 3; if (c != 12) { print("FAIL csub"); return 38; }
+    c *= 2; if (c != 24) { print("FAIL cmul"); return 39; }
+    c /= 4; if (c != 6) { print("FAIL cdiv"); return 40; }
+    c %= 4; if (c != 2) { print("FAIL cmod"); return 41; }
+
+    // --- if / else statement ---
+    var e: i32 = 0;
+    if (c == 2) { e = 1; } else { e = 9; }
+    if (e != 1) { print("FAIL ifelse"); return 42; }
+
+    // --- if as expression ---
+    var ix: i32 = if (true) { 1 } else { 2 };
+    var iy: i32 = if (false) { 1 } else { 2 };
+    if (ix != 1 || iy != 2) { print("FAIL ifexpr"); return 43; }
+
+    // --- while loop ---
+    var ws: i32 = 0;
+    var wi: i32 = 1;
+    while (wi <= 10) { ws = ws + wi; wi = wi + 1; }
+    if (ws != 55) { print("FAIL while"); return 44; }
+
+    // --- C-style for ---
+    var fs: i32 = 0;
+    for (var i: i32 = 1; i <= 10; i = i + 1) { fs = fs + i; }
+    if (fs != 55) { print("FAIL for"); return 45; }
+
+    // --- for-in array ---
+    var arr: i32[] = [2, 3, 4];
+    var arrsum: i32 = 0;
+    for x in arr { arrsum = arrsum + x * x; }
+    if (arrsum != 29) { print("FAIL forin-arr"); return 46; }
+
+    // --- for-in string (byte iteration) ---
+    var bs: i32 = 0;
+    for b in "abc" { bs = bs + b; }
+    if (bs != 294) { print("FAIL forin-str"); return 47; }
+
+    // --- inclusive + half-open ranges ---
+    var rs: i32 = 0;
+    for k in 0..=5 { rs = rs + k; }
+    if (rs != 15) { print("FAIL range-incl"); return 48; }
+    var hs: i32 = 0;
+    for k in 0..4 { hs = hs + k; }
+    if (hs != 6) { print("FAIL range-half"); return 49; }
+
+    // --- switch (comma cases + default) ---
+    if (classify(0) != 100) { print("FAIL switch0"); return 50; }
+    if (classify(2) != 42) { print("FAIL switch2"); return 51; }
+    if (classify(9) != 7) { print("FAIL switch-def"); return 52; }
+
+    // --- break / continue ---
+    var brk: i32 = 0;
+    for (var i: i32 = 0; i < 100; i = i + 1) {
+        if (i == 5) { break; }
+        brk = brk + 1;
+    }
+    if (brk != 5) { print("FAIL break"); return 53; }
+    var con: i32 = 0;
+    for (var i: i32 = 0; i < 6; i = i + 1) {
+        if (i % 2 == 0) { continue; }
+        con = con + i;
+    }
+    if (con != 9) { print("FAIL continue"); return 54; } // 1 + 3 + 5
+
+    // --- nested blocks + shadow-free scoping ---
+    var blk: i32 = 1;
+    { var inner: i32 = 40; blk = blk + inner; }
+    if (blk != 41) { print("FAIL block"); return 55; }
+
+    print("OK");
+    return 0;
+}

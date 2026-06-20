@@ -1,0 +1,27 @@
+// Generic associated dispatch: `T.f(args)` on a bounded type parameter,
+// resolved per monomorphisation. A generic constructor — `unit[T: Ident]`
+// builds a `T` via the trait's associated function, working for several
+// instantiations in one program.
+import "core/int";
+
+trait Ident { function one(): Self; }
+trait From { function of(n: i32): Self; }
+
+struct A { v: i32 }
+struct B { v: i32 }
+impl Ident for A { function one(): Self { return A { v: 10 }; } }
+impl Ident for B { function one(): Self { return B { v: 20 }; } }
+impl From for A { function of(n: i32): Self { return A { v: n }; } }
+
+function unit[T: Ident](): T { return T.one(); }
+function build[T: From](n: i32): T { return T.of(n); }
+
+function geta(): A { return unit(); }
+function getb(): B { return unit(); }
+
+function main(): i32 {
+    var a: A = geta();          // 10
+    var b: B = getb();          // 20
+    var c: A = build(5);        // 5
+    return a.v + b.v + c.v;     // 35
+}

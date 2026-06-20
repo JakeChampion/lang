@@ -26,7 +26,6 @@ Each example pulls in `<<clamp>>` and returns 0 only when the behaviour
 is correct — so these double as documentation *and* a test suite.
 
 ```fern test name=clamps-below-range
-import "core/no_prelude";
 <<clamp>>
 function main(): i32 {
     if (clamp(0 - 5, 0, 10) != 0) { return 1; }
@@ -35,7 +34,6 @@ function main(): i32 {
 ```
 
 ```fern test name=clamps-above-range
-import "core/no_prelude";
 <<clamp>>
 function main(): i32 {
     if (clamp(99, 0, 10) != 10) { return 1; }
@@ -44,7 +42,6 @@ function main(): i32 {
 ```
 
 ```fern test name=passes-through-in-range
-import "core/no_prelude";
 <<clamp>>
 function main(): i32 {
     if (clamp(7, 0, 10) != 7) { return 1; }

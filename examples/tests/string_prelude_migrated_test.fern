@@ -1,11 +1,10 @@
-import "core/no_prelude";
 import "std/test";
 // examples/tests/string_prelude_migrated_test.fern —
-// Proof-of-concept Lang port of `TestInterpScriptStringPrelude`
+// Proof-of-concept Fern port of `TestInterpScriptStringPrelude`
 // from `internal/e2e/interp_script_test.go`.
 //
 // The original Go test pinned the same surface by piping
-// an inline Lang program through `fern -interp` and
+// an inline Fern program through `fern -interp` and
 // checking the exit code + stdout. The migration replaces
 // that subprocess-and-grep shape with direct in-process
 // assertions: the program *IS* the test, and the
@@ -29,47 +28,47 @@ import "std/test";
 // broken — and the runner's TAP output already depends
 // on print() working.
 
-function test_bytes_len_is_5(): Option[string] {
+function test_bytes_len_is_5(): test.TestOutcome {
     var s: string = "Hello";
     var bs: u8[] = s.bytes();
     return test.assert_eq(bs.len(), 5);
 }
 
-function test_bytes_first_byte_is_H(): Option[string] {
+function test_bytes_first_byte_is_H(): test.TestOutcome {
     var s: string = "Hello";
     var bs: u8[] = s.bytes();
     return test.assert_eq(bs[0] as i32, 72);
 }
 
-function test_bytes_last_byte_is_lowercase_o(): Option[string] {
+function test_bytes_last_byte_is_lowercase_o(): test.TestOutcome {
     var s: string = "Hello";
     var bs: u8[] = s.bytes();
     return test.assert_eq(bs[4] as i32, 111);
 }
 
-function test_as_bytes_len_is_5(): Option[string] {
+function test_as_bytes_len_is_5(): test.TestOutcome {
     var s: string = "Hello";
     var ab: [u8] = s.as_bytes();
     return test.assert_eq(ab.len(), 5);
 }
 
-function test_as_bytes_first_byte_is_H(): Option[string] {
+function test_as_bytes_first_byte_is_H(): test.TestOutcome {
     var s: string = "Hello";
     var ab: [u8] = s.as_bytes();
     return test.assert_eq(ab[0] as i32, 72);
 }
 
-function test_to_upper_HELLO(): Option[string] {
+function test_to_upper_HELLO(): test.TestOutcome {
     var s: string = "Hello";
     return test.assert_eq(s.to_upper(), "HELLO");
 }
 
-function test_to_lower_hello(): Option[string] {
+function test_to_lower_hello(): test.TestOutcome {
     var s: string = "Hello";
     return test.assert_eq(s.to_lower(), "hello");
 }
 
-function test_string_from_bytes_roundtrip(): Option[string] {
+function test_string_from_bytes_roundtrip(): test.TestOutcome {
     var s: string = "Hello";
     var rt: string = string_from_bytes(s.bytes());
     return test.assert_eq(rt, "Hello");

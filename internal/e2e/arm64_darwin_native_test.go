@@ -55,11 +55,11 @@ func TestArm64DarwinNativeMachO(t *testing.T) {
 		{"exit", `function main(): i32 { return 42; }`, 42},
 		// String constant — exercises __DATA, adrp @PAGE / @PAGEOFF to a
 		// read-only string, and the write(2) syscall.
-		{"print", `import "core/no_prelude";
+		{"print", `
 function main(): i32 { print("hi"); return 0; }`, 0},
 		// Heap allocation — exercises the writable globals in __DATA
 		// (__fern_heap_ptr etc.) and mmap via svc.
-		{"concat", `import "core/no_prelude";
+		{"concat", `
 import "std/string";
 function main(): i32 { var a: string = "foo"; return (a + "bar").len(); }`, 6},
 		// now_unix_ms — exercises the Darwin gettimeofday port (vs Linux
@@ -73,7 +73,7 @@ function main(): i32 { var a: string = "foo"; return (a + "bar").len(); }`, 6},
 		// getrandom). Asserts length AND that the bytes are actually
 		// filled by the syscall: OR-of-8-bytes==0 would mean the buffer
 		// is still the zero-mapped alloc memory (syscall failed silently).
-		{"random_bytes", `import "core/no_prelude";
+		{"random_bytes", `
 function main(): i32 {
   var b: string = random_bytes(8);
   if (b.len() != 8) { return 1; }
@@ -147,7 +147,7 @@ func TestArm64DarwinNativeReadFile(t *testing.T) {
 		t.Fatalf("write data: %v", err)
 	}
 	src := filepath.Join(dir, "prog.fern")
-	prog := "import \"core/no_prelude\";\nfunction main(): i32 {\n  match (read_file(\"" + dataPath + "\")) {\n    Ok(s) => { return s.len(); },\n    Err(e) => { return 99; }\n  }\n}\n"
+	prog := "function main(): i32 {\n  match (read_file(\"" + dataPath + "\")) {\n    Ok(s) => { return s.len(); },\n    Err(e) => { return 99; }\n  }\n}\n"
 	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}

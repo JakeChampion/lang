@@ -145,6 +145,30 @@ pub function (s: string) last_index_of(needle: string): i32 {
     return 0 - 1;
 }
 
+// `s.find(needle)` / `s.rfind(needle)` — the Option-returning
+// companions to `index_of` / `last_index_of`. They report
+// "not found" as `None` instead of the `-1` sentinel, which is
+// the convention the rest of the stdlib settled on (split_once,
+// strip_prefix, the i32[] first_index_of family). Prefer these
+// in new code so a forgotten `< 0` check can't silently read a
+// bogus index; `index_of` / `last_index_of` stay as the
+// low-level i32 form (and the self-host compiler's own builtin).
+//
+// Empty-needle semantics match the underlying primitive: `find`
+// returns `Some(0)` and `rfind` returns `Some(len(s))`, never
+// `None`, since an empty needle is always "found".
+pub function (s: string) find(needle: string): Option[i32] {
+    var idx: i32 = s.index_of(needle);
+    if (idx < 0) { return None; }
+    return Some(idx);
+}
+
+pub function (s: string) rfind(needle: string): Option[i32] {
+    var idx: i32 = s.last_index_of(needle);
+    if (idx < 0) { return None; }
+    return Some(idx);
+}
+
 // `s.capitalize()` — uppercase the first byte, leave the
 // rest unchanged. ASCII-only: non-letter first bytes pass
 // through. Different from `to_upper` (which folds every
@@ -158,7 +182,7 @@ pub function (s: string) capitalize(): string {
     var first: i32 = s[0].to_upper();
     if (first == s[0]) { return s; }
     var buf: u8[] = __alloc_u8(1);
-    buf[0] = first as u8;
+    buf = buf.with(0, first as u8);
     return string_from_bytes(buf) + s[1:n];
 }
 
@@ -636,10 +660,25 @@ pub function (s: string) shift_byte(delta: i32): string {
         // negative deltas correctly — `(-1) % 256 == -1`
         // in i32, hence the second add).
         b = ((b % 256) + 256) % 256;
-        buf[i] = b as u8;
+        buf = buf.with(i, b as u8);
         i = i + 1;
     }
     return string_from_bytes(buf);
+}
+
+// `__byte_in_set(b, set)` — true iff byte `b` appears anywhere
+// in `set`. The shared inner loop behind without_chars /
+// contains_only / count_chars_in (and any future set-membership
+// string verb). Plain i32/string -> bool (no closures), so it
+// stays inside the self-host fixed-point emit surface.
+function __byte_in_set(b: i32, set: string): boolean {
+    var j: i32 = 0;
+    var setLen: i32 = set.len();
+    while (j < setLen) {
+        if (set[j] == b) { return true; }
+        j = j + 1;
+    }
+    return false;
 }
 
 // `s.without_chars(set)` — remove every byte from s that
@@ -648,21 +687,14 @@ pub function (s: string) shift_byte(delta: i32): string {
 pub function (s: string) without_chars(set: string): string {
     var n: i32 = s.len();
     if (n == 0) { return s; }
-    var setLen: i32 = set.len();
-    if (setLen == 0) { return s; }
+    if (set.len() == 0) { return s; }
     var buf: u8[] = __alloc_u8(n);
     var pos: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = s[i];
-        var found: boolean = false;
-        var j: i32 = 0;
-        while (j < setLen) {
-            if (set[j] == b) { found = true; }
-            j = j + 1;
-        }
-        if (!found) {
-            buf[pos] = b as u8;
+        if (!__byte_in_set(b, set)) {
+            buf = buf.with(pos, b as u8);
             pos = pos + 1;
         }
         i = i + 1;
@@ -670,7 +702,7 @@ pub function (s: string) without_chars(set: string): string {
     var out: u8[] = __alloc_u8(pos);
     var k: i32 = 0;
     while (k < pos) {
-        out[k] = buf[k];
+        out = out.with(k, buf[k]);
         k = k + 1;
     }
     return string_from_bytes(out);
@@ -682,18 +714,10 @@ pub function (s: string) without_chars(set: string): string {
 pub function (s: string) contains_only(set: string): boolean {
     var n: i32 = s.len();
     if (n == 0) { return true; }
-    var setLen: i32 = set.len();
-    if (setLen == 0) { return false; }
+    if (set.len() == 0) { return false; }
     var i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i];
-        var found: boolean = false;
-        var j: i32 = 0;
-        while (j < setLen) {
-            if (set[j] == b) { found = true; }
-            j = j + 1;
-        }
-        if (!found) { return false; }
+        if (!__byte_in_set(s[i], set)) { return false; }
         i = i + 1;
     }
     return true;
@@ -704,17 +728,11 @@ pub function (s: string) contains_only(set: string): boolean {
 // Empty set → 0.
 pub function (s: string) count_chars_in(set: string): i32 {
     var n: i32 = s.len();
-    var setLen: i32 = set.len();
-    if (n == 0 || setLen == 0) { return 0; }
+    if (n == 0 || set.len() == 0) { return 0; }
     var c: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i];
-        var j: i32 = 0;
-        while (j < setLen) {
-            if (set[j] == b) { c = c + 1; j = setLen; }
-            j = j + 1;
-        }
+        if (__byte_in_set(s[i], set)) { c = c + 1; }
         i = i + 1;
     }
     return c;
@@ -743,7 +761,7 @@ pub function (s: string) replace_byte(from: i32, to: i32): string {
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = s[i];
-        if (b == from) { buf[i] = to as u8; } else { buf[i] = b as u8; }
+        if (b == from) { buf = buf.with(i, to as u8); } else { buf = buf.with(i, b as u8); }
         i = i + 1;
     }
     return string_from_bytes(buf);
@@ -783,9 +801,9 @@ pub function (s: string) title_case(): string {
     while (i < n) {
         var b: i32 = s[i];
         if (prev_space) {
-            buf[i] = b.to_upper() as u8;
+            buf = buf.with(i, b.to_upper() as u8);
         } else {
-            buf[i] = b as u8;
+            buf = buf.with(i, b as u8);
         }
         prev_space = (b == 32);
         i = i + 1;
@@ -1119,7 +1137,7 @@ function __string_case_fold(s: string, srcBase: i32, dstBase: i32): string {
         if (b >= srcBase && b < srcBase + 26) {
             b = b + (dstBase - srcBase);
         }
-        buf[i] = b as u8;
+        buf = buf.with(i, b as u8);
         i = i + 1;
     }
     return string_from_bytes(buf);
@@ -1513,6 +1531,16 @@ pub function (s: string) index_of_ci(needle: string): i32 {
     return 0 - 1;
 }
 
+// `s.find_ci(needle)` — Option-returning companion to
+// `index_of_ci`: `Some(byte-index)` of the first case-
+// insensitive match, `None` when absent. Empty needle returns
+// `Some(0)`. Same Option convention as `find` / `rfind`.
+pub function (s: string) find_ci(needle: string): Option[i32] {
+    var idx: i32 = s.index_of_ci(needle);
+    if (idx < 0) { return None; }
+    return Some(idx);
+}
+
 // `s.pad_start_str(width, fill)` / `pad_end_str(width, fill)`
 // — left- and right-pad to a minimum BYTE width using the
 // multi-byte `fill` string as the padding unit. The pad
@@ -1668,7 +1696,7 @@ pub function (s: string) reverse_bytes(): string {
     var buf: u8[] = __alloc_u8(n);
     var i: i32 = 0;
     while (i < n) {
-        buf[i] = s[n - 1 - i] as u8;
+        buf = buf.with(i, s[n - 1 - i] as u8);
         i = i + 1;
     }
     return string_from_bytes(buf);
@@ -1906,6 +1934,18 @@ pub function (s: string) parse_int(): Option[i32] {
     return Some(acc as i32);
 }
 
+// `s.parse_int_or(fallback)` — parse a decimal integer, returning
+// `fallback` when `s` isn't a valid integer (the `parse_int` cases
+// that yield `None`). Saves the `match parse_int { Some => v, None
+// => default }` boilerplate at every CLI flag-operand site
+// (`head -n N`, `seq STEP`, `fold -w N`, …).
+pub function (s: string) parse_int_or(fallback: i32): i32 {
+    match (s.parse_int()) {
+        Some(v) => { return v; },
+        None => { return fallback; },
+    }
+}
+
 // `s.parse_hex_int()` / `s.parse_bin_int()` — sugar for
 // parse_int_radix(s, 16) / parse_int_radix(s, 2).
 pub function (s: string) parse_hex_int(): Option[i32] {
@@ -2016,7 +2056,7 @@ pub function repeat_char(ch: i32, n: i32): string {
     var buf: u8[] = __alloc_u8(n);
     var i: i32 = 0;
     while (i < n) {
-        buf[i] = ch as u8;
+        buf = buf.with(i, ch as u8);
         i = i + 1;
     }
     return string_from_bytes(buf);
@@ -2053,7 +2093,7 @@ pub function (s: string) without_byte(b: i32): string {
     var i: i32 = 0;
     while (i < n) {
         if (s[i] != b) {
-            buf[pos] = s[i] as u8;
+            buf = buf.with(pos, s[i] as u8);
             pos = pos + 1;
         }
         i = i + 1;
@@ -2061,7 +2101,7 @@ pub function (s: string) without_byte(b: i32): string {
     var out: u8[] = __alloc_u8(pos);
     var k: i32 = 0;
     while (k < pos) {
-        out[k] = buf[k];
+        out = out.with(k, buf[k]);
         k = k + 1;
     }
     return string_from_bytes(out);

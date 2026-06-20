@@ -409,7 +409,7 @@ func TestLoadStdlibFlatAllowsCycles(t *testing.T) {
 // codepath.
 func TestLoadAllowsStdlibCyclesViaUserImport(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"main.fern": `import "core/no_prelude";
+		"main.fern": `
 import "std/_test_empty";
 function main(): i32 { return _test_empty.stdlib_test_marker(); }`,
 	})
@@ -611,6 +611,60 @@ function main(): i32 {
 // Cross-module references to a non-`pub` function are a load-time
 // error. The diagnostic mentions the offending qualified name and
 // hints at the fix.
+// `pub(package)` decls are visible to a module in the SAME package (same
+// directory) — `util.helper()` resolves like a `pub` decl would. See
+// docs/PUB-PACKAGE.md.
+func TestLoadPubPackageSamePackage(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"util.fern": `pub(package) function helper(): i32 { return 42; }`,
+		"main.fern": `import "./util";
+function main(): i32 { return util.helper(); }`,
+	})
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err != nil {
+		t.Fatalf("same-package pub(package) access should load: %v", err)
+	}
+	if main := findFunc(prog, "main"); main == nil || !callsDirect(main, "util__helper") {
+		t.Errorf("util.helper() should resolve to util__helper; funcs: %v", funcNames(prog))
+	}
+}
+
+// A `pub(package)` decl is NOT visible from a module in a DIFFERENT
+// package (different directory).
+func TestLoadPubPackageCrossPackageRejected(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"util.fern": `pub(package) function helper(): i32 { return 42; }`,
+		"sub/app.fern": `import "../util";
+function appmain(): i32 { return util.helper(); }`,
+		"main.fern": `import "./sub/app";
+function main(): i32 { return 0; }`,
+	})
+	_, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err == nil {
+		t.Fatal("cross-package pub(package) access should error")
+	}
+	if !strings.Contains(err.Error(), "pub(package)") || !strings.Contains(err.Error(), "helper") {
+		t.Errorf("error should explain the package-scope restriction; got %v", err)
+	}
+}
+
+func TestSamePackage(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"/p/a.fern", "/p/b.fern", true},
+		{"/p/a.fern", "/p/q/b.fern", false},
+		{"stdlib://std/json.fern", "stdlib://core/int.fern", true},
+		{"stdlib://std/json.fern", "/p/a.fern", false},
+	}
+	for _, c := range cases {
+		if got := modload.SamePackageForTest(c.a, c.b); got != c.want {
+			t.Errorf("samePackage(%q,%q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
 func TestLoadRejectsPrivateFunctionAccess(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"util.fern": `function secret(): i32 { return 9; }`,
@@ -623,6 +677,120 @@ function main(): i32 { return util.secret(); }`,
 	}
 	if !strings.Contains(err.Error(), "util.secret") || !strings.Contains(err.Error(), "not exported") {
 		t.Errorf("error should mention `util.secret` and `not exported`; got %v", err)
+	}
+}
+
+// `pub use "path".{name}` re-exports a public symbol: a consumer of the
+// re-exporting module calls `facade.name`, and it rewrites to the
+// ORIGINAL module's mangled name (helpers__add5), not facade__add5 (no
+// copy is made). See docs/PRELUDE-TO-MODULES.md.
+func TestLoadPubUseReexport(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"helpers.fern": `pub function add5(n: i32): i32 { return n + 5; }
+pub const BONUS: i32 = 100;`,
+		"facade.fern": `pub use "./helpers".{add5, BONUS};`,
+		"main.fern": `import "./facade";
+function main(): i32 { return facade.add5(10) + facade.BONUS; }`,
+	})
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err != nil {
+		t.Fatalf("pub use re-export should load: %v", err)
+	}
+	main := findFunc(prog, "main")
+	if main == nil {
+		t.Fatal("main not found")
+	}
+	if !callsDirect(main, "helpers__add5") {
+		t.Errorf("facade.add5 should rewrite to helpers__add5 (the original), not facade__add5; funcs: %v", funcNames(prog))
+	}
+}
+
+// A `pub use` of a transitively-re-exported name resolves through the
+// chain to the ultimate original mangled name.
+func TestLoadPubUseTransitive(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"helpers.fern": `pub function add5(n: i32): i32 { return n + 5; }`,
+		"facade.fern":  `pub use "./helpers".{add5};`,
+		"prelude.fern": `pub use "./facade".{add5};`,
+		"main.fern": `import "./prelude";
+function main(): i32 { return prelude.add5(10); }`,
+	})
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err != nil {
+		t.Fatalf("transitive pub use should load: %v", err)
+	}
+	main := findFunc(prog, "main")
+	if !callsDirect(main, "helpers__add5") {
+		t.Errorf("prelude.add5 should resolve transitively to helpers__add5; funcs: %v", funcNames(prog))
+	}
+}
+
+// `pub use` can only re-export PUBLIC symbols — re-exporting a private
+// one is rejected.
+func TestLoadPubUseRejectsPrivate(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"helpers.fern": `function secret(): i32 { return 9; }`,
+		"facade.fern":  `pub use "./helpers".{secret};`,
+		"main.fern": `import "./facade";
+function main(): i32 { return facade.secret(); }`,
+	})
+	_, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err == nil {
+		t.Fatal("re-exporting a private symbol should error")
+	}
+	if !strings.Contains(err.Error(), "does not export") || !strings.Contains(err.Error(), "secret") {
+		t.Errorf("error should mention the missing export `secret`; got %v", err)
+	}
+}
+
+// A `pub use`-re-exported type resolves through the facade to its
+// original module's mangled name (not the facade's prefix), so a
+// consumer's `facade.Pt` annotation + literal both land on `helpers__Pt`.
+func TestLoadPubUseTypeReexport(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"helpers.fern": `pub struct Pt { x: i32 }`,
+		"facade.fern":  `pub use "./helpers".{Pt};`,
+		"main.fern": `import "./facade";
+function make(): facade.Pt { return facade.Pt { x: 7 }; }
+function main(): i32 { return make().x; }`,
+	})
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err != nil {
+		t.Fatalf("type re-export should load: %v", err)
+	}
+	mk := findFunc(prog, "make")
+	if mk == nil {
+		t.Fatal("make not found")
+	}
+	// Return type annotation `facade.Pt` → helpers__Pt.
+	st, ok := mk.ReturnType.(ast.StructType)
+	if !ok || st.Name != "helpers__Pt" {
+		t.Errorf("make return type = %#v, want StructType{Name: helpers__Pt}", mk.ReturnType)
+	}
+	// Struct literal `facade.Pt { … }` → helpers__Pt.
+	ret, _ := mk.Body.Stmts[0].(*ast.Return)
+	if ret == nil {
+		t.Fatal("make body should start with a return")
+	}
+	if sl, ok := ret.Value.(*ast.StructLit); !ok || sl.TypeName != "helpers__Pt" {
+		t.Errorf("struct literal = %#v, want StructLit{TypeName: helpers__Pt}", ret.Value)
+	}
+}
+
+// `pub use` can only re-export PUBLIC types — a private one is rejected.
+func TestLoadPubUseRejectsPrivateType(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"helpers.fern": `struct Secret { x: i32 }`,
+		"facade.fern":  `pub use "./helpers".{Secret};`,
+		"main.fern": `import "./facade";
+function main(): i32 { return 0; }`,
+	})
+	_, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err == nil {
+		t.Fatal("re-exporting a private type should error")
+	}
+	if !strings.Contains(err.Error(), "does not export") || !strings.Contains(err.Error(), "Secret") {
+		t.Errorf("error should mention the missing export `Secret`; got %v", err)
 	}
 }
 
@@ -974,28 +1142,16 @@ function main(): i32 { return (0 - 9).abs(); }`,
 	}
 }
 
-// `import "core/no_prelude";` opts a program out of the auto-
-// injected magic prelude. The user program then needs to
-// `import` every stdlib module it uses explicitly. Phase 5 of
-// the prelude-to-modules migration relies on this gate to land
-// without a single mega-PR.
+// There is no auto-injected prelude — a program needs to
+// `import` every stdlib module it uses explicitly. A program
+// that DOES need stdlib helpers writes `import "std/foo";` for
+// each module it touches.
 //
-// Positive case: a no-prelude program that doesn't need any
-// stdlib at all type-checks cleanly. Proves the opt-out
-// doesn't accidentally break otherwise-valid programs.
-//
-// Programs that DO need stdlib helpers under no-prelude need
-// `import "std/foo";` for each module they touch, AND each
-// std/* module's internal cross-module refs need to be
-// qualified (e.g. `int.int_to_string_radix(…)`) since modload
-// mangles non-receiver names on import. The current std/* sources
-// rely on the auto-prelude flattening their decls into one
-// namespace; cleaning that up for the no-prelude path is a
-// follow-up — until then, no-prelude programs that lean on
-// the stdlib will hit unresolved-name errors.
-func TestNoPreludeBareProgramTypechecks(t *testing.T) {
+// Positive case: a program that needs no stdlib at all
+// type-checks cleanly. Proves nothing is implicitly required.
+func TestBareProgramTypechecks(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"main.fern": `import "core/no_prelude";
+		"main.fern": `
 function main(): i32 { return 42; }`,
 	})
 	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
@@ -1003,18 +1159,16 @@ function main(): i32 { return 42; }`,
 		t.Fatal(err)
 	}
 	if _, err := checker.Check(prog); err != nil {
-		t.Fatalf("expected no-prelude bare program to compile, got %v", err)
+		t.Fatalf("expected bare program to compile, got %v", err)
 	}
 }
 
-// Negative case: program imports core/no_prelude but doesn't
-// import std/i32. The `(5).abs()` call has no `abs` method in
-// scope and the checker errors. Without the opt-out the auto-
-// prelude would silently supply the method; with the opt-out
-// the missing import is caught.
-func TestNoPreludeMissingImportErrors(t *testing.T) {
+// Negative case: a program that doesn't import std/i32. The
+// `(5).abs()` call has no `abs` method in scope and the checker
+// errors — there's no prelude to silently supply it.
+func TestMissingStdlibImportErrors(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"main.fern": `import "core/no_prelude";
+		"main.fern": `
 function main(): i32 { return (5).abs(); }`,
 	})
 	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
@@ -1022,7 +1176,7 @@ function main(): i32 { return (5).abs(); }`,
 		t.Fatal(err)
 	}
 	if _, err := checker.Check(prog); err == nil {
-		t.Fatal("expected checker error when no-prelude is set and std/i32 isn't imported")
+		t.Fatal("expected checker error when std/i32 isn't imported")
 	}
 }
 
@@ -1112,7 +1266,7 @@ func TestCheckStdlibToStdlibMethodsVisibleAcrossModules(t *testing.T) {
 		// stdlib-internal import graph. Extra stdlib imports
 		// satisfy ancillary method-source visibility needs
 		// (std/array body also calls (string).contains, etc.).
-		"main.fern": `import "core/no_prelude";
+		"main.fern": `
 import "std/array";
 import "std/i32";
 import "std/string";
@@ -1182,7 +1336,7 @@ function main(): i32 {
 // `undefined reference to map_new_impl` from the linker.
 func TestLoadPreservesMapRuntimeHelperNames(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
-		"main.fern": `import "core/no_prelude";
+		"main.fern": `
 import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
@@ -1234,7 +1388,7 @@ func TestLoadSourceDoesNotNeedGetwd(t *testing.T) {
 		t.Skip("could not make cwd unresolvable on this platform; skipping getwd guard")
 	}
 
-	src := `import "core/no_prelude";
+	src := `
 import "std/i32";
 function main(): i32 { return (5).abs(); }`
 	if _, _, err := modload.LoadSource(src); err != nil {

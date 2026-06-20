@@ -1,4 +1,3 @@
-import "core/no_prelude";
 import "std/test";
 // examples/tests/assert_at_wider_test.fern — batch 32
 // additions to std/test:
@@ -11,117 +10,117 @@ import "std/test";
 //     float spot checks with tolerance (NaN inputs always
 //     fail; tolerance is mandatory).
 
-function test_at_u32_pass(): Option[string] {
+function test_at_u32_pass(): test.TestOutcome {
     var arr: u32[] = [10 as u32, 20 as u32, 30 as u32];
     return test.assert_at(arr, 1, 20 as u32);
 }
 
-function test_at_u32_wrong_value(): Option[string] {
+function test_at_u32_wrong_value(): test.TestOutcome {
     var arr: u32[] = [10 as u32, 20 as u32];
     match (test.assert_at(arr, 0, 999 as u32)) {
-        None => { return test.fail("wrong-value should fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("wrong-value should fail"); },
+        Fail(msg) => {
             if (!msg.contains("at index 0") ||
                 !msg.contains("expected 999") ||
                 !msg.contains("got 10")) {
-                return Some("expected idx + both values: " + msg);
+                return test.fail("expected idx + both values: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_at_u32_out_of_bounds(): Option[string] {
+function test_at_u32_out_of_bounds(): test.TestOutcome {
     var arr: u32[] = [10 as u32];
     match (test.assert_at(arr, 5, 0 as u32)) {
-        None => { return test.fail("OOB should fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("OOB should fail"); },
+        Fail(msg) => {
             if (!msg.contains("out of bounds")) {
-                return Some("expected 'out of bounds': " + msg);
+                return test.fail("expected 'out of bounds': " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_at_u64_pass(): Option[string] {
+function test_at_u64_pass(): test.TestOutcome {
     var arr: u64[] = [100 as u64, 200 as u64, 300 as u64];
     return test.assert_at(arr, 2, 300 as u64);
 }
 
-function test_at_u64_wrong_value(): Option[string] {
+function test_at_u64_wrong_value(): test.TestOutcome {
     var arr: u64[] = [42 as u64];
     match (test.assert_at(arr, 0, 99 as u64)) {
-        None => { return test.fail("expected mismatch"); },
-        Some(_) => { return None; }
+        Pass => { return test.fail("expected mismatch"); },
+        Fail(_) => { return test.pass(); }
     }
 }
 
-function test_at_f64_pass_exact(): Option[string] {
+function test_at_f64_pass_exact(): test.TestOutcome {
     return test.assert_at_f64([1.0, 2.0, 3.0], 1, 2.0, 0.001);
 }
 
-function test_at_f64_pass_within_tolerance(): Option[string] {
+function test_at_f64_pass_within_tolerance(): test.TestOutcome {
     return test.assert_at_f64([1.0, 2.0001, 3.0], 1, 2.0, 0.001);
 }
 
-function test_at_f64_outside_tolerance(): Option[string] {
+function test_at_f64_outside_tolerance(): test.TestOutcome {
     match (test.assert_at_f64([1.0, 5.0, 3.0], 1, 2.0, 0.1)) {
-        None => { return test.fail("outside-tolerance should fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("outside-tolerance should fail"); },
+        Fail(msg) => {
             if (!msg.contains("at index 1") || !msg.contains("> epsilon 0.1")) {
-                return Some("expected idx + epsilon: " + msg);
+                return test.fail("expected idx + epsilon: " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_at_f64_nan_actual_fails(): Option[string] {
+function test_at_f64_nan_actual_fails(): test.TestOutcome {
     var z: f64 = 0.0;
     var nan: f64 = z / z;
     match (test.assert_at_f64([1.0, nan, 3.0], 1, 2.0, 100.0)) {
-        None => { return test.fail("NaN element should fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("NaN element should fail"); },
+        Fail(msg) => {
             if (!msg.contains("actual is NaN")) {
-                return Some("expected 'actual is NaN': " + msg);
+                return test.fail("expected 'actual is NaN': " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_at_f64_nan_expected_fails(): Option[string] {
+function test_at_f64_nan_expected_fails(): test.TestOutcome {
     var z: f64 = 0.0;
     var nan: f64 = z / z;
     match (test.assert_at_f64([1.0, 2.0], 0, nan, 0.001)) {
-        None => { return test.fail("NaN expected should fail"); },
-        Some(_) => { return None; }
+        Pass => { return test.fail("NaN expected should fail"); },
+        Fail(_) => { return test.pass(); }
     }
 }
 
-function test_at_f64_out_of_bounds(): Option[string] {
+function test_at_f64_out_of_bounds(): test.TestOutcome {
     match (test.assert_at_f64([1.0, 2.0], 5, 0.0, 0.001)) {
-        None => { return test.fail("OOB should fail"); },
-        Some(msg) => {
+        Pass => { return test.fail("OOB should fail"); },
+        Fail(msg) => {
             if (!msg.contains("out of bounds")) {
-                return Some("expected 'out of bounds': " + msg);
+                return test.fail("expected 'out of bounds': " + msg);
             }
-            return None;
+            return test.pass();
         }
     }
 }
 
-function test_at_f32_pass(): Option[string] {
+function test_at_f32_pass(): test.TestOutcome {
     var arr: f32[] = [(1.0 as f32), (2.0 as f32)];
     return test.assert_at_f32(arr, 0, 1.0 as f32, 0.001 as f32);
 }
 
-function test_at_f32_outside_tolerance(): Option[string] {
+function test_at_f32_outside_tolerance(): test.TestOutcome {
     var arr: f32[] = [(1.0 as f32), (5.0 as f32)];
     match (test.assert_at_f32(arr, 1, 2.0 as f32, 0.1 as f32)) {
-        None => { return test.fail("outside-tolerance should fail"); },
-        Some(_) => { return None; }
+        Pass => { return test.fail("outside-tolerance should fail"); },
+        Fail(_) => { return test.pass(); }
     }
 }
 
