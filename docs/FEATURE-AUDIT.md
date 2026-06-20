@@ -210,7 +210,7 @@ per-function bugs in the audit log.
 | `std/sort` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_sort_i32` — ordering + permutation (histogram) + idempotence laws |
 | `std/format` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | self-host via the IR path (x86-64 + wasm): `format_bytes` (`TestSelfHostFormatBytesIR`), `format(fmt, args)` `{}`-substitution (`TestSelfHostFormatStringIR`), `format_duration_ms` (`TestSelfHostFormatDurationIR`), and the `{:fill|align|width.precision}` specs (`TestSelfHostFormatSpecIR`) — all oracle-checked against the interpreter; native via `audit_std_textfmt` + the `format_specs` fixture (with std/float `to_string_prec`) |
 | `std/csv` | ✅ | ✅ | ✅ | ✅ | | ✅ | parse_line/join/escape — `audit_std_textfmt`; self-host via the IR path (x86-64 + wasm): `csv_parse_line` (`TestSelfHostCsvParseLineIR`) + `csv_escape`/`csv_join` (`TestSelfHostCsvEscapeIR`, oracle-checked — `index_of`/`replace` lower as `op_str_index_of`/`op_str_replace`) |
-| `std/log` | | | | | | ⬜ | |
+| `std/log` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | leveled `Logger`/`LogEntry` (#2683) plain-text + JSON-lines `render` — native via `log_leveled` fixture (all four backends); self-host via the IR path (x86-64 + wasm): `TestSelfHostLogLeveledIR` — structs with i32/boolean/string fields, chained struct-returning receiver methods, the threshold-filter branch, byte-indexed JSON escaping (hardcoded expectations: `.to_string()` is a self-host builtin the importless interp can't resolve, cf. format_bytes) |
 | `std/io` | | | | | | ⬜ | |
 | `std/io_buffered` | | | | | | ⬜ | |
 | `std/path` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | join/file_name/extension — `audit_std_path_numeric` + `self_host_audit_stdpath_test` |
@@ -249,6 +249,25 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-20 — std/log leveled `Logger`/`LogEntry` on the self-host IR path + native audit (#2683)
+
+Audited the `std/log` row (was ⬜ across the board). The leveled-logger surface
+(#2683) — `Logger` / `LogEntry` structs, the chained builder
+(`lg.info_().str(...).int(...).bool(...)`), the min-level threshold filter, and
+the pure `render` producing plain-text (`[LEVEL] msg key=value`) or JSON-lines
+(`{"level":..,"msg":..,<fields>}`) — now has native coverage via the
+`log_leveled` fixture (interp / x86-64 / arm64 / wasm, byte-for-byte) and
+self-host coverage via the IR path: `TestSelfHostLogLeveledIR{X86_64,Wasm}` run
+the inlined logger through the x86-64 + wasm IR drivers, pinned to the `"ir"`
+path (return value = rendered length). It exercises structs with
+i32/boolean/string fields, struct-returning receiver methods chained, struct
+field reads, the filter branch, byte-indexed JSON escaping, and
+`i32.to_string()` + concat — all already lower, so no compiler change.
+Expectations are hardcoded (verified against the interpreter with
+`import "std/i32"`): the single-program driver treats `.to_string()` as a
+self-host builtin while the importless interpreter can't resolve it, so the
+interp isn't a drop-in oracle here (same caveat as `TestSelfHostFormatBytesIR`).
 
 ### 2026-06-20 — std/format width/precision/fill specs + std/float `to_string_prec` ([#2684](https://github.com/JakeChampion/lang/issues/2684))
 
