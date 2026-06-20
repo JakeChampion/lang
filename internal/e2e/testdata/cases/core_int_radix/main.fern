@@ -1,0 +1,16 @@
+import "core/int";
+
+// Exercises core/int's int_to_string_radix (i32 -> base-N string) across all
+// four native backends — the to-string radix direction. Unlike int_to_string
+// (decimal, via __memcpy) this builds with __alloc_u8 + .with + string_from_bytes,
+// so it also lowers on the self-host IR path (TestSelfHostCoreIntRadixIR).
+// FEATURE-AUDIT core/int row. (print appends \n.)
+function main(): i32 {
+    print(int.int_to_string_radix(255, 16));       // ff
+    print(int.int_to_string_radix(10, 2));         // 1010
+    print(int.int_to_string_radix(0, 16));         // 0
+    print(int.int_to_string_radix(0 - 255, 16));   // -ff
+    print(int.int_to_string_radix(35, 36));        // z
+    print(int.int_to_string_radix(1234, 16));      // 4d2
+    return 0;
+}

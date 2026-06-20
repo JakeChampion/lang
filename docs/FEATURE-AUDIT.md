@@ -236,7 +236,7 @@ per-function bugs in the audit log.
 
 | Module | I | X | A | W | S | Status | Notes |
 |--------|---|---|---|---|---|--------|-------|
-| `core/int` | ✅ | ✅ | ✅ | ✅ | 🔧 | 🔧 | radix **parse** direction (`parse_int_radix` / `__radix_digit`, bases 2–36, sign handling) — native via the `core_int_parse` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostCoreIntParseIR` — `Option[i32]` `Some`/`None` + payload-binding `match`, string indexing with char-class compares, multiply-accumulate loop, sign + negation. The `to_string` direction (`int_to_string` / `int_to_string_radix`) stays on the AST path — it pokes raw memory via `__alloc_u8` / `__memcpy` / `usize` (same caveat as std/u64 `to_string`) |
+| `core/int` | ✅ | ✅ | ✅ | ✅ | 🔧 | 🔧 | radix **parse** direction (`parse_int_radix` / `__radix_digit`, bases 2–36, sign handling) — native via the `core_int_parse` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostCoreIntParseIR` — `Option[i32]` `Some`/`None` + payload-binding `match`, string indexing with char-class compares, multiply-accumulate loop, sign + negation. The **to-string radix** direction (`int_to_string_radix`) ALSO lowers on the IR path — it builds via `__alloc_u8` + `.with` + `string_from_bytes` (no `__memcpy`/`usize`), the same builder std/hex / std/base64 use — native via the `core_int_radix` fixture, self-host via `TestSelfHostCoreIntRadixIR` (x86-64 + wasm, oracle-checked). Only `int_to_string` / `__int_to_string_u64` (decimal) stay AST — those poke raw memory via `__memcpy` over a `usize` pointer (same caveat as std/u64 `to_string`) |
 | `core/cmp` (traits) | | | | | | ⬜ | |
 | `core/map` | | | | | | ⬜ | |
 | `core/no_prelude` | | | | | | ⬜ | no-op sentinel |
@@ -316,6 +316,27 @@ isn't in scope without `import "std/i32"` / `"std/float"`. That self-host
 over-permissiveness vs. native is a separate divergence, filed for follow-up;
 this entry scopes only the import-free escape-sequence surface, which both
 compilers agree on.)
+
+### 2026-06-20 — core/int int_to_string_radix on the self-host IR path + native audit
+
+Follow-up to the radix-**parse** audit (#3515): that entry put the whole
+to-string direction on the AST path, but only the **decimal** `int_to_string` /
+`__int_to_string_u64` actually stay AST (they `__memcpy` over a `usize` pointer).
+`int_to_string_radix` builds its result with `__alloc_u8` + `.with` +
+`string_from_bytes` — no `__memcpy`, no `usize` — the same IR-eligible builder
+std/hex / std/base64 use, so it lowers through the IR path too.
+
+- **Native** — `core_int_radix` fixture (interp / x86-64 / arm64 / wasm): hex,
+  binary, base-36, zero, negative, and a multi-digit value.
+- **Self-host IR** — `TestSelfHostCoreIntRadixIR{X86_64,Wasm}` run nine cases
+  through the x86-64 + wasm IR drivers (i64-magnitude `mag % b64` / `mag / b64`,
+  `__alloc_u8` + `.with` build, `string_from_bytes`, plus a round-trip back
+  through the IR-audited `parse_int_radix`), pinned to the `"ir"` path and
+  oracle-checked against the interpreter (results ≤ 120 for the wasm clamp,
+  #2908). All already lower, so **no compiler change**.
+
+The core/int row's to-string note is corrected accordingly; `int_to_string`
+(decimal) remains the only AST holdout.
 
 ### 2026-06-20 — core/int radix parse on the self-host IR path + native audit
 
