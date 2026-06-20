@@ -2970,6 +2970,20 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // no operands; __fern_now_ns() -> i64 in %rax.
             s = s.write("    call __fern_now_ns\n    pushq %rax\n");
             s = s.need("now_ns");
+        } else if (o.kind == "heap_bump_bytes") {
+            // bump high-water mark = (__fern_heap_ptr == 0) ? 0 : ptr − base,
+            // where base is the static __fern_heap symbol (movabs — it lives
+            // above 2 GiB). The cursor is 0 until the first alloc, so guard
+            // that case to report 0 (matching native's __fern_heap_bump_bytes).
+            s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");   // cursor (0 if uninit)
+            s = s.write("    movabs $__fern_heap, %rcx\n");          // base
+            s = s.write("    movq %rax, %rdx\n");
+            s = s.write("    subq %rcx, %rdx\n");                    // ptr − base
+            s = s.write("    xorq %rcx, %rcx\n");
+            s = s.write("    testq %rax, %rax\n");                   // ptr == 0 ?
+            s = s.write("    cmovneq %rdx, %rcx\n");                 // 0 if uninit, else ptr−base
+            s = s.write("    pushq %rcx\n");
+            s = s.need("heap");
         } else if (o.kind == "struct_make") {
             // nf field values on the operand stack (field nf-1 on top, decl
             // order). Box = [shape_ptr@0, f0@8, f1@16, …]; shape = the interned

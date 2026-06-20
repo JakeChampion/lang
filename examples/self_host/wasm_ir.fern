@@ -776,6 +776,14 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind == "str_from_bytes") {
             // stack: arr -> $__fern_string_from_bytes(arr) -> string block.
             out = out + "    call $__fern_string_from_bytes\n";
+        } else if (o.kind == "heap_bump_bytes") {
+            // bump high-water mark = $heap − heap_base. The $heap global is
+            // initialised to heap_base (heap_alloc_helpers), so this reads 0
+            // before the first allocation — matching the register backends and
+            // native's __fern_heap_bump_bytes. heap_base is recomputed from the
+            // data-section layout (identical to heap_base_for(mod), since
+            // str_vals == str_values(mod)).
+            out = out + "    global.get $heap\n    i32.const " + util.i32_to_string((str_offset(str_vals, str_vals.len()) + 16 + 7) / 8 * 8 + fl_cells() * 4) + "\n    i32.sub\n";
         } else if (o.kind == "memcpy") {
             // stack: dst, src, n -> copy n bytes src->dst via the bulk-memory
             // memory.copy (operand order [dest, src, size] matches the lowering

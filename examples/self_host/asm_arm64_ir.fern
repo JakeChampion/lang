@@ -444,6 +444,21 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // no operands; __fern_now_unix_ms() -> i64 in x0. Unconditional
             // helper (asm_arm64.emit_runtime), same as monotonic_ns.
             s = s.write("    bl __fern_now_unix_ms\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "heap_bump_bytes") {
+            // bump high-water mark = (__fern_heap_ptr == 0) ? 0 : ptr − base.
+            // The arena is mmap'd lazily; its base is recoverable from the
+            // recorded end (__fern_heap_end = base + heap_size), so base =
+            // end − heap_size and ptr − base = ptr − end + heap_size. The
+            // cursor is 0 until the first alloc, so guard that to report 0.
+            s = s.mark_heap();
+            s = s.write("    adrp x0, __fern_heap_ptr\n    add x0, x0, :lo12:__fern_heap_ptr\n    ldr x0, [x0]\n");   // cursor (0 if uninit)
+            s = s.write("    adrp x1, __fern_heap_end\n    add x1, x1, :lo12:__fern_heap_end\n    ldr x1, [x1]\n");   // arena end
+            s = s.write("    sub x2, x0, x1\n");                  // ptr − end
+            s = s.write("    mov x3, #14\n    lsl x3, x3, #28\n");// heap_size = 0xE0000000 (3.5 GiB), built via mov+lsl (32-bit literal parser)
+            s = s.write("    add x2, x2, x3\n");                  // ptr − base
+            s = s.write("    cmp x0, #0\n");
+            s = s.write("    csel x2, x2, xzr, ne\n");            // 0 if uninit, else ptr−base
+            s = s.write("    str x2, [sp, #-16]!\n");
         } else if (o.kind == "now_ns") {
             // no operands; __fern_now_ns() -> i64 in x0. Unconditional helper.
             s = s.write("    bl __fern_now_ns\n    str x0, [sp, #-16]!\n");
