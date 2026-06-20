@@ -85,6 +85,11 @@ type Options struct {
 	// runs, so it is correct at the arbitrary base the kernel loads it at.
 	// Pair with x86_64.AssembleProgramPIE + elf.StaticPieExecutableX86.
 	PIE bool
+
+	// Exports are function names kept as tree-shake roots (in addition to
+	// `main`) so a `-shared` .so can export functions the program never
+	// calls itself — e.g. JNI entry points, which only the JVM invokes.
+	Exports []string
 }
 
 // Emit produces assembly text for prog targeting x86-64 Linux.
@@ -119,6 +124,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// tree-shake roots so they survive (mirrors the wasm build path).
 	// See docs/DYN-TRAITS.md §4.2.2.
 	dynRoots := append(treeshake.DynCoercionImplMethods(info), treeshake.DowncastImplMethods(prog, info)...)
+	dynRoots = append(dynRoots, opts.Exports...) // -shared exports survive tree-shaking
 	treeshake.Run(prog, dynRoots...)
 	// x86-64 supports boxed one-word `dyn Trait` values
 	// (docs/DYN-TRAITS.md §4.2.2): DynSupported lifts the dispatch gate.

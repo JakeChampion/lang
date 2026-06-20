@@ -171,6 +171,11 @@ type Options struct {
 	// Pair with arm64.AssembleProgramPIE + elf.StaticPieExecutable. Linux
 	// only (the Darwin path is its own non-PIE Mach-O image).
 	PIE bool
+
+	// Exports are function names kept as tree-shake roots (in addition to
+	// `main`) so a `-shared` .so can export functions the program never
+	// calls itself — e.g. JNI entry points, which only the JVM invokes.
+	Exports []string
 }
 
 // Emit produces the assembly text for prog.
@@ -211,6 +216,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// tree-shake roots so they survive (mirrors the x86-64 + wasm build
 	// paths). See docs/DYN-TRAITS.md §4.2.2.
 	dynRoots := append(treeshake.DynCoercionImplMethods(info), treeshake.DowncastImplMethods(prog, info)...)
+	dynRoots = append(dynRoots, opts.Exports...) // -shared exports survive tree-shaking
 	treeshake.Run(prog, dynRoots...)
 	// arm64 supports boxed one-word `dyn Trait` values
 	// (docs/DYN-TRAITS.md §4.2.2): DynSupported lifts the dispatch gate
