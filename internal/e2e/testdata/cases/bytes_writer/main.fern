@@ -1,0 +1,21 @@
+import "core/int";
+import "std/io_buffered";
+import "std/i32";
+
+// std/io_buffered BytesWriter: functional u8[]-backed buffer (write_string /
+// write_bytes / write_byte / len / into_string). Verified across all backends.
+function main(): i32 {
+    var w: BytesWriter = io_buffered.bytes_writer_new();
+    w = w.write_string("HTTP/1.1 ");
+    w = w.write_string("200 OK");
+    w = w.write_byte(33);   // '!'
+    print(w.len().to_string());          // 9 + 6 + 1 = 16
+    print(w.into_string());              // "HTTP/1.1 200 OK!"
+    if (w.is_empty()) { print("empty"); } else { print("nonempty"); }
+    var e: BytesWriter = io_buffered.bytes_writer_new();
+    if (e.is_empty()) { print("empty2"); } else { print("nonempty2"); }
+    var b: u8[] = [120 as u8, 121 as u8, 122 as u8];   // "xyz"
+    e = e.write_bytes(b);
+    print(e.into_string());              // "xyz"
+    return 0;
+}
