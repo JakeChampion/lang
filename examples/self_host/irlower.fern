@@ -8965,7 +8965,14 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 // so binding one borrowed from the Option box can't
                                 // double-free. tuple_elems_lowerable is false for
                                 // non-tuples and for array/i64-element tuples (deferred).
-                                var ptag_is_tuple: boolean = tuple_elems_lowerable(ptag, ms.structs);
+                                // A fn-typed payload spelling (`() => i32` /
+                                // `(i32) => i32`) starts with `(` and so is also
+                                // accepted by tuple_elems_lowerable — but it is a
+                                // function, NOT a tuple. Detect it first so the
+                                // tuple path doesn't claim it (the marks below
+                                // mirror this order).
+                                var ptag_is_fn: boolean = is_fn_payload_spelling(ptag);
+                                var ptag_is_tuple: boolean = !ptag_is_fn && tuple_elems_lowerable(ptag, ms.structs);
                                 // An ARRAY payload (`Some(xs)` where the Option's T is
                                 // an array — `m.get(k)` on a Map[K, V[]], the url query
                                 // shape) is a leak-only heap pointer at offset 8 like a
@@ -8981,7 +8988,16 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 // op_opt_payload and marked with the dyn type so `e.method()`
                                 // routes through op_dyn_dispatch at the call site.
                                 var ptag_is_dyn: boolean = ptag.len() > 4 && ptag[0:4] == "dyn ";
-                                if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && ptag != "f64" && !ptag_is_struct && !ptag_is_enum && !ptag_is_opt && !ptag_is_tuple && !ptag_is_array && !ptag_is_dyn) { return s.fail(); }
+                                // A fn-typed payload (`Some(f)` where the Option's
+                                // T is `() => i32` / `(i32) => i32`, slice #3445
+                                // match-fn): stored by pointer at offset 8 — the
+                                // env box the constructor side wrapped — so it
+                                // reads via the default 8-byte op_opt_payload and
+                                // the bound slot is marked a closure local below so
+                                // `f(args)` dispatches env-first. ptag_is_fn is
+                                // computed above (before ptag_is_tuple, which it
+                                // pre-empts).
+                                if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && ptag != "f64" && !ptag_is_struct && !ptag_is_enum && !ptag_is_opt && !ptag_is_tuple && !ptag_is_array && !ptag_is_dyn && !ptag_is_fn) { return s.fail(); }
                             }
                             var want: i32 = 0;
                             if (pv.type_name == "None" || pv.type_name == "Err") { want = 1; }
@@ -9029,6 +9045,16 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 // slot's Option/Result type so the inner match (or a
                                 // `?`) recovers its payload.
                                 else if (ptag.len() >= 8 && (ptag[0:7] == "Option[" || ptag[0:7] == "Result[")) { ms = ms.mark_opt_type(pbslot, ptag); }
+                                // A fn-typed payload (`Some(f)` / `Ok(g)` where T is
+                                // `() => i32` / `(i32) => i32`, slice #3445 match-fn):
+                                // the payload read above is the env box the constructor
+                                // side wrapped, BORROWED from the Option/Result box.
+                                // Mark the bound NAME a closure local so `f(args)` /
+                                // passing `f` dispatch env-first against the box.
+                                // Checked BEFORE the tuple branch — a fn spelling
+                                // also starts with `(` and tuple_elems_lowerable
+                                // would otherwise claim it as a tuple.
+                                else if (is_fn_payload_spelling(ptag)) { ms = ms.mark_closure_local(pv.binding); }
                                 // A tuple payload: tag the bound slot's element types
                                 // so `p.0` / `p.1` read the right element width / type.
                                 else if (tuple_elems_lowerable(ptag, ms.structs)) { ms = ms.mark_tuple_elems(pbslot, tuple_elem_tags(ptag)); }
@@ -13445,6 +13471,42 @@ pub function opt_payload_type(rettype: string, variant: string): string {
     return "";
 }
 
+// is_fn_payload_spelling reports whether a recovered Option/Result payload type
+// spelling `t` names a FUNCTION type (slice #3445 match-fn). Detected
+// CONSERVATIVELY: only the unambiguous single-paren fn forms — `() => …` (no
+// params) or `(T) => …` (one param) — count. A multi-element tuple spelling
+// `(A, B)` is NEVER a fn (it has no top-level `=>` and the leading `(` is a
+// tuple, not a param list), so a top-level comma inside the leading parens
+// disqualifies it. The match arm marks a payload of this spelling a closure
+// local so the bound `f(args)` dispatches env-first against the env box the
+// constructor side wrapped.
+pub function is_fn_payload_spelling(t: string): boolean {
+    var n: i32 = t.len();
+    if (n < 5) { return false; }                 // shortest is "()=>X"
+    if (t[0] != 40) { return false; }            // must start with '('
+    // Find the matching ')' for the leading '(' at top depth; reject a
+    // top-level comma inside (that's a multi-element tuple, not a param list).
+    var depth: i32 = 0;
+    var i: i32 = 0;
+    var close: i32 = 0 - 1;
+    while (i < n) {
+        var ch: i32 = t[i];
+        if (ch == 40 || ch == 91) { depth = depth + 1; }        // '(' '['
+        else if (ch == 41 || ch == 93) {                        // ')' ']'
+            depth = depth - 1;
+            if (depth == 0 && ch == 41) { close = i; i = n; }
+        }
+        else if (ch == 44 && depth == 1) { return false; }       // top-level ',' -> tuple
+        i = i + 1;
+    }
+    if (close < 0) { return false; }
+    // After the ')' (skipping spaces) the next two chars must be "=>".
+    var j: i32 = close + 1;
+    while (j < n && t[j] == 32) { j = j + 1; }
+    if (j + 1 >= n) { return false; }
+    return t[j] == 61 && t[j + 1] == 62;          // '=' '>'
+}
+
 // map_key_kind_of returns 1 for an i32-keyed Map type, 0 for string-keyed
 // ("Map[i32, V]" / "Map[string, V]").
 pub function map_key_kind_of(typestr: string): i32 {
@@ -14941,6 +15003,23 @@ function lift_module_fn_arity(mfuncs: parser.FuncDecl[], name: string): i32 {
     return 0 - 1;
 }
 
+// lift_arg_is_fn_value reports whether `arg` is a fn-VALUE worth env-boxing at a
+// variant-constructor payload position (`Some(f)` / `Ok(f)` / `Err(f)`): an
+// inline lambda (capturing or not), or a bare module-fn-name ident naming a
+// receiver-less function with >= 1 param (a function pointer, distinct from a
+// zero-arg `const`). Anything else (a call returning an already-boxed value, a
+// boxed fn-value local, a non-fn payload) is left alone — try_fn_field_value
+// also declines those, but checking here keeps the Some/Ok/Err detection from
+// firing on ordinary non-fn payloads.
+function lift_arg_is_fn_value(arg: parser.Expr, mfuncs: parser.FuncDecl[]): boolean {
+    match (arg) {
+        parser.ExprLambda(_) => { return true; },
+        parser.ExprIdent(id) => { return lift_module_fn_arity(mfuncs, id.name) >= 1; },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // lift_inline_closures_expr walks an expression, hoisting capturing inline
 // lambdas in array-element and struct-field-value positions, AND wrapping
 // fn-typed CALL ARGUMENTS into uniform env boxes (slice #3445 follow-up). A call
@@ -14973,12 +15052,24 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                 _ => {}
             }
             var is_mkclo: boolean = cnm.len() > 8 && cnm[0:8] == "__mkclo$";
+            // A single-arg Option/Result variant constructor `Some(f)` / `Ok(f)`
+            // / `Err(f)` whose payload is a fn-VALUE (slice #3445 match-fn): wrap
+            // that payload into the uniform env box the SAME way a fn-typed
+            // struct-field / call-arg is wrapped, so when the match arm binds the
+            // payload (`Some(f) => f()`) it dispatches env-first against a real
+            // box. A non-fn-value payload is left untouched (lift_arg_is_fn_value
+            // declines it). The wrap only fires for exactly one argument; multi-
+            // arg shapes (none of Some/Ok/Err take >1) fall through.
+            var is_optvar: boolean = (cnm == "Some" || cnm == "Ok" || cnm == "Err") && call.args.len() == 1;
             var fs: parser.FuncDecl[] = funcs;
             var ct: i32 = counter;
             var nargs: parser.Expr[] = [];
             var ai: i32 = 0;
             while (ai < call.args.len()) {
-                if (!is_mkclo && cnm.len() > 0 && lift_callee_param_is_fn(mfuncs, cnm, ai)) {
+                if (is_optvar && lift_arg_is_fn_value(call.args[ai], mfuncs)) {
+                    var ofr: InlineCloRes = try_fn_field_value(call.args[ai], fd, fs, ct, gfns, mfuncs);
+                    fs = ofr.funcs; ct = ofr.counter; nargs = nargs.append(ofr.expr);
+                } else if (!is_mkclo && cnm.len() > 0 && lift_callee_param_is_fn(mfuncs, cnm, ai)) {
                     var fr: InlineCloRes = try_fn_field_value(call.args[ai], fd, fs, ct, gfns, mfuncs);
                     fs = fr.funcs; ct = fr.counter; nargs = nargs.append(fr.expr);
                 } else {
