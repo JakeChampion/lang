@@ -117,12 +117,14 @@ func TestSelfHostPubUseModloadX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostPubUseWasm compiles the same 3-module re-export program
-// through the unified self-host CLI driver (fern.fern) targeting wasm:
-// real on-disk module loading + flatten.bundle's `pub use` redirect, then
-// wasm codegen. The emitted WAT runs under wasmtime and must exit 47 —
-// the self-host parity gate for issue #3136 part 2 on wasm.
-func TestSelfHostPubUseWasm(t *testing.T) {
+// TestWasmSelfHostPubUseReexport compiles the same 3-module re-export
+// program through the unified self-host CLI driver (fern.fern) targeting
+// wasm: real on-disk module loading + flatten.bundle's `pub use` redirect,
+// then wasm codegen. The emitted WAT runs under wasmtime and must exit 47 —
+// the self-host parity gate for issue #3136 part 2 on wasm. Named `TestWasm*`
+// so it lands in the wasmtime-provisioned wasm e2e workflow rather than the
+// (wasmtime-less) self-host shards, where it would only ever SKIP.
+func TestWasmSelfHostPubUseReexport(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host pub-use wasm e2e")
 	}

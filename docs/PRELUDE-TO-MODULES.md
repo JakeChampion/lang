@@ -347,5 +347,6 @@ table (`facade__name` → `origin__name`), threaded through `RewriteCtx`;
 points the native rewriter does — qualified value refs in `rewrite_expr`
 and qualified type refs in `rewrite_type_name` (chained re-exports are
 followed to the end). Covered end-to-end by the self-host IR e2e gates
-`TestSelfHostPubUseModloadX86_64` (x86-64) and `TestSelfHostPubUseWasm`
-(wasm), mirroring the native `internal/e2e/pub_use_test.go`.
+`TestSelfHostPubUseModloadX86_64` (x86-64) and
+`TestWasmSelfHostPubUseReexport` (wasm), mirroring the native
+`internal/e2e/pub_use_test.go`.
