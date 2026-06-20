@@ -52,7 +52,34 @@ import "./parser";
 // TestOutcome). The self-host compiler's own modules sidestep this by
 // always qualifying (`parser.ExprIdent`), so this only widens what
 // downstream code can spell, never changing existing resolution.
-pub struct RewriteCtx { modnames: string[], prefix: string, declnames: string[], locals: string[], ivar_names: string[], ivar_mangled: string[] }
+pub struct RewriteCtx { modnames: string[], prefix: string, declnames: string[], locals: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[] }
+
+// lookup_reexport redirects a naively-mangled qualified reference
+// (`facade__name`) to the original module's mangled symbol
+// (`helpers__name`) when `facade` re-exported `name` via `pub use`.
+// Returns `mangled` unchanged when no re-export applies. Chained
+// re-exports (`a` re-exports `b`'s re-export of `c`) are followed to the
+// end; the bounded loop guards against a cyclic table. See bundle.
+function lookup_reexport(mangled: string, ctx: RewriteCtx): string {
+    var cur: string = mangled;
+    var steps: i32 = 0;
+    while (steps < ctx.reexport_keys.len() + 1) {
+        var i: i32 = 0;
+        var hit: boolean = false;
+        while (i < ctx.reexport_keys.len()) {
+            if (ctx.reexport_keys[i] == cur) {
+                cur = ctx.reexport_targets[i];
+                hit = true;
+                i = ctx.reexport_keys.len();
+            } else {
+                i = i + 1;
+            }
+        }
+        if (!hit) { return cur; }
+        steps = steps + 1;
+    }
+    return cur;
+}
 
 // lookup_ivar returns the bundled mangled name for a bare imported
 // enum-variant reference, or "" when `name` isn't an imported variant.
@@ -140,7 +167,16 @@ pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
     if (dot >= 0) {
         var prefix: string = tn[0:dot];
         if (is_in(prefix, ctx.modnames)) {
-            return prefix + "__" + tn[dot + 1:tn.len()];
+            // Split any generic/array suffix off the base name so a
+            // re-exported `facade.Point[]` redirects on `Point` and
+            // re-attaches the `[]`.
+            var rest: string = tn[dot + 1:tn.len()];
+            var rb: i32 = first_bracket(rest);
+            if (rb < 0) {
+                return lookup_reexport(prefix + "__" + rest, ctx);
+            }
+            var rbase: string = rest[0:rb];
+            return lookup_reexport(prefix + "__" + rbase, ctx) + rest[rb:rest.len()];
         }
         return tn;
     }
@@ -190,7 +226,8 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
             match (fa.obj) {
                 parser.ExprIdent(id) => {
                     if (is_in(id.name, ctx.modnames)) {
-                        return parser.ExprIdent { name: id.name + "__" + fa.field, line: id.line, col: id.col };
+                        var mangled: string = lookup_reexport(id.name + "__" + fa.field, ctx);
+                        return parser.ExprIdent { name: mangled, line: id.line, col: id.col };
                     }
                 },
                 _ => { }
@@ -477,7 +514,8 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         var bctx: RewriteCtx = RewriteCtx {
             modnames: ctx.modnames, prefix: ctx.prefix,
             declnames: ctx.declnames, locals: collect_local_names(fd),
-            ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled
+            ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled,
+            reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets
         };
         funcs = funcs.append(parser.FuncDecl {
             name: new_name,
@@ -530,7 +568,8 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         top_stmts: rewrite_block(mod.top_stmts, RewriteCtx {
             modnames: ctx.modnames, prefix: ctx.prefix, declnames: ctx.declnames,
             locals: collect_locals_stmts(mod.top_stmts, []),
-            ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled
+            ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled,
+            reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets
         }),
         enums: mod.enums,
         resources: mod.resources,
@@ -541,9 +580,9 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
 // flatten_qualified rewrites only QUALIFIED cross-module references
 // (`mod.X` → `mod__X`) in a module — no own-decl mangling. Used on
 // the entry module (whose own decls keep their bare names).
-pub function flatten_qualified(mod: parser.Module, ivar_names: string[], ivar_mangled: string[]): parser.Module {
+pub function flatten_qualified(mod: parser.Module, ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[]): parser.Module {
     var empty: string[] = [];
-    var ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), prefix: "", declnames: empty, locals: empty, ivar_names: ivar_names, ivar_mangled: ivar_mangled };
+    var ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), prefix: "", declnames: empty, locals: empty, ivar_names: ivar_names, ivar_mangled: ivar_mangled, reexport_keys: reexport_keys, reexport_targets: reexport_targets };
     return rewrite_module_bodies(mod, ctx);
 }
 
@@ -576,14 +615,16 @@ pub function collect_decl_names(mod: parser.Module): string[] {
 // mangle_module renames a non-entry module's own decls to
 // `prefix__name` and rewrites every internal reference to match, plus
 // flattens any qualified refs it makes to other modules.
-pub function mangle_module(mod: parser.Module, prefix: string, ivar_names: string[], ivar_mangled: string[]): parser.Module {
+pub function mangle_module(mod: parser.Module, prefix: string, ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[]): parser.Module {
     var ctx: RewriteCtx = RewriteCtx {
         modnames: mod_names(mod),
         prefix: prefix,
         declnames: collect_decl_names(mod),
         locals: [],
         ivar_names: ivar_names,
-        ivar_mangled: ivar_mangled
+        ivar_mangled: ivar_mangled,
+        reexport_keys: reexport_keys,
+        reexport_targets: reexport_targets
     };
     return rewrite_module_bodies(mod, ctx);
 }
@@ -649,9 +690,12 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
         }
         iv = iv + 1;
     }
+    // `pub use` re-export table: redirects a consumer's `facade.name`
+    // (which mangles to `facade__name`) to the original `origin__name`.
+    var rx: ReexportTable = build_reexports(imports);
     var i: i32 = 0;
     while (i < imports.len()) {
-        var m: parser.Module = mangle_module(imports[i].mod, imports[i].name, ivar_names, ivar_mangled);
+        var m: parser.Module = mangle_module(imports[i].mod, imports[i].name, ivar_names, ivar_mangled, rx.keys, rx.targets);
         funcs = append_funcs(funcs, m.funcs);
         structs = append_structs(structs, m.structs);
         aliases = append_aliases(aliases, m.aliases);
@@ -662,7 +706,7 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
         while (mxi < m.exports.len()) { exports = exports.append(m.exports[mxi]); mxi = mxi + 1; }
         i = i + 1;
     }
-    var e: parser.Module = flatten_qualified(entry, ivar_names, ivar_mangled);
+    var e: parser.Module = flatten_qualified(entry, ivar_names, ivar_mangled, rx.keys, rx.targets);
     funcs = append_funcs(funcs, e.funcs);
     structs = append_structs(structs, e.structs);
     aliases = append_aliases(aliases, e.aliases);
@@ -682,6 +726,46 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
         resources: resources,
         exports: exports
     };
+}
+
+// ReexportTable is the parallel-array re-export map threaded into every
+// module's rewrite: keys[i] is a naively-mangled qualified reference
+// (`facade__name`) and targets[i] the original module's mangled symbol
+// (`helpers__name`). Built by build_reexports from each import's `pub use`
+// directives. See lookup_reexport.
+pub struct ReexportTable { keys: string[], targets: string[] }
+
+// build_reexports scans every imported module for `pub use` directives
+// (re-export Import entries) and records, for each re-exported name, the
+// redirect from the re-exporting module's namespace to the target's. A
+// consumer's `facade.name` first mangles to `facade__name`; this table
+// then redirects it to the original `helpers__name`, which is the symbol
+// the bundled program actually defines. Mirrors the native compiler's
+// modload.resolveReexports (see internal/modload/modload.go).
+pub function build_reexports(imports: LoadedModule[]): ReexportTable {
+    var keys: string[] = [];
+    var targets: string[] = [];
+    var i: i32 = 0;
+    while (i < imports.len()) {
+        var ns: string = imports[i].name;
+        var imps: parser.Import[] = imports[i].mod.imports;
+        var j: i32 = 0;
+        while (j < imps.len()) {
+            if (imps[j].is_reexport) {
+                var origin: string = basename(imps[j].path);
+                var names: string[] = imps[j].reexport_names;
+                var n: i32 = 0;
+                while (n < names.len()) {
+                    keys = keys.append(ns + "__" + names[n]);
+                    targets = targets.append(origin + "__" + names[n]);
+                    n = n + 1;
+                }
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return ReexportTable { keys: keys, targets: targets };
 }
 
 // PerModule is one separately-emittable translation unit of a per-module
@@ -718,14 +802,15 @@ pub function bundle_per_module(entry: parser.Module, imports: LoadedModule[]): P
         }
         iv = iv + 1;
     }
+    var rx: ReexportTable = build_reexports(imports);
     var out: PerModule[] = [];
     var i: i32 = 0;
     while (i < imports.len()) {
-        var m: parser.Module = mangle_module(imports[i].mod, imports[i].name, ivar_names, ivar_mangled);
+        var m: parser.Module = mangle_module(imports[i].mod, imports[i].name, ivar_names, ivar_mangled, rx.keys, rx.targets);
         out = out.append(PerModule { ns: imports[i].name, mod: m, is_entry: false });
         i = i + 1;
     }
-    var e: parser.Module = flatten_qualified(entry, ivar_names, ivar_mangled);
+    var e: parser.Module = flatten_qualified(entry, ivar_names, ivar_mangled, rx.keys, rx.targets);
     out = out.append(PerModule { ns: "__entry", mod: e, is_entry: true });
     return out;
 }
@@ -740,12 +825,12 @@ function append_enum_decls(into: parser.EnumDecl[], more: parser.EnumDecl[]): pa
 
 function flatten_source(src: string): parser.Module {
     var none: string[] = [];
-    return flatten_qualified(parser.parse_module(lexer.tokenize(src)), none, none);
+    return flatten_qualified(parser.parse_module(lexer.tokenize(src)), none, none, none, none);
 }
 
 function mangle_source(src: string, prefix: string): parser.Module {
     var none: string[] = [];
-    return mangle_module(parser.parse_module(lexer.tokenize(src)), prefix, none, none);
+    return mangle_module(parser.parse_module(lexer.tokenize(src)), prefix, none, none, none, none);
 }
 
 function main(): i32 {
@@ -889,7 +974,9 @@ function main(): i32 {
     ivn = ivn.append("Fail");
     var ivm: string[] = [];
     ivm = ivm.append("test__Fail");
-    var ctx: RewriteCtx = RewriteCtx { modnames: mn, prefix: "lx", declnames: dn, locals: [], ivar_names: ivn, ivar_mangled: ivm };
+    var rxk: string[] = [];
+    var rxt: string[] = [];
+    var ctx: RewriteCtx = RewriteCtx { modnames: mn, prefix: "lx", declnames: dn, locals: [], ivar_names: ivn, ivar_mangled: ivm, reexport_keys: rxk, reexport_targets: rxt };
     if (rewrite_type_name("lexer.Token[]", ctx) != "lexer__Token[]") { return 90; }
     if (rewrite_type_name("Token[]", ctx) != "lx__Token[]") { return 91; }
     if (rewrite_type_name("Token", ctx) != "lx__Token") { return 92; }
@@ -899,6 +986,19 @@ function main(): i32 {
     // Bare imported-enum variant resolves to its bundled mangled name;
     // a same-named own decl still wins (declnames checked first).
     if (rewrite_type_name("Fail", ctx) != "test__Fail") { return 96; }
+
+    // --- `pub use` re-export redirection (type position) ---
+    // A facade re-exports lexer's Token; a consumer's `lexer.Token`
+    // (which mangles to `lexer__Token`) redirects to `orig__Token`.
+    var rxk2: string[] = [];
+    rxk2 = rxk2.append("lexer__Token");
+    var rxt2: string[] = [];
+    rxt2 = rxt2.append("orig__Token");
+    var rctx: RewriteCtx = RewriteCtx { modnames: mn, prefix: "lx", declnames: dn, locals: [], ivar_names: ivn, ivar_mangled: ivm, reexport_keys: rxk2, reexport_targets: rxt2 };
+    if (rewrite_type_name("lexer.Token", rctx) != "orig__Token") { return 97; }
+    if (rewrite_type_name("lexer.Token[]", rctx) != "orig__Token[]") { return 98; }
+    // A non-re-exported qualified type still mangles normally.
+    if (rewrite_type_name("lexer.Span", rctx) != "lexer__Span") { return 99; }
 
     // --- Brick 3: bundle (merge entry + mangled imports) ---
     var amod: parser.Module = parser.parse_module(lexer.tokenize(
@@ -932,6 +1032,45 @@ function main(): i32 {
         },
         _ => { return 108; }
     }
+
+    // --- Brick 4: `pub use` re-export through bundle ---
+    // helpers defines add5; facade re-exports it; entry calls facade.add5.
+    // The qualified call must flatten to `helpers__add5` (the real decl),
+    // NOT `facade__add5` (which has no decl).
+    var hmod: parser.Module = parser.parse_module(lexer.tokenize(
+        "pub function add5(n: i32): i32 { return n + 5; }"));
+    var fmod: parser.Module = parser.parse_module(lexer.tokenize(
+        "pub use \"./helpers\".{add5};"));
+    var rxmod: parser.Module = parser.parse_module(lexer.tokenize(
+        "import \"./facade\"; function main(): i32 { return facade.add5(10); }"));
+    var rxloaded: LoadedModule[] = [];
+    rxloaded = rxloaded.append(LoadedModule { name: "facade", mod: fmod });
+    rxloaded = rxloaded.append(LoadedModule { name: "helpers", mod: hmod });
+    var rxmerged: parser.Module = bundle(rxmod, rxloaded);
+    // Find entry main and confirm its call resolved to helpers__add5.
+    var fi: i32 = 0;
+    var found_main: boolean = false;
+    while (fi < rxmerged.funcs.len()) {
+        if (rxmerged.funcs[fi].name == "main") {
+            found_main = true;
+            match (rxmerged.funcs[fi].body[0]) {
+                parser.StmtReturn(r) => {
+                    match (r.value) {
+                        parser.ExprCall(c) => {
+                            match (c.callee) {
+                                parser.ExprIdent(id) => { if (id.name != "helpers__add5") { return 110; } },
+                                _ => { return 111; }
+                            }
+                        },
+                        _ => { return 112; }
+                    }
+                },
+                _ => { return 113; }
+            }
+        }
+        fi = fi + 1;
+    }
+    if (!found_main) { return 114; }
 
     return 0;
 }
