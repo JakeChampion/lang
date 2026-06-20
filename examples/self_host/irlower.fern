@@ -5971,6 +5971,29 @@ function iife_arg_is_payload_borrow(arg: parser.Expr, name: string): boolean {
         parser.ExprIdent(id) => { return id.name == name; },
         parser.ExprFieldAccess(fa) => { return iife_arg_is_payload_borrow(fa.obj, name); },
         parser.ExprIndex(ix) => { return iife_arg_is_payload_borrow(ix.array, name); },
+        // A CALL that borrows the payload and returns a FRESH value (`id(t)`,
+        // `s.trim()`): the payload flows only into the call's operands (its method
+        // receiver + every argument), each of which must itself be independent of
+        // the payload OR a borrow read. The call reads the payload and produces a
+        // NEW value, so the payload is never the result identity — borrow-safe by
+        // the same leak-safe reasoning as a direct read. This lets a nested-call
+        // argument (`sum(id(t))`) and a `.len()` over a payload string-method
+        // result (`s.trim().len()`) ride the i32 result temp (#3498 follow-up).
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    if (iife_expr_mentions_ident(cfa.obj, name) && !iife_arg_is_payload_borrow(cfa.obj, name)) { return false; }
+                },
+                parser.ExprIdent(_) => {},
+                _ => { return false; }
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                if (iife_expr_mentions_ident(c.args[i], name) && !iife_arg_is_payload_borrow(c.args[i], name)) { return false; }
+                i = i + 1;
+            }
+            return true;
+        },
         _ => { return false; }
     }
     return false;
@@ -6040,16 +6063,19 @@ function iife_borrow_leaf_i32(e: parser.Expr, name: string, ft: string, s: Lower
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprFieldAccess(cfa) => {
-                    // Method on the PAYLOAD itself: `name.len()` (string / array
-                    // length → i32) or `name.method()` on a struct / enum payload
-                    // whose return is provably i32 (NOT in any wider-result registry
-                    // — a boolean return also rides the i32 temp). Args are not
-                    // re-checked here: a non-borrow / non-lowerable arg bails the
-                    // function in lowering (AST fallback).
+                    // `<borrow-derived>.len()` → i32 (string / array length). The
+                    // receiver may be the bare payload (`name.len()`) OR any
+                    // borrow-derived value off it (`name.trim().len()` — a string
+                    // method on the payload whose fresh result is measured). #3498.
+                    if (cfa.field == "len" && c.args.len() == 0 && iife_arg_is_payload_borrow(cfa.obj, name)) { return true; }
+                    // Method on the PAYLOAD itself: `name.method()` on a struct /
+                    // enum payload whose return is provably i32 (NOT in any wider-
+                    // result registry — a boolean return also rides the i32 temp).
+                    // Args are not re-checked here: a non-borrow / non-lowerable arg
+                    // bails the function in lowering (AST fallback).
                     match (cfa.obj) {
                         parser.ExprIdent(rid) => {
                             if (rid.name == name) {
-                                if (cfa.field == "len" && c.args.len() == 0) { return true; }
                                 if (decl_is_struct(s.structs, ft) || is_enum_like_name(ft, s.structs)) {
                                     return iife_method_ret_i32(ft, cfa.field, s);
                                 }
