@@ -1,6 +1,7 @@
 import "core/int";
 import "std/url";
 import "std/i32";
+import "core/map";
 
 function main(): i32 {
     // round-trip percent-encoding.
@@ -20,6 +21,16 @@ function main(): i32 {
     match (url.url_parse("")) {
         Some(u) => { print("unexpected"); },
         None => { print("empty-none"); },
+    }
+    // query_parse: duplicate keys accumulate into a string[] value.
+    var q: Map[string, string[]] = url.query_parse("a=1&b=2&a=3");
+    match (q.get("a")) {
+        Some(v) => { print("a=" + v.len().to_string()); },   // a=2
+        None => { print("a-none"); },
+    }
+    match (q.get("b")) {
+        Some(v) => { print("b=" + v.len().to_string()); },   // b=1
+        None => { print("b-none"); },
     }
     return 0;
 }
