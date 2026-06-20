@@ -220,3 +220,108 @@ func TestSelfHostIRPerModuleCrossStruct(t *testing.T) {
 		t.Errorf("per-module cross-struct binary exit = %d, want 7 (3 + 4)", code)
 	}
 }
+
+// TestSelfHostIRPerModuleCrossEnum guards the per-module SHAPE-symbol fix (#3451):
+// enum/struct values are discriminated by a shape POINTER (the interned
+// variant-name string), compared by pointer equality. Per-module, each unit
+// interns its strings in its own .rodata, so the SAME shape referenced in two
+// units lands at two different addresses — a value CONSTRUCTED in module A and
+// MATCHED in module B compares mismatched pointers and the match silently falls
+// through. shape_ref emits shapes as `.weak` global symbols (shape_sym) the linker
+// merges to one address, so cross-module discrimination holds.
+//
+// The program is the minimal trigger: `col` defines an enum + a constructor
+// returning `Blue(7)`; the entry imports it and `match`es the value across the
+// module boundary. Pre-fix the Blue arm never matches (shape mismatch) and the
+// binary falls through to exit 0; post-fix it matches and exits 7. This is the
+// exact pattern the self-hosted parser hits (matching the lexer's token variants),
+// the root cause of the per-module self-build miscompile.
+func TestSelfHostIRPerModuleCrossEnum(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	for _, name := range []string{"flatten.fern", "checker.fern", "asm_load_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "alr")
+
+	colSrc := "pub enum Color { Red(i32), Green, Blue(i32) }\n" +
+		"pub function mk(): Color { return Blue(7); }\n"
+	mainSrc := "import \"./col\";\n" +
+		"function main(): i32 {\n" +
+		"    var c: col.Color = col.mk();\n" +
+		"    match (c) {\n" +
+		"        Red(x) => { return x + 100; },\n" +
+		"        Green => { return 200; },\n" +
+		"        Blue(y) => { return y; },\n" +
+		"    }\n" +
+		"    return 0;\n" +
+		"}\n"
+	if err := os.WriteFile(filepath.Join(dir, "col.fern"), []byte(colSrc), 0o644); err != nil {
+		t.Fatalf("write col.fern: %v", err)
+	}
+	entryPath := filepath.Join(dir, "ce_main.fern")
+	if err := os.WriteFile(entryPath, []byte(mainSrc), 0o644); err != nil {
+		t.Fatalf("write ce_main.fern: %v", err)
+	}
+
+	drive := func(t *testing.T, args ...string) string {
+		t.Helper()
+		full := append([]string{entryPath}, args...)
+		var cmd *exec.Cmd
+		if len(runner) == 0 {
+			cmd = exec.Command(driverBin, full...)
+		} else {
+			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), full...)...)
+		}
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("driver failed (args %v): %v", args, err)
+		}
+		return string(out)
+	}
+
+	n, err := strconv.Atoi(strings.TrimSpace(drive(t, "-per-module-count")))
+	if err != nil || n < 2 {
+		t.Fatalf("-per-module-count = %d (err=%v), want >=2", n, err)
+	}
+	var needArgs []string
+	for _, ln := range strings.Split(strings.TrimSpace(drive(t, "-per-module-needs")), "\n") {
+		if s := strings.TrimSpace(ln); s != "" {
+			needArgs = append(needArgs, "-extra-need", s)
+		}
+	}
+
+	var objs []string
+	for i := 0; i < n; i++ {
+		emitArgs := append([]string{"-per-module-emit", strconv.Itoa(i)}, needArgs...)
+		asm := drive(t, emitArgs...)
+		p := filepath.Join(dir, "ce_unit_"+strconv.Itoa(i)+".s")
+		if err := os.WriteFile(p, []byte(asm), 0o644); err != nil {
+			t.Fatalf("write unit %d: %v", i, err)
+		}
+		objs = append(objs, p)
+	}
+
+	binPath := filepath.Join(dir, "ce_prog")
+	linkArgs := append([]string{"-static", "-nostdlib", "-no-pie"}, append(objs, "-o", binPath)...)
+	if lout, err := exec.Command(gcc, linkArgs...).CombinedOutput(); err != nil {
+		t.Fatalf("link per-module units failed: %v\n%s", err, lout)
+	}
+
+	var rcmd *exec.Cmd
+	if len(runner) == 0 {
+		rcmd = exec.Command(binPath)
+	} else {
+		rcmd = exec.Command(runner[0], append(runner[1:], binPath)...)
+	}
+	_, _ = rcmd.CombinedOutput()
+	if code := rcmd.ProcessState.ExitCode(); code != 7 {
+		t.Errorf("per-module cross-enum binary exit = %d, want 7 (Blue(7) matched across the module boundary)", code)
+	}
+}

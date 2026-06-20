@@ -113,7 +113,17 @@ pub struct EmitState {
     // default / whole-program case) keeps the label `.S<idx>`; a non-empty ns
     // makes it `.S<ns>_<idx>` so two separately-emitted modules' string pools
     // don't collide at link. The IR backend reads this via str_lit_label.
-    str_ns: string
+    str_ns: string,
+    // shape_lits: the distinct enum/struct SHAPE names this unit references as a
+    // shape pointer (struct_make / variant_is / dyn dispatch). Per-module
+    // (str_ns != ""), a shape is emitted as a `.weak` global symbol
+    // (`__fern_shp_<sanitized>`) instead of a unit-local `.S<ns>_<idx>` string, so
+    // the SAME shape interned in two units resolves to ONE linker-merged address —
+    // pointer-equality shape discrimination then works across the module boundary
+    // (a token constructed in lexer matches in parser). Empty / unused on the
+    // whole-program (str_ns == "") path, which keeps interning shapes as ordinary
+    // string literals (byte-identical).
+    shape_lits: string[]
 }
 
 pub function new_state(): EmitState {
@@ -152,8 +162,30 @@ pub function new_state(): EmitState {
         // Whole-program default: no namespace, so string labels stay `.S<idx>`
         // (byte-identical to the pre-per-module emitter). Per-module unit emit
         // sets this to keep each module's `.rodata` pool collision-free.
-        str_ns: ""
+        str_ns: "",
+        shape_lits: []
     };
+}
+
+// add_shape_lit records `name` as a shape this unit references (deduped), for the
+// per-module weak-symbol shape emission (#3451). The returned symbol — the SAME
+// for `name` in every unit — is what struct_make / variant_is / dyn dispatch leaq
+// instead of a unit-local string label; emit_module_ir_unit emits each recorded
+// shape once as `.weak __fern_shp_<sanitized>` so the linker merges the copies.
+pub function add_shape_lit(s: EmitState, name: string): EmitState {
+    var i: i32 = 0;
+    while (i < s.shape_lits.len()) {
+        if (s.shape_lits[i] == name) { return s; }
+        i = i + 1;
+    }
+    return EmitState { ...s, shape_lits: s.shape_lits.append(name) };
+}
+
+// shape_sym is the deterministic global symbol for a shape name (the linker-merged
+// weak symbol the per-module path uses for shape pointers). Stable across units so
+// two units' references to the same shape resolve to one address.
+pub function shape_sym(name: string): string {
+    return "__fern_shp_" + sanitize_label(name);
 }
 
 pub function (s: EmitState) write(text: string): EmitState {
