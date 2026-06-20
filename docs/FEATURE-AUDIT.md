@@ -108,7 +108,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | String literals + escape sequences | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `\t \n \r \0 \\ \"` + `\xNN` hex bytes; each decodes to one byte (embedded NUL counts — not C strings). Byte-exact `.len()` / index / concat — native `string_escapes` fixture (4 backends) + self-host IR pin (x86-64 + wasm) |
 | f-strings / interpolation | | | | | | ⬜ | confirm syntax exists |
 | Owned arrays `T[]` + indexing + `.with` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | index, `.len()`, `.with` (reassign idiom); **read-after-`.with` aliases on compiled backends, [#2832](https://github.com/JakeChampion/lang/issues/2832)** |
-| Slice views `[T]` | | | | | | ⬜ | |
+| Slice views `[T]` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | borrowed window `a[i:j]`; `.len()`, indexing, `for x in s`, slice-of-slice, empty windows, `[string]` element slices — native `slice_views` fixture (4 backends) + self-host IR pin (x86-64 + wasm) |
 | Tuples `(T, U)` + destructuring | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `.0`/`.1` + `var (a,b) = …` |
 | `Map[K, V]` literal + ops | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `insert`/`get_or`/`has`/`len`/`keys`/`values`/`for (k,v)`, i32 + string keys; `without` (functional delete) now on the x86-64/arm64 IR path ([#2926](https://github.com/JakeChampion/lang/issues/2926)) — wasm `without` stays on the AST path (box-return ABI) |
 | Array literals | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
@@ -249,6 +249,26 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-20 — slice views `[T]` on the self-host IR path + native audit
+
+Audited the foundational `Slice views [T]` row (was ⬜ across the board). A
+slice `a[i:j]` is a borrowed (fat-pointer) window over an owned array — it is
+leak-only (never reclaims the backing storage), so `.len()`, element indexing
+(`s[k]`), `for x in s` iteration, slice-of-slice (`s[a:b]`), empty windows, and
+`[string]` element slices all stay on the IR path.
+
+- **Native** — `slice_views` fixture (interp / x86-64 / arm64 / wasm): builds
+  windows over `i32[]` / `string[]`, prints `.len()` / element values / a
+  `for`-loop sum, and asserts a slice-of-slice, an empty window, and
+  length-relative indexing.
+- **Self-host IR** — `TestSelfHostSliceViewsIR{X86_64,Wasm}` run eight cases
+  through the x86-64 + wasm IR drivers, pinned to the `"ir"` path and
+  oracle-checked against the interpreter (`.len()`, index, iter-sum,
+  slice-of-slice, slice-as-param, last-element, empty, `[string]` element;
+  every result ≤ 126). All already lower, so **no compiler change**.
+
+Row flipped to ✅.
 
 ### 2026-06-20 — string literals + escape sequences on the self-host IR path + native audit
 
