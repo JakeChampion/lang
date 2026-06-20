@@ -238,7 +238,7 @@ per-function bugs in the audit log.
 |--------|---|---|---|---|---|--------|-------|
 | `core/int` | ✅ | ✅ | ✅ | ✅ | 🔧 | 🔧 | radix **parse** direction (`parse_int_radix` / `__radix_digit`, bases 2–36, sign handling) — native via the `core_int_parse` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostCoreIntParseIR` — `Option[i32]` `Some`/`None` + payload-binding `match`, string indexing with char-class compares, multiply-accumulate loop, sign + negation. The **to-string radix** direction (`int_to_string_radix`) ALSO lowers on the IR path — it builds via `__alloc_u8` + `.with` + `string_from_bytes` (no `__memcpy`/`usize`), the same builder std/hex / std/base64 use — native via the `core_int_radix` fixture, self-host via `TestSelfHostCoreIntRadixIR` (x86-64 + wasm, oracle-checked). Only `int_to_string` / `__int_to_string_u64` (decimal) stay AST — those poke raw memory via `__memcpy` over a `usize` pointer (same caveat as std/u64 `to_string`) |
 | `core/cmp` (traits) | | | | | | ⬜ | |
-| `core/iter` (Iterator trait) | ✅ | ✅ | ✅ | ✅ | ✅ | 🔧 | numeric (i32) `Iterator` trait + integer `Range` + eager drivers (`sum`/`count`/`to_array`), the first slice of the iterator protocol ([#2686](https://github.com/JakeChampion/lang/issues/2686) / tail of [#2699](https://github.com/JakeChampion/lang/issues/2699)). Value-semantic `next(self): Option[(i32, Self)]`. Works on native (interp / x86-64 / arm64 / wasm) AND the self-host **IR path** (x86-64 + wasm), via the existing bounded-generic + concrete-impl trait machinery — `TestNativeIteratorTrait{,Module,Arm64}` + `TestSelfHostIteratorTraitIR{X86_64,Wasm}` (routing-pinned to `ir`). A **generic** `Iterator[T]` stays AST on the self-host (a bound on a *parametrised* trait `[I: Iterator[T]]` isn't monomorphised there yet) — so the trait is fixed to i32 for now |
+| `core/iter` (Iterator trait) | ✅ | ✅ | ✅ | ✅ | ✅ | 🔧 | numeric (i32) `Iterator` trait + integer `Range` + eager drivers (`sum`/`count`/`to_array`), the first slice of the iterator protocol ([#2686](https://github.com/JakeChampion/lang/issues/2686) / tail of [#2699](https://github.com/JakeChampion/lang/issues/2699)). Value-semantic `next(self): Option[(i32, Self)]`. Works on native (interp / x86-64 / arm64 / wasm) AND the self-host **IR path** (x86-64 + wasm), via the existing bounded-generic + concrete-impl trait machinery — `TestNativeIteratorTrait{,Module,Arm64}` + `TestSelfHostIteratorTraitIR{X86_64,Wasm}` (routing-pinned to `ir`). A **generic** `Iterator[T]` (a bound on a *parametrised* trait, `[I: Iterator[i32]]`) now ALSO lowers on the self-host IR path as of the bound-parser fix (`TestSelfHostGenericTraitBoundIR{X86_64,Wasm}`); `core/iter` stays i32-specialised for now but could be generalised in a follow-up |
 | `core/map` | | | | | | ⬜ | |
 | `core/no_prelude` | | | | | | ⬜ | no-op sentinel |
 
@@ -436,6 +436,30 @@ isn't in scope without `import "std/i32"` / `"std/float"`. That self-host
 over-permissiveness vs. native is a separate divergence, filed for follow-up;
 this entry scopes only the import-free escape-sequence surface, which both
 compilers agree on.)
+
+### 2026-06-20 — self-host: parametrised-trait bounds (`[I: Iterator[i32]]`) lower on the IR path ([#2691](https://github.com/JakeChampion/lang/issues/2691) step 1)
+
+Generic-trait support on the self-hosted compiler: a bounded generic whose bound
+is a **parametrised-trait instantiation** — `function f[I: Iterator[i32]](…)` —
+now monomorphises and lowers through the IR path. Before this the self-host
+type-parameter **bound parser** (`parser.fern`) consumed `Trait (+ Trait)*` with
+an optional `mod.` qualifier but **not** the trait's generic args, so it stopped
+at the `[` in `Iterator[i32]`, mis-parsed the rest of the param list, and bailed
+the whole module to the legacy AST emitter (isolated via an `asm_pathprobe_run`
+sweep: the non-parametrised bound `[T: Area]` already routed `ir`; the
+parametrised `[I: Iterator[i32]]` routed `ast` even for a scalar-returning
+method). Fix: after the bound trait name (and `mod.` qualifier), consume the
+balanced `[ … ]` type-arg list. This is the keystone (epic #2691 step 1) for a
+generic — not i32-locked — `Iterator[T]`: a generic trait declaration
+`Iterator[T]`, a parametrised impl `impl Iterator[i32] for R`, a method returning
+`Option[(T, Self)]`, and a bounded-generic driver `sum[I: Iterator[i32]]` now all
+lower on the self-host IR path. Coverage: `TestSelfHostGenericTraitBoundIR{X86_64,
+Wasm}` (routing-pinned to `ir`, oracle-checked against native) + the native
+`TestNativeGenericTraitBound{,Arm64}` cross-check, incl. a two-impls / one-driver
+case (two monomorphic clones). Self-host fixpoint stays byte-identical (modload +
+stage2): the compiler's own source uses no parametrised-trait bounds, so the new
+parse branch never fires on the fixpoint corpus. The `core/iter` row's
+generic-`Iterator[T]` caveat is updated accordingly.
 
 ### 2026-06-20 — core/iter: numeric Iterator trait + Range on native and the self-host IR path ([#2686](https://github.com/JakeChampion/lang/issues/2686))
 
