@@ -792,18 +792,20 @@ pub function elem_type_tag(e: parser.Expr, s: LowerState): string {
     if (maptag != "") { return maptag; }
     var st: string = expr_struct_type(e, s);
     if (st != "") { return st; }
-    // A typed-ARRAY element (`(["a","b"], x)` / `([P{..}], x)`): tag it with the
-    // element-typed array spelling so a later `t.N[i]` reads at the right type —
-    // `string[]` for the string-pointer element reads, `P[]` to recover the
+    // A typed-ARRAY element (`(["a","b"], x)` / `([P{..}], x)` / `([x as i64], y)`):
+    // tag it with the element-typed array spelling so a later `t.N[i]` reads at
+    // the right type/width — `string[]` for the string-pointer element reads,
+    // `f64[]`/`i64[]` for the 8-byte f64/i64 element reads, `P[]` to recover the
     // element struct type for `t.N[i].field`. Scalar i32[]/u32[]/boolean[]
     // arrays keep the bare "i32" tag — they need no element typing (`t.N[i]` is
     // a 4-byte scalar read) and broadening them would disturb the shared
     // destructure / kind-string consumers. The array element itself is a
     // POINTER stored in one slot (#3353), so only the tag carries the element
-    // type. (f64[]/i64[] tuple elements need width-aware `t.N[i]` reads — a
-    // follow-up; they still bail.)
+    // type; the width-aware `t.N[i]` read is in arr_index_is_f64 /
+    // arr_index_is_i64's tuple-element cases.
     if (expr_is_strarr(e, s)) { return "string[]"; }
     if (expr_is_f64arr(e, s)) { return "f64[]"; }
+    if (expr_is_i64arr(e, s)) { return "i64[]"; }
     match (e) {
         parser.ExprArray(sae) => {
             if (sae.elements.len() > 0) {
@@ -2667,8 +2669,15 @@ pub function arr_index_is_i64(arr: parser.Expr, s: LowerState): boolean {
             }
             return false;
         },
+        // `t.N[i]` where `t.N` is an i64[] TUPLE element (`([x as i64], y)`): the
+        // element's recorded tuple tag is `i64[]`, so the read uses 8-byte (i64)
+        // width — the tuple sibling of the struct-field case below, mirroring
+        // arr_index_is_f64's tuple-element branch. #3353.
         // `p.vals[i]` where p's field `vals` is an i64[] struct field.
         parser.ExprFieldAccess(fa) => {
+            if (util.is_all_digits(fa.field)) {
+                return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "i64[]";
+            }
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return false; }
             return decl_field_type(s.structs, oty, fa.field) == "i64[]";
@@ -2684,13 +2693,31 @@ pub function arr_index_is_i64(arr: parser.Expr, s: LowerState): boolean {
 }
 
 // expr_is_i64arr reports whether `e` is an i64[] — an i64-array-tracked
-// local/param (aliasing). i64 array literals aren't self-evidently i64 from
-// their elements (a bare integer literal could be i32), so the literal case is
-// driven by the `i64[]` annotation at the var binding, not here.
+// local/param (aliasing), an i64[]-returning call, an i64[] slice, OR a literal
+// whose first element is an unambiguous 64-bit int (`[x as i64, …]`). A bare
+// integer literal (`[10, 20]`) stays i32 — only an explicitly-64-bit first
+// element (an `as i64`/`as u64` cast or an i64-typed operand) marks the literal
+// i64[], mirroring the StmtVar i64[]-literal binding detection (#3353). This
+// lets an i64[] tuple element / array literal in a non-binding position carry
+// its 8-byte element width through elem_type_tag.
 pub function expr_is_i64arr(e: parser.Expr, s: LowerState): boolean {
     match (e) {
+        parser.ExprArray(lit) => {
+            if (lit.elements.len() == 0) { return false; }
+            return !expr_is_f64(lit.elements[0], s) && infer_expr_width(lit.elements[0], s) == 64;
+        },
         parser.ExprIdent(id) => { return s.is_i64arr_slot(s.slot_of(id.name)); },
         parser.ExprSlice(sl) => { return expr_is_i64arr(sl.array, s); },
+        // An `i64[]` TUPLE element `t.N` (`([x as i64], y)`): its recorded tuple
+        // tag is `i64[]`, so `t.N` is an i64[] (drives a `var xs = t.N` rebind so
+        // the new slot reads 8-byte elements — the i64 sibling of the f64[] case
+        // above). #3353.
+        parser.ExprFieldAccess(fa) => {
+            if (util.is_all_digits(fa.field)) {
+                return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "i64[]";
+            }
+            return false;
+        },
         parser.ExprCall(c) => {
             // A call to an i64[]-returning free function OR method (i64arr_ret_fns,
             // methods keyed "<Type>.<method>").
@@ -3954,6 +3981,24 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // literal: owned at rc=1, no alias-inc.) Elements must be i32 or the
             // element lowering bails.
             var n: i32 = arr.elements.len();
+            // An i64[]/u64[] literal (`[x as i64, …]`): a bare integer literal is
+            // i32, so an i64[] literal is identified by an unambiguous 64-bit
+            // first element. Lower each element via lower_i64 (8-byte value) and
+            // emit arr_make_i64 — mirroring the StmtVar i64[]-literal binding
+            // path. The generic i32/f64 path below lowers elements via lower_expr,
+            // which BAILS on an `as i64` element (as_i64 has no lower_expr arm),
+            // so without this an i64[] literal in a non-binding position (e.g. a
+            // tuple element `([x as i64], y)`) bailed the module to AST. #3353.
+            if (n > 0 && !expr_is_f64(arr.elements[0], s) && infer_expr_width(arr.elements[0], s) == 64) {
+                var ia64: LowerState = s;
+                var iae: i32 = 0;
+                while (iae < n) {
+                    ia64 = lower_i64(arr.elements[iae], ia64);
+                    if (!ia64.ok) { return ia64; }
+                    iae = iae + 1;
+                }
+                return ia64.emit(ir.op_arr_make_i64(n));
+            }
             // Element WIDTH selects the array stride: an f64 element array uses
             // an 8-byte stride (arr_make width 64; the wasm backend allocates
             // n*8 and f64.stores each element), everything else the 4-byte i32 /
