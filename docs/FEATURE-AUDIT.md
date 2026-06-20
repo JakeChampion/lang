@@ -224,7 +224,7 @@ per-function bugs in the audit log.
 | `std/convert` | ✅ | ✅ | ✅ | ✅ | | ✅ | canonical `From[T]` / `Into[T]` conversion traits (on generic traits, #3254): `impl convert.From[i32] for Celsius` + `Celsius.from(20)`, `impl convert.Into[F] for Celsius` + `c.into()` (`std_convert_test`, all four backends; #2691) — generic use over a bound awaits bounded-generics-over-generic-traits |
 | `std/http` | | | | | | ⬜ | |
 | `std/tcp` | | | | | | ⬜ | |
-| `std/headers` | | | | | | ⬜ | |
+| `std/headers` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `HeaderMap` case-insensitive get/get_all/append/set over two parallel string[] fields — native via `headers_map` fixture (all four backends); self-host via the IR path (x86-64 + wasm): `TestSelfHostHeadersIR` — struct with string[] fields, functional struct-spread update, `string[].append`, indexed string-field compares, `Option[string]` `Some`/`None` + payload-binding `match`, chained struct-returning receiver methods (inlined as `Headers` + a lookup-slice `lower`, since `HeaderMap` is a reserved builtin name + the importless driver has no `.to_lower()`); the `(h) len()` receiver method (`return h.names.len();`) miscompiles on the IR path ([#3478](https://github.com/JakeChampion/lang/issues/3478)) and is omitted from the pinned set |
 | `std/stream` | | | | | | ⬜ | |
 | `std/time` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | is_leap_year/days_in_month/date_make/format_iso — `audit_std_time`; self-host via the IR path: pure-i32 helpers (`TestSelfHostTimeIR`) + the **Date civil-date methods** (Hinnant days_from_civil/civil_from_days, is_valid/add_days/days_since/weekday/day_of_year/format_iso — `TestSelfHostTimeDateIR`, oracle-checked, struct ctor + field access + struct-returning fn + receiver methods) + `date_parse_iso` `Option[Date]` parse (`TestSelfHostTimeParseIR`, `Some`/`None` ctor + payload-binding `match`) + `format_rfc3339` / `instant_parse_rfc3339` (`TestSelfHostTimeRfc3339IR`, **i64 `sec` struct field** — i64 arithmetic/casts + `Some(Instant{ sec: <i64> })`) + `add_span` / `add_duration` / `duration_since` / `days_until` (`TestSelfHostTimeSpanIR`, **8-field Span by-value param** + i64+nsec carry/borrow) + the Zoned / TimeZone surface (`in_zone` / `to_datetime` / `timezone_iana` — `TestSelfHostTimeZonedIR`, **nested structs** `Zoned{instant,zone}` / `DateTime{date,time}` + `Option[TimeZone]`) |
 | `std/task` | | | | | | ⬜ | |
@@ -249,6 +249,28 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-20 — std/headers `HeaderMap` on the self-host IR path + native audit
+
+Audited the `std/headers` row (was ⬜ across the board). The `HeaderMap` surface
+— case-insensitive `get` / `get_all` / `append` / `set` over two parallel
+`string[]` fields with case-folded keys — now has native coverage via the
+`headers_map` fixture (interp / x86-64 / arm64 / wasm) and self-host coverage
+via the IR path: `TestSelfHostHeadersIR{X86_64,Wasm}` run the inlined map
+through the x86-64 + wasm IR drivers, pinned to the `"ir"` path (return value =
+a small deterministic int). It exercises a struct with two `string[]` fields,
+functional struct-spread update (`Headers { ...h, names: …, values: … }`),
+`string[].append`, indexed string-field compares, `Option[string]`
+`Some`/`None` with a payload-binding `match`, and chained struct-returning
+receiver methods — all already lower, so no compiler change. The type is
+inlined as `Headers` (`HeaderMap` is a reserved builtin name) and `.to_lower()`
+as a local lookup-slice `lower` (the single-program driver resolves no imports);
+expectations are hardcoded, verified against the native interp + x86-64 backends.
+The audit also surfaced a self-host IR miscompile: the `(h) len()` receiver
+method (`return h.names.len();`) returns a callee local's value (x86-64 → 26, the
+`lower` lookup-string length; wasm → 0) instead of 2 — filed as
+[#3478](https://github.com/JakeChampion/lang/issues/3478) and omitted from the
+pinned set (reading `.len()` directly on a returned value is correct).
 
 ### 2026-06-20 — std/log leveled `Logger`/`LogEntry` on the self-host IR path + native audit (#2683)
 
