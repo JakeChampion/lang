@@ -1997,6 +1997,17 @@ pub function all_eligible_lib_known(mod: parser.Module, known: string[]): boolea
     return eligible_core_known_main(mod, known, false);
 }
 
+// all_eligible_lib_known_view is all_eligible_lib_known with the WHOLE-PROGRAM
+// func/struct view threaded in (#3451): a per-module library unit whose
+// functions touch a sibling module's struct layout lowers in the gate exactly as
+// emit_module_funcs lowers it (against all_structs), instead of bailing because
+// the imported struct is absent from `mod.structs`. Use this — not the bare
+// all_eligible_lib_known — to gate a per-module emit driven off
+// flatten.bundle_per_module.
+pub function all_eligible_lib_known_view(mod: parser.Module, known: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[]): boolean {
+    return eligible_core_known_main_view(mod, known, false, all_funcs, all_structs);
+}
+
 // eligible_core_known_main is eligible_core_known with the `main`-required gate
 // made optional: require_main=true is the whole-program / entry path (emits
 // `_start` → `call __fn_main`, so a module with no main would dangle);
@@ -2062,7 +2073,61 @@ pub function eligible_core_known_main(mod: parser.Module, known: string[], requi
     var cnf: string[] = irlower.const_fns_of(mod.funcs);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (!func_eligible(mod.funcs[i], mod, known, arf, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf)) { return false; }
+        if (!func_eligible(mod.funcs[i], mod, mod.structs, known, arf, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// eligible_core_known_main_view is the per-module twin of
+// eligible_core_known_main (#3451 — retiring the AST fallback for the bootstrap
+// self-compile). Where eligible_core_known_main derives its lowering side-tables
+// and struct layouts from the module's OWN funcs/structs — correct for the
+// merged whole-program path, where `mod` already holds every decl — a per-module
+// LIBRARY unit's `mod` is one module of the program. A function in it that calls
+// a sibling module's function (resolved via `known`, an extern at link) OR
+// touches a sibling module's STRUCT layout must lower in the gate exactly as it
+// does in emit_module_funcs, which lowers every function against the WHOLE-
+// PROGRAM `all_funcs` / `all_structs` view (#3454). So this variant mirrors
+// emit_module_funcs's derivation precisely: the fourteen return-type side-tables
+// + interprocedural borrowability come from `all_funcs`, struct layouts from
+// `all_structs`. Without it, every module touching an imported struct (parser →
+// lexer.Token, asm → ir.Op, …) fails the gate and bails to AST even though the
+// emit would succeed — the central blocker to routing the bootstrap per-module.
+//
+// Passing all_funcs == mod.funcs and all_structs == mod.structs reproduces
+// eligible_core_known_main, modulo the merged path's historical use of
+// array_ret_fns / borrowable_params_of (vs the _of / _interproc forms emit
+// uses); this variant tracks emit, not that legacy gate, by design.
+pub function eligible_core_known_main_view(mod: parser.Module, known: string[], require_main: boolean, all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[]): boolean {
+    if (mod.funcs.len() == 0) { return false; }
+    // No 512-function size budget here: a per-module unit is a SINGLE module
+    // (the largest, irlower, is ~350 funcs), so the merged-bundle OOM the budget
+    // guards against (eligible_core_known_main) can't arise — each module is
+    // emitted in its own process, holding only its own ops live.
+    if (require_main && !asmcore.has_main(mod)) { return false; }
+    // Side-tables + struct layouts from the WHOLE-PROGRAM view, exactly as
+    // emit_module_funcs derives them (array_ret_fns_of / borrowable_params_interproc
+    // / *_of from all_funcs, struct_ret_fns_of against all_structs).
+    var arf: string[] = array_ret_fns_of(all_funcs);
+    var bparams: string[] = irlower.borrowable_params_interproc(all_funcs);
+    var srf: string[] = irlower.str_ret_fns_of(all_funcs);
+    var sarf: string[] = irlower.strarr_ret_fns_of(all_funcs);
+    var amf: string[] = irlower.arr_method_fns_of(all_funcs);
+    var orf: string[] = irlower.opt_ret_fns_of(all_funcs);
+    var irf: string[] = irlower.i64_ret_fns_of(all_funcs);
+    var trf: string[] = irlower.tuple_ret_fns_of(all_funcs);
+    var srtf: string[] = irlower.struct_ret_fns_of(all_funcs, all_structs);
+    var mrtf: string[] = irlower.map_ret_fns_of(all_funcs);
+    var frf: string[] = irlower.f64_ret_fns_of(all_funcs);
+    var farf: string[] = irlower.f64arr_ret_fns_of(all_funcs);
+    var iarf: string[] = irlower.i64arr_ret_fns_of(all_funcs);
+    var fps: string[] = irlower.fn_param_sigs_of(all_funcs);
+    var cfs: string[] = irlower.closure_ret_fns_of(all_funcs);
+    var cnf: string[] = irlower.const_fns_of(all_funcs);
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (!func_eligible(mod.funcs[i], mod, all_structs, known, arf, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf)) { return false; }
         i = i + 1;
     }
     return true;
@@ -2092,10 +2157,15 @@ function known_includes(known: string[], name: string): boolean {
 // kinds carry the callee name regardless of return-type tagging — so the module
 // verdict is unchanged, at a third of the lowering cost. `arf` (array_ret_fns) is
 // hoisted by the caller so it is derived once per module, not once per function.
-function func_eligible(fd: parser.FuncDecl, mod: parser.Module, known: string[], arf: string[], bparams: string[], srf: string[], sarf: string[], amf: string[], orf: string[], irf: string[], trf: string[], srtf: string[], mrtf: string[], frf: string[], farf: string[], iarf: string[], fps: string[], cfs: string[], cnf: string[]): boolean {
+function func_eligible(fd: parser.FuncDecl, mod: parser.Module, sview: parser.StructDecl[], known: string[], arf: string[], bparams: string[], srf: string[], sarf: string[], amf: string[], orf: string[], irf: string[], trf: string[], srtf: string[], mrtf: string[], frf: string[], farf: string[], iarf: string[], fps: string[], cfs: string[], cnf: string[]): boolean {
     // lower_func with the hoisted side-tables (the same set lower_func_for would
     // derive, but computed once by eligible_core — see the hoist note there).
-    var r: irlower.LowerResult = irlower.lower_func(fd, arf, mod.structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, bparams);
+    // `sview` is the struct-decl view lowering resolves field layouts against:
+    // the module's own structs for the merged/whole-program path, the WHOLE-
+    // PROGRAM struct union for a per-module unit (so a function touching an
+    // imported struct's layout lowers in the gate exactly as it does in
+    // emit_module_funcs, which already lowers against all_structs).
+    var r: irlower.LowerResult = irlower.lower_func(fd, arf, sview, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, bparams);
     if (!r.ok) { return false; }
     var i: i32 = 0;
     while (i < r.ops.len()) {
@@ -2127,6 +2197,15 @@ pub function all_eligible(mod: parser.Module): boolean {
 // all_eligible.
 pub function all_eligible_known(mod: parser.Module, known: string[]): boolean {
     return eligible_core_known(mod, known);
+}
+
+// all_eligible_known_view is all_eligible_known with the WHOLE-PROGRAM
+// func/struct view threaded in (#3451): the entry-unit twin of
+// all_eligible_lib_known_view (require_main=true — the entry emits `_start` →
+// `call __fn_main`). Gates a per-module ENTRY emit against the same all_funcs /
+// all_structs view emit_module_ir_unit lowers it with.
+pub function all_eligible_known_view(mod: parser.Module, known: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[]): boolean {
+    return eligible_core_known_main_view(mod, known, true, all_funcs, all_structs);
 }
 
 // eligibility_report returns a per-function IR-eligibility breakdown for `mod`:

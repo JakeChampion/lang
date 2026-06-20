@@ -263,9 +263,14 @@ function main(): i32 {
             return 1;
         }
         // Entry requires a main (it emits `_start` → `call __fn_main`); a
-        // library unit has none by design (all_eligible_lib_known).
-        var elig: boolean = asm_ir.all_eligible_lib_known(infmods[pm_index], known);
-        if (parts[pm_index].is_entry) { elig = asm_ir.all_eligible_known(infmods[pm_index], known); }
+        // library unit has none by design (all_eligible_lib_known_view). Both
+        // gate against the WHOLE-PROGRAM all_funcs / all_structs view, so a
+        // function touching a sibling module's struct layout lowers in the gate
+        // exactly as it does in emit_module_ir_unit (which already lowers against
+        // all_structs) — without the view, every module importing another's
+        // struct bails to AST (#3451).
+        var elig: boolean = asm_ir.all_eligible_lib_known_view(infmods[pm_index], known, all_funcs, all_structs);
+        if (parts[pm_index].is_entry) { elig = asm_ir.all_eligible_known_view(infmods[pm_index], known, all_funcs, all_structs); }
         if (!elig) {
             eprint("per-module: module not IR-eligible: ");
             eprint(parts[pm_index].ns);
