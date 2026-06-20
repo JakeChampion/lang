@@ -337,6 +337,14 @@ pub function op_random_bytes(): Op { return op0("random_bytes"); }
 // `random_i32` takes no operands → a single CSPRNG i32. A 4-byte random read
 // reinterpreted as an i32 (cheaper than random_bytes for one small value).
 pub function op_random_i32(): Op { return op0("random_i32"); }
+// `heap_bump_bytes` takes no operands → the bump allocator's high-water mark in
+// bytes (current cursor − region base; 0 before the first allocation). Backs the
+// `__heap_bump_bytes()` introspection builtin (the native compiler's
+// __fern_heap_bump_bytes). Reads — but never moves — the cursor, so it allocates
+// nothing; each backend emits its own `cursor − base` read inline (x86-64 /
+// arm64 read __fern_heap_ptr; wasm reads the $heap global). It still needs the
+// heap runtime present (op_allocates admits it) so its symbols exist.
+pub function op_heap_bump_bytes(): Op { return op0("heap_bump_bytes"); }
 // `monotonic_ns` / `now_unix_ms` take no operands → an i64 clock reading.
 // monotonic_ns is a monotonically non-decreasing nanosecond counter (elapsed
 // timing); now_unix_ms is wall-clock milliseconds since the Unix epoch. Both
@@ -745,6 +753,10 @@ pub function op_allocates(kind: string): boolean {
     if (kind == "map_new" || kind == "map_set") { return true; }
     // Byte/string builders that materialise a fresh box.
     if (kind == "random_bytes" || kind == "str_bytes" || kind == "str_split") { return true; }
+    // heap_bump_bytes does not allocate, but it reads the bump cursor / region
+    // base, so it needs the heap runtime present — admit it to the heap-need gate
+    // so a program that only introspects the heap still emits the allocator.
+    if (kind == "heap_bump_bytes") { return true; }
     if (kind == "str_to_upper" || kind == "str_to_lower") { return true; }
     if (kind == "str_repeat" || kind == "str_trim" || kind == "str_reverse") { return true; }
     if (kind == "str_replace" || kind == "str_chars" || kind == "str_lines") { return true; }

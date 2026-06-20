@@ -2958,6 +2958,19 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // no operands; __fern_random_i32() -> i32 in %rax.
             s = s.write("    call __fern_random_i32\n    pushq %rax\n");
             s = s.need("random_i32");
+        } else if (o.kind == "heap_bump_bytes") {
+            // no operands; the bump high-water mark (cursor − base) in %rax.
+            // The cursor __fern_heap_ptr is 0 until the first alloc, then the
+            // base symbol __fern_heap + bytes-used. Branchless: compute a 0/-1
+            // mask off (cursor != 0), then mask (cursor − base) so an
+            // un-allocated heap reports 0 rather than −base. need("heap") so
+            // emit_ir_runtime defines __fern_heap_ptr / __fern_heap.
+            s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");
+            s = s.write("    testq %rax, %rax\n");
+            s = s.write("    setne %cl\n    movzbq %cl, %rcx\n    negq %rcx\n");
+            s = s.write("    movabs $__fern_heap, %rdx\n    subq %rdx, %rax\n");
+            s = s.write("    andq %rcx, %rax\n    pushq %rax\n");
+            s = s.need("heap");
         } else if (o.kind == "monotonic_ns") {
             // no operands; __fern_monotonic_ns() -> i64 in %rax.
             s = s.write("    call __fern_monotonic_ns\n    pushq %rax\n");

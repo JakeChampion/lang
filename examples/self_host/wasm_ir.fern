@@ -908,6 +908,16 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind == "random_i32") {
             // -> $__fern_random_i32() -> i32.
             out = out + "    call $__fern_random_i32\n";
+        } else if (o.kind == "heap_bump_bytes") {
+            // The bump high-water mark (cursor − base) in bytes. The $heap global
+            // starts at heap_base and only moves up, so the value is simply
+            // $heap − heap_base (0 before the first alloc, since $heap == heap_base
+            // then). heap_base = fl_base_for + fl_cells*4, recomputed here from the
+            // module's string literals (str_vals == str_values(mod)).
+            var hbb: i32 = (str_offset(str_vals, str_vals.len()) + 16 + 7) / 8 * 8 + fl_cells() * 4;
+            out = out + "    global.get $heap\n";
+            out = out + "    i32.const " + util.i32_to_string(hbb) + "\n";
+            out = out + "    i32.sub\n";
         } else if (o.kind == "str_bytes") {
             // stack: s -> $__fern_str_bytes(s) -> fresh u8[] block.
             out = out + "    call $__fern_str_bytes\n";

@@ -435,6 +435,18 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // the random_i32 need (asm_arm64.emit_runtime), heap-independent.
             s = s.need("random_i32");
             s = s.write("    bl __fern_random_i32\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "heap_bump_bytes") {
+            // no operands; the bump high-water mark (cursor − base) in x0. The
+            // arena is mmap'd lazily: __fern_heap_ptr is 0 until the first alloc,
+            // then base + bytes-used; __fern_heap_end is base + heap_size (both 0
+            // before the first alloc). base = heap_end − heap_size, so the bytes
+            // used = heap_ptr − heap_end + heap_size; csel pins it to 0 when the
+            // cursor is still 0. mark_heap so asm_arm64 defines the heap symbols.
+            s = s.mark_heap();
+            s = s.write("    adrp x0, __fern_heap_ptr\n    add x0, x0, :lo12:__fern_heap_ptr\n    ldr x0, [x0]\n");
+            s = s.write("    adrp x1, __fern_heap_end\n    add x1, x1, :lo12:__fern_heap_end\n    ldr x1, [x1]\n");
+            s = s.write("    sub x2, x0, x1\n    mov x3, #14\n    lsl x3, x3, #28\n    add x2, x2, x3\n");
+            s = s.write("    cmp x0, #0\n    csel x0, x2, xzr, ne\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "monotonic_ns") {
             // no operands; __fern_monotonic_ns() -> i64 in x0. asm_arm64.emit_
             // runtime emits the helper unconditionally (heap-independent), so no

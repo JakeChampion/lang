@@ -1433,6 +1433,8 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     if (id.name == "read_dir") { return ty_result(ty_array_string()); }
                     if (id.name == "stat") { return ty_result(ty_unknown()); }
                     if (id.name == "remove_dir_all") { return ty_option(ty_unknown()); }
+                    // __heap_bump_bytes(): bump high-water mark in bytes → i32.
+                    if (id.name == "__heap_bump_bytes") { return ty_i32(); }
                     if (id.name == "f64_bits" || id.name == "f32_bits") { return ty_i32(); }
                     if (id.name == "f64_from_bits" || id.name == "f32_from_bits") { return ty_f64(); }
                     // env(name): Option[string] — Some(value) if the

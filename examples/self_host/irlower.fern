@@ -4365,6 +4365,13 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     if (cid.name == "random_i32" && c.args.len() == 0) {
                         return s.emit(ir.op_random_i32());
                     }
+                    // __heap_bump_bytes(): the bump allocator's high-water mark in
+                    // bytes (cursor − base; 0 before the first allocation). A 0-arg
+                    // i32 introspection builtin (infer_expr_width defaults it to 32);
+                    // each IR backend emits its own cursor-minus-base read.
+                    if (cid.name == "__heap_bump_bytes" && c.args.len() == 0) {
+                        return s.emit(ir.op_heap_bump_bytes());
+                    }
                     // monotonic_ns() / now_unix_ms(): 0-arg i64 clock readings.
                     // Each lowers to a dedicated op the IR backends emit as a
                     // call into the same __fern_* runtime helper the AST path

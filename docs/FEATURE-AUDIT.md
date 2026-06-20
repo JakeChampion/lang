@@ -171,7 +171,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `f32_bits/f32_from_bits/f64_bits/f64_from_bits` | | | | | | ⬜ | |
 | float math builtins `__sqrt_f64` etc. | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | via std/float; self-host IR path (`op_funary`; `TestSelfHostFloatMathIR`): `__sqrt_f64`/`__floor_f64`/`__ceil_f64`/`__trunc_f64`/`__abs_f64` lower to a single hardware instruction on all three backends, and `__round_f64` (round-half-away) lowers too — one instruction on arm64 (`frinta`), emulated as `trunc(x+copysign(0.5,x))` on x86/wasm (`roundsd`/`f64.nearest` have no ties-away mode). Only the libm transcendentals (`__log_f64`/`__exp_f64`/`__sin_f64`/`__cos_f64`/`__pow_f64`) still route AST |
 | `strbuf_reset/append/take` | | | | | | ⬜ | |
-| `__heap_bump_bytes` | | | | | | ⬜ | introspection |
+| `__heap_bump_bytes` | | ✅ | | | ✅ | ✅ | bump high-water mark (cursor − base; 0 pre-alloc). Self-host **IR path** lowers it on all three backends (`op_heap_bump_bytes`; `TestSelfHostHeapBumpBytesIR{X86_64,Arm64,Wasm}`): x86-64 / arm64 read `__fern_heap_ptr` against the heap base symbol / `__fern_heap_end − heap_size`, wasm reads `$heap − heap_base`; `op_allocates` admits it so a probe-only program still emits the heap runtime. Native x86-64 confirmed (`TestNativeHeapBumpBytes`). The interpreter has no bump-allocator model, so it can't oracle the value — tests assert the relational contract (pre-alloc 0; post-alloc reading higher; non-decreasing) |
 | `__rc_*` (inc/dec/get/underflow_count) | | | | | | ⬜ | RC introspection |
 | TCP: `tcp_listen/accept/recv/send/close` | | | | | | ⬜ | |
 | `udp_send` | | | | | | ⬜ | |
