@@ -233,6 +233,39 @@ statement position in straight-line and simple-branch bodies (covers
 fan-out); generalize to awaits-in-loops incrementally, each with its
 own test.
 
+**Phase 3a — DONE (the fan-out surface):** `concurrent { var a =
+spawn f(args); … }` is implemented as a parser-time desugar in the Go
+frontend (`internal/lexer` keywords `concurrent`/`spawn`;
+`parser.parseConcurrent`, dispatched inline from `parseBlock` like
+`use` so the result bindings leak into the enclosing scope). It
+expands to the `std/task` runtime: a reactor `var`, one
+`let (task, rx) = f(rx, args)` Destructure per spawn (reactor injected
+as the first arg), a `task.run(...)` call, and one result `var` per
+binding. All spawns start before `run`, so their I/O overlaps. Spawn
+targets follow the runtime protocol
+`(task.Reactor, args…) -> (task.Step, task.Reactor)`. Verified on
+interp / x86-64 / arm64(qemu); compiles on wasm. Tests:
+`internal/parser` (`TestParseConcurrentDesugar` + error cases) and
+`examples/tests/async_concurrent_test.fern` (e2e gate
+`TestRunnerAsyncConcurrentExamplePasses`). Requires `import
+"std/task"`.
+
+**Phase 3b — remaining:**
+- **Inline `await`** (`combine(await a, await b)`) and the full
+  body-splitting CPS transform so spawn targets are written as
+  ordinary functions (no `(Reactor) -> (Step, Reactor)` protocol
+  leak). This is the big rock; best paired with Phase 1/4 so awaited
+  calls do real I/O.
+- **Self-hosted parser port** (`examples/self_host/parser.fern`) — the
+  desugar must be mirrored there before the Go compiler retires.
+  Deferred while the self-host SSA-by-default migration is in flight
+  (it sits near that work).
+- **Formatter round-trip**: like `use` / `for..in`, the parse-time
+  desugar means `fern -fmt` prints the expanded form, not
+  `concurrent { … }`. Acceptable (consistent with the existing
+  parse-time desugars); a faithful round-trip would need a retained
+  AST node + checker/printer support.
+
 ### Phase 4 — the first real awaitable: `plat.fetch`
 
 Make the concurrency useful: outbound HTTP. Promote the `Platform`

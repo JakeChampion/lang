@@ -156,6 +156,9 @@ type parser struct {
 	// gets a unique name. Resets per Parse() so module-local
 	// names stay deterministic.
 	useN int
+	// concN counts `concurrent` blocks so each desugar's synthetic
+	// reactor / task / results locals get unique names.
+	concN int
 }
 
 func (p *parser) peek() lexer.Token { return p.tokens[p.i] }
@@ -2026,6 +2029,21 @@ func (p *parser) parseBlock() (*ast.Block, error) {
 			// callback body, so the current block is finished.
 			break
 		}
+		// `concurrent { var a = spawn f(...); ... }` is a
+		// statement-position desugar onto the std/task runtime.
+		// Handled inline (like `use`) so the spawn-result bindings
+		// can be appended to THIS block — they must leak into the
+		// enclosing scope so code after the block can read them.
+		if p.match(lexer.Keyword, "concurrent") {
+			if err := p.parseConcurrent(block); err != nil {
+				p.errors = append(p.errors, err)
+				p.syncToStmt()
+				if p.i == before {
+					p.advance()
+				}
+			}
+			continue
+		}
 		s, err := p.parseStmt()
 		if err != nil {
 			p.errors = append(p.errors, err)
@@ -3562,6 +3580,129 @@ func (p *parser) parseUse(parent *ast.Block) error {
 	// value.
 	srcCall.Args = append(srcCall.Args, &ast.Ident{P: kw.Pos, Name: callbackName})
 	parent.Stmts = append(parent.Stmts, &ast.Return{P: kw.Pos, Value: srcCall})
+	return nil
+}
+
+// parseConcurrent desugars a structured-concurrency fan-out block
+// onto the std/task runtime (docs/ASYNC-IMPLEMENTATION-PLAN.md
+// Phase 3). The supported shape is a block of one or more
+// spawn-bindings:
+//
+//	concurrent {
+//	    var a = spawn start_a(x, y);
+//	    var b = spawn start_b(z);
+//	}
+//	// a, b now hold the i32 results, in the enclosing scope.
+//
+// Each spawn target is a function with the runtime protocol
+// `(task.Reactor, args…) -> (task.Step, task.Reactor)` — i.e. it
+// registers its first wait on the reactor and hands back a task
+// state machine. The block desugars to (appended to `parent` so the
+// result names leak into the enclosing scope):
+//
+//	var __conc_rx_N_0 = task.reactor_new();
+//	let (__conc_task_N_0, __conc_rx_N_1) = start_a(__conc_rx_N_0, x, y);
+//	let (__conc_task_N_1, __conc_rx_N_2) = start_b(__conc_rx_N_1, z);
+//	var __conc_res_N = task.run([__conc_task_N_0, __conc_task_N_1], __conc_rx_N_2);
+//	var a = __conc_res_N[0];
+//	var b = __conc_res_N[1];
+//
+// All spawns start (register their waits) before `run`, so their I/O
+// overlaps on one thread — the canonical edge-handler fan-out. The
+// program must `import "std/task"`; the qualified `task.*` calls
+// emitted here resolve through modload exactly like hand-written
+// ones. Requires the in-memory reactor today; the Phase-1 syscall
+// reactor swaps in behind the same API. Inline `await` and awaits in
+// arbitrary control flow await the full CPS desugar — unsupported
+// shapes here error rather than miscompile.
+func (p *parser) parseConcurrent(parent *ast.Block) error {
+	kw := p.advance() // concurrent
+	if _, err := p.expect(lexer.Punct, "{"); err != nil {
+		return err
+	}
+	id := p.concN
+	p.concN++
+
+	mkIdent := func(name string) *ast.Ident { return &ast.Ident{P: kw.Pos, Name: name} }
+	rxName := func(v int) string { return fmt.Sprintf("__conc_rx_%d_%d", id, v) }
+	taskName := func(k int) string { return fmt.Sprintf("__conc_task_%d_%d", id, k) }
+	resName := fmt.Sprintf("__conc_res_%d", id)
+	// task.<fn>(args...)
+	taskCall := func(fn string, args []ast.Expr) *ast.Call {
+		return &ast.Call{
+			P:      kw.Pos,
+			Callee: &ast.FieldAccess{P: kw.Pos, Target: mkIdent("task"), Field: fn, FieldPos: kw.Pos},
+			Args:   args,
+		}
+	}
+
+	// var __conc_rx_N_0 = task.reactor_new();
+	parent.Stmts = append(parent.Stmts, &ast.Var{P: kw.Pos, Name: rxName(0), Init: taskCall("reactor_new", nil)})
+
+	var spawnNames []string // user-facing result names, in order
+	rxVer := 0
+	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
+		// Only `var IDENT = spawn CALL;` is allowed in the block.
+		if !p.match(lexer.Keyword, "var") {
+			return p.errorf(p.peek().Pos, "concurrent block may only contain `var NAME = spawn CALL;` statements")
+		}
+		p.advance() // var
+		nameTok, err := p.expect(lexer.Ident, "")
+		if err != nil {
+			return err
+		}
+		if _, err := p.expect(lexer.Punct, "="); err != nil {
+			return err
+		}
+		if _, err := p.expect(lexer.Keyword, "spawn"); err != nil {
+			return p.errorf(nameTok.Pos, "expected `spawn` after `var %s =` in a concurrent block", nameTok.Text)
+		}
+		callExpr, err := p.parseExpr()
+		if err != nil {
+			return err
+		}
+		call, ok := callExpr.(*ast.Call)
+		if !ok {
+			return p.errorf(kw.Pos, "`spawn` must be followed by a function call returning (task.Step, task.Reactor)")
+		}
+		if _, err := p.expect(lexer.Punct, ";"); err != nil {
+			return err
+		}
+		// Inject the current reactor as the spawn target's first arg
+		// and thread the advanced reactor out via the destructure.
+		call.Args = append([]ast.Expr{mkIdent(rxName(rxVer))}, call.Args...)
+		k := len(spawnNames)
+		parent.Stmts = append(parent.Stmts, &ast.Destructure{
+			P:     kw.Pos,
+			Names: []string{taskName(k), rxName(rxVer + 1)},
+			Init:  call,
+		})
+		spawnNames = append(spawnNames, nameTok.Text)
+		rxVer++
+	}
+	if _, err := p.expect(lexer.Punct, "}"); err != nil {
+		return err
+	}
+	if len(spawnNames) == 0 {
+		return p.errorf(kw.Pos, "concurrent block must spawn at least one task")
+	}
+
+	// var __conc_res_N = task.run([__conc_task_N_0, …], __conc_rx_N_final);
+	taskElems := make([]ast.Expr, len(spawnNames))
+	for k := range spawnNames {
+		taskElems[k] = mkIdent(taskName(k))
+	}
+	runArgs := []ast.Expr{&ast.ArrayLit{P: kw.Pos, Elems: taskElems}, mkIdent(rxName(rxVer))}
+	parent.Stmts = append(parent.Stmts, &ast.Var{P: kw.Pos, Name: resName, Init: taskCall("run", runArgs)})
+
+	// var <name> = __conc_res_N[k];  — leak results to enclosing scope.
+	for k, name := range spawnNames {
+		parent.Stmts = append(parent.Stmts, &ast.Var{
+			P:    kw.Pos,
+			Name: name,
+			Init: &ast.Index{P: kw.Pos, Array: mkIdent(resName), Idx: &ast.NumberLit{P: kw.Pos, Value: int64(k)}},
+		})
+	}
 	return nil
 }
 

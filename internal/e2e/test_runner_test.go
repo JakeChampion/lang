@@ -150,6 +150,24 @@ func TestRunnerAsyncRuntimeExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/async_concurrent_test.fern` exercises the
+// `concurrent { … }` / `spawn` SURFACE SYNTAX (Phase 3), which the
+// parser desugars onto the std/task runtime: two-task fan-out, a
+// single spawn, mixed await depths, and argument forwarding past the
+// injected reactor. Proves the desugar produces working fan-out
+// end-to-end. Passing suite → exit 0.
+func TestRunnerAsyncConcurrentExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/async_concurrent_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	if !strings.Contains(out, "# pass 4") || !strings.Contains(out, "# fail 0") {
+		t.Errorf("expected 4 passes, 0 fails\noutput:\n%s", out)
+	}
+}
+
 // A failing suite exits 1 and emits `not ok` + a summary that
 // names the failure. Inline-source so the failure cases stay
 // adjacent to the assertions about them — a regression in the
