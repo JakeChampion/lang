@@ -1,0 +1,7 @@
+[INFO] login user=alice id=7 ok=true
+
+filtered=[]
+{"level":"ERROR","msg":"a\"b","code":42}
+
+{"level":"WARN","msg":"edge"}
+

@@ -195,9 +195,17 @@ RFC 4180 escape / join / single-line parse.
 
 ### `std/log`
 
-Three thin stderr wrappers with level prefix.
+Zero-config stderr wrappers plus a leveled logger (#2683).
 
-- `log_info(msg)`, `log_warn(msg)`, `log_error(msg)`.
+- `log_info(msg)`, `log_warn(msg)`, `log_error(msg)` — thin stderr
+  wrappers with a level prefix.
+- `new_logger(min_level)` / `new_json_logger(min_level)` — a `Logger`
+  value carrying a min-level threshold (`level_trace()`..`level_error()`)
+  and a plain-text vs JSON-lines output mode.
+- `logger.at(level)` / `logger.info_()` … begin a `LogEntry`; chain
+  `.str(k, v)` / `.int(k, v)` / `.bool(k, v)` to attach structured
+  fields, then `.render(msg)` (pure → string, "" if below threshold)
+  or `.emit(msg)` (writes to stderr).
 
 ### `std/io`
 
