@@ -2557,7 +2557,7 @@ pub function br_target(ops: ir.Op[], lp: string, i: i32, d: i32): string {
 // modules' string pools don't collide at link (#3451 step 3 / #3455). The SAME
 // label is used at the definition site (.rodata) and every `leaq` reference, so
 // the box's data pointer resolves within the module.
-function str_lit_label(s: asmcore.EmitState, idx: i32): string {
+pub function str_lit_label(s: asmcore.EmitState, idx: i32): string {
     if (s.str_ns.len() == 0) { return ".S" + util.i32_to_string(idx); }
     return ".S" + s.str_ns + "_" + util.i32_to_string(idx);
 }
@@ -2575,7 +2575,7 @@ pub struct ShapeRefOut { state: asmcore.EmitState, label: string }
 // across the module boundary. Without this every cross-module enum `match` (e.g.
 // the parser matching lexer's token variants) silently fails — the self-build
 // miscompile #3451's per-module bootstrap hit.
-function shape_ref(s: asmcore.EmitState, name: string): ShapeRefOut {
+pub function shape_ref(s: asmcore.EmitState, name: string): ShapeRefOut {
     if (s.str_ns.len() == 0) {
         var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, name);
         return ShapeRefOut { state: lo.state, label: str_lit_label(lo.state, lo.idx) };
@@ -2592,7 +2592,7 @@ function shape_ref(s: asmcore.EmitState, name: string): ShapeRefOut {
 // symbol the entry DOES define is exported. This is emitted only in per-module
 // mode (globl_defs) — the whole-program emitter never calls it, so its output
 // is unchanged.
-function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
+pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
     var names: string[] = [
         "__fern_alloc", "__fern_alloc_u8", "__fern_arr_box", "__fern_arr_push",
         "__fern_arr_slice", "__fern_str_concat", "__fern_str_eq", "__fern_str_cmp",
