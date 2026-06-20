@@ -719,6 +719,18 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             out = out + "    i32.trunc_f64_s\n";
         } else if (o.kind == "f64_to_i64") {
             out = out + "    i64.trunc_f64_s\n";
+        } else if (o.kind == "f64_bits") {
+            // f64 -> i64 bit reinterpret (typed stack flips f64 -> i64).
+            out = out + "    i64.reinterpret_f64\n";
+        } else if (o.kind == "f64_from_bits") {
+            // i64 -> f64 bit reinterpret (typed stack flips i64 -> f64).
+            out = out + "    f64.reinterpret_i64\n";
+        } else if (o.kind == "f32_bits") {
+            // f64 -> f32 (demote), reinterpret to its i32 bit pattern.
+            out = out + "    f32.demote_f64\n    i32.reinterpret_f32\n";
+        } else if (o.kind == "f32_from_bits") {
+            // reinterpret the i32 bits as an f32, promote to f64.
+            out = out + "    f32.reinterpret_i32\n    f64.promote_f32\n";
         } else if (o.kind == "fround") {
             // round-half-away-from-zero (Go's math.Round). wasm's f64.nearest is
             // ties-to-EVEN, so emulate via trunc(x + copysign(0.5, x)): stash x in

@@ -2781,6 +2781,9 @@ pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
                 parser.ExprIdent(cid) => {
                     // The std/float single-instruction math builtins return f64.
                     if (f64_math_builtin_kind(cid.name) != "") { return true; }
+                    // f64_from_bits / f32_from_bits reinterpret an integer bit
+                    // pattern back into an f64 value.
+                    if (cid.name == "f64_from_bits" || cid.name == "f32_from_bits") { return true; }
                     return s.is_f64_ret_fn(cid.name);
                 },
                 parser.ExprFieldAccess(cfa) => {
@@ -3020,6 +3023,8 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
                     // binding `var a = monotonic_ns()` width-tracks i64.
                     if (cid.name == "monotonic_ns" || cid.name == "now_unix_ms" || cid.name == "now_ns") { return 64; }
                     if (cid.name == "__load_i64") { return 64; }
+                    // f64_bits reinterprets an f64 as its i64 bit pattern.
+                    if (cid.name == "f64_bits") { return 64; }
                     if (s.is_i64_ret_fn(cid.name)) { return 64; }
                 },
                 parser.ExprFieldAccess(cfa) => {
@@ -3169,6 +3174,9 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                     // normal call path (which emits the op + pushes the result).
                     if (cid.name == "monotonic_ns" || cid.name == "now_unix_ms" || cid.name == "now_ns") { return lower_expr(e, s); }
                     if (cid.name == "__load_i64") { return lower_expr(e, s); }
+                    // f64_bits returns an i64 bit pattern: lower via the normal
+                    // call path (lower_expr emits op_f64_bits + pushes the result).
+                    if (cid.name == "f64_bits") { return lower_expr(e, s); }
                     if (s.is_i64_ret_fn(cid.name)) { return lower_expr(e, s); }
                 },
                 parser.ExprFieldAccess(cfa) => {
@@ -4312,6 +4320,33 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         var fu: LowerState = lower_expr(c.args[0], s);
                         if (!fu.ok) { return fu; }
                         return fu.emit(ir.op_funary(fuk));
+                    }
+                    // f64_bits / f64_from_bits — bit reinterpret between an f64 and
+                    // its i64 bit pattern; f32_bits / f32_from_bits the 32-bit pair.
+                    // f64_bits / f32_bits take an f64 operand (lower_expr routes
+                    // floats); f64_from_bits takes an i64 (lower_i64) and
+                    // f32_from_bits an i32 (lower_expr). On the register backends
+                    // the bit-slot reinterpret is a no-op (f64) or a narrow/widen
+                    // (f32); wasm emits the typed reinterpret instructions.
+                    if (cid.name == "f64_bits" && c.args.len() == 1) {
+                        var fbb: LowerState = lower_expr(c.args[0], s);
+                        if (!fbb.ok) { return fbb; }
+                        return fbb.emit(ir.op_f64_bits());
+                    }
+                    if (cid.name == "f64_from_bits" && c.args.len() == 1) {
+                        var ffb: LowerState = lower_i64(c.args[0], s);
+                        if (!ffb.ok) { return ffb; }
+                        return ffb.emit(ir.op_f64_from_bits());
+                    }
+                    if (cid.name == "f32_bits" && c.args.len() == 1) {
+                        var f3b: LowerState = lower_expr(c.args[0], s);
+                        if (!f3b.ok) { return f3b; }
+                        return f3b.emit(ir.op_f32_bits());
+                    }
+                    if (cid.name == "f32_from_bits" && c.args.len() == 1) {
+                        var f3f: LowerState = lower_expr(c.args[0], s);
+                        if (!f3f.ok) { return f3f; }
+                        return f3f.emit(ir.op_f32_from_bits());
                     }
                     if (cid.name == "string_from_bytes" && c.args.len() == 1) {
                         var sfb: LowerState = lower_expr(c.args[0], s);
