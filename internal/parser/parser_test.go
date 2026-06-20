@@ -2644,3 +2644,82 @@ func TestParseDowncastVsCast(t *testing.T) {
 		t.Fatalf("plain `as` must not parse to DowncastExpr")
 	}
 }
+
+// `concurrent { var a = spawn f(args); … }` is a parser-time desugar
+// onto the std/task runtime (docs/ASYNC-IMPLEMENTATION-PLAN.md
+// Phase 3). It expands, in the enclosing block, to: a reactor `var`,
+// one `let (task, rx) = f(rx, args)` Destructure per spawn (the
+// reactor injected as the first arg), a `task.run(...)` `var`, and one
+// result `var` per spawn binding the user's name to `__conc_res_N[k]`.
+func TestParseConcurrentDesugar(t *testing.T) {
+	prog, err := Parse(`function h(): i32 {
+		concurrent {
+			var a = spawn start_a(10, 1);
+			var b = spawn start_b(20);
+		}
+		return a + b;
+	}`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	stmts := prog.Funcs[0].Body.Stmts
+	// reactor_new var, 2 spawn destructures, run var, 2 result vars,
+	// then the user's `return`.
+	if len(stmts) != 7 {
+		t.Fatalf("expected 7 desugared stmts, got %d: %+v", len(stmts), stmts)
+	}
+	rx0, ok := stmts[0].(*ast.Var)
+	if !ok || rx0.Name != "__conc_rx_0_0" {
+		t.Fatalf("stmt[0] = %T %+v, want reactor var __conc_rx_0_0", stmts[0], stmts[0])
+	}
+	if call, ok := rx0.Init.(*ast.Call); !ok {
+		t.Errorf("reactor init not a Call: %T", rx0.Init)
+	} else if fa, ok := call.Callee.(*ast.FieldAccess); !ok || fa.Field != "reactor_new" {
+		t.Errorf("reactor init callee = %+v, want task.reactor_new", call.Callee)
+	}
+	// First spawn → Destructure binding (__conc_task_0_0, __conc_rx_0_1).
+	d0, ok := stmts[1].(*ast.Destructure)
+	if !ok {
+		t.Fatalf("stmt[1] = %T, want *ast.Destructure", stmts[1])
+	}
+	if len(d0.Names) != 2 || d0.Names[0] != "__conc_task_0_0" || d0.Names[1] != "__conc_rx_0_1" {
+		t.Errorf("spawn destructure names = %v", d0.Names)
+	}
+	dcall, ok := d0.Init.(*ast.Call)
+	if !ok {
+		t.Fatalf("spawn init = %T, want *ast.Call", d0.Init)
+	}
+	// Reactor injected as the first arg: start_a(__conc_rx_0_0, 10, 1).
+	if len(dcall.Args) != 3 {
+		t.Fatalf("spawn call args = %d, want 3 (rx + 2)", len(dcall.Args))
+	}
+	if id, ok := dcall.Args[0].(*ast.Ident); !ok || id.Name != "__conc_rx_0_0" {
+		t.Errorf("spawn arg[0] = %+v, want reactor ident __conc_rx_0_0", dcall.Args[0])
+	}
+	// run var.
+	runVar, ok := stmts[3].(*ast.Var)
+	if !ok || runVar.Name != "__conc_res_0" {
+		t.Fatalf("stmt[3] = %T %+v, want run var __conc_res_0", stmts[3], stmts[3])
+	}
+	// Result vars leak the user's names a, b.
+	a, ok := stmts[4].(*ast.Var)
+	if !ok || a.Name != "a" {
+		t.Errorf("stmt[4] = %T %+v, want result var a", stmts[4], stmts[4])
+	}
+	if _, ok := a.Init.(*ast.Index); !ok {
+		t.Errorf("result a init = %T, want *ast.Index (__conc_res_0[0])", a.Init)
+	}
+	if b, ok := stmts[5].(*ast.Var); !ok || b.Name != "b" {
+		t.Errorf("stmt[5] = %T %+v, want result var b", stmts[5], stmts[5])
+	}
+}
+
+// A concurrent block rejects non-spawn statements and empty blocks.
+func TestParseConcurrentErrors(t *testing.T) {
+	if _, err := Parse(`function h(): i32 { concurrent { var x = 5; } return x; }`); err == nil {
+		t.Error("expected error for non-spawn statement in concurrent block")
+	}
+	if _, err := Parse(`function h(): i32 { concurrent { } return 0; }`); err == nil {
+		t.Error("expected error for empty concurrent block")
+	}
+}

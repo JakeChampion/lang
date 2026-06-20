@@ -91,11 +91,16 @@ var keywords = map[string]bool{
 	"break":    true,
 	"continue": true,
 	"return":   true,
-	"true":     true,
-	"false":    true,
-	"boolean":  true,
-	"void":     true,
-	"string":   true,
+	// Structured-concurrency surface (docs/ASYNC-IMPLEMENTATION-PLAN.md
+	// Phase 3): `concurrent { var a = spawn f(...); ... }` fans out
+	// tasks; the parser desugars the block onto the std/task runtime.
+	"concurrent": true,
+	"spawn":      true,
+	"true":       true,
+	"false":      true,
+	"boolean":    true,
+	"void":       true,
+	"string":     true,
 	// Sized numeric type names. Pre-i64/usize codebases shipped
 	// `number` / `float` as aliases for `i32` / `f32`; those were
 	// removed in the legacy-cleanup pass — use the sized names.

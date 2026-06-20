@@ -1,0 +1,84 @@
+import "std/test";
+import "std/task";
+
+// examples/tests/async_concurrent_test.fern — exercises the
+// `concurrent { … }` / `spawn` SURFACE SYNTAX (Phase 3), which the
+// parser desugars onto the std/task runtime
+// (docs/ASYNC-IMPLEMENTATION-PLAN.md). Where async_runtime_test.fern
+// hand-writes the state machines, this file drives them through the
+// language keywords — proving the desugar produces working fan-out on
+// every backend.
+//
+// Run:  fern -interp examples/tests/async_concurrent_test.fern
+
+// Spawn target protocol: (Reactor, args…) -> (Step, Reactor). A
+// single-await "fetch then add": registers a wait delivering
+// `simulated`, resumes by adding `addend`.
+function start_add(rx: task.Reactor, simulated: i32, addend: i32): (task.Step, task.Reactor) {
+    var (tok, rx2) = rx.register(simulated);
+    function resume(woken: i32, r: task.Reactor): (task.Step, task.Reactor) {
+        return (Done(woken + addend), r);
+    }
+    return (Wait(tok, resume), rx2);
+}
+
+// A multi-await spawn target: await a, then await b, finish with sum.
+function start_seq(rx: task.Reactor, a: i32, b: i32): (task.Step, task.Reactor) {
+    var (tok1, rx1) = rx.register(a);
+    function resume1(w1: i32, r: task.Reactor): (task.Step, task.Reactor) {
+        var (tok2, r2) = r.register(b);
+        function resume2(w2: i32, r3: task.Reactor): (task.Step, task.Reactor) {
+            return (Done(w1 + w2), r3);
+        }
+        return (Wait(tok2, resume2), r2);
+    }
+    return (Wait(tok1, resume1), rx1);
+}
+
+// Two-task fan-out through the surface. `a` and `b` hold the i32
+// results in the enclosing scope after the block.
+function test_concurrent_fanout(): test.TestOutcome {
+    concurrent {
+        var a = spawn start_add(10, 1);   // -> 11
+        var b = spawn start_add(20, 2);   // -> 22
+    }
+    if (a != 11) { return test.fail("a wrong: " + a.to_string()); }
+    return test.assert_eq(b, 22);
+}
+
+// A single spawn is allowed.
+function test_concurrent_single(): test.TestOutcome {
+    concurrent {
+        var only = spawn start_add(40, 2);   // -> 42
+    }
+    return test.assert_eq(only, 42);
+}
+
+// A multi-await task spawned alongside a single-await one: the
+// desugar's scheduler handles both depths.
+function test_concurrent_mixed(): test.TestOutcome {
+    concurrent {
+        var deep = spawn start_seq(5, 6);     // -> 11
+        var shallow = spawn start_add(100, 1); // -> 101
+    }
+    if (deep != 11) { return test.fail("deep wrong: " + deep.to_string()); }
+    return test.assert_eq(shallow, 101);
+}
+
+// Spawn-call arguments are forwarded after the injected reactor:
+// start_add(rx, 7, 35) -> 42.
+function test_concurrent_args_forwarded(): test.TestOutcome {
+    concurrent {
+        var r = spawn start_add(7, 35);
+    }
+    return test.assert_eq(r, 42);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("async_concurrent");
+    r = r.it("two-task fan-out", test_concurrent_fanout());
+    r = r.it("single spawn", test_concurrent_single());
+    r = r.it("mixed await depths", test_concurrent_mixed());
+    r = r.it("args forwarded", test_concurrent_args_forwarded());
+    return r.finish();
+}
