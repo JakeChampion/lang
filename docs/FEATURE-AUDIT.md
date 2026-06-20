@@ -93,7 +93,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | Feature | I | X | A | W | S | Status | Notes |
 |---------|---|---|---|---|---|--------|-------|
 | Integer arithmetic `+ - * / %` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | incl. trunc-toward-zero for negatives |
-| Integer comparison `== != < > <= >=` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
+| Integer comparison `== != < > <= >=` | ✅ | ✅ | ✅ | ✅ | ✅ | 🔧 | incl. wider types; self-host wasm-IR bug fixed — an *inferred* `u32` local (`var a = X as u32`) compared as signed ([#3537](https://github.com/JakeChampion/lang/issues/3537)) |
 | Boolean logic `&& \|\| !` (short-circuit) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | non-eval proven via trap-skip RHS (÷0) |
 | Bitwise `& \| ^ << >>` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | prop generators (LCG) + audit fixture |
 | Unary minus `-x` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
@@ -249,6 +249,27 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-20 — 🔧 self-host wasm IR: an inferred `u32` local compared as signed ([#3537](https://github.com/JakeChampion/lang/issues/3537))
+
+Found while auditing comparison operators on wider types. An **inferred**
+unsigned local — `var a = 3000000000 as u32;` with no `: u32` annotation —
+was not marked `u32` in `irlower`'s `StmtVar` lowering (which only consulted
+the explicit `type_name`), so a later `a > b` emitted a **signed** IR compare.
+On wasm that is a true-32-bit `i32.gt_s`, wrong once bit 31 is set (a
+`u32 >= 2^31` reads as a negative `i32`); `3000000000 > 5` returned **0**.
+x86-64 / arm64 were accidentally correct because the value sits zero-extended
+in a 64-bit register (same as the u32 div/rem note).
+
+Fix: an un-annotated binding is now marked `u32` / `u64` from its
+**initializer's** type (`expr_is_u32` / `expr_is_u64` on `v.init`), so the
+existing unsigned compare/div remap (`to_unsigned_kind`, #2917) fires. Only the
+inferred form was affected — explicit `: u32`, a direct `(X as u32)` operand,
+and `u32` parameters already worked (the sibling `std/u32` re-audit below closed
+those). Guarded by `TestSelfHostU32InferredCmpIR{X86_64,Wasm}` (value-pinned;
+the wasm leg is the one that caught it). The change is in `irlower.fern`, so the
+byte-identical self-host fixpoints (`TestSelfHostModloadFixpointX86_64` /
+`TestSelfHostStage2FixedPoint`) were watched closely — both stay green.
 
 ### 2026-06-20 — `std/u32` self-host row → ✅ (the #2917 wasm unsigned-compare gap is closed)
 
