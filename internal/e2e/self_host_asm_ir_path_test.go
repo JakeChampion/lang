@@ -1897,6 +1897,13 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"match-expr-enum-payload-call", `enum L { C(i32, L), N } function hd(l: L): i32 { return match (l) { C(h, t) => h, N => 0 }; } function snd(l: L): i32 { return match (l) { C(h, t) => hd(t), N => 0 }; } function main(): i32 { return snd(C(7, C(9, N))); }`, 9},
 		{"match-expr-recursive-sum", `enum L { C(i32, L), N } function sum(l: L): i32 { return match (l) { C(h, t) => h + sum(t), N => 0 }; } function main(): i32 { return sum(C(1, C(2, C(3, N)))); }`, 6},
 		{"match-expr-payload-call-mixed-args", `struct S { v: i32 } enum E { A(S), N } function g(s: S, k: i32): i32 { return s.v + k; } function f(e: E): i32 { return match (e) { A(s) => g(s, 3), N => 0 }; } function main(): i32 { return f(A(S { v: 5 })); }`, 8},
+		// The METHOD sibling (#3498 follow-up): a match-EXPRESSION arm calling a
+		// METHOD on ANOTHER receiver (`w.take(p)`, not the payload) with the bound
+		// payload as a borrow argument, returning i32. The value-position gate
+		// (iife_call_is_i32_borrow) infers the method's receiver type and proves its
+		// return i32 by exclusion — the same admission the free-function case uses.
+		{"match-expr-method-other-recv-payload-arg", `struct S { v: i32 } struct W { } enum E { A(S), N } function (w: W) take(s: S): i32 { return s.v; } function f(e: E): i32 { var w = W {}; return match (e) { A(s) => w.take(s), N => 0 }; } function main(): i32 { return f(A(S { v: 5 })); }`, 5},
+		{"match-expr-method-other-recv-scalar-arg", `struct W { } enum E { A(i32), N } function (w: W) dbl(x: i32): i32 { return x * 2; } function f(e: E): i32 { var w = W {}; return match (e) { A(x) => w.dbl(x), N => 0 }; } function main(): i32 { return f(A(7)); }`, 14},
 	}
 	for _, tc := range irOnly {
 		t.Run(tc.name, func(t *testing.T) {
