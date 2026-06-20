@@ -211,33 +211,73 @@ var traitsCases = []struct {
 			"function main(): i32 { var r: i32 = 0; " +
 			"if (Low(1).cmp(Low(2)) < 0) { r = r + 1; } if (Low(9).cmp(High) < 0) { r = r + 2; } " +
 			"if (High.cmp(Low(0)) > 0) { r = r + 4; } if (Low(3).cmp(Low(3)) == 0) { r = r + 8; } return r; }", 15},
-		// `@derive(Json)` on a struct synthesises a field-wise `to_json`
-		// rendering the canonical JSON object `{"f":<f.to_json()>,…}` — the
-		// same shape the Go checker's synthJson emits, composing through each
-		// field's own `Json` impl (i32 → number, string → quoted). The inline
-		// `trait Json` + primitive impls keep the case self-contained (the
-		// trait-test harness doesn't load std/json). Returns the rendered
-		// length: `{"id":7,"tag":"hi"}` (oracle-matched). The to_json body is
-		// structurally identical to the Display `to_string` body (string
-		// concat + per-field dispatch), so it lowers through the same IR path.
-		{"trait-derive-struct-json",
-			"trait Json { function to_json(self: Self): string; } " +
-				"impl Json for i32 { function to_json(self: Self): string { return self.to_string(); } } " +
-				"impl Json for string { function to_json(self: Self): string { return \"\\\"\" + self + \"\\\"\"; } } " +
-				"@derive(Json) struct Item { id: i32, tag: string } " +
-				"function main(): i32 { var p: Item = Item { id: 7, tag: \"hi\" }; return p.to_json().len(); }",
-			len(`{"id":7,"tag":"hi"}`)},
-		// `@derive(Json)` on an enum: externally-tagged — a unit variant
-		// renders as its quoted name (`"Nil"`), a single-payload variant as a
-		// one-key object (`{"Has":<__p0.to_json()>}`). Mirrors the Go
-		// synthEnumJson (self-host enum variants carry at most one payload).
-		// `Has(7)`→`{"Has":7}` (9) + `Nil`→`"Nil"` (5) = 14.
-		{"trait-derive-enum-json",
-			"trait Json { function to_json(self: Self): string; } " +
-				"impl Json for i32 { function to_json(self: Self): string { return self.to_string(); } } " +
-				"@derive(Json) enum Opt { Has(i32), Nil } " +
-				"function main(): i32 { var h: Opt = Has(7); var n: Opt = Nil; return h.to_json().len() + n.to_json().len(); }",
-			len(`{"Has":7}`) + len(`"Nil"`)},
+	// `@derive(Json)` on a struct synthesises a field-wise `to_json`
+	// rendering the canonical JSON object `{"f":<f.to_json()>,…}` — the
+	// same shape the Go checker's synthJson emits, composing through each
+	// field's own `Json` impl (i32 → number, string → quoted). The inline
+	// `trait Json` + primitive impls keep the case self-contained (the
+	// trait-test harness doesn't load std/json). Returns the rendered
+	// length: `{"id":7,"tag":"hi"}` (oracle-matched). The to_json body is
+	// structurally identical to the Display `to_string` body (string
+	// concat + per-field dispatch), so it lowers through the same IR path.
+	{"trait-derive-struct-json",
+		"trait Json { function to_json(self: Self): string; } " +
+			"impl Json for i32 { function to_json(self: Self): string { return self.to_string(); } } " +
+			"impl Json for string { function to_json(self: Self): string { return \"\\\"\" + self + \"\\\"\"; } } " +
+			"@derive(Json) struct Item { id: i32, tag: string } " +
+			"function main(): i32 { var p: Item = Item { id: 7, tag: \"hi\" }; return p.to_json().len(); }",
+		len(`{"id":7,"tag":"hi"}`)},
+	// `@derive(Json)` on an enum: externally-tagged — a unit variant
+	// renders as its quoted name (`"Nil"`), a single-payload variant as a
+	// one-key object (`{"Has":<__p0.to_json()>}`). Mirrors the Go
+	// synthEnumJson (self-host enum variants carry at most one payload).
+	// `Has(7)`→`{"Has":7}` (9) + `Nil`→`"Nil"` (5) = 14.
+	{"trait-derive-enum-json",
+		"trait Json { function to_json(self: Self): string; } " +
+			"impl Json for i32 { function to_json(self: Self): string { return self.to_string(); } } " +
+			"@derive(Json) enum Opt { Has(i32), Nil } " +
+			"function main(): i32 { var h: Opt = Has(7); var n: Opt = Nil; return h.to_json().len() + n.to_json().len(); }",
+		len(`{"Has":7}`) + len(`"Nil"`)},
+	// `@derive(Debug)` on a struct synthesises a `to_debug` rendering the
+	// structural `Name { f: <debug f>, … }` form — the Debug sibling of
+	// the derived Display. The one difference is that a string field
+	// renders QUOTED (`tag: "hi"`), so a debug dump is unambiguous; i32 +
+	// string render via emitter intrinsics, so no trait/impl is needed.
+	// `Item { id: 7, tag: "hi" }` (oracle-matched length).
+	{"trait-derive-struct-debug",
+		"@derive(Debug) struct Item { id: i32, tag: string } " +
+			"function main(): i32 { var p: Item = Item { id: 7, tag: \"hi\" }; return p.to_debug().len(); }",
+		len(`Item { id: 7, tag: "hi" }`)},
+	// `@derive(Debug)` on an enum: `Variant` / `Variant(<debug payload>)`.
+	// A string payload renders quoted (`Word("hi")`), the Debug vs Display
+	// distinction. `Word("hi")`→10 + `End`→3 = 13.
+	{"trait-derive-enum-debug",
+		"@derive(Debug) enum Msg { Word(string), End } " +
+			"function main(): i32 { var w: Msg = Word(\"hi\"); var e: Msg = End; return w.to_debug().len() + e.to_debug().len(); }",
+		len(`Word("hi")`) + len("End")},
+	// `@derive(Hash)` on a struct synthesises a field-wise fold `h = h*31 +
+	// self.f.hash()` from a seed of 17, composing through each field's own
+	// `Hash` impl (inline `impl Hash for i32` provides the field dispatch;
+	// the trait-test harness doesn't load core/cmp). Paired with Eq under
+	// `a == b ⇒ a.hash() == b.hash()`. r=3 only if equal values hash the
+	// same AND differing values hash apart.
+	{"trait-derive-struct-hash",
+		"trait Hash { function hash(self: Self): i32; } " +
+			"impl Hash for i32 { function hash(self: Self): i32 { return self; } } " +
+			"@derive(Hash) struct P { x: i32, y: i32 } " +
+			"function main(): i32 { var a: P = P { x: 3, y: 4 }; var b: P = P { x: 3, y: 4 }; var c: P = P { x: 5, y: 4 }; " +
+			"var r: i32 = 0; if (a.hash() == b.hash()) { r = r + 1; } if (a.hash() != c.hash()) { r = r + 2; } return r; }", 3},
+	// `@derive(Hash)` on an enum: the accumulator is seeded with the
+	// variant tag (17 + declaration index) so distinct variants hash
+	// apart, then the single payload is folded in. Inline `impl Hash for
+	// i32` for the payload. r=3 only if distinct variants differ AND the
+	// same variant+payload hashes equal.
+	{"trait-derive-enum-hash",
+		"trait Hash { function hash(self: Self): i32; } " +
+			"impl Hash for i32 { function hash(self: Self): i32 { return self; } } " +
+			"@derive(Hash) enum Shape { Dot, Circle(i32) } " +
+			"function main(): i32 { var r: i32 = 0; " +
+			"if (Dot.hash() != Circle(0).hash()) { r = r + 1; } if (Circle(7).hash() == Circle(7).hash()) { r = r + 2; } return r; }", 3},
 	// Generic-struct monomorphisation: a `@derive(Display) struct Box[T]`
 	// instantiated at `Box[i32]` is cloned to a concrete `Box__i32` with
 	// `v: i32`, so `self.v.to_string()` dispatches statically to the i32
