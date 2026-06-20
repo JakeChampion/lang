@@ -113,7 +113,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `Map[K, V]` literal + ops | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `insert`/`get_or`/`has`/`len`/`keys`/`values`/`for (k,v)`, i32 + string keys; `without` (functional delete) now on the x86-64/arm64 IR path ([#2926](https://github.com/JakeChampion/lang/issues/2926)) — wasm `without` stays on the AST path (box-return ABI) |
 | Array literals | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | `var x: T = expr;` + type inference | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | inference (no `: T`) covers wider scalars (i64/u32/u8-wrap/f64/f32/bool/string), composites (tuple/struct/array/enum), and call-return inference — native `var_inference` fixture (4 backends) + self-host IR pin (x86-64 + wasm) |
-| Compound assignment `+= -= *= …` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `+= -= *= /= %=` |
+| Compound assignment `+= -= *= …` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `+= -= *= /= %=`; read-modify-write is width-correct beyond i32 — i64/u32/u8-wrap/f64 + loop accumulation pinned via the self-host IR `compound_assign_wider` pin (x86-64 + wasm) + native fixture (array-element compound assign is E056: arrays are immutable, use `.with`) |
 | `if`/`else` statement | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | `if` as expression | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | `while` loop | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
@@ -249,6 +249,24 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-20 — compound assignment (wider types) on the self-host IR path + native audit
+
+Extended the `Compound assignment += -= *= …` row beyond the i32 path. A
+compound assignment is a read-modify-write — the lowering loads the local,
+applies the op, and stores back, so width-correct load/op/store matters for the
+wider types.
+
+- **Native** — `compound_assign_wider` fixture (interp / x86-64 / arm64 / wasm):
+  `+=` / `*=` on i64, `+=` on u32 / u8 (wrap), `+=` / `*=` on f64, the full
+  `-= /= %=` set on i32, and `+=` loop accumulation into an i64.
+- **Self-host IR** — `TestSelfHostCompoundAssignWiderIR{X86_64,Wasm}` run ten
+  cases through the x86-64 + wasm IR drivers, pinned to the `"ir"` path and
+  oracle-checked against the interpreter (every result ≤ 120). All already
+  lower, so **no compiler change**.
+
+(Array-element compound assignment `a[i] += v` is statically rejected with
+`E056` — owned arrays are immutable; use `.with` — so it is correctly excluded.)
 
 ### 2026-06-20 — `var` type inference (wider types) on the self-host IR path + native audit
 
