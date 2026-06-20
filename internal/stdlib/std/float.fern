@@ -103,6 +103,51 @@ pub function (n: f64) to_string(): string {
     return __float_to_string(n, 15);
 }
 
+// __float_to_string_prec renders `n` with EXACTLY `prec` fractional
+// digits — no trailing-zero trimming — rounding half away from zero.
+// Unlike __float_to_string (which trims and caps at the precision
+// floor), this gives the fixed-width output that table / currency
+// formatting wants: `3.14159 @ prec 2` -> "3.14", `2.5 @ prec 0` ->
+// "3", `1.0 @ prec 3` -> "1.000". The whole computation stays in the
+// float domain via __float_int_part, so no value crosses the
+// trapping/non-portable `f64 -> i64` boundary regardless of magnitude.
+function __float_to_string_prec(n: f64, prec: i32): string {
+    if (n != n) { return "NaN"; }
+    var out: string = "";
+    if (n < 0.0) {
+        out = "-";
+        n = 0.0 - n;
+    }
+    if (n != 0.0 && n * 2.0 == n) { return out + "Inf"; }
+    // mult = 10^prec.
+    var mult: f64 = 1.0;
+    var i: i32 = 0;
+    while (i < prec) { mult = mult * 10.0; i = i + 1; }
+    // Scale, round half away from zero, and split into integer + fraction
+    // halves — both integer-valued f64s now.
+    var scaled: f64 = __floor_f64(n * mult + 0.5);
+    var intf: f64 = __floor_f64(scaled / mult);
+    var fracf: f64 = scaled - intf * mult;
+    out = out + __float_int_part(intf);
+    if (prec == 0) { return out; }
+    // Zero-pad the fractional digits out to `prec` places.
+    var fracStr: string = __float_int_part(fracf);
+    while (fracStr.len() < prec) { fracStr = "0" + fracStr; }
+    return out + "." + fracStr;
+}
+
+// `to_string_prec(prec)` — fixed-precision rendering with exactly
+// `prec` fractional digits (rounded half away from zero). The
+// precision-controlled counterpart to `to_string()`, for the
+// width/precision table-output story (issue #2684).
+pub function (n: f32) to_string_prec(prec: i32): string {
+    return __float_to_string_prec(n as f64, prec);
+}
+
+pub function (n: f64) to_string_prec(prec: i32): string {
+    return __float_to_string_prec(n, prec);
+}
+
 // f64 math methods — receiver-syntax wrappers around the
 // checker-injected builtins. Each method's body is a single
 // call into the matching `__<op>_f64` primitive, so codegen

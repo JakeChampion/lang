@@ -63,7 +63,8 @@ Receiver methods on i32 / byte values.
 
 - **String:** `(n: f32) to_string()`, `(n: f64) to_string()` —
   up to 7 / 15 fractional digits, trailing zeros trimmed, NaN
-  / ±Inf handled
+  / ±Inf handled. `(n) to_string_prec(prec)` — fixed `prec`
+  fractional digits (no trimming), rounded half away from zero.
 - **Math primitives** (on both f32 and f64; f32 wrappers
   promote to f64, apply, demote): `abs`, `floor`, `ceil`,
   `round`, `trunc`, `sqrt`, `pow(y)`, `log`, `exp`, `sin`,
@@ -181,7 +182,8 @@ Free sort / compare helpers (insertion-sort).
 ### `std/format`
 
 - `format(fmt, args)` — template substitution with `{}`
-  placeholders.
+  placeholders and Rust-style `{:[[fill]align][width][.precision]}`
+  specs (`{:>8}`, `{:*^10}`, `{:.3}`, `{:>8.2}`).
 - `format_bytes(n)` — `"1024 → 1 KiB"` shape (binary prefixes).
 - `format_duration_ms(ms)` — `"1h 23m 45s"` shape.
 

@@ -208,7 +208,7 @@ per-function bugs in the audit log.
 | `std/array` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | reductions sum/max/min/product/sorted_asc — `audit_std_numeric` + `self_host_audit_stdarray_test` |
 | `std/math` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | range/i32_max/i32_min — `audit_std_numeric` + `self_host_math_test` |
 | `std/sort` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_sort_i32` — ordering + permutation (histogram) + idempotence laws |
-| `std/format` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | self-host via the IR path (x86-64 + wasm): `format_bytes` (`TestSelfHostFormatBytesIR`), `format(fmt, args)` `{}`-substitution (`TestSelfHostFormatStringIR`), and `format_duration_ms` (`TestSelfHostFormatDurationIR`) — the last two oracle-checked against the interpreter; native via `audit_std_textfmt` |
+| `std/format` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | self-host via the IR path (x86-64 + wasm): `format_bytes` (`TestSelfHostFormatBytesIR`), `format(fmt, args)` `{}`-substitution (`TestSelfHostFormatStringIR`), `format_duration_ms` (`TestSelfHostFormatDurationIR`), and the `{:fill|align|width.precision}` specs (`TestSelfHostFormatSpecIR`) — all oracle-checked against the interpreter; native via `audit_std_textfmt` + the `format_specs` fixture (with std/float `to_string_prec`) |
 | `std/csv` | ✅ | ✅ | ✅ | ✅ | | ✅ | parse_line/join/escape — `audit_std_textfmt`; self-host via the IR path (x86-64 + wasm): `csv_parse_line` (`TestSelfHostCsvParseLineIR`) + `csv_escape`/`csv_join` (`TestSelfHostCsvEscapeIR`, oracle-checked — `index_of`/`replace` lower as `op_str_index_of`/`op_str_replace`) |
 | `std/log` | | | | | | ⬜ | |
 | `std/io` | | | | | | ⬜ | |
@@ -249,6 +249,24 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-20 — std/format width/precision/fill specs + std/float `to_string_prec` ([#2684](https://github.com/JakeChampion/lang/issues/2684))
+
+`std/format.format` now parses Rust-style `{:[[fill]align][width][.precision]}`
+specs on top of the existing `{}` substitution: `<`/`>`/`^` alignment, a custom
+fill char (`{:*>8}`), minimum width padding, and `.N` string-precision
+truncation — applied to the already-stringified arg, so no trait dispatch is
+needed (generic `Display` remains the deferred half of #2684). A `{…}` run whose
+body isn't empty and doesn't start with `:` (e.g. JSON `{"k":1}`) now renders
+literally and consumes no arg. Paired with `std/float`'s new
+`to_string_prec(prec)` (f32/f64) — fixed `prec` fractional digits, rounded half
+away from zero, computed entirely in the float domain (`__float_to_string_prec`
+→ `__float_int_part`, no `f64→i64` trap boundary). Native across all four
+backends via the `format_specs` fixture; self-host via the IR path (x86-64 +
+wasm) with `TestSelfHostFormatSpecIR{X86_64,Wasm}` — the inlined spec machinery
+(forward `}`-scan, `s[a:b]` slices, byte compares, `boolean`-returning helpers
+with `||`, int-coded align, fill-repeat concat loop) oracle-checked against the
+interpreter, pinned to the `"ir"` path. No compiler change.
 
 ### 2026-06-16 — u64[] arrays on the self-host IR path (widen IR subset)
 
