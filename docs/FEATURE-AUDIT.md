@@ -112,7 +112,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | Tuples `(T, U)` + destructuring | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `.0`/`.1` + `var (a,b) = …` |
 | `Map[K, V]` literal + ops | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `insert`/`get_or`/`has`/`len`/`keys`/`values`/`for (k,v)`, i32 + string keys; `without` (functional delete) now on the x86-64/arm64 IR path ([#2926](https://github.com/JakeChampion/lang/issues/2926)) — wasm `without` stays on the AST path (box-return ABI) |
 | Array literals | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
-| `var x: T = expr;` + type inference | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | i32 path; wider types pending |
+| `var x: T = expr;` + type inference | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | inference (no `: T`) covers wider scalars (i64/u32/u8-wrap/f64/f32/bool/string), composites (tuple/struct/array/enum), and call-return inference — native `var_inference` fixture (4 backends) + self-host IR pin (x86-64 + wasm) |
 | Compound assignment `+= -= *= …` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `+= -= *= /= %=` |
 | `if`/`else` statement | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
 | `if` as expression | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
@@ -249,6 +249,25 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-20 — `var` type inference (wider types) on the self-host IR path + native audit
+
+Extended the `var x: T = expr + type inference` row from "i32 path; wider types
+pending" to full coverage. With no explicit `: T` annotation, the binding's
+type is inferred from its initializer; the inferred type then drives the
+arithmetic / field access / dispatch that follows, so a wrong inference would
+mis-lower or bail.
+
+- **Native** — `var_inference` fixture (interp / x86-64 / arm64 / wasm): infers
+  i64 / u32 / u8-wrap / f64 / bool / string / tuple / struct / `i32[]` / enum
+  bindings and a call-return-typed binding, then asserts each.
+- **Self-host IR** — `TestSelfHostVarInferenceIR{X86_64,Wasm}` run twelve cases
+  through the x86-64 + wasm IR drivers, pinned to the `"ir"` path and
+  oracle-checked against the interpreter (i64/u32/u8-wrap/f64/f32/bool/string +
+  tuple/struct/array/enum + call-return inference; every result ≤ 120). All
+  already lower, so **no compiler change**.
+
+Row note updated to reflect the wider-type coverage.
 
 ### 2026-06-20 — slice views `[T]` on the self-host IR path + native audit
 
