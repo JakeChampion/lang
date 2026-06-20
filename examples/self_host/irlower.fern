@@ -3020,6 +3020,8 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
                     // binding `var a = monotonic_ns()` width-tracks i64.
                     if (cid.name == "monotonic_ns" || cid.name == "now_unix_ms" || cid.name == "now_ns") { return 64; }
                     if (cid.name == "__load_i64") { return 64; }
+                    // f64_bits(x) reinterprets an f64's raw bits as an i64.
+                    if (cid.name == "f64_bits") { return 64; }
                     if (s.is_i64_ret_fn(cid.name)) { return 64; }
                 },
                 parser.ExprFieldAccess(cfa) => {
@@ -3169,6 +3171,10 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                     // normal call path (which emits the op + pushes the result).
                     if (cid.name == "monotonic_ns" || cid.name == "now_unix_ms" || cid.name == "now_ns") { return lower_expr(e, s); }
                     if (cid.name == "__load_i64") { return lower_expr(e, s); }
+                    // f64_bits(x) yields an i64 (the f64's raw bits) — route the
+                    // reinterpret through the normal expr path, which pushes the
+                    // i64 result.
+                    if (cid.name == "f64_bits") { return lower_expr(e, s); }
                     if (s.is_i64_ret_fn(cid.name)) { return lower_expr(e, s); }
                 },
                 parser.ExprFieldAccess(cfa) => {
@@ -4312,6 +4318,16 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         var fu: LowerState = lower_expr(c.args[0], s);
                         if (!fu.ok) { return fu; }
                         return fu.emit(ir.op_funary(fuk));
+                    }
+                    // f64_bits(x): reinterpret an f64's raw bits as an i64 (a
+                    // bit copy, not a numeric convert). Lower the f64 operand,
+                    // then emit the reinterpret op (a no-op on the register
+                    // backends, `i64.reinterpret_f64` on wasm). The result is an
+                    // i64 value (so lower_i64 routes a use here, below).
+                    if (cid.name == "f64_bits" && c.args.len() == 1) {
+                        var fbits: LowerState = lower_expr(c.args[0], s);
+                        if (!fbits.ok) { return fbits; }
+                        return fbits.emit(ir.op_reinterpret_f64_i64());
                     }
                     if (cid.name == "string_from_bytes" && c.args.len() == 1) {
                         var sfb: LowerState = lower_expr(c.args[0], s);

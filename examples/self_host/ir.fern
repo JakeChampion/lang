@@ -170,6 +170,14 @@ pub function op_f64_to_i32(): Op { return op0("f64_to_i32"); }
 // emit the same 64-bit-dest instruction for both.
 pub function op_f64_to_i64(): Op { return op0("f64_to_i64"); }
 
+// reinterpret_f64_i64 reinterprets an f64's raw bits as an i64 (the `f64_bits`
+// builtin) — a value-preserving bit copy, NOT a numeric conversion. On the
+// register backends the value already rides the operand stack as raw bits, so
+// it is a no-op; only wasm (typed operand stack) needs the explicit
+// `i64.reinterpret_f64`. (The reverse `f64_from_bits` / the f32 pair are a
+// later increment.)
+pub function op_reinterpret_f64_i64(): Op { return op0("reinterpret_f64_i64"); }
+
 // op_const_f64_text carries the float literal's SOURCE TEXT (in `str`) so the
 // backends can hand it straight to the assembler (`.double TEXT` in .rodata /
 // `f64.const TEXT`) without a float parse+format round-trip — mirroring

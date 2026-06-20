@@ -1,0 +1,12 @@
+import "core/int";
+
+// Exercises the f64_bits builtin (reinterpret an f64's raw bits as an i64,
+// IEEE-754 layout) across all four native backends by extracting bit-fields
+// of the double and narrowing to i32. FEATURE-AUDIT float-bits row (f64_bits).
+function main(): i32 {
+    print(int.int_to_string((f64_bits(2.0) >> 60) as i32));            // 4
+    print(int.int_to_string((f64_bits(1.0) >> 60) as i32));            // 3
+    print(int.int_to_string(f64_bits(0.0) as i32));                    // 0
+    print(int.int_to_string(((f64_bits(8.0) >> 52) as i32) - 1024));   // 2 (biased exp 1026)
+    return 0;
+}

@@ -168,7 +168,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `now_unix_ms` / `monotonic_ns` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | both ✅ all backends; `monotonic_ns` native x86-64/arm64 runtimes added ([#2843](https://github.com/JakeChampion/lang/issues/2843)); self-host **IR path** lowers both on x86-64/arm64 (wasm routes via the AST path) |
 | `now_ns` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | wall-clock nanoseconds (i64); native interp + x86-64 + arm64 runtimes added (previously wasm-only); self-host x86-64/arm64 now emit it on both the AST and IR paths (wasm routes via the AST path) |
 | `random_bytes` / `random_i32` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | length + usable value |
-| `f32_bits/f32_from_bits/f64_bits/f64_from_bits` | | | | | | ⬜ | |
+| `f32_bits/f32_from_bits/f64_bits/f64_from_bits` | ✅ | ✅ | ✅ | ✅ | 🔧 | 🔧 | bit reinterpret between float ↔ int (IEEE-754 layout). Native: all four backends (interp + register backends are a zero-cost bit copy; wasm uses the typed `*.reinterpret_*`). Self-host **IR path**: `f64_bits` (f64→i64) now lowers via a new `reinterpret_f64_i64` op — a no-op on x86-64/arm64 (the value rides the operand stack as raw bits), `i64.reinterpret_f64` on wasm — with i64 width-tracking in irlower (`TestSelfHostF64BitsIR`, x86-64 + wasm, oracle-checked). The reverse `f64_from_bits` + the `f32_*` pair still route AST (they need f64/f32-result width tracking) — a later increment |
 | float math builtins `__sqrt_f64` etc. | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | via std/float; self-host IR path (`op_funary`; `TestSelfHostFloatMathIR`): `__sqrt_f64`/`__floor_f64`/`__ceil_f64`/`__trunc_f64`/`__abs_f64` lower to a single hardware instruction on all three backends, and `__round_f64` (round-half-away) lowers too — one instruction on arm64 (`frinta`), emulated as `trunc(x+copysign(0.5,x))` on x86/wasm (`roundsd`/`f64.nearest` have no ties-away mode). Only the libm transcendentals (`__log_f64`/`__exp_f64`/`__sin_f64`/`__cos_f64`/`__pow_f64`) still route AST |
 | `strbuf_reset/append/take` | | | | | | ⬜ | |
 | `__heap_bump_bytes` | | | | | | ⬜ | introspection |
@@ -268,6 +268,25 @@ mis-lower or bail.
   already lower, so **no compiler change**.
 
 Row note updated to reflect the wider-type coverage.
+
+### 2026-06-20 — `f64_bits` on the self-host IR path (real IR widening)
+
+Widened the self-host IR subset: the `f64_bits` builtin (reinterpret an f64's
+raw bits as an i64 — IEEE-754 layout, a value-preserving bit copy) previously
+had **no** self-host IR lowering and bailed to the AST path. Added a new
+`reinterpret_f64_i64` IR op (`ir.fern`) wired through all three IR backends — a
+**no-op** on x86-64 / arm64 (the value already rides the operand stack as raw
+bits; `asm_ir.fern` / `asm_arm64_ir.fern`) and `i64.reinterpret_f64` on wasm's
+typed operand stack (`wasm_ir.fern`) — plus irlower recognition: `f64_bits` is
+lowered in `lower_expr` (lower the f64 operand, emit the reinterpret), routed
+from the i64 value path (`lower_i64`), and tracked as 64-bit in
+`infer_expr_width` so `f64_bits(x) >> n as i32` narrows correctly. Guarded by
+`TestSelfHostF64BitsIR{X86_64,Wasm}` (six cases extracting IEEE-754 bit-fields,
+pinned to `"ir"`, oracle-checked against the interpreter). Native already
+supported the builtin on all four backends (`internal/ir` `OpReinterpret*` +
+the interp). The reverse `f64_from_bits` (i64→f64) and the `f32_*` pair still
+route AST — they need f64/f32-**result** width tracking through the slot system,
+a later increment; row marked 🔧.
 
 ### 2026-06-20 — slice views `[T]` on the self-host IR path + native audit
 
