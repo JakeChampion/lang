@@ -5959,6 +5959,18 @@ function iife_call_arg_borrow_safe(arg: parser.Expr, name: string, ft: string, s
 function iife_call_is_i32_borrow(c: parser.ExprCall, name: string, ft: string, s: LowerState): boolean {
     match (c.callee) {
         parser.ExprIdent(cid) => { if (!iife_free_fn_ret_i32(cid.name, s)) { return false; } },
+        // A METHOD call on ANOTHER receiver (`w.take(p)` — `w` is not the bound
+        // payload): the method must provably return i32 (by exclusion on the
+        // receiver's struct/enum type, iife_method_ret_i32) and the receiver
+        // itself must be borrow-safe w.r.t. the payload (independent of it, or a
+        // borrow read). The method-on-the-PAYLOAD case (`p.m()`) is handled
+        // separately in iife_borrow_leaf_i32 and never reaches here. #3498.
+        parser.ExprFieldAccess(cfa) => {
+            var rty: string = expr_struct_type(cfa.obj, s);
+            if (rty == "") { return false; }
+            if (!iife_method_ret_i32(rty, cfa.field, s)) { return false; }
+            if (!iife_call_arg_borrow_safe(cfa.obj, name, ft, s)) { return false; }
+        },
         _ => { return false; }
     }
     var i: i32 = 0;
@@ -5993,21 +6005,28 @@ function iife_borrow_leaf_i32(e: parser.Expr, name: string, ft: string, s: Lower
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprFieldAccess(cfa) => {
+                    // Method on the PAYLOAD itself: `name.len()` (string / array
+                    // length → i32) or `name.method()` on a struct / enum payload
+                    // whose return is provably i32 (NOT in any wider-result registry
+                    // — a boolean return also rides the i32 temp). Args are not
+                    // re-checked here: a non-borrow / non-lowerable arg bails the
+                    // function in lowering (AST fallback).
                     match (cfa.obj) {
                         parser.ExprIdent(rid) => {
-                            if (rid.name != name) { return false; }
-                            // `name.len()` — string / array length → i32.
-                            if (cfa.field == "len" && c.args.len() == 0) { return true; }
-                            // `name.method()` on a struct / enum payload whose return is
-                            // provably i32 (NOT in any wider-result registry — a boolean
-                            // return also rides the i32 temp, so it's fine).
-                            if (decl_is_struct(s.structs, ft) || is_enum_like_name(ft, s.structs)) {
-                                return iife_method_ret_i32(ft, cfa.field, s);
+                            if (rid.name == name) {
+                                if (cfa.field == "len" && c.args.len() == 0) { return true; }
+                                if (decl_is_struct(s.structs, ft) || is_enum_like_name(ft, s.structs)) {
+                                    return iife_method_ret_i32(ft, cfa.field, s);
+                                }
+                                return false;
                             }
-                            return false;
                         },
-                        _ => { return false; }
+                        _ => {}
                     }
+                    // Method on ANOTHER receiver passing the payload as a borrow arg
+                    // (`w.take(p)`): the method sibling of the free-function case
+                    // below, handled by iife_call_is_i32_borrow (#3498 follow-up).
+                    return iife_call_is_i32_borrow(c, name, ft, s);
                 },
                 // `g(name)` / `sum(t)` — a FREE-function call passing the bound
                 // payload as a borrow argument, returning i32. The statement-form
