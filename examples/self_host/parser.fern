@@ -3095,6 +3095,13 @@ function parse_type_name(p: Par): TypeNameResult {
         // `Option[(string, string)]` — pass parens through verbatim.
         if (pk == "(") { inner = inner + "("; p = p.advance(); prev_ident = false; continue; }
         if (pk == ")") { inner = inner + ")"; p = p.advance(); prev_ident = false; continue; }
+        // FN-typed generic arg, e.g. `Option[() => i32]`, `Map[i32, (A) => B]`,
+        // `Result[(i32) => i32, E]` — pass the `=>` arrow through verbatim (joined
+        // with surrounding spaces) so the fn-type spelling round-trips inside the
+        // brackets. Without this the loop breaks on `=>`, truncating the type to
+        // `Option[()]` and leaving `=> i32` on the cursor — which then corrupts the
+        // enclosing decl body into a StmtUnknown.
+        if (pk == "=>") { inner = inner + " => "; p = p.advance(); prev_ident = false; continue; }
         var seg: string = p.peek_ident();
         if (seg.len() == 0) { seg = p.peek_keyword(); }
         if (seg.len() == 0) { break; }

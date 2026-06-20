@@ -1830,6 +1830,21 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// fn-typed param flows the box unwrapped (env-first). apply(g, 21) = 42.
 		{"clo-fnval-local-arg", `function dbl(n: i32): i32 { return n * 2; } function apply(f: (i32) => i32, n: i32): i32 { return f(n); } function main(): i32 { var g = dbl; return apply(g, 21); }`, 42},
 		{"method-fn-param-named", `struct Obj { k: i32 } function inc(x: i32): i32 { return x + 1; } function (o: Obj) ap(f: (i32) => i32, x: i32): i32 { return f(x) + o.k; } function main(): i32 { var o = Obj{k:100}; return o.ap(inc, 5); }`, 106},
+		// MATCH binds a fn-typed Option payload and CALLS it (slice #3445 match-fn).
+		// The constructor side wraps the no-capture lambda payload of `Some(...)`
+		// into a [$wrapN] env box; the match arm marks `f` a closure local so `f()`
+		// dispatches env-first. Option[() => i32], Some(λ.9) -> 9.
+		{"match-opt-fn-call", `function mk(): Option[() => i32] { return Some(function(): i32 { return 9; }); } function main(): i32 { match (mk()) { Some(f) => { return f(); }, None => { return 0; } } }`, 9},
+		// MATCH binds a fn-typed Result Ok payload that CAPTURES and calls it. The
+		// constructor wraps the capturing lambda into a [funcval, n] box; the Ok arm
+		// marks `g` a closure local so `g(5)` dispatches env-first against the box.
+		// Result[(i32) => i32, i32], mk2(10) = Ok(λx.x+10); g(5) = 15.
+		{"match-result-fn-call-captured", `function mk2(n: i32): Result[(i32) => i32, i32] { return Ok(function(x: i32): i32 { return x + n; }); } function main(): i32 { match (mk2(10)) { Ok(g) => { return g(5); }, Err(e) => { return e; } } }`, 15},
+		// MATCH binds a no-capture fn-typed Option payload and calls it, while the
+		// matching function ALSO has an outer capture-free local in scope (regression
+		// guard that the closure-local mark doesn't leak onto unrelated locals).
+		// Option[() => i32], Some(λ.7); f() + base = 7 + 100 = 107.
+		{"match-opt-fn-call-outer-local", `function mk(): Option[() => i32] { return Some(function(): i32 { return 7; }); } function main(): i32 { var base = 100; match (mk()) { Some(f) => { return f() + base; }, None => { return 0; } } }`, 107},
 	}
 	for _, tc := range irOnly {
 		t.Run(tc.name, func(t *testing.T) {
