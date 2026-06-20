@@ -4886,21 +4886,27 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             _ => {}
                         }
                     }
-                    if (fa.field == "len" && c.args.len() == 0 && expr_struct_type(fa.obj, s) == "") {
+                    if (fa.field == "len" && c.args.len() == 0 && !decl_is_struct(s.structs, expr_struct_type(fa.obj, s))) {
                         // String `.len()` reads the string box's length field;
                         // array `.len()` reads the array header. Dispatch on the
                         // receiver's tracked type.
                         //
                         // Guard: only intercept the builtin `.len()` when the
-                        // receiver is NOT a struct. A struct has no builtin
-                        // `.len()`, so `b.len()` on a struct must be a
+                        // receiver is NOT a declared struct VALUE. A struct has no
+                        // builtin `.len()`, so `b.len()` on a struct must be a
                         // user-defined receiver method (`(b: T) len()`) — which
                         // shadows the builtin, matching the native compiler.
                         // Without this guard the receiver fell through to
                         // `op_arr_len`, reading the struct box as an array header
                         // (returning garbage) instead of dispatching the method
-                        // (#3478). The sibling `append` intercepts below are
-                        // already array-guarded; `len` was the only unguarded one.
+                        // (#3478). `decl_is_struct` keys on the DECLARED struct
+                        // name, so it's false for arrays / strings (whose
+                        // `expr_struct_type` is "") AND for a generic `T[]`
+                        // param (whose tracked element type "T" isn't a declared
+                        // struct) — the latter keeps `xs.len()` in the generic
+                        // array serialiser on the builtin path. The sibling
+                        // `append` intercepts below are already array-guarded;
+                        // `len` was the only unguarded one.
                         var str_recv: boolean = expr_is_str(fa.obj, s);
                         var sl: LowerState = lower_expr(fa.obj, s);
                         if (!sl.ok) { return sl; }
