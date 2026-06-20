@@ -483,6 +483,12 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // its heap block). Pop the path box into x0, push the result box.
             s = s.need("heap").need("read_file");
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_read_file\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "args") {
+            // no args -> build a fresh string[] of the command-line arguments
+            // (asm_arm64.emit_runtime's __fern_args, emitted in its args block).
+            // The args need also makes _start save argc/argv from the initial stack.
+            s = s.need("heap").need("args");
+            s = s.write("    bl __fern_args\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "eprint_str") {
             // [strbox] -> write its bytes to stderr (asm_arm64.emit_runtime's
             // __fern_eprint_str, reused via the eprint need). Push x0 for the drop.
@@ -907,6 +913,21 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState): asmcore.EmitSt
         fi = fi + 1;
     }
     s = s.write("_start:\n");
+    // args() reads __fern_argc / __fern_argv; save them from the SysV entry stack
+    // (argc at [sp], argv at sp+8) BEFORE the frame push. Linux ELF, matching
+    // asm_arm64.emit_module's _start. Gated on the args need so a non-args program
+    // is byte-identical. __fern_args / __fern_arg_at come from the caller-appended
+    // asm_arm64.emit_runtime (also gated on the args need).
+    if (s.has_need("args")) {
+        s = s.write("    ldr x0, [sp]\n");
+        s = s.write("    adrp x1, __fern_argc\n");
+        s = s.write("    add x1, x1, :lo12:__fern_argc\n");
+        s = s.write("    str x0, [x1]\n");
+        s = s.write("    add x0, sp, #8\n");
+        s = s.write("    adrp x1, __fern_argv\n");
+        s = s.write("    add x1, x1, :lo12:__fern_argv\n");
+        s = s.write("    str x0, [x1]\n");
+    }
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");
     s = s.write("    bl __fn_main\n");
