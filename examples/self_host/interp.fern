@@ -378,6 +378,11 @@ function eval_unary(op: string, ov: Value): Value {
             _ => { return v_err("`as` float cast operand not numeric"); }
         }
     }
+    // A non-numeric `as <Type>` (`as_i32[]`, `as_string`, `as_Option[i32]`,
+    // …) is a zero-cost type ascription — identity on the runtime value.
+    // Pass the operand through unchanged (matching the AST/IR emitters, which
+    // treat every non-numeric `as_<T>` as a no-op).
+    if (op.len() > 3 && op[0:3] == "as_") { return ov; }
     return v_err("unknown unary op: " + op);
 }
 

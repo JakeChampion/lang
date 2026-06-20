@@ -822,6 +822,21 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"match-expr-some-construct", `function main(): i32 { return match (Some(6)) { Some(w) => w, None => 0 }; }`},
 		{"match-expr-some-construct-derived", `function main(): i32 { return match (Some(20)) { Some(w) => w + 1, None => 0 }; }`},
 		{"match-expr-arm-some-construct", `function main(): i32 { var o = Some(5); return match (o) { Some(v) => match (Some(v + 1)) { Some(w) => w, None => 0 }, None => 0 }; }`},
+		// Type ascription to an Option / Result target (#2669): `None as
+		// Option[i32]`. The parser now keeps the generic args in the cast op
+		// name (`as_Option[i32]`), so a binding `var x = None as Option[i32]`
+		// rebinds to `var x: Option[i32] = None` (payload type intact) and
+		// lowers through the IR path instead of bailing to the AST backend on
+		// the payload-less `var x: Option = None`. The Some/Ok/[] operands
+		// already lowered (they carry their own payload type); these lock in
+		// the bare-None / bare-Err cases plus the non-binding (return / nested)
+		// positions and the array ascription that shares the suffix path.
+		{"asc-none-opt-bind", `function main(): i32 { var x = None as Option[i32]; return match (x) { Some(v) => v, None => 7 }; }`},
+		{"asc-none-opt-str", `function main(): i32 { var x = None as Option[string]; return match (x) { Some(v) => v.len(), None => 7 }; }`},
+		{"asc-some-opt-bind", `function main(): i32 { var x = Some(5) as Option[i32]; return match (x) { Some(v) => v, None => 7 }; }`},
+		{"asc-none-opt-ret", `function f(): Option[i32] { return None as Option[i32]; } function main(): i32 { return match (f()) { Some(v) => v, None => 7 }; }`},
+		{"asc-none-opt-nested", `function main(): i32 { return match (None as Option[i32]) { Some(v) => v, None => 7 }; }`},
+		{"asc-opt-arr-suffix", `function main(): i32 { var a = [3, 4] as i32[]; return a[0] + a[1]; }`},
 		// A match-EXPRESSION whose scrutinee is an Option-typed tuple element (t.0):
 		// try_opt_type now resolves a numeric (tuple-element) field via
 		// expr_tuple_elem_tag, mirroring the main StmtMatch path (#3118).
