@@ -834,6 +834,16 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // produces the full 64-bit result, so it is the same instruction as
             // f64_to_i32 (which only keeps the low 32 bits).
             s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n    fcvtzs x0, d0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "f64_bits" || o.kind == "f64_from_bits") {
+            // No-op reinterpret: the 8-byte rt-stack slot already holds the
+            // IEEE-754 bit pattern, identical to the i64 bits.
+        } else if (o.kind == "f32_bits") {
+            // f64 -> f32 (fcvt s,d), take the 32-bit pattern, sign-extend into
+            // the 64-bit slot.
+            s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n    fcvt s0, d0\n    fmov w0, s0\n    sxtw x0, w0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "f32_from_bits") {
+            // interpret the low 32 bits as an IEEE-754 f32 and widen to f64.
+            s = s.write("    ldr x0, [sp], #16\n    fmov s0, w0\n    fcvt d0, s0\n    fmov x0, d0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "fadd" || o.kind == "fsub" || o.kind == "fmul" || o.kind == "fdiv") {
             // f64 arithmetic: pop rhs (x0) / lhs (x1) into d0/d1, op, push.
             s = s.write("    ldr x0, [sp], #16\n    ldr x1, [sp], #16\n    fmov d0, x0\n    fmov d1, x1\n");

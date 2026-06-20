@@ -3326,6 +3326,16 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // writes the full 64-bit %rax, so it is the same instruction as
             // f64_to_i32 (which only keeps the low 32 bits).
             s = s.write("    popq %rax\n    movq %rax, %xmm0\n    cvttsd2si %xmm0, %rax\n    pushq %rax\n");
+        } else if (o.kind == "f64_bits" || o.kind == "f64_from_bits") {
+            // No-op reinterpret: the 8-byte rt-stack slot already holds the
+            // IEEE-754 bit pattern, identical to the i64 bits.
+        } else if (o.kind == "f32_bits") {
+            // f64 -> f32 (cvtsd2ss), take the 32-bit pattern, sign-extend into
+            // the 64-bit slot.
+            s = s.write("    popq %rax\n    movq %rax, %xmm0\n    cvtsd2ss %xmm0, %xmm0\n    movd %xmm0, %eax\n    movsxd %eax, %rax\n    pushq %rax\n");
+        } else if (o.kind == "f32_from_bits") {
+            // interpret the low 32 bits as an IEEE-754 f32 and widen to f64.
+            s = s.write("    popq %rax\n    movd %eax, %xmm0\n    cvtss2sd %xmm0, %xmm0\n    movq %xmm0, %rax\n    pushq %rax\n");
         } else if (o.kind == "fadd" || o.kind == "fsub" || o.kind == "fmul" || o.kind == "fdiv") {
             // f64 arithmetic: pop rhs/lhs bits into xmm1/xmm0, op, push result.
             s = s.write("    popq %rax\n    movq %rax, %xmm1\n    popq %rax\n    movq %rax, %xmm0\n");
