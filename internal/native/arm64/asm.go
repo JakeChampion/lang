@@ -304,6 +304,17 @@ type Reloc struct {
 	Addend uint64 // the target's address (relative to load base)
 }
 
+// TextLabelVAddr returns the load-base-relative virtual address of a .text
+// symbol (textVAddr + its instruction offset), or false if name is not a
+// defined .text label. Used to resolve .so export addresses.
+func (a *Assembler) TextLabelVAddr(name string, textVAddr uint64) (uint64, bool) {
+	s, ok := a.syms[name]
+	if !ok || !s.inText {
+		return 0, false
+	}
+	return textVAddr + uint64(s.val)*4, true
+}
+
 // BytesProgramPIE resolves the program for a static position-independent
 // executable (elf.StaticPieExecutable): the same W^X two-segment layout,
 // but laid out relative to a load base of 0 (pass elf.TextVAddrPIE as

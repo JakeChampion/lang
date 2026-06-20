@@ -17,11 +17,14 @@ import (
 // which is a string-array + byte load — not a true T[][] element load), so the
 // genuine nested-array load had no dedicated routing pin.
 //
-// Scope is i32[][] and string[][] only: the i64[][] variant currently routes
-// "ast" (a separate width-decode widening, parallel to the i64-tuple sibling), so
-// it is deliberately excluded to keep the path == "ir" assertion honest. Each
-// case is oracle-checked against the interpreter and returns <= 126 (wasmtime
-// exit-code truncation, cf. #2908). Mirrors self_host_nested_tuple_ir_test.go.
+// Covers i32[][], string[][], and the 8-byte inner element kinds i64[][] /
+// f64[][]. The i64/f64 nested element read previously truncated to 32 bits
+// (silent miscompile): local_is_arrarr recorded only THAT a slot was T[][], not
+// what T was, so a nested read m[i][j] couldn't recover the inner width. #2691
+// adds local_arrarr_elem (the inner kind) so arr_index_is_i64/_f64 pick the
+// 8-byte load. Each case is oracle-checked against the interpreter and returns
+// <= 126 (wasmtime exit-code truncation, cf. #2908). Mirrors
+// self_host_nested_tuple_ir_test.go.
 var nestedArrayIRCases = []struct {
 	name string
 	main string
@@ -35,6 +38,29 @@ var nestedArrayIRCases = []struct {
 	// string[][]: nested string elements round-trip; sum their byte lengths.
 	// "ab"(2) + "c"(1) + "de"(2) = 5.
 	{"string-nested", `function main(): i32 { var g: string[][] = [["ab", "c"], ["de"]]; return g[0][0].len() + g[0][1].len() + g[1][0].len(); }`},
+	// f64[][] direct nested read — the parallel f64 8-byte fix. 2.5 * 2 = 5.
+	{"f64-2x2", `function main(): i32 { var m: f64[][] = [[2.5], [3.5]]; return (m[0][0] * 2.0) as i32; }`},
+}
+
+// nestedArrayI64IRCases pin the i64[][] read fix on x86-64 only. The READ side is
+// fixed on every backend (local_arrarr_elem → arr_get_i64), but an i64 array
+// LITERAL (`[5000000000]`) still emits its 64-bit element as `i32.const` on the
+// wasm backend (a separate, pre-existing construction-side bug — out of range, so
+// the module won't parse), so a wasm i64[][] case can't be built yet. f64
+// literals are unaffected (covered on both backends above). The wasm i64-literal
+// construction fix is a follow-up; until then these read-side pins run on x86-64,
+// where the previously-truncated 8-byte element now reads correctly.
+var nestedArrayI64IRCases = []struct {
+	name string
+	main string
+}{
+	// i64[][] direct nested read — the 8-byte element must NOT truncate to 32 bits.
+	// 5000000000 / 1e9 = 5.
+	{"i64-2x2", `function main(): i32 { var m: i64[][] = [[5000000000], [6000000000]]; return (m[0][0] / 1000000000) as i32; }`},
+	// i64[][] via a row binding (var r = m[0]; r[j]) — r tracked as i64[]. 5+1 = 6.
+	{"i64-row-binding", `function main(): i32 { var m: i64[][] = [[5000000000, 1000000000], [2000000000]]; var r = m[0]; return (r[0] / 1000000000) as i32 + (r[1] / 1000000000) as i32; }`},
+	// i64[][] via nested for-in (for row in m { for x in row }). (5+6)e9 / 1e9 = 11.
+	{"i64-forin", `function main(): i32 { var m: i64[][] = [[5000000000], [6000000000]]; var t: i64 = 0; for row in m { for x in row { t = t + x; } } return (t / 1000000000) as i32; }`},
 }
 
 // TestSelfHostNestedArrayIRX86_64 routes each case through the self-hosted x86-64
@@ -55,7 +81,15 @@ func TestSelfHostNestedArrayIRX86_64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
 	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
 
-	for _, tc := range nestedArrayIRCases {
+	// x86-64 runs the cross-backend cases plus the i64[][] cases (the i64 read
+	// fix is verified here; the wasm half is blocked by the i64-literal bug noted
+	// on nestedArrayI64IRCases).
+	x86Cases := append(append([]struct {
+		name string
+		main string
+	}{}, nestedArrayIRCases...), nestedArrayI64IRCases...)
+
+	for _, tc := range x86Cases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.main + "\n")
 			want := interpExit(t, interpBin, string(src))
