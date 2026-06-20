@@ -1,0 +1,31 @@
+import "std/mock_platform";
+import "std/i32";
+import "core/int";
+
+// Exercises std/mock_platform's call-recording log (MockPlatform holds a
+// MockCall[]) across all four native backends: functional struct-spread
+// append of an array-of-struct, indexed array-of-struct field reads, the
+// has_call membership scan, and find_call's Option[MockCall] payload.
+// FEATURE-AUDIT std/mock_platform row.
+function main(): i32 {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    m = m.record("fetch", "GET /a");
+    m = m.record("kv_set", "k=v");
+    m = m.record("fetch", "GET /b");
+    print(m.call_count().to_string());          // 3
+    print(m.calls[0].name);                      // fetch
+    print(m.calls[1].args);                      // k=v
+    if (m.has_call("kv_set")) { print("has-kv"); } else { print("no-kv"); }
+    if (m.has_call("missing")) { print("has-missing"); } else { print("no-missing"); }
+    match (m.find_call("fetch")) {
+        Some(c) => { print(c.args); },           // GET /a (first match)
+        None => { print("none"); },
+    }
+    match (m.find_call("nope")) {
+        Some(c) => { print("unexpected"); },
+        None => { print("find-none"); },
+    }
+    var m2: MockPlatform = m.reset();
+    print(m2.call_count().to_string());          // 0
+    return 0;
+}

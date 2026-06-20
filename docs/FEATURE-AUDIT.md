@@ -228,7 +228,7 @@ per-function bugs in the audit log.
 | `std/stream` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | in-memory byte `Stream` (`data: u8[]` + `pos` cursor) — the value-threaded CURSOR IDIOM: `len`/`remaining`/`read_byte`/`read_n`/`read_all_string`/`read_line` (CRLF/LF + unterminated tail) — native via the `stream_reader` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostStreamIR` — struct with a `u8[]` field + i32 cursor, struct-spread update, tuple-returning methods with pointer + `Option` elements, tuple destructuring in `let`, `u8[].append` with `as u8` casts, `string_from_bytes`, `Option` `Some`/`None` + payload-binding `match` (inlined as `Buf`, since `Stream` is a reserved builtin type + the importless driver has no imports) |
 | `std/time` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | is_leap_year/days_in_month/date_make/format_iso — `audit_std_time`; self-host via the IR path: pure-i32 helpers (`TestSelfHostTimeIR`) + the **Date civil-date methods** (Hinnant days_from_civil/civil_from_days, is_valid/add_days/days_since/weekday/day_of_year/format_iso — `TestSelfHostTimeDateIR`, oracle-checked, struct ctor + field access + struct-returning fn + receiver methods) + `date_parse_iso` `Option[Date]` parse (`TestSelfHostTimeParseIR`, `Some`/`None` ctor + payload-binding `match`) + `format_rfc3339` / `instant_parse_rfc3339` (`TestSelfHostTimeRfc3339IR`, **i64 `sec` struct field** — i64 arithmetic/casts + `Some(Instant{ sec: <i64> })`) + `add_span` / `add_duration` / `duration_since` / `days_until` (`TestSelfHostTimeSpanIR`, **8-field Span by-value param** + i64+nsec carry/borrow) + the Zoned / TimeZone surface (`in_zone` / `to_datetime` / `timezone_iana` — `TestSelfHostTimeZonedIR`, **nested structs** `Zoned{instant,zone}` / `DateTime{date,time}` + `Option[TimeZone]`) |
 | `std/task` | | | | | | ⬜ | |
-| `std/mock_platform` | | | | | | ⬜ | |
+| `std/mock_platform` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | call-recording log (`MockPlatform` holds a `MockCall[]`) — `record` / `call_count` / `reset` / `has_call` / `find_call` — native via the `mock_platform_log` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostMockPlatformIR` — struct with an array-of-struct field, functional struct-spread append, indexed array-of-struct field reads (`m.calls[i].name`), membership scan, and `find_call`'s `Option[MockCall]` (Option of a struct) + payload-binding `match` (inlined as `MPlat`/`MCall`, since both are reserved builtin type names) |
 | `std/test` (~150 assertions) | | | | | | ⬜ | |
 | `std/fuzz` | | | | | | ⬜ | |
 
@@ -249,6 +249,25 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-20 — std/mock_platform call-recording log on the self-host IR path + native audit
+
+Audited the `std/mock_platform` row (was ⬜ across the board). The Phase-1
+call-recording infrastructure — `MockPlatform` holds a `MockCall[]` effect log;
+`record` appends, `call_count` / `reset` / `has_call` / `find_call` inspect it —
+now has native coverage via the `mock_platform_log` fixture (interp / x86-64 /
+arm64 / wasm) and self-host coverage via the IR path:
+`TestSelfHostMockPlatformIR{X86_64,Wasm}` run the surface through the x86-64 +
+wasm IR drivers, pinned to the `"ir"` path (return value = a small deterministic
+int, oracle-checked against the interpreter). It exercises a struct holding an
+array-of-struct field (`MCall[]`), functional struct-spread update appending to
+that array (`MPlat { ...m, calls: m.calls.append(MCall { … }) }`), indexed
+array-of-struct field reads (`m.calls[i].name`), a membership scan with string
+equality, and `find_call`'s `Option[MCall]` (Option of a struct) with a
+payload-binding `match` — all already lower, so no compiler change. The types
+are inlined as `MPlat`/`MCall` (`MockPlatform`/`MockCall` are reserved builtin
+type names + the single-program driver resolves no imports). `std/mock_platform`
+row flipped to ✅.
 
 ### 2026-06-20 — std/stream byte Stream on the self-host IR path + native audit
 
