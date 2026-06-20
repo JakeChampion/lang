@@ -1884,6 +1884,19 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// separate deferred slice — it destabilises the byte-identical fixpoint.)
 		{"map-value-closure", `import "core/map"; function main(): i32 { var m: Map[i32, () => i32] = map_new(4); m = m.set(1, function(): i32 { return 42; }); match (m.get(1)) { Some(f) => { return f(); }, None => { return 0; } } }`, 42},
 		{"map-value-closure-captured", `import "core/map"; function main(): i32 { var n = 10; var m: Map[i32, () => i32] = map_new(4); m = m.set(1, function(): i32 { return n + 7; }); match (m.get(1)) { Some(f) => { return f(); }, None => { return 0; } } }`, 17},
+		// A match-EXPRESSION arm that binds a NON-SCALAR payload (struct / enum /
+		// string) and passes it as an ARGUMENT to a free-function call (#3498). The
+		// statement-form match already lowered this; the value-position gate now
+		// admits an i32-returning free-fn call whose args are borrow reads of the
+		// payload, so `V(p) => g(p)` rides the i32 result temp. The recursive-list
+		// `sum` is the headline shape (`Cons(h, t) => h + sum(t)` passes the enum
+		// payload `t` to the recursive call). Native/AST-correct; pinned to the IR
+		// value (the gate decides IR-vs-AST, so the value confirms the IR path).
+		{"match-expr-struct-payload-call", `struct S { v: i32 } enum E { A(S), N } function g(s: S): i32 { return s.v; } function f(e: E): i32 { return match (e) { A(s) => g(s), N => 0 }; } function main(): i32 { return f(A(S { v: 5 })); }`, 5},
+		{"match-expr-string-payload-call", `enum E { A(string), N } function g(s: string): i32 { return s.len(); } function f(e: E): i32 { return match (e) { A(s) => g(s), N => 0 }; } function main(): i32 { return f(A("hi")); }`, 2},
+		{"match-expr-enum-payload-call", `enum L { C(i32, L), N } function hd(l: L): i32 { return match (l) { C(h, t) => h, N => 0 }; } function snd(l: L): i32 { return match (l) { C(h, t) => hd(t), N => 0 }; } function main(): i32 { return snd(C(7, C(9, N))); }`, 9},
+		{"match-expr-recursive-sum", `enum L { C(i32, L), N } function sum(l: L): i32 { return match (l) { C(h, t) => h + sum(t), N => 0 }; } function main(): i32 { return sum(C(1, C(2, C(3, N)))); }`, 6},
+		{"match-expr-payload-call-mixed-args", `struct S { v: i32 } enum E { A(S), N } function g(s: S, k: i32): i32 { return s.v + k; } function f(e: E): i32 { return match (e) { A(s) => g(s, 3), N => 0 }; } function main(): i32 { return f(A(S { v: 5 })); }`, 8},
 	}
 	for _, tc := range irOnly {
 		t.Run(tc.name, func(t *testing.T) {

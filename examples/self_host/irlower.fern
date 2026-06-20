@@ -5907,8 +5907,69 @@ function iife_payload_arith_kind(e: parser.Expr, name: string, ft: string, kind:
     return false;
 }
 
-function iife_borrow_leaf_i32(e: parser.Expr, name: string, ft: string, s: LowerState): boolean {
-    match (e) {
+// iife_free_fn_ret_i32 reports whether free function `name` provably returns an
+// i32 (or boolean — both ride the i32 result temp). Sound by EXCLUSION, the
+// free-function sibling of iife_method_ret_i32: a function registered as
+// returning string / i64 / f64 / an array / a tuple / a struct / an Option is
+// rejected; anything else (an i32 / boolean return) is admitted. Over-admission
+// is safe — the actual lowering of the rewritten `tmp = g(args)` is the truth, so
+// a non-i32 / non-lowerable callee bails the function back to AST.
+function iife_free_fn_ret_i32(name: string, s: LowerState): boolean {
+    if (s.is_str_ret_fn(name)) { return false; }
+    if (s.is_i64_ret_fn(name)) { return false; }
+    if (s.is_f64_ret_fn(name)) { return false; }
+    if (s.is_arr_ret_fn(name) || s.is_strarr_ret_fn(name) || s.is_f64arr_ret_fn(name) || s.is_i64arr_ret_fn(name)) { return false; }
+    if (s.struct_ret_type(name) != "") { return false; }
+    if (s.tuple_ret_type(name) != "") { return false; }
+    if (s.opt_ret_type(name) != "") { return false; }
+    return true;
+}
+
+// iife_arg_is_payload_borrow reports whether `arg` is a BORROW read of the bound
+// payload `name` — the bare payload itself, or a field- / tuple- / index-access
+// chain rooted at it (`name`, `name.f`, `name.0.x`, `name[i]`). Such an argument
+// passes the payload (or a sub-part) to a callee by pointer; since the payload is
+// borrowed from the leak-safe enum box (never reclaimed by the match), the callee
+// reading — or even retaining — it can never double-free.
+function iife_arg_is_payload_borrow(arg: parser.Expr, name: string): boolean {
+    match (arg) {
+        parser.ExprIdent(id) => { return id.name == name; },
+        parser.ExprFieldAccess(fa) => { return iife_arg_is_payload_borrow(fa.obj, name); },
+        parser.ExprIndex(ix) => { return iife_arg_is_payload_borrow(ix.array, name); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// iife_call_arg_borrow_safe reports whether call argument `arg` is safe w.r.t. the
+// bound payload `name`: either it does NOT mention the payload (an independent
+// argument the rewritten StmtMatch lowers normally), or it IS a borrow read of the
+// payload (iife_arg_is_payload_borrow). Anything else that mentions the payload (a
+// non-borrow composition that could retain it in a non-leak-safe way) is rejected.
+function iife_call_arg_borrow_safe(arg: parser.Expr, name: string, ft: string, s: LowerState): boolean {
+    if (!iife_expr_mentions_ident(arg, name)) { return true; }
+    return iife_arg_is_payload_borrow(arg, name);
+}
+
+// iife_call_is_i32_borrow reports whether `c` is a FREE-function call (`g(args)`)
+// that provably returns i32 and whose arguments are each borrow-safe w.r.t. the
+// bound payload — so the match-EXPRESSION arm `V(p) => g(p)` / `Cons(h, t) => h +
+// sum(t)` (passing the bound payload as a borrow argument) yields an i32 result
+// and lowers exactly as its statement-position form already does (#3498).
+function iife_call_is_i32_borrow(c: parser.ExprCall, name: string, ft: string, s: LowerState): boolean {
+    match (c.callee) {
+        parser.ExprIdent(cid) => { if (!iife_free_fn_ret_i32(cid.name, s)) { return false; } },
+        _ => { return false; }
+    }
+    var i: i32 = 0;
+    while (i < c.args.len()) {
+        if (!iife_call_arg_borrow_safe(c.args[i], name, ft, s)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function iife_borrow_leaf_i32(e: parser.Expr, name: string, ft: string, s: LowerState): boolean {    match (e) {
         parser.ExprIdent(id) => { return false; },   // bare payload — not i32
         parser.ExprFieldAccess(fa) => {
             // A field / tuple-access CHAIN rooted at the bound payload — `name.f`,
@@ -5948,6 +6009,12 @@ function iife_borrow_leaf_i32(e: parser.Expr, name: string, ft: string, s: Lower
                         _ => { return false; }
                     }
                 },
+                // `g(name)` / `sum(t)` — a FREE-function call passing the bound
+                // payload as a borrow argument, returning i32. The statement-form
+                // match already lowers this; admitting it lets the value-position
+                // match-EXPRESSION arm (`V(p) => g(p)`, recursive `Cons(h, t) => h +
+                // sum(t)`) ride the i32 result temp instead of bailing to AST (#3498).
+                parser.ExprIdent(_) => { return iife_call_is_i32_borrow(c, name, ft, s); },
                 _ => {}
             }
             return false;
