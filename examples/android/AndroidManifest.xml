@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Minimal manifest for a Fern JNI library app. The native code lives in
+     lib/<abi>/libfern.so (loaded by the Native class via System.loadLibrary).
+     Compile to binary XML with `aapt2 link` (see README.md). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          package="dev.fern.demo">
+    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="34" />
+    <application android:label="Fern Demo" android:hasCode="true">
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
