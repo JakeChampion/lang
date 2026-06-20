@@ -1022,8 +1022,15 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             out = out + "    i32.const 1\n    i32.const 0\n    i32.const 1\n    i32.const 8\n    call $fd_write\n    drop\n";
             out = out + "    i32.const 0\n";
         } else if (o.kind == "map_set") {
-            // stack: map, k, v -> push vis (0 = i32 value) -> map_set -> map.
-            out = out + "    i32.const 0\n    call $__fern_map_set\n";
+            // stack: map, k, v -> push vis -> map_set -> map. `vis` (value-is-
+            // RC-pointer) comes from op_map_set's `unsigned` flag, set by
+            // irlower from the map's VALUE type. A pointer value (string /
+            // array / struct / …) MUST set vis=1 so __fern_map_set retains it;
+            // otherwise the caller's dec frees it under the map → use-after-free
+            // / sibling-key aliasing (#3495). i32/scalar values stay vis=0.
+            var vis: string = "0";
+            if (o.unsigned) { vis = "1"; }
+            out = out + "    i32.const " + vis + "\n    call $__fern_map_set\n";
         } else if (o.kind == "map_len") {
             // stack: map -> i32.load(map) (length at offset 0, wasm map layout).
             out = out + "    i32.load\n";

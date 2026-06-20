@@ -218,7 +218,7 @@ per-function bugs in the audit log.
 | `std/hex` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_codec_roundtrip`; self-host IR path: `hex_encode`/`hex_decode` lower end-to-end (real std/hex source, routing-pinned `TestSelfHostHexIR`, x86-64 + wasm + arm64 oracle-checked) — unblocked by the wasm `string_from_bytes` helper-gate fix |
 | `std/crypto` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | SHA-256 vectors ✅ native (`audit_std_crypto`); self-host now correct via the IR path — u32 wrapping + array builders + byte builtins ([#2861](https://github.com/JakeChampion/lang/issues/2861) fixed, #2891; `TestSelfHostU32WrapIR`) |
 | `std/uuid` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | v4 length/dashes/version/uniqueness — `audit_std_uuid`; self-host v4 + v7 via the IR path (`TestSelfHostUuidIR`) |
-| `std/url` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_url_roundtrip` — 300 inputs, all four backends; the arm64 heap-corruption ([#2817](https://github.com/JakeChampion/lang/issues/2817)) is fixed (two-word `string_from_bytes` now uses `__fern_alloc_rc1`); self-host via the IR path (x86-64 + wasm): `url_encode`/`url_decode` percent-coding (`TestSelfHostUrlCodecIR`) + `url_parse` URL decomposition (`TestSelfHostUrlParseIR` — 6-field struct w/ mixed string+i32 fields, repeated struct-spread updates, `Option[Url]` + payload `match`) + `query_parse` (`TestSelfHostUrlQueryIR` — `Map[string, string[]]` w/ string-ARRAY values via `Map {}`/`.get`/`.insert`, single-value-per-key cases) — byte classification, bit ops, `u8[]` literals + `as u8` casts, and the `string_from_bytes` builtin all lower; native via the `url_codec` fixture (encode/decode + `url_parse` + `query_parse` incl. dup-key accumulation). NB: query_parse's duplicate-key append-to-existing case miscompiles on the **wasm** IR backend ([#3495](https://github.com/JakeChampion/lang/issues/3495)) — correct on x86-64 IR + all native backends — so it's pinned only on the native side |
+| `std/url` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_url_roundtrip` — 300 inputs, all four backends; the arm64 heap-corruption ([#2817](https://github.com/JakeChampion/lang/issues/2817)) is fixed (two-word `string_from_bytes` now uses `__fern_alloc_rc1`); self-host via the IR path (x86-64 + wasm): `url_encode`/`url_decode` percent-coding (`TestSelfHostUrlCodecIR`) + `url_parse` URL decomposition (`TestSelfHostUrlParseIR` — 6-field struct w/ mixed string+i32 fields, repeated struct-spread updates, `Option[Url]` + payload `match`) + `query_parse` (`TestSelfHostUrlQueryIR` — `Map[string, string[]]` w/ string-ARRAY values via `Map {}`/`.get`/`.insert`, incl. the duplicate-key append-to-existing case) — byte classification, bit ops, `u8[]` literals + `as u8` casts, and the `string_from_bytes` builtin all lower; native via the `url_codec` fixture (encode/decode + `url_parse` + `query_parse` incl. dup-key accumulation). (The dup-key wasm-IR map miscompile [#3495](https://github.com/JakeChampion/lang/issues/3495) is now fixed — `op_map_set` threads value-pointerness into the wasm `vis` flag — and the dup-key case is the regression guard.) |
 | `std/json` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | parse → get_i32/get_string → encode → re-parse — `audit_std_json` + `self_host_json_test`; `@derive(Json)` incl. **array fields** (`T[]`) — native all backends (`derive_json` fixture), self-host i32/string/struct arrays via the IR path ([#2766](https://github.com/JakeChampion/lang/issues/2766); `TestSelfHostJsonArrayIR`) |
 | `std/error` | ✅ | ✅ | ✅ | ✅ | | ✅ | canonical `Error` supertype (`message()`) for heterogeneous errors: `Result[_, dyn error.Error]` + `?` boxes any concrete error that `impl error.Error for …` (`std_error_test`, all four backends) — caps the dyn-error story (#3216 dispatch fix + #3242 `?`-conversion; #2707) |
 | `std/convert` | ✅ | ✅ | ✅ | ✅ | | ✅ | canonical `From[T]` / `Into[T]` conversion traits (on generic traits, #3254): `impl convert.From[i32] for Celsius` + `Celsius.from(20)`, `impl convert.Into[F] for Celsius` + `c.into()` (`std_convert_test`, all four backends; #2691) — generic use over a bound awaits bounded-generics-over-generic-traits |
@@ -269,6 +269,25 @@ leak-only (never reclaims the backing storage), so `.len()`, element indexing
   every result ≤ 126). All already lower, so **no compiler change**.
 
 Row flipped to ✅.
+### 2026-06-20 — 🔧 self-host wasm IR: `op_map_set` dropped value-pointerness → `Map[K, ptr]` use-after-free ([#3495](https://github.com/JakeChampion/lang/issues/3495))
+
+The wasm IR backend hardcoded the `__fern_map_set` `vis` (value-is-RC-pointer)
+flag to `0` (`wasm_ir.fern`), so a map with **pointer values** (string / array /
+struct / …) never retained its values. After `m.insert(k, v)` the caller's `dec`
+of the value then freed it under the map; the next allocation reused the freed
+buffer, so a sibling key's value array aliased the appended one — e.g.
+`query_parse("a=1&b=2&a=3")` gave `b` two values (exit 22 vs 21). The AST wasm
+backend already set `vis` correctly from the value expr's type; the IR op
+`op_map_set` only carried the KEY kind, so the IR path lost the value flag.
+x86-64 was unaffected (its `__fern_map_set` never RC-manages values and its
+`arr_dec` is leak-only). Fix: `op_map_set(keykind, valptr)` now carries
+value-pointerness in the op's `unsigned` field — `irlower` computes it from the
+map's value type (`map_value_is_ptr`: only known scalars are non-pointers;
+everything else, incl. unknown/generic `V`, retains), `wasm_ir` emits `vis` from
+it, x86-64 is untouched (still reads the key kind from `i32_imm`). Regression
+guard: the `dup-keys` case in `TestSelfHostUrlQueryIR{X86_64,Wasm}` plus the
+minimal `Map[string, string[]]` append-via-helper repro. Self-hosting fixpoint
+unaffected (x86-64 emission byte-identical — it ignores the new flag).
 
 ### 2026-06-20 — string literals + escape sequences on the self-host IR path + native audit
 

@@ -20,12 +20,12 @@ import (
 // `string[]` value, `Option[string[]]` `Some`/`None` `match`, `url_decode`'s
 // `u8[]` + `string_from_bytes`, and byte scanning. Each program returns a small
 // deterministic int (kept <= 126), pinned to the `"ir"` path; expectations are
-// hardcoded, verified against the native interp + x86-64 backends. The pinned
-// cases keep at most one value per key: the duplicate-key (append-to-an-existing
-// `string[]` value) case miscompiles on the self-host WASM IR backend
-// (`m.get(k).append(v)` corrupts a sibling key's array — x86-64 IR + every
-// native backend are correct), tracked in #3495 and exercised on the native side
-// by the `url_codec` fixture. FEATURE-AUDIT std/url row.
+// hardcoded, verified against the native interp + x86-64 backends. The
+// `dup-keys` case (append to an existing `string[]` map value) is the #3495
+// regression guard: it previously corrupted a sibling key's array on the wasm
+// IR backend (returning 22 not 21) because `op_map_set` left the wasm `vis`
+// RC-retain flag at 0 for a pointer value; fixed by threading value-pointerness
+// through `op_map_set`. FEATURE-AUDIT std/url row.
 const urlQueryIRPrelude = `function url_hex_val(c: i32): i32 {
     if (c >= 48 && c <= 57) { return c - 48; }
     if (c >= 97 && c <= 102) { return c - 87; }
@@ -95,9 +95,12 @@ var urlQueryIRCases = []struct {
 	main string
 	want int
 }{
-	// single value. (The duplicate-key accumulation case — "a=1&b=2&a=3" -> a:[1,3]
-	// b:[2] — miscompiles on the wasm IR backend, #3495; it lives in the native
-	// url_codec fixture instead.)
+	// duplicate-key accumulation: "a" -> [1,3] (2), "b" -> [2] (1) -> 2*10+1.
+	// #3495 regression guard (pre-fix the wasm IR backend returned 22 — b's
+	// array corrupted by the append to a — because map_set's value `vis` flag
+	// was hardcoded 0 for the string[] value).
+	{"dup-keys", `var m: Map[string, string[]] = query_parse("a=1&b=2&a=3"); return vcount(m, "a") * 10 + vcount(m, "b");`, 21},
+	// single value.
 	{"single", `return vcount(query_parse("x=hello"), "x");`, 1},
 	// missing key -> the None arm -> 0.
 	{"missing", `return vcount(query_parse("a=1"), "zzz");`, 0},
