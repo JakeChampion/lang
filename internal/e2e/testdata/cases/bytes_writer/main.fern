@@ -1,0 +1,30 @@
+import "std/io_buffered";
+import "std/i32";
+import "core/int";
+
+// Exercises std/io_buffered's in-memory BytesWriter (data: u8[]) across all
+// four native backends: the value-threaded builder idiom (each write returns a
+// new writer; caller rebinds), write_string / write_byte / write_bytes, len /
+// is_empty, into_string / into_bytes, and reset. FEATURE-AUDIT std/io_buffered
+// row. (print appends its own newline.)
+function main(): i32 {
+    var w: BytesWriter = io_buffered.bytes_writer_new();
+    if (w.is_empty()) { print("empty"); }                // fresh writer is empty
+    w = w.write_string("HTTP/1.1 200 OK");
+    print(w.len().to_string());                          // 15 bytes
+    w = w.write_byte(33);                                 // '!'
+    var tail: u8[] = [63, 63];                            // "??"
+    w = w.write_bytes(tail);
+    print(w.into_string());                              // HTTP/1.1 200 OK!??
+    print(w.len().to_string());                          // 18
+
+    // into_bytes returns the raw buffer.
+    var raw: u8[] = w.into_bytes();
+    print(raw.len().to_string());                        // 18
+
+    // reset yields an empty writer (functional — rebind).
+    var w2: BytesWriter = w.reset();
+    if (w2.is_empty()) { print("reset-empty"); }
+    print(w2.len().to_string());                         // 0
+    return 0;
+}

@@ -212,7 +212,7 @@ per-function bugs in the audit log.
 | `std/csv` | ✅ | ✅ | ✅ | ✅ | | ✅ | parse_line/join/escape — `audit_std_textfmt`; self-host via the IR path (x86-64 + wasm): `csv_parse_line` (`TestSelfHostCsvParseLineIR`) + `csv_escape`/`csv_join` (`TestSelfHostCsvEscapeIR`, oracle-checked — `index_of`/`replace` lower as `op_str_index_of`/`op_str_replace`) |
 | `std/log` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | leveled `Logger`/`LogEntry` (#2683) plain-text + JSON-lines `render` — native via `log_leveled` fixture (all four backends); self-host via the IR path (x86-64 + wasm): `TestSelfHostLogLeveledIR` — structs with i32/boolean/string fields, chained struct-returning receiver methods, the threshold-filter branch, byte-indexed JSON escaping (hardcoded expectations: `.to_string()` is a self-host builtin the importless interp can't resolve, cf. format_bytes) |
 | `std/io` | | | | | | ⬜ | |
-| `std/io_buffered` | | | | | | ⬜ | |
+| `std/io_buffered` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | in-memory `BytesWriter` (`data: u8[]`) — the value-threaded BUILDER IDIOM: `bytes_writer_new` + `write_string`/`write_bytes`/`write_byte`/`len`/`is_empty`/`into_bytes`/`into_string`/`reset` — native via the `bytes_writer` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostIoBufferedIR` — struct with a `u8[]` field, functional struct-spread update, `u8[].append` with `as u8` casts, indexed byte reads, `string_from_bytes`, a `boolean`-returning receiver method, and chained struct-returning receiver methods (inlined as `BWrite`, since `BytesWriter` is a reserved builtin type + the importless driver has no `std/string` for `.bytes()`, so `write_string` iterates `s[i] as u8`) |
 | `std/path` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | join/file_name/extension — `audit_std_path_numeric` + `self_host_audit_stdpath_test` |
 | `std/base64` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_codec_roundtrip` — 300 random inputs, full byte range; self-host IR path: `base64_encode`/`base64_decode` lower end-to-end (real std/base64 source, routing-pinned `TestSelfHostBase64IR`, x86-64 + wasm + arm64 oracle-checked) |
 | `std/hex` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_codec_roundtrip`; self-host IR path: `hex_encode`/`hex_decode` lower end-to-end (real std/hex source, routing-pinned `TestSelfHostHexIR`, x86-64 + wasm + arm64 oracle-checked) — unblocked by the wasm `string_from_bytes` helper-gate fix |
@@ -249,6 +249,26 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-20 — std/io_buffered BytesWriter on the self-host IR path + native audit
+
+Audited the `std/io_buffered` row (was ⬜ across the board). The in-memory
+`BytesWriter` (`data: u8[]`) — the value-threaded BUILDER IDIOM (each write
+returns a new writer; the caller rebinds) — now has native coverage via the
+`bytes_writer` fixture (interp / x86-64 / arm64 / wasm) and self-host coverage
+via the IR path: `TestSelfHostIoBufferedIR{X86_64,Wasm}` run the surface
+(`bytes_writer_new` + `write_string` / `write_bytes` / `write_byte` / `len` /
+`is_empty` / `into_bytes` / `into_string` / `reset`) through the x86-64 + wasm IR
+drivers, pinned to the `"ir"` path (return value = a small deterministic int,
+oracle-checked against the interpreter). It exercises a struct with a `u8[]`
+field, functional struct-spread update (`BWrite { ...w, data: … }`), `u8[].append`
+build with `as u8` element casts, indexed byte reads (`s[i] as u8`, `b[i] as i32`),
+the `string_from_bytes` builtin, a `boolean`-returning receiver method, and
+chained struct-returning receiver methods — all already lower, so no compiler
+change. The type is inlined as `BWrite` (`BytesWriter` is a reserved builtin type
+name + the single-program driver resolves no imports, so the real
+`write_string`'s `s.bytes()` — a `std/string` method — is replaced by an
+equivalent `s[i] as u8` scan). `std/io_buffered` row flipped to ✅.
 
 ### 2026-06-20 — std/mock_platform call-recording log on the self-host IR path + native audit
 
