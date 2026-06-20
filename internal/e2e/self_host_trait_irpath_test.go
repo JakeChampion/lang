@@ -36,6 +36,12 @@ import (
 //     parser records each variant's owning enum on its desugared StructDecl
 //     (`enum_owner`), and irlower's `expr_enum_type` recovers it to dispatch
 //     `<Enum>.<method>` with the fresh variant as the receiver.
+//   - `@derive(Json)` on a struct + enum lowers through the IR path: the
+//     synthesised `to_json` is structurally identical to the Display
+//     `to_string` body (string concat + `match` + per-field/-payload
+//     `.to_json()` dispatch), so it rides the same IR machinery already
+//     proven for Display. Externally-tagged enums render unit variants as a
+//     quoted name and single-payload variants as a one-key object.
 //   - `dyn Trait` method dispatch now lowers through the IR path: a
 //     `dyn Trait` / `dyn Trait[]` param/loop-var carries the coarse
 //     "dyn <Trait>" type, and a `x.method()` call emits op_dyn_dispatch — the
@@ -64,6 +70,8 @@ var traitIRPath = map[string]string{
 	"trait-derive-enum-display":                  "ir",
 	"trait-derive-enum-eq":                       "ir",
 	"trait-derive-enum-ord":                      "ir",
+	"trait-derive-struct-json":                   "ir",
+	"trait-derive-enum-json":                     "ir",
 	"trait-generic-struct-derive-display-i32":    "ir",
 	"trait-generic-struct-derive-display-string": "ir",
 	"trait-generic-struct-derive-display-both":   "ir",
