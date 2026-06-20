@@ -2784,13 +2784,17 @@ function parse_stmt(p: Par): StmtResult {
         return StmtResult { par: p, stmt: StmtContinue { tag: 0, line: ckline, col: ckcol, label: clbl } };
     }
     // Expression statement — or (compound) assignment if `=`,
-    // `+=`, `-=`, `*=`, `/=`, `%=` follows. The parser doesn't
-    // accept any of these as binary operators (none of them are
-    // in the precedence table), so parse_expr stops at the
-    // ident; we peek for the assign-op here and either build a
-    // plain StmtAssign or desugar a compound to
+    // `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`
+    // follows. The parser doesn't accept any of these as binary
+    // operators (none of them are in the precedence table), so
+    // parse_expr stops at the ident; we peek for the assign-op
+    // here and either build a plain StmtAssign or desugar a
+    // compound to
     //   StmtAssign { target, ExprBinary(<op>, ExprIdent(target), rhs) }
-    // so the rest of the pipeline sees only plain assigns.
+    // so the rest of the pipeline sees only plain assigns. The
+    // bitwise / shift compound set (`&= |= ^= <<= >>=`) mirrors
+    // the native parser's compoundOps map exactly, so both
+    // front-ends desugar the same operators to the same binary op.
     //
     // Only bare-ident targets are supported in this cut — full
     // lvalue syntax (field / index / tuple) is a later
@@ -2805,7 +2809,9 @@ function parse_stmt(p: Par): StmtResult {
     var is_assign: boolean = assign_op == "=";
     var is_compound: boolean = assign_op == "+=" || assign_op == "-="
                             || assign_op == "*=" || assign_op == "/="
-                            || assign_op == "%=";
+                            || assign_op == "%=" || assign_op == "&="
+                            || assign_op == "|=" || assign_op == "^="
+                            || assign_op == "<<=" || assign_op == ">>=";
     if (is_assign || is_compound) {
         p = p.advance(); // consume the assign-op token
         var av = parse_expr(p);
@@ -7569,6 +7575,29 @@ function main(): i32 {
             }
         },
         _ => { return 722; }
+    }
+
+    // Bitwise / shift compounds desugar the same way: `m &= 6;` → op `&`,
+    // `f <<= 3;` → op `<<`. Mirrors the native parser's compoundOps set.
+    var srcBwAnd: string = "m &= 6;";
+    match (parse_program(lexer.tokenize(srcBwAnd))[0]) {
+        StmtAssign(a) => {
+            match (a.value) {
+                ExprBinary(b) => { if (b.op != "&") { return 730; } },
+                _ => { return 731; }
+            }
+        },
+        _ => { return 732; }
+    }
+    var srcBwShl: string = "f <<= 3;";
+    match (parse_program(lexer.tokenize(srcBwShl))[0]) {
+        StmtAssign(a) => {
+            match (a.value) {
+                ExprBinary(b) => { if (b.op != "<<") { return 733; } },
+                _ => { return 734; }
+            }
+        },
+        _ => { return 735; }
     }
 
     // Slice parsing: `s[1:4]` → ExprSlice with three subtrees.
