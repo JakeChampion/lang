@@ -225,7 +225,7 @@ per-function bugs in the audit log.
 | `std/http` | | | | | | ⬜ | |
 | `std/tcp` | | | | | | ⬜ | |
 | `std/headers` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `HeaderMap` case-insensitive get/get_all/append/set over two parallel string[] fields — native via `headers_map` fixture (all four backends); self-host via the IR path (x86-64 + wasm): `TestSelfHostHeadersIR` — struct with string[] fields, functional struct-spread update, `string[].append`, indexed string-field compares, `Option[string]` `Some`/`None` + payload-binding `match`, chained struct-returning receiver methods, and the `(h) len()` receiver method (the `append-len` case — pins the [#3478](https://github.com/JakeChampion/lang/issues/3478) fix) (inlined as `Headers` + a lookup-slice `lower`, since `HeaderMap` is a reserved builtin name + the importless driver has no `.to_lower()`) |
-| `std/stream` | | | | | | ⬜ | |
+| `std/stream` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | in-memory byte `Stream` (`data: u8[]` + `pos` cursor) — the value-threaded CURSOR IDIOM: `len`/`remaining`/`read_byte`/`read_n`/`read_all_string`/`read_line` (CRLF/LF + unterminated tail) — native via the `stream_reader` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostStreamIR` — struct with a `u8[]` field + i32 cursor, struct-spread update, tuple-returning methods with pointer + `Option` elements, tuple destructuring in `let`, `u8[].append` with `as u8` casts, `string_from_bytes`, `Option` `Some`/`None` + payload-binding `match` (inlined as `Buf`, since `Stream` is a reserved builtin type + the importless driver has no imports) |
 | `std/time` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | is_leap_year/days_in_month/date_make/format_iso — `audit_std_time`; self-host via the IR path: pure-i32 helpers (`TestSelfHostTimeIR`) + the **Date civil-date methods** (Hinnant days_from_civil/civil_from_days, is_valid/add_days/days_since/weekday/day_of_year/format_iso — `TestSelfHostTimeDateIR`, oracle-checked, struct ctor + field access + struct-returning fn + receiver methods) + `date_parse_iso` `Option[Date]` parse (`TestSelfHostTimeParseIR`, `Some`/`None` ctor + payload-binding `match`) + `format_rfc3339` / `instant_parse_rfc3339` (`TestSelfHostTimeRfc3339IR`, **i64 `sec` struct field** — i64 arithmetic/casts + `Some(Instant{ sec: <i64> })`) + `add_span` / `add_duration` / `duration_since` / `days_until` (`TestSelfHostTimeSpanIR`, **8-field Span by-value param** + i64+nsec carry/borrow) + the Zoned / TimeZone surface (`in_zone` / `to_datetime` / `timezone_iana` — `TestSelfHostTimeZonedIR`, **nested structs** `Zoned{instant,zone}` / `DateTime{date,time}` + `Option[TimeZone]`) |
 | `std/task` | | | | | | ⬜ | |
 | `std/mock_platform` | | | | | | ⬜ | |
@@ -249,6 +249,26 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-20 — std/stream byte Stream on the self-host IR path + native audit
+
+Audited the `std/stream` row (was ⬜ across the board). The in-memory byte
+`Stream` (`data: u8[]` + `pos` read cursor) follows the value-threaded CURSOR
+IDIOM — a read returns `(value, advancedStream)` and the caller rebinds — and
+now has native coverage via the `stream_reader` fixture (interp / x86-64 /
+arm64 / wasm) and self-host coverage via the IR path:
+`TestSelfHostStreamIR{X86_64,Wasm}` run `len` / `remaining` / `read_byte` /
+`read_n` / `read_all_string` / `read_line` (CRLF/LF handling + unterminated
+tail) through the x86-64 + wasm IR drivers, pinned to the `"ir"` path (return
+value = a small deterministic int, oracle-checked against the interpreter). It
+exercises a struct with a `u8[]` field + an i32 cursor, functional struct-spread
+update (`Buf { ...s, pos: … }`), tuple-returning methods with pointer + `Option`
+elements (`(u8[], Buf)`, `(Option[i32], Buf)`, `(Option[string], Buf)`), tuple
+destructuring in `let`, `u8[].append` with `as u8` element casts, indexed byte
+reads with `as i32`, the `string_from_bytes` builtin, and `Option` `Some`/`None`
+with a payload-binding `match` — all already lower, so no compiler change. The
+type is inlined as `Buf` (`Stream` is a reserved builtin type name + the
+single-program driver resolves no imports). `std/stream` row flipped to ✅.
 
 ### 2026-06-20 — std/url `url_parse` on the self-host IR path
 
