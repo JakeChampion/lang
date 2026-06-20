@@ -34,11 +34,26 @@ import "./asm_ir";
 // cycle): a scaled ldr/str can't encode a negative offset and ldur/stur only
 // reach -256, so for a frame with >32 slots materialise the address in x16
 // (AAPCS scratch, dead across a frame access here) via sub first.
+// fr_sub_imm emits `dst = base - imm`, materialising the immediate in x17 (IP1,
+// AAPCS scratch, dead at every caller here) when it exceeds arm64's 12-bit
+// add/sub immediate ceiling (#4095). The IR path's large functions blow past it
+// — irlower.lower_stmt has ~590 locals → a 4736-byte frame and frame-relative
+// offsets to match — which the AST emitter never hits (its frames stay under
+// 4 KiB). A single MOVZ covers up to 65535 (>8000 locals), far beyond any real
+// function; a frame past that would fail loudly at assembly.
+function fr_sub_imm(s: asmcore.EmitState, dst: string, base: string, imm: i32): asmcore.EmitState {
+    if (imm <= 4095) {
+        return s.write("    sub " + dst + ", " + base + ", #" + util.i32_to_string(imm) + "\n");
+    }
+    s = s.write("    mov x17, #" + util.i32_to_string(imm) + "\n");
+    return s.write("    sub " + dst + ", " + base + ", x17\n");
+}
+
 function fr_ldr(s: asmcore.EmitState, reg: string, off: i32): asmcore.EmitState {
     if (off >= 0 - 256) {
         return s.write("    ldr " + reg + ", [x29, #" + util.i32_to_string(off) + "]\n");
     }
-    s = s.write("    sub x16, x29, #" + util.i32_to_string(0 - off) + "\n");
+    s = fr_sub_imm(s, "x16", "x29", 0 - off);
     return s.write("    ldr " + reg + ", [x16]\n");
 }
 
@@ -46,7 +61,7 @@ function fr_str(s: asmcore.EmitState, reg: string, off: i32): asmcore.EmitState 
     if (off >= 0 - 256) {
         return s.write("    str " + reg + ", [x29, #" + util.i32_to_string(off) + "]\n");
     }
-    s = s.write("    sub x16, x29, #" + util.i32_to_string(0 - off) + "\n");
+    s = fr_sub_imm(s, "x16", "x29", 0 - off);
     return s.write("    str " + reg + ", [x16]\n");
 }
 
@@ -212,7 +227,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 // (str x0,[sp,#-16]! / ldr x0,[sp],#16), params copied from the caller rt-stack
 // at [x29, #16+i*16]. Structured control flow → per-function indexed labels
 // (.Lira_<fn>_<opidx>), the same OP-STREAM-INDEX scheme asm_ir uses.
-function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState, borrowable_params: string[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[], map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[]): asmcore.EmitState {
+pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState, borrowable_params: string[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[], map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[]): asmcore.EmitState {
     var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls, str_ret_fns, strarr_ret_fns, arr_method_fns, opt_ret_fns, i64_ret_fns, tuple_ret_fns, struct_ret_fns, map_ret_fns, f64_ret_fns, f64arr_ret_fns, i64arr_ret_fns, fn_param_sigs, closure_fns, const_fns, borrowable_params);
 
     // Methods get the receiver-type-qualified label `__fn_<Type>.<name>`.
@@ -223,7 +238,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
     s = s.write("    mov x29, sp\n");
     var frame: i32 = r.n_locals * 8;
     if (frame % 16 != 0) { frame = frame + 8; }
-    if (frame > 0) { s = s.write("    sub sp, sp, #" + util.i32_to_string(frame) + "\n"); }
+    if (frame > 0) { s = fr_sub_imm(s, "sp", "sp", frame); }
 
     // Zero-init the body-local slots (Perceus exit-sweep safety): slots
     // [n_params, n_locals) at [x29, #-8*(i+1)] — the contiguous range from
@@ -231,7 +246,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
     // AAPCS scratch, dead here (before the param copy).
     var nbody: i32 = r.n_locals - r.n_params;
     if (nbody > 0) {
-        s = s.write("    sub x9, x29, #" + util.i32_to_string(r.n_locals * 8) + "\n");
+        s = fr_sub_imm(s, "x9", "x29", r.n_locals * 8);
         s = s.write("    mov x10, #" + util.i32_to_string(nbody) + "\n");
         s = s.write(".Lira_zi_" + asmcore.sanitize_label(fd.name) + ":\n");
         s = s.write("    cbz x10, .Lira_zd_" + asmcore.sanitize_label(fd.name) + "\n");
@@ -389,10 +404,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.mark_heap();
             var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
             s = lo.state;
+            var lolbl: string = asm_ir.str_lit_label(s, lo.idx);
             s = s.write("    mov x0, #16\n");
             s = s.write("    bl __fern_alloc\n");
-            s = s.write("    adrp x1, .S" + util.i32_to_string(lo.idx) + "\n");
-            s = s.write("    add x1, x1, :lo12:.S" + util.i32_to_string(lo.idx) + "\n");
+            s = s.write("    adrp x1, " + lolbl + "\n");
+            s = s.write("    add x1, x1, :lo12:" + lolbl + "\n");
             s = s.write("    str x1, [x0]\n");
             s = s.write("    mov x1, #" + util.i32_to_string(o.str.len()) + "\n");
             s = s.write("    str x1, [x0, #8]\n");
@@ -574,11 +590,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // overwrite it with the shape pointer, leaving cap@data-16 intact.
             s = s.mark_heap();
             var nf: i32 = o.i32_imm;
-            var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
-            s = lo.state;
+            var smlo: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, o.str);
+            s = smlo.state;
             s = s.write("    mov x0, #" + util.i32_to_string(nf + 1) + "\n    bl __fern_arr_box\n");
-            s = s.write("    adrp x1, .S" + util.i32_to_string(lo.idx) + "\n");
-            s = s.write("    add x1, x1, :lo12:.S" + util.i32_to_string(lo.idx) + "\n");
+            s = s.write("    adrp x1, " + smlo.label + "\n");
+            s = s.write("    add x1, x1, :lo12:" + smlo.label + "\n");
             s = s.write("    str x1, [x0]\n");
             var em: i32 = nf - 1;
             while (em >= 0) {
@@ -597,20 +613,20 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // SAME .S label struct_make writes / variant_is compares) at offset 0.
             // Leaves the box on the stack. Used by the enum-donor in-place reuse to
             // re-shape a dead scalar-enum box as a same-size struct.
-            var sslo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
+            var sslo: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, o.str);
             s = sslo.state;
             s = s.write("    ldr x0, [sp]\n");
-            s = s.write("    adrp x1, .S" + util.i32_to_string(sslo.idx) + "\n");
-            s = s.write("    add x1, x1, :lo12:.S" + util.i32_to_string(sslo.idx) + "\n");
+            s = s.write("    adrp x1, " + sslo.label + "\n");
+            s = s.write("    add x1, x1, :lo12:" + sslo.label + "\n");
             s = s.write("    str x1, [x0]\n");
         } else if (o.kind == "variant_is") {
             // pop variant box; shape ptr @0; compare to the interned variant name
             // (pointer equality). Push 1 if equal, else 0.
-            var vlo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
+            var vlo: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, o.str);
             s = vlo.state;
             s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n");
-            s = s.write("    adrp x1, .S" + util.i32_to_string(vlo.idx) + "\n");
-            s = s.write("    add x1, x1, :lo12:.S" + util.i32_to_string(vlo.idx) + "\n");
+            s = s.write("    adrp x1, " + vlo.label + "\n");
+            s = s.write("    add x1, x1, :lo12:" + vlo.label + "\n");
             s = s.write("    cmp x0, x1\n    cset x0, eq\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "tuple_make") {
             // n elements on the operand stack (element n-1 on top). Box =
@@ -691,11 +707,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
                 if (dfd.name == o.str && dfd.receiver_type.len() > 0
                         && (asmcore.is_struct_decl_name(ddbn, s) || dprim)) {
                     var dbn: string = ddbn;
-                    var dlit: asmcore.StringLitOut = asmcore.add_string_lit(s, dbn);
+                    var dlit: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, dbn);
                     s = dlit.state;
                     var dnext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
-                    s = s.write("    adrp x2, .S" + util.i32_to_string(dlit.idx) + "\n");
-                    s = s.write("    add x2, x2, :lo12:.S" + util.i32_to_string(dlit.idx) + "\n");
+                    s = s.write("    adrp x2, " + dlit.label + "\n");
+                    s = s.write("    add x2, x2, :lo12:" + dlit.label + "\n");
                     s = s.write("    cmp x1, x2\n    b.ne " + dnext + "\n");
                     var dk: i32 = dargc - 1;
                     while (dk >= 0) {
@@ -730,14 +746,14 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // x19 (saved/restored around the call) before alloc; then store shape
             // (x2 = .S addr) + value, push the cell pointer. Mirrors opt_make's
             // alloc-then-store, with x19 carrying the value across the call.
-            var dbl: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
+            var dbl: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, o.str);
             s = dbl.state;
             s = s.write("    ldr x9, [sp], #16\n");                  // pop value -> x9
             s = s.write("    str x19, [sp, #-16]!\n");               // save callee-saved x19
             s = s.write("    mov x19, x9\n");                        // x19 = value (survives alloc)
             s = s.write("    mov x0, #16\n    bl __fern_alloc\n");   // x0 = cell ptr
-            s = s.write("    adrp x2, .S" + util.i32_to_string(dbl.idx) + "\n");
-            s = s.write("    add x2, x2, :lo12:.S" + util.i32_to_string(dbl.idx) + "\n");
+            s = s.write("    adrp x2, " + dbl.label + "\n");
+            s = s.write("    add x2, x2, :lo12:" + dbl.label + "\n");
             s = s.write("    str x2, [x0]\n");                       // shape @0
             s = s.write("    str x19, [x0, #8]\n");                  // value @8
             s = s.write("    ldr x19, [sp], #16\n");                 // restore x19
@@ -752,14 +768,14 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // value rides the operand stack (which __fern_alloc preserves)
             // across the alloc, so the hit path reloads it as the Some payload.
             s = s.mark_heap();
-            var dcl: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
+            var dcl: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, o.str);
             s = dcl.state;
             var dcmiss: string = lp + "dcmiss" + util.i32_to_string(i);
             var dcend: string = lp + "dcend" + util.i32_to_string(i);
             s = s.write("    ldr x0, [sp]\n");                       // peek dyn ptr (left on stack)
             s = s.write("    ldr x1, [x0]\n");                       // shape @0
-            s = s.write("    adrp x2, .S" + util.i32_to_string(dcl.idx) + "\n");
-            s = s.write("    add x2, x2, :lo12:.S" + util.i32_to_string(dcl.idx) + "\n");
+            s = s.write("    adrp x2, " + dcl.label + "\n");
+            s = s.write("    add x2, x2, :lo12:" + dcl.label + "\n");
             s = s.write("    cmp x1, x2\n    b.ne " + dcmiss + "\n");
             // hit: Some(value) — alloc, tag 0, reload+store the dyn ptr payload.
             s = s.write("    mov x0, #16\n    bl __fern_alloc\n");
