@@ -181,6 +181,79 @@ order:
 3. Only then attempt to raise / remove the 512-function cap, gated by
    re-running the measurement above on the real merged bundle.
 
+## Attempt log — Finding 2 via a cons-list `OpsBuilder` (BLOCKED)
+
+The cleanest O(M) fix for Effect A is to stop threading `ops` as a
+clone-on-append `ir.Op[]` and instead use a reverse cons-list builder
+that shares structurally:
+
+```
+pub struct OpsNil  { pad: i32 }
+pub struct OpsCons { op: ir.Op, rest: OpsBuilder }
+pub type   OpsBuilder = OpsNil | OpsCons;
+// ops_push = O(1) ref-prepend (never clones); ops_flatten = O(M), once
+// per function; LowerState.ops: ir.Op[]  ->  OpsBuilder.
+```
+
+This was implemented and **works under the native Go backend** — all
+100 `*IRX86_64` self-host IR tests pass, `-check` is clean on every
+backend entry. But the **self-host fixpoint regresses**, and the
+bisection is conclusive and worth recording:
+
+- `TestSelfHostModloadFixpointX86_64` keeps the binaries byte-identical
+  (`mmc == gen2 == gen3`) but **gen2-compiled programs drop their whole
+  body**: `add(19,23)` exits 0, not 42.
+- Paradox resolved: the ~1000-function compiler self-compiles via the
+  **legacy AST fallback** (it is over the 512-fn cap), so `OpsBuilder`
+  is never exercised *while building the compiler* — hence the
+  byte-identical reproduction. The **small** test programs are under the
+  cap, take the IR path, and run `gen2`'s self-host-compiled
+  `OpsBuilder`, which is broken.
+- Fast repro (≈1 s/probe, no 70 s rebuild): build the modload driver
+  native (`mdriver`), have it emit the compiler's own asm, link that as
+  `mmcBin`, then compile a one-line `add` with each. `mdriver` → 42,
+  `mmcBin` → 0. `mmcBin` emits each function's prologue + param copies
+  then `movq $0,%rax; ret` — **every body is dropped**.
+- Reading the AST backend's emission of the helpers in the compiler's
+  own asm (`__fn_irlower__ops_{empty,push,flatten}`) shows they are
+  **emitted correctly** — right shape tags (`OpsCons` = `.S425`),
+  field offsets (op@8, rest@16), match arm, reverse loop, and return.
+  So the fault is **not** in the helpers.
+
+Conclusion: the breakage is *uniform* (every IR-path body dropped) and
+the helpers are correct, which localises it to the **self-host AST
+backend mis-emitting the `LowerState` threading once `ops` is a
+union-typed field** in that 45-field, pervasively-by-value-threaded
+record. (A union-typed *field* works in the small — `ExprBinary.left:
+Expr` is one — so the trigger is the union field inside the large
+threaded state struct, not unions per se.)
+
+### What this means for the fix order
+
+The O(M) cons-list fix is **correct** (native proves it) but **blocked
+by a legacy-AST-backend bug**, and that backend is the one being
+retired. Three ways forward, cheapest-lever first:
+
+1. **Unblock via goal #1, not a backend patch.** Once the IR subset
+   covers the whole compiler, the >512-fn AST fallback retires; the
+   compiler then self-compiles through the IR path, under which
+   `OpsBuilder` already works. This is the standing roadmap goal anyway
+   — so Finding 2's O(M) rewrite should land *after* the AST fallback
+   is gone, not before.
+2. **Fix the AST backend's union-typed-field threading** in `asm.fern`
+   directly. Self-contained repro above (`mmcBin` compiling `add`), but
+   it is deep asm-level work in a backend slated for removal — low
+   leverage.
+3. **Sidestep the union field.** Any O(M) structure-sharing rep needs a
+   recursive type; a recursive *struct* with a sentinel hits the same
+   backend surface. No clone-free representation was found that avoids a
+   recursive/union field, so this is not currently viable.
+
+Net: keep the recommended order above, but treat the Finding-2 O(M)
+rewrite as **gated on retiring the AST fallback** (goal #1). The
+`local_*` collapse (Effect-A constant factor) and Finding 1 (Effect B)
+remain unblocked and independently landable.
+
 ## Reproduction
 
 ```sh
@@ -189,4 +262,11 @@ go build -o /tmp/fern ./cmd/fern
 /tmp/fern -target x86-64 -o /tmp/asm_run examples/self_host/asm_run.fern
 # feed generated N-function / M-statement modules on stdin; measure
 # peak RSS with getrusage(RUSAGE_CHILDREN).ru_maxrss
+
+# Self-host-backend repro for the OpsBuilder blocker (≈1 s/probe):
+#   mdriver = cmd/fern build of asm_modload_run.fern (native backend)
+#   mmcBin  = link of (mdriver compiling the compiler's own source)
+#   echo 'function add(x:i32,y:i32):i32{return x+y;} \
+#         function main():i32{return add(19,23);}' > add.fern
+#   mdriver add.fern -> 42 ;  mmcBin add.fern -> 0 (body dropped)
 ```
