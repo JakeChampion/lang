@@ -8256,8 +8256,12 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             }
             // A u32 / u32[] binding marks the slot u32 so its arithmetic wraps at
             // 2^32 and its `>>` is logical (expr_is_u32 / the binary-op masking).
-            if (is_u32_type_name(v.type_name)) { sb = sb.mark_u32(slot, true); }
-            if (is_u64_type_name(v.type_name)) { sb = sb.mark_u64(slot, true); }
+            // An un-annotated binding has an empty type_name, so also infer the
+            // u32 / u64-ness from the INITIALIZER (`var a = X as u32`) — otherwise
+            // a later `a > b` emits a SIGNED compare, wrong once bit 31/63 is set
+            // (visible on wasm's true-32-bit `i32.gt_s`; #3537).
+            if (is_u32_type_name(v.type_name) || (v.type_name == "" && expr_is_u32(v.init, s))) { sb = sb.mark_u32(slot, true); }
+            if (is_u64_type_name(v.type_name) || (v.type_name == "" && expr_is_u64(v.init, s))) { sb = sb.mark_u64(slot, true); }
             // A u8/i8/u16/i16 (or array thereof) binding records the sub-word
             // kind so the slot's arithmetic wraps back to width (mark_subword /
             // expr_subword_kind / the binary-op masking) — the sub-32-bit
