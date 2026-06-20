@@ -105,7 +105,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | Float comparison + NaN semantics | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | `< > >=` audited; NaN semantics pending |
 | `boolean` type + literals | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | exercised throughout audit fixture |
 | `string` type: `+`, `==`/`!=`, indexing, slice | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | concat, eq/neq, byte index, `s[i:j]`, `.len()` |
-| String literals + escape sequences | | | | | | ⬜ | |
+| String literals + escape sequences | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `\t \n \r \0 \\ \"` + `\xNN` hex bytes; each decodes to one byte (embedded NUL counts — not C strings). Byte-exact `.len()` / index / concat — native `string_escapes` fixture (4 backends) + self-host IR pin (x86-64 + wasm) |
 | f-strings / interpolation | | | | | | ⬜ | confirm syntax exists |
 | Owned arrays `T[]` + indexing + `.with` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | index, `.len()`, `.with` (reassign idiom); **read-after-`.with` aliases on compiled backends, [#2832](https://github.com/JakeChampion/lang/issues/2832)** |
 | Slice views `[T]` | | | | | | ⬜ | |
@@ -249,6 +249,34 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-20 — string literals + escape sequences on the self-host IR path + native audit
+
+Audited the foundational `String literals + escape sequences` row (was ⬜
+across the board). The lexer's `scan_string` decodes the C-style escapes
+`\t \n \r \0 \\ \"` plus `\xNN` hex bytes (`examples/self_host/lexer.fern` —
+`apply_escape`), so a literal carrying any of them is an ordinary string box
+and lowers exactly like a plain literal: `.len()`, byte indexing
+(`s[i] as i32`), and `+` concat all stay on the IR path.
+
+- **Native** — `string_escapes` fixture (interp / x86-64 / arm64 / wasm):
+  prints the observable escape bytes (TAB / backslash / quote / `\x41\x7a`
+  → `Az`) and byte-exact asserts every escape is one byte (incl. an embedded
+  NUL via `\0` and `\x00` — length-prefixed strings count it, unlike C).
+- **Self-host IR** — `TestSelfHostStringEscapesIR{X86_64,Wasm}` run nine
+  cases through the x86-64 + wasm IR drivers, pinned to the `"ir"` path and
+  oracle-checked against the interpreter (`.len()`, byte index, concat, mixed
+  escapes; every result ≤ 126). All already lower, so **no compiler change**.
+
+Row flipped to ✅. (Found while auditing the adjacent ⬜ `f-strings /
+interpolation` row: f-string interpolation desugars to `(expr).to_string()`,
+which on the self-host IR path is special-cased for `i32` and string-identity
+so importless `f"{i32val}"` compiles + routes `"ir"` — but the **native**
+checker rejects the same importless program with `E043` because `to_string`
+isn't in scope without `import "std/i32"` / `"std/float"`. That self-host
+over-permissiveness vs. native is a separate divergence, filed for follow-up;
+this entry scopes only the import-free escape-sequence surface, which both
+compilers agree on.)
 
 ### 2026-06-20 — std/io_buffered BytesWriter on the self-host IR path + native audit
 
