@@ -106,7 +106,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `boolean` type + literals | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | exercised throughout audit fixture |
 | `string` type: `+`, `==`/`!=`, indexing, slice | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | concat, eq/neq, byte index, `s[i:j]`, `.len()` |
 | String literals + escape sequences | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `\t \n \r \0 \\ \"` + `\xNN` hex bytes; each decodes to one byte (embedded NUL counts — not C strings). Byte-exact `.len()` / index / concat — native `string_escapes` fixture (4 backends) + self-host IR pin (x86-64 + wasm) |
-| f-strings / interpolation | | | | | | ⬜ | confirm syntax exists |
+| f-strings / interpolation | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `f"...{e}..."` desugars (parser) to literal parts + `(e).to_string()` folded with `+`. Native: `TestWASMFStringInterpolation` + closure-capture f-string mirrors. Self-host IR pin (x86-64 + wasm): `TestSelfHostFStringIR` — i32 + string interpolants (the two `to_string` receivers the importless IR path lowers), literal/empty parts, byte offsets, equality |
 | Owned arrays `T[]` + indexing + `.with` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | index, `.len()`, `.with` (reassign idiom); **read-after-`.with` aliases on compiled backends, [#2832](https://github.com/JakeChampion/lang/issues/2832)** |
 | Slice views `[T]` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | borrowed window `a[i:j]`; `.len()`, indexing, `for x in s`, slice-of-slice, empty windows, `[string]` element slices — native `slice_views` fixture (4 backends) + self-host IR pin (x86-64 + wasm) |
 | Tuples `(T, U)` + destructuring | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `.0`/`.1` + `var (a,b) = …` |
@@ -268,6 +268,33 @@ mis-lower or bail.
   already lower, so **no compiler change**.
 
 Row note updated to reflect the wider-type coverage.
+### 2026-06-20 — f-strings / interpolation on the self-host IR path + native audit
+
+Audited the foundational `f-strings / interpolation` row (was ⬜ across the
+board). An f-string `f"...{e}..."` is desugared in `parser.fern` to its literal
+parts (string literals) and each interpolant as `(e).to_string()`, folded
+left-to-right with `+` (an empty f-string → `""`). The self-host IR path already
+lowers `.to_string()` on the two primitive receivers an importless program can
+name — a string (identity: `"x".to_string() == "x"`) and an i32 (routed to the
+`__fern_i32_to_string` runtime helper) — so f-strings interpolating i32 +
+string values lower entirely through the IR path with **no compiler change**.
+
+- **Native** — f-strings already exercised end-to-end by
+  `TestWASMFStringInterpolation` (literal braces, nested expr interpolants,
+  plain text) and the closure-capture f-string mirrors across backends.
+- **Self-host IR** — new `TestSelfHostFStringIR{X86_64,Wasm}` run seven cases
+  through the x86-64 + wasm IR drivers, pinned to the `"ir"` path and verified
+  against the native interpreter (with `import "std/i32";` so `to_string`
+  resolves there): single / multi / string interpolants, a literal+interp mix,
+  multi-digit values, byte-offset content, and the empty f-string (every result
+  ≤ 126).
+
+Row flipped to ✅. f64 / i64 / bool interpolants are deliberately out of scope:
+their `to_string` needs an imported stdlib method, so those f-strings fall off
+the importless IR surface — a natural follow-up once the IR path grows native
+`to_string` lowering for the wider scalar types (mirrors the noted
+f-string-over-i32 self-host-vs-native divergence: the self-host IR path is more
+permissive than the native checker, which requires the explicit import).
 
 ### 2026-06-20 — slice views `[T]` on the self-host IR path + native audit
 
