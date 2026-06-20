@@ -12372,12 +12372,16 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // never fires there — the byte-identical fixpoint is undisturbed.
     // Only RECEIVER-LESS (free) functions: the call-argument wrapping in the lift
     // pass (lift_inline_closures_expr's ExprCall arm) fires for ident callees =
-    // free functions, NOT method calls (`o.m(fnval)`, a FieldAccess callee). So a
-    // METHOD fn-param's argument is never wrapped — marking the method param a
-    // closure local would env-first-dispatch an UNWRAPPED bare pointer and crash.
-    // Leaving method fn-params unmarked keeps `o.m(fn)` on the pre-existing bare
-    // dispatch (unchanged), while a capturing closure to a method still bails to
-    // AST (correctness preserved); free-function fn-params get the uniform env box.
+    // free functions. A method fn-param is deliberately NOT marked: converting a
+    // USER method's fn-arg to the env-box ABI (wrapping the argument + marking the
+    // param env-first) destabilises the byte-identical self-host fixpoint — it
+    // touches working bare-dispatch method-fn-arg code like std/test's
+    // `r.bench(name, iter, workload)` — so that uniform-ABI unification stays its
+    // own deferred slice. The map-value slice handled here (a lambda stored in a
+    // `Map[K, () => V]` value via the builtin `.set`/`.insert`) needs only the
+    // argument wrapped into a box for storage; the retrieval-side match-binding
+    // (#3466) dispatches it env-first, and the map op never calls the param, so no
+    // method-param marking is required. #3445.
     var fpm: i32 = 0;
     if (fn.receiver_type.len() == 0) {
         while (fpm < fn.params.len()) {
@@ -15137,6 +15141,30 @@ function lift_arg_is_fn_value(arg: parser.Expr, mfuncs: parser.FuncDecl[]): bool
     return false;
 }
 
+// lift_method_arg_is_fn decides whether a METHOD-call argument (`recv.m(arg)`)
+// should be wrapped into an env box. Scoped to the map-value slice (#3445): an
+// inline lambda whose method param is NOT a declared user fn-param. The negation
+// is the key discriminator —
+//   * a Map value slot `Map[K, () => V]` lowers `.set`/`.insert` to the builtin
+//     op_map_set, and the method's value parameter is the GENERIC `V` (coarse
+//     type, not literally "fn"), so lift_callee_param_is_fn is FALSE → wrap the
+//     lambda into a box to STORE; the retrieval-side match-binding (#3466)
+//     dispatches it env-first.
+//   * a USER method with a DECLARED fn-param (`r.bench(name, iter, fn: () => void)`)
+//     has lift_callee_param_is_fn TRUE → NOT wrapped here, so it keeps its
+//     existing path (bare dispatch / AST-bail). Converting those to the env-box
+//     ABI destabilises the byte-identical self-host fixpoint, so the full
+//     uniform-ABI unification for user-method fn-args stays a deferred slice.
+// Only an inline lambda qualifies (a bare fn-name to a builtin value slot is not
+// a shape that arises for map values and would need the deferred work). #3445.
+function lift_method_arg_is_fn(arg: parser.Expr, mfield: string, idx: i32, mfuncs: parser.FuncDecl[]): boolean {
+    match (arg) {
+        parser.ExprLambda(_) => { return !lift_callee_param_is_fn(mfuncs, mfield, idx); },
+        _ => {}
+    }
+    return false;
+}
+
 // lift_inline_closures_expr walks an expression, hoisting capturing inline
 // lambdas in array-element and struct-field-value positions, AND wrapping
 // fn-typed CALL ARGUMENTS into uniform env boxes (slice #3445 follow-up). A call
@@ -15164,8 +15192,22 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
             // types we consult; a `__mkclo$…` marker callee (this pass's own
             // output) has no fn-typed-param signature, so its args just recurse.
             var cnm: string = "";
+            // A METHOD callee `recv.m(args)` (FieldAccess, non-numeric field):
+            // wrap an inline-lambda argument stored into a Map value slot
+            // (`m.set(1, <lambda>)`) into the env box, so a `Map[K, () => V]`
+            // closure value is stored as a box the retrieval-side match-binding
+            // (#3466) dispatches env-first (slice #3445 map-values). The wrap
+            // decision (lift_method_arg_is_fn) fires only for a lambda whose method
+            // param is NOT a declared user fn-param — a map value lowers to the
+            // builtin op_map_set with a generic `V` param, whereas a user method's
+            // declared fn-param keeps its existing bare-dispatch / AST-bail path
+            // (env-box-unifying those would break the byte-identical fixpoint). A
+            // numeric field (`t.0(args)`, a fn-valued tuple element call) is left
+            // to its own path. #3445.
+            var mfield: string = "";
             match (call.callee) {
                 parser.ExprIdent(cid) => { cnm = cid.name; },
+                parser.ExprFieldAccess(cfa) => { if (!util.is_all_digits(cfa.field)) { mfield = cfa.field; } },
                 _ => {}
             }
             var is_mkclo: boolean = cnm.len() > 8 && cnm[0:8] == "__mkclo$";
@@ -15189,6 +15231,11 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                 } else if (!is_mkclo && cnm.len() > 0 && lift_callee_param_is_fn(mfuncs, cnm, ai)) {
                     var fr: InlineCloRes = try_fn_field_value(call.args[ai], fd, fs, ct, gfns, mfuncs);
                     fs = fr.funcs; ct = fr.counter; nargs = nargs.append(fr.expr);
+                } else if (mfield.len() > 0 && lift_method_arg_is_fn(call.args[ai], mfield, ai, mfuncs)) {
+                    // Method-call fn-value argument (`m.set(1, <lambda>)`): wrap into
+                    // the env box so the stored / called value is a uniform box. #3445.
+                    var mr: InlineCloRes = try_fn_field_value(call.args[ai], fd, fs, ct, gfns, mfuncs);
+                    fs = mr.funcs; ct = mr.counter; nargs = nargs.append(mr.expr);
                 } else {
                     var er: InlineCloRes = lift_inline_closures_expr(call.args[ai], fd, fs, ct, gfns, structs, mfuncs);
                     fs = er.funcs; ct = er.counter; nargs = nargs.append(er.expr);
