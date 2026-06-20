@@ -218,7 +218,7 @@ per-function bugs in the audit log.
 | `std/hex` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_codec_roundtrip`; self-host IR path: `hex_encode`/`hex_decode` lower end-to-end (real std/hex source, routing-pinned `TestSelfHostHexIR`, x86-64 + wasm + arm64 oracle-checked) — unblocked by the wasm `string_from_bytes` helper-gate fix |
 | `std/crypto` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | SHA-256 vectors ✅ native (`audit_std_crypto`); self-host now correct via the IR path — u32 wrapping + array builders + byte builtins ([#2861](https://github.com/JakeChampion/lang/issues/2861) fixed, #2891; `TestSelfHostU32WrapIR`) |
 | `std/uuid` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | v4 length/dashes/version/uniqueness — `audit_std_uuid`; self-host v4 + v7 via the IR path (`TestSelfHostUuidIR`) |
-| `std/url` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_url_roundtrip` — 300 inputs, all four backends; the arm64 heap-corruption ([#2817](https://github.com/JakeChampion/lang/issues/2817)) is fixed (two-word `string_from_bytes` now uses `__fern_alloc_rc1`) |
+| `std/url` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_url_roundtrip` — 300 inputs, all four backends; the arm64 heap-corruption ([#2817](https://github.com/JakeChampion/lang/issues/2817)) is fixed (two-word `string_from_bytes` now uses `__fern_alloc_rc1`); self-host via the IR path (x86-64 + wasm): `url_encode`/`url_decode` percent-coding (`TestSelfHostUrlCodecIR`) — byte classification, bit ops, `u8[]` literals + `as u8` casts, and the `string_from_bytes` builtin all lower; native via the `url_codec` fixture |
 | `std/json` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | parse → get_i32/get_string → encode → re-parse — `audit_std_json` + `self_host_json_test`; `@derive(Json)` incl. **array fields** (`T[]`) — native all backends (`derive_json` fixture), self-host i32/string/struct arrays via the IR path ([#2766](https://github.com/JakeChampion/lang/issues/2766); `TestSelfHostJsonArrayIR`) |
 | `std/error` | ✅ | ✅ | ✅ | ✅ | | ✅ | canonical `Error` supertype (`message()`) for heterogeneous errors: `Result[_, dyn error.Error]` + `?` boxes any concrete error that `impl error.Error for …` (`std_error_test`, all four backends) — caps the dyn-error story (#3216 dispatch fix + #3242 `?`-conversion; #2707) |
 | `std/convert` | ✅ | ✅ | ✅ | ✅ | | ✅ | canonical `From[T]` / `Into[T]` conversion traits (on generic traits, #3254): `impl convert.From[i32] for Celsius` + `Celsius.from(20)`, `impl convert.Into[F] for Celsius` + `c.into()` (`std_convert_test`, all four backends; #2691) — generic use over a bound awaits bounded-generics-over-generic-traits |
@@ -249,6 +249,17 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-20 — std/url percent-encoding on the self-host IR path + native audit
+
+Audited the `std/url` self-host column (was blank). `url_encode` / `url_decode`
+— RFC 3986 percent-coding — now route through the IR path on x86-64 + wasm
+(`TestSelfHostUrlCodecIR{X86_64,Wasm}`, pinned to `"ir"`, hardcoded expectations
+verified against native interp + x86-64) and have a native `url_codec` fixture
+(interp / x86-64 / arm64 / wasm). It exercises byte classification, bit ops
+(`>>` / `&` / `<<` / `|`), `u8[]` array literals with `as u8` element casts, and
+the `string_from_bytes(u8[])` builtin — all already lower, so no compiler change.
+(`url_parse` / `query_parse`, which build a `Map`, are left for a later slice.)
 
 ### 2026-06-20 — 🔧 self-host IR: user receiver method named `len` mis-dispatched to the builtin `.len()` ([#3478](https://github.com/JakeChampion/lang/issues/3478))
 

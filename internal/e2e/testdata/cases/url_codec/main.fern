@@ -1,0 +1,14 @@
+import "core/int";
+import "std/url";
+
+function main(): i32 {
+    // round-trip percent-encoding.
+    var enc: string = url.url_encode("a b/c?x=1");
+    print(enc);
+    print(url.url_decode(enc));
+    // unreserved stays as-is; reserved bytes are %-escaped uppercase.
+    print(url.url_encode("Hello-World_1.2~"));
+    // decode leaves an invalid escape literal.
+    print(url.url_decode("100%zz"));
+    return 0;
+}
