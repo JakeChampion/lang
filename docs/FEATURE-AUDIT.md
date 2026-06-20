@@ -102,7 +102,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | Sized int types `i8 i16 i32 i64 u8 u16 u32 u64` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | i64 arith, u8/u16 cast; out-of-range literal is a static error |
 | Integer overflow / wrapping semantics | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | runtime narrowing cast wraps mod 2ⁿ |
 | Float types `f32 f64` arithmetic | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `+ * /`, f32 + f64 |
-| Float comparison + NaN semantics | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | `< > >=` audited; NaN semantics pending |
+| Float comparison + NaN semantics | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `< > <= >= == !=` + IEEE NaN: every ordered compare with a NaN is false, only `!=` (incl. `NaN != NaN`) true. Self-host IR pin `TestSelfHostFloatNanIR` (x86-64 + wasm) — x86-64 `ucomisd`+`setcc` folds the unordered/parity flag correctly; wasm `f64.*` is IEEE-direct |
 | `boolean` type + literals | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | exercised throughout audit fixture |
 | `string` type: `+`, `==`/`!=`, indexing, slice | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | concat, eq/neq, byte index, `s[i:j]`, `.len()` |
 | String literals + escape sequences | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `\t \n \r \0 \\ \"` + `\xNN` hex bytes; each decodes to one byte (embedded NUL counts — not C strings). Byte-exact `.len()` / index / concat — native `string_escapes` fixture (4 backends) + self-host IR pin (x86-64 + wasm) |
@@ -267,6 +267,26 @@ wider types.
 
 (Array-element compound assignment `a[i] += v` is statically rejected with
 `E056` — owned arrays are immutable; use `.with` — so it is correctly excluded.)
+### 2026-06-20 — float comparison NaN semantics on the self-host IR path
+
+Closed the `⚠️` in the self-host column of the `Float comparison + NaN
+semantics` row ("`< > >=` audited; NaN semantics pending"). IEEE-754 says every
+ordered comparison with a NaN is **false** — `< > <= >= ==` — and only `!=`
+is **true**, including `NaN != NaN`. A NaN is produced importlessly with
+`0.0 / 0.0`.
+
+- **Self-host IR** — new `TestSelfHostFloatNanIR{X86_64,Wasm}` run eight cases
+  through the x86-64 + wasm IR drivers, pinned to the `"ir"` path and verified
+  against the native interpreter: `NaN != NaN` → true, `NaN == NaN` → false,
+  `NaN {< > <= >=} 1.0` → all false, the negated `!(NaN < 1.0)` else-branch, and
+  two ordered (non-NaN) sanity cases. All already lower correctly, so **no
+  compiler change** — the x86-64 float compare's `ucomisd` sets the parity flag
+  on an unordered operand and the emitted `setcc` sequence folds it correctly
+  (`==` stays false / `!=` true when PF=1); wasm's `f64.eq`/`f64.ne`/`f64.lt`/…
+  are IEEE-direct.
+
+Row flipped to ✅ (self-host column; the native I/X/A/W cells were already ✅
+for the ordered comparisons).
 
 ### 2026-06-20 — `var` type inference (wider types) on the self-host IR path + native audit
 
