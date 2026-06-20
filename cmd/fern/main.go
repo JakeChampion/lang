@@ -530,6 +530,8 @@ func main() {
 	cc := flag.String("cc", "", "external assembler/linker invoked when -o or --run is set. arm64/x86-64 Linux and arm64-darwin all default to the in-process native backend (no external toolchain); passing -cc opts out to it (e.g. aarch64-linux-gnu-gcc / x86_64-linux-gnu-gcc on Linux, clang on darwin).")
 	runIt := flag.Bool("run", false, "link to a temporary binary and execute it (arm64 Linux only; uses qemu-aarch64 when not on an arm64 host)")
 	native := flag.Bool("native", false, "force the in-process pure-Go assembler+linker (internal/native). Already the DEFAULT for arm64/x86-64 Linux and arm64-darwin, so the flag is only needed to override an explicit -cc. No external assembler or linker; errors clearly on any unsupported instruction (pass -cc to fall back to an external toolchain).")
+	shared := flag.Bool("shared", false, "emit a shared object (.so) instead of an executable — a position-independent ET_DYN with a dynamic symbol table exporting the -export functions, loadable via dlopen / Android's System.loadLibrary. Native ELF targets only (x86-64, arm64, arm64-android); requires -o.")
+	export := flag.String("export", "", "with -shared: comma-separated function names to export in the .so (default: main). Each must be a defined top-level function; it becomes a dynamic symbol resolvable by the loader.")
 	qemu := flag.String("qemu", "qemu-aarch64", "user-mode emulator used by --run")
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
 	doInterp := flag.Bool("interp", false, "run FILE.fern (or `-` for stdin) through the AST interpreter — no codegen, no link, no binary. main()'s return value becomes the process exit code (clamped to 0..255). State is fresh per invocation; the REPL flag keeps an interactive session across lines.")
@@ -671,7 +673,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "-component-wrap and -component-wrap-cli are mutually exclusive")
 		os.Exit(1)
 	}
-	code, err := run(srcPath, *out, *target, *cc, *runIt, *native, *qemu, *componentWrap, *componentWrapCli, progArgs)
+	code, err := run(srcPath, *out, *target, *cc, *runIt, *native, *qemu, *componentWrap, *componentWrapCli, *shared, *export, progArgs)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -898,7 +900,7 @@ func runCheck(srcPath string) error {
 // run drives the full pipeline. The returned int is the exit code that
 // the fern process itself should exit with: 0 in compile-only mode, or
 // the program's own exit code under --run.
-func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, componentWrap, componentWrapCli bool, progArgs []string) (int, error) {
+func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, componentWrap, componentWrapCli, shared bool, export string, progArgs []string) (int, error) {
 	e, err := loadEntry(srcPath)
 	if err != nil {
 		return 1, err
@@ -1119,6 +1121,22 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 			os.Remove(cleanupBin)
 		}
 	}()
+	if shared {
+		if outPath == "" {
+			return 1, fmt.Errorf("-shared requires -o OUTPUT.so")
+		}
+		if target != "x86-64" && target != "arm64" && target != "arm64-android" {
+			return 1, fmt.Errorf("-shared is only supported with -target x86-64, arm64, or arm64-android (got %q)", target)
+		}
+		exportNames := []string{"main"}
+		if export != "" {
+			exportNames = strings.Split(export, ",")
+		}
+		if err := linkNativeShared(asm, binPath, target, exportNames); err != nil {
+			return 1, err
+		}
+		return 0, nil
+	}
 	if native && target != "arm64" && target != "x86-64" && target != "arm64-darwin" && target != "arm64-android" {
 		return 1, fmt.Errorf("-native is only supported with -target arm64, arm64-android, x86-64, or arm64-darwin (got %q)", target)
 	}
@@ -1335,6 +1353,52 @@ func linkNativePIE(asm, outPath string) error {
 		return err
 	}
 	return os.Chmod(outPath, 0o755)
+}
+
+// linkNativeShared assembles a program into a shared object (.so) exporting
+// the named functions, entirely in-process. It is the -shared path: the
+// same base-0 PIE layout as linkNativePIE, but wrapped by
+// elf.SharedLibrary{,X86} with a dynamic symbol table so a loader (dlopen /
+// Android's System.loadLibrary) can resolve the exports. target selects the
+// machine (x86-64 vs arm64/arm64-android).
+func linkNativeShared(asm, outPath, target string, exportNames []string) error {
+	soname := filepath.Base(outPath)
+	var so []byte
+	if target == "x86-64" {
+		text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exportNames)
+		if err != nil {
+			return fmt.Errorf("native assembler: %w", err)
+		}
+		elfRelocs := make([]nativeelf.Reloc, len(relocs))
+		for i, r := range relocs {
+			elfRelocs[i] = nativeelf.Reloc{Offset: r.Offset, Addend: r.Addend}
+		}
+		so = nativeelf.SharedLibraryX86(text, rodata, elfRelocs, sharedExports(exportNames, ev), soname)
+	} else { // arm64 / arm64-android
+		text, rodata, relocs, ev, err := nativearm64.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exportNames)
+		if err != nil {
+			return fmt.Errorf("native assembler: %w", err)
+		}
+		elfRelocs := make([]nativeelf.Reloc, len(relocs))
+		for i, r := range relocs {
+			elfRelocs[i] = nativeelf.Reloc{Offset: r.Offset, Addend: r.Addend}
+		}
+		so = nativeelf.SharedLibrary(text, rodata, elfRelocs, sharedExports(exportNames, ev), soname)
+	}
+	if err := os.WriteFile(outPath, so, 0o755); err != nil {
+		return err
+	}
+	return os.Chmod(outPath, 0o755)
+}
+
+// sharedExports pairs each export name with the vaddr the assembler
+// resolved for it, preserving the requested order.
+func sharedExports(names []string, vaddr map[string]uint64) []nativeelf.Export {
+	out := make([]nativeelf.Export, len(names))
+	for i, n := range names {
+		out[i] = nativeelf.Export{Name: n, Value: vaddr[n]}
+	}
+	return out
 }
 
 // linkNativeX86 is the x86-64 counterpart of linkNative: it assembles and

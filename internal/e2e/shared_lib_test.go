@@ -8,6 +8,8 @@
 package e2e
 
 import (
+	"bytes"
+	"debug/elf"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +19,84 @@ import (
 	nativeelf "github.com/jakechampion/lang/internal/native/elf"
 	nativex86 "github.com/jakechampion/lang/internal/native/x86_64"
 )
+
+// TestCLISharedX86Dlopen drives the user-facing `-shared` flag end to end:
+// `fern -target x86-64 -shared -export answer -o lib.so prog.fern` must
+// produce a .so whose `answer` export dlopen+dlsym+calls to 42 (host amd64).
+func TestCLISharedX86Dlopen(t *testing.T) {
+	gcc, err := exec.LookPath("gcc")
+	if err != nil {
+		t.Skip("gcc not on PATH")
+	}
+	if runtime.GOARCH != "amd64" {
+		t.Skip("host is not amd64")
+	}
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(src, []byte("function answer(): i32 { return 42; }\nfunction main(): i32 { return answer(); }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	soPath := filepath.Join(dir, "libfern.so")
+	if o, err := exec.Command(bin, "-target", "x86-64", "-shared", "-export", "answer", "-o", soPath, src).CombinedOutput(); err != nil {
+		t.Fatalf("-shared build failed: %v\n%s", err, o)
+	}
+	loader := `#include <dlfcn.h>
+#include <stdio.h>
+int main(int c, char**v){void*h=dlopen(v[1],RTLD_NOW);if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}int(*f)(void)=(int(*)(void))dlsym(h,"answer");if(!f)return 101;return f();}`
+	cPath := filepath.Join(dir, "ld.c")
+	if err := os.WriteFile(cPath, []byte(loader), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ld := filepath.Join(dir, "ld")
+	if o, err := exec.Command(gcc, cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
+		t.Fatalf("gcc loader: %v\n%s", err, o)
+	}
+	cmd := exec.Command(ld, soPath)
+	out, _ := cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 42 {
+		t.Fatalf("dlopen+call = %d, want 42 (out=%q)", code, out)
+	}
+}
+
+// TestCLISharedArm64Structure checks `fern -target arm64-android -shared`
+// produces an AArch64 ET_DYN .so with PT_DYNAMIC and the export name in
+// .dynstr (the x86 test above exercises dlopen end to end).
+func TestCLISharedArm64Structure(t *testing.T) {
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(src, []byte("function answer(): i32 { return 42; }\nfunction main(): i32 { return answer(); }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	soPath := filepath.Join(dir, "libfern.so")
+	if o, err := exec.Command(bin, "-target", "arm64-android", "-shared", "-export", "answer", "-o", soPath, src).CombinedOutput(); err != nil {
+		t.Fatalf("-shared build failed: %v\n%s", err, o)
+	}
+	raw, err := os.ReadFile(soPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := elf.NewFile(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("not a parseable ELF: %v", err)
+	}
+	if f.Type != elf.ET_DYN || f.Machine != elf.EM_AARCH64 {
+		t.Errorf("type/machine = %v/%v, want ET_DYN/AArch64", f.Type, f.Machine)
+	}
+	dyn := false
+	for _, p := range f.Progs {
+		if p.Type == elf.PT_DYNAMIC {
+			dyn = true
+		}
+	}
+	if !dyn {
+		t.Errorf("no PT_DYNAMIC segment")
+	}
+	if !bytes.Contains(raw, []byte("answer\x00")) {
+		t.Errorf(".dynstr does not contain the export name")
+	}
+}
 
 func TestSharedLibX86ExportDlopen(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")

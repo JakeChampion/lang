@@ -55,6 +55,31 @@ func AssembleProgramPIE(src string, textVAddr uint64) (text, rodata []byte, relo
 	return a.BytesProgramPIE(textVAddr)
 }
 
+// AssembleProgramShared assembles for a shared object (.so): the same
+// base-0 PIE layout, also resolving each name in exportNames to its
+// load-base-relative virtual address (textVAddr + its .text offset) in
+// exportVAddr — the addresses elf.SharedLibrary records in .dynsym. Pass
+// elf.TextVAddrPIE as textVAddr.
+func AssembleProgramShared(src string, textVAddr uint64, exportNames []string) (text, rodata []byte, relocs []Reloc, exportVAddr map[string]uint64, err error) {
+	a, err := ParseProgram(src)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	text, rodata, relocs, err = a.BytesProgramPIE(textVAddr)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	exportVAddr = map[string]uint64{}
+	for _, n := range exportNames {
+		v, ok := a.TextLabelVAddr(n, textVAddr)
+		if !ok {
+			return nil, nil, nil, nil, fmt.Errorf("export %q is not a defined .text symbol", n)
+		}
+		exportVAddr[n] = v
+	}
+	return text, rodata, relocs, exportVAddr, nil
+}
+
 // ParseProgram parses and encodes the program (instructions + data
 // directives + symbol/relocation bookkeeping) but does not resolve
 // vaddr-dependent fixups. The caller finishes with BytesProgram (ELF,
