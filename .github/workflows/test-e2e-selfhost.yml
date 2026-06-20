@@ -118,4 +118,12 @@ jobs:
           # exactly (and runs all of its subtests).
           PAT="^($(IFS='|'; echo "${SEL[*]}"))\$"
           echo "shard $SHARD/$NSHARD: ${#SEL[@]} tests: ${SEL[*]}"
-          gotestsum --format pkgname-and-test-fails -- -run "$PAT" ./internal/e2e/
+          # -timeout 18m, NOT the Go default 600s. timeout-minutes (20) is the
+          # JOB budget, but `go test`'s own default test timeout is 10m, so a
+          # shard whose real work runs ~10-11 min (the IR-subset migration keeps
+          # pushing the compile-heavy self-host shards slower — see the TIMEOUT
+          # note above) gets killed at 600s with `panic: test timed out after
+          # 10m0s` even though the job had 20 min to spend. Set the test timeout
+          # under the job budget so a genuine hang still fails cleanly (~18m)
+          # while legitimately slow shards run to completion.
+          gotestsum --format pkgname-and-test-fails -- -run "$PAT" -timeout 18m ./internal/e2e/
