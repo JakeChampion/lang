@@ -211,6 +211,33 @@ var traitsCases = []struct {
 			"function main(): i32 { var r: i32 = 0; " +
 			"if (Low(1).cmp(Low(2)) < 0) { r = r + 1; } if (Low(9).cmp(High) < 0) { r = r + 2; } " +
 			"if (High.cmp(Low(0)) > 0) { r = r + 4; } if (Low(3).cmp(Low(3)) == 0) { r = r + 8; } return r; }", 15},
+		// `@derive(Json)` on a struct synthesises a field-wise `to_json`
+		// rendering the canonical JSON object `{"f":<f.to_json()>,…}` — the
+		// same shape the Go checker's synthJson emits, composing through each
+		// field's own `Json` impl (i32 → number, string → quoted). The inline
+		// `trait Json` + primitive impls keep the case self-contained (the
+		// trait-test harness doesn't load std/json). Returns the rendered
+		// length: `{"id":7,"tag":"hi"}` (oracle-matched). The to_json body is
+		// structurally identical to the Display `to_string` body (string
+		// concat + per-field dispatch), so it lowers through the same IR path.
+		{"trait-derive-struct-json",
+			"trait Json { function to_json(self: Self): string; } " +
+				"impl Json for i32 { function to_json(self: Self): string { return self.to_string(); } } " +
+				"impl Json for string { function to_json(self: Self): string { return \"\\\"\" + self + \"\\\"\"; } } " +
+				"@derive(Json) struct Item { id: i32, tag: string } " +
+				"function main(): i32 { var p: Item = Item { id: 7, tag: \"hi\" }; return p.to_json().len(); }",
+			len(`{"id":7,"tag":"hi"}`)},
+		// `@derive(Json)` on an enum: externally-tagged — a unit variant
+		// renders as its quoted name (`"Nil"`), a single-payload variant as a
+		// one-key object (`{"Has":<__p0.to_json()>}`). Mirrors the Go
+		// synthEnumJson (self-host enum variants carry at most one payload).
+		// `Has(7)`→`{"Has":7}` (9) + `Nil`→`"Nil"` (5) = 14.
+		{"trait-derive-enum-json",
+			"trait Json { function to_json(self: Self): string; } " +
+				"impl Json for i32 { function to_json(self: Self): string { return self.to_string(); } } " +
+				"@derive(Json) enum Opt { Has(i32), Nil } " +
+				"function main(): i32 { var h: Opt = Has(7); var n: Opt = Nil; return h.to_json().len() + n.to_json().len(); }",
+			len(`{"Has":7}`) + len(`"Nil"`)},
 	// Generic-struct monomorphisation: a `@derive(Display) struct Box[T]`
 	// instantiated at `Box[i32]` is cloned to a concrete `Box__i32` with
 	// `v: i32`, so `self.v.to_string()` dispatches statically to the i32
