@@ -207,7 +207,7 @@ per-function bugs in the audit log.
 | `std/string` (~120 methods) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | core set (upper/lower/trim/contains/starts_with/ends_with/index_of/replace/repeat/pad/split) — `audit_std_string` + `self_host_string_test`; `prop_string_involution` laws; full ~120 set pending |
 | `std/array` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | reductions sum/max/min/product/sorted_asc — `audit_std_numeric` + `self_host_audit_stdarray_test` |
 | `std/math` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | range/i32_max/i32_min — `audit_std_numeric` + `self_host_math_test` |
-| `std/sort` | ✅ | ✅ | ✅ | ✅ | | ✅ | `prop_sort_i32` — ordering + permutation (histogram) + idempotence laws |
+| `std/sort` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_sort_i32` — ordering + permutation (histogram) + idempotence laws (native, all four backends); self-host via the IR path (x86-64 + wasm): `TestSelfHostSortIR` — i32 ascending/descending insertion sorts, the byte-lexicographic `string_cmp` three-way comparator, and the `string[]` sorts built on it (`.append` build, `.with` element rewrite, indexed scalar + string-byte reads, nested insertion-sort `while`), oracle-checked against the interpreter |
 | `std/format` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | self-host via the IR path (x86-64 + wasm): `format_bytes` (`TestSelfHostFormatBytesIR`), `format(fmt, args)` `{}`-substitution (`TestSelfHostFormatStringIR`), `format_duration_ms` (`TestSelfHostFormatDurationIR`), and the `{:fill|align|width.precision}` specs (`TestSelfHostFormatSpecIR`) — all oracle-checked against the interpreter; native via `audit_std_textfmt` + the `format_specs` fixture (with std/float `to_string_prec`) |
 | `std/csv` | ✅ | ✅ | ✅ | ✅ | | ✅ | parse_line/join/escape — `audit_std_textfmt`; self-host via the IR path (x86-64 + wasm): `csv_parse_line` (`TestSelfHostCsvParseLineIR`) + `csv_escape`/`csv_join` (`TestSelfHostCsvEscapeIR`, oracle-checked — `index_of`/`replace` lower as `op_str_index_of`/`op_str_replace`) |
 | `std/log` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | leveled `Logger`/`LogEntry` (#2683) plain-text + JSON-lines `render` — native via `log_leveled` fixture (all four backends); self-host via the IR path (x86-64 + wasm): `TestSelfHostLogLeveledIR` — structs with i32/boolean/string fields, chained struct-returning receiver methods, the threshold-filter branch, byte-indexed JSON escaping (hardcoded expectations: `.to_string()` is a self-host builtin the importless interp can't resolve, cf. format_bytes) |
@@ -260,6 +260,26 @@ verified against native interp + x86-64) and have a native `url_codec` fixture
 (`>>` / `&` / `<<` / `|`), `u8[]` array literals with `as u8` element casts, and
 the `string_from_bytes(u8[])` builtin — all already lower, so no compiler change.
 (`url_parse` / `query_parse`, which build a `Map`, are left for a later slice.)
+
+### 2026-06-20 — std/sort on the self-host IR path + native audit
+
+Audited the `std/sort` row's self-host `S` column (was blank — native was
+already covered by the `prop_sort_i32` fixture across all four backends, but
+the self-hosted compiler had never been pinned to lower the sorts through its
+IR path). `TestSelfHostSortIR{X86_64,Wasm}` run the sort surface — the i32
+ascending / descending insertion sorts, the byte-lexicographic `string_cmp`
+three-way comparator, and the `string[]` ascending / descending sorts built on
+it — through the x86-64 + wasm IR drivers, pinned to the `"ir"` path (return
+value = a small deterministic int, oracle-checked against the interpreter). It
+exercises scalar (`i32[]`) and pointer (`string[]`) array build via `.append`,
+in-place element rewrite via `.with`, indexed scalar + string-byte reads,
+`.len()`, numeric `<`/`>` comparisons, and the nested-`while` insertion-sort
+shift — all already lower, so no compiler change. The sort surface is inlined
+verbatim from `internal/stdlib/std/sort.fern` (the single-program driver
+resolves no imports); the case-insensitive `string_cmp_ci` / `*_ci` sorts and
+the `own` in-place sorts are out of scope (they depend on a char `.to_lower()`
+and the affine `own`-parameter path respectively). `std/sort` S column flipped
+to ✅.
 
 ### 2026-06-20 — 🔧 self-host IR: user receiver method named `len` mis-dispatched to the builtin `.len()` ([#3478](https://github.com/JakeChampion/lang/issues/3478))
 
