@@ -236,7 +236,7 @@ per-function bugs in the audit log.
 
 | Module | I | X | A | W | S | Status | Notes |
 |--------|---|---|---|---|---|--------|-------|
-| `core/int` | | | | | | ⬜ | |
+| `core/int` | ✅ | ✅ | ✅ | ✅ | 🔧 | 🔧 | radix **parse** direction (`parse_int_radix` / `__radix_digit`, bases 2–36, sign handling) — native via the `core_int_parse` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostCoreIntParseIR` — `Option[i32]` `Some`/`None` + payload-binding `match`, string indexing with char-class compares, multiply-accumulate loop, sign + negation. The `to_string` direction (`int_to_string` / `int_to_string_radix`) stays on the AST path — it pokes raw memory via `__alloc_u8` / `__memcpy` / `usize` (same caveat as std/u64 `to_string`) |
 | `core/cmp` (traits) | | | | | | ⬜ | |
 | `core/map` | | | | | | ⬜ | |
 | `core/no_prelude` | | | | | | ⬜ | no-op sentinel |
@@ -277,6 +277,24 @@ isn't in scope without `import "std/i32"` / `"std/float"`. That self-host
 over-permissiveness vs. native is a separate divergence, filed for follow-up;
 this entry scopes only the import-free escape-sequence surface, which both
 compilers agree on.)
+
+### 2026-06-20 — core/int radix parse on the self-host IR path + native audit
+
+Audited the `core/int` row (was ⬜ across the board) — the **parse** direction.
+`parse_int_radix` (bases 2–36, optional `+`/`-` sign) + its `__radix_digit`
+char classifier now have native coverage via the `core_int_parse` fixture
+(interp / x86-64 / arm64 / wasm) and self-host coverage via the IR path:
+`TestSelfHostCoreIntParseIR{X86_64,Wasm}` run the parser through the x86-64 +
+wasm IR drivers, pinned to the `"ir"` path (return value = a small deterministic
+int, oracle-checked against the interpreter). It exercises `Option[i32]`
+`Some`/`None` returns with a payload-binding `match`, string indexing (`s[i]`)
+with char-class comparisons, a multiply-accumulate `while` loop, sign handling,
+and negation — all already lower, so no compiler change. The two functions are
+inlined verbatim (core/int has no reserved type names; the single-program
+driver resolves no imports). The **`to_string`** direction (`int_to_string` /
+`int_to_string_radix`) stays on the AST path — it pokes raw memory via
+`__alloc_u8` / `__memcpy` / `usize`, the same low-level concern that keeps
+std/u64 `to_string` off the IR path; row marked 🔧 (parse on IR, to_string AST).
 
 ### 2026-06-20 — std/io_buffered BytesWriter on the self-host IR path + native audit
 
