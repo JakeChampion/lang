@@ -62,7 +62,14 @@ function main(): i32 {
 }
 ```
 
-## Root cause — two sub-gaps
+## Which path B takes (confirmed)
+
+B's emitted asm is stack-machine style (`pushq`/`popq`/`movq -8(%rbp)`),
+i.e. it went through the **AST emitter**, not SSA — the SSA path bailed
+on the function-typed payload and fell back. So the proximate
+`call __fn_Fn` is emitted by the AST emitter's generic-call path.
+
+## Root cause — layered sub-gaps
 
 1. **SSA path (`ssa.fern` `build_func`) bails on a function value used
    as a variant-payload argument.** Multi-arg variant construction
@@ -89,6 +96,27 @@ function main(): i32 {
 
 The proximate link failure is (2); the reason a multi-arg variant
 reaches the broken (2) at all is (1).
+
+3. **Calling a closure read back from a variant payload** also fails:
+   the `sh_step` repro additionally emits `undefined reference to
+   __fn_cont` for `cont(41)` where `cont` was `match`-bound from a
+   `Wait(tok, cont)` payload. The AST emitter treats the call to the
+   match-bound `cont` as a direct named-function call rather than an
+   indirect closure call. So even with construction fixed, the
+   resume-the-continuation step needs the call site to recognize a
+   match-bound function-typed payload as a closure value.
+
+### The variant model (why this is layered, not a one-liner)
+
+The self-host checker (checker.fern:674) models an enum variant `V(…)`
+as a struct carrying a **single `__ev` marker field** — multi-payload
+variants ride a tuple in that one field. So a faithful AST-emitter fix
+isn't "store N flat payload slots"; the construction box layout must
+match whatever the `match` side reads back for a multi-payload variant
+(a tuple in `__ev`), and the match-bind + indirect-call (sub-gap 3)
+must agree. Getting construction, match-extraction, and
+indirect-call mutually consistent across the AST emitter is the real
+scope.
 
 ## Fix directions (for the SSA-migration epic, #2691)
 
