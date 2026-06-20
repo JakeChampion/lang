@@ -908,6 +908,101 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
+    // __fern_read_file: %rdi = path string box → Result[string, IoError] box
+    // [tag@0, payload@8] (tag=0 Ok(contents) / tag=1 Err(_)). NUL-terminates the
+    // path, openat(AT_FDCWD, path, O_RDONLY=0)=257, lseek-sizes the file (=8),
+    // reads to EOF (sys_read=0, up to 1 MiB per read), closes (=3), boxes the
+    // contents string and wraps it in Ok. Transcribed verbatim from asm.fern's
+    // emit_runtime (the per-module entry exports the symbol via
+    // emit_runtime_globls). Gated on the read_file need; calls __fern_alloc.
+    if (s.has_need("read_file")) {
+        s = s.write("__fern_read_file:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    pushq %r13\n");
+        s = s.write("    pushq %r14\n");
+        s = s.write("    pushq %r15\n");
+        s = s.write("    movq (%rdi), %rbx\n");
+        s = s.write("    movq 8(%rdi), %r15\n");
+        s = s.write("    leaq 1(%r15), %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %r13\n");
+        s = s.write("    movq $0, %rcx\n");
+        s = s.write(".Lrdf_copy:\n");
+        s = s.write("    cmpq %r15, %rcx\n");
+        s = s.write("    jge .Lrdf_copydone\n");
+        s = s.write("    movb (%rbx,%rcx,1), %dl\n");
+        s = s.write("    movb %dl, (%r13,%rcx,1)\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write("    jmp .Lrdf_copy\n");
+        s = s.write(".Lrdf_copydone:\n");
+        s = s.write("    movb $0, (%r13,%r15,1)\n");
+        s = s.write("    movq $-100, %rdi\n");
+        s = s.write("    movq %r13, %rsi\n");
+        s = s.write("    movq $0, %rdx\n");
+        s = s.write("    movq $0, %r10\n");
+        s = s.write("    movq $257, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    testq %rax, %rax\n");
+        s = s.write("    js .Lrdf_err\n");
+        s = s.write("    movq %rax, %r12\n");
+        s = s.write("    movq %r12, %rdi\n");
+        s = s.write("    movq $0, %rsi\n");
+        s = s.write("    movq $2, %rdx\n");
+        s = s.write("    movq $8, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    movq %rax, %r14\n");
+        s = s.write("    movq %r12, %rdi\n");
+        s = s.write("    movq $0, %rsi\n");
+        s = s.write("    movq $0, %rdx\n");
+        s = s.write("    movq $8, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    movq %r14, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %r13\n");
+        s = s.write("    movq %rax, %rbx\n");
+        s = s.write("    movq $0, %r14\n");
+        s = s.write(".Lrdf_rdloop:\n");
+        s = s.write("    movq %r12, %rdi\n");
+        s = s.write("    movq %rbx, %rsi\n");
+        s = s.write("    movq $1048576, %rdx\n");
+        s = s.write("    movq $0, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    cmpq $0, %rax\n");
+        s = s.write("    jle .Lrdf_rddone\n");
+        s = s.write("    addq %rax, %r14\n");
+        s = s.write("    addq %rax, %rbx\n");
+        s = s.write("    jmp .Lrdf_rdloop\n");
+        s = s.write(".Lrdf_rddone:\n");
+        s = s.write("    movq %r12, %rdi\n");
+        s = s.write("    movq $3, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %r13, (%rax)\n");
+        s = s.write("    movq %r14, 8(%rax)\n");
+        s = s.write("    movq %rax, %r13\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $0, (%rax)\n");
+        s = s.write("    movq %r13, 8(%rax)\n");
+        s = s.write("    jmp .Lrdf_ret\n");
+        s = s.write(".Lrdf_err:\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $1, (%rax)\n");
+        s = s.write("    movq $0, 8(%rax)\n");
+        s = s.write(".Lrdf_ret:\n");
+        s = s.write("    popq %r15\n");
+        s = s.write("    popq %r14\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+    }
     // __fern_eprint_str: %rdi = string box {data@0, len@8} → write(2, data, len)
     // (stderr). Transcribed verbatim from asm.fern. Gated on the eprint need.
     if (s.has_need("eprint")) {
@@ -2419,7 +2514,7 @@ function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_str_to_lower", "__fern_str_to_upper", "__fern_str_starts_with",
         "__fern_str_ends_with", "__fern_str_index_of", "__fern_print_str",
         "__fern_print_int", "__fern_eprint_str", "__fern_putchar",
-        "__fern_read_int", "__fern_read_line", "__fern_strbuf_append",
+        "__fern_read_int", "__fern_read_line", "__fern_read_file", "__fern_strbuf_append",
         "__fern_strbuf_reset", "__fern_strbuf_take", "__fern_random_i32",
         "__fern_random_bytes", "__fern_monotonic_ns", "__fern_now_ns",
         "__fern_now_unix_ms", "__fern_sleep_ms", "__fern_map_new",
@@ -2852,6 +2947,12 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // path's __fern_read_line, which allocates), push the box (a value op).
             s = s.write("    call __fern_read_line\n    pushq %rax\n");
             s = s.need("heap").need("str_read_line");
+        } else if (o.kind == "read_file") {
+            // [pathbox] -> read the whole named file, push a fresh Result[string,
+            // IoError] box (the AST path's __fern_read_file, which allocates). The
+            // path string box is the popped %rdi arg.
+            s = s.write("    popq %rdi\n    call __fern_read_file\n    pushq %rax\n");
+            s = s.need("heap").need("read_file");
         } else if (o.kind == "eprint_str") {
             // [strbox] -> write its bytes to stderr (the AST path's __fern_eprint_str).
             // Push the syscall return so the statement-level drop balances.
