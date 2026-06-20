@@ -1,0 +1,25 @@
+import "core/int";
+
+// Audit fixture: string literals + C-style escape sequences.
+// Exercises every escape the lexer recognises — \t \n \r \0 \\ \" and
+// \xNN hex bytes — both as observable printed bytes and via byte-exact
+// length / index assertions. Run across interp / x86-64 / arm64 / wasm.
+function main(): i32 {
+    // Observable escape bytes, one line each (tab / backslash / quote
+    // stay on a single line; the hex bytes render printable A and z).
+    print("tab[\t]end");
+    print("bs[\\]end");
+    print("dq[\"]end");
+    print("hex[\x41\x7a]");
+
+    // Each escape is exactly one byte in a length-prefixed string.
+    if ("a\tb\nc".len() != 5) { return 11; }      // a TAB b LF c
+    if ("x\\y\"z".len() != 5) { return 12; }      // x \ y " z
+    if (("\x41")[0] as i32 != 65) { return 13; }  // 'A'
+    if ("\r\0".len() != 2) { return 14; }         // CR + NUL (embedded NUL counts)
+    if ("a\nb"[1] as i32 != 10) { return 15; }    // '\n' == 10
+    if ("\t".len() != 1) { return 16; }
+    if ("\x00".len() != 1) { return 17; }         // \xNN form of NUL
+    if ("\x7a".len() != 1) { return 18; }         // 'z'
+    return 0;
+}
