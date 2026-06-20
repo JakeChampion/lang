@@ -522,9 +522,10 @@ pub function module_uses_i64_divrem(mod: parser.Module): boolean {
 // funcref table (fn_support_section), the register backends through the
 // function's code address.
 pub function wasm_eligible(mod: parser.Module): boolean {
-    // read_int / read_line read stdin and read_file reads a file, which the wasm
-    // runtime here does not support — such modules stay on the AST path on wasm
-    // (where they are likewise unsupported), while x86 / arm64 lower them via IR.
+    // read_int / read_line read stdin, read_file reads a file, and args() reads
+    // the process argv — none supported by the wasm runtime here, so such modules
+    // stay on the AST path on wasm (where they are likewise unsupported), while
+    // x86 / arm64 lower them via the IR path.
     // The clock builtins (monotonic_ns / now_unix_ms) are not yet lowered on the
     // wasm IR path either (they need a WASI clock import rather than a syscall),
     // so a clock module also stays on the wasm AST path; x86 / arm64 lower it
@@ -542,6 +543,7 @@ pub function wasm_eligible(mod: parser.Module): boolean {
         && !module_emits_op(mod, "read_int")
         && !module_emits_op(mod, "read_line")
         && !module_emits_op(mod, "read_file")
+        && !module_emits_op(mod, "args")
         && !module_emits_op(mod, "monotonic_ns")
         && !module_emits_op(mod, "now_unix_ms")
         && !module_emits_op(mod, "now_ns")
