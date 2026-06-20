@@ -3511,6 +3511,30 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         }
                         if (!fav_ok) { return s.fail(); }
                     }
+                    // Array fields whose ELEMENT type skips the admission gate above
+                    // (`string[]`, or an enum-array like `Ty[]` — neither
+                    // is_leaksafe_array_field nor is_struct_array_field_type) still
+                    // ALIAS a bare array-LOCAL/param ident's buffer when set from one,
+                    // e.g. `EmitState { ...s, local_names: ln, local_types: lts }` over
+                    // `var ln: string[] = []` / `var lts: Ty[] = []`. The scalar-array /
+                    // struct-array gate already alias-incs its own bare idents; without
+                    // the same retain here the local is BOTH stored into the field AND
+                    // freed by the function-exit dec-sweep, double-freeing the buffer the
+                    // (returned / escaping) struct now owns — the reset_locals
+                    // use-after-free that broke the per-module self-build. Retain it with
+                    // the same Perceus dup so the sweep dec is balanced (the struct keeps
+                    // a counted reference; a borrowed-param source simply leaks, never
+                    // over-frees). The inc is on the ARRAY buffer — a real rc-headered
+                    // box (__fern_arr_box) — never a header-less string box, so it is
+                    // sound (cf. the scalar-string-field warning below).
+                    if (!fav_alias_inc && is_array_type_name(cfft)) {
+                        match (slit.field_values[found]) {
+                            parser.ExprIdent(aaid) => {
+                                if (s.is_arr_slot(s.slot_of(aaid.name))) { fav_alias_inc = true; }
+                            },
+                            _ => {}
+                        }
+                    }
                     // A `string` field is rc-headered and deep-dropped on the
                     // struct's reclamation (emit_struct_field_drops). The values safe
                     // to FREE are exactly the fresh, sole-owned HEAP strings whose data

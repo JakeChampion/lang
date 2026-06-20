@@ -130,8 +130,7 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 	}
 
 	// 5. The linked binary runs as a compiler: emit non-empty asm for a trivial
-	// program and exit 0. (Output CORRECTNESS — the byte-identical fixpoint — is
-	// the next slice; see the doc comment.)
+	// program and exit 0.
 	progDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(progDir, "triv.fern"),
 		[]byte("function main(): i32 { return 7; }\n"), 0o644); err != nil {
@@ -153,5 +152,48 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 	}
 	if !strings.Contains(string(out), ".globl _start") {
 		t.Errorf("per-module-built compiler output missing `.globl _start` — does not look like an asm program")
+	}
+
+	// 6. CORRECTNESS: the per-module-built compiler must compile a program with
+	// FUNCTION PARAMETERS correctly. This is the regression guard for the Perceus
+	// use-after-free that the whole-compiler IR emit first surfaced: routing every
+	// module through the IR path means functions like asmcore.reset_locals — which
+	// `return EmitState { ...s, local_names: ln, local_types: lts }`, moving FRESH
+	// local arrays (a string[] and an enum-array Ty[], both of which skip the
+	// struct-literal array-field admission gate) into a returned struct — were
+	// IR-emitted for the first time. The exit dec-sweep then double-freed those
+	// moved locals, so the per-module-built compiler's own parse/check pipeline
+	// corrupted its heap and segfaulted the moment it compiled ANY function with a
+	// parameter (the param rendered "a: i32" landing in a freed string buffer). A
+	// no-arg `main` slipped past it (step 5); `add(a, b)` did not. Compiling +
+	// running `add(40, 2)` proves the moved-array buffers survive (exit 42).
+	if err := os.WriteFile(filepath.Join(progDir, "add.fern"),
+		[]byte("function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(40, 2); }\n"), 0o644); err != nil {
+		t.Fatalf("write add.fern: %v", err)
+	}
+	var acmd *exec.Cmd
+	addArg := filepath.Join(progDir, "add.fern")
+	if len(runner) == 0 {
+		acmd = exec.Command(binPath, addArg)
+	} else {
+		acmd = exec.Command(runner[0], append(append(runner[1:], binPath), addArg)...)
+	}
+	addAsm, err := acmd.Output()
+	if err != nil {
+		t.Fatalf("per-module-built compiler failed to compile a function with parameters (the reset_locals use-after-free regression): %v", err)
+	}
+	if len(addAsm) == 0 {
+		t.Fatal("per-module-built compiler emitted 0 bytes for add.fern")
+	}
+	addBin := buildBin(t, gcc, dir, "add_pm", string(addAsm))
+	var arun *exec.Cmd
+	if len(runner) == 0 {
+		arun = exec.Command(addBin)
+	} else {
+		arun = exec.Command(runner[0], append(runner[1:], addBin)...)
+	}
+	_ = arun.Run()
+	if code := arun.ProcessState.ExitCode(); code != 42 {
+		t.Errorf("per-module-built compiler miscompiled add(40, 2): program exited %d, want 42", code)
 	}
 }
