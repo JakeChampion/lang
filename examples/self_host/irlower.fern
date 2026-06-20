@@ -3043,6 +3043,18 @@ pub function is_eager_safe(e: parser.Expr): boolean {
 // what makes `var x: i64 = 5000000000` work without value-based parsing.
 pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
     match (e) {
+        parser.ExprNumber(num) => {
+            // A bare integer literal whose value exceeds i32-max is unambiguously
+            // an i64 value (the checker forbids it in any i32 context, E047), so
+            // width inference must report 64. Smaller literals stay i32 and only
+            // become i64 from an i64 context (see lower_i64) — but a too-big one
+            // has no valid i32 reading, so classifying it by value is sound. Without
+            // this an i64[] LITERAL element (`[5000000000]`, incl. the inner array of
+            // an i64[][]) skipped the arr_make_i64 path and emitted `i32.const`
+            // with an out-of-range constant on the wasm backend (module won't parse).
+            if (!num.is_float && literal_is_i64(num.text)) { return 64; }
+            return 32;
+        },
         parser.ExprIdent(id) => {
             if (s.is_i64_slot(s.slot_of(id.name))) { return 64; }
             return 32;
