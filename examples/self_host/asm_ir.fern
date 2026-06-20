@@ -2562,6 +2562,27 @@ function str_lit_label(s: asmcore.EmitState, idx: i32): string {
     return ".S" + s.str_ns + "_" + util.i32_to_string(idx);
 }
 
+// ShapeRefOut carries the updated state + the label a shape pointer leaqs.
+pub struct ShapeRefOut { state: asmcore.EmitState, label: string }
+
+// shape_ref resolves the label for an enum/struct SHAPE pointer (struct_make /
+// variant_is / struct_set_shape / dyn dispatch / downcast). On the whole-program
+// path (str_ns == "") a shape is interned as an ordinary string literal — the
+// pre-per-module behaviour, byte-identical. Per-module (str_ns != ""), a shape is
+// a `.weak` global symbol (shape_sym): the SAME shape referenced in two units
+// resolves to ONE linker-merged address, so the pointer-equality shape compare
+// (a token constructed in the lexer unit, matched in the parser unit) holds
+// across the module boundary. Without this every cross-module enum `match` (e.g.
+// the parser matching lexer's token variants) silently fails — the self-build
+// miscompile #3451's per-module bootstrap hit.
+function shape_ref(s: asmcore.EmitState, name: string): ShapeRefOut {
+    if (s.str_ns.len() == 0) {
+        var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, name);
+        return ShapeRefOut { state: lo.state, label: str_lit_label(lo.state, lo.idx) };
+    }
+    return ShapeRefOut { state: asmcore.add_shape_lit(s, name), label: asmcore.shape_sym(name) };
+}
+
 // emit_runtime_globls exports the shared `__fern_*` / `__fn___fern_*` runtime
 // entry points `.globl` so a library module's `call __fern_alloc` (etc.) — an
 // unresolved extern in that module — links against the single copy the entry
@@ -2964,11 +2985,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // __fern_arr_box writes len=cap at data+0; we overwrite it with the
             // shape pointer, leaving cap@data-16 (the free-size word) intact.
             var nf: i32 = o.i32_imm;
-            var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
-            s = lo.state;
+            var smshp: ShapeRefOut = shape_ref(s, o.str);
+            s = smshp.state;
             s = s.write("    movq $" + util.i32_to_string(nf + 1) + ", %rdi\n");
             s = s.write("    call __fern_arr_box\n");
-            s = s.write("    leaq " + str_lit_label(s, lo.idx) + "(%rip), %rcx\n");
+            s = s.write("    leaq " + smshp.label + "(%rip), %rcx\n");
             s = s.write("    movq %rcx, (%rax)\n");
             var em: i32 = nf - 1;
             while (em >= 0) {
@@ -3098,19 +3119,19 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // SAME .S label struct_make writes / variant_is compares) at offset 0.
             // Leaves the box on the stack. Used by the enum-donor in-place reuse to
             // re-shape a dead scalar-enum box as a same-size struct.
-            var sslo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
+            var sslo: ShapeRefOut = shape_ref(s, o.str);
             s = sslo.state;
             s = s.write("    movq (%rsp), %rax\n");
-            s = s.write("    leaq " + str_lit_label(s, sslo.idx) + "(%rip), %rcx\n");
+            s = s.write("    leaq " + sslo.label + "(%rip), %rcx\n");
             s = s.write("    movq %rcx, (%rax)\n");
         } else if (o.kind == "variant_is") {
             // pop variant box; shape ptr @0; compare to the interned variant name
             // (same .S label struct_make stores, so pointer equality identifies
             // the variant). Push 1 if equal, else 0.
-            var vlo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
+            var vlo: ShapeRefOut = shape_ref(s, o.str);
             s = vlo.state;
             s = s.write("    popq %rax\n    movq (%rax), %rax\n");
-            s = s.write("    leaq " + str_lit_label(s, vlo.idx) + "(%rip), %rcx\n");
+            s = s.write("    leaq " + vlo.label + "(%rip), %rcx\n");
             s = s.write("    cmpq %rcx, %rax\n    sete %al\n    movzbq %al, %rax\n    pushq %rax\n");
         } else if (o.kind == "tuple_make") {
             // n element values on the operand stack (element n-1 on top). Box =
@@ -3190,10 +3211,10 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
                 if (dfd.name == o.str && dfd.receiver_type.len() > 0
                         && (asmcore.is_struct_decl_name(ddbn, s) || dprim)) {
                     var dbn: string = ddbn;
-                    var dlit: asmcore.StringLitOut = asmcore.add_string_lit(s, dbn);
+                    var dlit: ShapeRefOut = shape_ref(s, dbn);
                     s = dlit.state;
                     var dnext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
-                    s = s.write("    leaq " + str_lit_label(s, dlit.idx) + "(%rip), %rdx\n");
+                    s = s.write("    leaq " + dlit.label + "(%rip), %rdx\n");
                     s = s.write("    cmpq %rdx, %rcx\n");
                     s = s.write("    jne " + dnext + "\n");
                     var dk: i32 = dargc - 1;
@@ -3226,10 +3247,10 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // value (one word — an i32/i64/f64 scalar OR a string box pointer) is
             // on the operand stack; alloc first (it survives on the machine stack,
             // like opt_make), then store shape + value, push the cell pointer.
-            var dbl: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
+            var dbl: ShapeRefOut = shape_ref(s, o.str);
             s = dbl.state;
             s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
-            s = s.write("    leaq " + str_lit_label(s, dbl.idx) + "(%rip), %rcx\n");
+            s = s.write("    leaq " + dbl.label + "(%rip), %rcx\n");
             s = s.write("    movq %rcx, (%rax)\n");
             s = s.write("    popq %rcx\n    movq %rcx, 8(%rax)\n    pushq %rax\n");
         } else if (o.kind == "dyn_downcast") {
@@ -3241,13 +3262,13 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // → None box [tag1@0, 0@8] — the ordinary Option box `match` reads.
             // The dyn value rides the machine stack across __fern_alloc (like
             // opt_make/dyn_box), so the hit path reuses it as the Some payload.
-            var dcl: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
+            var dcl: ShapeRefOut = shape_ref(s, o.str);
             s = dcl.state;
             var dcmiss: string = lp + "dcmiss" + util.i32_to_string(i);
             var dcend: string = lp + "dcend" + util.i32_to_string(i);
             s = s.write("    movq (%rsp), %rax\n");        // peek dyn ptr (left on stack)
             s = s.write("    movq (%rax), %rcx\n");        // shape @0
-            s = s.write("    leaq " + str_lit_label(s, dcl.idx) + "(%rip), %rdx\n");
+            s = s.write("    leaq " + dcl.label + "(%rip), %rdx\n");
             s = s.write("    cmpq %rdx, %rcx\n    jne " + dcmiss + "\n");
             // hit: Some(value) — pop the dyn ptr as payload.
             s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
@@ -3580,6 +3601,23 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
         while (li < s.string_lits.len()) {
             s = s.write(str_lit_label(s, li) + ": .ascii \"" + asmcore.escape_for_ascii(s.string_lits[li]) + "\"\n");
             li = li + 1;
+        }
+    }
+    // Per-module shape pointers: emit each distinct shape name once as a `.weak`
+    // global symbol (shape_sym) carrying its name bytes. Every unit referencing the
+    // same shape emits the same weak symbol, so the linker merges them to ONE
+    // address — pointer-equality shape discrimination then holds across the module
+    // boundary (a token constructed in the lexer unit matches in the parser unit).
+    // Only populated on the per-module path (shape_ref interns shapes as ordinary
+    // string literals when str_ns == "", so the whole-program emit is unchanged).
+    if (s.shape_lits.len() > 0) {
+        s = s.write("    .section .rodata\n");
+        var shi: i32 = 0;
+        while (shi < s.shape_lits.len()) {
+            var shsym: string = asmcore.shape_sym(s.shape_lits[shi]);
+            s = s.write(".weak " + shsym + "\n");
+            s = s.write(shsym + ": .ascii \"" + asmcore.escape_for_ascii(s.shape_lits[shi]) + "\"\n");
+            shi = shi + 1;
         }
     }
     // The "maps" / "heap" needs were marked per-function during the emit loop
