@@ -182,6 +182,29 @@ function (l: Lex) advance(): Lex {
     return Lex { src: l.src, i: l.i + 1, n: l.n, line: new_line, col: new_col };
 }
 
+// advance_to consumes every byte in [l.i, end) at once, allocating a
+// SINGLE Lex instead of one per byte. It tracks line/col exactly as a
+// run of `advance()` calls would (newlines reset col, bump line), so
+// it's a drop-in for the hot `while (...) { l = l.advance(); }` scan
+// loops — which otherwise churn one throwaway Lex box per source
+// character (the dominant per-char struct allocation).
+function (l: Lex) advance_to(end: i32): Lex {
+    if (end <= l.i) { return l; }
+    var i: i32 = l.i;
+    var new_line: i32 = l.line;
+    var new_col: i32 = l.col;
+    while (i < end) {
+        if (l.src[i] == 10) {
+            new_line = new_line + 1;
+            new_col = 1;
+        } else {
+            new_col = new_col + 1;
+        }
+        i = i + 1;
+    }
+    return Lex { src: l.src, i: end, n: l.n, line: new_line, col: new_col };
+}
+
 // skip_trivia drops whitespace + `//` line comments. Mirrors the
 // Go lexer's `skipTrivia` but doesn't accumulate the comment list
 // — production self-host would; this validation port skips them.
@@ -189,18 +212,22 @@ function skip_trivia(l: Lex): Lex {
     while (!l.at_end()) {
         var b: i32 = l.peek_byte();
         if (is_space(b)) {
-            l = l.advance();
+            var we: i32 = l.i;
+            while (we < l.n && is_space(l.src[we])) {
+                we = we + 1;
+            }
+            l = l.advance_to(we);
             continue;
         }
         if (b == 47 && l.i + 1 < l.n && l.src[l.i + 1] == 47) {
             // `//` line comment — consume to newline (newline
             // itself is left for the next iteration's whitespace
             // path so line tracking stays simple).
-            l = l.advance();
-            l = l.advance();
-            while (!l.at_end() && l.peek_byte() != 10) {
-                l = l.advance();
+            var ce: i32 = l.i + 2;
+            while (ce < l.n && l.src[ce] != 10) {
+                ce = ce + 1;
             }
+            l = l.advance_to(ce);
             continue;
         }
         return l;
@@ -293,29 +320,34 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
     if (l.peek_byte() == 48 && l.i + 1 < l.n
         && (l.src[l.i + 1] == 120 || l.src[l.i + 1] == 88)) {   // 'x' / 'X'
         is_hex = true;
-        l = l.advance();   // '0'
-        l = l.advance();   // 'x' / 'X'
+        l = l.advance_to(l.i + 2);   // '0' then 'x' / 'X'
         var hex_start: i32 = l.i;
-        while (!l.at_end() && is_hex_digit(l.peek_byte())) {
-            l = l.advance();
+        var he: i32 = l.i;
+        while (he < l.n && is_hex_digit(l.src[he])) {
+            he = he + 1;
         }
+        l = l.advance_to(he);
         if (l.i == hex_start) {
             return NumResult { lex: l, tok: error_tok("hex literal needs at least one digit after 0x", start_line, start_col) };
         }
     } else {
-        while (!l.at_end() && is_digit(l.peek_byte())) {
-            l = l.advance();
+        var de: i32 = l.i;
+        while (de < l.n && is_digit(l.src[de])) {
+            de = de + 1;
         }
+        l = l.advance_to(de);
     }
     var is_float: boolean = false;
     // Fractional part: `.<digit>+`. Suppressed for hex and right
     // after a `.` (chained tuple index).
     if (!is_hex && !after_dot && l.i + 1 < l.n && l.src[l.i] == 46 && is_digit(l.src[l.i + 1])) {
         is_float = true;
-        l = l.advance();   // consume `.`
-        while (!l.at_end() && is_digit(l.peek_byte())) {
-            l = l.advance();
+        l = l.advance_to(l.i + 1);   // consume `.`
+        var fe: i32 = l.i;
+        while (fe < l.n && is_digit(l.src[fe])) {
+            fe = fe + 1;
         }
+        l = l.advance_to(fe);
     }
     // Scientific-notation exponent: `[eE][+-]?[0-9]+`, valid on an
     // integer base (`1e3`) or a fractional one (`1.5e-2`). Only
@@ -327,13 +359,15 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
         if (j < l.n && (l.src[j] == 43 || l.src[j] == 45)) { j = j + 1; }   // '+' / '-'
         if (j < l.n && is_digit(l.src[j])) {
             is_float = true;
-            l = l.advance();   // 'e' / 'E'
+            l = l.advance_to(l.i + 1);   // 'e' / 'E'
             if (!l.at_end() && (l.peek_byte() == 43 || l.peek_byte() == 45)) {
-                l = l.advance();   // sign
+                l = l.advance_to(l.i + 1);   // sign
             }
-            while (!l.at_end() && is_digit(l.peek_byte())) {
-                l = l.advance();
+            var ee: i32 = l.i;
+            while (ee < l.n && is_digit(l.src[ee])) {
+                ee = ee + 1;
             }
+            l = l.advance_to(ee);
         }
     }
     var text: string = l.src[begin:l.i];
@@ -345,10 +379,12 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
     var suffix: string = "";
     if (!l.at_end() && is_suffix_start(l.peek_byte())) {
         var s_begin: i32 = l.i;
-        l = l.advance();
-        while (!l.at_end() && is_digit(l.peek_byte())) {
-            l = l.advance();
+        l = l.advance_to(l.i + 1);
+        var se: i32 = l.i;
+        while (se < l.n && is_digit(l.src[se])) {
+            se = se + 1;
         }
+        l = l.advance_to(se);
         suffix = l.src[s_begin:l.i];
         if (!is_valid_numeric_suffix(suffix)) {
             return NumResult { lex: l, tok: error_tok("unknown numeric suffix", start_line, start_col) };
@@ -371,9 +407,11 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
 // plain identifier.
 function scan_ident(l: Lex, start_line: i32, start_col: i32): NumResult {
     var begin: i32 = l.i;
-    while (!l.at_end() && is_alnum(l.peek_byte())) {
-        l = l.advance();
+    var e: i32 = l.i;
+    while (e < l.n && is_alnum(l.src[e])) {
+        e = e + 1;
     }
+    l = l.advance_to(e);
     var text: string = l.src[begin:l.i];
     var tok: Token = ident_tok(text, start_line, start_col);
     if (is_keyword(text)) {
