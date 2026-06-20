@@ -999,6 +999,18 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"tuple-f64arr-elem-index", `function main(): i32 { var t = ([1.5, 2.5], 3); return (t.0[1] as i32) + t.1; }`, 5},
 		{"tuple-f64arr-elem-sum", `function main(): i32 { var t = ([1.5, 2.5, 4.0], 10); var s = 0.0; var i = 0; while (i < 3) { s = s + t.0[i]; i = i + 1; } return (s as i32) + t.1; }`, 18},
 		{"tuple-f64arr-elem-rebind", `function main(): i32 { var t = ([1.5, 2.5], 3); var xs = t.0; return (xs[1] as i32) + t.1; }`, 5},
+		// An i64[]/u64[] tuple element (`([x as i64], y)`): the element's recorded
+		// `i64[]` tuple tag lets `t.0[i]` read an 8-byte i64 (arr_get_i64) and a
+		// rebind recover the i64[] type. The literal is identified by its unambiguous
+		// 64-bit first element (a bare integer literal stays i32). The element is a
+		// heap pointer in one slot stored at 8-byte stride (op_arr_make_i64); the
+		// self-host AST path bailed it at construction, so these pin the IR value.
+		// On wasm32 the i64[] element pointer is stored as a 4-byte tuple slot
+		// (kind "i64[]", not "i64"), then arr_get_i64 reads the 8-byte element. #3353.
+		{"tuple-i64arr-elem-index", `function main(): i32 { var t = ([10 as i64, 20 as i64], 3); return (t.0[1] as i32) + t.1; }`, 23},
+		{"tuple-i64arr-elem-two", `function main(): i32 { var t = ([10 as i64, 20 as i64], 3); return (t.0[0] as i32) + (t.0[1] as i32) + t.1; }`, 33},
+		{"tuple-i64arr-elem-rebind", `function main(): i32 { var t = ([10 as i64, 20 as i64], 3); var xs = t.0; return (xs[1] as i32) + t.1; }`, 23},
+		{"tuple-u64arr-elem-index", `function main(): i32 { var t = ([10 as u64, 20 as u64], 3); return (t.0[1] as i32) + t.1; }`, 23},
 		// An UNANNOTATED i64 array literal binding (`var xs = [10 as i64, …]`): the
 		// first element is i64-wide, so the slot is inferred i64[] and lowers the
 		// same as the annotated `var xs: i64[] = …` (arr_make_i64 + 8-byte element
