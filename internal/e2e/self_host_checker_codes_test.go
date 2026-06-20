@@ -80,6 +80,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E063": true, // returning a [T] slice that views function-local storage
 	"E058": true, // labeled break/continue names no enclosing loop
 	"E061": true, // value-position block has no trailing value
+	"E059": true, // `as?` downcast requires a `dyn Trait` value on the left
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -256,6 +257,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// the tail) draws no E061 from either checker.
 		{"if-branch-tail-ok", "function main(): i32 { var x = if (true) { 1 } else { 2 }; return x; }\n", nil},
 		{"if-branch-leading-then-tail-ok", "function main(): i32 { var x = if (true) { var k = 1; k + 1 } else { 0 }; return x; }\n", nil},
+		// E059 (`as?` downcast requires a `dyn Trait` value on the left, #2857):
+		// the operand of `x as? T` must be a `dyn Trait` value. A concrete
+		// scalar (i32 / string) on the left can never be dyn, so it's E059 —
+		// matching the Go checker. (A real dyn value types to `unknown` in the
+		// self-host and is left alone, like the E033/E042 conservatism.) The
+		// regular `as` cast is unaffected (it's the `as_` op, not `as?_`).
+		{"as-downcast-i32-left", "struct P { x: i32 }\nfunction main(): i32 { var a = 5; var b = a as? P; return 0; }\n", []string{"E059"}},
+		{"as-downcast-string-left", "struct P { x: i32 }\nfunction main(): i32 { var s = \"hi\"; var b = s as? P; return 0; }\n", []string{"E059"}},
+		{"regular-as-cast-ok", "function main(): i32 { var a = 5; var b = a as i32; return b; }\n", nil},
 		// `for x in <EXPR>` over a non-ident array iterable — clean from both checkers.
 		{"for-literal-clean", "function main(): i32 { var s = 0; for x in [1, 2, 3] { s = s + x; } return s; }\n", nil},
 		{"for-call-clean", "function mk(): i32[] { return [1, 2]; }\nfunction main(): i32 { var s = 0; for x in mk() { s = s + x; } return s; }\n", nil},

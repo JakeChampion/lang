@@ -3812,6 +3812,19 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     }
                 }
             }
+            // E059: an `as?` downcast (`x as? T`, parsed as the unary op
+            // `as?_<T>`) requires a `dyn Trait` value on the left. The self-
+            // host has no dyn-trait Type — a real `dyn Trait` value resolves
+            // to `unknown` here — so a CONCRETE scalar primitive operand
+            // (i32 / f64 / bool / string) can never be a dyn value and is
+            // flagged, while an unknown (possibly-dyn) operand is left alone.
+            // Same sound, zero-false-positive conservatism as E033 / E042.
+            if (u.op.len() > 4 && u.op[0:4] == "as?_") {
+                var aot: Type = check_expr(u.operand, s);
+                if (is_primitive_type(aot)) {
+                    out = out.append(dg_at("E059", "`as?` downcast requires a `dyn Trait` value on the left, got " + type_label(aot), u.line, u.col));
+                }
+            }
             // E042: the `?` try operator (parsed as the unary op `try_`)
             // requires an Option or Result operand. The self-host models a
             // sound, zero-false-positive subset: when the operand is a known
