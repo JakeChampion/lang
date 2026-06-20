@@ -399,7 +399,15 @@ pub function op_opt_payload(): Op { return op0("opt_payload"); }
 // 8-byte payload read: width 64 + the i64 flag select i64.load vs f64.load.
 pub function op_opt_payload_w(width: i32, is_i64: boolean): Op { return Op { kind: "opt_payload", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" }; }
 pub function op_map_new(keykind: i32): Op { return Op { kind: "map_new", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
-pub function op_map_set(keykind: i32): Op { return Op { kind: "map_set", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
+// op_map_set: `i32_imm` is the KEY kind (0 = string, 1 = i32 — the x86-64
+// runtime's string-eq-vs-int loop selector); `unsigned` carries the VALUE
+// pointerness (the wasm runtime's `vis` RC-retain flag — true when the value
+// is a heap pointer: string / array / struct / enum / tuple / fn / unknown).
+// Without the value flag the wasm map_set leaves vis=0, never retaining a
+// pointer value, so the caller's dec frees it under the map → use-after-free /
+// sibling-key aliasing (#3495). x86-64 ignores `unsigned` (its runtime never
+// RC-manages values; its arr_dec is leak-only).
+pub function op_map_set(keykind: i32, valptr: boolean): Op { return Op { kind: "map_set", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: valptr, str: "" }; }
 pub function op_map_len(): Op { return op0("map_len"); }
 // `print_int` pops an i32 and writes its decimal text to stdout (no newline),
 // pushing a dummy result (the syscall return) so a statement-level drop balances.

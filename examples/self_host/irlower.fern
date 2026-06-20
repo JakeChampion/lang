@@ -4743,7 +4743,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!mset.ok) { return mset; }
                             mset = lower_expr(c.args[1], mset);
                             if (!mset.ok) { return mset; }
-                            return mset.emit(ir.op_map_set(mkk2));
+                            return mset.emit(ir.op_map_set(mkk2, map_value_is_ptr(map_value_of(mtype))));
                         }
                         if (fa.field == "len" && c.args.len() == 0) {
                             var mlen: LowerState = lower_expr(fa.obj, s);
@@ -4832,7 +4832,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!emset.ok) { return emset; }
                             emset = lower_expr(c.args[1], emset);
                             if (!emset.ok) { return emset; }
-                            return emset.emit(ir.op_map_set(emk));
+                            return emset.emit(ir.op_map_set(emk, map_value_is_ptr(map_value_of(expr_map_type_tag(fa.obj, s)))));
                         }
                     }
                     // Qualified built-in Option/Result construction:
@@ -13723,6 +13723,21 @@ pub function map_key_kind_of(typestr: string): i32 {
 
 // map_value_of returns the value type V of a "Map[K, V]" type string (i32 /
 // string), or "" if not parseable.
+// map_value_is_ptr reports whether a map's VALUE type is a heap pointer (so
+// op_map_set must set the wasm `vis` RC-retain flag — #3495). Conservative:
+// only the known scalar value types are non-pointers; everything else
+// (string / arrays / structs / enums / tuples / fn / generic `V` / unknown)
+// retains. Defaulting unknown to "pointer" is the safe direction — an extra
+// retain leaks at worst, whereas a missed retain frees a live value under the
+// map (the corruption this fixes).
+function map_value_is_ptr(vt: string): boolean {
+    if (vt == "i32" || vt == "i64" || vt == "f64" || vt == "f32") { return false; }
+    if (vt == "bool" || vt == "boolean") { return false; }
+    if (vt == "u8" || vt == "u16" || vt == "u32" || vt == "u64") { return false; }
+    if (vt == "i8" || vt == "i16") { return false; }
+    return true;
+}
+
 pub function map_value_of(typestr: string): string {
     if (typestr.len() < 5 || typestr[0:4] != "Map[") { return ""; }
     var inner: string = typestr[4 : typestr.len() - 1];   // K, V
