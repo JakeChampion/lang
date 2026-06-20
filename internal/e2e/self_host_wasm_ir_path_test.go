@@ -1173,6 +1173,12 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// was a wrong VALUE, so an AST/IR equality check alone wouldn't catch it.
 		{"match-rebind-struct", `struct P { x: i32, y: i32 } enum Shape { Dot, Rect(P) } function area(s: Shape): i32 { match (s) { Rect(p) when p.x > 0 => { return p.x * p.y; }, Rect(p) => { return p.y + 100; }, Dot => { return 1; } } return 0; } function main(): i32 { return area(Rect(P { x: 0, y: 5 })); }`, 105},
 		{"match-rebind-i32", `enum E { A(i32), B } function g(e: E): i32 { match (e) { A(n) when n > 100 => { return n - 100; }, A(n) => { return n * 3; }, B => { return 0; } } return 0; } function main(): i32 { return g(A(7)) + g(A(150)); }`, 71},
+		// match-EXPRESSION arm passing a bound NON-SCALAR payload as a call argument
+		// (#3498): the value-position gate admits an i32-returning free-fn call whose
+		// args borrow the payload, so a recursive-list `sum` (`Cons(h, t) => h +
+		// sum(t)`) and a struct-payload `V(p) => g(p)` ride the i32 result temp.
+		{"match-expr-recursive-sum", `enum L { C(i32, L), N } function sum(l: L): i32 { return match (l) { C(h, t) => h + sum(t), N => 0 }; } function main(): i32 { return sum(C(1, C(2, C(3, N)))); }`, 6},
+		{"match-expr-struct-payload-call", `struct S { v: i32 } enum E { A(S), N } function g(s: S): i32 { return s.v; } function f(e: E): i32 { return match (e) { A(s) => g(s), N => 0 }; } function main(): i32 { return f(A(S { v: 5 })); }`, 5},
 	}
 	for _, tc := range irOnly {
 		t.Run(tc.name, func(t *testing.T) {
