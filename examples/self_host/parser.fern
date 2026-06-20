@@ -1330,31 +1330,25 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
             // binds to `as` and isn't mis-read as the postfix `?` try op.
             var is_downcast: boolean = false;
             if (p.peek_punct() == "?") { is_downcast = true; p = p.advance(); }
-            var tyname: string = p.peek_ident();
-            if (tyname.len() == 0) { tyname = p.peek_keyword(); }
-            if (tyname.len() > 0) { p = p.advance(); }
-            // Capture an array `[]` or generic `[...]` suffix on the cast
-            // target so `e as i32[]` / `e as Option[i32]` parse as a single
-            // ascription instead of leaving the brackets to be mis-read as a
-            // postfix index. Only the `[]` array marker is folded into the op
-            // name (it distinguishes an array ascription from the numeric
-            // `as i32` conversion); generic args are consumed but dropped —
-            // the base name already names the ascription and the cast lowers
-            // as a zero-cost identity regardless of the type argument.
-            if (p.peek_punct() == "[") {
-                p = p.advance();   // `[`
-                if (p.peek_punct() == "]") {
-                    p = p.advance();   // `]`
-                    tyname = tyname + "[]";
-                } else {
-                    var depth: i32 = 1;
-                    while (depth > 0 && !p.at_end()) {
-                        if (p.peek_punct() == "[") { depth = depth + 1; }
-                        else if (p.peek_punct() == "]") { depth = depth - 1; }
-                        p = p.advance();
-                    }
-                }
-            }
+            // Read the full target type spelling via parse_type_name so the
+            // cast op name carries any generic args / array `[]` / qualified
+            // `pkg.Type` suffix (`e as i32[]` → `as_i32[]`, `e as Option[i32]`
+            // → `as_Option[i32]`) instead of stalling on the brackets or
+            // mis-reading them as a postfix index. Earlier this dropped the
+            // generic args, so a binding `var x = None as Option[i32]` rebound
+            // to the payload-less `var x: Option = None` — which the self-host
+            // IR path can't size (a bare `None` has no statically-known payload
+            // type), bailing the whole module to the AST backend (#2669). The
+            // generic suffix only matters for a payload-less operand like
+            // `None` (a `Some(e)` / `[e]` operand carries its own type), but
+            // preserving it is uniformly correct and the cast still lowers as a
+            // zero-cost identity. Numeric targets (`as i32`, `as f64`) come
+            // back as the bare name, so is_numeric_cast_op still recognises
+            // them. parse_type_name also folds a trailing `[]` and a qualified
+            // `pkg.Type` chain the old single-ident read left on the cursor.
+            var castty: TypeNameResult = parse_type_name(p);
+            p = castty.par;
+            var tyname: string = castty.name;
             if (is_downcast) { base = e_unary_at("as?_" + tyname, base, asline, ascol); }
             else { base = e_unary_at("as_" + tyname, base, asline, ascol); }
         } else if (p.peek_punct() == "?") {

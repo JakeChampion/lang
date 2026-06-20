@@ -1110,6 +1110,17 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"asc-ret", "function make(): i32[] { var a = [10, 20, 30]; return a as i32[]; } function main(): i32 { var x = make(); return x[0] + x[2]; }", 40},
 		{"asc-nested-index", "function main(): i32 { var a = [3, 4]; return (a as i32[])[0] + (a as i32[])[1]; }", 7},
 		{"asc-str-method", "function main(): i32 { return (\"hello\" as string).len(); }", 5},
+		// Ascription to an Option / Result target (#2669): the parser now keeps
+		// the generic args in the cast op name (`as_Option[i32]`), so a binding
+		// `var x = None as Option[i32]` rebinds to `var x: Option[i32] = None`
+		// (payload type intact) and lowers through the IR path instead of
+		// bailing on the payload-less `var x: Option = None`. bare-None binding,
+		// the Some operand (carries its own payload), and the return / nested
+		// non-binding positions.
+		{"asc-none-opt-bind", "function main(): i32 { var x = None as Option[i32]; return match (x) { Some(v) => v, None => 7 }; }", 7},
+		{"asc-some-opt-bind", "function main(): i32 { var x = Some(5) as Option[i32]; return match (x) { Some(v) => v, None => 7 }; }", 5},
+		{"asc-none-opt-ret", "function f(): Option[i32] { return None as Option[i32]; } function main(): i32 { return match (f()) { Some(v) => v, None => 7 }; }", 7},
+		{"asc-none-opt-nested", "function main(): i32 { return match (None as Option[i32]) { Some(v) => v, None => 7 }; }", 7},
 		{"tup-arr-scalar", "function main(): i32 { var t = ([10, 20, 30], 9); return t.1; }", 9},
 		{"tup-arr-index", "function main(): i32 { var t = ([10, 20, 30], 9); return (t.0)[0] + (t.0)[2]; }", 40},
 		{"tup-arr-bind", "function main(): i32 { var t = ([10, 20, 30], 9); var a = t.0; return a[0] + a[2] + t.1; }", 49},

@@ -27,7 +27,6 @@ const interpDriverMod = "import \"./lexer\";\n" +
 	"    return 254;\n" +
 	"}\n"
 
-
 var interpProgs = []struct {
 	name string
 	src  string
@@ -51,6 +50,11 @@ var interpProgs = []struct {
 	{"cast-f64-to-i32", "function main(): i32 { var f: f64 = 3.9; return f as i32; }", 3},
 	{"cast-i32-to-f64", "function main(): i32 { var n: i32 = 5; var f: f64 = n as f64; return (f + 0.5) as i32; }", 5},
 	{"cast-in-i64-array-sum", "function main(): i32 { var xs: i64[] = [3, 5, 90]; var s: i64 = 0; for v in xs { s = s + v; } return s as i32; }", 98},
+	// Non-numeric `as <Type>` ascription (#2669) — `as_i32[]` is a zero-cost
+	// identity on the value. eval_unary previously errored ("unknown unary op:
+	// as_i32[]") on every non-numeric cast; it now passes the operand through
+	// unchanged, matching the AST/IR emitters.
+	{"asc-array-identity", "function main(): i32 { var a = [3, 4] as i32[]; return a[0] + a[1]; }", 7},
 	// Range-for `for i in LOW..HIGH`: the parser emits a synthetic
 	// __range(LOW, HIGH) for-iter that the IR path lowers (irlower) but the
 	// interpreter doesn't understand — parser.desugar_ranges_module (run in
