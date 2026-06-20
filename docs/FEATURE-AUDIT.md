@@ -171,7 +171,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `f32_bits/f32_from_bits/f64_bits/f64_from_bits` | | | | | | ⬜ | |
 | float math builtins `__sqrt_f64` etc. | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | via std/float; self-host IR path (`op_funary`; `TestSelfHostFloatMathIR`): `__sqrt_f64`/`__floor_f64`/`__ceil_f64`/`__trunc_f64`/`__abs_f64` lower to a single hardware instruction on all three backends, and `__round_f64` (round-half-away) lowers too — one instruction on arm64 (`frinta`), emulated as `trunc(x+copysign(0.5,x))` on x86/wasm (`roundsd`/`f64.nearest` have no ties-away mode). Only the libm transcendentals (`__log_f64`/`__exp_f64`/`__sin_f64`/`__cos_f64`/`__pow_f64`) still route AST |
 | `strbuf_reset/append/take` | | | | | | ⬜ | |
-| `__heap_bump_bytes` | | | | | | ⬜ | introspection |
+| `__heap_bump_bytes` | ⚠️ | ✅ | ✅ | ✅ | ✅ | 🔧 | bump high-water mark (cursor − region base; 0 before the first alloc). self-host **IR path** ([#3534](https://github.com/JakeChampion/lang/issues/3534)) lowers it inline — x86-64 `__fern_heap_ptr − &__fern_heap`, arm64 `__fern_heap_ptr − (__fern_heap_end − heap_size)`, wasm `$heap − heap_base` — with `ir.op_allocates` admitting it so an introspection-only module still emits the heap runtime. Guarded by `TestSelfHostHeapBumpBytesIR{X86_64,Wasm}` (+ native x86-64 cross-check). interp has no bump allocator so it reports 0 (the pre-alloc zero baseline holds; the growth contract does not). Legacy AST self-host path unchanged (IR-path-only, per goal 1) |
 | `__rc_*` (inc/dec/get/underflow_count) | | | | | | ⬜ | RC introspection |
 | TCP: `tcp_listen/accept/recv/send/close` | | | | | | ⬜ | |
 | `udp_send` | | | | | | ⬜ | |
@@ -288,6 +288,27 @@ leak-only (never reclaims the backing storage), so `.len()`, element indexing
   every result ≤ 126). All already lower, so **no compiler change**.
 
 Row flipped to ✅.
+### 2026-06-20 — self-host IR: `__heap_bump_bytes()` introspection builtin lowers on the IR path ([#3534](https://github.com/JakeChampion/lang/issues/3534))
+
+The `__heap_bump_bytes()` builtin — the bump allocator's high-water mark (cursor
+− region base; 0 before the first allocation) — had no self-host IR lowering and
+bailed the whole module to the legacy AST emitter. Native handles it on every
+backend (`internal/ir` → `__fern_heap_bump_bytes`), so this was a goal-1
+IR-subset gap. New `ir.op_heap_bump_bytes`, recognised in `irlower.lower_expr`,
+emitted inline by each backend from its own heap cursor: x86-64 `__fern_heap_ptr
+− &__fern_heap` (the static heap symbol; `cmovne`-guarded so a still-zero cursor
+reports 0), arm64 `__fern_heap_ptr − (__fern_heap_end − heap_size)` (the arena is
+mmap'd, so the base is recovered from the recorded end; `csel`-guarded), and wasm
+`$heap − heap_base` (the `$heap` global is initialised to `heap_base`, so it is 0
+pre-alloc). The op is folded into `ir.op_allocates` — the shared heap-runtime
+gate the x86 + wasm backends run over the lowered op stream — so a module that
+*only* introspects the heap still emits the heap runtime; arm64 marks the heap
+need in its op handler. Guarded by `TestSelfHostHeapBumpBytesIR{X86_64,Wasm}`
+(routing-pinned to `ir`, exit codes cross-checked against the native x86-64
+backend — the interpreter has no bump-allocator model, so it cannot be the
+oracle). Self-hosting fixpoint unaffected (the self-host source does not call the
+builtin, so no emission changes on the fixpoint corpus). Row flipped to 🔧.
+
 ### 2026-06-20 — 🔧 self-host wasm IR: `op_map_set` dropped value-pointerness → `Map[K, ptr]` use-after-free ([#3495](https://github.com/JakeChampion/lang/issues/3495))
 
 The wasm IR backend hardcoded the `__fern_map_set` `vis` (value-is-RC-pointer)

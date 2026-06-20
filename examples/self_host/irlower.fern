@@ -4378,6 +4378,12 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     if (cid.name == "now_ns" && c.args.len() == 0) {
                         return s.emit(ir.op_now_ns());
                     }
+                    // __heap_bump_bytes(): the bump allocator's high-water mark
+                    // (cursor − base) as an i32. Allocation-free introspection;
+                    // the IR backends compute it inline from their heap cursor.
+                    if (cid.name == "__heap_bump_bytes" && c.args.len() == 0) {
+                        return s.emit(ir.op_heap_bump_bytes());
+                    }
                     if (decl_is_struct(s.structs, cid.name)) {
                         if (!decl_is_leaksafe(s.structs, cid.name)) { return s.fail(); }
                         // Array-payload variant construction isn't in this slice
