@@ -1,0 +1,21 @@
+import "core/int";
+
+// Exercises slice views across all four native backends: an array slice
+// `a[1:4]` bound to a `[i32]` slice-view local (distinct from an owned i32[]),
+// .len() and indexed reads on the view, an index-loop sum, and string slicing
+// to fresh strings. FEATURE-AUDIT "Slice views [T]" row.
+function main(): i32 {
+    var a: i32[] = [10, 20, 30, 40, 50];
+    var m: [i32] = a[1:4];
+    print(int.int_to_string(m.len()));   // 3
+    print(int.int_to_string(m[0]));      // 20
+    print(int.int_to_string(m[2]));      // 40
+    var s: string = "hello world";
+    print(s[0:5]);                       // hello
+    print(s[6:11]);                      // world
+    var sum: i32 = 0;
+    var i: i32 = 0;
+    while (i < m.len()) { sum = sum + m[i]; i = i + 1; }
+    print(int.int_to_string(sum));       // 90
+    return 0;
+}

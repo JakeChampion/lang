@@ -108,7 +108,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | String literals + escape sequences | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `\t \n \r \0 \\ \"` + `\xNN` hex bytes; each decodes to one byte (embedded NUL counts — not C strings). Byte-exact `.len()` / index / concat — native `string_escapes` fixture (4 backends) + self-host IR pin (x86-64 + wasm) |
 | f-strings / interpolation | | | | | | ⬜ | confirm syntax exists |
 | Owned arrays `T[]` + indexing + `.with` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | index, `.len()`, `.with` (reassign idiom); **read-after-`.with` aliases on compiled backends, [#2832](https://github.com/JakeChampion/lang/issues/2832)** |
-| Slice views `[T]` | | | | | | ⬜ | |
+| Slice views `[T]` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `arr[lo:hi]` yields the distinct `[T]` slice-view type (vs owned `T[]`); `.len()` / indexed reads / index-loop over the view; string slicing `s[lo:hi]` → fresh string + byte index — native via the `slice_view` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostSliceViewIR` exercising `ExprSlice` lowering (`arr_slice` / `str_slice`), incl. full / empty slice edges |
 | Tuples `(T, U)` + destructuring | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `.0`/`.1` + `var (a,b) = …` |
 | `Map[K, V]` literal + ops | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `insert`/`get_or`/`has`/`len`/`keys`/`values`/`for (k,v)`, i32 + string keys; `without` (functional delete) now on the x86-64/arm64 IR path ([#2926](https://github.com/JakeChampion/lang/issues/2926)) — wasm `without` stays on the AST path (box-return ABI) |
 | Array literals | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
@@ -249,6 +249,21 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-20 — slice views `[T]` on the self-host IR path + native audit
+
+Audited the `Slice views [T]` row (was ⬜ across the board). `arr[lo:hi]` yields
+the distinct **slice-view** type `[T]` (as opposed to an owned `T[]`); string
+slicing `s[lo:hi]` yields a fresh string. Now native via the `slice_view`
+fixture (interp / x86-64 / arm64 / wasm) and self-host via the IR path:
+`TestSelfHostSliceViewIR{X86_64,Wasm}` run eight cases through the x86-64 + wasm
+IR drivers, pinned to the `"ir"` path (return value = a small deterministic int,
+oracle-checked against the interpreter). It exercises the `ExprSlice` lowering
+(`arr_slice` / `str_slice`): binding an array slice to a `[i32]` local, `.len()`
+on a slice view, indexed reads (`m[i]`), an index-loop sum over the view, string
+slicing to a fresh string, byte indexing of a string slice, and the full / empty
+slice edges — all already lower, so no compiler change. Pure language builtins,
+so each case is an import-free bare `main`. Row flipped to ✅.
 
 ### 2026-06-20 — string literals + escape sequences on the self-host IR path + native audit
 
