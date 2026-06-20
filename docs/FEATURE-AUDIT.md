@@ -133,7 +133,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | Generic structs/enums (monomorphised) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `Box[T]` + generic method |
 | Generic functions + inference | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `id[T](x: T): T`, inferred |
 | Traits (`Display`/`Eq`/`Ord`, bounds) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | trait + impl method dispatch |
-| Nested functions + closures (capture) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `function(x: T): R { … cap … }` |
+| Nested functions + closures (capture) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `function(x: T): R { … cap … }`; incl. returning a capturing closure and calling it inline off the call result (`mk(..)(args)` / curried `(x)=>(y)=>…`) — self-host IR `return_closure` pin (#3551) |
 | Function values / indirect calls | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | named fn as value; higher-order |
 | Lambdas (anonymous `function(…)` + arrow `(x: T): R => e`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | arrow form desugars to `function(…){ return e; }` — typed params required, return type optional (#2701) |
 | Tail-call optimisation | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | depth 5000 self-recursion, no overflow |
@@ -249,6 +249,29 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-20 — self-host IR: calling a RETURNED capturing closure inline (#3551)
+
+Closed the last common closure shape that bailed the self-host IR path to the
+AST emitter: **returning a capturing closure and calling it directly off the
+call result** — `mk(10)(5)` where `mk` returns `(y) => k + y`, and the curried
+`(x) => (y) => x + y`. Found while sweeping the IR path for remaining AST
+fallbacks (it was the only common one left).
+
+The env/RC machinery already worked for the via-`var` form (`var f = mk(10);
+f(5)` — `closure_ret_fns` marks `f` a closure local, the box is dispatched
+env-first). Only the **inline call-on-call** bailed: the `mk(..)(args)` lowering
+handled a callee returning a bare fn pointer (no-capture lambda) but explicitly
+`fail()`ed when the callee returned a CLOSURE box. The fix evaluates the inner
+call into a fresh temp (marked an array so the exit dec-sweep releases it,
+exactly as the bound closure local is) and dispatches env-first off the box —
+the same shape the `is_closure_local` call arm already uses.
+
+`irlower.fern` only; the byte-identical self-host fixpoints
+(`TestSelfHostModloadFixpointX86_64` / `TestSelfHostStage2FixedPoint`) stay
+green. Guarded by `TestSelfHostReturnClosureIR{X86_64,Wasm}` — 7 value-pinned
+cases (curry, param/local capture, two-arg, two-captures, plus no-capture and
+via-`var` regression guards), routing-pinned to `"ir"` and oracle-checked.
 
 ### 2026-06-20 — `std/u32` self-host row → ✅ (the #2917 wasm unsigned-compare gap is closed)
 
