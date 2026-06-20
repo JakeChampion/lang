@@ -79,6 +79,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E056": true, // subscript assignment (arr[i] = v) is read-only
 	"E063": true, // returning a [T] slice that views function-local storage
 	"E058": true, // labeled break/continue names no enclosing loop
+	"E061": true, // value-position block has no trailing value
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -243,6 +244,18 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// E011 still wins for an out-of-loop labeled break (the two never both
 		// fire) — a labeled break with no enclosing loop at all is E011.
 		{"labeled-break-no-loop", "function main(): i32 { break nope; return 0; }\n", []string{"E011"}},
+		// E061 (value-position block has no trailing value, #2857): an if/match
+		// used as a value whose branch ends in a `;`-terminated statement (no
+		// tail expression) has no result. parse_branch_body tags that branch
+		// with a marker the checker turns into E061 — matching the Go checker.
+		// Both branches value-less (so they agree as void → no E031) and an
+		// un-annotated var (→ no E003) isolate E061 as the only code.
+		{"if-branch-no-tail", "function f(): i32 { return 0; }\nfunction main(): i32 { var x = if (true) { f(); } else { f(); }; return 0; }\n", []string{"E061"}},
+		{"match-arm-no-tail", "function f(): i32 { return 0; }\nfunction main(): i32 { var a = match (1) { 1 => { f(); }, _ => { f(); } }; return 0; }\n", []string{"E061"}},
+		// A value if/match WITH trailing values (incl. leading statements before
+		// the tail) draws no E061 from either checker.
+		{"if-branch-tail-ok", "function main(): i32 { var x = if (true) { 1 } else { 2 }; return x; }\n", nil},
+		{"if-branch-leading-then-tail-ok", "function main(): i32 { var x = if (true) { var k = 1; k + 1 } else { 0 }; return x; }\n", nil},
 		// `for x in <EXPR>` over a non-ident array iterable — clean from both checkers.
 		{"for-literal-clean", "function main(): i32 { var s = 0; for x in [1, 2, 3] { s = s + x; } return s; }\n", nil},
 		{"for-call-clean", "function mk(): i32[] { return [1, 2]; }\nfunction main(): i32 { var s = 0; for x in mk() { s = s + x; } return s; }\n", nil},

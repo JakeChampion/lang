@@ -2623,7 +2623,10 @@ function mx_expr(e: parser.Expr, s: Scope, unions: UnionSig[], enums: parser.Enu
 
 // mx_stmts walks a statement list, threading scope (so a match/if-
 // expression sees earlier locals and a match arm sees its payload binding)
-// and dispatching every contained expression through mx_expr.
+// and dispatching every contained expression through mx_expr. It also emits
+// E061 for a value-position block with no trailing value (the marker
+// StmtUnknown parse_branch_body leaves), reached here because the walk
+// descends into the value-if/match IIFE lambda bodies where that marker lives.
 function mx_stmts(stmts: parser.Stmt[], s: Scope, unions: UnionSig[], enums: parser.EnumDecl[]): Diag[] {
     var out: Diag[] = [];
     var cur: Scope = s;
@@ -2668,6 +2671,18 @@ function mx_stmts(stmts: parser.Stmt[], s: Scope, unions: UnionSig[], enums: par
             parser.StmtDefer(d) => {
                 var one: parser.Stmt[] = [d.action];
                 out = append_diags(out, mx_stmts(one, cur, unions, enums));
+            },
+            parser.StmtUnknown(u) => {
+                // E061: a value-position block (an if/match value-branch) whose
+                // last element is a `;`-terminated statement has no trailing
+                // value. parse_branch_body tags exactly that case with this
+                // marker StmtUnknown (the only producer of this kind), so
+                // detecting it here — inside the same value-if/match IIFE walk
+                // that drives E031 — matches the Go checker, which reports E061
+                // when a value-position block has no tail expression.
+                if (u.kind == "value branch has no trailing expression") {
+                    out = out.append(dg("E061", "block-expression has no trailing value"));
+                }
             },
             _ => { }
         }
