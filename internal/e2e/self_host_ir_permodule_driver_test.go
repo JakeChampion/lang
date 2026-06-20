@@ -124,3 +124,99 @@ func TestSelfHostIRPerModuleDriver(t *testing.T) {
 		t.Errorf("per-module driver binary exit = %d, want 6 (len \"hello\" + 1)", code)
 	}
 }
+
+// TestSelfHostIRPerModuleCrossStruct guards the per-module eligibility-gate
+// VIEW fix (#3451): the gate (all_eligible_known_view / all_eligible_lib_known_view
+// → eligible_core_known_main_view) must lower each function against the WHOLE-
+// PROGRAM struct view (all_structs), exactly as emit_module_funcs does — not the
+// module's own structs. Without it, a module that touches a SIBLING module's
+// struct LAYOUT fails the gate and bails to AST even though the per-module emit
+// (which already lowers against all_structs) would succeed.
+//
+// The program is the minimal trigger: `point` defines a struct + constructor,
+// the entry imports it and reads an imported-struct FIELD (`p.x + p.y`). Lowering
+// the entry's `main` needs point.Point's field layout, which lives in the point
+// module — present only in the whole-program struct view. Pre-fix, the entry unit
+// reported "module not IR-eligible" and the build could not proceed; post-fix
+// every unit is eligible, the units link, and the binary exits 3 + 4 = 7.
+func TestSelfHostIRPerModuleCrossStruct(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	for _, name := range []string{"flatten.fern", "checker.fern", "asm_load_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "alr")
+
+	pointSrc := "pub struct Point { x: i32, y: i32 }\n" +
+		"pub function mk(a: i32, b: i32): Point { return Point { x: a, y: b }; }\n"
+	mainSrc := "import \"./point\";\n" +
+		"function main(): i32 { var p: point.Point = point.mk(3, 4); return p.x + p.y; }\n"
+	if err := os.WriteFile(filepath.Join(dir, "point.fern"), []byte(pointSrc), 0o644); err != nil {
+		t.Fatalf("write point.fern: %v", err)
+	}
+	entryPath := filepath.Join(dir, "cs_main.fern")
+	if err := os.WriteFile(entryPath, []byte(mainSrc), 0o644); err != nil {
+		t.Fatalf("write cs_main.fern: %v", err)
+	}
+
+	drive := func(t *testing.T, args ...string) string {
+		t.Helper()
+		full := append([]string{entryPath}, args...)
+		var cmd *exec.Cmd
+		if len(runner) == 0 {
+			cmd = exec.Command(driverBin, full...)
+		} else {
+			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), full...)...)
+		}
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("driver failed (args %v): %v", args, err)
+		}
+		return string(out)
+	}
+
+	n, err := strconv.Atoi(strings.TrimSpace(drive(t, "-per-module-count")))
+	if err != nil || n < 2 {
+		t.Fatalf("-per-module-count = %d (err=%v), want >=2", n, err)
+	}
+	var needArgs []string
+	for _, ln := range strings.Split(strings.TrimSpace(drive(t, "-per-module-needs")), "\n") {
+		if s := strings.TrimSpace(ln); s != "" {
+			needArgs = append(needArgs, "-extra-need", s)
+		}
+	}
+
+	var objs []string
+	for i := 0; i < n; i++ {
+		emitArgs := append([]string{"-per-module-emit", strconv.Itoa(i)}, needArgs...)
+		asm := drive(t, emitArgs...)
+		p := filepath.Join(dir, "cs_unit_"+strconv.Itoa(i)+".s")
+		if err := os.WriteFile(p, []byte(asm), 0o644); err != nil {
+			t.Fatalf("write unit %d: %v", i, err)
+		}
+		objs = append(objs, p)
+	}
+
+	binPath := filepath.Join(dir, "cs_prog")
+	linkArgs := append([]string{"-static", "-nostdlib", "-no-pie"}, append(objs, "-o", binPath)...)
+	if lout, err := exec.Command(gcc, linkArgs...).CombinedOutput(); err != nil {
+		t.Fatalf("link per-module units failed: %v\n%s", err, lout)
+	}
+
+	var rcmd *exec.Cmd
+	if len(runner) == 0 {
+		rcmd = exec.Command(binPath)
+	} else {
+		rcmd = exec.Command(runner[0], append(runner[1:], binPath)...)
+	}
+	_, _ = rcmd.CombinedOutput()
+	if code := rcmd.ProcessState.ExitCode(); code != 7 {
+		t.Errorf("per-module cross-struct binary exit = %d, want 7 (3 + 4)", code)
+	}
+}
