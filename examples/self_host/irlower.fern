@@ -5379,16 +5379,42 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 // lambda, lifted to a const_func by lift_lambdas). Lower the args,
                 // then the callee call (its returned fn pointer on TOS), then
                 // call_indirect — the same shape as a fn-pointer array element /
-                // tuple element call. A callee that returns a CLOSURE box (a
-                // capturing-lambda-returning fn, tracked in closure_fns) needs the
-                // env-passing form, so it bails to AST for now.
+                // tuple element call.
                 parser.ExprCall(cocall) => {
                     var coc_is_closure: boolean = false;
                     match (cocall.callee) {
                         parser.ExprIdent(cocid) => { if (util.index_of_str(s.closure_fns, cocid.name) >= 0) { coc_is_closure = true; } },
                         _ => {}
                     }
-                    if (coc_is_closure) { return s.fail(); }
+                    // A callee that returns a CLOSURE box [funcval, caps…] (a
+                    // capturing-lambda-returning fn, tracked in closure_fns):
+                    // dispatch env-FIRST, the same shape a closure LOCAL uses
+                    // (the `is_closure_local` arm above). The box is needed twice
+                    // — as the `__env` first arg and to read `box[0]` as the call
+                    // target — so the inner call is evaluated into a fresh temp.
+                    // Mirrors `var f = mk(…); f(args)`: the temp is marked an array
+                    // so the exit dec-sweep releases the box, exactly as the bound
+                    // closure local is. (#3551)
+                    if (coc_is_closure) {
+                        var bs: LowerState = lower_expr(c.callee, s);   // inner call -> box on TOS
+                        if (!bs.ok) { return bs; }
+                        var btmp: string = "$coc" + util.i32_to_string(bs.local_names.len());
+                        bs = bs.add_local(btmp);
+                        var bslot: i32 = bs.slot_of(btmp);
+                        bs = bs.mark_arr(bslot, true);
+                        bs = bs.emit(ir.op_store_local(bslot));
+                        bs = bs.emit(ir.op_load_local(bslot));          // __env (the box)
+                        var ba: i32 = 0;
+                        while (ba < c.args.len()) {
+                            bs = lower_expr(c.args[ba], bs);
+                            if (!bs.ok) { return bs; }
+                            ba = ba + 1;
+                        }
+                        bs = bs.emit(ir.op_load_local(bslot));          // box again
+                        bs = bs.emit(ir.op_const_i32(0));
+                        bs = bs.emit(ir.op_arr_get(32));                // box[0] = funcval
+                        return bs.emit(ir.op_call_indirect(c.args.len() + 1));
+                    }
                     var cocs: LowerState = s;
                     var coci: i32 = 0;
                     while (coci < c.args.len()) {
