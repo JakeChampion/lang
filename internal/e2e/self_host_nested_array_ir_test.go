@@ -42,14 +42,19 @@ var nestedArrayIRCases = []struct {
 	{"f64-2x2", `function main(): i32 { var m: f64[][] = [[2.5], [3.5]]; return (m[0][0] * 2.0) as i32; }`},
 }
 
-// nestedArrayI64IRCases pin the i64[][] read fix on x86-64 only. The READ side is
-// fixed on every backend (local_arrarr_elem → arr_get_i64), but an i64 array
-// LITERAL (`[5000000000]`) still emits its 64-bit element as `i32.const` on the
-// wasm backend (a separate, pre-existing construction-side bug — out of range, so
-// the module won't parse), so a wasm i64[][] case can't be built yet. f64
-// literals are unaffected (covered on both backends above). The wasm i64-literal
-// construction fix is a follow-up; until then these read-side pins run on x86-64,
-// where the previously-truncated 8-byte element now reads correctly.
+// nestedArrayI64IRCases pin the i64[][] read AND construction fixes on x86-64 +
+// wasm. The READ side (local_arrarr_elem → arr_get_i64) and the CONSTRUCTION side
+// both now work on every backend: previously an i64 array LITERAL (`[5000000000]`)
+// emitted its 64-bit element as `i32.const` on the wasm backend (out of range, so
+// the module wouldn't parse), because infer_expr_width treated every bare integer
+// literal as i32. infer_expr_width now classifies a literal that exceeds i32-max as
+// i64 by value (it has no valid i32 reading — checker E047), so the inner array
+// literal takes the arr_make_i64 path and the element is emitted i64.const.
+// (An UNANNOTATED 1-D big-literal array — `var a = [7000000000]` — would exercise
+// the same compiler path, but the tree-walking interpreter still defaults an
+// unannotated big literal to i32 and wraps, so it can't serve as an oracle here;
+// that checker/interp divergence is tracked separately. The annotated cases below
+// pin the construction fix unambiguously.)
 var nestedArrayI64IRCases = []struct {
 	name string
 	main string
@@ -81,9 +86,8 @@ func TestSelfHostNestedArrayIRX86_64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
 	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
 
-	// x86-64 runs the cross-backend cases plus the i64[][] cases (the i64 read
-	// fix is verified here; the wasm half is blocked by the i64-literal bug noted
-	// on nestedArrayI64IRCases).
+	// x86-64 runs the cross-backend cases plus the i64[][] cases (both the read
+	// and construction fixes; the wasm half now runs them too).
 	x86Cases := append(append([]struct {
 		name string
 		main string
@@ -138,7 +142,14 @@ func TestSelfHostNestedArrayIRWasm(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
-	for _, tc := range nestedArrayIRCases {
+	// wasm runs the cross-backend cases plus the i64[][] cases — the i64-literal
+	// construction fix (infer_expr_width value-based i64) makes these build here too.
+	wasmCases := append(append([]struct {
+		name string
+		main string
+	}{}, nestedArrayIRCases...), nestedArrayI64IRCases...)
+
+	for _, tc := range wasmCases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.main + "\n")
 			want := interpExit(t, interpBin, string(src))
