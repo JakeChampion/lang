@@ -317,3 +317,65 @@ int main(int c, char**v){
 		t.Fatalf("FFI callbacks via __c_call = exit %d, want 42 (out=%q)", code, out)
 	}
 }
+
+// TestStdJNIDispatch validates the std/jni outbound bridge: a Fern function
+// calls a JNIEnv method (table[index](env, arg)) via jni.call1, dispatched
+// through __c_call. A C harness builds a FAKE JNIEnv — a function table whose
+// entry at `index` increments its argument — so no real JVM is needed; the
+// result proves the env -> table -> method[index](env, arg) indirection and
+// the C-ABI call land correctly.
+func TestStdJNIDispatch(t *testing.T) {
+	gcc, err := exec.LookPath("gcc")
+	if err != nil {
+		t.Skip("gcc not on PATH")
+	}
+	if runtime.GOARCH != "amd64" {
+		t.Skip("host is not amd64")
+	}
+	src := `import "std/jni";
+function probe1(env: usize, cls: usize, jenv: usize, idx: usize, a0: usize): i32 {
+    return jni.call1(jenv, idx as i32, a0) as i32;
+}
+function main(): i32 { return 0; }`
+	asm := compileToX86AsmExports(t, src, []string{"probe1"})
+	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, []string{"probe1"})
+	if err != nil {
+		t.Fatalf("AssembleProgramShared: %v", err)
+	}
+	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs),
+		[]nativeelf.Export{{Name: "probe1", Value: ev["probe1"]}}, "libfern.so")
+	dir := t.TempDir()
+	soPath := filepath.Join(dir, "libfern.so")
+	if err := os.WriteFile(soPath, so, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Fake JNIEnv: env -> tptr -> table[]; table[5] = inc(env, x) = x+1.
+	// probe1(0, 0, env, 5, 41) -> jni.call1(env, 5, 41) -> table[5](env, 41) = 42.
+	loader := `#include <dlfcn.h>
+#include <stdio.h>
+static long inc(void* env, long x){ (void)env; return x + 1; }
+int main(int c, char** v){
+  void* h = dlopen(v[1], RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
+  void* table[16] = {0};
+  table[5] = (void*)inc;
+  void* tptr = table;        /* pointer to table[0]            */
+  void* env  = &tptr;        /* JNIEnv* = &(table pointer)     */
+  int (*probe)(long,long,long,long,long) =
+      (int(*)(long,long,long,long,long)) dlsym(h, "probe1");
+  if(!probe) return 101;
+  return probe(0, 0, (long)env, 5, 41);
+}`
+	cPath := filepath.Join(dir, "loader.c")
+	if err := os.WriteFile(cPath, []byte(loader), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ld := filepath.Join(dir, "loader")
+	if out, err := exec.Command(gcc, cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
+		t.Fatalf("gcc loader: %v\n%s", err, out)
+	}
+	cmd := exec.Command(ld, soPath)
+	out, _ := cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 42 {
+		t.Fatalf("jni.call1 dispatch = %d, want 42 (out=%q)", code, out)
+	}
+}
