@@ -78,6 +78,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E057": true, // cell_new(v) element type must be a scalar or string
 	"E056": true, // subscript assignment (arr[i] = v) is read-only
 	"E063": true, // returning a [T] slice that views function-local storage
+	"E058": true, // labeled break/continue names no enclosing loop
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -227,6 +228,21 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// break / continue inside `for` loops (#2788) — clean from both checkers.
 		{"for-continue-clean", "function main(): i32 { var s = 0; for i in 0..5 { if (i == 2) { continue; } s = s + i; } return s; }\n", nil},
 		{"for-break-clean", "function main(): i32 { var a = [1, 2, 3]; var s = 0; for x in a { if (x == 3) { break; } s = s + x; } return s; }\n", nil},
+		// E058 (labeled break/continue names no enclosing loop, #2857): a
+		// labeled `break L` / `continue L` whose `L` matches no enclosing loop
+		// label is E058. A valid label (the enclosing loop's, or an outer one
+		// from a nested loop) draws no code — matching the Go checker, which
+		// tracks the enclosing-loop label stack.
+		{"break-bad-label", "function main(): i32 { var c = 0; outer: while (c < 5) { c = c + 1; if (c == 2) { break nope; } } return c; }\n", []string{"E058"}},
+		{"continue-bad-label", "function main(): i32 { var c = 0; outer: while (c < 5) { c = c + 1; if (c == 2) { continue nope; } } return c; }\n", []string{"E058"}},
+		{"break-good-label-clean", "function main(): i32 { var c = 0; outer: while (c < 5) { c = c + 1; var j = 0; while (j < 5) { j = j + 1; if (j == 2) { break outer; } } } return c; }\n", nil},
+		{"continue-good-label-clean", "function main(): i32 { var c = 0; outer: while (c < 3) { c = c + 1; var j = 0; while (j < 3) { j = j + 1; if (j == 1) { continue outer; } } } return c; }\n", nil},
+		// A labeled break that targets the INNERMOST loop's own label is in
+		// scope (depth 0) — clean.
+		{"break-self-label-clean", "function main(): i32 { var c = 0; inner: while (c < 5) { c = c + 1; if (c == 2) { break inner; } } return c; }\n", nil},
+		// E011 still wins for an out-of-loop labeled break (the two never both
+		// fire) — a labeled break with no enclosing loop at all is E011.
+		{"labeled-break-no-loop", "function main(): i32 { break nope; return 0; }\n", []string{"E011"}},
 		// `for x in <EXPR>` over a non-ident array iterable — clean from both checkers.
 		{"for-literal-clean", "function main(): i32 { var s = 0; for x in [1, 2, 3] { s = s + x; } return s; }\n", nil},
 		{"for-call-clean", "function mk(): i32[] { return [1, 2]; }\nfunction main(): i32 { var s = 0; for x in mk() { s = s + x; } return s; }\n", nil},

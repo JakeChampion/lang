@@ -2808,7 +2808,9 @@ function stmts_slit_diags(stmts: parser.Stmt[], structs: StructSig[]): Diag[] {
 }
 
 // loop_diags emits E011 for a `break` / `continue` that isn't inside a
-// loop. It's purely structural (no scope): `while` / `for` bodies recurse
+// loop, and E058 for a labeled `break L` / `continue L` whose `L` names no
+// enclosing loop. It threads only the enclosing-loop label stack (no value
+// scope): `while` / `for` bodies recurse with in_loop = true.
 // block_exits reports whether a statement block is guaranteed to leave
 // its function (return) on every path — an under-approximation mirroring
 // the Go checker's funcBodyExits, used by E052. Only the LAST statement
@@ -2993,33 +2995,66 @@ function switch_diag_block(stmts: parser.Stmt[]): parser.Stmt[] {
     return out;
 }
 
+// label_in_scope reports whether `name` is one of the enclosing loop
+// labels (mirrors the Go checker's labelInScope over its loopLabels stack).
+// A labeled `break`/`continue` may only target a loop it is nested inside.
+function label_in_scope(labels: string[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < labels.len()) {
+        if (labels[i] == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // with in_loop = true, while `if` / `match` / `defer` pass the flag
 // through unchanged — so a `break` in a match arm is legal only when that
 // match is itself inside a loop (matching the Go checker).
-function loop_diags(stmts: parser.Stmt[], in_loop: boolean): Diag[] {
+//
+// `labels` is the stack of enclosing loop labels (a labeled `while`/`for`
+// pushes its label onto the stack for its body). A labeled `break L` /
+// `continue L` whose `L` names no enclosing loop is E058 — but only when
+// it IS inside a loop, since an out-of-loop break is already E011 (the Go
+// checker reports E058 in the `else` branch after the E011 check, so the
+// two never both fire on one statement).
+function loop_diags(stmts: parser.Stmt[], in_loop: boolean, labels: string[]): Diag[] {
     var out: Diag[] = [];
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtBreak(bk) => {
                 if (!in_loop) { out = out.append(dg_at("E011", "break outside of a loop or switch", bk.line, bk.col)); }
+                else if (bk.label.len() > 0 && !label_in_scope(labels, bk.label)) {
+                    out = out.append(dg_at("E058", "break label does not match any enclosing loop", bk.line, bk.col));
+                }
             },
             parser.StmtContinue(ck) => {
                 if (!in_loop) { out = out.append(dg_at("E011", "continue outside of a loop", ck.line, ck.col)); }
+                else if (ck.label.len() > 0 && !label_in_scope(labels, ck.label)) {
+                    out = out.append(dg_at("E058", "continue label does not match any enclosing loop", ck.line, ck.col));
+                }
             },
-            parser.StmtWhile(w) => { out = append_diags(out, loop_diags(w.body, true)); },
-            parser.StmtFor(fr) => { out = append_diags(out, loop_diags(fr.body, true)); },
+            parser.StmtWhile(w) => {
+                var wl: string[] = labels;
+                if (w.label.len() > 0) { wl = labels.append(w.label); }
+                out = append_diags(out, loop_diags(w.body, true, wl));
+            },
+            parser.StmtFor(fr) => {
+                var fl: string[] = labels;
+                if (fr.label.len() > 0) { fl = labels.append(fr.label); }
+                out = append_diags(out, loop_diags(fr.body, true, fl));
+            },
             parser.StmtIf(f) => {
-                out = append_diags(out, loop_diags(f.then_body, in_loop));
-                out = append_diags(out, loop_diags(f.else_body, in_loop));
+                out = append_diags(out, loop_diags(f.then_body, in_loop, labels));
+                out = append_diags(out, loop_diags(f.else_body, in_loop, labels));
             },
             parser.StmtMatch(m) => {
                 var a: i32 = 0;
-                while (a < m.arms.len()) { out = append_diags(out, loop_diags(m.arms[a].body, in_loop)); a = a + 1; }
+                while (a < m.arms.len()) { out = append_diags(out, loop_diags(m.arms[a].body, in_loop, labels)); a = a + 1; }
             },
             parser.StmtDefer(d) => {
                 var one: parser.Stmt[] = [d.action];
-                out = append_diags(out, loop_diags(one, in_loop));
+                out = append_diags(out, loop_diags(one, in_loop, labels));
             },
             _ => { }
         }
@@ -5507,8 +5542,9 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         body_diags = append_diags(body_diags, stmts_call_diags(dbody, build_func_scope(mod.funcs[i], sigs, structs, unions, methods)));
         // E003: assignment / annotated-var type mismatch (scope-threaded).
         body_diags = append_diags(body_diags, stmts_assign_diags(dbody, build_func_scope(mod.funcs[i], sigs, structs, unions, methods), unions));
-        // E011: break / continue outside a loop (structural, no scope).
-        body_diags = append_diags(body_diags, loop_diags(dbody, false));
+        // E011 / E058: break / continue outside a loop, and a labeled
+        // break/continue whose label names no enclosing loop (structural).
+        body_diags = append_diags(body_diags, loop_diags(dbody, false, []));
         // E013: duplicate `var` in the same block (structural, no scope).
         body_diags = append_diags(body_diags, dupvar_diags(dbody));
         // E026 / E028: structural match-arm errors (wildcard order, dup
@@ -5549,7 +5585,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     if (ambig.len() > 0) {
         body_diags = append_diags(body_diags, vref_stmts(dtop, new_scope_full(sigs, structs, unions, methods), ambig));
     }
-    body_diags = append_diags(body_diags, loop_diags(dtop, false));
+    body_diags = append_diags(body_diags, loop_diags(dtop, false, []));
     body_diags = append_diags(body_diags, dupvar_diags(dtop));
     body_diags = append_diags(body_diags, match_diags(dtop, structs));
     // E019: generic-struct type-argument arity in struct field types.
