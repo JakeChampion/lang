@@ -43,6 +43,12 @@ func TestSelfHostClosureWasmIR(t *testing.T) {
 		{"adder", `function make_adder(n: i32): (i32) => i32 { return function(x: i32): i32 { return x + n; }; } function main(): i32 { var add5 = make_adder(5); return add5(3); }`, 8},
 		{"multi-capture", `function make(a: i32, b: i32): (i32) => i32 { return function(x: i32): i32 { return x * a + b; }; } function main(): i32 { var f = make(3, 7); return f(5); }`, 22},
 		{"called-twice", `function make(a: i32, b: i32): (i32) => i32 { return function(x: i32): i32 { return x * a + b; }; } function main(): i32 { var f = make(2, 1); return f(3) + f(4); }`, 16},
+		// A CAPTURING closure stored as a MAP VALUE, retrieved and called (slice
+		// #3445 map-values): the lambda is wrapped into a `$cloN` env box stored in
+		// the map (the lift method-callee arm fires for a lambda in a generic
+		// builtin map-value slot), `m.get` returns it, and the `Some(f) => f()`
+		// match-binding dispatches it env-first — on wasm too.
+		{"map-value-closure-captured", `import "core/map"; function main(): i32 { var n = 10; var m: Map[i32, () => i32] = map_new(4); m = m.set(1, function(): i32 { return n + 7; }); match (m.get(1)) { Some(f) => { return f(); }, None => { return 0; } } }`, 17},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

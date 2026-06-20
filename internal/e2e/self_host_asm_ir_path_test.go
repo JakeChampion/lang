@@ -1872,6 +1872,18 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// guard that the closure-local mark doesn't leak onto unrelated locals).
 		// Option[() => i32], Some(λ.7); f() + base = 7 + 100 = 107.
 		{"match-opt-fn-call-outer-local", `function mk(): Option[() => i32] { return Some(function(): i32 { return 7; }); } function main(): i32 { var base = 100; match (mk()) { Some(f) => { return f() + base; }, None => { return 0; } } }`, 107},
+		// A closure stored as a MAP VALUE, retrieved and called (slice #3445
+		// map-values): `m.set(1, <lambda>)` wraps the lambda into an env box (the
+		// lift method-callee arm — `.set` lowers to the builtin op_map_set whose
+		// value param is the generic `V`, the wrap trigger), the map stores the box
+		// pointer, `m.get(1)` returns it, and the `Some(f) => f()` match-binding
+		// (slice #3445 match-fn) dispatches it env-first. Was `route=ir` but
+		// SEGFAULTED when compiled (the closure was stored unboxed). The capturing
+		// variant carries an env `[funcval, n]`; the no-capture a `[$wrapN]` box.
+		// (Converting a USER method's declared fn-param to the env-box ABI is a
+		// separate deferred slice — it destabilises the byte-identical fixpoint.)
+		{"map-value-closure", `import "core/map"; function main(): i32 { var m: Map[i32, () => i32] = map_new(4); m = m.set(1, function(): i32 { return 42; }); match (m.get(1)) { Some(f) => { return f(); }, None => { return 0; } } }`, 42},
+		{"map-value-closure-captured", `import "core/map"; function main(): i32 { var n = 10; var m: Map[i32, () => i32] = map_new(4); m = m.set(1, function(): i32 { return n + 7; }); match (m.get(1)) { Some(f) => { return f(); }, None => { return 0; } } }`, 17},
 	}
 	for _, tc := range irOnly {
 		t.Run(tc.name, func(t *testing.T) {
