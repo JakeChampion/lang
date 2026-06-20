@@ -3020,6 +3020,8 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
                     // binding `var a = monotonic_ns()` width-tracks i64.
                     if (cid.name == "monotonic_ns" || cid.name == "now_unix_ms" || cid.name == "now_ns") { return 64; }
                     if (cid.name == "__load_i64") { return 64; }
+                    // f64_bits reinterprets an f64's bits as an i64 (64-bit value).
+                    if (cid.name == "f64_bits") { return 64; }
                     if (s.is_i64_ret_fn(cid.name)) { return 64; }
                 },
                 parser.ExprFieldAccess(cfa) => {
@@ -3169,6 +3171,8 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                     // normal call path (which emits the op + pushes the result).
                     if (cid.name == "monotonic_ns" || cid.name == "now_unix_ms" || cid.name == "now_ns") { return lower_expr(e, s); }
                     if (cid.name == "__load_i64") { return lower_expr(e, s); }
+                    // f64_bits(x): i64 reinterpret of an f64 — lowered in lower_expr.
+                    if (cid.name == "f64_bits") { return lower_expr(e, s); }
                     if (s.is_i64_ret_fn(cid.name)) { return lower_expr(e, s); }
                 },
                 parser.ExprFieldAccess(cfa) => {
@@ -4317,6 +4321,16 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         var sfb: LowerState = lower_expr(c.args[0], s);
                         if (!sfb.ok) { return sfb; }
                         return sfb.emit(ir.op_str_from_bytes());
+                    }
+                    // f64_bits(x): reinterpret an f64's 8 bytes as an i64 (no
+                    // numeric conversion). Lower the f64 operand, then emit the
+                    // reinterpret op (a no-op on the register backends, an
+                    // i64.reinterpret_f64 on wasm). (The inverse f64_from_bits
+                    // stays on the AST path — see #3513.)
+                    if (cid.name == "f64_bits" && c.args.len() == 1) {
+                        var fbb: LowerState = lower_expr(c.args[0], s);
+                        if (!fbb.ok) { return fbb; }
+                        return fbb.emit(ir.op_f64_bits());
                     }
                     // random_bytes(n): a fresh string of n CSPRNG bytes. The
                     // result is a string box (str_index reads the bytes); the

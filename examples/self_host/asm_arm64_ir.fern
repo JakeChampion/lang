@@ -834,6 +834,10 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // produces the full 64-bit result, so it is the same instruction as
             // f64_to_i32 (which only keeps the low 32 bits).
             s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n    fcvtzs x0, d0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "f64_bits") {
+            // f64->i64 bit reinterpret: the value already rides the rt-stack as
+            // its 8-byte bit pattern (f64 values flow as bits in x-reg slots), so
+            // this is a no-op on the register backend.
         } else if (o.kind == "fadd" || o.kind == "fsub" || o.kind == "fmul" || o.kind == "fdiv") {
             // f64 arithmetic: pop rhs (x0) / lhs (x1) into d0/d1, op, push.
             s = s.write("    ldr x0, [sp], #16\n    ldr x1, [sp], #16\n    fmov d0, x0\n    fmov d1, x1\n");

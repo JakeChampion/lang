@@ -170,6 +170,13 @@ pub function op_f64_to_i32(): Op { return op0("f64_to_i32"); }
 // emit the same 64-bit-dest instruction for both.
 pub function op_f64_to_i64(): Op { return op0("f64_to_i64"); }
 
+// f64_bits reinterprets an f64's 8 bytes as an i64 with NO numeric conversion
+// (the raw IEEE-754 bit pattern). On the register backends the value already
+// rides the runtime stack as its bits, so this is a no-op; only wasm's typed
+// stack needs an explicit i64.reinterpret_f64. (The inverse f64_from_bits stays
+// on the AST path — it exposed a wasm self-host driver crash, see #3513.)
+pub function op_f64_bits(): Op { return op0("f64_bits"); }
+
 // op_const_f64_text carries the float literal's SOURCE TEXT (in `str`) so the
 // backends can hand it straight to the assembler (`.double TEXT` in .rodata /
 // `f64.const TEXT`) without a float parse+format round-trip — mirroring
