@@ -22,12 +22,114 @@
 // mode). Uses only features the self-hosted emitter supports (args,
 // read_file → Result, match), so it builds with either compiler.
 
+import "./util";
 import "./lexer";
 import "./parser";
 import "./flatten";
 import "./asm";
 import "./asm_ir";
 import "./modloader";
+
+// builtin_view returns `base` (the union of every per-module unit's structs)
+// extended with the built-in TYPE layouts the compiler's own code references:
+// builtins.fern's struct + enum-variant decls (read from the entry's dir, the
+// same source merge_builtins uses for the AST path), then inject_builtin_enums
+// for the globally-injected variants (Option / Result / JsonValue / IoError /
+// FileStat / …). The per-module IR emit + eligibility gate look up an imported
+// struct's field layout in this WHOLE-PROGRAM struct view, so a compiler function
+// touching a built-in type (e.g. a `match` on read_file's Result, an IoError
+// field) lowers correctly — without it the per-module-built compiler miscompiles
+// every built-in-typed code path (the AST path gets the same via
+// module_with_builtins). Enum-variant structs (enum_owner set) live in
+// bmod.structs after parse, so appending those covers builtins.fern's own enums.
+function builtin_view(dir: string, base: parser.StructDecl[]): parser.StructDecl[] {
+    var out: parser.StructDecl[] = base;
+    match (read_file(dir + "builtins.fern")) {
+        Ok(bsrc) => {
+            var bmod: parser.Module = parser.parse_module(lexer.tokenize(bsrc));
+            var i: i32 = 0;
+            while (i < bmod.structs.len()) { out = out.append(bmod.structs[i]); i = i + 1; }
+        },
+        Err(e) => { },
+    }
+    return parser.inject_builtin_enums(out);
+}
+
+// run_per_module drives the per-module build of the loaded program (#3451 step 4
+// / #3456), the builtins-aware twin of asm_load_run's per-module driver: it
+// threads the built-in struct layouts (builtin_view) into the whole-program
+// view so the compiler's OWN built-in-typed code (Option / Result / IoError /
+// JsonValue) lowers correctly. One emit per process (the native strbuf holds one
+// emit), so the build is driven across invocations:
+//   -per-module-count   → print the module count N
+//   -per-module-needs   → print the whole-program runtime-need union (one/line)
+//   -per-module-emit N [-extra-need X...]
+//                       → emit module N's translation unit (the entry folds the
+//                         supplied need union into its single shared runtime)
+function run_per_module(dir: string, entry: parser.Module, loaded: flatten.LoadedModule[], pm_mode: string, pm_index: i32, pm_extra: string[]): i32 {
+    var parts: flatten.PerModule[] = flatten.bundle_per_module(entry, loaded);
+    if (pm_mode == "count") {
+        print(util.i32_to_string(parts.len()) + "\n");
+        return 0;
+    }
+    // Whole-program signature view + program-wide known-symbol set, recomputed
+    // each invocation (cheap: parse + analysis, no codegen).
+    var infmods: parser.Module[] = [];
+    var all_funcs: parser.FuncDecl[] = [];
+    var all_structs: parser.StructDecl[] = [];
+    var known: string[] = [];
+    var pi: i32 = 0;
+    while (pi < parts.len()) {
+        var im: parser.Module = parser.infer_ret_types_module(asm_ir.lift_lambdas(parts[pi].mod));
+        infmods = infmods.append(im);
+        var fk: i32 = 0;
+        while (fk < im.funcs.len()) {
+            all_funcs = all_funcs.append(im.funcs[fk]);
+            known = known.append(im.funcs[fk].name);
+            if (im.funcs[fk].receiver_type.len() > 0) {
+                known = known.append(util.base_type_name(im.funcs[fk].receiver_type) + "." + im.funcs[fk].name);
+            }
+            fk = fk + 1;
+        }
+        var sk: i32 = 0;
+        while (sk < im.structs.len()) { all_structs = all_structs.append(im.structs[sk]); sk = sk + 1; }
+        pi = pi + 1;
+    }
+    // Extend the struct view with the built-in type layouts (see builtin_view).
+    all_structs = builtin_view(dir, all_structs);
+    if (pm_mode == "needs") {
+        var needs: string[] = [];
+        var ni: i32 = 0;
+        while (ni < infmods.len()) {
+            var mn: string[] = asm_ir.module_runtime_needs(infmods[ni]);
+            var mk: i32 = 0;
+            while (mk < mn.len()) {
+                if (!util.has_str(needs, mn[mk])) { needs = needs.append(mn[mk]); }
+                mk = mk + 1;
+            }
+            ni = ni + 1;
+        }
+        var no: i32 = 0;
+        while (no < needs.len()) { print(needs[no] + "\n"); no = no + 1; }
+        return 0;
+    }
+    if (pm_index < 0 || pm_index >= parts.len()) {
+        eprint("per-module: emit index out of range\n");
+        return 1;
+    }
+    var elig: boolean = asm_ir.all_eligible_lib_known_view(infmods[pm_index], known, all_funcs, all_structs);
+    if (parts[pm_index].is_entry) { elig = asm_ir.all_eligible_known_view(infmods[pm_index], known, all_funcs, all_structs); }
+    if (!elig) {
+        eprint("per-module: module not IR-eligible: ");
+        eprint(parts[pm_index].ns);
+        eprint("\n");
+        return 1;
+    }
+    var extra: string[] = [];
+    if (parts[pm_index].is_entry) { extra = pm_extra; }
+    write(asm_ir.emit_module_ir_unit(infmods[pm_index], parts[pm_index].is_entry, true, parts[pm_index].ns, extra, all_funcs, all_structs));
+    return 0;
+}
 
 function main(): i32 {
     var a: string[] = args();
@@ -40,16 +142,28 @@ function main(): i32 {
     // the import is never loaded. Point it at an entry sitting at the stdlib
     // root so `import "std/u64"` and its transitive `import "core/int"` both
     // resolve: `asm_modload_run internal/stdlib/_probe.fern -ir-probe`.
+    //
+    // The per-module flags (-per-module-count / -per-module-needs /
+    // -per-module-emit N [-extra-need X...]) drive the builtins-aware per-module
+    // build (run_per_module) — routing every module through the IR path instead
+    // of the merged AST emit below.
     var probe: boolean = false;
     var entry_path: string = "";
+    var pm_mode: string = "";
+    var pm_index: i32 = 0 - 1;
+    var pm_extra: string[] = [];
     var ai: i32 = 1;
     while (ai < a.len()) {
         if (a[ai] == "-ir-probe") { probe = true; }
+        else if (a[ai] == "-per-module-count") { pm_mode = "count"; }
+        else if (a[ai] == "-per-module-needs") { pm_mode = "needs"; }
+        else if (a[ai] == "-per-module-emit" && ai + 1 < a.len()) { pm_mode = "emit"; pm_index = util.digits_to_i32(a[ai + 1]); ai = ai + 1; }
+        else if (a[ai] == "-extra-need" && ai + 1 < a.len()) { pm_extra = pm_extra.append(a[ai + 1]); ai = ai + 1; }
         else if (entry_path == "") { entry_path = a[ai]; }
         ai = ai + 1;
     }
     if (entry_path == "") {
-        eprint("usage: asm_modload_run <entry.fern> [-ir-probe]\n");
+        eprint("usage: asm_modload_run <entry.fern> [-ir-probe | -per-module-count | -per-module-needs | -per-module-emit N]\n");
         return 2;
     }
     var dir: string = modloader.dirname(entry_path);
@@ -57,6 +171,9 @@ function main(): i32 {
         Ok(src) => {
             var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
             var loaded: flatten.LoadedModule[] = modloader.load_imports(dir, entry);
+            if (pm_mode.len() > 0) {
+                return run_per_module(dir, entry, loaded, pm_mode, pm_index, pm_extra);
+            }
             var merged: parser.Module = flatten.bundle(entry, loaded);
             merged = modloader.merge_builtins(dir, merged);
             if (probe) {
