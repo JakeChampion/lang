@@ -242,7 +242,14 @@ pub struct TypeAlias { name: string, variants: string[], line: i32, col: i32 }
 // across files is a later milestone — for now the parser
 // just gathers them into the Module so the rest of the
 // pipeline can see what dependencies a source declares.
-pub struct Import { path: string }
+// `is_reexport` distinguishes a plain `import "path";` (false) from a
+// `pub use "path".{names…};` re-export directive (true). A re-export
+// import carries the re-exported names in `reexport_names`; the module
+// loader still treats it as an import (so the target module is loaded +
+// bundled), and the bundler reads the names to build the re-export table
+// that redirects a consumer's `facade.name` to the original module's
+// mangled symbol. See flatten.bundle / docs/PRELUDE-TO-MODULES.md.
+pub struct Import { path: string, is_reexport: boolean, reexport_names: string[] }
 
 // A whole compilation unit: the funcs declared at top level and
 // any stmts that appear outside a function decl. The interp /
@@ -3477,7 +3484,39 @@ function parse_import(p: Par): ImportResult {
         _ => { }
     }
     if (p.peek_punct() == ";") { p = p.advance(); }
-    return ImportResult { par: p, imp: Import { path: path } };
+    return ImportResult { par: p, imp: Import { path: path, is_reexport: false, reexport_names: [] } };
+}
+
+// parse_pubuse consumes `use "path".{name1, name2, …};` (cursor on the
+// `use` keyword; a leading `pub` is stripped by the caller). It returns
+// an Import flagged `is_reexport` carrying the re-exported names, so the
+// loader pulls in the target module and the bundler can redirect a
+// consumer's `facade.name` to the target's mangled symbol. Malformed
+// input degrades to an empty re-export the caller can recover from.
+function parse_pubuse(p: Par): ImportResult {
+    p = p.advance();  // consume `use`
+    var path: string = "";
+    var t: lexer.Token = p.peek();
+    match (t) {
+        lexer.TokString(s) => { path = s.value; p = p.advance(); },
+        _ => { }
+    }
+    if (p.peek_punct() == ".") { p = p.advance(); }
+    var names: string[] = [];
+    if (p.peek_punct() == "{") {
+        p = p.advance();
+        while (!p.at_end() && p.peek_punct() != "}") {
+            var nm: string = p.peek_ident();
+            if (nm.len() > 0) { names = names.append(nm); p = p.advance(); }
+            if (p.peek_punct() == ",") { p = p.advance(); continue; }
+            if (p.peek_punct() == "}") { continue; }
+            // Unexpected token — bail to avoid spinning.
+            if (nm.len() == 0) { p = p.advance(); }
+        }
+        if (p.peek_punct() == "}") { p = p.advance(); }
+    }
+    if (p.peek_punct() == ";") { p = p.advance(); }
+    return ImportResult { par: p, imp: Import { path: path, is_reexport: true, reexport_names: names } };
 }
 
 // parse_const_decl consumes `const NAME[: T] = EXPR;` (cursor on the
@@ -7176,6 +7215,15 @@ pub function parse_module(toks: lexer.Token[]): Module {
             var ir: ImportResult = parse_import(p);
             p = ir.par;
             imports = imports.append(ir.imp);
+            continue;
+        }
+        // `pub use "path".{names…};` — a re-export directive. Recorded as a
+        // re-export Import so the loader pulls in the target module and the
+        // bundler redirects `facade.name` to the target's mangled symbol.
+        if (kw == "use") {
+            var ur: ImportResult = parse_pubuse(p);
+            p = ur.par;
+            imports = imports.append(ur.imp);
             continue;
         }
         if (kw == "trait") {

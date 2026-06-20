@@ -335,5 +335,18 @@ name: the value path through `rewriteExpr`, the type path through
 `rewriteStructNameAt` / `rewriteTraitNameAt` (the latter also covers
 `dyn facade.Trait`). Parsed by `parsePubUse` into `ast.PubUse`.
 
-**Remaining follow-up**: self-host-compiler `pub use` support (#3136 part
-2) — currently harmless, as no stdlib module uses `pub use`.
+**Self-host parity** (#3136 part 2): the self-hosted compiler resolves
+`pub use` too. `examples/self_host/parser.fern` parses `pub use
+"path".{names…};` into a re-export `Import` (`is_reexport` + the
+`reexport_names`), so the on-disk module loaders (`modloader.fern`,
+`fern.fern`) pull the target module into the graph like any import.
+`examples/self_host/flatten.fern`'s `build_reexports` then walks every
+imported module's `pub use` directives into a parallel-array re-export
+table (`facade__name` → `origin__name`), threaded through `RewriteCtx`;
+`lookup_reexport` redirects a consumer's `facade.name` at the same two
+points the native rewriter does — qualified value refs in `rewrite_expr`
+and qualified type refs in `rewrite_type_name` (chained re-exports are
+followed to the end). Covered end-to-end by the self-host IR e2e gates
+`TestSelfHostPubUseModloadX86_64` (x86-64) and
+`TestWasmSelfHostPubUseReexport` (wasm), mirroring the native
+`internal/e2e/pub_use_test.go`.
