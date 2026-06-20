@@ -21,11 +21,10 @@ import (
 // a payload-binding `match`, and chained struct-returning receiver methods. Each
 // program returns a small deterministic int (kept <= 126), pinned to the `"ir"`
 // path. Expectations are hardcoded, verified against the native interp + x86-64
-// backends. The `(h) len()` receiver method (`return h.names.len();`) is
-// deliberately NOT exercised here: reading a struct string[]-field length
-// through that trivial receiver method miscompiles on the self-host IR path
-// (x86-64 returns 26 — the `lower` lookup-string length; wasm returns 0) — see
-// #3478. The substantive ops (append/set/get/get_all) all lower correctly.
+// backends. The `append-len` case pins the `(h) len()` receiver method
+// (`return h.names.len();`): it regressed #3478 (a user receiver method named
+// `len` mis-dispatched to the builtin `.len()` on the struct box, returning a
+// callee local's value) — fixed in irlower.fern's `.len()` intercept guard.
 // FEATURE-AUDIT std/headers row.
 const headersIRPrelude = `struct Headers { names: string[], values: string[] }
 function lower(s: string): string {
@@ -100,6 +99,10 @@ var headersIRCases = []struct {
 	main string
 	want int
 }{
+	// the `(h) len()` receiver method counts entries: two appends -> 2. This is
+	// the #3478 regression guard — a user method named `len` must shadow the
+	// builtin `.len()` on the struct receiver (pre-fix: x86-64 -> 26, wasm -> 0).
+	{"append-len", `var h: Headers = header_map_new(); h = h.append("Set-Cookie", "a"); h = h.append("Set-Cookie", "b"); return h.len();`, 2},
 	// get is case-insensitive: "content-TYPE" finds "Content-Type" -> "text" (len 4).
 	{"get-ci", `var h: Headers = header_map_new(); h = h.append("Content-Type", "text"); return get_len(h, "content-TYPE");`, 4},
 	// set replaces in place: get returns the new value "22" (len 2).
