@@ -224,7 +224,7 @@ per-function bugs in the audit log.
 | `std/convert` | ✅ | ✅ | ✅ | ✅ | | ✅ | canonical `From[T]` / `Into[T]` conversion traits (on generic traits, #3254): `impl convert.From[i32] for Celsius` + `Celsius.from(20)`, `impl convert.Into[F] for Celsius` + `c.into()` (`std_convert_test`, all four backends; #2691) — generic use over a bound awaits bounded-generics-over-generic-traits |
 | `std/http` | | | | | | ⬜ | |
 | `std/tcp` | | | | | | ⬜ | |
-| `std/headers` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `HeaderMap` case-insensitive get/get_all/append/set over two parallel string[] fields — native via `headers_map` fixture (all four backends); self-host via the IR path (x86-64 + wasm): `TestSelfHostHeadersIR` — struct with string[] fields, functional struct-spread update, `string[].append`, indexed string-field compares, `Option[string]` `Some`/`None` + payload-binding `match`, chained struct-returning receiver methods (inlined as `Headers` + a lookup-slice `lower`, since `HeaderMap` is a reserved builtin name + the importless driver has no `.to_lower()`); the `(h) len()` receiver method (`return h.names.len();`) miscompiles on the IR path ([#3478](https://github.com/JakeChampion/lang/issues/3478)) and is omitted from the pinned set |
+| `std/headers` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `HeaderMap` case-insensitive get/get_all/append/set over two parallel string[] fields — native via `headers_map` fixture (all four backends); self-host via the IR path (x86-64 + wasm): `TestSelfHostHeadersIR` — struct with string[] fields, functional struct-spread update, `string[].append`, indexed string-field compares, `Option[string]` `Some`/`None` + payload-binding `match`, chained struct-returning receiver methods, and the `(h) len()` receiver method (the `append-len` case — pins the [#3478](https://github.com/JakeChampion/lang/issues/3478) fix) (inlined as `Headers` + a lookup-slice `lower`, since `HeaderMap` is a reserved builtin name + the importless driver has no `.to_lower()`) |
 | `std/stream` | | | | | | ⬜ | |
 | `std/time` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | is_leap_year/days_in_month/date_make/format_iso — `audit_std_time`; self-host via the IR path: pure-i32 helpers (`TestSelfHostTimeIR`) + the **Date civil-date methods** (Hinnant days_from_civil/civil_from_days, is_valid/add_days/days_since/weekday/day_of_year/format_iso — `TestSelfHostTimeDateIR`, oracle-checked, struct ctor + field access + struct-returning fn + receiver methods) + `date_parse_iso` `Option[Date]` parse (`TestSelfHostTimeParseIR`, `Some`/`None` ctor + payload-binding `match`) + `format_rfc3339` / `instant_parse_rfc3339` (`TestSelfHostTimeRfc3339IR`, **i64 `sec` struct field** — i64 arithmetic/casts + `Some(Instant{ sec: <i64> })`) + `add_span` / `add_duration` / `duration_since` / `days_until` (`TestSelfHostTimeSpanIR`, **8-field Span by-value param** + i64+nsec carry/borrow) + the Zoned / TimeZone surface (`in_zone` / `to_datetime` / `timezone_iana` — `TestSelfHostTimeZonedIR`, **nested structs** `Zoned{instant,zone}` / `DateTime{date,time}` + `Option[TimeZone]`) |
 | `std/task` | | | | | | ⬜ | |
@@ -249,6 +249,23 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-20 — 🔧 self-host IR: user receiver method named `len` mis-dispatched to the builtin `.len()` ([#3478](https://github.com/JakeChampion/lang/issues/3478))
+
+`irlower.fern` intercepted **every** zero-arg `.len()` call as the builtin
+string/array length — without checking the receiver's type. For a struct
+receiver with a user-defined `(b: T) len()` method, the receiver isn't a string,
+so the intercept fell through to `op_arr_len`, reading the struct box as if it
+were an array header (garbage: x86-64 → 26, wasm → 0) instead of dispatching the
+user method. The native compiler resolves the user method over the builtin, so
+this was a self-host-IR-only divergence (every native backend returned the right
+value). Fix: guard the intercept with `expr_struct_type(fa.obj, s) == ""` — a
+struct has no builtin `.len()`, so `b.len()` on a struct must be the user method,
+which now falls through to normal receiver-method dispatch. (The sibling
+`append`/map intercepts were already receiver-type-guarded; `len` was the only
+unguarded one.) Discovered while auditing `std/headers`; pinned by the
+`append-len` case in `TestSelfHostHeadersIR{X86_64,Wasm}` and a minimal
+`(b: Box) len()` vs `count()` differential. No change to string/array `.len()`.
 
 ### 2026-06-20 — std/headers `HeaderMap` on the self-host IR path + native audit
 
