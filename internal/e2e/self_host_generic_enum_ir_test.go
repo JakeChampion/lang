@@ -93,6 +93,22 @@ function main(): i32 {
     for b in xs { match (b) { V(s) => { n = n + s.len(); } } }
     return n;
 }`, 5},
+	// TWO type params: `Pair[i32, i32]` keys off the annotation, joining both
+	// args into `i32__i32`; me_infer_variant_key unifies each payload field, so
+	// the clone has concrete fields for both. 3 + 4 == 7.
+	{"multiparam_i32", `enum Pair[K, V] { P(K, V) }
+function main(): i32 {
+    var p: Pair[i32, i32] = P(3, 4);
+    match (p) { P(a, b) => { return a + b; } }
+}`, 7},
+	// two type params with MIXED payload types (i32 + string) + a unit variant —
+	// the key `i32__string` drives concrete field types so `b.len()` dispatches.
+	// 5 + "hi".len() == 7.
+	{"multiparam_mixed", `enum Pair[K, V] { P(K, V), Z }
+function main(): i32 {
+    var p: Pair[i32, string] = P(5, "hi");
+    match (p) { P(a, b) => { return a + b.len(); }, Z => { return 0; } }
+}`, 7},
 }
 
 // TestSelfHostGenericEnumIRX86_64 builds the self-host asm_run driver and runs

@@ -39,6 +39,22 @@ pub function call3(env: usize, index: i32, a0: usize, a1: usize, a2: usize): usi
     return __c_call4(method_ptr(env, index), env, a0, a1, a2);
 }
 
+// FP-returning dispatch: same integer-arg shape as call1/call2, but the
+// JNIEnv method's result is a jfloat / jdouble (returned in the FP register).
+// Only the return crosses the FP boundary; arguments stay integer/pointer.
+pub function call1_f32(env: usize, index: i32, a0: usize): f32 {
+    return __c_call2_f32(method_ptr(env, index), env, a0);
+}
+pub function call1_f64(env: usize, index: i32, a0: usize): f64 {
+    return __c_call2_f64(method_ptr(env, index), env, a0);
+}
+pub function call2_f32(env: usize, index: i32, a0: usize, a1: usize): f32 {
+    return __c_call3_f32(method_ptr(env, index), env, a0, a1);
+}
+pub function call2_f64(env: usize, index: i32, a0: usize, a1: usize): f64 {
+    return __c_call3_f64(method_ptr(env, index), env, a0, a1);
+}
+
 // Well-known JNINativeInterface method indices (subset). Index helpers
 // rather than magic numbers at call sites.
 pub function FIND_CLASS(): i32 { return 6; }
@@ -251,13 +267,14 @@ pub function is_instance_of(env: usize, obj: usize, clazz: usize): i32 {
 // Indices are anchored by GetFieldID=94 (just before GetObjectField=95)
 // and GetStaticMethodID=113 (just after SetDoubleField=112).
 //
-// Only the integer-shaped types are exposed: object / boolean / byte /
-// char / short / int / long all return and pass their value in the
-// integer-arg registers that __c_call models. The FLOAT and DOUBLE
-// accessors are deliberately omitted — their value rides in an FP register
-// (xmm0 / d0), which the __c_call shim doesn't touch, so they would
-// silently read/write garbage. Bit-cast through a long field, or extend
-// __c_call with FP support, if you need them.
+// Integer-shaped getters/setters (object / boolean / byte / char / short /
+// int / long) pass and return their value in the integer-arg registers.
+// Float and DOUBLE *getters* are also provided (get_float_field /
+// get_double_field below) — their result rides in an FP register, handled
+// by the call*_f32 / call*_f64 dispatch. The float/double *setters* are
+// still omitted: passing an FP argument needs the value in an FP register,
+// which the integer-only __c_call shim doesn't set up. Bit-cast through a
+// long field if you must write one.
 
 // jobject (*GetObjectField)(JNIEnv*, jobject obj, jfieldID fieldID)
 pub function get_object_field(env: usize, obj: usize, field: usize): usize {
@@ -292,6 +309,16 @@ pub function get_int_field(env: usize, obj: usize, field: usize): i32 {
 // jlong (*GetLongField)(JNIEnv*, jobject, jfieldID) — full 64-bit result.
 pub function get_long_field(env: usize, obj: usize, field: usize): usize {
     return call2(env, 101, obj, field);
+}
+
+// jfloat (*GetFloatField)(JNIEnv*, jobject, jfieldID) — FP result.
+pub function get_float_field(env: usize, obj: usize, field: usize): f32 {
+    return call2_f32(env, 102, obj, field);
+}
+
+// jdouble (*GetDoubleField)(JNIEnv*, jobject, jfieldID) — FP result.
+pub function get_double_field(env: usize, obj: usize, field: usize): f64 {
+    return call2_f64(env, 103, obj, field);
 }
 
 // void (*SetObjectField)(JNIEnv*, jobject obj, jfieldID, jobject value)
@@ -332,9 +359,10 @@ pub function set_long_field(env: usize, obj: usize, field: usize, value: usize):
 // --- Static field accessors ---------------------------------------------
 //
 // GetStatic<Type>Field(env, clazz, fieldID) — anchored by
-// GetStaticFieldID=144 (just before GetStaticObjectField=145). Same
-// integer-only restriction as the instance accessors. Setters
-// (SetStatic<Type>Field, 154+) follow the call3 shape if you need them.
+// GetStaticFieldID=144 (just before GetStaticObjectField=145). The
+// float/double getters use the FP dispatch like their instance siblings;
+// setters (SetStatic<Type>Field, 154+) follow the call3 shape if you need
+// them.
 
 // jobject (*GetStaticObjectField)(JNIEnv*, jclass, jfieldID)
 pub function get_static_object_field(env: usize, clazz: usize, field: usize): usize {
@@ -349,6 +377,16 @@ pub function get_static_int_field(env: usize, clazz: usize, field: usize): i32 {
 // jlong (*GetStaticLongField)(JNIEnv*, jclass, jfieldID)
 pub function get_static_long_field(env: usize, clazz: usize, field: usize): usize {
     return call2(env, 151, clazz, field);
+}
+
+// jfloat (*GetStaticFloatField)(JNIEnv*, jclass, jfieldID)
+pub function get_static_float_field(env: usize, clazz: usize, field: usize): f32 {
+    return call2_f32(env, 152, clazz, field);
+}
+
+// jdouble (*GetStaticDoubleField)(JNIEnv*, jclass, jfieldID)
+pub function get_static_double_field(env: usize, clazz: usize, field: usize): f64 {
+    return call2_f64(env, 153, clazz, field);
 }
 
 // --- Arrays -------------------------------------------------------------

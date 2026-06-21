@@ -58,6 +58,39 @@ var closureCallsClosureIRCases = []struct {
     var sumsq = function(n: i32): i32 { var s = 0; var i = 1; while (i <= n) { s = s + sq(i); i = i + 1; } return s; };
     return sumsq(3);
 }`, 14},
+	// the inner closure CAPTURES an outer variable (`add` captures `x`): the
+	// injected capture arg flows through as the calling closure's own capture.
+	{"capturing_inner", `function main(): i32 {
+    var x = 10;
+    var add = function(a: i32): i32 { return a + x; };
+    var twice = function(a: i32): i32 { return add(a) + add(a); };
+    return twice(1);
+}`, 22},
+	// the inner closure captures TWO variables.
+	{"capturing_two", `function main(): i32 {
+    var x = 3;
+    var y = 7;
+    var f = function(a: i32): i32 { return a * x + y; };
+    var g = function(a: i32): i32 { return f(a) + f(a); };
+    return g(2);
+}`, 26},
+	// two closures share a capture; a third calls both. (Return kept <= 125 for
+	// the WASI proc_exit range — base 50 → (1+50)+(50+1) = 102.)
+	{"shared_capture", `function main(): i32 {
+    var base = 50;
+    var f = function(a: i32): i32 { return a + base; };
+    var g = function(a: i32): i32 { return base + a; };
+    var h = function(a: i32): i32 { return f(a) + g(a); };
+    return h(1);
+}`, 102},
+	// the calling closure both CALLS the capturing inner closure and uses the
+	// captured variable directly.
+	{"direct_and_call", `function main(): i32 {
+    var x = 5;
+    var add = function(a: i32): i32 { return a + x; };
+    var combo = function(a: i32): i32 { return add(a) + x; };
+    return combo(10);
+}`, 20},
 }
 
 // TestSelfHostClosureCallsClosureX86IR builds the self-host asm_run driver and
