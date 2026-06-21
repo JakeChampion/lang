@@ -17,6 +17,8 @@
 //   a|b|c        alternation — match any one alternative
 //   *  +  ?      zero-or-more / one-or-more / optional, on the preceding
 //                atom OR group (`(ab)+`, `(a|b)*`)
+//   {n} {n,} {n,m}  counted repetition: exactly n / at-least n / between n
+//                and m, of the preceding atom or group (`a{3}`, `\d{2,4}`)
 //   ^            anchor at the start of the text
 //   $            anchor at the end of the text
 //   \d \w \s     shorthand classes: digit / word (`[A-Za-z0-9_]`) /
@@ -103,7 +105,53 @@ function __rx_atom(p: string, i: i32): RParse {
     return RParse { node: RChar(c), pos: i + 1 };                // literal
 }
 
-// __rx_quant parses an atom plus an optional trailing `*` / `+` / `?`.
+// __rx_repeat desugars a counted quantifier `node{n,m}` into the existing
+// node kinds: `n` required copies, then either an `RStar` (unbounded
+// `{n,}`) or `m - n` `ROpt` copies (bounded `{n,m}`). `{n}` is `m == n`.
+// Reusing the same `node` value across the copies is safe — the tree is
+// immutable during matching.
+function __rx_repeat(node: RNode, n: i32, m: i32, has_max: boolean): RNode {
+    var items: RNode[] = [];
+    var i: i32 = 0;
+    while (i < n) { items = items.append(node); i = i + 1; }
+    if (!has_max) {
+        items = items.append(RStar(node));
+    } else {
+        var k: i32 = n;
+        while (k < m) { items = items.append(ROpt(node)); k = k + 1; }
+    }
+    if (items.len() == 1) { return items[0]; }
+    return RSeq(items);
+}
+
+// __rx_count parses a `{n}` / `{n,}` / `{n,m}` counted quantifier following
+// an atom and applies it. A malformed run (no leading count, or no closing
+// `}`) is NOT consumed — the caller leaves the `{` to be read as a literal
+// byte, matching the lenient behaviour of most engines. `a` is the
+// already-parsed atom at index `pos` (the `{`).
+function __rx_count(p: string, pos: i32, a: RParse): RParse {
+    var j: i32 = pos + 1;
+    var n: i32 = 0;
+    var have_n: boolean = false;
+    while (j < p.len() && p[j] >= 48 && p[j] <= 57) { n = n * 10 + (p[j] - 48); j = j + 1; have_n = true; }
+    if (!have_n) { return a; }
+    var m: i32 = n;
+    var has_max: boolean = true;
+    if (j < p.len() && p[j] == 44) {                 // ','
+        j = j + 1;
+        if (j < p.len() && p[j] == 125) {            // `{n,}`
+            has_max = false;
+        } else {
+            m = 0;
+            while (j < p.len() && p[j] >= 48 && p[j] <= 57) { m = m * 10 + (p[j] - 48); j = j + 1; }
+        }
+    }
+    if (j >= p.len() || p[j] != 125) { return a; }   // no closing '}' → literal '{'
+    return RParse { node: __rx_repeat(a.node, n, m, has_max), pos: j + 1 };
+}
+
+// __rx_quant parses an atom plus an optional trailing quantifier:
+// `*` / `+` / `?`, or a counted `{n}` / `{n,}` / `{n,m}`.
 function __rx_quant(p: string, i: i32): RParse {
     var a: RParse = __rx_atom(p, i);
     var pos: i32 = a.pos;
@@ -112,6 +160,7 @@ function __rx_quant(p: string, i: i32): RParse {
         if (c == 42) { return RParse { node: RStar(a.node), pos: pos + 1 }; }
         if (c == 43) { return RParse { node: RPlus(a.node), pos: pos + 1 }; }
         if (c == 63) { return RParse { node: ROpt(a.node), pos: pos + 1 }; }
+        if (c == 123) { return __rx_count(p, pos, a); }   // '{'
     }
     return a;
 }
