@@ -276,6 +276,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		if g.usesCCall[n] {
 			g.emitCCallRuntime(n)
 		}
+		if g.usesCCallF32[n] {
+			g.emitCCallRuntimeSuffixed(n, "_f32")
+		}
+		if g.usesCCallF64[n] {
+			g.emitCCallRuntimeSuffixed(n, "_f64")
+		}
 	}
 	if g.usesRcInc {
 		g.emitRcIncRuntime()
@@ -452,8 +458,12 @@ type generator struct {
 	usesAlloc   bool
 	usesMemcpy  bool
 	// usesCCall[n] gates the `__c_call<n>` FFI shim (call a C-ABI function
-	// pointer with n integer args). See emitCCallRuntime.
-	usesCCall   [5]bool
+	// pointer with n integer args). The F32/F64 variants gate byte-identical
+	// shims whose only difference is a checker FuncSig declaring an f32/f64
+	// result, so the call site reads the FP register. See emitCCallRuntime.
+	usesCCall    [5]bool
+	usesCCallF32 [5]bool
+	usesCCallF64 [5]bool
 	usesStrcat  bool
 	usesStrcmp  bool
 	usesPuts    bool
@@ -650,6 +660,26 @@ func (g *generator) recordUse(target string) {
 		g.usesCCall[3] = true
 	case "__c_call4":
 		g.usesCCall[4] = true
+	case "__c_call0_f32":
+		g.usesCCallF32[0] = true
+	case "__c_call1_f32":
+		g.usesCCallF32[1] = true
+	case "__c_call2_f32":
+		g.usesCCallF32[2] = true
+	case "__c_call3_f32":
+		g.usesCCallF32[3] = true
+	case "__c_call4_f32":
+		g.usesCCallF32[4] = true
+	case "__c_call0_f64":
+		g.usesCCallF64[0] = true
+	case "__c_call1_f64":
+		g.usesCCallF64[1] = true
+	case "__c_call2_f64":
+		g.usesCCallF64[2] = true
+	case "__c_call3_f64":
+		g.usesCCallF64[3] = true
+	case "__c_call4_f64":
+		g.usesCCallF64[4] = true
 	case "__memcpy":
 		g.usesMemcpy = true
 	case "__fern_rc_inc":
@@ -854,6 +884,27 @@ func (g *generator) callReturnsVoid(name string) bool {
 		}
 	}
 	return false
+}
+
+// ccallFloatRetWidth reports the FP-return width (32 / 64) of a
+// `__c_call<n>_f32` / `_f64` FFI shim, or 0 for any other call. These shims
+// tail-jump to a C-ABI function, so an FP result comes back in xmm0 (the C
+// convention) — but Fern keeps f32/f64 operand-stack values in rax (the
+// regular Fern-call convention). After such a call the result must be moved
+// xmm0→rax before it's pushed, or it's used as garbage. Regular Fern
+// FP-returning functions already deliver their result in rax, so the move is
+// specific to these C-ABI shims.
+func ccallFloatRetWidth(name string) int {
+	if !strings.HasPrefix(name, "__c_call") {
+		return 0
+	}
+	if strings.HasSuffix(name, "_f64") {
+		return 64
+	}
+	if strings.HasSuffix(name, "_f32") {
+		return 32
+	}
+	return 0
 }
 
 // invariant the rest of the code expects.
@@ -2014,6 +2065,13 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// initialiser. Mirrors arm64's returnIsVoid gate.
 		if g.callReturnsVoid(op.Str) {
 			break
+		}
+		// __c_call*_f32/_f64 return their result in xmm0 (C ABI); move it
+		// into rax so it lands on the operand stack in Fern's FP convention.
+		if w := ccallFloatRetWidth(op.Str); w == 64 {
+			g.emit("movq rax, xmm0")
+		} else if w == 32 {
+			g.emit("movd eax, xmm0")
 		}
 		g.push()
 
@@ -3930,7 +3988,18 @@ func (g *generator) emitMemcpyRuntime() {
 // stack alignment (rsp ≡ 8 mod 16, exactly a C call site), and fn's `ret`
 // returns straight to the Fern caller with the result already in rax.
 func (g *generator) emitCCallRuntime(n int) {
-	name := fmt.Sprintf("__c_call%d", n)
+	g.emitCCallRuntimeSuffixed(n, "")
+}
+
+// emitCCallRuntimeSuffixed is emitCCallRuntime parameterised by a return-type
+// suffix. The shim body is identical regardless of return type — it's a tail
+// jump, so the callee's result lands in whichever register its ABI dictates
+// (rax for integer, xmm0 for f32/f64) and flows straight back to the Fern
+// caller. The only thing that differs is the symbol name (so a distinct
+// checker FuncSig can declare the FP result type, making the call site read
+// xmm0). Suffix is "" / "_f32" / "_f64".
+func (g *generator) emitCCallRuntimeSuffixed(n int, suffix string) {
+	name := fmt.Sprintf("__c_call%d%s", n, suffix)
 	g.line("")
 	g.line(".globl " + name)
 	g.line(".type " + name + ", @function")
@@ -3941,7 +4010,7 @@ func (g *generator) emitCCallRuntime(n int) {
 	for i := 0; i < n; i++ {
 		g.emit(fmt.Sprintf("mov %s, %s", regs[i], regs[i+1]))
 	}
-	g.emit("jmp r11") // tail-call fn; its ret returns to our caller, rax = result
+	g.emit("jmp r11") // tail-call fn; its ret returns to our caller, result in rax/xmm0
 	g.line(".size " + name + ", .-" + name)
 }
 

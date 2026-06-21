@@ -1789,6 +1789,19 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			ps[i] = usizeT
 		}
 		c.info.FuncSigs[n] = &ast.FuncType{Params: ps, Result: usizeT}
+		// FP-return variants `__c_call<n>_f32` / `_f64`: same integer-arg
+		// shim, but the result rides in an FP register (xmm0 / d0). These let
+		// std/jni read float/double JNIEnv methods (Get{Float,Double}Field,
+		// CallFloatMethod, …). FP *arguments* are not modelled — only the
+		// return crosses the FP boundary.
+		ps32 := make([]ast.Type, params)
+		ps64 := make([]ast.Type, params)
+		for i := range ps32 {
+			ps32[i] = usizeT
+			ps64[i] = usizeT
+		}
+		c.info.FuncSigs[n+"_f32"] = &ast.FuncType{Params: ps32, Result: ast.FloatType{Width: 32}}
+		c.info.FuncSigs[n+"_f64"] = &ast.FuncType{Params: ps64, Result: ast.FloatType{Width: 64}}
 	}
 	// `__load_i64` / `__store_i64` — 8-byte memory pokes. Used
 	// by the Map runtime's wide-scalar-boxed key path
