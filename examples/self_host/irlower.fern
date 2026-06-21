@@ -1935,7 +1935,19 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
             // A call to a struct-returning function evaluates to that struct type
             // (so `var p = make()` / `var p = obj.make()` then `p.x` resolves).
             match (c.callee) {
-                parser.ExprIdent(id) => { return s.struct_ret_type(id.name); },
+                parser.ExprIdent(id) => {
+                    var srt: string = s.struct_ret_type(id.name);
+                    if (srt != "") { return srt; }
+                    // A fn-typed PARAM whose declared return type is a struct:
+                    // `g: () => P` → `g().field` resolves P's fields. The return
+                    // type rides ParamDecl.fn_ret past the coarse "fn" tag and is
+                    // recorded per fn-param in fn_param_sigs (#3640). Guard on a
+                    // real struct so a fn returning a scalar / array stays "".
+                    // (fn_param_ret_struct only matches cur_fn's fn-typed params.)
+                    var fpr: string = s.fn_param_ret_struct(id.name);
+                    if (fpr != "" && (decl_is_struct(s.structs, fpr) || is_enum_like_name(fpr, s.structs))) { return fpr; }
+                    return "";
+                },
                 parser.ExprFieldAccess(fa) => {
                     // Associated-function call `Type.make()` / `Enum.default()` —
                     // the object is a bare TYPE name (struct or enum), not a local
@@ -14114,15 +14126,42 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     return out;
 }
 
+// str_has_char reports whether byte `c` occurs anywhere in `s`.
+function str_has_char(s: string, c: i32): boolean {
+    var i: i32 = 0;
+    while (i < s.len()) {
+        if (s[i] == c) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 pub function fn_param_sigs_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
     while (k < funcs.len()) {
         var flags: string = "";
+        // rets encodes the RETURN type of each `fn`-typed param whose declared
+        // return is a simple (struct-shaped) name, as `pname=Ret;…` — the return
+        // type the parser preserves past the coarse "fn" tag (ParamDecl.fn_ret).
+        // It rides a THIRD `|` segment ("key|flags|rets"); callee_param_is_fn /
+        // _is_dyn only read a single flag char inside the flags region, so the
+        // extra segment is invisible to them. Lets `g().field` resolve a struct
+        // RETURN of a fn-typed param (#3640).
+        var rets: string = "";
         var any: boolean = false;
         var pj: i32 = 0;
         while (pj < funcs[k].params.len()) {
-            if (funcs[k].params[pj].type_name == "fn") { flags = flags + "1"; any = true; }
+            if (funcs[k].params[pj].type_name == "fn") {
+                flags = flags + "1"; any = true;
+                var fr: string = funcs[k].params[pj].fn_ret;
+                // Only a simple name (no '=' / ';' / ',' that would corrupt the
+                // pair encoding, and no array/generic punctuation) is recorded;
+                // the consumer confirms it names a struct.
+                if (fr.len() > 0 && !str_has_char(fr, 61) && !str_has_char(fr, 59) && !str_has_char(fr, 44) && !str_has_char(fr, 91)) {
+                    rets = rets + funcs[k].params[pj].name + "=" + fr + ";";
+                }
+            }
             // A SCALAR `dyn Trait` param: flag '2'. A primitive/string arg passed
             // here is heap-boxed into a `dyn` cell at the call site (op_dyn_box) so
             // the receiver carries a shape pointer (docs/DYN-TRAITS.md §4.2.3).
@@ -14139,7 +14178,7 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[]): string[] {
         if (any) {
             var key: string = funcs[k].name;
             if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
-            out = out.append(key + "|" + flags);
+            out = out.append(key + "|" + flags + "|" + rets);
         }
         k = k + 1;
     }
@@ -14416,6 +14455,40 @@ pub function (s: LowerState) callee_param_is_dyn(name: string, idx: i32): boolea
         i = i + 1;
     }
     return false;
+}
+
+// fn_param_ret_struct returns the declared RETURN type of the CURRENT function's
+// fn-typed parameter named `pname` (so `pname().field` resolves the struct's
+// fields), or "" if `pname` isn't a fn-typed param of cur_fn with a recorded
+// struct return. Reads the third "|rets" segment of cur_fn's fn_param_sigs
+// entry, where rets is `pname=Ret;…`. (#3640)
+pub function (s: LowerState) fn_param_ret_struct(pname: string): string {
+    var i: i32 = 0;
+    while (i < s.fn_param_sigs.len()) {
+        var e: string = s.fn_param_sigs[i];
+        var bar1: i32 = 0;
+        while (bar1 < e.len() && e[bar1] != 124) { bar1 = bar1 + 1; }   // first '|'
+        if (bar1 < e.len() && e[0:bar1] == s.cur_fn) {
+            var bar2: i32 = bar1 + 1;
+            while (bar2 < e.len() && e[bar2] != 124) { bar2 = bar2 + 1; }   // second '|'
+            if (bar2 >= e.len()) { return ""; }
+            var rets: string = e[bar2 + 1 : e.len()];
+            // scan `pname=Ret;` pairs for a key match.
+            var ps: i32 = 0;
+            while (ps < rets.len()) {
+                var eq: i32 = ps;
+                while (eq < rets.len() && rets[eq] != 61) { eq = eq + 1; }   // 61 = '='
+                if (eq >= rets.len()) { return ""; }
+                var semi: i32 = eq + 1;
+                while (semi < rets.len() && rets[semi] != 59) { semi = semi + 1; }   // 59 = ';'
+                if (rets[ps : eq] == pname) { return rets[eq + 1 : semi]; }
+                ps = semi + 1;
+            }
+            return "";
+        }
+        i = i + 1;
+    }
+    return "";
 }
 
 // opt_ret_type returns the recorded ret_type for a function name in opt_ret_fns
@@ -15820,7 +15893,7 @@ function try_lift_binding(body: parser.Stmt[], idx: i32, fname: string, lam: par
     var pj: i32 = 0;
     while (pj < lam.params.len()) { lparams = lparams.append(lam.params[pj]); pj = pj + 1; }
     var cj: i32 = 0;
-    while (cj < caps.len()) { lparams = lparams.append(parser.ParamDecl { name: caps[cj], type_name: ctypes[cj], own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false }); cj = cj + 1; }
+    while (cj < caps.len()) { lparams = lparams.append(parser.ParamDecl { name: caps[cj], type_name: ctypes[cj], own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "" }); cj = cj + 1; }
     var lname: string = "__lam_" + util.i32_to_string(acc.counter);
     var notp: string[] = [];
     var newfn: parser.FuncDecl = parser.FuncDecl { name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
@@ -15893,7 +15966,7 @@ function make_clo_func(lam: parser.ExprLambda, cloname: string, fd: parser.FuncD
         ci = ci + 1;
     }
     // params = __env first, then the lambda's declared params.
-    var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false }];
+    var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "" }];
     var pj: i32 = 0;
     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
     // body = capture reads (var cap = __env[1+i]) then the lambda body.
@@ -15994,7 +16067,7 @@ function try_inline_closure(lam: parser.ExprLambda, fd: parser.FuncDecl, funcs: 
 // (the lambda body inlined verbatim; __env is unused). Always succeeds — a
 // no-capture lambda needs no env reads.
 function make_wrap_lambda_func(lam: parser.ExprLambda, wrapname: string): parser.FuncDecl {
-    var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false }];
+    var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "" }];
     var pj: i32 = 0;
     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
     var notp: string[] = [];
@@ -16012,7 +16085,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: parser.F
     while (fi < mfuncs.len()) {
         if (mfuncs[fi].name == fnname && mfuncs[fi].receiver_type.len() == 0) {
             var tgt: parser.FuncDecl = mfuncs[fi];
-            var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false }];
+            var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "" }];
             var args: parser.Expr[] = [];
             var pj: i32 = 0;
             while (pj < tgt.params.len()) {
