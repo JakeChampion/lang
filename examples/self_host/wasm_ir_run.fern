@@ -105,7 +105,11 @@ function main(): i32 {
         // needs the standalone push helper (the AST path's arr_helpers bundle —
         // which also defines arr_slice/slice8 — would double-define those, so use
         // the push-only emitter). Depends on $__fern_arr_box (module_allocates).
-        if (wasm_ir.module_emits_op(mod, "arr_push")) { o = o + wasm.arr_push_helper(); }
+        // A self-reassign append (`a = a.append(v)`) lowers to op_arr_push_owned,
+        // which on wasm maps to the SAME `call $__fern_arr_push` (no owned variant
+        // emitted) — so it must also pull the helper in, else a program whose only
+        // appends are self-reassigns calls an undefined function (invalid module).
+        if (wasm_ir.module_emits_op(mod, "arr_push") || wasm_ir.module_emits_op(mod, "arr_push_owned")) { o = o + wasm.arr_push_helper(); }
         if (wasm_ir.module_emits_op(mod, "arr_push_i64")) { o = o + wasm.arr_push_i64_helper(); }
         if (wasm_ir.module_emits_op(mod, "arr_push_f64")) { o = o + wasm.arr_push_f64_helper(); }
         if (wasm_ir.module_uses_maps(mod)) { o = o + wasm.map_helpers(); }
