@@ -1,0 +1,139 @@
+import "std/test";
+import "core/int" as int;
+// examples/tests/int_test.fern — pure-Fern coverage of core/int's
+// integer-formatting primitives: int_to_string (signed i32 → decimal,
+// incl. the INT_MIN unsigned-safe path), parse_int_radix (bases 2..36,
+// sign handling, out-of-range / bad-digit → None) and int_to_string_radix
+// (the inverse, lowercase digits). These sit behind the (n).to_string() /
+// to_hex / parse_hex_int method sugar; the Go-side suites unit-test the
+// prelude origin, this is the migration-shaped (pure-Fern) companion.
+
+function test_to_string_zero(): test.TestOutcome {
+    return test.assert_eq(int.int_to_string(0), "0");
+}
+
+function test_to_string_pos(): test.TestOutcome {
+    return test.assert_eq(int.int_to_string(42), "42");
+}
+
+function test_to_string_neg(): test.TestOutcome {
+    return test.assert_eq(int.int_to_string(0 - 7), "-7");
+}
+
+function test_to_string_max(): test.TestOutcome {
+    return test.assert_eq(int.int_to_string(2147483647), "2147483647");
+}
+
+function test_to_string_min(): test.TestOutcome {
+    // INT_MIN — exercises the unsigned-safe negation path.
+    return test.assert_eq(int.int_to_string(0 - 2147483647 - 1), "-2147483648");
+}
+
+function test_parse_hex(): test.TestOutcome {
+    match (int.parse_int_radix("ff", 16)) {
+        Some(v) => { return test.assert_eq(v, 255); },
+        None => { return test.fail("parse_int_radix(ff,16) expected Some"); }
+    }
+}
+
+function test_parse_binary(): test.TestOutcome {
+    match (int.parse_int_radix("1010", 2)) {
+        Some(v) => { return test.assert_eq(v, 10); },
+        None => { return test.fail("parse_int_radix(1010,2) expected Some"); }
+    }
+}
+
+function test_parse_neg_base36(): test.TestOutcome {
+    match (int.parse_int_radix("-z", 36)) {
+        Some(v) => { return test.assert_eq(v, 0 - 35); },
+        None => { return test.fail("parse_int_radix(-z,36) expected Some"); }
+    }
+}
+
+function test_parse_plus_sign(): test.TestOutcome {
+    match (int.parse_int_radix("+42", 10)) {
+        Some(v) => { return test.assert_eq(v, 42); },
+        None => { return test.fail("parse_int_radix(+42,10) expected Some"); }
+    }
+}
+
+function test_parse_empty_none(): test.TestOutcome {
+    match (int.parse_int_radix("", 10)) {
+        Some(v) => { return test.fail("expected None for empty"); },
+        None => { return test.pass(); }
+    }
+}
+
+function test_parse_bad_base_none(): test.TestOutcome {
+    match (int.parse_int_radix("12", 1)) {
+        Some(v) => { return test.fail("expected None for base 1"); },
+        None => { return test.pass(); }
+    }
+}
+
+function test_parse_digit_ge_base_none(): test.TestOutcome {
+    // '8' is not a valid base-8 digit.
+    match (int.parse_int_radix("8", 8)) {
+        Some(v) => { return test.fail("expected None for digit >= base"); },
+        None => { return test.pass(); }
+    }
+}
+
+function test_parse_sign_only_none(): test.TestOutcome {
+    match (int.parse_int_radix("-", 10)) {
+        Some(v) => { return test.fail("expected None for sign-only"); },
+        None => { return test.pass(); }
+    }
+}
+
+function test_radix_hex(): test.TestOutcome {
+    return test.assert_eq(int.int_to_string_radix(255, 16), "ff");
+}
+
+function test_radix_binary(): test.TestOutcome {
+    return test.assert_eq(int.int_to_string_radix(10, 2), "1010");
+}
+
+function test_radix_zero(): test.TestOutcome {
+    return test.assert_eq(int.int_to_string_radix(0, 16), "0");
+}
+
+function test_radix_neg(): test.TestOutcome {
+    return test.assert_eq(int.int_to_string_radix(0 - 255, 16), "-ff");
+}
+
+function test_radix_min(): test.TestOutcome {
+    // INT_MIN through the i64-magnitude path.
+    return test.assert_eq(int.int_to_string_radix(0 - 2147483647 - 1, 16), "-80000000");
+}
+
+function test_roundtrip(): test.TestOutcome {
+    match (int.parse_int_radix(int.int_to_string_radix(48879, 16), 16)) {
+        Some(v) => { return test.assert_eq(v, 48879); },   // 0xBEEF
+        None => { return test.fail("round-trip expected Some"); }
+    }
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("core/int");
+    r = r.it("to_string zero",          test_to_string_zero());
+    r = r.it("to_string positive",      test_to_string_pos());
+    r = r.it("to_string negative",      test_to_string_neg());
+    r = r.it("to_string INT_MAX",       test_to_string_max());
+    r = r.it("to_string INT_MIN",       test_to_string_min());
+    r = r.it("parse hex",               test_parse_hex());
+    r = r.it("parse binary",            test_parse_binary());
+    r = r.it("parse negative base36",   test_parse_neg_base36());
+    r = r.it("parse plus sign",         test_parse_plus_sign());
+    r = r.it("parse empty is None",     test_parse_empty_none());
+    r = r.it("parse bad base is None",  test_parse_bad_base_none());
+    r = r.it("parse digit>=base None",  test_parse_digit_ge_base_none());
+    r = r.it("parse sign-only None",    test_parse_sign_only_none());
+    r = r.it("radix hex",               test_radix_hex());
+    r = r.it("radix binary",            test_radix_binary());
+    r = r.it("radix zero",              test_radix_zero());
+    r = r.it("radix negative",          test_radix_neg());
+    r = r.it("radix INT_MIN",           test_radix_min());
+    r = r.it("radix round-trip",        test_roundtrip());
+    return r.finish();
+}

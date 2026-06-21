@@ -278,6 +278,25 @@ func TestRunnerCsvExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/int_test.fern` covers core/int's integer-formatting
+// primitives — int_to_string (signed i32 → decimal incl. the INT_MIN
+// unsigned-safe path), parse_int_radix (bases 2..36, sign handling,
+// out-of-range / bad-digit → None) and int_to_string_radix (the inverse,
+// lowercase). Passing suite → exit 0.
+func TestRunnerIntExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/int_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: core/int", "# pass 19", "# fail 0", "1..19"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/runner_self_test.fern` is the runner's own
 // meta-test — confirms that every assertion helper returns the
 // expected TestOutcome shape on both pass and fail paths.
