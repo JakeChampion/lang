@@ -955,3 +955,72 @@ int main(int c, char** v){
 		t.Fatalf("FP field accessor dispatch = %d, want 42 (out=%q)", code, out)
 	}
 }
+
+// TestStdlibInSharedLib proves real stdlib string helpers work inside a
+// dlopen'd .so. These all flow through s.as_bytes() over string-literal
+// .rodata, which is mapped at a high (>32-bit) base in a PIE shared object —
+// the exact case the slice-header fix addresses. Before that fix every one
+// of these returned garbage in a .so; this guards the whole class (case
+// folding, base64, hex) against regression, and documents that the .so /
+// Android target is stdlib-usable, not just JNI-glue-usable.
+func TestStdlibInSharedLib(t *testing.T) {
+	gcc, err := exec.LookPath("gcc")
+	if err != nil {
+		t.Skip("gcc not on PATH")
+	}
+	if runtime.GOARCH != "amd64" {
+		t.Skip("host is not amd64")
+	}
+	// `check` returns a bitmask; each bit is one stdlib round-trip that must
+	// hold. 63 == all six pass.
+	src := `import "std/string";
+import "std/base64";
+import "std/hex";
+function check(env: usize, cls: usize): i32 {
+    var ok: i32 = 0;
+    if (("HELLO").to_lower() == "hello") { ok = ok + 1; }
+    if (("hello").to_upper() == "HELLO") { ok = ok + 2; }
+    if (base64.base64_encode("Man") == "TWFu") { ok = ok + 4; }
+    if (base64.base64_decode("TWFu") == "Man") { ok = ok + 8; }
+    if (hex.hex_encode("AB") == "4142") { ok = ok + 16; }
+    if (hex.hex_decode("4142") == "AB") { ok = ok + 32; }
+    return ok;
+}
+function main(): i32 { return 0; }`
+	exps := []string{"check"}
+	asm := compileToX86AsmExports(t, src, exps)
+	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exps)
+	if err != nil {
+		t.Fatalf("AssembleProgramShared: %v", err)
+	}
+	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs),
+		[]nativeelf.Export{{Name: "check", Value: ev["check"]}}, "libfern.so")
+	dir := t.TempDir()
+	soPath := filepath.Join(dir, "libfern.so")
+	if err := os.WriteFile(soPath, so, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	loader := `#include <dlfcn.h>
+#include <stdio.h>
+int main(int c, char** v){
+  void* h = dlopen(v[1], RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
+  int (*check)(long,long) = (int(*)(long,long)) dlsym(h, "check");
+  if(!check) return 101;
+  int r = check(0,0);
+  if(r != 63){ fprintf(stderr, "stdlib bitmask = %d, want 63\n", r); return 1; }
+  return 42;
+}`
+	cPath := filepath.Join(dir, "loader.c")
+	if err := os.WriteFile(cPath, []byte(loader), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ld := filepath.Join(dir, "loader")
+	if out, err := exec.Command(gcc, cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
+		t.Fatalf("gcc loader: %v\n%s", err, out)
+	}
+	cmd := exec.Command(ld, soPath)
+	out, _ := cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 42 {
+		t.Fatalf("stdlib in .so = %d, want 42 (out=%q)", code, out)
+	}
+}
