@@ -251,6 +251,22 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-21 — std/hex: pure-Fern std/test migration coverage (`hex_encode` / `hex_decode`)
+
+`std/hex`'s lowercase encode / decode had Go-side coverage but no
+migration-shaped (pure-Fern, `std/test`-driven) companion. Added
+`examples/tests/hex_test.fern` — 10 assertions: round-trip fidelity, empty
+input both directions, case-insensitive decode (`4A` and `4a` both → `J`), the
+lenient decode termination (first non-hex char — `41ZZ` → `A` — and odd-length
+tail — `414` → `A` — both stop without raising), and that encode emits lower
+case. Gated natively (`TestRunnerHexExamplePasses`) and through the self-host
+differential gate (`TestSelfHostStdTestE2E/hex`), which compiles the suite with
+the self-hosted x86-64 compiler and oracle-checks TAP-13 stdout + exit code
+against the interpreter **byte-for-byte**. Notable: this is the first migration
+suite whose stdlib path exercises the `u8[]` / `__alloc_u8` / `.with()` /
+`string_from_bytes` byte-buffer surface end-to-end through the self-host IR —
+no AST fallback.
+
 ### 2026-06-21 — std/path: pure-Fern std/test migration coverage (`path_join` / `path_parent` / `path_file_name` / `path_extension`)
 
 `std/path`'s POSIX helpers (string-level, no FS interaction) had Go-side

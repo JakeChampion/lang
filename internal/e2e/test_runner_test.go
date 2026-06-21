@@ -186,6 +186,24 @@ func TestRunnerPathExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/hex_test.fern` covers std/hex's lowercase encode /
+// decode — round-trip fidelity, empty input, case-insensitive decode,
+// and the lenient decode termination (first non-hex char or odd-length
+// tail). Passing suite → exit 0.
+func TestRunnerHexExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/hex_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/hex", "# pass 10", "# fail 0", "1..10"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/runner_self_test.fern` is the runner's own
 // meta-test — confirms that every assertion helper returns the
 // expected TestOutcome shape on both pass and fail paths.
