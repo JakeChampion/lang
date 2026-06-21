@@ -207,6 +207,20 @@ func TestSelfHostU32WrapIR(t *testing.T) {
 		// u32 add overflow: 0x80000000 + 0x80000000 wraps to 0; the >>28 brings
 		// the would-be carry bit (bit 32) into the low byte if unmasked.
 		{"add-wrap", `function main(): i32 { var x: u32 = 0x80000000; var s: u32 = x + x; return ((s >> 28) & 255) as i32; }`},
+		// A u32 var initialised with a DECIMAL literal > i32-max (`4000000000`,
+		// width-infers 64) must stay a 32-bit u32, not get i64-backed — otherwise
+		// its arithmetic runs at full 64-bit width and skips the 2^32 wrap. The
+		// >>28 reveals the unmasked carry bit if the add didn't wrap. (Forms:
+		// reassign-to-self, fresh `var z`, and a function-local that's compared.)
+		{"large-lit-reassign", `function main(): i32 { var x: u32 = 4000000000; x = x + 1000000000; return ((x >> 28) & 255) as i32; }`},
+		{"large-lit-var-z", `function main(): i32 { var x: u32 = 4000000000; var y: u32 = 1000000000; var z = x + y; return ((z >> 28) & 255) as i32; }`},
+		// Unsigned COMPARE of a wrapped large-literal u32: after wrap x is
+		// 705032704 (< 1e9); i64-backed it would be 5e9 (> 1e9). Signed-compare on
+		// the bit-31-set value would also flip the answer.
+		{"large-lit-compare", `function main(): i32 { var x: u32 = 4000000000; x = x + 1000000000; if (x < 1000000000) { return 7; } return 0; }`},
+		// Division of a wrapped large-literal u32 (truncation-on-store can't mask
+		// this — the quotient differs by the unwrapped high bits).
+		{"large-lit-div", `function main(): i32 { var x: u32 = 4000000000; x = x + 1000000000; return ((x / 1000000) % 100) as i32; }`},
 		// 5-term wrapping add (the SHA round shape).
 		{"add5-wrap", `function main(): i32 { var a: u32 = 0xffffffff; var s: u32 = a + a + a + a + a; return ((s >> 24) & 255) as i32; }`},
 		// u32 mul overflow.
