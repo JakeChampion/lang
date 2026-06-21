@@ -625,6 +625,34 @@ on. Native-only so far; self-host parity is a follow-up.
    Self-host parity (the self-host parser/monomorphiser learning
    `impl[T]`) is a follow-up — the Go compiler is the reference.
 
+7. **Phase 7 (shipped): parametric impls of a GENERIC trait.**
+   `impl[T] Iterator[T] for ArrayIter[T]` — a parametric impl whose own
+   type parameter is passed as the *generic trait's* type argument. This
+   combination (distinct from Phase 6's parametric impl of a *non-generic*
+   trait, and from a *concrete* `impl Iterator[i32] for Range`) needed two
+   fixes. **Checker:** the conformance compare built `want` from the trait
+   method with the trait's type params bound to the impl's raw `TraitArgs`,
+   where the param still reads as an unresolved `StructType("T")`, while the
+   hoisted method's `got` side carries the resolved `ParamType("T")`; both
+   print as `T` but `ast.Equal` separates the two node kinds, so the compare
+   spuriously failed. Both sides are now canonicalised through the impl's
+   type-param set before comparison, and the generic-trait *bound* check
+   recovers the binding (`T=i32`) by unifying the impl's `for` pattern
+   against the concrete argument (`ArrayIter[i32]`) before matching trait
+   args. **Monomorphiser:** the call-driven worklist clones a parametric
+   method only at a direct concrete call site; a method reached ONLY through
+   a trait bound inside a generic combinator (`it.next()` in
+   `sum[I: Iterator[i32]]`) had none, so the post-monomorph re-check could
+   not resolve it. `monomorph.Run` now, for every concrete instantiation of
+   a parametric impl's `for` type, clones the impl's methods under the
+   receiver-dispatch name (`__method_ArrayIter__i32_next`, with `MethodRecv`
+   re-pointed at the concrete type) and synthesises a concrete `ImplDecl`
+   per instantiation so the re-check records the conformance for trait
+   dispatch. Verified on interp / x86-64 / wasm; this is what makes
+   `core/iter`'s `ArrayIter` (and thus every combinator over arrays / map
+   keys / map values) lower. Self-host parity is a follow-up — the Go
+   compiler is the reference.
+
 ## 7a. Self-hosting the trait feature
 
 The self-hosted compiler (`examples/self_host/*.fern`) must compile a

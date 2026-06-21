@@ -1,4 +1,4 @@
-// core/iter.fern — a generic iterator protocol + an integer Range.
+// core/iter.fern — a generic iterator protocol + a Range and an ArrayIter.
 //
 // The iterator trait (#2686 / the open tail of #2699). `Iterator[T]` is now
 // generic over the element type `T`, lowering on BOTH the native compiler and
@@ -8,6 +8,17 @@
 // `count[T, I: Iterator[T]]` / `to_array[T, I: Iterator[T]]: T[]` works on
 // every backend. (`sum` stays `i32`-specialised — summing needs `+` on the
 // element type, which awaits a numeric trait bound.)
+//
+// Two iterators ship: `Range` over `[lo, hi)`, and `ArrayIter` over a `T[]`
+// (`iter.of(xs)`), the latter being the stdlib's first PARAMETRIC impl of a
+// GENERIC trait — `impl[T] Iterator[T] for ArrayIter[T]`. That shape needed a
+// native checker fix (the conformance compare canonicalises the impl's type
+// params so a substituted `StructType("T")` matches the hoisted method's
+// `ParamType("T")`) and a monomorphiser fix (clone a parametric-impl method
+// per concrete `for`-type instantiation even when it is reached ONLY through a
+// trait bound, e.g. `it.next()` inside `sum[I: Iterator[i32]]`). With it,
+// EVERY combinator below works on a plain array — and, via a map's `.keys()` /
+// `.values()` snapshot, on map keys and values too.
 //
 // Iteration is value-semantic: `next` returns `Some((value, advanced))` where
 // `advanced` is a FRESH iterator positioned just after `value`, or `None` at
@@ -37,6 +48,30 @@ impl Iterator[i32] for Range {
     function next(self: Self): Option[(i32, Self)] {
         if (self.lo >= self.hi) { return None; }
         return Some((self.lo, Range { lo: self.lo + 1, hi: self.hi }));
+    }
+}
+
+// ArrayIter is an Iterator[T] over a T[]: it yields xs[0], xs[1], …, in
+// order. Iteration is value-semantic — `next` returns a fresh ArrayIter
+// advanced one element, never mutating — matching Range's shape. This is
+// what makes the whole combinator library (sum / count / map / filter /
+// fold / take / …) usable on a plain array, and (via a map's `.keys()` /
+// `.values()` snapshot) on map keys and values too:
+//   iter.sum(iter.of(xs))
+//   iter.count(iter.of(m.keys()))
+// Generic over the element type T, lowered through a parametric impl of the
+// generic Iterator trait.
+pub struct ArrayIter[T] { xs: T[], idx: i32 }
+
+// of wraps an array as an Iterator[T] positioned at its first element.
+pub function of[T](xs: T[]): ArrayIter[T] {
+    return ArrayIter { xs: xs, idx: 0 };
+}
+
+impl[T] Iterator[T] for ArrayIter[T] {
+    function next(self: Self): Option[(T, Self)] {
+        if (self.idx >= self.xs.len()) { return None; }
+        return Some((self.xs[self.idx], ArrayIter { xs: self.xs, idx: self.idx + 1 }));
     }
 }
 

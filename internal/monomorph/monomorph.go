@@ -388,6 +388,240 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		return fmt.Errorf("monomorph: generic struct instantiation did not terminate after %d rounds — a generic type appears to be infinitely (polymorphically) recursive, e.g. a field typed `T[T]`-style that nests the struct inside its own type argument; such types can't be monomorphised", maxStructInstRounds)
 	}
 
+	// 4b-bis. Instantiate parametric-impl methods reached ONLY through a
+	//     trait bound. The call-driven worklist (step 2) clones a parametric
+	//     method (`impl[T] Iterator[T] for ArrayIter[T]`) only when a direct
+	//     concrete call site exists (`x.next()` on a known `ArrayIter[i32]`).
+	//     A method called solely on a bound type parameter inside a generic
+	//     combinator (`it.next()` in `sum[I: Iterator[i32]]`) has no such site
+	//     — at first check it dispatches through the bound, not a mangled name
+	//     — so it is never enqueued, and the post-monomorph re-check then can't
+	//     resolve `next` on the concrete `ArrayIter__i32`. Bridge the gap: for
+	//     every concrete instantiation of a parametric impl's `for` type, clone
+	//     the impl's methods under the receiver-dispatch name
+	//     (`__method_ArrayIter__i32_next`). Loop to a fixpoint with struct +
+	//     function instantiation, since a cloned body may build further generic
+	//     structs or call further generics.
+	existingFunc := func(name string) bool {
+		for _, fn := range prog.Funcs {
+			if fn.Name == name {
+				return true
+			}
+		}
+		return false
+	}
+	existingStruct := func(prog *ast.Program, name string) bool {
+		for _, sd := range prog.Structs {
+			if sd.Name == name {
+				return true
+			}
+		}
+		return false
+	}
+	mangleBodyStructLits := func(b *ast.Block) {
+		walkBlockStructLits(b, func(sl *ast.StructLit) {
+			if len(sl.TypeArgs) == 0 || hasParamType(sl.TypeArgs) {
+				return
+			}
+			gen, isGen := info.GenericStructs[sl.TypeName]
+			if !isGen || len(sl.TypeArgs) != len(gen.TypeParams) {
+				return
+			}
+			mang := mangle(sl.TypeName, sl.TypeArgs)
+			structInsts[instKey{name: sl.TypeName, mang: mang}] = sl.TypeArgs
+			sl.TypeName = mang
+			sl.TypeArgs = nil
+		})
+	}
+	methodDone := map[instKey]bool{}
+	implDone := map[string]bool{}
+	for mround := 0; mround < maxStructInstRounds; mround++ {
+		progressed := false
+		// (a) Clone parametric-impl methods for each concrete instantiation of
+		//     their `for` type.
+		var methodKeys []instKey
+		methodArgs := map[instKey][]ast.Type{}
+		methodRecv := map[instKey]string{}
+		methodSimple := map[instKey]string{}
+		var newImpls []*ast.ImplDecl
+		for _, impl := range prog.Impls {
+			if len(impl.TypeParams) == 0 {
+				continue
+			}
+			baseName, ok := baseTypeName(impl.Type)
+			if !ok {
+				continue
+			}
+			pset := map[string]bool{}
+			for _, tp := range impl.TypeParams {
+				pset[tp] = true
+			}
+			for _, sk := range collectKeys(structInsts) {
+				if sk.name != baseName {
+					continue
+				}
+				psub := map[string]ast.Type{}
+				if !unifyImplType(impl.Type, ast.StructType{Name: baseName, Args: structInsts[sk]}, pset, psub) {
+					continue
+				}
+				// Synthesise a CONCRETE impl for this instantiation
+				// (`impl Iterator[i32] for ArrayIter__i32`) so the re-check
+				// records the conformance: trait-method dispatch
+				// (methodImplementsTrait) needs `ArrayIter__i32` to be a known
+				// implementor, which the dropped generic impl no longer
+				// provides. TypeParams cleared → survives the keepImpls filter.
+				implK := impl.Trait + "/" + sk.mang
+				if !implDone[implK] {
+					implDone[implK] = true
+					ci := *impl
+					ci.TypeParams = nil
+					ci.Bounds = nil
+					if _, isEnum := impl.Type.(ast.EnumType); isEnum {
+						ci.Type = ast.EnumType{Name: sk.mang}
+					} else {
+						ci.Type = ast.StructType{Name: sk.mang}
+					}
+					if len(impl.TraitArgs) > 0 {
+						ta := make([]ast.Type, len(impl.TraitArgs))
+						for k := range impl.TraitArgs {
+							ta[k] = substTypeByName(impl.TraitArgs[k], psub)
+						}
+						ci.TraitArgs = ta
+					}
+					if len(impl.AssocTypeBindings) > 0 {
+						ab := make(map[string]ast.Type, len(impl.AssocTypeBindings))
+						for name, t := range impl.AssocTypeBindings {
+							ab[name] = substTypeByName(t, psub)
+						}
+						ci.AssocTypeBindings = ab
+					}
+					newImpls = append(newImpls, &ci)
+					progressed = true
+				}
+				for _, mn := range impl.MethodNames {
+					prefix := "__method_"
+					genName := prefix + baseName + "_" + mn
+					gen, isGen := info.GenericFuncs[genName]
+					if !isGen {
+						prefix = "__assoc_"
+						genName = prefix + baseName + "_" + mn
+						gen, isGen = info.GenericFuncs[genName]
+					}
+					if !isGen {
+						continue
+					}
+					margs := make([]ast.Type, len(gen.TypeParams))
+					complete := true
+					for i, tp := range gen.TypeParams {
+						if v, found := psub[tp]; found {
+							margs[i] = v
+						} else {
+							complete = false
+						}
+					}
+					if !complete || hasParamType(margs) {
+						continue
+					}
+					mk := instKey{name: genName, mang: prefix + sk.mang + "_" + mn}
+					if methodDone[mk] {
+						continue
+					}
+					methodDone[mk] = true
+					methodKeys = append(methodKeys, mk)
+					methodArgs[mk] = margs
+					methodRecv[mk] = sk.mang
+					methodSimple[mk] = mn
+				}
+			}
+		}
+		prog.Impls = append(prog.Impls, newImpls...)
+		sortKeys(methodKeys)
+		for _, mk := range methodKeys {
+			gen := info.GenericFuncs[mk.name]
+			margs := methodArgs[mk]
+			sub := make(map[string]ast.Type, len(gen.TypeParams))
+			for i, tp := range gen.TypeParams {
+				sub[tp] = margs[i]
+			}
+			mc := cloneFuncDecl(gen)
+			mc.Name = mk.mang
+			mc.TypeParams = nil
+			// Re-point the method identity at the CONCRETE receiver type so
+			// the post-monomorph re-check registers it as a method of
+			// `ArrayIter__i32` (not the generic `ArrayIter`). The re-check
+			// re-registers from MethodRecv + "." + MethodSimpleName.
+			mc.MethodRecv = methodRecv[mk]
+			mc.MethodSimpleName = methodSimple[mk]
+			for i := range mc.Params {
+				mc.Params[i].Type = substituteType(mc.Params[i].Type, sub)
+			}
+			mc.ReturnType = substituteType(mc.ReturnType, sub)
+			substituteBlock(mc.Body, sub)
+			collectCalls(mc.Body)
+			mangleBodyStructLits(mc.Body)
+			prog.Funcs = append(prog.Funcs, mc)
+			progressed = true
+		}
+		// (b) Drain any generic FUNCTION calls those bodies introduced (a
+		//     parametric method that calls a generic free function).
+		for _, fk := range collectKeys(instantiations) {
+			if existingFunc(fk.mang) {
+				continue
+			}
+			gen, isGen := info.GenericFuncs[fk.name]
+			if !isGen {
+				continue
+			}
+			args := instantiations[fk]
+			if len(args) != len(gen.TypeParams) || hasParamType(args) {
+				continue
+			}
+			sub := make(map[string]ast.Type, len(gen.TypeParams))
+			for i, tp := range gen.TypeParams {
+				sub[tp] = args[i]
+			}
+			fc := cloneFuncDecl(gen)
+			fc.Name = fk.mang
+			fc.TypeParams = nil
+			for i := range fc.Params {
+				fc.Params[i].Type = substituteType(fc.Params[i].Type, sub)
+			}
+			fc.ReturnType = substituteType(fc.ReturnType, sub)
+			substituteBlock(fc.Body, sub)
+			collectCalls(fc.Body)
+			mangleBodyStructLits(fc.Body)
+			prog.Funcs = append(prog.Funcs, fc)
+			progressed = true
+		}
+		// (c) Clone any new structs the bodies referenced + mangle remaining
+		//     generic StructType slots (including the just-cloned funcs').
+		beforeStructs := len(structInsts)
+		rewriteGenericStructTypes(prog, info, structInsts)
+		for _, k := range collectKeys(structInsts) {
+			if existingStruct(prog, k.mang) {
+				continue
+			}
+			gen := info.GenericStructs[k.name]
+			args := structInsts[k]
+			sub := make(map[string]ast.Type, len(gen.TypeParams))
+			for i, tp := range gen.TypeParams {
+				sub[tp] = args[i]
+			}
+			c := *gen
+			c.Name = k.mang
+			c.TypeParams = nil
+			c.Fields = make([]ast.Param, len(gen.Fields))
+			for i, f := range gen.Fields {
+				c.Fields[i] = ast.Param{Name: f.Name, Type: substituteType(f.Type, sub)}
+			}
+			prog.Structs = append(prog.Structs, &c)
+			progressed = true
+		}
+		if !progressed && len(structInsts) == beforeStructs {
+			break
+		}
+	}
+
 	// 4c. Drop parametric impls (`impl[T] Trait for Box[T]`). Their
 	//     conformance + coherence were validated on the first check;
 	//     their methods have now been cloned per instantiation. The
@@ -629,6 +863,65 @@ func sortKeys(ks []instKey) {
 // binding from sub. Mirrors the helper in the checker — duplicated
 // here so the monomorph pass doesn't pull the checker's exported
 // surface beyond what it needs.
+// substTypeByName substitutes by NAME, treating a zero-arg StructType /
+// EnumType as a potential type-param reference (the form an impl's trait
+// args carry before name resolution rewrites them to ParamType). Used to
+// concretise a parametric impl's TraitArgs / assoc bindings (`Iterator[T]`
+// → `Iterator[i32]`) where substituteType — which only rewrites ParamType —
+// would leave a bare `StructType{"T"}` untouched.
+func substTypeByName(t ast.Type, sub map[string]ast.Type) ast.Type {
+	switch x := t.(type) {
+	case ast.ParamType:
+		if v, ok := sub[x.Name]; ok {
+			return v
+		}
+		return x
+	case ast.StructType:
+		if len(x.Args) == 0 {
+			if v, ok := sub[x.Name]; ok {
+				return v
+			}
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = substTypeByName(x.Args[i], sub)
+		}
+		return ast.StructType{Name: x.Name, Args: args}
+	case ast.EnumType:
+		if len(x.Args) == 0 {
+			if v, ok := sub[x.Name]; ok {
+				return v
+			}
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = substTypeByName(x.Args[i], sub)
+		}
+		return ast.EnumType{Name: x.Name, Args: args}
+	case ast.ArrayType:
+		return ast.ArrayType{Elem: substTypeByName(x.Elem, sub)}
+	case ast.SliceType:
+		return ast.SliceType{Elem: substTypeByName(x.Elem, sub)}
+	case ast.TupleType:
+		out := ast.TupleType{Elems: make([]ast.Type, len(x.Elems))}
+		for i := range x.Elems {
+			out.Elems[i] = substTypeByName(x.Elems[i], sub)
+		}
+		return out
+	case *ast.FuncType:
+		out := &ast.FuncType{Result: substTypeByName(x.Result, sub)}
+		for _, p := range x.Params {
+			out.Params = append(out.Params, substTypeByName(p, sub))
+		}
+		return out
+	case ast.ProjType:
+		return ast.ProjType{Base: substTypeByName(x.Base, sub), Name: x.Name}
+	}
+	return t
+}
+
 func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {
 	if t == nil {
 		return nil
@@ -782,6 +1075,87 @@ func hasParamType(types []ast.Type) bool {
 		}
 	}
 	return false
+}
+
+// baseTypeName returns the nominal name of a struct/enum type (the base of a
+// possibly-generic `Foo[…]`), used to key a parametric impl's `for` type to
+// its struct instantiations.
+func baseTypeName(t ast.Type) (string, bool) {
+	switch x := t.(type) {
+	case ast.StructType:
+		return x.Name, true
+	case ast.EnumType:
+		return x.Name, true
+	}
+	return "", false
+}
+
+// unifyImplType matches a parametric impl's `for` pattern (`ArrayIter[T]`,
+// whose param names are in `params`) against a concrete instantiation
+// (`ArrayIter[i32]`), binding each impl param in `sub` (T=i32). It lets the
+// method-instantiation pass recover the substitution needed to clone the
+// impl's methods per concrete type. A param name may surface either as a
+// ParamType or as a bare zero-arg StructType (depending on how far name
+// resolution rewrote impl.Type), so both are treated as binders.
+func unifyImplType(pattern, concrete ast.Type, params map[string]bool, sub map[string]ast.Type) bool {
+	switch p := pattern.(type) {
+	case ast.ParamType:
+		if params[p.Name] {
+			if ex, ok := sub[p.Name]; ok {
+				return ast.Equal(ex, concrete)
+			}
+			sub[p.Name] = concrete
+			return true
+		}
+		return ast.Equal(pattern, concrete)
+	case ast.StructType:
+		if len(p.Args) == 0 && params[p.Name] {
+			if ex, ok := sub[p.Name]; ok {
+				return ast.Equal(ex, concrete)
+			}
+			sub[p.Name] = concrete
+			return true
+		}
+		c, ok := concrete.(ast.StructType)
+		if !ok || c.Name != p.Name || len(c.Args) != len(p.Args) {
+			return false
+		}
+		for i := range p.Args {
+			if !unifyImplType(p.Args[i], c.Args[i], params, sub) {
+				return false
+			}
+		}
+		return true
+	case ast.EnumType:
+		c, ok := concrete.(ast.EnumType)
+		if !ok || c.Name != p.Name || len(c.Args) != len(p.Args) {
+			return false
+		}
+		for i := range p.Args {
+			if !unifyImplType(p.Args[i], c.Args[i], params, sub) {
+				return false
+			}
+		}
+		return true
+	case ast.ArrayType:
+		c, ok := concrete.(ast.ArrayType)
+		return ok && unifyImplType(p.Elem, c.Elem, params, sub)
+	case ast.SliceType:
+		c, ok := concrete.(ast.SliceType)
+		return ok && unifyImplType(p.Elem, c.Elem, params, sub)
+	case ast.TupleType:
+		c, ok := concrete.(ast.TupleType)
+		if !ok || len(c.Elems) != len(p.Elems) {
+			return false
+		}
+		for i := range p.Elems {
+			if !unifyImplType(p.Elems[i], c.Elems[i], params, sub) {
+				return false
+			}
+		}
+		return true
+	}
+	return ast.Equal(pattern, concrete)
 }
 
 func containsParamType(t ast.Type) bool {
