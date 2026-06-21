@@ -508,6 +508,28 @@ over-permissiveness vs. native is a separate divergence, filed for follow-up;
 this entry scopes only the import-free escape-sequence surface, which both
 compilers agree on.)
 
+### 2026-06-21 — self-host IR gap characterised: `boolean`-returning closures called through a function-typed param ([#2686](https://github.com/JakeChampion/lang/issues/2686) tail)
+
+Root-caused the self-host IR crash first seen as the `fold` "A≠T" case (#3618).
+The real trigger is narrower and type-specific: **a closure whose RETURN type
+is `boolean`, invoked INDIRECTLY through a function-typed parameter,
+miscompiles on the self-host IR path** — it routes `ir` and emits, then
+crashes at runtime (exit -1). A return-type sweep over the minimal repro
+`function apply(x: i32, f: (i32) => R): R { return f(x); }` pins it: `R = i32`,
+`R = f64`, and `R = string` all lower and run correctly on the self-host IR
+path; `R = i64` routes to the AST emitter (correct via fallback); only
+`R = boolean` stays on the IR path and crashes. So the #3618 "A≠T" framing was
+the symptom — that closure was `(boolean, i32) => boolean`, i.e. a
+boolean-return indirect call. This blocks the predicate iterator adapters
+(`any` / `all` / `find`, all `(T) => boolean`) from the self-host IR path; they
+work on every native backend and are pinned by `TestNativeGenericPredicateAdapters{,Arm64}`
+as the behavioural spec, kept OUT of the shipped `core/iter` until the codegen
+gap is fixed (a focused follow-up — a conservative AST-fallback guard is
+fixpoint-risky because the compiler itself may use such closures, so the IR
+result path needs the real fix). A directly-called local closure with a
+boolean return is unaffected (works); only the indirect (fn-typed-param) call
+is wrong.
+
 ### 2026-06-21 — core/iter: generic `fold` reducer ([#2686](https://github.com/JakeChampion/lang/issues/2686))
 
 Added `fold[T, A, I: Iterator[T]](it: I, init: A, f: (A, T) => A): A` — the
