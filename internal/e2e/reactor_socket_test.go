@@ -109,16 +109,14 @@ func TestPollDrivenTcpServerX86_64(t *testing.T) {
 // both connections. Exit 42 iff both fetches got a response.
 //
 // This is the edge-handler fan-out (fetch a cache + a primary, take
-// both) running end-to-end over the native reactor. x86-64 host-native
-// (tcp_connect is x86-first; arm64 follows).
-func TestReactorOutboundFanoutX86_64(t *testing.T) {
-	if qemu := x86QemuOrEmpty(t); qemu != "" {
-		t.Skip("outbound fan-out test runs host-native only")
-	}
+// both) running end-to-end over the native reactor, on both native
+// backends (arm64 under qemu connects to the host upstream).
+func TestReactorOutboundFanout(t *testing.T) {
 	bin := buildFernCLI(t)
 
-	// Upstream: accept 2 connections, answer each (own goroutine so
-	// both can be in flight while the Fern client fans out).
+	// Upstream: answer every inbound connection in its own goroutine
+	// (so both fan-out connections — and both backend runs — are
+	// served). Closed at test end.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Skipf("no free TCP port: %v", err)
@@ -126,7 +124,7 @@ func TestReactorOutboundFanoutX86_64(t *testing.T) {
 	defer ln.Close()
 	port := ln.Addr().(*net.TCPAddr).Port
 	go func() {
-		for i := 0; i < 2; i++ {
+		for {
 			conn, aerr := ln.Accept()
 			if aerr != nil {
 				return
@@ -172,13 +170,28 @@ function main(): i32 {
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	out := filepath.Join(dir, "fanout.bin")
-	if o, err := exec.Command(bin, "-target", "x86-64", "-o", out, srcPath).CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, o)
+
+	backends := []struct {
+		target string
+		qemu   func(*testing.T) string
+		run    func(qemu, bin string, args ...string) *exec.Cmd
+	}{
+		{"x86-64", x86QemuOrEmpty, runX86Bin},
+		{"arm64", arm64QemuOrEmpty, runArm64Bin},
 	}
-	cmd := exec.Command(out)
-	_ = cmd.Run()
-	if code := cmd.ProcessState.ExitCode(); code != 42 {
-		t.Errorf("outbound fan-out exit = %d, want 42", code)
+	for _, be := range backends {
+		be := be
+		t.Run(be.target, func(t *testing.T) {
+			qemu := be.qemu(t) // skips if no runner
+			out := filepath.Join(dir, be.target+"_fanout.bin")
+			if o, err := exec.Command(bin, "-target", be.target, "-o", out, srcPath).CombinedOutput(); err != nil {
+				t.Fatalf("build failed: %v\n%s", err, o)
+			}
+			cmd := be.run(qemu, out)
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 42 {
+				t.Errorf("%s: outbound fan-out exit = %d, want 42", be.target, code)
+			}
+		})
 	}
 }

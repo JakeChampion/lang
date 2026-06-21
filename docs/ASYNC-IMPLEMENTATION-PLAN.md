@@ -235,7 +235,11 @@ backends (`internal/e2e/poll_test.go`, x86-64 + arm64/qemu).
   (`internal/e2e/reactor_socket_test.go ▸ TestReactorOutboundFanoutX86_64`,
   Go upstream answering both). This is the edge-handler fan-out
   (fetch cache + primary, take both) working for real.
-- **arm64 `tcp_connect`** — mirror the x86 helper.
+- **DONE — arm64 `tcp_connect`:** mirrors the x86 helper (socket +
+  sockaddr_in + connect(2) #203 / Darwin #98), so the outbound fan-out
+  test now runs on **both** native backends (arm64 under qemu connects
+  to the host upstream). Native parity for the full edge-handler loop
+  (serve + fan-out fetch).
 - **`plat.fetch`** — wrap `tcp_connect` + HTTP request/response over
   `run_io` behind the `Platform` capability, so handlers write
   `plat.fetch(req)`.
