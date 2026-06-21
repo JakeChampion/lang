@@ -105,6 +105,61 @@ pub function fold[T, A, I: Iterator[T]](it: I, init: A, f: (A, T) => A): A {
     return acc;
 }
 
+// any reports whether the iterator yields a value for which `pred` is true. It
+// short-circuits on the first match. Empty iterator → false. The closure-taking
+// counterpart to the equality-only `contains`. Generic over the element type
+// `T`.
+pub function any[T, I: Iterator[T]](it: I, pred: (T) => boolean): boolean {
+    var cur = it;
+    var go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => {
+                if (pred(t.0)) { return true; }
+                cur = t.1;
+            },
+            None => { go = false; },
+        }
+    }
+    return false;
+}
+
+// all reports whether `pred` is true for EVERY value the iterator yields. It
+// short-circuits on the first failure. Empty iterator → true (vacuously).
+// Generic over the element type `T`.
+pub function all[T, I: Iterator[T]](it: I, pred: (T) => boolean): boolean {
+    var cur = it;
+    var go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => {
+                if (!pred(t.0)) { return false; }
+                cur = t.1;
+            },
+            None => { go = false; },
+        }
+    }
+    return true;
+}
+
+// find returns the first value for which `pred` is true, or `None` if no value
+// matches. The closure-taking counterpart to the equality-only `position`.
+// Generic over the element type `T`.
+pub function find[T, I: Iterator[T]](it: I, pred: (T) => boolean): Option[T] {
+    var cur = it;
+    var go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => {
+                if (pred(t.0)) { return Some(t.0); }
+                cur = t.1;
+            },
+            None => { go = false; },
+        }
+    }
+    return None;
+}
+
 // nth returns the value at index `n` (0-based), or `None` if the iterator yields
 // fewer than `n + 1` values. Generic over the element type `T`.
 pub function nth[T, I: Iterator[T]](it: I, n: i32): Option[T] {
@@ -194,7 +249,7 @@ pub function product[I: Iterator[i32]](it: I): i32 {
 
 // position returns the 0-based index of the first value equal to `target`, or
 // `None` if no value matches. i32-specialised (uses `==`); the closure-taking
-// `find` / `position_by` await the boolean-indirect-return self-host IR fix.
+// `find` is the generic counterpart above.
 pub function position[I: Iterator[i32]](it: I, target: i32): Option[i32] {
     var cur = it;
     var i = 0;
@@ -213,8 +268,8 @@ pub function position[I: Iterator[i32]](it: I, target: i32): Option[i32] {
 }
 
 // contains reports whether the iterator yields a value equal to `target`.
-// i32-specialised (uses `==`); the closure-taking `any` awaits the boolean-
-// indirect-return self-host IR fix.
+// i32-specialised (uses `==`); the closure-taking `any` is the generic
+// counterpart above.
 pub function contains[I: Iterator[i32]](it: I, target: i32): boolean {
     var cur = it;
     var go = true;
