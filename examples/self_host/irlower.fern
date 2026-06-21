@@ -1006,6 +1006,14 @@ pub function (s: LowerState) is_i32_scalar_slot(i: i32): boolean {
     if (s.is_closurearr_slot(i)) { return false; }
     if (s.is_fnarr_slot(i)) { return false; }
     if (s.is_arrarr_slot(i)) { return false; }
+    // A u32 SCALAR slot (arrays already excluded above) is a 32-bit integer
+    // scalar even though some var-decl paths spuriously record its type tag in
+    // local_struct_type ("u32"); is_u32_slot is the authoritative signal, so
+    // admit it before the struct/opt/tuple/map heap-type exclusions below — those
+    // would otherwise reject it on the bogus "u32" struct tag, leaving `u64 + u32`
+    // (the only context an unsigned 32-bit leaf can appear; the checker forbids
+    // i64 + u32) stuck on the AST path.
+    if (s.is_u32_slot(i)) { return true; }
     if (s.struct_type_of_slot(i).len() > 0) { return false; }
     if (s.opt_type_of_slot(i).len() > 0) { return false; }
     if (i < s.local_tuple_elems.len() && s.local_tuple_elems[i].len() > 0) { return false; }
