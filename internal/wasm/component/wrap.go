@@ -152,6 +152,34 @@ func WrapWasiImported(coreBytes []byte, imports []WasiImport) []byte {
 // This is the simplest preview-2 component shape that wasmtime
 // can `--invoke`. The byte-equivalence test pins the output
 // against the Lang version.
+// BuildAsyncLiftedExportComponent wraps a core module whose named
+// export delivers its single result through an imported `task-return`
+// (then returns void) into a WASI Preview-3 component-model-async
+// component: the export becomes `<exportName>: async func() ->
+// <resultValtype>`. The core module must import `("", "task-return")`
+// and call it before returning — the shape wasmbin emits under
+// BuildOptions.AsyncExportName. Proven end-to-end (returns its result
+// under `wasmtime -W component-model-async,component-model-async-stackful`);
+// see docs/WASI-PREVIEW3-ASYNC-PLAN.md.
+//
+// Recipe: canon task.return → core-func 0; embed module; a core
+// instance exporting "task-return"=core-func 0; instantiate the module
+// with it bound to the empty import module; alias the named core export
+// → core-func 1; func()->result at type 0; lift core-func 1 async →
+// component-func 0; export it.
+func BuildAsyncLiftedExportComponent(coreBytes []byte, coreExportName, exportName string, resultValtype byte) []byte {
+	buf := PutComponentHeader(nil)
+	buf = PutCanonTaskReturnSingle(buf, resultValtype)                                          // core func 0
+	buf = PutCoreModuleSection(buf, coreBytes)                                                  // core module 0
+	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "task-return", 0)                        // core instance 0
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 0, []string{""}, []uint32{0}) // core instance 1
+	buf = PutAliasSectionCoreExportFunc(buf, 1, coreExportName)                                 // core func 1
+	buf = PutTypeSectionOneFunc(buf, nil, nil, resultValtype)                                   // type 0: () -> result
+	buf = PutCanonSectionLiftAsync(buf, 1, 0)                                                   // component func 0
+	buf = PutExportSectionOneFunc(buf, exportName, 0)
+	return buf
+}
+
 func BuildLiftedExportComponent(coreBytes []byte, coreExportName, exportName string, paramNames []string, paramValtypes []byte, resultValtype byte) []byte {
 	buf := PutComponentHeader(nil)
 	buf = PutCoreModuleSection(buf, coreBytes)

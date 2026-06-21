@@ -7,6 +7,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/monomorph"
+	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/wasm/component"
 )
 
@@ -58,5 +63,60 @@ func TestWasmP3AsyncExportAssembly(t *testing.T) {
 	}
 	if !bytes.Contains(out, []byte("42")) {
 		t.Errorf("async export: got %q, want 42", bytes.TrimSpace(out))
+	}
+}
+
+// TestWasmP3AsyncExportFromFern is the full WASI Preview-3 vertical: a
+// real Fern `function main(): i32` is compiled with
+// BuildOptions.AsyncExportName, which emits an async core-func shape
+// (call main, hand its i32 to the ("","task-return") import, return
+// void); the composer then lifts that export with the `async`
+// canonical option (BuildAsyncLiftedExportComponent). The resulting
+// `run: async func() -> u32` export returns main's value under
+// wasmtime's async features — Fern source → runnable async component.
+func TestWasmP3AsyncExportFromFern(t *testing.T) {
+	skipIfPreview2Missing(t) // ensures wasmtime on PATH
+
+	src := "function main(): i32 { return 7 * 6; }\n"
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prog, _, err := modload.Load(srcPath)
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+		Preview2WASI:    true,
+		AsyncExportName: "__async_run",
+	})
+	if err != nil {
+		t.Fatalf("wasmbin.Build: %v", err)
+	}
+	comp := component.BuildAsyncLiftedExportComponent(core, "__async_run", "run", component.CValtypeU32)
+
+	p := filepath.Join(dir, "fern_async.wasm")
+	if err := os.WriteFile(p, comp, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("wasmtime", "run",
+		"-W", "component-model-async,component-model-async-stackful",
+		"--invoke", "run()", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run (async): %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte("42")) {
+		t.Errorf("Fern async export: got %q, want 42", bytes.TrimSpace(out))
 	}
 }

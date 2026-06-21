@@ -32,6 +32,19 @@ type importSpec struct {
 // importSpecs is the import registry. Each entry corresponds to
 // one wasi_snapshot_preview1 (or similar) imported function.
 var importSpecs = map[string]importSpec{
+	"async_task_return": {
+		// (value: i32) → (). The WASI Preview-3 component-model-async
+		// `task.return` intrinsic, imported under the empty module name
+		// `("", "task-return")` and provided by the component's
+		// `canon task.return` (see component.BuildAsyncLiftedExportComponent).
+		// An async-lifted export's core function calls this to deliver
+		// its result, then returns void. Added to the import set when
+		// BuildOptions.AsyncExportName is set.
+		module:  "",
+		name:    "task-return",
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_fd_write": {
 		// (fd, iovs_ptr, iovs_count, nwritten_ptr) → errno
 		module:  "wasi_snapshot_preview1",

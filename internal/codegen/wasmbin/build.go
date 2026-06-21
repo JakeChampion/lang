@@ -77,6 +77,15 @@ type BuildOptions struct {
 	// other imports stay on preview-1 until their own migrations
 	// land. Forwarded to EmitOptions.Preview2WASI.
 	Preview2WASI bool
+	// AsyncExportName, when non-empty, emits a WASI Preview-3
+	// component-model-async export: an `("", "task-return")` import is
+	// added and a synthetic core function under this name calls `main`,
+	// passes its i32 result to task-return, and returns void (the
+	// async ABI: result via task.return, function-return = task done).
+	// The composer lifts it with the `async` canonical option
+	// (component.BuildAsyncLiftedExportComponent). `main` must return
+	// i32. Forwarded to EmitOptions.AsyncExportName.
+	AsyncExportName string
 	// CliRunResult tells the SynthCliRun wrapper that its i32
 	// return will be canon-lifted as a `wasi:cli/run` `result<_, _>`
 	// (0 = ok, non-zero = err) rather than surfaced raw. Only 0 and
@@ -234,5 +243,6 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 		Preview2WASI:       opts.Preview2WASI,
 		SynthCliRun:        opts.SynthCliRun,
 		CliRunResult:       opts.CliRunResult,
+		AsyncExportName:    opts.AsyncExportName,
 	})
 }

@@ -111,6 +111,14 @@ type EmitOptions struct {
 	// valid discriminants, so without this a main returning >= 2 traps
 	// the host. Off for the raw u32-export (`-component-wrap`) shape.
 	CliRunResult bool
+	// AsyncExportName, when non-empty, emits a WASI Preview-3
+	// component-model-async export under this name: an
+	// `("", "task-return")` import is added and a synthetic core
+	// function calls `main`, hands its i32 result to task-return, and
+	// returns void. The composer lifts it with the `async` canonical
+	// option. `main` must return i32. See
+	// docs/WASI-PREVIEW3-ASYNC-PLAN.md.
+	AsyncExportName string
 	// Preview2WASI rewrites preview-1-shaped WASI imports to their
 	// preview-2 component-model equivalents. Currently scoped to
 	// `proc_exit` — the only import whose core-wasm signature is
@@ -239,6 +247,14 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	externSpecs, externWrappers, err := scanExternImports(prog, &importNeeds, &helpers)
 	if err != nil {
 		return nil, err
+	}
+
+	// WASI Preview-3 async export: pull in the ("", "task-return")
+	// import (importSpecs["async_task_return"]) so the synthetic async
+	// wrapper below can call it. Added before funcIdx is assigned so the
+	// import takes its slot in the import index space.
+	if opts.AsyncExportName != "" {
+		importNeeds.add("async_task_return")
 	}
 
 	funcIdx := make(map[string]uint32, len(prog.Funcs)+len(helpers.order)+len(importNeeds.order))
@@ -1063,6 +1079,39 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		m.ExportNames = append(m.ExportNames, "_lang_run")
 		m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
 		m.ExportIdxs = append(m.ExportIdxs, runFuncIdx)
+	}
+	if opts.AsyncExportName != "" {
+		// WASI Preview-3 async export: a synthetic `() -> ()` core
+		// function that calls `main` (which must return i32), hands the
+		// result to the `("", "task-return")` import, then returns void
+		// — the async ABI (result via task.return; function-return =
+		// task done). The composer lifts it with the `async` canonical
+		// option (component.BuildAsyncLiftedExportComponent).
+		mainIdx, ok := funcIdx["main"]
+		if !ok {
+			return nil, fmt.Errorf("wasmbin: AsyncExportName needs a `main` function")
+		}
+		mainPosInFnSection := mainIdx - uint32(len(importNeeds.order))
+		mainResults := m.TypeResults[m.FunctionTypeidxs[mainPosInFnSection]]
+		if !(len(mainResults) == 1 && mainResults[0] == encode.ValtypeI32) {
+			return nil, fmt.Errorf("wasmbin: AsyncExportName: `main` must return i32, got %v", mainResults)
+		}
+		trIdx, ok := funcIdx["async_task_return"]
+		if !ok {
+			return nil, fmt.Errorf("wasmbin: AsyncExportName: task-return import not registered")
+		}
+		asyncTIdx := addType(nil, nil) // () -> ()
+		asyncFuncIdx := nextFuncIdx
+		nextFuncIdx++
+		var body []byte
+		body = inst.InstCall(body, mainIdx) // main() -> i32 (result on stack)
+		body = inst.InstCall(body, trIdx)   // task-return(i32)
+		// void return
+		m.FunctionTypeidxs = append(m.FunctionTypeidxs, asyncTIdx)
+		m.CodeBodies = append(m.CodeBodies, inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body))
+		m.ExportNames = append(m.ExportNames, opts.AsyncExportName)
+		m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
+		m.ExportIdxs = append(m.ExportIdxs, asyncFuncIdx)
 	}
 	if opts.HttpHandler && !opts.SynthStart {
 		// Proxy components don't run a `main()` — `wasmtime
