@@ -3451,6 +3451,19 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                 },
                 _ => {}
             }
+            // An i32-returning call consumed in an i64 context (`s64 + g()`): lower
+            // the i32 result (lower_expr, the normal call path) and sign-extend to
+            // i64 instead of bailing the module to AST. The checker forbids i64 +
+            // f64/string/u32 and rejects binding a bare i32 call to an i64 (it needs
+            // an explicit `as i64`), so a call reaching this point in a valid program
+            // — width 32, not i64-returning, not the 0-arg if/match IIFE handled
+            // above — necessarily returns a signed i32. infer_expr_width gates the
+            // widen; expr_is_u32 (false for calls) leaves it sign-extended.
+            if (infer_expr_width(e, s) == 32) {
+                var cw: LowerState = lower_expr(e, s);
+                if (!cw.ok) { return cw; }
+                return cw.emit(ir.op_int_extend(expr_is_u32(e, s)));
+            }
             return s.fail();
         },
         parser.ExprFieldAccess(fa) => {
