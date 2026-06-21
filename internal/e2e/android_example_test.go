@@ -30,6 +30,8 @@ func TestAndroidJNIExampleBuilds(t *testing.T) {
 		"Java_dev_fern_demo_Native_greeting",
 		"Java_dev_fern_demo_Native_utf8Length",
 		"Java_dev_fern_demo_Native_isString",
+		"Java_dev_fern_demo_Native_objectHashCode",
+		"Java_dev_fern_demo_Native_charCodeAt",
 	}
 	exports := strings.Join(syms, ",")
 	so := filepath.Join(t.TempDir(), "libfern.so")
