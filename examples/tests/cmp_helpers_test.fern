@@ -1,0 +1,66 @@
+import "std/test";
+import "core/cmp" as cmp;
+// examples/tests/cmp_helpers_test.fern — pure-Fern coverage of core/cmp's
+// generic free helpers over the primitive `Ord` / `Eq` impls: min / max /
+// clamp / lt / gte / sort / is_sorted (Ord) and contains / index_of /
+// distinct / eq_arrays (Eq). `derive_test.fern` covers `@derive`; this covers
+// the free functions, driven through the std/test runner (migration-shaped).
+
+function test_min(): test.TestOutcome { return test.assert_eq(cmp.min(8, 3), 3); }
+function test_max(): test.TestOutcome { return test.assert_eq(cmp.max(8, 3), 8); }
+function test_clamp_hi(): test.TestOutcome { return test.assert_eq(cmp.clamp(15, 0, 10), 10); }
+function test_clamp_lo(): test.TestOutcome { return test.assert_eq(cmp.clamp(0 - 4, 0, 10), 0); }
+function test_clamp_in(): test.TestOutcome { return test.assert_eq(cmp.clamp(5, 0, 10), 5); }
+
+function test_lt(): test.TestOutcome { return test.assert_true(cmp.lt(2, 9)); }
+function test_gte(): test.TestOutcome { return test.assert_true(cmp.gte(9, 9)); }
+function test_lt_false(): test.TestOutcome { return test.assert_false(cmp.lt(9, 2)); }
+
+function test_sort(): test.TestOutcome {
+    var s = cmp.sort([3, 1, 2]);
+    return test.assert_true(s[0] == 1 && s[1] == 2 && s[2] == 3);
+}
+
+function test_is_sorted(): test.TestOutcome { return test.assert_true(cmp.is_sorted([1, 2, 3])); }
+function test_is_sorted_false(): test.TestOutcome { return test.assert_false(cmp.is_sorted([3, 1])); }
+
+function test_contains(): test.TestOutcome { return test.assert_true(cmp.contains([10, 20, 30], 20)); }
+function test_index_of(): test.TestOutcome { return test.assert_eq(cmp.index_of([10, 20, 30], 20), 1); }
+function test_index_of_absent(): test.TestOutcome { return test.assert_eq(cmp.index_of([10, 20, 30], 99), 0 - 1); }
+
+function test_distinct(): test.TestOutcome {
+    var d = cmp.distinct([1, 1, 2, 3, 3, 3]);
+    return test.assert_true(d.len() == 3 && d[0] == 1 && d[1] == 2 && d[2] == 3);
+}
+
+function test_eq_arrays(): test.TestOutcome { return test.assert_true(cmp.eq_arrays([1, 2], [1, 2])); }
+function test_eq_arrays_false(): test.TestOutcome { return test.assert_false(cmp.eq_arrays([1, 2], [1])); }
+
+// String works too (lexicographic Ord + Eq).
+function test_string_sort(): test.TestOutcome {
+    var s = cmp.sort(["b", "a", "c"]);
+    return test.assert_true(s[0] == "a" && s[2] == "c");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("core/cmp helpers");
+    r = r.it("min",                 test_min());
+    r = r.it("max",                 test_max());
+    r = r.it("clamp above hi",      test_clamp_hi());
+    r = r.it("clamp below lo",      test_clamp_lo());
+    r = r.it("clamp in range",      test_clamp_in());
+    r = r.it("lt",                  test_lt());
+    r = r.it("gte",                 test_gte());
+    r = r.it("lt false",            test_lt_false());
+    r = r.it("sort",                test_sort());
+    r = r.it("is_sorted",           test_is_sorted());
+    r = r.it("is_sorted false",     test_is_sorted_false());
+    r = r.it("contains",            test_contains());
+    r = r.it("index_of",            test_index_of());
+    r = r.it("index_of absent",     test_index_of_absent());
+    r = r.it("distinct",            test_distinct());
+    r = r.it("eq_arrays",           test_eq_arrays());
+    r = r.it("eq_arrays false",     test_eq_arrays_false());
+    r = r.it("string sort",         test_string_sort());
+    return r.finish();
+}
