@@ -316,6 +316,48 @@ is the existing monomorphise-then-recheck loop, plus a first-pass rule
 that says "a method call on a trait-bound type param type-checks against
 the trait and is left for the recheck."
 
+## 4a. Bound-driven inference (#2691)
+
+A fully-generic iterator collector is generic over **both** the iterator
+type and its element type:
+
+```fern
+function last[T, I: Iterator[T]](it: I, dflt: T): T { … }
+
+last(RangeIter { cur: 0, end: 5 }, -1)   // T = i32, I = RangeIter
+last(BoolSeq { n: 2 }, false)            // T = boolean, I = BoolSeq
+```
+
+Here `T` appears in a parameter (`dflt: T`) and the return type, but the
+*defining* occurrence is inside another parameter's parametrised-trait
+bound: `I: Iterator[T]`. Ordinary argument-driven inference pins `I` from
+`it`'s type, but it cannot pin `T` from `dflt` alone in the general case
+(an i32 literal could be many things), and a collector like
+`count[T, I: Iterator[T]](it: I): i32` mentions `T` *only* in the bound.
+Without help the checker reported `E040: could not infer type parameter T`.
+
+**Bound-driven inference** recovers `T` from the impl the bound resolves
+to. After the normal pass binds `I` to a concrete type, for each bound
+type-parameter already pinned to a concrete type the checker unifies the
+bound's trait arguments (which mention `T`) against that type's impl's
+trait arguments. `I = RangeIter` and `impl Iterator[i32] for RangeIter`
+give `Iterator[T]` vs `Iterator[i32]`, binding `T = i32`. A small fixpoint
+loop lets one bound parameter feed another (`[T, U, I: Map[T, U]]`).
+
+The lever is that bound type-arguments are normalised so a leaf whose name
+is a type parameter is a `ParamType`, not a same-named nullary `StructType`
+(the parser can't tell them apart) — see `normalizeParamRefs`,
+`bindBoundParam`, and `substBoundArg` in `internal/checker/checker.go`.
+Trait-bound satisfaction (E021) then resolves the bound's `T` through the
+inferred substitution before comparing against the impl's concrete args.
+
+On the **self-host IR path** no inference is needed: an *unbounded* type
+parameter like `T` is erased (the ABI is a uniform 8-byte slot, so one
+monomorphic body fits every element type) and the function monomorphises
+on the bounded `I`. So once the parametrised-trait bound itself parses
+(#3558) the collector lowers through the IR path unchanged. The native
+backend monomorphises fully (no erasure), so it needs the inferred `T`.
+
 ## 5. Coherence (the orphan rule)
 
 To guarantee a globally-unique impl for every `(Trait, Type)` pair:

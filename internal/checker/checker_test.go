@@ -3742,6 +3742,23 @@ function main(): i32 {
 	}
 }
 
+// Bound-driven inference (#2691): a type parameter that appears ONLY inside
+// another parameter's parametrised-trait bound (`count[T, I: Iterator[T]]`)
+// is pinned not by an argument or the result but by the impl the bound
+// resolves to. Once `I` is inferred (here `RangeIter`), the bound `Iterator[T]`
+// unifies against `RangeIter`'s `impl Iterator[i32]` to bind `T = i32`.
+// Before this, the checker reported E040 (could not infer type parameter T).
+func TestCheckBoundDrivenInference(t *testing.T) {
+	src := `trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
+struct RangeIter { cur: i32, end: i32 }
+impl Iterator[i32] for RangeIter { function next(self: Self): Option[(i32, Self)] { if (self.cur >= self.end) { return None; } return Some((self.cur, RangeIter { cur: self.cur + 1, end: self.end })); } }
+function last[T, I: Iterator[T]](it: I, dflt: T): T { var acc = dflt; var cur = it; var go = true; while (go) { match (cur.next()) { Some(t) => { acc = t.0; cur = t.1; }, None => { go = false; }, } } return acc; }
+function main(): i32 { return last(RangeIter { cur: 0, end: 5 }, -1); }`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("bound-driven inference of T from the impl should typecheck: %v", err)
+	}
+}
+
 // A bounded generic `T: Display` may forward its parameter straight to
 // `print`; the trait bound supplies the `to_string` the rewrite needs.
 func TestCheckPrintDisplayGeneric(t *testing.T) {
