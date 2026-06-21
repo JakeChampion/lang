@@ -171,11 +171,21 @@ the same `std/task` API shape. This is the one phase that touches
 backends — one new primitive plus non-blocking I/O — in **both**
 compilers' codegen.
 
-- **Native (arm64, x86-64):** add `__fern_poll` (epoll on Linux;
-  kqueue on Darwin) and non-blocking variants of accept/recv/send
-  (`O_NONBLOCK` + `EAGAIN` handling). Emit in
-  `internal/codegen/{arm64,x86_64}` (Go) and `asm.fern` /
-  `asm_arm64.fern` (self-host).
+**Phase 1a — DONE (the x86-64 `poll` primitive):** the
+`poll(fds: i32[], timeout_ms): i32` builtin lowers on x86-64 (Go
+compiler) to `__fern_poll` — marshals the length-prefixed `i32[]` into
+a `struct pollfd[]` (POLLIN per fd), calls `poll(2)` (#7), and returns
+the index of the first readable fd (or -1). Checker sig + call-site
+flag + target map + the runtime helper (`emitPollRuntime`). Verified
+with deterministic file-fd tests (`internal/e2e/poll_x86_test.go`:
+single-ready → 0, two-ready → 0, empty → -1). Parity-neutral: nothing
+wires the free `poll` builtin yet, so existing programs are unaffected.
+
+**Phase 1b — remaining:**
+- **Native arm64:** `ppoll(2)` (#73 — arm64 has no bare `poll`), same
+  marshalling, in `internal/codegen/arm64` (Go) + `asm_arm64.fern`.
+- **x86-64 self-host** (`asm.fern`) — mirror the Go `__fern_poll`.
+- Non-blocking variants of accept/recv/send (`O_NONBLOCK` + `EAGAIN`).
 - **wasm:** add `wasi:io/poll.poll(list<pollable>) -> list<u32>` (the
   multi-pollable form; today only single-pollable `.block` is used)
   in `internal/codegen/wasmbin` (Go) and `wasm.fern` (self-host).

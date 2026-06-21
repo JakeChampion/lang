@@ -75,6 +75,11 @@ const (
 	sysClockGettime = 228
 	// nanosleep(2): x86-64 syscall 35. Used by `__fern_sleep_ms`.
 	sysNanosleep = 35
+	// poll(2): x86-64 syscall 7. Used by `__fern_poll` — the readiness
+	// multiplexer behind the std/task reactor
+	// (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1). Waits on a set of
+	// fds for POLLIN.
+	sysPoll = 7
 )
 
 // Options tunes the emit.
@@ -333,6 +338,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.emitTcpSendRuntime()
 		g.emitTcpCloseRuntime()
 	}
+	if g.usesPoll {
+		g.emitPollRuntime()
+	}
 	if g.usesEnv {
 		g.emitEnvRuntime()
 	}
@@ -477,6 +485,7 @@ type generator struct {
 	usesSliceMake       bool
 	usesRandomBytes     bool
 	usesRandomI32       bool
+	usesPoll            bool
 	usesAsBytes         bool
 	usesReadLine        bool
 	// usesStrIdx tracks whether any code emits the SSO-aware
@@ -716,6 +725,11 @@ func (g *generator) recordUse(target string) {
 		if target == "tcp_recv" {
 			g.usesAlloc = true
 		}
+	case "poll":
+		// poll(fds, timeout_ms) — readiness multiplex. The runtime
+		// helper allocates a scratch pollfd buffer.
+		g.usesPoll = true
+		g.usesAlloc = true
 	case "env":
 		g.usesEnv = true
 		g.usesAlloc = true
@@ -1867,6 +1881,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_tcp_accept"
 		case "tcp_recv":
 			target = "__fern_tcp_recv"
+		case "poll":
+			target = "__fern_poll"
 		case "tcp_send":
 			target = "__fern_tcp_send"
 		case "tcp_close":
@@ -5324,6 +5340,84 @@ func (g *generator) emitRandomBytesRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_random_bytes, .-__fern_random_bytes")
+}
+
+// emitPollRuntime emits `__fern_poll(fds, timeout_ms)` — the readiness
+// multiplexer behind the std/task reactor
+// (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1). `fds` is a length-
+// prefixed i32[] of file descriptors; the helper builds a transient
+// `struct pollfd[]` (each 8 bytes: i32 fd, i16 events, i16 revents),
+// requests POLLIN on every fd, calls poll(2), and returns the INDEX of
+// the first fd that became readable, or -1 on timeout / no readiness.
+// The scheduler calls it repeatedly to drain ready fds. The pollfd
+// scratch is bump-allocated (reclaimed with the per-request arena).
+func (g *generator) emitPollRuntime() {
+	const pollin = 1 // POLLIN
+	g.line("")
+	g.line(".globl __fern_poll")
+	g.line(".type __fern_poll, @function")
+	g.label("__fern_poll")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // nfds
+	g.emit("push r12") // fds data ptr
+	g.emit("push r13") // pollfd buffer
+	g.emit("push r14") // timeout_ms
+	g.emit("push r15") // loop index
+	// rdi = fds data ptr, rsi = timeout_ms.
+	g.emit("mov r12, rdi")
+	g.emit("mov r14, rsi")
+	g.emitArrayLen("ebx", "r12") // nfds = [fds - 4]
+	// Empty set → nothing to wait on; return -1.
+	g.emit("test ebx, ebx")
+	g.emit("jle .Lpoll_none")
+	// buf = alloc(nfds * 8)
+	g.emit("mov edi, ebx")
+	g.emit("shl edi, 3")
+	g.emit("call __fern_alloc")
+	g.emit("mov r13, rax")
+	// Marshal: pollfd[i] = { fd=[fds+i*4], events=POLLIN, revents=0 }.
+	g.emit("xor r15, r15")
+	g.label(".Lpoll_fill")
+	g.emit("cmp r15, rbx")
+	g.emit("jge .Lpoll_filled")
+	g.emit("mov eax, [r12 + r15*4]")                            // fd
+	g.emit("mov [r13 + r15*8], eax")                            // pollfd.fd
+	g.emit(fmt.Sprintf("mov word ptr [r13 + r15*8 + 4], %d", pollin)) // .events
+	g.emit("mov word ptr [r13 + r15*8 + 6], 0")                // .revents
+	g.emit("inc r15")
+	g.emit("jmp .Lpoll_fill")
+	g.label(".Lpoll_filled")
+	// poll(buf, nfds, timeout_ms)
+	g.emit("mov rdi, r13")
+	g.emit("mov esi, ebx")
+	g.emit("mov edx, r14d")
+	g.emit(fmt.Sprintf("mov eax, %d", sysPoll))
+	g.emit("syscall")
+	// Scan revents for the first POLLIN-ready fd; return its index.
+	g.emit("xor r15, r15")
+	g.label(".Lpoll_scan")
+	g.emit("cmp r15, rbx")
+	g.emit("jge .Lpoll_none")
+	g.emit("movzx eax, word ptr [r13 + r15*8 + 6]") // revents
+	g.emit(fmt.Sprintf("test eax, %d", pollin))
+	g.emit("jnz .Lpoll_found")
+	g.emit("inc r15")
+	g.emit("jmp .Lpoll_scan")
+	g.label(".Lpoll_found")
+	g.emit("mov rax, r15")
+	g.emit("jmp .Lpoll_ret")
+	g.label(".Lpoll_none")
+	g.emit("mov rax, -1")
+	g.label(".Lpoll_ret")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_poll, .-__fern_poll")
 }
 
 // emitRandomI32Runtime emits `__fern_random_i32()` — returns a
