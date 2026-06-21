@@ -4055,6 +4055,32 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
             }
         }
     }
+    // The pattern is a generic instantiation (`Box[U]`) but the concrete is its
+    // already-MANGLED clone name (`Box__i32`) — a nested generic value whose
+    // literal was rewritten before this key inference (a generic struct/enum
+    // field of another generic struct). Recover the concrete's type args from
+    // the `__`-mangled key and unify. A single-param pattern takes the whole
+    // key as one arg (it may itself be a mangled nested clone); a multi-param
+    // pattern splits unambiguously.
+    if (pb > 0 && pattern[pattern.len() - 1 : pattern.len()] == "]" && cb < 0) {
+        var pbase: string = pattern[0 : pb];
+        var mpfx: string = pbase + "__";
+        if (concrete.len() > mpfx.len() && concrete[0 : mpfx.len()] == mpfx) {
+            var pp: string[] = split_top_commas(pattern[pb + 1 : pattern.len() - 1]);
+            var ckey: string = concrete[mpfx.len() : concrete.len()];
+            var cp: string[] = [ckey];
+            if (pp.len() != 1) { cp = split_dunder(ckey); }
+            if (pp.len() == cp.len()) {
+                var b2: MEnv = binds;
+                var j2: i32 = 0;
+                while (j2 < pp.len()) {
+                    b2 = bind_unify(pp[j2], cp[j2], tparams, b2);
+                    j2 = j2 + 1;
+                }
+                return b2;
+            }
+        }
+    }
     return binds;
 }
 
