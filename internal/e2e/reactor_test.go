@@ -81,3 +81,60 @@ function main(): i32 {
 		})
 	}
 }
+
+// run_io over two timerfds proves the reactor blocks on REAL readiness
+// transitions (not just always-ready files): each task waits on a
+// CLOCK_MONOTONIC timerfd, so `poll` actually blocks until the timer
+// fires, and the shorter timer is serviced first. Deterministic — a
+// timerfd always fires — with no network/socket timing.
+func TestReactorTimers(t *testing.T) {
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+
+	// Two timer tasks (10ms, 15ms); each resumes to IoDone(ms). run_io
+	// blocks in real poll until each fires, in order. Success → 42.
+	src := `import "std/reactor";
+
+function start_timer(ms: i32): reactor.IoStep {
+    var fd: i32 = timer_fd(ms);
+    function resume(woken_fd: i32): reactor.IoStep { return IoDone(ms); }
+    return IoWait(fd, resume);
+}
+
+function main(): i32 {
+    var tasks: reactor.IoStep[] = [start_timer(10), start_timer(15)];
+    var results: i32[] = reactor.run_io(tasks);
+    if (results.len() != 2) { return 90; }
+    if (results[0] != 10) { return 91; }
+    if (results[1] != 15) { return 92; }
+    return 42;
+}`
+
+	backends := []struct {
+		target string
+		qemu   func(*testing.T) string
+		run    func(qemu, bin string, args ...string) *exec.Cmd
+	}{
+		{"x86-64", x86QemuOrEmpty, runX86Bin},
+		{"arm64", arm64QemuOrEmpty, runArm64Bin},
+	}
+	for _, be := range backends {
+		be := be
+		t.Run(be.target, func(t *testing.T) {
+			qemu := be.qemu(t)
+			srcPath := filepath.Join(dir, be.target+"_timers.fern")
+			if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			out := filepath.Join(dir, be.target+"_timers.bin")
+			if o, err := exec.Command(bin, "-target", be.target, "-o", out, srcPath).CombinedOutput(); err != nil {
+				t.Fatalf("build failed: %v\n%s", err, o)
+			}
+			cmd := be.run(qemu, out)
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 42 {
+				t.Errorf("%s: timer run_io exit = %d, want 42", be.target, code)
+			}
+		})
+	}
+}

@@ -62,6 +62,11 @@ const (
 	// `poll`). Backs `__fern_poll` — the std/task reactor's readiness
 	// multiplexer (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1).
 	sysPpoll = 73
+	// timerfd_create(2) / timerfd_settime(2): asm-generic table 85 / 86.
+	// Back `__fern_timer_fd(ms)` — a CLOCK_MONOTONIC timerfd readable
+	// after `ms` (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1c).
+	sysTimerfdCreate  = 85
+	sysTimerfdSettime = 86
 )
 
 // Darwin BSD syscall numbers (xnu/bsd/kern/syscalls.master).
@@ -436,6 +441,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesPoll {
 		g.emitPollRuntime()
+	}
+	if g.usesTimerFd {
+		g.emitTimerFdRuntime()
 	}
 	if g.usesStrSlice {
 		g.emitStrSliceRuntime()
@@ -4608,6 +4616,62 @@ func (g *generator) emitPollRuntime() {
 	g.line(".ltorg")
 }
 
+// emitTimerFdRuntime emits `__fern_timer_fd(ms)` — the arm64 mirror of
+// the x86-64 helper: create a CLOCK_MONOTONIC timerfd readable once
+// after `ms` ms, return its fd (poll/std/reactor wait on it). Linux
+// only (timerfd has no Darwin equivalent); Darwin returns a -1 stub.
+func (g *generator) emitTimerFdRuntime() {
+	const clockMonotonic = 1
+	g.line("")
+	g.line(".global __fern_timer_fd")
+	g.typeDirective("__fern_timer_fd")
+	g.label("__fern_timer_fd")
+	if g.darwin {
+		g.emit("mov x0, #-1")
+		g.emit("ret")
+		g.sizeDirective("__fern_timer_fd")
+		return
+	}
+	// Frame: fp/lr + x19 (ms) / x20 (fd) + a 32-byte itimerspec scratch.
+	g.emit("stp x29, x30, [sp, #-64]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("mov x19, x0") // ms
+	// fd = timerfd_create(CLOCK_MONOTONIC, 0)
+	g.emit("mov x0, #%d", clockMonotonic)
+	g.emit("mov x1, #0")
+	g.emit("mov x8, #%d", sysTimerfdCreate)
+	g.emit("svc #0")
+	g.emit("mov x20, x0")
+	g.emit("cmp x0, #0")
+	g.emit("b.lt .Ltimerfd_ret")
+	// itimerspec at [x29,#32]: it_interval{0,0} (+32,+40),
+	// it_value{sec,nsec} (+48,+56).
+	g.emit("str xzr, [x29, #32]")
+	g.emit("str xzr, [x29, #40]")
+	g.emit("mov x9, #1000")
+	g.emit("udiv x10, x19, x9")      // sec
+	g.emit("msub x11, x10, x9, x19") // rem ms
+	g.emit("ldr x12, =1000000")
+	g.emit("mul x11, x11, x12") // nsec
+	g.emit("str x10, [x29, #48]")
+	g.emit("str x11, [x29, #56]")
+	// timerfd_settime(fd, 0, &its, NULL)
+	g.emit("mov x0, x20")
+	g.emit("mov x1, #0")
+	g.emit("add x2, x29, #32") // &itimerspec (it_interval first)
+	g.emit("mov x3, #0")
+	g.emit("mov x8, #%d", sysTimerfdSettime)
+	g.emit("svc #0")
+	g.emit("mov x0, x20") // return fd
+	g.label(".Ltimerfd_ret")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #64")
+	g.emit("ret")
+	g.sizeDirective("__fern_timer_fd")
+	g.line(".ltorg")
+}
+
 // emitRandomI32Runtime emits `__fern_random_i32()` — returns a
 // single cryptographic-quality i32 by reading 4 CSPRNG bytes
 // into a stack slot and reloading them as a (little-endian) i32.
@@ -6038,6 +6102,9 @@ type generator struct {
 	// reactor's readiness multiplexer (ppoll(2) on Linux; -1 stub on
 	// Darwin pending kqueue).
 	usesPoll bool
+	// usesTimerFd pulls in `__fern_timer_fd(ms)` — a CLOCK_MONOTONIC
+	// timerfd readable after `ms` (Linux; -1 stub on Darwin).
+	usesTimerFd bool
 	// usesStrSlice pulls in `__str_slice(base, low, high)` —
 	// a length-prefix-aware substring extractor that
 	// allocates a fresh string. The IR's `s[a:b]` slice
@@ -8679,6 +8746,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			target = "__fern_poll"
 			g.usesPoll = true
 			g.usesAlloc = true
+		case "timer_fd":
+			target = "__fern_timer_fd"
+			g.usesTimerFd = true
 		// Map / MapIter — the lang Map runtime lives entirely
 		// in the stdlib under `_impl`-suffixed names;
 		// user-facing call sites use the unsuffixed mangled

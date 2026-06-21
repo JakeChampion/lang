@@ -202,7 +202,16 @@ backends (`internal/e2e/poll_test.go`, x86-64 + arm64/qemu).
   reactor exposes the same `run_io`-style API over pollables rather
   than reusing the `poll(fds)` builtin. In `internal/codegen/wasmbin`
   (Go) + `wasm.fern` (self-host).
-- **Self-host** (`asm.fern` / `asm_arm64.fern`) — mirror `__fern_poll`.
+- **DONE — `timer_fd(ms)` builtin (native):** a CLOCK_MONOTONIC
+  timerfd readable after `ms` (`timerfd_create`/`timerfd_settime`;
+  x86-64 #283/#286, arm64 #85/#86; Darwin -1 stub). Gives the reactor
+  a real wait→ready transition for a deterministic readiness test
+  (`internal/e2e/reactor_test.go ▸ TestReactorTimers`: two timers via
+  `run_io`, the shorter serviced first — proving `poll` actually
+  blocks on real readiness, not just always-ready files) and is the
+  primitive for async **timeouts** (Phase 5).
+- **Self-host** (`asm.fern` / `asm_arm64.fern`) — mirror `__fern_poll`
+  + `__fern_timer_fd`.
 - Non-blocking accept/recv/send (`O_NONBLOCK` + `EAGAIN`), then
   `plat.fetch` as the first real awaitable over `run_io`.
 
