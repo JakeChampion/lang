@@ -5,6 +5,24 @@ Status: design / blueprint. The measurement that motivates it is in
 `docs/IR-SELFCOMPILE-OOM-FINDINGS.md` (Finding 2 + the quantified
 breakdown).
 
+## Routes tested (all mergeable ops fixes are blocked)
+
+Every localized ops fix has now been built and run; all are blocked, for
+the same reason:
+
+| route | cmd/fern result | fixpoint |
+| --- | --- | --- |
+| `OpsBuilder` recursive-union cons-list | works (#3554) | FAIL — gen2 miscompiles |
+| chunked `ir.Op[][]` (Plan B) | works, 536→419 MB | FAIL — gen2 miscompiles `add`→0 |
+| chunked `Op[][]` + raise the 512-fn cap so the compiler self-compiles via **IR** instead of AST | — | FAIL — stage-1 **segfault** compiling the whole compiler via the IR path |
+
+So the cap guards against an IR-path **crash** on the full compiler, not
+only the OOM — raising it is not viable even with the ops win. And every
+in-`LowerState` ops representation (union or nested array) breaks the
+AST-self-compile. The two unblocked paths below (Plan A; or fixing the
+IR-path full-compiler crash / the asm.fern compound-field miscompile so
+the cap can lift) are the only ways through.
+
 ## The target
 
 The self-compile's super-linear memory (Effect A) is, by measurement:
