@@ -7,7 +7,38 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/diag"
 )
+
+// TestNumericLiteralErrorsCarryCode pins that invalid numeric literals report
+// the P002 ("numeric literal error") code — previously these sites emitted an
+// uncoded `error:` so `fern -explain` couldn't speak to a code the parser had
+// just reported.
+func TestNumericLiteralErrorsCarryCode(t *testing.T) {
+	codeOf := func(src string) string {
+		t.Helper()
+		_, err := Parse(src)
+		if err == nil {
+			t.Fatalf("expected a parse error for %q", src)
+		}
+		errs, ok := err.(diag.Errors)
+		if !ok {
+			t.Fatalf("expected diag.Errors, got %T", err)
+		}
+		for _, e := range errs {
+			if c, ok := e.(interface{ Code() string }); ok && c.Code() != "" {
+				return c.Code()
+			}
+		}
+		return ""
+	}
+	if c := codeOf(`function main(): i32 { return 99999999999999999999999; }`); c != "P002" {
+		t.Errorf("out-of-range integer literal: code = %q, want P002", c)
+	}
+	if c := codeOf(`function main(): i32 { return 0xFFFFFFFFFFFFFFFFFFFF; }`); c != "P002" {
+		t.Errorf("out-of-range hex literal: code = %q, want P002", c)
+	}
+}
 
 func TestEmptyFunction(t *testing.T) {
 	prog, err := Parse("function f() {}")

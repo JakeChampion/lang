@@ -105,7 +105,7 @@ func parseExprFromText(text string, pos ast.Position) (ast.Expr, error) {
 		return nil, err
 	}
 	if p.peek().Kind != lexer.EOF {
-		return nil, p.errorf(p.peek().Pos, "f-string interpolation: unexpected trailing tokens after expression")
+		return nil, p.errorfCode(p.peek().Pos, "P001", "f-string interpolation: unexpected trailing tokens after expression")
 	}
 	if len(p.errors) > 0 {
 		return nil, diag.Errors(p.errors)
@@ -1849,7 +1849,7 @@ func (p *parser) parseType() (ast.Type, error) {
 			// group.
 			base = elems[0]
 		} else {
-			return nil, p.errorf(t.Pos, "expected `=>` after parameter list (function type) or 2+ comma-separated types (tuple type)")
+			return nil, p.errorfCode(t.Pos, "P001", "expected `=>` after parameter list (function type) or 2+ comma-separated types (tuple type)")
 		}
 	case t.Kind == lexer.Keyword && t.Text == "dyn":
 		// `dyn Trait` (single) or `dyn A + B` (multi-trait object) — a
@@ -4646,7 +4646,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			// checker applies the same range rules as decimal.
 			v, err := strconv.ParseInt(t.Text[2:], 16, 64)
 			if err != nil {
-				p.errors = append(p.errors, p.errorf(t.Pos, "invalid hex literal %q: %v", t.Text, err))
+				p.errors = append(p.errors, p.errorfCode(t.Pos, "P002", "invalid hex literal %q: %v", t.Text, err))
 			}
 			n = v
 		} else {
@@ -4665,7 +4665,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 				if uv, uerr := strconv.ParseUint(t.Text, 10, 64); uerr == nil {
 					v = int64(uv)
 				} else {
-					p.errors = append(p.errors, p.errorf(t.Pos, "invalid integer literal %q: %v", t.Text, err))
+					p.errors = append(p.errors, p.errorfCode(t.Pos, "P002", "invalid integer literal %q: %v", t.Text, err))
 				}
 			}
 			n = v
