@@ -4492,9 +4492,24 @@ function subst_expr(e: Expr, tparams: string[], cts: string[]): Expr {
                 ExprFieldAccess(cfa) => {
                     match (cfa.obj) {
                         ExprIdent(oid) => {
-                            if (cfa.field == "default" && c.args.len() == 0) {
+                            if (c.args.len() == 0) {
                                 var pk: i32 = tp_index(oid.name, tparams);
-                                if (pk >= 0 && dv_is_scalar(cts[pk])) { return dv_default_expr(cts[pk]); }
+                                if (pk >= 0) {
+                                    // T.default() on a primitive → the primitive's zero
+                                    // literal (see above).
+                                    if (cfa.field == "default" && dv_is_scalar(cts[pk])) { return dv_default_expr(cts[pk]); }
+                                    // T.zero() / T.one() (std/num's additive / multiplicative
+                                    // identities) on a NUMERIC primitive have no associated
+                                    // impl to dispatch to in the IR path either — emit the
+                                    // identity literal directly (i32→0/1, f64→0.0/1.0),
+                                    // exactly as the `default` case does, so a generic
+                                    // reducer `sum[T: Add + Zero](xs): T { var acc = T.zero(); … }`
+                                    // lowers through the IR path instead of bailing to the AST
+                                    // emitter (the native compiler resolves the same call via
+                                    // the primitive Zero / One impl).
+                                    if (cfa.field == "zero" && dv_is_num_scalar(cts[pk])) { return dv_num_identity_expr(cts[pk], false); }
+                                    if (cfa.field == "one" && dv_is_num_scalar(cts[pk])) { return dv_num_identity_expr(cts[pk], true); }
+                                }
                             }
                         },
                         _ => {}
@@ -8520,6 +8535,27 @@ function dv_default_expr(t: string): Expr {
     if (dv_is_scalar(t)) { return e_number("0", "", false); }
     var noargs: Expr[] = [];
     return e_call(e_field_access(e_ident(t), "default"), noargs);
+}
+
+// dv_is_num_scalar reports whether `t` is a numeric scalar — the subset of
+// dv_is_scalar (excluding string / boolean) that std/num's Zero / One are
+// impl'd for, so a `T.zero()` / `T.one()` on such a `T` can lower to a literal.
+function dv_is_num_scalar(t: string): boolean {
+    return t == "i32" || t == "i64" || t == "u32" || t == "u64"
+        || t == "f32" || t == "f64";
+}
+
+// dv_num_identity_expr builds the additive (`one=false` → 0 / 0.0) or
+// multiplicative (`one=true` → 1 / 1.0) identity literal for a numeric scalar
+// type — the `T.zero()` / `T.one()` counterpart to dv_default_expr's scalar
+// zero.
+function dv_num_identity_expr(t: string, one: boolean): Expr {
+    if (t == "f32" || t == "f64") {
+        if (one) { return e_number("1.0", "", true); }
+        return e_number("0.0", "", true);
+    }
+    if (one) { return e_number("1", "", false); }
+    return e_number("0", "", false);
 }
 
 // struct_default_derivable reports whether EVERY field of `sd` has a
