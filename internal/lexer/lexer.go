@@ -92,10 +92,11 @@ var keywords = map[string]bool{
 	"continue": true,
 	"return":   true,
 	// Structured-concurrency surface (docs/ASYNC-IMPLEMENTATION-PLAN.md
-	// Phase 3): `concurrent { var a = spawn f(...); ... }` fans out
-	// tasks; the parser desugars the block onto the std/task runtime.
+	// Phase 3): `concurrent { var a = spawn f(...); … await a … }` fans
+	// out tasks; the parser desugars the block onto the std/task runtime.
 	"concurrent": true,
 	"spawn":      true,
+	"await":      true,
 	"true":       true,
 	"false":      true,
 	"boolean":    true,

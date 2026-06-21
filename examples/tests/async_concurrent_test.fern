@@ -2,12 +2,14 @@ import "std/test";
 import "std/task";
 
 // examples/tests/async_concurrent_test.fern — exercises the
-// `concurrent { … }` / `spawn` SURFACE SYNTAX (Phase 3), which the
-// parser desugars onto the std/task runtime
+// `concurrent { … }` / `spawn` / `await` SURFACE SYNTAX (Phase 3),
+// which the parser desugars onto the std/task runtime
 // (docs/ASYNC-IMPLEMENTATION-PLAN.md). Where async_runtime_test.fern
 // hand-writes the state machines, this file drives them through the
 // language keywords — proving the desugar produces working fan-out on
-// every backend.
+// every backend. Spawned tasks are joined with `await` inside the
+// block (a structured-concurrency scope); the result names do not
+// leak outside it.
 //
 // Run:  fern -interp examples/tests/async_concurrent_test.fern
 
@@ -35,34 +37,33 @@ function start_seq(rx: task.Reactor, a: i32, b: i32): (task.Step, task.Reactor) 
     return (Wait(tok1, resume1), rx1);
 }
 
-// Two-task fan-out through the surface. `a` and `b` hold the i32
-// results in the enclosing scope after the block.
+// Two-task fan-out joined with `await` inside the block.
 function test_concurrent_fanout(): test.TestOutcome {
     concurrent {
         var a = spawn start_add(10, 1);   // -> 11
         var b = spawn start_add(20, 2);   // -> 22
+        if (await a != 11) { return test.fail("a wrong: " + a.to_string()); }
+        return test.assert_eq(await b, 22);
     }
-    if (a != 11) { return test.fail("a wrong: " + a.to_string()); }
-    return test.assert_eq(b, 22);
 }
 
 // A single spawn is allowed.
 function test_concurrent_single(): test.TestOutcome {
     concurrent {
         var only = spawn start_add(40, 2);   // -> 42
+        return test.assert_eq(await only, 42);
     }
-    return test.assert_eq(only, 42);
 }
 
 // A multi-await task spawned alongside a single-await one: the
 // desugar's scheduler handles both depths.
 function test_concurrent_mixed(): test.TestOutcome {
     concurrent {
-        var deep = spawn start_seq(5, 6);     // -> 11
+        var deep = spawn start_seq(5, 6);      // -> 11
         var shallow = spawn start_add(100, 1); // -> 101
+        if (await deep != 11) { return test.fail("deep wrong: " + deep.to_string()); }
+        return test.assert_eq(await shallow, 101);
     }
-    if (deep != 11) { return test.fail("deep wrong: " + deep.to_string()); }
-    return test.assert_eq(shallow, 101);
 }
 
 // Spawn-call arguments are forwarded after the injected reactor:
@@ -70,8 +71,16 @@ function test_concurrent_mixed(): test.TestOutcome {
 function test_concurrent_args_forwarded(): test.TestOutcome {
     concurrent {
         var r = spawn start_add(7, 35);
+        return test.assert_eq(await r, 42);
     }
-    return test.assert_eq(r, 42);
+}
+
+// `await` is optional sugar: the bound name reads the same result.
+function test_concurrent_await_optional(): test.TestOutcome {
+    concurrent {
+        var v = spawn start_add(1, 2);   // -> 3
+        return test.assert_eq(v, 3);
+    }
 }
 
 function main(): i32 {
@@ -80,5 +89,6 @@ function main(): i32 {
     r = r.it("single spawn", test_concurrent_single());
     r = r.it("mixed await depths", test_concurrent_mixed());
     r = r.it("args forwarded", test_concurrent_args_forwarded());
+    r = r.it("await optional", test_concurrent_await_optional());
     return r.finish();
 }

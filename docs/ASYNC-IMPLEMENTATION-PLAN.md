@@ -233,29 +233,37 @@ statement position in straight-line and simple-branch bodies (covers
 fan-out); generalize to awaits-in-loops incrementally, each with its
 own test.
 
-**Phase 3a — DONE (the fan-out surface):** `concurrent { var a =
-spawn f(args); … }` is implemented as a parser-time desugar in the Go
-frontend (`internal/lexer` keywords `concurrent`/`spawn`;
-`parser.parseConcurrent`, dispatched inline from `parseBlock` like
-`use` so the result bindings leak into the enclosing scope). It
-expands to the `std/task` runtime: a reactor `var`, one
-`let (task, rx) = f(rx, args)` Destructure per spawn (reactor injected
-as the first arg), a `task.run(...)` call, and one result `var` per
-binding. All spawns start before `run`, so their I/O overlaps. Spawn
-targets follow the runtime protocol
+**Phase 3a — DONE (the fan-out surface, with inline `await`):**
+`concurrent { var a = spawn f(args); … return combine(await a,
+await b); }` is implemented as a parser-time desugar in the Go
+frontend (`internal/lexer` keywords `concurrent`/`spawn`/`await`;
+`parser.parseConcurrent`, dispatched inline from `parseBlock`). The
+whole block desugars to **one scoped `Block`** (the synthetic
+reactor/task/result locals and the join-bound result names stay
+confined to the concurrent scope — structured concurrency): a reactor
+`var`, one `let (task, rx) = f(rx, args)` Destructure per spawn
+(reactor injected as the first arg), a `task.run(...)` call, one
+result `var` per binding, then the trailing/join statements. All
+spawns start before `run`, so their I/O overlaps. `await a` (handled
+in `parseUnary`, gated on an `inConcurrent` depth) is a **join
+marker** — `run` has already completed every task before the trailing
+statements execute, so it strips to its operand; the keyword
+documents the join point and reserves the word for the eventual
+suspending form. Spawn targets follow the runtime protocol
 `(task.Reactor, args…) -> (task.Step, task.Reactor)`. Verified on
 interp / x86-64 / arm64(qemu); compiles on wasm. Tests:
-`internal/parser` (`TestParseConcurrentDesugar` + error cases) and
-`examples/tests/async_concurrent_test.fern` (e2e gate
-`TestRunnerAsyncConcurrentExamplePasses`). Requires `import
+`internal/parser` (`TestParseConcurrentDesugar` + error cases incl.
+`await` outside a block) and `examples/tests/async_concurrent_test.fern`
+(e2e gate `TestRunnerAsyncConcurrentExamplePasses`). Requires `import
 "std/task"`.
 
 **Phase 3b — remaining:**
-- **Inline `await`** (`combine(await a, await b)`) and the full
-  body-splitting CPS transform so spawn targets are written as
-  ordinary functions (no `(Reactor) -> (Step, Reactor)` protocol
-  leak). This is the big rock; best paired with Phase 1/4 so awaited
-  calls do real I/O.
+- **Suspending `await` / the full body-splitting CPS transform** so
+  spawn targets are written as ordinary functions (no
+  `(Reactor) -> (Step, Reactor)` protocol leak) and `await` can sit in
+  arbitrary control flow. Today `await` is a scope-end join marker;
+  the suspending form is the big rock, best paired with Phase 1/4 so
+  awaited calls do real I/O.
 - **Self-hosted parser port** (`examples/self_host/parser.fern`) — the
   desugar must be mirrored there before the Go compiler retires.
   Deferred while the self-host SSA-by-default migration is in flight
