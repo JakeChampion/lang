@@ -15,7 +15,7 @@
 // Build the shared object (arm64 for a device, or x86-64 for an emulator):
 //
 //   fern -target arm64-android -shared \
-//        -export Java_dev_fern_demo_Native_answer,Java_dev_fern_demo_Native_jniVersion,Java_dev_fern_demo_Native_greeting,Java_dev_fern_demo_Native_utf8Length,Java_dev_fern_demo_Native_isString \
+//        -export Java_dev_fern_demo_Native_answer,Java_dev_fern_demo_Native_jniVersion,Java_dev_fern_demo_Native_greeting,Java_dev_fern_demo_Native_utf8Length,Java_dev_fern_demo_Native_isString,Java_dev_fern_demo_Native_objectHashCode,Java_dev_fern_demo_Native_charCodeAt \
 //        -o libfern.so examples/android/fern_jni.fern
 //
 // Then drop libfern.so into the APK under lib/arm64-v8a/ and load it from a
@@ -62,6 +62,27 @@ pub function Java_dev_fern_demo_Native_utf8Length(env: usize, thiz: usize, s: us
 pub function Java_dev_fern_demo_Native_isString(env: usize, thiz: usize, obj: usize): i32 {
     var strCls: usize = jni.find_class(env, jni.cstr("java/lang/String"));
     return jni.is_instance_of(env, obj, strCls);
+}
+
+// jint Java_dev_fern_demo_Native_objectHashCode(JNIEnv* env, jobject thiz, jobject obj)
+// CALLS a Java method on `obj`: resolves Object.hashCode() ("()I", no args)
+// via GetObjectClass + GetMethodID, then invokes it with an empty jvalue
+// array. The full no-arg call chain. Kotlin: `external fun
+// objectHashCode(obj: Any): Int`.
+pub function Java_dev_fern_demo_Native_objectHashCode(env: usize, thiz: usize, obj: usize): i32 {
+    var cls: usize = jni.get_object_class(env, obj);
+    var mid: usize = jni.get_method_id(env, cls, jni.cstr("hashCode"), jni.cstr("()I"));
+    return jni.call_int_method_a(env, obj, mid, jni.jvalues([]));
+}
+
+// jint Java_dev_fern_demo_Native_charCodeAt(JNIEnv* env, jobject thiz, jstring s, jint i)
+// CALLS a Java method WITH an argument: String.charAt(int) ("(I)C") on `s`,
+// packing the index into a one-element jvalue array. Returns the UTF-16 code
+// unit. Kotlin: `external fun charCodeAt(s: String, i: Int): Int`.
+pub function Java_dev_fern_demo_Native_charCodeAt(env: usize, thiz: usize, s: usize, i: usize): i32 {
+    var cls: usize = jni.get_object_class(env, s);
+    var mid: usize = jni.get_method_id(env, cls, jni.cstr("charAt"), jni.cstr("(I)C"));
+    return jni.call_int_method_a(env, s, mid, jni.jvalues([i]));
 }
 
 // A .so has no entry point, but the compiler still wants a `main`; it is

@@ -11,7 +11,7 @@ device or emulator.
 ```sh
 # arm64 device:
 fern -target arm64-android -shared \
-     -export Java_dev_fern_demo_Native_answer,Java_dev_fern_demo_Native_jniVersion,Java_dev_fern_demo_Native_greeting,Java_dev_fern_demo_Native_utf8Length,Java_dev_fern_demo_Native_isString \
+     -export Java_dev_fern_demo_Native_answer,Java_dev_fern_demo_Native_jniVersion,Java_dev_fern_demo_Native_greeting,Java_dev_fern_demo_Native_utf8Length,Java_dev_fern_demo_Native_isString,Java_dev_fern_demo_Native_objectHashCode,Java_dev_fern_demo_Native_charCodeAt \
      -o libfern.so examples/android/fern_jni.fern
 
 # x86-64 emulator: -target x86-64 (same flags)
@@ -30,7 +30,10 @@ a `jint`. To call back into the JVM, use `std/jni`: typed wrappers like
 `jni.get_version` / `jni.find_class` / `jni.new_string_utf` /
 `jni.get_int_field` / `jni.is_instance_of` (built on `jni.call0/1/2/3`),
 plus `jni.cstr` to turn a Fern string into the `const char*` the
-string/lookup methods expect.
+string/lookup methods expect. To **invoke** a Java method, resolve a
+`jmethodID` with `jni.get_method_id`, pack arguments with `jni.jvalues`,
+and call `jni.call_int_method_a` / `call_object_method_a` / etc. (the
+fixed-arity `Call<Type>MethodA` family).
 
 ## 2. The Java/Kotlin side (one tiny class)
 
@@ -42,6 +45,8 @@ class Native {
     external fun greeting(): String
     external fun utf8Length(s: String): Int
     external fun isString(obj: Any): Boolean
+    external fun objectHashCode(obj: Any): Int
+    external fun charCodeAt(s: String, i: Int): Int
     companion object { init { System.loadLibrary("fern") } }
 }
 ```
