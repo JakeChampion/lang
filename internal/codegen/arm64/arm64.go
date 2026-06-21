@@ -383,6 +383,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		if g.usesCCall[n] {
 			g.emitCCallRuntime(n)
 		}
+		if g.usesCCallF32[n] {
+			g.emitCCallRuntimeSuffixed(n, "_f32")
+		}
+		if g.usesCCallF64[n] {
+			g.emitCCallRuntimeSuffixed(n, "_f64")
+		}
 	}
 	if g.usesRcInc {
 		g.emitRcIncRuntime()
@@ -1367,7 +1373,18 @@ func (g *generator) emitCellFreeRuntime() {
 // fn. x30 still holds the Fern caller's return address, so fn's `ret` returns
 // there with the result already in x0.
 func (g *generator) emitCCallRuntime(n int) {
-	name := fmt.Sprintf("__c_call%d", n)
+	g.emitCCallRuntimeSuffixed(n, "")
+}
+
+// emitCCallRuntimeSuffixed is emitCCallRuntime parameterised by a return-type
+// suffix ("" / "_f32" / "_f64"). The shim body is identical regardless of
+// return type — it's a tail branch, so the callee's result lands in whichever
+// register its ABI dictates (x0 for integer, d0/v0 for f32/f64) and flows
+// straight back to the Fern caller. Only the symbol name differs, so a
+// distinct checker FuncSig can declare the FP result type (making the call
+// site read the FP register). Mirrors the x86-64 emitter.
+func (g *generator) emitCCallRuntimeSuffixed(n int, suffix string) {
+	name := fmt.Sprintf("__c_call%d%s", n, suffix)
 	g.line("")
 	g.line(".global " + name)
 	g.typeDirective(name)
@@ -1376,7 +1393,7 @@ func (g *generator) emitCCallRuntime(n int) {
 	for i := 0; i < n; i++ {
 		g.emit("mov x%d, x%d", i, i+1) // slide a{i} down
 	}
-	g.emit("br x9") // tail-call fn; its ret returns to our caller, x0 = result
+	g.emit("br x9") // tail-call fn; its ret returns to our caller, result in x0/d0
 }
 
 // emitMemcpyRuntime emits `__fern_memcpy(dst, src, n)` —
@@ -6175,8 +6192,12 @@ type generator struct {
 	usesStrcat bool
 	usesMemcpy bool
 	// usesCCall[n] gates the `__c_call<n>` FFI shim (call a C-ABI function
-	// pointer with n integer args). See emitCCallRuntime.
-	usesCCall  [5]bool
+	// pointer with n integer args). The F32/F64 variants gate byte-identical
+	// shims that differ only in the checker's declared FP result type, so the
+	// call site reads d0/v0. See emitCCallRuntime.
+	usesCCall    [5]bool
+	usesCCallF32 [5]bool
+	usesCCallF64 [5]bool
 	usesStrcmp bool
 	// usesTcp pulls in the full TCP socket runtime
 	// (__fern_tcp_listen / __fern_tcp_accept / __fern_tcp_recv
@@ -7172,6 +7193,25 @@ func returnIsVoid(g *generator, name string) bool {
 		}
 	}
 	return false
+}
+
+// ccallFloatRetWidth reports the FP-return width (32 / 64) of a
+// `__c_call<n>_f32` / `_f64` FFI shim, or 0 for any other call. Those shims
+// tail-branch to a C-ABI function, whose f32/f64 result comes back in d0 (the
+// C convention), while Fern keeps FP operand-stack values in x0. After such a
+// call the result must be moved d0→x0 before it's pushed. (x86-64 mirror in
+// the x86_64 package.)
+func ccallFloatRetWidth(name string) int {
+	if !strings.HasPrefix(name, "__c_call") {
+		return 0
+	}
+	if strings.HasSuffix(name, "_f64") {
+		return 64
+	}
+	if strings.HasSuffix(name, "_f32") {
+		return 32
+	}
+	return 0
 }
 
 // regW maps a 64-bit register name to its 32-bit counterpart.
@@ -8699,6 +8739,26 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesCCall[3] = true
 		case "__c_call4":
 			g.usesCCall[4] = true
+		case "__c_call0_f32":
+			g.usesCCallF32[0] = true
+		case "__c_call1_f32":
+			g.usesCCallF32[1] = true
+		case "__c_call2_f32":
+			g.usesCCallF32[2] = true
+		case "__c_call3_f32":
+			g.usesCCallF32[3] = true
+		case "__c_call4_f32":
+			g.usesCCallF32[4] = true
+		case "__c_call0_f64":
+			g.usesCCallF64[0] = true
+		case "__c_call1_f64":
+			g.usesCCallF64[1] = true
+		case "__c_call2_f64":
+			g.usesCCallF64[2] = true
+		case "__c_call3_f64":
+			g.usesCCallF64[3] = true
+		case "__c_call4_f64":
+			g.usesCCallF64[4] = true
 		case "__memcpy":
 			target = "__fern_memcpy"
 			g.usesMemcpy = true
@@ -9128,6 +9188,14 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.emit("mov x0, x1")
 			g.push() // push len
 			break
+		}
+		// __c_call*_f32/_f64 return their result in d0 (C ABI); move it into
+		// x0 so it lands on the operand stack in Fern's FP convention. (The
+		// x86-64 mirror moves xmm0→rax.)
+		if w := ccallFloatRetWidth(op.Str); w == 64 {
+			g.emit("fmov x0, d0")
+		} else if w == 32 {
+			g.emit("fmov w0, s0")
 		}
 		g.push()
 

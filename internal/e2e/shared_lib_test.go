@@ -887,3 +887,71 @@ int main(int c, char** v){
 		t.Fatalf("as_bytes in .so = %d, want 42 (out=%q)", code, out)
 	}
 }
+
+// TestStdJNIFloatFieldAccessors validates the FP-returning field getters:
+// get_float_field / get_double_field / get_static_double_field route through
+// the __c_call*_f32 / _f64 shims so the jfloat/jdouble result comes back in
+// the FP register (xmm0). Fake JNIEnv slots return known FP constants; the C
+// side reads them as float/double and the probe echoes them back as a scaled
+// int (×4) so a single integer exit code can assert all three.
+func TestStdJNIFloatFieldAccessors(t *testing.T) {
+	gcc, err := exec.LookPath("gcc")
+	if err != nil {
+		t.Skip("gcc not on PATH")
+	}
+	if runtime.GOARCH != "amd64" {
+		t.Skip("host is not amd64")
+	}
+	// Each probe scales its FP result by 4 and truncates to i32, so exact
+	// quarter-valued constants round-trip losslessly through the exit code.
+	src := `import "std/jni";
+function p_float(env: usize, cls: usize, j: usize): i32 { return (jni.get_float_field(j, 0 as usize, 0 as usize) * (4.0 as f32)) as i32; }
+function p_double(env: usize, cls: usize, j: usize): i32 { return (jni.get_double_field(j, 0 as usize, 0 as usize) * 4.0) as i32; }
+function p_sdouble(env: usize, cls: usize, j: usize): i32 { return (jni.get_static_double_field(j, 0 as usize, 0 as usize) * 4.0) as i32; }
+function main(): i32 { return 0; }`
+	exps := []string{"p_float", "p_double", "p_sdouble"}
+	asm := compileToX86AsmExports(t, src, exps)
+	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exps)
+	if err != nil {
+		t.Fatalf("AssembleProgramShared: %v", err)
+	}
+	elfExports := make([]nativeelf.Export, len(exps))
+	for i, n := range exps {
+		elfExports[i] = nativeelf.Export{Name: n, Value: ev[n]}
+	}
+	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs), elfExports, "libfern.so")
+	dir := t.TempDir()
+	soPath := filepath.Join(dir, "libfern.so")
+	if err := os.WriteFile(soPath, so, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// table[102]=GetFloatField->2.5, [103]=GetDoubleField->6.25,
+	// [153]=GetStaticDoubleField->9.75. Scaled ×4: 10, 25, 39.
+	loader := `#include <dlfcn.h>
+#include <stdio.h>
+static float  f102(void*e,long o,long f){(void)e;(void)o;(void)f;return 2.5f;}
+static double d103(void*e,long o,long f){(void)e;(void)o;(void)f;return 6.25;}
+static double d153(void*e,long c,long f){(void)e;(void)c;(void)f;return 9.75;}
+int main(int c, char** v){
+  void* h = dlopen(v[1], RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
+  void* t[256]={0}; t[102]=(void*)f102; t[103]=(void*)d103; t[153]=(void*)d153;
+  void* tp=t; void* env=&tp; long L=(long)env;
+  if(((int(*)(long,long,long))dlsym(h,"p_float"))(0,0,L)   != 10) return 1;
+  if(((int(*)(long,long,long))dlsym(h,"p_double"))(0,0,L)  != 25) return 2;
+  if(((int(*)(long,long,long))dlsym(h,"p_sdouble"))(0,0,L) != 39) return 3;
+  return 42;
+}`
+	cPath := filepath.Join(dir, "loader.c")
+	if err := os.WriteFile(cPath, []byte(loader), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ld := filepath.Join(dir, "loader")
+	if out, err := exec.Command(gcc, cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
+		t.Fatalf("gcc loader: %v\n%s", err, out)
+	}
+	cmd := exec.Command(ld, soPath)
+	out, _ := cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 42 {
+		t.Fatalf("FP field accessor dispatch = %d, want 42 (out=%q)", code, out)
+	}
+}
