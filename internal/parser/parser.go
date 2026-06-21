@@ -159,6 +159,9 @@ type parser struct {
 	// concN counts `concurrent` blocks so each desugar's synthetic
 	// reactor / task / results locals get unique names.
 	concN int
+	// inConcurrent is the nesting depth of `concurrent { … }` blocks
+	// currently being parsed. `await` is only valid when > 0.
+	inConcurrent int
 }
 
 func (p *parser) peek() lexer.Token { return p.tokens[p.i] }
@@ -3583,38 +3586,46 @@ func (p *parser) parseUse(parent *ast.Block) error {
 	return nil
 }
 
-// parseConcurrent desugars a structured-concurrency fan-out block
-// onto the std/task runtime (docs/ASYNC-IMPLEMENTATION-PLAN.md
-// Phase 3). The supported shape is a block of one or more
-// spawn-bindings:
+// parseConcurrent desugars a structured-concurrency block onto the
+// std/task runtime (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 3). The
+// shape is one or more spawn-bindings followed by ordinary statements
+// that join the tasks with `await`:
 //
 //	concurrent {
 //	    var a = spawn start_a(x, y);
 //	    var b = spawn start_b(z);
+//	    return combine(await a, await b);
 //	}
-//	// a, b now hold the i32 results, in the enclosing scope.
 //
 // Each spawn target is a function with the runtime protocol
-// `(task.Reactor, args…) -> (task.Step, task.Reactor)` — i.e. it
-// registers its first wait on the reactor and hands back a task
-// state machine. The block desugars to (appended to `parent` so the
-// result names leak into the enclosing scope):
+// `(task.Reactor, args…) -> (task.Step, task.Reactor)` — it registers
+// its first wait on the reactor and hands back a task state machine.
+// The block desugars to a single scoped block (so the synthetic and
+// result locals don't leak):
 //
-//	var __conc_rx_N_0 = task.reactor_new();
-//	let (__conc_task_N_0, __conc_rx_N_1) = start_a(__conc_rx_N_0, x, y);
-//	let (__conc_task_N_1, __conc_rx_N_2) = start_b(__conc_rx_N_1, z);
-//	var __conc_res_N = task.run([__conc_task_N_0, __conc_task_N_1], __conc_rx_N_2);
-//	var a = __conc_res_N[0];
-//	var b = __conc_res_N[1];
+//	{
+//	    var __conc_rx_N_0 = task.reactor_new();
+//	    let (__conc_task_N_0, __conc_rx_N_1) = start_a(__conc_rx_N_0, x, y);
+//	    let (__conc_task_N_1, __conc_rx_N_2) = start_b(__conc_rx_N_1, z);
+//	    var __conc_res_N = task.run([__conc_task_N_0, __conc_task_N_1], __conc_rx_N_2);
+//	    var a = __conc_res_N[0];
+//	    var b = __conc_res_N[1];
+//	    return combine(a, b);   // `await a` stripped to `a`
+//	}
 //
 // All spawns start (register their waits) before `run`, so their I/O
-// overlaps on one thread — the canonical edge-handler fan-out. The
-// program must `import "std/task"`; the qualified `task.*` calls
-// emitted here resolve through modload exactly like hand-written
-// ones. Requires the in-memory reactor today; the Phase-1 syscall
-// reactor swaps in behind the same API. Inline `await` and awaits in
-// arbitrary control flow await the full CPS desugar — unsupported
-// shapes here error rather than miscompile.
+// overlaps on one thread — the canonical edge-handler fan-out. `await`
+// (handled in parseUnary, gated on inConcurrent) is a join marker:
+// `run` has already completed every task before the trailing
+// statements execute, so `await a` reads a's resolved result.
+//
+// The program must `import "std/task"`; the qualified `task.*` calls
+// emitted here resolve through modload exactly like hand-written ones.
+// Requires the in-memory reactor today; the Phase-1 syscall reactor
+// swaps in behind the same API. All `var NAME = spawn …;` bindings
+// must come first; a non-spawn statement starts the trailing/join
+// section. Suspending awaits in arbitrary control flow await the full
+// CPS desugar.
 func (p *parser) parseConcurrent(parent *ast.Block) error {
 	kw := p.advance() // concurrent
 	if _, err := p.expect(lexer.Punct, "{"); err != nil {
@@ -3636,27 +3647,25 @@ func (p *parser) parseConcurrent(parent *ast.Block) error {
 		}
 	}
 
-	// var __conc_rx_N_0 = task.reactor_new();
-	parent.Stmts = append(parent.Stmts, &ast.Var{P: kw.Pos, Name: rxName(0), Init: taskCall("reactor_new", nil)})
+	// The whole block desugars into one scoped Block so the synthetic
+	// reactor/task/result locals (and the join-bound result names)
+	// stay confined to the concurrent scope.
+	block := &ast.Block{P: kw.Pos}
 
+	// var __conc_rx_N_0 = task.reactor_new();
+	block.Stmts = append(block.Stmts, &ast.Var{P: kw.Pos, Name: rxName(0), Init: taskCall("reactor_new", nil)})
+
+	// Spawn section: leading `var NAME = spawn CALL;` bindings.
 	var spawnNames []string // user-facing result names, in order
 	rxVer := 0
-	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
-		// Only `var IDENT = spawn CALL;` is allowed in the block.
-		if !p.match(lexer.Keyword, "var") {
-			return p.errorf(p.peek().Pos, "concurrent block may only contain `var NAME = spawn CALL;` statements")
-		}
+	for p.isSpawnBinding() {
 		p.advance() // var
 		nameTok, err := p.expect(lexer.Ident, "")
 		if err != nil {
 			return err
 		}
-		if _, err := p.expect(lexer.Punct, "="); err != nil {
-			return err
-		}
-		if _, err := p.expect(lexer.Keyword, "spawn"); err != nil {
-			return p.errorf(nameTok.Pos, "expected `spawn` after `var %s =` in a concurrent block", nameTok.Text)
-		}
+		p.advance() // =
+		p.advance() // spawn
 		callExpr, err := p.parseExpr()
 		if err != nil {
 			return err
@@ -3672,7 +3681,7 @@ func (p *parser) parseConcurrent(parent *ast.Block) error {
 		// and thread the advanced reactor out via the destructure.
 		call.Args = append([]ast.Expr{mkIdent(rxName(rxVer))}, call.Args...)
 		k := len(spawnNames)
-		parent.Stmts = append(parent.Stmts, &ast.Destructure{
+		block.Stmts = append(block.Stmts, &ast.Destructure{
 			P:     kw.Pos,
 			Names: []string{taskName(k), rxName(rxVer + 1)},
 			Init:  call,
@@ -3680,11 +3689,8 @@ func (p *parser) parseConcurrent(parent *ast.Block) error {
 		spawnNames = append(spawnNames, nameTok.Text)
 		rxVer++
 	}
-	if _, err := p.expect(lexer.Punct, "}"); err != nil {
-		return err
-	}
 	if len(spawnNames) == 0 {
-		return p.errorf(kw.Pos, "concurrent block must spawn at least one task")
+		return p.errorf(kw.Pos, "concurrent block must spawn at least one task (`var NAME = spawn CALL;`)")
 	}
 
 	// var __conc_res_N = task.run([__conc_task_N_0, …], __conc_rx_N_final);
@@ -3693,17 +3699,51 @@ func (p *parser) parseConcurrent(parent *ast.Block) error {
 		taskElems[k] = mkIdent(taskName(k))
 	}
 	runArgs := []ast.Expr{&ast.ArrayLit{P: kw.Pos, Elems: taskElems}, mkIdent(rxName(rxVer))}
-	parent.Stmts = append(parent.Stmts, &ast.Var{P: kw.Pos, Name: resName, Init: taskCall("run", runArgs)})
+	block.Stmts = append(block.Stmts, &ast.Var{P: kw.Pos, Name: resName, Init: taskCall("run", runArgs)})
 
-	// var <name> = __conc_res_N[k];  — leak results to enclosing scope.
+	// var <name> = __conc_res_N[k];  — bind the join names (scoped).
 	for k, name := range spawnNames {
-		parent.Stmts = append(parent.Stmts, &ast.Var{
+		block.Stmts = append(block.Stmts, &ast.Var{
 			P:    kw.Pos,
 			Name: name,
 			Init: &ast.Index{P: kw.Pos, Array: mkIdent(resName), Idx: &ast.NumberLit{P: kw.Pos, Value: int64(k)}},
 		})
 	}
+
+	// Trailing/join section: ordinary statements (may use `await NAME`).
+	p.inConcurrent++
+	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
+		before := p.i
+		s, err := p.parseStmt()
+		if err != nil {
+			p.inConcurrent--
+			return err
+		}
+		if s != nil {
+			block.Stmts = append(block.Stmts, s)
+		}
+		if p.i == before {
+			p.advance()
+		}
+	}
+	p.inConcurrent--
+	if _, err := p.expect(lexer.Punct, "}"); err != nil {
+		return err
+	}
+
+	parent.Stmts = append(parent.Stmts, block)
 	return nil
+}
+
+// isSpawnBinding reports whether the parser is positioned at a
+// `var IDENT = spawn …` statement (the spawn section of a concurrent
+// block), without consuming any tokens.
+func (p *parser) isSpawnBinding() bool {
+	return p.match(lexer.Keyword, "var") &&
+		p.i+3 < len(p.tokens) &&
+		p.tokens[p.i+1].Kind == lexer.Ident &&
+		p.tokens[p.i+2].Kind == lexer.Punct && p.tokens[p.i+2].Text == "=" &&
+		p.tokens[p.i+3].Kind == lexer.Keyword && p.tokens[p.i+3].Text == "spawn"
 }
 
 // parseLetElse parses `let <Variant>(b1, b2, …) = <expr> else
@@ -3974,6 +4014,20 @@ func (p *parser) parseMultiplicative() (ast.Expr, error) {
 }
 
 func (p *parser) parseUnary() (ast.Expr, error) {
+	if t := p.peek(); t.Kind == lexer.Keyword && t.Text == "await" {
+		aw := p.advance()
+		if p.inConcurrent == 0 {
+			return nil, p.errorf(aw.Pos, "`await` is only valid inside a `concurrent { … }` block")
+		}
+		// `await EXPR` is a join marker. By the time a concurrent
+		// block's trailing statements run, the scheduler (task.run,
+		// emitted by parseConcurrent) has already driven every spawned
+		// task to completion, so `await a` simply reads `a`'s resolved
+		// result. The keyword documents the join point and reserves the
+		// word for the future inline-await CPS transform; here it
+		// desugars to its operand.
+		return p.parseUnary()
+	}
 	if t := p.peek(); t.Kind == lexer.Punct && (t.Text == "-" || t.Text == "!") {
 		op := p.advance()
 		operand, err := p.parseUnary()

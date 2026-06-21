@@ -2656,17 +2656,26 @@ func TestParseConcurrentDesugar(t *testing.T) {
 		concurrent {
 			var a = spawn start_a(10, 1);
 			var b = spawn start_b(20);
+			return await a + await b;
 		}
-		return a + b;
 	}`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	stmts := prog.Funcs[0].Body.Stmts
+	top := prog.Funcs[0].Body.Stmts
+	// The whole concurrent block desugars to a single scoped Block.
+	if len(top) != 1 {
+		t.Fatalf("expected 1 top stmt (the scoped block), got %d: %+v", len(top), top)
+	}
+	blk, ok := top[0].(*ast.Block)
+	if !ok {
+		t.Fatalf("top[0] = %T, want *ast.Block", top[0])
+	}
+	stmts := blk.Stmts
 	// reactor_new var, 2 spawn destructures, run var, 2 result vars,
-	// then the user's `return`.
+	// then the user's `return` (with `await` stripped).
 	if len(stmts) != 7 {
-		t.Fatalf("expected 7 desugared stmts, got %d: %+v", len(stmts), stmts)
+		t.Fatalf("expected 7 block stmts, got %d: %+v", len(stmts), stmts)
 	}
 	rx0, ok := stmts[0].(*ast.Var)
 	if !ok || rx0.Name != "__conc_rx_0_0" {
@@ -2701,7 +2710,7 @@ func TestParseConcurrentDesugar(t *testing.T) {
 	if !ok || runVar.Name != "__conc_res_0" {
 		t.Fatalf("stmt[3] = %T %+v, want run var __conc_res_0", stmts[3], stmts[3])
 	}
-	// Result vars leak the user's names a, b.
+	// Result vars bind the user's names a, b (scoped to the block).
 	a, ok := stmts[4].(*ast.Var)
 	if !ok || a.Name != "a" {
 		t.Errorf("stmt[4] = %T %+v, want result var a", stmts[4], stmts[4])
@@ -2712,14 +2721,31 @@ func TestParseConcurrentDesugar(t *testing.T) {
 	if b, ok := stmts[5].(*ast.Var); !ok || b.Name != "b" {
 		t.Errorf("stmt[5] = %T %+v, want result var b", stmts[5], stmts[5])
 	}
+	// The trailing `return await a + await b` survives with `await`
+	// stripped to its operand (so it's `a + b`).
+	ret, ok := stmts[6].(*ast.Return)
+	if !ok {
+		t.Fatalf("stmt[6] = %T, want *ast.Return", stmts[6])
+	}
+	bin, ok := ret.Value.(*ast.Binary)
+	if !ok || bin.Op != "+" {
+		t.Fatalf("return value = %T %+v, want a + b Binary", ret.Value, ret.Value)
+	}
+	if id, ok := bin.Left.(*ast.Ident); !ok || id.Name != "a" {
+		t.Errorf("await a did not strip to ident a: %T %+v", bin.Left, bin.Left)
+	}
 }
 
-// A concurrent block rejects non-spawn statements and empty blocks.
+// A concurrent block must spawn at least one task; `await` is only
+// valid inside such a block.
 func TestParseConcurrentErrors(t *testing.T) {
-	if _, err := Parse(`function h(): i32 { concurrent { var x = 5; } return x; }`); err == nil {
-		t.Error("expected error for non-spawn statement in concurrent block")
-	}
 	if _, err := Parse(`function h(): i32 { concurrent { } return 0; }`); err == nil {
 		t.Error("expected error for empty concurrent block")
+	}
+	if _, err := Parse(`function h(): i32 { concurrent { return 0; } }`); err == nil {
+		t.Error("expected error for concurrent block with no spawn")
+	}
+	if _, err := Parse(`function h(): i32 { var x = await f(); return x; }`); err == nil {
+		t.Error("expected error for `await` outside a concurrent block")
 	}
 }
