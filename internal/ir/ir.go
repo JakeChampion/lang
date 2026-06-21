@@ -6111,7 +6111,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			if _, isStr := at.Elem.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 				b.emit(Op{Kind: OpLoadLocal, I32: slot})
 				b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_drop_arr_ptr", I32: 2})
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_drop_arr_str", I32: 2})
 				b.emit(Op{Kind: OpDrop})
 				return
 			}
@@ -6692,7 +6692,7 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 				Op{Kind: OpConstI32, I32: off},
 				Op{Kind: OpAdd},
 				Op{Kind: OpLoad, Width: WidthPtr},
-				Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1},
+				Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1},
 				Op{Kind: OpDrop})
 			off += slot
 			continue
@@ -8036,7 +8036,7 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 			// string[] on native single-word: __fern_drop_arr_ptr walks +
 			// __fern_rc_dec's each pointer element. Same routing as the
 			// local-side gate above and the dropStructField gate.
-			helper = "__fern_drop_arr_ptr"
+			helper = "__fern_drop_arr_str"
 		}
 		return append(ops,
 			Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, ptrW))},
@@ -15962,7 +15962,7 @@ func (b *builder) emitOwnedSlotDrop(idx int32, t ast.Type) {
 		if _, isStr := ty.Elem.(ast.StringType); isStr {
 			helper := "__fern_drop_arr_str"
 			if b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
-				helper = "__fern_drop_arr_ptr"
+				helper = "__fern_drop_arr_str"
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: idx})
 			b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(ty.Elem, b.ptrW))})
@@ -16258,7 +16258,7 @@ func (b *builder) dropStructField(t ast.Type) {
 			// string[] on native single-word (x86_64, !TwoWordOverride):
 			// elements are single pointers; __fern_drop_arr_ptr walks +
 			// __fern_rc_dec's each one (SSO inline-tag low-bit guard is safe).
-			helper = "__fern_drop_arr_ptr"
+			helper = "__fern_drop_arr_str"
 		}
 		b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
 		b.emit(Op{Kind: OpCallDirect, Str: helper, I32: 2})

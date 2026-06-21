@@ -1862,16 +1862,17 @@ function build(a: string): i32 {
 	}
 }
 
-// TestLowerStringArrayElemNoReclaimOnNative verifies string[] element
-// reclamation is wasm-only: ptrW=8 keeps the buffer-only __fern_arr_dec
-// and emits no __fern_drop_arr_str.
-func TestLowerStringArrayElemNoReclaimOnNative(t *testing.T) {
+// TestLowerStringArrayElemReclaimOnNative verifies the native (single-word
+// x86-64) string[] drop reclaims its element strings via the freeing
+// __fern_drop_arr_str (per-element __fern_str_dec, then free the buffer).
+// Elements are retained on store, so the per-element frees are balanced.
+func TestLowerStringArrayElemReclaimOnNative(t *testing.T) {
 	p := lowerSourceWith(t, `function build(a: string, b: string): i32 {
     var arr: string[] = [a, b];
     return arr[0].len();
 }`, 8)
-	if callsDirect(p, "build", "__fern_drop_arr_str") {
-		t.Errorf("native (ptrW=8) must not emit __fern_drop_arr_str:\n%s", p)
+	if !callsDirect(p, "build", "__fern_drop_arr_str") {
+		t.Errorf("native (ptrW=8) string[] drop must reclaim elements via __fern_drop_arr_str:\n%s", p)
 	}
 }
 
@@ -2026,16 +2027,19 @@ func TestLowerStringClosureCaptureReclaim(t *testing.T) {
 	}
 }
 
-// TestLowerStringClosureCaptureNoReclaimOnNative verifies the closure
-// string-capture drop is wasm-only (no __fern_str_dec on ptrW=8).
-func TestLowerStringClosureCaptureNoReclaimOnNative(t *testing.T) {
+// TestLowerStringClosureCaptureReclaimOnNative verifies the native
+// (single-word x86-64) closure env drop reclaims its captured string via
+// __fern_str_dec — the capture is retained at MakeEnv (__fern_rc_inc), so
+// freeing the buffer at the env's rc==1 is balanced. (Phase 1e-strings
+// native closure-capture slice.)
+func TestLowerStringClosureCaptureReclaimOnNative(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
     var s: string = "cap" + "tured";
     var f = function (): i32 { return s.len(); };
     return f();
 }`, 8)
-	if closureDropCallsDirect(p, "__fern_str_dec") {
-		t.Errorf("native (ptrW=8) closure drop must not emit __fern_str_dec:\n%s", p)
+	if !closureDropCallsDirect(p, "__fern_str_dec") {
+		t.Errorf("native (ptrW=8) closure drop must reclaim its captured string via __fern_str_dec:\n%s", p)
 	}
 }
 

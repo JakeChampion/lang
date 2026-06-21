@@ -305,6 +305,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesDropArrPtr {
 		g.emitDropArrPtrRuntime()
 	}
+	if g.usesDropArrStr {
+		g.emitDropArrStrRuntime()
+	}
 	if g.usesRcIsUnique {
 		g.emitRcIsUniqueRuntime()
 	}
@@ -592,6 +595,9 @@ type generator struct {
 	// drop handler for arrays of pointer-shaped rc-tracked
 	// elements. See arm64's mirror + the wasm runtime.
 	usesDropArrPtr bool
+	// usesDropArrStr gates `__fern_drop_arr_str` — the native single-word
+	// string[] drop (per-element __fern_str_dec then free the buffer).
+	usesDropArrStr bool
 	// usesRcIsUnique gates `__fern_rc_is_unique` — the guarded
 	// "last reference?" check used by the Phase 3 struct drop.
 	usesRcIsUnique bool
@@ -718,6 +724,15 @@ func (g *generator) recordUse(target string) {
 		g.usesRcDec = true
 		if ast.RcFreeEnabled {
 			// Flag-on, the drop frees the buffer at rc==1.
+			g.usesFree = true
+			g.usesAlloc = true
+		}
+	case "__fern_drop_arr_str":
+		g.usesDropArrStr = true
+		g.usesStrDec = true // per-element free
+		g.usesRcDec = true  // plain-dec fallback + str_dec defer
+		g.usesBoxFree = true
+		if ast.RcFreeEnabled {
 			g.usesFree = true
 			g.usesAlloc = true
 		}
@@ -4519,6 +4534,92 @@ func (g *generator) emitDropArrPtrRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_drop_arr_ptr, .-__fern_drop_arr_ptr")
+}
+
+// emitDropArrStrRuntime emits `__fern_drop_arr_str(ptr, stride) -> ptr`
+// — the native single-word (x86-64) string[] drop handler. Identical to
+// __fern_drop_arr_ptr except each element is reclaimed via __fern_str_dec
+// (free the heap-string buffer at the element's rc==1) instead of the
+// plain __fern_rc_dec; then the array buffer itself is returned to the
+// freelist. The elements were retained on store (the same inc that
+// __fern_drop_arr_ptr's per-element rc_dec already balanced), so freeing
+// them here is balanced; inline-SSO / literal / sentinel / shared
+// elements short-circuit inside __fern_str_dec. The two-word ABIs have
+// their own __fern_drop_arr_str; this is the single-word sibling.
+//
+// System V: rdi = ptr, rsi = stride. Returns ptr in rax.
+func (g *generator) emitDropArrStrRuntime() {
+	g.line("")
+	g.line(".globl __fern_drop_arr_str")
+	g.line(".type __fern_drop_arr_str, @function")
+	g.label("__fern_drop_arr_str")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("push r13")
+	g.emit("push r14")
+	g.emit("mov rbx, rdi") // rbx = ptr
+	g.emit("mov r14, rsi") // r14 = stride
+	g.emit("test rbx, rbx")
+	g.emit("jz .Ldrops_ret")
+	g.emit("cmp rbx, 0x10000")
+	g.emit("jb .Ldrops_ret")
+	g.emit("mov ecx, dword ptr [rbx - 8]")
+	g.emit("test ecx, ecx")
+	g.emit("js .Ldrops_ret") // static sentinel
+	g.emit("cmp ecx, 1")
+	g.emit("jne .Ldrops_decarr") // shared array → no element walk
+	g.emit("mov r12d, dword ptr [rbx - 4]") // len
+	g.emit("xor r13, r13")                  // i = 0
+	g.label(".Ldrops_loop")
+	g.emit("cmp r13, r12")
+	g.emit("jge .Ldrops_decarr")
+	g.emit("mov rax, r13")
+	g.emit("imul rax, r14")
+	g.emit("mov rdi, qword ptr [rbx + rax]") // element i (a string ptr)
+	g.emit("call __fern_str_dec")            // free the element's buffer at its rc==1
+	g.emit("inc r13")
+	g.emit("jmp .Ldrops_loop")
+	g.label(".Ldrops_decarr")
+	if ast.RcFreeEnabled {
+		g.emit("mov ecx, dword ptr [rbx - 8]")
+		g.emit("cmp ecx, 1")
+		g.emit("jne .Ldrops_plaindec")
+		if ast.RcFreeDebug {
+			g.emit(fmt.Sprintf("mov dword ptr [rbx - 8], %d", ast.RcPoison))
+			g.emit("jmp .Ldrops_done")
+		}
+		g.emit("mov r8, r14")
+		g.emit("cmp r8, 16")
+		g.emit("jae .Ldrops_hdr")
+		g.emit("mov r8, 16")
+		g.label(".Ldrops_hdr")
+		g.emit("mov ecx, dword ptr [rbx - 12]") // cap
+		g.emit("mov rax, rcx")
+		g.emit("imul rax, r14")
+		g.emit("add rax, r8")
+		g.emit("mov rsi, rax")
+		g.emit("mov rdi, rbx")
+		g.emit("sub rdi, r8")
+		g.emit("call __fern_free")
+		g.emit("mov rax, rbx")
+		g.emit("jmp .Ldrops_done")
+		g.label(".Ldrops_plaindec")
+	}
+	g.emit("mov rdi, rbx")
+	g.emit("call __fern_rc_dec")
+	g.emit("jmp .Ldrops_done")
+	g.label(".Ldrops_ret")
+	g.emit("mov rax, rbx")
+	g.label(".Ldrops_done")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_drop_arr_str, .-__fern_drop_arr_str")
 }
 
 // emitRcIsUniqueRuntime emits `__fern_rc_is_unique(ptr) -> i32` —
