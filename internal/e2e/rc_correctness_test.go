@@ -3411,6 +3411,37 @@ function main(): i32 {
     return (r[0] + s.xs[0] - 10) + __rc_underflow_count();
 }`,
 	},
+	{
+		// `.with` on a BORROWED parameter: `xs` is a non-`own`, borrow-inferred
+		// param (the callee only reads it), so the caller still owns the buffer
+		// (rc 1, the caller's) — an in-place cow would mutate the caller's array.
+		// computeArraySetIncs treated the param at its last use as a move and
+		// skipped the inc, so native mutated the caller's `a` in place
+		// (`a[0]` became 99) → 99 + 99 = 198 instead of the copy-on-write
+		// 99 + 1 = 100. The fix forces the inc for a borrowed-param receiver.
+		// b[0]=99, a[0]=1 → 100; the -100 makes a correct run read 0.
+		name: "with_on_borrowed_param",
+		src: `
+function bump(xs: i32[]): i32[] { return xs.with(0, 99); }
+function main(): i32 {
+    var a: i32[] = [1, 2];
+    var b: i32[] = bump(a);
+    return (b[0] + a[0] - 100) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Same borrow hazard via reassign-to-self on the param (`xs = xs.with`):
+		// the local rebind is fine but the buffer is still the caller's, so it
+		// must copy, not mutate in place. 99 + 1 - 100 → 0 when correct.
+		name: "with_reassign_self_borrowed_param",
+		src: `
+function bump(xs: i32[]): i32[] { xs = xs.with(0, 99); return xs; }
+function main(): i32 {
+    var a: i32[] = [1, 2];
+    var b: i32[] = bump(a);
+    return (b[0] + a[0] - 100) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
