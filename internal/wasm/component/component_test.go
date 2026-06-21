@@ -383,6 +383,31 @@ func TestWasiIoPollInstanceTypeBody_BlockOnly_Bytes(t *testing.T) {
 	}
 }
 
+// TestPutCanonSectionLowerAsync_Bytes pins the WASI Preview-3
+// component-model-async LOWER encoding (the import / await side): a
+// canon-lower with the `async` (0x06) + `memory` (0x03) options. Bytes
+// byte-identical to what wasm-tools 1.240 emits for
+// `(canon lower (func N) async (memory M))` — verified by disassembling
+// a nested-component await that runs under
+// `wasmtime -W component-model-async,component-model-async-stackful` and
+// returns its result (docs/WASI-PREVIEW3-ASYNC-PLAN.md). `memory` is
+// required for an async lower.
+func TestPutCanonSectionLowerAsync_Bytes(t *testing.T) {
+	got := component.PutCanonSectionLowerAsync(nil, 0, 0)
+	want := []byte{
+		0x08, 0x08, // canon section, size 8
+		0x01,       // vec(1)
+		0x01, 0x00, // canon-lower + function-lower sub-tag
+		0x00,       // func index 0
+		0x02,       // opts vec(2)
+		0x06,       // canonopt: async
+		0x03, 0x00, // canonopt: memory, memidx 0
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("PutCanonSectionLowerAsync(0, 0) = % x, want % x", got, want)
+	}
+}
+
 // TestPutCanonSectionLiftAsync_Bytes pins the WASI Preview-3
 // component-model-async lift encoding. The bytes are byte-identical to
 // what wasm-tools 1.240 emits for `(canon lift (core func 1) async)`

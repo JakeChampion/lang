@@ -2646,6 +2646,32 @@ func PutCanonSectionLowerWithMemory(buf []byte, funcIdx uint32, memIdx uint32) [
 	return wrapSection(buf, SectionCanon, body)
 }
 
+// PutCanonSectionLowerAsync emits a canon-lower entry carrying the
+// `async` (0x06) + `memory` (0x03) canonical options — the WASI
+// Preview-3 import side: lowering an imported `async func` so the guest
+// can call it and await the result. `memory` is REQUIRED for an async
+// lower (the lowered call writes the subtask/return info into linear
+// memory; a bare async lower validate-fails "canonical option `memory`
+// is required"). For an import that completes synchronously, the
+// lowered core call writes the result into the return area and the
+// guest reads it directly — no waitable-set loop needed; a pending
+// import additionally needs `waitable-set.wait`. Byte-verified against
+// a nested-component await that returns its result under
+// `wasmtime -W component-model-async,component-model-async-stackful`.
+// See docs/WASI-PREVIEW3-ASYNC-PLAN.md.
+func PutCanonSectionLowerAsync(buf []byte, funcIdx uint32, memIdx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1) canons
+	body = append(body, 0x01)      // canon-lower
+	body = append(body, 0x00)      // function-lower sub-tag
+	body = leb128.UlebU64(body, uint64(funcIdx))
+	body = leb128.UlebU64(body, 2) // opts vec(2)
+	body = append(body, 0x06)      // canonopt: async
+	body = append(body, 0x03)      // canonopt: memory
+	body = leb128.UlebU64(body, uint64(memIdx))
+	return wrapSection(buf, SectionCanon, body)
+}
+
 // PutCanonSectionLowerWithMemoryRealloc emits a canon-lower entry
 // carrying both `memory` and `realloc` canonical-ABI options. The
 // realloc option is required when the lowered function needs the
