@@ -252,10 +252,17 @@ backends (`internal/e2e/poll_test.go`, x86-64 + arm64/qemu).
   (docs/PLATFORM-RESEARCH.md Rec §1's capability model) — a literal
   IPv4 GET returning the response. Verified on x86-64 + arm64 against a
   Go upstream (`internal/e2e/fetch_test.go ▸ TestPlatformFetch`).
-- **Reactor-overlapped fan-out returning bodies** — gated on generic
-  `Task[T]` / string-result `run_io` (self-host monomorphization).
-  Until then, overlap collects readiness via `std/reactor` and reads
-  each body with `std/fetch`.
+- **DONE — reactor-overlapped fan-out returning bodies
+  (`run_io_str`):** the complete "two parallel fetches, return both
+  response bodies" payoff. A string-typed twin of `IoStep`/`run_io`
+  (`IoStepStr`/`run_io_str`), since a *generic* `IoStep[T]` compiles
+  for `T=i32` but **not** `T=string` — a checker limitation: generic-
+  variant inference can't recover `T` through a function-typed payload
+  (`Wait(tok, resume)` defaults `T` to i32 regardless of `resume`'s
+  return type or the expected type). Verified x86-64 + arm64 (two
+  overlapped fetches → both bodies, `TestReactorFanoutBodies`). The
+  duplication folds back into one generic reactor once that inference
+  gap is fixed.
 - **Self-host** (`asm.fern` / `asm_arm64.fern`) — mirror the reactor
   builtins (blocked on the fn-payload-variant gap, #3552, for
   `std/reactor` itself).
