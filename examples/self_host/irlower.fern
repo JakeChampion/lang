@@ -8170,6 +8170,14 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // fns). Mark the slot so a later `var c = fns[i]` / `for f in fns`
             // types the element as a closure (its call unpacks the env box).
             var is_closurearr: boolean = false;
+            // A closure-array TYPE annotation (`(() => i32)[]` / `(T) => R[]`,
+            // coarsed to "fn[]" by parse_type_name) marks the slot even when the
+            // initializer is the EMPTY literal `[]` — without this, a later
+            // `fns = fns.append(() => …)` + `fns[i]()` reads the element as a raw
+            // value instead of unpacking the closure box and traps/miscompiles
+            // (#3556). The non-empty literal case is still caught by the
+            // first-element inspection below (and agrees).
+            if (v.type_name == "fn[]") { is_closurearr = true; }
             match (v.init) {
                 parser.ExprArray(carr) => {
                     if (carr.elements.len() > 0) {
