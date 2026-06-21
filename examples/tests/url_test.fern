@@ -1,0 +1,84 @@
+import "std/test";
+import "std/url" as url;
+// examples/tests/url_test.fern — pure-Fern coverage of std/url's
+// RFC 3986 percent-encoding (url_encode / url_decode) and the
+// best-effort url_parse decomposition. Covers unreserved pass-through,
+// reserved-char escaping, case-insensitive + truncated decode, a
+// round-trip, and url_parse's scheme/host/port/path/query/fragment
+// split (plus the empty-input None). The Go-side suite unit-tests the
+// prelude origin; this is the migration-shaped (pure-Fern) companion.
+
+function test_encode_space(): test.TestOutcome {
+    return test.assert_eq(url.url_encode("a b"), "a%20b");
+}
+
+function test_encode_unreserved(): test.TestOutcome {
+    // A-Z a-z 0-9 and - . _ ~ pass through untouched.
+    return test.assert_eq(url.url_encode("aZ9-._~"), "aZ9-._~");
+}
+
+function test_encode_reserved(): test.TestOutcome {
+    // '/'=%2F '?'=%3F '&'=%26 '='=%3D (uppercase hex).
+    return test.assert_eq(url.url_encode("/?&="), "%2F%3F%26%3D");
+}
+
+function test_decode_space(): test.TestOutcome {
+    return test.assert_eq(url.url_decode("a%20b"), "a b");
+}
+
+function test_decode_lowercase_hex(): test.TestOutcome {
+    // Decode accepts lower-case hex digits.
+    return test.assert_eq(url.url_decode("%2f"), "/");
+}
+
+function test_decode_truncated(): test.TestOutcome {
+    // A truncated escape at end-of-string is left literal.
+    return test.assert_eq(url.url_decode("%2"), "%2");
+}
+
+function test_roundtrip(): test.TestOutcome {
+    return test.assert_eq(url.url_decode(url.url_encode("a b/c?d=e&f")), "a b/c?d=e&f");
+}
+
+function test_parse_full(): test.TestOutcome {
+    match (url.url_parse("http://example.com:8080/path?q=1#frag")) {
+        Some(u) => {
+            return test.assert_true(u.scheme == "http" && u.host == "example.com"
+                && u.port == 8080 && u.path == "/path" && u.query == "q=1"
+                && u.fragment == "frag");
+        },
+        None => { return test.fail("url_parse(full) expected Some"); }
+    }
+}
+
+function test_parse_minimal(): test.TestOutcome {
+    match (url.url_parse("https://host.com/")) {
+        Some(u) => {
+            return test.assert_true(u.scheme == "https" && u.host == "host.com"
+                && u.port == 0 && u.path == "/" && u.query == "" && u.fragment == "");
+        },
+        None => { return test.fail("url_parse(minimal) expected Some"); }
+    }
+}
+
+function test_parse_empty(): test.TestOutcome {
+    match (url.url_parse("")) {
+        Some(u) => { return test.fail("url_parse(\"\") expected None"); },
+        None => { return test.pass(); }
+    }
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/url");
+    r = r.it("encode space",            test_encode_space());
+    r = r.it("encode unreserved",       test_encode_unreserved());
+    r = r.it("encode reserved",         test_encode_reserved());
+    r = r.it("decode space",            test_decode_space());
+    r = r.it("decode lowercase hex",    test_decode_lowercase_hex());
+    r = r.it("decode truncated escape", test_decode_truncated());
+    r = r.it("round-trip",              test_roundtrip());
+    r = r.it("parse full URL",          test_parse_full());
+    r = r.it("parse minimal URL",       test_parse_minimal());
+    r = r.it("parse empty is None",     test_parse_empty());
+    return r.finish();
+}
