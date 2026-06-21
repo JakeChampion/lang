@@ -4291,6 +4291,20 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             if (sub_kind != "" && (kind == "add" || kind == "sub" || kind == "mul" || kind == "shl")) {
                 res = res.emit(ir.op_int_cast(sub_kind));
             }
+            // Plain-i32 wrap: an i32 `+`/`-`/`*`/`<<` whose result can exceed 32
+            // bits is truncated + sign-extended back to the i32 range — the signed
+            // sibling of the u32 / sub-word wraps above (movslq on x86, sxtw on
+            // arm64, a no-op on wasm's native 32-bit i32). Without it the 64-bit-
+            // register backends keep the wide result, so `2147483647 + 1` stays
+            // positive instead of wrapping to INT_MIN, diverging from native (which
+            // wraps in a 32-bit register) and the interp (which now defaults a
+            // leftover-polymorphic int op to i32 — #3661). Disjoint from res_u32 /
+            // sub_kind (both false here), so it never double-wraps; div/rem and the
+            // comparisons can't overflow the i32 range, so only add/sub/mul/shl
+            // need it. (#3581)
+            if (!res_u32 && sub_kind == "" && (kind == "add" || kind == "sub" || kind == "mul" || kind == "shl")) {
+                res = res.emit(ir.op_int_cast("i32"));
+            }
             return res;
         },
         parser.ExprUnary(u) => {
