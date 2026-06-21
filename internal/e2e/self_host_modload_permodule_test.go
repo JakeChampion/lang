@@ -31,12 +31,14 @@ import (
 // running as a compiler (emitting non-empty asm, exit 0) proves the per-module
 // emit + link mechanics hold at full-compiler scale.
 //
-// This is the emit+link MILESTONE, not yet the correctness one: routing the
-// bootstrap through this path to the BYTE-IDENTICAL fixpoint (and then deleting
-// the AST emitters, #3457) is the next slice — a self-build emit-correctness bug
-// (the per-module-built compiler's has_main currently misreads, so it emits the
-// no-main fallback) is tracked separately. Until that lands the default bootstrap
-// (TestSelfHostModloadFixpointX86_64) stays on the merged AST emit, untouched.
+// Step 7 carries it past the emit+link milestone to SELF-COMPILE correctness: the
+// per-module-built compiler compiles the whole compiler (the fixpoint gen2 input)
+// without crashing and emits a real `call __fn_main`. That self-compile first
+// surfaced the string[]-struct-field `.append()` aliasing UAF in the checker
+// (#3561), fixed by routing string[] field appends through the clone form. Routing
+// the DEFAULT bootstrap (TestSelfHostModloadFixpointX86_64) through this path to the
+// byte-identical fixpoint — and then deleting the AST emitters (#3457) — is the next
+// slice; until then the default bootstrap stays on the merged AST emit, untouched.
 func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
@@ -195,5 +197,30 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 	_ = arun.Run()
 	if code := arun.ProcessState.ExitCode(); code != 42 {
 		t.Errorf("per-module-built compiler miscompiled add(40, 2): program exited %d, want 42", code)
+	}
+
+	// 7. SELF-COMPILE (the #3561 regression guard): the per-module-built compiler
+	// compiles the WHOLE compiler — its own ~1000-function multi-module source, the
+	// fixpoint gen2 input. This is the case the per-module bootstrap needs and the
+	// one that first surfaced the string[]-struct-field `.append()` aliasing UAF:
+	// the checker's `var actx = ctx` (StmtMatch) aliases asmcore.EmitState across a
+	// match arm, and bind_local_typed's `s.local_names.append(name)` — a string[]
+	// FIELD read — took the in-place consume form, corrupting the shared local_names
+	// buffer (it desynced from the clone-form local_types, so local_type_of read out
+	// of bounds → NULL Ty → SIGSEGV in the checker). Small programs (steps 5-6) never
+	// hit it; only the whole-compiler self-compile does. Asserting it compiles + emits
+	// a real `call __fn_main` (not the no-main fallback) guards the fix.
+	var scmd *exec.Cmd
+	if len(runner) == 0 {
+		scmd = exec.Command(binPath, entry)
+	} else {
+		scmd = exec.Command(runner[0], append(append(runner[1:], binPath), entry)...)
+	}
+	gen2, err := scmd.Output()
+	if err != nil {
+		t.Fatalf("per-module-built compiler crashed self-compiling the whole compiler (#3561 regression): %v", err)
+	}
+	if !strings.Contains(string(gen2), "call __fn_main") {
+		t.Errorf("self-compiled whole compiler missing `call __fn_main` — has_main misread (no-main fallback)")
 	}
 }

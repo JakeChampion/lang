@@ -672,6 +672,34 @@ func (a *Assembler) mov(ops []operand, abs bool) error {
 	case dst.kind == opReg && src.kind == opMem:
 		return a.regMem(0x8A, dst, src)
 	case dst.kind == opMem && src.kind == opImm:
+		// Honour the operand size from the `byte/word/dword/qword ptr`
+		// prefix. Previously this always emitted C7 + imm32 (a 4-byte
+		// store), so `mov byte ptr [mem], imm` silently wrote 4 bytes —
+		// a 3-byte buffer overrun (e.g. __fern_strcat's 1-byte NUL
+		// terminator past a `len+1` allocation, #3544). C6 /0 ib is the
+		// byte form; word needs the 0x66 size prefix + imm16.
+		switch dst.memSize {
+		case 8:
+			// mov r/m8, imm8 : [REX] C6 /0 ib
+			if rex := memRex(false, 0, dst, false); rex != 0 {
+				a.emit(rex)
+			}
+			a.emit(0xC6)
+			a.encodeMem(0, dst)
+			a.emit(byte(src.imm))
+			return nil
+		case 16:
+			// mov r/m16, imm16 : 66 [REX] C7 /0 iw
+			a.emit(0x66)
+			if rex := memRex(false, 0, dst, false); rex != 0 {
+				a.emit(rex)
+			}
+			a.emit(0xC7)
+			a.encodeMem(0, dst)
+			a.emit(byte(src.imm), byte(src.imm>>8))
+			return nil
+		}
+		// 32-bit (or unspecified) and 64-bit: C7 /0 id, REX.W for qword.
 		w := dst.memSize == 64
 		if w {
 			a.emit(memRex(true, 0, dst, false))

@@ -412,6 +412,12 @@ type Interp struct {
 	// `var x = 7` at the prompt declares x here so the next prompt
 	// can read it.
 	Global *env
+	// strbuf is the interpreter's analogue of the compiled backends'
+	// single global string-builder scratch buffer: strbuf_reset zeroes
+	// it, strbuf_append adds a string's bytes, strbuf_take returns the
+	// accumulated string and resets. (The AOT backends use a 64 MiB BSS
+	// buffer; the interp just grows a []byte.)
+	strbuf []byte
 }
 
 func New() *Interp {
@@ -431,6 +437,12 @@ func New() *Interp {
 	i.Builtins["write"] = &Builtin{Fn: builtinWrite}
 	i.Builtins["eprint"] = &Builtin{Fn: builtinEprint}
 	i.Builtins["putchar"] = &Builtin{Fn: builtinPutchar}
+	// strbuf_reset() / strbuf_append(s) / strbuf_take() — the global
+	// string-builder primitive (see checker FuncSigs); the compiled
+	// backends back it with a 64 MiB BSS scratch buffer.
+	i.Builtins["strbuf_reset"] = &Builtin{Fn: builtinStrbufReset}
+	i.Builtins["strbuf_append"] = &Builtin{Fn: builtinStrbufAppend}
+	i.Builtins["strbuf_take"] = &Builtin{Fn: builtinStrbufTake}
 	// `x.len()` dispatches through three mangled names (one per
 	// receiver type the checker registers a method on); all three
 	// route to a single shared implementation that switches on the
@@ -1983,6 +1995,34 @@ func builtinPutchar(i *Interp, args []Value) (Value, error) {
 	}
 	fmt.Fprintf(i.Stdout, "%c", rune(int64(n)))
 	return Void{}, nil
+}
+
+// builtinStrbufReset zeroes the global string-builder buffer.
+func builtinStrbufReset(i *Interp, args []Value) (Value, error) {
+	i.strbuf = i.strbuf[:0]
+	return Void{}, nil
+}
+
+// builtinStrbufAppend appends a string's bytes to the global builder.
+func builtinStrbufAppend(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("strbuf_append: expected 1 arg, got %d", len(args))
+	}
+	s, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("strbuf_append: expected string arg, got %T", args[0])
+	}
+	i.strbuf = append(i.strbuf, string(s)...)
+	return Void{}, nil
+}
+
+// builtinStrbufTake returns the accumulated string and resets the buffer
+// (matching the compiled backends: take allocates a fresh string of the
+// accumulated bytes and zeroes the length).
+func builtinStrbufTake(i *Interp, args []Value) (Value, error) {
+	s := String(i.strbuf)
+	i.strbuf = i.strbuf[:0]
+	return s, nil
 }
 
 // Register adds a user-defined function to the interpreter. Subsequent

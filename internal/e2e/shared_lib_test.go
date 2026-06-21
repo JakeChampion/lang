@@ -379,3 +379,69 @@ int main(int c, char** v){
 		t.Fatalf("jni.call1 dispatch = %d, want 42 (out=%q)", code, out)
 	}
 }
+
+// TestStdJNITypedWrappers validates the typed std/jni wrappers route to the
+// correct JNINativeInterface indices. A fake JNIEnv wires the FindClass (6)
+// and NewStringUTF (167) slots to an increment fn; the Fern probes call
+// jni.find_class / jni.new_string_utf, and each must dispatch to its slot
+// (so f(env, 41) -> 42), proving the wrappers carry the right indices.
+func TestStdJNITypedWrappers(t *testing.T) {
+	gcc, err := exec.LookPath("gcc")
+	if err != nil {
+		t.Skip("gcc not on PATH")
+	}
+	if runtime.GOARCH != "amd64" {
+		t.Skip("host is not amd64")
+	}
+	src := `import "std/jni";
+function probe_find(env: usize, cls: usize, jenv: usize, a0: usize): i32 {
+    return jni.find_class(jenv, a0) as i32;
+}
+function probe_newstr(env: usize, cls: usize, jenv: usize, a0: usize): i32 {
+    return jni.new_string_utf(jenv, a0) as i32;
+}
+function main(): i32 { return 0; }`
+	exps := []string{"probe_find", "probe_newstr"}
+	asm := compileToX86AsmExports(t, src, exps)
+	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exps)
+	if err != nil {
+		t.Fatalf("AssembleProgramShared: %v", err)
+	}
+	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs),
+		[]nativeelf.Export{{Name: "probe_find", Value: ev["probe_find"]}, {Name: "probe_newstr", Value: ev["probe_newstr"]}}, "libfern.so")
+	dir := t.TempDir()
+	soPath := filepath.Join(dir, "libfern.so")
+	if err := os.WriteFile(soPath, so, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// table[6] = FindClass, table[167] = NewStringUTF — both inc(env, x)=x+1.
+	loader := `#include <dlfcn.h>
+#include <stdio.h>
+static long inc(void* env, long x){ (void)env; return x + 1; }
+int main(int c, char** v){
+  void* h = dlopen(v[1], RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
+  void* table[256] = {0};
+  table[6]   = (void*)inc;  /* FindClass     */
+  table[167] = (void*)inc;  /* NewStringUTF  */
+  void* tptr = table; void* env = &tptr;
+  int (*pf)(long,long,long,long) = (int(*)(long,long,long,long)) dlsym(h, "probe_find");
+  int (*pn)(long,long,long,long) = (int(*)(long,long,long,long)) dlsym(h, "probe_newstr");
+  if(!pf||!pn) return 101;
+  if(pf(0,0,(long)env,41) != 42) return 1;
+  if(pn(0,0,(long)env,41) != 42) return 2;
+  return 42;
+}`
+	cPath := filepath.Join(dir, "loader.c")
+	if err := os.WriteFile(cPath, []byte(loader), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ld := filepath.Join(dir, "loader")
+	if out, err := exec.Command(gcc, cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
+		t.Fatalf("gcc loader: %v\n%s", err, out)
+	}
+	cmd := exec.Command(ld, soPath)
+	out, _ := cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 42 {
+		t.Fatalf("typed wrappers dispatch = %d, want 42 (out=%q)", code, out)
+	}
+}

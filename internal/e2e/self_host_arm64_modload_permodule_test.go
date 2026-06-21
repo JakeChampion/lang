@@ -166,4 +166,17 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 	if code := arun.ProcessState.ExitCode(); code != 42 {
 		t.Errorf("per-module-built arm64 compiler miscompiled add(40, 2): program exited %d, want 42", code)
 	}
+
+	// 7. SELF-COMPILE (the #3561 regression guard, arm64 twin): the per-module-built
+	// arm64 compiler compiles the WHOLE compiler (the fixpoint gen2 input) without
+	// crashing and emits a real `call __fn_main`. Guards the string[]-struct-field
+	// `.append()` aliasing UAF in the checker (see the x86 twin for the mechanism) —
+	// the fix is in shared irlower.fern, so it must hold on both backends.
+	gen2, err := exec.Command(qemu, binPath, entry).Output()
+	if err != nil {
+		t.Fatalf("per-module-built arm64 compiler crashed self-compiling the whole compiler (#3561 regression): %v", err)
+	}
+	if !strings.Contains(string(gen2), "bl __fn_main") && !strings.Contains(string(gen2), "call __fn_main") {
+		t.Errorf("self-compiled whole compiler missing the main call — has_main misread (no-main fallback)")
+	}
 }

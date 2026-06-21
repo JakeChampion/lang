@@ -170,7 +170,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `random_bytes` / `random_i32` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | length + usable value |
 | `f32_bits/f32_from_bits/f64_bits/f64_from_bits` | | | | | | ⬜ | |
 | float math builtins `__sqrt_f64` etc. | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | via std/float; self-host IR path (`op_funary`; `TestSelfHostFloatMathIR`): `__sqrt_f64`/`__floor_f64`/`__ceil_f64`/`__trunc_f64`/`__abs_f64` lower to a single hardware instruction on all three backends, and `__round_f64` (round-half-away) lowers too — one instruction on arm64 (`frinta`), emulated as `trunc(x+copysign(0.5,x))` on x86/wasm (`roundsd`/`f64.nearest` have no ties-away mode). Only the libm transcendentals (`__log_f64`/`__exp_f64`/`__sin_f64`/`__cos_f64`/`__pow_f64`) still route AST |
-| `strbuf_reset/append/take` | | | | | | ⬜ | |
+| `strbuf_reset/append/take` | ✅ | ✅ | ✅ | | ✅ | ✅ | global string-builder (reset zeroes / append adds bytes / take returns + resets). interp impl added [#3579](https://github.com/JakeChampion/lang/pull/3579); native x86-64/arm64 + self-host IR lower it. **wasm (native) does not implement it** (`unknown callee "strbuf_reset"`) — W left blank. Tests: `interp_strbuf_test.go`, `self_host_strbuf_ir_test.go`, `arm64_strbuf_test.go` |
 | `__heap_bump_bytes` | ⚠️ | ✅ | ✅ | ✅ | ✅ | 🔧 | bump high-water mark (cursor − region base; 0 before the first alloc). self-host **IR path** ([#3534](https://github.com/JakeChampion/lang/issues/3534)) lowers it inline — x86-64 `__fern_heap_ptr − &__fern_heap`, arm64 `__fern_heap_ptr − (__fern_heap_end − heap_size)`, wasm `$heap − heap_base` — with `ir.op_allocates` admitting it so an introspection-only module still emits the heap runtime. Guarded by `TestSelfHostHeapBumpBytesIR{X86_64,Wasm}` (+ native x86-64 cross-check). interp has no bump allocator so it reports 0 (the pre-alloc zero baseline holds; the growth contract does not). Legacy AST self-host path unchanged (IR-path-only, per goal 1) |
 | `__rc_*` (inc/dec/get/underflow_count) | | | | | | ⬜ | RC introspection |
 | TCP: `tcp_listen/accept/recv/send/close` | | | | | | ⬜ | |
@@ -605,6 +605,34 @@ reads with `as i32`, the `string_from_bytes` builtin, and `Option` `Some`/`None`
 with a payload-binding `match` — all already lower, so no compiler change. The
 type is inlined as `Buf` (`Stream` is a reserved builtin type name + the
 single-program driver resolves no imports). `std/stream` row flipped to ✅.
+
+### 2026-06-21 — `strbuf_reset/append/take` audited; interp gap found + filled (#3579)
+
+Audited the `strbuf_reset/append/take` row (was ⬜ across the board) — the global
+string-builder primitive (the AOT backends back it with a 64 MiB BSS scratch
+buffer; reset zeroes the length, append memcpys a string's bytes past the tail,
+take allocates a fresh string of the accumulated bytes and resets). The audit
+found the **interpreter had no implementation at all** — a program using it
+errored with `undefined function "strbuf_reset"` (exit 1) even though the checker
+knows the signatures (`FuncSigs`) and the native + self-host IR backends lower
+it. Filled in [#3579](https://github.com/JakeChampion/lang/pull/3579): a `strbuf
+[]byte` accumulator + the three builtins, matching the documented + self-host
+semantics, with `interp_strbuf_test.go` cross-checking the interp exit against
+native x86-64 across two/three/loop appends, byte-content, and an empty take.
+
+Coverage: interp (#3579), native x86-64 (the same cross-check), native arm64
+(`arm64_strbuf_test.go`), and the self-host IR path (`self_host_strbuf_ir_test.go`
++ `self_host_strbuf_buffer_test.go`). **Native wasm does not implement strbuf**
+(`wasmbin` reports `unknown callee "strbuf_reset"`), so the W column is left
+blank — the builder is an x86-64 / arm64 / self-host-only primitive (it backs the
+self-host emitters' O(N) `EmitState.write`, which the wasm target doesn't need).
+
+Two adjacent observations, **not** filled here (filed/left for follow-up): a
+native optimizer drops the side effect of a *second* `strbuf_reset` / `strbuf_take`
+in one function (the x86-64 codegen emits the reset, but it's elided at runtime —
+a native-codegen issue), and the interp/IR-vs-native `i32` signed-overflow split
+([#3581](https://github.com/JakeChampion/lang/issues/3581)) surfaced in the same
+differential sweep. Row flipped to ✅ (W blank).
 
 ### 2026-06-20 — std/url `query_parse` on the self-host IR path (+ found wasm-IR map bug #3495)
 
