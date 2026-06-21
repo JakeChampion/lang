@@ -3395,6 +3395,31 @@ function lower_opt_make_payload(tag: i32, arg: parser.Expr, s: LowerState): Lowe
     return so.emit(ir.op_opt_make(tag));
 }
 
+// lower_opt_make_payload_exp is the expected-type-aware variant: when the
+// DECLARED payload type (`exp_tag`, recovered from the enclosing function's
+// Option/Result return type or an annotated binding) is i64/u64 but the argument
+// only infers i32 width (a bare literal `Ok(40)` or an i32 variable), the box must
+// still use the 8-byte/offset-8 layout every consumer reads via
+// op_opt_payload_w(64, true) — otherwise the construction stores a 4-byte payload
+// at offset 4 that the match-arm / try-operator read misinterprets (a silent
+// miscompile). An i64-spelled literal/cast/expr lowers via lower_i64; a plain i32
+// value is widened with op_int_extend. exp_tag "" (or any non-i64/u64 tag) is
+// byte-identical to lower_opt_make_payload.
+function lower_opt_make_payload_exp(tag: i32, arg: parser.Expr, exp_tag: string, s: LowerState): LowerState {
+    var ptag: string = elem_type_tag(arg, s);
+    var want_i64: boolean = (exp_tag == "i64" || exp_tag == "u64") && ptag != "i64" && ptag != "f64";
+    if (!want_i64) { return lower_opt_make_payload(tag, arg, s); }
+    // lower_i64 handles a numeric literal (const_i64_text), an `as i64`/`as u64`
+    // cast, an i64 slot, and i64 arithmetic; it bails (ok=false) on a bare i32
+    // value, in which case re-lower from the ORIGINAL state and widen to 8 bytes.
+    var a64: LowerState = lower_i64(arg, s);
+    if (a64.ok) { return a64.emit(ir.op_opt_make_w(tag, 64, true)); }
+    var aw: LowerState = lower_expr(arg, s);
+    if (!aw.ok) { return aw; }
+    aw = aw.emit(ir.op_int_extend(exp_tag == "u64"));
+    return aw.emit(ir.op_opt_make_w(tag, 64, true));
+}
+
 // lower_expr emits ops that leave the value of `e` on the operand stack.
 pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
     if (!s.ok) { return s; }
@@ -8547,6 +8572,37 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 _ => {}
             }
             if (!ret_val_is_arr && infer_expr_width(r.value, s) == 64) { return s.fail(); }
+            // `return Ok(x)/Some(x)/Err(x)` with an i64/u64 DECLARED payload: build
+            // the 8-byte box the consumers read, even when the argument only infers
+            // i32 (a bare literal `Ok(40)` or i32 var). The expected payload type
+            // comes from THIS function's Option/Result return type (cur_fn), so it
+            // is sound here (unlike a bare construction in an unknown context). Other
+            // payloads fall through to the generic lower_expr below unchanged.
+            match (r.value) {
+                parser.ExprCall(rc) => {
+                    match (rc.callee) {
+                        parser.ExprIdent(rcid) => {
+                            if (rc.args.len() == 1 && (rcid.name == "Ok" || rcid.name == "Some" || rcid.name == "Err")) {
+                                var rrt: string = s.opt_ret_type(s.cur_fn);
+                                if (rrt.len() >= 8 && (rrt[0:7] == "Result[" || rrt[0:7] == "Option[")) {
+                                    var rvar: string = "Ok";
+                                    var rtag: i32 = 0;
+                                    if (rcid.name == "Err") { rvar = "Err"; rtag = 1; }
+                                    var rexp: string = opt_payload_type(rrt, rvar);
+                                    if (rexp == "i64" || rexp == "u64") {
+                                        var rcs: LowerState = lower_opt_make_payload_exp(rtag, rc.args[0], rexp, s);
+                                        if (!rcs.ok) { return rcs; }
+                                        rcs = emit_dec_sweep_except(rcs, 0 - 1);
+                                        return rcs.emit(ir.op_return());
+                                    }
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
             // Returning a SCALAR-element array struct field (`return h.items`)
             // aliases it out to the caller, who will own it. Lower it via the IR
             // with a Perceus dup (RC-frontier slice 2): lower_expr emits struct_get
