@@ -44,3 +44,49 @@ pub function NEW_STRING_UTF(): i32 { return 167; }
 pub function GET_STRING_UTF_LENGTH(): i32 { return 168; }
 pub function GET_STRING_UTF_CHARS(): i32 { return 169; }
 pub function RELEASE_STRING_UTF_CHARS(): i32 { return 170; }
+
+// --- Typed JNIEnv method wrappers ---------------------------------------
+//
+// Fixed-arity convenience wrappers over call0/1/2 with the method index
+// baked in, so call sites read `jni.find_class(env, name)` instead of
+// `jni.call1(env, 6, name)`. Opaque JNI handles (jclass / jstring /
+// jobject / jchar*) are plain usize. C-string arguments (FindClass /
+// NewStringUTF) are NUL-terminated `const char*` pointers — produce them
+// on the C side or in your own buffer; converting a Fern string is a
+// separate concern. The varargs CallXxxMethod entries are out of scope
+// (only fixed-arity methods are expressible through __c_call).
+
+// jint (*GetVersion)(JNIEnv*)
+pub function get_version(env: usize): i32 {
+    return call0(env, 4) as i32;
+}
+
+// jclass (*FindClass)(JNIEnv*, const char* name)
+pub function find_class(env: usize, name: usize): usize {
+    return call1(env, FIND_CLASS(), name);
+}
+
+// jclass (*GetObjectClass)(JNIEnv*, jobject obj)
+pub function get_object_class(env: usize, obj: usize): usize {
+    return call1(env, 31, obj);
+}
+
+// jstring (*NewStringUTF)(JNIEnv*, const char* bytes)
+pub function new_string_utf(env: usize, bytes: usize): usize {
+    return call1(env, NEW_STRING_UTF(), bytes);
+}
+
+// jsize (*GetStringUTFLength)(JNIEnv*, jstring str)
+pub function get_string_utf_length(env: usize, jstr: usize): i32 {
+    return call1(env, GET_STRING_UTF_LENGTH(), jstr) as i32;
+}
+
+// const char* (*GetStringUTFChars)(JNIEnv*, jstring str, jboolean* isCopy)
+pub function get_string_utf_chars(env: usize, jstr: usize, is_copy: usize): usize {
+    return call2(env, GET_STRING_UTF_CHARS(), jstr, is_copy);
+}
+
+// void (*ReleaseStringUTFChars)(JNIEnv*, jstring str, const char* chars)
+pub function release_string_utf_chars(env: usize, jstr: usize, chars: usize): usize {
+    return call2(env, RELEASE_STRING_UTF_CHARS(), jstr, chars);
+}
