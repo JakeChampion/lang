@@ -15608,6 +15608,19 @@ function subst_fcall_expr(e: parser.Expr, fname: string, lname: string, capargs:
         parser.ExprFieldAccess(fa) => {
             return parser.ExprFieldAccess { obj: subst_fcall_expr(fa.obj, fname, lname, capargs), field: fa.field, line: fa.line, col: fa.col };
         },
+        parser.ExprLambda(lm) => {
+            // Rewrite a hoisted capture-FREE lambda's call sites that appear
+            // INSIDE another lambda body (`twice = fn(a){ return add(add(a)); }`
+            // → `add` resolves to its hoisted `__lam_0`). Only safe with no
+            // capture args (they'd reference outer-scope locals not in scope in
+            // the nested lambda), and not when the nested lambda shadows `fname`
+            // with a param of its own. This lets a closure that calls another
+            // local closure lift through the IR path instead of bailing to AST.
+            if (capargs.len() > 0) { return e; }
+            var pj: i32 = 0;
+            while (pj < lm.params.len()) { if (lm.params[pj].name == fname) { return e; } pj = pj + 1; }
+            return parser.ExprLambda { params: lm.params, ret_type: lm.ret_type, body: subst_fcall_stmts(lm.body, fname, lname, capargs) };
+        },
         _ => { return e; }
     }
     return e;
@@ -16452,10 +16465,17 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
             while (ici < ic.funcs.len()) { acc = LiftAcc { funcs: acc.funcs.append(ic.funcs[ici]), counter: acc.counter + 1 }; ici = ici + 1; }
         }
         // 1. Capturing lambdas bound to a local + only directly called: param-lift.
+        // Each round extends the global-fn set with the lambdas hoisted so far
+        // (their `__lam_N` names), so a sibling lambda that CALLS an already-
+        // hoisted capture-free lambda sees it as a global — not a capture it
+        // can't type — and lifts too (closure-calls-closure).
         var cbody: parser.Stmt[] = fd.body;
         var more: boolean = true;
         while (more) {
-            var cl: ClosureLift = closure_lift_one(cbody, fd, acc, gfns);
+            var lgfns: string[] = gfns;
+            var gj: i32 = 0;
+            while (gj < acc.funcs.len()) { lgfns = lgfns.append(acc.funcs[gj].name); gj = gj + 1; }
+            var cl: ClosureLift = closure_lift_one(cbody, fd, acc, lgfns);
             cbody = cl.body;
             acc = cl.acc;
             more = cl.changed;

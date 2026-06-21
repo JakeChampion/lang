@@ -1,0 +1,152 @@
+package e2e
+
+import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// closureCallsClosureIRCases exercise a local closure whose body CALLS another
+// local, capture-free closure (`var add = fn(a){…}; var twice = fn(a){
+// add(add(a)) }`). Previously the lift declined: `subst_fcall_expr` didn't
+// rewrite the hoisted `add`'s call sites that sit INSIDE `twice`'s body, so
+// `add` stayed referenced (its lift declined) and the whole module bailed to the
+// AST emitter. Now `subst_fcall_expr` recurses into nested lambda bodies (for a
+// capture-free hoist, no capture args to inject), and each lift round extends
+// the global-fn set with the names hoisted so far — so a sibling lambda calling
+// an already-hoisted `__lam_N` sees it as a global, not a capture it can't type.
+// Both closures lift to direct calls to hoisted `__lam_N` functions on the IR
+// path. Each case asserts the oracle exit code AND that lifting happened
+// (`__lam_` in the emitted asm/wat). Exit codes are kept <= 120 (native) / <=
+// 125 (WASI).
+var closureCallsClosureIRCases = []struct {
+	name     string
+	src      string
+	expected int
+}{
+	// nested call `add(add(a))` — the canonical shape.
+	{"nested", `function main(): i32 {
+    var add = function(a: i32): i32 { return a + 10; };
+    var twice = function(a: i32): i32 { return add(add(a)); };
+    return twice(1);
+}`, 21},
+	// binary call `mk(a) + mk(a)` — two separate call sites in one expression.
+	{"binary", `function main(): i32 {
+    var mk = function(a: i32): i32 { return a * 3; };
+    var combine = function(a: i32): i32 { return mk(a) + mk(a); };
+    return combine(4);
+}`, 24},
+	// a three-deep chain: f -> dbl -> inc, each a capture-free local closure.
+	{"chain", `function main(): i32 {
+    var inc = function(a: i32): i32 { return a + 1; };
+    var dbl = function(a: i32): i32 { return inc(a) * 2; };
+    var f = function(a: i32): i32 { return dbl(a) + inc(a); };
+    return f(3);
+}`, 12},
+	// control flow inside the calling closure (if + the called closure twice).
+	{"if_body", `function main(): i32 {
+    var pos = function(a: i32): i32 { if (a < 0) { return 0; } return a; };
+    var clamp = function(a: i32): i32 { return pos(a) + pos(0 - 5); };
+    return clamp(7);
+}`, 7},
+	// a loop in the calling closure calling the other closure each iteration.
+	{"loop_body", `function main(): i32 {
+    var sq = function(a: i32): i32 { return a * a; };
+    var sumsq = function(n: i32): i32 { var s = 0; var i = 1; while (i <= n) { s = s + sq(i); i = i + 1; } return s; };
+    return sumsq(3);
+}`, 14},
+}
+
+// TestSelfHostClosureCallsClosureX86IR builds the self-host asm_run driver and
+// runs each program through it (Fern → x86-64 asm → native binary → exit code),
+// asserting the oracle value and that the small IR path was taken (a bail to the
+// ~35 KB AST runtime would be far larger).
+func TestSelfHostClosureCallsClosureX86IR(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
+	if err != nil {
+		t.Fatalf("read asm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_run.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+
+	for _, tc := range closureCallsClosureIRCases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			if len(asm) == 0 || len(asm) > 15000 {
+				t.Fatalf("asm is %d bytes — expected small IR output; the closure-calls-closure module likely bailed to the AST runtime", len(asm))
+			}
+			if !strings.Contains(string(asm), "__lam_") {
+				t.Fatalf("%q: no __lam_ hoisted lambda in asm — lifting did not happen", tc.name)
+			}
+			progBin := buildBin(t, gcc, dir, "ccc_"+tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(progBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+			}
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.expected {
+				t.Errorf("closure-calls-closure %q exit %d, want %d", tc.name, code, tc.expected)
+			}
+		})
+	}
+}
+
+// TestSelfHostClosureCallsClosureWasmIR is the wasm sibling: the lift lives in
+// the target-independent irlower, so the wasm IR backend gets it for free.
+func TestSelfHostClosureCallsClosureWasmIR(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host closure-calls-closure wasm IR e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	for _, name := range []string{
+		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
+		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm.fern", "wasm_ir.fern", "wasm_ir_run.fern",
+	} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+
+	for _, tc := range closureCallsClosureIRCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(driverBin, "-ir")
+			} else {
+				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+			}
+			cmd.Stdin = bytes.NewReader([]byte(tc.src))
+			wat, err := cmd.Output()
+			if err != nil || len(wat) == 0 {
+				t.Fatalf("driver failed for %q: %v", tc.name, err)
+			}
+			watFile := filepath.Join(dir, "ccc_prog.wat")
+			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
+				t.Fatalf("write wat: %v", err)
+			}
+			rcmd := exec.Command("wasmtime", "run", watFile)
+			_ = rcmd.Run()
+			if rcmd.ProcessState == nil || !rcmd.ProcessState.Exited() {
+				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
+			}
+			if got := rcmd.ProcessState.ExitCode(); got != tc.expected {
+				t.Errorf("closure-calls-closure wasm IR %q = %d, want %d", tc.name, got, tc.expected)
+			}
+		})
+	}
+}
