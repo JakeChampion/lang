@@ -383,6 +383,46 @@ func TestWasiIoPollInstanceTypeBody_BlockOnly_Bytes(t *testing.T) {
 	}
 }
 
+// TestPutCanonSectionLiftAsync_Bytes pins the WASI Preview-3
+// component-model-async lift encoding. The bytes are byte-identical to
+// what wasm-tools 1.240 emits for `(canon lift (core func 1) async)`
+// (verified by disassembling a component that runs under
+// `wasmtime -W component-model-async,component-model-async-stackful`
+// and returns its result — docs/WASI-PREVIEW3-ASYNC-PLAN.md). The
+// `async` canonical option is 0x06.
+func TestPutCanonSectionLiftAsync_Bytes(t *testing.T) {
+	got := component.PutCanonSectionLiftAsync(nil, 1, 0)
+	want := []byte{
+		0x08, 0x07, // canon section, size 7
+		0x01,       // vec(1)
+		0x00, 0x00, // canon-lift + function-lift sub-tag
+		0x01,       // core func index 1
+		0x01, 0x06, // opts vec(1) = [async=0x06]
+		0x00, // type index 0
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("PutCanonSectionLiftAsync(1, 0) = % x, want % x", got, want)
+	}
+}
+
+// TestPutCanonTaskReturnSingle_Bytes pins the `task.return` (single
+// u32 result) encoding — the intrinsic an async-lifted export calls to
+// deliver its result. Byte-identical to wasm-tools 1.240's
+// `(canon task.return (result u32))`.
+func TestPutCanonTaskReturnSingle_Bytes(t *testing.T) {
+	got := component.PutCanonTaskReturnSingle(nil, component.CValtypeU32)
+	want := []byte{
+		0x08, 0x05, // canon section, size 5
+		0x01,                        // vec(1)
+		0x09,                        // canon task.return
+		0x00, component.CValtypeU32, // result: single-value u32
+		0x00, // options vec(0)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("PutCanonTaskReturnSingle(u32) = % x, want % x", got, want)
+	}
+}
+
 // TestWasiClocksMonotonicTimerInstanceTypeBody_Bytes pins the bytes
 // of the wasm-reactor timer instance type: an outer-aliased pollable
 // (here at top-level type index 5), own<pollable>, and the
