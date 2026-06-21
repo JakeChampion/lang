@@ -279,7 +279,7 @@ pub struct ExportBinding { func_name: string, iface: string, wit: string }
 // keeps it so the checker can detect enum-level declaration errors (an
 // enum redeclared, a duplicate variant) that the flat struct table can't
 // distinguish from ordinary structs. Codegen ignores it.
-pub struct EnumDecl { name: string, variant_names: string[], line: i32, col: i32 }
+pub struct EnumDecl { name: string, variant_names: string[], type_params: string[], line: i32, col: i32 }
 
 // enum_variant_names extracts the variant names from an enum's desugared
 // variant structs.
@@ -3448,15 +3448,34 @@ function parse_type_alias(p: Par): TypeAliasResult {
 // first payload of a multi-payload variant is bound; extras are
 // consumed. The enum's own name isn't recorded — variant names are
 // global, as with the existing union machinery.
-pub struct EnumResult { par: Par, name: string, variants: StructDecl[] }
+pub struct EnumResult { par: Par, name: string, variants: StructDecl[], type_params: string[] }
 
 function parse_enum_decl(p: Par): EnumResult {
     p = p.advance();  // consume `enum`
     var out: StructDecl[] = [];
     var name: string = p.peek_ident();
-    if (name.len() == 0) { return EnumResult { par: p, name: "", variants: out }; }
+    if (name.len() == 0) { return EnumResult { par: p, name: "", variants: out, type_params: [] }; }
     p = p.advance();
-    if (p.peek_punct() != "{") { return EnumResult { par: p, name: name, variants: out }; }
+    // Optional generic type parameters: `enum Opt[T] { … }`. Captured so the
+    // monomorphiser can clone a concrete enum per instantiation (the variant
+    // payload TYPES are substituted, like a generic struct's fields). Mirrors
+    // the `struct Box[T]` parse above.
+    var tparams: string[] = [];
+    if (p.peek_punct() == "[") {
+        p = p.advance(); // consume `[`
+        var gd: i32 = 1;
+        while (!p.at_end() && gd > 0) {
+            var gpk: string = p.peek_punct();
+            if (gpk == "[") { gd = gd + 1; p = p.advance(); continue; }
+            if (gpk == "]") { gd = gd - 1; p = p.advance(); continue; }
+            if (gd == 1) {
+                var tpn: string = p.peek_ident();
+                if (tpn.len() > 0) { tparams = tparams.append(tpn); }
+            }
+            p = p.advance();
+        }
+    }
+    if (p.peek_punct() != "{") { return EnumResult { par: p, name: name, variants: out, type_params: tparams }; }
     p = p.advance();
     while (p.peek_punct() != "}" && !p.at_end()) {
         var vname: string = p.peek_ident();
@@ -3487,7 +3506,7 @@ function parse_enum_decl(p: Par): EnumResult {
         break;
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    return EnumResult { par: p, name: name, variants: out };
+    return EnumResult { par: p, name: name, variants: out, type_params: tparams };
 }
 
 // parse_import consumes `import "path";` starting from the
@@ -5003,6 +5022,591 @@ pub function monomorphize_structs(mod: Module): Module {
     };
 }
 
+// ---- generic-enum monomorphisation ----------------------------------
+// The self-host historically erased generic enum type parameters: an
+// `Opt[i32]` and an `Opt[string]` shared one untyped "Opt" shape, so the
+// variant payload type stayed the bare type variable `T` and the IR path
+// couldn't resolve a payload's primitive methods (`s.len()` on a string
+// payload mis-dispatched) — so the whole module bailed to the legacy AST
+// emitter. This pass mirrors monomorphize_structs for enums: clone each
+// generic enum per concrete instantiation (`Opt[i32]` → `Opt__i32` with
+// `Sm__i32(i32)`), mangle the variant CONSTRUCTION call sites and `match`
+// arm patterns to the clone, rewrite the `Opt[i32]` annotations to
+// `Opt__i32`, and wire the cloned enums + variant structs into the
+// returned Module (the generic originals are dropped). Scope: a generic
+// enum with NO associated methods/derives and a key whose every type arg
+// is a simple nominal (primitive / string / bare struct). A method-bearing
+// generic enum, or an instantiation with a composite key (`Opt[Box[i32]]`),
+// is left untouched — its references aren't rewritten and its decls aren't
+// dropped, so it keeps its pre-existing (un-monomorphised) behaviour
+// instead of dangling. The compiler source + stdlib use no generic enums,
+// so the pass is a no-op there (fixpoint-safe), exactly like the
+// generic-struct pass. See issue #3572.
+
+// enum_has_method reports whether any function is an associated function /
+// method of the enum named `ename` (receiver type strips to `ename`).
+function enum_has_method(funcs: FuncDecl[], ename: string): boolean {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].receiver_type.len() > 0 && strip_struct_base(funcs[i].receiver_type) == ename) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// genum_is_mono reports whether the enum named `name` is a generic enum
+// the pass will monomorphise: it has type params and no associated methods.
+function genum_is_mono(enums: EnumDecl[], funcs: FuncDecl[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < enums.len()) {
+        if (enums[i].name == name && enums[i].type_params.len() > 0) {
+            return !enum_has_method(funcs, name);
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// genum_index returns the index of the generic EnumDecl named `name`, or -1.
+function genum_index(enums: EnumDecl[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < enums.len()) {
+        if (enums[i].name == name && enums[i].type_params.len() > 0) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// genum_owner_of_variant returns the index of the monomorphisable generic
+// enum whose variant list contains `vname`, or -1. (Variant names are
+// effectively global in the desugared struct table, so a bare `Sm`
+// construction resolves to its enum this way.)
+function genum_owner_of_variant(enums: EnumDecl[], funcs: FuncDecl[], vname: string): i32 {
+    var i: i32 = 0;
+    while (i < enums.len()) {
+        if (enums[i].type_params.len() > 0 && !enum_has_method(funcs, enums[i].name)) {
+            var vn: string[] = enums[i].variant_names;
+            var j: i32 = 0;
+            while (j < vn.len()) {
+                if (vn[j] == vname) { return i; }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// is_simple_key reports whether an instantiation key is a `__`-join of
+// simple nominal tokens (no `[`, no space) — the in-scope shape. A
+// composite key (`Box[i32]`, a tuple) is rejected so the instantiation
+// is left un-monomorphised rather than producing a malformed symbol.
+function is_simple_key(key: string): boolean {
+    if (key.len() == 0) { return false; }
+    if (util.contains(key, "[")) { return false; }
+    if (util.contains(key, " ")) { return false; }
+    if (util.contains(key, "(")) { return false; }
+    return true;
+}
+
+// genum_key_from_anno extracts the `__`-joined instantiation key from a
+// type spelling `Base[arg, …]` when Base == base, else "". Each top-level
+// arg contributes verbatim (the in-scope args are simple nominals).
+function genum_key_from_anno(ty: string, base: string): string {
+    var lb: i32 = first_bracket(ty);
+    if (lb <= 0) { return ""; }
+    if (ty[ty.len() - 1 : ty.len()] != "]") { return ""; }
+    if (ty[0 : lb] != base) { return ""; }
+    var parts: string[] = split_top_commas(ty[lb + 1 : ty.len() - 1]);
+    var key: string = "";
+    var j: i32 = 0;
+    while (j < parts.len()) {
+        if (j > 0) { key = key + "__"; }
+        key = key + parts[j];
+        j = j + 1;
+    }
+    if (!is_simple_key(key)) { return ""; }
+    return key;
+}
+
+// GEInst describes a recognised generic-enum instantiation derived from a
+// type spelling: ok, the base enum name, the `__`-joined key, and the
+// mangled enum name `Base__key`.
+struct GEInst { ok: boolean, base: string, key: string, mang: string }
+
+// ge_inst_of recognises a type spelling as a monomorphisable generic-enum
+// instantiation (`Opt[i32]` → ok, base "Opt", key "i32", mang "Opt__i32").
+// A bare base / non-generic / method-bearing / composite-key spelling
+// yields ok=false.
+function ge_inst_of(ty: string, enums: EnumDecl[], funcs: FuncDecl[]): GEInst {
+    var lb: i32 = first_bracket(ty);
+    if (lb <= 0) { return GEInst { ok: false, base: "", key: "", mang: "" }; }
+    if (ty[ty.len() - 1 : ty.len()] != "]") { return GEInst { ok: false, base: "", key: "", mang: "" }; }
+    var base: string = ty[0 : lb];
+    if (!genum_is_mono(enums, funcs, base)) { return GEInst { ok: false, base: "", key: "", mang: "" }; }
+    var key: string = genum_key_from_anno(ty, base);
+    if (key.len() == 0) { return GEInst { ok: false, base: "", key: "", mang: "" }; }
+    return GEInst { ok: true, base: base, key: key, mang: base + "__" + key };
+}
+
+// me_rewrite_ty rewrites a generic-enum type spelling to its mangled clone
+// name (`Opt[i32]` → `Opt__i32`); other spellings (incl. the `[]` array of
+// a generic enum) pass through, recursing on the array element.
+function me_rewrite_ty(ty: string, enums: EnumDecl[], funcs: FuncDecl[]): string {
+    if (type_ends_arr(ty)) {
+        return me_rewrite_ty(ty[0 : ty.len() - 2], enums, funcs) + "[]";
+    }
+    var gi: GEInst = ge_inst_of(ty, enums, funcs);
+    if (gi.ok) { return gi.mang; }
+    return ty;
+}
+
+// me_collect_anno records the instantiation a type spelling names (if any).
+function me_collect_anno(ty: string, enums: EnumDecl[], funcs: FuncDecl[], ins: Insts): Insts {
+    var t: string = ty;
+    if (type_ends_arr(t)) { t = t[0 : t.len() - 2]; }
+    var gi: GEInst = ge_inst_of(t, enums, funcs);
+    if (gi.ok) { return ins.iadd(gi.base, gi.key); }
+    return ins;
+}
+
+// variant_struct_index returns the index of the desugared variant struct
+// named `vname` owned by enum `owner`, or -1.
+function variant_struct_index(structs: StructDecl[], vname: string, owner: string): i32 {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == vname && structs[i].enum_owner == owner) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// me_infer_variant_key infers the instantiation key for a variant
+// construction `V(args)` of generic enum `ed`: first from the expected
+// annotation (`var o: Opt[i32] = Sm(5)`), then from the payload argument
+// types unified against the variant struct's field types (`Sm(5)` → T=i32).
+// Returns "" (leave generic) if unresolved or composite.
+function me_infer_variant_key(ed: EnumDecl, vname: string, args: Expr[], expected: string, env: MEnv, structs: StructDecl[], funcs: FuncDecl[]): string {
+    var fromAnno: string = genum_key_from_anno(expected, ed.name);
+    if (fromAnno.len() > 0) { return fromAnno; }
+    var vidx: i32 = variant_struct_index(structs, vname, ed.name);
+    if (vidx < 0) { return ""; }
+    var fields: StructFieldDecl[] = structs[vidx].fields;
+    var binds: MEnv = MEnv { mnames: [], mtypes: [] };
+    var fi: i32 = 0;
+    while (fi < fields.len() && fi < args.len()) {
+        var at: string = mono_infer(args[fi], env, funcs);
+        if (at.len() > 0) { binds = bind_unify(fields[fi].type_name, at, ed.type_params, binds); }
+        fi = fi + 1;
+    }
+    var key: string = "";
+    var j: i32 = 0;
+    while (j < ed.type_params.len()) {
+        var b: string = binds.elook(ed.type_params[j]);
+        if (b.len() == 0) { return ""; }
+        if (j > 0) { key = key + "__"; }
+        key = key + b;
+        j = j + 1;
+    }
+    if (!is_simple_key(key)) { return ""; }
+    return key;
+}
+
+// me_env_from_params seeds an MEnv with a function's parameter types (the
+// ORIGINAL spellings, so a `match` on a param recovers its `Opt[i32]`).
+function me_env_from_params(params: ParamDecl[]): MEnv {
+    var e: MEnv = MEnv { mnames: [], mtypes: [] };
+    var i: i32 = 0;
+    while (i < params.len()) {
+        e = e.ebind(params[i].name, params[i].type_name);
+        i = i + 1;
+    }
+    return e;
+}
+
+// me_expr rewrites generic-enum variant constructions to their mangled
+// clone names and recurses through every sub-expression. `expected` is the
+// type the expression flows into (a var annotation / return type), used to
+// pin a unit / ambiguous variant's instantiation; "" when unknown.
+function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], structs: StructDecl[], funcs: FuncDecl[], ins: Insts): RExpr {
+    match (e) {
+        ExprBinary(b) => {
+            var l: RExpr = me_expr(b.left, "", env, enums, structs, funcs, ins);
+            var r: RExpr = me_expr(b.right, "", env, enums, structs, funcs, l.rins);
+            return RExpr { rexpr: ExprBinary { op: b.op, left: l.rexpr, right: r.rexpr, line: b.line, col: b.col }, rins: r.rins };
+        },
+        ExprUnary(u) => {
+            var o: RExpr = me_expr(u.operand, "", env, enums, structs, funcs, ins);
+            return RExpr { rexpr: ExprUnary { op: u.op, operand: o.rexpr, line: u.line, col: u.col }, rins: o.rins };
+        },
+        ExprCall(c) => {
+            var nargs: Expr[] = [];
+            var cur: Insts = ins;
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                var ra: RExpr = me_expr(c.args[i], "", env, enums, structs, funcs, cur);
+                cur = ra.rins;
+                nargs = nargs.append(ra.rexpr);
+                i = i + 1;
+            }
+            // A variant construction `V(args)` (bare ident) or `Enum.V(args)`
+            // (qualified). The qualified form is only a construction when the
+            // object names a generic enum — otherwise `s.len()` (a method call,
+            // structurally identical: ExprCall over ExprFieldAccess) would be
+            // mis-read as constructing a variant named `len`.
+            var vname: string = "";
+            match (c.callee) {
+                ExprIdent(cid) => { vname = cid.name; },
+                ExprFieldAccess(cfa) => {
+                    match (cfa.obj) {
+                        ExprIdent(oid) => {
+                            if (genum_index(enums, oid.name) >= 0) { vname = cfa.field; }
+                        },
+                        _ => { }
+                    }
+                },
+                _ => { }
+            }
+            if (vname.len() > 0) {
+                var owner: i32 = genum_owner_of_variant(enums, funcs, vname);
+                if (owner >= 0) {
+                    var key: string = me_infer_variant_key(enums[owner], vname, c.args, expected, env, structs, funcs);
+                    if (key.len() > 0) {
+                        cur = cur.iadd(enums[owner].name, key);
+                        var mv: string = vname + "__" + key;
+                        return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mv, line: c.line, col: c.col }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc }, rins: cur };
+                    }
+                }
+            }
+            var rc: RExpr = me_expr(c.callee, "", env, enums, structs, funcs, cur);
+            return RExpr { rexpr: ExprCall { callee: rc.rexpr, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc }, rins: rc.rins };
+        },
+        ExprIdent(id) => {
+            // A bare unit-variant construction `Nn` — needs the expected
+            // annotation to pin its instantiation (no payload to infer from).
+            var owner: i32 = genum_owner_of_variant(enums, funcs, id.name);
+            if (owner >= 0) {
+                var key: string = genum_key_from_anno(expected, enums[owner].name);
+                if (key.len() > 0) {
+                    var nins: Insts = ins.iadd(enums[owner].name, key);
+                    return RExpr { rexpr: ExprIdent { name: id.name + "__" + key, line: id.line, col: id.col }, rins: nins };
+                }
+            }
+            return RExpr { rexpr: e, rins: ins };
+        },
+        ExprArray(a) => {
+            var nels: Expr[] = [];
+            var cur: Insts = ins;
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                var re: RExpr = me_expr(a.elements[i], "", env, enums, structs, funcs, cur);
+                cur = re.rins;
+                nels = nels.append(re.rexpr);
+                i = i + 1;
+            }
+            return RExpr { rexpr: ExprArray { elements: nels }, rins: cur };
+        },
+        ExprTuple(t) => {
+            var nels: Expr[] = [];
+            var cur: Insts = ins;
+            var i: i32 = 0;
+            while (i < t.elements.len()) {
+                var re: RExpr = me_expr(t.elements[i], "", env, enums, structs, funcs, cur);
+                cur = re.rins;
+                nels = nels.append(re.rexpr);
+                i = i + 1;
+            }
+            return RExpr { rexpr: ExprTuple { elements: nels }, rins: cur };
+        },
+        ExprIndex(ix) => {
+            var ar: RExpr = me_expr(ix.array, "", env, enums, structs, funcs, ins);
+            var ir: RExpr = me_expr(ix.index, "", env, enums, structs, funcs, ar.rins);
+            return RExpr { rexpr: ExprIndex { array: ar.rexpr, index: ir.rexpr }, rins: ir.rins };
+        },
+        ExprSlice(sl) => {
+            var ar: RExpr = me_expr(sl.array, "", env, enums, structs, funcs, ins);
+            var st: RExpr = me_expr(sl.start, "", env, enums, structs, funcs, ar.rins);
+            var en: RExpr = me_expr(sl.end, "", env, enums, structs, funcs, st.rins);
+            return RExpr { rexpr: ExprSlice { array: ar.rexpr, start: st.rexpr, end: en.rexpr }, rins: en.rins };
+        },
+        ExprStructLit(s) => {
+            var nvals: Expr[] = [];
+            var cur: Insts = ins;
+            var i: i32 = 0;
+            while (i < s.field_values.len()) {
+                var rv: RExpr = me_expr(s.field_values[i], "", env, enums, structs, funcs, cur);
+                cur = rv.rins;
+                nvals = nvals.append(rv.rexpr);
+                i = i + 1;
+            }
+            var rb: RExpr = me_expr(s.base, "", env, enums, structs, funcs, cur);
+            return RExpr { rexpr: ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: nvals, has_base: s.has_base, base: rb.rexpr, line: s.line, col: s.col }, rins: rb.rins };
+        },
+        ExprFieldAccess(fa) => {
+            var ob: RExpr = me_expr(fa.obj, "", env, enums, structs, funcs, ins);
+            return RExpr { rexpr: ExprFieldAccess { obj: ob.rexpr, field: fa.field, line: fa.line, col: fa.col }, rins: ob.rins };
+        },
+        ExprLambda(lm) => {
+            var lb: RStmts = me_stmts(lm.body, env, lm.ret_type, enums, structs, funcs, ins);
+            return RExpr { rexpr: ExprLambda { params: lm.params, ret_type: me_rewrite_ty(lm.ret_type, enums, funcs), body: lb.rstmts }, rins: lb.rins3 };
+        },
+        _ => { return RExpr { rexpr: e, rins: ins }; }
+    }
+    return RExpr { rexpr: e, rins: ins };
+}
+
+// me_rewrite_match_arms rewrites each variant pattern of a `match` whose
+// scrutinee is a known generic-enum instantiation (base, key) to the
+// mangled clone variant (`Sm` → `Sm__i32`), leaving wildcards and
+// non-owned variants untouched. Arm bodies are walked separately.
+function me_rewrite_arm_pattern(pat: Pattern, ed: EnumDecl, key: string): Pattern {
+    match (pat) {
+        PatVariant(pv) => {
+            var simple: string = pv.type_name;
+            var k: i32 = 0;
+            while (k < pv.type_name.len()) {
+                if (pv.type_name[k] == 46) { simple = pv.type_name[k + 1 : pv.type_name.len()]; }
+                k = k + 1;
+            }
+            var vn: string[] = ed.variant_names;
+            var j: i32 = 0;
+            while (j < vn.len()) {
+                if (vn[j] == simple) {
+                    return PatVariant { type_name: simple + "__" + key, binding: pv.binding, extra_bindings: pv.extra_bindings };
+                }
+                j = j + 1;
+            }
+            return pat;
+        },
+        _ => { return pat; }
+    }
+    return pat;
+}
+
+// me_stmt mirrors mono_stmt for the enum pass: it rewrites generic-enum
+// annotations, variant constructions, and `match` arm patterns, threading
+// the var-type env (original spellings) and the enclosing return type.
+function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs: StructDecl[], funcs: FuncDecl[], ins: Insts): RStmtOne {
+    match (st) {
+        StmtVar(v) => {
+            var iv: RExpr = me_expr(v.init, v.type_name, env, enums, structs, funcs, ins);
+            var cins: Insts = me_collect_anno(v.type_name, enums, funcs, iv.rins);
+            var nty: string = me_rewrite_ty(v.type_name, enums, funcs);
+            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: nty, init: iv.rexpr, line: v.line, col: v.col }, renv: env.ebind(v.name, v.type_name), rins2: cins };
+        },
+        StmtReturn(r) => {
+            var rv: RExpr = me_expr(r.value, ret_ty, env, enums, structs, funcs, ins);
+            return RStmtOne { rstmt: StmtReturn { value: rv.rexpr, line: r.line, col: r.col }, renv: env, rins2: rv.rins };
+        },
+        StmtExpr(x) => {
+            var xv: RExpr = me_expr(x.value, "", env, enums, structs, funcs, ins);
+            return RStmtOne { rstmt: StmtExpr { value: xv.rexpr }, renv: env, rins2: xv.rins };
+        },
+        StmtAssign(a) => {
+            var av: RExpr = me_expr(a.value, env.elook(a.target), env, enums, structs, funcs, ins);
+            return RStmtOne { rstmt: StmtAssign { target: a.target, value: av.rexpr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }, renv: env, rins2: av.rins };
+        },
+        StmtIf(f) => {
+            var cv: RExpr = me_expr(f.cond, "", env, enums, structs, funcs, ins);
+            var tb: RStmts = me_stmts(f.then_body, env, ret_ty, enums, structs, funcs, cv.rins);
+            var eb: RStmts = me_stmts(f.else_body, env, ret_ty, enums, structs, funcs, tb.rins3);
+            return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts }, renv: env, rins2: eb.rins3 };
+        },
+        StmtWhile(w) => {
+            var cv: RExpr = me_expr(w.cond, "", env, enums, structs, funcs, ins);
+            var wb: RStmts = me_stmts(w.body, env, ret_ty, enums, structs, funcs, cv.rins);
+            return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label }, renv: env, rins2: wb.rins3 };
+        },
+        StmtFor(fr) => {
+            var it: RExpr = me_expr(fr.iter, "", env, enums, structs, funcs, ins);
+            var benv: MEnv = env.ebind(fr.var_name, "");
+            var fb: RStmts = me_stmts(fr.body, benv, ret_ty, enums, structs, funcs, it.rins);
+            return RStmtOne { rstmt: StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label }, renv: env, rins2: fb.rins3 };
+        },
+        StmtMatch(m) => {
+            var sv: RExpr = me_expr(m.scrutinee, "", env, enums, structs, funcs, ins);
+            var cur: Insts = sv.rins;
+            // Recover the scrutinee's generic-enum instantiation (ident scrutinee).
+            var sty: string = "";
+            match (m.scrutinee) {
+                ExprIdent(id) => { sty = env.elook(id.name); },
+                _ => { }
+            }
+            var gi: GEInst = ge_inst_of(sty, enums, funcs);
+            var arms: MatchArm[] = [];
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                var npat: Pattern = m.arms[i].pattern;
+                if (gi.ok) {
+                    var gidx: i32 = genum_index(enums, gi.base);
+                    if (gidx >= 0) {
+                        npat = me_rewrite_arm_pattern(m.arms[i].pattern, enums[gidx], gi.key);
+                        cur = cur.iadd(gi.base, gi.key);
+                    }
+                }
+                var gv: RExpr = me_expr(m.arms[i].guard, "", env, enums, structs, funcs, cur);
+                cur = gv.rins;
+                var ab: RStmts = me_stmts(m.arms[i].body, env, ret_ty, enums, structs, funcs, cur);
+                cur = ab.rins3;
+                arms = arms.append(MatchArm { pattern: npat, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: gv.rexpr, has_guard: m.arms[i].has_guard });
+                i = i + 1;
+            }
+            return RStmtOne { rstmt: StmtMatch { scrutinee: sv.rexpr, arms: arms, line: m.line, col: m.col, origin: m.origin }, renv: env, rins2: cur };
+        },
+        _ => { return RStmtOne { rstmt: st, renv: env, rins2: ins }; }
+    }
+    return RStmtOne { rstmt: st, renv: env, rins2: ins };
+}
+
+// me_stmts walks a statement list, threading the block-local env.
+function me_stmts(stmts: Stmt[], env: MEnv, ret_ty: string, enums: EnumDecl[], structs: StructDecl[], funcs: FuncDecl[], ins: Insts): RStmts {
+    var out: Stmt[] = [];
+    var e2: MEnv = env;
+    var cur: Insts = ins;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var rs: RStmtOne = me_stmt(stmts[i], e2, ret_ty, enums, structs, funcs, cur);
+        out = out.append(rs.rstmt);
+        e2 = rs.renv;
+        cur = rs.rins2;
+        i = i + 1;
+    }
+    return RStmts { rstmts: out, rins3: cur };
+}
+
+// me_rewrite_params rewrites each parameter's generic-enum type annotation.
+function me_rewrite_params(params: ParamDecl[], enums: EnumDecl[], funcs: FuncDecl[]): ParamDecl[] {
+    var out: ParamDecl[] = [];
+    var i: i32 = 0;
+    while (i < params.len()) {
+        var p: ParamDecl = params[i];
+        out = out.append(ParamDecl { name: p.name, type_name: me_rewrite_ty(p.type_name, enums, funcs), own: p.own, has_default: p.has_default, default_value: p.default_value, ret_arr: p.ret_arr });
+        i = i + 1;
+    }
+    return out;
+}
+
+pub function monomorphize_enums(mod: Module): Module {
+    // Nothing to do unless there is a monomorphisable generic enum.
+    var any: boolean = false;
+    var ei: i32 = 0;
+    while (ei < mod.enums.len()) {
+        if (mod.enums[ei].type_params.len() > 0 && !enum_has_method(mod.funcs, mod.enums[ei].name)) { any = true; }
+        ei = ei + 1;
+    }
+    if (!any) { return mod; }
+
+    var ins: Insts = Insts { inames: [], itypes: [] };
+
+    // Phase 1: rewrite references in every function (body + param/ret types)
+    // and the top-level statements, accumulating instantiations.
+    var nfuncs: FuncDecl[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var fn: FuncDecl = mod.funcs[fi];
+        var env: MEnv = me_env_from_params(fn.params);
+        var rb: RStmts = me_stmts(fn.body, env, fn.ret_type, mod.enums, mod.structs, mod.funcs, ins);
+        ins = rb.rins3;
+        ins = me_collect_anno(fn.ret_type, mod.enums, mod.funcs, ins);
+        var pj: i32 = 0;
+        while (pj < fn.params.len()) {
+            ins = me_collect_anno(fn.params[pj].type_name, mod.enums, mod.funcs, ins);
+            pj = pj + 1;
+        }
+        nfuncs = nfuncs.append(FuncDecl {
+            name: fn.name, receiver_name: fn.receiver_name, receiver_type: fn.receiver_type,
+            type_params: fn.type_params, params: me_rewrite_params(fn.params, mod.enums, mod.funcs),
+            ret_type: me_rewrite_ty(fn.ret_type, mod.enums, mod.funcs), body: rb.rstmts, line: fn.line, col: fn.col,
+            import_iface: fn.import_iface, import_wit: fn.import_wit, type_param_count: fn.type_param_count
+        });
+        fi = fi + 1;
+    }
+    var topenv: MEnv = MEnv { mnames: [], mtypes: [] };
+    var tr: RStmts = me_stmts(mod.top_stmts, topenv, "", mod.enums, mod.structs, mod.funcs, ins);
+    ins = tr.rins3;
+
+    // Phase 2: generate a concrete enum + variant structs per instantiation.
+    var cl_enums: EnumDecl[] = [];
+    var cl_structs: StructDecl[] = [];
+    // dropped_bases collects the generic enum names that were instantiated;
+    // their originals (+ variant structs) are removed from the passthrough.
+    var dropped: string[] = [];
+    var wi: i32 = 0;
+    while (wi < ins.inames.len()) {
+        var base: string = ins.inames[wi];
+        var key: string = ins.itypes[wi];
+        var gidx: i32 = genum_index(mod.enums, base);
+        if (gidx >= 0) {
+            var ed: EnumDecl = mod.enums[gidx];
+            var cts: string[] = split_dunder(key);
+            var mname: string = base + "__" + key;
+            var nvn: string[] = [];
+            var vi2: i32 = 0;
+            while (vi2 < ed.variant_names.len()) {
+                var vn0: string = ed.variant_names[vi2];
+                nvn = nvn.append(vn0 + "__" + key);
+                // Clone the variant's desugared struct with substituted payloads.
+                var vidx: i32 = variant_struct_index(mod.structs, vn0, base);
+                if (vidx >= 0) {
+                    var vs: StructDecl = mod.structs[vidx];
+                    var nf: StructFieldDecl[] = [];
+                    var fj2: i32 = 0;
+                    while (fj2 < vs.fields.len()) {
+                        nf = nf.append(StructFieldDecl { name: vs.fields[fj2].name, type_name: subst_ty(vs.fields[fj2].type_name, ed.type_params, cts) });
+                        fj2 = fj2 + 1;
+                    }
+                    cl_structs = cl_structs.append(StructDecl { name: vn0 + "__" + key, fields: nf, type_params: [], line: vs.line, col: vs.col, enum_owner: mname });
+                }
+                vi2 = vi2 + 1;
+            }
+            cl_enums = cl_enums.append(EnumDecl { name: mname, variant_names: nvn, type_params: [], line: ed.line, col: ed.col });
+            if (!str_in(dropped, base)) { dropped = dropped.append(base); }
+        }
+        wi = wi + 1;
+    }
+
+    // Phase 3: passthrough non-dropped enums + structs, then append clones.
+    var out_enums: EnumDecl[] = [];
+    var oei: i32 = 0;
+    while (oei < mod.enums.len()) {
+        if (!str_in(dropped, mod.enums[oei].name)) { out_enums = out_enums.append(mod.enums[oei]); }
+        oei = oei + 1;
+    }
+    var k2: i32 = 0;
+    while (k2 < cl_enums.len()) { out_enums = out_enums.append(cl_enums[k2]); k2 = k2 + 1; }
+
+    var out_structs: StructDecl[] = [];
+    var osi: i32 = 0;
+    while (osi < mod.structs.len()) {
+        var sd: StructDecl = mod.structs[osi];
+        if (sd.enum_owner.len() == 0 || !str_in(dropped, sd.enum_owner)) { out_structs = out_structs.append(sd); }
+        osi = osi + 1;
+    }
+    var k3: i32 = 0;
+    while (k3 < cl_structs.len()) { out_structs = out_structs.append(cl_structs[k3]); k3 = k3 + 1; }
+
+    return Module {
+        funcs: nfuncs,
+        structs: out_structs,
+        aliases: mod.aliases,
+        imports: mod.imports,
+        top_stmts: tr.rstmts,
+        enums: out_enums,
+        resources: mod.resources,
+        exports: mod.exports
+    };
+}
+
+// str_in reports membership of `s` in `xs`.
+function str_in(xs: string[], s: string): boolean {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] == s) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // ---- defer lowering -------------------------------------------------
 // `defer ACTION;` runs ACTION when the enclosing function exits — at every
 // return path and at falloff, in LIFO order, and only if the defer
@@ -6231,7 +6835,7 @@ pub function module_with_builtins(mod: Module): Module {
     // Lower switches to if/else-if chains first (the type checker has
     // already run on the StmtSwitch shape for E025), so no later pass or
     // backend sees a StmtSwitch at runtime.
-    var mono: Module = monomorphize_structs(monomorphize_module(lower_defers_module(insert_resource_drops(infer_ret_types_module(hoist_local_funcs_module(desugar_switches_module(desugar_ranges_module(fill_default_args_module(resolve_labels_module(mod))))))))));
+    var mono: Module = monomorphize_enums(monomorphize_structs(monomorphize_module(lower_defers_module(insert_resource_drops(infer_ret_types_module(hoist_local_funcs_module(desugar_switches_module(desugar_ranges_module(fill_default_args_module(resolve_labels_module(mod)))))))))));
     return Module {
         funcs: mono.funcs,
         structs: inject_builtin_enums(mono.structs),
@@ -7180,7 +7784,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 var decol: i32 = p.peek_col();
                 var denr: EnumResult = parse_enum_decl(p);
                 p = denr.par;
-                enums = enums.append(EnumDecl { name: denr.name, variant_names: enum_variant_names(denr.variants), line: deline, col: decol });
+                enums = enums.append(EnumDecl { name: denr.name, variant_names: enum_variant_names(denr.variants), type_params: denr.type_params, line: deline, col: decol });
                 var dei: i32 = 0;
                 while (dei < denr.variants.len()) {
                     structs = structs.append(denr.variants[dei]);
@@ -7216,7 +7820,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
             var ecol: i32 = p.peek_col();
             var enr: EnumResult = parse_enum_decl(p);
             p = enr.par;
-            enums = enums.append(EnumDecl { name: enr.name, variant_names: enum_variant_names(enr.variants), line: eline, col: ecol });
+            enums = enums.append(EnumDecl { name: enr.name, variant_names: enum_variant_names(enr.variants), type_params: enr.type_params, line: eline, col: ecol });
             var ei: i32 = 0;
             while (ei < enr.variants.len()) {
                 structs = structs.append(enr.variants[ei]);
