@@ -14,14 +14,28 @@ the same reason:
 | --- | --- | --- |
 | `OpsBuilder` recursive-union cons-list | works (#3554) | FAIL — gen2 miscompiles |
 | chunked `ir.Op[][]` (Plan B) | works, 536→419 MB | FAIL — gen2 miscompiles `add`→0 |
-| chunked `Op[][]` + raise the 512-fn cap so the compiler self-compiles via **IR** instead of AST | — | FAIL — stage-1 **segfault** compiling the whole compiler via the IR path |
+| **clean main** + raise the 512-fn cap (compiler self-compiles via **IR**) | — | FAIL — stage-1 **exit 137 (OOM)** at 3.875 GiB |
+| Plan B + raised cap | — | stage-1 **segfault** (an `Op[][]` IR-path bug, distinct from the OOM) |
 
-So the cap guards against an IR-path **crash** on the full compiler, not
-only the OOM — raising it is not viable even with the ops win. And every
-in-`LowerState` ops representation (union or nested array) breaks the
-AST-self-compile. The two unblocked paths below (Plan A; or fixing the
-IR-path full-compiler crash / the asm.fern compound-field miscompile so
-the cap can lift) are the only ways through.
+The key result is the third row: on **clean main**, the IR path **can**
+compile the whole compiler — it just **runs out of memory** (exit 137,
+the documented reason for the cap). So the cap is gated on *memory*, and
+**reducing Effect-A memory enough lifts it** — at which point the
+compiler self-compiles through the IR path (which lowers unions / nested
+arrays correctly) and the localized ops fixes (`OpsBuilder`, `Op[][]`)
+all become mergeable. This is self-reinforcing: the dominant `local_*`
+70 % is exactly the memory that has to come down, and bringing it down is
+*also* what unblocks every other fix.
+
+So there are two ways through, and they converge:
+
+1. **Plan A** — separate plain-`ir.Op[]` (and `local_*`) threading; works
+   under the AST fallback today, ~100 % of Effect A.
+2. **Cut the IR self-compile's peak below 3.875 GiB** (chiefly the
+   `local_*` 70 %, via the same in-place/side-table rework) so the cap
+   lifts; then the localized union/nested-array fixes merge for free.
+
+Both routes are the same `local_*` in-place rework at their core.
 
 ## The target
 
