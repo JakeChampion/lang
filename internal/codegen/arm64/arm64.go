@@ -58,6 +58,10 @@ const (
 	// nanosleep(2): asm-generic table syscall 101. Backs
 	// `__fern_sleep_ms`.
 	sysNanosleep = 101
+	// ppoll(2): asm-generic table syscall 73 (arm64 has no bare
+	// `poll`). Backs `__fern_poll` — the std/task reactor's readiness
+	// multiplexer (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1).
+	sysPpoll = 73
 )
 
 // Darwin BSD syscall numbers (xnu/bsd/kern/syscalls.master).
@@ -142,6 +146,10 @@ var f64UnaryIntrinsic = map[string]string{
 
 var linuxOnlySysno = map[string]int{
 	"getrandom": sysGetrandom,
+	// ppoll: Linux-only here; arm64-darwin's readiness path (kqueue)
+	// is deferred, so `__fern_poll` branches to a -1 stub on Darwin
+	// rather than reaching this entry.
+	"ppoll": sysPpoll,
 }
 
 // regArgs is the AAPCS64 register-argument count: args 0..7
@@ -425,6 +433,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.emitTcpRecvRuntime()
 		g.emitTcpSendRuntime()
 		g.emitTcpCloseRuntime()
+	}
+	if g.usesPoll {
+		g.emitPollRuntime()
 	}
 	if g.usesStrSlice {
 		g.emitStrSliceRuntime()
@@ -4499,6 +4510,104 @@ func (g *generator) emitRandomBytesRuntime() {
 	g.line(".ltorg")
 }
 
+// emitPollRuntime emits `__fern_poll(fds, timeout_ms)` — the std/task
+// reactor's readiness multiplexer (docs/ASYNC-IMPLEMENTATION-PLAN.md
+// Phase 1), the arm64 mirror of the x86-64 helper. `fds` is a length-
+// prefixed i32[]; the helper builds a transient `struct pollfd[]`
+// (each 8 bytes: i32 fd, i16 events, i16 revents), requests POLLIN on
+// each, calls ppoll(2) (#73 — arm64 has no bare `poll`), and returns
+// the INDEX of the first readable fd, or -1 on timeout / none.
+// `timeout_ms` < 0 blocks indefinitely (NULL timespec); >= 0 builds a
+// timespec. On Darwin the readiness path (kqueue) is not yet ported,
+// so the helper returns -1 (no readiness).
+func (g *generator) emitPollRuntime() {
+	const pollin = 1 // POLLIN
+	g.line("")
+	g.line(".global __fern_poll")
+	g.typeDirective("__fern_poll")
+	g.label("__fern_poll")
+	if g.darwin {
+		// arm64-darwin readiness = kqueue, deferred. Stub: -1.
+		g.emit("mov x0, #-1")
+		g.emit("ret")
+		g.sizeDirective("__fern_poll")
+		return
+	}
+	// Frame: fp/lr + callee-saves x19..x23 + a 16-byte timespec scratch.
+	g.emit("stp x29, x30, [sp, #-80]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]") // x19 = nfds, x20 = fds ptr
+	g.emit("stp x21, x22, [sp, #32]") // x21 = pollfd buf, x22 = loop i
+	g.emit("stp x23, xzr, [sp, #48]") // x23 = timeout_ms
+	// timespec scratch lives at [x29, #64..79].
+	g.emit("mov x20, x0") // fds ptr
+	g.emit("mov x23, x1") // timeout_ms
+	g.emitArrayLen("w19", "x20")
+	g.emit("cmp w19, #0")
+	g.emit("b.le .Lpoll_none")
+	// buf = alloc(nfds * 8)
+	g.emit("lsl w0, w19, #3")
+	g.emit("bl __fern_alloc")
+	g.emit("mov x21, x0")
+	// Marshal: pollfd[i] = { fd = fds[i], events = POLLIN, revents = 0 }.
+	g.emit("mov x22, #0")
+	g.label(".Lpoll_fill")
+	g.emit("cmp x22, x19")
+	g.emit("b.ge .Lpoll_filled")
+	g.emit("ldr w0, [x20, x22, lsl #2]")  // fd
+	g.emit("add x9, x21, x22, lsl #3")    // &pollfd[i]
+	g.emit("str w0, [x9]")                // .fd
+	g.emit("mov w1, #%d", pollin)
+	g.emit("strh w1, [x9, #4]") // .events
+	g.emit("strh wzr, [x9, #6]") // .revents
+	g.emit("add x22, x22, #1")
+	g.emit("b .Lpoll_fill")
+	g.label(".Lpoll_filled")
+	// timespec: timeout_ms < 0 → NULL (block); else { sec, nsec }.
+	g.emit("cmp x23, #0")
+	g.emit("b.lt .Lpoll_infinite")
+	g.emit("mov x9, #1000")
+	g.emit("udiv x10, x23, x9")      // sec = ms / 1000
+	g.emit("msub x11, x10, x9, x23") // rem ms = ms - sec*1000
+	g.emit("ldr x12, =1000000")
+	g.emit("mul x11, x11, x12") // nsec = rem * 1e6
+	g.emit("add x2, x29, #64")  // &timespec
+	g.emit("stp x10, x11, [x2]")
+	g.emit("b .Lpoll_call")
+	g.label(".Lpoll_infinite")
+	g.emit("mov x2, #0") // NULL tmo_p → block
+	g.label(".Lpoll_call")
+	g.emit("mov x0, x21") // fds buf
+	g.emit("mov w1, w19") // nfds
+	g.emit("mov x3, #0")  // sigmask = NULL
+	g.emit("mov x4, #0")  // sigsetsize
+	g.syscall("ppoll")
+	// Scan revents for the first POLLIN-ready fd.
+	g.emit("mov x22, #0")
+	g.label(".Lpoll_scan")
+	g.emit("cmp x22, x19")
+	g.emit("b.ge .Lpoll_none")
+	g.emit("add x9, x21, x22, lsl #3")
+	g.emit("ldrh w0, [x9, #6]") // revents
+	g.emit("and w0, w0, #%d", pollin)
+	g.emit("cbnz w0, .Lpoll_found")
+	g.emit("add x22, x22, #1")
+	g.emit("b .Lpoll_scan")
+	g.label(".Lpoll_found")
+	g.emit("mov x0, x22")
+	g.emit("b .Lpoll_ret")
+	g.label(".Lpoll_none")
+	g.emit("mov x0, #-1")
+	g.label(".Lpoll_ret")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldr x23, [sp, #48]")
+	g.emit("ldp x29, x30, [sp], #80")
+	g.emit("ret")
+	g.sizeDirective("__fern_poll")
+	g.line(".ltorg")
+}
+
 // emitRandomI32Runtime emits `__fern_random_i32()` — returns a
 // single cryptographic-quality i32 by reading 4 CSPRNG bytes
 // into a stack slot and reloading them as a (little-endian) i32.
@@ -5925,6 +6034,10 @@ type generator struct {
 	// site reachability so non-server programs don't pay for
 	// the socket boilerplate.
 	usesTcp bool
+	// usesPoll pulls in `__fern_poll(fds, timeout_ms)` — the std/task
+	// reactor's readiness multiplexer (ppoll(2) on Linux; -1 stub on
+	// Darwin pending kqueue).
+	usesPoll bool
 	// usesStrSlice pulls in `__str_slice(base, low, high)` —
 	// a length-prefix-aware substring extractor that
 	// allocates a fresh string. The IR's `s[a:b]` slice
@@ -8562,6 +8675,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "tcp_close":
 			target = "__fern_tcp_close"
 			g.usesTcp = true
+		case "poll":
+			target = "__fern_poll"
+			g.usesPoll = true
+			g.usesAlloc = true
 		// Map / MapIter — the lang Map runtime lives entirely
 		// in the stdlib under `_impl`-suffixed names;
 		// user-facing call sites use the unsuffixed mangled

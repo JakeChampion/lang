@@ -181,11 +181,21 @@ with deterministic file-fd tests (`internal/e2e/poll_x86_test.go`:
 single-ready → 0, two-ready → 0, empty → -1). Parity-neutral: nothing
 wires the free `poll` builtin yet, so existing programs are unaffected.
 
-**Phase 1b — remaining:**
-- **Native arm64:** `ppoll(2)` (#73 — arm64 has no bare `poll`), same
-  marshalling, in `internal/codegen/arm64` (Go) + `asm_arm64.fern`.
-- **x86-64 self-host** (`asm.fern`) — mirror the Go `__fern_poll`.
+**Phase 1b — DONE (native arm64 `ppoll`):** the same `poll` builtin
+lowers on arm64 (Go compiler) to `__fern_poll` via `ppoll(2)` (#73 —
+arm64 has no bare `poll`; `timeout_ms` < 0 → NULL timespec = block,
+>= 0 → a built timespec). arm64-darwin returns a -1 stub pending its
+kqueue path. Same deterministic file-fd tests now run on both native
+backends (`internal/e2e/poll_test.go`, x86-64 + arm64/qemu).
+
+**Phase 1c — remaining:**
+- **wasm:** `wasi:io/poll.poll(list<pollable>) -> list<u32>` (the
+  multi-pollable form; today only single-pollable `.block` is used).
+- **Self-host** (`asm.fern` / `asm_arm64.fern`) — mirror `__fern_poll`.
 - Non-blocking variants of accept/recv/send (`O_NONBLOCK` + `EAGAIN`).
+- Then wire `std/task`'s `Reactor` onto the real primitive (fd
+  registration → `poll` → wake) and `plat.fetch` as the first real
+  awaitable.
 - **wasm:** add `wasi:io/poll.poll(list<pollable>) -> list<u32>` (the
   multi-pollable form; today only single-pollable `.block` is used)
   in `internal/codegen/wasmbin` (Go) and `wasm.fern` (self-host).
