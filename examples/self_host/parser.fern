@@ -3157,6 +3157,17 @@ function parse_type_name(p: Par): TypeNameResult {
         base = base + "." + seg0;
         p = p.advance();
     }
+    // `T?` shorthand → canonical `Option[T]`. The native parser desugars the
+    // trailing `?` optional-type suffix; mirror it here so the self-host
+    // pipeline (checker + irlower) sees the `Option[T]` spelling it already
+    // lowers, instead of dropping the `?` and mis-typing `i32?` as a bare `i32`
+    // (which made every `i32?`-typed binding / return fall back to the AST
+    // path). Scalar / dotted (`pkg.T?`) bases only — an optional generic /
+    // array (`Foo[T]?`, `T[]?`) is rarer and still drops the `?` for now.
+    if (p.peek_punct() == "?") {
+        p = p.advance();
+        return TypeNameResult { par: p, name: "Option[" + base + "]", ret_arr: false, fn_ret: "" };
+    }
     if (p.peek_punct() != "[") {
         return TypeNameResult { par: p, name: base, ret_arr: false, fn_ret: "" };
     }

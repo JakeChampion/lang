@@ -1488,6 +1488,16 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"defer-early-return", "function f(n: i32): i32 { var x = 5; defer { x = 0; } if (n > 0) { return n; } return x; } function main(): i32 { return f(7); }"},
 		{"defer-order-two", "function main(): i32 { var a = [0, 0]; defer { a = a.with(0, 1); } defer { a = a.with(1, 2); } return a[0] + a[1]; }"},
 		{"errdefer-ok-path", "function f(): Result[i32, string] { var x = 1; errdefer { x = 9; } return Ok(x); } function main(): i32 { match (f()) { Ok(v) => { return v; }, Err(_) => { return 0; } } }"},
+		// `T?` optional-type shorthand. The self-host parser now desugars the
+		// trailing `?` suffix to the canonical `Option[T]` spelling (it used to
+		// DROP the `?`, mis-typing `i32?` as a bare `i32`, which forced every
+		// `T?`-typed binding / return onto the AST path). Now `i32?` lowers via the
+		// IR path identically to an explicit `Option[i32]`. Covers the Some / None
+		// return arms, an explicit `var r: i32?` binding, and a `string?` payload.
+		{"opt-shorthand-some", "function lookup(k: i32): i32? { if (k == 7) { return Some(42); } return None; } function main(): i32 { match (lookup(7)) { Some(x) => { return x; }, None => { return 0; } } }"},
+		{"opt-shorthand-none", "function lookup(k: i32): i32? { if (k == 7) { return Some(42); } return None; } function main(): i32 { match (lookup(3)) { Some(x) => { return x; }, None => { return 17; } } }"},
+		{"opt-shorthand-bind", "function main(): i32 { var r: i32? = Some(5); match (r) { Some(x) => { return x * 8; }, None => { return 0; } } }"},
+		{"opt-shorthand-string", "function pick(b: i32): string? { if (b > 0) { return Some(\"yes\"); } return None; } function main(): i32 { match (pick(1)) { Some(s) => { return s.len(); }, None => { return 0; } } }"},
 	}
 
 	for _, tc := range cases {
