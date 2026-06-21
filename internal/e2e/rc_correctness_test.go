@@ -21,6 +21,26 @@ var rcCorpus = []struct {
 	src  string
 }{
 	{
+		// Fresh string temp passed to a non-retaining call, in a loop.
+		// Exercises the native single-word x86-64 owned-temp string drop
+		// (emitOwnedSlotDrop call-arg path → __fern_str_dec): `a + "cd"` is
+		// a fresh heap buffer (sole owner) consumed by `consume`, then freed
+		// after the call so the loop does not leak. `a` is a param so the
+		// concat is not constant-folded. 3 × len("abcd") = 12.
+		name: "string_callarg_fresh_temp",
+		src: `
+import "core/int";
+import "std/string";
+function consume(s: string): i32 { return s.len(); }
+function build(a: string): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) { acc = acc + consume(a + "cd"); i = i + 1; }
+    return acc;
+}
+function main(): i32 { return (build("ab") - 12) + __rc_underflow_count(); }`,
+	},
+	{
 		// String struct field, aliased across two structs + a live local,
 		// then all dropped. Exercises the native single-word x86-64
 		// string-field reclaim (__drop_struct_<N> → __fern_str_dec): the

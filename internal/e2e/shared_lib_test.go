@@ -649,3 +649,93 @@ int main(int c, char** v){
 		t.Fatalf("cstr round-trip = %d, want 42 (out=%q)", code, out)
 	}
 }
+
+// TestStdJNIExceptionAndRefWrappers validates the exception-handling,
+// reference-management, and class-relationship wrappers each dispatch to
+// their JNINativeInterface slot. A fake JNIEnv wires each slot to a fn that
+// returns the slot index as a marker; every probe must come back with its
+// own index, proving the wrapper carries the right number.
+func TestStdJNIExceptionAndRefWrappers(t *testing.T) {
+	gcc, err := exec.LookPath("gcc")
+	if err != nil {
+		t.Skip("gcc not on PATH")
+	}
+	if runtime.GOARCH != "amd64" {
+		t.Skip("host is not amd64")
+	}
+	src := `import "std/jni";
+function p_throw(env: usize, cls: usize, j: usize): i32 { return jni.throw(j, 0 as usize); }
+function p_thrownew(env: usize, cls: usize, j: usize): i32 { return jni.throw_new(j, 0 as usize, 0 as usize); }
+function p_excocc(env: usize, cls: usize, j: usize): i32 { return jni.exception_occurred(j) as i32; }
+function p_excdesc(env: usize, cls: usize, j: usize): i32 { return jni.exception_describe(j) as i32; }
+function p_excclr(env: usize, cls: usize, j: usize): i32 { return jni.exception_clear(j) as i32; }
+function p_newglobal(env: usize, cls: usize, j: usize): i32 { return jni.new_global_ref(j, 0 as usize) as i32; }
+function p_delglobal(env: usize, cls: usize, j: usize): i32 { return jni.delete_global_ref(j, 0 as usize) as i32; }
+function p_dellocal(env: usize, cls: usize, j: usize): i32 { return jni.delete_local_ref(j, 0 as usize) as i32; }
+function p_newlocal(env: usize, cls: usize, j: usize): i32 { return jni.new_local_ref(j, 0 as usize) as i32; }
+function p_super(env: usize, cls: usize, j: usize): i32 { return jni.get_superclass(j, 0 as usize) as i32; }
+function p_assign(env: usize, cls: usize, j: usize): i32 { return jni.is_assignable_from(j, 0 as usize, 0 as usize); }
+function p_same(env: usize, cls: usize, j: usize): i32 { return jni.is_same_object(j, 0 as usize, 0 as usize); }
+function p_alloc(env: usize, cls: usize, j: usize): i32 { return jni.alloc_object(j, 0 as usize) as i32; }
+function p_instof(env: usize, cls: usize, j: usize): i32 { return jni.is_instance_of(j, 0 as usize, 0 as usize); }
+function main(): i32 { return 0; }`
+	// probe name -> expected JNINativeInterface slot index.
+	probes := []struct {
+		fn   string
+		slot int
+	}{
+		{"p_throw", 13}, {"p_thrownew", 14}, {"p_excocc", 15}, {"p_excdesc", 16},
+		{"p_excclr", 17}, {"p_newglobal", 21}, {"p_delglobal", 22}, {"p_dellocal", 23},
+		{"p_newlocal", 25}, {"p_super", 10}, {"p_assign", 11}, {"p_same", 24},
+		{"p_alloc", 27}, {"p_instof", 32},
+	}
+	exps := make([]string, len(probes))
+	for i, p := range probes {
+		exps[i] = p.fn
+	}
+	asm := compileToX86AsmExports(t, src, exps)
+	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exps)
+	if err != nil {
+		t.Fatalf("AssembleProgramShared: %v", err)
+	}
+	elfExports := make([]nativeelf.Export, len(probes))
+	for i, p := range probes {
+		elfExports[i] = nativeelf.Export{Name: p.fn, Value: ev[p.fn]}
+	}
+	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs), elfExports, "libfern.so")
+	dir := t.TempDir()
+	soPath := filepath.Join(dir, "libfern.so")
+	if err := os.WriteFile(soPath, so, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Give each slot a trampoline that returns its own index, then check
+	// every probe echoes its slot back — proving each wrapper's index.
+	var fns, slotInit, checks string
+	for _, p := range probes {
+		idx := decstr(p.slot)
+		fns += "static long f" + idx + "(void){ return " + idx + "; }\n"
+		slotInit += "  table[" + idx + "] = (void*)f" + idx + ";\n"
+		checks += "  if(((long(*)(long,long,long))dlsym(h,\"" + p.fn + "\"))(0,0,(long)env) != " + idx + ") return " + idx + ";\n"
+	}
+	loader := `#include <dlfcn.h>
+#include <stdio.h>
+` + fns + `int main(int c, char** v){
+  void* h = dlopen(v[1], RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
+  void* table[256] = {0};
+` + slotInit + `  void* tptr = table; void* env = &tptr;
+` + checks + `  return 42;
+}`
+	cPath := filepath.Join(dir, "loader.c")
+	if err := os.WriteFile(cPath, []byte(loader), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ld := filepath.Join(dir, "loader")
+	if out, err := exec.Command(gcc, cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
+		t.Fatalf("gcc loader: %v\n%s", err, out)
+	}
+	cmd := exec.Command(ld, soPath)
+	out, _ := cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 42 {
+		t.Fatalf("exception/ref wrapper dispatch = %d, want 42 (out=%q)", code, out)
+	}
+}
