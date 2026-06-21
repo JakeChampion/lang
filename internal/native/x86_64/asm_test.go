@@ -156,3 +156,26 @@ func TestUnsupportedInstructionErrors(t *testing.T) {
 		t.Fatalf("expected an error for an unsupported instruction")
 	}
 }
+
+// TestEncodeMovImmToMemSize pins the operand-size of an immediate-to-memory
+// `mov` against the `byte/word/dword/qword ptr` prefix. Regression for #3544:
+// `mov byte ptr [mem], imm` was emitted as a 4-byte store (C7 + imm32) instead
+// of C6 + imm8, so __fern_strcat's 1-byte NUL terminator overran its `len+1`
+// buffer by 3 bytes (a layout-dependent heap corruption). Expected encodings
+// cross-checked against GNU `as -msyntax=intel`.
+func TestEncodeMovImmToMemSize(t *testing.T) {
+	cases := []struct{ src, want string }{
+		{"mov byte ptr [rdi], 0", "c60700"},
+		{"mov word ptr [rdi], 0", "66c7070000"},
+		{"mov dword ptr [rdi], 0", "c70700000000"},
+		{"mov qword ptr [rdi], 0", "48c70700000000"},
+		{"mov byte ptr [rdi], 0x41", "c60741"},
+		{"mov word ptr [rax], 0x1234", "66c7003412"},
+		{"mov byte ptr [r8], 0", "41c60000"},
+	}
+	for _, c := range cases {
+		if got := asm(t, c.src); got != c.want {
+			t.Errorf("asm(%q) = %s, want %s", c.src, got, c.want)
+		}
+	}
+}
