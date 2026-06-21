@@ -351,3 +351,46 @@ pub function sort[T: Ord](arr: T[]): T[] {
     }
     return out;
 }
+
+// ---- Eq-bounded sequence verbs ---------------------------------
+// Free functions over any `T: Eq`, derived from the single `eq`
+// primitive — so they cover the primitive impls above and any user
+// type that impls `Eq`. Like the `Ord` verbs, a bounded generic whose
+// body calls `x.eq(y)` monomorphises to a direct call, so these lower
+// on the self-host IR path too (#2689 / #2691). These are the
+// element-type-generic counterparts to the i32[]/string[]-specific
+// `contains` / `index_of` Array methods in std/array — which std/array
+// can't generalise to `T: Eq` itself without importing core/cmp (a
+// std/array → core/cmp → std/string → std/array import cycle), so the
+// Eq-bounded forms live here with the trait they depend on.
+
+// contains reports whether `xs` holds a value equal to `target`.
+pub function contains[T: Eq](xs: T[], target: T): boolean {
+    for x in xs {
+        if (x.eq(target)) { return true; }
+    }
+    return false;
+}
+
+// index_of returns the 0-based position of the first value equal to
+// `target`, or -1 if no value matches.
+pub function index_of[T: Eq](xs: T[], target: T): i32 {
+    var i = 0;
+    for x in xs {
+        if (x.eq(target)) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// distinct returns a new array with duplicate values removed, keeping
+// the first occurrence of each in original order. O(n²) via `Eq` alone
+// (no `Hash` needed) — suited to small / convenience inputs; a
+// `Hash`-backed dedup is the larger-n follow-up.
+pub function distinct[T: Eq](xs: T[]): T[] {
+    var out: T[] = [];
+    for x in xs {
+        if (!contains(out, x)) { out = out.append(x); }
+    }
+    return out;
+}
