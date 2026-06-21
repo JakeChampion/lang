@@ -217,10 +217,19 @@ backends (`internal/e2e/poll_test.go`, x86-64 + arm64/qemu).
   the Phase-5 timeout / bounded-happy-eyeballs primitive. Tested both
   paths (completes / times out) on x86-64 + arm64 with deterministic
   timerfds (`internal/e2e/reactor_test.go ▸ TestReactorDeadline`).
+- **DONE — `poll` validated on real TCP sockets:** a poll-driven
+  one-shot server (poll the listener → accept → poll the connection →
+  recv → respond) round-trips a real localhost request end-to-end
+  (`internal/e2e/reactor_socket_test.go`). No new builtins — a blocking
+  accept/recv doesn't block once `poll` reports the fd ready, so the
+  reactor needs no non-blocking variants for this shape. This is the
+  edge-handler serving path over the reactor.
 - **Self-host** (`asm.fern` / `asm_arm64.fern`) — mirror `__fern_poll`
   + `__fern_timer_fd`.
-- Non-blocking accept/recv/send (`O_NONBLOCK` + `EAGAIN`), then
-  `plat.fetch` as the first real awaitable over `run_io`.
+- Non-blocking accept/recv/send (`O_NONBLOCK` + `EAGAIN`) — only needed
+  for correctness under partial reads / spurious wakeups; the
+  poll-then-blocking shape covers the common case. Then `plat.fetch`
+  as the first real awaitable over `run_io`.
 
 Risk: this is the most backend-heavy slice and the only one needing
 arm64/qemu + wasmtime in the loop. Gate locally on x86-64 + interp +
