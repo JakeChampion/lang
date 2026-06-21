@@ -41,6 +41,18 @@ impl Ord for P { function cmp(self: Self, other: Self): i32 { if (self.v < other
 function lt[T: Ord](a: T, b: T): boolean { return a.cmp(b) < 0; }
 function gte[T: Ord](a: T, b: T): boolean { return a.cmp(b) >= 0; }
 function main(): i32 { var r = 0; if (lt(P { v: 2 }, P { v: 9 })) { r = r + 5; } if (gte(P { v: 9 }, P { v: 9 })) { r = r + 2; } return r; }`, 7},
+	// generic sort over a user Ord struct array → [1,2,3]; 1*100+2*10+3 = 123.
+	{"sort", `pub trait Ord { function cmp(self: Self, other: Self): i32; }
+struct P { v: i32 }
+impl Ord for P { function cmp(self: Self, other: Self): i32 { if (self.v < other.v) { return 0 - 1; } if (self.v > other.v) { return 1; } return 0; } }
+function sort[T: Ord](arr: T[]): T[] { var out = arr; var n = out.len(); var i = 1; while (i < n) { var j = i; while (j > 0 && out[j].cmp(out[j - 1]) < 0) { var tmp = out[j]; out = out.with(j, out[j - 1]); out = out.with(j - 1, tmp); j = j - 1; } i = i + 1; } return out; }
+function main(): i32 { var xs: P[] = [P { v: 3 }, P { v: 1 }, P { v: 2 }]; var s = sort(xs); return s[0].v * 100 + s[1].v * 10 + s[2].v; }`, 123},
+	// is_sorted over a user Ord struct array. sorted→+5, unsorted→+2 → 7.
+	{"is-sorted", `pub trait Ord { function cmp(self: Self, other: Self): i32; }
+struct P { v: i32 }
+impl Ord for P { function cmp(self: Self, other: Self): i32 { if (self.v < other.v) { return 0 - 1; } if (self.v > other.v) { return 1; } return 0; } }
+function is_sorted[T: Ord](arr: T[]): boolean { var i = 1; var n = arr.len(); while (i < n) { if (arr[i].cmp(arr[i - 1]) < 0) { return false; } i = i + 1; } return true; }
+function main(): i32 { var a: P[] = [P { v: 1 }, P { v: 2 }, P { v: 3 }]; var b: P[] = [P { v: 3 }, P { v: 1 }]; var r = 0; if (is_sorted(a)) { r = r + 5; } if (!is_sorted(b)) { r = r + 2; } return r; }`, 7},
 }
 
 // TestNativeCmpHelpers runs the inline Ord-helper programs on the native
@@ -95,18 +107,21 @@ function main(): i32 {
     var p = cmp.min(P { v: 5 }, P { v: 2 }); // P{v:2}
     var d = 0;
     if (cmp.lt(2, 9)) { d = 1; }         // 1
-    return a + b + c + p.v + d;          // 3+8+10+2+1 = 24
+    var arr = cmp.sort([3, 1, 2]);       // [1,2,3]  (primitive impl Ord for i32)
+    var srt = 0;
+    if (cmp.is_sorted(arr)) { srt = 1; } // 1
+    return a + b + c + p.v + d + arr[0] * 100 + arr[2] + srt; // 24 + 100 + 3 + 1 = 128
 }
 `
 	p := writeIterProg(t, src)
-	if _, code := runFixtureInterp(t, p, ""); code != 24 {
-		t.Errorf("cmp module interp = %d, want 24", code)
+	if _, code := runFixtureInterp(t, p, ""); code != 128 {
+		t.Errorf("cmp module interp = %d, want 128", code)
 	}
-	if _, code := runFixtureX86_64(t, p, ""); code != 24 {
-		t.Errorf("cmp module x86-64 = %d, want 24", code)
+	if _, code := runFixtureX86_64(t, p, ""); code != 128 {
+		t.Errorf("cmp module x86-64 = %d, want 128", code)
 	}
-	if code := runWasm(t, src); code != 24 {
-		t.Errorf("cmp module wasm = %d, want 24", code)
+	if code := runWasm(t, src); code != 128 {
+		t.Errorf("cmp module wasm = %d, want 128", code)
 	}
 }
 
