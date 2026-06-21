@@ -1,0 +1,83 @@
+package e2e
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+)
+
+// std/reactor's run_io drives fd-tagged stackless tasks (IoStep) to
+// completion using the real `poll` syscall builtin
+// (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1c) — the real-I/O
+// counterpart to std/task's in-memory reactor. Two tasks each wait on
+// a regular-file fd (always poll-readable, so deterministic — no
+// socket timing), so run_io must drive both to completion and return
+// their results in order. Native-only (poll is a native builtin).
+func TestReactorRunIO(t *testing.T) {
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+	fileA := filepath.Join(dir, "a.txt")
+	fileB := filepath.Join(dir, "b.txt")
+	for _, p := range []string{fileA, fileB} {
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatalf("write probe %s: %v", p, err)
+		}
+	}
+
+	// Two fd-tagged tasks fan out over real poll; success → 42.
+	src := fmt.Sprintf(`import "std/reactor";
+
+function start_io(fd: i32): reactor.IoStep {
+    function resume(woken_fd: i32): reactor.IoStep { return IoDone(woken_fd); }
+    return IoWait(fd, resume);
+}
+
+function main(): i32 {
+    match (open_reader("%s")) {
+        Ok(ra) => {
+            match (open_reader("%s")) {
+                Ok(rb) => {
+                    var tasks: reactor.IoStep[] = [start_io(ra.fd), start_io(rb.fd)];
+                    var results: i32[] = reactor.run_io(tasks);
+                    if (results.len() != 2) { return 90; }
+                    if (results[0] < 0) { return 91; }
+                    if (results[1] < 0) { return 92; }
+                    return 42;
+                },
+                Err(e) => { return 98; }
+            }
+        },
+        Err(e) => { return 99; }
+    }
+}`, fileA, fileB)
+
+	backends := []struct {
+		target string
+		qemu   func(*testing.T) string
+		run    func(qemu, bin string, args ...string) *exec.Cmd
+	}{
+		{"x86-64", x86QemuOrEmpty, runX86Bin},
+		{"arm64", arm64QemuOrEmpty, runArm64Bin},
+	}
+	for _, be := range backends {
+		be := be
+		t.Run(be.target, func(t *testing.T) {
+			qemu := be.qemu(t) // skips if no runner
+			srcPath := filepath.Join(dir, be.target+"_reactor.fern")
+			if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			out := filepath.Join(dir, be.target+"_reactor.bin")
+			if o, err := exec.Command(bin, "-target", be.target, "-o", out, srcPath).CombinedOutput(); err != nil {
+				t.Fatalf("build failed: %v\n%s", err, o)
+			}
+			cmd := be.run(qemu, out)
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 42 {
+				t.Errorf("%s: run_io exit = %d, want 42", be.target, code)
+			}
+		})
+	}
+}
