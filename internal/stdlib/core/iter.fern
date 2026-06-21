@@ -160,6 +160,45 @@ pub function find[T, I: Iterator[T]](it: I, pred: (T) => boolean): Option[T] {
     return None;
 }
 
+// position_by returns the 0-based index of the first value for which `pred` is
+// true, or -1 if none matches. The closure-taking, element-type-generic
+// counterpart to the i32-only `position` (which matches on `==` a target).
+pub function position_by[T, I: Iterator[T]](it: I, pred: (T) => boolean): i32 {
+    var cur = it;
+    var i = 0;
+    var go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => {
+                if (pred(t.0)) { return i; }
+                i = i + 1;
+                cur = t.1;
+            },
+            None => { go = false; },
+        }
+    }
+    return 0 - 1;
+}
+
+// count_by returns how many of the iterator's values satisfy `pred`. The
+// closure-taking, element-type-generic counterpart to the i32-only
+// `count_value` (which counts values `==` a target).
+pub function count_by[T, I: Iterator[T]](it: I, pred: (T) => boolean): i32 {
+    var cur = it;
+    var n = 0;
+    var go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => {
+                if (pred(t.0)) { n = n + 1; }
+                cur = t.1;
+            },
+            None => { go = false; },
+        }
+    }
+    return n;
+}
+
 // map eagerly applies `f` to every value the iterator yields, collecting the
 // results into a fresh `U[]` in order. The eager transform — `it.map(f)` of the
 // iterator world, returning an array rather than a lazy adapter (lazy fusion is
