@@ -184,3 +184,39 @@ func TestCmdLangAsyncFunctionKeyword(t *testing.T) {
 		t.Errorf("async function keyword: got %q, want 42", bytes.TrimSpace(out))
 	}
 }
+
+// TestWasmP3NestedComponentReExport exercises the nested-component
+// encoders (PutComponentSection + PutInstanceSectionInstantiateComponent)
+// — the building block the async-import / await side needs to bundle a
+// provider inside a consumer. It embeds the async-export provider as a
+// nested component, instantiates it, aliases its `dep: async func() ->
+// u32` export, and re-exports it at the outer level. Running the outer
+// `dep()` under wasmtime's async features returns the nested provider's
+// value (42) — proving nested embedding composes and an async export
+// survives nesting + re-export.
+func TestWasmP3NestedComponentReExport(t *testing.T) {
+	skipIfPreview2Missing(t) // ensures wasmtime on PATH
+
+	provider := component.BuildAsyncLiftedExportComponent(p3AsyncCoreModule, "run", "dep", component.CValtypeU32)
+
+	buf := component.PutComponentHeader(nil)
+	buf = component.PutComponentSection(buf, provider)                  // component 0
+	buf = component.PutInstanceSectionInstantiateComponent(buf, 0)      // component instance 0
+	buf = component.PutAliasSectionInstanceExportFunc(buf, 0, "dep")    // component func 0
+	buf = component.PutExportSectionOneFunc(buf, "dep", 0)
+
+	dir := t.TempDir()
+	p := filepath.Join(dir, "nested.wasm")
+	if err := os.WriteFile(p, buf, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("wasmtime", "run",
+		"-W", "component-model-async,component-model-async-stackful",
+		"--invoke", "dep()", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run (nested async): %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte("42")) {
+		t.Errorf("nested re-exported async dep: got %q, want 42", bytes.TrimSpace(out))
+	}
+}

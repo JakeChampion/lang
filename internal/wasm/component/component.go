@@ -28,6 +28,7 @@ const (
 	SectionCoreModule   = 1
 	SectionCoreInstance = 2
 	SectionCoreType     = 3
+	SectionComponent    = 4
 	SectionInstance     = 5
 	SectionAlias        = 6
 	SectionType         = 7
@@ -89,6 +90,35 @@ func PutCoreModuleSection(buf, core []byte) []byte {
 	buf = leb128.UlebU64(buf, uint64(len(core)))
 	buf = append(buf, core...)
 	return buf
+}
+
+// PutComponentSection embeds a nested component (section id 4). `comp`
+// is an entire component starting with its own preamble — the
+// component-level analogue of PutCoreModuleSection. Used to bundle a
+// provider component inside a consumer (e.g. an async-export provider
+// the consumer awaits), so the result is a single self-contained
+// runnable component with no external link step.
+func PutComponentSection(buf, comp []byte) []byte {
+	buf = append(buf, SectionComponent)
+	buf = leb128.UlebU64(buf, uint64(len(comp)))
+	buf = append(buf, comp...)
+	return buf
+}
+
+// PutInstanceSectionInstantiateComponent emits a component-level
+// instance section (id 5) with one "instantiate" entry that
+// instantiates an embedded component (by component index) with no
+// import args — the component-level analogue of
+// PutCoreInstanceSectionInstantiate. (A component with imports would
+// pass `(name, sort, idx)` arg triples; the no-import form covers a
+// self-contained provider.)
+func PutInstanceSectionInstantiateComponent(buf []byte, componentIdx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1) instances
+	body = append(body, 0x00)      // form: instantiate
+	body = leb128.UlebU64(body, uint64(componentIdx))
+	body = leb128.UlebU64(body, 0) // vec(0) args
+	return wrapSection(buf, SectionInstance, body)
 }
 
 // putName appends a uleb-prefixed UTF-8 name (the component-model
