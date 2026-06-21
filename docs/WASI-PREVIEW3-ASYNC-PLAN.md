@@ -38,19 +38,21 @@ overlapped outbound fetches directly, without the explicit `Step[T]`/
   34.0.1 after verifying the whole Preview-2 wasm suite passes under 37
   (async stays off by default), so the toolchain prerequisite for P3 is
   satisfied — CI can run async components once codegen emits them.
-- **wasm-tools 1.225.0** — partial: `future<u32>` / `stream<T>` WIT
-  **round-trips cleanly**, but the **`async func` WIT syntax is
-  rejected** (`expected keyword 'func', found an identifier`). So the
-  async *types* are encodable, but the async *function modifier* in WIT
-  text is not yet in this version. Binary `canon lift/lower async` may
-  still be hand-emittable (the Fern composer emits component bytes
-  directly, not WIT text), but validation/printing of an async lift is
-  not yet exercised by our tooling.
+- **wasm-tools 1.240.0** (bumped from 1.225, which **rejected** the
+  `async func` WIT syntax). 1.240 authors async cleanly: both an
+  `async func` interface method and an `export … : async func(...)`
+  round-trip through `wasm-tools component wit`, and `future<T>` /
+  `stream<T>` types already did. Verified the whole Preview-2 wasm suite
+  still passes under 1.240 (+ wasmtime 37), so the bump is
+  backward-compatible. So the async *authoring* path
+  (validate/print/encode) is now available, not just the runtime.
 
-**Conclusion:** the runtime is ready; the authoring/validation tooling
-is immature, and CI is two minor versions behind the async runtime.
-Nothing about P3 is testable in CI today without a wasmtime bump, and
-even locally a hand-emitted async lift can't be fully WIT-validated.
+**Conclusion:** the toolchain is ready — wasmtime 37 runs async
+components (async off by default) and wasm-tools 1.240 authors/validates
+them. Both are now the CI-pinned versions, so P3 async codegen has a
+fully testable target (author + validate + run). What remains is the
+**implementation** — emitting the async canonical ABI from the Fern
+composer — not the tooling.
 
 ## Scope of a P3 implementation in Fern
 
@@ -81,14 +83,13 @@ composition + three small builtins). It would touch:
    edge-handler fan-out (timer + poll + scheduler + deadline). The next
    concrete async increments (outbound socket pollables, a `select`
    first-wins combinator) all build on it with no tooling risk.
-2. **Gate P3 on a toolchain bump. — DONE.** The pinned wasmtime is now
-   v37.0.1 (CI + local), verified that the existing P2 wasm suite still
-   passes under it (async stays off by default; `-W component-model-async`
-   is opt-in). Remaining tooling caveat: wasm-tools 1.225 validates
-   `future`/`stream` types but not the `async func` WIT lift syntax, so
-   an async lift may need a newer wasm-tools (or to be exercised by
-   running under wasmtime rather than WIT-validating). The runtime
-   prerequisite is satisfied; async codegen now has a testable target.
+2. **Gate P3 on a toolchain bump. — DONE.** The pinned toolchain is now
+   wasmtime v37.0.1 + wasm-tools 1.240.0 (CI + local), each verified to
+   keep the existing P2 wasm suite green (async stays off by default;
+   `-W component-model-async` is opt-in). wasmtime 37 runs async
+   components; wasm-tools 1.240 authors/validates `async func` +
+   `future`/`stream`. The toolchain prerequisite is fully satisfied —
+   async codegen has a testable author→validate→run target.
 3. **Then implement P3 incrementally**, smallest-first: a single
    `async` export returning a `future<u32>` resolved immediately
    (`task.return`), run under `wasmtime -W component-model-async` — the

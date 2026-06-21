@@ -75,9 +75,9 @@ runs:
       with:
         path: |
           ~/.wasmtime
-          ~/wasm-tools-1.225.0-${{ steps.wasm-arch.outputs.arch }}
+          ~/wasm-tools-1.240.0-${{ steps.wasm-arch.outputs.arch }}
           ~/wasi-adapter
-        key: wasm-${{ runner.arch }}-1.225.0-v37.0.1
+        key: wasm-${{ runner.arch }}-1.240.0-v37.0.1
 
     - name: Install wasmtime + wasm-tools + adapter (cache miss)
       if: inputs.wasmtime == 'true' && steps.cache-wasm.outputs.cache-hit != 'true'
@@ -96,7 +96,7 @@ runs:
         curl -sSfL "https://github.com/bytecodealliance/wasmtime/releases/download/v37.0.1/wasmtime-v37.0.1-${{ steps.wasm-arch.outputs.arch }}.tar.xz" \
           | tar -xJ -C "$HOME"
         install -m 0755 "$HOME/wasmtime-v37.0.1-${{ steps.wasm-arch.outputs.arch }}/wasmtime" "$HOME/.wasmtime/bin/wasmtime"
-        curl -sSfL "https://github.com/bytecodealliance/wasm-tools/releases/download/v1.225.0/wasm-tools-1.225.0-${{ steps.wasm-arch.outputs.arch }}.tar.gz" \
+        curl -sSfL "https://github.com/bytecodealliance/wasm-tools/releases/download/v1.240.0/wasm-tools-1.240.0-${{ steps.wasm-arch.outputs.arch }}.tar.gz" \
           | tar -xz -C "$HOME"
         mkdir -p "$HOME/wasi-adapter"
         curl -sSfL -o "$HOME/wasi-adapter/wasi_snapshot_preview1.command.wasm" \
@@ -107,7 +107,7 @@ runs:
       shell: bash
       run: |
         echo "$HOME/.wasmtime/bin" >> "$GITHUB_PATH"
-        echo "$HOME/wasm-tools-1.225.0-${{ steps.wasm-arch.outputs.arch }}" >> "$GITHUB_PATH"
+        echo "$HOME/wasm-tools-1.240.0-${{ steps.wasm-arch.outputs.arch }}" >> "$GITHUB_PATH"
         echo "FERN_WASI_ADAPTER=$HOME/wasi-adapter/wasi_snapshot_preview1.command.wasm" >> "$GITHUB_ENV"
 
     - name: Cache gotestsum binary
