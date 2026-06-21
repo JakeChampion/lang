@@ -537,6 +537,7 @@ func main() {
 	doInterp := flag.Bool("interp", false, "run FILE.fern (or `-` for stdin) through the AST interpreter — no codegen, no link, no binary. main()'s return value becomes the process exit code (clamped to 0..255). State is fresh per invocation; the REPL flag keeps an interactive session across lines.")
 	componentWrap := flag.Bool("component-wrap", false, "with -target wasm-bin: wrap the core module as a self-contained preview-2 component via internal/wasm/component (no wasm-tools shell-out, no preview-1 adapter). Lifts main() as a component-level u32-returning export. Supports any mix of the migrated preview-2 imports; unrecognised imports surface a clear error.")
 	componentWrapCli := flag.Bool("component-wrap-cli", false, "like -component-wrap but emits the wasi:cli/run@0.2.0 export shape so the produced component runs under plain `wasmtime run prog.wasm` (no --invoke). main()'s return value lowers to result<_, _>: 0 = ok, non-zero = err. void main is supported (auto-wrapped to return 0). Same WASI coverage as -component-wrap.")
+	asyncExport := flag.Bool("async-export", false, "with -target wasm-bin: wrap the core as a WASI Preview-3 component-model-async component exporting `run: async func() -> u32` (lifted from main, which must return i32). The result is delivered via `canon task.return`. Run with `wasmtime run -W component-model-async,component-model-async-stackful --invoke 'run()'`. See docs/WASI-PREVIEW3-ASYNC-PLAN.md.")
 	doFmt := flag.Bool("fmt", false, "format the source file and write to stdout (use -w to write back in place, -d to print a diff)")
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite the input file with the formatted output")
 	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between the file and its formatted form; exits 1 when they differ")
@@ -673,7 +674,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, "-component-wrap and -component-wrap-cli are mutually exclusive")
 		os.Exit(1)
 	}
-	code, err := run(srcPath, *out, *target, *cc, *runIt, *native, *qemu, *componentWrap, *componentWrapCli, *shared, *export, progArgs)
+	if *asyncExport && (*componentWrap || *componentWrapCli) {
+		fmt.Fprintln(os.Stderr, "-async-export is mutually exclusive with -component-wrap / -component-wrap-cli")
+		os.Exit(1)
+	}
+	code, err := run(srcPath, *out, *target, *cc, *runIt, *native, *qemu, *componentWrap, *componentWrapCli, *asyncExport, *shared, *export, progArgs)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -902,7 +907,7 @@ func runCheck(srcPath string) error {
 // run drives the full pipeline. The returned int is the exit code that
 // the fern process itself should exit with: 0 in compile-only mode, or
 // the program's own exit code under --run.
-func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, componentWrap, componentWrapCli, shared bool, export string, progArgs []string) (int, error) {
+func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, componentWrap, componentWrapCli, asyncExport, shared bool, export string, progArgs []string) (int, error) {
 	e, err := loadEntry(srcPath)
 	if err != nil {
 		return 1, err
@@ -967,6 +972,23 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 		//     (no wasm-tools, no preview-1 adapter).
 		if outPath == "" {
 			return 1, fmt.Errorf("-target wasm-bin requires -o OUTPUT")
+		}
+		if asyncExport {
+			// WASI Preview-3 component-model-async: emit the async
+			// core-func shape (main → task-return → void) and lift it
+			// with the `async` canonical option. main must return i32.
+			acore, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+				Preview2WASI:    true,
+				AsyncExportName: "__async_run",
+			})
+			if err != nil {
+				return 1, fmt.Errorf("-async-export %w", err)
+			}
+			comp := component.BuildAsyncLiftedExportComponent(acore, "__async_run", "run", component.CValtypeU32)
+			if err := os.WriteFile(outPath, comp, 0o644); err != nil {
+				return 1, err
+			}
+			return 0, nil
 		}
 		bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
 			Preview2WASI: componentWrap || componentWrapCli,
