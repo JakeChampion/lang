@@ -5295,11 +5295,17 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
             return RExpr { rexpr: e, rins: ins };
         },
         ExprArray(a) => {
+            // An array literal flowing into `Opt[i32][]` propagates the ELEMENT
+            // expected type (`Opt[i32]`) to each element, so a unit-variant
+            // element (`Nn`, no payload to infer from) still pins its
+            // instantiation. Strip one `[]` off the expected array type.
+            var elexp: string = "";
+            if (type_ends_arr(expected)) { elexp = expected[0 : expected.len() - 2]; }
             var nels: Expr[] = [];
             var cur: Insts = ins;
             var i: i32 = 0;
             while (i < a.elements.len()) {
-                var re: RExpr = me_expr(a.elements[i], "", env, enums, structs, funcs, cur);
+                var re: RExpr = me_expr(a.elements[i], elexp, env, enums, structs, funcs, cur);
                 cur = re.rins;
                 nels = nels.append(re.rexpr);
                 i = i + 1;
@@ -5383,6 +5389,31 @@ function me_rewrite_arm_pattern(pat: Pattern, ed: EnumDecl, key: string): Patter
     return pat;
 }
 
+// me_scrutinee_type recovers the (original-spelling) type of a match scrutinee
+// or for-loop iterable, so its generic-enum instantiation can be read: an
+// ident / param / for-loop var via the env, a call result via the callee's
+// declared return type, and an index `a[i]` via the array's element type.
+// "" when it can't be determined (the arms then stay un-rewritten).
+function me_scrutinee_type(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
+    match (e) {
+        ExprIdent(id) => { return env.elook(id.name); },
+        ExprCall(c) => {
+            match (c.callee) {
+                ExprIdent(cid) => { return func_ret_of(funcs, cid.name); },
+                _ => { return ""; }
+            }
+            return "";
+        },
+        ExprIndex(ix) => {
+            var at: string = me_scrutinee_type(ix.array, env, funcs);
+            if (type_ends_arr(at)) { return at[0 : at.len() - 2]; }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 // me_stmt mirrors mono_stmt for the enum pass: it rewrites generic-enum
 // annotations, variant constructions, and `match` arm patterns, threading
 // the var-type env (original spellings) and the enclosing return type.
@@ -5392,7 +5423,12 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
             var iv: RExpr = me_expr(v.init, v.type_name, env, enums, structs, funcs, ins);
             var cins: Insts = me_collect_anno(v.type_name, enums, funcs, iv.rins);
             var nty: string = me_rewrite_ty(v.type_name, enums, funcs);
-            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: nty, init: iv.rexpr, line: v.line, col: v.col }, renv: env.ebind(v.name, v.type_name), rins2: cins };
+            // Track the var's type for a later `match`: the annotation if
+            // present, else the init's recovered type (a call result, so
+            // `var o = wrap(4); match (o)` resolves like `match (wrap(4))`).
+            var vty: string = v.type_name;
+            if (vty.len() == 0) { vty = me_scrutinee_type(v.init, env, funcs); }
+            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: nty, init: iv.rexpr, line: v.line, col: v.col }, renv: env.ebind(v.name, vty), rins2: cins };
         },
         StmtReturn(r) => {
             var rv: RExpr = me_expr(r.value, ret_ty, env, enums, structs, funcs, ins);
@@ -5419,19 +5455,24 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
         },
         StmtFor(fr) => {
             var it: RExpr = me_expr(fr.iter, "", env, enums, structs, funcs, ins);
-            var benv: MEnv = env.ebind(fr.var_name, "");
+            // Bind the loop variable to the iterable's ELEMENT type so a `match`
+            // in the body recovers a generic-enum element's instantiation
+            // (`for o in xs` over `Opt[i32][]` → o: `Opt[i32]`). Strip one `[]`
+            // off the iterable's tracked type.
+            var itty: string = me_scrutinee_type(fr.iter, env, funcs);
+            var elty: string = "";
+            if (type_ends_arr(itty)) { elty = itty[0 : itty.len() - 2]; }
+            var benv: MEnv = env.ebind(fr.var_name, elty);
             var fb: RStmts = me_stmts(fr.body, benv, ret_ty, enums, structs, funcs, it.rins);
             return RStmtOne { rstmt: StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label }, renv: env, rins2: fb.rins3 };
         },
         StmtMatch(m) => {
             var sv: RExpr = me_expr(m.scrutinee, "", env, enums, structs, funcs, ins);
             var cur: Insts = sv.rins;
-            // Recover the scrutinee's generic-enum instantiation (ident scrutinee).
-            var sty: string = "";
-            match (m.scrutinee) {
-                ExprIdent(id) => { sty = env.elook(id.name); },
-                _ => { }
-            }
+            // Recover the scrutinee's generic-enum instantiation: an annotated
+            // ident / param / for-loop var, a call result (the callee's return
+            // type), or an index into a generic-enum array.
+            var sty: string = me_scrutinee_type(m.scrutinee, env, funcs);
             var gi: GEInst = ge_inst_of(sty, enums, funcs);
             var arms: MatchArm[] = [];
             var i: i32 = 0;
