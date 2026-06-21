@@ -338,7 +338,10 @@ func TestAvailableCodesEnumeratesCatalogue(t *testing.T) {
 		"E031": true, "E032": true, "E033": true, "E034": true, "E035": true,
 		"E036": true, "E037": true, "E038": true, "E039": true, "E040": true,
 		"E041": true, "E042": true, "E043": true, "E044": true, "E045": true,
-		"E046": true, "E047": true, "E048": true, "E049": true, "E052": true,
+		"E046": true, "E047": true, "E048": true, "E049": true, "E050": true,
+		"E051": true, "E052": true, "E053": true, "E054": true, "E055": true,
+		"E056": true, "E057": true, "E058": true, "E059": true, "E060": true,
+		"E061": true, "E062": true, "E063": true, "E064": true,
 		"P001": true, "P002": true, "P003": true,
 	}
 	gotSet := map[string]bool{}
