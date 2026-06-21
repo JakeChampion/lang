@@ -433,7 +433,7 @@ type generator struct {
 	usesMemcpy  bool
 	// usesCCall[n] gates the `__c_call<n>` FFI shim (call a C-ABI function
 	// pointer with n integer args). See emitCCallRuntime.
-	usesCCall   [4]bool
+	usesCCall   [5]bool
 	usesStrcat  bool
 	usesStrcmp  bool
 	usesPuts    bool
@@ -618,6 +618,8 @@ func (g *generator) recordUse(target string) {
 		g.usesCCall[2] = true
 	case "__c_call3":
 		g.usesCCall[3] = true
+	case "__c_call4":
+		g.usesCCall[4] = true
 	case "__memcpy":
 		g.usesMemcpy = true
 	case "__fern_rc_inc":
@@ -3840,7 +3842,7 @@ func (g *generator) emitCCallRuntime(n int) {
 	g.label(name)
 	g.emit("mov r11, rdi") // r11 = fn (preserved across the arg slide)
 	// Slide a0..a{n-1} from (rsi,rdx,rcx) down to (rdi,rsi,rdx).
-	regs := []string{"rdi", "rsi", "rdx", "rcx"}
+	regs := []string{"rdi", "rsi", "rdx", "rcx", "r8"}
 	for i := 0; i < n; i++ {
 		g.emit(fmt.Sprintf("mov %s, %s", regs[i], regs[i+1]))
 	}
