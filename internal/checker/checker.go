@@ -9731,7 +9731,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				n.IsFloat = true
 				common, ok := commonFloatWidth(lt, rt)
 				if !ok {
-					c.errfCode(n.P, "E009", "operator %q requires both operands to share a float type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+					// Only the both-are-floats-but-different-width case needs
+					// this hint; if an operand wasn't a float, requireFloat
+					// above already reported it, so suppress the redundant
+					// follow-on rather than stacking two E009s on one typo.
+					if isFloat(lt) && isFloat(rt) {
+						c.errfCode(n.P, "E009", "operator %q requires both operands to share a float type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+					}
 					return ast.FloatType{}
 				}
 				c.settleNumeric(n.Left, common)
@@ -9745,7 +9751,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.requireInteger(n.P, rt, n.Op)
 			common, ok := commonIntegerWidth(lt, rt)
 			if !ok {
-				c.errfCode(n.P, "E009", "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+				// Only the both-are-integers-but-different-width/signedness
+				// case needs this hint; if an operand wasn't an integer,
+				// requireInteger above already reported it, so suppress the
+				// redundant follow-on rather than stacking two E009s on one
+				// typo (`i32 - "x"`).
+				if isInteger(lt) && isInteger(rt) {
+					c.errfCode(n.P, "E009", "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+				}
 				return ast.NumberType{}
 			}
 			c.settleNumeric(n.Left, common)
@@ -9778,7 +9791,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.requireInteger(n.P, rt, n.Op)
 			common, ok := commonIntegerWidth(lt, rt)
 			if !ok {
-				c.errfCode(n.P, "E009", "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+				// Only the both-are-integers-but-different-width/signedness
+				// case needs this hint; if an operand wasn't an integer,
+				// requireInteger above already reported it, so suppress the
+				// redundant follow-on rather than stacking two E009s on one
+				// typo (`i32 - "x"`).
+				if isInteger(lt) && isInteger(rt) {
+					c.errfCode(n.P, "E009", "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+				}
 				return ast.NumberType{}
 			}
 			c.settleNumeric(n.Left, common)
@@ -11679,6 +11699,12 @@ func (c *checker) requireFloat(p ast.Position, t ast.Type, op string) {
 }
 func isFloat(t ast.Type) bool {
 	_, ok := t.(ast.FloatType)
+	return ok
+}
+
+// isInteger reports whether t is an integer type (any width / signedness).
+func isInteger(t ast.Type) bool {
+	_, ok := t.(ast.NumberType)
 	return ok
 }
 
