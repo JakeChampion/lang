@@ -25,6 +25,8 @@
 //                whitespace; `\D \W \S` are their negations
 //   \b \B        word boundary / non-boundary (zero-width, between a
 //                `\w` and a non-`\w` byte or a text edge)
+//   (?i)…        a leading `(?i)` turns on ASCII case-insensitive matching
+//                (A–Z ↔ a–z) for the whole pattern
 //   \n \t \r     the newline / tab / carriage-return bytes
 //   \<meta>      a backslash before any other byte is that literal byte —
 //                use it to match a metacharacter (`\.`, `\(`, `\*`, `\\`, …)
@@ -217,9 +219,33 @@ function __rx_has(xs: i32[], v: i32): boolean {
     return false;
 }
 
+// __rx_fold lowercases an ASCII uppercase byte when case-insensitive
+// matching (`ci`) is on; otherwise returns the byte unchanged. The whole
+// case-insensitive story is ASCII A–Z ↔ a–z.
+function __rx_fold(c: i32, ci: boolean): i32 {
+    if (ci && c >= 65 && c <= 90) { return c + 32; }
+    return c;
+}
+
+// RProg is a compiled pattern: the parsed tree plus whether matching is
+// case-insensitive (set by a leading `(?i)` flag).
+pub struct RProg { root: RNode, ci: boolean }
+
+// __rx_compile parses `pattern`, honouring a leading `(?i)` flag that turns
+// on ASCII case-insensitive matching for the entire pattern. All the public
+// entry points compile through here, so `(?i)` works uniformly.
+function __rx_compile(pattern: string): RProg {
+    if (pattern.len() >= 4 && pattern[0 : 4] == "(?i)") {
+        return RProg { root: __rx_alt(pattern, 4).node, ci: true };
+    }
+    return RProg { root: __rx_alt(pattern, 0).node, ci: false };
+}
+
 // __rx_class tests a byte against a `[ … ]` class token (including its
-// brackets): ranges `a-b`, a leading `^` negation, and bare members.
-function __rx_class(tok: string, c: i32): boolean {
+// brackets): ranges `a-b`, a leading `^` negation, and bare members. Under
+// `ci`, the candidate byte and the class members/bounds are folded.
+function __rx_class(tok: string, c0: i32, ci: boolean): boolean {
+    var c: i32 = __rx_fold(c0, ci);
     var j: i32 = 1;                       // skip '['
     var neg: boolean = false;
     if (j < tok.len() && tok[j] == 94) { neg = true; j = j + 1; }
@@ -227,10 +253,10 @@ function __rx_class(tok: string, c: i32): boolean {
     var end: i32 = tok.len() - 1;         // index of ']'
     while (j < end) {
         if (tok[j + 1] == 45 && j + 2 < end) {       // 'a' '-' 'b'
-            if (c >= tok[j] && c <= tok[j + 2]) { found = true; }
+            if (c >= __rx_fold(tok[j], ci) && c <= __rx_fold(tok[j + 2], ci)) { found = true; }
             j = j + 3;
         } else {
-            if (c == tok[j]) { found = true; }
+            if (c == __rx_fold(tok[j], ci)) { found = true; }
             j = j + 1;
         }
     }
@@ -242,14 +268,14 @@ function __rx_class(tok: string, c: i32): boolean {
 // matching `inner` zero-or-more (`allow_zero`, for `*`) or one-or-more
 // (for `+`) times. A breadth-first set expansion: dedup against `seen`
 // guarantees termination even when `inner` can match the empty string.
-function __rx_closure(inner: RNode, t: string, ti: i32, allow_zero: boolean): i32[] {
+function __rx_closure(inner: RNode, t: string, ti: i32, allow_zero: boolean, ci: boolean): i32[] {
     var seen: i32[] = [];
     var frontier: i32[] = [];
     if (allow_zero) {
         seen = seen.append(ti);
         frontier = frontier.append(ti);
     } else {
-        var first: i32[] = __rx_match(inner, t, ti);
+        var first: i32[] = __rx_match(inner, t, ti, ci);
         var s: i32 = 0;
         while (s < first.len()) {
             if (!__rx_has(seen, first[s])) { seen = seen.append(first[s]); frontier = frontier.append(first[s]); }
@@ -260,7 +286,7 @@ function __rx_closure(inner: RNode, t: string, ti: i32, allow_zero: boolean): i3
         var nf: i32[] = [];
         var m: i32 = 0;
         while (m < frontier.len()) {
-            var sub: i32[] = __rx_match(inner, t, frontier[m]);
+            var sub: i32[] = __rx_match(inner, t, frontier[m], ci);
             var s2: i32 = 0;
             while (s2 < sub.len()) {
                 if (!__rx_has(seen, sub[s2])) { seen = seen.append(sub[s2]); nf = nf.append(sub[s2]); }
@@ -277,11 +303,11 @@ function __rx_closure(inner: RNode, t: string, ti: i32, allow_zero: boolean): i3
 // starting at `ti` can END (empty = no match). Anchors contribute the
 // current position when satisfied; `RSeq` threads the set through each
 // child; `RAlt` unions the alternatives.
-function __rx_match(n: RNode, t: string, ti: i32): i32[] {
+function __rx_match(n: RNode, t: string, ti: i32, ci: boolean): i32[] {
     match (n) {
-        RChar(c) => { var e: i32[] = []; if (ti < t.len() && t[ti] == c) { e = e.append(ti + 1); } return e; },
+        RChar(c) => { var e: i32[] = []; if (ti < t.len() && __rx_fold(t[ti], ci) == __rx_fold(c, ci)) { e = e.append(ti + 1); } return e; },
         RAny => { var e: i32[] = []; if (ti < t.len()) { e = e.append(ti + 1); } return e; },
-        RClass(tok) => { var e: i32[] = []; if (ti < t.len() && __rx_class(tok, t[ti])) { e = e.append(ti + 1); } return e; },
+        RClass(tok) => { var e: i32[] = []; if (ti < t.len() && __rx_class(tok, t[ti], ci)) { e = e.append(ti + 1); } return e; },
         RStart => { var e: i32[] = []; if (ti == 0) { e = e.append(ti); } return e; },
         REnd => { var e: i32[] = []; if (ti >= t.len()) { e = e.append(ti); } return e; },
         RBound(want) => {
@@ -300,7 +326,7 @@ function __rx_match(n: RNode, t: string, ti: i32): i32[] {
                 var nextset: i32[] = [];
                 var m: i32 = 0;
                 while (m < cur.len()) {
-                    var sub: i32[] = __rx_match(xs[k], t, cur[m]);
+                    var sub: i32[] = __rx_match(xs[k], t, cur[m], ci);
                     var s: i32 = 0;
                     while (s < sub.len()) { if (!__rx_has(nextset, sub[s])) { nextset = nextset.append(sub[s]); } s = s + 1; }
                     m = m + 1;
@@ -314,7 +340,7 @@ function __rx_match(n: RNode, t: string, ti: i32): i32[] {
             var out: i32[] = [];
             var k: i32 = 0;
             while (k < xs.len()) {
-                var sub: i32[] = __rx_match(xs[k], t, ti);
+                var sub: i32[] = __rx_match(xs[k], t, ti, ci);
                 var s: i32 = 0;
                 while (s < sub.len()) { if (!__rx_has(out, sub[s])) { out = out.append(sub[s]); } s = s + 1; }
                 k = k + 1;
@@ -323,13 +349,13 @@ function __rx_match(n: RNode, t: string, ti: i32): i32[] {
         },
         ROpt(inner) => {
             var out: i32[] = [ti];
-            var sub: i32[] = __rx_match(inner, t, ti);
+            var sub: i32[] = __rx_match(inner, t, ti, ci);
             var s: i32 = 0;
             while (s < sub.len()) { if (!__rx_has(out, sub[s])) { out = out.append(sub[s]); } s = s + 1; }
             return out;
         },
-        RStar(inner) => { return __rx_closure(inner, t, ti, true); },
-        RPlus(inner) => { return __rx_closure(inner, t, ti, false); }
+        RStar(inner) => { return __rx_closure(inner, t, ti, true, ci); },
+        RPlus(inner) => { return __rx_closure(inner, t, ti, false, ci); }
     }
 }
 
@@ -344,10 +370,10 @@ pub struct RMatch { found: boolean, start: i32, end: i32 }
 // the leftmost position it takes the longest end (greedy), so
 // `text[start:end]` is the longest leftmost match — the conventional search
 // semantics. The scanning helper behind search / find_all / replace / split.
-function __rx_search_from(root: RNode, text: string, from: i32): RMatch {
+function __rx_search_from(root: RNode, text: string, from: i32, ci: boolean): RMatch {
     var ti: i32 = from;
     while (true) {
-        var ends: i32[] = __rx_match(root, text, ti);
+        var ends: i32[] = __rx_match(root, text, ti, ci);
         if (ends.len() > 0) {
             var best: i32 = ends[0];
             var i: i32 = 1;
@@ -365,8 +391,8 @@ function __rx_search_from(root: RNode, text: string, from: i32): RMatch {
 // match). The pattern is parsed once; a `^` / `$` anchor self-limits the
 // match.
 pub function regex_search(pattern: string, text: string): RMatch {
-    var pr: RParse = __rx_alt(pattern, 0);
-    return __rx_search_from(pr.node, text, 0);
+    var prog: RProg = __rx_compile(pattern);
+    return __rx_search_from(prog.root, text, 0, prog.ci);
 }
 
 // `regex_match(pattern, text)` — true when `pattern` matches anywhere in
@@ -398,11 +424,11 @@ function __rx_advance(m: RMatch): i32 {
 // match, left to right, as an `RMatch[]`. A zero-width match advances one
 // byte so the scan terminates; the result is empty when nothing matches.
 pub function regex_find_all(pattern: string, text: string): RMatch[] {
-    var root: RNode = __rx_alt(pattern, 0).node;
+    var prog: RProg = __rx_compile(pattern);
     var out: RMatch[] = [];
     var pos: i32 = 0;
     while (pos <= text.len()) {
-        var m: RMatch = __rx_search_from(root, text, pos);
+        var m: RMatch = __rx_search_from(prog.root, text, pos, prog.ci);
         if (!m.found) { return out; }
         out = out.append(m);
         pos = __rx_advance(m);
@@ -414,12 +440,12 @@ pub function regex_find_all(pattern: string, text: string): RMatch[] {
 // match of `pattern` with the literal string `repl`, returning the new
 // string. `repl` is inserted verbatim (no `$1`/`\1` group substitution).
 pub function regex_replace_all(pattern: string, text: string, repl: string): string {
-    var root: RNode = __rx_alt(pattern, 0).node;
+    var prog: RProg = __rx_compile(pattern);
     var out: string = "";
     var last: i32 = 0;          // end of the text already emitted
     var pos: i32 = 0;
     while (pos <= text.len()) {
-        var m: RMatch = __rx_search_from(root, text, pos);
+        var m: RMatch = __rx_search_from(prog.root, text, pos, prog.ci);
         if (!m.found) { return out + text[last : text.len()]; }
         out = out + text[last : m.start] + repl;
         last = m.end;
@@ -441,12 +467,12 @@ pub function regex_replace_all(pattern: string, text: string, repl: string): str
 // nullable pattern doesn't shatter the string); a non-matching pattern
 // yields the whole text as a single element.
 pub function regex_split(text: string, pattern: string): string[] {
-    var root: RNode = __rx_alt(pattern, 0).node;
+    var prog: RProg = __rx_compile(pattern);
     var out: string[] = [];
     var last: i32 = 0;
     var pos: i32 = 0;
     while (pos <= text.len()) {
-        var m: RMatch = __rx_search_from(root, text, pos);
+        var m: RMatch = __rx_search_from(prog.root, text, pos, prog.ci);
         if (!m.found) {
             out = out.append(text[last : text.len()]);
             return out;

@@ -1,0 +1,18 @@
+// std/regex (#2680) case-insensitive matching via a leading `(?i)` flag,
+// across the native backends: literals, classes, alternation, and the
+// find/replace APIs all fold ASCII case; without the flag matching stays
+// case-sensitive. Each check sets a bit; all eight hold -> 255.
+import "std/regex";
+
+function main(): i32 {
+    var r: i32 = 0;
+    if (regex.regex_match("(?i)hello", "HELLO")) { r = r + 1; }            // literal
+    if (regex.regex_match("(?i)Hello", "hELLo")) { r = r + 2; }            // mixed case
+    if (!regex.regex_match("hello", "HELLO")) { r = r + 4; }               // no flag → sensitive
+    if (regex.regex_match("(?i)^[a-z]+$", "AbCdE")) { r = r + 8; }         // class folds
+    if (regex.regex_match("(?i)(cat|dog)", "DOG")) { r = r + 16; }         // alternation folds
+    if (regex.regex_find("(?i)world", "Hello World") == 6) { r = r + 32; } // find folds
+    if (regex.regex_replace_all("(?i)a", "AbAcad", "X") == "XbXcXd") { r = r + 64; } // replace folds
+    if (regex.regex_match("(?i)gr[ae]y", "GREY")) { r = r + 128; }         // class + alternation-ish
+    return r;
+}
