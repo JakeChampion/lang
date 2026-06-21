@@ -84,12 +84,25 @@ verified in `component_test.go`):
   task done. It needs the **stackful** async feature at runtime
   (`-W component-model-async-stackful`).
 
-**Status:** the two canonical-async byte emitters land here with
-deterministic bytes tests. Next slices: (2) the wasmbin async core-func
-shape (call `task-return`, return void) + the composer assembly
-(synthesize the task-return core instance + lift the export async), and
-(3) the minimal Fern surface to designate an async export, then a Go
-e2e test running the produced component under the async feature flags.
+**Status — DONE, Fern source → runnable async export via the CLI.**
+(1) the canonical-async emitters (`PutCanonSectionLiftAsync` /
+`PutCanonTaskReturnSingle`) + bytes tests + a runnable assembly test;
+(2) the wasmbin async core-func shape (`BuildOptions.AsyncExportName`:
+the `("", "task-return")` import + a synthetic `() -> ()` core func that
+calls `main`, hands its i32 to task-return, returns void) + the composer
+assembly (`component.BuildAsyncLiftedExportComponent`); (3) the CLI
+surface — `fern -target wasm-bin -async-export` produces a component
+exporting `run: async func() -> u32`, run with
+`wasmtime run -W component-model-async,component-model-async-stackful --invoke 'run()'`.
+Tests: `TestWasmP3AsyncExport{Assembly,FromFern}` + `TestCmdLangAsyncExport`
+(CLI-driven, returns 42).
+
+**Remaining (future P3 increments):** a first-class `async` keyword on
+function decls (vs the `-async-export` flag); `future<T>` / `stream<T>`
+parameter+result lowering; the async *import* / `canon lower async` side
+(so a handler can `await` host futures, the colorless-await payoff); and
+wiring async into the `concurrent { … }` desugar as an alternative to
+the P2 pollable reactor.
 
 ## Scope of a P3 implementation in Fern
 

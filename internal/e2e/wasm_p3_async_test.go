@@ -120,3 +120,34 @@ func TestWasmP3AsyncExportFromFern(t *testing.T) {
 		t.Errorf("Fern async export: got %q, want 42", bytes.TrimSpace(out))
 	}
 }
+
+// TestCmdLangAsyncExport drives a Fern program through the actual CLI
+// (`fern -target wasm-bin -async-export`) and runs the produced
+// component's `run: async func() -> u32` export under wasmtime's async
+// features — the user-facing surface for WASI Preview-3 async exports.
+func TestCmdLangAsyncExport(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "aexport.fern")
+	if err := os.WriteFile(srcPath, []byte("function main(): i32 { return 7 * 6; }\n"), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "aexport.wasm")
+	cmd := exec.Command("go", "run", "./cmd/fern",
+		"-target", "wasm-bin", "-async-export", "-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -async-export failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasmtime", "run",
+		"-W", "component-model-async,component-model-async-stackful",
+		"--invoke", "run()", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run (async): %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte("42")) {
+		t.Errorf("CLI async export: got %q, want 42", bytes.TrimSpace(out))
+	}
+}
