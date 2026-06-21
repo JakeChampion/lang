@@ -4291,6 +4291,18 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             if (sub_kind != "" && (kind == "add" || kind == "sub" || kind == "mul" || kind == "shl")) {
                 res = res.emit(ir.op_int_cast(sub_kind));
             }
+            // Plain-i32 wrap: a default-int (i32) +/-/*/<< whose result can
+            // exceed 32 bits is sign-extended back to 32 bits so it wraps
+            // exactly like the native backend's 32-bit register and the AST
+            // interpreter's width-32 arithmetic (#3581): `2147483647 + 1` ==
+            // -2147483648, not the wide 2147483648. u32 (op_u32_wrap) and
+            // sub-word (op_int_cast above) are disjoint from this case
+            // (res_u32 false, sub_kind ""), and the i64 / f64 dispatches
+            // returned earlier, so this fires only for a true i32 op.
+            // op_int_cast("i32") is the signed sibling of op_u32_wrap.
+            if (!res_u32 && sub_kind == "" && (kind == "add" || kind == "sub" || kind == "mul" || kind == "shl")) {
+                res = res.emit(ir.op_int_cast("i32"));
+            }
             return res;
         },
         parser.ExprUnary(u) => {
