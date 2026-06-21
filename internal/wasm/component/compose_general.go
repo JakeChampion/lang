@@ -68,6 +68,10 @@ type gComposer struct {
 	// call so ensureIoPoll (idempotent, possibly reached via a socket
 	// dependency) builds the right shape regardless of call order.
 	needPoll bool
+	// needConnect selects the outbound-client tcp instance type
+	// (start-connect / finish-connect appended). Set from
+	// ComposeRequest.TcpConnect before ensureTcp.
+	needConnect bool
 }
 
 func newGComposer() *gComposer {
@@ -188,8 +192,12 @@ func (g *gComposer) ensureTcp() {
 	g.ensureNetwork()
 	g.ensureIoStreams(true, true)
 	g.ensureIoPoll()
+	tcpBody := WasiSocketsTcpInstanceTypeBody
+	if g.needConnect {
+		tcpBody = WasiSocketsTcpConnectInstanceTypeBody
+	}
 	inst := g.c.importInstance("wasi:sockets/tcp@0.2.0",
-		g.c.typeRaw(WasiSocketsTcpInstanceTypeBody(g.surfaced["network"], g.surfaced["error-code"], g.surfaced["ip-socket-address"], g.surfaced["input-stream"], g.surfaced["output-stream"], g.surfaced["pollable"])))
+		g.c.typeRaw(tcpBody(g.surfaced["network"], g.surfaced["error-code"], g.surfaced["ip-socket-address"], g.surfaced["input-stream"], g.surfaced["output-stream"], g.surfaced["pollable"])))
 	g.inst["wasi:sockets/tcp@0.2.0"] = inst
 	g.surfaced["tcp-socket"] = g.c.aliasType(inst, "tcp-socket")
 }

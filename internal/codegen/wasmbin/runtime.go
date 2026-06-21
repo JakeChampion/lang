@@ -384,6 +384,13 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// outstream), or -errno on failure.
 					needs.add("__fern_alloc")
 					needs.add("__fern_tcp_accept")
+				case "__fern_tcp_connect":
+					// (host_be, port) → i32 — outbound client; same
+					// 12-byte connection struct as accept. Needs the
+					// network accessor (like tcp_listen).
+					needs.add("__fern_alloc")
+					needs.add("__network_handle")
+					needs.add("__fern_tcp_connect")
 				case "__fern_tcp_recv":
 					// (conn, max) → (data, len) — heap-form
 					// string with the bytes read. Empty on
@@ -1332,6 +1339,15 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildTcpAcceptBody,
+	},
+	"__fern_tcp_connect": {
+		// (host_be: i32, port: i32) → i32 — heap pointer to a
+		// 12-byte connection struct (tcp-socket, input-stream,
+		// output-stream), the same shape tcp_accept yields, or
+		// -errno on failure. The outbound client. See wasi_tcp.go.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildTcpConnectBody,
 	},
 	"__fern_tcp_recv": {
 		// (conn: i32, max: i32) → (data, len) heap-form

@@ -95,6 +95,11 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 			req.Args = true
 		case m == "wasi:cli/environment@0.2.0" && n == "get-environment":
 			req.Env = true
+		case m == "wasi:sockets/tcp@0.2.0" && n == "[method]tcp-socket.start-connect":
+			// Outbound client: pulls in the connect variant of the tcp
+			// instance type (start-connect / finish-connect appended).
+			req.Tcp = true
+			req.TcpConnect = true
 		case strings.HasPrefix(m, "wasi:sockets/tcp"):
 			req.Tcp = true // wasi:sockets/tcp@ + tcp-create-socket@
 		case strings.HasPrefix(m, "wasi:sockets/udp"):
@@ -169,7 +174,7 @@ func RequestEmpty(req ComposeRequest) bool {
 	return !req.Stdout && !req.Stderr && !req.Stdin &&
 		!req.BlockWrite && !req.BlockRead && !req.DropInput && !req.DropOutput &&
 		!req.FileRead && !req.FileWrite && !req.FileAppend && !req.FileReadWrite &&
-		!req.Tcp && !req.Udp && !req.Http && !req.Timer && !req.Poll && !req.PollableDrop &&
+		!req.Tcp && !req.Udp && !req.Http && !req.Timer && !req.Poll && !req.PollableDrop && !req.TcpConnect &&
 		!req.WallNow && !req.Args && !req.Env && len(req.Structured) == 0
 }
 

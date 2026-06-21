@@ -2409,12 +2409,13 @@ var CallDirectAliases = map[string]string{
 	// TCP. Each builtin maps to a runtime helper in wasi_tcp.go;
 	// the helpers wrap wasi:sockets + wasi:io directly. See
 	// `scanRuntimeHelpers` / `scanImports` for the dep wiring.
-	"tcp_listen": "__fern_tcp_listen",
-	"tcp_accept": "__fern_tcp_accept",
-	"tcp_recv":   "__fern_tcp_recv",
-	"tcp_send":   "__fern_tcp_send",
-	"tcp_close":  "__fern_tcp_close",
-	"udp_send":   "__fern_udp_send",
+	"tcp_listen":  "__fern_tcp_listen",
+	"tcp_accept":  "__fern_tcp_accept",
+	"tcp_connect": "__fern_tcp_connect",
+	"tcp_recv":    "__fern_tcp_recv",
+	"tcp_send":    "__fern_tcp_send",
+	"tcp_close":   "__fern_tcp_close",
+	"udp_send":    "__fern_udp_send",
 
 	// Map / MapIter generic-method dispatch — the lang doesn't yet
 	// support generic methods on a generic struct, so the stdlib
