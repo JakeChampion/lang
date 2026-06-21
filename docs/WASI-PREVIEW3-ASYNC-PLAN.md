@@ -110,9 +110,49 @@ wrapper). Tests: `TestParseAsyncModifier` + `TestCmdLangAsyncFunctionKeyword`
 returns 42 under the async features; fails without them, confirming the
 async lift).
 
-**Remaining (future P3 increments):** `future<T>` / `stream<T>`
-parameter+result lowering; the async *import* / `canon lower async` side
-(so a handler can `await` host futures, the colorless-await payoff); and
+## Next epic — the async IMPORT / await side (scoped, tooling-confirmed)
+
+The export side is complete (above). The remaining P3 capability is the
+async *import* — a guest that **awaits** a host/peer async function, the
+colorless-await payoff. Probed under wasm-tools 1.240 + wasmtime 37:
+
+- **`canon lower async` is authorable** (`(canon lower (func $dep) async
+  (memory $m "mem"))`) — it **requires the `memory` canonical option**
+  (the lowered call writes the subtask/return info into linear memory).
+  A bare `canon lower … async` validates-fails with "canonical option
+  `memory` is required".
+- **The waitable builtins exist** (`canon waitable-set.new`,
+  `waitable-set.wait`, …) — the await state machine the guest uses.
+
+So the epic is tooling-feasible. The work, smallest-first:
+
+1. **Spike the await state machine in WAT** end to end: a consumer
+   component that imports `dep: async func() -> u32`, lowers it async
+   (with memory), calls it (the lowered call returns either the value
+   inline or a subtask handle + "pending"), and on pending runs
+   `waitable-set.new` → register the subtask → `waitable-set.wait` →
+   read the result, then `task.return`s it. Compose it with the async
+   *export* provider from this doc (two-component link) and run under
+   `wasmtime -W component-model-async,component-model-async-stackful`.
+   Decode the exact bytes (as was done for the export side).
+2. **Composer**: a `BuildAsyncLowerImport` path emitting `canon lower
+   async` + the memory option + the waitable wiring; thread the imported
+   async func through the existing import-composition machinery.
+3. **wasmbin**: the core funcs implementing the await loop
+   (`waitable-set.*`, the subtask poll), and a runtime helper exposing
+   "call this async import and block until ready".
+4. **Fern surface**: an `await`-shaped expression (or reuse the
+   `concurrent { … }` / reactor desugar) that lowers to the await loop —
+   the colorless `await` the whole concurrency design targets. This is
+   the design-heavy part (which imports are async; how `await` reads in
+   source).
+
+This is a multi-PR epic (comparable to the export side plus the waitable
+state machine), best taken as a focused effort — the tooling feasibility
+and the lower-async memory-option requirement are now known, so it
+starts from a solved position.
+
+**Also remaining:** `future<T>` / `stream<T>` parameter+result lowering;
 wiring async into the `concurrent { … }` desugar as an alternative to
 the P2 pollable reactor.
 
