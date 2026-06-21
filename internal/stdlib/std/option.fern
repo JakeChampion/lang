@@ -68,3 +68,29 @@ pub function (o: Option[T]) filter(pred: (T) => boolean): Option[T] {
 pub function (o: Option[T]) ok_or[E](e: E): Result[T, E] {
     match (o) { Some(x) => { return Ok(x); }, None => { return Err(e); } }
 }
+
+// map_or applies `f` to the contained value, or returns `fallback` when
+// empty — `o.map(f).unwrap_or(fallback)` in one step (and without
+// building the intermediate `Option`).
+pub function (o: Option[T]) map_or[U](fallback: U, f: (T) => U): U {
+    match (o) { Some(x) => { return f(x); }, None => { return fallback; } }
+}
+
+// is_some_and reports whether the option holds a value AND that value
+// satisfies `pred`. Empty short-circuits to false (pred is not called).
+pub function (o: Option[T]) is_some_and(pred: (T) => boolean): boolean {
+    match (o) { Some(x) => { return pred(x); }, None => { return false; } }
+}
+
+// or returns this option if present, else `other` (the eagerly-evaluated
+// counterpart of `or_else`).
+pub function (o: Option[T]) or(other: Option[T]): Option[T] {
+    match (o) { Some(x) => { return Some(x); }, None => { return other; } }
+}
+
+// and returns `other` if this option is present, else `None` — useful
+// for gating one optional on the presence of another. The value type may
+// change (`Option[T]` -> `Option[U]`).
+pub function (o: Option[T]) and[U](other: Option[U]): Option[U] {
+    match (o) { Some(x) => { return other; }, None => { return None; } }
+}

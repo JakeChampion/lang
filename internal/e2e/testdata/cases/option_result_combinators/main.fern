@@ -26,5 +26,22 @@ function main(): i32 {
     if (ok.is_ok() && er.is_err()) { r = r + 1; }       // 97
     r = r + ok.ok().unwrap_or(0);                       // +20 = 117
     r = r + er.err().unwrap_or(0);                      // +3  = 120
-    return r;                                            // 120
+
+    // map_or / is_some_and / or / and (std/option).
+    r = r + a.map_or(0, inc) + n.map_or(7, inc);        // 11 + 7  = 138
+    if (a.is_some_and(pos)) { r = r + 1; }              // 139 (n.is_some_and(pos) is false)
+    r = r + a.or(Some(1)).unwrap_or(0);                 // 10 -> 149
+    r = r + n.or(Some(4)).unwrap_or(0);                 // 4  -> 153
+    r = r + a.and(Some(2)).unwrap_or(0);                // 2  -> 155
+    r = r + n.and(Some(9)).unwrap_or(0);                // 0  (None.and -> None)
+
+    // map_or / is_ok_and / is_err_and / or (std/result).
+    r = r + ok.map_or(0, inc) + er.map_or(6, inc);      // 21 + 6 = 182
+    if (ok.is_ok_and(pos)) { r = r + 1; }               // 183
+    if (er.is_err_and(pos)) { r = r + 1; }              // 184 (pos(3))
+    var ok1: Result[i32, i32] = Ok(1);
+    var ok5: Result[i32, i32] = Ok(5);
+    r = r + ok.or(ok1).unwrap_or(0);                    // 20 -> 204
+    r = r + er.or(ok5).unwrap_or(0);                    // 5  -> 209
+    return r;                                            // 209
 }

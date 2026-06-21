@@ -65,3 +65,27 @@ pub function (r: Result[T, E]) ok(): Option[T] {
 pub function (r: Result[T, E]) err(): Option[E] {
     match (r) { Ok(x) => { return None; }, Err(e) => { return Some(e); } }
 }
+
+// map_or applies `f` to the `Ok` value, or returns `fallback` on `Err`
+// — `r.map(f).unwrap_or(fallback)` in one step.
+pub function (r: Result[T, E]) map_or[U](fallback: U, f: (T) => U): U {
+    match (r) { Ok(x) => { return f(x); }, Err(e) => { return fallback; } }
+}
+
+// is_ok_and reports whether the result is `Ok` AND its value satisfies
+// `pred`. `Err` short-circuits to false (pred is not called).
+pub function (r: Result[T, E]) is_ok_and(pred: (T) => boolean): boolean {
+    match (r) { Ok(x) => { return pred(x); }, Err(e) => { return false; } }
+}
+
+// is_err_and reports whether the result is `Err` AND its error satisfies
+// `pred`. `Ok` short-circuits to false.
+pub function (r: Result[T, E]) is_err_and(pred: (E) => boolean): boolean {
+    match (r) { Ok(x) => { return false; }, Err(e) => { return pred(e); } }
+}
+
+// or returns this result if `Ok`, else `other` (the eagerly-evaluated
+// counterpart of `unwrap_or_else` at the `Result` level).
+pub function (r: Result[T, E]) or(other: Result[T, E]): Result[T, E] {
+    match (r) { Ok(x) => { return Ok(x); }, Err(e) => { return other; } }
+}
