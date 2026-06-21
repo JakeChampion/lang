@@ -7753,7 +7753,15 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // the init as an i64 value, store. Scalar locals only — i64 arrays /
             // params / returns are deferred to the AST path (lower_func bails on
             // an i64 param/return; lower_i64 bails on anything non-i64-value).
-            if (comma < 0 && (v.type_name == "i64" || v.type_name == "u64" || infer_expr_width(v.init, s) == 64)) {
+            // A u32 var holds a 32-bit value, so even a large literal init
+            // (`var x: u32 = 4000000000`, whose value exceeds i32-max and thus
+            // infers width 64) must NOT take the i64 path — that would i64-back
+            // the slot and route its arithmetic through the full-width i64 ops,
+            // skipping the u32 wrap (op_const_i32_text below stores the literal's
+            // 32-bit pattern, and the slot is marked u32 so `x + y` wraps at
+            // 2^32). u32 is the only ≤32-bit type that can carry a (2^31, 2^32)
+            // literal — i32 / u8 / u16 reject one at E047.
+            if (comma < 0 && (v.type_name == "i64" || v.type_name == "u64" || (infer_expr_width(v.init, s) == 64 && !is_u32_type_name(v.type_name)))) {
                 var iv: LowerState = lower_i64(v.init, s);
                 if (!iv.ok) { return iv; }
                 var ivb: LowerState = iv.add_local(v.name);
