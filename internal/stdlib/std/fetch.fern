@@ -118,3 +118,44 @@ pub function (plat: Platform) fetch(host: string, port: i32, path: string): stri
     }
     return fetch_get(h, port, path);
 }
+
+// get_url(url) — fetch a full `http://HOST[:PORT]/PATH` URL in one
+// call: split the scheme / host / optional port / path and GET it,
+// returning the raw response (use `http_body`). HOST must be a literal
+// IPv4 (no DNS / TLS yet); the port defaults to 80; a missing path
+// becomes "/". Returns "" on a malformed URL or a connect failure.
+pub function get_url(url: string): string {
+    // Require and strip the http:// scheme.
+    var prefix: string = "http://";
+    if (url.len() < prefix.len()) { return ""; }
+    if (url[0 : prefix.len()] != prefix) { return ""; }
+    var rest: string = url[prefix.len() : url.len()];
+    // authority is up to the first '/'; the rest (incl. the '/') is the path.
+    var slash: i32 = rest.index_of("/");
+    var authority: string = rest;
+    var path: string = "/";
+    if (slash >= 0) {
+        authority = rest[0 : slash];
+        path = rest[slash : rest.len()];
+    }
+    // authority = HOST[:PORT].
+    var host: string = authority;
+    var port: i32 = 80;
+    var colon: i32 = authority.index_of(":");
+    if (colon >= 0) {
+        host = authority[0 : colon];
+        var portstr: string = authority[colon + 1 : authority.len()];
+        port = 0;
+        var i: i32 = 0;
+        while (i < portstr.len()) {
+            var ch: i32 = portstr[i];
+            if (ch < 48 || ch > 57) { return ""; }
+            port = port * 10 + (ch - 48);
+            i = i + 1;
+        }
+        if (i == 0) { return ""; }
+    }
+    var h: i32 = parse_ipv4(host);
+    if (h < 0) { return ""; }
+    return fetch_get(h, port, path);
+}
