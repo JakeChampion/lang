@@ -243,3 +243,118 @@ pub function alloc_object(env: usize, clazz: usize): usize {
 pub function is_instance_of(env: usize, obj: usize, clazz: usize): i32 {
     return call2(env, 32, obj, clazz) as i32;
 }
+
+// --- Instance field accessors -------------------------------------------
+//
+// Get<Type>Field(env, obj, fieldID) and Set<Type>Field(env, obj, fieldID,
+// value). Pair these with get_field_id to read/write instance fields.
+// Indices are anchored by GetFieldID=94 (just before GetObjectField=95)
+// and GetStaticMethodID=113 (just after SetDoubleField=112).
+//
+// Only the integer-shaped types are exposed: object / boolean / byte /
+// char / short / int / long all return and pass their value in the
+// integer-arg registers that __c_call models. The FLOAT and DOUBLE
+// accessors are deliberately omitted — their value rides in an FP register
+// (xmm0 / d0), which the __c_call shim doesn't touch, so they would
+// silently read/write garbage. Bit-cast through a long field, or extend
+// __c_call with FP support, if you need them.
+
+// jobject (*GetObjectField)(JNIEnv*, jobject obj, jfieldID fieldID)
+pub function get_object_field(env: usize, obj: usize, field: usize): usize {
+    return call2(env, 95, obj, field);
+}
+
+// jboolean (*GetBooleanField)(JNIEnv*, jobject, jfieldID)
+pub function get_boolean_field(env: usize, obj: usize, field: usize): i32 {
+    return call2(env, 96, obj, field) as i32;
+}
+
+// jbyte (*GetByteField)(JNIEnv*, jobject, jfieldID)
+pub function get_byte_field(env: usize, obj: usize, field: usize): i32 {
+    return call2(env, 97, obj, field) as i32;
+}
+
+// jchar (*GetCharField)(JNIEnv*, jobject, jfieldID)
+pub function get_char_field(env: usize, obj: usize, field: usize): i32 {
+    return call2(env, 98, obj, field) as i32;
+}
+
+// jshort (*GetShortField)(JNIEnv*, jobject, jfieldID)
+pub function get_short_field(env: usize, obj: usize, field: usize): i32 {
+    return call2(env, 99, obj, field) as i32;
+}
+
+// jint (*GetIntField)(JNIEnv*, jobject, jfieldID)
+pub function get_int_field(env: usize, obj: usize, field: usize): i32 {
+    return call2(env, 100, obj, field) as i32;
+}
+
+// jlong (*GetLongField)(JNIEnv*, jobject, jfieldID) — full 64-bit result.
+pub function get_long_field(env: usize, obj: usize, field: usize): usize {
+    return call2(env, 101, obj, field);
+}
+
+// void (*SetObjectField)(JNIEnv*, jobject obj, jfieldID, jobject value)
+pub function set_object_field(env: usize, obj: usize, field: usize, value: usize): usize {
+    return call3(env, 104, obj, field, value);
+}
+
+// void (*SetBooleanField)(JNIEnv*, jobject, jfieldID, jboolean)
+pub function set_boolean_field(env: usize, obj: usize, field: usize, value: usize): usize {
+    return call3(env, 105, obj, field, value);
+}
+
+// void (*SetByteField)(JNIEnv*, jobject, jfieldID, jbyte)
+pub function set_byte_field(env: usize, obj: usize, field: usize, value: usize): usize {
+    return call3(env, 106, obj, field, value);
+}
+
+// void (*SetCharField)(JNIEnv*, jobject, jfieldID, jchar)
+pub function set_char_field(env: usize, obj: usize, field: usize, value: usize): usize {
+    return call3(env, 107, obj, field, value);
+}
+
+// void (*SetShortField)(JNIEnv*, jobject, jfieldID, jshort)
+pub function set_short_field(env: usize, obj: usize, field: usize, value: usize): usize {
+    return call3(env, 108, obj, field, value);
+}
+
+// void (*SetIntField)(JNIEnv*, jobject, jfieldID, jint)
+pub function set_int_field(env: usize, obj: usize, field: usize, value: usize): usize {
+    return call3(env, 109, obj, field, value);
+}
+
+// void (*SetLongField)(JNIEnv*, jobject, jfieldID, jlong)
+pub function set_long_field(env: usize, obj: usize, field: usize, value: usize): usize {
+    return call3(env, 110, obj, field, value);
+}
+
+// --- Static field accessors ---------------------------------------------
+//
+// GetStatic<Type>Field(env, clazz, fieldID) — anchored by
+// GetStaticFieldID=144 (just before GetStaticObjectField=145). Same
+// integer-only restriction as the instance accessors. Setters
+// (SetStatic<Type>Field, 154+) follow the call3 shape if you need them.
+
+// jobject (*GetStaticObjectField)(JNIEnv*, jclass, jfieldID)
+pub function get_static_object_field(env: usize, clazz: usize, field: usize): usize {
+    return call2(env, 145, clazz, field);
+}
+
+// jint (*GetStaticIntField)(JNIEnv*, jclass, jfieldID)
+pub function get_static_int_field(env: usize, clazz: usize, field: usize): i32 {
+    return call2(env, 150, clazz, field) as i32;
+}
+
+// jlong (*GetStaticLongField)(JNIEnv*, jclass, jfieldID)
+pub function get_static_long_field(env: usize, clazz: usize, field: usize): usize {
+    return call2(env, 151, clazz, field);
+}
+
+// --- Arrays -------------------------------------------------------------
+
+// jsize (*GetArrayLength)(JNIEnv*, jarray array) — anchored by
+// ReleaseStringUTFChars=170 (just before GetArrayLength=171).
+pub function get_array_length(env: usize, array: usize): i32 {
+    return call1(env, 171, array) as i32;
+}
