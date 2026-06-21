@@ -210,6 +210,13 @@ backends (`internal/e2e/poll_test.go`, x86-64 + arm64/qemu).
   `run_io`, the shorter serviced first — proving `poll` actually
   blocks on real readiness, not just always-ready files) and is the
   primitive for async **timeouts** (Phase 5).
+- **DONE — reactor timeouts (`run_io_deadline`):** bounds the whole
+  fan-out by a wall-clock deadline (poll's timeout + `monotonic_ns`
+  across rounds); tasks that don't finish in time are abandoned (-1),
+  like a cancelled `select` loser. Pure Fern, no new builtin. This is
+  the Phase-5 timeout / bounded-happy-eyeballs primitive. Tested both
+  paths (completes / times out) on x86-64 + arm64 with deterministic
+  timerfds (`internal/e2e/reactor_test.go ▸ TestReactorDeadline`).
 - **Self-host** (`asm.fern` / `asm_arm64.fern`) — mirror `__fern_poll`
   + `__fern_timer_fd`.
 - Non-blocking accept/recv/send (`O_NONBLOCK` + `EAGAIN`), then

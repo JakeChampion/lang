@@ -138,3 +138,79 @@ function main(): i32 {
 		})
 	}
 }
+
+// run_io_deadline bounds the whole fan-out by a wall-clock deadline:
+// a task that completes in time carries its result; one whose timer
+// outlives the deadline is abandoned (-1). Both paths are
+// deterministic via timerfds + monotonic_ns (no network).
+func TestReactorDeadline(t *testing.T) {
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+
+	timerHelper := `import "std/reactor";
+
+function start_timer(ms: i32): reactor.IoStep {
+    var fd: i32 = timer_fd(ms);
+    function resume(w: i32): reactor.IoStep { return IoDone(ms); }
+    return IoWait(fd, resume);
+}
+`
+	cases := []struct {
+		name, body string
+		want       int
+	}{
+		{
+			// 5ms timer, 500ms deadline → completes → result 5.
+			name: "completes_in_time",
+			body: `function main(): i32 {
+    var tasks: reactor.IoStep[] = [start_timer(5)];
+    var r: i32[] = reactor.run_io_deadline(tasks, 500);
+    return r[0];
+}`,
+			want: 5,
+		},
+		{
+			// 500ms timer, 20ms deadline → times out → -1 → map to 42.
+			name: "times_out",
+			body: `function main(): i32 {
+    var tasks: reactor.IoStep[] = [start_timer(500)];
+    var r: i32[] = reactor.run_io_deadline(tasks, 20);
+    if (r[0] < 0) { return 42; }
+    return 99;
+}`,
+			want: 42,
+		},
+	}
+
+	backends := []struct {
+		target string
+		qemu   func(*testing.T) string
+		run    func(qemu, bin string, args ...string) *exec.Cmd
+	}{
+		{"x86-64", x86QemuOrEmpty, runX86Bin},
+		{"arm64", arm64QemuOrEmpty, runArm64Bin},
+	}
+	for _, be := range backends {
+		be := be
+		t.Run(be.target, func(t *testing.T) {
+			qemu := be.qemu(t)
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					srcPath := filepath.Join(dir, be.target+"_"+tc.name+".fern")
+					if err := os.WriteFile(srcPath, []byte(timerHelper+tc.body), 0o644); err != nil {
+						t.Fatalf("write src: %v", err)
+					}
+					out := filepath.Join(dir, be.target+"_"+tc.name+".bin")
+					if o, err := exec.Command(bin, "-target", be.target, "-o", out, srcPath).CombinedOutput(); err != nil {
+						t.Fatalf("build failed: %v\n%s", err, o)
+					}
+					cmd := be.run(qemu, out)
+					_ = cmd.Run()
+					if code := cmd.ProcessState.ExitCode(); code != tc.want {
+						t.Errorf("%s/%s: exit = %d, want %d", be.target, tc.name, code, tc.want)
+					}
+				})
+			}
+		})
+	}
+}
