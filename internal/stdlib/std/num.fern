@@ -107,12 +107,13 @@ impl Num for u64 {}
 // to a direct call, so these lower on the self-host IR path too (#2691 / #3558).
 //
 // The identity (`zero` for `sum_with`, `one` for `product_with`) is passed
-// explicitly rather than recovered from the `Zero` trait: `T.zero()` is an
-// associated function on a bound type parameter, a dispatch shape that does not
-// yet lower on the self-host IR path (it bails to the AST emitter), so the bare
-// `sum[T: Num + Zero](xs): T` form is deferred until that lands. Passing the
-// identity keeps these on the IR path and stays correct for `f32`/`f64` (where
-// the additive identity a caller wants may be `0.0`, not a trait-fixed value).
+// explicitly rather than recovered from the `Zero` / `One` trait. `T.zero()` /
+// `T.one()` on a bound type parameter now DO lower on the self-host IR path —
+// the monomorphiser emits the numeric identity literal directly for a primitive
+// `T` (mirroring `T.default()`), so a bare `sum[T: Add + Zero](xs): T` form
+// lowers on every backend. The explicit-identity API is kept regardless: it
+// works for a user `Add`/`Mul` type that has no `Zero`/`One` impl, and lets a
+// caller choose the seed (e.g. `0.0` vs a trait-fixed value) at the call site.
 
 // sum_with folds `xs` left with `.add`, starting from `zero`: the generic
 // element-wise total. Empty `xs` returns `zero` unchanged.
