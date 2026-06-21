@@ -973,18 +973,32 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 		if outPath == "" {
 			return 1, fmt.Errorf("-target wasm-bin requires -o OUTPUT")
 		}
-		if asyncExport {
-			// WASI Preview-3 component-model-async: emit the async
-			// core-func shape (main → task-return → void) and lift it
-			// with the `async` canonical option. main must return i32.
+		// WASI Preview-3 component-model-async export, triggered either
+		// by an `async function` in the source (lifted under its own
+		// name) or by the `-async-export` flag (wraps main, exported as
+		// `run`). The wasmbin emits the async core-func shape (call the
+		// source fn → task.return → void); the composer lifts it with
+		// the `async` canonical option. The source fn must return i32.
+		asyncSrc, asyncExportNm := "", ""
+		for _, fn := range prog.Funcs {
+			if fn.Async {
+				asyncSrc, asyncExportNm = fn.Name, fn.Name
+				break
+			}
+		}
+		if asyncSrc == "" && asyncExport {
+			asyncSrc, asyncExportNm = "main", "run"
+		}
+		if asyncSrc != "" {
 			acore, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
 				Preview2WASI:    true,
 				AsyncExportName: "__async_run",
+				AsyncSourceFunc: asyncSrc,
 			})
 			if err != nil {
-				return 1, fmt.Errorf("-async-export %w", err)
+				return 1, fmt.Errorf("async export: %w", err)
 			}
-			comp := component.BuildAsyncLiftedExportComponent(acore, "__async_run", "run", component.CValtypeU32)
+			comp := component.BuildAsyncLiftedExportComponent(acore, "__async_run", asyncExportNm, component.CValtypeU32)
 			if err := os.WriteFile(outPath, comp, 0o644); err != nil {
 				return 1, err
 			}

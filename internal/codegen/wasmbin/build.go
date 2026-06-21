@@ -86,6 +86,11 @@ type BuildOptions struct {
 	// (component.BuildAsyncLiftedExportComponent). `main` must return
 	// i32. Forwarded to EmitOptions.AsyncExportName.
 	AsyncExportName string
+	// AsyncSourceFunc names the Fern function the async wrapper calls
+	// (its i32 result is handed to task.return). Empty defaults to
+	// "main" — the `-async-export` flag shape; `async function foo`
+	// sets it to "foo". Forwarded to EmitOptions.AsyncSourceFunc.
+	AsyncSourceFunc string
 	// CliRunResult tells the SynthCliRun wrapper that its i32
 	// return will be canon-lifted as a `wasi:cli/run` `result<_, _>`
 	// (0 = ok, non-zero = err) rather than surfaced raw. Only 0 and
@@ -145,6 +150,18 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	// missing func (OpConstVtable: impl method not in prog.Funcs).
 	downcastImplMethods := treeshake.DowncastImplMethods(prog, info)
 	treeshakeExtras = append(treeshakeExtras, downcastImplMethods...)
+	if opts.AsyncExportName != "" {
+		// The async export's source function is called only by the
+		// synthetic async wrapper (emit-time wasm bytes, invisible to the
+		// AST/IR reachability walkers), so pin it past tree-shake — same
+		// shape as `handle` for HttpHandler. An `async function foo` is
+		// otherwise unreferenced and would be culled before funcIdx.
+		src := opts.AsyncSourceFunc
+		if src == "" {
+			src = "main"
+		}
+		treeshakeExtras = append(treeshakeExtras, src)
+	}
 	if opts.HttpHandler {
 		// `handle` is called by the wrapper but the treeshake
 		// walker doesn't see the call (the wrapper lives in
@@ -204,6 +221,16 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	if opts.HttpHandler {
 		liveExtras = append(liveExtras, "handle", "__method_HeaderMap_append")
 	}
+	if opts.AsyncExportName != "" {
+		// Root the async export's source function for the IR-level cull
+		// too (it culls separately from the AST tree-shaker); the
+		// synthetic async wrapper that calls it is emit-time only.
+		src := opts.AsyncSourceFunc
+		if src == "" {
+			src = "main"
+		}
+		liveExtras = append(liveExtras, src)
+	}
 	liveExtras = append(liveExtras, exportRoots...)
 	liveExtras = append(liveExtras, dynImplMethods...)
 	liveExtras = append(liveExtras, downcastImplMethods...)
@@ -244,5 +271,6 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 		SynthCliRun:        opts.SynthCliRun,
 		CliRunResult:       opts.CliRunResult,
 		AsyncExportName:    opts.AsyncExportName,
+		AsyncSourceFunc:    opts.AsyncSourceFunc,
 	})
 }
