@@ -5171,14 +5171,16 @@ func (b *builder) emitOwnedTempStackDrop(t ast.Type) {
 		// Mirrors the exit-sweep / reinit string branch exactly (slice 5g is
 		// done): two-word ABIs (wasm + arm64) free via __fern_str_dec, which
 		// consumes the (data, len) pair on the stack and returns the data ptr
-		// (dropped after); native single-word x86_64 via __fern_rc_dec. The
-		// guards (inline-SSO / literal sentinel / rc>1) keep every source safe,
-		// and this drop only fires for a provably-fresh owned temp.
+		// (dropped after); native single-word x86_64 via __fern_str_dec —
+		// frees the buffer at rc==1, else defers to __fern_rc_dec. The
+		// guards (inline-SSO / literal sentinel / below-heap / rc>1) keep
+		// every source safe, and this drop only fires for a provably-fresh
+		// owned temp (sole owner), so the free is exactly balanced.
 		if ast.UseTwoWordStrings(b.ptrW) {
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
 		} else if b.ptrW == 8 {
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
 		}
 	case ast.ArrayType:
@@ -6144,7 +6146,11 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 				b.emit(Op{Kind: OpDrop}) // drop the returned data ptr
 			} else if ast.RcFreeEnabled && eligible && b.ptrW == 8 {
 				b.emit(Op{Kind: OpLoadLocal, I32: slot}) // pushes single data ptr
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+				// Native single-word: free the owned buffer at rc==1 via
+				// __fern_str_dec (else defer to __fern_rc_dec). Gated
+				// `eligible` (proven-owned, alias-free), so freeing at exit
+				// is balanced; inline / literal / sentinel short-circuit.
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
 				b.emit(Op{Kind: OpDrop}) // drop the returned ptr
 			}
 			return
@@ -16015,7 +16021,11 @@ func (b *builder) emitOwnedSlotDrop(idx int32, t ast.Type) {
 			b.emit(Op{Kind: OpDrop})
 		} else if b.ptrW == 8 {
 			b.emit(Op{Kind: OpLoadLocal, I32: idx})
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1})
+			// Native single-word: free at rc==1 via __fern_str_dec (else
+			// defer to __fern_rc_dec). The caller gates ownership
+			// (emitVarReinitDropOld: freeEligible/unique/!moved; the call-arg
+			// path: provably-fresh owned temp), so the free is balanced.
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
 			b.emit(Op{Kind: OpDrop})
 		}
 	case ast.TupleType:
