@@ -115,6 +115,58 @@ pub function run_io[T](states_in: IoStep[T][], not_ready: T): T[] {
     return results;
 }
 
+// run_io_select(states, none_val) — drive the fd-tagged tasks until the
+// FIRST one completes, then return its value. The first-wins / race
+// counterpart to run_io (which waits for ALL): fan out to N upstreams,
+// take the fastest answer, abandon the rest. Returns `none_val` if no
+// task can make progress (poll error / no waiters). The native twin of
+// std/wasm_reactor.select — but it does NOT close the losers' fds (the
+// reactor never owns fd lifecycle here; the caller / process exit
+// reclaims them, exactly as run_io leaves fds untouched).
+pub function run_io_select[T](states_in: IoStep[T][], none_val: T): T {
+    var states: IoStep[T][] = states_in;
+    // An already-done task wins immediately.
+    var j: i32 = 0;
+    while (j < states.len()) {
+        match (states[j]) {
+            IoDone(v) => { return v; },
+            IoWait(fd, c) => { },
+        }
+        j = j + 1;
+    }
+    while (true) {
+        var fds: i32[] = [];
+        var idxs: i32[] = [];
+        var i: i32 = 0;
+        while (i < states.len()) {
+            match (states[i]) {
+                IoDone(v) => { },
+                IoWait(fd, c) => {
+                    fds = fds.append(fd);
+                    idxs = idxs.append(i);
+                },
+            }
+            i = i + 1;
+        }
+        if (fds.len() == 0) { return none_val; }
+        var ready: i32 = poll(fds, -1);
+        if (ready < 0) { return none_val; }
+        var ti: i32 = idxs[ready];
+        var st: IoStep[T] = states[ti];
+        match (st) {
+            IoDone(v) => { return v; },
+            IoWait(fd, resume) => {
+                var nx: IoStep[T] = resume(fd);
+                match (nx) {
+                    IoDone(v) => { return v; },
+                    IoWait(nfd, nc) => { states = states.with(ti, nx); },
+                }
+            },
+        }
+    }
+    return none_val;
+}
+
 // run_io_deadline(states, deadline_ms, not_ready) — like run_io, but
 // the whole fan-out must finish within `deadline_ms` wall-clock
 // milliseconds. This is the reactor's timeout primitive

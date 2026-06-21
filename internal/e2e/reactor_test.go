@@ -139,6 +139,61 @@ function main(): i32 {
 	}
 }
 
+// run_io_select drives the fd-tagged tasks until the FIRST completes
+// and returns its value — the first-wins / race counterpart to run_io.
+// Two timerfds (10ms, 50ms): select returns the fast one's value (10)
+// regardless of its position, blocking in real poll only until the
+// first fires. Deterministic via timerfds (no network).
+func TestReactorSelect(t *testing.T) {
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+
+	// Fast timer (10ms → 10) at index 1, slow (50ms → 50) at index 0:
+	// select must return 10. main returns 42 iff that holds.
+	src := `import "std/reactor";
+
+function start_timer(ms: i32): reactor.IoStep[i32] {
+    var fd: i32 = timer_fd(ms);
+    function resume(woken_fd: i32): reactor.IoStep[i32] { return IoDone(ms); }
+    return IoWait(fd, resume);
+}
+
+function main(): i32 {
+    var tasks: reactor.IoStep[i32][] = [start_timer(50), start_timer(10)];
+    var winner: i32 = reactor.run_io_select(tasks, -1);
+    if (winner != 10) { return 91; }
+    return 42;
+}`
+
+	backends := []struct {
+		target string
+		qemu   func(*testing.T) string
+		run    func(qemu, bin string, args ...string) *exec.Cmd
+	}{
+		{"x86-64", x86QemuOrEmpty, runX86Bin},
+		{"arm64", arm64QemuOrEmpty, runArm64Bin},
+	}
+	for _, be := range backends {
+		be := be
+		t.Run(be.target, func(t *testing.T) {
+			qemu := be.qemu(t)
+			srcPath := filepath.Join(dir, be.target+"_select.fern")
+			if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			out := filepath.Join(dir, be.target+"_select.bin")
+			if o, err := exec.Command(bin, "-target", be.target, "-o", out, srcPath).CombinedOutput(); err != nil {
+				t.Fatalf("build failed: %v\n%s", err, o)
+			}
+			cmd := be.run(qemu, out)
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 42 {
+				t.Errorf("%s: select exit = %d, want 42", be.target, code)
+			}
+		})
+	}
+}
+
 // run_io_deadline bounds the whole fan-out by a wall-clock deadline:
 // a task that completes in time carries its result; one whose timer
 // outlives the deadline is abandoned (-1). Both paths are
