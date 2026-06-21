@@ -21,6 +21,43 @@ var rcCorpus = []struct {
 	src  string
 }{
 	{
+		// String tuple element, aliased across two tuples + a live local.
+		// Exercises the native single-word x86-64 tuple string-element
+		// reclaim (__drop_tuple_<...> → __fern_str_dec); elements are
+		// retained on tuple construction (__fern_rc_inc), so the per-tuple
+		// frees balance the shared buffer to exactly one free. 3 × 4 = 12.
+		name: "string_tuple_element_aliased",
+		src: `
+import "core/int";
+import "std/string";
+function cat(a: string, b: string): string { return a + b; }
+function use2(p: (string, i32), q: (string, i32)): i32 { return p.0.len() + q.0.len(); }
+function main(): i32 {
+    var s: string = cat("ab", "cd");
+    var a: (string, i32) = (s, 1);
+    var b: (string, i32) = (s, 2);
+    return (use2(a, b) + s.len() - 12) + __rc_underflow_count();
+}`,
+	},
+	{
+		// String enum payload (Option[string]), aliased across two values +
+		// a live local. Exercises the native single-word enum payload
+		// reclaim (appendChildDrop → __fern_str_dec); the payload is
+		// retained on construction, so the frees balance. 3 × 4 = 12.
+		name: "string_enum_payload_aliased",
+		src: `
+import "core/int";
+import "std/string";
+function cat(a: string, b: string): string { return a + b; }
+function unwrap(o: Option[string]): i32 { match (o) { Some(v) => { return v.len(); }, None => { return 0; } } }
+function main(): i32 {
+    var s: string = cat("ab", "cd");
+    var a: Option[string] = Some(s);
+    var b: Option[string] = Some(s);
+    return (unwrap(a) + unwrap(b) + s.len() - 12) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Fresh string temp passed to a non-retaining call, in a loop.
 		// Exercises the native single-word x86-64 owned-temp string drop
 		// (emitOwnedSlotDrop call-arg path → __fern_str_dec): `a + "cd"` is

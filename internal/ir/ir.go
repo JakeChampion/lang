@@ -8007,7 +8007,7 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 	// branch above.
 	if _, isStr := t.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
 		return append(ops,
-			Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1},
+			Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1},
 			Op{Kind: OpDrop})
 	}
 	if isMapType(t) {
@@ -8100,7 +8100,7 @@ func genTupleDropFn(mangled string, tt ast.TupleType, info *checker.Info, ptrW i
 			}
 			ops = append(ops,
 				Op{Kind: OpLoad, Width: WidthPtr},
-				Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1},
+				Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1},
 				Op{Kind: OpDrop})
 			continue
 		}
