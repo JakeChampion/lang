@@ -1,11 +1,13 @@
-// core/iter.fern — a numeric (i32) iterator protocol + an integer Range.
+// core/iter.fern — a generic iterator protocol + an integer Range.
 //
-// This is the first slice of the iterator trait (#2686 / the open tail of
-// #2699), specialised to i32 ("numbers") so it lowers on BOTH the native
-// compiler and the self-hosted compiler's IR path. A *generic* `Iterator[T]`
-// needs bounded generics over a parametrised-trait bound (`[I: Iterator[T]]`),
-// which the self-host IR path does not yet monomorphise — so the trait is fixed
-// to i32 for now (a generic version is a later slice).
+// The iterator trait (#2686 / the open tail of #2699). `Iterator[T]` is now
+// generic over the element type `T`, lowering on BOTH the native compiler and
+// the self-hosted compiler's IR path: parametrised-trait bounds parse on the
+// self-host (#3558) and the native checker recovers a bound-only type parameter
+// by bound-driven inference (#3596), so a fully-generic collector
+// `count[T, I: Iterator[T]]` / `to_array[T, I: Iterator[T]]: T[]` works on
+// every backend. (`sum` stays `i32`-specialised — summing needs `+` on the
+// element type, which awaits a numeric trait bound.)
 //
 // Iteration is value-semantic: `next` returns `Some((value, advanced))` where
 // `advanced` is a FRESH iterator positioned just after `value`, or `None` at
@@ -13,15 +15,15 @@
 // which is the functional shape the self-host IR path already lowers (a
 // Cell-backed mutable cursor would be a later optimisation).
 
-// Iterator is the numeric iteration protocol: a type yields i32 values one at a
-// time via `next`. `Some((v, it2))` produces the next value `v` and the
-// iterator state `it2` to continue from; `None` signals exhaustion.
-pub trait Iterator {
-    function next(self: Self): Option[(i32, Self)];
+// Iterator is the iteration protocol: a type yields `T` values one at a time
+// via `next`. `Some((v, it2))` produces the next value `v` and the iterator
+// state `it2` to continue from; `None` signals exhaustion.
+pub trait Iterator[T] {
+    function next(self: Self): Option[(T, Self)];
 }
 
-// Range is the half-open integer interval [lo, hi) as an Iterator: it yields
-// lo, lo+1, …, hi-1.
+// Range is the half-open integer interval [lo, hi) as an Iterator[i32]: it
+// yields lo, lo+1, …, hi-1.
 pub struct Range { lo: i32, hi: i32 }
 
 // range(lo, hi) constructs the half-open range [lo, hi). `range(0, n)` is the
@@ -31,16 +33,17 @@ pub function range(lo: i32, hi: i32): Range {
     return Range { lo: lo, hi: hi };
 }
 
-impl Iterator for Range {
+impl Iterator[i32] for Range {
     function next(self: Self): Option[(i32, Self)] {
         if (self.lo >= self.hi) { return None; }
         return Some((self.lo, Range { lo: self.lo + 1, hi: self.hi }));
     }
 }
 
-// sum consumes the iterator, returning the sum of every value it yields (0 for
-// an empty iterator).
-pub function sum[I: Iterator](it: I): i32 {
+// sum consumes an i32 iterator, returning the sum of every value it yields (0
+// for an empty iterator). Specialised to i32 — summing needs `+` on the element
+// type, which a numeric trait bound will later generalise.
+pub function sum[I: Iterator[i32]](it: I): i32 {
     var total = 0;
     var cur = it;
     var go = true;
@@ -53,8 +56,9 @@ pub function sum[I: Iterator](it: I): i32 {
     return total;
 }
 
-// count consumes the iterator, returning how many values it yields.
-pub function count[I: Iterator](it: I): i32 {
+// count consumes any iterator, returning how many values it yields. Generic
+// over the element type `T` (which appears only in the bound).
+pub function count[T, I: Iterator[T]](it: I): i32 {
     var n = 0;
     var cur = it;
     var go = true;
@@ -67,9 +71,10 @@ pub function count[I: Iterator](it: I): i32 {
     return n;
 }
 
-// to_array collects the iterator's values into a fresh i32[], in order.
-pub function to_array[I: Iterator](it: I): i32[] {
-    var out: i32[] = [];
+// to_array collects any iterator's values into a fresh `T[]`, in order. Generic
+// over the element type `T`.
+pub function to_array[T, I: Iterator[T]](it: I): T[] {
+    var out: T[] = [];
     var cur = it;
     var go = true;
     while (go) {
