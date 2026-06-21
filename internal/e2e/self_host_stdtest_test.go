@@ -273,6 +273,7 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"string_count_and_dir_listing", langSrcAbs(t, "examples/tests/string_count_and_dir_listing_test.fern"), ""},
 		{"timing", langSrcAbs(t, "examples/tests/timing_test.fern"), ""},
 		{"unions_migrated", langSrcAbs(t, "examples/tests/unions_migrated_test.fern"), ""},
+		{"math", langSrcAbs(t, "examples/tests/math_test.fern"), ""},
 		{"synthetic_fail", failing, ""},
 	}
 }
