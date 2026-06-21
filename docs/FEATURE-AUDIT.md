@@ -238,7 +238,7 @@ per-function bugs in the audit log.
 |--------|---|---|---|---|---|--------|-------|
 | `core/int` | ✅ | ✅ | ✅ | ✅ | 🔧 | 🔧 | radix **parse** direction (`parse_int_radix` / `__radix_digit`, bases 2–36, sign handling) — native via the `core_int_parse` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostCoreIntParseIR` — `Option[i32]` `Some`/`None` + payload-binding `match`, string indexing with char-class compares, multiply-accumulate loop, sign + negation. The **to-string radix** direction (`int_to_string_radix`) ALSO lowers on the IR path — it builds via `__alloc_u8` + `.with` + `string_from_bytes` (no `__memcpy`/`usize`), the same builder std/hex / std/base64 use — native via the `core_int_radix` fixture, self-host via `TestSelfHostCoreIntRadixIR` (x86-64 + wasm, oracle-checked). Only `int_to_string` / `__int_to_string_u64` (decimal) stay AST — those poke raw memory via `__memcpy` over a `usize` pointer (same caveat as std/u64 `to_string`) |
 | `core/cmp` (traits) | | | | | | ⬜ | |
-| `core/iter` (Iterator trait) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **Generic** `Iterator[T]` protocol + integer `Range` (`impl Iterator[i32]`) + eager drivers ([#2686](https://github.com/JakeChampion/lang/issues/2686) / tail of [#2699](https://github.com/JakeChampion/lang/issues/2699)). Value-semantic `next(self): Option[(T, Self)]`. `count[T, I: Iterator[T]]`, `to_array[T, I: Iterator[T]]: T[]`, and `fold[T, A, I: Iterator[T]](it, init: A, f: (A, T) => A): A` (the fundamental left reduction, generic over both element and accumulator type, taking a closure combiner) are generic over the element type. Closure-free adapters `nth[T, I: Iterator[T]]: Option[T]` and `min`/`max[I: Iterator[i32]]: Option[i32]` round out the set (`sum`/`min`/`max` stay i32 — they need `+`/`<`). Works on native (interp / x86-64 / arm64 / wasm) AND the self-host **IR path** (x86-64 + wasm): parametrised-trait bounds parse on the self-host (#3558) and the native checker recovers the bound-only `T` by bound-driven inference (#3596). Coverage: `TestNativeIteratorTrait{,Module,ModuleGeneric,Arm64}`, `TestSelfHostIteratorTraitIR{X86_64,Wasm}`, `TestNativeGenericIteratorCollector{,Arm64}` + `TestSelfHostGenericCollectorIR{X86_64,Wasm}` (incl. a `boolean`-element impl + `to_array` returning a generic `T[]`), all routing-pinned to `ir` on the self-host |
+| `core/iter` (Iterator trait) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **Generic** `Iterator[T]` protocol + integer `Range` (`impl Iterator[i32]`) + eager drivers ([#2686](https://github.com/JakeChampion/lang/issues/2686) / tail of [#2699](https://github.com/JakeChampion/lang/issues/2699)). Value-semantic `next(self): Option[(T, Self)]`. `count[T, I: Iterator[T]]`, `to_array[T, I: Iterator[T]]: T[]`, and `fold[T, A, I: Iterator[T]](it, init: A, f: (A, T) => A): A` (the fundamental left reduction, generic over both element and accumulator type, taking a closure combiner) are generic over the element type. Closure-free adapters `nth`/`last[T, I: Iterator[T]]: Option[T]`, `min`/`max`/`product[I: Iterator[i32]]`, and `position[I: Iterator[i32]](it, target): Option[i32]` round out the set (the i32-bound ones need `+`/`*`/`<`/`==`). Works on native (interp / x86-64 / arm64 / wasm) AND the self-host **IR path** (x86-64 + wasm): parametrised-trait bounds parse on the self-host (#3558) and the native checker recovers the bound-only `T` by bound-driven inference (#3596). Coverage: `TestNativeIteratorTrait{,Module,ModuleGeneric,Arm64}`, `TestSelfHostIteratorTraitIR{X86_64,Wasm}`, `TestNativeGenericIteratorCollector{,Arm64}` + `TestSelfHostGenericCollectorIR{X86_64,Wasm}` (incl. a `boolean`-element impl + `to_array` returning a generic `T[]`), all routing-pinned to `ir` on the self-host |
 | `core/map` | | | | | | ⬜ | |
 | `core/no_prelude` | | | | | | ⬜ | no-op sentinel |
 
@@ -534,6 +534,21 @@ isn't in scope without `import "std/i32"` / `"std/float"`. That self-host
 over-permissiveness vs. native is a separate divergence, filed for follow-up;
 this entry scopes only the import-free escape-sequence surface, which both
 compilers agree on.)
+
+### 2026-06-21 — core/iter: more closure-free adapters `last` / `product` / `position` ([#2686](https://github.com/JakeChampion/lang/issues/2686))
+
+Three more closure-free terminal ops, same proven shape (scalar / `Option`
+returns consumed directly, no closure, no erased-generic-struct return — so
+they avoid both characterised self-host codegen gaps and lower on every
+backend incl. the self-host IR path): `last[T, I: Iterator[T]](it): Option[T]`
+(generic), `product[I: Iterator[i32]](it): i32`, and `position[I:
+Iterator[i32]](it, target): Option[i32]` (first index equal to `target`; the
+closure-taking `find` / `position_by` still await the boolean-indirect-return
+fix). Coverage: `product-position` / `last-opt` in
+`TestNativeGenericIteratorCollector` + `TestSelfHostGenericCollectorIR{X86_64,
+Wasm}` (routing-pinned to `ir`), and `iter.product`/`last`/`position` via the
+shipped module in `TestNativeIteratorTraitModuleAdapters`. Fixpoint unaffected
+(`core/iter` is standalone).
 
 ### 2026-06-21 — core/iter: closure-free adapters `nth` / `min` / `max` ([#2686](https://github.com/JakeChampion/lang/issues/2686))
 

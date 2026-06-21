@@ -132,7 +132,7 @@ function main(): i32 {
 }
 
 // TestNativeIteratorTraitModuleAdapters exercises the shipped module's
-// closure-free adapters (nth / skip / min / max) end-to-end.
+// closure-free adapters (nth / min / max / product / last / position) end-to-end.
 func TestNativeIteratorTraitModuleAdapters(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
@@ -142,18 +142,23 @@ function main(): i32 {
     match (iter.min(iter.range(3, 7))) { Some(v) => { c = v; }, None => {} }       // 3
     var d = 0;
     match (iter.max(iter.range(3, 7))) { Some(v) => { d = v; }, None => {} }       // 6
-    return a + c + d;                                                             // 4+3+6 = 13
+    var e = iter.product(iter.range(1, 5));                                        // 24
+    var f = 0;
+    match (iter.last(iter.range(0, 5))) { Some(v) => { f = v; }, None => {} }       // 4
+    var g = 0;
+    match (iter.position(iter.range(0, 9), 7)) { Some(v) => { g = v; }, None => {} } // 7
+    return a + c + d + e + f + g;                                                 // 4+3+6+24+4+7 = 48
 }
 `
 	p := writeIterProg(t, src)
-	if _, code := runFixtureInterp(t, p, ""); code != 13 {
-		t.Errorf("adapters interp = %d, want 13", code)
+	if _, code := runFixtureInterp(t, p, ""); code != 48 {
+		t.Errorf("adapters interp = %d, want 48", code)
 	}
-	if _, code := runFixtureX86_64(t, p, ""); code != 13 {
-		t.Errorf("adapters x86-64 = %d, want 13", code)
+	if _, code := runFixtureX86_64(t, p, ""); code != 48 {
+		t.Errorf("adapters x86-64 = %d, want 48", code)
 	}
-	if code := runWasm(t, src); code != 13 {
-		t.Errorf("adapters wasm = %d, want 13", code)
+	if code := runWasm(t, src); code != 48 {
+		t.Errorf("adapters wasm = %d, want 48", code)
 	}
 }
 

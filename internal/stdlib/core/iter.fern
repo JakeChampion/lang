@@ -161,3 +161,53 @@ pub function max[I: Iterator[i32]](it: I): Option[i32] {
     if (seen) { return Some(best); }
     return None;
 }
+
+// last returns the final value an iterator yields, or `None` if it is empty.
+// Generic over the element type `T`.
+pub function last[T, I: Iterator[T]](it: I): Option[T] {
+    var cur = it;
+    var acc: Option[T] = None;
+    var go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => { acc = Some(t.0); cur = t.1; },
+            None => { go = false; },
+        }
+    }
+    return acc;
+}
+
+// product returns the product of every value an i32 iterator yields (1 for an
+// empty iterator). i32-specialised — multiplication needs `*` on the element.
+pub function product[I: Iterator[i32]](it: I): i32 {
+    var p = 1;
+    var cur = it;
+    var go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => { p = p * t.0; cur = t.1; },
+            None => { go = false; },
+        }
+    }
+    return p;
+}
+
+// position returns the 0-based index of the first value equal to `target`, or
+// `None` if no value matches. i32-specialised (uses `==`); the closure-taking
+// `find` / `position_by` await the boolean-indirect-return self-host IR fix.
+pub function position[I: Iterator[i32]](it: I, target: i32): Option[i32] {
+    var cur = it;
+    var i = 0;
+    var go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => {
+                if (t.0 == target) { return Some(i); }
+                i = i + 1;
+                cur = t.1;
+            },
+            None => { go = false; },
+        }
+    }
+    return None;
+}
