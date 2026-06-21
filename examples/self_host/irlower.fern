@@ -6223,21 +6223,22 @@ function iife_arm_returns_narrowed_payload(arm: parser.MatchArm, name: string): 
 
 // iife_arm_returns_narrowed_payload_arith is the ARITHMETIC sibling of
 // iife_arm_returns_narrowed_payload: it admits `(arith-over-payload) as i32`
-// (`Some(x) => (x + 2) as i32`), where the arm computes a wide i64 intermediate
-// over the bound payload and then narrows the whole thing to an i32-width result.
-// The result temp stays i32 (the cast narrows), exactly like the bare-payload
-// narrow case; the wide intermediate is lowered by the statement-match arm body
-// (the same iife_payload_arith_kind tree the wide-result admit at the call site
-// uses), which already lowers `return (n + 2) as i32` correctly on every backend.
-// Restricted to i64 payloads — the f64 arith-then-narrow result temp is not yet
-// correctly width-lowered in the IIFE path (a separate follow-up), so it stays AST.
+// (`Some(x) => (x + 2) as i32`, `Some(v) => (v * 4.0) as i32`), where the arm
+// computes a wide i64/f64 intermediate over the bound payload and then narrows
+// the whole thing to an i32-width result. The result temp stays i32 (the cast
+// narrows), exactly like the bare-payload narrow case; the wide intermediate is
+// lowered by the statement-match arm body (the same iife_payload_arith_kind tree
+// the wide-result admit at the call site uses), which already lowers
+// `return (n + 2) as i32` / `return (v * 4.0) as i32` correctly on every backend.
+// kind = ft so an f64 payload routes the f64 arith leaf/op path (#2691 follows up
+// on the earlier i64-only #3585).
 function iife_arm_returns_narrowed_payload_arith(arm: parser.MatchArm, name: string, ft: string, s: LowerState): boolean {
-    if (ft != "i64") { return false; }
+    if (ft != "i64" && ft != "f64") { return false; }
     var t: parser.Expr = iife_arm_tail_expr(arm);
     match (t) {
         parser.ExprUnary(u) => {
             if (u.op == "as_i32" || u.op == "as_u32" || u.op == "as_u8" || u.op == "as_i8") {
-                return iife_payload_arith_kind(u.operand, name, ft, "i64", s);
+                return iife_payload_arith_kind(u.operand, name, ft, ft, s);
             }
             return false;
         },
@@ -6652,9 +6653,11 @@ function iife_payload_field_bindable(ft: string, name: string, arm: parser.Match
     if (ft == "i32") { return true; }
     if (ft == "i64" || ft == "f64") {
         if (iife_arm_returns_ident(arm, name) || iife_arm_returns_narrowed_payload(arm, name)) { return true; }
-        // `(arith-over-payload) as i32` (`Some(x) => (x + 2) as i32`): wide i64
-        // intermediate over the payload, narrowed to an i32 result temp. i64 only.
-        if (ft == "i64" && iife_arm_returns_narrowed_payload_arith(arm, name, ft, s)) { return true; }
+        // `(arith-over-payload) as i32` (`Some(x) => (x + 2) as i32`, `Some(v) =>
+        // (v * 4.0) as i32`): a wide i64/f64 intermediate over the payload, narrowed
+        // to an i32 result temp. The cast narrows, so the result temp is i32 either
+        // way; iife_arm_returns_narrowed_payload_arith certifies the wide-arith shape.
+        if ((ft == "i64" || ft == "f64") && iife_arm_returns_narrowed_payload_arith(arm, name, ft, s)) { return true; }
         // An i64/f64 ARITHMETIC composition over the BARE wide payload (`V(n) => n + 1`,
         // `V(n) => n + 1.5`): the result temp was classified i64/f64 by the matching
         // iife_payload_arith_kind shape (iife_arm_payload_result_kind), and the
