@@ -2164,7 +2164,17 @@ pub function expr_is_arr_src(e: parser.Expr, s: LowerState): boolean {
 pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
     match (e) {
         parser.ExprString(_) => { return true; },
-        parser.ExprIdent(id) => { return s.is_str_slot(s.slot_of(id.name)); },
+        parser.ExprIdent(id) => {
+            var isl: i32 = s.slot_of(id.name);
+            if (isl >= 0) { return s.is_str_slot(isl); }
+            // A bare const-string reference (`NAME`, a zero-arg string-returning
+            // const fn) has no local slot but reads as a string, so `NAME.len()` /
+            // `NAME + x` dispatch as string ops instead of falling through to the
+            // array path (which read a string box as an array header — str_len vs
+            // arr_len read different length fields, a silent miscompile). The const
+            // ref itself lowers to a call of the const fn (op_call_direct, 0 args).
+            return s.is_const_fn(id.name) && s.is_str_ret_fn(id.name);
+        },
         parser.ExprBinary(b) => {
             if (b.op == "+") { return expr_is_str(b.left, s) || expr_is_str(b.right, s); }
             return false;
