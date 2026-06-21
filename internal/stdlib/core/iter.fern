@@ -104,3 +104,60 @@ pub function fold[T, A, I: Iterator[T]](it: I, init: A, f: (A, T) => A): A {
     }
     return acc;
 }
+
+// nth returns the value at index `n` (0-based), or `None` if the iterator yields
+// fewer than `n + 1` values. Generic over the element type `T`.
+pub function nth[T, I: Iterator[T]](it: I, n: i32): Option[T] {
+    var cur = it;
+    var k = n;
+    var go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => {
+                if (k == 0) { return Some(t.0); }
+                k = k - 1;
+                cur = t.1;
+            },
+            None => { go = false; },
+        }
+    }
+    return None;
+}
+
+// min returns the smallest value an i32 iterator yields, or `None` if empty.
+pub function min[I: Iterator[i32]](it: I): Option[i32] {
+    var cur = it;
+    var best = 0;
+    var seen = false;
+    var go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => {
+                if (!seen || t.0 < best) { best = t.0; seen = true; }
+                cur = t.1;
+            },
+            None => { go = false; },
+        }
+    }
+    if (seen) { return Some(best); }
+    return None;
+}
+
+// max returns the largest value an i32 iterator yields, or `None` if empty.
+pub function max[I: Iterator[i32]](it: I): Option[i32] {
+    var cur = it;
+    var best = 0;
+    var seen = false;
+    var go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => {
+                if (!seen || t.0 > best) { best = t.0; seen = true; }
+                cur = t.1;
+            },
+            None => { go = false; },
+        }
+    }
+    if (seen) { return Some(best); }
+    return None;
+}

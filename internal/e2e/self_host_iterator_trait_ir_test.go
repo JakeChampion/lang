@@ -131,6 +131,32 @@ function main(): i32 {
 	}
 }
 
+// TestNativeIteratorTraitModuleAdapters exercises the shipped module's
+// closure-free adapters (nth / skip / min / max) end-to-end.
+func TestNativeIteratorTraitModuleAdapters(t *testing.T) {
+	src := `import "core/iter" as iter;
+function main(): i32 {
+    var a = 0;
+    match (iter.nth(iter.range(0, 9), 4)) { Some(v) => { a = v; }, None => {} }   // 4
+    var c = 0;
+    match (iter.min(iter.range(3, 7))) { Some(v) => { c = v; }, None => {} }       // 3
+    var d = 0;
+    match (iter.max(iter.range(3, 7))) { Some(v) => { d = v; }, None => {} }       // 6
+    return a + c + d;                                                             // 4+3+6 = 13
+}
+`
+	p := writeIterProg(t, src)
+	if _, code := runFixtureInterp(t, p, ""); code != 13 {
+		t.Errorf("adapters interp = %d, want 13", code)
+	}
+	if _, code := runFixtureX86_64(t, p, ""); code != 13 {
+		t.Errorf("adapters x86-64 = %d, want 13", code)
+	}
+	if code := runWasm(t, src); code != 13 {
+		t.Errorf("adapters wasm = %d, want 13", code)
+	}
+}
+
 // TestNativeIteratorTraitModuleGeneric exercises the GENERIC face of the
 // shipped `core/iter` module: a user type that implements `iter.Iterator[T]`
 // for a non-i32 element type (`boolean`) and drives the module's generic
