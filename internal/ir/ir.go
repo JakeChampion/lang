@@ -10864,8 +10864,11 @@ func (b *builder) expr(e ast.Expr) error {
 				case ast.SliceType:
 					// slice value is a pointer to a
 					// `{data_ptr, len}` header — load the
-					// data_ptr at offset 0.
-					b.emit(Op{Kind: OpLoad})
+					// data_ptr at offset 0. It's a full
+					// pointer-width field (8 bytes native /
+					// 4 wasm32), so load at WidthPtr; a plain
+					// i32 load would truncate a high pointer.
+					b.emit(Op{Kind: OpLoad, Width: WidthPtr})
 					return nil
 				case ast.StringType:
 					if b.twoWordStrings() {
@@ -11630,8 +11633,11 @@ func (b *builder) expr(e ast.Expr) error {
 		}
 		if n.SourceIsSlice {
 			// For sub-slicing, dereference: data_ptr lives at
-			// slice + 0.
-			b.emit(Op{Kind: OpLoad})
+			// slice + 0. It's a full pointer-width field (8 bytes
+			// on native, 4 on wasm32), so load at WidthPtr — a
+			// plain i32 load would truncate a high .rodata / heap
+			// pointer (the as_bytes-in-.so / arm64-darwin bug).
+			b.emit(Op{Kind: OpLoad, Width: WidthPtr})
 		}
 		// data_ptr += low * stride (skip when low is 0/missing).
 		// Stride defaults to 4 for the historical i32 layout but
@@ -11672,8 +11678,9 @@ func (b *builder) expr(e ast.Expr) error {
 				return err
 			}
 			if n.SourceIsSlice {
-				// len lives at slice + 4.
-				b.emit(Op{Kind: OpConstI32, I32: 4})
+				// len lives at slice + ptrW (after the pointer-width
+				// data field): +8 on native, +4 on wasm32.
+				b.emit(Op{Kind: OpConstI32, I32: int32(b.ptrW)})
 				b.emit(Op{Kind: OpAdd})
 				b.emit(Op{Kind: OpLoad})
 			} else {
@@ -14150,7 +14157,8 @@ func (b *builder) callBody(n *ast.Call) error {
 	// the mangled method names the checker rewrites the dispatch
 	// to. String and array layouts carry a 4-byte little-endian
 	// length prefix at `ptr - 4`; slice values carry the length
-	// at `slice + 4` after the data pointer. Strings route
+	// at `slice + ptrW` after the pointer-width data field
+	// (+8 native / +4 wasm32). Strings route
 	// through OpStrLen so a future small-string-optimisation
 	// pass can change the encoding in one place instead of
 	// patching every backend's open-coded `[ptr - 4]` load.
@@ -14202,7 +14210,9 @@ func (b *builder) callBody(n *ast.Call) error {
 		}
 		switch id.Name {
 		case "__method_slice_len":
-			b.emit(Op{Kind: OpConstI32, I32: 4})
+			// len lives at slice + ptrW (after the pointer-width data
+			// field): +8 on native, +4 on wasm32.
+			b.emit(Op{Kind: OpConstI32, I32: int32(b.ptrW)})
 			b.emit(Op{Kind: OpAdd})
 			b.emit(Op{Kind: OpLoad})
 		case "__method_string_len":

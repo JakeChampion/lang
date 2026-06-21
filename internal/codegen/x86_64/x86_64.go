@@ -3008,12 +3008,12 @@ func (g *generator) emitArrBoundsCheck() {
 }
 
 // emitSliceBoundsCheck is emitArrBoundsCheck for a slice: the len
-// is in the slice header at [rax+4] (data_ptr at [rax+0]), read
-// before the helper overwrites rax with the data pointer. rdx is
-// scratch.
+// is in the slice header at [rax+8] (8-byte data_ptr at [rax+0]),
+// read before the helper overwrites rax with the data pointer. rdx
+// is scratch.
 func (g *generator) emitSliceBoundsCheck() {
 	ok := g.freshLabel(".Lslice_ok")
-	g.emit("mov edx, [rax + 4]") // len at [slice+4]
+	g.emit("mov edx, [rax + 8]") // len at [slice+8] (after 8-byte data_ptr)
 	g.emit("cmp ecx, edx")
 	g.emit(fmt.Sprintf("jb %s", ok))
 	g.emit("mov edi, 134")
@@ -3084,24 +3084,24 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		g.emitArrBoundsCheck()
 		g.emit("lea rax, [rax + rcx*8]")
 	// Slice indexing first bounds-checks `i` against the slice
-	// header's len (at [slice+4]), then dereferences its data_ptr
-	// field (4 bytes at [slice+0]). After the deref it's the same
-	// stride-add shape as the array helpers.
+	// header's len (at [slice+8]), then dereferences its data_ptr
+	// field (8-byte pointer at [slice+0]). After the deref it's the
+	// same stride-add shape as the array helpers.
 	case "__slice_idx_1":
 		g.emitSliceBoundsCheck()
-		g.emit("mov eax, [rax]") // data_ptr (i32)
+		g.emit("mov rax, [rax]") // data_ptr (8-byte pointer)
 		g.emit("add rax, rcx")
 	case "__slice_idx_2":
 		g.emitSliceBoundsCheck()
-		g.emit("mov eax, [rax]")
+		g.emit("mov rax, [rax]")
 		g.emit("lea rax, [rax + rcx*2]")
 	case "__slice_idx":
 		g.emitSliceBoundsCheck()
-		g.emit("mov eax, [rax]")
+		g.emit("mov rax, [rax]")
 		g.emit("lea rax, [rax + rcx*4]")
 	case "__slice_idx_8":
 		g.emitSliceBoundsCheck()
-		g.emit("mov eax, [rax]")
+		g.emit("mov rax, [rax]")
 		g.emit("lea rax, [rax + rcx*8]")
 	default:
 		return fmt.Errorf("x86_64: unknown index helper %q", name)
@@ -3941,7 +3941,7 @@ func (g *generator) emitStrDecRuntime() {
 }
 
 // emitSliceMakeRuntime emits `__fern_slice_make(data, len)`:
-// allocate an 8-byte slice header [data_ptr, len] on the bump
+// allocate a 16-byte slice header [data_ptr, len] on the bump
 // heap and return its address. The IR's slice-construction path
 // (per `*ast.SliceExpr` and `*ast.IndexExpr` write side) calls
 // this helper to materialise the header — element indexing is
@@ -3949,12 +3949,14 @@ func (g *generator) emitStrDecRuntime() {
 // __slice_idx_N inline helpers, so there's no per-stride
 // dispatch needed here.
 //
-// Header layout matches the wasm runtime ($__slice_make) so the
-// IR's `len(slice)` shape (`[slice + 4]`) and field-load offsets
-// stay backend-agnostic: 4 bytes data_ptr, 4 bytes len, 8 bytes
-// total. This relies on heap addresses fitting in 32 bits —
-// true today for x86-64 Linux + arm64 Linux qemu; arm64-darwin's
-// >4 GiB heap is a documented limitation tracked in CLAUDE.md.
+// Header layout: an 8-byte (pointer-width) data_ptr at +0, the
+// i32 len at +ptrW (=8 here), 16 bytes total (the trailing 4 are
+// padding). The full-width data pointer is what makes a slice
+// over `.rodata` in a PIE shared object correct — a 32-bit field
+// truncated high addresses (the as_bytes-in-.so bug). The IR's
+// `len(slice)` shape reads `[slice + ptrW]`, so wasm32 (ptrW=4)
+// keeps its 8-byte {i32 data, i32 len} layout unchanged while the
+// native backends use the widened one.
 //
 // Calling convention: rdi = data_ptr (post-stride-offset),
 // rsi = len. Returns slice header address in rax. Calls
@@ -3968,12 +3970,12 @@ func (g *generator) emitSliceMakeRuntime() {
 	g.label("__fern_slice_make")
 	g.emit("push r12")
 	g.emit("push r13")
-	g.emit("mov r12, rdi") // save data_ptr
+	g.emit("mov r12, rdi") // save data_ptr (full 8 bytes)
 	g.emit("mov r13, rsi") // save len
-	g.emit("mov edi, 8")
+	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc")
-	g.emit("mov [rax], r12d")     // [+0..+3] data_ptr (i32)
-	g.emit("mov [rax + 4], r13d") // [+4..+7] len (i32)
+	g.emit("mov [rax], r12")      // [+0..+7] data_ptr (8-byte pointer)
+	g.emit("mov [rax + 8], r13d") // [+8..+11] len (i32)
 	g.emit("pop r13")
 	g.emit("pop r12")
 	g.emit("ret")
@@ -5822,16 +5824,10 @@ func (g *generator) emitRandomI32Runtime() {
 // that outlives the call. Returns the slice header pointer in rax.
 // Mirrors wasm's buildStringAsBytesBody.
 //
-// The slice header stores the data pointer in 32 bits (see
-// __fern_slice_make), which is fine while every data pointer lives in the
-// low heap (the mmap arena is hinted at 0x10000000). But a string LITERAL's
-// bytes live in .rodata, and in a position-independent shared object
-// (`-shared`, dlopen'd at a high base) that address exceeds 32 bits — so
-// the zero-copy view would truncate to a bogus pointer. Guard the heap
-// path: if the data pointer doesn't fit 32 bits, copy the bytes into a
-// fresh low-heap buffer first (same promotion the inline path always does).
-// Low pointers (the common case, and every static-exec case) keep the
-// zero-copy fast path.
+// The heap path is genuinely zero-copy: __fern_slice_make now stores a full
+// 8-byte data pointer, so aliasing a string LITERAL's .rodata address works
+// even in a PIE shared object loaded at a high base (the earlier 32-bit
+// slice field truncated it; superseded by the 64-bit slice header).
 func (g *generator) emitStringAsBytesRuntime() {
 	g.line("")
 	g.line(".globl __method_string_as_bytes")
@@ -5847,25 +5843,10 @@ func (g *generator) emitStringAsBytesRuntime() {
 	g.labelCounter++
 	g.emit("test bl, 1")
 	g.emit(fmt.Sprintf("jnz .Lasbytes_inline_%d", id))
-	// Heap form: data ptr = value, len = [value-4].
+	// Heap form: data ptr = value, len = [value-4]. Zero-copy — the slice
+	// header carries the full 8-byte pointer.
 	g.emit("mov r12, rbx")       // data ptr
 	g.emit("mov esi, [rbx - 4]") // len
-	// High-pointer guard: if data ptr fits 32 bits, take the zero-copy
-	// fast path; otherwise copy to a low-heap buffer (PIE .rodata case).
-	g.emit("mov rax, r12")
-	g.emit("shr rax, 32")
-	g.emit(fmt.Sprintf("jz .Lasbytes_make_%d", id))
-	g.emit("mov [rbp - 16], esi") // stash len
-	g.emit("mov [rbp - 24], r12") // stash old (high) data ptr
-	g.emit("mov edi, esi")        // alloc(len)
-	g.emit("call __fern_alloc")
-	g.emit("mov r12, rax")        // r12 = fresh low-heap buffer (new data)
-	g.emit("mov rdi, rax")        // dst
-	g.emit("mov rsi, [rbp - 24]") // src = old high data ptr (readable)
-	g.emit("mov ecx, [rbp - 16]") // count = len
-	g.emit("cld")
-	g.emit("rep movsb")
-	g.emit("mov esi, [rbp - 16]") // len for the slice header
 	g.emit(fmt.Sprintf("jmp .Lasbytes_make_%d", id))
 	g.label(fmt.Sprintf(".Lasbytes_inline_%d", id))
 	// Inline form: length in bits 1..3, bytes 1..7 of the value.
