@@ -8205,8 +8205,9 @@ function synth_struct_ord(sd: StructDecl): FuncDecl {
     var i: i32 = 0;
     while (i < sd.fields.len()) {
         var vn: string = "__c" + dl_itoa(i);
-        var cc: Expr = dv_call1(dv_self_field(sd.fields[i].name), "cmp", dv_other_field(sd.fields[i].name));
-        stmts = stmts.append(s_var(vn, "i32", cc));
+        var cs: Stmt[] = dv_cmp_stmts(vn, sd.fields[i].type_name, dv_self_field(sd.fields[i].name), dv_other_field(sd.fields[i].name));
+        var k: i32 = 0;
+        while (k < cs.len()) { stmts = stmts.append(cs[k]); k = k + 1; }
         var cond: Expr = e_binary("!=", e_ident(vn), e_number("0", "", false));
         var thenb: Stmt[] = [s_return(e_ident(vn))];
         var elseb: Stmt[] = [];
@@ -8357,8 +8358,7 @@ function synth_enum_ord(ename: string, variants: StructDecl[]): FuncDecl {
                     ibody = [s_return(e_binary("-", e_number("0", "", false), e_number("1", "", false)))];
                 } else {
                     if (vi.fields.len() > 0) {
-                        var cc: Expr = dv_call1(e_ident("__s0"), "cmp", e_ident("__o0"));
-                        var cstmts: Stmt[] = [s_var("__c0", "i32", cc)];
+                        var cstmts: Stmt[] = dv_cmp_stmts("__c0", vi.fields[0].type_name, e_ident("__s0"), e_ident("__o0"));
                         var emptyb: Stmt[] = [];
                         cstmts = cstmts.append(s_if(e_binary("!=", e_ident("__c0"), e_number("0", "", false)), [s_return(e_ident("__c0"))], emptyb));
                         cstmts = cstmts.append(s_return(e_number("0", "", false)));
@@ -8549,6 +8549,27 @@ function dv_default_expr(t: string): Expr {
 function dv_eq_expr(ty: string, lhs: Expr, rhs: Expr): Expr {
     if (dv_is_scalar(ty)) { return e_binary("==", lhs, rhs); }
     return dv_call1(lhs, "eq", rhs);
+}
+
+// dv_cmp_stmts builds the statements that compute the three-way comparison of
+// one derived-`cmp` field/payload into the i32 local `vn`. A NUMERIC scalar
+// inlines core/cmp's Ord body (`vn = -1 / 1 / 0` via `<` / `>`), so the derive
+// needs no `Ord` impl for that type — which the self-host loader (local +
+// builtin only, no core/std) doesn't provide; a `.cmp()` there would bail the
+// module to the AST emitter. A nominal field delegates to its own (local,
+// derived) `.cmp()`; a string field also keeps `.cmp()` (its Ord routes
+// through sort.string_cmp, not a primitive `<`), so a string-keyed derive(Ord)
+// remains the one shape that still falls back. The inline `<`/`>` form matches
+// core/cmp's numeric `cmp` exactly, so the differential oracle still agrees.
+function dv_cmp_stmts(vn: string, ty: string, lhs: Expr, rhs: Expr): Stmt[] {
+    if (dv_is_num_scalar(ty)) {
+        var neg1: Expr = e_binary("-", e_number("0", "", false), e_number("1", "", false));
+        var out: Stmt[] = [s_var(vn, "i32", e_number("0", "", false))];
+        out = out.append(s_if(e_binary("<", lhs, rhs), [s_assign(vn, neg1)], []));
+        out = out.append(s_if(e_binary(">", lhs, rhs), [s_assign(vn, e_number("1", "", false))], []));
+        return out;
+    }
+    return [s_var(vn, "i32", dv_call1(lhs, "cmp", rhs))];
 }
 
 // dv_is_num_scalar reports whether `t` is a numeric scalar — the subset of
