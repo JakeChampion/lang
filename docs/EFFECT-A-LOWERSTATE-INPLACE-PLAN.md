@@ -1,7 +1,18 @@
 # Effect A — `LowerState` in-place accumulation plan
 
 Date: 2026-06-21.
-Status: design / blueprint. The measurement that motivates it is in
+Status: **SUPERSEDED (2026-06-21).** Direct measurement
+(`docs/IR-SELFCOMPILE-OOM-FINDINGS.md` → "Finding 2 RE-MEASURED") shows
+the premise of this plan is wrong: the 45-field `LowerState` rebuild is
+**already in-place** under clean self-reassign threading (verified flat
+at 45 fields / 20 arrays). The O(N²) "clone per emit" this plan was
+written to remove fires only when a state is **read after being
+threaded** (rc≥2) — a per-site one-line hoist, not a reason to move
+`ops`/`local_*` out of `LowerState` across ~1000 sites. Do **not**
+execute this plan; the real cost is a linear per-allocation leak plus a
+localized keep-alive (see the findings doc). Kept for history.
+
+The measurement that originally motivated it is in
 `docs/IR-SELFCOMPILE-OOM-FINDINGS.md` (Finding 2 + the quantified
 breakdown).
 
