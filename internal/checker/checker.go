@@ -1196,6 +1196,15 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
+	// tcp_connect(host_be, port): number — outbound client connect (the
+	// upstream-fetch half of the edge-handler use case). host_be is the
+	// IPv4 in network byte order packed into an i32
+	// (a | b<<8 | c<<16 | d<<24); returns the connected fd, or -errno.
+	// x86-64 first; arm64 follows.
+	c.info.FuncSigs["tcp_connect"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
 	// poll(fds, timeout_ms): number — the std/task reactor's readiness
 	// multiplexer (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1). Waits up
 	// to `timeout_ms` (negative = block indefinitely, 0 = non-blocking)

@@ -100,3 +100,85 @@ func TestPollDrivenTcpServerX86_64(t *testing.T) {
 		t.Errorf("server exit = %d, want 42 (poll-driven accept+recv path)", code)
 	}
 }
+
+// The literal trigger condition from docs/CONCURRENCY-RESEARCH.md:
+// "issue two parallel fetches and await both." A Fern program opens
+// two OUTBOUND connections (tcp_connect), sends a request on each, and
+// multiplexes the two responses through std/reactor.run_io — the real
+// reactor driving two real sockets concurrently. A Go upstream answers
+// both connections. Exit 42 iff both fetches got a response.
+//
+// This is the edge-handler fan-out (fetch a cache + a primary, take
+// both) running end-to-end over the native reactor. x86-64 host-native
+// (tcp_connect is x86-first; arm64 follows).
+func TestReactorOutboundFanoutX86_64(t *testing.T) {
+	if qemu := x86QemuOrEmpty(t); qemu != "" {
+		t.Skip("outbound fan-out test runs host-native only")
+	}
+	bin := buildFernCLI(t)
+
+	// Upstream: accept 2 connections, answer each (own goroutine so
+	// both can be in flight while the Fern client fans out).
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("no free TCP port: %v", err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+	go func() {
+		for i := 0; i < 2; i++ {
+			conn, aerr := ln.Accept()
+			if aerr != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				_ = c.SetDeadline(time.Now().Add(3 * time.Second))
+				b := make([]byte, 256)
+				_, _ = c.Read(b)
+				fmt.Fprint(c, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+			}(conn)
+		}
+	}()
+
+	// 127.0.0.1 in network byte order, packed: 127 | (1 << 24).
+	const host = 127 | (1 << 24)
+	src := fmt.Sprintf(`import "std/reactor";
+
+function start_fetch(conn: i32): reactor.IoStep {
+    function resume(woken_fd: i32): reactor.IoStep {
+        var resp: string = tcp_recv(woken_fd, 4096);
+        if (resp.len() > 0) { return IoDone(1); }
+        return IoDone(0);
+    }
+    return IoWait(conn, resume);
+}
+
+function main(): i32 {
+    var c1: i32 = tcp_connect(%d, %d);
+    var c2: i32 = tcp_connect(%d, %d);
+    if (c1 < 0) { return 81; }
+    if (c2 < 0) { return 82; }
+    if (tcp_send(c1, "GET /1 HTTP/1.1\r\nHost: x\r\n\r\n") < 0) { return 83; }
+    if (tcp_send(c2, "GET /2 HTTP/1.1\r\nHost: x\r\n\r\n") < 0) { return 84; }
+    var tasks: reactor.IoStep[] = [start_fetch(c1), start_fetch(c2)];
+    var results: i32[] = reactor.run_io(tasks);
+    if (results[0] == 1 && results[1] == 1) { return 42; }
+    return 85;
+}`, host, port, host, port)
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "fanout.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	out := filepath.Join(dir, "fanout.bin")
+	if o, err := exec.Command(bin, "-target", "x86-64", "-o", out, srcPath).CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, o)
+	}
+	cmd := exec.Command(out)
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 42 {
+		t.Errorf("outbound fan-out exit = %d, want 42", code)
+	}
+}
