@@ -117,6 +117,40 @@ function main(): i32 {
 	}
 }
 
+// std/wasm_reactor.select drives tasks until the FIRST completes, then
+// returns its value and cancels the rest — the race / first-wins
+// counterpart to run (which waits for all). Two timers (10ms, 200ms):
+// select returns the fast one's value regardless of its position.
+func TestWasmReactorSelect(t *testing.T) {
+	// Fast task at index 1 → select returns its value (7), not the slow
+	// one's (35), and short-circuits.
+	src := `import "std/wasm_reactor";
+function start(ns: i64, val: i32): wasm_reactor.Step[i32] {
+    function resume(p: i32): wasm_reactor.Step[i32] { return Done(val); }
+    return Wait(wasm_timer_pollable(ns), resume);
+}
+function main(): i32 {
+    var tasks: wasm_reactor.Step[i32][] = [start(200000000, 35), start(10000000, 7)];
+    return wasm_reactor.select(tasks, 0 - 1);
+}`
+	if got := runWasm(t, src); got != 7 {
+		t.Errorf("wasm_reactor.select (fast at idx 1): got %d, want 7", got)
+	}
+	// Fast task at index 0 → returns 7 too.
+	src0 := `import "std/wasm_reactor";
+function start(ns: i64, val: i32): wasm_reactor.Step[i32] {
+    function resume(p: i32): wasm_reactor.Step[i32] { return Done(val); }
+    return Wait(wasm_timer_pollable(ns), resume);
+}
+function main(): i32 {
+    var tasks: wasm_reactor.Step[i32][] = [start(10000000, 7), start(200000000, 35)];
+    return wasm_reactor.select(tasks, 0 - 1);
+}`
+	if got := runWasm(t, src0); got != 7 {
+		t.Errorf("wasm_reactor.select (fast at idx 0): got %d, want 7", got)
+	}
+}
+
 // std/wasm_reactor.run_deadline bounds the whole fan-out by a
 // wall-clock deadline (a timer pollable added to every poll round) —
 // the wasm twin of std/reactor.run_io_deadline. A task that beats the
