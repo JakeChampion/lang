@@ -1205,6 +1205,15 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
+	// tcp_pollable(conn): number — a wasi:io/poll pollable handle for a
+	// connection's readiness (tcp-socket.subscribe), so std/wasm_reactor
+	// can multiplex N connections via wasm_poll for overlapped outbound
+	// fan-out. wasm-only (Preview-2 pollables); the native reactor polls
+	// the connection fd directly.
+	c.info.FuncSigs["tcp_pollable"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
 	// poll(fds, timeout_ms): number — the std/task reactor's readiness
 	// multiplexer (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1). Waits up
 	// to `timeout_ms` (negative = block indefinitely, 0 = non-blocking)
