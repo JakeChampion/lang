@@ -9358,42 +9358,16 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             if (is_scalar_arr_field_access(r.value, s)) { return s.fail(); }
             var se: LowerState = lower_expr(r.value, s);
             if (!se.ok) { return se; }
-            // Perceus move-on-return: when the returned value is a bare array
-            // local, it is MOVED to the caller — exclude it from the exit
-            // dec-sweep so it isn't freed (the return-inc the caller would owe
-            // and this dec cancel; here there is no return-inc, so eliding the
-            // dec is the whole move). Everything else is released as usual.
-            var moved: i32 = 0 - 1;
-            match (r.value) {
-                parser.ExprIdent(rid) => {
-                    var rs: i32 = se.slot_of(rid.name);
-                    if (se.is_arr_slot(rs)) { moved = rs; }
-                },
-                // `return <arr>.append(e)`: arr_push consumed the receiver array
-                // and the grown array is what's returned (moved to the caller). If
-                // the receiver is a bare array local, exclude it from the exit
-                // dec-sweep — its buffer now backs the returned value, so a dec
-                // here would free it out from under the caller. Mirrors the bare
-                // `return <arr-local>` move above. (std/string split/splitn/chunks.)
-                parser.ExprCall(rcall) => {
-                    match (rcall.callee) {
-                        parser.ExprFieldAccess(rfa) => {
-                            if (rfa.field == "append" && rcall.args.len() == 1) {
-                                match (rfa.obj) {
-                                    parser.ExprIdent(raid) => {
-                                        var ras: i32 = se.slot_of(raid.name);
-                                        if (se.is_arr_slot(ras)) { moved = ras; }
-                                    },
-                                    _ => {}
-                                }
-                            }
-                        },
-                        _ => {}
-                    }
-                },
-                _ => {}
-            }
-            se = emit_dec_sweep_except(se, moved);
+            // Perceus move-on-return: any array local the returned value MOVES out
+            // (a bare array local, an `.append` receiver, or an array under a
+            // returned enum / struct-enum-field — see returned_moved_arr_slots) is
+            // excluded from the exit dec-sweep so it isn't freed (the return-inc the
+            // caller would owe and this dec cancel; here there is no return-inc, so
+            // eliding the dec is the whole move). #3720: a `return Many(a)` over a
+            // local array `a` previously freed `a` here while the returned box still
+            // referenced it. Everything else is released as usual.
+            var moved_slots: i32[] = returned_moved_arr_slots(r.value, se, []);
+            se = emit_dec_sweep_except_list(se, moved_slots);
             return se.emit(ir.op_return());
         },
         parser.StmtIf(iff) => {
@@ -11169,11 +11143,43 @@ function precise_drop_names(body: parser.Stmt[], arr_ret: string[], strarr_ret: 
     return PreciseDrops { idxs: idxs, names: names };
 }
 
+// slot_list_has reports whether slot index `v` is in `xs` — the keep-set
+// membership test for emit_dec_sweep_except_list.
+function slot_list_has(xs: i32[], v: i32): boolean {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] == v) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// emit_dec_sweep_except is the single-keep wrapper retained for its many call
+// sites: keep < 0 means "sweep everything", keep >= 0 keeps exactly that slot.
 pub function emit_dec_sweep_except(s: LowerState, keep: i32): LowerState {
+    var keeps: i32[] = [];
+    if (keep >= 0) { keeps = keeps.append(keep); }
+    return emit_dec_sweep_except_list(s, keeps);
+}
+
+// emit_dec_sweep_except_list is the move-on-return sweep generalised to a SET of
+// kept slots: a returned value can MOVE more than one array local out (e.g.
+// `return Many(items)` moves `items` into the leaking enum box; a struct literal
+// `S { a: Many(x), b: Many(y) }` moves both). Each kept slot's buffer now backs
+// an escaping value, so decing it here would free it out from under the caller —
+// #3720: a function returning an array-payload enum built from a LOCAL array
+// (`var a = [...]; return Many(a)`) freed `a` in the exit sweep while the
+// returned box still pointed at it, so a later allocation that recycled the
+// buffer corrupted the box (a use-after-free that surfaced as a SIGSEGV only once
+// the freed memory was reused — e.g. a second `append` that grew the holding
+// array). Excluding the moved slots leaves the buffer alive: it leaks WITH the
+// enum box, consistent with the IR leak-mode invariant that an enum box and its
+// payload are never swept.
+pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState {
     var st: LowerState = s;
     var i: i32 = st.n_params;
     while (i < st.local_is_arr.len()) {
-        if (i != keep && st.is_arr_slot(i)) {
+        if (!slot_list_has(keeps, i) && st.is_arr_slot(i)) {
             st = st.emit(ir.op_load_local(i));
             st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
             st = st.emit(ir.op_drop());
@@ -11184,12 +11190,12 @@ pub function emit_dec_sweep_except(s: LowerState, keep: i32): LowerState {
     // box at scope exit. Only fresh, proven-non-escaping struct locals qualify
     // (slot_is_reclaimable_struct), so the box is the sole reference and freeing
     // it cannot dangle a caller's / container's reference: a RETURNED struct is
-    // escaping → never reclaimable → never swept (no move-on-return `keep` needed
+    // escaping → never reclaimable → never swept (no move-on-return keep needed
     // for structs). Slots are zeroed at entry (arr_slots_of), so an untaken-branch
     // slot decs a null (guarded no-op).
     var j: i32 = st.n_params;
     while (j < st.local_struct_type.len()) {
-        if (j != keep && slot_is_reclaimable_struct(st, j)) {
+        if (!slot_list_has(keeps, j) && slot_is_reclaimable_struct(st, j)) {
             // Deep-drop the struct's scalar-array fields (sole-owned literals), then
             // free the box. Order matters: read the fields before freeing the box.
             st = emit_struct_field_drops(st, j);
@@ -11200,6 +11206,72 @@ pub function emit_dec_sweep_except(s: LowerState, keep: i32): LowerState {
         j = j + 1;
     }
     return st;
+}
+
+// returned_moved_arr_slots collects every array-LOCAL slot that the returned
+// expression `e` MOVES out of this frame, so the exit dec-sweep can keep them
+// (their buffers now back an escaping value). It covers, recursively:
+//   - a bare array-local return (`return a`)              — the buffer is moved;
+//   - `return <arr-local>.append(e)`                      — receiver moved;
+//   - an enum-variant construction `return V(a, …)`       — each bare array-local
+//     payload arg is moved into the (leaking) enum box (#3720);
+//   - a struct literal whose enum-typed field is built from such a construction
+//     (`return S { node: Many(items), … }`) — the array under the enum payload.
+// Struct ARRAY fields (`S { xs: a }`) are deliberately NOT collected: those take
+// an alias-inc at the struct-lit lowering, so the sweep dec is balanced and must
+// still run. A fresh array literal payload (`Many([…])`) names no slot, so it is
+// naturally excluded. Mirrors the single-slot `moved` logic it replaces.
+function returned_moved_arr_slots(e: parser.Expr, s: LowerState, acc: i32[]): i32[] {
+    var out: i32[] = acc;
+    match (e) {
+        parser.ExprIdent(id) => {
+            var sl: i32 = s.slot_of(id.name);
+            if (s.is_arr_slot(sl) && !slot_list_has(out, sl)) { out = out.append(sl); }
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    // Enum-variant construction: bare array-local payload args move
+                    // into the box (recurse to also catch nested `V(W(a))`).
+                    if (variant_enum_owner(s.structs, cid.name) != "") {
+                        var ai: i32 = 0;
+                        while (ai < c.args.len()) {
+                            out = returned_moved_arr_slots(c.args[ai], s, out);
+                            ai = ai + 1;
+                        }
+                    }
+                },
+                parser.ExprFieldAccess(fa) => {
+                    // `arr.append(e)`: the receiver array is consumed and its buffer
+                    // backs the returned (grown) array.
+                    if (fa.field == "append" && c.args.len() == 1) {
+                        match (fa.obj) {
+                            parser.ExprIdent(rid) => {
+                                var rs: i32 = s.slot_of(rid.name);
+                                if (s.is_arr_slot(rs) && !slot_list_has(out, rs)) { out = out.append(rs); }
+                            },
+                            _ => {}
+                        }
+                    }
+                },
+                _ => {}
+            }
+        },
+        parser.ExprStructLit(sl) => {
+            // Only descend into enum-payload fields (ExprCall constructors): a bare
+            // array-field value gets its own alias-inc, so it must stay swept.
+            var fi: i32 = 0;
+            while (fi < sl.field_values.len()) {
+                match (sl.field_values[fi]) {
+                    parser.ExprCall(_) => { out = returned_moved_arr_slots(sl.field_values[fi], s, out); },
+                    _ => {}
+                }
+                fi = fi + 1;
+            }
+        },
+        _ => {}
+    }
+    return out;
 }
 
 // lower_block lowers a sequence of statements (a then/else body), bailing
