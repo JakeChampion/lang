@@ -196,6 +196,48 @@ pub function filter[T, I: Iterator[T]](it: I, keep: (T) => boolean): T[] {
     return out;
 }
 
+// take eagerly collects the first `n` values the iterator yields into a fresh
+// `T[]` (fewer if the iterator is shorter); `n <= 0` yields an empty array. The
+// bounded-prefix collector — `take(it, k)` is the eager form of "the first k
+// elements". Generic over the element type `T`.
+pub function take[T, I: Iterator[T]](it: I, n: i32): T[] {
+    var out: T[] = [];
+    var cur = it;
+    var k = n;
+    var go = true;
+    while (go) {
+        if (k <= 0) {
+            go = false;
+        } else {
+            match (cur.next()) {
+                Some(t) => { out = out.append(t.0); cur = t.1; k = k - 1; },
+                None => { go = false; },
+            }
+        }
+    }
+    return out;
+}
+
+// skip discards the first `n` values the iterator yields and eagerly collects
+// the rest into a fresh `T[]`; `n <= 0` keeps everything, and skipping past the
+// end yields an empty array. Generic over the element type `T`.
+pub function skip[T, I: Iterator[T]](it: I, n: i32): T[] {
+    var out: T[] = [];
+    var cur = it;
+    var k = n;
+    var go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => {
+                if (k > 0) { k = k - 1; } else { out = out.append(t.0); }
+                cur = t.1;
+            },
+            None => { go = false; },
+        }
+    }
+    return out;
+}
+
 // nth returns the value at index `n` (0-based), or `None` if the iterator yields
 // fewer than `n + 1` values. Generic over the element type `T`.
 pub function nth[T, I: Iterator[T]](it: I, n: i32): Option[T] {
