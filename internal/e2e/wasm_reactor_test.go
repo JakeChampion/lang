@@ -117,6 +117,46 @@ function main(): i32 {
 	}
 }
 
+// std/wasm_reactor.run_deadline bounds the whole fan-out by a
+// wall-clock deadline (a timer pollable added to every poll round) —
+// the wasm twin of std/reactor.run_io_deadline. A task that beats the
+// deadline carries its result; one that doesn't is abandoned and takes
+// `not_ready`.
+func TestWasmReactorRunDeadline(t *testing.T) {
+	// Fast task (10ms → 7) beats the 60ms deadline; slow task (300ms →
+	// 35) does not, so it lands not_ready (-1).
+	mixed := `import "std/wasm_reactor";
+function start(ns: i64, val: i32): wasm_reactor.Step[i32] {
+    function resume(p: i32): wasm_reactor.Step[i32] { return Done(val); }
+    return Wait(wasm_timer_pollable(ns), resume);
+}
+function main(): i32 {
+    var tasks: wasm_reactor.Step[i32][] = [start(10000000, 7), start(300000000, 35)];
+    var r: i32[] = wasm_reactor.run_deadline(tasks, 60000000, 0 - 1);
+    if (r.len() != 2) { return 90; }
+    if (r[0] != 7) { return 91; }       // beat the deadline
+    if (r[1] != (0 - 1)) { return 92; } // abandoned at the deadline
+    return 42;
+}`
+	if got := runWasm(t, mixed); got != 42 {
+		t.Errorf("wasm_reactor.run_deadline mixed: got %d, want 42", got)
+	}
+	// Both tasks beat a generous deadline → both carry their result.
+	intime := `import "std/wasm_reactor";
+function start(ns: i64, val: i32): wasm_reactor.Step[i32] {
+    function resume(p: i32): wasm_reactor.Step[i32] { return Done(val); }
+    return Wait(wasm_timer_pollable(ns), resume);
+}
+function main(): i32 {
+    var tasks: wasm_reactor.Step[i32][] = [start(5000000, 35), start(10000000, 7)];
+    var r: i32[] = wasm_reactor.run_deadline(tasks, 500000000, 0 - 1);
+    return r[0] + r[1];
+}`
+	if got := runWasm(t, intime); got != 42 {
+		t.Errorf("wasm_reactor.run_deadline in-time: got %d, want 42", got)
+	}
+}
+
 // The scheduler is generic in T: a Step[string] fan-out returns string
 // results. Exercises the generic-variant inference (T recovered through
 // the function-typed Wait payload) end-to-end on wasm, plus string
