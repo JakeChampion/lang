@@ -4823,9 +4823,10 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     }
                     if (decl_is_struct(s.structs, cid.name)) {
                         if (!decl_is_leaksafe(s.structs, cid.name)) { return s.fail(); }
-                        // Array-payload variant construction isn't in this slice
-                        // (the fresh-literal constraint is only wired for struct
-                        // literals) — defer to AST.
+                        // Variant / struct construction via a call form (`Many(items)`,
+                        // `One(c)`). An array payload that aliases a local array gets a
+                        // Perceus alias-inc below so the variant box retains the buffer
+                        // (the safe-leak invariant — see the inc site after each arg).
                         if (c.args.len() != decl_field_count(s.structs, cid.name)) { return s.fail(); }
                         var vctor: LowerState = s;
                         var vi: i32 = 0;
@@ -4838,6 +4839,30 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (struct_field_is_i64(s.structs, cid.name, vi)) { vctor = lower_i64(c.args[vi], vctor); }
                             else { vctor = lower_expr(c.args[vi], vctor); }
                             if (!vctor.ok) { return vctor; }
+                            // Perceus alias-inc for an ARRAY payload that aliases a
+                            // local array: the variant box references the buffer, so
+                            // retain it (rc_inc) with the pointer on top of the stack.
+                            // Without this the exit dec-sweep frees the source local
+                            // out from under the returned box — a UAF that corrupts the
+                            // nested structure (e.g. `return PS { node: Many(items) }`
+                            // hands the caller a box over freed/reused memory, which
+                            // `count` then walks into unbounded recursion; #3720). An
+                            // enum variant is a struct with enum_owner, so this mirrors
+                            // the struct-lit fav_alias_inc idiom. Only a bare ident on
+                            // an array slot: a fresh-literal payload isn't a local, so
+                            // the sweep never frees it (it leaks — the safe-leak
+                            // invariant for nested payloads). The inc pops + re-pushes
+                            // the same pointer, leaving struct_make's arg order intact.
+                            if (is_array_type_name(decl_field_type_at(vctor.structs, cid.name, vi))) {
+                                match (c.args[vi]) {
+                                    parser.ExprIdent(paid) => {
+                                        if (vctor.is_arr_slot(vctor.slot_of(paid.name))) {
+                                            vctor = vctor.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                                        }
+                                    },
+                                    _ => {}
+                                }
+                            }
                             vi = vi + 1;
                         }
                         return vctor.emit(ir.op_struct_make(cid.name, c.args.len()));
