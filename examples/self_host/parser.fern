@@ -896,6 +896,20 @@ function (p: Par) peek_keyword(): string {
     }
     return "";
 }
+// peek2_punct returns the punctuation text of the token ONE past the
+// cursor ("" when it isn't a punctuator / out of range). The 2-token
+// lookahead the call-argument parser needs to spot a named argument
+// (`name = value`): the current token is the IDENT, this is the `=`.
+function (p: Par) peek2_punct(): string {
+    if (p.pos + 1 < p.toks.len()) {
+        var t: lexer.Token = p.toks[p.pos + 1];
+        match (t) {
+            lexer.TokPunct(x) => { return x.text; },
+            _ => { return ""; }
+        }
+    }
+    return "";
+}
 function (p: Par) peek_ident(): string {
     var t: lexer.Token = p.peek();
     match (t) {
@@ -1172,9 +1186,29 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
             var args: Expr[] = [];
             if (p.peek_punct() != ")") {
                 while (true) {
-                    var ra = parse_expr(p);
-                    p = ra.par;
-                    args = args.append(ra.expr);
+                    // Named argument `name = value`: an IDENT immediately
+                    // followed by a single `=` (peek2 is exactly "=", never
+                    // "==" / "=>"). Encode it as a synthetic
+                    // `ExprBinary("__named_arg", <name ident>, value)` marker;
+                    // fill_default_args_module reorders these into positional
+                    // order against the callee's params and fills omitted
+                    // defaults, mirroring the native `defaultargs` pass. Without
+                    // this, parse_expr reads `name` as a bare value and stops at
+                    // `=`, breaking the call.
+                    var an: string = p.peek_ident();
+                    if (an.len() > 0 && p.peek2_punct() == "=") {
+                        var aline: i32 = p.peek_line();
+                        var acol: i32 = p.peek_col();
+                        p = p.advance();   // consume the parameter name
+                        p = p.advance();   // consume `=`
+                        var rv = parse_expr(p);
+                        p = rv.par;
+                        args = args.append(ExprBinary { op: "__named_arg", left: ExprIdent { name: an, line: aline, col: acol }, right: rv.expr, line: aline, col: acol });
+                    } else {
+                        var ra = parse_expr(p);
+                        p = ra.par;
+                        args = args.append(ra.expr);
+                    }
                     if (p.peek_punct() == ",") { p = p.advance(); continue; }
                     break;
                 }
@@ -6904,6 +6938,216 @@ function fda_lookup_params(name: string, funcs: FuncDecl[]): ParamDecl[] {
     return none;
 }
 
+// ---- named-argument resolution (mirrors internal/defaultargs) ----
+// A named argument `name = value` is parsed into a synthetic
+// `ExprBinary("__named_arg", <name ident>, value)` marker. These helpers
+// recognise, inspect, and resolve those markers against a callee's
+// parameter list, turning a mixed positional/named call into a plain
+// positional one with defaults filled — so every later pass and backend
+// sees an ordinary `Args` list (the same contract the native pass gives
+// the Go checker).
+
+function fda_is_named_marker(e: Expr): boolean {
+    match (e) {
+        ExprBinary(b) => { return b.op == "__named_arg"; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function fda_marker_name(e: Expr): string {
+    match (e) {
+        ExprBinary(b) => {
+            match (b.left) {
+                ExprIdent(id) => { return id.name; },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+function fda_marker_value(e: Expr): Expr {
+    match (e) {
+        ExprBinary(b) => { return b.right; },
+        _ => { return e; }
+    }
+    return e;
+}
+
+function fda_args_have_named(args: Expr[]): boolean {
+    var i: i32 = 0;
+    while (i < args.len()) {
+        if (fda_is_named_marker(args[i])) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// fda_strip_named unwraps any named markers to their bare value, dropping
+// the name. The fallback when a named argument lands on a callee we can't
+// resolve (a method or an unknown function — an error in the native
+// compiler); unwrapping keeps a well-formed positional call so nothing
+// downstream trips over the marker.
+function fda_strip_named(args: Expr[]): Expr[] {
+    var out: Expr[] = [];
+    var i: i32 = 0;
+    while (i < args.len()) {
+        if (fda_is_named_marker(args[i])) { out = out.append(fda_marker_value(args[i])); }
+        else { out = out.append(args[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+function fda_named_lookup(names: string[], vals: Expr[], want: string): i32 {
+    var i: i32 = 0;
+    while (i < names.len()) {
+        if (names[i] == want) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// fda_resolve_named rebuilds a positional argument list from a call whose
+// args mix leading positionals and trailing `name = value` markers. Each
+// parameter takes, in order: the matching leading positional, else a named
+// value for its name, else its default. A still-unfilled required param
+// gets its (empty) default_value placeholder — the same shape an omitted
+// required positional arg leaves, so the checker's arity path reports it.
+function fda_resolve_named(params: ParamDecl[], args: Expr[]): Expr[] {
+    var posvals: Expr[] = [];
+    var nnames: string[] = [];
+    var nvals: Expr[] = [];
+    var i: i32 = 0;
+    while (i < args.len()) {
+        if (fda_is_named_marker(args[i])) {
+            nnames = nnames.append(fda_marker_name(args[i]));
+            nvals = nvals.append(fda_marker_value(args[i]));
+        } else {
+            posvals = posvals.append(args[i]);
+        }
+        i = i + 1;
+    }
+    var out: Expr[] = [];
+    var pi: i32 = 0;
+    while (pi < params.len()) {
+        if (pi < posvals.len()) {
+            out = out.append(posvals[pi]);
+        } else {
+            var ni: i32 = fda_named_lookup(nnames, nvals, params[pi].name);
+            if (ni >= 0) { out = out.append(nvals[ni]); }
+            else { out = out.append(params[pi].default_value); }
+        }
+        pi = pi + 1;
+    }
+    // Surplus positional args (more than params) — keep them so an arity
+    // error still surfaces rather than silently dropping arguments.
+    var j: i32 = params.len();
+    while (j < posvals.len()) { out = out.append(posvals[j]); j = j + 1; }
+    return out;
+}
+
+// stmts_have_named / expr_has_named detect whether a module contains any
+// named-argument marker, so fill_default_args_module runs the resolving
+// walk even for a module with no default-valued parameters (named args and
+// defaults are independent features).
+function expr_has_named(e: Expr, depth: i32): boolean {
+    if (depth > 256) { return false; }
+    match (e) {
+        ExprCall(c) => {
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                if (fda_is_named_marker(c.args[i])) { return true; }
+                if (expr_has_named(c.args[i], depth + 1)) { return true; }
+                i = i + 1;
+            }
+            return expr_has_named(c.callee, depth + 1);
+        },
+        ExprBinary(b) => {
+            if (b.op == "__named_arg") { return true; }
+            if (expr_has_named(b.left, depth + 1)) { return true; }
+            return expr_has_named(b.right, depth + 1);
+        },
+        ExprUnary(u) => { return expr_has_named(u.operand, depth + 1); },
+        ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { if (expr_has_named(a.elements[i], depth + 1)) { return true; } i = i + 1; }
+            return false;
+        },
+        ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { if (expr_has_named(t.elements[i], depth + 1)) { return true; } i = i + 1; }
+            return false;
+        },
+        ExprIndex(ix) => {
+            if (expr_has_named(ix.array, depth + 1)) { return true; }
+            return expr_has_named(ix.index, depth + 1);
+        },
+        ExprSlice(sl) => {
+            if (expr_has_named(sl.array, depth + 1)) { return true; }
+            if (expr_has_named(sl.start, depth + 1)) { return true; }
+            return expr_has_named(sl.end, depth + 1);
+        },
+        ExprFieldAccess(fa) => { return expr_has_named(fa.obj, depth + 1); },
+        ExprStructLit(s) => {
+            var i: i32 = 0;
+            while (i < s.field_values.len()) { if (expr_has_named(s.field_values[i], depth + 1)) { return true; } i = i + 1; }
+            if (s.has_base) { return expr_has_named(s.base, depth + 1); }
+            return false;
+        },
+        ExprLambda(lm) => { return stmts_have_named(lm.body); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function stmts_have_named(stmts: Stmt[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            StmtVar(v) => { if (expr_has_named(v.init, 0)) { return true; } },
+            StmtReturn(r) => { if (expr_has_named(r.value, 0)) { return true; } },
+            StmtExpr(e) => { if (expr_has_named(e.value, 0)) { return true; } },
+            StmtAssign(a) => { if (expr_has_named(a.value, 0)) { return true; } },
+            StmtIf(f) => {
+                if (expr_has_named(f.cond, 0)) { return true; }
+                if (stmts_have_named(f.then_body)) { return true; }
+                if (stmts_have_named(f.else_body)) { return true; }
+            },
+            StmtWhile(w) => {
+                if (expr_has_named(w.cond, 0)) { return true; }
+                if (stmts_have_named(w.body)) { return true; }
+            },
+            StmtFor(fr) => {
+                if (expr_has_named(fr.iter, 0)) { return true; }
+                if (stmts_have_named(fr.body)) { return true; }
+            },
+            StmtMatch(m) => {
+                if (expr_has_named(m.scrutinee, 0)) { return true; }
+                var a: i32 = 0;
+                while (a < m.arms.len()) {
+                    if (stmts_have_named(m.arms[a].body)) { return true; }
+                    a = a + 1;
+                }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+function module_has_named_args(mod: Module): boolean {
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        if (stmts_have_named(mod.funcs[fi].body)) { return true; }
+        fi = fi + 1;
+    }
+    return stmts_have_named(mod.top_stmts);
+}
+
 function fda_expr(e: Expr, funcs: FuncDecl[]): Expr {
     match (e) {
         ExprCall(c) => {
@@ -6911,10 +7155,18 @@ function fda_expr(e: Expr, funcs: FuncDecl[]): Expr {
             var new_args: Expr[] = [];
             var i: i32 = 0;
             while (i < c.args.len()) { new_args = new_args.append(fda_expr(c.args[i], funcs)); i = i + 1; }
+            var has_named: boolean = fda_args_have_named(new_args);
             match (c.callee) {
                 ExprIdent(id) => {
                     var params: ParamDecl[] = fda_lookup_params(id.name, funcs);
-                    if (params.len() > new_args.len()) {
+                    if (has_named) {
+                        // Reorder named + leading-positional args into a plain
+                        // positional list, filling defaults. A named arg on an
+                        // unknown callee (no params found) falls back to a
+                        // name-stripped positional call.
+                        if (params.len() > 0) { new_args = fda_resolve_named(params, new_args); }
+                        else { new_args = fda_strip_named(new_args); }
+                    } else if (params.len() > new_args.len()) {
                         var ok: boolean = true;
                         var k: i32 = new_args.len();
                         while (k < params.len()) { if (!params[k].has_default) { ok = false; } k = k + 1; }
@@ -6924,7 +7176,12 @@ function fda_expr(e: Expr, funcs: FuncDecl[]): Expr {
                         }
                     }
                 },
-                _ => {}
+                _ => {
+                    // Method / indirect callee: named args aren't supported on
+                    // these (an error natively); strip the marker so codegen
+                    // never sees it.
+                    if (has_named) { new_args = fda_strip_named(new_args); }
+                }
             }
             return ExprCall { callee: new_callee, args: new_args, line: c.line, col: c.col, type_argc: c.type_argc };
         },
@@ -6992,7 +7249,7 @@ function fda_stmts(stmts: Stmt[], funcs: FuncDecl[]): Stmt[] {
 }
 
 pub function fill_default_args_module(mod: Module): Module {
-    if (!module_has_default_params(mod)) { return mod; }
+    if (!module_has_default_params(mod) && !module_has_named_args(mod)) { return mod; }
     var funcs: FuncDecl[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
