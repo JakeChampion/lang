@@ -23,6 +23,8 @@
 //   $            anchor at the end of the text
 //   \d \w \s     shorthand classes: digit / word (`[A-Za-z0-9_]`) /
 //                whitespace; `\D \W \S` are their negations
+//   \b \B        word boundary / non-boundary (zero-width, between a
+//                `\w` and a non-`\w` byte or a text edge)
 //   \n \t \r     the newline / tab / carriage-return bytes
 //   \<meta>      a backslash before any other byte is that literal byte —
 //                use it to match a metacharacter (`\.`, `\(`, `\*`, `\\`, …)
@@ -48,11 +50,12 @@
 // (un-grouped) patterns do. The native path is unaffected.
 
 // RNode is the parsed pattern tree. Leaf atoms (`RChar` / `RAny` /
-// `RClass` / `RStart` / `REnd`) and the composites `RSeq` (concatenation)
+// `RClass` / `RStart` / `REnd`, plus `RBound` for a `\b` / `\B`
+// word-boundary assertion) and the composites `RSeq` (concatenation)
 // / `RAlt` (alternation) / `RStar` / `RPlus` / `ROpt` (quantifiers over a
 // sub-node, which a group makes an arbitrary tree).
 pub enum RNode {
-    RChar(i32), RAny, RClass(string), RStart, REnd,
+    RChar(i32), RAny, RClass(string), RStart, REnd, RBound(boolean),
     RSeq(RNode[]), RAlt(RNode[]), RStar(RNode), RPlus(RNode), ROpt(RNode)
 }
 
@@ -76,6 +79,9 @@ function __rx_atom(p: string, i: i32): RParse {
         if (d == 87)  { return RParse { node: RClass("[^A-Za-z0-9_]"), pos: i + 2 }; }  // \W
         if (d == 115) { return RParse { node: RClass("[ \t\n\r]"), pos: i + 2 }; }      // \s
         if (d == 83)  { return RParse { node: RClass("[^ \t\n\r]"), pos: i + 2 }; }     // \S
+        // Word-boundary assertions (zero-width).
+        if (d == 98)  { return RParse { node: RBound(true),  pos: i + 2 }; }            // \b
+        if (d == 66)  { return RParse { node: RBound(false), pos: i + 2 }; }            // \B
         // Escaped control bytes.
         if (d == 110) { return RParse { node: RChar(10), pos: i + 2 }; }   // \n
         if (d == 116) { return RParse { node: RChar(9),  pos: i + 2 }; }   // \t
@@ -195,6 +201,16 @@ function __rx_alt(p: string, i: i32): RParse {
     return RParse { node: RAlt(branches), pos: pos };
 }
 
+// __rx_is_word reports whether byte `c` is a word character (`[A-Za-z0-9_]`)
+// — the alphabet a `\b` word boundary is defined against.
+function __rx_is_word(c: i32): boolean {
+    if (c >= 48 && c <= 57) { return true; }    // 0-9
+    if (c >= 65 && c <= 90) { return true; }    // A-Z
+    if (c >= 97 && c <= 122) { return true; }   // a-z
+    if (c == 95) { return true; }               // _
+    return false;
+}
+
 function __rx_has(xs: i32[], v: i32): boolean {
     var i: i32 = 0;
     while (i < xs.len()) { if (xs[i] == v) { return true; } i = i + 1; }
@@ -268,6 +284,15 @@ function __rx_match(n: RNode, t: string, ti: i32): i32[] {
         RClass(tok) => { var e: i32[] = []; if (ti < t.len() && __rx_class(tok, t[ti])) { e = e.append(ti + 1); } return e; },
         RStart => { var e: i32[] = []; if (ti == 0) { e = e.append(ti); } return e; },
         REnd => { var e: i32[] = []; if (ti >= t.len()) { e = e.append(ti); } return e; },
+        RBound(want) => {
+            var before: boolean = false;
+            if (ti > 0) { before = __rx_is_word(t[ti - 1]); }
+            var after: boolean = false;
+            if (ti < t.len()) { after = __rx_is_word(t[ti]); }
+            var e: i32[] = [];
+            if ((before != after) == want) { e = e.append(ti); }   // zero-width
+            return e;
+        },
         RSeq(xs) => {
             var cur: i32[] = [ti];
             var k: i32 = 0;
