@@ -251,6 +251,35 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-21 — self-host IR: user-defined generic enums (`enum E[T]`) monomorphise + lower ([#3572](https://github.com/JakeChampion/lang/issues/3572))
+
+A **user-defined generic enum** — `enum Opt[T] { Sm(T), Nn }` — previously
+bailed the whole module to the legacy AST emitter (construction *and* match):
+generic functions and generic structs already monomorphised on the self-host
+path, but the enum table passed straight through `monomorphize_module` /
+`monomorphize_structs`, so a generic enum's variant payload type stayed the bare
+type variable `T` and the IR path couldn't resolve a payload's primitive methods
+(`s.len()` on a `Box[string]` payload mis-dispatched → it bailed). Native
+monomorphises per instantiation, so this was a goal-1 IR-subset gap. Fix: a new
+`parser.monomorphize_enums` pass (mirroring the generic-struct pass) clones each
+generic enum per concrete instantiation (`Opt[i32]` → `Opt__i32` with
+`Sm__i32(i32)`), mangles the variant **construction** call sites, the `match` arm
+**patterns**, and the `Opt[i32]` **annotations** to the clone, and wires the
+cloned enums + variant structs into the returned `Module` (the generic originals
+are dropped). The instantiation key is inferred from a `var`/param/return
+annotation or, for a payloaded variant, the argument types unified against the
+variant's field types — exactly the way the struct pass infers a literal's key.
+Scope: a generic enum with **no** associated methods and a simple-nominal key
+(primitive / string / bare struct); a method-bearing generic enum, or a composite
+key (`Opt[Box[i32]]`), is left untouched (it keeps its pre-existing behaviour
+rather than dangling). Coverage: `TestSelfHostGenericEnum{IRX86_64,WasmIR}` —
+i32 payload, string-payload method dispatch, unit variant, construction-only, and
+**two distinct instantiations coexisting** (`Opt[i32]` + `Opt[string]`) — all
+routing `ir` and oracle-checked against the native interpreter. Self-host
+fixpoint stays byte-identical (modload + stage2): the compiler source + stdlib
+use no generic enums, so the pass is a no-op on the fixpoint corpus, exactly like
+the generic-struct pass.
+
 ### 2026-06-20 — self-host IR: calling a RETURNED capturing closure inline (#3551)
 
 Closed the last common closure shape that bailed the self-host IR path to the
