@@ -974,6 +974,13 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// types are structs vs. enums; we lazily disambiguate here.
 	c.resolveTypeNames(prog)
 
+	// With every type slot resolved (parameters → ParamType, enums →
+	// EnumType, resources → HandleType), validate that each remaining
+	// nominal reference names a type that actually exists — otherwise an
+	// unknown type was silently accepted as an opaque nominal and only
+	// surfaced as a confusing downstream cascade (or not at all). See E064.
+	c.validateKnownTypes(prog)
+
 	// Pre-declare built-ins so user code can call them.
 	c.info.FuncSigs["putchar"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
@@ -4770,6 +4777,160 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool) {
 		}
 		c.resolveType(&t.Result, params)
 	}
+}
+
+// validateKnownTypes reports any nominal type reference (E064) that names
+// no declared type — `var x: Wibble`, `function f(a: Wibble): Wibble`,
+// `struct S { f: Wibble }`. It runs after resolveTypeNames, so type
+// parameters are already ParamType, enums are EnumType, and resources are
+// HandleType; a leftover StructType/EnumType is therefore either a declared
+// struct/enum or genuinely undefined. The per-decl type-parameter scope
+// mirrors resolveTypeNames exactly so an in-scope `T` is never flagged. A
+// function body uses a single type-param scope throughout (Fern has no
+// nested generic scopes), so every `var` annotation inside it — at any
+// block depth — is validated against the function's own parameters.
+func (c *checker) validateKnownTypes(prog *ast.Program) {
+	for _, fn := range prog.Funcs {
+		params := typeParamSet(fn.TypeParams)
+		if fn.Receiver != nil {
+			c.checkTypeKnown(fn.Receiver.Type, params, fn.P)
+		}
+		for i := range fn.Params {
+			c.checkTypeKnown(fn.Params[i].Type, params, paramPos(fn.Params[i], fn.P))
+		}
+		c.checkTypeKnown(fn.ReturnType, params, fn.P)
+		if fn.Body != nil {
+			ast.Walk(fn.Body, func(n ast.Node) bool {
+				if v, ok := n.(*ast.Var); ok && v.Type != nil {
+					c.checkTypeKnown(v.Type, params, v.P)
+				}
+				return true
+			})
+		}
+	}
+	for _, sd := range prog.Structs {
+		params := typeParamSet(sd.TypeParams)
+		for i := range sd.Fields {
+			c.checkTypeKnown(sd.Fields[i].Type, params, paramPos(sd.Fields[i], sd.P))
+		}
+	}
+	for _, ed := range prog.Enums {
+		params := typeParamSet(ed.TypeParams)
+		for i := range ed.Variants {
+			for j := range ed.Variants[i].Payloads {
+				c.checkTypeKnown(ed.Variants[i].Payloads[j], params, ed.Variants[i].P)
+			}
+		}
+	}
+	for _, impl := range prog.Impls {
+		params := typeParamSet(impl.TypeParams)
+		c.checkTypeKnown(impl.Type, params, impl.P)
+	}
+}
+
+// checkTypeKnown walks a resolved type tree and reports E064 for each
+// nominal (struct / enum) name that isn't a declared type or an in-scope
+// type parameter. Composite types recurse; every other form (ParamType,
+// the scalar/string/void built-ins, Self, dyn-trait, handle, projection)
+// is intrinsically valid and skipped.
+func (c *checker) checkTypeKnown(t ast.Type, params map[string]bool, pos ast.Position) {
+	switch x := t.(type) {
+	case ast.StructType:
+		if !c.knownTypeName(x.Name, params) {
+			c.errfCode(pos, "E064", "unknown type %q%s", x.Name, unknownTypeHint(x.Name))
+			return
+		}
+		for _, a := range x.Args {
+			c.checkTypeKnown(a, params, pos)
+		}
+	case ast.EnumType:
+		if !c.knownTypeName(x.Name, params) {
+			c.errfCode(pos, "E064", "unknown type %q%s", x.Name, unknownTypeHint(x.Name))
+			return
+		}
+		for _, a := range x.Args {
+			c.checkTypeKnown(a, params, pos)
+		}
+	case ast.ArrayType:
+		c.checkTypeKnown(x.Elem, params, pos)
+	case ast.SliceType:
+		c.checkTypeKnown(x.Elem, params, pos)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			c.checkTypeKnown(e, params, pos)
+		}
+	case *ast.FuncType:
+		for _, p := range x.Params {
+			c.checkTypeKnown(p, params, pos)
+		}
+		c.checkTypeKnown(x.Result, params, pos)
+	}
+}
+
+// knownTypeName reports whether `name` is an in-scope type parameter or
+// names any declared struct / enum / trait / resource (built-in generics
+// like Map and Cell are registered structs; Option / Result are enums).
+// It deliberately accepts a name known in *any* of these roles — the goal
+// is to flag only genuinely-undefined names, not to police misuse of a
+// known name (that's other rules' job), keeping false positives out.
+func (c *checker) knownTypeName(name string, params map[string]bool) bool {
+	if params[name] {
+		return true
+	}
+	if _, ok := c.info.Structs[name]; ok {
+		return true
+	}
+	if _, ok := c.info.Enums[name]; ok {
+		return true
+	}
+	if _, ok := c.info.Traits[name]; ok {
+		return true
+	}
+	if _, ok := c.info.Resources[name]; ok {
+		return true
+	}
+	return false
+}
+
+// unknownTypeHint suggests the right spelling for a handful of common
+// cross-language slips, appended to the E064 message.
+func unknownTypeHint(name string) string {
+	switch name {
+	case "bool":
+		return " (did you mean `boolean`?)"
+	case "int", "i8", "i16", "long":
+		return " (did you mean `i32`?)"
+	case "uint", "u8", "u16":
+		return " (did you mean `u32`?)"
+	case "float", "double":
+		return " (did you mean `f64`?)"
+	case "str", "String":
+		return " (did you mean `string`?)"
+	}
+	return ""
+}
+
+// typeParamSet builds a lookup set from a decl's type-parameter names, or
+// nil when there are none.
+func typeParamSet(names []string) map[string]bool {
+	if len(names) == 0 {
+		return nil
+	}
+	m := make(map[string]bool, len(names))
+	for _, n := range names {
+		m[n] = true
+	}
+	return m
+}
+
+// paramPos prefers a Param's name position (so an E064 points at the
+// offending parameter / field) and falls back to the decl position for a
+// synthetic Param that carries no source location.
+func paramPos(p ast.Param, fallback ast.Position) ast.Position {
+	if p.NamePos.Line > 0 {
+		return p.NamePos
+	}
+	return fallback
 }
 
 // variantRef is the resolution target for an unqualified variant
