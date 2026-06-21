@@ -1,0 +1,112 @@
+import "std/test";
+import "std/i32";
+
+// examples/tests/i32_methods_test.fern — exercise std/i32's receiver
+// methods through the test runner: the ASCII byte-classification family
+// (is_digit / is_alpha / is_hex_digit / hex_value / digit_value /
+// to_lower / to_ascii_string) and the integer utilities (abs / signum /
+// reverse_digits / sum_of_digits / factorial / is_prime /
+// is_perfect_square / is_palindrome). std/i32 had only Go-side coverage;
+// this is the pure-Fern, std/test-driven shape, gated through the
+// self-host IR path (TestSelfHostStdTestE2E) so the receiver-method
+// dispatch + arithmetic lowering is proven end to end on the
+// self-hosted compiler.
+
+// ---- ASCII byte classification (the i32 is a byte / char code) ----
+
+function test_is_digit(): test.TestOutcome {
+    return test.assert_true((48).is_digit());   // '0'
+}
+
+function test_is_alpha(): test.TestOutcome {
+    return test.assert_true((65).is_alpha());   // 'A'
+}
+
+function test_not_hex_digit(): test.TestOutcome {
+    return test.assert_false((71).is_hex_digit());  // 'G'
+}
+
+function test_is_hex_digit(): test.TestOutcome {
+    return test.assert_true((70).is_hex_digit());   // 'F'
+}
+
+function test_hex_value(): test.TestOutcome {
+    return test.assert_eq((70).hex_value(), 15);    // 'F' -> 15
+}
+
+function test_digit_value(): test.TestOutcome {
+    return test.assert_eq((57).digit_value(), 9);   // '9' -> 9
+}
+
+function test_to_lower(): test.TestOutcome {
+    return test.assert_eq((65).to_lower(), 97);     // 'A' -> 'a'
+}
+
+function test_to_ascii_string(): test.TestOutcome {
+    return test.assert_eq((65).to_ascii_string(), "A");
+}
+
+// ---- integer utilities ----
+
+function test_abs(): test.TestOutcome {
+    return test.assert_eq((0 - 5).abs(), 5);
+}
+
+function test_signum(): test.TestOutcome {
+    return test.assert_eq((0 - 3).signum(), 0 - 1);
+}
+
+function test_reverse_digits(): test.TestOutcome {
+    return test.assert_eq((123).reverse_digits(), 321);
+}
+
+function test_sum_of_digits(): test.TestOutcome {
+    return test.assert_eq((123).sum_of_digits(), 6);
+}
+
+function test_factorial(): test.TestOutcome {
+    return test.assert_eq((5).factorial(), 120);
+}
+
+function test_is_prime(): test.TestOutcome {
+    return test.assert_true((7).is_prime());
+}
+
+function test_not_prime(): test.TestOutcome {
+    return test.assert_false((9).is_prime());
+}
+
+function test_is_perfect_square(): test.TestOutcome {
+    return test.assert_true((9).is_perfect_square());
+}
+
+function test_is_palindrome(): test.TestOutcome {
+    return test.assert_true((121).is_palindrome());
+}
+
+function test_not_palindrome(): test.TestOutcome {
+    return test.assert_false((123).is_palindrome());
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/i32");
+    r = r.it("is_digit '0'", test_is_digit());
+    r = r.it("is_alpha 'A'", test_is_alpha());
+    r = r.it("is_hex_digit 'G' false", test_not_hex_digit());
+    r = r.it("is_hex_digit 'F'", test_is_hex_digit());
+    r = r.it("hex_value 'F'", test_hex_value());
+    r = r.it("digit_value '9'", test_digit_value());
+    r = r.it("to_lower 'A'", test_to_lower());
+    r = r.it("to_ascii_string", test_to_ascii_string());
+    r = r.it("abs", test_abs());
+    r = r.it("signum", test_signum());
+    r = r.it("reverse_digits", test_reverse_digits());
+    r = r.it("sum_of_digits", test_sum_of_digits());
+    r = r.it("factorial", test_factorial());
+    r = r.it("is_prime", test_is_prime());
+    r = r.it("not prime", test_not_prime());
+    r = r.it("is_perfect_square", test_is_perfect_square());
+    r = r.it("is_palindrome", test_is_palindrome());
+    r = r.it("not palindrome", test_not_palindrome());
+    return r.finish();
+}

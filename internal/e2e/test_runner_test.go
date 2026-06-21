@@ -278,6 +278,26 @@ func TestRunnerCsvExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/i32_methods_test.fern` covers std/i32's receiver
+// methods — the ASCII byte-classification family (is_digit / is_alpha /
+// is_hex_digit / hex_value / digit_value / to_lower / to_ascii_string)
+// and the integer utilities (abs / signum / reverse_digits /
+// sum_of_digits / factorial / is_prime / is_perfect_square /
+// is_palindrome) — which had only Go-side coverage. Passing → exit 0.
+func TestRunnerI32MethodsExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/i32_methods_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/i32", "# pass 18", "# fail 0", "1..18"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/runner_self_test.fern` is the runner's own
 // meta-test — confirms that every assertion helper returns the
 // expected TestOutcome shape on both pass and fail paths.
