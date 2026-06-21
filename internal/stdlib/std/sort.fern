@@ -387,3 +387,35 @@ pub function is_sorted_by[T](arr: T[], cmp: (T, T) => i32): boolean {
     }
     return true;
 }
+
+// `sort_by_i32_key[T](arr, key)` — return a fresh copy of `arr` sorted
+// ascending by the i32 `key(x)` projection. The common "sort records by a
+// numeric field" case (`sort_by_i32_key(rows, \r -> r.timestamp)`), without
+// spelling a full comparator. Keys are computed ONCE up front into a parallel
+// array (a Schwartzian transform — each element's `key` is evaluated a single
+// time, not O(n log n) times), then the elements and their keys are insertion-
+// sorted together by the precomputed i32 key. Stable, O(n²); the input is not
+// mutated. (Correct on every backend; on the self-host it currently lowers via
+// the AST emitter rather than the IR path — a closure-typed param over a
+// generic `T[]` isn't yet IR-eligible there.)
+pub function sort_by_i32_key[T](arr: T[], key: (T) => i32): T[] {
+    var out: T[] = arr;
+    var keys: i32[] = [];
+    for x in out { keys = keys.append(key(x)); }
+    var n: i32 = out.len();
+    var i: i32 = 1;
+    while (i < n) {
+        var j: i32 = i;
+        while (j > 0 && keys[j] < keys[j - 1]) {
+            var tv: T = out[j];
+            out = out.with(j, out[j - 1]);
+            out = out.with(j - 1, tv);
+            var tk: i32 = keys[j];
+            keys = keys.with(j, keys[j - 1]);
+            keys = keys.with(j - 1, tk);
+            j = j - 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}

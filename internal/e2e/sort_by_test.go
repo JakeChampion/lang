@@ -126,6 +126,106 @@ func TestSelfHostSortByIRX86_64(t *testing.T) {
 	}
 }
 
+// sortByI32KeyProg sorts a struct array by an i32-key projection (closure
+// `(P) => i32`), the common "sort records by a numeric field" case. Keys are
+// precomputed once (Schwartzian transform). [k:3, k:1, k:2] → [1,2,3];
+// 1*100 + 2*10 + 3 = 123.
+const sortByI32KeyProg = `import "std/sort" as sort;
+struct P { k: i32, tag: i32 }
+function main(): i32 {
+    var xs: P[] = [P { k: 3, tag: 0 }, P { k: 1, tag: 0 }, P { k: 2, tag: 0 }];
+    var s = sort.sort_by_i32_key(xs, function (p: P): i32 { return p.k; });
+    return s[0].k * 100 + s[1].k * 10 + s[2].k;
+}
+`
+
+// TestNativeSortByI32Key exercises the shipped `import "std/sort"`
+// `sort_by_i32_key` on interp / x86-64 / wasm.
+func TestNativeSortByI32Key(t *testing.T) {
+	p := writeIterProg(t, sortByI32KeyProg)
+	if _, code := runFixtureInterp(t, p, ""); code != 123 {
+		t.Errorf("sort_by_i32_key interp = %d, want 123", code)
+	}
+	if _, code := runFixtureX86_64(t, p, ""); code != 123 {
+		t.Errorf("sort_by_i32_key x86-64 = %d, want 123", code)
+	}
+	if code := runWasm(t, sortByI32KeyProg); code != 123 {
+		t.Errorf("sort_by_i32_key wasm = %d, want 123", code)
+	}
+}
+
+// TestNativeSortByI32KeyArm64 is the arm64 leg (CI-gated; qemu).
+func TestNativeSortByI32KeyArm64(t *testing.T) {
+	p := writeIterProg(t, sortByI32KeyProg)
+	if _, code := runFixtureArm64(t, p, ""); code != 123 {
+		t.Errorf("sort_by_i32_key arm64 = %d, want 123", code)
+	}
+}
+
+// TestSelfHostSortByI32Key drives `sort_by_i32_key` through the self-hosted
+// x86-64 compiler and oracle-checks the result. It asserts BEHAVIOUR, not the
+// routing tag: a closure-typed param over a generic `T[]` currently lowers via
+// the AST emitter rather than the IR path on the self-host, which is still
+// correct end-to-end (the legitimate fallback). IR-eligibility for this shape
+// is a self-host codegen follow-up.
+func TestSelfHostSortByI32Key(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	src, err := os.ReadFile(filepath.Join("../../examples/self_host", "asm_run.fern"))
+	if err != nil {
+		t.Fatalf("read asm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_run.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	// Inline the helper (the self-host single-program driver doesn't resolve
+	// `import "std/sort"`); same body as the shipped sort_by_i32_key.
+	prog := `struct P { k: i32, tag: i32 }
+function sort_by_i32_key[T](arr: T[], key: (T) => i32): T[] {
+    var out: T[] = arr;
+    var keys: i32[] = [];
+    for x in out { keys = keys.append(key(x)); }
+    var n: i32 = out.len();
+    var i: i32 = 1;
+    while (i < n) {
+        var j: i32 = i;
+        while (j > 0 && keys[j] < keys[j - 1]) {
+            var tv: T = out[j];
+            out = out.with(j, out[j - 1]);
+            out = out.with(j - 1, tv);
+            var tk: i32 = keys[j];
+            keys = keys.with(j, keys[j - 1]);
+            keys = keys.with(j - 1, tk);
+            j = j - 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+function main(): i32 {
+    var xs: P[] = [P { k: 3, tag: 0 }, P { k: 1, tag: 0 }, P { k: 2, tag: 0 }];
+    var s = sort_by_i32_key(xs, function (p: P): i32 { return p.k; });
+    return s[0].k * 100 + s[1].k * 10 + s[2].k;
+}
+`
+	asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
+	if len(asm) == 0 {
+		t.Fatal("self-host compiler emitted 0 bytes")
+	}
+	progBin := buildBin(t, gcc, dir, "sortbyi32key", string(asm))
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(progBin)
+	} else {
+		cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+	}
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 123 {
+		t.Errorf("sort_by_i32_key self-host x86-64 = %d, want 123", code)
+	}
+}
+
 // TestSelfHostSortByIRWasm is the wasm leg.
 func TestSelfHostSortByIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
