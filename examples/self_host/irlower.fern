@@ -961,6 +961,34 @@ pub function (s: LowerState) is_i64_slot(i: i32): boolean {
     if (i >= s.local_is_i64.len()) { return false; }
     return s.local_is_i64[i];
 }
+// is_i32_scalar_slot reports whether slot i holds a 32-bit (or sub-32) INTEGER
+// scalar — a plain i32, a u32, or a subword (bool/u8/i8/u16/i16) — but NOT
+// i64/u64, NOT a float, and NOT any heap/pointer type (string, array of any
+// kind, struct, Option/Result, tuple, map). It gates the implicit i32->i64
+// widening in lower_i64's ExprIdent leaf: such a leaf can be sign/zero-extended
+// into an i64 context (`s64 + i`, a for-range loop var accumulated into an i64)
+// instead of bailing the whole module to the AST path. The extend's signedness
+// is chosen by the caller (is_u32_slot -> zero-extend; otherwise sign-extend,
+// which is also correct for a subword already loaded sign-correct in 32 bits).
+pub function (s: LowerState) is_i32_scalar_slot(i: i32): boolean {
+    if (i < 0) { return false; }
+    if (s.is_i64_slot(i)) { return false; }
+    if (s.is_f64_slot(i)) { return false; }
+    if (s.is_f32_slot(i)) { return false; }
+    if (s.is_str_slot(i)) { return false; }
+    if (s.is_strarr_slot(i)) { return false; }
+    if (s.is_arr_slot(i)) { return false; }
+    if (s.is_f64arr_slot(i)) { return false; }
+    if (s.is_i64arr_slot(i)) { return false; }
+    if (s.is_closurearr_slot(i)) { return false; }
+    if (s.is_fnarr_slot(i)) { return false; }
+    if (s.is_arrarr_slot(i)) { return false; }
+    if (s.struct_type_of_slot(i).len() > 0) { return false; }
+    if (s.opt_type_of_slot(i).len() > 0) { return false; }
+    if (i < s.local_tuple_elems.len() && s.local_tuple_elems[i].len() > 0) { return false; }
+    if (i < s.local_map_type.len() && s.local_map_type[i].len() > 0) { return false; }
+    return true;
+}
 pub function (s: LowerState) mark_f64(i: i32, v: boolean): LowerState {
     return LowerState { ops: s.ops, local_names: s.local_names, local_is_arr: s.local_is_arr, local_is_str: s.local_is_str, local_is_strarr: s.local_is_strarr, local_struct_type: s.local_struct_type, local_opt_type: s.local_opt_type, local_tuple_elems: s.local_tuple_elems, local_map_type: s.local_map_type, local_is_i64: s.local_is_i64, local_is_f64: s.local_is_f64.with(i, v), local_is_f32: s.local_is_f32, local_is_f64arr: s.local_is_f64arr, local_is_i64arr: s.local_is_i64arr, local_is_closurearr: s.local_is_closurearr, local_is_fnarr: s.local_is_fnarr, local_is_arrarr: s.local_is_arrarr, local_arrarr_elem: s.local_arrarr_elem, local_is_u32: s.local_is_u32, local_is_u64: s.local_is_u64, local_subword: s.local_subword, ctrl: s.ctrl, loop_blk: s.loop_blk, ret_is_i64: s.ret_is_i64, ret_is_i64arr: s.ret_is_i64arr, ret_is_dyn: s.ret_is_dyn, i64_ret_fns: s.i64_ret_fns, fn_param_sigs: s.fn_param_sigs, cur_fn: s.cur_fn, closure_fns: s.closure_fns, const_fns: s.const_fns, closure_locals: s.closure_locals, f64_ret_fns: s.f64_ret_fns, f64arr_ret_fns: s.f64arr_ret_fns, i64arr_ret_fns: s.i64arr_ret_fns, structs: s.structs, str_ret_fns: s.str_ret_fns, arr_ret_fns: s.arr_ret_fns, strarr_ret_fns: s.strarr_ret_fns, arr_method_fns: s.arr_method_fns, opt_ret_fns: s.opt_ret_fns, tuple_ret_fns: s.tuple_ret_fns, struct_ret_fns: s.struct_ret_fns, map_ret_fns: s.map_ret_fns, reclaimable_names: s.reclaimable_names, n_params: s.n_params, ok: s.ok };
 }
@@ -3281,6 +3309,18 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
         parser.ExprIdent(id) => {
             var sl: i32 = s.slot_of(id.name);
             if (sl >= 0 && s.is_i64_slot(sl)) { return s.emit(ir.op_load_local(sl)); }
+            // An i32-width scalar leaf consumed in an i64 context — `s64 + i`, a
+            // mixed-width param/local, or a for-range loop var accumulated into an
+            // i64 — widens to i64 instead of bailing the module to the AST path.
+            // lower_expr pushes the i32 value; op_int_extend widens it (zero-extend
+            // for u32, sign-extend for a signed i32 / subword). Because the
+            // ExprBinary arm recurses through lower_i64, this also lifts the i32
+            // leaves of nested sub-expressions (`s64 + (i + 1)`) for free.
+            if (sl >= 0 && s.is_i32_scalar_slot(sl)) {
+                var iw: LowerState = lower_expr(e, s);
+                if (!iw.ok) { return iw; }
+                return iw.emit(ir.op_int_extend(s.is_u32_slot(sl)));
+            }
             return s.fail();
         },
         parser.ExprUnary(u) => {
