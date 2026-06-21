@@ -7729,6 +7729,28 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 },
                 _ => {}
             }
+            // A bare ZERO-ARG fn name bound to a `fn`-typed local is a function
+            // VALUE (pointer), not a `const`-style call: `var g: () => T = f`.
+            // The generic lower_expr below would read `f` (a 0-arg receiver-less
+            // fn, indistinguishable from a `const` without context) as a const and
+            // CALL it, storing f()'s result; `g()` then calls that integer as a
+            // code pointer and segfaults. The `fn`-typed target disambiguates it
+            // as a value → emit const_func (the same pointer a >=1-arg fn-name
+            // already lowers to). g stays a plain fn-pointer slot, so `g()`
+            // dispatches via the plain call_indirect path. (#3574)
+            if (v.type_name == "fn") {
+                match (v.init) {
+                    parser.ExprIdent(fvid) => {
+                        if (s.slot_of(fvid.name) < 0 && s.is_const_fn(fvid.name)) {
+                            var fvs: LowerState = s.emit(ir.op_const_func(0, fvid.name));
+                            var fvb: LowerState = fvs.add_local(v.name);
+                            var fvslot: i32 = fvb.slot_of(v.name);
+                            return fvb.emit(ir.op_store_local(fvslot));
+                        }
+                    },
+                    _ => {}
+                }
+            }
             var se: LowerState = lower_expr(v.init, s);
             if (!se.ok) { return se; }
             // Perceus alias-inc + array tracking: a fresh array literal is
