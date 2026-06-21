@@ -5519,7 +5519,12 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
             var cur: Insts = ins;
             var i: i32 = 0;
             while (i < s.field_values.len()) {
-                var rv: RExpr = me_expr(s.field_values[i], "", env, enums, structs, funcs, cur);
+                // Propagate the declared field type as the expected type so a
+                // generic-enum field set to a unit / payload-less variant
+                // (`S { o: Nn }` where `o: Opt[i32]`) pins its instantiation
+                // from the field annotation rather than staying generic.
+                var fexp: string = me_field_type_of(structs, s.type_name, s.field_names[i]);
+                var rv: RExpr = me_expr(s.field_values[i], fexp, env, enums, structs, funcs, cur);
                 cur = rv.rins;
                 nvals = nvals.append(rv.rexpr);
                 i = i + 1;
@@ -5568,14 +5573,36 @@ function me_rewrite_arm_pattern(pat: Pattern, ed: EnumDecl, key: string): Patter
     return pat;
 }
 
+// me_field_type_of returns the declared type of field `fname` on the struct
+// named `sname` (stripped of any generic args), or "".
+function me_field_type_of(structs: StructDecl[], sname: string, fname: string): string {
+    var base: string = strip_struct_base(sname);
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == base) {
+            var fs: StructFieldDecl[] = structs[i].fields;
+            var j: i32 = 0;
+            while (j < fs.len()) {
+                if (fs[j].name == fname) { return fs[j].type_name; }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
 // me_scrutinee_type recovers the (original-spelling) type of a match scrutinee
 // or for-loop iterable, so its generic-enum instantiation can be read: an
 // ident / param / for-loop var via the env, a call result via the callee's
-// declared return type, and an index `a[i]` via the array's element type.
+// declared return type, an index `a[i]` via the array's element type, a struct
+// literal via its type name, and a field access `s.o` via the field's declared
+// type (so `match (s.o)` over a generic-enum-typed field rewrites its arms).
 // "" when it can't be determined (the arms then stay un-rewritten).
-function me_scrutinee_type(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
+function me_scrutinee_type(e: Expr, env: MEnv, structs: StructDecl[], funcs: FuncDecl[]): string {
     match (e) {
         ExprIdent(id) => { return env.elook(id.name); },
+        ExprStructLit(s) => { return s.type_name; },
         ExprCall(c) => {
             match (c.callee) {
                 ExprIdent(cid) => { return func_ret_of(funcs, cid.name); },
@@ -5584,9 +5611,14 @@ function me_scrutinee_type(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
             return "";
         },
         ExprIndex(ix) => {
-            var at: string = me_scrutinee_type(ix.array, env, funcs);
+            var at: string = me_scrutinee_type(ix.array, env, structs, funcs);
             if (type_ends_arr(at)) { return at[0 : at.len() - 2]; }
             return "";
+        },
+        ExprFieldAccess(fa) => {
+            var ot: string = me_scrutinee_type(fa.obj, env, structs, funcs);
+            if (ot.len() == 0) { return ""; }
+            return me_field_type_of(structs, ot, fa.field);
         },
         _ => { return ""; }
     }
@@ -5628,7 +5660,7 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
             // present, else the init's recovered type (a call result, so
             // `var o = wrap(4); match (o)` resolves like `match (wrap(4))`).
             var vty: string = v.type_name;
-            if (vty.len() == 0) { vty = me_scrutinee_type(v.init, env, funcs); }
+            if (vty.len() == 0) { vty = me_scrutinee_type(v.init, env, structs, funcs); }
             return RStmtOne { rstmt: StmtVar { name: v.name, type_name: nty, init: iv.rexpr, line: v.line, col: v.col }, renv: env.ebind(v.name, vty), rins2: cins };
         },
         StmtReturn(r) => {
@@ -5660,7 +5692,7 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
             // in the body recovers a generic-enum element's instantiation
             // (`for o in xs` over `Opt[i32][]` → o: `Opt[i32]`). Strip one `[]`
             // off the iterable's tracked type.
-            var itty: string = me_scrutinee_type(fr.iter, env, funcs);
+            var itty: string = me_scrutinee_type(fr.iter, env, structs, funcs);
             var elty: string = "";
             if (type_ends_arr(itty)) { elty = itty[0 : itty.len() - 2]; }
             var benv: MEnv = env.ebind(fr.var_name, elty);
@@ -5673,7 +5705,7 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
             // Recover the scrutinee's generic-enum instantiation: an annotated
             // ident / param / for-loop var, a call result (the callee's return
             // type), or an index into a generic-enum array.
-            var sty: string = me_scrutinee_type(m.scrutinee, env, funcs);
+            var sty: string = me_scrutinee_type(m.scrutinee, env, structs, funcs);
             var gi: GEInst = ge_inst_of(sty, enums, funcs);
             var arms: MatchArm[] = [];
             var i: i32 = 0;
@@ -5777,6 +5809,23 @@ pub function monomorphize_enums(mod: Module): Module {
     var tr: RStmts = me_stmts(mod.top_stmts, topenv, "", mod.enums, mod.structs, mod.funcs, ins);
     ins = tr.rins3;
 
+    // Phase 1b: collect instantiations referenced by STRUCT FIELD types — a
+    // (non-generic) struct with a generic-enum-typed field (`struct S { o:
+    // Opt[i32] }`) must clone `Opt__i32` too, else the passthrough field below
+    // dangles on the dropped generic `Opt`. A bare type-param field (`T`, on a
+    // generic enum's own variant struct) yields no instantiation, so this is a
+    // no-op there.
+    var sfi: i32 = 0;
+    while (sfi < mod.structs.len()) {
+        var sfd: StructFieldDecl[] = mod.structs[sfi].fields;
+        var sfj: i32 = 0;
+        while (sfj < sfd.len()) {
+            ins = me_collect_anno(sfd[sfj].type_name, mod.enums, mod.funcs, ins);
+            sfj = sfj + 1;
+        }
+        sfi = sfi + 1;
+    }
+
     // Phase 2: generate a concrete enum + variant structs per instantiation.
     var cl_enums: EnumDecl[] = [];
     var cl_structs: StructDecl[] = [];
@@ -5836,7 +5885,18 @@ pub function monomorphize_enums(mod: Module): Module {
     var osi: i32 = 0;
     while (osi < mod.structs.len()) {
         var sd: StructDecl = mod.structs[osi];
-        if (sd.enum_owner.len() == 0 || !str_in(dropped, sd.enum_owner)) { out_structs = out_structs.append(sd); }
+        if (sd.enum_owner.len() == 0 || !str_in(dropped, sd.enum_owner)) {
+            // Rewrite a kept struct's generic-enum-typed fields to the mangled
+            // clone (`o: Opt[i32]` -> `o: Opt__i32`), matching the clones phase 2
+            // generated; non-generic-enum field types pass through unchanged.
+            var rf: StructFieldDecl[] = [];
+            var rfj: i32 = 0;
+            while (rfj < sd.fields.len()) {
+                rf = rf.append(StructFieldDecl { name: sd.fields[rfj].name, type_name: me_rewrite_ty(sd.fields[rfj].type_name, mod.enums, mod.funcs) });
+                rfj = rfj + 1;
+            }
+            out_structs = out_structs.append(StructDecl { name: sd.name, fields: rf, type_params: sd.type_params, line: sd.line, col: sd.col, enum_owner: sd.enum_owner });
+        }
         osi = osi + 1;
     }
     var k3: i32 = 0;
