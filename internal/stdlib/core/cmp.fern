@@ -209,6 +209,39 @@ impl Hash for string {
     }
 }
 
+// ---- Default ---------------------------------------------------
+// Primitive zero values: numerics default to 0 (0.0 for floats),
+// `string` to the empty string, `boolean` to false. These let a
+// generic `@derive(Default)` over a primitive type parameter
+// (`@derive(Default) struct Box[T]` instantiated at `Box[i32]`)
+// resolve `T.default()` against the bound, the same way nominal
+// fields delegate to their own derived `default()`.
+
+impl Default for i32 {
+    function default(): i32 { return 0; }
+}
+impl Default for i64 {
+    function default(): i64 { return 0 as i64; }
+}
+impl Default for u32 {
+    function default(): u32 { return 0 as u32; }
+}
+impl Default for u64 {
+    function default(): u64 { return 0 as u64; }
+}
+impl Default for string {
+    function default(): string { return ""; }
+}
+impl Default for boolean {
+    function default(): boolean { return false; }
+}
+impl Default for f32 {
+    function default(): f32 { return 0.0 as f32; }
+}
+impl Default for f64 {
+    function default(): f64 { return 0.0 as f64; }
+}
+
 // ---- Debug -----------------------------------------------------
 // Numeric types debug as their decimal form (same as `to_string`);
 // `boolean` as `true`/`false`. `string` is QUOTED with `"` — and the

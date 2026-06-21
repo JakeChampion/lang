@@ -1,0 +1,24 @@
+// Generic `@derive(Default)` over a PRIMITIVE type parameter, resolved
+// against the stdlib `cmp.Default` trait. Each `Box.default()` builds
+// `Box { v: T.default(), tag: 0 }`, the `T.default()` resolving to the
+// primitive `impl Default for {i32,string,boolean,i64,f64}` in core/cmp.
+// Before those primitive impls existed a generic-default over a
+// primitive param was a type error (the bound was unsatisfiable in the
+// stdlib), even though the native monomorph + self-host IR machinery
+// could already lower it. #2779 (item 3 follow-up).
+import "core/cmp";
+
+@derive(cmp.Default) struct Box[T] { v: T, tag: i32 }
+
+function main(): i32 {
+    var a: Box[i32] = Box.default();        // v = 0,     tag = 0
+    var b: Box[string] = Box.default();     // v = "",    tag = 0
+    var c: Box[boolean] = Box.default();    // v = false, tag = 0
+    var d: Box[i64] = Box.default();        // v = 0i64,  tag = 0
+    var e: Box[f64] = Box.default();        // v = 0.0,   tag = 0
+
+    var r: i32 = a.v + a.tag + b.v.len() + b.tag + c.tag + (d.v as i32) + 9;
+    if (c.v) { r = r + 100; }               // false → not taken
+    if (e.v == (0.0 as f64)) { r = r + 1; } // float default is exactly 0.0
+    return r;                               // 9 + 1 = 10
+}
