@@ -1099,3 +1099,71 @@ int main(int c,char**v){
 		t.Fatalf("Call*MethodA dispatch = %d, want 42 (out=%q)", code, out)
 	}
 }
+
+// TestStdJNIJvalueFloatArgs validates passing float/double method ARGUMENTS
+// via the typed jvalue setters: jvalue_alloc + jvalue_set_f64/int/f32 build
+// a mixed-type arg array whose slots carry IEEE-754 bits (jdouble = 8 bytes,
+// jfloat = low 4 bytes) and integer words, exactly as the jvalue union lays
+// out. A fake CallDoubleMethodA reads d/i/f back out and sums them.
+func TestStdJNIJvalueFloatArgs(t *testing.T) {
+	gcc, err := exec.LookPath("gcc")
+	if err != nil {
+		t.Skip("gcc not on PATH")
+	}
+	if runtime.GOARCH != "amd64" {
+		t.Skip("host is not amd64")
+	}
+	src := `import "std/jni";
+function p(env: usize, cls: usize, j: usize, obj: usize, m: usize): i32 {
+    var a: usize = jni.jvalue_alloc(3);
+    a = jni.jvalue_set_f64(a, 0, 2.5);
+    a = jni.jvalue_set_int(a, 1, 4 as usize);
+    a = jni.jvalue_set_f32(a, 2, 1.5 as f32);
+    return (jni.call_double_method_a(j, obj, m, a) * 4.0) as i32;
+}
+function main(): i32 { return 0; }`
+	exps := []string{"p"}
+	asm := compileToX86AsmExports(t, src, exps)
+	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exps)
+	if err != nil {
+		t.Fatalf("AssembleProgramShared: %v", err)
+	}
+	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs),
+		[]nativeelf.Export{{Name: "p", Value: ev["p"]}}, "libfern.so")
+	dir := t.TempDir()
+	soPath := filepath.Join(dir, "libfern.so")
+	if err := os.WriteFile(soPath, so, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// jvalue union: [0].d (double @0), [1].i (int @ slot+0 = byte 8),
+	// [2].f (float @ slot+0 = byte 16). Sum = 2.5 + 4 + 1.5 = 8.0; ×4 = 32.
+	loader := `#include <dlfcn.h>
+#include <stdio.h>
+#include <string.h>
+static double cdm(void*e,long o,long m,unsigned char* a){
+  (void)e;(void)o;(void)m;
+  double d; memcpy(&d, a+0, 8);
+  int i;    memcpy(&i, a+8, 4);
+  float f;  memcpy(&f, a+16, 4);
+  return d + (double)i + (double)f;
+}
+int main(int c,char**v){
+  void*h=dlopen(v[1],RTLD_NOW);if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
+  void*t[256]={0}; t[60]=(void*)cdm; void*tp=t; void*env=&tp; long L=(long)env;
+  if(((int(*)(long,long,long,long,long))dlsym(h,"p"))(0,0,L,0,0) != 32) return 1;
+  return 42;
+}`
+	cPath := filepath.Join(dir, "loader.c")
+	if err := os.WriteFile(cPath, []byte(loader), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ld := filepath.Join(dir, "loader")
+	if out, err := exec.Command(gcc, cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
+		t.Fatalf("gcc loader: %v\n%s", err, out)
+	}
+	cmd := exec.Command(ld, soPath)
+	out, _ := cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 42 {
+		t.Fatalf("jvalue float-arg packing = %d, want 42 (out=%q)", code, out)
+	}
+}
