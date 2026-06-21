@@ -8523,7 +8523,37 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                     aps = lower_expr(wc.args[0], aps);
                                     if (!aps.ok) { return aps; }
                                     aps = aps.emit(ir.op_arr_push());
-                                    return aps.emit(ir.op_store_local(slot));
+                                    aps = aps.emit(ir.op_store_local(slot));
+                                    // If the appended value is a closure BOX — a
+                                    // `__mkclo$…` env-box marker (capturing `$clo` or
+                                    // wrapped no-capture `$wrap`), a closure-returning
+                                    // call, or a closure local — mark the slot a
+                                    // closure array so a later `fns[i]()` dispatches
+                                    // env-first. An EMPTY `(() => T)[] = []` can't be
+                                    // inferred a closure array at its decl (no elements
+                                    // to read), so the FIRST closure append is where it
+                                    // is discovered (#3556). The element STORE is the
+                                    // same `arr_push` either way (the box is a pointer);
+                                    // only the call dispatch depends on this flag. A bare
+                                    // named-fn value (an Ident, not a `__mkclo$` box) is
+                                    // left unmarked — it is a plain fn pointer, and the
+                                    // broader named-fn-value mis-lowering is #3574.
+                                    var ap_clo: boolean = false;
+                                    match (wc.args[0]) {
+                                        parser.ExprCall(apc) => {
+                                            match (apc.callee) {
+                                                parser.ExprIdent(apcid) => {
+                                                    if (apcid.name.len() > 8 && apcid.name[0:8] == "__mkclo$") { ap_clo = true; }
+                                                    if (util.index_of_str(s.closure_fns, apcid.name) >= 0) { ap_clo = true; }
+                                                },
+                                                _ => {}
+                                            }
+                                        },
+                                        parser.ExprIdent(apid) => { if (s.is_closure_local(apid.name)) { ap_clo = true; } },
+                                        _ => {}
+                                    }
+                                    if (ap_clo) { aps = aps.mark_closurearr(slot, true); }
+                                    return aps;
                                 }
                             },
                             _ => {}
