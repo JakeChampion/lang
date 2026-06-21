@@ -21,10 +21,16 @@ import (
 // All of it already lowers, so no compiler change — an observability pin against
 // a regression to the AST fallback.
 //
-// NB: the `.append`-built form (`fns = fns.append(() => n)`) is deliberately NOT
-// covered — it currently mis-lowers to a runtime segfault while wrongly passing
-// `all_eligible` (a soundness gap, filed separately). These cases use only
-// array-literal construction, which is sound.
+// The `.append`-built form (`fns = fns.append(() => n)`) is now covered too
+// (#3556): an EMPTY closure-array literal `var fns: (() => i32)[] = []` leaves
+// the slot a generic array (no closure elements to infer from at the decl), so
+// the later `fns[i]()` dispatched a closure box as a plain fn pointer and
+// segfaulted while `all_eligible` wrongly admitted it. The fix marks the slot a
+// closure array at the FIRST closure `.append` (when the appended value is a
+// `__mkclo$…` env box / closure-returning call / closure local), so the indexed
+// call dispatches env-first. A bare NAMED-function value (`[f]` / `append(f)`)
+// is left a plain fn pointer — its broader mis-lowering is the separate #3574
+// (even `var g: () => i32 = f; g()` segfaults).
 //
 // Each case is routing-pinned to "ir" (asm_pathprobe_run) and oracle-checked
 // against the interpreter; every result stays <= 120 (the wasm exit-code clamp,
@@ -42,6 +48,14 @@ var closureArrayIRCases = []struct {
 	{"two-arg-cap", `function main(): i32 { var k = 2; var fns: ((i32) => i32)[] = [(a: i32) => a + k, (a: i32) => a * k]; return fns[0](5) + fns[1](5); }`, 17},
 	// single capturing closure in a one-element array.
 	{"single-cap", `function main(): i32 { var n = 9; var fns: (() => i32)[] = [() => n]; return fns[0](); }`, 9},
+	// #3556: append a capturing closure to an EMPTY `(() => i32)[]`, then call it.
+	{"append-empty", `function main(): i32 { var n = 4; var fns: (() => i32)[] = []; fns = fns.append(() => n); return fns[0](); }`, 4},
+	// append two closures, call both: 10 + 20 = 30.
+	{"append-two", `function main(): i32 { var a = 10; var b = 20; var fns: (() => i32)[] = []; fns = fns.append(() => a); fns = fns.append(() => b); return fns[0]() + fns[1](); }`, 30},
+	// append onto a NON-empty literal, then call the appended element.
+	{"append-after-literal", `function main(): i32 { var n = 4; var fns: (() => i32)[] = [() => n]; fns = fns.append(() => n + 1); return fns[1](); }`, 5},
+	// append three, then sum them via a `for` loop over the array: 1+2+3 = 6.
+	{"append-loop", `function main(): i32 { var a = 1; var b = 2; var c = 3; var fns: (() => i32)[] = []; fns = fns.append(() => a); fns = fns.append(() => b); fns = fns.append(() => c); var s = 0; for f in fns { s = s + f(); } return s; }`, 6},
 }
 
 // TestSelfHostClosureArrayIRX86_64 routes each case through the self-hosted
