@@ -51,6 +51,7 @@ const (
 	sysBind      = 200
 	sysListen    = 201
 	sysAccept    = 202
+	sysConnect   = 203
 	// clock_gettime(2): asm-generic table syscall 113.
 	// Used by `__fern_now_unix_ms` / `__fern_monotonic_ns` for the
 	// clock-now surface (docs/STDLIB-DESIGN-RESEARCH.md Rec §4 Phase 2).
@@ -79,6 +80,7 @@ const (
 	darClose      = 6
 	darExit       = 1
 	darAccept     = 30
+	darConnect    = 98
 	darSocket     = 97
 	darBind       = 104
 	darListen     = 106
@@ -120,6 +122,7 @@ var linuxDarwinSysno = map[string][2]int{
 	"bind":       {sysBind, darBind},
 	"listen":     {sysListen, darListen},
 	"accept":     {sysAccept, darAccept},
+	"connect":    {sysConnect, darConnect},
 	"openat":     {sysOpenat, darOpenat},
 	"exit":       {sysExit, darExit},
 	"exit_group": {sysExitGroup, darExit},
@@ -434,6 +437,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesTcp {
 		g.emitTcpListenRuntime()
+		g.emitTcpConnectRuntime()
 		g.emitTcpAcceptRuntime()
 		g.emitTcpRecvRuntime()
 		g.emitTcpSendRuntime()
@@ -3142,6 +3146,58 @@ func (g *generator) emitTcpListenRuntime() {
 	g.emit("ldp x29, x30, [sp], #32")
 	g.emit("ret")
 	g.sizeDirective("__fern_tcp_listen")
+	g.line(".ltorg")
+}
+
+// emitTcpConnectRuntime emits `__fern_tcp_connect(host_be, port)` — the
+// outbound client primitive (arm64 mirror of the x86-64 helper).
+// host_be is the IPv4 in network byte order packed into an i32 (drops
+// straight into sin_addr); returns the connected fd or -errno.
+func (g *generator) emitTcpConnectRuntime() {
+	g.line("")
+	g.line(".global __fern_tcp_connect")
+	g.typeDirective("__fern_tcp_connect")
+	g.label("__fern_tcp_connect")
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("str x21, [sp, #32]")
+	g.emit("mov x19, x0") // host_be
+	g.emit("mov x20, x1") // port
+	// socket(AF_INET=2, SOCK_STREAM=1, 0)
+	g.emit("mov x0, #2")
+	g.emit("mov x1, #1")
+	g.emit("mov x2, #0")
+	g.syscall("socket")
+	g.emit("cmp x0, #0")
+	g.emit("blt .Ltcp_con_err")
+	g.emit("mov x21, x0") // fd
+	// sockaddr_in on the stack.
+	g.emit("sub sp, sp, #16")
+	g.emit("mov w0, #2")
+	g.emit("strh w0, [sp]") // sin_family
+	g.emit("rev16 w0, w20") // htons(port)
+	g.emit("strh w0, [sp, #2]")
+	g.emit("str w19, [sp, #4]") // sin_addr = host_be (network order)
+	g.emit("str xzr, [sp, #8]") // sin_zero
+	// connect(fd, sa, 16)
+	g.emit("mov x0, x21")
+	g.emit("mov x1, sp")
+	g.emit("mov x2, #16")
+	g.syscall("connect")
+	g.emit("add sp, sp, #16")
+	g.emit("cmp x0, #0")
+	g.emit("blt .Ltcp_con_err")
+	g.emit("mov x0, x21") // return fd
+	g.emit("b .Ltcp_con_done")
+	g.label(".Ltcp_con_err")
+	// x0 holds -errno from the failed syscall.
+	g.label(".Ltcp_con_done")
+	g.emit("ldr x21, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_tcp_connect")
 	g.line(".ltorg")
 }
 
@@ -8772,6 +8828,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "tcp_close":
 			target = "__fern_tcp_close"
 			g.usesTcp = true
+		case "tcp_connect":
+			target = "__fern_tcp_connect"
+			g.usesTcp = true
+			// usesTcp always emits __fern_tcp_recv (→ __fern_alloc_rc1),
+			// so a connect-only program needs the alloc runtime too.
+			g.usesAlloc = true
 		case "poll":
 			target = "__fern_poll"
 			g.usesPoll = true
