@@ -7559,6 +7559,171 @@ pub function inline_callonly_fn_values(mod: Module): Module {
     return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: cf_inline_fn_body(mod.top_stmts, mod.funcs), enums: mod.enums, resources: mod.resources, exports: mod.exports };
 }
 
+// ===== #3640 slice B.2: use-directed struct-fn-value-local inference =====
+//
+// An unannotated `var f = mk` where `mk` is a zero-arg receiver-less function
+// returning a STRUCT is ambiguous: it can mean "call mk, store the struct" (a
+// const-call) or "bind mk as a function VALUE". The self-host defaults to the
+// const-call, so a later `f()` calls the stored struct as a code pointer and
+// crashes (#3640 case B). The native compiler disambiguates from USE: if `f` is
+// later CALLED (`f(...)`), it is a fn-value. This pass recovers that — it
+// rewrites such a `var f = mk` to carry the coarse `fn` type, exactly the
+// annotation `var f: () => P = mk` already carries, so the fn-value binding +
+// the slice-B.1 struct-return registration in lower_func handle it on the IR
+// path. Restricted to STRUCT-returning targets (issue case B): this keeps the
+// rewrite away from the genuinely ambiguous fn-returning-fn shape, and i32 /
+// string const-fn locals stay out of scope. Runs on the shared IR funnel
+// (irlower.lift_lambdas), so the route decision and the emitted code stay
+// consistent across backends.
+
+// fnv_name_called_in_expr reports whether `name` appears as the CALLEE of a call
+// (`name(...)`) anywhere in `e`. A bare read or a field/member access does NOT
+// count — those are the const-call interpretation.
+function fnv_name_called_in_expr(e: Expr, name: string): boolean {
+    match (e) {
+        ExprCall(c) => {
+            match (c.callee) {
+                ExprIdent(cid) => { if (cid.name == name) { return true; } },
+                _ => { if (fnv_name_called_in_expr(c.callee, name)) { return true; } }
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                if (fnv_name_called_in_expr(c.args[i], name)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        ExprBinary(b) => { return fnv_name_called_in_expr(b.left, name) || fnv_name_called_in_expr(b.right, name); },
+        ExprUnary(u) => { return fnv_name_called_in_expr(u.operand, name); },
+        ExprIndex(x) => { return fnv_name_called_in_expr(x.array, name) || fnv_name_called_in_expr(x.index, name); },
+        ExprSlice(sl) => { return fnv_name_called_in_expr(sl.array, name) || fnv_name_called_in_expr(sl.start, name) || fnv_name_called_in_expr(sl.end, name); },
+        ExprFieldAccess(fa) => { return fnv_name_called_in_expr(fa.obj, name); },
+        ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { if (fnv_name_called_in_expr(a.elements[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { if (fnv_name_called_in_expr(t.elements[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        ExprStructLit(sl) => {
+            if (sl.has_base) { if (fnv_name_called_in_expr(sl.base, name)) { return true; } }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { if (fnv_name_called_in_expr(sl.field_values[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        ExprLambda(lm) => { return fnv_name_called_in_block(lm.body, name); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function fnv_name_called_in_block(stmts: Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (fnv_name_called_in_stmt(stmts[i], name)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function fnv_name_called_in_stmt(st: Stmt, name: string): boolean {
+    match (st) {
+        StmtVar(v) => { return fnv_name_called_in_expr(v.init, name); },
+        StmtReturn(r) => { return fnv_name_called_in_expr(r.value, name); },
+        StmtExpr(e) => { return fnv_name_called_in_expr(e.value, name); },
+        StmtAssign(a) => { return fnv_name_called_in_expr(a.value, name); },
+        StmtIf(f) => { return fnv_name_called_in_expr(f.cond, name) || fnv_name_called_in_block(f.then_body, name) || fnv_name_called_in_block(f.else_body, name); },
+        StmtWhile(w) => { return fnv_name_called_in_expr(w.cond, name) || fnv_name_called_in_block(w.body, name); },
+        StmtFor(fr) => { return fnv_name_called_in_expr(fr.iter, name) || fnv_name_called_in_block(fr.body, name); },
+        StmtMatch(m) => {
+            if (fnv_name_called_in_expr(m.scrutinee, name)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) { if (fnv_name_called_in_block(m.arms[ai].body, name)) { return true; } ai = ai + 1; }
+            return false;
+        },
+        StmtDefer(d) => { return fnv_name_called_in_stmt(d.action, name); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// fnv_is_struct_ret_zero_arg reports whether `name` is a zero-arg, receiver-less
+// function whose return type is a DECLARED struct — the precise shape whose
+// `var f = name` binding the slice-B.1 lower_func registration can carry.
+function fnv_is_struct_ret_zero_arg(funcs: FuncDecl[], structs: StructDecl[], name: string): boolean {
+    var fi: i32 = 0;
+    while (fi < funcs.len()) {
+        if (funcs[fi].name == name && funcs[fi].receiver_type.len() == 0 && funcs[fi].params.len() == 0) {
+            var rt: string = funcs[fi].ret_type;
+            var si: i32 = 0;
+            while (si < structs.len()) {
+                if (structs[si].name == rt) { return true; }
+                si = si + 1;
+            }
+            return false;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+function fnv_rewrite_block(stmts: Stmt[], whole: Stmt[], funcs: FuncDecl[], structs: StructDecl[]): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        out = out.append(fnv_rewrite_stmt(stmts[i], whole, funcs, structs));
+        i = i + 1;
+    }
+    return out;
+}
+
+function fnv_rewrite_stmt(st: Stmt, whole: Stmt[], funcs: FuncDecl[], structs: StructDecl[]): Stmt {
+    match (st) {
+        StmtVar(v) => {
+            if (v.type_name.len() == 0) {
+                match (v.init) {
+                    ExprIdent(rid) => {
+                        if (fnv_is_struct_ret_zero_arg(funcs, structs, rid.name) && fnv_name_called_in_block(whole, v.name)) {
+                            return StmtVar { name: v.name, type_name: "fn", init: v.init, line: v.line, col: v.col };
+                        }
+                    },
+                    _ => {}
+                }
+            }
+            return st;
+        },
+        StmtIf(f) => { return StmtIf { cond: f.cond, then_body: fnv_rewrite_block(f.then_body, whole, funcs, structs), else_body: fnv_rewrite_block(f.else_body, whole, funcs, structs) }; },
+        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: fnv_rewrite_block(w.body, whole, funcs, structs), label: w.label }; },
+        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: fr.iter, body: fnv_rewrite_block(fr.body, whole, funcs, structs), label: fr.label }; },
+        StmtMatch(m) => {
+            var arms: MatchArm[] = [];
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                arms = arms.append(MatchArm { pattern: m.arms[ai].pattern, body: fnv_rewrite_block(m.arms[ai].body, whole, funcs, structs), line: m.arms[ai].line, col: m.arms[ai].col, guard: m.arms[ai].guard, has_guard: m.arms[ai].has_guard });
+                ai = ai + 1;
+            }
+            return StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin };
+        },
+        _ => { return st; }
+    }
+    return st;
+}
+
+pub function infer_fnvalue_locals_module(mod: Module): Module {
+    var funcs: FuncDecl[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var fd: FuncDecl = mod.funcs[i];
+        var nbody: Stmt[] = fnv_rewrite_block(fd.body, fd.body, mod.funcs, mod.structs);
+        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: nbody, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count });
+        i = i + 1;
+    }
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
+}
+
 pub function module_with_builtins(mod: Module): Module {
     // Automatic drop for owned WIT resource handles (P5 slice 3): insert a
     // `defer <drop>(h);` for each kept `own R` local and synthesize the

@@ -16788,7 +16788,13 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
     // Fill omitted trailing arguments from default parameter values before the
     // IR path inspects the module, so `f(5)` to `f(a, b = 128)` reaches the IR
     // as `f(5, 128)`. No-op for default-free modules.
-    var mod: parser.Module = parser.fill_default_args_module(raw_mod);
+    // #3640 slice B.2: bind an unannotated `var f = mk` (mk a struct-returning
+    // zero-arg fn) as a fn-value when `f` is later called, instead of const-
+    // calling mk. Runs here on the shared IR funnel (both asm_ir.lift_lambdas and
+    // wasm_ir.lift_lambdas wrap this), so the eligibility probe and the emit see
+    // the same rewritten module; the slice-B.1 lower_func registration then
+    // resolves the call-result struct.
+    var mod: parser.Module = parser.infer_fnvalue_locals_module(parser.fill_default_args_module(raw_mod));
     var gfns: string[] = [];
     var gi: i32 = 0;
     while (gi < mod.funcs.len()) {
