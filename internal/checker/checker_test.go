@@ -21,6 +21,33 @@ func checkSource(t *testing.T, src string) error {
 	return err
 }
 
+// TestChainedMethodCallErrorReportedOnce guards against a diagnostic
+// duplication: a method-call chain `n.foo().bar()` whose inner `n.foo()` is
+// invalid (here, a method call on a non-struct i32) reported the inner E043
+// twice — once when the outer call checked its receiver, then again when the
+// generic callee path re-checked the same target. checkCall now bails as soon
+// as the receiver fails to type, so the diagnostic is emitted exactly once.
+func TestChainedMethodCallErrorReportedOnce(t *testing.T) {
+	count := func(src string) int {
+		err := checkSource(t, src)
+		if err == nil {
+			t.Fatalf("expected a type error for %q, got none", src)
+		}
+		return strings.Count(err.Error(), "field access on non-struct")
+	}
+	if n := count(`function main(): i32 { var n: i32 = 5; return n.foo().bar(); }`); n != 1 {
+		t.Errorf("chained call: E043 reported %d times, want 1", n)
+	}
+	if n := count(`function main(): i32 { var n: i32 = 5; return n.a().b().c(); }`); n != 1 {
+		t.Errorf("triple chain: E043 reported %d times, want 1", n)
+	}
+	// A single (non-chained) bad method call was always reported once —
+	// pin that it still is, so the fix didn't suppress the lone diagnostic.
+	if n := count(`function main(): i32 { var n: i32 = 5; return n.foo(); }`); n != 1 {
+		t.Errorf("single call: E043 reported %d times, want 1", n)
+	}
+}
+
 // TestUnannotatedBigLiteralDefaultsToI64 covers #3676: an unannotated integer
 // literal that doesn't fit i32 defaults to i64 (option 2), not the usual i32.
 // The inferred type is asserted indirectly through assignability — a binding

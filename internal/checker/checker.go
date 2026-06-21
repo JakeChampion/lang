@@ -8990,6 +8990,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// function call.
 		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
 			tt := c.checkExpr(fa.Target, s)
+			// The receiver itself failed to type — an error is already
+			// reported on it (e.g. a chained `n.foo().bar()` whose inner
+			// `n.foo()` is invalid). Bail now: falling through to the
+			// generic `c.checkExpr(n.Callee, …)` below would re-check this
+			// same target and emit the identical diagnostic a second time.
+			if tt == nil {
+				return nil
+			}
 			// Trait-bounded type parameter: `x.m(...)` where `x: T`
 			// and `T: SomeTrait`. We type-check against the trait's
 			// signature here but DON'T rewrite the callee — the
