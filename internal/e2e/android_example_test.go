@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -23,7 +24,14 @@ func TestAndroidJNIExampleBuilds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exports := "Java_dev_fern_demo_Native_answer,Java_dev_fern_demo_Native_jniVersion"
+	syms := []string{
+		"Java_dev_fern_demo_Native_answer",
+		"Java_dev_fern_demo_Native_jniVersion",
+		"Java_dev_fern_demo_Native_greeting",
+		"Java_dev_fern_demo_Native_utf8Length",
+		"Java_dev_fern_demo_Native_isString",
+	}
+	exports := strings.Join(syms, ",")
 	so := filepath.Join(t.TempDir(), "libfern.so")
 	if o, err := exec.Command(bin, "-target", "arm64-android", "-shared",
 		"-export", exports, "-o", so, src).CombinedOutput(); err != nil {
@@ -40,7 +48,7 @@ func TestAndroidJNIExampleBuilds(t *testing.T) {
 	if f.Type != elf.ET_DYN || f.Machine != elf.EM_AARCH64 {
 		t.Errorf("type/machine = %v/%v, want ET_DYN/AArch64", f.Type, f.Machine)
 	}
-	for _, sym := range []string{"Java_dev_fern_demo_Native_answer", "Java_dev_fern_demo_Native_jniVersion"} {
+	for _, sym := range syms {
 		if !bytes.Contains(raw, append([]byte(sym), 0)) {
 			t.Errorf(".dynstr missing export %q", sym)
 		}
