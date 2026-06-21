@@ -115,17 +115,15 @@ func TestSelfHostRecStructArrayEnumIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostRecStructArrayEnumIRWasm runs the same #3720 cases through the
-// wasm IR backend. The x86-64 fix (the enum-ctor Perceus alias-inc in
-// irlower.fern) is shared by every IR backend, but the wasm path has a
-// SEPARATE, pre-existing defect: an append-built array used as an enum payload
-// (`var a = []; a = a.append(x); Many(a)`) reads back wrong on wasm (`count`
-// sees too few / the wrong tag → exit 1), independent of the shared RC fix — a
-// hand-built array-literal payload (`Many([Many([..]), ..])`) is correct on
-// wasm. That wasm append-array-as-enum-payload bug is tracked separately as the
-// #3720 wasm remainder; unskip this once it lands. The x86-64 IR path (the
-// headline SIGSEGV) is covered and green by TestSelfHostRecStructArrayEnumIRX86_64.
+// wasm IR backend. The x86-64 RC fix (the enum-ctor Perceus alias-inc in
+// irlower.fern) is shared by every IR backend, but the wasm path had a SEPARATE
+// defect: a self-reassign append (`a = a.append(x)`) lowers to op_arr_push_owned,
+// which on wasm maps to `call $__fern_arr_push` — yet wasm_ir_run only pulled the
+// $__fern_arr_push helper in for op_arr_push, so a program whose appends are all
+// self-reassigns (every #3720 parse loop) called an undefined function → an
+// invalid module (wasmtime "unknown func", exit 1). Fixed by gating the helper on
+// arr_push OR arr_push_owned.
 func TestSelfHostRecStructArrayEnumIRWasm(t *testing.T) {
-	t.Skip("#3720 wasm remainder: append-built array as enum payload mis-reads on the wasm IR backend (separate from the shared RC fix); x86-64 is fixed + covered")
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host recstruct-arrayenum wasm IR e2e")
 	}
