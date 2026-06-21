@@ -21,6 +21,45 @@ func checkSource(t *testing.T, src string) error {
 	return err
 }
 
+// TestUnknownTypeReported covers E064: a nominal type reference that names
+// no declared type is now flagged at the annotation, instead of being
+// silently accepted (and only surfacing as a confusing E002/E003 cascade,
+// or not at all). It fires in every annotation position and recurses into
+// composite types — while leaving valid built-ins, declared types, and
+// in-scope type parameters untouched.
+func TestUnknownTypeReported(t *testing.T) {
+	mustE064 := func(src string) {
+		t.Helper()
+		err := checkSource(t, src)
+		if err == nil || !strings.Contains(err.Error(), "unknown type") {
+			t.Errorf("expected E064 unknown type for %q, got: %v", src, err)
+		}
+	}
+	mustOK := func(src string) {
+		t.Helper()
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("expected no error for %q, got: %v", src, err)
+		}
+	}
+	// Every annotation position rejects an undefined name.
+	mustE064(`function f(a: Wibble): i32 { return 0; }`)
+	mustE064(`function f(): Wibble { return 0; }`)
+	mustE064(`function main(): i32 { var x: Wibble = 0; return 0; }`)
+	mustE064(`struct S { f: Wibble }`)
+	mustE064(`enum E { A(Wibble) }`)
+	// Recurses into composite types (array / tuple / nested).
+	mustE064(`function main(): i32 { var a: Wibble[] = []; return 0; }`)
+	mustE064(`function f(): (i32, Wibble) { return (0, 0); }`)
+	// `bool` is a common slip — the real type is `boolean`.
+	mustE064(`function main(): i32 { var x: bool = 0; return 0; }`)
+	// Valid: built-ins, declared types, and in-scope type parameters.
+	mustOK(`function id[T](x: T): T { return x; }`)
+	mustOK(`struct P { x: i32 } function getx(p: P): i32 { return p.x; }`)
+	mustOK(`struct Box[T] { v: T } function main(): i32 { var b: Box[i32] = Box { v: 7 }; return b.v; }`)
+	mustOK(`function main(): i32 { var o: Option[i32] = None; return 0; }`)
+	mustOK(`function main(): i32 { var n: i32 = 1; var b: boolean = true; if (b) { return n; } return 0; }`)
+}
+
 // TestBinaryOperandErrorNoCascade guards two bugs in one: a binary
 // expression with an already-errored operand (here `q()`, an undefined
 // identifier, whose type is nil) used to emit a *second*, cascading E009
