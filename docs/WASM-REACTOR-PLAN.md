@@ -118,12 +118,23 @@ string case exercises the generic-variant inference through the
 function-typed `Wait` payload on wasm). `std/wasm_reactor` also passes
 the standalone-typecheck gate.
 
-**Remaining:** pollable resource-drop (`[resource-drop]pollable`) for
-tidy cleanup of consumed pollables (today a finished timer's pollable
-is left to be reclaimed at exit), and wiring real socket/stream
-pollables (when the wasm socket path grows a `subscribe`) into the same
-`run` loop for outbound fan-out. The reactor core — primitives +
-composition + scheduler — is complete.
+**UPDATE — pollable resource-drop lands.** `wasm_pollable_drop(p)`
+wraps `wasi:io/poll.[resource-drop]pollable`, and `std/wasm_reactor.run`
+now drops each pollable right after its task resumes (the handle has
+fired and won't be polled again), so a long-running reactor frees fired
+timer pollables instead of leaking them until component exit. The
+standalone `[resource-drop]pollable` lowering (`ComposeRequest.
+PollableDrop`, classified from the drop import) is gated off `Tcp`/`Udp`
+— the socket paths already declare their own pollable drop, so there's
+no duplicate. Tested: `TestWasmReactorTimerBlockDrop` (timer → block →
+drop) + the scheduler tests exercise drop on every resumed task; socket
+composition unaffected.
+
+**Remaining:** wiring real socket/stream pollables (when the wasm
+socket path grows a `subscribe`) into the same `run` loop for outbound
+fan-out. The reactor core — primitives (timer, block, poll, drop) +
+standalone resource-aware composition + the `Step[T]`/`run` scheduler
+— is complete.
 
 ## Layer 2 — component composer: THE BLOCKER (historical — now solved for timers)
 

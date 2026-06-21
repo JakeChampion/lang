@@ -91,7 +91,11 @@ pub function run[T](states_in: Step[T][], not_ready: T): T[] {
         match (st) {
             Done(v) => { },
             Wait(p, resume) => {
+                // Resume past the now-ready pollable, then drop it —
+                // the handle has fired and won't be polled again, so
+                // free it instead of leaking until component exit.
                 states = states.with(ti, resume(p));
+                var dropped: i32 = wasm_pollable_drop(p);
             },
         }
     }

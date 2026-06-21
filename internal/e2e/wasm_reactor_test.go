@@ -75,6 +75,22 @@ func TestWasmReactorPollFirstReady(t *testing.T) {
 	}
 }
 
+// wasm_pollable_drop frees a consumed pollable. A timer → block → drop
+// sequence composes (the standalone [resource-drop]pollable lowering)
+// and runs clean. Guards the resource-drop path the reactor uses to
+// avoid leaking fired timer pollables.
+func TestWasmReactorTimerBlockDrop(t *testing.T) {
+	src := `function main(): i32 {
+    var p: i32 = wasm_timer_pollable(1000000);
+    wasm_block(p);
+    wasm_pollable_drop(p);
+    return 42;
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("wasm timer block drop: got %d, want 42", got)
+	}
+}
+
 // std/wasm_reactor.run drives generic pollable-tagged stackless tasks
 // (Step[T]) to completion over wasm_poll — the wasm twin of
 // std/reactor.run_io. Two timer tasks overlap on one thread; each
