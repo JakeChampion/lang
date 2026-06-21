@@ -1,0 +1,18 @@
+// std/regex (#2680) counted quantifiers `{n}` / `{n,}` / `{n,m}` across the
+// native backends: exact / bounded / unbounded repetition of an atom or
+// group, plus a shorthand-class count. Each check sets a bit; all eight
+// hold -> 255.
+import "std/regex";
+
+function main(): i32 {
+    var r: i32 = 0;
+    if (regex.regex_match("^a{3}$", "aaa")) { r = r + 1; }        // exactly 3
+    if (!regex.regex_match("^a{3}$", "aa")) { r = r + 2; }        // too few
+    if (!regex.regex_match("^a{3}$", "aaaa")) { r = r + 4; }      // too many
+    if (regex.regex_match("^a{2,4}$", "aaa")) { r = r + 8; }      // in range
+    if (!regex.regex_match("^a{2,4}$", "a")) { r = r + 16; }      // below range
+    if (regex.regex_match("^a{2,}$", "aaaaa")) { r = r + 32; }    // at-least 2 (unbounded)
+    if (regex.regex_match("^(ab){2}$", "abab")) { r = r + 64; }   // counted group
+    if (regex.regex_match("\\d{2,4}", "x4567")) { r = r + 128; }  // counted shorthand class
+    return r;
+}
