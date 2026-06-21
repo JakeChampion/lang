@@ -66,49 +66,74 @@ in statement count. One ~1500-statement function would OOM on its own.
 | 2000 × 20 | 40 000 | 2017 MB |
 
 4× the functions → 4× the memory: ≈ 48 KB retained **per source
-statement**. That is far more than a single Op box; peak tracks the
-**sum of every op allocation ever made — across all functions and all
-lowering passes — not the live set.** That is the signature of a
-non-freeing allocator (Finding 1), independent of the quadratic.
+statement**. Peak tracks the **sum of every *unreclaimed string* ever
+allocated — across all functions and all lowering passes — not the live
+set** (struct/array storage *is* reclaimed; see the corrected Finding 1
+below). That is the signature of a non-freeing allocator for one type
+category (Finding 1), independent of the quadratic.
 
 A flat AST changes neither table: both scale with *IR allocations
 performed during lowering*, not with AST-node storage.
 
-## Finding 1 — RC `dec` never frees (the #3425 leak)
+## Finding 1 — unreclaimed **strings** (CORRECTED 2026-06-20)
 
-`internal/codegen/x86_64/x86_64.go:emitRcDecRuntime` (`__fern_rc_dec`)
-is explicit:
+> **Correction.** An earlier revision of this doc blamed Effect B on the
+> generic `__fern_rc_dec` never freeing **struct / enum / string** boxes.
+> Direct measurement shows that is wrong for structs and enums: the
+> codebase already generates per-type recursive drops
+> (`__drop_struct_<N>` / `__drop_enum_<N>` via `dropFnNameFor` →
+> `genStructDropFn`, dispatched in `internal/ir/ir.go:emitDec`) that
+> free the box, and `ast.RcFreeEnabled` is `true` by default. The
+> generic no-free `__fern_rc_dec` is only the **declined-type fallback**.
+> Effect B is **strings**, which are genuinely unreclaimed.
 
-> Phase-1 simplification: on rc == 1 the helper still decrements to 0
-> instead of calling a type-specific drop handler + freelist push.
-> **The bump allocator leaks.**
+Empirical isolation (each a tight `while` loop, peak RSS via
+`getrusage`):
 
-A recycling two-tier freelist (`__fern_free`, `emitAllocRuntime` /
-`emitFreeRuntime`) *does* exist and works — but it is **starved**.
-Only the array drop handler (`__fern_drop_arr_ptr`) returns its buffer
-to it; the generic dec used for **struct / enum / string boxes** just
-writes rc=0 and walks away.
+| workload | allocations | peak RSS |
+| --- | --- | --- |
+| `S { a, b }` struct per iter | 10,000,000 | **9 MB** (freed/recycled) |
+| `grow("x",4)` heap strings per iter | ~2,000,000 | **76 MB** (leaked) |
 
-`ir.Op` (`examples/self_host/ir.fern:55`) is a struct with string
-fields, so an `Op[]` is an array of **heap-boxed `Op` structs**. The
-array *buffer* recycles via `__fern_drop_arr_ptr`, but every
-individual `Op` box and its `kind`/`str` strings drop through the
-non-freeing generic dec. Across ~1000 functions × hundreds of ops ×
-multiple lowering passes, those boxes accumulate until the heap is
-exhausted. This is Effect B.
+Structs are reclaimed; strings are not. So the ~48 KB/statement of
+Effect B is dominated by the compiler's **string** churn — every
+`Op.kind` / `Op.str`, every mangled symbol / local name, every
+intermediate of an emitted-asm concat. `__drop_struct_Op` frees the
+`Op` box and `__fern_arr_dec` frees the `Op[]` buffer, but each Op's
+`kind`/`str` **string fields leak**, and they vastly outnumber the
+boxes.
 
-This is the native half of the already-planned work in
-`docs/RC-PERCEUS-PHASE-1E-PLAN.md` (widening RC from arrays to
-structs/strings/enums/closures). That plan also documents *why* it is
-delicate: opaque runtime structs (Reader, Writer, Map, HttpRequest, …)
-have no rc word, so a blind "free everything on dec" corrupts the
-heap. The fix must emit **type-specific drop handlers** (or carry an
-allocation size in the box header) so only genuinely rc-tracked,
-user-allocated boxes are returned to the freelist.
+Why strings leak while the rest frees: heap strings are allocated by
+`__fern_strcat` (and the other string-producing runtimes) through
+`__fern_alloc_rc1`, so they **already carry `rc=1` at `[data-8]` and
+their payload size at `[data-4]`** — the same header closures use. But
+the single-word (x86-64) string drop in `emitDec` routes to the generic
+`__fern_rc_dec`, which only decrements; the two-word (wasm/arm64)
+`__fern_str_dec` likewise does not free. So heap strings hit rc=0 and
+are abandoned, never returned to the freelist.
 
-Scope: native runtime change, mirrored across x86-64 / arm64 / wasm.
-High blast radius (heap corruption class of bug). Must be validated on
-the full e2e + arm64/qemu + wasm matrix, not x86-64 alone.
+### Fix (tractable — mirror `__fern_closure_drop`)
+
+Because the rc word *and* the size are already in the string header,
+freeing is the closure-drop pattern, not new layout work:
+
+- Add a freeing string drop (single-word x86-64: a `__fern_str_dec`
+  that, after the null / inline-SSO low-bit / below-heap / high-bit
+  sentinel guards, does `rc==1 → __fern_box_free(data, [data-4])`,
+  else dec). Make the two-word `__fern_str_dec` free on its rc==1 path
+  too.
+- Route string-typed drops in `emitDec` / the exit sweep / reinit /
+  `emitOwnedTempStackDrop` to it instead of `__fern_rc_dec`.
+- Guard rails already exist and are load-bearing: string **literals**
+  (static `.rodata`, below the `0x1000_0000` heap base) and the empty
+  sentinel (high-bit rc) must keep short-circuiting so a free never
+  touches read-only memory; inline SSO values (low bit set) must keep
+  short-circuiting so a packed register value is never deref'd.
+
+Scope: native + wasm runtime change, mirrored across x86-64 / arm64 /
+wasm. Heap-corruption class — validate on the full e2e + arm64/qemu +
+wasm matrix, not x86-64 alone. This is `docs/RC-PERCEUS-PHASE-1E-PLAN.md`'s
+unshipped **Phase 1e-strings** slice.
 
 ## Finding 2 — O(N²) `LowerState` rebuild in IR lowering
 
