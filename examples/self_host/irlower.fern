@@ -13127,6 +13127,56 @@ function emit_inarm_match_reuse(y_name: string, init: parser.Expr, donor_name: s
 // lower_func lowers a whole function's body. Params take slots 0..n-1.
 // arr_ret_fns is the set of array-returning function names (for move tracking);
 // strarr_ret_fns is the string[]-returning subset (for element typing at calls).
+// fnv_lookup_struct_ret returns the struct type S recorded for `name` in a
+// "name|S" registry (struct_ret_fns), or "" if absent — the function-side
+// sibling of (s).struct_ret_type, used by the binding-time scan below where no
+// LowerState exists yet.
+function fnv_lookup_struct_ret(reg: string[], name: string): string {
+    var i: i32 = 0;
+    while (i < reg.len()) {
+        var e: string = reg[i];
+        var bar: i32 = 0;
+        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
+        if (bar < e.len() && e[0 : bar] == name) { return e[bar + 1 : e.len()]; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// register_fnvalue_local_struct_rets augments `reg` with a `f|S` entry for each
+// struct-returning fn-value LOCAL `var f = g` (type_name "fn", `g` a struct-
+// returning function already in `reg`) — so a later `f()` resolves its struct
+// result for field / method access (#3640 slice B.1). Recurses nested bodies so
+// a binding inside an if / while / for / match arm counts.
+function register_fnvalue_local_struct_rets(stmts: parser.Stmt[], reg: string[]): string[] {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (v.type_name == "fn") {
+                    match (v.init) {
+                        parser.ExprIdent(g) => {
+                            var s_ty: string = fnv_lookup_struct_ret(reg, g.name);
+                            if (s_ty.len() > 0) { reg = reg.append(v.name + "|" + s_ty); }
+                        },
+                        _ => {}
+                    }
+                }
+            },
+            parser.StmtIf(f) => { reg = register_fnvalue_local_struct_rets(f.then_body, reg); reg = register_fnvalue_local_struct_rets(f.else_body, reg); },
+            parser.StmtWhile(w) => { reg = register_fnvalue_local_struct_rets(w.body, reg); },
+            parser.StmtFor(fr) => { reg = register_fnvalue_local_struct_rets(fr.body, reg); },
+            parser.StmtMatch(m) => {
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) { reg = register_fnvalue_local_struct_rets(m.arms[ai].body, reg); ai = ai + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return reg;
+}
+
 pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: parser.StructDecl[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[],
     map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[], borrowable_params: string[]): LowerResult {
     var empty: ir.Op[] = [];
@@ -13422,6 +13472,15 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         }
         pri = pri + 1;
     }
+    // #3640 slice B.1: a struct-returning fn-value LOCAL `var f: () => P = mk`
+    // (type_name coarsed to "fn") binds `mk` as a fn-value (const_func); a call
+    // `f()` then yields a `P`. Register a `f|P` entry — the local sibling of the
+    // param registration above — so `f().field` / `var p = f()` resolve the
+    // struct result and lower on the IR path instead of bailing. The return
+    // struct is recovered from the target `mk`'s own struct_ret_fns entry (a
+    // struct-returning free function), so no annotation return-type spelling is
+    // needed. Scanned over the function body (incl. nested blocks).
+    struct_ret_fns_aug = register_fnvalue_local_struct_rets(fn.body, struct_ret_fns_aug);
     // Struct reclamation: the fresh, non-escaping struct locals this function may
     // free at scope exit / loop-rebind (conservative escape analysis above).
     var reclaim: string[] = reclaimable_names_of(fn.body, structs);
