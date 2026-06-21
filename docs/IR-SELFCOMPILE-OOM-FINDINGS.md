@@ -106,34 +106,62 @@ boxes.
 Why strings leak while the rest frees: heap strings are allocated by
 `__fern_strcat` (and the other string-producing runtimes) through
 `__fern_alloc_rc1`, so they **already carry `rc=1` at `[data-8]` and
-their payload size at `[data-4]`** — the same header closures use. But
-the single-word (x86-64) string drop in `emitDec` routes to the generic
-`__fern_rc_dec`, which only decrements; the two-word (wasm/arm64)
-`__fern_str_dec` likewise does not free. So heap strings hit rc=0 and
-are abandoned, never returned to the freelist.
+their payload size at `[data-4]`** — the same header closures use. The
+two-word ABIs (wasm + arm64-`TwoWordOverride`) **already reclaim**
+strings: they retain on alias (`__fern_str_inc`) and free on the last
+drop (`__fern_str_dec`). The leak is **single-word x86-64 only**, where
+the string drop routes to the generic `__fern_rc_dec`, which only
+decrements — so heap strings hit rc=0 and are abandoned, never returned
+to the freelist.
 
-### Fix (tractable — mirror `__fern_closure_drop`)
+### Fix — the FULL inc+dec balance, not a dec-only drop
 
-Because the rc word *and* the size are already in the string header,
-freeing is the closure-drop pattern, not new layout work:
+A first attempt routed the single-word string drops to a new
+`__fern_str_dec` (the `__fern_closure_drop` pattern: `rc==1 →
+__fern_box_free(data, [data-4])`, else defer). The freeing dec alone
+**measures the win** — a `2M ×` struct-with-one-heap-string-field loop
+drops **91 MB → 9 MB** once `__drop_struct_<N>`'s field drop
+(`genStructDropFn`, `internal/ir/ir.go`) frees the buffer — **but it is
+unsound** and was reverted. Two hard signals:
 
-- Add a freeing string drop (single-word x86-64: a `__fern_str_dec`
-  that, after the null / inline-SSO low-bit / below-heap / high-bit
-  sentinel guards, does `rc==1 → __fern_box_free(data, [data-4])`,
-  else dec). Make the two-word `__fern_str_dec` free on its rc==1 path
-  too.
-- Route string-typed drops in `emitDec` / the exit sweep / reinit /
-  `emitOwnedTempStackDrop` to it instead of `__fern_rc_dec`.
-- Guard rails already exist and are load-bearing: string **literals**
-  (static `.rodata`, below the `0x1000_0000` heap base) and the empty
-  sentinel (high-bit rc) must keep short-circuiting so a free never
-  touches read-only memory; inline SSO values (low bit set) must keep
-  short-circuiting so a packed register value is never deref'd.
+1. **No retain side on native.** Every `__fern_str_inc` emission is
+   gated to the two-word ABIs (`ast.UseTwoWordStrings` / `b.twoWordStrings()`
+   — wasm + arm64-`TwoWordOverride`). On single-word x86-64 a string is
+   **not** inc'd when aliased (`var b = a`, field init, capture, arg
+   pass), so two live references share one buffer at `rc==1`. Freeing on
+   the first drop is a use-after-free for the second.
+2. **The behavior is pinned by tests.** `TestLowerString{StructField,
+   TupleElem,EnumPayload,ClosureCapture}NoReclaimOnNative`
+   (`internal/ir/ir_test.go`) assert native (`ptrW=8`) drops must **not**
+   emit `__fern_str_dec`. They encode the intentional "native strings are
+   not rc-tracked yet" limitation.
 
-Scope: native + wasm runtime change, mirrored across x86-64 / arm64 /
-wasm. Heap-corruption class — validate on the full e2e + arm64/qemu +
-wasm matrix, not x86-64 alone. This is `docs/RC-PERCEUS-PHASE-1E-PLAN.md`'s
-unshipped **Phase 1e-strings** slice.
+So Phase 1e-strings on native is the **whole inc+dec slice**, mirroring
+what the two-word backends already do:
+
+- Emit `__fern_str_inc` at **every** native single-word string alias
+  site (the `ptrW==8 && !UseTwoWordStrings` counterparts of the existing
+  two-word `str_inc` sites: `var`/ident alias, struct field-init, tuple
+  element, enum payload, closure capture, call-arg, `Map[K,string]`
+  get/get_or). The inc and the freeing dec must be exactly balanced or
+  strings double-free / UAF.
+- Add the freeing single-word `__fern_str_dec` (guards: null /
+  inline-SSO low-bit / below-`0x1000_0000` literal / high-bit sentinel;
+  then `rc==1 → __fern_box_free(data, [data-4])`, else defer to
+  `__fern_rc_dec`) and route the ~20 native string drop sites to it
+  (`emitDec`, the exit sweep, reinit, `emitOwnedTempStackDrop`,
+  `genStructDropFn` field drop, array/tuple/enum element drops, closure
+  capture drop).
+- Flip the four `…NoReclaimOnNative` tests to `…ReclaimOnNative` and add
+  an aliasing UAF regression (shared buffer, drop one ref, reuse the
+  freed block, read the other).
+
+Scope: x86-64-only (arm64/wasm already reclaim strings), so it is fully
+**locally** testable — but it is heap-corruption class and the inc/dec
+balance is delicate (the two-word equivalent took several PRs). Gate on
+the full x86-64 e2e + `rc_correctness` suite, which exercises every
+aliasing shape. This is `docs/RC-PERCEUS-PHASE-1E-PLAN.md`'s unshipped
+**Phase 1e-strings** slice — a multi-step effort, not a one-helper drop.
 
 ## Finding 2 — O(N²) `LowerState` rebuild in IR lowering
 
