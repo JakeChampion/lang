@@ -1766,15 +1766,15 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.NumberType{},
 	}
-	// `__c_call0..3(fn, args...)` — call a C-ABI function pointer `fn` with
-	// up to three integer/pointer arguments, returning its result. The
+	// `__c_call0..4(fn, args...)` — call a C-ABI function pointer `fn` with
+	// up to four integer/pointer arguments, returning its result. The
 	// arguments and result are usize (a raw machine word). This is the FFI
 	// primitive for talking to C: a JNIEnv method (loaded from the env's
 	// function table) or an NDK callback is just a function pointer invoked
 	// with the System V / AAPCS64 integer-arg convention. The codegen emits
 	// a tiny shim that re-shuffles Fern's arg registers into the C ABI and
 	// tail-calls fn.
-	for n, params := range map[string]int{"__c_call0": 1, "__c_call1": 2, "__c_call2": 3, "__c_call3": 4} {
+	for n, params := range map[string]int{"__c_call0": 1, "__c_call1": 2, "__c_call2": 3, "__c_call3": 4, "__c_call4": 5} {
 		ps := make([]ast.Type, params)
 		for i := range ps {
 			ps[i] = usizeT
@@ -2255,6 +2255,25 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// the deferred-dispatch path silently fails to resolve. See
 	// docs/TRAITS.md.
 	for _, fn := range prog.Funcs {
+		// Normalise generic-trait bound args so a type-parameter reference
+		// (`I: Iterator[T]`) is a ParamType, not a same-named StructType —
+		// the parser can't tell them apart at parse time. This lets
+		// unifyType / substituteType and the trait-method-signature
+		// instantiation treat `T` uniformly, so bound-driven inference
+		// (#2691) and `t.0`-style element typing inside the body agree.
+		if len(fn.TypeParams) > 0 && fn.BoundArgs != nil {
+			tpSet := make(map[string]bool, len(fn.TypeParams))
+			for _, tp := range fn.TypeParams {
+				tpSet[tp] = true
+			}
+			for _, argLists := range fn.BoundArgs {
+				for i := range argLists {
+					for k := range argLists[i] {
+						argLists[i][k] = normalizeParamRefs(argLists[i][k], tpSet)
+					}
+				}
+			}
+		}
 		for tp, traits := range fn.Bounds {
 			for i, traitName := range traits {
 				td, ok := c.info.Traits[traitName]
@@ -5110,6 +5129,104 @@ func typeArgsEqual(a, b []ast.Type) bool {
 		}
 	}
 	return true
+}
+
+// normalizeParamRefs rewrites a parsed bound type-argument so any leaf whose
+// name is a type parameter becomes a ParamType rather than a same-named
+// zero-arg StructType. The parser emits the `T` in `Iterator[T]` as a nullary
+// StructType — it can't distinguish a type-parameter reference from a nullary
+// named type at parse time — so normalising to ParamType lets unifyType /
+// substituteType, bindBoundParam, and substBoundArg treat `T` uniformly for
+// bound-driven inference (#2691). Recurses through generic type arguments;
+// non-param types pass through unchanged.
+func normalizeParamRefs(t ast.Type, tpSet map[string]bool) ast.Type {
+	switch b := t.(type) {
+	case ast.StructType:
+		if len(b.Args) == 0 {
+			if tpSet[b.Name] {
+				return ast.ParamType{Name: b.Name}
+			}
+			return t
+		}
+		na := make([]ast.Type, len(b.Args))
+		for i := range b.Args {
+			na[i] = normalizeParamRefs(b.Args[i], tpSet)
+		}
+		b.Args = na
+		return b
+	}
+	return t
+}
+
+// bindBoundParam matches a generic-trait bound's type argument `boundArg`
+// (which may reference the enclosing function's type parameters by name)
+// against the concrete `implArg` the bound resolved to, recording any
+// newly-resolved type parameter in `sub`. Returns true when it adds a
+// binding. Bound args are parsed as a named type (StructType) or ParamType,
+// so a leaf whose name is in `tpSet` is a type-parameter reference, not a
+// concrete struct — that is the lever that pins `T` in `count[T, I:
+// Iterator[T]]` from the `Iterator[i32] for RangeIter` impl. Nested generic
+// bounds (`I: Iterator[Box[T]]`) recurse positionally. See #2691.
+func bindBoundParam(boundArg, implArg ast.Type, tpSet map[string]bool, sub map[string]ast.Type) bool {
+	bind := func(name string) bool {
+		if tpSet[name] {
+			if _, done := sub[name]; !done {
+				sub[name] = implArg
+				return true
+			}
+		}
+		return false
+	}
+	switch b := boundArg.(type) {
+	case ast.ParamType:
+		return bind(b.Name)
+	case ast.StructType:
+		if len(b.Args) == 0 {
+			return bind(b.Name)
+		}
+		if it, ok := implArg.(ast.StructType); ok && len(it.Args) == len(b.Args) {
+			changed := false
+			for i := range b.Args {
+				if bindBoundParam(b.Args[i], it.Args[i], tpSet, sub) {
+					changed = true
+				}
+			}
+			return changed
+		}
+	}
+	return false
+}
+
+// substBoundArg resolves any type-parameter references inside a generic-trait
+// bound's type argument against the inferred substitution `sub`, so a bound
+// written `Iterator[T]` can be compared (#2691, E021) against the concrete
+// `Iterator[i32]` an impl provides once `T` is pinned. Type-param leaves are
+// parsed as bare-name StructType / ParamType; non-param types pass through.
+func substBoundArg(t ast.Type, tpSet map[string]bool, sub map[string]ast.Type) ast.Type {
+	switch b := t.(type) {
+	case ast.ParamType:
+		if tpSet[b.Name] {
+			if v, ok := sub[b.Name]; ok {
+				return v
+			}
+		}
+	case ast.StructType:
+		if len(b.Args) == 0 {
+			if tpSet[b.Name] {
+				if v, ok := sub[b.Name]; ok {
+					return v
+				}
+			}
+			return t
+		}
+		na := make([]ast.Type, len(b.Args))
+		for i := range b.Args {
+			na[i] = substBoundArg(b.Args[i], tpSet, sub)
+		}
+		b.Args = na
+		return b
+	}
+	return t
 }
 
 // traitArgsStr renders a trait's type-argument list as `[A, B]` (empty
@@ -9050,6 +9167,52 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			if callExpected != nil && sub != nil {
 				c.unifyType(ft.Result, callExpected, sub)
 			}
+			tpSet := make(map[string]bool, len(genericFn.TypeParams))
+			for _, tp := range genericFn.TypeParams {
+				tpSet[tp] = true
+			}
+			// Bound-driven inference (#2691): a type parameter that
+			// appears ONLY inside another parameter's generic-trait
+			// bound — `count[T, I: Iterator[T]](it: I)` — is never
+			// pinned by an argument or the result; it is determined by
+			// the *impl* the bound resolves to. For each bound param `I`
+			// already pinned to a concrete type, unify the bound's trait
+			// args (which mention `T`) against `I`'s impl's trait args
+			// (concrete) so `T` binds. A small fixpoint loop lets one
+			// bound param feed another. See docs/TRAITS.md §4a.
+			if sub != nil {
+				for changed := true; changed; {
+					changed = false
+					for _, tp := range genericFn.TypeParams {
+						bt, ok := sub[tp]
+						if !ok {
+							continue
+						}
+						if _, isParam := bt.(ast.ParamType); isParam {
+							continue
+						}
+						tn, okTn := methodTypeName(bt)
+						if !okTn {
+							continue
+						}
+						for bi, traitName := range genericFn.Bounds[tp] {
+							ba := genericFn.BoundArgs[tp]
+							if bi >= len(ba) || len(ba[bi]) == 0 {
+								continue
+							}
+							implArgs := c.info.ImplTraitArgs[traitName][tn]
+							if len(implArgs) != len(ba[bi]) {
+								continue
+							}
+							for k := range ba[bi] {
+								if bindBoundParam(ba[bi][k], implArgs[k], tpSet, sub) {
+									changed = true
+								}
+							}
+						}
+					}
+				}
+			}
 			// Substitute the inferred sub through the result so
 			// callers see a concrete type, AND record TypeArgs in
 			// declaration order for the monomorphiser.
@@ -9095,6 +9258,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 							boundArgs = ba[bi]
 						}
 						if len(boundArgs) > 0 {
+							// A bound arg may name a type param the call
+							// inferred (`I: Iterator[T]` with T pinned from the
+							// impl) — resolve those before comparing so the
+							// impl's concrete args match. See #2691.
+							resolved := make([]ast.Type, len(boundArgs))
+							for k, baT := range boundArgs {
+								resolved[k] = substBoundArg(baT, tpSet, sub)
+							}
+							boundArgs = resolved
 							implArgs := c.info.ImplTraitArgs[traitName][tn]
 							if !typeArgsEqual(implArgs, boundArgs) {
 								c.errfCode(n.P, "E021",

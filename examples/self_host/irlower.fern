@@ -2886,6 +2886,32 @@ pub function arr_index_is_i64(arr: parser.Expr, s: LowerState): boolean {
     return false;
 }
 
+// arr_index_is_i32_scalar reports whether `arr` is a plain 32-bit-element array
+// IDENT slot — an i32[] (or u32[]) — so `arr[i]` reads a 32-bit integer element.
+// It deliberately EXCLUDES every wider/typed array overlay (i64[]/u64[], f64[],
+// string[], T[][], closure[]/fn[]); arr_index_is_i64 covers the 8-byte case in
+// lower_i64 directly. Drives the i32-element widening of `s64 + a[i]` in
+// lower_i64's ExprIndex arm (the checker forbids i64 + u32, so such an element
+// reaching an i64 context is a signed i32). #2691.
+pub function arr_index_is_i32_scalar(arr: parser.Expr, s: LowerState): boolean {
+    match (arr) {
+        parser.ExprIdent(id) => {
+            var sl: i32 = s.slot_of(id.name);
+            if (!s.is_arr_slot(sl)) { return false; }
+            if (s.is_i64arr_slot(sl)) { return false; }
+            if (s.is_f64arr_slot(sl)) { return false; }
+            if (s.is_strarr_slot(sl)) { return false; }
+            if (s.is_arrarr_slot(sl)) { return false; }
+            if (s.is_closurearr_slot(sl)) { return false; }
+            if (s.is_fnarr_slot(sl)) { return false; }
+            if (s.is_u64_slot(sl)) { return false; }
+            return true;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // expr_is_i64arr reports whether `e` is an i64[] — an i64-array-tracked
 // local/param (aliasing), an i64[]-returning call, an i64[] slice, OR a literal
 // whose first element is an unambiguous 64-bit int (`[x as i64, …]`). A bare
@@ -3451,14 +3477,25 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
         },
         parser.ExprIndex(ix) => {
             // a[i] on an i64[] is an 8-byte i64 element: lower base + index (i32
-            // values) then arr_get_i64 (i64.load on wasm). A non-i64-array source
-            // bails (the i32/f64 element paths live in lower_expr).
-            if (!arr_index_is_i64(ix.array, s)) { return s.fail(); }
-            var bs: LowerState = lower_expr(ix.array, s);
-            if (!bs.ok) { return bs; }
-            bs = lower_expr(ix.index, bs);
-            if (!bs.ok) { return bs; }
-            return bs.emit(ir.op_arr_get_i64());
+            // values) then arr_get_i64 (i64.load on wasm).
+            if (arr_index_is_i64(ix.array, s)) {
+                var bs: LowerState = lower_expr(ix.array, s);
+                if (!bs.ok) { return bs; }
+                bs = lower_expr(ix.index, bs);
+                if (!bs.ok) { return bs; }
+                return bs.emit(ir.op_arr_get_i64());
+            }
+            // An i32-element array indexed in an i64 context (`s64 + a[i]`, a
+            // numeric reduction): lower the i32 element via lower_expr (arr_get)
+            // and widen to i64 instead of bailing the module to AST. The checker
+            // forbids i64 + u32, so a plain i32[] element here is signed;
+            // expr_is_u32 still selects zero-extend for the defensive u32[] case.
+            if (arr_index_is_i32_scalar(ix.array, s)) {
+                var ws: LowerState = lower_expr(e, s);
+                if (!ws.ok) { return ws; }
+                return ws.emit(ir.op_int_extend(expr_is_u32(e, s)));
+            }
+            return s.fail();
         },
         _ => { return s.fail(); }
     }

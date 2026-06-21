@@ -11,15 +11,17 @@ import (
 // eprintIRCases exercise the `eprint(s)` / `eprint_int(n)` stderr builtins on the
 // IR path. They lower to an `eprint_str` IR op (not a call_direct, so they
 // sidestep the call eligibility gate) that each backend emits as a call into the
-// same __fern_eprint_str helper the AST path uses (write to fd 2, no newline).
-// eprint_int desugars to i32_to_string then eprint_str. stderr pins the bytes.
+// same __fern_eprint_str helper the AST path uses (write to fd 2, then a newline).
+// `eprint` is the stderr line-printer — it appends "\n", mirroring `print` and the
+// Go-backend / interp / wasm `eprint`, which all do. eprint_int desugars to
+// i32_to_string then eprint_str. stderr pins the bytes.
 var eprintIRCases = []struct {
 	name, src, want string
 }{
-	{"eprint-literal", `function main(): i32 { eprint("hi"); return 0; }`, "hi"},
-	{"eprint-var", `function main(): i32 { var s: string = "abc"; eprint(s); return 0; }`, "abc"},
-	{"eprint-int", `function main(): i32 { eprint_int(42); return 0; }`, "42"},
-	{"eprint-concat", `function main(): i32 { eprint("x" + "y"); return 0; }`, "xy"},
+	{"eprint-literal", `function main(): i32 { eprint("hi"); return 0; }`, "hi\n"},
+	{"eprint-var", `function main(): i32 { var s: string = "abc"; eprint(s); return 0; }`, "abc\n"},
+	{"eprint-int", `function main(): i32 { eprint_int(42); return 0; }`, "42\n"},
+	{"eprint-concat", `function main(): i32 { eprint("x" + "y"); return 0; }`, "xy\n"},
 }
 
 func TestSelfHostEprintIRX86_64(t *testing.T) {

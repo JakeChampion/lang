@@ -272,13 +272,16 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         var earg: parser.Expr = c.args[0];
         match (earg) {
             parser.ExprString(esv) => {
-                var elo: asmcore.StringLitOut = asmcore.add_string_lit(s, esv.value);
+                // eprint appends a newline (stderr line-printer); the trailing
+                // "\n" rides along in the interned literal so it's one write.
+                var elit: string = esv.value + "\n";
+                var elo: asmcore.StringLitOut = asmcore.add_string_lit(s, elit);
                 s = elo.state;
                 var elbl: string = ".S" + util.i32_to_string(elo.idx);
                 s = s.write("    mov x0, #2\n");     // fd 2 stderr
                 s = s.write("    adrp x1, " + elbl + "\n");
                 s = s.write("    add x1, x1, :lo12:" + elbl + "\n");
-                s = s.write("    mov x2, #" + util.i32_to_string(esv.value.len()) + "\n");
+                s = s.write("    mov x2, #" + util.i32_to_string(elit.len()) + "\n");
                 s = s.write("    mov x8, #64\n");
                 s = s.write("    svc #0\n");
                 s = s.write("    mov x0, #0\n");
@@ -4371,7 +4374,10 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
-    // __fern_eprint_str: x0 = string box. write(2, data, len).
+    // __fern_eprint_str: x0 = string box. write(2, data, len), then a trailing
+    // newline (eprint is the stderr line-printer — mirrors `print` and the
+    // Go-backend / interp / wasm `eprint`, which all append "\n"). The newline
+    // byte is written from a stack scratch slot.
     if (s.has_need("eprint")) {
         s = s.write("__fern_eprint_str:\n");
         s = s.write("    ldr x1, [x0]\n");
@@ -4379,6 +4385,14 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    mov x0, #2\n");
         s = s.write("    mov x8, #64\n");
         s = s.write("    svc #0\n");
+        s = s.write("    mov w1, #10\n");
+        s = s.write("    strb w1, [sp, #-16]!\n");
+        s = s.write("    mov x0, #2\n");
+        s = s.write("    mov x1, sp\n");
+        s = s.write("    mov x2, #1\n");
+        s = s.write("    mov x8, #64\n");
+        s = s.write("    svc #0\n");
+        s = s.write("    add sp, sp, #16\n");
         s = s.write("    ret\n");
     }
     // String search helpers. See asm.fern.
