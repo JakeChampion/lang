@@ -2005,3 +2005,24 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   owns the old→new transition, then reclaim-on-grow (FBIP reuse of the old box).
   Both grow sites now carry a LOAD-BEARING-LEAK warning comment so the footgun
   isn't "optimised" into a double-free again.
+- 2026-06-21: **Sole-owner append reclaim-on-grow (`op_arr_push_owned`).** The
+  sound form of the reclaim the previous entry warned the shared helper can't do.
+  A new IR op `arr_push_owned` is emitted in the two append sites where the buffer
+  is PROVABLY sole-owned: (1) the self-reassign `a = a.append(v)` when `a` is not
+  in `aliased_names` (mirroring the `.with` aliased gate, #3599), and (2) the
+  clone form `lower_arr_append_value` (the `Builder { xs: s.xs.append(v) }`
+  immutable-update), whose freshly-sliced clone is sole-owned by construction. The
+  x86 backend lowers it to `__fern_arr_push_owned` — a thin wrapper that calls
+  `__fern_arr_push` and, iff the result differs (a grow realloc), pushes the dead
+  old buffer onto its size class. arm64 + wasm alias it to the plain push for now
+  (reclaim is x86-only; they stay leak-but-sound). Closes the `a = a.append(v)`
+  self-append leak on the self-host-emitted runtime (the #3452 repro shape:
+  exit-137 → runs clean). Verified: x86 default fixpoint byte-identical
+  (`mmc==gen2==gen3`), whole-compiler per-module self-compile, self-host IR append
+  + per-module-link suites, native push/aliased/reclaim, wasm RC reclaim — all
+  green; aliased self-appends still copy. **NOT yet converged**: the per-module
+  self-compile of the large modules still OOMs because the DOMINANT remaining leak
+  is the *escaping struct* — an `EmitState`/`LowerState` passed as a call argument
+  escapes (`reclaimable_names`), which disables struct-box reclaim, so the threaded
+  builder boxes *and their array fields* leak. That escaping-struct reclaim is the
+  next slice toward per-module convergence (#3457), not the append path.

@@ -8883,7 +8883,18 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                         aps = lower_expr(wc.args[0], aps);
                                         if (!aps.ok) { return aps; }
                                     }
-                                    aps = aps.emit(ir.op_arr_push());
+                                    // Sole-owner (unaliased) `a = a.append(v)`: the old
+                                    // buffer has no surviving reference, so on a grow-
+                                    // realloc reclaim it (arr_push_owned) instead of
+                                    // leaking — the dominant per-module self-compile leak
+                                    // (#3452 / #3425). An ALIASED target keeps the plain
+                                    // arr_push (leaky but sound), mirroring the `.with`
+                                    // aliased gate above (#3599).
+                                    if (s.is_aliased_name(a.target)) {
+                                        aps = aps.emit(ir.op_arr_push());
+                                    } else {
+                                        aps = aps.emit(ir.op_arr_push_owned());
+                                    }
                                     aps = aps.emit(ir.op_store_local(slot));
                                     // If the appended value is a closure BOX — a
                                     // `__mkclo$…` env-box marker (capturing `$clo` or
@@ -10393,7 +10404,13 @@ pub function lower_arr_append_value(obj: parser.Expr, val: parser.Expr, s: Lower
     }
     st = lower_expr(val, st);
     if (!st.ok) { return st; }
-    return st.emit(ir.op_arr_push());
+    // The clone (a fresh slice, cap == len) is grown immediately, so this
+    // arr_push ALWAYS reallocs — and the clone is sole-owned (just sliced, no
+    // alias), so reclaim the pre-grow clone instead of leaking it. This is the
+    // dominant per-module self-compile leak: every `Builder { xs: s.xs.append(v) }`
+    // immutable-update (the EmitState/LowerState threading) flows through here
+    // (#3452 / #3425).
+    return st.emit(ir.op_arr_push_owned());
 }
 
 // emit_arr_store stores the new value (on top of the operand stack) into

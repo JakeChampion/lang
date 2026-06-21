@@ -305,11 +305,14 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             else if (o.str == "i16") { s = s.write("    sxth x0, w0\n"); }
             else if (o.str == "i32") { s = s.write("    sxtw x0, w0\n"); }
             s = s.write("    str x0, [sp, #-16]!\n");
-        } else if (o.kind == "arr_push" || o.kind == "arr_push_i64" || o.kind == "arr_push_f64") {
+        } else if (o.kind == "arr_push" || o.kind == "arr_push_i64" || o.kind == "arr_push_f64" || o.kind == "arr_push_owned") {
             // [arr, val] -> grown array. __fern_arr_push(x0=arr, x1=val) -> x0.
             // arm64 array slots are 8 bytes, so i64/u64/f64 elements ride the SAME
             // helper (x1 holds the full 8-byte value); only wasm needs a distinct
-            // 8-byte-stride push.
+            // 8-byte-stride push. arr_push_owned (the sole-owner self-append) maps
+            // to the same plain push for now — reclaim-on-grow is an x86-only
+            // optimisation so far (asm_ir's __fern_arr_push_owned); arm64 stays
+            // leak-but-sound until its own owned helper lands.
             s = s.mark_arr_push();
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_arr_push\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "alloc_u8") {

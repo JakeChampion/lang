@@ -237,6 +237,18 @@ pub function op_arr_rc(): Op { return op0("arr_rc"); }
 // Lowered from a reassign-self `a = a.append(v)`; the result re-binds the slot.
 pub function op_arr_push(): Op { return op0("arr_push"); }
 
+// `arr_push_owned` is `arr_push` for a self-reassign `a = a.append(v)` where the
+// target `a` is the SOLE owner of its buffer (not in aliased_names). It lowers to
+// __fern_arr_push_owned, which behaves exactly like __fern_arr_push but, when the
+// push GROWS (reallocs into a new buffer), reclaims the old buffer instead of
+// leaking it. Sound only because the !aliased gate proves no other reference to
+// the old buffer survives — a borrow-form append (where the owner keeps the
+// buffer) must NOT use this op (see asm_ir.fern's .Larr_push_grow note). Closes
+// the dominant self-host-emitted leak that OOMed the per-module self-compile of
+// the large modules (#3452 / #3425). Register-backend only difference from
+// arr_push is the helper called; element width is unchanged (8-byte slot).
+pub function op_arr_push_owned(): Op { return op0("arr_push_owned"); }
+
 // `arr_push_i64` is `arr_push` for an 8-byte-element array (i64[] / u64[]): the
 // value is an i64 (i64.store / 8-byte slot). On the register backends every
 // array slot is already 8 bytes, so this reuses __fern_arr_push; on wasm32,
