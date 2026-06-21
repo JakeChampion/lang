@@ -251,6 +251,33 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-21 — self-host IR: a closure that calls another local closure now lifts
+
+A local closure whose body CALLS another local closure — `var add = fn(a){…};
+var twice = fn(a){ add(add(a)) }; twice(1)` — bailed the whole module to the AST
+emitter; the native compiler runs it (a goal-1 IR-subset gap in the closure /
+fn-value family). Root cause: when `closure_lift_one` hoists `add` to a
+top-level `__lam_N`, `subst_fcall_expr` rewrote `add`'s call sites in the rest of
+the body but didn't recurse into nested `ExprLambda` bodies, so `add(add(a))`
+inside `twice` kept an `add` reference → its lift was declined → the module fell
+to the first-class-closure path → AST. Fix (two localized spots in
+`irlower.fern`): `subst_fcall_expr` recurses into a nested lambda body (declining
+only when `fname` or an injected capture name is shadowed by a binding of that
+lambda), and each lift round extends the global-fn set with the `__lam_N` names
+hoisted so far so a sibling lambda calling an already-hoisted one sees a global,
+not an un-typeable capture. Both the capture-free and the **capturing** inner
+closure work (the inner closure's captures live in the shared enclosing scope, so
+the injected capture args flow through as the calling lambda's own captures —
+covering `add` capturing `x`, multi-capture, and a shared capture called by a
+third closure). Landed in two PRs (capture-free first, then the capturing-inner
+relaxation). The harder remaining case — a first-class closure VALUE captured by
+another closure and dispatched dynamically (#3445) — is unchanged. Coverage:
+`TestSelfHostClosureCallsClosure{X86IR,WasmIR}` (nested / binary / chain / if /
+loop bodies + capturing-inner / two-capture / shared-capture / direct-and-call),
+each oracle-checked against native and asserting `__lam_` lifting; the shadow-
+decline path falls cleanly to AST with the correct result. Fixpoint stays
+byte-identical (the transform is deterministic + self-consistent).
+
 ### 2026-06-21 — self-host IR: generic-enum match over call / array / index scrutinees ([#3572](https://github.com/JakeChampion/lang/issues/3572) follow-up)
 
 Closes two follow-on miscompiles in the generic-enum monomorphiser (the same-day
