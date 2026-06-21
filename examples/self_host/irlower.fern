@@ -3067,6 +3067,15 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
         parser.ExprUnary(u) => {
             if (u.op == "-") { return infer_expr_width(u.operand, s); }
             if (u.op == "as_i64" || u.op == "as_u64") { return 64; }
+            // `inner?` is i64-width when the Option/Result payload is i64/u64, so an
+            // unannotated `var x = inner?` width-tracks i64 (StmtVar routes width-64
+            // inits through lower_i64, where try_ now lowers).
+            if (u.op == "try_") {
+                var ot: string = try_opt_type(u.operand, s);
+                var pt: string = opt_payload_type(ot, "Ok");
+                if (pt == "i64" || pt == "u64") { return 64; }
+                return 32;
+            }
             return 32;
         },
         parser.ExprCall(c) => {
@@ -3181,6 +3190,11 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                 if (!sw.ok) { return sw; }
                 return sw.emit(ir.op_int_extend(u.op == "as_u64"));
             }
+            // `inner?` with an i64/u64 payload: lower_try emits the width-64 payload
+            // read, so the unwrapped value is a true i64 here (the `var x: i64 =
+            // inner?` binding lands in lower_i64). lower_try bails for non-i64/u64
+            // payloads, so this stays sound for the i64 domain.
+            if (u.op == "try_") { return lower_try(u.operand, s); }
             return s.fail();
         },
         parser.ExprBinary(b) => {
@@ -5484,9 +5498,14 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
     var is_result: boolean = ot[0:7] == "Result[";
     var is_option: boolean = ot[0:7] == "Option[";
     if (!is_result && !is_option) { return s.fail(); }
-    // Success payload type — only scalar i32 / boolean inline here.
+    // Success payload type — scalar i32 / boolean (4-byte) or i64 / u64 (8-byte)
+    // inline here. An i64/u64 payload reads through op_opt_payload_w(64) just like
+    // the match-arm payload binding does; the `var x: i64 = inner?` binding routes
+    // through lower_i64 (which dispatches back here), so the success value is left
+    // as a true 8-byte i64 on the stack. (string / f64 / composite still bail.)
     var pt: string = opt_payload_type(ot, "Ok");
-    if (pt != "i32" && pt != "boolean") { return s.fail(); }
+    var pt_is_i64: boolean = pt == "i64" || pt == "u64";
+    if (pt != "i32" && pt != "boolean" && !pt_is_i64) { return s.fail(); }
     // Evaluate inner into a fresh temp slot (the box pointer).
     var tmp: string = "$try" + util.i32_to_string(s.local_names.len());
     var ts: LowerState = s.add_local(tmp);
@@ -5507,8 +5526,11 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
     }
     ts = ts.emit(ir.op_return());
     ts = ts.emit(ir.op_end());
-    // Success path: load the payload (offset abstracted by op_opt_payload).
+    // Success path: load the payload (offset abstracted by op_opt_payload). An
+    // i64/u64 payload uses the 8-byte width-64 read (mirrors the match path's
+    // op_opt_payload_w(64, true)).
     ts = ts.emit(ir.op_load_local(tslot));
+    if (pt_is_i64) { return ts.emit(ir.op_opt_payload_w(64, true)); }
     return ts.emit(ir.op_opt_payload());
 }
 
