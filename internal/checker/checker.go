@@ -7335,7 +7335,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 				return
 			}
 			got := c.checkExpr(n.Value, s)
-			got = postSettleType(n.Value, got)
+			got = c.postSettleType(n.Value, got)
 			*c.inferReturns = append(*c.inferReturns, got)
 			return
 		}
@@ -7356,7 +7356,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		// and a tuple / numeric-literal return would
 		// otherwise compare the pre-settle width against
 		// the function's declared return type.
-		got = postSettleType(n.Value, got)
+		got = c.postSettleType(n.Value, got)
 		got = c.maybeWrapForUnion(want, &n.Value, got, s)
 		// Same generic-call destination refinement as the
 		// Var case — `return f(...)` from a function returning
@@ -7383,7 +7383,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		c.elemHint = nil
 		if n.Type != nil {
 			c.settleNumeric(n.Init, n.Type)
-			got = postSettleType(n.Init, got)
+			got = c.postSettleType(n.Init, got)
 			// Generic-struct destination inference: a builtin
 			// like `map_new(cap)` returns `Map` with no Args;
 			// the destination's `Map[K, V]` Args propagate
@@ -7728,7 +7728,7 @@ func (c *checker) checkLiteralMatch(n *ast.Match, tagT ast.Type, s *scope) {
 		litT := c.checkExpr(arm.Literal, s)
 		if litT != nil {
 			c.settleNumeric(arm.Literal, tagT)
-			litT = postSettleType(arm.Literal, litT)
+			litT = c.postSettleType(arm.Literal, litT)
 			if !c.assignable(litT, tagT) {
 				c.errfCode(arm.P, "E035", "literal pattern of type %s does not match scrutinee type %s", litT, tagT)
 			}
@@ -7793,7 +7793,7 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 		litT := c.checkExpr(arm.Literal, s)
 		if litT != nil {
 			c.settleNumeric(arm.Literal, tagT)
-			litT = postSettleType(arm.Literal, litT)
+			litT = c.postSettleType(arm.Literal, litT)
 			if !c.assignable(litT, tagT) {
 				c.errfCode(arm.P, "E035", "literal pattern of type %s does not match scrutinee type %s", litT, tagT)
 			}
@@ -8296,7 +8296,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		} else {
 			c.settleNumeric(n.Inner, n.Target)
 		}
-		inner = postSettleType(n.Inner, inner)
+		inner = c.postSettleType(n.Inner, inner)
 		n.InnerType = inner
 		_, innerIsNum := inner.(ast.NumberType)
 		_, innerIsFloat := inner.(ast.FloatType)
@@ -8634,7 +8634,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			switch id.Name {
 			case "print", "write", "eprint":
 				at := c.checkExpr(n.Args[0], s)
-				at = postSettleType(n.Args[0], at)
+				at = c.postSettleType(n.Args[0], at)
 				if at == nil {
 					return ast.VoidType{}
 				}
@@ -8672,7 +8672,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				return ast.StructType{Name: "Cell"}
 			}
 			at := c.checkExpr(n.Args[0], s)
-			at = postSettleType(n.Args[0], at)
+			at = c.postSettleType(n.Args[0], at)
 			if at == nil {
 				return ast.StructType{Name: "Cell"}
 			}
@@ -9139,7 +9139,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						switch bound.(type) {
 						case ast.NumberType, ast.FloatType:
 							c.settleNumeric(n.Args[i], bound)
-							at = postSettleType(n.Args[i], at)
+							at = c.postSettleType(n.Args[i], at)
 						}
 					}
 				}
@@ -9161,7 +9161,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				// (`Box[]`) lets unifyType bind `T = Box`.
 				if !(sub != nil && containsParamType(expected)) {
 					c.settleNumeric(n.Args[i], expected)
-					at = postSettleType(n.Args[i], at)
+					at = c.postSettleType(n.Args[i], at)
 				}
 				at = c.maybeWrapForUnion(expected, &n.Args[i], at, s)
 				// If the arg is itself a generic call with
@@ -9330,13 +9330,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if ft, ok := lt.(ast.FloatType); ok && !ft.Polymorphic {
 			if rn, ok := rt.(ast.NumberType); ok && rn.Polymorphic {
 				c.settleNumeric(n.Right, ft)
-				rt = postSettleType(n.Right, rt)
+				rt = c.postSettleType(n.Right, rt)
 			}
 		}
 		if ft, ok := rt.(ast.FloatType); ok && !ft.Polymorphic {
 			if ln, ok := lt.(ast.NumberType); ok && ln.Polymorphic {
 				c.settleNumeric(n.Left, ft)
-				lt = postSettleType(n.Left, lt)
+				lt = c.postSettleType(n.Left, lt)
 			}
 		}
 		switch n.Op {
@@ -9491,13 +9491,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			if common, common_ok := commonIntegerWidth(lt, rt); common_ok && !common.Polymorphic {
 				c.settleNumeric(n.Left, common)
 				c.settleNumeric(n.Right, common)
-				lt = postSettleType(n.Left, lt)
-				rt = postSettleType(n.Right, rt)
+				lt = c.postSettleType(n.Left, lt)
+				rt = c.postSettleType(n.Right, rt)
 			} else if common, common_ok := commonFloatWidth(lt, rt); common_ok && !common.Polymorphic {
 				c.settleNumeric(n.Left, common)
 				c.settleNumeric(n.Right, common)
-				lt = postSettleType(n.Left, lt)
-				rt = postSettleType(n.Right, rt)
+				lt = c.postSettleType(n.Left, lt)
+				rt = c.postSettleType(n.Right, rt)
 			}
 			if lt != nil && rt != nil && !ast.Equal(lt, rt) {
 				c.errfCode(n.P, "E041", "cannot compare %s and %s", lt, rt)
@@ -9616,7 +9616,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		rt := c.checkExpr(n.Value, s)
 		if lt != nil {
 			c.settleNumeric(n.Value, lt)
-			rt = postSettleType(n.Value, rt)
+			rt = c.postSettleType(n.Value, rt)
 			rt = c.maybeWrapForUnion(lt, &n.Value, rt, s)
 		}
 		if lt != nil && rt != nil && !ast.Equal(lt, rt) && !c.assignable(lt, rt) {
@@ -9958,7 +9958,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				continue
 			}
 			c.settleNumeric(f.Value, expected)
-			vt = postSettleType(f.Value, vt)
+			vt = c.postSettleType(f.Value, vt)
 			// Implicit union-wrap: a bare variant struct literal in a
 			// field position widens to its union type, matching the
 			// `var x: Union = Variant{...}`, return, and call-argument
@@ -10039,8 +10039,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if len(n.Entries) > 0 {
 			kt := c.checkExpr(n.Entries[0].Key, s)
 			vt := c.checkExpr(n.Entries[0].Value, s)
-			kt = postSettleType(n.Entries[0].Key, kt)
-			vt = postSettleType(n.Entries[0].Value, vt)
+			kt = c.postSettleType(n.Entries[0].Key, kt)
+			vt = c.postSettleType(n.Entries[0].Value, vt)
 			if kt != nil {
 				keyType = kt
 			}
@@ -10068,8 +10068,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			c.settleNumeric(ent.Key, keyType)
 			c.settleNumeric(ent.Value, valueType)
-			kt := postSettleType(ent.Key, keyType)
-			vt := postSettleType(ent.Value, valueType)
+			kt := c.postSettleType(ent.Key, keyType)
+			vt := c.postSettleType(ent.Value, valueType)
 			if kt != nil && !ast.Equal(kt, keyType) {
 				c.errfCode(ent.Key.Pos(), "E045", "map key type %s, expected %s", kt, keyType)
 			}
@@ -10928,7 +10928,7 @@ func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
 // convention but wasn't a guarantee; the explicit flag is.
 func isVariantCall(c *ast.Call) bool { return c.IsVariantCall }
 
-func postSettleType(e ast.Expr, prior ast.Type) ast.Type {
+func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 	switch x := e.(type) {
 	case *ast.NumberLit:
 		if x.IsFloat {
@@ -10960,7 +10960,7 @@ func postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 			return ast.FloatType{Width: x.FloatWidth}
 		}
 	case *ast.Unary:
-		return postSettleType(x.Operand, prior)
+		return c.postSettleType(x.Operand, prior)
 	case *ast.ArrayLit:
 		if x.ElemType != nil {
 			return ast.ArrayType{Elem: x.ElemType}
@@ -10975,7 +10975,7 @@ func postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 		if tt, ok := prior.(ast.TupleType); ok && len(tt.Elems) == len(x.Elems) {
 			out := make([]ast.Type, len(x.Elems))
 			for i, el := range x.Elems {
-				out[i] = postSettleType(el, tt.Elems[i])
+				out[i] = c.postSettleType(el, tt.Elems[i])
 			}
 			return ast.TupleType{Elems: out}
 		}
@@ -10986,12 +10986,12 @@ func postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 		// First arm whose post-settle type differs from `prior`
 		// wins; otherwise both arms agreed with `prior`.
 		if x.Then != nil {
-			if t := postSettleType(x.Then, prior); t != nil {
+			if t := c.postSettleType(x.Then, prior); t != nil {
 				return t
 			}
 		}
 		if x.Else != nil {
-			if t := postSettleType(x.Else, prior); t != nil {
+			if t := c.postSettleType(x.Else, prior); t != nil {
 				return t
 			}
 		}
@@ -11003,7 +11003,7 @@ func postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 			if arm == nil {
 				continue
 			}
-			if t := postSettleType(arm.Body, prior); t != nil {
+			if t := c.postSettleType(arm.Body, prior); t != nil {
 				return t
 			}
 		}
@@ -11011,7 +11011,7 @@ func postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 		// Block-expression branch: the value is the trailing
 		// expression, so its post-settle type is the block's type.
 		if x.Tail != nil {
-			if t := postSettleType(x.Tail, prior); t != nil {
+			if t := c.postSettleType(x.Tail, prior); t != nil {
 				return t
 			}
 		}
@@ -11021,39 +11021,63 @@ func postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 		// onto each constructor arg, the prior EnumType's
 		// Args still reflect the pre-settle widths (the
 		// type was unified before the settle pass touched
-		// the literals). Recompute Args[0] from the
-		// (now-resolved) first arg, when:
-		//
-		//   - prior is an EnumType with a single Arg, and
-		//   - the call has at least one arg
-		//
-		// Multi-arg generic variants (multi-type-param
-		// generics like Result[T, E]) need both args
-		// refreshed — walk both when prior carries the
-		// right shape. Without this refresh,
-		// `Some((1234567890123, 42))` keeps its pre-settle
-		// `Option[(i32, i32)]` type and a `var o:
-		// Option[(i64, i32)] = ...` assignment rejects.
-		//
-		// Gated on the call being an actual variant
-		// constructor (not just any function call that
-		// happens to return Option[T] / Result[T, E]). The
-		// gate uses `*ast.Call.Args` pairwise against the
-		// prior's Args — for a non-variant call like
-		// `f([true]): Option[i32]`, the arg types
-		// (boolean[]) don't match the prior's Args (i32),
-		// so the assignable-check that follows would have
-		// the wrong refreshed type. The check below catches
-		// this by requiring the call's first-arg-position
-		// resolved type to be assignable to the prior's
-		// matching Arg — variant constructors satisfy this
-		// trivially (their args ARE the payload values).
-		if et, ok := prior.(ast.EnumType); ok && len(et.Args) > 0 && len(x.Args) >= len(et.Args) && isVariantCall(x) {
-			newArgs := make([]ast.Type, len(et.Args))
-			for i := range et.Args {
-				newArgs[i] = postSettleType(x.Args[i], et.Args[i])
+		// the literals). Recompute the enum's type arguments
+		// by re-unifying each (now-settled) constructor arg
+		// against its declared payload type — exactly as the
+		// first checkExpr pass did, but with the widened
+		// literals. Re-unifying (rather than pairing
+		// `et.Args[i]` with `x.Args[i]` positionally) is the
+		// only correct mapping when a type parameter is
+		// determined by a payload whose position differs from
+		// the parameter's index — e.g. `enum Box[T] { Mk(i32,
+		// (i32) => T) }`, where `T` comes from the *second*
+		// (function-typed) payload, not the leading `i32`.
+		// Positional pairing there mis-bound `T` to the i32
+		// literal and produced `Box[i32]` instead of
+		// `Box[string]`. It also correctly refreshes one type
+		// param of a multi-param generic (e.g. the `T` of
+		// `Result[T, E]` from `Ok(v)`) while preserving the
+		// other from the first-pass result.
+		if et, ok := prior.(ast.EnumType); ok && len(et.Args) > 0 && isVariantCall(x) {
+			if id, ok := x.Callee.(*ast.Ident); ok {
+				if vr, isVar, _ := c.resolveVariant(id.Name, id.EnumName); isVar {
+					if ed := c.info.Enums[vr.enumName]; ed != nil &&
+						len(ed.TypeParams) == len(et.Args) &&
+						len(x.Args) == len(vr.payloads) {
+						// Seed from the first-pass result so payload
+						// positions that don't pin a type param (and
+						// nested shapes) keep their resolved types.
+						priorSub := map[string]ast.Type{}
+						for i, tp := range ed.TypeParams {
+							priorSub[tp] = et.Args[i]
+						}
+						newSub := map[string]ast.Type{}
+						for i, a := range x.Args {
+							declared := vr.payloads[i]
+							actual := c.postSettleType(a, substituteType(declared, priorSub))
+							if actual != nil {
+								c.unifyType(declared, actual, newSub)
+							}
+						}
+						newArgs := make([]ast.Type, len(et.Args))
+						complete := true
+						for i, tp := range ed.TypeParams {
+							if v, ok := newSub[tp]; ok {
+								newArgs[i] = v
+							} else {
+								newArgs[i] = et.Args[i]
+							}
+							if newArgs[i] == nil {
+								complete = false
+							}
+						}
+						if complete {
+							return ast.EnumType{Name: et.Name, Args: newArgs}
+						}
+					}
+				}
 			}
-			return ast.EnumType{Name: et.Name, Args: newArgs}
+			return prior
 		}
 	case *ast.MapLit:
 		// After settleNumeric stamped widths onto each entry
@@ -11069,8 +11093,8 @@ func postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 		// path for wide V).
 		if st, ok := prior.(ast.StructType); ok && st.Name == "Map" && len(st.Args) == 2 && len(x.Entries) > 0 {
 			ent := x.Entries[0]
-			newK := postSettleType(ent.Key, st.Args[0])
-			newV := postSettleType(ent.Value, st.Args[1])
+			newK := c.postSettleType(ent.Key, st.Args[0])
+			newV := c.postSettleType(ent.Value, st.Args[1])
 			x.KeyType = newK
 			x.ValueType = newV
 			return ast.StructType{Name: "Map", Args: []ast.Type{newK, newV}}

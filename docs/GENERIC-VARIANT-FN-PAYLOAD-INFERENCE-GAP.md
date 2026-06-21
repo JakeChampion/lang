@@ -1,92 +1,88 @@
-# Go-compiler gap: generic-variant inference through a function payload
+# Go-compiler gap: generic-variant inference through a function payload — RESOLVED
 
-Root-cause findings for a type-inference gap that blocks a *generic*
-`Task[T]` reactor — the reason `std/reactor` ships duplicated
-`IoStep`/`run_io` (i32) and `IoStepStr`/`run_io_str` (string) twins
-instead of one generic `IoStep[T]`/`run_io[T]`
+Root-cause findings (and the fix) for a type-inference gap that blocked
+a *generic* `Task[T]` reactor — the reason `std/reactor` used to ship
+duplicated `IoStep`/`run_io` (i32) and `IoStepStr`/`run_io_str`
+(string) twins instead of one generic `IoStep[T]`/`run_io[T]`
 (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1c). Go compiler only; the
 self-hosted compiler has its own, separate variant-payload gap
 (docs/SELF-HOST-FN-PAYLOAD-VARIANT-GAP.md, #3552).
 
+**Status: fixed.** `std/reactor` is now a single generic `IoStep[T]`
+with `run_io[T]` / `run_io_deadline[T]`; the `*Str` twins are gone.
+
 ## Symptom
 
-Constructing a generic enum variant whose payload is a **function
-returning that enum** infers the wrong type argument: `T` is left at
-the i32 default instead of being recovered from the function's return
-type (or the expected type).
+Constructing a generic enum variant whose type parameter is determined
+by a **non-leading payload** — in particular a function-typed payload
+whose result is the type parameter — inferred the wrong type argument:
+`T` came out as the leading argument's type instead of the one the
+payload actually pins.
 
 ```fern
-enum Step[T] { Done(T), Wait(i32, (i32) => Step[T]) }
+enum Box[T] { Mk(i32, (i32) => T), Nil }
 
-function start(s: string): Step[string] {
-    function resume(w: i32): Step[string] { return Done(s); } // OK: Step[string]
-    return Wait(1, resume);   // INFERRED Step[i32], not Step[string]
+function f(): Box[string] {
+    return Box.Mk(7, (x: i32) => "hi");   // INFERRED Box[i32], not Box[string]
 }
 ```
 
 ```
-error[E002]: return type mismatch: function returns Step[string]
-             but expression is Step[i32]
-    return Wait(1, resume);
+error[E002]: return type mismatch: function returns Box[string]
+             but expression is Box[i32]
+    return Box.Mk(7, (x: i32) => "hi");
 ```
 
-An explicit annotation doesn't rescue it either:
+A variant whose single payload *is* the function (`enum Box[T] { Mk((i32) => T) }`)
+inferred correctly; the bug needed a concrete payload (here the leading
+`i32`) **before** the function payload.
 
-```fern
-var node: Step[string] = Wait(1, resume);
-// error[E003]: cannot assign Step[i32] to variable of type Step[string]
+## Actual root cause
+
+The bug was **not** in the first-pass variant-constructor unify (which
+was correct — instrumenting `sub` after the unify loop showed
+`sub = map[T:string]`, i.e. `Box[string]`). It was in the
+**post-settle refresh**, `postSettleType`'s `*ast.Call` case
+(`internal/checker/checker.go`). After `settleNumeric` widens
+literals, that case recomputed the enum's type arguments by **pairing
+the type-arg slot `i` positionally with constructor argument `i`**:
+
+```go
+for i := range et.Args {
+    newArgs[i] = postSettleType(x.Args[i], et.Args[i]) // WRONG mapping
+}
 ```
 
-The `Done(s)` variant (payload is `T` directly) infers `Step[string]`
-correctly — only the **function-typed payload** path misbinds.
+For `Box[T]` (one type param) the loop took `et.Args[0]` (the `T` slot)
+and recomputed it from `x.Args[0]` — the leading **i32 literal** — so a
+`NumberLit` settled to width 32 re-derived `T = i32`, clobbering the
+correct `Box[string]` from the first pass. The positional assumption
+only holds when type param `i` is filled by constructor arg `i`
+(`Some(x)`, `Ok(x)`); it breaks whenever a parameter is pinned by a
+payload at a different position.
 
-## What works vs not (spiked on the Go x86-64 backend)
+## The fix
 
-| construct | result |
-|---|---|
-| `Step[i32]` via `Wait(5, resume)` (resume: `(i32)=>Step[i32]`) | ✅ 21 — compiles + runs |
-| `Step[string]` via `Wait(1, resume)` (resume: `(i32)=>Step[string]`) | ❌ infers `Step[i32]` |
-| `Done(s)` (string) — simple `T` payload | ✅ `Step[string]` |
+Make `postSettleType` a method on `*checker` and refresh the variant
+type args by **re-unifying** each (now-settled) constructor argument
+against its *declared* payload type — exactly what the first pass does,
+but with the widened literals — then rebuild the `EnumType.Args` in
+type-param order. A first-pass-seeded substitution keeps payload
+positions that don't pin a parameter (and nested shapes) intact, so
+the legitimate refreshes still work:
 
-So the `T=i32` case only works *by luck* (the misbound default happens
-to match); any non-i32 instantiation through a function payload fails.
+- `var o: Option[i64] = Some(1)` — literal widened to i64, `T`
+  refreshed to i64. ✅
+- `Result[T, E]` `Ok(v)` — `T` refreshed from the settled `v`, `E`
+  preserved from the first pass. ✅
+- `Box[T] { Mk(i32, (i32) => T) }` — `T` recovered from the function
+  payload, leading i32 literal no longer captures it. ✅ (the fix)
 
-## Where it lives
+## Tests
 
-- Variant-constructor inference: `internal/checker/checker.go` ~8793–8864
-  (the `isVar` branch of the `*ast.Call` case). It unifies each arg
-  against the declared payload type —
-  `c.unifyType(vr.payloads[i], at, sub)` (~8818–8827) — then builds the
-  result `EnumType.Args` from `sub[p]` per type-param (~8843–8862).
-- `unifyType` already handles `FuncType` (params + result) and generic
-  `EnumType` (pairwise Args): `internal/checker/checker.go` ~5335–5403.
-  So the *machinery* to bind `T` from `resume`'s `(i32)=>Step[string]`
-  through to `Step[T]`'s `T` exists — meaning the bug is that `sub[T]`
-  ends up i32 anyway: either `at` (the checked type of the bare
-  function-name arg) isn't `(i32)=>Step[string]` at this point, or the
-  FuncType→EnumType→ParamType unify isn't binding `T` for this shape.
-  Pinning which needs instrumenting `sub` after the unify loop.
-
-## Fix direction
-
-Two complementary angles:
-1. **Expected-type-directed inference:** seed `sub` from the
-   destination/annotation (`Step[string]`) before/with the arg unify,
-   so a function-typed payload that can't bind `T` from the arg alone
-   still resolves. (The result construction already returns a
-   parameterless `EnumType{Name}` when `!complete` to let `assignable`
-   flow context in — but here it returns `complete` with the wrong
-   `T`, so context never gets a chance.)
-2. **Verify the function-name arg's checked type** carries
-   `(i32)=>Step[string]` into the unify (vs a defaulted/erased form).
-
-## Impact / why it matters
-
-Until fixed, a generic stackless-task type (`Task[T]` / `IoStep[T]`)
-can't be expressed, so each result type needs a hand-duplicated
-reactor (`run_io` for i32, `run_io_str` for string, …). The fix folds
-those back into one generic reactor and removes the duplication — and
-generally unblocks generic enums whose variants carry continuations
-(the stackless-CPS shape this whole concurrency design is built on).
-A checker regression test: the `Step[string]` repro above should
-type-check and run.
+- `internal/checker/checker_test.go`: `TestVariantTypeParamFromFnPayload`
+  (function-payload-pinned `T` for both `T=string` and `T=i32`, plus a
+  leading literal that itself widens from the destination).
+- `internal/e2e/reactor_socket_test.go`: `TestReactorFanoutBodies` now
+  exercises the generic `IoStep[string]` reactor end-to-end on x86-64 +
+  arm64 (the string-result fan-out that previously needed `IoStepStr`).

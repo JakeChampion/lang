@@ -143,8 +143,8 @@ func TestReactorOutboundFanout(t *testing.T) {
 	const host = 127 | (1 << 24)
 	src := fmt.Sprintf(`import "std/reactor";
 
-function start_fetch(conn: i32): reactor.IoStep {
-    function resume(woken_fd: i32): reactor.IoStep {
+function start_fetch(conn: i32): reactor.IoStep[i32] {
+    function resume(woken_fd: i32): reactor.IoStep[i32] {
         var resp: string = tcp_recv(woken_fd, 4096);
         if (resp.len() > 0) { return IoDone(1); }
         return IoDone(0);
@@ -159,8 +159,8 @@ function main(): i32 {
     if (c2 < 0) { return 82; }
     if (tcp_send(c1, "GET /1 HTTP/1.1\r\nHost: x\r\n\r\n") < 0) { return 83; }
     if (tcp_send(c2, "GET /2 HTTP/1.1\r\nHost: x\r\n\r\n") < 0) { return 84; }
-    var tasks: reactor.IoStep[] = [start_fetch(c1), start_fetch(c2)];
-    var results: i32[] = reactor.run_io(tasks);
+    var tasks: reactor.IoStep[i32][] = [start_fetch(c1), start_fetch(c2)];
+    var results: i32[] = reactor.run_io(tasks, -1);
     if (results[0] == 1 && results[1] == 1) { return 42; }
     return 85;
 }`, host, port, host, port)
@@ -197,8 +197,9 @@ function main(): i32 {
 }
 
 // The complete fan-out payoff: two parallel fetches that return their
-// response BODIES, via std/reactor.run_io_str (the string-result
-// reactor). Both connections' reads overlap on one thread; each task's
+// response BODIES, via std/reactor.run_io over IoStep[string] (the
+// string-result reactor). Both connections' reads overlap on one
+// thread; each task's
 // continuation recvs and returns the body. Exit 42 iff both bodies
 // came back as the expected "hello-world".
 func TestReactorFanoutBodies(t *testing.T) {
@@ -231,12 +232,12 @@ func TestReactorFanoutBodies(t *testing.T) {
 import "std/fetch";
 import "std/string";
 
-function start_fetch(conn: i32): reactor.IoStepStr {
-    function resume(woken_fd: i32): reactor.IoStepStr {
+function start_fetch(conn: i32): reactor.IoStep[string] {
+    function resume(woken_fd: i32): reactor.IoStep[string] {
         var resp: string = tcp_recv(woken_fd, 4096);
-        return IoDoneStr(fetch.http_body(resp));
+        return IoDone(fetch.http_body(resp));
     }
-    return IoWaitStr(conn, resume);
+    return IoWait(conn, resume);
 }
 
 function main(): i32 {
@@ -246,8 +247,8 @@ function main(): i32 {
     if (c2 < 0) { return 82; }
     if (tcp_send(c1, "GET /1 HTTP/1.1\r\nConnection: close\r\n\r\n") < 0) { return 83; }
     if (tcp_send(c2, "GET /2 HTTP/1.1\r\nConnection: close\r\n\r\n") < 0) { return 84; }
-    var tasks: reactor.IoStepStr[] = [start_fetch(c1), start_fetch(c2)];
-    var bodies: string[] = reactor.run_io_str(tasks);
+    var tasks: reactor.IoStep[string][] = [start_fetch(c1), start_fetch(c2)];
+    var bodies: string[] = reactor.run_io(tasks, "");
     if (bodies[0] == "hello-world" && bodies[1] == "hello-world") { return 42; }
     return 85;
 }`, host, port, host, port)
