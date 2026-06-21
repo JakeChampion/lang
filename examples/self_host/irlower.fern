@@ -4953,6 +4953,21 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!rfs.ok) { return rfs; }
                         return rfs.emit(ir.op_read_file());
                     }
+                    // Built-in `write_file(path, content)` — write the whole content
+                    // to the named file, push a fresh Option[IoError] box (None on
+                    // success / Some(_) on error). A value op consuming the lowered
+                    // path + content args (path first, content second — op_write_file
+                    // pops content then path). The Option type is resolved by
+                    // read_file_result_type's write_file case so `match (write_file(p,
+                    // c)) { Some(_) => .., None => .. }` lowers. No wasm file I/O, so
+                    // wasm_eligible rejects write_file modules; x86 / arm64 lower it.
+                    if (cid.name == "write_file" && c.args.len() == 2) {
+                        var wfs: LowerState = lower_expr(c.args[0], s);
+                        if (!wfs.ok) { return wfs; }
+                        wfs = lower_expr(c.args[1], wfs);
+                        if (!wfs.ok) { return wfs; }
+                        return wfs.emit(ir.op_write_file());
+                    }
                     // Built-in `args()` — the command-line argv accessor: push a
                     // fresh string[] (argv[0] first). A no-arg value op; the result
                     // str-array-tracks (expr_is_strarr's args case) so `a.len()` /
@@ -14851,6 +14866,7 @@ pub function (s: LowerState) opt_ret_type(name: string): string {
     // op_read_file). Checked AFTER the registry so a user decl of the same name
     // still wins. read_file → Result[string, IoError].
     if (name == "read_file") { return "Result[string, IoError]"; }
+    if (name == "write_file") { return "Option[IoError]"; }
     return "";
 }
 
