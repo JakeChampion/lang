@@ -115,6 +115,17 @@ func TestSelfHostFnValueX86IR(t *testing.T) {
 		// a 1-arg named-fn array stays correct (already const_func via the generic
 		// path; the fn[] interception emits the same const_func).
 		{"arr-one-arg", `function inc(x: i32): i32 { return x + 1; } function dbl(x: i32): i32 { return x * 2; } function main(): i32 { var fns: ((i32) => i32)[] = [inc, dbl]; return fns[0](10) + fns[1](10); }`, 31},
+		// #3640 slice A: a fn-value PARAM whose RETURN type is a STRUCT. The
+		// return-struct name is preserved through parse-time coarsening
+		// (ParamDecl.fn_ret) and registered as a `g|P` struct_ret_fns entry in
+		// lower_func, so the call-result field read `g().x` resolves P's field
+		// index and lowers on the IR path instead of bailing to AST. Previously
+		// `() => P` discarded P at coarsening, so `g().x` couldn't resolve the
+		// field and the module routed `ast`.
+		{"param-ret-struct-field", `struct P { x: i32 } function call(g: () => P): i32 { return g().x; } function mk(): P { return P { x: 4 }; } function main(): i32 { return call(mk); }`, 4},
+		{"param-ret-struct-var-2fields", `struct P { x: i32, y: i32 } function call(g: () => P): i32 { var p = g(); return p.x + p.y; } function mk(): P { return P { x: 4, y: 5 }; } function main(): i32 { return call(mk); }`, 9},
+		{"param-ret-struct-method", `struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function call(g: () => P): i32 { return g().dbl(); } function mk(): P { return P { x: 11 }; } function main(): i32 { return call(mk); }`, 22},
+		{"param-ret-struct-witharg", `struct P { x: i32 } function call(g: (i32) => P): i32 { return g(7).x; } function mk(n: i32): P { return P { x: n + 1 }; } function main(): i32 { return call(mk); }`, 8},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

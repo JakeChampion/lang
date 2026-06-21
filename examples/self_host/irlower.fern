@@ -13276,9 +13276,23 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // it never leaks to another function — a param named `f` elsewhere that is
     // NOT array-returning is unaffected.
     var arr_ret_fns_aug: string[] = arr_ret_fns;
+    // Struct-returning fn-value PARAM (`g: () => P`, coarse "fn" with the
+    // return-struct name on ParamDecl.fn_ret): a call `g()` yields a `P`, so
+    // register a `g|P` entry in THIS function's struct_ret_fns view. The
+    // existing struct_ret_type lookup (split on `|`) then resolves `g().field`
+    // / `var p = g()` exactly as it does for a struct-returning free function —
+    // so the call-result field read lowers on the IR path instead of bailing to
+    // AST (#3640 slice A). Like arr_ret_fns_aug, the entry lives only in the
+    // per-call LowerState, so it never leaks to another function. The self-host
+    // compiler's own source uses no fn-typed params, so this never fires there —
+    // the byte-identical fixpoint is undisturbed.
+    var struct_ret_fns_aug: string[] = struct_ret_fns;
     var pri: i32 = 0;
     while (pri < fn.params.len()) {
         if (fn.params[pri].ret_arr) { arr_ret_fns_aug = arr_ret_fns_aug.append(fn.params[pri].name); }
+        if (fn.params[pri].type_name == "fn" && fn.params[pri].fn_ret.len() > 0) {
+            struct_ret_fns_aug = struct_ret_fns_aug.append(fn.params[pri].name + "|" + fn.params[pri].fn_ret);
+        }
         pri = pri + 1;
     }
     // Struct reclamation: the fresh, non-escaping struct locals this function may
@@ -13288,7 +13302,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // `a = a.with(i, v)` self-reassign must clone instead of mutating in place
     // when its target is here (#3599; see the aliased_names field doc).
     var aliased: string[] = aliased_array_names_of(fn.body);
-    var s: LowerState = LowerState { ops: empty, local_names: names, local_is_arr: isarr, local_is_str: isstr, local_is_strarr: isstrarr, local_struct_type: structty, local_opt_type: optty, local_tuple_elems: tupty, local_map_type: mapty, local_is_i64: isi64, local_is_f64: isf64, local_is_f32: isf32, local_is_f64arr: isf64arr, local_is_i64arr: isi64arr, local_is_closurearr: isclosurearr, local_is_fnarr: isfnarr, local_is_arrarr: isarrarr, local_arrarr_elem: arrarr_elem, local_is_u32: isu32, local_is_u64: isu64, local_subword: subword, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_is_i64arr: ret_i64arr, ret_is_dyn: ret_dyn, i64_ret_fns: i64_ret_fns, fn_param_sigs: fn_param_sigs, cur_fn: fn.name, closure_fns: closure_fns, const_fns: const_fns, closure_locals: noclos, f64_ret_fns: f64_ret_fns, f64arr_ret_fns: f64arr_ret_fns, i64arr_ret_fns: i64arr_ret_fns, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns_aug, strarr_ret_fns: strarr_ret_fns, arr_method_fns: arr_method_fns, opt_ret_fns: opt_ret_fns, tuple_ret_fns: tuple_ret_fns, struct_ret_fns: struct_ret_fns, map_ret_fns: map_ret_fns, reclaimable_names: reclaim, aliased_names: aliased, n_params: names.len(), ok: true };
+    var s: LowerState = LowerState { ops: empty, local_names: names, local_is_arr: isarr, local_is_str: isstr, local_is_strarr: isstrarr, local_struct_type: structty, local_opt_type: optty, local_tuple_elems: tupty, local_map_type: mapty, local_is_i64: isi64, local_is_f64: isf64, local_is_f32: isf32, local_is_f64arr: isf64arr, local_is_i64arr: isi64arr, local_is_closurearr: isclosurearr, local_is_fnarr: isfnarr, local_is_arrarr: isarrarr, local_arrarr_elem: arrarr_elem, local_is_u32: isu32, local_is_u64: isu64, local_subword: subword, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_is_i64arr: ret_i64arr, ret_is_dyn: ret_dyn, i64_ret_fns: i64_ret_fns, fn_param_sigs: fn_param_sigs, cur_fn: fn.name, closure_fns: closure_fns, const_fns: const_fns, closure_locals: noclos, f64_ret_fns: f64_ret_fns, f64arr_ret_fns: f64arr_ret_fns, i64arr_ret_fns: i64arr_ret_fns, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns_aug, strarr_ret_fns: strarr_ret_fns, arr_method_fns: arr_method_fns, opt_ret_fns: opt_ret_fns, tuple_ret_fns: tuple_ret_fns, struct_ret_fns: struct_ret_fns_aug, map_ret_fns: map_ret_fns, reclaimable_names: reclaim, aliased_names: aliased, n_params: names.len(), ok: true };
     // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
     // UNIFORM env box [funcval, caps…] — the same shape a closure local /
     // closure-array element / fn-typed struct field carries (slice #3445
@@ -15828,7 +15842,7 @@ function try_lift_binding(body: parser.Stmt[], idx: i32, fname: string, lam: par
     var pj: i32 = 0;
     while (pj < lam.params.len()) { lparams = lparams.append(lam.params[pj]); pj = pj + 1; }
     var cj: i32 = 0;
-    while (cj < caps.len()) { lparams = lparams.append(parser.ParamDecl { name: caps[cj], type_name: ctypes[cj], own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false }); cj = cj + 1; }
+    while (cj < caps.len()) { lparams = lparams.append(parser.ParamDecl { name: caps[cj], type_name: ctypes[cj], own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "" }); cj = cj + 1; }
     var lname: string = "__lam_" + util.i32_to_string(acc.counter);
     var notp: string[] = [];
     var newfn: parser.FuncDecl = parser.FuncDecl { name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
@@ -15901,7 +15915,7 @@ function make_clo_func(lam: parser.ExprLambda, cloname: string, fd: parser.FuncD
         ci = ci + 1;
     }
     // params = __env first, then the lambda's declared params.
-    var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false }];
+    var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "" }];
     var pj: i32 = 0;
     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
     // body = capture reads (var cap = __env[1+i]) then the lambda body.
@@ -16002,7 +16016,7 @@ function try_inline_closure(lam: parser.ExprLambda, fd: parser.FuncDecl, funcs: 
 // (the lambda body inlined verbatim; __env is unused). Always succeeds — a
 // no-capture lambda needs no env reads.
 function make_wrap_lambda_func(lam: parser.ExprLambda, wrapname: string): parser.FuncDecl {
-    var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false }];
+    var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "" }];
     var pj: i32 = 0;
     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
     var notp: string[] = [];
@@ -16020,7 +16034,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: parser.F
     while (fi < mfuncs.len()) {
         if (mfuncs[fi].name == fnname && mfuncs[fi].receiver_type.len() == 0) {
             var tgt: parser.FuncDecl = mfuncs[fi];
-            var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false }];
+            var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "" }];
             var args: parser.Expr[] = [];
             var pj: i32 = 0;
             while (pj < tgt.params.len()) {
