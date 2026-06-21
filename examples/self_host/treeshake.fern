@@ -1,0 +1,211 @@
+// examples/self_host/treeshake.fern — reachability-based dead-code
+// elimination for the self-hosted compiler.
+//
+// Loading a stdlib module (`import "core/cmp"`) pulls in its WHOLE transitive
+// closure — core/sort, core/int, char-predicate helpers, generic comparison
+// helpers (`min`/`max`/`lt`/…) — most of which a given program never uses.
+// That bloats the merged module past asm_ir's 512-function IR budget (and the
+// uninstantiated generics individually bail the IR-eligibility gate), so a
+// stdlib-importing program is forced onto the legacy AST emitter. `treeshake`
+// prunes `mod.funcs` to the functions REACHABLE from `main` (+ top-level
+// statements + WIT exports), so a program that uses only `i32`'s `eq`/`hash`
+// drops the hundreds of unrelated stdlib functions and fits the IR path.
+//
+// SOUNDNESS — the prune must never drop a function the program can reach. It
+// over-approximates reachability by NAME: a function is kept if its name
+// appears anywhere reachable as
+//   * an identifier read (`f(...)`, a function value, a mangled call target),
+//   * a field/method name (`x.eq(...)` keeps every `*.eq`),
+//   * the trait method an operator desugars to (`a < b` keeps `*.cmp`,
+//     `a + b` keeps `*.add`, …) — covering operator overloading even if the
+//     `+`→`.add()` rewrite has not run yet.
+// The collector visits every Expr/Stmt form (mirroring astwalk's complete
+// traversal) and, unlike astwalk's capture analysis, does NOT subtract
+// lambda-local bindings — for reachability, keeping an extra same-named
+// function is harmless; dropping a referenced one is not. Over-keeping only
+// costs IR budget; it never changes behaviour.
+
+import "./parser";
+import "./util";
+
+// ts_op_method maps a (possibly overloadable) operator to the trait method it
+// dispatches to, so `a <op> b` keeps that method even before the operator-
+// overload desugar rewrites it to an explicit call. "" for non-overloadable.
+function ts_op_method(op: string): string {
+    if (op == "+") { return "add"; }
+    if (op == "-") { return "sub"; }
+    if (op == "*") { return "mul"; }
+    if (op == "/") { return "div"; }
+    if (op == "%") { return "rem"; }
+    if (op == "==" || op == "!=") { return "eq"; }
+    if (op == "<" || op == "<=" || op == ">" || op == ">=") { return "cmp"; }
+    return "";
+}
+
+// ts_names_expr appends every name `e` could REFERENCE (idents, field/method
+// names, operator-dispatch methods) to `acc`. Duplicates are fine.
+function ts_names_expr(e: parser.Expr, acc: string[]): string[] {
+    match (e) {
+        parser.ExprIdent(id) => { return acc.append(id.name); },
+        parser.ExprNumber(_) => { return acc; },
+        parser.ExprString(_) => { return acc; },
+        parser.ExprBool(_) => { return acc; },
+        parser.ExprBinary(b) => {
+            var m: string = ts_op_method(b.op);
+            if (m.len() > 0) { acc = acc.append(m); }
+            acc = ts_names_expr(b.left, acc);
+            return ts_names_expr(b.right, acc);
+        },
+        parser.ExprUnary(u) => {
+            if (u.op == "-") { acc = acc.append("neg"); }
+            return ts_names_expr(u.operand, acc);
+        },
+        parser.ExprCall(c) => {
+            acc = ts_names_expr(c.callee, acc);
+            var i: i32 = 0;
+            while (i < c.args.len()) { acc = ts_names_expr(c.args[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { acc = ts_names_expr(a.elements[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { acc = ts_names_expr(t.elements[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.ExprIndex(x) => {
+            acc = ts_names_expr(x.array, acc);
+            return ts_names_expr(x.index, acc);
+        },
+        parser.ExprSlice(sl) => {
+            acc = ts_names_expr(sl.array, acc);
+            acc = ts_names_expr(sl.start, acc);
+            return ts_names_expr(sl.end, acc);
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) { acc = ts_names_expr(sl.base, acc); }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { acc = ts_names_expr(sl.field_values[i], acc); i = i + 1; }
+            return acc;
+        },
+        // A method/field name (`x.eq`) is a reference: keep every function with
+        // that simple name. Also recurse into the object.
+        parser.ExprFieldAccess(fa) => {
+            acc = acc.append(fa.field);
+            return ts_names_expr(fa.obj, acc);
+        },
+        // Walk the WHOLE lambda body — every function it calls is reachable.
+        // (Unlike astwalk's free-var collector we do not subtract lambda-local
+        // bindings: over-keeping a same-named function is safe, dropping a
+        // referenced one is not.)
+        parser.ExprLambda(lm) => {
+            var i: i32 = 0;
+            while (i < lm.body.len()) { acc = ts_names_stmt(lm.body[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.ExprUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
+// ts_names_stmt appends every name `st` could reference to `acc`.
+function ts_names_stmt(st: parser.Stmt, acc: string[]): string[] {
+    match (st) {
+        parser.StmtSwitch(_) => { return ts_names_stmt(parser.desugar_switch_in_stmt(st), acc); },
+        parser.StmtDefer(d) => { return ts_names_stmt(d.action, acc); },
+        parser.StmtVar(v) => { return ts_names_expr(v.init, acc); },
+        parser.StmtReturn(r) => { return ts_names_expr(r.value, acc); },
+        parser.StmtExpr(e) => { return ts_names_expr(e.value, acc); },
+        parser.StmtIf(i) => {
+            acc = ts_names_expr(i.cond, acc);
+            var ti: i32 = 0;
+            while (ti < i.then_body.len()) { acc = ts_names_stmt(i.then_body[ti], acc); ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < i.else_body.len()) { acc = ts_names_stmt(i.else_body[ei], acc); ei = ei + 1; }
+            return acc;
+        },
+        parser.StmtWhile(w) => {
+            acc = ts_names_expr(w.cond, acc);
+            var i: i32 = 0;
+            while (i < w.body.len()) { acc = ts_names_stmt(w.body[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.StmtAssign(a) => { return ts_names_expr(a.value, acc); },
+        parser.StmtMatch(m) => {
+            acc = ts_names_expr(m.scrutinee, acc);
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) { acc = ts_names_stmt(m.arms[ai].body[bi], acc); bi = bi + 1; }
+                ai = ai + 1;
+            }
+            return acc;
+        },
+        parser.StmtFor(f) => {
+            acc = ts_names_expr(f.iter, acc);
+            var i: i32 = 0;
+            while (i < f.body.len()) { acc = ts_names_stmt(f.body[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.StmtBreak(_) => { return acc; },
+        parser.StmtContinue(_) => { return acc; },
+        parser.StmtUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
+// ts_func_names appends every name function `fd`'s body references to `acc`.
+function ts_func_names(fd: parser.FuncDecl, acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < fd.body.len()) { acc = ts_names_stmt(fd.body[i], acc); i = i + 1; }
+    return acc;
+}
+
+// treeshake returns `mod` with `mod.funcs` pruned to those reachable, by name,
+// from the roots (`main`, top-level statements, WIT exports). Structs / enums /
+// aliases / imports / top_stmts / exports are preserved unchanged (only the
+// function list — the IR-budget axis — is pruned). Idempotent.
+pub function treeshake(mod: parser.Module): parser.Module {
+    // Seed the reachable-name set from the roots.
+    var refs: string[] = ["main"];
+    var ti: i32 = 0;
+    while (ti < mod.top_stmts.len()) { refs = ts_names_stmt(mod.top_stmts[ti], refs); ti = ti + 1; }
+    var ei: i32 = 0;
+    while (ei < mod.exports.len()) { refs = refs.append(mod.exports[ei].func_name); ei = ei + 1; }
+
+    // Grow `refs` to a fixpoint: any function whose name is reachable
+    // contributes the names ITS body references. Only genuinely NEW names are
+    // appended (membership-checked), so `refs` grows monotonically toward a
+    // bounded set and the loop terminates.
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        var fi: i32 = 0;
+        while (fi < mod.funcs.len()) {
+            if (util.has_str(refs, mod.funcs[fi].name)) {
+                var body_names: string[] = ts_func_names(mod.funcs[fi], []);
+                var bi: i32 = 0;
+                while (bi < body_names.len()) {
+                    if (!util.has_str(refs, body_names[bi])) {
+                        refs = refs.append(body_names[bi]);
+                        changed = true;
+                    }
+                    bi = bi + 1;
+                }
+            }
+            fi = fi + 1;
+        }
+    }
+
+    // Keep only the reachable functions.
+    var kept: parser.FuncDecl[] = [];
+    var ki: i32 = 0;
+    while (ki < mod.funcs.len()) {
+        if (util.has_str(refs, mod.funcs[ki].name)) { kept = kept.append(mod.funcs[ki]); }
+        ki = ki + 1;
+    }
+    return parser.Module { funcs: kept, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
+}

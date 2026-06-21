@@ -29,7 +29,7 @@ func TestSelfHostLoadFixpointX86_64(t *testing.T) {
 		t.Skip("file-loading driver test runs only natively (argv paths)")
 	}
 	dir := writeSelfHostAsmProject(t) // lexer, parser, asm
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "flatten.fern", "checker.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern", "asm_load_run.fern"} {
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "flatten.fern", "checker.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern", "treeshake.fern", "asm_load_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
