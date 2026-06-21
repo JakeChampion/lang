@@ -238,7 +238,7 @@ per-function bugs in the audit log.
 |--------|---|---|---|---|---|--------|-------|
 | `core/int` | ✅ | ✅ | ✅ | ✅ | 🔧 | 🔧 | radix **parse** direction (`parse_int_radix` / `__radix_digit`, bases 2–36, sign handling) — native via the `core_int_parse` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostCoreIntParseIR` — `Option[i32]` `Some`/`None` + payload-binding `match`, string indexing with char-class compares, multiply-accumulate loop, sign + negation. The **to-string radix** direction (`int_to_string_radix`) ALSO lowers on the IR path — it builds via `__alloc_u8` + `.with` + `string_from_bytes` (no `__memcpy`/`usize`), the same builder std/hex / std/base64 use — native via the `core_int_radix` fixture, self-host via `TestSelfHostCoreIntRadixIR` (x86-64 + wasm, oracle-checked). Only `int_to_string` / `__int_to_string_u64` (decimal) stay AST — those poke raw memory via `__memcpy` over a `usize` pointer (same caveat as std/u64 `to_string`) |
 | `core/cmp` (traits) | | | | | | ⬜ | |
-| `core/iter` (Iterator trait) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **Generic** `Iterator[T]` protocol + integer `Range` (`impl Iterator[i32]`) + eager drivers ([#2686](https://github.com/JakeChampion/lang/issues/2686) / tail of [#2699](https://github.com/JakeChampion/lang/issues/2699)). Value-semantic `next(self): Option[(T, Self)]`. `count[T, I: Iterator[T]]`, `to_array[T, I: Iterator[T]]: T[]`, and `fold[T, A, I: Iterator[T]](it, init: A, f: (A, T) => A): A` (the fundamental left reduction, generic over both element and accumulator type, taking a closure combiner) are generic over the element type. Closure-free adapters `nth`/`last[T, I: Iterator[T]]: Option[T]`, `min`/`max`/`product[I: Iterator[i32]]`, and `position[I: Iterator[i32]](it, target): Option[i32]` round out the set (the i32-bound ones need `+`/`*`/`<`/`==`). Works on native (interp / x86-64 / arm64 / wasm) AND the self-host **IR path** (x86-64 + wasm): parametrised-trait bounds parse on the self-host (#3558) and the native checker recovers the bound-only `T` by bound-driven inference (#3596). Coverage: `TestNativeIteratorTrait{,Module,ModuleGeneric,Arm64}`, `TestSelfHostIteratorTraitIR{X86_64,Wasm}`, `TestNativeGenericIteratorCollector{,Arm64}` + `TestSelfHostGenericCollectorIR{X86_64,Wasm}` (incl. a `boolean`-element impl + `to_array` returning a generic `T[]`), all routing-pinned to `ir` on the self-host |
+| `core/iter` (Iterator trait) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **Generic** `Iterator[T]` protocol + integer `Range` (`impl Iterator[i32]`) + eager drivers ([#2686](https://github.com/JakeChampion/lang/issues/2686) / tail of [#2699](https://github.com/JakeChampion/lang/issues/2699)). Value-semantic `next(self): Option[(T, Self)]`. `count[T, I: Iterator[T]]`, `to_array[T, I: Iterator[T]]: T[]`, and `fold[T, A, I: Iterator[T]](it, init: A, f: (A, T) => A): A` (the fundamental left reduction, generic over both element and accumulator type, taking a closure combiner) are generic over the element type. Closure-free adapters `nth`/`last[T, I: Iterator[T]]: Option[T]`, `min`/`max`/`product[I: Iterator[i32]]`, `position`/`count_value[I: Iterator[i32]](it, target)`, and `contains[I: Iterator[i32]](it, target): boolean` round out the set (the i32-bound ones need `+`/`*`/`<`/`==`). Works on native (interp / x86-64 / arm64 / wasm) AND the self-host **IR path** (x86-64 + wasm): parametrised-trait bounds parse on the self-host (#3558) and the native checker recovers the bound-only `T` by bound-driven inference (#3596). Coverage: `TestNativeIteratorTrait{,Module,ModuleGeneric,Arm64}`, `TestSelfHostIteratorTraitIR{X86_64,Wasm}`, `TestNativeGenericIteratorCollector{,Arm64}` + `TestSelfHostGenericCollectorIR{X86_64,Wasm}` (incl. a `boolean`-element impl + `to_array` returning a generic `T[]`), all routing-pinned to `ir` on the self-host |
 | `core/map` | | | | | | ⬜ | |
 | `core/no_prelude` | | | | | | ⬜ | no-op sentinel |
 
@@ -250,6 +250,29 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-21 — self-host: a 0-arg fn-value (`var f = mk; f()`) no longer segfaults
+
+`var f = mk` where `mk` is a **0-arg** function, then `f()`, **segfaulted** on the
+self-host compiler (an IR-path miscompile for an i32 return — it even routed
+`ir` — and an AST one for a struct return). Root cause: the self-host's "a bare
+0-arg receiver-less fn name is a CALL to it" rule (the `const` rule, #2954)
+lowered `var f = mk` to `var f = mk()`, binding the RESULT, so the later `f()`
+called a non-function. The native compiler treats it as a function value.
+Fix: a new parser pass `inline_callonly_fn_values` (run in `module_with_builtins`,
+so BOTH the IR and AST self-host paths get it) recognises a local bound to a bare
+0-arg fn name and used ONLY as a call target, and inlines it — drops the binding
+and rewrites every `f(args)` to `mk(args)` (a 0-arg fn-value called is exactly
+its direct call evaluated at each call site, matching native). A `const` (or any
+0-arg fn) bound to a var and used as a VALUE (`var f = K; f + 1`) is left as a
+const-call, so const semantics are unchanged. Coverage:
+`TestSelfHostZeroArgFnValueIRX86_64` — i32 return, struct return, called-twice,
+loop-call, a >0-arg fn-value, and the const-as-value soundness case — each
+oracle-checked against the native interpreter. Self-host fixpoint stays
+byte-identical (`TestSelfHostModloadFixpointX86_64`): the compiler source uses no
+such bindings, so the pass is a no-op on the fixpoint corpus. (The deeper
+first-class-closure-VALUE cases — a *capturing* closure passed as an argument or
+returned capturing a closure param, #3445 — remain on the AST path.)
 
 ### 2026-06-21 — self-host IR: a closure that calls another local closure now lifts
 
@@ -534,6 +557,19 @@ isn't in scope without `import "std/i32"` / `"std/float"`. That self-host
 over-permissiveness vs. native is a separate divergence, filed for follow-up;
 this entry scopes only the import-free escape-sequence surface, which both
 compilers agree on.)
+
+### 2026-06-21 — core/iter: closure-free queries `contains` / `count_value` ([#2686](https://github.com/JakeChampion/lang/issues/2686))
+
+Two i32 equality queries, no closure: `contains[I: Iterator[i32]](it, target):
+boolean` and `count_value[I: Iterator[i32]](it, target): i32`. Notably
+`contains` returns `boolean` from a *direct* bounded-generic function — which
+lowers fine on the self-host IR path (routing `ir`), confirming the
+boolean-return self-host gap is specific to *indirect* closure-through-fn-param
+calls (#3628), not boolean returns in general. Coverage: `contains-count-value`
+in `TestNativeGenericIteratorCollector` + `TestSelfHostGenericCollectorIR{X86_64,
+Wasm}` (routing-pinned to `ir`), and `iter.contains`/`count_value` via the
+shipped module in `TestNativeIteratorTraitModuleAdapters`. Fixpoint unaffected
+(`core/iter` is standalone).
 
 ### 2026-06-21 — core/iter: more closure-free adapters `last` / `product` / `position` ([#2686](https://github.com/JakeChampion/lang/issues/2686))
 

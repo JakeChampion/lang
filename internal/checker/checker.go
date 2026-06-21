@@ -2434,6 +2434,26 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		if b.ArithCall != nil {
 			return b.ArithCall
 		}
+		// Default a leftover-polymorphic integer op to i32. An integer
+		// `+`/`-`/`*`/… whose operands never got pinned to a concrete
+		// width (an unannotated `var x = 2147483647; var y = x + 1`)
+		// stays `IntWidth == 0`: the inference branch skips it
+		// (`!common.Polymorphic`) and no `settleInt` hint ever reached
+		// it. The compiled backends still compute it in a 32-bit
+		// register (i32 is the default int), so it wraps; the AST
+		// interpreter is width-driven and would otherwise keep the full
+		// 64-bit value (#3581). Stamp the default i32 width here, AFTER
+		// all settling, so a genuine i64 context (which `settleInt`
+		// already set to 64) is untouched and only true defaults land at
+		// 32. Float ops carry their width on FloatWidth and evaluate
+		// through the interp's separate Float value, so the stamp is
+		// inert for them; string concatenation is flagged separately.
+		if b.IntWidth == 0 && b.FloatWidth == 0 && !b.IsStringConcat {
+			switch b.Op {
+			case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>":
+				b.IntWidth = 32
+			}
+		}
 		return e
 	})
 

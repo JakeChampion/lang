@@ -2081,6 +2081,32 @@ pub function (s: LowerState) is_str_ret_fn(name: string): boolean {
 // expr_is_strarr reports whether `e` evaluates to a string[] array — a string-
 // element array literal, or a string[]-marked local/param slot. Drives the
 // element typing of `arr[i]` (a string).
+// map_kv_elem_tag classifies a map `.keys()` / `.values()` METHOD call (argc 0)
+// by the element type its result array yields — "i32" or "string" — or "" when
+// `obj` isn't a map OR the element type isn't one the unannotated
+// `var x = m.keys()/values()` array path handles. Keys are i32 (an i32-keyed
+// map) or string; an i32 / string VALUE likewise. Anything else (i64 / f64 /
+// u64 / u32 / struct / nested-array values) stays on the AST path: the 8-byte
+// i64/f64 cases hit a SEPARATE pre-existing wasm bug in op_map_values (the
+// annotated `var x: i64[] = m.values()` form mis-sums on wasm too), so routing
+// them to IR would expose that, and the unsigned/heap cases need extra marking.
+// The two array-source predicates (expr_is_arr_src / expr_is_strarr) and the
+// StmtVar is_arr inference all gate on this ONE helper so a slot's array-ness
+// and element width stay consistent. #2691.
+function map_kv_elem_tag(obj: parser.Expr, field: string, argc: i32, s: LowerState): string {
+    if (argc != 0) { return ""; }
+    if (field != "keys" && field != "values") { return ""; }
+    var mty: string = expr_map_type_tag(obj, s);
+    if (mty == "") { return ""; }
+    if (field == "keys") {
+        if (map_key_kind_of(mty) == 1) { return "i32"; }
+        return "string";
+    }
+    var vt: string = map_value_of(mty);
+    if (vt == "i32" || vt == "string") { return vt; }
+    return "";
+}
+
 pub function expr_is_strarr(e: parser.Expr, s: LowerState): boolean {
     match (e) {
         parser.ExprArray(arr) => {
@@ -2105,6 +2131,9 @@ pub function expr_is_strarr(e: parser.Expr, s: LowerState): boolean {
                     if (cfa.field == "split" && c.args.len() == 1 && expr_is_str(cfa.obj, s)) { return true; }
                     if (cfa.field == "chars" && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return true; }
                     if (cfa.field == "lines" && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return true; }
+                    // `m.keys()` on a string-keyed map / `m.values()` on a
+                    // string-valued map yields a string[].
+                    if (map_kv_elem_tag(cfa.obj, cfa.field, c.args.len(), s) == "string") { return true; }
                     return false;
                 },
                 _ => { return false; }
@@ -2231,6 +2260,9 @@ pub function expr_is_arr_src(e: parser.Expr, s: LowerState): boolean {
                         var amn: string = s.find_arr_method(cfa.field);
                         if (amn.len() > 0 && s.is_arr_ret_fn(amn)) { return true; }
                     }
+                    // `m.keys()` / `m.values()` is a fresh owned array source (drives
+                    // slicing / re-binding); element width is gated identically.
+                    if (map_kv_elem_tag(cfa.obj, cfa.field, c.args.len(), s) != "") { return true; }
                     return false;
                 },
                 _ => { return false; }
@@ -8093,6 +8125,12 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                     || expr_is_f64arr(cfa.obj, se) || expr_is_i64arr(cfa.obj, se)
                                     || scalar_arr_field_type(cfa.obj, se) != "") { is_arr = true; }
                             }
+                            // `var ks = m.keys()` / `var vs = m.values()` — op_map_keys
+                            // / op_map_values return a FRESH owned array (rc=1, a move,
+                            // no alias_inc). The element flags (is_strarr / is_i64arr /
+                            // is_f64arr) flow from the same map_kv_elem_tag gate via the
+                            // predicates below, so the slot's width stays consistent.
+                            else if (map_kv_elem_tag(cfa.obj, cfa.field, cc.args.len(), se) != "") { is_arr = true; }
                         },
                         // `var a = if (c) { [..] } else { [..] }` — an if-/match-
                         // EXPRESSION desugars to a 0-arg IIFE (callee is ExprLambda).

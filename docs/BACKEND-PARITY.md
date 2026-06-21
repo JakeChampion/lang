@@ -233,7 +233,21 @@ Items that are known-broken in some configuration but considered too
 costly (or too speculative) to fix right now. Each entry should have a
 concrete fix plan and a rough scope estimate.
 
-### arm64-darwin heap-address truncation in Map runtime
+### arm64-darwin heap-address truncation in Map runtime — RESOLVED
+
+**Resolution**: the `core/map` runtime is now `usize`-pointered
+throughout — every Map handle / buffer / entry pointer is a `usize`
+local or parameter (`NumberType{Width: WidthPtr}`: 8 bytes native,
+4 bytes wasm32), so heap pointers above 4 GiB no longer shed their
+high half. No `i32`-typed pointer locals remain anywhere in
+`internal/stdlib` (Map / string / slice runtimes). The `usize` type
+the fix plan below proposed now exists, and the migration landed with
+it. Re-added regression guard: the `map_heap_string_values` case in
+`internal/e2e/arm64_darwin_native_test.go` builds a `Map[string,
+string]` with concat-built (heap, >4 GiB on macOS) keys + values and
+asserts they round-trip on a real Apple Silicon runner (exit 42).
+
+The historical analysis below is retained for context.
 
 **Scope**: macOS-only.
 
@@ -257,11 +271,12 @@ variable's `i32` declaration sheds the high 32 bits. Linux's
 32 bits; macOS ignores the hint and returns high addresses, exposing
 the truncation.
 
-**Status**: **confirmed on macOS CI** (PR #291's probe test tripped
-the bug — heap-allocated string values stored in a `Map` value slot
-get truncated on macOS-latest runners). The probe was removed from
-the test suite to keep CI green; re-add it as a regression test
-alongside the fix.
+**Status (historical)**: **confirmed on macOS CI** (PR #291's probe
+test tripped the bug — heap-allocated string values stored in a `Map`
+value slot get truncated on macOS-latest runners). The probe was
+removed at the time to keep CI green; it has since been re-added (see
+the Resolution note above) now that the `usize` migration fixes the
+underlying truncation.
 
 **Fix plan (revised after looking at Nature lang's type
 system)**: introduce a target-aware **`usize` Fern type** modelled

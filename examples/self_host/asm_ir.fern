@@ -1636,6 +1636,20 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %r14, (%r12)\n");
     s = s.write("    movq %r12, %rax\n");
     s = s.write("    jmp .Larr_push_ret\n");
+    // LOAD-BEARING LEAK — do NOT add a free of the old buffer (%r12) here.
+    // The grow path doubles into a fresh box and abandons the previous buffer,
+    // so every grow leaks it; under emit_module_ir's op-array churn this is what
+    // OOMs (exit 137) the per-module self-compile of the big modules (#3425,
+    // #3452 — the self-host-emitted twin of the native large-tier leak). It is
+    // tempting to push %r12 onto the freelist when its rc==1, but that DOUBLE-
+    // FREEs: today's lowering deliberately depends on __fern_arr_push never
+    // freeing, because borrow-form appends can hand it an ALIASED (rc>1) buffer
+    // the struct/owner still references (see irlower.fern's note "arr_push's …
+    // returned an ALIASED buffer leaves it rc>1"). Adding the free turns the OOM
+    // into a SIGSEGV. Reclaim-on-grow is sound only AFTER the lowering routes
+    // every non-consume append through the clone form (lower_arr_append_value),
+    // leaving op_arr_push for true consumes, and drops the self-consume
+    // (`a = a.append(v)`) reassign-dec — the reuse-analysis slice of goal #2.
     s = s.write(".Larr_push_grow:\n");
     s = s.write("    movq %r15, %rcx\n");
     s = s.write("    cmpq $0, %rcx\n");
