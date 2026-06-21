@@ -84,3 +84,74 @@ function main(): i32 {
 		})
 	}
 }
+
+// plat.fetch is the capability-scoped form a handler uses:
+// `plat.fetch("a.b.c.d", port, path)` (parses the literal IPv4, routes
+// through the Platform bag). Same upstream round-trip as fetch_get,
+// via the Platform method.
+func TestPlatformFetch(t *testing.T) {
+	bin := buildFernCLI(t)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("no free TCP port: %v", err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+	go func() {
+		for {
+			conn, aerr := ln.Accept()
+			if aerr != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				_ = c.SetDeadline(time.Now().Add(3 * time.Second))
+				b := make([]byte, 512)
+				_, _ = c.Read(b)
+				fmt.Fprint(c, "HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\nhello-world")
+			}(conn)
+		}
+	}()
+
+	src := fmt.Sprintf(`import "std/fetch";
+import "std/string";
+
+function main(): i32 {
+    var p: Platform = Platform { version: 1 };
+    var resp: string = p.fetch("127.0.0.1", %d, "/");
+    var body: string = fetch.http_body(resp);
+    if (body == "hello-world") { return 42; }
+    return 1;
+}`, port)
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "platfetch.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	backends := []struct {
+		target string
+		qemu   func(*testing.T) string
+		run    func(qemu, bin string, args ...string) *exec.Cmd
+	}{
+		{"x86-64", x86QemuOrEmpty, runX86Bin},
+		{"arm64", arm64QemuOrEmpty, runArm64Bin},
+	}
+	for _, be := range backends {
+		be := be
+		t.Run(be.target, func(t *testing.T) {
+			qemu := be.qemu(t)
+			out := filepath.Join(dir, be.target+"_platfetch.bin")
+			if o, err := exec.Command(bin, "-target", be.target, "-o", out, srcPath).CombinedOutput(); err != nil {
+				t.Fatalf("build failed: %v\n%s", err, o)
+			}
+			cmd := be.run(qemu, out)
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 42 {
+				t.Errorf("%s: plat.fetch exit = %d, want 42", be.target, code)
+			}
+		})
+	}
+}

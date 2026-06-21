@@ -246,12 +246,16 @@ backends (`internal/e2e/poll_test.go`, x86-64 + arm64/qemu).
   real response string. The upstream-fetch capability a handler needs.
   Verified on x86-64 + arm64 against a Go upstream
   (`internal/e2e/fetch_test.go`).
-- **`plat.fetch`** — surface it as a `Platform` capability method
-  (`(p: Platform) fetch(...)`) so handlers write `plat.fetch(req)`;
-  and a reactor-overlapped fan-out returning the response bodies —
-  gated on generic `Task[T]`/string-result `run_io` (self-host
-  monomorphization). Until then, overlap collects readiness via
-  `std/reactor` and reads each body with `std/fetch`.
+- **DONE — `plat.fetch` capability method:** `(plat: Platform)
+  fetch(host, port, path)` (+ `parse_ipv4`), so a handler reaches
+  upstreams *only* through the `Platform` bag it was handed
+  (docs/PLATFORM-RESEARCH.md Rec §1's capability model) — a literal
+  IPv4 GET returning the response. Verified on x86-64 + arm64 against a
+  Go upstream (`internal/e2e/fetch_test.go ▸ TestPlatformFetch`).
+- **Reactor-overlapped fan-out returning bodies** — gated on generic
+  `Task[T]` / string-result `run_io` (self-host monomorphization).
+  Until then, overlap collects readiness via `std/reactor` and reads
+  each body with `std/fetch`.
 - **Self-host** (`asm.fern` / `asm_arm64.fern`) — mirror the reactor
   builtins (blocked on the fn-payload-variant gap, #3552, for
   `std/reactor` itself).

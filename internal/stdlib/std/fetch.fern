@@ -72,3 +72,49 @@ pub function http_body(resp: string): string {
     }
     return resp[sep + 4 : resp.len()];
 }
+
+// parse_ipv4(s) — parse a dotted-quad "a.b.c.d" into the network-byte-
+// order i32 tcp_connect wants, or -1 if it isn't four 0..255 octets.
+// No DNS — a literal address only.
+pub function parse_ipv4(s: string): i32 {
+    var octets: i32[] = [];
+    var cur: i32 = 0;
+    var have: boolean = false;
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var ch: i32 = s[i];
+        if (ch == 46) { // '.'
+            if (!have) { return -1; }
+            octets = octets.append(cur);
+            cur = 0;
+            have = false;
+        } else if (ch >= 48 && ch <= 57) {
+            cur = cur * 10 + (ch - 48);
+            if (cur > 255) { return -1; }
+            have = true;
+        } else {
+            return -1;
+        }
+        i = i + 1;
+    }
+    if (!have) { return -1; }
+    octets = octets.append(cur);
+    if (octets.len() != 4) { return -1; }
+    return ipv4(octets[0], octets[1], octets[2], octets[3]);
+}
+
+// (plat: Platform).fetch(host, port, path) — the capability-scoped
+// outbound GET an edge handler reaches for: `plat.fetch("a.b.c.d",
+// port, "/x")`. Routing outbound I/O through the `Platform` bag keeps
+// the capability model (docs/PLATFORM-RESEARCH.md Rec §1) — a handler
+// can only fetch through the platform it was handed. `host` is a
+// literal IPv4; returns the raw response (use `http_body`), or "" on a
+// parse / connect failure. Blocking; fan out via std/reactor for
+// overlap.
+pub function (plat: Platform) fetch(host: string, port: i32, path: string): string {
+    var h: i32 = parse_ipv4(host);
+    if (h < 0) {
+        return "";
+    }
+    return fetch_get(h, port, path);
+}
