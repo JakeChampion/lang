@@ -145,12 +145,26 @@ So the epic is tooling-feasible. The work, smallest-first:
    `canon lower async` encoding is decoded and now emitted by
    `component.PutCanonSectionLowerAsync` (`[async 0x06, memory 0x03]`),
    byte-verified against the spike (`TestPutCanonSectionLowerAsync_Bytes`).
+1b. **Await proven through the Go composer — DONE.** The whole
+   consumer-awaits-a-nested-async-provider component is now assembled via
+   the Go composer (no wac, no wasm-tools compose), using the
+   nested-component encoders (`PutComponentSection` /
+   `PutInstanceSectionInstantiateComponent`) + `PutCanonSectionLowerAsync`
+   + a hand-built consumer core (lower the import, read the shared return
+   area, `task.return`). Runs under wasmtime async features → 42
+   (`TestWasmP3AsyncImportAwait`), exercising BOTH async-ABI directions
+   (lower + lift). So the await path is a permanent CI artifact, not just
+   a `/tmp` spike.
 2. **Composer**: a `BuildAsyncLowerImport` path emitting `canon lower
    async` + the memory option + the waitable wiring; thread the imported
-   async func through the existing import-composition machinery.
-3. **wasmbin**: the core funcs implementing the await loop
-   (`waitable-set.*`, the subtask poll), and a runtime helper exposing
-   "call this async import and block until ready".
+   async func through the existing import-composition machinery — using
+   the memory-trampoline (the `/tmp`/test uses an externalized shared
+   memory; the real composer reuses the P2 `gMem` trampoline so a
+   single-memory program works).
+3. **wasmbin**: the core funcs implementing the await loop (the sync case
+   needs only the lowered call + a return-area read — proven; a *pending*
+   import additionally needs `waitable-set.*` + the subtask poll), and a
+   runtime helper exposing "call this async import and block until ready".
 4. **Fern surface**: an `await`-shaped expression (or reuse the
    `concurrent { … }` / reactor desugar) that lowers to the await loop —
    the colorless `await` the whole concurrency design targets. This is
