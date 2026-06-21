@@ -1601,12 +1601,13 @@ func buildPreview2Component(prog *ast.Program, info *checker.Info, bin []byte, e
 		return component.Compose(rb, req, "_lang_run"), nil
 	}
 	// CLI-stream / filesystem / clock family. The read side, the file
-	// open-chain, and the list-returning args/env imports allocate
+	// open-chain, the list-returning args/env imports, and the reactor
+	// multiplexer (wasi:io/poll.poll returns list<u32>) all allocate
 	// through cabi_realloc, so rebuild with ForceMemorySection when any
 	// is present.
 	req.ExportName = exportName
 	b := bin
-	if req.Stdin || req.FileRead || req.FileWrite || req.FileAppend || req.FileReadWrite || req.Args || req.Env {
+	if req.Stdin || req.FileRead || req.FileWrite || req.FileAppend || req.FileReadWrite || req.Args || req.Env || req.Poll {
 		rb, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
 			ForceMemorySection: true,
 			Preview2WASI:       true,

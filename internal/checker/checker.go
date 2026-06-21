@@ -1236,11 +1236,18 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	}
 	// wasm_block(pollable: i32): i32 — synchronously block until the
 	// pollable handle is ready, then return 0. Wraps
-	// wasi:io/poll.pollable.block; wasm-only (Preview-2). The
-	// single-pollable wait; the list multiplexer (wasm_poll over
-	// wasi:io/poll.poll) follows.
+	// wasi:io/poll.pollable.block; wasm-only (Preview-2).
 	c.info.FuncSigs["wasm_block"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// wasm_poll(pollables: i32[]): i32 — the wasm reactor's readiness
+	// multiplexer. Blocks until at least one pollable in the array is
+	// ready, then returns its array index (or -1 if none). Wraps
+	// wasi:io/poll.poll(list<pollable>) -> list<u32>; wasm-only
+	// (Preview-2). The pollable analog of the native poll(fds).
+	c.info.FuncSigs["wasm_poll"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 32, Signed: true}}},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
 	// udp_send(host, port, data): number — one-shot fire-and-forget UDP

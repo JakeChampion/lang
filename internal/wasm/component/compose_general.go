@@ -62,6 +62,12 @@ type gComposer struct {
 	surfaced map[string]uint32 // shared type name → component type index
 	inst     map[string]uint32 // wasi:X interface → imported instance index
 	imports  []gImport
+	// needPoll requests the heavier wasi:io/poll instance type that
+	// also declares `poll(list<pollable>) -> list<u32>` (the reactor
+	// multiplexer). Set from ComposeRequest.Poll before any ensure*
+	// call so ensureIoPoll (idempotent, possibly reached via a socket
+	// dependency) builds the right shape regardless of call order.
+	needPoll bool
 }
 
 func newGComposer() *gComposer {
@@ -166,7 +172,7 @@ func (g *gComposer) ensureIoPoll() {
 	if _, ok := g.inst["wasi:io/poll@0.2.0"]; ok {
 		return
 	}
-	inst := g.c.importInstance("wasi:io/poll@0.2.0", g.c.typeRaw(WasiIoPollInstanceTypeBody()))
+	inst := g.c.importInstance("wasi:io/poll@0.2.0", g.c.typeRaw(WasiIoPollInstanceTypeBody(g.needPoll)))
 	g.inst["wasi:io/poll@0.2.0"] = inst
 	g.surfaced["pollable"] = g.c.aliasType(inst, "pollable")
 }

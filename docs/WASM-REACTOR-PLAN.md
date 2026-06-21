@@ -74,14 +74,35 @@ needed.
   wasmtime, timer block + timer-with-stdout), component bytes/validate,
   checker sig test. Verified a 500ms timer actually blocks ~500ms.
 
-**Remaining for a true multiplexing reactor:** the list multiplexer
-`wasi:io/poll.poll(list<pollable>) -> list<u32>` (the wasm analog of
-the native `poll(fds)`), so N timers/socket-pollables can be awaited
-together and the first-ready resumed. That adds one method to the
-io/poll instance type (list param + list result via return area —
-mirror `fields.entries`) + a `wasm_poll` builtin, then the
-`IoStep[T]`-shaped scheduler over pollables. The hard cross-instance
-resource composition is already done; this is the next slice.
+**UPDATE — the multiplexer lands too.** `wasm_poll(pollables: i32[])`
+now wraps `wasi:io/poll.poll(list<pollable>) -> list<u32>` (the wasm
+analog of the native `poll(fds)`): it blocks until the first pollable
+in the array is ready and returns its index (or -1). Verified two
+timers (200ms + 10ms) → `wasm_poll` returns the short one's index and
+short-circuits in ~20ms (does not wait 200ms).
+
+- A Fern `i32[]` is length-prefixed (count at `ptr-4`, contiguous
+  elements at `ptr+0`), so the pollable list lowers directly to the
+  canonical `(ptr, len)` list param; the `list<u32>` of ready indices
+  comes back via an 8-byte return area (data ptr @ +0, count @ +4).
+- The shared `WasiIoPollInstanceTypeBody` is parameterized
+  (`withPoll bool`): sockets keep the byte-identical block-only shape
+  (pinned by a bytes test); `req.Poll` opts into the heavier instance
+  that also declares `poll`. `ComposeRequest.Poll` (classified from the
+  `poll` import) drives `g.needPoll`, and the `poll` lowering is a
+  `gMemRealloc` import (list-out needs `cabi_realloc`; the CLI now
+  rebuilds with `ForceMemorySection` when `req.Poll`).
+- Builtin `wasm_poll` wired through wasmbin (import spec
+  `wasi_io_poll_poll`, helper `__fern_wasm_poll`) + checker FuncSig.
+  Tests: `TestWasmReactorPollFirstReady` (e2e), component
+  validate/bytes, checker sig.
+
+**Remaining:** the `IoStep[T]`-shaped scheduler over pollables (the
+portable reactor loop in Fern, like `std/reactor` but over pollable
+handles + `wasm_poll` instead of fds + the native `poll`), plus
+pollable resource-drop for tidy cleanup. All the wasm primitives
+(timer pollable, block, poll) and the hard cross-instance resource
+composition now exist; the scheduler is pure Fern on top.
 
 ## Layer 2 — component composer: THE BLOCKER (historical — now solved for timers)
 

@@ -1053,8 +1053,19 @@ func WasiHttpTypesInstanceTypeBody(inputStreamT, outputStreamT uint32) []byte {
 //
 // Decls: 0 pollable (sub-resource), 1 borrow<pollable>, 2 func(self)
 // -> (), 3 export "[method]pollable.block" (func 0).
-func WasiIoPollInstanceTypeBody() []byte {
-	body := []byte{0x01, 0x42, 0x04}                          // 4 decls
+// WasiIoPollInstanceTypeBody builds the wasi:io/poll instance type.
+// When withPoll is false it is the minimal block-only shape the socket
+// shapes use (pollable + pollable.block); when true it additionally
+// declares the readiness multiplexer `poll(in: list<pollable>) ->
+// list<u32>` — the wasm reactor's fan-out primitive. The socket path
+// passes false so its imported instance is byte-identical to before;
+// only the reactor (req.Poll) opts into the heavier shape.
+func WasiIoPollInstanceTypeBody(withPoll bool) []byte {
+	declCount := byte(4)
+	if withPoll {
+		declCount = 8
+	}
+	body := []byte{0x01, 0x42, declCount}
 	body = append(body, ExportSubResourceDecl("pollable")...) // 0
 	body = append(body, 0x01, 0x68, 0x00)                     // 1: borrow<pollable=0>
 	// 2: func(self: borrow 1) -> () (no result)
@@ -1067,6 +1078,20 @@ func WasiIoPollInstanceTypeBody() []byte {
 	body = append(body, 0x04, 0x00, byte(len("[method]pollable.block")))
 	body = append(body, "[method]pollable.block"...)
 	body = append(body, 0x01, 0x02)
+	if withPoll {
+		// Func exports do NOT consume a type index, so after the block
+		// functype (type 2) the next types are 3, 4, 5:
+		//   type 3: list<borrow<pollable>=1>
+		body = append(body, 0x01, 0x70, 0x01)
+		//   type 4: list<u32>
+		body = append(body, 0x01, 0x70, CValtypeU32)
+		//   type 5: func(in: list 3) -> list 4
+		body = append(body, tcpMethodFuncDecl("poll", []string{"in"}, []byte{0x03}, 0x04)...)
+		// export "poll" (functype is type 5)
+		body = append(body, 0x04, 0x00, byte(len("poll")))
+		body = append(body, "poll"...)
+		body = append(body, 0x01, 0x05)
+	}
 	return body
 }
 

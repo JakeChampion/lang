@@ -336,6 +336,53 @@ func TestWasiIoErrorInstanceTypeBody_Bytes(t *testing.T) {
 	}
 }
 
+// TestWasiIoPollInstanceTypeBody_WithPoll_Validates composes the
+// heavier io/poll instance type (block + the poll multiplexer) and
+// confirms wasm-tools accepts it and the `poll` func + `list<u32>`
+// result appear.
+func TestWasiIoPollInstanceTypeBody_WithPoll_Validates(t *testing.T) {
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	buf := component.PutComponentHeader(nil)
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoPollInstanceTypeBody(true))
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/poll@0.2.0", 0)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "poll.wasm")
+	if err := os.WriteFile(p, buf, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", p).CombinedOutput(); err != nil {
+		t.Fatalf("validate failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasm-tools", "print", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("print failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{"\"poll\"", "(list u32)", "(list 1)"} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("expected %q in printed component, got:\n%s", want, out)
+		}
+	}
+}
+
+// The default (block-only) io/poll instance type must stay byte-
+// identical to the historical shape the socket shapes depend on — the
+// withPoll=false path adds nothing.
+func TestWasiIoPollInstanceTypeBody_BlockOnly_Bytes(t *testing.T) {
+	got := component.WasiIoPollInstanceTypeBody(false)
+	want := []byte{
+		0x01, 0x42, 0x04,
+		0x04, 0x00, 0x08, 'p', 'o', 'l', 'l', 'a', 'b', 'l', 'e', 0x03, 0x01,
+		0x01, 0x68, 0x00,
+		0x01, 0x40, 0x01, 0x04, 's', 'e', 'l', 'f', 0x01, 0x01, 0x00,
+		0x04, 0x00, 0x16, '[', 'm', 'e', 't', 'h', 'o', 'd', ']', 'p', 'o', 'l', 'l', 'a', 'b', 'l', 'e', '.', 'b', 'l', 'o', 'c', 'k', 0x01, 0x02,
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("WasiIoPollInstanceTypeBody(false) = % x, want % x", got, want)
+	}
+}
+
 // TestWasiClocksMonotonicTimerInstanceTypeBody_Bytes pins the bytes
 // of the wasm-reactor timer instance type: an outer-aliased pollable
 // (here at top-level type index 5), own<pollable>, and the
@@ -1154,7 +1201,7 @@ func TestWasiIoPollInstanceTypeBody_Validates(t *testing.T) {
 		t.Skip("wasm-tools not on PATH")
 	}
 	buf := component.PutComponentHeader(nil)
-	buf = component.PutTypeSectionRawBody(buf, component.WasiIoPollInstanceTypeBody())
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoPollInstanceTypeBody(false))
 	buf = component.PutImportSectionOneInstance(buf, "wasi:io/poll@0.2.0", 0)
 	buf = component.PutAliasSectionInstanceExportType(buf, 0, "pollable") // → type 1
 	buf = component.PutCanonResourceDrop(buf, 1)
@@ -1384,7 +1431,7 @@ func TestWasiSocketsTcpInstanceTypeBody_Validates(t *testing.T) {
 	buf = component.PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)                            // inst 1
 	buf = component.PutAliasSectionInstanceExportType(buf, 1, "output-stream")                              // type 3
 	buf = component.PutAliasSectionInstanceExportType(buf, 1, "input-stream")                               // type 4
-	buf = component.PutTypeSectionRawBody(buf, component.WasiIoPollInstanceTypeBody())                      // type 5
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoPollInstanceTypeBody(false))                      // type 5
 	buf = component.PutImportSectionOneInstance(buf, "wasi:io/poll@0.2.0", 5)                               // inst 2
 	buf = component.PutAliasSectionInstanceExportType(buf, 2, "pollable")                                   // type 6
 	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsNetworkInstanceTypeBody())              // type 7
@@ -1430,7 +1477,7 @@ func TestWasiSocketsTcpCreateSocketInstanceTypeBody_Validates(t *testing.T) {
 	buf = component.PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)                                // inst 1
 	buf = component.PutAliasSectionInstanceExportType(buf, 1, "output-stream")                                  // type 3
 	buf = component.PutAliasSectionInstanceExportType(buf, 1, "input-stream")                                   // type 4
-	buf = component.PutTypeSectionRawBody(buf, component.WasiIoPollInstanceTypeBody())                          // type 5
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoPollInstanceTypeBody(false))                          // type 5
 	buf = component.PutImportSectionOneInstance(buf, "wasi:io/poll@0.2.0", 5)                                   // inst 2
 	buf = component.PutAliasSectionInstanceExportType(buf, 2, "pollable")                                       // type 6
 	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsNetworkInstanceTypeBody())                  // type 7
@@ -1479,7 +1526,7 @@ func TestWasiSocketsUdpInstanceTypeBody_Validates(t *testing.T) {
 	buf = component.PutAliasSectionInstanceExportType(buf, 0, "error-code")                                   // type 2
 	buf = component.PutAliasSectionInstanceExportType(buf, 0, "ip-socket-address")                            // type 3
 	buf = component.PutAliasSectionInstanceExportType(buf, 0, "ip-address-family")                            // type 4
-	buf = component.PutTypeSectionRawBody(buf, component.WasiIoPollInstanceTypeBody())                        // type 5
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoPollInstanceTypeBody(false))                        // type 5
 	buf = component.PutImportSectionOneInstance(buf, "wasi:io/poll@0.2.0", 5)                                 // inst 1
 	buf = component.PutAliasSectionInstanceExportType(buf, 1, "pollable")                                     // type 6
 	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsUdpInstanceTypeBody(1, 2, 3, 6))          // type 7
