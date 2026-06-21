@@ -54,6 +54,43 @@ fully testable target (author + validate + run). What remains is the
 **implementation** — emitting the async canonical ABI from the Fern
 composer — not the tooling.
 
+## Proven recipe — a minimal async export runs end to end
+
+Spiked successfully: this component (authored as WAT, encoded by
+wasm-tools 1.240) returns `42` under
+`wasmtime run -W component-model-async,component-model-async-stackful --invoke 'run()'`:
+
+```wat
+(component
+  (core func $task_return (canon task.return (result u32)))
+  (core module $m
+    (import "" "task-return" (func $tr (param i32)))
+    (func (export "run") i32.const 42  call $tr))   ;; void return; result via task.return
+  (core instance $libi (export "task-return" (func $task_return)))
+  (core instance $i (instantiate $m (with "" (instance $libi))))
+  (func $run (result u32) (canon lift (core func $i "run") async))
+  (export "run" (func $run)))
+```
+
+Decoded canonical encodings (now emitted by the composer package, byte-
+verified in `component_test.go`):
+
+- **`canon lift … async`** = `00 00 <coreFuncIdx> 01 06 <typeIdx>` — the
+  `async` canonical option is **0x06**. → `PutCanonSectionLiftAsync`.
+- **`canon task.return (result u32)`** = `09 00 79 00`. →
+  `PutCanonTaskReturnSingle`.
+- An async-lifted export's core function returns **void** and calls the
+  `task.return` core import to deliver its result; function-return =
+  task done. It needs the **stackful** async feature at runtime
+  (`-W component-model-async-stackful`).
+
+**Status:** the two canonical-async byte emitters land here with
+deterministic bytes tests. Next slices: (2) the wasmbin async core-func
+shape (call `task-return`, return void) + the composer assembly
+(synthesize the task-return core instance + lift the export async), and
+(3) the minimal Fern surface to designate an async export, then a Go
+e2e test running the produced component under the async feature flags.
+
 ## Scope of a P3 implementation in Fern
 
 Far larger than the P2 pollable reactor (which reused existing

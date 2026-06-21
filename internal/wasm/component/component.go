@@ -2902,6 +2902,45 @@ func PutCanonSectionLiftNoOpts(buf []byte, coreFuncIdx uint32, typeidx uint32) [
 	return wrapSection(buf, SectionCanon, body)
 }
 
+// PutCanonSectionLiftAsync emits a canon section with one canon-lift
+// entry carrying the `async` canonical option (0x06) — the WASI
+// Preview-3 / component-model-async lift. An async-lifted export's core
+// function returns void and delivers its result through `canon
+// task.return` (see PutCanonTaskReturnSingle); function-return signals
+// task completion. The bytes match what wasm-tools 1.240 emits for
+// `(canon lift (core func N) async)` and run under
+// `wasmtime -W component-model-async,component-model-async-stackful`.
+// See docs/WASI-PREVIEW3-ASYNC-PLAN.md.
+func PutCanonSectionLiftAsync(buf []byte, coreFuncIdx uint32, typeidx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x00)      // canon-lift
+	body = append(body, 0x00)      // function-lift sub-tag
+	body = leb128.UlebU64(body, uint64(coreFuncIdx))
+	body = leb128.UlebU64(body, 1) // opts vec(1)
+	body = append(body, 0x06)      // canonopt: async
+	body = leb128.UlebU64(body, uint64(typeidx))
+	return wrapSection(buf, SectionCanon, body)
+}
+
+// PutCanonTaskReturnSingle emits a canon section with one `task.return`
+// entry that lowers to a CORE function taking the result value — the
+// component-model-async intrinsic an async-lifted export calls to
+// deliver its single result before returning. `resultValtype` is the
+// component valtype of the result (e.g. CValtypeU32). The bytes match
+// wasm-tools 1.240's `(canon task.return (result <ty>))`. The produced
+// core func is provided to the user core module as an import. See
+// docs/WASI-PREVIEW3-ASYNC-PLAN.md.
+func PutCanonTaskReturnSingle(buf []byte, resultValtype byte) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1)        // vec(1)
+	body = append(body, 0x09)             // canon task.return
+	body = append(body, 0x00)             // result: single-value form
+	body = append(body, resultValtype)    // the result valtype
+	body = append(body, 0x00)             // options vec(0)
+	return wrapSection(buf, SectionCanon, body)
+}
+
 // PutCanonSectionLiftWithMemory emits a canon-lift entry carrying the `memory`
 // canonical-ABI option — the inverse of PutCanonSectionLowerWithMemory. A lift
 // needs `memory` when the lifted function's signature carries a string / list:
