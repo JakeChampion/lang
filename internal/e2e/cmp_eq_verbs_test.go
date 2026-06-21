@@ -33,17 +33,20 @@ struct P { v: i32 }
 impl Eq for P { function eq(self: Self, other: Self): boolean { return self.v == other.v; } }
 function index_of[T: Eq](xs: T[], target: T): i32 { var i = 0; for x in xs { if (x.eq(target)) { return i; } i = i + 1; } return 0 - 1; }
 function main(): i32 { var xs: P[] = [P { v: 10 }, P { v: 20 }, P { v: 30 }]; return index_of(xs, P { v: 30 }) * 10 + (index_of(xs, P { v: 99 }) + 1); }`, 20},
-	// distinct dedups [1,2,1,3,2] → 3 unique, keeping the kept values present and
-	// dropping a never-seen one. Verified by length + membership rather than
-	// `d[i].v` field access, which on a generic function's `struct[]` RETURN hits
-	// a separate pre-existing native codegen limit ("field access on unresolved
-	// struct", noted in #2689) unrelated to distinct itself. len*10 + 1 + 2 + 4 = 37.
+	// distinct dedups [1,2,1,3,2] → [1,2,3] (first occurrence kept, in order).
+	// Verified directly via field access on the result: d.len()*100 + d[0].v*10 +
+	// d[2].v. (An earlier revision avoided d[i].v on a generic `struct[]` return,
+	// believing it hit a codegen limit — that was a process-exit-code (u8)
+	// truncation artifact in the oracle, not a real limit: the value was 313,
+	// which the exit code wraps to 57. Field access compiles and runs correctly;
+	// the oracle just has to stay < 256, so this case checks len + d[0] + d[2].)
+	// 3*10 + 1 + 3 = 34.
 	{"distinct", `pub trait Eq { function eq(self: Self, other: Self): boolean; }
 struct P { v: i32 }
 impl Eq for P { function eq(self: Self, other: Self): boolean { return self.v == other.v; } }
 function contains[T: Eq](xs: T[], target: T): boolean { for x in xs { if (x.eq(target)) { return true; } } return false; }
 function distinct[T: Eq](xs: T[]): T[] { var out: T[] = []; for x in xs { if (!contains(out, x)) { out = out.append(x); } } return out; }
-function main(): i32 { var xs: P[] = [P { v: 1 }, P { v: 2 }, P { v: 1 }, P { v: 3 }, P { v: 2 }]; var d = distinct(xs); var r = d.len() * 10; if (contains(d, P { v: 1 })) { r = r + 1; } if (contains(d, P { v: 3 })) { r = r + 2; } if (!contains(d, P { v: 9 })) { r = r + 4; } return r; }`, 37},
+function main(): i32 { var xs: P[] = [P { v: 1 }, P { v: 2 }, P { v: 1 }, P { v: 3 }, P { v: 2 }]; var d = distinct(xs); return d.len() * 10 + d[0].v + d[2].v; }`, 34},
 }
 
 // TestNativeEqVerbs runs the inline Eq-verb programs on the native interp /

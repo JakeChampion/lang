@@ -235,6 +235,45 @@ pub function filter[T, I: Iterator[T]](it: I, keep: (T) => boolean): T[] {
     return out;
 }
 
+// enumerate pairs each value with its 0-based index, collecting `(index, value)`
+// tuples into a fresh `(i32, T)[]` in order — the eager form of "number the
+// elements". Generic over the element type `T`.
+pub function enumerate[T, I: Iterator[T]](it: I): (i32, T)[] {
+    var out: (i32, T)[] = [];
+    var cur = it;
+    var i = 0;
+    var go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => { out = out.append((i, t.0)); cur = t.1; i = i + 1; },
+            None => { go = false; },
+        }
+    }
+    return out;
+}
+
+// zip walks two iterators in lockstep, collecting `(a, b)` pairs into a fresh
+// `(T, U)[]` until EITHER runs out (so the result length is the shorter of the
+// two). Generic over both element types `T` and `U`.
+pub function zip[T, U, I: Iterator[T], J: Iterator[U]](a: I, b: J): (T, U)[] {
+    var out: (T, U)[] = [];
+    var ca = a;
+    var cb = b;
+    var go = true;
+    while (go) {
+        match (ca.next()) {
+            Some(ta) => {
+                match (cb.next()) {
+                    Some(tb) => { out = out.append((ta.0, tb.0)); ca = ta.1; cb = tb.1; },
+                    None => { go = false; },
+                }
+            },
+            None => { go = false; },
+        }
+    }
+    return out;
+}
+
 // take eagerly collects the first `n` values the iterator yields into a fresh
 // `T[]` (fewer if the iterator is shorter); `n <= 0` yields an empty array. The
 // bounded-prefix collector — `take(it, k)` is the eager form of "the first k
