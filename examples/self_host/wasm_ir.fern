@@ -543,6 +543,7 @@ pub function wasm_eligible(mod: parser.Module): boolean {
         && !module_emits_op(mod, "read_int")
         && !module_emits_op(mod, "read_line")
         && !module_emits_op(mod, "read_file")
+        && !module_emits_op(mod, "write_file")
         && !module_emits_op(mod, "read_chunk")
         && !module_emits_op(mod, "reader_close")
         && !module_emits_op(mod, "args")
