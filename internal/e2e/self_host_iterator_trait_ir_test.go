@@ -131,6 +131,36 @@ function main(): i32 {
 	}
 }
 
+// TestNativeIteratorTraitModuleGeneric exercises the GENERIC face of the
+// shipped `core/iter` module: a user type that implements `iter.Iterator[T]`
+// for a non-i32 element type (`boolean`) and drives the module's generic
+// `count` / `to_array` over it. This proves the stdlib trait is genuinely
+// generic (#2691), not the old i32-only shape — `count`/`to_array` infer the
+// element type from the impl (bound-driven inference, #3596).
+func TestNativeIteratorTraitModuleGeneric(t *testing.T) {
+	src := `import "core/iter" as iter;
+struct BoolSeq { n: i32 }
+impl iter.Iterator[boolean] for BoolSeq { function next(self: Self): Option[(boolean, Self)] { if (self.n <= 0) { return None; } return Some((true, BoolSeq { n: self.n - 1 })); } }
+function main(): i32 {
+    var c = iter.count(BoolSeq { n: 3 });           // 3
+    var bs = iter.to_array(BoolSeq { n: 2 });        // [true, true]
+    var k = 0;
+    for b in bs { if (b) { k = k + 1; } }            // 2
+    return c + k + bs.len();                         // 3+2+2 = 7
+}
+`
+	p := writeIterProg(t, src)
+	if _, code := runFixtureInterp(t, p, ""); code != 7 {
+		t.Errorf("generic module interp = %d, want 7", code)
+	}
+	if _, code := runFixtureX86_64(t, p, ""); code != 7 {
+		t.Errorf("generic module x86-64 = %d, want 7", code)
+	}
+	if code := runWasm(t, src); code != 7 {
+		t.Errorf("generic module wasm = %d, want 7", code)
+	}
+}
+
 // TestSelfHostIteratorTraitIRX86_64 routes each inlined case through the
 // self-hosted x86-64 IR driver, pins routing to "ir", and oracle-checks the
 // exit code.
