@@ -9156,6 +9156,23 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             return emit_arr_store(se, slot, reassign_inc, target_is_arr || slot_is_reclaimable_struct(s, slot));
         },
         parser.StmtReturn(r) => {
+            // A bare `return;` in a VOID function — parse_expr yields an
+            // ExprUnknown for the missing value, which lower_expr can't lower (so
+            // the whole module bailed to AST; every void helper with an early
+            // `return;` was affected). op_return pops a result into the result reg,
+            // so emit a dummy 0 (harmless — a void caller ignores it) after the exit
+            // dec-sweep, mirroring `return 0`. Only reachable in a void function
+            // (the checker rejects a value-less return where a value is required).
+            var ret_is_bare: boolean = false;
+            match (r.value) {
+                parser.ExprUnknown(_) => { ret_is_bare = true; },
+                _ => {}
+            }
+            if (ret_is_bare) {
+                var bs: LowerState = s.emit(ir.op_const_i32(0));
+                bs = emit_dec_sweep_except(bs, 0 - 1);
+                return bs.emit(ir.op_return());
+            }
             // i64-returning function: lower the value as an i64, run the exit
             // dec-sweep over array locals (no moved array — i64 isn't one), then
             // return. The wasm sig declares (result i64); x86/arm64 are unchanged.
