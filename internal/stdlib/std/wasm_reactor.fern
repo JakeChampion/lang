@@ -169,6 +169,85 @@ pub function run_deadline[T](states_in: Step[T][], deadline_ns: i64, not_ready: 
     return results;
 }
 
+// __wr_drop_waiting(states, except) — drop the pollable of every
+// still-waiting task except the one at `except` (whose pollable the
+// caller already dropped). Used by select to cancel the losers. Returns
+// the number dropped.
+function __wr_drop_waiting[T](states: Step[T][], except: i32): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < states.len()) {
+        if (i != except) {
+            match (states[i]) {
+                Done(v) => { },
+                Wait(p, c) => {
+                    var d: i32 = wasm_pollable_drop(p);
+                    n = n + 1;
+                },
+            }
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+// select(states, none_val) — drive the tasks until the FIRST one
+// completes, then return its value and cancel the rest (dropping their
+// pollables). The first-wins counterpart to `run` (which waits for ALL)
+// — the structured-concurrency `select` / `race` shape: fan out to N
+// upstreams, take the fastest answer, abandon the others. Returns
+// `none_val` if no task can make progress (poll error / no waiters).
+pub function select[T](states_in: Step[T][], none_val: T): T {
+    var states: Step[T][] = states_in;
+    // An already-Done task wins immediately.
+    var j: i32 = 0;
+    while (j < states.len()) {
+        match (states[j]) {
+            Done(v) => { return v; },
+            Wait(p, c) => { },
+        }
+        j = j + 1;
+    }
+    while (true) {
+        var polls: i32[] = [];
+        var idxs: i32[] = [];
+        var i: i32 = 0;
+        while (i < states.len()) {
+            match (states[i]) {
+                Done(v) => { },
+                Wait(p, c) => {
+                    polls = polls.append(p);
+                    idxs = idxs.append(i);
+                },
+            }
+            i = i + 1;
+        }
+        if (polls.len() == 0) { return none_val; }
+        var ready: i32 = wasm_poll(polls);
+        if (ready < 0) { return none_val; }
+        var ti: i32 = idxs[ready];
+        var st: Step[T] = states[ti];
+        match (st) {
+            Done(v) => { return v; },
+            Wait(p, resume) => {
+                var nx: Step[T] = resume(p);
+                var dropped: i32 = wasm_pollable_drop(p);
+                match (nx) {
+                    Done(v) => {
+                        // First to finish — cancel the other waiters.
+                        var c: i32 = __wr_drop_waiting(states, ti);
+                        return v;
+                    },
+                    Wait(np, nc) => {
+                        states = states.with(ti, nx);
+                    },
+                }
+            },
+        }
+    }
+    return none_val;
+}
+
 // sleep_pollable(duration_ns) — a Wait step that fires after the given
 // duration. Sugar over wasm_timer_pollable for building timer tasks:
 //   wasm_reactor.run([wasm_reactor.sleep_pollable(ms, (p) => Done(1))], -1)
