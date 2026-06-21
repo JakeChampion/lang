@@ -64,6 +64,7 @@ const (
 	sysClose     = 3
 	sysMmap      = 9
 	sysSocket    = 41
+	sysConnect   = 42
 	sysAccept    = 43
 	sysBind      = 49
 	sysListen    = 50
@@ -346,6 +347,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.emitTcpRecvRuntime()
 		g.emitTcpSendRuntime()
 		g.emitTcpCloseRuntime()
+		g.emitTcpConnectRuntime()
 	}
 	if g.usesPoll {
 		g.emitPollRuntime()
@@ -748,12 +750,12 @@ func (g *generator) recordUse(target string) {
 		g.usesNowNs = true
 	case "sleep_ms":
 		g.usesSleepMs = true
-	case "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close":
+	case "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close", "tcp_connect":
 		g.usesTcp = true
-		// tcp_recv allocates a string buffer for the read.
-		if target == "tcp_recv" {
-			g.usesAlloc = true
-		}
+		// usesTcp always emits the __fern_tcp_recv helper, which calls
+		// __fern_alloc_rc1 for its read buffer — so any tcp builtin
+		// needs the alloc runtime present, even a connect-only program.
+		g.usesAlloc = true
 	case "poll":
 		// poll(fds, timeout_ms) — readiness multiplex. The runtime
 		// helper allocates a scratch pollfd buffer.
@@ -1919,6 +1921,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_timer_fd"
 		case "tcp_send":
 			target = "__fern_tcp_send"
+		case "tcp_connect":
+			target = "__fern_tcp_connect"
 		case "tcp_close":
 			target = "__fern_tcp_close"
 		case "env":
@@ -5105,6 +5109,65 @@ func (g *generator) emitTcpListenRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_tcp_listen, .-__fern_tcp_listen")
+}
+
+// emitTcpConnectRuntime emits `__fern_tcp_connect(host_be, port)` — the
+// outbound client primitive (the upstream-fetch half of the
+// edge-handler use case). `host_be` is the IPv4 address already in
+// network byte order packed into an i32 (e.g. `ipv4(a,b,c,d)` =
+// a | b<<8 | c<<16 | d<<24), so it drops straight into sin_addr.
+// Returns the connected socket fd, or -errno. Mirrors
+// __fern_tcp_listen's socket + sockaddr_in construction.
+func (g *generator) emitTcpConnectRuntime() {
+	g.line("")
+	g.line(".globl __fern_tcp_connect")
+	g.line(".type __fern_tcp_connect, @function")
+	g.label("__fern_tcp_connect")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")      // fd
+	g.emit("push r12")      // port
+	g.emit("push r13")      // host_be
+	g.emit("sub rsp, 16")   // sockaddr_in
+	g.emit("mov r13d, edi") // host_be
+	g.emit("mov r12d, esi") // port
+	// socket(AF_INET=2, SOCK_STREAM=1, 0)
+	g.emit("mov edi, 2")
+	g.emit("mov esi, 1")
+	g.emit("xor edx, edx")
+	g.emit(fmt.Sprintf("mov eax, %d", sysSocket))
+	g.emit("syscall")
+	g.emit("test eax, eax")
+	g.emit("js .Ltcp_con_err")
+	g.emit("mov ebx, eax") // fd
+	// sockaddr_in { sin_family=AF_INET, sin_port=htons(port),
+	//              sin_addr=host_be, sin_zero=0 }
+	g.emit("mov word ptr [rsp], 2")
+	g.emit("mov eax, r12d")
+	g.emit("xchg al, ah") // htons
+	g.emit("mov word ptr [rsp+2], ax")
+	g.emit("mov dword ptr [rsp+4], r13d") // sin_addr (already network order)
+	g.emit("mov qword ptr [rsp+8], 0")
+	// connect(fd, sa, 16)
+	g.emit("mov edi, ebx")
+	g.emit("mov rsi, rsp")
+	g.emit("mov edx, 16")
+	g.emit(fmt.Sprintf("mov eax, %d", sysConnect))
+	g.emit("syscall")
+	g.emit("test eax, eax")
+	g.emit("js .Ltcp_con_err")
+	g.emit("mov eax, ebx") // return fd
+	g.emit("jmp .Ltcp_con_done")
+	g.label(".Ltcp_con_err")
+	// rax holds -errno from the failing syscall.
+	g.label(".Ltcp_con_done")
+	g.emit("add rsp, 16")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_tcp_connect, .-__fern_tcp_connect")
 }
 
 // emitTcpAcceptRuntime emits `__fern_tcp_accept(listener)` —

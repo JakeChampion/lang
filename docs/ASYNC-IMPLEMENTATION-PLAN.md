@@ -224,12 +224,27 @@ backends (`internal/e2e/poll_test.go`, x86-64 + arm64/qemu).
   accept/recv doesn't block once `poll` reports the fd ready, so the
   reactor needs no non-blocking variants for this shape. This is the
   edge-handler serving path over the reactor.
-- **Self-host** (`asm.fern` / `asm_arm64.fern`) — mirror `__fern_poll`
-  + `__fern_timer_fd`.
-- Non-blocking accept/recv/send (`O_NONBLOCK` + `EAGAIN`) — only needed
-  for correctness under partial reads / spurious wakeups; the
-  poll-then-blocking shape covers the common case. Then `plat.fetch`
-  as the first real awaitable over `run_io`.
+- **DONE — `tcp_connect` (x86-64) + the outbound fan-out (trigger
+  condition):** added the outbound client primitive
+  `tcp_connect(host_be, port)` (socket + sockaddr_in + connect(2),
+  mirroring `tcp_listen`; host as a network-order-packed i32). The
+  literal `CONCURRENCY-RESEARCH.md` trigger — *two parallel fetches,
+  await both* — now runs end-to-end over the native reactor: a program
+  opens two outbound connections and multiplexes their responses
+  through `std/reactor.run_io`
+  (`internal/e2e/reactor_socket_test.go ▸ TestReactorOutboundFanoutX86_64`,
+  Go upstream answering both). This is the edge-handler fan-out
+  (fetch cache + primary, take both) working for real.
+- **arm64 `tcp_connect`** — mirror the x86 helper.
+- **`plat.fetch`** — wrap `tcp_connect` + HTTP request/response over
+  `run_io` behind the `Platform` capability, so handlers write
+  `plat.fetch(req)`.
+- **Self-host** (`asm.fern` / `asm_arm64.fern`) — mirror the reactor
+  builtins (blocked on the fn-payload-variant gap, #3552, for
+  `std/reactor` itself).
+- Non-blocking accept/recv/send — only for partial-read / spurious-
+  wakeup correctness; the poll-then-blocking shape covers the common
+  case.
 
 Risk: this is the most backend-heavy slice and the only one needing
 arm64/qemu + wasmtime in the loop. Gate locally on x86-64 + interp +
