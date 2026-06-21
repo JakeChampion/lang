@@ -189,6 +189,14 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__fern_wasm_block":
 					// wasm reactor: block on a pollable.
 					needs.add("__fern_wasm_block")
+				case "__fern_wasm_poll":
+					// wasm reactor multiplexer: poll(list<pollable>).
+					// Needs alloc for the 8-byte return area, and
+					// cabi_realloc so the host can lower the returned
+					// list<u32> of ready indices into our memory.
+					needs.add("__fern_alloc")
+					needs.add("cabi_realloc")
+					needs.add("__fern_wasm_poll")
 				case "__fern_sqrt_f64":
 					needs.add("__fern_sqrt_f64")
 				case "__fern_abs_f64":
@@ -851,6 +859,16 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildWasmBlockBody,
+	},
+	"__fern_wasm_poll": {
+		// (pollables: i32[]) → i32 — the reactor multiplexer. Blocks
+		// until at least one pollable in the array is ready, then
+		// returns the array index of the first ready one, or -1 if
+		// the ready list comes back empty. Preview-2-only (wraps
+		// wasi:io/poll.poll); see buildWasmPollBody.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildWasmPollBody,
 	},
 	"__fern_sqrt_f64": {
 		// (f64) → f64 — wasm-native f64.sqrt.

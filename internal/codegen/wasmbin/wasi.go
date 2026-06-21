@@ -440,6 +440,17 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI64},
 		results: []byte{encode.ValtypeI32},
 	},
+	"wasi_io_poll_poll": {
+		// (list-ptr, list-len, retptr) → (). The reactor multiplexer:
+		// poll(list<pollable>) -> list<u32>. The pollable list is
+		// passed as (ptr, len) — a Fern i32[] is already a contiguous
+		// handle array — and the ready-index list comes back through
+		// the return area: retptr holds (data ptr @ +0, count @ +4).
+		module:  "wasi:io/poll@0.2.0",
+		name:    "poll",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_io_input_stream_drop": {
 		// (handle) → (). Drops an input-stream resource. Required
 		// before dropping the parent tcp-socket (canonical-ABI
@@ -1119,6 +1130,10 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 	if helpers.set["__fern_wasm_block"] {
 		// Preview-2-only: block on a wasi:io/poll pollable.
 		in.add("wasi_io_pollable_block")
+	}
+	if helpers.set["__fern_wasm_poll"] {
+		// Preview-2-only: multiplex a list of pollables.
+		in.add("wasi_io_poll_poll")
 	}
 	if helpers.set["__fern_env_count"] {
 		in.add("wasi_environ_sizes_get")
@@ -1893,6 +1908,51 @@ func buildWasmBlockBody(idxs map[string]uint32) []byte {
 	body = inst.InstCall(body, block) // block until ready
 	body = inst.InstI32Const(body, 0) // return 0
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildWasmPollBody — body for __fern_wasm_poll.
+//
+// Signature: (pollables: i32[]) → i32
+//
+// A Fern array is length-prefixed (count at ptr-4, contiguous i32
+// elements at ptr+0), so the pollable list lowers directly to the
+// canonical (ptr, len) list param. Calls wasi:io/poll.poll, which
+// writes a list<u32> of ready indices into an 8-byte return area
+// (data ptr @ +0, count @ +4). Returns the first ready index, or -1
+// when the ready list is empty.
+//
+// Locals (param 0 = arr):
+//
+//	1: $retptr (8-byte return area)
+func buildWasmPollBody(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	poll := idxs["wasi_io_poll_poll"]
+	var body []byte
+	// $retptr = alloc(8)
+	body = inst.InstI32Const(body, 8)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 1)
+	// poll(arr, len = i32.load(arr-4), retptr)
+	body = inst.InstLocalGet(body, 0) // arr (list data ptr = first elem)
+	body = inst.InstLocalGet(body, 0) // arr
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0) // len = count @ arr-4
+	body = inst.InstLocalGet(body, 1)     // retptr
+	body = inst.InstCall(body, poll)
+	// count = i32.load(retptr+4)
+	body = inst.InstLocalGet(body, 1)
+	body = memory.InstI32Load(body, 2, 4)
+	// if count != 0 { return ready[0] } else { return -1 }
+	body = inst.InstIfStart(body, encode.ValtypeI32)
+	body = inst.InstLocalGet(body, 1)
+	body = memory.InstI32Load(body, 2, 0) // data ptr @ retptr+0
+	body = memory.InstI32Load(body, 2, 0) // ready[0]
+	body = inst.InstElse(body)
+	body = inst.InstI32Const(body, -1)
+	body = inst.InstEnd(body)
+	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
 }
 
 // buildMonotonicNsBodyP2 is the preview-2 variant of

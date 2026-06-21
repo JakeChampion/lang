@@ -45,3 +45,32 @@ func TestWasmReactorTimerWithStdout(t *testing.T) {
 		t.Errorf("wasm reactor timer + stdout: got %q, want %q", got, "tick")
 	}
 }
+
+// The reactor multiplexer: wasm_poll(pollables) blocks until the FIRST
+// pollable in the array is ready and returns its index. Two timers
+// (200ms, 10ms) — poll must return the index of the short one and
+// short-circuit (not wait for the long one). The wasm analog of the
+// native poll(fds); exercises wasi:io/poll.poll(list<pollable>) ->
+// list<u32> with the list-in / list-out canonical-ABI marshalling.
+func TestWasmReactorPollFirstReady(t *testing.T) {
+	// Short timer at index 1 → poll returns 1.
+	idx1 := `function main(): i32 {
+    var a: i32 = wasm_timer_pollable(200000000);
+    var b: i32 = wasm_timer_pollable(10000000);
+    var ps: i32[] = [a, b];
+    return wasm_poll(ps);
+}`
+	if got := runWasm(t, idx1); got != 1 {
+		t.Errorf("wasm_poll first-ready (short at idx 1): got %d, want 1", got)
+	}
+	// Short timer at index 0 → poll returns 0.
+	idx0 := `function main(): i32 {
+    var a: i32 = wasm_timer_pollable(10000000);
+    var b: i32 = wasm_timer_pollable(200000000);
+    var ps: i32[] = [a, b];
+    return wasm_poll(ps);
+}`
+	if got := runWasm(t, idx0); got != 0 {
+		t.Errorf("wasm_poll first-ready (short at idx 0): got %d, want 0", got)
+	}
+}

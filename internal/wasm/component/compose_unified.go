@@ -39,6 +39,12 @@ type ComposeRequest struct {
 	// standalone (no sockets). The wasm reactor's timer primitive.
 	Timer bool
 
+	// Reactor multiplexer: wasi:io/poll.poll(list<pollable>) ->
+	// list<u32>. Opts the imported wasi:io/poll instance into the
+	// heavier shape that also declares `poll`. The wasm analog of the
+	// native poll(fds) readiness multiplexer.
+	Poll bool
+
 	// Standalone CLI capabilities. WallNow is wasi:clocks/wall-clock.now
 	// (a memory trampoline). Args / Env are wasi:cli/environment
 	// get-arguments / get-environment (memory+realloc, shared interface).
@@ -68,6 +74,11 @@ func (r ComposeRequest) streamDirections() (needIn, needOut bool) {
 // (_lang_run for cli/run + named exports; the handle export for HTTP).
 func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte {
 	g := newGComposer()
+	// Decide the wasi:io/poll instance shape up front: req.Poll wants
+	// the `poll(list<pollable>)` multiplexer in addition to block.
+	// Set before any ensure* so ensureIoPoll builds the right shape
+	// whichever dependency reaches it first (timer or socket).
+	g.needPoll = req.Poll
 
 	// Surface io/streams first with the full direction union so the
 	// later ensure* calls (which request narrower directions) are no-ops.
@@ -90,6 +101,11 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 	}
 	if req.Timer {
 		g.ensureMonotonicTimer()
+	}
+	if req.Poll {
+		// The multiplexer needs the io/poll instance surfaced even
+		// when no socket / timer pulled it in (a poll-only program).
+		g.ensureIoPoll()
 	}
 
 	// Filesystem open-chain.
@@ -211,6 +227,12 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 			gImport{iface: "wasi:clocks/monotonic-clock@0.2.0", name: "subscribe-duration", kind: gNoOpt},
 			gImport{iface: "wasi:io/poll@0.2.0", name: "[method]pollable.block", kind: gNoOpt},
 		)
+	}
+	if req.Poll {
+		// poll(list<pollable>) -> list<u32>: list param (ptr, len) +
+		// list result via return area — memory + realloc lowering,
+		// like fields.entries / get-arguments.
+		g.add(gImport{iface: "wasi:io/poll@0.2.0", name: "poll", kind: gMemRealloc, params: repeatI32(3)})
 	}
 
 	// Filesystem open-chain lowerings.
