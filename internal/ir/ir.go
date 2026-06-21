@@ -5775,9 +5775,29 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 		}
 		return true
 	})
+	// Borrowed parameters: a non-`own`, non-owned-by-default, non-consumed
+	// param is a BORROW — the caller still owns its buffer (no caller-side inc
+	// on the borrow), so the buffer's rc is 1 (the caller's). An in-place cow
+	// at rc==1 would mutate the caller's array out from under it
+	// (`function f(xs: i32[]): i32[] { return xs.with(0, 9); }` must not change
+	// the caller's array). This holds even at the param's last use and for a
+	// reassign-to-self (`xs = xs.with(...)`): the local rebind is fine, but the
+	// underlying buffer is the caller's. Same borrow predicate as
+	// computeFreeEligible (which runs before this — b.consumedParams /
+	// b.freeEligible are already populated). Force the inc so cow copies.
+	borrowedParam := map[string]bool{}
+	for i, p := range b.fn.Params {
+		if !p.Own && !b.paramOwnedByDefault(p.Type, i) && !b.consumedParams[p.Name] {
+			borrowedParam[p.Name] = true
+		}
+	}
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		c, ok := n.(*ast.Call)
 		if !ok || !isArraySetCall(c) {
+			return true
+		}
+		if rid, rok := c.Args[0].(*ast.Ident); rok && borrowedParam[rid.Name] {
+			incs[c] = true
 			return true
 		}
 		if reassignSelf[c] {
