@@ -255,6 +255,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesClosureDrop {
 		g.emitClosureDropRuntime()
 	}
+	if g.usesStrDec {
+		g.emitStrDecRuntime()
+	}
 	if g.usesMemcpy {
 		g.emitMemcpyRuntime()
 	}
@@ -590,6 +593,14 @@ type generator struct {
 	// stashed by __fern_alloc_rc1); otherwise it dec's. Tail-calls
 	// __fern_box_free / __fern_rc_dec, so it pulls both in.
 	usesClosureDrop bool
+	// usesStrDec gates `__fern_str_dec` — the single-word (x86-64)
+	// heap-string reclamation helper. At a string value's last
+	// reference (rc==1) it frees the rc1 block (size at data-4,
+	// stashed by __fern_alloc_rc1 inside __fern_strcat et al.);
+	// inline-SSO / literal / sentinel / shared values defer to
+	// __fern_rc_dec. Mirrors __fern_closure_drop, so it pulls in
+	// __fern_box_free / __fern_rc_dec / the freelist BSS.
+	usesStrDec bool
 	// usesReadFile / usesWriteFile pull in the file-I/O
 	// runtimes; usesIoError pulls in the shared
 	// `__fern_io_error(errno, path) → IoError box` helper.
@@ -630,6 +641,12 @@ func (g *generator) recordUse(target string) {
 		g.usesFree = true    // box_free → __fern_free
 		g.usesAlloc = true   // shares the freelist BSS
 		g.usesRcDec = true   // tail-called otherwise
+	case "__fern_str_dec":
+		g.usesStrDec = true
+		g.usesBoxFree = true // tail-called on rc==1
+		g.usesFree = true    // box_free → __fern_free
+		g.usesAlloc = true   // shares the freelist BSS
+		g.usesRcDec = true   // deferred to otherwise
 	case "__fern_rc_underflow_count":
 		g.usesRcUnderflowCount = true
 	case "__fern_heap_bump_bytes":
@@ -3764,6 +3781,53 @@ func (g *generator) emitClosureDropRuntime() {
 	g.label(".Lcd_ret")
 	g.emit("ret")
 	g.line(".size __fern_closure_drop, .-__fern_closure_drop")
+}
+
+// emitStrDecRuntime emits `__fern_str_dec(data) -> data` — the
+// single-word (x86-64) heap-string reclamation helper, the string
+// analogue of __fern_closure_drop. A heap string allocated by
+// __fern_strcat (and the other string-producing runtimes) goes
+// through __fern_alloc_rc1, so it carries a live rc at [data-8] and
+// its payload size at [data-4]. On the LAST reference (rc==1) the
+// block is returned to the freelist via __fern_box_free(data, size);
+// every other source defers to __fern_rc_dec, which carries the
+// underflow guard.
+//
+// Three guards keep non-freeable sources safe — they mirror the
+// guards __fern_rc_inc/dec already apply to strings:
+//   - NULL: a zero pointer returns immediately.
+//   - inline SSO (low bit set): a string ≤7 bytes is a packed
+//     register value, not a heap pointer; never deref it.
+//   - below-heap (< 0x1000_0000): string LITERALS live in .rodata
+//     under the heap base, so they can never reach the rc==1 free
+//     path and have their read-only storage handed to the freelist.
+// The high-bit static sentinel (the shared empty string) reads as a
+// negative rc, so the rc!=1 branch routes it to __fern_rc_dec, which
+// short-circuits on the sentinel. System V: rdi = data. Returns the
+// input (via the tail-called helper) in rax.
+func (g *generator) emitStrDecRuntime() {
+	g.line("")
+	g.line(".globl __fern_str_dec")
+	g.line(".type __fern_str_dec, @function")
+	g.label("__fern_str_dec")
+	g.emit("mov rax, rdi") // default return = data
+	g.emit("test rdi, rdi")
+	g.emit("jz .Lstrdec_ret")
+	g.emit("test dil, 1") // inline SSO packed value → not a heap ptr
+	g.emit("jnz .Lstrdec_ret")
+	g.emit("cmp rdi, 0x10000000") // below the heap base → literal/.rodata
+	g.emit("jb .Lstrdec_ret")
+	g.emit("mov ecx, dword ptr [rdi - 8]") // rc
+	g.emit("cmp ecx, 1")
+	g.emit("jne .Lstrdec_dec") // rc != 1 (shared, sentinel, or under) → dec
+	// rc == 1 → free the rc1 block; payload size at [data-4].
+	g.emit("mov esi, dword ptr [rdi - 4]")
+	g.emit("jmp __fern_box_free") // tail-call: box_free(data, size) -> data
+	g.label(".Lstrdec_dec")
+	g.emit("jmp __fern_rc_dec") // tail-call: rc_dec(data) -> data
+	g.label(".Lstrdec_ret")
+	g.emit("ret")
+	g.line(".size __fern_str_dec, .-__fern_str_dec")
 }
 
 // emitSliceMakeRuntime emits `__fern_slice_make(data, len)`:

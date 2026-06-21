@@ -1727,17 +1727,20 @@ function build(s: string): i32 {
 	}
 }
 
-// TestLowerStringStructFieldNoReclaimOnNative verifies the string struct
-// field drop is wasm-only: on a native ptrW (8) the struct drop must not
-// emit __fern_str_dec (the helper is wasm-only).
-func TestLowerStringStructFieldNoReclaimOnNative(t *testing.T) {
+// TestLowerStringStructFieldReclaimOnNative verifies the native (single-
+// word x86-64) struct drop reclaims its string field via __fern_str_dec —
+// the field is retained on construction (field-init emitAliasInc →
+// __fern_rc_inc when the initialiser aliases, or moved in when fresh-
+// owned), so __drop_struct_<N> freeing the buffer at the field's rc==1 is
+// exactly balanced. (Phase 1e-strings native struct-field slice.)
+func TestLowerStringStructFieldReclaimOnNative(t *testing.T) {
 	p := lowerSourceWith(t, `struct Holder { name: string }
 function build(s: string): i32 {
     var h: Holder = Holder { name: s };
     return h.name.len();
 }`, 8)
-	if callsDirect(p, "__drop_struct_Holder", "__fern_str_dec") {
-		t.Errorf("native (ptrW=8) struct drop must not emit __fern_str_dec:\n%s", p)
+	if !callsDirect(p, "__drop_struct_Holder", "__fern_str_dec") {
+		t.Errorf("native (ptrW=8) struct drop must reclaim its string field via __fern_str_dec:\n%s", p)
 	}
 }
 

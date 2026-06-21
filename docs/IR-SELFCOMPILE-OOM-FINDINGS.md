@@ -114,54 +114,58 @@ the string drop routes to the generic `__fern_rc_dec`, which only
 decrements — so heap strings hit rc=0 and are abandoned, never returned
 to the freelist.
 
-### Fix — the FULL inc+dec balance, not a dec-only drop
+### Fix — incrementally route native string drops to a freeing `__fern_str_dec`
 
-A first attempt routed the single-word string drops to a new
-`__fern_str_dec` (the `__fern_closure_drop` pattern: `rc==1 →
-__fern_box_free(data, [data-4])`, else defer). The freeing dec alone
-**measures the win** — a `2M ×` struct-with-one-heap-string-field loop
-drops **91 MB → 9 MB** once `__drop_struct_<N>`'s field drop
-(`genStructDropFn`, `internal/ir/ir.go`) frees the buffer — **but it is
-unsound** and was reverted. Two hard signals:
+The single-word x86-64 string drop is a strict superset substitution: a
+new `__fern_str_dec` (the `__fern_closure_drop` pattern — guards: null /
+inline-SSO low-bit / below-`0x1000_0000` literal / high-bit sentinel;
+then `rc==1 → __fern_box_free(data, [data-4])`, else defer to
+`__fern_rc_dec`) replaces `__fern_rc_dec` at a native string drop site.
+The freeing is **balanced** because native strings *are* retained on
+alias — `needsRcIncOnAlias` returns true for `StringType` and
+`emitAliasInc` falls through to `__fern_rc_inc` for the single-word case
+(the two-word-gated `__fern_str_inc` is just the fat-pointer-specific
+helper; native uses plain `rc_inc` at the same logical alias sites). The
+dec was simply never freeing.
 
-1. **No retain side on native.** Every `__fern_str_inc` emission is
-   gated to the two-word ABIs (`ast.UseTwoWordStrings` / `b.twoWordStrings()`
-   — wasm + arm64-`TwoWordOverride`). On single-word x86-64 a string is
-   **not** inc'd when aliased (`var b = a`, field init, capture, arg
-   pass), so two live references share one buffer at `rc==1`. Freeing on
-   the first drop is a use-after-free for the second.
-2. **The behavior is pinned by tests.** `TestLowerString{StructField,
-   TupleElem,EnumPayload,ClosureCapture}NoReclaimOnNative`
-   (`internal/ir/ir_test.go`) assert native (`ptrW=8`) drops must **not**
-   emit `__fern_str_dec`. They encode the intentional "native strings are
-   not rc-tracked yet" limitation.
+> An earlier revision of this section claimed native strings have **no**
+> retain side and that the dec-only free is an unconditional UAF. That
+> was a misread of `emitAliasInc` — native strings *do* `rc_inc` on
+> alias. The drop-site substitution is sound where the alias-inc is
+> actually emitted; it must still be done **per drop site**, validated
+> against the inc that feeds it.
 
-So Phase 1e-strings on native is the **whole inc+dec slice**, mirroring
-what the two-word backends already do:
+**Shipped slice — struct fields.** `genStructDropFn`'s native
+single-word string field drop now emits `__fern_str_dec`. The field is
+retained on construction (struct field-init `emitAliasInc → __fern_rc_inc`
+when the initialiser aliases, or moved in when fresh-owned), so freeing
+the buffer at the field's `rc==1` under `__drop_struct_<N>` is exactly
+balanced. Measured: a `2M ×` struct-with-one-heap-string-field loop
+**91 MB → 9 MB**. Validated by the `rc_correctness` corpus (new
+`struct_string_field_aliased` case — shared buffer across two structs +
+a live local, returns 0 = correct value **and** zero
+`__rc_underflow_count`), by the freelist/recycle harness, and under
+`RcFreeDebug` poison mode (the UAF detector traps on any stale access;
+the aliasing stress stays clean). `TestLowerStringStructFieldReclaim
+OnNative` pins the codegen. This is the highest-value site for the
+self-compile — `Op.kind` / `Op.str` are struct string fields.
 
-- Emit `__fern_str_inc` at **every** native single-word string alias
-  site (the `ptrW==8 && !UseTwoWordStrings` counterparts of the existing
-  two-word `str_inc` sites: `var`/ident alias, struct field-init, tuple
-  element, enum payload, closure capture, call-arg, `Map[K,string]`
-  get/get_or). The inc and the freeing dec must be exactly balanced or
-  strings double-free / UAF.
-- Add the freeing single-word `__fern_str_dec` (guards: null /
-  inline-SSO low-bit / below-`0x1000_0000` literal / high-bit sentinel;
-  then `rc==1 → __fern_box_free(data, [data-4])`, else defer to
-  `__fern_rc_dec`) and route the ~20 native string drop sites to it
-  (`emitDec`, the exit sweep, reinit, `emitOwnedTempStackDrop`,
-  `genStructDropFn` field drop, array/tuple/enum element drops, closure
-  capture drop).
-- Flip the four `…NoReclaimOnNative` tests to `…ReclaimOnNative` and add
-  an aliasing UAF regression (shared buffer, drop one ref, reuse the
-  freed block, read the other).
+**Remaining native string drop sites** (each its own incremental,
+poison-validated slice): the function-exit sweep / reinit drop of a bare
+string local, `emitOwnedTempStackDrop` (fresh concat/slice temps,
+provably sole-owner so trivially safe), and string **elements** of
+arrays / tuples / enums / closure captures. Each routes its
+`__fern_rc_dec` to `__fern_str_dec` **only after** confirming the
+matching alias site emits the balancing inc on native (some specialized
+two-word `str_inc` sites — tuple element, `Map[K,string]` get/get_or —
+have **no** native `rc_inc` branch yet; those need the inc added first or
+they would over-release).
 
-Scope: x86-64-only (arm64/wasm already reclaim strings), so it is fully
-**locally** testable — but it is heap-corruption class and the inc/dec
-balance is delicate (the two-word equivalent took several PRs). Gate on
-the full x86-64 e2e + `rc_correctness` suite, which exercises every
-aliasing shape. This is `docs/RC-PERCEUS-PHASE-1E-PLAN.md`'s unshipped
-**Phase 1e-strings** slice — a multi-step effort, not a one-helper drop.
+Scope: x86-64-only (arm64/wasm already reclaim strings via the two-word
+`str_inc`/`str_dec` pair), so each slice is fully **locally** testable.
+Heap-corruption class — gate every slice on the x86-64 `rc_correctness`
+corpus + freelist harness + a `RcFreeDebug` poison run. Tracks
+`docs/RC-PERCEUS-PHASE-1E-PLAN.md`'s **Phase 1e-strings**.
 
 ## Finding 2 — O(N²) `LowerState` rebuild in IR lowering
 
