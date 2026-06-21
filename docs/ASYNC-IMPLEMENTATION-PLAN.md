@@ -252,17 +252,18 @@ backends (`internal/e2e/poll_test.go`, x86-64 + arm64/qemu).
   (docs/PLATFORM-RESEARCH.md Rec §1's capability model) — a literal
   IPv4 GET returning the response. Verified on x86-64 + arm64 against a
   Go upstream (`internal/e2e/fetch_test.go ▸ TestPlatformFetch`).
-- **DONE — reactor-overlapped fan-out returning bodies
-  (`run_io_str`):** the complete "two parallel fetches, return both
-  response bodies" payoff. A string-typed twin of `IoStep`/`run_io`
-  (`IoStepStr`/`run_io_str`), since a *generic* `IoStep[T]` compiles
-  for `T=i32` but **not** `T=string` — a checker limitation: generic-
-  variant inference can't recover `T` through a function-typed payload
-  (`Wait(tok, resume)` defaults `T` to i32 regardless of `resume`'s
-  return type or the expected type). Verified x86-64 + arm64 (two
-  overlapped fetches → both bodies, `TestReactorFanoutBodies`). The
-  duplication folds back into one generic reactor once that inference
-  gap is fixed.
+- **DONE — reactor-overlapped fan-out returning bodies:** the complete
+  "two parallel fetches, return both response bodies" payoff. Now over
+  a single **generic** `IoStep[T]` reactor (`run_io[T]` /
+  `run_io_deadline[T]`): the i32 fan-out uses `IoStep[i32]`, the
+  body-returning fan-out `IoStep[string]`. This previously needed a
+  hand-duplicated string twin (`IoStepStr`/`run_io_str`) because the Go
+  checker mis-inferred `T` through the function-typed `IoWait` payload;
+  that inference gap is now **closed**
+  (docs/GENERIC-VARIANT-FN-PAYLOAD-INFERENCE-GAP.md — a positional
+  type-arg/payload pairing in `postSettleType`), so the twins folded
+  into the one generic shape. Verified x86-64 + arm64 (two overlapped
+  fetches → both bodies, `TestReactorFanoutBodies`).
 - **Self-host** (`asm.fern` / `asm_arm64.fern`) — mirror the reactor
   builtins (blocked on the fn-payload-variant gap, #3552, for
   `std/reactor` itself).

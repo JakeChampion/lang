@@ -21,6 +21,40 @@ func checkSource(t *testing.T, src string) error {
 	return err
 }
 
+// A generic enum whose type parameter is determined by a payload at a
+// non-leading position — in particular a function-typed payload whose
+// result is the type parameter — must infer that parameter from the
+// payload that actually pins it, not by positionally pairing the
+// type-arg slot with the leading constructor argument. Regression for
+// the variant post-settle refresh, which previously mis-bound `T` to
+// the first (i32-literal) argument and reported `Box[i32]` where
+// `Box[string]` was expected. See docs/GENERIC-VARIANT-FN-PAYLOAD-INFERENCE-GAP.md.
+func TestVariantTypeParamFromFnPayload(t *testing.T) {
+	ok := []string{
+		// T comes from the second, function-typed payload; the leading
+		// i32 literal must not capture T.
+		`enum Box[T] { Mk(i32, (i32) => T), Nil }
+function f(): Box[string] { return Box.Mk(7, (x: i32) => "hi"); }
+function main(): i32 { match (f()) { Mk(n, g) => { return n; }, Nil => { return 0; }, } }`,
+		// Same shape, T = i32 from the function result (the originally
+		// "accidentally working" case must keep working).
+		`enum Box[T] { Mk(i32, (i32) => T), Nil }
+function f(): Box[i32] { return Box.Mk(1, (x: i32) => x); }
+function main(): i32 { match (f()) { Mk(n, g) => { return n; }, Nil => { return 0; }, } }`,
+		// Leading literal that itself needs widening from the
+		// destination, alongside a function payload that pins T — both
+		// refreshes must hold simultaneously.
+		`enum Box2[T] { Mk(i64, (i32) => T), Nil }
+function f(): Box2[string] { return Box2.Mk(1234567890123, (x: i32) => "hi"); }
+function main(): i32 { match (f()) { Mk(n, g) => { return 0; }, Nil => { return 0; }, } }`,
+	}
+	for _, src := range ok {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("variant fn-payload inference should type-check, got: %v\nsrc: %s", err, src)
+		}
+	}
+}
+
 func TestGoodPrograms(t *testing.T) {
 	for _, src := range []string{
 		`function f(): i32 { return 1 + 2; }`,

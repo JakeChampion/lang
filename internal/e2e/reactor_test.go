@@ -29,8 +29,8 @@ func TestReactorRunIO(t *testing.T) {
 	// Two fd-tagged tasks fan out over real poll; success → 42.
 	src := fmt.Sprintf(`import "std/reactor";
 
-function start_io(fd: i32): reactor.IoStep {
-    function resume(woken_fd: i32): reactor.IoStep { return IoDone(woken_fd); }
+function start_io(fd: i32): reactor.IoStep[i32] {
+    function resume(woken_fd: i32): reactor.IoStep[i32] { return IoDone(woken_fd); }
     return IoWait(fd, resume);
 }
 
@@ -39,8 +39,8 @@ function main(): i32 {
         Ok(ra) => {
             match (open_reader("%s")) {
                 Ok(rb) => {
-                    var tasks: reactor.IoStep[] = [start_io(ra.fd), start_io(rb.fd)];
-                    var results: i32[] = reactor.run_io(tasks);
+                    var tasks: reactor.IoStep[i32][] = [start_io(ra.fd), start_io(rb.fd)];
+                    var results: i32[] = reactor.run_io(tasks, -1);
                     if (results.len() != 2) { return 90; }
                     if (results[0] < 0) { return 91; }
                     if (results[1] < 0) { return 92; }
@@ -95,15 +95,15 @@ func TestReactorTimers(t *testing.T) {
 	// blocks in real poll until each fires, in order. Success → 42.
 	src := `import "std/reactor";
 
-function start_timer(ms: i32): reactor.IoStep {
+function start_timer(ms: i32): reactor.IoStep[i32] {
     var fd: i32 = timer_fd(ms);
-    function resume(woken_fd: i32): reactor.IoStep { return IoDone(ms); }
+    function resume(woken_fd: i32): reactor.IoStep[i32] { return IoDone(ms); }
     return IoWait(fd, resume);
 }
 
 function main(): i32 {
-    var tasks: reactor.IoStep[] = [start_timer(10), start_timer(15)];
-    var results: i32[] = reactor.run_io(tasks);
+    var tasks: reactor.IoStep[i32][] = [start_timer(10), start_timer(15)];
+    var results: i32[] = reactor.run_io(tasks, -1);
     if (results.len() != 2) { return 90; }
     if (results[0] != 10) { return 91; }
     if (results[1] != 15) { return 92; }
@@ -149,9 +149,9 @@ func TestReactorDeadline(t *testing.T) {
 
 	timerHelper := `import "std/reactor";
 
-function start_timer(ms: i32): reactor.IoStep {
+function start_timer(ms: i32): reactor.IoStep[i32] {
     var fd: i32 = timer_fd(ms);
-    function resume(w: i32): reactor.IoStep { return IoDone(ms); }
+    function resume(w: i32): reactor.IoStep[i32] { return IoDone(ms); }
     return IoWait(fd, resume);
 }
 `
@@ -163,8 +163,8 @@ function start_timer(ms: i32): reactor.IoStep {
 			// 5ms timer, 500ms deadline → completes → result 5.
 			name: "completes_in_time",
 			body: `function main(): i32 {
-    var tasks: reactor.IoStep[] = [start_timer(5)];
-    var r: i32[] = reactor.run_io_deadline(tasks, 500);
+    var tasks: reactor.IoStep[i32][] = [start_timer(5)];
+    var r: i32[] = reactor.run_io_deadline(tasks, 500, -1);
     return r[0];
 }`,
 			want: 5,
@@ -173,8 +173,8 @@ function start_timer(ms: i32): reactor.IoStep {
 			// 500ms timer, 20ms deadline → times out → -1 → map to 42.
 			name: "times_out",
 			body: `function main(): i32 {
-    var tasks: reactor.IoStep[] = [start_timer(500)];
-    var r: i32[] = reactor.run_io_deadline(tasks, 20);
+    var tasks: reactor.IoStep[i32][] = [start_timer(500)];
+    var r: i32[] = reactor.run_io_deadline(tasks, 20, -1);
     if (r[0] < 0) { return 42; }
     return 99;
 }`,

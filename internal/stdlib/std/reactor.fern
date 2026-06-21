@@ -24,22 +24,30 @@
 // this first cut (covers the canonical fan-out: issue N reads, await
 // each); multi-await threads through the same way the std/task
 // scheduler already does.
+//
+// IoStep is generic in its result type T. A status/count fan-out uses
+// IoStep[i32]; an outbound-fetch fan-out that wants the response BODY
+// back uses IoStep[string]. (This was previously two hand-duplicated
+// enums — IoStep + IoStepStr — because the checker couldn't recover T
+// through the function-typed `IoWait` payload; that inference gap is
+// now closed, so the twins fold into this one generic shape. See
+// docs/GENERIC-VARIANT-FN-PAYLOAD-INFERENCE-GAP.md.)
 
 // `poll(fds, timeout_ms): i32` is the native builtin: returns the
 // index (into `fds`) of the first readable fd, or -1 on timeout.
 
 // A real-fd task step.
 //
-//   IoDone(result)    — finished with this i32 result.
+//   IoDone(result)     — finished with this result of type T.
 //   IoWait(fd, resume) — suspended until `fd` is readable; the runtime
 //                        calls `resume(fd)` to get the next step.
-pub enum IoStep {
-    IoDone(i32),
-    IoWait(i32, (i32) => IoStep),
+pub enum IoStep[T] {
+    IoDone(T),
+    IoWait(i32, (i32) => IoStep[T]),
 }
 
 // __io_all_done(states) — true once no task is still waiting.
-function __io_all_done(states: IoStep[]): boolean {
+function __io_all_done[T](states: IoStep[T][]): boolean {
     var i: i32 = 0;
     while (i < states.len()) {
         match (states[i]) {
@@ -51,9 +59,10 @@ function __io_all_done(states: IoStep[]): boolean {
     return true;
 }
 
-// run_io(states) — drive a set of already-started fd-tagged tasks to
-// completion on a single thread, multiplexing their fds through the
-// real `poll` syscall, and return their i32 results in task order.
+// run_io(states, not_ready) — drive a set of already-started fd-tagged
+// tasks to completion on a single thread, multiplexing their fds
+// through the real `poll` syscall, and return their results (type T)
+// in task order.
 //
 // Each round: gather the fds of the still-waiting tasks, block in
 // `poll` until one is readable, resume that task (its continuation
@@ -62,9 +71,10 @@ function __io_all_done(states: IoStep[]): boolean {
 // one thread — the edge-handler fan-out, now over real descriptors.
 //
 // A task whose fd never becomes ready leaves the loop only via the
-// poll error/timeout guard (-1), landing -1 in its result slot.
-pub function run_io(states_in: IoStep[]): i32[] {
-    var states: IoStep[] = states_in;
+// poll error/timeout guard (-1), landing `not_ready` in its result
+// slot (e.g. -1 for an i32 status, "" for a string body).
+pub function run_io[T](states_in: IoStep[T][], not_ready: T): T[] {
+    var states: IoStep[T][] = states_in;
     while (true) {
         if (__io_all_done(states)) { break; }
         // Gather waiting fds and their task indices (parallel arrays).
@@ -85,7 +95,7 @@ pub function run_io(states_in: IoStep[]): i32[] {
         var ready: i32 = poll(fds, -1);
         if (ready < 0) { break; }
         var ti: i32 = idxs[ready];
-        var st: IoStep = states[ti];
+        var st: IoStep[T] = states[ti];
         match (st) {
             IoDone(v) => { },
             IoWait(fd, resume) => {
@@ -93,32 +103,33 @@ pub function run_io(states_in: IoStep[]): i32[] {
             },
         }
     }
-    var results: i32[] = [];
+    var results: T[] = [];
     var k: i32 = 0;
     while (k < states.len()) {
         match (states[k]) {
             IoDone(v) => { results = results.append(v); },
-            IoWait(fd, c) => { results = results.append(-1); },
+            IoWait(fd, c) => { results = results.append(not_ready); },
         }
         k = k + 1;
     }
     return results;
 }
 
-// run_io_deadline(states, deadline_ms) — like run_io, but the whole
-// fan-out must finish within `deadline_ms` wall-clock milliseconds.
-// This is the reactor's timeout primitive (docs/CONCURRENCY-RESEARCH.md
-// Rec §5 / ASYNC-IMPLEMENTATION-PLAN.md Phase 5): it bounds `poll` to
-// the time remaining (`monotonic_ns` tracks elapsed across rounds), so
-// a task whose fd never becomes ready in time is abandoned — its slot
-// in the returned results is -1, exactly like a cancelled `select`
-// loser. Tasks that complete before the deadline carry their result.
+// run_io_deadline(states, deadline_ms, not_ready) — like run_io, but
+// the whole fan-out must finish within `deadline_ms` wall-clock
+// milliseconds. This is the reactor's timeout primitive
+// (docs/CONCURRENCY-RESEARCH.md Rec §5 / ASYNC-IMPLEMENTATION-PLAN.md
+// Phase 5): it bounds `poll` to the time remaining (`monotonic_ns`
+// tracks elapsed across rounds), so a task whose fd never becomes
+// ready in time is abandoned — its slot in the returned results is
+// `not_ready`, exactly like a cancelled `select` loser. Tasks that
+// complete before the deadline carry their result.
 //
 // Edge handlers want this for happy-eyeballs with an upper bound:
 // fan out to N upstreams, take whatever answers within the SLA, drop
 // the stragglers.
-pub function run_io_deadline(states_in: IoStep[], deadline_ms: i32): i32[] {
-    var states: IoStep[] = states_in;
+pub function run_io_deadline[T](states_in: IoStep[T][], deadline_ms: i32, not_ready: T): T[] {
+    var states: IoStep[T][] = states_in;
     var start_ns: i64 = monotonic_ns();
     var ns_per_ms: i64 = 1000000;
     var deadline_ns: i64 = (deadline_ms as i64) * ns_per_ms;
@@ -144,7 +155,7 @@ pub function run_io_deadline(states_in: IoStep[], deadline_ms: i32): i32[] {
         var ready: i32 = poll(fds, remaining_ms);
         if (ready < 0) { break; } // poll timed out (deadline) or errored
         var ti: i32 = idxs[ready];
-        var st: IoStep = states[ti];
+        var st: IoStep[T] = states[ti];
         match (st) {
             IoDone(v) => { },
             IoWait(fd, resume) => {
@@ -153,89 +164,13 @@ pub function run_io_deadline(states_in: IoStep[], deadline_ms: i32): i32[] {
         }
     }
     // Completed tasks carry their result; still-waiting tasks timed out
-    // and land -1.
-    var results: i32[] = [];
+    // and land `not_ready`.
+    var results: T[] = [];
     var k: i32 = 0;
     while (k < states.len()) {
         match (states[k]) {
             IoDone(v) => { results = results.append(v); },
-            IoWait(fd, c) => { results = results.append(-1); },
-        }
-        k = k + 1;
-    }
-    return results;
-}
-
-// ── String-result variant ────────────────────────────────────────
-//
-// IoStep / run_io carry i32 results (a status / count). Outbound
-// fetches want the response BODY back, so the string-typed twins below
-// mirror them exactly with a `string` result. This duplication is a
-// stand-in for a generic IoStep[T] / run_io[T] — verified to compile
-// for T=i32 but blocked for T=string by a checker limitation: the
-// generic-variant inference can't recover T through a function-typed
-// payload (`Wait(tok, resume)` defaults T to i32 regardless of
-// `resume`'s return type or the expected type). Once that inference
-// gap is closed, IoStepStr/run_io_str fold back into IoStep[T].
-
-// IoStepStr — a fd-tagged task whose result is a string (e.g. an HTTP
-// response body). Same shape as IoStep with a `string` payload.
-pub enum IoStepStr {
-    IoDoneStr(string),
-    IoWaitStr(i32, (i32) => IoStepStr),
-}
-
-function __io_all_done_str(states: IoStepStr[]): boolean {
-    var i: i32 = 0;
-    while (i < states.len()) {
-        match (states[i]) {
-            IoDoneStr(v) => { },
-            IoWaitStr(fd, c) => { return false; },
-        }
-        i = i + 1;
-    }
-    return true;
-}
-
-// run_io_str(states) — the string-result twin of run_io: drive
-// fd-tagged tasks to completion via real `poll`, returning each task's
-// string result in order (the canonical "two parallel fetches, return
-// both response bodies" fan-out). A task that never becomes ready
-// lands "" via the deadlock guard.
-pub function run_io_str(states_in: IoStepStr[]): string[] {
-    var states: IoStepStr[] = states_in;
-    while (true) {
-        if (__io_all_done_str(states)) { break; }
-        var fds: i32[] = [];
-        var idxs: i32[] = [];
-        var i: i32 = 0;
-        while (i < states.len()) {
-            match (states[i]) {
-                IoDoneStr(v) => { },
-                IoWaitStr(fd, c) => {
-                    fds = fds.append(fd);
-                    idxs = idxs.append(i);
-                },
-            }
-            i = i + 1;
-        }
-        var ready: i32 = poll(fds, -1);
-        if (ready < 0) { break; }
-        var ti: i32 = idxs[ready];
-        var st: IoStepStr = states[ti];
-        match (st) {
-            IoDoneStr(v) => { },
-            IoWaitStr(fd, resume) => {
-                states = states.with(ti, resume(fd));
-            },
-        }
-    }
-    var results: string[] = [];
-    var k: i32 = 0;
-    while (k < states.len()) {
-        match (states[k]) {
-            IoDoneStr(v) => { results = results.append(v); },
-            IoWaitStr(fd, c) => { results = results.append(""); },
+            IoWait(fd, c) => { results = results.append(not_ready); },
         }
         k = k + 1;
     }
