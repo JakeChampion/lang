@@ -135,22 +135,23 @@ func TestSelfHostTreeshakeStdlibIR(t *testing.T) {
 		if _, code := runFixtureInterp(t, entry, ""); code != 4 {
 			t.Fatalf("heavy native interp = %d, want 4", code)
 		}
-		// The keystone: without treeshake the loaded module is over budget → ast;
-		// with treeshake it fits → ir.
-		if out, _ := runDriver(entry, root, "-decide"); strings.TrimSpace(out) != "ast" {
+		// The keystone: WITHOUT the prune (explicit -no-treeshake) the loaded
+		// module is over budget → ast; with the prune (the default once a stdlib
+		// root is given) it fits → ir.
+		if out, _ := runDriver(entry, root, "-no-treeshake", "-decide"); strings.TrimSpace(out) != "ast" {
 			t.Errorf("heavy decide (no treeshake) = %q, want \"ast\"", strings.TrimSpace(out))
 		}
-		if out, _ := runDriver(entry, root, "-treeshake", "-decide"); strings.TrimSpace(out) != "ir" {
-			t.Errorf("heavy decide (treeshake) = %q, want \"ir\"", strings.TrimSpace(out))
+		if out, _ := runDriver(entry, root, "-decide"); strings.TrimSpace(out) != "ir" {
+			t.Errorf("heavy decide (default treeshake) = %q, want \"ir\"", strings.TrimSpace(out))
 		}
 		// Both paths must produce the correct result (treeshake changes the path,
-		// not behaviour): AST build (no treeshake) and IR build (treeshake).
+		// not behaviour): AST build (-no-treeshake) and IR build (default).
 		for _, tc := range []struct {
 			tag  string
 			args []string
 		}{
-			{"ast", []string{entry, root}},
-			{"ir", []string{entry, root, "-treeshake"}},
+			{"ast", []string{entry, root, "-no-treeshake"}},
+			{"ir", []string{entry, root}},
 		} {
 			asm, _ := runDriver(tc.args...)
 			if len(asm) == 0 {
