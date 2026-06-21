@@ -104,7 +104,23 @@ pub function is_fern_helper(name: string): boolean {
         // snapshot-param consume-rebind reclaim (#3456 slice 2): frees the
         // superseded old box (rc-guarded shallow free) unless it is `new` or the
         // caller's snapshot; passes `new` back through. Body in emit_ir_runtime.
-        || name == "__fern_snapshot_dec";
+        || name == "__fern_snapshot_dec"
+        // per-type field-level move tracking (#3457): __field_reclaim_<T> frees
+        // the REPLACED array-field buffers of the superseded old box (cow + snap
+        // guarded) before freeing the box. x86 emits a real per-type body
+        // (emit_ir_field_reclaims); arm64 / wasm emit a leak-safe pass-through.
+        || is_field_reclaim_name(name);
+}
+
+// is_field_reclaim_name reports whether a call_direct callee is a per-type
+// __field_reclaim_<T> helper (the suffix is the struct type name).
+pub function is_field_reclaim_name(name: string): boolean {
+    return name.len() > 16 && name[0:16] == "__field_reclaim_";
+}
+
+// field_reclaim_type returns the struct type T from a "__field_reclaim_<T>" name.
+pub function field_reclaim_type(name: string): string {
+    return name[16 : name.len()];
 }
 
 // ir_helper_symbol maps an IR runtime-helper name to the asm.fern symbol the
@@ -117,6 +133,10 @@ pub function ir_helper_symbol(name: string): string {
     if (name == "__fern_rc_dec") { return "__fn___fern_arr_dec"; }
     if (name == "__fern_rc_is_unique") { return "__fn___fern_rc_is_unique"; }
     if (name == "__fern_rc_underflow_get") { return "__fn___fern_rc_underflow_count"; }
+    // __field_reclaim_<T> -> __fn___field_reclaim_<sanitized T> (#3457). Sanitised
+    // so a monomorphised / bracketed type name yields a valid asm label, matching
+    // the body label emit_ir_field_reclaims writes.
+    if (is_field_reclaim_name(name)) { return "__fn___field_reclaim_" + asmcore.sanitize_label(field_reclaim_type(name)); }
     return "__fn_" + name;
 }
 
@@ -3449,6 +3469,10 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             if (o.str == "__fern_str_to_i32") { s = s.need("str_to_i32"); }
             // chr allocates its 1-char box, so pull in the heap runtime too.
             if (o.str == "__fern_chr") { s = s.need("heap").need("chr"); }
+            // __field_reclaim_<T> (#3457): record the type so emit_ir_field_reclaims
+            // emits exactly the per-type bodies actually called; needs the heap
+            // runtime (the freelist + __fn___fern_arr_dec it frees through).
+            if (is_field_reclaim_name(o.str)) { s = s.need("heap").need("field_reclaim:" + field_reclaim_type(o.str)); }
             s = s.write("    call " + ir_helper_symbol(o.str) + "\n");
             if (o.i32_imm > 0) { s = s.write("    addq $" + util.i32_to_string(o.i32_imm * 8) + ", %rsp\n"); }
             s = s.write("    pushq %rax\n");
@@ -3726,6 +3750,76 @@ pub function lift_lambdas(mod: parser.Module): parser.Module {
 // EMITTED; all_funcs/all_structs drive analysis only. For the whole-program
 // single-unit path all_funcs==mod.funcs / all_structs==mod.structs, so the
 // derived tables — and the emitted asm — are byte-identical.
+// emit_ir_field_reclaims emits the per-type __field_reclaim_<T> helper bodies
+// this module's lowering marked (#3457 field-level move tracking). Each `T` was
+// recorded as a "field_reclaim:<T>" need at the call site. Emitted as `.weak`
+// (like the shape symbols) so two per-module translation units that both use
+// `__field_reclaim_<T>` co-link to one definition. The body calls the shared,
+// entry-exported __fn___fern_arr_dec (per-field buffer free) and
+// __fn___fern_snapshot_dec (the box free), so a LIBRARY module's body references
+// only those .globl externs — never the .bss freelist directly — and resolves
+// against the entry's single runtime copy.
+function emit_ir_field_reclaims(s: asmcore.EmitState): asmcore.EmitState {
+    var ni: i32 = 0;
+    while (ni < s.needed.len()) {
+        var nd: string = s.needed[ni];
+        if (nd.len() > 14 && nd[0:14] == "field_reclaim:") {
+            s = emit_ir_field_reclaim_one(s, nd[14 : nd.len()]);
+        }
+        ni = ni + 1;
+    }
+    return s;
+}
+
+// emit_ir_field_reclaim_one emits one __field_reclaim_<sty> body. Stack-arg ABI:
+// 24(%rsp)=new, 16=old, 8=snap. For each rc-tracked ARRAY field (offset (k+1)*8
+// off the struct box's data pointer) it frees old.field[k] via __fn___fern_arr_dec
+// (rc-guarded SHALLOW dec/free) iff old.field[k] differs from new.field[k] (cow)
+// AND, when snap != 0, from snap.field[k] (the caller's original). It then frees
+// the old box itself via __fn___fern_snapshot_dec(new, old, snap) and returns
+// `new` in %rax. r9/r10/r11 hold snap/old/new across the field loop —
+// __fn___fern_arr_dec clobbers only rax/rcx/rdx/rsi/rdi/r8, so they survive.
+function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.EmitState {
+    var san: string = asmcore.sanitize_label(sty);
+    var n: i32 = irlower.decl_field_count(s.struct_decls, sty);
+    s = s.write(".weak __fn___field_reclaim_" + san + "\n");
+    s = s.write("__fn___field_reclaim_" + san + ":\n");
+    s = s.write("    movq 24(%rsp), %r11\n");      // new
+    s = s.write("    movq 16(%rsp), %r10\n");      // old
+    s = s.write("    movq 8(%rsp), %r9\n");        // snap
+    s = s.write("    cmpq $0x10000, %r10\n");      // old null / low-addr -> skip fields
+    s = s.write("    jb .Lfr_" + san + "_box\n");
+    var k: i32 = 0;
+    while (k < n) {
+        var fdt: string = irlower.decl_field_type_at(s.struct_decls, sty, k);
+        if (irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
+            var off: string = util.i32_to_string((k + 1) * 8);
+            var ks: string = util.i32_to_string(k);
+            s = s.write("    movq " + off + "(%r10), %rsi\n");      // old.field_k
+            s = s.write("    cmpq " + off + "(%r11), %rsi\n");      // == new.field_k? (cow)
+            s = s.write("    je .Lfr_" + san + "_skip" + ks + "\n");
+            s = s.write("    testq %r9, %r9\n");                    // snap == 0 (local)?
+            s = s.write("    jz .Lfr_" + san + "_dec" + ks + "\n");
+            s = s.write("    cmpq " + off + "(%r9), %rsi\n");       // == snap.field_k? (caller's)
+            s = s.write("    je .Lfr_" + san + "_skip" + ks + "\n");
+            s = s.write(".Lfr_" + san + "_dec" + ks + ":\n");
+            s = s.write("    pushq %rsi\n");
+            s = s.write("    call __fn___fern_arr_dec\n");          // shallow dec/free the dead buffer
+            s = s.write("    addq $8, %rsp\n");
+            s = s.write(".Lfr_" + san + "_skip" + ks + ":\n");
+        }
+        k = k + 1;
+    }
+    s = s.write(".Lfr_" + san + "_box:\n");
+    s = s.write("    pushq %r11\n");                // new
+    s = s.write("    pushq %r10\n");                // old
+    s = s.write("    pushq %r9\n");                 // snap
+    s = s.write("    call __fn___fern_snapshot_dec\n");   // free old box (cow + snap guarded); -> %rax = new
+    s = s.write("    addq $24, %rsp\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
 function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], s: asmcore.EmitState, globl_defs: boolean): asmcore.EmitState {
     var arf: string[] = array_ret_fns_of(all_funcs);
     // Inter-procedural borrowability computed ONCE per module (not per function —
@@ -3895,6 +3989,11 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     // library modules can link their `call __fern_*` externs against them.
     if (is_entry && globl_defs) { s = emit_runtime_globls(s); }
     s = emit_module_funcs(mod, all_funcs, all_structs, s, globl_defs);
+    // Per-type __field_reclaim_<T> bodies (#3457), in .text alongside the module
+    // funcs — emitted by EVERY unit that uses one (weak-deduped at link), so a
+    // library module's call resolves locally rather than relying on the entry's
+    // need-set covering a per-type symbol the fixed all_runtime_need_roots can't.
+    s = emit_ir_field_reclaims(s);
     // Fold the whole-program extra_needs (sibling modules' needs, for the entry's
     // single shared runtime) into the need set BEFORE _start, so _start's
     // need-gated argc/argv save below fires even when only a LIBRARY module

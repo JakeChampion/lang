@@ -695,6 +695,10 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // chr(n)'s 1-char-box helper — gated on this need (the self-contained
             // stack-ABI __fn___fern_chr in asm_arm64.emit_runtime).
             if (o.str == "__fern_chr") { s = s.mark_chr(); }
+            // __field_reclaim_<T> (#3457): record the type so emit_module_ir_unit_arm64
+            // emits a per-type pass-through body. arm64 does NOT reclaim yet (leak-safe
+            // pass-through, mirroring __fern_snapshot_dec); still needs the heap runtime.
+            if (asm_ir.is_field_reclaim_name(o.str)) { s = s.mark_heap(); s = s.need("field_reclaim:" + asm_ir.field_reclaim_type(o.str)); }
             s = s.write("    bl " + asm_ir.ir_helper_symbol(o.str) + "\n");
             if (o.i32_imm > 0) { s = s.write("    add sp, sp, #" + util.i32_to_string(o.i32_imm * 16) + "\n"); }
             s = s.write("    str x0, [sp, #-16]!\n");

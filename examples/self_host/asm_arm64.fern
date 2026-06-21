@@ -3735,6 +3735,23 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
         s = asm_arm64_ir.emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, irlower.fn_names_of(mod.funcs));
         fi = fi + 1;
     }
+    // Per-type __field_reclaim_<T> pass-through bodies (#3457). arm64 does not
+    // reclaim the replaced field buffers yet — a leak-safe PASS-THROUGH (returns
+    // `new`), mirroring __fern_snapshot_dec / op_arr_push_owned's arm64 aliasing.
+    // Emitted per-unit + `.weak` (link-deduped) for each type this unit calls.
+    // Stack-arg ABI: [sp]=snap, [sp+16]=old, [sp+32]=new (16-byte slots).
+    var fri: i32 = 0;
+    while (fri < s.needed.len()) {
+        var frnd: string = s.needed[fri];
+        if (frnd.len() > 14 && frnd[0:14] == "field_reclaim:") {
+            var frsan: string = asmcore.sanitize_label(frnd[14 : frnd.len()]);
+            s = s.write(".weak __fn___field_reclaim_" + frsan + "\n");
+            s = s.write("__fn___field_reclaim_" + frsan + ":\n");
+            s = s.write("    ldr x0, [sp, #32]\n");      // new
+            s = s.write("    ret\n");
+        }
+        fri = fri + 1;
+    }
     // Fold the whole-program need union (sibling modules' needs) into the entry's
     // single runtime BEFORE _start, so _start's args gating sees a sibling's
     // args() need. Inert (empty) on the single-unit path.
