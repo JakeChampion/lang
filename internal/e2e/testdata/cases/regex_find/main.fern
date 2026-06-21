@@ -1,0 +1,22 @@
+// std/regex (#2680) position APIs across the native backends: regex_find
+// returns the leftmost match's start index (-1 if none), and regex_search
+// returns the leftmost-longest span (start, end). Each check sets a bit;
+// all eight hold → 255.
+import "std/regex";
+
+function main(): i32 {
+    var r: i32 = 0;
+    if (regex.regex_find("cat", "the cat sat") == 4) { r = r + 1; }      // start index
+    if (regex.regex_find("dog", "the cat sat") == 0 - 1) { r = r + 2; }  // no match → -1
+    if (regex.regex_find("[0-9]+", "abc42") == 3) { r = r + 4; }         // leftmost digit run
+    if (regex.regex_find("^the", "the cat") == 0) { r = r + 8; }         // anchored at 0
+
+    var m: regex.RMatch = regex.regex_search("(a|b)+", "xxabbay");       // greedy span
+    if (m.found) { r = r + 16; }
+    if (m.start == 2) { r = r + 32; }
+    if (m.end == 6) { r = r + 64; }                                      // "abba" → [2,6)
+
+    var none: regex.RMatch = regex.regex_search("zzz", "abc");
+    if (!none.found && none.start == 0 - 1) { r = r + 128; }
+    return r;
+}

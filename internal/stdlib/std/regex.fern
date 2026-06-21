@@ -20,12 +20,17 @@
 //   ^            anchor at the start of the text
 //   $            anchor at the end of the text
 //
-// `regex_match(pattern, text)` is a SEARCH: true when the pattern matches
-// anywhere in the text. Anchor with `^` / `$` for a whole-string match
-// (`regex_match("^(cat|dog)$", s)`). Matching is on raw bytes, so
-// multi-byte UTF-8 is matched byte-wise. There are no capturing-group
-// extractions or backreferences — grouping is purely for quantifier /
-// alternation scoping.
+// Three entry points, all SEARCHES (the pattern may match anywhere; anchor
+// with `^` / `$` for a whole-string match like `"^(cat|dog)$"`):
+//   - `regex_match(pattern, text)`  → boolean: did it match anywhere?
+//   - `regex_find(pattern, text)`   → i32: start byte index of the leftmost
+//                                     match, or -1.
+//   - `regex_search(pattern, text)` → RMatch { found, start, end }: the
+//                                     leftmost-longest match span; the
+//                                     matched text is `text[start:end]`.
+// Matching is on raw bytes, so multi-byte UTF-8 is matched byte-wise. There
+// are no capturing-group extractions or backreferences — grouping is purely
+// for quantifier / alternation scoping.
 //
 // Backend note: the matcher and the whole module compile and run on the
 // native compiler's interp / x86-64 / arm64 / wasm backends. The grammar's
@@ -230,18 +235,54 @@ function __rx_match(n: RNode, t: string, ti: i32): i32[] {
     }
 }
 
-// `regex_match(pattern, text)` — true when `pattern` matches anywhere in
-// `text` (a search). The pattern is parsed once, then tried at each start
-// position; a `^` / `$` anchor in the pattern self-limits the match.
-pub function regex_match(pattern: string, text: string): boolean {
-    var pr: RParse = __rx_alt(pattern, 0);
-    var root: RNode = pr.node;
+// RMatch is the result of `regex_search`: whether a match was found and,
+// if so, its half-open byte span `[start, end)` in the text. On no match,
+// `found` is false and `start` / `end` are -1. The matched substring is
+// `text[start:end]`.
+pub struct RMatch { found: boolean, start: i32, end: i32 }
+
+// __rx_search_root finds the LEFTMOST match of an already-parsed tree,
+// returning its span. Among matches that start at the leftmost position it
+// takes the longest end (greedy), so `text[start:end]` is the longest
+// leftmost match — the conventional search semantics.
+function __rx_search_root(root: RNode, text: string): RMatch {
     var ti: i32 = 0;
     while (true) {
         var ends: i32[] = __rx_match(root, text, ti);
-        if (ends.len() > 0) { return true; }
-        if (ti >= text.len()) { return false; }
+        if (ends.len() > 0) {
+            var best: i32 = ends[0];
+            var i: i32 = 1;
+            while (i < ends.len()) { if (ends[i] > best) { best = ends[i]; } i = i + 1; }
+            return RMatch { found: true, start: ti, end: best };
+        }
+        if (ti >= text.len()) { return RMatch { found: false, start: 0 - 1, end: 0 - 1 }; }
         ti = ti + 1;
     }
-    return false;
+    return RMatch { found: false, start: 0 - 1, end: 0 - 1 };
+}
+
+// `regex_search(pattern, text)` — find the leftmost-longest match of
+// `pattern` in `text` and return its `RMatch` span (`found` false on no
+// match). The pattern is parsed once; a `^` / `$` anchor self-limits the
+// match.
+pub function regex_search(pattern: string, text: string): RMatch {
+    var pr: RParse = __rx_alt(pattern, 0);
+    return __rx_search_root(pr.node, text);
+}
+
+// `regex_match(pattern, text)` — true when `pattern` matches anywhere in
+// `text` (a search). A `^` / `$` anchor in the pattern self-limits the
+// match.
+pub function regex_match(pattern: string, text: string): boolean {
+    return regex_search(pattern, text).found;
+}
+
+// `regex_find(pattern, text)` — the start byte index of the leftmost match,
+// or -1 if the pattern doesn't match anywhere. The position counterpart to
+// the boolean `regex_match`; pair with `regex_search` when the end / the
+// matched substring is also needed.
+pub function regex_find(pattern: string, text: string): i32 {
+    var m: RMatch = regex_search(pattern, text);
+    if (m.found) { return m.start; }
+    return 0 - 1;
 }
