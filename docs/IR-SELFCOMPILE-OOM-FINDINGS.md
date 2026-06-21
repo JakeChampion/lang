@@ -273,6 +273,35 @@ Two costs compound, both per local introduced:
 
 ### Fix options for Finding 2
 
+**Measured breakdown of Effect A (cmd/fern-built `asm_run` driver, peak
+RSS, fresh process each).** Two experiments split the cost:
+
+| variant | 1×800 | 1×1600 |
+| --- | --- | --- |
+| baseline | 536 MB | 1576 MB |
+| `OpsBuilder` ops cons-list (ops clone removed) | 406 MB | 1077 MB |
+| 1 local, 800 op-heavy stmts (no `local_*` growth) | 158 MB | — |
+
+So the super-linear cost splits **~30 % ops-array cloning / ~70 %
+`local_*` cloning**, and both halves are independently super-linear. Two
+consequences:
+
+1. **`OpsBuilder` alone is not enough.** Routing ops through the
+   clone-free cons-list (applied to `irlower.fern`, built by the *native*
+   `cmd/fern` which compiles it correctly) drops 1×800 only 536→406 MB
+   (~24 %) and stays super-linear. It is also **fixpoint-blocked** (#3554:
+   the self-host AST backend miscompiles the recursive union when the
+   >512-fn compiler self-compiles via the AST fallback). Worth landing for
+   the ~30 %, but only after the AST-backend bug is fixed (goal #1).
+2. **The dominant ~70 % is `local_*` threading** — every `with_local_*`
+   does `s.local_<f>.with(i, v)` inside the 45-field rebuild, where the
+   array is shared (rc≥2) so it clones instead of taking the in-place
+   rc==1 path. (A standalone analog — `s = s.emit(v)` with `s.a.append(v)`
+   even through a 31-field struct — stays at 9 MB because the append *is*
+   in-place there; the self-host keeps `s.local_*` at rc≥2, so it clones.)
+
+Fix options for the dominant half:
+
 - **Mutable side-table ownership.** Hold the 17 `local_*` arrays so
   updates hit the in-place rc==1 path (single-owner reassign), instead
   of cloning out of a shared immutable record. Removes the quadratic
@@ -282,7 +311,13 @@ Two costs compound, both per local introduced:
   (struct-of-arrays → array-of-structs). One `.with()` per local
   update instead of 17 record rebuilds; cuts the constant by ~17× and
   shrinks each rebuilt box. Does not by itself remove the clone-vs-
-  share quadratic, but is a contained, independently-valuable step.
+  share quadratic (the single `LocalInfo[]` still clones per local-add
+  out of the shared record), but is a contained, independently-valuable
+  step that stacks with the in-place rework.
+- The clone-free cons approach that works for ops (`OpsBuilder`) would
+  also work for the local table, but inherits the same AST-backend
+  union-miscompile blocker — so the mutable/in-place route is the
+  unblocked path for the dominant half.
 - Either way, **Finding 1 must land too** — even an O(N) allocation
   count OOMs at this scale if nothing is freed.
 

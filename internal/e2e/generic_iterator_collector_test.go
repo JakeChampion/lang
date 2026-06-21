@@ -46,12 +46,55 @@ struct RangeIter { cur: i32, end: i32 }
 impl Iterator[i32] for RangeIter { function next(self: Self): Option[(i32, Self)] { if (self.cur >= self.end) { return None; } return Some((self.cur, RangeIter { cur: self.cur + 1, end: self.end })); } }
 function to_array[T, I: Iterator[T]](it: I): T[] { var out: T[] = []; var cur = it; var go = true; while (go) { match (cur.next()) { Some(t) => { out = out.append(t.0); cur = t.1; }, None => { go = false; }, } } return out; }
 function main(): i32 { var xs = to_array(RangeIter { cur: 0, end: 4 }); var s = 0; for x in xs { s = s + x; } return s + xs.len(); }`, 10},
+	// fold: three type params (element T, accumulator A, iterator I) + a closure
+	// combiner. Here A = T = i32; sums 0..5 = 10.
+	{"fold-sum", `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
+struct RangeIter { cur: i32, end: i32 }
+impl Iterator[i32] for RangeIter { function next(self: Self): Option[(i32, Self)] { if (self.cur >= self.end) { return None; } return Some((self.cur, RangeIter { cur: self.cur + 1, end: self.end })); } }
+function fold[T, A, I: Iterator[T]](it: I, init: A, f: (A, T) => A): A { var acc = init; var cur = it; var go = true; while (go) { match (cur.next()) { Some(t) => { acc = f(acc, t.0); cur = t.1; }, None => { go = false; }, } } return acc; }
+function main(): i32 { return fold(RangeIter { cur: 0, end: 5 }, 0, function (a: i32, x: i32): i32 { return a + x; }); }`, 10},
 	// the SAME generic `last` instantiated at T=boolean (different element type).
 	{"last-bool", `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 struct BoolSeq { n: i32 }
 impl Iterator[boolean] for BoolSeq { function next(self: Self): Option[(boolean, Self)] { if (self.n <= 0) { return None; } return Some((true, BoolSeq { n: self.n - 1 })); } }
 function last[T, I: Iterator[T]](it: I, dflt: T): T { var acc = dflt; var cur = it; var go = true; while (go) { match (cur.next()) { Some(t) => { acc = t.0; cur = t.1; }, None => { go = false; }, } } return acc; }
 function main(): i32 { if (last(BoolSeq { n: 2 }, false)) { return 7; } return 0; }`, 7},
+}
+
+// foldCrossTypeProg folds an i32 iterator with a boolean ACCUMULATOR (A ≠ T)
+// via a closure combiner — "are all values < 10?" over 0..4 → true → 5. The
+// native backends monomorphise A and T independently and handle this; the
+// self-host IR path currently MISCOMPILES a closure-accumulator fold when the
+// accumulator type differs from the element type (both erase to 8-byte slots
+// but the closure call ABI gets the boolean accumulator wrong — `routing=ir`,
+// then the program crashes). So this case is native-only; the A=T `fold-sum`
+// case above pins the self-host IR path. Fixing the A≠T self-host gap is a
+// follow-up (#2686 tail).
+const foldCrossTypeProg = `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
+struct RangeIter { cur: i32, end: i32 }
+impl Iterator[i32] for RangeIter { function next(self: Self): Option[(i32, Self)] { if (self.cur >= self.end) { return None; } return Some((self.cur, RangeIter { cur: self.cur + 1, end: self.end })); } }
+function fold[T, A, I: Iterator[T]](it: I, init: A, f: (A, T) => A): A { var acc = init; var cur = it; var go = true; while (go) { match (cur.next()) { Some(t) => { acc = f(acc, t.0); cur = t.1; }, None => { go = false; }, } } return acc; }
+function main(): i32 { if (fold(RangeIter { cur: 0, end: 4 }, true, function (a: boolean, x: i32): boolean { if (x < 10) { return a; } return false; })) { return 5; } return 0; }
+`
+
+// TestNativeGenericFoldCrossType pins the A≠T closure-accumulator fold on the
+// native backends (interp / x86-64 / wasm). See foldCrossTypeProg for the
+// self-host caveat.
+func TestNativeGenericFoldCrossType(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(p, []byte(foldCrossTypeProg), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, code := runFixtureInterp(t, p, ""); code != 5 {
+		t.Errorf("fold-cross-type interp = %d, want 5", code)
+	}
+	if _, code := runFixtureX86_64(t, p, ""); code != 5 {
+		t.Errorf("fold-cross-type x86-64 = %d, want 5", code)
+	}
+	if code := runWasm(t, foldCrossTypeProg); code != 5 {
+		t.Errorf("fold-cross-type wasm = %d, want 5", code)
+	}
 }
 
 // TestNativeGenericIteratorCollector exercises bound-driven inference on the
