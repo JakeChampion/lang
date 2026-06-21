@@ -147,19 +147,49 @@ a live local, returns 0 = correct value **and** zero
 `__rc_underflow_count`), by the freelist/recycle harness, and under
 `RcFreeDebug` poison mode (the UAF detector traps on any stale access;
 the aliasing stress stays clean). `TestLowerStringStructFieldReclaim
-OnNative` pins the codegen. This is the highest-value site for the
-self-compile — `Op.kind` / `Op.str` are struct string fields.
+OnNative` pins the codegen.
+
+**Measured self-compile impact: ~none (yet).** A 500×20 generated module
+self-compiled by the `asm_run` driver is **1100 MB before and after**
+this slice; a pure-i32 500×20 module is 662 MB, so strings account for
+~438 MB — but that ~438 MB is **not** captured here. Two reasons, both
+upstream of the struct-field drop: (1) the dominant string locals are
+**bare `var s = …` locals**, which native does not drop at all yet (no
+exit-sweep / reinit free — see "Remaining sites" below); and (2) the
+compiler's own `Op.kind` / `Op.str` fields live in `Op` structs that are
+**never dropped** in the self-compile — they sit in the cloned / threaded
+`LowerState` op arrays that leak under Effect A (Finding 2), so
+`__drop_struct_Op` is not reached. So this slice is a correct,
+general-purpose win (any program that *drops* a string-bearing struct now
+reclaims the buffer — `91 MB → 9 MB` above), but the **self-compile**
+string win is gated on (a) the bare-local drop slice and (b) dropping the
+`Op` containers (Effect A). The earlier "highest-value site for the
+self-compile" framing was optimistic — corrected here against
+measurement.
 
 **Remaining native string drop sites** (each its own incremental,
 poison-validated slice): the function-exit sweep / reinit drop of a bare
 string local, `emitOwnedTempStackDrop` (fresh concat/slice temps,
 provably sole-owner so trivially safe), and string **elements** of
-arrays / tuples / enums / closure captures. Each routes its
-`__fern_rc_dec` to `__fern_str_dec` **only after** confirming the
-matching alias site emits the balancing inc on native (some specialized
-two-word `str_inc` sites — tuple element, `Map[K,string]` get/get_or —
-have **no** native `rc_inc` branch yet; those need the inc added first or
-they would over-release).
+arrays / tuples / enums / closure captures.
+
+> **Note — bare locals need predicate widening, not just drop routing.**
+> Unlike the struct field (which flows through the always-generated
+> `__drop_struct_<N>`), a bare native string *local* is **never tracked
+> for the exit sweep / reinit drop at all** — verified: even `function
+> f(x: string): i32 { var s = x + "yy"; return s.len(); }` emits **no**
+> string dec on native (`ptrW=8`). The eligibility gate
+> (`computeFreeEligible` / `rcTracked`) doesn't admit native string
+> locals, so the `b.ptrW == 8` arms in `emitDec` / `emitOwnedSlotDrop`
+> are unreached. Routing those arms to `__fern_str_dec` is therefore dead
+> code until the **tracking predicate** is first widened to native
+> strings (the inc/dec-balance work — `needsRcIncOnAlias` is already true
+> for strings, but the exit-sweep / reinit eligibility is not). That
+> predicate widening — not the drop helper — is the real bare-local
+> slice, and it must stay balanced against the alias inc (some
+> specialized two-word `str_inc` sites — tuple element, `Map[K,string]`
+> get/get_or — have **no** native `rc_inc` branch yet, so those element
+> categories need the inc added first or they would over-release).
 
 Scope: x86-64-only (arm64/wasm already reclaim strings via the two-word
 `str_inc`/`str_dec` pair), so each slice is fully **locally** testable.
