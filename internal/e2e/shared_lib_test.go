@@ -819,3 +819,71 @@ int main(int c, char** v){
 		t.Fatalf("field accessor dispatch = %d, want 42 (out=%q)", code, out)
 	}
 }
+
+// TestAsBytesInSharedLib guards the PIE/.so fix for s.as_bytes(): a string
+// literal's bytes live in .rodata, which a dlopen'd shared object maps at a
+// high (>32-bit) base. Slice headers store the data pointer in 32 bits, so
+// without the high-pointer copy guard in __method_string_as_bytes the view
+// would alias a truncated, bogus address and read zeroes. Here the export
+// returns the as_bytes data pointer for "hello"; the C side must read back
+// the real bytes. (Regression guard for the bug found while adding cstr.)
+func TestAsBytesInSharedLib(t *testing.T) {
+	gcc, err := exec.LookPath("gcc")
+	if err != nil {
+		t.Skip("gcc not on PATH")
+	}
+	if runtime.GOARCH != "amd64" {
+		t.Skip("host is not amd64")
+	}
+	src := `function ab_data(env: usize, cls: usize): usize {
+    var s: string = "hello";
+    var b: [u8] = s.as_bytes();
+    return b as usize;
+}
+function ab_idx(env: usize, cls: usize, i: usize): i32 {
+    var s: string = "the quick brown fox";
+    var b: [u8] = s.as_bytes();
+    return (b[i as i32] as i32);
+}
+function main(): i32 { return 0; }`
+	exps := []string{"ab_data", "ab_idx"}
+	asm := compileToX86AsmExports(t, src, exps)
+	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exps)
+	if err != nil {
+		t.Fatalf("AssembleProgramShared: %v", err)
+	}
+	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs),
+		[]nativeelf.Export{{Name: "ab_data", Value: ev["ab_data"]}, {Name: "ab_idx", Value: ev["ab_idx"]}}, "libfern.so")
+	dir := t.TempDir()
+	soPath := filepath.Join(dir, "libfern.so")
+	if err := os.WriteFile(soPath, so, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	loader := `#include <dlfcn.h>
+#include <stdio.h>
+#include <string.h>
+int main(int c, char** v){
+  void* h = dlopen(v[1], RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
+  unsigned char* (*pd)(long,long) = (unsigned char*(*)(long,long)) dlsym(h, "ab_data");
+  int (*pi)(long,long,long) = (int(*)(long,long,long)) dlsym(h, "ab_idx");
+  if(!pd||!pi) return 101;
+  unsigned char* d = pd(0,0);
+  if(memcmp(d, "hello", 5) != 0){ fprintf(stderr, "as_bytes data = %.5s\n", d); return 1; }
+  /* "the quick brown fox"[16] == 'f' (index past the 32-bit truncation) */
+  if(pi(0,0,16) != 'f'){ fprintf(stderr, "idx16 = %d\n", pi(0,0,16)); return 2; }
+  return 42;
+}`
+	cPath := filepath.Join(dir, "loader.c")
+	if err := os.WriteFile(cPath, []byte(loader), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ld := filepath.Join(dir, "loader")
+	if out, err := exec.Command(gcc, cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
+		t.Fatalf("gcc loader: %v\n%s", err, out)
+	}
+	cmd := exec.Command(ld, soPath)
+	out, _ := cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 42 {
+		t.Fatalf("as_bytes in .so = %d, want 42 (out=%q)", code, out)
+	}
+}
