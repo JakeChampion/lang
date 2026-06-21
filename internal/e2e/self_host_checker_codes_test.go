@@ -509,6 +509,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"match-variant-on-i32", "enum E { A, B }\nfunction main(): i32 { var n: i32 = 5; match (n) { A => { return 1; }, _ => { return 0; } } }\n", []string{"E035"}},
 		{"match-variant-on-string", "enum E { A, B }\nfunction main(): i32 { var s: string = \"x\"; match (s) { A => { return 1; }, _ => { return 0; } } }\n", []string{"E035"}},
 		{"match-i32-wildcard-only-ok", "function main(): i32 { var n: i32 = 5; match (n) { _ => { return 0; } } }\n", nil},
+		// Literal `match` with a NON-LAST wildcard (#3612): the parse-time
+		// desugar used to lose the arm shape, so a `_`-first literal match drew a
+		// spurious E052 (the `1` arm mis-parsed → looked non-returning) and a
+		// `_`-in-the-middle one missed E026 entirely. Kept as a checkable
+		// StmtMatch now, both match the Go checker: E026, no spurious E052.
+		{"lit-match-wildcard-first", "function main(): i32 { var x = 1; match (x) { _ => { return 0; }, 1 => { return 1; } } }\n", []string{"E026"}},
+		{"lit-match-wildcard-middle", "function main(): i32 { var x = 1; match (x) { 1 => { return 1; }, _ => { return 9; }, 2 => { return 2; } } }\n", []string{"E026"}},
+		{"lit-match-wildcard-last-ok", "function main(): i32 { var x = 1; match (x) { 1 => { return 1; }, 2 => { return 2; }, _ => { return 9; } } }\n", nil},
+		{"lit-match-string-wildcard-last-ok", "function main(): i32 { var s = \"a\"; match (s) { \"a\" => { return 1; }, _ => { return 0; } } }\n", nil},
 		{"union-match-non-exhaustive", "struct A { x: i32 }\nstruct B { y: i32 }\npub type U = A | B;\nfunction f(u: U): i32 { match (u) { A(a) => { return a.x; } } return 0; }\nfunction main(): i32 { return f(A { x: 1 }); }\n", []string{"E030"}},
 		{"union-match-exhaustive-ok", "struct A { x: i32 }\nstruct B { y: i32 }\npub type U = A | B;\nfunction f(u: U): i32 { match (u) { A(a) => { return a.x; }, B(b) => { return b.y; } } return 0; }\nfunction main(): i32 { return f(A { x: 1 }); }\n", nil},
 		{"union-match-wildcard-ok", "struct A { x: i32 }\nstruct B { y: i32 }\npub type U = A | B;\nfunction f(u: U): i32 { match (u) { A(a) => { return a.x; }, _ => { return 0; } } return 0; }\nfunction main(): i32 { return f(A { x: 1 }); }\n", nil},

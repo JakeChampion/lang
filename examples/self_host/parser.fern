@@ -140,7 +140,14 @@ pub type Pattern = PatVariant | PatWildcard;
 // guard is an optional `if <expr>` between the pattern and `=>`; has_guard
 // distinguishes a real guard from the placeholder. When present the arm matches
 // only if the guard evaluates true (E027 checks it is boolean).
-pub struct MatchArm { pattern: Pattern, body: Stmt[], line: i32, col: i32, guard: Expr, has_guard: boolean }
+// `lit` carries the literal pattern expression for a literal-match arm (a
+// `match` on a non-enum scrutinee, StmtMatch.origin == "literal"): the arm's
+// pattern is an empty-name PatVariant and `lit` holds the `0` / `"yes"` the
+// scrutinee is compared against. Inert (e_unknown) for variant/wildcard arms.
+// Kept on the arm — rather than desugaring at parse — so the checker sees the
+// match shape (E026 wildcard-order, E030 exhaustiveness, E035 literal-type);
+// desugar_literal_matches_module folds it to an if/else-if chain for codegen.
+pub struct MatchArm { pattern: Pattern, body: Stmt[], line: i32, col: i32, guard: Expr, has_guard: boolean, lit: Expr }
 // `origin` records whether this match was written directly (""), or
 // synthesised by the parser from an `if let` (`"if_let"`) / `let … else`
 // (`"let_else"`) desugar. Codegen ignores it (a desugared match compiles
@@ -468,7 +475,7 @@ function rewrite_builder_stmt(s: Stmt, b: string): Stmt {
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
                 var arm: MatchArm = m.arms[ai];
-                arms = arms.append(MatchArm { pattern: arm.pattern, body: rewrite_builder_stmts(arm.body, b), line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard });
+                arms = arms.append(MatchArm { pattern: arm.pattern, body: rewrite_builder_stmts(arm.body, b), line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard, lit: arm.lit });
                 ai = ai + 1;
             }
             return StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin };
@@ -686,7 +693,7 @@ pub function desugar_switch_in_stmt(st: Stmt): Stmt {
             var arms: MatchArm[] = [];
             var a: i32 = 0;
             while (a < m.arms.len()) {
-                arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: desugar_switch_block(m.arms[a].body), line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard });
+                arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: desugar_switch_block(m.arms[a].body), line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard, lit: m.arms[a].lit });
                 a = a + 1;
             }
             return StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin };
@@ -695,6 +702,85 @@ pub function desugar_switch_in_stmt(st: Stmt): Stmt {
         _ => { return st; }
     }
     return st;
+}
+
+// fold_literal_match lowers a literal `match` (StmtMatch.origin == "literal")
+// to the nested if/else-if chain the backends consume — each non-wildcard arm
+// becomes `if (scrut == arm.lit) { body } else <rest>`, the `_` arm's body at
+// the innermost else. Mirrors build_literal_match (the expression-form path)
+// but reads MatchArm (pattern + `lit`) so the statement form can keep the arm
+// shape for the checker and only fold here, for codegen. Built back-to-front so
+// each arm's else is the already-built remainder. Runs only on well-typed input
+// (a misplaced `_` is rejected by E026 before codegen), so a wildcard is last.
+function fold_literal_match(scrut: Expr, arms: MatchArm[]): Stmt {
+    var else_body: Stmt[] = [];
+    var i: i32 = arms.len() - 1;
+    while (i >= 0) {
+        var a: MatchArm = arms[i];
+        var is_wild: boolean = false;
+        match (a.pattern) {
+            PatWildcard(_) => { is_wild = true; },
+            _ => { },
+        }
+        if (is_wild) {
+            if (a.has_guard) { else_body = [s_if(a.guard, a.body, else_body)]; }
+            else { else_body = a.body; }
+        } else {
+            var cond: Expr = e_binary("==", scrut, a.lit);
+            if (a.has_guard) { cond = e_binary("&&", cond, a.guard); }
+            else_body = [s_if(cond, a.body, else_body)];
+        }
+        i = i - 1;
+    }
+    if (else_body.len() == 0) { return s_unknown("empty literal match"); }
+    return else_body[0];
+}
+
+// desugar_literal_match_block / _in_stmt / desugar_literal_matches_module fold
+// every literal `match` (origin == "literal") in a module to its if/else-if
+// chain, recursing through nested bodies. Run from module_with_builtins (the
+// emit paths, AFTER desugar_switches so no StmtSwitch remains) and the interp
+// driver — AFTER the type checker, which needs the StmtMatch shape for E026 /
+// E030 / E035 and block_exits's literal-exhaustiveness E052. Inert for a module
+// with no literal matches (every other StmtMatch is rebuilt unchanged), so it
+// is a no-op on the self-host bundle (which uses none) — fixpoint-safe.
+function desugar_literal_match_block(body: Stmt[]): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < body.len()) { out = out.append(desugar_literal_match_in_stmt(body[i])); i = i + 1; }
+    return out;
+}
+
+pub function desugar_literal_match_in_stmt(st: Stmt): Stmt {
+    match (st) {
+        StmtMatch(m) => {
+            var arms: MatchArm[] = [];
+            var a: i32 = 0;
+            while (a < m.arms.len()) {
+                arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: desugar_literal_match_block(m.arms[a].body), line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard, lit: m.arms[a].lit });
+                a = a + 1;
+            }
+            if (m.origin == "literal") { return fold_literal_match(m.scrutinee, arms); }
+            return StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin };
+        },
+        StmtIf(f) => { return StmtIf { cond: f.cond, then_body: desugar_literal_match_block(f.then_body), else_body: desugar_literal_match_block(f.else_body) }; },
+        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: desugar_literal_match_block(w.body), label: w.label }; },
+        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: fr.iter, body: desugar_literal_match_block(fr.body), label: fr.label }; },
+        StmtDefer(d) => { return StmtDefer { action: desugar_literal_match_in_stmt(d.action), on_error: d.on_error }; },
+        _ => { return st; }
+    }
+    return st;
+}
+
+pub function desugar_literal_matches_module(mod: Module): Module {
+    var funcs: FuncDecl[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var f: FuncDecl = mod.funcs[fi];
+        funcs = funcs.append(FuncDecl { name: f.name, receiver_name: f.receiver_name, receiver_type: f.receiver_type, type_params: f.type_params, params: f.params, ret_type: f.ret_type, body: desugar_literal_match_block(f.body), line: f.line, col: f.col, import_iface: f.import_iface, import_wit: f.import_wit, type_param_count: f.type_param_count });
+        fi = fi + 1;
+    }
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: desugar_literal_match_block(mod.top_stmts), enums: mod.enums, resources: mod.resources, exports: mod.exports };
 }
 
 // label_depth returns the relative loop depth of `name` in the enclosing-loop
@@ -746,7 +832,7 @@ function resolve_labels_stmt(st: Stmt, labels: string[]): Stmt {
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
                 var a: MatchArm = m.arms[ai];
-                arms2 = arms2.append(MatchArm { pattern: a.pattern, body: resolve_labels_block(a.body, labels), line: a.line, col: a.col, guard: a.guard, has_guard: a.has_guard });
+                arms2 = arms2.append(MatchArm { pattern: a.pattern, body: resolve_labels_block(a.body, labels), line: a.line, col: a.col, guard: a.guard, has_guard: a.has_guard, lit: a.lit });
                 ai = ai + 1;
             }
             return StmtMatch { scrutinee: m.scrutinee, arms: arms2, line: m.line, col: m.col, origin: m.origin };
@@ -1963,7 +2049,7 @@ function parse_match_expr(p: Par): IfChain {
             art = if_expr_rt(er.expr);
         }
         if (first) { rt = art; first = false; }
-        arms = arms.append(MatchArm { pattern: pr.pattern, body: abody, line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard });
+        arms = arms.append(MatchArm { pattern: pr.pattern, body: abody, line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard, lit: e_unknown("") });
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }
@@ -2132,52 +2218,37 @@ function parse_match_stmt(p: Par): MatchStmtResult {
         return MatchStmtResult { par: p, stmt: s_match_at(sr.expr, empty_arms, mkline, mkcol) };
     }
     p = p.advance();
-    // A literal at the FIRST arm's pattern position marks a match on a
-    // non-enum (i32 / string) scrutinee: parse every arm as a literal /
-    // `_` and desugar to an if/else-if chain (build_literal_match). The
-    // decision is made once, up front, so the common enum/variant match
-    // takes the normal StmtMatch path below with no extra allocation.
-    if (p.peek_is_literal()) {
-        var lit_arms: LitArm[] = [];
-        while (p.peek_punct() != "}" && !p.at_end()) {
-            var llit: Expr = e_bool(true);
-            var lwild: boolean = false;
-            if (p.peek_is_literal()) {
-                var lle: ExprResult = parse_expr(p);
-                p = lle.par;
-                llit = lle.expr;
-            } else {
-                var lpr: PatternResult = parse_pattern(p);
-                p = lpr.par;
-                lwild = true;
-            }
-            var lguard: Expr = e_bool(true);
-            var lhas_guard: boolean = false;
-            if (p.peek_keyword() == "when") {
-                p = p.advance();
-                var lgr: ExprResult = parse_expr(p);
-                p = lgr.par;
-                lguard = lgr.expr;
-                lhas_guard = true;
-            }
-            if (p.peek_punct() == "=>") { p = p.advance(); }
-            var lbb: BlockResult = parse_block(p);
-            p = lbb.par;
-            lit_arms = lit_arms.append(LitArm { is_wild: lwild, lit: llit, guard: lguard, has_guard: lhas_guard, body: lbb.body });
-            if (p.peek_punct() == ",") { p = p.advance(); continue; }
-            break;
-        }
-        if (p.peek_punct() == "}") { p = p.advance(); }
-        return MatchStmtResult { par: p, stmt: build_literal_match(sr.expr, lit_arms) };
-    }
+    // Parse every arm uniformly, deciding PER ARM whether it is a LITERAL
+    // pattern (`0 => …`, `"yes" => …` — a match on a non-enum i32 / string
+    // scrutinee) or a variant / `_` pattern. If ANY arm is a literal the whole
+    // match is tagged `origin == "literal"` and kept as a StmtMatch — literal
+    // arms carry their value in `MatchArm.lit` and use an empty-name PatVariant
+    // as a placeholder pattern — so the checker sees the arm shape (E026
+    // wildcard-order, E030 exhaustiveness, E035 literal-type);
+    // desugar_literal_matches_module folds it to an if/else-if chain for
+    // codegen. Deciding per arm (not just the first) is what lets a misplaced
+    // wildcard `_ => …, 1 => …` still parse as a literal match and draw E026,
+    // instead of routing to the variant path where parse_pattern mis-reads the
+    // `1` (and the arm desyncs into a spurious missing-return E052). E026 / E028
+    // are reported at the arm (Go's `arm.P`), the pattern's first token.
     var arms: MatchArm[] = [];
+    var any_lit: boolean = false;
     while (p.peek_punct() != "}" && !p.at_end()) {
-        // E026 / E028 are reported at the arm (Go's `arm.P`), which is the
-        // pattern's first token.
         var aline: i32 = p.peek_line();
         var acol: i32 = p.peek_col();
-        var pr: PatternResult = parse_pattern(p);
-        p = pr.par;
+        var apat: Pattern = p_wildcard();
+        var alit: Expr = e_unknown("");
+        if (p.peek_is_literal()) {
+            var lle: ExprResult = parse_expr(p);
+            p = lle.par;
+            alit = lle.expr;
+            apat = p_variant("", "");
+            any_lit = true;
+        } else {
+            var pr: PatternResult = parse_pattern(p);
+            p = pr.par;
+            apat = pr.pattern;
+        }
         // Optional guard: `Pattern when <expr> => …`. The arm matches only
         // when the guard is true (E027 checks it is boolean).
         var arm_guard: Expr = e_bool(true);
@@ -2195,12 +2266,14 @@ function parse_match_stmt(p: Par): MatchStmtResult {
         }
         var bb: BlockResult = parse_block(p);
         p = bb.par;
-        arms = arms.append(MatchArm { pattern: pr.pattern, body: bb.body, line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard });
+        arms = arms.append(MatchArm { pattern: apat, body: bb.body, line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard, lit: alit });
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    return MatchStmtResult { par: p, stmt: s_match_at(sr.expr, arms, mkline, mkcol) };
+    var morigin: string = "";
+    if (any_lit) { morigin = "literal"; }
+    return MatchStmtResult { par: p, stmt: StmtMatch { scrutinee: sr.expr, arms: arms, line: mkline, col: mkcol, origin: morigin } };
 }
 
 // SwitchCasesResult carries the flat `case` / `default` arms parsed from a
@@ -2582,8 +2655,8 @@ function parse_stmt(p: Par): StmtResult {
                 ilelse = ileb.body;
             }
             var ilarms: MatchArm[] = [];
-            ilarms = ilarms.append(MatchArm { pattern: ilpat.pattern, body: ilthen.body, line: 0, col: 0, guard: e_bool(true), has_guard: false });
-            ilarms = ilarms.append(MatchArm { pattern: p_wildcard(), body: ilelse, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            ilarms = ilarms.append(MatchArm { pattern: ilpat.pattern, body: ilthen.body, line: 0, col: 0, guard: e_bool(true), has_guard: false, lit: e_unknown("") });
+            ilarms = ilarms.append(MatchArm { pattern: p_wildcard(), body: ilelse, line: 0, col: 0, guard: e_bool(true), has_guard: false, lit: e_unknown("") });
             return StmtResult { par: p, stmt: s_match_origin(ilscrut.expr, ilarms, 0, 0, "if_let") };
         }
         if (p.peek_punct() != "(") {
@@ -2738,8 +2811,8 @@ function parse_stmt(p: Par): StmtResult {
             }
             var le_pat: Pattern = PatVariant { type_name: name, binding: le_binding, extra_bindings: le_extra };
             var le_arms: MatchArm[] = [];
-            le_arms = le_arms.append(MatchArm { pattern: le_pat, body: rest, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
-            le_arms = le_arms.append(MatchArm { pattern: p_wildcard(), body: le_else.body, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
+            le_arms = le_arms.append(MatchArm { pattern: le_pat, body: rest, line: vline, col: vcol, guard: e_bool(true), has_guard: false, lit: e_unknown("") });
+            le_arms = le_arms.append(MatchArm { pattern: p_wildcard(), body: le_else.body, line: vline, col: vcol, guard: e_bool(true), has_guard: false, lit: e_unknown("") });
             return StmtResult { par: p, stmt: s_match_origin(init.expr, le_arms, vline, vcol, "let_else") };
         }
         if (p.peek_punct() == ";") { p = p.advance(); }
@@ -4254,7 +4327,7 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts): RStmtOne
             while (i < m.arms.len()) {
                 var ab: RStmts = mono_stmts(m.arms[i].body, env, funcs, cur);
                 cur = ab.rins3;
-                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
+                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard, lit: m.arms[i].lit });
                 i = i + 1;
             }
             return RStmtOne { rstmt: StmtMatch { scrutinee: sv.rexpr, arms: arms, line: m.line, col: m.col, origin: m.origin }, renv: env, rins2: cur };
@@ -4398,7 +4471,7 @@ function subst_stmts(stmts: Stmt[], tparams: string[], cts: string[]): Stmt[] {
                 var arms: MatchArm[] = [];
                 var j: i32 = 0;
                 while (j < m.arms.len()) {
-                    arms = arms.append(MatchArm { pattern: m.arms[j].pattern, body: subst_stmts(m.arms[j].body, tparams, cts), line: m.arms[j].line, col: m.arms[j].col, guard: subst_expr(m.arms[j].guard, tparams, cts), has_guard: m.arms[j].has_guard });
+                    arms = arms.append(MatchArm { pattern: m.arms[j].pattern, body: subst_stmts(m.arms[j].body, tparams, cts), line: m.arms[j].line, col: m.arms[j].col, guard: subst_expr(m.arms[j].guard, tparams, cts), has_guard: m.arms[j].has_guard, lit: m.arms[j].lit });
                     j = j + 1;
                 }
                 out = out.append(StmtMatch { scrutinee: subst_expr(m.scrutinee, tparams, cts), arms: arms, line: m.line, col: m.col, origin: m.origin });
@@ -4823,7 +4896,7 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
             while (i < m.arms.len()) {
                 var ab: RStmts = ms_stmts(m.arms[i].body, env, gstructs, funcs, cur);
                 cur = ab.rins3;
-                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
+                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard, lit: m.arms[i].lit });
                 i = i + 1;
             }
             return RStmtOne { rstmt: StmtMatch { scrutinee: sv.rexpr, arms: arms, line: m.line, col: m.col, origin: m.origin }, renv: env, rins2: cur };
@@ -5448,7 +5521,7 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
                 cur = gv.rins;
                 var ab: RStmts = me_stmts(m.arms[i].body, env, ret_ty, enums, structs, funcs, cur);
                 cur = ab.rins3;
-                arms = arms.append(MatchArm { pattern: npat, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: gv.rexpr, has_guard: m.arms[i].has_guard });
+                arms = arms.append(MatchArm { pattern: npat, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: gv.rexpr, has_guard: m.arms[i].has_guard, lit: m.arms[i].lit });
                 i = i + 1;
             }
             return RStmtOne { rstmt: StmtMatch { scrutinee: sv.rexpr, arms: arms, line: m.line, col: m.col, origin: m.origin }, renv: env, rins2: cur };
@@ -5683,7 +5756,7 @@ function dl_collect_stmt(st: Stmt, actions: Stmt[], flags: i32[]): DeferAcc {
             var i: i32 = 0;
             while (i < m.arms.len()) {
                 var ar: DeferAcc = dl_collect_stmts(m.arms[i].body, acc, afl);
-                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ar.stmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
+                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ar.stmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard, lit: m.arms[i].lit });
                 acc = ar.actions;
                 afl = ar.flags;
                 i = i + 1;
@@ -5788,7 +5861,7 @@ function dl_expand_return_stmt(st: Stmt, cleanup_all: Stmt[], cleanup_err: Stmt[
             var arms: MatchArm[] = [];
             var i: i32 = 0;
             while (i < m.arms.len()) {
-                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: dl_expand_returns(m.arms[i].body, cleanup_all, cleanup_err), line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
+                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: dl_expand_returns(m.arms[i].body, cleanup_all, cleanup_err), line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard, lit: m.arms[i].lit });
                 i = i + 1;
             }
             var one: Stmt[] = [s_match(m.scrutinee, arms)];
@@ -5989,7 +6062,7 @@ function rw_call_stmts(stmts: Stmt[], fname: string, caps: string[]): Stmt[] {
                 var arms: MatchArm[] = [];
                 var a: i32 = 0;
                 while (a < m.arms.len()) {
-                    arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: rw_call_stmts(m.arms[a].body, fname, caps), line: m.arms[a].line, col: m.arms[a].col, guard: rw_call_expr(m.arms[a].guard, fname, caps), has_guard: m.arms[a].has_guard });
+                    arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: rw_call_stmts(m.arms[a].body, fname, caps), line: m.arms[a].line, col: m.arms[a].col, guard: rw_call_expr(m.arms[a].guard, fname, caps), has_guard: m.arms[a].has_guard, lit: m.arms[a].lit });
                     a = a + 1;
                 }
                 out = out.append(s_match_at(rw_call_expr(m.scrutinee, fname, caps), arms, m.line, m.col));
@@ -6015,7 +6088,7 @@ function hl_rewrite_match(m: StmtMatch, enclosing: string[], hoisted: FuncDecl[]
         var ar: HoistResult = hl_rewrite(m.arms[a].body, enclosing, acc);
         acc = ar.hoisted;
         acc_lifts = hl_append_lifts(acc_lifts, ar.lifts);
-        arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: ar.stmts, line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard });
+        arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: ar.stmts, line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard, lit: m.arms[a].lit });
         a = a + 1;
     }
     return HoistResult { stmts: [s_match_at(m.scrutinee, arms, m.line, m.col)], hoisted: acc, lifts: acc_lifts };
@@ -6477,7 +6550,7 @@ function desugar_ranges_one(st: Stmt): Stmt[] {
             var arms: MatchArm[] = [];
             var a: i32 = 0;
             while (a < m.arms.len()) {
-                arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: desugar_ranges_block(m.arms[a].body), line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard });
+                arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: desugar_ranges_block(m.arms[a].body), line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard, lit: m.arms[a].lit });
                 a = a + 1;
             }
             return [StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin }];
@@ -6629,7 +6702,7 @@ function fda_stmts(stmts: Stmt[], funcs: FuncDecl[]): Stmt[] {
                 var arms: MatchArm[] = [];
                 var a: i32 = 0;
                 while (a < m.arms.len()) {
-                    arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: fda_stmts(m.arms[a].body, funcs), line: m.arms[a].line, col: m.arms[a].col, guard: fda_expr(m.arms[a].guard, funcs), has_guard: m.arms[a].has_guard });
+                    arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: fda_stmts(m.arms[a].body, funcs), line: m.arms[a].line, col: m.arms[a].col, guard: fda_expr(m.arms[a].guard, funcs), has_guard: m.arms[a].has_guard, lit: m.arms[a].lit });
                     a = a + 1;
                 }
                 out = out.append(s_match_at(fda_expr(m.scrutinee, funcs), arms, m.line, m.col));
@@ -6835,7 +6908,11 @@ pub function module_with_builtins(mod: Module): Module {
     // Lower switches to if/else-if chains first (the type checker has
     // already run on the StmtSwitch shape for E025), so no later pass or
     // backend sees a StmtSwitch at runtime.
-    var mono: Module = monomorphize_enums(monomorphize_structs(monomorphize_module(lower_defers_module(insert_resource_drops(infer_ret_types_module(hoist_local_funcs_module(desugar_switches_module(desugar_ranges_module(fill_default_args_module(resolve_labels_module(mod)))))))))));
+    // desugar_literal_matches_module runs OUTERMOST (after switches are folded,
+    // so no StmtSwitch remains, and after monomorphisation) — it is codegen-only
+    // lowering the checker doesn't run, folding every literal `match` to its
+    // if/else-if chain. No-op for the literal-match-free self-host bundle.
+    var mono: Module = desugar_literal_matches_module(monomorphize_enums(monomorphize_structs(monomorphize_module(lower_defers_module(insert_resource_drops(infer_ret_types_module(hoist_local_funcs_module(desugar_switches_module(desugar_ranges_module(fill_default_args_module(resolve_labels_module(mod))))))))))));
     return Module {
         funcs: mono.funcs,
         structs: inject_builtin_enums(mono.structs),
@@ -7073,9 +7150,9 @@ function synth_enum_display(ename: string, variants: StructDecl[]): FuncDecl {
             var e: Expr = e_string(v.name + "(");
             e = e_binary("+", e, dv_call0(e_ident("__p0"), "to_string"));
             e = e_binary("+", e, e_string(")"));
-            arms = arms.append(MatchArm { pattern: p_variant(v.name, "__p0"), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, "__p0"), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false, lit: e_unknown("") });
         } else {
-            arms = arms.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string(v.name))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string(v.name))], line: 0, col: 0, guard: e_bool(true), has_guard: false, lit: e_unknown("") });
         }
         i = i + 1;
     }
@@ -7099,9 +7176,9 @@ function synth_enum_debug(ename: string, variants: StructDecl[]): FuncDecl {
             var e: Expr = e_string(v.name + "(");
             e = e_binary("+", e, dv_debug_render(e_ident("__p0"), v.fields[0].type_name));
             e = e_binary("+", e, e_string(")"));
-            arms = arms.append(MatchArm { pattern: p_variant(v.name, "__p0"), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, "__p0"), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false, lit: e_unknown("") });
         } else {
-            arms = arms.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string(v.name))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string(v.name))], line: 0, col: 0, guard: e_bool(true), has_guard: false, lit: e_unknown("") });
         }
         i = i + 1;
     }
@@ -7122,13 +7199,13 @@ function synth_enum_eq(ename: string, variants: StructDecl[]): FuncDecl {
         var inner: MatchArm[] = [];
         if (v.fields.len() > 0) {
             var eqx: Expr = dv_call1(e_ident("__s0"), "eq", e_ident("__o0"));
-            inner = inner.append(MatchArm { pattern: p_variant(v.name, "__o0"), body: [s_return(eqx)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
-            inner = inner.append(MatchArm { pattern: p_wildcard(), body: [s_return(e_bool(false))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
-            arms = arms.append(MatchArm { pattern: p_variant(v.name, "__s0"), body: [s_match(e_ident("other"), inner)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            inner = inner.append(MatchArm { pattern: p_variant(v.name, "__o0"), body: [s_return(eqx)], line: 0, col: 0, guard: e_bool(true), has_guard: false, lit: e_unknown("") });
+            inner = inner.append(MatchArm { pattern: p_wildcard(), body: [s_return(e_bool(false))], line: 0, col: 0, guard: e_bool(true), has_guard: false, lit: e_unknown("") });
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, "__s0"), body: [s_match(e_ident("other"), inner)], line: 0, col: 0, guard: e_bool(true), has_guard: false, lit: e_unknown("") });
         } else {
-            inner = inner.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_bool(true))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
-            inner = inner.append(MatchArm { pattern: p_wildcard(), body: [s_return(e_bool(false))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
-            arms = arms.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_match(e_ident("other"), inner)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            inner = inner.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_bool(true))], line: 0, col: 0, guard: e_bool(true), has_guard: false, lit: e_unknown("") });
+            inner = inner.append(MatchArm { pattern: p_wildcard(), body: [s_return(e_bool(false))], line: 0, col: 0, guard: e_bool(true), has_guard: false, lit: e_unknown("") });
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_match(e_ident("other"), inner)], line: 0, col: 0, guard: e_bool(true), has_guard: false, lit: e_unknown("") });
         }
         i = i + 1;
     }
@@ -7171,12 +7248,12 @@ function synth_enum_ord(ename: string, variants: StructDecl[]): FuncDecl {
                     }
                 }
             }
-            inner = inner.append(MatchArm { pattern: p_variant(vj.name, ob), body: ibody, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            inner = inner.append(MatchArm { pattern: p_variant(vj.name, ob), body: ibody, line: 0, col: 0, guard: e_bool(true), has_guard: false, lit: e_unknown("") });
             j = j + 1;
         }
         var sb: string = "";
         if (vi.fields.len() > 0) { sb = "__s0"; }
-        arms = arms.append(MatchArm { pattern: p_variant(vi.name, sb), body: [s_match(e_ident("other"), inner)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+        arms = arms.append(MatchArm { pattern: p_variant(vi.name, sb), body: [s_match(e_ident("other"), inner)], line: 0, col: 0, guard: e_bool(true), has_guard: false, lit: e_unknown("") });
         i = i + 1;
     }
     var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_number("0", "", false))];
@@ -7203,7 +7280,7 @@ function synth_enum_hash(ename: string, variants: StructDecl[]): FuncDecl {
             stmts = stmts.append(s_assign("__h", fold));
         }
         stmts = stmts.append(s_return(e_ident("__h")));
-        arms = arms.append(MatchArm { pattern: p_variant(v.name, pat), body: stmts, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+        arms = arms.append(MatchArm { pattern: p_variant(v.name, pat), body: stmts, line: 0, col: 0, guard: e_bool(true), has_guard: false, lit: e_unknown("") });
         i = i + 1;
     }
     var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_number("0", "", false))];
@@ -7225,9 +7302,9 @@ function synth_enum_json(ename: string, variants: StructDecl[]): FuncDecl {
             var e: Expr = e_string("{\"" + v.name + "\":");
             e = e_binary("+", e, dv_call0(e_ident("__p0"), "to_json"));
             e = e_binary("+", e, e_string("}"));
-            arms = arms.append(MatchArm { pattern: p_variant(v.name, "__p0"), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, "__p0"), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false, lit: e_unknown("") });
         } else {
-            arms = arms.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string("\"" + v.name + "\""))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string("\"" + v.name + "\""))], line: 0, col: 0, guard: e_bool(true), has_guard: false, lit: e_unknown("") });
         }
         i = i + 1;
     }

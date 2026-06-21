@@ -2859,6 +2859,24 @@ function block_exits(stmts: parser.Stmt[]): boolean {
             if (m.origin == "let_else") {
                 return block_exits(m.arms[0].body);
             }
+            // A literal `match` (non-enum scrutinee) only covers every value if
+            // it carries an unguarded `_` arm — without one an unmatched
+            // scrutinee falls through, so the construct does NOT exit (and E030
+            // fires separately). With one, it exits iff every arm exits. (An
+            // enum match's exhaustiveness is enforced by E030, so the all-arms
+            // rule below is sound there.) Mirrors the Go funcBodyExits.
+            if (m.origin == "literal") {
+                var lw: i32 = 0;
+                var saw_uw: boolean = false;
+                while (lw < m.arms.len()) {
+                    match (m.arms[lw].pattern) {
+                        parser.PatWildcard(_) => { if (!m.arms[lw].has_guard) { saw_uw = true; } },
+                        _ => { },
+                    }
+                    lw = lw + 1;
+                }
+                if (!saw_uw) { return false; }
+            }
             var i: i32 = 0;
             while (i < m.arms.len()) {
                 if (!block_exits(m.arms[i].body)) { return false; }
@@ -2993,7 +3011,7 @@ function switch_diag_block(stmts: parser.Stmt[]): parser.Stmt[] {
                 var arms: parser.MatchArm[] = [];
                 var a: i32 = 0;
                 while (a < m.arms.len()) {
-                    arms = arms.append(parser.MatchArm { pattern: m.arms[a].pattern, body: switch_diag_block(m.arms[a].body), line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard });
+                    arms = arms.append(parser.MatchArm { pattern: m.arms[a].pattern, body: switch_diag_block(m.arms[a].body), line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard, lit: m.arms[a].lit });
                     a = a + 1;
                 }
                 out = out.append(parser.StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin });

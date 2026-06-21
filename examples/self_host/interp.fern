@@ -1116,6 +1116,10 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             return StepResult { env: env.update(a.target, av), ret: v_err("__noreturn__") };
         },
         parser.StmtMatch(m) => {
+            // A literal `match` (origin == "literal") is folded to an if/else-if
+            // chain on the fly (the interp driver doesn't run
+            // module_with_builtins), mirroring the StmtSwitch case above.
+            if (m.origin == "literal") { return eval_stmt(parser.desugar_literal_match_in_stmt(st), env); }
             // Evaluate the scrutinee. An error in the scrutinee
             // propagates without running any arm.
             var sv: Value = eval_expr(m.scrutinee, env);

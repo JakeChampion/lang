@@ -7407,7 +7407,7 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState, force_i64: boolean
                 var bj: i32 = 0;
                 while (bj < arm.body.len() - 1) { nbody = nbody.append(arm.body[bj]); bj = bj + 1; }
                 nbody = nbody.append(parser.StmtAssign { target: tmp, value: r.value, line: 0, col: 0, target_line: 0, target_col: 0 });
-                newarms = newarms.append(parser.MatchArm { pattern: arm.pattern, body: nbody, line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard });
+                newarms = newarms.append(parser.MatchArm { pattern: arm.pattern, body: nbody, line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard, lit: arm.lit });
             },
             _ => { return s.fail(); }
         }
@@ -16330,7 +16330,7 @@ function box_rewrite_stmt(st: parser.Stmt, boxed: string[]): parser.Stmt {
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
                 var arm: parser.MatchArm = m.arms[ai];
-                na = na.append(parser.MatchArm { pattern: arm.pattern, body: box_rewrite_stmts(arm.body, boxed), line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard });
+                na = na.append(parser.MatchArm { pattern: arm.pattern, body: box_rewrite_stmts(arm.body, boxed), line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard, lit: arm.lit });
                 ai = ai + 1;
             }
             return parser.StmtMatch { scrutinee: box_rewrite_expr(m.scrutinee, boxed), arms: na, line: m.line, col: m.col, origin: m.origin };
