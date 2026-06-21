@@ -220,3 +220,87 @@ func TestWasmP3NestedComponentReExport(t *testing.T) {
 		t.Errorf("nested re-exported async dep: got %q, want 42", bytes.TrimSpace(out))
 	}
 }
+
+// p3AsyncConsumerCore is a hand-built consumer core module for the
+// async-import await: it imports ("","task-return") (i32)->(),
+// ("","dep-lower") (i32)->(i32), and ("mem","mem") memory; its "run"
+// export calls dep-lower(retptr=8) (the lowered async import), drops the
+// status (the import completes synchronously, so the result is already
+// at mem[8]), loads mem[8], and hands it to task-return.
+var p3AsyncConsumerCore = []byte{
+	0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // magic + version
+	// types: 0:(i32)->()  1:(i32)->(i32)  2:()->()
+	0x01, 0x0d, 0x03, 0x60, 0x01, 0x7f, 0x00, 0x60, 0x01, 0x7f, 0x01, 0x7f, 0x60, 0x00, 0x00,
+	// imports: "" "task-return" func0 ; "" "dep-lower" func1 ; "mem" "mem" memory(min1)
+	0x02, 0x28, 0x03,
+	0x00, 0x0b, 't', 'a', 's', 'k', '-', 'r', 'e', 't', 'u', 'r', 'n', 0x00, 0x00,
+	0x00, 0x09, 'd', 'e', 'p', '-', 'l', 'o', 'w', 'e', 'r', 0x00, 0x01,
+	0x03, 'm', 'e', 'm', 0x03, 'm', 'e', 'm', 0x02, 0x00, 0x01,
+	// func section: 1 func of type 2
+	0x03, 0x02, 0x01, 0x02,
+	// export "run" func 2 (after the 2 imported funcs)
+	0x07, 0x07, 0x01, 0x03, 'r', 'u', 'n', 0x00, 0x02,
+	// code: i32.const 8; call 1 (dep-lower); drop; i32.const 8; i32.load; call 0 (task-return); end
+	0x0a, 0x10, 0x01, 0x0e, 0x00, 0x41, 0x08, 0x10, 0x01, 0x1a, 0x41, 0x08, 0x28, 0x02, 0x00, 0x10, 0x00, 0x0b,
+}
+
+// p3MemModule is a core module exporting a linear memory "mem" — the
+// shared memory the async lower writes its return area into (sidesteps
+// the lower-memory circularity; the real composer reuses its
+// memory-trampoline machinery).
+var p3MemModule = []byte{
+	0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // magic + version
+	0x05, 0x03, 0x01, 0x00, 0x01, // memory section: 1 mem, limits min 1
+	0x07, 0x07, 0x01, 0x03, 'm', 'e', 'm', 0x02, 0x00, // export "mem" memory 0
+}
+
+// TestWasmP3AsyncImportAwait is the WASI Preview-3 async IMPORT / await
+// payoff, assembled entirely through the Go composer (no wac, no
+// wasm-tools compose): a consumer bundles the async-export provider as a
+// NESTED component, lowers its `dep: async func() -> u32` import with
+// canon lower async, calls + awaits it (synchronous completion → result
+// read from the shared return area), and re-returns it from its own
+// async export `run`. Runs under wasmtime's async features → 42. This
+// converts the proven nested-component await spike into a permanent,
+// CI-tested artifact, exercising both async-ABI directions (lower + lift)
+// through real composer code.
+func TestWasmP3AsyncImportAwait(t *testing.T) {
+	skipIfPreview2Missing(t) // ensures wasmtime on PATH
+
+	provider := component.BuildAsyncLiftedExportComponent(p3AsyncCoreModule, "run", "dep", component.CValtypeU32)
+
+	buf := component.PutComponentHeader(nil)
+	buf = component.PutComponentSection(buf, provider)                                                       // component 0
+	buf = component.PutInstanceSectionInstantiateComponent(buf, 0)                                           // component instance 0
+	buf = component.PutAliasSectionInstanceExportFunc(buf, 0, "dep")                                         // component func 0 (dep)
+	buf = component.PutCoreModuleSection(buf, p3MemModule)                                                   // core module 0
+	buf = component.PutCoreInstanceSectionInstantiate(buf, 0)                                                // core instance 0 (mem)
+	buf = component.PutAliasSectionCoreExport(buf, component.CoreSortMemory, 0, "mem")                       // core memory 0
+	buf = component.PutCanonSectionLowerAsync(buf, 0, 0)                                                     // core func 0 (dep-lower)
+	buf = component.PutCanonTaskReturnSingle(buf, component.CValtypeU32)                                     // core func 1 (task.return)
+	buf = component.PutCoreModuleSection(buf, p3AsyncConsumerCore)                                           // core module 1
+	buf = component.PutCoreInstanceSectionFromExports(buf, []component.CoreInstanceExport{
+		{Name: "task-return", Sort: component.CoreSortFunc, Idx: 1},
+		{Name: "dep-lower", Sort: component.CoreSortFunc, Idx: 0},
+	}) // core instance 1 (cli)
+	buf = component.PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 1, []string{"", "mem"}, []uint32{1, 0}) // core instance 2 (ci)
+	buf = component.PutAliasSectionCoreExportFunc(buf, 2, "run")                                             // core func 2 (run)
+	buf = component.PutTypeSectionOneFunc(buf, nil, nil, component.CValtypeU32)                              // type 0
+	buf = component.PutCanonSectionLiftAsync(buf, 2, 0)                                                      // component func 1 (run)
+	buf = component.PutExportSectionOneFunc(buf, "run", 1)
+
+	dir := t.TempDir()
+	p := filepath.Join(dir, "await.wasm")
+	if err := os.WriteFile(p, buf, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("wasmtime", "run",
+		"-W", "component-model-async,component-model-async-stackful",
+		"--invoke", "run()", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run (async import await): %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte("42")) {
+		t.Errorf("async import await: got %q, want 42", bytes.TrimSpace(out))
+	}
+}
