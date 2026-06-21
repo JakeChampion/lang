@@ -7083,6 +7083,259 @@ pub function infer_ret_types_module(mod: Module): Module {
     return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
 }
 
+// ---- call-only 0-arg fn-value inlining ------------------------------
+// The self-host's "bare 0-arg receiver-less fn name = a CALL to it" rule (the
+// `const` rule, #2954) mis-lowers `var f = mk` (mk a 0-arg function) to
+// `var f = mk()`, binding the RESULT — so a later `f()` calls a non-function
+// and segfaults (an IR-path miscompile for an i32 return, an AST one for a
+// struct). When `f` is used ONLY as a call target, it is unambiguously the
+// function VALUE of a 0-arg function — and a 0-arg fn-value called is exactly
+// its direct call evaluated at each call site (matching the native compiler).
+// So inline it: drop the `var f = mk` binding and rewrite every `f(args)` to
+// `mk(args)`. `f` used as a value (`return f`, `g(f)`), reassigned, or
+// re-declared in a nested scope is left alone (the const-call semantics still
+// apply). The native compiler already handles this; this is a self-host-only
+// fix that lands on BOTH the IR and AST paths (both consume this module). The
+// compiler source uses no such bindings, so the pass is fixpoint-neutral.
+
+// CFScan counts a name's VALUE uses (as a plain value) and CALL uses (as a
+// direct call callee) within an expression / statement subtree.
+struct CFScan { vals: i32, calls: i32 }
+function cf_add(a: CFScan, b: CFScan): CFScan { return CFScan { vals: a.vals + b.vals, calls: a.calls + b.calls }; }
+
+function cf_zero(): CFScan { return CFScan { vals: 0, calls: 0 }; }
+
+// cf_is_zero_arg_fn reports whether `name` is a receiver-less module function
+// with zero parameters (the const-rule shape that `var f = name` mis-handles).
+function cf_is_zero_arg_fn(funcs: FuncDecl[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && funcs[i].params.len() == 0) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function cf_scan_expr(e: Expr, f: string): CFScan {
+    match (e) {
+        ExprIdent(id) => { if (id.name == f) { return CFScan { vals: 1, calls: 0 }; } return cf_zero(); },
+        ExprBinary(b) => { return cf_add(cf_scan_expr(b.left, f), cf_scan_expr(b.right, f)); },
+        ExprUnary(u) => { return cf_scan_expr(u.operand, f); },
+        ExprCall(c) => {
+            var acc: CFScan = cf_zero();
+            var callee_is_f: boolean = false;
+            match (c.callee) {
+                ExprIdent(cid) => { if (cid.name == f) { callee_is_f = true; } },
+                _ => { }
+            }
+            if (callee_is_f) { acc = CFScan { vals: 0, calls: 1 }; }
+            else { acc = cf_scan_expr(c.callee, f); }
+            var i: i32 = 0;
+            while (i < c.args.len()) { acc = cf_add(acc, cf_scan_expr(c.args[i], f)); i = i + 1; }
+            return acc;
+        },
+        ExprArray(a) => {
+            var acc: CFScan = cf_zero();
+            var i: i32 = 0;
+            while (i < a.elements.len()) { acc = cf_add(acc, cf_scan_expr(a.elements[i], f)); i = i + 1; }
+            return acc;
+        },
+        ExprTuple(t) => {
+            var acc: CFScan = cf_zero();
+            var i: i32 = 0;
+            while (i < t.elements.len()) { acc = cf_add(acc, cf_scan_expr(t.elements[i], f)); i = i + 1; }
+            return acc;
+        },
+        ExprIndex(ix) => { return cf_add(cf_scan_expr(ix.array, f), cf_scan_expr(ix.index, f)); },
+        ExprSlice(sl) => { return cf_add(cf_scan_expr(sl.array, f), cf_add(cf_scan_expr(sl.start, f), cf_scan_expr(sl.end, f))); },
+        ExprStructLit(sl) => {
+            var acc: CFScan = cf_scan_expr(sl.base, f);
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { acc = cf_add(acc, cf_scan_expr(sl.field_values[i], f)); i = i + 1; }
+            return acc;
+        },
+        ExprFieldAccess(fa) => { return cf_scan_expr(fa.obj, f); },
+        ExprLambda(lm) => { return cf_scan_stmts(lm.body, f); },
+        _ => { return cf_zero(); }
+    }
+    return cf_zero();
+}
+
+function cf_scan_stmt(st: Stmt, f: string): CFScan {
+    match (st) {
+        StmtVar(v) => { return cf_scan_expr(v.init, f); },
+        StmtReturn(r) => { return cf_scan_expr(r.value, f); },
+        StmtExpr(x) => { return cf_scan_expr(x.value, f); },
+        StmtAssign(a) => {
+            var base: CFScan = cf_scan_expr(a.value, f);
+            if (a.target == f) { return cf_add(base, CFScan { vals: 1, calls: 0 }); }
+            return base;
+        },
+        StmtIf(fst) => { return cf_add(cf_scan_expr(fst.cond, f), cf_add(cf_scan_stmts(fst.then_body, f), cf_scan_stmts(fst.else_body, f))); },
+        StmtWhile(w) => { return cf_add(cf_scan_expr(w.cond, f), cf_scan_stmts(w.body, f)); },
+        StmtFor(fr) => { return cf_add(cf_scan_expr(fr.iter, f), cf_scan_stmts(fr.body, f)); },
+        StmtMatch(m) => {
+            var acc: CFScan = cf_scan_expr(m.scrutinee, f);
+            var i: i32 = 0;
+            while (i < m.arms.len()) { acc = cf_add(acc, cf_add(cf_scan_expr(m.arms[i].guard, f), cf_scan_stmts(m.arms[i].body, f))); i = i + 1; }
+            return acc;
+        },
+        StmtDefer(d) => { return cf_scan_stmt(d.action, f); },
+        _ => { return cf_zero(); }
+    }
+    return cf_zero();
+}
+
+function cf_scan_stmts(stmts: Stmt[], f: string): CFScan {
+    var acc: CFScan = cf_zero();
+    var i: i32 = 0;
+    while (i < stmts.len()) { acc = cf_add(acc, cf_scan_stmt(stmts[i], f)); i = i + 1; }
+    return acc;
+}
+
+// cf_decl_count counts `var <name>` bindings anywhere in a statement list.
+function cf_decl_count(stmts: Stmt[], name: string): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            StmtVar(v) => { if (v.name == name) { n = n + 1; } },
+            StmtIf(f) => { n = n + cf_decl_count(f.then_body, name) + cf_decl_count(f.else_body, name); },
+            StmtWhile(w) => { n = n + cf_decl_count(w.body, name); },
+            StmtFor(fr) => { n = n + cf_decl_count(fr.body, name); if (fr.var_name == name) { n = n + 1; } },
+            StmtMatch(m) => {
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) { n = n + cf_decl_count(m.arms[ai].body, name); ai = ai + 1; }
+            },
+            _ => { }
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+// cf_rw_expr rewrites every direct call `f(args)` to `target(args)`.
+function cf_rw_expr(e: Expr, f: string, target: string): Expr {
+    match (e) {
+        ExprBinary(b) => { return ExprBinary { op: b.op, left: cf_rw_expr(b.left, f, target), right: cf_rw_expr(b.right, f, target), line: b.line, col: b.col }; },
+        ExprUnary(u) => { return ExprUnary { op: u.op, operand: cf_rw_expr(u.operand, f, target), line: u.line, col: u.col }; },
+        ExprCall(c) => {
+            var na: Expr[] = [];
+            var i: i32 = 0;
+            while (i < c.args.len()) { na = na.append(cf_rw_expr(c.args[i], f, target)); i = i + 1; }
+            var ncallee: Expr = c.callee;
+            var done: boolean = false;
+            match (c.callee) {
+                ExprIdent(cid) => { if (cid.name == f) { ncallee = ExprIdent { name: target, line: cid.line, col: cid.col }; done = true; } },
+                _ => { }
+            }
+            if (!done) { ncallee = cf_rw_expr(c.callee, f, target); }
+            return ExprCall { callee: ncallee, args: na, line: c.line, col: c.col, type_argc: c.type_argc };
+        },
+        ExprArray(a) => {
+            var ne: Expr[] = [];
+            var i: i32 = 0;
+            while (i < a.elements.len()) { ne = ne.append(cf_rw_expr(a.elements[i], f, target)); i = i + 1; }
+            return ExprArray { elements: ne };
+        },
+        ExprTuple(t) => {
+            var ne: Expr[] = [];
+            var i: i32 = 0;
+            while (i < t.elements.len()) { ne = ne.append(cf_rw_expr(t.elements[i], f, target)); i = i + 1; }
+            return ExprTuple { elements: ne };
+        },
+        ExprIndex(ix) => { return ExprIndex { array: cf_rw_expr(ix.array, f, target), index: cf_rw_expr(ix.index, f, target) }; },
+        ExprSlice(sl) => { return ExprSlice { array: cf_rw_expr(sl.array, f, target), start: cf_rw_expr(sl.start, f, target), end: cf_rw_expr(sl.end, f, target) }; },
+        ExprStructLit(sl) => {
+            var nv: Expr[] = [];
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { nv = nv.append(cf_rw_expr(sl.field_values[i], f, target)); i = i + 1; }
+            return ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: cf_rw_expr(sl.base, f, target), line: sl.line, col: sl.col };
+        },
+        ExprFieldAccess(fa) => { return ExprFieldAccess { obj: cf_rw_expr(fa.obj, f, target), field: fa.field, line: fa.line, col: fa.col }; },
+        ExprLambda(lm) => { return ExprLambda { params: lm.params, ret_type: lm.ret_type, body: cf_rw_stmts(lm.body, f, target) }; },
+        _ => { return e; }
+    }
+    return e;
+}
+
+function cf_rw_stmt(st: Stmt, f: string, target: string): Stmt {
+    match (st) {
+        StmtVar(v) => { return StmtVar { name: v.name, type_name: v.type_name, init: cf_rw_expr(v.init, f, target), line: v.line, col: v.col }; },
+        StmtReturn(r) => { return StmtReturn { value: cf_rw_expr(r.value, f, target), line: r.line, col: r.col }; },
+        StmtExpr(x) => { return StmtExpr { value: cf_rw_expr(x.value, f, target) }; },
+        StmtAssign(a) => { return StmtAssign { target: a.target, value: cf_rw_expr(a.value, f, target), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; },
+        StmtIf(fst) => { return StmtIf { cond: cf_rw_expr(fst.cond, f, target), then_body: cf_rw_stmts(fst.then_body, f, target), else_body: cf_rw_stmts(fst.else_body, f, target) }; },
+        StmtWhile(w) => { return StmtWhile { cond: cf_rw_expr(w.cond, f, target), body: cf_rw_stmts(w.body, f, target), label: w.label }; },
+        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: cf_rw_expr(fr.iter, f, target), body: cf_rw_stmts(fr.body, f, target), label: fr.label }; },
+        StmtMatch(m) => {
+            var arms: MatchArm[] = [];
+            var i: i32 = 0;
+            while (i < m.arms.len()) { arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: cf_rw_stmts(m.arms[i].body, f, target), line: m.arms[i].line, col: m.arms[i].col, guard: cf_rw_expr(m.arms[i].guard, f, target), has_guard: m.arms[i].has_guard }); i = i + 1; }
+            return StmtMatch { scrutinee: cf_rw_expr(m.scrutinee, f, target), arms: arms, line: m.line, col: m.col, origin: m.origin };
+        },
+        StmtDefer(d) => { return StmtDefer { action: cf_rw_stmt(d.action, f, target), on_error: d.on_error }; },
+        _ => { return st; }
+    }
+    return st;
+}
+
+function cf_rw_stmts(stmts: Stmt[], f: string, target: string): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) { out = out.append(cf_rw_stmt(stmts[i], f, target)); i = i + 1; }
+    return out;
+}
+
+// cf_inline_fn_body inlines every call-only 0-arg fn-value binding in a
+// function body's TOP-LEVEL statements (one full pass, left to right).
+function cf_inline_fn_body(body: Stmt[], funcs: FuncDecl[]): Stmt[] {
+    var out: Stmt[] = body;
+    var i: i32 = 0;
+    while (i < out.len()) {
+        var handled: boolean = false;
+        match (out[i]) {
+            StmtVar(v) => {
+                match (v.init) {
+                    ExprIdent(id) => {
+                        if (cf_is_zero_arg_fn(funcs, id.name) && cf_decl_count(out, v.name) == 1) {
+                            var sc: CFScan = cf_scan_stmts(out, v.name);
+                            if (sc.vals == 0 && sc.calls >= 1) {
+                                // Drop the binding; rewrite f(args) -> fnname(args).
+                                var nb: Stmt[] = [];
+                                var k: i32 = 0;
+                                while (k < out.len()) { if (k != i) { nb = nb.append(out[k]); } k = k + 1; }
+                                out = cf_rw_stmts(nb, v.name, id.name);
+                                handled = true;
+                            }
+                        }
+                    },
+                    _ => { }
+                }
+            },
+            _ => { }
+        }
+        if (!handled) { i = i + 1; }
+    }
+    return out;
+}
+
+pub function inline_callonly_fn_values(mod: Module): Module {
+    var funcs: FuncDecl[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var fd: FuncDecl = mod.funcs[i];
+        funcs = funcs.append(FuncDecl {
+            name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type,
+            type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type,
+            body: cf_inline_fn_body(fd.body, mod.funcs), line: fd.line, col: fd.col,
+            import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count
+        });
+        i = i + 1;
+    }
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: cf_inline_fn_body(mod.top_stmts, mod.funcs), enums: mod.enums, resources: mod.resources, exports: mod.exports };
+}
+
 pub function module_with_builtins(mod: Module): Module {
     // Automatic drop for owned WIT resource handles (P5 slice 3): insert a
     // `defer <drop>(h);` for each kept `own R` local and synthesize the
@@ -7092,7 +7345,7 @@ pub function module_with_builtins(mod: Module): Module {
     // Lower switches to if/else-if chains first (the type checker has
     // already run on the StmtSwitch shape for E025), so no later pass or
     // backend sees a StmtSwitch at runtime.
-    var mono: Module = monomorphize_enums(monomorphize_structs(monomorphize_module(lower_defers_module(insert_resource_drops(infer_ret_types_module(hoist_local_funcs_module(desugar_switches_module(desugar_ranges_module(fill_default_args_module(resolve_labels_module(mod)))))))))));
+    var mono: Module = inline_callonly_fn_values(monomorphize_enums(monomorphize_structs(monomorphize_module(lower_defers_module(insert_resource_drops(infer_ret_types_module(hoist_local_funcs_module(desugar_switches_module(desugar_ranges_module(fill_default_args_module(resolve_labels_module(mod))))))))))));
     return Module {
         funcs: mono.funcs,
         structs: inject_builtin_enums(mono.structs),
