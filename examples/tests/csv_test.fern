@@ -1,0 +1,77 @@
+import "std/test";
+import "std/csv" as csv;
+// examples/tests/csv_test.fern — pure-Fern coverage of std/csv's
+// RFC 4180 single-line surface: csv_escape (quote-wrap fields with
+// comma / quote / newline, interior quotes doubled), csv_join (escape
+// then comma-join) and csv_parse_line (split, with quoted fields that
+// may contain commas and "" → " decoding). The Go-side suite unit-tests
+// the prelude origin; this is the migration-shaped (pure-Fern) companion.
+
+function test_escape_plain(): test.TestOutcome {
+    return test.assert_eq(csv.csv_escape("hello"), "hello");
+}
+
+function test_escape_comma(): test.TestOutcome {
+    return test.assert_eq(csv.csv_escape("a,b"), "\"a,b\"");
+}
+
+function test_escape_quote(): test.TestOutcome {
+    // Interior quotes are doubled and the field is wrapped.
+    return test.assert_eq(csv.csv_escape("say \"hi\""), "\"say \"\"hi\"\"\"");
+}
+
+function test_escape_newline(): test.TestOutcome {
+    return test.assert_eq(csv.csv_escape("l1\nl2"), "\"l1\nl2\"");
+}
+
+function test_join(): test.TestOutcome {
+    return test.assert_eq(csv.csv_join(["a", "b", "c"]), "a,b,c");
+}
+
+function test_join_escapes(): test.TestOutcome {
+    return test.assert_eq(csv.csv_join(["a,b", "c"]), "\"a,b\",c");
+}
+
+function test_join_empty(): test.TestOutcome {
+    return test.assert_eq(csv.csv_join([]), "");
+}
+
+function test_parse_plain(): test.TestOutcome {
+    return test.assert_eq_array(csv.csv_parse_line("a,b,c"), ["a", "b", "c"]);
+}
+
+function test_parse_quoted_comma(): test.TestOutcome {
+    // A quoted field may contain commas.
+    return test.assert_eq_array(csv.csv_parse_line("\"a,b\",c"), ["a,b", "c"]);
+}
+
+function test_parse_doubled_quote(): test.TestOutcome {
+    // "" inside a quoted field decodes to a single ".
+    return test.assert_eq_array(csv.csv_parse_line("\"say \"\"hi\"\"\""), ["say \"hi\""]);
+}
+
+function test_parse_empty(): test.TestOutcome {
+    // The empty input is a single empty field.
+    return test.assert_eq_array(csv.csv_parse_line(""), [""]);
+}
+
+function test_roundtrip(): test.TestOutcome {
+    return test.assert_eq_array(csv.csv_parse_line(csv.csv_join(["a,b", "c\"d"])), ["a,b", "c\"d"]);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/csv");
+    r = r.it("escape plain",            test_escape_plain());
+    r = r.it("escape comma",            test_escape_comma());
+    r = r.it("escape quote",            test_escape_quote());
+    r = r.it("escape newline",          test_escape_newline());
+    r = r.it("join",                    test_join());
+    r = r.it("join escapes fields",     test_join_escapes());
+    r = r.it("join empty",              test_join_empty());
+    r = r.it("parse plain",             test_parse_plain());
+    r = r.it("parse quoted comma",      test_parse_quoted_comma());
+    r = r.it("parse doubled quote",     test_parse_doubled_quote());
+    r = r.it("parse empty",             test_parse_empty());
+    r = r.it("round-trip join/parse",   test_roundtrip());
+    return r.finish();
+}

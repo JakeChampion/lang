@@ -251,6 +251,22 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-21 — std/csv: pure-Fern std/test migration coverage (`csv_escape` / `csv_join` / `csv_parse_line`)
+
+`std/csv`'s RFC 4180 single-line surface had Go-side coverage but no
+migration-shaped (pure-Fern, `std/test`-driven) companion. Added
+`examples/tests/csv_test.fern` — 12 assertions: `csv_escape` plain pass-through
+and quote-wrapping on comma / interior-quote (doubled) / newline; `csv_join`
+plain, field-escaping, and empty; `csv_parse_line` plain split, quoted field
+with embedded comma, `""` → `"` decode, the empty-input single-empty-field
+case; and a `csv_join` → `csv_parse_line` round-trip through a field that holds
+both a comma and a quote. Gated natively (`TestRunnerCsvExamplePasses`) and
+through the self-host differential gate (`TestSelfHostStdTestE2E/csv`), which
+oracle-checks TAP-13 stdout + exit code against the interpreter **byte-for-byte**.
+Exercises `string[]` accumulation (`.append`), `.index_of` / `.replace`
+dispatch, and char-scan/slice lowering end-to-end through the self-host IR — no
+AST fallback.
+
 ### 2026-06-21 — std/url: pure-Fern std/test migration coverage (`url_encode` / `url_decode` / `url_parse`)
 
 `std/url`'s RFC 3986 percent-encoding and best-effort URL parsing had Go-side
