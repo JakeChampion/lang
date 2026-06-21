@@ -21,6 +21,26 @@ var rcCorpus = []struct {
 	src  string
 }{
 	{
+		// String captured by a closure + kept live in the source local.
+		// Exercises the native single-word x86-64 closure-capture string
+		// reclaim (env drop → __fern_str_dec); the capture is retained at
+		// MakeEnv (__fern_rc_inc), so the env's is_unique free balances the
+		// shared buffer. 4 (via closure) + 4 (local) - 8 = 0.
+		name: "string_closure_capture_aliased",
+		src: `
+import "core/int";
+import "std/string";
+function cat(a: string, b: string): string { return a + b; }
+function callit(f: () => i32): i32 { return f(); }
+function main(): i32 {
+    var s: string = cat("ab", "cd");
+    var f: () => i32 = () => s.len();
+    var x: i32 = callit(f);
+    var y: i32 = s.len();
+    return (x + y - 8) + __rc_underflow_count();
+}`,
+	},
+	{
 		// String tuple element, aliased across two tuples + a live local.
 		// Exercises the native single-word x86-64 tuple string-element
 		// reclaim (__drop_tuple_<...> → __fern_str_dec); elements are

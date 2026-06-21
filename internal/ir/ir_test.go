@@ -2026,16 +2026,19 @@ func TestLowerStringClosureCaptureReclaim(t *testing.T) {
 	}
 }
 
-// TestLowerStringClosureCaptureNoReclaimOnNative verifies the closure
-// string-capture drop is wasm-only (no __fern_str_dec on ptrW=8).
-func TestLowerStringClosureCaptureNoReclaimOnNative(t *testing.T) {
+// TestLowerStringClosureCaptureReclaimOnNative verifies the native
+// (single-word x86-64) closure env drop reclaims its captured string via
+// __fern_str_dec — the capture is retained at MakeEnv (__fern_rc_inc), so
+// freeing the buffer at the env's rc==1 is balanced. (Phase 1e-strings
+// native closure-capture slice.)
+func TestLowerStringClosureCaptureReclaimOnNative(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
     var s: string = "cap" + "tured";
     var f = function (): i32 { return s.len(); };
     return f();
 }`, 8)
-	if closureDropCallsDirect(p, "__fern_str_dec") {
-		t.Errorf("native (ptrW=8) closure drop must not emit __fern_str_dec:\n%s", p)
+	if !closureDropCallsDirect(p, "__fern_str_dec") {
+		t.Errorf("native (ptrW=8) closure drop must reclaim its captured string via __fern_str_dec:\n%s", p)
 	}
 }
 

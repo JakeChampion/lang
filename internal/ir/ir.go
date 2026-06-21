@@ -6692,7 +6692,7 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 				Op{Kind: OpConstI32, I32: off},
 				Op{Kind: OpAdd},
 				Op{Kind: OpLoad, Width: WidthPtr},
-				Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1},
+				Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1},
 				Op{Kind: OpDrop})
 			off += slot
 			continue
