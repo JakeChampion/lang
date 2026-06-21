@@ -34,6 +34,11 @@ type ComposeRequest struct {
 	Udp  bool // send-only UDP client
 	Http bool // wasi:http/incoming-handler
 
+	// Reactor timer: wasi:clocks/monotonic-clock.subscribe-duration
+	// (own<pollable>) + wasi:io/poll.pollable.block, composed
+	// standalone (no sockets). The wasm reactor's timer primitive.
+	Timer bool
+
 	// Standalone CLI capabilities. WallNow is wasi:clocks/wall-clock.now
 	// (a memory trampoline). Args / Env are wasi:cli/environment
 	// get-arguments / get-environment (memory+realloc, shared interface).
@@ -82,6 +87,9 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 	}
 	if req.Http {
 		g.ensureHttpTypes()
+	}
+	if req.Timer {
+		g.ensureMonotonicTimer()
 	}
 
 	// Filesystem open-chain.
@@ -189,6 +197,19 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 			gImport{iface: http, name: "[method]incoming-request.method", kind: gMemRealloc, params: httpSelfRetParams},
 			gImport{iface: http, name: "[method]incoming-request.path-with-query", kind: gMemRealloc, params: httpSelfRetParams},
 			gImport{iface: http, name: "[method]fields.entries", kind: gMemRealloc, params: httpSelfRetParams},
+		)
+	}
+
+	// Reactor timer lowerings: subscribe-duration (→ own<pollable>)
+	// and pollable.block. The pollable resource is surfaced by
+	// ensureIoPoll (pulled in by ensureMonotonicTimer); its drop is
+	// not emitted yet (the program exits with the pollable live — the
+	// canonical ABI permits a leaked own handle at trap/exit). The
+	// list multiplexer (wasi:io/poll.poll) lands in a later slice.
+	if req.Timer {
+		g.add(
+			gImport{iface: "wasi:clocks/monotonic-clock@0.2.0", name: "subscribe-duration", kind: gNoOpt},
+			gImport{iface: "wasi:io/poll@0.2.0", name: "[method]pollable.block", kind: gNoOpt},
 		)
 	}
 

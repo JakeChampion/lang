@@ -427,6 +427,19 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: nil,
 	},
+	"wasi_clocks_subscribe_duration": {
+		// (duration_ns: u64) → pollable handle. Returns an
+		// own<pollable> that becomes ready after `duration_ns`
+		// nanoseconds. The wasm reactor's timer primitive — the
+		// pollable analog of the native timerfd. Crucially the
+		// pollable is the SAME wasi:io/poll resource a socket's
+		// subscribe yields, so the composer aliases it across the
+		// clock/poll instance boundary (see WASM-REACTOR-PLAN.md).
+		module:  "wasi:clocks/monotonic-clock@0.2.0",
+		name:    "subscribe-duration",
+		params:  []byte{encode.ValtypeI64},
+		results: []byte{encode.ValtypeI32},
+	},
 	"wasi_io_input_stream_drop": {
 		// (handle) → (). Drops an input-stream resource. Required
 		// before dropping the parent tcp-socket (canonical-ABI
@@ -1097,6 +1110,15 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		} else {
 			in.add("wasi_clock_time_get")
 		}
+	}
+	if helpers.set["__fern_wasm_timer_pollable"] {
+		// Preview-2-only: the timer pollable comes from
+		// monotonic-clock.subscribe-duration.
+		in.add("wasi_clocks_subscribe_duration")
+	}
+	if helpers.set["__fern_wasm_block"] {
+		// Preview-2-only: block on a wasi:io/poll pollable.
+		in.add("wasi_io_pollable_block")
 	}
 	if helpers.set["__fern_env_count"] {
 		in.add("wasi_environ_sizes_get")
@@ -1840,6 +1862,37 @@ func buildRandomBytesBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0)
 	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildWasmTimerPollableBody — () body for __fern_wasm_timer_pollable.
+//
+// Signature: (duration_ns: i64) → i32 (pollable handle)
+//
+// Just forwards the duration to
+// wasi:clocks/monotonic-clock@0.2.0::subscribe-duration, which
+// returns the own<pollable> handle directly. Preview-2-only (the
+// native reactor uses timerfd; this is the wasm analog).
+func buildWasmTimerPollableBody(idxs map[string]uint32) []byte {
+	sub := idxs["wasi_clocks_subscribe_duration"]
+	var body []byte
+	body = inst.InstLocalGet(body, 0) // duration_ns
+	body = inst.InstCall(body, sub)   // → pollable handle (i32)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildWasmBlockBody — body for __fern_wasm_block.
+//
+// Signature: (pollable: i32) → i32
+//
+// Blocks on the pollable via wasi:io/poll.pollable.block, then
+// returns 0. Preview-2-only.
+func buildWasmBlockBody(idxs map[string]uint32) []byte {
+	block := idxs["wasi_io_pollable_block"]
+	var body []byte
+	body = inst.InstLocalGet(body, 0) // pollable handle
+	body = inst.InstCall(body, block) // block until ready
+	body = inst.InstI32Const(body, 0) // return 0
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
 // buildMonotonicNsBodyP2 is the preview-2 variant of

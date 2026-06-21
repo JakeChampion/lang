@@ -49,7 +49,41 @@ Implemented locally and verified to typecheck + emit a core module
 - `wasi.go` `scanImports`: add the imports when the helpers are used.
 - `internal/checker/checker.go`: `FuncSigs` for the builtins.
 
-## Layer 2 — component composer: THE BLOCKER
+## STATUS UPDATE — timer pollable lands end-to-end (composer blocker solved)
+
+The composer blocker described below is **solved for the timer path**.
+A wasm program can now create a `wasi:io/poll` pollable from a timer
+and block on it until ready, composed **standalone** (clocks + io/poll,
+no socket), running on the stock **wasmtime 34** the rest of the suite
+uses — pollables are Preview 2, so no Preview 3 / wasmtime upgrade was
+needed.
+
+- Builtins (Layer 1): `wasm_timer_pollable(duration_ns: i64): i32`
+  (→ `monotonic-clock.subscribe-duration`, returns the pollable) and
+  `wasm_block(pollable: i32): i32` (→ `pollable.block`). Wired in
+  `internal/codegen/wasmbin/` (import spec `wasi_clocks_subscribe_duration`,
+  helpers `__fern_wasm_timer_pollable` / `__fern_wasm_block`, scanImports,
+  CallDirectAliases) + `internal/checker` FuncSigs.
+- Composer (Layer 2): `ComposeRequest.Timer`, `ensureMonotonicTimer`
+  (pulls in `ensureIoPoll`, outer-aliases the surfaced `pollable` into
+  the clock instance so `subscribe-duration`'s `own<pollable>` is the
+  SAME resource `pollable.block` consumes), and
+  `WasiClocksMonotonicTimerInstanceTypeBody`. `classify.go` maps the
+  `subscribe-duration` import → `req.Timer`.
+- Tests: `internal/e2e/wasm_reactor_test.go` (compile → component →
+  wasmtime, timer block + timer-with-stdout), component bytes/validate,
+  checker sig test. Verified a 500ms timer actually blocks ~500ms.
+
+**Remaining for a true multiplexing reactor:** the list multiplexer
+`wasi:io/poll.poll(list<pollable>) -> list<u32>` (the wasm analog of
+the native `poll(fds)`), so N timers/socket-pollables can be awaited
+together and the first-ready resumed. That adds one method to the
+io/poll instance type (list param + list result via return area —
+mirror `fields.entries`) + a `wasm_poll` builtin, then the
+`IoStep[T]`-shaped scheduler over pollables. The hard cross-instance
+resource composition is already done; this is the next slice.
+
+## Layer 2 — component composer: THE BLOCKER (historical — now solved for timers)
 
 `fern -target wasm` wraps the emitted core module into a Preview-2
 **component** via `internal/wasm/component`. `ClassifyCore`

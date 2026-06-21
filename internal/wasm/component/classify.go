@@ -101,8 +101,14 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 			req.Udp = true
 		case m == "wasi:sockets/instance-network@0.2.0":
 			// consumed by the TCP / UDP shape; accepted implicitly
+		case m == "wasi:clocks/monotonic-clock@0.2.0" && n == "subscribe-duration":
+			// wasm reactor timer: returns own<pollable>. Composed
+			// standalone (clocks + io/poll) — see WASM-REACTOR-PLAN.md.
+			req.Timer = true
 		case m == "wasi:io/poll@0.2.0":
-			// consumed by the TCP shape; accepted implicitly
+			// consumed by the TCP shape / the reactor timer; accepted
+			// implicitly (the pollable.block / poll lowerings are added
+			// explicitly by the Tcp / Udp / Timer request paths).
 		case m == "wasi:http/types@0.2.0":
 			req.Http = true
 		default:
@@ -154,7 +160,7 @@ func RequestEmpty(req ComposeRequest) bool {
 	return !req.Stdout && !req.Stderr && !req.Stdin &&
 		!req.BlockWrite && !req.BlockRead && !req.DropInput && !req.DropOutput &&
 		!req.FileRead && !req.FileWrite && !req.FileAppend && !req.FileReadWrite &&
-		!req.Tcp && !req.Udp && !req.Http &&
+		!req.Tcp && !req.Udp && !req.Http && !req.Timer &&
 		!req.WallNow && !req.Args && !req.Env && len(req.Structured) == 0
 }
 

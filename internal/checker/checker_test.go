@@ -21,6 +21,21 @@ func checkSource(t *testing.T, src string) error {
 	return err
 }
 
+// The wasm reactor builtins (wasm_timer_pollable / wasm_block) are
+// registered as FuncSigs and type-check: wasm_timer_pollable takes an
+// i64 duration and returns an i32 pollable handle; wasm_block takes a
+// pollable and returns i32. (Runtime is wasm-only — Preview-2
+// pollables — but the signatures are checked on every backend.)
+func TestWasmReactorBuiltinSigs(t *testing.T) {
+	ok := `function main(): i32 {
+    var p: i32 = wasm_timer_pollable(1000000);
+    return wasm_block(p);
+}`
+	if err := checkSource(t, ok); err != nil {
+		t.Errorf("wasm reactor builtins should type-check, got: %v", err)
+	}
+}
+
 // A generic enum whose type parameter is determined by a payload at a
 // non-leading position — in particular a function-typed payload whose
 // result is the type parameter — must infer that parameter from the

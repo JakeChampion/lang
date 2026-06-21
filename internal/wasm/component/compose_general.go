@@ -198,6 +198,28 @@ func (g *gComposer) ensureTcpCreate() {
 	g.inst["wasi:sockets/tcp-create-socket@0.2.0"] = inst
 }
 
+// ensureMonotonicTimer imports wasi:clocks/monotonic-clock with just
+// the reactor's `subscribe-duration` func, which returns an
+// own<pollable>. It pulls in io/poll first and outer-aliases the
+// surfaced `pollable` resource into the clock instance type, so the
+// pollable subscribe-duration yields is the SAME resource the
+// io/poll block/poll methods consume — the cross-instance identity
+// the socket shapes already rely on, here without any socket.
+//
+// NOTE: a program that also uses monotonic-clock `now` (a scalar
+// Structured import on the same interface) would need a combined
+// instance type; that combination is not yet supported (the timer
+// path owns the interface). The reactor timer doesn't use `now`.
+func (g *gComposer) ensureMonotonicTimer() {
+	if _, ok := g.inst["wasi:clocks/monotonic-clock@0.2.0"]; ok {
+		return
+	}
+	g.ensureIoPoll()
+	inst := g.c.importInstance("wasi:clocks/monotonic-clock@0.2.0",
+		g.c.typeRaw(WasiClocksMonotonicTimerInstanceTypeBody(g.surfaced["pollable"])))
+	g.inst["wasi:clocks/monotonic-clock@0.2.0"] = inst
+}
+
 func (g *gComposer) ensureCliStdin() {
 	if _, ok := g.inst["wasi:cli/stdin@0.2.0"]; ok {
 		return

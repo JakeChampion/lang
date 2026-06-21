@@ -1224,6 +1224,25 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
+	// wasm_timer_pollable(duration_ns: i64): i32 — the wasm reactor's
+	// timer primitive. Returns a wasi:io/poll pollable handle that
+	// becomes ready after `duration_ns` nanoseconds (via
+	// wasi:clocks/monotonic-clock.subscribe-duration). The pollable
+	// analog of the native timer_fd; wasm-only (Preview-2). See
+	// docs/WASM-REACTOR-PLAN.md.
+	c.info.FuncSigs["wasm_timer_pollable"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// wasm_block(pollable: i32): i32 — synchronously block until the
+	// pollable handle is ready, then return 0. Wraps
+	// wasi:io/poll.pollable.block; wasm-only (Preview-2). The
+	// single-pollable wait; the list multiplexer (wasm_poll over
+	// wasi:io/poll.poll) follows.
+	c.info.FuncSigs["wasm_block"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	// udp_send(host, port, data): number — one-shot fire-and-forget UDP
 	// datagram. host is an IPv4 literal ("a.b.c.d"); binds an ephemeral
 	// local port, connects to host:port, sends data, and tears the

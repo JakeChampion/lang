@@ -2351,6 +2351,12 @@ var CallDirectAliases = map[string]string{
 	"now_unix_ms":  "__fern_now_unix_ms",
 	"monotonic_ns": "__fern_monotonic_ns",
 
+	// wasm reactor primitives (Preview-2 pollables): a timer
+	// pollable from monotonic-clock.subscribe-duration, and a
+	// blocking wait on a pollable. See docs/WASM-REACTOR-PLAN.md.
+	"wasm_timer_pollable": "__fern_wasm_timer_pollable",
+	"wasm_block":          "__fern_wasm_block",
+
 	// f64 math primitives that map to native wasm ops. sin /
 	// cos / log / exp / pow / round have no wasm-native shape
 	// and stay unimplemented in wasmbin for now (the WAT path
