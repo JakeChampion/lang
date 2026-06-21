@@ -198,6 +198,10 @@ pub function op_store(width: i32): Op {
     return Op { kind: "store", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 pub function op_alloc(): Op { return op0("alloc"); }
+// `ptr_width` pushes the target's heap-pointer width in BYTES — 8 on x86-64 /
+// arm64, 4 on wasm32 — a backend-resolved constant (NOT a baked-in literal, which
+// would corrupt wasm32 pointer arithmetic). Backs core/map's `__ptr_width()`.
+pub function op_ptr_width(): Op { return op0("ptr_width"); }
 
 // high-level array ops — layout-agnostic. The IR carries array SEMANTICS
 // (make / index / index-store / length / refcount read), not a byte layout;

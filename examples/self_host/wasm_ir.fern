@@ -816,6 +816,13 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
             out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
             out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        } else if (o.kind == "alloc") {
+            // stack: n -> bump-alloc n raw bytes, push the pointer (core/map's
+            // __alloc). $__fern_alloc is the wasm bump allocator (heap_alloc_helpers).
+            out = out + "    call $__fern_alloc\n";
+        } else if (o.kind == "ptr_width") {
+            // () -> heap-pointer width in bytes. 4 on wasm32 (NOT 8).
+            out = out + "    i32.const 4\n";
         } else if (o.kind == "load_local") {
             out = out + "    local.get " + util.i32_to_string(o.i32_imm) + "\n";
         } else if (o.kind == "store_local") {

@@ -4697,6 +4697,21 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!au.ok) { return au; }
                         return au.emit(ir.op_alloc_u8());
                     }
+                    // __alloc(n): bump-alloc n raw bytes, push the usize pointer (the
+                    // core/map runtime's allocator). op_alloc is the bare-pointer
+                    // sibling of op_alloc_u8 (which builds an array box) — both call
+                    // the backend's __fern_alloc.
+                    if (cid.name == "__alloc" && c.args.len() == 1) {
+                        var al: LowerState = lower_expr(c.args[0], s);
+                        if (!al.ok) { return al; }
+                        return al.emit(ir.op_alloc());
+                    }
+                    // __ptr_width(): the target's heap-pointer width in bytes (8 on
+                    // x86-64 / arm64, 4 on wasm32). Backend-resolved so wasm32's
+                    // pointer arithmetic uses 4, not a baked-in 8.
+                    if (cid.name == "__ptr_width" && c.args.len() == 0) {
+                        return s.emit(ir.op_ptr_width());
+                    }
                     // __memcpy(dst, src, n): raw byte copy. Lower the three
                     // usize/i32 operands (dst, src, n) then emit op_memcpy, which
                     // the IR backends select rep movsb / a byte loop / memory.copy
