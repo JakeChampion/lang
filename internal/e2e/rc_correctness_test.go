@@ -21,6 +21,28 @@ var rcCorpus = []struct {
 	src  string
 }{
 	{
+		// String struct field, aliased across two structs + a live local,
+		// then all dropped. Exercises the native single-word x86-64
+		// string-field reclaim (__drop_struct_<N> → __fern_str_dec): the
+		// field-init alias-incs balance the per-struct frees so the shared
+		// buffer is freed exactly once (no over-release). cat() defeats
+		// constant-folding so the concat is a real heap string.
+		name: "struct_string_field_aliased",
+		src: `
+import "core/int";
+import "std/string";
+struct H { name: string, n: i32 }
+function cat(a: string, b: string): string { return a + b; }
+function use2(p: H, q: H): i32 { return p.name.len() + q.name.len(); }
+function main(): i32 {
+    var s: string = cat("abc", "defgh");
+    var a: H = H { name: s, n: 1 };
+    var b: H = H { name: s, n: 2 };
+    var total: i32 = use2(a, b) + s.len();
+    return (total - 24) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Array of structs: build, read back, drop at exit.
 		name: "array_of_structs",
 		src: `

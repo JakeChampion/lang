@@ -8172,17 +8172,17 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 		}
 		if isNativeStr {
 			// Native single-word string field (x86_64, !TwoWordOverride):
-			// load the single data pointer and reclaim via __fern_rc_dec
-			// (SSO inline-tag low-bit guard + literal sentinel keep all
-			// sources safe). This mirrors the inline exit-sweep struct
-			// branch (emitDec) and appendChildDrop's native-string case;
-			// without it __drop_struct_<N> leaked every native string
-			// field, so a string-bearing struct routed through the
-			// generated drop (nested field / overwrite / consumed param)
-			// over-counted its string buffers forever.
+			// load the single data pointer and reclaim via __fern_str_dec
+			// — at the struct's last reference, and only when the field's
+			// own rc hits 1, the heap buffer is freed (size at data-4);
+			// inline-SSO / literal / sentinel / shared (rc>1) sources defer
+			// to __fern_rc_dec. The field was retained on construction
+			// (field-init emitAliasInc → __fern_rc_inc when the initialiser
+			// aliases, or moved in when fresh-owned), so this free is
+			// exactly balanced. Mirrors the two-word str_dec branch above.
 			ops = append(ops, Op{Kind: OpLoad, Width: WidthPtr})
 			ops = append(ops,
-				Op{Kind: OpCallDirect, Str: "__fern_rc_dec", I32: 1},
+				Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1},
 				Op{Kind: OpDrop})
 			continue
 		}
