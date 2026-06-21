@@ -104,3 +104,64 @@ pub function run_io(states_in: IoStep[]): i32[] {
     }
     return results;
 }
+
+// run_io_deadline(states, deadline_ms) — like run_io, but the whole
+// fan-out must finish within `deadline_ms` wall-clock milliseconds.
+// This is the reactor's timeout primitive (docs/CONCURRENCY-RESEARCH.md
+// Rec §5 / ASYNC-IMPLEMENTATION-PLAN.md Phase 5): it bounds `poll` to
+// the time remaining (`monotonic_ns` tracks elapsed across rounds), so
+// a task whose fd never becomes ready in time is abandoned — its slot
+// in the returned results is -1, exactly like a cancelled `select`
+// loser. Tasks that complete before the deadline carry their result.
+//
+// Edge handlers want this for happy-eyeballs with an upper bound:
+// fan out to N upstreams, take whatever answers within the SLA, drop
+// the stragglers.
+pub function run_io_deadline(states_in: IoStep[], deadline_ms: i32): i32[] {
+    var states: IoStep[] = states_in;
+    var start_ns: i64 = monotonic_ns();
+    var ns_per_ms: i64 = 1000000;
+    var deadline_ns: i64 = (deadline_ms as i64) * ns_per_ms;
+    while (true) {
+        if (__io_all_done(states)) { break; }
+        var fds: i32[] = [];
+        var idxs: i32[] = [];
+        var i: i32 = 0;
+        while (i < states.len()) {
+            match (states[i]) {
+                IoDone(v) => { },
+                IoWait(fd, c) => {
+                    fds = fds.append(fd);
+                    idxs = idxs.append(i);
+                },
+            }
+            i = i + 1;
+        }
+        var remaining_ns: i64 = deadline_ns - (monotonic_ns() - start_ns);
+        if (remaining_ns <= 0) { break; } // deadline reached
+        var remaining_ms: i32 = (remaining_ns / ns_per_ms) as i32;
+        if (remaining_ms <= 0) { remaining_ms = 1; } // sub-ms left: poll once
+        var ready: i32 = poll(fds, remaining_ms);
+        if (ready < 0) { break; } // poll timed out (deadline) or errored
+        var ti: i32 = idxs[ready];
+        var st: IoStep = states[ti];
+        match (st) {
+            IoDone(v) => { },
+            IoWait(fd, resume) => {
+                states = states.with(ti, resume(fd));
+            },
+        }
+    }
+    // Completed tasks carry their result; still-waiting tasks timed out
+    // and land -1.
+    var results: i32[] = [];
+    var k: i32 = 0;
+    while (k < states.len()) {
+        match (states[k]) {
+            IoDone(v) => { results = results.append(v); },
+            IoWait(fd, c) => { results = results.append(-1); },
+        }
+        k = k + 1;
+    }
+    return results;
+}
