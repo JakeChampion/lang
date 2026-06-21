@@ -908,6 +908,65 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
+    // __fern_reader_read_chunk(%rdi = fd, %rsi = n) → Option[string] (Some(chunk)
+    // [tag=0, strbox@8] / None [tag=1] at EOF), and __fern_reader_close(%rdi = fd)
+    // → Option[IoError] (always None). Transcribed verbatim from asm.fern's
+    // emit_runtime so the IR path's stdin/Reader code calls the identical bodies
+    // (the per-module entry exports the symbols via emit_runtime_globls). Gated on
+    // the reader need; calls __fern_alloc. Backs the std/io read_all_stdin loop.
+    if (s.has_need("reader")) {
+        s = s.write("__fern_reader_read_chunk:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    pushq %r13\n");
+        s = s.write("    pushq %r14\n");
+        s = s.write("    movq %rdi, %rbx\n");
+        s = s.write("    movq %rsi, %r12\n");
+        s = s.write("    movq %r12, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %r13\n");
+        s = s.write("    movq %rbx, %rdi\n");
+        s = s.write("    movq %r13, %rsi\n");
+        s = s.write("    movq %r12, %rdx\n");
+        s = s.write("    movq $0, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    cmpq $0, %rax\n");
+        s = s.write("    jle .Lirc_none\n");
+        s = s.write("    movq %rax, %r12\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %r13, (%rax)\n");
+        s = s.write("    movq %r12, 8(%rax)\n");
+        s = s.write("    movq %rax, %r13\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $0, (%rax)\n");
+        s = s.write("    movq %r13, 8(%rax)\n");
+        s = s.write("    jmp .Lirc_ret\n");
+        s = s.write(".Lirc_none:\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $1, (%rax)\n");
+        s = s.write(".Lirc_ret:\n");
+        s = s.write("    popq %r14\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+        s = s.write("__fern_reader_close:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    movq $3, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $1, (%rax)\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+    }
     // __fern_read_file: %rdi = path string box → Result[string, IoError] box
     // [tag@0, payload@8] (tag=0 Ok(contents) / tag=1 Err(_)). NUL-terminates the
     // path, openat(AT_FDCWD, path, O_RDONLY=0)=257, lseek-sizes the file (=8),
@@ -2675,6 +2734,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_str_ends_with", "__fern_str_index_of", "__fern_print_str",
         "__fern_print_int", "__fern_eprint_str", "__fern_putchar",
         "__fern_read_int", "__fern_read_line", "__fern_read_file",
+        "__fern_reader_read_chunk", "__fern_reader_close",
         "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
         "__fern_strbuf_reset", "__fern_strbuf_take", "__fern_random_i32",
         "__fern_random_bytes", "__fern_monotonic_ns", "__fern_now_ns",
@@ -3133,6 +3193,17 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // path string box is the popped %rdi arg.
             s = s.write("    popq %rdi\n    call __fern_read_file\n    pushq %rax\n");
             s = s.need("heap").need("read_file");
+        } else if (o.kind == "read_chunk") {
+            // [fd][n] -> read up to n bytes from the Reader fd, push a fresh
+            // Option[string] box (Some(chunk) / None at EOF). Reuses the AST path's
+            // __fern_reader_read_chunk (which allocates). n on TOS, fd below.
+            s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_reader_read_chunk\n    pushq %rax\n");
+            s = s.need("heap").need("reader");
+        } else if (o.kind == "reader_close") {
+            // [fd] -> close the Reader fd, push a fresh Option[IoError] (None on
+            // success). Reuses the AST path's __fern_reader_close (which allocates).
+            s = s.write("    popq %rdi\n    call __fern_reader_close\n    pushq %rax\n");
+            s = s.need("heap").need("reader");
         } else if (o.kind == "args") {
             // no args -> build a fresh string[] of the command-line arguments (the
             // AST path's __fern_args, which allocates). The args need also makes the
@@ -3778,7 +3849,7 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     // The freestanding allocator + RC runtime, only when the program allocates.
     // i32.to_string() allocates its box even in an otherwise heap-free program,
     // so its emit-time need pulls the runtime in too (its body calls __fern_alloc).
-    if (s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("print_int") || s.has_need("read_int") || s.has_need("str_read_line") || s.has_need("putchar") || s.has_need("strbuf")) { s = emit_ir_runtime(s); }
+    if (s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("print_int") || s.has_need("read_int") || s.has_need("str_read_line") || s.has_need("putchar") || s.has_need("strbuf") || s.has_need("reader")) { s = emit_ir_runtime(s); }
     // String search predicates (starts_with / ends_with / index_of) are
     // allocation-free + self-contained, so they're emitted in their own helper
     // — kept OUT of emit_ir_runtime, whose size is near the self-host's

@@ -4925,6 +4925,14 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     if (cid.name == "read_int" && c.args.len() == 0) {
                         return s.emit(ir.op_read_int());
                     }
+                    // Built-in `stdin()` — returns a Reader. As in the AST backend
+                    // (asm.fern), a Reader is just its fd, and fd 0 is stdin; so the
+                    // value is the i32 constant 0. The `r.read_chunk(n)` / `r.close()`
+                    // methods take that fd directly (see the method-call interception).
+                    // No wasm stdin support, so wasm_eligible rejects read_chunk modules.
+                    if (cid.name == "stdin" && c.args.len() == 0) {
+                        return s.emit(ir.op_const_i32(0));
+                    }
                     // Built-in `read_line()` — read one line from stdin, return a
                     // fresh string box. A value op; the binding str-tracks the
                     // result (expr_is_str's read_line case). No wasm stdin support,
@@ -5147,6 +5155,32 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     return s.fail();
                 },
                 parser.ExprFieldAccess(fa) => {
+                    // Reader.read_chunk(n) / Reader.close() — built-in resource
+                    // intrinsics. A Reader is just its fd (an i32; see stdin()), so
+                    // the receiver lowers as a plain i32 and the result is a fresh
+                    // Option box: read_chunk → Option[string] (Some(chunk) / None at
+                    // EOF), close → Option[IoError]. Mirrors asm.fern's
+                    // emit_method_call, but gated to a non-struct / non-enum /
+                    // non-string / non-array receiver so a user `.close()` on a real
+                    // struct still routes to struct-method dispatch below (the AST
+                    // backend intercepts unconditionally; this is strictly safer). No
+                    // wasm stdin, so wasm_eligible rejects read_chunk/reader_close.
+                    if ((fa.field == "read_chunk" || fa.field == "close")
+                        && !decl_is_struct(s.structs, expr_struct_type(fa.obj, s)) && expr_enum_type(fa.obj, s) == ""
+                        && !expr_is_str(fa.obj, s) && !expr_is_arr_src(fa.obj, s)) {
+                        if (fa.field == "read_chunk" && c.args.len() == 1) {
+                            var rcs: LowerState = lower_expr(fa.obj, s);
+                            if (!rcs.ok) { return rcs; }
+                            rcs = lower_expr(c.args[0], rcs);
+                            if (!rcs.ok) { return rcs; }
+                            return rcs.emit(ir.op_read_chunk());
+                        }
+                        if (fa.field == "close" && c.args.len() == 0) {
+                            var rcl: LowerState = lower_expr(fa.obj, s);
+                            if (!rcl.ok) { return rcl; }
+                            return rcl.emit(ir.op_reader_close());
+                        }
+                    }
                     // A function-VALUE tuple element call `t.N(args)` — `t.N` is a
                     // numeric tuple index whose element is a fn value (tagged "fn"
                     // at construction by elem_type_tag). Lower the args, then the
@@ -5913,6 +5947,15 @@ function try_opt_type(inner: parser.Expr, s: LowerState): string {
                     return rt;
                 },
                 parser.ExprFieldAccess(scfa) => {
+                    // Reader.read_chunk(n) → Option[string] (the built-in resource
+                    // intrinsic; gated like lower_expr's interception to a non-struct
+                    // / non-enum / non-string / non-array receiver so the scrutinee
+                    // type agrees with what actually lowers to op_read_chunk).
+                    if (scfa.field == "read_chunk" && !decl_is_struct(s.structs, expr_struct_type(scfa.obj, s))
+                        && expr_enum_type(scfa.obj, s) == "" && !expr_is_str(scfa.obj, s)
+                        && !expr_is_arr_src(scfa.obj, s)) {
+                        return "Option[string]";
+                    }
                     if (scfa.field == "get") {
                         match (scfa.obj) {
                             parser.ExprIdent(mapid) => {
@@ -9903,8 +9946,17 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                                 if (srt == "") { srt = some_opt_type(m.scrutinee, ms); }
                                             },
                                             parser.ExprFieldAccess(scfa) => {
+                                                // Reader.read_chunk(n) → Option[string] (built-in resource
+                                                // intrinsic; gated like lower_expr's interception to a
+                                                // non-declared-struct / non-enum / non-string / non-array
+                                                // receiver). The Some payload binds as a string (mark_str).
+                                                if (scfa.field == "read_chunk" && !decl_is_struct(ms.structs, expr_struct_type(scfa.obj, ms))
+                                                    && expr_enum_type(scfa.obj, ms) == "" && !expr_is_str(scfa.obj, ms)
+                                                    && !expr_is_arr_src(scfa.obj, ms)) {
+                                                    srt = "Option[string]";
+                                                }
                                                 // `m.get(k)` evaluates to Option[V] (V = the map's value type).
-                                                if (scfa.field == "get") {
+                                                if (srt == "" && scfa.field == "get") {
                                                     match (scfa.obj) {
                                                         parser.ExprIdent(mapid) => {
                                                             var vt: string = map_value_of(ms.map_type_of(ms.slot_of(mapid.name)));
