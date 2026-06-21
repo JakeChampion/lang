@@ -252,3 +252,36 @@ impl Debug for string {
         return out + "\"";
     }
 }
+
+// ---- Generic Ord helpers ---------------------------------------
+// Free functions over any `T: Ord`, derived from the single `cmp`
+// primitive — so they work for the integer/string impls above and for
+// any user `Ord` type (incl. `@derive(Ord)`). A bounded generic whose
+// body calls `a.cmp(b)` monomorphises to a direct call, so these lower
+// on the self-host IR path too (#2691 / #3558).
+
+// min returns the smaller of `a` and `b` (`a` when equal).
+pub function min[T: Ord](a: T, b: T): T {
+    if (b.cmp(a) < 0) { return b; }
+    return a;
+}
+
+// max returns the larger of `a` and `b` (`a` when equal).
+pub function max[T: Ord](a: T, b: T): T {
+    if (a.cmp(b) < 0) { return b; }
+    return a;
+}
+
+// clamp constrains `x` to the inclusive range [lo, hi]. Assumes lo <= hi.
+pub function clamp[T: Ord](x: T, lo: T, hi: T): T {
+    if (x.cmp(lo) < 0) { return lo; }
+    if (x.cmp(hi) > 0) { return hi; }
+    return x;
+}
+
+// lt / lte / gt / gte are the named relational forms of `cmp`, for call
+// sites that read better than a bare `a.cmp(b) < 0`.
+pub function lt[T: Ord](a: T, b: T): boolean { return a.cmp(b) < 0; }
+pub function lte[T: Ord](a: T, b: T): boolean { return a.cmp(b) <= 0; }
+pub function gt[T: Ord](a: T, b: T): boolean { return a.cmp(b) > 0; }
+pub function gte[T: Ord](a: T, b: T): boolean { return a.cmp(b) >= 0; }
