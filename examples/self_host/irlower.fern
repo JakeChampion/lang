@@ -13104,11 +13104,9 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // (#3466) dispatches it env-first, and the map op never calls the param, so no
     // method-param marking is required. #3445.
     var fpm: i32 = 0;
-    if (fn.receiver_type.len() == 0) {
-        while (fpm < fn.params.len()) {
-            if (fn.params[fpm].type_name == "fn") { s = s.mark_closure_local(fn.params[fpm].name); }
-            fpm = fpm + 1;
-        }
+    while (fpm < fn.params.len()) {
+        if (fn.params[fpm].type_name == "fn") { s = s.mark_closure_local(fn.params[fpm].name); }
+        fpm = fpm + 1;
     }
     // Perceus precise drops: release each linear, owned array-literal local right
     // after its last top-level use (drop-on-last-use), instead of at the exit
@@ -15967,7 +15965,7 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                 } else if (!is_mkclo && cnm.len() > 0 && lift_callee_param_is_fn(mfuncs, cnm, ai)) {
                     var fr: InlineCloRes = try_fn_field_value(call.args[ai], fd, fs, ct, gfns, mfuncs);
                     fs = fr.funcs; ct = fr.counter; nargs = nargs.append(fr.expr);
-                } else if (mfield.len() > 0 && lift_method_arg_is_fn(call.args[ai], mfield, ai, mfuncs)) {
+                } else if (mfield.len() > 0 && (lift_callee_param_is_fn(mfuncs, mfield, ai) || lift_method_arg_is_fn(call.args[ai], mfield, ai, mfuncs))) {
                     // Method-call fn-value argument (`m.set(1, <lambda>)`): wrap into
                     // the env box so the stored / called value is a uniform box. #3445.
                     var mr: InlineCloRes = try_fn_field_value(call.args[ai], fd, fs, ct, gfns, mfuncs);
@@ -16350,7 +16348,16 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
     // capture resolves because the outer lift turns the captured outer var into a
     // PARAM of the lifted function, which the inner lift sees as an ordinary
     // param. Each round strips one nesting level, so the worklist terminates.
-    var worklist: parser.FuncDecl[] = mod.funcs;
+    // COPY mod.funcs into a fresh worklist rather than aliasing it: the drain
+    // below (`worklist = worklist.append(...)`) must not mutate the caller's
+    // `mod.funcs`. The Go backend's append reallocates (so mod is untouched),
+    // but the self-host backend appends into the shared backing array in place,
+    // so aliasing here leaks lifted `$wrap`/`$clo` trampolines back into the
+    // input module — which the AST emit path (`emit_module` loops `mod.funcs`)
+    // then emits, diverging the byte-identical self-host fixpoint. (#3445)
+    var worklist: parser.FuncDecl[] = [];
+    var wlcp: i32 = 0;
+    while (wlcp < mod.funcs.len()) { worklist = worklist.append(mod.funcs[wlcp]); wlcp = wlcp + 1; }
     var wi: i32 = 0;
     while (wi < worklist.len()) {
         var fd: parser.FuncDecl = worklist[wi];
