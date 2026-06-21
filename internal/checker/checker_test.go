@@ -21,6 +21,32 @@ func checkSource(t *testing.T, src string) error {
 	return err
 }
 
+// TestUnannotatedBigLiteralDefaultsToI64 covers #3676: an unannotated integer
+// literal that doesn't fit i32 defaults to i64 (option 2), not the usual i32.
+// The inferred type is asserted indirectly through assignability — a binding
+// whose value is past i32 range is i64, so storing it into an i32 slot is
+// rejected (E003), while a small literal stays i32 and assigns fine, and an
+// i64 slot accepts it.
+func TestUnannotatedBigLiteralDefaultsToI64(t *testing.T) {
+	// Past i32 max → i64, so i64-context assignment is fine...
+	if err := checkSource(t, `function main(): i32 { var x = 2147483648; var y: i64 = x; return (y / 1000000000) as i32; }`); err != nil {
+		t.Errorf("big unannotated literal should be i64 (assignable to i64), got: %v", err)
+	}
+	// ...but i32-context assignment is now an error (no implicit narrowing).
+	err := checkSource(t, `function main(): i32 { var x = 2147483648; var y: i32 = x; return y; }`)
+	if err == nil || !strings.Contains(err.Error(), "i64") {
+		t.Errorf("big unannotated literal in i32 slot should error with i64 mention, got: %v", err)
+	}
+	// A literal that fits i32 still defaults to i32 (unchanged) — assigns fine.
+	if err := checkSource(t, `function main(): i32 { var x = 5; var y: i32 = x; return y; }`); err != nil {
+		t.Errorf("small unannotated literal should stay i32, got: %v", err)
+	}
+	// A negative literal past i32 min also widens to i64.
+	if err := checkSource(t, `function main(): i32 { var x = -5000000000; var y: i64 = x; return (y / 1000000000) as i32; }`); err != nil {
+		t.Errorf("big negative unannotated literal should be i64, got: %v", err)
+	}
+}
+
 // The wasm reactor builtins (wasm_timer_pollable / wasm_block) are
 // registered as FuncSigs and type-check: wasm_timer_pollable takes an
 // i64 duration and returns an i32 pollable handle; wasm_block takes a
