@@ -5,6 +5,38 @@ Status: design / blueprint. The measurement that motivates it is in
 `docs/IR-SELFCOMPILE-OOM-FINDINGS.md` (Finding 2 + the quantified
 breakdown).
 
+## Routes tested (all mergeable ops fixes are blocked)
+
+Every localized ops fix has now been built and run; all are blocked, for
+the same reason:
+
+| route | cmd/fern result | fixpoint |
+| --- | --- | --- |
+| `OpsBuilder` recursive-union cons-list | works (#3554) | FAIL — gen2 miscompiles |
+| chunked `ir.Op[][]` (Plan B) | works, 536→419 MB | FAIL — gen2 miscompiles `add`→0 |
+| **clean main** + raise the 512-fn cap (compiler self-compiles via **IR**) | — | FAIL — stage-1 **exit 137 (OOM)** at 3.875 GiB |
+| Plan B + raised cap | — | stage-1 **segfault** (an `Op[][]` IR-path bug, distinct from the OOM) |
+
+The key result is the third row: on **clean main**, the IR path **can**
+compile the whole compiler — it just **runs out of memory** (exit 137,
+the documented reason for the cap). So the cap is gated on *memory*, and
+**reducing Effect-A memory enough lifts it** — at which point the
+compiler self-compiles through the IR path (which lowers unions / nested
+arrays correctly) and the localized ops fixes (`OpsBuilder`, `Op[][]`)
+all become mergeable. This is self-reinforcing: the dominant `local_*`
+70 % is exactly the memory that has to come down, and bringing it down is
+*also* what unblocks every other fix.
+
+So there are two ways through, and they converge:
+
+1. **Plan A** — separate plain-`ir.Op[]` (and `local_*`) threading; works
+   under the AST fallback today, ~100 % of Effect A.
+2. **Cut the IR self-compile's peak below 3.875 GiB** (chiefly the
+   `local_*` 70 %, via the same in-place/side-table rework) so the cap
+   lifts; then the localized union/nested-array fixes merge for free.
+
+Both routes are the same `local_*` in-place rework at their core.
+
 ## The target
 
 The self-compile's super-linear memory (Effect A) is, by measurement:
