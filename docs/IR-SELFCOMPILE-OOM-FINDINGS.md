@@ -147,8 +147,25 @@ a live local, returns 0 = correct value **and** zero
 `__rc_underflow_count`), by the freelist/recycle harness, and under
 `RcFreeDebug` poison mode (the UAF detector traps on any stale access;
 the aliasing stress stays clean). `TestLowerStringStructFieldReclaim
-OnNative` pins the codegen. This is the highest-value site for the
-self-compile — `Op.kind` / `Op.str` are struct string fields.
+OnNative` pins the codegen.
+
+**Measured self-compile impact: ~none (yet).** A 500×20 generated module
+self-compiled by the `asm_run` driver is **1100 MB before and after**
+this slice; a pure-i32 500×20 module is 662 MB, so strings account for
+~438 MB — but that ~438 MB is **not** captured here. Two reasons, both
+upstream of the struct-field drop: (1) the dominant string locals are
+**bare `var s = …` locals**, which native does not drop at all yet (no
+exit-sweep / reinit free — see "Remaining sites" below); and (2) the
+compiler's own `Op.kind` / `Op.str` fields live in `Op` structs that are
+**never dropped** in the self-compile — they sit in the cloned / threaded
+`LowerState` op arrays that leak under Effect A (Finding 2), so
+`__drop_struct_Op` is not reached. So this slice is a correct,
+general-purpose win (any program that *drops* a string-bearing struct now
+reclaims the buffer — `91 MB → 9 MB` above), but the **self-compile**
+string win is gated on (a) the bare-local drop slice and (b) dropping the
+`Op` containers (Effect A). The earlier "highest-value site for the
+self-compile" framing was optimistic — corrected here against
+measurement.
 
 **Remaining native string drop sites** (each its own incremental,
 poison-validated slice): the function-exit sweep / reinit drop of a bare
