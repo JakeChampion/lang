@@ -1559,3 +1559,83 @@ suite that exercises `<io>` / `<throws>` / `<state>`
 patterns. That's the right moment to prototype the
 effect-row checker rules and see if they catch
 anything real.
+
+### Concurrency: structured fan-out over a stackless task runtime
+
+Sources:
+- `docs/ASYNC-IMPLEMENTATION-RESEARCH.md` (Koka / Lean 4 / Roc /
+  AOT+WASM mechanics)
+- `docs/CONCURRENCY-RESEARCH.md` (the menu + the chosen surface)
+- `docs/ASYNC-IMPLEMENTATION-PLAN.md` (the phased build)
+
+The standing decision (Rec §10 of `CONCURRENCY-RESEARCH.md` asks
+this be recorded here once the surface lands — it has):
+
+**The decision.** Fern gets **colorless structured concurrency**:
+a `concurrent { … }` block fans out `spawn`ed tasks whose I/O
+overlaps on one thread, joined with `await` inside the block's
+scope. It is implemented as a **stackless CPS / state-machine**
+shape (`std/task`: a task is uniformly a `Step = Done(i32) |
+Wait(token, resume)`, the continuation capturing its live frame),
+driven by a **single-threaded readiness reactor** that lives in
+the platform/stdlib layer (the "host owns the loop" insight from
+Roc, kept in-binary). No function coloring — suspension is a
+property of the block, not the function signature.
+
+```fern
+concurrent {
+    var a = spawn fetch(plat, url_a);
+    var b = spawn fetch(plat, url_b);
+    return combine(await a, await b);
+}
+```
+
+**What we took.**
+- *Stackless continuations* (Rust/C#/old-Zig/Koka-default): a pure
+  IR/source transform — one shape that compiles unchanged on
+  x86-64, arm64, and wasm32 (verified). No per-arch assembly.
+- *Structured concurrency* (Trio nurseries / Swift task groups /
+  Kotlin scopes): tasks are confined to the block; results don't
+  leak; `select` cancels losers by simply not resuming them (RC
+  reclaims the dropped continuation — one-shot, the cheap case).
+- *Host-owned event loop* (Roc): the reactor is platform glue over
+  one `poll` primitive, not baked into codegen.
+
+**What we left.**
+- *Stackful green threads* (Go goroutines): mandatory always-linked
+  scheduler+GC, ~1 MB binary floor, per-ABI stack-switch assembly,
+  no WASM story. Cold-start hostile — wrong for edge handlers.
+- *Function coloring* (Rust/JS/Python async): the red/blue split
+  infects the stdlib. We take Rust's *mechanism* (state machines)
+  without the colored *ergonomics*.
+- *A general algebraic-effect system as the way in* — see the
+  effects entry above. Effects are the eventual colorless
+  substrate (Koka/OCaml 5 prove direct-style async compiles AOT on
+  the same Perceus RC), but they're heavier than the cheapest
+  first step; concurrency arrives as a concrete surface first,
+  effects subsume it later.
+- *Multi-core parallelism in the language surface.* Edge handlers
+  need concurrency (overlap I/O waits), not parallelism. Within a
+  handler the model is single-threaded interleaving — two tasks
+  share locals freely because only their suspension points
+  interleave. Parallelism (if ever) is a host-scheduler concern.
+
+**What's shipped vs pending.** The pure-Fern runtime (fan-out,
+multi-await, `select`/cancellation) and the `concurrent`/`spawn`/
+`await` surface are live on the **Go compiler** (interp / x86-64 /
+arm64; wasm compiles). Pending: the suspending-`await` CPS
+transform (drops today's `(Reactor) -> (Step, Reactor)` spawn-target
+protocol leak), the real syscall reactor (`poll(2)`/`epoll`/
+`wasi:io/poll` — makes I/O real), `plat.fetch` as the first real
+awaitable, and the self-hosted-compiler path (blocked on the
+fn-typed-enum-payload codegen gap, `docs/SELF-HOST-FN-PAYLOAD-VARIANT-GAP.md`).
+
+**When to revisit.** (a) When a real handler needs two parallel
+fetches doing *real* network I/O — that's the trigger for the
+syscall reactor + `plat.fetch`. (b) When suspending `await` in
+arbitrary control flow (loops, conditionals) is wanted — the full
+body-splitting CPS transform. (c) When a single handler invocation
+legitimately benefits from multi-core CPU parallelism (likely never
+for edge handlers; possibly for CLI data-processing) — revisit the
+single-threaded-within-a-handler constraint. (d) When the effect-row
+work (above) matures — fold concurrency into it as one effect.
