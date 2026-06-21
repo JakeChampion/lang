@@ -1006,6 +1006,20 @@ verified against native interp + x86-64) and have a native `url_codec` fixture
 the `string_from_bytes(u8[])` builtin — all already lower, so no compiler change.
 (`url_parse` / `query_parse`, which build a `Map`, are left for a later slice.)
 
+### 2026-06-21 — std/sort: `sort_by_i32_key` (sort by a numeric projection) ([#2686](https://github.com/JakeChampion/lang/issues/2686))
+
+`sort_by_i32_key[T](arr: T[], key: (T) => i32): T[]` — the common "sort records
+by a numeric field" case (`sort_by_i32_key(rows, \r -> r.timestamp)`) without
+spelling a full comparator. Keys are computed ONCE up front into a parallel i32
+array (a Schwartzian transform — each `key` evaluated a single time), then
+elements and keys are insertion-sorted together by the precomputed key. Correct
+on every backend (interp/x86-64/wasm/arm64 + self-host); on the self-host it
+currently lowers via the **AST** emitter, not the IR path — a closure-typed
+param over a generic `T[]` isn't yet IR-eligible there (a self-host codegen
+follow-up). Coverage: `TestNativeSortByI32Key{,Arm64}` (shipped `import
+"std/sort"`) + `TestSelfHostSortByI32Key` (behaviour-asserted). Self-host
+fixpoint byte-identical (22534765 bytes).
+
 ### 2026-06-21 — std/sort: generic comparator `sort_by` / `is_sorted_by` ([#2686](https://github.com/JakeChampion/lang/issues/2686))
 
 `sort_by[T](arr: T[], cmp: (T, T) => i32): T[]` (stable insertion sort) and
