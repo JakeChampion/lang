@@ -45,6 +45,12 @@ type ComposeRequest struct {
 	// native poll(fds) readiness multiplexer.
 	Poll bool
 
+	// Reactor pollable drop: wasi:io/poll.[resource-drop]pollable, so
+	// the reactor frees a consumed timer pollable. Only added on the
+	// standalone (timer / poll) path — the socket paths emit their own
+	// pollable drop, so the lowering is gated to avoid a duplicate.
+	PollableDrop bool
+
 	// Standalone CLI capabilities. WallNow is wasi:clocks/wall-clock.now
 	// (a memory trampoline). Args / Env are wasi:cli/environment
 	// get-arguments / get-environment (memory+realloc, shared interface).
@@ -105,6 +111,11 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 	if req.Poll {
 		// The multiplexer needs the io/poll instance surfaced even
 		// when no socket / timer pulled it in (a poll-only program).
+		g.ensureIoPoll()
+	}
+	if req.PollableDrop && !req.Tcp && !req.Udp {
+		// Standalone reactor drop needs the io/poll instance + the
+		// pollable resource surfaced (sockets already do this).
 		g.ensureIoPoll()
 	}
 
@@ -233,6 +244,11 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 		// list result via return area — memory + realloc lowering,
 		// like fields.entries / get-arguments.
 		g.add(gImport{iface: "wasi:io/poll@0.2.0", name: "poll", kind: gMemRealloc, params: repeatI32(3)})
+	}
+	if req.PollableDrop && !req.Tcp && !req.Udp {
+		// Standalone reactor pollable drop. Gated off Tcp/Udp, which
+		// already declare [resource-drop]pollable in their blocks.
+		g.add(gImport{iface: "wasi:io/poll@0.2.0", name: "[resource-drop]pollable", kind: gDrop, resourceT: g.surfaced["pollable"]})
 	}
 
 	// Filesystem open-chain lowerings.

@@ -189,6 +189,9 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__fern_wasm_block":
 					// wasm reactor: block on a pollable.
 					needs.add("__fern_wasm_block")
+				case "__fern_wasm_pollable_drop":
+					// wasm reactor: drop a consumed pollable.
+					needs.add("__fern_wasm_pollable_drop")
 				case "__fern_wasm_poll":
 					// wasm reactor multiplexer: poll(list<pollable>).
 					// Needs alloc for the 8-byte return area, and
@@ -859,6 +862,16 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildWasmBlockBody,
+	},
+	"__fern_wasm_pollable_drop": {
+		// (pollable: i32) → i32 — drop a pollable handle, then return
+		// 0. Lets the reactor free a consumed timer pollable instead
+		// of leaking it until component exit. Preview-2-only (wraps
+		// wasi:io/poll.[resource-drop]pollable); see
+		// buildWasmPollableDropBody.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildWasmPollableDropBody,
 	},
 	"__fern_wasm_poll": {
 		// (pollables: i32[]) → i32 — the reactor multiplexer. Blocks

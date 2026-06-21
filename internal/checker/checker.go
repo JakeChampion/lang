@@ -1250,6 +1250,14 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 32, Signed: true}}},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
+	// wasm_pollable_drop(pollable: i32): i32 — drop a consumed pollable
+	// handle (returns 0), so the reactor frees a fired timer pollable
+	// instead of leaking it until exit. Wraps
+	// wasi:io/poll.[resource-drop]pollable; wasm-only (Preview-2).
+	c.info.FuncSigs["wasm_pollable_drop"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	// udp_send(host, port, data): number — one-shot fire-and-forget UDP
 	// datagram. host is an IPv4 literal ("a.b.c.d"); binds an ephemeral
 	// local port, connects to host:port, sends data, and tears the

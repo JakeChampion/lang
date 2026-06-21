@@ -1135,6 +1135,10 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		// Preview-2-only: multiplex a list of pollables.
 		in.add("wasi_io_poll_poll")
 	}
+	if helpers.set["__fern_wasm_pollable_drop"] {
+		// Preview-2-only: drop a consumed pollable handle.
+		in.add("wasi_io_pollable_drop")
+	}
 	if helpers.set["__fern_env_count"] {
 		in.add("wasi_environ_sizes_get")
 	}
@@ -1906,6 +1910,21 @@ func buildWasmBlockBody(idxs map[string]uint32) []byte {
 	var body []byte
 	body = inst.InstLocalGet(body, 0) // pollable handle
 	body = inst.InstCall(body, block) // block until ready
+	body = inst.InstI32Const(body, 0) // return 0
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildWasmPollableDropBody — body for __fern_wasm_pollable_drop.
+//
+// Signature: (pollable: i32) → i32
+//
+// Drops the pollable via wasi:io/poll.[resource-drop]pollable, then
+// returns 0. Preview-2-only.
+func buildWasmPollableDropBody(idxs map[string]uint32) []byte {
+	drop := idxs["wasi_io_pollable_drop"]
+	var body []byte
+	body = inst.InstLocalGet(body, 0) // pollable handle
+	body = inst.InstCall(body, drop)  // [resource-drop]pollable
 	body = inst.InstI32Const(body, 0) // return 0
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }

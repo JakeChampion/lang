@@ -109,6 +109,11 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 			// wasm reactor multiplexer: poll(list<pollable>) ->
 			// list<u32>. Pulls in the heavier io/poll instance type.
 			req.Poll = true
+		case m == "wasi:io/poll@0.2.0" && n == "[resource-drop]pollable":
+			// wasm reactor: drop a consumed pollable. Only the reactor
+			// (timer / poll) standalone path needs this lowering added
+			// explicitly; the socket paths add their own drop.
+			req.PollableDrop = true
 		case m == "wasi:io/poll@0.2.0":
 			// consumed by the TCP shape / the reactor timer; accepted
 			// implicitly (the pollable.block lowering is added
@@ -164,7 +169,7 @@ func RequestEmpty(req ComposeRequest) bool {
 	return !req.Stdout && !req.Stderr && !req.Stdin &&
 		!req.BlockWrite && !req.BlockRead && !req.DropInput && !req.DropOutput &&
 		!req.FileRead && !req.FileWrite && !req.FileAppend && !req.FileReadWrite &&
-		!req.Tcp && !req.Udp && !req.Http && !req.Timer && !req.Poll &&
+		!req.Tcp && !req.Udp && !req.Http && !req.Timer && !req.Poll && !req.PollableDrop &&
 		!req.WallNow && !req.Args && !req.Env && len(req.Structured) == 0
 }
 
