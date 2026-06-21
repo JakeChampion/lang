@@ -207,7 +207,7 @@ per-function bugs in the audit log.
 | `std/string` (~120 methods) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | core set (upper/lower/trim/contains/starts_with/ends_with/index_of/replace/repeat/pad/split) — `audit_std_string` + `self_host_string_test`; `prop_string_involution` laws; full ~120 set pending |
 | `std/array` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | reductions sum/max/min/product/sorted_asc — `audit_std_numeric` + `self_host_audit_stdarray_test` |
 | `std/math` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | range/i32_max/i32_min — `audit_std_numeric` + `self_host_math_test` |
-| `std/sort` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_sort_i32` — ordering + permutation (histogram) + idempotence laws (native, all four backends); self-host via the IR path (x86-64 + wasm): `TestSelfHostSortIR` — i32 ascending/descending insertion sorts, the byte-lexicographic `string_cmp` three-way comparator, and the `string[]` sorts built on it (`.append` build, `.with` element rewrite, indexed scalar + string-byte reads, nested insertion-sort `while`), oracle-checked against the interpreter |
+| `std/sort` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_sort_i32` — ordering + permutation (histogram) + idempotence laws (native, all four backends); self-host via the IR path (x86-64 + wasm): `TestSelfHostSortIR` — i32 ascending/descending insertion sorts, the byte-lexicographic `string_cmp` three-way comparator, and the `string[]` sorts built on it (`.append` build, `.with` element rewrite, indexed scalar + string-byte reads, nested insertion-sort `while`), oracle-checked. **Generic comparator sort** `sort_by[T](arr, cmp: (T,T)=>i32): T[]` + `is_sorted_by[T]` added (the closure-arg form the module header long deferred — now that fn-typed args lower, incl. in loop conditions): any element type / custom ordering, no `Ord` bound. Coverage: `TestNativeSortBy{,Module,Arm64}` + `TestSelfHostSortByIR{X86_64,Wasm}` |
 | `std/format` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | self-host via the IR path (x86-64 + wasm): `format_bytes` (`TestSelfHostFormatBytesIR`), `format(fmt, args)` `{}`-substitution (`TestSelfHostFormatStringIR`), `format_duration_ms` (`TestSelfHostFormatDurationIR`), and the `{:fill|align|width.precision}` specs (`TestSelfHostFormatSpecIR`) — all oracle-checked against the interpreter; native via `audit_std_textfmt` + the `format_specs` fixture (with std/float `to_string_prec`) |
 | `std/csv` | ✅ | ✅ | ✅ | ✅ | | ✅ | parse_line/join/escape — `audit_std_textfmt`; self-host via the IR path (x86-64 + wasm): `csv_parse_line` (`TestSelfHostCsvParseLineIR`) + `csv_escape`/`csv_join` (`TestSelfHostCsvEscapeIR`, oracle-checked — `index_of`/`replace` lower as `op_str_index_of`/`op_str_replace`) |
 | `std/log` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | leveled `Logger`/`LogEntry` (#2683) plain-text + JSON-lines `render` — native via `log_leveled` fixture (all four backends); self-host via the IR path (x86-64 + wasm): `TestSelfHostLogLeveledIR` — structs with i32/boolean/string fields, chained struct-returning receiver methods, the threshold-filter branch, byte-indexed JSON escaping (hardcoded expectations: `.to_string()` is a self-host builtin the importless interp can't resolve, cf. format_bytes) |
@@ -961,6 +961,21 @@ verified against native interp + x86-64) and have a native `url_codec` fixture
 (`>>` / `&` / `<<` / `|`), `u8[]` array literals with `as u8` element casts, and
 the `string_from_bytes(u8[])` builtin — all already lower, so no compiler change.
 (`url_parse` / `query_parse`, which build a `Map`, are left for a later slice.)
+
+### 2026-06-21 — std/sort: generic comparator `sort_by` / `is_sorted_by` ([#2686](https://github.com/JakeChampion/lang/issues/2686))
+
+`sort_by[T](arr: T[], cmp: (T, T) => i32): T[]` (stable insertion sort) and
+`is_sorted_by[T](arr, cmp): boolean` — the comparator-closure form the std/sort
+module header had deferred ("avoids the closure-arg infrastructure a generic
+`sort_by` would need"). That infrastructure has since landed (fn-typed args lower
+on every backend, incl. in loop conditions — #2686 tail), so the comparator is a
+`(T, T) => i32` closure invoked in the inner `while` CONDITION. Generic over ANY
+element type via the comparator (no `Ord` bound) — sort by a projected key,
+reverse order, custom relation; the comparator form of `core/cmp`'s `sort[T:
+Ord]`. Lowers on native AND the self-host IR path. Coverage:
+`TestNativeSortBy{,Module,Arm64}` (interp/x86-64/wasm/arm64, incl. shipped
+`import "std/sort"`) + `TestSelfHostSortByIR{X86_64,Wasm}`. Self-host fixpoint
+byte-identical (the compiler doesn't call `sort_by`).
 
 ### 2026-06-20 — std/sort on the self-host IR path + native audit
 
