@@ -513,3 +513,139 @@ int main(int c, char** v){
 		t.Fatalf("get_method_id dispatch = %d, want 42 (out=%q)", code, out)
 	}
 }
+
+// TestStdJNIStaticIds validates the remaining env+3 ID wrappers
+// (get_field_id / get_static_method_id / get_static_field_id) carry the
+// right JNINativeInterface indices (94 / 113 / 144). Each fake slot returns
+// its own marker, so the probe's combined result proves each wrapper landed
+// on its slot.
+func TestStdJNIStaticIds(t *testing.T) {
+	gcc, err := exec.LookPath("gcc")
+	if err != nil {
+		t.Skip("gcc not on PATH")
+	}
+	if runtime.GOARCH != "amd64" {
+		t.Skip("host is not amd64")
+	}
+	// Each probe ignores its args and returns the slot's marker; the C side
+	// checks field=1, smethod=2, sfield=3 then returns 42.
+	src := `import "std/jni";
+function probe_field(env: usize, cls: usize, jenv: usize): i32 {
+    return jni.get_field_id(jenv, 0 as usize, 0 as usize, 0 as usize) as i32;
+}
+function probe_smethod(env: usize, cls: usize, jenv: usize): i32 {
+    return jni.get_static_method_id(jenv, 0 as usize, 0 as usize, 0 as usize) as i32;
+}
+function probe_sfield(env: usize, cls: usize, jenv: usize): i32 {
+    return jni.get_static_field_id(jenv, 0 as usize, 0 as usize, 0 as usize) as i32;
+}
+function main(): i32 { return 0; }`
+	exps := []string{"probe_field", "probe_smethod", "probe_sfield"}
+	asm := compileToX86AsmExports(t, src, exps)
+	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exps)
+	if err != nil {
+		t.Fatalf("AssembleProgramShared: %v", err)
+	}
+	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs),
+		[]nativeelf.Export{
+			{Name: "probe_field", Value: ev["probe_field"]},
+			{Name: "probe_smethod", Value: ev["probe_smethod"]},
+			{Name: "probe_sfield", Value: ev["probe_sfield"]},
+		}, "libfern.so")
+	dir := t.TempDir()
+	soPath := filepath.Join(dir, "libfern.so")
+	if err := os.WriteFile(soPath, so, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// table[94]=GetFieldID->1, table[113]=GetStaticMethodID->2, table[144]=GetStaticFieldID->3.
+	loader := `#include <dlfcn.h>
+#include <stdio.h>
+static long m1(void* e, long a, long b, long c){ (void)e;(void)a;(void)b;(void)c; return 1; }
+static long m2(void* e, long a, long b, long c){ (void)e;(void)a;(void)b;(void)c; return 2; }
+static long m3(void* e, long a, long b, long c){ (void)e;(void)a;(void)b;(void)c; return 3; }
+int main(int c, char** v){
+  void* h = dlopen(v[1], RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
+  void* table[256] = {0};
+  table[94]  = (void*)m1;  /* GetFieldID       */
+  table[113] = (void*)m2;  /* GetStaticMethodID */
+  table[144] = (void*)m3;  /* GetStaticFieldID  */
+  void* tptr = table; void* env = &tptr;
+  int (*pf)(long,long,long) = (int(*)(long,long,long)) dlsym(h, "probe_field");
+  int (*ps)(long,long,long) = (int(*)(long,long,long)) dlsym(h, "probe_smethod");
+  int (*pg)(long,long,long) = (int(*)(long,long,long)) dlsym(h, "probe_sfield");
+  if(!pf||!ps||!pg) return 101;
+  if(pf(0,0,(long)env) != 1) return 1;
+  if(ps(0,0,(long)env) != 2) return 2;
+  if(pg(0,0,(long)env) != 3) return 3;
+  return 42;
+}`
+	cPath := filepath.Join(dir, "loader.c")
+	if err := os.WriteFile(cPath, []byte(loader), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ld := filepath.Join(dir, "loader")
+	if out, err := exec.Command(gcc, cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
+		t.Fatalf("gcc loader: %v\n%s", err, out)
+	}
+	cmd := exec.Command(ld, soPath)
+	out, _ := cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 42 {
+		t.Fatalf("static-id wrappers dispatch = %d, want 42 (out=%q)", code, out)
+	}
+}
+
+// TestStdJNICstr validates jni.cstr copies a Fern string into a fresh,
+// NUL-terminated C buffer reachable from the dlopen'd .so: the export
+// returns jni.cstr("hello"), and the C side checks the bytes round-trip as
+// the NUL-terminated string "hello" (exercises the lazy-mmap heap +
+// __memcpy + the i32 NUL pad inside a library with no _start).
+func TestStdJNICstr(t *testing.T) {
+	gcc, err := exec.LookPath("gcc")
+	if err != nil {
+		t.Skip("gcc not on PATH")
+	}
+	if runtime.GOARCH != "amd64" {
+		t.Skip("host is not amd64")
+	}
+	src := `import "std/jni";
+function probe_cstr(env: usize, cls: usize): usize { return jni.cstr("hello"); }
+function main(): i32 { return 0; }`
+	exps := []string{"probe_cstr"}
+	asm := compileToX86AsmExports(t, src, exps)
+	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exps)
+	if err != nil {
+		t.Fatalf("AssembleProgramShared: %v", err)
+	}
+	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs),
+		[]nativeelf.Export{{Name: "probe_cstr", Value: ev["probe_cstr"]}}, "libfern.so")
+	dir := t.TempDir()
+	soPath := filepath.Join(dir, "libfern.so")
+	if err := os.WriteFile(soPath, so, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	loader := `#include <dlfcn.h>
+#include <stdio.h>
+#include <string.h>
+int main(int c, char** v){
+  void* h = dlopen(v[1], RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
+  char* (*p)(long,long) = (char*(*)(long,long)) dlsym(h, "probe_cstr");
+  if(!p) return 101;
+  char* s = p(0,0);
+  if(!s) return 102;
+  if(strcmp(s, "hello") != 0){ fprintf(stderr, "got %s\n", s); return 1; }
+  return 42;
+}`
+	cPath := filepath.Join(dir, "loader.c")
+	if err := os.WriteFile(cPath, []byte(loader), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ld := filepath.Join(dir, "loader")
+	if out, err := exec.Command(gcc, cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
+		t.Fatalf("gcc loader: %v\n%s", err, out)
+	}
+	cmd := exec.Command(ld, soPath)
+	out, _ := cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 42 {
+		t.Fatalf("cstr round-trip = %d, want 42 (out=%q)", code, out)
+	}
+}

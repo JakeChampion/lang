@@ -43,10 +43,53 @@ pub function call3(env: usize, index: i32, a0: usize, a1: usize, a2: usize): usi
 // rather than magic numbers at call sites.
 pub function FIND_CLASS(): i32 { return 6; }
 pub function GET_METHOD_ID(): i32 { return 33; }
+pub function GET_FIELD_ID(): i32 { return 94; }
+pub function GET_STATIC_METHOD_ID(): i32 { return 113; }
+pub function GET_STATIC_FIELD_ID(): i32 { return 144; }
 pub function NEW_STRING_UTF(): i32 { return 167; }
 pub function GET_STRING_UTF_LENGTH(): i32 { return 168; }
 pub function GET_STRING_UTF_CHARS(): i32 { return 169; }
 pub function RELEASE_STRING_UTF_CHARS(): i32 { return 170; }
+
+// cstr copies a Fern string into a fresh, NUL-terminated C buffer and
+// returns its raw address — the `const char*` shape FindClass /
+// NewStringUTF / GetMethodID names + signatures expect. The buffer comes
+// from __alloc (the raw bump heap), NOT __alloc_u8: a raw pointer is not
+// reference-counted, so it can't be reclaimed out from under a caller that
+// escapes it through `as usize` (the same reason core/map's column builders
+// return raw __alloc pointers). The JVM copies the bytes out of
+// NewStringUTF / FindClass immediately, so the short-lived allocation is
+// the right trade for a CLI / edge handler.
+//
+// Bytes are read one at a time via `s[i]` (the SSO-aware index path) and
+// packed four per i32 store. The shorter `as_bytes` + `__memcpy` form is
+// deliberately avoided: `s.as_bytes() as usize` currently yields a bad
+// data pointer in the shared-library / PIE codegen path (the slice
+// data-pointer extraction works in a static exec but reads zeroes from a
+// dlopen'd .so — a separate backend bug), whereas `s[i]` is exercised and
+// correct on both. `+ 4` reserves a final word whose unused high bytes
+// stay zero, so the result is always NUL-terminated (including the empty
+// string and exact-multiple-of-4 lengths).
+pub function cstr(s: string): usize {
+    var n: i32 = s.len();
+    var buf: usize = __alloc(n + 4);
+    var i: i32 = 0;
+    while (i + 4 <= n) {
+        var w: i32 = s[i] | (s[i + 1] << 8) | (s[i + 2] << 16) | (s[i + 3] << 24);
+        __store_i32(buf + (i as usize), w);
+        i = i + 4;
+    }
+    var base: i32 = i; // start of the (< 4-byte) tail
+    var t: i32 = 0;
+    var sh: i32 = 0;
+    while (i < n) {
+        t = t | (s[i] << sh);
+        sh = sh + 8;
+        i = i + 1;
+    }
+    __store_i32(buf + (base as usize), t); // tail bytes + NUL terminator
+    return buf;
+}
 
 // --- Typed JNIEnv method wrappers ---------------------------------------
 //
@@ -54,9 +97,9 @@ pub function RELEASE_STRING_UTF_CHARS(): i32 { return 170; }
 // baked in, so call sites read `jni.find_class(env, name)` instead of
 // `jni.call1(env, 6, name)`. Opaque JNI handles (jclass / jstring /
 // jobject / jchar*) are plain usize. C-string arguments (FindClass /
-// NewStringUTF) are NUL-terminated `const char*` pointers — produce them
-// on the C side or in your own buffer; converting a Fern string is a
-// separate concern. The varargs CallXxxMethod entries are out of scope
+// NewStringUTF / GetMethodID names + signatures) are NUL-terminated
+// `const char*` pointers — pass `jni.cstr(myFernString)` to produce one
+// from a Fern string. The varargs CallXxxMethod entries are out of scope
 // (only fixed-arity methods are expressible through __c_call).
 
 // jint (*GetVersion)(JNIEnv*)
@@ -77,6 +120,21 @@ pub function get_object_class(env: usize, obj: usize): usize {
 // jmethodID (*GetMethodID)(JNIEnv*, jclass clazz, const char* name, const char* sig)
 pub function get_method_id(env: usize, clazz: usize, name: usize, sig: usize): usize {
     return call3(env, GET_METHOD_ID(), clazz, name, sig);
+}
+
+// jfieldID (*GetFieldID)(JNIEnv*, jclass clazz, const char* name, const char* sig)
+pub function get_field_id(env: usize, clazz: usize, name: usize, sig: usize): usize {
+    return call3(env, GET_FIELD_ID(), clazz, name, sig);
+}
+
+// jmethodID (*GetStaticMethodID)(JNIEnv*, jclass clazz, const char* name, const char* sig)
+pub function get_static_method_id(env: usize, clazz: usize, name: usize, sig: usize): usize {
+    return call3(env, GET_STATIC_METHOD_ID(), clazz, name, sig);
+}
+
+// jfieldID (*GetStaticFieldID)(JNIEnv*, jclass clazz, const char* name, const char* sig)
+pub function get_static_field_id(env: usize, clazz: usize, name: usize, sig: usize): usize {
+    return call3(env, GET_STATIC_FIELD_ID(), clazz, name, sig);
 }
 
 // jstring (*NewStringUTF)(JNIEnv*, const char* bytes)
