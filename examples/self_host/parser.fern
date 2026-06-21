@@ -8182,13 +8182,14 @@ function synth_struct_debug(sd: StructDecl): FuncDecl {
     return FuncDecl { name: "to_debug", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0 };
 }
 
-// synth_struct_eq: field-wise `self.f.eq(other.f) && …` (true for an
-// empty struct).
+// synth_struct_eq: field-wise `<f-eq> && …` (true for an empty struct),
+// where a scalar field compares with the primitive `==` and a nominal field
+// delegates to its own derived `.eq()` — see dv_eq_expr.
 function synth_struct_eq(sd: StructDecl): FuncDecl {
     var expr: Expr = e_bool(true);
     var i: i32 = 0;
     while (i < sd.fields.len()) {
-        var cm: Expr = dv_call1(dv_self_field(sd.fields[i].name), "eq", dv_other_field(sd.fields[i].name));
+        var cm: Expr = dv_eq_expr(sd.fields[i].type_name, dv_self_field(sd.fields[i].name), dv_other_field(sd.fields[i].name));
         if (i == 0) { expr = cm; } else { expr = e_binary("&&", expr, cm); }
         i = i + 1;
     }
@@ -8317,7 +8318,7 @@ function synth_enum_eq(ename: string, variants: StructDecl[]): FuncDecl {
         var v: StructDecl = variants[i];
         var inner: MatchArm[] = [];
         if (v.fields.len() > 0) {
-            var eqx: Expr = dv_call1(e_ident("__s0"), "eq", e_ident("__o0"));
+            var eqx: Expr = dv_eq_expr(v.fields[0].type_name, e_ident("__s0"), e_ident("__o0"));
             inner = inner.append(MatchArm { pattern: p_variant(v.name, "__o0"), body: [s_return(eqx)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
             inner = inner.append(MatchArm { pattern: p_wildcard(), body: [s_return(e_bool(false))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
             arms = arms.append(MatchArm { pattern: p_variant(v.name, "__s0"), body: [s_match(e_ident("other"), inner)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
@@ -8535,6 +8536,19 @@ function dv_default_expr(t: string): Expr {
     if (dv_is_scalar(t)) { return e_number("0", "", false); }
     var noargs: Expr[] = [];
     return e_call(e_field_access(e_ident(t), "default"), noargs);
+}
+
+// dv_eq_expr builds the equality test for one derived-`eq` field/payload.
+// A SCALAR (`dv_is_scalar`) compares with the primitive `==`, so the derive
+// needs no `Eq` impl for that type — which matters on the self-host, whose
+// loader skips `core`/`std` imports, leaving `core/cmp`'s primitive `i32.eq`
+// (etc.) unavailable; a `.eq()` call there would bail the module to the AST
+// emitter. A nominal field delegates to its own (local, derived) `.eq()`.
+// `==` matches `core/cmp`'s scalar `eq` exactly (`self == other`), so the
+// native/self-host differential oracle still agrees.
+function dv_eq_expr(ty: string, lhs: Expr, rhs: Expr): Expr {
+    if (dv_is_scalar(ty)) { return e_binary("==", lhs, rhs); }
+    return dv_call1(lhs, "eq", rhs);
 }
 
 // dv_is_num_scalar reports whether `t` is a numeric scalar — the subset of
