@@ -133,11 +133,15 @@ function main(): i32 {
     // prints "ir"/"ast" (the path the merged module routes through) and stops,
     // for observing the treeshake effect without emitting.
     var do_treeshake: boolean = false;
+    // -no-treeshake opts OUT of the default (stdlib-root) prune — for observing
+    // the un-pruned baseline (e.g. a budget-busting program routing AST).
+    var no_treeshake: boolean = false;
     var do_decide: boolean = false;
     var ag: i32 = 2;
     while (ag < av.len()) {
         if (av[ag] == "-ir-probe") { probe = true; }
         else if (av[ag] == "-treeshake") { do_treeshake = true; }
+        else if (av[ag] == "-no-treeshake") { no_treeshake = true; }
         else if (av[ag] == "-decide") { do_decide = true; }
         else if (av[ag] == "-per-module-count") { pm_mode = "count"; }
         else if (av[ag] == "-per-module-needs") { pm_mode = "needs"; }
@@ -294,8 +298,12 @@ function main(): i32 {
     // so a stdlib-importing program's merged module fits the IR budget. Raw
     // (pre-module_with_builtins) pruning is sound: derive-synthesised methods
     // and monomorph instantiations are added AFTER this from functions that are
-    // themselves reachable, so nothing reachable is dropped.
-    if (do_treeshake) { merged = treeshake.treeshake(merged); }
+    // themselves reachable, so nothing reachable is dropped. Applied by default
+    // whenever a stdlib root is in play (the only time the transitive closure
+    // bloats past the IR budget); `-treeshake` forces it on even without a root.
+    // A program with no stdlib imports (the bootstrap self-compile, root == "")
+    // is left exactly as before.
+    if ((do_treeshake || root.len() > 0) && !no_treeshake) { merged = treeshake.treeshake(merged); }
 
     // `-decide`: print the path the merged module routes through (ir / ast) —
     // the same all_eligible decision emit_module makes — and stop.
