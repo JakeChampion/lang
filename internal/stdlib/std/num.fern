@@ -39,6 +39,10 @@ pub trait Neg { function neg(self: Self): Self; }
 // (`var s = T.zero();`). Kept a STANDALONE trait — not folded into Num — so its
 // primitive impls register across module imports the same way Add/Sub/… do.
 pub trait Zero { function zero(): Self; }
+// One is the multiplicative identity (1) as an associated function — the
+// `product` counterpart to Zero. Standalone (like Zero) so its primitive
+// impls register across module imports.
+pub trait One { function one(): Self; }
 
 // Num bundles the four binary arithmetic operators — the conventional bound for
 // "any number". Implementors get it for free once they impl Add/Sub/Mul/Div.
@@ -51,6 +55,7 @@ impl Mul for i32 { function mul(self: Self, o: Self): Self { return self * o; } 
 impl Div for i32 { function div(self: Self, o: Self): Self { return self / o; } }
 impl Neg for i32 { function neg(self: Self): Self { return 0 - self; } }
 impl Zero for i32 { function zero(): Self { return 0; } }
+impl One for i32 { function one(): Self { return 1; } }
 impl Num for i32 {}
 
 // ---- i64 ----
@@ -60,6 +65,7 @@ impl Mul for i64 { function mul(self: Self, o: Self): Self { return self * o; } 
 impl Div for i64 { function div(self: Self, o: Self): Self { return self / o; } }
 impl Neg for i64 { function neg(self: Self): Self { return 0 - self; } }
 impl Zero for i64 { function zero(): Self { return 0; } }
+impl One for i64 { function one(): Self { return 1; } }
 impl Num for i64 {}
 
 // ---- f64 ----
@@ -69,6 +75,7 @@ impl Mul for f64 { function mul(self: Self, o: Self): Self { return self * o; } 
 impl Div for f64 { function div(self: Self, o: Self): Self { return self / o; } }
 impl Neg for f64 { function neg(self: Self): Self { return 0.0 - self; } }
 impl Zero for f64 { function zero(): Self { return 0.0; } }
+impl One for f64 { function one(): Self { return 1.0; } }
 impl Num for f64 {}
 
 // ---- f32 ----
@@ -78,6 +85,7 @@ impl Mul for f32 { function mul(self: Self, o: Self): Self { return self * o; } 
 impl Div for f32 { function div(self: Self, o: Self): Self { return self / o; } }
 impl Neg for f32 { function neg(self: Self): Self { return 0.0 - self; } }
 impl Zero for f32 { function zero(): Self { return 0.0; } }
+impl One for f32 { function one(): Self { return 1.0; } }
 impl Num for f32 {}
 
 // ---- u32 ---- (unsigned: no Neg)
@@ -86,6 +94,7 @@ impl Sub for u32 { function sub(self: Self, o: Self): Self { return self - o; } 
 impl Mul for u32 { function mul(self: Self, o: Self): Self { return self * o; } }
 impl Div for u32 { function div(self: Self, o: Self): Self { return self / o; } }
 impl Zero for u32 { function zero(): Self { return 0; } }
+impl One for u32 { function one(): Self { return 1; } }
 impl Num for u32 {}
 
 // ---- u64 ---- (unsigned: no Neg)
@@ -94,6 +103,7 @@ impl Sub for u64 { function sub(self: Self, o: Self): Self { return self - o; } 
 impl Mul for u64 { function mul(self: Self, o: Self): Self { return self * o; } }
 impl Div for u64 { function div(self: Self, o: Self): Self { return self / o; } }
 impl Zero for u64 { function zero(): Self { return 0; } }
+impl One for u64 { function one(): Self { return 1; } }
 impl Num for u64 {}
 
 // ---- generic numeric reducers ------------------------------------------------
@@ -131,6 +141,30 @@ pub function product_with[T: Mul](xs: T[], one: T): T {
     return acc;
 }
 
+// sum / product are the implicit-identity forms — `sum_with` / `product_with`
+// without the explicit seed, recovering it from the `Zero` / `One` trait
+// (`T.zero()` / `T.one()`). Enabled now that an associated-function call on a
+// bound type parameter lowers on the self-host IR path (#3749), so the bare
+// `sum[T: Add + Zero](xs): T` the explicit forms' note once deferred now works
+// on every backend. Bound on `Add + Zero` / `Mul + One`: usable for the
+// primitive numerics and any user type that impls BOTH the operator and the
+// identity. (A user `Add` type with no `Zero` impl still has `sum_with`.)
+
+// sum totals `xs` from the additive identity; empty `xs` returns `T.zero()`.
+pub function sum[T: Add + Zero](xs: T[]): T {
+    var acc: T = T.zero();
+    for x in xs { acc = acc.add(x); }
+    return acc;
+}
+
+// product multiplies `xs` from the multiplicative identity; empty `xs` returns
+// `T.one()`.
+pub function product[T: Mul + One](xs: T[]): T {
+    var acc: T = T.one();
+    for x in xs { acc = acc.mul(x); }
+    return acc;
+}
+
 // ---- iterator forms ----------------------------------------------------------
 //
 // The Iterator counterparts of sum_with / product_with — they fold any
@@ -140,12 +174,12 @@ pub function product_with[T: Mul](xs: T[], one: T): T {
 //   num.sum_iter(iter.filter(iter.of(xs), keep_positive), 0)
 // `T` appears only inside the iterator bound (`I: iter.Iterator[T]`); it is
 // recovered by bound-driven inference once `I` is pinned by the argument
-// (#2691). The identity is passed explicitly for the same reasons as the array
-// forms above — `T.zero()` on a bound type parameter does not yet lower on the
-// self-host IR path, and a caller may want `0.0` rather than a trait-fixed
-// value. The accumulator's `.add` / `.mul` monomorphises to a direct call, so
-// these lower on the self-host IR path like core/iter's other bounded
-// collectors (#2691 / #3558).
+// (#2691). The identity is passed explicitly so these stay usable for a user
+// `Add`/`Mul` type that has no `Zero`/`One` impl, and so a caller can choose
+// the seed (e.g. `0.0`); the implicit-identity array forms `sum` / `product`
+// above cover the `T: Add + Zero` case. The accumulator's `.add` / `.mul`
+// monomorphises to a direct call, so these lower on the self-host IR path like
+// core/iter's other bounded collectors (#2691 / #3558).
 
 // sum_iter totals every value an iterator yields, starting from `zero`
 // (returned unchanged for an empty iterator).
