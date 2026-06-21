@@ -132,6 +132,14 @@ type Info struct {
 	// match, not just that some `impl From[_] for T` exists. Empty for a
 	// non-generic trait. See docs/TRAITS.md.
 	ImplTraitArgs map[string]map[string][]ast.Type
+	// ImplForPattern records a PARAMETRIC impl-of-a-generic-trait's `for`
+	// type pattern (`impl[T] Iterator[T] for ArrayIter[T]` →
+	// ImplForPattern["Iterator"]["ArrayIter"] = ArrayIter[T], with T as a
+	// ParamType). A bound check unifies it against a concrete type
+	// (`ArrayIter[i32]`) to recover the impl's param binding (T=i32) and
+	// resolve the generic ImplTraitArgs ([T]) to concrete ([i32]). Empty for
+	// concrete impls. See docs/TRAITS.md.
+	ImplForPattern map[string]map[string]ast.Type
 	// AssocBindings records each impl's associated-type bindings:
 	// AssocBindings[typeName][assocName] = concrete type. Built during the
 	// conformance pass. resolveProj uses it to resolve a concrete-base
@@ -759,6 +767,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			Traits:              map[string]*ast.TraitDecl{},
 			Impls:               map[string]map[string]bool{},
 			ImplTraitArgs:       map[string]map[string][]ast.Type{},
+			ImplForPattern:      map[string]map[string]ast.Type{},
 			AssocBindings:       map[string]map[string]ast.Type{},
 		},
 		variantOf: map[string][]variantRef{},
@@ -2146,6 +2155,13 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 				c.errfCode(impl.P, "E021", "method %q is not a member of trait %s", mn, demangle(impl.Trait))
 			}
 		}
+		// Impl-type-param names (`impl[T] … for Box[T]`) canonicalise to
+		// ParamType so the want/got structural compare below doesn't split a
+		// StructType("T") from a ParamType("T"). Empty for concrete impls.
+		paramSub := map[string]ast.Type{}
+		for _, tp := range impl.TypeParams {
+			paramSub[tp] = ast.ParamType{Name: tp}
+		}
 		// Every trait method must be present with a matching signature.
 		conforms := true
 		for _, m := range td.Methods {
@@ -2203,6 +2219,25 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			gotSig := &ast.FuncType{Params: make([]ast.Type, len(sig.Params)), Result: c.resolveProjWith(c.normalizeEnumKinds(sig.Result), impl.AssocTypeBindings)}
 			for i, pt := range sig.Params {
 				gotSig.Params[i] = c.resolveProjWith(c.normalizeEnumKinds(pt), impl.AssocTypeBindings)
+			}
+			// A parametric impl of a GENERIC trait (`impl[T] Iterator[T] for
+			// ArrayIter[T]`) binds the trait's type parameter to the impl's own
+			// type parameter. The hoisted `got` signature has those references
+			// resolved to ParamType (resolveTypeNames walks prog.Impls), but the
+			// `want` side substituted the raw TraitArgs / impl.Type, where the
+			// param is still an unresolved StructType. Both print as "T" yet
+			// ast.Equal separates ParamType from StructType, so the compare
+			// spuriously failed. Canonicalise both sides first. (Concrete impls
+			// have an empty paramSub and skip this.)
+			if len(paramSub) > 0 {
+				for i := range want {
+					want[i] = substByName(want[i], paramSub)
+				}
+				wantRet = substByName(wantRet, paramSub)
+				for i := range gotSig.Params {
+					gotSig.Params[i] = substByName(gotSig.Params[i], paramSub)
+				}
+				gotSig.Result = substByName(gotSig.Result, paramSub)
 			}
 			if !sigMatches(gotSig, want, wantRet) {
 				c.errfCode(impl.P, "E021",
@@ -2274,6 +2309,17 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 					c.info.ImplTraitArgs[impl.Trait] = map[string][]ast.Type{}
 				}
 				c.info.ImplTraitArgs[impl.Trait][typeName] = impl.TraitArgs
+				// A parametric impl of this generic trait
+				// (`impl[T] Iterator[T] for ArrayIter[T]`) leaves its trait
+				// args generic. Record the `for` pattern (params canonicalised
+				// to ParamType) so a bound check can recover T=i32 from a
+				// concrete `ArrayIter[i32]` and resolve [T] to [i32].
+				if len(paramSub) > 0 {
+					if c.info.ImplForPattern[impl.Trait] == nil {
+						c.info.ImplForPattern[impl.Trait] = map[string]ast.Type{}
+					}
+					c.info.ImplForPattern[impl.Trait][typeName] = substByName(impl.Type, paramSub)
+				}
 			}
 		}
 	}
@@ -5225,6 +5271,33 @@ func substByName(t ast.Type, sub map[string]ast.Type) ast.Type {
 		return ast.ProjType{Base: substByName(x.Base, sub), Name: x.Name}
 	}
 	return t
+}
+
+// implTraitArgsFor returns the type arguments the concrete type `ct` (with
+// base name `tn`) supplies to `traitName`. For a concrete impl this is just
+// the stored ImplTraitArgs. For a PARAMETRIC impl of a generic trait
+// (`impl[T] Iterator[T] for ArrayIter[T]`) the stored args are generic ([T]):
+// unify the recorded `for` pattern (ArrayIter[T]) against `ct` (ArrayIter[i32])
+// to recover the binding (T=i32) and substitute, yielding the concrete args
+// ([i32]). See docs/TRAITS.md.
+func (c *checker) implTraitArgsFor(traitName, tn string, ct ast.Type) []ast.Type {
+	implArgs := c.info.ImplTraitArgs[traitName][tn]
+	if len(implArgs) == 0 {
+		return implArgs
+	}
+	pat, ok := c.info.ImplForPattern[traitName][tn]
+	if !ok {
+		return implArgs
+	}
+	psub := map[string]ast.Type{}
+	if !c.unifyType(pat, ct, psub) || len(psub) == 0 {
+		return implArgs
+	}
+	out := make([]ast.Type, len(implArgs))
+	for k := range implArgs {
+		out[k] = substByName(implArgs[k], psub)
+	}
+	return out
 }
 
 // typeArgsEqual reports whether two type-argument lists are element-wise
@@ -9350,7 +9423,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 							if bi >= len(ba) || len(ba[bi]) == 0 {
 								continue
 							}
-							implArgs := c.info.ImplTraitArgs[traitName][tn]
+							implArgs := c.implTraitArgsFor(traitName, tn, bt)
 							if len(implArgs) != len(ba[bi]) {
 								continue
 							}
@@ -9417,7 +9490,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 								resolved[k] = substBoundArg(baT, tpSet, sub)
 							}
 							boundArgs = resolved
-							implArgs := c.info.ImplTraitArgs[traitName][tn]
+							implArgs := c.implTraitArgsFor(traitName, tn, args[i])
 							if !typeArgsEqual(implArgs, boundArgs) {
 								c.errfCode(n.P, "E021",
 									"type argument %s = %s implements %s%s but the bound requires %s%s (in %s)",
