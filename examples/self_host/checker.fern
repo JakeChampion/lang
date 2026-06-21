@@ -5489,6 +5489,35 @@ pub function e049_diags(mod: parser.Module): Diag[] {
     return out;
 }
 
+// e064_unknown_bare reports whether `type_name` is a BARE NOMINAL identifier
+// that names no declared type — the E064 case. It is deliberately conservative
+// so it never false-positives on the self-host bundle (which would break the
+// fixpoint):
+//   - empty / inferred annotations and the `void` / `Self` pseudo-types the
+//     name resolver doesn't model are skipped;
+//   - only a plain identifier ([A-Za-z0-9_]) is considered. Any other shape —
+//     an array (`X[]`), generic instantiation (`Box[i32]`), function type
+//     (`() => i32`), tuple, `dyn Trait`, or dotted cross-module name — is
+//     skipped, because its surface text may legitimately mention an erased
+//     generic parameter, a builtin, or syntax the simple resolver doesn't
+//     model. Callers further restrict this to NON-generic declarations.
+function e064_unknown_bare(type_name: string, struct_names: string[], union_names: string[]): boolean {
+    if (type_name.len() == 0) { return false; }
+    if (type_name == "void" || type_name == "Self") { return false; }
+    // The parser coarses a function type (`() => R`) to the tag "fn" and some
+    // shapes to "tuple"; neither is a user nominal, so don't flag them.
+    if (type_name == "fn" || type_name == "tuple") { return false; }
+    var i: i32 = 0;
+    while (i < type_name.len()) {
+        var ch: i32 = type_name[i];
+        var alpha: boolean = (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122);
+        var digit: boolean = ch >= 48 && ch <= 57;
+        if (!alpha && !digit && ch != 95) { return false; }
+        i = i + 1;
+    }
+    return is_unknown(type_from_name_with_names_and_unions(type_name, struct_names, union_names));
+}
+
 pub function check_module(mod: parser.Module): ModuleTypes {
     // Collect struct decls first; func sigs + union aliases
     // both use them to resolve names. Union aliases come next
@@ -5625,6 +5654,51 @@ pub function check_module(mod: parser.Module): ModuleTypes {
             fj2 = fj2 + 1;
         }
         sfi = sfi + 1;
+    }
+    // E064: a type annotation that names no declared type (the self-host
+    // counterpart of the native checker's unknown-type rule). Scoped to bare
+    // identifiers in NON-generic, NON-method functions and NON-generic,
+    // NON-enum-variant structs — contexts with no type parameter in scope —
+    // so a genuine typo (`var x: Wibble`) is reported while an erased generic
+    // parameter is never mistaken for one. Resolves against the same struct +
+    // union/enum name sets the rest of check_module uses.
+    var union_names: string[] = [];
+    var uni: i32 = 0;
+    while (uni < unions.len()) { union_names = union_names.append(unions[uni].name); uni = uni + 1; }
+    var efi: i32 = 0;
+    while (efi < mod.funcs.len()) {
+        var efn: parser.FuncDecl = mod.funcs[efi];
+        // Skip generic functions: unbounded generics (`id[T]`) record their
+        // parameters in type_param_count rather than type_params, so both must
+        // be zero. Methods are skipped too — their receiver may bind type
+        // parameters that aren't in scope for this resolver.
+        if (efn.type_params.len() == 0 && efn.type_param_count == 0 && efn.receiver_name.len() == 0) {
+            var epi: i32 = 0;
+            while (epi < efn.params.len()) {
+                if (e064_unknown_bare(efn.params[epi].type_name, struct_names, union_names)) {
+                    body_diags = body_diags.append(dg_at("E064", "unknown type \"" + efn.params[epi].type_name + "\"", efn.line, efn.col));
+                }
+                epi = epi + 1;
+            }
+            if (e064_unknown_bare(efn.ret_type, struct_names, union_names)) {
+                body_diags = body_diags.append(dg_at("E064", "unknown type \"" + efn.ret_type + "\"", efn.line, efn.col));
+            }
+        }
+        efi = efi + 1;
+    }
+    var esi: i32 = 0;
+    while (esi < mod.structs.len()) {
+        var esd: parser.StructDecl = mod.structs[esi];
+        if (esd.type_params.len() == 0 && esd.enum_owner.len() == 0) {
+            var efj: i32 = 0;
+            while (efj < esd.fields.len()) {
+                if (e064_unknown_bare(esd.fields[efj].type_name, struct_names, union_names)) {
+                    body_diags = body_diags.append(dg_at("E064", "unknown type \"" + esd.fields[efj].type_name + "\"", esd.line, esd.col));
+                }
+                efj = efj + 1;
+            }
+        }
+        esi = esi + 1;
     }
     // own_diags (E050/E051) and e049_diags (E049) walk whole-function bodies
     // for move / capture analysis; give them the switch-lowered module so

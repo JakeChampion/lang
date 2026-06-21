@@ -81,6 +81,7 @@ var selfHostImplementedCodes = map[string]bool{
 	"E058": true, // labeled break/continue names no enclosing loop
 	"E061": true, // value-position block has no trailing value
 	"E059": true, // `as?` downcast requires a `dyn Trait` value on the left
+	"E064": true, // a type annotation names no declared type (bare nominal)
 }
 
 // goCheckerCodes runs the production (Go) front end over src and returns
@@ -207,6 +208,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		want []string // codes the self-host checker should print
 	}{
 		{"clean", "function main(): i32 { return 1 + 2; }\n", nil},
+		// E064: a bare nominal annotation that names no declared type, in a
+		// non-generic function parameter — both checkers flag it.
+		{"unknown-param-type", "function f(a: Wibble): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
+		{"unknown-field-type", "struct S { v: Wibble }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
 		{"rec-local-ok", "function main(): i32 { function f(n: i32): i32 { if (n <= 0) { return 0; } return f(n - 1); } return f(3); }\n", nil},
 		{"rec-local-capture-ok", "function main(): i32 { var base: i32 = 10; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }\n", nil},
 		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice): the loop

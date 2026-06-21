@@ -1128,6 +1128,21 @@ picks them up with the right prerequisite, not as a lone checker tweak:
   improvement.) Gated by corpus cases `cellnew-i32-ok`,
   `cellnew-string-ok`, `cellnew-bool-ok`, `cellnew-struct-bad`,
   `cellnew-array-bad`, `cellnew-tuple-bad`, `cellnew-nested-bad`.
+- **E064** (a type annotation names no declared type) — `check_module`
+  resolves each annotation against the same struct + union/enum name sets
+  the rest of the checker uses (`type_from_name_with_names_and_unions`)
+  and flags a result that `is_unknown`. Conservatively scoped via
+  `e064_unknown_bare` to a **bare nominal identifier** (`[A-Za-z0-9_]`, so
+  array / generic-instantiation / function (`fn`) / tuple / `dyn` / dotted
+  cross-module spellings are skipped) in a **non-generic, non-method**
+  function (`type_params` *and* `type_param_count` zero — the latter
+  catches unbounded generics, whose params aren't recorded) or a
+  **non-generic, non-enum-variant** struct — contexts with no type
+  parameter in scope to be mistaken for an undefined type. This keeps the
+  bundle fixpoint-clean while matching Go's E064 on the ported shape; the
+  array-element / generic-argument / body-`var` positions Go also covers
+  are a later widening. Gated by corpus cases `unknown-param-type`,
+  `unknown-field-type`.
 - **E053** (`fip` function may not allocate) — needs Perceus in the
   self-host before allocation sites can be attributed to a `fip` function.
 
