@@ -15741,16 +15741,32 @@ function subst_fcall_expr(e: parser.Expr, fname: string, lname: string, capargs:
             return parser.ExprFieldAccess { obj: subst_fcall_expr(fa.obj, fname, lname, capargs), field: fa.field, line: fa.line, col: fa.col };
         },
         parser.ExprLambda(lm) => {
-            // Rewrite a hoisted capture-FREE lambda's call sites that appear
-            // INSIDE another lambda body (`twice = fn(a){ return add(add(a)); }`
-            // → `add` resolves to its hoisted `__lam_0`). Only safe with no
-            // capture args (they'd reference outer-scope locals not in scope in
-            // the nested lambda), and not when the nested lambda shadows `fname`
-            // with a param of its own. This lets a closure that calls another
-            // local closure lift through the IR path instead of bailing to AST.
-            if (capargs.len() > 0) { return e; }
-            var pj: i32 = 0;
-            while (pj < lm.params.len()) { if (lm.params[pj].name == fname) { return e; } pj = pj + 1; }
+            // Rewrite a hoisted lambda's call sites that appear INSIDE another
+            // lambda body (`twice = fn(a){ return add(add(a)); }` → `add`
+            // resolves to its hoisted `__lam_0`, with any capture args injected).
+            // The injected capture args name the FIRST lambda's captures, which
+            // live in the shared enclosing scope — so the nested lambda naturally
+            // captures them too when it is itself lifted. This lets a closure
+            // that calls another local closure lift through the IR path instead
+            // of bailing to AST, INCLUDING a capturing inner closure (the
+            // injected caps flow through as the nested lambda's own caps).
+            // Declined when `fname` or any injected capture name is shadowed by a
+            // binding (param or local `var`) of the nested lambda: the rewrite
+            // would then bind the wrong value, so it stays on the AST path.
+            var bound: string[] = [];
+            var bpi: i32 = 0;
+            while (bpi < lm.params.len()) { bound = bound.append(lm.params[bpi].name); bpi = bpi + 1; }
+            var bbi: i32 = 0;
+            while (bbi < lm.body.len()) { bound = astwalk.collect_bound_stmt(lm.body[bbi], bound); bbi = bbi + 1; }
+            if (util.index_of_str(bound, fname) >= 0) { return e; }
+            var ck: i32 = 0;
+            while (ck < capargs.len()) {
+                match (capargs[ck]) {
+                    parser.ExprIdent(cid) => { if (util.index_of_str(bound, cid.name) >= 0) { return e; } },
+                    _ => { }
+                }
+                ck = ck + 1;
+            }
             return parser.ExprLambda { params: lm.params, ret_type: lm.ret_type, body: subst_fcall_stmts(lm.body, fname, lname, capargs) };
         },
         _ => { return e; }
