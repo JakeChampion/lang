@@ -517,6 +517,12 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // its heap block). Pop the path box into x0, push the result box.
             s = s.need("heap").need("read_file");
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_read_file\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "write_file") {
+            // [pathbox][contentbox] -> write content to the named file, push a fresh
+            // Option[IoError] box (asm_arm64.emit_runtime's __fern_write_file, in its
+            // heap block). Pop content into x1, path into x0; push the result box.
+            s = s.need("heap").need("write_file");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_write_file\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "read_chunk") {
             // [fd][n] -> read up to n bytes from the Reader fd, push a fresh
             // Option[string] box (asm_arm64.emit_runtime's __fern_reader_read_chunk,
