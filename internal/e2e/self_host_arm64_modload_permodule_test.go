@@ -179,4 +179,18 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 	if !strings.Contains(string(gen2), "bl __fn_main") && !strings.Contains(string(gen2), "call __fn_main") {
 		t.Errorf("self-compiled whole compiler missing the main call — has_main misread (no-main fallback)")
 	}
+
+	// 8. SELF-DRIVEN -per-module-needs (#3456, arm64 twin): the per-module-built arm64
+	// compiler drives its own whole-program runtime-need query without OOM, now that it
+	// returns the static all_runtime_need_roots over-approximation instead of re-emitting
+	// every module (see the x86 twin for the mechanism).
+	selfNeeds, err := exec.Command(qemu, binPath, entry, "-per-module-needs").Output()
+	if err != nil {
+		t.Fatalf("per-module-built arm64 compiler OOM/crash on its own -per-module-needs (#3456): %v", err)
+	}
+	for _, root := range []string{"heap", "str_concat", "maps", "arr_push"} {
+		if !strings.Contains(string(selfNeeds), root) {
+			t.Errorf("self-driven -per-module-needs missing root %q", root)
+		}
+	}
 }

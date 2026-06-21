@@ -223,4 +223,31 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 	if !strings.Contains(string(gen2), "call __fn_main") {
 		t.Errorf("self-compiled whole compiler missing `call __fn_main` — has_main misread (no-main fallback)")
 	}
+
+	// 8. SELF-DRIVEN -per-module-needs (the #3456 step toward the IR-only bootstrap):
+	// the per-module-built compiler drives ITS OWN whole-program runtime-need query.
+	// This used to OOM (exit 137): the old -per-module-needs ran a full emit_module_funcs
+	// over every loaded module in one process to read back the exact need union, and the
+	// self-host runtime does not yet reclaim the per-function IR-op allocations (#3425),
+	// so a self-host-built compiler exhausted memory. It now returns the static
+	// all_runtime_need_roots over-approximation (the entry emits the full runtime), so the
+	// query is allocation-cheap and the self-host compiler can run it. (The full
+	// self-driven per-module BUILD still needs the large-module emit OOM resolved — the
+	// self-host Perceus reclamation work, roadmap goal #2 — so this guards only the needs
+	// query, the slice that landed here.)
+	var ncmd *exec.Cmd
+	if len(runner) == 0 {
+		ncmd = exec.Command(binPath, entry, "-per-module-needs")
+	} else {
+		ncmd = exec.Command(runner[0], append(append(runner[1:], binPath), entry, "-per-module-needs")...)
+	}
+	selfNeeds, err := ncmd.Output()
+	if err != nil {
+		t.Fatalf("per-module-built compiler OOM/crash on its own -per-module-needs (#3456 regression): %v", err)
+	}
+	for _, root := range []string{"heap", "str_concat", "maps", "arr_push"} {
+		if !strings.Contains(string(selfNeeds), root) {
+			t.Errorf("self-driven -per-module-needs missing root %q (got %q)", root, strings.TrimSpace(string(selfNeeds)))
+		}
+	}
 }

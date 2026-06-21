@@ -98,17 +98,12 @@ function run_per_module(dir: string, entry: parser.Module, loaded: flatten.Loade
     // Extend the struct view with the built-in type layouts (see builtin_view).
     all_structs = builtin_view(dir, all_structs);
     if (pm_mode == "needs") {
-        var needs: string[] = [];
-        var ni: i32 = 0;
-        while (ni < infmods.len()) {
-            var mn: string[] = asm_ir.module_runtime_needs(infmods[ni]);
-            var mk: i32 = 0;
-            while (mk < mn.len()) {
-                if (!util.has_str(needs, mn[mk])) { needs = needs.append(mn[mk]); }
-                mk = mk + 1;
-            }
-            ni = ni + 1;
-        }
+        // Seed the entry's shared runtime with the full root set instead of an
+        // exact per-module union (asm_ir.all_runtime_need_roots): a sound,
+        // deterministic over-approximation that avoids re-emitting every module
+        // here via module_runtime_needs — that aggregation OOMs a self-host-built
+        // driver (#3425), the one thing blocking a self-host per-module self-compile.
+        var needs: string[] = asm_ir.all_runtime_need_roots();
         var no: i32 = 0;
         while (no < needs.len()) { print(needs[no] + "\n"); no = no + 1; }
         return 0;
