@@ -1,0 +1,27 @@
+// std/regex (#2680) bulk operations across the native backends:
+// regex_find_all (all non-overlapping matches), regex_replace_all (literal
+// replacement, incl. groups + no-match passthrough), and regex_split
+// (separators dropped, empty fields kept). Each check sets a bit; all eight
+// hold → 255.
+import "std/regex";
+
+function main(): i32 {
+    var r: i32 = 0;
+
+    var ms: regex.RMatch[] = regex.regex_find_all("[0-9]+", "a12b345c6");
+    if (ms.len() == 3) { r = r + 1; }
+    if (ms.len() == 3 && ms[0].start == 1 && ms[0].end == 3) { r = r + 2; }
+
+    if (regex.regex_replace_all("a", "banana", "X") == "bXnXnX") { r = r + 4; }
+    if (regex.regex_replace_all("[0-9]+", "x12y3", "#") == "x#y#") { r = r + 8; }
+    if (regex.regex_replace_all("(cat|dog)", "cat and dog", "pet") == "pet and pet") { r = r + 16; }
+    if (regex.regex_replace_all("z", "abc", "Q") == "abc") { r = r + 32; }   // no match → unchanged
+
+    var parts: string[] = regex.regex_split("a,b,,c", ",");
+    if (parts.len() == 4 && parts[0] == "a" && parts[2] == "" && parts[3] == "c") { r = r + 64; }
+
+    var ws: string[] = regex.regex_split("one  two   three", " +");
+    if (ws.len() == 3 && ws[0] == "one" && ws[1] == "two" && ws[2] == "three") { r = r + 128; }
+
+    return r;
+}

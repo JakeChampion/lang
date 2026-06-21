@@ -241,12 +241,13 @@ function __rx_match(n: RNode, t: string, ti: i32): i32[] {
 // `text[start:end]`.
 pub struct RMatch { found: boolean, start: i32, end: i32 }
 
-// __rx_search_root finds the LEFTMOST match of an already-parsed tree,
-// returning its span. Among matches that start at the leftmost position it
-// takes the longest end (greedy), so `text[start:end]` is the longest
-// leftmost match — the conventional search semantics.
-function __rx_search_root(root: RNode, text: string): RMatch {
-    var ti: i32 = 0;
+// __rx_search_from finds the LEFTMOST match of an already-parsed tree at or
+// after byte offset `from`, returning its span. Among matches that start at
+// the leftmost position it takes the longest end (greedy), so
+// `text[start:end]` is the longest leftmost match — the conventional search
+// semantics. The scanning helper behind search / find_all / replace / split.
+function __rx_search_from(root: RNode, text: string, from: i32): RMatch {
+    var ti: i32 = from;
     while (true) {
         var ends: i32[] = __rx_match(root, text, ti);
         if (ends.len() > 0) {
@@ -267,7 +268,7 @@ function __rx_search_root(root: RNode, text: string): RMatch {
 // match.
 pub function regex_search(pattern: string, text: string): RMatch {
     var pr: RParse = __rx_alt(pattern, 0);
-    return __rx_search_root(pr.node, text);
+    return __rx_search_from(pr.node, text, 0);
 }
 
 // `regex_match(pattern, text)` — true when `pattern` matches anywhere in
@@ -285,4 +286,81 @@ pub function regex_find(pattern: string, text: string): i32 {
     var m: RMatch = regex_search(pattern, text);
     if (m.found) { return m.start; }
     return 0 - 1;
+}
+
+// __rx_advance returns the next scan position after a match, always making
+// progress: the match's end, or one past its start for a zero-width match
+// (`a*` matching empty) so the left-to-right scanners can't loop forever.
+function __rx_advance(m: RMatch): i32 {
+    if (m.end > m.start) { return m.end; }
+    return m.start + 1;
+}
+
+// `regex_find_all(pattern, text)` — every non-overlapping leftmost-longest
+// match, left to right, as an `RMatch[]`. A zero-width match advances one
+// byte so the scan terminates; the result is empty when nothing matches.
+pub function regex_find_all(pattern: string, text: string): RMatch[] {
+    var root: RNode = __rx_alt(pattern, 0).node;
+    var out: RMatch[] = [];
+    var pos: i32 = 0;
+    while (pos <= text.len()) {
+        var m: RMatch = __rx_search_from(root, text, pos);
+        if (!m.found) { return out; }
+        out = out.append(m);
+        pos = __rx_advance(m);
+    }
+    return out;
+}
+
+// `regex_replace_all(pattern, text, repl)` — replace every non-overlapping
+// match of `pattern` with the literal string `repl`, returning the new
+// string. `repl` is inserted verbatim (no `$1`/`\1` group substitution).
+pub function regex_replace_all(pattern: string, text: string, repl: string): string {
+    var root: RNode = __rx_alt(pattern, 0).node;
+    var out: string = "";
+    var last: i32 = 0;          // end of the text already emitted
+    var pos: i32 = 0;
+    while (pos <= text.len()) {
+        var m: RMatch = __rx_search_from(root, text, pos);
+        if (!m.found) { return out + text[last : text.len()]; }
+        out = out + text[last : m.start] + repl;
+        last = m.end;
+        var nxt: i32 = __rx_advance(m);
+        // a zero-width match leaves `last` at m.start; carry the skipped byte
+        // into the output by emitting it before advancing.
+        if (m.end <= m.start && nxt <= text.len() && nxt > last) {
+            out = out + text[last : nxt];
+            last = nxt;
+        }
+        pos = nxt;
+    }
+    return out + text[last : text.len()];
+}
+
+// `regex_split(text, pattern)` — split `text` on non-overlapping matches of
+// `pattern`, returning the pieces between matches (the separators are
+// dropped). Zero-width matches are skipped as separators (so splitting on a
+// nullable pattern doesn't shatter the string); a non-matching pattern
+// yields the whole text as a single element.
+pub function regex_split(text: string, pattern: string): string[] {
+    var root: RNode = __rx_alt(pattern, 0).node;
+    var out: string[] = [];
+    var last: i32 = 0;
+    var pos: i32 = 0;
+    while (pos <= text.len()) {
+        var m: RMatch = __rx_search_from(root, text, pos);
+        if (!m.found) {
+            out = out.append(text[last : text.len()]);
+            return out;
+        }
+        if (m.end > m.start) {           // non-empty separator
+            out = out.append(text[last : m.start]);
+            last = m.end;
+            pos = m.end;
+        } else {
+            pos = m.start + 1;           // skip a zero-width match
+        }
+    }
+    out = out.append(text[last : text.len()]);
+    return out;
 }
