@@ -3,6 +3,19 @@
 Date: 2026-06-20.
 Status: investigation complete; fixes scoped, not yet implemented.
 
+> **CORRECTION (2026-06-21) — see "Finding 2 RE-MEASURED" below.** Direct
+> measurement with `cmd/fern`-compiled microbenchmarks contradicts this
+> document's central Finding-2 claim that the 45-field `LowerState`
+> rebuild *inherently* clones O(N²). It does **not**: clean self-reassign
+> threading (`s = s.emit(x)`) is **in-place** even at 45 fields and 20
+> parallel arrays (flat ~2 MB over 8000 iters). The clone fires only when
+> a state is **read after being threaded** (kept alive, rc≥2). So the
+> "move `ops`/`local_*` out of `LowerState`" rework (Plan A /
+> `docs/EFFECT-A-LOWERSTATE-INPLACE-PLAN.md`) attacks a rebuild that is
+> already in-place under clean threading, and is **not** the right fix.
+> The real cost is a *linear* per-allocation leak (Effect B) plus a
+> specific, localized keep-alive — see the re-measured section.
+
 ## Question that started this
 
 > Would moving to a **flat AST** (one contiguous array of nodes with
@@ -410,6 +423,71 @@ Net: keep the recommended order above, but treat the Finding-2 O(M)
 rewrite as **gated on retiring the AST fallback** (goal #1). The
 `local_*` collapse (Effect-A constant factor) and Finding 1 (Effect B)
 remain unblocked and independently landable.
+
+## Finding 2 RE-MEASURED (2026-06-21) — the rebuild is NOT the problem
+
+The original Finding 2 attributed the super-linear cost to the
+`LowerState` rebuild cloning its arrays (`.append` / `.with` taking the
+clone path because the record is rc≥2). A fresh round of direct
+measurement — `cmd/fern`-compiled microbenchmarks that isolate one
+variable at a time, plus the real `asm_run` IR driver — shows that
+framing is wrong, and pinpoints the actual mechanism.
+
+### The native in-place reuse works (the rebuild is in-place)
+
+Microbenchmarks (45-field struct mirroring `LowerState`, peak RSS via
+`wait4`/`ru_maxrss`, 8000 iterations):
+
+| shape | peak RSS | verdict |
+| --- | --- | --- |
+| `s = s.emit(x)` clean self-reassign, 45 fields | **2.1 MB** | in-place |
+| field count swept 20 → 60 | flat 2.1 MB | **no field-count threshold** |
+| struct with **20 arrays**, `add` appends to ALL in one rebuild | **2.1 MB** | multi-array rebuild in-place too |
+| thread `s` through a helper (`s = step(s,i)`) | **2.7 MB** | function boundary fine |
+| **read `s.field` AFTER `step(s,i)`** (s kept alive) | **278 MB** | ← the clone |
+| same, but hoist the read BEFORE the call (s moved) | **2.7 MB** | fix confirmed |
+
+So: the 45-field rebuild, multi-array append, and helper threading are
+**all in-place**. The clone fires for exactly one reason — the threaded
+state is **read after it was passed into a call**, which keeps it live
+(rc≥2) so the in-place reuse is disabled. The fix for any such site is a
+one-line **hoist** (move the read before the threading call, or read the
+equivalent field from the threaded result), not a structural change.
+
+### The real cost is mostly LINEAR (Effect B), not the quadratic
+
+Real `asm_run` (cap temporarily raised), peak RSS:
+
+| workload | measurement | scaling |
+| --- | --- | --- |
+| 800 stmts, vary ops/stmt (~4 → ~14) | 122 → 440 MB | **linear in ops** (3.6× for 3.5×) |
+| vary local count 200 → 3200 | 117 → 2502 MB | marginal 0.4 → 1.0 MB/local |
+
+Tripling ops-per-statement triples memory — *linear*, not the O(ops²) a
+clone would give. The per-local marginal rises then settles (~0.8
+MB/local), i.e. a dominant **linear leak** (~0.4–1 MB per local /
+statement) with a mild super-linear tail. A targeted hoist applied to a
+real read-after-thread site in `lower_expr`'s `ExprBinary` arm changed
+peak RSS by **zero**, confirming the rebuild-clone is not the resident
+cost here; the well-threaded `lower_block` / `lower_stmt` / `StmtVar`
+paths are already clean (read `s` *before* the thread point, operate on
+the result *after*).
+
+### Revised conclusion
+
+- **Plan A (move `ops`/`local_*` out of `LowerState`) is not the fix.**
+  It targets the rebuild clone, which is already in-place under the clean
+  threading the code already uses. `docs/EFFECT-A-LOWERSTATE-INPLACE-PLAN.md`
+  is superseded by this section.
+- The dominant term is a **linear per-allocation leak** (Effect B —
+  candidates: the asm-emit string building in `EmitState`, and leaked
+  `Op.kind`/`Op.str` strings that ride the persistent op stream). The
+  mild super-linear tail is a **specific keep-alive** that stops
+  superseded `LowerState`s from being reclaimed — once located (needs
+  rc/heap instrumentation in the self-host runtime, since the source
+  reads cleanly), it is a cheap localized hoist, not a refactor.
+- Next memory work, if resumed, should **locate the keep-alive + profile
+  the linear leak** first, rather than execute a structural rework.
 
 ## Reproduction
 
