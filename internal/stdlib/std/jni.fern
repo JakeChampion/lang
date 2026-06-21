@@ -156,3 +156,90 @@ pub function get_string_utf_chars(env: usize, jstr: usize, is_copy: usize): usiz
 pub function release_string_utf_chars(env: usize, jstr: usize, chars: usize): usize {
     return call2(env, RELEASE_STRING_UTF_CHARS(), jstr, chars);
 }
+
+// --- Exception handling -------------------------------------------------
+//
+// Every JNI call that can throw leaves a pending exception that MUST be
+// checked and cleared before most other JNI calls are legal — these are
+// the primitives for that. Indices are anchored by the (already-verified)
+// GetObjectClass=31 / GetMethodID=33 ordering of JNINativeInterface.
+
+// jint (*Throw)(JNIEnv*, jthrowable obj) — rethrow an existing throwable.
+pub function throw(env: usize, throwable: usize): i32 {
+    return call1(env, 13, throwable) as i32;
+}
+
+// jint (*ThrowNew)(JNIEnv*, jclass clazz, const char* message) — construct
+// and throw `clazz(message)`. Pass `jni.cstr(msg)` for the message.
+pub function throw_new(env: usize, clazz: usize, message: usize): i32 {
+    return call2(env, 14, clazz, message) as i32;
+}
+
+// jthrowable (*ExceptionOccurred)(JNIEnv*) — the pending exception, or 0.
+pub function exception_occurred(env: usize): usize {
+    return call0(env, 15);
+}
+
+// void (*ExceptionDescribe)(JNIEnv*) — print the pending exception + trace.
+pub function exception_describe(env: usize): usize {
+    return call0(env, 16);
+}
+
+// void (*ExceptionClear)(JNIEnv*) — clear the pending exception.
+pub function exception_clear(env: usize): usize {
+    return call0(env, 17);
+}
+
+// --- Reference management -----------------------------------------------
+//
+// Local refs die when the native method returns; promote anything that
+// must outlive the call to a global ref, and delete refs you no longer
+// need (the local table is finite).
+
+// jobject (*NewGlobalRef)(JNIEnv*, jobject obj)
+pub function new_global_ref(env: usize, obj: usize): usize {
+    return call1(env, 21, obj);
+}
+
+// void (*DeleteGlobalRef)(JNIEnv*, jobject gref)
+pub function delete_global_ref(env: usize, gref: usize): usize {
+    return call1(env, 22, gref);
+}
+
+// void (*DeleteLocalRef)(JNIEnv*, jobject lref)
+pub function delete_local_ref(env: usize, lref: usize): usize {
+    return call1(env, 23, lref);
+}
+
+// jobject (*NewLocalRef)(JNIEnv*, jobject ref)
+pub function new_local_ref(env: usize, ref: usize): usize {
+    return call1(env, 25, ref);
+}
+
+// --- Class / object relationships ---------------------------------------
+
+// jclass (*GetSuperclass)(JNIEnv*, jclass clazz)
+pub function get_superclass(env: usize, clazz: usize): usize {
+    return call1(env, 10, clazz);
+}
+
+// jboolean (*IsAssignableFrom)(JNIEnv*, jclass sub, jclass sup)
+pub function is_assignable_from(env: usize, sub: usize, sup: usize): i32 {
+    return call2(env, 11, sub, sup) as i32;
+}
+
+// jboolean (*IsSameObject)(JNIEnv*, jobject a, jobject b)
+pub function is_same_object(env: usize, a: usize, b: usize): i32 {
+    return call2(env, 24, a, b) as i32;
+}
+
+// jobject (*AllocObject)(JNIEnv*, jclass clazz) — allocate without running
+// a constructor (pair with CallNonvirtual<init> if you need one).
+pub function alloc_object(env: usize, clazz: usize): usize {
+    return call1(env, 27, clazz);
+}
+
+// jboolean (*IsInstanceOf)(JNIEnv*, jobject obj, jclass clazz)
+pub function is_instance_of(env: usize, obj: usize, clazz: usize): i32 {
+    return call2(env, 32, obj, clazz) as i32;
+}
