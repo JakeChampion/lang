@@ -165,11 +165,42 @@ So the epic is tooling-feasible. The work, smallest-first:
    needs only the lowered call + a return-area read — proven; a *pending*
    import additionally needs `waitable-set.*` + the subtask poll), and a
    runtime helper exposing "call this async import and block until ready".
-4. **Fern surface**: an `await`-shaped expression (or reuse the
-   `concurrent { … }` / reactor desugar) that lowers to the await loop —
-   the colorless `await` the whole concurrency design targets. This is
-   the design-heavy part (which imports are async; how `await` reads in
-   source).
+4. **Fern surface — DECIDED: colorless auto-await.** An `async`-marked
+   import call is implicitly awaited — `var x = dep();` just returns the
+   value, the compiler inserts the await (no `await` keyword; matches the
+   research doc's colorless-concurrency stance). The surface foundation
+   is **already in place**: `@import("iface","name") async function
+   dep(): i32;` parses today (the `async` contextual modifier sets
+   `FuncDecl.Async`; `@import` sets `ImportIface`) — verified, no parser
+   change needed. Only the caller needs to be `async`-lifted (it must
+   own a task to await), which the `async function` keyword already
+   provides.
+
+### Codegen plan for the colorless async import (the remaining vertical)
+
+A tightly-coupled but precedented vertical (mirrors the existing
+composite-result `@import` **extern-wrapper** machinery,
+`scanExternImports`/`externWrappers`):
+
+- **wasmbin**: an `async @import dep(): i32` emits its raw core import
+  with the **async-lower core signature** `(retptr) -> status` (not a
+  direct `() -> i32`), plus a generated wrapper `__async_dep` that
+  allocs an 8-byte return area, calls the raw import, (sync case) reads
+  the result from the return area and returns it — exactly the
+  extern-wrapper pattern, so a Fern `dep()` call resolves to the wrapper
+  and stays colorless. The enclosing function must be `async`-lifted.
+- **composer**: classify the async import (from `FuncDecl.Async` +
+  `ImportIface`) and lower it with `canon lower async` + the user
+  module's memory via the existing `gMem` **trampoline** (solves the
+  lower-memory circularity for a single-memory program — the proven
+  `PutCanonSectionLowerAsync` over the trampoline memory).
+- **test**: compile such a program, compose it against a nested async
+  provider (the proven `PutComponentSection` path), run under the async
+  features. Expected: `dep()`'s value flows through colorlessly.
+
+The ABI, the emitters, and the nested-provider composition are all
+proven (TestWasmP3AsyncImportAwait); this vertical wires them to Fern
+source. It is the next focused build.
 
 This is a multi-PR epic (comparable to the export side plus the waitable
 state machine), best taken as a focused effort — the tooling feasibility
