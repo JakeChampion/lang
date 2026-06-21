@@ -5786,9 +5786,19 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 		}
 		rid, rok := c.Args[0].(*ast.Ident)
 		if !rok {
-			// Non-ident receiver (a fresh temp, e.g. `f().with(...)`): dead
-			// after the call, so reuse is sound.
-			incs[c] = false
+			// A non-ident receiver is only a MOVE-able fresh temp when it is
+			// genuinely owned (a call result `f().with(...)`, dead after the
+			// call). A PROJECTION out of another live value — an array element
+			// `a[0]`, a struct field `s.b`, or a slice `a[i:j]` — is a BORROW:
+			// the inner buffer is still owned by its container, so an in-place
+			// cow would corrupt the container (`a[0].with(0,9)` must not mutate
+			// `a[0]`). Force the inc on a projection so cow copies instead.
+			switch c.Args[0].(type) {
+			case *ast.Index, *ast.FieldAccess, *ast.SliceExpr:
+				incs[c] = true
+			default:
+				incs[c] = false
+			}
 			return true
 		}
 		// Live after the call iff this occurrence is NOT the receiver

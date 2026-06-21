@@ -3381,6 +3381,36 @@ function main(): i32 {
     return (n - 800) + __rc_underflow_count();
 }`,
 	},
+	{
+		// `a[0].with(0, 9)` on a NESTED array: the receiver `a[0]` is a
+		// projection out of the live outer array `a`, i.e. a BORROW — the inner
+		// buffer is still owned by `a`, so an in-place cow would corrupt `a[0]`.
+		// computeArraySetIncs previously treated any non-ident receiver as a
+		// dead fresh temp and skipped the inc, so native mutated `a[0]` in place
+		// (`a[0][0]` became 9) → 9 + 9 = 18 instead of the copy-on-write 9 + 1
+		// = 10 (interp/self-host were already correct). The fix forces the inc
+		// for an Index/FieldAccess/Slice receiver so cow copies. r[0]=9,
+		// a[0][0]=1 → 10; the -10 makes a correct run read 0.
+		name: "nested_array_with_borrowed_element",
+		src: `
+function main(): i32 {
+    var a: i32[][] = [[1, 2], [3, 4]];
+    var r: i32[] = a[0].with(0, 9);
+    return (r[0] + a[0][0] - 10) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Same borrow hazard through a STRUCT FIELD: `s.xs.with(0, 9)` must not
+		// mutate `s.xs` in place. r[0]=9, s.xs[0]=1 → 10; -10 → 0 when correct.
+		name: "struct_field_array_with_borrowed",
+		src: `
+struct S { xs: i32[] }
+function main(): i32 {
+    var s: S = S { xs: [1, 2, 3] };
+    var r: i32[] = s.xs.with(0, 9);
+    return (r[0] + s.xs[0] - 10) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
