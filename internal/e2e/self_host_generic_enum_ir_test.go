@@ -62,6 +62,37 @@ function main(): i32 {
     match (b) { Sm(s) => { y = s.len(); }, Nn => { } }
     return x + y;
 }`, 10},
+	// match on a CALL result (`match (wrap(4))`): the scrutinee's instantiation
+	// comes from the callee's declared return type, not an annotation.
+	{"call_scrutinee", `enum Opt[T] { Sm(T), Nn }
+function wrap(v: i32): Opt[i32] { return Sm(v); }
+function main(): i32 {
+    match (wrap(4)) { Sm(x) => { return x + 1; }, Nn => { return 0; } }
+}`, 5},
+	// array of a generic enum, iterated + matched per element. The unit-variant
+	// element (`Nn`) gets its instantiation from the array's element type, and
+	// the `for` loop variable carries the element type into the match.
+	{"array_iter", `enum Opt[T] { Sm(T), Nn }
+function main(): i32 {
+    var xs: Opt[i32][] = [Sm(1), Sm(2), Nn];
+    var s: i32 = 0;
+    for o in xs { match (o) { Sm(x) => { s = s + x; }, Nn => { } } }
+    return s;
+}`, 3},
+	// match on an index into a generic-enum array (`match (xs[0])`).
+	{"index_scrutinee", `enum Opt[T] { Sm(T), Nn }
+function main(): i32 {
+    var xs: Opt[i32][] = [Sm(9), Nn];
+    match (xs[0]) { Sm(x) => { return x; }, Nn => { return 0; } }
+}`, 9},
+	// string-payload array, method dispatch on the bound element through a `for`.
+	{"string_array_method", `enum Box[T] { V(T) }
+function main(): i32 {
+    var xs: Box[string][] = [V("ab"), V("cde")];
+    var n: i32 = 0;
+    for b in xs { match (b) { V(s) => { n = n + s.len(); } } }
+    return n;
+}`, 5},
 }
 
 // TestSelfHostGenericEnumIRX86_64 builds the self-host asm_run driver and runs

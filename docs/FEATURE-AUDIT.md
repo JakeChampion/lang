@@ -251,6 +251,25 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-21 — self-host IR: generic-enum match over call / array / index scrutinees ([#3572](https://github.com/JakeChampion/lang/issues/3572) follow-up)
+
+Closes two follow-on miscompiles in the generic-enum monomorphiser (the same-day
+#3572 work below): the pass only recovered a `match` scrutinee's instantiation
+from a directly-annotated **ident** (`var o: Opt[i32]; match (o)`), so other
+scrutinee shapes left their arm patterns un-mangled — and since the pass *drops*
+the generic variant structs, an un-mangled `Sm`/`Nn` pattern (or a unit-variant
+construction) dangled → wrong result or a segfault. Now `monomorphize_enums`
+recovers the instantiation for a **call** scrutinee (`match (wrap(4))` — via the
+callee's declared return type), an **index** scrutinee (`match (xs[0])`), and a
+`for`-loop element (`for o in xs` over `Opt[i32][]` binds `o: Opt[i32]`), and an
+**array literal** flowing into `Opt[i32][]` propagates the element expected type
+to each element so a unit-variant element (`Nn`) still pins its instantiation. An
+unannotated `var o = wrap(4)` also records the init's recovered type for a later
+`match (o)`. Coverage: four new `TestSelfHostGenericEnum{IRX86_64,WasmIR}` cases
+— call scrutinee, array-iter (unit element), index scrutinee, string-payload
+array method dispatch — all routing `ir` and oracle-checked against native.
+Fixpoint stays byte-identical (compiler source has no generic enums).
+
 ### 2026-06-21 — self-host IR: user-defined generic enums (`enum E[T]`) monomorphise + lower ([#3572](https://github.com/JakeChampion/lang/issues/3572))
 
 A **user-defined generic enum** — `enum Opt[T] { Sm(T), Nn }` — previously
