@@ -11,22 +11,26 @@ device or emulator.
 ```sh
 # arm64 device:
 fern -target arm64-android -shared \
-     -export Java_dev_fern_demo_Native_answer,Java_dev_fern_demo_Native_jniVersion \
+     -export Java_dev_fern_demo_Native_answer,Java_dev_fern_demo_Native_jniVersion,Java_dev_fern_demo_Native_greeting,Java_dev_fern_demo_Native_utf8Length,Java_dev_fern_demo_Native_isString \
      -o libfern.so examples/android/fern_jni.fern
 
 # x86-64 emulator: -target x86-64 (same flags)
 ```
 
-This emits an `ET_DYN`, W^X, position-independent `.so` with the two
-exported symbols in its dynamic symbol table — the artifact an APK ships
-under `lib/arm64-v8a/libfern.so`. The Fern→`.so` build and the JNI ABI are
+This emits an `ET_DYN`, W^X, position-independent `.so` with the exported
+symbols in its dynamic symbol table — the artifact an APK ships under
+`lib/arm64-v8a/libfern.so`. The Fern→`.so` build and the JNI ABI are
 covered by the test suite (`internal/e2e/shared_lib_test.go`,
 `TestAndroidJNIExampleBuilds`); the `dlopen`+call mechanics are validated
 on the host in the same file.
 
 A Fern function is a JNI native method as-is: `(JNIEnv* env, jobject thiz,
 args…)` maps to `usize` params (System V / AAPCS64), and an `i32` return is
-a `jint`. To call back into the JVM, use `std/jni` (`jni.call0/1/2`).
+a `jint`. To call back into the JVM, use `std/jni`: typed wrappers like
+`jni.get_version` / `jni.find_class` / `jni.new_string_utf` /
+`jni.get_int_field` / `jni.is_instance_of` (built on `jni.call0/1/2/3`),
+plus `jni.cstr` to turn a Fern string into the `const char*` the
+string/lookup methods expect.
 
 ## 2. The Java/Kotlin side (one tiny class)
 
@@ -35,6 +39,9 @@ package dev.fern.demo
 class Native {
     external fun answer(): Int
     external fun jniVersion(): Int
+    external fun greeting(): String
+    external fun utf8Length(s: String): Int
+    external fun isString(obj: Any): Boolean
     companion object { init { System.loadLibrary("fern") } }
 }
 ```
