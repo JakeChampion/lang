@@ -33,9 +33,11 @@ overlapped outbound fetches directly, without the explicit `Step[T]`/
   `-W component-model-async`, `-W component-model-async-builtins` (🚝),
   `-W component-model-async-stackful` (🚟), plus async stacks +
   `component-model-error-context` (📝). So the **runtime supports P3
-  async** (behind these `-W` flags). The repo's pinned wasmtime is
-  **34.0.1**, which predates these — so CI (and `/root/.fern-wasm`)
-  can't run async components until bumped.
+  async** (behind these `-W` flags). **The pinned wasmtime is now
+  v37.0.1** (CI `.github/actions/setup-fern/action.yml`): bumped from
+  34.0.1 after verifying the whole Preview-2 wasm suite passes under 37
+  (async stays off by default), so the toolchain prerequisite for P3 is
+  satisfied — CI can run async components once codegen emits them.
 - **wasm-tools 1.225.0** — partial: `future<u32>` / `stream<T>` WIT
   **round-trips cleanly**, but the **`async func` WIT syntax is
   rejected** (`expected keyword 'func', found an identifier`). So the
@@ -79,12 +81,14 @@ composition + three small builtins). It would touch:
    edge-handler fan-out (timer + poll + scheduler + deadline). The next
    concrete async increments (outbound socket pollables, a `select`
    first-wins combinator) all build on it with no tooling risk.
-2. **Gate P3 on a toolchain bump.** The first P3 PR should be
-   infrastructure: bump the pinned wasmtime to ≥37 and confirm the
-   existing P2 wasm suite still passes under it (async stays off by
-   default; `-W component-model-async` is opt-in), and pull a wasm-tools
-   that validates async lifts. Only once that is green does async
-   codegen have a testable target.
+2. **Gate P3 on a toolchain bump. — DONE.** The pinned wasmtime is now
+   v37.0.1 (CI + local), verified that the existing P2 wasm suite still
+   passes under it (async stays off by default; `-W component-model-async`
+   is opt-in). Remaining tooling caveat: wasm-tools 1.225 validates
+   `future`/`stream` types but not the `async func` WIT lift syntax, so
+   an async lift may need a newer wasm-tools (or to be exercised by
+   running under wasmtime rather than WIT-validating). The runtime
+   prerequisite is satisfied; async codegen now has a testable target.
 3. **Then implement P3 incrementally**, smallest-first: a single
    `async` export returning a `future<u32>` resolved immediately
    (`task.return`), run under `wasmtime -W component-model-async` — the
