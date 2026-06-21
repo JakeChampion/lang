@@ -68,6 +68,31 @@ var nestedArrayI64IRCases = []struct {
 	{"i64-forin", `function main(): i32 { var m: i64[][] = [[5000000000], [6000000000]]; var t: i64 = 0; for row in m { for x in row { t = t + x; } } return (t / 1000000000) as i32; }`},
 }
 
+// nestedArrayStructIRCases pin field/method access on a struct/enum element of an
+// array-of-arrays (`a[i][j].field`, `a[i][j].method()`) to the self-host IR path on
+// x86-64 + wasm. Value lowering of `a[i][j]` already worked (the temp-bound form
+// `var p = a[i][j]; p.x` lowers), but `expr_struct_type` couldn't recover the
+// element type for a doubly-indexed `a[i][j]` (its ExprIndex arm only matched an
+// ExprIdent/ExprFieldAccess array, never a nested ExprIndex), so the field-read and
+// method-dispatch paths bailed to the AST emitter. #2691 adds the depth-2 ExprIndex
+// case so the innermost struct/enum element type recorded on the T[][] slot is
+// recovered. Each case is oracle-checked against the interpreter and returns <= 126.
+var nestedArrayStructIRCases = []struct {
+	name string
+	main string
+}{
+	// Two field reads off a struct element of a P[][]. 3 + 4 = 7.
+	{"struct-field", `struct P{x:i32,y:i32} function main(): i32 { var a: P[][] = [[P{x:3,y:4}]]; return a[0][0].x + a[0][0].y; }`},
+	// Variable indices into the nested struct array. a[0][1].x = 6.
+	{"struct-field-var-idx", `struct P{x:i32} function main(): i32 { var a: P[][] = [[P{x:5},P{x:6}]]; var i = 0; var j = 1; return a[i][j].x; }`},
+	// Method dispatch on the struct element. 3*2 = 6.
+	{"struct-method", `struct P{x:i32} function (p: P) val(): i32 { return p.x*2; } function main(): i32 { var a: P[][] = [[P{x:3}]]; return a[0][0].val(); }`},
+	// 8-byte i64 field on the nested element (field read picks the 8-byte load). 5.
+	{"struct-i64-field", `struct P{x:i64} function main(): i32 { var a: P[][] = [[P{x:5000000000}]]; return (a[0][0].x / 1000000000) as i32; }`},
+	// Method dispatch on an enum element of a Sh[][] (`<Enum>.<method>`). 3*3 = 9.
+	{"enum-method", `enum Sh{C(i32)} function (s: Sh) area(): i32 { match(s){Sh.C(r)=>{return r*r;}} } function main(): i32 { var a: Sh[][] = [[Sh.C(3)]]; return a[0][0].area(); }`},
+}
+
 // TestSelfHostNestedArrayIRX86_64 routes each case through the self-hosted x86-64
 // IR driver, oracle-checked, with routing pinned to "ir".
 func TestSelfHostNestedArrayIRX86_64(t *testing.T) {
@@ -87,11 +112,12 @@ func TestSelfHostNestedArrayIRX86_64(t *testing.T) {
 	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
 
 	// x86-64 runs the cross-backend cases plus the i64[][] cases (both the read
-	// and construction fixes; the wasm half now runs them too).
-	x86Cases := append(append([]struct {
+	// and construction fixes; the wasm half now runs them too) plus the struct/enum
+	// nested-element field/method cases.
+	x86Cases := append(append(append([]struct {
 		name string
 		main string
-	}{}, nestedArrayIRCases...), nestedArrayI64IRCases...)
+	}{}, nestedArrayIRCases...), nestedArrayI64IRCases...), nestedArrayStructIRCases...)
 
 	for _, tc := range x86Cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -143,11 +169,12 @@ func TestSelfHostNestedArrayIRWasm(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
 	// wasm runs the cross-backend cases plus the i64[][] cases — the i64-literal
-	// construction fix (infer_expr_width value-based i64) makes these build here too.
-	wasmCases := append(append([]struct {
+	// construction fix (infer_expr_width value-based i64) makes these build here too —
+	// plus the struct/enum nested-element field/method cases.
+	wasmCases := append(append(append([]struct {
 		name string
 		main string
-	}{}, nestedArrayIRCases...), nestedArrayI64IRCases...)
+	}{}, nestedArrayIRCases...), nestedArrayI64IRCases...), nestedArrayStructIRCases...)
 
 	for _, tc := range wasmCases {
 		t.Run(tc.name, func(t *testing.T) {
