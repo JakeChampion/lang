@@ -16525,21 +16525,38 @@ function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, f
                 }
             },
             parser.StmtIf(f) => {
+                // Walk the CONDITION too, not just the bodies: a fn-typed call
+                // ARGUMENT in `if (g(<lambda>))` must be env-boxed exactly as it is
+                // in `var r = g(<lambda>)` / `return g(<lambda>)`, otherwise the
+                // callee (whose fn-param is marked a closure local) unpacks a box
+                // from a bare fn pointer and crashes. lift_inline_closures_expr is a
+                // structural identity when no fn-arg is present, so this is inert for
+                // the self-host source (no fn-typed params) — the fixpoint is
+                // undisturbed. (#2686 tail: the cross-type `fold` driver is called as
+                // `if (fold(it, init, <lambda>))`, which this reaches.)
+                var cr: InlineCloRes = lift_inline_closures_expr(f.cond, fd, fs, ct, gfns, structs, mfuncs);
+                fs = cr.funcs; ct = cr.counter;
                 var tb: InlineCloStmts = lift_inline_closures_stmts(f.then_body, fd, fs, ct, gfns, structs, mfuncs);
                 fs = tb.funcs; ct = tb.counter;
                 var eb: InlineCloStmts = lift_inline_closures_stmts(f.else_body, fd, fs, ct, gfns, structs, mfuncs);
                 fs = eb.funcs; ct = eb.counter;
-                out = out.append(parser.StmtIf { cond: f.cond, then_body: tb.stmts, else_body: eb.stmts });
+                out = out.append(parser.StmtIf { cond: cr.expr, then_body: tb.stmts, else_body: eb.stmts });
             },
             parser.StmtWhile(w) => {
+                // Walk the condition (same fn-arg-boxing reason as StmtIf above).
+                var cr: InlineCloRes = lift_inline_closures_expr(w.cond, fd, fs, ct, gfns, structs, mfuncs);
+                fs = cr.funcs; ct = cr.counter;
                 var b: InlineCloStmts = lift_inline_closures_stmts(w.body, fd, fs, ct, gfns, structs, mfuncs);
                 fs = b.funcs; ct = b.counter;
-                out = out.append(parser.StmtWhile { cond: w.cond, body: b.stmts, label: w.label });
+                out = out.append(parser.StmtWhile { cond: cr.expr, body: b.stmts, label: w.label });
             },
             parser.StmtFor(fr) => {
+                // Walk the iterated expression (`for x in g(<lambda>)`): same boxing.
+                var cr: InlineCloRes = lift_inline_closures_expr(fr.iter, fd, fs, ct, gfns, structs, mfuncs);
+                fs = cr.funcs; ct = cr.counter;
                 var b: InlineCloStmts = lift_inline_closures_stmts(fr.body, fd, fs, ct, gfns, structs, mfuncs);
                 fs = b.funcs; ct = b.counter;
-                out = out.append(parser.StmtFor { var_name: fr.var_name, iter: fr.iter, body: b.stmts, label: fr.label });
+                out = out.append(parser.StmtFor { var_name: fr.var_name, iter: cr.expr, body: b.stmts, label: fr.label });
             },
             _ => { out = out.append(stmts[i]); }
         }
