@@ -739,3 +739,83 @@ function main(): i32 { return 0; }`
 		t.Fatalf("exception/ref wrapper dispatch = %d, want 42 (out=%q)", code, out)
 	}
 }
+
+// TestStdJNIFieldAccessors validates the instance/static field accessors and
+// get_array_length: correct slot dispatch, a 64-bit get_long_field value
+// (proving the full word survives, not just 32 bits), and a set_int_field
+// write that lands in the fake field. A backing `long fld` models the
+// instance field so the get/set pair round-trips through the .so.
+func TestStdJNIFieldAccessors(t *testing.T) {
+	gcc, err := exec.LookPath("gcc")
+	if err != nil {
+		t.Skip("gcc not on PATH")
+	}
+	if runtime.GOARCH != "amd64" {
+		t.Skip("host is not amd64")
+	}
+	src := `import "std/jni";
+function g_int(env: usize, cls: usize, j: usize): i32 { return jni.get_int_field(j, 0 as usize, 0 as usize); }
+function g_long(env: usize, cls: usize, j: usize): usize { return jni.get_long_field(j, 0 as usize, 0 as usize); }
+function g_obj(env: usize, cls: usize, j: usize): usize { return jni.get_object_field(j, 0 as usize, 0 as usize); }
+function s_int(env: usize, cls: usize, j: usize, v: usize): usize { return jni.set_int_field(j, 0 as usize, 0 as usize, v); }
+function g_sint(env: usize, cls: usize, j: usize): i32 { return jni.get_static_int_field(j, 0 as usize, 0 as usize); }
+function arrlen(env: usize, cls: usize, j: usize, a: usize): i32 { return jni.get_array_length(j, a); }
+function main(): i32 { return 0; }`
+	exps := []string{"g_int", "g_long", "g_obj", "s_int", "g_sint", "arrlen"}
+	asm := compileToX86AsmExports(t, src, exps)
+	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exps)
+	if err != nil {
+		t.Fatalf("AssembleProgramShared: %v", err)
+	}
+	elfExports := make([]nativeelf.Export, len(exps))
+	for i, n := range exps {
+		elfExports[i] = nativeelf.Export{Name: n, Value: ev[n]}
+	}
+	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs), elfExports, "libfern.so")
+	dir := t.TempDir()
+	soPath := filepath.Join(dir, "libfern.so")
+	if err := os.WriteFile(soPath, so, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Fake JNIEnv slots: 100 GetIntField, 101 GetLongField (returns a value
+	// >32 bits), 95 GetObjectField, 109 SetIntField (writes fld), 150
+	// GetStaticIntField, 171 GetArrayLength.
+	loader := `#include <dlfcn.h>
+#include <stdio.h>
+static long fld;
+static long g100(void*e,long o,long f){(void)e;(void)o;(void)f;return fld;}
+static long g101(void*e,long o,long f){(void)e;(void)o;(void)f;return 0x1ffffffffL;}
+static long g95(void*e,long o,long f){(void)e;(void)o;(void)f;return 0xABC;}
+static long s109(void*e,long o,long f,long v){(void)e;(void)o;(void)f;fld=v;return 0;}
+static long g150(void*e,long c,long f){(void)e;(void)c;(void)f;return 555;}
+static long g171(void*e,long a){(void)e;(void)a;return 7;}
+int main(int c, char** v){
+  void* h = dlopen(v[1], RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
+  void* t[256]={0};
+  t[100]=(void*)g100; t[101]=(void*)g101; t[95]=(void*)g95;
+  t[109]=(void*)s109; t[150]=(void*)g150; t[171]=(void*)g171;
+  void* tp=t; void* env=&tp; long L=(long)env;
+  fld=42;
+  if(((int(*)(long,long,long))dlsym(h,"g_int"))(0,0,L)!=42) return 1;
+  if(((unsigned long(*)(long,long,long))dlsym(h,"g_long"))(0,0,L)!=0x1ffffffffUL) return 2;
+  if(((unsigned long(*)(long,long,long))dlsym(h,"g_obj"))(0,0,L)!=0xABC) return 3;
+  ((unsigned long(*)(long,long,long,long))dlsym(h,"s_int"))(0,0,L,99);
+  if(fld!=99) return 4;
+  if(((int(*)(long,long,long))dlsym(h,"g_sint"))(0,0,L)!=555) return 5;
+  if(((int(*)(long,long,long,long))dlsym(h,"arrlen"))(0,0,L,0)!=7) return 6;
+  return 42;
+}`
+	cPath := filepath.Join(dir, "loader.c")
+	if err := os.WriteFile(cPath, []byte(loader), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ld := filepath.Join(dir, "loader")
+	if out, err := exec.Command(gcc, cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
+		t.Fatalf("gcc loader: %v\n%s", err, out)
+	}
+	cmd := exec.Command(ld, soPath)
+	out, _ := cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 42 {
+		t.Fatalf("field accessor dispatch = %d, want 42 (out=%q)", code, out)
+	}
+}
