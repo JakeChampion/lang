@@ -4653,9 +4653,9 @@ function mg_ty(ty: string, gstructs: StructDecl[], ins: Insts): TyIns {
     var lb: i32 = first_bracket(ty);
     if (lb > 0 && ty[ty.len() - 1 : ty.len()] == "]") {
         var base: string = ty[0 : lb];
+        var inner: string = ty[lb + 1 : ty.len() - 1];
+        var parts: string[] = split_top_commas(inner);
         if (gstruct_index(gstructs, base) >= 0) {
-            var inner: string = ty[lb + 1 : ty.len() - 1];
-            var parts: string[] = split_top_commas(inner);
             var cur: Insts = ins;
             var key: string = "";
             var j: i32 = 0;
@@ -4669,6 +4669,25 @@ function mg_ty(ty: string, gstructs: StructDecl[], ins: Insts): TyIns {
             cur = cur.iadd(base, key);
             return TyIns { ty: base + "__" + key, mins: cur };
         }
+        // A NON-generic-struct generic base — a built-in `Option`/`Result` or a
+        // user generic ENUM (`Opt[Box[i32]]`). The base itself isn't mangled
+        // here (the enum pass, which runs after, keys it), but recurse into its
+        // args so a NESTED generic-struct argument is monomorphised to its clone
+        // name (`Opt[Box[i32]]` -> `Opt[Box__i32]`); the enum pass then sees a
+        // plain nominal arg it can key. Args with no generic struct pass through
+        // unchanged. Only fires when a generic struct exists in the module (the
+        // whole pass is a no-op otherwise), so it is fixpoint-safe.
+        var cur2: Insts = ins;
+        var ninner: string = "";
+        var k: i32 = 0;
+        while (k < parts.len()) {
+            var pr2: TyIns = mg_ty(parts[k], gstructs, cur2);
+            cur2 = pr2.mins;
+            if (k > 0) { ninner = ninner + ", "; }
+            ninner = ninner + pr2.ty;
+            k = k + 1;
+        }
+        return TyIns { ty: base + "[" + ninner + "]", mins: cur2 };
     }
     return TyIns { ty: ty, mins: ins };
 }
