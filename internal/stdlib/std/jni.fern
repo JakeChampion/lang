@@ -417,10 +417,10 @@ pub function get_array_length(env: usize, array: usize): i32 {
 // array (8 bytes per slot — a jvalue is an 8-byte union) and returns its
 // address, the `const jvalue*` the ...A methods want. Each arg is stored
 // as a full 8-byte word (low bytes = a jint/jboolean, all 8 = a jlong /
-// jobject). FLOAT/DOUBLE arguments are NOT handled — their jvalue holds
-// the raw IEEE-754 bits, which a usize arg can't carry; build those slots
-// yourself if needed. Raw __alloc (not __alloc_u8) so the buffer isn't
-// reference-counted out from under the call.
+// jobject). For FLOAT/DOUBLE arguments — whose jvalue holds raw IEEE-754
+// bits, not an integer — build the array with jvalue_alloc + the typed
+// jvalue_set_* setters below instead. Raw __alloc (not __alloc_u8) so the
+// buffer isn't reference-counted out from under the call.
 pub function jvalues(args: usize[]): usize {
     var n: i32 = args.len();
     var buf: usize = __alloc(n * 8);
@@ -430,6 +430,47 @@ pub function jvalues(args: usize[]): usize {
         i = i + 1;
     }
     return buf;
+}
+
+// jvalue_alloc + jvalue_set_* build a mixed-type jvalue array for the ...A
+// method/ctor calls when some arguments are float / double (a jfloat /
+// jdouble jvalue carries the value's IEEE-754 BITS, which the integer-only
+// `jvalues` packer can't represent). Allocate `n` zeroed slots, then write
+// each argument by its JNI type; every setter returns the buffer so calls
+// chain: `jni.jvalue_set_f64(jni.jvalue_set_int(jvalue_alloc(2), 0, x), 1, d)`.
+pub function jvalue_alloc(n: i32): usize {
+    var buf: usize = __alloc(n * 8);
+    var i: i32 = 0;
+    while (i < n) {
+        __store_i64(buf + (i * 8) as usize, 0 as i64); // zero (clears f32 padding)
+        i = i + 1;
+    }
+    return buf;
+}
+
+// integer / boolean / char / object slot — a full 8-byte word.
+pub function jvalue_set_int(args: usize, idx: i32, v: usize): usize {
+    __store_i64(args + (idx * 8) as usize, v as i64);
+    return args;
+}
+
+// jlong slot — explicit i64 (same storage as set_int; named for clarity).
+pub function jvalue_set_long(args: usize, idx: i32, v: i64): usize {
+    __store_i64(args + (idx * 8) as usize, v);
+    return args;
+}
+
+// jfloat slot — the 4-byte float bits in the slot's low word (the high 4
+// stay zero from jvalue_alloc, matching the jvalue union's jfloat member).
+pub function jvalue_set_f32(args: usize, idx: i32, x: f32): usize {
+    __store_i32(args + (idx * 8) as usize, f32_bits(x));
+    return args;
+}
+
+// jdouble slot — the full 8-byte double bits.
+pub function jvalue_set_f64(args: usize, idx: i32, d: f64): usize {
+    __store_i64(args + (idx * 8) as usize, f64_bits(d));
+    return args;
 }
 
 // jobject (*CallObjectMethodA)(JNIEnv*, jobject, jmethodID, const jvalue*)
