@@ -217,6 +217,28 @@ pub function map[T, U, I: Iterator[T]](it: I, f: (T) => U): U[] {
     return out;
 }
 
+// flat_map applies `f` to every value (each producing a `U[]`) and concatenates
+// the results into one fresh `U[]`, in order — `map` followed by a flatten. The
+// "expand each element to zero-or-more" transform (return `[]` to drop a value,
+// a multi-element array to fan it out). Generic over the element type `T` and the
+// per-element result element type `U`.
+pub function flat_map[T, U, I: Iterator[T]](it: I, f: (T) => U[]): U[] {
+    var out: U[] = [];
+    var cur = it;
+    var go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => {
+                var ys = f(t.0);
+                for y in ys { out = out.append(y); }
+                cur = t.1;
+            },
+            None => { go = false; },
+        }
+    }
+    return out;
+}
+
 // filter eagerly collects the values for which `keep` is true into a fresh `T[]`,
 // preserving order. Generic over the element type `T`.
 pub function filter[T, I: Iterator[T]](it: I, keep: (T) => boolean): T[] {
