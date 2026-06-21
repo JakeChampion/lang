@@ -39,6 +39,10 @@
 //   - `regex_search(pattern, text)` → RMatch { found, start, end }: the
 //                                     leftmost-longest match span; the
 //                                     matched text is `text[start:end]`.
+// `regex_full_match` requires the pattern to match the whole text;
+// `regex_count` returns the number of matches; `regex_find_all` /
+// `regex_replace` / `regex_replace_all` / `regex_split` cover the bulk
+// operations.
 // Matching is on raw bytes, so multi-byte UTF-8 is matched byte-wise. There
 // are no capturing-group extractions or backreferences — grouping is purely
 // for quantifier / alternation scoping.
@@ -487,4 +491,35 @@ pub function regex_split(text: string, pattern: string): string[] {
     }
     out = out.append(text[last : text.len()]);
     return out;
+}
+
+// `regex_full_match(pattern, text)` — true only when `pattern` matches the
+// ENTIRE text (as if anchored `^…$`). Tests whether a match starting at 0
+// can end exactly at `text.len()`, so it's correct even when the pattern
+// has shorter matches too (`a|aa` fully matches "aa").
+pub function regex_full_match(pattern: string, text: string): boolean {
+    var prog: RProg = __rx_compile(pattern);
+    var ends: i32[] = __rx_match(prog.root, text, 0, prog.ci);
+    var i: i32 = 0;
+    while (i < ends.len()) {
+        if (ends[i] == text.len()) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// `regex_count(pattern, text)` — the number of non-overlapping matches of
+// `pattern` in `text` (0 when it doesn't match).
+pub function regex_count(pattern: string, text: string): i32 {
+    return regex_find_all(pattern, text).len();
+}
+
+// `regex_replace(pattern, text, repl)` — replace only the FIRST match of
+// `pattern` with the literal `repl`, returning the new string; the text is
+// returned unchanged when there is no match. The single-match counterpart
+// to `regex_replace_all`.
+pub function regex_replace(pattern: string, text: string, repl: string): string {
+    var m: RMatch = regex_search(pattern, text);
+    if (!m.found) { return text; }
+    return text[0 : m.start] + repl + text[m.end : text.len()];
 }

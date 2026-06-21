@@ -1,0 +1,20 @@
+// std/regex (#2680) convenience entry points across the native backends:
+// regex_full_match (whole-string), regex_count (number of matches), and
+// regex_replace (first match only). Each check sets a bit; all eight hold
+// -> 255.
+import "std/regex";
+
+function main(): i32 {
+    var r: i32 = 0;
+    if (regex.regex_full_match("a|aa", "aa")) { r = r + 1; }        // shorter alt exists; full still true
+    if (regex.regex_full_match("[0-9]+", "12345")) { r = r + 2; }
+    if (!regex.regex_full_match("[0-9]+", "12a45")) { r = r + 4; }  // not whole-string
+    if (!regex.regex_full_match("cat", "category")) { r = r + 8; }  // prefix only
+
+    if (regex.regex_count("a", "banana") == 3) { r = r + 16; }
+    if (regex.regex_count("xyz", "banana") == 0) { r = r + 32; }
+
+    if (regex.regex_replace("a", "banana", "X") == "bXnana") { r = r + 64; }   // first only
+    if (regex.regex_replace("z", "banana", "X") == "banana") { r = r + 128; }  // no match → unchanged
+    return r;
+}
