@@ -9520,6 +9520,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	case *ast.Binary:
 		lt := c.checkExpr(n.Left, s)
 		rt := c.checkExpr(n.Right, s)
+		// An operand already failed to type (its own diagnostic is
+		// reported, and its type is nil). Don't pile on a cascading
+		// operator-type error — which would additionally format the nil
+		// type into the message as the garbage `%!s(<nil>)`. Returning
+		// nil propagates the already-errored sentinel so the surrounding
+		// context (return, assignment, …) doesn't re-cascade either.
+		if lt == nil || rt == nil {
+			return nil
+		}
 		// If exactly one side is a concrete float and the other
 		// is a polymorphic numeric literal, promote the literal
 		// to that float type before requireFloat fires. Lets
