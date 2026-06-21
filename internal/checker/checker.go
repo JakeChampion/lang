@@ -1196,6 +1196,16 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
+	// poll(fds, timeout_ms): number — the std/task reactor's readiness
+	// multiplexer (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1). Waits up
+	// to `timeout_ms` (negative = block indefinitely, 0 = non-blocking)
+	// for any fd in `fds` to become readable; returns the index of the
+	// first ready fd, or -1 on timeout. x86-64 first; arm64 (ppoll) +
+	// wasm (wasi:io/poll) follow.
+	c.info.FuncSigs["poll"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{}}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
 	// udp_send(host, port, data): number — one-shot fire-and-forget UDP
 	// datagram. host is an IPv4 literal ("a.b.c.d"); binds an ephemeral
 	// local port, connects to host:port, sends data, and tears the
