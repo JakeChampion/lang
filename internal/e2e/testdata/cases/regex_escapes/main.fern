@@ -1,0 +1,19 @@
+// std/regex (#2680) backslash escapes across the native backends: the
+// shorthand classes `\d` / `\w` / `\s` (and a negation), and escaping a
+// metacharacter so it matches literally (`\.`, `\(` `\)`, `\|`, `\\`). In a
+// Fern string literal the backslash is itself written `\\`. Each check sets
+// a bit; all eight hold -> 255.
+import "std/regex";
+
+function main(): i32 {
+    var r: i32 = 0;
+    if (regex.regex_match("\\d+", "abc123")) { r = r + 1; }       // \d digit class
+    if (regex.regex_match("^\\w+$", "hello_42")) { r = r + 2; }   // \w word class
+    if (!regex.regex_match("^\\d+$", "12a")) { r = r + 4; }       // \d negative
+    if (regex.regex_match("a\\.b", "a.b")) { r = r + 8; }         // \. matches a literal dot
+    if (!regex.regex_match("a\\.b", "axb")) { r = r + 16; }       // \. is NOT "any byte"
+    if (regex.regex_match("\\(\\)", "()")) { r = r + 32; }        // \( \) literal parens
+    if (regex.regex_match("a\\|b", "a|b")) { r = r + 64; }        // \| literal pipe
+    if (regex.regex_match("\\s", "x y")) { r = r + 128; }         // \s whitespace
+    return r;
+}

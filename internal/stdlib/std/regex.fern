@@ -19,6 +19,11 @@
 //                atom OR group (`(ab)+`, `(a|b)*`)
 //   ^            anchor at the start of the text
 //   $            anchor at the end of the text
+//   \d \w \s     shorthand classes: digit / word (`[A-Za-z0-9_]`) /
+//                whitespace; `\D \W \S` are their negations
+//   \n \t \r     the newline / tab / carriage-return bytes
+//   \<meta>      a backslash before any other byte is that literal byte —
+//                use it to match a metacharacter (`\.`, `\(`, `\*`, `\\`, …)
 //
 // Three entry points, all SEARCHES (the pattern may match anywhere; anchor
 // with `^` / `$` for a whole-string match like `"^(cat|dog)$"`):
@@ -58,6 +63,25 @@ struct RParse { node: RNode, pos: i32 }
 // literal byte.
 function __rx_atom(p: string, i: i32): RParse {
     var c: i32 = p[i];
+    if (c == 92) {                                   // '\' escape
+        if (i + 1 >= p.len()) { return RParse { node: RChar(92), pos: i + 1 }; } // trailing → literal '\'
+        var d: i32 = p[i + 1];
+        // Shorthand classes (and their negations) desugar to an equivalent
+        // `[ … ]` class token the matcher already understands.
+        if (d == 100) { return RParse { node: RClass("[0-9]"), pos: i + 2 }; }          // \d
+        if (d == 68)  { return RParse { node: RClass("[^0-9]"), pos: i + 2 }; }         // \D
+        if (d == 119) { return RParse { node: RClass("[A-Za-z0-9_]"), pos: i + 2 }; }   // \w
+        if (d == 87)  { return RParse { node: RClass("[^A-Za-z0-9_]"), pos: i + 2 }; }  // \W
+        if (d == 115) { return RParse { node: RClass("[ \t\n\r]"), pos: i + 2 }; }      // \s
+        if (d == 83)  { return RParse { node: RClass("[^ \t\n\r]"), pos: i + 2 }; }     // \S
+        // Escaped control bytes.
+        if (d == 110) { return RParse { node: RChar(10), pos: i + 2 }; }   // \n
+        if (d == 116) { return RParse { node: RChar(9),  pos: i + 2 }; }   // \t
+        if (d == 114) { return RParse { node: RChar(13), pos: i + 2 }; }   // \r
+        // Any other escaped byte is that literal byte — covers the
+        // metacharacters `\. \* \+ \? \( \) \[ \] \| \^ \$ \\` etc.
+        return RParse { node: RChar(d), pos: i + 2 };
+    }
     if (c == 40) {                                   // '('
         var inner: RParse = __rx_alt(p, i + 1);
         var pos: i32 = inner.pos;
