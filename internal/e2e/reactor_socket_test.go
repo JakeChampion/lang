@@ -195,3 +195,90 @@ function main(): i32 {
 		})
 	}
 }
+
+// The complete fan-out payoff: two parallel fetches that return their
+// response BODIES, via std/reactor.run_io_str (the string-result
+// reactor). Both connections' reads overlap on one thread; each task's
+// continuation recvs and returns the body. Exit 42 iff both bodies
+// came back as the expected "hello-world".
+func TestReactorFanoutBodies(t *testing.T) {
+	bin := buildFernCLI(t)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("no free TCP port: %v", err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+	go func() {
+		for {
+			conn, aerr := ln.Accept()
+			if aerr != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				_ = c.SetDeadline(time.Now().Add(3 * time.Second))
+				b := make([]byte, 256)
+				_, _ = c.Read(b)
+				fmt.Fprint(c, "HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\nhello-world")
+			}(conn)
+		}
+	}()
+
+	const host = 127 | (1 << 24)
+	src := fmt.Sprintf(`import "std/reactor";
+import "std/fetch";
+import "std/string";
+
+function start_fetch(conn: i32): reactor.IoStepStr {
+    function resume(woken_fd: i32): reactor.IoStepStr {
+        var resp: string = tcp_recv(woken_fd, 4096);
+        return IoDoneStr(fetch.http_body(resp));
+    }
+    return IoWaitStr(conn, resume);
+}
+
+function main(): i32 {
+    var c1: i32 = tcp_connect(%d, %d);
+    var c2: i32 = tcp_connect(%d, %d);
+    if (c1 < 0) { return 81; }
+    if (c2 < 0) { return 82; }
+    if (tcp_send(c1, "GET /1 HTTP/1.1\r\nConnection: close\r\n\r\n") < 0) { return 83; }
+    if (tcp_send(c2, "GET /2 HTTP/1.1\r\nConnection: close\r\n\r\n") < 0) { return 84; }
+    var tasks: reactor.IoStepStr[] = [start_fetch(c1), start_fetch(c2)];
+    var bodies: string[] = reactor.run_io_str(tasks);
+    if (bodies[0] == "hello-world" && bodies[1] == "hello-world") { return 42; }
+    return 85;
+}`, host, port, host, port)
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "fanout_bodies.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	backends := []struct {
+		target string
+		qemu   func(*testing.T) string
+		run    func(qemu, bin string, args ...string) *exec.Cmd
+	}{
+		{"x86-64", x86QemuOrEmpty, runX86Bin},
+		{"arm64", arm64QemuOrEmpty, runArm64Bin},
+	}
+	for _, be := range backends {
+		be := be
+		t.Run(be.target, func(t *testing.T) {
+			qemu := be.qemu(t)
+			out := filepath.Join(dir, be.target+"_fanout_bodies.bin")
+			if o, err := exec.Command(bin, "-target", be.target, "-o", out, srcPath).CombinedOutput(); err != nil {
+				t.Fatalf("build failed: %v\n%s", err, o)
+			}
+			cmd := be.run(qemu, out)
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 42 {
+				t.Errorf("%s: fan-out bodies exit = %d, want 42", be.target, code)
+			}
+		})
+	}
+}

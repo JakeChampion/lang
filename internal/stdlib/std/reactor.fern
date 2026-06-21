@@ -165,3 +165,79 @@ pub function run_io_deadline(states_in: IoStep[], deadline_ms: i32): i32[] {
     }
     return results;
 }
+
+// ── String-result variant ────────────────────────────────────────
+//
+// IoStep / run_io carry i32 results (a status / count). Outbound
+// fetches want the response BODY back, so the string-typed twins below
+// mirror them exactly with a `string` result. This duplication is a
+// stand-in for a generic IoStep[T] / run_io[T] — verified to compile
+// for T=i32 but blocked for T=string by a checker limitation: the
+// generic-variant inference can't recover T through a function-typed
+// payload (`Wait(tok, resume)` defaults T to i32 regardless of
+// `resume`'s return type or the expected type). Once that inference
+// gap is closed, IoStepStr/run_io_str fold back into IoStep[T].
+
+// IoStepStr — a fd-tagged task whose result is a string (e.g. an HTTP
+// response body). Same shape as IoStep with a `string` payload.
+pub enum IoStepStr {
+    IoDoneStr(string),
+    IoWaitStr(i32, (i32) => IoStepStr),
+}
+
+function __io_all_done_str(states: IoStepStr[]): boolean {
+    var i: i32 = 0;
+    while (i < states.len()) {
+        match (states[i]) {
+            IoDoneStr(v) => { },
+            IoWaitStr(fd, c) => { return false; },
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// run_io_str(states) — the string-result twin of run_io: drive
+// fd-tagged tasks to completion via real `poll`, returning each task's
+// string result in order (the canonical "two parallel fetches, return
+// both response bodies" fan-out). A task that never becomes ready
+// lands "" via the deadlock guard.
+pub function run_io_str(states_in: IoStepStr[]): string[] {
+    var states: IoStepStr[] = states_in;
+    while (true) {
+        if (__io_all_done_str(states)) { break; }
+        var fds: i32[] = [];
+        var idxs: i32[] = [];
+        var i: i32 = 0;
+        while (i < states.len()) {
+            match (states[i]) {
+                IoDoneStr(v) => { },
+                IoWaitStr(fd, c) => {
+                    fds = fds.append(fd);
+                    idxs = idxs.append(i);
+                },
+            }
+            i = i + 1;
+        }
+        var ready: i32 = poll(fds, -1);
+        if (ready < 0) { break; }
+        var ti: i32 = idxs[ready];
+        var st: IoStepStr = states[ti];
+        match (st) {
+            IoDoneStr(v) => { },
+            IoWaitStr(fd, resume) => {
+                states = states.with(ti, resume(fd));
+            },
+        }
+    }
+    var results: string[] = [];
+    var k: i32 = 0;
+    while (k < states.len()) {
+        match (states[k]) {
+            IoDoneStr(v) => { results = results.append(v); },
+            IoWaitStr(fd, c) => { results = results.append(""); },
+        }
+        k = k + 1;
+    }
+    return results;
+}
