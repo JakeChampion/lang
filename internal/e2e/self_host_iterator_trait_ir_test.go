@@ -197,6 +197,42 @@ function main(): i32 {
 	}
 }
 
+// TestNativeIteratorTraitModulePredicates exercises the shipped module's
+// closure-taking predicate adapters (any / all / find) over the real
+// `import "core/iter"` module. These take a `(T) => boolean` through a
+// function-typed parameter; the self-host IR lowering of the inline forms is
+// pinned by generic_iterator_predicate_test.go (the #2686 condition-lift fix),
+// so this leg validates the shipped module on the native backends.
+func TestNativeIteratorTraitModulePredicates(t *testing.T) {
+	src := `import "core/iter" as iter;
+function main(): i32 {
+    var a = 0;
+    if (iter.any(iter.range(0, 5), function (x: i32): boolean { return x == 3; })) { a = 1; }      // 1
+    var b = 0;
+    if (!iter.any(iter.range(0, 5), function (x: i32): boolean { return x > 9; })) { b = 2; }       // 2
+    var c = 0;
+    if (iter.all(iter.range(0, 5), function (x: i32): boolean { return x < 10; })) { c = 4; }       // 4
+    var d = 0;
+    if (!iter.all(iter.range(0, 5), function (x: i32): boolean { return x % 2 == 0; })) { d = 8; }   // 8
+    var e = 0;
+    match (iter.find(iter.range(0, 9), function (x: i32): boolean { return x >= 2 && x % 2 == 0; })) { Some(v) => { e = v; }, None => {} }  // 2
+    var f = 0;
+    match (iter.find(iter.range(0, 3), function (x: i32): boolean { return x > 100; })) { Some(v) => { f = v; }, None => { f = 16; } }      // 16
+    return a + b + c + d + e + f;                                                                   // 1+2+4+8+2+16 = 33
+}
+`
+	p := writeIterProg(t, src)
+	if _, code := runFixtureInterp(t, p, ""); code != 33 {
+		t.Errorf("predicate adapters module interp = %d, want 33", code)
+	}
+	if _, code := runFixtureX86_64(t, p, ""); code != 33 {
+		t.Errorf("predicate adapters module x86-64 = %d, want 33", code)
+	}
+	if code := runWasm(t, src); code != 33 {
+		t.Errorf("predicate adapters module wasm = %d, want 33", code)
+	}
+}
+
 // TestSelfHostIteratorTraitIRX86_64 routes each inlined case through the
 // self-hosted x86-64 IR driver, pins routing to "ir", and oracle-checks the
 // exit code.
