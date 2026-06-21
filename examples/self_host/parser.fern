@@ -4056,6 +4056,32 @@ function split_dunder(s: string): string[] {
     return out;
 }
 
+// sanitize_key turns a (possibly composite) instantiation key into a symbol-
+// safe mangled suffix: a generic-enum type argument carries brackets / commas
+// (`Box[Opt[i32]]`'s key is `Opt[i32]`), which can't appear in a struct clone's
+// name. Rewrite `[` and `,` to the `__` separator and drop `]` / spaces, so
+// `Opt[i32]` → `Opt__i32` and `Pair[i32, string]` → `Pair__i32__string`. A key
+// that is already bracket-free (every existing case — a primitive, a bare
+// struct, or a nested struct clone like `Box__i32`) passes through unchanged, so
+// this is a no-op on the pre-existing instantiations and only reshapes the
+// generic-struct-of-generic-enum combo (#3694). The raw bracketed key is kept
+// for field-type SUBSTITUTION (so the enum pass still sees `Opt[i32]` to clone);
+// only the emitted NAME is sanitized.
+function sanitize_key(s: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var ch: i32 = s[i];
+        if (ch == 91) { out = out + "__"; }         // '[' -> __
+        else if (ch == 93) { }                       // ']' -> drop
+        else if (ch == 44) { out = out + "__"; }    // ',' -> __
+        else if (ch == 32) { }                       // ' ' -> drop
+        else { out = out + s[i : i + 1]; }
+        i = i + 1;
+    }
+    return out;
+}
+
 // bind_unify matches a parameter-type pattern against the argument's
 // inferred concrete type, recording a binding for each type variable it
 // pins down. Handles a bare variable (`T` ⊢ i32), an array element
@@ -4742,7 +4768,7 @@ function mg_ty(ty: string, gstructs: StructDecl[], ins: Insts): TyIns {
                 j = j + 1;
             }
             cur = cur.iadd(base, key);
-            return TyIns { ty: base + "__" + key, mins: cur };
+            return TyIns { ty: base + "__" + sanitize_key(key), mins: cur };
         }
         // A NON-generic-struct generic base — a built-in `Option`/`Result` or a
         // user generic ENUM (`Opt[Box[i32]]`). The base itself isn't mangled
@@ -4894,7 +4920,7 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
             if (gi >= 0) {
                 var key: string = infer_lit_key(gstructs[gi], s.field_names, vals, env, funcs);
                 if (key.len() > 0) {
-                    tn = s.type_name + "__" + key;
+                    tn = s.type_name + "__" + sanitize_key(key);
                     cur = cur.iadd(s.type_name, key);
                 }
             }
@@ -4952,6 +4978,33 @@ function retype_assoc_ctor(init: Expr, concrete: string, gstructs: StructDecl[])
     return init;
 }
 
+// retype_struct_lit re-keys a still-generic struct literal from its binding's
+// annotation when the field values alone couldn't pin the instantiation. The
+// motivating case is a generic struct of a generic ENUM (`var b: Box[Opt[i32]]
+// = Box { v: Sm(5) }`): infer_lit_key can't infer `Opt[i32]` from the variant
+// construction `Sm(5)` (mono_infer doesn't key variant calls), so the literal
+// stays the bare generic `Box` and dangles. The annotation already mangled to
+// `concrete` (`Box__Opt__i32`) and mg_ty recorded that instantiation, so we
+// just re-point the literal's type name at it — the enum pass then keys the
+// inner `Sm(5)` from the clone's `v: Opt[i32]` field type. Mirrors
+// retype_assoc_ctor (the constructor-call analogue). A literal ms_expr already
+// keyed (its base is a mangled clone, not a generic base) is left untouched, as
+// is a non-matching annotation. See #3694.
+function retype_struct_lit(init: Expr, concrete: string, gstructs: StructDecl[]): Expr {
+    match (init) {
+        ExprStructLit(s) => {
+            if (gstruct_index(gstructs, s.type_name) >= 0) {
+                var pfx: string = s.type_name + "__";
+                if (concrete.len() > pfx.len() && concrete[0 : pfx.len()] == pfx) {
+                    return ExprStructLit { type_name: concrete, field_names: s.field_names, field_values: s.field_values, has_base: s.has_base, base: s.base, line: s.line, col: s.col };
+                }
+            }
+        },
+        _ => {}
+    }
+    return init;
+}
+
 // ms_stmt rewrites one statement: generic-struct annotations on a `var`
 // go through mg_ty, struct literals through ms_expr, threading env+ins.
 function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], ins: Insts): RStmtOne {
@@ -4962,7 +5015,7 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
             // A receiver-less associated constructor `Box.default()` bound to a
             // generic-struct annotation takes its instantiation from that
             // annotation: rewrite it to `Box__Inner.default()`.
-            var ninit: Expr = retype_assoc_ctor(iv.rexpr, ta.ty, gstructs);
+            var ninit: Expr = retype_struct_lit(retype_assoc_ctor(iv.rexpr, ta.ty, gstructs), ta.ty, gstructs);
             return RStmtOne { rstmt: StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col }, renv: env.ebind(v.name, ta.ty), rins2: ta.mins };
         },
         StmtReturn(r) => {
@@ -5078,7 +5131,7 @@ function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: S
     // keys split unambiguously into per-param pieces.
     var cts: string[] = [key];
     if (tparams.len() != 1) { cts = split_dunder(key); }
-    var mang: string = base + "__" + key;
+    var mang: string = base + "__" + sanitize_key(key);
     var nparams: ParamDecl[] = [];
     var i: i32 = 0;
     while (i < m.params.len()) {
@@ -5168,7 +5221,7 @@ pub function monomorphize_structs(mod: Module): Module {
             // the `__`-join of simple nominals and splits unambiguously.
             var cts: string[] = [key];
             if (gd.type_params.len() != 1) { cts = split_dunder(key); }
-            var mang: string = base + "__" + key;
+            var mang: string = base + "__" + sanitize_key(key);
             var cf: StructFieldDecl[] = [];
             var cfi: i32 = 0;
             while (cfi < gd.fields.len()) {
