@@ -21,6 +21,39 @@ func checkSource(t *testing.T, src string) error {
 	return err
 }
 
+// TestBinaryOperandErrorNoCascade guards two bugs in one: a binary
+// expression with an already-errored operand (here `q()`, an undefined
+// identifier, whose type is nil) used to emit a *second*, cascading E009
+// "operator requires …" diagnostic — and, worse, format the nil operand
+// type into that message as the literal Go garbage `%!s(<nil>)`. checkExpr
+// on a Binary now bails when either operand failed to type, so only the
+// root cause is reported and no malformed type string leaks out.
+func TestBinaryOperandErrorNoCascade(t *testing.T) {
+	check := func(src string) (errCount, nilFmt int) {
+		err := checkSource(t, src)
+		if err == nil {
+			t.Fatalf("expected a type error for %q, got none", src)
+		}
+		msg := err.Error()
+		return strings.Count(msg, "type error at"), strings.Count(msg, "%!s")
+	}
+	for _, src := range []string{
+		`function main(): i32 { return q() + 1; }`,
+		`function main(): i32 { return 1 + q(); }`,
+		`function main(): i32 { return q() & 1; }`,
+		`function main(): i32 { return q() % 2; }`,
+		`function main(): i32 { return (q() + 1) * 2; }`,
+	} {
+		n, nf := check(src)
+		if n != 1 {
+			t.Errorf("%q: reported %d errors, want 1 (no cascade)", src, n)
+		}
+		if nf != 0 {
+			t.Errorf("%q: message leaked %d %%!s(<nil>) format error(s)", src, nf)
+		}
+	}
+}
+
 // TestChainedMethodCallErrorReportedOnce guards against a diagnostic
 // duplication: a method-call chain `n.foo().bar()` whose inner `n.foo()` is
 // invalid (here, a method call on a non-struct i32) reported the inner E043
