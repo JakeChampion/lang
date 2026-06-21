@@ -4937,7 +4937,6 @@ function ms_func(fn: FuncDecl, gstructs: StructDecl[], funcs: FuncDecl[], ins: I
 // substituted; its literal display strings (baked from the original
 // struct's name at synth time) stay intact.
 function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: StructDecl[]): FuncDecl {
-    var cts: string[] = split_dunder(key);
     // Substitute with the generic STRUCT's type params (not the method's, which
     // a synthesized method like default() leaves empty). The struct's params are
     // the ones a method body refers to — e.g. a derived default()'s
@@ -4947,6 +4946,11 @@ function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: S
     var gsi: i32 = gstruct_index(gstructs, base);
     var tparams: string[] = m.type_params;
     if (gsi >= 0) { tparams = gstructs[gsi].type_params; }
+    // A single-type-param key is the one concrete arg verbatim (a mangled
+    // nested clone like `Box__i32` must not be split on `__`); multi-param
+    // keys split unambiguously into per-param pieces.
+    var cts: string[] = [key];
+    if (tparams.len() != 1) { cts = split_dunder(key); }
     var mang: string = base + "__" + key;
     var nparams: ParamDecl[] = [];
     var i: i32 = 0;
@@ -5031,7 +5035,12 @@ pub function monomorphize_structs(mod: Module): Module {
         var idx: i32 = gstruct_index(gstructs, base);
         if (idx >= 0) {
             var gd: StructDecl = gstructs[idx];
-            var cts: string[] = split_dunder(key);
+            // A single-type-param struct's key IS the one concrete arg verbatim
+            // (which may itself be a mangled nested clone like `Box__i32`, so
+            // splitting on `__` would wrongly fracture it). A multi-param key is
+            // the `__`-join of simple nominals and splits unambiguously.
+            var cts: string[] = [key];
+            if (gd.type_params.len() != 1) { cts = split_dunder(key); }
             var mang: string = base + "__" + key;
             var cf: StructFieldDecl[] = [];
             var cfi: i32 = 0;

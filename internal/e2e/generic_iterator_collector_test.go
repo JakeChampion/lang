@@ -66,6 +66,20 @@ impl Iterator[i32] for RangeIter { function next(self: Self): Option[(i32, Self)
 function min[I: Iterator[i32]](it: I): Option[i32] { var cur = it; var best = 0; var seen = false; var go = true; while (go) { match (cur.next()) { Some(t) => { if (!seen || t.0 < best) { best = t.0; seen = true; } cur = t.1; }, None => { go = false; }, } } if (seen) { return Some(best); } return None; }
 function max[I: Iterator[i32]](it: I): Option[i32] { var cur = it; var best = 0; var seen = false; var go = true; while (go) { match (cur.next()) { Some(t) => { if (!seen || t.0 > best) { best = t.0; seen = true; } cur = t.1; }, None => { go = false; }, } } if (seen) { return Some(best); } return None; }
 function main(): i32 { var lo = 0; match (min(RangeIter { cur: 3, end: 7 })) { Some(v) => { lo = v; }, None => {} } var hi = 0; match (max(RangeIter { cur: 3, end: 7 })) { Some(v) => { hi = v; }, None => {} } return lo + hi; }`, 9},
+	// product / position over an i32 iterator. product(1..5)=24; position of 3 in
+	// 0..9 = Some(3). 24 - 3 + 0 ... combine: product(1..5)=24, position=3 → 24-21=3.
+	{"product-position", `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
+struct RangeIter { cur: i32, end: i32 }
+impl Iterator[i32] for RangeIter { function next(self: Self): Option[(i32, Self)] { if (self.cur >= self.end) { return None; } return Some((self.cur, RangeIter { cur: self.cur + 1, end: self.end })); } }
+function product[I: Iterator[i32]](it: I): i32 { var p = 1; var cur = it; var go = true; while (go) { match (cur.next()) { Some(t) => { p = p * t.0; cur = t.1; }, None => { go = false; }, } } return p; }
+function position[I: Iterator[i32]](it: I, target: i32): Option[i32] { var cur = it; var i = 0; var go = true; while (go) { match (cur.next()) { Some(t) => { if (t.0 == target) { return Some(i); } i = i + 1; cur = t.1; }, None => { go = false; }, } } return None; }
+function main(): i32 { var pr = product(RangeIter { cur: 1, end: 5 }); var po = 0; match (position(RangeIter { cur: 0, end: 9 }, 3)) { Some(v) => { po = v; }, None => {} } return pr - 7 * po; }`, 3},
+	// last over a generic iterator → Option[T]. last(0..5) = Some(4).
+	{"last-opt", `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
+struct RangeIter { cur: i32, end: i32 }
+impl Iterator[i32] for RangeIter { function next(self: Self): Option[(i32, Self)] { if (self.cur >= self.end) { return None; } return Some((self.cur, RangeIter { cur: self.cur + 1, end: self.end })); } }
+function last[T, I: Iterator[T]](it: I): Option[T] { var cur = it; var acc: Option[T] = None; var go = true; while (go) { match (cur.next()) { Some(t) => { acc = Some(t.0); cur = t.1; }, None => { go = false; }, } } return acc; }
+function main(): i32 { match (last(RangeIter { cur: 0, end: 5 })) { Some(v) => { return v; }, None => { return 99; } } }`, 4},
 	// the SAME generic `last` instantiated at T=boolean (different element type).
 	{"last-bool", `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 struct BoolSeq { n: i32 }
