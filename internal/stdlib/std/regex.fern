@@ -1,127 +1,245 @@
-// std/regex — a small backtracking regular-expression matcher.
+// std/regex — a small regular-expression matcher.
 //
-// Fern had no pattern-matching engine (#2680); this is a compact,
-// dependency-free one in the classic recursive-backtracking style
-// (Kernighan & Pike, "The Practice of Programming", generalised from
-// single chars to atoms with character classes and the `+`/`?`
-// quantifiers). It runs on every backend — it is ordinary Fern, lowered
-// through the same IR path as any other module.
+// Fern had no pattern-matching engine (#2680). This one parses a pattern
+// into a tree (`RNode`) and matches it as a Thompson-style NFA: each step
+// carries the SET of text positions the pattern could be at, so
+// alternation and the star/plus closures are handled without
+// backtracking blow-up (and a star over an empty match can't loop — the
+// position set only ever grows, then stops). It's ordinary Fern.
 //
-// Supported syntax (a useful subset, not full POSIX/PCRE):
+// Supported syntax:
 //   .            any single byte
 //   c            the literal byte `c`
 //   [abc]        character class — any one of the listed bytes
 //   [a-z]        class with ranges (inclusive, by byte value)
 //   [^...]       negated class — any byte NOT listed
-//   *            zero or more of the preceding atom (greedy)
-//   +            one or more of the preceding atom (greedy)
-//   ?            zero or one of the preceding atom
+//   ( ... )      grouping (scopes a quantifier or an alternation)
+//   a|b|c        alternation — match any one alternative
+//   *  +  ?      zero-or-more / one-or-more / optional, on the preceding
+//                atom OR group (`(ab)+`, `(a|b)*`)
 //   ^            anchor at the start of the text
 //   $            anchor at the end of the text
 //
-// `regex_match(pattern, text)` is a SEARCH: it returns true when the
-// pattern matches anywhere in the text. Anchor with `^` / `$` for a
-// whole-string match (`regex_match("^[0-9]+$", s)`). Matching is on raw
-// bytes, so multi-byte UTF-8 is matched byte-wise. There is no grouping
-// `( )`, alternation `|`, or backreferences yet — those want a compiled
-// NFA rather than this linear backtracker, and are left for a follow-up.
+// `regex_match(pattern, text)` is a SEARCH: true when the pattern matches
+// anywhere in the text. Anchor with `^` / `$` for a whole-string match
+// (`regex_match("^(cat|dog)$", s)`). Matching is on raw bytes, so
+// multi-byte UTF-8 is matched byte-wise. There are no capturing-group
+// extractions or backreferences — grouping is purely for quantifier /
+// alternation scoping.
+//
+// Backend note: the matcher and the whole module compile and run on the
+// native compiler's interp / x86-64 / arm64 / wasm backends. The grammar's
+// recursive-descent PARSER for a `( … )` group currently trips a self-host
+// IR codegen bug (#3720) — a struct/array that holds an array-payload enum,
+// returned across a recursive parse — so a pattern containing a *grouped*
+// subexpression does not yet lower through the self-host compiler. Plain
+// (un-grouped) patterns do. The native path is unaffected.
 
-// __re_atom_len returns the byte length of the atom token starting at
-// pattern index `ri`: a `[...]` class spans through its closing `]`,
-// every other atom (`.` or a literal) is one byte. A leading `^` (negate)
-// or a `]` as the first class member is part of the class, not a
-// terminator.
-function __re_atom_len(p: string, ri: i32): i32 {
-    if (p[ri] == 91) {            // '['
-        var j: i32 = ri + 1;
-        if (j < p.len() && p[j] == 94) { j = j + 1; }   // leading '^'
-        if (j < p.len() && p[j] == 93) { j = j + 1; }   // ']' as first member
+// RNode is the parsed pattern tree. Leaf atoms (`RChar` / `RAny` /
+// `RClass` / `RStart` / `REnd`) and the composites `RSeq` (concatenation)
+// / `RAlt` (alternation) / `RStar` / `RPlus` / `ROpt` (quantifiers over a
+// sub-node, which a group makes an arbitrary tree).
+pub enum RNode {
+    RChar(i32), RAny, RClass(string), RStart, REnd,
+    RSeq(RNode[]), RAlt(RNode[]), RStar(RNode), RPlus(RNode), ROpt(RNode)
+}
+
+// RParse threads the recursive-descent parser's cursor: the node parsed
+// so far and the index just past it.
+struct RParse { node: RNode, pos: i32 }
+
+// __rx_atom parses one atom: a `( … )` group (transparent — the inner
+// tree is returned directly), a `[ … ]` class, `.` / `^` / `$`, or a
+// literal byte.
+function __rx_atom(p: string, i: i32): RParse {
+    var c: i32 = p[i];
+    if (c == 40) {                                   // '('
+        var inner: RParse = __rx_alt(p, i + 1);
+        var pos: i32 = inner.pos;
+        if (pos < p.len() && p[pos] == 41) { pos = pos + 1; }   // ')'
+        return RParse { node: inner.node, pos: pos };
+    }
+    if (c == 91) {                                   // '['
+        var j: i32 = i + 1;
+        if (j < p.len() && p[j] == 94) { j = j + 1; }            // leading '^'
+        if (j < p.len() && p[j] == 93) { j = j + 1; }            // ']' as first member
         while (j < p.len() && p[j] != 93) { j = j + 1; }
-        if (j < p.len()) { return (j - ri) + 1; }        // include ']'
-        return j - ri;                                   // unterminated
+        var endb: i32 = j;
+        if (endb < p.len()) { endb = endb + 1; }                 // include ']'
+        return RParse { node: RClass(p[i : endb]), pos: endb };
     }
-    return 1;
+    if (c == 46) { return RParse { node: RAny, pos: i + 1 }; }   // '.'
+    if (c == 94) { return RParse { node: RStart, pos: i + 1 }; } // '^'
+    if (c == 36) { return RParse { node: REnd, pos: i + 1 }; }   // '$'
+    return RParse { node: RChar(c), pos: i + 1 };                // literal
 }
 
-// __re_atom_matches reports whether byte `c` matches the atom occupying
-// `p[ri .. ri+alen)`: `.` matches anything, a class tests membership
-// (with `a-b` ranges and a leading `^` negation), and a literal compares
-// equal.
-function __re_atom_matches(p: string, ri: i32, alen: i32, c: i32): boolean {
-    var a0: i32 = p[ri];
-    if (a0 == 46) { return true; }   // '.'
-    if (a0 == 91) {                  // '[' class
-        var j: i32 = ri + 1;
-        var neg: boolean = false;
-        if (j < ri + alen && p[j] == 94) { neg = true; j = j + 1; }
-        var found: boolean = false;
-        var end: i32 = ri + alen - 1;   // index of the closing ']'
-        while (j < end) {
-            if (p[j + 1] == 45 && j + 2 < end) {   // 'a' '-' 'b' range
-                if (c >= p[j] && c <= p[j + 2]) { found = true; }
-                j = j + 3;
-            } else {
-                if (c == p[j]) { found = true; }
-                j = j + 1;
+// __rx_quant parses an atom plus an optional trailing `*` / `+` / `?`.
+function __rx_quant(p: string, i: i32): RParse {
+    var a: RParse = __rx_atom(p, i);
+    var pos: i32 = a.pos;
+    if (pos < p.len()) {
+        var c: i32 = p[pos];
+        if (c == 42) { return RParse { node: RStar(a.node), pos: pos + 1 }; }
+        if (c == 43) { return RParse { node: RPlus(a.node), pos: pos + 1 }; }
+        if (c == 63) { return RParse { node: ROpt(a.node), pos: pos + 1 }; }
+    }
+    return a;
+}
+
+// __rx_seq parses a concatenation of quantified atoms, stopping at `|` or
+// `)` (or end). An empty run yields `RSeq([])`, which matches the empty
+// string (so `a|` and `()` behave).
+function __rx_seq(p: string, i: i32): RParse {
+    var items: RNode[] = [];
+    var pos: i32 = i;
+    while (pos < p.len() && p[pos] != 124 && p[pos] != 41) {     // not '|' / ')'
+        var q: RParse = __rx_quant(p, pos);
+        items = items.append(q.node);
+        pos = q.pos;
+    }
+    if (items.len() == 1) { return RParse { node: items[0], pos: pos }; }
+    return RParse { node: RSeq(items), pos: pos };
+}
+
+// __rx_alt parses `seq ('|' seq)*`, the top of the grammar (also entered
+// for the body of each group).
+function __rx_alt(p: string, i: i32): RParse {
+    var first: RParse = __rx_seq(p, i);
+    var branches: RNode[] = [first.node];
+    var pos: i32 = first.pos;
+    while (pos < p.len() && p[pos] == 124) {                     // '|'
+        var nxt: RParse = __rx_seq(p, pos + 1);
+        branches = branches.append(nxt.node);
+        pos = nxt.pos;
+    }
+    if (branches.len() == 1) { return RParse { node: branches[0], pos: pos }; }
+    return RParse { node: RAlt(branches), pos: pos };
+}
+
+function __rx_has(xs: i32[], v: i32): boolean {
+    var i: i32 = 0;
+    while (i < xs.len()) { if (xs[i] == v) { return true; } i = i + 1; }
+    return false;
+}
+
+// __rx_class tests a byte against a `[ … ]` class token (including its
+// brackets): ranges `a-b`, a leading `^` negation, and bare members.
+function __rx_class(tok: string, c: i32): boolean {
+    var j: i32 = 1;                       // skip '['
+    var neg: boolean = false;
+    if (j < tok.len() && tok[j] == 94) { neg = true; j = j + 1; }
+    var found: boolean = false;
+    var end: i32 = tok.len() - 1;         // index of ']'
+    while (j < end) {
+        if (tok[j + 1] == 45 && j + 2 < end) {       // 'a' '-' 'b'
+            if (c >= tok[j] && c <= tok[j + 2]) { found = true; }
+            j = j + 3;
+        } else {
+            if (c == tok[j]) { found = true; }
+            j = j + 1;
+        }
+    }
+    if (neg) { return !found; }
+    return found;
+}
+
+// __rx_closure computes every text position reachable from `ti` by
+// matching `inner` zero-or-more (`allow_zero`, for `*`) or one-or-more
+// (for `+`) times. A breadth-first set expansion: dedup against `seen`
+// guarantees termination even when `inner` can match the empty string.
+function __rx_closure(inner: RNode, t: string, ti: i32, allow_zero: boolean): i32[] {
+    var seen: i32[] = [];
+    var frontier: i32[] = [];
+    if (allow_zero) {
+        seen = seen.append(ti);
+        frontier = frontier.append(ti);
+    } else {
+        var first: i32[] = __rx_match(inner, t, ti);
+        var s: i32 = 0;
+        while (s < first.len()) {
+            if (!__rx_has(seen, first[s])) { seen = seen.append(first[s]); frontier = frontier.append(first[s]); }
+            s = s + 1;
+        }
+    }
+    while (frontier.len() > 0) {
+        var nf: i32[] = [];
+        var m: i32 = 0;
+        while (m < frontier.len()) {
+            var sub: i32[] = __rx_match(inner, t, frontier[m]);
+            var s2: i32 = 0;
+            while (s2 < sub.len()) {
+                if (!__rx_has(seen, sub[s2])) { seen = seen.append(sub[s2]); nf = nf.append(sub[s2]); }
+                s2 = s2 + 1;
             }
+            m = m + 1;
         }
-        if (neg) { return !found; }
-        return found;
+        frontier = nf;
     }
-    return c == a0;                 // literal byte
+    return seen;
 }
 
-// __re_here matches pattern `p[ri..]` against text `t[ti..]`, anchored at
-// `ti`. It dispatches on the quantifier (if any) following the current
-// atom, recursing for the remainder.
-function __re_here(p: string, ri: i32, t: string, ti: i32): boolean {
-    if (ri >= p.len()) { return true; }
-    if (p[ri] == 36 && ri + 1 >= p.len()) { return ti >= t.len(); }  // '$'
-    var alen: i32 = __re_atom_len(p, ri);
-    var nxt: i32 = ri + alen;
-    var q: i32 = 0;
-    if (nxt < p.len()) {
-        if (p[nxt] == 42 || p[nxt] == 43 || p[nxt] == 63) { q = p[nxt]; }
+// __rx_match returns the set of text positions at which a match of `n`
+// starting at `ti` can END (empty = no match). Anchors contribute the
+// current position when satisfied; `RSeq` threads the set through each
+// child; `RAlt` unions the alternatives.
+function __rx_match(n: RNode, t: string, ti: i32): i32[] {
+    match (n) {
+        RChar(c) => { var e: i32[] = []; if (ti < t.len() && t[ti] == c) { e = e.append(ti + 1); } return e; },
+        RAny => { var e: i32[] = []; if (ti < t.len()) { e = e.append(ti + 1); } return e; },
+        RClass(tok) => { var e: i32[] = []; if (ti < t.len() && __rx_class(tok, t[ti])) { e = e.append(ti + 1); } return e; },
+        RStart => { var e: i32[] = []; if (ti == 0) { e = e.append(ti); } return e; },
+        REnd => { var e: i32[] = []; if (ti >= t.len()) { e = e.append(ti); } return e; },
+        RSeq(xs) => {
+            var cur: i32[] = [ti];
+            var k: i32 = 0;
+            while (k < xs.len()) {
+                var nextset: i32[] = [];
+                var m: i32 = 0;
+                while (m < cur.len()) {
+                    var sub: i32[] = __rx_match(xs[k], t, cur[m]);
+                    var s: i32 = 0;
+                    while (s < sub.len()) { if (!__rx_has(nextset, sub[s])) { nextset = nextset.append(sub[s]); } s = s + 1; }
+                    m = m + 1;
+                }
+                cur = nextset;
+                k = k + 1;
+            }
+            return cur;
+        },
+        RAlt(xs) => {
+            var out: i32[] = [];
+            var k: i32 = 0;
+            while (k < xs.len()) {
+                var sub: i32[] = __rx_match(xs[k], t, ti);
+                var s: i32 = 0;
+                while (s < sub.len()) { if (!__rx_has(out, sub[s])) { out = out.append(sub[s]); } s = s + 1; }
+                k = k + 1;
+            }
+            return out;
+        },
+        ROpt(inner) => {
+            var out: i32[] = [ti];
+            var sub: i32[] = __rx_match(inner, t, ti);
+            var s: i32 = 0;
+            while (s < sub.len()) { if (!__rx_has(out, sub[s])) { out = out.append(sub[s]); } s = s + 1; }
+            return out;
+        },
+        RStar(inner) => { return __rx_closure(inner, t, ti, true); },
+        RPlus(inner) => { return __rx_closure(inner, t, ti, false); }
     }
-    if (q == 42) { return __re_star(0, p, ri, alen, nxt + 1, t, ti); }  // '*'
-    if (q == 43) { return __re_star(1, p, ri, alen, nxt + 1, t, ti); }  // '+'
-    if (q == 63) {                                                      // '?'
-        if (ti < t.len() && __re_atom_matches(p, ri, alen, t[ti])) {
-            if (__re_here(p, nxt + 1, t, ti + 1)) { return true; }
-        }
-        return __re_here(p, nxt + 1, t, ti);
-    }
-    if (ti < t.len() && __re_atom_matches(p, ri, alen, t[ti])) {
-        return __re_here(p, nxt, t, ti + 1);
-    }
-    return false;
-}
-
-// __re_star matches at least `min` (0 for `*`, 1 for `+`) greedy copies of
-// the atom, then the rest of the pattern — consuming as many as possible
-// first and backtracking one at a time, so `a*` in `a*b` yields to the
-// trailing `b`.
-function __re_star(min: i32, p: string, ri: i32, alen: i32, rest: i32, t: string, ti: i32): boolean {
-    var k: i32 = ti;
-    while (k < t.len() && __re_atom_matches(p, ri, alen, t[k])) { k = k + 1; }
-    var count: i32 = k - ti;
-    while (count >= min) {
-        if (__re_here(p, rest, t, ti + count)) { return true; }
-        count = count - 1;
-    }
-    return false;
 }
 
 // `regex_match(pattern, text)` — true when `pattern` matches anywhere in
-// `text` (a search). A leading `^` anchors at the start; otherwise every
-// start position is tried (including the empty match at end-of-text).
+// `text` (a search). The pattern is parsed once, then tried at each start
+// position; a `^` / `$` anchor in the pattern self-limits the match.
 pub function regex_match(pattern: string, text: string): boolean {
-    if (pattern.len() > 0 && pattern[0] == 94) {   // '^'
-        return __re_here(pattern, 1, text, 0);
-    }
+    var pr: RParse = __rx_alt(pattern, 0);
+    var root: RNode = pr.node;
     var ti: i32 = 0;
     while (true) {
-        if (__re_here(pattern, 0, text, ti)) { return true; }
+        var ends: i32[] = __rx_match(root, text, ti);
+        if (ends.len() > 0) { return true; }
         if (ti >= text.len()) { return false; }
         ti = ti + 1;
     }
