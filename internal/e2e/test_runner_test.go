@@ -112,6 +112,25 @@ func TestRunnerStringsExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/iter_test.fern` covers the core/iter stdlib (the
+// generic Iterator[T] protocol + Range / ArrayIter and the eager
+// drivers — sum / count / of / product / nth / last / min / max /
+// contains / count_value / fold / any / all / map / filter) through the
+// pure-Fern runner. Passing suite → exit 0.
+func TestRunnerIterExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/iter_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: core/iter", "# pass 15", "# fail 0", "1..15"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/runner_self_test.fern` is the runner's own
 // meta-test — confirms that every assertion helper returns the
 // expected TestOutcome shape on both pass and fail paths.

@@ -1,0 +1,107 @@
+import "std/test";
+import "core/iter" as iter;
+// examples/tests/iter_test.fern — pure-Fern coverage of the core/iter
+// stdlib (the generic Iterator[T] protocol + Range / ArrayIter and the
+// eager drivers), driven through the std/test runner. The Go-side
+// *_test.go suites unit-test each piece; this is the migration-shaped
+// (pure-Fern) companion, exercising the surface end-to-end via assertions.
+
+function test_sum_range(): test.TestOutcome {
+    return test.assert_eq(iter.sum(iter.range(0, 5)), 10);          // 0+1+2+3+4
+}
+
+function test_count_range(): test.TestOutcome {
+    return test.assert_eq(iter.count(iter.range(2, 9)), 7);
+}
+
+function test_of_sum(): test.TestOutcome {
+    var xs: i32[] = [3, 1, 4, 1, 5];
+    return test.assert_eq(iter.sum(iter.of(xs)), 14);              // array → iterator
+}
+
+function test_product(): test.TestOutcome {
+    return test.assert_eq(iter.product(iter.range(1, 5)), 24);      // 1*2*3*4
+}
+
+function test_nth(): test.TestOutcome {
+    match (iter.nth(iter.range(0, 9), 4)) {
+        Some(v) => { return test.assert_eq(v, 4); },
+        None => { return test.fail("nth(0..9, 4) expected Some"); }
+    }
+}
+
+function test_last(): test.TestOutcome {
+    match (iter.last(iter.range(0, 5))) {
+        Some(v) => { return test.assert_eq(v, 4); },
+        None => { return test.fail("last(0..5) expected Some"); }
+    }
+}
+
+function test_min(): test.TestOutcome {
+    var xs: i32[] = [5, 2, 8, 1];
+    match (iter.min(iter.of(xs))) {
+        Some(v) => { return test.assert_eq(v, 1); },
+        None => { return test.fail("min expected Some"); }
+    }
+}
+
+function test_max(): test.TestOutcome {
+    var xs: i32[] = [5, 2, 8, 1];
+    match (iter.max(iter.of(xs))) {
+        Some(v) => { return test.assert_eq(v, 8); },
+        None => { return test.fail("max expected Some"); }
+    }
+}
+
+function test_contains(): test.TestOutcome {
+    return test.assert_true(iter.contains(iter.range(0, 5), 3));
+}
+
+function test_count_value(): test.TestOutcome {
+    var xs: i32[] = [1, 2, 2, 3, 2];
+    return test.assert_eq(iter.count_value(iter.of(xs), 2), 3);
+}
+
+function test_fold(): test.TestOutcome {
+    var s = iter.fold(iter.range(1, 5), 0, function (a: i32, x: i32): i32 { return a + x; });
+    return test.assert_eq(s, 10);
+}
+
+function test_any(): test.TestOutcome {
+    return test.assert_true(iter.any(iter.range(0, 5), function (x: i32): boolean { return x == 3; }));
+}
+
+function test_all(): test.TestOutcome {
+    return test.assert_true(iter.all(iter.range(0, 5), function (x: i32): boolean { return x < 10; }));
+}
+
+function test_any_miss(): test.TestOutcome {
+    return test.assert_false(iter.any(iter.range(0, 5), function (x: i32): boolean { return x > 99; }));
+}
+
+function test_map_filter(): test.TestOutcome {
+    var xs: i32[] = [1, 2, 3, 4, 5, 6];
+    var evens = iter.filter(iter.of(xs), function (x: i32): boolean { return x % 2 == 0; });
+    var doubled = iter.map(iter.of(evens), function (x: i32): i32 { return x * 2; });
+    return test.assert_eq(iter.sum(iter.of(doubled)), 24);         // (2+4+6)*2
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("core/iter");
+    r = r.it("sum over a range",          test_sum_range());
+    r = r.it("count over a range",        test_count_range());
+    r = r.it("of: array to iterator",     test_of_sum());
+    r = r.it("product",                   test_product());
+    r = r.it("nth",                       test_nth());
+    r = r.it("last",                      test_last());
+    r = r.it("min",                       test_min());
+    r = r.it("max",                       test_max());
+    r = r.it("contains",                  test_contains());
+    r = r.it("count_value",              test_count_value());
+    r = r.it("fold",                      test_fold());
+    r = r.it("any hit",                   test_any());
+    r = r.it("all true",                  test_all());
+    r = r.it("any miss",                  test_any_miss());
+    r = r.it("map + filter pipeline",     test_map_filter());
+    return r.finish();
+}
