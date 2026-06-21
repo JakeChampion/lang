@@ -251,6 +251,24 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-21 — std/path: pure-Fern std/test migration coverage (`path_join` / `path_parent` / `path_file_name` / `path_extension`)
+
+`std/path`'s POSIX helpers (string-level, no FS interaction) had Go-side
+coverage but no migration-shaped (pure-Fern, `std/test`-driven) companion.
+Added `examples/tests/path_test.fern` — 17 assertions across all four
+functions, covering the tricky edges: `path_join` separator-collapsing
+(`["a/", "/b"]` → `"a/b"`), root preservation (`["/", "etc", "hosts"]` →
+`"/etc/hosts"`), empty-part skipping and join-of-nothing; `path_parent` of a
+relative path, a no-separator name, the root, and a top-level entry;
+`path_file_name` trailing-slash trimming; and `path_extension`'s last-dot rule
+plus the hidden-file (`.bashrc` → `""`) carve-out. Gated natively
+(`TestRunnerPathExamplePasses`) and through the self-host differential gate
+(`TestSelfHostStdTestE2E/path`), which compiles the suite with the self-hosted
+x86-64 compiler and oracle-checks TAP-13 stdout + exit code against the
+interpreter **byte-for-byte**. Routes cleanly through the self-host IR path —
+no AST fallback — exercising string-slicing / `while`-loop / char-compare
+lowering end-to-end.
+
 ### 2026-06-21 — std/math: pure-Fern std/test migration coverage (`range` / `range_step` / width constants / `pack_rgb`)
 
 `std/math`'s deterministic surface had Go-side coverage but no migration-shaped

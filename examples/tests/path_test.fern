@@ -1,0 +1,103 @@
+import "std/test";
+import "std/path" as path;
+// examples/tests/path_test.fern — pure-Fern coverage of the std/path
+// POSIX path helpers (string-level, no FS interaction): path_join /
+// path_parent / path_file_name / path_extension, including the
+// separator-collapsing, root-preservation, trailing-slash and
+// hidden-file edge cases. The Go-side suites unit-test the prelude
+// origins; this is the migration-shaped (pure-Fern, std/test-driven)
+// companion, driven end-to-end through the runner.
+
+function test_join(): test.TestOutcome {
+    return test.assert_eq(path.path_join(["a", "b", "c"]), "a/b/c");
+}
+
+function test_join_collapses(): test.TestOutcome {
+    // Trailing sep on the left + leading sep on the right collapse to one.
+    return test.assert_eq(path.path_join(["a/", "/b"]), "a/b");
+}
+
+function test_join_root(): test.TestOutcome {
+    // The root "/" is preserved as a separator-sentinel.
+    return test.assert_eq(path.path_join(["/", "etc", "hosts"]), "/etc/hosts");
+}
+
+function test_join_empty_parts(): test.TestOutcome {
+    return test.assert_eq(path.path_join(["", "b"]), "b");
+}
+
+function test_join_none(): test.TestOutcome {
+    return test.assert_eq(path.path_join([]), "");
+}
+
+function test_parent(): test.TestOutcome {
+    return test.assert_eq(path.path_parent("/a/b/c"), "/a/b");
+}
+
+function test_parent_relative(): test.TestOutcome {
+    return test.assert_eq(path.path_parent("a/b"), "a");
+}
+
+function test_parent_no_sep(): test.TestOutcome {
+    return test.assert_eq(path.path_parent("foo"), "");
+}
+
+function test_parent_root(): test.TestOutcome {
+    return test.assert_eq(path.path_parent("/"), "/");
+}
+
+function test_parent_top(): test.TestOutcome {
+    return test.assert_eq(path.path_parent("/a"), "/");
+}
+
+function test_file_name(): test.TestOutcome {
+    return test.assert_eq(path.path_file_name("/a/b/c"), "c");
+}
+
+function test_file_name_trailing(): test.TestOutcome {
+    return test.assert_eq(path.path_file_name("a/b/"), "b");
+}
+
+function test_file_name_bare(): test.TestOutcome {
+    return test.assert_eq(path.path_file_name("foo"), "foo");
+}
+
+function test_extension(): test.TestOutcome {
+    return test.assert_eq(path.path_extension("a/b/file.txt"), "txt");
+}
+
+function test_extension_last_dot(): test.TestOutcome {
+    // Extension is the substring after the LAST dot.
+    return test.assert_eq(path.path_extension("archive.tar.gz"), "gz");
+}
+
+function test_extension_hidden(): test.TestOutcome {
+    // A leading-dot file has no extension.
+    return test.assert_eq(path.path_extension(".bashrc"), "");
+}
+
+function test_extension_none(): test.TestOutcome {
+    return test.assert_eq(path.path_extension("noext"), "");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/path");
+    r = r.it("join",                    test_join());
+    r = r.it("join collapses seps",     test_join_collapses());
+    r = r.it("join preserves root",     test_join_root());
+    r = r.it("join skips empty parts",  test_join_empty_parts());
+    r = r.it("join of nothing",         test_join_none());
+    r = r.it("parent",                  test_parent());
+    r = r.it("parent relative",         test_parent_relative());
+    r = r.it("parent no separator",     test_parent_no_sep());
+    r = r.it("parent of root",          test_parent_root());
+    r = r.it("parent of top-level",     test_parent_top());
+    r = r.it("file_name",               test_file_name());
+    r = r.it("file_name trailing slash", test_file_name_trailing());
+    r = r.it("file_name bare",          test_file_name_bare());
+    r = r.it("extension",               test_extension());
+    r = r.it("extension last dot",      test_extension_last_dot());
+    r = r.it("extension hidden file",   test_extension_hidden());
+    r = r.it("extension none",          test_extension_none());
+    return r.finish();
+}

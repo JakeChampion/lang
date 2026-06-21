@@ -168,6 +168,24 @@ func TestRunnerMathExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/path_test.fern` covers the std/path POSIX helpers
+// (string-level, no FS) — path_join / path_parent / path_file_name /
+// path_extension, incl. separator-collapsing, root-preservation,
+// trailing-slash and hidden-file edges. Passing suite → exit 0.
+func TestRunnerPathExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/path_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/path", "# pass 17", "# fail 0", "1..17"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/runner_self_test.fern` is the runner's own
 // meta-test — confirms that every assertion helper returns the
 // expected TestOutcome shape on both pass and fail paths.
