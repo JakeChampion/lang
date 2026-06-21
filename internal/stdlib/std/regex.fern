@@ -1,0 +1,129 @@
+// std/regex — a small backtracking regular-expression matcher.
+//
+// Fern had no pattern-matching engine (#2680); this is a compact,
+// dependency-free one in the classic recursive-backtracking style
+// (Kernighan & Pike, "The Practice of Programming", generalised from
+// single chars to atoms with character classes and the `+`/`?`
+// quantifiers). It runs on every backend — it is ordinary Fern, lowered
+// through the same IR path as any other module.
+//
+// Supported syntax (a useful subset, not full POSIX/PCRE):
+//   .            any single byte
+//   c            the literal byte `c`
+//   [abc]        character class — any one of the listed bytes
+//   [a-z]        class with ranges (inclusive, by byte value)
+//   [^...]       negated class — any byte NOT listed
+//   *            zero or more of the preceding atom (greedy)
+//   +            one or more of the preceding atom (greedy)
+//   ?            zero or one of the preceding atom
+//   ^            anchor at the start of the text
+//   $            anchor at the end of the text
+//
+// `regex_match(pattern, text)` is a SEARCH: it returns true when the
+// pattern matches anywhere in the text. Anchor with `^` / `$` for a
+// whole-string match (`regex_match("^[0-9]+$", s)`). Matching is on raw
+// bytes, so multi-byte UTF-8 is matched byte-wise. There is no grouping
+// `( )`, alternation `|`, or backreferences yet — those want a compiled
+// NFA rather than this linear backtracker, and are left for a follow-up.
+
+// __re_atom_len returns the byte length of the atom token starting at
+// pattern index `ri`: a `[...]` class spans through its closing `]`,
+// every other atom (`.` or a literal) is one byte. A leading `^` (negate)
+// or a `]` as the first class member is part of the class, not a
+// terminator.
+function __re_atom_len(p: string, ri: i32): i32 {
+    if (p[ri] == 91) {            // '['
+        var j: i32 = ri + 1;
+        if (j < p.len() && p[j] == 94) { j = j + 1; }   // leading '^'
+        if (j < p.len() && p[j] == 93) { j = j + 1; }   // ']' as first member
+        while (j < p.len() && p[j] != 93) { j = j + 1; }
+        if (j < p.len()) { return (j - ri) + 1; }        // include ']'
+        return j - ri;                                   // unterminated
+    }
+    return 1;
+}
+
+// __re_atom_matches reports whether byte `c` matches the atom occupying
+// `p[ri .. ri+alen)`: `.` matches anything, a class tests membership
+// (with `a-b` ranges and a leading `^` negation), and a literal compares
+// equal.
+function __re_atom_matches(p: string, ri: i32, alen: i32, c: i32): boolean {
+    var a0: i32 = p[ri];
+    if (a0 == 46) { return true; }   // '.'
+    if (a0 == 91) {                  // '[' class
+        var j: i32 = ri + 1;
+        var neg: boolean = false;
+        if (j < ri + alen && p[j] == 94) { neg = true; j = j + 1; }
+        var found: boolean = false;
+        var end: i32 = ri + alen - 1;   // index of the closing ']'
+        while (j < end) {
+            if (p[j + 1] == 45 && j + 2 < end) {   // 'a' '-' 'b' range
+                if (c >= p[j] && c <= p[j + 2]) { found = true; }
+                j = j + 3;
+            } else {
+                if (c == p[j]) { found = true; }
+                j = j + 1;
+            }
+        }
+        if (neg) { return !found; }
+        return found;
+    }
+    return c == a0;                 // literal byte
+}
+
+// __re_here matches pattern `p[ri..]` against text `t[ti..]`, anchored at
+// `ti`. It dispatches on the quantifier (if any) following the current
+// atom, recursing for the remainder.
+function __re_here(p: string, ri: i32, t: string, ti: i32): boolean {
+    if (ri >= p.len()) { return true; }
+    if (p[ri] == 36 && ri + 1 >= p.len()) { return ti >= t.len(); }  // '$'
+    var alen: i32 = __re_atom_len(p, ri);
+    var nxt: i32 = ri + alen;
+    var q: i32 = 0;
+    if (nxt < p.len()) {
+        if (p[nxt] == 42 || p[nxt] == 43 || p[nxt] == 63) { q = p[nxt]; }
+    }
+    if (q == 42) { return __re_star(0, p, ri, alen, nxt + 1, t, ti); }  // '*'
+    if (q == 43) { return __re_star(1, p, ri, alen, nxt + 1, t, ti); }  // '+'
+    if (q == 63) {                                                      // '?'
+        if (ti < t.len() && __re_atom_matches(p, ri, alen, t[ti])) {
+            if (__re_here(p, nxt + 1, t, ti + 1)) { return true; }
+        }
+        return __re_here(p, nxt + 1, t, ti);
+    }
+    if (ti < t.len() && __re_atom_matches(p, ri, alen, t[ti])) {
+        return __re_here(p, nxt, t, ti + 1);
+    }
+    return false;
+}
+
+// __re_star matches at least `min` (0 for `*`, 1 for `+`) greedy copies of
+// the atom, then the rest of the pattern — consuming as many as possible
+// first and backtracking one at a time, so `a*` in `a*b` yields to the
+// trailing `b`.
+function __re_star(min: i32, p: string, ri: i32, alen: i32, rest: i32, t: string, ti: i32): boolean {
+    var k: i32 = ti;
+    while (k < t.len() && __re_atom_matches(p, ri, alen, t[k])) { k = k + 1; }
+    var count: i32 = k - ti;
+    while (count >= min) {
+        if (__re_here(p, rest, t, ti + count)) { return true; }
+        count = count - 1;
+    }
+    return false;
+}
+
+// `regex_match(pattern, text)` — true when `pattern` matches anywhere in
+// `text` (a search). A leading `^` anchors at the start; otherwise every
+// start position is tried (including the empty match at end-of-text).
+pub function regex_match(pattern: string, text: string): boolean {
+    if (pattern.len() > 0 && pattern[0] == 94) {   // '^'
+        return __re_here(pattern, 1, text, 0);
+    }
+    var ti: i32 = 0;
+    while (true) {
+        if (__re_here(pattern, 0, text, ti)) { return true; }
+        if (ti >= text.len()) { return false; }
+        ti = ti + 1;
+    }
+    return false;
+}

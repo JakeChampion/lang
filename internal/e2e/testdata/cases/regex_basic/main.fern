@@ -1,0 +1,17 @@
+// std/regex (#2680) exercised across every backend: literals, `.`, `^`/`$`
+// anchors, the `*`/`+`/`?` quantifiers, and `[...]` character classes with
+// ranges and negation. Each check contributes a distinct bit; all seven
+// match, so main returns 0b1111111 = 127.
+import "std/regex";
+
+function main(): i32 {
+    var r: i32 = 0;
+    if (regex.regex_match("abc", "xxabcyy")) { r = r + 1; }            // literal, searched
+    if (regex.regex_match("^a.c$", "axc")) { r = r + 2; }             // anchors + `.`
+    if (regex.regex_match("a*b", "aaab")) { r = r + 4; }              // `*` greedy + backtrack
+    if (regex.regex_match("colou?r", "color")) { r = r + 8; }         // `?` optional
+    if (regex.regex_match("[0-9]+", "abc123")) { r = r + 16; }        // class + `+`
+    if (regex.regex_match("a+b", "aab")) { r = r + 32; }              // `+` one-or-more
+    if (regex.regex_match("^[A-Z][a-z]*$", "Hello")) { r = r + 64; }  // ranges, anchored
+    return r;
+}
