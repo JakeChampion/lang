@@ -9075,6 +9075,12 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // identity return), so this reclaims the per-iteration builder leak
             // (#3456 — escaping-struct reclaim). reassign_inc stays false for a
             // call result (already owned).
+            // A SNAPSHOT struct PARAM reassign (the builder `s = s.write(x)`,
+            // #3456 slice 2) frees the old box via the snapshot-guarded shallow
+            // free — never the caller's original (the entry snapshot).
+            if (slot_is_snapshot_param(s, slot)) {
+                return emit_snapshot_store(se, slot, s.slot_of("$snap$" + s.local_names[slot]));
+            }
             return emit_arr_store(se, slot, reassign_inc, target_is_arr || slot_is_reclaimable_struct(s, slot));
         },
         parser.StmtReturn(r) => {
@@ -10516,6 +10522,21 @@ pub function emit_arr_store(se: LowerState, slot: i32, alias_inc: boolean, do_de
     return st.emit(ir.op_store_local(slot));
 }
 
+// emit_snapshot_store stores `new` (on the operand stack) into a SNAPSHOT param
+// slot (#3456 slice 2) and frees the OLD box only when it differs from BOTH the
+// new value (cow) AND the entry snapshot at `snap_slot` (the caller's original).
+// The conditional free lives in the runtime helper __fern_snapshot_dec(new, old,
+// snap) -> new (rc-guarded SHALLOW box release, pass-through of `new`) — keeping
+// it a 4-op call site instead of ~16 inline ops, because a builder has hundreds
+// of rebinds and the inline ops (each rebuilding LowerState) OOM the native
+// driver's emit of large modules. `new` is already on the stack (arg0, deepest).
+function emit_snapshot_store(se: LowerState, slot: i32, snap_slot: i32): LowerState {
+    var st: LowerState = se.emit(ir.op_load_local(slot));        // old (arg1)
+    st = st.emit(ir.op_load_local(snap_slot));                   // snap (arg2)
+    st = st.emit(ir.op_call_direct("__fern_snapshot_dec", 3));   // frees old; returns new
+    return st.emit(ir.op_store_local(slot));
+}
+
 // emit_dec_sweep_except releases (decs) every OWNED array local currently in
 // scope except `keep` (the move-on-return slot, or -1 for none), leaving the
 // operand stack unchanged. Array params (slots < n_params) are BORROWED — the
@@ -10802,6 +10823,59 @@ function stmt_unsafe_for(st: parser.Stmt, name: string, borrowable: string[]): b
             while (ai < m.arms.len()) {
                 if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable)) { return true; }
                 if (body_unsafe_for(m.arms[ai].body, name, borrowable)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// body_unsafe_for_allow_ret / stmt_unsafe_for_allow_ret: the borrow check for the
+// SNAPSHOT-param reclaim (#3456 slice 2) — identical to body_unsafe_for except a
+// bare `return name` is SAFE (the builder param's final value is MOVED OUT to the
+// caller, not retained). Every other unsafe use — an alias `var c = name`, a
+// store into a container, a non-borrowable call arg, a slice — is still flagged.
+function body_unsafe_for_allow_ret(stmts: parser.Stmt[], name: string, borrowable: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (stmt_unsafe_for_allow_ret(stmts[i], name, borrowable)) { return true; } i = i + 1; }
+    return false;
+}
+function stmt_unsafe_for_allow_ret(st: parser.Stmt, name: string, borrowable: string[]): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return expr_unsafe_for(v.init, name, borrowable); },
+        parser.StmtReturn(r) => {
+            match (r.value) {
+                parser.ExprIdent(_) => { return false; },   // `return name`: move-out, safe
+                _ => { return expr_unsafe_for(r.value, name, borrowable); }
+            }
+        },
+        parser.StmtExpr(e) => { return expr_unsafe_for(e.value, name, borrowable); },
+        parser.StmtAssign(a) => { return expr_unsafe_for(a.value, name, borrowable); },
+        parser.StmtIf(f) => {
+            if (expr_unsafe_for(f.cond, name, borrowable)) { return true; }
+            return body_unsafe_for_allow_ret(f.then_body, name, borrowable) || body_unsafe_for_allow_ret(f.else_body, name, borrowable);
+        },
+        parser.StmtWhile(w) => {
+            if (expr_unsafe_for(w.cond, name, borrowable)) { return true; }
+            return body_unsafe_for_allow_ret(w.body, name, borrowable);
+        },
+        parser.StmtFor(fo) => {
+            var iter_unsafe: boolean = true;
+            match (fo.iter) {
+                parser.ExprIdent(_) => { iter_unsafe = false; },
+                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable); }
+            }
+            if (iter_unsafe) { return true; }
+            return body_unsafe_for_allow_ret(fo.body, name, borrowable);
+        },
+        parser.StmtMatch(m) => {
+            if (expr_unsafe_for(m.scrutinee, name, borrowable)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable)) { return true; }
+                if (body_unsafe_for_allow_ret(m.arms[ai].body, name, borrowable)) { return true; }
                 ai = ai + 1;
             }
             return false;
@@ -11412,6 +11486,36 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     return out;
 }
 
+// snapshot_param_names_of: the struct PARAMS / RECEIVER that are SNAPSHOT-
+// reclaimable (#3456 slice 2) — the builder pattern
+// `function f(s: EmitState): EmitState { s = s.write(x); ...; return s; }`, where
+// `s` is a param/receiver REASSIGNED through a consume-rebind and moved back out
+// via `return s`. Such a param cannot use the normal reclaim path (its box would
+// be deep-dropped at scope exit, and its final value shares the CALLER's field
+// buffers); instead lower_func snapshots it at entry and each reassign frees the
+// old box only when it differs from BOTH the new value and the snapshot (the
+// caller's original). Eligibility: reassigned + only-safe-uses-plus-return. The
+// struct-slot check is applied at the emit site (struct_type_of_slot), so a
+// scalar param — flagged unsafe by its arithmetic — never reaches here.
+function snapshot_param_names_of(fn: parser.FuncDecl, borrowable: string[]): string[] {
+    var out: string[] = [];
+    var reassigned: string[] = body_assign_targets(fn.body);
+    if (fn.receiver_name.len() > 0) {
+        if (util.index_of_str(reassigned, fn.receiver_name) >= 0 && !body_unsafe_for_allow_ret(fn.body, fn.receiver_name, borrowable)) {
+            out = out.append(fn.receiver_name);
+        }
+    }
+    var pi: i32 = 0;
+    while (pi < fn.params.len()) {
+        var pn: string = fn.params[pi].name;
+        if (util.index_of_str(reassigned, pn) >= 0 && !body_unsafe_for_allow_ret(fn.body, pn, borrowable)) {
+            out = out.append(pn);
+        }
+        pi = pi + 1;
+    }
+    return out;
+}
+
 // --- consumed scalar-payload enum scrutinee free (Perceus) -------------------
 //
 // The simplest SOUND enum-box reclamation: a function-local `var x = V(args...)`
@@ -11984,6 +12088,19 @@ function slot_is_reclaimable_struct(s: LowerState, i: i32): boolean {
     if (i >= s.local_names.len()) { return false; }
     if (s.struct_type_of_slot(i).len() == 0) { return false; }
     return util.index_of_str(s.reclaimable_names, s.local_names[i]) >= 0;
+}
+
+// slot_is_snapshot_param: slot `i` is a struct PARAM / receiver lower_func
+// snapshotted at entry for the builder consume-rebind reclaim (#3456 slice 2,
+// piggybacked as "SNAP:<name>" on reclaimable_names). Only the param slot itself
+// (i < n_params) and struct slots qualify; its reassign emits the snapshot-
+// guarded shallow free (emit_snapshot_store) — freeing the function's own
+// intermediate boxes, never the caller's original.
+function slot_is_snapshot_param(s: LowerState, i: i32): boolean {
+    if (i >= s.n_params) { return false; }
+    if (i >= s.local_names.len()) { return false; }
+    if (s.struct_type_of_slot(i).len() == 0) { return false; }
+    return util.index_of_str(s.reclaimable_names, "SNAP:" + s.local_names[i]) >= 0;
 }
 
 // --- struct in-place reuse (FBIP): functional-update self-overwrite ---------
@@ -13526,6 +13643,14 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // Struct reclamation: the fresh, non-escaping struct locals this function may
     // free at scope exit / loop-rebind (conservative escape analysis above).
     var reclaim: string[] = reclaimable_names_of(fn.body, structs, borrowable_params);
+    // Snapshot-param reclaim (#3456 slice 2): struct params/receiver threaded
+    // through a consume-rebind (`s = s.write(x); return s`). Piggybacked as
+    // "SNAP:<name>" so slot_is_reclaimable_struct (bare-name lookup) stays false
+    // for them — they are NOT swept/deep-dropped (their final value shares the
+    // caller's fields); each reassign instead emits emit_snapshot_store.
+    var snaps: string[] = snapshot_param_names_of(fn, borrowable_params);
+    var snj: i32 = 0;
+    while (snj < snaps.len()) { reclaim = reclaim.append("SNAP:" + snaps[snj]); snj = snj + 1; }
     // Array/map locals that acquire a lasting local alias — the in-place
     // `a = a.with(i, v)` self-reassign must clone instead of mutating in place
     // when its target is here (#3599; see the aliased_names field doc).
@@ -13560,6 +13685,21 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     while (fpm < fn.params.len()) {
         if (fn.params[fpm].type_name == "fn") { s = s.mark_closure_local(fn.params[fpm].name); }
         fpm = fpm + 1;
+    }
+    // Snapshot-param entry capture (#3456 slice 2): store each snapshot struct
+    // param/receiver's ENTRY value (the caller's original box) into a hidden
+    // "$snap$<name>" local. Emitted FIRST (before any body op). Each reassign then
+    // frees the old box only when it differs from this snapshot, so the caller's
+    // original is never freed. Only struct slots qualify.
+    var sni: i32 = 0;
+    while (sni < snaps.len()) {
+        var psl: i32 = s.slot_of(snaps[sni]);
+        if (psl >= 0 && s.struct_type_of_slot(psl).len() > 0) {
+            s = s.add_local("$snap$" + snaps[sni]);
+            s = s.emit(ir.op_load_local(psl));
+            s = s.emit(ir.op_store_local(s.slot_of("$snap$" + snaps[sni])));
+        }
+        sni = sni + 1;
     }
     // Perceus precise drops: release each linear, owned array-literal local right
     // after its last top-level use (drop-on-last-use), instead of at the exit

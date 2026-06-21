@@ -6668,6 +6668,12 @@ pub function rc_runtime_helpers(heap_base: i32): string {
     // __fern_rc_underflow_count() -> i32: the over-release detector.
     o = o + "  (func $__fern_rc_underflow_count (result i32)\n";
     o = o + "    (global.get $__fern_rc_underflow))\n";
+    // __fern_snapshot_dec(new, old, snap) -> new (#3456 slice 2). wasm does NOT
+    // reclaim yet — a leak-safe PASS-THROUGH returning `new` (mirrors
+    // op_arr_push_owned's wasm aliasing). The x86 backend does the real rc-guarded
+    // shallow free; the wasm owned helper is a later slice.
+    o = o + "  (func $__fern_snapshot_dec (param $new i32) (param $old i32) (param $snap i32) (result i32)\n";
+    o = o + "    (local.get $new))\n";
     return o;
 }
 
@@ -6679,6 +6685,7 @@ function module_uses_rcmem(mod: parser.Module): boolean {
         || module_calls(mod, "__load_i32") || module_calls(mod, "__store_i32")
         || module_calls(mod, "__fern_rc_inc") || module_calls(mod, "__fern_rc_dec")
         || module_calls(mod, "__fern_rc_is_unique")
+        || module_calls(mod, "__fern_snapshot_dec")
         || module_calls(mod, "__fern_rc_underflow_count");
 }
 

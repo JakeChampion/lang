@@ -2050,3 +2050,29 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   reclaims its OWN intermediate builder boxes, never the caller's original — no
   interprocedural ownership inference needed. That is what converges the
   per-module self-compile of the large modules.
+- 2026-06-21: **Snapshot-param reclaim landed (#3456 slice 2).** The builder
+  `function f(s: S): R { s = s.step(x); …; return … }` threads a struct PARAM /
+  receiver through a consume-rebind. Params can't use the normal reclaim
+  (caller-owned; the final value may share the caller's fields), so lower_func
+  snapshots the param's ENTRY box into a hidden `$snap$<name>` local
+  (snapshot_param_names_of, gated by body_unsafe_for_allow_ret — a bare
+  `return s` is the move-out, allowed), and each reassign frees the old box only
+  when it differs from BOTH `new` (cow) AND the snapshot — via the helper
+  `__fern_snapshot_dec(new, old, snap) -> new` (rc-guarded SHALLOW free,
+  pass-through of `new`). A function reclaims its OWN intermediate boxes, never
+  the caller's original, with NO interprocedural inference. x86 reclaims; arm64 +
+  wasm are leak-safe PASS-THROUGHs (the owned helper a later slice), mirroring
+  op_arr_push_owned. The 4-op call site is essential — the inline ~16-op form
+  OOMed the native driver's emit of the large modules (isolated + measured).
+  Verified: scalar param-threading churn (3M×200 boxes) 137→0; caller-original
+  intact; heap-field param builder value-correct; x86 default fixpoint
+  byte-identical (mmc==gen2==gen3); whole-compiler per-module self-compile;
+  struct/RC + wasm struct suites green.
+  **CORRECTION to the previous entry**: this does NOT by itself converge the
+  per-module self-compile. The DOMINANT remaining leak is the clone-form REPLACED
+  array field — `LowerState { ops: s.ops.append(op), … }` clones `s.ops` each emit
+  and a shallow box-free can't free the dead SOURCE array, so the ops arrays leak
+  O(K²) per function (confirmed: a clone-form-field-append churn still OOMs WITH
+  this slice). Convergence needs FIELD-LEVEL move tracking — free the replaced
+  fields, keep the shared ones — the deep Perceus reuse piece, the genuine next
+  slice.
