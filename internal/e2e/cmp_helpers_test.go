@@ -53,6 +53,12 @@ struct P { v: i32 }
 impl Ord for P { function cmp(self: Self, other: Self): i32 { if (self.v < other.v) { return 0 - 1; } if (self.v > other.v) { return 1; } return 0; } }
 function is_sorted[T: Ord](arr: T[]): boolean { var i = 1; var n = arr.len(); while (i < n) { if (arr[i].cmp(arr[i - 1]) < 0) { return false; } i = i + 1; } return true; }
 function main(): i32 { var a: P[] = [P { v: 1 }, P { v: 2 }, P { v: 3 }]; var b: P[] = [P { v: 3 }, P { v: 1 }]; var r = 0; if (is_sorted(a)) { r = r + 5; } if (!is_sorted(b)) { r = r + 2; } return r; }`, 7},
+	// eq_arrays over a user Eq struct array. equal→+5, unequal→+2 → 7.
+	{"eq-arrays", `pub trait Eq { function eq(self: Self, other: Self): boolean; }
+struct P { v: i32 }
+impl Eq for P { function eq(self: Self, other: Self): boolean { return self.v == other.v; } }
+function eq_arrays[T: Eq](a: T[], b: T[]): boolean { var n = a.len(); if (n != b.len()) { return false; } var i = 0; while (i < n) { if (!a[i].eq(b[i])) { return false; } i = i + 1; } return true; }
+function main(): i32 { var xs: P[] = [P { v: 1 }, P { v: 2 }]; var ys: P[] = [P { v: 1 }, P { v: 2 }]; var zs: P[] = [P { v: 1 }]; var r = 0; if (eq_arrays(xs, ys)) { r = r + 5; } if (!eq_arrays(xs, zs)) { r = r + 2; } return r; }`, 7},
 }
 
 // TestNativeCmpHelpers runs the inline Ord-helper programs on the native
@@ -110,18 +116,23 @@ function main(): i32 {
     var arr = cmp.sort([3, 1, 2]);       // [1,2,3]  (primitive impl Ord for i32)
     var srt = 0;
     if (cmp.is_sorted(arr)) { srt = 1; } // 1
-    return a + b + c + p.v + d + arr[0] * 100 + arr[2] + srt; // 24 + 100 + 3 + 1 = 128
+    var ix = cmp.index_of([10, 20, 30], 20); // 1  (canonical index_of -> i32, #3699)
+    var has = 0;
+    if (cmp.contains([10, 20, 30], 30)) { has = 1; }                              // 1
+    var eqa = 0;
+    if (cmp.eq_arrays([1, 2], [1, 2])) { eqa = 1; }                               // 1
+    return a + b + c + p.v + d + arr[0] * 100 + arr[2] + srt + ix + has + eqa;    // 128 + 1+1+1 = 131
 }
 `
 	p := writeIterProg(t, src)
-	if _, code := runFixtureInterp(t, p, ""); code != 128 {
-		t.Errorf("cmp module interp = %d, want 128", code)
+	if _, code := runFixtureInterp(t, p, ""); code != 131 {
+		t.Errorf("cmp module interp = %d, want 131", code)
 	}
-	if _, code := runFixtureX86_64(t, p, ""); code != 128 {
-		t.Errorf("cmp module x86-64 = %d, want 128", code)
+	if _, code := runFixtureX86_64(t, p, ""); code != 131 {
+		t.Errorf("cmp module x86-64 = %d, want 131", code)
 	}
-	if code := runWasm(t, src); code != 128 {
-		t.Errorf("cmp module wasm = %d, want 128", code)
+	if code := runWasm(t, src); code != 131 {
+		t.Errorf("cmp module wasm = %d, want 131", code)
 	}
 }
 

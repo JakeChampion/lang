@@ -394,3 +394,16 @@ pub function distinct[T: Eq](xs: T[]): T[] {
     }
     return out;
 }
+
+// eq_arrays reports whether `a` and `b` have the same length and equal
+// elements pairwise under `Eq`.
+pub function eq_arrays[T: Eq](a: T[], b: T[]): boolean {
+    var n = a.len();
+    if (n != b.len()) { return false; }
+    var i = 0;
+    while (i < n) {
+        if (!a[i].eq(b[i])) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
