@@ -4740,6 +4740,23 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!fr.ok) { return fr; }
                         return fr.emit(ir.op_free());
                     }
+                    // __fern_arr_dec(v, stride) / __fern_drop_arr_ptr(v, stride):
+                    // core/map's value-release helpers. The self-host backends keep
+                    // these NO-OPS (safe-leak mode — the array rc-header layout
+                    // migration that would wire in real frees isn't done; the native
+                    // backend does real RC, goal #2 ports it). Lower as a no-op that
+                    // consumes both args and pushes a dummy 0 (reusing op_free's
+                    // pop-2/push-0). This matches asm.fern's documented no-op and
+                    // avoids the stack-arg-helper ABI: a generic call_direct would
+                    // mis-pass the 2 args to the 1-slot __fn___fern_arr_dec. Flips
+                    // __map_dec_value (the last core/map bail) to ir. #2691 stage 3.
+                    if ((cid.name == "__fern_arr_dec" || cid.name == "__fern_drop_arr_ptr") && c.args.len() == 2) {
+                        var rd: LowerState = lower_expr(c.args[0], s);
+                        if (!rd.ok) { return rd; }
+                        rd = lower_expr(c.args[1], rd);
+                        if (!rd.ok) { return rd; }
+                        return rd.emit(ir.op_free());
+                    }
                     // __memcpy(dst, src, n): raw byte copy. Lower the three
                     // usize/i32 operands (dst, src, n) then emit op_memcpy, which
                     // the IR backends select rep movsb / a byte loop / memory.copy
