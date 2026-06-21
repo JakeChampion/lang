@@ -146,7 +146,8 @@ function main(): i32 {
     var bs = iter.to_array(BoolSeq { n: 2 });        // [true, true]
     var k = 0;
     for b in bs { if (b) { k = k + 1; } }            // 2
-    return c + k + bs.len();                         // 3+2+2 = 7
+    var f = iter.fold(iter.range(1, 5), 1, function (a: i32, x: i32): i32 { return a * x; });  // 1*1*2*3*4 = 24
+    return c + k + bs.len() + f - 24;                // 3+2+2+24-24 = 7
 }
 `
 	p := writeIterProg(t, src)

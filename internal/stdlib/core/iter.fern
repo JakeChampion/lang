@@ -85,3 +85,22 @@ pub function to_array[T, I: Iterator[T]](it: I): T[] {
     }
     return out;
 }
+
+// fold is the fundamental left reduction: starting from `init`, it threads an
+// accumulator of type `A` through `f(acc, value)` for every value the iterator
+// yields, returning the final accumulator. `sum` is `fold(it, 0, +)`; `count`
+// is `fold(it, 0, \acc _ -> acc + 1)`. Generic over both the element type `T`
+// and the accumulator type `A` (so e.g. an i32 iterator can fold into a
+// string, or a count). The combining function is an ordinary closure value.
+pub function fold[T, A, I: Iterator[T]](it: I, init: A, f: (A, T) => A): A {
+    var acc = init;
+    var cur = it;
+    var go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => { acc = f(acc, t.0); cur = t.1; },
+            None => { go = false; },
+        }
+    }
+    return acc;
+}
