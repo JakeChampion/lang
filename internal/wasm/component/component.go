@@ -1256,12 +1256,32 @@ func tcpMethodFuncDecl(method string, paramNames []string, paramValtypes []byte,
 // 14 tuple<10,11,12>, 15 result<14,error-code>, then 16/18/20/22/24/26
 // the method functypes (each followed by its export). 28 decls.
 func WasiSocketsTcpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, inputStreamT, outputStreamT, pollableT uint32) []byte {
+	return wasiSocketsTcpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, inputStreamT, outputStreamT, pollableT, false)
+}
+
+// WasiSocketsTcpConnectInstanceTypeBody is the outbound-client variant:
+// the same tcp-socket instance type plus the connect chain
+// (start-connect / finish-connect). finish-connect returns
+// result<tuple<own input-stream, own output-stream>, error-code>. The
+// server path uses the (smaller) bind/listen/accept shape via
+// WasiSocketsTcpInstanceTypeBody; the connect methods are a strict
+// superset appended after subscribe, so the type indices the server
+// path relies on (0-21) are unchanged.
+func WasiSocketsTcpConnectInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, inputStreamT, outputStreamT, pollableT uint32) []byte {
+	return wasiSocketsTcpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, inputStreamT, outputStreamT, pollableT, true)
+}
+
+func wasiSocketsTcpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, inputStreamT, outputStreamT, pollableT uint32, withConnect bool) []byte {
 	exportMethod := func(body []byte, name string, funcTypeidx byte) []byte {
 		body = append(body, 0x04, 0x00, byte(len(name)))
 		body = append(body, name...)
 		return append(body, 0x01, funcTypeidx)
 	}
-	body := []byte{0x01, 0x42, 0x1c}                             // 28 decls
+	declCount := byte(0x1c) // 28
+	if withConnect {
+		declCount = 0x22 // 34: +tuple, +result, +2 functypes, +2 exports
+	}
+	body := []byte{0x01, 0x42, declCount}
 	body = append(body, OuterAliasTypeDecl(1, networkT)...)      // 0
 	body = append(body, OuterAliasTypeDecl(1, errorCodeT)...)    // 1
 	body = append(body, OuterAliasTypeDecl(1, ipSockAddrT)...)   // 2
@@ -1300,6 +1320,21 @@ func WasiSocketsTcpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, inputStre
 	// 21: subscribe(self) -> own<pollable> 13
 	body = append(body, tcpMethodFuncDecl("subscribe", []string{"self"}, []byte{0x07}, 0x0d)...)
 	body = exportMethod(body, "[method]tcp-socket.subscribe", 0x15)
+	if withConnect {
+		// 22: tuple<own input-stream=11, own output-stream=12>
+		body = append(body, 0x01)
+		body = append(body, InnerTypeTuple([]byte{0x0b, 0x0c})...)
+		// 23: result<tuple=22, error-code=1>
+		body = append(body, 0x01)
+		body = append(body, InnerTypeResultOkErr(22, 1)...)
+		// 24: start-connect(self 7, network 8, remote-address 2) -> result 9
+		body = append(body, tcpMethodFuncDecl("start-connect",
+			[]string{"self", "network", "remote-address"}, []byte{0x07, 0x08, 0x02}, 0x09)...)
+		body = exportMethod(body, "[method]tcp-socket.start-connect", 0x18)
+		// 25: finish-connect(self 7) -> result 23
+		body = append(body, tcpMethodFuncDecl("finish-connect", []string{"self"}, []byte{0x07}, 0x17)...)
+		body = exportMethod(body, "[method]tcp-socket.finish-connect", 0x19)
+	}
 	return body
 }
 

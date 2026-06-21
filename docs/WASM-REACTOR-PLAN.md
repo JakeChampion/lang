@@ -138,14 +138,67 @@ still-waiting tasks, landing `not_ready` in their slots — happy-eyeballs
 with an SLA upper bound. Tested both the beat-the-deadline and
 timed-out paths (`TestWasmReactorRunDeadline`).
 
-**Remaining:** wiring real socket/stream pollables into the same `run`
-loop for outbound fan-out — which first needs the wasm **outbound TCP
-client** path (start-connect / finish-connect / the connection's
-subscribe → pollable; today the wasm TCP path is server-only:
-bind/listen/accept). That's the larger next async slice. The reactor
-core — primitives (timer, block, poll, drop) + standalone
-resource-aware composition + the `Step[T]`/`run`/`run_deadline`
-scheduler — is complete.
+**UPDATE — `select` lands across all three reactor flavors.** First-
+wins / race: drive tasks until the FIRST completes, return its value,
+cancel the rest. `std/wasm_reactor.select` (drops the losers' pollables
+via `__wr_drop_waiting`), native `std/reactor.run_io_select` (leaves
+fds to the caller — the reactor never owns fd lifecycle), and the
+portable `std/task.select` (pre-existing). The scheduler API is now at
+parity: **`run` (all) · `run_deadline`/`run_io_deadline` (SLA) ·
+`select`/`run_io_select` (first-wins)** on every backend.
+
+## Remaining: wasm outbound TCP client (the next async slice)
+
+The reactor core is complete; the one large remaining piece is wiring
+real connection pollables into `run`/`select` for **overlapped outbound
+fetch** — the wasm analog of native `TestReactorFanoutBodies`. Today the
+wasm TCP path is **server-only** (bind/listen/accept in `wasi_tcp.go` +
+the composer's `tcp-socket` methods). Outbound needs the connect chain.
+Feasibility confirmed: `wasmtime run -S inherit-network` already drives
+the wasm TCP **server** e2e tests, so an outbound client is testable
+against a Go upstream the same way.
+
+The ABI groundwork (the historically fiddly part) is done — verified by
+`wasm-tools print` of a compiled server component. The
+`wasi:sockets/tcp@0.2.0` instance type (`WasiSocketsTcpInstanceTypeBody`,
+component.go) numbers types **0–21** (exports do NOT consume type
+indices; the six method functypes are consecutive 16–21). Extend it
+with `withConnect` (parameterize like `WasiIoPollInstanceTypeBody`'s
+`withPoll`, so the server path stays byte-identical):
+
+- type 22: `tuple<own input-stream=11, own output-stream=12>` — `InnerTypeTuple([]byte{0x0b,0x0c})`
+- type 23: `result<22, error-code=1>` — `InnerTypeResultOkErr(22, 1)`
+- type 24: `start-connect(self 7, network 8, remote-address 2) -> result 9` — same shape as start-bind (`tcpMethodFuncDecl(..., []byte{0x07,0x08,0x02}, 0x09)`), export `[method]tcp-socket.start-connect`
+- type 25: `finish-connect(self 7) -> result 23` (`tcpMethodFuncDecl("finish-connect", []string{"self"}, []byte{0x07}, 0x17)`), export `[method]tcp-socket.finish-connect`
+- decl count 28 (0x1c) → 34 (0x22): +4 types, +2 exports.
+
+Then the rest of the vertical:
+
+1. **wasmbin** (`wasi_tcp.go`): import specs `wasi_sockets_tcp_start_connect`
+   / `_finish_connect`; `buildTcpConnectBody` mirroring
+   `buildTcpListenBody` + `buildTcpAcceptBody`: create-tcp-socket →
+   start-connect(remote ipv4 addr, like start-bind's 15-param
+   flattening) → subscribe → `pollable.block` → finish-connect →
+   12-byte connection struct `(sock, input-stream, output-stream)`.
+   `tcp_recv` / `tcp_send` reuse the existing stream paths.
+2. **Fern API + checker**: `tcp_connect(host_be: i32, port: i32): i32`
+   (parallel to the native builtin; returns the connection struct ptr
+   or `-errno`).
+3. **composer** (`compose_unified.go` / `compose_general.go` /
+   `classify.go`): `ComposeRequest.TcpConnect` + `g.needConnect`
+   threaded into `ensureTcp` (like `needPoll`); classify the
+   `start-connect` import; add the connect lowerings (create-socket,
+   start/finish-connect, subscribe, pollable.block, the io/streams
+   read+write, the drops) for a connect program — the connect
+   counterpart of the existing `req.Tcp` server block.
+4. **reactor integration + test**: a connection's `subscribe` → pollable
+   feeds `std/wasm_reactor.run`/`select`; e2e: a Go upstream +
+   `wasmtime -S inherit-network`, fan out 2 connects, recv both bodies
+   (the wasm `TestReactorFanoutBodies`).
+
+This is a single large vertical (testable only end-to-end, so it ships
+as one PR), best taken as a focused effort — the ABI design above means
+it starts from a solved position.
 
 ## Layer 2 — component composer: THE BLOCKER (historical — now solved for timers)
 
