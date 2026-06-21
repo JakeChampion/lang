@@ -320,6 +320,14 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // block of asm_arm64.emit_runtime).
             s = s.mark_heap();
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_alloc_u8\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "alloc") {
+            // [n] -> bump-alloc n raw bytes, push the usize pointer (core/map's
+            // __alloc). __fern_alloc(x0=n) -> x0, the bare-pointer allocator.
+            s = s.mark_heap();
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_alloc\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "ptr_width") {
+            // () -> heap-pointer width in bytes. 8 on arm64.
+            s = s.write("    mov x0, #8\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "str_from_bytes") {
             // [arr] -> string box. __fern_string_from_bytes(x0=arr) -> x0.
             s = s.mark_heap();

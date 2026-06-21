@@ -3103,6 +3103,14 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // [n] -> fresh n-element array. __fern_alloc_u8(%rdi=n).
             s = s.write("    popq %rdi\n    call __fern_alloc_u8\n    pushq %rax\n");
             s = s.need("heap").need("alloc_u8");
+        } else if (o.kind == "alloc") {
+            // [n] -> bump-alloc n raw bytes, push the usize pointer (core/map's
+            // __alloc). __fern_alloc(%rdi=n) is the bare-pointer allocator.
+            s = s.write("    popq %rdi\n    call __fern_alloc\n    pushq %rax\n");
+            s = s.need("heap");
+        } else if (o.kind == "ptr_width") {
+            // () -> heap-pointer width in bytes. 8 on x86-64.
+            s = s.write("    pushq $8\n");
         } else if (o.kind == "str_from_bytes") {
             // [arr] -> string box packing each slot's low byte.
             s = s.write("    popq %rdi\n    call __fern_string_from_bytes\n    pushq %rax\n");
