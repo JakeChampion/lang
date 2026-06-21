@@ -251,6 +251,23 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-21 — std/option + std/result: more combinators (`map_or` / `is_*_and` / `or` / `and`) ([#2691](https://github.com/JakeChampion/lang/issues/2691))
+
+`std/option` already shipped `is_some`/`map`/`and_then`/`filter`/`unwrap_or`/…
+and `std/result` the `Ok`/`Err` analogues, but a handful of common Rust-parity
+verbs were missing. Added, as ordinary generic methods (a small `match`, the
+generic-methods keystone #2692 — no compiler change): on `Option[T]` —
+`map_or(fallback, f)`, `is_some_and(pred)`, `or(other)`, `and(other)`; on
+`Result[T, E]` — `map_or(fallback, f)`, `is_ok_and(pred)`, `is_err_and(pred)`,
+`or(other)`. All are scalar-callback or non-callback (no `string`-typed callback
+at the #2753 indirect-call seam, no tuples), so they lower on native (interp /
+x86-64 / arm64 / wasm) AND the self-host **IR path** (x86-64 + wasm). Coverage:
+the `option_result_combinators` fixture (extended, all four backends → 209) +
+`TestSelfHostOptResultCombinatorsIR{X86_64,Wasm}` (combinator defs inlined since
+the importless self-host driver doesn't resolve stdlib imports; routing-pinned
+to `ir`, oracle-checked, each result ≤ 120). Self-host fixpoint unaffected — the
+additions are new `pub` methods and the compiler imports neither module.
+
 ### 2026-06-21 — self-host: a 0-arg fn in an array (`var fns = [mk]; fns[0]()`) no longer segfaults
 
 The array analog of the 0-arg fn-value segfault below: `var fns = [mk]` (mk a
