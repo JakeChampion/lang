@@ -1,0 +1,106 @@
+// std/reactor — native real-fd readiness scheduler (Phase 1c of
+// docs/ASYNC-IMPLEMENTATION-PLAN.md).
+//
+// This is the real-I/O counterpart to std/task's in-memory reactor:
+// it drives fd-tagged stackless tasks to completion using the actual
+// `poll` syscall builtin (poll(2) on x86-64, ppoll(2) on arm64),
+// instead of simulated completions. A task suspended on a file
+// descriptor is resumed when that fd becomes readable.
+//
+// NATIVE-ONLY: `poll` is a native syscall builtin, so this module
+// compiles on the native backends (x86-64 / arm64), not on
+// wasm/interp. The portable, simulation-friendly model stays in
+// std/task (imported by the `concurrent { … }` desugar); keeping the
+// real-fd scheduler here means std/task itself never depends on a
+// native-only builtin, so concurrent programs still compile on every
+// backend. The wasm reactor (over `wasi:io/poll` pollables, a
+// different shape than raw fds) lands separately.
+//
+// A task is an IoStep, the stackless-CPS shape from
+// docs/ASYNC-IMPLEMENTATION-RESEARCH.md but with the wait TOKEN being
+// a real file descriptor: IoWait(fd, resume) suspends until `fd` is
+// readable, then `resume(fd)` produces the next step — typically a
+// non-blocking read followed by IoDone. Single-await per task for
+// this first cut (covers the canonical fan-out: issue N reads, await
+// each); multi-await threads through the same way the std/task
+// scheduler already does.
+
+// `poll(fds, timeout_ms): i32` is the native builtin: returns the
+// index (into `fds`) of the first readable fd, or -1 on timeout.
+
+// A real-fd task step.
+//
+//   IoDone(result)    — finished with this i32 result.
+//   IoWait(fd, resume) — suspended until `fd` is readable; the runtime
+//                        calls `resume(fd)` to get the next step.
+pub enum IoStep {
+    IoDone(i32),
+    IoWait(i32, (i32) => IoStep),
+}
+
+// __io_all_done(states) — true once no task is still waiting.
+function __io_all_done(states: IoStep[]): boolean {
+    var i: i32 = 0;
+    while (i < states.len()) {
+        match (states[i]) {
+            IoDone(v) => { },
+            IoWait(fd, c) => { return false; },
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// run_io(states) — drive a set of already-started fd-tagged tasks to
+// completion on a single thread, multiplexing their fds through the
+// real `poll` syscall, and return their i32 results in task order.
+//
+// Each round: gather the fds of the still-waiting tasks, block in
+// `poll` until one is readable, resume that task (its continuation
+// does the actual read), and repeat until every task is IoDone. All
+// tasks' fds are in flight simultaneously, so their I/O overlaps on
+// one thread — the edge-handler fan-out, now over real descriptors.
+//
+// A task whose fd never becomes ready leaves the loop only via the
+// poll error/timeout guard (-1), landing -1 in its result slot.
+pub function run_io(states_in: IoStep[]): i32[] {
+    var states: IoStep[] = states_in;
+    while (true) {
+        if (__io_all_done(states)) { break; }
+        // Gather waiting fds and their task indices (parallel arrays).
+        var fds: i32[] = [];
+        var idxs: i32[] = [];
+        var i: i32 = 0;
+        while (i < states.len()) {
+            match (states[i]) {
+                IoDone(v) => { },
+                IoWait(fd, c) => {
+                    fds = fds.append(fd);
+                    idxs = idxs.append(i);
+                },
+            }
+            i = i + 1;
+        }
+        // Block until at least one of the waiting fds is readable.
+        var ready: i32 = poll(fds, -1);
+        if (ready < 0) { break; }
+        var ti: i32 = idxs[ready];
+        var st: IoStep = states[ti];
+        match (st) {
+            IoDone(v) => { },
+            IoWait(fd, resume) => {
+                states = states.with(ti, resume(fd));
+            },
+        }
+    }
+    var results: i32[] = [];
+    var k: i32 = 0;
+    while (k < states.len()) {
+        match (states[k]) {
+            IoDone(v) => { results = results.append(v); },
+            IoWait(fd, c) => { results = results.append(-1); },
+        }
+        k = k + 1;
+    }
+    return results;
+}

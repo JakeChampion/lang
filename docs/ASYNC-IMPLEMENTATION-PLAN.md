@@ -188,14 +188,22 @@ arm64 has no bare `poll`; `timeout_ms` < 0 → NULL timespec = block,
 kqueue path. Same deterministic file-fd tests now run on both native
 backends (`internal/e2e/poll_test.go`, x86-64 + arm64/qemu).
 
-**Phase 1c — remaining:**
-- **wasm:** `wasi:io/poll.poll(list<pollable>) -> list<u32>` (the
-  multi-pollable form; today only single-pollable `.block` is used).
+**Phase 1c — IN PROGRESS:**
+- **DONE — `std/reactor` (native real-fd scheduler):** `run_io(states)`
+  drives fd-tagged stackless tasks (`IoStep = IoDone | IoWait(fd,
+  resume)`) to completion using the real `poll` builtin — the real-I/O
+  counterpart to `std/task`'s in-memory reactor. Kept in a separate,
+  native-only module so `std/task` (imported by the `concurrent`
+  desugar) never depends on a native-only builtin and stays compilable
+  on wasm/interp. Verified on x86-64 + arm64/qemu with deterministic
+  file-fd tasks (`internal/e2e/reactor_test.go`).
+- **wasm:** `wasi:io/poll.poll(list<pollable>) -> list<u32>` — a
+  *different shape* than raw fds (pollables, not ints), so the wasm
+  reactor exposes the same `run_io`-style API over pollables rather
+  than reusing the `poll(fds)` builtin.
 - **Self-host** (`asm.fern` / `asm_arm64.fern`) — mirror `__fern_poll`.
-- Non-blocking variants of accept/recv/send (`O_NONBLOCK` + `EAGAIN`).
-- Then wire `std/task`'s `Reactor` onto the real primitive (fd
-  registration → `poll` → wake) and `plat.fetch` as the first real
-  awaitable.
+- Non-blocking accept/recv/send (`O_NONBLOCK` + `EAGAIN`), then
+  `plat.fetch` as the first real awaitable over `run_io`.
 - **wasm:** add `wasi:io/poll.poll(list<pollable>) -> list<u32>` (the
   multi-pollable form; today only single-pollable `.block` is used)
   in `internal/codegen/wasmbin` (Go) and `wasm.fern` (self-host).
