@@ -1,0 +1,69 @@
+import "std/test";
+import "std/hex" as hex;
+// examples/tests/hex_test.fern — pure-Fern coverage of std/hex's
+// lowercase hex encode / decode: round-trip fidelity, empty input,
+// case-insensitive decode, and the lenient decode termination (first
+// non-hex char or odd-length tail stops without raising). The Go-side
+// suites unit-test the prelude origin; this is the migration-shaped
+// (pure-Fern, std/test-driven) companion.
+
+function test_encode(): test.TestOutcome {
+    // 'A'=0x41 'B'=0x42 'C'=0x43.
+    return test.assert_eq(hex.hex_encode("ABC"), "414243");
+}
+
+function test_encode_empty(): test.TestOutcome {
+    return test.assert_eq(hex.hex_encode(""), "");
+}
+
+function test_decode(): test.TestOutcome {
+    return test.assert_eq(hex.hex_decode("414243"), "ABC");
+}
+
+function test_decode_empty(): test.TestOutcome {
+    return test.assert_eq(hex.hex_decode(""), "");
+}
+
+function test_decode_uppercase(): test.TestOutcome {
+    // Decode accepts upper-case hex digits ('4A' = 0x4A = 'J').
+    return test.assert_eq(hex.hex_decode("4A"), "J");
+}
+
+function test_decode_lowercase(): test.TestOutcome {
+    return test.assert_eq(hex.hex_decode("4a"), "J");
+}
+
+function test_decode_stops_at_nonhex(): test.TestOutcome {
+    // First non-hex character terminates: only "41" is consumed.
+    return test.assert_eq(hex.hex_decode("41ZZ"), "A");
+}
+
+function test_decode_odd_tail(): test.TestOutcome {
+    // An odd-length tail is dropped (3 nibbles → 1 byte).
+    return test.assert_eq(hex.hex_decode("414"), "A");
+}
+
+function test_roundtrip(): test.TestOutcome {
+    return test.assert_eq(hex.hex_decode(hex.hex_encode("Hello, Fern!")), "Hello, Fern!");
+}
+
+function test_encode_lowercase_digits(): test.TestOutcome {
+    // 0xFF is emitted lowercase ('ff', not 'FF'). chr(255) via a
+    // round-trip through decode keeps this byte-exact.
+    return test.assert_eq(hex.hex_encode(hex.hex_decode("ff")), "ff");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/hex");
+    r = r.it("encode",                   test_encode());
+    r = r.it("encode empty",             test_encode_empty());
+    r = r.it("decode",                   test_decode());
+    r = r.it("decode empty",             test_decode_empty());
+    r = r.it("decode uppercase",         test_decode_uppercase());
+    r = r.it("decode lowercase",         test_decode_lowercase());
+    r = r.it("decode stops at non-hex",  test_decode_stops_at_nonhex());
+    r = r.it("decode odd tail",          test_decode_odd_tail());
+    r = r.it("round-trip",               test_roundtrip());
+    r = r.it("encode emits lowercase",   test_encode_lowercase_digits());
+    return r.finish();
+}
