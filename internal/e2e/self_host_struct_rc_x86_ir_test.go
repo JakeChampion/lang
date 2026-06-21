@@ -8,12 +8,15 @@ import (
 	"testing"
 )
 
-// structRCIRCases exercise the conservative escape-gated struct reclamation on
-// the stack-IR path: a fresh, non-escaping struct local (only field-read) is
-// freed at scope exit / loop-rebind via a shallow rc-dec of its box
-// (`call __fn___fern_arr_dec`, the generic size-classed box release), while a
-// struct that ESCAPES — returned, or passed as a call argument — is left to leak
-// so its box never dangles. The earlier shallow-RC slice freed escaping boxes
+// structRCIRCases exercise the borrow-aware escape-gated struct reclamation on
+// the stack-IR path: a fresh, non-aliased struct local that never escapes
+// UNSAFELY (only field-reads, method-receiver borrows, and borrowable-callee
+// call args — body_unsafe_for) is freed at scope exit / loop-rebind via a
+// shallow rc-dec of its box (`call __fn___fern_arr_dec`, the generic
+// size-classed box release), while a struct that genuinely ESCAPES — returned,
+// or stored into a container / struct-literal field — is left to leak so its box
+// never dangles. A call arg to a BORROWABLE callee (which only reads it) is a
+// borrow, not an escape, so it is reclaimed. The earlier shallow-RC slice freed escaping boxes
 // and use-after-free'd the self-compile; these cases pin that:
 //   - exit codes pin VALUE correctness (a double-free / use-after-free corrupts);
 //   - freeAssert pins the EMISSION contract (no array appears in any case, so any
@@ -21,9 +24,9 @@ import (
 //     (can't regress to leak-only), -1 requires zero (the escape case can't
 //     regress to a spurious free → double-free).
 var structRCIRCases = []struct {
-	name      string
-	src       string
-	expected  int
+	name       string
+	src        string
+	expected   int
 	freeAssert int // +1: must free a struct; -1: must NOT free any struct; 0: don't check
 }{
 	// Loop-rebind: a fresh struct built each iteration, only field-read, is freed
@@ -36,13 +39,17 @@ var structRCIRCases = []struct {
 	{"single-reclaimed",
 		`struct P { x: i32, y: i32 } function main(): i32 { var p: P = P { x: 30, y: 12 }; return p.x + p.y; }`,
 		42, 1},
-	// Escape via call argument: p is passed to sumit (borrowed by the callee), so
-	// p escapes and is NOT reclaimed — zero struct frees. A regression that freed
-	// it here would double-free (p is freed by main AND lives through the call).
-	// total = (0+10)+(1+10)+(2+10) = 33.
-	{"escape-call-arg-not-freed",
+	// Borrow via call argument: p is passed to sumit, which only FIELD-READS it
+	// (`return p.x + p.y`) and so has a BORROWABLE param — passing p there is a
+	// borrow, not an escape. p is sole-owner, dead after the call, and the callee
+	// does not retain it, so the borrow-aware reclaim (reclaimable_names_of via
+	// body_unsafe_for) frees it once at loop-rebind/scope-exit (#3456). The value
+	// stays correct (no double-free: sumit never frees its borrowed param), which
+	// pins soundness: total = (0+10)+(1+10)+(2+10) = 33, and a struct free is now
+	// REQUIRED (regressing to leak-only would drop it).
+	{"borrow-call-arg-reclaimed",
 		`struct P { x: i32, y: i32 } function sumit(p: P): i32 { return p.x + p.y; } function main(): i32 { var total: i32 = 0; var i: i32 = 0; while (i < 3) { var p: P = P { x: i, y: 10 }; total = total + sumit(p); i = i + 1; } return total; }`,
-		33, -1},
+		33, 1},
 	// Escape via return: make() returns its fresh local, so it is NOT freed in
 	// make (the caller's reference survives); main's q is call-bound (not a fresh
 	// literal) so also not reclaimed. A premature free in make would corrupt q.

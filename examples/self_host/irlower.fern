@@ -9066,7 +9066,16 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             var target_is_arr: boolean = s.is_arr_slot(slot) && slot >= s.n_params;
             var se: LowerState = lower_expr(a.value, s);
             if (!se.ok) { return se; }
-            return emit_arr_store(se, slot, reassign_inc, target_is_arr);
+            // A reclaimable struct REASSIGN (`s = bump(s)` / `s = s.emit(op)`, the
+            // builder consume-rebind) releases the OLD box the same way the StmtVar
+            // branch does: emit_arr_store's cow-guarded, rc-guarded SHALLOW arr_dec
+            // frees the previous box (box-only, so a builder's shared field
+            // pointers are untouched and freed once at the final box's death). The
+            // fresh call result never aliases the old box (cow guard skips an
+            // identity return), so this reclaims the per-iteration builder leak
+            // (#3456 — escaping-struct reclaim). reassign_inc stays false for a
+            // call result (already owned).
+            return emit_arr_store(se, slot, reassign_inc, target_is_arr || slot_is_reclaimable_struct(s, slot));
         },
         parser.StmtReturn(r) => {
             // i64-returning function: lower the value as an i64, run the exit
@@ -11378,13 +11387,26 @@ function collect_fresh_in_stmt(st: parser.Stmt, structs: parser.StructDecl[], ac
 }
 
 // reclaimable_names_of = fresh-bound struct names that never escape.
-function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[]): string[] {
-    var esc: string[] = walk_stmts_escapes(body, []);
+function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, []);
     var out: string[] = [];
     var i: i32 = 0;
     while (i < fresh.len()) {
-        if (util.index_of_str(esc, fresh[i]) < 0) { out = out.append(fresh[i]); }
+        // Borrow-AWARE escape gate (the same predicate the array reclaim uses in
+        // precise_drop_names): a fresh struct local is reclaim-safe unless it is
+        // used UNSAFELY — returned, stored into a container, passed to a
+        // non-borrowable param, sliced, etc. Unlike the older crude
+        // walk_stmts_escapes, a method RECEIVER (`s = s.emit(op)`) and a
+        // borrowable free-call arg (`s = f(s)`) count as BORROWS, not escapes —
+        // so the builder-threaded EmitState/LowerState (`s = s.method(...)`, the
+        // dominant per-module pattern) becomes reclaimable. The reassign frees the
+        // old box with a cow-guarded, rc-guarded SHALLOW arr_dec (emit_arr_store)
+        // and the final value with the end-of-scope sweep — both box-only, so the
+        // builder's shared field pointers (carried into the new box without an
+        // inc) keep rc==1 across the chain and are freed exactly once at the last
+        // box's death. A `return s` still flags `s` unsafe (escapes), so a
+        // returned builder is never reclaimed. (#3456 — escaping-struct reclaim.)
+        if (!body_unsafe_for(body, fresh[i], borrowable)) { out = out.append(fresh[i]); }
         i = i + 1;
     }
     return out;
@@ -13503,7 +13525,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     struct_ret_fns_aug = register_fnvalue_local_struct_rets(fn.body, struct_ret_fns_aug);
     // Struct reclamation: the fresh, non-escaping struct locals this function may
     // free at scope exit / loop-rebind (conservative escape analysis above).
-    var reclaim: string[] = reclaimable_names_of(fn.body, structs);
+    var reclaim: string[] = reclaimable_names_of(fn.body, structs, borrowable_params);
     // Array/map locals that acquire a lasting local alias — the in-place
     // `a = a.with(i, v)` self-reassign must clone instead of mutating in place
     // when its target is here (#3599; see the aliased_names field doc).

@@ -2026,3 +2026,27 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   escapes (`reclaimable_names`), which disables struct-box reclaim, so the threaded
   builder boxes *and their array fields* leak. That escaping-struct reclaim is the
   next slice toward per-module convergence (#3457), not the append path.
+- 2026-06-21: **Borrow-aware struct reclaim — local consume-rebinds (#3456,
+  slice 1).** `reclaimable_names_of` switched from the crude `walk_stmts_escapes`
+  to the borrow-AWARE `body_unsafe_for` (the same predicate the array reclaim
+  uses): a method RECEIVER (`s = s.emit(op)`) and a BORROWABLE free-call arg
+  (`s = bump(s)`, callee only field-reads its param) now count as borrows, not
+  escapes — so a fresh, non-aliased, non-returned struct LOCAL threaded through a
+  consume-rebind is reclaimed. Wired `slot_is_reclaimable_struct` into the
+  `StmtAssign` reassign's `do_dec` (the `StmtVar` branch already had it), so each
+  rebind frees the old box with a cow-guarded, rc-guarded SHALLOW `arr_dec`
+  (box-only; the builder's shared field pointers keep rc==1 across the chain and
+  are freed once at the final box's death — no alias-inc needed, no UAF).
+  Measured: a scalar consume-rebind churn (200M `s = bump(s)`) goes exit-137 →
+  exit-0; value-correct. Verified: x86 default fixpoint byte-identical
+  (`mmc==gen2==gen3`), whole-compiler per-module self-compile, struct/RC IR
+  suites; one IR case (`escape-call-arg-not-freed` → `borrow-call-arg-reclaimed`)
+  updated to the now-sound reclaim. New `TestSelfHostStructConsumeRebindReclaimIRX86_64`.
+  **Still leaves the dominant compiler leak**: a builder PARAM
+  (`function f(s: EmitState): EmitState { s = s.write(x); return s; }`) — params
+  are excluded because the FIRST reassign's old value is the caller's original.
+  The sound fix (slice 2) is to SNAPSHOT the param at entry and free a reassigned
+  old value only when it differs from the snapshot (rc/cow-guarded): a function
+  reclaims its OWN intermediate builder boxes, never the caller's original — no
+  interprocedural ownership inference needed. That is what converges the
+  per-module self-compile of the large modules.
