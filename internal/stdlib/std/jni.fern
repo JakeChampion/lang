@@ -54,6 +54,12 @@ pub function call2_f32(env: usize, index: i32, a0: usize, a1: usize): f32 {
 pub function call2_f64(env: usize, index: i32, a0: usize, a1: usize): f64 {
     return __c_call3_f64(method_ptr(env, index), env, a0, a1);
 }
+pub function call3_f32(env: usize, index: i32, a0: usize, a1: usize, a2: usize): f32 {
+    return __c_call4_f32(method_ptr(env, index), env, a0, a1, a2);
+}
+pub function call3_f64(env: usize, index: i32, a0: usize, a1: usize, a2: usize): f64 {
+    return __c_call4_f64(method_ptr(env, index), env, a0, a1, a2);
+}
 
 // Well-known JNINativeInterface method indices (subset). Index helpers
 // rather than magic numbers at call sites.
@@ -395,4 +401,68 @@ pub function get_static_double_field(env: usize, clazz: usize, field: usize): f6
 // ReleaseStringUTFChars=170 (just before GetArrayLength=171).
 pub function get_array_length(env: usize, array: usize): i32 {
     return call1(env, 171, array) as i32;
+}
+
+// --- Calling Java methods (jvalue-array form) ---------------------------
+//
+// The varargs Call<Type>Method entries can't go through the fixed-arity
+// __c_call shim, but their `...A` siblings take a `const jvalue* args`
+// pointer instead — fixed arity (env, obj, methodID, args), so they ARE
+// expressible via call3. This is how you actually invoke a Java method
+// from Fern once get_method_id has resolved the jmethodID. Indices are
+// anchored by GetMethodID=33: each `...A` sits at base+2 of its family
+// (CallObjectMethod=34 → ...A=36, CallIntMethod=49 → ...A=51, etc.).
+
+// jvalues packs integer/object arguments into a freshly-allocated jvalue
+// array (8 bytes per slot — a jvalue is an 8-byte union) and returns its
+// address, the `const jvalue*` the ...A methods want. Each arg is stored
+// as a full 8-byte word (low bytes = a jint/jboolean, all 8 = a jlong /
+// jobject). FLOAT/DOUBLE arguments are NOT handled — their jvalue holds
+// the raw IEEE-754 bits, which a usize arg can't carry; build those slots
+// yourself if needed. Raw __alloc (not __alloc_u8) so the buffer isn't
+// reference-counted out from under the call.
+pub function jvalues(args: usize[]): usize {
+    var n: i32 = args.len();
+    var buf: usize = __alloc(n * 8);
+    var i: i32 = 0;
+    while (i < n) {
+        __store_i64(buf + (i * 8) as usize, args[i] as i64);
+        i = i + 1;
+    }
+    return buf;
+}
+
+// jobject (*CallObjectMethodA)(JNIEnv*, jobject, jmethodID, const jvalue*)
+pub function call_object_method_a(env: usize, obj: usize, method: usize, args: usize): usize {
+    return call3(env, 36, obj, method, args);
+}
+
+// jboolean (*CallBooleanMethodA)(JNIEnv*, jobject, jmethodID, const jvalue*)
+pub function call_boolean_method_a(env: usize, obj: usize, method: usize, args: usize): i32 {
+    return call3(env, 39, obj, method, args) as i32;
+}
+
+// jint (*CallIntMethodA)(JNIEnv*, jobject, jmethodID, const jvalue*)
+pub function call_int_method_a(env: usize, obj: usize, method: usize, args: usize): i32 {
+    return call3(env, 51, obj, method, args) as i32;
+}
+
+// jlong (*CallLongMethodA)(JNIEnv*, jobject, jmethodID, const jvalue*)
+pub function call_long_method_a(env: usize, obj: usize, method: usize, args: usize): usize {
+    return call3(env, 54, obj, method, args);
+}
+
+// jfloat (*CallFloatMethodA)(JNIEnv*, jobject, jmethodID, const jvalue*)
+pub function call_float_method_a(env: usize, obj: usize, method: usize, args: usize): f32 {
+    return call3_f32(env, 57, obj, method, args);
+}
+
+// jdouble (*CallDoubleMethodA)(JNIEnv*, jobject, jmethodID, const jvalue*)
+pub function call_double_method_a(env: usize, obj: usize, method: usize, args: usize): f64 {
+    return call3_f64(env, 60, obj, method, args);
+}
+
+// void (*CallVoidMethodA)(JNIEnv*, jobject, jmethodID, const jvalue*)
+pub function call_void_method_a(env: usize, obj: usize, method: usize, args: usize): usize {
+    return call3(env, 63, obj, method, args);
 }
