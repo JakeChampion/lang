@@ -167,6 +167,41 @@ string win is gated on (a) the bare-local drop slice and (b) dropping the
 self-compile" framing was optimistic — corrected here against
 measurement.
 
+**Slice 2 (owned string temps + locals, #3611) — also ~no self-compile
+impact.** Routing the owned/sole-owner native string drops to
+`__fern_str_dec` (fresh call-arg temps `f(a + b)`, owned reinit/exit
+locals) is a real general-purpose win — a 2M-iter `consume(a + "_suffix")`
+loop goes from a per-iteration leak to **9 MB** — but the same 500×20
+self-compile is **1099 MB** (was 1100). big500's *input* concats
+constant-fold, so the ~438 MB of self-compile string memory is
+**compiler-internal** (`Op.kind`/`Op.str`, mangled names, lexer tokens)
+and trapped in the leaked Effect-A containers, which neither string slice
+reaches.
+
+**Effect A confirmed real (not a measurement artifact).** Re-measured
+single-function programs **each in a fresh process** (so the
+`getrusage(RUSAGE_CHILDREN)` cumulative-max can't inflate later runs):
+
+| 1 function × N statements | peak RSS |
+| --- | --- |
+| 100 | 99 MB |
+| 400 | 219 MB |
+| 800 | 536 MB |
+| 1600 | 1576 MB |
+
+~2.4–2.9× per doubling — genuinely super-linear. (A by-value-function
+array-threading analog — `s = emit(s, v)` with `s.a.append(v)`, 20k iters
+— stays at **9 MB**, i.e. the clones *are* freed there; the self-host
+blow-up is the 45-field `LowerState` rebuilt per emit plus the 17
+`.with()`-cloned `local_*` arrays, Finding 2.)
+
+**Net for the self-compile:** Effect A is the **sole lever** — the
+string-reclamation slices (#3600, #3611) are correct and worthwhile for
+general programs but do not move it. The Effect-A fixes are the O(M) ops
+`OpsBuilder` (blocked by the self-host AST-backend union-field miscompile,
+#3554 — unblock = roadmap goal #1) and the `local_*` collapse
+(constant-factor, unblocked but a large `irlower.fern` refactor).
+
 **Remaining native string drop sites** (each its own incremental,
 poison-validated slice): the function-exit sweep / reinit drop of a bare
 string local, `emitOwnedTempStackDrop` (fresh concat/slice temps,
