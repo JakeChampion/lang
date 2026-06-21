@@ -5564,9 +5564,18 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // is a receiver-method call on a variant value, not an
                     // associated call on a type, so it falls through to the
                     // enum-method dispatch below.
+                    //
+                    // A PRIMITIVE type-name target (`i32.zero()`, `u64.max()`) is
+                    // accepted via decl_is_prim_recv: such a name is never a local
+                    // slot, so `i32.f()` is unambiguously an associated call (a
+                    // value receiver `x.f()` has `x` as a local). Without this the
+                    // call fell through to the prim-method path below, which treated
+                    // the bare type name as a value receiver and miscompiled it (it
+                    // emitted a 1-arg call to the 0-arg `i32.zero`), forcing the
+                    // whole module onto the legacy AST emitter.
                     match (fa.obj) {
                         parser.ExprIdent(tid) => {
-                            if (s.slot_of(tid.name) < 0 && variant_enum_owner(s.structs, tid.name) == "" && (decl_is_struct(s.structs, tid.name) || s.struct_ret_type(tid.name + "." + fa.field) != "")) {
+                            if (s.slot_of(tid.name) < 0 && variant_enum_owner(s.structs, tid.name) == "" && (decl_is_struct(s.structs, tid.name) || s.struct_ret_type(tid.name + "." + fa.field) != "" || decl_is_prim_recv(s.structs, tid.name))) {
                                 var asf: LowerState = s;
                                 var afi: i32 = 0;
                                 while (afi < c.args.len()) {
