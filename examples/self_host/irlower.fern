@@ -8916,6 +8916,34 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                     _ => {}
                 }
             }
+            // ALIASED map self-reassign `m = m.insert(k, v)` / `m = m.set(k, v)`
+            // (#3633): the builtin op_map_set mutates the map's keys[]/values[] in
+            // place, which is unsound when `m` has a live alias (`var n = m`) — `n`
+            // would observe the change. Clone-on-write: build a fresh copy of the
+            // map, mutate the sole-owned clone, then bind it back. Sole-owner
+            // (unaliased) map slots fall through to the in-place op_map_set on the
+            // generic insert path below. The array sibling is the .with handler
+            // above (#3599); the same aliased_names set covers map locals.
+            if (is_map_type_name(s.map_type_of(slot)) && s.is_aliased_name(a.target)) {
+                match (a.value) {
+                    parser.ExprCall(mic) => {
+                        match (mic.callee) {
+                            parser.ExprFieldAccess(mifa) => {
+                                var mi_self: boolean = false;
+                                match (mifa.obj) {
+                                    parser.ExprIdent(miid) => { mi_self = miid.name == a.target; },
+                                    _ => {}
+                                }
+                                if (mi_self && (mifa.field == "insert" || mifa.field == "set") && mic.args.len() == 2) {
+                                    return lower_map_clone_insert(a.target, mifa.obj, mic.args[0], mic.args[1], s.map_type_of(slot), s);
+                                }
+                            },
+                            _ => {}
+                        }
+                    },
+                    _ => {}
+                }
+            }
             // i64 reassignment: lower the value as an i64 and store. (i64 locals
             // aren't rc-tracked, so no alias-inc / old-value release.) Storing an
             // i64 value into a non-i64 slot would be a width mismatch — bail.
@@ -10268,6 +10296,55 @@ pub function lower_arr_with_value(obj: parser.Expr, idx: parser.Expr, val: parse
     }
     // Leave the fresh clone on the operand stack.
     return st.emit(ir.op_load_local(ctmp));
+}
+
+// lower_map_clone_insert lowers an ALIASED map self-reassign
+// `m = m.insert(k, v)` / `m = m.set(k, v)` (#3633) as a copy-on-write. The
+// builtin op_map_set mutates the map's keys[]/values[] in place; with a live
+// alias (`var n = m`) that corrupts what `n` reads. So clone the map first,
+// mutate the sole-owned clone, then bind it back to `m`. The clone is composed
+// from existing ops — a fresh `map_new` of the same type + a copy loop over
+// `m.keys()` / `m.values()` — so it is backend-agnostic and needs no new
+// runtime helper (maps are i32/string K/V only, so each key/value slot is a
+// uniform pointer-or-i32 width that copies correctly regardless of K/V type;
+// `map_new`'s key kind comes from the annotation, not the callee). The fresh
+// clone local is never aliased, so its own copy-loop inserts (and the final
+// real insert) take the sound in-place path. Mirrors lower_arr_with_value
+// (the array `.with` sibling, #3599); the same `aliased_names` set drives both.
+function lower_map_clone_insert(target: string, recv: parser.Expr, key: parser.Expr, val: parser.Expr, maptype: string, s: LowerState): LowerState {
+    var n: i32 = s.local_names.len();
+    var mc: string = "$mc" + util.i32_to_string(n);
+    var mck: string = "$mck" + util.i32_to_string(n);
+    var mcv: string = "$mcv" + util.i32_to_string(n);
+    var mci: string = "$mci" + util.i32_to_string(n);
+    var zero: parser.Expr = parser.ExprNumber { text: "0", suffix: "", is_float: false, line: 0, col: 0 };
+    // var $mc: <maptype> = map_new(0);  (key kind from the annotation)
+    var newcall: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "map_new", line: 0, col: 0 }, args: [zero], line: 0, col: 0, type_argc: 0 };
+    var st: LowerState = lower_stmt(parser.StmtVar { name: mc, type_name: maptype, init: newcall, line: 0, col: 0 }, s);
+    if (!st.ok) { return st; }
+    // var $mck = recv.keys();  var $mcv = recv.values();
+    var keyscall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: recv, field: "keys", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
+    st = lower_stmt(parser.StmtVar { name: mck, type_name: "", init: keyscall, line: 0, col: 0 }, st);
+    if (!st.ok) { return st; }
+    var valscall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: recv, field: "values", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
+    st = lower_stmt(parser.StmtVar { name: mcv, type_name: "", init: valscall, line: 0, col: 0 }, st);
+    if (!st.ok) { return st; }
+    // for $mci in 0 .. $mck.len() { $mc = $mc.insert($mck[$mci], $mcv[$mci]); }
+    var mckref: parser.Expr = parser.ExprIdent { name: mck, line: 0, col: 0 };
+    var mcvref: parser.Expr = parser.ExprIdent { name: mcv, line: 0, col: 0 };
+    var mciref: parser.Expr = parser.ExprIdent { name: mci, line: 0, col: 0 };
+    var mcref: parser.Expr = parser.ExprIdent { name: mc, line: 0, col: 0 };
+    var lencall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: mckref, field: "len", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
+    var range: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "__range", line: 0, col: 0 }, args: [zero, lencall], line: 0, col: 0, type_argc: 0 };
+    var insargs: parser.Expr[] = [parser.ExprIndex { array: mckref, index: mciref }, parser.ExprIndex { array: mcvref, index: mciref }];
+    var insexpr: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0 }, args: insargs, line: 0, col: 0, type_argc: 0 };
+    var loopbody: parser.Stmt[] = [parser.StmtAssign { target: mc, value: insexpr, line: 0, col: 0, target_line: 0, target_col: 0 }];
+    st = lower_stmt(parser.StmtFor { var_name: mci, iter: range, body: loopbody, label: "" }, st);
+    if (!st.ok) { return st; }
+    // target = $mc.insert(key, val);  ($mc != target → generic assign; $mc is
+    // unaliased so its in-place insert is sound, and the fresh clone binds to m).
+    var finalins: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0 }, args: [key, val], line: 0, col: 0, type_argc: 0 };
+    return lower_stmt(parser.StmtAssign { target: target, value: finalins, line: 0, col: 0, target_line: 0, target_col: 0 }, st);
 }
 
 // lower_arr_append_value lowers `obj.append(val)` as a VALUE-PRODUCING
