@@ -690,6 +690,14 @@ type ExternFunc struct {
 	// it back to a Fern payloadless enum value by selecting the matching static
 	// per-tag sentinel (`[tag:i32 @0]`), so no heap box is allocated.
 	ResultPlainEnumN int
+	// Async marks an `@import(...) async function` — a WASI Preview-3
+	// component-model-async import. Its call is colorless: the composer
+	// lowers it with `canon lower async` (result delivered via a return
+	// area) and the wasm backend wraps the call to await the result, so a
+	// plain `dep()` returns the value. The enclosing function must be
+	// `async`-lifted (own a task). Set from ast.FuncDecl.Async. See
+	// docs/WASI-PREVIEW3-ASYNC-PLAN.md.
+	Async bool
 }
 
 // ExternEnumParam describes a flattened option/result `@import` parameter
@@ -2597,6 +2605,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 				WITName:    fn.ImportWITName,
 				Params:     fn.Params,
 				ReturnType: fn.ReturnType,
+				Async:      fn.Async,
 			}
 			// Precompute the flattened layout of any record (struct) parameter
 			// while info.Structs is in scope; the wasm backend (which has no
