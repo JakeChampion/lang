@@ -93,3 +93,37 @@ impl Mul for u64 { function mul(self: Self, o: Self): Self { return self * o; } 
 impl Div for u64 { function div(self: Self, o: Self): Self { return self / o; } }
 impl Zero for u64 { function zero(): Self { return 0; } }
 impl Num for u64 {}
+
+// ---- generic numeric reducers ------------------------------------------------
+//
+// One implementation, every width — the #2706 payoff: a `[T: Add]` / `[T: Mul]`
+// bound collapses the width-suffixed `sum_i64` / `product_u32` / … zoo into a
+// single generic body that dispatches `.add` / `.mul` by method. They work for
+// the primitive impls above AND for any user type that `impl`s the trait (a 2D
+// vector, a money type, …) — `sum_with(vectors, V2 { x: 0, y: 0 })` folds with
+// the user's `Add`. The accumulator's bounded-generic method call monomorphises
+// to a direct call, so these lower on the self-host IR path too (#2691 / #3558).
+//
+// The identity (`zero` for `sum_with`, `one` for `product_with`) is passed
+// explicitly rather than recovered from the `Zero` trait: `T.zero()` is an
+// associated function on a bound type parameter, a dispatch shape that does not
+// yet lower on the self-host IR path (it bails to the AST emitter), so the bare
+// `sum[T: Num + Zero](xs): T` form is deferred until that lands. Passing the
+// identity keeps these on the IR path and stays correct for `f32`/`f64` (where
+// the additive identity a caller wants may be `0.0`, not a trait-fixed value).
+
+// sum_with folds `xs` left with `.add`, starting from `zero`: the generic
+// element-wise total. Empty `xs` returns `zero` unchanged.
+pub function sum_with[T: Add](xs: T[], zero: T): T {
+    var acc = zero;
+    for x in xs { acc = acc.add(x); }
+    return acc;
+}
+
+// product_with folds `xs` left with `.mul`, starting from `one`: the generic
+// element-wise product. Empty `xs` returns `one` unchanged.
+pub function product_with[T: Mul](xs: T[], one: T): T {
+    var acc = one;
+    for x in xs { acc = acc.mul(x); }
+    return acc;
+}
