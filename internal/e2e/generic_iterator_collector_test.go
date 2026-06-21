@@ -98,13 +98,17 @@ function main(): i32 { if (last(BoolSeq { n: 2 }, false)) { return 7; } return 0
 
 // foldCrossTypeProg folds an i32 iterator with a boolean ACCUMULATOR (A ≠ T)
 // via a closure combiner — "are all values < 10?" over 0..4 → true → 5. The
-// native backends monomorphise A and T independently and handle this; the
-// self-host IR path currently MISCOMPILES a closure-accumulator fold when the
-// accumulator type differs from the element type (both erase to 8-byte slots
-// but the closure call ABI gets the boolean accumulator wrong — `routing=ir`,
-// then the program crashes). So this case is native-only; the A=T `fold-sum`
-// case above pins the self-host IR path. Fixing the A≠T self-host gap is a
-// follow-up (#2686 tail).
+// driver is called as `if (fold(it, init, <lambda>))`. This pins the #2686 tail
+// fix: the self-host IR lift pass (lift_inline_closures_stmts) used to walk only
+// var-init / return / expr-stmt / assign and the nested BODIES of if/while/for —
+// NOT the condition / iterated expression — so a fn-typed call argument inside an
+// `if (…)` condition was never env-boxed, while the callee's fn-param (marked a
+// closure local) still unpacked a box from the bare fn pointer and crashed. The
+// earlier diagnosis ("the boolean accumulator gets the closure ABI wrong") was a
+// red herring: an A≠T fold bound to a `var` already worked, and an A=T fold inside
+// an `if` already crashed — the discriminator was the call CONTEXT, not the types.
+// Now if/while/for conditions are walked, so this lowers + runs on the self-host
+// IR path (x86-64 + wasm) too — see TestSelfHostGenericFoldCrossTypeIR* below.
 const foldCrossTypeProg = `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 struct RangeIter { cur: i32, end: i32 }
 impl Iterator[i32] for RangeIter { function next(self: Self): Option[(i32, Self)] { if (self.cur >= self.end) { return None; } return Some((self.cur, RangeIter { cur: self.cur + 1, end: self.end })); } }
@@ -114,7 +118,7 @@ function main(): i32 { if (fold(RangeIter { cur: 0, end: 4 }, true, function (a:
 
 // TestNativeGenericFoldCrossType pins the A≠T closure-accumulator fold on the
 // native backends (interp / x86-64 / wasm). See foldCrossTypeProg for the
-// self-host caveat.
+// #2686-tail story (fn-arg in an `if` condition now lifts on the self-host path).
 func TestNativeGenericFoldCrossType(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "main.fern")
@@ -129,6 +133,94 @@ func TestNativeGenericFoldCrossType(t *testing.T) {
 	}
 	if code := runWasm(t, foldCrossTypeProg); code != 5 {
 		t.Errorf("fold-cross-type wasm = %d, want 5", code)
+	}
+}
+
+// TestSelfHostGenericFoldCrossTypeIRX86_64 pins the #2686-tail fix: the cross-type
+// closure-accumulator fold, driven through `if (fold(…))`, now lowers + runs on
+// the self-hosted x86-64 IR path (the fn-typed argument inside the `if` condition
+// is env-boxed by the lift pass). Routing is pinned to "ir".
+func TestSelfHostGenericFoldCrossTypeIRX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	for _, name := range []string{"asm_run.fern", "asm_pathprobe_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
+
+	src := []byte(foldCrossTypeProg)
+	path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
+	if path != "ir" {
+		t.Fatalf("fold-cross-type routed through %q path, want \"ir\"", path)
+	}
+	asm := runCapture(t, gcc, runner, driverBin, src)
+	if len(asm) == 0 {
+		t.Fatal("self-host compiler emitted 0 bytes")
+	}
+	progBin := buildBin(t, gcc, dir, "fold_cross_type", string(asm))
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(progBin)
+	} else {
+		cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+	}
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 5 {
+		t.Errorf("fold-cross-type self-host x86-64 = %d, want 5", code)
+	}
+}
+
+// TestSelfHostGenericFoldCrossTypeIRWasm is the wasm IR leg of the #2686-tail fix.
+func TestSelfHostGenericFoldCrossTypeIRWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host fold-cross-type wasm IR e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	for _, name := range []string{
+		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
+		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm.fern", "wasm_ir.fern", "wasm_ir_run.fern",
+	} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+
+	src := []byte(foldCrossTypeProg)
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(driverBin, "-ir")
+	} else {
+		cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+	}
+	cmd.Stdin = bytes.NewReader(src)
+	wat, err := cmd.Output()
+	if err != nil || len(wat) == 0 {
+		t.Fatalf("driver failed for fold-cross-type: %v", err)
+	}
+	watFile := filepath.Join(dir, "fold_cross_type_prog.wat")
+	if err := os.WriteFile(watFile, wat, 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	runc := exec.Command("wasmtime", "run", watFile)
+	_ = runc.Run()
+	if runc.ProcessState == nil || !runc.ProcessState.Exited() {
+		t.Fatalf("wasmtime did not exit normally for fold-cross-type:\n%s", wat)
+	}
+	if code := runc.ProcessState.ExitCode(); code != 5 {
+		t.Errorf("fold-cross-type wasm IR = %d, want 5", code)
 	}
 }
 

@@ -1,35 +1,32 @@
 package e2e
 
 import (
+	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
 
 // Predicate-based iterator adapters — `any` / `all` / `find` — that take a
 // `(T) => boolean` closure through a function-typed parameter. These work on
-// every NATIVE backend (interp / x86-64 / wasm / arm64). They are NOT yet in
-// the shipped `core/iter` module because they trip a precisely-characterised
-// self-host IR bug:
+// every NATIVE backend (interp / x86-64 / wasm / arm64) AND on the self-host IR
+// path (TestSelfHostGenericPredicateAdaptersIR* below).
 //
-//	a closure whose RETURN type is `boolean`, called INDIRECTLY through a
-//	function-typed parameter, miscompiles on the self-host IR path — it routes
-//	`ir` and emits, then crashes at runtime (exit -1).
-//
-// The minimal repro is `function apply(x: i32, f: (i32) => boolean): boolean {
-// return f(x); }`. A type sweep over the closure's return type pins it as
-// boolean-specific: `(i32) => i32`, `(i32) => f64`, and `(i32) => string`
-// indirect returns all lower and run correctly on the self-host IR path, and
-// `(i32) => i64` routes to the AST emitter (correct via fallback); only
-// `boolean` stays on the IR path and crashes. This is the same root cause as
-// the `fold` A≠T crash recorded for #3618 — there the closure was `(boolean,
-// i32) => boolean`, i.e. a boolean-return indirect call — so "A≠T" was the
-// symptom, not the cause. Fixing the boolean indirect-return codegen on the
-// self-host IR path (then moving these adapters into core/iter) is a focused
-// follow-up.
-//
-// These tests are the behavioural spec the fix must satisfy; they guard the
-// native semantics in the meantime.
+// The earlier diagnosis here — "a closure whose RETURN type is `boolean`, called
+// indirectly through a function-typed parameter, miscompiles" — was WRONG. The
+// real #2686-tail bug was that the self-host IR lift pass
+// (lift_inline_closures_stmts) walked only var-init / return / expr-stmt /
+// assignment and the nested BODIES of if/while/for — never a statement's
+// CONDITION or iterated expression. Every case here calls the adapter in such a
+// position (`if (any(…))` / `if (all(…))` / `match (find(…))`), so the lambda
+// argument was never env-boxed while the callee's fn-param — marked a closure
+// local — unpacked an env box from the bare fn pointer and crashed. The "boolean
+// return" / "A≠T" framings were symptoms of which cases happened to sit in a
+// condition, not a codegen bug. With if/while/for conditions now walked, `any` /
+// `all` lower on the IR path; `find` (called in a `match` scrutinee, a position
+// the lift pass still leaves to the AST emitter) runs correctly via the AST
+// fallback — both produce the oracle result on every backend.
 var predicateAdapterPrelude = `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 struct RangeIter { cur: i32, end: i32 }
 impl Iterator[i32] for RangeIter { function next(self: Self): Option[(i32, Self)] { if (self.cur >= self.end) { return None; } return Some((self.cur, RangeIter { cur: self.cur + 1, end: self.end })); } }
@@ -93,6 +90,97 @@ func TestNativeGenericPredicateAdaptersArm64(t *testing.T) {
 			}
 			if _, code := runFixtureArm64(t, p, ""); code != tc.want {
 				t.Errorf("%s arm64 = %d, want %d", tc.name, code, tc.want)
+			}
+		})
+	}
+}
+
+// TestSelfHostGenericPredicateAdaptersIRX86_64 drives the predicate adapters
+// through the self-hosted x86-64 compiler and oracle-checks the exit code. Both
+// the IR-lowered cases (`any` / `all`, called in an `if` condition the lift pass
+// now walks) and the AST-fallback case (`find`, called in a `match` scrutinee)
+// must produce the right answer end-to-end — so this asserts behaviour, not the
+// routing tag (which differs case to case by design).
+func TestSelfHostGenericPredicateAdaptersIRX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	src, err := os.ReadFile(filepath.Join("../../examples/self_host", "asm_run.fern"))
+	if err != nil {
+		t.Fatalf("read asm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_run.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+
+	for _, tc := range predicateAdapterCases {
+		t.Run(tc.name, func(t *testing.T) {
+			prog := []byte(predicateAdapterPrelude + tc.main + "\n")
+			asm := runCapture(t, gcc, runner, driverBin, prog)
+			if len(asm) == 0 {
+				t.Fatal("self-host compiler emitted 0 bytes")
+			}
+			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(progBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+			}
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+				t.Errorf("%s self-host x86-64 = %d, want %d", tc.name, code, tc.want)
+			}
+		})
+	}
+}
+
+// TestSelfHostGenericPredicateAdaptersIRWasm is the wasm leg.
+func TestSelfHostGenericPredicateAdaptersIRWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host predicate-adapter wasm IR e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	for _, name := range []string{
+		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
+		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm.fern", "wasm_ir.fern", "wasm_ir_run.fern",
+	} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+
+	for _, tc := range predicateAdapterCases {
+		t.Run(tc.name, func(t *testing.T) {
+			prog := []byte(predicateAdapterPrelude + tc.main + "\n")
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(driverBin, "-ir")
+			} else {
+				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+			}
+			cmd.Stdin = bytes.NewReader(prog)
+			wat, err := cmd.Output()
+			if err != nil || len(wat) == 0 {
+				t.Fatalf("driver failed for %q: %v", tc.name, err)
+			}
+			watFile := filepath.Join(dir, "predicate_adapter_prog.wat")
+			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
+				t.Fatalf("write wat: %v", err)
+			}
+			runc := exec.Command("wasmtime", "run", watFile)
+			_ = runc.Run()
+			if runc.ProcessState == nil || !runc.ProcessState.Exited() {
+				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
+			}
+			if code := runc.ProcessState.ExitCode(); code != tc.want {
+				t.Errorf("predicate-adapter wasm IR %q = %d, want %d", tc.name, code, tc.want)
 			}
 		})
 	}
