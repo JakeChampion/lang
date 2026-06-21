@@ -277,6 +277,7 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"path", langSrcAbs(t, "examples/tests/path_test.fern"), ""},
 		{"hex", langSrcAbs(t, "examples/tests/hex_test.fern"), ""},
 		{"base64", langSrcAbs(t, "examples/tests/base64_test.fern"), ""},
+		{"url", langSrcAbs(t, "examples/tests/url_test.fern"), ""},
 		{"synthetic_fail", failing, ""},
 	}
 }

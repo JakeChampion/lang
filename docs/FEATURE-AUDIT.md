@@ -251,6 +251,23 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-21 — std/url: pure-Fern std/test migration coverage (`url_encode` / `url_decode` / `url_parse`)
+
+`std/url`'s RFC 3986 percent-encoding and best-effort URL parsing had Go-side
+coverage but no migration-shaped (pure-Fern, `std/test`-driven) companion. Added
+`examples/tests/url_test.fern` — 10 assertions: `url_encode` unreserved
+pass-through (`aZ9-._~`), reserved escaping (`/?&=` → `%2F%3F%26%3D`, uppercase
+hex) and the space case; `url_decode` lower-case hex acceptance (`%2f` → `/`)
+and the truncated-escape-left-literal edge (`%2` → `%2`); a round-trip; and
+`url_parse`'s full scheme/host/port/path/query/fragment split
+(`http://example.com:8080/path?q=1#frag`), a minimal `https://host.com/`, and
+the empty-input `None`. Gated natively (`TestRunnerUrlExamplePasses`) and
+through the self-host differential gate (`TestSelfHostStdTestE2E/url`), which
+oracle-checks TAP-13 stdout + exit code against the interpreter **byte-for-byte**.
+Notably the `url_parse` path — struct-spread update (`Url { ...u, scheme: … }`)
++ `Option[Url]` match — routes cleanly through the self-host IR (no AST
+fallback), a step beyond the pure byte-buffer encoders.
+
 ### 2026-06-21 — std/hex: pure-Fern std/test migration coverage (`hex_encode` / `hex_decode`)
 
 `std/hex`'s lowercase encode / decode had Go-side coverage but no
