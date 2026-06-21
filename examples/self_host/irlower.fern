@@ -4718,6 +4718,28 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     if (cid.name == "__ptr_width" && c.args.len() == 0) {
                         return s.emit(ir.op_ptr_width());
                     }
+                    // __memset(dst, byte, n): fill n bytes at dst with `byte`'s low
+                    // byte (core/map's bucket init). Lower dst, byte, n then emit
+                    // op_memset (rep stosb / byte loop / memory.fill); pushes dummy 0.
+                    if (cid.name == "__memset" && c.args.len() == 3) {
+                        var ms3: LowerState = lower_expr(c.args[0], s);
+                        if (!ms3.ok) { return ms3; }
+                        ms3 = lower_expr(c.args[1], ms3);
+                        if (!ms3.ok) { return ms3; }
+                        ms3 = lower_expr(c.args[2], ms3);
+                        if (!ms3.ok) { return ms3; }
+                        return ms3.emit(ir.op_memset());
+                    }
+                    // __free(ptr, size): a no-op under the bump/leak heap (core/map's
+                    // grow path). Lower both args (no side effects), emit op_free,
+                    // which discards them and pushes dummy 0 (statement-position).
+                    if (cid.name == "__free" && c.args.len() == 2) {
+                        var fr: LowerState = lower_expr(c.args[0], s);
+                        if (!fr.ok) { return fr; }
+                        fr = lower_expr(c.args[1], fr);
+                        if (!fr.ok) { return fr; }
+                        return fr.emit(ir.op_free());
+                    }
                     // __memcpy(dst, src, n): raw byte copy. Lower the three
                     // usize/i32 operands (dst, src, n) then emit op_memcpy, which
                     // the IR backends select rep movsb / a byte loop / memory.copy
