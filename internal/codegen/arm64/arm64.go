@@ -4716,7 +4716,15 @@ func (g *generator) emitRandomI32Runtime() {
 // `TwoWordOverride`), so the receiver already arrives as
 // (x0=data, x1=len) — exactly __fern_slice_make's argument
 // shape. The header aliases the source bytes (heap or .rodata
-// for literals); no copy is needed. We tail-call slice_make.
+// for literals); usually no copy is needed and we tail-call slice_make.
+//
+// Exception: __fern_slice_make stores the data pointer in 32 bits, which
+// is fine for the low-heap arena (hinted at 0x10000000) but truncates a
+// string LITERAL's .rodata address when the program is a position-
+// independent shared object (`-shared`) dlopen'd at a high base. Guard
+// the high case: if x0 doesn't fit 32 bits, copy the bytes into a fresh
+// low-heap buffer first, so the 32-bit slice field stays valid. (x86-64
+// mirror in emitStringAsBytesRuntime there.)
 func (g *generator) emitStringAsBytesRuntime() {
 	g.line("")
 	g.line(".global __method_string_as_bytes")
@@ -4729,8 +4737,30 @@ func (g *generator) emitStringAsBytesRuntime() {
 		// rather than emit silently-wrong asm (mirrors syscall()).
 		panic("arm64 __method_string_as_bytes: single-word string ABI unsupported")
 	}
-	// (x0=data, x1=len) → __fern_slice_make(data, len) → header.
+	// (x0=data, x1=len). Fast path: data fits 32 bits → tail-call slice_make.
+	g.emit("lsr x9, x0, #32")
+	g.emit("cbnz x9, .Lasbytes_copy")
 	g.emit("b __fern_slice_make")
+	// High-pointer (PIE .rodata) path: copy len bytes into a low-heap
+	// buffer, then build the slice over the copy. x19=src, x20=len are
+	// preserved across the alloc/memcpy calls (callee-saved).
+	g.label(".Lasbytes_copy")
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #-16]!")
+	g.emit("mov x19, x0") // src (high data ptr)
+	g.emit("mov x20, x1") // len
+	g.emit("mov x0, x1")  // alloc(len)
+	g.emit("bl __fern_alloc")
+	g.emit("mov x1, x19") // src
+	g.emit("mov x2, x20") // n
+	// x0 already = dst (buffer); __fern_memcpy returns dst in x0.
+	g.emit("bl __fern_memcpy")
+	g.emit("mov x1, x20") // len for slice_make (x0 = low-heap data)
+	g.emit("bl __fern_slice_make")
+	g.emit("ldp x19, x20, [sp], #16")
+	g.emit("ldp x29, x30, [sp], #16")
+	g.emit("ret")
 	g.sizeDirective("__method_string_as_bytes")
 	g.line(".ltorg")
 }
@@ -8987,6 +9017,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesAsBytes = true
 			g.usesSliceMake = true
 			g.usesAlloc = true
+			g.usesMemcpy = true // high-pointer (PIE .rodata) copy path
 		}
 		// Compute the effective operand-stack slot count for
 		// the call: under the two-word ABI, each string arg

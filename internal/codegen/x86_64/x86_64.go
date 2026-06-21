@@ -5651,6 +5651,17 @@ func (g *generator) emitRandomI32Runtime() {
 // heap buffer so the slice header points at real linear memory
 // that outlives the call. Returns the slice header pointer in rax.
 // Mirrors wasm's buildStringAsBytesBody.
+//
+// The slice header stores the data pointer in 32 bits (see
+// __fern_slice_make), which is fine while every data pointer lives in the
+// low heap (the mmap arena is hinted at 0x10000000). But a string LITERAL's
+// bytes live in .rodata, and in a position-independent shared object
+// (`-shared`, dlopen'd at a high base) that address exceeds 32 bits — so
+// the zero-copy view would truncate to a bogus pointer. Guard the heap
+// path: if the data pointer doesn't fit 32 bits, copy the bytes into a
+// fresh low-heap buffer first (same promotion the inline path always does).
+// Low pointers (the common case, and every static-exec case) keep the
+// zero-copy fast path.
 func (g *generator) emitStringAsBytesRuntime() {
 	g.line("")
 	g.line(".globl __method_string_as_bytes")
@@ -5669,6 +5680,22 @@ func (g *generator) emitStringAsBytesRuntime() {
 	// Heap form: data ptr = value, len = [value-4].
 	g.emit("mov r12, rbx")       // data ptr
 	g.emit("mov esi, [rbx - 4]") // len
+	// High-pointer guard: if data ptr fits 32 bits, take the zero-copy
+	// fast path; otherwise copy to a low-heap buffer (PIE .rodata case).
+	g.emit("mov rax, r12")
+	g.emit("shr rax, 32")
+	g.emit(fmt.Sprintf("jz .Lasbytes_make_%d", id))
+	g.emit("mov [rbp - 16], esi") // stash len
+	g.emit("mov [rbp - 24], r12") // stash old (high) data ptr
+	g.emit("mov edi, esi")        // alloc(len)
+	g.emit("call __fern_alloc")
+	g.emit("mov r12, rax")        // r12 = fresh low-heap buffer (new data)
+	g.emit("mov rdi, rax")        // dst
+	g.emit("mov rsi, [rbp - 24]") // src = old high data ptr (readable)
+	g.emit("mov ecx, [rbp - 16]") // count = len
+	g.emit("cld")
+	g.emit("rep movsb")
+	g.emit("mov esi, [rbp - 16]") // len for the slice header
 	g.emit(fmt.Sprintf("jmp .Lasbytes_make_%d", id))
 	g.label(fmt.Sprintf(".Lasbytes_inline_%d", id))
 	// Inline form: length in bits 1..3, bytes 1..7 of the value.
