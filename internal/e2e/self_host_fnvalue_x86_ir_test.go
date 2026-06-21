@@ -126,6 +126,17 @@ func TestSelfHostFnValueX86IR(t *testing.T) {
 		{"param-ret-struct-var-2fields", `struct P { x: i32, y: i32 } function call(g: () => P): i32 { var p = g(); return p.x + p.y; } function mk(): P { return P { x: 4, y: 5 }; } function main(): i32 { return call(mk); }`, 9},
 		{"param-ret-struct-method", `struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function call(g: () => P): i32 { return g().dbl(); } function mk(): P { return P { x: 11 }; } function main(): i32 { return call(mk); }`, 22},
 		{"param-ret-struct-witharg", `struct P { x: i32 } function call(g: (i32) => P): i32 { return g(7).x; } function mk(n: i32): P { return P { x: n + 1 }; } function main(): i32 { return call(mk); }`, 8},
+		// #3640 slice B.1: a struct-returning fn-value LOCAL `var f: () => P = mk`
+		// (the local sibling of the slice-A param case). lower_func registers a
+		// `f|P` struct_ret_fns entry — recovering P from the target `mk`'s own
+		// struct return — so `f().x` / `var p = f()` / `f().method()` resolve the
+		// struct result and lower on the IR path. Previously the field read on the
+		// fn-value-local call result couldn't resolve P and bailed to AST (then
+		// crashed). The unannotated form `var f = mk` (no `: () => P`) is the
+		// separate use-directed-inference slice and stays as-is.
+		{"local-ret-struct-field", `struct P { x: i32 } function mk(): P { return P { x: 4 }; } function main(): i32 { var f: () => P = mk; return f().x; }`, 4},
+		{"local-ret-struct-var-2fields", `struct P { x: i32, y: i32 } function mk(): P { return P { x: 4, y: 5 }; } function main(): i32 { var f: () => P = mk; var p = f(); return p.x + p.y; }`, 9},
+		{"local-ret-struct-method", `struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function mk(): P { return P { x: 11 }; } function main(): i32 { var f: () => P = mk; return f().dbl(); }`, 22},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
