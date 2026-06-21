@@ -1,0 +1,68 @@
+import "std/test";
+import "std/base64" as base64;
+
+// examples/tests/base64_test.fern — exercise the deterministic
+// std/base64 encoder/decoder through the test runner. std/base64 had
+// only Go-side coverage; this is the pure-Fern, std/test-driven shape,
+// gated through the self-host IR path (TestSelfHostStdTestE2E) so the
+// byte/string lowering is proven end to end on the self-hosted compiler.
+// (std/hex has its own sibling suite, hex_test.fern.)
+
+// Three-byte groups encode to four base64 chars with no padding.
+function test_encode_no_pad(): test.TestOutcome {
+    return test.assert_eq(base64.base64_encode("Man"), "TWFu");
+}
+
+// A two-byte tail leaves one `=` pad; a one-byte tail leaves two.
+function test_encode_one_pad(): test.TestOutcome {
+    return test.assert_eq(base64.base64_encode("Ma"), "TWE=");
+}
+
+function test_encode_two_pad(): test.TestOutcome {
+    return test.assert_eq(base64.base64_encode("M"), "TQ==");
+}
+
+function test_encode_longer(): test.TestOutcome {
+    return test.assert_eq(base64.base64_encode("hello"), "aGVsbG8=");
+}
+
+function test_encode_empty(): test.TestOutcome {
+    return test.assert_eq(base64.base64_encode(""), "");
+}
+
+function test_decode_no_pad(): test.TestOutcome {
+    return test.assert_eq(base64.base64_decode("TWFu"), "Man");
+}
+
+function test_decode_one_pad(): test.TestOutcome {
+    return test.assert_eq(base64.base64_decode("TWE="), "Ma");
+}
+
+function test_decode_two_pad(): test.TestOutcome {
+    return test.assert_eq(base64.base64_decode("TQ=="), "M");
+}
+
+function test_decode_empty(): test.TestOutcome {
+    return test.assert_eq(base64.base64_decode(""), "");
+}
+
+// decode . encode is the identity on arbitrary text.
+function test_roundtrip(): test.TestOutcome {
+    var s = "The quick brown fox jumps over the lazy dog.";
+    return test.assert_eq(base64.base64_decode(base64.base64_encode(s)), s);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/base64");
+    r = r.it("encode (no pad)", test_encode_no_pad());
+    r = r.it("encode (one pad)", test_encode_one_pad());
+    r = r.it("encode (two pad)", test_encode_two_pad());
+    r = r.it("encode (longer)", test_encode_longer());
+    r = r.it("encode (empty)", test_encode_empty());
+    r = r.it("decode (no pad)", test_decode_no_pad());
+    r = r.it("decode (one pad)", test_decode_one_pad());
+    r = r.it("decode (two pad)", test_decode_two_pad());
+    r = r.it("decode (empty)", test_decode_empty());
+    r = r.it("roundtrip", test_roundtrip());
+    return r.finish();
+}

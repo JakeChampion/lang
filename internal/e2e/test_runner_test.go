@@ -131,6 +131,24 @@ func TestRunnerIterExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/base64_test.fern` covers std/base64 (encode / decode
+// across all three padding tails, empty input, and a decode∘encode
+// round-trip) — a deterministic codec that had only Go-side coverage.
+// (std/hex has its own sibling suite, hex_test.fern.) Passing → exit 0.
+func TestRunnerBase64ExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/base64_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/base64", "# pass 10", "# fail 0", "1..10"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/cmp_helpers_test.fern` covers core/cmp's generic free
 // helpers over the primitive Ord/Eq impls (min / max / clamp / lt / gte /
 // sort / is_sorted / contains / index_of / distinct / eq_arrays, incl.
