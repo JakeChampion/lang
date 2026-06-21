@@ -1024,3 +1024,78 @@ int main(int c, char** v){
 		t.Fatalf("stdlib in .so = %d, want 42 (out=%q)", code, out)
 	}
 }
+
+// TestStdJNICallMethodA validates invoking Java methods through the
+// fixed-arity jvalue-array Call<Type>MethodA family + the jvalues packer:
+// jni.call_int_method_a (slot 51) sums the packed jvalue args, the FP-return
+// jni.call_double_method_a (slot 60, via call3_f64) round-trips a jdouble,
+// and jni.call_void_method_a (slot 63) delivers its arg. A fake JNIEnv reads
+// the jvalue array (8-byte slots) the packer built.
+func TestStdJNICallMethodA(t *testing.T) {
+	gcc, err := exec.LookPath("gcc")
+	if err != nil {
+		t.Skip("gcc not on PATH")
+	}
+	if runtime.GOARCH != "amd64" {
+		t.Skip("host is not amd64")
+	}
+	src := `import "std/jni";
+function p_int(env: usize, cls: usize, j: usize, obj: usize, m: usize): i32 {
+    return jni.call_int_method_a(j, obj, m, jni.jvalues([10 as usize, 20 as usize, 12 as usize]));
+}
+function p_dbl(env: usize, cls: usize, j: usize, obj: usize, m: usize): i32 {
+    return (jni.call_double_method_a(j, obj, m, jni.jvalues([3 as usize, 4 as usize])) * 4.0) as i32;
+}
+function p_void(env: usize, cls: usize, j: usize, obj: usize, m: usize): i32 {
+    jni.call_void_method_a(j, obj, m, jni.jvalues([7 as usize]));
+    return 0;
+}
+function main(): i32 { return 0; }`
+	exps := []string{"p_int", "p_dbl", "p_void"}
+	asm := compileToX86AsmExports(t, src, exps)
+	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exps)
+	if err != nil {
+		t.Fatalf("AssembleProgramShared: %v", err)
+	}
+	elfExports := make([]nativeelf.Export, len(exps))
+	for i, n := range exps {
+		elfExports[i] = nativeelf.Export{Name: n, Value: ev[n]}
+	}
+	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs), elfExports, "libfern.so")
+	dir := t.TempDir()
+	soPath := filepath.Join(dir, "libfern.so")
+	if err := os.WriteFile(soPath, so, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// table[51]=CallIntMethodA (sum of 3 jvalue ints), [60]=CallDoubleMethodA
+	// ((a0+a1)+0.25, FP return), [63]=CallVoidMethodA (records its arg).
+	loader := `#include <dlfcn.h>
+#include <stdio.h>
+static long cim(void*e,long o,long m,long long* a){(void)e;(void)o;(void)m; return (long)(a[0]+a[1]+a[2]); }
+static double cdm(void*e,long o,long m,long long* a){(void)e;(void)o;(void)m; return (double)(a[0]+a[1]) + 0.25; }
+static long g_void;
+static long cvm(void*e,long o,long m,long long* a){(void)e;(void)o;(void)m; g_void=(long)a[0]; return 0; }
+int main(int c,char**v){
+  void*h=dlopen(v[1],RTLD_NOW);if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
+  void*t[256]={0}; t[51]=(void*)cim; t[60]=(void*)cdm; t[63]=(void*)cvm;
+  void*tp=t; void*env=&tp; long L=(long)env;
+  if(((int(*)(long,long,long,long,long))dlsym(h,"p_int"))(0,0,L,0,0) != 42) return 1;
+  if(((int(*)(long,long,long,long,long))dlsym(h,"p_dbl"))(0,0,L,0,0) != 29) return 2;
+  ((int(*)(long,long,long,long,long))dlsym(h,"p_void"))(0,0,L,0,0);
+  if(g_void != 7) return 3;
+  return 42;
+}`
+	cPath := filepath.Join(dir, "loader.c")
+	if err := os.WriteFile(cPath, []byte(loader), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ld := filepath.Join(dir, "loader")
+	if out, err := exec.Command(gcc, cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
+		t.Fatalf("gcc loader: %v\n%s", err, out)
+	}
+	cmd := exec.Command(ld, soPath)
+	out, _ := cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 42 {
+		t.Fatalf("Call*MethodA dispatch = %d, want 42 (out=%q)", code, out)
+	}
+}
