@@ -168,6 +168,25 @@ func TestRunnerFormatExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/csv_test.fern` covers std/csv — RFC 4180 field
+// escaping (comma / quote / newline), record joining, single-line
+// parsing (quoted delimiters, doubled-quote decode, empty fields), and
+// a parse∘join round-trip — a deterministic codec that had only Go-side
+// coverage. Passing suite → exit 0.
+func TestRunnerCsvExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/csv_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/csv", "# pass 12", "# fail 0", "1..12"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/cmp_helpers_test.fern` covers core/cmp's generic free
 // helpers over the primitive Ord/Eq impls (min / max / clamp / lt / gte /
 // sort / is_sorted / contains / index_of / distinct / eq_arrays, incl.

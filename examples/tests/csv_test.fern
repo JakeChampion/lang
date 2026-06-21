@@ -1,0 +1,92 @@
+import "std/test";
+import "std/csv" as csv;
+
+// examples/tests/csv_test.fern — exercise std/csv's RFC 4180 field
+// escaping, record joining, and single-line parsing through the test
+// runner. std/csv had only Go-side coverage; this is the pure-Fern,
+// std/test-driven shape, gated through the self-host IR path
+// (TestSelfHostStdTestE2E) so the string-scan / quote-doubling lowering
+// is proven end to end on the self-hosted compiler.
+
+// ---- csv_escape ----
+
+// A field with no comma / quote / newline passes through untouched.
+function test_escape_plain(): test.TestOutcome {
+    return test.assert_eq(csv.csv_escape("plain"), "plain");
+}
+
+// A comma forces wrapping in double quotes.
+function test_escape_comma(): test.TestOutcome {
+    return test.assert_eq(csv.csv_escape("a,b"), "\"a,b\"");
+}
+
+// Interior quotes are doubled and the field is wrapped.
+function test_escape_quote(): test.TestOutcome {
+    return test.assert_eq(csv.csv_escape("say \"hi\""), "\"say \"\"hi\"\"\"");
+}
+
+// A newline also forces quoting.
+function test_escape_newline(): test.TestOutcome {
+    return test.assert_eq(csv.csv_escape("a\nb"), "\"a\nb\"");
+}
+
+// ---- csv_join ----
+
+function test_join_simple(): test.TestOutcome {
+    return test.assert_eq(csv.csv_join(["a", "b", "c"]), "a,b,c");
+}
+
+// Fields needing escapes are quoted; clean fields are not.
+function test_join_with_escape(): test.TestOutcome {
+    return test.assert_eq(csv.csv_join(["a,1", "b"]), "\"a,1\",b");
+}
+
+function test_join_empty(): test.TestOutcome {
+    var none: string[] = [];
+    return test.assert_eq(csv.csv_join(none), "");
+}
+
+// ---- csv_parse_line ----
+
+function test_parse_simple(): test.TestOutcome {
+    return test.assert_eq_array(csv.csv_parse_line("a,b,c"), ["a", "b", "c"]);
+}
+
+// A quoted field may contain the delimiter.
+function test_parse_quoted_comma(): test.TestOutcome {
+    return test.assert_eq_array(csv.csv_parse_line("\"a,1\",b"), ["a,1", "b"]);
+}
+
+// A doubled quote inside a quoted field decodes to a single quote.
+function test_parse_doubled_quote(): test.TestOutcome {
+    return test.assert_eq_array(csv.csv_parse_line("\"say \"\"hi\"\"\""), ["say \"hi\""]);
+}
+
+// Empty fields are preserved.
+function test_parse_empty_fields(): test.TestOutcome {
+    return test.assert_eq_array(csv.csv_parse_line("a,,c"), ["a", "", "c"]);
+}
+
+// ---- round-trip: parse ∘ join is the identity on a record ----
+
+function test_roundtrip(): test.TestOutcome {
+    var fields: string[] = ["plain", "has,comma", "has \"quote\"", ""];
+    return test.assert_eq_array(csv.csv_parse_line(csv.csv_join(fields)), fields);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/csv");
+    r = r.it("escape plain", test_escape_plain());
+    r = r.it("escape comma", test_escape_comma());
+    r = r.it("escape quote", test_escape_quote());
+    r = r.it("escape newline", test_escape_newline());
+    r = r.it("join simple", test_join_simple());
+    r = r.it("join with escape", test_join_with_escape());
+    r = r.it("join empty", test_join_empty());
+    r = r.it("parse simple", test_parse_simple());
+    r = r.it("parse quoted comma", test_parse_quoted_comma());
+    r = r.it("parse doubled quote", test_parse_doubled_quote());
+    r = r.it("parse empty fields", test_parse_empty_fields());
+    r = r.it("roundtrip", test_roundtrip());
+    return r.finish();
+}
