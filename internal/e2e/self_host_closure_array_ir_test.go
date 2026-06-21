@@ -28,9 +28,13 @@ import (
 // segfaulted while `all_eligible` wrongly admitted it. The fix marks the slot a
 // closure array at the FIRST closure `.append` (when the appended value is a
 // `__mkclo$…` env box / closure-returning call / closure local), so the indexed
-// call dispatches env-first. A bare NAMED-function value (`[f]` / `append(f)`)
-// is left a plain fn pointer — its broader mis-lowering is the separate #3574
-// (even `var g: () => i32 = f; g()` segfaults).
+// call dispatches env-first. A bare NAMED-function value (`[f]` / `append(f)`) is
+// a plain fn POINTER, not a closure box: the `namedfn-*` cases below flow through
+// the is_fnarr slot flag (#3574) — each element lowers to const_func and
+// dispatches via PLAIN call_indirect. The fn[]-literal `[f, g]` is handled at the
+// StmtVar binding; the `append(f)` form reads is_fnarr at the append site so a
+// bare 0-arg fn name emits const_func instead of const-calling f (which
+// segfaulted). They share this harness because the routing-pin + run is identical.
 //
 // Each case is routing-pinned to "ir" (asm_pathprobe_run) and oracle-checked
 // against the interpreter; every result stays <= 120 (the wasm exit-code clamp,
@@ -56,6 +60,16 @@ var closureArrayIRCases = []struct {
 	{"append-after-literal", `function main(): i32 { var n = 4; var fns: (() => i32)[] = [() => n]; fns = fns.append(() => n + 1); return fns[1](); }`, 5},
 	// append three, then sum them via a `for` loop over the array: 1+2+3 = 6.
 	{"append-loop", `function main(): i32 { var a = 1; var b = 2; var c = 3; var fns: (() => i32)[] = []; fns = fns.append(() => a); fns = fns.append(() => b); fns = fns.append(() => c); var s = 0; for f in fns { s = s + f(); } return s; }`, 6},
+	// #3574: a bare NAMED-fn value appended to an empty fn-pointer array (is_fnarr),
+	// then called — previously const-called f and segfaulted (exit -1).
+	{"namedfn-append-empty", `function f(): i32 { return 7; } function main(): i32 { var fns: (() => i32)[] = []; fns = fns.append(f); return fns[0](); }`, 7},
+	// append two named fns, call both: 7 + 5 = 12.
+	{"namedfn-append-two", `function f(): i32 { return 7; } function g(): i32 { return 5; } function main(): i32 { var fns: (() => i32)[] = []; fns = fns.append(f); fns = fns.append(g); return fns[0]() + fns[1](); }`, 12},
+	// append a named fn onto a NON-empty named-fn literal (the literal marks
+	// is_fnarr at its StmtVar binding; the append reads it), then call it.
+	{"namedfn-append-after-literal", `function f(): i32 { return 7; } function g(): i32 { return 5; } function main(): i32 { var fns: (() => i32)[] = [f]; fns = fns.append(g); return fns[1](); }`, 5},
+	// append three named fns, sum via a `for` loop: 1 + 2 + 4 = 7.
+	{"namedfn-append-loop", `function a(): i32 { return 1; } function b(): i32 { return 2; } function c(): i32 { return 4; } function main(): i32 { var fns: (() => i32)[] = []; fns = fns.append(a); fns = fns.append(b); fns = fns.append(c); var s = 0; for f in fns { s = s + f(); } return s; }`, 7},
 }
 
 // TestSelfHostClosureArrayIRX86_64 routes each case through the self-hosted
