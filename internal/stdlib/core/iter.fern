@@ -160,6 +160,42 @@ pub function find[T, I: Iterator[T]](it: I, pred: (T) => boolean): Option[T] {
     return None;
 }
 
+// map eagerly applies `f` to every value the iterator yields, collecting the
+// results into a fresh `U[]` in order. The eager transform — `it.map(f)` of the
+// iterator world, returning an array rather than a lazy adapter (lazy fusion is
+// a later optimisation; see the module header). Generic over the element type
+// `T` and the result type `U`.
+pub function map[T, U, I: Iterator[T]](it: I, f: (T) => U): U[] {
+    var out: U[] = [];
+    var cur = it;
+    var go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => { out = out.append(f(t.0)); cur = t.1; },
+            None => { go = false; },
+        }
+    }
+    return out;
+}
+
+// filter eagerly collects the values for which `keep` is true into a fresh `T[]`,
+// preserving order. Generic over the element type `T`.
+pub function filter[T, I: Iterator[T]](it: I, keep: (T) => boolean): T[] {
+    var out: T[] = [];
+    var cur = it;
+    var go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => {
+                if (keep(t.0)) { out = out.append(t.0); }
+                cur = t.1;
+            },
+            None => { go = false; },
+        }
+    }
+    return out;
+}
+
 // nth returns the value at index `n` (0-based), or `None` if the iterator yields
 // fewer than `n + 1` values. Generic over the element type `T`.
 pub function nth[T, I: Iterator[T]](it: I, n: i32): Option[T] {
