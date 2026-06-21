@@ -1862,16 +1862,17 @@ function build(a: string): i32 {
 	}
 }
 
-// TestLowerStringArrayElemNoReclaimOnNative verifies string[] element
-// reclamation is wasm-only: ptrW=8 keeps the buffer-only __fern_arr_dec
-// and emits no __fern_drop_arr_str.
-func TestLowerStringArrayElemNoReclaimOnNative(t *testing.T) {
+// TestLowerStringArrayElemReclaimOnNative verifies the native (single-word
+// x86-64) string[] drop reclaims its element strings via the freeing
+// __fern_drop_arr_str (per-element __fern_str_dec, then free the buffer).
+// Elements are retained on store, so the per-element frees are balanced.
+func TestLowerStringArrayElemReclaimOnNative(t *testing.T) {
 	p := lowerSourceWith(t, `function build(a: string, b: string): i32 {
     var arr: string[] = [a, b];
     return arr[0].len();
 }`, 8)
-	if callsDirect(p, "build", "__fern_drop_arr_str") {
-		t.Errorf("native (ptrW=8) must not emit __fern_drop_arr_str:\n%s", p)
+	if !callsDirect(p, "build", "__fern_drop_arr_str") {
+		t.Errorf("native (ptrW=8) string[] drop must reclaim elements via __fern_drop_arr_str:\n%s", p)
 	}
 }
 

@@ -21,6 +21,24 @@ var rcCorpus = []struct {
 	src  string
 }{
 	{
+		// string[] whose elements alias a live local. Exercises the native
+		// single-word x86-64 string[] element reclaim (__fern_drop_arr_str:
+		// per-element __fern_str_dec then free the buffer); elements are
+		// retained on store, so the per-element frees balance the shared
+		// buffer. 3 × 4 = 12.
+		name: "string_array_element_aliased",
+		src: `
+import "core/int";
+import "std/string";
+function cat(a: string, b: string): string { return a + b; }
+function suml(arr: string[]): i32 { var s: i32 = 0; var i: i32 = 0; while (i < arr.len()) { s = s + arr[i].len(); i = i + 1; } return s; }
+function main(): i32 {
+    var s: string = cat("ab", "cd");
+    var arr: string[] = [s, s];
+    return (suml(arr) + s.len() - 12) + __rc_underflow_count();
+}`,
+	},
+	{
 		// String captured by a closure + kept live in the source local.
 		// Exercises the native single-word x86-64 closure-capture string
 		// reclaim (env drop → __fern_str_dec); the capture is retained at
