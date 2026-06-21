@@ -55,6 +55,19 @@ function main(): i32 { var f = dbl; return f(7); }`, 14},
 		// inlined — it stays a const-call (f = 10), so `f + 5` = 15.
 		{"const_as_value", `const TEN: i32 = 10;
 function main(): i32 { var f = TEN; return f + 5; }`, 15},
+		// 0-arg fn in an unannotated ARRAY, called via index — the array analog.
+		// `var fns = [mk]` would const-call each element (storing mk()'s result),
+		// so `fns[0]()` calls an integer as a code pointer and segfaults; the pass
+		// types it `fn[]` (a fn-pointer array) when used only as indexed calls.
+		{"array_index_call", `function mk(): i32 { return 7; }
+function main(): i32 { var fns = [mk]; return fns[0](); }`, 7},
+		// two 0-arg fns in an array, both called by index.
+		{"array_two_fns", `function a(): i32 { return 3; }
+function b(): i32 { return 4; }
+function main(): i32 { var fns = [a, b]; return fns[0]() + fns[1](); }`, 7},
+		// an indexed call inside a loop.
+		{"array_loop_call", `function one(): i32 { return 1; }
+function main(): i32 { var fns = [one]; var s = 0; var i = 0; while (i < 5) { s = s + fns[0](); i = i + 1; } return s; }`, 5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

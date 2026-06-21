@@ -7289,6 +7289,110 @@ function cf_rw_stmts(stmts: Stmt[], f: string, target: string): Stmt[] {
 
 // cf_inline_fn_body inlines every call-only 0-arg fn-value binding in a
 // function body's TOP-LEVEL statements (one full pass, left to right).
+// cf_all_zero_arg_fn_elems reports whether every element of an array literal is
+// a bare identifier naming a 0-arg receiver-less module function — the shape
+// `[mk, mk2]` that would otherwise const-CALL each element through the generic
+// array lowering (storing `mk()` results), so a later `fns[i]()` calls an
+// integer as a code pointer and segfaults. (A >0-arg fn name already lowers to a
+// fn value, so only the 0-arg case needs this rescue.)
+function cf_all_zero_arg_fn_elems(elems: Expr[], funcs: FuncDecl[]): boolean {
+    if (elems.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < elems.len()) {
+        match (elems[i]) {
+            ExprIdent(id) => { if (!cf_is_zero_arg_fn(funcs, id.name)) { return false; } },
+            _ => { return false; }
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// cf_arr_scan_expr counts a name's INDEXED-CALL uses (`f[i](...)` — calls) vs
+// any OTHER use (vals: `f[i]` as a value, `f` passed / stored / a bare ref). A
+// `var f = [fns…]` used only as indexed calls is a fn-pointer array; a value use
+// means the elements are meant as const CALLS (an `i32[]` of `mk()` results).
+function cf_arr_scan_expr(e: Expr, f: string): CFScan {
+    match (e) {
+        ExprIdent(id) => { if (id.name == f) { return CFScan { vals: 1, calls: 0 }; } return cf_zero(); },
+        ExprBinary(b) => { return cf_add(cf_arr_scan_expr(b.left, f), cf_arr_scan_expr(b.right, f)); },
+        ExprUnary(u) => { return cf_arr_scan_expr(u.operand, f); },
+        ExprCall(c) => {
+            var acc: CFScan = cf_zero();
+            var indexed_f: boolean = false;
+            match (c.callee) {
+                ExprIndex(ix) => {
+                    match (ix.array) {
+                        ExprIdent(aid) => { if (aid.name == f) { indexed_f = true; acc = cf_add(CFScan { vals: 0, calls: 1 }, cf_arr_scan_expr(ix.index, f)); } },
+                        _ => { }
+                    }
+                },
+                _ => { }
+            }
+            if (!indexed_f) { acc = cf_arr_scan_expr(c.callee, f); }
+            var i: i32 = 0;
+            while (i < c.args.len()) { acc = cf_add(acc, cf_arr_scan_expr(c.args[i], f)); i = i + 1; }
+            return acc;
+        },
+        ExprArray(a) => {
+            var acc: CFScan = cf_zero();
+            var i: i32 = 0;
+            while (i < a.elements.len()) { acc = cf_add(acc, cf_arr_scan_expr(a.elements[i], f)); i = i + 1; }
+            return acc;
+        },
+        ExprTuple(t) => {
+            var acc: CFScan = cf_zero();
+            var i: i32 = 0;
+            while (i < t.elements.len()) { acc = cf_add(acc, cf_arr_scan_expr(t.elements[i], f)); i = i + 1; }
+            return acc;
+        },
+        ExprIndex(ix) => { return cf_add(cf_arr_scan_expr(ix.array, f), cf_arr_scan_expr(ix.index, f)); },
+        ExprSlice(sl) => { return cf_add(cf_arr_scan_expr(sl.array, f), cf_add(cf_arr_scan_expr(sl.start, f), cf_arr_scan_expr(sl.end, f))); },
+        ExprStructLit(sl) => {
+            var acc: CFScan = cf_arr_scan_expr(sl.base, f);
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { acc = cf_add(acc, cf_arr_scan_expr(sl.field_values[i], f)); i = i + 1; }
+            return acc;
+        },
+        ExprFieldAccess(fa) => { return cf_arr_scan_expr(fa.obj, f); },
+        ExprLambda(lm) => { return cf_arr_scan_stmts(lm.body, f); },
+        _ => { return cf_zero(); }
+    }
+    return cf_zero();
+}
+
+function cf_arr_scan_stmt(st: Stmt, f: string): CFScan {
+    match (st) {
+        StmtVar(v) => { return cf_arr_scan_expr(v.init, f); },
+        StmtReturn(r) => { return cf_arr_scan_expr(r.value, f); },
+        StmtExpr(x) => { return cf_arr_scan_expr(x.value, f); },
+        StmtAssign(a) => {
+            var base: CFScan = cf_arr_scan_expr(a.value, f);
+            if (a.target == f) { return cf_add(base, CFScan { vals: 1, calls: 0 }); }
+            return base;
+        },
+        StmtIf(fst) => { return cf_add(cf_arr_scan_expr(fst.cond, f), cf_add(cf_arr_scan_stmts(fst.then_body, f), cf_arr_scan_stmts(fst.else_body, f))); },
+        StmtWhile(w) => { return cf_add(cf_arr_scan_expr(w.cond, f), cf_arr_scan_stmts(w.body, f)); },
+        StmtFor(fr) => { return cf_add(cf_arr_scan_expr(fr.iter, f), cf_arr_scan_stmts(fr.body, f)); },
+        StmtMatch(m) => {
+            var acc: CFScan = cf_arr_scan_expr(m.scrutinee, f);
+            var i: i32 = 0;
+            while (i < m.arms.len()) { acc = cf_add(acc, cf_add(cf_arr_scan_expr(m.arms[i].guard, f), cf_arr_scan_stmts(m.arms[i].body, f))); i = i + 1; }
+            return acc;
+        },
+        StmtDefer(d) => { return cf_arr_scan_stmt(d.action, f); },
+        _ => { return cf_zero(); }
+    }
+    return cf_zero();
+}
+
+function cf_arr_scan_stmts(stmts: Stmt[], f: string): CFScan {
+    var acc: CFScan = cf_zero();
+    var i: i32 = 0;
+    while (i < stmts.len()) { acc = cf_add(acc, cf_arr_scan_stmt(stmts[i], f)); i = i + 1; }
+    return acc;
+}
+
 function cf_inline_fn_body(body: Stmt[], funcs: FuncDecl[]): Stmt[] {
     var out: Stmt[] = body;
     var i: i32 = 0;
@@ -7317,7 +7421,38 @@ function cf_inline_fn_body(body: Stmt[], funcs: FuncDecl[]): Stmt[] {
         }
         if (!handled) { i = i + 1; }
     }
-    return out;
+    // Annotate a `var fns = [<0-arg fn names>]` used ONLY as indexed calls
+    // (`fns[i]()`) as a fn-pointer array (`fn[]`), so the fn[]-array lowering
+    // emits const_func per element instead of const-CALLING each (which makes
+    // `fns[i]()` call an integer as a code pointer → segfault). A value use of
+    // `fns` leaves it as the generic const-called array (the elements are
+    // `mk()` results), so const semantics are unchanged.
+    var res: Stmt[] = [];
+    var j: i32 = 0;
+    while (j < out.len()) {
+        var keep: Stmt = out[j];
+        match (out[j]) {
+            StmtVar(v) => {
+                if (v.type_name.len() == 0) {
+                    match (v.init) {
+                        ExprArray(arr) => {
+                            if (cf_all_zero_arg_fn_elems(arr.elements, funcs) && cf_decl_count(out, v.name) == 1) {
+                                var asc: CFScan = cf_arr_scan_stmts(out, v.name);
+                                if (asc.vals == 0 && asc.calls >= 1) {
+                                    keep = StmtVar { name: v.name, type_name: "fn[]", init: v.init, line: v.line, col: v.col };
+                                }
+                            }
+                        },
+                        _ => { }
+                    }
+                }
+            },
+            _ => { }
+        }
+        res = res.append(keep);
+        j = j + 1;
+    }
+    return res;
 }
 
 pub function inline_callonly_fn_values(mod: Module): Module {

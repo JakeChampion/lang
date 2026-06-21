@@ -251,6 +251,23 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-21 — self-host: a 0-arg fn in an array (`var fns = [mk]; fns[0]()`) no longer segfaults
+
+The array analog of the 0-arg fn-value segfault below: `var fns = [mk]` (mk a
+0-arg fn, no annotation) const-CALLED each element through the generic array
+lowering — storing `mk()`'s result — so `fns[0]()` called an integer as a code
+pointer and crashed (an IR-path miscompile). The existing fn-pointer-array
+lowering (`irlower.fern`, gated on the `fn[]` annotation) already emits
+`const_func` per element, but only fired with an explicit `var fns: fn[]`
+annotation. Fix: the `inline_callonly_fn_values` parser pass now also types a
+`var fns = [<bare 0-arg fn names>]` as `fn[]` when `fns` is used ONLY as indexed
+calls (`fns[i](...)`); a VALUE use of `fns` (e.g. `fns[0] + 1`) leaves it as the
+generic const-called `i32` array, so the const-call interpretation is unchanged.
+A `>0`-arg fn name already lowers to a fn value, so only the 0-arg array case
+needed this. Coverage: `TestSelfHostZeroArgFnValueIRX86_64` gains `array_index_call`,
+`array_two_fns`, and `array_loop_call`, oracle-checked against native. Fixpoint
+stays byte-identical (the compiler source uses no such array bindings).
+
 ### 2026-06-21 — self-host: a 0-arg fn-value (`var f = mk; f()`) no longer segfaults
 
 `var f = mk` where `mk` is a **0-arg** function, then `f()`, **segfaulted** on the
