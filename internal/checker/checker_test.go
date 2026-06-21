@@ -21,6 +21,37 @@ func checkSource(t *testing.T, src string) error {
 	return err
 }
 
+// TestOperatorClassMismatchNoRedundantShareError covers the cascade where an
+// arithmetic/bitwise operator with a wrong-class operand (e.g. a string where
+// an integer is required) stacked TWO E009s: one from the per-operand
+// requireInteger/requireFloat check, then a redundant "both operands must
+// share a … type" follow-on. The follow-on now fires only when both operands
+// ARE the right class but differ in width/signedness — the case where its
+// `use as` hint is actually actionable.
+func TestOperatorClassMismatchNoRedundantShareError(t *testing.T) {
+	count := func(src string) int {
+		err := checkSource(t, src)
+		if err == nil {
+			t.Fatalf("expected a type error for %q, got none", src)
+		}
+		// Each case's only diagnostic is the operator error itself, so the
+		// total diagnostic count is the E009 count.
+		return strings.Count(err.Error(), "type error at")
+	}
+	// One wrong-class operand → exactly one E009 (no redundant "share" line).
+	if n := count(`function main(): i32 { var x: i32 = 1 - "b"; return 0; }`); n != 1 {
+		t.Errorf("int op with string operand: %d E009s, want 1", n)
+	}
+	if n := count(`function main(): i32 { var s: string = "a"; return s & 1; }`); n != 1 {
+		t.Errorf("bitwise op with string operand: %d E009s, want 1", n)
+	}
+	// Both operands the right class but mismatched width/signedness → the
+	// "share a … type" hint is still emitted (it's actionable via `as`).
+	if n := count(`function main(): i32 { var a: i32 = 1; var b: u32 = 2; return a - b; }`); n != 1 {
+		t.Errorf("i32/u32 mismatch: %d E009s, want 1 (the share hint)", n)
+	}
+}
+
 // TestUnknownTypeReported covers E064: a nominal type reference that names
 // no declared type is now flagged at the annotation, instead of being
 // silently accepted (and only surfacing as a confusing E002/E003 cascade,
