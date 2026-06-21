@@ -7636,6 +7636,40 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 },
                 _ => {}
             }
+            // `var x: Option[T]/Result[T,E] = Ok/Some/Err(arg)` with an i64/u64
+            // DECLARED payload: build the 8-byte box (payload at offset 8) every
+            // consumer reads via op_opt_payload_w(64), even when `arg` only infers
+            // i32 (a bare literal `Ok(40)` or i32 var). The expected payload comes
+            // from the annotation, and the slot records the ANNOTATION as its
+            // opt_type so the later `match (x)` reads the matching 8-byte payload —
+            // both sides must agree on offset 8 or the read truncates. Mirrors the
+            // StmtReturn i64-construction path (#3566). Early-return (like map_new):
+            // an Option/Result box is a leak-only pointer needing no array/string/
+            // struct slot marking beyond mark_opt_type.
+            match (v.init) {
+                parser.ExprCall(vc) => {
+                    match (vc.callee) {
+                        parser.ExprIdent(vcid) => {
+                            if (vc.args.len() == 1 && (vcid.name == "Ok" || vcid.name == "Some" || vcid.name == "Err") && v.type_name.len() >= 8 && (v.type_name[0:7] == "Result[" || v.type_name[0:7] == "Option[")) {
+                                var vvar: string = "Ok";
+                                var vtag: i32 = 0;
+                                if (vcid.name == "Err") { vvar = "Err"; vtag = 1; }
+                                var vexp: string = opt_payload_type(v.type_name, vvar);
+                                if (vexp == "i64" || vexp == "u64") {
+                                    var vcs: LowerState = lower_opt_make_payload_exp(vtag, vc.args[0], vexp, s);
+                                    if (!vcs.ok) { return vcs; }
+                                    var vsb: LowerState = vcs.add_local(v.name);
+                                    var vslot: i32 = vsb.slot_of(v.name);
+                                    vsb = vsb.mark_opt_type(vslot, v.type_name);
+                                    return vsb.emit(ir.op_store_local(vslot));
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
             var se: LowerState = lower_expr(v.init, s);
             if (!se.ok) { return se; }
             // Perceus alias-inc + array tracking: a fresh array literal is
