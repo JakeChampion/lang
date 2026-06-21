@@ -5625,20 +5625,39 @@ function me_scrutinee_type(e: Expr, env: MEnv, structs: StructDecl[], funcs: Fun
     return "";
 }
 
-// me_bind_pat_vars binds a match arm's payload variable(s) to `ty` in the
-// arm-body env. For a single-type-param generic enum every variant field is
-// the param `T`, so each binding (the primary plus any extra destructured
-// bindings) takes the scrutinee's single concrete arg — enough for a nested
-// match on the bound value to recover its instantiation.
-function me_bind_pat_vars(pat: Pattern, ty: string, env: MEnv): MEnv {
+// me_bind_pat_vars binds a match arm's payload variable(s) to their concrete
+// types in the arm-body env, so a nested match on a bound value recovers its
+// instantiation. For a single-type-param enum each binding takes the matched
+// variant's declared field type with the param substituted by the scrutinee's
+// one concrete arg (`arg0`): for `Opt[T] { Sm(T) }` the field is `T` → `arg0`,
+// but for `E[U] { A(Opt[U]) }` the field is `Opt[U]` → `Opt[arg0]`, so a nested
+// `match (o)` sees the real `Opt[i32]` rather than a bare `i32`.
+function me_bind_pat_vars(pat: Pattern, ed: EnumDecl, arg0: string, structs: StructDecl[], env: MEnv): MEnv {
     match (pat) {
         PatVariant(pv) => {
+            var simple: string = pv.type_name;
+            var k: i32 = 0;
+            while (k < pv.type_name.len()) {
+                if (pv.type_name[k] == 46) { simple = pv.type_name[k + 1 : pv.type_name.len()]; }
+                k = k + 1;
+            }
+            var vidx: i32 = variant_struct_index(structs, simple, ed.name);
+            if (vidx < 0) { return env; }
+            var fs: StructFieldDecl[] = structs[vidx].fields;
+            var cts: string[] = [arg0];
+            // Ordered payload variables: the primary binding, then extras.
+            var names: string[] = [];
+            if (pv.binding.len() > 0) { names = names.append(pv.binding); }
+            var bi: i32 = 0;
+            while (bi < pv.extra_bindings.len()) {
+                if (pv.extra_bindings[bi].len() > 0) { names = names.append(pv.extra_bindings[bi]); }
+                bi = bi + 1;
+            }
             var e: MEnv = env;
-            if (pv.binding.len() > 0) { e = e.ebind(pv.binding, ty); }
-            var i: i32 = 0;
-            while (i < pv.extra_bindings.len()) {
-                if (pv.extra_bindings[i].len() > 0) { e = e.ebind(pv.extra_bindings[i], ty); }
-                i = i + 1;
+            var ni: i32 = 0;
+            while (ni < names.len() && ni < fs.len()) {
+                e = e.ebind(names[ni], subst_ty(fs[ni].type_name, ed.type_params, cts));
+                ni = ni + 1;
             }
             return e;
         },
@@ -5724,7 +5743,7 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
                         cur = cur.iadd(gi.base, gi.key);
                         if (enums[gidx].type_params.len() == 1) {
                             var arg0: string = genum_single_arg(sty);
-                            if (arg0.len() > 0) { armenv = me_bind_pat_vars(m.arms[i].pattern, arg0, env); }
+                            if (arg0.len() > 0) { armenv = me_bind_pat_vars(m.arms[i].pattern, enums[gidx], arg0, structs, env); }
                         }
                     }
                 }
@@ -5858,7 +5877,16 @@ pub function monomorphize_enums(mod: Module): Module {
                     var nf: StructFieldDecl[] = [];
                     var fj2: i32 = 0;
                     while (fj2 < vs.fields.len()) {
-                        nf = nf.append(StructFieldDecl { name: vs.fields[fj2].name, type_name: subst_ty(vs.fields[fj2].type_name, ed.type_params, cts) });
+                        // Substitute the payload's type params, then mangle a
+                        // resulting generic-enum reference to its clone name and
+                        // enqueue it — a variant whose payload is another generic
+                        // enum in the param (`enum E[U] { A(Opt[U]) }` → after
+                        // subst `A(Opt[i32])`) must reference `Opt__i32` and have
+                        // it cloned (the enqueue extends this worklist). A plain
+                        // payload (`i32`, a struct) passes through unchanged.
+                        var subbed: string = subst_ty(vs.fields[fj2].type_name, ed.type_params, cts);
+                        ins = me_collect_anno(subbed, mod.enums, mod.funcs, ins);
+                        nf = nf.append(StructFieldDecl { name: vs.fields[fj2].name, type_name: me_rewrite_ty(subbed, mod.enums, mod.funcs) });
                         fj2 = fj2 + 1;
                     }
                     cl_structs = cl_structs.append(StructDecl { name: vn0 + "__" + key, fields: nf, type_params: [], line: vs.line, col: vs.col, enum_owner: mname });
