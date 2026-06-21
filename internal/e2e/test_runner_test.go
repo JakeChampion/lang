@@ -260,6 +260,24 @@ func TestRunnerUrlExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/csv_test.fern` covers std/csv's RFC 4180 single-line
+// surface — csv_escape (quote-wrap on comma / quote / newline, interior
+// quotes doubled), csv_join (escape then comma-join) and csv_parse_line
+// (split, quoted-field commas, "" → " decode). Passing suite → exit 0.
+func TestRunnerCsvExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/csv_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/csv", "# pass 12", "# fail 0", "1..12"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/runner_self_test.fern` is the runner's own
 // meta-test — confirms that every assertion helper returns the
 // expected TestOutcome shape on both pass and fail paths.
