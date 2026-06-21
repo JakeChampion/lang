@@ -10298,6 +10298,19 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		var sub map[string]ast.Type
 		if len(sd.TypeParams) > 0 {
 			sub = make(map[string]ast.Type, len(sd.TypeParams))
+			// Seed the type-arg substitution from an explicit destination
+			// type (`var b: Box[i32] = Box { v: … }`) so each field is
+			// checked against the concrete instantiation instead of a free
+			// parameter. Without this a field mismatch (`v: "x"` for a
+			// Box[i32]) unifies the parameter to the wrong type, slips past
+			// this check, and only surfaces at monomorph re-check as a
+			// confusing "compiler bug" — the verdict monomorph already
+			// reaches, just earlier and as a proper E043.
+			if et, ok := c.expectedType.(ast.StructType); ok && et.Name == sd.Name && len(et.Args) == len(sd.TypeParams) {
+				for i, tp := range sd.TypeParams {
+					sub[tp] = et.Args[i]
+				}
+			}
 		}
 		// Struct-update literal `Foo { ...base, field: v }`: the base
 		// must have this struct's type, and supplies every field the
@@ -10357,7 +10370,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			vt = c.maybeWrapForUnion(expected, &n.Fields[i].Value, vt, s)
 			if sub != nil {
 				if !c.unifyType(expected, vt, sub) {
-					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s", f.Name, expected, vt)
+					// Show the substituted field type (`i32`) rather than the
+					// bare parameter (`T`) when the instantiation is known —
+					// e.g. seeded from a `Box[i32]` destination.
+					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s", f.Name, substituteType(expected, sub), vt)
 				}
 			} else if !ast.Equal(vt, expected) {
 				// Allow the polymorphic / argless-enum vs
