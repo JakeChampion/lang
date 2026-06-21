@@ -82,6 +82,26 @@ function main(): i32 {
   if (v != 0) { return 7; }
   return 2;
 }`, 7},
+		// Map with HEAP-allocated string values — the arm64-darwin
+		// >4 GiB pointer-truncation regression guard (docs/BACKEND-PARITY.md
+		// "Known limitations"). The keys/values are built by concat (`"a" +
+		// "b"`), so they live on the heap, which macOS-14+ maps above 4 GiB —
+		// where a 32-bit Map value slot truncated the pointer and the lookup
+		// read garbage. The core/map runtime is now usize-pointered
+		// throughout, so the values round-trip; exit 42 proves it. (On
+		// Linux/x86 the heap is low so this passes trivially — it only
+		// exercises the truncation on a real Apple Silicon runner.)
+		{"map_heap_string_values", `
+import "core/map";
+function main(): i32 {
+  var m: Map[string, string] = map_new(8);
+  m = m.insert("key" + "_one", "value" + "_one");
+  m = m.insert("key" + "_two", "value" + "_two");
+  if (m.get_or("key_one", "x") != "value_one") { return 1; }
+  if (m.get_or("key_two", "x") != "value_two") { return 2; }
+  if (m.len() != 2) { return 3; }
+  return 42;
+}`, 42},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
