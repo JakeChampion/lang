@@ -126,15 +126,25 @@ colorless-await payoff. Probed under wasm-tools 1.240 + wasmtime 37:
 
 So the epic is tooling-feasible. The work, smallest-first:
 
-1. **Spike the await state machine in WAT** end to end: a consumer
-   component that imports `dep: async func() -> u32`, lowers it async
-   (with memory), calls it (the lowered call returns either the value
-   inline or a subtask handle + "pending"), and on pending runs
-   `waitable-set.new` → register the subtask → `waitable-set.wait` →
-   read the result, then `task.return`s it. Compose it with the async
-   *export* provider from this doc (two-component link) and run under
-   `wasmtime -W component-model-async,component-model-async-stackful`.
-   Decode the exact bytes (as was done for the export side).
+1. **Spike the await state machine — DONE (sync case), proven end to
+   end.** A self-contained **nested-component** component (provider
+   nested inside consumer — no `wac`, no `wasm-tools compose`): the
+   consumer imports the nested `dep: async func() -> u32`, lowers it
+   `async` with a memory option, calls it, reads the result from the
+   return area, and `task.return`s it; lifted `async` as `run`. Runs
+   under `wasmtime -W component-model-async,component-model-async-stackful
+   --invoke 'run()'` → **42**. Key findings: (a) the `async` lower
+   **requires** the `memory` option; (b) the `memory`-option
+   **circularity** (the lower needs the user module's memory before the
+   module is instantiated) is sidestepped in the spike by externalizing
+   memory into a shared core instance — the real composer reuses its
+   existing memory-trampoline machinery (the same one P2 `gMem`
+   lowerings use); (c) for a **synchronously-completing** import the
+   lowered call writes the result inline and **no `waitable-set` loop is
+   needed** — only a *pending* import needs `waitable-set.wait`. The
+   `canon lower async` encoding is decoded and now emitted by
+   `component.PutCanonSectionLowerAsync` (`[async 0x06, memory 0x03]`),
+   byte-verified against the spike (`TestPutCanonSectionLowerAsync_Bytes`).
 2. **Composer**: a `BuildAsyncLowerImport` path emitting `canon lower
    async` + the memory option + the waitable wiring; thread the imported
    async func through the existing import-composition machinery.
