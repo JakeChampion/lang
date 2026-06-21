@@ -251,6 +251,33 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-21 — self-host IR: a user function shadowing a builtin name (`len` / `chr` / …) is now called, not intercepted ([#3710](https://github.com/JakeChampion/lang/issues/3710))
+
+`irlower`'s `ExprCall` arm intercepts a bare-ident call by NAME for the builtin
+free-call spellings (`len` / `exit` / `chr` / `i32_to_string` / `str_to_i32` /
+the `str_*` predicates / `Some` / `Ok` / `print` / … ~45 of them). The `len`
+intercept's comment claimed the name "never shadows a user function" — false:
+native + interp resolve `len(x)` to a user-defined `len` when one exists, so a
+program with `function len(l: L): i32` (e.g. a recursive list length) had every
+`len(t)` call mis-lowered as `op_arr_len` on the (non-array) enum box → read 0
+instead of calling the function.
+
+Fix: thread a `fn_names` registry (every free function's name) into `LowerState`
+— built where the `*_ret_fns` registries are, mirroring them — and gate the
+WHOLE builtin-name intercept block on `!s.is_user_fn(cid.name)`. A bare call
+whose name is a module function now falls through to the ordinary direct-call
+lowering, matching native/interp. Closes the latent shadowing bug for every
+intercepted builtin, not just `len`. Locals/closures already shadowed (checked
+above the intercepts); this extends the same precedence to functions.
+
+Fixpoint-safe: the compiler's own builtin calls use qualified/mangled names
+(`util__i32_to_string`), never the bare builtin spelling, so the intercepts stay
+live when compiling the compiler — both x86-64 self-host fixpoints re-verified
+**byte-identical** (`mmc == gen1 == gen2`, 28144464 B; `mmc == gen2 == gen3`,
+22560339 B). Coverage: `TestSelfHostUserFnShadowsBuiltinIR{X86_64,Wasm}` — a
+user `len` over an enum (the repro → 3), a user `chr` (→ 42), and a user
+`str_index_of` (→ 42), each routing-pinned to `ir` and oracle-checked.
+
 ### 2026-06-21 — std/option + std/result: more combinators (`map_or` / `is_*_and` / `or` / `and`) ([#2691](https://github.com/JakeChampion/lang/issues/2691))
 
 `std/option` already shipped `is_some`/`map`/`and_then`/`filter`/`unwrap_or`/…
