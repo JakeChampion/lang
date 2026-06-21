@@ -1831,10 +1831,46 @@ pub function (s: EmitState) need(name: string): EmitState {
 // (End goal: when the runtime moves into Fern — issue #2649 — this table and
 // close_needs disappear, replaced by the real call graph + the deadcode pass.)
 pub function runtime_need_deps(name: string): string[] {
+    // Heap-only deps: the helper's body `call __fern_alloc`s (directly or via
+    // __fern_arr_box / a result-box alloc), so marking it pulls in "heap".
+    // Note strbuf: the strbuf bundle is emitted as a unit gated on the single
+    // "strbuf" need, and __fern_strbuf_take in it allocates the drained string's
+    // box via __fern_alloc — so ANY strbuf use (even reset/append-only) needs the
+    // heap, even though only take allocates.
+    var heap: string[] = ["heap"];
+    if (name == "str_concat" || name == "str_read_line" || name == "i32_to_string"
+        || name == "chr" || name == "args" || name == "read_file" || name == "random_bytes"
+        || name == "str_from_bytes" || name == "alloc_u8" || name == "strbuf"
+        || name == "arr_push" || name == "arr_slice" || name == "arr_reverse"
+        || name == "arr_concat" || name == "str_chars" || name == "str_bytes"
+        || name == "str_split" || name == "str_case" || name == "str_repeat"
+        || name == "str_trim" || name == "str_reverse" || name == "str_replace") {
+        return heap;
+    }
     if (name == "maps") {
         // __fern_map_set calls __fern_str_eq (string-key path) and __fern_arr_push.
         var d: string[] = ["str_eq", "arr_push", "heap"];
         return d;
+    }
+    if (name == "arr_push_owned") {
+        // The sole-owner reclaim-on-grow append shares __fern_arr_push's grow path.
+        var d2: string[] = ["arr_push"];
+        return d2;
+    }
+    if (name == "arr_str_index_of") {
+        // Linear scan comparing string elements with __fern_str_eq.
+        var d3: string[] = ["str_eq"];
+        return d3;
+    }
+    if (name == "arr_str_join") {
+        // Joins with a separator via __fern_str_concat (which itself needs heap).
+        var d4: string[] = ["heap", "str_concat"];
+        return d4;
+    }
+    if (name == "str_lines") {
+        // __fern_str_lines splits on '\n' by calling __fern_str_split.
+        var d5: string[] = ["heap", "str_split"];
+        return d5;
     }
     var none: string[] = [];
     return none;
