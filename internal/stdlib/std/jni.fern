@@ -22,9 +22,9 @@ pub function method_ptr(env: usize, index: i32): usize {
     return __load_ptr(table + (index * 8) as usize); // table[index] (8-byte slots)
 }
 
-// call0 / call1 / call2 invoke JNIEnv method `index` with `env` as the
-// implicit first argument plus 0 / 1 / 2 further arguments, returning the
-// method's result (usize; 0/ignored for void methods). The JVM's varargs
+// call0 / call1 / call2 / call3 invoke JNIEnv method `index` with `env` as
+// the implicit first argument plus 0 / 1 / 2 / 3 further arguments, returning
+// the method's result (usize; 0/ignored for void methods). The JVM's varargs
 // CallXxxMethod entries aren't covered here — fixed-arity methods only.
 pub function call0(env: usize, index: i32): usize {
     return __c_call1(method_ptr(env, index), env);
@@ -34,6 +34,9 @@ pub function call1(env: usize, index: i32, a0: usize): usize {
 }
 pub function call2(env: usize, index: i32, a0: usize, a1: usize): usize {
     return __c_call3(method_ptr(env, index), env, a0, a1);
+}
+pub function call3(env: usize, index: i32, a0: usize, a1: usize, a2: usize): usize {
+    return __c_call4(method_ptr(env, index), env, a0, a1, a2);
 }
 
 // Well-known JNINativeInterface method indices (subset). Index helpers
@@ -69,6 +72,11 @@ pub function find_class(env: usize, name: usize): usize {
 // jclass (*GetObjectClass)(JNIEnv*, jobject obj)
 pub function get_object_class(env: usize, obj: usize): usize {
     return call1(env, 31, obj);
+}
+
+// jmethodID (*GetMethodID)(JNIEnv*, jclass clazz, const char* name, const char* sig)
+pub function get_method_id(env: usize, clazz: usize, name: usize, sig: usize): usize {
+    return call3(env, GET_METHOD_ID(), clazz, name, sig);
 }
 
 // jstring (*NewStringUTF)(JNIEnv*, const char* bytes)

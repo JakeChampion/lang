@@ -272,35 +272,42 @@ func TestSharedLibX86CCallFFI(t *testing.T) {
 	if runtime.GOARCH != "amd64" {
 		t.Skip("host is not amd64")
 	}
-	// run0(env,cls,cb) calls cb(); run1(env,cls,cb,x) calls cb(x).
+	// run0(env,cls,cb) calls cb(); run1 calls cb(x); run4 calls cb(a,b,c,d)
+	// — run4 exercises __c_call4's 4-arg slide (the r8 register).
 	src := `function run0(env: usize, cls: usize, cb: usize): i32 { return __c_call0(cb) as i32; }
 function run1(env: usize, cls: usize, cb: usize, x: usize): i32 { return __c_call1(cb, x) as i32; }
+function run4(env: usize, cls: usize, cb: usize, a: usize, b: usize, c: usize, d: usize): i32 { return __c_call4(cb, a, b, c, d) as i32; }
 function main(): i32 { return 0; }`
-	asm := compileToX86AsmExports(t, src, []string{"run0", "run1"})
-	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, []string{"run0", "run1"})
+	exps := []string{"run0", "run1", "run4"}
+	asm := compileToX86AsmExports(t, src, exps)
+	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exps)
 	if err != nil {
 		t.Fatalf("AssembleProgramShared: %v", err)
 	}
 	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs),
-		[]nativeelf.Export{{Name: "run0", Value: ev["run0"]}, {Name: "run1", Value: ev["run1"]}}, "libfern.so")
+		[]nativeelf.Export{{Name: "run0", Value: ev["run0"]}, {Name: "run1", Value: ev["run1"]}, {Name: "run4", Value: ev["run4"]}}, "libfern.so")
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// run0(forty_two)=42 ; run1(dbl,21)=42 — both must come back 42.
+	// run0(forty_two)=42 ; run1(dbl,21)=42 ; run4(sum4,10,11,9,12)=42.
 	loader := `#include <dlfcn.h>
 #include <stdio.h>
 static long forty_two(void){ return 42; }
 static long dbl(long x){ return x*2; }
+static long sum4(long a, long b, long c, long d){ return a+b+c+d; }
 int main(int c, char**v){
   void*h=dlopen(v[1],RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
   int(*r0)(long,long,long)=(int(*)(long,long,long))dlsym(h,"run0"); if(!r0)return 101;
   int(*r1)(long,long,long,long)=(int(*)(long,long,long,long))dlsym(h,"run1"); if(!r1)return 102;
+  int(*r4)(long,long,long,long,long,long,long)=(int(*)(long,long,long,long,long,long,long))dlsym(h,"run4"); if(!r4)return 103;
   int a=r0(0,0,(long)&forty_two);
   int b=r1(0,0,(long)&dbl,21);
+  int d=r4(0,0,(long)&sum4,10,11,9,12);
   if(a!=42){fprintf(stderr,"run0=%d\n",a);return 1;}
   if(b!=42){fprintf(stderr,"run1=%d\n",b);return 2;}
+  if(d!=42){fprintf(stderr,"run4=%d\n",d);return 3;}
   return 42;
 }`
 	cPath := filepath.Join(dir, "loader.c")
@@ -443,5 +450,66 @@ int main(int c, char** v){
 	out, _ := cmd.CombinedOutput()
 	if code := cmd.ProcessState.ExitCode(); code != 42 {
 		t.Fatalf("typed wrappers dispatch = %d, want 42 (out=%q)", code, out)
+	}
+}
+
+// TestStdJNIGetMethodId validates the env+3-arg path: jni.get_method_id ->
+// call3 -> __c_call4, dispatching to JNINativeInterface slot 33 (GetMethodID)
+// with all three real arguments (clazz, name, sig) preserved through the FFI
+// shim's arg slide. The fake slot sums its three args, so a result of 42
+// proves none was dropped or clobbered.
+func TestStdJNIGetMethodId(t *testing.T) {
+	gcc, err := exec.LookPath("gcc")
+	if err != nil {
+		t.Skip("gcc not on PATH")
+	}
+	if runtime.GOARCH != "amd64" {
+		t.Skip("host is not amd64")
+	}
+	src := `import "std/jni";
+function probe_gmid(env: usize, cls: usize, jenv: usize, a0: usize, a1: usize, a2: usize): i32 {
+    return jni.get_method_id(jenv, a0, a1, a2) as i32;
+}
+function main(): i32 { return 0; }`
+	exps := []string{"probe_gmid"}
+	asm := compileToX86AsmExports(t, src, exps)
+	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exps)
+	if err != nil {
+		t.Fatalf("AssembleProgramShared: %v", err)
+	}
+	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs),
+		[]nativeelf.Export{{Name: "probe_gmid", Value: ev["probe_gmid"]}}, "libfern.so")
+	dir := t.TempDir()
+	soPath := filepath.Join(dir, "libfern.so")
+	if err := os.WriteFile(soPath, so, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// table[33] = GetMethodID(env, clazz, name, sig) = clazz + name + sig.
+	// probe_gmid(0,0,env,10,20,12) -> get_method_id(env,10,20,12) -> 42.
+	loader := `#include <dlfcn.h>
+#include <stdio.h>
+static long gmid(void* env, long a, long b, long c){ (void)env; return a + b + c; }
+int main(int c, char** v){
+  void* h = dlopen(v[1], RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
+  void* table[256] = {0};
+  table[33] = (void*)gmid;  /* GetMethodID */
+  void* tptr = table; void* env = &tptr;
+  int (*pg)(long,long,long,long,long,long) = (int(*)(long,long,long,long,long,long)) dlsym(h, "probe_gmid");
+  if(!pg) return 101;
+  if(pg(0,0,(long)env,10,20,12) != 42) return 1;
+  return 42;
+}`
+	cPath := filepath.Join(dir, "loader.c")
+	if err := os.WriteFile(cPath, []byte(loader), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ld := filepath.Join(dir, "loader")
+	if out, err := exec.Command(gcc, cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
+		t.Fatalf("gcc loader: %v\n%s", err, out)
+	}
+	cmd := exec.Command(ld, soPath)
+	out, _ := cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 42 {
+		t.Fatalf("get_method_id dispatch = %d, want 42 (out=%q)", code, out)
 	}
 }

@@ -1756,15 +1756,15 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.NumberType{},
 	}
-	// `__c_call0..3(fn, args...)` — call a C-ABI function pointer `fn` with
-	// up to three integer/pointer arguments, returning its result. The
+	// `__c_call0..4(fn, args...)` — call a C-ABI function pointer `fn` with
+	// up to four integer/pointer arguments, returning its result. The
 	// arguments and result are usize (a raw machine word). This is the FFI
 	// primitive for talking to C: a JNIEnv method (loaded from the env's
 	// function table) or an NDK callback is just a function pointer invoked
 	// with the System V / AAPCS64 integer-arg convention. The codegen emits
 	// a tiny shim that re-shuffles Fern's arg registers into the C ABI and
 	// tail-calls fn.
-	for n, params := range map[string]int{"__c_call0": 1, "__c_call1": 2, "__c_call2": 3, "__c_call3": 4} {
+	for n, params := range map[string]int{"__c_call0": 1, "__c_call1": 2, "__c_call2": 3, "__c_call3": 4, "__c_call4": 5} {
 		ps := make([]ast.Type, params)
 		for i := range ps {
 			ps[i] = usizeT

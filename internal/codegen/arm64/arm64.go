@@ -5917,7 +5917,7 @@ type generator struct {
 	usesMemcpy bool
 	// usesCCall[n] gates the `__c_call<n>` FFI shim (call a C-ABI function
 	// pointer with n integer args). See emitCCallRuntime.
-	usesCCall  [4]bool
+	usesCCall  [5]bool
 	usesStrcmp bool
 	// usesTcp pulls in the full TCP socket runtime
 	// (__fern_tcp_listen / __fern_tcp_accept / __fern_tcp_recv
@@ -8431,6 +8431,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesCCall[2] = true
 		case "__c_call3":
 			g.usesCCall[3] = true
+		case "__c_call4":
+			g.usesCCall[4] = true
 		case "__memcpy":
 			target = "__fern_memcpy"
 			g.usesMemcpy = true
