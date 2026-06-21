@@ -391,6 +391,10 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_alloc")
 					needs.add("__network_handle")
 					needs.add("__fern_tcp_connect")
+				case "__fern_tcp_pollable":
+					// (conn) → i32 — the connection's readiness
+					// pollable for reactor fan-out.
+					needs.add("__fern_tcp_pollable")
 				case "__fern_tcp_recv":
 					// (conn, max) → (data, len) — heap-form
 					// string with the bytes read. Empty on
@@ -1348,6 +1352,15 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildTcpConnectBody,
+	},
+	"__fern_tcp_pollable": {
+		// (conn: i32) → i32 — a wasi:io/poll pollable for the
+		// connection (tcp-socket.subscribe), so std/wasm_reactor can
+		// multiplex N connections for overlapped outbound fan-out.
+		// See buildTcpPollableBody.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildTcpPollableBody,
 	},
 	"__fern_tcp_recv": {
 		// (conn: i32, max: i32) → (data, len) heap-form

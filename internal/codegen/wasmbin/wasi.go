@@ -1357,6 +1357,9 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		in.add("wasi_io_pollable_block")
 		in.add("wasi_io_pollable_drop")
 	}
+	if helpers.set["__fern_tcp_pollable"] {
+		in.add("wasi_sockets_tcp_subscribe")
+	}
 	if helpers.set["__fern_tcp_recv"] {
 		in.add("wasi_io_blocking_read")
 	}

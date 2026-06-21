@@ -169,17 +169,32 @@ outbound fetch). The server path is unaffected (the connect instance
 type is a superset; its server method indices 0-21 are unchanged, and
 the connect lowerings are gated).
 
-## Remaining: overlapped outbound fan-out
+## UPDATE — overlapped outbound fan-out lands (the wasm reactor is complete)
 
-The one piece left for the full edge story is **overlapped** outbound
-fan-out — N connections in flight, multiplexed through the reactor (the
-wasm analog of native `TestReactorFanoutBodies`). The blocking
-`tcp_connect` + `tcp_recv` above are synchronous; overlapping them needs
-(a) exposing a connection's `subscribe` → pollable to Fern (e.g.
-`tcp_pollable(conn)`), and (b) a NON-blocking recv (the current
-`tcp_recv` blocks internally). Then `std/wasm_reactor.run`/`select` over
-the connection pollables gives the fan-out. The connect primitive +
-resource-aware composition are done; this is the next slice.
+`tcp_pollable(conn)` exposes a connection's readiness pollable
+(`tcp-socket.subscribe`, already composed) to Fern, and
+`std/wasm_reactor.run`/`select` multiplexes N connection pollables
+through `wasm_poll` — the wasm analog of native `TestReactorFanoutBodies`.
+No NON-blocking recv was needed: the wasm `tcp_recv` uses
+`input-stream.blocking-read`, which returns immediately once the reactor's
+`wasm_poll` reports the connection readable (verified empirically that
+`tcp-socket.subscribe` fires on incoming data under wasmtime, so no
+io/streams `input-stream.subscribe` extension was required).
+
+Verified end-to-end (`TestWasmReactorOutboundFanout`): two overlapped
+outbound fetches (a 200ms-slow upstream as task 0, a 10ms-fast one as
+task 1) both come back via `wasm_reactor.run`, in **task order**
+regardless of completion order, and the whole fan-out is bounded by the
+slow upstream (~200ms), not the sum — real concurrent I/O on the edge
+target.
+
+**The wasm reactor is complete end to end:** primitives (timer, block,
+poll, drop) + standalone resource-aware composition + the
+`Step[T]`/`run`/`run_deadline`/`select` scheduler + outbound TCP
+(`tcp_connect` / `tcp_pollable`) → overlapped outbound fetch fan-out,
+all on the stock wasmtime (Preview 2 pollables). Future direction:
+WASI Preview 3 native async (docs/WASI-PREVIEW3-ASYNC-PLAN.md), gated on
+a wasmtime/CI bump.
 
 The ABI groundwork (the historically fiddly part) is done — verified by
 `wasm-tools print` of a compiled server component. The

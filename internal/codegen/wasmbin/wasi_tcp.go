@@ -400,6 +400,22 @@ func buildTcpConnectBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
+// buildTcpPollableBody assembles __fern_tcp_pollable.
+//
+// Signature: (conn: i32) → i32
+//
+// Returns a wasi:io/poll pollable for the connection's tcp-socket
+// (mem[conn+0]) via tcp-socket.subscribe — the handle std/wasm_reactor
+// multiplexes through wasm_poll for overlapped outbound fan-out.
+func buildTcpPollableBody(idxs map[string]uint32) []byte {
+	subscribe := idxs["wasi_sockets_tcp_subscribe"]
+	var body []byte
+	body = inst.InstLocalGet(body, 0)     // $conn
+	body = memory.InstI32Load(body, 2, 0) // tcp-socket @ conn+0
+	body = inst.InstCall(body, subscribe) // → pollable handle
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
 // buildTcpAcceptBody assembles __fern_tcp_accept.
 //
 // Signature: (listener: i32) → i32 — heap pointer to a fresh
