@@ -21,6 +21,44 @@ func checkSource(t *testing.T, src string) error {
 	return err
 }
 
+// TestGenericStructLitFieldCheckedAgainstDestination covers a generic struct
+// literal whose field value conflicts with an explicit destination
+// instantiation — `var b: Box[i32] = Box { v: "x" }`. The field used to be
+// checked only against the free parameter `T` (which unified to `string`), so
+// the mismatch slipped past the checker and crashed monomorph re-check with a
+// confusing "compiler bug". The destination now seeds the type-arg
+// substitution, so it's a clean E043 at check time — while genuinely valid
+// instantiations and unannotated inference still pass.
+func TestGenericStructLitFieldCheckedAgainstDestination(t *testing.T) {
+	mustErr := func(src, want string) {
+		t.Helper()
+		err := checkSource(t, src)
+		if err == nil {
+			t.Errorf("expected an error for %q, got none", src)
+			return
+		}
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("for %q: want error containing %q, got: %v", src, want, err)
+		}
+	}
+	mustOK := func(src string) {
+		t.Helper()
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("expected no error for %q, got: %v", src, err)
+		}
+	}
+	// Mismatch is caught at check time with the substituted type in the
+	// message (`i32`, not the bare `T`), not deferred to monomorph.
+	mustErr(`struct Box[T] { v: T } function main(): i32 { var b: Box[i32] = Box { v: "x" }; return b.v; }`,
+		`field "v": expected i32, got string`)
+	mustErr(`struct Pair[A, B] { a: A, b: B } function main(): i32 { var p: Pair[i32, string] = Pair { a: "x", b: 1 }; return 0; }`,
+		`field "a": expected i32, got string`)
+	// Valid instantiations and unannotated inference are unaffected.
+	mustOK(`struct Box[T] { v: T } function main(): i32 { var b: Box[i32] = Box { v: 5 }; return b.v; }`)
+	mustOK(`struct Box[T] { v: T } function main(): i32 { var b: Box[string] = Box { v: "x" }; return b.v.len(); }`)
+	mustOK(`struct Box[T] { v: T } function main(): i32 { var b = Box { v: "x" }; return 0; }`)
+}
+
 // TestOperatorClassMismatchNoRedundantShareError covers the cascade where an
 // arithmetic/bitwise operator with a wrong-class operand (e.g. a string where
 // an integer is required) stacked TWO E009s: one from the per-operand
