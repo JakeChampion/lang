@@ -251,6 +251,29 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-21 — self-host: a 0-arg fn-value (`var f = mk; f()`) no longer segfaults
+
+`var f = mk` where `mk` is a **0-arg** function, then `f()`, **segfaulted** on the
+self-host compiler (an IR-path miscompile for an i32 return — it even routed
+`ir` — and an AST one for a struct return). Root cause: the self-host's "a bare
+0-arg receiver-less fn name is a CALL to it" rule (the `const` rule, #2954)
+lowered `var f = mk` to `var f = mk()`, binding the RESULT, so the later `f()`
+called a non-function. The native compiler treats it as a function value.
+Fix: a new parser pass `inline_callonly_fn_values` (run in `module_with_builtins`,
+so BOTH the IR and AST self-host paths get it) recognises a local bound to a bare
+0-arg fn name and used ONLY as a call target, and inlines it — drops the binding
+and rewrites every `f(args)` to `mk(args)` (a 0-arg fn-value called is exactly
+its direct call evaluated at each call site, matching native). A `const` (or any
+0-arg fn) bound to a var and used as a VALUE (`var f = K; f + 1`) is left as a
+const-call, so const semantics are unchanged. Coverage:
+`TestSelfHostZeroArgFnValueIRX86_64` — i32 return, struct return, called-twice,
+loop-call, a >0-arg fn-value, and the const-as-value soundness case — each
+oracle-checked against the native interpreter. Self-host fixpoint stays
+byte-identical (`TestSelfHostModloadFixpointX86_64`): the compiler source uses no
+such bindings, so the pass is a no-op on the fixpoint corpus. (The deeper
+first-class-closure-VALUE cases — a *capturing* closure passed as an argument or
+returned capturing a closure param, #3445 — remain on the AST path.)
+
 ### 2026-06-21 — self-host IR: a closure that calls another local closure now lifts
 
 A local closure whose body CALLS another local closure — `var add = fn(a){…};
