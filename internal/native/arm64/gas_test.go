@@ -297,3 +297,41 @@ func gnuAsText(t *testing.T, as, objcopy, src string) []byte {
 	}
 	return b
 }
+
+// TestAddSubSPRegister pins `add/sub sp, sp, <reg>` to the EXTENDED-register
+// form. Register number 31 means SP only in the extended-register encoding;
+// the shifted-register form (ADDreg/SUBreg) treats 31 as XZR, so a
+// `sub sp, sp, x16` assembled as shifted-register becomes `sub xzr, xzr, x16`
+// (`neg xzr, x16`) — a no-op that never moves SP. Large stack frames
+// (> 4095 bytes) emit exactly this register-form frame adjust, so the bug left
+// the frame unallocated and the operand stack overran the locals (issue #3598).
+// Known encodings (extended-register, UXTX #0):
+//
+//	sub sp, sp, x16 = 0xcb3063ff   add sp, sp, x16 = 0x8b3063ff
+//	sub sp, sp, x9  = 0xcb2963ff   add sp, x0, x1  = 0x8b21601f (Rn=x0, Rd=sp)
+//
+// A non-SP `sub x0, x0, x1` must stay the shifted-register form (0xcb010000).
+func TestAddSubSPRegister(t *testing.T) {
+	cases := []struct {
+		asm  string
+		want uint32
+	}{
+		{"\tsub sp, sp, x16\n", 0xcb3063ff},
+		{"\tadd sp, sp, x16\n", 0x8b3063ff},
+		{"\tsub sp, sp, x9\n", 0xcb2963ff},
+		{"\tadd sp, x0, x1\n", 0x8b21601f},
+		// Non-SP operands keep the shifted-register form.
+		{"\tsub x0, x0, x1\n", 0xcb010000},
+		{"\tadd x0, x0, x1\n", 0x8b010000},
+	}
+	for _, c := range cases {
+		got, err := arm64.Assemble(c.asm)
+		if err != nil {
+			t.Fatalf("Assemble(%q): %v", c.asm, err)
+		}
+		want := arm64.Put(nil, c.want)
+		if !bytes.Equal(got, want) {
+			t.Errorf("%q: got % x, want % x", c.asm, got, want)
+		}
+	}
+}

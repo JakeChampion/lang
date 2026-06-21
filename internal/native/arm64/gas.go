@@ -431,6 +431,27 @@ func asmAddSub(a *Assembler, mnem string, ops []string) error {
 		}
 		return nil
 	}
+	// `add/sub sp, ...` with a plain register operand: register number 31
+	// denotes SP only in the EXTENDED-register form. The shifted-register
+	// form (ADDreg/SUBreg) treats 31 as XZR, so it silently turns
+	// `sub sp, sp, x16` into `sub xzr, xzr, x16` (`neg xzr, x16`) — a no-op
+	// that never adjusts SP. Large stack frames (> 4095 bytes, e.g. the
+	// self-host `lower_stmt`) materialise the frame size in a register and
+	// emit `sub sp, sp, x16` / `add sp, sp, x16`; encoded as shifted-register
+	// the frame was never allocated, so the operand-stack push/pops overran
+	// the locals and corrupted them (issue #3598). Route SP-targeting plain-
+	// register add/sub through the extended form with UXTX (a 64-bit no-op
+	// extension), which encodes 31 as SP. Keyed on the operand SPELLING, since
+	// "sp" and "xzr" share register number 31.
+	if isSPReg(ops[0]) || isSPReg(ops[1]) {
+		const uxtx = 3
+		if mnem == "add" {
+			a.Emit(ADDextReg(rd, rn, rm, uxtx, 0))
+		} else {
+			a.Emit(SUBextReg(rd, rn, rm, uxtx, 0))
+		}
+		return nil
+	}
 	if mnem == "add" {
 		a.Emit(clearSF(ADDreg(rd, rn, rm), w))
 	} else {
@@ -438,6 +459,11 @@ func asmAddSub(a *Assembler, mnem string, ops []string) error {
 	}
 	return nil
 }
+
+// isSPReg reports whether an operand is spelled "sp" (register 31 as the
+// stack pointer). "sp" and "xzr"/"wzr" share register number 31, so SP-vs-XZR
+// must be distinguished by spelling, not by the parsed register number.
+func isSPReg(op string) bool { return strings.TrimSpace(op) == "sp" }
 
 // parseRegShift parses a register-shift operand like "lsl #3" into a
 // shift-type selector (0=LSL, 1=LSR, 2=ASR) and amount.
