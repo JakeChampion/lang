@@ -1236,6 +1236,32 @@ pub function is_leaksafe_opt_field(t: string): boolean {
     return false;
 }
 
+// opt_payload_ok_d: an Option/Result payload type is admissible for a leak-safe
+// struct field when it is a leak-safe scalar/string OR a leak-safe STRUCT (a
+// leak-only pointer in one slot, offset 8 — exactly what the match lowering's
+// ptag_is_struct branch reads). Enum payloads are deliberately excluded: the
+// legacy AST backend miscompiles an `Option[enum]` struct field (it segfaults),
+// so admitting it to the IR path would route a backend-buggy shape.
+function opt_payload_ok_d(structs: parser.StructDecl[], p: string): boolean {
+    if (is_leaksafe_payload(p)) { return true; }
+    if (decl_is_struct(structs, p) && decl_is_leaksafe(structs, p)) { return true; }
+    return false;
+}
+
+// is_leaksafe_opt_field_d is the structs-aware variant of is_leaksafe_opt_field:
+// it additionally admits an Option[Struct] / Result[Struct, …] field whose struct
+// payload is itself leak-safe (the construction + match lowering already handle
+// it on every backend; only this eligibility predicate forced such fields to AST).
+pub function is_leaksafe_opt_field_d(structs: parser.StructDecl[], t: string): boolean {
+    var n: i32 = t.len();
+    if (n < 9) { return false; }
+    if (t[0:7] == "Option[") { return opt_payload_ok_d(structs, opt_payload_type(t, "Some")); }
+    if (t[0:7] == "Result[") {
+        return opt_payload_ok_d(structs, opt_payload_type(t, "Ok")) && opt_payload_ok_d(structs, opt_payload_type(t, "Err"));
+    }
+    return false;
+}
+
 // tuple_type_elem_tag parses a tuple type string "(t0, t1, …)" → element n's tag
 // (top-level-comma split, so nested brackets don't confuse it), or "" if not a
 // tuple / n is out of range.
@@ -1440,7 +1466,7 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
                 // read loads at the default 32-bit width; a sub-word cast wraps the
                 // value before the store). u64 / f32 are NOT added: they need real
                 // 64-bit / float width handling, so they keep the struct on AST.
-                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || t == "f32" || t == "float" || t == "u64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field(t) || is_leaksafe_tuple_field(t) || is_map_type_name(t)) {
+                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || t == "f32" || t == "float" || t == "u64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field_d(structs, t) || is_leaksafe_tuple_field(t) || is_map_type_name(t)) {
                     fi = fi + 1;
                     continue;
                 }
@@ -1484,7 +1510,7 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
                     // `Option[T]` is a leak-safe Option/Result: the whole nested
                     // structure leaks with the struct. Covers the common 2-D
                     // field; deeper nesting still bails.
-                    if (is_leaksafe_array_field(elt) || is_struct_array_field_type(structs, elt) || is_enum_array_field_type(structs, elt) || is_leaksafe_opt_field(elt)) {
+                    if (is_leaksafe_array_field(elt) || is_struct_array_field_type(structs, elt) || is_enum_array_field_type(structs, elt) || is_leaksafe_opt_field_d(structs, elt)) {
                         fi = fi + 1;
                         continue;
                     }
