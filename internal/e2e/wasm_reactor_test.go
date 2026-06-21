@@ -74,3 +74,53 @@ func TestWasmReactorPollFirstReady(t *testing.T) {
 		t.Errorf("wasm_poll first-ready (short at idx 0): got %d, want 0", got)
 	}
 }
+
+// std/wasm_reactor.run drives generic pollable-tagged stackless tasks
+// (Step[T]) to completion over wasm_poll — the wasm twin of
+// std/reactor.run_io. Two timer tasks overlap on one thread; each
+// resumes to Done(val). Results come back in TASK order, not
+// completion order: task 0 is the slow (50ms) timer carrying 35, task 1
+// the fast (10ms) one carrying 7, so results must be [35, 7] even
+// though task 1 finishes first.
+func TestWasmReactorRunSchedulerI32(t *testing.T) {
+	src := `import "std/wasm_reactor";
+function start(ns: i64, val: i32): wasm_reactor.Step[i32] {
+    function resume(p: i32): wasm_reactor.Step[i32] { return Done(val); }
+    return Wait(wasm_timer_pollable(ns), resume);
+}
+function main(): i32 {
+    var tasks: wasm_reactor.Step[i32][] = [start(50000000, 35), start(10000000, 7)];
+    var r: i32[] = wasm_reactor.run(tasks, -1);
+    if (r.len() != 2) { return 90; }
+    if (r[0] != 35) { return 91; }  // task-order, not completion-order
+    if (r[1] != 7) { return 92; }
+    return r[0] + r[1];
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("wasm_reactor.run i32: got %d, want 42", got)
+	}
+}
+
+// The scheduler is generic in T: a Step[string] fan-out returns string
+// results. Exercises the generic-variant inference (T recovered through
+// the function-typed Wait payload) end-to-end on wasm, plus string
+// results threaded through wasm_poll-driven resumption.
+func TestWasmReactorRunSchedulerString(t *testing.T) {
+	src := `import "std/wasm_reactor";
+import "std/string";
+function start(ns: i64, val: string): wasm_reactor.Step[string] {
+    function resume(p: i32): wasm_reactor.Step[string] { return Done(val); }
+    return Wait(wasm_timer_pollable(ns), resume);
+}
+function main(): i32 {
+    var tasks: wasm_reactor.Step[string][] = [start(40000000, "lo"), start(10000000, "hi")];
+    var r: string[] = wasm_reactor.run(tasks, "");
+    if (r.len() != 2) { return 1; }
+    if (r[0] != "lo") { return 2; }
+    if (r[1] != "hi") { return 3; }
+    return 0;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("wasm_reactor.run string: got %d, want 0", got)
+	}
+}

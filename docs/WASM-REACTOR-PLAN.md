@@ -97,12 +97,33 @@ short-circuits in ~20ms (does not wait 200ms).
   Tests: `TestWasmReactorPollFirstReady` (e2e), component
   validate/bytes, checker sig.
 
-**Remaining:** the `IoStep[T]`-shaped scheduler over pollables (the
-portable reactor loop in Fern, like `std/reactor` but over pollable
-handles + `wasm_poll` instead of fds + the native `poll`), plus
-pollable resource-drop for tidy cleanup. All the wasm primitives
-(timer pollable, block, poll) and the hard cross-instance resource
-composition now exist; the scheduler is pure Fern on top.
+**UPDATE — the scheduler lands too (`std/wasm_reactor`).** The
+pollable scheduler is now a pure-Fern module,
+`internal/stdlib/std/wasm_reactor.fern` — the wasm twin of
+`std/reactor`: a generic `Step[T]` (`Done(T)` / `Wait(pollable,
+resume)`) and `run[T](states, not_ready)` that gathers the waiting
+tasks' pollables, blocks in `wasm_poll`, resumes the first-ready task,
+and repeats — returning results in **task order**. Where `std/reactor`
+multiplexes raw fds via the native `poll`, this multiplexes pollables
+via `wasm_poll`; no native-only builtin, so concurrent fan-out works on
+the wasm edge target. (`sleep_pollable` is sugar over
+`wasm_timer_pollable` for timer tasks.) wasm-only, the codegen
+counterpart of native-only `std/reactor` — import whichever matches the
+target.
+
+Verified end-to-end on wasmtime (`internal/e2e/wasm_reactor_test.go`):
+two overlapped timer tasks resume and return their values in task order
+(not completion order) for both `Step[i32]` and `Step[string]` (the
+string case exercises the generic-variant inference through the
+function-typed `Wait` payload on wasm). `std/wasm_reactor` also passes
+the standalone-typecheck gate.
+
+**Remaining:** pollable resource-drop (`[resource-drop]pollable`) for
+tidy cleanup of consumed pollables (today a finished timer's pollable
+is left to be reclaimed at exit), and wiring real socket/stream
+pollables (when the wasm socket path grows a `subscribe`) into the same
+`run` loop for outbound fan-out. The reactor core — primitives +
+composition + scheduler — is complete.
 
 ## Layer 2 — component composer: THE BLOCKER (historical — now solved for timers)
 
