@@ -1,0 +1,17 @@
+// std/regex (#2680) grouping + alternation edge cases on the native
+// backends: nested groups, a quantified group, optional group (present and
+// absent), alternatives of unequal length, anchored repeated alternation,
+// and a deliberate non-match. Each contributes a bit; all hold → 127.
+import "std/regex";
+
+function main(): i32 {
+    var r: i32 = 0;
+    if (regex.regex_match("((a|b)c)+", "acbcac")) { r = r + 1; }      // nested group + quantifier
+    if (regex.regex_match("a(bc)?d", "ad")) { r = r + 2; }           // optional group absent
+    if (regex.regex_match("a(bc)?d", "abcd")) { r = r + 4; }         // optional group present
+    if (regex.regex_match("^(a|ab)c$", "abc")) { r = r + 8; }        // unequal-length alternatives (NFA tries both)
+    if (regex.regex_match("^(foo|bar)+$", "foobarbar")) { r = r + 16; } // repeated alternation, anchored
+    if (regex.regex_match("gr(a|e)y", "gray")) { r = r + 32; }       // group alternation, other branch
+    if (!regex.regex_match("^(cat|dog)$", "fox")) { r = r + 64; }    // non-match
+    return r;
+}
