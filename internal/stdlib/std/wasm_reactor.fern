@@ -111,6 +111,64 @@ pub function run[T](states_in: Step[T][], not_ready: T): T[] {
     return results;
 }
 
+// run_deadline(states, deadline_ns, not_ready) — like run, but the
+// whole fan-out must finish within `deadline_ns` nanoseconds. The wasm
+// twin of std/reactor.run_io_deadline: a single deadline timer
+// pollable is added to every poll round, so when it fires first the
+// loop abandons the still-waiting tasks (their result slots take
+// `not_ready`) — happy-eyeballs with an upper bound, the edge-handler
+// SLA shape. Tasks that complete before the deadline carry their
+// result.
+//
+// The deadline pollable lives at poll-index 0 each round (idx -1 in the
+// task map); a ready index of 0 means the deadline fired. It is created
+// once and dropped at the end; per-task pollables are dropped as they
+// fire (as in run).
+pub function run_deadline[T](states_in: Step[T][], deadline_ns: i64, not_ready: T): T[] {
+    var states: Step[T][] = states_in;
+    var deadline_p: i32 = wasm_timer_pollable(deadline_ns);
+    while (true) {
+        if (__wr_all_done(states)) { break; }
+        // poll-index 0 is the deadline; the rest are waiting tasks.
+        var polls: i32[] = [deadline_p];
+        var idxs: i32[] = [0 - 1];
+        var i: i32 = 0;
+        while (i < states.len()) {
+            match (states[i]) {
+                Done(v) => { },
+                Wait(p, c) => {
+                    polls = polls.append(p);
+                    idxs = idxs.append(i);
+                },
+            }
+            i = i + 1;
+        }
+        var ready: i32 = wasm_poll(polls);
+        if (ready < 0) { break; }
+        if (ready == 0) { break; } // deadline fired — abandon stragglers
+        var ti: i32 = idxs[ready];
+        var st: Step[T] = states[ti];
+        match (st) {
+            Done(v) => { },
+            Wait(p, resume) => {
+                states = states.with(ti, resume(p));
+                var dropped: i32 = wasm_pollable_drop(p);
+            },
+        }
+    }
+    var d2: i32 = wasm_pollable_drop(deadline_p);
+    var results: T[] = [];
+    var k: i32 = 0;
+    while (k < states.len()) {
+        match (states[k]) {
+            Done(v) => { results = results.append(v); },
+            Wait(p, c) => { results = results.append(not_ready); },
+        }
+        k = k + 1;
+    }
+    return results;
+}
+
 // sleep_pollable(duration_ns) — a Wait step that fires after the given
 // duration. Sugar over wasm_timer_pollable for building timer tasks:
 //   wasm_reactor.run([wasm_reactor.sleep_pollable(ms, (p) => Done(1))], -1)

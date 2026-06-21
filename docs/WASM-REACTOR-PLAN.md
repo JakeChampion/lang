@@ -130,11 +130,22 @@ no duplicate. Tested: `TestWasmReactorTimerBlockDrop` (timer → block →
 drop) + the scheduler tests exercise drop on every resumed task; socket
 composition unaffected.
 
-**Remaining:** wiring real socket/stream pollables (when the wasm
-socket path grows a `subscribe`) into the same `run` loop for outbound
-fan-out. The reactor core — primitives (timer, block, poll, drop) +
-standalone resource-aware composition + the `Step[T]`/`run` scheduler
-— is complete.
+**UPDATE — `run_deadline` lands** (parity with native
+`std/reactor.run_io_deadline`): `std/wasm_reactor.run_deadline(states,
+deadline_ns, not_ready)` adds a single deadline timer pollable to every
+poll round (poll-index 0); when it fires first the loop abandons the
+still-waiting tasks, landing `not_ready` in their slots — happy-eyeballs
+with an SLA upper bound. Tested both the beat-the-deadline and
+timed-out paths (`TestWasmReactorRunDeadline`).
+
+**Remaining:** wiring real socket/stream pollables into the same `run`
+loop for outbound fan-out — which first needs the wasm **outbound TCP
+client** path (start-connect / finish-connect / the connection's
+subscribe → pollable; today the wasm TCP path is server-only:
+bind/listen/accept). That's the larger next async slice. The reactor
+core — primitives (timer, block, poll, drop) + standalone
+resource-aware composition + the `Step[T]`/`run`/`run_deadline`
+scheduler — is complete.
 
 ## Layer 2 — component composer: THE BLOCKER (historical — now solved for timers)
 
