@@ -3521,6 +3521,45 @@ pub function module_runtime_needs(mod: parser.Module): string[] {
     return s.needed;
 }
 
+// all_runtime_need_roots is the closed set of runtime-need ROOT names — every
+// string the codegen ever passes to `s.need("…")` (the mark_* helpers all bottom
+// out in one of these). It is the over-approximation the per-module driver feeds
+// the ENTRY module's shared runtime instead of the exact union computed by
+// running module_runtime_needs over every loaded module.
+//
+// Why: module_runtime_needs does a FULL emit_module_funcs (the heavy IR lowering)
+// per module purely to read back `needed`. Aggregating it across the ~12 whole-
+// compiler modules in ONE process — what `-per-module-needs` does — re-emits the
+// entire compiler, and the self-host runtime does not yet reclaim the per-function
+// IR-op allocations (#3425), so a self-host-built driver OOMs (exit 137) there
+// even though each SINGLE module emits fine. That OOM is the one thing blocking a
+// self-host-built compiler from driving its OWN per-module self-compile (the
+// IR-only bootstrap #3456 needs to retire the AST emitters, #3457).
+//
+// Feeding the entry every root instead makes it emit the full `__fern_*` runtime
+// (close_needs still pulls each root's transitive deps). It is SOUND — the entry's
+// runtime is a superset of what any module references, so no `call __fern_*` extern
+// dangles at link — and DETERMINISTIC, so the byte-identical per-module fixpoint is
+// preserved (every generation emits the same full runtime). The cost is a handful
+// of unused helpers in the entry unit (the existing extra_needs path already emits
+// sibling-only helpers, so over-emission is already the per-module norm). If a NEW
+// `.need("x")` root is added without listing it here, a module using x links against
+// an undefined `__fern_x` — caught immediately by the per-module link test, never a
+// silent miscompile.
+pub function all_runtime_need_roots(): string[] {
+    return [
+        "alloc_u8", "args", "arr_concat", "arr_i32_index_of", "arr_i32_min_max",
+        "arr_i32_product", "arr_i32_sum", "arr_push", "arr_reverse", "arr_slice",
+        "arr_str_index_of", "arr_str_join", "chr", "eprint", "heap", "i32_pow",
+        "i32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
+        "print_int", "putchar", "random_bytes", "random_i32", "read_file",
+        "read_int", "sleep_ms", "str_bytes", "str_case", "str_chars", "str_cmp",
+        "str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
+        "str_read_line", "str_repeat", "str_replace", "str_reverse", "str_search",
+        "str_split", "str_to_i32", "str_trim", "strbuf"
+    ];
+}
+
 pub function emit_module_ir(mod: parser.Module): string {
     // Infer return types BEFORE snapshotting all_funcs: the side-tables are
     // derived over all_funcs, so they must see the inferred (unannotated)

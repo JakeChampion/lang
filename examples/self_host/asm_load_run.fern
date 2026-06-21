@@ -237,21 +237,14 @@ function main(): i32 {
             pi = pi + 1;
         }
         if (pm_mode == "needs") {
-            // The runtime-need union over every module. module_runtime_needs
-            // dirties the strbuf, but we only read its `needed` result and emit
-            // nothing here, so that is harmless — the union is printed, one
-            // need per line, for the entry's -extra-need on a later invocation.
-            var needs: string[] = [];
-            var ni: i32 = 0;
-            while (ni < infmods.len()) {
-                var mn: string[] = asm_ir.module_runtime_needs(infmods[ni]);
-                var mk: i32 = 0;
-                while (mk < mn.len()) {
-                    if (!util.has_str(needs, mn[mk])) { needs = needs.append(mn[mk]); }
-                    mk = mk + 1;
-                }
-                ni = ni + 1;
-            }
+            // Seed the entry's shared runtime with the full root set instead of an
+            // exact per-module union (asm_ir.all_runtime_need_roots): a sound,
+            // deterministic over-approximation. Computing the exact union here ran
+            // module_runtime_needs (a full emit) over EVERY module in one process,
+            // which OOMs a self-host-built driver (#3425) — the one thing blocking a
+            // self-host per-module self-compile. The entry over-emits a few unused
+            // helpers; close_needs still pulls each root's transitive deps.
+            var needs: string[] = asm_ir.all_runtime_need_roots();
             var no: i32 = 0;
             while (no < needs.len()) { print(needs[no] + "\n"); no = no + 1; }
             return 0;
