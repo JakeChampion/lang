@@ -437,6 +437,30 @@ over-permissiveness vs. native is a separate divergence, filed for follow-up;
 this entry scopes only the import-free escape-sequence surface, which both
 compilers agree on.)
 
+### 2026-06-21 — bound-driven inference: fully-generic iterator collectors (`f[T, I: Iterator[T]]`) ([#2691](https://github.com/JakeChampion/lang/issues/2691) step 2)
+
+A function generic over **both** the iterator and its element type —
+`count[T, I: Iterator[T]](it: I): i32`, `last[T, I: Iterator[T]](it: I,
+dflt: T): T` — where `T` appears only inside another parameter's
+parametrised-trait bound. Previously the native checker reported `E040:
+could not infer type parameter T`. Now **bound-driven inference** recovers
+`T` from the impl the bound resolves to: once `I` is pinned to a concrete
+type, the bound's trait args (`Iterator[T]`) unify against that type's
+impl's trait args (`Iterator[i32]` / `Iterator[boolean]`) to bind `T`, with
+a fixpoint loop so one bound param can feed another. The lever is
+normalising bound type-arg leaves to `ParamType` (`normalizeParamRefs`) so
+`bindBoundParam` / `substBoundArg` treat `T` uniformly; E021 bound-
+satisfaction resolves `T` through the substitution before comparing against
+the impl. The native backend monomorphises fully so it needs the inferred
+`T`; the **self-host IR path** erases the unbounded `T` (uniform 8-byte
+slot) and monomorphises on `I`, so #3558's parametrised-bound parsing
+already suffices there — no self-host change. The SAME generic `last` runs
+at `T=i32` and `T=boolean`, proving genuine genericity. Coverage:
+`TestCheckBoundDrivenInference` (checker), `TestNativeGenericIteratorCollector{,Arm64}`
+(interp/x86-64/wasm/arm64), `TestSelfHostGenericCollectorIR{X86_64,Wasm}`
+(routing-pinned to `ir`). Self-host fixpoint unaffected (checker change is
+native-only). See docs/TRAITS.md §4a.
+
 ### 2026-06-20 — self-host: parametrised-trait bounds (`[I: Iterator[i32]]`) lower on the IR path ([#2691](https://github.com/JakeChampion/lang/issues/2691) step 1)
 
 Generic-trait support on the self-hosted compiler: a bounded generic whose bound
