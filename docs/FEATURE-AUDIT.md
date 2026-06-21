@@ -237,7 +237,7 @@ per-function bugs in the audit log.
 | Module | I | X | A | W | S | Status | Notes |
 |--------|---|---|---|---|---|--------|-------|
 | `core/int` | ✅ | ✅ | ✅ | ✅ | 🔧 | 🔧 | radix **parse** direction (`parse_int_radix` / `__radix_digit`, bases 2–36, sign handling) — native via the `core_int_parse` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostCoreIntParseIR` — `Option[i32]` `Some`/`None` + payload-binding `match`, string indexing with char-class compares, multiply-accumulate loop, sign + negation. The **to-string radix** direction (`int_to_string_radix`) ALSO lowers on the IR path — it builds via `__alloc_u8` + `.with` + `string_from_bytes` (no `__memcpy`/`usize`), the same builder std/hex / std/base64 use — native via the `core_int_radix` fixture, self-host via `TestSelfHostCoreIntRadixIR` (x86-64 + wasm, oracle-checked). Only `int_to_string` / `__int_to_string_u64` (decimal) stay AST — those poke raw memory via `__memcpy` over a `usize` pointer (same caveat as std/u64 `to_string`) |
-| `core/cmp` (traits) | | | | | | ⬜ | |
+| `core/cmp` (traits) | ✅ | ✅ | | | ✅ | 🔧 | Trait foundation (`Display`/`Eq`/`Ord`/`Hash`/`Default`/`Debug`) + primitive impls, used by `std/test`. **Generic `Ord` helpers** added — `min`/`max`/`clamp`/`lt`/`lte`/`gt`/`gte`/`cmp[T: Ord]`, derived from the single `cmp` primitive — work over the primitive impls AND any user/`@derive(Ord)` type, on native (interp/x86-64/wasm) AND the self-host **IR path** (`TestNativeCmpHelpers{,Arm64}` + `TestNativeCmpModule` + `TestSelfHostCmpHelpersIR{X86_64,Wasm}`, routing-pinned to `ir`). Full trait/derive audit of the rest is a follow-up |
 | `core/iter` (Iterator trait) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **Generic** `Iterator[T]` protocol + integer `Range` (`impl Iterator[i32]`) + eager drivers ([#2686](https://github.com/JakeChampion/lang/issues/2686) / tail of [#2699](https://github.com/JakeChampion/lang/issues/2699)). Value-semantic `next(self): Option[(T, Self)]`. `count[T, I: Iterator[T]]`, `to_array[T, I: Iterator[T]]: T[]`, and `fold[T, A, I: Iterator[T]](it, init: A, f: (A, T) => A): A` (the fundamental left reduction, generic over both element and accumulator type, taking a closure combiner) are generic over the element type. Closure-free adapters `nth`/`last[T, I: Iterator[T]]: Option[T]`, `min`/`max`/`product[I: Iterator[i32]]`, `position`/`count_value[I: Iterator[i32]](it, target)`, and `contains[I: Iterator[i32]](it, target): boolean` round out the set (the i32-bound ones need `+`/`*`/`<`/`==`). Works on native (interp / x86-64 / arm64 / wasm) AND the self-host **IR path** (x86-64 + wasm): parametrised-trait bounds parse on the self-host (#3558) and the native checker recovers the bound-only `T` by bound-driven inference (#3596). Coverage: `TestNativeIteratorTrait{,Module,ModuleGeneric,Arm64}`, `TestSelfHostIteratorTraitIR{X86_64,Wasm}`, `TestNativeGenericIteratorCollector{,Arm64}` + `TestSelfHostGenericCollectorIR{X86_64,Wasm}` (incl. a `boolean`-element impl + `to_array` returning a generic `T[]`), all routing-pinned to `ir` on the self-host |
 | `core/map` | | | | | | ⬜ | |
 | `core/no_prelude` | | | | | | ⬜ | no-op sentinel |
@@ -557,6 +557,22 @@ isn't in scope without `import "std/i32"` / `"std/float"`. That self-host
 over-permissiveness vs. native is a separate divergence, filed for follow-up;
 this entry scopes only the import-free escape-sequence surface, which both
 compilers agree on.)
+
+### 2026-06-21 — core/cmp: generic `Ord` helpers `min` / `max` / `clamp` / relational ([#2691](https://github.com/JakeChampion/lang/issues/2691))
+
+`core/cmp` already shipped the `Ord` trait (`cmp(self, other): i32`) + primitive
+impls (used by `std/test`) but no free helpers. Added generic functions over any
+`T: Ord`, all derived from the single `cmp` primitive: `min` / `max` / `clamp`
+(return `T`), and `lt` / `lte` / `gt` / `gte` (return `boolean`) + a named `cmp`.
+A bounded generic whose body calls a trait method on the bound parameter
+monomorphises to a direct call, so these lower on native AND the self-host IR
+path — the comparison analogue of the `core/iter` generics. They work over the
+existing `impl Ord for i32`/`i64`/`u32`/`u64`/`string` and any user/`@derive(Ord)`
+type. Coverage: `TestNativeCmpHelpers{,Arm64}` (interp/x86-64/wasm/arm64),
+`TestNativeCmpModule` (shipped `import "core/cmp"`, primitive + user impl), and
+`TestSelfHostCmpHelpersIR{X86_64,Wasm}` (routing-pinned to `ir`). Self-host
+fixpoint re-verified byte-identical (the additions are new pub functions; the
+self-host compiler doesn't import `core/cmp`).
 
 ### 2026-06-21 — core/iter: closure-free queries `contains` / `count_value` ([#2686](https://github.com/JakeChampion/lang/issues/2686))
 
