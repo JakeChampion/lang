@@ -27,6 +27,8 @@
 // separate and implemented for the signed/float types only (i32/i64/f32/f64);
 // the unsigned u32/u64 get Add/Sub/Mul/Div/Num but no Neg.
 
+import "core/iter";
+
 pub trait Add { function add(self: Self, o: Self): Self; }
 pub trait Sub { function sub(self: Self, o: Self): Self; }
 pub trait Mul { function mul(self: Self, o: Self): Self; }
@@ -125,5 +127,51 @@ pub function sum_with[T: Add](xs: T[], zero: T): T {
 pub function product_with[T: Mul](xs: T[], one: T): T {
     var acc = one;
     for x in xs { acc = acc.mul(x); }
+    return acc;
+}
+
+// ---- iterator forms ----------------------------------------------------------
+//
+// The Iterator counterparts of sum_with / product_with — they fold any
+// `iter.Iterator[T]` directly, without first collecting it into an array, so a
+// numeric pipeline composes end to end:
+//   num.sum_iter(iter.of(xs), 0)
+//   num.sum_iter(iter.filter(iter.of(xs), keep_positive), 0)
+// `T` appears only inside the iterator bound (`I: iter.Iterator[T]`); it is
+// recovered by bound-driven inference once `I` is pinned by the argument
+// (#2691). The identity is passed explicitly for the same reasons as the array
+// forms above — `T.zero()` on a bound type parameter does not yet lower on the
+// self-host IR path, and a caller may want `0.0` rather than a trait-fixed
+// value. The accumulator's `.add` / `.mul` monomorphises to a direct call, so
+// these lower on the self-host IR path like core/iter's other bounded
+// collectors (#2691 / #3558).
+
+// sum_iter totals every value an iterator yields, starting from `zero`
+// (returned unchanged for an empty iterator).
+pub function sum_iter[T: Add, I: iter.Iterator[T]](it: I, zero: T): T {
+    var acc = zero;
+    var cur = it;
+    var go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => { acc = acc.add(t.0); cur = t.1; },
+            None => { go = false; },
+        }
+    }
+    return acc;
+}
+
+// product_iter multiplies every value an iterator yields, starting from `one`
+// (returned unchanged for an empty iterator).
+pub function product_iter[T: Mul, I: iter.Iterator[T]](it: I, one: T): T {
+    var acc = one;
+    var cur = it;
+    var go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => { acc = acc.mul(t.0); cur = t.1; },
+            None => { go = false; },
+        }
+    }
     return acc;
 }
