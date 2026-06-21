@@ -11073,6 +11073,23 @@ pub function emit_dec_sweep_except(s: LowerState, keep: i32): LowerState {
 
 // lower_block lowers a sequence of statements (a then/else body), bailing
 // on the first out-of-subset statement.
+// stmt_scopes_bindings reports whether a statement introduces a binding that is
+// scoped to the statement itself rather than to the enclosing block: a `for`
+// loop variable, or a `match` arm's payload binding(s) + scrutinee temp. Those
+// are added OUTSIDE the body block (so lower_block's own retire doesn't reach
+// them), so lower_block retires them right after the statement — otherwise the
+// loop var / arm binding leaks past the statement and shadows / clobbers a
+// same-named outer local (the loop/match sibling of #3726). A plain `var` must
+// persist through the rest of the block, so it is NOT included.
+function stmt_scopes_bindings(st: parser.Stmt): boolean {
+    match (st) {
+        parser.StmtFor(_) => { return true; },
+        parser.StmtMatch(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
 pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
     // Block scope: the locals this block introduces (slots >= base) are retired
     // on exit so a SIBLING block (the other match arm, the else branch) re-uses
@@ -11082,8 +11099,12 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
     var st: LowerState = s;
     var i: i32 = 0;
     while (i < stmts.len()) {
+        var sbase: i32 = st.local_names.len();
         st = lower_stmt(stmts[i], st);
         if (!st.ok) { return st; }
+        // A `for` / `match` statement's loop var / arm bindings are scoped to it,
+        // not the block — retire them now so they don't leak past the statement.
+        if (stmt_scopes_bindings(stmts[i])) { st = st.retire_locals(sbase); }
         i = i + 1;
     }
     return st.retire_locals(base);
@@ -13689,6 +13710,12 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     var inarm: InArmReuseSites = consumed_inarm_reuse_sites(fn.body, structs);
     var j: i32 = 0;
     while (j < fn.body.len()) {
+        // Slot count before this statement, so a `for` / `match` at function-body
+        // top level (the body loop here doesn't go through lower_block) can retire
+        // its scoped loop var / arm bindings afterward — otherwise they leak past
+        // the statement and clobber a same-named outer local (the top-level
+        // sibling of the lower_block fix; #3726).
+        var stmt_sbase: i32 = s.local_names.len();
         // Is statement j a self-overwrite reuse site? If so, lower it in place.
         var reuse_i: i32 = 0 - 1;
         var ri: i32 = 0;
@@ -13800,6 +13827,11 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
             }
             rei = rei + 1;
         }
+        // Retire a top-level `for` / `match` statement's scoped bindings (loop
+        // var / arm bindings) now — after the precise-drop / enum-free passes
+        // above, which resolve their own (function-level) names by slot. Runs
+        // only for those statement kinds; a plain `var` persists.
+        if (stmt_scopes_bindings(fn.body[j])) { s = s.retire_locals(stmt_sbase); }
         j = j + 1;
     }
     return LowerResult { ok: true, ops: s.ops, n_locals: s.local_names.len(), n_params: s.n_params, arr_slots: arr_slots_of(s), i64_slots: i64_slots_of(s), f64_slots: f64_slots_of(s) };
