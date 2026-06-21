@@ -80,6 +80,12 @@ const (
 	// (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1). Waits on a set of
 	// fds for POLLIN.
 	sysPoll = 7
+	// timerfd_create(2) / timerfd_settime(2): x86-64 syscalls 283 / 286.
+	// Back `__fern_timer_fd(ms)` — a CLOCK_MONOTONIC timerfd that
+	// becomes readable after `ms`, for reactor timeouts + deterministic
+	// readiness tests (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1c).
+	sysTimerfdCreate  = 283
+	sysTimerfdSettime = 286
 )
 
 // Options tunes the emit.
@@ -344,6 +350,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesPoll {
 		g.emitPollRuntime()
 	}
+	if g.usesTimerFd {
+		g.emitTimerFdRuntime()
+	}
 	if g.usesEnv {
 		g.emitEnvRuntime()
 	}
@@ -489,6 +498,7 @@ type generator struct {
 	usesRandomBytes     bool
 	usesRandomI32       bool
 	usesPoll            bool
+	usesTimerFd         bool
 	usesAsBytes         bool
 	usesReadLine        bool
 	// usesStrIdx tracks whether any code emits the SSO-aware
@@ -749,6 +759,9 @@ func (g *generator) recordUse(target string) {
 		// helper allocates a scratch pollfd buffer.
 		g.usesPoll = true
 		g.usesAlloc = true
+	case "timer_fd":
+		// timer_fd(ms) — a timerfd readable after `ms`.
+		g.usesTimerFd = true
 	case "env":
 		g.usesEnv = true
 		g.usesAlloc = true
@@ -1902,6 +1915,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_tcp_recv"
 		case "poll":
 			target = "__fern_poll"
+		case "timer_fd":
+			target = "__fern_timer_fd"
 		case "tcp_send":
 			target = "__fern_tcp_send"
 		case "tcp_close":
@@ -5484,6 +5499,61 @@ func (g *generator) emitPollRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_poll, .-__fern_poll")
+}
+
+// emitTimerFdRuntime emits `__fern_timer_fd(ms)` — create a
+// CLOCK_MONOTONIC timerfd that becomes readable once after `ms`
+// milliseconds, and return its fd (poll/std/reactor can then wait on
+// it). Used for reactor timeouts and deterministic readiness tests
+// (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1c). Negative on error.
+func (g *generator) emitTimerFdRuntime() {
+	const clockMonotonic = 1
+	g.line("")
+	g.line(".globl __fern_timer_fd")
+	g.line(".type __fern_timer_fd, @function")
+	g.label("__fern_timer_fd")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // ms
+	g.emit("push r12") // fd
+	g.emit("sub rsp, 32") // struct itimerspec { it_interval, it_value }
+	g.emit("mov rbx, rdi") // ms
+	// fd = timerfd_create(CLOCK_MONOTONIC, 0)
+	g.emit(fmt.Sprintf("mov edi, %d", clockMonotonic))
+	g.emit("xor esi, esi")
+	g.emit(fmt.Sprintf("mov eax, %d", sysTimerfdCreate))
+	g.emit("syscall")
+	g.emit("mov r12, rax")
+	g.emit("test rax, rax")
+	g.emit("js .Ltimerfd_ret") // create failed → return -errno
+	// it_interval = {0, 0} (one-shot)
+	g.emit("xor eax, eax")
+	g.emit("mov [rsp], rax")
+	g.emit("mov [rsp + 8], rax")
+	// it_value = { ms/1000, (ms%1000)*1e6 }
+	g.emit("mov rax, rbx")
+	g.emit("xor edx, edx")
+	g.emit("mov rcx, 1000")
+	g.emit("div rcx")         // rax = sec, rdx = rem ms
+	g.emit("mov [rsp + 16], rax")
+	g.emit("mov rax, 1000000")
+	g.emit("imul rax, rdx")
+	g.emit("mov [rsp + 24], rax")
+	// timerfd_settime(fd, 0, &its, NULL)
+	g.emit("mov edi, r12d")
+	g.emit("xor esi, esi")
+	g.emit("mov rdx, rsp")
+	g.emit("xor r10d, r10d") // 4th syscall arg is r10
+	g.emit(fmt.Sprintf("mov eax, %d", sysTimerfdSettime))
+	g.emit("syscall")
+	g.emit("mov rax, r12") // return fd
+	g.label(".Ltimerfd_ret")
+	g.emit("add rsp, 32")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_timer_fd, .-__fern_timer_fd")
 }
 
 // emitRandomI32Runtime emits `__fern_random_i32()` — returns a

@@ -1206,6 +1206,15 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{}}, ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
+	// timer_fd(ms): number — a CLOCK_MONOTONIC timerfd that becomes
+	// readable once after `ms` milliseconds; returns its fd (poll it via
+	// `poll` / std/reactor). Backs reactor timeouts + deterministic
+	// readiness tests (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1c).
+	// x86-64 + arm64 (Linux timerfd); wasm/Darwin follow.
+	c.info.FuncSigs["timer_fd"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
 	// udp_send(host, port, data): number — one-shot fire-and-forget UDP
 	// datagram. host is an IPv4 literal ("a.b.c.d"); binds an ephemeral
 	// local port, connects to host:port, sends data, and tears the
