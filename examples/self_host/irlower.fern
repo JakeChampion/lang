@@ -7819,6 +7819,47 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                     _ => {}
                 }
             }
+            // A fn-VALUE ARRAY literal of bare named-function values —
+            // `var fns: (() => T)[] = [f, g]` — is the array sibling of the
+            // scalar fn-value binding above. Each bare 0-arg fn-name element
+            // would otherwise const-CALL through the generic ExprArray lowering
+            // (storing f()'s result), so `fns[i]()` then calls that integer as a
+            // code pointer and segfaults. The `fn[]` target type disambiguates
+            // every element as a VALUE → emit const_func (a plain fn pointer).
+            // The slot is a plain fn-pointer array (is_arr, NOT is_closurearr):
+            // `fns[i]()` dispatches via the plain call_indirect path, exactly as
+            // the single-element non-capturing `fs[0](4)` case already does. Only
+            // a HOMOGENEOUS bare-fn-name literal takes this path; any lambda /
+            // closure element leaves all_fnval false so the literal keeps the
+            // generic closure-array path (which marks is_closurearr for env-first
+            // dispatch), and a bare LOCAL element (`[g]` where g is a local) is
+            // excluded too — fn_value_arg_name returns "" for a local. (#3574)
+            if (v.type_name == "fn[]") {
+                match (v.init) {
+                    parser.ExprArray(fva) => {
+                        var all_fnval: boolean = fva.elements.len() > 0;
+                        var fci: i32 = 0;
+                        while (fci < fva.elements.len()) {
+                            if (fn_value_arg_name(fva.elements[fci], s) == "") { all_fnval = false; }
+                            fci = fci + 1;
+                        }
+                        if (all_fnval) {
+                            var fcs: LowerState = s;
+                            var fcj: i32 = 0;
+                            while (fcj < fva.elements.len()) {
+                                fcs = fcs.emit(ir.op_const_func(0, fn_value_arg_name(fva.elements[fcj], s)));
+                                fcj = fcj + 1;
+                            }
+                            fcs = fcs.emit(ir.op_arr_make(fva.elements.len(), 32));
+                            var fcb: LowerState = fcs.add_local(v.name);
+                            var fcslot: i32 = fcb.slot_of(v.name);
+                            fcb = fcb.mark_arr(fcslot, true);
+                            return emit_arr_store(fcb, fcslot, false, true);
+                        }
+                    },
+                    _ => {}
+                }
+            }
             var se: LowerState = lower_expr(v.init, s);
             if (!se.ok) { return se; }
             // Perceus alias-inc + array tracking: a fresh array literal is
