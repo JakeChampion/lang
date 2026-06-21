@@ -1,0 +1,115 @@
+// std/wasm_reactor — pollable-based readiness scheduler (wasm/WASI).
+//
+// The wasm twin of std/reactor: it drives generic stackless tasks to
+// completion over `wasi:io/poll` pollables, using the `wasm_poll`
+// builtin (wasi:io/poll.poll(list<pollable>) -> list<u32>) as the
+// readiness multiplexer — instead of raw file descriptors + the native
+// `poll(2)` syscall std/reactor uses. A task suspended on a pollable is
+// resumed when that pollable becomes ready.
+//
+// WASM-ONLY: wasm_poll / wasm_block / wasm_timer_pollable are
+// Preview-2 pollable builtins emitted only by the wasm backend
+// (docs/WASM-REACTOR-PLAN.md). They type-check on every backend (the
+// FuncSigs are global) but codegen only on wasm, so this module is the
+// wasm counterpart of the native-only std/reactor — import whichever
+// matches the target. The portable, simulation-friendly model stays in
+// std/task (imported by the `concurrent { … }` desugar), so concurrent
+// programs still compile everywhere.
+//
+// A task is a Step, the stackless-CPS shape from
+// docs/ASYNC-IMPLEMENTATION-RESEARCH.md, but with the wait TOKEN being
+// a `pollable` handle: Wait(pollable, resume) suspends until `pollable`
+// is ready, then `resume(pollable)` produces the next step — typically
+// a read followed by Done. Step is generic in its result type T (an
+// i32 status / count, or a string body), exactly like std/reactor's
+// IoStep[T].
+//
+// Timer pollables come from `wasm_timer_pollable(duration_ns)`; socket
+// / stream pollables (when those land on wasm) plug into the same loop.
+
+// A pollable-tagged task step.
+//
+//   Done(result)        — finished with this result of type T.
+//   Wait(pollable, resume) — suspended until `pollable` is ready; the
+//                            runtime calls `resume(pollable)` for the
+//                            next step.
+pub enum Step[T] {
+    Done(T),
+    Wait(i32, (i32) => Step[T]),
+}
+
+// __wr_all_done(states) — true once no task is still waiting.
+function __wr_all_done[T](states: Step[T][]): boolean {
+    var i: i32 = 0;
+    while (i < states.len()) {
+        match (states[i]) {
+            Done(v) => { },
+            Wait(p, c) => { return false; },
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// run(states, not_ready) — drive a set of already-started
+// pollable-tagged tasks to completion on a single thread, multiplexing
+// their pollables through `wasm_poll`, and return their results (type
+// T) in task order.
+//
+// Each round: gather the pollables of the still-waiting tasks, block in
+// `wasm_poll` until one is ready, resume that task (its continuation
+// does the actual read), and repeat until every task is Done. All
+// tasks' pollables are in flight simultaneously, so their I/O overlaps
+// on one thread — the edge-handler fan-out, over wasi pollables.
+//
+// A task whose pollable never becomes ready leaves the loop only via
+// the wasm_poll error guard (-1), landing `not_ready` in its result
+// slot (e.g. -1 for an i32 status, "" for a string body).
+pub function run[T](states_in: Step[T][], not_ready: T): T[] {
+    var states: Step[T][] = states_in;
+    while (true) {
+        if (__wr_all_done(states)) { break; }
+        // Gather waiting pollables and their task indices (parallel arrays).
+        var polls: i32[] = [];
+        var idxs: i32[] = [];
+        var i: i32 = 0;
+        while (i < states.len()) {
+            match (states[i]) {
+                Done(v) => { },
+                Wait(p, c) => {
+                    polls = polls.append(p);
+                    idxs = idxs.append(i);
+                },
+            }
+            i = i + 1;
+        }
+        // Block until at least one of the waiting pollables is ready.
+        var ready: i32 = wasm_poll(polls);
+        if (ready < 0) { break; }
+        var ti: i32 = idxs[ready];
+        var st: Step[T] = states[ti];
+        match (st) {
+            Done(v) => { },
+            Wait(p, resume) => {
+                states = states.with(ti, resume(p));
+            },
+        }
+    }
+    var results: T[] = [];
+    var k: i32 = 0;
+    while (k < states.len()) {
+        match (states[k]) {
+            Done(v) => { results = results.append(v); },
+            Wait(p, c) => { results = results.append(not_ready); },
+        }
+        k = k + 1;
+    }
+    return results;
+}
+
+// sleep_pollable(duration_ns) — a Wait step that fires after the given
+// duration. Sugar over wasm_timer_pollable for building timer tasks:
+//   wasm_reactor.run([wasm_reactor.sleep_pollable(ms, (p) => Done(1))], -1)
+pub function sleep_pollable[T](duration_ns: i64, resume: (i32) => Step[T]): Step[T] {
+    return Wait(wasm_timer_pollable(duration_ns), resume);
+}
