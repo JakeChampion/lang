@@ -1982,3 +1982,26 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   EXACT native parity are deep-element reclaim of pointer-element-array map
   VALUES (string[]/struct[]) and array-of-tuple closure CAPTURES — both
   one-level sound leaks of inner elements, the buffers/boxes themselves reclaim.
+- 2026-06-21: **Open gap found — the in-place `.append` GROW path does not
+  reuse/free the old buffer** (audit of `emit_ir_runtime` per #3452's footnote).
+  The deep-reclaim parity above covers every heap shape on *death*, but the
+  amortised-growth realloc inside `__fern_arr_push` (asm_ir.fern `.Larr_push_grow`,
+  mirrored in asm.fern) doubles into a fresh `__fern_arr_box`, copies, and
+  **abandons the previous buffer** — the native side reclaims it via the reuse
+  spine (`__fern_alloc_reuse` / reuse-token emit), the self-host in-place append
+  does not. Consequence: routing a large module (parser / asm / irlower) through
+  `emit_module_ir` leaks one buffer per grow and exit-137 OOMs the **per-module**
+  self-compile of those modules — so the per-module byte-identical fixpoint does
+  not yet converge (gen2's emit of the big units dies). It is the self-host twin
+  of the native large-tier leak #3452 and the concrete blocker between the proven
+  per-module emit+link (#3456) and AST-emitter retirement (#3457). A runtime-only
+  free is **unsound**: today's lowering relies on `__fern_arr_push` never freeing
+  because borrow-form appends can hand it an ALIASED (rc>1) buffer (irlower.fern:
+  "arr_push's … returned an ALIASED buffer leaves it rc>1"), so adding the free
+  turns the OOM into a SIGSEGV (verified). The sound fix is the reuse slice of
+  this port: route every non-consume / borrow append through the clone form
+  (`lower_arr_append_value`) so `op_arr_push` only ever sees uniquely-owned
+  arrays, drop the self-consume (`a = a.append(v)`) reassign-dec so the helper
+  owns the old→new transition, then reclaim-on-grow (FBIP reuse of the old box).
+  Both grow sites now carry a LOAD-BEARING-LEAK warning comment so the footgun
+  isn't "optimised" into a double-free again.

@@ -7580,6 +7580,18 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq %r14, (%r12)\n");
         s = s.write("    movq %r12, %rax\n");
         s = s.write("    jmp .Larr_push_ret\n");
+        // LOAD-BEARING LEAK — do NOT add a free of the old buffer (%r12) here.
+        // The grow path doubles into a fresh box and abandons the previous
+        // buffer (it leaks until process exit). Reclaiming it on rc==1 looks
+        // safe but DOUBLE-FREEs: the lowering relies on __fern_arr_push never
+        // freeing, since borrow-form appends can hand it an ALIASED (rc>1)
+        // buffer the owner still references (irlower.fern: "arr_push's …
+        // returned an ALIASED buffer leaves it rc>1"). The asm_ir.fern twin of
+        // this helper carries the same note — see #3452 / #3425 for the path to
+        // a sound reclaim-on-grow (route non-consume appends through the clone
+        // form first). Lower allocation volume on the AST path keeps this under
+        // the heap ceiling; the IR path's churn does not (hence the per-module
+        // OOM).
         s = s.write(".Larr_push_grow:\n");
         // newcap = cap == 0 ? 4 : cap * 2.
         s = s.write("    movq %r15, %rcx\n");
