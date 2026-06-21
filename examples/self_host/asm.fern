@@ -242,11 +242,14 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         var earg: parser.Expr = c.args[0];
         match (earg) {
             parser.ExprString(esv) => {
-                var elo: asmcore.StringLitOut = asmcore.add_string_lit(s, esv.value);
+                // eprint appends a newline (stderr line-printer); the trailing
+                // "\n" rides along in the interned literal so it's one write.
+                var elit: string = esv.value + "\n";
+                var elo: asmcore.StringLitOut = asmcore.add_string_lit(s, elit);
                 s = elo.state;
                 s = s.write("    movq $2, %rdi\n");
                 s = s.write("    leaq .S" + util.i32_to_string(elo.idx) + "(%rip), %rsi\n");
-                s = s.write("    movq $" + util.i32_to_string(esv.value.len()) + ", %rdx\n");
+                s = s.write("    movq $" + util.i32_to_string(elit.len()) + ", %rdx\n");
                 s = s.write("    movq $1, %rax\n");
                 s = s.write("    syscall\n");
                 s = s.write("    pushq $0\n");
@@ -4502,7 +4505,10 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    ret\n");
     }
     // __fern_eprint_str: %rdi = string box ptr. Loads box.data
-    // + box.len, issues a write(2, ptr, len) — stderr.
+    // + box.len, issues a write(2, ptr, len) — stderr — then a
+    // trailing newline (eprint is the stderr line-printer, mirroring
+    // `print` and the Go-backend / interp / wasm `eprint`, which all
+    // append "\n"). The newline byte is written from a stack slot.
     if (s.has_need("eprint")) {
         s = s.write("__fern_eprint_str:\n");
         s = s.write("    movq (%rdi), %rsi\n");
@@ -4510,6 +4516,13 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq $2, %rdi\n");
         s = s.write("    movq $1, %rax\n");
         s = s.write("    syscall\n");
+        s = s.write("    pushq $10\n");
+        s = s.write("    movq $2, %rdi\n");
+        s = s.write("    movq %rsp, %rsi\n");
+        s = s.write("    movq $1, %rdx\n");
+        s = s.write("    movq $1, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    addq $8, %rsp\n");
         s = s.write("    ret\n");
     }
     // __fern_str_starts_with: %rdi = box A, %rsi = box B
