@@ -80,6 +80,14 @@ struct RangeIter { cur: i32, end: i32 }
 impl Iterator[i32] for RangeIter { function next(self: Self): Option[(i32, Self)] { if (self.cur >= self.end) { return None; } return Some((self.cur, RangeIter { cur: self.cur + 1, end: self.end })); } }
 function last[T, I: Iterator[T]](it: I): Option[T] { var cur = it; var acc: Option[T] = None; var go = true; while (go) { match (cur.next()) { Some(t) => { acc = Some(t.0); cur = t.1; }, None => { go = false; }, } } return acc; }
 function main(): i32 { match (last(RangeIter { cur: 0, end: 5 })) { Some(v) => { return v; }, None => { return 99; } } }`, 4},
+	// contains / count_value: i32 equality queries, no closure. contains(0..5,3)=true→5;
+	// count_value(0..5,2)=1. Combine: 5 + 1 + 1 = 7.
+	{"contains-count-value", `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
+struct RangeIter { cur: i32, end: i32 }
+impl Iterator[i32] for RangeIter { function next(self: Self): Option[(i32, Self)] { if (self.cur >= self.end) { return None; } return Some((self.cur, RangeIter { cur: self.cur + 1, end: self.end })); } }
+function contains[I: Iterator[i32]](it: I, target: i32): boolean { var cur = it; var go = true; while (go) { match (cur.next()) { Some(t) => { if (t.0 == target) { return true; } cur = t.1; }, None => { go = false; }, } } return false; }
+function count_value[I: Iterator[i32]](it: I, target: i32): i32 { var n = 0; var cur = it; var go = true; while (go) { match (cur.next()) { Some(t) => { if (t.0 == target) { n = n + 1; } cur = t.1; }, None => { go = false; }, } } return n; }
+function main(): i32 { var a = 0; if (contains(RangeIter { cur: 0, end: 5 }, 3)) { a = 5; } return a + count_value(RangeIter { cur: 0, end: 5 }, 2) + 1; }`, 7},
 	// the SAME generic `last` instantiated at T=boolean (different element type).
 	{"last-bool", `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 struct BoolSeq { n: i32 }
