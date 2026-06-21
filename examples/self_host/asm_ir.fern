@@ -3120,6 +3120,13 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // n is on top, then src, then dst (the lowering order). Mirrors the
             // AST __memcpy emitter in asm.fern.
             s = s.write("    popq %rcx\n    popq %rsi\n    popq %rdi\n    rep movsb\n    pushq $0\n");
+        } else if (o.kind == "memset") {
+            // [dst, byte, n] -> fill n bytes at dst with byte's low byte (rep
+            // stosb, AL), push dummy 0. n on top, then byte, then dst.
+            s = s.write("    popq %rcx\n    popq %rax\n    popq %rdi\n    cld\n    rep stosb\n    pushq $0\n");
+        } else if (o.kind == "free") {
+            // [ptr, size] -> no-op under the bump/leak heap; drop both, push dummy 0.
+            s = s.write("    popq %rax\n    popq %rax\n    pushq $0\n");
         } else if (o.kind == "load_i32") {
             // [addr] -> sign-extended 4-byte load (matches __fn___load_i32).
             s = s.write("    popq %rax\n    movslq (%rax), %rax\n    pushq %rax\n");

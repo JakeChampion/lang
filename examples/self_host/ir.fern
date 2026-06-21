@@ -281,6 +281,14 @@ pub function op_str_from_bytes(): Op { return op0("str_from_bytes"); }
 // is what lets core/int's int_to_string / __int_to_string_u64 (and everything
 // transitively calling them) lower on the IR path instead of BAIL call.
 pub function op_memcpy(): Op { return op0("memcpy"); }
+// `memset` pops a byte-count n, a fill byte, and a usize dest (push order
+// dest,byte,n) and fills n bytes at dest with the low byte of `byte`, pushing a
+// dummy 0 (statement-position, discarded). Backs core/map's __memset; the IR
+// backends select rep stosb / a byte loop / memory.fill.
+pub function op_memset(): Op { return op0("memset"); }
+// `free` pops a usize ptr and an i32 size (core/map's __free) and does nothing
+// under the bump/leak heap, pushing a dummy 0. A stack-balancing no-op.
+pub function op_free(): Op { return op0("free"); }
 // Raw-memory load/store intrinsics — the `__load_i32` / `__load_i64` /
 // `__load_ptr` / `__store_i32` / `__store_ptr` builtins the core/map runtime
 // uses to read/write its packed entry buffer. The AST backends emit these as

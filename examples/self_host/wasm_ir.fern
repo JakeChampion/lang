@@ -797,6 +797,14 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // push order), then push a dummy 0 (value discarded). This is the
             // wasm sibling of rep movsb / the arm64 byte loop.
             out = out + "    memory.copy\n    i32.const 0\n";
+        } else if (o.kind == "memset") {
+            // stack: dst, byte, n -> fill n bytes at dst with byte (memory.fill;
+            // operand order [dest, byte, size] matches the lowering push order),
+            // then push a dummy 0. wasm sibling of rep stosb / the arm64 byte loop.
+            out = out + "    memory.fill\n    i32.const 0\n";
+        } else if (o.kind == "free") {
+            // stack: ptr, size -> no-op under the bump heap; drop both, push dummy 0.
+            out = out + "    drop\n    drop\n    i32.const 0\n";
         } else if (o.kind == "load_i32" || o.kind == "load_ptr") {
             // stack: addr -> 4-byte load (ptr is i32-width on wasm32).
             out = out + "    i32.load\n";

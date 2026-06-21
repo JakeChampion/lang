@@ -343,6 +343,19 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             s = s.write("    b " + lp + "mc" + util.i32_to_string(i) + "\n");
             s = s.write(lp + "mcd" + util.i32_to_string(i) + ":\n");
             s = s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "memset") {
+            // [dst, byte, n] -> fill n bytes at dst with byte's low byte (byte
+            // loop), push dummy 0. n on top (x2), then byte (x1), then dst (x0).
+            s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+            s = s.write(lp + "ms" + util.i32_to_string(i) + ":\n");
+            s = s.write("    cbz x2, " + lp + "msd" + util.i32_to_string(i) + "\n");
+            s = s.write("    strb w1, [x0], #1\n    sub x2, x2, #1\n");
+            s = s.write("    b " + lp + "ms" + util.i32_to_string(i) + "\n");
+            s = s.write(lp + "msd" + util.i32_to_string(i) + ":\n");
+            s = s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "free") {
+            // [ptr, size] -> no-op under bump/leak heap; drop both, push dummy 0.
+            s = s.write("    ldr x0, [sp], #16\n    ldr x0, [sp], #16\n    mov x0, #0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "load_i32") {
             // [addr] -> sign-extended 4-byte load.
             s = s.write("    ldr x0, [sp], #16\n    ldrsw x0, [x0]\n    str x0, [sp, #-16]!\n");
