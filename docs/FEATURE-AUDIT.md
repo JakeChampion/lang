@@ -251,6 +251,24 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-21 — core/int: pure-Fern std/test migration coverage (`int_to_string` / `parse_int_radix` / `int_to_string_radix`)
+
+`core/int`'s integer-formatting primitives (the layer behind the
+`(n).to_string()` / `to_hex` / `parse_hex_int` method sugar) had Go-side
+coverage but no migration-shaped (pure-Fern, `std/test`-driven) companion.
+Added `examples/tests/int_test.fern` — 19 assertions: `int_to_string` zero /
+positive / negative / `INT_MAX` / `INT_MIN` (the unsigned-safe negation path);
+`parse_int_radix` hex / binary / negative-base36 / `+`-sign, and the four
+`None` paths (empty, base out of range, digit ≥ base, sign-without-digits);
+`int_to_string_radix` hex / binary / zero / negative / `INT_MIN` (the
+i64-magnitude path → `-80000000`); and a parse∘format round-trip on `0xBEEF`.
+Gated natively (`TestRunnerIntExamplePasses`) and through the self-host
+differential gate (`TestSelfHostStdTestE2E/int`), which oracle-checks TAP-13
+stdout + exit code against the interpreter **byte-for-byte**. Notably this
+exercises the `__alloc_u8` / `__memcpy` / `usize` scratch-buffer-written-
+backwards path (the high-mmap-address-safe pointer capture) end-to-end through
+the self-host IR — no AST fallback.
+
 ### 2026-06-21 — std/csv: pure-Fern std/test migration coverage (`csv_escape` / `csv_join` / `csv_parse_line`)
 
 `std/csv`'s RFC 4180 single-line surface had Go-side coverage but no
