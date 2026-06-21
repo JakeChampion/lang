@@ -100,7 +100,11 @@ pub function is_fern_helper(name: string): boolean {
         || name == "__fern_str_to_i32"
         // chr(n)'s 1-char-string-box helper (stack-arg body under
         // __fn___fern_chr; allocates, so it needs the heap runtime).
-        || name == "__fern_chr";
+        || name == "__fern_chr"
+        // snapshot-param consume-rebind reclaim (#3456 slice 2): frees the
+        // superseded old box (rc-guarded shallow free) unless it is `new` or the
+        // caller's snapshot; passes `new` back through. Body in emit_ir_runtime.
+        || name == "__fern_snapshot_dec";
 }
 
 // ir_helper_symbol maps an IR runtime-helper name to the asm.fern symbol the
@@ -752,6 +756,38 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq $1, %rax\n");
     s = s.write(".Lshuniq_ret:\n");
     s = s.write("    ret\n");
+    // __fern_snapshot_dec(new, old, snap) -> new — the snapshot-param consume-
+    // rebind reclaim (#3456 slice 2). Stack-arg ABI: 24(%rsp)=new, 16=old,
+    // 8=snap. Frees `old` (rc-guarded SHALLOW box release, the __fern_arr_dec free
+    // path) only when it differs from BOTH `new` (cow) AND `snap` (never freed).
+    // Returns `new` in %rax. %rcx/%rdx/%rsi/%rdi/%r8/%r9 are scratch.
+    s = s.write("__fn___fern_snapshot_dec:\n");
+    s = s.write("    movq 24(%rsp), %rax\n");      // new (return value)
+    s = s.write("    movq 16(%rsp), %rcx\n");      // old
+    s = s.write("    cmpq %rax, %rcx\n");          // old == new? (cow)
+    s = s.write("    je .Lsd_ret\n");
+    s = s.write("    movq 8(%rsp), %rdx\n");       // snap
+    s = s.write("    cmpq %rdx, %rcx\n");          // old == snap? (caller's original)
+    s = s.write("    je .Lsd_ret\n");
+    s = s.write("    cmpq $0x10000, %rcx\n");      // low-addr / SSO sentinel
+    s = s.write("    jb .Lsd_ret\n");
+    s = s.write("    movl -8(%rcx), %esi\n");      // old rc
+    s = s.write("    testl %esi, %esi\n");
+    s = s.write("    js .Lsd_ret\n");              // static sentinel (rc<0)
+    s = s.write("    cmpl $1, %esi\n");
+    s = s.write("    jne .Lsd_ret\n");             // shared — leave (defensive)
+    s = s.write("    movl -16(%rcx), %esi\n");     // old cap
+    s = s.write("    addq $3, %rsi\n");            // words = cap + 3 (header)
+    s = s.write("    cmpq $65536, %rsi\n");
+    s = s.write("    jae .Lsd_ret\n");             // large tier — leak (matches arr_dec)
+    s = s.write("    movl $0, -8(%rcx)\n");        // mark freed
+    s = s.write("    leaq -16(%rcx), %rdi\n");     // old box base
+    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
+    s = s.write("    movq (%r8,%rsi,8), %r9\n");
+    s = s.write("    movq %r9, (%rdi)\n");         // node.next = head
+    s = s.write("    movq %rdi, (%r8,%rsi,8)\n");  // head = node
+    s = s.write(".Lsd_ret:\n");
+    s = s.write("    ret\n");                      // %rax = new
     // __fern_print_int: the i32 in %rdi → decimal text in a stack buffer → stdout
     // (sys_write, fd 1, no newline). Transcribed verbatim from asm.fern's
     // emit_runtime so the IR path's print_int calls the identical body. Gated on
@@ -2823,7 +2859,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fern_map_delete",
         "__fn___fern_rc_inc", "__fn___fern_arr_dec", "__fn___fern_rc_is_unique",
         "__fn___fern_rc_underflow_count", "__fn___fern_i32_to_string",
-        "__fn___fern_str_to_i32", "__fn___fern_chr"
+        "__fn___fern_str_to_i32", "__fn___fern_chr", "__fn___fern_snapshot_dec"
     ];
     var i: i32 = 0;
     while (i < names.len()) {

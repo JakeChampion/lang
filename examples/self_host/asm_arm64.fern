@@ -5363,6 +5363,14 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    add x10, x10, :lo12:__fern_rc_underflow\n");
         s = s.write("    ldr w0, [x10]\n");
         s = s.write("    ret\n");
+        // __fern_snapshot_dec(new, old, snap) -> new (#3456 slice 2). arm64 does
+        // NOT reclaim yet — a leak-safe PASS-THROUGH (returns `new`), mirroring
+        // op_arr_push_owned's arm64 aliasing. Stack-arg ABI: [sp]=snap, [sp+16]=
+        // old, [sp+32]=new. The x86 backend (asm_ir.emit_ir_runtime) does the
+        // real rc-guarded shallow free; the arm64 owned helper is a later slice.
+        s = s.write("__fn___fern_snapshot_dec:\n");
+        s = s.write("    ldr x0, [sp, #32]\n");      // new
+        s = s.write("    ret\n");
         // __fern_arr_dec(data) — Phase 3 array release (arm64 mirror).
         // rc>1 -> dec; rc==1 -> free buffer to the freelist
         // (base=data-16, size=(cap+3)*8, idx=cap+3); rc<=0 -> detector.
