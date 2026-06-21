@@ -7464,6 +7464,24 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 				c.errfCode(n.P, "E020", "empty array literal needs a type annotation")
 				return
 			}
+			// An unannotated binding whose init is a bare integer
+			// literal that doesn't fit i32 defaults to i64 rather
+			// than the usual i32 (#3676). i32 is the default int, so
+			// `var x = 5` stays polymorphic→i32; but a written-out
+			// constant past i32 range (`var big = 5000000000`) has no
+			// valid i32 reading — native would silently truncate it to
+			// INT_MIN while the interp / self-host IR kept it wide, a
+			// three-way divergence. Widening to i64 here makes all
+			// paths agree and lets the literal "just work" (the
+			// interp + self-host IR already treat a too-big bare
+			// literal as i64; this pins native to match). Arithmetic
+			// ON an i32 value still wraps at 32 bits (#3581) — only the
+			// bare literal's own type widens.
+			if gn, ok := got.(ast.NumberType); ok && gn.Polymorphic && intLitExceedsI32(n.Init) {
+				i64 := ast.NumberType{Width: 64, Signed: true}
+				c.settleInt(n.Init, i64)
+				got = i64
+			}
 			n.Type = got
 		} else if got != nil {
 			got = c.maybeWrapForUnion(n.Type, &n.Init, got, s)
@@ -11179,6 +11197,30 @@ func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 // Run once the width has been decided. For unsigned types the
 // value must be in [0, 2^width); for signed it must be in
 // [-2^(width-1), 2^(width-1)).
+// intLitExceedsI32 reports whether `e` is a bare integer literal (or a
+// unary-negated one) whose value lies outside the signed i32 range. It drives
+// the i64-widening default for an unannotated binding (#3676): a written-out
+// constant past i32 range has no valid i32 reading, so it defaults to i64
+// instead of being silently truncated. A typed-suffix literal (`42i64`) already
+// carries a Width and isn't a default case; a float literal is excluded.
+func intLitExceedsI32(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.NumberLit:
+		if x.IsFloat || x.Width != 0 {
+			return false
+		}
+		return x.Value < -1<<31 || x.Value > 1<<31-1
+	case *ast.Unary:
+		if x.Op == "-" {
+			if nl, ok := x.Operand.(*ast.NumberLit); ok && !nl.IsFloat && nl.Width == 0 {
+				v := -nl.Value
+				return v < -1<<31 || v > 1<<31-1
+			}
+		}
+	}
+	return false
+}
+
 func (c *checker) checkLiteralFits(lit *ast.NumberLit, t ast.NumberType) {
 	w := t.NormalWidth()
 	if t.IsSigned() {
