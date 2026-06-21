@@ -183,6 +183,12 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// CLOCK_MONOTONIC (1) variant of __fern_now_ns.
 					needs.add("__fern_alloc")
 					needs.add("__fern_monotonic_ns")
+				case "__fern_wasm_timer_pollable":
+					// wasm reactor timer: subscribe-duration → pollable.
+					needs.add("__fern_wasm_timer_pollable")
+				case "__fern_wasm_block":
+					// wasm reactor: block on a pollable.
+					needs.add("__fern_wasm_block")
 				case "__fern_sqrt_f64":
 					needs.add("__fern_sqrt_f64")
 				case "__fern_abs_f64":
@@ -827,6 +833,24 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  nil,
 		results: []byte{encode.ValtypeI64},
 		body:    buildMonotonicNsBody,
+	},
+	"__fern_wasm_timer_pollable": {
+		// (duration_ns: i64) → pollable handle (i32). The wasm
+		// reactor's timer primitive: a pollable that fires after
+		// the given duration. Preview-2-only (wraps
+		// wasi:clocks/monotonic-clock.subscribe-duration); see
+		// buildWasmTimerPollableBody.
+		params:  []byte{encode.ValtypeI64},
+		results: []byte{encode.ValtypeI32},
+		body:    buildWasmTimerPollableBody,
+	},
+	"__fern_wasm_block": {
+		// (pollable: i32) → i32 — synchronously block until the
+		// pollable is ready, then return 0. Preview-2-only (wraps
+		// wasi:io/poll.pollable.block); see buildWasmBlockBody.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildWasmBlockBody,
 	},
 	"__fern_sqrt_f64": {
 		// (f64) → f64 — wasm-native f64.sqrt.

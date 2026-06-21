@@ -336,6 +336,26 @@ func TestWasiIoErrorInstanceTypeBody_Bytes(t *testing.T) {
 	}
 }
 
+// TestWasiClocksMonotonicTimerInstanceTypeBody_Bytes pins the bytes
+// of the wasm-reactor timer instance type: an outer-aliased pollable
+// (here at top-level type index 5), own<pollable>, and the
+// `subscribe-duration(when: u64) -> own<pollable>` func + export.
+func TestWasiClocksMonotonicTimerInstanceTypeBody_Bytes(t *testing.T) {
+	got := component.WasiClocksMonotonicTimerInstanceTypeBody(5)
+	want := []byte{
+		0x01, 0x42, 0x04, // 4 decls
+		0x02, 0x03, 0x02, 0x01, 0x05, // 0: outer-alias(1, 5) -> pollable
+		0x01, 0x69, 0x00, // 1: own<pollable=0>
+		// 2: func(when: u64) -> own<pollable=1>
+		0x01, 0x40, 0x01, 0x04, 'w', 'h', 'e', 'n', component.CValtypeU64, 0x00, 0x01,
+		// 3: export "subscribe-duration" (func 2)
+		0x04, 0x00, 0x12, 's', 'u', 'b', 's', 'c', 'r', 'i', 'b', 'e', '-', 'd', 'u', 'r', 'a', 't', 'i', 'o', 'n', 0x01, 0x02,
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("WasiClocksMonotonicTimerInstanceTypeBody(5) = % x, want % x", got, want)
+	}
+}
+
 // TestWasiFilesystemTypesDescriptorInstanceTypeBody_Bytes pins the
 // bytes of the minimal wasi:filesystem/types instance type (one
 // exported `descriptor` sub-resource).

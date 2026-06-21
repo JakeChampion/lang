@@ -1070,6 +1070,33 @@ func WasiIoPollInstanceTypeBody() []byte {
 	return body
 }
 
+// WasiClocksMonotonicTimerInstanceTypeBody returns the type-section
+// body for a minimal `wasi:clocks/monotonic-clock@0.2.0` instance
+// type exposing only `subscribe-duration(when: duration) -> pollable`
+// — the wasm reactor's timer primitive. `duration` is u64 nanoseconds;
+// the returned `pollable` is the wasi:io/poll `pollable` resource,
+// outer-aliased from the surfaced top-level type (the caller surfaces
+// it via ensureIoPoll) so the resource identity matches io/poll's
+// block/poll methods — exactly how tcp-socket.subscribe's own<pollable>
+// lines up with pollable.block, but here with no socket in play.
+//
+// Decls: 0 outer-alias pollable, 1 own<pollable=0>, 2 func(when: u64)
+// -> own<pollable=1>, 3 export "subscribe-duration" (func 2). 4 decls.
+func WasiClocksMonotonicTimerInstanceTypeBody(pollableT uint32) []byte {
+	body := []byte{0x01, 0x42, 0x04}                         // 4 decls
+	body = append(body, OuterAliasTypeDecl(1, pollableT)...) // 0: pollable
+	body = append(body, 0x01, 0x69, 0x00)                    // 1: own<pollable=0>
+	// 2: func(when: u64) -> own<pollable=1>
+	body = append(body, tcpMethodFuncDecl("subscribe-duration",
+		[]string{"when"}, []byte{CValtypeU64}, 0x01)...)
+	// 3: export "subscribe-duration" (functype is decl/type 2)
+	const name = "subscribe-duration"
+	body = append(body, 0x04, 0x00, byte(len(name)))
+	body = append(body, name...)
+	body = append(body, 0x01, 0x02)
+	return body
+}
+
 // WasiSocketsNetworkErrorCodeNames is the ordered case list of the
 // `wasi:sockets/network@0.2.0` error-code enum (21 cases). Order
 // fixes the discriminant values, so it must match the WIT exactly
