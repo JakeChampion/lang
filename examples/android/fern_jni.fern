@@ -15,11 +15,11 @@
 // Build the shared object (arm64 for a device, or x86-64 for an emulator):
 //
 //   fern -target arm64-android -shared \
-//        -export Java_dev_fern_demo_Native_answer,Java_dev_fern_demo_Native_jniVersion \
+//        -export Java_dev_fern_demo_Native_answer,Java_dev_fern_demo_Native_jniVersion,Java_dev_fern_demo_Native_greeting,Java_dev_fern_demo_Native_utf8Length,Java_dev_fern_demo_Native_isString \
 //        -o libfern.so examples/android/fern_jni.fern
 //
 // Then drop libfern.so into the APK under lib/arm64-v8a/ and load it from a
-// `Native` class with a matching `external fun answer(): Int`. See README.md
+// `Native` class with matching `external fun` declarations. See README.md
 // for the full aapt2 / zipalign / apksigner (or Gradle) packaging recipe.
 
 import "std/jni";
@@ -31,11 +31,37 @@ pub function Java_dev_fern_demo_Native_answer(env: usize, thiz: usize): i32 {
 }
 
 // jint Java_dev_fern_demo_Native_jniVersion(JNIEnv* env, jobject thiz)
-// Calls back INTO the JVM: GetVersion() is JNIEnv method index 4, taking
-// only env. Demonstrates the outbound std/jni path (the return is the JNI
-// version, e.g. 0x00010006 for JNI 1.6).
+// Calls back INTO the JVM: GetVersion() (JNIEnv method index 4, taking only
+// env) via the typed std/jni wrapper. Demonstrates the outbound path (the
+// return is the JNI version, e.g. 0x00010006 for JNI 1.6).
 pub function Java_dev_fern_demo_Native_jniVersion(env: usize, thiz: usize): i32 {
-    return jni.call0(env, 4) as i32;
+    return jni.get_version(env);
+}
+
+// jstring Java_dev_fern_demo_Native_greeting(JNIEnv* env, jobject thiz)
+// Returns a freshly constructed Java String. `jni.cstr` turns a Fern string
+// into the NUL-terminated `const char*` NewStringUTF wants; the returned
+// jstring (an opaque handle, here a `usize`) is handed straight back to the
+// JVM. Kotlin side: `external fun greeting(): String`.
+pub function Java_dev_fern_demo_Native_greeting(env: usize, thiz: usize): usize {
+    return jni.new_string_utf(env, jni.cstr("Hello from Fern!"));
+}
+
+// jint Java_dev_fern_demo_Native_utf8Length(JNIEnv* env, jobject thiz, jstring s)
+// Reads an inbound Java String argument. The jstring is just another
+// `usize` parameter (3rd integer register); GetStringUTFLength reports its
+// UTF-8 byte length. Kotlin: `external fun utf8Length(s: String): Int`.
+pub function Java_dev_fern_demo_Native_utf8Length(env: usize, thiz: usize, s: usize): i32 {
+    return jni.get_string_utf_length(env, s);
+}
+
+// jboolean Java_dev_fern_demo_Native_isString(JNIEnv* env, jobject thiz, jobject obj)
+// Resolves java.lang.String via FindClass (note the JVM-internal name with
+// '/' separators, built with cstr) and asks IsInstanceOf whether `obj` is
+// one. Kotlin: `external fun isString(obj: Any): Boolean`.
+pub function Java_dev_fern_demo_Native_isString(env: usize, thiz: usize, obj: usize): i32 {
+    var strCls: usize = jni.find_class(env, jni.cstr("java/lang/String"));
+    return jni.is_instance_of(env, obj, strCls);
 }
 
 // A .so has no entry point, but the compiler still wants a `main`; it is
