@@ -320,6 +320,29 @@ pub function module_allocates(mod: parser.Module): boolean {
     return module_uses_strings(mod);
 }
 
+// field_reclaim_types returns the distinct struct types `T` for which a
+// __field_reclaim_<T> helper is called anywhere in the lowered module (#3457).
+// wasm emits a per-type PASS-THROUGH body for each (no reclaim yet — leak-safe,
+// mirroring __fern_snapshot_dec); collected by scanning lowered call_direct ops
+// rather than a need-set, matching wasm's module_calls-style gating.
+pub function field_reclaim_types(mod: parser.Module): string[] {
+    var out: string[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == "call_direct" && asm_ir.is_field_reclaim_name(r.ops[i].str)) {
+                var t: string = asm_ir.field_reclaim_type(r.ops[i].str);
+                if (util.index_of_str(out, t) < 0) { out = out.append(t); }
+            }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return out;
+}
+
 // module_emits_op reports whether any lowered function emits an op of `kind` —
 // the shared scanner the random/byte-source helper gates use (issue #2747).
 pub function module_emits_op(mod: parser.Module, kind: string): boolean {

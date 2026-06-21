@@ -9262,9 +9262,28 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // call result (already owned).
             // A SNAPSHOT struct PARAM reassign (the builder `s = s.write(x)`,
             // #3456 slice 2) frees the old box via the snapshot-guarded shallow
-            // free — never the caller's original (the entry snapshot).
+            // free — never the caller's original (the entry snapshot). When the
+            // struct has rc-tracked ARRAY fields (#3457 field-level move tracking),
+            // route to the per-type __field_reclaim_<T> helper instead, which also
+            // frees the REPLACED field buffers (the dominant clone-form leak —
+            // `LowerState { ops: s.ops.append(op), … }`) before freeing the box,
+            // guarded so neither the new value nor the caller's snapshot is freed.
             if (slot_is_snapshot_param(s, slot)) {
-                return emit_snapshot_store(se, slot, s.slot_of("$snap$" + s.local_names[slot]));
+                var snsl: i32 = s.slot_of("$snap$" + s.local_names[slot]);
+                var snty: string = s.struct_type_of_slot(slot);
+                if (struct_has_reclaim_array_field(s.structs, snty)) {
+                    return emit_field_reclaim_store(se, slot, snty, snsl);
+                }
+                return emit_snapshot_store(se, slot, snsl);
+            }
+            // A reclaimable struct LOCAL consume-rebind (`c = bump(c)`) with
+            // rc-tracked ARRAY fields likewise routes to __field_reclaim_<T>
+            // (snap = 0 — no caller's original to protect), freeing the old box's
+            // replaced field buffers before the box. A scalar-only reclaimable
+            // struct keeps the plain box free via emit_arr_store's do_dec.
+            var asty: string = s.struct_type_of_slot(slot);
+            if (!target_is_arr && slot_is_reclaimable_struct(s, slot) && struct_has_reclaim_array_field(s.structs, asty)) {
+                return emit_field_reclaim_store(se, slot, asty, 0 - 1);
             }
             return emit_arr_store(se, slot, reassign_inc, target_is_arr || slot_is_reclaimable_struct(s, slot));
         },
@@ -10719,6 +10738,52 @@ function emit_snapshot_store(se: LowerState, slot: i32, snap_slot: i32): LowerSt
     var st: LowerState = se.emit(ir.op_load_local(slot));        // old (arg1)
     st = st.emit(ir.op_load_local(snap_slot));                   // snap (arg2)
     st = st.emit(ir.op_call_direct("__fern_snapshot_dec", 3));   // frees old; returns new
+    return st.emit(ir.op_store_local(slot));
+}
+
+// struct_has_reclaim_array_field reports whether struct type `sty` has at least
+// one rc-tracked ARRAY field — a scalar-element array (i32[]/u32[]/f64[]/…), an
+// array-of-struct, or an array-of-enum field. These are exactly the fields whose
+// BUFFER the per-type field-reclaim helper shallow-frees on a consume-rebind, so
+// this is the gate that picks `__field_reclaim_<T>` over the scalar-only
+// `__fern_snapshot_dec` / the plain box `__fern_rc_dec`. Mirrors the `any`
+// detection loop of emit_struct_field_drops (string / map / option / tuple /
+// nested-struct fields are NOT reclaimed — they leak with the struct, sound).
+pub function struct_has_reclaim_array_field(structs: parser.StructDecl[], sty: string): boolean {
+    if (sty.len() == 0) { return false; }
+    var n: i32 = decl_field_count(structs, sty);
+    var fi: i32 = 0;
+    while (fi < n) {
+        var fdt: string = decl_field_type_at(structs, sty, fi);
+        if (is_leaksafe_array_field(fdt)) { return true; }
+        if (is_struct_array_field_type(structs, fdt)) { return true; }
+        if (is_enum_array_field_type(structs, fdt)) { return true; }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// emit_field_reclaim_store stores `new` (already on the operand stack) into a
+// reclaimable struct slot (#3457 field-level move tracking) AND frees the REPLACED
+// array-field buffers of the OLD box before shallow-freeing the old box itself.
+// The conditional per-field free + box free live in the per-type runtime helper
+// __field_reclaim_<T>(new, old, snap) -> new: for each array field i it frees
+// old.field[i] iff it differs from BOTH new.field[i] (cow — the field new still
+// owns) AND snap.field[i] (the caller's original, when snap != 0), then frees the
+// old box (the __fern_snapshot_dec tail). A per-type helper, never inline: a
+// builder has hundreds of rebinds and inlining ~16 ops × the field count at each
+// would OOM the native driver's emit of the large modules (#3452). `snap_slot`
+// >= 0 is the SNAPSHOT-param case (free a box != the caller's original); < 0 is
+// the LOCAL consume-rebind case (no snapshot — the helper is passed snap=0, so
+// only the != new guard applies, and the box free is cow-guarded as before).
+function emit_field_reclaim_store(se: LowerState, slot: i32, sty: string, snap_slot: i32): LowerState {
+    var st: LowerState = se.emit(ir.op_load_local(slot));        // old (arg1); new already on stack (arg0)
+    if (snap_slot >= 0) {
+        st = st.emit(ir.op_load_local(snap_slot));              // snap (arg2)
+    } else {
+        st = st.emit(ir.op_const_i32(0));                       // snap = null (local reclaim)
+    }
+    st = st.emit(ir.op_call_direct("__field_reclaim_" + sty, 3));   // frees replaced fields + box; returns new
     return st.emit(ir.op_store_local(slot));
 }
 

@@ -2076,3 +2076,54 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   this slice). Convergence needs FIELD-LEVEL move tracking — free the replaced
   fields, keep the shared ones — the deep Perceus reuse piece, the genuine next
   slice.
+- 2026-06-21: **Field-level move tracking — `__field_reclaim_<T>` mechanism
+  landed (sound, validated); detection-gap finding for the per-module
+  convergence.** The per-type helper `__field_reclaim_<T>(new, old, snap) -> new`
+  (port of native's `__drop_<T>` glue): for each rc-tracked ARRAY field i it frees
+  `old.field[i]` via `__fern_rc_dec` iff it differs from BOTH `new.field[i]` (cow —
+  the field new still owns) AND `snap.field[i]` (the caller's original, when snap !=
+  0), then frees the old box via `__fern_snapshot_dec`. The two guards make it sound
+  with NO static field-alias analysis (it frees only buffers neither survivor points
+  at; a buffer aliased by a THIRD live local is `__fern_rc_dec`'d, not unconditionally
+  freed, so its rc respects that owner — safe-leak, never UAF). Built from
+  `struct_has_reclaim_array_field` + `emit_field_reclaim_store` (irlower), gated to
+  fire wherever `__fern_snapshot_dec` would for a struct with array fields: the
+  snapshot-param rebind (`emit_snapshot_store` path) AND the local consume-rebind
+  (`StmtAssign` reclaimable-struct path, snap = 0 → only the != new guard). It MUST be
+  a per-type helper (≈4-op call site), never inline — the prior session proved the
+  inline ~16-op×hundreds-of-rebinds form OOMs the native driver's emit; the body is
+  emitted ONCE per type. Multi-backend: x86 emits the real per-type reclaim body
+  (`emit_ir_field_reclaims`, `.weak` so per-module units link-dedupe, calling the
+  entry-exported `__fn___fern_arr_dec` + `__fn___fern_snapshot_dec` — no direct
+  `.bss` freelist reference, so a library unit's body resolves cleanly); arm64 +
+  wasm emit a leak-safe PASS-THROUGH (`ldr x0,[sp,#32]` / `local.get $new`),
+  mirroring `op_arr_push_owned` / `__fern_snapshot_dec`. Validated: x86 default
+  fixpoint byte-identical (mmc == gen2 == gen3, `TestSelfHostModloadFixpointX86_64`);
+  `TestSelfHostStage2FixedPoint`; whole-compiler per-module emit
+  (`TestSelfHostModloadPerModuleWholeCompilerX86_64`); the RC/struct IR suites
+  (StructRCIR / ConsumeRebindReclaimIR / SnapshotParamReclaimIR / StructFieldDropIR);
+  wasm struct + deep-nest RC; and a new `TestSelfHostFieldReclaimIRX86_64` proving
+  the mechanism CONVERGES a clone-form-field-append churn (a builder grown then
+  cleared, 200M iterations: exit-137 on origin/main → exit-0 with this slice,
+  measured against a baseline driver) plus value-correctness (builder read back
+  after threading) and caller-original-intact (the snapshot/caller buffer survives).
+  **Honest scope — does NOT yet converge the per-module SELF-compile of the big
+  units.** Measurement of `mmc` (the self-host-built compiler) shows the mechanism
+  is correct but currently INERT on the real workload: across the WHOLE self-host
+  compiler `mmc` emits **0** `__field_reclaim_<T>` calls and only **1**
+  `__fern_snapshot_dec` call. The dominant `LowerState`/`EmitState` builders thread
+  through CONSUME-HELPER CHAINS (`s = lower_expr(e, s)`, `s = lower_stmt(st, s)`),
+  where `s` is passed to a callee that consumes-and-returns it — a non-borrowable
+  call, so the snapshot/reclaim DETECTION (`body_unsafe_for_allow_ret` /
+  `reclaimable_names_of`) classifies it an ESCAPE and never marks `s` a snapshot
+  param or reclaimable local. So neither `__fern_snapshot_dec` nor `__field_reclaim`
+  fires there, and the per-module emit of the big units (parser/asm/irlower) still
+  exhausts the static `.bss` bump heap mid-emit (manifests as SIGSEGV 139, the
+  bump-past-`.bss`, IDENTICAL on origin/main — this slice neither fixes nor regresses
+  it). The genuine NEXT slice is therefore the consume-call MOVE detection: recognise
+  `s = f(…, s, …)` (a consume-and-return of the same struct, ownership transfer) as a
+  MOVE rather than an escape, which will activate BOTH the snapshot-param reclaim AND
+  this field-level helper across the builder-threading hot path. This slice lands the
+  field-free MECHANISM (the prerequisite the detection slice will switch on),
+  byte-identical and fully tested; it is necessary but not sufficient, exactly as the
+  snapshot-param and local-reclaim slices before it.

@@ -11258,6 +11258,16 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
             ir_out = ir_out + heap_alloc_helpers(wasm_ir.heap_base_for(mod), wasm_ir.fl_base_for(mod), wasm_ir.fl_cells());
             ir_out = ir_out + rc_runtime_helpers(wasm_ir.heap_base_for(mod));
         }
+        // Per-type $__field_reclaim_<T> bodies (#3457). wasm does not reclaim the
+        // replaced field buffers yet — a leak-safe PASS-THROUGH (returns `new`),
+        // mirroring $__fern_snapshot_dec. One body per type the module calls.
+        var frt: string[] = wasm_ir.field_reclaim_types(mod);
+        var frti: i32 = 0;
+        while (frti < frt.len()) {
+            ir_out = ir_out + "  (func $__field_reclaim_" + frt[frti] + " (param $new i32) (param $old i32) (param $snap i32) (result i32)\n";
+            ir_out = ir_out + "    (local.get $new))\n";
+            frti = frti + 1;
+        }
         if (wasm_ir.module_uses_divrem(mod)) { ir_out = ir_out + divrem_helpers(); }
         if (wasm_ir.module_uses_i64_divrem(mod)) { ir_out = ir_out + divrem64_helpers(); }
         // $__fern_strcat + $__fern_streq; references $__fern_str_box from
