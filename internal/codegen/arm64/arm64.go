@@ -171,6 +171,11 @@ type Options struct {
 	// Pair with arm64.AssembleProgramPIE + elf.StaticPieExecutable. Linux
 	// only (the Darwin path is its own non-PIE Mach-O image).
 	PIE bool
+
+	// Exports are function names kept as tree-shake roots (in addition to
+	// `main`) so a `-shared` .so can export functions the program never
+	// calls itself — e.g. JNI entry points, which only the JVM invokes.
+	Exports []string
 }
 
 // Emit produces the assembly text for prog.
@@ -211,6 +216,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// tree-shake roots so they survive (mirrors the x86-64 + wasm build
 	// paths). See docs/DYN-TRAITS.md §4.2.2.
 	dynRoots := append(treeshake.DynCoercionImplMethods(info), treeshake.DowncastImplMethods(prog, info)...)
+	dynRoots = append(dynRoots, opts.Exports...) // -shared exports survive tree-shaking
 	treeshake.Run(prog, dynRoots...)
 	// arm64 supports boxed one-word `dyn Trait` values
 	// (docs/DYN-TRAITS.md §4.2.2): DynSupported lifts the dispatch gate
@@ -356,6 +362,11 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesMemcpy {
 		g.emitMemcpyRuntime()
+	}
+	for n := range g.usesCCall {
+		if g.usesCCall[n] {
+			g.emitCCallRuntime(n)
+		}
 	}
 	if g.usesRcInc {
 		g.emitRcIncRuntime()
@@ -1324,6 +1335,25 @@ func (g *generator) emitCellFreeRuntime() {
 	g.emit("ret")
 	g.sizeDirective("__fern_cell_free")
 	g.line(".ltorg")
+}
+
+// emitCCallRuntime emits `__c_call<n>(fn, a0..a{n-1})` — the FFI shim that
+// invokes a C-ABI (AAPCS64) function pointer. Fern uses the same integer-arg
+// registers (x0..x3), so the shim drops the leading `fn` argument: save fn in
+// x9, slide each real arg down one register (x1->x0, …), and tail-branch to
+// fn. x30 still holds the Fern caller's return address, so fn's `ret` returns
+// there with the result already in x0.
+func (g *generator) emitCCallRuntime(n int) {
+	name := fmt.Sprintf("__c_call%d", n)
+	g.line("")
+	g.line(".global " + name)
+	g.typeDirective(name)
+	g.label(name)
+	g.emit("mov x9, x0") // x9 = fn
+	for i := 0; i < n; i++ {
+		g.emit("mov x%d, x%d", i, i+1) // slide a{i} down
+	}
+	g.emit("br x9") // tail-call fn; its ret returns to our caller, x0 = result
 }
 
 // emitMemcpyRuntime emits `__fern_memcpy(dst, src, n)` —
@@ -5885,6 +5915,9 @@ type generator struct {
 	usesAlloc  bool
 	usesStrcat bool
 	usesMemcpy bool
+	// usesCCall[n] gates the `__c_call<n>` FFI shim (call a C-ABI function
+	// pointer with n integer args). See emitCCallRuntime.
+	usesCCall  [4]bool
 	usesStrcmp bool
 	// usesTcp pulls in the full TCP socket runtime
 	// (__fern_tcp_listen / __fern_tcp_accept / __fern_tcp_recv
@@ -8390,6 +8423,14 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			return nil
 		}
 		switch target {
+		case "__c_call0":
+			g.usesCCall[0] = true
+		case "__c_call1":
+			g.usesCCall[1] = true
+		case "__c_call2":
+			g.usesCCall[2] = true
+		case "__c_call3":
+			g.usesCCall[3] = true
 		case "__memcpy":
 			target = "__fern_memcpy"
 			g.usesMemcpy = true

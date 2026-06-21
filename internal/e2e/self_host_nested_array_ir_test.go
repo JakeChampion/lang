@@ -42,14 +42,19 @@ var nestedArrayIRCases = []struct {
 	{"f64-2x2", `function main(): i32 { var m: f64[][] = [[2.5], [3.5]]; return (m[0][0] * 2.0) as i32; }`},
 }
 
-// nestedArrayI64IRCases pin the i64[][] read fix on x86-64 only. The READ side is
-// fixed on every backend (local_arrarr_elem → arr_get_i64), but an i64 array
-// LITERAL (`[5000000000]`) still emits its 64-bit element as `i32.const` on the
-// wasm backend (a separate, pre-existing construction-side bug — out of range, so
-// the module won't parse), so a wasm i64[][] case can't be built yet. f64
-// literals are unaffected (covered on both backends above). The wasm i64-literal
-// construction fix is a follow-up; until then these read-side pins run on x86-64,
-// where the previously-truncated 8-byte element now reads correctly.
+// nestedArrayI64IRCases pin the i64[][] read AND construction fixes on x86-64 +
+// wasm. The READ side (local_arrarr_elem → arr_get_i64) and the CONSTRUCTION side
+// both now work on every backend: previously an i64 array LITERAL (`[5000000000]`)
+// emitted its 64-bit element as `i32.const` on the wasm backend (out of range, so
+// the module wouldn't parse), because infer_expr_width treated every bare integer
+// literal as i32. infer_expr_width now classifies a literal that exceeds i32-max as
+// i64 by value (it has no valid i32 reading — checker E047), so the inner array
+// literal takes the arr_make_i64 path and the element is emitted i64.const.
+// (An UNANNOTATED 1-D big-literal array — `var a = [7000000000]` — would exercise
+// the same compiler path, but the tree-walking interpreter still defaults an
+// unannotated big literal to i32 and wraps, so it can't serve as an oracle here;
+// that checker/interp divergence is tracked separately. The annotated cases below
+// pin the construction fix unambiguously.)
 var nestedArrayI64IRCases = []struct {
 	name string
 	main string
@@ -61,6 +66,31 @@ var nestedArrayI64IRCases = []struct {
 	{"i64-row-binding", `function main(): i32 { var m: i64[][] = [[5000000000, 1000000000], [2000000000]]; var r = m[0]; return (r[0] / 1000000000) as i32 + (r[1] / 1000000000) as i32; }`},
 	// i64[][] via nested for-in (for row in m { for x in row }). (5+6)e9 / 1e9 = 11.
 	{"i64-forin", `function main(): i32 { var m: i64[][] = [[5000000000], [6000000000]]; var t: i64 = 0; for row in m { for x in row { t = t + x; } } return (t / 1000000000) as i32; }`},
+}
+
+// nestedArrayStructIRCases pin field/method access on a struct/enum element of an
+// array-of-arrays (`a[i][j].field`, `a[i][j].method()`) to the self-host IR path on
+// x86-64 + wasm. Value lowering of `a[i][j]` already worked (the temp-bound form
+// `var p = a[i][j]; p.x` lowers), but `expr_struct_type` couldn't recover the
+// element type for a doubly-indexed `a[i][j]` (its ExprIndex arm only matched an
+// ExprIdent/ExprFieldAccess array, never a nested ExprIndex), so the field-read and
+// method-dispatch paths bailed to the AST emitter. #2691 adds the depth-2 ExprIndex
+// case so the innermost struct/enum element type recorded on the T[][] slot is
+// recovered. Each case is oracle-checked against the interpreter and returns <= 126.
+var nestedArrayStructIRCases = []struct {
+	name string
+	main string
+}{
+	// Two field reads off a struct element of a P[][]. 3 + 4 = 7.
+	{"struct-field", `struct P{x:i32,y:i32} function main(): i32 { var a: P[][] = [[P{x:3,y:4}]]; return a[0][0].x + a[0][0].y; }`},
+	// Variable indices into the nested struct array. a[0][1].x = 6.
+	{"struct-field-var-idx", `struct P{x:i32} function main(): i32 { var a: P[][] = [[P{x:5},P{x:6}]]; var i = 0; var j = 1; return a[i][j].x; }`},
+	// Method dispatch on the struct element. 3*2 = 6.
+	{"struct-method", `struct P{x:i32} function (p: P) val(): i32 { return p.x*2; } function main(): i32 { var a: P[][] = [[P{x:3}]]; return a[0][0].val(); }`},
+	// 8-byte i64 field on the nested element (field read picks the 8-byte load). 5.
+	{"struct-i64-field", `struct P{x:i64} function main(): i32 { var a: P[][] = [[P{x:5000000000}]]; return (a[0][0].x / 1000000000) as i32; }`},
+	// Method dispatch on an enum element of a Sh[][] (`<Enum>.<method>`). 3*3 = 9.
+	{"enum-method", `enum Sh{C(i32)} function (s: Sh) area(): i32 { match(s){Sh.C(r)=>{return r*r;}} } function main(): i32 { var a: Sh[][] = [[Sh.C(3)]]; return a[0][0].area(); }`},
 }
 
 // TestSelfHostNestedArrayIRX86_64 routes each case through the self-hosted x86-64
@@ -81,13 +111,13 @@ func TestSelfHostNestedArrayIRX86_64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
 	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
 
-	// x86-64 runs the cross-backend cases plus the i64[][] cases (the i64 read
-	// fix is verified here; the wasm half is blocked by the i64-literal bug noted
-	// on nestedArrayI64IRCases).
-	x86Cases := append(append([]struct {
+	// x86-64 runs the cross-backend cases plus the i64[][] cases (both the read
+	// and construction fixes; the wasm half now runs them too) plus the struct/enum
+	// nested-element field/method cases.
+	x86Cases := append(append(append([]struct {
 		name string
 		main string
-	}{}, nestedArrayIRCases...), nestedArrayI64IRCases...)
+	}{}, nestedArrayIRCases...), nestedArrayI64IRCases...), nestedArrayStructIRCases...)
 
 	for _, tc := range x86Cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -138,7 +168,15 @@ func TestSelfHostNestedArrayIRWasm(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
-	for _, tc := range nestedArrayIRCases {
+	// wasm runs the cross-backend cases plus the i64[][] cases — the i64-literal
+	// construction fix (infer_expr_width value-based i64) makes these build here too —
+	// plus the struct/enum nested-element field/method cases.
+	wasmCases := append(append(append([]struct {
+		name string
+		main string
+	}{}, nestedArrayIRCases...), nestedArrayI64IRCases...), nestedArrayStructIRCases...)
+
+	for _, tc := range wasmCases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.main + "\n")
 			want := interpExit(t, interpBin, string(src))

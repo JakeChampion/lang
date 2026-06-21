@@ -133,7 +133,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | Generic structs/enums (monomorphised) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `Box[T]` + generic method |
 | Generic functions + inference | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `id[T](x: T): T`, inferred |
 | Traits (`Display`/`Eq`/`Ord`, bounds) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | trait + impl method dispatch |
-| Nested functions + closures (capture) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `function(x: T): R { … cap … }` |
+| Nested functions + closures (capture) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `function(x: T): R { … cap … }`; incl. returning a capturing closure and calling it inline off the call result (`mk(..)(args)` / curried `(x)=>(y)=>…`) — self-host IR `return_closure` pin (#3551) |
 | Function values / indirect calls | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | named fn as value; higher-order |
 | Lambdas (anonymous `function(…)` + arrow `(x: T): R => e`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | arrow form desugars to `function(…){ return e; }` — typed params required, return type optional (#2701) |
 | Tail-call optimisation | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | depth 5000 self-recursion, no overflow |
@@ -238,6 +238,7 @@ per-function bugs in the audit log.
 |--------|---|---|---|---|---|--------|-------|
 | `core/int` | ✅ | ✅ | ✅ | ✅ | 🔧 | 🔧 | radix **parse** direction (`parse_int_radix` / `__radix_digit`, bases 2–36, sign handling) — native via the `core_int_parse` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostCoreIntParseIR` — `Option[i32]` `Some`/`None` + payload-binding `match`, string indexing with char-class compares, multiply-accumulate loop, sign + negation. The **to-string radix** direction (`int_to_string_radix`) ALSO lowers on the IR path — it builds via `__alloc_u8` + `.with` + `string_from_bytes` (no `__memcpy`/`usize`), the same builder std/hex / std/base64 use — native via the `core_int_radix` fixture, self-host via `TestSelfHostCoreIntRadixIR` (x86-64 + wasm, oracle-checked). Only `int_to_string` / `__int_to_string_u64` (decimal) stay AST — those poke raw memory via `__memcpy` over a `usize` pointer (same caveat as std/u64 `to_string`) |
 | `core/cmp` (traits) | | | | | | ⬜ | |
+| `core/iter` (Iterator trait) | ✅ | ✅ | ✅ | ✅ | ✅ | 🔧 | numeric (i32) `Iterator` trait + integer `Range` + eager drivers (`sum`/`count`/`to_array`), the first slice of the iterator protocol ([#2686](https://github.com/JakeChampion/lang/issues/2686) / tail of [#2699](https://github.com/JakeChampion/lang/issues/2699)). Value-semantic `next(self): Option[(i32, Self)]`. Works on native (interp / x86-64 / arm64 / wasm) AND the self-host **IR path** (x86-64 + wasm), via the existing bounded-generic + concrete-impl trait machinery — `TestNativeIteratorTrait{,Module,Arm64}` + `TestSelfHostIteratorTraitIR{X86_64,Wasm}` (routing-pinned to `ir`). A **generic** `Iterator[T]` (a bound on a *parametrised* trait, `[I: Iterator[i32]]`) now ALSO lowers on the self-host IR path as of the bound-parser fix (`TestSelfHostGenericTraitBoundIR{X86_64,Wasm}`); `core/iter` stays i32-specialised for now but could be generalised in a follow-up |
 | `core/map` | | | | | | ⬜ | |
 | `core/no_prelude` | | | | | | ⬜ | no-op sentinel |
 
@@ -249,6 +250,29 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-20 — self-host IR: calling a RETURNED capturing closure inline (#3551)
+
+Closed the last common closure shape that bailed the self-host IR path to the
+AST emitter: **returning a capturing closure and calling it directly off the
+call result** — `mk(10)(5)` where `mk` returns `(y) => k + y`, and the curried
+`(x) => (y) => x + y`. Found while sweeping the IR path for remaining AST
+fallbacks (it was the only common one left).
+
+The env/RC machinery already worked for the via-`var` form (`var f = mk(10);
+f(5)` — `closure_ret_fns` marks `f` a closure local, the box is dispatched
+env-first). Only the **inline call-on-call** bailed: the `mk(..)(args)` lowering
+handled a callee returning a bare fn pointer (no-capture lambda) but explicitly
+`fail()`ed when the callee returned a CLOSURE box. The fix evaluates the inner
+call into a fresh temp (marked an array so the exit dec-sweep releases it,
+exactly as the bound closure local is) and dispatches env-first off the box —
+the same shape the `is_closure_local` call arm already uses.
+
+`irlower.fern` only; the byte-identical self-host fixpoints
+(`TestSelfHostModloadFixpointX86_64` / `TestSelfHostStage2FixedPoint`) stay
+green. Guarded by `TestSelfHostReturnClosureIR{X86_64,Wasm}` — 7 value-pinned
+cases (curry, param/local capture, two-arg, two-captures, plus no-capture and
+via-`var` regression guards), routing-pinned to `"ir"` and oracle-checked.
 
 ### 2026-06-20 — `std/u32` self-host row → ✅ (the #2917 wasm unsigned-compare gap is closed)
 
@@ -435,6 +459,54 @@ isn't in scope without `import "std/i32"` / `"std/float"`. That self-host
 over-permissiveness vs. native is a separate divergence, filed for follow-up;
 this entry scopes only the import-free escape-sequence surface, which both
 compilers agree on.)
+
+### 2026-06-20 — self-host: parametrised-trait bounds (`[I: Iterator[i32]]`) lower on the IR path ([#2691](https://github.com/JakeChampion/lang/issues/2691) step 1)
+
+Generic-trait support on the self-hosted compiler: a bounded generic whose bound
+is a **parametrised-trait instantiation** — `function f[I: Iterator[i32]](…)` —
+now monomorphises and lowers through the IR path. Before this the self-host
+type-parameter **bound parser** (`parser.fern`) consumed `Trait (+ Trait)*` with
+an optional `mod.` qualifier but **not** the trait's generic args, so it stopped
+at the `[` in `Iterator[i32]`, mis-parsed the rest of the param list, and bailed
+the whole module to the legacy AST emitter (isolated via an `asm_pathprobe_run`
+sweep: the non-parametrised bound `[T: Area]` already routed `ir`; the
+parametrised `[I: Iterator[i32]]` routed `ast` even for a scalar-returning
+method). Fix: after the bound trait name (and `mod.` qualifier), consume the
+balanced `[ … ]` type-arg list. This is the keystone (epic #2691 step 1) for a
+generic — not i32-locked — `Iterator[T]`: a generic trait declaration
+`Iterator[T]`, a parametrised impl `impl Iterator[i32] for R`, a method returning
+`Option[(T, Self)]`, and a bounded-generic driver `sum[I: Iterator[i32]]` now all
+lower on the self-host IR path. Coverage: `TestSelfHostGenericTraitBoundIR{X86_64,
+Wasm}` (routing-pinned to `ir`, oracle-checked against native) + the native
+`TestNativeGenericTraitBound{,Arm64}` cross-check, incl. a two-impls / one-driver
+case (two monomorphic clones). Self-host fixpoint stays byte-identical (modload +
+stage2): the compiler's own source uses no parametrised-trait bounds, so the new
+parse branch never fires on the fixpoint corpus. The `core/iter` row's
+generic-`Iterator[T]` caveat is updated accordingly.
+
+### 2026-06-20 — core/iter: numeric Iterator trait + Range on native and the self-host IR path ([#2686](https://github.com/JakeChampion/lang/issues/2686))
+
+First slice of the iterator protocol (the trait-spine epic #2691 step 6, and the
+open tail of the Range issue #2699). New `internal/stdlib/core/iter.fern`: a
+numeric (i32) `Iterator` trait — `next(self): Option[(i32, Self)]`, value-
+semantic (advancing yields a fresh iterator, no interior mutation) — an integer
+`Range` (`[lo, hi)`) implementing it, a `range(lo, hi)` constructor, and eager
+bounded-generic drivers `sum` / `count` / `to_array`. So a range is now a first-
+class iterable value: `iter.sum(iter.range(0, n))`.
+
+The trait is **fixed to i32** ("numbers") on purpose: a *generic* `Iterator[T]`
+needs a bound on a parametrised-trait instantiation (`[I: Iterator[T]]`), which
+the self-host IR path does not yet monomorphise (it routes such programs AST —
+isolated via the `asm_pathprobe_run` sweep; the non-generic i32 form routes
+`ir`). The i32 form rides the already-mature trait machinery on BOTH compilers
+(concrete struct impl + bounded generics over a plain trait bound + tuple-in-
+Option returns), so it lowers natively (interp / x86-64 / arm64 / wasm) and on
+the self-host IR path (x86-64 + wasm) with no compiler change — pure stdlib +
+tests. Coverage: `TestNativeIteratorTrait{,Module,Arm64}` (the module test
+exercises the real `import "core/iter"`) and `TestSelfHostIteratorTraitIR{X86_64,
+Wasm}` (routing-pinned to `ir`, oracle-checked, results ≤ 120 for the wasmtime
+exit-code clamp). A generic `Iterator[T]` (and a Cell-backed mutable cursor) are
+later slices.
 
 ### 2026-06-20 — core/int int_to_string_radix on the self-host IR path + native audit
 

@@ -85,6 +85,11 @@ type Options struct {
 	// runs, so it is correct at the arbitrary base the kernel loads it at.
 	// Pair with x86_64.AssembleProgramPIE + elf.StaticPieExecutableX86.
 	PIE bool
+
+	// Exports are function names kept as tree-shake roots (in addition to
+	// `main`) so a `-shared` .so can export functions the program never
+	// calls itself — e.g. JNI entry points, which only the JVM invokes.
+	Exports []string
 }
 
 // Emit produces assembly text for prog targeting x86-64 Linux.
@@ -119,6 +124,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// tree-shake roots so they survive (mirrors the wasm build path).
 	// See docs/DYN-TRAITS.md §4.2.2.
 	dynRoots := append(treeshake.DynCoercionImplMethods(info), treeshake.DowncastImplMethods(prog, info)...)
+	dynRoots = append(dynRoots, opts.Exports...) // -shared exports survive tree-shaking
 	treeshake.Run(prog, dynRoots...)
 	// x86-64 supports boxed one-word `dyn Trait` values
 	// (docs/DYN-TRAITS.md §4.2.2): DynSupported lifts the dispatch gate.
@@ -251,6 +257,11 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesMemcpy {
 		g.emitMemcpyRuntime()
+	}
+	for n := range g.usesCCall {
+		if g.usesCCall[n] {
+			g.emitCCallRuntime(n)
+		}
 	}
 	if g.usesRcInc {
 		g.emitRcIncRuntime()
@@ -420,6 +431,9 @@ type generator struct {
 	// these from a pre-scan of the IR's OpCallDirect ops.
 	usesAlloc   bool
 	usesMemcpy  bool
+	// usesCCall[n] gates the `__c_call<n>` FFI shim (call a C-ABI function
+	// pointer with n integer args). See emitCCallRuntime.
+	usesCCall   [4]bool
 	usesStrcat  bool
 	usesStrcmp  bool
 	usesPuts    bool
@@ -596,6 +610,14 @@ type generator struct {
 // auto-`main()`-from-`handle()` synthesis.
 func (g *generator) recordUse(target string) {
 	switch target {
+	case "__c_call0":
+		g.usesCCall[0] = true
+	case "__c_call1":
+		g.usesCCall[1] = true
+	case "__c_call2":
+		g.usesCCall[2] = true
+	case "__c_call3":
+		g.usesCCall[3] = true
 	case "__memcpy":
 		g.usesMemcpy = true
 	case "__fern_rc_inc":
@@ -3801,6 +3823,29 @@ func (g *generator) emitMemcpyRuntime() {
 	g.emit("rep movsb")    // [rdi++] = [rsi++], rcx times
 	g.emit("ret")
 	g.line(".size __fern_memcpy, .-__fern_memcpy")
+}
+
+// emitCCallRuntime emits `__c_call<n>(fn, a0..a{n-1})` — the FFI shim that
+// invokes a C-ABI function pointer. Fern uses the System V integer-arg
+// convention (rdi, rsi, rdx, rcx), the same as the C ABI, so the shim only
+// has to drop the leading `fn` argument: save fn, slide each real arg down
+// one register, and tail-jump to fn. The tail `jmp` preserves the entry
+// stack alignment (rsp ≡ 8 mod 16, exactly a C call site), and fn's `ret`
+// returns straight to the Fern caller with the result already in rax.
+func (g *generator) emitCCallRuntime(n int) {
+	name := fmt.Sprintf("__c_call%d", n)
+	g.line("")
+	g.line(".globl " + name)
+	g.line(".type " + name + ", @function")
+	g.label(name)
+	g.emit("mov r11, rdi") // r11 = fn (preserved across the arg slide)
+	// Slide a0..a{n-1} from (rsi,rdx,rcx) down to (rdi,rsi,rdx).
+	regs := []string{"rdi", "rsi", "rdx", "rcx"}
+	for i := 0; i < n; i++ {
+		g.emit(fmt.Sprintf("mov %s, %s", regs[i], regs[i+1]))
+	}
+	g.emit("jmp r11") // tail-call fn; its ret returns to our caller, rax = result
+	g.line(".size " + name + ", .-" + name)
 }
 
 // emitRcIncRuntime emits `__fern_rc_inc(ptr) -> ptr` —

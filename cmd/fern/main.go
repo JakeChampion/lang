@@ -1076,12 +1076,21 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 	// exec, so the codegen emits the self-relocation prologue and the
 	// linker produces a .rela.dyn / PT_DYNAMIC image.
 	android := target == "arm64-android"
+	// -shared exports are kept as tree-shake roots so the .so can export
+	// functions the program never calls itself (e.g. JVM-invoked JNI entries).
+	var exportNames []string
+	if shared {
+		exportNames = []string{"main"}
+		if export != "" {
+			exportNames = strings.Split(export, ",")
+		}
+	}
 	var asm string
 	switch target {
 	case "x86-64":
-		asm, err = x86_64codegen.EmitWithOptions(prog, info, x86_64codegen.Options{})
+		asm, err = x86_64codegen.EmitWithOptions(prog, info, x86_64codegen.Options{Exports: exportNames})
 	default:
-		asm, err = arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: darwin, PIE: android})
+		asm, err = arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: darwin, PIE: android, Exports: exportNames})
 	}
 	if err != nil {
 		return 1, err
@@ -1127,10 +1136,6 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 		}
 		if target != "x86-64" && target != "arm64" && target != "arm64-android" {
 			return 1, fmt.Errorf("-shared is only supported with -target x86-64, arm64, or arm64-android (got %q)", target)
-		}
-		exportNames := []string{"main"}
-		if export != "" {
-			exportNames = strings.Split(export, ",")
 		}
 		if err := linkNativeShared(asm, binPath, target, exportNames); err != nil {
 			return 1, err

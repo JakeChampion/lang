@@ -1236,6 +1236,32 @@ pub function is_leaksafe_opt_field(t: string): boolean {
     return false;
 }
 
+// opt_payload_ok_d: an Option/Result payload type is admissible for a leak-safe
+// struct field when it is a leak-safe scalar/string OR a leak-safe STRUCT (a
+// leak-only pointer in one slot, offset 8 — exactly what the match lowering's
+// ptag_is_struct branch reads). Enum payloads are deliberately excluded: the
+// legacy AST backend miscompiles an `Option[enum]` struct field (it segfaults),
+// so admitting it to the IR path would route a backend-buggy shape.
+function opt_payload_ok_d(structs: parser.StructDecl[], p: string): boolean {
+    if (is_leaksafe_payload(p)) { return true; }
+    if (decl_is_struct(structs, p) && decl_is_leaksafe(structs, p)) { return true; }
+    return false;
+}
+
+// is_leaksafe_opt_field_d is the structs-aware variant of is_leaksafe_opt_field:
+// it additionally admits an Option[Struct] / Result[Struct, …] field whose struct
+// payload is itself leak-safe (the construction + match lowering already handle
+// it on every backend; only this eligibility predicate forced such fields to AST).
+pub function is_leaksafe_opt_field_d(structs: parser.StructDecl[], t: string): boolean {
+    var n: i32 = t.len();
+    if (n < 9) { return false; }
+    if (t[0:7] == "Option[") { return opt_payload_ok_d(structs, opt_payload_type(t, "Some")); }
+    if (t[0:7] == "Result[") {
+        return opt_payload_ok_d(structs, opt_payload_type(t, "Ok")) && opt_payload_ok_d(structs, opt_payload_type(t, "Err"));
+    }
+    return false;
+}
+
 // tuple_type_elem_tag parses a tuple type string "(t0, t1, …)" → element n's tag
 // (top-level-comma split, so nested brackets don't confuse it), or "" if not a
 // tuple / n is out of range.
@@ -1440,7 +1466,7 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
                 // read loads at the default 32-bit width; a sub-word cast wraps the
                 // value before the store). u64 / f32 are NOT added: they need real
                 // 64-bit / float width handling, so they keep the struct on AST.
-                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || t == "f32" || t == "float" || t == "u64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field(t) || is_leaksafe_tuple_field(t) || is_map_type_name(t)) {
+                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "u16" || t == "i8" || t == "i16" || t == "f32" || t == "float" || t == "u64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field_d(structs, t) || is_leaksafe_tuple_field(t) || is_map_type_name(t)) {
                     fi = fi + 1;
                     continue;
                 }
@@ -1484,7 +1510,7 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
                     // `Option[T]` is a leak-safe Option/Result: the whole nested
                     // structure leaks with the struct. Covers the common 2-D
                     // field; deeper nesting still bails.
-                    if (is_leaksafe_array_field(elt) || is_struct_array_field_type(structs, elt) || is_enum_array_field_type(structs, elt) || is_leaksafe_opt_field(elt)) {
+                    if (is_leaksafe_array_field(elt) || is_struct_array_field_type(structs, elt) || is_enum_array_field_type(structs, elt) || is_leaksafe_opt_field_d(structs, elt)) {
                         fi = fi + 1;
                         continue;
                     }
@@ -1746,6 +1772,39 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
                             var elt: string = ft[0 : ft.len() - 2];
                             if (decl_is_struct(s.structs, elt) || is_enum_like_name(elt, s.structs)) { return elt; }
                         }
+                    }
+                },
+                // `a[i][j]` where `a` is a `T[][]` of structs/enums → the innermost
+                // element type, so `a[i][j].field` / `a[i][j].method()` resolve
+                // without an intermediate typed local (the depth-2 sibling of the
+                // `arr[i]` ExprIdent case above). The element struct/enum name is
+                // recorded on the T[][] slot's local_struct_type at declaration; a
+                // plain i32[][]/f64[][] element carries "" → unaffected.
+                parser.ExprIndex(inner) => {
+                    match (inner.array) {
+                        parser.ExprIdent(aaid) => {
+                            var aasl: i32 = s.slot_of(aaid.name);
+                            if (s.is_arrarr_slot(aasl)) {
+                                var aaty: string = s.struct_type_of_slot(aasl);
+                                if (aaty != "" && (decl_is_struct(s.structs, aaty) || is_enum_like_name(aaty, s.structs))) { return aaty; }
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                // `mk()[i].field` — field on a struct ELEMENT indexed directly from a
+                // function that returns a struct ARRAY (`P[]`). struct_ret_type for a
+                // P[]-returning free fn already records the ELEMENT type "P" (the
+                // registry strips "[]", #3035), so recover it for `mk()[i]` — the
+                // call sibling of the `arr[i]` ExprIdent case above. Restricted to a
+                // bare-name (free fn) callee; method-call callees stay on the AST path.
+                parser.ExprCall(cc) => {
+                    match (cc.callee) {
+                        parser.ExprIdent(ccid) => {
+                            var crt: string = s.struct_ret_type(ccid.name);
+                            if (crt != "" && (decl_is_struct(s.structs, crt) || is_enum_like_name(crt, s.structs))) { return crt; }
+                        },
+                        _ => {}
                     }
                 },
                 _ => {}
@@ -3043,6 +3102,18 @@ pub function is_eager_safe(e: parser.Expr): boolean {
 // what makes `var x: i64 = 5000000000` work without value-based parsing.
 pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
     match (e) {
+        parser.ExprNumber(num) => {
+            // A bare integer literal whose value exceeds i32-max is unambiguously
+            // an i64 value (the checker forbids it in any i32 context, E047), so
+            // width inference must report 64. Smaller literals stay i32 and only
+            // become i64 from an i64 context (see lower_i64) — but a too-big one
+            // has no valid i32 reading, so classifying it by value is sound. Without
+            // this an i64[] LITERAL element (`[5000000000]`, incl. the inner array of
+            // an i64[][]) skipped the arr_make_i64 path and emitted `i32.const`
+            // with an out-of-range constant on the wasm backend (module won't parse).
+            if (!num.is_float && literal_is_i64(num.text)) { return 64; }
+            return 32;
+        },
         parser.ExprIdent(id) => {
             if (s.is_i64_slot(s.slot_of(id.name))) { return 64; }
             return 32;
@@ -3055,6 +3126,15 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
         parser.ExprUnary(u) => {
             if (u.op == "-") { return infer_expr_width(u.operand, s); }
             if (u.op == "as_i64" || u.op == "as_u64") { return 64; }
+            // `inner?` is i64-width when the Option/Result payload is i64/u64, so an
+            // unannotated `var x = inner?` width-tracks i64 (StmtVar routes width-64
+            // inits through lower_i64, where try_ now lowers).
+            if (u.op == "try_") {
+                var ot: string = try_opt_type(u.operand, s);
+                var pt: string = opt_payload_type(ot, "Ok");
+                if (pt == "i64" || pt == "u64") { return 64; }
+                return 32;
+            }
             return 32;
         },
         parser.ExprCall(c) => {
@@ -3169,6 +3249,11 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                 if (!sw.ok) { return sw; }
                 return sw.emit(ir.op_int_extend(u.op == "as_u64"));
             }
+            // `inner?` with an i64/u64 payload: lower_try emits the width-64 payload
+            // read, so the unwrapped value is a true i64 here (the `var x: i64 =
+            // inner?` binding lands in lower_i64). lower_try bails for non-i64/u64
+            // payloads, so this stays sound for the i64 domain.
+            if (u.op == "try_") { return lower_try(u.operand, s); }
             return s.fail();
         },
         parser.ExprBinary(b) => {
@@ -3367,6 +3452,31 @@ function lower_opt_make_payload(tag: i32, arg: parser.Expr, s: LowerState): Lowe
     if (ptag == "i64") { return so.emit(ir.op_opt_make_w(tag, 64, true)); }
     if (ptag == "f64") { return so.emit(ir.op_opt_make_w(tag, 64, false)); }
     return so.emit(ir.op_opt_make(tag));
+}
+
+// lower_opt_make_payload_exp is the expected-type-aware variant: when the
+// DECLARED payload type (`exp_tag`, recovered from the enclosing function's
+// Option/Result return type or an annotated binding) is i64/u64 but the argument
+// only infers i32 width (a bare literal `Ok(40)` or an i32 variable), the box must
+// still use the 8-byte/offset-8 layout every consumer reads via
+// op_opt_payload_w(64, true) — otherwise the construction stores a 4-byte payload
+// at offset 4 that the match-arm / try-operator read misinterprets (a silent
+// miscompile). An i64-spelled literal/cast/expr lowers via lower_i64; a plain i32
+// value is widened with op_int_extend. exp_tag "" (or any non-i64/u64 tag) is
+// byte-identical to lower_opt_make_payload.
+function lower_opt_make_payload_exp(tag: i32, arg: parser.Expr, exp_tag: string, s: LowerState): LowerState {
+    var ptag: string = elem_type_tag(arg, s);
+    var want_i64: boolean = (exp_tag == "i64" || exp_tag == "u64") && ptag != "i64" && ptag != "f64";
+    if (!want_i64) { return lower_opt_make_payload(tag, arg, s); }
+    // lower_i64 handles a numeric literal (const_i64_text), an `as i64`/`as u64`
+    // cast, an i64 slot, and i64 arithmetic; it bails (ok=false) on a bare i32
+    // value, in which case re-lower from the ORIGINAL state and widen to 8 bytes.
+    var a64: LowerState = lower_i64(arg, s);
+    if (a64.ok) { return a64.emit(ir.op_opt_make_w(tag, 64, true)); }
+    var aw: LowerState = lower_expr(arg, s);
+    if (!aw.ok) { return aw; }
+    aw = aw.emit(ir.op_int_extend(exp_tag == "u64"));
+    return aw.emit(ir.op_opt_make_w(tag, 64, true));
 }
 
 // lower_expr emits ops that leave the value of `e` on the operand stack.
@@ -5379,16 +5489,42 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 // lambda, lifted to a const_func by lift_lambdas). Lower the args,
                 // then the callee call (its returned fn pointer on TOS), then
                 // call_indirect — the same shape as a fn-pointer array element /
-                // tuple element call. A callee that returns a CLOSURE box (a
-                // capturing-lambda-returning fn, tracked in closure_fns) needs the
-                // env-passing form, so it bails to AST for now.
+                // tuple element call.
                 parser.ExprCall(cocall) => {
                     var coc_is_closure: boolean = false;
                     match (cocall.callee) {
                         parser.ExprIdent(cocid) => { if (util.index_of_str(s.closure_fns, cocid.name) >= 0) { coc_is_closure = true; } },
                         _ => {}
                     }
-                    if (coc_is_closure) { return s.fail(); }
+                    // A callee that returns a CLOSURE box [funcval, caps…] (a
+                    // capturing-lambda-returning fn, tracked in closure_fns):
+                    // dispatch env-FIRST, the same shape a closure LOCAL uses
+                    // (the `is_closure_local` arm above). The box is needed twice
+                    // — as the `__env` first arg and to read `box[0]` as the call
+                    // target — so the inner call is evaluated into a fresh temp.
+                    // Mirrors `var f = mk(…); f(args)`: the temp is marked an array
+                    // so the exit dec-sweep releases the box, exactly as the bound
+                    // closure local is. (#3551)
+                    if (coc_is_closure) {
+                        var bs: LowerState = lower_expr(c.callee, s);   // inner call -> box on TOS
+                        if (!bs.ok) { return bs; }
+                        var btmp: string = "$coc" + util.i32_to_string(bs.local_names.len());
+                        bs = bs.add_local(btmp);
+                        var bslot: i32 = bs.slot_of(btmp);
+                        bs = bs.mark_arr(bslot, true);
+                        bs = bs.emit(ir.op_store_local(bslot));
+                        bs = bs.emit(ir.op_load_local(bslot));          // __env (the box)
+                        var ba: i32 = 0;
+                        while (ba < c.args.len()) {
+                            bs = lower_expr(c.args[ba], bs);
+                            if (!bs.ok) { return bs; }
+                            ba = ba + 1;
+                        }
+                        bs = bs.emit(ir.op_load_local(bslot));          // box again
+                        bs = bs.emit(ir.op_const_i32(0));
+                        bs = bs.emit(ir.op_arr_get(32));                // box[0] = funcval
+                        return bs.emit(ir.op_call_indirect(c.args.len() + 1));
+                    }
                     var cocs: LowerState = s;
                     var coci: i32 = 0;
                     while (coci < c.args.len()) {
@@ -5446,9 +5582,14 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
     var is_result: boolean = ot[0:7] == "Result[";
     var is_option: boolean = ot[0:7] == "Option[";
     if (!is_result && !is_option) { return s.fail(); }
-    // Success payload type — only scalar i32 / boolean inline here.
+    // Success payload type — scalar i32 / boolean (4-byte) or i64 / u64 (8-byte)
+    // inline here. An i64/u64 payload reads through op_opt_payload_w(64) just like
+    // the match-arm payload binding does; the `var x: i64 = inner?` binding routes
+    // through lower_i64 (which dispatches back here), so the success value is left
+    // as a true 8-byte i64 on the stack. (string / f64 / composite still bail.)
     var pt: string = opt_payload_type(ot, "Ok");
-    if (pt != "i32" && pt != "boolean") { return s.fail(); }
+    var pt_is_i64: boolean = pt == "i64" || pt == "u64";
+    if (pt != "i32" && pt != "boolean" && !pt_is_i64) { return s.fail(); }
     // Evaluate inner into a fresh temp slot (the box pointer).
     var tmp: string = "$try" + util.i32_to_string(s.local_names.len());
     var ts: LowerState = s.add_local(tmp);
@@ -5469,8 +5610,11 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
     }
     ts = ts.emit(ir.op_return());
     ts = ts.emit(ir.op_end());
-    // Success path: load the payload (offset abstracted by op_opt_payload).
+    // Success path: load the payload (offset abstracted by op_opt_payload). An
+    // i64/u64 payload uses the 8-byte width-64 read (mirrors the match path's
+    // op_opt_payload_w(64, true)).
     ts = ts.emit(ir.op_load_local(tslot));
+    if (pt_is_i64) { return ts.emit(ir.op_opt_payload_w(64, true)); }
     return ts.emit(ir.op_opt_payload());
 }
 
@@ -7551,6 +7695,40 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 },
                 _ => {}
             }
+            // `var x: Option[T]/Result[T,E] = Ok/Some/Err(arg)` with an i64/u64
+            // DECLARED payload: build the 8-byte box (payload at offset 8) every
+            // consumer reads via op_opt_payload_w(64), even when `arg` only infers
+            // i32 (a bare literal `Ok(40)` or i32 var). The expected payload comes
+            // from the annotation, and the slot records the ANNOTATION as its
+            // opt_type so the later `match (x)` reads the matching 8-byte payload —
+            // both sides must agree on offset 8 or the read truncates. Mirrors the
+            // StmtReturn i64-construction path (#3566). Early-return (like map_new):
+            // an Option/Result box is a leak-only pointer needing no array/string/
+            // struct slot marking beyond mark_opt_type.
+            match (v.init) {
+                parser.ExprCall(vc) => {
+                    match (vc.callee) {
+                        parser.ExprIdent(vcid) => {
+                            if (vc.args.len() == 1 && (vcid.name == "Ok" || vcid.name == "Some" || vcid.name == "Err") && v.type_name.len() >= 8 && (v.type_name[0:7] == "Result[" || v.type_name[0:7] == "Option[")) {
+                                var vvar: string = "Ok";
+                                var vtag: i32 = 0;
+                                if (vcid.name == "Err") { vvar = "Err"; vtag = 1; }
+                                var vexp: string = opt_payload_type(v.type_name, vvar);
+                                if (vexp == "i64" || vexp == "u64") {
+                                    var vcs: LowerState = lower_opt_make_payload_exp(vtag, vc.args[0], vexp, s);
+                                    if (!vcs.ok) { return vcs; }
+                                    var vsb: LowerState = vcs.add_local(v.name);
+                                    var vslot: i32 = vsb.slot_of(v.name);
+                                    vsb = vsb.mark_opt_type(vslot, v.type_name);
+                                    return vsb.emit(ir.op_store_local(vslot));
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
             var se: LowerState = lower_expr(v.init, s);
             if (!se.ok) { return se; }
             // Perceus alias-inc + array tracking: a fresh array literal is
@@ -8487,6 +8665,37 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 _ => {}
             }
             if (!ret_val_is_arr && infer_expr_width(r.value, s) == 64) { return s.fail(); }
+            // `return Ok(x)/Some(x)/Err(x)` with an i64/u64 DECLARED payload: build
+            // the 8-byte box the consumers read, even when the argument only infers
+            // i32 (a bare literal `Ok(40)` or i32 var). The expected payload type
+            // comes from THIS function's Option/Result return type (cur_fn), so it
+            // is sound here (unlike a bare construction in an unknown context). Other
+            // payloads fall through to the generic lower_expr below unchanged.
+            match (r.value) {
+                parser.ExprCall(rc) => {
+                    match (rc.callee) {
+                        parser.ExprIdent(rcid) => {
+                            if (rc.args.len() == 1 && (rcid.name == "Ok" || rcid.name == "Some" || rcid.name == "Err")) {
+                                var rrt: string = s.opt_ret_type(s.cur_fn);
+                                if (rrt.len() >= 8 && (rrt[0:7] == "Result[" || rrt[0:7] == "Option[")) {
+                                    var rvar: string = "Ok";
+                                    var rtag: i32 = 0;
+                                    if (rcid.name == "Err") { rvar = "Err"; rtag = 1; }
+                                    var rexp: string = opt_payload_type(rrt, rvar);
+                                    if (rexp == "i64" || rexp == "u64") {
+                                        var rcs: LowerState = lower_opt_make_payload_exp(rtag, rc.args[0], rexp, s);
+                                        if (!rcs.ok) { return rcs; }
+                                        rcs = emit_dec_sweep_except(rcs, 0 - 1);
+                                        return rcs.emit(ir.op_return());
+                                    }
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
             // Returning a SCALAR-element array struct field (`return h.items`)
             // aliases it out to the caller, who will own it. Lower it via the IR
             // with a Perceus dup (RC-frontier slice 2): lower_expr emits struct_get

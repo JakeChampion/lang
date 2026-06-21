@@ -3244,13 +3244,29 @@ function parse_func_decl(p: Par): FuncResult {
             if (p.peek_punct() == ":") {
                 has_bound = true;
                 p = p.advance();
-                // Consume `Trait (+ Trait)*`, each possibly `mod.Trait`.
+                // Consume `Trait (+ Trait)*`, each possibly `mod.Trait` and
+                // each possibly carrying generic args (`Iterator[i32]`).
                 var go: boolean = true;
                 while (go && !p.at_end()) {
                     if (p.peek_ident().len() > 0) { p = p.advance(); }
                     if (p.peek_punct() == ".") {
                         p = p.advance();
                         if (p.peek_ident().len() > 0) { p = p.advance(); }
+                    }
+                    // A parametrised-trait bound (`T: Iterator[i32]`) carries a
+                    // bracketed type-arg list after the trait name — consume the
+                    // balanced `[ … ]` (possibly nested) so the bound parses and
+                    // the function stays on the monomorphisation / IR path rather
+                    // than mis-parsing at the `[` and bailing to AST.
+                    if (p.peek_punct() == "[") {
+                        var depth: i32 = 0;
+                        var bgo: boolean = true;
+                        while (bgo && !p.at_end()) {
+                            var bpk: string = p.peek_punct();
+                            if (bpk == "[") { depth = depth + 1; p = p.advance(); }
+                            else if (bpk == "]") { depth = depth - 1; p = p.advance(); if (depth == 0) { bgo = false; } }
+                            else { p = p.advance(); }
+                        }
                     }
                     if (p.peek_punct() == "+") { p = p.advance(); } else { go = false; }
                 }

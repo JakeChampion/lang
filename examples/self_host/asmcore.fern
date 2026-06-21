@@ -1849,10 +1849,19 @@ pub function (s: EmitState) close_needs(): EmitState {
     var changed: boolean = true;
     while (changed) {
         changed = false;
-        var snap: string[] = cur.needed;
+        // Iterate cur.needed by index against a captured LENGTH (an i32), NOT a
+        // `var snap: string[] = cur.needed` snapshot. That bind aliases the
+        // needed buffer into a local WITHOUT an alias-inc, so close_needs's
+        // function-exit dec-sweep frees a box cur.needed still references — a
+        // use-after-free the arm64 per-module self-build hit in has_need (the
+        // freed empty-needs box was reused for a `.rodata` string, so has_need
+        // read garbage as the array length; latent on x86, where the freed box
+        // isn't immediately reused). need() only ever APPENDS (gated on
+        // !has_need), so elements [0, n) stay put across the inner loop.
+        var n: i32 = cur.needed.len();
         var i: i32 = 0;
-        while (i < snap.len()) {
-            var deps: string[] = runtime_need_deps(snap[i]);
+        while (i < n) {
+            var deps: string[] = runtime_need_deps(cur.needed[i]);
             var j: i32 = 0;
             while (j < deps.len()) {
                 if (!cur.has_need(deps[j])) { cur = cur.need(deps[j]); changed = true; }
