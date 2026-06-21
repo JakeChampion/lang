@@ -97,8 +97,20 @@ exporting `run: async func() -> u32`, run with
 Tests: `TestWasmP3AsyncExport{Assembly,FromFern}` + `TestCmdLangAsyncExport`
 (CLI-driven, returns 42).
 
-**Remaining (future P3 increments):** a first-class `async` keyword on
-function decls (vs the `-async-export` flag); `future<T>` / `stream<T>`
+**UPDATE — first-class `async` keyword.** `async function foo(): i32 {
+… }` (a contextual modifier, like `fip` — `async` stays usable as an
+ordinary identifier elsewhere; `pub async function` works) marks the
+function `FuncDecl.Async`. On `-target wasm-bin` the driver lifts the
+async-marked function under its own name (`foo: async func() -> u32`),
+no flag needed; the `-async-export` flag remains for wrapping `main` as
+`run`. The source function is pinned past both the AST tree-shaker and
+the IR-level cull (it's reachable only through the synthetic async
+wrapper). Tests: `TestParseAsyncModifier` + `TestCmdLangAsyncFunctionKeyword`
+(`async function compute(): i32 { return 6*7; }` → exported `compute`,
+returns 42 under the async features; fails without them, confirming the
+async lift).
+
+**Remaining (future P3 increments):** `future<T>` / `stream<T>`
 parameter+result lowering; the async *import* / `canon lower async` side
 (so a handler can `await` host futures, the colorless-await payoff); and
 wiring async into the `concurrent { … }` desugar as an alternative to

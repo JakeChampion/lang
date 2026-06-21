@@ -320,9 +320,10 @@ func (p *parser) parseProgram() *ast.Program {
 				!p.match(lexer.Keyword, "trait") &&
 				!p.match(lexer.Keyword, "const") &&
 				!p.match(lexer.Ident, "opaque") &&
-				!p.match(lexer.Ident, "fip") {
+				!p.match(lexer.Ident, "fip") &&
+				!p.match(lexer.Ident, "async") {
 				p.errors = append(p.errors, p.errorf(pubTok.Pos,
-					"`pub` must be followed by `function`, `struct`, `enum`, `type`, `trait`, `const`, `opaque`, or `fip`"))
+					"`pub` must be followed by `function`, `struct`, `enum`, `type`, `trait`, `const`, `opaque`, `fip`, or `async`"))
 				p.syncToTopLevel()
 				if p.i == before {
 					p.advance()
@@ -343,6 +344,17 @@ func (p *parser) parseProgram() *ast.Program {
 			p.tokens[p.i+1].Kind == lexer.Keyword && p.tokens[p.i+1].Text == "function" {
 			p.advance() // fip
 			isFip = true
+		}
+		// `async` is a contextual modifier on a function decl (`async
+		// function …` / `pub async function …`): the WASI Preview-3
+		// component-model-async export surface. Recognised only when
+		// directly followed by `function`, so `async` stays usable as an
+		// ordinary identifier elsewhere. See docs/WASI-PREVIEW3-ASYNC-PLAN.md.
+		isAsync := false
+		if p.match(lexer.Ident, "async") && p.i+1 < len(p.tokens) &&
+			p.tokens[p.i+1].Kind == lexer.Keyword && p.tokens[p.i+1].Text == "function" {
+			p.advance() // async
+			isAsync = true
 		}
 		// `opaque` is a contextual modifier on a struct decl
 		// (`pub opaque struct …`): the type is exported but its fields
@@ -547,6 +559,7 @@ func (p *parser) parseProgram() *ast.Program {
 			fn.Public = isPub
 			fn.PackageScoped = isPackage
 			fn.Fip = isFip
+			fn.Async = isAsync
 			if importIface != "" {
 				if fn.Body != nil {
 					p.errors = append(p.errors, p.errorf(fn.P,

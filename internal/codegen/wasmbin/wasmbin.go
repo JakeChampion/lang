@@ -119,6 +119,11 @@ type EmitOptions struct {
 	// option. `main` must return i32. See
 	// docs/WASI-PREVIEW3-ASYNC-PLAN.md.
 	AsyncExportName string
+	// AsyncSourceFunc names the Fern function the async wrapper calls;
+	// empty defaults to "main". Set to the `async function`'s name when
+	// driven by the keyword (vs the `-async-export` flag, which wraps
+	// main).
+	AsyncSourceFunc string
 	// Preview2WASI rewrites preview-1-shaped WASI imports to their
 	// preview-2 component-model equivalents. Currently scoped to
 	// `proc_exit` — the only import whose core-wasm signature is
@@ -1087,14 +1092,18 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		// — the async ABI (result via task.return; function-return =
 		// task done). The composer lifts it with the `async` canonical
 		// option (component.BuildAsyncLiftedExportComponent).
-		mainIdx, ok := funcIdx["main"]
+		srcFn := opts.AsyncSourceFunc
+		if srcFn == "" {
+			srcFn = "main"
+		}
+		mainIdx, ok := funcIdx[srcFn]
 		if !ok {
-			return nil, fmt.Errorf("wasmbin: AsyncExportName needs a `main` function")
+			return nil, fmt.Errorf("wasmbin: AsyncExportName needs the source function %q", srcFn)
 		}
 		mainPosInFnSection := mainIdx - uint32(len(importNeeds.order))
 		mainResults := m.TypeResults[m.FunctionTypeidxs[mainPosInFnSection]]
 		if !(len(mainResults) == 1 && mainResults[0] == encode.ValtypeI32) {
-			return nil, fmt.Errorf("wasmbin: AsyncExportName: `main` must return i32, got %v", mainResults)
+			return nil, fmt.Errorf("wasmbin: AsyncExportName: %q must return i32, got %v", srcFn, mainResults)
 		}
 		trIdx, ok := funcIdx["async_task_return"]
 		if !ok {

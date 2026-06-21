@@ -151,3 +151,36 @@ func TestCmdLangAsyncExport(t *testing.T) {
 		t.Errorf("CLI async export: got %q, want 42", bytes.TrimSpace(out))
 	}
 }
+
+// TestCmdLangAsyncFunctionKeyword drives the `async function` keyword
+// through the CLI (no -async-export flag): the async-marked function is
+// lifted as the component's `<name>: async func() -> u32` export, run
+// under wasmtime's async features.
+func TestCmdLangAsyncFunctionKeyword(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "akw.fern")
+	src := "async function compute(): i32 { return 6 * 7; }\nfunction main(): i32 { return 0; }\n"
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "akw.wasm")
+	cmd := exec.Command("go", "run", "./cmd/fern",
+		"-target", "wasm-bin", "-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern (async function) failed: %v\n%s", err, out)
+	}
+	// The async-marked function is exported under its own name.
+	out, err := exec.Command("wasmtime", "run",
+		"-W", "component-model-async,component-model-async-stackful",
+		"--invoke", "compute()", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run (async): %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte("42")) {
+		t.Errorf("async function keyword: got %q, want 42", bytes.TrimSpace(out))
+	}
+}

@@ -2343,6 +2343,16 @@ type FuncDecl struct {
 	// annotation — the in-place lowering already happens; `fip` only asserts
 	// and checks it. Default false. Set by the parser for `fip function`.
 	Fip bool
+	// Async marks a function the source annotated `async function …` —
+	// the WASI Preview-3 component-model-async export surface. On
+	// `-target wasm-bin` the driver lifts the async-marked function with
+	// the `async` canonical option (result via `canon task.return`), so
+	// the produced component exports it as `<name>: async func() ->
+	// <result>`, runnable under
+	// `wasmtime -W component-model-async,component-model-async-stackful`.
+	// Default false; set by the parser for `async function`. See
+	// docs/WASI-PREVIEW3-ASYNC-PLAN.md.
+	Async bool
 	// IsSynthesisedHandlerMain marks the auto-`main()` the
 	// checker emits for handler-shaped programs (a top-level
 	// `handle(req: HttpRequest): HttpResponse` with no
