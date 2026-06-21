@@ -1,0 +1,69 @@
+import "std/test";
+import "std/math" as math;
+// examples/tests/math_test.fern — pure-Fern coverage of the deterministic
+// std/math surface: range / range_step (half-open i32 ranges), the numeric-
+// width constants (i32_max/min, i64_max/min) and the pack_rgb bit-packer.
+// random_int is intentionally omitted (non-deterministic CSPRNG draw). The
+// Go-side suites unit-test the prelude origins; this is the migration-shaped
+// (pure-Fern, std/test-driven) companion.
+
+function test_range(): test.TestOutcome {
+    return test.assert_eq_array(math.range(2, 5), [2, 3, 4]);
+}
+
+function test_range_empty(): test.TestOutcome {
+    // start >= end yields the empty range.
+    return test.assert_eq(math.range(5, 2).len(), 0);
+}
+
+function test_range_single(): test.TestOutcome {
+    return test.assert_eq_array(math.range(7, 8), [7]);
+}
+
+function test_range_step(): test.TestOutcome {
+    return test.assert_eq_array(math.range_step(0, 10, 3), [0, 3, 6, 9]);
+}
+
+function test_range_step_exact(): test.TestOutcome {
+    // end lands exactly on a step boundary — half-open excludes it.
+    return test.assert_eq_array(math.range_step(0, 9, 3), [0, 3, 6]);
+}
+
+function test_range_step_nonpositive(): test.TestOutcome {
+    // step <= 0 is the empty range (no reverse ranges).
+    return test.assert_eq(math.range_step(0, 10, 0).len(), 0);
+}
+
+function test_i32_bounds(): test.TestOutcome {
+    return test.assert_true(math.i32_max() == 2147483647 &&
+                            math.i32_min() == (0 - 2147483647 - 1));
+}
+
+function test_i64_bounds(): test.TestOutcome {
+    return test.assert_eq(math.i64_max(), 9223372036854775807);
+}
+
+function test_pack_rgb(): test.TestOutcome {
+    // 0xFF8040 = 16744512.
+    return test.assert_eq(math.pack_rgb(255, 128, 64), 16744512);
+}
+
+function test_pack_rgb_wraps(): test.TestOutcome {
+    // Components are masked to their low 8 bits; 256 & 255 == 0.
+    return test.assert_eq(math.pack_rgb(256, 256, 256), 0);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/math");
+    r = r.it("range",                   test_range());
+    r = r.it("range empty",             test_range_empty());
+    r = r.it("range single",            test_range_single());
+    r = r.it("range_step",              test_range_step());
+    r = r.it("range_step exact end",    test_range_step_exact());
+    r = r.it("range_step nonpositive",  test_range_step_nonpositive());
+    r = r.it("i32 bounds",              test_i32_bounds());
+    r = r.it("i64 bounds",              test_i64_bounds());
+    r = r.it("pack_rgb",                test_pack_rgb());
+    r = r.it("pack_rgb wraps",          test_pack_rgb_wraps());
+    return r.finish();
+}

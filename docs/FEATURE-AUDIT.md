@@ -251,6 +251,22 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-21 — std/math: pure-Fern std/test migration coverage (`range` / `range_step` / width constants / `pack_rgb`)
+
+`std/math`'s deterministic surface had Go-side coverage but no migration-shaped
+(pure-Fern, `std/test`-driven) companion suite. Added
+`examples/tests/math_test.fern` — 10 assertions over `range` / `range_step`
+(half-open i32 ranges, incl. empty + exact-boundary + non-positive-step edges),
+the numeric-width constants (`i32_max`/`i32_min`/`i64_max`) and the `pack_rgb`
+bit-packer (incl. the low-8-bit component masking / wrap). `random_int` is
+intentionally omitted (non-deterministic CSPRNG draw). Gated three ways: the
+native interp runner (`TestRunnerMathExamplePasses`), and — crucially — the
+self-host differential gate (`TestSelfHostStdTestE2E/math`), which compiles the
+suite through the self-hosted x86-64 compiler and oracle-checks its TAP-13
+stdout + exit code against the interpreter **byte-for-byte**. The suite routes
+cleanly through the self-host IR path (no AST fallback crash), confirming the
+arithmetic / while-loop / array-append / bit-op lowering composes end-to-end.
+
 ### 2026-06-21 — self-host IR: a user function shadowing a builtin name (`len` / `chr` / …) is now called, not intercepted ([#3710](https://github.com/JakeChampion/lang/issues/3710))
 
 `irlower`'s `ExprCall` arm intercepts a bare-ident call by NAME for the builtin

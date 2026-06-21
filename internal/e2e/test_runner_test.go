@@ -150,6 +150,24 @@ func TestRunnerCmpHelpersExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/math_test.fern` covers the deterministic std/math
+// surface — range / range_step (half-open i32 ranges), the numeric-width
+// constants (i32_max/min, i64_max/min) and the pack_rgb bit-packer
+// (random_int is omitted as non-deterministic). Passing suite → exit 0.
+func TestRunnerMathExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/math_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/math", "# pass 10", "# fail 0", "1..10"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/runner_self_test.fern` is the runner's own
 // meta-test — confirms that every assertion helper returns the
 // expected TestOutcome shape on both pass and fail paths.
