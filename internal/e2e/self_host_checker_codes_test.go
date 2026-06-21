@@ -486,6 +486,20 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"match-variant-twice", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { Has(n) => { return n; }, Has(m) => { return m; }, Nil => { return 0; } } }\n", []string{"E028"}},
 		{"match-clean-ok", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { Has(n) => { return n; }, Nil => { return 0; } } }\n", nil},
 		{"match-wildcard-last-ok", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { Has(n) => { return n; }, _ => { return 0; } } }\n", nil},
+		// E026 on a LITERAL match (i32 / string scrutinee), where the
+		// non-enum arms desugar to an if/else chain. A non-last wildcard
+		// must still be E026 — and ONLY E026 — for any `_` position
+		// (#3612): wildcard-first (where every arm returns, so the old
+		// variant-path mis-parse used to add a spurious E052) and
+		// wildcard-in-the-middle (which the old desugar silently swallowed,
+		// dropping the diagnostic entirely). Native (the oracle) emits a
+		// lone E026 in both. The wildcard-last / no-wildcard forms stay
+		// clean and still lower through build_literal_match unchanged.
+		{"match-lit-wildcard-first", "function main(): i32 { var x = 1; match (x) { _ => { return 0; }, 1 => { return 1; } } }\n", []string{"E026"}},
+		{"match-lit-wildcard-middle", "function main(): i32 { var x = 1; match (x) { 1 => { return 1; }, _ => { return 9; }, 2 => { return 2; } } }\n", []string{"E026"}},
+		{"match-lit-wildcard-first-3arm", "function main(): i32 { var x = 1; match (x) { _ => { return 0; }, 1 => { return 1; }, 2 => { return 2; } } }\n", []string{"E026"}},
+		{"match-str-wildcard-middle", "function f(s: string): i32 { match (s) { \"a\" => { return 1; }, _ => { return 0; }, \"b\" => { return 2; } } }\nfunction main(): i32 { return f(\"a\"); }\n", []string{"E026"}},
+		{"match-lit-wildcard-last-ok", "function classify(x: i32): i32 { match (x) { 1 => { return 10; }, 2 => { return 20; }, _ => { return 99; } } }\nfunction main(): i32 { return classify(2); }\n", nil},
 		{"type-arity-param", "struct Box[T] { v: T }\nfunction f(b: Box[i32, i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E019"}},
 		{"type-arity-field", "struct Box[T] { v: T }\nstruct W { b: Box[i32, i32] }\nfunction main(): i32 { return 0; }\n", []string{"E019"}},
 		{"type-arity-param-ok", "struct Box[T] { v: T }\nfunction f(b: Box[i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
@@ -890,6 +904,15 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"array-append-union-ok", "struct P { x: i32 }\nstruct Q { y: i32 }\ntype U = P | Q;\nfunction main(): i32 { var a: U[] = [P { x: 1 }]; a = a.append(Q { y: 2 }); return 0; }\n"},
 		{"array-with-ok", "function main(): i32 { var a: i32[] = [1, 2]; a = a.with(0, 9); return a.len(); }\n"},
 		{"array-append-tuple-ok", "function main(): i32 { var a: (i32, string)[] = []; a = a.append((1, \"x\")); return 0; }\n"},
+		// Literal-match wildcard position (#3612), proven against the Go
+		// oracle: a non-last `_` on an i32/string scrutinee desugars to an
+		// if/else chain, so the self-host must still surface E026 (and only
+		// E026) for any `_` position, while the wildcard-last form stays
+		// clean. Differential — no hardcoded codes, native is the oracle.
+		{"lit-match-wildcard-first", "function main(): i32 { var x = 1; match (x) { _ => { return 0; }, 1 => { return 1; } } }\n"},
+		{"lit-match-wildcard-middle", "function main(): i32 { var x = 1; match (x) { 1 => { return 1; }, _ => { return 9; }, 2 => { return 2; } } }\n"},
+		{"str-match-wildcard-middle", "function f(s: string): i32 { match (s) { \"a\" => { return 1; }, _ => { return 0; }, \"b\" => { return 2; } } }\nfunction main(): i32 { return f(\"a\"); }\n"},
+		{"lit-match-wildcard-last-ok", "function classify(x: i32): i32 { match (x) { 1 => { return 10; }, 2 => { return 20; }, _ => { return 99; } } }\nfunction main(): i32 { return classify(2); }\n"},
 	}
 
 	for _, tc := range progs {

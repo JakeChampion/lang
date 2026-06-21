@@ -1697,7 +1697,7 @@ function if_expr_rt(e: Expr): string {
 // match-arm parsers (parse_match_stmt / parse_match_expr) collect these
 // only when the first arm is a literal, then hand them to
 // build_literal_match instead of emitting a StmtMatch.
-struct LitArm { is_wild: boolean, lit: Expr, guard: Expr, has_guard: boolean, body: Stmt[] }
+struct LitArm { is_wild: boolean, lit: Expr, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
 
 // build_literal_match lowers a match on a non-enum scrutinee to a nested
 // if/else-if chain — the same shape desugar_switch produces, and what
@@ -1706,7 +1706,41 @@ struct LitArm { is_wild: boolean, lit: Expr, guard: Expr, has_guard: boolean, bo
 // it as `if (scrut == lit) { body } else { rest }` (a guard folds in as
 // `scrut == lit && guard`). The caller only routes here when at least
 // one literal arm exists, so the result is always an if statement.
-function build_literal_match(scrut: Expr, arms: LitArm[]): Stmt {
+// EXCEPTION: a wildcard `_` that isn't the LAST arm is an E026 error
+// (native: "wildcard `_` arm must be last"). The backward desugar would
+// silently swallow the unreachable post-`_` arms, and with no StmtMatch
+// left the checker can't see the misplaced wildcard. So in that case we
+// DON'T desugar: we hand back a real StmtMatch (the `_` arm as
+// PatWildcard, every literal arm as a bare PatVariant("") whose empty
+// type-name the E028 / E015 / E030 checks all skip) so the existing
+// match_diags / block_exits passes emit exactly E026 — the same single
+// code native produces. Such a program never type-checks, so this
+// StmtMatch never reaches codegen, and a well-formed literal match
+// (wildcard last or absent) still desugars unchanged.
+function build_literal_match(scrut: Expr, arms: LitArm[], mkline: i32, mkcol: i32): Stmt {
+    var wi: i32 = 0;
+    var non_last_wild: boolean = false;
+    while (wi < arms.len()) {
+        // Only an UNGUARDED `_` is a true catch-all that makes the
+        // following arms dead (and that native treats as exhaustive, so
+        // E026 is its only diagnostic). A guarded `_ when c` is
+        // conditional — its exhaustiveness (E030) is a separate concern —
+        // so leave those on the normal desugar path.
+        if (arms[wi].is_wild && !arms[wi].has_guard && wi < arms.len() - 1) { non_last_wild = true; }
+        wi = wi + 1;
+    }
+    if (non_last_wild) {
+        var marms: MatchArm[] = [];
+        var mi: i32 = 0;
+        while (mi < arms.len()) {
+            var la: LitArm = arms[mi];
+            var pat: Pattern = p_variant("", "");
+            if (la.is_wild) { pat = p_wildcard(); }
+            marms = marms.append(MatchArm { pattern: pat, body: la.body, line: la.line, col: la.col, guard: la.guard, has_guard: la.has_guard });
+            mi = mi + 1;
+        }
+        return s_match_at(scrut, marms, mkline, mkcol);
+    }
     var else_body: Stmt[] = [];
     var i: i32 = arms.len() - 1;
     while (i >= 0) {
@@ -1884,6 +1918,8 @@ function parse_match_expr(p: Par): IfChain {
         var lit_arms: LitArm[] = [];
         var lfirst: boolean = true;
         while (p.peek_punct() != "}" && !p.at_end()) {
+            var laline: i32 = p.peek_line();
+            var lacol: i32 = p.peek_col();
             var llit: Expr = e_bool(true);
             var lwild: boolean = false;
             if (p.peek_is_literal()) {
@@ -1922,12 +1958,12 @@ function parse_match_expr(p: Par): IfChain {
                 lrt = if_expr_rt(ler.expr);
             }
             if (lfirst) { rt = lrt; lfirst = false; }
-            lit_arms = lit_arms.append(LitArm { is_wild: lwild, lit: llit, guard: lguard, has_guard: lhas_guard, body: lbody });
+            lit_arms = lit_arms.append(LitArm { is_wild: lwild, lit: llit, guard: lguard, has_guard: lhas_guard, body: lbody, line: laline, col: lacol });
             if (p.peek_punct() == ",") { p = p.advance(); continue; }
             break;
         }
         if (p.peek_punct() == "}") { p = p.advance(); }
-        return IfChain { par: p, stmt: build_literal_match(sr.expr, lit_arms), rt: rt };
+        return IfChain { par: p, stmt: build_literal_match(sr.expr, lit_arms, mkline, mkcol), rt: rt };
     }
     var arms: MatchArm[] = [];
     var first: boolean = true;
@@ -2062,6 +2098,20 @@ function parse_pattern(p: Par): PatternResult {
         p = p.advance();
         return PatternResult { par: p, pattern: p_wildcard() };
     }
+    // A literal-pattern arm (`1 => …`, `"yes" => …`) only reaches
+    // parse_pattern when an EARLIER arm wasn't a literal (so the whole
+    // match took the variant path) — e.g. a wildcard-first match
+    // `_ => …, 1 => …`, which is itself an E026 error. The literal token
+    // is not an ident/keyword, so without consuming it here the cursor
+    // would stick on it: the arm's `=>` and body would fail to parse,
+    // corrupting the return-path (E052) analysis. Consume it and yield a
+    // bare PatVariant("") — the empty type-name is skipped by the E028 /
+    // E015 variant checks, leaving only the E026 the misplaced wildcard
+    // already earns.
+    if (p.peek_is_literal()) {
+        p = p.advance();
+        return PatternResult { par: p, pattern: p_variant("", "") };
+    }
     if (name.len() == 0) {
         return PatternResult { par: p, pattern: p_variant("", "") };
     }
@@ -2140,6 +2190,8 @@ function parse_match_stmt(p: Par): MatchStmtResult {
     if (p.peek_is_literal()) {
         var lit_arms: LitArm[] = [];
         while (p.peek_punct() != "}" && !p.at_end()) {
+            var laline: i32 = p.peek_line();
+            var lacol: i32 = p.peek_col();
             var llit: Expr = e_bool(true);
             var lwild: boolean = false;
             if (p.peek_is_literal()) {
@@ -2163,12 +2215,12 @@ function parse_match_stmt(p: Par): MatchStmtResult {
             if (p.peek_punct() == "=>") { p = p.advance(); }
             var lbb: BlockResult = parse_block(p);
             p = lbb.par;
-            lit_arms = lit_arms.append(LitArm { is_wild: lwild, lit: llit, guard: lguard, has_guard: lhas_guard, body: lbb.body });
+            lit_arms = lit_arms.append(LitArm { is_wild: lwild, lit: llit, guard: lguard, has_guard: lhas_guard, body: lbb.body, line: laline, col: lacol });
             if (p.peek_punct() == ",") { p = p.advance(); continue; }
             break;
         }
         if (p.peek_punct() == "}") { p = p.advance(); }
-        return MatchStmtResult { par: p, stmt: build_literal_match(sr.expr, lit_arms) };
+        return MatchStmtResult { par: p, stmt: build_literal_match(sr.expr, lit_arms, mkline, mkcol) };
     }
     var arms: MatchArm[] = [];
     while (p.peek_punct() != "}" && !p.at_end()) {
