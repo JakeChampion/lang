@@ -40,6 +40,12 @@ struct RangeIter { cur: i32, end: i32 }
 impl Iterator[i32] for RangeIter { function next(self: Self): Option[(i32, Self)] { if (self.cur >= self.end) { return None; } return Some((self.cur, RangeIter { cur: self.cur + 1, end: self.end })); } }
 function last[T, I: Iterator[T]](it: I, dflt: T): T { var acc = dflt; var cur = it; var go = true; while (go) { match (cur.next()) { Some(t) => { acc = t.0; cur = t.1; }, None => { go = false; }, } } return acc; }
 function main(): i32 { return last(RangeIter { cur: 0, end: 5 }, -1); }`, 4},
+	// to_array: T threaded through the RETURN type as a generic array `T[]`.
+	{"to-array-i32", `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
+struct RangeIter { cur: i32, end: i32 }
+impl Iterator[i32] for RangeIter { function next(self: Self): Option[(i32, Self)] { if (self.cur >= self.end) { return None; } return Some((self.cur, RangeIter { cur: self.cur + 1, end: self.end })); } }
+function to_array[T, I: Iterator[T]](it: I): T[] { var out: T[] = []; var cur = it; var go = true; while (go) { match (cur.next()) { Some(t) => { out = out.append(t.0); cur = t.1; }, None => { go = false; }, } } return out; }
+function main(): i32 { var xs = to_array(RangeIter { cur: 0, end: 4 }); var s = 0; for x in xs { s = s + x; } return s + xs.len(); }`, 10},
 	// the SAME generic `last` instantiated at T=boolean (different element type).
 	{"last-bool", `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 struct BoolSeq { n: i32 }

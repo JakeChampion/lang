@@ -200,16 +200,11 @@ backends (`internal/e2e/poll_test.go`, x86-64 + arm64/qemu).
 - **wasm:** `wasi:io/poll.poll(list<pollable>) -> list<u32>` — a
   *different shape* than raw fds (pollables, not ints), so the wasm
   reactor exposes the same `run_io`-style API over pollables rather
-  than reusing the `poll(fds)` builtin.
+  than reusing the `poll(fds)` builtin. In `internal/codegen/wasmbin`
+  (Go) + `wasm.fern` (self-host).
 - **Self-host** (`asm.fern` / `asm_arm64.fern`) — mirror `__fern_poll`.
 - Non-blocking accept/recv/send (`O_NONBLOCK` + `EAGAIN`), then
   `plat.fetch` as the first real awaitable over `run_io`.
-- **wasm:** add `wasi:io/poll.poll(list<pollable>) -> list<u32>` (the
-  multi-pollable form; today only single-pollable `.block` is used)
-  in `internal/codegen/wasmbin` (Go) and `wasm.fern` (self-host).
-- **Tests:** a reactor that waits on two real sockets and reports the
-  ready one first; the existing HTTP serving path re-expressed over
-  the reactor (behavior-preserving) for a single connection.
 
 Risk: this is the most backend-heavy slice and the only one needing
 arm64/qemu + wasmtime in the loop. Gate locally on x86-64 + interp +

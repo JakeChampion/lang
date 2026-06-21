@@ -238,7 +238,7 @@ per-function bugs in the audit log.
 |--------|---|---|---|---|---|--------|-------|
 | `core/int` | ✅ | ✅ | ✅ | ✅ | 🔧 | 🔧 | radix **parse** direction (`parse_int_radix` / `__radix_digit`, bases 2–36, sign handling) — native via the `core_int_parse` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostCoreIntParseIR` — `Option[i32]` `Some`/`None` + payload-binding `match`, string indexing with char-class compares, multiply-accumulate loop, sign + negation. The **to-string radix** direction (`int_to_string_radix`) ALSO lowers on the IR path — it builds via `__alloc_u8` + `.with` + `string_from_bytes` (no `__memcpy`/`usize`), the same builder std/hex / std/base64 use — native via the `core_int_radix` fixture, self-host via `TestSelfHostCoreIntRadixIR` (x86-64 + wasm, oracle-checked). Only `int_to_string` / `__int_to_string_u64` (decimal) stay AST — those poke raw memory via `__memcpy` over a `usize` pointer (same caveat as std/u64 `to_string`) |
 | `core/cmp` (traits) | | | | | | ⬜ | |
-| `core/iter` (Iterator trait) | ✅ | ✅ | ✅ | ✅ | ✅ | 🔧 | numeric (i32) `Iterator` trait + integer `Range` + eager drivers (`sum`/`count`/`to_array`), the first slice of the iterator protocol ([#2686](https://github.com/JakeChampion/lang/issues/2686) / tail of [#2699](https://github.com/JakeChampion/lang/issues/2699)). Value-semantic `next(self): Option[(i32, Self)]`. Works on native (interp / x86-64 / arm64 / wasm) AND the self-host **IR path** (x86-64 + wasm), via the existing bounded-generic + concrete-impl trait machinery — `TestNativeIteratorTrait{,Module,Arm64}` + `TestSelfHostIteratorTraitIR{X86_64,Wasm}` (routing-pinned to `ir`). A **generic** `Iterator[T]` (a bound on a *parametrised* trait, `[I: Iterator[i32]]`) now ALSO lowers on the self-host IR path as of the bound-parser fix (`TestSelfHostGenericTraitBoundIR{X86_64,Wasm}`); `core/iter` stays i32-specialised for now but could be generalised in a follow-up |
+| `core/iter` (Iterator trait) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **Generic** `Iterator[T]` protocol + integer `Range` (`impl Iterator[i32]`) + eager drivers ([#2686](https://github.com/JakeChampion/lang/issues/2686) / tail of [#2699](https://github.com/JakeChampion/lang/issues/2699)). Value-semantic `next(self): Option[(T, Self)]`. `count[T, I: Iterator[T]]` and `to_array[T, I: Iterator[T]]: T[]` are generic over the element type (`sum[I: Iterator[i32]]` stays i32 — it needs `+`). Works on native (interp / x86-64 / arm64 / wasm) AND the self-host **IR path** (x86-64 + wasm): parametrised-trait bounds parse on the self-host (#3558) and the native checker recovers the bound-only `T` by bound-driven inference (#3596). Coverage: `TestNativeIteratorTrait{,Module,ModuleGeneric,Arm64}`, `TestSelfHostIteratorTraitIR{X86_64,Wasm}`, `TestNativeGenericIteratorCollector{,Arm64}` + `TestSelfHostGenericCollectorIR{X86_64,Wasm}` (incl. a `boolean`-element impl + `to_array` returning a generic `T[]`), all routing-pinned to `ir` on the self-host |
 | `core/map` | | | | | | ⬜ | |
 | `core/no_prelude` | | | | | | ⬜ | no-op sentinel |
 
@@ -250,6 +250,35 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-21 — self-host IR: user-defined generic enums (`enum E[T]`) monomorphise + lower ([#3572](https://github.com/JakeChampion/lang/issues/3572))
+
+A **user-defined generic enum** — `enum Opt[T] { Sm(T), Nn }` — previously
+bailed the whole module to the legacy AST emitter (construction *and* match):
+generic functions and generic structs already monomorphised on the self-host
+path, but the enum table passed straight through `monomorphize_module` /
+`monomorphize_structs`, so a generic enum's variant payload type stayed the bare
+type variable `T` and the IR path couldn't resolve a payload's primitive methods
+(`s.len()` on a `Box[string]` payload mis-dispatched → it bailed). Native
+monomorphises per instantiation, so this was a goal-1 IR-subset gap. Fix: a new
+`parser.monomorphize_enums` pass (mirroring the generic-struct pass) clones each
+generic enum per concrete instantiation (`Opt[i32]` → `Opt__i32` with
+`Sm__i32(i32)`), mangles the variant **construction** call sites, the `match` arm
+**patterns**, and the `Opt[i32]` **annotations** to the clone, and wires the
+cloned enums + variant structs into the returned `Module` (the generic originals
+are dropped). The instantiation key is inferred from a `var`/param/return
+annotation or, for a payloaded variant, the argument types unified against the
+variant's field types — exactly the way the struct pass infers a literal's key.
+Scope: a generic enum with **no** associated methods and a simple-nominal key
+(primitive / string / bare struct); a method-bearing generic enum, or a composite
+key (`Opt[Box[i32]]`), is left untouched (it keeps its pre-existing behaviour
+rather than dangling). Coverage: `TestSelfHostGenericEnum{IRX86_64,WasmIR}` —
+i32 payload, string-payload method dispatch, unit variant, construction-only, and
+**two distinct instantiations coexisting** (`Opt[i32]` + `Opt[string]`) — all
+routing `ir` and oracle-checked against the native interpreter. Self-host
+fixpoint stays byte-identical (modload + stage2): the compiler source + stdlib
+use no generic enums, so the pass is a no-op on the fixpoint corpus, exactly like
+the generic-struct pass.
 
 ### 2026-06-20 — self-host IR: calling a RETURNED capturing closure inline (#3551)
 
@@ -459,6 +488,23 @@ isn't in scope without `import "std/i32"` / `"std/float"`. That self-host
 over-permissiveness vs. native is a separate divergence, filed for follow-up;
 this entry scopes only the import-free escape-sequence surface, which both
 compilers agree on.)
+
+### 2026-06-21 — core/iter generalised to a generic `Iterator[T]` ([#2686](https://github.com/JakeChampion/lang/issues/2686))
+
+With parametrised-trait bounds parsing on the self-host (#3558) and bound-
+driven inference on native (#3596), the shipped `core/iter` trait is no
+longer i32-locked: `pub trait Iterator[T] { next(self): Option[(T, Self)]; }`,
+`Range` provides `impl Iterator[i32]`, and the drivers `count[T, I:
+Iterator[T]]` / `to_array[T, I: Iterator[T]]: T[]` are generic over the
+element type (`sum[I: Iterator[i32]]` stays i32 — it needs `+`). Backward
+compatible: `iter.sum/count/to_array(iter.range(…))` still infer `T = i32`
+and return the same types (the module test still returns 27). The generic
+face is exercised by `TestNativeIteratorTraitModuleGeneric` — a user
+`impl iter.Iterator[boolean]` driven through the module's generic
+`count`/`to_array` — plus a `to_array` (generic `T[]` return) case added to
+`TestNativeGenericIteratorCollector` / `TestSelfHostGenericCollectorIR`
+(routing-pinned to `ir`, runs on the self-host). `core/iter` imports nothing
+and nothing imports it, so the self-host fixpoint is unaffected.
 
 ### 2026-06-21 — bound-driven inference: fully-generic iterator collectors (`f[T, I: Iterator[T]]`) ([#2691](https://github.com/JakeChampion/lang/issues/2691) step 2)
 

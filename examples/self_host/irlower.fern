@@ -3461,19 +3461,40 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
             if (util.is_all_digits(fa.field)) {
                 var tn: i32 = util.digits_to_i32(fa.field);
                 var tnt: string = expr_tuple_elem_tag(fa.obj, tn, s);
-                if (tnt != "i64" && tnt != "u64") { return s.fail(); }
-                var ts: LowerState = lower_expr(fa.obj, s);
-                if (!ts.ok) { return ts; }
-                return ts.emit(ir.op_tuple_get_w(tn, 64, true));
+                if (tnt == "i64" || tnt == "u64") {
+                    var ts: LowerState = lower_expr(fa.obj, s);
+                    if (!ts.ok) { return ts; }
+                    return ts.emit(ir.op_tuple_get_w(tn, 64, true));
+                }
+                // An i32 tuple element `t.N` consumed in an i64 context: read the
+                // i32 element (lower_expr) and widen instead of bailing to AST.
+                if (tnt == "i32" || tnt == "u32") {
+                    var tw: LowerState = lower_expr(e, s);
+                    if (!tw.ok) { return tw; }
+                    return tw.emit(ir.op_int_extend(tnt == "u32"));
+                }
+                return s.fail();
             }
             var fty: string = expr_struct_type(fa.obj, s);
             if (fty == "") { return s.fail(); }
             var fidx: i32 = s.field_index_in(fty, fa.field);
             if (fidx < 0) { return s.fail(); }
-            if (!struct_field_is_i64(s.structs, fty, fidx)) { return s.fail(); }
-            var fs: LowerState = lower_expr(fa.obj, s);
-            if (!fs.ok) { return fs; }
-            return fs.emit(ir.op_struct_get_i64(fidx));
+            if (struct_field_is_i64(s.structs, fty, fidx)) {
+                var fs: LowerState = lower_expr(fa.obj, s);
+                if (!fs.ok) { return fs; }
+                return fs.emit(ir.op_struct_get_i64(fidx));
+            }
+            // An i32 struct field `p.x` consumed in an i64 context (`s64 + p.x`):
+            // read the i32 field (lower_expr) and sign/zero-extend to i64 instead
+            // of bailing the module to AST. The checker forbids i64 + u32, so a
+            // plain i32 field here is signed; the u32 flag stays defensive.
+            var ffty: string = decl_field_type(s.structs, fty, fa.field);
+            if (ffty == "i32" || ffty == "u32") {
+                var fw: LowerState = lower_expr(e, s);
+                if (!fw.ok) { return fw; }
+                return fw.emit(ir.op_int_extend(ffty == "u32"));
+            }
+            return s.fail();
         },
         parser.ExprIndex(ix) => {
             // a[i] on an i64[] is an 8-byte i64 element: lower base + index (i32
