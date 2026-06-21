@@ -4760,6 +4760,23 @@ func (c *checker) resolveVariant(name, enumName string) (variantRef, bool, bool)
 	return variantRef{}, false, len(cands) > 1
 }
 
+// monomorphCloneEnumName extracts, from a destination type, the name of
+// a monomorphized enum clone (#3693) it pins — or "". Used to
+// disambiguate a bare variant reference shared by clones of one generic
+// enum (E__i32.A vs E__string.A). The Monomorphized gate keeps this a
+// clone-only relaxation: user-written enums that share a variant name
+// still require qualification (the E036 rule is unchanged for them).
+func (c *checker) monomorphCloneEnumName(dest ast.Type) string {
+	et, ok := dest.(ast.EnumType)
+	if !ok {
+		return ""
+	}
+	if ed, ok := c.info.Enums[et.Name]; ok && ed.Monomorphized {
+		return et.Name
+	}
+	return ""
+}
+
 // variantEnumList returns a human-readable list of enum names that
 // declare `name`. Used in the "ambiguous variant" diagnostic so the
 // user sees every candidate, not just the first one.
@@ -8542,6 +8559,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// optional `n.EnumName` qualifier (set by the FieldAccess
 		// rewrite for `Color.Red`) restricts the lookup to one
 		// specific enum.
+		// A payload-less bare variant shared by multiple enum clones
+		// (#3693) is disambiguated by the destination's expected enum.
+		if n.EnumName == "" {
+			if en := c.monomorphCloneEnumName(c.expectedType); en != "" {
+				if _, ok, _ := c.resolveVariant(n.Name, en); ok {
+					n.EnumName = en
+				}
+			}
+		}
 		if vr, ok, multi := c.resolveVariant(n.Name, n.EnumName); ok {
 			if len(vr.payloads) > 0 {
 				c.errfCode(n.P, "E036", "variant %s expects %d payload argument(s); call it as %s(...)",
@@ -8859,6 +8885,18 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		if id, ok := n.Callee.(*ast.Ident); ok {
 			vr, vrOk, vrMulti := c.resolveVariant(id.Name, id.EnumName)
+			// A bare variant shared by multiple enum clones (#3693) is
+			// disambiguated by the destination's expected enum. checkCall
+			// snapshotted that into `callExpected` (the live field was
+			// cleared above so it can't leak into the args).
+			if vrMulti && id.EnumName == "" {
+				if en := c.monomorphCloneEnumName(callExpected); en != "" {
+					if vr2, ok2, _ := c.resolveVariant(id.Name, en); ok2 {
+						vr, vrOk, vrMulti = vr2, true, false
+						id.EnumName = en
+					}
+				}
+			}
 			isVar := vrOk && !c.isUserFuncOrLocal(id.Name, s)
 			// Bare-name reference to a variant that lives in two
 			// or more enums — the call site has to qualify.

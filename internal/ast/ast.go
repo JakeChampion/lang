@@ -2458,6 +2458,14 @@ type EnumDecl struct {
 	Name       string
 	TypeParams []string
 	Variants   []EnumVariant
+	// Monomorphized marks a per-instantiation clone the monomorphizer
+	// emitted for a generic enum with a composite payload (#3693), e.g.
+	// `E__i32` from `enum E[U] { A(Box[U]) }`. Such clones share their
+	// variant names (`E__i32.A` vs `E__string.A`), so the checker lets a
+	// destination type disambiguate a bare variant reference among them —
+	// a relaxation that applies ONLY to clones, never to user-written
+	// enums (whose shared variant names still require qualification).
+	Monomorphized bool
 	// Derives lists the trait names from an `@derive(Trait, …)`
 	// attribute on the enum. The checker synthesises a variant-wise
 	// `impl` per derived trait. See docs/TRAITS.md.

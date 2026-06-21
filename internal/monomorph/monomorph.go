@@ -277,6 +277,19 @@ func Run(prog *ast.Program, info *checker.Info) error {
 	}
 	prog.Structs = append(keepStructs, clonedStructs...)
 
+	// 4a-enum. Drop clone-needed generic enums (#3693); their concrete
+	// `E__i32` clones are appended by the 4b worklist below. Generic enums
+	// aren't in info.Generics, so this filters prog.Enums directly. A
+	// bare-param generic enum (Option/Result) is kept generic.
+	keepEnums := prog.Enums[:0]
+	for _, ed := range prog.Enums {
+		if len(ed.TypeParams) > 0 && enumNeedsClone(ed, info) {
+			continue
+		}
+		keepEnums = append(keepEnums, ed)
+	}
+	prog.Enums = keepEnums
+
 	// 4b. Now that only monomorphic decls remain in prog.Funcs /
 	//     prog.Structs, walk every type slot to mangle remaining
 	//     generic StructType references (`Pair[i32, string]` →
@@ -296,6 +309,42 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		rewriteGenericStructTypes(prog, info, structInsts)
 		// Append any structs the new pass found.
 		for _, k := range collectKeys(structInsts) {
+			// Enum instantiations (clone-needed generic enums, #3693) ride
+			// the same `structInsts` map — instKey is type-agnostic and the
+			// decl kind is recovered by lookup. Build an EnumDecl clone for
+			// an enum key, a StructDecl clone otherwise.
+			if ged := genericEnum(info, k.name); ged != nil {
+				already := false
+				for _, ed := range prog.Enums {
+					if ed.Name == k.mang {
+						already = true
+						break
+					}
+				}
+				if already {
+					continue
+				}
+				args := structInsts[k]
+				sub := make(map[string]ast.Type, len(ged.TypeParams))
+				for i, tp := range ged.TypeParams {
+					sub[tp] = args[i]
+				}
+				c := *ged
+				c.Name = k.mang
+				c.TypeParams = nil
+				c.Monomorphized = true
+				c.Variants = make([]ast.EnumVariant, len(ged.Variants))
+				for i, v := range ged.Variants {
+					nv := v
+					nv.Payloads = make([]ast.Type, len(v.Payloads))
+					for j, p := range v.Payloads {
+						nv.Payloads[j] = substituteType(p, sub)
+					}
+					c.Variants[i] = nv
+				}
+				prog.Enums = append(prog.Enums, &c)
+				continue
+			}
 			already := false
 			for _, sd := range prog.Structs {
 				if sd.Name == k.mang {
@@ -357,6 +406,36 @@ func Run(prog *ast.Program, info *checker.Info) error {
 	}
 	prog.Impls = keepImpls
 
+	// 4d. Re-qualify variant references whose enum was cloned (#3693). The
+	//     first check stamped EnumName = "E" (the generic enum) on each
+	//     variant construction; that enum's decl was just dropped in favour
+	//     of concrete `E__i32` clones, so the stale qualifier now names a
+	//     missing enum. Clear it and let the re-check's bare-name
+	//     resolveVariant bind to the clone (unique per variant name for a
+	//     singly-instantiated enum). Covers a Call callee / value Ident and
+	//     the payload-less EnumLit.
+	clonedEnumNames := map[string]bool{}
+	for name, ed := range info.Enums {
+		if len(ed.TypeParams) > 0 && enumNeedsClone(ed, info) {
+			clonedEnumNames[name] = true
+		}
+	}
+	if len(clonedEnumNames) > 0 {
+		ast.WalkProgram(prog, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.Ident:
+				if clonedEnumNames[x.EnumName] {
+					x.EnumName = ""
+				}
+			case *ast.EnumLit:
+				if clonedEnumNames[x.EnumName] {
+					x.EnumName = ""
+				}
+			}
+			return true
+		})
+	}
+
 	// 5. Re-check. The cloned functions / structs need FuncSigs /
 	//    Structs entries + body type-checking with the
 	//    substituted types.
@@ -368,6 +447,88 @@ func Run(prog *ast.Program, info *checker.Info) error {
 	}
 	*info = *newInfo
 	return nil
+}
+
+// genericEnum returns the generic EnumDecl for `name` (TypeParams
+// non-empty), or nil. Generic enums aren't recorded in info.Generics
+// (only funcs + structs are), so this checks info.Enums directly.
+func genericEnum(info *checker.Info, name string) *ast.EnumDecl {
+	ed, ok := info.Enums[name]
+	if !ok || len(ed.TypeParams) == 0 {
+		return nil
+	}
+	return ed
+}
+
+// typeRefsGenericNominal reports whether a type tree references a
+// generic struct or generic enum by a *composite* (args-bearing)
+// nominal — the shape the monomorphizer mangles + drops. A bare
+// ParamType (`U`) is NOT such a reference: a variant payload that is
+// just `U` re-checks fine against the leniently-unified call (the
+// `enum Opt[T] { Sm(T) }` case), so its enum needs no clone.
+func typeRefsGenericNominal(t ast.Type, info *checker.Info) bool {
+	switch x := t.(type) {
+	case ast.StructType:
+		if len(x.Args) > 0 {
+			if _, isGen := info.GenericStructs[x.Name]; isGen {
+				return true
+			}
+		}
+		for _, a := range x.Args {
+			if typeRefsGenericNominal(a, info) {
+				return true
+			}
+		}
+	case ast.EnumType:
+		if len(x.Args) > 0 && genericEnum(info, x.Name) != nil {
+			return true
+		}
+		for _, a := range x.Args {
+			if typeRefsGenericNominal(a, info) {
+				return true
+			}
+		}
+	case ast.ArrayType:
+		return typeRefsGenericNominal(x.Elem, info)
+	case ast.SliceType:
+		return typeRefsGenericNominal(x.Elem, info)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			if typeRefsGenericNominal(e, info) {
+				return true
+			}
+		}
+	case *ast.FuncType:
+		if typeRefsGenericNominal(x.Result, info) {
+			return true
+		}
+		for _, p := range x.Params {
+			if typeRefsGenericNominal(p, info) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// enumNeedsClone reports whether a generic enum must be cloned per
+// instantiation (#3693): when some variant payload references a
+// generic struct/enum, the monomorphizer mangles + drops that nominal,
+// so the enum's still-generic payload (`Box[U]`) would dangle at the
+// re-check ("unknown struct type Box"). Cloning emits a concrete
+// `E__i32` whose payload is the mangled `Box__i32`. A generic enum
+// whose payloads are only bare type params (Option / Result) is left
+// generic — it re-checks fine and cloning it would collide variant
+// names across instantiations.
+func enumNeedsClone(ed *ast.EnumDecl, info *checker.Info) bool {
+	for _, v := range ed.Variants {
+		for _, p := range v.Payloads {
+			if typeRefsGenericNominal(p, info) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // mangle generates a unique function name for a given
@@ -1008,6 +1169,22 @@ func rewriteGenericStructTypes(prog *ast.Program, info *checker.Info, into map[i
 			rewrite(&sd.Fields[i].Type)
 		}
 	}
+	// Enums: variant payload types of concrete enums (TypeParams empty) —
+	// the cloned `E__i32` from #3693 has its payload substituted to
+	// `Box[i32]` during cloning, which this pass mangles to `Box__i32`
+	// (and records the struct instantiation so its decl gets built). A
+	// still-generic enum (Option/Result) is skipped: its `T` payloads are
+	// substituted per use, not here.
+	for _, ed := range prog.Enums {
+		if len(ed.TypeParams) > 0 {
+			continue
+		}
+		for vi := range ed.Variants {
+			for pi := range ed.Variants[vi].Payloads {
+				rewrite(&ed.Variants[vi].Payloads[pi])
+			}
+		}
+	}
 }
 
 // collectKeys returns a deterministic-order key list for the
@@ -1051,9 +1228,21 @@ func rewriteType(t ast.Type, info *checker.Info, into map[instKey][]ast.Type) as
 		if len(x.Args) == 0 {
 			return x
 		}
+		// Recursively rewrite nested args first (a generic enum's args
+		// may reference other generic nominals).
 		args := make([]ast.Type, len(x.Args))
 		for i := range x.Args {
 			args[i] = rewriteType(x.Args[i], info, into)
+		}
+		// A clone-needed generic enum (composite payload, #3693) flattens
+		// to a mangled, concrete `E__i32` whose decl the clone loop builds
+		// from `into`. A bare-param generic enum (Option/Result) stays
+		// generic — it re-checks fine and must keep its single decl so its
+		// variant names don't collide across instantiations.
+		if ed := genericEnum(info, x.Name); ed != nil && enumNeedsClone(ed, info) {
+			mang := mangle(x.Name, args)
+			into[instKey{name: x.Name, mang: mang}] = args
+			return ast.EnumType{Name: mang}
 		}
 		return ast.EnumType{Name: x.Name, Args: args}
 	case ast.ArrayType:
