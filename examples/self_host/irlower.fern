@@ -1405,6 +1405,38 @@ pub function enum_arr_field_read_type(e: parser.Expr, s: LowerState): string {
     return "";
 }
 
+// strarr_field_read_type is the string[] twin of scalar_arr_field_type /
+// struct_arr_field_read_type / enum_arr_field_read_type: it returns the field
+// type of a `string[]` struct field read (`s.local_names` where local_names:
+// string[]), else "". A string[] is NOT covered by is_leaksafe_array_field (a
+// string element is a heap pointer, not a scalar), so without this the
+// `field.append(v)` dispatch fell through to the move/consume form (op_arr_push
+// in place). That consume form reuses the receiver buffer — UNSOUND when the
+// receiver is a borrowed, possibly-shared struct field: aliasing the enclosing
+// struct (`var b = a` over a struct holding the string[]) then appending in one
+// alias silently mutates the buffer the other alias still reads. That is exactly
+// the checker self-build crash (asmcore.EmitState.local_names is a string[] field;
+// check_stmt's `var actx = ctx` aliases the EmitState across a match arm, and the
+// arm-body bind_local_typed's `s.local_names.append(name)` corrupted the shared
+// buffer — leaking the arm's bindings into the restored local_names so it desynced
+// from the clone-form local_types). Routing string[] field appends through the
+// CLONE form (lower_arr_append_value) — element-kind-agnostic, the same sound shape
+// the scalar/struct/enum-array fields use — fixes it: the receiver buffer is never
+// reused, only the sole-owned clone.
+pub function strarr_field_read_type(e: parser.Expr, s: LowerState): string {
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return ""; }
+            var ft: string = decl_field_type(s.structs, oty, fa.field);
+            if (ft == "string[]") { return ft; }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 // field_access_arr_field_type returns the field type of an array-field struct
 // field read (`s.xs` where xs: i32[]/f64[]/i64[]/boolean[] — a scalar-element
 // array — OR xs: P[] — an array-of-struct — OR xs: E[] — an array-of-enum), for
@@ -5137,6 +5169,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // `State { xs: s.xs.append(v), … }` as a struct-field value.
                     if (fa.field == "append" && c.args.len() == 1
                         && (scalar_arr_field_type(fa.obj, s) != ""
+                            || strarr_field_read_type(fa.obj, s) != ""
                             || struct_arr_field_read_type(fa.obj, s) != ""
                             || enum_arr_field_read_type(fa.obj, s) != "")) {
                         return lower_arr_append_value(fa.obj, c.args[0], s);
