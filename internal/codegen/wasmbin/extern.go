@@ -1402,3 +1402,64 @@ func buildExportListParamWrapper(idxs map[string]uint32, userFuncIdx uint32, par
 	locals = inst.PutLocalsOneGroup(nil, uint32(narr), encode.ValtypeI32)
 	return body, locals
 }
+
+// buildExternAsyncScalarResultWrapper returns the body builder for the wrapper
+// of an `@import ... async function` with scalar params and a scalar result —
+// the WASI Preview-3 colorless async-import shape (docs/WASI-PREVIEW3-ASYNC-PLAN.md).
+// The raw import is lowered with `canon lower async`, whose core signature is
+// `(scalar params…, retptr) -> i32 status`: the result is delivered indirectly
+// through a linear-memory return area, and the i32 status reports
+// completion/blocked. For an import that completes synchronously the result is
+// already in the return area when the call returns, so the wrapper drops the
+// status and loads the result directly — no waitable-set loop. (A pending
+// import would additionally need `waitable-set.wait`; that lands with the
+// non-blocking-host path.) Keeping the wrapper between the Fern `dep()` call and
+// the raw async-lowered import is what makes the await colorless: the source
+// just sees a value-returning call.
+//
+// nparams is the count of (scalar, one-slot) parameters; rawImport is the raw
+// import's name in helperIdxs; resultVT is the result's core valtype. The
+// wrapper's type is (scalar params…) -> resultVT.
+//
+// Local after the params: 0:$rb (8-byte-aligned return area).
+func buildExternAsyncScalarResultWrapper(nparams int, rawImport string, resultVT byte) func(map[string]uint32) []byte {
+	return func(idxs map[string]uint32) []byte {
+		alloc := idxs["__fern_alloc"]
+		imp := idxs[rawImport]
+		rb := uint32(nparams)
+
+		var body []byte
+		// rb = (__fern_alloc(16) + 7) & ~7 — an 8-byte-aligned return area
+		// (covers an i64/f64 result; __fern_alloc bumps without aligning, so
+		// over-allocate by 7 bytes of slack and round up).
+		body = inst.InstI32Const(body, 16)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstI32Const(body, 7)
+		body = numeric.InstI32Add(body)
+		body = inst.InstI32Const(body, -8)
+		body = numeric.InstI32And(body)
+		body = inst.InstLocalSet(body, rb)
+		// raw import: forward each scalar param, then the return-area pointer.
+		for p := 0; p < nparams; p++ {
+			body = inst.InstLocalGet(body, uint32(p))
+		}
+		body = inst.InstLocalGet(body, rb)
+		body = inst.InstCall(body, imp)
+		// Synchronous completion: drop the i32 status, read the result inline.
+		body = inst.InstDrop(body)
+		body = inst.InstLocalGet(body, rb)
+		switch resultVT {
+		case encode.ValtypeI64:
+			body = memory.InstI64Load(body, 3, 0)
+		case encode.ValtypeF32:
+			body = memory.InstF32Load(body, 2, 0)
+		case encode.ValtypeF64:
+			body = memory.InstF64Load(body, 3, 0)
+		default:
+			body = memory.InstI32Load(body, 2, 0)
+		}
+
+		locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32) // rb
+		return inst.PutFunctionBody(nil, locals, body)
+	}
+}

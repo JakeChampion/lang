@@ -877,6 +877,43 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			_, isVoid = ret.(ast.VoidType)
 		}
 
+		// An `@import ... async function` (WASI Preview-3 colorless async import,
+		// docs/WASI-PREVIEW3-ASYNC-PLAN.md): the raw import is lowered with
+		// `canon lower async`, whose core signature appends a return-area pointer
+		// and returns an i32 status — `(scalar params…, retptr) -> i32`. The Fern
+		// name resolves to a generated wrapper that allocates the return area,
+		// calls the raw import, and (sync-completion case) drops the status and
+		// reads the result inline, so the source-level call stays colorless. This
+		// slice covers scalar params + a scalar result (the proven `dep(): i32`
+		// shape); a string/array/composite async param or result is rejected until
+		// its slice lands. The enclosing caller must be `async`-lifted (it owns the
+		// task that awaits) — the `async function` keyword provides that.
+		if ex.Async {
+			if hasMemParam {
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): async extern with a string/array/record/option parameter is not supported yet (only scalar params; docs/WASI-PREVIEW3-ASYNC-PLAN.md)", ex.Name, ex.Iface, ex.WITName)
+			}
+			if !externScalarType(ret) {
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): async extern must return a scalar (i32/i64/f32/f64) for now; void/string/array/composite results are not supported yet (docs/WASI-PREVIEW3-ASYNC-PLAN.md)", ex.Name, ex.Iface, ex.WITName)
+			}
+			results, err := resultValtypes(ret)
+			if err != nil {
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): %w", ex.Name, ex.Iface, ex.WITName, err)
+			}
+			rawName := ex.Name + "$import"
+			// raw import: (scalar params…, retptr) -> i32 status.
+			rawParams := append(append([]byte{}, params...), encode.ValtypeI32)
+			specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: rawParams, results: []byte{encode.ValtypeI32}}
+			in.add(rawName)
+			wrappers[ex.Name] = runtimeHelperSpec{
+				params:  params,
+				results: results,
+				body:    buildExternAsyncScalarResultWrapper(len(ex.Params), rawName, results[0]),
+			}
+			helpers.add(ex.Name)
+			helpers.add("__fern_alloc")
+			continue
+		}
+
 		// A memory parameter (`string` or `u8[]`, P4c): a generated wrapper
 		// normalizes each to the canonical (ptr,len) before the raw import is
 		// called. The wrapper's signature mirrors the Fern flattening (`params`:
