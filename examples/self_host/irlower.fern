@@ -1748,6 +1748,24 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
                         }
                     }
                 },
+                // `a[i][j]` where `a` is a `T[][]` of structs/enums → the innermost
+                // element type, so `a[i][j].field` / `a[i][j].method()` resolve
+                // without an intermediate typed local (the depth-2 sibling of the
+                // `arr[i]` ExprIdent case above). The element struct/enum name is
+                // recorded on the T[][] slot's local_struct_type at declaration; a
+                // plain i32[][]/f64[][] element carries "" → unaffected.
+                parser.ExprIndex(inner) => {
+                    match (inner.array) {
+                        parser.ExprIdent(aaid) => {
+                            var aasl: i32 = s.slot_of(aaid.name);
+                            if (s.is_arrarr_slot(aasl)) {
+                                var aaty: string = s.struct_type_of_slot(aasl);
+                                if (aaty != "" && (decl_is_struct(s.structs, aaty) || is_enum_like_name(aaty, s.structs))) { return aaty; }
+                            }
+                        },
+                        _ => {}
+                    }
+                },
                 _ => {}
             }
             return "";
