@@ -6429,6 +6429,13 @@ function iife_payload_field_bindable(ft: string, name: string, arm: parser.Match
         // (statement-position already lowers `return n + 1`). res_kind names the wide
         // width; admit when the arm tail is that wide-arith shape over the payload.
         if ((res_kind == "i64" || res_kind == "f64") && iife_payload_arith_kind(iife_arm_tail_expr(arm), name, ft, res_kind, s)) { return true; }
+        // The binding is DEAD — the arm body never references `name` (`Some(x) => 1`,
+        // an i64/f64 payload bound to a name the arm doesn't read). The payload width
+        // is then irrelevant to the result temp (driven solely by the arm's actual
+        // return value), and the StmtMatch binder already produces the correct
+        // width-typed slot. This is the wide-payload analog of the unconditional i32
+        // admit above and of the wildcard `Some(_)` path, which already lower.
+        if (!parser.stmts_mention(arm.body, name)) { return true; }
         return false;
     }
     if (is_scalar_array_type(ft)) { return !iife_arm_returns_ident(arm, name); }

@@ -2266,7 +2266,7 @@ function parse_switch_cases(p: Par): SwitchCasesResult {
 // the closure-valued-local desugar below can't bind the name before the
 // lambda captures it, so recursion needs top-level hoisting (closureconv),
 // which isn't ported yet. Conservative: any mention counts.
-function expr_mentions(e: Expr, name: string): boolean {
+pub function expr_mentions(e: Expr, name: string): boolean {
     match (e) {
         ExprIdent(id) => { return id.name == name; },
         ExprBinary(b) => { return expr_mentions(b.left, name) || expr_mentions(b.right, name); },
@@ -2313,7 +2313,7 @@ function expr_mentions(e: Expr, name: string): boolean {
     }
 }
 
-function stmt_mentions(st: Stmt, name: string): boolean {
+pub function stmt_mentions(st: Stmt, name: string): boolean {
     match (st) {
         StmtVar(v) => { return expr_mentions(v.init, name); },
         StmtReturn(r) => { return expr_mentions(r.value, name); },
@@ -2335,7 +2335,7 @@ function stmt_mentions(st: Stmt, name: string): boolean {
     }
 }
 
-function stmts_mention(stmts: Stmt[], name: string): boolean {
+pub function stmts_mention(stmts: Stmt[], name: string): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         if (stmt_mentions(stmts[i], name)) { return true; }
