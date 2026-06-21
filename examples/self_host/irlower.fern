@@ -1792,6 +1792,21 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
                         _ => {}
                     }
                 },
+                // `mk()[i].field` — field on a struct ELEMENT indexed directly from a
+                // function that returns a struct ARRAY (`P[]`). struct_ret_type for a
+                // P[]-returning free fn already records the ELEMENT type "P" (the
+                // registry strips "[]", #3035), so recover it for `mk()[i]` — the
+                // call sibling of the `arr[i]` ExprIdent case above. Restricted to a
+                // bare-name (free fn) callee; method-call callees stay on the AST path.
+                parser.ExprCall(cc) => {
+                    match (cc.callee) {
+                        parser.ExprIdent(ccid) => {
+                            var crt: string = s.struct_ret_type(ccid.name);
+                            if (crt != "" && (decl_is_struct(s.structs, crt) || is_enum_like_name(crt, s.structs))) { return crt; }
+                        },
+                        _ => {}
+                    }
+                },
                 _ => {}
             }
             return "";
