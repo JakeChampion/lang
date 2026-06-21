@@ -211,3 +211,39 @@ pub function position[I: Iterator[i32]](it: I, target: i32): Option[i32] {
     }
     return None;
 }
+
+// contains reports whether the iterator yields a value equal to `target`.
+// i32-specialised (uses `==`); the closure-taking `any` awaits the boolean-
+// indirect-return self-host IR fix.
+pub function contains[I: Iterator[i32]](it: I, target: i32): boolean {
+    var cur = it;
+    var go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => {
+                if (t.0 == target) { return true; }
+                cur = t.1;
+            },
+            None => { go = false; },
+        }
+    }
+    return false;
+}
+
+// count_value returns how many of the iterator's values equal `target`.
+// i32-specialised (uses `==`).
+pub function count_value[I: Iterator[i32]](it: I, target: i32): i32 {
+    var n = 0;
+    var cur = it;
+    var go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => {
+                if (t.0 == target) { n = n + 1; }
+                cur = t.1;
+            },
+            None => { go = false; },
+        }
+    }
+    return n;
+}
