@@ -383,6 +383,32 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 	},
+	"wasi_sockets_tcp_start_connect": {
+		// Outbound client. Same canonical-ABI flattening as
+		// start-bind: self, borrow<network>, disc, 11 flat slots
+		// (ipv4 uses port + 4 octets), retptr = 15 i32.
+		module: "wasi:sockets/tcp@0.2.0",
+		name:   "[method]tcp-socket.start-connect",
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+		},
+		results: nil,
+	},
+	"wasi_sockets_tcp_finish_connect": {
+		// (self, retptr) → (). retptr holds
+		// `result<tuple<input-stream, output-stream>, error-code>`:
+		// 1 disc byte at +0, 3 bytes pad, then (input, output) at
+		// +4 / +8 (Ok) or the error-code at +4 (Err). 8-byte
+		// payload; the caller's retptr is the shared 16-byte area.
+		module:  "wasi:sockets/tcp@0.2.0",
+		name:    "[method]tcp-socket.finish-connect",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_sockets_tcp_accept": {
 		// (self, retptr) → (). retptr holds
 		// `result<tuple<tcp-socket, input-stream, output-stream>,
@@ -1318,6 +1344,15 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 	}
 	if helpers.set["__fern_tcp_accept"] {
 		in.add("wasi_sockets_tcp_accept")
+		in.add("wasi_sockets_tcp_subscribe")
+		in.add("wasi_io_pollable_block")
+		in.add("wasi_io_pollable_drop")
+	}
+	if helpers.set["__fern_tcp_connect"] {
+		in.add("wasi_sockets_instance_network")
+		in.add("wasi_sockets_create_tcp_socket")
+		in.add("wasi_sockets_tcp_start_connect")
+		in.add("wasi_sockets_tcp_finish_connect")
 		in.add("wasi_sockets_tcp_subscribe")
 		in.add("wasi_io_pollable_block")
 		in.add("wasi_io_pollable_drop")

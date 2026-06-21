@@ -147,16 +147,39 @@ portable `std/task.select` (pre-existing). The scheduler API is now at
 parity: **`run` (all) · `run_deadline`/`run_io_deadline` (SLA) ·
 `select`/`run_io_select` (first-wins)** on every backend.
 
-## Remaining: wasm outbound TCP client (the next async slice)
+## UPDATE — the wasm outbound TCP client lands
 
-The reactor core is complete; the one large remaining piece is wiring
-real connection pollables into `run`/`select` for **overlapped outbound
-fetch** — the wasm analog of native `TestReactorFanoutBodies`. Today the
-wasm TCP path is **server-only** (bind/listen/accept in `wasi_tcp.go` +
-the composer's `tcp-socket` methods). Outbound needs the connect chain.
-Feasibility confirmed: `wasmtime run -S inherit-network` already drives
-the wasm TCP **server** e2e tests, so an outbound client is testable
-against a Go upstream the same way.
+`tcp_connect(host_be, port)` now works on wasm (the analog of the
+native builtin): create-tcp-socket → start-connect(remote ipv4 addr,
+unpacked from the `std/fetch` `ipv4` packing) → subscribe →
+`pollable.block` (await the connection) → finish-connect → a 12-byte
+connection struct `(tcp-socket, input-stream, output-stream)` — the
+SAME shape `tcp_accept` yields, so `tcp_recv` / `tcp_send` / `tcp_close`
+work on it unchanged. Wired through wasmbin (`buildTcpConnectBody`,
+import specs `wasi_sockets_tcp_start_connect` / `_finish_connect`,
+`scanImports`, the `tcp_connect` alias) and the composer
+(`ComposeRequest.TcpConnect` + `g.needConnect` selecting
+`WasiSocketsTcpConnectInstanceTypeBody`; the connect lowerings gated on
+`req.TcpConnect`). Verified end-to-end:
+`TestWasmTcpConnectOutbound` runs a Go upstream and the wasm guest
+connects + sends + recvs the body under `wasmtime -S inherit-network`.
+
+So a wasm edge handler can now reach upstreams (single blocking
+outbound fetch). The server path is unaffected (the connect instance
+type is a superset; its server method indices 0-21 are unchanged, and
+the connect lowerings are gated).
+
+## Remaining: overlapped outbound fan-out
+
+The one piece left for the full edge story is **overlapped** outbound
+fan-out — N connections in flight, multiplexed through the reactor (the
+wasm analog of native `TestReactorFanoutBodies`). The blocking
+`tcp_connect` + `tcp_recv` above are synchronous; overlapping them needs
+(a) exposing a connection's `subscribe` → pollable to Fern (e.g.
+`tcp_pollable(conn)`), and (b) a NON-blocking recv (the current
+`tcp_recv` blocks internally). Then `std/wasm_reactor.run`/`select` over
+the connection pollables gives the fan-out. The connect primitive +
+resource-aware composition are done; this is the next slice.
 
 The ABI groundwork (the historically fiddly part) is done — verified by
 `wasm-tools print` of a compiled server component. The

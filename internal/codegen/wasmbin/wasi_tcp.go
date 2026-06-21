@@ -266,6 +266,140 @@ func buildTcpListenBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
+// buildTcpConnectBody assembles __fern_tcp_connect — the outbound
+// client.
+//
+// Signature: (host_be: i32, port: i32) → i32
+//
+// host_be is the IPv4 address packed a | b<<8 | c<<16 | d<<24 (the
+// std/fetch `ipv4` convention), unpacked here into the four octets of
+// the ip-socket-address ipv4 form. Pipeline: create-tcp-socket →
+// start-connect(remote addr) → subscribe → pollable.block (wait for
+// the connection to establish) → pollable.drop → finish-connect.
+// Returns a 12-byte connection struct (tcp-socket, input-stream,
+// output-stream) — the SAME shape tcp_accept yields, so tcp_recv /
+// tcp_send / tcp_close work on it unchanged — or -errno on failure.
+//
+// Locals (params 0 = host_be, 1 = port):
+//
+//	2: $sock   3: $retptr   4: $struct   5: $pollable
+func buildTcpConnectBody(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	netHandle := idxs["__network_handle"]
+	createSock := idxs["wasi_sockets_create_tcp_socket"]
+	startConnect := idxs["wasi_sockets_tcp_start_connect"]
+	finishConnect := idxs["wasi_sockets_tcp_finish_connect"]
+	subscribe := idxs["wasi_sockets_tcp_subscribe"]
+	pollBlock := idxs["wasi_io_pollable_block"]
+	pollDrop := idxs["wasi_io_pollable_drop"]
+
+	octet := func(body []byte, shift int32) []byte {
+		body = inst.InstLocalGet(body, 0)
+		if shift != 0 {
+			body = inst.InstI32Const(body, shift)
+			body = numeric.InstI32ShrU(body)
+		}
+		body = inst.InstI32Const(body, 0xff)
+		return numeric.InstI32And(body)
+	}
+
+	var body []byte
+
+	// $retptr = alloc(16).
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 3)
+
+	// create-tcp-socket(ipv4=0, retptr).
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstCall(body, createSock)
+	body = inst.InstLocalGet(body, 3)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = emitErrnoNegReturn(body, 3)
+	body = inst.InstEnd(body)
+	// $sock = mem[retptr + 4].
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 2)
+
+	// start-connect(self=$sock, network, disc=0 (ipv4), port,
+	//   4 ipv4 octets from host_be, 6 padding slots, retptr).
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, netHandle)
+	body = inst.InstI32Const(body, 0) // disc = ipv4
+	body = inst.InstLocalGet(body, 1) // port
+	body = octet(body, 0)             // a = host_be & 0xff
+	body = octet(body, 8)             // b
+	body = octet(body, 16)            // c
+	body = octet(body, 24)            // d
+	body = inst.InstI32Const(body, 0) // pad 1
+	body = inst.InstI32Const(body, 0) // pad 2
+	body = inst.InstI32Const(body, 0) // pad 3
+	body = inst.InstI32Const(body, 0) // pad 4
+	body = inst.InstI32Const(body, 0) // pad 5
+	body = inst.InstI32Const(body, 0) // pad 6
+	body = inst.InstLocalGet(body, 3) // retptr
+	body = inst.InstCall(body, startConnect)
+	body = inst.InstLocalGet(body, 3)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = emitErrnoNegReturn(body, 3)
+	body = inst.InstEnd(body)
+
+	// subscribe($sock) → $pollable; block until connected; drop it.
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, subscribe)
+	body = inst.InstLocalSet(body, 5)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstCall(body, pollBlock)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstCall(body, pollDrop)
+
+	// finish-connect(self, retptr).
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstCall(body, finishConnect)
+	body = inst.InstLocalGet(body, 3)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = emitErrnoNegReturn(body, 3)
+	body = inst.InstEnd(body)
+
+	// Allocate the 12-byte connection struct: (sock, input, output).
+	// finish-connect's Ok payload is tuple<input @ retptr+4,
+	// output @ retptr+8>.
+	body = inst.InstI32Const(body, 12)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 4)
+	body = inst.InstLocalGet(body, 2) // $sock
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Load(body, 2, 0) // input-stream @ retptr+4
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Load(body, 2, 0) // output-stream @ retptr+8
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 4)
+
+	// Four i32 locals after the two params: $sock, $retptr, $struct, $pollable.
+	locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
 // buildTcpAcceptBody assembles __fern_tcp_accept.
 //
 // Signature: (listener: i32) → i32 — heap pointer to a fresh

@@ -34,6 +34,12 @@ type ComposeRequest struct {
 	Udp  bool // send-only UDP client
 	Http bool // wasi:http/incoming-handler
 
+	// TcpConnect adds the outbound-client chain (start-connect /
+	// finish-connect) to the tcp instance type + lowerings. Implies
+	// Tcp. The wasm analog of the native tcp_connect; lets an edge
+	// handler reach upstreams.
+	TcpConnect bool
+
 	// Reactor timer: wasi:clocks/monotonic-clock.subscribe-duration
 	// (own<pollable>) + wasi:io/poll.pollable.block, composed
 	// standalone (no sockets). The wasm reactor's timer primitive.
@@ -85,6 +91,9 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 	// Set before any ensure* so ensureIoPoll builds the right shape
 	// whichever dependency reaches it first (timer or socket).
 	g.needPoll = req.Poll
+	// Outbound client opts the tcp instance type into the connect
+	// variant (start-connect / finish-connect). Set before ensureTcp.
+	g.needConnect = req.TcpConnect
 
 	// Surface io/streams first with the full direction union so the
 	// later ensure* calls (which request narrower directions) are no-ops.
@@ -175,6 +184,17 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 			gImport{iface: "wasi:io/poll@0.2.0", name: "[method]pollable.block", kind: gNoOpt},
 			gImport{iface: "wasi:io/poll@0.2.0", name: "[resource-drop]pollable", kind: gDrop, resourceT: g.surfaced["pollable"]},
 		)
+		if req.TcpConnect {
+			// Outbound client: the connect chain. The tcp instance type
+			// is the connect variant (a superset of the server one), so
+			// the server lowerings above still resolve; these add the
+			// two connect methods. start-connect mirrors start-bind's
+			// 15-param ip-socket-address flattening.
+			g.add(
+				gImport{iface: tcp, name: "[method]tcp-socket.start-connect", kind: gMem, params: composeTcpStartBindParams},
+				gImport{iface: tcp, name: "[method]tcp-socket.finish-connect", kind: gMem, params: composeTcpSelfRetParams},
+			)
+		}
 	}
 	if req.Udp {
 		const udp = "wasi:sockets/udp@0.2.0"
