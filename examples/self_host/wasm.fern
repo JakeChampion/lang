@@ -11280,7 +11280,10 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         // narrow helper here — but ONLY when str_split is absent, because
         // str_split_helper (below) is self-contained and emits its own copy;
         // emitting both would define $__fern_arr_push twice.
-        if (wasm_ir.module_emits_op(mod, "arr_push") && !wasm_ir.module_emits_op(mod, "str_split")) {
+        // arr_push_owned (the sole-owner self-append) also lowers to a
+        // $__fern_arr_push call on wasm (reclaim-on-grow is x86-only so far), so a
+        // module with only owned appends still needs the helper emitted.
+        if ((wasm_ir.module_emits_op(mod, "arr_push") || wasm_ir.module_emits_op(mod, "arr_push_owned")) && !wasm_ir.module_emits_op(mod, "str_split")) {
             ir_out = ir_out + arr_push_helper();
         }
         // 8-byte i64[]/u64[] push — its own helper ($__fern_arr_push_i64), no

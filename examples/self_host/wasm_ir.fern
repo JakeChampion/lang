@@ -762,8 +762,12 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             else if (o.str == "i8") { out = out + "    i32.extend8_s\n"; }
             else if (o.str == "i16") { out = out + "    i32.extend16_s\n"; }
             // u32 / i32: no-op (value already a 32-bit i32).
-        } else if (o.kind == "arr_push") {
+        } else if (o.kind == "arr_push" || o.kind == "arr_push_owned") {
             // stack: arr, val -> $__fern_arr_push(arr, val) -> grown array.
+            // arr_push_owned (the sole-owner self-append) maps to the same plain
+            // push for now — reclaim-on-grow is an x86-only optimisation so far
+            // (asm_ir's __fern_arr_push_owned); wasm stays leak-but-sound until its
+            // own owned helper lands.
             out = out + "    call $__fern_arr_push\n";
         } else if (o.kind == "arr_push_i64") {
             // stack: arr, i64 val -> the 8-byte-stride push (wasm32 packs i32[] at
