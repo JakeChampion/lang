@@ -1,0 +1,98 @@
+import "std/test";
+import "std/format" as format;
+
+// examples/tests/format_test.fern — exercise std/format's dynamic
+// template substitution and the human-readable byte / duration
+// formatters through the test runner. std/format had only Go-side
+// coverage; this is the pure-Fern, std/test-driven shape, gated through
+// the self-host IR path (TestSelfHostStdTestE2E) so the string-build /
+// integer-division lowering is proven end to end on the self-hosted
+// compiler.
+
+// ---- format(fmt, args) — positional `{}` substitution ----
+
+function test_format_positional(): test.TestOutcome {
+    return test.assert_eq(format.format("{} + {} = {}", ["1", "2", "3"]), "1 + 2 = 3");
+}
+
+function test_format_no_placeholders(): test.TestOutcome {
+    return test.assert_eq(format.format("plain text", []), "plain text");
+}
+
+// `{{` / `}}` escape to literal braces (Python/Rust convention).
+function test_format_escaped_braces(): test.TestOutcome {
+    return test.assert_eq(format.format("{{}} literal", []), "{} literal");
+}
+
+// Width specs: `{:>w}` right-aligns, `{:<w}` left-aligns to width w.
+function test_format_right_align(): test.TestOutcome {
+    return test.assert_eq(format.format("{:>5}", ["42"]), "   42");
+}
+
+function test_format_left_align(): test.TestOutcome {
+    return test.assert_eq(format.format("{:<5}", ["42"]), "42   ");
+}
+
+// ---- format_bytes(n) — binary IEC units (B / KiB / MiB / GiB) ----
+
+function test_bytes_below_kib(): test.TestOutcome {
+    return test.assert_eq(format.format_bytes(0), "0 B");
+}
+
+function test_bytes_just_below_kib(): test.TestOutcome {
+    return test.assert_eq(format.format_bytes(1023), "1023 B");
+}
+
+function test_bytes_one_kib(): test.TestOutcome {
+    return test.assert_eq(format.format_bytes(1024), "1 KiB");
+}
+
+function test_bytes_one_mib(): test.TestOutcome {
+    return test.assert_eq(format.format_bytes(1048576), "1 MiB");
+}
+
+function test_bytes_negative(): test.TestOutcome {
+    return test.assert_eq(format.format_bytes(0 - 2048), "-2 KiB");
+}
+
+// ---- format_duration_ms(ms) — h/m/s/ms, non-zero components only ----
+
+function test_duration_zero(): test.TestOutcome {
+    return test.assert_eq(format.format_duration_ms(0), "0ms");
+}
+
+function test_duration_sub_second(): test.TestOutcome {
+    return test.assert_eq(format.format_duration_ms(500), "500ms");
+}
+
+function test_duration_seconds_and_ms(): test.TestOutcome {
+    return test.assert_eq(format.format_duration_ms(1500), "1s 500ms");
+}
+
+function test_duration_minutes(): test.TestOutcome {
+    return test.assert_eq(format.format_duration_ms(65000), "1m 5s");
+}
+
+function test_duration_full(): test.TestOutcome {
+    return test.assert_eq(format.format_duration_ms(3661001), "1h 1m 1s 1ms");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/format");
+    r = r.it("format positional", test_format_positional());
+    r = r.it("format no placeholders", test_format_no_placeholders());
+    r = r.it("format escaped braces", test_format_escaped_braces());
+    r = r.it("format right-align", test_format_right_align());
+    r = r.it("format left-align", test_format_left_align());
+    r = r.it("bytes below KiB", test_bytes_below_kib());
+    r = r.it("bytes just below KiB", test_bytes_just_below_kib());
+    r = r.it("bytes one KiB", test_bytes_one_kib());
+    r = r.it("bytes one MiB", test_bytes_one_mib());
+    r = r.it("bytes negative", test_bytes_negative());
+    r = r.it("duration zero", test_duration_zero());
+    r = r.it("duration sub-second", test_duration_sub_second());
+    r = r.it("duration seconds and ms", test_duration_seconds_and_ms());
+    r = r.it("duration minutes", test_duration_minutes());
+    r = r.it("duration full", test_duration_full());
+    return r.finish();
+}

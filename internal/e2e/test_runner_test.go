@@ -149,6 +149,25 @@ func TestRunnerBase64ExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/format_test.fern` covers std/format — positional `{}`
+// substitution (incl. `{{`/`}}` escapes and `{:>w}`/`{:<w}` width
+// alignment), the binary-IEC `format_bytes`, and `format_duration_ms`
+// (h/m/s/ms components) — a deterministic formatter that had only
+// Go-side coverage. Passing suite → exit 0.
+func TestRunnerFormatExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/format_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/format", "# pass 15", "# fail 0", "1..15"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/cmp_helpers_test.fern` covers core/cmp's generic free
 // helpers over the primitive Ord/Eq impls (min / max / clamp / lt / gte /
 // sort / is_sorted / contains / index_of / distinct / eq_arrays, incl.
