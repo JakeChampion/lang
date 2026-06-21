@@ -43,6 +43,42 @@ function main(): i32 {
 }
 `
 
+// Generic enum with a FUNCTION-typed, SELF-referential variant payload —
+// `Wait(i32, (i32) => Step[T])` — used in function signatures and
+// instantiated. This is std/wasm_reactor's `Step[T]` minimized. It
+// re-checks fine while the enum stays generic (lenient unify), but the
+// composite-payload cloning (#3693/#3733) over-eagerly cloned it via the
+// function boundary and produced a broken clone (`Step[i32]` slots in
+// signatures and the `(i32) => Step[i32]` payload weren't rewritten to
+// `Step__i32`), crashing the re-check. The fix treats a function
+// boundary as opaque for the clone decision (enumNeedsClone), so such
+// enums stay generic and work. Returns 6.
+const genEnumFnSelfPayload = `
+enum Step[T] { Done(T), Wait(i32, (i32) => Step[T]) }
+function start(v: i32): Step[i32] {
+  function resume(p: i32): Step[i32] { return Done(v); }
+  return Wait(0, resume);
+}
+function main(): i32 {
+  match (start(6)) {
+    Done(v) => { return v; },
+    Wait(tok, r) => { match (r(tok)) { Done(v) => { return v; }, Wait(a, b) => { return 0; } } },
+  }
+}
+`
+
+func TestGenEnumFnSelfPayloadInterp(t *testing.T) {
+	if code := genEnumInterpExit(t, genEnumFnSelfPayload); code != 6 {
+		t.Errorf("fn-self-payload: interp exit = %d, want 6", code)
+	}
+}
+
+func TestGenEnumFnSelfPayloadX86_64(t *testing.T) {
+	if _, code := compileAndRunX86_64(t, genEnumFnSelfPayload); code != 6 {
+		t.Errorf("fn-self-payload: x86-64 exit = %d, want 6", code)
+	}
+}
+
 func genEnumInterpExit(t *testing.T, src string) int {
 	t.Helper()
 	bin := buildLangBinForInterp(t)

@@ -598,10 +598,54 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		beforeStructs := len(structInsts)
 		rewriteGenericStructTypes(prog, info, structInsts)
 		for _, k := range collectKeys(structInsts) {
+			// Enum instantiations (clone-needed generic enums, #3693) ride
+			// the same `structInsts` map. A later fixpoint pass can surface
+			// a fresh enum key — e.g. a self-referential generic enum whose
+			// variant payload is a function returning the enum itself
+			// (`Wait(i32, (i32) => Step[T])`, std/wasm_reactor) — so this
+			// loop must build the enum clone too, exactly like the first
+			// worklist loop above; otherwise the GenericStructs lookup is
+			// nil and the clone is dropped (panic / dangling generic enum).
+			if ged := genericEnum(info, k.name); ged != nil {
+				already := false
+				for _, ed := range prog.Enums {
+					if ed.Name == k.mang {
+						already = true
+						break
+					}
+				}
+				if already {
+					continue
+				}
+				args := structInsts[k]
+				sub := make(map[string]ast.Type, len(ged.TypeParams))
+				for i, tp := range ged.TypeParams {
+					sub[tp] = args[i]
+				}
+				c := *ged
+				c.Name = k.mang
+				c.TypeParams = nil
+				c.Monomorphized = true
+				c.Variants = make([]ast.EnumVariant, len(ged.Variants))
+				for i, v := range ged.Variants {
+					nv := v
+					nv.Payloads = make([]ast.Type, len(v.Payloads))
+					for j, p := range v.Payloads {
+						nv.Payloads[j] = substituteType(p, sub)
+					}
+					c.Variants[i] = nv
+				}
+				prog.Enums = append(prog.Enums, &c)
+				progressed = true
+				continue
+			}
 			if existingStruct(prog, k.mang) {
 				continue
 			}
 			gen := info.GenericStructs[k.name]
+			if gen == nil {
+				continue
+			}
 			args := structInsts[k]
 			sub := make(map[string]ast.Type, len(gen.TypeParams))
 			for i, tp := range gen.TypeParams {
@@ -733,14 +777,20 @@ func typeRefsGenericNominal(t ast.Type, info *checker.Info) bool {
 			}
 		}
 	case *ast.FuncType:
-		if typeRefsGenericNominal(x.Result, info) {
-			return true
-		}
-		for _, p := range x.Params {
-			if typeRefsGenericNominal(p, info) {
-				return true
-			}
-		}
+		// A generic-nominal reference behind a FUNCTION boundary does
+		// NOT force an enum clone. A function-typed variant payload —
+		// e.g. the self-referential `Wait(i32, (i32) => Step[T])` of
+		// std/wasm_reactor's `Step[T]` — re-checks fine while the enum
+		// stays generic (lenient unify), the behavior before the
+		// composite-payload cloning (#3733/#3693). Cloning such an enum
+		// is both unnecessary and (for the self-referential / signature-
+		// used shape) incompletely implemented — the clone's
+		// `(i32) => Step[i32]` payload and the `Step[i32]` slots in
+		// function signatures aren't rewritten to `Step__i32`, so the
+		// re-check fails. Treating the function boundary as opaque keeps
+		// these enums generic (working) while #3733's target — a DIRECT
+		// generic-struct/enum payload like `A(Box[U])` — still clones.
+		return false
 	}
 	return false
 }
