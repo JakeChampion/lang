@@ -202,10 +202,42 @@ The ABI, the emitters, and the nested-provider composition are all
 proven (TestWasmP3AsyncImportAwait); this vertical wires them to Fern
 source. It is the next focused build.
 
-This is a multi-PR epic (comparable to the export side plus the waitable
-state machine), best taken as a focused effort — the tooling feasibility
-and the lower-async memory-option requirement are now known, so it
-starts from a solved position.
+**STATUS — DONE for the scalar case: Fern source → runnable colorless
+async import.** Both halves landed together (coupled-for-correctness):
+
+- **wasmbin** (`scanExternImports`, gated on `ir.ExternFunc.Async`): an
+  `@import(...) async function dep(): i32` emits its raw core import with
+  the `canon lower async` signature `(scalar params…, retptr) -> i32
+  status` (`dep$import`), plus a generated wrapper the Fern `dep()` call
+  resolves to — it allocates an 8-byte-aligned return area, calls the raw
+  import, and (sync completion) drops the status and reads the result
+  inline, so the await stays colorless (no `await` keyword). Scalar
+  params + scalar result this slice; a string/array/composite async param
+  or result is rejected with a clear error. Helper:
+  `buildExternAsyncScalarResultWrapper`. Tests:
+  `TestScanExternImportsAsyncScalar` / `…SyncStaysDirect` /
+  `…RejectsMemParam` (`internal/codegen/wasmbin/async_extern_test.go`).
+- **composer** (`component.BuildAsyncImportAwaitComponent`): lowers the
+  async import with `canon lower async` over the consumer's memory via
+  the **P2 `gMem` trampoline** (`TrampolineModuleForParamsResults` /
+  `FixupModuleForParamsResults` — the same machinery that breaks the
+  lower→memory→instance circularity for sync mem imports), bundles the
+  async provider as a NESTED component (so the result is a single
+  self-contained component, no host needed for the import), and lifts the
+  consumer's async core export with `canon lift async`. Both async-ABI
+  directions run together.
+- **e2e** (`TestWasmP3AsyncImportFromFern`): real Fern source
+  (`@import async function dep(): i32` + colorless `async function run()
+  { return dep(); }`) compiles, composes against a bundled provider, and
+  returns 42 under `wasmtime -W
+  component-model-async,component-model-async-stackful --invoke 'run()'`.
+
+**Still remaining on the import side:** a *pending* (non-synchronous)
+host import needs the `waitable-set.wait` await loop (the sync case reads
+the result inline); string/array/composite async params + results;
+wiring the consumer assembly into the CLI driver (today the runnable
+assembly is exercised through `BuildAsyncImportAwaitComponent` directly,
+as the bring-your-own async provider has no CLI surface yet).
 
 **Also remaining:** `future<T>` / `stream<T>` parameter+result lowering;
 wiring async into the `concurrent { … }` desugar as an alternative to

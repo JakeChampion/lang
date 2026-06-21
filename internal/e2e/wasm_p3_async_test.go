@@ -8,11 +8,12 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/wasm/component"
+	"github.com/jakechampion/lang/internal/wasm/encode"
 )
 
 // p3AsyncCoreModule is a hand-built core module for the minimal async
@@ -41,13 +42,13 @@ func TestWasmP3AsyncExportAssembly(t *testing.T) {
 	skipIfPreview2Missing(t) // ensures wasmtime on PATH
 
 	buf := component.PutComponentHeader(nil)
-	buf = component.PutCanonTaskReturnSingle(buf, component.CValtypeU32)                                  // core func 0: task.return
-	buf = component.PutCoreModuleSection(buf, p3AsyncCoreModule)                                          // core module 0
-	buf = component.PutCoreInstanceSectionFromOneFuncExport(buf, "task-return", 0)                        // core instance 0: provides task-return
+	buf = component.PutCanonTaskReturnSingle(buf, component.CValtypeU32)                                 // core func 0: task.return
+	buf = component.PutCoreModuleSection(buf, p3AsyncCoreModule)                                         // core module 0
+	buf = component.PutCoreInstanceSectionFromOneFuncExport(buf, "task-return", 0)                       // core instance 0: provides task-return
 	buf = component.PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 0, []string{""}, []uint32{0}) // core instance 1: the user module
-	buf = component.PutAliasSectionCoreExportFunc(buf, 1, "run")                                          // core func 1: the export
-	buf = component.PutTypeSectionOneFunc(buf, nil, nil, component.CValtypeU32)                           // type 0: () -> u32
-	buf = component.PutCanonSectionLiftAsync(buf, 1, 0)                                                   // component func 0: lift async
+	buf = component.PutAliasSectionCoreExportFunc(buf, 1, "run")                                         // core func 1: the export
+	buf = component.PutTypeSectionOneFunc(buf, nil, nil, component.CValtypeU32)                          // type 0: () -> u32
+	buf = component.PutCanonSectionLiftAsync(buf, 1, 0)                                                  // component func 0: lift async
 	buf = component.PutExportSectionOneFunc(buf, "run", 0)
 
 	dir := t.TempDir()
@@ -200,9 +201,9 @@ func TestWasmP3NestedComponentReExport(t *testing.T) {
 	provider := component.BuildAsyncLiftedExportComponent(p3AsyncCoreModule, "run", "dep", component.CValtypeU32)
 
 	buf := component.PutComponentHeader(nil)
-	buf = component.PutComponentSection(buf, provider)                  // component 0
-	buf = component.PutInstanceSectionInstantiateComponent(buf, 0)      // component instance 0
-	buf = component.PutAliasSectionInstanceExportFunc(buf, 0, "dep")    // component func 0
+	buf = component.PutComponentSection(buf, provider)               // component 0
+	buf = component.PutInstanceSectionInstantiateComponent(buf, 0)   // component instance 0
+	buf = component.PutAliasSectionInstanceExportFunc(buf, 0, "dep") // component func 0
 	buf = component.PutExportSectionOneFunc(buf, "dep", 0)
 
 	dir := t.TempDir()
@@ -218,6 +219,80 @@ func TestWasmP3NestedComponentReExport(t *testing.T) {
 	}
 	if !bytes.Contains(out, []byte("42")) {
 		t.Errorf("nested re-exported async dep: got %q, want 42", bytes.TrimSpace(out))
+	}
+}
+
+// TestWasmP3AsyncImportFromFern is the full colorless async-import vertical from
+// REAL Fern source (docs/WASI-PREVIEW3-ASYNC-PLAN.md): a program declares
+// `@import(...) async function dep(): i32` and an `async function run()` that
+// just calls `dep()` — the await is colorless, no `await` keyword. The wasmbin
+// backend lowers `dep` to the `canon lower async` import shape (raw
+// `(retptr) -> status` + a colorless wrapper), and BuildAsyncImportAwaitComponent
+// composes it against a bundled async provider: it lowers the import `async` over
+// the consumer's memory via the trampoline, lifts `run` async, and bundles the
+// provider as a nested component. Running `run()` under wasmtime's async
+// features returns the provider's value (42) — proving Fern source flows
+// colorlessly through both async-ABI directions (lower + lift). This is the
+// real-source counterpart to the hand-built-core TestWasmP3AsyncImportAwait.
+func TestWasmP3AsyncImportFromFern(t *testing.T) {
+	skipIfPreview2Missing(t) // ensures wasmtime on PATH
+
+	src := `@import("test:dep/d", "compute") async function dep(): i32;
+async function run(): i32 { return dep(); }
+function main(): i32 { return 0; }
+`
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prog, _, err := modload.Load(srcPath)
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+		Preview2WASI:    true,
+		AsyncExportName: "__async_run",
+		AsyncSourceFunc: "run",
+	})
+	if err != nil {
+		t.Fatalf("wasmbin.Build: %v", err)
+	}
+
+	// The bundled provider supplies `compute: async func() -> u32` returning 42.
+	provider := component.BuildAsyncLiftedExportComponent(p3AsyncCoreModule, "run", "compute", component.CValtypeU32)
+
+	// The async-lowered import is `(retptr) -> status` = (i32) -> (i32).
+	comp := component.BuildAsyncImportAwaitComponent(
+		core, "test:dep/d", "compute",
+		provider, "compute",
+		"__async_run", "run",
+		[]byte{encode.ValtypeI32}, []byte{encode.ValtypeI32},
+		component.CValtypeU32,
+	)
+
+	p := filepath.Join(dir, "fern_async_import.wasm")
+	if err := os.WriteFile(p, comp, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("wasmtime", "run",
+		"-W", "component-model-async,component-model-async-stackful",
+		"--invoke", "run()", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run (async import from Fern): %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte("42")) {
+		t.Errorf("Fern async import: got %q, want 42", bytes.TrimSpace(out))
 	}
 }
 
@@ -270,23 +345,23 @@ func TestWasmP3AsyncImportAwait(t *testing.T) {
 	provider := component.BuildAsyncLiftedExportComponent(p3AsyncCoreModule, "run", "dep", component.CValtypeU32)
 
 	buf := component.PutComponentHeader(nil)
-	buf = component.PutComponentSection(buf, provider)                                                       // component 0
-	buf = component.PutInstanceSectionInstantiateComponent(buf, 0)                                           // component instance 0
-	buf = component.PutAliasSectionInstanceExportFunc(buf, 0, "dep")                                         // component func 0 (dep)
-	buf = component.PutCoreModuleSection(buf, p3MemModule)                                                   // core module 0
-	buf = component.PutCoreInstanceSectionInstantiate(buf, 0)                                                // core instance 0 (mem)
-	buf = component.PutAliasSectionCoreExport(buf, component.CoreSortMemory, 0, "mem")                       // core memory 0
-	buf = component.PutCanonSectionLowerAsync(buf, 0, 0)                                                     // core func 0 (dep-lower)
-	buf = component.PutCanonTaskReturnSingle(buf, component.CValtypeU32)                                     // core func 1 (task.return)
-	buf = component.PutCoreModuleSection(buf, p3AsyncConsumerCore)                                           // core module 1
+	buf = component.PutComponentSection(buf, provider)                                 // component 0
+	buf = component.PutInstanceSectionInstantiateComponent(buf, 0)                     // component instance 0
+	buf = component.PutAliasSectionInstanceExportFunc(buf, 0, "dep")                   // component func 0 (dep)
+	buf = component.PutCoreModuleSection(buf, p3MemModule)                             // core module 0
+	buf = component.PutCoreInstanceSectionInstantiate(buf, 0)                          // core instance 0 (mem)
+	buf = component.PutAliasSectionCoreExport(buf, component.CoreSortMemory, 0, "mem") // core memory 0
+	buf = component.PutCanonSectionLowerAsync(buf, 0, 0)                               // core func 0 (dep-lower)
+	buf = component.PutCanonTaskReturnSingle(buf, component.CValtypeU32)               // core func 1 (task.return)
+	buf = component.PutCoreModuleSection(buf, p3AsyncConsumerCore)                     // core module 1
 	buf = component.PutCoreInstanceSectionFromExports(buf, []component.CoreInstanceExport{
 		{Name: "task-return", Sort: component.CoreSortFunc, Idx: 1},
 		{Name: "dep-lower", Sort: component.CoreSortFunc, Idx: 0},
 	}) // core instance 1 (cli)
 	buf = component.PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 1, []string{"", "mem"}, []uint32{1, 0}) // core instance 2 (ci)
-	buf = component.PutAliasSectionCoreExportFunc(buf, 2, "run")                                             // core func 2 (run)
-	buf = component.PutTypeSectionOneFunc(buf, nil, nil, component.CValtypeU32)                              // type 0
-	buf = component.PutCanonSectionLiftAsync(buf, 2, 0)                                                      // component func 1 (run)
+	buf = component.PutAliasSectionCoreExportFunc(buf, 2, "run")                                                   // core func 2 (run)
+	buf = component.PutTypeSectionOneFunc(buf, nil, nil, component.CValtypeU32)                                    // type 0
+	buf = component.PutCanonSectionLiftAsync(buf, 2, 0)                                                            // component func 1 (run)
 	buf = component.PutExportSectionOneFunc(buf, "run", 1)
 
 	dir := t.TempDir()
