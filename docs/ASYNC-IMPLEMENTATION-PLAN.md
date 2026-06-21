@@ -240,9 +240,18 @@ backends (`internal/e2e/poll_test.go`, x86-64 + arm64/qemu).
   test now runs on **both** native backends (arm64 under qemu connects
   to the host upstream). Native parity for the full edge-handler loop
   (serve + fan-out fetch).
-- **`plat.fetch`** — wrap `tcp_connect` + HTTP request/response over
-  `run_io` behind the `Platform` capability, so handlers write
-  `plat.fetch(req)`.
+- **DONE — `std/fetch` (outbound HTTP client):** `fetch_get(host_be,
+  port, path)` + `fetch_raw` + `http_body` + `ipv4(a,b,c,d)` — a
+  blocking HTTP/1.1 GET over `tcp_connect`/`send`/`recv` returning the
+  real response string. The upstream-fetch capability a handler needs.
+  Verified on x86-64 + arm64 against a Go upstream
+  (`internal/e2e/fetch_test.go`).
+- **`plat.fetch`** — surface it as a `Platform` capability method
+  (`(p: Platform) fetch(...)`) so handlers write `plat.fetch(req)`;
+  and a reactor-overlapped fan-out returning the response bodies —
+  gated on generic `Task[T]`/string-result `run_io` (self-host
+  monomorphization). Until then, overlap collects readiness via
+  `std/reactor` and reads each body with `std/fetch`.
 - **Self-host** (`asm.fern` / `asm_arm64.fern`) — mirror the reactor
   builtins (blocked on the fn-payload-variant gap, #3552, for
   `std/reactor` itself).

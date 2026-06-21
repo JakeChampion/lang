@@ -1,0 +1,74 @@
+// std/fetch — outbound HTTP/1.1 client (the upstream-fetch half of the
+// edge-handler use case: docs/PLATFORM-RESEARCH.md Rec §1,
+// docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1c).
+//
+// Built on the native socket primitives (tcp_connect / tcp_send /
+// tcp_recv / tcp_close), so it compiles on the native backends
+// (x86-64 / arm64), not wasm/interp. A single `fetch_get` is a
+// blocking request; overlapping several upstreams is the reactor's job
+// (std/reactor: connect + send, then poll the connection fds and recv
+// the ready ones — see the outbound fan-out in the reactor tests). A
+// generic/string-result run_io that returns the response bodies
+// directly is gated on generic Task[T] (self-host monomorphization);
+// until then a fan-out collects readiness via std/reactor and reads
+// each body with the helpers here.
+//
+// `host_be` is the IPv4 address in network byte order packed into an
+// i32 (use `ipv4(a,b,c,d)`); pass the upstream port separately. URL /
+// DNS parsing is a higher layer.
+
+import "std/string";
+
+// ipv4(a, b, c, d) — pack a dotted-quad into the network-byte-order
+// i32 that tcp_connect wants in sin_addr. ipv4(127,0,0,1) addresses
+// loopback.
+pub function ipv4(a: i32, b: i32, c: i32, d: i32): i32 {
+    return (a & 255) | ((b & 255) << 8) | ((c & 255) << 16) | ((d & 255) << 24);
+}
+
+// fetch_raw(host_be, port, request) — open a connection, send `request`
+// verbatim, and read the whole response until the peer closes (the
+// request should carry `Connection: close`). Returns the raw response
+// bytes as a string, or "" if the connection or send failed. Blocking;
+// for overlap, drive several connections through std/reactor.
+pub function fetch_raw(host_be: i32, port: i32, request: string): string {
+    var c: i32 = tcp_connect(host_be, port);
+    if (c < 0) {
+        return "";
+    }
+    if (tcp_send(c, request) < 0) {
+        tcp_close(c);
+        return "";
+    }
+    var resp: string = "";
+    while (true) {
+        var chunk: string = tcp_recv(c, 4096);
+        if (chunk.len() == 0) {
+            break;
+        }
+        resp = resp + chunk;
+    }
+    tcp_close(c);
+    return resp;
+}
+
+// fetch_get(host_be, port, path) — issue `GET <path>` against the
+// upstream and return the raw HTTP/1.1 response (status line + headers
+// + body). `Connection: close` so the read terminates at EOF. Use
+// `http_body(resp)` to peel the body off.
+pub function fetch_get(host_be: i32, port: i32, path: string): string {
+    var request: string = "GET " + path + " HTTP/1.1\r\nHost: fern\r\nConnection: close\r\n\r\n";
+    return fetch_raw(host_be, port, request);
+}
+
+// http_body(resp) — return the body of an HTTP response (everything
+// after the first blank line `\r\n\r\n`), or "" if the response has no
+// header/body separator. Does not interpret Content-Length / chunked
+// encoding; it returns whatever followed the headers.
+pub function http_body(resp: string): string {
+    var sep: i32 = resp.index_of("\r\n\r\n");
+    if (sep < 0) {
+        return "";
+    }
+    return resp[sep + 4 : resp.len()];
+}
