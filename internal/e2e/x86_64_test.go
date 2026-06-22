@@ -32,6 +32,7 @@ import (
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
 )
 
@@ -93,6 +94,17 @@ func compileAndRunX86_64(t *testing.T, src string) (stdout string, exitCode int)
 	info, err := checker.Check(prog)
 	if err != nil {
 		t.Fatalf("check: %v", err)
+	}
+	// Monomorphise generic functions before codegen — the production
+	// driver (cmd/fern) always runs this, and x86_64.Emit documents that
+	// it expects a checked + monomorphised program. This harness was
+	// missing the pass (the arm64 sibling compileAndRunArm64 already runs
+	// it). Feeding Emit an un-monomorphised program leaves generic
+	// instantiations unspecialised; that latent gap only surfaced as a
+	// wrong differential result once a heap-layout shift (the core/int
+	// to_string rewrite) perturbed it into view. Mirrors compileAndRunArm64.
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
 	}
 	asm, err := x86_64.Emit(prog, info)
 	if err != nil {
@@ -955,6 +967,17 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 	info, err := checker.Check(prog)
 	if err != nil {
 		t.Fatalf("check: %v", err)
+	}
+	// Monomorphise generic functions before codegen — the production
+	// driver (cmd/fern) always runs this, and x86_64.Emit documents that
+	// it expects a checked + monomorphised program. This harness was
+	// missing the pass (the arm64 sibling compileAndRunArm64 already runs
+	// it). Feeding Emit an un-monomorphised program leaves generic
+	// instantiations unspecialised; that latent gap only surfaced as a
+	// wrong differential result once a heap-layout shift (the core/int
+	// to_string rewrite) perturbed it into view. Mirrors compileAndRunArm64.
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
 	}
 	asm, err := x86_64.Emit(prog, info)
 	if err != nil {
