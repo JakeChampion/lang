@@ -498,6 +498,108 @@ var p3AsyncBigCoreModule = []byte{
 	0x0a, 0x0c, 0x01, 0x0a, 0x00, 0x42, 0xaa, 0x80, 0x80, 0x80, 0x10, 0x10, 0x00, 0x0b,
 }
 
+// p3AsyncCore40 / p3AsyncCore2 are async-export provider cores returning 40 and
+// 2 (an i32.const + task-return + void), used to back two distinct async imports
+// the consumer awaits and sums to 42. Structurally identical to
+// p3AsyncCoreModule (which returns 42), only the constant differs.
+var p3AsyncCore40 = []byte{
+	0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+	0x01, 0x08, 0x02, 0x60, 0x01, 0x7f, 0x00, 0x60, 0x00, 0x00,
+	0x02, 0x10, 0x01, 0x00, 0x0b, 't', 'a', 's', 'k', '-', 'r', 'e', 't', 'u', 'r', 'n', 0x00, 0x00,
+	0x03, 0x02, 0x01, 0x01,
+	0x07, 0x07, 0x01, 0x03, 'r', 'u', 'n', 0x00, 0x01,
+	0x0a, 0x08, 0x01, 0x06, 0x00, 0x41, 0x28, 0x10, 0x00, 0x0b, // i32.const 40
+}
+
+var p3AsyncCore2 = []byte{
+	0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+	0x01, 0x08, 0x02, 0x60, 0x01, 0x7f, 0x00, 0x60, 0x00, 0x00,
+	0x02, 0x10, 0x01, 0x00, 0x0b, 't', 'a', 's', 'k', '-', 'r', 'e', 't', 'u', 'r', 'n', 0x00, 0x00,
+	0x03, 0x02, 0x01, 0x01,
+	0x07, 0x07, 0x01, 0x03, 'r', 'u', 'n', 0x00, 0x01,
+	0x0a, 0x08, 0x01, 0x06, 0x00, 0x41, 0x02, 0x10, 0x00, 0x0b, // i32.const 2
+}
+
+// TestWasmP3AsyncImportMultiFromFern proves the colorless async-import vertical
+// generalises to MULTIPLE awaited imports in one program — the edge-handler
+// shape that overlaps several upstreams. A real Fern program imports two async
+// functions from distinct interfaces and sums them colorlessly:
+//
+//	@import("test:a/d","one") async function one(): i32;
+//	@import("test:b/d","two") async function two(): i32;
+//	async function run(): i32 { return one() + two(); }
+//
+// Each import lowers with its own `canon lower async` over the consumer's memory
+// via its own trampoline+fixup; the two providers (returning 40 and 2) are
+// bundled as separate nested components. Running `run()` under wasmtime's async
+// features returns 42 — both awaits resolve and compose.
+func TestWasmP3AsyncImportMultiFromFern(t *testing.T) {
+	skipIfPreview2Missing(t) // ensures wasmtime on PATH
+
+	src := `@import("test:a/d", "one") async function one(): i32;
+@import("test:b/d", "two") async function two(): i32;
+async function run(): i32 { return one() + two(); }
+function main(): i32 { return 0; }
+`
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prog, _, err := modload.Load(srcPath)
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+		Preview2WASI:    true,
+		AsyncExportName: "__async_run",
+		AsyncSourceFunc: "run",
+	})
+	if err != nil {
+		t.Fatalf("wasmbin.Build: %v", err)
+	}
+
+	i32 := []byte{encode.ValtypeI32}
+	comp := component.BuildAsyncImportsAwaitComponent(core, []component.AsyncImportSpec{
+		{
+			Iface: "test:a/d", WITName: "one",
+			Provider:           component.BuildAsyncLiftedExportComponent(p3AsyncCore40, "run", "one", component.CValtypeU32),
+			ProviderExportName: "one",
+			LowerParams:        i32, LowerResults: i32,
+		},
+		{
+			Iface: "test:b/d", WITName: "two",
+			Provider:           component.BuildAsyncLiftedExportComponent(p3AsyncCore2, "run", "two", component.CValtypeU32),
+			ProviderExportName: "two",
+			LowerParams:        i32, LowerResults: i32,
+		},
+	}, "__async_run", "run", component.CValtypeU32)
+
+	p := filepath.Join(dir, "fern_async_multi.wasm")
+	if err := os.WriteFile(p, comp, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("wasmtime", "run",
+		"-W", "component-model-async,component-model-async-stackful",
+		"--invoke", "run()", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run (async multi-import): %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte("42")) {
+		t.Errorf("Fern async multi-import: got %q, want 42", bytes.TrimSpace(out))
+	}
+}
+
 // TestWasmP3AsyncImportI64ResultFromFern extends the colorless async-import
 // vertical to a 64-bit result. A real Fern `@import(...) async function big():
 // u64` is awaited colorlessly; the lowered import is the same
