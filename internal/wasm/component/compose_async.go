@@ -163,3 +163,57 @@ func BuildAsyncImportsAwaitComponent(
 // n+1..2n per-import args, 2n+1 consumer, then for each import a (fixup-arg,
 // fixup) pair starting at 2n+2 — so import i's fixup arg is at 2n+2 + 2*i.
 func argFixupInst(n uint32, i int) uint32 { return 2*n + 2 + 2*uint32(i) }
+
+// BuildAsyncLiftedExportComponentString wraps a reactor `providerCore` whose
+// `coreExportName` export delivers a STRING result through an imported
+// `task.return` (core sig `(ptr, len) -> ()`, the bytes living in the core's
+// own linear memory exported as `coreMemExportName`) into a component exporting
+// `exportName: async func() -> string`. Unlike the scalar
+// BuildAsyncLiftedExportComponent, the string `task.return` carries a `memory`
+// option that references the provider's memory — but the provider imports
+// task.return, so the memory→instance→import dependency is circular. It is
+// broken with the same gMem trampoline used for the import lower: the provider
+// imports a funcref-table placeholder for task.return, its memory is aliased
+// after instantiation, the real `canon task.return (string) (memory)` is emitted
+// over that memory, and a fixup patches the table slot. The async lift carries
+// the memory option too (a string result reads from the core memory).
+func BuildAsyncLiftedExportComponentString(providerCore []byte, coreMemExportName, coreExportName, exportName string) []byte {
+	// task.return for a string lowers to a core func `(ptr i32, len i32) -> ()`.
+	trParams := []byte{0x7f, 0x7f}
+	buf := PutComponentHeader(nil)
+
+	// Trampoline module 0 → core instance 0 (placeholder task.return + table).
+	buf = PutCoreModuleSection(buf, TrampolineModuleForParamsResults(trParams, nil))
+	buf = PutCoreInstanceSectionInstantiate(buf, 0)  // core instance 0
+	buf = PutAliasSectionCoreExportFunc(buf, 0, "0") // core func 0 (placeholder)
+
+	// Provider core module 1, instantiated with the placeholder bound to its
+	// ("", "task-return") import.
+	buf = PutCoreModuleSection(buf, providerCore)
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "task-return", Sort: CoreSortFunc, Idx: 0},
+	}) // core instance 1
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 1, []string{""}, []uint32{1}) // core instance 2 (provider)
+
+	// Alias the provider memory → core memory 0, then emit the real string
+	// task.return over it (core func 1).
+	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 2, coreMemExportName) // core memory 0
+	buf = PutCanonTaskReturnStringWithMemory(buf, 0)                           // core func 1
+
+	// Fixup module 2: patch the trampoline table slot 0 to the real task.return.
+	buf = PutCoreModuleSection(buf, FixupModuleForParamsResults(trParams, nil))
+	buf = PutAliasSectionCoreExport(buf, CoreSortTable, 0, "$imports") // core table 0
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "$imports", Sort: CoreSortTable, Idx: 0},
+		{Name: "0", Sort: CoreSortFunc, Idx: 1},
+	}) // core instance 3
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 2, []string{""}, []uint32{3}) // core instance 4 (fixup)
+
+	// Alias the provider's export → core func 2, lift it async (with memory,
+	// since the result is a string) as exportName.
+	buf = PutAliasSectionCoreExportFunc(buf, 2, coreExportName) // core func 2
+	buf = PutTypeSectionOneFunc(buf, nil, nil, cValtypeString)  // type 0: () -> string
+	buf = PutCanonSectionLiftAsyncWithMemory(buf, 2, 0, 0)      // component func 0
+	buf = PutExportSectionOneFunc(buf, exportName, 0)
+	return buf
+}
