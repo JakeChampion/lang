@@ -251,6 +251,30 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-21 — std/i32: pure-Fern std/test migration coverage (receiver-method helpers)
+
+`std/i32`'s deterministic receiver-method helper surface had Go-side coverage
+but no migration-shaped (pure-Fern, `std/test`-driven) companion. Added
+`examples/tests/i32_test.fern` — 19 assertions: `abs` (±) / `signum`; byte
+classification (`is_digit` / `is_alpha` / `hex_value` incl. the `-1` miss /
+`to_lower` / `to_upper`); number-shape helpers (`reverse_digits` incl. the
+sign-preserving negative case, `is_palindrome`, `sum_of_digits`, `factorial`,
+`is_prime` incl. the `1`-isn't-prime case, `is_perfect_square`,
+`is_multiple_of`); and the range checks (`is_in_range` half-open `[lo,hi)` vs
+`is_between` inclusive `[lo,hi]`). Gated natively
+(`TestRunnerI32ExamplePasses`) and through the self-host differential gate
+(`TestSelfHostStdTestE2E/i32`), which oracle-checks TAP-13 stdout + exit code
+against the interpreter **byte-for-byte**. Exercises bare receiver-method
+dispatch on an `i32` literal end-to-end through the self-host IR — no AST
+fallback.
+
+(Aside: a parallel attempt to migrate `std/regex` was held back — even its
+un-grouped patterns crash the self-hosted binary at runtime via the #3720
+array-payload-enum codegen bug, since `RAlt` / `RSeq` / `RClass` build
+array-payload enums during the recursive parse; the module note's "plain
+patterns lower" holds only for trivial single-atom patterns. Left for after
+#3720 is fixed in `irlower.fern`.)
+
 ### 2026-06-21 — core/int: pure-Fern std/test migration coverage (`int_to_string` / `parse_int_radix` / `int_to_string_radix`)
 
 `core/int`'s integer-formatting primitives (the layer behind the
