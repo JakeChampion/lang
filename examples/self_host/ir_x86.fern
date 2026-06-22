@@ -125,6 +125,28 @@ function emit_op(o: ir.Op, exitlabel: string): string {
         // pop base; load the refcount header at base-4.
         return "    popq %rax\n    movl -4(%rax), %eax\n    pushq %rax\n";
     }
+    if (o.kind == "int_cast") {
+        // `x as <ty>` int->int width mask/extend, AND the wrap irlower emits
+        // after a default-i32 / sub-word `+`/`-`/`*`/`<<` to keep the result in
+        // its declared width (e.g. `2147483647 + 1 == -2147483648`). A single
+        // operand in, one out — NOT a binary op. Byte-identical to asm_ir.fern.
+        // Without this case the op fell through to the binary-op default below
+        // (pop two, push one), corrupting the operand stack on every i32 add /
+        // sub / mul / shl (e.g. `2 + 3 * 4` -> 5 instead of 14).
+        var c: string = "    popq %rax\n";
+        if (o.str == "u8") { c = c + "    andq $255, %rax\n"; }
+        else if (o.str == "u16") { c = c + "    andq $65535, %rax\n"; }
+        else if (o.str == "u32") { c = c + "    movl %eax, %eax\n"; }
+        else if (o.str == "i8") { c = c + "    movsbq %al, %rax\n"; }
+        else if (o.str == "i16") { c = c + "    movswq %ax, %rax\n"; }
+        else if (o.str == "i32") { c = c + "    movslq %eax, %rax\n"; }
+        return c + "    pushq %rax\n";
+    }
+    if (o.kind == "u32_wrap") {
+        // Reduce a u32 arithmetic result to the u32 range (zero-extend low 32),
+        // wrapping at 2^32 on this 64-bit-register backend. One operand in/out.
+        return "    popq %rax\n    movl %eax, %eax\n    pushq %rax\n";
+    }
     // otherwise a binary op: pop r into %ecx, l into %eax, combine, push.
     return "    popq %rcx\n    popq %rax\n" + bin_mid(o.kind) + "    pushq %rax\n";
 }
