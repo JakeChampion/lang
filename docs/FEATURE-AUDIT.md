@@ -251,6 +251,31 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-22 — self-host IR: `as i64` / `as u64` truncated a 64-bit operand to 32 bits
+
+The follow-up to the `to_string` layout fix below. With empty strings gone, the
+remaining gap was 64-bit magnitudes **> 2³²** (large `i64`, `u64 ≥ 2³²`)
+formatting wrong on self-host. Root cause in `irlower.fern`'s `as_i64` / `as_u64`
+arm: for a NON-literal, non-float operand it lowered via the 32-bit `lower_expr`
+path and then `op_int_extend`. When the operand was *already* 64-bit (an `i64`
+var, i64 arithmetic, …), `lower_expr` first truncated it to its low 32 bits and
+the extend re-widened the truncated value — so e.g. `(mag as u64) / 10` in
+`__int_to_string_u64` divided `mag mod 2³²`, not `mag`. Literals were unaffected
+(they take the `const_i64_text` path), which is why the earlier u64 *literal*
+probes passed while a u64/i64 *variable* failed.
+
+Fix: when `infer_expr_width(operand) == 64`, route through `lower_i64` instead —
+`i64 as u64` / `u64 as i64` is a pure reinterpret (shared bit pattern), no
+truncating extend. With it, on the **IR path**: `std/i64.to_string` of large ±
+values, and `core/int.__int_to_string_u64` of high-bit-set `u64` (> 2³², incl.
+1.8e19) now format correctly, matching the interpreter. Gated by
+`TestSelfHostI64ToStringIR`.
+
+Note: `std/u64.to_string` *itself* still routes the **legacy AST fallback**
+(`decide = ast`) — a separate out-of-IR-subset routing concern, not this bug — so
+the high-bit u64 case is pinned via the `core/int` direct call, which does lower
+on IR. Widening the subset so `std/u64` routes IR is a later step.
+
 ### 2026-06-22 — self-host: integer `to_string` was a `u8[]` packed-vs-slotted layout bug (not "unsigned")
 
 Followed the previous entry's `__int_to_string_u64`-from-unsigned lead and

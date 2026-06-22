@@ -3458,6 +3458,15 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                     parser.ExprNumber(n) => { if (!n.is_float) { return s.emit(ir.op_const_i64_text(n.text)); } },
                     _ => {}
                 }
+                // A 64-bit operand (an i64/u64 var, an i64 arithmetic expr, …) is
+                // already full-width: `i64 as u64` / `u64 as i64` is a pure
+                // reinterpret (same bit pattern), so lower it via the 64-bit path
+                // and DON'T op_int_extend — extending would first truncate to 32
+                // bits via lower_expr (the 32-bit path) and then re-widen, losing
+                // the high half. Only a genuinely 32-bit operand needs widening.
+                if (infer_expr_width(u.operand, s) == 64) {
+                    return lower_i64(u.operand, s);
+                }
                 var sw: LowerState = lower_expr(u.operand, s);
                 if (!sw.ok) { return sw; }
                 return sw.emit(ir.op_int_extend(u.op == "as_u64"));
