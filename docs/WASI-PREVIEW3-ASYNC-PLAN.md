@@ -313,6 +313,28 @@ byte-verified bar:
   → read the return area → `subtask.drop`), rather than unconditionally
   reading inline as it does now.
 
+**PENDING AWAIT — RECIPE PROVEN, runnable through the Go composer.**
+`component.BuildPendingAwaitComponent` assembles the whole thing and
+`TestWasmP3AsyncPendingAwait` runs it under wasmtime → **42**. Findings,
+all confirmed against wasm-tools 1.240 + wasmtime 37:
+- A provider forces a *pending* subtask by calling `thread.yield` (core
+  sig `() -> i32`, drop the result) before `task.return`.
+- The async lower returns an i32 **status**: `state = status & 0xf`
+  (RETURNED = 2; STARTING/STARTED < 2), `subtask = status >> 4`.
+- The await loop the consumer core runs on a non-RETURNED status:
+  `ws = waitable-set.new()` → `waitable.join(subtask, ws)` →
+  `waitable-set.wait(ws, evtptr)` (blocks; stackful) → `subtask.drop(subtask)`
+  → `waitable-set.drop(ws)`; the result is then in the lower's return area.
+- The provider MUST be a **nested sub-component** (inlining its lift+lower
+  in one component traps wasmtime with "degenerate component adapter").
+- The lower/wait `memory` circularity is sidestepped here with externalized
+  memory; the production path reuses the gMem trampoline.
+
+So the **only** thing between this and real-Fern pending imports is wiring
+the await loop into the wasmbin async-import wrapper (emit the
+status-branch + the loop instead of the inline read) — every ABI detail,
+encoder, and the runnable recipe are now in hand.
+
 **Also remaining (smaller):** string/array/composite async import results
 (needs the `realloc` option on `canon lower async` — unproven; the lower
 currently emits `[async, memory]` only) and string async *params*; wiring
