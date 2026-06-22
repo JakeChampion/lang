@@ -10356,7 +10356,20 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// variant. maybeWrapForUnion below only widens a DIRECT variant field
 			// value, not the elements of an array field.
 			c.setElemHintFor(f.Value, expected)
+			// Check the field value against the field's CONCRETE expected type
+			// (the parameter substituted through the current instantiation), not
+			// the enclosing struct-lit's destination. Without this, a nested
+			// generic field literal — `Box { v: Box { v: 42 } }` for a
+			// `Box[Box[i32]]` destination — would re-read the OUTER expectedType
+			// (Box[Box[i32]]) when seeding its own type-arg substitution and
+			// mis-check the inner literal (#3763 follow-up). Save/restore so the
+			// sibling fields and the enclosing context are unaffected.
+			savedExp := c.expectedType
+			if sub != nil {
+				c.expectedType = substituteType(expected, sub)
+			}
 			vt := c.checkExpr(f.Value, s)
+			c.expectedType = savedExp
 			if vt == nil {
 				continue
 			}

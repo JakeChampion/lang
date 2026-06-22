@@ -57,6 +57,11 @@ func TestGenericStructLitFieldCheckedAgainstDestination(t *testing.T) {
 	mustOK(`struct Box[T] { v: T } function main(): i32 { var b: Box[i32] = Box { v: 5 }; return b.v; }`)
 	mustOK(`struct Box[T] { v: T } function main(): i32 { var b: Box[string] = Box { v: "x" }; return b.v.len(); }`)
 	mustOK(`struct Box[T] { v: T } function main(): i32 { var b = Box { v: "x" }; return 0; }`)
+	// A NESTED generic field literal must seed its OWN instantiation from the
+	// field's substituted type, not re-read the outer destination. Before the
+	// fix, `Box { v: Box { v: 42 } }` for a `Box[Box[i32]]` destination checked
+	// the inner literal against Box[Box[i32]] and falsely flagged the field.
+	mustOK(`struct Box[T] { v: T } function main(): i32 { var b: Box[Box[i32]] = Box { v: Box { v: 42 } }; return b.v.v; }`)
 }
 
 // TestOperatorClassMismatchNoRedundantShareError covers the cascade where an

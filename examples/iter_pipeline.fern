@@ -9,16 +9,16 @@ import "core/iter" as iter;
 import "std/sort" as sort;
 
 function main(): i32 {
-    var xs: i32[] = [5, 2, 8, 1, 4, 7, 6];
+  var xs: i32[] = [5, 2, 8, 1, 4, 7, 6];
 
-    // Keep the evens, square them, sum the squares: 2² + 8² + 4² + 6² = 120.
-    var evens = iter.filter(iter.of(xs), function (x: i32): boolean { return x % 2 == 0; });
-    var squares = iter.map(iter.of(evens), function (x: i32): i32 { return x * x; });
-    var total = iter.sum(iter.of(squares));
+  // Keep the evens, square them, sum the squares: 2² + 8² + 4² + 6² = 120.
+  var evens = iter.filter(iter.of(xs), function(x: i32): boolean { return x % 2 == 0; });
+  var squares = iter.map(iter.of(evens), function(x: i32): i32 { return x * x; });
+  var total = iter.sum(iter.of(squares));
 
-    // Sort the evens ascending: [2, 4, 6, 8].
-    var asc = sort.sort_i32_asc(evens);
+  // Sort the evens ascending: [2, 4, 6, 8].
+  var asc = sort.sort_i32_asc(evens);
 
-    // 120 + 2*10 + 8 = 148.
-    return total + asc[0] * 10 + asc[3];
+  // 120 + 2*10 + 8 = 148.
+  return total + asc[0] * 10 + asc[3];
 }
