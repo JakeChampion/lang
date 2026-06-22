@@ -2426,7 +2426,10 @@ all of the above. All pass on the self-hosted compiler.
   concise arrow `(x: T): R => e` (#2701), which desugars to
   `function(x: T): R { return e; }`. Parameter types are required (as in the
   verbose form); the return type is optional and defaults to void. The arrow
-  form is native-only so far; self-host parser support is a follow-up. (Outside
+  form is supported on **both** compilers — `parse_arrow_lambda` in
+  `parser.fern` ports native's `parseArrowLambda` (#2701) and desugars to the
+  same verbose-function AST, so the lambda-lift + IR lowering handle it
+  unchanged; gated by `TestSelfHostArrowLambdaIR{X86_64,Wasm}`. (Outside
   a lambda, `=>` is the `match`-arm separator and the function-*type* arrow
   `(T) => R`.)
 - **Out-of-range integer literal in a cast** (`300 as u8`) is a **static**
