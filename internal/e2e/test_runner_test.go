@@ -394,6 +394,25 @@ func TestRunnerOptionCombinatorsExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/result_combinators_test.fern` covers the std/result
+// COMBINATOR surface (distinct from result_assertions_test, which covers the
+// std/test Result assertion helpers) — is_ok / is_err / unwrap_or /
+// unwrap_or_else / map / and_then / map_err / ok / err / map_or / is_ok_and /
+// is_err_and / or, including the closure-taking generic methods. Passing → exit 0.
+func TestRunnerResultCombinatorsExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/result_combinators_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/result combinators", "# pass 12", "# fail 0", "1..12"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/runner_self_test.fern` is the runner's own
 // meta-test — confirms that every assertion helper returns the
 // expected TestOutcome shape on both pass and fail paths.

@@ -251,6 +251,21 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-22 — std/result: pure-Fern std/test migration coverage (the combinator surface)
+
+The `std/result` analogue of the `std/option` combinator suite below: the
+existing `result_assertions_test` covers the `std/test` *Result assertion
+helpers*, NOT the combinators. Added `examples/tests/result_combinators_test.fern`
+— 12 assertions over `is_ok` / `is_err` / `unwrap_or` / `unwrap_or_else` (the
+`(E) => T` error-recovery form) / `map` / `and_then` / `map_err` / `ok` /
+`err` (both → `Option`) / `map_or` / `is_ok_and` / `is_err_and` / `or`, as
+ordinary generic methods on the two-type-parameter `Result[T, E]` enum. Gated
+natively (`TestRunnerResultCombinatorsExamplePasses`) and through the self-host
+differential gate (`TestSelfHostStdTestE2E/result_combinators`, x86 + arm64),
+byte-for-byte vs the interpreter. Like the option combinators, the
+closure-taking generic methods over a **two**-type-param enum lower cleanly
+through the self-host IR — no AST fallback.
+
 ### 2026-06-22 — std/option: pure-Fern std/test migration coverage (the combinator surface)
 
 `std/option`'s combinator vocabulary (#2691) had Go-side coverage and an
