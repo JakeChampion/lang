@@ -45,6 +45,41 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: nil,
 	},
+	// The WASI Preview-3 waitable-set / subtask intrinsics the async-import
+	// await loop calls when the lowered call returns a STARTED (pending)
+	// status. Imported under the empty module name; provided by the component
+	// composer's canon waitable-set.* / subtask.drop. See
+	// docs/WASI-PREVIEW3-ASYNC-PLAN.md.
+	"async_ws_new": { // waitable-set.new: () -> i32 (set handle)
+		module:  "",
+		name:    "ws-new",
+		params:  nil,
+		results: []byte{encode.ValtypeI32},
+	},
+	"async_w_join": { // waitable.join: (waitable, set) -> ()
+		module:  "",
+		name:    "w-join",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
+	"async_ws_wait": { // waitable-set.wait: (set, evtptr) -> i32 (event code)
+		module:  "",
+		name:    "ws-wait",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
+	"async_subtask_drop": { // subtask.drop: (subtask) -> ()
+		module:  "",
+		name:    "subtask-drop",
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
+	"async_ws_drop": { // waitable-set.drop: (set) -> ()
+		module:  "",
+		name:    "ws-drop",
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_fd_write": {
 		// (fd, iovs_ptr, iovs_count, nwritten_ptr) → errno
 		module:  "wasi_snapshot_preview1",
@@ -889,6 +924,15 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 		// its slice lands. The enclosing caller must be `async`-lifted (it owns the
 		// task that awaits) — the `async function` keyword provides that.
 		if ex.Async {
+			// Every async-import wrapper runs the pending-await loop after the
+			// lowered call, so it imports the waitable-set / subtask intrinsics
+			// (provided by the composer's canon waitable-set.* / subtask.drop).
+			// in.add is idempotent, so registering them per async import is fine.
+			in.add("async_ws_new")
+			in.add("async_w_join")
+			in.add("async_ws_wait")
+			in.add("async_subtask_drop")
+			in.add("async_ws_drop")
 			if hasMemParam {
 				// Composite ARGUMENT to an async import. This slice supports a
 				// single `string` param + scalar result: the wrapper normalises the

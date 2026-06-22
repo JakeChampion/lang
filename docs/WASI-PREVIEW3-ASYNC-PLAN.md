@@ -330,10 +330,41 @@ all confirmed against wasm-tools 1.240 + wasmtime 37:
 - The lower/wait `memory` circularity is sidestepped here with externalized
   memory; the production path reuses the gMem trampoline.
 
-So the **only** thing between this and real-Fern pending imports is wiring
-the await loop into the wasmbin async-import wrapper (emit the
-status-branch + the loop instead of the inline read) — every ABI detail,
-encoder, and the runnable recipe are now in hand.
+**PENDING AWAIT — DONE, runnable from real Fern source.** The await loop
+is now wired into the wasmbin async-import wrapper and provisioned by the
+composer, so a real Fern `@import async` of a host-deferring function
+drives the full pending path:
+- **wasmbin** (`extern.go` `emitAsyncAwaitLoop`): every async-import
+  wrapper, after the `canon lower async` call, tees the i32 status and —
+  when `(status & 0xf) != RETURNED(2)` — runs the loop
+  (`waitable-set.new` → `waitable.join(status>>4, ws)` →
+  `waitable-set.wait(ws, rb+8)` → `subtask.drop` → `waitable-set.drop`),
+  then reads the result from the lower's return area at `rb+0`. A
+  synchronously-completing import takes the RETURNED fast path (loop
+  skipped). All four async wrappers (scalar / string / list result,
+  string param) share the helper; the return area is alloc'd ≥16 bytes
+  (result at +0, the 8-byte wait event at +8). The loop's intrinsics are
+  imported under `""` (`ws-new`/`w-join`/`ws-wait`/`subtask-drop`/
+  `ws-drop`, registered in `scanExternImports`).
+- **composer** (`BuildAsyncImportsAwaitComponent`): the consumer's `""`
+  import instance now provides task-return **plus** the five waitable
+  intrinsics. The four memory-independent ones (ws-new/w-join/
+  subtask-drop/ws-drop) are direct canon core funcs; `ws-wait` carries a
+  `memory` option over the consumer's exported memory (aliased only after
+  the consumer is instantiated → the same lower→memory→instance
+  circularity), so it goes through its own gMem trampoline + fixup
+  alongside each dep-lower. The function was rewritten to track every
+  index space with running counters (the waitable glue made the
+  closed-form formulas unmaintainable).
+- **e2e** (`TestWasmP3AsyncImportPendingFromFern`): a real Fern
+  `@import("test:dep/d","compute") async function dep(): i32` + `async
+  function run() { return dep(); }`, compiled through wasmbin, composed
+  against a **deferring** nested provider
+  (`BuildPendingDeferringProviderComponent` — its core `thread.yield`s
+  before `task.return`, so the consumer's lower returns STARTED and the
+  loop body actually executes), runs `run()` under wasmtime's async
+  features → **42**. This is the deferring counterpart of the
+  sync-provider `TestWasmP3AsyncImportFromFern`.
 
 **Also remaining (smaller):** string/array/composite async import results
 (needs the `realloc` option on `canon lower async` — unproven; the lower
