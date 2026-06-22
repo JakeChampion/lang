@@ -1,0 +1,86 @@
+import "std/test";
+import "std/i64";
+// examples/tests/i64_test.fern — pure-Fern coverage of std/i64's
+// signed-64-bit receiver methods (the wider counterpart to std/i32):
+// abs / min / max / clamp / pow (exponentiation-by-squaring, incl. a
+// value past the i32 range) / gcd / lcm / to_string (incl. negative) /
+// is_even / is_odd. The Go-side suite unit-tests these; this is the
+// migration-shaped (pure-Fern, std/test-driven, self-host-gated)
+// companion. Receivers are written `… as i64` so dispatch lands on the
+// i64 methods rather than the i32 ones.
+
+function test_abs(): test.TestOutcome {
+    return test.assert_eq(((0 as i64) - 5).abs(), 5 as i64);
+}
+
+function test_min(): test.TestOutcome {
+    return test.assert_eq((10 as i64).min(3 as i64), 3 as i64);
+}
+
+function test_max(): test.TestOutcome {
+    return test.assert_eq((10 as i64).max(3 as i64), 10 as i64);
+}
+
+function test_clamp_hi(): test.TestOutcome {
+    return test.assert_eq((15 as i64).clamp(0 as i64, 10 as i64), 10 as i64);
+}
+
+function test_clamp_in(): test.TestOutcome {
+    return test.assert_eq((5 as i64).clamp(0 as i64, 10 as i64), 5 as i64);
+}
+
+function test_pow(): test.TestOutcome {
+    return test.assert_eq((2 as i64).pow(10), 1024 as i64);
+}
+
+function test_pow_zero(): test.TestOutcome {
+    return test.assert_eq((3 as i64).pow(0), 1 as i64);
+}
+
+function test_pow_wide(): test.TestOutcome {
+    // 2^40 = 1099511627776 — well past the i32 range.
+    return test.assert_eq((2 as i64).pow(40), 1099511627776 as i64);
+}
+
+function test_gcd(): test.TestOutcome {
+    return test.assert_eq((12 as i64).gcd(18 as i64), 6 as i64);
+}
+
+function test_lcm(): test.TestOutcome {
+    return test.assert_eq((4 as i64).lcm(6 as i64), 12 as i64);
+}
+
+function test_to_string_wide(): test.TestOutcome {
+    return test.assert_eq((1234567890123 as i64).to_string(), "1234567890123");
+}
+
+function test_to_string_neg(): test.TestOutcome {
+    return test.assert_eq(((0 as i64) - 42).to_string(), "-42");
+}
+
+function test_is_even(): test.TestOutcome {
+    return test.assert_true((10 as i64).is_even() && !(7 as i64).is_even());
+}
+
+function test_is_odd(): test.TestOutcome {
+    return test.assert_true((7 as i64).is_odd() && !(10 as i64).is_odd());
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/i64");
+    r = r.it("abs",                test_abs());
+    r = r.it("min",                test_min());
+    r = r.it("max",                test_max());
+    r = r.it("clamp above hi",     test_clamp_hi());
+    r = r.it("clamp in range",     test_clamp_in());
+    r = r.it("pow",                test_pow());
+    r = r.it("pow zero",           test_pow_zero());
+    r = r.it("pow wide",           test_pow_wide());
+    r = r.it("gcd",                test_gcd());
+    r = r.it("lcm",                test_lcm());
+    r = r.it("to_string wide",     test_to_string_wide());
+    r = r.it("to_string negative", test_to_string_neg());
+    r = r.it("is_even",            test_is_even());
+    r = r.it("is_odd",             test_is_odd());
+    return r.finish();
+}
