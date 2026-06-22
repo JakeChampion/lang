@@ -251,6 +251,25 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-22 — std/option: pure-Fern std/test migration coverage (the combinator surface)
+
+`std/option`'s combinator vocabulary (#2691) had Go-side coverage and an
+existing `option_and_set_ops_test` — but that suite covers the `std/test`
+*Option assertion helpers* (`assert_is_some_*`), NOT the combinators. Added
+`examples/tests/option_combinators_test.fern` — 14 assertions over the full
+combinator surface as ordinary generic methods on `Option[T]`: `is_some` /
+`is_none` / `unwrap_or` / `unwrap_or_else` / `map` / `and_then` / `or_else` /
+`filter` (keep + drop) / `ok_or` / `map_or` (Some + None) / `is_some_and` /
+`or` / `and`. Gated natively (`TestRunnerOptionCombinatorsExamplePasses`) and
+through the self-host differential gate (`TestSelfHostStdTestE2E/option_combinators`,
+x86 + arm64), which oracle-checks TAP-13 stdout + exit code against the
+interpreter **byte-for-byte**. Notable: the **closure-taking** generic methods
+(`map` / `and_then` / `filter` / `map_or` / `is_some_and` / `or_else` /
+`unwrap_or_else` — each `(T) => U` / `() => T` / `(T) => boolean`) lower cleanly
+end-to-end through the self-host IR (closure + generic-method-on-enum
+monomorphisation), no AST fallback — a meaningfully richer surface than the
+plain receiver-method modules.
+
 ### 2026-06-22 — std/crypto: pure-Fern std/test KAT coverage (interp-gated) + self-host gap map
 
 `std/crypto`'s SHA-256 + HMAC-SHA256 had Go-side coverage but no
