@@ -5507,6 +5507,16 @@ function e064_unknown_bare(type_name: string, struct_names: string[], union_name
     // The parser coarses a function type (`() => R`) to the tag "fn" and some
     // shapes to "tuple"; neither is a user nominal, so don't flag them.
     if (type_name == "fn" || type_name == "tuple") { return false; }
+    // Sub-word integer keywords the parser accepts but the simple name resolver
+    // (`type_from_name_with_names_and_unions`) doesn't model — it only knows
+    // i32/i64/u32/u64 among integers. The stdlib uses these as body-var
+    // annotations (`var b: u8` in std/string, `var p: usize` scratch pointers in
+    // core/int), so without this allowlist the E064 body-var walk false-positives
+    // on every program importing them, diverging from the Go oracle (which
+    // accepts all five) and bailing the module off the IR path. `byte`/`char`/
+    // `isize` are NOT parser keywords, so the Go checker rejects them too — keep
+    // flagging those.
+    if (type_name == "u8" || type_name == "i8" || type_name == "u16" || type_name == "i16" || type_name == "usize") { return false; }
     var i: i32 = 0;
     while (i < type_name.len()) {
         var ch: i32 = type_name[i];

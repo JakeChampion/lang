@@ -215,6 +215,16 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// E064 in a body `var` annotation. The init `q()` is itself undefined
 		// (E001), so there is no E003 init-mismatch cascade to diverge on.
 		{"unknown-var-type", "function main(): i32 { var x: Wibble = q(); return 0; }\n", []string{"E001", "E064"}},
+		// Sub-word integer keywords (u8/i8/u16/i16/usize) the parser accepts but
+		// the self-host name resolver doesn't model. They must NOT draw E064 in a
+		// body `var` annotation — the Go oracle accepts them, and the stdlib uses
+		// them (`var b: u8`, `var p: usize`), so a false E064 here would bail every
+		// importing module off the IR path (the #3813 regression).
+		{"subword-int-vars-clean", "function main(): i32 { var a: u8 = 1 as u8; var b: i8 = 1 as i8; var c: u16 = 1 as u16; var d: i16 = 1 as i16; var e: usize = 1 as usize; return 0; }\n", nil},
+		// `byte` is NOT a parser keyword, so the Go checker flags it E064 too —
+		// the self-host must keep flagging it (init `q()` is E001, avoiding an
+		// E003 init-mismatch cascade, same as unknown-var-type above).
+		{"unknown-byte-var-type", "function main(): i32 { var x: byte = q(); return 0; }\n", []string{"E001", "E064"}},
 		{"rec-local-ok", "function main(): i32 { function f(n: i32): i32 { if (n <= 0) { return 0; } return f(n - 1); } return f(3); }\n", nil},
 		{"rec-local-capture-ok", "function main(): i32 { var base: i32 = 10; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }\n", nil},
 		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice): the loop
