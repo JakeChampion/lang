@@ -397,23 +397,25 @@ So composite **results** (string + numeric list) are complete, import +
 export. String/list async *params* and the *pending* (waitable-set) path
 remain (see above).
 
-**Finding — composite async *params* are blocked on the async-lift param
-ABI.** A spike of a string-*param* async export (`send: async func(s:
-string) -> u32`, provider built with a `[async, memory, realloc]` lift +
-an exported bump `cabi_realloc`) fails at runtime under wasmtime with
-`realloc return: beyond end of memory`. The scalar-param async path works,
-so the snag is specifically how `canon lift async` delivers a *pointer-
-shaped* (string/list) parameter to the core function: it is **not** the
-sync flattened `(ptr, len)` the core spike assumed — the async lift appears
-to pass params through a different buffer/convention, which we can't derive
-confidently without the reference toolchain (wasm-tools 1.240 `component
-wit`/`dump`, absent in this sandbox; only 1.225 is present). The
-`realloc`-carrying lift encoder (`PutCanonSectionLiftAsyncWithMemoryRealloc`)
-is straightforward; the unknown is the core-side param shape. So composite
-async params are gated on the same 1.240 prerequisite as the pending
-`waitable-set` path — both need the reference tooling to pin an
-async-specific convention. (Composite async *results* needed no such
-convention — the result flows out through `task.return`, which we proved.)
+**Composite async *params* — provider side DONE, runtime-verified (earlier
+"blocked" note RESOLVED).** The earlier failure (`realloc return: beyond end
+of memory` on a string-param async export) was **not** an async-lift param-ABI
+unknown — the core signature is the plain sync flattening `(ptr, len) -> ()`
+(result via scalar `task.return`) exactly as assumed. The bug was the spike's
+`cabi_realloc`: it returned a **constant**, but the async ABI calls
+`cabi_realloc` more than once, so it must be a real **bump allocator**.
+Cross-checked with wasm-tools 1.240 (now fetched into the sandbox): a
+hand-authored `send: async func(s: string) -> u32` component
+(`[async, memory, realloc]` lift over a bump-`cabi_realloc` core) encodes,
+validates, and runs under wasmtime — `send("hello") -> 5`.
+`component.BuildAsyncLiftedExportComponentStringParam` builds it (lift via
+`PutCanonSectionLiftAsyncWithMemoryRealloc`), proven by
+`TestWasmP3AsyncStringParamExportProvider`. The remaining param step is the
+**consumer**: the wasmbin async-import branch must normalise a string/list
+*argument* to `(ptr, len)` before the `canon lower async` call (combining the
+existing P4c mem-param normalisation with the async retptr+status) + an e2e —
+no new ABI unknowns. (Composite async *results* are already complete, import +
+export.)
 
 **Also remaining:** `future<T>` / `stream<T>` parameter+result lowering;
 wiring async into the `concurrent { … }` desugar as an alternative to

@@ -3023,6 +3023,29 @@ func PutCanonSectionLiftAsyncWithMemory(buf []byte, coreFuncIdx uint32, typeidx 
 	return wrapSection(buf, SectionCanon, body)
 }
 
+// PutCanonSectionLiftAsyncWithMemoryRealloc is PutCanonSectionLiftAsyncWithMemory
+// with the `realloc` (0x04) option appended — for an async export that takes a
+// string/list PARAMETER: the canonical ABI materialises the incoming bytes in
+// the export's memory via its cabi_realloc before the core func runs. Opts
+// vec(3) = [async 0x06, memory 0x03 <mem>, realloc 0x04 <realloc>]. Verified
+// against a wasm-tools 1.240 component whose `send: async func(s: string) -> u32`
+// runs under wasmtime (`send("hello") -> 5`); see docs/WASI-PREVIEW3-ASYNC-PLAN.md.
+func PutCanonSectionLiftAsyncWithMemoryRealloc(buf []byte, coreFuncIdx uint32, typeidx uint32, memIdx uint32, reallocFuncIdx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x00)      // canon-lift
+	body = append(body, 0x00)      // function-lift sub-tag
+	body = leb128.UlebU64(body, uint64(coreFuncIdx))
+	body = leb128.UlebU64(body, 3) // opts vec(3)
+	body = append(body, 0x06)      // canonopt: async
+	body = append(body, 0x03)      // canonopt: memory
+	body = leb128.UlebU64(body, uint64(memIdx))
+	body = append(body, 0x04) // canonopt: realloc
+	body = leb128.UlebU64(body, uint64(reallocFuncIdx))
+	body = leb128.UlebU64(body, uint64(typeidx))
+	return wrapSection(buf, SectionCanon, body)
+}
+
 // PutCanonTaskReturnSingle emits a canon section with one `task.return`
 // entry that lowers to a CORE function taking the result value — the
 // component-model-async intrinsic an async-lifted export calls to
