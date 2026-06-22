@@ -23,8 +23,14 @@ name: Build & release
 # produced regardless of the host the compiler runs on.
 
 on:
-  push:
-    branches: [main]
+  # `nightly` is a *rolling daily* build — it does not need to rebuild on
+  # every merge to main. The autonomous merge loop lands many PRs a day, and
+  # a full 3-platform build + release per merge was the bulk of main's CI
+  # load (and a big chunk of the run queue). Build once a day instead: the
+  # rolling `nightly` tracks whatever main is at 06:00 UTC. `workflow_dispatch`
+  # still builds on demand (artifacts only — see the release job's `if`).
+  schedule:
+    - cron: "0 6 * * *"
   workflow_dispatch:
 
 permissions:
@@ -85,10 +91,11 @@ jobs:
             fern-${{ matrix.name }}.tar.gz.sha256
 
   release:
-    # Only publish a release on real pushes to main; workflow_dispatch
-    # runs still build + upload artifacts (handy for verifying changes
-    # to this workflow without spamming the releases page).
-    if: github.event_name == 'push'
+    # Only publish on the scheduled daily run; workflow_dispatch runs still
+    # build + upload artifacts (handy for verifying changes to this workflow
+    # without spamming the releases page). On `schedule`, github.sha is main's
+    # HEAD, so the rolling `nightly` lands on the latest commit as intended.
+    if: github.event_name == 'schedule'
     needs: build
     runs-on: ubuntu-latest
     steps:
