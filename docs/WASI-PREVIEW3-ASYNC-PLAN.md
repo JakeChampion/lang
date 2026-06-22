@@ -332,18 +332,33 @@ Byte tests: `TestPutCanonSectionLowerAsyncRealloc_Bytes`,
 `TestPutCanonTaskReturnStringWithMemory_Bytes`,
 `TestPutCanonSectionLiftAsyncWithMemory_Bytes`.
 
-**Key finding blocking the runnable string flow:** a string `task.return`'s
+**Key finding (the provider-side circularity):** a string `task.return`'s
 `memory` option references the *provider's* linear memory, but the provider
 core module *imports* `task.return` — the same lower→memory→instance
 circularity the async lower hits, so even a string-returning *provider*
 needs a memory trampoline (or externalized shared memory), not just the
-consumer. The full runnable string vertical therefore needs: (a) a
-trampoline on the provider's `task.return` memory; (b) the consumer's
-`cabi_realloc` aliased into the lower (via the same gMem trampoline);
-(c) the wasmbin async-import branch extended to lift the `(ptr,len)`
-return area into a Fern string (`__bytes_to_lang_string`, mirroring the
-non-async `buildExternStringResultWrapper`). The encoders above are the
-first piece; the trampoline wiring + wasmbin lift are the next.
+consumer.
+
+**Provider side — DONE, runtime-verified.**
+`component.BuildAsyncLiftedExportComponentString` lifts a core whose export
+delivers a string via `task.return` into `<name>: async func() -> string`,
+breaking the circularity with the gMem trampoline (placeholder task.return →
+alias provider memory → real `task.return (string) (memory)` → fixup the
+table). `TestWasmP3AsyncStringExportProvider` runs `fetch()` under wasmtime's
+async features and gets `"hello"` — so `PutCanonTaskReturnStringWithMemory`
++ `PutCanonSectionLiftAsyncWithMemory` are now **runtime-verified**, not just
+byte-pinned-by-analogy.
+
+The remaining runnable string vertical needs: (a) the consumer's
+`cabi_realloc` aliased into the `canon lower async + realloc`
+(`PutCanonSectionLowerAsyncRealloc`) via the gMem trampoline; (b) the wasmbin
+async-import branch extended to lift the `(ptr,len)` return area into a Fern
+string (`__bytes_to_lang_string`, mirroring the non-async
+`buildExternStringResultWrapper`); (c) an e2e composing a real Fern
+`@import async function fetch(): string` consumer against the now-proven
+string provider. The provider half + all three composite-result encoders
+are in place; the consumer lower-realloc wiring + wasmbin string lift are
+the next step.
 
 **Also remaining:** `future<T>` / `stream<T>` parameter+result lowering;
 wiring async into the `concurrent { … }` desugar as an alternative to
