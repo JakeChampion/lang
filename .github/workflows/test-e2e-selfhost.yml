@@ -148,6 +148,9 @@ jobs:
           - { key: modload,   drivers: "asm_modload_run.fern" }
           - { key: checker,   drivers: "checker_modload_run.fern" }
           - { key: ssa,       drivers: "ssa_run.fern,ssa_emit_run.fern" }
+          - { key: cli,       drivers: "fern.fern" }
+          - { key: irx86,     drivers: "ir_x86_run.fern,irlower_run.fern" }
+          - { key: asmfile,   drivers: "asm_file_run.fern" }
     name: warm-selfhost-x86_64-${{ matrix.key }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -245,11 +248,26 @@ jobs:
         with:
           path: ${{ runner.temp }}/uc-ssa
           key: selfhost-unicache-x86_64-ssa-${{ github.sha }}
+      - uses: actions/cache/restore@v4
+        if: matrix.host.name == 'x86_64'
+        with:
+          path: ${{ runner.temp }}/uc-cli
+          key: selfhost-unicache-x86_64-cli-${{ github.sha }}
+      - uses: actions/cache/restore@v4
+        if: matrix.host.name == 'x86_64'
+        with:
+          path: ${{ runner.temp }}/uc-irx86
+          key: selfhost-unicache-x86_64-irx86-${{ github.sha }}
+      - uses: actions/cache/restore@v4
+        if: matrix.host.name == 'x86_64'
+        with:
+          path: ${{ runner.temp }}/uc-asmfile
+          key: selfhost-unicache-x86_64-asmfile-${{ github.sha }}
       - name: run self-host shard ${{ matrix.shard }}/6 (prebuilt binary, streaming)
         env:
           SHARD: "${{ matrix.shard }}"
           NSHARD: "6"
-          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/uc-elig:${{ runner.temp }}/uc-asm:${{ runner.temp }}/uc-pathprobe:${{ runner.temp }}/uc-asmir:${{ runner.temp }}/uc-asmload:${{ runner.temp }}/uc-modload:${{ runner.temp }}/uc-checker:${{ runner.temp }}/uc-ssa"
+          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/uc-elig:${{ runner.temp }}/uc-asm:${{ runner.temp }}/uc-pathprobe:${{ runner.temp }}/uc-asmir:${{ runner.temp }}/uc-asmload:${{ runner.temp }}/uc-modload:${{ runner.temp }}/uc-checker:${{ runner.temp }}/uc-ssa:${{ runner.temp }}/uc-cli:${{ runner.temp }}/uc-irx86:${{ runner.temp }}/uc-asmfile"
         run: |
           set -euo pipefail
           chmod +x e2e.test
