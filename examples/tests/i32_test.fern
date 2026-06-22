@@ -1,0 +1,95 @@
+import "std/test";
+import "std/i32";
+// examples/tests/i32_test.fern — pure-Fern coverage of std/i32's
+// receiver-method helper surface (deterministic, no I/O): abs / signum,
+// the byte-classification predicates (is_digit / is_alpha / hex_value /
+// to_lower / to_upper), the number-shape helpers (reverse_digits /
+// is_palindrome / sum_of_digits / factorial / is_prime / is_perfect_square)
+// and the range checks (is_in_range half-open vs is_between inclusive).
+// The Go-side suite unit-tests these; this is the migration-shaped
+// (pure-Fern, std/test-driven, self-host-gated) companion. Methods are
+// called bare (receiver-method dispatch), the module only needs importing.
+
+function test_abs_neg(): test.TestOutcome { return test.assert_eq((0 - 5).abs(), 5); }
+function test_abs_pos(): test.TestOutcome { return test.assert_eq((5).abs(), 5); }
+
+function test_signum(): test.TestOutcome {
+    return test.assert_true((0 - 3).signum() == (0 - 1) && (0).signum() == 0 && (7).signum() == 1);
+}
+
+function test_is_digit(): test.TestOutcome {
+    // '5' is 53, 'A' is 65.
+    return test.assert_true((53).is_digit() && !(65).is_digit());
+}
+
+function test_is_alpha(): test.TestOutcome {
+    return test.assert_true((65).is_alpha() && !(53).is_alpha());
+}
+
+function test_hex_value(): test.TestOutcome {
+    // 'a'=97 → 10, '9'=57 → 9, 'F'=70 → 15, 'x'=120 → -1.
+    return test.assert_true((97).hex_value() == 10 && (57).hex_value() == 9
+        && (70).hex_value() == 15 && (120).hex_value() == (0 - 1));
+}
+
+function test_to_lower(): test.TestOutcome { return test.assert_eq((65).to_lower(), 97); }
+function test_to_upper(): test.TestOutcome { return test.assert_eq((97).to_upper(), 65); }
+
+function test_reverse_digits(): test.TestOutcome { return test.assert_eq((1234).reverse_digits(), 4321); }
+function test_reverse_neg(): test.TestOutcome { return test.assert_eq((0 - 120).reverse_digits(), 0 - 21); }
+
+function test_palindrome(): test.TestOutcome {
+    return test.assert_true((121).is_palindrome() && !(123).is_palindrome());
+}
+
+function test_sum_of_digits(): test.TestOutcome { return test.assert_eq((123).sum_of_digits(), 6); }
+
+function test_factorial(): test.TestOutcome { return test.assert_eq((5).factorial(), 120); }
+
+function test_is_prime(): test.TestOutcome {
+    return test.assert_true((7).is_prime() && !(8).is_prime() && !(1).is_prime());
+}
+
+function test_perfect_square(): test.TestOutcome {
+    return test.assert_true((16).is_perfect_square() && !(15).is_perfect_square());
+}
+
+function test_is_multiple_of(): test.TestOutcome {
+    return test.assert_true((12).is_multiple_of(3) && !(13).is_multiple_of(3));
+}
+
+function test_is_in_range(): test.TestOutcome {
+    // half-open [1, 10): 1 in, 10 out.
+    return test.assert_true((1).is_in_range(1, 10) && !(10).is_in_range(1, 10));
+}
+
+function test_is_between(): test.TestOutcome {
+    // inclusive [1, 10]: 10 in.
+    return test.assert_true((10).is_between(1, 10) && !(11).is_between(1, 10));
+}
+
+function test_min(): test.TestOutcome { return test.assert_eq((10).min(3), 3); }
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/i32");
+    r = r.it("abs negative",        test_abs_neg());
+    r = r.it("abs positive",        test_abs_pos());
+    r = r.it("signum",              test_signum());
+    r = r.it("is_digit",            test_is_digit());
+    r = r.it("is_alpha",            test_is_alpha());
+    r = r.it("hex_value",           test_hex_value());
+    r = r.it("to_lower",            test_to_lower());
+    r = r.it("to_upper",            test_to_upper());
+    r = r.it("reverse_digits",      test_reverse_digits());
+    r = r.it("reverse negative",    test_reverse_neg());
+    r = r.it("is_palindrome",       test_palindrome());
+    r = r.it("sum_of_digits",       test_sum_of_digits());
+    r = r.it("factorial",           test_factorial());
+    r = r.it("is_prime",            test_is_prime());
+    r = r.it("is_perfect_square",   test_perfect_square());
+    r = r.it("is_multiple_of",      test_is_multiple_of());
+    r = r.it("is_in_range",         test_is_in_range());
+    r = r.it("is_between",          test_is_between());
+    r = r.it("min",                 test_min());
+    return r.finish();
+}
