@@ -248,6 +248,16 @@ func cachedLink(t *testing.T, gcc, asm string) string {
 	t.Helper()
 	sum := sha256.Sum256([]byte(gcc + "\x00" + asm))
 	key := hex.EncodeToString(sum[:])
+	// The cross-PROCESS disk .bin is keyed by the asm CONTENT alone (not gcc),
+	// so a binary a `warm` job linked is reused by a test shard even though the
+	// two runners may resolve different gcc paths (x86_64-linux-gnu-gcc vs gcc)
+	// and thus different in-process keys. The asm is byte-identical when the .s
+	// cache hits, and the output is a static -nostdlib -no-pie ELF — independent
+	// of which gcc produced it — so this is sound. Without it the .bin silently
+	// missed across runners and the (minute-long) link of the big drivers was
+	// repeated per shard, keeping shards in the preemption window.
+	asmSum := sha256.Sum256([]byte(asm))
+	diskKey := hex.EncodeToString(asmSum[:])
 	path, err := selfHostBinCache.get(key, func() (string, error) {
 		base, err := linkCacheBaseDir()
 		if err != nil {
@@ -257,7 +267,7 @@ func cachedLink(t *testing.T, gcc, asm string) string {
 		// Cross-process disk hit: a pre-linked binary from a warm job — copy it
 		// into this process's link dir and skip gcc. Scan every configured dir.
 		for _, d := range diskCacheReadDirs() {
-			diskBin := filepath.Join(d, key+".bin")
+			diskBin := filepath.Join(d, diskKey+".bin")
 			if in, oerr := os.ReadFile(diskBin); oerr == nil {
 				if werr := os.WriteFile(binPath, in, 0o755); werr == nil {
 					return binPath, nil
@@ -266,7 +276,7 @@ func cachedLink(t *testing.T, gcc, asm string) string {
 		}
 		diskBin := ""
 		if d := diskCacheWriteDir(); d != "" {
-			diskBin = filepath.Join(d, key+".bin")
+			diskBin = filepath.Join(d, diskKey+".bin")
 		}
 		asmPath := filepath.Join(base, key+".s")
 		if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {

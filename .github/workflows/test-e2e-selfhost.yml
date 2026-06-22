@@ -33,9 +33,11 @@ name: Test e2e self-host
 #     recompiling. This is the bootstrap a per-shard cache could never give: a
 #     shard reclaimed mid-run never reaches its own post-save, so cold shards
 #     never seeded one another — a warm job that always finishes does. Warmed:
-#     the unified driver selfhost_x86_run.fern (imports the whole front-end +
-#     backends, dispatches a backend on argv[1]; shared by the probe tests) plus
-#     asm_run / asm_pathprobe_run (the two the bulk of `*IRX86_64` tests build).
+#     every file-based x86 driver the suite builds — asm_run / asm_pathprobe_run
+#     (the bulk of `*IRX86_64` tests), asm_ir_run / asm_load_run / asm_modload_run
+#     / checker_modload_run / ssa, and asm_ir_elig_run (the lean front-end+asm_ir
+#     probe the six IR-eligibility tests share, in place of a whole-compiler
+#     driver whose 256 MB binary did not disk-cache).
 #     Un-warmed drivers still compile per shard, now at most once each.
 #
 # Matrix per arch because individual tests are split per backend
@@ -49,9 +51,9 @@ name: Test e2e self-host
 # SHARDED by test name: each shard claims `index % N == shard` over the
 # sorted `-test.list '^TestSelfHost'` output of the prebuilt binary, so
 # the set splits ~evenly and new tests are picked up automatically.
-# N = 6 (the `test` job is 2 arch × 6 = 12 jobs, plus 2 build jobs).
+# N = 12 (the `test` job is 2 arch × 12 = 24 jobs, plus 2 build + the warm jobs).
 #
-# RUNNER PREEMPTION — why streaming + compile-once, but NOT more shards.
+# RUNNER PREEMPTION — why short shards matter.
 # The x86 self-host shards were intermittently coming back `failure` with
 # "The runner has received a shutdown signal" / exit 143, mid-run, with no
 # test failures — the runner was reclaimed out from under the job. Two
@@ -63,17 +65,19 @@ name: Test e2e self-host
 #     (~6.4 min one run, ~11 min another), so it is not a fixed cap.
 # The one robust correlation: short jobs survive (the ~30s aarch64 shards
 # are never reclaimed) and long jobs get caught. So this is infrastructure
-# preemption of the runner pool, and the only lever we have is to make the
-# x86 jobs *shorter* (lower the probability of being caught) — hence
-# compile-once (drops the ~2.5 min per-shard rebuild), the UNIFIED-DRIVER WARM
-# CACHE above (drops a converted shard's ~50-70s-per-driver compiles to a ~1s
-# disk restore), and 6 shards. It CANNOT be made deterministically green from
-# CI config alone, and that is
-# acceptable: this lane is not a required check, and a shard that survives
-# to completion passes. Bumping the shard count was tried (6 → 12) and did
-# NOT help — 12-shard jobs were still reclaimed — so do not re-raise N
-# expecting it to fix preemption; only raise it if real per-shard work
-# (not the shared build) grows past the job budget.
+# preemption of the runner pool, and the lever is to make the x86 jobs
+# *shorter*: compile-once (drops the ~2.5 min per-shard rebuild), the DRIVER
+# WARM CACHE above (drops a shard's ~50-130s-per-driver build+link to a ~1s
+# disk restore), and enough shards that no shard clusters too many of the
+# tests that *run* the self-host compiler on real programs (DeriveStdlibIR,
+# ImmutabilityGate, the per-module / CLI / fixpoint drivers) — those execute
+# the compiler for tens of seconds each and cannot be build-cached away.
+# N was 6 while every shard still REBUILT its drivers (so 6 → 12 didn't help
+# then — each shard's cost was dominated by the redundant rebuilds, not the
+# test count). Now that the warm cache serves the builds, per-shard wall-clock
+# scales with the test count, so raising N genuinely shortens each shard;
+# hence N = 12. If the inherent-runtime tail still clusters past the job
+# budget, raise N further — it is now an effective lever, no longer a no-op.
 #
 # STREAMING OUTPUT. The shards run the binary with `-test.v`, which streams
 # each test's RUN/PASS/FAIL as it happens, rather than gotestsum's
@@ -118,28 +122,37 @@ jobs:
           if-no-files-found: error
 
   # WARM THE DRIVER CACHE (x86). The per-shard cost is dominated by self-host
-  # DRIVERS, each a ~50-70s Go x86-64 emit of the ~35k-line front-end. With the
-  # closure-keyed cache (hashSelfHostSources keys on a driver's import closure,
-  # not its dir contents) a given stock driver hashes to ONE key across every
-  # test, so it can be compiled once here and restored by the shards. Each warm
-  # job compiles a SINGLE driver (~70s) in parallel — short jobs are never
-  # reclaimed — and saves it under a per-(driver, SHA) cache key. Keyed by SHA so
-  # the warm and its shards share one exact intra-run hand-off (a source change
-  # is a new SHA → fresh warm, no staleness). `unified` is selfhost_x86_run.fern
-  # (the argv-dispatched all-backends driver the probe tests share); asm_run and
-  # asm_pathprobe_run are the two drivers the bulk of the `*IRX86_64` tests build.
-  # The aarch64 lane skips the x86 driver tests, so warming is x86-only
-  # (x86_64Tooling t.Skip()s elsewhere).
+  # DRIVERS, each a ~50-70s Go x86-64 emit of the ~35k-line front-end PLUS a gcc
+  # link that, for the bigger drivers, runs another ~minute. With the closure-
+  # keyed cache (hashSelfHostSources keys on a driver's import closure, not its
+  # dir contents) a given stock driver hashes to ONE key across every test, so it
+  # can be compiled+linked once here and restored by the shards. ONE driver per
+  # warm job: warming several big drivers in a single job ran the job's disk low
+  # and the (silent) per-driver .bin disk-cache write was dropped, so the shards
+  # re-linked them (~min each) — the residual preemption after the first cut.
+  # A dedicated runner per driver has ample disk to persist both the .s and the
+  # .bin. Keyed by (driver, SHA): SHA so warm + shards share one intra-run hand-
+  # off (a source change is a new SHA → fresh warm, no staleness); per-driver so
+  # each restores into its own dir (actions/cache/restore only populates the
+  # first restore into a shared path). The aarch64 lane skips the x86 driver
+  # tests, so warming is x86-only (x86_64Tooling t.Skip()s elsewhere).
   warm:
     needs: build
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { key: unified,  drivers: "selfhost_x86_run.fern" }
-          - { key: asm,      drivers: "asm_run.fern,asm_pathprobe_run.fern" }
-          - { key: ir,       drivers: "asm_ir_run.fern,asm_load_run.fern" }
-          - { key: modload,  drivers: "asm_modload_run.fern,checker_modload_run.fern,ssa_run.fern,ssa_emit_run.fern" }
+          - { key: elig,      drivers: "asm_ir_elig_run.fern" }
+          - { key: asm,       drivers: "asm_run.fern" }
+          - { key: pathprobe, drivers: "asm_pathprobe_run.fern" }
+          - { key: asmir,     drivers: "asm_ir_run.fern" }
+          - { key: asmload,   drivers: "asm_load_run.fern" }
+          - { key: modload,   drivers: "asm_modload_run.fern" }
+          - { key: checker,   drivers: "checker_modload_run.fern" }
+          - { key: ssa,       drivers: "ssa_run.fern,ssa_emit_run.fern" }
+          - { key: cli,       drivers: "fern.fern" }
+          - { key: irx86,     drivers: "ir_x86_run.fern,irlower_run.fern" }
+          - { key: asmfile,   drivers: "asm_file_run.fern" }
     name: warm-selfhost-x86_64-${{ matrix.key }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -160,6 +173,7 @@ jobs:
           BIN="$PWD/e2e.test"
           cd internal/e2e
           "$BIN" -test.run '^TestSelfHostWarmStockDriver$' -test.v -test.timeout 13m
+          du -sh "$FERN_SELFHOST_BUILD_CACHE" || true
       - uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/selfhost-unicache
@@ -173,8 +187,8 @@ jobs:
         host:
           - { runner: ubuntu-latest,    name: x86_64  }
           - { runner: ubuntu-24.04-arm, name: aarch64 }
-        # Six shards. See SHARDED / RUNNER PREEMPTION notes above.
-        shard: [0, 1, 2, 3, 4, 5]
+        # Twelve shards. See SHARDED / RUNNER PREEMPTION notes above.
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     name: test-e2e-selfhost-${{ matrix.host.name }}-shard${{ matrix.shard }}
     runs-on: ${{ matrix.host.runner }}
     timeout-minutes: 20
@@ -199,8 +213,8 @@ jobs:
       - uses: actions/cache/restore@v4
         if: matrix.host.name == 'x86_64'
         with:
-          path: ${{ runner.temp }}/uc-unified
-          key: selfhost-unicache-x86_64-unified-${{ github.sha }}
+          path: ${{ runner.temp }}/uc-elig
+          key: selfhost-unicache-x86_64-elig-${{ github.sha }}
       - uses: actions/cache/restore@v4
         if: matrix.host.name == 'x86_64'
         with:
@@ -209,18 +223,53 @@ jobs:
       - uses: actions/cache/restore@v4
         if: matrix.host.name == 'x86_64'
         with:
-          path: ${{ runner.temp }}/uc-ir
-          key: selfhost-unicache-x86_64-ir-${{ github.sha }}
+          path: ${{ runner.temp }}/uc-pathprobe
+          key: selfhost-unicache-x86_64-pathprobe-${{ github.sha }}
+      - uses: actions/cache/restore@v4
+        if: matrix.host.name == 'x86_64'
+        with:
+          path: ${{ runner.temp }}/uc-asmir
+          key: selfhost-unicache-x86_64-asmir-${{ github.sha }}
+      - uses: actions/cache/restore@v4
+        if: matrix.host.name == 'x86_64'
+        with:
+          path: ${{ runner.temp }}/uc-asmload
+          key: selfhost-unicache-x86_64-asmload-${{ github.sha }}
       - uses: actions/cache/restore@v4
         if: matrix.host.name == 'x86_64'
         with:
           path: ${{ runner.temp }}/uc-modload
           key: selfhost-unicache-x86_64-modload-${{ github.sha }}
-      - name: run self-host shard ${{ matrix.shard }}/6 (prebuilt binary, streaming)
+      - uses: actions/cache/restore@v4
+        if: matrix.host.name == 'x86_64'
+        with:
+          path: ${{ runner.temp }}/uc-checker
+          key: selfhost-unicache-x86_64-checker-${{ github.sha }}
+      - uses: actions/cache/restore@v4
+        if: matrix.host.name == 'x86_64'
+        with:
+          path: ${{ runner.temp }}/uc-ssa
+          key: selfhost-unicache-x86_64-ssa-${{ github.sha }}
+      - uses: actions/cache/restore@v4
+        if: matrix.host.name == 'x86_64'
+        with:
+          path: ${{ runner.temp }}/uc-cli
+          key: selfhost-unicache-x86_64-cli-${{ github.sha }}
+      - uses: actions/cache/restore@v4
+        if: matrix.host.name == 'x86_64'
+        with:
+          path: ${{ runner.temp }}/uc-irx86
+          key: selfhost-unicache-x86_64-irx86-${{ github.sha }}
+      - uses: actions/cache/restore@v4
+        if: matrix.host.name == 'x86_64'
+        with:
+          path: ${{ runner.temp }}/uc-asmfile
+          key: selfhost-unicache-x86_64-asmfile-${{ github.sha }}
+      - name: run self-host shard ${{ matrix.shard }}/12 (prebuilt binary, streaming)
         env:
           SHARD: "${{ matrix.shard }}"
-          NSHARD: "6"
-          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/uc-unified:${{ runner.temp }}/uc-asm:${{ runner.temp }}/uc-ir:${{ runner.temp }}/uc-modload"
+          NSHARD: "12"
+          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/uc-elig:${{ runner.temp }}/uc-asm:${{ runner.temp }}/uc-pathprobe:${{ runner.temp }}/uc-asmir:${{ runner.temp }}/uc-asmload:${{ runner.temp }}/uc-modload:${{ runner.temp }}/uc-checker:${{ runner.temp }}/uc-ssa:${{ runner.temp }}/uc-cli:${{ runner.temp }}/uc-irx86:${{ runner.temp }}/uc-asmfile"
         run: |
           set -euo pipefail
           chmod +x e2e.test
