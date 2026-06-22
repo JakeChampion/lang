@@ -4602,7 +4602,17 @@ function subst_stmts(stmts: Stmt[], tparams: string[], cts: string[]): Stmt[] {
 // return + body annotations.
 function clone_bg(fd: FuncDecl, key: string): FuncDecl {
     var tparams: string[] = fd.type_params;
-    var cts: string[] = split_dunder(key);
+    // A single type parameter's key IS the one concrete type, verbatim —
+    // never split it. A module-mangled type argument (`iter__Range` from a
+    // bundled program) itself contains `__`, so split_dunder would shatter it
+    // (`iter__Range` -> ["iter", "Range"]) and subst_ty would bind the param
+    // to the bogus "iter". This mirrors the guard the generic-struct / enum
+    // monomorphisers already use (gen_struct / gen_enum: `if (tparams.len()
+    // != 1) { cts = split_dunder(key); }`). With >1 param the key is still a
+    // `__`-join (multi-param mangled-type args remain a known limitation,
+    // shared with the struct/enum paths).
+    var cts: string[] = [key];
+    if (tparams.len() != 1) { cts = split_dunder(key); }
     var nparams: ParamDecl[] = [];
     var i: i32 = 0;
     while (i < fd.params.len()) {
