@@ -6006,10 +6006,13 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
     // a string, is_enum_like_name→struct_ty for an enum (StmtVar). So `x.field` /
     // `x.len()` / `match (x)` resolve. Without this a struct payload bailed the whole
     // module to AST (#3802 — goal-1 `?`-on-composites); #3810 widens it to string +
-    // enum. f64 (needs a width-64 read like the i64 path) / tuple payloads still bail.
+    // enum. An f64 payload is admitted too: it reads through the same 8-byte
+    // width-64 path as i64 (the `var x: f64 = inner?` slot is f64-typed from its
+    // annotation), with the wasm-only is_i64=false tweak below so wasm emits
+    // f64.load. Only tuple payloads still bail (slot-typing not threaded).
     var pt_is_struct: boolean = decl_is_struct(s.structs, pt) && decl_is_leaksafe(s.structs, pt);
     var pt_is_enum: boolean = is_enum_like_name(pt, s.structs);
-    if (pt != "i32" && pt != "boolean" && !pt_is_i64 && !pt_is_struct && pt != "string" && !pt_is_enum) { return s.fail(); }
+    if (pt != "i32" && pt != "boolean" && !pt_is_i64 && !pt_is_struct && pt != "string" && !pt_is_enum && pt != "f64") { return s.fail(); }
     // Evaluate inner into a fresh temp slot (the box pointer).
     var tmp: string = "$try" + util.i32_to_string(s.local_names.len());
     var ts: LowerState = s.add_local(tmp);
@@ -6068,6 +6071,12 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
     // op_opt_payload_w(64, true)).
     ts = ts.emit(ir.op_load_local(tslot));
     if (pt_is_i64) { return ts.emit(ir.op_opt_payload_w(64, true)); }
+    // An f64 payload is also an 8-byte width-64 read, but the wasm backend keys
+    // i64.load vs f64.load off the is_i64 flag (a typed-stack load), so pass
+    // false: the success value must land on the stack as an f64 to match the
+    // `var x: f64` slot. x86/arm64 asm_ir ignore the flag (a raw 8-byte movq),
+    // so this is wasm-only and harmless there.
+    if (pt == "f64") { return ts.emit(ir.op_opt_payload_w(64, false)); }
     return ts.emit(ir.op_opt_payload());
 }
 
