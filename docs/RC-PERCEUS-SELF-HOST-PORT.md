@@ -2251,3 +2251,31 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
     and the rebind reclaim would free the CALLER's box (UAF). The `fresh_ret`
     classifier is exactly what rules that out; do not admit a call/method binding
     whose callee is absent from `fresh_ret`.
+- 2026-06-22: **Snapshot-LOCAL reclaim — SHIPPED (the ownership-analysis slice's
+  first half; the field-reclaim mechanism now FIRES on the real workload).**
+  Implemented the plan above: `fresh_struct_ret_fns_of` (a fn is fresh-returning iff
+  every `return` is a struct literal/update of a leaf-safe struct) threaded into
+  `lower_func` as a new param (7 call sites + the 3 backends' `emit_function_via_ir`
+  / `emit_module_funcs`; the eligibility probe passes `[]` since reclaim doesn't
+  affect `r.ok`); `snapshot_local_names_of` (fresh-ret-bound, threaded, moved-out
+  struct locals with rc-array fields) added to the `reclaim` list so each rebind
+  reclaims via the shipped `emit_field_reclaim_store`; and struct move-on-return
+  (`returned_moved_arr_slots` now also keeps a returned reclaimable struct slot) so
+  the moved-out final box is not double-freed. Sound because the binding is a
+  fresh-ret call — `st` owns a fresh box, never an alias of a borrowed receiver
+  (`return self` is excluded), so a rebind reclaim never frees the caller's box.
+  **Activation (the prior entries' inert mechanism now lives):** the forced-IR
+  per-module emit produces **1941** `__field_reclaim_<T>` sites in unit 5, 61 in
+  irlower, 10 in unit 4 — soundly (the aggressive probe's 1944 minus the
+  fresh-ret-gated ones). **Perf gotcha fixed:** the per-var predicate order matters
+  — `struct_has_reclaim_array_field` (an allocating field walk) and the O(body)
+  borrow check must be gated behind the cheap+selective annotated/reassigned/
+  fresh-ret-call tests, else the per-function pass OOMs the native driver's emit of
+  the big parser module (#3452 heap limit; isolated as analysis-cost, not
+  emit-cost). Validated x86: byte-identical modload fixpoint (mmc == gen2 == gen3),
+  stage-2 fixed point, whole-compiler per-module emit + link + RUN (UAF guard at
+  scale — the 1941 reclaim sites execute), all RC/struct IR suites, wasm struct +
+  deep-nest RC; all 12 per-module units still emit (no eligibility/OOM regression).
+  Remaining for full per-module convergence: the `s = lower_X(.., s)` consume-rebind
+  cases (gated on `infer_param_escapes`) — a function with any such rebind is still
+  excluded; this slice covers the method-threaded majority.
