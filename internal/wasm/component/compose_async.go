@@ -334,3 +334,82 @@ func BuildAsyncLiftedExportComponentStringParam(providerCore []byte, memExportNa
 	buf = PutExportSectionOneFunc(buf, exportName, 0)
 	return buf
 }
+
+// buildPendingProviderComponent builds the nested provider sub-component for the
+// pending-await spike: `dep: async func() -> u32` whose core first calls
+// `thread.yield` (so the caller's async lower returns a STARTED/pending status)
+// and then `task.return`s its value. providerCore imports ("", "tr") task-return
+// (i32)->() and ("", "y") thread.yield ()->(i32), and exports "dep" ()->().
+func buildPendingProviderComponent(providerCore []byte, resultValtype byte) []byte {
+	buf := PutComponentHeader(nil)
+	buf = PutCanonTaskReturnSingle(buf, resultValtype) // core func 0
+	buf = PutCanonThreadYield(buf)                     // core func 1
+	buf = PutCoreModuleSection(buf, providerCore)      // core module 0
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "tr", Sort: CoreSortFunc, Idx: 0},
+		{Name: "y", Sort: CoreSortFunc, Idx: 1},
+	}) // core instance 0
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 0, []string{""}, []uint32{0}) // core instance 1
+	buf = PutAliasSectionCoreExportFunc(buf, 1, "dep")                                         // core func 2
+	buf = PutTypeSectionOneFunc(buf, nil, nil, resultValtype)                                  // type 0
+	buf = PutCanonSectionLiftAsync(buf, 2, 0)                                                  // component func 0
+	buf = PutExportSectionOneFunc(buf, "dep", 0)
+	return buf
+}
+
+// BuildPendingAwaitComponent assembles a runnable WASI Preview-3 component that
+// awaits a *genuinely pending* async import — the deferring-provider /
+// waitable-set await loop (docs/WASI-PREVIEW3-ASYNC-PLAN.md). The nested
+// provider's `dep` `thread.yield`s before returning, so the consumer's
+// `canon lower async` of it returns a STARTED status; the consumer core then
+// drives the await state machine (`waitable-set.new` → `waitable.join` the
+// subtask → `waitable-set.wait` → `subtask.drop` → read the return area) and
+// `task.return`s the value, lifted async as `run`. The consumer's memory is
+// externalized into a shared core module (sidestepping the lower/wait
+// memory-option circularity for this spike; the production path reuses the gMem
+// trampoline). consumerCore must import ("","tr"/"dl"/"wsn"/"wj"/"wsw"/"sd"/"wsd")
+// and ("mem","m"), and export "run". Proven to return its value under
+// `wasmtime -W component-model-async,component-model-async-stackful`.
+func BuildPendingAwaitComponent(providerCore, consumerCore, memCore []byte, resultValtype byte) []byte {
+	buf := PutComponentHeader(nil)
+
+	// Nested provider → component 0, instance 0, alias dep → component func 0.
+	buf = PutComponentSection(buf, buildPendingProviderComponent(providerCore, resultValtype))
+	buf = PutInstanceSectionInstantiateComponent(buf, 0)
+	buf = PutAliasSectionInstanceExportFunc(buf, 0, "dep") // component func 0 (dep)
+
+	// Externalized consumer memory → core memory 0.
+	buf = PutCoreModuleSection(buf, memCore)                     // core module 0
+	buf = PutCoreInstanceSectionInstantiate(buf, 0)              // core instance 0
+	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 0, "m") // core memory 0
+
+	// Consumer canon glue (core funcs 0..6).
+	buf = PutCanonTaskReturnSingle(buf, resultValtype) // core func 0 (tr)
+	buf = PutCanonSectionLowerAsync(buf, 0, 0)         // core func 1 (dl: lower dep async over memory 0)
+	buf = PutCanonWaitableSetNew(buf)                  // core func 2 (wsn)
+	buf = PutCanonWaitableJoin(buf)                    // core func 3 (wj)
+	buf = PutCanonWaitableSetWait(buf, 0)              // core func 4 (wsw over memory 0)
+	buf = PutCanonSubtaskDrop(buf)                     // core func 5 (sd)
+	buf = PutCanonWaitableSetDrop(buf)                 // core func 6 (wsd)
+
+	// Consumer core module 1, instantiated with the canon glue (module "") and
+	// the shared memory (module "mem").
+	buf = PutCoreModuleSection(buf, consumerCore) // core module 1
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "tr", Sort: CoreSortFunc, Idx: 0},
+		{Name: "dl", Sort: CoreSortFunc, Idx: 1},
+		{Name: "wsn", Sort: CoreSortFunc, Idx: 2},
+		{Name: "wj", Sort: CoreSortFunc, Idx: 3},
+		{Name: "wsw", Sort: CoreSortFunc, Idx: 4},
+		{Name: "sd", Sort: CoreSortFunc, Idx: 5},
+		{Name: "wsd", Sort: CoreSortFunc, Idx: 6},
+	}) // core instance 1
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 1, []string{"", "mem"}, []uint32{1, 0}) // core instance 2 (consumer)
+
+	// Lift the consumer's run async under "run".
+	buf = PutAliasSectionCoreExportFunc(buf, 2, "run")        // core func 7
+	buf = PutTypeSectionOneFunc(buf, nil, nil, resultValtype) // type 0
+	buf = PutCanonSectionLiftAsync(buf, 7, 0)                 // component func 1
+	buf = PutExportSectionOneFunc(buf, "run", 1)
+	return buf
+}
