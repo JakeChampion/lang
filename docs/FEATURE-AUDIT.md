@@ -251,6 +251,50 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-22 — self-host: integer `to_string` was a `u8[]` packed-vs-slotted layout bug (not "unsigned")
+
+Followed the previous entry's `__int_to_string_u64`-from-unsigned lead and
+pinned the real root cause, which is **neither unsigned-specific nor a crash**:
+the plain i32 `int_to_string` miscompiles on the self-host path too, producing an
+**empty string** (so `s.len()` is 0, not a SIGSEGV). The interp can't oracle
+this — it special-cases both formatters as Go builtins (`builtinIntToString` /
+`builtinIntToStringU64`), so it never runs the Fern source; the bug only shows
+on a compiled backend.
+
+Differential probing through the self-host x86-64 loader isolated it to the
+copy tail both functions share:
+
+```fern
+var scratch_ptr: usize = scratch as usize;
+var buf: u8[] = __alloc_u8(n_bytes);
+__memcpy(buf as usize, scratch_ptr + end, n_bytes);   // packed-byte copy
+return string_from_bytes(buf);
+```
+
+A raw `__memcpy` of `n_bytes` contiguous bytes is correct only if `u8[]` is
+**packed** (one byte per element) — true on the native / wasm runtimes. But the
+self-hosted runtime (`asm_ir.fern` / `asm.fern`, `__fern_arr_box`) stores every
+array element in an **8-byte slot**: a `u8[]` value points at the length word,
+element `i` lives at `+8 + i*8`, and `string_from_bytes` is itself slot-aware
+(it packs each slot's low byte). So `scratch as usize` is the length word, the
+contiguous copy reads the wrong memory, and the result string is empty. Confirmed
+by dumping the live layout (`__load_i32` at `arr+0`=len, `+8`=elem0, `+16`=elem1).
+
+**Fix (stdlib, not the backend):** replace the `__memcpy` tail in
+`core/int.fern`'s `int_to_string` + `__int_to_string_u64` with a slot-aware
+element copy — `buf = buf.with(i, scratch[end + i])`. `.with` / indexing /
+`string_from_bytes` are all layout-aware, so the new shape is correct on *every*
+backend AND lowers on the self-host IR path (the raw-pointer form did not). With
+it, **`int_to_string` (i32) and `u32.to_string()` now self-host-compile to the
+correct decimal string** — verified across interp / native x86-64 / self-host
+x86-64 (full i32 incl. `INT_MIN`/`INT_MAX`, and `u32` incl. `4294967295`), and
+the wasm individual cases. Gated by `TestSelfHostIntToStringIR`.
+
+Remaining (now-narrower) gap: **64-bit magnitudes > 2³²** (large `i64`, any
+`u64 ≥ 2³²` like the `std/u64` high-bit cases) still format wrong on self-host —
+a *separate* i64/u64 div/mod-or-reinterpret issue, previously masked by the
+empty-string bug. `std/u32` no longer depends on it (its mask keeps the magnitude
+< 2³²); `std/u64` / `std/i64` large-value `to_string` are the next target.
 ### 2026-06-22 — std/result: pure-Fern std/test migration coverage (the combinator surface)
 
 The `std/result` analogue of the `std/option` combinator suite below: the
