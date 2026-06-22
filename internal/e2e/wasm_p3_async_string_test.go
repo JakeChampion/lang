@@ -141,3 +141,86 @@ function main(): i32 { return 0; }
 		t.Errorf("Fern async string import: got %q, want 5 (len \"hello\")", bytes.TrimSpace(out))
 	}
 }
+
+// TestWasmP3AsyncImportMixedScalarStringFromFern hardens the composer's mixed
+// realloc/non-realloc handling: one program awaits a scalar async import AND a
+// string async import together, the heterogeneous edge-handler shape —
+//
+//	@import("test:a/d","num") async function num(): i32;
+//	@import("test:b/d","msg") async function msg(): string;
+//	async function run(): i32 { return num() + msg().len(); }
+//
+// `num` lowers with plain `canon lower async`; `msg` lowers with
+// `canon lower async + realloc` (NeedsRealloc) — so the single shared
+// cabi_realloc alias shifts the real-lower / run core-func indices by one for
+// BOTH imports (the reallocOff path), which this exercises. The scalar provider
+// returns 40 and the string provider "hello" (len 5); running `run()` under
+// wasmtime's async features returns 45.
+func TestWasmP3AsyncImportMixedScalarStringFromFern(t *testing.T) {
+	skipIfPreview2Missing(t) // ensures wasmtime on PATH
+
+	src := `@import("test:a/d", "num") async function num(): i32;
+@import("test:b/d", "msg") async function msg(): string;
+async function run(): i32 { return num() + msg().len(); }
+function main(): i32 { return 0; }
+`
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prog, _, err := modload.Load(srcPath)
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+		Preview2WASI:    true,
+		AsyncExportName: "__async_run",
+		AsyncSourceFunc: "run",
+	})
+	if err != nil {
+		t.Fatalf("wasmbin.Build: %v", err)
+	}
+
+	i32 := []byte{encode.ValtypeI32}
+	comp := component.BuildAsyncImportsAwaitComponent(core, []component.AsyncImportSpec{
+		{
+			Iface: "test:a/d", WITName: "num",
+			Provider:           component.BuildAsyncLiftedExportComponent(p3AsyncCore40, "run", "num", component.CValtypeU32),
+			ProviderExportName: "num",
+			LowerParams:        i32, LowerResults: i32,
+			NeedsRealloc: false, // scalar result
+		},
+		{
+			Iface: "test:b/d", WITName: "msg",
+			Provider:           component.BuildAsyncLiftedExportComponentString(p3FetchStringCore, "mem", "fetch", "msg"),
+			ProviderExportName: "msg",
+			LowerParams:        i32, LowerResults: i32,
+			NeedsRealloc: true, // string result
+		},
+	}, "__async_run", "run", component.CValtypeU32)
+
+	p := filepath.Join(dir, "fern_async_mixed.wasm")
+	if err := os.WriteFile(p, comp, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("wasmtime", "run",
+		"-W", "component-model-async,component-model-async-stackful",
+		"--invoke", "run()", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run (async mixed scalar+string import): %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte("45")) {
+		t.Errorf("Fern async mixed import: got %q, want 45 (40 + len \"hello\")", bytes.TrimSpace(out))
+	}
+}
