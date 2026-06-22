@@ -512,6 +512,30 @@ func TestPutCanonSectionLiftAsyncWithMemory_Bytes(t *testing.T) {
 	}
 }
 
+// TestPutCanonWaitableBuiltins_Bytes pins the WASI Preview-3 waitable-set /
+// subtask canon-builtin encodings — byte-verified against wasm-tools 1.240's
+// `dump` (waitable-set.new 0x1f, waitable-set.wait 0x20 <cancellable> <mem>,
+// waitable-set.drop 0x22, waitable.join 0x23, subtask.drop 0x0d). These are the
+// encoder layer for the pending-await epic (docs/WASI-PREVIEW3-ASYNC-PLAN.md).
+func TestPutCanonWaitableBuiltins_Bytes(t *testing.T) {
+	cases := []struct {
+		name string
+		got  []byte
+		want []byte
+	}{
+		{"waitable-set.new", component.PutCanonWaitableSetNew(nil), []byte{0x08, 0x02, 0x01, 0x1f}},
+		{"waitable-set.wait", component.PutCanonWaitableSetWait(nil, 0), []byte{0x08, 0x04, 0x01, 0x20, 0x00, 0x00}},
+		{"waitable-set.drop", component.PutCanonWaitableSetDrop(nil), []byte{0x08, 0x02, 0x01, 0x22}},
+		{"waitable.join", component.PutCanonWaitableJoin(nil), []byte{0x08, 0x02, 0x01, 0x23}},
+		{"subtask.drop", component.PutCanonSubtaskDrop(nil), []byte{0x08, 0x02, 0x01, 0x0d}},
+	}
+	for _, c := range cases {
+		if !bytes.Equal(c.got, c.want) {
+			t.Errorf("%s = % x, want % x", c.name, c.got, c.want)
+		}
+	}
+}
+
 // TestWasiClocksMonotonicTimerInstanceTypeBody_Bytes pins the bytes
 // of the wasm-reactor timer instance type: an outer-aliased pollable
 // (here at top-level type index 5), own<pollable>, and the
