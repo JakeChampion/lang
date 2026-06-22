@@ -384,18 +384,18 @@ function peek_ident(toks: Token[], pos: i32): string {
     match (toks[pos]) { TokIdent(t) => { return t.name; }, _ => { return ""; } }
 }
 
-function parse_factor(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
-    var pos: i32 = cur[0];
+function parse_factor(toks: Token[], cur: Cell[i32]): Result[Expr, ParseError] {
+    var pos: i32 = cur.get();
     var k: i32 = peek_kind(toks, pos);
     if (k == 0) {
         var iv: i32 = peek_int(toks, pos);
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var n: Expr = Num { value: iv };
         return Ok(n);
     }
     if (k == 1) {
         var name: string = peek_ident(toks, pos);
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var ve: Expr = Var { name: name };
         return Ok(ve);
     }
@@ -406,33 +406,33 @@ function parse_factor(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
     if (p != 40) {
         return Err(ParseError { message: "expected number, ident, or paren", pos: pos });
     }
-    cur = cur.with(0, pos + 1);
+    cur.set(pos + 1);
     var inner_r: Result[Expr, ParseError] = parse_expr(toks, cur);
     match (inner_r) {
         Err(e) => { return Err(e); },
         Ok(inner_e) => {
-            var ep: i32 = cur[0];
+            var ep: i32 = cur.get();
             if (peek_kind(toks, ep) != 2 || peek_punct(toks, ep) != 41) {
                 return Err(ParseError { message: "missing close paren", pos: ep });
             }
-            cur = cur.with(0, ep + 1);
+            cur.set(ep + 1);
             return Ok(inner_e);
         },
     }
 }
 
-function parse_term(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
+function parse_term(toks: Token[], cur: Cell[i32]): Result[Expr, ParseError] {
     var lhs_r: Result[Expr, ParseError] = parse_factor(toks, cur);
     match (lhs_r) {
         Err(e) => { return Err(e); },
         Ok(lhs_e) => {
             var lhs: Expr = lhs_e;
             while (true) {
-                var pos: i32 = cur[0];
+                var pos: i32 = cur.get();
                 if (peek_kind(toks, pos) != 2) { return Ok(lhs); }
                 var op: i32 = peek_punct(toks, pos);
                 if (op != 42 && op != 47) { return Ok(lhs); }
-                cur = cur.with(0, pos + 1);
+                cur.set(pos + 1);
                 var rhs_r: Result[Expr, ParseError] = parse_factor(toks, cur);
                 match (rhs_r) {
                     Err(e) => { return Err(e); },
@@ -446,18 +446,18 @@ function parse_term(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
     }
 }
 
-function parse_expr(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
+function parse_expr(toks: Token[], cur: Cell[i32]): Result[Expr, ParseError] {
     var lhs_r: Result[Expr, ParseError] = parse_term(toks, cur);
     match (lhs_r) {
         Err(e) => { return Err(e); },
         Ok(lhs_e) => {
             var lhs: Expr = lhs_e;
             while (true) {
-                var pos: i32 = cur[0];
+                var pos: i32 = cur.get();
                 if (peek_kind(toks, pos) != 2) { return Ok(lhs); }
                 var op: i32 = peek_punct(toks, pos);
                 if (op != 43 && op != 45) { return Ok(lhs); }
-                cur = cur.with(0, pos + 1);
+                cur.set(pos + 1);
                 var rhs_r: Result[Expr, ParseError] = parse_term(toks, cur);
                 match (rhs_r) {
                     Err(e) => { return Err(e); },
@@ -513,7 +513,7 @@ function eval_expr(e: Expr, names: string[], values: i32[]): Result[i32, EvalErr
 // test bug, not a thing to surface).
 function parse_and_eval(src: string, names: string[], values: i32[]): Result[i32, EvalError] {
     var toks: Token[] = tokenize(src);
-    var cur: i32[] = [0];
+    var cur: Cell[i32] = cell_new(0);
     var pr: Result[Expr, ParseError] = parse_expr(toks, cur);
     match (pr) {
         Err(pe) => { return Err(EvalError { message: "parse failed: " + pe.message }); },
@@ -638,12 +638,12 @@ function peek_int(toks: Token[], pos: i32): i32 {
     match (toks[pos]) { TokInt(t) => { return t.value; }, _ => { return 0; } }
 }
 
-function parse_factor(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
-    var pos: i32 = cur[0];
+function parse_factor(toks: Token[], cur: Cell[i32]): Result[Expr, ParseError] {
+    var pos: i32 = cur.get();
     var k: i32 = peek_kind(toks, pos);
     if (k == 0) {
         var v: i32 = peek_int(toks, pos);
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var n: Expr = Num { value: v };
         return Ok(n);
     }
@@ -654,33 +654,33 @@ function parse_factor(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
     if (p != 40) {
         return Err(ParseError { message: "expected number or paren", pos: pos });
     }
-    cur = cur.with(0, pos + 1);
+    cur.set(pos + 1);
     var inner_r: Result[Expr, ParseError] = parse_expr(toks, cur);
     match (inner_r) {
         Err(e) => { return Err(e); },
         Ok(inner_e) => {
-            var ep: i32 = cur[0];
+            var ep: i32 = cur.get();
             if (peek_kind(toks, ep) != 1 || peek_punct(toks, ep) != 41) {
                 return Err(ParseError { message: "missing close paren", pos: ep });
             }
-            cur = cur.with(0, ep + 1);
+            cur.set(ep + 1);
             return Ok(inner_e);
         },
     }
 }
 
-function parse_term(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
+function parse_term(toks: Token[], cur: Cell[i32]): Result[Expr, ParseError] {
     var lhs_r: Result[Expr, ParseError] = parse_factor(toks, cur);
     match (lhs_r) {
         Err(e) => { return Err(e); },
         Ok(lhs_e) => {
             var lhs: Expr = lhs_e;
             while (true) {
-                var pos: i32 = cur[0];
+                var pos: i32 = cur.get();
                 if (peek_kind(toks, pos) != 1) { return Ok(lhs); }
                 var op: i32 = peek_punct(toks, pos);
                 if (op != 42 && op != 47) { return Ok(lhs); }
-                cur = cur.with(0, pos + 1);
+                cur.set(pos + 1);
                 var rhs_r: Result[Expr, ParseError] = parse_factor(toks, cur);
                 match (rhs_r) {
                     Err(e) => { return Err(e); },
@@ -694,18 +694,18 @@ function parse_term(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
     }
 }
 
-function parse_expr(toks: Token[], cur: i32[]): Result[Expr, ParseError] {
+function parse_expr(toks: Token[], cur: Cell[i32]): Result[Expr, ParseError] {
     var lhs_r: Result[Expr, ParseError] = parse_term(toks, cur);
     match (lhs_r) {
         Err(e) => { return Err(e); },
         Ok(lhs_e) => {
             var lhs: Expr = lhs_e;
             while (true) {
-                var pos: i32 = cur[0];
+                var pos: i32 = cur.get();
                 if (peek_kind(toks, pos) != 1) { return Ok(lhs); }
                 var op: i32 = peek_punct(toks, pos);
                 if (op != 43 && op != 45) { return Ok(lhs); }
-                cur = cur.with(0, pos + 1);
+                cur.set(pos + 1);
                 var rhs_r: Result[Expr, ParseError] = parse_term(toks, cur);
                 match (rhs_r) {
                     Err(e) => { return Err(e); },
@@ -735,7 +735,7 @@ function eval_expr(e: Expr): i32 {
 
 function interp(src: string): Result[i32, ParseError] {
     var toks: Token[] = tokenize(src);
-    var cur: i32[] = [0];
+    var cur: Cell[i32] = cell_new(0);
     var ast_r: Result[Expr, ParseError] = parse_expr(toks, cur);
     match (ast_r) {
         Err(e) => { return Err(e); },
@@ -922,74 +922,74 @@ function is_comp_op(op: i32): boolean {
            op == 1004 || op == 1005 || op == 1006;
 }
 
-function parse_factor(toks: Token[], cur: i32[]): Expr {
-    var pos: i32 = cur[0];
+function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
+    var pos: i32 = cur.get();
     var k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
         var name: string = tok_ident_name(toks[pos]);
-        cur = cur.with(0, pos + 1);
-        if (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 40) {
-            cur = cur.with(0, cur[0] + 1);
+        cur.set(pos + 1);
+        if (tok_kind(toks[cur.get()]) == 2 && tok_punct_ch(toks[cur.get()]) == 40) {
+            cur.set(cur.get() + 1);
             var args: Expr[] = [];
-            if (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 41) {
-                cur = cur.with(0, cur[0] + 1);
+            if (tok_kind(toks[cur.get()]) == 2 && tok_punct_ch(toks[cur.get()]) == 41) {
+                cur.set(cur.get() + 1);
                 return Call { name: name, args: args };
             }
             args = args.append(parse_expr(toks, cur));
-            while (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 44) {
-                cur = cur.with(0, cur[0] + 1);
+            while (tok_kind(toks[cur.get()]) == 2 && tok_punct_ch(toks[cur.get()]) == 44) {
+                cur.set(cur.get() + 1);
                 args = args.append(parse_expr(toks, cur));
             }
-            cur = cur.with(0, cur[0] + 1);
+            cur.set(cur.get() + 1);
             return Call { name: name, args: args };
         }
         return Var { name: name };
     }
-    cur = cur.with(0, pos + 1);
+    cur.set(pos + 1);
     var inner: Expr = parse_expr(toks, cur);
-    cur = cur.with(0, cur[0] + 1);
+    cur.set(cur.get() + 1);
     return inner;
 }
 
-function parse_term(toks: Token[], cur: i32[]): Expr {
+function parse_term(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
-function parse_arith(toks: Token[], cur: i32[]): Expr {
+function parse_arith(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
-function parse_expr(toks: Token[], cur: i32[]): Expr {
+function parse_expr(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_arith(toks, cur);
-    var pos: i32 = cur[0];
+    var pos: i32 = cur.get();
     if (tok_kind(toks[pos]) != 2) { return lhs; }
     var op: i32 = tok_punct_ch(toks[pos]);
     if (!is_comp_op(op)) { return lhs; }
-    cur = cur.with(0, pos + 1);
+    cur.set(pos + 1);
     var rhs: Expr = parse_arith(toks, cur);
     return BinOp { op: op, left: lhs, right: rhs };
 }
@@ -998,78 +998,78 @@ function expect_kw(toks: Token[], pos: i32, kw: string): boolean {
     return tok_kind(toks[pos]) == 1 && tok_ident_name(toks[pos]) == kw;
 }
 
-function parse_stmt(toks: Token[], cur: i32[]): Stmt {
+function parse_stmt(toks: Token[], cur: Cell[i32]): Stmt {
     var name: string = "";
     var value: Expr = Num { value: 0 };
     var cond: Expr = Num { value: 0 };
     var body: Stmt[] = [];
-    if (expect_kw(toks, cur[0], "var")) {
-        cur = cur.with(0, cur[0] + 1);
-        name = tok_ident_name(toks[cur[0]]);
-        cur = cur.with(0, cur[0] + 1);
-        cur = cur.with(0, cur[0] + 1);
+    if (expect_kw(toks, cur.get(), "var")) {
+        cur.set(cur.get() + 1);
+        name = tok_ident_name(toks[cur.get()]);
+        cur.set(cur.get() + 1);
+        cur.set(cur.get() + 1);
         value = parse_expr(toks, cur);
-        cur = cur.with(0, cur[0] + 1);
+        cur.set(cur.get() + 1);
         return VarDecl { name: name, value: value };
     }
-    if (expect_kw(toks, cur[0], "return")) {
-        cur = cur.with(0, cur[0] + 1);
+    if (expect_kw(toks, cur.get(), "return")) {
+        cur.set(cur.get() + 1);
         value = parse_expr(toks, cur);
-        cur = cur.with(0, cur[0] + 1);
+        cur.set(cur.get() + 1);
         return Return { value: value };
     }
-    if (expect_kw(toks, cur[0], "while")) {
-        cur = cur.with(0, cur[0] + 1);
-        cur = cur.with(0, cur[0] + 1);
+    if (expect_kw(toks, cur.get(), "while")) {
+        cur.set(cur.get() + 1);
+        cur.set(cur.get() + 1);
         cond = parse_expr(toks, cur);
-        cur = cur.with(0, cur[0] + 1);
-        cur = cur.with(0, cur[0] + 1);
+        cur.set(cur.get() + 1);
+        cur.set(cur.get() + 1);
         body = [];
-        while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
+        while (tok_kind(toks[cur.get()]) != 2 || tok_punct_ch(toks[cur.get()]) != 125) {
             body = body.append(parse_stmt(toks, cur));
         }
-        cur = cur.with(0, cur[0] + 1);
+        cur.set(cur.get() + 1);
         return WhileSt { cond: cond, body: body };
     }
-    if (expect_kw(toks, cur[0], "if")) {
-        cur = cur.with(0, cur[0] + 1);
-        cur = cur.with(0, cur[0] + 1);   // (
+    if (expect_kw(toks, cur.get(), "if")) {
+        cur.set(cur.get() + 1);
+        cur.set(cur.get() + 1);   // (
         cond = parse_expr(toks, cur);
-        cur = cur.with(0, cur[0] + 1);   // )
-        cur = cur.with(0, cur[0] + 1);   // {
+        cur.set(cur.get() + 1);   // )
+        cur.set(cur.get() + 1);   // {
         var thn: Stmt[] = [];
-        while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
+        while (tok_kind(toks[cur.get()]) != 2 || tok_punct_ch(toks[cur.get()]) != 125) {
             thn = thn.append(parse_stmt(toks, cur));
         }
-        cur = cur.with(0, cur[0] + 1);   // }
+        cur.set(cur.get() + 1);   // }
         // Optional else / else if.
         var els: Stmt[] = [];
-        if (expect_kw(toks, cur[0], "else")) {
-            cur = cur.with(0, cur[0] + 1);
-            if (expect_kw(toks, cur[0], "if")) {
+        if (expect_kw(toks, cur.get(), "else")) {
+            cur.set(cur.get() + 1);
+            if (expect_kw(toks, cur.get(), "if")) {
                 // else if — recursively parse the nested if as
                 // the sole stmt of the else body.
                 els = els.append(parse_stmt(toks, cur));
             } else {
-                cur = cur.with(0, cur[0] + 1);   // {
-                while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
+                cur.set(cur.get() + 1);   // {
+                while (tok_kind(toks[cur.get()]) != 2 || tok_punct_ch(toks[cur.get()]) != 125) {
                     els = els.append(parse_stmt(toks, cur));
                 }
-                cur = cur.with(0, cur[0] + 1);   // }
+                cur.set(cur.get() + 1);   // }
             }
         }
         return IfSt { cond: cond, thn: thn, els: els };
     }
-    if (tok_kind(toks[cur[0]]) == 1 && tok_kind(toks[cur[0] + 1]) == 2 && tok_punct_ch(toks[cur[0] + 1]) == 61) {
-        name = tok_ident_name(toks[cur[0]]);
-        cur = cur.with(0, cur[0] + 1);
-        cur = cur.with(0, cur[0] + 1);
+    if (tok_kind(toks[cur.get()]) == 1 && tok_kind(toks[cur.get() + 1]) == 2 && tok_punct_ch(toks[cur.get() + 1]) == 61) {
+        name = tok_ident_name(toks[cur.get()]);
+        cur.set(cur.get() + 1);
+        cur.set(cur.get() + 1);
         value = parse_expr(toks, cur);
-        cur = cur.with(0, cur[0] + 1);
+        cur.set(cur.get() + 1);
         return Assign { name: name, value: value };
     }
     value = parse_expr(toks, cur);
-    cur = cur.with(0, cur[0] + 1);
+    cur.set(cur.get() + 1);
     return ExprSt { value: value };
 }
 
@@ -1077,34 +1077,34 @@ struct Program { fns: FnDef[], main_stmts: Stmt[] }
 
 function parse_program(src: string): Program {
     var toks: Token[] = tokenize(src);
-    var cur: i32[] = [0];
+    var cur: Cell[i32] = cell_new(0);
     var fns: FnDef[] = [];
-    while (expect_kw(toks, cur[0], "fn")) {
-        cur = cur.with(0, cur[0] + 1);
-        var name: string = tok_ident_name(toks[cur[0]]);
-        cur = cur.with(0, cur[0] + 1);
-        cur = cur.with(0, cur[0] + 1);
+    while (expect_kw(toks, cur.get(), "fn")) {
+        cur.set(cur.get() + 1);
+        var name: string = tok_ident_name(toks[cur.get()]);
+        cur.set(cur.get() + 1);
+        cur.set(cur.get() + 1);
         var params: string[] = [];
-        if (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 41) {
-            params = params.append(tok_ident_name(toks[cur[0]]));
-            cur = cur.with(0, cur[0] + 1);
-            while (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 44) {
-                cur = cur.with(0, cur[0] + 1);
-                params = params.append(tok_ident_name(toks[cur[0]]));
-                cur = cur.with(0, cur[0] + 1);
+        if (tok_kind(toks[cur.get()]) != 2 || tok_punct_ch(toks[cur.get()]) != 41) {
+            params = params.append(tok_ident_name(toks[cur.get()]));
+            cur.set(cur.get() + 1);
+            while (tok_kind(toks[cur.get()]) == 2 && tok_punct_ch(toks[cur.get()]) == 44) {
+                cur.set(cur.get() + 1);
+                params = params.append(tok_ident_name(toks[cur.get()]));
+                cur.set(cur.get() + 1);
             }
         }
-        cur = cur.with(0, cur[0] + 1);
-        cur = cur.with(0, cur[0] + 1);
+        cur.set(cur.get() + 1);
+        cur.set(cur.get() + 1);
         var body: Stmt[] = [];
-        while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
+        while (tok_kind(toks[cur.get()]) != 2 || tok_punct_ch(toks[cur.get()]) != 125) {
             body = body.append(parse_stmt(toks, cur));
         }
-        cur = cur.with(0, cur[0] + 1);
+        cur.set(cur.get() + 1);
         fns = fns.append(FnDef { name: name, params: params, body: body });
     }
     var main_stmts: Stmt[] = [];
-    while (tok_kind(toks[cur[0]]) != 3) {
+    while (tok_kind(toks[cur.get()]) != 3) {
         main_stmts = main_stmts.append(parse_stmt(toks, cur));
     }
     return Program { fns: fns, main_stmts: main_stmts };
@@ -1440,75 +1440,75 @@ function is_comp_op(op: i32): boolean {
            op == 1004 || op == 1005 || op == 1006;
 }
 
-function parse_factor(toks: Token[], cur: i32[]): Expr {
-    var pos: i32 = cur[0];
+function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
+    var pos: i32 = cur.get();
     var k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
         var name: string = tok_ident_name(toks[pos]);
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         // Call vs Var disambiguation on '(' lookahead.
-        if (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 40) {
-            cur = cur.with(0, cur[0] + 1);   // skip '('
+        if (tok_kind(toks[cur.get()]) == 2 && tok_punct_ch(toks[cur.get()]) == 40) {
+            cur.set(cur.get() + 1);   // skip '('
             var args: Expr[] = [];
-            if (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 41) {
-                cur = cur.with(0, cur[0] + 1);
+            if (tok_kind(toks[cur.get()]) == 2 && tok_punct_ch(toks[cur.get()]) == 41) {
+                cur.set(cur.get() + 1);
                 return Call { name: name, args: args };
             }
             args = args.append(parse_expr(toks, cur));
-            while (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 44) {
-                cur = cur.with(0, cur[0] + 1);   // skip ','
+            while (tok_kind(toks[cur.get()]) == 2 && tok_punct_ch(toks[cur.get()]) == 44) {
+                cur.set(cur.get() + 1);   // skip ','
                 args = args.append(parse_expr(toks, cur));
             }
-            cur = cur.with(0, cur[0] + 1);   // skip ')'
+            cur.set(cur.get() + 1);   // skip ')'
             return Call { name: name, args: args };
         }
         return Var { name: name };
     }
-    cur = cur.with(0, pos + 1);   // skip '('
+    cur.set(pos + 1);   // skip '('
     var inner: Expr = parse_expr(toks, cur);
-    cur = cur.with(0, cur[0] + 1);   // skip ')'
+    cur.set(cur.get() + 1);   // skip ')'
     return inner;
 }
 
-function parse_term(toks: Token[], cur: i32[]): Expr {
+function parse_term(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
-function parse_arith(toks: Token[], cur: i32[]): Expr {
+function parse_arith(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
-function parse_expr(toks: Token[], cur: i32[]): Expr {
+function parse_expr(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_arith(toks, cur);
-    var pos: i32 = cur[0];
+    var pos: i32 = cur.get();
     if (tok_kind(toks[pos]) != 2) { return lhs; }
     var op: i32 = tok_punct_ch(toks[pos]);
     if (!is_comp_op(op)) { return lhs; }
-    cur = cur.with(0, pos + 1);
+    cur.set(pos + 1);
     var rhs: Expr = parse_arith(toks, cur);
     return BinOp { op: op, left: lhs, right: rhs };
 }
@@ -1517,67 +1517,67 @@ function expect_kw(toks: Token[], pos: i32, kw: string): boolean {
     return tok_kind(toks[pos]) == 1 && tok_ident_name(toks[pos]) == kw;
 }
 
-function parse_stmt(toks: Token[], cur: i32[]): Stmt {
+function parse_stmt(toks: Token[], cur: Cell[i32]): Stmt {
     var name: string = "";
     var value: Expr = Num { value: 0 };
-    if (expect_kw(toks, cur[0], "var")) {
-        cur = cur.with(0, cur[0] + 1);
-        name = tok_ident_name(toks[cur[0]]);
-        cur = cur.with(0, cur[0] + 1);
-        cur = cur.with(0, cur[0] + 1);   // skip '='
+    if (expect_kw(toks, cur.get(), "var")) {
+        cur.set(cur.get() + 1);
+        name = tok_ident_name(toks[cur.get()]);
+        cur.set(cur.get() + 1);
+        cur.set(cur.get() + 1);   // skip '='
         value = parse_expr(toks, cur);
-        cur = cur.with(0, cur[0] + 1);   // skip ';'
+        cur.set(cur.get() + 1);   // skip ';'
         return VarDecl { name: name, value: value };
     }
-    if (expect_kw(toks, cur[0], "return")) {
-        cur = cur.with(0, cur[0] + 1);
+    if (expect_kw(toks, cur.get(), "return")) {
+        cur.set(cur.get() + 1);
         value = parse_expr(toks, cur);
-        cur = cur.with(0, cur[0] + 1);   // skip ';'
+        cur.set(cur.get() + 1);   // skip ';'
         return Return { value: value };
     }
     // Hoist cond / body across the while / if arms — wasm
     // rejects sibling-scope duplicate locals.
     var cond: Expr = Num { value: 0 };
     var body: Stmt[] = [];
-    if (expect_kw(toks, cur[0], "while")) {
-        cur = cur.with(0, cur[0] + 1);
-        cur = cur.with(0, cur[0] + 1);   // skip '('
+    if (expect_kw(toks, cur.get(), "while")) {
+        cur.set(cur.get() + 1);
+        cur.set(cur.get() + 1);   // skip '('
         cond = parse_expr(toks, cur);
-        cur = cur.with(0, cur[0] + 1);   // skip ')'
-        cur = cur.with(0, cur[0] + 1);   // skip '{'
+        cur.set(cur.get() + 1);   // skip ')'
+        cur.set(cur.get() + 1);   // skip '{'
         body = [];
-        while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
+        while (tok_kind(toks[cur.get()]) != 2 || tok_punct_ch(toks[cur.get()]) != 125) {
             body = body.append(parse_stmt(toks, cur));
         }
-        cur = cur.with(0, cur[0] + 1);   // skip '}'
+        cur.set(cur.get() + 1);   // skip '}'
         return WhileSt { cond: cond, body: body };
     }
-    if (expect_kw(toks, cur[0], "if")) {
-        cur = cur.with(0, cur[0] + 1);
-        cur = cur.with(0, cur[0] + 1);   // skip '('
+    if (expect_kw(toks, cur.get(), "if")) {
+        cur.set(cur.get() + 1);
+        cur.set(cur.get() + 1);   // skip '('
         cond = parse_expr(toks, cur);
-        cur = cur.with(0, cur[0] + 1);   // skip ')'
-        cur = cur.with(0, cur[0] + 1);   // skip '{'
+        cur.set(cur.get() + 1);   // skip ')'
+        cur.set(cur.get() + 1);   // skip '{'
         body = [];
-        while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
+        while (tok_kind(toks[cur.get()]) != 2 || tok_punct_ch(toks[cur.get()]) != 125) {
             body = body.append(parse_stmt(toks, cur));
         }
-        cur = cur.with(0, cur[0] + 1);   // skip '}'
+        cur.set(cur.get() + 1);   // skip '}'
         return IfSt { cond: cond, body: body };
     }
     // Lookahead: ident '=' is assignment; ident '(' is an
     // expression-statement (call). Anything else here is
     // bare expression-as-statement (covers stray calls).
-    if (tok_kind(toks[cur[0]]) == 1 && tok_kind(toks[cur[0] + 1]) == 2 && tok_punct_ch(toks[cur[0] + 1]) == 61) {
-        name = tok_ident_name(toks[cur[0]]);
-        cur = cur.with(0, cur[0] + 1);
-        cur = cur.with(0, cur[0] + 1);   // skip '='
+    if (tok_kind(toks[cur.get()]) == 1 && tok_kind(toks[cur.get() + 1]) == 2 && tok_punct_ch(toks[cur.get() + 1]) == 61) {
+        name = tok_ident_name(toks[cur.get()]);
+        cur.set(cur.get() + 1);
+        cur.set(cur.get() + 1);   // skip '='
         value = parse_expr(toks, cur);
-        cur = cur.with(0, cur[0] + 1);   // skip ';'
+        cur.set(cur.get() + 1);   // skip ';'
         return Assign { name: name, value: value };
     }
     value = parse_expr(toks, cur);
-    cur = cur.with(0, cur[0] + 1);   // skip ';'
+    cur.set(cur.get() + 1);   // skip ';'
     return ExprSt { value: value };
 }
 
@@ -1585,34 +1585,34 @@ struct Program { fns: FnDef[], main_stmts: Stmt[] }
 
 function parse_program(src: string): Program {
     var toks: Token[] = tokenize(src);
-    var cur: i32[] = [0];
+    var cur: Cell[i32] = cell_new(0);
     var fns: FnDef[] = [];
-    while (expect_kw(toks, cur[0], "fn")) {
-        cur = cur.with(0, cur[0] + 1);
-        var name: string = tok_ident_name(toks[cur[0]]);
-        cur = cur.with(0, cur[0] + 1);
-        cur = cur.with(0, cur[0] + 1);   // skip '('
+    while (expect_kw(toks, cur.get(), "fn")) {
+        cur.set(cur.get() + 1);
+        var name: string = tok_ident_name(toks[cur.get()]);
+        cur.set(cur.get() + 1);
+        cur.set(cur.get() + 1);   // skip '('
         var params: string[] = [];
-        if (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 41) {
-            params = params.append(tok_ident_name(toks[cur[0]]));
-            cur = cur.with(0, cur[0] + 1);
-            while (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 44) {
-                cur = cur.with(0, cur[0] + 1);   // skip ','
-                params = params.append(tok_ident_name(toks[cur[0]]));
-                cur = cur.with(0, cur[0] + 1);
+        if (tok_kind(toks[cur.get()]) != 2 || tok_punct_ch(toks[cur.get()]) != 41) {
+            params = params.append(tok_ident_name(toks[cur.get()]));
+            cur.set(cur.get() + 1);
+            while (tok_kind(toks[cur.get()]) == 2 && tok_punct_ch(toks[cur.get()]) == 44) {
+                cur.set(cur.get() + 1);   // skip ','
+                params = params.append(tok_ident_name(toks[cur.get()]));
+                cur.set(cur.get() + 1);
             }
         }
-        cur = cur.with(0, cur[0] + 1);   // skip ')'
-        cur = cur.with(0, cur[0] + 1);   // skip '{'
+        cur.set(cur.get() + 1);   // skip ')'
+        cur.set(cur.get() + 1);   // skip '{'
         var body: Stmt[] = [];
-        while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
+        while (tok_kind(toks[cur.get()]) != 2 || tok_punct_ch(toks[cur.get()]) != 125) {
             body = body.append(parse_stmt(toks, cur));
         }
-        cur = cur.with(0, cur[0] + 1);   // skip '}'
+        cur.set(cur.get() + 1);   // skip '}'
         fns = fns.append(FnDef { name: name, params: params, body: body });
     }
     var main_stmts: Stmt[] = [];
-    while (tok_kind(toks[cur[0]]) != 3) {
+    while (tok_kind(toks[cur.get()]) != 3) {
         main_stmts = main_stmts.append(parse_stmt(toks, cur));
     }
     return Program { fns: fns, main_stmts: main_stmts };
@@ -1952,45 +1952,45 @@ function is_comp_op(op: i32): boolean {
            op == 1004 || op == 1005 || op == 1006;
 }
 
-function parse_factor(toks: Token[], cur: i32[]): Expr {
-    var pos: i32 = cur[0];
+function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
+    var pos: i32 = cur.get();
     var k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         return Var { name: tok_ident_name(toks[pos]) };
     }
-    cur = cur.with(0, pos + 1);
+    cur.set(pos + 1);
     var inner: Expr = parse_expr(toks, cur);
-    cur = cur.with(0, cur[0] + 1);
+    cur.set(cur.get() + 1);
     return inner;
 }
 
-function parse_term(toks: Token[], cur: i32[]): Expr {
+function parse_term(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
-function parse_arith(toks: Token[], cur: i32[]): Expr {
+function parse_arith(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -1999,13 +1999,13 @@ function parse_arith(toks: Token[], cur: i32[]): Expr {
 
 // Single comparison layer atop arith. NON-chaining: each comp
 // arm takes one arith on each side.
-function parse_expr(toks: Token[], cur: i32[]): Expr {
+function parse_expr(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_arith(toks, cur);
-    var pos: i32 = cur[0];
+    var pos: i32 = cur.get();
     if (tok_kind(toks[pos]) != 2) { return lhs; }
     var op: i32 = tok_punct_ch(toks[pos]);
     if (!is_comp_op(op)) { return lhs; }
-    cur = cur.with(0, pos + 1);
+    cur.set(pos + 1);
     var rhs: Expr = parse_arith(toks, cur);
     return BinOp { op: op, left: lhs, right: rhs };
 }
@@ -2014,51 +2014,51 @@ function expect_kw(toks: Token[], pos: i32, kw: string): boolean {
     return tok_kind(toks[pos]) == 1 && tok_ident_name(toks[pos]) == kw;
 }
 
-function parse_stmt(toks: Token[], cur: i32[]): Stmt {
+function parse_stmt(toks: Token[], cur: Cell[i32]): Stmt {
     var name: string = "";
     var value: Expr = Num { value: 0 };
-    if (expect_kw(toks, cur[0], "var")) {
-        cur = cur.with(0, cur[0] + 1);
-        name = tok_ident_name(toks[cur[0]]);
-        cur = cur.with(0, cur[0] + 1);
-        cur = cur.with(0, cur[0] + 1);   // skip '='
+    if (expect_kw(toks, cur.get(), "var")) {
+        cur.set(cur.get() + 1);
+        name = tok_ident_name(toks[cur.get()]);
+        cur.set(cur.get() + 1);
+        cur.set(cur.get() + 1);   // skip '='
         value = parse_expr(toks, cur);
-        cur = cur.with(0, cur[0] + 1);   // skip ';'
+        cur.set(cur.get() + 1);   // skip ';'
         return VarDecl { name: name, value: value };
     }
-    if (expect_kw(toks, cur[0], "return")) {
-        cur = cur.with(0, cur[0] + 1);
+    if (expect_kw(toks, cur.get(), "return")) {
+        cur.set(cur.get() + 1);
         value = parse_expr(toks, cur);
-        cur = cur.with(0, cur[0] + 1);   // skip ';'
+        cur.set(cur.get() + 1);   // skip ';'
         return Return { value: value };
     }
-    if (expect_kw(toks, cur[0], "while")) {
-        cur = cur.with(0, cur[0] + 1);
-        cur = cur.with(0, cur[0] + 1);   // skip '('
+    if (expect_kw(toks, cur.get(), "while")) {
+        cur.set(cur.get() + 1);
+        cur.set(cur.get() + 1);   // skip '('
         var cond: Expr = parse_expr(toks, cur);
-        cur = cur.with(0, cur[0] + 1);   // skip ')'
-        cur = cur.with(0, cur[0] + 1);   // skip '{'
+        cur.set(cur.get() + 1);   // skip ')'
+        cur.set(cur.get() + 1);   // skip '{'
         var body: Stmt[] = [];
-        while (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 125) {
+        while (tok_kind(toks[cur.get()]) != 2 || tok_punct_ch(toks[cur.get()]) != 125) {
             body = body.append(parse_stmt(toks, cur));
         }
-        cur = cur.with(0, cur[0] + 1);   // skip '}'
+        cur.set(cur.get() + 1);   // skip '}'
         return WhileSt { cond: cond, body: body };
     }
     // Assignment: ident '=' expr ';'
-    name = tok_ident_name(toks[cur[0]]);
-    cur = cur.with(0, cur[0] + 1);
-    cur = cur.with(0, cur[0] + 1);   // skip '='
+    name = tok_ident_name(toks[cur.get()]);
+    cur.set(cur.get() + 1);
+    cur.set(cur.get() + 1);   // skip '='
     value = parse_expr(toks, cur);
-    cur = cur.with(0, cur[0] + 1);   // skip ';'
+    cur.set(cur.get() + 1);   // skip ';'
     return Assign { name: name, value: value };
 }
 
 function parse_program(src: string): Stmt[] {
     var toks: Token[] = tokenize(src);
-    var cur: i32[] = [0];
+    var cur: Cell[i32] = cell_new(0);
     var stmts: Stmt[] = [];
-    while (tok_kind(toks[cur[0]]) != 3) {
+    while (tok_kind(toks[cur.get()]) != 3) {
         stmts = stmts.append(parse_stmt(toks, cur));
     }
     return stmts;
@@ -2328,48 +2328,48 @@ function tok_punct_ch(t: Token): i32 {
     match (t) { TokPunct(p) => { return p.ch; }, _ => { return 0; } }
 }
 
-function parse_arith(toks: Token[], cur: i32[]): Expr {
+function parse_arith(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
-function parse_term(toks: Token[], cur: i32[]): Expr {
+function parse_term(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
-function parse_factor(toks: Token[], cur: i32[]): Expr {
-    var pos: i32 = cur[0];
+function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
+    var pos: i32 = cur.get();
     var k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         return Var { name: tok_ident_name(toks[pos]) };
     }
-    cur = cur.with(0, pos + 1);
+    cur.set(pos + 1);
     var inner: Expr = parse_arith(toks, cur);
-    cur = cur.with(0, cur[0] + 1);
+    cur.set(cur.get() + 1);
     return inner;
 }
 
@@ -2377,42 +2377,42 @@ function expect_kw(toks: Token[], pos: i32, kw: string): boolean {
     return tok_kind(toks[pos]) == 1 && tok_ident_name(toks[pos]) == kw;
 }
 
-function parse_stmt(toks: Token[], cur: i32[]): Stmt {
+function parse_stmt(toks: Token[], cur: Cell[i32]): Stmt {
     // Hoist name + value to function scope. The wasm backend
     // names locals by lang identifier; three sibling-scope
     // var-name / var-value declarations would collide. Same
     // workaround the prelude uses.
     var name: string = "";
     var value: Expr = Num { value: 0 };
-    if (expect_kw(toks, cur[0], "var")) {
-        cur = cur.with(0, cur[0] + 1);
-        name = tok_ident_name(toks[cur[0]]);
-        cur = cur.with(0, cur[0] + 1);
-        cur = cur.with(0, cur[0] + 1);   // skip '='
+    if (expect_kw(toks, cur.get(), "var")) {
+        cur.set(cur.get() + 1);
+        name = tok_ident_name(toks[cur.get()]);
+        cur.set(cur.get() + 1);
+        cur.set(cur.get() + 1);   // skip '='
         value = parse_arith(toks, cur);
-        cur = cur.with(0, cur[0] + 1);   // skip ';'
+        cur.set(cur.get() + 1);   // skip ';'
         return VarDecl { name: name, value: value };
     }
-    if (expect_kw(toks, cur[0], "return")) {
-        cur = cur.with(0, cur[0] + 1);
+    if (expect_kw(toks, cur.get(), "return")) {
+        cur.set(cur.get() + 1);
         value = parse_arith(toks, cur);
-        cur = cur.with(0, cur[0] + 1);   // skip ';'
+        cur.set(cur.get() + 1);   // skip ';'
         return Return { value: value };
     }
     // Assignment: ident '=' expr ';'
-    name = tok_ident_name(toks[cur[0]]);
-    cur = cur.with(0, cur[0] + 1);
-    cur = cur.with(0, cur[0] + 1);   // skip '='
+    name = tok_ident_name(toks[cur.get()]);
+    cur.set(cur.get() + 1);
+    cur.set(cur.get() + 1);   // skip '='
     value = parse_arith(toks, cur);
-    cur = cur.with(0, cur[0] + 1);   // skip ';'
+    cur.set(cur.get() + 1);   // skip ';'
     return Assign { name: name, value: value };
 }
 
 function parse_program(src: string): Stmt[] {
     var toks: Token[] = tokenize(src);
-    var cur: i32[] = [0];
+    var cur: Cell[i32] = cell_new(0);
     var stmts: Stmt[] = [];
-    while (tok_kind(toks[cur[0]]) != 3) {
+    while (tok_kind(toks[cur.get()]) != 3) {
         stmts = stmts.append(parse_stmt(toks, cur));
     }
     return stmts;
@@ -3973,79 +3973,79 @@ function eval(e: Expr, names: string[], values: i32[], fns: FnDef[]): i32 {
     }
 }
 
-function parse_arith(toks: Token[], cur: i32[]): Expr {
+function parse_arith(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
-function parse_term(toks: Token[], cur: i32[]): Expr {
+function parse_term(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
-function parse_expr(toks: Token[], cur: i32[]): Expr {
-    var pos: i32 = cur[0];
+function parse_expr(toks: Token[], cur: Cell[i32]): Expr {
+    var pos: i32 = cur.get();
     if (expect_kw(toks, pos, "if")) {
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var c: Expr = parse_expr(toks, cur);
-        cur = cur.with(0, cur[0] + 1);   // skip "then"
+        cur.set(cur.get() + 1);   // skip "then"
         var thn: Expr = parse_expr(toks, cur);
-        cur = cur.with(0, cur[0] + 1);   // skip "else"
+        cur.set(cur.get() + 1);   // skip "else"
         var els: Expr = parse_expr(toks, cur);
         return If { cond: c, thn: thn, els: els };
     }
     return parse_arith(toks, cur);
 }
 
-function parse_factor(toks: Token[], cur: i32[]): Expr {
-    var pos: i32 = cur[0];
+function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
+    var pos: i32 = cur.get();
     var k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
         var name: string = tok_ident_name(toks[pos]);
-        cur = cur.with(0, pos + 1);
-        if (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 40) {
-            cur = cur.with(0, cur[0] + 1);   // skip '('
+        cur.set(pos + 1);
+        if (tok_kind(toks[cur.get()]) == 2 && tok_punct_ch(toks[cur.get()]) == 40) {
+            cur.set(cur.get() + 1);   // skip '('
             var args: Expr[] = [];
             // Empty arg list — immediate ')'.
-            if (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 41) {
-                cur = cur.with(0, cur[0] + 1);
+            if (tok_kind(toks[cur.get()]) == 2 && tok_punct_ch(toks[cur.get()]) == 41) {
+                cur.set(cur.get() + 1);
                 return Call { name: name, args: args };
             }
             args = args.append(parse_expr(toks, cur));
-            while (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 44) {
-                cur = cur.with(0, cur[0] + 1);   // skip ','
+            while (tok_kind(toks[cur.get()]) == 2 && tok_punct_ch(toks[cur.get()]) == 44) {
+                cur.set(cur.get() + 1);   // skip ','
                 args = args.append(parse_expr(toks, cur));
             }
-            cur = cur.with(0, cur[0] + 1);   // skip ')'
+            cur.set(cur.get() + 1);   // skip ')'
             return Call { name: name, args: args };
         }
         return Var { name: name };
     }
-    cur = cur.with(0, pos + 1);   // skip '('
+    cur.set(pos + 1);   // skip '('
     var inner: Expr = parse_expr(toks, cur);
-    cur = cur.with(0, cur[0] + 1);   // skip ')'
+    cur.set(cur.get() + 1);   // skip ')'
     return inner;
 }
 
@@ -4053,27 +4053,27 @@ struct Program { fns: FnDef[], main_expr: Expr }
 
 function parse_program(src: string): Program {
     var toks: Token[] = tokenize(src);
-    var cur: i32[] = [0];
+    var cur: Cell[i32] = cell_new(0);
     var fns: FnDef[] = [];
-    while (expect_kw(toks, cur[0], "fn")) {
-        cur = cur.with(0, cur[0] + 1);
-        var name: string = tok_ident_name(toks[cur[0]]);
-        cur = cur.with(0, cur[0] + 1);
-        cur = cur.with(0, cur[0] + 1);   // skip '('
+    while (expect_kw(toks, cur.get(), "fn")) {
+        cur.set(cur.get() + 1);
+        var name: string = tok_ident_name(toks[cur.get()]);
+        cur.set(cur.get() + 1);
+        cur.set(cur.get() + 1);   // skip '('
         var params: string[] = [];
-        if (tok_kind(toks[cur[0]]) != 2 || tok_punct_ch(toks[cur[0]]) != 41) {
-            params = params.append(tok_ident_name(toks[cur[0]]));
-            cur = cur.with(0, cur[0] + 1);
-            while (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 44) {
-                cur = cur.with(0, cur[0] + 1);   // skip ','
-                params = params.append(tok_ident_name(toks[cur[0]]));
-                cur = cur.with(0, cur[0] + 1);
+        if (tok_kind(toks[cur.get()]) != 2 || tok_punct_ch(toks[cur.get()]) != 41) {
+            params = params.append(tok_ident_name(toks[cur.get()]));
+            cur.set(cur.get() + 1);
+            while (tok_kind(toks[cur.get()]) == 2 && tok_punct_ch(toks[cur.get()]) == 44) {
+                cur.set(cur.get() + 1);   // skip ','
+                params = params.append(tok_ident_name(toks[cur.get()]));
+                cur.set(cur.get() + 1);
             }
         }
-        cur = cur.with(0, cur[0] + 1);   // skip ')'
-        cur = cur.with(0, cur[0] + 1);   // skip '='
+        cur.set(cur.get() + 1);   // skip ')'
+        cur.set(cur.get() + 1);   // skip '='
         var body: Expr = parse_expr(toks, cur);
-        cur = cur.with(0, cur[0] + 1);   // skip ';'
+        cur.set(cur.get() + 1);   // skip ';'
         fns = fns.append(FnDef { name: name, params: params, body: body });
     }
     var main_expr: Expr = parse_expr(toks, cur);
@@ -4277,70 +4277,70 @@ function eval(e: Expr, names: string[], values: i32[], fn_names: string[], fn_pa
     }
 }
 
-function parse_arith(toks: Token[], cur: i32[]): Expr {
+function parse_arith(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
-function parse_term(toks: Token[], cur: i32[]): Expr {
+function parse_term(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
-function parse_expr(toks: Token[], cur: i32[]): Expr {
-    var pos: i32 = cur[0];
+function parse_expr(toks: Token[], cur: Cell[i32]): Expr {
+    var pos: i32 = cur.get();
     if (expect_kw(toks, pos, "if")) {
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var c: Expr = parse_expr(toks, cur);
-        cur = cur.with(0, cur[0] + 1);   // skip "then"
+        cur.set(cur.get() + 1);   // skip "then"
         var thn: Expr = parse_expr(toks, cur);
-        cur = cur.with(0, cur[0] + 1);   // skip "else"
+        cur.set(cur.get() + 1);   // skip "else"
         var els: Expr = parse_expr(toks, cur);
         return If { cond: c, thn: thn, els: els };
     }
     return parse_arith(toks, cur);
 }
 
-function parse_factor(toks: Token[], cur: i32[]): Expr {
-    var pos: i32 = cur[0];
+function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
+    var pos: i32 = cur.get();
     var k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
         var name: string = tok_ident_name(toks[pos]);
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         // Call if next is '(' — single-token lookahead.
-        if (tok_kind(toks[cur[0]]) == 2 && tok_punct_ch(toks[cur[0]]) == 40) {
-            cur = cur.with(0, cur[0] + 1);
+        if (tok_kind(toks[cur.get()]) == 2 && tok_punct_ch(toks[cur.get()]) == 40) {
+            cur.set(cur.get() + 1);
             var arg: Expr = parse_expr(toks, cur);
-            cur = cur.with(0, cur[0] + 1);   // skip ')'
+            cur.set(cur.get() + 1);   // skip ')'
             return Call { name: name, arg: arg };
         }
         return Var { name: name };
     }
-    cur = cur.with(0, pos + 1);   // skip '('
+    cur.set(pos + 1);   // skip '('
     var inner: Expr = parse_expr(toks, cur);
-    cur = cur.with(0, cur[0] + 1);   // skip ')'
+    cur.set(cur.get() + 1);   // skip ')'
     return inner;
 }
 
@@ -4353,21 +4353,21 @@ struct Program {
 
 function parse_program(src: string): Program {
     var toks: Token[] = tokenize(src);
-    var cur: i32[] = [0];
+    var cur: Cell[i32] = cell_new(0);
     var fn_names: string[] = [];
     var fn_params: string[] = [];
     var fn_bodies: Expr[] = [];
-    while (expect_kw(toks, cur[0], "fn")) {
-        cur = cur.with(0, cur[0] + 1);
-        var name: string = tok_ident_name(toks[cur[0]]);
-        cur = cur.with(0, cur[0] + 1);
-        cur = cur.with(0, cur[0] + 1);   // skip '('
-        var param: string = tok_ident_name(toks[cur[0]]);
-        cur = cur.with(0, cur[0] + 1);
-        cur = cur.with(0, cur[0] + 1);   // skip ')'
-        cur = cur.with(0, cur[0] + 1);   // skip '='
+    while (expect_kw(toks, cur.get(), "fn")) {
+        cur.set(cur.get() + 1);
+        var name: string = tok_ident_name(toks[cur.get()]);
+        cur.set(cur.get() + 1);
+        cur.set(cur.get() + 1);   // skip '('
+        var param: string = tok_ident_name(toks[cur.get()]);
+        cur.set(cur.get() + 1);
+        cur.set(cur.get() + 1);   // skip ')'
+        cur.set(cur.get() + 1);   // skip '='
         var body: Expr = parse_expr(toks, cur);
-        cur = cur.with(0, cur[0] + 1);   // skip ';'
+        cur.set(cur.get() + 1);   // skip ';'
         fn_names = fn_names.append(name);
         fn_params = fn_params.append(param);
         fn_bodies = fn_bodies.append(body);
@@ -4547,78 +4547,78 @@ function expect_kw(toks: Token[], pos: i32, kw: string): boolean {
     return tok_kind(toks[pos]) == 1 && tok_ident_name(toks[pos]) == kw;
 }
 
-function parse_expr(toks: Token[], cur: i32[]): Expr {
-    var pos: i32 = cur[0];
+function parse_expr(toks: Token[], cur: Cell[i32]): Expr {
+    var pos: i32 = cur.get();
     if (expect_kw(toks, pos, "if")) {
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var c: Expr = parse_expr(toks, cur);
-        cur = cur.with(0, cur[0] + 1);
+        cur.set(cur.get() + 1);
         var t: Expr = parse_expr(toks, cur);
-        cur = cur.with(0, cur[0] + 1);
+        cur.set(cur.get() + 1);
         var el: Expr = parse_expr(toks, cur);
         return If { cond: c, thn: t, els: el };
     }
     if (expect_kw(toks, pos, "let")) {
-        cur = cur.with(0, pos + 1);
-        var name: string = tok_ident_name(toks[cur[0]]);
-        cur = cur.with(0, cur[0] + 1);
-        cur = cur.with(0, cur[0] + 1);
+        cur.set(pos + 1);
+        var name: string = tok_ident_name(toks[cur.get()]);
+        cur.set(cur.get() + 1);
+        cur.set(cur.get() + 1);
         var val: Expr = parse_expr(toks, cur);
-        cur = cur.with(0, cur[0] + 1);
+        cur.set(cur.get() + 1);
         var body: Expr = parse_expr(toks, cur);
         return Let { name: name, value: val, body: body };
     }
     return parse_arith(toks, cur);
 }
 
-function parse_arith(toks: Token[], cur: i32[]): Expr {
+function parse_arith(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
-function parse_term(toks: Token[], cur: i32[]): Expr {
+function parse_term(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
-function parse_factor(toks: Token[], cur: i32[]): Expr {
-    var pos: i32 = cur[0];
+function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
+    var pos: i32 = cur.get();
     var k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         return Var { name: tok_ident_name(toks[pos]) };
     }
-    cur = cur.with(0, pos + 1);
+    cur.set(pos + 1);
     var inner: Expr = parse_expr(toks, cur);
-    cur = cur.with(0, cur[0] + 1);
+    cur.set(cur.get() + 1);
     return inner;
 }
 
 function interp(src: string): i32 {
     var toks: Token[] = tokenize(src);
-    var cur: i32[] = [0];
+    var cur: Cell[i32] = cell_new(0);
     var ast: Expr = parse_expr(toks, cur);
     var empty_n: string[] = [];
     var empty_v: i32[] = [];
@@ -4739,28 +4739,28 @@ function eval(e: Expr): i32 {
     }
 }
 
-function parse_factor(toks: Token[], cur: i32[]): Expr {
-    var pos: i32 = cur[0];
+function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
+    var pos: i32 = cur.get();
     var k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
         var v: i32 = tok_int_value(toks[pos]);
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         return Num { value: v };
     }
-    cur = cur.with(0, pos + 1);
+    cur.set(pos + 1);
     var inner: Expr = parse_relation(toks, cur);
-    cur = cur.with(0, cur[0] + 1);
+    cur.set(cur.get() + 1);
     return inner;
 }
 
-function parse_term(toks: Token[], cur: i32[]): Expr {
+function parse_term(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 1) { return lhs; }
         var ch: i32 = tok_punct_ch(toks[pos]);
         if (ch != 42 && ch != 47) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         var op_s: string = "*";
         if (ch == 47) { op_s = "/"; }
@@ -4769,14 +4769,14 @@ function parse_term(toks: Token[], cur: i32[]): Expr {
     return lhs;
 }
 
-function parse_expr(toks: Token[], cur: i32[]): Expr {
+function parse_expr(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 1) { return lhs; }
         var ch: i32 = tok_punct_ch(toks[pos]);
         if (ch != 43 && ch != 45) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         var op_s: string = "+";
         if (ch == 45) { op_s = "-"; }
@@ -4785,16 +4785,16 @@ function parse_expr(toks: Token[], cur: i32[]): Expr {
     return lhs;
 }
 
-function parse_relation(toks: Token[], cur: i32[]): Expr {
+function parse_relation(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_expr(toks, cur);
-    var pos: i32 = cur[0];
+    var pos: i32 = cur.get();
     var k: i32 = tok_kind(toks[pos]);
     var rhs: Expr = Num { value: 0 };
     var op_s: string = "";
     if (k == 1) {
         var ch: i32 = tok_punct_ch(toks[pos]);
         if (ch == 60 || ch == 62) {
-            cur = cur.with(0, pos + 1);
+            cur.set(pos + 1);
             rhs = parse_expr(toks, cur);
             op_s = "<";
             if (ch == 62) { op_s = ">"; }
@@ -4804,7 +4804,7 @@ function parse_relation(toks: Token[], cur: i32[]): Expr {
     }
     if (k == 2) {
         op_s = tok_dpunct_text(toks[pos]);
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         rhs = parse_expr(toks, cur);
         return BinOp { op: op_s, left: lhs, right: rhs };
     }
@@ -4813,7 +4813,7 @@ function parse_relation(toks: Token[], cur: i32[]): Expr {
 
 function interp(src: string): i32 {
     var toks: Token[] = tokenize(src);
-    var cur: i32[] = [0];
+    var cur: Cell[i32] = cell_new(0);
     var ast: Expr = parse_relation(toks, cur);
     return eval(ast);
 }
@@ -4923,42 +4923,42 @@ function eval(e: Expr): i32 {
     }
 }
 
-function parse_factor(toks: Token[], cur: i32[]): Expr {
-    var pos: i32 = cur[0];
+function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
+    var pos: i32 = cur.get();
     var k: i32 = peek_kind(toks, pos);
     if (k == 0) {
         var v: i32 = peek_int(toks, pos);
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         return Num { value: v };
     }
-    cur = cur.with(0, pos + 1);
+    cur.set(pos + 1);
     var inner: Expr = parse_expr(toks, cur);
-    cur = cur.with(0, cur[0] + 1);
+    cur.set(cur.get() + 1);
     return inner;
 }
 
-function parse_term(toks: Token[], cur: i32[]): Expr {
+function parse_term(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (peek_kind(toks, pos) != 1) { return lhs; }
         var op: i32 = peek_punct(toks, pos);
         if (op != 42 && op != 47) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
-function parse_expr(toks: Token[], cur: i32[]): Expr {
+function parse_expr(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (peek_kind(toks, pos) != 1) { return lhs; }
         var op: i32 = peek_punct(toks, pos);
         if (op != 43 && op != 45) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -4967,7 +4967,7 @@ function parse_expr(toks: Token[], cur: i32[]): Expr {
 
 function interp(src: string): i32 {
     var toks: Token[] = tokenize(src);
-    var cur: i32[] = [0];
+    var cur: Cell[i32] = cell_new(0);
     var ast: Expr = parse_expr(toks, cur);
     return eval(ast);
 }
@@ -5061,44 +5061,44 @@ function eval(e: Expr): i32 {
     }
 }
 
-function parse_factor(toks: Token[], cur: i32[]): Expr {
-    var pos: i32 = cur[0];
+function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
+    var pos: i32 = cur.get();
     var k: i32 = peek(toks, pos);
     if (k == 0) {
         var v: i32 = peek_int(toks, pos);
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         return Num { value: v };
     }
-    cur = cur.with(0, pos + 1);
+    cur.set(pos + 1);
     var inner: Expr = parse_expr(toks, cur);
-    cur = cur.with(0, cur[0] + 1);
+    cur.set(cur.get() + 1);
     return inner;
 }
 
-function parse_term(toks: Token[], cur: i32[]): Expr {
+function parse_term(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         var k: i32 = peek(toks, pos);
         if (k != 1) { return lhs; }
         var op: i32 = peek_punct(toks, pos);
         if (op != 42 && op != 47) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
-function parse_expr(toks: Token[], cur: i32[]): Expr {
+function parse_expr(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         var k: i32 = peek(toks, pos);
         if (k != 1) { return lhs; }
         var op: i32 = peek_punct(toks, pos);
         if (op != 43 && op != 45) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
@@ -5114,7 +5114,7 @@ function main(): i32 {
     t1 = t1.append(TokPunct { ch: 42 });
     t1 = t1.append(TokInt { value: 3 });
     t1 = t1.append(TokEof { _pad: 0 });
-    var c1: i32[] = [0];
+    var c1: Cell[i32] = cell_new(0);
     if (eval(parse_expr(t1, c1)) != 7) { return 1; }
 
     // (1 + 2) * 3 → 9 (parens override)
@@ -5127,7 +5127,7 @@ function main(): i32 {
     t2 = t2.append(TokPunct { ch: 42 });
     t2 = t2.append(TokInt { value: 3 });
     t2 = t2.append(TokEof { _pad: 0 });
-    var c2: i32[] = [0];
+    var c2: Cell[i32] = cell_new(0);
     if (eval(parse_expr(t2, c2)) != 9) { return 2; }
 
     // 10 - 4 - 2 → 4 (left-associativity)
@@ -5138,7 +5138,7 @@ function main(): i32 {
     t3 = t3.append(TokPunct { ch: 45 });
     t3 = t3.append(TokInt { value: 2 });
     t3 = t3.append(TokEof { _pad: 0 });
-    var c3: i32[] = [0];
+    var c3: Cell[i32] = cell_new(0);
     if (eval(parse_expr(t3, c3)) != 4) { return 3; }
     return 0;
 }`
