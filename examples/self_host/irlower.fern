@@ -10870,116 +10870,34 @@ function emit_field_reclaim_store(se: LowerState, slot: i32, sty: string, snap_s
 // operand stack unchanged. Array params (slots < n_params) are BORROWED — the
 // caller retains ownership, so the callee never decs them (the n_params borrow
 // boundary). Used at each return.
-// emit_struct_field_drops releases the scalar-array (i32[] / boolean[]) FIELDS of
-// a reclaimable struct before its box is freed — Perceus deep-drop, one level.
-// The leaf-safe rule requires such a field be a fresh array LITERAL at
-// construction (is_scalar_arr_field_access bails the aliasing forms), so the
-// struct is the SOLE owner of that array; freeing it when the (sole-owner,
-// non-escaping) struct is reclaimed cannot double-free. Guarded on a non-null box:
-// an untaken-branch slot is null (op_struct_get would deref it), while the box's
-// own rc-dec is null-safe. Emits nothing when the struct has no array field.
 // emit_struct_field_drops releases the rc-array FIELDS of a reclaimable struct
-// before its box is freed — Perceus deep-drop, one level (the BUFFER, not its
-// elements). Covers scalar-element arrays (i32[] / boolean[] / …) AND array-of-
-// struct / array-of-enum fields: the dec is a shallow __fern_arr_dec on the
-// field's buffer pointer, element-type-agnostic, so it reclaims the array SLAB
-// (the element boxes still leak — the safe-leak invariant for nested payloads).
+// before its box is freed — Perceus deep-drop, one level. Covers scalar-element
+// arrays (i32[] / boolean[] / …) AND array-of-struct / array-of-enum fields: a
+// scalar field's BUFFER is shallow-dec'd; a struct/enum-array field's buffer is
+// walked (each element box dec'd) when uniquely owned, then the buffer dec'd.
 // This BALANCES the Perceus dup (__fern_rc_inc) the struct-lit / bind / return /
 // assign paths add when a struct/enum-array field aliases a local: rc 1 →inc 2
 // →source-owner dec 1 →this field-drop 0 (freed once). A fresh-literal field is
-// the sole owner (rc 1) → freed directly. Guarded on a non-null box. Emits
+// the sole owner (rc 1) → freed directly. A `string` field is NEVER dec'd (IR
+// string boxes are header-less, so an rc-dec would corrupt the adjacent block).
+//
+// Emitted as a per-type runtime helper __struct_drop_<T>(box) -> box, NEVER
+// inline: a single function can sweep many reclaimable struct locals at exit, and
+// a struct/enum-array field's deep-walk is a ~30-op loop — inlining it at every
+// sweep site exploded the native driver's per-function op arrays past the #3452
+// heap on the large modules. A per-type helper (the body emitted once, the call
+// site ~3 ops) keeps the broad struct reclaim within the emit budget, exactly as
+// __field_reclaim_<T> already does for the consume-rebind path. x86 emits a real
+// per-type body (emit_ir_struct_drops); arm64 / wasm emit a leak-safe pass-
+// through (return box). Guarded on a non-null box inside the helper. Emits
 // nothing when the struct has no rc-array field.
 function emit_struct_field_drops(s: LowerState, slot: i32): LowerState {
     var sty: string = s.struct_type_of_slot(slot);
     if (sty.len() == 0) { return s; }
-    var n: i32 = decl_field_count(s.structs, sty);
-    var any: boolean = false;
-    var has_box_field: boolean = false;
-    var fi: i32 = 0;
-    while (fi < n) {
-        var fdt: string = decl_field_type_at(s.structs, sty, fi);
-        if (is_leaksafe_array_field(fdt)) { any = true; }   // strings: header-less in IR (leak), never inc'd/dec'd
-        else if (is_struct_array_field_type(s.structs, fdt) || is_enum_array_field_type(s.structs, fdt)) { any = true; has_box_field = true; }
-        fi = fi + 1;
-    }
-    if (!any) { return s; }
-    var st: LowerState = s;
-    var arr_tmp: i32 = 0 - 1;
-    var idx_tmp: i32 = 0 - 1;
-    if (has_box_field) {
-        if (st.slot_of("$fdrop_a") < 0) { st = st.add_local("$fdrop_a"); }
-        if (st.slot_of("$fdrop_i") < 0) { st = st.add_local("$fdrop_i"); }
-        arr_tmp = st.slot_of("$fdrop_a");
-        idx_tmp = st.slot_of("$fdrop_i");
-    }
-    // if (box == null) skip the field drops:
-    st = st.emit(ir.op_block(0));
-    st = st.emit(ir.op_load_local(slot));
-    st = st.emit(ir.op_const_i32(0));
-    st = st.emit(ir.op_bin("eq", 0, false));   // 1 if box == null
-    st = st.emit(ir.op_brif(0));               // -> skip on null
-    var k: i32 = 0;
-    while (k < n) {
-        var kdt: string = decl_field_type_at(st.structs, sty, k);
-        // Scalar-array fields (i32[]/u32[]/boolean[]/f64[]/i64[]) take precedence:
-        // they have no element BOXES, so only the buffer is dec'd — never the
-        // element walk (which would mis-treat scalar values as pointers). Mirrors
-        // the `any` detection loop above.
-        // A `string` field is NOT dec'd here: IR string boxes are header-less
-        // (const_str: [data@0,len@8] via __fern_alloc, "not RC'd" — strings leak
-        // on every IR backend), so __fern_rc_dec on one would write [box-8] = the
-        // adjacent heap block's word, corrupting it. Strings are excluded from
-        // both this drop and the struct-lit alias-inc (they leak; sound).
-        var k_scalar: boolean = is_leaksafe_array_field(kdt);   // NOT strings — header-less in IR; rc_dec would corrupt [box-8]
-        var k_box: boolean = !k_scalar && (is_struct_array_field_type(st.structs, kdt) || is_enum_array_field_type(st.structs, kdt));
-        if (k_box) {
-            st = st.emit(ir.op_load_local(slot));
-            st = st.emit(ir.op_struct_get(k, struct_field_width(st.structs, sty, k)));
-            st = st.emit(ir.op_store_local(arr_tmp));
-            st = st.emit(ir.op_block(0));            // guard: null / not-unique -> skip walk
-            st = st.emit(ir.op_load_local(arr_tmp));
-            st = st.emit(ir.op_const_i32(0));
-            st = st.emit(ir.op_bin("eq", 0, false));
-            st = st.emit(ir.op_brif(0));            // null -> skip walk
-            st = st.emit(ir.op_load_local(arr_tmp));
-            st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
-            st = st.emit(ir.op_bin("not", 0, false));
-            st = st.emit(ir.op_brif(0));            // shared (rc>1) -> skip walk
-            st = st.emit(ir.op_const_i32(0 - 1));   // i = -1
-            st = st.emit(ir.op_store_local(idx_tmp));
-            st = st.emit(ir.op_block(0));           // loop wrapper
-            st = st.emit(ir.op_loop(0));
-            st = st.emit(ir.op_load_local(idx_tmp));
-            st = st.emit(ir.op_const_i32(1));
-            st = st.emit(ir.op_bin("add", 0, false));
-            st = st.emit(ir.op_store_local(idx_tmp));
-            st = st.emit(ir.op_load_local(idx_tmp));
-            st = st.emit(ir.op_load_local(arr_tmp));
-            st = st.emit(ir.op_arr_len());
-            st = st.emit(ir.op_bin("lt_s", 0, false));
-            st = st.emit(ir.op_bin("not", 0, false));
-            st = st.emit(ir.op_brif(1));            // i >= len -> exit loop wrapper
-            st = st.emit(ir.op_load_local(arr_tmp));
-            st = st.emit(ir.op_load_local(idx_tmp));
-            st = st.emit(ir.op_arr_get(32));
-            st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
-            st = st.emit(ir.op_drop());
-            st = st.emit(ir.op_br(0));
-            st = st.emit(ir.op_end());              // end loop
-            st = st.emit(ir.op_end());              // end loop wrapper
-            st = st.emit(ir.op_end());              // end null/unique guard
-            st = st.emit(ir.op_load_local(arr_tmp));
-            st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
-            st = st.emit(ir.op_drop());
-        } else if (k_scalar) {
-            st = st.emit(ir.op_load_local(slot));
-            st = st.emit(ir.op_struct_get(k, struct_field_width(st.structs, sty, k)));
-            st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
-            st = st.emit(ir.op_drop());
-        }
-        k = k + 1;
-    }
-    return st.emit(ir.op_end());
+    if (!struct_has_reclaim_array_field(s.structs, sty)) { return s; }
+    var st: LowerState = s.emit(ir.op_load_local(slot));    // box (arg0)
+    st = st.emit(ir.op_call_direct("__struct_drop_" + sty, 1));   // deep-drops the rc-array fields; returns box
+    return st.emit(ir.op_drop());
 }
 
 // --- Perceus precise drops (drop-on-last-use) for arrays -----------------

@@ -109,7 +109,25 @@ pub function is_fern_helper(name: string): boolean {
         // the REPLACED array-field buffers of the superseded old box (cow + snap
         // guarded) before freeing the box. x86 emits a real per-type body
         // (emit_ir_field_reclaims); arm64 / wasm emit a leak-safe pass-through.
-        || is_field_reclaim_name(name);
+        || is_field_reclaim_name(name)
+        // per-type deep struct-drop (#3457): __struct_drop_<T> deep-drops the
+        // rc-array FIELDS of a reclaimable struct box at scope exit (a scalar
+        // field's buffer; a struct/enum-array field's elements + buffer). x86
+        // emits a real per-type body (emit_ir_struct_drops); arm64 / wasm emit a
+        // leak-safe pass-through (return box). The per-type helper replaces the
+        // former inline field-drop so the broad struct reclaim fits #3452.
+        || is_struct_drop_name(name);
+}
+
+// is_struct_drop_name reports whether a call_direct callee is a per-type
+// __struct_drop_<T> helper (the suffix is the struct type name).
+pub function is_struct_drop_name(name: string): boolean {
+    return name.len() > 14 && name[0:14] == "__struct_drop_";
+}
+
+// struct_drop_type returns the struct type T from a "__struct_drop_<T>" name.
+pub function struct_drop_type(name: string): string {
+    return name[14 : name.len()];
 }
 
 // is_field_reclaim_name reports whether a call_direct callee is a per-type
@@ -137,6 +155,9 @@ pub function ir_helper_symbol(name: string): string {
     // so a monomorphised / bracketed type name yields a valid asm label, matching
     // the body label emit_ir_field_reclaims writes.
     if (is_field_reclaim_name(name)) { return "__fn___field_reclaim_" + asmcore.sanitize_label(field_reclaim_type(name)); }
+    // __struct_drop_<T> -> __fn___struct_drop_<sanitized T> (#3457), matching the
+    // body label emit_ir_struct_drops writes.
+    if (is_struct_drop_name(name)) { return "__fn___struct_drop_" + asmcore.sanitize_label(struct_drop_type(name)); }
     return "__fn_" + name;
 }
 
@@ -3489,6 +3510,10 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // emits exactly the per-type bodies actually called; needs the heap
             // runtime (the freelist + __fn___fern_arr_dec it frees through).
             if (is_field_reclaim_name(o.str)) { s = s.need("heap").need("field_reclaim:" + field_reclaim_type(o.str)); }
+            // __struct_drop_<T> (#3457): record the type so emit_ir_struct_drops
+            // emits exactly the per-type bodies actually called; needs the heap
+            // runtime (the freelist + __fn___fern_arr_dec it frees through).
+            if (is_struct_drop_name(o.str)) { s = s.need("heap").need("struct_drop:" + struct_drop_type(o.str)); }
             s = s.write("    call " + ir_helper_symbol(o.str) + "\n");
             if (o.i32_imm > 0) { s = s.write("    addq $" + util.i32_to_string(o.i32_imm * 8) + ", %rsp\n"); }
             s = s.write("    pushq %rax\n");
@@ -3836,6 +3861,89 @@ function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.E
     return s;
 }
 
+// emit_ir_struct_drops emits the per-type __struct_drop_<T> helper bodies this
+// module's lowering marked (#3457 — the deep struct-drop, formerly emitted inline
+// by emit_struct_field_drops). Each `T` was recorded as a "struct_drop:<T>" need
+// at the call site. `.weak` (like __field_reclaim) so two per-module units that
+// both sweep a `T` co-link to one definition; the body references only the shared
+// .globl externs __fn___fern_arr_dec / __fn___fern_rc_is_unique.
+function emit_ir_struct_drops(s: asmcore.EmitState): asmcore.EmitState {
+    var ni: i32 = 0;
+    while (ni < s.needed.len()) {
+        var nd: string = s.needed[ni];
+        if (nd.len() > 12 && nd[0:12] == "struct_drop:") {
+            s = emit_ir_struct_drop_one(s, nd[12 : nd.len()]);
+        }
+        ni = ni + 1;
+    }
+    return s;
+}
+
+// emit_ir_struct_drop_one emits one __struct_drop_<sty>(box) -> box body. Stack-
+// arg ABI: 8(%rsp)=box. For each rc-tracked ARRAY field (offset (k+1)*8 off the
+// box's data pointer) it releases the field BUFFER via __fn___fern_arr_dec (rc-
+// guarded SHALLOW dec/free). For a struct/enum-array field it FIRST walks the
+// buffer (when uniquely owned) dec'ing each element box, then dec's the buffer.
+// Returns `box` in %rax (the call site drops it). %r11 holds box, %r10 the
+// current buffer, %r9 the loop index across the field loop — __fn___fern_arr_dec
+// and __fn___fern_rc_is_unique clobber only rax/rcx/rdx/rsi/rdi/r8, so they
+// survive. Mirrors the IR ops the inline emit_struct_field_drops used to write.
+function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.EmitState {
+    var san: string = asmcore.sanitize_label(sty);
+    var n: i32 = irlower.decl_field_count(s.struct_decls, sty);
+    s = s.write(".weak __fn___struct_drop_" + san + "\n");
+    s = s.write("__fn___struct_drop_" + san + ":\n");
+    s = s.write("    movq 8(%rsp), %r11\n");       // box
+    s = s.write("    movq %r11, %rax\n");          // return box (caller drops)
+    s = s.write("    cmpq $0x10000, %r11\n");      // box null / low-addr -> skip fields
+    s = s.write("    jb .Lstd_" + san + "_ret\n");
+    var k: i32 = 0;
+    while (k < n) {
+        var fdt: string = irlower.decl_field_type_at(s.struct_decls, sty, k);
+        var k_scalar: boolean = irlower.is_leaksafe_array_field(fdt);
+        var k_box: boolean = !k_scalar && (irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt));
+        var off: string = util.i32_to_string((k + 1) * 8);
+        var ks: string = util.i32_to_string(k);
+        if (k_box) {
+            s = s.write("    movq " + off + "(%r11), %r10\n");          // a = box.field_k (buffer)
+            s = s.write("    cmpq $0x10000, %r10\n");                   // null / low -> skip walk (buffer dec is a null no-op)
+            s = s.write("    jb .Lstd_" + san + "_buf" + ks + "\n");
+            s = s.write("    pushq %r10\n");
+            s = s.write("    call __fn___fern_rc_is_unique\n");         // shared (rc>1) -> skip element walk
+            s = s.write("    addq $8, %rsp\n");
+            s = s.write("    testq %rax, %rax\n");
+            s = s.write("    jz .Lstd_" + san + "_buf" + ks + "\n");
+            s = s.write("    xorq %r9, %r9\n");                         // i = 0
+            s = s.write(".Lstd_" + san + "_loop" + ks + ":\n");
+            s = s.write("    movq (%r10), %rax\n");                     // len = a[0] (length header at data+0)
+            s = s.write("    cmpq %rax, %r9\n");
+            s = s.write("    jge .Lstd_" + san + "_buf" + ks + "\n");   // i >= len -> done walking
+            s = s.write("    movq %r9, %rcx\n");
+            s = s.write("    incq %rcx\n");
+            s = s.write("    movq (%r10,%rcx,8), %rdi\n");              // a[i] at data+(i+1)*8
+            s = s.write("    pushq %rdi\n");
+            s = s.write("    call __fn___fern_arr_dec\n");              // shallow dec the element box
+            s = s.write("    addq $8, %rsp\n");
+            s = s.write("    incq %r9\n");
+            s = s.write("    jmp .Lstd_" + san + "_loop" + ks + "\n");
+            s = s.write(".Lstd_" + san + "_buf" + ks + ":\n");
+            s = s.write("    movq " + off + "(%r11), %rdi\n");          // reload buffer (r10 may be stale across walk)
+            s = s.write("    pushq %rdi\n");
+            s = s.write("    call __fn___fern_arr_dec\n");              // shallow dec the buffer slab
+            s = s.write("    addq $8, %rsp\n");
+        } else if (k_scalar) {
+            s = s.write("    movq " + off + "(%r11), %rdi\n");          // box.field_k buffer
+            s = s.write("    pushq %rdi\n");
+            s = s.write("    call __fn___fern_arr_dec\n");
+            s = s.write("    addq $8, %rsp\n");
+        }
+        k = k + 1;
+    }
+    s = s.write(".Lstd_" + san + "_ret:\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
 function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], s: asmcore.EmitState, globl_defs: boolean): asmcore.EmitState {
     var arf: string[] = array_ret_fns_of(all_funcs);
     // Inter-procedural borrowability computed ONCE per module (not per function —
@@ -4012,6 +4120,9 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     // library module's call resolves locally rather than relying on the entry's
     // need-set covering a per-type symbol the fixed all_runtime_need_roots can't.
     s = emit_ir_field_reclaims(s);
+    // Per-type __struct_drop_<T> bodies (#3457) — same weak-deduped per-unit
+    // emission as the field-reclaims; replaces the former inline field-drop.
+    s = emit_ir_struct_drops(s);
     // Fold the whole-program extra_needs (sibling modules' needs, for the entry's
     // single shared runtime) into the need set BEFORE _start, so _start's
     // need-gated argc/argv save below fires even when only a LIBRARY module
