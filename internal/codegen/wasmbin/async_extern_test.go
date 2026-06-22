@@ -86,6 +86,51 @@ func TestScanExternImportsAsyncScalar(t *testing.T) {
 	}
 }
 
+// TestScanExternImportsAsyncString pins the string-result case of the async
+// import: `@import(...) async function fetch(): string` lowers to the same raw
+// `(retptr) -> i32 status` async-lower import, plus a wrapper that lifts the
+// return-area (ptr,len) into a Fern string. It pulls in __bytes_to_lang_string
+// (the lift) and cabi_realloc (the lower's realloc option materialises the host
+// bytes in this module's memory), and the wrapper's result is the Fern heap
+// string pair (i32, i32). See docs/WASI-PREVIEW3-ASYNC-PLAN.md.
+func TestScanExternImportsAsyncString(t *testing.T) {
+	ext := &ir.ExternFunc{
+		Name:       "fetch",
+		Iface:      "test:dep/d",
+		WITName:    "fetch",
+		ReturnType: ast.StringType{},
+		Async:      true,
+	}
+	var in importNeeds
+	var helpers runtimeNeeds
+	specs, wrappers, err := scanExternImports(progCallingExtern("fetch", ext), &in, &helpers)
+	if err != nil {
+		t.Fatalf("scanExternImports: %v", err)
+	}
+	raw, ok := specs["fetch$import"]
+	if !ok {
+		t.Fatalf("missing raw async import spec %q; specs=%v", "fetch$import", specs)
+	}
+	if len(raw.params) != 1 || raw.params[0] != encode.ValtypeI32 {
+		t.Errorf("raw import params = %v, want [i32] (the retptr)", raw.params)
+	}
+	if len(raw.results) != 1 || raw.results[0] != encode.ValtypeI32 {
+		t.Errorf("raw import results = %v, want [i32] (the status)", raw.results)
+	}
+	w, ok := wrappers["fetch"]
+	if !ok {
+		t.Fatalf("missing wrapper for %q", "fetch")
+	}
+	if len(w.results) != 2 || w.results[0] != encode.ValtypeI32 || w.results[1] != encode.ValtypeI32 {
+		t.Errorf("wrapper results = %v, want [i32 i32] (Fern heap string)", w.results)
+	}
+	for _, h := range []string{"fetch", "__fern_alloc", "__bytes_to_lang_string", "cabi_realloc"} {
+		if !helpers.set[h] {
+			t.Errorf("helper %q not pulled in for the async string import", h)
+		}
+	}
+}
+
 // TestScanExternImportsSyncStaysDirect is the contrast: without `async` the same
 // extern lowers to a direct `() -> i32` import and no wrapper — proving the
 // async lowering is gated strictly on ExternFunc.Async.
