@@ -2,10 +2,12 @@ package e2e
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestSelfHostIRx86Run exercises the first IR-consuming backend
@@ -217,13 +219,25 @@ func TestSelfHostIRx86Run(t *testing.T) {
 			if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", innerAsm, "-o", innerBin).CombinedOutput(); err != nil {
 				t.Fatalf("inner gcc: %v\n%s\n--- asm ---\n%s", err, out, emittedAsm)
 			}
+			// Per-binary timeout: a codegen bug can emit a non-terminating
+			// loop (cf. #3827, the range-for `continue` hang). Without a bound
+			// here inner.Run() would block until the whole shard's job budget
+			// expires, marking every later case `(unknown)` and burning a
+			// runner slot. CommandContext kills the process at the deadline so
+			// a future hang fails this one case fast with a clear diagnostic.
+			// 30s is ~1000x the real runtime (these binaries finish in ms).
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
 			var inner *exec.Cmd
 			if len(runner) == 0 {
-				inner = exec.Command(innerBin)
+				inner = exec.CommandContext(ctx, innerBin)
 			} else {
-				inner = exec.Command(runner[0], append(append([]string{}, runner[1:]...), innerBin)...)
+				inner = exec.CommandContext(ctx, runner[0], append(append([]string{}, runner[1:]...), innerBin)...)
 			}
 			_ = inner.Run()
+			if ctx.Err() == context.DeadlineExceeded {
+				t.Fatalf("inner binary did not terminate within 30s (likely a codegen hang) for %q\n--- asm ---\n%s", tc.source, emittedAsm)
+			}
 			if inner.ProcessState == nil || !inner.ProcessState.Exited() {
 				t.Fatalf("inner did not exit normally for %q", tc.source)
 			}
