@@ -55,6 +55,23 @@ func TestSelfHostImmutabilityGateX86_64(t *testing.T) {
 			wantDiag: "error[E055]",
 		},
 		{
+			// E057: a Cell[T] element must be cycle-free — a composite element
+			// (here a struct) could reconstruct a reference cycle, so the
+			// native compiler rejects it before codegen. The self-host build
+			// gate must match (it previously filtered E057 out and silently
+			// compiled this — more permissive than native).
+			name:     "cell-composite-E057",
+			src:      "struct P { x: i32 }\nfunction main(): i32 { var c = cell_new(P { x: 1 }); return 0; }\n",
+			wantDiag: "error[E057]",
+		},
+		{
+			// A Cell over a scalar is cycle-free and still compiles cleanly —
+			// guards against the gate over-rejecting valid Cell uses.
+			name:     "cell-scalar-ok",
+			src:      "function main(): i32 { var c = cell_new(0); c.set(c.get() + 1); return c.get(); }\n",
+			wantDiag: "",
+		},
+		{
 			// The functional-update forms compile cleanly (no diagnostic).
 			name:     "valid-functional-update",
 			src:      "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p = P { ...p, x: 5 }; var a: i32[] = [1, 2, 3]; a = a.with(0, 9); return p.x + a[0]; }\n",
