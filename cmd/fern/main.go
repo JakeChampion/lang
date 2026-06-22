@@ -998,7 +998,18 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 			if err != nil {
 				return 1, fmt.Errorf("async export: %w", err)
 			}
-			comp := component.BuildAsyncLiftedExportComponent(acore, "__async_run", asyncExportNm, component.CValtypeU32)
+			// Lift the async export with the component valtype matching the
+			// source function's (scalar) result, so `async function foo():
+			// u64 / f64` is exported as `foo: async func() -> u64 / f64`
+			// rather than forced to u32.
+			var rvt byte = component.CValtypeU32
+			for _, fn := range prog.Funcs {
+				if fn.Name == asyncSrc {
+					rvt = asyncResultCValtype(fn.ReturnType)
+					break
+				}
+			}
+			comp := component.BuildAsyncLiftedExportComponent(acore, "__async_run", asyncExportNm, rvt)
 			if err := os.WriteFile(outPath, comp, 0o644); err != nil {
 				return 1, err
 			}
@@ -1562,6 +1573,29 @@ func execUnderQemu(qemu, binPath string, progArgs []string) (int, error) {
 // ForceMemorySection when any is present.
 func buildPreview2CliRunComponent(prog *ast.Program, info *checker.Info, bin []byte) ([]byte, error) {
 	return buildPreview2Component(prog, info, bin, "")
+}
+
+// asyncResultCValtype maps a WASI Preview-3 async export's (scalar) Fern result
+// type to the component valtype it lifts as. 64-bit ints map to s64/u64 and
+// floats to f32/f64; every 8/16/32-bit integer (and anything else) keeps the
+// established u32 default — the core function returns i32 for those, and the
+// signedness only affects how a `--invoke` caller displays the value.
+func asyncResultCValtype(t ast.Type) byte {
+	switch x := t.(type) {
+	case ast.NumberType:
+		if x.NormalWidth() == 64 {
+			if x.Signed {
+				return component.CValtypeS64
+			}
+			return component.CValtypeU64
+		}
+	case ast.FloatType:
+		if x.NormalWidth() == 32 {
+			return component.CValtypeF32
+		}
+		return component.CValtypeF64
+	}
+	return component.CValtypeU32
 }
 
 // buildPreview2Component is buildPreview2CliRunComponent generalised
