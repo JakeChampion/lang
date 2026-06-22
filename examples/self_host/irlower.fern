@@ -2045,6 +2045,12 @@ pub function expr_recv_prim_type(e: parser.Expr, s: LowerState): string {
     // method dispatch must key "f32.<m>" (distinct from f64 for to_string/etc.).
     if (expr_is_f32(e, s)) { return "f32"; }
     if (expr_is_f64(e, s)) { return "f64"; }
+    // u64 BEFORE the i64 width fallback: a u64 value is also width-64, but its
+    // method dispatch must key "u64.<m>" (std/u64's methods are recorded under
+    // their u64 base type) — without this a u64 receiver dispatched to the
+    // nonexistent "i64.<m>" and bailed the whole module to AST. Mirrors
+    // method_recv_tyname's u64 branch.
+    if (expr_is_u64(e, s)) { return "u64"; }
     if (infer_expr_width(e, s) == 64) { return "i64"; }
     return "i32";
 }
@@ -5876,7 +5882,9 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     var pty: string = expr_recv_prim_type(fa.obj, s);
                     if (pty != "") {
                         var pm: LowerState = s;
-                        if (pty == "i64") { pm = lower_i64(fa.obj, s); }
+                        // i64 AND u64 receivers are 64-bit: lower full-width so the
+                        // receiver arg isn't truncated to 32 bits by lower_expr.
+                        if (pty == "i64" || pty == "u64") { pm = lower_i64(fa.obj, s); }
                         else { pm = lower_expr(fa.obj, s); }
                         if (!pm.ok) { return pm; }
                         var pai: i32 = 0;

@@ -251,6 +251,29 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-22 — self-host IR: u64 RECEIVER methods (`std/u64`) now lower (dispatch keyed "i64", not "u64")
+
+The remaining half of "std/u64.to_string routes AST" from the entry below. A
+program that `import`s `std/u64` and calls its methods (`min` / `max` / `clamp` /
+`to_string`) routed the legacy AST fallback even though the methods themselves
+were IR-eligible — `-ir-probe` showed `u64.min: ir` but `main: BAIL call`. Cause:
+`irlower.fern`'s `expr_recv_prim_type` (the method-dispatch receiver classifier)
+mapped EVERY 64-bit receiver to `"i64"`, so a u64 receiver dispatched to a
+nonexistent `"i64.<m>"` label, which `calls_only_known` rejected → whole module
+to AST. (i64 / u32 receivers were fine; only u64 had no branch.)
+
+Fix: add a `u64` branch to `expr_recv_prim_type` (before the i64 width fallback,
+mirroring the already-correct `method_recv_tyname`), and lower a u64 receiver
+full-width (`lower_i64`) in the prim-method dispatch so the receiver arg isn't
+truncated to 32 bits. `"u64"` is already in `prim_type_ids`, so the dyn-box /
+return-type-classification call sites that share this helper become more correct
+too (a u64 dyn value now boxes as `u64`). With it, `std/u64`'s whole method
+surface routes **IR** and matches the interpreter — incl. high-bit-set values
+(> 2³³, > 2⁶³): `min` / `max` / `clamp` (unsigned compares) and `to_string`
+(`4294967296` → "4294967296", `1.8e19` → exact 20-digit string). Gated by
+`TestSelfHostU64MethodsIR`. (`std/i64` already routed IR; this brings `std/u64`
+to parity.)
+
 ### 2026-06-22 — self-host IR: `as i64` / `as u64` truncated a 64-bit operand to 32 bits
 
 The follow-up to the `to_string` layout fix below. With empty strings gone, the
