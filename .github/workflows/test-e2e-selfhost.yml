@@ -113,10 +113,29 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: e2e-test-${{ matrix.host.name }}
+      # Cross-RUN driver cache: each `*_run.fern` self-host driver statically
+      # imports lexer+parser (the multi-thousand-line front-end), so building a
+      # shard's ~handful of distinct drivers recompiles that core repeatedly —
+      # the heavy CPU/RAM/disk work (a shard's link cache grows to multiple GB)
+      # that exhausts the hosted runner mid-shard ("received a shutdown signal").
+      # cachedSelfHostAsm/cachedLink read+write FERN_SELFHOST_BUILD_CACHE; this
+      # restores the prior run's per-shard cache so unchanged drivers are served
+      # from disk (~12x faster: 175s -> 15s of driver work, measured locally)
+      # instead of recompiled. Content-addressed, so a hit is byte-identical and
+      # a changed driver simply misses and recompiles (then re-caches). Keyed
+      # per (arch, shard) with a unique suffix so every run saves a fresh cache
+      # and restores the most recent prior via restore-keys.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/selfhost-drvcache
+          key: selfhost-drvcache-${{ matrix.host.name }}-shard${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            selfhost-drvcache-${{ matrix.host.name }}-shard${{ matrix.shard }}-
       - name: run self-host shard ${{ matrix.shard }}/6 (prebuilt binary, streaming)
         env:
           SHARD: "${{ matrix.shard }}"
           NSHARD: "6"
+          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-drvcache"
         run: |
           set -euo pipefail
           chmod +x e2e.test
