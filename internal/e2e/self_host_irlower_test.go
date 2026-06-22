@@ -253,14 +253,19 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		const src = "function main(): i32 { var x = 2 + 3; return x * 10; }"
 		// Integer literals lower to const_i32_text (source text spliced into the
 		// immediate), so hex literals and the full u32 range survive — see
-		// op_const_i32_text / the IR backends.
+		// op_const_i32_text / the IR backends. Each i32 arithmetic op is followed
+		// by an int_cast (the signed sibling of u32_wrap — op_int_cast("i32"),
+		// the per-width wrap the register backends emit), so `add` and `mul` each
+		// carry a trailing int_cast.
 		const want = "const_i32_text 2\n" +
 			"const_i32_text 3\n" +
 			"add\n" +
+			"int_cast\n" +
 			"store_local 0\n" +
 			"load_local 0\n" +
 			"const_i32_text 10\n" +
 			"mul\n" +
+			"int_cast\n" +
 			"return\n"
 		cmd := exec.Command(bin, "-dump")
 		cmd.Stdin = strings.NewReader(src)
@@ -269,8 +274,8 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 			t.Errorf("lowered op stream mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
 		}
 		// exit code is ops.len() in -dump mode.
-		if code := cmd.ProcessState.ExitCode(); code != 8 {
-			t.Errorf("dump op count = %d, want 8", code)
+		if code := cmd.ProcessState.ExitCode(); code != 10 {
+			t.Errorf("dump op count = %d, want 10", code)
 		}
 	})
 }
