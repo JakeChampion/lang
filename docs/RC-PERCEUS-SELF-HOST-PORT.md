@@ -2303,3 +2303,23 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   ownership analysis that admits the threaded-builder hot path to the
   `__field_reclaim_<T>` mechanism is complete (method-threaded + consume-rebind +
   fresh-ret-local), closing the gap the 2026-06-22 measurement entries opened.
+- 2026-06-22: **Convergence measurement after the ownership-analysis slices — the
+  bottleneck MOVED from emit to eligibility.** Built a per-module-linked compiler
+  (`selfcompiler_pm`, 2033 `__field_reclaim_<T>` call sites in its own runtime) and
+  drove it `-per-module-emit` on the big units. It still exit-139s, but gdb shows the
+  fault is now in `func_eligible` → `__fern_str_eq`/`__fern_alloc` (the ELIGIBILITY
+  phase, `all_eligible_lib_known_view` → `eligible_core` → `func_eligible`), NOT the
+  emit phase (`self_overwrite_reuse_sites`) it hit before the reclaim. So the
+  field-reclaim + ownership analysis soundly cut the emit-phase leak; the new wall is
+  `func_eligible`'s probe: `var r = lower_func(fd, .., [], [])` builds a full
+  `LowerResult`, scans `r.ok` / `r.ops`, and DISCARDS it — per function, across the
+  whole module — and `r` leaks. `r` is a FRESH-ret CALL binding (`lower_func` is
+  fresh-returning) that is NEVER reassigned and never escapes, so neither
+  snapshot_local (requires reassignment) nor reclaimable_names_of (collect_fresh
+  requires a struct LITERAL, not a call) reclaims it. The next slice is therefore the
+  NON-reassigned fresh-ret-local case (increment "A"): extend `is_fresh_struct_init`
+  / `collect_fresh_struct_names` to admit a fresh-ret call binding (threading the
+  already-available `fresh_struct_ret_fns` into `reclaimable_names_of`), so a
+  used-then-discarded `var r = f(..)` is freed at scope exit. That targets the
+  measured eligibility-phase leak directly; convergence is leak-by-leak, each slice
+  sound + validated.
