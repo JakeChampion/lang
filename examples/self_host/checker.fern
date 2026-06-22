@@ -5504,6 +5504,17 @@ pub function e049_diags(mod: parser.Module): Diag[] {
 function e064_unknown_bare(type_name: string, struct_names: string[], union_names: string[]): boolean {
     if (type_name.len() == 0) { return false; }
     if (type_name == "void" || type_name == "Self") { return false; }
+    // Sub-word / pointer-width integer builtins the type resolver below
+    // doesn't enumerate (it only knows i32/i64/u32/u64). These are the
+    // remaining integer keywords the parser accepts (parser.go parseType:
+    // i8/i16/u8/u16/usize); the Go checker treats them as real types, and
+    // stdlib byte/pointer code uses `var b: u8` and `var p: usize`
+    // pervasively, so the E064 rule must not flag them — otherwise every
+    // program importing std/string (a dozen `u8` body vars) or anything
+    // pulling in core/int (`usize` scratch pointers) diverges from the
+    // oracle. byte/char/isize are intentionally absent: not keywords, so
+    // the Go checker rejects them and the self-host must keep flagging them.
+    if (type_name == "u8" || type_name == "i8" || type_name == "u16" || type_name == "i16" || type_name == "usize") { return false; }
     // The parser coarses a function type (`() => R`) to the tag "fn" and some
     // shapes to "tuple"; neither is a user nominal, so don't flag them.
     if (type_name == "fn" || type_name == "tuple") { return false; }
