@@ -20,21 +20,14 @@ func buildModloadDriverX86(t *testing.T) (gcc string, runner []string, driverBin
 	t.Helper()
 	gcc, runner = x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
-	prog, _, err := modload.Load(filepath.Join(dir, "asm_modload_run.fern"))
-	if err != nil {
-		t.Fatalf("modload driver: %v", err)
-	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
+	// Route through the content-addressed asm cache: dozens of tests build this
+	// same ~35k-line driver, and recompiling it per test is both the suite's
+	// dominant time cost and a RAM/disk spike that, accumulated across a shard,
+	// has been exhausting the GitHub-hosted runner (the mid-run `exit 143`
+	// reclaims). cachedSelfHostAsm runs the identical modload.Load → constfold →
+	// checker.Check → x86_64.Emit pipeline, keyed by source-set hash, so this is
+	// behaviour-identical and only deduplicates the repeated compile.
+	asm := cachedSelfHostAsm(t, dir, "asm_modload_run.fern")
 	driverBin = buildBin(t, gcc, dir, "driver", asm)
 	return gcc, runner, driverBin
 }
