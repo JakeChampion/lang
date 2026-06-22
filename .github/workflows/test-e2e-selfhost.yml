@@ -51,9 +51,9 @@ name: Test e2e self-host
 # SHARDED by test name: each shard claims `index % N == shard` over the
 # sorted `-test.list '^TestSelfHost'` output of the prebuilt binary, so
 # the set splits ~evenly and new tests are picked up automatically.
-# N = 6 (the `test` job is 2 arch × 6 = 12 jobs, plus 2 build jobs).
+# N = 12 (the `test` job is 2 arch × 12 = 24 jobs, plus 2 build + the warm jobs).
 #
-# RUNNER PREEMPTION — why streaming + compile-once, but NOT more shards.
+# RUNNER PREEMPTION — why short shards matter.
 # The x86 self-host shards were intermittently coming back `failure` with
 # "The runner has received a shutdown signal" / exit 143, mid-run, with no
 # test failures — the runner was reclaimed out from under the job. Two
@@ -65,17 +65,19 @@ name: Test e2e self-host
 #     (~6.4 min one run, ~11 min another), so it is not a fixed cap.
 # The one robust correlation: short jobs survive (the ~30s aarch64 shards
 # are never reclaimed) and long jobs get caught. So this is infrastructure
-# preemption of the runner pool, and the only lever we have is to make the
-# x86 jobs *shorter* (lower the probability of being caught) — hence
-# compile-once (drops the ~2.5 min per-shard rebuild), the UNIFIED-DRIVER WARM
-# CACHE above (drops a converted shard's ~50-70s-per-driver compiles to a ~1s
-# disk restore), and 6 shards. It CANNOT be made deterministically green from
-# CI config alone, and that is
-# acceptable: this lane is not a required check, and a shard that survives
-# to completion passes. Bumping the shard count was tried (6 → 12) and did
-# NOT help — 12-shard jobs were still reclaimed — so do not re-raise N
-# expecting it to fix preemption; only raise it if real per-shard work
-# (not the shared build) grows past the job budget.
+# preemption of the runner pool, and the lever is to make the x86 jobs
+# *shorter*: compile-once (drops the ~2.5 min per-shard rebuild), the DRIVER
+# WARM CACHE above (drops a shard's ~50-130s-per-driver build+link to a ~1s
+# disk restore), and enough shards that no shard clusters too many of the
+# tests that *run* the self-host compiler on real programs (DeriveStdlibIR,
+# ImmutabilityGate, the per-module / CLI / fixpoint drivers) — those execute
+# the compiler for tens of seconds each and cannot be build-cached away.
+# N was 6 while every shard still REBUILT its drivers (so 6 → 12 didn't help
+# then — each shard's cost was dominated by the redundant rebuilds, not the
+# test count). Now that the warm cache serves the builds, per-shard wall-clock
+# scales with the test count, so raising N genuinely shortens each shard;
+# hence N = 12. If the inherent-runtime tail still clusters past the job
+# budget, raise N further — it is now an effective lever, no longer a no-op.
 #
 # STREAMING OUTPUT. The shards run the binary with `-test.v`, which streams
 # each test's RUN/PASS/FAIL as it happens, rather than gotestsum's
@@ -185,8 +187,8 @@ jobs:
         host:
           - { runner: ubuntu-latest,    name: x86_64  }
           - { runner: ubuntu-24.04-arm, name: aarch64 }
-        # Six shards. See SHARDED / RUNNER PREEMPTION notes above.
-        shard: [0, 1, 2, 3, 4, 5]
+        # Twelve shards. See SHARDED / RUNNER PREEMPTION notes above.
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     name: test-e2e-selfhost-${{ matrix.host.name }}-shard${{ matrix.shard }}
     runs-on: ${{ matrix.host.runner }}
     timeout-minutes: 20
@@ -263,10 +265,10 @@ jobs:
         with:
           path: ${{ runner.temp }}/uc-asmfile
           key: selfhost-unicache-x86_64-asmfile-${{ github.sha }}
-      - name: run self-host shard ${{ matrix.shard }}/6 (prebuilt binary, streaming)
+      - name: run self-host shard ${{ matrix.shard }}/12 (prebuilt binary, streaming)
         env:
           SHARD: "${{ matrix.shard }}"
-          NSHARD: "6"
+          NSHARD: "12"
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/uc-elig:${{ runner.temp }}/uc-asm:${{ runner.temp }}/uc-pathprobe:${{ runner.temp }}/uc-asmir:${{ runner.temp }}/uc-asmload:${{ runner.temp }}/uc-modload:${{ runner.temp }}/uc-checker:${{ runner.temp }}/uc-ssa:${{ runner.temp }}/uc-cli:${{ runner.temp }}/uc-irx86:${{ runner.temp }}/uc-asmfile"
         run: |
           set -euo pipefail
