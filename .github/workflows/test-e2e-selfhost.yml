@@ -131,4 +131,19 @@ jobs:
           # 10m0s` even though the job had 20 min to spend. Set the test timeout
           # under the job budget so a genuine hang still fails cleanly (~18m)
           # while legitimately slow shards run to completion.
+          # Heartbeat: emit a line every 30s so a no-output idle watchdog on the
+          # runner sees continuous activity. SUSPECTED ROOT CAUSE of the ~11-min
+          # mid-run `exit 143` "runner has received a shutdown signal" reclaims
+          # (which the 6->12 reshard alone did NOT stop — a 12-shard, 67-test job
+          # was still killed at ~11 min after producing ZERO output): every shard
+          # runs `gotestsum --format pkgname-and-test-fails`, which prints nothing
+          # during an all-passing run, so the job is silent for its whole ~10 min
+          # and the runner is torn down at ~11 min (well under the 20-min budget;
+          # not a go-test timeout). A 30s heartbeat keeps stdout flowing even
+          # across the multi-minute single-test gaps (the ~600 MB fixpoint
+          # self-compile) that no gotestsum format can fill. Backgrounded; killed
+          # on step exit via the trap so a real test failure still fails the job.
+          ( while true; do sleep 30; echo "[heartbeat $(date -u +%H:%M:%S)] self-host shard $SHARD/$NSHARD still running"; done ) &
+          hb_pid=$!
+          trap 'kill "$hb_pid" 2>/dev/null || true' EXIT
           gotestsum --format pkgname-and-test-fails -- -run "$PAT" -timeout 18m ./internal/e2e/
