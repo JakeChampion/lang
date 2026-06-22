@@ -257,8 +257,35 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// WASI Preview-3 async export: pull in the ("", "task-return")
 	// import (importSpecs["async_task_return"]) so the synthetic async
 	// wrapper below can call it. Added before funcIdx is assigned so the
-	// import takes its slot in the import index space.
+	// import takes its slot in the import index space. The task-return
+	// intrinsic carries the source function's (scalar) result, so its
+	// param valtype is width-matched to it via an externSpecs overlay —
+	// an i64/f32/f64-returning async export hands task.return the wider
+	// value (the default importSpecs entry is i32-only).
 	if opts.AsyncExportName != "" {
+		srcFn := opts.AsyncSourceFunc
+		if srcFn == "" {
+			srcFn = "main"
+		}
+		var srcRet ast.Type
+		found := false
+		for _, fn := range prog.Funcs {
+			if fn.Name == srcFn {
+				srcRet, found = fn.ReturnType, true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("wasmbin: AsyncExportName needs the source function %q", srcFn)
+		}
+		rv, err := resultValtypes(srcRet)
+		if err != nil {
+			return nil, fmt.Errorf("wasmbin: AsyncExportName: %q result: %w", srcFn, err)
+		}
+		if len(rv) != 1 {
+			return nil, fmt.Errorf("wasmbin: AsyncExportName: %q must return a single scalar (i32/i64/f32/f64); a void/string/composite async export is not supported yet", srcFn)
+		}
+		externSpecs["async_task_return"] = importSpec{module: "", name: "task-return", params: rv, results: nil}
 		importNeeds.add("async_task_return")
 	}
 
@@ -283,11 +310,15 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	}
 
 	// Type-section dedup: same param-list + result-list → same
-	// typeidx. The string key joins valtype bytes; collisions
-	// are impossible since valtype bytes are in 0x7c..0x7f.
+	// typeidx. The key is the param count (one byte) followed by the
+	// param then result valtype bytes — the count delimits params from
+	// results unambiguously. A literal separator byte would NOT work: the
+	// natural choice '|' is 0x7c, which is also the f64 valtype byte, so
+	// `() -> (f64)` and `(f64) -> ()` would collide (and merge into one
+	// wrong type). The count-prefix avoids any value-range overlap.
 	typeIdx := map[string]uint32{}
 	addType := func(params, results []byte) uint32 {
-		key := string(params) + "|" + string(results)
+		key := string(append(append([]byte{byte(len(params))}, params...), results...))
 		if idx, ok := typeIdx[key]; ok {
 			return idx
 		}
@@ -1102,8 +1133,11 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		}
 		mainPosInFnSection := mainIdx - uint32(len(importNeeds.order))
 		mainResults := m.TypeResults[m.FunctionTypeidxs[mainPosInFnSection]]
-		if !(len(mainResults) == 1 && mainResults[0] == encode.ValtypeI32) {
-			return nil, fmt.Errorf("wasmbin: AsyncExportName: %q must return i32, got %v", srcFn, mainResults)
+		// A single scalar result (i32/i64/f32/f64) is delivered through
+		// task.return, whose import param was width-matched to it above. A
+		// void/multi result has no scalar to hand over.
+		if len(mainResults) != 1 {
+			return nil, fmt.Errorf("wasmbin: AsyncExportName: %q must return a single scalar, got %v", srcFn, mainResults)
 		}
 		trIdx, ok := funcIdx["async_task_return"]
 		if !ok {

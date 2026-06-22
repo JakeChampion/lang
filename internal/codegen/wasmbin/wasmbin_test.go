@@ -302,6 +302,35 @@ func TestEmitTypeDedup(t *testing.T) {
 	}
 }
 
+// TestEmitTypeDedupF64NoSeparatorCollision is a regression for the addType
+// dedup key. It once joined the param and result valtype bytes with a literal
+// '|' separator — but '|' is 0x7c, which is ALSO the f64 valtype byte. So
+// `() -> (f64)` (key "" | "\x7c") and `(f64) -> ()` (key "\x7c" | "") both
+// hashed to "\x7c\x7c" and merged into one type entry. Whichever was emitted
+// first won, leaving the other function referencing a type that disagreed with
+// its body — a module that fails wasm validation at instantiation. The two
+// shapes must stay distinct.
+func TestEmitTypeDedupF64NoSeparatorCollision(t *testing.T) {
+	prog := &ir.Program{Funcs: []*ir.Func{
+		// () -> (f64): emitted first, so a collision would make THIS the shared
+		// (wrong) type for sink below.
+		{Name: "give", ReturnType: f64(), Ops: []ir.Op{{Kind: ir.OpConstF64, F64: 3.5}}},
+		// (f64) -> (): a void function with one f64 param. Under the old key it
+		// would inherit give's () -> (f64) type and fail validation (param count
+		// + result mismatch against its body).
+		{Name: "sink", Params: []ast.Param{{Name: "x", Type: f64()}}, ReturnType: void(), Ops: []ir.Op{{Kind: ir.OpReturnVoid}}},
+	}}
+	bin, err := Emit(prog)
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	// Instantiating the module validates every function's body against its
+	// declared type; a dedup collision would corrupt sink's type and fail here.
+	if got := runUnderWasmtime(t, bin, "give"); !strings.HasPrefix(got, "3.5") {
+		t.Fatalf("invoke give: got %q, want 3.5 (a type-dedup collision would fail module validation)", got)
+	}
+}
+
 //	TestEmitIfElse — `function pick(a, b: i32): i32 {
 //	  if a > b { return a } else { return b }
 //	}`. Uses `if (result i32)` with branches that push the chosen

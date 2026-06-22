@@ -251,6 +251,29 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-21 — std/uuid: pure-Fern std/test migration coverage (v4 / v7 by shape)
+
+`std/uuid` (the RFC 4122 / 9562 generators) had Go-side coverage but no
+migration-shaped (pure-Fern, `std/test`-driven) companion. Added
+`examples/tests/uuid_test.fern` — 9 assertions that check the *structure* of a
+draw rather than its (random) bytes: v4/v7 length 36, the 8-4-4-4-12 hyphen
+positions, the version nibble (`4` / `7` at index 14), the v4 variant nibble
+(`8`/`9`/`a`/`b` at index 19), `string.is_uuid()` shape, and that two v4 draws
+differ. Because the assertions are randomness-invariant, the TAP output is
+deterministic — so the suite is **self-host differential-gateable despite the
+randomness**: `TestSelfHostStdTestE2E/uuid` (x86 + arm64) oracle-checks the
+self-host vs interpreter TAP-13 stdout + exit code **byte-for-byte**, and
+passes. This validates the module's own note that the generators (string-concat
++ sliced hex-digit literals, no `chr` / byte-array round-trip) lower through the
+self-host IR path with no AST fallback. Also gated natively
+(`TestRunnerUuidExamplePasses`).
+
+(Aside: `std/u32` / `std/u64` were attempted in parallel but held back — their
+`as u32`/`as u64` casts + unsigned compare / large-literal handling crash the
+self-hosted binary at runtime, exit 1 with no output, an unsigned-codegen gap
+distinct from the i32/i64 path. `std/regex` likewise remains blocked on #3720.
+Both left for after the respective `irlower.fern` fixes.)
+
 ### 2026-06-21 — std/i64: pure-Fern std/test migration coverage (signed-64-bit receiver methods)
 
 `std/i64` (the wider counterpart to `std/i32`) had Go-side coverage but no
