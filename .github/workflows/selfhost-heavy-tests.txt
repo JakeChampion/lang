@@ -16,7 +16,10 @@
 # Format: one anchored top-level test name per line. Blank lines and lines
 # starting with `#` are ignored. Add a name here when a new compiler-running
 # test shows up in the >~20s tail; new lighter tests need no change (they keep
-# auto-sharding round-robin).
+# auto-sharding round-robin). The authoritative signal for "is this heavy?" is
+# CI preemption itself (exit 143 on an x86 shard), not local timing — a fresh
+# CI shard pays a cold driver build plus accumulated shard load that a warm
+# local cache hides.
 TestSelfHostStage2Bootstrap
 TestSelfHostStage2Compiler
 TestSelfHostStage2FixedPoint
@@ -45,3 +48,6 @@ TestSelfHostIRStructReturnEligible
 TestSelfHostIRTupleReturnEligible
 TestSelfHostModloadIRProbeX86_64
 TestSelfHostX86ScaleProbe
+# Added after PR #3844 — confirmed preempted (exit 143) on its own CI run:
+TestSelfHostStdlibModulesIR
+TestSelfHostStdTestE2E
