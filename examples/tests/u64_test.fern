@@ -1,0 +1,93 @@
+import "std/test";
+import "std/u64";
+// examples/tests/u64_test.fern — pure-Fern coverage of std/u64's
+// unsigned-64-bit receiver methods (the wider counterpart to std/u32):
+// min / max / clamp / to_string. The unsigned semantics are the point —
+// `(0 as u64) - (1 as u64)` wraps to the all-ones value 2^64-1, which is
+// negative when reinterpreted as i64, so min/max/clamp must compare it
+// as the LARGEST u64 (not the smallest i64) and to_string must print the
+// full unsigned decimal. Receivers are written `… as u64` so dispatch
+// lands on the u64 methods.
+//
+// Interp-gated (TestRunnerU64ExamplePasses), NOT yet on the self-host
+// differential gate. Status: `538749c` routed u64 *receiver* methods
+// onto the self-host IR path, so the unsigned compare inside a concrete
+// method works when the all-ones value is the RECEIVER (e.g.
+// `umax().clamp(0,100) == 100` lowers correctly). The remaining gap is
+// the all-ones / wraparound value flowing as a function ARGUMENT and
+// through the generic `assert_eq[T: cmp.Eq + cmp.Display]` monomorph:
+// both the equality and the Display degrade to signed there (a u64
+// argument prints as `-1` and compares as the smallest i64 rather than
+// the largest u64). Until that monomorph preserves unsigned semantics,
+// `test_min_unsigned` / `test_max_unsigned` / `test_to_string_umax`
+// fail on self-host even though they pass under the interpreter oracle.
+
+// 2^64 - 1, the all-ones wraparound value.
+function umax(): u64 {
+    return (0 as u64) - (1 as u64);
+}
+
+function test_min(): test.TestOutcome {
+    return test.assert_eq((10 as u64).min(3 as u64), 3 as u64);
+}
+
+function test_max(): test.TestOutcome {
+    return test.assert_eq((10 as u64).max(3 as u64), 10 as u64);
+}
+
+function test_min_unsigned(): test.TestOutcome {
+    // umax() reinterprets as a negative i64; unsigned min must still pick 5.
+    return test.assert_eq((5 as u64).min(umax()), 5 as u64);
+}
+
+function test_max_unsigned(): test.TestOutcome {
+    // unsigned max must pick the all-ones value, not the small one.
+    return test.assert_eq((5 as u64).max(umax()), umax());
+}
+
+function test_clamp_hi(): test.TestOutcome {
+    return test.assert_eq((150 as u64).clamp(0 as u64, 100 as u64), 100 as u64);
+}
+
+function test_clamp_lo(): test.TestOutcome {
+    return test.assert_eq((3 as u64).clamp(10 as u64, 100 as u64), 10 as u64);
+}
+
+function test_clamp_in(): test.TestOutcome {
+    return test.assert_eq((50 as u64).clamp(0 as u64, 100 as u64), 50 as u64);
+}
+
+function test_clamp_unsigned_hi(): test.TestOutcome {
+    // umax() exceeds hi=100 under unsigned comparison → clamps down to 100.
+    return test.assert_eq(umax().clamp(0 as u64, 100 as u64), 100 as u64);
+}
+
+function test_to_string_small(): test.TestOutcome {
+    return test.assert_eq((42 as u64).to_string(), "42");
+}
+
+function test_to_string_wide(): test.TestOutcome {
+    return test.assert_eq((1234567890123 as u64).to_string(), "1234567890123");
+}
+
+function test_to_string_umax(): test.TestOutcome {
+    // The defining unsigned case: 2^64-1 prints as the full decimal,
+    // not as -1.
+    return test.assert_eq(umax().to_string(), "18446744073709551615");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/u64");
+    r = r.it("min",                test_min());
+    r = r.it("max",                test_max());
+    r = r.it("min unsigned",       test_min_unsigned());
+    r = r.it("max unsigned",       test_max_unsigned());
+    r = r.it("clamp above hi",     test_clamp_hi());
+    r = r.it("clamp below lo",     test_clamp_lo());
+    r = r.it("clamp in range",     test_clamp_in());
+    r = r.it("clamp unsigned hi",  test_clamp_unsigned_hi());
+    r = r.it("to_string small",    test_to_string_small());
+    r = r.it("to_string wide",     test_to_string_wide());
+    r = r.it("to_string umax",     test_to_string_umax());
+    return r.finish();
+}

@@ -251,6 +251,36 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-22 — std/u64: pure-Fern std/test coverage (interp-gated) + the unsigned-through-generic gap
+
+New `examples/tests/u64_test.fern` — pure-Fern, std/test-driven coverage of
+`std/u64`'s `min` / `max` / `clamp` / `to_string`, the unsigned-64-bit
+counterpart to the existing `i64_test`. The point of a u64 suite over i64 is the
+wraparound value `(0 as u64) - (1 as u64)` = 2⁶⁴-1, which is negative when
+reinterpreted as i64: unsigned `min`/`max`/`clamp` must treat it as the LARGEST
+u64 and `to_string` must print the full 20-digit decimal. Gated by
+`TestRunnerU64ExamplePasses` (interp).
+
+Held back from the self-host differential gate after re-probing the `538749c`
+"u64 receiver methods now lower" landing. That commit IS real — the unsigned
+compare inside a concrete u64 method lowers correctly when the all-ones value is
+the **receiver**: `umax().clamp(0, 100) == 100` and `umax().to_string()` (alone,
+compared with a direct `!=`) both match the interpreter on x86 + arm64
+self-host. The remaining gap is narrower and reproducible: the all-ones value
+flowing as a function **argument**, and through the generic
+`assert_eq[T: cmp.Eq + cmp.Display]` monomorph, both degrade to **signed**. The
+differential gate surfaces it exactly — `assert_eq((5 as u64).min(umax()), 5)`
+reports `expected 5, got -1` (the u64 argument prints `-1` and the compare picks
+the smallest i64 rather than the largest u64), while the byte-identical
+expression with a direct operator (`(5 as u64).min(umax()) != (5 as u64)`)
+lowers green. So the frontier is no longer the receiver-method dispatch
+(`538749c` closed that) but the **argument-position / bounded-generic
+monomorph** preserving the `u64` signedness tag — the same class as the u32
+`cmp` gap, now isolated to u64's wraparound bit pattern. `test_min_unsigned` /
+`test_max_unsigned` / `test_to_string_umax` are the three cases that flip green
+once that monomorph is fixed; the other 8 (incl. `test_clamp_unsigned_hi`, which
+exercises the unsigned compare via the receiver path) already lower.
+
 ### 2026-06-22 — self-host IR frontier remap: `std/num` scalar reducers already lower; the real gap is the Iterator-bounded stack
 
 Systematic `-decide` / `-ir-probe` sweep of the gaps the older "std/crypto gap
