@@ -2326,3 +2326,21 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   locals like `func_eligible`'s `r`, or the #3425 reclaim of the emit's per-function
   IR-op arrays. Until the emit budget grows, further reclaim admission is
   counter-productive (it OOMs the emit before it helps the runtime).
+- 2026-06-22: **Sharpened next-axis: make the deep struct-drop a PER-TYPE HELPER
+  (mirror `__field_reclaim`).** Root-causing increment A's emit-OOM: the exit-sweep
+  reclaim of a struct emits `emit_struct_field_drops` INLINE — for an array-of-struct
+  field that is a ~15-20-op element-walk loop. Admitting the parser's many fresh-ret
+  array-field locals emits that inline block at each site, exploding the native
+  driver's op arrays past the #3452 heap. This is the SAME inline-vs-helper trap the
+  field-reclaim slice already solved: `__field_reclaim_<T>` is a per-type helper with
+  a ~4-op call site precisely so hundreds of rebinds don't OOM the emit. The deep
+  struct-drop should get the same treatment — emit `__struct_drop_<T>` ONCE per type
+  (the element-walk body) and replace the inline `emit_struct_field_drops` at the
+  exit-sweep / reclaim sites with a 4-op call. That cuts the per-site emit cost ~5x,
+  bringing the broader struct reclaim (incl. increment A's discarded fresh-ret
+  locals) back within the #3452 budget. It is the principled unlock for per-module
+  convergence — a contained, proven pattern (the `__field_reclaim` wiring is the
+  template: `is_fern_helper` + `ir_helper_symbol` + per-type body in
+  `emit_ir_runtime`-style, x86 real / arm64+wasm via the same emit), distinct from
+  the reclaim ANALYSIS (now complete) and from the heavier #3425 emit-time IR-op
+  reclaim. Recommended as the next slice once picked up.
