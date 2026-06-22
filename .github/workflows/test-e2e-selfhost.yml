@@ -49,9 +49,12 @@ name: Test e2e self-host
 # under a minute.
 #
 # SHARDED by test name: each shard claims `index % N == shard` over the
-# sorted `-test.list '^TestSelfHost'` output of the prebuilt binary, so
-# the set splits ~evenly and new tests are picked up automatically.
-# N = 20 (the `test` job is 2 arch × 20 = 40 jobs, plus 2 build + the warm jobs).
+# sorted `-test.list '^TestSelfHost'` output of the prebuilt binary, MINUS the
+# heavy tests (selfhost-heavy-tests.txt, which run in their own `heavy` jobs —
+# see HEAVY-TEST SPLIT below), so the remainder splits ~evenly and new (light)
+# tests are picked up automatically.
+# N = 20 (the `test` job is 2 arch × 20 = 40 jobs, plus 2 build + the warm jobs
+# + the heavy jobs).
 #
 # RUNNER PREEMPTION — why short shards matter.
 # The x86 self-host shards were intermittently coming back `failure` with
@@ -80,11 +83,27 @@ name: Test e2e self-host
 # residual tail of inherent-runtime tests (CLI, DeriveStdlibIR, ImmutabilityGate,
 # the per-module driver) RUN the self-host compiler for tens of seconds each,
 # can't be build-cached, and — plus ~1 min of cache restore — kept some shards
-# in the reclaim window. Rather than chase that tail with ever-more shards, the
-# x86 test job is now `continue-on-error` (see the `test` job): a preempted x86
-# shard no longer fails the PR. Correctness is preserved by the aarch64 lane,
-# which runs the identical test set in <1 min/shard (never preempted) and stays
-# strict. So N is a wall-clock/cost lever now, not a greenness lever.
+# in the reclaim window. Rather than chase that tail with ever-more shards, two
+# things tackle it:
+#   * the x86 test job is `continue-on-error` (see the `test` job): a preempted
+#     x86 shard no longer FAILS the run. But continue-on-error only neutralises
+#     the run conclusion — each preempted shard still shows as a red `failure`
+#     CHECK on the PR (a runner reclaim is a cancellation, not a step exit code
+#     we can trap), so the PR check list stayed visibly red on every push.
+#   * THE HEAVY-TEST SPLIT (see selfhost-heavy-tests.txt + the heavy-matrix /
+#     heavy jobs). The residual tail is a KNOWN, enumerable set of tests that
+#     RUN the self-host compiler on whole programs (bootstrap / fixpoint /
+#     per-module / CLI / derive-stdlib). They are pulled OUT of the round-robin
+#     shards and each runs in its OWN short job, so no shard clusters them and
+#     every remaining shard is short. This applies the "make x86 jobs shorter"
+#     lever to the one part of the suite that resisted it — the build cache
+#     can't help tests whose cost IS running the compiler, but isolation can.
+# Correctness on the heavy tests is NOT covered by the aarch64 lane: they t.Skip
+# there (no x86 cross-gcc / qemu), which is why the aarch64 shards finish in
+# <1 min. The x86 lane is the only one that runs them; the split keeps them
+# running, just each in a short job instead of bunched into a reclaim-prone
+# shard. So N is a wall-clock/cost lever for the round-robin remainder, and the
+# heavy split is the greenness lever for the compiler-running tail.
 #
 # STREAMING OUTPUT. The shards run the binary with `-test.v`, which streams
 # each test's RUN/PASS/FAIL as it happens, rather than gotestsum's
@@ -185,6 +204,112 @@ jobs:
         with:
           path: ${{ runner.temp }}/selfhost-unicache
           key: selfhost-unicache-x86_64-${{ matrix.key }}-${{ github.sha }}
+
+  # HEAVY-TEST SPLIT — read the single source of truth into a matrix.
+  # The x86 self-host shards were going red on every PR not from test failures
+  # but from RUNNER PREEMPTION (exit 143) of the long shards (see RUNNER
+  # PREEMPTION above). The long pole is a known set of tests that RUN the
+  # self-host compiler on whole programs (bootstrap / fixpoint / per-module /
+  # CLI / derive-stdlib / the IR eligibility probes) — tens of seconds each and
+  # not build-cacheable. selfhost-heavy-tests.txt lists them; this job turns
+  # that file into the `heavy` matrix so the set lives in exactly ONE place
+  # (the `test` shard step reads the same file to EXCLUDE them).
+  heavy-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tests: ${{ steps.gen.outputs.tests }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: gen
+        run: |
+          set -euo pipefail
+          mapfile -t T < <(grep -vE '^[[:space:]]*(#|$)' .github/workflows/selfhost-heavy-tests.txt | sort -u)
+          if [ ${#T[@]} -eq 0 ]; then echo "no heavy tests listed"; exit 1; fi
+          printf '%s\n' "${T[@]}" | jq -R . | jq -cs . > "$RUNNER_TEMP/heavy.json"
+          echo "tests=$(cat "$RUNNER_TEMP/heavy.json")" >> "$GITHUB_OUTPUT"
+
+  # HEAVY TESTS — one job per compiler-running test (x86 only; they t.Skip on
+  # aarch64 for lack of x86 cross-gcc / qemu-x86_64, so the always-green aarch64
+  # lane never covered them anyway). Each job restores the warm driver caches
+  # and runs a SINGLE test, so it is short (~1-3 min incl. restore) and clears
+  # the reclaim window the clustered shards could not. continue-on-error mirrors
+  # the x86 `test` lane: a preempted heavy job must not fail the PR (aarch64
+  # cannot backstop these), but pulled out and run alone it now usually finishes
+  # green — which is the whole point of the split.
+  heavy:
+    needs: [build, warm, heavy-matrix]
+    strategy:
+      fail-fast: false
+      matrix:
+        test: ${{ fromJSON(needs.heavy-matrix.outputs.tests) }}
+    name: selfhost-x86_64-heavy-${{ matrix.test }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-fern
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-test-x86_64
+      # Restore the same warmed driver caches the `test` shards use (see the
+      # RESTORE block in the `test` job). One restore per warm group into a
+      # separate dir; the run step points FERN_SELFHOST_BUILD_CACHE at the
+      # ':'-list so the read side scans them all.
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/uc-elig
+          key: selfhost-unicache-x86_64-elig-${{ github.sha }}
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/uc-asm
+          key: selfhost-unicache-x86_64-asm-${{ github.sha }}
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/uc-pathprobe
+          key: selfhost-unicache-x86_64-pathprobe-${{ github.sha }}
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/uc-asmir
+          key: selfhost-unicache-x86_64-asmir-${{ github.sha }}
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/uc-asmload
+          key: selfhost-unicache-x86_64-asmload-${{ github.sha }}
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/uc-modload
+          key: selfhost-unicache-x86_64-modload-${{ github.sha }}
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/uc-checker
+          key: selfhost-unicache-x86_64-checker-${{ github.sha }}
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/uc-ssa
+          key: selfhost-unicache-x86_64-ssa-${{ github.sha }}
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/uc-cli
+          key: selfhost-unicache-x86_64-cli-${{ github.sha }}
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/uc-irx86
+          key: selfhost-unicache-x86_64-irx86-${{ github.sha }}
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/uc-asmfile
+          key: selfhost-unicache-x86_64-asmfile-${{ github.sha }}
+      - name: run heavy test ${{ matrix.test }} (prebuilt binary, streaming)
+        env:
+          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/uc-elig:${{ runner.temp }}/uc-asm:${{ runner.temp }}/uc-pathprobe:${{ runner.temp }}/uc-asmir:${{ runner.temp }}/uc-asmload:${{ runner.temp }}/uc-modload:${{ runner.temp }}/uc-checker:${{ runner.temp }}/uc-ssa:${{ runner.temp }}/uc-cli:${{ runner.temp }}/uc-irx86:${{ runner.temp }}/uc-asmfile"
+        run: |
+          set -euo pipefail
+          chmod +x e2e.test
+          BIN="$PWD/e2e.test"
+          cd internal/e2e
+          "$BIN" -test.run "^${{ matrix.test }}\$" -test.v -test.timeout 18m
 
   test:
     needs: [build, warm]
@@ -301,7 +426,14 @@ jobs:
           # by list index so each shard runs a disjoint ~1/N slice. Read from the
           # prebuilt binary (no recompile). Sorting makes the partition
           # deterministic and stable as tests are added.
-          mapfile -t ALL < <("$BIN" -test.list '^TestSelfHost' | grep '^TestSelfHost' | sort)
+          #
+          # EXCLUDE the heavy compiler-running tests: they are pulled out of the
+          # round-robin and run in their own one-test `heavy` jobs (see the
+          # heavy-matrix / heavy jobs above), so no shard clusters them and every
+          # remaining shard stays short enough to clear the runner reclaim window.
+          # selfhost-heavy-tests.txt is the single source of truth for that set.
+          grep -vE '^[[:space:]]*(#|$)' "$GITHUB_WORKSPACE/.github/workflows/selfhost-heavy-tests.txt" | sort -u > "$RUNNER_TEMP/heavy.txt"
+          mapfile -t ALL < <("$BIN" -test.list '^TestSelfHost' | grep '^TestSelfHost' | sort | grep -vxF -f "$RUNNER_TEMP/heavy.txt")
           SEL=()
           for i in "${!ALL[@]}"; do
             if [ $(( i % NSHARD )) -eq "$SHARD" ]; then SEL+=("${ALL[$i]}"); fi
