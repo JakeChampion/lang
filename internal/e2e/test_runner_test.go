@@ -413,6 +413,27 @@ func TestRunnerResultCombinatorsExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/array_hof_test.fern` covers the std/array higher-order
+// combinators NOT already in array_combinators_test (map/filter/fold/any/all/
+// find): flat_map, reduce (→ Option[T]), and sort_by (a comparator closure).
+// Interp-gated only: these three crash the self-hosted binary at program exit
+// (a drop/RC-at-exit bug — the tests all PASS, output is byte-correct, then
+// teardown traps; see the audit log), so the suite is intentionally NOT in
+// selfHostStdTestCases. Passing suite → exit 0.
+func TestRunnerArrayHofExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/array_hof_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/array higher-order", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/runner_self_test.fern` is the runner's own
 // meta-test — confirms that every assertion helper returns the
 // expected TestOutcome shape on both pass and fail paths.
