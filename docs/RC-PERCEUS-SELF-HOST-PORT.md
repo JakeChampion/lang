@@ -2303,3 +2303,26 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   ownership analysis that admits the threaded-builder hot path to the
   `__field_reclaim_<T>` mechanism is complete (method-threaded + consume-rebind +
   fresh-ret-local), closing the gap the 2026-06-22 measurement entries opened.
+- 2026-06-22: **Increment "A" (non-reassigned fresh-ret-local reclaim) — ATTEMPTED,
+  REVERTED; the convergence blocker has SHIFTED to the #3452 native-emit limit.**
+  Targeted the measured eligibility-phase leak (`func_eligible`'s discarded
+  `var r = lower_func(..)`): `lower_func` IS fresh-returning (verified — every real
+  `return` is a `LowerResult {..}` literal), so admitting fresh-ret CALL bindings to
+  `reclaimable_names_of` (extend `collect_fresh` / `is_fresh_struct_init`, threading
+  the already-available `fresh_struct_ret_fns`) would soundly free `r` at scope exit.
+  But the parser has MANY `var r = parse_x(..)` fresh-ret array-field call locals;
+  admitting them all emits an `emit_struct_field_drops` walk per local, and the
+  per-module emit of the parser unit then exit-137s (OS OOM-kill) — even with the
+  admission gated to annotated array-field structs + cheap-checks-first. This is the
+  documented #3452 wall: the native emit's OWN per-function IR-op allocation (#3425,
+  not reclaimed) is at its limit, so each increment of reclaim EMISSION (the
+  field-drop ops) tips a big module over. Reverted; no code landed from increment A.
+  **Conclusion:** the ownership ANALYSIS that admits the threaded-builder hot path to
+  `__field_reclaim_<T>` is now complete (method-threaded #3852 + consume-rebind #3860
+  + fresh-ret-local), and the gating blocker for per-module convergence is no longer
+  missing reclaim — it is the native-emit memory budget (#3452/#3425). The next axis
+  is reducing the emit's own footprint: either a SHALLOW field-drop (free only the
+  buffer, leak the elements — cheap ~4-op emit) for cheaply-discarded fresh-ret
+  locals like `func_eligible`'s `r`, or the #3425 reclaim of the emit's per-function
+  IR-op arrays. Until the emit budget grows, further reclaim admission is
+  counter-productive (it OOMs the emit before it helps the runtime).
