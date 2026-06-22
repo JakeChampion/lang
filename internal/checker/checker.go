@@ -10355,19 +10355,25 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// bare struct with no variant tag, and reads back as the wrong
 			// variant. maybeWrapForUnion below only widens a DIRECT variant field
 			// value, not the elements of an array field.
-			c.setElemHintFor(f.Value, expected)
 			// In a known generic instantiation, the field's expected type is
-			// the SUBSTITUTED field type (e.g. Box[i32], not the bare T).
-			// Propagate it as the expected type while checking the value so a
-			// NESTED generic literal (`Box { v: 42 }` inside a `Box[Box[i32]]`)
-			// seeds its own type-arg substitution from the right instantiation
-			// instead of inheriting the outer destination type — without this it
-			// re-seeds from `Box[Box[i32]]` and reports a spurious E043. Restore
-			// afterward so sibling fields aren't affected.
+			// the SUBSTITUTED field type (e.g. Box[i32] / i64, not the bare T).
+			// Drive every destination-typed step from it: the array-elem hint,
+			// the expected type while checking the value (so a NESTED generic
+			// literal like `Box { v: 42 }` inside a `Box[Box[i32]]` seeds its own
+			// type-arg substitution from the right instantiation instead of
+			// inheriting the outer destination type), and numeric settling (so an
+			// out-of-i32 literal in a `Box[i64]` field settles to i64 rather than
+			// defaulting to i32 against the bare `T`). Without this the value
+			// resolves against `T` and the field reports a spurious E043.
+			fieldExpected := expected
+			if sub != nil {
+				fieldExpected = substituteType(expected, sub)
+			}
+			c.setElemHintFor(f.Value, fieldExpected)
 			savedExpected := c.expectedType
 			restoreExpected := false
 			if sub != nil {
-				c.expectedType = substituteType(expected, sub)
+				c.expectedType = fieldExpected
 				restoreExpected = true
 			}
 			vt := c.checkExpr(f.Value, s)
@@ -10377,7 +10383,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			if vt == nil {
 				continue
 			}
-			c.settleNumeric(f.Value, expected)
+			c.settleNumeric(f.Value, fieldExpected)
 			vt = c.postSettleType(f.Value, vt)
 			// Implicit union-wrap: a bare variant struct literal in a
 			// field position widens to its union type, matching the
