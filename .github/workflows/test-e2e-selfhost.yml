@@ -192,31 +192,35 @@ jobs:
       # so shards never race to save, and the SHA match means no staleness.
       # Drivers not warmed here still compile per-shard (now closure-cached, so a
       # given driver builds at most once per shard regardless of dir shape).
+      # One restore per warm group into a SEPARATE dir: actions/cache/restore
+      # only populates the first restore into a given path, so restoring all
+      # groups into one shared dir would silently keep only the first. The shard
+      # points FERN_SELFHOST_BUILD_CACHE at the whole ':'-list (read scans all).
       - uses: actions/cache/restore@v4
         if: matrix.host.name == 'x86_64'
         with:
-          path: ${{ runner.temp }}/selfhost-unicache
+          path: ${{ runner.temp }}/uc-unified
           key: selfhost-unicache-x86_64-unified-${{ github.sha }}
       - uses: actions/cache/restore@v4
         if: matrix.host.name == 'x86_64'
         with:
-          path: ${{ runner.temp }}/selfhost-unicache
+          path: ${{ runner.temp }}/uc-asm
           key: selfhost-unicache-x86_64-asm-${{ github.sha }}
       - uses: actions/cache/restore@v4
         if: matrix.host.name == 'x86_64'
         with:
-          path: ${{ runner.temp }}/selfhost-unicache
+          path: ${{ runner.temp }}/uc-ir
           key: selfhost-unicache-x86_64-ir-${{ github.sha }}
       - uses: actions/cache/restore@v4
         if: matrix.host.name == 'x86_64'
         with:
-          path: ${{ runner.temp }}/selfhost-unicache
+          path: ${{ runner.temp }}/uc-modload
           key: selfhost-unicache-x86_64-modload-${{ github.sha }}
       - name: run self-host shard ${{ matrix.shard }}/6 (prebuilt binary, streaming)
         env:
           SHARD: "${{ matrix.shard }}"
           NSHARD: "6"
-          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
+          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/uc-unified:${{ runner.temp }}/uc-asm:${{ runner.temp }}/uc-ir:${{ runner.temp }}/uc-modload"
         run: |
           set -euo pipefail
           chmod +x e2e.test

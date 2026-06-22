@@ -76,17 +76,47 @@ var (
 	linkCacheDirOnce sync.Once
 )
 
-// diskCacheDir is an optional cross-PROCESS cache directory (set via
-// FERN_SELFHOST_BUILD_CACHE). When set, the asm + linked-binary caches read
-// from and write to it, so a `build` CI job can pre-compile every self-host
-// driver once and the sharded test jobs consume the artifact instead of
-// recompiling the ~35k-line compiler per shard — the heavy, RAM/disk-hungry
-// work that exhausts a hosted runner mid-shard ("received a shutdown signal").
-// Empty (the default, e.g. local `go test`) leaves the in-process caches as
-// the only layer — behaviour is unchanged. Content-addressed by the same
-// source-set / asm hash as the in-process caches, so a hit is byte-identical
-// to a fresh build and a stale dir only costs a miss (recompile).
-func diskCacheDir() string { return os.Getenv("FERN_SELFHOST_BUILD_CACHE") }
+// FERN_SELFHOST_BUILD_CACHE is an optional cross-PROCESS cache location: a
+// single directory, or a PATH-list (os.PathListSeparator, ':') of directories.
+// When set, the asm + linked-binary caches read from and write to it, so CI
+// `warm` jobs can pre-compile the self-host drivers once and the sharded test
+// jobs consume the artifacts instead of recompiling the ~35k-line compiler per
+// shard — the heavy, RAM/disk-hungry work that exhausts a hosted runner mid-
+// shard ("received a shutdown signal"). Empty (the default, e.g. local
+// `go test`) leaves the in-process caches as the only layer. Content-addressed
+// by the same source-set / asm hash as the in-process caches, so a hit is
+// byte-identical to a fresh build and a stale dir only costs a miss (recompile).
+//
+// The list form exists because `actions/cache/restore` only populates the FIRST
+// restore into a given path — restoring several caches into one shared dir
+// silently drops all but the first. So each warm group is restored into its own
+// dir and the shards point FERN_SELFHOST_BUILD_CACHE at the whole list; reads
+// scan every dir, writes go to the first.
+
+// diskCacheReadDirs is the ordered list of cache dirs to consult on a lookup.
+func diskCacheReadDirs() []string {
+	v := os.Getenv("FERN_SELFHOST_BUILD_CACHE")
+	if v == "" {
+		return nil
+	}
+	var dirs []string
+	for _, d := range filepath.SplitList(v) {
+		if d != "" {
+			dirs = append(dirs, d)
+		}
+	}
+	return dirs
+}
+
+// diskCacheWriteDir is where a freshly-built artifact is published (the first
+// configured dir), or "" when no disk cache is set.
+func diskCacheWriteDir() string {
+	dirs := diskCacheReadDirs()
+	if len(dirs) == 0 {
+		return ""
+	}
+	return dirs[0]
+}
 
 // linkCacheBaseDir is a process-lifetime scratch dir holding the cached
 // linked binaries. It is intentionally NOT a t.TempDir (those are torn
@@ -172,12 +202,14 @@ func cachedSelfHostAsm(t *testing.T, dir, fernName string) string {
 	t.Helper()
 	key := hashSelfHostSources(t, dir, fernName)
 	asm, err := selfHostAsmCache.get(key, func() (string, error) {
-		diskPath := ""
-		if d := diskCacheDir(); d != "" {
-			diskPath = filepath.Join(d, key+".s")
-			if b, rerr := os.ReadFile(diskPath); rerr == nil {
+		for _, d := range diskCacheReadDirs() {
+			if b, rerr := os.ReadFile(filepath.Join(d, key+".s")); rerr == nil {
 				return string(b), nil // cross-process hit: skip the ~35k-line compile
 			}
+		}
+		diskPath := ""
+		if d := diskCacheWriteDir(); d != "" {
+			diskPath = filepath.Join(d, key+".s")
 		}
 		prog, _, err := modload.Load(filepath.Join(dir, fernName))
 		if err != nil {
@@ -222,19 +254,19 @@ func cachedLink(t *testing.T, gcc, asm string) string {
 			return "", fmt.Errorf("link cache dir: %w", err)
 		}
 		binPath := filepath.Join(base, key)
-		// Cross-process disk hit: a pre-linked binary from the build-job
-		// artifact — copy it into this process's link dir and skip gcc.
-		diskBin := ""
-		if d := diskCacheDir(); d != "" {
-			diskBin = filepath.Join(d, key+".bin")
-			if _, serr := os.Stat(diskBin); serr == nil {
-				in, oerr := os.ReadFile(diskBin)
-				if oerr == nil {
-					if werr := os.WriteFile(binPath, in, 0o755); werr == nil {
-						return binPath, nil
-					}
+		// Cross-process disk hit: a pre-linked binary from a warm job — copy it
+		// into this process's link dir and skip gcc. Scan every configured dir.
+		for _, d := range diskCacheReadDirs() {
+			diskBin := filepath.Join(d, key+".bin")
+			if in, oerr := os.ReadFile(diskBin); oerr == nil {
+				if werr := os.WriteFile(binPath, in, 0o755); werr == nil {
+					return binPath, nil
 				}
 			}
+		}
+		diskBin := ""
+		if d := diskCacheWriteDir(); d != "" {
+			diskBin = filepath.Join(d, key+".bin")
 		}
 		asmPath := filepath.Join(base, key+".s")
 		if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
