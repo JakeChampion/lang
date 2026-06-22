@@ -169,13 +169,33 @@ func WrapWasiImported(coreBytes []byte, imports []WasiImport) []byte {
 // component-func 0; export it.
 func BuildAsyncLiftedExportComponent(coreBytes []byte, coreExportName, exportName string, resultValtype byte) []byte {
 	buf := PutComponentHeader(nil)
-	buf = PutCanonTaskReturnSingle(buf, resultValtype)                                          // core func 0
-	buf = PutCoreModuleSection(buf, coreBytes)                                                  // core module 0
-	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "task-return", 0)                        // core instance 0
+	buf = PutCanonTaskReturnSingle(buf, resultValtype)                                         // core func 0
+	buf = PutCoreModuleSection(buf, coreBytes)                                                 // core module 0
+	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "task-return", 0)                       // core instance 0
 	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 0, []string{""}, []uint32{0}) // core instance 1
-	buf = PutAliasSectionCoreExportFunc(buf, 1, coreExportName)                                 // core func 1
-	buf = PutTypeSectionOneFunc(buf, nil, nil, resultValtype)                                   // type 0: () -> result
-	buf = PutCanonSectionLiftAsync(buf, 1, 0)                                                   // component func 0
+	buf = PutAliasSectionCoreExportFunc(buf, 1, coreExportName)                                // core func 1
+	buf = PutTypeSectionOneFunc(buf, nil, nil, resultValtype)                                  // type 0: () -> result
+	buf = PutCanonSectionLiftAsync(buf, 1, 0)                                                  // component func 0
+	buf = PutExportSectionOneFunc(buf, exportName, 0)
+	return buf
+}
+
+// BuildAsyncLiftedExportComponentParams is BuildAsyncLiftedExportComponent
+// generalised over a parameter list: the export becomes `<exportName>: async
+// func(<params>) -> <resultValtype>`. The core export takes the params directly
+// (`(params…) -> ()`) and delivers its result through the imported
+// `task-return`. paramValtypes are component valtype bytes (e.g. CValtypeU32),
+// parallel to paramNames. Used to build a param-taking async provider for the
+// colorless async-import await path (docs/WASI-PREVIEW3-ASYNC-PLAN.md).
+func BuildAsyncLiftedExportComponentParams(coreBytes []byte, coreExportName, exportName string, paramNames []string, paramValtypes []byte, resultValtype byte) []byte {
+	buf := PutComponentHeader(nil)
+	buf = PutCanonTaskReturnSingle(buf, resultValtype)                                         // core func 0
+	buf = PutCoreModuleSection(buf, coreBytes)                                                 // core module 0
+	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "task-return", 0)                       // core instance 0
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 0, []string{""}, []uint32{0}) // core instance 1
+	buf = PutAliasSectionCoreExportFunc(buf, 1, coreExportName)                                // core func 1
+	buf = PutTypeSectionOneFunc(buf, paramNames, paramValtypes, resultValtype)                 // type 0: (params) -> result
+	buf = PutCanonSectionLiftAsync(buf, 1, 0)                                                  // component func 0
 	buf = PutExportSectionOneFunc(buf, exportName, 0)
 	return buf
 }

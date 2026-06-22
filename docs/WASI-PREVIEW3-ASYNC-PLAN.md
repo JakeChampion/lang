@@ -231,6 +231,13 @@ async import.** Both halves landed together (coupled-for-correctness):
   { return dep(); }`) compiles, composes against a bundled provider, and
   returns 42 under `wasmtime -W
   component-model-async,component-model-async-stackful --invoke 'run()'`.
+- **scalar params** (`TestWasmP3AsyncImportParamsFromFern`): an async
+  import that takes arguments — `@import async function add(a: i32, b:
+  i32): i32` + colorless `run() { return add(40, 2); }` — round-trips
+  through the `(a, b, retptr) -> status` lower against a param-taking
+  provider (`add: async func(u32, u32) -> u32`, built by
+  `BuildAsyncLiftedExportComponentParams`), returning 42. The wasmbin
+  wrapper forwards each scalar param ahead of the return-area pointer.
 
 **Still remaining on the import side:** a *pending* (non-synchronous)
 host import needs the `waitable-set.wait` await loop (the sync case reads
