@@ -51,7 +51,7 @@ name: Test e2e self-host
 # SHARDED by test name: each shard claims `index % N == shard` over the
 # sorted `-test.list '^TestSelfHost'` output of the prebuilt binary, so
 # the set splits ~evenly and new tests are picked up automatically.
-# N = 12 (the `test` job is 2 arch × 12 = 24 jobs, plus 2 build + the warm jobs).
+# N = 20 (the `test` job is 2 arch × 20 = 40 jobs, plus 2 build + the warm jobs).
 #
 # RUNNER PREEMPTION — why short shards matter.
 # The x86 self-host shards were intermittently coming back `failure` with
@@ -78,6 +78,8 @@ name: Test e2e self-host
 # scales with the test count, so raising N genuinely shortens each shard;
 # hence N = 12. If the inherent-runtime tail still clusters past the job
 # budget, raise N further — it is now an effective lever, no longer a no-op.
+# (Raised 12 -> 20 after 12-way shards still accumulated ~6 min: ~33 tests/shard
+# of real exec work plus ~1 min of cache restore was enough to be caught.)
 #
 # STREAMING OUTPUT. The shards run the binary with `-test.v`, which streams
 # each test's RUN/PASS/FAIL as it happens, rather than gotestsum's
@@ -187,8 +189,8 @@ jobs:
         host:
           - { runner: ubuntu-latest,    name: x86_64  }
           - { runner: ubuntu-24.04-arm, name: aarch64 }
-        # Twelve shards. See SHARDED / RUNNER PREEMPTION notes above.
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        # Twenty shards. See SHARDED / RUNNER PREEMPTION notes above.
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
     name: test-e2e-selfhost-${{ matrix.host.name }}-shard${{ matrix.shard }}
     runs-on: ${{ matrix.host.runner }}
     timeout-minutes: 20
@@ -265,10 +267,10 @@ jobs:
         with:
           path: ${{ runner.temp }}/uc-asmfile
           key: selfhost-unicache-x86_64-asmfile-${{ github.sha }}
-      - name: run self-host shard ${{ matrix.shard }}/12 (prebuilt binary, streaming)
+      - name: run self-host shard ${{ matrix.shard }}/20 (prebuilt binary, streaming)
         env:
           SHARD: "${{ matrix.shard }}"
-          NSHARD: "12"
+          NSHARD: "20"
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/uc-elig:${{ runner.temp }}/uc-asm:${{ runner.temp }}/uc-pathprobe:${{ runner.temp }}/uc-asmir:${{ runner.temp }}/uc-asmload:${{ runner.temp }}/uc-modload:${{ runner.temp }}/uc-checker:${{ runner.temp }}/uc-ssa:${{ runner.temp }}/uc-cli:${{ runner.temp }}/uc-irx86:${{ runner.temp }}/uc-asmfile"
         run: |
           set -euo pipefail
