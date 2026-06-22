@@ -13,6 +13,10 @@
 // unchanged during the transition.
 
 import "std/sort";
+// core/cmp supplies the `Eq` trait that bounds the equality-driven verbs
+// (`contains` / `index_of` / `distinct`) below, plus the primitive `impl Eq`
+// instances (i32 / string / …) that satisfy it.
+import "core/cmp";
 // std/array's bodies dispatch (i32) byte methods like `.abs()`
 // in abs_each and (string) methods like `.contains(needle)` /
 // `.index_of(...)` / `.count(...)` / `.join(...)` in the
@@ -1077,6 +1081,59 @@ pub function sort_by[T](xs: T[], cmp: (T, T) => i32): T[] {
             out = out.with(i, tmp);
             i = i - 1;
         }
+    }
+    return out;
+}
+
+// =================== EQ-DRIVEN GENERIC VERBS ===================
+//
+// `contains` / `index_of` / `distinct` over an arbitrary `T[]`, driven by
+// structural equality. Unlike the structural verbs above (reverse / take /
+// drop / concat / zip), these compare elements, so the element type is bound
+// `T: cmp.Eq` — `i32` / `string` / the other primitives satisfy it out of the
+// box (their `impl Eq` lives in core/cmp), and a `@derive(Eq)` struct or enum
+// qualifies too. The `Eq` bound is also what lets these monomorphise (and so
+// dispatch `==` correctly per element type) on the self-host IR path, where an
+// UNBOUNDED `[T]` would erase to a single pointer-compare clone and silently
+// miscompare strings.
+//
+// Free functions (not `.contains()` / `.index_of()` / `.distinct()` receiver
+// methods) because the string[]-specific `__method_Array_contains` /
+// `index_of` / `distinct` already claim those method names and array method
+// dispatch keys on the name only. Use `contains(xs, t)` / `index_of(xs, t)` /
+// `distinct(xs)` for non-string element types until the type-specific methods
+// are unified with the generic ones (the same deferral as reverse/take/drop).
+
+// `index_of(xs, target)` — `Some(i)` for the first index whose element equals
+// `target`, else `None`. The Option return keeps "not found" out of band,
+// matching `find` / the string[] `position` method rather than the `-1`
+// sentinel the string[] `index_of` method uses.
+pub function index_of[T: cmp.Eq](xs: T[], target: T): Option[i32] {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] == target) { return Some(i); }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `contains(xs, target)` — true if any element equals `target`. The boolean
+// companion to `index_of`; short-circuits on the first match. Empty → false.
+pub function contains[T: cmp.Eq](xs: T[], target: T): boolean {
+    for x in xs {
+        if (x == target) { return true; }
+    }
+    return false;
+}
+
+// `distinct(xs)` — fresh `T[]` with duplicates removed (first occurrence wins,
+// input order preserved). O(n²) membership scan via `contains` — fine for the
+// small-n CLI / edge-handler workloads; reach for a Map-backed dedup at larger
+// N. Empty → empty.
+pub function distinct[T: cmp.Eq](xs: T[]): T[] {
+    var out: T[] = [];
+    for x in xs {
+        if (!contains(out, x)) { out = out.append(x); }
     }
     return out;
 }
