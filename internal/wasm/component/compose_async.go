@@ -32,6 +32,12 @@ type AsyncImportSpec struct {
 	ProviderExportName string
 	LowerParams        []byte
 	LowerResults       []byte
+	// NeedsRealloc selects the `canon lower async + realloc` form for a result
+	// that carries linear-memory data (a `string` / `list<T>`): the canonical
+	// ABI materialises the incoming bytes in the consumer's memory via its
+	// cabi_realloc, which the composer aliases and threads into the lower. A
+	// scalar result leaves this false (lower carries only `[async, memory]`).
+	NeedsRealloc bool
 }
 
 // BuildAsyncImportAwaitComponent is the single-import case of
@@ -122,24 +128,46 @@ func BuildAsyncImportsAwaitComponent(
 	consumerInst := 2*n + 1
 	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, consumerMod, argNames, argInsts)
 
-	// Phase 7: alias the consumer's memory → core memory 0.
+	// Phase 7: alias the consumer's memory → core memory 0. If any import
+	// returns a string/list, also alias the consumer's exported cabi_realloc →
+	// core func n+1 (the `realloc` option the string/list lower carries). The
+	// realloc alias is a core FUNC, so it shifts the real-lower / run-alias core
+	// func indices by reallocOff (1 when present) but leaves core-instance /
+	// table / memory indices unchanged.
 	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, consumerInst, "memory")
-
-	// Phase 8: the real `canon lower async` of each provider func (component
-	// func i) over the consumer memory → core func n+1+i.
+	needRealloc := false
 	for i := range imports {
-		buf = PutCanonSectionLowerAsync(buf, uint32(i), 0)
+		if imports[i].NeedsRealloc {
+			needRealloc = true
+		}
+	}
+	var reallocOff, reallocCoreF uint32
+	if needRealloc {
+		reallocCoreF = n + 1
+		buf = PutAliasSectionCoreExport(buf, CoreSortFunc, consumerInst, "cabi_realloc") // core func n+1
+		reallocOff = 1
+	}
+
+	// Phase 8: the real lower of each provider func (component func i) over the
+	// consumer memory → core func n+1+reallocOff+i. A string/list result uses
+	// the realloc-carrying lower; a scalar uses the plain async lower.
+	for i := range imports {
+		if imports[i].NeedsRealloc {
+			buf = PutCanonSectionLowerAsyncRealloc(buf, uint32(i), 0, reallocCoreF)
+		} else {
+			buf = PutCanonSectionLowerAsync(buf, uint32(i), 0)
+		}
 	}
 
 	// Phase 9: per import, a fixup module that patches its trampoline table
-	// slot 0 to its real lowered func (core func n+1+i). Core table i is that
-	// import's trampoline "$imports" table.
+	// slot 0 to its real lowered func (core func n+1+reallocOff+i). Core table i
+	// is that import's trampoline "$imports" table.
 	for i := range imports {
 		buf = PutCoreModuleSection(buf, FixupModuleForParamsResults(imports[i].LowerParams, imports[i].LowerResults))
 		buf = PutAliasSectionCoreExport(buf, CoreSortTable, uint32(i), "$imports") // core table i
 		buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
 			{Name: "$imports", Sort: CoreSortTable, Idx: uint32(i)},
-			{Name: "0", Sort: CoreSortFunc, Idx: n + 1 + uint32(i)},
+			{Name: "0", Sort: CoreSortFunc, Idx: n + 1 + reallocOff + uint32(i)},
 		})
 		// The fixup module index is n (consumer) + 1 + i.
 		buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, consumerMod+1+uint32(i),
@@ -147,13 +175,13 @@ func BuildAsyncImportsAwaitComponent(
 	}
 
 	// Phase 10: lift the consumer's async core export async under liftExportName.
-	// Core funcs: 0 (task.return), 1..n (placeholders), n+1..2n (real lowers),
-	// then runCoreF = 2n+1. Component funcs: 0..n-1 (provider aliases), then
-	// the lift is component func n.
-	runCoreF := 2*n + 1
-	buf = PutAliasSectionCoreExportFunc(buf, consumerInst, consumerAsyncExport) // core func 2n+1
-	buf = PutTypeSectionOneFunc(buf, nil, nil, resultValtype)                   // type 0
-	buf = PutCanonSectionLiftAsync(buf, runCoreF, 0)                            // component func n
+	// Core funcs: 0 (task.return), 1..n (placeholders), [n+1 cabi_realloc],
+	// then real lowers, then runCoreF = 2n+1+reallocOff. Component funcs: 0..n-1
+	// (provider aliases), then the lift is component func n.
+	runCoreF := 2*n + 1 + reallocOff
+	buf = PutAliasSectionCoreExportFunc(buf, consumerInst, consumerAsyncExport)
+	buf = PutTypeSectionOneFunc(buf, nil, nil, resultValtype) // type 0
+	buf = PutCanonSectionLiftAsync(buf, runCoreF, 0)          // component func n
 	buf = PutExportSectionOneFunc(buf, liftExportName, n)
 	return buf
 }
@@ -162,6 +190,8 @@ func BuildAsyncImportsAwaitComponent(
 // instance. Core instances in order: 0..n-1 trampolines, n task-return arg,
 // n+1..2n per-import args, 2n+1 consumer, then for each import a (fixup-arg,
 // fixup) pair starting at 2n+2 — so import i's fixup arg is at 2n+2 + 2*i.
+// (The optional cabi_realloc alias is a core func, not an instance, so it does
+// not shift these.)
 func argFixupInst(n uint32, i int) uint32 { return 2*n + 2 + 2*uint32(i) }
 
 // BuildAsyncLiftedExportComponentString wraps a reactor `providerCore` whose

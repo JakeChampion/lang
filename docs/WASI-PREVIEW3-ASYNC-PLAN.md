@@ -349,20 +349,28 @@ async features and gets `"hello"` — so `PutCanonTaskReturnStringWithMemory`
 + `PutCanonSectionLiftAsyncWithMemory` are now **runtime-verified**, not just
 byte-pinned-by-analogy.
 
-The remaining runnable string vertical needs: (a) the consumer's
-`cabi_realloc` aliased into the `canon lower async + realloc`
-(`PutCanonSectionLowerAsyncRealloc`) via the gMem trampoline; (b) the wasmbin
-async-import branch extended to lift the `(ptr,len)` return area into a Fern
-string (`__bytes_to_lang_string`, mirroring the non-async
-`buildExternStringResultWrapper`) — **DONE**: `scanExternImports`' async
-branch handles a `string` result (`buildExternAsyncStringResultWrapper`,
-pulling in `__bytes_to_lang_string` + `cabi_realloc`;
-`TestScanExternImportsAsyncString`); (c) an e2e composing a real Fern
-`@import async function fetch(): string` consumer against the now-proven
-string provider. The provider half, all three composite-result encoders,
-and the wasmbin consumer string lift are in place; the **composer
-lower-realloc wiring** (alias the consumer's cabi_realloc into the async
-lower) + that e2e are the last step.
+**String result vertical — DONE, runnable from real Fern source.**
+All three pieces landed:
+- (a) **composer lower-realloc wiring**: `AsyncImportSpec.NeedsRealloc`
+  selects `PutCanonSectionLowerAsyncRealloc` and the composer aliases the
+  consumer's exported `cabi_realloc` into the lower (a core-func alias that
+  shifts the lower/run core-func indices by one but not the instance
+  layout); the host materialises the result bytes in the consumer's memory.
+- (b) **wasmbin string lift**: `scanExternImports`' async branch handles a
+  `string` result (`buildExternAsyncStringResultWrapper`, pulling in
+  `__bytes_to_lang_string` + `cabi_realloc`; `TestScanExternImportsAsyncString`).
+- (c) **e2e**: `TestWasmP3AsyncImportStringFromFern` compiles a real Fern
+  `@import async function fetch(): string` + `async function run(): i32 {
+  var s = fetch(); return s.len(); }`, composes it against the proven
+  string provider, and runs `run()` under wasmtime's async features → **5**
+  (`len "hello"`). The string flows colorlessly across the async lower/lift
+  round-trip.
+
+So the colorless async vertical now covers scalars (i32/i64/u64/f32/f64),
+params, N concurrent imports, AND `string` results — import + export — all
+runnable end to end. `list<T>` results reuse the same realloc path (a
+follow-up); string/list async *params* and the *pending* (waitable-set)
+path remain (see above).
 
 **Also remaining:** `future<T>` / `stream<T>` parameter+result lowering;
 wiring async into the `concurrent { … }` desugar as an alternative to
