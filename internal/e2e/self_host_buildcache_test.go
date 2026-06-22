@@ -74,6 +74,18 @@ var (
 	linkCacheDirOnce sync.Once
 )
 
+// diskCacheDir is an optional cross-PROCESS cache directory (set via
+// FERN_SELFHOST_BUILD_CACHE). When set, the asm + linked-binary caches read
+// from and write to it, so a `build` CI job can pre-compile every self-host
+// driver once and the sharded test jobs consume the artifact instead of
+// recompiling the ~35k-line compiler per shard — the heavy, RAM/disk-hungry
+// work that exhausts a hosted runner mid-shard ("received a shutdown signal").
+// Empty (the default, e.g. local `go test`) leaves the in-process caches as
+// the only layer — behaviour is unchanged. Content-addressed by the same
+// source-set / asm hash as the in-process caches, so a hit is byte-identical
+// to a fresh build and a stale dir only costs a miss (recompile).
+func diskCacheDir() string { return os.Getenv("FERN_SELFHOST_BUILD_CACHE") }
+
 // linkCacheBaseDir is a process-lifetime scratch dir holding the cached
 // linked binaries. It is intentionally NOT a t.TempDir (those are torn
 // down per-test); the cache must outlive any single test.
@@ -124,6 +136,13 @@ func cachedSelfHostAsm(t *testing.T, dir, fernName string) string {
 	t.Helper()
 	key := hashSelfHostSources(t, dir, fernName)
 	asm, err := selfHostAsmCache.get(key, func() (string, error) {
+		diskPath := ""
+		if d := diskCacheDir(); d != "" {
+			diskPath = filepath.Join(d, key+".s")
+			if b, rerr := os.ReadFile(diskPath); rerr == nil {
+				return string(b), nil // cross-process hit: skip the ~35k-line compile
+			}
+		}
 		prog, _, err := modload.Load(filepath.Join(dir, fernName))
 		if err != nil {
 			return "", fmt.Errorf("modload %s: %w", fernName, err)
@@ -138,6 +157,13 @@ func cachedSelfHostAsm(t *testing.T, dir, fernName string) string {
 		asm, err := x86_64.Emit(prog, info)
 		if err != nil {
 			return "", fmt.Errorf("emit %s: %w", fernName, err)
+		}
+		if diskPath != "" {
+			_ = os.MkdirAll(filepath.Dir(diskPath), 0o755)
+			tmp := diskPath + ".tmp"
+			if werr := os.WriteFile(tmp, []byte(asm), 0o644); werr == nil {
+				_ = os.Rename(tmp, diskPath) // atomic publish; safe under parallel shards
+			}
 		}
 		return asm, nil
 	})
@@ -159,13 +185,36 @@ func cachedLink(t *testing.T, gcc, asm string) string {
 		if err != nil {
 			return "", fmt.Errorf("link cache dir: %w", err)
 		}
-		asmPath := filepath.Join(base, key+".s")
 		binPath := filepath.Join(base, key)
+		// Cross-process disk hit: a pre-linked binary from the build-job
+		// artifact — copy it into this process's link dir and skip gcc.
+		diskBin := ""
+		if d := diskCacheDir(); d != "" {
+			diskBin = filepath.Join(d, key+".bin")
+			if _, serr := os.Stat(diskBin); serr == nil {
+				in, oerr := os.ReadFile(diskBin)
+				if oerr == nil {
+					if werr := os.WriteFile(binPath, in, 0o755); werr == nil {
+						return binPath, nil
+					}
+				}
+			}
+		}
+		asmPath := filepath.Join(base, key+".s")
 		if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
 			return "", err
 		}
 		if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 			return "", fmt.Errorf("gcc: %w\n%s", err, out)
+		}
+		if diskBin != "" {
+			_ = os.MkdirAll(filepath.Dir(diskBin), 0o755)
+			if in, rerr := os.ReadFile(binPath); rerr == nil {
+				tmp := diskBin + ".tmp"
+				if werr := os.WriteFile(tmp, in, 0o755); werr == nil {
+					_ = os.Rename(tmp, diskBin)
+				}
+			}
 		}
 		return binPath, nil
 	})
