@@ -343,6 +343,29 @@ pub function field_reclaim_types(mod: parser.Module): string[] {
     return out;
 }
 
+// struct_drop_types returns the distinct struct types `T` for which a
+// __struct_drop_<T> helper is called anywhere in the lowered module (#3457 — the
+// deep struct-drop, formerly inline). wasm emits a per-type PASS-THROUGH body for
+// each (no deep-drop yet — leak-safe, mirroring field_reclaim_types); collected by
+// scanning lowered call_direct ops, the same gating field_reclaim_types uses.
+pub function struct_drop_types(mod: parser.Module): string[] {
+    var out: string[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind == "call_direct" && asm_ir.is_struct_drop_name(r.ops[i].str)) {
+                var t: string = asm_ir.struct_drop_type(r.ops[i].str);
+                if (util.index_of_str(out, t) < 0) { out = out.append(t); }
+            }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return out;
+}
+
 // module_emits_op reports whether any lowered function emits an op of `kind` —
 // the shared scanner the random/byte-source helper gates use (issue #2747).
 pub function module_emits_op(mod: parser.Module, kind: string): boolean {

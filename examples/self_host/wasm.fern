@@ -11268,6 +11268,16 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
             ir_out = ir_out + "    (local.get $new))\n";
             frti = frti + 1;
         }
+        // Per-type $__struct_drop_<T> bodies (#3457 — the deep struct-drop). wasm
+        // does not deep-drop the struct's rc-array fields yet — a leak-safe PASS-
+        // THROUGH (returns `box`), mirroring the field_reclaim pass-through above.
+        var sdt: string[] = wasm_ir.struct_drop_types(mod);
+        var sdti: i32 = 0;
+        while (sdti < sdt.len()) {
+            ir_out = ir_out + "  (func $__struct_drop_" + sdt[sdti] + " (param $box i32) (result i32)\n";
+            ir_out = ir_out + "    (local.get $box))\n";
+            sdti = sdti + 1;
+        }
         if (wasm_ir.module_uses_divrem(mod)) { ir_out = ir_out + divrem_helpers(); }
         if (wasm_ir.module_uses_i64_divrem(mod)) { ir_out = ir_out + divrem64_helpers(); }
         // $__fern_strcat + $__fern_streq; references $__fern_str_box from

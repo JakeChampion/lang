@@ -3754,6 +3754,22 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
         }
         fri = fri + 1;
     }
+    // Per-type __struct_drop_<T> pass-through bodies (#3457). arm64 does not deep-
+    // drop the struct's rc-array fields yet — a leak-safe PASS-THROUGH (returns
+    // the box arg), mirroring the field_reclaim pass-through above. Stack-arg ABI:
+    // [sp]=box (one 16-byte slot). Emitted per-unit + `.weak` (link-deduped).
+    var sdi: i32 = 0;
+    while (sdi < s.needed.len()) {
+        var sdnd: string = s.needed[sdi];
+        if (sdnd.len() > 12 && sdnd[0:12] == "struct_drop:") {
+            var sdsan: string = asmcore.sanitize_label(sdnd[12 : sdnd.len()]);
+            s = s.write(".weak __fn___struct_drop_" + sdsan + "\n");
+            s = s.write("__fn___struct_drop_" + sdsan + ":\n");
+            s = s.write("    ldr x0, [sp]\n");           // box
+            s = s.write("    ret\n");
+        }
+        sdi = sdi + 1;
+    }
     // Fold the whole-program need union (sibling modules' needs) into the entry's
     // single runtime BEFORE _start, so _start's args gating sees a sibling's
     // args() need. Inert (empty) on the single-unit path.
