@@ -70,6 +70,14 @@ on:
       - "go.sum"
   workflow_dispatch:
 
+# Supersede an in-flight run for the same ref: a new push to the
+# branch / PR (or a new dispatch) cancels the older run instead of
+# letting both sit in the queue. Keyed per-workflow + per-ref so
+# distinct PRs and the main branch never cancel each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test-arm64-darwin:
     runs-on: macos-15
