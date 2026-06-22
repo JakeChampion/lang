@@ -251,6 +251,51 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-22 — std/crypto: pure-Fern std/test KAT coverage (interp-gated) + self-host gap map
+
+`std/crypto`'s SHA-256 + HMAC-SHA256 had Go-side coverage but no
+migration-shaped (pure-Fern, `std/test`-driven) companion. Added
+`examples/tests/crypto_test.fern` — 6 assertions pinning the standard
+known-answer vectors: `sha256_hex` of the empty string / `"abc"` / the classic
+pangram (FIPS 180-4), the 32-byte raw-digest length, and the well-known
+`hmac_sha256_hex("key", pangram)` RFC-shaped vector. Gated via
+`TestRunnerCryptoExamplePasses` (interp).
+
+**Interp-gated, not self-host-gated** — and this is the notable part: it is
+intentionally NOT in `selfHostStdTestCases`. The self-hosted compiler crashes at
+runtime compiling `std/crypto` (exit 1, no output). To pin the cause precisely
+rather than hand-wave "unsigned-`u32`", this run probed minimal repros through
+the differential gate — and the gap is **much narrower** than the surface
+suggests. Self-host-compiled and **passing**: scalar `u32` arithmetic; unsigned
+compare (`>` / `<`); `>>` / `<<` / `|` / `&`; large hex `u32` literals
+(`0x428a2f98 as u32`); and `u32[]` element arrays (build + index). So `std/u32`
+/ `std/u64`'s `min` / `max` / `clamp` are NOT the problem. The one confirmed
+crash is **`u32.to_string()`** — the `int.__int_to_string_u64((n as i64) & mask,
+0)` path (the unsigned→i64 reinterpret-and-format), which is exactly what makes
+`std/u32` / `std/u64` (whose `to_string` routes there) crash. `std/crypto`
+crashes for a *separate, not-yet-isolated* reason — it uses none of the
+above-passing ops nor `to_string`, so the likely culprit is the SHA-256
+length-padding `u64` math or `string_from_bytes` over computed bytes (left for a
+follow-up probe). The deterministic-stdlib self-host gaps, restated precisely:
+
+- **`__int_to_string_u64` from an unsigned cast** — blocks `std/u32` /
+  `std/u64` `to_string` (and any unsigned decimal formatting). Basic `u32` ops
+  themselves lower fine.
+- **a separate `std/crypto` path** — not `to_string`; un-isolated (SHA-256
+  `u64` length math / computed-byte `string_from_bytes` are the suspects).
+- **trait-generic reducers** — `std/num`'s `sum`/`product`/`sum_with`/… crash
+  (exit -1) despite the module note claiming they lower; the bounded-generic
+  monomorphisation over `Add`/`Mul`/`Zero` doesn't fully lower yet.
+- **array-payload enums (#3720)** — `std/regex`'s `RAlt`/`RSeq`/`RClass` built
+  during the recursive parse crash the self-host binary even for un-grouped
+  patterns.
+
+The stdlib that DID lower (math / path / hex / url / csv / core/int / i32 / i64
+/ uuid, all merged) is the i32 / string / struct / monomorphic-method surface.
+The narrow `__int_to_string_u64`-from-unsigned fix (in `irlower.fern` / the asm
+backends) is the cheapest lever — it flips `u32` / `u64` onto the differential
+gate on its own.
+
 ### 2026-06-21 — std/uuid: pure-Fern std/test migration coverage (v4 / v7 by shape)
 
 `std/uuid` (the RFC 4122 / 9562 generators) had Go-side coverage but no

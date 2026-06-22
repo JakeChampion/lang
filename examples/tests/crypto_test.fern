@@ -1,0 +1,51 @@
+import "std/test";
+import "std/crypto" as crypto;
+// examples/tests/crypto_test.fern — pure-Fern coverage of std/crypto's
+// SHA-256 + HMAC-SHA256 against the standard NIST (FIPS 180-4) and
+// RFC 4231 known-answer vectors: the empty string, "abc", the classic
+// pangram, the 32-byte raw-digest length, and an HMAC-SHA256 vector.
+// The Go-side suite unit-tests the rounds; this is the migration-shaped
+// (pure-Fern, std/test-driven) companion. All arithmetic is u32, so this
+// also exercises the unsigned round math end to end.
+
+function test_sha256_empty(): test.TestOutcome {
+    return test.assert_eq(crypto.sha256_hex(""),
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+}
+
+function test_sha256_abc(): test.TestOutcome {
+    return test.assert_eq(crypto.sha256_hex("abc"),
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+}
+
+function test_sha256_pangram(): test.TestOutcome {
+    return test.assert_eq(crypto.sha256_hex("The quick brown fox jumps over the lazy dog"),
+        "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592");
+}
+
+function test_sha256_bytes_len(): test.TestOutcome {
+    // The raw digest is exactly 32 bytes.
+    return test.assert_eq(crypto.sha256_bytes("abc").len(), 32);
+}
+
+function test_hmac_sha256(): test.TestOutcome {
+    // The well-known HMAC-SHA256("key", pangram) vector.
+    return test.assert_eq(
+        crypto.hmac_sha256_hex("key", "The quick brown fox jumps over the lazy dog"),
+        "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8");
+}
+
+function test_hmac_bytes_len(): test.TestOutcome {
+    return test.assert_eq(crypto.hmac_sha256_bytes("key", "msg").len(), 32);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/crypto");
+    r = r.it("sha256 empty",       test_sha256_empty());
+    r = r.it("sha256 abc",         test_sha256_abc());
+    r = r.it("sha256 pangram",     test_sha256_pangram());
+    r = r.it("sha256_bytes len",   test_sha256_bytes_len());
+    r = r.it("hmac-sha256 vector", test_hmac_sha256());
+    r = r.it("hmac_bytes len",     test_hmac_bytes_len());
+    return r.finish();
+}
