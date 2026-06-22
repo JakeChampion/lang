@@ -890,7 +890,34 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 		// task that awaits) — the `async function` keyword provides that.
 		if ex.Async {
 			if hasMemParam {
-				return nil, nil, fmt.Errorf("@import %q (%s/%s): async extern with a string/array/record/option parameter is not supported yet (only scalar params; docs/WASI-PREVIEW3-ASYNC-PLAN.md)", ex.Name, ex.Iface, ex.WITName)
+				// Composite ARGUMENT to an async import. This slice supports a
+				// single `string` param + scalar result: the wrapper normalises the
+				// string to a canonical (ptr, len) in this module's memory (which the
+				// callee reads via the lower's memory option), then runs the async
+				// lower `(ptr, len, retptr) -> status` and reads the scalar result.
+				// Other mem-param shapes (arrays/records, or a composite result
+				// alongside) are not supported yet.
+				if !(len(ex.Params) == 1 && isStringType(ex.Params[0].Type) && externScalarType(ret)) {
+					return nil, nil, fmt.Errorf("@import %q (%s/%s): async extern with a non-scalar parameter only supports a single string param + scalar result so far (docs/WASI-PREVIEW3-ASYNC-PLAN.md)", ex.Name, ex.Iface, ex.WITName)
+				}
+				results, err := resultValtypes(ret)
+				if err != nil {
+					return nil, nil, fmt.Errorf("@import %q (%s/%s): %w", ex.Name, ex.Iface, ex.WITName, err)
+				}
+				rawName := ex.Name + "$import"
+				// raw import: (ptr, len, retptr) -> i32 status.
+				specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32}, results: []byte{encode.ValtypeI32}}
+				in.add(rawName)
+				wrappers[ex.Name] = runtimeHelperSpec{
+					params:  params, // (data, len) — the Fern string
+					results: results,
+					body:    buildExternAsyncStringParamWrapper(rawName, results[0]),
+				}
+				helpers.add(ex.Name)
+				helpers.add("__fern_alloc")
+				helpers.add("__fern_str_len")
+				helpers.add("__fern_str_byte")
+				continue
 			}
 			rawName := ex.Name + "$import"
 			// raw import: (scalar params…, retptr) -> i32 status. The retptr

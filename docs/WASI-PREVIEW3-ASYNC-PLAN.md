@@ -408,14 +408,27 @@ Cross-checked with wasm-tools 1.240 (now fetched into the sandbox): a
 hand-authored `send: async func(s: string) -> u32` component
 (`[async, memory, realloc]` lift over a bump-`cabi_realloc` core) encodes,
 validates, and runs under wasmtime — `send("hello") -> 5`.
-`component.BuildAsyncLiftedExportComponentStringParam` builds it (lift via
-`PutCanonSectionLiftAsyncWithMemoryRealloc`), proven by
-`TestWasmP3AsyncStringParamExportProvider`. The remaining param step is the
-**consumer**: the wasmbin async-import branch must normalise a string/list
-*argument* to `(ptr, len)` before the `canon lower async` call (combining the
-existing P4c mem-param normalisation with the async retptr+status) + an e2e —
-no new ABI unknowns. (Composite async *results* are already complete, import +
-export.)
+`component.BuildAsyncLiftedExportComponentStringParam` builds the provider (lift
+via `PutCanonSectionLiftAsyncWithMemoryRealloc`), proven by
+`TestWasmP3AsyncStringParamExportProvider`.
+
+**String param — DONE, runnable from real Fern source.** The consumer side
+landed too: the wasmbin async-import branch normalises a single string
+*argument* to a canonical `(ptr, len)` in the consumer's memory
+(`buildExternAsyncStringParamWrapper`, reusing `emitStrNormalize`) and runs the
+`canon lower async` call `(ptr, len, retptr) -> status` — **memory option only,
+no realloc on the consumer** (the param bytes are the caller's; the provider's
+lift realloc copies them into the callee).
+`TestWasmP3AsyncImportStringParamFromFern` compiles a real Fern `@import async
+function send(s: string): i32` + `run() { return send("hello"); }`, composes it
+against the string-param provider, and runs `run()` → **5**. So a string
+argument flows colorlessly into an awaited import.
+
+That makes composite types — `string` + numeric `list<T>` — complete for both
+**results and (string) params**, import + export. A `list<T>` *argument* reuses
+the same path (numeric-array normalisation, a follow-up); multi-arg mem shapes
+remain. The *pending* (`waitable-set`) path is the last remaining async
+capability (now derivable with wasm-tools 1.240 in hand).
 
 **Also remaining:** `future<T>` / `stream<T>` parameter+result lowering;
 wiring async into the `concurrent { … }` desugar as an alternative to
