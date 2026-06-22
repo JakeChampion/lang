@@ -2702,6 +2702,33 @@ func PutCanonSectionLowerAsync(buf []byte, funcIdx uint32, memIdx uint32) []byte
 	return wrapSection(buf, SectionCanon, body)
 }
 
+// PutCanonSectionLowerAsyncRealloc is PutCanonSectionLowerAsync with the
+// additional `realloc` (0x04) canonical option — the WASI Preview-3 async
+// import side for a result that carries linear-memory data (a `string` /
+// `list<T>`). A scalar async lower needs only `[async, memory]` (the result is
+// a fixed-size scalar written into the return area), but a string/list result
+// flattens to a `(ptr, len)` whose backing bytes the canonical ABI materialises
+// in the guest's memory via `realloc` — so the lower carries
+// `[async, memory, realloc]`. The realloc func is the guest's exported
+// cabi_realloc (aliased through the same trampoline as the memory). For a
+// synchronously-completing import the host writes the bytes + the (ptr,len)
+// into the return area before the lowered call returns, so the guest reads them
+// inline (no waitable loop). See docs/WASI-PREVIEW3-ASYNC-PLAN.md.
+func PutCanonSectionLowerAsyncRealloc(buf []byte, funcIdx uint32, memIdx uint32, reallocFuncIdx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1) canons
+	body = append(body, 0x01)      // canon-lower
+	body = append(body, 0x00)      // function-lower sub-tag
+	body = leb128.UlebU64(body, uint64(funcIdx))
+	body = leb128.UlebU64(body, 3) // opts vec(3)
+	body = append(body, 0x06)      // canonopt: async
+	body = append(body, 0x03)      // canonopt: memory
+	body = leb128.UlebU64(body, uint64(memIdx))
+	body = append(body, 0x04) // canonopt: realloc
+	body = leb128.UlebU64(body, uint64(reallocFuncIdx))
+	return wrapSection(buf, SectionCanon, body)
+}
+
 // PutCanonSectionLowerWithMemoryRealloc emits a canon-lower entry
 // carrying both `memory` and `realloc` canonical-ABI options. The
 // realloc option is required when the lowered function needs the
@@ -2979,6 +3006,23 @@ func PutCanonSectionLiftAsync(buf []byte, coreFuncIdx uint32, typeidx uint32) []
 	return wrapSection(buf, SectionCanon, body)
 }
 
+// PutCanonSectionLiftAsyncWithMemory is PutCanonSectionLiftAsync with the
+// `memory` (0x03) option appended — for an async export whose result carries
+// linear-memory data (string / list). Opts vec(2) = [async 0x06, memory 0x03].
+func PutCanonSectionLiftAsyncWithMemory(buf []byte, coreFuncIdx uint32, typeidx uint32, memIdx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x00)      // canon-lift
+	body = append(body, 0x00)      // function-lift sub-tag
+	body = leb128.UlebU64(body, uint64(coreFuncIdx))
+	body = leb128.UlebU64(body, 2) // opts vec(2)
+	body = append(body, 0x06)      // canonopt: async
+	body = append(body, 0x03)      // canonopt: memory
+	body = leb128.UlebU64(body, uint64(memIdx))
+	body = leb128.UlebU64(body, uint64(typeidx))
+	return wrapSection(buf, SectionCanon, body)
+}
+
 // PutCanonTaskReturnSingle emits a canon section with one `task.return`
 // entry that lowers to a CORE function taking the result value — the
 // component-model-async intrinsic an async-lifted export calls to
@@ -2989,11 +3033,30 @@ func PutCanonSectionLiftAsync(buf []byte, coreFuncIdx uint32, typeidx uint32) []
 // docs/WASI-PREVIEW3-ASYNC-PLAN.md.
 func PutCanonTaskReturnSingle(buf []byte, resultValtype byte) []byte {
 	body := []byte{}
-	body = leb128.UlebU64(body, 1)        // vec(1)
-	body = append(body, 0x09)             // canon task.return
-	body = append(body, 0x00)             // result: single-value form
-	body = append(body, resultValtype)    // the result valtype
-	body = append(body, 0x00)             // options vec(0)
+	body = leb128.UlebU64(body, 1)     // vec(1)
+	body = append(body, 0x09)          // canon task.return
+	body = append(body, 0x00)          // result: single-value form
+	body = append(body, resultValtype) // the result valtype
+	body = append(body, 0x00)          // options vec(0)
+	return wrapSection(buf, SectionCanon, body)
+}
+
+// PutCanonTaskReturnStringWithMemory emits a `task.return` whose result is a
+// `string` (CValtype 0x73) and which carries the `memory` (0x03) canonical
+// option. An async export returning a string calls this intrinsic with the
+// `(ptr, len)` of the bytes in its linear memory; task.return reads `len` bytes
+// at `ptr` from `memIdx` and stages them as the lifted string result. The
+// produced core func has signature `(ptr i32, len i32) -> ()`. The string/list
+// counterpart of PutCanonTaskReturnSingle. See docs/WASI-PREVIEW3-ASYNC-PLAN.md.
+func PutCanonTaskReturnStringWithMemory(buf []byte, memIdx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1)      // vec(1)
+	body = append(body, 0x09)           // canon task.return
+	body = append(body, 0x00)           // result: single-value form
+	body = append(body, cValtypeString) // the result valtype: string
+	body = leb128.UlebU64(body, 1)      // options vec(1)
+	body = append(body, 0x03)           // canonopt: memory
+	body = leb128.UlebU64(body, uint64(memIdx))
 	return wrapSection(buf, SectionCanon, body)
 }
 
