@@ -57,6 +57,15 @@ func TestGenericStructLitFieldCheckedAgainstDestination(t *testing.T) {
 	mustOK(`struct Box[T] { v: T } function main(): i32 { var b: Box[i32] = Box { v: 5 }; return b.v; }`)
 	mustOK(`struct Box[T] { v: T } function main(): i32 { var b: Box[string] = Box { v: "x" }; return b.v.len(); }`)
 	mustOK(`struct Box[T] { v: T } function main(): i32 { var b = Box { v: "x" }; return 0; }`)
+	// A NESTED generic instantiation must seed the inner literal's type-arg
+	// substitution from the SUBSTITUTED field type (Box[i32]), not the outer
+	// destination (Box[Box[i32]]). The seeding in #3763 propagated the outer
+	// expected type into the inner literal, which reported a spurious E043.
+	mustOK(`struct Box[T] { v: T } function main(): i32 { var b: Box[Box[i32]] = Box { v: Box { v: 42 } }; return b.v.v; }`)
+	// The nested check still catches a genuine inner mismatch (the inner value
+	// is a string where the instantiation demands i32).
+	mustErr(`struct Box[T] { v: T } function main(): i32 { var b: Box[Box[i32]] = Box { v: Box { v: "x" } }; return 0; }`,
+		`field "v": expected i32, got string`)
 }
 
 // TestOperatorClassMismatchNoRedundantShareError covers the cascade where an
