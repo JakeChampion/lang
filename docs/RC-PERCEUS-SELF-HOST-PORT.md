@@ -2168,3 +2168,54 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   already in place and validated, so that analysis is the remaining gate to
   per-module convergence (#3457). Branch `claude/consume-call-move-detection` carried
   only the reverted probe; no code landed from it.
+- 2026-06-22: **Ownership-analysis slice — refined implementation plan (the
+  dominant pattern is a RETURNED builder).** Scoping the "next slice" against the
+  actual self-host source (`lower_expr` / `lower_stmt` / the 174 LowerState-param
+  helpers) sharpened the design beyond the previous entry. The threaded builder is
+  almost always a fresh-bound LOCAL that is MOVED OUT:
+
+      function lower_X(.., se: LowerState): LowerState {
+          var st: LowerState = se.emit(op);      // bound from a fresh-RET method
+          st = st.emit(op2);                      // 179x `st = st.method(..)` (safe)
+          st = lower_Y(arg, st);                  // 25x `st = g(.., st, ..)` (consume-rebind)
+          return st;                              // MOVED OUT
+      }
+
+  Consequences for the design:
+  1. `is_fresh_struct_init` (gating `reclaimable_names_of` via
+     `collect_fresh_struct_names`) accepts only a struct LITERAL today, so a
+     call/method-bound builder local (`var st = se.emit(op)`) is never collected —
+     the first gap. It must also accept a binding from a FRESH-struct-returning
+     call/method.
+  2. Soundness of (1) needs a FRESH-struct-return classifier
+     `fresh_struct_ret_fns(funcs, structs)`: a fn/method is fresh-returning iff
+     EVERY `return` is a struct LITERAL or struct-UPDATE of a leaf-safe struct —
+     never a bare param ident (which would alias the caller's box, so reclaiming the
+     local double-frees). It is a module-level body scan, threaded into `lower_func`
+     as a new param at the ~7 call sites that already thread `struct_ret_fns`
+     (`emit_function_via_ir` x3 backends, `lower_func_for`, `lower_func_for_noret`,
+     `lower_module`, `ir_eligible`) — NOT a new LowerState field (the mega-struct's
+     ~50-field spreads make a new field prohibitive).
+  3. Because the builder is `return`ed, `reclaimable_names_of` (which uses
+     `body_unsafe_for`, where `return st` is an ESCAPE) excludes it. The fix is a
+     SNAPSHOT-LOCAL classification (the local analogue of
+     `snapshot_param_names_of`): a fresh-ret-bound, threaded, moved-out local is
+     reclaimed AT EACH REBIND via the already-shipped `emit_field_reclaim_store`
+     (snap = 0 — a pure local has no caller's original) using
+     `body_unsafe_for_allow_ret` (return = move-out, allowed). No entry snapshot is
+     needed (unlike params).
+  4. The final `return st` must be a STRUCT move-on-return — the struct analogue of
+     `move_on_return_idx` for arrays — so the exit reclaim does NOT free the box
+     that was just moved to the caller (else double-free).
+  5. The `st = lower_Y(arg, st)` consume-rebinds still need the
+     `infer_param_escapes` consume-safe fixpoint (previous entry) to be admitted; a
+     function with ANY such rebind is excluded until then, so the fresh-ret +
+     snapshot-local piece (1-4) lands first and covers the method-only-threaded
+     helpers, then the escape fixpoint widens it.
+
+  The field-free MECHANISM (`__field_reclaim_<T>`, #3789) already does the work; this
+  slice is purely the ANALYSIS that admits the threaded builders to it. Gate: the
+  x86 byte-identical fixpoint at every step (arm64 rides CI — shared-`asmcore` /
+  `irlower` analysis is x86=>arm64 by construction). A single over-admission is a
+  SIGSEGV in the 600 MB self-compile, so it is landed smallest-increment-first with
+  the fixpoint as the arbiter.
