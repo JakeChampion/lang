@@ -122,6 +122,61 @@ func TestWasmP3AsyncExportFromFern(t *testing.T) {
 	}
 }
 
+// TestWasmP3AsyncExportU64FromFern proves the async EXPORT side handles a 64-bit
+// result. A real Fern `async function big(): u64 { return 4294967338; }` (2^32 +
+// 42) is compiled with AsyncExportName/AsyncSourceFunc and lifted as `big: async
+// func() -> u64`: the synthetic wrapper hands the i64 result to a task-return
+// import now width-matched to i64 (previously hard-wired to i32). Running it
+// returns the full 64-bit value under wasmtime's async features — a value that
+// would be truncated if the result were still forced through i32.
+func TestWasmP3AsyncExportU64FromFern(t *testing.T) {
+	skipIfPreview2Missing(t) // ensures wasmtime on PATH
+
+	src := "async function big(): u64 { return 4294967338; }\nfunction main(): i32 { return 0; }\n"
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prog, _, err := modload.Load(srcPath)
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+		Preview2WASI:    true,
+		AsyncExportName: "__async_run",
+		AsyncSourceFunc: "big",
+	})
+	if err != nil {
+		t.Fatalf("wasmbin.Build: %v", err)
+	}
+	comp := component.BuildAsyncLiftedExportComponent(core, "__async_run", "big", component.CValtypeU64)
+
+	p := filepath.Join(dir, "fern_async_u64.wasm")
+	if err := os.WriteFile(p, comp, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("wasmtime", "run",
+		"-W", "component-model-async,component-model-async-stackful",
+		"--invoke", "big()", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run (async u64 export): %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte("4294967338")) {
+		t.Errorf("Fern async u64 export: got %q, want 4294967338", bytes.TrimSpace(out))
+	}
+}
+
 // TestCmdLangAsyncExport drives a Fern program through the actual CLI
 // (`fern -target wasm-bin -async-export`) and runs the produced
 // component's `run: async func() -> u32` export under wasmtime's async
@@ -183,6 +238,40 @@ func TestCmdLangAsyncFunctionKeyword(t *testing.T) {
 	}
 	if !bytes.Contains(out, []byte("42")) {
 		t.Errorf("async function keyword: got %q, want 42", bytes.TrimSpace(out))
+	}
+}
+
+// TestCmdLangAsyncFunctionKeywordF64 drives an `async function` returning a
+// non-i32 scalar through the CLI: `async function half(): f64 { return 3.5; }`
+// is lifted as `half: async func() -> f64` (the CLI derives the component result
+// valtype from the source's return type). Running `half()` under wasmtime's
+// async features prints 3.5 — proving the async export width plumbing works end
+// to end from `fern -target wasm-bin`, not just the i32 default.
+func TestCmdLangAsyncFunctionKeywordF64(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "akwf.fern")
+	src := "async function half(): f64 { return 3.5; }\nfunction main(): i32 { return 0; }\n"
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "akwf.wasm")
+	cmd := exec.Command("go", "run", "./cmd/fern",
+		"-target", "wasm-bin", "-o", compPath, srcPath)
+	cmd.Dir = projectRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern (async function f64) failed: %v\n%s", err, out)
+	}
+	out, err := exec.Command("wasmtime", "run",
+		"-W", "component-model-async,component-model-async-stackful",
+		"--invoke", "half()", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run (async f64): %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte("3.5")) {
+		t.Errorf("async f64 export: got %q, want 3.5", bytes.TrimSpace(out))
 	}
 }
 

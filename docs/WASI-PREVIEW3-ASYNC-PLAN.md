@@ -110,6 +110,19 @@ wrapper). Tests: `TestParseAsyncModifier` + `TestCmdLangAsyncFunctionKeyword`
 returns 42 under the async features; fails without them, confirming the
 async lift).
 
+**UPDATE — non-i32 scalar export results.** The async export now lifts
+any single scalar result, not just i32: the synthetic wrapper hands its
+value to a `task-return` import whose param valtype is width-matched to
+the source result (i32/i64/f32/f64), and the CLI derives the component
+result valtype from the source's return type (`s64`/`u64`/`f32`/`f64`).
+Tests: `TestWasmP3AsyncExportU64FromFern` (`async function big(): u64`
+returns 4294967338) and `TestCmdLangAsyncFunctionKeywordF64` (`async
+function half(): f64` prints 3.5 via the CLI). This surfaced and fixed a
+latent wasmbin type-dedup bug: the `addType` key joined params/results
+with `'|'` (0x7c) — the f64 valtype byte — so `() -> (f64)` and `(f64) ->
+()` collided into one wrong type; the key now param-count-prefixes
+instead (`TestEmitTypeDedupF64NoSeparatorCollision`).
+
 ## Next epic — the async IMPORT / await side (scoped, tooling-confirmed)
 
 The export side is complete (above). The remaining P3 capability is the
