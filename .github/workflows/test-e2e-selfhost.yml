@@ -311,6 +311,77 @@ jobs:
           cd internal/e2e
           "$BIN" -test.run "^${{ matrix.test }}\$" -test.v -test.timeout 18m
 
+  # ONE-SHOT HEAVY ENUMERATION (TEMPORARY — delete after the heavy list is
+  # filled). Times EVERY TestSelfHost test (heavy tests INCLUDED — no exclusion)
+  # with the warm driver caches restored, exactly the env a `test` shard runs in,
+  # and prints each test whose warm runtime exceeds the heavy threshold. Sharded
+  # 20-way (heavy tests included) so each job stays short enough to clear the
+  # reclaim window and actually FINISH — a single whole-suite job would itself be
+  # preempted. Aggregating the per-shard ">20s" lists across all 20 logs yields
+  # the complete heavy set in one batch, instead of discovering stragglers one
+  # CI preemption at a time. continue-on-error so a preempted shard never blocks.
+  enumerate:
+    needs: [build, warm]
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+    name: enumerate-selfhost-x86_64-shard${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-fern
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-test-x86_64
+      - uses: actions/cache/restore@v4
+        with: { path: "${{ runner.temp }}/uc-elig",      key: "selfhost-unicache-x86_64-elig-${{ github.sha }}" }
+      - uses: actions/cache/restore@v4
+        with: { path: "${{ runner.temp }}/uc-asm",       key: "selfhost-unicache-x86_64-asm-${{ github.sha }}" }
+      - uses: actions/cache/restore@v4
+        with: { path: "${{ runner.temp }}/uc-pathprobe", key: "selfhost-unicache-x86_64-pathprobe-${{ github.sha }}" }
+      - uses: actions/cache/restore@v4
+        with: { path: "${{ runner.temp }}/uc-asmir",     key: "selfhost-unicache-x86_64-asmir-${{ github.sha }}" }
+      - uses: actions/cache/restore@v4
+        with: { path: "${{ runner.temp }}/uc-asmload",   key: "selfhost-unicache-x86_64-asmload-${{ github.sha }}" }
+      - uses: actions/cache/restore@v4
+        with: { path: "${{ runner.temp }}/uc-modload",   key: "selfhost-unicache-x86_64-modload-${{ github.sha }}" }
+      - uses: actions/cache/restore@v4
+        with: { path: "${{ runner.temp }}/uc-checker",   key: "selfhost-unicache-x86_64-checker-${{ github.sha }}" }
+      - uses: actions/cache/restore@v4
+        with: { path: "${{ runner.temp }}/uc-ssa",       key: "selfhost-unicache-x86_64-ssa-${{ github.sha }}" }
+      - uses: actions/cache/restore@v4
+        with: { path: "${{ runner.temp }}/uc-cli",       key: "selfhost-unicache-x86_64-cli-${{ github.sha }}" }
+      - uses: actions/cache/restore@v4
+        with: { path: "${{ runner.temp }}/uc-irx86",     key: "selfhost-unicache-x86_64-irx86-${{ github.sha }}" }
+      - uses: actions/cache/restore@v4
+        with: { path: "${{ runner.temp }}/uc-asmfile",   key: "selfhost-unicache-x86_64-asmfile-${{ github.sha }}" }
+      - name: time slice ${{ matrix.shard }}/20 (ALL TestSelfHost, warm)
+        env:
+          SHARD: "${{ matrix.shard }}"
+          NSHARD: "20"
+          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/uc-elig:${{ runner.temp }}/uc-asm:${{ runner.temp }}/uc-pathprobe:${{ runner.temp }}/uc-asmir:${{ runner.temp }}/uc-asmload:${{ runner.temp }}/uc-modload:${{ runner.temp }}/uc-checker:${{ runner.temp }}/uc-ssa:${{ runner.temp }}/uc-cli:${{ runner.temp }}/uc-irx86:${{ runner.temp }}/uc-asmfile"
+        run: |
+          set -uo pipefail
+          chmod +x e2e.test
+          BIN="$PWD/e2e.test"
+          cd internal/e2e
+          mapfile -t ALL < <("$BIN" -test.list '^TestSelfHost' | grep '^TestSelfHost' | sort)
+          SEL=()
+          for i in "${!ALL[@]}"; do
+            if [ $(( i % NSHARD )) -eq "$SHARD" ]; then SEL+=("${ALL[$i]}"); fi
+          done
+          if [ ${#SEL[@]} -eq 0 ]; then echo "no tests for shard $SHARD"; exit 0; fi
+          PAT="^($(IFS='|'; echo "${SEL[*]}"))\$"
+          "$BIN" -test.run "$PAT" -test.v -test.timeout 22m 2>&1 | tee /tmp/s.log || true
+          echo "===== HEAVY-CANDIDATES shard ${SHARD} (top-level TestSelfHost >20s, warm) ====="
+          grep -E '^--- (PASS|FAIL): TestSelfHost' /tmp/s.log \
+            | sed -E 's/^--- (PASS|FAIL): ([^ ]+) \(([0-9.]+)s\)/\3 \2/' \
+            | sort -rn | awk '$1+0 > 20 { print }'
+          echo "===== END shard ${SHARD} ====="
+
   test:
     needs: [build, warm]
     strategy:
