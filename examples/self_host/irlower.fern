@@ -11196,6 +11196,105 @@ function stmt_unsafe_for_allow_ret(st: parser.Stmt, name: string, borrowable: st
     return false;
 }
 
+// --- consume-safe (escape) analysis for consume-rebinds (#3457) ---------------
+//
+// `infer_param_escapes` port: a free-call CONSUME-REBIND `s = g(.., s, ..)` is a
+// safe move (the caller may reclaim the old box after) IFF g neither RETAINS nor
+// FREES s's box at that position — it may read / thread / return a value derived
+// from it, but never store it into a container / global / longer-lived struct.
+// This is the relaxation `body_unsafe_for_allow_ret` lacks (it flags any non-
+// borrowable call arg as an escape), and it admits the `s = lower_X(.., s)`
+// chains the snapshot-param / snapshot-local reclaim otherwise excludes.
+
+// is_consume_rebind_call: `e` is a free call `g(.., name, ..)` where every direct
+// `name` argument sits at a CONSUME-SAFE or BORROWABLE position of g, and no other
+// argument lets `name` escape. (Method calls are already safe via the receiver-
+// borrow rule, so only free-call rebinds need this.)
+function is_consume_rebind_call(e: parser.Expr, name: string, borrowable: string[], consume_safe: string[]): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            var callee_name: string = "";
+            match (c.callee) {
+                parser.ExprIdent(cid) => { if (cid.name == name) { return false; } callee_name = cid.name; },
+                _ => { return false; }
+            }
+            var saw_name: boolean = false;
+            var ai: i32 = 0;
+            while (ai < c.args.len()) {
+                var arg_is_name: boolean = false;
+                match (c.args[ai]) {
+                    parser.ExprIdent(aid) => { if (aid.name == name) { arg_is_name = true; } },
+                    _ => {}
+                }
+                if (arg_is_name) {
+                    saw_name = true;
+                    if (!(param_is_borrowable(consume_safe, callee_name, ai) || param_is_borrowable(borrowable, callee_name, ai))) { return false; }
+                } else {
+                    if (expr_unsafe_for(c.args[ai], name, borrowable)) { return false; }
+                }
+                ai = ai + 1;
+            }
+            return saw_name;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// body_consume_unsafe_for: body_unsafe_for_allow_ret PLUS the consume-rebind
+// relaxation — a `name = g(.., name, ..)` whose callee is consume-safe at name's
+// position(s) is NOT an escape.
+function body_consume_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[], consume_safe: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (stmt_consume_unsafe_for(stmts[i], name, borrowable, consume_safe)) { return true; } i = i + 1; }
+    return false;
+}
+function stmt_consume_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], consume_safe: string[]): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return expr_unsafe_for(v.init, name, borrowable); },
+        parser.StmtReturn(r) => {
+            match (r.value) {
+                parser.ExprIdent(_) => { return false; },   // `return name`: move-out, safe
+                _ => { return expr_unsafe_for(r.value, name, borrowable); }
+            }
+        },
+        parser.StmtExpr(e) => { return expr_unsafe_for(e.value, name, borrowable); },
+        parser.StmtAssign(a) => {
+            if (a.target == name && is_consume_rebind_call(a.value, name, borrowable, consume_safe)) { return false; }
+            return expr_unsafe_for(a.value, name, borrowable);
+        },
+        parser.StmtIf(f) => {
+            if (expr_unsafe_for(f.cond, name, borrowable)) { return true; }
+            return body_consume_unsafe_for(f.then_body, name, borrowable, consume_safe) || body_consume_unsafe_for(f.else_body, name, borrowable, consume_safe);
+        },
+        parser.StmtWhile(w) => {
+            if (expr_unsafe_for(w.cond, name, borrowable)) { return true; }
+            return body_consume_unsafe_for(w.body, name, borrowable, consume_safe);
+        },
+        parser.StmtFor(fo) => {
+            var iter_unsafe: boolean = true;
+            match (fo.iter) {
+                parser.ExprIdent(_) => { iter_unsafe = false; },
+                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable); }
+            }
+            if (iter_unsafe) { return true; }
+            return body_consume_unsafe_for(fo.body, name, borrowable, consume_safe);
+        },
+        parser.StmtMatch(m) => {
+            if (expr_unsafe_for(m.scrutinee, name, borrowable)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable)) { return true; }
+                if (body_consume_unsafe_for(m.arms[ai].body, name, borrowable, consume_safe)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // all_i32_number_elems reports whether every element of an array literal is a
 // non-float number literal — i.e. the literal is a pure i32[] (the only element
 // type precise drops handle: scalar values whose buffer free needs no element
@@ -11932,18 +12031,18 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
 // caller's original). Eligibility: reassigned + only-safe-uses-plus-return. The
 // struct-slot check is applied at the emit site (struct_type_of_slot), so a
 // scalar param — flagged unsafe by its arithmetic — never reaches here.
-function snapshot_param_names_of(fn: parser.FuncDecl, borrowable: string[]): string[] {
+function snapshot_param_names_of(fn: parser.FuncDecl, borrowable: string[], consume_safe: string[]): string[] {
     var out: string[] = [];
     var reassigned: string[] = body_assign_targets(fn.body);
     if (fn.receiver_name.len() > 0) {
-        if (util.index_of_str(reassigned, fn.receiver_name) >= 0 && !body_unsafe_for_allow_ret(fn.body, fn.receiver_name, borrowable)) {
+        if (util.index_of_str(reassigned, fn.receiver_name) >= 0 && !body_consume_unsafe_for(fn.body, fn.receiver_name, borrowable, consume_safe)) {
             out = out.append(fn.receiver_name);
         }
     }
     var pi: i32 = 0;
     while (pi < fn.params.len()) {
         var pn: string = fn.params[pi].name;
-        if (util.index_of_str(reassigned, pn) >= 0 && !body_unsafe_for_allow_ret(fn.body, pn, borrowable)) {
+        if (util.index_of_str(reassigned, pn) >= 0 && !body_consume_unsafe_for(fn.body, pn, borrowable, consume_safe)) {
             out = out.append(pn);
         }
         pi = pi + 1;
@@ -12063,11 +12162,11 @@ function is_fresh_ret_binding(e: parser.Expr, recv_type: string, fresh_ret: stri
 // analogue of snapshot_param_names_of. No entry snapshot (a pure local has no
 // caller original); each rebind reclaims via emit_field_reclaim_store (snap = 0)
 // and the moved-out final is kept by struct move-on-return.
-function snapshot_local_names_of(fn: parser.FuncDecl, structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[]): string[] {
+function snapshot_local_names_of(fn: parser.FuncDecl, structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], consume_safe: string[]): string[] {
     var reassigned: string[] = body_assign_targets(fn.body);
-    return collect_snap_locals(fn.body, fn, structs, borrowable, fresh_ret, reassigned, []);
+    return collect_snap_locals(fn.body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, []);
 }
-function collect_snap_locals(stmts: parser.Stmt[], fn: parser.FuncDecl, structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], reassigned: string[], acc: string[]): string[] {
+function collect_snap_locals(stmts: parser.Stmt[], fn: parser.FuncDecl, structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], consume_safe: string[], reassigned: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -12084,14 +12183,14 @@ function collect_snap_locals(stmts: parser.Stmt[], fn: parser.FuncDecl, structs:
                     && is_fresh_ret_binding(v.init, v.type_name, fresh_ret)
                     && decl_is_struct(structs, v.type_name) && decl_is_leaksafe(structs, v.type_name)
                     && struct_has_reclaim_array_field(structs, v.type_name)
-                    && !body_unsafe_for_allow_ret(fn.body, v.name, borrowable)) {
+                    && !body_consume_unsafe_for(fn.body, v.name, borrowable, consume_safe)) {
                     a = push_str_unique(a, v.name);
                 }
             },
-            parser.StmtIf(f) => { a = collect_snap_locals(f.then_body, fn, structs, borrowable, fresh_ret, reassigned, a); a = collect_snap_locals(f.else_body, fn, structs, borrowable, fresh_ret, reassigned, a); },
-            parser.StmtWhile(w) => { a = collect_snap_locals(w.body, fn, structs, borrowable, fresh_ret, reassigned, a); },
-            parser.StmtFor(fo) => { a = collect_snap_locals(fo.body, fn, structs, borrowable, fresh_ret, reassigned, a); },
-            parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_snap_locals(m.arms[ai].body, fn, structs, borrowable, fresh_ret, reassigned, a); ai = ai + 1; } },
+            parser.StmtIf(f) => { a = collect_snap_locals(f.then_body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, a); a = collect_snap_locals(f.else_body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, a); },
+            parser.StmtWhile(w) => { a = collect_snap_locals(w.body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, a); },
+            parser.StmtFor(fo) => { a = collect_snap_locals(fo.body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, a); },
+            parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_snap_locals(m.arms[ai].body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, a); ai = ai + 1; } },
             _ => {}
         }
         i = i + 1;
@@ -13920,7 +14019,7 @@ function register_fnvalue_local_struct_rets(stmts: parser.Stmt[], reg: string[])
 }
 
 pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: parser.StructDecl[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[],
-    map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[], borrowable_params: string[], fn_names: string[], fresh_struct_ret_fns: string[]): LowerResult {
+    map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[], borrowable_params: string[], fn_names: string[], fresh_struct_ret_fns: string[], consume_safe_params: string[]): LowerResult {
     var empty: ir.Op[] = [];
     var noslots: i32[] = [];
     // ret_i64: does this function return i64 (so `return <i64expr>` lowers via
@@ -14231,7 +14330,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // "SNAP:<name>" so slot_is_reclaimable_struct (bare-name lookup) stays false
     // for them — they are NOT swept/deep-dropped (their final value shares the
     // caller's fields); each reassign instead emits emit_snapshot_store.
-    var snaps: string[] = snapshot_param_names_of(fn, borrowable_params);
+    var snaps: string[] = snapshot_param_names_of(fn, borrowable_params, consume_safe_params);
     var snj: i32 = 0;
     while (snj < snaps.len()) { reclaim = reclaim.append("SNAP:" + snaps[snj]); snj = snj + 1; }
     // Snapshot-LOCAL reclaim (#3457): fresh-ret-bound struct LOCALS threaded +
@@ -14241,7 +14340,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // final is kept by the struct move-on-return in StmtReturn. Sound because the
     // binding is a FRESH-struct-returning call (st owns a fresh box, not an alias
     // of the borrowed receiver — fresh_struct_ret_fns is the guard).
-    var snap_locals: string[] = snapshot_local_names_of(fn, structs, borrowable_params, fresh_struct_ret_fns);
+    var snap_locals: string[] = snapshot_local_names_of(fn, structs, borrowable_params, fresh_struct_ret_fns, consume_safe_params);
     var sli: i32 = 0;
     while (sli < snap_locals.len()) {
         if (util.index_of_str(reclaim, snap_locals[sli]) < 0) { reclaim = reclaim.append(snap_locals[sli]); }
@@ -15276,6 +15375,44 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
     }
     return reg;
 }
+
+// consume_safe_params_interproc: the consume-safe (escape) registry — a param is
+// consume-safe iff its box does not escape the callee (`body_consume_unsafe_for`),
+// the relaxation that admits `s = g(.., s, ..)` consume-rebinds. A least-fixpoint
+// from below (like borrowable_params_interproc): each pass re-runs the escape walk
+// against the previous registry, so a param forwarding into an already-consume-safe
+// callee becomes consume-safe, growing monotonically to convergence. Seeded with
+// `borrowable` (every borrowable param is consume-safe) and using it for the
+// borrow side of the per-arg check. Encoded "callee|flags" like borrowable.
+// Computed ONCE per module on the emit path, threaded into lower_func.
+pub function consume_safe_params_interproc(funcs: parser.FuncDecl[], borrowable: string[]): string[] {
+    var reg: string[] = [];
+    var cap: i32 = 8;
+    var iter: i32 = 0;
+    var prevsize: i32 = 0 - 1;
+    while (iter < cap && reg.len() != prevsize) {
+        prevsize = reg.len();
+        var next: string[] = [];
+        var i: i32 = 0;
+        while (i < funcs.len()) {
+            if (funcs[i].params.len() > 0) {
+                var flags: string = "";
+                var any: boolean = false;
+                var pj: i32 = 0;
+                while (pj < funcs[i].params.len()) {
+                    if (!body_consume_unsafe_for(funcs[i].body, funcs[i].params[pj].name, borrowable, reg)) { flags = flags + "1"; any = true; }
+                    else { flags = flags + "0"; }
+                    pj = pj + 1;
+                }
+                if (any) { next = next.append(borrowable_key(funcs[i]) + "|" + flags); }
+            }
+            i = i + 1;
+        }
+        reg = next;
+        iter = iter + 1;
+    }
+    return reg;
+}
 pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
@@ -15322,7 +15459,7 @@ pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // fixed-point `borrowable_params` that is deliberately NOT
 // `borrowable_params_of(funcs)`, so they keep calling lower_func directly.
 pub function lower_func_for(fn: parser.FuncDecl, arr_ret_fns: string[], structs: parser.StructDecl[], funcs: parser.FuncDecl[]): LowerResult {
-    return lower_func(fn, arr_ret_fns, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs));
+    return lower_func(fn, arr_ret_fns, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), []);
 }
 
 // lower_func_for_noret is lower_func_for with the array- and string-return name
@@ -15347,7 +15484,7 @@ pub function lower_func_for_noret(fn: parser.FuncDecl, structs: parser.StructDec
         if (is_array_type_name(funcs[k].ret_type)) { arr_ret = arr_ret.append(funcs[k].name); }
         k = k + 1;
     }
-    return lower_func(fn, arr_ret, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs));
+    return lower_func(fn, arr_ret, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), []);
 }
 
 // i64_sig_of returns the "<ret><params>" flag string for `name`, or "" if the
@@ -15641,7 +15778,7 @@ pub function lower_module(funcs: parser.FuncDecl[], structs: parser.StructDecl[]
     var out: LoweredFn[] = [];
     var i: i32 = 0;
     while (i < funcs.len()) {
-        var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs));
+        var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), []);
         // A receiver method is registered under the receiver-qualified name
         // `<BaseType>.<method>` — the SAME label a method call lowers to
         // (op_call_direct(receiver_type + "." + field)) and the backends'
