@@ -3,6 +3,7 @@ package e2e
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -33,26 +34,34 @@ func fullSelfHostProject(t *testing.T) string {
 	return dir
 }
 
-// TestSelfHostWarmStockDriver compiles ONE stock self-host driver (selected by
-// the FERN_WARM_DRIVER env var, e.g. "asm_run.fern") into the disk cache and
-// runs a trivial program through it as a smoke check. CI's parallel `warm` jobs
-// each set FERN_WARM_DRIVER + FERN_SELFHOST_BUILD_CACHE and run this, so every
-// dominant driver is compiled once off the critical path and the test shards
-// restore it (see .github/workflows/test-e2e-selfhost.yml). Locally, with
-// FERN_WARM_DRIVER unset, the test is a no-op skip.
+// TestSelfHostWarmStockDriver compiles each self-host driver named in the
+// comma-separated FERN_WARM_DRIVER env var (e.g. "asm_run.fern,asm_ir_run.fern")
+// into the disk cache. For every driver it populates BOTH the emitted-asm cache
+// (cachedSelfHostAsm — the expensive ~50-70s Go x86-64 emit) and the linked-
+// binary cache (cachedLink), so tests using either the buildSelfHostBin path
+// (asm hit + cheap relink) or the selfHostX86Driver path (asm + binary hit) skip
+// the compile. CI's parallel `warm` jobs each set FERN_WARM_DRIVER +
+// FERN_SELFHOST_BUILD_CACHE and run this, off the critical path, and the test
+// shards restore the result (see .github/workflows/test-e2e-selfhost.yml).
+// Locally, with FERN_WARM_DRIVER unset, the test is a no-op skip.
 func TestSelfHostWarmStockDriver(t *testing.T) {
-	driver := os.Getenv("FERN_WARM_DRIVER")
-	if driver == "" {
+	list := os.Getenv("FERN_WARM_DRIVER")
+	if list == "" {
 		t.Skip("FERN_WARM_DRIVER unset; nothing to warm")
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := fullSelfHostProject(t)
-	bin := buildSelfHostBin(t, gcc, dir, driver, "warm")
-
-	// Smoke: every stock driver reads a program on stdin; an empty/trivial
-	// program must not crash the driver (exit normally, any status).
-	const prog = "function main(): i32 { return 0; }\n"
-	if err := runDriverStdinExits(runner, bin, prog); err != nil {
-		t.Fatalf("warmed driver %s did not run: %v", driver, err)
+	for _, driver := range strings.Split(list, ",") {
+		driver = strings.TrimSpace(driver)
+		if driver == "" {
+			continue
+		}
+		asm := cachedSelfHostAsm(t, dir, driver)
+		bin := cachedLink(t, gcc, asm)
+		// Smoke: every driver reads a program on stdin; a trivial program must
+		// not crash it (exit normally, any status).
+		if err := runDriverStdinExits(runner, bin, "function main(): i32 { return 0; }\n"); err != nil {
+			t.Fatalf("warmed driver %s did not run: %v", driver, err)
+		}
 	}
 }

@@ -136,9 +136,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { key: unified,   driver: "",                     test: TestSelfHostUnifiedDriverWarm }
-          - { key: asm_run,   driver: asm_run.fern,           test: TestSelfHostWarmStockDriver }
-          - { key: pathprobe, driver: asm_pathprobe_run.fern, test: TestSelfHostWarmStockDriver }
+          - { key: unified,  drivers: "selfhost_x86_run.fern" }
+          - { key: asm,      drivers: "asm_run.fern,asm_pathprobe_run.fern" }
+          - { key: ir,       drivers: "asm_ir_run.fern,asm_load_run.fern" }
+          - { key: modload,  drivers: "asm_modload_run.fern,ssa_run.fern,ssa_emit_run.fern" }
     name: warm-selfhost-x86_64-${{ matrix.key }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -148,17 +149,17 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: e2e-test-x86_64
-      - name: warm ${{ matrix.key }} driver
+      - name: warm ${{ matrix.key }} drivers (${{ matrix.drivers }})
         env:
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
-          FERN_WARM_DRIVER: "${{ matrix.driver }}"
+          FERN_WARM_DRIVER: "${{ matrix.drivers }}"
         run: |
           set -euo pipefail
           mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
           chmod +x e2e.test
           BIN="$PWD/e2e.test"
           cd internal/e2e
-          "$BIN" -test.run '^${{ matrix.test }}$' -test.v -test.timeout 12m
+          "$BIN" -test.run '^TestSelfHostWarmStockDriver$' -test.v -test.timeout 13m
       - uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/selfhost-unicache
@@ -200,12 +201,17 @@ jobs:
         if: matrix.host.name == 'x86_64'
         with:
           path: ${{ runner.temp }}/selfhost-unicache
-          key: selfhost-unicache-x86_64-asm_run-${{ github.sha }}
+          key: selfhost-unicache-x86_64-asm-${{ github.sha }}
       - uses: actions/cache/restore@v4
         if: matrix.host.name == 'x86_64'
         with:
           path: ${{ runner.temp }}/selfhost-unicache
-          key: selfhost-unicache-x86_64-pathprobe-${{ github.sha }}
+          key: selfhost-unicache-x86_64-ir-${{ github.sha }}
+      - uses: actions/cache/restore@v4
+        if: matrix.host.name == 'x86_64'
+        with:
+          path: ${{ runner.temp }}/selfhost-unicache
+          key: selfhost-unicache-x86_64-modload-${{ github.sha }}
       - name: run self-host shard ${{ matrix.shard }}/6 (prebuilt binary, streaming)
         env:
           SHARD: "${{ matrix.shard }}"
