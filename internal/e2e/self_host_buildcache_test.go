@@ -302,9 +302,20 @@ func cachedLink(t *testing.T, gcc, asm string) string {
 	return path
 }
 
-// copyExecutable copies src to dst with 0755 perms.
+// copyExecutable links (preferably) or copies src to dst with 0755 perms.
+// The cached self-host driver binaries are large (~180-250 MB) and dozens of
+// tests per shard each materialise one into their t.TempDir — a plain copy is
+// ~2s of IO apiece, which accumulates into minutes and (stacked on the heavy
+// run-tests) pushes a shard into the runner-preemption window. The cached
+// binary is read-only and only ever exec'd, so a HARDLINK is equivalent and
+// effectively free; we fall back to a copy when the link fails (e.g. src/dst on
+// different filesystems). t.TempDir teardown just drops the extra link.
 func copyExecutable(t *testing.T, src, dst string) {
 	t.Helper()
+	_ = os.Remove(dst) // os.Link fails if dst exists
+	if err := os.Link(src, dst); err == nil {
+		return
+	}
 	in, err := os.Open(src)
 	if err != nil {
 		t.Fatalf("open cached bin %s: %v", src, err)
