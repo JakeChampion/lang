@@ -2659,54 +2659,54 @@ function tok_punct_ch(t: Token): i32 {
     match (t) { TokPunct(p) => { return p.ch; }, _ => { return 0; } }
 }
 
-function parse_arith(toks: Token[], cur: i32[]): Expr {
+function parse_arith(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
-function parse_term(toks: Token[], cur: i32[]): Expr {
+function parse_term(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
-function parse_factor(toks: Token[], cur: i32[]): Expr {
-    var pos: i32 = cur[0];
+function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
+    var pos: i32 = cur.get();
     var k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         return Var { name: tok_ident_name(toks[pos]) };
     }
-    cur = cur.with(0, pos + 1);
+    cur.set(pos + 1);
     var inner: Expr = parse_arith(toks, cur);
-    cur = cur.with(0, cur[0] + 1);
+    cur.set(cur.get() + 1);
     return inner;
 }
 
 function parse_src(src: string): Expr {
     var toks: Token[] = tokenize(src);
-    var cur: i32[] = [0];
+    var cur: Cell[i32] = cell_new(0);
     return parse_arith(toks, cur);
 }
 
@@ -2997,54 +2997,54 @@ function tok_punct_ch(t: Token): i32 {
     match (t) { TokPunct(p) => { return p.ch; }, _ => { return 0; } }
 }
 
-function parse_arith(toks: Token[], cur: i32[]): Expr {
+function parse_arith(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
-function parse_term(toks: Token[], cur: i32[]): Expr {
+function parse_term(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
-function parse_factor(toks: Token[], cur: i32[]): Expr {
-    var pos: i32 = cur[0];
+function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
+    var pos: i32 = cur.get();
     var k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         return Var { name: tok_ident_name(toks[pos]) };
     }
-    cur = cur.with(0, pos + 1);
+    cur.set(pos + 1);
     var inner: Expr = parse_arith(toks, cur);
-    cur = cur.with(0, cur[0] + 1);
+    cur.set(cur.get() + 1);
     return inner;
 }
 
 function parse_src(src: string): Expr {
     var toks: Token[] = tokenize(src);
-    var cur: i32[] = [0];
+    var cur: Cell[i32] = cell_new(0);
     return parse_arith(toks, cur);
 }
 
@@ -3329,54 +3329,54 @@ function tok_punct_ch(t: Token): i32 {
     match (t) { TokPunct(p) => { return p.ch; }, _ => { return 0; } }
 }
 
-function parse_arith(toks: Token[], cur: i32[]): Expr {
+function parse_arith(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
-function parse_term(toks: Token[], cur: i32[]): Expr {
+function parse_term(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
-function parse_factor(toks: Token[], cur: i32[]): Expr {
-    var pos: i32 = cur[0];
+function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
+    var pos: i32 = cur.get();
     var k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         return Var { name: tok_ident_name(toks[pos]) };
     }
-    cur = cur.with(0, pos + 1);
+    cur.set(pos + 1);
     var inner: Expr = parse_arith(toks, cur);
-    cur = cur.with(0, cur[0] + 1);
+    cur.set(cur.get() + 1);
     return inner;
 }
 
 function parse_src(src: string): Expr {
     var toks: Token[] = tokenize(src);
-    var cur: i32[] = [0];
+    var cur: Cell[i32] = cell_new(0);
     return parse_arith(toks, cur);
 }
 
@@ -3608,54 +3608,54 @@ function tok_punct_ch(t: Token): i32 {
     match (t) { TokPunct(p) => { return p.ch; }, _ => { return 0; } }
 }
 
-function parse_arith(toks: Token[], cur: i32[]): Expr {
+function parse_arith(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
-function parse_term(toks: Token[], cur: i32[]): Expr {
+function parse_term(toks: Token[], cur: Cell[i32]): Expr {
     var lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur[0];
+        var pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
         var op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         var rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
-function parse_factor(toks: Token[], cur: i32[]): Expr {
-    var pos: i32 = cur[0];
+function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
+    var pos: i32 = cur.get();
     var k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
-        cur = cur.with(0, pos + 1);
+        cur.set(pos + 1);
         return Var { name: tok_ident_name(toks[pos]) };
     }
-    cur = cur.with(0, pos + 1);
+    cur.set(pos + 1);
     var inner: Expr = parse_arith(toks, cur);
-    cur = cur.with(0, cur[0] + 1);
+    cur.set(cur.get() + 1);
     return inner;
 }
 
 function parse_src(src: string): Expr {
     var toks: Token[] = tokenize(src);
-    var cur: i32[] = [0];
+    var cur: Cell[i32] = cell_new(0);
     return parse_arith(toks, cur);
 }
 
