@@ -6037,7 +6037,16 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
         // forwarded unchanged, exactly as before.
         var src_err: string = opt_payload_type(ot, "Err");
         var ret_err: string = opt_payload_type(s.cur_ret, "Err");
-        if (ret_err != "" && src_err != ret_err) {
+        // A `dyn Trait` return error type is NOT a `From` target: a concrete
+        // error box (`Err(NotFound{..})`) upcasts to `dyn Error` directly —
+        // the concrete struct/enum pointer's layout is already a valid dyn
+        // pointer — so the source Err box is forwarded UNCHANGED, exactly as
+        // when E1 == E2. Without this guard `src_err != ret_err` ("NotFound"
+        // != "dyn Error") wrongly entered the From branch and bailed the whole
+        // module to AST at the struct gate below (dyn Error isn't a struct),
+        // regressing the `Result[_, dyn Error]` propagation pattern off IR.
+        var ret_err_is_dyn: boolean = ret_err.len() > 4 && ret_err[0:4] == "dyn ";
+        if (ret_err != "" && src_err != ret_err && !ret_err_is_dyn) {
             if (!decl_is_struct(s.structs, ret_err) || !decl_is_leaksafe(s.structs, ret_err)) { return s.fail(); }
             if (src_err == "i64" || src_err == "u64" || src_err == "f64" || src_err == "f32") { return s.fail(); }
             ts = ts.emit(ir.op_load_local(tslot));

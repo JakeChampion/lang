@@ -47,7 +47,12 @@ func TestSelfHostMapMemsetFreeIRProbeX86_64(t *testing.T) {
 	if err := os.WriteFile(mainPath, []byte(prog), 0o644); err != nil {
 		t.Fatalf("write main.fern: %v", err)
 	}
-	out, err := exec.Command(mmc, mainPath, stdlibRoot, "-ir-probe").Output()
+	// -no-treeshake: this is a staged-progress probe that inspects the
+	// IR-eligibility of EVERY core/map function (incl. ones the tiny driver
+	// program never reaches, like __map_clear_impl). The default-on stdlib-root
+	// treeshake (added later) would prune those unreached functions out of the
+	// report, hiding the very frontier this gate measures — so opt out of it.
+	out, err := exec.Command(mmc, mainPath, stdlibRoot, "-no-treeshake", "-ir-probe").Output()
 	if err != nil {
 		t.Fatalf("ir-probe: %v", err)
 	}
