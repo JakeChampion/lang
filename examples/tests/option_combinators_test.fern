@@ -1,0 +1,115 @@
+import "std/test";
+import "std/option";
+// examples/tests/option_combinators_test.fern — pure-Fern coverage of the
+// std/option COMBINATOR surface (distinct from option_and_set_ops_test, which
+// covers the std/test Option assertion helpers): is_some / is_none /
+// unwrap_or / unwrap_or_else / map / and_then / or_else / filter / ok_or /
+// map_or / is_some_and / or / and — the Rust-parity vocabulary (#2691), as
+// ordinary generic methods on Option[T] with closure args. The Go-side suite
+// unit-tests these; this is the migration-shaped (pure-Fern, std/test-driven,
+// self-host-gated) companion.
+
+function test_is_some_is_none(): test.TestOutcome {
+    var s: Option[i32] = Some(5);
+    var n: Option[i32] = None;
+    return test.assert_true(s.is_some() && !s.is_none() && n.is_none() && !n.is_some());
+}
+
+function test_unwrap_or(): test.TestOutcome {
+    var s: Option[i32] = Some(5);
+    var n: Option[i32] = None;
+    return test.assert_true(s.unwrap_or(0) == 5 && n.unwrap_or(42) == 42);
+}
+
+function test_unwrap_or_else(): test.TestOutcome {
+    var n: Option[i32] = None;
+    return test.assert_eq(n.unwrap_or_else(function (): i32 { return 7; }), 7);
+}
+
+function test_map(): test.TestOutcome {
+    var s: Option[i32] = Some(5);
+    var m = s.map(function (x: i32): i32 { return x * 2; });
+    return test.assert_eq(m.unwrap_or(0), 10);
+}
+
+function test_map_none(): test.TestOutcome {
+    var n: Option[i32] = None;
+    var m = n.map(function (x: i32): i32 { return x * 2; });
+    return test.assert_eq(m.unwrap_or(0 - 1), 0 - 1);
+}
+
+function test_and_then(): test.TestOutcome {
+    var s: Option[i32] = Some(5);
+    var r = s.and_then(function (x: i32): Option[i32] { return Some(x + 1); });
+    return test.assert_eq(r.unwrap_or(0), 6);
+}
+
+function test_or_else(): test.TestOutcome {
+    var n: Option[i32] = None;
+    var r = n.or_else(function (): Option[i32] { return Some(9); });
+    return test.assert_eq(r.unwrap_or(0), 9);
+}
+
+function test_filter_keep(): test.TestOutcome {
+    var s: Option[i32] = Some(5);
+    var r = s.filter(function (x: i32): boolean { return x > 3; });
+    return test.assert_eq(r.unwrap_or(0), 5);
+}
+
+function test_filter_drop(): test.TestOutcome {
+    var s: Option[i32] = Some(2);
+    var r = s.filter(function (x: i32): boolean { return x > 3; });
+    return test.assert_true(r.is_none());
+}
+
+function test_map_or(): test.TestOutcome {
+    var s: Option[i32] = Some(5);
+    var n: Option[i32] = None;
+    var a = s.map_or(0, function (x: i32): i32 { return x * 10; });
+    var b = n.map_or(0, function (x: i32): i32 { return x * 10; });
+    return test.assert_true(a == 50 && b == 0);
+}
+
+function test_is_some_and(): test.TestOutcome {
+    var s: Option[i32] = Some(5);
+    return test.assert_true(s.is_some_and(function (x: i32): boolean { return x > 3; }));
+}
+
+function test_or(): test.TestOutcome {
+    var s: Option[i32] = Some(5);
+    var n: Option[i32] = None;
+    return test.assert_true(s.or(Some(9)).unwrap_or(0) == 5 && n.or(Some(9)).unwrap_or(0) == 9);
+}
+
+function test_and(): test.TestOutcome {
+    var s: Option[i32] = Some(5);
+    var n: Option[i32] = None;
+    return test.assert_true(s.and(Some(9)).unwrap_or(0) == 9 && n.and(Some(9)).is_none());
+}
+
+function test_ok_or(): test.TestOutcome {
+    var s: Option[i32] = Some(5);
+    match (s.ok_or("missing")) {
+        Ok(v) => { return test.assert_eq(v, 5); },
+        Err(e) => { return test.fail("expected Ok"); }
+    }
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/option combinators");
+    r = r.it("is_some / is_none",   test_is_some_is_none());
+    r = r.it("unwrap_or",           test_unwrap_or());
+    r = r.it("unwrap_or_else",      test_unwrap_or_else());
+    r = r.it("map",                 test_map());
+    r = r.it("map over None",       test_map_none());
+    r = r.it("and_then",            test_and_then());
+    r = r.it("or_else",             test_or_else());
+    r = r.it("filter keep",         test_filter_keep());
+    r = r.it("filter drop",         test_filter_drop());
+    r = r.it("map_or",              test_map_or());
+    r = r.it("is_some_and",         test_is_some_and());
+    r = r.it("or",                  test_or());
+    r = r.it("and",                 test_and());
+    r = r.it("ok_or",               test_ok_or());
+    return r.finish();
+}
