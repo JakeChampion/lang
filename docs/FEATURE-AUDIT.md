@@ -251,6 +251,40 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-22 — self-host IR: root-caused the Iterator-bounded gap to unbounded-generic type-erasure leaking a dangling `T`
+
+Drilled into the Iterator-bounded reducer gap from the entry below
+(`core/iter.sum` / `count` / `to_array`, `std/num.sum_iter` route AST). Added a
+post-monomorphisation `-ir-probe` (temporary debug build) and instrumented
+`infer_inst` / a new `call_ret_type` to observe the actual values. Definitive
+finding:
+
+The self-host parser **deliberately type-erases UNBOUNDED generic params**
+(`parser.fern` func-header parse, ~line 3348: "UNBOUNDED params are erased — the
+self-host ABI is a uniform 8-byte slot, so one body fits every instantiation");
+only **bounded** params (`[I: Iterator[i32]]`) are kept for the monomorphiser. So
+for `of[T](xs: T[]): ArrayIter[T]`, `T` is erased — `iter__of` arrives at
+monomorphisation with `type_params=[]` but a return type that still literally
+spells `ArrayIter[T]`. Two downstream failures cascade from that dangling `T`:
+
+1. The bounded generic `sum[I: Iterator[i32]](it: I)` infers `I` from
+   `iter.of(xs)`'s return type — observed `II name=iter__sum key=iter__ArrayIter[T]`
+   (the `[T]`, not `[i32]`), so `sum` is cloned at a bogus `ArrayIter[T]`.
+2. `mg_ty` (the struct-instantiation collector) sees `ArrayIter[T]` in `of`'s
+   ERASED body / `sum`'s bogus clone and mints an `ArrayIter__T` struct+method
+   clone whose `next` body carries a generic `T` and never lowers
+   (`iter__ArrayIter__T.next: BAIL lower` → module AST).
+
+So this is NOT a narrow dispatch fix (unlike the `std/u64` "i64"-vs-"u64"
+mis-key): it's an architectural tension between unbounded-generic ERASURE and the
+parametric-struct MONOMORPHISER, where a parametric struct (`ArrayIter[T]`) flows
+out of an erased generic function (`of`) into a bounded generic (`sum`). A
+`call_ret_type` that substitutes type args into a generic's return type was
+prototyped but is insufficient alone — `of`'s erased *body* still spells
+`ArrayIter[T]`, so the struct clone stays bogus. The real fix is a design change
+(propagate concrete type args through erased generic returns, OR monomorphise
+unbounded generics that construct/return a parametric struct) — a multi-step
+piece, scoped here rather than rushed.
 ### 2026-06-23 — std/time civil-calendar arithmetic: pure-Fern std/test coverage (self-host-gated)
 
 New `examples/tests/time_calendar_test.fern` covers std/time's civil-calendar
