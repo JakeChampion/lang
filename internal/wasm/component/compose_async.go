@@ -21,15 +21,21 @@ package component
 // real composer reuses the proven trampoline machinery rather than the spike's
 // externalized shared memory.
 
-// BuildAsyncImportAwaitComponent wraps `consumerCore` (a Fern core that imports
-// one async function `(importIface, importWITName)` lowered as
-// `(lowerParams…) -> lowerResults` and `("", "task-return")`, and exports its
-// linear memory plus an async core function `consumerAsyncExport`) into a
-// component that lifts `consumerAsyncExport` async under `liftExportName` and
-// satisfies the async import from `provider` (a component exporting
-// `providerExportName: async func(...) -> resultValtype`, e.g. one built by
-// BuildAsyncLiftedExportComponent). This slice covers a single scalar async
-// import + a scalar async export — the proven `dep(): i32` / `run` shape.
+// AsyncImportSpec describes one async import a consumer awaits: the
+// `(iface, witName)` it imports, the `provider` component that satisfies it
+// (exporting `providerExportName: async func(...) -> resultValtype`, bundled
+// nested), and the `canon lower async` core signature `(lowerParams…) ->
+// lowerResults` the import lowers to (`(scalar params…, retptr) -> i32 status`).
+type AsyncImportSpec struct {
+	Iface, WITName     string
+	Provider           []byte
+	ProviderExportName string
+	LowerParams        []byte
+	LowerResults       []byte
+}
+
+// BuildAsyncImportAwaitComponent is the single-import case of
+// BuildAsyncImportsAwaitComponent, kept as a thin wrapper. See that function.
 func BuildAsyncImportAwaitComponent(
 	consumerCore []byte,
 	importIface, importWITName string,
@@ -38,56 +44,122 @@ func BuildAsyncImportAwaitComponent(
 	lowerParams, lowerResults []byte,
 	resultValtype byte,
 ) []byte {
+	return BuildAsyncImportsAwaitComponent(consumerCore, []AsyncImportSpec{{
+		Iface: importIface, WITName: importWITName,
+		Provider: provider, ProviderExportName: providerExportName,
+		LowerParams: lowerParams, LowerResults: lowerResults,
+	}}, consumerAsyncExport, liftExportName, resultValtype)
+}
+
+// BuildAsyncImportsAwaitComponent wraps `consumerCore` (a Fern core that imports
+// N async functions plus `("", "task-return")`, exports its linear memory, and
+// exposes an async core function `consumerAsyncExport`) into a component that
+// lifts `consumerAsyncExport` async under `liftExportName` and satisfies every
+// async import from its bundled nested provider. Each import is lowered with
+// `canon lower async` over the consumer's memory via its own gMem trampoline +
+// fixup (breaking the lower→memory→instance circularity), so a handler that
+// awaits several upstreams composes. The single-import path
+// (BuildAsyncImportAwaitComponent) is N=1 and emits byte-identical output.
+//
+// Each import's interface must be distinct (one core-instance import arg per
+// module name); scalar params + scalar result per the proven `dep(): i32`
+// shape.
+func BuildAsyncImportsAwaitComponent(
+	consumerCore []byte,
+	imports []AsyncImportSpec,
+	consumerAsyncExport, liftExportName string,
+	resultValtype byte,
+) []byte {
+	n := uint32(len(imports))
 	buf := PutComponentHeader(nil)
 
-	// Provider nested → component 0, component instance 0, alias its async
-	// export → component func 0 (the func we lower async below).
-	buf = PutComponentSection(buf, provider)
-	buf = PutInstanceSectionInstantiateComponent(buf, 0)
-	buf = PutAliasSectionInstanceExportFunc(buf, 0, providerExportName) // component func 0
+	// Phase 1: nest each provider, instantiate it, alias its async export.
+	// Provider i → component i, component instance i, component func i (depCFunc[i] = i).
+	for i := range imports {
+		buf = PutComponentSection(buf, imports[i].Provider)
+		buf = PutInstanceSectionInstantiateComponent(buf, uint32(i))
+		buf = PutAliasSectionInstanceExportFunc(buf, uint32(i), imports[i].ProviderExportName)
+	}
 
-	// Trampoline module 0 → core instance 0: exports a placeholder func "0"
-	// (matching the lowered signature) that call_indirects through its
-	// "$imports" table, breaking the lower→memory→consumer circularity.
-	buf = PutCoreModuleSection(buf, TrampolineModuleForParamsResults(lowerParams, lowerResults))
-	buf = PutCoreInstanceSectionInstantiate(buf, 0) // core instance 0
+	// Phase 2: a trampoline module + instance per import (core module i, core
+	// instance i) — the funcref-table placeholder that breaks the
+	// lower→memory→consumer circularity.
+	for i := range imports {
+		buf = PutCoreModuleSection(buf, TrampolineModuleForParamsResults(imports[i].LowerParams, imports[i].LowerResults))
+		buf = PutCoreInstanceSectionInstantiate(buf, uint32(i))
+	}
 
-	// task.return → core func 0; placeholder dep-lower (trampoline "0") → core func 1.
+	// Phase 3: task.return → core func 0.
 	buf = PutCanonTaskReturnSingle(buf, resultValtype)
-	buf = PutAliasSectionCoreExportFunc(buf, 0, "0")
+	// Phase 4: placeholder dep-lower per import (trampoline "0") → core func 1+i.
+	for i := range imports {
+		buf = PutAliasSectionCoreExportFunc(buf, uint32(i), "0")
+	}
 
-	// Consumer core module 1, instantiated with two import-arg instances:
-	// module "" provides task-return (core func 0); module importIface provides
-	// importWITName wired to the trampoline placeholder (core func 1).
+	// Phase 5: consumer core module → core module n.
+	consumerMod := n
 	buf = PutCoreModuleSection(buf, consumerCore)
+
+	// Phase 6: import-arg instances. Module "" provides task-return (core func
+	// 0); each import's interface provides its wit-name wired to that import's
+	// trampoline placeholder (core func 1+i). Then instantiate the consumer.
 	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
 		{Name: "task-return", Sort: CoreSortFunc, Idx: 0},
-	}) // core instance 1
-	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
-		{Name: importWITName, Sort: CoreSortFunc, Idx: 1},
-	}) // core instance 2
-	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 1,
-		[]string{"", importIface}, []uint32{1, 2}) // core instance 3 (consumer)
+	}) // core instance n
+	for i := range imports {
+		buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+			{Name: imports[i].WITName, Sort: CoreSortFunc, Idx: 1 + uint32(i)},
+		}) // core instance n+1+i
+	}
+	argNames := make([]string, 0, n+1)
+	argInsts := make([]uint32, 0, n+1)
+	argNames = append(argNames, "")
+	argInsts = append(argInsts, n) // task-return arg instance
+	for i := range imports {
+		argNames = append(argNames, imports[i].Iface)
+		argInsts = append(argInsts, n+1+uint32(i))
+	}
+	consumerInst := 2*n + 1
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, consumerMod, argNames, argInsts)
 
-	// Alias the consumer's memory → core memory 0, then emit the real
-	// `canon lower async` of the provider's func (component func 0) over it.
-	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 3, "memory") // core memory 0
-	buf = PutCanonSectionLowerAsync(buf, 0, 0)                        // core func 2 (real dep-lower)
+	// Phase 7: alias the consumer's memory → core memory 0.
+	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, consumerInst, "memory")
 
-	// Fixup module 2: patch the trampoline table slot 0 to the real lowered func.
-	buf = PutCoreModuleSection(buf, FixupModuleForParamsResults(lowerParams, lowerResults))
-	buf = PutAliasSectionCoreExport(buf, CoreSortTable, 0, "$imports") // core table 0
-	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
-		{Name: "$imports", Sort: CoreSortTable, Idx: 0},
-		{Name: "0", Sort: CoreSortFunc, Idx: 2},
-	}) // core instance 4
-	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 2,
-		[]string{""}, []uint32{4}) // core instance 5 (fixup)
+	// Phase 8: the real `canon lower async` of each provider func (component
+	// func i) over the consumer memory → core func n+1+i.
+	for i := range imports {
+		buf = PutCanonSectionLowerAsync(buf, uint32(i), 0)
+	}
 
-	// Lift the consumer's async core export async under liftExportName.
-	buf = PutAliasSectionCoreExportFunc(buf, 3, consumerAsyncExport) // core func 3
-	buf = PutTypeSectionOneFunc(buf, nil, nil, resultValtype)        // type 0
-	buf = PutCanonSectionLiftAsync(buf, 3, 0)                        // component func 1
-	buf = PutExportSectionOneFunc(buf, liftExportName, 1)
+	// Phase 9: per import, a fixup module that patches its trampoline table
+	// slot 0 to its real lowered func (core func n+1+i). Core table i is that
+	// import's trampoline "$imports" table.
+	for i := range imports {
+		buf = PutCoreModuleSection(buf, FixupModuleForParamsResults(imports[i].LowerParams, imports[i].LowerResults))
+		buf = PutAliasSectionCoreExport(buf, CoreSortTable, uint32(i), "$imports") // core table i
+		buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+			{Name: "$imports", Sort: CoreSortTable, Idx: uint32(i)},
+			{Name: "0", Sort: CoreSortFunc, Idx: n + 1 + uint32(i)},
+		})
+		// The fixup module index is n (consumer) + 1 + i.
+		buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, consumerMod+1+uint32(i),
+			[]string{""}, []uint32{argFixupInst(n, i)})
+	}
+
+	// Phase 10: lift the consumer's async core export async under liftExportName.
+	// Core funcs: 0 (task.return), 1..n (placeholders), n+1..2n (real lowers),
+	// then runCoreF = 2n+1. Component funcs: 0..n-1 (provider aliases), then
+	// the lift is component func n.
+	runCoreF := 2*n + 1
+	buf = PutAliasSectionCoreExportFunc(buf, consumerInst, consumerAsyncExport) // core func 2n+1
+	buf = PutTypeSectionOneFunc(buf, nil, nil, resultValtype)                   // type 0
+	buf = PutCanonSectionLiftAsync(buf, runCoreF, 0)                            // component func n
+	buf = PutExportSectionOneFunc(buf, liftExportName, n)
 	return buf
 }
+
+// argFixupInst returns the core-instance index of import i's fixup arg
+// instance. Core instances in order: 0..n-1 trampolines, n task-return arg,
+// n+1..2n per-import args, 2n+1 consumer, then for each import a (fixup-arg,
+// fixup) pair starting at 2n+2 — so import i's fixup arg is at 2n+2 + 2*i.
+func argFixupInst(n uint32, i int) uint32 { return 2*n + 2 + 2*uint32(i) }
