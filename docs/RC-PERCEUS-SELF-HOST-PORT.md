@@ -2344,3 +2344,31 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `emit_ir_runtime`-style, x86 real / arm64+wasm via the same emit), distinct from
   the reclaim ANALYSIS (now complete) and from the heavier #3425 emit-time IR-op
   reclaim. Recommended as the next slice once picked up.
+- 2026-06-22: **Per-type `__struct_drop_<T>` deep-drop helper — SHIPPED (the
+  emit-budget unlock the prior entry recommended).** `emit_struct_field_drops` no
+  longer emits the deep-drop inline; it now emits a ~3-op call to a per-type runtime
+  helper `__struct_drop_<T>(box) -> box`, exactly mirroring the `__field_reclaim_<T>`
+  wiring. x86 emits a real per-type body (`emit_ir_struct_drops` /
+  `emit_ir_struct_drop_one` in `asm_ir.fern`): a scalar-array field's buffer is
+  shallow-dec'd; a struct/enum-array field's buffer is unique-guarded, its element
+  boxes walked + dec'd, then the buffer dec'd — `box` held in `%r11`, the buffer in
+  `%r10`, the loop index in `%r9` across the `__fn___fern_arr_dec` /
+  `__fn___fern_rc_is_unique` calls (which clobber only rax/rcx/rdx/rsi/rdi/r8, so
+  the callee-survivor regs hold). arm64 / wasm emit a leak-safe pass-through (return
+  box), matching their `__field_reclaim` pass-throughs and the established
+  reclaim-only-on-x86 stance. The need is recorded at the call site
+  (`is_struct_drop_name` / `struct_drop_type` + `ir_helper_symbol` in `asm_ir.fern`;
+  the x86 + arm64 need-set; the wasm `struct_drop_types` scan in `wasm_ir.fern`).
+  **Effect:** the per-site emit drops from a ~30-op inline element-walk to a 3-op
+  call, so admitting broad struct reclaim (incl. increment A's discarded fresh-ret
+  array-field locals) no longer explodes the native driver's per-function op arrays
+  past the #3452 heap — the emit-budget blocker the prior three entries identified is
+  now removed for struct reclaim. Same observable reclaim on x86 (the deep-drop still
+  runs, just via the helper). Validated x86: byte-identical modload fixpoint (mmc ==
+  gen2 == gen3), whole-compiler per-module emit + link + RUN (UAF guard at scale —
+  the reclaim sites, now routed through the helper, execute), field-reclaim + struct
+  RC IR suites; wasm struct / enum / nested-generic RC IR; arm64 rides CI. **Next:**
+  with the emit budget freed, re-attempt increment A (admit `func_eligible`'s
+  discarded `var r = lower_func(..)` and the parser's `var r = parse_x(..)` fresh-ret
+  array-field locals to `reclaimable_names_of`) — now that each such local's exit
+  drop is a 3-op call, the parser unit should stay within the #3452 budget.
