@@ -7,7 +7,13 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/codegen/wasmbin"
+	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/wasm/component"
+	"github.com/jakechampion/lang/internal/wasm/encode"
 )
 
 // p3FetchStringCore is an async-export provider core that returns a STRING:
@@ -55,5 +61,83 @@ func TestWasmP3AsyncStringExportProvider(t *testing.T) {
 	}
 	if !bytes.Contains(out, []byte("hello")) {
 		t.Errorf("async string export: got %q, want hello", bytes.TrimSpace(out))
+	}
+}
+
+// TestWasmP3AsyncImportStringFromFern is the full composite-result colorless
+// async-import vertical from REAL Fern source: a program awaits a
+// string-returning async import and uses the result —
+//
+//	@import("test:dep/d","fetch") async function fetch(): string;
+//	async function run(): i32 { var s: string = fetch(); return s.len(); }
+//
+// The wasmbin async-import branch lowers `fetch` to the `(retptr) -> status`
+// shape and lifts the return-area (ptr,len) into a Fern string;
+// BuildAsyncImportsAwaitComponent lowers it with `canon lower async + realloc`
+// (NeedsRealloc), aliasing the consumer's cabi_realloc so the host materialises
+// the bytes in the consumer's memory, and bundles the proven string provider
+// (p3FetchStringCore → "hello"). Running `run()` under wasmtime's async
+// features returns 5 (len "hello") — the string flows colorlessly across the
+// async lower/lift round-trip. See docs/WASI-PREVIEW3-ASYNC-PLAN.md.
+func TestWasmP3AsyncImportStringFromFern(t *testing.T) {
+	skipIfPreview2Missing(t) // ensures wasmtime on PATH
+
+	src := `@import("test:dep/d", "fetch") async function fetch(): string;
+async function run(): i32 { var s: string = fetch(); return s.len(); }
+function main(): i32 { return 0; }
+`
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prog, _, err := modload.Load(srcPath)
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+		Preview2WASI:    true,
+		AsyncExportName: "__async_run",
+		AsyncSourceFunc: "run",
+	})
+	if err != nil {
+		t.Fatalf("wasmbin.Build: %v", err)
+	}
+
+	// Provider: `fetch: async func() -> string` returning "hello" (len 5).
+	provider := component.BuildAsyncLiftedExportComponentString(p3FetchStringCore, "mem", "fetch", "fetch")
+
+	i32 := []byte{encode.ValtypeI32}
+	comp := component.BuildAsyncImportsAwaitComponent(core, []component.AsyncImportSpec{{
+		Iface: "test:dep/d", WITName: "fetch",
+		Provider:           provider,
+		ProviderExportName: "fetch",
+		LowerParams:        i32, // (retptr) -> status
+		LowerResults:       i32,
+		NeedsRealloc:       true, // string result: lower carries [async, memory, realloc]
+	}}, "__async_run", "run", component.CValtypeU32)
+
+	p := filepath.Join(dir, "fern_async_string.wasm")
+	if err := os.WriteFile(p, comp, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("wasmtime", "run",
+		"-W", "component-model-async,component-model-async-stackful",
+		"--invoke", "run()", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run (async string import): %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte("5")) {
+		t.Errorf("Fern async string import: got %q, want 5 (len \"hello\")", bytes.TrimSpace(out))
 	}
 }
