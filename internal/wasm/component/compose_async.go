@@ -300,3 +300,37 @@ func BuildAsyncLiftedExportComponentList(providerCore []byte, coreMemExportName,
 	buf = PutExportSectionOneFunc(buf, exportName, 0)
 	return buf
 }
+
+// BuildAsyncLiftedExportComponentStringParam lifts a core `send` that takes a
+// STRING parameter and returns a scalar (`coreExportName`, core sig
+// `(ptr, len) -> ()` delivering its scalar result through the imported scalar
+// `task.return`) into `exportName: async func(s: string) -> resultValtype`. A
+// string parameter is materialised in the export's memory by the canonical ABI
+// via the export's exported cabi_realloc before the core func runs, so the lift
+// carries [async, memory, realloc]. Unlike the string/list RESULT providers
+// there is no task.return memory-circularity: the result is a scalar, so
+// task.return needs no memory option and the provider imports it directly (the
+// lift's memory + realloc reference the provider instance, aliased after it is
+// instantiated). The core must export its memory (memExportName) and a real
+// bump `cabi_realloc` (reallocExportName) — a constant-returning realloc fails
+// at runtime because the async ABI calls it more than once. Verified end to end
+// (`send("hello") -> 5`) — docs/WASI-PREVIEW3-ASYNC-PLAN.md.
+func BuildAsyncLiftedExportComponentStringParam(providerCore []byte, memExportName, reallocExportName, coreExportName, exportName string, resultValtype byte) []byte {
+	buf := PutComponentHeader(nil)
+
+	// Scalar task.return → core func 0; provider instantiated against it.
+	buf = PutCanonTaskReturnSingle(buf, resultValtype)                                         // core func 0
+	buf = PutCoreModuleSection(buf, providerCore)                                              // core module 0
+	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "task-return", 0)                       // core instance 0
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 0, []string{""}, []uint32{0}) // core instance 1 (provider)
+
+	// Alias the provider's memory + cabi_realloc (the lift's options), then its
+	// send export, and lift it async with [memory, realloc] as `(string) -> result`.
+	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 1, memExportName)                 // core memory 0
+	buf = PutAliasSectionCoreExport(buf, CoreSortFunc, 1, reallocExportName)               // core func 1 (cabi_realloc)
+	buf = PutAliasSectionCoreExportFunc(buf, 1, coreExportName)                            // core func 2 (send)
+	buf = PutTypeSectionOneFunc(buf, []string{"s"}, []byte{cValtypeString}, resultValtype) // component type 0
+	buf = PutCanonSectionLiftAsyncWithMemoryRealloc(buf, 2, 0, 0, 1)                       // component func 0
+	buf = PutExportSectionOneFunc(buf, exportName, 0)
+	return buf
+}
