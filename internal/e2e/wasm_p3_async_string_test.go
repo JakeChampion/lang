@@ -254,3 +254,88 @@ func TestWasmP3AsyncListExportProvider(t *testing.T) {
 		t.Errorf("async list export: got %q, want bytes of \"hello\" (104..111)", bytes.TrimSpace(out))
 	}
 }
+
+// TestWasmP3AsyncImportListFromFern is the full list<T> composite-result async
+// import from REAL Fern source: a program awaits a u8[]-returning async import
+// and inspects the lifted array —
+//
+//	@import("test:dep/d","fetch") async function fetch(): u8[];
+//	async function run(): i32 {
+//	    var xs: u8[] = fetch();
+//	    if (xs.len() == 5 && xs[0] == 104 && xs[4] == 111) { return 42; }
+//	    return 0;
+//	}
+//
+// The wasmbin async-import branch lowers `fetch` to `(retptr) -> status` and
+// lifts the return-area (ptr,len) into a Fern u8[]; the composer lowers it with
+// `canon lower async + realloc` (NeedsRealloc) so the host materialises the
+// bytes in the consumer's memory; the bundled provider (p3FetchStringCore typed
+// as list<u8>) returns "hello"'s bytes [104,101,108,108,111]. Running `run()`
+// under wasmtime's async features returns 42 — the array flows colorlessly with
+// the right length AND element values.
+func TestWasmP3AsyncImportListFromFern(t *testing.T) {
+	skipIfPreview2Missing(t) // ensures wasmtime on PATH
+
+	src := `@import("test:dep/d", "fetch") async function fetch(): u8[];
+async function run(): i32 {
+	var xs: u8[] = fetch();
+	if (xs.len() == 5 && xs[0] == 104 && xs[4] == 111) { return 42; }
+	return 0;
+}
+function main(): i32 { return 0; }
+`
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prog, _, err := modload.Load(srcPath)
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+		Preview2WASI:    true,
+		AsyncExportName: "__async_run",
+		AsyncSourceFunc: "run",
+	})
+	if err != nil {
+		t.Fatalf("wasmbin.Build: %v", err)
+	}
+
+	// Provider: `fetch: async func() -> list<u8>` returning "hello"'s bytes.
+	provider := component.BuildAsyncLiftedExportComponentList(p3FetchStringCore, "mem", "fetch", "fetch", component.CValtypeU8)
+
+	i32 := []byte{encode.ValtypeI32}
+	comp := component.BuildAsyncImportsAwaitComponent(core, []component.AsyncImportSpec{{
+		Iface: "test:dep/d", WITName: "fetch",
+		Provider:           provider,
+		ProviderExportName: "fetch",
+		LowerParams:        i32,
+		LowerResults:       i32,
+		NeedsRealloc:       true, // list<u8> result: lower carries [async, memory, realloc]
+	}}, "__async_run", "run", component.CValtypeU32)
+
+	p := filepath.Join(dir, "fern_async_list.wasm")
+	if err := os.WriteFile(p, comp, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("wasmtime", "run",
+		"-W", "component-model-async,component-model-async-stackful",
+		"--invoke", "run()", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run (async list import): %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte("42")) {
+		t.Errorf("Fern async list import: got %q, want 42", bytes.TrimSpace(out))
+	}
+}

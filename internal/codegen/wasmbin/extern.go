@@ -247,6 +247,80 @@ func buildExternListResultWrapper(nparams int, rawImport string, stride uint32) 
 	}
 }
 
+// buildExternAsyncListResultWrapper is the async counterpart of
+// buildExternListResultWrapper: the raw import is a `canon lower async` call
+// `(scalar params…, retptr) -> i32 status`, so after the call there is a status
+// to DROP before reading the return-area (ptr,len) and materialising a Fern T[]
+// (host bytes copied past a length prefix at native `stride`). For a
+// synchronously-completing import the host has already written the canonical
+// (ptr,len) into the return area (bytes materialised in this module's memory via
+// the lower's realloc option). Wrapper type is (scalar params…) -> i32.
+// Locals after the params: 0:$rb 1:$dp 2:$n 3:$arr.
+func buildExternAsyncListResultWrapper(nparams int, rawImport string, stride uint32) func(map[string]uint32) []byte {
+	return func(idxs map[string]uint32) []byte {
+		alloc := idxs["__fern_alloc"]
+		imp := idxs[rawImport]
+		rb := uint32(nparams)
+		dp := uint32(nparams + 1)
+		n := uint32(nparams + 2)
+		arr := uint32(nparams + 3)
+
+		pushByteLen := func(b []byte) []byte {
+			b = inst.InstLocalGet(b, n)
+			if stride != 1 {
+				b = inst.InstI32Const(b, int32(stride))
+				b = numeric.InstI32Mul(b)
+			}
+			return b
+		}
+
+		var body []byte
+		// rb = (__fern_alloc(12) + 3) & ~3 — 4-byte-aligned return area (ptr@+0, len@+4).
+		body = inst.InstI32Const(body, 12)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstI32Const(body, 3)
+		body = numeric.InstI32Add(body)
+		body = inst.InstI32Const(body, -4)
+		body = numeric.InstI32And(body)
+		body = inst.InstLocalSet(body, rb)
+		for i := 0; i < nparams; i++ {
+			body = inst.InstLocalGet(body, uint32(i))
+		}
+		body = inst.InstLocalGet(body, rb)
+		body = inst.InstCall(body, imp)
+		body = inst.InstDrop(body) // sync completion: drop the i32 status
+		// dp = load(rb+0); n = load(rb+4) (element count).
+		body = inst.InstLocalGet(body, rb)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, dp)
+		body = inst.InstLocalGet(body, rb)
+		body = memory.InstI32Load(body, 2, 4)
+		body = inst.InstLocalSet(body, n)
+		// arr = __fern_alloc(4 + count*stride); store count; copy bytes to arr+4.
+		body = inst.InstI32Const(body, 4)
+		body = pushByteLen(body)
+		body = numeric.InstI32Add(body)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, arr)
+		body = inst.InstLocalGet(body, arr)
+		body = inst.InstLocalGet(body, n)
+		body = memory.InstI32Store(body, 2, 0) // count @ arr+0
+		body = inst.InstLocalGet(body, arr)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, dp)
+		body = pushByteLen(body)
+		body = memory.InstMemoryCopy(body)
+		// return arr + 4 (element pointer; count at ptr-4).
+		body = inst.InstLocalGet(body, arr)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Add(body)
+
+		locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32)
+		return inst.PutFunctionBody(nil, locals, body)
+	}
+}
+
 // buildExternBoolListResultWrapper lifts a canonical `list<bool>` result into a
 // Fern `bool[]`. Unlike the numeric-array wrapper (a straight memory.copy at
 // native stride), a Fern bool array element is a 4-byte slot while the canonical
