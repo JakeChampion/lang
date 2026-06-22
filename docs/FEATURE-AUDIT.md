@@ -295,6 +295,31 @@ Remaining (now-narrower) gap: **64-bit magnitudes > 2³²** (large `i64`, any
 a *separate* i64/u64 div/mod-or-reinterpret issue, previously masked by the
 empty-string bug. `std/u32` no longer depends on it (its mask keeps the magnitude
 < 2³²); `std/u64` / `std/i64` large-value `to_string` are the next target.
+
+### 2026-06-22 — std/array higher-order: pure-Fern std/test coverage (interp-gated) + drop-at-exit gap
+
+`std/array`'s higher-order combinators had `array_combinators_test` covering
+`map` / `filter` / `fold` / `any` / `all` / `find` — but `flat_map`, `reduce`
+(→ `Option[T]`), and `sort_by` (comparator closure) were uncovered. Added
+`examples/tests/array_hof_test.fern` — 8 assertions over those three. Gated via
+`TestRunnerArrayHofExamplePasses` (interp).
+
+**Interp-gated, not self-host-gated** — a precise gap finding. The
+already-covered `map`/`filter`/`fold` lower cleanly (array_combinators_test is
+on the self-host differential gate), but `flat_map` / `reduce` / `sort_by` each
+**crash the self-hosted binary at program exit**: probed individually through
+the differential gate, all three run correctly (the TAP output is byte-perfect,
+`# pass N # fail 0`) and then exit `-1` — a **drop/RC-at-exit** trap during
+teardown, not a codegen error in the operation itself. That points at the
+reference-counting / drop path (the goal-2 Perceus port, actively in progress)
+rather than `irlower`'s instruction selection: the values these three produce
+(flattened `U[]`, a reduced `Option[T]`, a freshly-sorted `T[]`) are retained
+to program end and their drop traps. Distinct from the earlier gaps
+(`__int_to_string_u64`-from-unsigned for `u32`/`u64`; trait-impl machinery for
+`std/convert` / `std/num`; array-payload enums for `std/regex`). Left for the
+RC-port work; the suite flips onto the differential gate once the drop path is
+fixed.
+
 ### 2026-06-22 — std/result: pure-Fern std/test migration coverage (the combinator surface)
 
 The `std/result` analogue of the `std/option` combinator suite below: the
