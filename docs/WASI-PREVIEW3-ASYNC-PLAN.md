@@ -292,19 +292,25 @@ and the guest must drive the await state machine:
 Prerequisites / unknowns to resolve before building this to the project's
 byte-verified bar:
 
-- **Encoders not yet written**: `waitable-set.new` / `waitable-set.wait`
-  / `subtask.drop` canon builtins. Their canon-section opcodes must be
-  pinned against a reference (`wasm-tools 1.240` `component wit` / `dump`)
-  — *that toolchain is the CI-pinned version but is NOT present in the
-  current dev sandbox* (only wasm-tools 1.225 is), so the encodings can't
-  be byte-verified here yet. This is the first blocker.
+- **Encoders — DONE, byte-verified against wasm-tools 1.240.** 1.240 has
+  since been fetched into the sandbox; the waitable canon builtins were
+  authored, encoded, and `dump`-checked, and the opcodes pinned:
+  `waitable-set.new` = 0x1f, `waitable-set.wait` = `0x20 <cancellable>
+  <mem>`, `waitable-set.poll` = 0x21, `waitable-set.drop` = 0x22,
+  `waitable.join` = 0x23, `subtask.drop` = 0x0d (note: the await *yield*
+  is `thread.yield`, not `canon yield`). Emitters:
+  `PutCanonWaitableSetNew` / `…Wait` / `…Drop` / `PutCanonWaitableJoin` /
+  `PutCanonSubtaskDrop` (`TestPutCanonWaitableBuiltins_Bytes`).
 - **A genuinely-deferring provider** to exercise the pending path: the
   bundled nested providers all `task.return` immediately (sync). Forcing
-  the STARTED/pending status needs a provider that yields (`canon yield`)
-  or awaits a real pollable before returning — a non-trivial spike.
+  the STARTED/pending status needs a provider that `thread.yield`s (or
+  awaits a real operation) before returning — a non-trivial spike, the
+  main remaining unknown.
 - **wasmbin**: the async-import wrapper must branch on the lowered call's
-  status (RETURNED vs STARTED) and run the waitable loop on STARTED,
-  rather than unconditionally reading inline as it does now.
+  status (RETURNED vs STARTED) and run the waitable loop on STARTED
+  (`waitable-set.new` → `waitable.join` the subtask → `waitable-set.wait`
+  → read the return area → `subtask.drop`), rather than unconditionally
+  reading inline as it does now.
 
 **Also remaining (smaller):** string/array/composite async import results
 (needs the `realloc` option on `canon lower async` — unproven; the lower

@@ -2645,6 +2645,67 @@ func PutCanonResourceDrop(buf []byte, resourceTypeidx uint32) []byte {
 	return wrapSection(buf, SectionCanon, body)
 }
 
+// The WASI Preview-3 waitable-set / subtask canon builtins — the await state
+// machine a guest uses to drive a *pending* (non-synchronously-completing)
+// async import (docs/WASI-PREVIEW3-ASYNC-PLAN.md). The canon-builtin opcodes
+// are byte-verified against wasm-tools 1.240's `dump`:
+//
+//	waitable-set.new  = 0x1f                          -> () -> i32 (set handle)
+//	waitable-set.wait = 0x20 <cancellable> <memidx>   -> (set, ptr) -> i32 (event)
+//	waitable-set.poll = 0x21 <cancellable> <memidx>   -> (set, ptr) -> i32
+//	waitable-set.drop = 0x22                          -> (set) -> ()
+//	waitable.join     = 0x23                          -> (waitable, set) -> ()
+//	subtask.drop      = 0x0d                          -> (subtask) -> ()
+//
+// These are the encoder layer for the pending-await epic; the guest await loop
+// (wasmbin) + a genuinely-deferring provider follow.
+
+// PutCanonWaitableSetNew emits `canon waitable-set.new` (0x1f).
+func PutCanonWaitableSetNew(buf []byte) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x1f)      // waitable-set.new
+	return wrapSection(buf, SectionCanon, body)
+}
+
+// PutCanonWaitableSetWait emits `canon waitable-set.wait` (0x20) with the
+// (non-cancellable) `memory` option — the blocking wait that writes the
+// completed event into `memIdx` and returns its code.
+func PutCanonWaitableSetWait(buf []byte, memIdx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x20)      // waitable-set.wait
+	body = append(body, 0x00)      // cancellable: false
+	body = leb128.UlebU64(body, uint64(memIdx))
+	return wrapSection(buf, SectionCanon, body)
+}
+
+// PutCanonWaitableSetDrop emits `canon waitable-set.drop` (0x22).
+func PutCanonWaitableSetDrop(buf []byte) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x22)      // waitable-set.drop
+	return wrapSection(buf, SectionCanon, body)
+}
+
+// PutCanonWaitableJoin emits `canon waitable.join` (0x23) — adds a waitable
+// (e.g. a subtask) to a waitable-set.
+func PutCanonWaitableJoin(buf []byte) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x23)      // waitable.join
+	return wrapSection(buf, SectionCanon, body)
+}
+
+// PutCanonSubtaskDrop emits `canon subtask.drop` (0x0d) — releases a finished
+// subtask handle returned by an async lower.
+func PutCanonSubtaskDrop(buf []byte) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x0d)      // subtask.drop
+	return wrapSection(buf, SectionCanon, body)
+}
+
 // PutCanonSectionLowerWithMemory emits a canon section with one
 // canon-lower entry that carries a single `memory` canonical-ABI
 // option. The memory option is needed when the lowered function
