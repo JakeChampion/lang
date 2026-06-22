@@ -16041,6 +16041,23 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
             sp = sp + 1;
             pc = pc + 1;
         }
+        else if (o.kind == "int_cast") {
+            // Narrow / sign-extend the top of stack to the target int width
+            // (rides `o.str`), mirroring ir.op_int_cast and asm.fern's
+            // `as_<ty>`. The lowering emits this after every i32 arithmetic op
+            // (add/sub/mul/shl — the signed sibling of u32_wrap) and for `as`
+            // casts, so the i32 evaluator must apply the same per-width wrap or
+            // every arithmetic program bails. i32 / u32 are identity in this
+            // 32-bit-word model; only the sub-word widths change the value.
+            var cv: i32 = stack[sp - 1];
+            var cty: string = o.str;
+            if (cty == "u8") { cv = cv & 255; }
+            else if (cty == "u16") { cv = cv & 65535; }
+            else if (cty == "i8") { cv = cv & 255; if (cv >= 128) { cv = cv - 256; } }
+            else if (cty == "i16") { cv = cv & 65535; if (cv >= 32768) { cv = cv - 65536; } }
+            stack = stack.with(sp - 1, cv);
+            pc = pc + 1;
+        }
         else if (is_bin_kind(o.kind)) {
             // a binary op: pop r, pop l, push apply
             sp = sp - 1;
