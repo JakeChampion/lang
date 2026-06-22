@@ -1,10 +1,30 @@
 package e2e
 
 import (
+	"fmt"
 	"os/exec"
 	"strings"
 	"testing"
 )
+
+// runDriverStdinExits runs a self-host driver binary with `src` on stdin and
+// returns an error only if the process failed to exit normally (a crash, as
+// opposed to choosing any exit status). Used by the cache warmers as a smoke
+// check that a freshly-compiled driver actually runs.
+func runDriverStdinExits(runner []string, bin, src string) error {
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(bin)
+	} else {
+		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
+	}
+	cmd.Stdin = strings.NewReader(src)
+	_ = cmd.Run()
+	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+		return fmt.Errorf("driver did not exit normally")
+	}
+	return nil
+}
 
 // selfHostX86Driver builds the unified x86-family self-host driver
 // (examples/self_host/selfhost_x86_run.fern) and returns the x86 runner plus

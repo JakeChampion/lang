@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 
@@ -96,24 +98,58 @@ func linkCacheBaseDir() (string, error) {
 	return linkCacheDir, linkCacheDirErr
 }
 
-// hashSelfHostSources hashes the entry name plus every *.fern file under
-// dir (the test's project tree), so the key changes iff any source the
-// driver could compile changes. Stray files only cost a cache miss.
+// fernImportRe matches a local module import — `import "./lexer";` or
+// `import "lexer";`. The captured path is resolved to a sibling `.fern` file.
+// `std/…` / `core/…` imports resolve to paths that don't exist under the test
+// dir and so are naturally excluded (the stdlib + compiler are fixed for the
+// run; see the cache-key note above).
+var fernImportRe = regexp.MustCompile(`(?m)^\s*import\s+"([^"]+)"`)
+
+// selfHostImportClosure returns the entry file plus the transitive set of local
+// `.fern` files it imports, resolved relative to each importing file's dir.
+// This is the set whose contents actually determine the emitted asm — stray
+// `.fern` files sitting in the project dir but NOT imported by the entry (e.g. a
+// sibling `asm_pathprobe_run.fern` present while building `asm_run.fern`) are
+// excluded, so the same driver hashes identically regardless of what unrelated
+// drivers a test happens to drop alongside it.
+func selfHostImportClosure(t *testing.T, dir, fernName string) []string {
+	t.Helper()
+	seen := map[string]bool{}
+	var order []string
+	var visit func(path string)
+	visit = func(path string) {
+		if seen[path] {
+			return
+		}
+		seen[path] = true
+		order = append(order, path)
+		src, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		base := filepath.Dir(path)
+		for _, m := range fernImportRe.FindAllStringSubmatch(string(src), -1) {
+			imp := strings.TrimPrefix(m[1], "./")
+			cand := filepath.Join(base, imp+".fern")
+			if _, statErr := os.Stat(cand); statErr == nil {
+				visit(cand)
+			}
+		}
+	}
+	visit(filepath.Join(dir, fernName))
+	return order
+}
+
+// hashSelfHostSources hashes the entry name plus the contents of every `.fern`
+// file in the entry's transitive local-import closure, so the key changes iff a
+// source the driver actually compiles changes — and is INVARIANT to unrelated
+// `.fern` files in the same dir. That invariance is what lets two tests building
+// the same stock driver (e.g. asm_run) share one cache entry even when their
+// project dirs differ in which OTHER drivers they also wrote, and lets the CI
+// `build` job warm a driver under a key the test shards reproduce exactly.
 func hashSelfHostSources(t *testing.T, dir, fernName string) string {
 	t.Helper()
-	var files []string
-	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() && filepath.Ext(path) == ".fern" {
-			files = append(files, path)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk %s: %v", dir, err)
-	}
+	files := selfHostImportClosure(t, dir, fernName)
 	sort.Strings(files)
 	h := sha256.New()
 	fmt.Fprintf(h, "x86_64\x00entry=%s\x00", fernName)

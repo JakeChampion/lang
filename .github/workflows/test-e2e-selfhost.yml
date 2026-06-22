@@ -17,20 +17,26 @@ name: Test e2e self-host
 # shard's wall-clock by ~2.5 min — which matters because of the runner
 # behaviour documented under RUNNER PREEMPTION below.
 #
-# UNIFIED-DRIVER WARM CACHE (x86). The dominant per-shard cost is not the Go
-# test binary but the self-host DRIVERS: each `*_run.fern` driver statically
-# imports the multi-thousand-line front-end, and the Go x86-64 backend takes
-# ~50-70s to emit one. A shard that touches several distinct drivers pays that
-# many times (and the linked binaries pile multiple GB into the link cache).
-# The fix converges the x86 probe tests onto ONE driver,
-# examples/self_host/selfhost_x86_run.fern, which imports the whole front-end +
-# backends once and dispatches a backend on argv[1]; the build job compiles it a
-# single time (it is short and never reclaimed) and writes the content-addressed
-# artifact to a cache the test shards RESTORE, so a converted shard serves its
-# driver from disk in ~1s. This is the bootstrap a per-shard cache could never
-# give: a shard reclaimed mid-run never reaches its own post-save, so cold shards
-# never seeded one another — a build job that always finishes does. (Drivers not
-# yet converted still compile per shard and are process-cached as before.)
+# DRIVER WARM CACHE (x86). The dominant per-shard cost is not the Go test binary
+# but the self-host DRIVERS: each `*_run.fern` driver statically imports the
+# multi-thousand-line front-end, and the Go x86-64 backend takes ~50-70s to emit
+# one. A shard that touches several distinct drivers pays that many times (and
+# the linked binaries pile multiple GB into the link cache) — long enough to be
+# caught by the preemption below. Two changes cut it:
+#   * the self-host build cache is keyed on a driver's IMPORT CLOSURE, not its
+#     project-dir contents (hashSelfHostSources), so a given driver hashes to ONE
+#     key across every test regardless of which other drivers a test drops in the
+#     same dir — it builds at most once per shard, and its key is reproducible.
+#   * separate, parallel `warm` jobs each compile ONE driver up front (short jobs
+#     are never reclaimed) and save it under a per-(driver, SHA) cache key; the
+#     test shards RESTORE those, serving the driver from disk (~1s) instead of
+#     recompiling. This is the bootstrap a per-shard cache could never give: a
+#     shard reclaimed mid-run never reaches its own post-save, so cold shards
+#     never seeded one another — a warm job that always finishes does. Warmed:
+#     the unified driver selfhost_x86_run.fern (imports the whole front-end +
+#     backends, dispatches a backend on argv[1]; shared by the probe tests) plus
+#     asm_run / asm_pathprobe_run (the two the bulk of `*IRX86_64` tests build).
+#     Un-warmed drivers still compile per shard, now at most once each.
 #
 # Matrix per arch because individual tests are split per backend
 # (TestSelfHostAsmX86_64, TestSelfHostAsmArm64, etc.) — running on
@@ -110,41 +116,56 @@ jobs:
           path: e2e.test
           retention-days: 1
           if-no-files-found: error
-      # WARM THE UNIFIED-DRIVER CACHE (x86 only). The x86 self-host probe tests
-      # increasingly share ONE driver — examples/self_host/selfhost_x86_run.fern,
-      # which imports the whole front-end + backends and dispatches a backend on
-      # argv[1]. Compiling it (the ~70s Go x86-64 emit of the ~35k-line compiler)
-      # ONCE here, in the short-lived build job that is never reclaimed, writes
-      # the content-addressed artifact to FERN_SELFHOST_BUILD_CACHE; the cache is
-      # then saved (post step below) and RESTORED by every test shard, which
-      # serve the driver from disk (~1s) instead of recompiling. That is the
-      # bootstrap the per-shard cache lacked: a shard that gets reclaimed never
-      # reaches its own post-save, so cold shards never seeded each other — but a
-      # build job that always completes can. The aarch64 lane skips the x86
-      # driver tests, so it needs no warm cache (x86_64Tooling t.Skip()s there).
-      - name: warm unified-driver cache (x86 only)
-        if: matrix.host.name == 'x86_64'
+
+  # WARM THE DRIVER CACHE (x86). The per-shard cost is dominated by self-host
+  # DRIVERS, each a ~50-70s Go x86-64 emit of the ~35k-line front-end. With the
+  # closure-keyed cache (hashSelfHostSources keys on a driver's import closure,
+  # not its dir contents) a given stock driver hashes to ONE key across every
+  # test, so it can be compiled once here and restored by the shards. Each warm
+  # job compiles a SINGLE driver (~70s) in parallel — short jobs are never
+  # reclaimed — and saves it under a per-(driver, SHA) cache key. Keyed by SHA so
+  # the warm and its shards share one exact intra-run hand-off (a source change
+  # is a new SHA → fresh warm, no staleness). `unified` is selfhost_x86_run.fern
+  # (the argv-dispatched all-backends driver the probe tests share); asm_run and
+  # asm_pathprobe_run are the two drivers the bulk of the `*IRX86_64` tests build.
+  # The aarch64 lane skips the x86 driver tests, so warming is x86-only
+  # (x86_64Tooling t.Skip()s elsewhere).
+  warm:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { key: unified,   driver: "",                     test: TestSelfHostUnifiedDriverWarm }
+          - { key: asm_run,   driver: asm_run.fern,           test: TestSelfHostWarmStockDriver }
+          - { key: pathprobe, driver: asm_pathprobe_run.fern, test: TestSelfHostWarmStockDriver }
+    name: warm-selfhost-x86_64-${{ matrix.key }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-fern
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-test-x86_64
+      - name: warm ${{ matrix.key }} driver
         env:
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
+          FERN_WARM_DRIVER: "${{ matrix.driver }}"
         run: |
           set -euo pipefail
           mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
           chmod +x e2e.test
           BIN="$PWD/e2e.test"
           cd internal/e2e
-          "$BIN" -test.run '^TestSelfHostUnifiedDriverWarm$' -test.v -test.timeout 10m
-      # Save the warm cache keyed by commit SHA: the build and its test shards
-      # share one run/SHA, so this is always an exact intra-run hand-off with no
-      # staleness window (a source change is a new SHA → fresh warm). actions/cache
-      # saves the path at job-end; `needs: build` makes the test jobs wait for it.
+          "$BIN" -test.run '^${{ matrix.test }}$' -test.v -test.timeout 12m
       - uses: actions/cache@v4
-        if: matrix.host.name == 'x86_64'
         with:
           path: ${{ runner.temp }}/selfhost-unicache
-          key: selfhost-unicache-${{ matrix.host.name }}-${{ github.sha }}
+          key: selfhost-unicache-x86_64-${{ matrix.key }}-${{ github.sha }}
 
   test:
-    needs: build
+    needs: [build, warm]
     strategy:
       fail-fast: false
       matrix:
@@ -162,19 +183,29 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: e2e-test-${{ matrix.host.name }}
-      # RESTORE the unified-driver cache warmed by the build job (x86 only).
-      # Tests that share examples/self_host/selfhost_x86_run.fern (see the warm
-      # step in `build`) read the prebuilt driver from FERN_SELFHOST_BUILD_CACHE
-      # — a content-addressed hit is byte-identical to a fresh compile — so the
-      # shard skips the ~70s front-end build entirely. Restore-only: the build
-      # job owns the single SHA-keyed entry, so shards never race to save.
-      # Drivers NOT yet on the unified path still compile per-shard and are
-      # process-cached as before; this only removes the unified driver's cost.
+      # RESTORE the driver caches warmed by the `warm` jobs (x86 only). Each
+      # restore drops one prebuilt driver (content-addressed, byte-identical to a
+      # fresh compile) into FERN_SELFHOST_BUILD_CACHE, so a shard whose tests use
+      # that driver serve it from disk (~1s) instead of the ~70s front-end emit.
+      # Restore-only and per-(driver, SHA) keyed: the warm jobs own the entries,
+      # so shards never race to save, and the SHA match means no staleness.
+      # Drivers not warmed here still compile per-shard (now closure-cached, so a
+      # given driver builds at most once per shard regardless of dir shape).
       - uses: actions/cache/restore@v4
         if: matrix.host.name == 'x86_64'
         with:
           path: ${{ runner.temp }}/selfhost-unicache
-          key: selfhost-unicache-${{ matrix.host.name }}-${{ github.sha }}
+          key: selfhost-unicache-x86_64-unified-${{ github.sha }}
+      - uses: actions/cache/restore@v4
+        if: matrix.host.name == 'x86_64'
+        with:
+          path: ${{ runner.temp }}/selfhost-unicache
+          key: selfhost-unicache-x86_64-asm_run-${{ github.sha }}
+      - uses: actions/cache/restore@v4
+        if: matrix.host.name == 'x86_64'
+        with:
+          path: ${{ runner.temp }}/selfhost-unicache
+          key: selfhost-unicache-x86_64-pathprobe-${{ github.sha }}
       - name: run self-host shard ${{ matrix.shard }}/6 (prebuilt binary, streaming)
         env:
           SHARD: "${{ matrix.shard }}"
