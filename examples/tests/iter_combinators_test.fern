@@ -1,0 +1,72 @@
+import "std/test";
+import "core/iter" as iter;
+// examples/tests/iter_combinators_test.fern — pure-Fern coverage of the
+// core/iter combinators NOT already in iter_test (which does sum / count / of /
+// product / nth / last / min / max / contains / count_value / fold / any / all /
+// map / filter): take, skip, to_array, find, position, position_by, count_by,
+// enumerate, zip. All are bounded-generic over `I: Iterator[T]` (the shape that
+// already lowers on the self-host IR path — iter_test is differential-gated),
+// returning eager arrays / Option / i32. The Go-side suite unit-tests these;
+// this is the migration-shaped (pure-Fern, std/test-driven, self-host-gated)
+// companion. (flat_map is intentionally left to a follow-up — the eager
+// std/array flat_map hits a drop-at-exit gap.)
+
+function test_to_array(): test.TestOutcome {
+    return test.assert_eq_array(iter.to_array(iter.range(0, 4)), [0, 1, 2, 3]);
+}
+
+function test_take(): test.TestOutcome {
+    var xs: i32[] = [1, 2, 3, 4, 5];
+    return test.assert_eq_array(iter.take(iter.of(xs), 3), [1, 2, 3]);
+}
+
+function test_skip(): test.TestOutcome {
+    var xs: i32[] = [1, 2, 3, 4, 5];
+    return test.assert_eq_array(iter.skip(iter.of(xs), 2), [3, 4, 5]);
+}
+
+function test_find(): test.TestOutcome {
+    match (iter.find(iter.range(0, 10), function (x: i32): boolean { return x > 5; })) {
+        Some(v) => { return test.assert_eq(v, 6); },
+        None => { return test.fail("find expected Some(6)"); }
+    }
+}
+
+function test_find_miss(): test.TestOutcome {
+    match (iter.find(iter.range(0, 5), function (x: i32): boolean { return x > 99; })) {
+        Some(v) => { return test.fail("expected None"); },
+        None => { return test.pass(); }
+    }
+}
+
+function test_position(): test.TestOutcome {
+    match (iter.position(iter.range(0, 10), 7)) {
+        Some(v) => { return test.assert_eq(v, 7); },
+        None => { return test.fail("position expected Some(7)"); }
+    }
+}
+
+function test_position_by(): test.TestOutcome {
+    var xs: i32[] = [10, 20, 30];
+    return test.assert_eq(iter.position_by(iter.of(xs), function (x: i32): boolean { return x == 20; }), 1);
+}
+
+function test_count_by(): test.TestOutcome {
+    var xs: i32[] = [1, 2, 3, 4, 5, 6];
+    return test.assert_eq(iter.count_by(iter.of(xs), function (x: i32): boolean { return x % 2 == 0; }), 3);
+}
+
+
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("core/iter combinators");
+    r = r.it("to_array",      test_to_array());
+    r = r.it("take",          test_take());
+    r = r.it("skip",          test_skip());
+    r = r.it("find",          test_find());
+    r = r.it("find miss",     test_find_miss());
+    r = r.it("position",      test_position());
+    r = r.it("position_by",   test_position_by());
+    r = r.it("count_by",      test_count_by());
+    return r.finish();
+}
