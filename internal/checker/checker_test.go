@@ -59,6 +59,49 @@ func TestGenericStructLitFieldCheckedAgainstDestination(t *testing.T) {
 	mustOK(`struct Box[T] { v: T } function main(): i32 { var b = Box { v: "x" }; return 0; }`)
 }
 
+// TestGenericStructLitNestedInstantiation locks the fix for a regression
+// the destination-seeding above (#3763) introduced: a nested struct literal
+// whose field type reuses the SAME generic name re-seeded its type-args from
+// the OUTER destination left in c.expectedType, instead of from its own
+// field type. `var b: Box[Box[i32]] = Box { v: Box { v: 42 } }` wrongly bound
+// the inner Box's T to Box[i32] (not i32) and reported a spurious
+// `field "v": expected Box[i32], got i32`. The field value is now checked
+// against its substituted field type, so nested generics check cleanly — while
+// a genuine nested mismatch is still caught.
+func TestGenericStructLitNestedInstantiation(t *testing.T) {
+	mustOK := func(src string) {
+		t.Helper()
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("expected no error for %q, got: %v", src, err)
+		}
+	}
+	mustErr := func(src, want string) {
+		t.Helper()
+		err := checkSource(t, src)
+		if err == nil {
+			t.Errorf("expected an error for %q, got none", src)
+			return
+		}
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("for %q: want error containing %q, got: %v", src, want, err)
+		}
+	}
+	// The regression repro: nested same-named generic now checks cleanly.
+	mustOK(`struct Box[T] { v: T } function main(): i32 { var b: Box[Box[i32]] = Box { v: Box { v: 42 } }; return b.v.v; }`)
+	// Three levels deep, still clean.
+	mustOK(`struct Box[T] { v: T } function main(): i32 { var b: Box[Box[Box[i32]]] = Box { v: Box { v: Box { v: 7 } } }; return b.v.v.v; }`)
+	// A nested generic with a different element type.
+	mustOK(`struct Box[T] { v: T } function main(): i32 { var b: Box[Box[string]] = Box { v: Box { v: "x" } }; return b.v.v.len(); }`)
+	// A genuine mismatch in the inner literal is still reported.
+	mustErr(`struct Box[T] { v: T } function main(): i32 { var b: Box[Box[i32]] = Box { v: Box { v: "x" } }; return 0; }`,
+		`field "v": expected i32, got string`)
+	// A numeric-literal field value settles to the CONCRETE (substituted)
+	// field type, not the bare parameter: an i64-magnitude literal in a
+	// Box[i64] field must widen to i64 rather than being left i32 and then
+	// rejected by the seeded sub[T]=i64. (#3763 also regressed this.)
+	mustOK(`struct Box[T] { v: T } function main(): i32 { var b: Box[i64] = Box { v: 1234567890123 }; if (b.v == 1234567890123) { return 0; } return 1; }`)
+}
+
 // TestOperatorClassMismatchNoRedundantShareError covers the cascade where an
 // arithmetic/bitwise operator with a wrong-class operand (e.g. a string where
 // an integer is required) stacked TWO E009s: one from the per-operand

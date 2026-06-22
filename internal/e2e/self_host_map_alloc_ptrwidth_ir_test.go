@@ -48,7 +48,11 @@ func TestSelfHostMapAllocPtrWidthIRProbeX86_64(t *testing.T) {
 	if err := os.WriteFile(mainPath, []byte(prog), 0o644); err != nil {
 		t.Fatalf("write main.fern: %v", err)
 	}
-	out, err := exec.Command(mmc, mainPath, stdlibRoot, "-ir-probe").Output()
+	// -no-treeshake: staged-progress probe over EVERY core/map function (incl.
+	// ones the driver program never reaches). The default-on stdlib-root
+	// treeshake (added later) would prune those out of the report, hiding the
+	// frontier this gate measures — so opt out of it.
+	out, err := exec.Command(mmc, mainPath, stdlibRoot, "-no-treeshake", "-ir-probe").Output()
 	if err != nil {
 		t.Fatalf("ir-probe: %v", err)
 	}

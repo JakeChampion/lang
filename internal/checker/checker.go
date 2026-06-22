@@ -10355,12 +10355,28 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// bare struct with no variant tag, and reads back as the wrong
 			// variant. maybeWrapForUnion below only widens a DIRECT variant field
 			// value, not the elements of an array field.
-			c.setElemHintFor(f.Value, expected)
+			// When the instantiation is known (sub seeded from the
+			// destination, e.g. `Box[i64]`), drive hints / literal-settling
+			// with the SUBSTITUTED field type (`i64`) rather than the bare
+			// parameter (`T`): a polymorphic literal `5` must settle to the
+			// concrete `i64`, not default to i32 and then mismatch the seeded
+			// arg.
+			fieldExpected := substituteType(expected, sub)
+			c.setElemHintFor(f.Value, fieldExpected)
+			// Scope the expected-type to THIS field's destination while
+			// checking its value, then restore it. Without this, the enclosing
+			// literal's destination leaks in: a nested generic struct literal —
+			// `Box { v: Box { v: 42 } }` for a `Box[Box[i32]]` target — would
+			// seed the inner literal's type args from the OUTER `Box[Box[i32]]`
+			// instead of its own field type `Box[i32]`, mis-typing it.
+			savedExpected := c.expectedType
+			c.expectedType = fieldExpected
 			vt := c.checkExpr(f.Value, s)
+			c.expectedType = savedExpected
 			if vt == nil {
 				continue
 			}
-			c.settleNumeric(f.Value, expected)
+			c.settleNumeric(f.Value, fieldExpected)
 			vt = c.postSettleType(f.Value, vt)
 			// Implicit union-wrap: a bare variant struct literal in a
 			// field position widens to its union type, matching the

@@ -148,6 +148,11 @@ func TestSelfHostIRPipelineProbe(t *testing.T) {
 		args := []string{entry}
 		if root != "" {
 			args = append(args, root)
+			// With a stdlib root the loader treeshakes by default (added later),
+			// which would prune the imported module's functions this probe asserts
+			// on (it verifies the loader pulls the whole flattened program into the
+			// report, not just the entry module). Opt out so they remain visible.
+			args = append(args, "-no-treeshake")
 		}
 		args = append(args, "-ir-probe")
 		var cmd *exec.Cmd

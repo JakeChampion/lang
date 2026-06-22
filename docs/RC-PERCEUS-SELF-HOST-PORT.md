@@ -2127,3 +2127,44 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   field-free MECHANISM (the prerequisite the detection slice will switch on),
   byte-identical and fully tested; it is necessary but not sufficient, exactly as the
   snapshot-param and local-reclaim slices before it.
+- 2026-06-22: **Consume-call move detection — measurement-first probe (reverted);
+  the lever + the sound requirements located.** Followed up the previous entry's
+  "next slice" by probing whether relaxing the snapshot/reclaim DETECTION actually
+  activates the reclaim on the real workload. Two aggressive (deliberately unsound)
+  relaxations were applied to `irlower.fern` and measured against a self-host-built
+  `mmc`, then reverted:
+    1. recognise `name = g(…, name, …)` as a safe consume-rebind in
+       `stmt_unsafe_for` / `stmt_unsafe_for_allow_ret` (instead of an escape);
+    2. accept a call/method-bound struct local (`var st = se.emit(op)`) as
+       reclaim-eligible in `is_fresh_struct_init` (today it accepts only a direct
+       struct LITERAL — the comment there already flags "a struct-returning call is
+       a move too, … left to leak").
+  **Result (driver0 per-module IR emit, the forced-IR path):** with the relaxations
+  the IR path emits **1944** `__field_reclaim_<T>` call sites in one unit, **69** in
+  the irlower unit, **36** in another — i.e. the DETECTION is the lever; the
+  field-free mechanism from the prior slice fires en masse once the threaded
+  builders are admitted. (Whole-program `mmc` still showed 0 because that build
+  routes these modules differently from the forced-IR per-module path — an
+  IR-eligibility / routing axis, goal #1, separate from the reclaim analysis.)
+  **Why it can't land as-is (both relaxations are UNSOUND without the ownership
+  analysis):**
+    - relaxation 1 frees `name`'s old box after `name = g(…, name, …)`, which is a
+      UAF if `g` RETAINS `name` (stores its box/fields somewhere that outlives the
+      call). Soundness needs `infer_param_escapes` (native ir.go:1336, analysis #2
+      in §5): a param position is consume-safe iff the box neither escapes nor is
+      freed by the callee.
+    - relaxation 2 reclaims `var st = f(…)` even when `f` returns its (borrowed)
+      PARAM — then `st` ALIASES the caller's box and reclaiming `st` double-frees.
+      Soundness needs a FRESH-return classification (the result is a freshly
+      constructed/updated box, never a bare param ident) — the move/escape side of
+      the same analysis. The probe also broke per-module eligibility for two units
+      (0 bytes), confirming the all-calls form is too coarse.
+  **So the next slice is the ownership/escape analysis itself** (the documented
+  `infer_param_escapes` + a fresh-struct-return classifier), computed ONCE per
+  module and threaded like `borrowable_params_interproc` — NOT a further detection
+  shortcut. It must be precise: a single over-approximation frees a retained/aliased
+  box and breaks the byte-identical fixpoint with a SIGSEGV in the 600 MB
+  self-compile. The field-free `__field_reclaim_<T>` mechanism (prior slice) is
+  already in place and validated, so that analysis is the remaining gate to
+  per-module convergence (#3457). Branch `claude/consume-call-move-detection` carried
+  only the reverted probe; no code landed from it.

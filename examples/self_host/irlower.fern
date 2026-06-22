@@ -5999,7 +5999,25 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
     // as a true 8-byte i64 on the stack. (string / f64 / composite still bail.)
     var pt: string = opt_payload_type(ot, "Ok");
     var pt_is_i64: boolean = pt == "i64" || pt == "u64";
-    if (pt != "i32" && pt != "boolean" && !pt_is_i64) { return s.fail(); }
+    // A leaf-safe STRUCT, a STRING, or an ENUM success payload is admitted too:
+    // op_opt_payload reads the pointer-width box exactly as the match-arm Some/Ok
+    // binding does (which already lowers these payloads), and the `var x: T = inner?`
+    // binding types x's slot from its annotation — struct_ty for a struct, is_str for
+    // a string, is_enum_like_name→struct_ty for an enum (StmtVar). So `x.field` /
+    // `x.len()` / `match (x)` resolve. Without this a struct payload bailed the whole
+    // module to AST (#3802 — goal-1 `?`-on-composites); #3810 widens it to string +
+    // enum. An f64 payload is admitted too: it reads through the same 8-byte
+    // width-64 path as i64 (the `var x: f64 = inner?` slot is f64-typed from its
+    // annotation), with the wasm-only is_i64=false tweak below so wasm emits
+    // f64.load. A TUPLE payload (#3824) rounds out the set: it is pointer-boxed,
+    // so it reads through the default op_opt_payload like a struct, and the
+    // `var t: (A, B) = inner?` binding types t's slot via mark_tuple_elems from
+    // its annotation (StmtVar's ExprUnary arm) so a later `t.N` resolves. With
+    // tuple admitted every `?` success-payload shape now lowers through IR.
+    var pt_is_struct: boolean = decl_is_struct(s.structs, pt) && decl_is_leaksafe(s.structs, pt);
+    var pt_is_enum: boolean = is_enum_like_name(pt, s.structs);
+    var pt_is_tuple: boolean = pt.len() > 1 && pt[0] == 40 && tuple_elems_lowerable(pt, s.structs);
+    if (pt != "i32" && pt != "boolean" && !pt_is_i64 && !pt_is_struct && pt != "string" && !pt_is_enum && pt != "f64" && !pt_is_tuple) { return s.fail(); }
     // Evaluate inner into a fresh temp slot (the box pointer).
     var tmp: string = "$try" + util.i32_to_string(s.local_names.len());
     var ts: LowerState = s.add_local(tmp);
@@ -6029,7 +6047,16 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
         // forwarded unchanged, exactly as before.
         var src_err: string = opt_payload_type(ot, "Err");
         var ret_err: string = opt_payload_type(s.cur_ret, "Err");
-        if (ret_err != "" && src_err != ret_err) {
+        // A `dyn Trait` return error type is NOT a `From` target: a concrete
+        // error box (`Err(NotFound{..})`) upcasts to `dyn Error` directly —
+        // the concrete struct/enum pointer's layout is already a valid dyn
+        // pointer — so the source Err box is forwarded UNCHANGED, exactly as
+        // when E1 == E2. Without this guard `src_err != ret_err` ("NotFound"
+        // != "dyn Error") wrongly entered the From branch and bailed the whole
+        // module to AST at the struct gate below (dyn Error isn't a struct),
+        // regressing the `Result[_, dyn Error]` propagation pattern off IR.
+        var ret_err_is_dyn: boolean = ret_err.len() > 4 && ret_err[0:4] == "dyn ";
+        if (ret_err != "" && src_err != ret_err && !ret_err_is_dyn) {
             if (!decl_is_struct(s.structs, ret_err) || !decl_is_leaksafe(s.structs, ret_err)) { return s.fail(); }
             if (src_err == "i64" || src_err == "u64" || src_err == "f64" || src_err == "f32") { return s.fail(); }
             ts = ts.emit(ir.op_load_local(tslot));
@@ -6049,6 +6076,12 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
     // op_opt_payload_w(64, true)).
     ts = ts.emit(ir.op_load_local(tslot));
     if (pt_is_i64) { return ts.emit(ir.op_opt_payload_w(64, true)); }
+    // An f64 payload is also an 8-byte width-64 read, but the wasm backend keys
+    // i64.load vs f64.load off the is_i64 flag (a typed-stack load), so pass
+    // false: the success value must land on the stack as an f64 to match the
+    // `var x: f64` slot. x86/arm64 asm_ir ignore the flag (a raw 8-byte movq),
+    // so this is wasm-only and harmless there.
+    if (pt == "f64") { return ts.emit(ir.op_opt_payload_w(64, false)); }
     return ts.emit(ir.op_opt_payload());
 }
 
@@ -9001,6 +9034,17 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                         }
                     }
                     sb = sb.mark_tuple_elems(slot, enc);
+                },
+                // `var t: (i32, string) = f()?` — a try-operator init (parsed as a
+                // `try_` unary). lower_try now admits a tuple success payload (read
+                // as the pointer-width box, like a struct), but the leaf is the
+                // unwrapped value not in scope here, so type the slot from the
+                // tuple TYPE annotation (authoritative — it names each element,
+                // including a Result[T,E] element's E) so a later `t.N` resolves.
+                parser.ExprUnary(_) => {
+                    if (v.type_name.len() >= 2 && v.type_name[0:1] == "(") {
+                        sb = sb.mark_tuple_elems(slot, tuple_elem_tags(v.type_name));
+                    }
                 },
                 _ => {}
             }
