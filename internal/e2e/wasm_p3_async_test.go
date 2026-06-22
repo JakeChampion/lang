@@ -296,6 +296,100 @@ function main(): i32 { return 0; }
 	}
 }
 
+// p3AsyncAddCoreModule is a hand-built async-export provider core for an async
+// import that takes PARAMETERS: it imports ("", "task-return") (i32)->() and
+// exports "add" of type (i32,i32)->() — it sums its two params and delivers the
+// result through task-return (function-return = task done), the shape a
+// param-taking async-lifted export takes.
+var p3AsyncAddCoreModule = []byte{
+	0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // magic + version
+	// types: 0:(i32)->()  1:(i32,i32)->()
+	0x01, 0x0a, 0x02, 0x60, 0x01, 0x7f, 0x00, 0x60, 0x02, 0x7f, 0x7f, 0x00,
+	// import "" "task-return" func 0 (type 0)
+	0x02, 0x10, 0x01, 0x00, 0x0b, 't', 'a', 's', 'k', '-', 'r', 'e', 't', 'u', 'r', 'n', 0x00, 0x00,
+	// func section: 1 func of type 1
+	0x03, 0x02, 0x01, 0x01,
+	// export "add" func 1
+	0x07, 0x07, 0x01, 0x03, 'a', 'd', 'd', 0x00, 0x01,
+	// code: local.get 0, local.get 1, i32.add, call 0 (task-return), end
+	0x0a, 0x0b, 0x01, 0x09, 0x00, 0x20, 0x00, 0x20, 0x01, 0x6a, 0x10, 0x00, 0x0b,
+}
+
+// TestWasmP3AsyncImportParamsFromFern extends the colorless async-import vertical
+// to an import that takes PARAMETERS: a real Fern `@import(...) async function
+// add(a: i32, b: i32): i32` plus a colorless `async function run() { return
+// add(40, 2); }`. The wasmbin wrapper forwards the two scalar params to the
+// `canon lower async` import `(a, b, retptr) -> status`, and the bundled
+// provider (a param-taking async export `add: async func(u32, u32) -> u32`)
+// computes a+b and delivers it via task-return. Running `run()` under wasmtime's
+// async features returns 42 — proving scalar params flow colorlessly through the
+// async lower/lift round-trip. See docs/WASI-PREVIEW3-ASYNC-PLAN.md.
+func TestWasmP3AsyncImportParamsFromFern(t *testing.T) {
+	skipIfPreview2Missing(t) // ensures wasmtime on PATH
+
+	src := `@import("test:dep/d", "add") async function add(a: i32, b: i32): i32;
+async function run(): i32 { return add(40, 2); }
+function main(): i32 { return 0; }
+`
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prog, _, err := modload.Load(srcPath)
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+		Preview2WASI:    true,
+		AsyncExportName: "__async_run",
+		AsyncSourceFunc: "run",
+	})
+	if err != nil {
+		t.Fatalf("wasmbin.Build: %v", err)
+	}
+
+	// Provider: `add: async func(a: u32, b: u32) -> u32` returning a+b.
+	provider := component.BuildAsyncLiftedExportComponentParams(
+		p3AsyncAddCoreModule, "add", "add",
+		[]string{"a", "b"}, []byte{component.CValtypeU32, component.CValtypeU32},
+		component.CValtypeU32,
+	)
+
+	// The async-lowered import is `(a, b, retptr) -> status` = (i32,i32,i32)->(i32).
+	comp := component.BuildAsyncImportAwaitComponent(
+		core, "test:dep/d", "add",
+		provider, "add",
+		"__async_run", "run",
+		[]byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32}, []byte{encode.ValtypeI32},
+		component.CValtypeU32,
+	)
+
+	p := filepath.Join(dir, "fern_async_add.wasm")
+	if err := os.WriteFile(p, comp, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("wasmtime", "run",
+		"-W", "component-model-async,component-model-async-stackful",
+		"--invoke", "run()", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run (async import params): %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte("42")) {
+		t.Errorf("Fern async import w/ params: got %q, want 42", bytes.TrimSpace(out))
+	}
+}
+
 // p3AsyncConsumerCore is a hand-built consumer core module for the
 // async-import await: it imports ("","task-return") (i32)->(),
 // ("","dep-lower") (i32)->(i32), and ("mem","mem") memory; its "run"
