@@ -313,6 +313,38 @@ the consumer assembly into the CLI driver (today exercised through
 `BuildAsyncImportsAwaitComponent` directly, as a bring-your-own async
 provider has no CLI surface yet); non-i32 async *export* params.
 
+### Composite-result groundwork (encoders landed; runnable flow gated)
+
+The canonical encoders for a **string/list async result** are now in
+place (byte-pinned, derived by analogy from the proven scalar async
+opcodes — async 0x06 / memory 0x03 / realloc 0x04 / string 0x73):
+
+- `PutCanonSectionLowerAsyncRealloc` — the import-side lower carrying
+  `[async, memory, realloc]` (the host materialises the result bytes in
+  the guest's memory via its cabi_realloc).
+- `PutCanonTaskReturnStringWithMemory` — the provider-side `task.return`
+  for a `string` result, carrying the `memory` option; core sig
+  `(ptr, len) -> ()`.
+- `PutCanonSectionLiftAsyncWithMemory` — the async export lift with the
+  `memory` option (string/list result).
+
+Byte tests: `TestPutCanonSectionLowerAsyncRealloc_Bytes`,
+`TestPutCanonTaskReturnStringWithMemory_Bytes`,
+`TestPutCanonSectionLiftAsyncWithMemory_Bytes`.
+
+**Key finding blocking the runnable string flow:** a string `task.return`'s
+`memory` option references the *provider's* linear memory, but the provider
+core module *imports* `task.return` — the same lower→memory→instance
+circularity the async lower hits, so even a string-returning *provider*
+needs a memory trampoline (or externalized shared memory), not just the
+consumer. The full runnable string vertical therefore needs: (a) a
+trampoline on the provider's `task.return` memory; (b) the consumer's
+`cabi_realloc` aliased into the lower (via the same gMem trampoline);
+(c) the wasmbin async-import branch extended to lift the `(ptr,len)`
+return area into a Fern string (`__bytes_to_lang_string`, mirroring the
+non-async `buildExternStringResultWrapper`). The encoders above are the
+first piece; the trampoline wiring + wasmbin lift are the next.
+
 **Also remaining:** `future<T>` / `stream<T>` parameter+result lowering;
 wiring async into the `concurrent { … }` desugar as an alternative to
 the P2 pollable reactor.

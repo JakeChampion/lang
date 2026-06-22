@@ -448,6 +448,70 @@ func TestPutCanonTaskReturnSingle_Bytes(t *testing.T) {
 	}
 }
 
+// TestPutCanonSectionLowerAsyncRealloc_Bytes pins the async-import lower for a
+// result that carries linear-memory data (string / list): the scalar async
+// lower `[async, memory]` plus the `realloc` (0x04) option the canonical ABI
+// uses to materialise the incoming bytes in the guest's memory. Derived by
+// analogy from the proven scalar async lower (PutCanonSectionLowerAsync) +
+// PutCanonSectionLowerWithMemoryRealloc's `realloc` option; the runnable
+// string-flow check is gated on the provider-side memory circularity noted in
+// docs/WASI-PREVIEW3-ASYNC-PLAN.md.
+func TestPutCanonSectionLowerAsyncRealloc_Bytes(t *testing.T) {
+	got := component.PutCanonSectionLowerAsyncRealloc(nil, 0, 0, 0)
+	want := []byte{
+		0x08, 0x0a, // canon section, size 10
+		0x01,       // vec(1)
+		0x01, 0x00, // canon-lower + function-lower sub-tag
+		0x00,       // func index 0
+		0x03,       // opts vec(3)
+		0x06,       // canonopt: async
+		0x03, 0x00, // canonopt: memory, memidx 0
+		0x04, 0x00, // canonopt: realloc, funcidx 0
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("PutCanonSectionLowerAsyncRealloc(0,0,0) = % x, want % x", got, want)
+	}
+}
+
+// TestPutCanonTaskReturnStringWithMemory_Bytes pins the `task.return` whose
+// result is a `string` (0x73) carrying the `memory` (0x03) option — the
+// intrinsic a string-returning async export calls with `(ptr, len)`. Derived
+// from PutCanonTaskReturnSingle's form + the memory option.
+func TestPutCanonTaskReturnStringWithMemory_Bytes(t *testing.T) {
+	got := component.PutCanonTaskReturnStringWithMemory(nil, 0)
+	want := []byte{
+		0x08, 0x07, // canon section, size 7
+		0x01,       // vec(1)
+		0x09,       // canon task.return
+		0x00, 0x73, // result: single-value string
+		0x01,       // options vec(1)
+		0x03, 0x00, // canonopt: memory, memidx 0
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("PutCanonTaskReturnStringWithMemory(0) = % x, want % x", got, want)
+	}
+}
+
+// TestPutCanonSectionLiftAsyncWithMemory_Bytes pins the async export lift with
+// the `memory` option appended (for a string/list result). Derived from
+// PutCanonSectionLiftAsync + the memory option.
+func TestPutCanonSectionLiftAsyncWithMemory_Bytes(t *testing.T) {
+	got := component.PutCanonSectionLiftAsyncWithMemory(nil, 1, 0, 0)
+	want := []byte{
+		0x08, 0x09, // canon section, size 9
+		0x01,       // vec(1)
+		0x00, 0x00, // canon-lift + function-lift sub-tag
+		0x01,       // core func index 1
+		0x02,       // opts vec(2)
+		0x06,       // canonopt: async
+		0x03, 0x00, // canonopt: memory, memidx 0
+		0x00, // type index 0
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("PutCanonSectionLiftAsyncWithMemory(1,0,0) = % x, want % x", got, want)
+	}
+}
+
 // TestWasiClocksMonotonicTimerInstanceTypeBody_Bytes pins the bytes
 // of the wasm-reactor timer instance type: an outer-aliased pollable
 // (here at top-level type index 5), own<pollable>, and the
@@ -1496,7 +1560,7 @@ func TestWasiSocketsTcpInstanceTypeBody_Validates(t *testing.T) {
 	buf = component.PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)                            // inst 1
 	buf = component.PutAliasSectionInstanceExportType(buf, 1, "output-stream")                              // type 3
 	buf = component.PutAliasSectionInstanceExportType(buf, 1, "input-stream")                               // type 4
-	buf = component.PutTypeSectionRawBody(buf, component.WasiIoPollInstanceTypeBody(false))                      // type 5
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoPollInstanceTypeBody(false))                 // type 5
 	buf = component.PutImportSectionOneInstance(buf, "wasi:io/poll@0.2.0", 5)                               // inst 2
 	buf = component.PutAliasSectionInstanceExportType(buf, 2, "pollable")                                   // type 6
 	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsNetworkInstanceTypeBody())              // type 7
@@ -1589,7 +1653,7 @@ func TestWasiSocketsTcpCreateSocketInstanceTypeBody_Validates(t *testing.T) {
 	buf = component.PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)                                // inst 1
 	buf = component.PutAliasSectionInstanceExportType(buf, 1, "output-stream")                                  // type 3
 	buf = component.PutAliasSectionInstanceExportType(buf, 1, "input-stream")                                   // type 4
-	buf = component.PutTypeSectionRawBody(buf, component.WasiIoPollInstanceTypeBody(false))                          // type 5
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoPollInstanceTypeBody(false))                     // type 5
 	buf = component.PutImportSectionOneInstance(buf, "wasi:io/poll@0.2.0", 5)                                   // inst 2
 	buf = component.PutAliasSectionInstanceExportType(buf, 2, "pollable")                                       // type 6
 	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsNetworkInstanceTypeBody())                  // type 7
@@ -1638,7 +1702,7 @@ func TestWasiSocketsUdpInstanceTypeBody_Validates(t *testing.T) {
 	buf = component.PutAliasSectionInstanceExportType(buf, 0, "error-code")                                   // type 2
 	buf = component.PutAliasSectionInstanceExportType(buf, 0, "ip-socket-address")                            // type 3
 	buf = component.PutAliasSectionInstanceExportType(buf, 0, "ip-address-family")                            // type 4
-	buf = component.PutTypeSectionRawBody(buf, component.WasiIoPollInstanceTypeBody(false))                        // type 5
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoPollInstanceTypeBody(false))                   // type 5
 	buf = component.PutImportSectionOneInstance(buf, "wasi:io/poll@0.2.0", 5)                                 // inst 1
 	buf = component.PutAliasSectionInstanceExportType(buf, 1, "pollable")                                     // type 6
 	buf = component.PutTypeSectionRawBody(buf, component.WasiSocketsUdpInstanceTypeBody(1, 2, 3, 6))          // type 7
