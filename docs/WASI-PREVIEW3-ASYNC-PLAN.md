@@ -354,11 +354,15 @@ The remaining runnable string vertical needs: (a) the consumer's
 (`PutCanonSectionLowerAsyncRealloc`) via the gMem trampoline; (b) the wasmbin
 async-import branch extended to lift the `(ptr,len)` return area into a Fern
 string (`__bytes_to_lang_string`, mirroring the non-async
-`buildExternStringResultWrapper`); (c) an e2e composing a real Fern
+`buildExternStringResultWrapper`) — **DONE**: `scanExternImports`' async
+branch handles a `string` result (`buildExternAsyncStringResultWrapper`,
+pulling in `__bytes_to_lang_string` + `cabi_realloc`;
+`TestScanExternImportsAsyncString`); (c) an e2e composing a real Fern
 `@import async function fetch(): string` consumer against the now-proven
-string provider. The provider half + all three composite-result encoders
-are in place; the consumer lower-realloc wiring + wasmbin string lift are
-the next step.
+string provider. The provider half, all three composite-result encoders,
+and the wasmbin consumer string lift are in place; the **composer
+lower-realloc wiring** (alias the consumer's cabi_realloc into the async
+lower) + that e2e are the last step.
 
 **Also remaining:** `future<T>` / `stream<T>` parameter+result lowering;
 wiring async into the `concurrent { … }` desugar as an alternative to

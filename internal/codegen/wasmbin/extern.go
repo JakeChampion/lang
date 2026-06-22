@@ -123,6 +123,50 @@ func buildExternStringResultWrapper(nparams int, rawImport string) func(map[stri
 	}
 }
 
+// buildExternAsyncStringResultWrapper is the async counterpart of
+// buildExternStringResultWrapper: the raw import is a `canon lower async` call
+// `(scalar params…, retptr) -> i32 status` (vs the non-async void-returning
+// retptr import), so after the call there is a status to DROP before lifting.
+// For a synchronously-completing import the host has already written the
+// canonical `(ptr, len)` into the return area (the bytes materialised in this
+// module's memory via the lower's realloc option), so the wrapper reads them
+// inline and lifts to a Fern string — no waitable loop. Wrapper type is
+// (scalar params…) -> (i32 i32).
+func buildExternAsyncStringResultWrapper(nparams int, rawImport string) func(map[string]uint32) []byte {
+	return func(idxs map[string]uint32) []byte {
+		alloc := idxs["__fern_alloc"]
+		lift := idxs["__bytes_to_lang_string"]
+		imp := idxs[rawImport]
+		retbuf := uint32(nparams)
+
+		var body []byte
+		// retbuf = (__fern_alloc(12) + 3) & ~3 — 4-byte-aligned (data @+0, len @+4).
+		body = inst.InstI32Const(body, 12)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstI32Const(body, 3)
+		body = numeric.InstI32Add(body)
+		body = inst.InstI32Const(body, -4)
+		body = numeric.InstI32And(body)
+		body = inst.InstLocalSet(body, retbuf)
+		// raw import: forward each scalar param, then the return-area pointer.
+		for i := 0; i < nparams; i++ {
+			body = inst.InstLocalGet(body, uint32(i))
+		}
+		body = inst.InstLocalGet(body, retbuf)
+		body = inst.InstCall(body, imp)
+		body = inst.InstDrop(body) // sync completion: drop the i32 status
+		// lift: __bytes_to_lang_string(load(retbuf+0), load(retbuf+4)).
+		body = inst.InstLocalGet(body, retbuf)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalGet(body, retbuf)
+		body = memory.InstI32Load(body, 2, 4)
+		body = inst.InstCall(body, lift)
+
+		locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32) // retbuf
+		return inst.PutFunctionBody(nil, locals, body)
+	}
+}
+
 // buildExternListResultWrapper is the integer-array counterpart of the
 // string-result wrapper: it lowers a `list<T>` result the same way (canonical
 // return area), then materializes a Fern `T[]` array. A native array is

@@ -892,25 +892,48 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			if hasMemParam {
 				return nil, nil, fmt.Errorf("@import %q (%s/%s): async extern with a string/array/record/option parameter is not supported yet (only scalar params; docs/WASI-PREVIEW3-ASYNC-PLAN.md)", ex.Name, ex.Iface, ex.WITName)
 			}
-			if !externScalarType(ret) {
-				return nil, nil, fmt.Errorf("@import %q (%s/%s): async extern must return a scalar (i32/i64/f32/f64) for now; void/string/array/composite results are not supported yet (docs/WASI-PREVIEW3-ASYNC-PLAN.md)", ex.Name, ex.Iface, ex.WITName)
-			}
-			results, err := resultValtypes(ret)
-			if err != nil {
-				return nil, nil, fmt.Errorf("@import %q (%s/%s): %w", ex.Name, ex.Iface, ex.WITName, err)
-			}
 			rawName := ex.Name + "$import"
-			// raw import: (scalar params…, retptr) -> i32 status.
+			// raw import: (scalar params…, retptr) -> i32 status. The retptr
+			// return area receives the result the host writes before the lowered
+			// `canon lower async` call returns (sync-completion case).
 			rawParams := append(append([]byte{}, params...), encode.ValtypeI32)
-			specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: rawParams, results: []byte{encode.ValtypeI32}}
-			in.add(rawName)
-			wrappers[ex.Name] = runtimeHelperSpec{
-				params:  params,
-				results: results,
-				body:    buildExternAsyncScalarResultWrapper(len(ex.Params), rawName, results[0]),
+			switch {
+			case externScalarType(ret):
+				results, err := resultValtypes(ret)
+				if err != nil {
+					return nil, nil, fmt.Errorf("@import %q (%s/%s): %w", ex.Name, ex.Iface, ex.WITName, err)
+				}
+				specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: rawParams, results: []byte{encode.ValtypeI32}}
+				in.add(rawName)
+				wrappers[ex.Name] = runtimeHelperSpec{
+					params:  params,
+					results: results,
+					body:    buildExternAsyncScalarResultWrapper(len(ex.Params), rawName, results[0]),
+				}
+				helpers.add(ex.Name)
+				helpers.add("__fern_alloc")
+			case isStringType(ret):
+				// string / list<u8> async result: the return area holds the
+				// canonical (ptr, len); the host materialises the bytes in this
+				// module's memory via `canon lower async`'s realloc option (so the
+				// module must export cabi_realloc). The wrapper allocs the return
+				// area, calls the raw import, drops the status, and lifts (ptr,len)
+				// into a Fern string — the async counterpart of the P4c
+				// string-result extern wrapper.
+				specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: rawParams, results: []byte{encode.ValtypeI32}}
+				in.add(rawName)
+				wrappers[ex.Name] = runtimeHelperSpec{
+					params:  params,
+					results: []byte{encode.ValtypeI32, encode.ValtypeI32}, // Fern heap string (data, len)
+					body:    buildExternAsyncStringResultWrapper(len(ex.Params), rawName),
+				}
+				helpers.add(ex.Name)
+				helpers.add("__fern_alloc")
+				helpers.add("__bytes_to_lang_string")
+				helpers.add("cabi_realloc")
+			default:
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): async extern result %s is not supported yet — only a scalar (i32/i64/f32/f64) or string; void/array/record/option results are not supported (docs/WASI-PREVIEW3-ASYNC-PLAN.md)", ex.Name, ex.Iface, ex.WITName, ret)
 			}
-			helpers.add(ex.Name)
-			helpers.add("__fern_alloc")
 			continue
 		}
 
