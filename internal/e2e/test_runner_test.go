@@ -434,6 +434,28 @@ func TestRunnerArrayHofExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/iter_combinators_test.fern` covers the core/iter
+// combinators NOT in iter_test (sum/count/of/product/nth/last/min/max/
+// contains/count_value/fold/any/all/map/filter): to_array / take / skip /
+// find / position / position_by / count_by. Interp-gated only: `take` / `skip`
+// over an `ArrayIter[T]` argument make the self-host monomorphiser emit an
+// invalid symbol — `bl __fn_iter__take__iter__ArrayIter[T]` with the
+// unsubstituted `[T]` (bracket chars the assembler rejects; see the audit log)
+// — so the suite is intentionally NOT in selfHostStdTestCases. Passing → exit 0.
+func TestRunnerIterCombinatorsExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/iter_combinators_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: core/iter combinators", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/runner_self_test.fern` is the runner's own
 // meta-test — confirms that every assertion helper returns the
 // expected TestOutcome shape on both pass and fail paths.

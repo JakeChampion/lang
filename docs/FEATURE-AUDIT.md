@@ -276,6 +276,34 @@ Note: `std/u64.to_string` *itself* still routes the **legacy AST fallback**
 the high-bit u64 case is pinned via the `core/int` direct call, which does lower
 on IR. Widening the subset so `std/u64` routes IR is a later step.
 
+### 2026-06-22 — core/iter combinators: pure-Fern std/test coverage (interp-gated) + a `[T]`-in-mangled-symbol gap
+
+`core/iter`'s combinators had `iter_test` covering sum / count / of / product /
+nth / last / min / max / contains / count_value / fold / any / all / map /
+filter (it's on the self-host differential gate). The remaining adapters were
+uncovered; added `examples/tests/iter_combinators_test.fern` — 8 assertions over
+`to_array` / `take` / `skip` / `find` / `position` / `position_by` / `count_by`.
+Gated via `TestRunnerIterCombinatorsExamplePasses` (interp).
+
+**Interp-gated, with a precise self-host codegen finding.** `take` / `skip`
+applied to an `iter.of(xs)` argument (an `ArrayIter[T]`) make the self-hosted
+arm64 emit an **un-assemblable symbol**:
+
+    Error: unexpected characters following instruction at operand 1
+      -- `bl __fn_iter__take__iter__ArrayIter[T]'
+
+i.e. the monomorphiser mangles the iterator type-arg as `ArrayIter[T]` with the
+**unsubstituted `[T]` and the literal `[` / `]`** in the symbol name — assembler-
+unsafe and, more fundamentally, not actually monomorphised. `iter_test`'s
+`sum`/`map`/`filter`/… over the same `ArrayIter` lower fine, so this is specific
+to the `[T, I: Iterator[T]] → T[]` adapters (`take`/`skip`). It sits in the iter
+monomorphiser name-mangling area a parallel change recently touched
+(#…“fix monomorphiser key over-split for mangled type args (core/iter)”), so it's
+left to that work; the suite flips onto the differential gate once the mangled
+type-arg is fully substituted. (`enumerate` / `zip` — tuple-array returns — were
+dropped from the suite for the same family of reasons; `flat_map` is the eager
+drop-at-exit case.)
+
 ### 2026-06-22 — self-host: integer `to_string` was a `u8[]` packed-vs-slotted layout bug (not "unsigned")
 
 Followed the previous entry's `__int_to_string_u64`-from-unsigned lead and
