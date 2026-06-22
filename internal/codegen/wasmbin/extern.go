@@ -123,15 +123,61 @@ func buildExternStringResultWrapper(nparams int, rawImport string) func(map[stri
 	}
 }
 
+// emitAsyncAwaitLoop emits the WASI Preview-3 pending-await loop shared by every
+// async-import wrapper. The `canon lower async` call's i32 status must be on the
+// stack; this tees it into statusL and — when the state (status & 0xf) is not
+// RETURNED (2), i.e. the import is pending — drives the waitable state machine
+// over the subtask (status >> 4): `waitable-set.new` → `waitable.join` →
+// `waitable-set.wait(set, rb+8)` → `subtask.drop` → `waitable-set.drop`. On
+// return the result is in the lower's return area at rb+0, which the caller then
+// reads. A synchronously-completing import takes the RETURNED fast path (no
+// loop). The return area `rb` must be allocated >= 16 bytes (result at +0, the
+// 8-byte wait event at +8). statusL/taskL/wsL are scratch i32 locals. The
+// waitable intrinsics are imported (importSpecs `async_ws_new` etc.) and
+// provided by the component composer's canon waitable-set.* / subtask.drop.
+// See docs/WASI-PREVIEW3-ASYNC-PLAN.md.
+func emitAsyncAwaitLoop(body []byte, idxs map[string]uint32, rbL, statusL, taskL, wsL uint32) []byte {
+	wsn := idxs["async_ws_new"]
+	wj := idxs["async_w_join"]
+	wsw := idxs["async_ws_wait"]
+	sd := idxs["async_subtask_drop"]
+	wsd := idxs["async_ws_drop"]
+
+	body = inst.InstLocalTee(body, statusL) // status (on stack) -> statusL, kept
+	body = inst.InstI32Const(body, 0xf)
+	body = numeric.InstI32And(body)
+	body = inst.InstI32Const(body, 2) // RETURNED
+	body = numeric.InstI32Ne(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, statusL) // subtask = status >> 4
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32ShrU(body)
+	body = inst.InstLocalSet(body, taskL)
+	body = inst.InstCall(body, wsn) // ws = waitable-set.new()
+	body = inst.InstLocalSet(body, wsL)
+	body = inst.InstLocalGet(body, taskL) // waitable.join(subtask, ws)
+	body = inst.InstLocalGet(body, wsL)
+	body = inst.InstCall(body, wj)
+	body = inst.InstLocalGet(body, wsL) // waitable-set.wait(ws, rb+8); drop event
+	body = inst.InstLocalGet(body, rbL)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, wsw)
+	body = inst.InstDrop(body)
+	body = inst.InstLocalGet(body, taskL) // subtask.drop(subtask)
+	body = inst.InstCall(body, sd)
+	body = inst.InstLocalGet(body, wsL) // waitable-set.drop(ws)
+	body = inst.InstCall(body, wsd)
+	body = inst.InstEnd(body)
+	return body
+}
+
 // buildExternAsyncStringResultWrapper is the async counterpart of
 // buildExternStringResultWrapper: the raw import is a `canon lower async` call
-// `(scalar params…, retptr) -> i32 status` (vs the non-async void-returning
-// retptr import), so after the call there is a status to DROP before lifting.
-// For a synchronously-completing import the host has already written the
-// canonical `(ptr, len)` into the return area (the bytes materialised in this
-// module's memory via the lower's realloc option), so the wrapper reads them
-// inline and lifts to a Fern string — no waitable loop. Wrapper type is
-// (scalar params…) -> (i32 i32).
+// `(scalar params…, retptr) -> i32 status`. After the call it runs the
+// pending-await loop (emitAsyncAwaitLoop; a sync import takes the RETURNED fast
+// path) and then lifts the canonical `(ptr, len)` at the return area into a Fern
+// string. Wrapper type is (scalar params…) -> (i32 i32).
 func buildExternAsyncStringResultWrapper(nparams int, rawImport string) func(map[string]uint32) []byte {
 	return func(idxs map[string]uint32) []byte {
 		alloc := idxs["__fern_alloc"]
@@ -140,8 +186,9 @@ func buildExternAsyncStringResultWrapper(nparams int, rawImport string) func(map
 		retbuf := uint32(nparams)
 
 		var body []byte
-		// retbuf = (__fern_alloc(12) + 3) & ~3 — 4-byte-aligned (data @+0, len @+4).
-		body = inst.InstI32Const(body, 12)
+		// retbuf = (__fern_alloc(16) + 3) & ~3 — 4-byte-aligned (data @+0, len @+4,
+		// the 8-byte wait event @+8).
+		body = inst.InstI32Const(body, 16)
 		body = inst.InstCall(body, alloc)
 		body = inst.InstI32Const(body, 3)
 		body = numeric.InstI32Add(body)
@@ -154,7 +201,8 @@ func buildExternAsyncStringResultWrapper(nparams int, rawImport string) func(map
 		}
 		body = inst.InstLocalGet(body, retbuf)
 		body = inst.InstCall(body, imp)
-		body = inst.InstDrop(body) // sync completion: drop the i32 status
+		// Await the (possibly pending) subtask, then lift the (ptr,len).
+		body = emitAsyncAwaitLoop(body, idxs, retbuf, uint32(nparams)+1, uint32(nparams)+2, uint32(nparams)+3)
 		// lift: __bytes_to_lang_string(load(retbuf+0), load(retbuf+4)).
 		body = inst.InstLocalGet(body, retbuf)
 		body = memory.InstI32Load(body, 2, 0)
@@ -162,7 +210,7 @@ func buildExternAsyncStringResultWrapper(nparams int, rawImport string) func(map
 		body = memory.InstI32Load(body, 2, 4)
 		body = inst.InstCall(body, lift)
 
-		locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32) // retbuf
+		locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32) // retbuf, status, task, ws
 		return inst.PutFunctionBody(nil, locals, body)
 	}
 }
@@ -275,8 +323,9 @@ func buildExternAsyncListResultWrapper(nparams int, rawImport string, stride uin
 		}
 
 		var body []byte
-		// rb = (__fern_alloc(12) + 3) & ~3 — 4-byte-aligned return area (ptr@+0, len@+4).
-		body = inst.InstI32Const(body, 12)
+		// rb = (__fern_alloc(16) + 3) & ~3 — 4-byte-aligned return area (ptr@+0,
+		// len@+4, the 8-byte wait event @+8).
+		body = inst.InstI32Const(body, 16)
 		body = inst.InstCall(body, alloc)
 		body = inst.InstI32Const(body, 3)
 		body = numeric.InstI32Add(body)
@@ -288,7 +337,8 @@ func buildExternAsyncListResultWrapper(nparams int, rawImport string, stride uin
 		}
 		body = inst.InstLocalGet(body, rb)
 		body = inst.InstCall(body, imp)
-		body = inst.InstDrop(body) // sync completion: drop the i32 status
+		// Await the (possibly pending) subtask, then read the (ptr,len).
+		body = emitAsyncAwaitLoop(body, idxs, rb, uint32(nparams)+4, uint32(nparams)+5, uint32(nparams)+6)
 		// dp = load(rb+0); n = load(rb+4) (element count).
 		body = inst.InstLocalGet(body, rb)
 		body = memory.InstI32Load(body, 2, 0)
@@ -316,7 +366,7 @@ func buildExternAsyncListResultWrapper(nparams int, rawImport string, stride uin
 		body = inst.InstI32Const(body, 4)
 		body = numeric.InstI32Add(body)
 
-		locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32)
+		locals := inst.PutLocalsOneGroup(nil, 7, encode.ValtypeI32) // rb,dp,n,arr,status,task,ws
 		return inst.PutFunctionBody(nil, locals, body)
 	}
 }
@@ -1563,8 +1613,8 @@ func buildExternAsyncScalarResultWrapper(nparams int, rawImport string, resultVT
 		}
 		body = inst.InstLocalGet(body, rb)
 		body = inst.InstCall(body, imp)
-		// Synchronous completion: drop the i32 status, read the result inline.
-		body = inst.InstDrop(body)
+		// Await the (possibly pending) subtask, then read the result inline.
+		body = emitAsyncAwaitLoop(body, idxs, rb, uint32(nparams)+1, uint32(nparams)+2, uint32(nparams)+3)
 		body = inst.InstLocalGet(body, rb)
 		switch resultVT {
 		case encode.ValtypeI64:
@@ -1577,7 +1627,7 @@ func buildExternAsyncScalarResultWrapper(nparams int, rawImport string, resultVT
 			body = memory.InstI32Load(body, 2, 0)
 		}
 
-		locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32) // rb
+		locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32) // rb, status, task, ws
 		return inst.PutFunctionBody(nil, locals, body)
 	}
 }
@@ -1614,8 +1664,8 @@ func buildExternAsyncStringParamWrapper(rawImport string, resultVT byte) func(ma
 		body = inst.InstLocalGet(body, byteLen)
 		body = inst.InstLocalGet(body, rb)
 		body = inst.InstCall(body, imp)
-		body = inst.InstDrop(body)
-		// read the scalar result from the return area.
+		// Await the (possibly pending) subtask, then read the scalar result.
+		body = emitAsyncAwaitLoop(body, idxs, rb, 6, 7, 8)
 		body = inst.InstLocalGet(body, rb)
 		switch resultVT {
 		case encode.ValtypeI64:
@@ -1628,7 +1678,7 @@ func buildExternAsyncStringParamWrapper(rawImport string, resultVT byte) func(ma
 			body = memory.InstI32Load(body, 2, 0)
 		}
 
-		locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32) // buf, byteLen, i, rb
+		locals := inst.PutLocalsOneGroup(nil, 7, encode.ValtypeI32) // buf,byteLen,i,rb,status,task,ws
 		return inst.PutFunctionBody(nil, locals, body)
 	}
 }
