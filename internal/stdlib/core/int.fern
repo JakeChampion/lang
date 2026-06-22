@@ -4,9 +4,9 @@
 // the primitives the wider `(n).to_string()` method-syntax
 // wrappers in `std/i32` / `std/i64` / `std/u32` / `std/u64`
 // call into. They sit in `core/` because the implementation
-// pokes raw memory (`__alloc_u8`, `__memcpy`, scratch buffers
-// written backwards) — user code should reach for the method-
-// syntax surface or `format(…)` rather than these directly.
+// pokes raw memory (`__alloc_u8`, scratch buffers written
+// backwards) — user code should reach for the method-syntax
+// surface or `format(…)` rather than these directly.
 //
 // `parse_int_radix(s, base)` / `int_to_string_radix(n, base)`
 // extend the same shape to bases 2..36 (digits 0-9 then a-z,
@@ -21,15 +21,13 @@
 // we then read the result as u32 for the divmod chain, and
 // -INT_MIN's unsigned value is exactly `2^31`.
 //
-// scratch_ptr is usize, not i32: native arm64 (and any
-// 64-bit target) places mmap regions at addresses that won't
-// fit in i32 (kernel ASLR + the mmap region typically lands
-// above 0x4_0000_0000). Truncating with `as i32` worked
-// only on qemu-aarch64's address-space-constrained user-mode
-// emulation, which honors the 0x1000_0000 hint; native arm64
-// runners (GitHub Actions ubuntu-24.04-arm = Ampere Altra)
-// hand back a high address and the truncated low 32 bits
-// point at unmapped memory → SIGSEGV inside __memcpy.
+// The digits are written backwards into `scratch[end..N]` then
+// packed into a right-sized buffer with slot-aware array ops
+// (`.with` / index), not a raw `__memcpy`: a byte copy assumes a
+// PACKED `u8[]`, which holds on native / wasm but not on the
+// self-hosted runtime (8-byte-slotted `u8[]`). The element-wise
+// copy is layout-agnostic, so it is correct on every backend and
+// lowers on the self-host IR path.
 pub function int_to_string(n: i32): string {
     var scratch: u8[] = __alloc_u8(16);
     var end: i32 = 16;
@@ -54,13 +52,21 @@ pub function int_to_string(n: i32): string {
         scratch = scratch.with(end, 45 as u8);
     }
     var n_bytes: i32 = 16 - end;
-    // Capture the buffer pointer AFTER the `.with` writes: `.with` is
-    // value-returning (it can relocate on a CoW copy), so an address taken
-    // before the writes could be stale. `scratch` now holds the final
-    // buffer with all digits written.
-    var scratch_ptr: usize = scratch as usize;
+    // Pack the right-aligned digits `scratch[end..16]` into a fresh
+    // `n_bytes`-long buffer using slot-aware array ops (`.with` / index)
+    // rather than a raw `__memcpy` over `scratch as usize`. A raw byte copy
+    // assumes a PACKED `u8[]` (one byte per element) — true on the native /
+    // wasm backends but NOT on the self-hosted runtime, whose `u8[]` stores
+    // each element in an 8-byte slot. The element-wise copy is correct on
+    // every backend because `.with` / indexing / `string_from_bytes` are all
+    // layout-aware, so this is the portable shape (and lowers on the
+    // self-host IR path, which the `__memcpy` form did not).
     var buf: u8[] = __alloc_u8(n_bytes);
-    __memcpy(buf as usize, scratch_ptr + end, n_bytes);
+    var i: i32 = 0;
+    while (i < n_bytes) {
+        buf = buf.with(i, scratch[end + i]);
+        i = i + 1;
+    }
     return string_from_bytes(buf);
 }
 
@@ -91,10 +97,15 @@ pub function __int_to_string_u64(mag: i64, neg: i32): string {
         scratch = scratch.with(end, 45 as u8);
     }
     var n_bytes: i32 = 24 - end;
-    // Capture the pointer after the `.with` writes (see int_to_string).
-    var scratch_ptr: usize = scratch as usize;
+    // Slot-aware element copy of the right-aligned digits, not a raw
+    // `__memcpy` over `scratch as usize` — see int_to_string for why the
+    // byte-copy form miscompiles on the self-hosted runtime's slotted `u8[]`.
     var buf: u8[] = __alloc_u8(n_bytes);
-    __memcpy(buf as usize, scratch_ptr + end, n_bytes);
+    var i: i32 = 0;
+    while (i < n_bytes) {
+        buf = buf.with(i, scratch[end + i]);
+        i = i + 1;
+    }
     return string_from_bytes(buf);
 }
 
