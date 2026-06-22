@@ -251,6 +251,38 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-22 — self-host IR frontier remap: `std/num` scalar reducers already lower; the real gap is the Iterator-bounded stack
+
+Systematic `-decide` / `-ir-probe` sweep of the gaps the older "std/crypto gap
+map" entry listed, correcting two now-stale claims and pinning the real
+remaining frontier precisely (no code change — a verified roadmap update):
+
+- **`std/num` scalar reducers now LOWER on IR.** The old entry's "`sum` /
+  `product` / `sum_with` / … crash (exit -1)" is obsolete: `num.sum` /
+  `num.product` / `num.sum_with` / `num.product_with` over `i32[]` all route
+  **ir** and match the interpreter (10 / 24 / 10 / 24). The bounded-generic
+  monomorphisation over `Add` / `Mul` / `Zero` (single type param, array arg)
+  lowers — closed by the intervening trait/monomorph work.
+
+- **The remaining reducer gap is the *Iterator-bounded* form**, not the scalar
+  one: `core/iter.sum` / `count` / `to_array` and `std/num.sum_iter` /
+  `product_iter` route **ast**. `-ir-probe` shows `iter__sum: BAIL lower`. The
+  blocker was isolated by elimination — each of these lowers fine on IR on its
+  own: `Option[(i32, i32)]` match with `.0` / `.1`; a struct-element tuple in
+  `Option` reassigned in a `while` loop (free fn); a struct RECEIVER method
+  returning `Option[(i32, Self)]`; and a plain trait-bound generic
+  `run[I: Step]` over a NON-generic struct. The unlowered combination is the
+  full **generic-trait + parametric-impl-for-a-generic-struct + bounded-generic**
+  stack (`impl[T] Iterator[T] for ArrayIter[T]`, called through
+  `sum[I: Iterator[i32]]` instantiated at `ArrayIter[i32]`). That is the next
+  real IR-subset target — a monomorphisation feature, not a narrow fix.
+
+- **`std/regex` does not crash** for the patterns probed (`abc`, `a|b`, `[abc]`,
+  `(ab)+`): it routes **ast** but runs correctly via the AST fallback (matches
+  the interpreter). The array-payload-enum (#3720) concern is an IR-subset
+  *routing* gap, not the runtime crash the old entry implied — at least for
+  these inputs.
+
 ### 2026-06-22 — self-host IR: u64 RECEIVER methods (`std/u64`) now lower (dispatch keyed "i64", not "u64")
 
 The remaining half of "std/u64.to_string routes AST" from the entry below. A
