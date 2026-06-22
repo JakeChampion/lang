@@ -931,8 +931,24 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 				helpers.add("__fern_alloc")
 				helpers.add("__bytes_to_lang_string")
 				helpers.add("cabi_realloc")
+			case isScalarArrayParamType(ret):
+				// list<T> async result (numeric element) lifted into a Fern T[]: the
+				// return area holds the canonical (ptr, len) the host materialises in
+				// this module's memory via the lower's realloc option; the wrapper
+				// drops the status and copies count*stride bytes past a length prefix
+				// — the async counterpart of the P4c list-result extern wrapper.
+				specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: rawParams, results: []byte{encode.ValtypeI32}}
+				in.add(rawName)
+				wrappers[ex.Name] = runtimeHelperSpec{
+					params:  params,
+					results: []byte{encode.ValtypeI32}, // Fern array (element pointer)
+					body:    buildExternAsyncListResultWrapper(len(ex.Params), rawName, scalarArrayElemStride(ret)),
+				}
+				helpers.add(ex.Name)
+				helpers.add("__fern_alloc")
+				helpers.add("cabi_realloc")
 			default:
-				return nil, nil, fmt.Errorf("@import %q (%s/%s): async extern result %s is not supported yet — only a scalar (i32/i64/f32/f64) or string; void/array/record/option results are not supported (docs/WASI-PREVIEW3-ASYNC-PLAN.md)", ex.Name, ex.Iface, ex.WITName, ret)
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): async extern result %s is not supported yet — only a scalar (i32/i64/f32/f64), string, or numeric array (u8[]/i32[]/f64[]/…); void/bool-array/record/option results are not supported (docs/WASI-PREVIEW3-ASYNC-PLAN.md)", ex.Name, ex.Iface, ex.WITName, ret)
 			}
 			continue
 		}

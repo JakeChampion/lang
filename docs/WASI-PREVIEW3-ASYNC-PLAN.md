@@ -380,13 +380,22 @@ component type referenced by index, emitted via
 `PutCanonTaskReturnTypeIdxWithMemory` (the type-index-result generalisation
 of the string `task.return`). `TestWasmP3AsyncListExportProvider` runs
 `fetch()` → `list<u8>` `[104,101,108,108,111]` ("hello" bytes) under
-wasmtime's async features. The consumer half (a wasmbin `(ptr,len) -> Fern
-T[]` async lift — the array sibling of `buildExternAsyncStringResultWrapper`
-— + the realloc lower, which the composer already supports via NeedsRealloc)
-+ the e2e are the remaining step, mirroring the string consumer slices.
+wasmtime's async features.
 
-String/list async *params* and the *pending* (waitable-set) path remain
-(see above).
+**`list<elem>` results — DONE, runnable from real Fern source.** The
+consumer half landed: the wasmbin async-import branch lifts a numeric-array
+result (`buildExternAsyncListResultWrapper` — the array sibling of the
+string wrapper: drops the status, copies count*stride bytes past a length
+prefix), and the composer's `NeedsRealloc` lower supplies the bytes.
+`TestWasmP3AsyncImportListFromFern` compiles a real Fern `@import async
+function fetch(): u8[]` + `run() { var xs = fetch(); if (xs.len()==5 &&
+xs[0]==104 && xs[4]==111) return 42; }`, composes it against the list
+provider, and runs `run()` → **42** — the array flows colorlessly with the
+right length AND element values.
+
+So composite **results** (string + numeric list) are complete, import +
+export. String/list async *params* and the *pending* (waitable-set) path
+remain (see above).
 
 **Also remaining:** `future<T>` / `stream<T>` parameter+result lowering;
 wiring async into the `concurrent { … }` desugar as an alternative to
