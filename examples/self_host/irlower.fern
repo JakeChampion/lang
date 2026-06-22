@@ -5999,15 +5999,17 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
     // as a true 8-byte i64 on the stack. (string / f64 / composite still bail.)
     var pt: string = opt_payload_type(ot, "Ok");
     var pt_is_i64: boolean = pt == "i64" || pt == "u64";
-    // A leaf-safe STRUCT success payload is admitted too: op_opt_payload reads the
-    // pointer-width struct box exactly as the match-arm Some/Ok binding does (which
-    // already lowers struct-payload Option/Result), and the `var p: P = inner?`
-    // binding types p's slot as the struct from its annotation (StmtVar's struct_ty
-    // path), so `p.field` resolves. Without this a struct payload bailed the whole
-    // module to AST (#3802 — the goal-1 IR-eligibility gap for `?` on composites).
-    // string / f64 / enum / tuple payloads still bail (slot-typing not threaded).
+    // A leaf-safe STRUCT, a STRING, or an ENUM success payload is admitted too:
+    // op_opt_payload reads the pointer-width box exactly as the match-arm Some/Ok
+    // binding does (which already lowers these payloads), and the `var x: T = inner?`
+    // binding types x's slot from its annotation — struct_ty for a struct, is_str for
+    // a string, is_enum_like_name→struct_ty for an enum (StmtVar). So `x.field` /
+    // `x.len()` / `match (x)` resolve. Without this a struct payload bailed the whole
+    // module to AST (#3802 — goal-1 `?`-on-composites); #3810 widens it to string +
+    // enum. f64 (needs a width-64 read like the i64 path) / tuple payloads still bail.
     var pt_is_struct: boolean = decl_is_struct(s.structs, pt) && decl_is_leaksafe(s.structs, pt);
-    if (pt != "i32" && pt != "boolean" && !pt_is_i64 && !pt_is_struct) { return s.fail(); }
+    var pt_is_enum: boolean = is_enum_like_name(pt, s.structs);
+    if (pt != "i32" && pt != "boolean" && !pt_is_i64 && !pt_is_struct && pt != "string" && !pt_is_enum) { return s.fail(); }
     // Evaluate inner into a fresh temp slot (the box pointer).
     var tmp: string = "$try" + util.i32_to_string(s.local_names.len());
     var ts: LowerState = s.add_local(tmp);
