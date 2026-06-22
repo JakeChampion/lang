@@ -7,66 +7,56 @@ name: Test e2e self-host
 # current `lang` binary against the in-tree self-host sources and
 # diffs the output against the reference.
 #
+# COMPILE ONCE, RUN MANY. A `build` job (per arch) compiles the e2e
+# test binary a single time with `go test -c` and uploads it as an
+# artifact; the sharded `test` jobs download that binary and run their
+# slice of it. Previously every one of the (2 arch × N) shards
+# recompiled the ~32 MB e2e test binary itself (`go test ./...` rebuilds
+# the package per job, ~2.5 min each), so the build cost was paid 2N
+# times. Now it is paid twice. This both saves CI minutes and trims each
+# shard's wall-clock by ~2.5 min — which matters because of the runner
+# behaviour documented under RUNNER PREEMPTION below.
+#
 # Matrix per arch because individual tests are split per backend
 # (TestSelfHostAsmX86_64, TestSelfHostAsmArm64, etc.) — running on
-# both runners means each backend-specific test exercises its
-# native toolchain rather than skipping for lack of qemu /
-# cross-gcc.
+# both runners means each backend-specific test exercises its native
+# toolchain rather than skipping for lack of qemu / cross-gcc. The
+# aarch64 runner skips the x86 self-host driver builds (and vice-versa),
+# so the x86 lane is the long pole; the aarch64 shards finish in well
+# under a minute.
 #
-# SHARDED by test name. There are ~450 TestSelfHost* functions and
-# many build a full self-host driver (compiling the ~35k-line
-# self-host compiler through the production backend, then linking),
-# so the unsharded job was the CI long pole (~9.5 min on x86, where
-# the arm64-backed tests additionally run under qemu). Each shard
-# claims `index % N == shard` over the sorted `go test -list` output,
-# so the set splits ~evenly and new tests are picked up
-# automatically. Crossed with the per-arch matrix this gives 2×N
-# parallel jobs vs the previous single ~9.5 min job. `go test -list`
-# builds the test binary once; the gotestsum run reuses that cached
-# build.
+# SHARDED by test name: each shard claims `index % N == shard` over the
+# sorted `-test.list '^TestSelfHost'` output of the prebuilt binary, so
+# the set splits ~evenly and new tests are picked up automatically.
+# N = 6 (the `test` job is 2 arch × 6 = 12 jobs, plus 2 build jobs).
 #
-# SHARD COUNT — currently 12 (24 jobs across the per-arch matrix).
-# The x86_64 self-host backend tests are the long pole: ~23 min of real
-# work on the x86 lane (the arm64 runner skips them for lack of
-# qemu-x86_64 and vice-versa, so each arch concentrates its native
-# backend's heavy self-host driver builds). Sharding by test name
-# (`index % N == shard` over the sorted `go test -list`) splits that
-# pole across jobs; the per-job ~2.5-min test-binary build is unshareable
-# (`go test -list` recompiles the e2e package once per job), so very high
-# shard counts hit diminishing returns.
+# RUNNER PREEMPTION — why streaming + compile-once, but NOT more shards.
+# The x86 self-host shards were intermittently coming back `failure` with
+# "The runner has received a shutdown signal" / exit 143, mid-run, with no
+# test failures — the runner was reclaimed out from under the job. Two
+# hypotheses were tested and BOTH refuted by experiment:
+#   * "idle-output watchdog" — added a 30s stdout heartbeat; a shard
+#     emitting a heartbeat line every 30s was STILL killed (at ~6.4 min),
+#     so it is not a no-output timeout.
+#   * "fixed job/runner lifetime" — kills landed at variable times
+#     (~6.4 min one run, ~11 min another), so it is not a fixed cap.
+# The one robust correlation: short jobs survive (the ~30s aarch64 shards
+# are never reclaimed) and long jobs get caught. So this is infrastructure
+# preemption of the runner pool, and the only lever we have is to make the
+# x86 jobs *shorter* (lower the probability of being caught) — hence
+# compile-once (drops the ~2.5 min per-shard rebuild) and 6 shards. It
+# CANNOT be made deterministically green from CI config alone, and that is
+# acceptable: this lane is not a required check, and a shard that survives
+# to completion passes. Bumping the shard count was tried (6 → 12) and did
+# NOT help — 12-shard jobs were still reclaimed — so do not re-raise N
+# expecting it to fix preemption; only raise it if real per-shard work
+# (not the shared build) grows past the job budget.
 #
-# RUNNER RECLAIM — why this is back up at 12 (not 6). At 6 shards the
-# heaviest x86 shards ran ~11-15 min, and the runners were being reclaimed
-# mid-run before they finished: every x86 shard came back `failure` with
-# "The runner has received a shutdown signal" / exit 143, with NO test
-# failures and NO `DONE` summary (the run was not superseded — a single
-# run_attempt, not a concurrency cancel). That reclaim window (~10-15 min)
-# is below the 20-min job budget, so the budget never protected us. The
-# only lever we control is wall-clock: make each shard finish well inside
-# the window. 6 -> 12 halves the per-shard test load (~23 min / 12 ≈ 1.9
-# min tests + ~2.5 min build + heaviest-single-test floor ≈ ~6-7 min
-# worst-case), comfortably under the reclaim window. The single heaviest
-# test (the ~600 MB fixpoint self-compile, bootstrap, IRx86Run corpus)
-# sets an unshakeable per-shard floor, so going much higher than 12 buys
-# little once each shard holds at most one of them.
-#
-# History: this dialled up to 14 shards (28 jobs) chasing minimal
-# wall-clock, then down to 6 when queue capacity (not wall-clock) was
-# believed to be the binding constraint and the per-ref `concurrency`
-# group was cancelling superseded shards. The reclaim above showed 6 was
-# too few: shorter jobs beat the reclaim, and the queue cost of 24 jobs is
-# the accepted trade for a selfhost lane that actually completes.
-# Bump N (here and in NSHARD below) if the worst x86 shard still creeps
-# toward the reclaim window; drop it only if all shards finish well under
-# ~4 min AND the reclaim stops biting.
-#
-# TIMEOUT. `timeout-minutes: 20` (job budget) with `-timeout 18m` (go
-# test) sits above the worst shard's real ~10-11 min yet under a hung-test
-# pathology. The IR-subset migration keeps making the compile-heavy
-# self-host shards slower (the heaviest fixpoint / bootstrap tests run
-# longer as more of the compiler routes through the IR path), so keep the
-# generous budget — and the current shard count's headroom — until that
-# settles, then revisit both.
+# STREAMING OUTPUT. The shards run the binary with `-test.v`, which streams
+# each test's RUN/PASS/FAIL as it happens, rather than gotestsum's
+# `pkgname-and-test-fails` (which prints nothing until the package ends).
+# This gives live progress and — when a shard IS preempted — shows exactly
+# which test was in flight at the moment of the kill.
 
 on:
   pull_request:
@@ -81,37 +71,61 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  # Compile the e2e test binary ONCE per arch; the sharded test jobs reuse it.
+  build:
     strategy:
       fail-fast: false
       matrix:
         host:
           - { runner: ubuntu-latest,    name: x86_64  }
           - { runner: ubuntu-24.04-arm, name: aarch64 }
-        # Twelve shards (24 jobs across the per-arch matrix). See the
-        # SHARD COUNT note above for why this is 12 (runner-reclaim margin).
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-    name: test-e2e-selfhost-${{ matrix.host.name }}-shard${{ matrix.shard }}
+    name: build-selfhost-${{ matrix.host.name }}
     runs-on: ${{ matrix.host.runner }}
-    # 20, not 10: the IR-subset migration keeps making the compile-heavy
-    # self-host shards slower (shard 7 hit the old 10-min limit even at 12
-    # shards). See the TIMEOUT note above. Revisit once the migration settles.
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-fern
+      - name: compile e2e test binary (go test -c)
+        run: go test -c -o e2e.test ./internal/e2e/
+      - uses: actions/upload-artifact@v4
         with:
-          gotestsum: "true"
-      - name: go test (self-host shard ${{ matrix.shard }}/12)
+          name: e2e-test-${{ matrix.host.name }}
+          path: e2e.test
+          retention-days: 1
+          if-no-files-found: error
+
+  test:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        host:
+          - { runner: ubuntu-latest,    name: x86_64  }
+          - { runner: ubuntu-24.04-arm, name: aarch64 }
+        # Six shards. See SHARDED / RUNNER PREEMPTION notes above.
+        shard: [0, 1, 2, 3, 4, 5]
+    name: test-e2e-selfhost-${{ matrix.host.name }}-shard${{ matrix.shard }}
+    runs-on: ${{ matrix.host.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4 # for the ../../examples + ../../internal/stdlib data files the tests read
+      - uses: ./.github/actions/setup-fern # wasmtime / qemu / cross-gcc + FERN_WASI_ADAPTER
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-test-${{ matrix.host.name }}
+      - name: run self-host shard ${{ matrix.shard }}/6 (prebuilt binary, streaming)
         env:
           SHARD: "${{ matrix.shard }}"
-          NSHARD: "12"
+          NSHARD: "6"
         run: |
           set -euo pipefail
-          # Sorted list of every TestSelfHost* function, partitioned
-          # round-robin by list index so each shard runs a disjoint
-          # ~1/N slice. Sorting makes the partition deterministic.
-          mapfile -t ALL < <(go test ./internal/e2e/ -list '^TestSelfHost' | grep '^TestSelfHost' | sort)
+          chmod +x e2e.test
+          BIN="$PWD/e2e.test"
+          # Sorted list of every TestSelfHost* function, partitioned round-robin
+          # by list index so each shard runs a disjoint ~1/N slice. Read from the
+          # prebuilt binary (no recompile). Sorting makes the partition
+          # deterministic and stable as tests are added.
+          mapfile -t ALL < <("$BIN" -test.list '^TestSelfHost' | grep '^TestSelfHost' | sort)
           SEL=()
           for i in "${!ALL[@]}"; do
             if [ $(( i % NSHARD )) -eq "$SHARD" ]; then SEL+=("${ALL[$i]}"); fi
@@ -119,31 +133,14 @@ jobs:
           if [ ${#SEL[@]} -eq 0 ]; then
             echo "no TestSelfHost tests for shard $SHARD/$NSHARD"; exit 0
           fi
-          # Anchored alternation: ^(A|B|C)$ matches each top-level test
-          # exactly (and runs all of its subtests).
+          # Anchored alternation: ^(A|B|C)$ matches each top-level test exactly
+          # (and runs all of its subtests).
           PAT="^($(IFS='|'; echo "${SEL[*]}"))\$"
           echo "shard $SHARD/$NSHARD: ${#SEL[@]} tests: ${SEL[*]}"
-          # -timeout 18m, NOT the Go default 600s. timeout-minutes (20) is the
-          # JOB budget, but `go test`'s own default test timeout is 10m, so a
-          # shard whose real work runs ~10-11 min (the IR-subset migration keeps
-          # pushing the compile-heavy self-host shards slower — see the TIMEOUT
-          # note above) gets killed at 600s with `panic: test timed out after
-          # 10m0s` even though the job had 20 min to spend. Set the test timeout
-          # under the job budget so a genuine hang still fails cleanly (~18m)
-          # while legitimately slow shards run to completion.
-          # Heartbeat: emit a line every 30s so a no-output idle watchdog on the
-          # runner sees continuous activity. SUSPECTED ROOT CAUSE of the ~11-min
-          # mid-run `exit 143` "runner has received a shutdown signal" reclaims
-          # (which the 6->12 reshard alone did NOT stop — a 12-shard, 67-test job
-          # was still killed at ~11 min after producing ZERO output): every shard
-          # runs `gotestsum --format pkgname-and-test-fails`, which prints nothing
-          # during an all-passing run, so the job is silent for its whole ~10 min
-          # and the runner is torn down at ~11 min (well under the 20-min budget;
-          # not a go-test timeout). A 30s heartbeat keeps stdout flowing even
-          # across the multi-minute single-test gaps (the ~600 MB fixpoint
-          # self-compile) that no gotestsum format can fill. Backgrounded; killed
-          # on step exit via the trap so a real test failure still fails the job.
-          ( while true; do sleep 30; echo "[heartbeat $(date -u +%H:%M:%S)] self-host shard $SHARD/$NSHARD still running"; done ) &
-          hb_pid=$!
-          trap 'kill "$hb_pid" 2>/dev/null || true' EXIT
-          gotestsum --format pkgname-and-test-fails -- -run "$PAT" -timeout 18m ./internal/e2e/
+          # Run from the package dir so the tests' ../../ relative paths
+          # (examples/self_host, internal/stdlib) resolve. -test.v streams each
+          # test's RUN/PASS/FAIL live. -test.timeout 18m sits under the 20-min
+          # job budget so a genuine hang fails cleanly; a preemption reclaim is
+          # distinct and out of our control (see RUNNER PREEMPTION above).
+          cd internal/e2e
+          "$BIN" -test.run "$PAT" -test.v -test.timeout 18m
