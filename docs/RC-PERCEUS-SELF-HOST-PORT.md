@@ -2215,7 +2215,39 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
 
   The field-free MECHANISM (`__field_reclaim_<T>`, #3789) already does the work; this
   slice is purely the ANALYSIS that admits the threaded builders to it. Gate: the
-  x86 byte-identical fixpoint at every step (arm64 rides CI — shared-`asmcore` /
+  x86 byte-identical fixpoint + wasm tests locally, arm64 on CI (shared-`asmcore` /
   `irlower` analysis is x86=>arm64 by construction). A single over-admission is a
   SIGSEGV in the 600 MB self-compile, so it is landed smallest-increment-first with
   the fixpoint as the arbiter.
+
+  **Mechanical execution checklist (verified against current `main`):**
+  - `snapshot_local_names_of(fn, structs, borrowable, fresh_ret)` is a NEW detector
+    PARALLEL to `snapshot_param_names_of` — it does NOT touch `is_fresh_struct_init`
+    / `collect_fresh_struct_names` (those serve the non-returned reclaimable-local
+    path). It collects each `var st: T = <call/method>` where the callee is in
+    `fresh_ret`, `T` is a leaf-safe struct with an rc-array field, `st` is reassigned
+    (`body_assign_targets`), and `!body_unsafe_for_allow_ret(fn.body, st, borrowable)`.
+  - In `lower_func`, append the snapshot-locals to the `reclaim` list as PLAIN names
+    (not the `SNAP:` prefix) so `slot_is_reclaimable_struct` is true → the existing
+    `StmtAssign` reclaim path (`emit_field_reclaim_store`, snap = 0) frees each
+    rebind's old box + replaced fields. No entry-snapshot store is emitted (a pure
+    local has no caller original to protect — unlike `snapshot_param_names_of`).
+  - STRUCT move-on-return: extend `returned_moved_arr_slots` (the StmtReturn
+    `keeps` collector for `emit_dec_sweep_except_list`) to ALSO collect a returned
+    bare-ident slot that is `slot_is_reclaimable_struct`, so the moved-out final box
+    is not double-freed by the exit sweep. (The sweep at `emit_dec_sweep_except_list`
+    already frees reclaimable struct locals; the keep is the only missing guard.)
+  - `fresh_struct_ret_fns_of(funcs, structs)` = keys (`name` / `<Type>.<method>`) of
+    fns whose EVERY value `return` is a struct LITERAL or struct-UPDATE of a
+    leaf-safe struct (a `__lam_`-style or bare-ident return disqualifies). Thread it
+    as a new LAST param of `lower_func`, appended at the 7 call sites:
+    `irlower.lower_func_for` (15159), `lower_func_for_noret` (15184), `lower_module`
+    (15478); `asm_ir` eligibility probe (2597) + `emit_function_via_ir` (3002);
+    `asm_arm64_ir.emit_function_via_ir` (231); `wasm_ir` (671). The three backends
+    compute it once in their module-emit (alongside `struct_ret_fns_of`) and pass it
+    through `emit_function_via_ir` (one added param each).
+  - Risk note: a method binding `var st = se.emit(op)` is only sound if `emit` is
+    fresh-ret — a `return self` method would make `st` alias the borrowed receiver
+    and the rebind reclaim would free the CALLER's box (UAF). The `fresh_ret`
+    classifier is exactly what rules that out; do not admit a call/method binding
+    whose callee is absent from `fresh_ret`.
