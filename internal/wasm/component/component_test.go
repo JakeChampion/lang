@@ -528,6 +528,7 @@ func TestPutCanonWaitableBuiltins_Bytes(t *testing.T) {
 		{"waitable-set.drop", component.PutCanonWaitableSetDrop(nil), []byte{0x08, 0x02, 0x01, 0x22}},
 		{"waitable.join", component.PutCanonWaitableJoin(nil), []byte{0x08, 0x02, 0x01, 0x23}},
 		{"subtask.drop", component.PutCanonSubtaskDrop(nil), []byte{0x08, 0x02, 0x01, 0x0d}},
+		{"thread.yield", component.PutCanonThreadYield(nil), []byte{0x08, 0x03, 0x01, 0x0c, 0x00}},
 	}
 	for _, c := range cases {
 		if !bytes.Equal(c.got, c.want) {

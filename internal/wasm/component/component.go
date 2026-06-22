@@ -2706,6 +2706,19 @@ func PutCanonSubtaskDrop(buf []byte) []byte {
 	return wrapSection(buf, SectionCanon, body)
 }
 
+// PutCanonThreadYield emits `canon thread.yield` (0x0c, non-cancellable) — the
+// cooperative yield a *deferring* async export calls before delivering its
+// result, so the caller's async lower returns a STARTED (pending) status and
+// the await loop runs. (The component-model spells this `thread.yield`, not
+// `canon yield`.) Byte-verified against wasm-tools 1.240 (`0x0c 0x00`).
+func PutCanonThreadYield(buf []byte) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x0c)      // thread.yield
+	body = append(body, 0x00)      // cancellable: false
+	return wrapSection(buf, SectionCanon, body)
+}
+
 // PutCanonSectionLowerWithMemory emits a canon section with one
 // canon-lower entry that carries a single `memory` canonical-ABI
 // option. The memory option is needed when the lowered function

@@ -297,10 +297,11 @@ byte-verified bar:
   authored, encoded, and `dump`-checked, and the opcodes pinned:
   `waitable-set.new` = 0x1f, `waitable-set.wait` = `0x20 <cancellable>
   <mem>`, `waitable-set.poll` = 0x21, `waitable-set.drop` = 0x22,
-  `waitable.join` = 0x23, `subtask.drop` = 0x0d (note: the await *yield*
-  is `thread.yield`, not `canon yield`). Emitters:
-  `PutCanonWaitableSetNew` / `…Wait` / `…Drop` / `PutCanonWaitableJoin` /
-  `PutCanonSubtaskDrop` (`TestPutCanonWaitableBuiltins_Bytes`).
+  `waitable.join` = 0x23, `subtask.drop` = 0x0d, and the deferring-provider
+  yield `thread.yield` = `0x0c <cancellable>` (the component-model spells it
+  `thread.yield`, not `canon yield`). Emitters: `PutCanonWaitableSetNew` /
+  `…Wait` / `…Drop` / `PutCanonWaitableJoin` / `PutCanonSubtaskDrop` /
+  `PutCanonThreadYield` (`TestPutCanonWaitableBuiltins_Bytes`).
 - **A genuinely-deferring provider** to exercise the pending path: the
   bundled nested providers all `task.return` immediately (sync). Forcing
   the STARTED/pending status needs a provider that `thread.yield`s (or
