@@ -5518,6 +5518,44 @@ function e064_unknown_bare(type_name: string, struct_names: string[], union_name
     return is_unknown(type_from_name_with_names_and_unions(type_name, struct_names, union_names));
 }
 
+// e064_var_diags walks a (non-generic, non-method) function body and reports
+// E064 for any `var x: T` annotation whose bare nominal type is undefined. It
+// recurses into control-flow blocks the same way dupvar_diags does, but not
+// into nested function / lambda bodies — those carry their own scope. The
+// caller restricts this to functions with no type parameters, so a plain
+// identifier that resolves to unknown is a genuine typo, never an erased
+// generic parameter.
+function e064_var_diags(stmts: parser.Stmt[], struct_names: string[], union_names: string[]): Diag[] {
+    var out: Diag[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (e064_unknown_bare(v.type_name, struct_names, union_names)) {
+                    out = out.append(dg_at("E064", "unknown type \"" + v.type_name + "\"", v.line, v.col));
+                }
+            },
+            parser.StmtIf(f) => {
+                out = append_diags(out, e064_var_diags(f.then_body, struct_names, union_names));
+                out = append_diags(out, e064_var_diags(f.else_body, struct_names, union_names));
+            },
+            parser.StmtWhile(w) => { out = append_diags(out, e064_var_diags(w.body, struct_names, union_names)); },
+            parser.StmtFor(fr) => { out = append_diags(out, e064_var_diags(fr.body, struct_names, union_names)); },
+            parser.StmtMatch(m) => {
+                var a: i32 = 0;
+                while (a < m.arms.len()) { out = append_diags(out, e064_var_diags(m.arms[a].body, struct_names, union_names)); a = a + 1; }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                out = append_diags(out, e064_var_diags(one, struct_names, union_names));
+            },
+            _ => { }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 pub function check_module(mod: parser.Module): ModuleTypes {
     // Collect struct decls first; func sigs + union aliases
     // both use them to resolve names. Union aliases come next
@@ -5683,6 +5721,8 @@ pub function check_module(mod: parser.Module): ModuleTypes {
             if (e064_unknown_bare(efn.ret_type, struct_names, union_names)) {
                 body_diags = body_diags.append(dg_at("E064", "unknown type \"" + efn.ret_type + "\"", efn.line, efn.col));
             }
+            // Body `var x: T` annotations (same non-generic scope).
+            body_diags = append_diags(body_diags, e064_var_diags(efn.body, struct_names, union_names));
         }
         efi = efi + 1;
     }

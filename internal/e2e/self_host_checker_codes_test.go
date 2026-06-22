@@ -212,6 +212,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// non-generic function parameter — both checkers flag it.
 		{"unknown-param-type", "function f(a: Wibble): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
 		{"unknown-field-type", "struct S { v: Wibble }\nfunction main(): i32 { return 0; }\n", []string{"E064"}},
+		// E064 in a body `var` annotation. The init `q()` is itself undefined
+		// (E001), so there is no E003 init-mismatch cascade to diverge on.
+		{"unknown-var-type", "function main(): i32 { var x: Wibble = q(); return 0; }\n", []string{"E001", "E064"}},
 		{"rec-local-ok", "function main(): i32 { function f(n: i32): i32 { if (n <= 0) { return 0; } return f(n - 1); } return f(3); }\n", nil},
 		{"rec-local-capture-ok", "function main(): i32 { var base: i32 = 10; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }\n", nil},
 		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice): the loop
