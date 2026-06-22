@@ -38,9 +38,9 @@ func fullSelfHostProject(t *testing.T) string {
 // comma-separated FERN_WARM_DRIVER env var (e.g. "asm_run.fern,asm_ir_run.fern")
 // into the disk cache. For every driver it populates BOTH the emitted-asm cache
 // (cachedSelfHostAsm — the expensive ~50-70s Go x86-64 emit) and the linked-
-// binary cache (cachedLink), so tests using either the buildSelfHostBin path
-// (asm hit + cheap relink) or the selfHostX86Driver path (asm + binary hit) skip
-// the compile. CI's parallel `warm` jobs each set FERN_WARM_DRIVER +
+// binary cache (cachedLink), so tests building the driver (buildSelfHostBin, or
+// cachedSelfHostAsm + cachedLink directly) hit both the emit and the link. CI's
+// parallel `warm` jobs each set FERN_WARM_DRIVER +
 // FERN_SELFHOST_BUILD_CACHE and run this, off the critical path, and the test
 // shards restore the result (see .github/workflows/test-e2e-selfhost.yml).
 // Locally, with FERN_WARM_DRIVER unset, the test is a no-op skip.
