@@ -139,7 +139,7 @@ jobs:
           - { key: unified,  drivers: "selfhost_x86_run.fern" }
           - { key: asm,      drivers: "asm_run.fern,asm_pathprobe_run.fern" }
           - { key: ir,       drivers: "asm_ir_run.fern,asm_load_run.fern" }
-          - { key: modload,  drivers: "asm_modload_run.fern,ssa_run.fern,ssa_emit_run.fern" }
+          - { key: modload,  drivers: "asm_modload_run.fern,checker_modload_run.fern,ssa_run.fern,ssa_emit_run.fern" }
     name: warm-selfhost-x86_64-${{ matrix.key }}
     runs-on: ubuntu-latest
     timeout-minutes: 15

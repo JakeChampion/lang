@@ -13,9 +13,10 @@ import (
 // stdlib root is given), a `@derive`d type's methods dispatch to core/cmp's
 // real `eq`/`cmp`/`hash` and std/json's `to_json` — including the cases the
 // inline lowerings (#3759 Eq, #3765 Ord) deliberately did NOT cover:
-//   * `@derive(Hash)`     — core/cmp's __hash_mix_i32 + per-width / FNV string,
-//   * `@derive(Json)`     — std/json's field-/variant-wise renderer,
-//   * string-keyed `@derive(Ord)` — core/cmp's string `cmp` via sort.string_cmp.
+//   - `@derive(Hash)`     — core/cmp's __hash_mix_i32 + per-width / FNV string,
+//   - `@derive(Json)`     — std/json's field-/variant-wise renderer,
+//   - string-keyed `@derive(Ord)` — core/cmp's string `cmp` via sort.string_cmp.
+//
 // All route IR (the merged module fits the budget after treeshake) and match
 // the native interpreter. Drives the self-hosted x86-64 loader (asm_load_run)
 // with the repo's real stdlib as the root.

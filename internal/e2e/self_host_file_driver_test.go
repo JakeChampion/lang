@@ -89,12 +89,18 @@ func TestSelfHostFileDriverX86_64(t *testing.T) {
 }
 
 // buildSelfHostBin loads a self-host driver .fern (by file name in dir),
-// compiles it with the Go x86-64 backend, and links it into dir/out.
-// The source→asm compile is cached process-wide by source-set hash
-// (see self_host_buildcache_test.go), so building the same driver in a
-// later test reuses the emitted asm instead of recompiling 35k lines.
+// compiles it with the Go x86-64 backend, links it, and returns dir/out.
+// BOTH steps are cached (see self_host_buildcache_test.go): the source→asm
+// compile by source-set hash, and the link by asm hash. The link cache matters
+// for the large drivers (e.g. asm_ir_run / asm_load_run, which pull in asm_ir)
+// whose gcc link alone runs ~minute — without it a CI shard re-links the same
+// driver per test. The linked binary is copied to dir/out so callers that exec
+// it (or drop sibling files next to it) see a real file in their own dir.
 func buildSelfHostBin(t *testing.T, gcc, dir, fernName, out string) string {
 	t.Helper()
 	asm := cachedSelfHostAsm(t, dir, fernName)
-	return buildBin(t, gcc, dir, out, asm)
+	cached := cachedLink(t, gcc, asm)
+	dst := filepath.Join(dir, out)
+	copyExecutable(t, cached, dst)
+	return dst
 }

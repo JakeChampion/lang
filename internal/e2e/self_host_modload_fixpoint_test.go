@@ -5,11 +5,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
 )
 
 // TestSelfHostModloadFixpointX86_64 is the file-based, import-driven
@@ -21,11 +16,11 @@ import (
 // it pulls in lexer / parser / flatten / asm (transitively the whole
 // compiler) plus the real builtins.fern by following its own imports.
 //
-//   stage 0: native fern builds the driver (asm_modload_run) → host binary.
-//   stage 1: that driver compiles the compiler's own source (the on-disk
-//            asm_modload_run.fern + its import graph) → mmc.
-//   stage 2: mmc compiles the same source → gen2.
-//   stage 3: gen2 compiles the same source → gen3.
+//	stage 0: native fern builds the driver (asm_modload_run) → host binary.
+//	stage 1: that driver compiles the compiler's own source (the on-disk
+//	         asm_modload_run.fern + its import graph) → mmc.
+//	stage 2: mmc compiles the same source → gen2.
+//	stage 3: gen2 compiles the same source → gen3.
 //
 // mmc == gen2 == gen3, byte-identical — the same self-hosting fixpoint the
 // marker harness guarantees, with zero `///MODULE` markers and zero stdin
@@ -37,21 +32,7 @@ func TestSelfHostModloadFixpointX86_64(t *testing.T) {
 	dir := writeSelfHostModloadProject(t)
 
 	// stage 0: build the driver (asm_modload_run) as an x86 host binary.
-	prog, _, err := modload.Load(filepath.Join(dir, "asm_modload_run.fern"))
-	if err != nil {
-		t.Fatalf("modload driver: %v", err)
-	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
+	asm := cachedSelfHostAsm(t, dir, "asm_modload_run.fern")
 	driverBin := buildBin(t, gcc, dir, "driver", asm)
 
 	// The compiler's own source, addressed by its on-disk entry. The driver

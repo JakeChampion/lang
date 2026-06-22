@@ -5,11 +5,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
 )
 
 // pubUseSelfHostProgram is a 3-module re-export program, the self-host
@@ -76,21 +71,7 @@ func TestSelfHostPubUseModloadX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
 
-	prog, _, err := modload.Load(filepath.Join(dir, "asm_modload_run.fern"))
-	if err != nil {
-		t.Fatalf("modload driver: %v", err)
-	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
+	asm := cachedSelfHostAsm(t, dir, "asm_modload_run.fern")
 	driverBin := buildBin(t, gcc, dir, "driver", asm)
 
 	progDir := t.TempDir()
