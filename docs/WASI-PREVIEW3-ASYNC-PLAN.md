@@ -258,13 +258,60 @@ async import.** Both halves landed together (coupled-for-correctness):
   (width-selected by the result valtype). The `run` export stays i32
   (the async *export* side is i32-only today) and returns 42 iff the
   awaited u64 matches, so a truncated read would fail the check.
+- **multiple imports** (`TestWasmP3AsyncImportMultiFromFern`): a program
+  that awaits TWO async imports from distinct interfaces and sums them —
+  `one()+two()` → 42. `component.BuildAsyncImportsAwaitComponent` takes a
+  slice of `AsyncImportSpec` and lowers each import `async` over the
+  consumer's single memory via its OWN `gMem` trampoline+fixup (distinct
+  funcref-table per import, so placeholders don't collide), each provider
+  bundled as a separate nested component. `BuildAsyncImportAwaitComponent`
+  is now the N=1 wrapper (byte-identical output). The edge-handler
+  fan-out-of-awaits shape composes.
+- **non-i32 scalar EXPORT results** (`TestWasmP3AsyncExportU64FromFern` /
+  `TestCmdLangAsyncFunctionKeywordF64`): `async function foo(): i64 / u64
+  / f32 / f64` lifts as `foo: async func() -> <that type>`; the synthetic
+  wrapper's `task-return` import is width-matched to the source result and
+  the CLI derives the component valtype (`s64`/`u64`/`f32`/`f64`). This
+  also fixed a latent wasmbin type-dedup collision (`'|'` separator ==
+  0x7c == f64 valtype byte).
 
-**Still remaining on the import side:** a *pending* (non-synchronous)
-host import needs the `waitable-set.wait` await loop (the sync case reads
-the result inline); string/array/composite async params + results;
-wiring the consumer assembly into the CLI driver (today the runnable
-assembly is exercised through `BuildAsyncImportAwaitComponent` directly,
-as the bring-your-own async provider has no CLI surface yet).
+**Remaining — the *pending* (genuinely non-blocking) async import.**
+Everything above is the **synchronous-completion** path: the lowered
+`canon lower async` call returns with the result already in the return
+area, so the wrapper reads it inline and no waitable loop runs. A host
+import that does NOT complete inline returns a "started/pending" status,
+and the guest must drive the await state machine:
+
+1. `canon waitable-set.new` → a waitable-set handle.
+2. add the in-flight subtask (the lower's returned subtask handle) to the
+   set; `canon waitable-set.wait` (blocks the task until any member is
+   ready — needs the **stackful** feature).
+3. on wake, read the completed result from the return area; `canon
+   subtask.drop` the finished subtask.
+
+Prerequisites / unknowns to resolve before building this to the project's
+byte-verified bar:
+
+- **Encoders not yet written**: `waitable-set.new` / `waitable-set.wait`
+  / `subtask.drop` canon builtins. Their canon-section opcodes must be
+  pinned against a reference (`wasm-tools 1.240` `component wit` / `dump`)
+  — *that toolchain is the CI-pinned version but is NOT present in the
+  current dev sandbox* (only wasm-tools 1.225 is), so the encodings can't
+  be byte-verified here yet. This is the first blocker.
+- **A genuinely-deferring provider** to exercise the pending path: the
+  bundled nested providers all `task.return` immediately (sync). Forcing
+  the STARTED/pending status needs a provider that yields (`canon yield`)
+  or awaits a real pollable before returning — a non-trivial spike.
+- **wasmbin**: the async-import wrapper must branch on the lowered call's
+  status (RETURNED vs STARTED) and run the waitable loop on STARTED,
+  rather than unconditionally reading inline as it does now.
+
+**Also remaining (smaller):** string/array/composite async import results
+(needs the `realloc` option on `canon lower async` — unproven; the lower
+currently emits `[async, memory]` only) and string async *params*; wiring
+the consumer assembly into the CLI driver (today exercised through
+`BuildAsyncImportsAwaitComponent` directly, as a bring-your-own async
+provider has no CLI surface yet); non-i32 async *export* params.
 
 **Also remaining:** `future<T>` / `stream<T>` parameter+result lowering;
 wiring async into the `concurrent { … }` desugar as an alternative to
