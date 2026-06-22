@@ -335,6 +335,24 @@ func TestRunnerI64ExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/uuid_test.fern` covers std/uuid's generators by
+// shape — v4/v7 length, hyphen positions, version + variant nibbles,
+// is_uuid, and distinctness. The output is random but the assertions are
+// structural, so the TAP output is deterministic. Passing → exit 0.
+func TestRunnerUuidExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/uuid_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/uuid", "# pass 9", "# fail 0", "1..9"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/runner_self_test.fern` is the runner's own
 // meta-test — confirms that every assertion helper returns the
 // expected TestOutcome shape on both pass and fail paths.
