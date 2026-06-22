@@ -397,6 +397,24 @@ So composite **results** (string + numeric list) are complete, import +
 export. String/list async *params* and the *pending* (waitable-set) path
 remain (see above).
 
+**Finding — composite async *params* are blocked on the async-lift param
+ABI.** A spike of a string-*param* async export (`send: async func(s:
+string) -> u32`, provider built with a `[async, memory, realloc]` lift +
+an exported bump `cabi_realloc`) fails at runtime under wasmtime with
+`realloc return: beyond end of memory`. The scalar-param async path works,
+so the snag is specifically how `canon lift async` delivers a *pointer-
+shaped* (string/list) parameter to the core function: it is **not** the
+sync flattened `(ptr, len)` the core spike assumed — the async lift appears
+to pass params through a different buffer/convention, which we can't derive
+confidently without the reference toolchain (wasm-tools 1.240 `component
+wit`/`dump`, absent in this sandbox; only 1.225 is present). The
+`realloc`-carrying lift encoder (`PutCanonSectionLiftAsyncWithMemoryRealloc`)
+is straightforward; the unknown is the core-side param shape. So composite
+async params are gated on the same 1.240 prerequisite as the pending
+`waitable-set` path — both need the reference tooling to pin an
+async-specific convention. (Composite async *results* needed no such
+convention — the result flows out through `task.return`, which we proved.)
+
 **Also remaining:** `future<T>` / `stream<T>` parameter+result lowering;
 wiring async into the `concurrent { … }` desugar as an alternative to
 the P2 pollable reactor.
