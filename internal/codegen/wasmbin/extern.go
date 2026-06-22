@@ -1581,3 +1581,54 @@ func buildExternAsyncScalarResultWrapper(nparams int, rawImport string, resultVT
 		return inst.PutFunctionBody(nil, locals, body)
 	}
 }
+
+// buildExternAsyncStringParamWrapper handles an `@import ... async function
+// f(s: string): <scalar>` — a string ARGUMENT to an async import. It normalises
+// the Fern string (data, len) into a contiguous heap buffer (the canonical
+// (ptr, len) the callee reads from this module's memory via the lower's memory
+// option), then runs the async-lower call `(ptr, len, retptr) -> i32 status`,
+// drops the status (sync completion), and reads the scalar result from the
+// return area. Wrapper type is (i32 data, i32 len) -> resultVT.
+//
+// Locals after the 2 string param slots: 2:$buf 3:$byteLen 4:$i 5:$rb.
+func buildExternAsyncStringParamWrapper(rawImport string, resultVT byte) func(map[string]uint32) []byte {
+	return func(idxs map[string]uint32) []byte {
+		alloc := idxs["__fern_alloc"]
+		imp := idxs[rawImport]
+		const data, length = 0, 1
+		buf, byteLen, i, rb := uint32(2), uint32(3), uint32(4), uint32(5)
+
+		var body []byte
+		// Normalise the Fern string arg → (buf, byteLen) in linear memory.
+		body = emitStrNormalize(body, idxs, data, length, buf, byteLen, i)
+		// rb = (__fern_alloc(16) + 7) & ~7 — 8-byte-aligned return area.
+		body = inst.InstI32Const(body, 16)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstI32Const(body, 7)
+		body = numeric.InstI32Add(body)
+		body = inst.InstI32Const(body, -8)
+		body = numeric.InstI32And(body)
+		body = inst.InstLocalSet(body, rb)
+		// async lower: (buf, byteLen, rb) -> status; drop the status.
+		body = inst.InstLocalGet(body, buf)
+		body = inst.InstLocalGet(body, byteLen)
+		body = inst.InstLocalGet(body, rb)
+		body = inst.InstCall(body, imp)
+		body = inst.InstDrop(body)
+		// read the scalar result from the return area.
+		body = inst.InstLocalGet(body, rb)
+		switch resultVT {
+		case encode.ValtypeI64:
+			body = memory.InstI64Load(body, 3, 0)
+		case encode.ValtypeF32:
+			body = memory.InstF32Load(body, 2, 0)
+		case encode.ValtypeF64:
+			body = memory.InstF64Load(body, 3, 0)
+		default:
+			body = memory.InstI32Load(body, 2, 0)
+		}
+
+		locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32) // buf, byteLen, i, rb
+		return inst.PutFunctionBody(nil, locals, body)
+	}
+}

@@ -166,21 +166,66 @@ func TestScanExternImportsSyncStaysDirect(t *testing.T) {
 	}
 }
 
-// TestScanExternImportsAsyncRejectsMemParam pins the slice boundary: an async
-// extern with a non-scalar (string/array/record) parameter is rejected with a
-// clear error until that marshalling lands.
-func TestScanExternImportsAsyncRejectsMemParam(t *testing.T) {
+// TestScanExternImportsAsyncStringParam covers an async import that takes a
+// single string ARGUMENT with a scalar result — `@import async function
+// send(s: string): i32`. It lowers to the raw `(ptr, len, retptr) -> i32 status`
+// import plus a wrapper that normalises the string (pulling in __fern_str_len /
+// __fern_str_byte / __fern_alloc) and reads the scalar result. (No cabi_realloc
+// on the consumer side — the param bytes are the caller's.)
+func TestScanExternImportsAsyncStringParam(t *testing.T) {
 	ext := &ir.ExternFunc{
-		Name:       "dep",
+		Name:       "send",
 		Iface:      "test:dep/d",
-		WITName:    "compute",
+		WITName:    "send",
 		Params:     []ast.Param{{Name: "s", Type: ast.StringType{}}},
 		ReturnType: i32Type(),
 		Async:      true,
 	}
 	var in importNeeds
 	var helpers runtimeNeeds
+	specs, wrappers, err := scanExternImports(progCallingExtern("send", ext), &in, &helpers)
+	if err != nil {
+		t.Fatalf("scanExternImports: %v", err)
+	}
+	raw, ok := specs["send$import"]
+	if !ok {
+		t.Fatalf("missing raw async import spec %q; specs=%v", "send$import", specs)
+	}
+	if len(raw.params) != 3 || raw.params[0] != encode.ValtypeI32 || raw.params[2] != encode.ValtypeI32 {
+		t.Errorf("raw import params = %v, want [i32 i32 i32] (ptr, len, retptr)", raw.params)
+	}
+	if len(raw.results) != 1 || raw.results[0] != encode.ValtypeI32 {
+		t.Errorf("raw import results = %v, want [i32] (status)", raw.results)
+	}
+	w, ok := wrappers["send"]
+	if !ok {
+		t.Fatalf("missing wrapper for %q", "send")
+	}
+	if len(w.params) != 2 {
+		t.Errorf("wrapper params = %v, want 2 slots (string data,len)", w.params)
+	}
+	for _, h := range []string{"send", "__fern_alloc", "__fern_str_len", "__fern_str_byte"} {
+		if !helpers.set[h] {
+			t.Errorf("helper %q not pulled in for the async string-param import", h)
+		}
+	}
+}
+
+// TestScanExternImportsAsyncRejectsArrayParam pins the remaining slice boundary:
+// an async import with a non-string mem param (here a numeric array) is still
+// rejected with a clear error.
+func TestScanExternImportsAsyncRejectsArrayParam(t *testing.T) {
+	ext := &ir.ExternFunc{
+		Name:       "dep",
+		Iface:      "test:dep/d",
+		WITName:    "compute",
+		Params:     []ast.Param{{Name: "xs", Type: ast.ArrayType{Elem: ast.NumberType{Width: 8}}}},
+		ReturnType: i32Type(),
+		Async:      true,
+	}
+	var in importNeeds
+	var helpers runtimeNeeds
 	if _, _, err := scanExternImports(progCallingExtern("dep", ext), &in, &helpers); err == nil {
-		t.Fatalf("expected an error for an async extern with a string parameter")
+		t.Fatalf("expected an error for an async extern with an array parameter")
 	}
 }
