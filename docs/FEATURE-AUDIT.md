@@ -251,6 +251,21 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-21 — std/i64: pure-Fern std/test migration coverage (signed-64-bit receiver methods)
+
+`std/i64` (the wider counterpart to `std/i32`) had Go-side coverage but no
+migration-shaped (pure-Fern, `std/test`-driven) companion. Added
+`examples/tests/i64_test.fern` — 14 assertions: `abs` / `min` / `max` /
+`clamp` (above-hi + in-range); `pow` (incl. `2^40 = 1099511627776`, past the
+i32 range — exercising true 64-bit arithmetic); `gcd` / `lcm`; `to_string`
+(wide value + negative, via `__int_to_string_u64`); and `is_even` / `is_odd`.
+Receivers are written `… as i64` so dispatch lands on the i64 methods. Gated
+natively (`TestRunnerI64ExamplePasses`) and through the self-host differential
+gate (`TestSelfHostStdTestE2E/i64`, x86 + arm64), which oracle-checks TAP-13
+stdout + exit code against the interpreter **byte-for-byte** — confirming i64
+receiver-method dispatch and the i64 string formatter lower end-to-end through
+the self-host IR with no AST fallback.
+
 ### 2026-06-21 — std/i32: pure-Fern std/test migration coverage (receiver-method helpers)
 
 `std/i32`'s deterministic receiver-method helper surface had Go-side coverage
