@@ -6,11 +6,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
 )
 
 // TestSelfHostReaderX86_64 exercises the self-hosted x86-64 emitter's
@@ -42,21 +37,7 @@ func TestSelfHostReaderX86_64(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
 		t.Fatalf("write asm_run.fern: %v", err)
 	}
-	prog, _, err := modload.Load(filepath.Join(dir, "asm_run.fern"))
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
+	asm := cachedSelfHostAsm(t, dir, "asm_run.fern")
 	driverBin := buildBin(t, gcc, dir, "driver", asm)
 
 	// A read-all-of-stdin echo program — the same shape as
@@ -172,21 +153,7 @@ func TestSelfHostReadFileX86_64(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
 		t.Fatalf("write asm_run.fern: %v", err)
 	}
-	prog, _, err := modload.Load(filepath.Join(dir, "asm_run.fern"))
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
+	asm := cachedSelfHostAsm(t, dir, "asm_run.fern")
 	driverBin := buildBin(t, gcc, dir, "driver", asm)
 
 	// A "cat" program: read argv[1] and print it, or exit 7 on error.

@@ -7,9 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
 )
 
@@ -42,21 +39,7 @@ func buildCheckerModloadDriverX86(t *testing.T) (gcc string, runner []string, dr
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	prog, _, err := modload.Load(filepath.Join(dir, "checker_modload_run.fern"))
-	if err != nil {
-		t.Fatalf("modload driver: %v", err)
-	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
+	asm := cachedSelfHostAsm(t, dir, "checker_modload_run.fern")
 	return gcc, runner, buildBin(t, gcc, dir, "ckdriver", asm)
 }
 

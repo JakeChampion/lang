@@ -1,0 +1,83 @@
+// examples/self_host/selfhost_x86_run.fern — unified x86-family self-host
+// driver. One program that imports the whole x86 front-end + backends and
+// dispatches on argv[1] to a single backend, reading the program under test
+// from stdin. Built ONCE per test process (content-addressed cache) and shared
+// by every x86 self-host probe test, so a CI shard pays the ~60s front-end
+// compile a single time instead of once per distinct bespoke driver — the
+// redundancy that ran shards into the hosted-runner preemption window.
+//
+// Modes (argv[1]):
+//   asm        emit AT&T x86-64 from the AST backend (asm.emit_module); prints
+//   ir-x86     emit x86-64 from the stack IR (irlower -> ir_x86); prints
+//   irlower    lower main to IR and interpret it; exit = result
+//   interp     tree-walk the module; exit = main's int/bool result
+//   vm         bytecode-compile + execute; exit = main's int/bool result
+//   check      type-check; exit 0 well-typed, 1 otherwise (diags to stderr)
+//   elig       exit 1 if every fn is IR-eligible (asm_ir.all_eligible), else 0
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./checker";
+import "./irlower";
+import "./ir_x86";
+import "./asm";
+import "./asm_ir";
+import "./interp";
+import "./vm";
+
+function mode_arg(): string {
+    var av: string[] = args();
+    if (av.len() > 1) { return av[1]; }
+    return "";
+}
+
+function main(): i32 {
+    var mode: string = mode_arg();
+    var src: string = io.read_all_stdin();
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+
+    if (mode == "asm") {
+        print(asm.emit_module(parser.module_with_builtins(mod)));
+        return 0;
+    }
+    if (mode == "ir-x86") {
+        var fns: irlower.LoweredFn[] = irlower.lower_module(mod.funcs, mod.structs);
+        print(ir_x86.emit_module(fns));
+        return 0;
+    }
+    if (mode == "irlower") {
+        var lf: irlower.LoweredFn[] = irlower.lower_module(mod.funcs, mod.structs);
+        return irlower.eval_program(lf);
+    }
+    if (mode == "interp") {
+        var rv: interp.Value = interp.eval_module(mod);
+        match (rv) {
+            interp.VInt(i) => { return i.v; },
+            interp.VBool(b) => { if (b.v) { return 1; } return 0; },
+            _ => { return 254; }
+        }
+        return 254;
+    }
+    if (mode == "vm") {
+        var prog: vm.CompiledProgram = vm.compile_program(mod);
+        var vr: vm.Value = vm.exec_program(prog);
+        match (vr) {
+            vm.VInt(i) => { return i.v; },
+            vm.VBool(b) => { if (b.v) { return 1; } return 0; },
+            _ => { return 254; }
+        }
+        return 254;
+    }
+    if (mode == "check") {
+        var mt: checker.ModuleTypes = checker.check_module(mod);
+        if (mt.all_well_typed) { return 0; }
+        eprint(checker.format_diags(mt.diags));
+        return 1;
+    }
+    if (mode == "elig") {
+        if (asm_ir.all_eligible(parser.module_with_builtins(mod))) { return 1; }
+        return 0;
+    }
+    eprint("unknown mode: " + mode + "\n");
+    return 2;
+}

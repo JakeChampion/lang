@@ -16,6 +16,7 @@ import (
 //   - a bare-ident enum-array local       (`S { items: one }`)
 //   - a `.append` on a borrowed param      (`S { items: items.append(B(v)) }`)
 //   - a field-access copy                   (`S { items: a.items }`)
+//
 // Enum-array struct fields take the IDENTICAL is_unique-gated deep-drop as
 // struct-array fields (emit_struct_field_drops' k_box walk), so the same alias-
 // inc / no-inc decisions are sound; this is the construction-side widening that
