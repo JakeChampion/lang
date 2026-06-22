@@ -2540,6 +2540,7 @@ pub function eligible_core_known_main_view(mod: parser.Module, known: string[], 
     // / *_of from all_funcs, struct_ret_fns_of against all_structs).
     var arf: string[] = array_ret_fns_of(all_funcs);
     var bparams: string[] = irlower.borrowable_params_interproc(all_funcs);
+    var csparams: string[] = irlower.consume_safe_params_interproc(all_funcs, bparams);
     var srf: string[] = irlower.str_ret_fns_of(all_funcs);
     var sarf: string[] = irlower.strarr_ret_fns_of(all_funcs);
     var amf: string[] = irlower.arr_method_fns_of(all_funcs);
@@ -2594,7 +2595,7 @@ function func_eligible(fd: parser.FuncDecl, mod: parser.Module, sview: parser.St
     // PROGRAM struct union for a per-module unit (so a function touching an
     // imported struct's layout lowers in the gate exactly as it does in
     // emit_module_funcs, which already lowers against all_structs).
-    var r: irlower.LowerResult = irlower.lower_func(fd, arf, sview, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, bparams, fn_names, []);
+    var r: irlower.LowerResult = irlower.lower_func(fd, arf, sview, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, bparams, fn_names, [], []);
     if (!r.ok) { return false; }
     var i: i32 = 0;
     while (i < r.ops.len()) {
@@ -2998,8 +2999,8 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 // emit_function_via_ir emits one IR-eligible function via the stack IR,
 // writing through the global strbuf (same as asm.fern's emitters).
 // arr_ret_fns drives move-on-return / move-from-call for array values.
-function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState, borrowable_params: string[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[], map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[], fn_names: string[], fresh_struct_ret_fns: string[]): asmcore.EmitState {
-    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls, str_ret_fns, strarr_ret_fns, arr_method_fns, opt_ret_fns, i64_ret_fns, tuple_ret_fns, struct_ret_fns, map_ret_fns, f64_ret_fns, f64arr_ret_fns, i64arr_ret_fns, fn_param_sigs, closure_fns, const_fns, borrowable_params, fn_names, fresh_struct_ret_fns);
+function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState, borrowable_params: string[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[], map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[], fn_names: string[], fresh_struct_ret_fns: string[], consume_safe_params: string[]): asmcore.EmitState {
+    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls, str_ret_fns, strarr_ret_fns, arr_method_fns, opt_ret_fns, i64_ret_fns, tuple_ret_fns, struct_ret_fns, map_ret_fns, f64_ret_fns, f64arr_ret_fns, i64arr_ret_fns, fn_param_sigs, closure_fns, const_fns, borrowable_params, fn_names, fresh_struct_ret_fns, consume_safe_params);
 
     // Runtime-need detection, folded into the per-function lowering the emit loop
     // ALREADY performs. The tail used to re-derive these by re-lowering the WHOLE
@@ -3840,6 +3841,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
     // Inter-procedural borrowability computed ONCE per module (not per function —
     // that OOMs the arm64 self-compile); threaded into every emit_function_via_ir.
     var bparams: string[] = irlower.borrowable_params_interproc(all_funcs);
+    var csparams: string[] = irlower.consume_safe_params_interproc(all_funcs, bparams);
     // The fourteen return-type / signature side-tables lower_func consults are
     // derived ONCE here (each scans all of all_funcs — the WHOLE-PROGRAM
     // signature view, #3454), then threaded into every emit_function_via_ir —
@@ -3872,7 +3874,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
             if (mod.funcs[fi].receiver_type.len() > 0) { gname = util.base_type_name(mod.funcs[fi].receiver_type) + "." + mod.funcs[fi].name; }
             s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
         }
-        s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, irlower.fn_names_of(mod.funcs), frsf);
+        s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, irlower.fn_names_of(mod.funcs), frsf, csparams);
         fi = fi + 1;
     }
     return s;

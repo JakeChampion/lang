@@ -2279,3 +2279,27 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   Remaining for full per-module convergence: the `s = lower_X(.., s)` consume-rebind
   cases (gated on `infer_param_escapes`) — a function with any such rebind is still
   excluded; this slice covers the method-threaded majority.
+- 2026-06-22: **Consume-safe escape analysis (`infer_param_escapes`) — SHIPPED;
+  admits the `s = lower_X(.., s)` consume-rebinds.** Completes the ownership-analysis
+  slice: the snapshot-param / snapshot-local reclaim previously excluded any function
+  with a free-call consume-rebind (`body_unsafe_for_allow_ret` flags a non-borrowable
+  call arg as an escape). `consume_safe_params_interproc` (a least-fixpoint like
+  `borrowable_params_interproc`, seeded with `borrowable`) classifies a param
+  consume-safe iff its box does not ESCAPE the callee — `body_consume_unsafe_for`
+  is `body_unsafe_for_allow_ret` plus the relaxation that a `name = g(.., name, ..)`
+  whose callee is consume-safe (or borrowable) at name's position is NOT an escape.
+  Sound: a consume-safe callee neither retains nor frees the box (it may read /
+  thread / return a value derived from it), so the caller may reclaim the old box
+  after the rebind (cow-guarded if the callee returned it unchanged; field_reclaim's
+  != new/snap guards keep shared fields). Threaded into `lower_func` as a new param
+  (computed once per module alongside `borrowable_params_interproc`; the
+  eligibility/eval wrappers pass `[]` — the fixpoint must NOT run per-function, and
+  reclaim doesn't affect `r.ok`). `snapshot_param_names_of` + `snapshot_local_names_of`
+  now use `body_consume_unsafe_for`. Activation: the parser unit goes 0 → 20
+  `__field_reclaim_<T>` sites (it threads builders through `lower_*` consume-rebinds),
+  unit 5 +1, all units still emit (no OOM). Validated x86: byte-identical modload
+  fixpoint, whole-compiler per-module emit + link + RUN (UAF guard — the consume-
+  rebind reclaims execute), all RC/struct IR suites; arm64 rides CI. With this the
+  ownership analysis that admits the threaded-builder hot path to the
+  `__field_reclaim_<T>` mechanism is complete (method-threaded + consume-rebind +
+  fresh-ret-local), closing the gap the 2026-06-22 measurement entries opened.
