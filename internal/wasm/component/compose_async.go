@@ -247,3 +247,56 @@ func BuildAsyncLiftedExportComponentString(providerCore []byte, coreMemExportNam
 	buf = PutExportSectionOneFunc(buf, exportName, 0)
 	return buf
 }
+
+// BuildAsyncLiftedExportComponentList is the `list<elem>` counterpart of
+// BuildAsyncLiftedExportComponentString: it lifts a core whose `coreExportName`
+// export delivers a `list<elem>` (its `(ptr, len)` bytes in the core memory
+// `coreMemExportName`) through `task.return` into `exportName: async func() ->
+// list<elem>`. At the canonical ABI a `list<elem>` is `(ptr, len)` just like a
+// string, so the core shape, the task.return core sig `(ptr, len) -> ()`, and
+// the gMem trampoline that breaks the task.return memory circularity are
+// identical to the string provider — the only difference is that the result is
+// a defined `list<elem>` component type (referenced by index) instead of the
+// inline `string` primitive. `elemValtype` is the element's component valtype
+// (e.g. CValtypeU8 / CValtypeU32).
+func BuildAsyncLiftedExportComponentList(providerCore []byte, coreMemExportName, coreExportName, exportName string, elemValtype byte) []byte {
+	trParams := []byte{0x7f, 0x7f} // task.return for a list: (ptr, len) -> ()
+	buf := PutComponentHeader(nil)
+
+	// Component type 0: the `list<elem>` defined type (referenced by task.return
+	// and the lift functype below).
+	buf = PutTypeSectionOneDefined(buf, InnerTypeList(elemValtype)) // component type 0
+
+	// Trampoline module 0 → core instance 0 (placeholder task.return + table).
+	buf = PutCoreModuleSection(buf, TrampolineModuleForParamsResults(trParams, nil))
+	buf = PutCoreInstanceSectionInstantiate(buf, 0)  // core instance 0
+	buf = PutAliasSectionCoreExportFunc(buf, 0, "0") // core func 0 (placeholder)
+
+	// Provider core module 1, instantiated with the placeholder task.return.
+	buf = PutCoreModuleSection(buf, providerCore)
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "task-return", Sort: CoreSortFunc, Idx: 0},
+	}) // core instance 1
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 1, []string{""}, []uint32{1}) // core instance 2 (provider)
+
+	// Alias the provider memory → core memory 0; real `task.return (list) (memory)`.
+	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 2, coreMemExportName) // core memory 0
+	buf = PutCanonTaskReturnTypeIdxWithMemory(buf, 0, 0)                       // core func 1 (result = component type 0)
+
+	// Fixup module 2: patch the trampoline table slot 0 to the real task.return.
+	buf = PutCoreModuleSection(buf, FixupModuleForParamsResults(trParams, nil))
+	buf = PutAliasSectionCoreExport(buf, CoreSortTable, 0, "$imports") // core table 0
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "$imports", Sort: CoreSortTable, Idx: 0},
+		{Name: "0", Sort: CoreSortFunc, Idx: 1},
+	}) // core instance 3
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 2, []string{""}, []uint32{3}) // core instance 4 (fixup)
+
+	// Alias the provider export → core func 2; lift it async (with memory) as a
+	// `() -> list<elem>` (component type 1, whose result references type 0).
+	buf = PutAliasSectionCoreExportFunc(buf, 2, coreExportName) // core func 2
+	buf = PutTypeSectionOneFuncResultIdx(buf, nil, nil, 0)      // component type 1: () -> (type 0)
+	buf = PutCanonSectionLiftAsyncWithMemory(buf, 2, 1, 0)      // component func 0 (functype 1)
+	buf = PutExportSectionOneFunc(buf, exportName, 0)
+	return buf
+}

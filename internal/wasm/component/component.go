@@ -3060,6 +3060,24 @@ func PutCanonTaskReturnStringWithMemory(buf []byte, memIdx uint32) []byte {
 	return wrapSection(buf, SectionCanon, body)
 }
 
+// PutCanonTaskReturnTypeIdxWithMemory is PutCanonTaskReturnStringWithMemory
+// generalised to a result that is a DEFINED component type referenced by index
+// (e.g. a `list<T>` emitted via PutTypeSectionOneDefined(InnerTypeList(elem))),
+// rather than the inline `string` primitive. The result valtype is the type
+// index encoded as an s33 sleb; the `memory` option is carried the same way
+// (the core func is `(ptr, len) -> ()` for a list, whose bytes live in `memIdx`).
+func PutCanonTaskReturnTypeIdxWithMemory(buf []byte, typeIdx uint32, memIdx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1)                   // vec(1)
+	body = append(body, 0x09)                        // canon task.return
+	body = append(body, 0x00)                        // result: single-value form
+	body = append(body, leb128SlebBytes(typeIdx)...) // result valtype = typeidx (s33)
+	body = leb128.UlebU64(body, 1)                   // options vec(1)
+	body = append(body, 0x03)                        // canonopt: memory
+	body = leb128.UlebU64(body, uint64(memIdx))
+	return wrapSection(buf, SectionCanon, body)
+}
+
 // PutCanonSectionLiftWithMemory emits a canon-lift entry carrying the `memory`
 // canonical-ABI option — the inverse of PutCanonSectionLowerWithMemory. A lift
 // needs `memory` when the lifted function's signature carries a string / list:

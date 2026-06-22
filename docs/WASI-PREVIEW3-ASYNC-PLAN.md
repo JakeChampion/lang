@@ -368,9 +368,25 @@ All three pieces landed:
 
 So the colorless async vertical now covers scalars (i32/i64/u64/f32/f64),
 params, N concurrent imports, AND `string` results — import + export — all
-runnable end to end. `list<T>` results reuse the same realloc path (a
-follow-up); string/list async *params* and the *pending* (waitable-set)
-path remain (see above).
+runnable end to end.
+
+**`list<elem>` results — provider side DONE, runtime-verified.**
+`component.BuildAsyncLiftedExportComponentList` lifts a core whose export
+delivers a `list<elem>` via `task.return` into `<name>: async func() ->
+list<elem>`. A `list<elem>` is `(ptr, len)` at the canonical ABI exactly
+like a string, so the core shape + the task.return memory trampoline are
+identical; the only difference is the result is a *defined* `list<elem>`
+component type referenced by index, emitted via
+`PutCanonTaskReturnTypeIdxWithMemory` (the type-index-result generalisation
+of the string `task.return`). `TestWasmP3AsyncListExportProvider` runs
+`fetch()` → `list<u8>` `[104,101,108,108,111]` ("hello" bytes) under
+wasmtime's async features. The consumer half (a wasmbin `(ptr,len) -> Fern
+T[]` async lift — the array sibling of `buildExternAsyncStringResultWrapper`
+— + the realloc lower, which the composer already supports via NeedsRealloc)
++ the e2e are the remaining step, mirroring the string consumer slices.
+
+String/list async *params* and the *pending* (waitable-set) path remain
+(see above).
 
 **Also remaining:** `future<T>` / `stream<T>` parameter+result lowering;
 wiring async into the `concurrent { … }` desugar as an alternative to

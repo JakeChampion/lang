@@ -224,3 +224,33 @@ function main(): i32 { return 0; }
 		t.Errorf("Fern async mixed import: got %q, want 45 (40 + len \"hello\")", bytes.TrimSpace(out))
 	}
 }
+
+// TestWasmP3AsyncListExportProvider runtime-verifies the `list<elem>` side of
+// the async canonical ABI — the sibling of the string provider. A `list<u8>`
+// is `(ptr, len)` at the canonical ABI exactly like a string, so
+// component.BuildAsyncLiftedExportComponentList reuses the same core shape +
+// task.return memory trampoline; the only difference is the result is a defined
+// `list<u8>` component type (referenced by index) rather than the inline string
+// primitive. Reusing p3FetchStringCore (the bytes "hello"), `fetch: async
+// func() -> list<u8>` returns [104,101,108,108,111] under wasmtime's async
+// features — verifying PutCanonTaskReturnTypeIdxWithMemory + the list lift.
+func TestWasmP3AsyncListExportProvider(t *testing.T) {
+	skipIfPreview2Missing(t) // ensures wasmtime on PATH
+
+	comp := component.BuildAsyncLiftedExportComponentList(p3FetchStringCore, "mem", "fetch", "fetch", component.CValtypeU8)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "listprov.wasm")
+	if err := os.WriteFile(p, comp, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("wasmtime", "run",
+		"-W", "component-model-async,component-model-async-stackful",
+		"--invoke", `fetch()`, p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run (async list export): %v\n%s", err, out)
+	}
+	// "hello" = [104, 101, 108, 108, 111]; check the first and last bytes appear.
+	if !bytes.Contains(out, []byte("104")) || !bytes.Contains(out, []byte("111")) {
+		t.Errorf("async list export: got %q, want bytes of \"hello\" (104..111)", bytes.TrimSpace(out))
+	}
+}
