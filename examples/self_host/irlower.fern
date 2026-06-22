@@ -6009,10 +6009,15 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
     // enum. An f64 payload is admitted too: it reads through the same 8-byte
     // width-64 path as i64 (the `var x: f64 = inner?` slot is f64-typed from its
     // annotation), with the wasm-only is_i64=false tweak below so wasm emits
-    // f64.load. Only tuple payloads still bail (slot-typing not threaded).
+    // f64.load. A TUPLE payload (#3824) rounds out the set: it is pointer-boxed,
+    // so it reads through the default op_opt_payload like a struct, and the
+    // `var t: (A, B) = inner?` binding types t's slot via mark_tuple_elems from
+    // its annotation (StmtVar's ExprUnary arm) so a later `t.N` resolves. With
+    // tuple admitted every `?` success-payload shape now lowers through IR.
     var pt_is_struct: boolean = decl_is_struct(s.structs, pt) && decl_is_leaksafe(s.structs, pt);
     var pt_is_enum: boolean = is_enum_like_name(pt, s.structs);
-    if (pt != "i32" && pt != "boolean" && !pt_is_i64 && !pt_is_struct && pt != "string" && !pt_is_enum && pt != "f64") { return s.fail(); }
+    var pt_is_tuple: boolean = pt.len() > 1 && pt[0] == 40 && tuple_elems_lowerable(pt, s.structs);
+    if (pt != "i32" && pt != "boolean" && !pt_is_i64 && !pt_is_struct && pt != "string" && !pt_is_enum && pt != "f64" && !pt_is_tuple) { return s.fail(); }
     // Evaluate inner into a fresh temp slot (the box pointer).
     var tmp: string = "$try" + util.i32_to_string(s.local_names.len());
     var ts: LowerState = s.add_local(tmp);
@@ -9029,6 +9034,17 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                         }
                     }
                     sb = sb.mark_tuple_elems(slot, enc);
+                },
+                // `var t: (i32, string) = f()?` — a try-operator init (parsed as a
+                // `try_` unary). lower_try now admits a tuple success payload (read
+                // as the pointer-width box, like a struct), but the leaf is the
+                // unwrapped value not in scope here, so type the slot from the
+                // tuple TYPE annotation (authoritative — it names each element,
+                // including a Result[T,E] element's E) so a later `t.N` resolves.
+                parser.ExprUnary(_) => {
+                    if (v.type_name.len() >= 2 && v.type_name[0:1] == "(") {
+                        sb = sb.mark_tuple_elems(slot, tuple_elem_tags(v.type_name));
+                    }
                 },
                 _ => {}
             }
