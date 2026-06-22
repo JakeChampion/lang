@@ -1,0 +1,102 @@
+import "std/test";
+import "std/result";
+import "std/option";
+// examples/tests/result_combinators_test.fern — pure-Fern coverage of the
+// std/result COMBINATOR surface (distinct from result_assertions_test, which
+// covers the std/test Result assertion helpers): is_ok / is_err / unwrap_or /
+// unwrap_or_else / map / and_then / map_err / ok / err / map_or / is_ok_and /
+// is_err_and / or — the Rust-parity vocabulary (#2691) as ordinary generic
+// methods on Result[T, E] with closure args. The Go-side suite unit-tests
+// these; this is the migration-shaped (pure-Fern, std/test-driven,
+// self-host-gated) companion.
+
+function test_is_ok_is_err(): test.TestOutcome {
+    var ok: Result[i32, string] = Ok(5);
+    var er: Result[i32, string] = Err("bad");
+    return test.assert_true(ok.is_ok() && !ok.is_err() && er.is_err() && !er.is_ok());
+}
+
+function test_unwrap_or(): test.TestOutcome {
+    var ok: Result[i32, string] = Ok(5);
+    var er: Result[i32, string] = Err("bad");
+    return test.assert_true(ok.unwrap_or(0) == 5 && er.unwrap_or(42) == 42);
+}
+
+function test_unwrap_or_else(): test.TestOutcome {
+    // (E) => T : recover the value from the error.
+    var er: Result[i32, string] = Err("bad");
+    return test.assert_eq(er.unwrap_or_else(function (e: string): i32 { return e.len(); }), 3);
+}
+
+function test_map(): test.TestOutcome {
+    var ok: Result[i32, string] = Ok(5);
+    var m = ok.map(function (x: i32): i32 { return x * 2; });
+    return test.assert_eq(m.unwrap_or(0), 10);
+}
+
+function test_and_then(): test.TestOutcome {
+    var ok: Result[i32, string] = Ok(5);
+    var r = ok.and_then(function (x: i32): Result[i32, string] { return Ok(x + 1); });
+    return test.assert_eq(r.unwrap_or(0), 6);
+}
+
+function test_map_err(): test.TestOutcome {
+    // Err("bad").map_err(len) => Err(3); read it back via err().
+    var er: Result[i32, string] = Err("bad");
+    var r = er.map_err(function (e: string): i32 { return e.len(); });
+    return test.assert_eq(r.err().unwrap_or(0), 3);
+}
+
+function test_ok(): test.TestOutcome {
+    var ok: Result[i32, string] = Ok(5);
+    var er: Result[i32, string] = Err("bad");
+    return test.assert_true(ok.ok().unwrap_or(0) == 5 && er.ok().is_none());
+}
+
+function test_err(): test.TestOutcome {
+    var er: Result[i32, string] = Err("bad");
+    var ok: Result[i32, string] = Ok(5);
+    return test.assert_true(er.err().unwrap_or("") == "bad" && ok.err().is_none());
+}
+
+function test_map_or(): test.TestOutcome {
+    var ok: Result[i32, string] = Ok(5);
+    var er: Result[i32, string] = Err("bad");
+    var a = ok.map_or(0, function (x: i32): i32 { return x * 10; });
+    var b = er.map_or(0, function (x: i32): i32 { return x * 10; });
+    return test.assert_true(a == 50 && b == 0);
+}
+
+function test_is_ok_and(): test.TestOutcome {
+    var ok: Result[i32, string] = Ok(5);
+    return test.assert_true(ok.is_ok_and(function (x: i32): boolean { return x > 3; }));
+}
+
+function test_is_err_and(): test.TestOutcome {
+    var er: Result[i32, string] = Err("bad");
+    return test.assert_true(er.is_err_and(function (e: string): boolean { return e.len() > 2; }));
+}
+
+function test_or(): test.TestOutcome {
+    var ok: Result[i32, string] = Ok(5);
+    var er: Result[i32, string] = Err("bad");
+    var fallback: Result[i32, string] = Ok(9);
+    return test.assert_true(ok.or(fallback).unwrap_or(0) == 5 && er.or(fallback).unwrap_or(0) == 9);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/result combinators");
+    r = r.it("is_ok / is_err",   test_is_ok_is_err());
+    r = r.it("unwrap_or",        test_unwrap_or());
+    r = r.it("unwrap_or_else",   test_unwrap_or_else());
+    r = r.it("map",              test_map());
+    r = r.it("and_then",         test_and_then());
+    r = r.it("map_err",          test_map_err());
+    r = r.it("ok",               test_ok());
+    r = r.it("err",              test_err());
+    r = r.it("map_or",           test_map_or());
+    r = r.it("is_ok_and",        test_is_ok_and());
+    r = r.it("is_err_and",       test_is_err_and());
+    r = r.it("or",               test_or());
+    return r.finish();
+}
