@@ -238,6 +238,13 @@ async import.** Both halves landed together (coupled-for-correctness):
   provider (`add: async func(u32, u32) -> u32`, built by
   `BuildAsyncLiftedExportComponentParams`), returning 42. The wasmbin
   wrapper forwards each scalar param ahead of the return-area pointer.
+- **64-bit result** (`TestWasmP3AsyncImportI64ResultFromFern`): an async
+  import `big(): u64` returning 4294967338 (2^32 + 42) round-trips
+  through the same `(retptr) -> i32 status` lower — the wide result lands
+  in the 8-byte return area, and the wrapper reads it with `i64.load`
+  (width-selected by the result valtype). The `run` export stays i32
+  (the async *export* side is i32-only today) and returns 42 iff the
+  awaited u64 matches, so a truncated read would fail the check.
 
 **Still remaining on the import side:** a *pending* (non-synchronous)
 host import needs the `waitable-set.wait` await loop (the sync case reads

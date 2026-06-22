@@ -390,6 +390,101 @@ function main(): i32 { return 0; }
 	}
 }
 
+// p3AsyncBigCoreModule is a hand-built async-export provider core for an async
+// import that returns a 64-bit result: it imports ("", "task-return") (i64)->()
+// and exports "big" of type ()->() — it delivers the constant 4294967338
+// (2^32 + 42, genuinely > 32 bits) through task-return as an i64. Pairs with a
+// `big: async func() -> u64` lift to exercise the wrapper's i64 return-area read.
+var p3AsyncBigCoreModule = []byte{
+	0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // magic + version
+	// types: 0:(i64)->()  1:()->()
+	0x01, 0x08, 0x02, 0x60, 0x01, 0x7e, 0x00, 0x60, 0x00, 0x00,
+	// import "" "task-return" func 0 (type 0)
+	0x02, 0x10, 0x01, 0x00, 0x0b, 't', 'a', 's', 'k', '-', 'r', 'e', 't', 'u', 'r', 'n', 0x00, 0x00,
+	// func section: 1 func of type 1
+	0x03, 0x02, 0x01, 0x01,
+	// export "big" func 1
+	0x07, 0x07, 0x01, 0x03, 'b', 'i', 'g', 0x00, 0x01,
+	// code: i64.const 4294967338, call 0 (task-return), end
+	0x0a, 0x0c, 0x01, 0x0a, 0x00, 0x42, 0xaa, 0x80, 0x80, 0x80, 0x10, 0x10, 0x00, 0x0b,
+}
+
+// TestWasmP3AsyncImportI64ResultFromFern extends the colorless async-import
+// vertical to a 64-bit result. A real Fern `@import(...) async function big():
+// u64` is awaited colorlessly; the lowered import is the same
+// `(retptr) -> i32 status` shape, but the result occupies 8 bytes of the return
+// area, so the wrapper reads it with i64.load. The bundled provider delivers
+// 4294967338 (2^32 + 42 — a value that does not fit in 32 bits, so a truncated
+// read would fail the check). `run` keeps the i32 export shape (the async export
+// side is i32-only today) and returns 42 iff the awaited u64 matches — proving
+// the wrapper's wide return-area read is correct end to end under wasmtime.
+func TestWasmP3AsyncImportI64ResultFromFern(t *testing.T) {
+	skipIfPreview2Missing(t) // ensures wasmtime on PATH
+
+	src := `@import("test:dep/d", "big") async function big(): u64;
+async function run(): i32 {
+	var x: u64 = big();
+	if (x == 4294967338) { return 42; }
+	return 0;
+}
+function main(): i32 { return 0; }
+`
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prog, _, err := modload.Load(srcPath)
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+		Preview2WASI:    true,
+		AsyncExportName: "__async_run",
+		AsyncSourceFunc: "run",
+	})
+	if err != nil {
+		t.Fatalf("wasmbin.Build: %v", err)
+	}
+
+	// Provider: `big: async func() -> u64` returning 4294967338.
+	provider := component.BuildAsyncLiftedExportComponent(p3AsyncBigCoreModule, "big", "big", component.CValtypeU64)
+
+	// The async-lowered import is `(retptr) -> status` = (i32) -> (i32); the u64
+	// result is delivered through the 8-byte return area (read as i64).
+	comp := component.BuildAsyncImportAwaitComponent(
+		core, "test:dep/d", "big",
+		provider, "big",
+		"__async_run", "run",
+		[]byte{encode.ValtypeI32}, []byte{encode.ValtypeI32},
+		component.CValtypeU32, // run's own (export) result stays i32
+	)
+
+	p := filepath.Join(dir, "fern_async_i64.wasm")
+	if err := os.WriteFile(p, comp, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("wasmtime", "run",
+		"-W", "component-model-async,component-model-async-stackful",
+		"--invoke", "run()", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run (async import i64 result): %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte("42")) {
+		t.Errorf("Fern async import i64 result: got %q, want 42", bytes.TrimSpace(out))
+	}
+}
+
 // p3AsyncConsumerCore is a hand-built consumer core module for the
 // async-import await: it imports ("","task-return") (i32)->(),
 // ("","dep-lower") (i32)->(i32), and ("mem","mem") memory; its "run"
