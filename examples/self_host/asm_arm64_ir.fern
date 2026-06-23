@@ -936,6 +936,25 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             else if (o.kind == "fround") { s = s.write("    frinta d0, d0\n"); }
             else { s = s.write("    fabs d0, d0\n"); }
             s = s.write("    fmov x0, d0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "fsin" || o.kind == "fcos" || o.kind == "fexp" || o.kind == "flog") {
+            // f64 transcendentals (op_funary): arm64 has no transcendental
+            // instruction, so call the polynomial-approximation runtime helpers
+            // emit_runtime always emits (arg in d0, result in d0). Mirrors
+            // asm_arm64.fern's __sin_f64/etc. The entry unit's emit_runtime defines
+            // these `.globl`, so a sibling unit's `bl` extern resolves against it.
+            s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n");
+            if (o.kind == "fsin") { s = s.write("    bl __fern_sin_f64\n"); }
+            else if (o.kind == "fcos") { s = s.write("    bl __fern_cos_f64\n"); }
+            else if (o.kind == "fexp") { s = s.write("    bl __fern_exp_f64\n"); }
+            else { s = s.write("    bl __fern_log_f64\n"); }
+            s = s.write("    fmov x0, d0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "fpow") {
+            // pow(x, y) = exp(y·log x) via the __fern_pow_f64 helper — d0 = x (lhs),
+            // d1 = y (rhs). fbin pops rhs (y) then lhs (x). Mirrors asm_arm64.fern.
+            s = s.write("    ldr x9, [sp], #16\n    ldr x0, [sp], #16\n");
+            s = s.write("    fmov d0, x0\n    fmov d1, x9\n");
+            s = s.write("    bl __fern_pow_f64\n");
+            s = s.write("    fmov x0, d0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "flt" || o.kind == "fle" || o.kind == "fgt" || o.kind == "fge" || o.kind == "feq" || o.kind == "fne") {
             // f64 compare → i32 0/1. fcmp's condition codes are NaN-aware (mi/ls
             // are false when unordered); mirrors asm_arm64.fern.

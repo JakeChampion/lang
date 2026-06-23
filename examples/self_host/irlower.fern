@@ -2904,6 +2904,15 @@ pub function f64_math_builtin_kind(name: string): string {
     if (name == "__trunc_f64") { return "ftrunc"; }
     if (name == "__abs_f64") { return "fabs"; }
     if (name == "__round_f64") { return "fround"; }
+    // The libm transcendentals: x86 computes these on the x87 FPU (fsin / fcos /
+    // fyl2x+f2xm1), arm64 calls its polynomial-approximation runtime helpers
+    // (bl __fern_<op>_f64). wasm has no transcendental instruction or IR runtime
+    // for them, so wasm_eligible subtracts these op kinds and a transcendental
+    // module stays on the wasm AST path (#2691 float-math IR widening).
+    if (name == "__sin_f64") { return "fsin"; }
+    if (name == "__cos_f64") { return "fcos"; }
+    if (name == "__exp_f64") { return "fexp"; }
+    if (name == "__log_f64") { return "flog"; }
     return "";
 }
 
@@ -3146,6 +3155,10 @@ pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
                 parser.ExprIdent(cid) => {
                     // The std/float single-instruction math builtins return f64.
                     if (f64_math_builtin_kind(cid.name) != "") { return true; }
+                    // __pow_f64 is f64-returning too — it lowers as the fpow fbin
+                    // (not an op_funary), so it isn't in f64_math_builtin_kind, but
+                    // its result must still cast via f64_to_i32 (not an i32 mask).
+                    if (cid.name == "__pow_f64") { return true; }
                     // f64_from_bits / f32_from_bits reinterpret an integer bit
                     // pattern back into an f64 value.
                     if (cid.name == "f64_from_bits" || cid.name == "f32_from_bits") { return true; }
@@ -4913,6 +4926,17 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         var fu: LowerState = lower_expr(c.args[0], s);
                         if (!fu.ok) { return fu; }
                         return fu.emit(ir.op_funary(fuk));
+                    }
+                    // __pow_f64(x, y) — the one two-argument transcendental. Lower
+                    // both f64 operands (x then y), then emit the fpow fbin: x86
+                    // reconstructs 2^(y·log2 x) on the x87 FPU, arm64 calls its
+                    // __fern_pow_f64 helper. wasm subtracts "fpow" in wasm_eligible.
+                    if (cid.name == "__pow_f64" && c.args.len() == 2) {
+                        var fp: LowerState = lower_expr(c.args[0], s);
+                        if (!fp.ok) { return fp; }
+                        fp = lower_expr(c.args[1], fp);
+                        if (!fp.ok) { return fp; }
+                        return fp.emit(ir.op_fbin("fpow"));
                     }
                     // f64_bits / f64_from_bits — bit reinterpret between an f64 and
                     // its i64 bit pattern; f32_bits / f32_from_bits the 32-bit pair.
