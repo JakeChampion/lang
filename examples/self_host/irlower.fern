@@ -2014,7 +2014,7 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
             // operand's struct type, the fallback when the registry has no entry.
             if (binop_overload_method(opb.op) != "") {
                 var olt: string = expr_struct_type(opb.left, s);
-                if (olt != "") {
+                if (decl_is_struct(s.structs, olt)) {
                     // A struct result only when the type actually defines the
                     // overload method (struct-returning). No method ⇒ "" — an
                     // invalid program the lowering bails to AST, kept consistent
@@ -2030,7 +2030,7 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
             // above (again "" when the type has no `neg`).
             if (opu.op == "-") {
                 var out0: string = expr_struct_type(opu.operand, s);
-                if (out0 != "") {
+                if (decl_is_struct(s.structs, out0)) {
                     return s.struct_ret_type(out0 + ".neg");
                 }
             }
@@ -4208,7 +4208,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
         },
         parser.ExprBinary(b) => {
             // Composite operator overload (#2706): `a <op> b` where the left
-            // operand is a struct/enum lowers to `a.<method>(b)` (`+`→add, …),
+            // operand is a struct lowers to `a.<method>(b)` (`+`→add, …),
             // mirroring the native checker desugar. Rewriting to a method call
             // reuses the struct-returning-method path (#3640); if the type has
             // no such method, that path bails to the AST fallback rather than
@@ -4217,7 +4217,11 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // untouched and fall through to the numeric/string dispatch below.
             if (binop_overload_method(b.op) != "") {
                 var blt: string = expr_struct_type(b.left, s);
-                if (blt != "") {
+                // Only a real struct/enum operand is an overload — expr_struct_type
+                // also reports a typed scalar's name (e.g. a `u8` local returns
+                // "u8"), which must fall through to the normal numeric/sub-word
+                // lowering below, NOT be treated as a composite (#2706 regression).
+                if (decl_is_struct(s.structs, blt)) {
                     var ovm: string = binop_overload_method(b.op);
                     // Only a defined (struct-returning) overload method lowers.
                     // Without one this is an invalid program (native rejects it
@@ -4426,7 +4430,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 // As with the binary overloads, a type without `neg` bails to
                 // the AST path rather than negating a struct pointer as a scalar.
                 var ust: string = expr_struct_type(u.operand, s);
-                if (ust != "") {
+                if (decl_is_struct(s.structs, ust)) {
                     if (s.struct_ret_type(ust + ".neg") == "") { return s.fail(); }
                     var negcall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: u.operand, field: "neg", line: u.line, col: u.col }, args: [], line: u.line, col: u.col, type_argc: 0 };
                     return lower_expr(negcall, s);
