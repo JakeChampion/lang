@@ -8,12 +8,12 @@ import (
 	"testing"
 )
 
-// argsIRCases exercise the `args()` builtin through the IR path on x86-64 and
-// arm64 (wasm has no argv in this runtime, so wasm_eligible rejects args
-// modules). args() lowers to a value IR op that calls each backend's
-// __fern_args helper (reading the __fern_argc / __fern_argv globals the entry's
-// _start saves from the initial stack), pushing a fresh string[] — argv[0]
-// first. `argc` returns a.len(); `index` returns a[1].len() (exercising the
+// argsIRCases exercise the `args()` builtin through the IR path on x86-64,
+// arm64, and wasm. args() lowers to a value IR op that calls each backend's
+// __fern_args helper, pushing a fresh string[] — argv[0] first. On the register
+// backends the helper reads the __fern_argc / __fern_argv globals the entry's
+// _start saves from the initial stack; on wasm it reads the wasi args_get
+// import. `argc` returns a.len(); `index` returns a[1].len() (exercising the
 // str-array tracking that makes a[i] read a string box and .len() dispatch to
 // str_len).
 var argsIRCases = []struct {
@@ -53,6 +53,63 @@ func TestSelfHostArgsIRX86_64(t *testing.T) {
 			_ = cmd.Run()
 			if code := cmd.ProcessState.ExitCode(); code != tc.wantExit {
 				t.Errorf("%s: exit %d, want %d", tc.name, code, tc.wantExit)
+			}
+		})
+	}
+}
+
+// TestSelfHostArgsIRWasm runs the same cases through the wasm IR backend under
+// wasmtime, which supplies argv (argv[0] is the program name). args() now
+// lowers on the wasm IR path: wasm_ir emits `call $__fern_args` and wasm_ir_run
+// pulls in the wasi args_sizes_get / args_get imports + the args_func helper
+// (the runtime the AST path already used) when the module reads argv. The extra
+// args sit after the module path on the wasmtime command line.
+func TestSelfHostArgsIRWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host args wasm IR e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	for _, name := range []string{
+		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
+		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm.fern", "wasm_ir.fern", "wasm_ir_run.fern",
+	} {
+		s, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), s, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	for _, tc := range argsIRCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(driverBin, "-ir")
+			} else {
+				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+			}
+			cmd.Stdin = bytes.NewReader([]byte(tc.src))
+			wat, err := cmd.Output()
+			if err != nil || len(wat) == 0 {
+				t.Fatalf("driver failed for %q: %v", tc.src, err)
+			}
+			if !bytes.Contains(wat, []byte("call $__fern_args")) {
+				t.Fatalf("%s: no `call $__fern_args` — did not lower through the wasm IR path", tc.name)
+			}
+			watFile := filepath.Join(dir, "aw_"+tc.name+".wat")
+			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
+				t.Fatalf("write wat: %v", err)
+			}
+			run := exec.Command("wasmtime", append([]string{"run", watFile}, tc.extraArgs...)...)
+			_ = run.Run()
+			if run.ProcessState == nil || !run.ProcessState.Exited() {
+				t.Fatalf("%s: wasmtime did not exit normally:\n%s", tc.name, wat)
+			}
+			if code := run.ProcessState.ExitCode(); code != tc.wantExit {
+				t.Errorf("args wasm IR %s: exit %d, want %d", tc.name, code, tc.wantExit)
 			}
 		})
 	}

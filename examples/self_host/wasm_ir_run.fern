@@ -63,6 +63,10 @@ function main(): i32 {
         if (wasm_ir.module_emits_op(mod, "monotonic_ns") || wasm_ir.module_emits_op(mod, "now_unix_ms") || wasm_ir.module_emits_op(mod, "now_ns")) {
             o = o + "  (import \"wasi_snapshot_preview1\" \"clock_time_get\" (func $clock_time_get (param i32 i64 i32) (result i32)))\n";
         }
+        // args() reads the wasi argv vector — its args_sizes_get / args_get
+        // imports must precede the function section, emitted when the module
+        // reads argv.
+        if (wasm_ir.module_emits_op(mod, "args")) { o = o + wasm.args_helpers(); }
         o = o + "  (memory (export \"memory\") 16)\n";
         // String literals -> data-section blocks `[len:i32 LE][bytes]`. Emitted
         // caller-side (wasm owns le32_escape/wat_escape); wasm_ir supplies the
@@ -92,6 +96,10 @@ function main(): i32 {
         // import into the 8-byte scratch at addr 16 — emitted as a trio (the AST
         // path does the same) when the module reads any clock.
         if (wasm_ir.module_emits_op(mod, "monotonic_ns") || wasm_ir.module_emits_op(mod, "now_unix_ms") || wasm_ir.module_emits_op(mod, "now_ns")) { o = o + wasm.clock_funcs(); }
+        // $__fern_args builds the argv string[] via the wasi args_get import +
+        // the heap runtime (module_allocates pulls the heap in for an args
+        // module — op_allocates admits "args"). Emitted when the module reads argv.
+        if (wasm_ir.module_emits_op(mod, "args")) { o = o + wasm.args_func(); }
         // $__fern_str_to_i32 backs str_to_i32(s); allocation-free, own gate.
         if (wasm_ir.module_uses_str_to_i32(mod)) { o = o + wasm.str_to_i32_helper(); }
         // $__fern_chr backs chr(n); allocates (heap gate ORs in module_uses_chr).

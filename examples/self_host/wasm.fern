@@ -6947,7 +6947,7 @@ function random_func_p2(): string {
 // the two-call sizes-then-get pattern, building a string[] array whose
 // elements are fresh string blocks copied from each NUL-terminated argv
 // entry (argv[0] is the program name, matching the native backends).
-function args_helpers(): string {
+pub function args_helpers(): string {
     var o: string = "";
     o = o + "  (import \"wasi_snapshot_preview1\" \"args_sizes_get\" (func $args_sizes_get (param i32 i32) (result i32)))\n";
     o = o + "  (import \"wasi_snapshot_preview1\" \"args_get\" (func $args_get (param i32 i32) (result i32)))\n";
@@ -7000,7 +7000,7 @@ function args_func_p2(): string {
     return o;
 }
 
-function args_func(): string {
+pub function args_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_args (result i32)\n";
     o = o + "    (local $argc i32) (local $bufsz i32) (local $ptrs i32) (local $buf i32)\n";
