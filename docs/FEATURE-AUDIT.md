@@ -251,6 +251,33 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — range EXPRESSIONS `a..b` / `a..=b` as first-class iterator values (#2699)
+
+Completes the remaining part of #2699 ("Range as an `Iterable`"). The `for i in
+LOW..HIGH` / `..=HIGH` loop forms already shipped (counted-loop desugar); what was
+left was `a..b` as a first-class **value** — `iter.sum(0..n)`, `(0..10)` passed to
+any combinator. Neither parser accepted `..` in expression position (only the
+for-loop's `in`-clause handled it).
+
+Implemented as a pure parser desugar in BOTH compilers: a new low-precedence
+`parseRange` / `parse_range` level (just below the pipe operator, above logical-or,
+so `0..n+1` is `0..(n+1)`) rewrites `a..b` → `iter.range(a, b)` and `a..=b` →
+`iter.range_incl(a, b)` — `core/iter`'s `Range`, which implements `Iterator`. So a
+range value flows through the entire (now-IR-lowering) combinator surface exactly
+like `iter.of(xs)`; no new AST node, checker rule, or codegen — it reuses the
+iterator-protocol work landed earlier this session. Added `core/iter.range_incl`
+(`[lo, hi]` over the half-open `Range` as `[lo, hi+1)`). Requires `import
+"core/iter"` (the module the desugar targets; consistent with the no-prelude
+model). The `for i in LOW..HIGH` loop keeps its separate optimized counted-loop
+desugar — both `parseForEach` and `parse_for_stmt` now read their bounds *below*
+the range level, so a range in `for` never collapses into an iterator value.
+
+Gated by `TestSelfHostRangeValueIR` (sum/product/count over half-open + inclusive,
+precedence, bound-to-var, empty) on the self-host IR path, the `range_value`
+native fixture (interp / x86-64 / arm64 / wasm), and the existing `range_for`
+counted-loop fixture as a regression guard. Byte-identical bootstrap fixpoint
+holds (the self-host source uses no `..` expression form).
+
 ### 2026-06-23 — `core/iter` `collect` terminal (#2709, array sink)
 
 Added `collect[T, I: Iterator[T]](it) -> T[]` to `core/iter` — the canonical

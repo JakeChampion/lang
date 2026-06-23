@@ -44,6 +44,13 @@ pub function range(lo: i32, hi: i32): Range {
     return Range { lo: lo, hi: hi };
 }
 
+// range_incl(lo, hi) constructs the CLOSED range [lo, hi] — it yields lo, lo+1,
+// …, hi. The inclusive-value form of `a..=b` (the expression desugar target),
+// expressed over the half-open Range as [lo, hi+1).
+pub function range_incl(lo: i32, hi: i32): Range {
+    return Range { lo: lo, hi: hi + 1 };
+}
+
 impl Iterator[i32] for Range {
     function next(self: Self): Option[(i32, Self)] {
         if (self.lo >= self.hi) { return None; }

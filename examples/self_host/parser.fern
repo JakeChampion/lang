@@ -2093,13 +2093,39 @@ function pipe_desugar(left: Expr, right: Expr): Expr {
 // operator, left-associative): the operands of `|>` are full binary
 // expressions and the pipe itself only binds at the expression top
 // level, matching the Go grammar (parseExpr -> parsePipe -> parseLogicOr).
-function parse_pipe(p: Par): ExprResult {
+// parse_range handles the range EXPRESSION `a..b` / `a..=b`, desugaring it to a
+// first-class iterator value: `iter.range(a, b)` / `iter.range_incl(a, b)` —
+// core/iter's `Range`, which implements `Iterator`, so `iter.sum(0..n)` and
+// `(0..10)` passed to any combinator flow through the iterator protocol
+// (requires `import "core/iter"`; flatten_qualified rewrites `iter.range` ->
+// `iter__range`). It sits just below the pipe operator and reads its operands
+// with parse_binary so `0..n+1` is `0..(n+1)`. The `for i in LOW..HIGH` loop
+// keeps its own counted-loop desugar — parse_for_stmt reads its bounds with
+// parse_binary (below this level), so a range there stays the optimized form.
+function parse_range(p: Par): ExprResult {
     var left: ExprResult = parse_binary(p, 1);
+    p = left.par;
+    var pk: string = p.peek_punct();
+    if (pk == ".." || pk == "..=") {
+        p = p.advance();
+        var fn: string = "range";
+        if (pk == "..=") { fn = "range_incl"; }
+        var right: ExprResult = parse_binary(p, 1);
+        p = right.par;
+        var callee: Expr = e_field_access(e_ident("iter"), fn);
+        var args: Expr[] = [left.expr, right.expr];
+        return ExprResult { par: p, expr: e_call(callee, args) };
+    }
+    return ExprResult { par: p, expr: left.expr };
+}
+
+function parse_pipe(p: Par): ExprResult {
+    var left: ExprResult = parse_range(p);
     p = left.par;
     var acc: Expr = left.expr;
     while (p.peek_punct() == "|>") {
         p = p.advance();
-        var right: ExprResult = parse_binary(p, 1);
+        var right: ExprResult = parse_range(p);
         p = right.par;
         acc = pipe_desugar(acc, right.expr);
     }
@@ -2552,7 +2578,11 @@ function parse_for_stmt(p: Par): StmtResult {
     // Suppress trailing struct-literal parsing on the iter so that
     // `for x in a {}` reads `a` + an empty block, not `a {}`.
     var f_saved: boolean = p.no_struct;
-    var fiter = parse_expr(p.with_no_struct(true));
+    // Read the iterable / LOW bound BELOW the range-expression level
+    // (parse_binary, not parse_expr) so `for i in 0..n` stops at `..` and keeps
+    // the counted-loop desugar below, instead of collapsing `0..n` into an
+    // `iter.range(0, n)` iterator value.
+    var fiter = parse_binary(p.with_no_struct(true), 1);
     p = (fiter.par).with_no_struct(f_saved);
     var iter_expr: Expr = fiter.expr;
     // Range form `for IDENT in LOW..HIGH { body }`. parse_expr stops
@@ -2570,7 +2600,7 @@ function parse_for_stmt(p: Par): StmtResult {
     if (range_punct == ".." || range_punct == "..=") {
         p = p.advance();   // consume `..` or `..=`
         var hi_saved: boolean = p.no_struct;
-        var fhi = parse_expr(p.with_no_struct(true));
+        var fhi = parse_binary(p.with_no_struct(true), 1);
         p = (fhi.par).with_no_struct(hi_saved);
         var rargs: Expr[] = [fiter.expr, fhi.expr];
         var range_fn: string = "__range";
