@@ -1491,6 +1491,45 @@ function g(xs: Option[string][]): i32 { return 0; }`)
 	}
 }
 
+// `stream[T]` parses to the built-in ast.StreamType (the WASI Preview-3 async
+// data channel — docs/STREAM-TYPE-SURFACE.md), NOT a generic enum
+// instantiation, distinguished contextually by the name `stream`. A bare
+// `stream` (no bracket arg) and a generic `stream[A, B]` (two args) stay an
+// ordinary struct/enum reference, so `stream` remains a usable identifier.
+func TestStreamTypeParse(t *testing.T) {
+	prog, err := Parse(`function f(s: stream[u8]): i32 { return 0; }
+function g(): stream[string] { return None; }
+function h(xs: stream[u8][]): i32 { return 0; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, ok := prog.Funcs[0].Params[0].Type.(ast.StreamType)
+	if !ok {
+		t.Fatalf("f's param should be stream[u8]; got %+v", prog.Funcs[0].Params[0].Type)
+	}
+	if n, ok := st.Elem.(ast.NumberType); !ok || n.NormalWidth() != 8 {
+		t.Errorf("stream element should be u8; got %+v", st.Elem)
+	}
+	if st.String() != "stream[u8]" {
+		t.Errorf("StreamType.String() = %q, want stream[u8]", st.String())
+	}
+	rt, ok := prog.Funcs[1].ReturnType.(ast.StreamType)
+	if !ok {
+		t.Fatalf("g's return type should be stream[string]; got %+v", prog.Funcs[1].ReturnType)
+	}
+	if _, ok := rt.Elem.(ast.StringType); !ok {
+		t.Errorf("stream element should be string; got %+v", rt.Elem)
+	}
+	// `stream[u8][]` is an array of streams (the array suffix wraps the stream).
+	at, ok := prog.Funcs[2].Params[0].Type.(ast.ArrayType)
+	if !ok {
+		t.Fatalf("h's param should be an array; got %+v", prog.Funcs[2].Params[0].Type)
+	}
+	if _, ok := at.Elem.(ast.StreamType); !ok {
+		t.Errorf("h's array element should be stream[u8]; got %+v", at.Elem)
+	}
+}
+
 // `let (a, b) = expr;` parses to a *ast.Destructure carrying
 // the identifier list and the source expression — distinct
 // from `let Variant(x) = …` which routes to *ast.LetElse.
