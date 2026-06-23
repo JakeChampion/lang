@@ -1,8 +1,95 @@
 # Iterator-bounded generics on the self-host IR path — fix plan
 
-Status: **investigated + fix-path validated; not yet landed.** This note
-captures the validated approach and the remaining work so a focused effort can
-complete it without re-deriving the analysis.
+Status: **deeply investigated; 5 monomorphiser layers fixed + validated; one
+final lowering blocker remains (`ArrayIter__i32.next` body).** Not yet landed —
+a multi-layer change that resisted rapid iteration. This note captures every
+validated layer and the precise remaining blocker so a focused effort can finish
+without re-deriving the analysis.
+
+## Progress (post-monomorphisation `-ir-probe` on `iter.sum(iter.of(xs))`)
+
+Baseline (no fixes): `iter__ArrayIter__T.next: BAIL` (bogus `[T]` clone),
+`module: AST`. After the layers below, the probe reads:
+
+```
+iter__sum__iter__ArrayIter[i32]: ir        <- FIXED (was BAIL / bogus [T])
+iter__ArrayIter__i32.next: BAIL lower       <- the one remaining blocker
+module: AST
+```
+
+i.e. the whole `[T]`→`[i32]` cascade is gone and `sum`'s clone lowers; only the
+cloned `next` body still won't lower.
+
+## The five validated monomorphiser layers (all in `parser.fern`)
+
+1. **Promote unbounded type params** — the func-header loop drops unbounded
+   `[T]` (erasure); append them to `bounded_tps` so `of[T]` monomorphises. (For
+   production this must be TARGETED — only when `T` feeds a parametric struct —
+   to avoid the 512-budget regression on the bootstrap self-compiles.)
+2. **`call_ret_type`** in `mono_infer`'s `ExprCall` arms — substitute a generic
+   callee's inferred type args into its return type, so `iter.of(xs:i32[])`
+   infers `ArrayIter[i32]` and `sum` then infers `I = ArrayIter[i32]`.
+3. **Tuple-aware `subst_ty`** — add a `(...)` branch recursing into each element;
+   without it `T`/structs nested in a tuple (`Option[(T, Self)]`) are never
+   substituted.
+4. **Tuple-aware `mg_ty`** — same `(...)` branch, so a generic struct nested in a
+   tuple gets its clone-name mangling (`(i32, ArrayIter[i32])` →
+   `(i32, ArrayIter__i32)`).
+5. **Clone-time `Self` resolution** — in `clone_struct_method`, `subst_self(.., mang)`
+   on the return + param types (resolve nested `Self` → the concrete clone name).
+   IMPORTANT: do it at clone time, NOT in `finalize_impl_method` — rewriting
+   `Self` there perturbs the return-type *registry* the caller (`sum`) reads, and
+   regresses `sum`'s clone to BAIL. Clone-time keeps `finalize` (and the registry)
+   untouched, so `sum` stays `ir`.
+
+Also attempted: seeding the receiver (`self → mang`) into the `ms_stmts` env that
+processes the clone body (line ~5300, the `ms_stmts(clm.body, …)` call) so
+`ms_expr` can type `self.xs` and mangle the body's struct literal. This did NOT
+clear the `next` bail on its own.
+
+## The remaining blocker: `ArrayIter__i32.next` body won't lower
+
+A hand-written CONCRETE equivalent lowers fine (proves the body *shape* is
+supported):
+
+```fern
+struct AI { xs: i32[], i: i32 }
+function (self: AI) nxt(): Option[(i32, AI)] {
+    if (self.i < self.xs.len()) { return Some((self.xs[self.i], AI { xs: self.xs, i: self.i + 1 })); }
+    return None;
+}   // decide=ir, runs correctly
+```
+
+So the blocker is residual non-concreteness in (or an unsupported shape of) the
+CLONED body. Two hypotheses were TESTED and did NOT clear the bail:
+
+- Seeding the receiver (`self → ArrayIter__i32`) into the clone body's `ms_stmts`
+  env (so `ms_expr` can type `self.xs`) — no change.
+- Substituting type params in the body's struct-literal `type_name`
+  (`subst_ty(sl.type_name, …)` in `subst_expr`, so `ArrayIter[T]{}` →
+  `ArrayIter[i32]{}` for `ms_expr` to mangle) — no change.
+
+So the residual issue is NOT (only) the struct-literal mangling. The blocker
+must be pinned empirically: instrument `irlower.fern`'s `lower_func` / `lower_stmts`
+to print the kind of the FIRST statement/expr whose lowering returns `ok=false`
+when lowering `iter__ArrayIter__i32.next`, and/or dump the cloned `next` FuncDecl
+(receiver_type, ret_type, body) right after `clone_struct_method` +
+`ms_stmts` to see exactly what the lowering is fed. The concrete `AI.nxt` above
+lowers, so a direct text diff of the cloned `next` against `AI.nxt` will reveal
+the residual non-concrete token. Only then is the final fix knowable; guessing
+from the body shape has been exhausted (5 layers fixed, `sum` lowering, `next`
+still BAIL).
+
+## Reproduce
+
+Build a scratch driver with the five layers (patch `parser.fern`), patch
+`asm_load_run.fern`'s `-ir-probe` to run on
+`parser.module_with_builtins(merged)` (post-mono), then:
+`./alr t.fern internal/stdlib -ir-probe` on
+`import "core/iter"; function main(): i32 { var xs: i32[] = [1,2,3,4]; return iter.sum(iter.of(xs)); }`.
+Oracle against `/tmp/fern -interp` (10). When `ArrayIter__i32.next` reports `ir`,
+add `TestSelfHostIterBoundedIR` (model on `self_host_u64_methods_ir_test.go`),
+make promotion targeted, and run the full self-host suite before the PR.
 
 ## The gap
 
