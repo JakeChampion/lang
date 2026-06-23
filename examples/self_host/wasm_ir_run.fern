@@ -54,9 +54,14 @@ function main(): i32 {
         if (wasm_ir.module_uses_random(mod)) { o = o + wasm.random_get_import(); }
         // print_int / print_str / eprint_str / putchar write via WASI fd_write
         // — import it only when the module writes to stdout or stderr.
-        if (wasm_ir.module_emits_op(mod, "print_int") || wasm_ir.module_emits_op(mod, "print_str") || wasm_ir.module_emits_op(mod, "eprint_str") || wasm_ir.module_emits_op(mod, "putchar")) {
+        if (wasm_ir.module_emits_op(mod, "print_int") || wasm_ir.module_emits_op(mod, "print_str") || wasm_ir.module_emits_op(mod, "eprint_str") || wasm_ir.module_emits_op(mod, "putchar") || wasm_ir.module_emits_op(mod, "write_file")) {
             o = o + "  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n";
         }
+        // read_file / write_file open paths under preopen fd 3: path_open +
+        // fd_read + fd_close (write_file also uses the fd_write import above).
+        // These imports must precede the function section, emitted when the
+        // module does file I/O.
+        if (wasm_ir.module_emits_op(mod, "read_file") || wasm_ir.module_emits_op(mod, "write_file")) { o = o + wasm.file_imports(); }
         // The clock builtins (monotonic_ns / now_unix_ms / now_ns) wrap the
         // preview1 wasi clock_time_get import — emitted (before the function
         // section, like the other imports) when the module reads any clock.
@@ -100,6 +105,13 @@ function main(): i32 {
         // the heap runtime (module_allocates pulls the heap in for an args
         // module — op_allocates admits "args"). Emitted when the module reads argv.
         if (wasm_ir.module_emits_op(mod, "args")) { o = o + wasm.args_func(); }
+        // $__fern_read_file / $__fern_write_file: open under preopen fd 3 and
+        // read/write the whole file, boxing a Result[string, IoError] /
+        // Option[IoError]. They alloc via the heap runtime (module_allocates
+        // pulls it in — op_allocates admits read_file/write_file). Emitted when
+        // the module does the matching file op.
+        if (wasm_ir.module_emits_op(mod, "read_file")) { o = o + wasm.readfile_func(); }
+        if (wasm_ir.module_emits_op(mod, "write_file")) { o = o + wasm.writefile_func(); }
         // $__fern_str_to_i32 backs str_to_i32(s); allocation-free, own gate.
         if (wasm_ir.module_uses_str_to_i32(mod)) { o = o + wasm.str_to_i32_helper(); }
         // $__fern_chr backs chr(n); allocates (heap gate ORs in module_uses_chr).
