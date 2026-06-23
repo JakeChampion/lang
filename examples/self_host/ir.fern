@@ -813,6 +813,10 @@ pub function op_allocates(kind: string): boolean {
     // remove_dir_all boxes its Option[IoError] result and heap-builds child path
     // strings while recursing, so it needs the heap runtime.
     if (kind == "remove_dir_all") { return true; }
+    // read_line boxes the line into a fresh string block, so it needs the heap.
+    // (read_int is NOT here: it parses into scratch + returns a bare i32, like
+    // the register backends, so a read_int-only module needs no heap runtime.)
+    if (kind == "read_line") { return true; }
     if (kind == "str_to_upper" || kind == "str_to_lower") { return true; }
     if (kind == "str_repeat" || kind == "str_trim" || kind == "str_reverse") { return true; }
     if (kind == "str_replace" || kind == "str_chars" || kind == "str_lines") { return true; }

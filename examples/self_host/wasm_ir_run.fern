@@ -62,6 +62,13 @@ function main(): i32 {
         // These imports must precede the function section, emitted when the
         // module does file I/O.
         if (wasm_ir.module_emits_op(mod, "read_file") || wasm_ir.module_emits_op(mod, "write_file")) { o = o + wasm.file_imports(); }
+        // read_line / read_int read stdin via fd_read. file_imports above already
+        // imports fd_read for path-based file I/O, so emit the standalone fd_read
+        // import ONLY when the module reads stdin but does NOT do file I/O —
+        // otherwise fd_read would be imported twice (an invalid module).
+        if ((wasm_ir.module_emits_op(mod, "read_line") || wasm_ir.module_emits_op(mod, "read_int")) && !(wasm_ir.module_emits_op(mod, "read_file") || wasm_ir.module_emits_op(mod, "write_file"))) {
+            o = o + wasm.stdin_fd_read_import();
+        }
         // The clock builtins (monotonic_ns / now_unix_ms / now_ns) wrap the
         // preview1 wasi clock_time_get import — emitted (before the function
         // section, like the other imports) when the module reads any clock.
@@ -112,6 +119,11 @@ function main(): i32 {
         // the module does the matching file op.
         if (wasm_ir.module_emits_op(mod, "read_file")) { o = o + wasm.readfile_func(); }
         if (wasm_ir.module_emits_op(mod, "write_file")) { o = o + wasm.writefile_func(); }
+        // $__fern_read_line boxes a line of stdin (heap-gated via op_allocates);
+        // $__fern_read_int parses an int into scratch (no heap). Emitted when the
+        // module reads stdin.
+        if (wasm_ir.module_emits_op(mod, "read_line")) { o = o + wasm.read_line_func(); }
+        if (wasm_ir.module_emits_op(mod, "read_int")) { o = o + wasm.read_int_func(); }
         // $__fern_str_to_i32 backs str_to_i32(s); allocation-free, own gate.
         if (wasm_ir.module_uses_str_to_i32(mod)) { o = o + wasm.str_to_i32_helper(); }
         // $__fern_chr backs chr(n); allocates (heap gate ORs in module_uses_chr).

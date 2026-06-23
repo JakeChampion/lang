@@ -1932,6 +1932,21 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// docs/TRAITS.md.
 	c.synthesizeTraitDefaults(prog)
 
+	// Colorless stream result: an `@import async function f(): stream[T]` is
+	// delivered incrementally over the wire but, under the colorless model,
+	// yields the fully-collected `T[]` at the call site (docs/STREAM-TYPE-SURFACE.md).
+	// Rewrite the effective return type to `T[]` here — before FuncSigs and every
+	// other fn.ReturnType reader — and stash the element type so codegen knows to
+	// use the stream-collect ABI rather than the single-block list lowering.
+	for _, fn := range prog.Funcs {
+		if fn.ImportIface != "" && fn.Async {
+			if st, ok := fn.ReturnType.(ast.StreamType); ok && st.Elem != nil {
+				fn.StreamResultElem = st.Elem
+				fn.ReturnType = ast.ArrayType{Elem: st.Elem}
+			}
+		}
+	}
+
 	// First pass: gather all top-level signatures so functions can call
 	// each other in any order. Methods are hoisted to mangled
 	// top-level names (`__method_<Type>_<Name>`) with the receiver

@@ -2306,6 +2306,13 @@ type FuncDecl struct {
 	// lowers to a core wasm import of (ImportIface, ImportWITName).
 	ImportIface   string
 	ImportWITName string
+	// StreamResultElem is set (to the element type) when an `@import async
+	// function f(): stream[T]` is normalised to its colorless effective result
+	// `T[]` — the checker rewrites ReturnType to `T[]` early and stashes `T` here
+	// so codegen knows to use the incremental stream-collect ABI (stream.read +
+	// the await loop) rather than the single-block list-result lowering. nil for
+	// every other function. See docs/STREAM-TYPE-SURFACE.md.
+	StreamResultElem Type
 	// ExportIface / ExportWITName bind a function (WITH a body) to a WIT
 	// *export* via an `@export("wasi:iface@x.y.z", "wit-name")` attribute
 	// (bring-your-own WIT, P6 — docs/WIT-BRING-YOUR-OWN.md): the component

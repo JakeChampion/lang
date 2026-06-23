@@ -1,0 +1,54 @@
+import "std/test";
+import "std/num" as num;
+import "core/iter" as iter;
+// examples/tests/num_reducers_test.fern — pure-Fern coverage of std/num's
+// generic numeric reducers: the trait-bounded array forms (sum_with / sum [Add
+// (+ Zero)], product_with / product [Mul (+ One)]) and the Iterator-bounded
+// forms (sum_iter / product_iter over `I: iter.Iterator[T]`). The iter forms are
+// exactly the shape #3915 (Iterator-bounded reducers) just lowered; this probes
+// whether std/num rides that fix. Driven over i32.
+
+function test_sum_with(): test.TestOutcome {
+    var xs: i32[] = [1, 2, 3, 4];
+    return test.assert_eq(num.sum_with(xs, 0), 10);
+}
+function test_product_with(): test.TestOutcome {
+    var xs: i32[] = [2, 3, 4];
+    return test.assert_eq(num.product_with(xs, 1), 24);
+}
+function test_sum(): test.TestOutcome {
+    var xs: i32[] = [5, 10, 15];
+    return test.assert_eq(num.sum(xs), 30);
+}
+function test_product(): test.TestOutcome {
+    var xs: i32[] = [2, 5, 10];
+    return test.assert_eq(num.product(xs), 100);
+}
+function test_sum_empty(): test.TestOutcome {
+    var xs: i32[] = [];
+    return test.assert_eq(num.sum(xs), 0);
+}
+function test_sum_iter(): test.TestOutcome {
+    var xs: i32[] = [1, 2, 3, 4, 5];
+    return test.assert_eq(num.sum_iter(iter.of(xs), 0), 15);
+}
+function test_product_iter(): test.TestOutcome {
+    var xs: i32[] = [1, 2, 3, 4];
+    return test.assert_eq(num.product_iter(iter.of(xs), 1), 24);
+}
+function test_sum_iter_range(): test.TestOutcome {
+    // sum 0..5 = 0+1+2+3+4 = 10.
+    return test.assert_eq(num.sum_iter(iter.range(0, 5), 0), 10);
+}
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/num reducers");
+    r = r.it("sum_with",      test_sum_with());
+    r = r.it("product_with",  test_product_with());
+    r = r.it("sum",           test_sum());
+    r = r.it("product",       test_product());
+    r = r.it("sum empty",     test_sum_empty());
+    r = r.it("sum_iter",      test_sum_iter());
+    r = r.it("product_iter",  test_product_iter());
+    r = r.it("sum_iter range", test_sum_iter_range());
+    return r.finish();
+}

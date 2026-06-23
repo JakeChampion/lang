@@ -97,22 +97,81 @@ lazy-iteration story can layer on top once an Iterator protocol exists.
    (not a `(ptr,len)`); emit a collect-wrapper that drives `stream.read` + the
    existing pending-await loop (`emitAsyncAwaitLoop`), appending each delivered
    chunk into a growing length-prefixed Fern array until the stream reports EOF.
-   This needs a `stream.read` (+ `stream.drop`) intrinsic imported under `""`
-   (mirror the waitable intrinsics registered for the await loop) and the
+   This needs a `stream.read` (+ `stream.drop-readable`) intrinsic imported under
+   `""` (mirror the waitable intrinsics registered for the await loop) and the
    composer (`BuildAsyncImportsAwaitComponent`) to provide them — `stream.read`
    trampolined over the consumer memory (the `BuildStreamExportImportComponent`
    consumer path already proved the read side). This slice is comparable in size
    to the pending-await wiring.
+
+   **Mechanics derived (wasm-tools 1.240 + wasmtime 37, this slice's spike):**
+   - canon opcodes: `stream.read 0x0f`, `stream.drop-readable 0x13`,
+     `stream.drop-writable 0x14` (core sig of the drops: `(handle) -> ()`).
+   - `stream.read` is **async**: a read with no data yet ready returns a
+     **BLOCKED** status and leaves the readable end *in-flight* — issuing a
+     second read on the same handle traps `invalid handle; got Busy`. So the
+     collect loop MUST await each read through the waitable machinery before the
+     next: `read(rd, buf, cap)` → if BLOCKED, `waitable.join`+`waitable-set.wait`
+     (the existing `emitAsyncAwaitLoop` shape, keyed on the read's subtask) →
+     decode the completed count from the read status → append `count` elems to
+     the growing array → repeat.
+   - EOF is signalled by the producer **dropping the writable end**
+     (`stream.drop-writable`); the consumer's next `stream.read` then completes
+     with a CLOSED/DROPPED state (low nibble) instead of a data count. The loop
+     terminates on that state, then `stream.drop-readable`s its end.
+   - **Status packing — PINNED** (runnable spike, wasmtime 37): a not-ready read
+     returns the **BLOCKED sentinel `0xffffffff`** (the count is NOT in the read
+     return). The completion arrives via the event: `waitable.join(rd, ws)` (the
+     **readable handle itself** is the waitable — there is no subtask handle) →
+     `waitable-set.wait(ws, evtptr)` returns event-code **`2` = STREAM_READ** and
+     writes `[waitable, result]` at `evtptr` (`evtptr+0` = the readable handle,
+     `evtptr+4` = the **result**). The result packs `(count << 4) | code` with
+     **`code`: `0` = COMPLETED (more may come), `1` = CLOSED (EOF)**, `2` =
+     CANCELLED; `count = result >> 4`. A synchronously-ready read returns that
+     same `(count<<4)|code` directly (when it is not `0xffffffff`).
+   - **Collect loop (pinned shape):** `ws = waitable-set.new(); waitable.join(rd,
+     ws); loop { rs = stream.read(rd, buf, cap); if rs == 0xffffffff { wait(ws,
+     evt); rs = load(evt+4) }; count = rs>>4; copy count elems buf→array;
+     if (rs & 0xf) != 0 break }` then **`stream.drop-readable(rd)` BEFORE
+     `waitable-set.drop(ws)`** (dropping the set while the readable is still a
+     child traps `resource has children`).
+   - Because the read blocks-until-awaited, deriving the status was entangled with
+     the await loop — there is no shortcut single-read observation (a second
+     un-awaited read on the in-flight handle traps `got Busy`).
+   - **Producer (EOF) side is symmetric and also await-driven** (spike finding):
+     a producer cannot `stream.drop-writable` while a `stream.write` is still
+     in-flight — it traps `cannot drop busy stream`. With no reader yet, the
+     write BLOCKs, so the producer must AWAIT its write (`write` → `0xffffffff`
+     → `join(wr, ws)` + `wait` → completes when the consumer reads) and only then
+     `stream.drop-writable(wr)` to signal EOF. So the runnable stream vertical is
+     two-sided: the consumer collect-loop above + a producer that write-awaits
+     then drops. For the e2e (slice 4), the bundled producer scaffolding gets
+     this write-await; the consumer collect-wrapper (slice 3, the wasmbin
+     deliverable) is the read side.
 4. **e2e.** Real Fern `@import async function body(): stream[u8]` +
    `var b: u8[] = body();` collect, composed against the stream producer, run
    under wasmtime → the collected bytes (mirrors `TestWasmP3StreamExportImport`,
    from Fern source). The runnable payoff.
 
-## Status
+## Status — COMPLETE
+
+The `stream[T]` Fern language surface is shipped end to end; a `stream[T]` flows
+from a host export into Fern source as a colorlessly-collected `T[]`.
 
 - Channels at the ABI/composer level: **DONE** (see
   `docs/WASI-PREVIEW3-ASYNC-PLAN.md`).
-- `stream[T]` Fern surface: slice 1 (AST + parser) **DONE** (#3916); slices 2–4
-  specified above (slice 3 is the substantial collect-wrapper/composer vertical).
-- `future[T]` Fern surface: **intentionally not exposed** (colorless subsumes
-  it).
+- `stream[T]` Fern surface — all slices **DONE**:
+  - slice 1 (`ast.StreamType` + parser, #3916),
+  - slice 2 (checker colorless `: stream[T]` → `T[]` transform + guard, #3920),
+  - slice 3a (wasmbin `stream.read`+await collect-wrapper, #3926),
+  - slice 3b (runnable composer collect proof → 42, #3929),
+  - slice 4 (real-Fern from-source e2e → 42, #3931:
+    `TestWasmP3StreamImportFromFern`).
+- `future[T]` Fern surface: **intentionally not exposed** (colorless auto-await
+  subsumes a single deferred value).
+
+**Possible follow-ons (new design efforts, not gaps in this surface):** lazy
+`for x in stream { … }` iteration (needs a type-driven for-in / Iterator-protocol
+rework — the colored model); `stream[T]` / `future[T]` as async-import
+*parameters* (the producer/write side from Fern source); a CLI surface so
+`fern -target wasm-bin` auto-bundles a bring-your-own async provider.

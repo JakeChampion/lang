@@ -294,6 +294,69 @@ swath of std/test modules from the AST emitter (goal 1, #3457): the universal
 lowers now routes IR. Per CLAUDE.md, the AST emitter's u32 gap is **not**
 fixed — it is being retired, and the code now lowers correctly on IR.
 
+### 2026-06-23 — std/num.sum_iter / product_iter (two-param bounded generics) now lower on the IR path
+
+Follow-up to the `core/iter` reducer landing (#3915). `std/num.sum_iter` /
+`product_iter` — `sum_iter[T: Add, I: iter.Iterator[T]](it: I, zero: T): T` —
+still routed AST even after the `core/iter` combinators lowered. Root-caused to
+the **multi-param instantiation-key shattering**: over `iter.of(xs)` the key is
+`{T=i32, I=iter__ArrayIter[i32]}`, which `infer_inst` joined with `__` into
+`i32__iter__ArrayIter[i32]`; `clone_bg`'s `split_dunder` then split that into
+**three** pieces (`["i32", "iter", "ArrayIter[i32]"]`) for two type params,
+binding `I` to the bogus `"iter"` — so the clone's `it: I` param became `iter`,
+`cur.next()` never dispatched, and the un-instantiated template fell to AST. The
+documented multi-param limitation (the `clone_bg` comment called it out).
+
+Fixed by joining multi-param instantiation keys with `;` (a char that never
+appears in a type name) instead of `__`, and splitting them with a new
+`split_inst_key` (splits on `;`, leaving each value's internal `__` intact);
+`sanitize_key` maps `;` → `__` so the emitted clone NAME is **byte-identical**
+for the simple multi-param case (`i32;string` → `i32__string`). Single-param
+keys are unchanged (the `[key]` fast path never joins). The `mg_ty`-keyed
+struct/enum monomorphisers are untouched (separate key flow; not the blocker
+here). Gated by the `num-sum_iter` / `num-sum_iter-empty` / `num-product_iter`
+cases added to `TestSelfHostIterBoundedReducersIR`; bootstrap fixpoint +
+generics/iterator/map (x86-64 + wasm) confirm no regression (the `;`-join is
+byte-compatible).
+
+### 2026-06-23 — std/num generic reducers: pure-Fern std/test coverage, self-host-gated (#3915 also carried std/num)
+
+Second watch-list payoff from `#3915`. `std/num` was previously recorded as
+blocked on *two* fronts — the trait-reducer machinery (`sum_with` / `sum` over
+`T: Add (+ Zero)`, `product*` over `T: Mul (+ One)`) and the Iterator-bounded
+forms (`sum_iter` / `product_iter` over `I: iter.Iterator[T]`). New
+`examples/tests/num_reducers_test.fern` (8 assertions over all six, driven on
+i32 arrays + `iter.of` / `iter.range`) **passes the differential gate on both
+x86 + arm64** — so the generic-monomorphisation work behind `#3915` closed the
+trait-reducer path as well, not just the Iterator one. Shipped **self-host-gated**
+(`num_reducers` in `selfHostStdTestCases` + `TestRunnerNumReducersExamplePasses`).
+
+Watch-list status: **iter_combinators ✓, num ✓ cleared.** Remaining blocked
+(awaiting their parallel fixes): `crypto` / `u32` (u32 `+`/`<<` not truncated to
+32 bits — root-caused in `#3908`); `array_hof` / `io_buffered` (RC drop-at-exit
+of a struct/array retained to scope exit). Each flips on the moment its blocker
+lands — re-probe and promote.
+
+### 2026-06-23 — iter_combinators promoted to the self-host differential gate (Iterator-bounded #3915 unblocked it)
+
+Watch-list payoff. `#3915` (self-host IR: Iterator-bounded reducers — `core/iter`
+`sum`/`count`/`to_array` — lower on the IR path) just merged, closing the
+unbounded-generic-erasure gap that this session root-caused (`7bd5ddf`) and a
+parallel session fix-planned. Re-probed `iter_combinators_test` (take / skip /
+to_array / find / position / position_by / count_by over `iter.of` / `iter.range`
+— all bounded-generic `I: Iterator[T]`) on the differential gate: **now passes
+byte-for-byte on both x86 + arm64**, where it previously crashed. Promoted it
+interp-only → self-host-gated (`iter_combinators` in `selfHostStdTestCases`); the
+interp gate `TestRunnerIterCombinatorsExamplePasses` stays as the oracle.
+
+Watch-list status after this: **iter_combinators ✓ cleared.** Still blocked,
+pending their parallel fixes — `crypto` / `u32` (u32 `+`/`<<` not truncated to
+32 bits, root-caused in `#3908`); `array_hof` / `io_buffered` (RC drop-at-exit of
+a struct/array retained to scope exit — `#3909` reclaimed discarded fresh-ret
+struct locals but not this case yet); `num` lazy-iter beyond the reducer trio.
+Each flips onto the gate the moment its blocker lands — re-probe and promote, as
+here.
+
 ### 2026-06-23 — Iterator-bounded generic reducers (core/iter) now lower on the IR path
 
 `core/iter.sum` / `count` / `to_array` / `product` — bounded-generic reducers
