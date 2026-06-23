@@ -596,6 +596,7 @@ pub function wasm_eligible(mod: parser.Module): boolean {
         && !module_emits_op(mod, "read_chunk")
         && !module_emits_op(mod, "reader_close")
         && !module_emits_op(mod, "sleep_ms")
+        && !module_emits_op(mod, "remove_dir_all")
         && !module_emits_op(mod, "strbuf_reset")
         && !module_emits_op(mod, "strbuf_append")
         && !module_emits_op(mod, "strbuf_take");

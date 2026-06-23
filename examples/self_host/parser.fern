@@ -4325,6 +4325,15 @@ function mono_infer(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
                     return func_ret_of(funcs, cid.name);
                 },
                 ExprFieldAccess(cfa) => {
+                    // A `.to_string()` / `.to_debug()` method call yields a string
+                    // regardless of the receiver type. Inferring it lets a bounded
+                    // generic call like `assert_eq(x.to_string(), y.to_string())`
+                    // bind its `T = string` from a computed (non-literal) argument
+                    // — without it, neither arg infers a type, the call stays the
+                    // uninstantiated template, and the whole module is dragged to
+                    // the AST emitter (#3457: the std/u32 wrapping test's
+                    // `rotr_roundtrip` asserts two computed `.to_string()`s).
+                    if ((cfa.field == "to_string" || cfa.field == "to_debug") && c.args.len() == 0) { return "string"; }
                     // Associated call `Type.method()` (e.g. `Inner.default()`):
                     // the object is a bare type name, so infer the method's
                     // return type — lets a generic constructor body infer its
