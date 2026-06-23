@@ -17651,6 +17651,33 @@ function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, f
                 fs = b.funcs; ct = b.counter;
                 out = out.append(parser.StmtFor { var_name: fr.var_name, iter: cr.expr, body: b.stmts, label: fr.label });
             },
+            parser.StmtMatch(mm) => {
+                // Walk the SCRUTINEE (same fn-arg-boxing reason as StmtIf/While): a
+                // fn-typed call argument in `match (g(<lambda>)) { … }` /
+                // `match (iter.find(it, named_fn)) { … }` must be env-boxed exactly
+                // as in `var r = g(<lambda>)`, otherwise the callee (whose fn-param
+                // is a closure local) unpacks a box from a bare fn pointer and
+                // crashes. Without this, a fn-value arg to a call in match-scrutinee
+                // position was the one statement context the lift never reached.
+                // Arm bodies + guards are walked too (a fn-arg call inside an arm).
+                // Structural identity when no fn-arg is present (fixpoint-safe).
+                var sr: InlineCloRes = lift_inline_closures_expr(mm.scrutinee, fd, fs, ct, gfns, structs, mfuncs);
+                fs = sr.funcs; ct = sr.counter;
+                var narms: parser.MatchArm[] = [];
+                var ami: i32 = 0;
+                while (ami < mm.arms.len()) {
+                    var gexpr: parser.Expr = mm.arms[ami].guard;
+                    if (mm.arms[ami].has_guard) {
+                        var gr: InlineCloRes = lift_inline_closures_expr(mm.arms[ami].guard, fd, fs, ct, gfns, structs, mfuncs);
+                        fs = gr.funcs; ct = gr.counter; gexpr = gr.expr;
+                    }
+                    var ab: InlineCloStmts = lift_inline_closures_stmts(mm.arms[ami].body, fd, fs, ct, gfns, structs, mfuncs);
+                    fs = ab.funcs; ct = ab.counter;
+                    narms = narms.append(parser.MatchArm { pattern: mm.arms[ami].pattern, body: ab.stmts, line: mm.arms[ami].line, col: mm.arms[ami].col, guard: gexpr, has_guard: mm.arms[ami].has_guard });
+                    ami = ami + 1;
+                }
+                out = out.append(parser.StmtMatch { scrutinee: sr.expr, arms: narms, line: mm.line, col: mm.col, origin: mm.origin });
+            },
             _ => { out = out.append(stmts[i]); }
         }
         i = i + 1;
