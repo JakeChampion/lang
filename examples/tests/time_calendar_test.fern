@@ -1,0 +1,121 @@
+import "std/test";
+import "std/time" as time;
+// examples/tests/time_calendar_test.fern — pure-Fern coverage of std/time's
+// civil-calendar arithmetic, a domain timing_test (benchmark elapsed-time)
+// doesn't touch at all:
+//   is_leap_year / days_in_month           (the Gregorian rules)
+//   date_make + (Date).is_valid            (construction + validation)
+//   (Date).add_days                        (serial-day add → Date, incl. leap +
+//                                            month + year boundaries, backward)
+//   (Date).days_since                      (exact day difference)
+//   (Date).day_of_year                     (1..366)
+//   (Date).weekday                         (0..6, Sunday=0)
+// This exercises Date struct construction, struct-returning methods, and a
+// struct-typed argument (days_since(other: Date)) through the self-host IR path
+// on the real Hinnant serial-day algorithms. The Go-side suite unit-tests these;
+// this is the migration-shaped (pure-Fern, std/test-driven, self-host-gated)
+// companion.
+
+// ---- Gregorian rules ----
+
+function test_is_leap_year(): test.TestOutcome {
+    var yes: boolean = time.is_leap_year(2000) && time.is_leap_year(2024);
+    var no: boolean = !time.is_leap_year(1900) && !time.is_leap_year(2100) && !time.is_leap_year(2023);
+    return test.assert_true(yes && no);
+}
+
+function test_days_in_month_feb(): test.TestOutcome {
+    return test.assert_true(time.days_in_month(2024, 2) == 29 && time.days_in_month(2023, 2) == 28);
+}
+
+function test_days_in_month_others(): test.TestOutcome {
+    var ok: boolean = time.days_in_month(2024, 1) == 31
+        && time.days_in_month(2024, 4) == 30
+        && time.days_in_month(2024, 12) == 31;
+    return test.assert_true(ok);
+}
+
+// ---- construction + validation ----
+
+function test_is_valid_true(): test.TestOutcome {
+    // Feb 29 in a leap year is real.
+    return test.assert_true(time.date_make(2024, 2, 29).is_valid());
+}
+
+function test_is_valid_false(): test.TestOutcome {
+    var f1: boolean = !time.date_make(2023, 2, 29).is_valid(); // not a leap year
+    var f2: boolean = !time.date_make(2024, 13, 1).is_valid(); // month out of range
+    var f3: boolean = !time.date_make(2024, 4, 31).is_valid(); // April has 30 days
+    return test.assert_true(f1 && f2 && f3);
+}
+
+// ---- add_days (returns Date) ----
+
+function test_add_days_within(): test.TestOutcome {
+    var d = time.date_make(2024, 1, 1).add_days(10);
+    return test.assert_true(d.year == 2024 && d.month == 1 && d.day == 11);
+}
+
+function test_add_days_leap_boundary(): test.TestOutcome {
+    // Feb 28 2024 + 1 = Feb 29 (leap year).
+    var d = time.date_make(2024, 2, 28).add_days(1);
+    return test.assert_true(d.year == 2024 && d.month == 2 && d.day == 29);
+}
+
+function test_add_days_year_boundary(): test.TestOutcome {
+    var d = time.date_make(2023, 12, 31).add_days(1);
+    return test.assert_true(d.year == 2024 && d.month == 1 && d.day == 1);
+}
+
+function test_add_days_backward(): test.TestOutcome {
+    var d = time.date_make(2024, 1, 1).add_days(0 - 1);
+    return test.assert_true(d.year == 2023 && d.month == 12 && d.day == 31);
+}
+
+// ---- days_since (struct-typed arg) ----
+
+function test_days_since_year(): test.TestOutcome {
+    // 2023 is not a leap year → 365 days.
+    return test.assert_eq(time.date_make(2024, 1, 1).days_since(time.date_make(2023, 1, 1)), 365);
+}
+
+function test_days_since_leap_feb(): test.TestOutcome {
+    // Feb 28 → Mar 1 crosses Feb 29 in 2024 → 2 days.
+    return test.assert_eq(time.date_make(2024, 3, 1).days_since(time.date_make(2024, 2, 28)), 2);
+}
+
+// ---- day_of_year ----
+
+function test_day_of_year(): test.TestOutcome {
+    var jan1: boolean = time.date_make(2024, 1, 1).day_of_year() == 1;
+    var dec31_leap: boolean = time.date_make(2024, 12, 31).day_of_year() == 366;
+    var dec31_plain: boolean = time.date_make(2023, 12, 31).day_of_year() == 365;
+    return test.assert_true(jan1 && dec31_leap && dec31_plain);
+}
+
+// ---- weekday (0..6, Sunday=0) ----
+
+function test_weekday(): test.TestOutcome {
+    // 2024-01-01 was a Monday (1); 1970-01-01 was a Thursday (4).
+    var mon: boolean = time.date_make(2024, 1, 1).weekday() == 1;
+    var thu: boolean = time.date_make(1970, 1, 1).weekday() == 4;
+    return test.assert_true(mon && thu);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/time calendar");
+    r = r.it("is_leap_year",        test_is_leap_year());
+    r = r.it("days_in_month feb",   test_days_in_month_feb());
+    r = r.it("days_in_month others", test_days_in_month_others());
+    r = r.it("is_valid true",       test_is_valid_true());
+    r = r.it("is_valid false",      test_is_valid_false());
+    r = r.it("add_days within",     test_add_days_within());
+    r = r.it("add_days leap",       test_add_days_leap_boundary());
+    r = r.it("add_days year",       test_add_days_year_boundary());
+    r = r.it("add_days backward",   test_add_days_backward());
+    r = r.it("days_since year",     test_days_since_year());
+    r = r.it("days_since leap feb", test_days_since_leap_feb());
+    r = r.it("day_of_year",         test_day_of_year());
+    r = r.it("weekday",             test_weekday());
+    return r.finish();
+}
