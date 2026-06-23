@@ -121,6 +121,32 @@ pub function to_array[T, I: Iterator[T]](it: I): T[] {
     return out;
 }
 
+// collect is the canonical terminal of an iterator chain — it drains the
+// iterator into a fresh `T[]`, in order (`xs.iter().map(f).filter(g).collect()`).
+// Semantically identical to `to_array`; `collect` is the name the chain-terminal
+// idiom reaches for, `to_array` the descriptive alias. Generic over the element
+// type `T`, so it lands a chain of any element type on the native backends AND
+// the self-host IR path (the same bounded-collector shape `to_array` already
+// proves). The `Map` sink for a `(K, V)`-yielding iterator is `to_map`.
+pub function collect[T, I: Iterator[T]](it: I): T[] {
+    var out: T[] = [];
+    var cur = it;
+    var go = true;
+    while (go) {
+        match (cur.next()) {
+            Some(t) => { out = out.append(t.0); cur = t.1; },
+            None => { go = false; },
+        }
+    }
+    return out;
+}
+
+// (A `to_map` terminal for a `(K, V)`-yielding iterator — the keyed `Map` half
+// of #2709's FromIterator — is deferred: a fully-generic `Map[K, V]` built in a
+// generic body hits the same abstract-key `Map` dispatch gap as the generic
+// `Set[T]` in #2671, where the function's `K`/`V` don't unify with the `Map`
+// method's own type params. It lands once that compiler gap closes.)
+
 // fold is the fundamental left reduction: starting from `init`, it threads an
 // accumulator of type `A` through `f(acc, value)` for every value the iterator
 // yields, returning the final accumulator. `sum` is `fold(it, 0, +)`; `count`
