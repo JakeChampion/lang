@@ -251,6 +251,21 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — `read_dir(path)` lowers on the IR path
+
+`read_dir` (list a directory's base-name children via openat+getdents64 →
+`Result[string[], IoError]`) had a full AST runtime (`__fern_read_dir`) but no IR
+lowering, so it bailed `BAIL lower`. Now lowers as `op_read_dir` → the same
+`__fern_read_dir` runtime the AST path calls (boxing a `string[]` via
+`__fern_arr_box`, already in the IR heap runtime); x86 transcribed into `asm_ir`,
+arm64 reused from `asm_arm64.emit_runtime`'s heap block, wasm ineligible. Same
+recipe as `temp_dir` / `remove_dir_all`; `opt_ret_type` resolves `read_dir` →
+`Result[string[], IoError]` so `Ok(names)` binds `names` as `string[]`. Gated by
+`TestSelfHostReadDirIR` (temp_dir → write 2 files → read_dir asserts 2 →
+remove_dir_all, exit 0, IR-routing pinned). (`string_count_and_dir_listing`'s
+`assert_eq_dir_listing` still routes AST — further blocked on `sort_strings_asc` /
+`assert_eq_array` mono, a separate follow-up.)
+
 ### 2026-06-23 — arithmetic operators over a trait-bounded type parameter (#2706) + nested-overload rewrite fix
 
 Two coupled fixes completing the `Num` / arithmetic-operator-trait payoff of #2706
