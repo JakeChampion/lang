@@ -251,6 +251,24 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — std/num generic reducers: pure-Fern std/test coverage, self-host-gated (#3915 also carried std/num)
+
+Second watch-list payoff from `#3915`. `std/num` was previously recorded as
+blocked on *two* fronts — the trait-reducer machinery (`sum_with` / `sum` over
+`T: Add (+ Zero)`, `product*` over `T: Mul (+ One)`) and the Iterator-bounded
+forms (`sum_iter` / `product_iter` over `I: iter.Iterator[T]`). New
+`examples/tests/num_reducers_test.fern` (8 assertions over all six, driven on
+i32 arrays + `iter.of` / `iter.range`) **passes the differential gate on both
+x86 + arm64** — so the generic-monomorphisation work behind `#3915` closed the
+trait-reducer path as well, not just the Iterator one. Shipped **self-host-gated**
+(`num_reducers` in `selfHostStdTestCases` + `TestRunnerNumReducersExamplePasses`).
+
+Watch-list status: **iter_combinators ✓, num ✓ cleared.** Remaining blocked
+(awaiting their parallel fixes): `crypto` / `u32` (u32 `+`/`<<` not truncated to
+32 bits — root-caused in `#3908`); `array_hof` / `io_buffered` (RC drop-at-exit
+of a struct/array retained to scope exit). Each flips on the moment its blocker
+lands — re-probe and promote.
+
 ### 2026-06-23 — iter_combinators promoted to the self-host differential gate (Iterator-bounded #3915 unblocked it)
 
 Watch-list payoff. `#3915` (self-host IR: Iterator-bounded reducers — `core/iter`
