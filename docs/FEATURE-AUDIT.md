@@ -251,6 +251,39 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — stdlib IR-vs-AST frontier map (modload eligibility probe)
+
+Swept the whole stdlib through the **modload** eligibility probe
+(`asm_modload_run <entry> -ir-probe`, which resolves imports off disk so it sees
+the *real* post-mangling frontier — unlike the stdin probe, which reports
+artificial `BAIL call` for any cross-module call). Results, to focus goal-1
+(widen-the-IR-subset) work on what actually blocks:
+
+- **Full IR already:** `core/int`, `core/map`, `std/convert`, `std/hex`,
+  `std/base64`, `std/path`, `std/url`, `std/uuid`, `std/error`, `std/u64`
+  (the last contradicting an earlier "later step" note, now corrected below).
+- **`BAIL call` only, all from generic TEMPLATES** (`core/cmp`'s 7 Ord helpers
+  `min/max/clamp/lt/lte/gt/gte`, plus a module's own `[T: …]` generics): these
+  call a trait method on a type-param (`a.cmp(b)`) that resolves only per
+  **monomorphisation**. The uninstantiated template bails, but CONCRETE usage
+  lowers IR (`TestSelfHostCmpHelpersIR`, routing-pinned to `ir`). So
+  `std/array`, `std/string`, `std/format`, `std/option`, `std/result`,
+  `std/sort`, `std/csv`, `core/cmp` show `module: AST` *in isolation* but are
+  **not** real blockers for real (monomorphised) programs. A probe artifact —
+  not a construct gap.
+- **Real `BAIL lower` (body construct gaps):** concentrated in the **`core/iter`
+  combinators** (`sum`/`count`/`fold`/`map`/`filter`/`take`/`skip`/`enumerate`/
+  `zip`/…). These drag `std/num` to AST too (its `sum_iter`/`product_iter` wrap
+  them; 26 of its bails are `iter__*`). This is the documented Iterator-bounded /
+  unbounded-generic type-erasure frontier (2026-06-22 entry, #3329) — the single
+  highest-leverage goal-1 target, and a deep one (the `Option[(i32, Self)]`
+  cloned-method-return lowering subproblem).
+
+Takeaway: the keystone goal-1 blocker is `core/iter`'s combinator lowering;
+most other `module: AST` verdicts are monomorphisation-template artifacts, not
+constructs to lower. The probe (`asm_ir.eligibility_report` /
+`asm_modload_run -ir-probe`) is the canonical way to re-check this frontier.
+
 ### 2026-06-23 — std/io_buffered BytesWriter: pure-Fern std/test coverage (interp-gated) + another RC-drop data point
 
 New `examples/tests/io_buffered_test.fern` covers `std/io_buffered`'s
@@ -735,6 +768,11 @@ Note: `std/u64.to_string` *itself* still routes the **legacy AST fallback**
 (`decide = ast`) — a separate out-of-IR-subset routing concern, not this bug — so
 the high-bit u64 case is pinned via the `core/int` direct call, which does lower
 on IR. Widening the subset so `std/u64` routes IR is a later step.
+
+**Update (2026-06-23): `std/u64` now routes the IR path.** Verified via the
+modload eligibility probe (`asm_modload_run <entry importing std/u64> -ir-probe`
+→ `module: IR`); the gap above is closed (intervening qualified-call /
+mangling work). The "later step" note is superseded.
 
 ### 2026-06-22 — core/iter combinators: pure-Fern std/test coverage (interp-gated) + a `[T]`-in-mangled-symbol gap
 
