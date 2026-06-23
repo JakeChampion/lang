@@ -2715,7 +2715,11 @@ func (p *parser) parseForEach(kw lexer.Token, label string) (ast.Stmt, error) {
 	// struct lit.
 	prevNS := p.noStructLit
 	p.noStructLit = true
-	expr, err := p.parseExpr()
+	// Read the iterable / LOW bound BELOW the range-expression level
+	// (parseLogicOr, not parseExpr) so `for i in 0..n` stops at `..` and keeps
+	// the optimized counted-loop desugar below, rather than collapsing `0..n`
+	// into an `iter.range(0, n)` iterator value.
+	expr, err := p.parseLogicOr()
 	p.noStructLit = prevNS
 	if err != nil {
 		return nil, err
@@ -2733,7 +2737,7 @@ func (p *parser) parseForEach(kw lexer.Token, label string) (ast.Stmt, error) {
 		inclusive := rangeTok.Text == "..="
 		prevNS2 := p.noStructLit
 		p.noStructLit = true
-		high, err := p.parseExpr()
+		high, err := p.parseLogicOr()
 		p.noStructLit = prevNS2
 		if err != nil {
 			return nil, err
@@ -3950,14 +3954,48 @@ func (p *parser) parseAssign() (ast.Expr, error) {
 // OCaml / F# / Elixir / Roc / Gleam convention. The lang stdlib
 // is written subject-first so the first arg is the most natural
 // pipe target.
-func (p *parser) parsePipe() (ast.Expr, error) {
+// parseRange handles the half-open / inclusive range EXPRESSION `a..b` /
+// `a..=b`, desugaring it to a first-class iterator value: `iter.range(a, b)` /
+// `iter.range_incl(a, b)` (core/iter's `Range`, which implements `Iterator`).
+// So `iter.sum(0..n)` and `(0..10)` passed to any combinator work via the
+// iterator protocol — requiring `import "core/iter"` (the module whose `Range`
+// and `range`/`range_incl` constructors this lowers to). It sits just below the
+// pipe operator so `0..n` binds looser than arithmetic (`0..n+1` is `0..(n+1)`).
+// Note: the `for i in LOW..HIGH` loop keeps its own optimized counted-loop
+// desugar — parseForEach reads its bounds with parseLogicOr (below this level),
+// so a range there never collapses into an iterator value.
+func (p *parser) parseRange() (ast.Expr, error) {
 	left, err := p.parseLogicOr()
+	if err != nil {
+		return nil, err
+	}
+	if p.match(lexer.Punct, "..") || p.match(lexer.Punct, "..=") {
+		tok := p.advance()
+		fn := "range"
+		if tok.Text == "..=" {
+			fn = "range_incl"
+		}
+		right, err := p.parseLogicOr()
+		if err != nil {
+			return nil, err
+		}
+		return &ast.Call{
+			P:      tok.Pos,
+			Callee: &ast.FieldAccess{P: tok.Pos, Target: &ast.Ident{P: tok.Pos, Name: "iter"}, Field: fn, FieldPos: tok.Pos},
+			Args:   []ast.Expr{left, right},
+		}, nil
+	}
+	return left, nil
+}
+
+func (p *parser) parsePipe() (ast.Expr, error) {
+	left, err := p.parseRange()
 	if err != nil {
 		return nil, err
 	}
 	for p.match(lexer.Punct, "|>") {
 		pipeTok := p.advance()
-		right, err := p.parseLogicOr()
+		right, err := p.parseRange()
 		if err != nil {
 			return nil, err
 		}
