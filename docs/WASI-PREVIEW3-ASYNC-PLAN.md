@@ -631,6 +631,25 @@ future ops lack). That completes the **future/stream channel pair at the compose
 level**; the remaining work is the two-component split + the real wasmbin / Fern
 type-surface for `future<T>` / `stream<T>`.
 
+**`future<u32>` ACROSS a component boundary — DONE, runnable through the Go
+composer.** `component.BuildFutureExportImportComponent` is the two-component
+split: a NESTED producer (`buildFutureProducerComponent`) exports
+`prod: async func() -> future<u32>` — `future.new` → `task.return` the readable
+end → `future.write` the value, the latter gMem-trampolined because a nested
+component can't receive an external core memory (so its `future.write`'s memory
+option over its own memory is circular, exactly like the string `task.return`
+provider). The consumer `canon lower async`-es that import, reads the returned
+future readable handle from the lower's return area, `future.read`s the value,
+and re-returns it from its async export `run`. Both the prod-lower and the
+`future.read` complete synchronously (the producer writes before yielding back —
+stackful), so no await loop is needed; `task.return` of a future result is scalar
+(`PutCanonTaskReturnTypeIdx` — `09 00 <typeidx> 00`, no memory option).
+`TestWasmP3FutureExportImport` runs it under wasmtime → **42** — a future flowing
+OUT of one component and INTO another, both future-ABI directions together. The
+production-shaped counterpart of the single-component round-trip. The remaining
+future/stream work is the real wasmbin / Fern type-surface (parser/checker/IR
+support for the `future<T>` / `stream<T>` types).
+
 **Also remaining:** `future<T>` / `stream<T>` parameter+result lowering;
 wiring async into the `concurrent { … }` desugar as an alternative to
 the P2 pollable reactor.
