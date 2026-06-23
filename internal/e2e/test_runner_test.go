@@ -433,6 +433,20 @@ func TestRunnerTimeCalendarExamplePasses(t *testing.T) {
 	}
 }
 
+func TestRunnerTimeIsoSpanExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/time_iso_span_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/time iso + span", "# pass 12", "# fail 0", "1..12"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/uuid_test.fern` covers std/uuid's generators by
 // shape — v4/v7 length, hyphen positions, version + variant nibbles,
 // is_uuid, and distinctness. The output is random but the assertions are
