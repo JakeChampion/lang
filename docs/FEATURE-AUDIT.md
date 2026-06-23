@@ -283,8 +283,10 @@ a fn-value call argument, but had **no `StmtMatch` arm** — so a fn-value passe
 inside a `match` scrutinee (`match (assert_count_i32(arr, is_even, n)) { … }`,
 `wider_array` / `map_eq`) was left a BARE fn pointer; the callee (whose fn-param
 is a closure local) then unpacked a box from it and segfaulted on the indirect
-call. Added the `StmtMatch` arm (lift scrutinee + guards + arm bodies) — inert
-for the self-host source (no fn-typed params), fixpoint undisturbed.
+call. The `StmtMatch` arm that fixes it (lift scrutinee + guards + arm bodies)
+landed in parallel as #3932 (root-caused there from the `core/iter find`-named
+angle — the identical bug); this branch takes that fix on merge. Inert for the
+self-host source (no fn-typed params), fixpoint undisturbed.
 
 With these, `crypto` and `u32_arith` route `ir` and match the interpreter
 byte-for-byte; promoted onto the self-host differential gate
@@ -293,6 +295,31 @@ swath of std/test modules from the AST emitter (goal 1, #3457): the universal
 `TestRunner.finish` blocker is gone, so any std/test module that otherwise
 lowers now routes IR. Per CLAUDE.md, the AST emitter's u32 gap is **not**
 fixed — it is being retired, and the code now lowers correctly on IR.
+
+### 2026-06-23 — the WHOLE core/iter combinator surface now lowers on the IR path (match-scrutinee fn-arg boxing)
+
+With the Iterator-bounded reducer + multi-param-key landings in place, a full
+sweep of `core/iter`'s combinators over a real `iter.of(xs)` showed every one
+routing `decide = ir` — `any` / `all` / `find` / `position_by` / `count_by` /
+`flat_map` / `enumerate` / `zip` / `take` / `skip` / `nth` / `last` / `position`
+/ `count_value` (plus the reducers `sum` / `count` / `to_array` / `product` /
+`fold` / `map` / `filter` from the prior entries). The keystone goal-1 blocker
+(the audit's "single highest-leverage target") is cleared.
+
+One combinator — `find` — **segfaulted** with a NAMED-function predicate
+(`match (iter.find(iter.of(xs), named_fn)) { … }`) while a lambda predicate
+worked. Root-caused to a closure-conversion gap: the lift pass's statement walker
+(`lift_inline_closures_stmts`) env-boxed fn-value call ARGUMENTS in `if` / `while`
+/ `for` conditions and `var` / `return` / `assign` / `expr` positions, but had **no
+`StmtMatch` arm** — so a fn-value arg to a call in MATCH-SCRUTINEE position was
+never wrapped. The callee (whose fn-param is a closure local, dispatched env-first
+via `[pred+8]`) then unpacked a closure box from a raw fn-pointer and crashed; a
+lambda already being a box masked it. Fixed by adding the `StmtMatch` arm (walk
+the scrutinee + each arm's guard/body); it is a structural identity when no fn-arg
+is present, so the byte-identical bootstrap fixpoint is undisturbed. Gated by
+`TestSelfHostIterCombinatorsIR` (16 cases incl. `find-named`); bootstrap fixpoint
++ closures + generics/iterator/predicate-adapter (x86-64 + wasm) confirm no
+regression.
 
 ### 2026-06-23 — std/num.sum_iter / product_iter (two-param bounded generics) now lower on the IR path
 

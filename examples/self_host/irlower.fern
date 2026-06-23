@@ -17668,38 +17668,32 @@ function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, f
                 fs = b.funcs; ct = b.counter;
                 out = out.append(parser.StmtFor { var_name: fr.var_name, iter: cr.expr, body: b.stmts, label: fr.label });
             },
-            parser.StmtMatch(m) => {
-                // Walk the SCRUTINEE (same fn-arg-boxing reason as StmtIf above): a
-                // fn-typed call argument in `match (g(<lambda>)) { … }` — e.g.
-                // `match (assert_count_i32(arr, is_even, n)) { … }` — must be env-
-                // boxed exactly as in `var r = g(…)`, else the callee (whose fn-param
-                // is a closure local) unpacks a box from a BARE fn pointer and
-                // segfaults on the indirect call. Without this arm the default case
-                // passed StmtMatch through untouched, so a fn-value arg in a match
-                // scrutinee (or guard/arm body) was never wrapped — the latent IR bug
-                // surfaced once std/test modules routed IR (#3457: wider_array's
-                // `match (assert_count_i32(…, is_even, …))`, map_eq's predicate).
-                // lift_inline_closures_expr is a structural identity when no fn-arg is
-                // present, so this is inert for the self-host source (no fn-typed
-                // params) and the byte-identical fixpoint is undisturbed.
-                var scr: InlineCloRes = lift_inline_closures_expr(m.scrutinee, fd, fs, ct, gfns, structs, mfuncs);
-                fs = scr.funcs; ct = scr.counter;
+            parser.StmtMatch(mm) => {
+                // Walk the SCRUTINEE (same fn-arg-boxing reason as StmtIf/While): a
+                // fn-typed call argument in `match (g(<lambda>)) { … }` /
+                // `match (iter.find(it, named_fn)) { … }` must be env-boxed exactly
+                // as in `var r = g(<lambda>)`, otherwise the callee (whose fn-param
+                // is a closure local) unpacks a box from a bare fn pointer and
+                // crashes. Without this, a fn-value arg to a call in match-scrutinee
+                // position was the one statement context the lift never reached.
+                // Arm bodies + guards are walked too (a fn-arg call inside an arm).
+                // Structural identity when no fn-arg is present (fixpoint-safe).
+                var sr: InlineCloRes = lift_inline_closures_expr(mm.scrutinee, fd, fs, ct, gfns, structs, mfuncs);
+                fs = sr.funcs; ct = sr.counter;
                 var narms: parser.MatchArm[] = [];
-                var mi: i32 = 0;
-                while (mi < m.arms.len()) {
-                    var arm: parser.MatchArm = m.arms[mi];
-                    var gexpr: parser.Expr = arm.guard;
-                    if (arm.has_guard) {
-                        var gr: InlineCloRes = lift_inline_closures_expr(arm.guard, fd, fs, ct, gfns, structs, mfuncs);
-                        fs = gr.funcs; ct = gr.counter;
-                        gexpr = gr.expr;
+                var ami: i32 = 0;
+                while (ami < mm.arms.len()) {
+                    var gexpr: parser.Expr = mm.arms[ami].guard;
+                    if (mm.arms[ami].has_guard) {
+                        var gr: InlineCloRes = lift_inline_closures_expr(mm.arms[ami].guard, fd, fs, ct, gfns, structs, mfuncs);
+                        fs = gr.funcs; ct = gr.counter; gexpr = gr.expr;
                     }
-                    var ab: InlineCloStmts = lift_inline_closures_stmts(arm.body, fd, fs, ct, gfns, structs, mfuncs);
+                    var ab: InlineCloStmts = lift_inline_closures_stmts(mm.arms[ami].body, fd, fs, ct, gfns, structs, mfuncs);
                     fs = ab.funcs; ct = ab.counter;
-                    narms = narms.append(parser.MatchArm { pattern: arm.pattern, body: ab.stmts, line: arm.line, col: arm.col, guard: gexpr, has_guard: arm.has_guard });
-                    mi = mi + 1;
+                    narms = narms.append(parser.MatchArm { pattern: mm.arms[ami].pattern, body: ab.stmts, line: mm.arms[ami].line, col: mm.arms[ami].col, guard: gexpr, has_guard: mm.arms[ami].has_guard });
+                    ami = ami + 1;
                 }
-                out = out.append(parser.StmtMatch { scrutinee: scr.expr, arms: narms, line: m.line, col: m.col, origin: m.origin });
+                out = out.append(parser.StmtMatch { scrutinee: sr.expr, arms: narms, line: mm.line, col: mm.col, origin: mm.origin });
             },
             _ => { out = out.append(stmts[i]); }
         }
