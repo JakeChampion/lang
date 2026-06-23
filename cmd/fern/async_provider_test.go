@@ -190,3 +190,47 @@ function main(): i32 { return 0; }
 		t.Errorf("bundled async provider (params): got %q, want 42 (20+22)", bytes.TrimSpace(res))
 	}
 }
+
+// TestAsyncExportParamsCLI covers `fern -target wasm-bin` lifting a param'd async
+// function as a component export: `async function add(a: i32, b: i32): i32` →
+// `add: async func(a, b: u32) -> u32`. The CLI now selects the param-aware lift
+// (BuildAsyncLiftedExportComponentParams) when the async source has parameters,
+// and the wasmbin wrapper forwards them. Emits a component; runs add(20,22) → 42
+// when wasmtime is on PATH.
+func TestAsyncExportParamsCLI(t *testing.T) {
+	dir := t.TempDir()
+	src := `async function add(a: i32, b: i32): i32 { return a + b; }
+function main(): i32 { return 0; }
+`
+	srcPath := filepath.Join(dir, "add.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outPath := filepath.Join(dir, "add.wasm")
+
+	code, err := run(srcPath, outPath, "wasm-bin", "", false, false, "qemu-aarch64",
+		false, false, true /*asyncExport*/, "" /*asyncProvider*/, false, "", nil)
+	if err != nil || code != 0 {
+		t.Fatalf("run(-async-export, params): code=%d err=%v", code, err)
+	}
+	out, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) < 8 || !bytes.Equal(out[:4], []byte("\x00asm")) || out[6] != 0x01 {
+		t.Fatalf("output is not a component (magic/version = % x)", out[:min(8, len(out))])
+	}
+
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; emitted a valid component but skipping runtime check")
+	}
+	res, err := exec.Command("wasmtime", "run",
+		"-W", "component-model-async,component-model-async-stackful",
+		"--invoke", "add(20, 22)", outPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run (CLI param async export): %v\n%s", err, res)
+	}
+	if !bytes.Contains(res, []byte("42")) {
+		t.Errorf("CLI param async export: got %q, want 42", bytes.TrimSpace(res))
+	}
+}
