@@ -485,10 +485,28 @@ against the string-param provider, and runs `run()` → **5**. So a string
 argument flows colorlessly into an awaited import.
 
 That makes composite types — `string` + numeric `list<T>` — complete for both
-**results and (string) params**, import + export. A `list<T>` *argument* reuses
-the same path (numeric-array normalisation, a follow-up); multi-arg mem shapes
-remain. The *pending* (`waitable-set`) path is the last remaining async
-capability (now derivable with wasm-tools 1.240 in hand).
+**results and params**, import + export.
+
+**`list<T>` param — DONE, runnable from real Fern source.** The numeric-array
+*argument* landed: the wasmbin async-import branch forwards the array's canonical
+`(ptr, len) = (elemPtr, load(elemPtr-4))` with NO normalisation (the elements are
+already packed at native stride) and runs the `canon lower async` call
+`(ptr, len, retptr) -> status` (memory option only — the param bytes are the
+caller's, no realloc on the consumer side); the provider lifts a defined
+`list<elem>` parameter type via `component.BuildAsyncLiftedExportComponentListParam`
+(`[async, memory, realloc]` over a bump cabi_realloc, the param materialised in
+the callee's memory). `buildExternAsyncArrayParamWrapper` is the array sibling of
+`buildExternAsyncStringParamWrapper` (no `__fern_str_*` helpers).
+`TestWasmP3AsyncImportListParamFromFern` compiles a real Fern `@import async
+function recv(xs: u8[]): i32` + `run() { var xs: u8[] = [104,…,111]; return
+recv(xs); }`, composes it against the list-param provider (reusing the
+string-param core, which task-returns the length), and runs `run()` → **5**.
+`TestWasmP3AsyncListParamExportProvider` runtime-verifies the provider half. So a
+numeric array flows colorlessly into an awaited import.
+
+**Multi-arg mem shapes remain** (a single string/array param is supported; two+
+mem params, or a mem param mixed with a composite result, are still rejected).
+The *pending* (`waitable-set`) await path is **DONE** (see above).
 
 **Also remaining:** `future<T>` / `stream<T>` parameter+result lowering;
 wiring async into the `concurrent { … }` desugar as an alternative to

@@ -934,15 +934,20 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			in.add("async_subtask_drop")
 			in.add("async_ws_drop")
 			if hasMemParam {
-				// Composite ARGUMENT to an async import. This slice supports a
-				// single `string` param + scalar result: the wrapper normalises the
-				// string to a canonical (ptr, len) in this module's memory (which the
-				// callee reads via the lower's memory option), then runs the async
-				// lower `(ptr, len, retptr) -> status` and reads the scalar result.
-				// Other mem-param shapes (arrays/records, or a composite result
+				// Composite ARGUMENT to an async import. This slice supports a single
+				// `string` OR numeric-array (`u8[]`/`i32[]`/`f64[]`/…) param + scalar
+				// result: the wrapper marshals the argument to a canonical (ptr, len)
+				// in this module's memory (which the callee reads via the lower's
+				// memory option), then runs the async lower `(ptr, len, retptr) ->
+				// status` and reads the scalar result. A string is normalised through
+				// the SSO seam; a numeric array is already canonical (element pointer +
+				// count at ptr-4), so it forwards (ptr, load(ptr-4)) directly. Other
+				// mem-param shapes (multi-arg, records, bool[], or a composite result
 				// alongside) are not supported yet.
-				if !(len(ex.Params) == 1 && isStringType(ex.Params[0].Type) && externScalarType(ret)) {
-					return nil, nil, fmt.Errorf("@import %q (%s/%s): async extern with a non-scalar parameter only supports a single string param + scalar result so far (docs/WASI-PREVIEW3-ASYNC-PLAN.md)", ex.Name, ex.Iface, ex.WITName)
+				isStrParam := len(ex.Params) == 1 && isStringType(ex.Params[0].Type) && externScalarType(ret)
+				isArrParam := len(ex.Params) == 1 && isScalarArrayParamType(ex.Params[0].Type) && externScalarType(ret)
+				if !(isStrParam || isArrParam) {
+					return nil, nil, fmt.Errorf("@import %q (%s/%s): async extern with a non-scalar parameter only supports a single string or numeric-array param + scalar result so far (docs/WASI-PREVIEW3-ASYNC-PLAN.md)", ex.Name, ex.Iface, ex.WITName)
 				}
 				results, err := resultValtypes(ret)
 				if err != nil {
@@ -952,15 +957,22 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 				// raw import: (ptr, len, retptr) -> i32 status.
 				specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32}, results: []byte{encode.ValtypeI32}}
 				in.add(rawName)
+				wrapperBody := buildExternAsyncStringParamWrapper(rawName, results[0])
+				if isArrParam {
+					// A numeric array is a single Fern slot (the element pointer).
+					wrapperBody = buildExternAsyncArrayParamWrapper(rawName, results[0])
+				}
 				wrappers[ex.Name] = runtimeHelperSpec{
-					params:  params, // (data, len) — the Fern string
+					params:  params, // string → (data, len); numeric array → (elemPtr)
 					results: results,
-					body:    buildExternAsyncStringParamWrapper(rawName, results[0]),
+					body:    wrapperBody,
 				}
 				helpers.add(ex.Name)
 				helpers.add("__fern_alloc")
-				helpers.add("__fern_str_len")
-				helpers.add("__fern_str_byte")
+				if isStrParam {
+					helpers.add("__fern_str_len")
+					helpers.add("__fern_str_byte")
+				}
 				continue
 			}
 			rawName := ex.Name + "$import"

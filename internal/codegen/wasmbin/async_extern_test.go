@@ -211,21 +211,77 @@ func TestScanExternImportsAsyncStringParam(t *testing.T) {
 	}
 }
 
-// TestScanExternImportsAsyncRejectsArrayParam pins the remaining slice boundary:
-// an async import with a non-string mem param (here a numeric array) is still
-// rejected with a clear error.
-func TestScanExternImportsAsyncRejectsArrayParam(t *testing.T) {
+// TestScanExternImportsAsyncArrayParam covers an async import that takes a single
+// numeric-array ARGUMENT with a scalar result — `@import async function
+// recv(xs: u8[]): i32`. Like the string-param case it lowers to the raw
+// `(ptr, len, retptr) -> i32 status` import plus a wrapper, but the wrapper's
+// source-level signature is a single Fern slot (the element pointer) and it pulls
+// in only __fern_alloc (no string-normalisation helpers — a numeric array is
+// already canonical, count at ptr-4). No cabi_realloc on the consumer side: the
+// param bytes are the caller's.
+func TestScanExternImportsAsyncArrayParam(t *testing.T) {
 	ext := &ir.ExternFunc{
-		Name:       "dep",
+		Name:       "recv",
 		Iface:      "test:dep/d",
-		WITName:    "compute",
+		WITName:    "recv",
 		Params:     []ast.Param{{Name: "xs", Type: ast.ArrayType{Elem: ast.NumberType{Width: 8}}}},
 		ReturnType: i32Type(),
 		Async:      true,
 	}
 	var in importNeeds
 	var helpers runtimeNeeds
+	specs, wrappers, err := scanExternImports(progCallingExtern("recv", ext), &in, &helpers)
+	if err != nil {
+		t.Fatalf("scanExternImports: %v", err)
+	}
+	raw, ok := specs["recv$import"]
+	if !ok {
+		t.Fatalf("missing raw async import spec %q; specs=%v", "recv$import", specs)
+	}
+	if len(raw.params) != 3 || raw.params[0] != encode.ValtypeI32 || raw.params[2] != encode.ValtypeI32 {
+		t.Errorf("raw import params = %v, want [i32 i32 i32] (ptr, len, retptr)", raw.params)
+	}
+	if len(raw.results) != 1 || raw.results[0] != encode.ValtypeI32 {
+		t.Errorf("raw import results = %v, want [i32] (status)", raw.results)
+	}
+	w, ok := wrappers["recv"]
+	if !ok {
+		t.Fatalf("missing wrapper for %q", "recv")
+	}
+	if len(w.params) != 1 || w.params[0] != encode.ValtypeI32 {
+		t.Errorf("wrapper params = %v, want 1 slot (the element pointer)", w.params)
+	}
+	if len(w.results) != 1 || w.results[0] != encode.ValtypeI32 {
+		t.Errorf("wrapper results = %v, want [i32]", w.results)
+	}
+	if !helpers.set["recv"] || !helpers.set["__fern_alloc"] {
+		t.Errorf("helpers missing wrapper/allocator: %v", helpers.set)
+	}
+	// A numeric array needs NO string-normalisation helpers.
+	if helpers.set["__fern_str_len"] || helpers.set["__fern_str_byte"] {
+		t.Errorf("array-param wrapper should not pull in string-normalisation helpers: %v", helpers.set)
+	}
+}
+
+// TestScanExternImportsAsyncRejectsMultiMemParam pins the remaining slice
+// boundary: an async import with MORE THAN ONE mem param (here two arrays) is
+// still rejected with a clear error — only a single string/array param is
+// supported so far.
+func TestScanExternImportsAsyncRejectsMultiMemParam(t *testing.T) {
+	ext := &ir.ExternFunc{
+		Name:    "dep",
+		Iface:   "test:dep/d",
+		WITName: "compute",
+		Params: []ast.Param{
+			{Name: "xs", Type: ast.ArrayType{Elem: ast.NumberType{Width: 8}}},
+			{Name: "ys", Type: ast.ArrayType{Elem: ast.NumberType{Width: 8}}},
+		},
+		ReturnType: i32Type(),
+		Async:      true,
+	}
+	var in importNeeds
+	var helpers runtimeNeeds
 	if _, _, err := scanExternImports(progCallingExtern("dep", ext), &in, &helpers); err == nil {
-		t.Fatalf("expected an error for an async extern with an array parameter")
+		t.Fatalf("expected an error for an async extern with multiple mem parameters")
 	}
 }
