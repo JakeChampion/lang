@@ -600,6 +600,72 @@ So the runnable `future<u32>` vertical is fully specified: a producer (mechanics
 above) + a reader consumer (future.read + the existing await loop), composed and
 run end to end — the next slice.
 
+**`future<u32>` round-trip — DONE, runnable through the Go composer.**
+`component.BuildFutureRoundtripComponent` assembles a consumer that creates a
+`future<u32>`, `future.write`s a value through the writable end, `future.read`s
+it back through the readable end, and re-returns it from its async export `run`;
+`TestWasmP3FutureRoundtrip` runs it under wasmtime → **42** — the future
+counterpart of `TestWasmP3AsyncPendingAwait`, exercising `future.new` /
+`future.write` / `future.read` end to end. It sidesteps the `--invoke`
+can't-print-a-future gotcha by reading the future *inside* the component and
+returning a scalar `u32`; and it confirms the write-before-read path completes
+synchronously (RETURNED — no await loop needed). The memory option is over the
+externalised shared memory (the production path reuses the gMem trampoline). This
+is the future analog of the pending-await composer spike: the next steps are a
+two-component split (a `future<u32>` *export* read by a separate consumer, the
+reader's `future.read` reusing the pending-await loop when the read is STARTED)
+and then wiring `future<T>` through the real wasmbin / Fern surface.
+
+**`stream<u8>` round-trip — DONE, runnable through the Go composer.**
+`component.BuildStreamRoundtripComponent` is the stream counterpart of the future
+round-trip: a consumer creates a `stream<u8>` (`stream.new` — same i64 packing,
+readable=low32 / writable=high32), POSTs a `stream.read` for N elements, then
+`stream.write`s N elements through the writable end (read-before-write so the
+stackful transfer resolves synchronously), sums the bytes it read, and returns
+the total from its async export `run`. `TestWasmP3StreamRoundtrip` runs it under
+wasmtime → **42** (`10+20+12`), exercising `stream.new` / `stream.write` /
+`stream.read` end to end. Core signatures (probed via `validate`): `stream.new ()
+-> i64`, `stream.write (writable, ptr, count) -> i32 status`, `stream.read
+(readable, ptr, count) -> i32 status` (the `count` is the element-count the
+future ops lack). That completes the **future/stream channel pair at the composer
+level**; the remaining work is the two-component split + the real wasmbin / Fern
+type-surface for `future<T>` / `stream<T>`.
+
+**`future<u32>` ACROSS a component boundary — DONE, runnable through the Go
+composer.** `component.BuildFutureExportImportComponent` is the two-component
+split: a NESTED producer (`buildFutureProducerComponent`) exports
+`prod: async func() -> future<u32>` — `future.new` → `task.return` the readable
+end → `future.write` the value, the latter gMem-trampolined because a nested
+component can't receive an external core memory (so its `future.write`'s memory
+option over its own memory is circular, exactly like the string `task.return`
+provider). The consumer `canon lower async`-es that import, reads the returned
+future readable handle from the lower's return area, `future.read`s the value,
+and re-returns it from its async export `run`. Both the prod-lower and the
+`future.read` complete synchronously (the producer writes before yielding back —
+stackful), so no await loop is needed; `task.return` of a future result is scalar
+(`PutCanonTaskReturnTypeIdx` — `09 00 <typeidx> 00`, no memory option).
+`TestWasmP3FutureExportImport` runs it under wasmtime → **42** — a future flowing
+OUT of one component and INTO another, both future-ABI directions together. The
+production-shaped counterpart of the single-component round-trip. The remaining
+future/stream work is the real wasmbin / Fern type-surface (parser/checker/IR
+support for the `future<T>` / `stream<T>` types).
+
+**`stream<u8>` ACROSS a component boundary — DONE, runnable through the Go
+composer.** `component.BuildStreamExportImportComponent` is the stream
+counterpart of the future export/import split: a nested producer
+(`buildStreamProducerComponent`) exports `prod: async func() -> stream<u8>`
+(`stream.new` → `task.return` the readable end → `stream.write` `[10,20,12]`,
+the write gMem-trampolined like the future producer), and the consumer
+`canon lower async`-es that import, reads the returned stream readable handle,
+`stream.read`s the 3 bytes, sums them, and re-returns the total from its async
+export `run`. The producer's write buffers across the task boundary, so the
+consumer's later read drains it synchronously — no await loop (verified: the
+single-component round-trip needed read-before-write, but across the boundary the
+buffered write resolves on the consumer's read). `TestWasmP3StreamExportImport`
+runs it under wasmtime → **42** (`10+20+12`). That completes the cross-boundary
+future/stream pair at the composer level; the last future/stream piece is the
+real Fern type-surface.
+
 **Also remaining:** `future<T>` / `stream<T>` parameter+result lowering;
 wiring async into the `concurrent { … }` desugar as an alternative to
 the P2 pollable reactor.
