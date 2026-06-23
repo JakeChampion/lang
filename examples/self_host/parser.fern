@@ -4113,6 +4113,7 @@ function sanitize_key(s: string): string {
         if (ch == 91) { out = out + "__"; }         // '[' -> __
         else if (ch == 93) { }                       // ']' -> drop
         else if (ch == 44) { out = out + "__"; }    // ',' -> __
+        else if (ch == 59) { out = out + "__"; }    // ';' (multi-param key sep) -> __
         else if (ch == 32) { }                       // ' ' -> drop
         else { out = out + s[i : i + 1]; }
         i = i + 1;
@@ -4208,11 +4209,39 @@ function infer_inst(fd: FuncDecl, args: Expr[], env: MEnv, funcs: FuncDecl[]): s
     while (j < fd.type_params.len()) {
         var b: string = binds.elook(fd.type_params[j]);
         if (b.len() == 0) { return ""; }
-        if (j > 0) { key = key + "__"; }
+        // Join multi-param instantiation keys with ';' (a char that never
+        // appears in a type name) rather than '__': a per-param value can
+        // itself be a module-mangled type (`iter__ArrayIter[i32]`) whose
+        // embedded '__' would make split_dunder shatter the key into the wrong
+        // arity (the documented multi-param limitation). split_inst_key splits
+        // on ';' so each value stays intact; sanitize_key maps ';' -> '__' so
+        // the emitted clone NAME is unchanged for the simple multi-param case.
+        if (j > 0) { key = key + ";"; }
         key = key + b;
         j = j + 1;
     }
     return key;
+}
+
+// split_inst_key splits a multi-param instantiation key (joined by infer_inst
+// with ';') back into its per-param concrete types, preserving any '__' inside
+// a single module-mangled value. The ';'-free single-param key is handled by
+// the callers' `[key]` fast path (never reaches here).
+function split_inst_key(s: string): string[] {
+    var out: string[] = [];
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i < s.len()) {
+        if (s[i] == 59) {                            // ';'
+            out = out.append(s[start : i]);
+            i = i + 1;
+            start = i;
+            continue;
+        }
+        i = i + 1;
+    }
+    out = out.append(s[start : s.len()]);
+    return out;
 }
 
 // func_ret_of returns the return type of a plain function by name.
@@ -4238,7 +4267,7 @@ function call_ret_type(funcs: FuncDecl[], name: string, args: Expr[], env: MEnv)
     var key: string = infer_inst(fd, args, env, funcs);
     if (key.len() == 0) { return ""; }
     var cts: string[] = [key];
-    if (fd.type_params.len() != 1) { cts = split_dunder(key); }
+    if (fd.type_params.len() != 1) { cts = split_inst_key(key); }
     return subst_ty(fd.ret_type, fd.type_params, cts);
 }
 
@@ -4764,16 +4793,13 @@ function retarget_self_lit_stmts(stmts: Stmt[], base: string, mang: string): Stm
 function clone_bg(fd: FuncDecl, key: string): FuncDecl {
     var tparams: string[] = fd.type_params;
     // A single type parameter's key IS the one concrete type, verbatim —
-    // never split it. A module-mangled type argument (`iter__Range` from a
-    // bundled program) itself contains `__`, so split_dunder would shatter it
-    // (`iter__Range` -> ["iter", "Range"]) and subst_ty would bind the param
-    // to the bogus "iter". This mirrors the guard the generic-struct / enum
-    // monomorphisers already use (gen_struct / gen_enum: `if (tparams.len()
-    // != 1) { cts = split_dunder(key); }`). With >1 param the key is still a
-    // `__`-join (multi-param mangled-type args remain a known limitation,
-    // shared with the struct/enum paths).
+    // never split it. A multi-param key is joined by infer_inst with ';'
+    // (split_inst_key), so a per-param module-mangled value (`iter__ArrayIter[i32]`,
+    // from an Iterator-bounded reducer `sum_iter[T: Add, I: Iterator[T]]` over
+    // `iter.of(xs)`) keeps its embedded '__' intact — split_dunder would have
+    // shattered it into the wrong arity and bound `I` to the bogus "iter".
     var cts: string[] = [key];
-    if (tparams.len() != 1) { cts = split_dunder(key); }
+    if (tparams.len() != 1) { cts = split_inst_key(key); }
     var nparams: ParamDecl[] = [];
     var i: i32 = 0;
     while (i < fd.params.len()) {

@@ -48,6 +48,22 @@ function main(): i32 { var xs: i32[] = [9, 8, 7]; var ys: i32[] = iter.to_array(
 	// 1+2+3+4 = 10.
 	{"range-sum", `import "core/iter";
 function main(): i32 { return iter.sum(iter.range(1, 5)); }`},
+	// std/num.sum_iter[T: Add, I: iter.Iterator[T]] — a TWO bounded-param reducer
+	// where I instantiates to a module-mangled struct (`iter__ArrayIter[i32]`).
+	// Exercises the ';'-joined multi-param instantiation key (split_inst_key):
+	// a '__'-join would shatter the key on the embedded '__' of `iter__ArrayIter`
+	// and bind I to the bogus "iter". 4+5+6 = 15.
+	{"num-sum_iter", `import "core/iter";
+import "std/num";
+function main(): i32 { var xs: i32[] = [4, 5, 6]; return num.sum_iter(iter.of(xs), 0); }`},
+	// num.sum_iter over empty: returns the zero unchanged (0).
+	{"num-sum_iter-empty", `import "core/iter";
+import "std/num";
+function main(): i32 { var xs: i32[] = []; return num.sum_iter(iter.of(xs), 0); }`},
+	// num.product_iter[T: Mul, I: iter.Iterator[T]]: 2*3*4 = 24.
+	{"num-product_iter", `import "core/iter";
+import "std/num";
+function main(): i32 { var xs: i32[] = [2, 3, 4]; return num.product_iter(iter.of(xs), 1); }`},
 }
 
 func TestSelfHostIterBoundedReducersIR(t *testing.T) {

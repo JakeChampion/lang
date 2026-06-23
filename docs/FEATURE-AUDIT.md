@@ -251,6 +251,31 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — std/num.sum_iter / product_iter (two-param bounded generics) now lower on the IR path
+
+Follow-up to the `core/iter` reducer landing (#3915). `std/num.sum_iter` /
+`product_iter` — `sum_iter[T: Add, I: iter.Iterator[T]](it: I, zero: T): T` —
+still routed AST even after the `core/iter` combinators lowered. Root-caused to
+the **multi-param instantiation-key shattering**: over `iter.of(xs)` the key is
+`{T=i32, I=iter__ArrayIter[i32]}`, which `infer_inst` joined with `__` into
+`i32__iter__ArrayIter[i32]`; `clone_bg`'s `split_dunder` then split that into
+**three** pieces (`["i32", "iter", "ArrayIter[i32]"]`) for two type params,
+binding `I` to the bogus `"iter"` — so the clone's `it: I` param became `iter`,
+`cur.next()` never dispatched, and the un-instantiated template fell to AST. The
+documented multi-param limitation (the `clone_bg` comment called it out).
+
+Fixed by joining multi-param instantiation keys with `;` (a char that never
+appears in a type name) instead of `__`, and splitting them with a new
+`split_inst_key` (splits on `;`, leaving each value's internal `__` intact);
+`sanitize_key` maps `;` → `__` so the emitted clone NAME is **byte-identical**
+for the simple multi-param case (`i32;string` → `i32__string`). Single-param
+keys are unchanged (the `[key]` fast path never joins). The `mg_ty`-keyed
+struct/enum monomorphisers are untouched (separate key flow; not the blocker
+here). Gated by the `num-sum_iter` / `num-sum_iter-empty` / `num-product_iter`
+cases added to `TestSelfHostIterBoundedReducersIR`; bootstrap fixpoint +
+generics/iterator/map (x86-64 + wasm) confirm no regression (the `;`-join is
+byte-compatible).
+
 ### 2026-06-23 — std/num generic reducers: pure-Fern std/test coverage, self-host-gated (#3915 also carried std/num)
 
 Second watch-list payoff from `#3915`. `std/num` was previously recorded as
