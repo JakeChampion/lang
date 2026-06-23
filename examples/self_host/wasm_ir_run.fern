@@ -33,7 +33,17 @@ function main(): i32 {
         // slice 2a) so callback-style lambdas ride the slice-1 function-value
         // path; lambda-free modules are unchanged. The AST fallback keeps the
         // original `mod`.
-        mod = lm;
+        // Monomorphise bounded generics (functions + generic structs/enums) on
+        // the IR path, the same expansion module_with_builtins runs for the AST
+        // path — otherwise a generic body keeps its `T[]` params, so an element
+        // method like `xs[i].to_string()` can't see the concrete element type and
+        // mis-dispatches (e.g. defaulting `.to_string()` to the i32 runtime
+        // helper on a string element). The x86-64 driver (asm_run) gets this via
+        // module_with_builtins; the wasm IR driver did its own lighter prep and
+        // skipped it (#3893). Non-generic modules are unchanged (the passes
+        // no-op when nothing is bounded-generic), so IR-eligible programs that
+        // already worked keep their exact output.
+        mod = parser.monomorphize_enums(parser.monomorphize_structs(parser.monomorphize_module(lm)));
         // Force the IR path: orchestrate the module wrapper + wasm's heap/RC
         // runtime + wasm_ir.emit_functions (the same orchestration
         // wasm.emit_module's use_ir dispatch does).
