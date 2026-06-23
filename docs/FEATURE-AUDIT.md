@@ -251,6 +251,41 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — root-caused the std/crypto self-host mismatch to un-truncated u32 `+` / `<<` (a minimal, concrete repro)
+
+Followed up the crypto re-probe (it now *runs* on self-host — exits 1, not -1 —
+after the parallel std/crypto-compiles fix, but the digests are wrong). Captured
+the differential-gate TAP diff: `sha256` of `""` / `"abc"` / pangram and the
+HMAC vector all produce **wrong digests of the correct length** (the two
+`*_bytes len` assertions pass; the four value assertions fail). SHA-256 is built
+entirely from u32 wrapping-adds + rotate-shifts, so "right length, wrong bits"
+pointed straight at the u32 ALU.
+
+Isolated it with a 4-case probe (since shipped as the suite below):
+
+| op | self-host result | want |
+|----|----|----|
+| `x >> n` (logical) | correct | — |
+| `1 << 31` | correct | — |
+| `(0xFFFFFFFF as u32) + (2 as u32)` | **4294967297** (`0x100000001`) | 1 |
+| `rotr(0x12345678, 8)` = `(x>>8)\|(x<<24)` | **a value > 2³²** | 2014458966 |
+
+**Root cause: the self-host backends evaluate `u32 +` and `u32 <<` at full
+register width and never mask the result back to 32 bits.** Only operations that
+cannot overflow bit 31 *look* correct — logical `>>` produces no high bits, and
+`1 << 31` lands exactly on bit 31. Anything that carries / shifts past bit 31
+keeps the excess, so every SHA-256 round accumulates garbage high bits → wrong
+digest, right length. This is **narrower and more concrete than the prior "u32
+through a bounded generic" framing** — it reproduces in plain non-generic u32
+code (no `cmp` / `assert_eq` monomorph involved). The fix lives in the contended
+`irlower` / asm-backend u32 path (parallel-owned, not touched here): truncate
+(`& 0xFFFFFFFF`, or use 32-bit-register ops) after u32 `+` / `-` / `*` / `<<`.
+
+Shipped `examples/tests/u32_arith_test.fern` (10 assertions: wrapping
+add/sub/mul, shl-overflow-mask, shl-to-bit31, logical-shr, rotr/rotl +
+roundtrip) — **interp-gated** via `TestRunnerU32ArithExamplePasses`, deliberately
+off the differential gate; it flips onto the gate (and unblocks `crypto_test`)
+once u32 arithmetic truncates to 32 bits.
 ### 2026-06-23 — self-host IR: discarded fresh-ret-CALL local reclaim (Perceus, #3457 follow-up)
 
 `reclaimable_names_of` freed only fresh struct-LITERAL locals (`var x = S{..}`)

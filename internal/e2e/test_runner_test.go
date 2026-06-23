@@ -349,6 +349,25 @@ func TestRunnerU64ExamplePasses(t *testing.T) {
 	}
 }
 
+// TestRunnerU32ArithExamplePasses gates the u32 wrapping-arithmetic contract
+// suite under the interpreter. Interp-gated only: the self-host backends do not
+// yet truncate u32 `+` / `<<` results back to 32 bits (the suite header documents
+// the minimal repro + the std/crypto connection), so it is deliberately absent
+// from selfHostStdTestCases until that codegen gap closes.
+func TestRunnerU32ArithExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/u32_arith_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/u32 wrapping arithmetic", "# pass 10", "# fail 0", "1..10"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 func TestRunnerSortByAndCiExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/sort_by_and_ci_test.fern")

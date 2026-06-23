@@ -1,0 +1,91 @@
+import "std/test";
+import "std/u32";
+// examples/tests/u32_arith_test.fern — pins the u32 wrapping-arithmetic
+// contract: every operation must truncate its result back to 32 bits, so a
+// carry / shifted bit past bit 31 is discarded (mod 2³²). All operands are
+// chosen with the high bit set or deliberately overflowing so signed-vs-unsigned
+// and truncate-vs-widen diverge.
+//
+// INTERP-GATED, deliberately NOT on the self-host differential gate. A minimal
+// probe isolates the gap: on the self-host backends `u32 +` and `u32 <<` are
+// evaluated at full register width and the result is NOT masked back to 32 bits,
+// so:
+//   (0xFFFFFFFF as u32) + (2 as u32)        → 4294967297 (0x100000001), want 1
+//   rotr(0x12345678, 8) = (x>>8)|(x<<24)    → a value > 2³²,           want 2014458966
+// Operations that never overflow bit 31 already pass on self-host — logical
+// `>>` (no high bits produced) and `1 << 31` (lands exactly on bit 31). This is
+// the root cause of the std/crypto self-host digest mismatch (`crypto_test`
+// exits 1, not -1): SHA-256 is a tower of u32 wrapping-adds + rotate-shifts, and
+// the un-truncated high bits corrupt every digest while leaving its length
+// correct. Distinct from (and narrower than) the earlier "u32 through a bounded
+// generic" framing — this is plain, concrete, non-generic u32 code. The suite
+// flips onto the differential gate once u32 arithmetic truncates to 32 bits.
+
+function rotr(x: u32, n: u32): u32 { return (x >> n) | (x << (32 - n)); }
+function rotl(x: u32, n: u32): u32 { return (x << n) | (x >> (32 - n)); }
+
+function test_wrap_add(): test.TestOutcome {
+    // 0xFFFFFFFF + 2 = 0x100000001 → truncate → 1.
+    return test.assert_eq(((0xFFFFFFFF as u32) + (2 as u32)).to_string(), "1");
+}
+
+function test_wrap_add_two_high(): test.TestOutcome {
+    // 0x80000000 + 0x80000000 = 0x100000000 → truncate → 0.
+    return test.assert_eq(((0x80000000 as u32) + (0x80000000 as u32)).to_string(), "0");
+}
+
+function test_wrap_sub(): test.TestOutcome {
+    // 0 - 1 underflows to 0xFFFFFFFF = 4294967295.
+    return test.assert_eq(((0 as u32) - (1 as u32)).to_string(), "4294967295");
+}
+
+function test_wrap_mul(): test.TestOutcome {
+    // 0x10000 * 0x10000 = 0x100000000 → truncate → 0.
+    return test.assert_eq(((0x10000 as u32) * (0x10000 as u32)).to_string(), "0");
+}
+
+function test_shl_overflow_mask(): test.TestOutcome {
+    // 0x12345678 << 24 keeps only the low byte's contribution: 0x78000000.
+    return test.assert_eq(((0x12345678 as u32) << (24 as u32)).to_string(), "2013265920");
+}
+
+function test_shl_to_bit31(): test.TestOutcome {
+    // 1 << 31 = 0x80000000 (lands exactly on bit 31, no overflow).
+    return test.assert_eq(((1 as u32) << (31 as u32)).to_string(), "2147483648");
+}
+
+function test_logical_shr(): test.TestOutcome {
+    // 0x80000000 >> 4 logical = 0x08000000 (no sign smear).
+    return test.assert_eq(((0x80000000 as u32) >> (4 as u32)).to_string(), "134217728");
+}
+
+function test_rotr(): test.TestOutcome {
+    // rotr(0x12345678, 8) = 0x78123456 = 2014458966.
+    return test.assert_eq(rotr(0x12345678 as u32, 8 as u32).to_string(), "2014458966");
+}
+
+function test_rotl(): test.TestOutcome {
+    // rotl(0x12345678, 8) = 0x34567812 = 878082066.
+    return test.assert_eq(rotl(0x12345678 as u32, 8 as u32).to_string(), "878082066");
+}
+
+function test_rotr_roundtrip(): test.TestOutcome {
+    // rotr by n then rotl by n recovers the original.
+    var x: u32 = (0xDEADBEEF as u32);
+    return test.assert_eq(rotl(rotr(x, 13 as u32), 13 as u32).to_string(), (0xDEADBEEF as u32).to_string());
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/u32 wrapping arithmetic");
+    r = r.it("wrap add",          test_wrap_add());
+    r = r.it("wrap add two high", test_wrap_add_two_high());
+    r = r.it("wrap sub",          test_wrap_sub());
+    r = r.it("wrap mul",          test_wrap_mul());
+    r = r.it("shl overflow mask", test_shl_overflow_mask());
+    r = r.it("shl to bit31",      test_shl_to_bit31());
+    r = r.it("logical shr",       test_logical_shr());
+    r = r.it("rotr",              test_rotr());
+    r = r.it("rotl",              test_rotl());
+    r = r.it("rotr roundtrip",    test_rotr_roundtrip());
+    return r.finish();
+}
