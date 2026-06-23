@@ -1,0 +1,109 @@
+import "std/test";
+import "std/string";
+// examples/tests/string_replace_split_test.fern — pure-Fern coverage of the
+// std/string substitution + splitting surface not touched by the earlier four
+// string suites:
+//   replace / replace_first / replace_n   (substring substitution, count-bounded)
+//   replace_byte                          (single-byte substitution)
+//   remove_all / without_byte / without_chars (deletion)
+//   splitn                                (bounded split → string[])
+//   split_at                              (index split → (string, string))
+//   to_acronym                            (first-byte-per-token initialism)
+// The replace family has real edge cases (overlap consumption, the count cap,
+// empty-needle no-op) and the splitn / split_at shapes return string[] and a
+// tuple. The Go-side suite unit-tests these; this is the migration-shaped
+// (pure-Fern, std/test-driven, self-host-gated) companion.
+
+// ---- substring substitution ----
+
+function test_replace(): test.TestOutcome {
+    return test.assert_eq("a.b.c".replace(".", "-"), "a-b-c");
+}
+
+function test_replace_overlap(): test.TestOutcome {
+    // matches are consumed left-to-right, non-overlapping: "aaa" → first "aa"
+    // becomes "b", leaving a trailing "a".
+    return test.assert_eq("aaa".replace("aa", "b"), "ba");
+}
+
+function test_replace_first(): test.TestOutcome {
+    return test.assert_eq("a.b.c".replace_first(".", "-"), "a-b.c");
+}
+
+function test_replace_n(): test.TestOutcome {
+    // cap at the first 2 substitutions; the third stays.
+    return test.assert_eq("a.b.c.d".replace_n(".", "-", 2), "a-b-c.d");
+}
+
+function test_replace_byte(): test.TestOutcome {
+    // 45 is '-', 95 is '_'.
+    return test.assert_eq("a-b-c".replace_byte(45, 95), "a_b_c");
+}
+
+// ---- deletion ----
+
+function test_remove_all(): test.TestOutcome {
+    return test.assert_eq("a,b,c".remove_all(","), "abc");
+}
+
+function test_without_byte(): test.TestOutcome {
+    // 108 is 'l'.
+    return test.assert_eq("hello".without_byte(108), "heo");
+}
+
+function test_without_chars(): test.TestOutcome {
+    // drop every 'l' or 'o'.
+    return test.assert_eq("hello world".without_chars("lo"), "he wrd");
+}
+
+// ---- splitting ----
+
+function test_splitn(): test.TestOutcome {
+    // n=2 → at most one split; the remainder keeps its separators.
+    return test.assert_eq_array("a,b,c,d".splitn(",", 2), ["a", "b,c,d"]);
+}
+
+function test_splitn_under_cap(): test.TestOutcome {
+    // n larger than the actual piece count → a full split.
+    return test.assert_eq_array("a,b,c".splitn(",", 99), ["a", "b", "c"]);
+}
+
+function test_split_at(): test.TestOutcome {
+    var p = "hello".split_at(2);
+    return test.assert_true(p.0 == "he" && p.1 == "llo");
+}
+
+function test_split_at_clamp(): test.TestOutcome {
+    // index past the end clamps: everything in the first part.
+    var p = "hi".split_at(99);
+    return test.assert_true(p.0 == "hi" && p.1 == "");
+}
+
+// ---- initialism ----
+
+function test_to_acronym(): test.TestOutcome {
+    return test.assert_eq("hello world foo".to_acronym(), "HWF");
+}
+
+function test_to_acronym_empty(): test.TestOutcome {
+    return test.assert_eq("   ".to_acronym(), "");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/string replace + split");
+    r = r.it("replace",          test_replace());
+    r = r.it("replace overlap",  test_replace_overlap());
+    r = r.it("replace_first",    test_replace_first());
+    r = r.it("replace_n",        test_replace_n());
+    r = r.it("replace_byte",     test_replace_byte());
+    r = r.it("remove_all",       test_remove_all());
+    r = r.it("without_byte",     test_without_byte());
+    r = r.it("without_chars",    test_without_chars());
+    r = r.it("splitn",           test_splitn());
+    r = r.it("splitn under cap", test_splitn_under_cap());
+    r = r.it("split_at",         test_split_at());
+    r = r.it("split_at clamp",   test_split_at_clamp());
+    r = r.it("to_acronym",       test_to_acronym());
+    r = r.it("to_acronym empty", test_to_acronym_empty());
+    return r.finish();
+}

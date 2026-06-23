@@ -251,6 +251,28 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — std/string replace + split surface: pure-Fern std/test coverage (self-host-gated)
+
+New `examples/tests/string_replace_split_test.fern` covers the std/string
+substitution + splitting surface left out by the four earlier string suites:
+`replace` / `replace_first` / `replace_n` (substring substitution, count-bounded,
+incl. the non-overlapping left-to-right consumption case `"aaa".replace("aa",
+"b") == "ba"`), `replace_byte` (single-byte), `remove_all` / `without_byte` /
+`without_chars` (deletion), `splitn` (bounded split → `string[]`, both the
+capped and under-cap cases), `split_at` (index split → `(string, string)`, incl.
+the past-the-end clamp), and `to_acronym` (first-byte-per-token initialism).
+14 tests. Coverage audit confirmed all untested at the example-suite layer.
+
+The substitution family has the subtle edge cases (overlap consumption, the
+count cap, empty-needle no-op) and the `splitn` / `split_at` shapes return
+`string[]` and a tuple, so the suite stresses the self-host `__substr_eq` +
+slice + tuple-return path on real stdlib bodies. On the **differential** gate
+(both x86 + arm64). Gated by `TestRunnerStringReplaceSplitExamplePasses`
+(interp) + `string_replace_split` in `TestSelfHostStdTestE2E` / `…Arm64`. This
+is the fifth std/string slice — classify/transform (#3874), slice/extract
+(#3875), escape/count (#3876), and now replace/split — together covering the
+predicate, transform, extraction, encoding, and substitution surface.
+
 ### 2026-06-23 — std/string escape + count surface: pure-Fern std/test coverage (self-host-gated)
 
 New `examples/tests/string_escape_count_test.fern` covers the std/string
