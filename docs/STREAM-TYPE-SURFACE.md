@@ -68,28 +68,51 @@ lazy-iteration story can layer on top once an Iterator protocol exists.
 
 1. **AST + parser foundation.** Add `ast.StreamType{ Elem Type }`
    (`internal/ast/ast.go`: `isType`, `String` → `"stream[" + Elem + "]"`,
-   `Equal`, `SubstSelf`, `IsPointerType` → false). Parse `stream[T]` in
-   `parser.parseType` (`internal/parser/parser.go` ~L1854, a `stream` keyword
-   case consuming `[`, an element type, `]`). Tests: parser round-trip.
-2. **Type-system plumbing.** `internal/checker` + `internal/monomorph`
-   substitution / equality / reconciliation cases (mirror `ArrayType`, ~5 sites
-   each per recon §3/§6). Test: a `stream[T]` annotation type-checks.
-3. **Colorless result transform + wasmbin collect-wrapper.** Recognise a
-   `stream[T]` result on an async `@import` (`scanExternImports`,
-   `internal/codegen/wasmbin/wasi.go`); the call site yields `T[]`. Emit a
-   wrapper that drives `stream.read` + the existing pending-await loop, growing a
-   length-prefixed Fern array until the stream reports EOF (the
-   `BuildStreamExportImportComponent` ABI already provides the read side). Test:
-   checker rule.
-4. **e2e.** Real Fern `@import async function body(): stream[u8]` + a
-   `for`-free collect, composed against the stream producer, run under wasmtime
-   → the collected bytes. The runnable payoff (mirrors
-   `TestWasmP3StreamExportImport`, but from Fern source).
+   `Equal`, `SubstSelf`; left out of `IsPointerType` — it's transformed to `T[]`
+   before codegen, never a materialised value). Parse `stream[T]` **contextually**
+   in `parser.parseType`: the existing `Ident[args]` generic-instantiation path
+   yields `StreamType` when the name is `stream` with one arg, else `EnumType` —
+   no reserved keyword, so `stream` stays a usable identifier. Tests: parser
+   round-trip.
+   **DONE** (PR #3916): `ast.StreamType` + contextual `stream[T]` parse
+   (`Ident[args]` with name `stream`, one arg → `StreamType`, else `EnumType`),
+   `TestStreamTypeParse`.
+
+2. **Colorless result transform (early rewrite).** The robust, low-churn way to
+   make `body()` yield `T[]` — given the many `fn.ReturnType` readers in the
+   checker — is a single **early normalization** (start of `checker.Check`, or a
+   tiny pre-pass over `prog.Funcs`, before `FuncSigs` is built at
+   `checker.go:2077`): for a func with `ImportIface != "" && Async` and
+   `ReturnType` a `StreamType{T}`, set a new `FuncDecl.StreamResultElem = T` and
+   rewrite `ReturnType = ArrayType{T}`. After that every checker site (and `ir.go`)
+   sees a plain `T[]` async-list result — NO per-site checker changes, NO
+   monomorph subst plumbing needed for the result path (slice 1's `Equal`/
+   `SubstSelf` cover the rare param/var use). `ir.go` (`ExternFunc` build,
+   ~L2608) copies `StreamResultElem` onto a new `ExternFunc.StreamResultElem`.
+   Test: checker accepts `@import async function body(): stream[u8]` and types
+   `var b: u8[] = body()`.
+3. **wasmbin collect-wrapper + composer.** In `scanExternImports`
+   (`internal/codegen/wasmbin/wasi.go`), when `ex.StreamResultElem != nil` the
+   raw `canon lower async` of the import returns a **stream readable handle**
+   (not a `(ptr,len)`); emit a collect-wrapper that drives `stream.read` + the
+   existing pending-await loop (`emitAsyncAwaitLoop`), appending each delivered
+   chunk into a growing length-prefixed Fern array until the stream reports EOF.
+   This needs a `stream.read` (+ `stream.drop`) intrinsic imported under `""`
+   (mirror the waitable intrinsics registered for the await loop) and the
+   composer (`BuildAsyncImportsAwaitComponent`) to provide them — `stream.read`
+   trampolined over the consumer memory (the `BuildStreamExportImportComponent`
+   consumer path already proved the read side). This slice is comparable in size
+   to the pending-await wiring.
+4. **e2e.** Real Fern `@import async function body(): stream[u8]` +
+   `var b: u8[] = body();` collect, composed against the stream producer, run
+   under wasmtime → the collected bytes (mirrors `TestWasmP3StreamExportImport`,
+   from Fern source). The runnable payoff.
 
 ## Status
 
 - Channels at the ABI/composer level: **DONE** (see
   `docs/WASI-PREVIEW3-ASYNC-PLAN.md`).
-- `stream[T]` Fern surface: **designed (this note)**; slices 1–4 pending.
+- `stream[T]` Fern surface: slice 1 (AST + parser) **DONE** (#3916); slices 2–4
+  specified above (slice 3 is the substantial collect-wrapper/composer vertical).
 - `future[T]` Fern surface: **intentionally not exposed** (colorless subsumes
   it).
