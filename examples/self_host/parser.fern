@@ -1506,6 +1506,28 @@ function parse_primary(p: Par): ExprResult {
                 var iife: Expr = e_call(e_lambda(no_params, ic.rt, lam_body), no_args);
                 return parse_postfix(ic.par, iife);
             }
+            // A TYPE keyword used as a MODULE name: `string.repeat_char(…)`
+            // imports std/string, whose basename alias `string` collides with the
+            // `string` type keyword, so the lexer emits a keyword token, not an
+            // ident. When a type keyword is immediately followed by `.`, it is a
+            // module-qualified reference base (not a type) — parse it as a bare
+            // ident and let parse_postfix handle the `.field(…)` chain;
+            // flatten_qualified then rewrites `string.f` -> `string__f`. Without
+            // this the keyword fell through to e_unknown and the call never lowered
+            // (the native parser already accepts this form). Guarded by the
+            // following `.` so a type keyword in any other position is unaffected.
+            var is_tykw: boolean = x.name == "string" || x.name == "boolean" || x.name == "void"
+                || x.name == "i8" || x.name == "i16" || x.name == "i32" || x.name == "i64"
+                || x.name == "u8" || x.name == "u16" || x.name == "u32" || x.name == "u64"
+                || x.name == "usize" || x.name == "f32" || x.name == "f64";
+            if (is_tykw) {
+                var kwline: i32 = p.peek_line();
+                var kwcol: i32 = p.peek_col();
+                var look: Par = p.advance();
+                if (look.peek_punct() == ".") {
+                    return parse_postfix(look, e_ident_at(x.name, kwline, kwcol));
+                }
+            }
             return ExprResult { par: p, expr: e_unknown("keyword:" + x.name) };
         },
         lexer.TokIdent(x) => {

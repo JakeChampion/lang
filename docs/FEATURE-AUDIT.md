@@ -251,6 +251,31 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — std/string module-qualified free-function calls (`string.repeat_char`) now lower on the IR path
+
+A stdlib frontier re-sweep (after the core/iter combinator landings) found
+`string.repeat_char(…)` — a module-qualified free-FUNCTION call into `std/string`
+— routing the AST emitter, while `format.format` / `csv.csv_parse_line` (other
+cross-module free-function calls) lowered. Root cause: `std/string`'s basename
+import alias is `string`, which **collides with the `string` primitive type
+keyword**. The self-host lexer emits a KEYWORD token for `string`, so
+`parse_primary` did not produce `ExprFieldAccess{obj: ExprIdent "string"}` for
+`string.repeat_char` — it fell through to `e_unknown`. `flatten_qualified` (whose
+`mod.field → mod__field` rewrite matches an `ExprIdent` base) therefore never
+rewrote the call, so the call site stayed an unlowerable type-keyword field
+access and bailed `main` to AST (the `string__repeat_char` function itself
+lowered fine; with `-no-treeshake` it shows `: ir`). The native `-interp` parser
+already accepts the form, masking it.
+
+Fixed in `parse_primary`: a TYPE keyword (`string` / `boolean` / `i8`…`u64` /
+`f32` / `f64` / …) immediately followed by `.` is parsed as a module-qualified
+reference base (a bare ident routed through `parse_postfix`), so
+`flatten_qualified` collapses `string.f` → `string__f`. Guarded by the following
+`.`, so a type keyword in any other position (annotations, `as` casts) is
+unaffected — the byte-identical bootstrap fixpoint holds (the self-host source
+uses no `<typekw>.member` form). Gated by `TestSelfHostStringModuleFnIR`
+(`repeat_char` len / var / empty + a `trim()` method regression guard).
+
 ### 2026-06-23 — `remove_dir_all` lowers on the IR path → `crypto` / `u32` route IR (not AST)
 
 The `std/crypto` self-host digest mismatch (#3908: SHA-256 produces the right
