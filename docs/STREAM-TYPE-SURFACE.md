@@ -97,12 +97,34 @@ lazy-iteration story can layer on top once an Iterator protocol exists.
    (not a `(ptr,len)`); emit a collect-wrapper that drives `stream.read` + the
    existing pending-await loop (`emitAsyncAwaitLoop`), appending each delivered
    chunk into a growing length-prefixed Fern array until the stream reports EOF.
-   This needs a `stream.read` (+ `stream.drop`) intrinsic imported under `""`
-   (mirror the waitable intrinsics registered for the await loop) and the
+   This needs a `stream.read` (+ `stream.drop-readable`) intrinsic imported under
+   `""` (mirror the waitable intrinsics registered for the await loop) and the
    composer (`BuildAsyncImportsAwaitComponent`) to provide them — `stream.read`
    trampolined over the consumer memory (the `BuildStreamExportImportComponent`
    consumer path already proved the read side). This slice is comparable in size
    to the pending-await wiring.
+
+   **Mechanics derived (wasm-tools 1.240 + wasmtime 37, this slice's spike):**
+   - canon opcodes: `stream.read 0x0f`, `stream.drop-readable 0x13`,
+     `stream.drop-writable 0x14` (core sig of the drops: `(handle) -> ()`).
+   - `stream.read` is **async**: a read with no data yet ready returns a
+     **BLOCKED** status and leaves the readable end *in-flight* — issuing a
+     second read on the same handle traps `invalid handle; got Busy`. So the
+     collect loop MUST await each read through the waitable machinery before the
+     next: `read(rd, buf, cap)` → if BLOCKED, `waitable.join`+`waitable-set.wait`
+     (the existing `emitAsyncAwaitLoop` shape, keyed on the read's subtask) →
+     decode the completed count from the read status → append `count` elems to
+     the growing array → repeat.
+   - EOF is signalled by the producer **dropping the writable end**
+     (`stream.drop-writable`); the consumer's next `stream.read` then completes
+     with a CLOSED/DROPPED state (low nibble) instead of a data count. The loop
+     terminates on that state, then `stream.drop-readable`s its end.
+   - Status packing mirrors the async-lower status (low nibble = state/event,
+     high bits = count/subtask) — exact CLOSED/COMPLETED nibble values to be
+     pinned by the same dump-oracle approach when the loop is built.
+   - Because the read blocks-until-awaited, deriving the status is entangled with
+     the await loop — i.e. building the collect loop *is* the derivation; there
+     is no shortcut single-read observation (a second un-awaited read traps Busy).
 4. **e2e.** Real Fern `@import async function body(): stream[u8]` +
    `var b: u8[] = body();` collect, composed against the stream producer, run
    under wasmtime → the collected bytes (mirrors `TestWasmP3StreamExportImport`,
