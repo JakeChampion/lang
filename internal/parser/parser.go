@@ -1984,10 +1984,19 @@ func (p *parser) parseType() (ast.Type, error) {
 			if _, err := p.expect(lexer.Punct, "]"); err != nil {
 				return nil, err
 			}
-			// Generic instantiations are always enums in this
-			// PR; the checker validates the name actually
-			// resolves to an enum.
-			base = ast.EnumType{Name: name, Args: args}
+			// `stream[T]` is the built-in WASI Preview-3 async data
+			// channel (docs/STREAM-TYPE-SURFACE.md), not a generic enum
+			// instantiation. Recognised contextually (name "stream" + one
+			// arg) so `stream` stays a usable identifier elsewhere — no
+			// reserved keyword.
+			if name == "stream" && len(args) == 1 {
+				base = ast.StreamType{Elem: args[0]}
+			} else {
+				// Generic instantiations are otherwise enums in this
+				// PR; the checker validates the name actually
+				// resolves to an enum.
+				base = ast.EnumType{Name: name, Args: args}
+			}
 		} else {
 			base = ast.StructType{Name: name}
 		}
