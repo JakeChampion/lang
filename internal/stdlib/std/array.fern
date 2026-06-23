@@ -1222,6 +1222,35 @@ pub function index_of_last[T: cmp.Eq](xs: T[], target: T): Option[i32] {
     return None;
 }
 
+// `starts_with(xs, prefix)` — true iff `xs` begins with `prefix`: every element
+// of `prefix` equals the element of `xs` at the same index. A `prefix` longer
+// than `xs` is never a prefix (false); an empty `prefix` always matches (true).
+// The array analogue of `string.starts_with`, over any `T: cmp.Eq`.
+pub function starts_with[T: cmp.Eq](xs: T[], prefix: T[]): boolean {
+    if (prefix.len() > xs.len()) { return false; }
+    var i: i32 = 0;
+    while (i < prefix.len()) {
+        if (xs[i] != prefix[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `ends_with(xs, suffix)` — true iff `xs` ends with `suffix`: every element of
+// `suffix` equals the element of `xs` at the matching tail index. A `suffix`
+// longer than `xs` is false; an empty `suffix` always matches.
+pub function ends_with[T: cmp.Eq](xs: T[], suffix: T[]): boolean {
+    var n: i32 = xs.len();
+    var m: i32 = suffix.len();
+    if (m > n) { return false; }
+    var i: i32 = 0;
+    while (i < m) {
+        if (xs[n - m + i] != suffix[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 // ---- Generic array methods --------------------------------------
 //
 // Method forms of the combinators above, so pipelines read
