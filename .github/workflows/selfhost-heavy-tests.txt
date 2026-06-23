@@ -1,25 +1,30 @@
 # Heavy self-host tests — SINGLE SOURCE OF TRUTH for the x86 split.
 #
 # These TestSelfHost* tests RUN the self-host compiler on whole programs
-# (bootstrap / fixpoint / per-module / CLI / derive-stdlib / the IR
-# eligibility probes). Each takes tens of seconds and cannot be build-cached
-# away, so when several land in one round-robin shard the shard runs long
-# enough to be reclaimed mid-run by the GitHub runner pool (exit 143,
-# "runner received a shutdown signal") — the persistent red on every PR.
-#
+# (bootstrap / fixpoint / per-module / CLI / derive-stdlib / real stdlib).
 # The `test-e2e-selfhost.yml` workflow pulls every name listed here OUT of the
 # round-robin `test` shards and runs each in its own short `heavy` job, so no
-# shard clusters them and each heavy test runs alone in a job short enough to
-# clear the reclaim window. They run x86-only (they t.Skip on aarch64 for lack
-# of x86 cross-gcc / qemu-x86_64).
+# shard clusters them and a slow build can't push a shard into the runner
+# reclaim window (exit 143). They run x86-only (t.Skip on aarch64).
+#
+# WHY THIS LIST IS SHRINKING. The ~50 s these tests cost was never inherent
+# runtime — profiling showed it was entirely the one-time Go x86-64 EMIT of the
+# ~35 k-line self-host driver. The driver-BINARY cache (cachedDriverBin) now
+# restores that build reliably (it dropped the dead-weight ~680 MB `.s` that
+# used to exhaust the runner's disk and silently drop restores), so a warmed
+# driver is served in ~1 s and a 2-pass local measure shows every test here at
+# ~0 s once its driver is cached. The IR eligibility/probe cluster — which
+# shares the LEAN `asm_ir_elig` driver (smallest, most reliably cached) and
+# runs tiny snippets — was therefore removed from this list and folded back
+# into the round-robin. What remains is the conservative safety hedge: the
+# tests that build the BIG whole-compiler drivers (asm_modload_run / fern) or
+# iterate the compiler (fixpoint / bootstrap), where a cold rebuild on a future
+# cache miss would be most disruptive in a shared shard. As CI confirms the
+# cache holds, these can be pruned further (or the split retired).
 #
 # Format: one anchored top-level test name per line. Blank lines and lines
-# starting with `#` are ignored. Add a name here when a new compiler-running
-# test shows up in the >~20s tail; new lighter tests need no change (they keep
-# auto-sharding round-robin). The authoritative signal for "is this heavy?" is
-# CI preemption itself (exit 143 on an x86 shard), not local timing — a fresh
-# CI shard pays a cold driver build plus accumulated shard load that a warm
-# local cache hides.
+# starting with `#` are ignored. The authoritative signal for "is this heavy?"
+# is CI preemption itself (exit 143 on an x86 shard), not local timing.
 TestSelfHostStage2Bootstrap
 TestSelfHostStage2Compiler
 TestSelfHostStage2FixedPoint
@@ -37,17 +42,5 @@ TestSelfHostImmutabilityGateX86_64
 TestSelfHostCLIX86_64
 TestSelfHostMathX86_64
 TestSelfHostArrayX86_64
-TestSelfHostIREligibilityProbe
-TestSelfHostIRExternProbe
-TestSelfHostIRPipelineProbe
-TestSelfHostIRF64Eligible
-TestSelfHostIRF64ArrayEligible
-TestSelfHostIRF64FieldEligible
-TestSelfHostIRMethodReturnEligible
-TestSelfHostIRStructReturnEligible
-TestSelfHostIRTupleReturnEligible
-TestSelfHostModloadIRProbeX86_64
-TestSelfHostX86ScaleProbe
-# Added after PR #3844 — confirmed preempted (exit 143) on its own CI run:
 TestSelfHostStdlibModulesIR
 TestSelfHostStdTestE2E
