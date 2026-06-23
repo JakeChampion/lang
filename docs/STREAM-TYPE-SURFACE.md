@@ -153,10 +153,46 @@ lazy-iteration story can layer on top once an Iterator protocol exists.
    under wasmtime → the collected bytes (mirrors `TestWasmP3StreamExportImport`,
    from Fern source). The runnable payoff.
 
-## Status — COMPLETE
+## `stream[T]` as an async-import PARAMETER (the produce side)
 
-The `stream[T]` Fern language surface is shipped end to end; a `stream[T]` flows
-from a host export into Fern source as a colorlessly-collected `T[]`.
+The mirror of the result side: an `@import async function sink(s: stream[u8])`
+accepts an eager `u8[]` and the wrapper streams its elements OUT over the wire
+(useful exactly as a `stream[u8]` result collects an eager `u8[]` from a
+streaming wire — the wire is incremental, the Fern surface is eager).
+
+- **P1 — DONE** (#3934): checker rewrites a `stream[T]` param to `T[]` and records
+  `FuncDecl.StreamParamElems[i]` → `ir.ExternFunc.StreamParamElems`; wasmbin guards
+  it pending the produce-wrapper.
+- **P2 mechanics — PINNED & runnable** (wasmtime-37 spike → 42). The produce
+  wrapper, ported from the validated template:
+  - `(rd, wr) = stream.new()` (readable=low32 / writable=high32);
+  - `status = sink_lower(rd, retptr)` — pass the **readable** handle as the
+    canonical param (so the host gets the read end), retptr for the scalar result;
+  - **write-stream the eager array** to `wr` (write-await): `ws =
+    waitable-set.new(); waitable.join(wr, ws); loop { rs = stream.write(wr, ptr +
+    wrote*stride, count - wrote); if rs == 0xffffffff { wait(ws, evt); rs =
+    load(evt+4) }; wrote += rs>>4; if wrote >= count || (rs & 0xf) != 0 break }`
+    (event-code for a write completion is `3` = STREAM_WRITE; same
+    `(count<<4)|code` packing);
+  - `waitable.join(wr, 0)` (unjoin) → `stream.drop-writable(wr)` (EOF) →
+    `waitable-set.drop(ws)`;
+  - **await the lowered call** (the host sink subtask) via the normal
+    `emitAsyncAwaitLoop` (status low-nibble != RETURNED(2) → subtask = status>>4,
+    join+wait+`subtask.drop`), then read the scalar result at retptr.
+  - The host scaffolding is a provider `sink: async func(s: stream[u8]) -> u32`
+    whose core collect-reads the param (the read loop above) and task-returns the
+    sum.
+  - Remaining P2 build: the wasmbin produce-wrapper (`buildExternAsyncStreamParamWrapper`)
+    + intrinsics (`stream.new`, `stream.write`, `stream.drop-writable`) +
+    composer provisioning (stream.write trampolined over the consumer memory) +
+    the host sink provider + e2e — a direct mirror of slices 3a/3b/4.
+
+## Status — result side COMPLETE; param side started
+
+The `stream[T]` Fern *result* surface is shipped end to end; a `stream[T]` flows
+from a host export into Fern source as a colorlessly-collected `T[]`. The
+*parameter* surface (produce side) is started: P1 (checker) merged, P2 mechanics
+pinned + runnable (above), P2 codegen/composer/e2e remaining.
 
 - Channels at the ABI/composer level: **DONE** (see
   `docs/WASI-PREVIEW3-ASYNC-PLAN.md`).
