@@ -129,20 +129,30 @@ func rewriteExprChildren(n Node, fn func(Expr) Expr) {
 			x.Args[i] = rewriteExpr(x.Args[i], fn)
 		}
 	case *Binary:
-		// A composite `==`/`!=` (EqCall) or ordering op (CmpCall)
-		// carries its desugared method call; rewrite inside that (its
-		// operands), not Left/Right (which the replacement discards).
+		// A composite `==`/`!=` (EqCall), ordering op (CmpCall), or
+		// arithmetic op (ArithCall) carries its desugared method call; rewrite
+		// inside that (so a NESTED composite operand like `(a-b)*b` has its
+		// inner `a.sub(b)` swapped in too), not Left/Right (which the
+		// replacement discards).
 		switch {
 		case x.EqCall != nil:
 			rewriteExprChildren(x.EqCall, fn)
 		case x.CmpCall != nil:
 			rewriteExprChildren(x.CmpCall, fn)
+		case x.ArithCall != nil:
+			rewriteExprChildren(x.ArithCall, fn)
 		default:
 			x.Left = rewriteExpr(x.Left, fn)
 			x.Right = rewriteExpr(x.Right, fn)
 		}
 	case *Unary:
-		x.Operand = rewriteExpr(x.Operand, fn)
+		// A composite unary minus (`-v` → `v.neg()`) carries its desugared
+		// call on NegCall; rewrite inside that so a nested operand is swapped.
+		if x.NegCall != nil {
+			rewriteExprChildren(x.NegCall, fn)
+		} else {
+			x.Operand = rewriteExpr(x.Operand, fn)
+		}
 	case *Assign:
 		x.Target = rewriteExpr(x.Target, fn)
 		x.Value = rewriteExpr(x.Value, fn)

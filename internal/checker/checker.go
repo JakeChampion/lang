@@ -5162,12 +5162,33 @@ func (c *checker) compositeOpOverload(n *ast.Binary, lt, rt ast.Type, s *scope) 
 	if lt == nil || !ast.Equal(lt, rt) {
 		return nil, false
 	}
+	opMethod := arithOpMethod[n.Op]
+	// Operator overloading over a trait-bounded TYPE PARAMETER: `a <op> b`
+	// where `a`/`b` have type `T` and `T`'s bound provides the op's trait
+	// method (`+`→`Add.add`, `*`→`Mul.mul`, …) desugars to `a.add(b)` —
+	// resolved through the same deferred trait-bound dispatch as `a.cmp(b)`
+	// for `T: Ord`. This is the #2706 payoff: generic numeric code
+	// (`function sum[T: Num](xs: T[]): T { var acc = …; for x in xs { acc = acc + x } }`)
+	// reads with operators instead of explicit `.add` calls. A type param
+	// WITHOUT the matching arithmetic bound falls through (handled=false) to
+	// the numeric path, which reports the usual E009.
+	if pt, ok := lt.(ast.ParamType); ok {
+		if opMethod == "" {
+			return nil, false
+		}
+		if _, _, found := c.resolveTraitMethodForParam(pt.Name, opMethod); !found {
+			return nil, false
+		}
+		call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: opMethod}, Args: []ast.Expr{n.Right}}
+		rtt := c.checkExpr(call, s)
+		n.ArithCall = call
+		return rtt, true
+	}
 	switch lt.(type) {
 	case ast.StructType, ast.EnumType:
 	default:
 		return nil, false
 	}
-	opMethod := arithOpMethod[n.Op]
 	tn, _ := methodTypeName(lt)
 	if mangled, ok := c.info.Methods[tn+"."+opMethod]; ok && c.methodVisibleHere(mangled) {
 		call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: opMethod}, Args: []ast.Expr{n.Right}}
@@ -9995,6 +10016,19 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				// Propagate polymorphism — `-3.14` should still
 				// be polymorphic so it can settle to f32 / f64.
 				return ft
+			}
+			// Unary minus over a trait-bounded TYPE PARAMETER: `-a` where
+			// `a: T` and `T: Neg` desugars to `a.neg()`, resolved through the
+			// bound (mirroring the binary operator-on-type-param path). See
+			// #2706. A type param without a `Neg` bound falls through to the
+			// numeric path's E009.
+			if pt, ok := t.(ast.ParamType); ok {
+				if _, _, found := c.resolveTraitMethodForParam(pt.Name, "neg"); found {
+					call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Operand, Field: "neg"}, Args: nil}
+					rtt := c.checkExpr(call, s)
+					n.NegCall = call
+					return rtt
+				}
 			}
 			// Composite-type unary minus: `-v` on a struct / enum with a
 			// `neg` method desugars to `v.neg()` — operator overloading,

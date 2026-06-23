@@ -1,0 +1,18 @@
+// NESTED composite operator overloads in a single expression: `(a + b) * (a - b)`
+// where each `+`/`-`/`*` dispatches to V's add/sub/mul. This exercised a latent
+// rewrite bug (#2706) — the inner `a.sub(b)` / `a.add(b)` desugar was not swapped
+// in when it was the receiver of the outer `.mul`, so the inner op ran as scalar
+// arithmetic on the struct pointer and the field read returned garbage. Fixed by
+// recursing the post-check expr rewrite into the Binary/Unary side-channel calls.
+struct V { x: i32 }
+function (a: V) add(b: V): V { return V { x: a.x + b.x }; }
+function (a: V) sub(b: V): V { return V { x: a.x - b.x }; }
+function (a: V) mul(b: V): V { return V { x: a.x * b.x }; }
+function (a: V) neg(): V { return V { x: 0 - a.x }; }
+function main(): i32 {
+    var a: V = V { x: 5 };
+    var b: V = V { x: 3 };
+    var d: V = (a + b) * (a - b);    // (8) * (2) = 16
+    var e: V = -(a - b);             // -(2) = -2
+    return d.x + e.x + 100;          // 16 + (-2) + 100 = 114
+}
