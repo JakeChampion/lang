@@ -600,6 +600,22 @@ So the runnable `future<u32>` vertical is fully specified: a producer (mechanics
 above) + a reader consumer (future.read + the existing await loop), composed and
 run end to end — the next slice.
 
+**`future<u32>` round-trip — DONE, runnable through the Go composer.**
+`component.BuildFutureRoundtripComponent` assembles a consumer that creates a
+`future<u32>`, `future.write`s a value through the writable end, `future.read`s
+it back through the readable end, and re-returns it from its async export `run`;
+`TestWasmP3FutureRoundtrip` runs it under wasmtime → **42** — the future
+counterpart of `TestWasmP3AsyncPendingAwait`, exercising `future.new` /
+`future.write` / `future.read` end to end. It sidesteps the `--invoke`
+can't-print-a-future gotcha by reading the future *inside* the component and
+returning a scalar `u32`; and it confirms the write-before-read path completes
+synchronously (RETURNED — no await loop needed). The memory option is over the
+externalised shared memory (the production path reuses the gMem trampoline). This
+is the future analog of the pending-await composer spike: the next steps are a
+two-component split (a `future<u32>` *export* read by a separate consumer, the
+reader's `future.read` reusing the pending-await loop when the read is STARTED)
+and then wiring `future<T>` through the real wasmbin / Fern surface.
+
 **Also remaining:** `future<T>` / `stream<T>` parameter+result lowering;
 wiring async into the `concurrent { … }` desugar as an alternative to
 the P2 pollable reactor.

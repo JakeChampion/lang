@@ -634,3 +634,54 @@ func BuildPendingAwaitComponent(providerCore, consumerCore, memCore []byte, resu
 	buf = PutExportSectionOneFunc(buf, "run", 1)
 	return buf
 }
+
+// BuildFutureRoundtripComponent assembles a runnable WASI Preview-3 component
+// that exercises the `future<T>` async data channel end to end through the Go
+// composer — the future counterpart of BuildPendingAwaitComponent. The consumer
+// core creates a future (`future.new`, whose i64 packs readable=low32 /
+// writable=high32), stores a value, `future.write`s it through the writable end,
+// `future.read`s it back through the readable end (the write precedes the read in
+// the same task, so the read completes synchronously / RETURNED — no await loop),
+// and `task.return`s the value, lifted async as `run: async func() -> T`. The
+// consumer's memory is externalised into a shared core module so the future
+// read/write `memory` options reference memory 0 without the lower→memory→instance
+// circularity (the production path reuses the gMem trampoline). consumerCore must
+// import ("","tr"/"fnew"/"fwrite"/"fread") and ("mem","m"), and export "run".
+// Proven to return its value under `wasmtime -W
+// component-model-async,component-model-async-stackful`.
+func BuildFutureRoundtripComponent(consumerCore, memCore []byte, resultValtype byte) []byte {
+	buf := PutComponentHeader(nil)
+
+	// Component type 0: the `future<resultValtype>` defined type (referenced by
+	// future.new / future.write / future.read).
+	buf = PutTypeSectionOneDefined(buf, InnerTypeFuture(resultValtype)) // component type 0
+
+	// Externalised consumer memory → core memory 0.
+	buf = PutCoreModuleSection(buf, memCore)                     // core module 0
+	buf = PutCoreInstanceSectionInstantiate(buf, 0)              // core instance 0
+	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 0, "m") // core memory 0
+
+	// Consumer canon glue (core funcs 0..3).
+	buf = PutCanonTaskReturnSingle(buf, resultValtype) // core func 0 (tr)
+	buf = PutCanonFutureNew(buf, 0)                    // core func 1 (fnew; future type 0)
+	buf = PutCanonFutureWrite(buf, 0, 0)               // core func 2 (fwrite over memory 0)
+	buf = PutCanonFutureRead(buf, 0, 0)                // core func 3 (fread over memory 0)
+
+	// Consumer core module 1, instantiated with the canon glue (module "") and the
+	// shared memory (module "mem").
+	buf = PutCoreModuleSection(buf, consumerCore) // core module 1
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "tr", Sort: CoreSortFunc, Idx: 0},
+		{Name: "fnew", Sort: CoreSortFunc, Idx: 1},
+		{Name: "fwrite", Sort: CoreSortFunc, Idx: 2},
+		{Name: "fread", Sort: CoreSortFunc, Idx: 3},
+	}) // core instance 1
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 1, []string{"", "mem"}, []uint32{1, 0}) // core instance 2 (consumer)
+
+	// Lift the consumer's run async under "run" (scalar result T).
+	buf = PutAliasSectionCoreExportFunc(buf, 2, "run")        // core func 4
+	buf = PutTypeSectionOneFunc(buf, nil, nil, resultValtype) // component type 1
+	buf = PutCanonSectionLiftAsync(buf, 4, 1)                 // component func 0
+	buf = PutExportSectionOneFunc(buf, "run", 0)
+	return buf
+}
