@@ -8,11 +8,11 @@ import (
 	"testing"
 )
 
-// readIntIRCases exercise the `read_int()` builtin through the IR path on x86-64
-// and arm64 (no wasm — the wasm runtime has no stdin read, so wasm_eligible
-// rejects read_int modules). read_int lowers to a value IR op that calls each
-// backend's __fern_read_int helper (reused from the AST runtime). The program
-// returns the parsed int as its exit code; stdin supplies the digits.
+// readIntIRCases exercise the `read_int()` builtin through the IR path on x86-64,
+// arm64, and wasm. read_int lowers to a value IR op that calls each backend's
+// __fern_read_int helper; on wasm it reads fd 0 via fd_read into scratch and
+// parses (allocating nothing — no heap runtime needed). The program returns the
+// parsed int as its exit code; stdin supplies the digits.
 var readIntIRCases = []struct {
 	name, src, stdin string
 	want             int
@@ -51,6 +51,63 @@ func TestSelfHostReadIntIRX86_64(t *testing.T) {
 			_ = cmd.Run()
 			if code := cmd.ProcessState.ExitCode(); code != tc.want {
 				t.Errorf("%s: exit %d, want %d", tc.name, code, tc.want)
+			}
+		})
+	}
+}
+
+// TestSelfHostReadIntIRWasm runs the same cases through the wasm IR backend
+// under wasmtime, piping stdin in. read_int now lowers on the wasm IR path:
+// wasm_ir emits `call $__fern_read_int` and wasm_ir_run pulls in the fd_read
+// import + the read_int_func helper (which reads stdin into the 16-byte scratch
+// and parses, needing no heap runtime).
+func TestSelfHostReadIntIRWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host read_int wasm IR e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	for _, name := range []string{
+		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
+		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm.fern", "wasm_ir.fern", "wasm_ir_run.fern",
+	} {
+		s, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), s, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	for _, tc := range readIntIRCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(driverBin, "-ir")
+			} else {
+				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+			}
+			cmd.Stdin = bytes.NewReader([]byte(tc.src))
+			wat, err := cmd.Output()
+			if err != nil || len(wat) == 0 {
+				t.Fatalf("driver failed for %q: %v", tc.src, err)
+			}
+			if !bytes.Contains(wat, []byte("call $__fern_read_int")) {
+				t.Fatalf("%s: no `call $__fern_read_int` — did not lower through the wasm IR path", tc.name)
+			}
+			watFile := filepath.Join(dir, "ri_"+tc.name+".wat")
+			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
+				t.Fatalf("write wat: %v", err)
+			}
+			run := exec.Command("wasmtime", "run", watFile)
+			run.Stdin = bytes.NewReader([]byte(tc.stdin))
+			_ = run.Run()
+			if run.ProcessState == nil || !run.ProcessState.Exited() {
+				t.Fatalf("%s: wasmtime did not exit normally:\n%s", tc.name, wat)
+			}
+			if code := run.ProcessState.ExitCode(); code != tc.want {
+				t.Errorf("read_int wasm IR %s: exit %d, want %d", tc.name, code, tc.want)
 			}
 		})
 	}

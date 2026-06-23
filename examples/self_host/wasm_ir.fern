@@ -568,14 +568,15 @@ pub function module_uses_i64_divrem(mod: parser.Module): boolean {
 // funcref table (fn_support_section), the register backends through the
 // function's code address.
 pub function wasm_eligible(mod: parser.Module): boolean {
-    // read_int / read_line read stdin (no wasm IR runtime yet — they stay on the
-    // wasm AST path, where they are likewise unsupported), while x86 / arm64
-    // lower them via the IR path. args() / read_file / write_file DO lower on the
-    // wasm IR path now: wasm_ir emits `call $__fern_<op>` and wasm_ir_run pulls in
-    // the matching wasi imports + helpers (the same runtime the AST path uses)
-    // when the module uses them. args() reads argv (wasmtime supplies it,
-    // argv[0] = program name); read_file / write_file open paths under preopen
-    // fd 3 (run with `--dir`), returning Result[string, IoError] / Option[IoError].
+    // read_line / read_int / args / read_file / write_file all lower on the wasm
+    // IR path now: wasm_ir emits `call $__fern_<op>` and wasm_ir_run pulls in the
+    // matching wasi imports + helpers when the module uses them. read_line /
+    // read_int read stdin (fd 0) via fd_read — read_line boxes the line (newline
+    // stripped), read_int parses a leading integer; args() reads argv (wasmtime
+    // supplies it, argv[0] = program name); read_file / write_file open paths
+    // under preopen fd 3 (run with `--dir`), returning Result[string, IoError] /
+    // Option[IoError]. read_chunk / reader_close (the streaming reader API) still
+    // have no wasm IR runtime, so a reader module stays on the wasm AST path.
     // The clock builtins (monotonic_ns / now_unix_ms / now_ns) DO lower on the
     // wasm IR path now: wasm_ir emits `call $__fern_<clock>` for each op and
     // wasm_ir_run pulls in the preview1 wasi clock_time_get import + the
@@ -592,8 +593,6 @@ pub function wasm_eligible(mod: parser.Module): boolean {
     // have no wasm IR runtime yet — a strbuf module stays on the wasm AST path
     // (where the legacy emitter handles it), while x86 / arm64 lower it via the IR.
     return asm_ir.eligible_core(mod)
-        && !module_emits_op(mod, "read_int")
-        && !module_emits_op(mod, "read_line")
         && !module_emits_op(mod, "read_chunk")
         && !module_emits_op(mod, "reader_close")
         && !module_emits_op(mod, "sleep_ms")
@@ -1105,6 +1104,17 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind == "now_ns") {
             // 0-arg i64 clock reading -> raw realtime nanoseconds.
             out = out + "    call $__fern_now_ns\n";
+        } else if (o.kind == "read_line") {
+            // 0-arg -> read one line of stdin (fd 0), push a fresh string block
+            // (the line without its trailing newline). The helper
+            // ($__fern_read_line, result i32) is emitted caller-side in
+            // wasm_ir_run with the fd_read import + the heap runtime.
+            out = out + "    call $__fern_read_line\n";
+        } else if (o.kind == "read_int") {
+            // 0-arg -> parse a leading integer from stdin (fd 0), push it (i32).
+            // The helper ($__fern_read_int) reads into scratch and allocates
+            // nothing; emitted caller-side with the fd_read import.
+            out = out + "    call $__fern_read_int\n";
         } else if (o.kind == "read_file") {
             // stack: path strblock ptr -> read the whole named file, push a
             // Result[string, IoError] box ptr. The helper ($__fern_read_file,
