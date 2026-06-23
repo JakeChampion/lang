@@ -119,12 +119,35 @@ lazy-iteration story can layer on top once an Iterator protocol exists.
      (`stream.drop-writable`); the consumer's next `stream.read` then completes
      with a CLOSED/DROPPED state (low nibble) instead of a data count. The loop
      terminates on that state, then `stream.drop-readable`s its end.
-   - Status packing mirrors the async-lower status (low nibble = state/event,
-     high bits = count/subtask) — exact CLOSED/COMPLETED nibble values to be
-     pinned by the same dump-oracle approach when the loop is built.
-   - Because the read blocks-until-awaited, deriving the status is entangled with
-     the await loop — i.e. building the collect loop *is* the derivation; there
-     is no shortcut single-read observation (a second un-awaited read traps Busy).
+   - **Status packing — PINNED** (runnable spike, wasmtime 37): a not-ready read
+     returns the **BLOCKED sentinel `0xffffffff`** (the count is NOT in the read
+     return). The completion arrives via the event: `waitable.join(rd, ws)` (the
+     **readable handle itself** is the waitable — there is no subtask handle) →
+     `waitable-set.wait(ws, evtptr)` returns event-code **`2` = STREAM_READ** and
+     writes `[waitable, result]` at `evtptr` (`evtptr+0` = the readable handle,
+     `evtptr+4` = the **result**). The result packs `(count << 4) | code` with
+     **`code`: `0` = COMPLETED (more may come), `1` = CLOSED (EOF)**, `2` =
+     CANCELLED; `count = result >> 4`. A synchronously-ready read returns that
+     same `(count<<4)|code` directly (when it is not `0xffffffff`).
+   - **Collect loop (pinned shape):** `ws = waitable-set.new(); waitable.join(rd,
+     ws); loop { rs = stream.read(rd, buf, cap); if rs == 0xffffffff { wait(ws,
+     evt); rs = load(evt+4) }; count = rs>>4; copy count elems buf→array;
+     if (rs & 0xf) != 0 break }` then **`stream.drop-readable(rd)` BEFORE
+     `waitable-set.drop(ws)`** (dropping the set while the readable is still a
+     child traps `resource has children`).
+   - Because the read blocks-until-awaited, deriving the status was entangled with
+     the await loop — there is no shortcut single-read observation (a second
+     un-awaited read on the in-flight handle traps `got Busy`).
+   - **Producer (EOF) side is symmetric and also await-driven** (spike finding):
+     a producer cannot `stream.drop-writable` while a `stream.write` is still
+     in-flight — it traps `cannot drop busy stream`. With no reader yet, the
+     write BLOCKs, so the producer must AWAIT its write (`write` → `0xffffffff`
+     → `join(wr, ws)` + `wait` → completes when the consumer reads) and only then
+     `stream.drop-writable(wr)` to signal EOF. So the runnable stream vertical is
+     two-sided: the consumer collect-loop above + a producer that write-awaits
+     then drops. For the e2e (slice 4), the bundled producer scaffolding gets
+     this write-await; the consumer collect-wrapper (slice 3, the wasmbin
+     deliverable) is the read side.
 4. **e2e.** Real Fern `@import async function body(): stream[u8]` +
    `var b: u8[] = body();` collect, composed against the stream producer, run
    under wasmtime → the collected bytes (mirrors `TestWasmP3StreamExportImport`,
