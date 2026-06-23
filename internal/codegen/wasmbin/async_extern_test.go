@@ -263,18 +263,65 @@ func TestScanExternImportsAsyncArrayParam(t *testing.T) {
 	}
 }
 
-// TestScanExternImportsAsyncRejectsMultiMemParam pins the remaining slice
-// boundary: an async import with MORE THAN ONE mem param (here two arrays) is
-// still rejected with a clear error — only a single string/array param is
-// supported so far.
-func TestScanExternImportsAsyncRejectsMultiMemParam(t *testing.T) {
+// TestScanExternImportsAsyncMixedMultiParam covers the multi-arg edge-handler
+// shape — `@import async function fetch(url: string, timeout: i32): i32`. The raw
+// import flattens to the canonical `(ptr, len, i32, retptr) -> i32 status` and
+// the wrapper takes 3 Fern slots (string data,len + the scalar). A string in the
+// mix pulls in the string-normalisation helpers.
+func TestScanExternImportsAsyncMixedMultiParam(t *testing.T) {
+	ext := &ir.ExternFunc{
+		Name:    "fetch",
+		Iface:   "test:dep/d",
+		WITName: "fetch",
+		Params: []ast.Param{
+			{Name: "url", Type: ast.StringType{}},
+			{Name: "timeout", Type: i32Type()},
+		},
+		ReturnType: i32Type(),
+		Async:      true,
+	}
+	var in importNeeds
+	var helpers runtimeNeeds
+	specs, wrappers, err := scanExternImports(progCallingExtern("fetch", ext), &in, &helpers)
+	if err != nil {
+		t.Fatalf("scanExternImports: %v", err)
+	}
+	raw, ok := specs["fetch$import"]
+	if !ok {
+		t.Fatalf("missing raw async import spec %q; specs=%v", "fetch$import", specs)
+	}
+	want := []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32} // ptr,len,timeout,retptr
+	if len(raw.params) != len(want) {
+		t.Errorf("raw import params = %v, want %v (ptr, len, timeout, retptr)", raw.params, want)
+	}
+	if len(raw.results) != 1 || raw.results[0] != encode.ValtypeI32 {
+		t.Errorf("raw import results = %v, want [i32] (status)", raw.results)
+	}
+	w, ok := wrappers["fetch"]
+	if !ok {
+		t.Fatalf("missing wrapper for %q", "fetch")
+	}
+	if len(w.params) != 3 {
+		t.Errorf("wrapper params = %v, want 3 slots (string data,len + scalar)", w.params)
+	}
+	for _, h := range []string{"fetch", "__fern_alloc", "__fern_str_len", "__fern_str_byte"} {
+		if !helpers.set[h] {
+			t.Errorf("helper %q not pulled in for the mixed async multi-param import", h)
+		}
+	}
+}
+
+// TestScanExternImportsAsyncRejectsRecordParam pins the remaining slice boundary:
+// an async import whose param is a record/tuple (a composite needing field
+// marshalling) is still rejected with a clear error — only scalar / string /
+// numeric-array async params are supported so far.
+func TestScanExternImportsAsyncRejectsRecordParam(t *testing.T) {
 	ext := &ir.ExternFunc{
 		Name:    "dep",
 		Iface:   "test:dep/d",
 		WITName: "compute",
 		Params: []ast.Param{
-			{Name: "xs", Type: ast.ArrayType{Elem: ast.NumberType{Width: 8}}},
-			{Name: "ys", Type: ast.ArrayType{Elem: ast.NumberType{Width: 8}}},
+			{Name: "p", Type: ast.TupleType{Elems: []ast.Type{i32Type(), i32Type()}}},
 		},
 		ReturnType: i32Type(),
 		Async:      true,
@@ -282,6 +329,6 @@ func TestScanExternImportsAsyncRejectsMultiMemParam(t *testing.T) {
 	var in importNeeds
 	var helpers runtimeNeeds
 	if _, _, err := scanExternImports(progCallingExtern("dep", ext), &in, &helpers); err == nil {
-		t.Fatalf("expected an error for an async extern with multiple mem parameters")
+		t.Fatalf("expected an error for an async extern with a record/tuple parameter")
 	}
 }
