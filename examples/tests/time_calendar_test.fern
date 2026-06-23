@@ -1,0 +1,153 @@
+import "std/test";
+import "std/time" as time;
+// examples/tests/time_calendar_test.fern — pure-Fern coverage of the
+// std/time *calendar* helpers: the deterministic, platform-free core
+// (no instant_now / wall-clock reads) — is_leap_year, days_in_month,
+// Date.is_valid / weekday / day_of_year / days_since / add_days /
+// format_iso. These are pure year/month/day arithmetic with primitive
+// or string results, so they lower the same way the path / string
+// suites do. Driven end-to-end through the std/test runner (TAP-13),
+// the migration-shaped companion to the Go-side time tests. Oracle
+// values cross-checked against `fern -interp`.
+
+// --- is_leap_year: divisible-by-4 except centuries, unless by 400 ---
+function test_leap_400(): test.TestOutcome {
+    return test.assert_true(time.is_leap_year(2000));
+}
+function test_leap_century_not(): test.TestOutcome {
+    return test.assert_false(time.is_leap_year(1900));
+}
+function test_leap_div4(): test.TestOutcome {
+    return test.assert_true(time.is_leap_year(2024));
+}
+function test_leap_common(): test.TestOutcome {
+    return test.assert_false(time.is_leap_year(2023));
+}
+
+// --- days_in_month: February tracks the leap rule ---
+function test_dim_feb_leap(): test.TestOutcome {
+    return test.assert_eq(time.days_in_month(2024, 2), 29);
+}
+function test_dim_feb_common(): test.TestOutcome {
+    return test.assert_eq(time.days_in_month(2023, 2), 28);
+}
+function test_dim_april(): test.TestOutcome {
+    return test.assert_eq(time.days_in_month(2024, 4), 30);
+}
+function test_dim_july(): test.TestOutcome {
+    return test.assert_eq(time.days_in_month(2024, 7), 31);
+}
+
+// --- Date.is_valid: range-checks day against the month length ---
+function test_valid_leap_day(): test.TestOutcome {
+    var d = time.date_make(2024, 2, 29);
+    return test.assert_true(d.is_valid());
+}
+function test_invalid_leap_day(): test.TestOutcome {
+    var d = time.date_make(2023, 2, 29);
+    return test.assert_false(d.is_valid());
+}
+function test_invalid_month_high(): test.TestOutcome {
+    var d = time.date_make(2024, 13, 1);
+    return test.assert_false(d.is_valid());
+}
+function test_invalid_month_zero(): test.TestOutcome {
+    var d = time.date_make(2024, 0, 1);
+    return test.assert_false(d.is_valid());
+}
+function test_invalid_day_overflow(): test.TestOutcome {
+    var d = time.date_make(2024, 4, 31);
+    return test.assert_false(d.is_valid());
+}
+
+// --- Date.weekday: 0 = Sunday .. 6 = Saturday ---
+function test_weekday_sat(): test.TestOutcome {
+    var d = time.date_make(2000, 1, 1);
+    return test.assert_eq(d.weekday(), 6);
+}
+function test_weekday_mon(): test.TestOutcome {
+    var d = time.date_make(2024, 1, 1);
+    return test.assert_eq(d.weekday(), 1);
+}
+function test_weekday_thu(): test.TestOutcome {
+    var d = time.date_make(2024, 2, 29);
+    return test.assert_eq(d.weekday(), 4);
+}
+
+// --- Date.day_of_year: 1-based, leap-aware ---
+function test_doy_leap_feb29(): test.TestOutcome {
+    var d = time.date_make(2024, 2, 29);
+    return test.assert_eq(d.day_of_year(), 60);
+}
+function test_doy_common_end(): test.TestOutcome {
+    var d = time.date_make(2023, 12, 31);
+    return test.assert_eq(d.day_of_year(), 365);
+}
+function test_doy_leap_end(): test.TestOutcome {
+    var d = time.date_make(2024, 12, 31);
+    return test.assert_eq(d.day_of_year(), 366);
+}
+
+// --- Date.days_since: signed day delta between two dates ---
+function test_days_since_one(): test.TestOutcome {
+    var a = time.date_make(2024, 3, 1);
+    var b = time.date_make(2024, 2, 29);
+    return test.assert_eq(a.days_since(b), 1);
+}
+function test_days_since_leap_year(): test.TestOutcome {
+    var a = time.date_make(2024, 1, 1);
+    var b = time.date_make(2023, 1, 1);
+    return test.assert_eq(a.days_since(b), 365);
+}
+
+// --- Date.add_days: normalises across month / year boundaries ---
+function test_add_days_into_march(): test.TestOutcome {
+    var d = time.date_make(2024, 2, 29);
+    var r = d.add_days(2);
+    return test.assert_eq(r.month * 100 + r.day, 302);
+}
+function test_add_days_year_rollover(): test.TestOutcome {
+    var d = time.date_make(2023, 12, 31);
+    var r = d.add_days(1);
+    return test.assert_eq(r.year * 10000 + r.month * 100 + r.day, 20240101);
+}
+
+// --- Date.format_iso: zero-padded YYYY-MM-DD ---
+function test_iso_basic(): test.TestOutcome {
+    var d = time.date_make(2024, 2, 29);
+    return test.assert_eq(d.format_iso(), "2024-02-29");
+}
+function test_iso_zero_pad(): test.TestOutcome {
+    var d = time.date_make(2024, 3, 7);
+    return test.assert_eq(d.format_iso(), "2024-03-07");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/time calendar");
+    r = r.it("is_leap_year div-by-400",     test_leap_400());
+    r = r.it("is_leap_year century-not",    test_leap_century_not());
+    r = r.it("is_leap_year div-by-4",       test_leap_div4());
+    r = r.it("is_leap_year common",         test_leap_common());
+    r = r.it("days_in_month feb leap",      test_dim_feb_leap());
+    r = r.it("days_in_month feb common",    test_dim_feb_common());
+    r = r.it("days_in_month april",         test_dim_april());
+    r = r.it("days_in_month july",          test_dim_july());
+    r = r.it("is_valid leap day",           test_valid_leap_day());
+    r = r.it("is_valid rejects feb29 common", test_invalid_leap_day());
+    r = r.it("is_valid rejects month 13",   test_invalid_month_high());
+    r = r.it("is_valid rejects month 0",    test_invalid_month_zero());
+    r = r.it("is_valid rejects april 31",   test_invalid_day_overflow());
+    r = r.it("weekday saturday",            test_weekday_sat());
+    r = r.it("weekday monday",              test_weekday_mon());
+    r = r.it("weekday thursday",            test_weekday_thu());
+    r = r.it("day_of_year leap feb29",      test_doy_leap_feb29());
+    r = r.it("day_of_year common year-end", test_doy_common_end());
+    r = r.it("day_of_year leap year-end",   test_doy_leap_end());
+    r = r.it("days_since one day",          test_days_since_one());
+    r = r.it("days_since full year",        test_days_since_leap_year());
+    r = r.it("add_days into march",         test_add_days_into_march());
+    r = r.it("add_days year rollover",      test_add_days_year_rollover());
+    r = r.it("format_iso basic",            test_iso_basic());
+    r = r.it("format_iso zero-pad",         test_iso_zero_pad());
+    return r.finish();
+}

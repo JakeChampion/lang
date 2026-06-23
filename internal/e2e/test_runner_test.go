@@ -223,6 +223,25 @@ func TestRunnerPathExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/time_calendar_test.fern` covers the std/time calendar
+// core — the deterministic, platform-free helpers (no wall-clock reads):
+// is_leap_year / days_in_month / Date.is_valid / weekday / day_of_year /
+// days_since / add_days / format_iso, incl. leap-year, month-length,
+// weekday, year-boundary and ISO zero-pad edges. Passing suite → exit 0.
+func TestRunnerTimeCalendarExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/time_calendar_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/time calendar", "# pass 25", "# fail 0", "1..25"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/hex_test.fern` covers std/hex's lowercase encode /
 // decode — round-trip fidelity, empty input, case-insensitive decode,
 // and the lenient decode termination (first non-hex char or odd-length
