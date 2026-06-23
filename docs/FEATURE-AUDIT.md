@@ -286,6 +286,40 @@ add/sub/mul, shl-overflow-mask, shl-to-bit31, logical-shr, rotr/rotl +
 roundtrip) — **interp-gated** via `TestRunnerU32ArithExamplePasses`, deliberately
 off the differential gate; it flips onto the gate (and unblocks `crypto_test`)
 once u32 arithmetic truncates to 32 bits.
+### 2026-06-23 — self-host IR: discarded fresh-ret-CALL local reclaim (Perceus, #3457 follow-up)
+
+`reclaimable_names_of` freed only fresh struct-LITERAL locals (`var x = S{..}`)
+that never escape. A struct local bound from a fresh-struct-returning CALL
+(`var r = mk()`) that is then READ (a field copy, `r.ops`) and goes dead without
+escaping was left to LEAK. This widens the reclaim to credit those discarded
+fresh-ret-call locals (non-reassigned — a reassigned one is the snapshot-LOCAL
+path's job), deep-dropped via `__struct_drop_<T>` at scope exit.
+
+Soundness is the subtle part. The first cut reused the existing
+`fresh_struct_ret_fns` guard (every return a fresh leak-safe struct literal),
+trusting the callee's struct-lit Perceus dup (alias-inc) to keep aliased fields
+rc-counted. That is **unsound**: a returned `struct[]` / `enum[]` field's
+alias-inc is on the OUTER buffer pointer only — it does not guard the INNER
+element buffers, so a discarded-local deep-drop double-frees them. Caught as a
+`TestSelfHostModloadPerModuleWholeCompilerX86_64` **segfault** — note the
+byte-identical fixpoint *passes* through this bug (it only compares bytes; the
+per-module test RUNS the self-compiled compiler, which is what surfaces the UAF).
+
+The shipped guard is the STRICT subset `return_fresh_struct_ret_fns_of`: a
+function qualifies only if every return is a struct literal (no base) whose
+every array-typed field is a FRESH array LITERAL of a SCALAR or STRING element
+type — so the returned box is unambiguously the sole owner of every field buffer
+(no alias, no shared inner element pointers), and the caller's discarded-local
+deep-drop is balanced. Threaded through `lower_func` + every backend like
+`fresh_struct_ret_fns`. Conservative (struct[]/enum[]-field returns still leak),
+but the analysis + mechanism is the foundation for widening once the deep-drop
+element-aliasing guard lands.
+
+Coverage: `fresh-ret-call-discarded` + `-forward` cases in `TestSelfHostAsmIRPath`
+(differential IR-vs-AST exit-code equivalence; an asm probe confirms the
+`call __fn___struct_drop_Box` actually fires on the discarded local), green on
+the x86-64 fixpoint + per-module whole-compiler self-compile + RC correctness
+corpus (x86-64 + wasm).
 
 ### 2026-06-23 — std/regex array-payload enums (#3720) now lower on the IR path
 

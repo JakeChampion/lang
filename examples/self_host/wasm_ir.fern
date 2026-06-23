@@ -572,11 +572,13 @@ pub function wasm_eligible(mod: parser.Module): boolean {
     // the process argv — none supported by the wasm runtime here, so such modules
     // stay on the AST path on wasm (where they are likewise unsupported), while
     // x86 / arm64 lower them via the IR path.
-    // The clock builtins (monotonic_ns / now_unix_ms) are not yet lowered on the
-    // wasm IR path either (they need a WASI clock import rather than a syscall),
-    // so a clock module also stays on the wasm AST path; x86 / arm64 lower it
-    // via the IR. sleep_ms likewise has no wasm runtime (a WASI poll-based sleep
-    // is the deferred #2843 item), so a sleep module stays off the wasm IR path.
+    // The clock builtins (monotonic_ns / now_unix_ms / now_ns) DO lower on the
+    // wasm IR path now: wasm_ir emits `call $__fern_<clock>` for each op and
+    // wasm_ir_run pulls in the preview1 wasi clock_time_get import + the
+    // clock_funcs helpers (the same runtime the AST path uses) when the module
+    // calls any clock builtin (#3893 follow-up). sleep_ms still has no wasm
+    // runtime (a WASI poll-based sleep is the deferred #2843 item), so a sleep
+    // module stays off the wasm IR path.
     // `m.without(k)` (map_delete) now lowers via the IR: wasm's
     // $__fern_map_delete returns a [map, existed] tuple box (the wasm tuple ABI,
     // element i at offset i*4) matching the register backends, so the IR
@@ -593,9 +595,6 @@ pub function wasm_eligible(mod: parser.Module): boolean {
         && !module_emits_op(mod, "read_chunk")
         && !module_emits_op(mod, "reader_close")
         && !module_emits_op(mod, "args")
-        && !module_emits_op(mod, "monotonic_ns")
-        && !module_emits_op(mod, "now_unix_ms")
-        && !module_emits_op(mod, "now_ns")
         && !module_emits_op(mod, "sleep_ms")
         && !module_emits_op(mod, "strbuf_reset")
         && !module_emits_op(mod, "strbuf_append")
@@ -691,7 +690,7 @@ pub function fn_support_section(mod: parser.Module): string {
 // locals, plus TWO scratch locals (indices n_locals, n_locals+1) the array ops
 // use to hold a base pointer / popped element while reordering the wasm stack.
 function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: parser.StructDecl[], arr_ret: string[], str_ret: string[], strarr_ret: string[], opt_ret: string[], i64_ret: string[], tuple_ret: string[], struct_ret: string[], map_ret: string[], f64_ret: string[], f64arr_ret: string[], i64arr_ret: string[], fn_table: string[], fn_param_sigs: string[], closure_fns: string[], funcs: parser.FuncDecl[], borrowable_params: string[], consume_safe_params: string[]): string {
-    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret, structs, str_ret, strarr_ret, irlower.arr_method_fns_of(funcs), opt_ret, i64_ret, tuple_ret, struct_ret, map_ret, f64_ret, f64arr_ret, i64arr_ret, fn_param_sigs, closure_fns, irlower.const_fns_of(funcs), borrowable_params, irlower.fn_names_of(funcs), irlower.fresh_struct_ret_fns_of(funcs, structs), consume_safe_params);
+    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret, structs, str_ret, strarr_ret, irlower.arr_method_fns_of(funcs), opt_ret, i64_ret, tuple_ret, struct_ret, map_ret, f64_ret, f64arr_ret, i64arr_ret, fn_param_sigs, closure_fns, irlower.const_fns_of(funcs), borrowable_params, irlower.fn_names_of(funcs), irlower.fresh_struct_ret_fns_of(funcs, structs), consume_safe_params, irlower.return_fresh_struct_ret_fns_of(funcs, structs));
     var arrtmp: i32 = r.n_locals;
     var eltmp: i32 = r.n_locals + 1;
     // f64tmp: an f64-typed scratch local for reordering 64-bit struct field
@@ -1093,6 +1092,18 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // stack: strblock ptr -> write its bytes to stderr (no newline). The
             // helper returns void, so push a dummy i32 for the statement-level drop.
             out = out + "    call $__fern_eprint_str\n    i32.const 0\n";
+        } else if (o.kind == "monotonic_ns") {
+            // 0-arg i64 clock reading -> push the raw monotonic nanosecond
+            // count. The helper ($__fern_monotonic_ns, result i64) wraps the
+            // wasi clock_time_get import; emitted caller-side in wasm_ir_run
+            // when the module uses any clock builtin (module_uses_clocks).
+            out = out + "    call $__fern_monotonic_ns\n";
+        } else if (o.kind == "now_unix_ms") {
+            // 0-arg i64 clock reading -> realtime nanoseconds / 1_000_000.
+            out = out + "    call $__fern_now_unix_ms\n";
+        } else if (o.kind == "now_ns") {
+            // 0-arg i64 clock reading -> raw realtime nanoseconds.
+            out = out + "    call $__fern_now_ns\n";
         } else if (o.kind == "exit") {
             // stack: n -> proc_exit(n) (already imported for _start). Never returns;
             // push a dummy i32 for the statement-level drop.

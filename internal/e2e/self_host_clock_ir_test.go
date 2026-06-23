@@ -71,6 +71,66 @@ func TestSelfHostClockIRX86_64(t *testing.T) {
 	}
 }
 
+// TestSelfHostClockIRWasm runs the same cases through the wasm IR backend under
+// wasmtime. Each clock op now emits `call $__fern_<clock>` (wasm_ir), and
+// wasm_ir_run pulls in the preview1 wasi clock_time_get import + the clock_funcs
+// helpers (the same runtime the wasm AST path uses) when the module reads any
+// clock — so a timing module is wasm-IR-eligible instead of bailing to the AST
+// emitter. The non-decreasing-clock contract again gives exit 7.
+func TestSelfHostClockIRWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host clock wasm IR e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	for _, name := range []string{
+		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
+		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm.fern", "wasm_ir.fern", "wasm_ir_run.fern",
+	} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+
+	for _, tc := range clockIRCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(driverBin, "-ir")
+			} else {
+				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+			}
+			cmd.Stdin = bytes.NewReader([]byte(tc.src))
+			wat, err := cmd.Output()
+			if err != nil || len(wat) == 0 {
+				t.Fatalf("driver failed for %q: %v", tc.src, err)
+			}
+			// IR routing: the clock op must lower to `call $__fern_<clock>`
+			// (wasm_ir's op arm), not bail to the AST emitter.
+			if !bytes.Contains(wat, []byte("call $"+tc.helper)) {
+				t.Fatalf("%s: emitted wat has no `call $%s` — clock builtin did not lower through the wasm IR path", tc.name, tc.helper)
+			}
+			watFile := filepath.Join(dir, "clk_"+tc.name+".wat")
+			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
+				t.Fatalf("write wat: %v", err)
+			}
+			runc := exec.Command("wasmtime", "run", watFile)
+			_ = runc.Run()
+			if runc.ProcessState == nil || !runc.ProcessState.Exited() {
+				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
+			}
+			if code := runc.ProcessState.ExitCode(); code != 7 {
+				t.Errorf("clock wasm IR %q: exit %d, want 7", tc.name, code)
+			}
+		})
+	}
+}
+
 // TestSelfHostClockIRArm64 runs the same cases through the arm64 IR backend
 // under qemu (CI-gated). The arm64 op handler emits `bl __fern_<clock>`, whose
 // helper asm_arm64.emit_runtime already provides unconditionally (shared with

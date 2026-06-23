@@ -709,6 +709,17 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// it is an RC hazard (deferred to the Perceus self-host port, #3003). The
 		// AST emitter handles it, so the differential still matches.
 		{"struct-i32arr-field-forin", `struct R { nums: i32[] } function main(): i32 { var r = R { nums: [3, 4] }; var n = 0; for v in r.nums { n = n + v; } return n; }`},
+		// Discarded fresh-ret-CALL local (#3457 follow-up): `var r = mk()` where mk
+		// is fresh-struct-returning (Box is leak-safe, fields are properly rc-
+		// counted by mk's struct-lit), r is READ (field copies) then goes dead
+		// without escaping — so reclaimable_names_of now credits it and the scope-
+		// end sweep deep-drops it (__struct_drop_Box). Must run correctly on BOTH
+		// paths (the freed buffers are sole-owned, never a caller alias).
+		{"fresh-ret-call-discarded", `struct Box { ops: i32[] } function mk(): Box { return Box { ops: [1, 2, 3] }; } function use_it(): i32 { var r: Box = mk(); var a = r.ops[0]; var b = r.ops[1]; var c = r.ops[2]; return a + b + c; } function main(): i32 { return use_it(); }`},
+		// Same, but the discarded local's field is forwarded into a fresh builder
+		// (the lower_func-style `s = s.append_all(r.ops)`) then r dies — the field
+		// read is a borrow, so r stays reclaimable.
+		{"fresh-ret-call-discarded-forward", `struct Box { ops: i32[] } function mk(): Box { return Box { ops: [5, 6, 7] }; } function sum(xs: i32[]): i32 { var s = 0; var i = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; } function use_it(): i32 { var r: Box = mk(); return sum(r.ops); } function main(): i32 { return use_it(); }`},
 		{"tuple-str-i32-dotn", `function main(): i32 { var t = ("hello", 7); return t.0.len() + t.1; }`},
 		{"tuple-str-i32-destructure", `function main(): i32 { var (a, b) = ("world", 3); return a.len() + b; }`},
 		{"tuple-struct-dotn", `struct P { x: i32, y: i32 } function main(): i32 { var t = (P { x: 4, y: 5 }, 2); return t.0.x * t.0.y + t.1; }`},

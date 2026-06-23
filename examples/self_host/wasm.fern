@@ -6246,7 +6246,7 @@ function clock_imports_p2(has_wall: boolean, has_mono: boolean): string {
 // reuse the 8-byte scratch at addr 16 (write-then-load, no concurrent
 // use). now_unix_ms = realtime ns / 1_000_000; monotonic_ns = the raw
 // monotonic clock; now_ns = the raw realtime clock.
-function clock_funcs(): string {
+pub function clock_funcs(): string {
     var o: string = "";
     o = o + "  (func $__fern_now_ns (result i64)\n";
     o = o + "    (drop (call $clock_time_get (i32.const 0) (i64.const 1000) (i32.const 16)))\n";
