@@ -538,6 +538,7 @@ func main() {
 	componentWrap := flag.Bool("component-wrap", false, "with -target wasm-bin: wrap the core module as a self-contained preview-2 component via internal/wasm/component (no wasm-tools shell-out, no preview-1 adapter). Lifts main() as a component-level u32-returning export. Supports any mix of the migrated preview-2 imports; unrecognised imports surface a clear error.")
 	componentWrapCli := flag.Bool("component-wrap-cli", false, "like -component-wrap but emits the wasi:cli/run@0.2.0 export shape so the produced component runs under plain `wasmtime run prog.wasm` (no --invoke). main()'s return value lowers to result<_, _>: 0 = ok, non-zero = err. void main is supported (auto-wrapped to return 0). Same WASI coverage as -component-wrap.")
 	asyncExport := flag.Bool("async-export", false, "with -target wasm-bin: wrap the core as a WASI Preview-3 component-model-async component exporting `run: async func() -> u32` (lifted from main, which must return i32). The result is delivered via `canon task.return`. Run with `wasmtime run -W component-model-async,component-model-async-stackful --invoke 'run()'`. See docs/WASI-PREVIEW3-ASYNC-PLAN.md.")
+	asyncProvider := flag.String("async-provider", "", "with -target wasm-bin and an `@import async` (WASI Preview-3) program: PATH to a pre-built provider *component* (.wasm) that exports the matching async function, BUNDLED so the result is a single self-contained runnable component (no separate host needed). MVP: the program must have exactly one async `@import`, a no-parameter scalar-result function (e.g. `@import(\"iface\",\"name\") async function dep(): i32;`), and the provider must export `name`. See docs/WASI-PREVIEW3-ASYNC-PLAN.md.")
 	doFmt := flag.Bool("fmt", false, "format the source file and write to stdout (use -w to write back in place, -d to print a diff)")
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite the input file with the formatted output")
 	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between the file and its formatted form; exits 1 when they differ")
@@ -678,7 +679,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "-async-export is mutually exclusive with -component-wrap / -component-wrap-cli")
 		os.Exit(1)
 	}
-	code, err := run(srcPath, *out, *target, *cc, *runIt, *native, *qemu, *componentWrap, *componentWrapCli, *asyncExport, *shared, *export, progArgs)
+	code, err := run(srcPath, *out, *target, *cc, *runIt, *native, *qemu, *componentWrap, *componentWrapCli, *asyncExport, *asyncProvider, *shared, *export, progArgs)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -907,7 +908,7 @@ func runCheck(srcPath string) error {
 // run drives the full pipeline. The returned int is the exit code that
 // the fern process itself should exit with: 0 in compile-only mode, or
 // the program's own exit code under --run.
-func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, componentWrap, componentWrapCli, asyncExport, shared bool, export string, progArgs []string) (int, error) {
+func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, componentWrap, componentWrapCli, asyncExport bool, asyncProvider string, shared bool, export string, progArgs []string) (int, error) {
 	e, err := loadEntry(srcPath)
 	if err != nil {
 		return 1, err
@@ -981,7 +982,9 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 		// the `async` canonical option. The source fn must return i32.
 		asyncSrc, asyncExportNm := "", ""
 		for _, fn := range prog.Funcs {
-			if fn.Async {
+			// Pick the async function WITH a body to lift — never an `@import async`
+			// (body-less) declaration, which is a colorless import, not the export.
+			if fn.Async && fn.ImportIface == "" {
 				asyncSrc, asyncExportNm = fn.Name, fn.Name
 				break
 			}
@@ -1008,6 +1011,44 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 					rvt = asyncResultCValtype(fn.ReturnType)
 					break
 				}
+			}
+			// -async-provider: BUNDLE a bring-your-own provider component so the
+			// program's single async `@import` is satisfied in-component, yielding
+			// one self-contained runnable artifact (rather than a component with an
+			// unresolved import for a separate host to satisfy). See
+			// docs/WASI-PREVIEW3-ASYNC-PLAN.md. MVP: exactly one no-parameter
+			// scalar-result async import.
+			if asyncProvider != "" {
+				var imps []*ast.FuncDecl
+				for _, fn := range prog.Funcs {
+					if fn.ImportIface != "" && fn.Async {
+						imps = append(imps, fn)
+					}
+				}
+				if len(imps) != 1 {
+					return 1, fmt.Errorf("-async-provider: expected exactly one async @import to bundle, found %d", len(imps))
+				}
+				imp := imps[0]
+				if len(imp.Params) != 0 {
+					return 1, fmt.Errorf("-async-provider: async import %q has parameters; only no-parameter scalar-result imports are supported so far", imp.Name)
+				}
+				provBytes, err := os.ReadFile(asyncProvider)
+				if err != nil {
+					return 1, fmt.Errorf("-async-provider: reading provider component: %w", err)
+				}
+				i32 := []byte{0x7f} // wasm i32 (retptr / status)
+				comp := component.BuildAsyncImportsAwaitComponent(acore, []component.AsyncImportSpec{{
+					Iface:              imp.ImportIface,
+					WITName:            imp.ImportWITName,
+					Provider:           provBytes,
+					ProviderExportName: imp.ImportWITName,
+					LowerParams:        i32, // just the retptr (no source params)
+					LowerResults:       i32, // i32 status
+				}}, "__async_run", asyncExportNm, rvt)
+				if err := os.WriteFile(outPath, comp, 0o644); err != nil {
+					return 1, err
+				}
+				return 0, nil
 			}
 			comp := component.BuildAsyncLiftedExportComponent(acore, "__async_run", asyncExportNm, rvt)
 			if err := os.WriteFile(outPath, comp, 0o644); err != nil {
