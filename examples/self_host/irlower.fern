@@ -2005,6 +2005,37 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
                 _ => { return ""; }
             }
         },
+        parser.ExprBinary(opb) => {
+            // Composite operator overload result (#2706): `a <op> b` evaluates to
+            // the overload method's return struct type, so `var c = a + b` /
+            // `(a + b).x` type `c` / the field read as a struct. The method's
+            // declared return (`struct_ret_type("<T>.<method>")`) is authoritative;
+            // for the Num-style Self-returning overloads it equals the left
+            // operand's struct type, the fallback when the registry has no entry.
+            if (binop_overload_method(opb.op) != "") {
+                var olt: string = expr_struct_type(opb.left, s);
+                if (decl_is_struct(s.structs, olt)) {
+                    // A struct result only when the type actually defines the
+                    // overload method (struct-returning). No method ⇒ "" — an
+                    // invalid program the lowering bails to AST, kept consistent
+                    // here so a consumer never types the result as a struct.
+                    return s.struct_ret_type(olt + "." + binop_overload_method(opb.op));
+                }
+            }
+            return "";
+        },
+        parser.ExprUnary(opu) => {
+            // Composite unary minus result: `-a` evaluates to `a.neg()`'s return
+            // struct type, the unary sibling of the binary-overload result type
+            // above (again "" when the type has no `neg`).
+            if (opu.op == "-") {
+                var out0: string = expr_struct_type(opu.operand, s);
+                if (decl_is_struct(s.structs, out0)) {
+                    return s.struct_ret_type(out0 + ".neg");
+                }
+            }
+            return "";
+        },
         _ => { return ""; }
     }
     return "";
@@ -2557,6 +2588,21 @@ pub function map_binop(op: string): string {
     if (op == "<=") { return "le_s"; }
     if (op == ">") { return "gt_s"; }
     if (op == ">=") { return "ge_s"; }
+    return "";
+}
+
+// binop_overload_method maps an arithmetic operator to the conventionally-
+// named method that overloads it on a composite (struct / enum) operand —
+// `a + b` → `a.add(b)`, etc. (#2706, mirroring the native checker desugar at
+// checker.go:9723). Comparison / logical / bitwise ops are intentionally not
+// here: arithmetic is the Num-trait surface this covers, and `==`/`<` composite
+// overloads ride their own eq/cmp path. Returns "" for a non-arithmetic op.
+pub function binop_overload_method(op: string): string {
+    if (op == "+") { return "add"; }
+    if (op == "-") { return "sub"; }
+    if (op == "*") { return "mul"; }
+    if (op == "/") { return "div"; }
+    if (op == "%") { return "rem"; }
     return "";
 }
 
@@ -4161,6 +4207,31 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             return s.emit(ir.op_const_func(0, id.name));
         },
         parser.ExprBinary(b) => {
+            // Composite operator overload (#2706): `a <op> b` where the left
+            // operand is a struct lowers to `a.<method>(b)` (`+`→add, …),
+            // mirroring the native checker desugar. Rewriting to a method call
+            // reuses the struct-returning-method path (#3640); if the type has
+            // no such method, that path bails to the AST fallback rather than
+            // mis-lowering the struct pointers as scalar arithmetic. Scalars /
+            // strings / f64 return "" from expr_struct_type, so they're
+            // untouched and fall through to the numeric/string dispatch below.
+            if (binop_overload_method(b.op) != "") {
+                var blt: string = expr_struct_type(b.left, s);
+                // Only a real struct/enum operand is an overload — expr_struct_type
+                // also reports a typed scalar's name (e.g. a `u8` local returns
+                // "u8"), which must fall through to the normal numeric/sub-word
+                // lowering below, NOT be treated as a composite (#2706 regression).
+                if (decl_is_struct(s.structs, blt)) {
+                    var ovm: string = binop_overload_method(b.op);
+                    // Only a defined (struct-returning) overload method lowers.
+                    // Without one this is an invalid program (native rejects it
+                    // E009), so bail to the AST path rather than mis-lower the
+                    // struct pointers as scalar arithmetic.
+                    if (s.struct_ret_type(blt + "." + ovm) == "") { return s.fail(); }
+                    var ovcall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: b.left, field: ovm, line: b.line, col: b.col }, args: [b.right], line: b.line, col: b.col, type_argc: 0 };
+                    return lower_expr(ovcall, s);
+                }
+            }
             // Short-circuit `&&` / `||`. When the RIGHT operand is trap-free and
             // side-effect-free, eagerly evaluating it is unobservable, so the
             // logical op is just a bitwise `&` / `|` of the two boolean (0/1)
@@ -4353,6 +4424,16 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     var fx: LowerState = lower_expr(u.operand, fz);
                     if (!fx.ok) { return fx; }
                     return fx.emit(ir.op_fbin("fsub"));
+                }
+                // Composite unary minus (#2706): `-a` on a struct/enum lowers
+                // to `a.neg()`, mirroring the native checker's NegCall desugar.
+                // As with the binary overloads, a type without `neg` bails to
+                // the AST path rather than negating a struct pointer as a scalar.
+                var ust: string = expr_struct_type(u.operand, s);
+                if (decl_is_struct(s.structs, ust)) {
+                    if (s.struct_ret_type(ust + ".neg") == "") { return s.fail(); }
+                    var negcall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: u.operand, field: "neg", line: u.line, col: u.col }, args: [], line: u.line, col: u.col, type_argc: 0 };
+                    return lower_expr(negcall, s);
                 }
                 // -x  ==  0 - x  : push 0, push x, sub.
                 var sz: LowerState = s.emit(ir.op_const_i32(0));
