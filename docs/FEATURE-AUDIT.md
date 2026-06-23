@@ -251,6 +251,23 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — std/crypto now self-host-compiles on the IR path (the original gap, closed)
+
+`std/crypto` (SHA-256 + HMAC-SHA256) was THE motivating gap of the
+integer-formatting arc: the 2026-06-22 entry recorded it crashing the
+self-hosted compiler at runtime (interp-gated only, deliberately NOT in
+`selfHostStdTestCases`). With the 64-bit integer fixes since merged — the
+`as_i64`/`as_u64` 32-bit-truncation fix and the `u64`/`i64` `to_string` path —
+the crash is gone: a program that `import`s the REAL `std/crypto` and calls
+`sha256_hex` / `hmac_sha256_hex` now routes **ir** through the self-hosted
+x86-64 loader (`asm_load_run`, the multi-module path the old crash was on) and
+produces the correct digests, matching the interpreter on the FIPS 180-4 /
+RFC known-answer vectors (`sha256_hex("abc")` / `""` / pangram;
+`hmac_sha256_hex("key", pangram)`). Gated by `TestSelfHostCryptoModuleIR`
+(distinct from the pre-existing `TestSelfHostCryptoIRX86_64`, which exercises the
+*concatenated* single-module form via the importless driver — this one pins the
+real-import loader path). No compiler change was needed here; the merged 64-bit
+work unblocked it, and this adds the gate + records the closure.
 ### 2026-06-23 — std/json parse → typed-get → encode round-trip: pure-Fern std/test coverage (self-host-gated)
 
 New `examples/tests/json_roundtrip_test.fern` drives the **raw** std/json API
