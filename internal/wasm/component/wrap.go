@@ -200,6 +200,31 @@ func BuildAsyncLiftedExportComponentParams(coreBytes []byte, coreExportName, exp
 	return buf
 }
 
+// BuildAsyncLiftedExportComponentTupleParam lifts a core `recv` whose canonical
+// flattening takes the elements of a `tuple<elems…>` (the core sig is
+// `(elem0, elem1, …) -> ()`, delivering a scalar result via task.return) into
+// `exportName: async func(p: tuple<elems…>) -> resultValtype`. A tuple of scalars
+// flattens straight to its element core types — no memory/realloc option — so this
+// is the plain async lift of BuildAsyncLiftedExportComponentParams with the params
+// grouped into a single defined `tuple` component type (referenced by index in
+// the lift functype). Used to satisfy a real Fern async `@import` whose parameter
+// is a tuple/record (the wasmbin side marshals the Fern tuple value to the same
+// flattened element args via the shared emitExternParamMarshal head).
+func BuildAsyncLiftedExportComponentTupleParam(coreBytes []byte, coreExportName, exportName string, elemValtypes []byte, resultValtype byte) []byte {
+	buf := PutComponentHeader(nil)
+	buf = PutTypeSectionOneDefined(buf, InnerTypeTuple(elemValtypes))                          // component type 0: tuple<elems…>
+	buf = PutCanonTaskReturnSingle(buf, resultValtype)                                         // core func 0
+	buf = PutCoreModuleSection(buf, coreBytes)                                                 // core module 0
+	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "task-return", 0)                       // core instance 0
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 0, []string{""}, []uint32{0}) // core instance 1
+	buf = PutAliasSectionCoreExportFunc(buf, 1, coreExportName)                                // core func 1
+	// component type 1: func(p: tuple<elems…>(type 0)) -> resultValtype.
+	buf = PutTypeSectionOneFuncGeneral(buf, []string{"p"}, [][]byte{leb128SlebBytes(0)}, []byte{resultValtype})
+	buf = PutCanonSectionLiftAsync(buf, 1, 1) // component func 0 (functype 1)
+	buf = PutExportSectionOneFunc(buf, exportName, 0)
+	return buf
+}
+
 func BuildLiftedExportComponent(coreBytes []byte, coreExportName, exportName string, paramNames []string, paramValtypes []byte, resultValtype byte) []byte {
 	buf := PutComponentHeader(nil)
 	buf = PutCoreModuleSection(buf, coreBytes)

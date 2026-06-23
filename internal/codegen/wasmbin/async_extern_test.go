@@ -347,24 +347,70 @@ func TestScanExternImportsAsyncMemParamStringResult(t *testing.T) {
 	}
 }
 
-// TestScanExternImportsAsyncRejectsRecordParam pins the remaining slice boundary:
-// an async import whose param is a record/tuple (a composite needing field
-// marshalling) is still rejected with a clear error — only scalar / string /
-// numeric-array async params are supported so far.
-func TestScanExternImportsAsyncRejectsRecordParam(t *testing.T) {
+// TestScanExternImportsAsyncRecordParam covers a record/tuple ARGUMENT to an
+// async import — `@import async function add(p: (i32, i32)): i32`. With its
+// flattened field layout resolved (ex.ParamRecords, as IR lowering sets it), the
+// async path accepts it exactly like the sync path: the raw import flattens the
+// tuple to its element core types `(i32, i32, retptr) -> i32 status`, the wrapper
+// takes the single Fern tuple slot, and no string/realloc helpers are pulled in.
+func TestScanExternImportsAsyncRecordParam(t *testing.T) {
 	ext := &ir.ExternFunc{
-		Name:    "dep",
+		Name:    "add",
 		Iface:   "test:dep/d",
-		WITName: "compute",
+		WITName: "add",
 		Params: []ast.Param{
 			{Name: "p", Type: ast.TupleType{Elems: []ast.Type{i32Type(), i32Type()}}},
 		},
 		ReturnType: i32Type(),
 		Async:      true,
+		// Flattened field layout the IR lowering would precompute for the tuple.
+		ParamRecords: map[int][]ir.ExternRecordField{
+			0: {
+				{Offset: 0, Type: i32Type()},
+				{Offset: 4, Type: i32Type()},
+			},
+		},
 	}
 	var in importNeeds
 	var helpers runtimeNeeds
-	if _, _, err := scanExternImports(progCallingExtern("dep", ext), &in, &helpers); err == nil {
-		t.Fatalf("expected an error for an async extern with a record/tuple parameter")
+	specs, wrappers, err := scanExternImports(progCallingExtern("add", ext), &in, &helpers)
+	if err != nil {
+		t.Fatalf("scanExternImports: %v", err)
+	}
+	raw, ok := specs["add$import"]
+	if !ok {
+		t.Fatalf("missing raw async import spec %q; specs=%v", "add$import", specs)
+	}
+	want := []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32} // x, y, retptr
+	if len(raw.params) != len(want) {
+		t.Errorf("raw import params = %v, want %v (x, y, retptr)", raw.params, want)
+	}
+	w, ok := wrappers["add"]
+	if !ok {
+		t.Fatalf("missing wrapper for %q", "add")
+	}
+	if len(w.params) != 1 || w.params[0] != encode.ValtypeI32 {
+		t.Errorf("wrapper params = %v, want 1 slot (the Fern tuple value)", w.params)
+	}
+	if helpers.set["__fern_str_len"] || helpers.set["cabi_realloc"] {
+		t.Errorf("a scalar-tuple param/result should pull in no string/realloc helpers: %v", helpers.set)
+	}
+}
+
+// TestScanExternImportsAsyncRejectsCompositeResult pins the remaining boundary:
+// a composite (record/tuple) RESULT from an async import is still rejected — only
+// a scalar / string / numeric-array result is supported.
+func TestScanExternImportsAsyncRejectsCompositeResult(t *testing.T) {
+	ext := &ir.ExternFunc{
+		Name:       "mk",
+		Iface:      "test:dep/d",
+		WITName:    "mk",
+		ReturnType: ast.TupleType{Elems: []ast.Type{i32Type(), i32Type()}},
+		Async:      true,
+	}
+	var in importNeeds
+	var helpers runtimeNeeds
+	if _, _, err := scanExternImports(progCallingExtern("mk", ext), &in, &helpers); err == nil {
+		t.Fatalf("expected an error for an async extern with a composite (tuple) result")
 	}
 }

@@ -1055,17 +1055,168 @@ func appendEnumResultAreaToBox(body []byte, idxs map[string]uint32, rb, base, di
 	return body
 }
 
+// externParamSlots returns the number of Fern stack slots an extern's params
+// occupy (a `string` is the two-word (data, len) pair; every other param —
+// scalar, numeric/bool array, record, tuple, enum — is one slot). It is also the
+// base index of the (bufL, byteLenL, iL) marshalling scratch locals.
+func externParamSlots(ex *ir.ExternFunc) uint32 {
+	n := uint32(0)
+	for _, p := range ex.Params {
+		if isStringType(p.Type) {
+			n += 2
+		} else {
+			n++
+		}
+	}
+	return n
+}
+
+// emitExternParamMarshal pushes the canonical argument(s) for every @import
+// parameter onto the stack, in declaration order — the shared marshalling head
+// used by BOTH the sync (buildExternMemParamWrapper) and async
+// (buildExternAsyncMemParamWrapper) extern wrappers, so an async @import accepts
+// exactly the parameter shapes a sync @import does. A `string` normalises through
+// the SSO seam into (bufL, byteLenL); a record/tuple flattens to its fields; an
+// option/result pushes (disc, payload-join); a plain enum pushes its tag; a
+// numeric array forwards (elemPtr, count@ptr-4); a bool array byte-repacks into a
+// fresh (buf, count); a scalar passes through. bufL/byteLenL/iL are i32 scratch
+// locals at (externParamSlots(ex), +1, +2).
+func emitExternParamMarshal(body []byte, idxs map[string]uint32, ex *ir.ExternFunc, bufL, byteLenL, iL uint32) []byte {
+	slot := uint32(0)
+	for i, p := range ex.Params {
+		switch {
+		case isStringType(p.Type):
+			// (data@slot, len@slot+1) → normalized (bufL, byteLenL).
+			body = emitStrNormalize(body, idxs, slot, slot+1, bufL, byteLenL, iL)
+			body = inst.InstLocalGet(body, bufL)
+			body = inst.InstLocalGet(body, byteLenL)
+			slot += 2
+		case ex.ParamRecords[i] != nil:
+			// Record param: flatten to its fields. The Fern slot holds the
+			// struct value; each field is loaded at its (rc-header-inclusive)
+			// offset and pushed in declaration order, matching the canonical
+			// record flattening the raw import expects.
+			for _, f := range ex.ParamRecords[i] {
+				body = inst.InstLocalGet(body, slot)
+				// Nested record leaf: deref each offset in the path (load the
+				// inner value pointer) before the final leaf load.
+				for _, off := range f.DerefPath {
+					body = memory.InstI32Load(body, 2, uint32(off))
+				}
+				body = appendExternFieldLoad(body, f.Type, uint32(f.Offset))
+			}
+			slot++
+		case ex.ParamEnums[i] != nil:
+			// option/result param: the Fern slot holds the enum box value.
+			// Push the canonical discriminant (the i32 tag at +0, remapped
+			// 1-tag for option), then the payload loaded at its box offset.
+			ep := ex.ParamEnums[i]
+			if ep.RemapDisc {
+				body = inst.InstI32Const(body, 1)
+				body = inst.InstLocalGet(body, slot)
+				body = memory.InstI32Load(body, 2, 0) // tag @ +0
+				body = numeric.InstI32Sub(body)       // 1 - tag
+			} else {
+				body = inst.InstLocalGet(body, slot)
+				body = memory.InstI32Load(body, 2, 0)
+			}
+			if ep.SlotCount > 0 {
+				// Multi-field variant: push SlotCount i32 join slots, each chosen
+				// by branching on the box tag (arm's field j, or 0 to pad).
+				body = appendVariantParamMultiField(body, slot, ep)
+			} else if ep.Variants != nil {
+				// Mixed-width variant: produce the i64 join value by branching on
+				// the box tag — each arm loads its payload at its own box offset
+				// and coerces to i64 (a 32-bit arm extends; a 64-bit arm loads it
+				// directly; float bits are value-preserving under the int load).
+				body = appendVariantParamPayloadI64(body, slot, ep.Variants)
+			} else {
+				poff := uint32(ep.PayloadOffset)
+				body = inst.InstLocalGet(body, slot)
+				switch externRecordFieldValtype(ep.PayloadType) {
+				case encode.ValtypeI64:
+					body = memory.InstI64Load(body, 3, poff)
+				case encode.ValtypeF32:
+					body = memory.InstF32Load(body, 2, poff)
+				case encode.ValtypeF64:
+					body = memory.InstF64Load(body, 3, poff)
+				default:
+					body = memory.InstI32Load(body, 2, poff)
+				}
+			}
+			slot++
+		case ex.ParamPlainEnums[i]:
+			// plain (payloadless) enum → WIT enum: the Fern slot holds a
+			// pointer to a 4-byte sentinel/box `[tag:i32 @0]`; push the tag as
+			// the canonical discriminant (Fern variant order == WIT case order,
+			// no remap).
+			body = inst.InstLocalGet(body, slot)
+			body = memory.InstI32Load(body, 2, 0)
+			slot++
+		case isScalarArrayParamType(p.Type):
+			// (ptr, len) = (elemPtr, load(elemPtr-4)). The count prefix holds
+			// the element count, which is the canonical list length for any
+			// element width; the elements are already packed at native stride.
+			body = inst.InstLocalGet(body, slot) // ptr
+			body = inst.InstLocalGet(body, slot)
+			body = inst.InstI32Const(body, 4)
+			body = numeric.InstI32Sub(body)
+			body = memory.InstI32Load(body, 2, 0) // count @ ptr-4
+			slot++
+		case isBoolArrayParamType(p.Type):
+			// bool[] → canonical list<bool> (1 byte/elem): the Fern bools are
+			// 4-byte slots, so byte-repack into a fresh count-byte buffer and
+			// push (buf, count). byteLenL holds the count (== byte length for
+			// 1-byte elements). The buffer pointer is pushed onto the stack
+			// now, so a later param reusing bufL doesn't disturb it.
+			body = inst.InstLocalGet(body, slot) // count = load(ptr-4)
+			body = inst.InstI32Const(body, 4)
+			body = numeric.InstI32Sub(body)
+			body = memory.InstI32Load(body, 2, 0)
+			body = inst.InstLocalSet(body, byteLenL)
+			body = inst.InstLocalGet(body, byteLenL) // buf = alloc(count)
+			body = inst.InstCall(body, idxs["__fern_alloc"])
+			body = inst.InstLocalSet(body, bufL)
+			body = inst.InstI32Const(body, 0) // i = 0
+			body = inst.InstLocalSet(body, iL)
+			body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+			body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+			body = inst.InstLocalGet(body, iL) // if i >= count: break
+			body = inst.InstLocalGet(body, byteLenL)
+			body = numeric.InstI32GeU(body)
+			body = inst.InstBrIf(body, 1)
+			body = inst.InstLocalGet(body, bufL) // store8(buf+i, load(ptr+i*4))
+			body = inst.InstLocalGet(body, iL)
+			body = numeric.InstI32Add(body)
+			body = inst.InstLocalGet(body, slot)
+			body = inst.InstLocalGet(body, iL)
+			body = inst.InstI32Const(body, 4)
+			body = numeric.InstI32Mul(body)
+			body = numeric.InstI32Add(body)
+			body = memory.InstI32Load(body, 2, 0)
+			body = memory.InstI32Store8(body, 0, 0)
+			body = inst.InstLocalGet(body, iL) // i++
+			body = inst.InstI32Const(body, 1)
+			body = numeric.InstI32Add(body)
+			body = inst.InstLocalSet(body, iL)
+			body = inst.InstBr(body, 0)
+			body = inst.InstEnd(body)            // loop
+			body = inst.InstEnd(body)            // block
+			body = inst.InstLocalGet(body, bufL) // push (buf, count)
+			body = inst.InstLocalGet(body, byteLenL)
+			slot++
+		default:
+			body = inst.InstLocalGet(body, slot)
+			slot++
+		}
+	}
+	return body
+}
+
 func buildExternMemParamWrapper(ex *ir.ExternFunc, rawImport string, resultEnum *ir.ExternEnumParam) func(map[string]uint32) []byte {
 	return func(idxs map[string]uint32) []byte {
 		imp := idxs[rawImport]
-		nSlots := uint32(0)
-		for _, p := range ex.Params {
-			if isStringType(p.Type) {
-				nSlots += 2
-			} else {
-				nSlots++ // u8[]/record/scalar are each one Fern slot
-			}
-		}
+		nSlots := externParamSlots(ex)
 		bufL, byteLenL, iL := nSlots, nSlots+1, nSlots+2
 
 		var body []byte
@@ -1078,134 +1229,7 @@ func buildExternMemParamWrapper(ex *ir.ExternFunc, rawImport string, resultEnum 
 			body = inst.InstCall(body, idxs["__fern_alloc"])
 			body = inst.InstLocalSet(body, nSlots+3) // rb
 		}
-		slot := uint32(0)
-		for i, p := range ex.Params {
-			switch {
-			case isStringType(p.Type):
-				// (data@slot, len@slot+1) → normalized (bufL, byteLenL).
-				body = emitStrNormalize(body, idxs, slot, slot+1, bufL, byteLenL, iL)
-				body = inst.InstLocalGet(body, bufL)
-				body = inst.InstLocalGet(body, byteLenL)
-				slot += 2
-			case ex.ParamRecords[i] != nil:
-				// Record param: flatten to its fields. The Fern slot holds the
-				// struct value; each field is loaded at its (rc-header-inclusive)
-				// offset and pushed in declaration order, matching the canonical
-				// record flattening the raw import expects.
-				for _, f := range ex.ParamRecords[i] {
-					body = inst.InstLocalGet(body, slot)
-					// Nested record leaf: deref each offset in the path (load the
-					// inner value pointer) before the final leaf load.
-					for _, off := range f.DerefPath {
-						body = memory.InstI32Load(body, 2, uint32(off))
-					}
-					body = appendExternFieldLoad(body, f.Type, uint32(f.Offset))
-				}
-				slot++
-			case ex.ParamEnums[i] != nil:
-				// option/result param: the Fern slot holds the enum box value.
-				// Push the canonical discriminant (the i32 tag at +0, remapped
-				// 1-tag for option), then the payload loaded at its box offset.
-				ep := ex.ParamEnums[i]
-				if ep.RemapDisc {
-					body = inst.InstI32Const(body, 1)
-					body = inst.InstLocalGet(body, slot)
-					body = memory.InstI32Load(body, 2, 0) // tag @ +0
-					body = numeric.InstI32Sub(body)       // 1 - tag
-				} else {
-					body = inst.InstLocalGet(body, slot)
-					body = memory.InstI32Load(body, 2, 0)
-				}
-				if ep.SlotCount > 0 {
-					// Multi-field variant: push SlotCount i32 join slots, each chosen
-					// by branching on the box tag (arm's field j, or 0 to pad).
-					body = appendVariantParamMultiField(body, slot, ep)
-				} else if ep.Variants != nil {
-					// Mixed-width variant: produce the i64 join value by branching on
-					// the box tag — each arm loads its payload at its own box offset
-					// and coerces to i64 (a 32-bit arm extends; a 64-bit arm loads it
-					// directly; float bits are value-preserving under the int load).
-					body = appendVariantParamPayloadI64(body, slot, ep.Variants)
-				} else {
-					poff := uint32(ep.PayloadOffset)
-					body = inst.InstLocalGet(body, slot)
-					switch externRecordFieldValtype(ep.PayloadType) {
-					case encode.ValtypeI64:
-						body = memory.InstI64Load(body, 3, poff)
-					case encode.ValtypeF32:
-						body = memory.InstF32Load(body, 2, poff)
-					case encode.ValtypeF64:
-						body = memory.InstF64Load(body, 3, poff)
-					default:
-						body = memory.InstI32Load(body, 2, poff)
-					}
-				}
-				slot++
-			case ex.ParamPlainEnums[i]:
-				// plain (payloadless) enum → WIT enum: the Fern slot holds a
-				// pointer to a 4-byte sentinel/box `[tag:i32 @0]`; push the tag as
-				// the canonical discriminant (Fern variant order == WIT case order,
-				// no remap).
-				body = inst.InstLocalGet(body, slot)
-				body = memory.InstI32Load(body, 2, 0)
-				slot++
-			case isScalarArrayParamType(p.Type):
-				// (ptr, len) = (elemPtr, load(elemPtr-4)). The count prefix holds
-				// the element count, which is the canonical list length for any
-				// element width; the elements are already packed at native stride.
-				body = inst.InstLocalGet(body, slot) // ptr
-				body = inst.InstLocalGet(body, slot)
-				body = inst.InstI32Const(body, 4)
-				body = numeric.InstI32Sub(body)
-				body = memory.InstI32Load(body, 2, 0) // count @ ptr-4
-				slot++
-			case isBoolArrayParamType(p.Type):
-				// bool[] → canonical list<bool> (1 byte/elem): the Fern bools are
-				// 4-byte slots, so byte-repack into a fresh count-byte buffer and
-				// push (buf, count). byteLenL holds the count (== byte length for
-				// 1-byte elements). The buffer pointer is pushed onto the stack
-				// now, so a later param reusing bufL doesn't disturb it.
-				body = inst.InstLocalGet(body, slot) // count = load(ptr-4)
-				body = inst.InstI32Const(body, 4)
-				body = numeric.InstI32Sub(body)
-				body = memory.InstI32Load(body, 2, 0)
-				body = inst.InstLocalSet(body, byteLenL)
-				body = inst.InstLocalGet(body, byteLenL) // buf = alloc(count)
-				body = inst.InstCall(body, idxs["__fern_alloc"])
-				body = inst.InstLocalSet(body, bufL)
-				body = inst.InstI32Const(body, 0) // i = 0
-				body = inst.InstLocalSet(body, iL)
-				body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
-				body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
-				body = inst.InstLocalGet(body, iL) // if i >= count: break
-				body = inst.InstLocalGet(body, byteLenL)
-				body = numeric.InstI32GeU(body)
-				body = inst.InstBrIf(body, 1)
-				body = inst.InstLocalGet(body, bufL) // store8(buf+i, load(ptr+i*4))
-				body = inst.InstLocalGet(body, iL)
-				body = numeric.InstI32Add(body)
-				body = inst.InstLocalGet(body, slot)
-				body = inst.InstLocalGet(body, iL)
-				body = inst.InstI32Const(body, 4)
-				body = numeric.InstI32Mul(body)
-				body = numeric.InstI32Add(body)
-				body = memory.InstI32Load(body, 2, 0)
-				body = memory.InstI32Store8(body, 0, 0)
-				body = inst.InstLocalGet(body, iL) // i++
-				body = inst.InstI32Const(body, 1)
-				body = numeric.InstI32Add(body)
-				body = inst.InstLocalSet(body, iL)
-				body = inst.InstBr(body, 0)
-				body = inst.InstEnd(body)            // loop
-				body = inst.InstEnd(body)            // block
-				body = inst.InstLocalGet(body, bufL) // push (buf, count)
-				body = inst.InstLocalGet(body, byteLenL)
-				slot++
-			default:
-				body = inst.InstLocalGet(body, slot)
-				slot++
-			}
-		}
+		body = emitExternParamMarshal(body, idxs, ex, bufL, byteLenL, iL)
 		if resultEnum != nil {
 			// Pass the return-area pointer as the trailing canonical retptr, call
 			// (void), then read the filled area into a Fern enum box.
@@ -1674,15 +1698,8 @@ func buildExternAsyncMemParamWrapper(ex *ir.ExternFunc, rawImport string, resKin
 	return func(idxs map[string]uint32) []byte {
 		alloc := idxs["__fern_alloc"]
 		imp := idxs[rawImport]
-		// Fern-facing slots: string = 2 (data, len); scalar / numeric array = 1.
-		nSlots := uint32(0)
-		for _, p := range ex.Params {
-			if isStringType(p.Type) {
-				nSlots += 2
-			} else {
-				nSlots++
-			}
-		}
+		// Fern-facing slots: string = 2 (data, len); every other param = 1.
+		nSlots := externParamSlots(ex)
 		bufL, byteLenL, iL := nSlots, nSlots+1, nSlots+2
 		rb, statusL, taskL, wsL := nSlots+3, nSlots+4, nSlots+5, nSlots+6
 		dp, nL, arr := nSlots+7, nSlots+8, nSlots+9 // list-result scratch
@@ -1699,27 +1716,10 @@ func buildExternAsyncMemParamWrapper(ex *ir.ExternFunc, rawImport string, resKin
 		body = numeric.InstI32And(body)
 		body = inst.InstLocalSet(body, rb)
 
-		// Marshal each param to its canonical slot(s), in order, onto the stack.
-		slot := uint32(0)
-		for _, p := range ex.Params {
-			switch {
-			case isStringType(p.Type):
-				body = emitStrNormalize(body, idxs, slot, slot+1, bufL, byteLenL, iL)
-				body = inst.InstLocalGet(body, bufL)
-				body = inst.InstLocalGet(body, byteLenL)
-				slot += 2
-			case isScalarArrayParamType(p.Type):
-				body = inst.InstLocalGet(body, slot) // ptr
-				body = inst.InstLocalGet(body, slot)
-				body = inst.InstI32Const(body, 4)
-				body = numeric.InstI32Sub(body)
-				body = memory.InstI32Load(body, 2, 0) // count @ ptr-4
-				slot++
-			default: // scalar — forwarded as-is
-				body = inst.InstLocalGet(body, slot)
-				slot++
-			}
-		}
+		// Marshal each param to its canonical slot(s) — the shared sync/async head,
+		// so an async @import accepts every parameter shape a sync one does
+		// (scalar / string / numeric+bool array / record / tuple / option / result).
+		body = emitExternParamMarshal(body, idxs, ex, bufL, byteLenL, iL)
 		// Trailing retptr, then the async-lower call -> status.
 		body = inst.InstLocalGet(body, rb)
 		body = inst.InstCall(body, imp)
