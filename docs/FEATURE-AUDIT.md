@@ -251,6 +251,32 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — std/io_buffered BytesWriter: pure-Fern std/test coverage (interp-gated) + another RC-drop data point
+
+New `examples/tests/io_buffered_test.fern` covers `std/io_buffered`'s
+`BytesWriter` — a **completely untested module** (0 prior test files): the
+in-memory buffered writer used to build an HTTP response body without per-write
+socket calls (the stated edge-handler use case). 9 tests over the whole surface:
+`bytes_writer_new` / `is_empty` / `len`, the append family `write_string` /
+`write_byte` / `write_bytes`, extraction `into_string` / `into_bytes`, `reset`,
+and the fluent chained-build pattern
+(`bytes_writer_new().write_string(..).write_byte(..)`). Gated by
+`TestRunnerIoBufferedExamplePasses` (interp). (The `BytesWriter` struct is not
+`pub`, so the suite lets `var w = io.bytes_writer_new()` infer the type rather
+than annotating it.)
+
+**Interp-gated, not self-host-gated** — and a clean new RC-drop-frontier data
+point. `BytesWriter` holds a `u8[]` field and is rebuilt immutably
+(`BytesWriter { ...w, data }`) on every write; a writer retained to scope/program
+exit **crashes the self-hosted binary (exit -1) during the first test's
+teardown** on both x86 + arm64 — it prints the suite header then dies before
+`ok 1`. This is the **same RC drop-at-exit class as array_hof**
+(`flat_map`/`reduce`/`sort_by`): a heap value holding an array, dropped at exit.
+So the frontier now has two independent witnesses — a generic array method
+returning a fresh array, and a *named struct* holding a `u8[]` — both tripping
+the receiver-/local-drop of a struct-holding-array. Left for the goal-2 RC port;
+the suite flips onto the differential gate once that drop path lands.
+
 ### 2026-06-23 — root-caused the std/crypto self-host mismatch to un-truncated u32 `+` / `<<` (a minimal, concrete repro)
 
 Followed up the crypto re-probe (it now *runs* on self-host — exits 1, not -1 —
