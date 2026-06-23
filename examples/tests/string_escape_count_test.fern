@@ -1,0 +1,119 @@
+import "std/test";
+import "std/string";
+// examples/tests/string_escape_count_test.fern — pure-Fern coverage of the
+// std/string escaping, counting, tokenisation, and prefix/suffix-set surface
+// not touched by the earlier string suites:
+//   escape_html / escape_c / escape_shell   (output-safe encoding)
+//   count_byte / count_chars_in             (occurrence counting)
+//   fields                                  (whitespace tokenisation → string[])
+//   center                                  (two-sided padding)
+//   starts_with_any / ends_with_any         (prefix/suffix-set match, []-arg)
+// The escapers are the security-relevant surface (HTML / C-string / POSIX-shell
+// quoting); the *_any predicates take a string[] arg. The Go-side suite unit-
+// tests these; this is the migration-shaped (pure-Fern, std/test-driven,
+// self-host-gated) companion.
+
+// ---- escaping ----
+
+function test_escape_html(): test.TestOutcome {
+    // & < > " ' each map to their entity; other bytes pass through.
+    return test.assert_eq("a<b>&\"'".escape_html(), "a&lt;b&gt;&amp;&#34;&#39;");
+}
+
+function test_escape_c(): test.TestOutcome {
+    // tab → \t, backslash → \\ ; the rest pass through.
+    return test.assert_eq("a\tb\\c".escape_c(), "a\\tb\\\\c");
+}
+
+function test_escape_shell_plain(): test.TestOutcome {
+    // no interior quote → just single-quote wrap.
+    return test.assert_eq("abc".escape_shell(), "'abc'");
+}
+
+function test_escape_shell_quote(): test.TestOutcome {
+    // interior ' → the '\'' close/escape/reopen dance.
+    return test.assert_eq("a'b".escape_shell(), "'a'\\''b'");
+}
+
+// ---- counting ----
+
+function test_count_byte(): test.TestOutcome {
+    // 'a' is byte 97; "banana" has three.
+    return test.assert_eq("banana".count_byte(97), 3);
+}
+
+function test_count_chars_in(): test.TestOutcome {
+    // count bytes that are 'l' or 'o' in "hello world": l,l,o,o,l = 5.
+    return test.assert_eq("hello world".count_chars_in("lo"), 5);
+}
+
+function test_count_chars_in_empty_set(): test.TestOutcome {
+    return test.assert_eq("abc".count_chars_in(""), 0);
+}
+
+// ---- tokenisation ----
+
+function test_fields(): test.TestOutcome {
+    // leading / trailing / repeated whitespace all collapse; empties dropped.
+    return test.assert_eq_array("  a b  c ".fields(), ["a", "b", "c"]);
+}
+
+function test_fields_empty(): test.TestOutcome {
+    return test.assert_eq("   ".fields().len(), 0);
+}
+
+// ---- padding ----
+
+function test_center(): test.TestOutcome {
+    // width 6, len 2 → 2 left + 2 right.
+    return test.assert_eq("hi".center(6, "*"), "**hi**");
+}
+
+function test_center_odd(): test.TestOutcome {
+    // width 5, len 2 → total 3, lpad 1, rpad 2.
+    return test.assert_eq("hi".center(5, "-"), "-hi--");
+}
+
+function test_center_noop(): test.TestOutcome {
+    // already at/over width → unchanged.
+    return test.assert_eq("hello".center(3, "*"), "hello");
+}
+
+// ---- prefix / suffix sets ----
+
+function test_starts_with_any(): test.TestOutcome {
+    var xs: string[] = ["xy", "he", "zz"];
+    var no: string[] = ["xy", "zz"];
+    return test.assert_true("hello".starts_with_any(xs) && !"hello".starts_with_any(no));
+}
+
+function test_ends_with_any(): test.TestOutcome {
+    var xs: string[] = [".md", ".txt"];
+    var no: string[] = [".md", ".rs"];
+    return test.assert_true("file.txt".ends_with_any(xs) && !"file.txt".ends_with_any(no));
+}
+
+function test_starts_with_any_empty(): test.TestOutcome {
+    var empty: string[] = [];
+    return test.assert_false("hello".starts_with_any(empty));
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/string escape + count");
+    r = r.it("escape_html",          test_escape_html());
+    r = r.it("escape_c",             test_escape_c());
+    r = r.it("escape_shell plain",   test_escape_shell_plain());
+    r = r.it("escape_shell quote",   test_escape_shell_quote());
+    r = r.it("count_byte",           test_count_byte());
+    r = r.it("count_chars_in",       test_count_chars_in());
+    r = r.it("count_chars_in empty", test_count_chars_in_empty_set());
+    r = r.it("fields",               test_fields());
+    r = r.it("fields empty",         test_fields_empty());
+    r = r.it("center",               test_center());
+    r = r.it("center odd",           test_center_odd());
+    r = r.it("center noop",          test_center_noop());
+    r = r.it("starts_with_any",      test_starts_with_any());
+    r = r.it("ends_with_any",        test_ends_with_any());
+    r = r.it("starts_with_any empty", test_starts_with_any_empty());
+    return r.finish();
+}
