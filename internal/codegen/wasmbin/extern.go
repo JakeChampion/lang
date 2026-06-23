@@ -371,6 +371,187 @@ func buildExternAsyncListResultWrapper(nparams int, rawImport string, stride uin
 	}
 }
 
+// buildExternAsyncStreamResultWrapper handles an `@import async function f():
+// stream[T]` (the checker rewrote the result to `T[]` and set StreamResultElem).
+// The raw import is the `canon lower async` of the stream-returning import —
+// `(scalar params…, retptr) -> i32 status`; the return area receives the stream
+// *readable handle*. The wrapper awaits the lowered call (the dep task-returns
+// the handle), then drives the colorless collect loop
+// (docs/STREAM-TYPE-SURFACE.md): join the readable handle to a waitable-set and
+// repeatedly `stream.read` directly into a grow-on-demand Fern array — on a
+// BLOCKED read (`0xffffffff`) wait on the set and take the completed result from
+// the event area (`evt+4 = (count<<4)|code`) — appending `count` elements each
+// iteration until `code != 0` (CLOSED/EOF). Finally it writes the length prefix,
+// `stream.drop-readable`s the handle, drops the set, and returns the Fern array
+// element pointer. Wrapper type is `(scalar params…) -> i32`.
+func buildExternAsyncStreamResultWrapper(nparams int, rawImport string, stride uint32) func(map[string]uint32) []byte {
+	return func(idxs map[string]uint32) []byte {
+		alloc := idxs["__fern_alloc"]
+		imp := idxs[rawImport]
+		sread := idxs["async_stream_read"]
+		sdropr := idxs["async_stream_drop_readable"]
+		wsn := idxs["async_ws_new"]
+		wj := idxs["async_w_join"]
+		wsw := idxs["async_ws_wait"]
+		wsd := idxs["async_ws_drop"]
+
+		rb := uint32(nparams) // lower return area (handle@+0, lower-await event@+8)
+		statusL := uint32(nparams + 1)
+		taskL := uint32(nparams + 2)
+		wsAwaitL := uint32(nparams + 3) // emitAsyncAwaitLoop scratch (the lower's subtask)
+		rd := uint32(nparams + 4)       // stream readable handle
+		ws := uint32(nparams + 5)       // read-loop waitable-set
+		evt := uint32(nparams + 6)      // read-completion event buffer
+		arr := uint32(nparams + 7)      // Fern array region: [len@+0][elems@+4]
+		cap := uint32(nparams + 8)      // capacity in elements
+		total := uint32(nparams + 9)    // elements collected so far
+		rs := uint32(nparams + 10)      // read status / completed result
+		avail := uint32(nparams + 11)   // free element slots = cap - total
+		nd := uint32(nparams + 12)      // grown array region
+
+		// elemBytes(countLocal) pushes countLocal*stride (bytes for `count` elems).
+		elemBytes := func(b []byte, countLocal uint32) []byte {
+			b = inst.InstLocalGet(b, countLocal)
+			if stride != 1 {
+				b = inst.InstI32Const(b, int32(stride))
+				b = numeric.InstI32Mul(b)
+			}
+			return b
+		}
+
+		const initCap = 16
+		var body []byte
+		// rb = (alloc(16)+7) & ~7 — 8-byte-aligned lower return area.
+		body = inst.InstI32Const(body, 16)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstI32Const(body, 7)
+		body = numeric.InstI32Add(body)
+		body = inst.InstI32Const(body, -8)
+		body = numeric.InstI32And(body)
+		body = inst.InstLocalSet(body, rb)
+		// lower(scalar params…, rb) -> status; await it; rd = load(rb+0).
+		for i := 0; i < nparams; i++ {
+			body = inst.InstLocalGet(body, uint32(i))
+		}
+		body = inst.InstLocalGet(body, rb)
+		body = inst.InstCall(body, imp)
+		body = emitAsyncAwaitLoop(body, idxs, rb, statusL, taskL, wsAwaitL)
+		body = inst.InstLocalGet(body, rb)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, rd)
+		// evt = alloc(16); arr = alloc(4 + initCap*stride); cap = initCap; total = 0.
+		body = inst.InstI32Const(body, 16)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, evt)
+		body = inst.InstI32Const(body, int32(4+initCap*int(stride)))
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, arr)
+		body = inst.InstI32Const(body, initCap)
+		body = inst.InstLocalSet(body, cap)
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalSet(body, total)
+		// ws = waitable-set.new(); waitable.join(rd, ws).
+		body = inst.InstCall(body, wsn)
+		body = inst.InstLocalSet(body, ws)
+		body = inst.InstLocalGet(body, rd)
+		body = inst.InstLocalGet(body, ws)
+		body = inst.InstCall(body, wj)
+
+		body = inst.InstBlockStart(body, inst.BlocktypeEmpty) // $done
+		body = inst.InstLoopStart(body, inst.BlocktypeEmpty)  // $more
+		// avail = cap - total; if avail == 0 grow (double the capacity, copy).
+		body = inst.InstLocalGet(body, cap)
+		body = inst.InstLocalGet(body, total)
+		body = numeric.InstI32Sub(body)
+		body = inst.InstLocalTee(body, avail)
+		body = numeric.InstI32Eqz(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, cap) // ncap = cap*2 (kept in cap after grow)
+		body = inst.InstI32Const(body, 2)
+		body = numeric.InstI32Mul(body)
+		body = inst.InstLocalSet(body, cap)
+		body = inst.InstI32Const(body, 4) // nd = alloc(4 + cap*stride)
+		body = elemBytes(body, cap)
+		body = numeric.InstI32Add(body)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, nd)
+		body = inst.InstLocalGet(body, nd) // memory.copy(nd+4, arr+4, total*stride)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, arr)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Add(body)
+		body = elemBytes(body, total)
+		body = memory.InstMemoryCopy(body)
+		body = inst.InstLocalGet(body, nd)
+		body = inst.InstLocalSet(body, arr)
+		body = inst.InstLocalGet(body, cap) // avail = cap - total
+		body = inst.InstLocalGet(body, total)
+		body = numeric.InstI32Sub(body)
+		body = inst.InstLocalSet(body, avail)
+		body = inst.InstEnd(body) // if grow
+		// rs = stream.read(rd, arr + 4 + total*stride, avail).
+		body = inst.InstLocalGet(body, rd)
+		body = inst.InstLocalGet(body, arr)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Add(body)
+		body = elemBytes(body, total)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, avail)
+		body = inst.InstCall(body, sread)
+		body = inst.InstLocalSet(body, rs)
+		// if rs == BLOCKED(-1): wait(ws, evt); rs = load(evt+4).
+		body = inst.InstLocalGet(body, rs)
+		body = inst.InstI32Const(body, -1)
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, ws)
+		body = inst.InstLocalGet(body, evt)
+		body = inst.InstCall(body, wsw)
+		body = inst.InstDrop(body)
+		body = inst.InstLocalGet(body, evt)
+		body = memory.InstI32Load(body, 2, 4)
+		body = inst.InstLocalSet(body, rs)
+		body = inst.InstEnd(body)
+		// total += rs >> 4 (the completed element count).
+		body = inst.InstLocalGet(body, total)
+		body = inst.InstLocalGet(body, rs)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32ShrU(body)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, total)
+		// if (rs & 0xf) != 0: break (CLOSED/EOF).
+		body = inst.InstLocalGet(body, rs)
+		body = inst.InstI32Const(body, 0xf)
+		body = numeric.InstI32And(body)
+		body = inst.InstI32Const(body, 0)
+		body = numeric.InstI32Ne(body)
+		body = inst.InstBrIf(body, 1) // break $done
+		body = inst.InstBr(body, 0)   // continue $more
+		body = inst.InstEnd(body)     // loop
+		body = inst.InstEnd(body)     // block $done
+
+		// store the length prefix; unjoin + drop the readable end + the set.
+		body = inst.InstLocalGet(body, arr)
+		body = inst.InstLocalGet(body, total)
+		body = memory.InstI32Store(body, 2, 0) // count @ arr+0
+		body = inst.InstLocalGet(body, rd)     // waitable.join(rd, 0) — unjoin before drops
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstCall(body, wj)
+		body = inst.InstLocalGet(body, rd)
+		body = inst.InstCall(body, sdropr)
+		body = inst.InstLocalGet(body, ws)
+		body = inst.InstCall(body, wsd)
+		// return arr + 4 (element pointer; count at ptr-4).
+		body = inst.InstLocalGet(body, arr)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Add(body)
+
+		locals := inst.PutLocalsOneGroup(nil, 13, encode.ValtypeI32) // rb,status,task,wsAwait,rd,ws,evt,arr,cap,total,rs,avail,nd
+		return inst.PutFunctionBody(nil, locals, body)
+	}
+}
+
 // buildExternBoolListResultWrapper lifts a canonical `list<bool>` result into a
 // Fern `bool[]`. Unlike the numeric-array wrapper (a straight memory.copy at
 // native stride), a Fern bool array element is a 4-byte slot while the canonical
