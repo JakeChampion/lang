@@ -40,8 +40,7 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 
 	// Build the driver (asm_modload_run) as an x86 host binary via the native
 	// toolchain, exactly as the fixpoint harness does.
-	asm := cachedSelfHostAsm(t, dir, "asm_modload_run.fern")
-	driverBin := buildBin(t, gcc, dir, "driver", asm)
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "driver")
 
 	entry := filepath.Join(dir, "asm_modload_run.fern")
 

@@ -71,8 +71,7 @@ func TestSelfHostPubUseModloadX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
 
-	asm := cachedSelfHostAsm(t, dir, "asm_modload_run.fern")
-	driverBin := buildBin(t, gcc, dir, "driver", asm)
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "driver")
 
 	progDir := t.TempDir()
 	for name, src := range pubUseSelfHostProgram {

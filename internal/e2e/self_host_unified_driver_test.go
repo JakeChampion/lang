@@ -57,8 +57,7 @@ func runStdinExit(t *testing.T, runner []string, bin, src string) int {
 func eligBits(t *testing.T, progs []string, weights []int) int {
 	t.Helper()
 	gcc, runner := x86_64Tooling(t)
-	asm := cachedSelfHostAsm(t, "../../examples/self_host", "asm_ir_elig_run.fern")
-	bin := cachedLink(t, gcc, asm)
+	bin := cachedDriverBin(t, gcc, "../../examples/self_host", "asm_ir_elig_run.fern")
 	got := 0
 	for i, p := range progs {
 		if runStdinExit(t, runner, bin, p) == 1 {

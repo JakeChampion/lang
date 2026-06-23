@@ -27,8 +27,7 @@ func buildModloadDriverX86(t *testing.T) (gcc string, runner []string, driverBin
 	// reclaims). cachedSelfHostAsm runs the identical modload.Load → constfold →
 	// checker.Check → x86_64.Emit pipeline, keyed by source-set hash, so this is
 	// behaviour-identical and only deduplicates the repeated compile.
-	asm := cachedSelfHostAsm(t, dir, "asm_modload_run.fern")
-	driverBin = buildBin(t, gcc, dir, "driver", asm)
+	driverBin = buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "driver")
 	return gcc, runner, driverBin
 }
 

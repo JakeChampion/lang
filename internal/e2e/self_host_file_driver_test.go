@@ -98,9 +98,7 @@ func TestSelfHostFileDriverX86_64(t *testing.T) {
 // it (or drop sibling files next to it) see a real file in their own dir.
 func buildSelfHostBin(t *testing.T, gcc, dir, fernName, out string) string {
 	t.Helper()
-	asm := cachedSelfHostAsm(t, dir, fernName)
-	cached := cachedLink(t, gcc, asm)
 	dst := filepath.Join(dir, out)
-	copyExecutable(t, cached, dst)
+	copyExecutable(t, cachedDriverBin(t, gcc, dir, fernName), dst)
 	return dst
 }
