@@ -2313,6 +2313,13 @@ type FuncDecl struct {
 	// the await loop) rather than the single-block list-result lowering. nil for
 	// every other function. See docs/STREAM-TYPE-SURFACE.md.
 	StreamResultElem Type
+	// StreamParamElems maps a parameter index to its element type when an
+	// `@import async` param is `stream[T]` — the checker rewrites that param to
+	// `T[]` (the eager array the call site passes) and records `T` here, so codegen
+	// streams the array's elements out over the wire (stream.new + write-await +
+	// drop-writable) rather than passing a single list block. nil otherwise; the
+	// mirror of StreamResultElem.
+	StreamParamElems map[int]Type
 	// ExportIface / ExportWITName bind a function (WITH a body) to a WIT
 	// *export* via an `@export("wasi:iface@x.y.z", "wit-name")` attribute
 	// (bring-your-own WIT, P6 — docs/WIT-BRING-YOUR-OWN.md): the component

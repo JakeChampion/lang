@@ -705,6 +705,12 @@ type ExternFunc struct {
 	// collect a `T[]`, rather than the single-block list-result lowering. nil
 	// otherwise. See docs/STREAM-TYPE-SURFACE.md.
 	StreamResultElem ast.Type
+	// StreamParamElems maps a parameter index to its element type when an async
+	// import param is `stream[T]` (the checker rewrote it to `T[]`). Non-empty
+	// means those params are produced as streams — the wasm backend creates a
+	// stream and write-streams the eager array's elements over the wire. The
+	// mirror of StreamResultElem.
+	StreamParamElems map[int]ast.Type
 }
 
 // ExternEnumParam describes a flattened option/result `@import` parameter
@@ -2614,6 +2620,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 				ReturnType:       fn.ReturnType,
 				Async:            fn.Async,
 				StreamResultElem: fn.StreamResultElem,
+				StreamParamElems: fn.StreamParamElems,
 			}
 			// Precompute the flattened layout of any record (struct) parameter
 			// while info.Structs is in scope; the wasm backend (which has no
