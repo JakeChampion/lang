@@ -106,6 +106,15 @@ type FloatType struct {
 }
 type ArrayType struct{ Elem Type }
 
+// StreamType is the WASI Preview-3 async data channel `stream[T]` — a sequence
+// of `T` delivered incrementally over the wire. It appears in Fern source only
+// as the result type of an async `@import` (e.g. `async function body():
+// stream[u8]`); under the colorless model the call site yields the fully
+// collected `T[]` (the compiler drives `stream.read` + the await loop to EOF —
+// see docs/STREAM-TYPE-SURFACE.md). `future[T]` is intentionally NOT a surface
+// type (colorless auto-await subsumes a single deferred value).
+type StreamType struct{ Elem Type }
+
 // SliceType is a non-owning view into an Array<T>. Spelled `[T]`
 // in source — distinct from owned `T[]` so the API surface
 // signals "this borrows" without a borrow checker. Codegen
@@ -393,6 +402,7 @@ func (VoidType) isType()     {}
 func (StringType) isType()   {}
 func (FloatType) isType()    {}
 func (ArrayType) isType()    {}
+func (StreamType) isType()   {}
 func (SliceType) isType()    {}
 func (TupleType) isType()    {}
 func (*FuncType) isType()    {}
@@ -428,6 +438,12 @@ func (s SliceType) String() string {
 		return "[]"
 	}
 	return "[" + s.Elem.String() + "]"
+}
+func (s StreamType) String() string {
+	if s.Elem == nil {
+		return "stream"
+	}
+	return "stream[" + s.Elem.String() + "]"
 }
 func (t TupleType) String() string {
 	out := "("
@@ -517,6 +533,8 @@ func SubstSelf(t Type, self Type) Type {
 		return self
 	case ArrayType:
 		return ArrayType{Elem: SubstSelf(tt.Elem, self)}
+	case StreamType:
+		return StreamType{Elem: SubstSelf(tt.Elem, self)}
 	case SliceType:
 		return SliceType{Elem: SubstSelf(tt.Elem, self)}
 	case TupleType:
@@ -1145,6 +1163,9 @@ func Equal(a, b Type) bool {
 		return ok && x.NormalWidth() == y.NormalWidth()
 	case ArrayType:
 		y, ok := b.(ArrayType)
+		return ok && Equal(x.Elem, y.Elem)
+	case StreamType:
+		y, ok := b.(StreamType)
 		return ok && Equal(x.Elem, y.Elem)
 	case SliceType:
 		y, ok := b.(SliceType)

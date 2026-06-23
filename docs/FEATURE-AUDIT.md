@@ -289,6 +289,135 @@ Gated by `TestSelfHostIterBoundedReducersIR` (sum / sum-empty / product / count 
 to_array-len / to_array-elem / range-sum). `std/num.sum_iter` / `product_iter`
 (`[T: Add]` / `[T: Mul]` element bounds) still route AST but run correctly.
 
+### 2026-06-23 — stdlib IR-vs-AST frontier map (modload eligibility probe)
+
+Swept the whole stdlib through the **modload** eligibility probe
+(`asm_modload_run <entry> -ir-probe`, which resolves imports off disk so it sees
+the *real* post-mangling frontier — unlike the stdin probe, which reports
+artificial `BAIL call` for any cross-module call). Results, to focus goal-1
+(widen-the-IR-subset) work on what actually blocks:
+
+- **Full IR already:** `core/int`, `core/map`, `std/convert`, `std/hex`,
+  `std/base64`, `std/path`, `std/url`, `std/uuid`, `std/error`, `std/u64`
+  (the last contradicting an earlier "later step" note, now corrected below).
+- **`BAIL call` only, all from generic TEMPLATES** (`core/cmp`'s 7 Ord helpers
+  `min/max/clamp/lt/lte/gt/gte`, plus a module's own `[T: …]` generics): these
+  call a trait method on a type-param (`a.cmp(b)`) that resolves only per
+  **monomorphisation**. The uninstantiated template bails, but CONCRETE usage
+  lowers IR (`TestSelfHostCmpHelpersIR`, routing-pinned to `ir`). So
+  `std/array`, `std/string`, `std/format`, `std/option`, `std/result`,
+  `std/sort`, `std/csv`, `core/cmp` show `module: AST` *in isolation* but are
+  **not** real blockers for real (monomorphised) programs. A probe artifact —
+  not a construct gap.
+- **Real `BAIL lower` (body construct gaps):** concentrated in the **`core/iter`
+  combinators** (`sum`/`count`/`fold`/`map`/`filter`/`take`/`skip`/`enumerate`/
+  `zip`/…). These drag `std/num` to AST too (its `sum_iter`/`product_iter` wrap
+  them; 26 of its bails are `iter__*`). This is the documented Iterator-bounded /
+  unbounded-generic type-erasure frontier (2026-06-22 entry, #3329) — the single
+  highest-leverage goal-1 target, and a deep one (the `Option[(i32, Self)]`
+  cloned-method-return lowering subproblem).
+
+Takeaway: the keystone goal-1 blocker is `core/iter`'s combinator lowering;
+most other `module: AST` verdicts are monomorphisation-template artifacts, not
+constructs to lower. The probe (`asm_ir.eligibility_report` /
+`asm_modload_run -ir-probe`) is the canonical way to re-check this frontier.
+
+### 2026-06-23 — std/io_buffered BytesWriter: pure-Fern std/test coverage (interp-gated) + another RC-drop data point
+
+New `examples/tests/io_buffered_test.fern` covers `std/io_buffered`'s
+`BytesWriter` — a **completely untested module** (0 prior test files): the
+in-memory buffered writer used to build an HTTP response body without per-write
+socket calls (the stated edge-handler use case). 9 tests over the whole surface:
+`bytes_writer_new` / `is_empty` / `len`, the append family `write_string` /
+`write_byte` / `write_bytes`, extraction `into_string` / `into_bytes`, `reset`,
+and the fluent chained-build pattern
+(`bytes_writer_new().write_string(..).write_byte(..)`). Gated by
+`TestRunnerIoBufferedExamplePasses` (interp). (The `BytesWriter` struct is not
+`pub`, so the suite lets `var w = io.bytes_writer_new()` infer the type rather
+than annotating it.)
+
+**Interp-gated, not self-host-gated** — and a clean new RC-drop-frontier data
+point. `BytesWriter` holds a `u8[]` field and is rebuilt immutably
+(`BytesWriter { ...w, data }`) on every write; a writer retained to scope/program
+exit **crashes the self-hosted binary (exit -1) during the first test's
+teardown** on both x86 + arm64 — it prints the suite header then dies before
+`ok 1`. This is the **same RC drop-at-exit class as array_hof**
+(`flat_map`/`reduce`/`sort_by`): a heap value holding an array, dropped at exit.
+So the frontier now has two independent witnesses — a generic array method
+returning a fresh array, and a *named struct* holding a `u8[]` — both tripping
+the receiver-/local-drop of a struct-holding-array. Left for the goal-2 RC port;
+the suite flips onto the differential gate once that drop path lands.
+
+### 2026-06-23 — root-caused the std/crypto self-host mismatch to un-truncated u32 `+` / `<<` (a minimal, concrete repro)
+
+Followed up the crypto re-probe (it now *runs* on self-host — exits 1, not -1 —
+after the parallel std/crypto-compiles fix, but the digests are wrong). Captured
+the differential-gate TAP diff: `sha256` of `""` / `"abc"` / pangram and the
+HMAC vector all produce **wrong digests of the correct length** (the two
+`*_bytes len` assertions pass; the four value assertions fail). SHA-256 is built
+entirely from u32 wrapping-adds + rotate-shifts, so "right length, wrong bits"
+pointed straight at the u32 ALU.
+
+Isolated it with a 4-case probe (since shipped as the suite below):
+
+| op | self-host result | want |
+|----|----|----|
+| `x >> n` (logical) | correct | — |
+| `1 << 31` | correct | — |
+| `(0xFFFFFFFF as u32) + (2 as u32)` | **4294967297** (`0x100000001`) | 1 |
+| `rotr(0x12345678, 8)` = `(x>>8)\|(x<<24)` | **a value > 2³²** | 2014458966 |
+
+**Root cause: the self-host backends evaluate `u32 +` and `u32 <<` at full
+register width and never mask the result back to 32 bits.** Only operations that
+cannot overflow bit 31 *look* correct — logical `>>` produces no high bits, and
+`1 << 31` lands exactly on bit 31. Anything that carries / shifts past bit 31
+keeps the excess, so every SHA-256 round accumulates garbage high bits → wrong
+digest, right length. This is **narrower and more concrete than the prior "u32
+through a bounded generic" framing** — it reproduces in plain non-generic u32
+code (no `cmp` / `assert_eq` monomorph involved). The fix lives in the contended
+`irlower` / asm-backend u32 path (parallel-owned, not touched here): truncate
+(`& 0xFFFFFFFF`, or use 32-bit-register ops) after u32 `+` / `-` / `*` / `<<`.
+
+Shipped `examples/tests/u32_arith_test.fern` (10 assertions: wrapping
+add/sub/mul, shl-overflow-mask, shl-to-bit31, logical-shr, rotr/rotl +
+roundtrip) — **interp-gated** via `TestRunnerU32ArithExamplePasses`, deliberately
+off the differential gate; it flips onto the gate (and unblocks `crypto_test`)
+once u32 arithmetic truncates to 32 bits.
+### 2026-06-23 — self-host IR: discarded fresh-ret-CALL local reclaim (Perceus, #3457 follow-up)
+
+`reclaimable_names_of` freed only fresh struct-LITERAL locals (`var x = S{..}`)
+that never escape. A struct local bound from a fresh-struct-returning CALL
+(`var r = mk()`) that is then READ (a field copy, `r.ops`) and goes dead without
+escaping was left to LEAK. This widens the reclaim to credit those discarded
+fresh-ret-call locals (non-reassigned — a reassigned one is the snapshot-LOCAL
+path's job), deep-dropped via `__struct_drop_<T>` at scope exit.
+
+Soundness is the subtle part. The first cut reused the existing
+`fresh_struct_ret_fns` guard (every return a fresh leak-safe struct literal),
+trusting the callee's struct-lit Perceus dup (alias-inc) to keep aliased fields
+rc-counted. That is **unsound**: a returned `struct[]` / `enum[]` field's
+alias-inc is on the OUTER buffer pointer only — it does not guard the INNER
+element buffers, so a discarded-local deep-drop double-frees them. Caught as a
+`TestSelfHostModloadPerModuleWholeCompilerX86_64` **segfault** — note the
+byte-identical fixpoint *passes* through this bug (it only compares bytes; the
+per-module test RUNS the self-compiled compiler, which is what surfaces the UAF).
+
+The shipped guard is the STRICT subset `return_fresh_struct_ret_fns_of`: a
+function qualifies only if every return is a struct literal (no base) whose
+every array-typed field is a FRESH array LITERAL of a SCALAR or STRING element
+type — so the returned box is unambiguously the sole owner of every field buffer
+(no alias, no shared inner element pointers), and the caller's discarded-local
+deep-drop is balanced. Threaded through `lower_func` + every backend like
+`fresh_struct_ret_fns`. Conservative (struct[]/enum[]-field returns still leak),
+but the analysis + mechanism is the foundation for widening once the deep-drop
+element-aliasing guard lands.
+
+Coverage: `fresh-ret-call-discarded` + `-forward` cases in `TestSelfHostAsmIRPath`
+(differential IR-vs-AST exit-code equivalence; an asm probe confirms the
+`call __fn___struct_drop_Box` actually fires on the discarded local), green on
+the x86-64 fixpoint + per-module whole-compiler self-compile + RC correctness
+corpus (x86-64 + wasm).
+
 ### 2026-06-23 — std/regex array-payload enums (#3720) now lower on the IR path
 
 The 2026-06-22 frontier remap listed **array-payload enums (#3720)** —
@@ -677,6 +806,11 @@ Note: `std/u64.to_string` *itself* still routes the **legacy AST fallback**
 (`decide = ast`) — a separate out-of-IR-subset routing concern, not this bug — so
 the high-bit u64 case is pinned via the `core/int` direct call, which does lower
 on IR. Widening the subset so `std/u64` routes IR is a later step.
+
+**Update (2026-06-23): `std/u64` now routes the IR path.** Verified via the
+modload eligibility probe (`asm_modload_run <entry importing std/u64> -ir-probe`
+→ `module: IR`); the gap above is closed (intervening qualified-call /
+mangling work). The "later step" note is superseded.
 
 ### 2026-06-22 — core/iter combinators: pure-Fern std/test coverage (interp-gated) + a `[T]`-in-mangled-symbol gap
 

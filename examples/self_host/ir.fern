@@ -796,6 +796,9 @@ pub function op_allocates(kind: string): boolean {
     if (kind == "map_new" || kind == "map_set") { return true; }
     // Byte/string builders that materialise a fresh box.
     if (kind == "random_bytes" || kind == "str_bytes" || kind == "str_split") { return true; }
+    // args() materialises a fresh string[] (the arr box + a string block per
+    // argv entry), so it needs the heap runtime like any other allocator.
+    if (kind == "args") { return true; }
     if (kind == "str_to_upper" || kind == "str_to_lower") { return true; }
     if (kind == "str_repeat" || kind == "str_trim" || kind == "str_reverse") { return true; }
     if (kind == "str_replace" || kind == "str_chars" || kind == "str_lines") { return true; }
