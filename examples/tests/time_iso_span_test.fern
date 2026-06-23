@@ -1,0 +1,110 @@
+import "std/test";
+import "std/time" as time;
+// examples/tests/time_iso_span_test.fern — pure-Fern coverage of std/time's ISO
+// formatting / parsing and calendar-aware Span arithmetic, the follow-on to
+// time_calendar_test (which did the serial-day Date core):
+//   (Date).format_iso          (Date → "YYYY-MM-DD", zero-padded)
+//   date_parse_iso             (string → Option[Date], with the round-trip)
+//   span_days / span_weeks / span_months / span_years (Span constructors)
+//   (Date).add_span            (calendar add: months/years clamp the day to the
+//                               target month's length; weeks/days are serial)
+// This exercises the Span struct, an Option[Date]-returning parser, and the
+// month-clamping arithmetic (Jan 31 + 1 month → Feb 28/29) through the self-host
+// IR path on real stdlib bodies. The Go-side suite unit-tests these; this is the
+// migration-shaped (pure-Fern, std/test-driven, self-host-gated) companion.
+
+// ---- ISO formatting ----
+
+function test_format_iso(): test.TestOutcome {
+    return test.assert_eq(time.date_make(2024, 3, 7).format_iso(), "2024-03-07");
+}
+
+function test_format_iso_pad_year(): test.TestOutcome {
+    // years < 1000 zero-pad to four digits.
+    return test.assert_eq(time.date_make(987, 1, 2).format_iso(), "0987-01-02");
+}
+
+// ---- ISO parsing ----
+
+function test_parse_iso_ok(): test.TestOutcome {
+    match (time.date_parse_iso("2024-03-07")) {
+        Some(d) => { return test.assert_true(d.year == 2024 && d.month == 3 && d.day == 7); },
+        None => { return test.fail("date_parse_iso expected Some"); }
+    }
+}
+
+function test_parse_iso_bad_len(): test.TestOutcome {
+    match (time.date_parse_iso("2024-3-7")) {
+        Some(d) => { return test.fail("expected None for short string"); },
+        None => { return test.pass(); }
+    }
+}
+
+function test_parse_iso_bad_sep(): test.TestOutcome {
+    match (time.date_parse_iso("2024/03/07")) {
+        Some(d) => { return test.fail("expected None for wrong separator"); },
+        None => { return test.pass(); }
+    }
+}
+
+function test_iso_round_trip(): test.TestOutcome {
+    // format then parse must recover the same fields.
+    var s: string = time.date_make(2024, 12, 31).format_iso();
+    match (time.date_parse_iso(s)) {
+        Some(d) => { return test.assert_true(d.year == 2024 && d.month == 12 && d.day == 31); },
+        None => { return test.fail("round-trip parse failed"); }
+    }
+}
+
+// ---- Span arithmetic ----
+
+function test_add_span_days(): test.TestOutcome {
+    var d = time.date_make(2024, 1, 1).add_span(time.span_days(10));
+    return test.assert_true(d.year == 2024 && d.month == 1 && d.day == 11);
+}
+
+function test_add_span_weeks(): test.TestOutcome {
+    var d = time.date_make(2024, 1, 1).add_span(time.span_weeks(2));
+    return test.assert_true(d.year == 2024 && d.month == 1 && d.day == 15);
+}
+
+function test_add_span_months_clamp_leap(): test.TestOutcome {
+    // Jan 31 + 1 month → Feb; day clamps to 29 in leap-year 2024.
+    var d = time.date_make(2024, 1, 31).add_span(time.span_months(1));
+    return test.assert_true(d.year == 2024 && d.month == 2 && d.day == 29);
+}
+
+function test_add_span_months_clamp_plain(): test.TestOutcome {
+    // Jan 31 + 1 month → Feb; day clamps to 28 in non-leap 2023.
+    var d = time.date_make(2023, 1, 31).add_span(time.span_months(1));
+    return test.assert_true(d.year == 2023 && d.month == 2 && d.day == 28);
+}
+
+function test_add_span_years_clamp(): test.TestOutcome {
+    // Feb 29 2024 + 1 year → Feb 28 2025 (2025 not a leap year).
+    var d = time.date_make(2024, 2, 29).add_span(time.span_years(1));
+    return test.assert_true(d.year == 2025 && d.month == 2 && d.day == 28);
+}
+
+function test_add_span_months_rollover(): test.TestOutcome {
+    // Nov + 3 months crosses the year boundary into Feb.
+    var d = time.date_make(2024, 11, 15).add_span(time.span_months(3));
+    return test.assert_true(d.year == 2025 && d.month == 2 && d.day == 15);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/time iso + span");
+    r = r.it("format_iso",            test_format_iso());
+    r = r.it("format_iso pad year",   test_format_iso_pad_year());
+    r = r.it("parse_iso ok",          test_parse_iso_ok());
+    r = r.it("parse_iso bad len",     test_parse_iso_bad_len());
+    r = r.it("parse_iso bad sep",     test_parse_iso_bad_sep());
+    r = r.it("iso round trip",        test_iso_round_trip());
+    r = r.it("add_span days",         test_add_span_days());
+    r = r.it("add_span weeks",        test_add_span_weeks());
+    r = r.it("add_span months clamp leap",  test_add_span_months_clamp_leap());
+    r = r.it("add_span months clamp plain", test_add_span_months_clamp_plain());
+    r = r.it("add_span years clamp",  test_add_span_years_clamp());
+    r = r.it("add_span months rollover", test_add_span_months_rollover());
+    return r.finish();
+}

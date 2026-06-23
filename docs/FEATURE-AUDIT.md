@@ -251,6 +251,26 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — std/time ISO + Span arithmetic: pure-Fern std/test coverage (self-host-gated)
+
+New `examples/tests/time_iso_span_test.fern` — the follow-on to
+`time_calendar_test` (which did the serial-day `Date` core). Covers std/time's
+ISO formatting / parsing and calendar-aware Span arithmetic:
+`(Date).format_iso` (`Date` → `"YYYY-MM-DD"`, zero-padded incl. sub-1000 years),
+`date_parse_iso` (`string` → `Option[Date]`, with the Some / bad-length /
+bad-separator paths and a format→parse round-trip), the `span_*` constructors,
+and `(Date).add_span` — the calendar add where months / years **clamp the day to
+the target month's length** (Jan 31 + 1 month → Feb 28/29 by leap year; Feb 29
++ 1 year → Feb 28) while weeks / days stay serial, plus a month rollover across
+the year boundary. 12 tests.
+
+Exercises the `Span` struct, an `Option[Date]`-returning parser, and the
+month-clamping arithmetic through the self-host IR path on real stdlib bodies —
+the struct-arg + struct-return + Option shape from the calendar suite plus the
+new day-clamp branch. On the **differential** gate (both x86 + arm64). Gated by
+`TestRunnerTimeIsoSpanExamplePasses` (interp) + `time_iso_span` in
+`TestSelfHostStdTestE2E` / `…Arm64`.
+
 ### 2026-06-22 — self-host IR: root-caused the Iterator-bounded gap to unbounded-generic type-erasure leaking a dangling `T`
 
 Drilled into the Iterator-bounded reducer gap from the entry below
@@ -285,6 +305,7 @@ prototyped but is insufficient alone — `of`'s erased *body* still spells
 (propagate concrete type args through erased generic returns, OR monomorphise
 unbounded generics that construct/return a parametric struct) — a multi-step
 piece, scoped here rather than rushed.
+
 ### 2026-06-23 — std/time civil-calendar arithmetic: pure-Fern std/test coverage (self-host-gated)
 
 New `examples/tests/time_calendar_test.fern` covers std/time's civil-calendar
