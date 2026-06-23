@@ -114,23 +114,41 @@ function main(): i32 { return 0; }
 	}
 }
 
-// p3AsyncAddParamCore is a param-forwarding async provider core: its
-// `__async_run(a, b)` export computes a+b and delivers it via task.return — the
-// shape BuildAsyncLiftedExportComponentParams lifts to `add: async func(a, b:
-// u32) -> u32`. (Hand-built rather than compiled from Fern because the wasmbin
-// -async-export wrapper does not yet forward params to the source function — a
-// separate gap; the provider here is a stand-in for a real bring-your-own host.)
-// Generated from WAT via wasm-tools 1.240.
-var p3AsyncAddParamCore = []byte{
-	0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x0a, 0x02, 0x60,
-	0x01, 0x7f, 0x00, 0x60, 0x02, 0x7f, 0x7f, 0x00, 0x02, 0x10, 0x01, 0x00,
-	0x0b, 0x74, 0x61, 0x73, 0x6b, 0x2d, 0x72, 0x65, 0x74, 0x75, 0x72, 0x6e,
-	0x00, 0x00, 0x03, 0x02, 0x01, 0x01, 0x05, 0x03, 0x01, 0x00, 0x01, 0x07,
-	0x15, 0x02, 0x03, 0x6d, 0x65, 0x6d, 0x02, 0x00, 0x0b, 0x5f, 0x5f, 0x61,
-	0x73, 0x79, 0x6e, 0x63, 0x5f, 0x72, 0x75, 0x6e, 0x00, 0x01, 0x0a, 0x0b,
-	0x01, 0x09, 0x00, 0x20, 0x00, 0x20, 0x01, 0x6a, 0x10, 0x00, 0x0b, 0x00,
-	0x17, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x01, 0x05, 0x01, 0x00, 0x02, 0x74,
-	0x72, 0x02, 0x09, 0x01, 0x01, 0x02, 0x00, 0x01, 0x61, 0x01, 0x01, 0x62,
+// buildAsyncProviderComponentParams is buildAsyncProviderComponent for a provider
+// that TAKES scalar params: compiles `async function <srcFn>(<params>): i32` and
+// lifts it as `<exportName>: async func(<params>) -> u32`. (The wasmbin
+// -async-export wrapper now forwards source-function params, so a param-taking
+// provider is authored in Fern rather than a hand-built core.)
+func buildAsyncProviderComponentParams(t *testing.T, src, srcFn, exportName string, paramNames []string, paramVals []byte) []byte {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prov.fern")
+	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prog, _, err := modload.Load(p)
+	if err != nil {
+		t.Fatalf("provider modload: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("provider constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("provider check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("provider monomorph: %v", err)
+	}
+	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+		Preview2WASI:    true,
+		AsyncExportName: "__async_run",
+		AsyncSourceFunc: srcFn,
+	})
+	if err != nil {
+		t.Fatalf("provider build: %v", err)
+	}
+	return component.BuildAsyncLiftedExportComponentParams(core, "__async_run", exportName, paramNames, paramVals, component.CValtypeU32)
 }
 
 // TestAsyncProviderBundleParamsCLI widens TestAsyncProviderBundleCLI to a
@@ -141,14 +159,13 @@ var p3AsyncAddParamCore = []byte{
 //	async function run(): i32 { return add(20, 22); }
 //
 // `-async-provider` flattens the import's scalar params into the canon-lower
-// signature; the bundled provider computes 20+22 → 42.
+// signature; the bundled provider (authored in Fern) computes 20+22 → 42.
 func TestAsyncProviderBundleParamsCLI(t *testing.T) {
 	dir := t.TempDir()
 
-	prov := component.BuildAsyncLiftedExportComponentParams(
-		p3AsyncAddParamCore, "__async_run", "add",
-		[]string{"a", "b"}, []byte{component.CValtypeU32, component.CValtypeU32},
-		component.CValtypeU32)
+	prov := buildAsyncProviderComponentParams(t,
+		"async function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return 0; }\n",
+		"add", "add", []string{"a", "b"}, []byte{component.CValtypeU32, component.CValtypeU32})
 	provPath := filepath.Join(dir, "provider.wasm")
 	if err := os.WriteFile(provPath, prov, 0o644); err != nil {
 		t.Fatal(err)
