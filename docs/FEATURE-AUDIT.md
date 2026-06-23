@@ -251,6 +251,29 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-22 — std/sort comparator + case-insensitive surface: pure-Fern std/test coverage (self-host-gated)
+
+New `examples/tests/sort_by_and_ci_test.fern` covers the half of `std/sort`
+that `sort_wider_test` leaves out — the comparator / case-insensitive /
+projection-key functions rather than the monomorphic wider-int sorts:
+`string_cmp` / `string_cmp_ci` (the ordering primitives), `sort_strings_desc`,
+`sort_strings_asc_ci` (case-insensitive ascending — mixed case must not
+fragment the order), `sort_by[T]` (generic comparator-driven insertion sort,
+closure arg), `is_sorted_by[T]` (its verification companion), and
+`sort_by_i32_key[T]` (the Schwartzian projection sort). 9 tests.
+
+On the self-host **differential** gate (both x86 + arm64), not just interp:
+re-probing confirmed the module headers' own claims hold end-to-end —
+`sort_by[T]` lowers on the self-host **IR** path (the closure-arg-over-generic
+infrastructure has landed), and `sort_by_i32_key[T]` lowers correctly via the
+**AST** fallback (its header notes the closure-typed param over a generic `T[]`
+isn't IR-eligible there yet, but the AST emitter handles it — so the gate's
+byte-for-byte output match passes regardless of which path is taken). Gated by
+`TestRunnerSortByAndCiExamplePasses` (interp) + the `sort_by_and_ci` case in
+`TestSelfHostStdTestE2E` / `…Arm64`. This is the comparator-driven companion to
+the receiver-method sorts already on the gate; closure-over-generic-`T[]` is
+the recurring self-host shape it exercises.
+
 ### 2026-06-22 — std/u64: pure-Fern std/test coverage (interp-gated) + the unsigned-through-generic gap
 
 New `examples/tests/u64_test.fern` — pure-Fern, std/test-driven coverage of
