@@ -698,6 +698,13 @@ type ExternFunc struct {
 	// `async`-lifted (own a task). Set from ast.FuncDecl.Async. See
 	// docs/WASI-PREVIEW3-ASYNC-PLAN.md.
 	Async bool
+	// StreamResultElem is set (to the element type) when the async import's
+	// result is a `stream[T]` (the checker rewrote ReturnType to `T[]` and
+	// stashed the element here). Non-nil means the result is delivered
+	// incrementally — the wasm backend drives `stream.read` + the await loop to
+	// collect a `T[]`, rather than the single-block list-result lowering. nil
+	// otherwise. See docs/STREAM-TYPE-SURFACE.md.
+	StreamResultElem ast.Type
 }
 
 // ExternEnumParam describes a flattened option/result `@import` parameter
@@ -2600,12 +2607,13 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 		// import; a call to fn.Name resolves to that import's funcidx.
 		if fn.ImportIface != "" {
 			ef := &ExternFunc{
-				Name:       fn.Name,
-				Iface:      fn.ImportIface,
-				WITName:    fn.ImportWITName,
-				Params:     fn.Params,
-				ReturnType: fn.ReturnType,
-				Async:      fn.Async,
+				Name:             fn.Name,
+				Iface:            fn.ImportIface,
+				WITName:          fn.ImportWITName,
+				Params:           fn.Params,
+				ReturnType:       fn.ReturnType,
+				Async:            fn.Async,
+				StreamResultElem: fn.StreamResultElem,
 			}
 			// Precompute the flattened layout of any record (struct) parameter
 			// while info.Structs is in scope; the wasm backend (which has no
