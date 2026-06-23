@@ -368,6 +368,27 @@ func TestRunnerU32ArithExamplePasses(t *testing.T) {
 	}
 }
 
+// TestRunnerIoBufferedExamplePasses gates the std/io_buffered BytesWriter suite
+// under the interpreter. Interp-gated only: BytesWriter holds a `u8[]` field and
+// is rebuilt immutably (`{ ...w, data }`) per write, so a writer retained to
+// scope/program exit hits the RC drop-at-exit gap on the self-host backends
+// (the same class as array_hof's flat_map/reduce/sort_by — crashes -1 during the
+// first test's teardown). Deliberately absent from selfHostStdTestCases until the
+// goal-2 RC port drops struct-holding-array locals correctly.
+func TestRunnerIoBufferedExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/io_buffered_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/io_buffered BytesWriter", "# pass 9", "# fail 0", "1..9"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 func TestRunnerSortByAndCiExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/sort_by_and_ci_test.fern")

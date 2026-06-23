@@ -1,0 +1,95 @@
+import "std/test";
+import "std/io_buffered" as io;
+// examples/tests/io_buffered_test.fern — pure-Fern coverage of std/io_buffered's
+// BytesWriter, a completely untested module: the in-memory buffered writer used
+// to build an HTTP response body without per-write socket calls (the stated
+// edge-handler use case). Covers the whole surface:
+//   bytes_writer_new / is_empty / len
+//   write_string / write_byte / write_bytes  (the append family)
+//   into_string / into_bytes                 (extraction)
+//   reset                                    (functional clear)
+//   chained builds                           (w.write(..).write(..) fluent form)
+// Each write returns a FRESH BytesWriter (immutable `{ ...w, data }` spread), so
+// this exercises struct-spread + u8[] append + string_from_bytes + chained
+// method dispatch — a distinct self-host shape. The Go-side suite unit-tests
+// these; this is the migration-shaped (pure-Fern, std/test-driven,
+// self-host-gated) companion.
+
+function test_empty(): test.TestOutcome {
+    var w = io.bytes_writer_new();
+    return test.assert_true(w.is_empty() && w.len() == 0 && w.into_string() == "");
+}
+
+function test_write_string(): test.TestOutcome {
+    var w = io.bytes_writer_new();
+    w = w.write_string("abc");
+    return test.assert_true(w.len() == 3 && !w.is_empty() && w.into_string() == "abc");
+}
+
+function test_write_byte(): test.TestOutcome {
+    // 72 = 'H', 105 = 'i'.
+    var w = io.bytes_writer_new();
+    w = w.write_byte(72);
+    w = w.write_byte(105);
+    return test.assert_eq(w.into_string(), "Hi");
+}
+
+function test_write_bytes(): test.TestOutcome {
+    var w = io.bytes_writer_new();
+    w = w.write_bytes("BC".bytes());
+    return test.assert_eq(w.into_string(), "BC");
+}
+
+function test_chained_build(): test.TestOutcome {
+    // The motivating HTTP-response-line pattern, fluent.
+    var w = io.bytes_writer_new()
+        .write_string("HTTP/1.1 ")
+        .write_string("200")
+        .write_byte(32)
+        .write_string("OK");
+    return test.assert_eq(w.into_string(), "HTTP/1.1 200 OK");
+}
+
+function test_mixed_writes(): test.TestOutcome {
+    // string + byte + bytes interleaved accumulate in order.
+    var w = io.bytes_writer_new();
+    w = w.write_string("a");
+    w = w.write_byte(98);          // 'b'
+    w = w.write_bytes("cd".bytes());
+    return test.assert_true(w.into_string() == "abcd" && w.len() == 4);
+}
+
+function test_into_bytes(): test.TestOutcome {
+    var w = io.bytes_writer_new().write_string("xyz");
+    var bs: u8[] = w.into_bytes();
+    // 'x' = 120; the buffer length and first byte round-trip.
+    return test.assert_true(bs.len() == 3 && (bs[0] as i32) == 120);
+}
+
+function test_reset(): test.TestOutcome {
+    var w = io.bytes_writer_new().write_string("discard me");
+    w = w.reset();
+    return test.assert_true(w.is_empty() && w.into_string() == "");
+}
+
+function test_reset_then_reuse(): test.TestOutcome {
+    // After reset the writer is usable again, with no leftover bytes.
+    var w = io.bytes_writer_new().write_string("old");
+    w = w.reset();
+    w = w.write_string("new");
+    return test.assert_eq(w.into_string(), "new");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/io_buffered BytesWriter");
+    r = r.it("empty",            test_empty());
+    r = r.it("write_string",     test_write_string());
+    r = r.it("write_byte",       test_write_byte());
+    r = r.it("write_bytes",      test_write_bytes());
+    r = r.it("chained build",    test_chained_build());
+    r = r.it("mixed writes",     test_mixed_writes());
+    r = r.it("into_bytes",       test_into_bytes());
+    r = r.it("reset",            test_reset());
+    r = r.it("reset then reuse", test_reset_then_reuse());
+    return r.finish();
+}
