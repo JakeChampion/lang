@@ -80,6 +80,22 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: nil,
 	},
+	// WASI Preview-3 stream-result intrinsics — the colorless `stream[T]` collect
+	// loop (docs/STREAM-TYPE-SURFACE.md). Imported under "" and provided by the
+	// composer's canon stream.read (trampolined over the consumer memory) /
+	// stream.drop-readable.
+	"async_stream_read": { // stream.read: (readable, ptr, count) -> i32 status
+		module:  "",
+		name:    "stream-read",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
+	"async_stream_drop_readable": { // stream.drop-readable: (readable) -> ()
+		module:  "",
+		name:    "stream-drop-readable",
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_fd_write": {
 		// (fd, iovs_ptr, iovs_count, nwritten_ptr) → errno
 		module:  "wasi_snapshot_preview1",
@@ -924,14 +940,6 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 		// its slice lands. The enclosing caller must be `async`-lifted (it owns the
 		// task that awaits) — the `async function` keyword provides that.
 		if ex.Async {
-			// A `stream[T]` result (the checker rewrote ReturnType to `T[]` and set
-			// StreamResultElem) is delivered incrementally — the collect-wrapper
-			// (stream.read + the await loop) is a later slice. Until it lands, reject
-			// rather than silently emit the single-block list-result lowering, whose
-			// ABI does not match an incremental stream. See docs/STREAM-TYPE-SURFACE.md.
-			if ex.StreamResultElem != nil {
-				return nil, nil, fmt.Errorf("@import %q (%s/%s): async stream[T] result codegen is not implemented yet (the type parses + type-checks, collected to %s[]; the stream.read collect-wrapper is the next slice — docs/STREAM-TYPE-SURFACE.md)", ex.Name, ex.Iface, ex.WITName, ex.StreamResultElem)
-			}
 			// Every async-import wrapper runs the pending-await loop after the
 			// lowered call, so it imports the waitable-set / subtask intrinsics
 			// (provided by the composer's canon waitable-set.* / subtask.drop).
@@ -941,6 +949,32 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			in.add("async_ws_wait")
 			in.add("async_subtask_drop")
 			in.add("async_ws_drop")
+			// A `stream[T]` result (the checker rewrote ReturnType to `T[]` and set
+			// StreamResultElem) is delivered incrementally: the raw `canon lower
+			// async` returns the stream readable handle, and the collect-wrapper
+			// drives `stream.read` + the await loop into a grow-on-demand Fern array
+			// until EOF (docs/STREAM-TYPE-SURFACE.md). It reuses the waitable
+			// intrinsics above plus stream.read / stream.drop-readable. Only scalar
+			// params are supported alongside a stream result for now.
+			if ex.StreamResultElem != nil {
+				if hasMemParam {
+					return nil, nil, fmt.Errorf("@import %q (%s/%s): an async stream[T] result with a composite (string/array/record) parameter is not supported yet (docs/STREAM-TYPE-SURFACE.md)", ex.Name, ex.Iface, ex.WITName)
+				}
+				in.add("async_stream_read")
+				in.add("async_stream_drop_readable")
+				rawName := ex.Name + "$import"
+				rawParams := append(append([]byte{}, params...), encode.ValtypeI32) // scalar params + retptr
+				specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: rawParams, results: []byte{encode.ValtypeI32}}
+				in.add(rawName)
+				wrappers[ex.Name] = runtimeHelperSpec{
+					params:  params,
+					results: []byte{encode.ValtypeI32}, // Fern array (element pointer)
+					body:    buildExternAsyncStreamResultWrapper(len(ex.Params), rawName, scalarArrayElemStride(ex.ReturnType)),
+				}
+				helpers.add(ex.Name)
+				helpers.add("__fern_alloc")
+				continue
+			}
 			if hasMemParam {
 				// Composite ARGUMENT(s) to an async import. This slice supports any mix
 				// of scalar / `string` / numeric-array (`u8[]`/`i32[]`/`f64[]`/…) params

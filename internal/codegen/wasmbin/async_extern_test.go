@@ -397,13 +397,14 @@ func TestScanExternImportsAsyncRecordParam(t *testing.T) {
 	}
 }
 
-// TestScanExternImportsAsyncStreamResultRejectedPending pins the slice boundary
-// for the colorless stream[T] result: the type parses + type-checks (the checker
-// rewrites the result to T[] and sets StreamResultElem), but until the
-// stream.read collect-wrapper lands, wasmbin rejects it rather than silently
-// emitting the single-block list-result lowering (whose ABI does not match an
-// incremental stream). See docs/STREAM-TYPE-SURFACE.md.
-func TestScanExternImportsAsyncStreamResultRejectedPending(t *testing.T) {
+// TestScanExternImportsAsyncStreamResult covers the colorless stream[T] result
+// collect-wrapper (docs/STREAM-TYPE-SURFACE.md): an `@import async function
+// body(): stream[u8]` (the checker rewrote the result to u8[] and set
+// StreamResultElem). The raw import is the async lower `(retptr) -> i32 status`
+// (delivering the stream readable handle), the wrapper's result is the Fern array
+// element pointer (i32), and it registers the waitable intrinsics PLUS
+// stream.read / stream.drop-readable.
+func TestScanExternImportsAsyncStreamResult(t *testing.T) {
 	ext := &ir.ExternFunc{
 		Name:             "body",
 		Iface:            "test:dep/d",
@@ -414,8 +415,31 @@ func TestScanExternImportsAsyncStreamResultRejectedPending(t *testing.T) {
 	}
 	var in importNeeds
 	var helpers runtimeNeeds
-	if _, _, err := scanExternImports(progCallingExtern("body", ext), &in, &helpers); err == nil {
-		t.Fatalf("expected an error for an async stream[T] result (collect-wrapper codegen pending)")
+	specs, wrappers, err := scanExternImports(progCallingExtern("body", ext), &in, &helpers)
+	if err != nil {
+		t.Fatalf("scanExternImports: %v", err)
+	}
+	raw, ok := specs["body$import"]
+	if !ok {
+		t.Fatalf("missing raw async import spec %q; specs=%v", "body$import", specs)
+	}
+	if len(raw.params) != 1 || raw.params[0] != encode.ValtypeI32 {
+		t.Errorf("raw import params = %v, want [i32] (the retptr)", raw.params)
+	}
+	if len(raw.results) != 1 || raw.results[0] != encode.ValtypeI32 {
+		t.Errorf("raw import results = %v, want [i32] (status)", raw.results)
+	}
+	w, ok := wrappers["body"]
+	if !ok {
+		t.Fatalf("missing wrapper for %q", "body")
+	}
+	if len(w.results) != 1 || w.results[0] != encode.ValtypeI32 {
+		t.Errorf("wrapper results = %v, want [i32] (Fern array element pointer)", w.results)
+	}
+	for _, n := range []string{"async_ws_new", "async_w_join", "async_ws_wait", "async_ws_drop", "async_stream_read", "async_stream_drop_readable", "body$import"} {
+		if !in.set[n] {
+			t.Errorf("intrinsic/import %q not registered for the async stream result", n)
+		}
 	}
 }
 
