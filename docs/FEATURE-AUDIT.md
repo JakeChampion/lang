@@ -251,6 +251,40 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — arithmetic operators over a trait-bounded type parameter (#2706) + nested-overload rewrite fix
+
+Two coupled fixes completing the `Num` / arithmetic-operator-trait payoff of #2706
+on the **native** compiler (the self-host IR path already handled it by
+monomorphising the bounded `T` to its concrete instantiation):
+
+1. **Operators on a bounded type parameter.** `a + b` / `(a + b) * (a - b)` /
+   unary `-a` where the operands have type `T` and `T`'s bound provides the op's
+   trait method (`Num` = Add+Sub+Mul+Div, `Neg`) now desugar to `a.add(b)` /
+   `a.neg()`, resolved through the bound — the same deferred dispatch as
+   `a.cmp(b)` for `T: Ord`. Previously the native checker rejected them with E009
+   ("operator requires an integer type, got T"), so generic numeric code
+   (`function sum[T: Num](xs: T[]): T { … acc = acc + x … }`) had to spell out
+   `.add` / `.mul`. `compositeOpOverload` (binary) and the unary-minus path now
+   handle a `ParamType` operand via `resolveTraitMethodForParam`; a type param
+   without the matching arithmetic bound still falls through to E009.
+
+2. **Nested composite-overload rewrite bug (latent, all backends).** The
+   post-check expr rewrite that swaps a `Binary`/`Unary` for its desugared
+   `ArithCall` / `NegCall` did NOT recurse into those side-channel calls, so a
+   NESTED overloaded operand — `(a - b) * b`, `((a + b) * (a - b)).x` — kept an
+   un-swapped inner `Binary`, which then ran as scalar arithmetic on a struct
+   pointer (garbage field read) or hit a runtime "field access on non-struct"
+   error. `ast/walk.go`'s `rewriteExprChildren` now recurses into `ArithCall`
+   (alongside the existing `EqCall`/`CmpCall`) and into `NegCall`, so nested
+   overloads — for both bounded type params and concrete structs — lower
+   correctly.
+
+Gated by `TestOperatorOverloadOverTypeParam` (checker, positive + the
+bound-without-the-method E009 negative), the `op_trait_generic` + `op_overload_nested`
+native fixtures (interp / x86-64 / arm64 / wasm), and `TestSelfHostOpTraitGenericIR`
+(self-host IR: sum3 / diff-of-squares / unary-neg / accumulate-loop). The
+byte-identical bootstrap fixpoint holds.
+
 ### 2026-06-23 — range EXPRESSIONS `a..b` / `a..=b` as first-class iterator values (#2699)
 
 Completes the remaining part of #2699 ("Range as an `Iterable`"). The `for i in

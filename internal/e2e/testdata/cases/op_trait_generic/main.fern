@@ -1,0 +1,16 @@
+// Arithmetic operator overloading over a trait-bounded TYPE PARAMETER (#2706):
+// `a + b`, `(a + b) * (a - b)`, unary `-a` where the operands have type `T` and
+// `T`'s bound provides the op's trait method (`Num` = Add+Sub+Mul+Div, `Neg`)
+// desugar to `a.add(b)` / `a.neg()` etc., resolved through the bound — the same
+// deferred dispatch as `a.cmp(b)` for `T: Ord`. This is the payoff: generic
+// numeric code reads with operators instead of explicit `.add` calls.
+import "std/num";
+function sum3[T: num.Num](a: T, b: T, c: T): T { return a + b + c; }       // nested (a+b)+c
+function dsq[T: num.Num](a: T, b: T): T { return (a + b) * (a - b); }      // nested both sides
+function negate[T: num.Neg](a: T): T { return -a; }                        // unary on a type param
+function main(): i32 {
+    var s: i32 = sum3(10, 20, 12);   // 42
+    s = s + dsq(5, 3);               // (8)*(2)=16 -> 58
+    s = s + negate(0 - 8);           // 8         -> 66
+    return s;                        // 66
+}

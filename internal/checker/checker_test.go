@@ -514,6 +514,42 @@ function main(): i32 { var a: V = V{x:5}; var b: V = -a; return b.x; }`); err !=
 	}
 }
 
+// Operator overloading over a trait-bounded TYPE PARAMETER: `a + b` / `-a` where
+// `a`/`b` have type `T` and `T`'s bound provides the op's trait method desugars
+// to `a.add(b)` / `a.neg()` resolved via the bound — the #2706 generic-numeric
+// payoff. A type param whose bound lacks the method falls through to the usual
+// E009.
+func TestOperatorOverloadOverTypeParam(t *testing.T) {
+	const traits = `trait Add { function add(self: Self, o: Self): Self; }
+trait Mul { function mul(self: Self, o: Self): Self; }
+trait Neg { function neg(self: Self): Self; }
+trait Arith: Add + Mul + Neg {}
+`
+	// Binary `+` / `*` (including nested) over a type param bound by the traits.
+	if err := checkSource(t, traits+`function poly[T: Arith](a: T, b: T): T { return (a + b) * a; }
+function main(): i32 { return 0; }`); err != nil {
+		t.Errorf("binary operators over a trait-bounded type param should type-check, got: %v", err)
+	}
+	// Unary `-` over a `Neg`-bounded type param.
+	if err := checkSource(t, traits+`function negate[T: Neg](a: T): T { return -a; }
+function main(): i32 { return 0; }`); err != nil {
+		t.Errorf("unary `-` over a Neg-bounded type param should type-check, got: %v", err)
+	}
+	// A direct supertrait bound (`T: Add`) is enough for `+`.
+	if err := checkSource(t, traits+`function plus[T: Add](a: T, b: T): T { return a + b; }
+function main(): i32 { return 0; }`); err != nil {
+		t.Errorf("`+` over an Add-bounded type param should type-check, got: %v", err)
+	}
+	// A type param whose bound does NOT provide the op's method is rejected
+	// (falls through to the numeric path's E009).
+	err := checkSource(t, `trait Show { function show(self: Self): i32; }
+function bad[T: Show](a: T, b: T): T { return a + b; }
+function main(): i32 { return 0; }`)
+	if err == nil || !strings.Contains(err.Error(), `operator "+" requires an integer type`) {
+		t.Errorf("`+` over a type param without an Add bound should be rejected (E009), got: %v", err)
+	}
+}
+
 func TestCompositeEqualityRoutesToEq(t *testing.T) {
 	const eqI32 = `trait Eq { function eq(self: Self, other: Self): boolean; }
 impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } }
