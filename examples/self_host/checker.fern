@@ -4841,17 +4841,25 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
         var ej: i32 = 0;
         while (ej < di) {
             var pe: parser.FuncDecl = mod.funcs[ej];
-            if (f2.receiver_name.len() == 0 && pe.receiver_name.len() == 0 && pe.name == f2.name) {
+            // Key redeclaration on the receiver TYPE, not the receiver NAME:
+            // an ASSOCIATED function (`impl Default for i32 { function default()
+            // }`) has an empty receiver_name (no `self`) but a SET receiver_type
+            // (`i32`). Keying on receiver_name mis-merged every type's `default`
+            // into one "free function" and flagged E006 across distinct impls
+            // (i32.default vs i64.default …). Free functions have NO receiver
+            // type on either side; type-associated decls (methods OR associated
+            // fns) collide only when name AND receiver type both match.
+            if (f2.receiver_type.len() == 0 && pe.receiver_type.len() == 0 && pe.name == f2.name) {
                 earlier = true;
             }
-            if (f2.receiver_name.len() > 0 && pe.receiver_name.len() > 0 && pe.name == f2.name
+            if (f2.receiver_type.len() > 0 && pe.receiver_type.len() > 0 && pe.name == f2.name
                     && util.base_type_name(pe.receiver_type) == util.base_type_name(f2.receiver_type)) {
                 earlier = true;
             }
             ej = ej + 1;
         }
         if (earlier) {
-            if (f2.receiver_name.len() == 0) {
+            if (f2.receiver_type.len() == 0) {
                 out = out.append(dg_at("E006", "function \"" + f2.name + "\" redeclared", f2.line, f2.col));
             } else {
                 out = out.append(dg_at("E006", "method \"" + f2.name + "\" on " + util.base_type_name(f2.receiver_type) + " redeclared", f2.line, f2.col));
