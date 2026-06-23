@@ -5068,6 +5068,22 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!wfs.ok) { return wfs; }
                         return wfs.emit(ir.op_write_file());
                     }
+                    // Built-in `remove_dir_all(path)` — recursively rm -rf the named
+                    // directory tree, push a fresh Option[IoError] box (None on
+                    // success / Some(_) on a non-ENOENT/ENOTDIR open error). A value
+                    // op consuming the lowered path arg. The Option type is resolved
+                    // by read_file_result_type's remove_dir_all case so `match
+                    // (remove_dir_all(p)) { Some(_) => .., None => .. }` lowers. No
+                    // wasm file I/O, so wasm_eligible rejects remove_dir_all modules;
+                    // x86 / arm64 lower it (the same recursive runtime the AST path
+                    // calls — `TestRunner.finish`'s cleanup path, the universal
+                    // std/test blocker that pinned every test module to the AST
+                    // emitter and its u32 miscompile, #3457).
+                    if (cid.name == "remove_dir_all" && c.args.len() == 1) {
+                        var rdas: LowerState = lower_expr(c.args[0], s);
+                        if (!rdas.ok) { return rdas; }
+                        return rdas.emit(ir.op_remove_dir_all());
+                    }
                     // Built-in `args()` — the command-line argv accessor: push a
                     // fresh string[] (argv[0] first). A no-arg value op; the result
                     // str-array-tracks (expr_is_strarr's args case) so `a.len()` /
@@ -15660,6 +15676,7 @@ pub function (s: LowerState) opt_ret_type(name: string): string {
     // still wins. read_file → Result[string, IoError].
     if (name == "read_file") { return "Result[string, IoError]"; }
     if (name == "write_file") { return "Option[IoError]"; }
+    if (name == "remove_dir_all") { return "Option[IoError]"; }
     return "";
 }
 
@@ -17650,6 +17667,39 @@ function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, f
                 var b: InlineCloStmts = lift_inline_closures_stmts(fr.body, fd, fs, ct, gfns, structs, mfuncs);
                 fs = b.funcs; ct = b.counter;
                 out = out.append(parser.StmtFor { var_name: fr.var_name, iter: cr.expr, body: b.stmts, label: fr.label });
+            },
+            parser.StmtMatch(m) => {
+                // Walk the SCRUTINEE (same fn-arg-boxing reason as StmtIf above): a
+                // fn-typed call argument in `match (g(<lambda>)) { … }` — e.g.
+                // `match (assert_count_i32(arr, is_even, n)) { … }` — must be env-
+                // boxed exactly as in `var r = g(…)`, else the callee (whose fn-param
+                // is a closure local) unpacks a box from a BARE fn pointer and
+                // segfaults on the indirect call. Without this arm the default case
+                // passed StmtMatch through untouched, so a fn-value arg in a match
+                // scrutinee (or guard/arm body) was never wrapped — the latent IR bug
+                // surfaced once std/test modules routed IR (#3457: wider_array's
+                // `match (assert_count_i32(…, is_even, …))`, map_eq's predicate).
+                // lift_inline_closures_expr is a structural identity when no fn-arg is
+                // present, so this is inert for the self-host source (no fn-typed
+                // params) and the byte-identical fixpoint is undisturbed.
+                var scr: InlineCloRes = lift_inline_closures_expr(m.scrutinee, fd, fs, ct, gfns, structs, mfuncs);
+                fs = scr.funcs; ct = scr.counter;
+                var narms: parser.MatchArm[] = [];
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) {
+                    var arm: parser.MatchArm = m.arms[mi];
+                    var gexpr: parser.Expr = arm.guard;
+                    if (arm.has_guard) {
+                        var gr: InlineCloRes = lift_inline_closures_expr(arm.guard, fd, fs, ct, gfns, structs, mfuncs);
+                        fs = gr.funcs; ct = gr.counter;
+                        gexpr = gr.expr;
+                    }
+                    var ab: InlineCloStmts = lift_inline_closures_stmts(arm.body, fd, fs, ct, gfns, structs, mfuncs);
+                    fs = ab.funcs; ct = ab.counter;
+                    narms = narms.append(parser.MatchArm { pattern: arm.pattern, body: ab.stmts, line: arm.line, col: arm.col, guard: gexpr, has_guard: arm.has_guard });
+                    mi = mi + 1;
+                }
+                out = out.append(parser.StmtMatch { scrutinee: scr.expr, arms: narms, line: m.line, col: m.col, origin: m.origin });
             },
             _ => { out = out.append(stmts[i]); }
         }

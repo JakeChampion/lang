@@ -251,6 +251,49 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — `remove_dir_all` lowers on the IR path → `crypto` / `u32` route IR (not AST)
+
+The `std/crypto` self-host digest mismatch (#3908: SHA-256 produces the right
+length, wrong bits) was **mis-attributed to the u32 ALU**. Root-caused it to
+routing, not arithmetic:
+
+- The **IR path already wraps u32 correctly** — `op_u32_wrap` after
+  `+`/`-`/`*`/`<<` gated on `expr_is_u32` (which recognises `as u32` casts,
+  u32 slots/params, u32[] elements). A pure-arithmetic probe
+  (`(0xFFFFFFFF as u32) + 2 == 1`, `rotr(0x12345678, 8) == 2014458966`) routes
+  `ir` and exits 0, oracle-matched.
+- **Every** `crypto` function (`__rotr` / `__sha256_compress` / `main`) routes
+  `ir`. The module verdict was `module: AST` for **one** reason: the
+  whole-module gate is all-or-nothing, and `TestRunner.finish` (called by every
+  `std/test` program) bailed `BAIL call` on **`remove_dir_all`** — its cleanup
+  path — which had no IR lowering. So the AST emitter (whose u32 `+`/`<<` do
+  **not** truncate to 32 bits) was selected, miscompiling the digests.
+- Fix: lower `remove_dir_all` on the IR path (`op_remove_dir_all`, the same
+  recursive `__fern_remove_dir_all` runtime the AST path calls — x86 in
+  `asm_ir`, arm64 reused from `asm_arm64.emit_runtime`'s heap block; wasm stays
+  ineligible, as for `read_int`/`sleep_ms`). Plus a `mono_infer` gap: a
+  `.to_string()` / `.to_debug()` arg now infers `string`, so a bounded-generic
+  `assert_eq(x.to_string(), y.to_string())` binds `T = string` instead of
+  staying an uninstantiated template (the std/u32 `rotr_roundtrip` case).
+
+Lowering `remove_dir_all` flips **every** `std/test` module to the IR path
+(all call `TestRunner.finish`), which surfaced a **latent IR closure bug**:
+`lift_inline_closures_stmts` walked `StmtIf`/`While`/`For` conditions to env-box
+a fn-value call argument, but had **no `StmtMatch` arm** — so a fn-value passed
+inside a `match` scrutinee (`match (assert_count_i32(arr, is_even, n)) { … }`,
+`wider_array` / `map_eq`) was left a BARE fn pointer; the callee (whose fn-param
+is a closure local) then unpacked a box from it and segfaulted on the indirect
+call. Added the `StmtMatch` arm (lift scrutinee + guards + arm bodies) — inert
+for the self-host source (no fn-typed params), fixpoint undisturbed.
+
+With these, `crypto` and `u32_arith` route `ir` and match the interpreter
+byte-for-byte; promoted onto the self-host differential gate
+(`u32_arith` / `crypto` in `selfHostStdTestCases`). This retires another
+swath of std/test modules from the AST emitter (goal 1, #3457): the universal
+`TestRunner.finish` blocker is gone, so any std/test module that otherwise
+lowers now routes IR. Per CLAUDE.md, the AST emitter's u32 gap is **not**
+fixed — it is being retired, and the code now lowers correctly on IR.
+
 ### 2026-06-23 — Iterator-bounded generic reducers (core/iter) now lower on the IR path
 
 `core/iter.sum` / `count` / `to_array` / `product` — bounded-generic reducers

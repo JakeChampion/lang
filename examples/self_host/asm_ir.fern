@@ -1220,6 +1220,179 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    popq %rbp\n");
         s = s.write("    ret\n");
     }
+    // __fern_remove_dir_all: %rdi = path box -> Option[IoError] box. Recursive
+    // rm -rf: openat the path as a directory; ENOENT -> None (already gone),
+    // ENOTDIR -> unlink the file, success -> recurse into each child (path + "/"
+    // + name) then rmdir. Best-effort. Transcribed verbatim from asm.fern's
+    // emit_runtime (the same body the AST path calls); gated on the
+    // remove_dir_all need; calls __fern_alloc + recurses into itself.
+    if (s.has_need("remove_dir_all")) {
+        s = s.write("__fern_remove_dir_all:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    pushq %r13\n");
+        s = s.write("    pushq %r14\n");
+        s = s.write("    pushq %r15\n");
+        s = s.write("    movq (%rdi), %r12\n");
+        s = s.write("    movq 8(%rdi), %r13\n");
+        s = s.write("    leaq 1(%r13), %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %rbx\n");
+        s = s.write("    movq $0, %rcx\n");
+        s = s.write(".Lrda_copy:\n");
+        s = s.write("    cmpq %r13, %rcx\n");
+        s = s.write("    jge .Lrda_cpd\n");
+        s = s.write("    movb (%r12,%rcx,1), %dl\n");
+        s = s.write("    movb %dl, (%rbx,%rcx,1)\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write("    jmp .Lrda_copy\n");
+        s = s.write(".Lrda_cpd:\n");
+        s = s.write("    movb $0, (%rbx,%r13,1)\n");
+        s = s.write("    movq $-100, %rdi\n");
+        s = s.write("    movq %rbx, %rsi\n");
+        s = s.write("    movq $65536, %rdx\n");
+        s = s.write("    movq $0, %r10\n");
+        s = s.write("    movq $257, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    testq %rax, %rax\n");
+        s = s.write("    jns .Lrda_dir\n");
+        s = s.write("    cmpq $-2, %rax\n");
+        s = s.write("    je .Lrda_none\n");
+        s = s.write("    cmpq $-20, %rax\n");
+        s = s.write("    jne .Lrda_some\n");
+        s = s.write("    movq $-100, %rdi\n");
+        s = s.write("    movq %rbx, %rsi\n");
+        s = s.write("    movq $0, %rdx\n");
+        s = s.write("    movq $263, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    jmp .Lrda_none\n");
+        s = s.write(".Lrda_dir:\n");
+        s = s.write("    movq %rax, %r12\n");
+        s = s.write("    movq $65536, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %r13\n");
+        s = s.write("    movq $0, %r14\n");
+        s = s.write(".Lrda_g:\n");
+        s = s.write("    movq %r12, %rdi\n");
+        s = s.write("    leaq (%r13,%r14,1), %rsi\n");
+        s = s.write("    movq $65536, %rdx\n");
+        s = s.write("    subq %r14, %rdx\n");
+        s = s.write("    movq $217, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    cmpq $0, %rax\n");
+        s = s.write("    jle .Lrda_gd\n");
+        s = s.write("    addq %rax, %r14\n");
+        s = s.write("    jmp .Lrda_g\n");
+        s = s.write(".Lrda_gd:\n");
+        s = s.write("    movq $0, %r15\n");
+        s = s.write(".Lrda_it:\n");
+        s = s.write("    cmpq %r14, %r15\n");
+        s = s.write("    jge .Lrda_itd\n");
+        s = s.write("    leaq 19(%r13,%r15,1), %rax\n");
+        s = s.write("    movb (%rax), %cl\n");
+        s = s.write("    cmpb $46, %cl\n");
+        s = s.write("    jne .Lrda_ch\n");
+        s = s.write("    movb 1(%rax), %cl\n");
+        s = s.write("    cmpb $0, %cl\n");
+        s = s.write("    je .Lrda_adv\n");
+        s = s.write("    cmpb $46, %cl\n");
+        s = s.write("    jne .Lrda_ch\n");
+        s = s.write("    movb 2(%rax), %cl\n");
+        s = s.write("    cmpb $0, %cl\n");
+        s = s.write("    je .Lrda_adv\n");
+        s = s.write(".Lrda_ch:\n");
+        s = s.write("    movq %rax, %r8\n");
+        s = s.write("    movq $0, %r9\n");
+        s = s.write(".Lrda_pl:\n");
+        s = s.write("    movb (%rbx,%r9,1), %cl\n");
+        s = s.write("    cmpb $0, %cl\n");
+        s = s.write("    je .Lrda_pld\n");
+        s = s.write("    incq %r9\n");
+        s = s.write("    jmp .Lrda_pl\n");
+        s = s.write(".Lrda_pld:\n");
+        s = s.write("    movq $0, %r10\n");
+        s = s.write(".Lrda_nl:\n");
+        s = s.write("    movb (%r8,%r10,1), %cl\n");
+        s = s.write("    cmpb $0, %cl\n");
+        s = s.write("    je .Lrda_nld\n");
+        s = s.write("    incq %r10\n");
+        s = s.write("    jmp .Lrda_nl\n");
+        s = s.write(".Lrda_nld:\n");
+        s = s.write("    pushq %r8\n");
+        s = s.write("    pushq %r9\n");
+        s = s.write("    pushq %r10\n");
+        s = s.write("    leaq 1(%r9,%r10,1), %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %rsi\n");
+        s = s.write("    popq %r10\n");
+        s = s.write("    popq %r9\n");
+        s = s.write("    popq %r8\n");
+        s = s.write("    movq $0, %rcx\n");
+        s = s.write(".Lrda_cc1:\n");
+        s = s.write("    cmpq %r9, %rcx\n");
+        s = s.write("    jge .Lrda_cc1d\n");
+        s = s.write("    movb (%rbx,%rcx,1), %dl\n");
+        s = s.write("    movb %dl, (%rsi,%rcx,1)\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write("    jmp .Lrda_cc1\n");
+        s = s.write(".Lrda_cc1d:\n");
+        s = s.write("    movb $47, (%rsi,%r9,1)\n");
+        s = s.write("    movq $0, %rcx\n");
+        s = s.write(".Lrda_cc2:\n");
+        s = s.write("    cmpq %r10, %rcx\n");
+        s = s.write("    jge .Lrda_cc2d\n");
+        s = s.write("    movb (%r8,%rcx,1), %dl\n");
+        s = s.write("    leaq 1(%r9,%rcx,1), %rax\n");
+        s = s.write("    movb %dl, (%rsi,%rax,1)\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write("    jmp .Lrda_cc2\n");
+        s = s.write(".Lrda_cc2d:\n");
+        s = s.write("    leaq 1(%r9,%r10,1), %r11\n");
+        s = s.write("    pushq %rsi\n");
+        s = s.write("    pushq %r11\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    popq %r11\n");
+        s = s.write("    popq %rsi\n");
+        s = s.write("    movq %rsi, (%rax)\n");
+        s = s.write("    movq %r11, 8(%rax)\n");
+        s = s.write("    movq %rax, %rdi\n");
+        s = s.write("    call __fern_remove_dir_all\n");
+        s = s.write(".Lrda_adv:\n");
+        s = s.write("    movzwq 16(%r13,%r15,1), %rax\n");
+        s = s.write("    addq %rax, %r15\n");
+        s = s.write("    jmp .Lrda_it\n");
+        s = s.write(".Lrda_itd:\n");
+        s = s.write("    movq %r12, %rdi\n");
+        s = s.write("    movq $3, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    movq $-100, %rdi\n");
+        s = s.write("    movq %rbx, %rsi\n");
+        s = s.write("    movq $512, %rdx\n");
+        s = s.write("    movq $263, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write(".Lrda_none:\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $1, (%rax)\n");
+        s = s.write("    movq $0, 8(%rax)\n");
+        s = s.write("    jmp .Lrda_ret\n");
+        s = s.write(".Lrda_some:\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $0, (%rax)\n");
+        s = s.write("    movq $0, 8(%rax)\n");
+        s = s.write(".Lrda_ret:\n");
+        s = s.write("    popq %r15\n");
+        s = s.write("    popq %r14\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+    }
     // __fern_argc / __fern_argv globals (.bss) + __fern_arg_at + __fern_args: the
     // command-line argv accessor. The entry's _start saves argc / argv from the
     // initial stack into these globals (gated on the same args need); __fern_args
@@ -2894,6 +3067,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_print_int", "__fern_eprint_str", "__fern_putchar",
         "__fern_read_int", "__fern_read_line", "__fern_read_file",
         "__fern_reader_read_chunk", "__fern_reader_close", "__fern_write_file",
+        "__fern_remove_dir_all",
         "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
         "__fern_strbuf_reset", "__fern_strbuf_take", "__fern_random_i32",
         "__fern_random_bytes", "__fern_monotonic_ns", "__fern_now_ns",
@@ -3373,6 +3547,12 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // allocates). content on TOS -> rsi, path below -> rdi.
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_write_file\n    pushq %rax\n");
             s = s.need("heap").need("write_file");
+        } else if (o.kind == "remove_dir_all") {
+            // [pathbox] -> recursively rm -rf the named dir tree, push a fresh
+            // Option[IoError] box (the AST path's __fern_remove_dir_all, which
+            // allocates + recurses). The path string box is the popped %rdi arg.
+            s = s.write("    popq %rdi\n    call __fern_remove_dir_all\n    pushq %rax\n");
+            s = s.need("heap").need("remove_dir_all");
         } else if (o.kind == "read_chunk") {
             // [fd][n] -> read up to n bytes from the Reader fd, push a fresh
             // Option[string] box (Some(chunk) / None at EOF). Reuses the AST path's
@@ -4201,7 +4381,7 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     // The freestanding allocator + RC runtime, only when the program allocates.
     // i32.to_string() allocates its box even in an otherwise heap-free program,
     // so its emit-time need pulls the runtime in too (its body calls __fern_alloc).
-    if (s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("print_int") || s.has_need("read_int") || s.has_need("str_read_line") || s.has_need("putchar") || s.has_need("strbuf") || s.has_need("reader") || s.has_need("write_file")) { s = emit_ir_runtime(s); }
+    if (s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("print_int") || s.has_need("read_int") || s.has_need("str_read_line") || s.has_need("putchar") || s.has_need("strbuf") || s.has_need("reader") || s.has_need("write_file") || s.has_need("remove_dir_all")) { s = emit_ir_runtime(s); }
     // String search predicates (starts_with / ends_with / index_of) are
     // allocation-free + self-contained, so they're emitted in their own helper
     // — kept OUT of emit_ir_runtime, whose size is near the self-host's

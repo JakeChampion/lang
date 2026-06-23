@@ -544,6 +544,13 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // heap block). Pop content into x1, path into x0; push the result box.
             s = s.need("heap").need("write_file");
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_write_file\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "remove_dir_all") {
+            // [pathbox] -> recursively rm -rf the named dir tree, push a fresh
+            // Option[IoError] box (asm_arm64.emit_runtime's __fern_remove_dir_all,
+            // emitted in its heap block — the same recursive runtime the AST path
+            // calls). Pop the path box into x0, push the result box.
+            s = s.need("heap");
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_remove_dir_all\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "read_chunk") {
             // [fd][n] -> read up to n bytes from the Reader fd, push a fresh
             // Option[string] box (asm_arm64.emit_runtime's __fern_reader_read_chunk,

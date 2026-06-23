@@ -295,6 +295,12 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"sort_by_and_ci", langSrcAbs(t, "examples/tests/sort_by_and_ci_test.fern"), ""},
 		{"option_combinators", langSrcAbs(t, "examples/tests/option_combinators_test.fern"), ""},
 		{"result_combinators", langSrcAbs(t, "examples/tests/result_combinators_test.fern"), ""},
+		// crypto + u32 lower fully on the IR path now that remove_dir_all (the
+		// TestRunner.finish cleanup call) lowers there — previously the bail
+		// dragged every std/test module onto the AST emitter, whose u32
+		// arithmetic doesn't truncate to 32 bits, miscompiling SHA-256 (#3457).
+		{"u32_arith", langSrcAbs(t, "examples/tests/u32_arith_test.fern"), ""},
+		{"crypto", langSrcAbs(t, "examples/tests/crypto_test.fern"), ""},
 		{"synthetic_fail", failing, ""},
 	}
 }
