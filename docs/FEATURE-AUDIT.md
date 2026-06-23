@@ -251,6 +251,24 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — flatten mangles struct names inside tuple return types → cross-module tuple-struct destructure routes IR
+
+A tuple return type with an own-module struct element (`(string, TestRunner)`,
+std/test's `must_temp_dir`) was left UNMANGLED by `flatten.rewrite_type_name`:
+its bare/bracket logic treated the whole `( … )` spelling as one name, so the
+inner `TestRunner` never became `test__TestRunner`. A cross-module tuple
+destructure (`var (dir, rr) = test.must_temp_dir(…)`) then recovered the
+unmangled `TestRunner` tag, marked `rr` as struct `TestRunner`, and dispatched a
+non-existent `TestRunner.it` (the real method is `test__TestRunner.it`) →
+`BAIL call[TestRunner.it]`, dragging the module to AST. `rewrite_type_name` now
+recurses into a tuple spelling, mangling each element (depth-aware split,
+preserving nesting). Three gate modules — `result_assertions`, `helpers`,
+`string_count_and_dir_listing` — flip from AST to IR and match the interpreter
+byte-for-byte (the `temp_dir` / `read_dir` landings + this complete their
+must_temp_dir → write_file/read_dir → assert chains on IR). Bootstrap fixpoint
+byte-identical (the self-host's own cross-module tuple-struct returns now mangle
+consistently, but its emit was already self-consistent, so output is unchanged).
+
 ### 2026-06-23 — `read_dir(path)` lowers on the IR path
 
 `read_dir` (list a directory's base-name children via openat+getdents64 →
