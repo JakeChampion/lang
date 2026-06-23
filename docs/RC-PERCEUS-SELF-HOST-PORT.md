@@ -2406,3 +2406,62 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   discarded fresh-ret-call locals must keep leaking (sound). The `__struct_drop_<T>`
   emit-budget unlock stands on its own (#3868) — it is a prerequisite for this slice,
   not wasted.
+- 2026-06-23: **Increment A root-cause SHARPENED (corrects the #3880 framing): the
+  blocker is INTRA-procedural callee-return freshness, not an interprocedural
+  classifier, and NOT an escape-analysis gap.** Two candidate failure modes for the
+  discarded-local deep-drop were on the table: (a) the escape analysis treats
+  `r.field` as a borrow (`expr_unsafe_for`'s ExprFieldAccess ident-base arm returns
+  false), so `var x = r.ops` could extract an rc-array field into a lasting alias;
+  (b) the callee returns a struct whose array field aliases one of its args. A timing
+  argument settles it: the discarded-local reclaim fires ONLY in the end-of-scope
+  dec-sweep (`emit_dec_sweep_except_list`), which runs AFTER every in-function use of
+  `r` and its extracted fields — so an extracted alias `x = r.ops` is always still
+  valid at its last use within the frame (mode (a) cannot dangle for the exit-sweep;
+  the existing struct-literal reclaim relies on this same property and is sound). The
+  only way the exit-sweep frees a still-live buffer is if `r`'s array field aliases a
+  value that outlives THIS frame — i.e. the fresh-ret CALLEE returned a struct whose
+  rc-array field points at one of the callee's own args (which the caller still owns).
+  That is mode (b), and it is decided entirely by the CALLEE's body, intra-
+  procedurally: is each rc-array field of every `return S { .. }` initialised from a
+  FRESH value (an array literal, or a non-param local provably built fresh — append
+  chains off a literal, a field of a fresh struct local) rather than from a param /
+  param-field / call-result? So the real next slice is a `return_fresh_struct_ret_fns`
+  refinement of `fresh_struct_ret_fns_of`: keep a fn only if every return-struct
+  rc-array field init is fresh by an intra-procedural provenance check of the callee.
+  No change to `expr_unsafe_for` / the escape analysis is needed (mode (a) is a
+  non-issue for the exit-sweep). **Tractability caveat (measured):** a cheap sound
+  over-approximation has near-zero value — gating on "callee has no rc-array-typed
+  params" (so nothing can alias in) is sound but excludes exactly the valuable cases
+  (`lower_func` takes `structs[]` / `fn` yet returns a fresh `LowerResult.ops`), so
+  the freshness must be proven for callees that DO take rc-array inputs but build
+  their return fields fresh. That provenance check (literal / fresh-built-local /
+  fresh-struct-field, transitively) is the substantive dataflow work; until it lands,
+  discarded fresh-ret-call locals keep leaking (sound). `__struct_drop_<T>` (#3868)
+  remains the prerequisite that makes the eventual admission fit the #3452 budget.
+- 2026-06-23: **Correction to the entry above — the freshness check IS an
+  interprocedural fixpoint, reconciling #3880 and #3888.** Inspecting `lower_func`'s
+  actual success return (`return LowerResult { ok: true, ops: s.ops, n_locals: ..,
+  arr_slots: arr_slots_of(s), i64_slots: i64_slots_of(s), f64_slots: f64_slots_of(s),
+  .. }`) shows the rc-array fields are initialised from (i) `s.ops`, a field of the
+  fresh threaded `LowerState` local `s`, and (ii) `arr_slots_of(s)` / `i64_slots_of(s)`
+  / `f64_slots_of(s)`, HELPER CALLS that build a fresh `i32[]`. A purely intra-
+  procedural provenance check sees those calls and conservatively says "not fresh" →
+  it REJECTS `lower_func`, the one case worth admitting. To admit it, the check must
+  also classify `arr_slots_of` & co. as FRESH-ARRAY-RETURNING — which is the same
+  freshness question one level down. So the real shape is an interprocedural least-
+  fixpoint over TWO predicates — `fresh_array_ret_fns` (a fn whose every `return e`
+  is a fresh array: literal / append-chain off a literal / a call to a
+  fresh_array_ret_fn) and `return_fresh_struct_ret_fns` (a fresh-ret struct fn whose
+  every return-struct rc-array field init is fresh: array literal / fresh non-param
+  local / field of a fresh struct local / call to a fresh_array_ret_fn) — seeded
+  empty and iterated to a fixpoint, exactly like `borrowable_params_interproc` /
+  `consume_safe_params_interproc`. The timing argument from the prior entry still
+  holds (the exit-sweep makes mode (a)/escape a non-issue; the decision is about the
+  callee's returned-field provenance) — but proving that provenance for the valuable
+  callees is interprocedural, not intra-procedural. Net: #3880's "interprocedural
+  classifier" was right about the shape, #3888 was right that it's the callee's
+  return-field provenance (not an escape-analysis change) and that mode (a) is inert;
+  this is the reconciled, accurate spec for the slice. Effort + risk unchanged
+  (substantial dataflow; a false-positive freshness = UAF, caught by the per-module
+  RUN gate), value unchanged (admits the `lower_func`/`parse_x` discarded-local hot
+  path once it lands), prerequisite unchanged (`__struct_drop_<T>`, #3868).

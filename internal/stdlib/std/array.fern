@@ -1195,6 +1195,33 @@ pub function difference[T: cmp.Eq](a: T[], b: T[]): T[] {
     return out;
 }
 
+// `equal(a, b)` — structural array equality: true iff `a` and `b` have the
+// same length and equal elements at every index (element `==`). The
+// `Eq`-bounded generic companion to comparing two `T[]` element-wise — there
+// is no `==` on arrays themselves. Short-circuits on the first mismatch.
+// `equal([], [])` is true.
+pub function equal[T: cmp.Eq](a: T[], b: T[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) {
+        if (a[i] != b[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `index_of_last(xs, target)` — `Some(i)` for the LAST index whose element
+// equals `target`, else `None`. The reverse-scan companion to `index_of`
+// (first match); the Option keeps "not found" out of band.
+pub function index_of_last[T: cmp.Eq](xs: T[], target: T): Option[i32] {
+    var i: i32 = xs.len() - 1;
+    while (i >= 0) {
+        if (xs[i] == target) { return Some(i); }
+        i = i - 1;
+    }
+    return None;
+}
+
 // ---- Generic array methods --------------------------------------
 //
 // Method forms of the combinators above, so pipelines read

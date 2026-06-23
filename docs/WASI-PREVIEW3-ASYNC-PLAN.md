@@ -537,8 +537,32 @@ runs `run()` → **5**. So a mem param and a composite result now flow together
 across an awaited import.
 
 **Still remaining:** record / bool[] / enum params (or a record/tuple result) to
-an async import; `future<T>` / `stream<T>`. The *pending* (`waitable-set`) await
-path and the scalar/string/list param×result matrix are **DONE**.
+an async import; `future<T>` / `stream<T>` (encoder layer landed — see next). The
+*pending* (`waitable-set`) await path and the scalar/string/list param×result
+matrix are **DONE**.
+
+**`future<T>` / `stream<T>` — encoder layer landed, byte-verified.** The next
+async primitive (the WASI-P3 async data channels) starts from its canonical
+encoders, all derived from wasm-tools 1.240's `dump` and byte-pinned by
+`TestPutCanonFutureStreamBuiltins_Bytes`:
+
+- **defvaltypes:** `future<T>` = `0x65 0x01 <elem>`, `stream<T>` = `0x66 0x01
+  <elem>` (a bare `future`/`stream` is `…0x00`) — `InnerTypeFuture` /
+  `InnerTypeStream`.
+- **canon builtins** (`typeidx` = the channel's defined-type index):
+  - `future.new` `0x15 <ty>`, `future.read` `0x16 <ty> <opts>`, `future.write`
+    `0x17 <ty> <opts>` — `PutCanonFutureNew` / `…Read` / `…Write`.
+  - `stream.new` `0x0e <ty>`, `stream.read` `0x0f <ty> <opts>`, `stream.write`
+    `0x10 <ty> <opts>` — `PutCanonStreamNew` / `…Read` / `…Write`.
+  - `.read`/`.write` carry the canonical `[async(0x06), memory(0x03 <idx>)]`
+    options (async so a not-yet-ready transfer returns a pending status; memory
+    locates the element buffer); `.new` carries none.
+
+This mirrors how the waitable-set encoders preceded the runnable pending-await:
+the next slice is the smallest-first runnable artifact — an async export
+returning `future<u32>` resolved immediately (core: `future.new` →
+`task.return` the readable handle → `future.write` the value), run under
+`wasmtime -W component-model-async`.
 
 **Also remaining:** `future<T>` / `stream<T>` parameter+result lowering;
 wiring async into the `concurrent { … }` desugar as an alternative to
