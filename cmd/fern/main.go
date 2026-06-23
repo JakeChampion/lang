@@ -1058,7 +1058,30 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 				}
 				return 0, nil
 			}
-			comp := component.BuildAsyncLiftedExportComponent(acore, "__async_run", asyncExportNm, rvt)
+			// An async export with scalar parameters lifts as
+			// `name: async func(<params>) -> rvt` (the wasmbin wrapper forwards the
+			// params); a no-parameter source keeps the plain `() -> rvt` lift.
+			var srcDecl *ast.FuncDecl
+			for _, fn := range prog.Funcs {
+				if fn.Name == asyncSrc {
+					srcDecl = fn
+					break
+				}
+			}
+			var comp []byte
+			if srcDecl != nil && len(srcDecl.Params) > 0 {
+				names := make([]string, len(srcDecl.Params))
+				vals := make([]byte, len(srcDecl.Params))
+				for i, p := range srcDecl.Params {
+					if _, ok := asyncScalarCoreValtype(p.Type); !ok {
+						return 1, fmt.Errorf("async export: %q parameter %q has non-scalar type %s; only scalar params are supported", asyncSrc, p.Name, p.Type.String())
+					}
+					names[i], vals[i] = p.Name, asyncResultCValtype(p.Type)
+				}
+				comp = component.BuildAsyncLiftedExportComponentParams(acore, "__async_run", asyncExportNm, names, vals, rvt)
+			} else {
+				comp = component.BuildAsyncLiftedExportComponent(acore, "__async_run", asyncExportNm, rvt)
+			}
 			if err := os.WriteFile(outPath, comp, 0o644); err != nil {
 				return 1, err
 			}

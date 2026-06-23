@@ -1143,12 +1143,20 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		if !ok {
 			return nil, fmt.Errorf("wasmbin: AsyncExportName: task-return import not registered")
 		}
-		asyncTIdx := addType(nil, nil) // () -> ()
+		// The wrapper mirrors the source function's (scalar) parameters and
+		// forwards them, so `async function f(a, b): T` lifts as a component
+		// export `f: async func(a, b) -> T` (not just the no-param main/run case).
+		// Params are the wrapper's locals 0..n-1; void source params → `() -> ()`.
+		srcParams := m.TypeParams[m.FunctionTypeidxs[mainPosInFnSection]]
+		asyncTIdx := addType(srcParams, nil) // (srcParams) -> ()
 		asyncFuncIdx := nextFuncIdx
 		nextFuncIdx++
 		var body []byte
-		body = inst.InstCall(body, mainIdx) // main() -> i32 (result on stack)
-		body = inst.InstCall(body, trIdx)   // task-return(i32)
+		for i := range srcParams {
+			body = inst.InstLocalGet(body, uint32(i)) // forward param i
+		}
+		body = inst.InstCall(body, mainIdx) // src(params…) -> scalar (result on stack)
+		body = inst.InstCall(body, trIdx)   // task-return(scalar)
 		// void return
 		m.FunctionTypeidxs = append(m.FunctionTypeidxs, asyncTIdx)
 		m.CodeBodies = append(m.CodeBodies, inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body))
