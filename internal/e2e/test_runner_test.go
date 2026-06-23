@@ -363,6 +363,20 @@ func TestRunnerSortByAndCiExamplePasses(t *testing.T) {
 	}
 }
 
+func TestRunnerStringClassifyTransformExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/string_classify_transform_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/string classify + transform", "# pass 17", "# fail 0", "1..17"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/uuid_test.fern` covers std/uuid's generators by
 // shape — v4/v7 length, hyphen positions, version + variant nibbles,
 // is_uuid, and distinctness. The output is random but the assertions are

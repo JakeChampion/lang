@@ -251,6 +251,28 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-22 — std/string classify + transform surface: pure-Fern std/test coverage (self-host-gated)
+
+New `examples/tests/string_classify_transform_test.fern` covers the std/string
+surface `strings_test` (find / split / to_lower / to_upper / rfind) leaves out —
+the classification predicates and case/format transforms, all concrete
+`string -> boolean` / `string -> string` / `string -> i32` methods (no generics):
+`is_int` / `is_float` / `is_numeric` / `is_alpha_only` / `is_blank` /
+`is_email_like` / `is_url_like` (shape predicates), `capitalize` / `title_case` /
+`snake_case` / `kebab_case` (case transforms), `word_count` (tokenisation), and
+`pad_start` / `pad_end` / `truncate` / `ellipsis` (fitting / padding). 17 tests.
+A coverage audit confirmed these were almost entirely untested at the
+example-suite layer (only `is_uuid` of the predicate set appeared anywhere, via
+`uuid_test`).
+
+On the self-host **differential** gate (both x86 + arm64), not just interp: this
+exercises the byte-level string machinery (`__alloc_u8` / `string_from_bytes` /
+slice `s[a:b]` / `with` / `to_upper` / `is_digit` / `is_alpha`) through the
+self-host IR path on real stdlib bodies, so a regression in any of those
+primitives surfaces here. Gated by
+`TestRunnerStringClassifyTransformExamplePasses` (interp) +
+`string_classify_transform` in `TestSelfHostStdTestE2E` / `…Arm64`.
+
 ### 2026-06-22 — std/sort comparator + case-insensitive surface: pure-Fern std/test coverage (self-host-gated)
 
 New `examples/tests/sort_by_and_ci_test.fern` covers the half of `std/sort`

@@ -1,0 +1,121 @@
+import "std/test";
+import "std/string";
+// examples/tests/string_classify_transform_test.fern — pure-Fern coverage of
+// the std/string classification predicates and case/format transforms that
+// strings_test (find / split / to_lower / to_upper / rfind) leaves out. These
+// are concrete `string -> boolean` / `string -> string` / `string -> i32`
+// methods (no generics), the bread-and-butter validation + formatting surface:
+//   is_int / is_float / is_numeric / is_alpha_only / is_blank
+//   is_email_like / is_url_like                       (shape predicates)
+//   capitalize / title_case / snake_case / kebab_case (case transforms)
+//   word_count                                        (tokenisation)
+//   pad_start / pad_end / truncate / ellipsis         (fitting / padding)
+// The Go-side suite unit-tests these; this is the migration-shaped (pure-Fern,
+// std/test-driven, self-host-gated) companion.
+
+// ---- classification predicates ----
+
+function test_is_int(): test.TestOutcome {
+    var ok: boolean = "42".is_int() && "-42".is_int() && "+5".is_int();
+    var no: boolean = !"4.5".is_int() && !"abc".is_int() && !"".is_int() && !"-".is_int();
+    return test.assert_true(ok && no);
+}
+
+function test_is_float(): test.TestOutcome {
+    var ok: boolean = "3.14".is_float() && "-0.5".is_float() && "5".is_float();
+    var no: boolean = !"abc".is_float() && !"".is_float() && !"1.2.3".is_float();
+    return test.assert_true(ok && no);
+}
+
+function test_is_numeric(): test.TestOutcome {
+    return test.assert_true("12345".is_numeric() && !"12a".is_numeric() && !"".is_numeric());
+}
+
+function test_is_alpha_only(): test.TestOutcome {
+    return test.assert_true("abcDEF".is_alpha_only() && !"ab1".is_alpha_only() && !"".is_alpha_only());
+}
+
+function test_is_blank(): test.TestOutcome {
+    // empty and all-whitespace are blank; a non-ws char makes it non-blank.
+    return test.assert_true("".is_blank() && "   ".is_blank() && !"  x ".is_blank());
+}
+
+function test_is_email_like(): test.TestOutcome {
+    var ok: boolean = "a@b.com".is_email_like();
+    var no: boolean = !"noat".is_email_like() && !"a@b".is_email_like() && !"@b.com".is_email_like();
+    return test.assert_true(ok && no);
+}
+
+function test_is_url_like(): test.TestOutcome {
+    var ok: boolean = "http://example.com".is_url_like() && "https://a.b/c".is_url_like();
+    var no: boolean = !"ftp://x.y".is_url_like() && !"http://nodot".is_url_like();
+    return test.assert_true(ok && no);
+}
+
+// ---- case transforms ----
+
+function test_capitalize(): test.TestOutcome {
+    return test.assert_eq("hello".capitalize(), "Hello");
+}
+
+function test_capitalize_empty(): test.TestOutcome {
+    return test.assert_eq("".capitalize(), "");
+}
+
+function test_title_case(): test.TestOutcome {
+    return test.assert_eq("hello world".title_case(), "Hello World");
+}
+
+function test_snake_case(): test.TestOutcome {
+    return test.assert_eq("camelCase".snake_case(), "camel_case");
+}
+
+function test_kebab_case(): test.TestOutcome {
+    return test.assert_eq("camelCase".kebab_case(), "camel-case");
+}
+
+function test_word_count(): test.TestOutcome {
+    var n: i32 = "  hello   world  ".word_count();
+    return test.assert_eq(n, 2);
+}
+
+// ---- fitting / padding ----
+
+function test_pad_start(): test.TestOutcome {
+    return test.assert_eq("7".pad_start(3, "0"), "007");
+}
+
+function test_pad_end(): test.TestOutcome {
+    return test.assert_eq("7".pad_end(3, "."), "7..");
+}
+
+function test_truncate(): test.TestOutcome {
+    // 11 bytes, cap 8, "..." (3) ellipsis → first 5 + "..." → "hello...".
+    return test.assert_eq("hello world".truncate(8, "..."), "hello...");
+}
+
+function test_ellipsis(): test.TestOutcome {
+    return test.assert_eq("hello world".ellipsis(8), "hello...");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/string classify + transform");
+    r = r.it("is_int",         test_is_int());
+    r = r.it("is_float",       test_is_float());
+    r = r.it("is_numeric",     test_is_numeric());
+    r = r.it("is_alpha_only",  test_is_alpha_only());
+    r = r.it("is_blank",       test_is_blank());
+    r = r.it("is_email_like",  test_is_email_like());
+    r = r.it("is_url_like",    test_is_url_like());
+    r = r.it("capitalize",     test_capitalize());
+    r = r.it("capitalize empty", test_capitalize_empty());
+    r = r.it("title_case",     test_title_case());
+    r = r.it("snake_case",     test_snake_case());
+    r = r.it("kebab_case",     test_kebab_case());
+    r = r.it("word_count",     test_word_count());
+    r = r.it("pad_start",      test_pad_start());
+    r = r.it("pad_end",        test_pad_end());
+    r = r.it("truncate",       test_truncate());
+    r = r.it("ellipsis",       test_ellipsis());
+    return r.finish();
+}
