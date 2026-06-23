@@ -251,6 +251,27 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — std/json parse → typed-get → encode round-trip: pure-Fern std/test coverage (self-host-gated)
+
+New `examples/tests/json_roundtrip_test.fern` drives the **raw** std/json API
+directly — `json_detail_test` / `json_field_eq_test` exercise std/json only
+indirectly through std/test's `assert_json_*` helpers (has_key / eq_field /
+array_len / object_size). Covers `json_parse` (`string` → `Option[JsonValue]`),
+the typed getters `json_get_string` / `_bool` / `_i32` (→ `Option[T]`, incl. the
+missing-key and wrong-type → `None` paths), `json_get` + `json_is_null` (the
+`JNull` predicate), `json_get_array` (`JArray` navigation), and `json_encode`
+(`JsonValue` → string — array round-trip, scalars, string re-escaping). 11 tests.
+
+Significance for the IR frontier: this is the first migration suite to exercise
+`json_encode` walking the **`JArray` array-payload-enum variant** (`JArray(arr:
+JsonValue[])`) on the self-host path — the `assert_json_*` helpers never reach
+the encoder or `JArray` navigation. It **passes the differential gate on both
+x86 + arm64**, confirming the array-payload-enum recursion + the `JsonValue`
+recursive-descent parser both lower self-host (the typed getters return
+`Option[primitive]`, so the suite drives this without naming a `JsonValue`
+variant directly). Gated by `TestRunnerJsonRoundtripExamplePasses` (interp) +
+`json_roundtrip` in `TestSelfHostStdTestE2E` / `…Arm64`.
+
 ### 2026-06-23 — std/time ISO + Span arithmetic: pure-Fern std/test coverage (self-host-gated)
 
 New `examples/tests/time_iso_span_test.fern` — the follow-on to
