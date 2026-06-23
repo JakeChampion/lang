@@ -454,6 +454,38 @@ func BuildAsyncLiftedExportComponentListParam(providerCore []byte, memExportName
 	return buf
 }
 
+// BuildAsyncLiftedExportComponentMemParams is the general multi-parameter
+// counterpart of BuildAsyncLiftedExportComponentStringParam: it lifts a core
+// `recv` taking an arbitrary mix of params and returning a scalar into
+// `exportName: async func(<params…>) -> resultValtype` with a `[async, memory,
+// realloc]` lift. Each parameter's component valtype is supplied pre-encoded in
+// `paramVals` (a primitive byte such as `CValtypeString` / `CValtypeU32`, or the
+// sleb-encoded index of a defined type emitted earlier). The core's signature is
+// the canonical flattening of those params `-> ()` (result via scalar
+// task.return); any incoming `string`/`list` arg is materialised in the export's
+// memory via its bump cabi_realloc before the core runs. The core must export its
+// memory (memExportName) and a real bump cabi_realloc (reallocExportName). Used
+// for the multi-arg edge-handler shape (e.g. `fetch(url: string, timeout: u32)`).
+func BuildAsyncLiftedExportComponentMemParams(providerCore []byte, memExportName, reallocExportName, coreExportName, exportName string, paramNames []string, paramVals [][]byte, resultValtype byte) []byte {
+	buf := PutComponentHeader(nil)
+
+	// Scalar task.return → core func 0; provider instantiated against it.
+	buf = PutCanonTaskReturnSingle(buf, resultValtype)                                         // core func 0
+	buf = PutCoreModuleSection(buf, providerCore)                                              // core module 0
+	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "task-return", 0)                       // core instance 0
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 0, []string{""}, []uint32{0}) // core instance 1 (provider)
+
+	// Alias the provider's memory + cabi_realloc (the lift's options), then its
+	// recv export, and lift it async with [memory, realloc] as `(params…) -> result`.
+	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 1, memExportName)   // core memory 0
+	buf = PutAliasSectionCoreExport(buf, CoreSortFunc, 1, reallocExportName) // core func 1 (cabi_realloc)
+	buf = PutAliasSectionCoreExportFunc(buf, 1, coreExportName)              // core func 2 (recv)
+	buf = PutTypeSectionOneFuncGeneral(buf, paramNames, paramVals, []byte{resultValtype})
+	buf = PutCanonSectionLiftAsyncWithMemoryRealloc(buf, 2, 0, 0, 1) // component func 0
+	buf = PutExportSectionOneFunc(buf, exportName, 0)
+	return buf
+}
+
 // buildPendingProviderComponent is the spike's fixed-name pending provider
 // (`dep: async func() -> u32`), kept as a thin wrapper over the general
 // BuildPendingDeferringProviderComponent.

@@ -934,42 +934,53 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			in.add("async_subtask_drop")
 			in.add("async_ws_drop")
 			if hasMemParam {
-				// Composite ARGUMENT to an async import. This slice supports a single
-				// `string` OR numeric-array (`u8[]`/`i32[]`/`f64[]`/…) param + scalar
-				// result: the wrapper marshals the argument to a canonical (ptr, len)
-				// in this module's memory (which the callee reads via the lower's
-				// memory option), then runs the async lower `(ptr, len, retptr) ->
-				// status` and reads the scalar result. A string is normalised through
-				// the SSO seam; a numeric array is already canonical (element pointer +
-				// count at ptr-4), so it forwards (ptr, load(ptr-4)) directly. Other
-				// mem-param shapes (multi-arg, records, bool[], or a composite result
-				// alongside) are not supported yet.
-				isStrParam := len(ex.Params) == 1 && isStringType(ex.Params[0].Type) && externScalarType(ret)
-				isArrParam := len(ex.Params) == 1 && isScalarArrayParamType(ex.Params[0].Type) && externScalarType(ret)
-				if !(isStrParam || isArrParam) {
-					return nil, nil, fmt.Errorf("@import %q (%s/%s): async extern with a non-scalar parameter only supports a single string or numeric-array param + scalar result so far (docs/WASI-PREVIEW3-ASYNC-PLAN.md)", ex.Name, ex.Iface, ex.WITName)
+				// Composite ARGUMENT(s) to an async import. This slice supports any mix
+				// of scalar / `string` / numeric-array (`u8[]`/`i32[]`/`f64[]`/…) params
+				// with a scalar result — the multi-arg edge-handler shape (e.g.
+				// `fetch(url: string, timeout: i32)`, `post(id: i32, body: u8[])`). The
+				// wrapper marshals each arg to its canonical slot(s) in this module's
+				// memory (which the callee reads via the lower's memory option): a scalar
+				// passes through, a string is SSO-normalised to (ptr, len), a numeric
+				// array forwards (elemPtr, count@ptr-4) directly. It then runs the async
+				// lower `(canon params…, retptr) -> status` and reads the scalar result.
+				// Records / bool[] / enum params, or a composite result alongside, are
+				// not supported yet.
+				anyString := false
+				allLowerable := externScalarType(ret)
+				for _, p := range ex.Params {
+					switch {
+					case isStringType(p.Type):
+						anyString = true
+					case isScalarArrayParamType(p.Type) || externScalarType(p.Type):
+						// already lowerable
+					default:
+						allLowerable = false
+					}
+				}
+				if !allLowerable {
+					return nil, nil, fmt.Errorf("@import %q (%s/%s): an async extern with a composite parameter only supports scalar / string / numeric-array params + a scalar result so far (records, bool[], enums, and composite results are not supported) (docs/WASI-PREVIEW3-ASYNC-PLAN.md)", ex.Name, ex.Iface, ex.WITName)
 				}
 				results, err := resultValtypes(ret)
 				if err != nil {
 					return nil, nil, fmt.Errorf("@import %q (%s/%s): %w", ex.Name, ex.Iface, ex.WITName, err)
 				}
-				rawName := ex.Name + "$import"
-				// raw import: (ptr, len, retptr) -> i32 status.
-				specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32}, results: []byte{encode.ValtypeI32}}
-				in.add(rawName)
-				wrapperBody := buildExternAsyncStringParamWrapper(rawName, results[0])
-				if isArrParam {
-					// A numeric array is a single Fern slot (the element pointer).
-					wrapperBody = buildExternAsyncArrayParamWrapper(rawName, results[0])
+				rawParams, err := canonicalExternParamValtypes(ex)
+				if err != nil {
+					return nil, nil, fmt.Errorf("@import %q (%s/%s): %w", ex.Name, ex.Iface, ex.WITName, err)
 				}
+				rawParams = append(rawParams, encode.ValtypeI32) // trailing retptr
+				rawName := ex.Name + "$import"
+				// raw import: (canon params…, retptr) -> i32 status.
+				specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: rawParams, results: []byte{encode.ValtypeI32}}
+				in.add(rawName)
 				wrappers[ex.Name] = runtimeHelperSpec{
-					params:  params, // string → (data, len); numeric array → (elemPtr)
+					params:  params, // Fern flattening: string → (data, len); scalar/array → 1
 					results: results,
-					body:    wrapperBody,
+					body:    buildExternAsyncMemParamWrapper(ex, rawName, results[0]),
 				}
 				helpers.add(ex.Name)
 				helpers.add("__fern_alloc")
-				if isStrParam {
+				if anyString {
 					helpers.add("__fern_str_len")
 					helpers.add("__fern_str_byte")
 				}

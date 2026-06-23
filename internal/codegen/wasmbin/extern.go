@@ -1632,26 +1632,48 @@ func buildExternAsyncScalarResultWrapper(nparams int, rawImport string, resultVT
 	}
 }
 
-// buildExternAsyncStringParamWrapper handles an `@import ... async function
-// f(s: string): <scalar>` — a string ARGUMENT to an async import. It normalises
-// the Fern string (data, len) into a contiguous heap buffer (the canonical
-// (ptr, len) the callee reads from this module's memory via the lower's memory
-// option), then runs the async-lower call `(ptr, len, retptr) -> i32 status`,
-// drops the status (sync completion), and reads the scalar result from the
-// return area. Wrapper type is (i32 data, i32 len) -> resultVT.
+// buildExternAsyncMemParamWrapper handles an `@import ... async function` whose
+// params are any mix of scalars, `string`s, and numeric arrays (`u8[]`/`i32[]`/
+// `f64[]`/…), with a scalar result — the realistic multi-arg edge-handler shape
+// (e.g. `fetch(url: string, timeout: i32)`, `post(id: i32, body: u8[])`). It
+// generalises (and subsumes) the single-string / single-array param wrappers.
 //
-// Locals after the 2 string param slots: 2:$buf 3:$byteLen 4:$i 5:$rb.
-func buildExternAsyncStringParamWrapper(rawImport string, resultVT byte) func(map[string]uint32) []byte {
+// Each argument is marshalled to its canonical slot(s) in declaration order:
+//   - scalar → forwarded as-is (one i32/i64/f32/f64);
+//   - string → SSO-normalised (emitStrNormalize) into a contiguous heap buffer,
+//     forwarded as the canonical (ptr, len) the callee reads via the lower's
+//     memory option;
+//   - numeric array → forwarded as (elemPtr, count@elemPtr-4); a Fern array is
+//     already canonical (elements packed at native stride), so no copy.
+//
+// Then the return-area pointer is appended (the trailing canonical retptr) and
+// the async-lower call `(canon params…, retptr) -> i32 status` runs; the
+// pending-await loop drives a non-RETURNED subtask, and the scalar result is
+// read from the return area. The param bytes are the caller's, so there is no
+// realloc on the consumer side (memory option only).
+//
+// Locals after the Fern param slots: $buf $byteLen $i (string-normalise scratch),
+// $rb (return area), $status $task $ws (await-loop scratch).
+func buildExternAsyncMemParamWrapper(ex *ir.ExternFunc, rawImport string, resultVT byte) func(map[string]uint32) []byte {
 	return func(idxs map[string]uint32) []byte {
 		alloc := idxs["__fern_alloc"]
 		imp := idxs[rawImport]
-		const data, length = 0, 1
-		buf, byteLen, i, rb := uint32(2), uint32(3), uint32(4), uint32(5)
+		// Fern-facing slots: string = 2 (data, len); scalar / numeric array = 1.
+		nSlots := uint32(0)
+		for _, p := range ex.Params {
+			if isStringType(p.Type) {
+				nSlots += 2
+			} else {
+				nSlots++
+			}
+		}
+		bufL, byteLenL, iL := nSlots, nSlots+1, nSlots+2
+		rb, statusL, taskL, wsL := nSlots+3, nSlots+4, nSlots+5, nSlots+6
 
 		var body []byte
-		// Normalise the Fern string arg → (buf, byteLen) in linear memory.
-		body = emitStrNormalize(body, idxs, data, length, buf, byteLen, i)
-		// rb = (__fern_alloc(16) + 7) & ~7 — 8-byte-aligned return area.
+		// rb = (__fern_alloc(16) + 7) & ~7 — 8-byte-aligned return area (result @ +0,
+		// the 8-byte wait event @ +8). Allocated first so later string-buffer allocs
+		// don't disturb it.
 		body = inst.InstI32Const(body, 16)
 		body = inst.InstCall(body, alloc)
 		body = inst.InstI32Const(body, 7)
@@ -1659,13 +1681,33 @@ func buildExternAsyncStringParamWrapper(rawImport string, resultVT byte) func(ma
 		body = inst.InstI32Const(body, -8)
 		body = numeric.InstI32And(body)
 		body = inst.InstLocalSet(body, rb)
-		// async lower: (buf, byteLen, rb) -> status; drop the status.
-		body = inst.InstLocalGet(body, buf)
-		body = inst.InstLocalGet(body, byteLen)
+
+		// Marshal each param to its canonical slot(s), in order, onto the stack.
+		slot := uint32(0)
+		for _, p := range ex.Params {
+			switch {
+			case isStringType(p.Type):
+				body = emitStrNormalize(body, idxs, slot, slot+1, bufL, byteLenL, iL)
+				body = inst.InstLocalGet(body, bufL)
+				body = inst.InstLocalGet(body, byteLenL)
+				slot += 2
+			case isScalarArrayParamType(p.Type):
+				body = inst.InstLocalGet(body, slot) // ptr
+				body = inst.InstLocalGet(body, slot)
+				body = inst.InstI32Const(body, 4)
+				body = numeric.InstI32Sub(body)
+				body = memory.InstI32Load(body, 2, 0) // count @ ptr-4
+				slot++
+			default: // scalar — forwarded as-is
+				body = inst.InstLocalGet(body, slot)
+				slot++
+			}
+		}
+		// Trailing retptr, then the async-lower call -> status.
 		body = inst.InstLocalGet(body, rb)
 		body = inst.InstCall(body, imp)
 		// Await the (possibly pending) subtask, then read the scalar result.
-		body = emitAsyncAwaitLoop(body, idxs, rb, 6, 7, 8)
+		body = emitAsyncAwaitLoop(body, idxs, rb, statusL, taskL, wsL)
 		body = inst.InstLocalGet(body, rb)
 		switch resultVT {
 		case encode.ValtypeI64:
@@ -1679,61 +1721,6 @@ func buildExternAsyncStringParamWrapper(rawImport string, resultVT byte) func(ma
 		}
 
 		locals := inst.PutLocalsOneGroup(nil, 7, encode.ValtypeI32) // buf,byteLen,i,rb,status,task,ws
-		return inst.PutFunctionBody(nil, locals, body)
-	}
-}
-
-// buildExternAsyncArrayParamWrapper is the numeric-array counterpart of
-// buildExternAsyncStringParamWrapper: an async import that takes a single
-// `list<T>` (numeric element) argument + a scalar result. A Fern numeric array
-// is already canonical — the value is the element pointer and the count lives at
-// `ptr-4`, packed at native stride — so unlike a string there is no
-// normalisation: the wrapper forwards `(elemPtr, load(elemPtr-4))` as the
-// canonical `(ptr, len)`, allocs the return area, runs the `canon lower async`
-// call `(ptr, len, retptr) -> status` (memory option only — the param bytes are
-// the caller's, so no realloc on the consumer side), awaits the (possibly
-// pending) subtask, and reads the scalar result. Wrapper type is
-// `(elemPtr) -> resultVT`.
-func buildExternAsyncArrayParamWrapper(rawImport string, resultVT byte) func(map[string]uint32) []byte {
-	return func(idxs map[string]uint32) []byte {
-		alloc := idxs["__fern_alloc"]
-		imp := idxs[rawImport]
-		const ptr = 0 // the array's element pointer (the single Fern arg slot)
-		rb := uint32(1)
-
-		var body []byte
-		// rb = (__fern_alloc(16) + 7) & ~7 — 8-byte-aligned return area (result @ +0,
-		// the 8-byte wait event @ +8).
-		body = inst.InstI32Const(body, 16)
-		body = inst.InstCall(body, alloc)
-		body = inst.InstI32Const(body, 7)
-		body = numeric.InstI32Add(body)
-		body = inst.InstI32Const(body, -8)
-		body = numeric.InstI32And(body)
-		body = inst.InstLocalSet(body, rb)
-		// async lower: (ptr, len = load(ptr-4), rb) -> status.
-		body = inst.InstLocalGet(body, ptr)
-		body = inst.InstLocalGet(body, ptr)
-		body = inst.InstI32Const(body, 4)
-		body = numeric.InstI32Sub(body)
-		body = memory.InstI32Load(body, 2, 0) // count @ ptr-4
-		body = inst.InstLocalGet(body, rb)
-		body = inst.InstCall(body, imp)
-		// Await the (possibly pending) subtask, then read the scalar result.
-		body = emitAsyncAwaitLoop(body, idxs, rb, 2, 3, 4)
-		body = inst.InstLocalGet(body, rb)
-		switch resultVT {
-		case encode.ValtypeI64:
-			body = memory.InstI64Load(body, 3, 0)
-		case encode.ValtypeF32:
-			body = memory.InstF32Load(body, 2, 0)
-		case encode.ValtypeF64:
-			body = memory.InstF64Load(body, 3, 0)
-		default:
-			body = memory.InstI32Load(body, 2, 0)
-		}
-
-		locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32) // rb,status,task,ws
 		return inst.PutFunctionBody(nil, locals, body)
 	}
 }

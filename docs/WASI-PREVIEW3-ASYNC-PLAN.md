@@ -504,9 +504,25 @@ string-param core, which task-returns the length), and runs `run()` → **5**.
 `TestWasmP3AsyncListParamExportProvider` runtime-verifies the provider half. So a
 numeric array flows colorlessly into an awaited import.
 
-**Multi-arg mem shapes remain** (a single string/array param is supported; two+
-mem params, or a mem param mixed with a composite result, are still rejected).
-The *pending* (`waitable-set`) await path is **DONE** (see above).
+**Multi-arg mem params — DONE, runnable from real Fern source.** An async
+import now accepts ANY mix of scalar / `string` / numeric-array params with a
+scalar result — the realistic multi-arg edge-handler shape. The single
+string/array wrappers were generalised into one `buildExternAsyncMemParamWrapper`
+(extern.go) that marshals each argument to its canonical slot(s) in declaration
+order (scalar passthrough, string SSO-normalised to `(ptr, len)`, numeric array
+forwarded as `(elemPtr, count@ptr-4)`), appends the retptr, async-lowers, awaits,
+and reads the scalar result; `scanExternImports` emits the full canonical param
+flattening (`canonicalExternParamValtypes` + retptr). The provider side adds the
+general `component.BuildAsyncLiftedExportComponentMemParams` (`[async, memory,
+realloc]` lift over a pre-encoded param-valtype vector).
+`TestWasmP3AsyncImportMixedMultiParamFromFern` compiles a real Fern
+`@import async function fetch(url: string, n: i32): i32` + `run() { return
+fetch("hi", 40); }`, composes it against the mixed-param provider (which
+task-returns `len + n`), and runs `run()` → **42** (len "hi" = 2, + 40).
+
+**Still remaining:** record / bool[] / enum params to an async import, and a
+composite (string/list/record) result alongside a mem param. The *pending*
+(`waitable-set`) await path is **DONE** (see above).
 
 **Also remaining:** `future<T>` / `stream<T>` parameter+result lowering;
 wiring async into the `concurrent { … }` desugar as an alternative to
