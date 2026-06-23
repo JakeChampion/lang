@@ -251,6 +251,23 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — std/regex array-payload enums (#3720) now lower on the IR path
+
+The 2026-06-22 frontier remap listed **array-payload enums (#3720)** —
+`std/regex`'s `RNode` variants `RAlt` / `RSeq` / `RClass`, each holding an
+`RNode[]`, built during the recursive pattern parse — as crashing the
+self-hosted binary. Re-probed with the corrected API (`regex.regex_match`, not
+the nonexistent `matches`): that gap is **closed for the matching surface**.
+Importing the real `std/regex` and calling `regex_match` compiles the recursive
+array-payload `RNode` construction + the matcher through the self-host IR path
+(`decide = ir`, no `BAIL`) and matches the interpreter across alternation
+(`a|b`), character classes (`[abc]+`), grouped repetition (`(ab)+c`), and the
+negative case. Gated by `TestSelfHostRegexModuleIR`. (Not attributed to a
+specific fix — likely intervening enum/IR-lowering work; the audit's "crashes"
+claim is simply no longer true for this surface. `regex_find_all` still routes
+the AST fallback — a separate, larger-module budget concern — but runs correctly
+there.)
+
 ### 2026-06-23 — std/crypto now self-host-compiles on the IR path (the original gap, closed)
 
 `std/crypto` (SHA-256 + HMAC-SHA256) was THE motivating gap of the
