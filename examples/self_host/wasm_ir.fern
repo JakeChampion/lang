@@ -592,6 +592,11 @@ pub function wasm_eligible(mod: parser.Module): boolean {
     // The global string-builder ops (strbuf_reset / strbuf_append / strbuf_take)
     // have no wasm IR runtime yet — a strbuf module stays on the wasm AST path
     // (where the legacy emitter handles it), while x86 / arm64 lower it via the IR.
+    // The libm transcendentals (sin / cos / exp / log / pow) lower through the IR
+    // on x86 (x87 FPU) and arm64 (polynomial-approx runtime helpers), but wasm has
+    // neither a transcendental instruction nor an IR runtime for them, so a module
+    // calling one stays on the wasm AST path (where it is already deferred — see
+    // wasm.fern: "sin/cos/exp/log/pow have no primitive and are deferred"). #2691.
     return asm_ir.eligible_core(mod)
         && !module_emits_op(mod, "read_chunk")
         && !module_emits_op(mod, "reader_close")
@@ -599,7 +604,12 @@ pub function wasm_eligible(mod: parser.Module): boolean {
         && !module_emits_op(mod, "remove_dir_all")
         && !module_emits_op(mod, "strbuf_reset")
         && !module_emits_op(mod, "strbuf_append")
-        && !module_emits_op(mod, "strbuf_take");
+        && !module_emits_op(mod, "strbuf_take")
+        && !module_emits_op(mod, "fsin")
+        && !module_emits_op(mod, "fcos")
+        && !module_emits_op(mod, "fexp")
+        && !module_emits_op(mod, "flog")
+        && !module_emits_op(mod, "fpow");
 }
 
 // should_use_ir: the use_ir default is on AND the module is wasm-eligible — the
