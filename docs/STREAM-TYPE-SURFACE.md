@@ -153,11 +153,25 @@ lazy-iteration story can layer on top once an Iterator protocol exists.
    under wasmtime → the collected bytes (mirrors `TestWasmP3StreamExportImport`,
    from Fern source). The runnable payoff.
 
-## Status
+## Status — COMPLETE
+
+The `stream[T]` Fern language surface is shipped end to end; a `stream[T]` flows
+from a host export into Fern source as a colorlessly-collected `T[]`.
 
 - Channels at the ABI/composer level: **DONE** (see
   `docs/WASI-PREVIEW3-ASYNC-PLAN.md`).
-- `stream[T]` Fern surface: slice 1 (AST + parser) **DONE** (#3916); slices 2–4
-  specified above (slice 3 is the substantial collect-wrapper/composer vertical).
-- `future[T]` Fern surface: **intentionally not exposed** (colorless subsumes
-  it).
+- `stream[T]` Fern surface — all slices **DONE**:
+  - slice 1 (`ast.StreamType` + parser, #3916),
+  - slice 2 (checker colorless `: stream[T]` → `T[]` transform + guard, #3920),
+  - slice 3a (wasmbin `stream.read`+await collect-wrapper, #3926),
+  - slice 3b (runnable composer collect proof → 42, #3929),
+  - slice 4 (real-Fern from-source e2e → 42, #3931:
+    `TestWasmP3StreamImportFromFern`).
+- `future[T]` Fern surface: **intentionally not exposed** (colorless auto-await
+  subsumes a single deferred value).
+
+**Possible follow-ons (new design efforts, not gaps in this surface):** lazy
+`for x in stream { … }` iteration (needs a type-driven for-in / Iterator-protocol
+rework — the colored model); `stream[T]` / `future[T]` as async-import
+*parameters* (the producer/write side from Fern source); a CLI surface so
+`fern -target wasm-bin` auto-bundles a bring-your-own async provider.
