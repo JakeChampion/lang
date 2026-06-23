@@ -51,18 +51,24 @@ and no "deferred value" surface object (`docs/WASI-PREVIEW3-ASYNC-PLAN.md`).
   spelling is **`stream[T]`**, not `stream<T>` (angle brackets are not a lexer
   token — see recon §2).
 
-### Why not `for x in stream` (lazy iteration) — for now
+### `for x in stream` — works EAGERLY, by construction; not colored-lazy
 
-The obvious "process elements as they arrive" shape would be lazy iteration
-(`for x in body() { … }`). That is the *colored* model (each step is an implicit
-await) and, mechanically, `for-in` is desugared at **parse time**, hardcoded to
-`.len()` + index access (recon §4). Making a lazy stream `for`-iterable requires
-either a fake `.len()`/indexing (semantically wrong → incoherent) or reworking
-`for-in` into a **type-driven desugar / Iterator protocol** — a core-semantics
-change that deserves its own design pass. The colorless **collect-to-array**
-delivery above needs none of that and ships the useful 90% (edge handlers
-read a request/body stream to completion before responding). A future
-lazy-iteration story can layer on top once an Iterator protocol exists.
+`for x in body() { … }` over a stream-returning call **already works**, for free
+and consistently with the colorless model: the checker rewrites the `stream[T]`
+result to `T[]` (the eager collected array), so the ordinary parse-time array
+`for-in` desugar (`.len()` + index) iterates it after the collect-wrapper drains
+the stream to EOF — no intermediate `var b: u8[] = …` and no for-in rework
+needed. Locked by `internal/e2e` `TestWasmP3StreamForIn` (→ 42).
+
+What is intentionally **NOT** provided is true *element-at-a-time* lazy iteration
+(process each item as it arrives off the wire, before EOF). That is the *colored*
+model — each loop step an implicit await — which Fern's colorless design avoids,
+and mechanically it would require reworking the parse-time `for-in` into a
+type-driven desugar / Iterator protocol with per-step awaits. Iteration over a
+stream is therefore **eager collect-then-iterate**, which ships the useful 90%
+(edge handlers read a request/body to completion before responding). A
+colored/lazy variant could layer on top later if an Iterator protocol is ever
+introduced, but it is a separate, deliberate departure from colorless — not a gap.
 
 ## Implementation slices (recon-grounded; file anchors in the recon)
 
@@ -206,8 +212,12 @@ pinned + runnable (above), P2 codegen/composer/e2e remaining.
 - `future[T]` Fern surface: **intentionally not exposed** (colorless auto-await
   subsumes a single deferred value).
 
-**Possible follow-ons (new design efforts, not gaps in this surface):** lazy
-`for x in stream { … }` iteration (needs a type-driven for-in / Iterator-protocol
-rework — the colored model); `stream[T]` / `future[T]` as async-import
-*parameters* (the producer/write side from Fern source); a CLI surface so
-`fern -target wasm-bin` auto-bundles a bring-your-own async provider.
+Done since: `stream[T]` **parameters** (produce side from Fern source — P1/P2,
+`TestWasmP3StreamParamFromFern`); `u8`+`i32` **stride** coverage in both
+directions; and `for x in stream` **eager** iteration (`TestWasmP3StreamForIn`).
+
+**Possible follow-ons (new design efforts, not gaps in this surface):**
+colored/lazy `for x in stream` (element-at-a-time, per-step await — a deliberate
+departure from colorless, needs an Iterator protocol); a CLI surface so
+`fern -target wasm-bin` auto-bundles a bring-your-own async provider (today the
+composer is driven from tests).
