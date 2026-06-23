@@ -5202,6 +5202,19 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!tds.ok) { return tds; }
                         return tds.emit(ir.op_temp_dir());
                     }
+                    // Built-in `read_dir(path)` — list a directory's base-name
+                    // children, push a fresh Result[string[], IoError] box
+                    // (Ok(names) / Err(_)). The Result type is resolved by
+                    // opt_ret_type's read_dir case so `match (read_dir(p)) { Ok =>
+                    // .., Err => .. }` binds `names` as string[]. No wasm file I/O,
+                    // so wasm_eligible rejects read_dir modules; x86 / arm64 lower
+                    // it (the same __fern_read_dir runtime the AST path calls —
+                    // std/test's assert_eq_dir_listing, #3457).
+                    if (cid.name == "read_dir" && c.args.len() == 1) {
+                        var rds: LowerState = lower_expr(c.args[0], s);
+                        if (!rds.ok) { return rds; }
+                        return rds.emit(ir.op_read_dir());
+                    }
                     // Built-in `args()` — the command-line argv accessor: push a
                     // fresh string[] (argv[0] first). A no-arg value op; the result
                     // str-array-tracks (expr_is_strarr's args case) so `a.len()` /
@@ -15808,6 +15821,7 @@ pub function (s: LowerState) opt_ret_type(name: string): string {
     if (name == "write_file") { return "Option[IoError]"; }
     if (name == "remove_dir_all") { return "Option[IoError]"; }
     if (name == "temp_dir") { return "Result[string, IoError]"; }
+    if (name == "read_dir") { return "Result[string[], IoError]"; }
     return "";
 }
 

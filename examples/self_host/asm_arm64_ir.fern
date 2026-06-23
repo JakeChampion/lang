@@ -558,6 +558,13 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // emits unconditionally). Pop the prefix box into x0, push the result.
             s = s.need("heap");
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_temp_dir\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "read_dir") {
+            // [pathbox] -> list a directory's base-name children, push a fresh
+            // Result[string[], IoError] box (asm_arm64.emit_runtime's __fern_read_dir,
+            // in its heap block; boxes a string[] via __fern_arr_box). Pop the path
+            // box into x0, push the result box.
+            s = s.need("heap");
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_read_dir\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "read_chunk") {
             // [fd][n] -> read up to n bytes from the Reader fd, push a fresh
             // Option[string] box (asm_arm64.emit_runtime's __fern_reader_read_chunk,
