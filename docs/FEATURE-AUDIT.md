@@ -251,6 +251,22 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — `temp_dir(prefix)` lowers on the IR path
+
+`temp_dir` (make a uniquely-named `/tmp/<prefix>-<monotonic_ns>` directory via
+mkdirat → `Result[string, IoError]`) had a full AST runtime (`__fern_temp_dir`)
+but no IR lowering, so it bailed `BAIL lower` — dragging any user to the AST
+emitter (std/test's `must_temp_dir`, used by `result_assertions` / `helpers`).
+Now lowers as `op_temp_dir` → the same `__fern_temp_dir` runtime the AST path
+calls (x86 transcribed into `asm_ir`; arm64 reused from `asm_arm64.emit_runtime`'s
+heap block; both pull in `__fern_monotonic_ns` for the unique suffix — x86 via
+the `monotonic_ns` need, arm64 unconditionally). wasm stays ineligible
+(`module_emits_op`), as for `remove_dir_all` / `read_int`. Same recipe as the
+`remove_dir_all` landing. Gated by `TestSelfHostTempDirIR` (create → sanity-check
+path → `remove_dir_all`, exit 0, IR-routing pinned). (`result_assertions` /
+`helpers` still route AST — separately blocked on `assert_is_ok_*` / file-helper
+`BAIL call`s, distinct follow-ups.)
+
 ### 2026-06-23 — `mono_infer` types `as <type>` casts → u64 / wider-int reductions route IR
 
 A bounded-generic call whose only type-inferable argument was an `as <type>`

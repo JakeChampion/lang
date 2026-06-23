@@ -507,6 +507,14 @@ pub function op_write_file(): Op { return op0("write_file"); }
 // path calls). No wasm file I/O here, so a remove_dir_all module is wasm-
 // ineligible (wasm_eligible) and stays on the AST path there.
 pub function op_remove_dir_all(): Op { return op0("remove_dir_all"); }
+// `temp_dir` pops a prefix string value and creates a uniquely-named directory
+// under /tmp (prefix + a monotonic-ns suffix, via mkdirat), pushing a fresh
+// Result[string, IoError]: Ok(path) on success, Err(_) on mkdir failure (a
+// VALUE op — one arg consumed, the box left on the stack). Lowers to each
+// backend's __fern_temp_dir helper (the same one the AST path calls; it also
+// calls __fern_monotonic_ns). No wasm file I/O here, so a temp_dir module is
+// wasm-ineligible (wasm_eligible) and stays on the AST path there.
+pub function op_temp_dir(): Op { return op0("temp_dir"); }
 // `read_chunk` pops an i32 byte-count `n` and an i32 Reader fd (a stdin/file
 // handle from `stdin()`/`open_reader`), reads up to n bytes via `read(fd, …, n)`,
 // and pushes a fresh Option[string]: Some(chunk) on a non-empty read, None at EOF
@@ -813,6 +821,8 @@ pub function op_allocates(kind: string): boolean {
     // remove_dir_all boxes its Option[IoError] result and heap-builds child path
     // strings while recursing, so it needs the heap runtime.
     if (kind == "remove_dir_all") { return true; }
+    // temp_dir boxes the path string + a Result wrapper, so it needs the heap.
+    if (kind == "temp_dir") { return true; }
     // read_line boxes the line into a fresh string block, so it needs the heap.
     // (read_int is NOT here: it parses into scratch + returns a bare i32, like
     // the register backends, so a read_int-only module needs no heap runtime.)

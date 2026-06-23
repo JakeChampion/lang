@@ -5165,6 +5165,19 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!rdas.ok) { return rdas; }
                         return rdas.emit(ir.op_remove_dir_all());
                     }
+                    // Built-in `temp_dir(prefix)` — make a uniquely-named /tmp
+                    // directory, push a fresh Result[string, IoError] box
+                    // (Ok(path) / Err(_)). The Result type is resolved by
+                    // opt_ret_type's temp_dir case so `match (temp_dir(p)) { Ok =>
+                    // .., Err => .. }` lowers. No wasm file I/O, so wasm_eligible
+                    // rejects temp_dir modules; x86 / arm64 lower it (the same
+                    // __fern_temp_dir runtime the AST path calls — std/test's
+                    // must_temp_dir, used by result_assertions / helpers, #3457).
+                    if (cid.name == "temp_dir" && c.args.len() == 1) {
+                        var tds: LowerState = lower_expr(c.args[0], s);
+                        if (!tds.ok) { return tds; }
+                        return tds.emit(ir.op_temp_dir());
+                    }
                     // Built-in `args()` — the command-line argv accessor: push a
                     // fresh string[] (argv[0] first). A no-arg value op; the result
                     // str-array-tracks (expr_is_strarr's args case) so `a.len()` /
@@ -15758,6 +15771,7 @@ pub function (s: LowerState) opt_ret_type(name: string): string {
     if (name == "read_file") { return "Result[string, IoError]"; }
     if (name == "write_file") { return "Option[IoError]"; }
     if (name == "remove_dir_all") { return "Option[IoError]"; }
+    if (name == "temp_dir") { return "Result[string, IoError]"; }
     return "";
 }
 
