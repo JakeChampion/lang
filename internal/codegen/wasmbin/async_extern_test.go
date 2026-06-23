@@ -347,6 +347,28 @@ func TestScanExternImportsAsyncMemParamStringResult(t *testing.T) {
 	}
 }
 
+// TestScanExternImportsAsyncStreamParamRejectedPending pins the slice boundary
+// for the colorless stream[T] PARAMETER: the type parses + type-checks (the
+// checker rewrites the param to T[] and records StreamParamElems), but until the
+// stream-produce wrapper lands, wasmbin rejects it rather than mislowering the
+// rewritten T[] as a single list block. See docs/STREAM-TYPE-SURFACE.md.
+func TestScanExternImportsAsyncStreamParamRejectedPending(t *testing.T) {
+	ext := &ir.ExternFunc{
+		Name:             "sink",
+		Iface:            "test:dep/d",
+		WITName:          "sink",
+		Params:           []ast.Param{{Name: "s", Type: ast.ArrayType{Elem: ast.NumberType{Width: 8}}}}, // rewritten u8[]
+		StreamParamElems: map[int]ast.Type{0: ast.NumberType{Width: 8}},                                 // stream[u8] param
+		ReturnType:       i32Type(),
+		Async:            true,
+	}
+	var in importNeeds
+	var helpers runtimeNeeds
+	if _, _, err := scanExternImports(progCallingExtern("sink", ext), &in, &helpers); err == nil {
+		t.Fatalf("expected an error for an async stream[T] parameter (produce-wrapper codegen pending)")
+	}
+}
+
 // TestScanExternImportsAsyncRecordParam covers a record/tuple ARGUMENT to an
 // async import — `@import async function add(p: (i32, i32)): i32`. With its
 // flattened field layout resolved (ex.ParamRecords, as IR lowering sets it), the

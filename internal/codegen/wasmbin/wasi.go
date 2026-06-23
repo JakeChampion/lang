@@ -940,6 +940,15 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 		// its slice lands. The enclosing caller must be `async`-lifted (it owns the
 		// task that awaits) — the `async function` keyword provides that.
 		if ex.Async {
+			// A `stream[T]` PARAMETER (the checker rewrote it to `T[]` and recorded
+			// StreamParamElems) must be produced as a stream — the wrapper creates a
+			// stream and write-streams the eager array's elements over the wire. That
+			// producer-wrapper is a later slice; until it lands, reject rather than
+			// silently mislower the rewritten `T[]` as a single list block (the wrong
+			// ABI for a stream param). See docs/STREAM-TYPE-SURFACE.md.
+			if len(ex.StreamParamElems) > 0 {
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): async stream[T] parameter codegen is not implemented yet (the type parses + type-checks, accepting a T[]; the stream-produce wrapper is the next slice — docs/STREAM-TYPE-SURFACE.md)", ex.Name, ex.Iface, ex.WITName)
+			}
 			// Every async-import wrapper runs the pending-await loop after the
 			// lowered call, so it imports the waitable-set / subtask intrinsics
 			// (provided by the composer's canon waitable-set.* / subtask.drop).

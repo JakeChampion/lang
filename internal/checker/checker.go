@@ -1944,6 +1944,20 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 				fn.StreamResultElem = st.Elem
 				fn.ReturnType = ast.ArrayType{Elem: st.Elem}
 			}
+			// Colorless stream PARAMETER (the mirror of the result transform): an
+			// `@import async function f(s: stream[T])` accepts an eager `T[]` at the
+			// call site (the wrapper creates a stream and write-streams the array's
+			// elements over the wire). Rewrite each `stream[T]` param to `T[]` and
+			// stash the element type so codegen uses the stream-produce ABI.
+			for i := range fn.Params {
+				if st, ok := fn.Params[i].Type.(ast.StreamType); ok && st.Elem != nil {
+					if fn.StreamParamElems == nil {
+						fn.StreamParamElems = map[int]ast.Type{}
+					}
+					fn.StreamParamElems[i] = st.Elem
+					fn.Params[i].Type = ast.ArrayType{Elem: st.Elem}
+				}
+			}
 		}
 	}
 

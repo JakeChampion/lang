@@ -50,3 +50,46 @@ async function run(): i32 { var b: u8[] = body(); return b.len(); }
 		t.Fatalf("body FuncDecl not found")
 	}
 }
+
+// TestStreamParamColorlessTransform covers the colorless `stream[T]` PARAMETER
+// transform (the mirror of the result side): an `@import async function
+// sink(s: stream[u8]): i32` accepts an eager `u8[]` at the call site (codegen
+// streams its elements over the wire). The checker rewrites the param's effective
+// type to `u8[]` (so `sink(xs)` with `xs: u8[]` type-checks) and stashes the
+// element type on the FuncDecl for codegen.
+func TestStreamParamColorlessTransform(t *testing.T) {
+	src := `@import("test:dep/d", "sink") async function sink(s: stream[u8]): i32;
+async function run(): i32 { var xs: u8[] = [10 as u8, 20 as u8, 12 as u8]; return sink(xs); }
+`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := Check(prog)
+	if err != nil {
+		t.Fatalf("check (stream param should accept u8[]): %v", err)
+	}
+	sig, ok := info.FuncSigs["sink"]
+	if !ok || len(sig.Params) != 1 {
+		t.Fatalf("no FuncSig (1 param) for sink; got %+v", sig)
+	}
+	at, ok := sig.Params[0].(ast.ArrayType)
+	if !ok {
+		t.Fatalf("sink's effective param should be rewritten to u8[]; got %T (%v)", sig.Params[0], sig.Params[0])
+	}
+	if n, ok := at.Elem.(ast.NumberType); !ok || n.NormalWidth() != 8 {
+		t.Errorf("param element type should be u8; got %v", at.Elem)
+	}
+	var found bool
+	for _, fn := range prog.Funcs {
+		if fn.Name == "sink" {
+			found = true
+			if fn.StreamParamElems == nil || fn.StreamParamElems[0] == nil {
+				t.Errorf("sink.StreamParamElems[0] should be set to the stream element type")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("sink FuncDecl not found")
+	}
+}
