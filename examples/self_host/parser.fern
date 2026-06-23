@@ -4336,6 +4336,12 @@ function mono_infer(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
         },
         ExprUnary(u) => {
             if (u.op == "!") { return "boolean"; }
+            // An `as <type>` cast (op "as_<type>") evaluates to its TARGET type,
+            // not the operand's. Without this a `3 as i64` argument inferred the
+            // operand's "i32", so a bounded-generic `assert_eq((x).min(y), 3 as
+            // i64)` bound `T = i32` and the i64-valued clone failed to lower
+            // (#3457: i64/u64 `.min`/`.max`/`.abs`/`.clamp` + i64 array reductions).
+            if (u.op.len() > 3 && u.op[0:3] == "as_") { return u.op[3:u.op.len()]; }
             return mono_infer(u.operand, env, funcs);
         },
         ExprStructLit(sl) => { return sl.type_name; },

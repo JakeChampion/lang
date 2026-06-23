@@ -251,6 +251,21 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — `mono_infer` types `as <type>` casts → u64 / wider-int reductions route IR
+
+A bounded-generic call whose only type-inferable argument was an `as <type>`
+cast — e.g. `assert_eq((10 as i64).min(3 as i64), 3 as i64)` — bound the wrong
+`T`: `mono_infer`'s `ExprUnary` arm fell through a cast to its operand, so
+`3 as i64` inferred the operand's `"i32"` and the generic instantiated at the
+wrong type, producing a clone that failed to lower (`BAIL lower`) and dragging
+the module to AST. `mono_infer` now returns a cast's TARGET type (`"as_i64"` →
+`"i64"`). With it, `std/u64` (`min`/`max`/`clamp` over `as u64` args),
+`array_reductions` (i64 `max`/`min`/`avg`), and `sort_wider` (i64) route `decide
+= ir` and match the interpreter byte-for-byte; `u64_test` joins the differential
+gate. (`i64_test` still routes AST — separately blocked on the libm
+transcendentals `f64.exp`/`f64.pow` it transitively pulls in, the documented
+remaining frontier.)
+
 ### 2026-06-23 — std/string module-qualified free-function calls (`string.repeat_char`) now lower on the IR path
 
 A stdlib frontier re-sweep (after the core/iter combinator landings) found
