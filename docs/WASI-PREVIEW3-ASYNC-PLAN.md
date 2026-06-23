@@ -536,10 +536,25 @@ echo("hello"); return r.len(); }`, composes it against the echo provider, and
 runs `run()` → **5**. So a mem param and a composite result now flow together
 across an awaited import.
 
-**Still remaining:** record / bool[] / enum params (or a record/tuple result) to
-an async import; `future<T>` / `stream<T>` (encoder layer landed — see next). The
-*pending* (`waitable-set`) await path and the scalar/string/list param×result
-matrix are **DONE**.
+**Async `@import` params — FULL parity with sync, DONE.** An async import now
+accepts EVERY parameter shape a sync `@import` does — scalar / `string` /
+numeric+bool array / record / tuple / option / result — by sharing one
+marshalling head: `emitExternParamMarshal` (extern.go) is extracted from the sync
+`buildExternMemParamWrapper` and called by BOTH it and the async
+`buildExternAsyncMemParamWrapper`, so the two can't drift. `scanExternImports`'
+async branch dropped its scalar/string/array-only param gate (unlowerable params
+are already rejected by the shared param-validation loop) and emits the full
+canonical flattening (`canonicalExternParamValtypes`). The provider side adds
+`component.BuildAsyncLiftedExportComponentTupleParam` (a defined `tuple`/record
+param type, plain async lift). `TestWasmP3AsyncImportTupleParamFromFern` compiles
+a real Fern `@import async function add(p: (i32, i32)): i32` + `run() { var p =
+(10, 32); return add(p); }` → **42** (the tuple flattens to `(x, y)`).
+
+**Still remaining:** a composite (record/tuple/option) RESULT from an async
+import; the real `future<T>` / `stream<T>` Fern type-surface (parser/checker/IR —
+the channels are complete at the composer level: encoders + round-trips +
+cross-boundary export/import). The *pending* (`waitable-set`) await path and the
+full async `@import` param surface are **DONE**.
 
 **`future<T>` / `stream<T>` — encoder layer landed, byte-verified.** The next
 async primitive (the WASI-P3 async data channels) starts from its canonical

@@ -945,30 +945,26 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 				// lower `(canon params…, retptr) -> status` and reads the scalar result.
 				// Records / bool[] / enum params, or a composite result alongside, are
 				// not supported yet.
+				// Composite ARGUMENT(s) to an async import. The async path now accepts
+				// every parameter shape the sync @import path does — scalar / `string` /
+				// numeric+bool array / record / tuple / option / result — via the shared
+				// marshalling head (emitExternParamMarshal); unlowerable params were
+				// already rejected by the param-validation loop above. The result may be
+				// a scalar, a `string`, or a numeric `list<T>` (string/list results
+				// materialise in this module's memory via the lower's realloc option, so
+				// NeedsRealloc + cabi_realloc). A composite (record/tuple/option) result
+				// is not supported yet.
 				anyString := false
-				paramsOK := true
 				for _, p := range ex.Params {
-					switch {
-					case isStringType(p.Type):
+					if isStringType(p.Type) {
 						anyString = true
-					case isScalarArrayParamType(p.Type) || externScalarType(p.Type):
-						// already lowerable
-					default:
-						paramsOK = false
 					}
 				}
-				// The result may be a scalar, a `string`, or a numeric `list<T>`
-				// (the composite-result-alongside-a-mem-param quadrant, e.g.
-				// `fetch(url: string): string`). The string/list bytes are
-				// materialised in this module's memory via the lower's realloc option,
-				// so the composer must set NeedsRealloc and the module exports
-				// cabi_realloc. Records / bool[] / enum params or results are not
-				// supported yet.
 				resScalar := externScalarType(ret)
 				resString := isStringType(ret)
 				resList := isScalarArrayParamType(ret)
-				if !paramsOK || !(resScalar || resString || resList) {
-					return nil, nil, fmt.Errorf("@import %q (%s/%s): an async extern with a composite parameter only supports scalar / string / numeric-array params + a scalar / string / numeric-array result so far (records, bool[], enums are not supported) (docs/WASI-PREVIEW3-ASYNC-PLAN.md)", ex.Name, ex.Iface, ex.WITName)
+				if !(resScalar || resString || resList) {
+					return nil, nil, fmt.Errorf("@import %q (%s/%s): an async extern result must be a scalar, string, or numeric array so far (a composite record/tuple/option result is not supported) (docs/WASI-PREVIEW3-ASYNC-PLAN.md)", ex.Name, ex.Iface, ex.WITName)
 				}
 				rawParams, err := canonicalExternParamValtypes(ex)
 				if err != nil {
