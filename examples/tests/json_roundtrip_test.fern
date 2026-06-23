@@ -1,0 +1,174 @@
+import "std/test";
+import "std/json" as json;
+// examples/tests/json_roundtrip_test.fern — pure-Fern coverage of std/json's
+// parse → typed-get → encode surface. json_detail_test / json_field_eq_test
+// exercise std/json only INDIRECTLY through std/test's assert_json_* helpers
+// (has_key / eq_field_bool|string / array_len / object_size); this drives the
+// raw API directly:
+//   json_parse                       (string → Option[JsonValue])
+//   json_get_string / _bool / _i32   (typed field extraction → Option[T])
+//   json_get + json_is_null          (the JNull predicate)
+//   json_get_array                   (JArray navigation → JsonValue[])
+//   json_encode                      (JsonValue → string; the parse inverse)
+// The typed getters return Option[primitive] so the suite never names a
+// JsonValue variant directly; json_encode walks the JArray array-payload-enum
+// variant, the path the assert_json_* helpers don't reach. The Go-side suite
+// unit-tests these; this is the migration-shaped (pure-Fern, std/test-driven,
+// self-host-gated) companion.
+
+function doc(): string {
+    return "{\"name\":\"fern\",\"age\":3,\"active\":true,\"tags\":[\"a\",\"b\"],\"meta\":null}";
+}
+
+// ---- typed field extraction ----
+
+function test_get_string(): test.TestOutcome {
+    match (json.json_parse(doc())) {
+        Some(obj) => {
+            match (json.json_get_string(obj, "name")) {
+                Some(v) => { return test.assert_eq(v, "fern"); },
+                None => { return test.fail("expected Some(name)"); }
+            }
+        },
+        None => { return test.fail("parse failed"); }
+    }
+}
+
+function test_get_i32(): test.TestOutcome {
+    match (json.json_parse(doc())) {
+        Some(obj) => {
+            match (json.json_get_i32(obj, "age")) {
+                Some(v) => { return test.assert_eq(v, 3); },
+                None => { return test.fail("expected Some(age)"); }
+            }
+        },
+        None => { return test.fail("parse failed"); }
+    }
+}
+
+function test_get_bool(): test.TestOutcome {
+    match (json.json_parse(doc())) {
+        Some(obj) => {
+            match (json.json_get_bool(obj, "active")) {
+                Some(v) => { return test.assert_true(v); },
+                None => { return test.fail("expected Some(active)"); }
+            }
+        },
+        None => { return test.fail("parse failed"); }
+    }
+}
+
+function test_get_missing(): test.TestOutcome {
+    match (json.json_parse(doc())) {
+        Some(obj) => {
+            match (json.json_get_string(obj, "nope")) {
+                Some(v) => { return test.fail("expected None for missing key"); },
+                None => { return test.pass(); }
+            }
+        },
+        None => { return test.fail("parse failed"); }
+    }
+}
+
+function test_get_wrong_type(): test.TestOutcome {
+    // "name" is a string → json_get_i32 must return None, not coerce.
+    match (json.json_parse(doc())) {
+        Some(obj) => {
+            match (json.json_get_i32(obj, "name")) {
+                Some(v) => { return test.fail("expected None for non-number"); },
+                None => { return test.pass(); }
+            }
+        },
+        None => { return test.fail("parse failed"); }
+    }
+}
+
+// ---- null predicate ----
+
+function test_is_null(): test.TestOutcome {
+    match (json.json_parse(doc())) {
+        Some(obj) => {
+            match (json.json_get(obj, "meta")) {
+                Some(v) => { return test.assert_true(json.json_is_null(v)); },
+                None => { return test.fail("expected meta key"); }
+            }
+        },
+        None => { return test.fail("parse failed"); }
+    }
+}
+
+// ---- array navigation (JArray payload) ----
+
+function test_get_array(): test.TestOutcome {
+    match (json.json_parse(doc())) {
+        Some(obj) => {
+            match (json.json_get_array(obj, "tags")) {
+                Some(arr) => {
+                    // two elements; encode the first back to its JSON text.
+                    return test.assert_true(arr.len() == 2 && json.json_encode(arr[0]) == "\"a\"");
+                },
+                None => { return test.fail("expected tags array"); }
+            }
+        },
+        None => { return test.fail("parse failed"); }
+    }
+}
+
+// ---- encode (the parse inverse) ----
+
+function test_encode_array_round_trip(): test.TestOutcome {
+    // Array order is deterministic, so the round-trip is exact.
+    match (json.json_parse("[1,2,3]")) {
+        Some(v) => { return test.assert_eq(json.json_encode(v), "[1,2,3]"); },
+        None => { return test.fail("parse failed"); }
+    }
+}
+
+function test_encode_scalars(): test.TestOutcome {
+    var ok: boolean = true;
+    match (json.json_parse("true")) {
+        Some(v) => { ok = ok && json.json_encode(v) == "true"; },
+        None => { return test.fail("parse true failed"); }
+    }
+    match (json.json_parse("null")) {
+        Some(v) => { ok = ok && json.json_encode(v) == "null"; },
+        None => { return test.fail("parse null failed"); }
+    }
+    match (json.json_parse("42")) {
+        Some(v) => { ok = ok && json.json_encode(v) == "42"; },
+        None => { return test.fail("parse 42 failed"); }
+    }
+    return test.assert_true(ok);
+}
+
+function test_encode_string_escape(): test.TestOutcome {
+    // A quote inside the string must re-escape on encode.
+    match (json.json_parse("\"a\\\"b\"")) {
+        Some(v) => { return test.assert_eq(json.json_encode(v), "\"a\\\"b\""); },
+        None => { return test.fail("parse failed"); }
+    }
+}
+
+function test_parse_invalid(): test.TestOutcome {
+    // Trailing garbage → None.
+    match (json.json_parse("{\"a\":1} trailing")) {
+        Some(v) => { return test.fail("expected None for trailing garbage"); },
+        None => { return test.pass(); }
+    }
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/json roundtrip");
+    r = r.it("get_string",        test_get_string());
+    r = r.it("get_i32",           test_get_i32());
+    r = r.it("get_bool",          test_get_bool());
+    r = r.it("get missing",       test_get_missing());
+    r = r.it("get wrong type",    test_get_wrong_type());
+    r = r.it("is_null",           test_is_null());
+    r = r.it("get_array",         test_get_array());
+    r = r.it("encode array round trip", test_encode_array_round_trip());
+    r = r.it("encode scalars",    test_encode_scalars());
+    r = r.it("encode string escape", test_encode_string_escape());
+    r = r.it("parse invalid",     test_parse_invalid());
+    return r.finish();
+}
