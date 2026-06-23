@@ -2372,3 +2372,37 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   discarded `var r = lower_func(..)` and the parser's `var r = parse_x(..)` fresh-ret
   array-field locals to `reclaimable_names_of`) — now that each such local's exit
   drop is a 3-op call, the parser unit should stay within the #3452 budget.
+- 2026-06-23: **Increment A re-attempted on the freed emit budget — RUNS now, but
+  UNSOUND at the per-module RUN level; REVERTED. The blocker was never only #3452.**
+  With `__struct_drop_<T>` (#3868) cutting each exit-drop to a ~3-op call, the
+  discarded fresh-ret-call local reclaim no longer OOMs the parser unit's emit — so
+  this attempt got *past* the budget wall the prior two reverts hit, far enough to
+  build the per-module compiler and RUN it. Implementation: a new
+  `fresh_ret_call_local_names_of` (the complement of `snapshot_local_names_of`) —
+  a `var r: T = f(..)` that is NEITHER reassigned NOR escaping, where `f` is
+  fresh-ret (`is_fresh_ret_binding`) and `T` is a leaf-safe struct with an rc-array
+  field — appended to lower_func's `reclaim` list so the exit-sweep frees its box +
+  deep-drops its fields. **Result:** the byte-identical x86 modload fixpoint PASSED
+  (mmc == gen2 == gen3, 193s, no OOM — the emit budget is genuinely freed), but
+  `TestSelfHostModloadPerModuleWholeCompilerX86_64` FAILED: the per-module-built
+  compiler miscompiled `add(40, 2)` → exit 0 (want 42) and segfaulted self-
+  compiling the whole compiler. That is a use-after-free: the discarded-local path
+  frees via the plain exit-sweep deep-drop, which ASSUMES the callee's struct-lit
+  alias-inc balances any array field that aliases a caller value — and for some
+  fresh-ret function that assumption does not hold, so the deep-drop frees a buffer
+  still live in the caller. (The fixpoint passes because the native-built compiler's
+  own compile happens not to reuse the prematurely-freed block; the per-module RUN
+  path does, surfacing the UAF — the same fixpoint-green / RUN-red split #3561
+  established as the UAF tripwire.) Reverted in full; no code landed.
+  **Conclusion / refined next-axis:** the snapshot-LOCAL path (reassigned + moved-
+  out, SHIPPED) is sound precisely because its rebind reclaim is cow + snapshot
+  guarded; the DISCARDED-local path cannot reuse the plain deep-drop because a
+  fresh-ret callee may return a struct whose array field ALIASES an arg without a
+  balancing inc. A sound discarded-local reclaim needs an interprocedural guarantee
+  that the fresh-ret callee's returned struct array fields are FRESHLY allocated
+  (not arg-aliased) — a `fresh_struct_ret_fns`-style classifier refined to inspect
+  the RETURN's field initializers, not just "every return is a struct literal".
+  That callee-return-freshness analysis is the real next slice; until it exists,
+  discarded fresh-ret-call locals must keep leaking (sound). The `__struct_drop_<T>`
+  emit-budget unlock stands on its own (#3868) — it is a prerequisite for this slice,
+  not wasted.
