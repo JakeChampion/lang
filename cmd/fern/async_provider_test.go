@@ -113,3 +113,80 @@ function main(): i32 { return 0; }
 		t.Errorf("bundled async provider: got %q, want 42", bytes.TrimSpace(res))
 	}
 }
+
+// p3AsyncAddParamCore is a param-forwarding async provider core: its
+// `__async_run(a, b)` export computes a+b and delivers it via task.return — the
+// shape BuildAsyncLiftedExportComponentParams lifts to `add: async func(a, b:
+// u32) -> u32`. (Hand-built rather than compiled from Fern because the wasmbin
+// -async-export wrapper does not yet forward params to the source function — a
+// separate gap; the provider here is a stand-in for a real bring-your-own host.)
+// Generated from WAT via wasm-tools 1.240.
+var p3AsyncAddParamCore = []byte{
+	0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x0a, 0x02, 0x60,
+	0x01, 0x7f, 0x00, 0x60, 0x02, 0x7f, 0x7f, 0x00, 0x02, 0x10, 0x01, 0x00,
+	0x0b, 0x74, 0x61, 0x73, 0x6b, 0x2d, 0x72, 0x65, 0x74, 0x75, 0x72, 0x6e,
+	0x00, 0x00, 0x03, 0x02, 0x01, 0x01, 0x05, 0x03, 0x01, 0x00, 0x01, 0x07,
+	0x15, 0x02, 0x03, 0x6d, 0x65, 0x6d, 0x02, 0x00, 0x0b, 0x5f, 0x5f, 0x61,
+	0x73, 0x79, 0x6e, 0x63, 0x5f, 0x72, 0x75, 0x6e, 0x00, 0x01, 0x0a, 0x0b,
+	0x01, 0x09, 0x00, 0x20, 0x00, 0x20, 0x01, 0x6a, 0x10, 0x00, 0x0b, 0x00,
+	0x17, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x01, 0x05, 0x01, 0x00, 0x02, 0x74,
+	0x72, 0x02, 0x09, 0x01, 0x01, 0x02, 0x00, 0x01, 0x61, 0x01, 0x01, 0x62,
+}
+
+// TestAsyncProviderBundleParamsCLI widens TestAsyncProviderBundleCLI to a
+// scalar-PARAM async import: `add: async func(a, b: u32) -> u32` returning a+b.
+// Consumer:
+//
+//	@import("test:dep/d","add") async function add(a: i32, b: i32): i32;
+//	async function run(): i32 { return add(20, 22); }
+//
+// `-async-provider` flattens the import's scalar params into the canon-lower
+// signature; the bundled provider computes 20+22 → 42.
+func TestAsyncProviderBundleParamsCLI(t *testing.T) {
+	dir := t.TempDir()
+
+	prov := component.BuildAsyncLiftedExportComponentParams(
+		p3AsyncAddParamCore, "__async_run", "add",
+		[]string{"a", "b"}, []byte{component.CValtypeU32, component.CValtypeU32},
+		component.CValtypeU32)
+	provPath := filepath.Join(dir, "provider.wasm")
+	if err := os.WriteFile(provPath, prov, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	consumer := `@import("test:dep/d", "add") async function add(a: i32, b: i32): i32;
+async function run(): i32 { return add(20, 22); }
+function main(): i32 { return 0; }
+`
+	consumerPath := filepath.Join(dir, "consumer.fern")
+	if err := os.WriteFile(consumerPath, []byte(consumer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outPath := filepath.Join(dir, "bundled.wasm")
+
+	code, err := run(consumerPath, outPath, "wasm-bin", "", false, false, "qemu-aarch64",
+		false, false, false, provPath, false, "", nil)
+	if err != nil || code != 0 {
+		t.Fatalf("run(-async-provider, params): code=%d err=%v", code, err)
+	}
+	out, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) < 8 || !bytes.Equal(out[:4], []byte("\x00asm")) || out[6] != 0x01 {
+		t.Fatalf("output is not a component (magic/version = % x)", out[:min(8, len(out))])
+	}
+
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; emitted a valid component but skipping runtime check")
+	}
+	res, err := exec.Command("wasmtime", "run",
+		"-W", "component-model-async,component-model-async-stackful",
+		"--invoke", "run()", outPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run (bundled async provider, params): %v\n%s", err, res)
+	}
+	if !bytes.Contains(res, []byte("42")) {
+		t.Errorf("bundled async provider (params): got %q, want 42 (20+22)", bytes.TrimSpace(res))
+	}
+}
