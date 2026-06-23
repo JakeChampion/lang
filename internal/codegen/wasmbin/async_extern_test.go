@@ -397,6 +397,28 @@ func TestScanExternImportsAsyncRecordParam(t *testing.T) {
 	}
 }
 
+// TestScanExternImportsAsyncStreamResultRejectedPending pins the slice boundary
+// for the colorless stream[T] result: the type parses + type-checks (the checker
+// rewrites the result to T[] and sets StreamResultElem), but until the
+// stream.read collect-wrapper lands, wasmbin rejects it rather than silently
+// emitting the single-block list-result lowering (whose ABI does not match an
+// incremental stream). See docs/STREAM-TYPE-SURFACE.md.
+func TestScanExternImportsAsyncStreamResultRejectedPending(t *testing.T) {
+	ext := &ir.ExternFunc{
+		Name:             "body",
+		Iface:            "test:dep/d",
+		WITName:          "body",
+		ReturnType:       ast.ArrayType{Elem: ast.NumberType{Width: 8}}, // rewritten u8[]
+		StreamResultElem: ast.NumberType{Width: 8},                      // stream[u8]
+		Async:            true,
+	}
+	var in importNeeds
+	var helpers runtimeNeeds
+	if _, _, err := scanExternImports(progCallingExtern("body", ext), &in, &helpers); err == nil {
+		t.Fatalf("expected an error for an async stream[T] result (collect-wrapper codegen pending)")
+	}
+}
+
 // TestScanExternImportsAsyncRejectsCompositeResult pins the remaining boundary:
 // a composite (record/tuple) RESULT from an async import is still rejected — only
 // a scalar / string / numeric-array result is supported.

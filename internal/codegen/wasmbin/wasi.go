@@ -924,6 +924,14 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 		// its slice lands. The enclosing caller must be `async`-lifted (it owns the
 		// task that awaits) — the `async function` keyword provides that.
 		if ex.Async {
+			// A `stream[T]` result (the checker rewrote ReturnType to `T[]` and set
+			// StreamResultElem) is delivered incrementally — the collect-wrapper
+			// (stream.read + the await loop) is a later slice. Until it lands, reject
+			// rather than silently emit the single-block list-result lowering, whose
+			// ABI does not match an incremental stream. See docs/STREAM-TYPE-SURFACE.md.
+			if ex.StreamResultElem != nil {
+				return nil, nil, fmt.Errorf("@import %q (%s/%s): async stream[T] result codegen is not implemented yet (the type parses + type-checks, collected to %s[]; the stream.read collect-wrapper is the next slice — docs/STREAM-TYPE-SURFACE.md)", ex.Name, ex.Iface, ex.WITName, ex.StreamResultElem)
+			}
 			// Every async-import wrapper runs the pending-await loop after the
 			// lowered call, so it imports the waitable-set / subtask intrinsics
 			// (provided by the composer's canon waitable-set.* / subtask.drop).
