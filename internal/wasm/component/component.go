@@ -454,6 +454,22 @@ func InnerTypeList(elemValtype byte) []byte {
 	return []byte{0x70, elemValtype}
 }
 
+// InnerTypeFuture returns the defvaltype body for a `future<elem>` — the WASI
+// Preview-3 async single-value channel. Encoding `0x65 0x01 <elem>` (a payloadful
+// future); a bare `future` (no payload) is `0x65 0x00`. Byte-verified against
+// wasm-tools 1.240 (`future<u32>` → `65 01 79`). See docs/WASI-PREVIEW3-ASYNC-PLAN.md.
+func InnerTypeFuture(elemValtype byte) []byte {
+	return []byte{0x65, 0x01, elemValtype}
+}
+
+// InnerTypeStream returns the defvaltype body for a `stream<elem>` — the WASI
+// Preview-3 async multi-value channel. Encoding `0x66 0x01 <elem>` (a payloadful
+// stream); a bare `stream` is `0x66 0x00`. Byte-verified against wasm-tools 1.240
+// (`stream<u8>` → `66 01 7d`). See docs/WASI-PREVIEW3-ASYNC-PLAN.md.
+func InnerTypeStream(elemValtype byte) []byte {
+	return []byte{0x66, 0x01, elemValtype}
+}
+
 // InnerTypeResultErr returns the defvaltype body for a
 // `result<_, err=<typeidx>>` — an err-only result whose error
 // arm carries the given typeidx. The ok arm is empty.
@@ -2716,6 +2732,88 @@ func PutCanonThreadYield(buf []byte) []byte {
 	body = leb128.UlebU64(body, 1) // vec(1)
 	body = append(body, 0x0c)      // thread.yield
 	body = append(body, 0x00)      // cancellable: false
+	return wrapSection(buf, SectionCanon, body)
+}
+
+// The WASI Preview-3 `future<T>` / `stream<T>` canon builtins. All opcodes +
+// option encodings byte-verified against wasm-tools 1.240 (see
+// docs/WASI-PREVIEW3-ASYNC-PLAN.md). `typeidx` is the component type index of the
+// `future<T>` / `stream<T>` defined type. `.new` carries no options; `.read` /
+// `.write` carry the canonical `[async, memory <idx>]` options the async data
+// transfer needs (async so a not-yet-ready transfer returns a pending status; the
+// `memory` option locates the element buffer).
+
+// PutCanonFutureNew emits `canon future.new` (0x15) — allocates a fresh future,
+// returning the packed writable/readable handle pair.
+func PutCanonFutureNew(buf []byte, typeidx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x15)      // future.new
+	body = leb128.UlebU64(body, uint64(typeidx))
+	return wrapSection(buf, SectionCanon, body)
+}
+
+// PutCanonFutureRead emits `canon future.read` (0x16) with `[async, memory]` —
+// reads the future's value into `memIdx`, returning a status.
+func PutCanonFutureRead(buf []byte, typeidx uint32, memIdx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x16)      // future.read
+	body = leb128.UlebU64(body, uint64(typeidx))
+	body = leb128.UlebU64(body, 2)              // 2 options
+	body = append(body, 0x06)                   // async
+	body = append(body, 0x03)                   // memory
+	body = leb128.UlebU64(body, uint64(memIdx)) // memidx
+	return wrapSection(buf, SectionCanon, body)
+}
+
+// PutCanonFutureWrite emits `canon future.write` (0x17) with `[async, memory]` —
+// writes the value at `memIdx` into the future (resolving it), returning a status.
+func PutCanonFutureWrite(buf []byte, typeidx uint32, memIdx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x17)      // future.write
+	body = leb128.UlebU64(body, uint64(typeidx))
+	body = leb128.UlebU64(body, 2)              // 2 options
+	body = append(body, 0x06)                   // async
+	body = append(body, 0x03)                   // memory
+	body = leb128.UlebU64(body, uint64(memIdx)) // memidx
+	return wrapSection(buf, SectionCanon, body)
+}
+
+// PutCanonStreamNew emits `canon stream.new` (0x0e) — the `stream<T>` counterpart
+// of future.new.
+func PutCanonStreamNew(buf []byte, typeidx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x0e)      // stream.new
+	body = leb128.UlebU64(body, uint64(typeidx))
+	return wrapSection(buf, SectionCanon, body)
+}
+
+// PutCanonStreamRead emits `canon stream.read` (0x0f) with `[async, memory]`.
+func PutCanonStreamRead(buf []byte, typeidx uint32, memIdx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x0f)      // stream.read
+	body = leb128.UlebU64(body, uint64(typeidx))
+	body = leb128.UlebU64(body, 2)              // 2 options
+	body = append(body, 0x06)                   // async
+	body = append(body, 0x03)                   // memory
+	body = leb128.UlebU64(body, uint64(memIdx)) // memidx
+	return wrapSection(buf, SectionCanon, body)
+}
+
+// PutCanonStreamWrite emits `canon stream.write` (0x10) with `[async, memory]`.
+func PutCanonStreamWrite(buf []byte, typeidx uint32, memIdx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x10)      // stream.write
+	body = leb128.UlebU64(body, uint64(typeidx))
+	body = leb128.UlebU64(body, 2)              // 2 options
+	body = append(body, 0x06)                   // async
+	body = append(body, 0x03)                   // memory
+	body = leb128.UlebU64(body, uint64(memIdx)) // memidx
 	return wrapSection(buf, SectionCanon, body)
 }
 

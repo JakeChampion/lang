@@ -537,6 +537,42 @@ func TestPutCanonWaitableBuiltins_Bytes(t *testing.T) {
 	}
 }
 
+// TestPutCanonFutureStreamBuiltins_Bytes pins the WASI Preview-3 future<T> /
+// stream<T> canon-builtin encodings — byte-verified against wasm-tools 1.240's
+// `dump` (future.new 0x15, future.read 0x16, future.write 0x17; stream.new 0x0e,
+// stream.read 0x0f, stream.write 0x10; .read/.write carry the canonical
+// `[async(0x06), memory(0x03 <idx>)]` options). The defvaltype encodings are
+// future `0x65` / stream `0x66`, each `01 <elem>` for a payloadful channel. These
+// are the encoder layer for the future/stream epic — the next async primitive
+// after the scalar/string/list param×result matrix + pending-await. See
+// docs/WASI-PREVIEW3-ASYNC-PLAN.md.
+func TestPutCanonFutureStreamBuiltins_Bytes(t *testing.T) {
+	cases := []struct {
+		name string
+		got  []byte
+		want []byte
+	}{
+		{"future.new", component.PutCanonFutureNew(nil, 0), []byte{0x08, 0x03, 0x01, 0x15, 0x00}},
+		{"future.read", component.PutCanonFutureRead(nil, 0, 0), []byte{0x08, 0x07, 0x01, 0x16, 0x00, 0x02, 0x06, 0x03, 0x00}},
+		{"future.write", component.PutCanonFutureWrite(nil, 0, 0), []byte{0x08, 0x07, 0x01, 0x17, 0x00, 0x02, 0x06, 0x03, 0x00}},
+		{"stream.new", component.PutCanonStreamNew(nil, 0), []byte{0x08, 0x03, 0x01, 0x0e, 0x00}},
+		{"stream.read", component.PutCanonStreamRead(nil, 0, 0), []byte{0x08, 0x07, 0x01, 0x0f, 0x00, 0x02, 0x06, 0x03, 0x00}},
+		{"stream.write", component.PutCanonStreamWrite(nil, 0, 0), []byte{0x08, 0x07, 0x01, 0x10, 0x00, 0x02, 0x06, 0x03, 0x00}},
+	}
+	for _, c := range cases {
+		if !bytes.Equal(c.got, c.want) {
+			t.Errorf("%s = % x, want % x", c.name, c.got, c.want)
+		}
+	}
+	// Defvaltype bodies: future<u32> = 65 01 79, stream<u8> = 66 01 7d.
+	if got := component.InnerTypeFuture(component.CValtypeU32); !bytes.Equal(got, []byte{0x65, 0x01, 0x79}) {
+		t.Errorf("InnerTypeFuture(u32) = % x, want 65 01 79", got)
+	}
+	if got := component.InnerTypeStream(component.CValtypeU8); !bytes.Equal(got, []byte{0x66, 0x01, 0x7d}) {
+		t.Errorf("InnerTypeStream(u8) = % x, want 66 01 7d", got)
+	}
+}
+
 // TestWasiClocksMonotonicTimerInstanceTypeBody_Bytes pins the bytes
 // of the wasm-reactor timer instance type: an outer-aliased pollable
 // (here at top-level type index 5), own<pollable>, and the
