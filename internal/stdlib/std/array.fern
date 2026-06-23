@@ -1085,6 +1085,30 @@ pub function sort_by[T](xs: T[], cmp: (T, T) => i32): T[] {
     return out;
 }
 
+// `sort(xs)` — ascending sort by the element type's `Ord` ordering: the
+// no-comparator companion to `sort_by(xs, cmp)`. The `T: cmp.Ord` bound supplies
+// the ordering (`a.cmp(b)`) and is what monomorphises it per element type on the
+// self-host IR path — an `i32` instance lowers `.cmp` to the scalar three-way
+// compare, a `string` instance to the lexicographic byte compare — where an
+// unbounded `[T]` would erase to one clone and mis-order strings. Stable (equal
+// elements keep input order): the same insertion sort `sort_by` uses, with the
+// comparator inlined as the `Ord` method, so `> 0` only swaps on a STRICT
+// greater — a tie leaves the earlier element in front. Empty / singleton → as-is.
+pub function sort[T: cmp.Ord](xs: T[]): T[] {
+    var out: T[] = [];
+    for x in xs {
+        out = out.append(x);
+        var i: i32 = out.len() - 1;
+        while (i > 0 && out[i - 1].cmp(out[i]) > 0) {
+            var tmp: T = out[i - 1];
+            out = out.with(i - 1, out[i]);
+            out = out.with(i, tmp);
+            i = i - 1;
+        }
+    }
+    return out;
+}
+
 // =================== EQ-DRIVEN GENERIC VERBS ===================
 //
 // `contains` / `index_of` / `distinct` over an arbitrary `T[]`, driven by

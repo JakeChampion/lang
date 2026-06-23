@@ -205,7 +205,7 @@ per-function bugs in the audit log.
 | `std/u64` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | clamp — `audit_std_path_numeric`; self-host via the IR path: u64 unsigned compare / `>>` / `/` / `%` ([#2904](https://github.com/JakeChampion/lang/issues/2904); `TestSelfHostU64UnsignedIR`) + the `min`/`max`/`clamp` methods incl. high-bit-set bounds (`TestSelfHostU64IR`, oracle-checked) — the i64-domain analog of the u32 wrapping fix; `to_string` routes via the AST path (core/int `__int_to_string_u64`'s `u8[]`/`usize`/`__memcpy`) |
 | `std/float` | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | sqrt/floor/ceil/abs/is_finite — `audit_std_path_numeric`; self-host IR path: the `sqrt`/`floor`/`ceil`/`trunc`/`abs`/`round` intrinsics lower via `op_funary` (routing-pinned `TestSelfHostFloatMathIR`; `round` is `frinta` on arm64, `trunc(x+copysign(0.5,x))` on x86/wasm); `min`/`max`/`clamp`/`is_nan`/`is_finite`/`is_inf` are ordinary f64 compares that already lower. Only the transcendentals (`log`/`exp`/`sin`/`cos`/`pow`) still route AST |
 | `std/string` (~120 methods) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | core set (upper/lower/trim/contains/starts_with/ends_with/index_of/replace/repeat/pad/split) — `audit_std_string` + `self_host_string_test`; `prop_string_involution` laws; full ~120 set pending |
-| `std/array` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | reductions sum/max/min/product/sorted_asc — `audit_std_numeric` + `self_host_audit_stdarray_test` |
+| `std/array` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | reductions sum/max/min/product/sorted_asc — `audit_std_numeric` + `self_host_audit_stdarray_test`; generic verbs `reverse`/`take`/`drop`/`concat`/`zip`/`flat_map`/`reduce`/`sort_by` + Eq-bound `contains`/`index_of`/`distinct`/`count` + **`Ord`-bound `sort[T: Ord]`** (#2689) — native + self-host IR (`TestNativeOrdSort{,Module,Arm64}`, `TestSelfHostOrdSortIR{X86_64,Wasm}`) |
 | `std/math` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | range/i32_max/i32_min — `audit_std_numeric` + `self_host_math_test` |
 | `std/sort` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_sort_i32` — ordering + permutation (histogram) + idempotence laws (native, all four backends); self-host via the IR path (x86-64 + wasm): `TestSelfHostSortIR` — i32 ascending/descending insertion sorts, the byte-lexicographic `string_cmp` three-way comparator, and the `string[]` sorts built on it (`.append` build, `.with` element rewrite, indexed scalar + string-byte reads, nested insertion-sort `while`), oracle-checked. **Generic comparator sort** `sort_by[T](arr, cmp: (T,T)=>i32): T[]` + `is_sorted_by[T]` added (the closure-arg form the module header long deferred — now that fn-typed args lower, incl. in loop conditions): any element type / custom ordering, no `Ord` bound. Coverage: `TestNativeSortBy{,Module,Arm64}` + `TestSelfHostSortByIR{X86_64,Wasm}` |
 | `std/format` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | self-host via the IR path (x86-64 + wasm): `format_bytes` (`TestSelfHostFormatBytesIR`), `format(fmt, args)` `{}`-substitution (`TestSelfHostFormatStringIR`), `format_duration_ms` (`TestSelfHostFormatDurationIR`), and the `{:fill|align|width.precision}` specs (`TestSelfHostFormatSpecIR`) — all oracle-checked against the interpreter; native via `audit_std_textfmt` + the `format_specs` fixture (with std/float `to_string_prec`) |
@@ -266,6 +266,26 @@ the `monotonic_ns` need, arm64 unconditionally). wasm stays ineligible
 path → `remove_dir_all`, exit 0, IR-routing pinned). (`result_assertions` /
 `helpers` still route AST — separately blocked on `assert_is_ok_*` / file-helper
 `BAIL call`s, distinct follow-ups.)
+
+### 2026-06-23 — `std/array` Ord-driven `sort[T: Ord]` (closes the #2689 verb set)
+
+The last remaining verb under #2689 — an `Ord`-driven `sort` to complement the
+already-shipped comparator `sort_by(xs, cmp)`. Added `sort[T: cmp.Ord](xs) ->
+T[]` to `std/array` (a stable insertion sort whose comparator is the `Ord`
+method `a.cmp(b)`, the same body shape as `sort_by` with the closure inlined).
+Like the Eq verbs (`contains`/`index_of`/`distinct`, #3872), the `T: cmp.Ord`
+bound is what monomorphises it per element type — an `i32` instance lowers
+`.cmp` to the scalar three-way compare, a `string` instance to the lexicographic
+byte compare — so it works on native (interp / x86-64 / arm64 / wasm) AND the
+self-host **IR path** (the i32[] return lowers; a generic `struct[]` return rides
+the AST fallback, as `distinct` does — both correct). A free function (not a
+`.sort()` receiver method) to match the `reverse`/`take`/`contains` deferral:
+the element-type-specific `sorted_asc` / string sorts already claim those names
+and array dispatch keys on the name only. `core/cmp` keeps its own trait-helper
+`sort[T: Ord]`; this is the std/array verb-namespace copy (same pattern as the
+duplicated `contains`/`distinct`). Coverage: `TestNativeOrdSort{,Module,Arm64}` +
+`TestSelfHostOrdSortIR{X86_64,Wasm}` — i32 ascending / reverse-ordered, a user
+`Ord` struct, and a stability case (equal keys keep input order).
 
 ### 2026-06-23 — `mono_infer` types `as <type>` casts → u64 / wider-int reductions route IR
 
