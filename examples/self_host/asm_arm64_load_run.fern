@@ -159,7 +159,7 @@ function main(): i32 {
     }
 
     // Immutability gate (see asm_load_run.fern): reject the immutable-data
-    // cycle rules (E048/E049/E055/E056) before codegen, filtered so the
+    // cycle rules (E048/E049/E055/E056/E057) before codegen, filtered so the
     // partial checker's other rules can't false-positive-reject.
     var imm: checker.Diag[] = checker.filter_immutability(checker.check_module(merged).diags);
     if (imm.len() > 0) {

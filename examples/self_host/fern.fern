@@ -527,8 +527,9 @@ function main(): i32 {
 
     // Immutability gate: reject the immutable-data cycle rules (E048 field
     // assign / E049 reference-capture write-back / E055 discarded pure-
-    // collection result / E056 subscript assign) BEFORE codegen, so the
-    // compiler is not MORE permissive than the native compiler / `-check`
+    // collection result / E056 subscript assign / E057 Cell[composite]
+    // element) BEFORE codegen, so the compiler is not MORE permissive than
+    // the native compiler / `-check`
     // (issue #2825 — the SSA / IR / AST codegen paths previously compiled
     // forbidden field mutation like `p.x = v` straight to a working binary).
     // Native always type-checks ahead of codegen; this is the matching gate

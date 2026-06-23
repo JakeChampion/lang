@@ -4681,12 +4681,16 @@ pub struct Diag { code: string, message: string, line: i32, col: i32 }
 
 // is_immutability_code reports whether `code` is one of the immutable-data
 // cycle rules — E048 (field assign), E049 (reference-capture write-back),
-// E055 (discarded pure-collection result), E056 (subscript assign). These
-// are the diagnostics the self-host compiler enforces at the build gate
-// (the rest of the checker is a partial port and may false-positive, so the
-// gate filters to this set). See docs/IMMUTABILITY-MIGRATION-PLAN.md §4.
+// E055 (discarded pure-collection result), E056 (subscript assign), E057
+// (Cell[T] element must be cycle-free — a composite/reference element could
+// reconstruct a cycle). These are the diagnostics the self-host compiler
+// enforces at the build gate (the rest of the checker is a partial port and
+// may false-positive, so the gate filters to this set). E057 belongs here
+// for the same cycle-freedom reason as the others, and matches the native
+// compiler, which rejects a Cell[composite] before codegen via its full
+// pre-codegen check. See docs/IMMUTABILITY-MIGRATION-PLAN.md §4.
 pub function is_immutability_code(code: string): boolean {
-    return code == "E048" || code == "E049" || code == "E055" || code == "E056";
+    return code == "E048" || code == "E049" || code == "E055" || code == "E056" || code == "E057";
 }
 
 // filter_immutability keeps only the immutable-data cycle diagnostics.

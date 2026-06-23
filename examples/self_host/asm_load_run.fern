@@ -328,7 +328,8 @@ function main(): i32 {
 
     // Immutability gate: reject the immutable-data cycle rules
     // (E048 field assign / E049 capture write-back / E055 discarded pure
-    // result / E056 subscript assign) before codegen — the self-host
+    // result / E056 subscript assign / E057 Cell[composite] element) before
+    // codegen — the self-host
     // enforcement of the immutable-data model (docs/IMMUTABILITY-MIGRATION-
     // PLAN.md §4). Filtered to the cycle rules so the rest of the partial
     // checker can't false-positive-reject a valid program (or this very
