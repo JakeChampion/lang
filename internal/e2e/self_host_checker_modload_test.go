@@ -39,8 +39,7 @@ func buildCheckerModloadDriverX86(t *testing.T) (gcc string, runner []string, dr
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	asm := cachedSelfHostAsm(t, dir, "checker_modload_run.fern")
-	return gcc, runner, buildBin(t, gcc, dir, "ckdriver", asm)
+	return gcc, runner, buildSelfHostBin(t, gcc, dir, "checker_modload_run.fern", "ckdriver")
 }
 
 // checkSourceModload resolves `entrySrc`'s full stdlib closure (real Go

@@ -39,6 +39,15 @@ name: Test e2e self-host
 #     probe the six IR-eligibility tests share, in place of a whole-compiler
 #     driver whose 256 MB binary did not disk-cache).
 #     Un-warmed drivers still compile per shard, now at most once each.
+#   * the warm/restore cache stores ONLY the linked driver BINARY, keyed by the
+#     driver's source-closure hash (cachedDriverBin) — NOT the ~680 MB emitted
+#     `.s`. That `.s` was cached only to skip the ~47 s emit, but binary-only
+#     consumers (every driver build — they just run the driver) never need the
+#     asm text. Restoring it dragged ~826 MB per driver onto the runner (679 MB
+#     of it dead-weight .s); restoring all the warmed drivers exhausted disk, so
+#     restores silently dropped and the driver re-emitted COLD (~47 s — the
+#     residual ~50 s tail). Binary-only caching keeps each warmed driver ~4x
+#     smaller (~190 MB), so the restores fit and the emit is skipped.
 #
 # Matrix per arch because individual tests are split per backend
 # (TestSelfHostAsmX86_64, TestSelfHostAsmArm64, etc.) — running on

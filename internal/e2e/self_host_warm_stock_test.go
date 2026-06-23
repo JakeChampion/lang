@@ -56,8 +56,7 @@ func TestSelfHostWarmStockDriver(t *testing.T) {
 		if driver == "" {
 			continue
 		}
-		asm := cachedSelfHostAsm(t, dir, driver)
-		bin := cachedLink(t, gcc, asm)
+		bin := cachedDriverBin(t, gcc, dir, driver)
 		// Smoke: every driver reads a program on stdin; a trivial program must
 		// not crash it (exit normally, any status).
 		if err := runDriverStdinExits(runner, bin, "function main(): i32 { return 0; }\n"); err != nil {

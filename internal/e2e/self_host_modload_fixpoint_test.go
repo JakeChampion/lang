@@ -32,8 +32,7 @@ func TestSelfHostModloadFixpointX86_64(t *testing.T) {
 	dir := writeSelfHostModloadProject(t)
 
 	// stage 0: build the driver (asm_modload_run) as an x86 host binary.
-	asm := cachedSelfHostAsm(t, dir, "asm_modload_run.fern")
-	driverBin := buildBin(t, gcc, dir, "driver", asm)
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "driver")
 
 	// The compiler's own source, addressed by its on-disk entry. The driver
 	// follows asm_modload_run.fern's import graph to the sibling modules.

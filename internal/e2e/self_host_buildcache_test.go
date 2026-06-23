@@ -68,8 +68,8 @@ func (c *buildCache[T]) get(key string, build func() (T, error)) (T, error) {
 }
 
 var (
-	selfHostAsmCache = newBuildCache[string]()
-	selfHostBinCache = newBuildCache[string]()
+	selfHostBinCache       = newBuildCache[string]()
+	selfHostDriverBinCache = newBuildCache[string]()
 
 	linkCacheDir     string
 	linkCacheDirErr  error
@@ -195,22 +195,45 @@ func hashSelfHostSources(t *testing.T, dir, fernName string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// cachedSelfHostAsm compiles dir/fernName through the Go x86-64 backend,
-// caching the emitted asm by source-set hash so repeated tests building
-// the same driver pay the ~10s compile only once per process.
-func cachedSelfHostAsm(t *testing.T, dir, fernName string) string {
+// cachedDriverBin builds (or restores) the LINKED self-host driver binary for
+// dir/fernName, keyed by the source-closure hash, and returns the path to the
+// shared cached binary (callers copyExecutable it where they need it).
+//
+// Unlike the old cachedSelfHostAsm+cachedLink pair it persists ONLY the
+// ~190 MB linked binary to the disk cache — NEVER the ~680 MB emitted `.s`.
+// That `.s` was cached only to skip the ~47 s Go x86-64 emit and to derive the
+// binary's content key, but binary-only consumers (every self-host driver
+// build — they just run the driver) never need the asm text. Restoring it was
+// the bug: a warmed driver dragged ~826 MB onto the runner (679 MB of it dead-
+// weight .s), and restoring all the warmed drivers exhausted the runner's disk,
+// so restores silently dropped and the test re-emitted the driver COLD (~47 s
+// — the ~50 s tail the heavy-split was chasing). Caching just the binary keeps
+// each warmed driver ~4x smaller, so the restores fit and the emit is skipped.
+//
+// The binary is a static -nostdlib -no-pie ELF, independent of which gcc
+// produced it, so the source-hash key is sound across runners (matching the
+// rationale on cachedLink's disk key). The emit is held in memory and the
+// scratch `.s` lives only in the process-local link dir until the link
+// completes, then is removed — it never reaches the disk cache.
+func cachedDriverBin(t *testing.T, gcc, dir, fernName string) string {
 	t.Helper()
 	key := hashSelfHostSources(t, dir, fernName)
-	asm, err := selfHostAsmCache.get(key, func() (string, error) {
+	path, err := selfHostDriverBinCache.get(key, func() (string, error) {
+		base, err := linkCacheBaseDir()
+		if err != nil {
+			return "", fmt.Errorf("link cache dir: %w", err)
+		}
+		binPath := filepath.Join(base, "drv-"+key)
+		// Cross-process disk hit: a driver binary a warm job pre-linked. Scan
+		// every configured dir; copy it in and skip both the emit and the link.
 		for _, d := range diskCacheReadDirs() {
-			if b, rerr := os.ReadFile(filepath.Join(d, key+".s")); rerr == nil {
-				return string(b), nil // cross-process hit: skip the ~35k-line compile
+			if in, oerr := os.ReadFile(filepath.Join(d, key+".driverbin")); oerr == nil {
+				if werr := os.WriteFile(binPath, in, 0o755); werr == nil {
+					return binPath, nil
+				}
 			}
 		}
-		diskPath := ""
-		if d := diskCacheWriteDir(); d != "" {
-			diskPath = filepath.Join(d, key+".s")
-		}
+		// Cold: emit (held in memory — no disk `.s`), link, publish the binary.
 		prog, _, err := modload.Load(filepath.Join(dir, fernName))
 		if err != nil {
 			return "", fmt.Errorf("modload %s: %w", fernName, err)
@@ -226,19 +249,32 @@ func cachedSelfHostAsm(t *testing.T, dir, fernName string) string {
 		if err != nil {
 			return "", fmt.Errorf("emit %s: %w", fernName, err)
 		}
-		if diskPath != "" {
-			_ = os.MkdirAll(filepath.Dir(diskPath), 0o755)
-			tmp := diskPath + ".tmp"
-			if werr := os.WriteFile(tmp, []byte(asm), 0o644); werr == nil {
-				_ = os.Rename(tmp, diskPath) // atomic publish; safe under parallel shards
+		asmPath := binPath + ".s" // scratch in the process-local link dir only
+		if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
+			return "", err
+		}
+		if out, lerr := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); lerr != nil {
+			return "", fmt.Errorf("gcc %s: %w\n%s", fernName, lerr, out)
+		}
+		_ = os.Remove(asmPath) // never keep the ~680 MB .s around
+		// Publish the linked binary to the disk cache (atomic), so a warm job
+		// seeds it for the test shards.
+		if d := diskCacheWriteDir(); d != "" {
+			dst := filepath.Join(d, key+".driverbin")
+			_ = os.MkdirAll(filepath.Dir(dst), 0o755)
+			if in, rerr := os.ReadFile(binPath); rerr == nil {
+				tmp := dst + ".tmp"
+				if werr := os.WriteFile(tmp, in, 0o755); werr == nil {
+					_ = os.Rename(tmp, dst) // atomic publish; safe under parallel shards
+				}
 			}
 		}
-		return asm, nil
+		return binPath, nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return asm
+	return path
 }
 
 // cachedLink links asm into a static binary once per (gcc, asm) and

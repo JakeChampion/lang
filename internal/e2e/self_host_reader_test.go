@@ -37,8 +37,7 @@ func TestSelfHostReaderX86_64(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
 		t.Fatalf("write asm_run.fern: %v", err)
 	}
-	asm := cachedSelfHostAsm(t, dir, "asm_run.fern")
-	driverBin := buildBin(t, gcc, dir, "driver", asm)
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
 
 	// A read-all-of-stdin echo program — the same shape as
 	// std/io.read_all_stdin, with a print to make the result
@@ -153,8 +152,7 @@ func TestSelfHostReadFileX86_64(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
 		t.Fatalf("write asm_run.fern: %v", err)
 	}
-	asm := cachedSelfHostAsm(t, dir, "asm_run.fern")
-	driverBin := buildBin(t, gcc, dir, "driver", asm)
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
 
 	// A "cat" program: read argv[1] and print it, or exit 7 on error.
 	catSrc := "function main(): i32 {\n" +
