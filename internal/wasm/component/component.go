@@ -2817,6 +2817,29 @@ func PutCanonStreamWrite(buf []byte, typeidx uint32, memIdx uint32) []byte {
 	return wrapSection(buf, SectionCanon, body)
 }
 
+// PutCanonStreamDropReadable emits `canon stream.drop-readable` (0x13) — releases
+// the readable end of a `stream<T>` (the consumer calls it after EOF). Core sig
+// `(handle) -> ()`. Byte-verified against wasm-tools 1.240.
+func PutCanonStreamDropReadable(buf []byte, typeidx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x13)      // stream.drop-readable
+	body = leb128.UlebU64(body, uint64(typeidx))
+	return wrapSection(buf, SectionCanon, body)
+}
+
+// PutCanonStreamDropWritable emits `canon stream.drop-writable` (0x14) — releases
+// the writable end of a `stream<T>`, signalling EOF to the reader (the producer
+// calls it after its final awaited write). Core sig `(handle) -> ()`.
+// Byte-verified against wasm-tools 1.240.
+func PutCanonStreamDropWritable(buf []byte, typeidx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1) // vec(1)
+	body = append(body, 0x14)      // stream.drop-writable
+	body = leb128.UlebU64(body, uint64(typeidx))
+	return wrapSection(buf, SectionCanon, body)
+}
+
 // PutCanonSectionLowerWithMemory emits a canon section with one
 // canon-lower entry that carries a single `memory` canonical-ABI
 // option. The memory option is needed when the lowered function
