@@ -330,6 +330,64 @@ func BuildAsyncLiftedExportComponentString(providerCore []byte, coreMemExportNam
 	return buf
 }
 
+// BuildAsyncLiftedExportComponentStringParamStringResult lifts a core that takes
+// a STRING parameter AND returns a STRING result into `exportName: async
+// func(s: string) -> string` — the composite-param-and-result edge shape (e.g.
+// an HTTP `fetch(url) -> body`). It combines the two composite directions:
+//   - the incoming `string` param is materialised in the export's memory via its
+//     bump cabi_realloc before the core runs (the `[memory, realloc]` lift), and
+//   - the `string` result is delivered through an imported string `task.return`
+//     (core sig `(ptr, len) -> ()`) whose `memory` option references the
+//     provider's own memory — circular because the provider imports task.return,
+//     so it is broken with the same gMem trampoline as
+//     BuildAsyncLiftedExportComponentString (placeholder task.return → alias
+//     memory → real `task.return (string) (memory)` → fixup the table slot).
+//
+// The core must export its memory (memExportName) and a real bump cabi_realloc
+// (reallocExportName), and import `("", "task-return")` (the string-flavored
+// `(ptr, len) -> ()`); `coreExportName` is its `(ptr, len) -> ()` worker.
+func BuildAsyncLiftedExportComponentStringParamStringResult(providerCore []byte, memExportName, reallocExportName, coreExportName, exportName string) []byte {
+	trParams := []byte{0x7f, 0x7f} // string task.return: (ptr, len) -> ()
+	buf := PutComponentHeader(nil)
+
+	// Trampoline module 0 → core instance 0 (placeholder task.return + table).
+	buf = PutCoreModuleSection(buf, TrampolineModuleForParamsResults(trParams, nil))
+	buf = PutCoreInstanceSectionInstantiate(buf, 0)  // core instance 0
+	buf = PutAliasSectionCoreExportFunc(buf, 0, "0") // core func 0 (placeholder task.return)
+
+	// Provider core module 1, instantiated with the placeholder bound to its
+	// ("", "task-return") import.
+	buf = PutCoreModuleSection(buf, providerCore)
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "task-return", Sort: CoreSortFunc, Idx: 0},
+	}) // core instance 1
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 1, []string{""}, []uint32{1}) // core instance 2 (provider)
+
+	// Alias the provider memory → core memory 0, then the real string task.return
+	// over it (core func 1).
+	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 2, memExportName) // core memory 0
+	buf = PutCanonTaskReturnStringWithMemory(buf, 0)                       // core func 1
+
+	// Fixup module 2: patch the trampoline table slot 0 to the real task.return.
+	buf = PutCoreModuleSection(buf, FixupModuleForParamsResults(trParams, nil))
+	buf = PutAliasSectionCoreExport(buf, CoreSortTable, 0, "$imports") // core table 0
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "$imports", Sort: CoreSortTable, Idx: 0},
+		{Name: "0", Sort: CoreSortFunc, Idx: 1},
+	}) // core instance 3
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 2, []string{""}, []uint32{3}) // core instance 4 (fixup)
+
+	// Alias the provider's cabi_realloc (the lift's realloc option for the incoming
+	// param) and its worker export, then lift async with [memory, realloc] as
+	// `(string) -> string`.
+	buf = PutAliasSectionCoreExport(buf, CoreSortFunc, 2, reallocExportName) // core func 2 (cabi_realloc)
+	buf = PutAliasSectionCoreExportFunc(buf, 2, coreExportName)              // core func 3 (worker)
+	buf = PutTypeSectionOneFunc(buf, []string{"s"}, []byte{cValtypeString}, cValtypeString)
+	buf = PutCanonSectionLiftAsyncWithMemoryRealloc(buf, 3, 0, 0, 2) // component func 0
+	buf = PutExportSectionOneFunc(buf, exportName, 0)
+	return buf
+}
+
 // BuildAsyncLiftedExportComponentList is the `list<elem>` counterpart of
 // BuildAsyncLiftedExportComponentString: it lifts a core whose `coreExportName`
 // export delivers a `list<elem>` (its `(ptr, len)` bytes in the core memory

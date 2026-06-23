@@ -1632,11 +1632,23 @@ func buildExternAsyncScalarResultWrapper(nparams int, rawImport string, resultVT
 	}
 }
 
+// asyncResultKind selects how an async-import wrapper lifts the value the host
+// wrote into the return area after the awaited call: a scalar read, a `string`
+// lift, or a numeric `list<T>` copy.
+type asyncResultKind int
+
+const (
+	asyncResScalar asyncResultKind = iota // i32/i64/f32/f64 read at rb+0
+	asyncResString                        // (ptr,len)@rb lifted via __bytes_to_lang_string
+	asyncResList                          // (ptr,len)@rb copied into a length-prefixed Fern array
+)
+
 // buildExternAsyncMemParamWrapper handles an `@import ... async function` whose
 // params are any mix of scalars, `string`s, and numeric arrays (`u8[]`/`i32[]`/
-// `f64[]`/…), with a scalar result — the realistic multi-arg edge-handler shape
-// (e.g. `fetch(url: string, timeout: i32)`, `post(id: i32, body: u8[])`). It
-// generalises (and subsumes) the single-string / single-array param wrappers.
+// `f64[]`/…), returning a scalar, a `string`, or a numeric `list<T>` — the
+// realistic multi-arg edge-handler shape (e.g. `fetch(url: string, timeout: i32)
+// -> string`, `post(id: i32, body: u8[]) -> i32`). It generalises (and subsumes)
+// the single-string / single-array param wrappers.
 //
 // Each argument is marshalled to its canonical slot(s) in declaration order:
 //   - scalar → forwarded as-is (one i32/i64/f32/f64);
@@ -1648,13 +1660,17 @@ func buildExternAsyncScalarResultWrapper(nparams int, rawImport string, resultVT
 //
 // Then the return-area pointer is appended (the trailing canonical retptr) and
 // the async-lower call `(canon params…, retptr) -> i32 status` runs; the
-// pending-await loop drives a non-RETURNED subtask, and the scalar result is
-// read from the return area. The param bytes are the caller's, so there is no
-// realloc on the consumer side (memory option only).
+// pending-await loop drives a non-RETURNED subtask. The result tail is selected
+// by resKind: a scalar is read at rb+0; a `string`/`list` value (whose bytes the
+// host materialised in this module's memory via the lower's realloc option — so
+// the module must export cabi_realloc and the composer set NeedsRealloc) is
+// lifted from the canonical (ptr, len) at rb+0/rb+4. The param bytes themselves
+// are the caller's (memory option, no realloc needed for them).
 //
 // Locals after the Fern param slots: $buf $byteLen $i (string-normalise scratch),
-// $rb (return area), $status $task $ws (await-loop scratch).
-func buildExternAsyncMemParamWrapper(ex *ir.ExternFunc, rawImport string, resultVT byte) func(map[string]uint32) []byte {
+// $rb (return area), $status $task $ws (await-loop scratch), and for a list
+// result $dp $n $arr.
+func buildExternAsyncMemParamWrapper(ex *ir.ExternFunc, rawImport string, resKind asyncResultKind, resultVT byte, stride uint32) func(map[string]uint32) []byte {
 	return func(idxs map[string]uint32) []byte {
 		alloc := idxs["__fern_alloc"]
 		imp := idxs[rawImport]
@@ -1669,6 +1685,7 @@ func buildExternAsyncMemParamWrapper(ex *ir.ExternFunc, rawImport string, result
 		}
 		bufL, byteLenL, iL := nSlots, nSlots+1, nSlots+2
 		rb, statusL, taskL, wsL := nSlots+3, nSlots+4, nSlots+5, nSlots+6
+		dp, nL, arr := nSlots+7, nSlots+8, nSlots+9 // list-result scratch
 
 		var body []byte
 		// rb = (__fern_alloc(16) + 7) & ~7 — 8-byte-aligned return area (result @ +0,
@@ -1706,21 +1723,70 @@ func buildExternAsyncMemParamWrapper(ex *ir.ExternFunc, rawImport string, result
 		// Trailing retptr, then the async-lower call -> status.
 		body = inst.InstLocalGet(body, rb)
 		body = inst.InstCall(body, imp)
-		// Await the (possibly pending) subtask, then read the scalar result.
+		// Await the (possibly pending) subtask, then lift the result by kind.
 		body = emitAsyncAwaitLoop(body, idxs, rb, statusL, taskL, wsL)
-		body = inst.InstLocalGet(body, rb)
-		switch resultVT {
-		case encode.ValtypeI64:
-			body = memory.InstI64Load(body, 3, 0)
-		case encode.ValtypeF32:
-			body = memory.InstF32Load(body, 2, 0)
-		case encode.ValtypeF64:
-			body = memory.InstF64Load(body, 3, 0)
-		default:
+
+		switch resKind {
+		case asyncResString:
+			// __bytes_to_lang_string(load(rb+0), load(rb+4)).
+			body = inst.InstLocalGet(body, rb)
 			body = memory.InstI32Load(body, 2, 0)
+			body = inst.InstLocalGet(body, rb)
+			body = memory.InstI32Load(body, 2, 4)
+			body = inst.InstCall(body, idxs["__bytes_to_lang_string"])
+		case asyncResList:
+			// dp = load(rb+0); n = load(rb+4) (element count); copy count*stride
+			// bytes into a fresh length-prefixed array, return its element pointer.
+			pushByteLen := func(b []byte) []byte {
+				b = inst.InstLocalGet(b, nL)
+				if stride != 1 {
+					b = inst.InstI32Const(b, int32(stride))
+					b = numeric.InstI32Mul(b)
+				}
+				return b
+			}
+			body = inst.InstLocalGet(body, rb)
+			body = memory.InstI32Load(body, 2, 0)
+			body = inst.InstLocalSet(body, dp)
+			body = inst.InstLocalGet(body, rb)
+			body = memory.InstI32Load(body, 2, 4)
+			body = inst.InstLocalSet(body, nL)
+			body = inst.InstI32Const(body, 4)
+			body = pushByteLen(body)
+			body = numeric.InstI32Add(body)
+			body = inst.InstCall(body, alloc)
+			body = inst.InstLocalSet(body, arr)
+			body = inst.InstLocalGet(body, arr)
+			body = inst.InstLocalGet(body, nL)
+			body = memory.InstI32Store(body, 2, 0) // count @ arr+0
+			body = inst.InstLocalGet(body, arr)
+			body = inst.InstI32Const(body, 4)
+			body = numeric.InstI32Add(body)
+			body = inst.InstLocalGet(body, dp)
+			body = pushByteLen(body)
+			body = memory.InstMemoryCopy(body)
+			body = inst.InstLocalGet(body, arr)
+			body = inst.InstI32Const(body, 4)
+			body = numeric.InstI32Add(body) // return arr + 4 (count at ptr-4)
+		default: // asyncResScalar
+			body = inst.InstLocalGet(body, rb)
+			switch resultVT {
+			case encode.ValtypeI64:
+				body = memory.InstI64Load(body, 3, 0)
+			case encode.ValtypeF32:
+				body = memory.InstF32Load(body, 2, 0)
+			case encode.ValtypeF64:
+				body = memory.InstF64Load(body, 3, 0)
+			default:
+				body = memory.InstI32Load(body, 2, 0)
+			}
 		}
 
-		locals := inst.PutLocalsOneGroup(nil, 7, encode.ValtypeI32) // buf,byteLen,i,rb,status,task,ws
+		nScratch := uint32(7)
+		if resKind == asyncResList {
+			nScratch = 10 // + dp, n, arr
+		}
+		locals := inst.PutLocalsOneGroup(nil, nScratch, encode.ValtypeI32)
 		return inst.PutFunctionBody(nil, locals, body)
 	}
 }
