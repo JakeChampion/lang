@@ -251,6 +251,28 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — std/string escape + count surface: pure-Fern std/test coverage (self-host-gated)
+
+New `examples/tests/string_escape_count_test.fern` covers the std/string
+escaping / counting / tokenisation / prefix-suffix-set surface left out by the
+three earlier string suites: `escape_html` / `escape_c` / `escape_shell`
+(output-safe encoding — HTML entities, C-string escapes, POSIX-shell quoting),
+`count_byte` / `count_chars_in` (occurrence counting), `fields` (whitespace
+tokenisation → `string[]`), `center` (two-sided padding, incl. the odd-width
+split), and `starts_with_any` / `ends_with_any` (prefix/suffix-set match over a
+`string[]` arg). 15 tests. Coverage audit confirmed all untested at the
+example-suite layer.
+
+The escapers are the security-relevant surface and the most escape-byte-dense:
+they walk every byte and concatenate multi-char replacements (`&amp;`, `\t`,
+`'\''`), so they stress the self-host string-concat + slice path harder than the
+plain transforms. On the **differential** gate (both x86 + arm64). Gated by
+`TestRunnerStringEscapeCountExamplePasses` (interp) + `string_escape_count` in
+`TestSelfHostStdTestE2E` / `…Arm64`. (This is the fourth and final std/string
+slice — classify/transform #3874, slice/extract #3875, and now escape/count —
+between them the bread-and-butter predicate, transform, extraction, and
+encoding surface is now migration-covered.)
+
 ### 2026-06-23 — std/string slice + extract surface: pure-Fern std/test coverage (self-host-gated)
 
 New `examples/tests/string_slice_extract_test.fern` covers the std/string
