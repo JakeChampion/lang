@@ -251,6 +251,26 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — iter_combinators promoted to the self-host differential gate (Iterator-bounded #3915 unblocked it)
+
+Watch-list payoff. `#3915` (self-host IR: Iterator-bounded reducers — `core/iter`
+`sum`/`count`/`to_array` — lower on the IR path) just merged, closing the
+unbounded-generic-erasure gap that this session root-caused (`7bd5ddf`) and a
+parallel session fix-planned. Re-probed `iter_combinators_test` (take / skip /
+to_array / find / position / position_by / count_by over `iter.of` / `iter.range`
+— all bounded-generic `I: Iterator[T]`) on the differential gate: **now passes
+byte-for-byte on both x86 + arm64**, where it previously crashed. Promoted it
+interp-only → self-host-gated (`iter_combinators` in `selfHostStdTestCases`); the
+interp gate `TestRunnerIterCombinatorsExamplePasses` stays as the oracle.
+
+Watch-list status after this: **iter_combinators ✓ cleared.** Still blocked,
+pending their parallel fixes — `crypto` / `u32` (u32 `+`/`<<` not truncated to
+32 bits, root-caused in `#3908`); `array_hof` / `io_buffered` (RC drop-at-exit of
+a struct/array retained to scope exit — `#3909` reclaimed discarded fresh-ret
+struct locals but not this case yet); `num` lazy-iter beyond the reducer trio.
+Each flips onto the gate the moment its blocker lands — re-probe and promote, as
+here.
+
 ### 2026-06-23 — Iterator-bounded generic reducers (core/iter) now lower on the IR path
 
 `core/iter.sum` / `count` / `to_array` / `product` — bounded-generic reducers
