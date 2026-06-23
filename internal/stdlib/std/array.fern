@@ -1138,6 +1138,63 @@ pub function distinct[T: cmp.Eq](xs: T[]): T[] {
     return out;
 }
 
+// =================== EQ-DRIVEN SET ALGEBRA ===================
+//
+// `count` / `union` / `intersection` / `difference` over an arbitrary `T[]`,
+// driven by the same `T: cmp.Eq` bound (and the same per-element-type
+// monomorphisation on the self-host IR path) as `contains` / `distinct`. The
+// three set operations treat the inputs as multisets but return SET results —
+// each element appears at most once, in first-seen order — built on `contains`,
+// so the `==` they perform is the type's structural equality (`str_eq` for
+// strings, the scalar compare for `i32`). O(n·m) membership scans; fine for the
+// small-n CLI / edge-handler workloads, reach for a Map/Set at larger N.
+
+// `count(xs, target)` — how many elements equal `target`. The Eq-bounded
+// generic companion to the element-type-specific `.count()` / `.count_str()`
+// receiver methods (which dispatch on the array's element type by name). Empty
+// → 0.
+pub function count[T: cmp.Eq](xs: T[], target: T): i32 {
+    var c: i32 = 0;
+    for x in xs {
+        if (x == target) { c = c + 1; }
+    }
+    return c;
+}
+
+// `union(a, b)` — set union: the distinct elements of `a`, then the distinct
+// elements of `b` not already present. First-seen order across `a` then `b`
+// (equivalent to `distinct(concat(a, b))`, one pass).
+pub function union[T: cmp.Eq](a: T[], b: T[]): T[] {
+    var out: T[] = [];
+    for x in a {
+        if (!contains(out, x)) { out = out.append(x); }
+    }
+    for y in b {
+        if (!contains(out, y)) { out = out.append(y); }
+    }
+    return out;
+}
+
+// `intersection(a, b)` — set intersection: the distinct elements of `a` that
+// also appear in `b`, in `a`'s first-seen order.
+pub function intersection[T: cmp.Eq](a: T[], b: T[]): T[] {
+    var out: T[] = [];
+    for x in a {
+        if (contains(b, x) && !contains(out, x)) { out = out.append(x); }
+    }
+    return out;
+}
+
+// `difference(a, b)` — set difference (`a \ b`): the distinct elements of `a`
+// that do NOT appear in `b`, in `a`'s first-seen order.
+pub function difference[T: cmp.Eq](a: T[], b: T[]): T[] {
+    var out: T[] = [];
+    for x in a {
+        if (!contains(b, x) && !contains(out, x)) { out = out.append(x); }
+    }
+    return out;
+}
+
 // ---- Generic array methods --------------------------------------
 //
 // Method forms of the combinators above, so pipelines read
