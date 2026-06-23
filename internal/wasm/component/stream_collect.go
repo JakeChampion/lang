@@ -295,3 +295,218 @@ func BuildAsyncStreamImportComponent(consumerCore, producerCore, tramp2, fixup2 
 	buf = PutExportSectionOneFunc(buf, liftExportName, liftCompF)
 	return buf
 }
+
+// buildStreamSinkProviderComponent builds the nested host `sink: async func(s:
+// stream<elem>) -> u32` sub-component whose core (sinkCore) COLLECT-READS the
+// stream param to EOF and task-returns a scalar — the read-side mirror of
+// buildStreamEOFProducerComponent. sinkCore imports under "" : tr (task.return
+// scalar), sr (stream.read), sdr (stream.drop-readable), wsn/wj/wsw/wsd; exports
+// "mem" + "sink". stream.read + waitable-set.wait reference its own memory and it
+// imports them, so they go through the same 2-slot gMem trampoline (slot 0 = read,
+// slot 1 = wait) + fixup.
+func buildStreamSinkProviderComponent(sinkCore []byte, tramp2, fixup2 []byte, elemValtype, resultValtype byte) []byte {
+	buf := PutComponentHeader(nil)
+	buf = PutTypeSectionOneDefined(buf, InnerTypeStream(elemValtype)) // component type 0: stream<elem>
+
+	buf = PutCoreModuleSection(buf, tramp2)           // core module 0 (2-slot tramp: read@0, wait@1)
+	buf = PutCoreInstanceSectionInstantiate(buf, 0)   // core instance 0
+	buf = PutAliasSectionCoreExportFunc(buf, 0, "w")  // core func 0 (read placeholder, slot 0)
+	buf = PutAliasSectionCoreExportFunc(buf, 0, "wt") // core func 1 (wait placeholder, slot 1)
+
+	buf = PutCanonTaskReturnSingle(buf, resultValtype) // core func 2 (tr; scalar)
+	buf = PutCanonStreamDropReadable(buf, 0)           // core func 3 (sdr)
+	buf = PutCanonWaitableSetNew(buf)                  // core func 4 (wsn)
+	buf = PutCanonWaitableJoin(buf)                    // core func 5 (wj)
+	buf = PutCanonWaitableSetDrop(buf)                 // core func 6 (wsd)
+
+	buf = PutCoreModuleSection(buf, sinkCore) // core module 1
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "tr", Sort: CoreSortFunc, Idx: 2},
+		{Name: "sr", Sort: CoreSortFunc, Idx: 0},
+		{Name: "sdr", Sort: CoreSortFunc, Idx: 3},
+		{Name: "wsn", Sort: CoreSortFunc, Idx: 4},
+		{Name: "wj", Sort: CoreSortFunc, Idx: 5},
+		{Name: "wsw", Sort: CoreSortFunc, Idx: 1},
+		{Name: "wsd", Sort: CoreSortFunc, Idx: 6},
+	}) // core instance 1
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 1, []string{""}, []uint32{1}) // core instance 2 (sink)
+
+	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 2, "mem") // core memory 0
+	buf = PutCanonStreamRead(buf, 0, 0)                            // core func 7 (real sr over memory 0)
+	buf = PutCanonWaitableSetWait(buf, 0)                          // core func 8 (real wsw over memory 0)
+
+	buf = PutCoreModuleSection(buf, fixup2)                            // core module 2
+	buf = PutAliasSectionCoreExport(buf, CoreSortTable, 0, "$imports") // core table 0
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "$imports", Sort: CoreSortTable, Idx: 0},
+		{Name: "0", Sort: CoreSortFunc, Idx: 7},
+		{Name: "1", Sort: CoreSortFunc, Idx: 8},
+	}) // core instance 3
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 2, []string{""}, []uint32{3}) // core instance 4 (fixup)
+
+	buf = PutAliasSectionCoreExportFunc(buf, 2, "sink") // core func 9 (sink)
+	// component type 1: func(s: stream<elem>(type 0)) -> resultValtype.
+	buf = PutTypeSectionOneFuncGeneral(buf, []string{"s"}, [][]byte{leb128SlebBytes(0)}, []byte{resultValtype})
+	buf = PutCanonSectionLiftAsync(buf, 9, 1) // component func 0
+	buf = PutExportSectionOneFunc(buf, "sink", 0)
+	return buf
+}
+
+// BuildAsyncStreamParamImportComponent is the real-Fern integration of the
+// colorless stream[T] PRODUCE path — the mirror of BuildAsyncStreamImportComponent.
+// It wraps a WASMBIN-GENERATED consumer (which exports its own memory and whose
+// `stream[T]` async-import param resolves to the produce-wrapper) against a
+// bundled host sink that collect-reads the stream. The consumer's three
+// memory-carrying imports — the dep-lower `(rd, retptr)->status`,
+// `waitable-set.wait`, and `stream.write` — each go through their own gMem
+// trampoline + fixup over the consumer's exported memory; the memory-independent
+// glue (task.return, ws-new/w-join/subtask-drop/ws-drop, stream.new,
+// stream.drop-writable) is direct. See docs/STREAM-TYPE-SURFACE.md.
+func BuildAsyncStreamParamImportComponent(consumerCore, sinkCore, tramp2, fixup2 []byte,
+	importIface, importWITName, consumerAsyncExport, liftExportName string,
+	elemValtype, resultValtype byte) []byte {
+	buf := PutComponentHeader(nil)
+	var cf, ci, cm, ct, compc, compi, compf uint32
+
+	// Component type 0: stream<elem> (referenced by stream.write).
+	buf = PutTypeSectionOneDefined(buf, InnerTypeStream(elemValtype))
+
+	// Phase 1: nest the host sink, instantiate, alias its `sink` export.
+	buf = PutComponentSection(buf, buildStreamSinkProviderComponent(sinkCore, tramp2, fixup2, elemValtype, resultValtype))
+	buf = PutInstanceSectionInstantiateComponent(buf, compc)
+	compc++
+	buf = PutAliasSectionInstanceExportFunc(buf, compi, "sink")
+	compi++
+	depCFunc := compf
+	compf++
+
+	// Phase 2: trampolines for the three consumer-memory-carrying funcs.
+	lowerParams, lowerResults := []byte{0x7f, 0x7f}, []byte{0x7f} // dep-lower (rd,retptr)->status
+	buf = PutCoreModuleSection(buf, TrampolineModuleForParamsResults(lowerParams, lowerResults))
+	cm++
+	buf = PutCoreInstanceSectionInstantiate(buf, cm-1)
+	depTrampInst := ci
+	ci++
+	wsWaitParams, wsWaitResults := []byte{0x7f, 0x7f}, []byte{0x7f} // ws-wait (set,evt)->i32
+	buf = PutCoreModuleSection(buf, TrampolineModuleForParamsResults(wsWaitParams, wsWaitResults))
+	cm++
+	buf = PutCoreInstanceSectionInstantiate(buf, cm-1)
+	wsWaitTrampInst := ci
+	ci++
+	swParams, swResults := []byte{0x7f, 0x7f, 0x7f}, []byte{0x7f} // stream.write (wr,ptr,cnt)->i32
+	buf = PutCoreModuleSection(buf, TrampolineModuleForParamsResults(swParams, swResults))
+	cm++
+	buf = PutCoreInstanceSectionInstantiate(buf, cm-1)
+	swTrampInst := ci
+	ci++
+
+	// Phase 3: memory-independent canon glue → direct core funcs.
+	trCoreF := cf
+	buf = PutCanonTaskReturnSingle(buf, resultValtype)
+	cf++
+	wsNewCoreF := cf
+	buf = PutCanonWaitableSetNew(buf)
+	cf++
+	wJoinCoreF := cf
+	buf = PutCanonWaitableJoin(buf)
+	cf++
+	subtaskDropCoreF := cf
+	buf = PutCanonSubtaskDrop(buf)
+	cf++
+	wsDropCoreF := cf
+	buf = PutCanonWaitableSetDrop(buf)
+	cf++
+	snewCoreF := cf
+	buf = PutCanonStreamNew(buf, 0) // stream type 0
+	cf++
+	sdwCoreF := cf
+	buf = PutCanonStreamDropWritable(buf, 0) // stream type 0
+	cf++
+
+	// Phase 4: placeholders aliased out of the trampolines.
+	buf = PutAliasSectionCoreExportFunc(buf, depTrampInst, "0")
+	depPlaceholderF := cf
+	cf++
+	buf = PutAliasSectionCoreExportFunc(buf, wsWaitTrampInst, "0")
+	wsWaitPlaceholderF := cf
+	cf++
+	buf = PutAliasSectionCoreExportFunc(buf, swTrampInst, "0")
+	swPlaceholderF := cf
+	cf++
+
+	// Phase 5: consumer core module.
+	buf = PutCoreModuleSection(buf, consumerCore)
+	consumerMod := cm
+	cm++
+
+	// Phase 6: "" glue instance + import-iface instance + consumer instantiation.
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "task-return", Sort: CoreSortFunc, Idx: trCoreF},
+		{Name: "ws-new", Sort: CoreSortFunc, Idx: wsNewCoreF},
+		{Name: "w-join", Sort: CoreSortFunc, Idx: wJoinCoreF},
+		{Name: "ws-wait", Sort: CoreSortFunc, Idx: wsWaitPlaceholderF},
+		{Name: "subtask-drop", Sort: CoreSortFunc, Idx: subtaskDropCoreF},
+		{Name: "ws-drop", Sort: CoreSortFunc, Idx: wsDropCoreF},
+		{Name: "stream-new", Sort: CoreSortFunc, Idx: snewCoreF},
+		{Name: "stream-write", Sort: CoreSortFunc, Idx: swPlaceholderF},
+		{Name: "stream-drop-writable", Sort: CoreSortFunc, Idx: sdwCoreF},
+	})
+	emptyInst := ci
+	ci++
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: importWITName, Sort: CoreSortFunc, Idx: depPlaceholderF},
+	})
+	importInst := ci
+	ci++
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, consumerMod,
+		[]string{"", importIface}, []uint32{emptyInst, importInst})
+	consumerInst := ci
+	ci++
+
+	// Phase 7: alias the consumer memory → core memory 0.
+	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, consumerInst, "memory")
+	mem := uint32(0)
+
+	// Phase 8: the real dep-lower / ws-wait / stream-write over the consumer memory.
+	buf = PutCanonSectionLowerAsync(buf, depCFunc, mem)
+	depRealF := cf
+	cf++
+	buf = PutCanonWaitableSetWait(buf, mem)
+	wsWaitRealF := cf
+	cf++
+	buf = PutCanonStreamWrite(buf, 0, mem) // stream type 0
+	swRealF := cf
+	cf++
+
+	// Phase 9: fixup each trampoline table slot 0 → its real func.
+	fixup := func(trampInst, realF uint32, p, r []byte) {
+		buf = PutCoreModuleSection(buf, FixupModuleForParamsResults(p, r))
+		fixupMod := cm
+		cm++
+		buf = PutAliasSectionCoreExport(buf, CoreSortTable, trampInst, "$imports")
+		tbl := ct
+		ct++
+		buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+			{Name: "$imports", Sort: CoreSortTable, Idx: tbl},
+			{Name: "0", Sort: CoreSortFunc, Idx: realF},
+		})
+		argInst := ci
+		ci++
+		buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, fixupMod, []string{""}, []uint32{argInst})
+		ci++
+	}
+	fixup(depTrampInst, depRealF, lowerParams, lowerResults)
+	fixup(wsWaitTrampInst, wsWaitRealF, wsWaitParams, wsWaitResults)
+	fixup(swTrampInst, swRealF, swParams, swResults)
+
+	// Phase 10: lift the consumer's async export.
+	buf = PutAliasSectionCoreExportFunc(buf, consumerInst, consumerAsyncExport)
+	runCoreF := cf
+	cf++
+	buf = PutTypeSectionOneFunc(buf, nil, nil, resultValtype) // component type 1
+	buf = PutCanonSectionLiftAsync(buf, runCoreF, 1)
+	liftCompF := compf
+	compf++
+	buf = PutExportSectionOneFunc(buf, liftExportName, liftCompF)
+	return buf
+}
