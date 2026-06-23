@@ -347,12 +347,14 @@ func TestScanExternImportsAsyncMemParamStringResult(t *testing.T) {
 	}
 }
 
-// TestScanExternImportsAsyncStreamParamRejectedPending pins the slice boundary
-// for the colorless stream[T] PARAMETER: the type parses + type-checks (the
-// checker rewrites the param to T[] and records StreamParamElems), but until the
-// stream-produce wrapper lands, wasmbin rejects it rather than mislowering the
-// rewritten T[] as a single list block. See docs/STREAM-TYPE-SURFACE.md.
-func TestScanExternImportsAsyncStreamParamRejectedPending(t *testing.T) {
+// TestScanExternImportsAsyncStreamParam covers the colorless stream[T] PARAMETER
+// produce-wrapper (docs/STREAM-TYPE-SURFACE.md): an `@import async function
+// sink(s: stream[u8]): i32` (the checker rewrote the param to u8[] and set
+// StreamParamElems). The raw lower is `(readable_handle, retptr) -> i32 status`
+// (the wrapper creates the stream and passes the readable end), the wrapper takes
+// the single Fern u8[] slot, and it registers the waitable intrinsics PLUS
+// stream.new / stream.write / stream.drop-writable.
+func TestScanExternImportsAsyncStreamParam(t *testing.T) {
 	ext := &ir.ExternFunc{
 		Name:             "sink",
 		Iface:            "test:dep/d",
@@ -364,8 +366,54 @@ func TestScanExternImportsAsyncStreamParamRejectedPending(t *testing.T) {
 	}
 	var in importNeeds
 	var helpers runtimeNeeds
+	specs, wrappers, err := scanExternImports(progCallingExtern("sink", ext), &in, &helpers)
+	if err != nil {
+		t.Fatalf("scanExternImports: %v", err)
+	}
+	raw, ok := specs["sink$import"]
+	if !ok {
+		t.Fatalf("missing raw async import spec %q; specs=%v", "sink$import", specs)
+	}
+	if len(raw.params) != 2 || raw.params[0] != encode.ValtypeI32 || raw.params[1] != encode.ValtypeI32 {
+		t.Errorf("raw import params = %v, want [i32 i32] (readable handle, retptr)", raw.params)
+	}
+	if len(raw.results) != 1 || raw.results[0] != encode.ValtypeI32 {
+		t.Errorf("raw import results = %v, want [i32] (status)", raw.results)
+	}
+	w, ok := wrappers["sink"]
+	if !ok {
+		t.Fatalf("missing wrapper for %q", "sink")
+	}
+	if len(w.params) != 1 || w.params[0] != encode.ValtypeI32 {
+		t.Errorf("wrapper params = %v, want 1 slot (the Fern u8[] arg)", w.params)
+	}
+	for _, n := range []string{"async_ws_new", "async_w_join", "async_ws_wait", "async_subtask_drop", "async_ws_drop", "async_stream_new", "async_stream_write", "async_stream_drop_writable", "sink$import"} {
+		if !in.set[n] {
+			t.Errorf("intrinsic/import %q not registered for the async stream param", n)
+		}
+	}
+}
+
+// TestScanExternImportsAsyncStreamParamMultiRejected keeps the slice boundary: a
+// stream[T] param alongside other params (or a non-scalar result) is still
+// rejected for now.
+func TestScanExternImportsAsyncStreamParamMultiRejected(t *testing.T) {
+	ext := &ir.ExternFunc{
+		Name:    "sink",
+		Iface:   "test:dep/d",
+		WITName: "sink",
+		Params: []ast.Param{
+			{Name: "s", Type: ast.ArrayType{Elem: ast.NumberType{Width: 8}}},
+			{Name: "n", Type: i32Type()},
+		},
+		StreamParamElems: map[int]ast.Type{0: ast.NumberType{Width: 8}},
+		ReturnType:       i32Type(),
+		Async:            true,
+	}
+	var in importNeeds
+	var helpers runtimeNeeds
 	if _, _, err := scanExternImports(progCallingExtern("sink", ext), &in, &helpers); err == nil {
-		t.Fatalf("expected an error for an async stream[T] parameter (produce-wrapper codegen pending)")
+		t.Fatalf("expected an error for an async stream[T] param alongside other params")
 	}
 }
 

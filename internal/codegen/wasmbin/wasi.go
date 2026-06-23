@@ -96,6 +96,28 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: nil,
 	},
+	// WASI Preview-3 stream-PARAM (produce) intrinsics — the colorless `stream[T]`
+	// produce wrapper write-streams an eager array out (docs/STREAM-TYPE-SURFACE.md).
+	// Provided by the composer's canon stream.new / stream.write (trampolined over
+	// the consumer memory) / stream.drop-writable.
+	"async_stream_new": { // stream.new: () -> i64 (packed readable<<? / writable handle pair)
+		module:  "",
+		name:    "stream-new",
+		params:  nil,
+		results: []byte{encode.ValtypeI64},
+	},
+	"async_stream_write": { // stream.write: (writable, ptr, count) -> i32 status
+		module:  "",
+		name:    "stream-write",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
+	"async_stream_drop_writable": { // stream.drop-writable: (writable) -> ()
+		module:  "",
+		name:    "stream-drop-writable",
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_fd_write": {
 		// (fd, iovs_ptr, iovs_count, nwritten_ptr) → errno
 		module:  "wasi_snapshot_preview1",
@@ -940,15 +962,6 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 		// its slice lands. The enclosing caller must be `async`-lifted (it owns the
 		// task that awaits) — the `async function` keyword provides that.
 		if ex.Async {
-			// A `stream[T]` PARAMETER (the checker rewrote it to `T[]` and recorded
-			// StreamParamElems) must be produced as a stream — the wrapper creates a
-			// stream and write-streams the eager array's elements over the wire. That
-			// producer-wrapper is a later slice; until it lands, reject rather than
-			// silently mislower the rewritten `T[]` as a single list block (the wrong
-			// ABI for a stream param). See docs/STREAM-TYPE-SURFACE.md.
-			if len(ex.StreamParamElems) > 0 {
-				return nil, nil, fmt.Errorf("@import %q (%s/%s): async stream[T] parameter codegen is not implemented yet (the type parses + type-checks, accepting a T[]; the stream-produce wrapper is the next slice — docs/STREAM-TYPE-SURFACE.md)", ex.Name, ex.Iface, ex.WITName)
-			}
 			// Every async-import wrapper runs the pending-await loop after the
 			// lowered call, so it imports the waitable-set / subtask intrinsics
 			// (provided by the composer's canon waitable-set.* / subtask.drop).
@@ -958,6 +971,36 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 			in.add("async_ws_wait")
 			in.add("async_subtask_drop")
 			in.add("async_ws_drop")
+			// A `stream[T]` PARAMETER (the checker rewrote it to `T[]` and recorded
+			// StreamParamElems) is produced as a stream: the wrapper creates a stream,
+			// passes the readable end to the lower, write-streams the eager array's
+			// elements over the wire, drops-writable, then awaits the host's subtask
+			// (docs/STREAM-TYPE-SURFACE.md). This slice supports exactly one stream
+			// param + a scalar result; other shapes are rejected.
+			if len(ex.StreamParamElems) > 0 {
+				if !(len(ex.Params) == 1 && ex.StreamParamElems[0] != nil && externScalarType(ret)) {
+					return nil, nil, fmt.Errorf("@import %q (%s/%s): an async stream[T] parameter is supported only as the sole parameter with a scalar result so far (docs/STREAM-TYPE-SURFACE.md)", ex.Name, ex.Iface, ex.WITName)
+				}
+				results, err := resultValtypes(ret)
+				if err != nil {
+					return nil, nil, fmt.Errorf("@import %q (%s/%s): %w", ex.Name, ex.Iface, ex.WITName, err)
+				}
+				in.add("async_stream_new")
+				in.add("async_stream_write")
+				in.add("async_stream_drop_writable")
+				rawName := ex.Name + "$import"
+				// raw lower: (stream readable handle, retptr) -> i32 status.
+				specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: []byte{encode.ValtypeI32, encode.ValtypeI32}, results: []byte{encode.ValtypeI32}}
+				in.add(rawName)
+				wrappers[ex.Name] = runtimeHelperSpec{
+					params:  params, // the Fern T[] arg (element pointer)
+					results: results,
+					body:    buildExternAsyncStreamParamWrapper(rawName, results[0], scalarArrayElemStride(ex.Params[0].Type)),
+				}
+				helpers.add(ex.Name)
+				helpers.add("__fern_alloc")
+				continue
+			}
 			// A `stream[T]` result (the checker rewrote ReturnType to `T[]` and set
 			// StreamResultElem) is delivered incrementally: the raw `canon lower
 			// async` returns the stream readable handle, and the collect-wrapper

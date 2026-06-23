@@ -18,8 +18,10 @@ package wasmbin
 import (
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/ir"
+	"github.com/jakechampion/lang/internal/wasm/convert"
 	"github.com/jakechampion/lang/internal/wasm/encode"
 	"github.com/jakechampion/lang/internal/wasm/inst"
+	"github.com/jakechampion/lang/internal/wasm/leb128"
 	"github.com/jakechampion/lang/internal/wasm/memory"
 	"github.com/jakechampion/lang/internal/wasm/numeric"
 )
@@ -550,6 +552,188 @@ func buildExternAsyncStreamResultWrapper(nparams int, rawImport string, stride u
 		locals := inst.PutLocalsOneGroup(nil, 13, encode.ValtypeI32) // rb,status,task,wsAwait,rd,ws,evt,arr,cap,total,rs,avail,nd
 		return inst.PutFunctionBody(nil, locals, body)
 	}
+}
+
+// buildExternAsyncStreamParamWrapper handles an `@import async function
+// sink(s: stream[T]): <scalar>` (the checker rewrote the param to `T[]` and set
+// StreamParamElems). The single Fern argument is an eager `T[]`; the wrapper
+// creates a stream, passes the readable end as the canonical param to the lowered
+// call, write-streams the array's elements out over the wire (write-await), drops
+// the writable end (EOF), then awaits the host's subtask and reads the scalar
+// result (docs/STREAM-TYPE-SURFACE.md — the produce mirror of the collect-wrapper):
+//
+//	(rd, wr) = stream.new()                       // readable=lo32, writable=hi32
+//	status = sink_lower(rd, retptr)               // host gets the read end
+//	join(wr, ws); loop { rs = stream.write(wr, ptr + wrote*stride, count - wrote);
+//	    if rs == 0xffffffff { wait(ws, evt); rs = load(evt+4) }
+//	    wrote += rs>>4; if wrote>=count || (rs & 0xf) != 0 break }
+//	unjoin(wr); stream.drop-writable(wr); ws.drop
+//	await(status) via emitAsyncAwaitLoop; read scalar @ retptr
+//
+// Wrapper type is `(elemPtr) -> resultVT`. Scalar-only result; single stream param.
+func buildExternAsyncStreamParamWrapper(rawImport string, resultVT byte, stride uint32) func(map[string]uint32) []byte {
+	return func(idxs map[string]uint32) []byte {
+		alloc := idxs["__fern_alloc"]
+		imp := idxs[rawImport]
+		snew := idxs["async_stream_new"]
+		swrite := idxs["async_stream_write"]
+		sdropw := idxs["async_stream_drop_writable"]
+		wsn := idxs["async_ws_new"]
+		wj := idxs["async_w_join"]
+		wsw := idxs["async_ws_wait"]
+		wsd := idxs["async_ws_drop"]
+
+		const ptr = 0          // the array's element pointer (the single Fern arg slot)
+		h := uint32(1)         // stream.new packed handle
+		rd := uint32(2)        // readable end
+		wr := uint32(3)        // writable end
+		rb := uint32(4)        // lower return area (result@+0, lower-await event@+8)
+		statusL := uint32(5)   // captured lower status
+		ws := uint32(6)        // write-loop waitable-set
+		evt := uint32(7)       // write-completion event buffer
+		count := uint32(8)     // element count (load(ptr-4))
+		wrote := uint32(9)     // elements written so far
+		rs := uint32(10)       // write status / completed result
+		taskL := uint32(11)    // emitAsyncAwaitLoop scratch (subtask)
+		wsAwaitL := uint32(12) // emitAsyncAwaitLoop scratch (its set)
+
+		pushBytes := func(b []byte, n uint32) []byte { // n elems → n*stride bytes
+			b = inst.InstLocalGet(b, n)
+			if stride != 1 {
+				b = inst.InstI32Const(b, int32(stride))
+				b = numeric.InstI32Mul(b)
+			}
+			return b
+		}
+
+		var body []byte
+		// h = stream.new(); rd = lo(h); wr = hi(h).
+		body = inst.InstCall(body, snew)
+		body = inst.InstLocalSet(body, h)
+		body = inst.InstLocalGet(body, h)
+		body = convert.InstI32WrapI64(body)
+		body = inst.InstLocalSet(body, rd)
+		body = inst.InstLocalGet(body, h)
+		body = inst.InstI64Const(body, 32)
+		body = numeric.InstI64ShrU(body)
+		body = convert.InstI32WrapI64(body)
+		body = inst.InstLocalSet(body, wr)
+		// rb = (alloc(16)+7) & ~7; evt = alloc(16).
+		body = inst.InstI32Const(body, 16)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstI32Const(body, 7)
+		body = numeric.InstI32Add(body)
+		body = inst.InstI32Const(body, -8)
+		body = numeric.InstI32And(body)
+		body = inst.InstLocalSet(body, rb)
+		body = inst.InstI32Const(body, 16)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, evt)
+		// status = sink_lower(rd, rb) — pass the readable handle as the canonical param.
+		body = inst.InstLocalGet(body, rd)
+		body = inst.InstLocalGet(body, rb)
+		body = inst.InstCall(body, imp)
+		body = inst.InstLocalSet(body, statusL)
+		// count = load(ptr-4); wrote = 0; ws = ws.new(); join(wr, ws).
+		body = inst.InstLocalGet(body, ptr)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Sub(body)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, count)
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalSet(body, wrote)
+		body = inst.InstCall(body, wsn)
+		body = inst.InstLocalSet(body, ws)
+		body = inst.InstLocalGet(body, wr)
+		body = inst.InstLocalGet(body, ws)
+		body = inst.InstCall(body, wj)
+		// write-stream loop.
+		body = inst.InstBlockStart(body, inst.BlocktypeEmpty) // $wdone
+		body = inst.InstLoopStart(body, inst.BlocktypeEmpty)  // $wmore
+		// rs = stream.write(wr, ptr + wrote*stride, count - wrote).
+		body = inst.InstLocalGet(body, wr)
+		body = inst.InstLocalGet(body, ptr)
+		body = pushBytes(body, wrote)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, count)
+		body = inst.InstLocalGet(body, wrote)
+		body = numeric.InstI32Sub(body)
+		body = inst.InstCall(body, swrite)
+		body = inst.InstLocalSet(body, rs)
+		// if rs == BLOCKED(-1): wait(ws, evt); rs = load(evt+4).
+		body = inst.InstLocalGet(body, rs)
+		body = inst.InstI32Const(body, -1)
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, ws)
+		body = inst.InstLocalGet(body, evt)
+		body = inst.InstCall(body, wsw)
+		body = inst.InstDrop(body)
+		body = inst.InstLocalGet(body, evt)
+		body = memory.InstI32Load(body, 2, 4)
+		body = inst.InstLocalSet(body, rs)
+		body = inst.InstEnd(body)
+		// wrote += rs>>4.
+		body = inst.InstLocalGet(body, wrote)
+		body = inst.InstLocalGet(body, rs)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32ShrU(body)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, wrote)
+		// if wrote >= count: break.
+		body = inst.InstLocalGet(body, wrote)
+		body = inst.InstLocalGet(body, count)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstBrIf(body, 1)
+		// if (rs & 0xf) != 0: break (CLOSED — reader went away).
+		body = inst.InstLocalGet(body, rs)
+		body = inst.InstI32Const(body, 0xf)
+		body = numeric.InstI32And(body)
+		body = inst.InstI32Const(body, 0)
+		body = numeric.InstI32Ne(body)
+		body = inst.InstBrIf(body, 1)
+		body = inst.InstBr(body, 0) // continue
+		body = inst.InstEnd(body)   // loop
+		body = inst.InstEnd(body)   // block $wdone
+		// unjoin(wr); drop-writable(wr) [EOF]; ws.drop.
+		body = inst.InstLocalGet(body, wr)
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstCall(body, wj)
+		body = inst.InstLocalGet(body, wr)
+		body = inst.InstCall(body, sdropw)
+		body = inst.InstLocalGet(body, ws)
+		body = inst.InstCall(body, wsd)
+		// Await the host subtask (the lower) and read the scalar result.
+		body = inst.InstLocalGet(body, statusL)
+		body = emitAsyncAwaitLoop(body, idxs, rb, statusL, taskL, wsAwaitL)
+		body = inst.InstLocalGet(body, rb)
+		switch resultVT {
+		case encode.ValtypeI64:
+			body = memory.InstI64Load(body, 3, 0)
+		case encode.ValtypeF32:
+			body = memory.InstF32Load(body, 2, 0)
+		case encode.ValtypeF64:
+			body = memory.InstF64Load(body, 3, 0)
+		default:
+			body = memory.InstI32Load(body, 2, 0)
+		}
+
+		return inst.PutFunctionBody(nil, streamParamLocals(), body)
+	}
+}
+
+// streamParamLocals emits the produce-wrapper's locals as ONE 2-group vector:
+// group 0 = a single i64 ($h, the packed stream.new handle, local index 1 after
+// the param), group 1 = 11 i32 (rd,wr,rb,status,ws,evt,count,wrote,rs,task,
+// wsAwait, indices 2..12). PutLocalsOneGroup can't be chained (it writes a whole
+// 1-group vector each time), so this builds the vector directly.
+func streamParamLocals() []byte {
+	out := leb128.UlebU32(nil, 2)        // 2 groups
+	out = leb128.UlebU32(out, 1)         // group 0: count 1
+	out = append(out, encode.ValtypeI64) // i64 ($h)
+	out = leb128.UlebU32(out, 11)        // group 1: count 11
+	out = append(out, encode.ValtypeI32) // i32 scratch
+	return out
 }
 
 // buildExternBoolListResultWrapper lifts a canonical `list<bool>` result into a
