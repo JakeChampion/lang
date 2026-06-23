@@ -251,6 +251,26 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — std/time civil-calendar arithmetic: pure-Fern std/test coverage (self-host-gated)
+
+New `examples/tests/time_calendar_test.fern` covers std/time's civil-calendar
+arithmetic — a domain `timing_test` (benchmark elapsed-time) does not touch at
+all: `is_leap_year` / `days_in_month` (the Gregorian rules), `date_make` +
+`(Date).is_valid` (construction + validation), `(Date).add_days` (serial-day add
+→ `Date`, exercising the leap, month, and year boundaries plus a backward walk),
+`(Date).days_since` (exact day difference, struct-typed arg), `(Date).day_of_year`
+(1..366), and `(Date).weekday` (0..6, Sunday=0). 13 tests covering the real
+edge cases — Feb 29 in leap vs non-leap years, Dec 31 → Jan 1 rollover, the
+1970-01-01-is-Thursday weekday anchor.
+
+This is the first migration suite to exercise **`Date` struct construction +
+struct-returning methods + a struct-typed method argument** (`days_since(other:
+Date)`) through the self-host IR path, on the real Hinnant serial-day algorithms
+(`__days_from_civil` / `__civil_from_days`) — a meaningfully different self-host
+shape from the string/array/numeric suites. On the **differential** gate (both
+x86 + arm64). Gated by `TestRunnerTimeCalendarExamplePasses` (interp) +
+`time_calendar` in `TestSelfHostStdTestE2E` / `…Arm64`.
+
 ### 2026-06-23 — std/string replace + split surface: pure-Fern std/test coverage (self-host-gated)
 
 New `examples/tests/string_replace_split_test.fern` covers the std/string
