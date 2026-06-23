@@ -417,6 +417,43 @@ func BuildAsyncLiftedExportComponentStringParam(providerCore []byte, memExportNa
 	return buf
 }
 
+// BuildAsyncLiftedExportComponentListParam is the numeric-`list<elem>` parameter
+// counterpart of BuildAsyncLiftedExportComponentStringParam: it lifts a core
+// `recv` that takes a `list<elem>` argument and returns a scalar into
+// `exportName: async func(xs: list<elem>) -> resultValtype`. At the canonical
+// ABI a `list<elem>` parameter flattens to `(ptr, len)` exactly like a string,
+// so the core sig is the plain `(ptr, len) -> ()` (result via scalar
+// task.return) and the lift carries the same `[async, memory, realloc]` options
+// — the incoming elements are materialised in the export's memory via its bump
+// cabi_realloc before the core runs. The only difference from the string-param
+// builder is the parameter's component type: a *defined* `list<elem>` type
+// (component type 0, referenced by index in the lift functype) instead of the
+// inline `string` primitive. The core must export its memory (memExportName) and
+// a real bump cabi_realloc (reallocExportName).
+func BuildAsyncLiftedExportComponentListParam(providerCore []byte, memExportName, reallocExportName, coreExportName, exportName string, elemValtype, resultValtype byte) []byte {
+	buf := PutComponentHeader(nil)
+
+	// Component type 0: the `list<elem>` defined type (the lift functype's param).
+	buf = PutTypeSectionOneDefined(buf, InnerTypeList(elemValtype)) // component type 0
+
+	// Scalar task.return → core func 0; provider instantiated against it.
+	buf = PutCanonTaskReturnSingle(buf, resultValtype)                                         // core func 0
+	buf = PutCoreModuleSection(buf, providerCore)                                              // core module 0
+	buf = PutCoreInstanceSectionFromOneFuncExport(buf, "task-return", 0)                       // core instance 0
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 0, []string{""}, []uint32{0}) // core instance 1 (provider)
+
+	// Alias the provider's memory + cabi_realloc (the lift's options), then its
+	// recv export, and lift it async with [memory, realloc] as `(list<elem>) -> result`.
+	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 1, memExportName)   // core memory 0
+	buf = PutAliasSectionCoreExport(buf, CoreSortFunc, 1, reallocExportName) // core func 1 (cabi_realloc)
+	buf = PutAliasSectionCoreExportFunc(buf, 1, coreExportName)              // core func 2 (recv)
+	// component type 1: func(xs: type 0) -> resultValtype.
+	buf = PutTypeSectionOneFuncGeneral(buf, []string{"xs"}, [][]byte{leb128SlebBytes(0)}, []byte{resultValtype})
+	buf = PutCanonSectionLiftAsyncWithMemoryRealloc(buf, 2, 1, 0, 1) // component func 0 (functype 1)
+	buf = PutExportSectionOneFunc(buf, exportName, 0)
+	return buf
+}
+
 // buildPendingProviderComponent is the spike's fixed-name pending provider
 // (`dep: async func() -> u32`), kept as a thin wrapper over the general
 // BuildPendingDeferringProviderComponent.
