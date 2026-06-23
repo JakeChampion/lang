@@ -1,6 +1,35 @@
-# Iterator-bounded generics on the self-host IR path — fix plan
+# Iterator-bounded generics on the self-host IR path — LANDED
 
-Status: **deeply investigated; 5 monomorphiser layers fixed + validated; one
+Status: **DONE.** `core/iter.sum` / `count` / `to_array` / `product` over
+`iter.of(xs)` now route the self-host **IR path** (`decide = ir`) and match the
+interpreter. Gated by `TestSelfHostIterBoundedReducersIR`; see the 2026-06-23
+FEATURE-AUDIT entry for the shipped summary. The historical analysis below is
+retained for context.
+
+## What actually shipped (the final blocker, resolved)
+
+The deep dive below correctly isolated the `[T]`→`[i32]` cascade but mis-attributed
+the final `ArrayIter__i32.next: BAIL`. Empirical instrumentation (dumping the bail
+point in `lower_func` + the failing struct-literal in `lower_expr`) pinned **two**
+residual issues the plan had not: (1) the cloned `next`'s return type carried a
+**bare, un-module-prefixed** `ArrayIter[i32]` (finalize bakes the source name;
+`mg_ty` matches the prefixed `iter__ArrayIter`), and the **body** struct literal
+stayed at the generic `iter__ArrayIter` (no key inference for `self.xs`); and
+(2) once `sum` cloned, its GAS label `iter__sum__iter__ArrayIter[i32]` had raw
+brackets that the assembler rejects (so the program never even ran — the "1" was
+gcc's exit code). The shipped fix is the four `parser.fern` changes in the
+FEATURE-AUDIT entry: targeted promotion (`feeds_user_parametric` +
+`token_at_paren_depth0`), clone-time `Self` resolution
+(`replace_struct_ident` + `retarget_self_lit_stmts`), tuple-aware
+`subst_ty`/`mg_ty`, and `sanitize_key` on bounded-generic clone names. The
+promotion is **targeted** (not promote-all) precisely to avoid the 512-budget
+regression the plan flagged — and it had to be narrowed twice (exclude
+return-only / function-param `T`, then exclude built-in `Option`/`Result`/`Map`
+bases) to keep `find` / `reduce` / `nth` / the array-method surface erased.
+
+---
+
+(Historical) Status: **deeply investigated; 5 monomorphiser layers fixed + validated; one
 final lowering blocker remains (`ArrayIter__i32.next` body).** Not yet landed —
 a multi-layer change that resisted rapid iteration. This note captures every
 validated layer and the precise remaining blocker so a focused effort can finish

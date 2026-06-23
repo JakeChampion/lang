@@ -251,6 +251,44 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — Iterator-bounded generic reducers (core/iter) now lower on the IR path
+
+`core/iter.sum` / `count` / `to_array` / `product` — bounded-generic reducers
+(`sum[I: Iterator[i32]]`, `count[T, I: Iterator[T]]`) driven over
+`iter.of(xs)`, where `of[T](xs: T[]): ArrayIter[T]` and
+`impl[T] Iterator[T] for ArrayIter[T]` — used to route the **legacy AST
+fallback** (`decide = ast`). Root cause: the self-host parser type-**erased**
+the unbounded `T`, leaving `of` with a return type that still literally spelled
+`ArrayIter[T]`; that dangling `T` cascaded into a bogus `ArrayIter[T]` clone
+whose `next` body never lowered. Closed end-to-end (`decide = ir`, oracle-matched
+to the interpreter) by four coordinated `parser.fern` changes:
+
+- **Targeted promotion of unbounded type params** — an unbounded `T` is promoted
+  to the monomorphiser only when it *feeds a user parametric type* (appears as a
+  type-arg of a non-builtin generic, e.g. `ArrayIter[T]`, via
+  `feeds_user_parametric`) **and** is *bindable from a param* (appears at
+  paren-depth 0 in a param type, the positions `bind_unify` unifies, via
+  `token_at_paren_depth0`). `of` qualifies; `find` / `reduce` / `count` /
+  `to_array` (whose `T` surfaces only in `Option[T]`, a function-type param, or
+  the trait bound) stay erased — so the 512-function IR budget and the existing
+  generic surface are untouched.
+- **Clone-time `Self`-instantiation resolution** in `clone_struct_method` —
+  normalise the finalize-baked bare struct name to the module-prefixed registered
+  name (`replace_struct_ident`) so `mg_ty` mangles a nested `Self` instantiation
+  in the return/param types, and **retarget** the cloned body's bare-base struct
+  literals to the concrete clone name (`retarget_self_lit_stmts`), since
+  `ms_expr` cannot infer the key for `self.xs`.
+- **Tuple-aware `subst_ty` / `mg_ty`** — recurse into `( … )` so a struct nested
+  in a tuple (`Option[(i32, ArrayIter[i32])]`) is substituted + mangled.
+- **Symbol-safe bounded-generic clone names** — `clone_bg` / the call sites
+  `sanitize_key` the instantiation key in the emitted NAME (a bracketed key like
+  `iter__ArrayIter[i32]` is a GAS-illegal label) while keeping the raw key for
+  body type-substitution.
+
+Gated by `TestSelfHostIterBoundedReducersIR` (sum / sum-empty / product / count /
+to_array-len / to_array-elem / range-sum). `std/num.sum_iter` / `product_iter`
+(`[T: Add]` / `[T: Mul]` element bounds) still route AST but run correctly.
+
 ### 2026-06-23 — std/regex array-payload enums (#3720) now lower on the IR path
 
 The 2026-06-22 frontier remap listed **array-payload enums (#3720)** —

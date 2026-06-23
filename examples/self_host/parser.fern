@@ -3314,6 +3314,16 @@ function parse_func_decl(p: Par): FuncResult {
     // (empty for non-generic / unbounded-generic functions). Drives
     // monomorphisation — see FuncDecl.type_params.
     var bounded_tps: string[] = [];
+    // Unbounded type params, collected during the header parse and TARGETED-
+    // promoted after the signature is known: an unbounded `T` is promoted to
+    // the monomorphiser (so its instantiations clone) ONLY when it feeds a
+    // parametric type — appearing as a type-ARGUMENT inside brackets
+    // (`ArrayIter[T]`, `Option[T]`) in a param or return type. A purely-opaque
+    // `T` / `T[]` (uniform 8-byte ABI) or one that surfaces only in a trait
+    // bound (`count[T, I: Iterator[T]]`, where the param is `it: I`) stays
+    // erased — promoting it would add an unbindable key component and inflate
+    // the 512-function IR budget on the bootstrap self-compiles.
+    var unbounded_tps: string[] = [];
     // Total number of type parameters (bounded + unbounded). Bounded names
     // are kept for the monomorphiser; unbounded ones are erased, but the
     // count is recorded so the checker can flag a generic-call type-argument
@@ -3391,6 +3401,7 @@ function parse_func_decl(p: Par): FuncResult {
                 }
             }
             if (has_bound) { bounded_tps = bounded_tps.append(tpname); }
+            else { unbounded_tps = unbounded_tps.append(tpname); }
             if (p.peek_punct() == ",") { p = p.advance(); }
         }
         if (p.peek_punct() == "]") { p = p.advance(); }
@@ -3416,6 +3427,33 @@ function parse_func_decl(p: Par): FuncResult {
         var fr_tr: TypeNameResult = parse_type_name(p);
         p = fr_tr.par;
         ret_type = fr_tr.name;
+    }
+    // Targeted promotion: promote an unbounded type param only when BOTH
+    //   (a) it feeds a parametric type — appears as a bracketed type-argument
+    //       (`ArrayIter[T]`) in a param or the return type, so a struct/enum
+    //       clone needs its concrete value; AND
+    //   (b) it is bindable from a param — appears as a standalone token at
+    //       paren-depth 0 in some param type (`xs: T[]`, `b: Box[T]`), the
+    //       positions `bind_unify` actually unifies. A `T` reachable only via
+    //       the RETURN (`find[T, I](…): Option[T]`) or inside a function-type /
+    //       tuple param (`(T) => boolean`) is NOT bindable from the call args,
+    //       so promoting it would mint an incomplete instantiation key and the
+    //       call site would fail to resolve. `of[T](xs: T[]): ArrayIter[T]`
+    //       satisfies both; `find` / `nth` / `count` satisfy neither and stay
+    //       erased (as before).
+    var ui: i32 = 0;
+    while (ui < unbounded_tps.len()) {
+        var un: string = unbounded_tps[ui];
+        var feeds: boolean = feeds_user_parametric(ret_type, un);
+        var bindable: boolean = false;
+        var pj: i32 = 0;
+        while (pj < params.len()) {
+            if (feeds_user_parametric(params[pj].type_name, un)) { feeds = true; }
+            if (token_at_paren_depth0(params[pj].type_name, un)) { bindable = true; }
+            pj = pj + 1;
+        }
+        if (feeds && bindable) { bounded_tps = bounded_tps.append(un); }
+        ui = ui + 1;
     }
     // A body-less function (`function f(): T;`) is an extern import
     // declaration — the caller's `@import` attribute supplies its WIT binding.
@@ -4187,6 +4225,23 @@ function func_ret_of(funcs: FuncDecl[], name: string): string {
     return "";
 }
 
+function call_ret_type(funcs: FuncDecl[], name: string, args: Expr[], env: MEnv): string {
+    var fi: i32 = 0 - 1;
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && funcs[i].receiver_type.len() == 0) { fi = i; }
+        i = i + 1;
+    }
+    if (fi < 0) { return ""; }
+    var fd: FuncDecl = funcs[fi];
+    if (fd.type_params.len() == 0) { return fd.ret_type; }
+    var key: string = infer_inst(fd, args, env, funcs);
+    if (key.len() == 0) { return ""; }
+    var cts: string[] = [key];
+    if (fd.type_params.len() != 1) { cts = split_dunder(key); }
+    return subst_ty(fd.ret_type, fd.type_params, cts);
+}
+
 // assoc_ret_of returns the return type of the associated function (or method)
 // `<tyname>.<method>` — a receiver-LESS impl method keyed by its receiver type,
 // like a derived `default()`. Lets mono_infer type an associated call
@@ -4235,14 +4290,22 @@ function mono_infer(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
         ExprStructLit(sl) => { return sl.type_name; },
         ExprCall(c) => {
             match (c.callee) {
-                ExprIdent(cid) => { return func_ret_of(funcs, cid.name); },
+                ExprIdent(cid) => {
+                    var crt: string = call_ret_type(funcs, cid.name, c.args, env);
+                    if (crt.len() > 0) { return crt; }
+                    return func_ret_of(funcs, cid.name);
+                },
                 ExprFieldAccess(cfa) => {
                     // Associated call `Type.method()` (e.g. `Inner.default()`):
                     // the object is a bare type name, so infer the method's
                     // return type — lets a generic constructor body infer its
                     // instantiation key from a defaulted field value.
                     match (cfa.obj) {
-                        ExprIdent(oid) => { return assoc_ret_of(funcs, oid.name, cfa.field); },
+                        ExprIdent(oid) => {
+                            var qrt: string = call_ret_type(funcs, oid.name + "." + cfa.field, c.args, env);
+                            if (qrt.len() > 0) { return qrt; }
+                            return assoc_ret_of(funcs, oid.name, cfa.field);
+                        },
                         _ => { return ""; }
                     }
                     return "";
@@ -4285,7 +4348,14 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                     if (bi >= 0) {
                         var ct: string = infer_inst(funcs[bi], c.args, env, funcs);
                         if (ct.len() > 0) {
-                            var mang: string = cid.name + "__" + ct;
+                            // The clone NAME must be symbol-safe: a key that is a
+                            // generic-struct instantiation (`iter__ArrayIter[i32]`,
+                            // from an Iterator-bounded reducer over `iter.of(xs)`)
+                            // carries brackets that GAS rejects in a label. Sanitise
+                            // the name (`[`/`,` -> `__`); keep the RAW key in the
+                            // worklist so clone_bg's body type-substitution and the
+                            // struct pass's mg_ty still see `iter__ArrayIter[i32]`.
+                            var mang: string = cid.name + "__" + sanitize_key(ct);
                             cur = cur.iadd(cid.name, ct);
                             return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mang, line: cid.line, col: cid.col }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc }, rins: cur };
                         }
@@ -4305,7 +4375,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                                 var ct2: string = infer_inst(funcs[bi2], c.args, env, funcs);
                                 if (ct2.len() > 0) {
                                     cur = cur.iadd(qn, ct2);
-                                    return RExpr { rexpr: ExprCall { callee: ExprFieldAccess { obj: fac.obj, field: fac.field + "__" + ct2, line: fac.line, col: fac.col }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc }, rins: cur };
+                                    return RExpr { rexpr: ExprCall { callee: ExprFieldAccess { obj: fac.obj, field: fac.field + "__" + sanitize_key(ct2), line: fac.line, col: fac.col }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc }, rins: cur };
                                 }
                             }
                         },
@@ -4473,6 +4543,17 @@ function subst_ty(name: string, tparams: string[], cts: string[]): string {
     if (type_ends_arr(name)) {
         return subst_ty(name[0 : name.len() - 2], tparams, cts) + "[]";
     }
+    if (name.len() >= 2 && name[0 : 1] == "(" && name[name.len() - 1 : name.len()] == ")") {
+        var tparts: string[] = split_top_commas(name[1 : name.len() - 1]);
+        var tnin: string = "";
+        var tj: i32 = 0;
+        while (tj < tparts.len()) {
+            if (tj > 0) { tnin = tnin + ", "; }
+            tnin = tnin + subst_ty(tparts[tj], tparams, cts);
+            tj = tj + 1;
+        }
+        return "(" + tnin + ")";
+    }
     var lb: i32 = first_bracket(name);
     if (lb > 0 && name[name.len() - 1 : name.len()] == "]") {
         var inner: string = name[lb + 1 : name.len() - 1];
@@ -4596,6 +4677,86 @@ function subst_stmts(stmts: Stmt[], tparams: string[], cts: string[]): Stmt[] {
     return out;
 }
 
+// retarget_self_lit_expr rewrites every bare-base struct literal `base { .. }`
+// in a cloned struct-method body to the concrete clone name `mang`. A struct's
+// own method that constructs its struct WITHOUT explicit type arguments (the
+// `next` of an `impl[T] Iterator[T] for ArrayIter[T]`: `return Some((v,
+// ArrayIter { xs: self.xs, idx: .. }))`) is building the SAME instantiation as
+// the receiver — `Self` in value position. ms_expr can't infer that key
+// (mono_infer has no field-access / struct typing for `self.xs`), so resolve it
+// structurally here, mirroring the `Self`-in-types resolution that
+// to_concrete_struct_ty does for the return / param types. Nested values are
+// walked so a struct literal inside a tuple / call / array is retargeted too.
+function retarget_self_lit_expr(e: Expr, base: string, mang: string): Expr {
+    match (e) {
+        ExprStructLit(sl) => {
+            var nv: Expr[] = [];
+            var si: i32 = 0;
+            while (si < sl.field_values.len()) { nv = nv.append(retarget_self_lit_expr(sl.field_values[si], base, mang)); si = si + 1; }
+            var nb: Expr = sl.base;
+            if (sl.has_base) { nb = retarget_self_lit_expr(sl.base, base, mang); }
+            var tn: string = sl.type_name;
+            if (tn == base) { tn = mang; }
+            return ExprStructLit { type_name: tn, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nb, line: sl.line, col: sl.col };
+        },
+        ExprCall(c) => {
+            var na: Expr[] = [];
+            var ci: i32 = 0;
+            while (ci < c.args.len()) { na = na.append(retarget_self_lit_expr(c.args[ci], base, mang)); ci = ci + 1; }
+            return ExprCall { callee: retarget_self_lit_expr(c.callee, base, mang), args: na, line: c.line, col: c.col, type_argc: c.type_argc };
+        },
+        ExprTuple(t) => {
+            var ne: Expr[] = [];
+            var ti: i32 = 0;
+            while (ti < t.elements.len()) { ne = ne.append(retarget_self_lit_expr(t.elements[ti], base, mang)); ti = ti + 1; }
+            return ExprTuple { elements: ne };
+        },
+        ExprArray(a) => {
+            var ne2: Expr[] = [];
+            var ai: i32 = 0;
+            while (ai < a.elements.len()) { ne2 = ne2.append(retarget_self_lit_expr(a.elements[ai], base, mang)); ai = ai + 1; }
+            return ExprArray { elements: ne2 };
+        },
+        ExprBinary(b) => { return ExprBinary { op: b.op, left: retarget_self_lit_expr(b.left, base, mang), right: retarget_self_lit_expr(b.right, base, mang), line: b.line, col: b.col }; },
+        ExprUnary(u) => { return ExprUnary { op: u.op, operand: retarget_self_lit_expr(u.operand, base, mang), line: u.line, col: u.col }; },
+        ExprIndex(ix) => { return ExprIndex { array: retarget_self_lit_expr(ix.array, base, mang), index: retarget_self_lit_expr(ix.index, base, mang) }; },
+        ExprSlice(sl2) => { return ExprSlice { array: retarget_self_lit_expr(sl2.array, base, mang), start: retarget_self_lit_expr(sl2.start, base, mang), end: retarget_self_lit_expr(sl2.end, base, mang) }; },
+        ExprFieldAccess(fa) => { return ExprFieldAccess { obj: retarget_self_lit_expr(fa.obj, base, mang), field: fa.field, line: fa.line, col: fa.col }; },
+        _ => { return e; }
+    }
+    return e;
+}
+// retarget_self_lit_stmts walks a cloned struct-method body, applying
+// retarget_self_lit_expr to every contained expression.
+function retarget_self_lit_stmts(stmts: Stmt[], base: string, mang: string): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var st: Stmt = stmts[i];
+        match (st) {
+            StmtVar(v) => { out = out.append(StmtVar { name: v.name, type_name: v.type_name, init: retarget_self_lit_expr(v.init, base, mang), line: v.line, col: v.col }); },
+            StmtReturn(r) => { out = out.append(StmtReturn { value: retarget_self_lit_expr(r.value, base, mang), line: r.line, col: r.col }); },
+            StmtExpr(x) => { out = out.append(StmtExpr { value: retarget_self_lit_expr(x.value, base, mang) }); },
+            StmtAssign(a) => { out = out.append(StmtAssign { target: a.target, value: retarget_self_lit_expr(a.value, base, mang), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }); },
+            StmtIf(f) => { out = out.append(StmtIf { cond: retarget_self_lit_expr(f.cond, base, mang), then_body: retarget_self_lit_stmts(f.then_body, base, mang), else_body: retarget_self_lit_stmts(f.else_body, base, mang) }); },
+            StmtWhile(w) => { out = out.append(StmtWhile { cond: retarget_self_lit_expr(w.cond, base, mang), body: retarget_self_lit_stmts(w.body, base, mang), label: w.label }); },
+            StmtFor(fr) => { out = out.append(StmtFor { var_name: fr.var_name, iter: retarget_self_lit_expr(fr.iter, base, mang), body: retarget_self_lit_stmts(fr.body, base, mang), label: fr.label }); },
+            StmtMatch(m) => {
+                var arms: MatchArm[] = [];
+                var j: i32 = 0;
+                while (j < m.arms.len()) {
+                    arms = arms.append(MatchArm { pattern: m.arms[j].pattern, body: retarget_self_lit_stmts(m.arms[j].body, base, mang), line: m.arms[j].line, col: m.arms[j].col, guard: retarget_self_lit_expr(m.arms[j].guard, base, mang), has_guard: m.arms[j].has_guard });
+                    j = j + 1;
+                }
+                out = out.append(StmtMatch { scrutinee: retarget_self_lit_expr(m.scrutinee, base, mang), arms: arms, line: m.line, col: m.col, origin: m.origin });
+            },
+            _ => { out = out.append(st); }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 // clone_bg builds the `f__<key>` clone of bounded-generic func `fd`,
 // substituting each type variable with its concrete type (the `__`-
 // joined `key`, split back into per-parameter pieces) across params +
@@ -4621,7 +4782,7 @@ function clone_bg(fd: FuncDecl, key: string): FuncDecl {
     }
     var notp: string[] = [];
     return FuncDecl {
-        name: fd.name + "__" + key,
+        name: fd.name + "__" + sanitize_key(key),
         receiver_name: "",
         receiver_type: "",
         type_params: notp,
@@ -4760,6 +4921,20 @@ function mg_ty(ty: string, gstructs: StructDecl[], ins: Insts): TyIns {
     if (type_ends_arr(ty)) {
         var r: TyIns = mg_ty(ty[0 : ty.len() - 2], gstructs, ins);
         return TyIns { ty: r.ty + "[]", mins: r.mins };
+    }
+    if (ty.len() >= 2 && ty[0 : 1] == "(" && ty[ty.len() - 1 : ty.len()] == ")") {
+        var tps: string[] = split_top_commas(ty[1 : ty.len() - 1]);
+        var tcur: Insts = ins;
+        var tnin2: string = "";
+        var tk: i32 = 0;
+        while (tk < tps.len()) {
+            var tpr: TyIns = mg_ty(tps[tk], gstructs, tcur);
+            tcur = tpr.mins;
+            if (tk > 0) { tnin2 = tnin2 + ", "; }
+            tnin2 = tnin2 + tpr.ty;
+            tk = tk + 1;
+        }
+        return TyIns { ty: "(" + tnin2 + ")", mins: tcur };
     }
     var lb: i32 = first_bracket(ty);
     if (lb > 0 && ty[ty.len() - 1 : ty.len()] == "]") {
@@ -5142,19 +5317,29 @@ function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: S
     var cts: string[] = [key];
     if (tparams.len() != 1) { cts = split_dunder(key); }
     var mang: string = base + "__" + sanitize_key(key);
+    // finalize_impl_method (at parse time) bakes the BARE source struct name
+    // into a generic impl method's `Self` positions, but the struct is
+    // registered module-prefixed (`iter__ArrayIter`). Normalise the bare base
+    // back to the prefixed `base` so to_concrete_struct_ty / mg_ty can mangle a
+    // nested `Self` instantiation (`Option[(i32, ArrayIter[i32])]` ->
+    // `Option[(i32, iter__ArrayIter__i32)]`) in the clone's return / params.
+    var bsegs: string[] = split_dunder(base);
+    var bare_base: string = bsegs[bsegs.len() - 1];
     var nparams: ParamDecl[] = [];
     var i: i32 = 0;
     while (i < m.params.len()) {
-        var pt: string = to_concrete_struct_ty(subst_ty(m.params[i].type_name, tparams, cts), base, mang, gstructs);
+        var psrc: string = replace_struct_ident(m.params[i].type_name, bare_base, base);
+        var pt: string = to_concrete_struct_ty(subst_ty(psrc, tparams, cts), base, mang, gstructs);
         nparams = nparams.append(ParamDecl { name: m.params[i].name, type_name: pt, own: m.params[i].own, has_default: m.params[i].has_default, default_value: m.params[i].default_value, ret_arr: m.params[i].ret_arr, fn_ret: m.params[i].fn_ret });
         i = i + 1;
     }
-    var rt: string = to_concrete_struct_ty(subst_ty(m.ret_type, tparams, cts), base, mang, gstructs);
+    var rsrc: string = replace_struct_ident(m.ret_type, bare_base, base);
+    var rt: string = to_concrete_struct_ty(subst_ty(rsrc, tparams, cts), base, mang, gstructs);
     var notp: string[] = [];
     return FuncDecl {
         name: m.name, receiver_name: m.receiver_name, receiver_type: mang,
         type_params: notp, params: nparams, ret_type: rt,
-        body: subst_stmts(m.body, tparams, cts), line: m.line, col: m.col,
+        body: retarget_self_lit_stmts(subst_stmts(m.body, tparams, cts), base, mang), line: m.line, col: m.col,
         import_iface: m.import_iface, import_wit: m.import_wit, type_param_count: m.type_param_count
     };
 }
@@ -8903,9 +9088,144 @@ function parse_impl_decl(p: Par): ImplResult {
 // isn't `self` is an associated function with an empty receiver_name),
 // and the impl's bounded type params merged in. Shared by parse_impl_decl
 // (written methods) and trait default-method synthesis in parse_module.
+function ident_byte(b: i32): boolean {
+    return (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || (b >= 48 && b <= 57) || b == 95;
+}
+// is_builtin_generic_base reports whether `b` is a built-in generic type
+// constructor whose instantiations are NOT cloned by the struct/enum
+// monomorphiser — `Option` / `Result` (uniform leak-only boxes) and `Map`
+// (built-in K/V dispatch). A type param appearing only as their argument
+// (`find[T](…): Option[T]`) does not need promotion: the uniform 8-byte ABI
+// already handles it, exactly as the historical erasure did.
+function is_builtin_generic_base(b: string): boolean {
+    return b == "Option" || b == "Result" || b == "Map";
+}
+// enclosing_bracket_base returns the base identifier of the INNERMOST `[ … ]`
+// that encloses position `pos` in `ty` — `Box` for the `T` in `Box[T]`,
+// `Option` for the `T` in `Box[Option[T]]` — or "" if `pos` is not inside any
+// bracket. Found by scanning left from `pos`, balancing `]`/`[`, until the
+// first unmatched `[`; the base is the identifier immediately preceding it.
+function enclosing_bracket_base(ty: string, pos: i32): string {
+    var bal: i32 = 0;
+    var i: i32 = pos - 1;
+    while (i >= 0) {
+        var c: i32 = ty[i];
+        if (c == 93) { bal = bal + 1; }                 // ']'
+        else if (c == 91) {                             // '['
+            if (bal == 0) {
+                var st: i32 = i;
+                while (st > 0 && ident_byte(ty[st - 1])) { st = st - 1; }
+                return ty[st : i];
+            }
+            bal = bal - 1;
+        }
+        i = i - 1;
+    }
+    return "";
+}
+// feeds_user_parametric reports whether the type-param `name` appears as a
+// bracketed type-ARGUMENT to a USER parametric type in `ty` — i.e. inside
+// `Base[ … name … ]` where `Base` is a user generic struct/enum (NOT a
+// built-in: see is_builtin_generic_base, and NOT the array marker `T[]`, whose
+// `[` is preceded by the element and encloses nothing). Such an occurrence
+// means a struct/enum clone needs `name`'s concrete value, so the unbounded
+// param must be promoted to the monomorphiser. `ArrayIter[T]` matches;
+// `Option[T]` / `Map[K, V]` / bare `T` / `T[]` do not. The base checked is the
+// INNERMOST enclosing bracket (`Box[Option[T]]` -> base `Option`, no promote).
+function feeds_user_parametric(ty: string, name: string): boolean {
+    var i: i32 = 0;
+    var nl: i32 = name.len();
+    if (nl == 0) { return false; }
+    while (i < ty.len()) {
+        if (i + nl <= ty.len() && ty[i : i + nl] == name) {
+            var prev_ok: boolean = true;
+            if (i > 0 && ident_byte(ty[i - 1])) { prev_ok = false; }
+            var next_ok: boolean = true;
+            if (i + nl < ty.len() && ident_byte(ty[i + nl])) { next_ok = false; }
+            if (prev_ok && next_ok) {
+                var b: string = enclosing_bracket_base(ty, i);
+                if (b.len() > 0 && !is_builtin_generic_base(b)) { return true; }
+            }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+// token_at_paren_depth0 reports whether `name` appears as a standalone
+// identifier token at PAREN nesting depth 0 in `ty` — the positions a param
+// type lets `bind_unify` recover a type param from a call argument (`T`,
+// `T[]`, `Box[T]`; brackets `[]` are unified, so they don't gate). A token
+// inside `(`…`)` (a function-type or tuple param like `(T) => boolean`) is NOT
+// reached by bind_unify, so it does not make the param bind the type variable.
+function token_at_paren_depth0(ty: string, name: string): boolean {
+    var pdepth: i32 = 0;
+    var i: i32 = 0;
+    var nl: i32 = name.len();
+    if (nl == 0) { return false; }
+    while (i < ty.len()) {
+        var c: i32 = ty[i];
+        if (c == 40) { pdepth = pdepth + 1; i = i + 1; continue; }   // '('
+        if (c == 41) { pdepth = pdepth - 1; i = i + 1; continue; }   // ')'
+        if (pdepth == 0 && i + nl <= ty.len() && ty[i : i + nl] == name) {
+            var prev_ok: boolean = true;
+            if (i > 0 && ident_byte(ty[i - 1])) { prev_ok = false; }
+            var next_ok: boolean = true;
+            if (i + nl < ty.len() && ident_byte(ty[i + nl])) { next_ok = false; }
+            if (prev_ok && next_ok) { return true; }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+// replace_struct_ident rewrites every standalone `from` identifier token in a
+// type string to `to` (identifier-boundary aware, like subst_self). Used to
+// normalise a finalize-baked BARE struct name (`ArrayIter`, the source spelling
+// substituted into a generic impl method's `Self` positions at parse time)
+// back to the module-prefixed registered name (`iter__ArrayIter`) BEFORE the
+// struct monomorphiser mangles it — otherwise mg_ty cannot match the bare base
+// against the prefixed gstructs entry and the clone's return/param type keeps a
+// dangling `ArrayIter[i32]` that never lowers. The boundary check skips the
+// `ArrayIter` inside an already-prefixed `iter__ArrayIter` (preceded by `_`).
+function replace_struct_ident(ty: string, from: string, to: string): string {
+    if (ty.len() == 0 || from.len() == 0 || from == to) { return ty; }
+    var out: string = "";
+    var i: i32 = 0;
+    var fl: i32 = from.len();
+    while (i < ty.len()) {
+        if (i + fl <= ty.len() && ty[i : i + fl] == from) {
+            var prev_ok: boolean = true;
+            if (i > 0 && ident_byte(ty[i - 1])) { prev_ok = false; }
+            var next_ok: boolean = true;
+            if (i + fl < ty.len() && ident_byte(ty[i + fl])) { next_ok = false; }
+            if (prev_ok && next_ok) { out = out + to; i = i + fl; continue; }
+        }
+        out = out + ty[i : i + 1];
+        i = i + 1;
+    }
+    return out;
+}
+// subst_self rewrites every standalone `Self` token in a type string to
+// impl_type, INCLUDING nested (Option[(T, Self)] -> Option[(T, ArrayIter[T])]).
+function subst_self(ty: string, impl_type: string): string {
+    if (ty.len() == 0) { return ty; }
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < ty.len()) {
+        if (i + 4 <= ty.len() && ty[i : i + 4] == "Self") {
+            var prev_ok: boolean = true;
+            if (i > 0 && ident_byte(ty[i - 1])) { prev_ok = false; }
+            var next_ok: boolean = true;
+            if (i + 4 < ty.len() && ident_byte(ty[i + 4])) { next_ok = false; }
+            if (prev_ok && next_ok) { out = out + impl_type; i = i + 4; continue; }
+        }
+        out = out + ty[i : i + 1];
+        i = i + 1;
+    }
+    return out;
+}
+
 function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]): FuncDecl {
-    var rt: string = m.ret_type;
-    if (rt == "Self") { rt = impl_type; }
+    var rt: string = subst_self(m.ret_type, impl_type);
     var mtps: string[] = m.type_params;
     var ti: i32 = 0;
     while (ti < impl_tps.len()) { mtps = mtps.append(impl_tps[ti]); ti = ti + 1; }
@@ -8920,7 +9240,7 @@ function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]
         var ai: i32 = 0;
         while (ai < m.params.len()) {
             var apt: string = m.params[ai].type_name;
-            if (apt == "Self") { apt = impl_type; }
+            apt = subst_self(apt, impl_type);
             aparams = aparams.append(ParamDecl { name: m.params[ai].name, type_name: apt, own: m.params[ai].own, has_default: m.params[ai].has_default, default_value: m.params[ai].default_value, ret_arr: m.params[ai].ret_arr, fn_ret: m.params[ai].fn_ret });
             ai = ai + 1;
         }
@@ -8945,7 +9265,7 @@ function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]
             rname = m.params[i].name;
         } else {
             var pt: string = m.params[i].type_name;
-            if (pt == "Self") { pt = impl_type; }
+            pt = subst_self(pt, impl_type);
             newparams = newparams.append(ParamDecl { name: m.params[i].name, type_name: pt, own: m.params[i].own, has_default: m.params[i].has_default, default_value: m.params[i].default_value, ret_arr: m.params[i].ret_arr, fn_ret: m.params[i].fn_ret });
         }
         i = i + 1;
