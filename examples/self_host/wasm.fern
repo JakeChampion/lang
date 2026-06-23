@@ -7191,7 +7191,7 @@ function writefile_func_p2(): string {
     return o;
 }
 
-function file_imports(): string {
+pub function file_imports(): string {
     var o: string = "";
     o = o + "  (import \"wasi_snapshot_preview1\" \"path_open\" (func $path_open (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32)))\n";
     o = o + "  (import \"wasi_snapshot_preview1\" \"fd_read\" (func $fd_read (param i32 i32 i32 i32) (result i32)))\n";
@@ -7199,7 +7199,7 @@ function file_imports(): string {
     return o;
 }
 
-function readfile_func(): string {
+pub function readfile_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_read_file (param $np i32) (result i32)\n";
     o = o + "    (local $err i32) (local $fd i32) (local $blk i32) (local $off i32) (local $n i32) (local $tmp i32) (local $cap i32)\n";
@@ -7248,7 +7248,7 @@ function readfile_func(): string {
 // content block's bytes via fd_write, fd_close. Returns None (tag 1) on
 // success or Some(errno) (tag 0) when path_open fails. rights_base =
 // FD_WRITE (64) | FD_SEEK (4) = 68.
-function writefile_func(): string {
+pub function writefile_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_write_file (param $np i32) (param $cp i32) (result i32)\n";
     o = o + "    (local $err i32) (local $fd i32) (local $tmp i32)\n";

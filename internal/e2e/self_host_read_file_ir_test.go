@@ -9,8 +9,8 @@ import (
 )
 
 // readFileIRCases exercise the `read_file(path)` builtin through the IR path on
-// x86-64 and arm64 (wasm has no file I/O, so wasm_eligible rejects read_file
-// modules). read_file lowers to a value IR op that pops the path string box and
+// x86-64, arm64, and wasm (the wasm IR path opens the path under preopen fd 3 —
+// run with `--dir`). read_file lowers to a value IR op that pops the path string box and
 // calls each backend's __fern_read_file helper, pushing a fresh
 // Result[string, IoError] box — so `match (read_file(p)) { Ok(s) => …, Err(e)
 // => … }` lowers like any other Result (the Result type is recognised by
@@ -74,6 +74,73 @@ func TestSelfHostReadFileIRX86_64(t *testing.T) {
 			if tc.wantOut == "" && tc.wantExit != 0 {
 				if code := cmd.ProcessState.ExitCode(); code != tc.wantExit {
 					t.Errorf("%s: exit %d, want %d", tc.name, code, tc.wantExit)
+				}
+			}
+		})
+	}
+}
+
+// TestSelfHostReadFileIRWasm runs the same cases through the wasm IR backend
+// under wasmtime, granting the run directory as preopen fd 3 (`--dir=.::/`).
+// read_file now lowers on the wasm IR path: wasm_ir emits `call $__fern_read_file`
+// and wasm_ir_run pulls in the path_open / fd_read / fd_close imports + the
+// readfile_func helper (the runtime the AST path already used).
+func TestSelfHostReadFileIRWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host read_file wasm IR e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	for _, name := range []string{
+		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
+		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm.fern", "wasm_ir.fern", "wasm_ir_run.fern",
+	} {
+		s, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), s, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	writeRFData(t, dir)
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	for _, tc := range readFileIRCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(driverBin, "-ir")
+			} else {
+				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+			}
+			cmd.Stdin = bytes.NewReader([]byte(tc.src))
+			wat, err := cmd.Output()
+			if err != nil || len(wat) == 0 {
+				t.Fatalf("driver failed for %q: %v", tc.src, err)
+			}
+			if !bytes.Contains(wat, []byte("call $__fern_read_file")) {
+				t.Fatalf("%s: no `call $__fern_read_file` — did not lower through the wasm IR path", tc.name)
+			}
+			watFile := filepath.Join(dir, "rf_"+tc.name+".wat")
+			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
+				t.Fatalf("write wat: %v", err)
+			}
+			run := exec.Command("wasmtime", "run", "--dir=.::/", watFile)
+			run.Dir = dir
+			var stdout bytes.Buffer
+			run.Stdout = &stdout
+			_ = run.Run()
+			if run.ProcessState == nil || !run.ProcessState.Exited() {
+				t.Fatalf("%s: wasmtime did not exit normally:\n%s", tc.name, wat)
+			}
+			if tc.wantOut != "" || tc.wantExit == 0 {
+				if stdout.String() != tc.wantOut {
+					t.Errorf("read_file wasm IR %s: stdout %q, want %q", tc.name, stdout.String(), tc.wantOut)
+				}
+			}
+			if tc.wantOut == "" && tc.wantExit != 0 {
+				if code := run.ProcessState.ExitCode(); code != tc.wantExit {
+					t.Errorf("read_file wasm IR %s: exit %d, want %d", tc.name, code, tc.wantExit)
 				}
 			}
 		})
