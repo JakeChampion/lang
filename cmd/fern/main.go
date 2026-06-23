@@ -538,7 +538,7 @@ func main() {
 	componentWrap := flag.Bool("component-wrap", false, "with -target wasm-bin: wrap the core module as a self-contained preview-2 component via internal/wasm/component (no wasm-tools shell-out, no preview-1 adapter). Lifts main() as a component-level u32-returning export. Supports any mix of the migrated preview-2 imports; unrecognised imports surface a clear error.")
 	componentWrapCli := flag.Bool("component-wrap-cli", false, "like -component-wrap but emits the wasi:cli/run@0.2.0 export shape so the produced component runs under plain `wasmtime run prog.wasm` (no --invoke). main()'s return value lowers to result<_, _>: 0 = ok, non-zero = err. void main is supported (auto-wrapped to return 0). Same WASI coverage as -component-wrap.")
 	asyncExport := flag.Bool("async-export", false, "with -target wasm-bin: wrap the core as a WASI Preview-3 component-model-async component exporting `run: async func() -> u32` (lifted from main, which must return i32). The result is delivered via `canon task.return`. Run with `wasmtime run -W component-model-async,component-model-async-stackful --invoke 'run()'`. See docs/WASI-PREVIEW3-ASYNC-PLAN.md.")
-	asyncProvider := flag.String("async-provider", "", "with -target wasm-bin and an `@import async` (WASI Preview-3) program: PATH to a pre-built provider *component* (.wasm) that exports the matching async function, BUNDLED so the result is a single self-contained runnable component (no separate host needed). MVP: the program must have exactly one async `@import`, a no-parameter scalar-result function (e.g. `@import(\"iface\",\"name\") async function dep(): i32;`), and the provider must export `name`. See docs/WASI-PREVIEW3-ASYNC-PLAN.md.")
+	asyncProvider := flag.String("async-provider", "", "with -target wasm-bin and an `@import async` (WASI Preview-3) program: PATH to a pre-built provider *component* (.wasm) that exports the matching async function, BUNDLED so the result is a single self-contained runnable component (no separate host needed). Supports exactly one async `@import` with scalar parameters and a scalar result (e.g. `@import(\"iface\",\"name\") async function add(a: i32, b: i32): i32;`); the provider must export `name`. See docs/WASI-PREVIEW3-ASYNC-PLAN.md.")
 	doFmt := flag.Bool("fmt", false, "format the source file and write to stdout (use -w to write back in place, -d to print a diff)")
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite the input file with the formatted output")
 	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between the file and its formatted form; exits 1 when they differ")
@@ -1016,8 +1016,9 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 			// program's single async `@import` is satisfied in-component, yielding
 			// one self-contained runnable artifact (rather than a component with an
 			// unresolved import for a separate host to satisfy). See
-			// docs/WASI-PREVIEW3-ASYNC-PLAN.md. MVP: exactly one no-parameter
-			// scalar-result async import.
+			// docs/WASI-PREVIEW3-ASYNC-PLAN.md. Supports exactly one async import
+			// with scalar parameters and a scalar result (string/list/stream
+			// params + results are follow-ons).
 			if asyncProvider != "" {
 				var imps []*ast.FuncDecl
 				for _, fn := range prog.Funcs {
@@ -1029,21 +1030,28 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 					return 1, fmt.Errorf("-async-provider: expected exactly one async @import to bundle, found %d", len(imps))
 				}
 				imp := imps[0]
-				if len(imp.Params) != 0 {
-					return 1, fmt.Errorf("-async-provider: async import %q has parameters; only no-parameter scalar-result imports are supported so far", imp.Name)
+				// Lower signature: the scalar params (flattened) followed by the
+				// return-area pointer; the result is the i32 async status.
+				lowerParams := []byte{}
+				for _, p := range imp.Params {
+					vt, ok := asyncScalarCoreValtype(p.Type)
+					if !ok {
+						return 1, fmt.Errorf("-async-provider: async import %q parameter %q has non-scalar type %s; only scalar params are supported so far", imp.Name, p.Name, p.Type.String())
+					}
+					lowerParams = append(lowerParams, vt)
 				}
+				lowerParams = append(lowerParams, 0x7f) // retptr (i32)
 				provBytes, err := os.ReadFile(asyncProvider)
 				if err != nil {
 					return 1, fmt.Errorf("-async-provider: reading provider component: %w", err)
 				}
-				i32 := []byte{0x7f} // wasm i32 (retptr / status)
 				comp := component.BuildAsyncImportsAwaitComponent(acore, []component.AsyncImportSpec{{
 					Iface:              imp.ImportIface,
 					WITName:            imp.ImportWITName,
 					Provider:           provBytes,
 					ProviderExportName: imp.ImportWITName,
-					LowerParams:        i32, // just the retptr (no source params)
-					LowerResults:       i32, // i32 status
+					LowerParams:        lowerParams,
+					LowerResults:       []byte{0x7f}, // i32 status
 				}}, "__async_run", asyncExportNm, rvt)
 				if err := os.WriteFile(outPath, comp, 0o644); err != nil {
 					return 1, err
@@ -1637,6 +1645,29 @@ func asyncResultCValtype(t ast.Type) byte {
 		return component.CValtypeF64
 	}
 	return component.CValtypeU32
+}
+
+// asyncScalarCoreValtype maps a scalar Fern type to its core wasm valtype byte
+// (i32=0x7f, i64=0x7e, f32=0x7d, f64=0x7c), used to build the canon-lower
+// parameter signature for a bundled async import (-async-provider). Returns
+// ok=false for any non-scalar type (string / array / record / …), which the
+// caller rejects — those need realloc/marshalling and are not bundled yet.
+func asyncScalarCoreValtype(t ast.Type) (byte, bool) {
+	switch x := t.(type) {
+	case ast.NumberType:
+		if x.NormalWidth() == 64 {
+			return 0x7e, true // i64
+		}
+		return 0x7f, true // i32 (i8/i16/i32 + usize all lower to i32)
+	case ast.BoolType:
+		return 0x7f, true // i32
+	case ast.FloatType:
+		if x.NormalWidth() == 32 {
+			return 0x7d, true // f32
+		}
+		return 0x7c, true // f64
+	}
+	return 0, false
 }
 
 // buildPreview2Component is buildPreview2CliRunComponent generalised
