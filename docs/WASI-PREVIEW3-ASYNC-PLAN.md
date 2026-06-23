@@ -616,6 +616,21 @@ two-component split (a `future<u32>` *export* read by a separate consumer, the
 reader's `future.read` reusing the pending-await loop when the read is STARTED)
 and then wiring `future<T>` through the real wasmbin / Fern surface.
 
+**`stream<u8>` round-trip — DONE, runnable through the Go composer.**
+`component.BuildStreamRoundtripComponent` is the stream counterpart of the future
+round-trip: a consumer creates a `stream<u8>` (`stream.new` — same i64 packing,
+readable=low32 / writable=high32), POSTs a `stream.read` for N elements, then
+`stream.write`s N elements through the writable end (read-before-write so the
+stackful transfer resolves synchronously), sums the bytes it read, and returns
+the total from its async export `run`. `TestWasmP3StreamRoundtrip` runs it under
+wasmtime → **42** (`10+20+12`), exercising `stream.new` / `stream.write` /
+`stream.read` end to end. Core signatures (probed via `validate`): `stream.new ()
+-> i64`, `stream.write (writable, ptr, count) -> i32 status`, `stream.read
+(readable, ptr, count) -> i32 status` (the `count` is the element-count the
+future ops lack). That completes the **future/stream channel pair at the composer
+level**; the remaining work is the two-component split + the real wasmbin / Fern
+type-surface for `future<T>` / `stream<T>`.
+
 **Also remaining:** `future<T>` / `stream<T>` parameter+result lowering;
 wiring async into the `concurrent { … }` desugar as an alternative to
 the P2 pollable reactor.

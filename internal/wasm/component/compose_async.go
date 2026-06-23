@@ -685,3 +685,53 @@ func BuildFutureRoundtripComponent(consumerCore, memCore []byte, resultValtype b
 	buf = PutExportSectionOneFunc(buf, "run", 0)
 	return buf
 }
+
+// BuildStreamRoundtripComponent assembles a runnable WASI Preview-3 component
+// that exercises the `stream<elem>` async data channel end to end through the Go
+// composer — the stream counterpart of BuildFutureRoundtripComponent. The
+// consumer core creates a stream (`stream.new`, whose i64 packs readable=low32 /
+// writable=high32), posts a `stream.read` for N elements, then `stream.write`s N
+// elements through the writable end (read-before-write so the stackful async
+// transfer resolves synchronously), and `task.return`s a scalar derived from the
+// elements it read, lifted async as `run: async func() -> resultValtype`. The
+// stream read/write `memory` options are over the externalised shared memory (the
+// production path reuses the gMem trampoline). consumerCore must import
+// ("","tr"/"snew"/"swrite"/"sread") and ("mem","m"), and export "run". Proven to
+// return its value under `wasmtime -W
+// component-model-async,component-model-async-stackful`.
+func BuildStreamRoundtripComponent(consumerCore, memCore []byte, elemValtype, resultValtype byte) []byte {
+	buf := PutComponentHeader(nil)
+
+	// Component type 0: the `stream<elem>` defined type (referenced by
+	// stream.new / stream.write / stream.read).
+	buf = PutTypeSectionOneDefined(buf, InnerTypeStream(elemValtype)) // component type 0
+
+	// Externalised consumer memory → core memory 0.
+	buf = PutCoreModuleSection(buf, memCore)                     // core module 0
+	buf = PutCoreInstanceSectionInstantiate(buf, 0)              // core instance 0
+	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 0, "m") // core memory 0
+
+	// Consumer canon glue (core funcs 0..3).
+	buf = PutCanonTaskReturnSingle(buf, resultValtype) // core func 0 (tr)
+	buf = PutCanonStreamNew(buf, 0)                    // core func 1 (snew; stream type 0)
+	buf = PutCanonStreamWrite(buf, 0, 0)               // core func 2 (swrite over memory 0)
+	buf = PutCanonStreamRead(buf, 0, 0)                // core func 3 (sread over memory 0)
+
+	// Consumer core module 1, instantiated with the canon glue (module "") and the
+	// shared memory (module "mem").
+	buf = PutCoreModuleSection(buf, consumerCore) // core module 1
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "tr", Sort: CoreSortFunc, Idx: 0},
+		{Name: "snew", Sort: CoreSortFunc, Idx: 1},
+		{Name: "swrite", Sort: CoreSortFunc, Idx: 2},
+		{Name: "sread", Sort: CoreSortFunc, Idx: 3},
+	}) // core instance 1
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 1, []string{"", "mem"}, []uint32{1, 0}) // core instance 2 (consumer)
+
+	// Lift the consumer's run async under "run" (scalar result).
+	buf = PutAliasSectionCoreExportFunc(buf, 2, "run")        // core func 4
+	buf = PutTypeSectionOneFunc(buf, nil, nil, resultValtype) // component type 1
+	buf = PutCanonSectionLiftAsync(buf, 4, 1)                 // component func 0
+	buf = PutExportSectionOneFunc(buf, "run", 0)
+	return buf
+}
