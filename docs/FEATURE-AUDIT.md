@@ -285,6 +285,45 @@ RFC known-answer vectors (`sha256_hex("abc")` / `""` / pangram;
 *concatenated* single-module form via the importless driver — this one pins the
 real-import loader path). No compiler change was needed here; the merged 64-bit
 work unblocked it, and this adds the gate + records the closure.
+### 2026-06-23 — array_combinators promoted to the self-host differential gate; array_hof / iter_combinators / crypto re-probed (still RC-blocked)
+
+Re-probed the four interp-only suites against the differential gate after the
+`__struct_drop_<T>` deep-drop helper (`bdcf943` / `6136e7f`) landed, to see if
+the RC-drop frontier moved. Result:
+
+- **`array_combinators` now PROMOTED to the differential gate** (both x86 +
+  arm64). It was only interp-gated; probing the whole file passes byte-for-byte
+  on both backends, so the free-function generic combinators `array.map` /
+  `filter` / `fold` / `any` / `all` / `find` / `enumerate` — **including the
+  captured-variable closure case** (`test_filter_capture`, exercising
+  closure-conversion) — are confirmed to lower self-host. Added as
+  `array_combinators` in `selfHostStdTestCases`. (The earlier array_hof entry
+  already *claimed* this suite was gated; this makes it actually true.)
+- **`array_hof` still crashes** — and the boundary is now sharper. Probed
+  `flat_map` / `reduce` / `sort_by` **individually** through the gate: each one
+  exits `-1` (SIGSEGV) on its own, on both backends. So it is not one bad op but
+  the class. The distinguishing factor is NOT "array method + closure" (the
+  free-function `array.map`-family above lowers fine, and the free-function
+  `sort.sort_by(arr, cmp)` shipped green in #3869): it is specifically the
+  **receiver-method forms that retain a freshly-allocated heap value to program
+  exit** — `xs.flat_map` (intermediate `U[]` per element), `xs.reduce` (an
+  `Option[T]` built from generic `T`), `xs.sort_by` (a `.with()`-rebuilt `T[]`).
+  The `__struct_drop_<T>` helper did not move this; the receiver-method monomorph
+  drop path is still the open RC-port surface.
+- **`iter_combinators` still crashes** the differential gate (exit `-1`,
+  unchanged) — left interp-gated.
+- **`crypto` no longer crashes** — after the parallel `std/crypto`-now-compiles
+  fix (see the crypto entry above), `crypto_test.fern` through the StdTestE2E
+  gate now *runs* and exits `1` (an assertion / KAT mismatch) rather than `-1`
+  (SIGSEGV) on both backends. So the module compiles, but the full std/test
+  suite isn't byte-identical to the interpreter yet — distinct from the
+  module-compile gate `TestSelfHostCryptoModuleIR` the parallel work added. Left
+  interp-gated pending that residual mismatch.
+
+Net: one suite converted interp-only → differential-gated (real coverage gain),
+plus a refined RC-frontier diagnosis (free-function-combinator-lowers vs
+retained-heap-from-receiver-method-traps) for the goal-2 port.
+
 ### 2026-06-23 — std/json parse → typed-get → encode round-trip: pure-Fern std/test coverage (self-host-gated)
 
 New `examples/tests/json_roundtrip_test.fern` drives the **raw** std/json API

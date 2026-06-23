@@ -571,6 +571,11 @@ func TestPutCanonFutureStreamBuiltins_Bytes(t *testing.T) {
 	if got := component.InnerTypeStream(component.CValtypeU8); !bytes.Equal(got, []byte{0x66, 0x01, 0x7d}) {
 		t.Errorf("InnerTypeStream(u8) = % x, want 66 01 7d", got)
 	}
+	// task.return of a future<T> result (type index 0): 09 00 <typeidx> 00, no
+	// options (the readable handle is scalar) — byte-verified vs wasm-tools 1.240.
+	if got := component.PutCanonTaskReturnTypeIdx(nil, 0); !bytes.Equal(got, []byte{0x08, 0x05, 0x01, 0x09, 0x00, 0x00, 0x00}) {
+		t.Errorf("PutCanonTaskReturnTypeIdx(0) = % x, want 08 05 01 09 00 00 00", got)
+	}
 }
 
 // TestWasiClocksMonotonicTimerInstanceTypeBody_Bytes pins the bytes

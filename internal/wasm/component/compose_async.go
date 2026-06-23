@@ -735,3 +735,193 @@ func BuildStreamRoundtripComponent(consumerCore, memCore []byte, elemValtype, re
 	buf = PutExportSectionOneFunc(buf, "run", 0)
 	return buf
 }
+
+// buildFutureProducerComponent builds a nested sub-component
+// `prod: async func() -> future<resultValtype>`: its core creates a future
+// (future.new — readable=low32 / writable=high32), task.returns the readable end,
+// then future.writes the value through the writable end. task.return of a future
+// result is scalar (the readable handle), so it needs no memory; future.write
+// reads the value from the producer's own memory, and since the producer core
+// imports future.write the memory→instance→import dependency is circular — broken
+// with the gMem trampoline (placeholder future.write → alias memory → real
+// `future.write (mem)` → fixup the table slot), as BuildAsyncLiftedExportComponentString
+// does for the string task.return. providerCore imports ("","tr"/"fnew"/"fw") and
+// exports "mem" + "prod".
+func buildFutureProducerComponent(producerCore []byte, resultValtype byte) []byte {
+	buf := PutComponentHeader(nil)
+	buf = PutTypeSectionOneDefined(buf, InnerTypeFuture(resultValtype)) // component type 0: future<T>
+
+	// future.write trampoline (core sig (writable, ptr) -> status).
+	fwParams, fwResults := []byte{0x7f, 0x7f}, []byte{0x7f}
+	buf = PutCoreModuleSection(buf, TrampolineModuleForParamsResults(fwParams, fwResults)) // core module 0
+	buf = PutCoreInstanceSectionInstantiate(buf, 0)                                        // core instance 0
+	buf = PutAliasSectionCoreExportFunc(buf, 0, "0")                                       // core func 0 (placeholder fw)
+
+	buf = PutCanonTaskReturnTypeIdx(buf, 0) // core func 1 (tr; future type 0, no memory)
+	buf = PutCanonFutureNew(buf, 0)         // core func 2 (fnew; future type 0)
+
+	buf = PutCoreModuleSection(buf, producerCore) // core module 1
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "tr", Sort: CoreSortFunc, Idx: 1},
+		{Name: "fnew", Sort: CoreSortFunc, Idx: 2},
+		{Name: "fw", Sort: CoreSortFunc, Idx: 0},
+	}) // core instance 1
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 1, []string{""}, []uint32{1}) // core instance 2 (producer)
+
+	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 2, "mem") // core memory 0
+	buf = PutCanonFutureWrite(buf, 0, 0)                           // core func 3 (real fw over memory 0)
+
+	buf = PutCoreModuleSection(buf, FixupModuleForParamsResults(fwParams, fwResults)) // core module 2
+	buf = PutAliasSectionCoreExport(buf, CoreSortTable, 0, "$imports")                // core table 0
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "$imports", Sort: CoreSortTable, Idx: 0},
+		{Name: "0", Sort: CoreSortFunc, Idx: 3},
+	}) // core instance 3
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 2, []string{""}, []uint32{3}) // core instance 4 (fixup)
+
+	buf = PutAliasSectionCoreExportFunc(buf, 2, "prod")    // core func 4 (prod)
+	buf = PutTypeSectionOneFuncResultIdx(buf, nil, nil, 0) // component type 1: () -> future<T>(type 0)
+	buf = PutCanonSectionLiftAsync(buf, 4, 1)              // component func 0
+	buf = PutExportSectionOneFunc(buf, "prod", 0)
+	return buf
+}
+
+// BuildFutureExportImportComponent assembles a runnable WASI Preview-3 component
+// that passes a `future<resultValtype>` ACROSS a component boundary — the
+// two-component split that exercises both future-ABI directions together. A
+// nested producer (buildFutureProducerComponent) exports
+// `prod: async func() -> future<T>`; the consumer `canon lower async`-es that
+// import, reads the returned future readable handle from the lower's return area,
+// `future.read`s the value, and re-returns it from its own async export `run`.
+// The producer writes the value before yielding back (stackful), so both the
+// prod-lower and the future.read complete synchronously (RETURNED) — no await
+// loops. The consumer's memory is externalised into a shared core module so the
+// lower / future.read memory options reference memory 0 without the
+// lower→memory→instance circularity (the production path reuses the gMem
+// trampoline; the producer's future.write IS trampolined because a nested
+// component can't receive an external core memory). consumerCore must import
+// ("","tr"/"prodl"/"fread") and ("mem","m"), and export "run". Proven to return
+// the value under `wasmtime -W component-model-async,component-model-async-stackful`.
+func BuildFutureExportImportComponent(producerCore, consumerCore, memCore []byte, resultValtype byte) []byte {
+	buf := PutComponentHeader(nil)
+	buf = PutTypeSectionOneDefined(buf, InnerTypeFuture(resultValtype)) // component type 0: future<T> (for future.read)
+
+	// Nested producer → component 0, instance 0, alias prod → component func 0.
+	buf = PutComponentSection(buf, buildFutureProducerComponent(producerCore, resultValtype))
+	buf = PutInstanceSectionInstantiateComponent(buf, 0)
+	buf = PutAliasSectionInstanceExportFunc(buf, 0, "prod") // component func 0 (prod)
+
+	// Externalised consumer memory → core memory 0.
+	buf = PutCoreModuleSection(buf, memCore)                     // core module 0
+	buf = PutCoreInstanceSectionInstantiate(buf, 0)              // core instance 0
+	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 0, "m") // core memory 0
+
+	buf = PutCanonTaskReturnSingle(buf, resultValtype) // core func 0 (tr)
+	buf = PutCanonSectionLowerAsync(buf, 0, 0)         // core func 1 (prodl: lower prod over memory 0)
+	buf = PutCanonFutureRead(buf, 0, 0)                // core func 2 (fread: future type 0 over memory 0)
+
+	buf = PutCoreModuleSection(buf, consumerCore) // core module 1
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "tr", Sort: CoreSortFunc, Idx: 0},
+		{Name: "prodl", Sort: CoreSortFunc, Idx: 1},
+		{Name: "fread", Sort: CoreSortFunc, Idx: 2},
+	}) // core instance 1
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 1, []string{"", "mem"}, []uint32{1, 0}) // core instance 2 (consumer)
+
+	buf = PutAliasSectionCoreExportFunc(buf, 2, "run")        // core func 3
+	buf = PutTypeSectionOneFunc(buf, nil, nil, resultValtype) // component type 1: () -> T
+	buf = PutCanonSectionLiftAsync(buf, 3, 1)                 // component func 1
+	buf = PutExportSectionOneFunc(buf, "run", 1)
+	return buf
+}
+
+// buildStreamProducerComponent builds a nested sub-component
+// `prod: async func() -> stream<elem>`: its core creates a stream (stream.new —
+// readable=low32 / writable=high32), task.returns the readable end, then
+// stream.writes `count` elements through the writable end. Like the future
+// producer, stream.write reads from the producer's own memory and the producer
+// core imports it, so the memory option is circular — broken with the gMem
+// trampoline. providerCore imports ("","tr"/"snew"/"sw") and exports "mem" + "prod".
+func buildStreamProducerComponent(producerCore []byte, elemValtype byte) []byte {
+	buf := PutComponentHeader(nil)
+	buf = PutTypeSectionOneDefined(buf, InnerTypeStream(elemValtype)) // component type 0: stream<elem>
+
+	// stream.write trampoline (core sig (writable, ptr, count) -> status).
+	swParams, swResults := []byte{0x7f, 0x7f, 0x7f}, []byte{0x7f}
+	buf = PutCoreModuleSection(buf, TrampolineModuleForParamsResults(swParams, swResults)) // core module 0
+	buf = PutCoreInstanceSectionInstantiate(buf, 0)                                        // core instance 0
+	buf = PutAliasSectionCoreExportFunc(buf, 0, "0")                                       // core func 0 (placeholder sw)
+
+	buf = PutCanonTaskReturnTypeIdx(buf, 0) // core func 1 (tr; stream type 0, no memory)
+	buf = PutCanonStreamNew(buf, 0)         // core func 2 (snew; stream type 0)
+
+	buf = PutCoreModuleSection(buf, producerCore) // core module 1
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "tr", Sort: CoreSortFunc, Idx: 1},
+		{Name: "snew", Sort: CoreSortFunc, Idx: 2},
+		{Name: "sw", Sort: CoreSortFunc, Idx: 0},
+	}) // core instance 1
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 1, []string{""}, []uint32{1}) // core instance 2 (producer)
+
+	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 2, "mem") // core memory 0
+	buf = PutCanonStreamWrite(buf, 0, 0)                           // core func 3 (real sw over memory 0)
+
+	buf = PutCoreModuleSection(buf, FixupModuleForParamsResults(swParams, swResults)) // core module 2
+	buf = PutAliasSectionCoreExport(buf, CoreSortTable, 0, "$imports")                // core table 0
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "$imports", Sort: CoreSortTable, Idx: 0},
+		{Name: "0", Sort: CoreSortFunc, Idx: 3},
+	}) // core instance 3
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 2, []string{""}, []uint32{3}) // core instance 4 (fixup)
+
+	buf = PutAliasSectionCoreExportFunc(buf, 2, "prod")    // core func 4 (prod)
+	buf = PutTypeSectionOneFuncResultIdx(buf, nil, nil, 0) // component type 1: () -> stream<elem>(type 0)
+	buf = PutCanonSectionLiftAsync(buf, 4, 1)              // component func 0
+	buf = PutExportSectionOneFunc(buf, "prod", 0)
+	return buf
+}
+
+// BuildStreamExportImportComponent assembles a runnable WASI Preview-3 component
+// that passes a `stream<elem>` ACROSS a component boundary — the stream
+// counterpart of BuildFutureExportImportComponent. A nested producer
+// (buildStreamProducerComponent) exports `prod: async func() -> stream<elem>`
+// (stream.new → task.return the readable end → stream.write the elements); the
+// consumer `canon lower async`-es that import, reads the returned stream readable
+// handle, `stream.read`s the elements, derives a scalar, and re-returns it from
+// its async export `run`. The producer's write buffers across the task boundary,
+// so the consumer's later read drains it synchronously — no await loop.
+// consumerCore must import ("","tr"/"prodl"/"sread") and ("mem","m"), and export
+// "run". Proven to return its value under `wasmtime -W
+// component-model-async,component-model-async-stackful`.
+func BuildStreamExportImportComponent(producerCore, consumerCore, memCore []byte, elemValtype, resultValtype byte) []byte {
+	buf := PutComponentHeader(nil)
+	buf = PutTypeSectionOneDefined(buf, InnerTypeStream(elemValtype)) // component type 0: stream<elem> (for stream.read)
+
+	// Nested producer → component 0, instance 0, alias prod → component func 0.
+	buf = PutComponentSection(buf, buildStreamProducerComponent(producerCore, elemValtype))
+	buf = PutInstanceSectionInstantiateComponent(buf, 0)
+	buf = PutAliasSectionInstanceExportFunc(buf, 0, "prod") // component func 0 (prod)
+
+	// Externalised consumer memory → core memory 0.
+	buf = PutCoreModuleSection(buf, memCore)                     // core module 0
+	buf = PutCoreInstanceSectionInstantiate(buf, 0)              // core instance 0
+	buf = PutAliasSectionCoreExport(buf, CoreSortMemory, 0, "m") // core memory 0
+
+	buf = PutCanonTaskReturnSingle(buf, resultValtype) // core func 0 (tr)
+	buf = PutCanonSectionLowerAsync(buf, 0, 0)         // core func 1 (prodl: lower prod over memory 0)
+	buf = PutCanonStreamRead(buf, 0, 0)                // core func 2 (sread: stream type 0 over memory 0)
+
+	buf = PutCoreModuleSection(buf, consumerCore) // core module 1
+	buf = PutCoreInstanceSectionFromExports(buf, []CoreInstanceExport{
+		{Name: "tr", Sort: CoreSortFunc, Idx: 0},
+		{Name: "prodl", Sort: CoreSortFunc, Idx: 1},
+		{Name: "sread", Sort: CoreSortFunc, Idx: 2},
+	}) // core instance 1
+	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 1, []string{"", "mem"}, []uint32{1, 0}) // core instance 2 (consumer)
+
+	buf = PutAliasSectionCoreExportFunc(buf, 2, "run")        // core func 3
+	buf = PutTypeSectionOneFunc(buf, nil, nil, resultValtype) // component type 1: () -> resultValtype
+	buf = PutCanonSectionLiftAsync(buf, 3, 1)                 // component func 1
+	buf = PutExportSectionOneFunc(buf, "run", 1)
+	return buf
+}

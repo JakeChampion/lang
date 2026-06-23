@@ -3273,6 +3273,24 @@ func PutCanonTaskReturnTypeIdxWithMemory(buf []byte, typeIdx uint32, memIdx uint
 	return wrapSection(buf, SectionCanon, body)
 }
 
+// PutCanonTaskReturnTypeIdx emits a `task.return` whose result is a DEFINED
+// component type referenced by index, with NO canonical options. This is the
+// shape an async export returning a `future<T>` / `stream<T>` uses: the result is
+// the readable handle (a scalar i32), so — unlike a string/list result —
+// task.return needs no `memory` option. The produced core func is
+// `(readable: i32) -> ()`. Byte-verified against wasm-tools 1.240
+// (`task.return (result future<u32>)` → `09 00 <typeidx> 00`). See
+// docs/WASI-PREVIEW3-ASYNC-PLAN.md.
+func PutCanonTaskReturnTypeIdx(buf []byte, typeIdx uint32) []byte {
+	body := []byte{}
+	body = leb128.UlebU64(body, 1)                   // vec(1)
+	body = append(body, 0x09)                        // canon task.return
+	body = append(body, 0x00)                        // result: single-value form
+	body = append(body, leb128SlebBytes(typeIdx)...) // result valtype = typeidx (s33)
+	body = append(body, 0x00)                        // options vec(0)
+	return wrapSection(buf, SectionCanon, body)
+}
+
 // PutCanonSectionLiftWithMemory emits a canon-lift entry carrying the `memory`
 // canonical-ABI option — the inverse of PutCanonSectionLowerWithMemory. A lift
 // needs `memory` when the lifted function's signature carries a string / list:
