@@ -1393,6 +1393,104 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    popq %rbp\n");
         s = s.write("    ret\n");
     }
+    // __fern_temp_dir: %rdi = prefix box -> Result[string, IoError] box. Makes a
+    // uniquely-named /tmp/<prefix>-<monotonic_ns> directory (mkdirat). Transcribed
+    // verbatim from asm.fern's emit_runtime (the same body the AST path calls);
+    // gated on the temp_dir need; calls __fern_monotonic_ns + __fern_alloc.
+    if (s.has_need("temp_dir")) {
+        s = s.write("__fern_temp_dir:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    pushq %r13\n");
+        s = s.write("    pushq %r14\n");
+        s = s.write("    pushq %r15\n");
+        s = s.write("    movq %rdi, %rbx\n");
+        s = s.write("    call __fern_monotonic_ns\n");
+        s = s.write("    movq %rax, %r15\n");
+        s = s.write("    movq 8(%rbx), %r12\n");
+        s = s.write("    leaq 27(%r12), %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %r13\n");
+        s = s.write("    movb $47, 0(%r13)\n");
+        s = s.write("    movb $116, 1(%r13)\n");
+        s = s.write("    movb $109, 2(%r13)\n");
+        s = s.write("    movb $112, 3(%r13)\n");
+        s = s.write("    movb $47, 4(%r13)\n");
+        s = s.write("    movq $5, %r14\n");
+        s = s.write("    movq (%rbx), %rcx\n");
+        s = s.write("    movq $0, %rdx\n");
+        s = s.write(".Ltd_pcopy:\n");
+        s = s.write("    cmpq %r12, %rdx\n");
+        s = s.write("    jge .Ltd_pdone\n");
+        s = s.write("    movb (%rcx,%rdx,1), %al\n");
+        s = s.write("    movb %al, (%r13,%r14,1)\n");
+        s = s.write("    incq %r14\n");
+        s = s.write("    incq %rdx\n");
+        s = s.write("    jmp .Ltd_pcopy\n");
+        s = s.write(".Ltd_pdone:\n");
+        s = s.write("    movb $45, (%r13,%r14,1)\n");
+        s = s.write("    incq %r14\n");
+        s = s.write("    movq %r15, %rax\n");
+        s = s.write("    movq $0, %r8\n");
+        s = s.write("    cmpq $0, %rax\n");
+        s = s.write("    jne .Ltd_cnt\n");
+        s = s.write("    movq $1, %r8\n");
+        s = s.write("    jmp .Ltd_cntdone\n");
+        s = s.write(".Ltd_cnt:\n");
+        s = s.write("    cmpq $0, %rax\n");
+        s = s.write("    je .Ltd_cntdone\n");
+        s = s.write("    movq $0, %rdx\n");
+        s = s.write("    movq $10, %rcx\n");
+        s = s.write("    divq %rcx\n");
+        s = s.write("    incq %r8\n");
+        s = s.write("    jmp .Ltd_cnt\n");
+        s = s.write(".Ltd_cntdone:\n");
+        s = s.write("    leaq -1(%r14,%r8,1), %r9\n");
+        s = s.write("    movq %r15, %rax\n");
+        s = s.write(".Ltd_wr:\n");
+        s = s.write("    movq $0, %rdx\n");
+        s = s.write("    movq $10, %rcx\n");
+        s = s.write("    divq %rcx\n");
+        s = s.write("    addq $48, %rdx\n");
+        s = s.write("    movb %dl, (%r13,%r9,1)\n");
+        s = s.write("    decq %r9\n");
+        s = s.write("    cmpq $0, %rax\n");
+        s = s.write("    jne .Ltd_wr\n");
+        s = s.write("    addq %r8, %r14\n");
+        s = s.write("    movb $0, (%r13,%r14,1)\n");
+        s = s.write("    movq $-100, %rdi\n");
+        s = s.write("    movq %r13, %rsi\n");
+        s = s.write("    movq $448, %rdx\n");
+        s = s.write("    movq $258, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    testq %rax, %rax\n");
+        s = s.write("    jnz .Ltd_err\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %r13, (%rax)\n");
+        s = s.write("    movq %r14, 8(%rax)\n");
+        s = s.write("    movq %rax, %r13\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $0, (%rax)\n");
+        s = s.write("    movq %r13, 8(%rax)\n");
+        s = s.write("    jmp .Ltd_ret\n");
+        s = s.write(".Ltd_err:\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $1, (%rax)\n");
+        s = s.write("    movq $0, 8(%rax)\n");
+        s = s.write(".Ltd_ret:\n");
+        s = s.write("    popq %r15\n");
+        s = s.write("    popq %r14\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+    }
     // __fern_argc / __fern_argv globals (.bss) + __fern_arg_at + __fern_args: the
     // command-line argv accessor. The entry's _start saves argc / argv from the
     // initial stack into these globals (gated on the same args need); __fern_args
@@ -3067,7 +3165,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_print_int", "__fern_eprint_str", "__fern_putchar",
         "__fern_read_int", "__fern_read_line", "__fern_read_file",
         "__fern_reader_read_chunk", "__fern_reader_close", "__fern_write_file",
-        "__fern_remove_dir_all",
+        "__fern_remove_dir_all", "__fern_temp_dir",
         "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
         "__fern_strbuf_reset", "__fern_strbuf_take", "__fern_random_i32",
         "__fern_random_bytes", "__fern_monotonic_ns", "__fern_now_ns",
@@ -3553,6 +3651,13 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // allocates + recurses). The path string box is the popped %rdi arg.
             s = s.write("    popq %rdi\n    call __fern_remove_dir_all\n    pushq %rax\n");
             s = s.need("heap").need("remove_dir_all");
+        } else if (o.kind == "temp_dir") {
+            // [prefixbox] -> make a uniquely-named /tmp dir, push a fresh
+            // Result[string, IoError] box (the AST path's __fern_temp_dir, which
+            // allocates + calls __fern_monotonic_ns). The prefix box is the
+            // popped %rdi arg; monotonic_ns need pulls in the clock helper.
+            s = s.write("    popq %rdi\n    call __fern_temp_dir\n    pushq %rax\n");
+            s = s.need("heap").need("monotonic_ns").need("temp_dir");
         } else if (o.kind == "read_chunk") {
             // [fd][n] -> read up to n bytes from the Reader fd, push a fresh
             // Option[string] box (Some(chunk) / None at EOF). Reuses the AST path's
@@ -4422,7 +4527,7 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     // The freestanding allocator + RC runtime, only when the program allocates.
     // i32.to_string() allocates its box even in an otherwise heap-free program,
     // so its emit-time need pulls the runtime in too (its body calls __fern_alloc).
-    if (s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("print_int") || s.has_need("read_int") || s.has_need("str_read_line") || s.has_need("putchar") || s.has_need("strbuf") || s.has_need("reader") || s.has_need("write_file") || s.has_need("remove_dir_all")) { s = emit_ir_runtime(s); }
+    if (s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("print_int") || s.has_need("read_int") || s.has_need("str_read_line") || s.has_need("putchar") || s.has_need("strbuf") || s.has_need("reader") || s.has_need("write_file") || s.has_need("remove_dir_all") || s.has_need("temp_dir")) { s = emit_ir_runtime(s); }
     // String search predicates (starts_with / ends_with / index_of) are
     // allocation-free + self-contained, so they're emitted in their own helper
     // — kept OUT of emit_ir_runtime, whose size is near the self-host's
