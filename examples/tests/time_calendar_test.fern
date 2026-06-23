@@ -102,6 +102,17 @@ function test_weekday(): test.TestOutcome {
     return test.assert_true(mon && thu);
 }
 
+// ---- format_iso (zero-padded YYYY-MM-DD) ----
+
+function test_format_iso_basic(): test.TestOutcome {
+    return test.assert_eq(time.date_make(2024, 2, 29).format_iso(), "2024-02-29");
+}
+
+function test_format_iso_zero_pad(): test.TestOutcome {
+    // Single-digit month and day both pad to two columns.
+    return test.assert_eq(time.date_make(2024, 3, 7).format_iso(), "2024-03-07");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/time calendar");
     r = r.it("is_leap_year",        test_is_leap_year());
@@ -117,5 +128,7 @@ function main(): i32 {
     r = r.it("days_since leap feb", test_days_since_leap_feb());
     r = r.it("day_of_year",         test_day_of_year());
     r = r.it("weekday",             test_weekday());
+    r = r.it("format_iso basic",    test_format_iso_basic());
+    r = r.it("format_iso zero-pad", test_format_iso_zero_pad());
     return r.finish();
 }
