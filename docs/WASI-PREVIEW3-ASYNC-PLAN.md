@@ -564,6 +564,42 @@ returning `future<u32>` resolved immediately (core: `future.new` →
 `task.return` the readable handle → `future.write` the value), run under
 `wasmtime -W component-model-async`.
 
+**`future<u32>` export mechanics — RUNTIME-PROVEN at the wasm level (hand-built
+WAT, wasmtime 37).** A `run: async func() -> future<u32>` resolving immediately
+runs without trapping. Findings (all to be reused by the Go composer slice):
+
+- **Core signatures** (probed by `wasm-tools validate --features all` against a
+  core that imports each canon func): `future.new () -> i64`,
+  `future.write (writable: i32, ptr: i32) -> i32 status`,
+  `future.read (readable: i32, ptr: i32) -> i32 status`,
+  `task.return (readable: i32) -> ()` for a `future<T>` result.
+- **future.new packing:** the returned `i64` is `(writable << 32) | readable` —
+  the **readable** end is the **low** 32 bits, the **writable** end the high 32.
+  (Proven: passing the high half to `task.return` traps "handle is not a
+  readable end of a future"; passing the low half runs clean.)
+- **task.return of a future result** references the `future<T>` defined type by
+  index and carries NO options (`09 00 <typeidx> 00`); the async **lift** of the
+  export (`canon lift … async`, result = the `future<T>` type) likewise needs no
+  memory option — the result is just the readable handle.
+- **Producer sequence** (runtime-verified): `h = future.new(); rd = lo(h);
+  wr = hi(h); store value @ ptr; task.return(rd); future.write(wr, ptr)`.
+  `future.write`'s `memory` option references the value buffer; over the
+  producer's own (exported) memory it is the usual lower→memory→instance
+  circularity → break it with the gMem trampoline (or externalised shared
+  memory, as the spike did).
+- **GOTCHA — wasmtime `--invoke` cannot DISPLAY a future result**
+  (`wasm-wave: unsupported value type` panic *after* the component runs fine).
+  So a runtime-verified e2e cannot just print the export's value; it must compose
+  a **consumer** component that `future.read`s the value and returns a printable
+  scalar. That reader is the runnable slice's other half — `future.read` is async
+  `(readable, ptr) -> status`, so it reuses the **exact pending-await loop** the
+  async-import wrapper already runs (waitable-set.new → waitable.join →
+  waitable-set.wait → subtask.drop) when the read returns STARTED.
+
+So the runnable `future<u32>` vertical is fully specified: a producer (mechanics
+above) + a reader consumer (future.read + the existing await loop), composed and
+run end to end — the next slice.
+
 **Also remaining:** `future<T>` / `stream<T>` parameter+result lowering;
 wiring async into the `concurrent { … }` desugar as an alternative to
 the P2 pollable reactor.
