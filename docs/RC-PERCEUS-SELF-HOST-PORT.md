@@ -2438,3 +2438,30 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   fresh-struct-field, transitively) is the substantive dataflow work; until it lands,
   discarded fresh-ret-call locals keep leaking (sound). `__struct_drop_<T>` (#3868)
   remains the prerequisite that makes the eventual admission fit the #3452 budget.
+- 2026-06-23: **Correction to the entry above — the freshness check IS an
+  interprocedural fixpoint, reconciling #3880 and #3888.** Inspecting `lower_func`'s
+  actual success return (`return LowerResult { ok: true, ops: s.ops, n_locals: ..,
+  arr_slots: arr_slots_of(s), i64_slots: i64_slots_of(s), f64_slots: f64_slots_of(s),
+  .. }`) shows the rc-array fields are initialised from (i) `s.ops`, a field of the
+  fresh threaded `LowerState` local `s`, and (ii) `arr_slots_of(s)` / `i64_slots_of(s)`
+  / `f64_slots_of(s)`, HELPER CALLS that build a fresh `i32[]`. A purely intra-
+  procedural provenance check sees those calls and conservatively says "not fresh" →
+  it REJECTS `lower_func`, the one case worth admitting. To admit it, the check must
+  also classify `arr_slots_of` & co. as FRESH-ARRAY-RETURNING — which is the same
+  freshness question one level down. So the real shape is an interprocedural least-
+  fixpoint over TWO predicates — `fresh_array_ret_fns` (a fn whose every `return e`
+  is a fresh array: literal / append-chain off a literal / a call to a
+  fresh_array_ret_fn) and `return_fresh_struct_ret_fns` (a fresh-ret struct fn whose
+  every return-struct rc-array field init is fresh: array literal / fresh non-param
+  local / field of a fresh struct local / call to a fresh_array_ret_fn) — seeded
+  empty and iterated to a fixpoint, exactly like `borrowable_params_interproc` /
+  `consume_safe_params_interproc`. The timing argument from the prior entry still
+  holds (the exit-sweep makes mode (a)/escape a non-issue; the decision is about the
+  callee's returned-field provenance) — but proving that provenance for the valuable
+  callees is interprocedural, not intra-procedural. Net: #3880's "interprocedural
+  classifier" was right about the shape, #3888 was right that it's the callee's
+  return-field provenance (not an escape-analysis change) and that mode (a) is inert;
+  this is the reconciled, accurate spec for the slice. Effort + risk unchanged
+  (substantial dataflow; a false-positive freshness = UAF, caught by the per-module
+  RUN gate), value unchanged (admits the `lower_func`/`parse_x` discarded-local hot
+  path once it lands), prerequisite unchanged (`__struct_drop_<T>`, #3868).
