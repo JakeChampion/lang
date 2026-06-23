@@ -311,6 +311,42 @@ func TestScanExternImportsAsyncMixedMultiParam(t *testing.T) {
 	}
 }
 
+// TestScanExternImportsAsyncMemParamStringResult covers the composite-param-AND-
+// result quadrant — `@import async function echo(s: string): string`. The raw
+// import flattens to `(ptr, len, retptr) -> i32 status`, the wrapper's result is
+// the Fern heap string pair (i32, i32), and it pulls in the string-lift helpers
+// (__bytes_to_lang_string) AND cabi_realloc (the lower's realloc materialises the
+// result bytes in this module's memory) on top of the string-param normalisation
+// helpers.
+func TestScanExternImportsAsyncMemParamStringResult(t *testing.T) {
+	ext := &ir.ExternFunc{
+		Name:       "echo",
+		Iface:      "test:dep/d",
+		WITName:    "echo",
+		Params:     []ast.Param{{Name: "s", Type: ast.StringType{}}},
+		ReturnType: ast.StringType{},
+		Async:      true,
+	}
+	var in importNeeds
+	var helpers runtimeNeeds
+	_, wrappers, err := scanExternImports(progCallingExtern("echo", ext), &in, &helpers)
+	if err != nil {
+		t.Fatalf("scanExternImports: %v", err)
+	}
+	w, ok := wrappers["echo"]
+	if !ok {
+		t.Fatalf("missing wrapper for %q", "echo")
+	}
+	if len(w.results) != 2 || w.results[0] != encode.ValtypeI32 || w.results[1] != encode.ValtypeI32 {
+		t.Errorf("wrapper results = %v, want [i32 i32] (Fern heap string)", w.results)
+	}
+	for _, h := range []string{"echo", "__fern_alloc", "__fern_str_len", "__fern_str_byte", "__bytes_to_lang_string", "cabi_realloc"} {
+		if !helpers.set[h] {
+			t.Errorf("helper %q not pulled in for the async string-param/string-result import", h)
+		}
+	}
+}
+
 // TestScanExternImportsAsyncRejectsRecordParam pins the remaining slice boundary:
 // an async import whose param is a record/tuple (a composite needing field
 // marshalling) is still rejected with a clear error — only scalar / string /

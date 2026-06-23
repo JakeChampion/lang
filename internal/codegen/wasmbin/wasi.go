@@ -946,7 +946,7 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 				// Records / bool[] / enum params, or a composite result alongside, are
 				// not supported yet.
 				anyString := false
-				allLowerable := externScalarType(ret)
+				paramsOK := true
 				for _, p := range ex.Params {
 					switch {
 					case isStringType(p.Type):
@@ -954,15 +954,21 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 					case isScalarArrayParamType(p.Type) || externScalarType(p.Type):
 						// already lowerable
 					default:
-						allLowerable = false
+						paramsOK = false
 					}
 				}
-				if !allLowerable {
-					return nil, nil, fmt.Errorf("@import %q (%s/%s): an async extern with a composite parameter only supports scalar / string / numeric-array params + a scalar result so far (records, bool[], enums, and composite results are not supported) (docs/WASI-PREVIEW3-ASYNC-PLAN.md)", ex.Name, ex.Iface, ex.WITName)
-				}
-				results, err := resultValtypes(ret)
-				if err != nil {
-					return nil, nil, fmt.Errorf("@import %q (%s/%s): %w", ex.Name, ex.Iface, ex.WITName, err)
+				// The result may be a scalar, a `string`, or a numeric `list<T>`
+				// (the composite-result-alongside-a-mem-param quadrant, e.g.
+				// `fetch(url: string): string`). The string/list bytes are
+				// materialised in this module's memory via the lower's realloc option,
+				// so the composer must set NeedsRealloc and the module exports
+				// cabi_realloc. Records / bool[] / enum params or results are not
+				// supported yet.
+				resScalar := externScalarType(ret)
+				resString := isStringType(ret)
+				resList := isScalarArrayParamType(ret)
+				if !paramsOK || !(resScalar || resString || resList) {
+					return nil, nil, fmt.Errorf("@import %q (%s/%s): an async extern with a composite parameter only supports scalar / string / numeric-array params + a scalar / string / numeric-array result so far (records, bool[], enums are not supported) (docs/WASI-PREVIEW3-ASYNC-PLAN.md)", ex.Name, ex.Iface, ex.WITName)
 				}
 				rawParams, err := canonicalExternParamValtypes(ex)
 				if err != nil {
@@ -973,16 +979,44 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 				// raw import: (canon params…, retptr) -> i32 status.
 				specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: rawParams, results: []byte{encode.ValtypeI32}}
 				in.add(rawName)
+				var resKind asyncResultKind
+				var wrapResults []byte
+				var resultVT byte
+				var stride uint32
+				switch {
+				case resString:
+					resKind = asyncResString
+					wrapResults = []byte{encode.ValtypeI32, encode.ValtypeI32} // Fern heap string (data, len)
+				case resList:
+					resKind = asyncResList
+					wrapResults = []byte{encode.ValtypeI32} // Fern array (element pointer)
+					stride = scalarArrayElemStride(ret)
+				default:
+					resKind = asyncResScalar
+					results, err := resultValtypes(ret)
+					if err != nil {
+						return nil, nil, fmt.Errorf("@import %q (%s/%s): %w", ex.Name, ex.Iface, ex.WITName, err)
+					}
+					wrapResults = results
+					resultVT = results[0]
+				}
 				wrappers[ex.Name] = runtimeHelperSpec{
 					params:  params, // Fern flattening: string → (data, len); scalar/array → 1
-					results: results,
-					body:    buildExternAsyncMemParamWrapper(ex, rawName, results[0]),
+					results: wrapResults,
+					body:    buildExternAsyncMemParamWrapper(ex, rawName, resKind, resultVT, stride),
 				}
 				helpers.add(ex.Name)
 				helpers.add("__fern_alloc")
 				if anyString {
 					helpers.add("__fern_str_len")
 					helpers.add("__fern_str_byte")
+				}
+				if resString {
+					helpers.add("__bytes_to_lang_string")
+					helpers.add("cabi_realloc")
+				}
+				if resList {
+					helpers.add("cabi_realloc")
 				}
 				continue
 			}

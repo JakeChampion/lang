@@ -520,9 +520,25 @@ realloc]` lift over a pre-encoded param-valtype vector).
 fetch("hi", 40); }`, composes it against the mixed-param provider (which
 task-returns `len + n`), and runs `run()` → **42** (len "hi" = 2, + 40).
 
-**Still remaining:** record / bool[] / enum params to an async import, and a
-composite (string/list/record) result alongside a mem param. The *pending*
-(`waitable-set`) await path is **DONE** (see above).
+**Composite result alongside a mem param — DONE, runnable from real Fern
+source.** The last param×result quadrant: an async import that BOTH takes a mem
+param AND returns a `string`/numeric-`list<T>` (the HTTP-like `fetch(url) ->
+body` shape). `buildExternAsyncMemParamWrapper` gained a result-kind tail
+(scalar read / `string` lift via `__bytes_to_lang_string` / `list` copy into a
+length-prefixed Fern array); `scanExternImports` accepts a scalar/string/list
+result there and pulls in `cabi_realloc` (the lower's realloc materialises the
+result bytes in the consumer's memory — `NeedsRealloc`). The provider side adds
+`component.BuildAsyncLiftedExportComponentStringParamStringResult`, which unions
+the `[memory, realloc]` param lift with the gMem-trampolined string `task.return`
+result. `TestWasmP3AsyncImportStringParamStringResultFromFern` compiles a real
+Fern `@import async function echo(s: string): string` + `run() { var r =
+echo("hello"); return r.len(); }`, composes it against the echo provider, and
+runs `run()` → **5**. So a mem param and a composite result now flow together
+across an awaited import.
+
+**Still remaining:** record / bool[] / enum params (or a record/tuple result) to
+an async import; `future<T>` / `stream<T>`. The *pending* (`waitable-set`) await
+path and the scalar/string/list param×result matrix are **DONE**.
 
 **Also remaining:** `future<T>` / `stream<T>` parameter+result lowering;
 wiring async into the `concurrent { … }` desugar as an alternative to
