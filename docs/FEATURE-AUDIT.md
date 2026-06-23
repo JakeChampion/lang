@@ -251,6 +251,27 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — std/string slice + extract surface: pure-Fern std/test coverage (self-host-gated)
+
+New `examples/tests/string_slice_extract_test.fern` covers the std/string
+substring-extraction + manipulation surface left out by both `strings_test` and
+`string_classify_transform_test`: `before` / `after` / `between` / `split_once`
+(delimiter extraction), `remove_prefix` / `remove_suffix` (affix stripping),
+`strip_quotes` (quote unwrapping → Option), `common_prefix` / `common_suffix`
+(shared run), `repeat` / `reverse_words` / `wrap` / `indent` (construction), and
+`chunks` (fixed-width slicing → `string[]`). 19 tests. A coverage audit
+confirmed all of these were untested at the example-suite layer.
+
+These mix `string -> string`, `-> Option[string]`, `-> Option[(string,
+string)]`, and `-> string[]` return shapes, so the suite exercises Option/tuple
+`match` and array assertions through the self-host IR path on real stdlib
+bodies — a wider shape mix than the predicate-only classify/transform suite.
+On the self-host **differential** gate (both x86 + arm64). Gated by
+`TestRunnerStringSliceExtractExamplePasses` (interp) + `string_slice_extract` in
+`TestSelfHostStdTestE2E` / `…Arm64`. (Local arm64 run initially hit a disk-full
+infra error in `buildLangBinForInterp` — cleared the bincache and it passed;
+not a codegen issue.)
+
 ### 2026-06-22 — std/string classify + transform surface: pure-Fern std/test coverage (self-host-gated)
 
 New `examples/tests/string_classify_transform_test.fern` covers the std/string
