@@ -251,6 +251,39 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — `remove_file(path)` lowers on IR + remaining AST-router frontier map
+
+`remove_file` (unlink → `Option[IoError]`) had a full AST runtime
+(`__fern_remove_file`) but no IR lowering, so it bailed `BAIL call[remove_file]`.
+Now lowers as `op_remove_file` → the same runtime the AST path calls (x86
+transcribed, arm64 reused from the heap block, wasm ineligible) — the same recipe
+as `remove_dir_all`/`temp_dir`/`read_dir`. `filesystem_ops` flips AST → IR;
+gated by `TestSelfHostRemoveFileIR`; fixpoint byte-identical.
+
+**Frontier map** — the remaining `examples/tests/*_test.fern` that route AST,
+with the first real (post-monomorphisation) blocker each (from `asm_modload_run
+-ir-probe` + a named-symbol diagnostic). The cheap fs/builtin recipe is now
+exhausted; what's left clusters into a few deeper root causes:
+
+- **Array-method desugar gap** — `.join` / `.concat` / `.reverse` / `.flat_map`
+  on a typed array receiver mis-dispatch as `i32.<m>` (the array methods don't get
+  the `__method_Array_<m>` helper, so they fall to the prim path which types an
+  array as `i32`). Shared by `array_combinators`, `array_structural_verbs`,
+  `array_hof`, `strings`, `string_slice_extract` — **~5 modules, one root cause**;
+  highest-leverage next target.
+- **`subprocess` not lowered on IR** — `process_assertions`,
+  `process_output_shortcuts`, `lang_binary_e2e` (3 modules; a heavy fork/exec
+  runtime, same lowering recipe as the fs builtins).
+- **`Map.iter` not intercepted on IR** — `json_roundtrip` (`m.iter()` →
+  `BAIL call[Map.iter]`; needs the map-iter builtin interception like keys/values).
+- **Tuple-array-returning method element typing** — `map_verbs`
+  (`for e in m.entries()`: the snapshot var doesn't recover the `(i32,i32)[]`
+  element tuple tags; needs a tuple-array return-type recovery).
+- **Deeper / parallel-owned** — `io_buffered` (BytesWriter, RC), `async_concurrent`
+  / `async_runtime` (async), `timing` (clock/sleep `BAIL lower`), `fuzz_corpus`
+  (`BAIL lower`). `iter` / `batch7` / `env_unreachable` show only std/test helper
+  generics post-mono (a monomorphisation artifact, not a construct gap).
+
 ### 2026-06-23 — lambda_captures excludes Some/Ok/Err → Option/Result-returning lambdas route IR
 
 A no-capture lambda whose body constructs an Option/Result
