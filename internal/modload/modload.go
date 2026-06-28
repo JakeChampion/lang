@@ -1363,6 +1363,9 @@ func collectLocalsStmt(s ast.Stmt, dst map[string]bool) {
 	case *ast.For:
 		collectLocalsStmt(x.Init, dst)
 		collectLocalsStmt(x.Body, dst)
+	case *ast.ForEach:
+		dst[x.Var] = true
+		collectLocalsStmt(x.Body, dst)
 	case *ast.Var:
 		dst[x.Name] = true
 	case *ast.Destructure:
@@ -1421,6 +1424,9 @@ func (r *rewriter) rewriteStmt(s ast.Stmt) {
 		if x.Step != nil {
 			r.rewriteStmt(x.Step)
 		}
+		r.rewriteStmt(x.Body)
+	case *ast.ForEach:
+		r.rewriteExpr(&x.Iter)
 		r.rewriteStmt(x.Body)
 	case *ast.Return:
 		if x.Value != nil {

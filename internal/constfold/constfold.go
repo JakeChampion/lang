@@ -321,6 +321,9 @@ func (s *substituter) walkStmt(st ast.Stmt) {
 			s.walkStmt(x.Step)
 		}
 		s.walkStmt(x.Body)
+	case *ast.ForEach:
+		s.walkExpr(&x.Iter)
+		s.walkStmt(x.Body)
 	case *ast.Return:
 		if x.Value != nil {
 			s.walkExpr(&x.Value)

@@ -2011,6 +2011,58 @@ type For struct {
 	Label string
 }
 
+// ForEach is the un-desugared `for IDENT in Iter Body` loop (the plain,
+// non-range, non-map-tuple form). The parser emits it instead of desugaring at
+// parse time, so a later type-aware pass can choose the lowering by Iter's type:
+// an array/string/slice → the `.len()` + index loop; a `stream[T]` → a lazy
+// per-element read loop. ID gives the desugar unique helper-var names.
+// See docs/STREAM-TYPE-SURFACE.md.
+type ForEach struct {
+	P      Position
+	ID     int
+	Var    string
+	VarPos Position
+	Iter   Expr
+	Body   Stmt
+	Label  string
+}
+
+// DesugarForEachArray lowers a ForEach over an array/string/slice to the
+// `.len()` + index C-style loop — the exact shape the parser used to build at
+// parse time (moved here so a type-aware pass owns the choice of lowering). The
+// step lives on the For (not appended to the body) so `continue` still advances
+// the index; the index decls live on the enclosing block so an outer loop does
+// not re-zero them.
+func DesugarForEachArray(fe *ForEach) *Block {
+	kw := fe.P
+	iterName := fmt.Sprintf("__foreach_iter_%d", fe.ID)
+	idxName := fmt.Sprintf("__foreach_idx_%d", fe.ID)
+	lenName := fmt.Sprintf("__foreach_len_%d", fe.ID)
+	mkIdent := func(name string) *Ident { return &Ident{P: kw, Name: name} }
+	mkNum := func(v int64) *NumberLit { return &NumberLit{P: kw, Value: v} }
+
+	declIter := &Var{P: kw, Name: iterName, Init: fe.Iter}
+	declLen := &Var{P: kw, Name: lenName, Init: &Call{P: kw, Callee: &FieldAccess{P: kw, Target: mkIdent(iterName), Field: "len", FieldPos: kw}}}
+	declIdx := &Var{P: kw, Name: idxName, Init: mkNum(0)}
+	bindUser := &Var{P: fe.VarPos, Name: fe.Var, Init: &Index{P: fe.VarPos, Array: mkIdent(iterName), Idx: mkIdent(idxName)}}
+	stepStmt := &ExprStmt{P: kw, Expr: &Assign{P: kw, Target: mkIdent(idxName), Value: &Binary{P: kw, Op: "+", Left: mkIdent(idxName), Right: mkNum(1)}}}
+
+	innerStmts := []Stmt{bindUser}
+	if blk, ok := fe.Body.(*Block); ok {
+		innerStmts = append(innerStmts, blk.Stmts...)
+	} else {
+		innerStmts = append(innerStmts, fe.Body)
+	}
+	forLoop := &For{
+		P:     kw,
+		Cond:  &Binary{P: kw, Op: "<", Left: mkIdent(idxName), Right: mkIdent(lenName)},
+		Step:  stepStmt,
+		Body:  &Block{P: kw, Stmts: innerStmts},
+		Label: fe.Label,
+	}
+	return &Block{P: kw, Stmts: []Stmt{declIter, declLen, declIdx, forLoop}}
+}
+
 // Break / Continue carry an optional Label naming an enclosing labeled
 // loop to target; empty means the innermost loop (the existing behaviour).
 type Break struct {
@@ -2190,6 +2242,7 @@ func (s *IfLet) Pos() Position                  { return s.P }
 func (s *LetElse) Pos() Position                { return s.P }
 func (s *While) Pos() Position                  { return s.P }
 func (s *For) Pos() Position                    { return s.P }
+func (s *ForEach) Pos() Position                { return s.P }
 func (s *Break) Pos() Position                  { return s.P }
 func (s *Continue) Pos() Position               { return s.P }
 func (s *Return) Pos() Position                 { return s.P }
@@ -2209,6 +2262,7 @@ func (*IfLet) isStmt()       {}
 func (*LetElse) isStmt()     {}
 func (*While) isStmt()       {}
 func (*For) isStmt()         {}
+func (*ForEach) isStmt()     {}
 func (*Break) isStmt()       {}
 func (*Continue) isStmt()    {}
 func (*Return) isStmt()      {}
