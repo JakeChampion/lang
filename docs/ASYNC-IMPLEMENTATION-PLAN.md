@@ -446,10 +446,19 @@ protocol leak) and `await` can sit in arbitrary control flow.
   bodies but not loop CONDITIONS (re-evaluated per iteration) or nested
   functions / lambdas. So the transform only ever sees binding-form awaits.
   Covered by `start_expr` in `async_task_fn_test.fern` and `TestParseTaskFunctionDesugar`.
-- **Remaining:** richer loop bodies (`break` / `continue` / nested control flow /
-  `return` inside an await-bearing loop), `await` in a loop CONDITION, early
-  returns before an await, non-i32 carried/await types, and pairing with Phase 1/4
-  so awaited calls do real I/O rather than the in-memory reactor's `register(value)`.
+- **Loop-body control flow — DONE (`break` / `continue` / nested `if`s):** the
+  loop's EXIT (code after the loop) is factored into its own function
+  `__task_exit_d(carried…, r)` so the `!cond` path AND any `break` can both jump
+  to it; `continue` tail-calls the loop; `return E` is `Done(E)`. `buildLoopBody`
+  now lowers nested `if`s in the loop body via the same push-rest-into-branches
+  merge machinery and maps the terminators with `wrapLoopReturns`
+  (`blockTerminates` counts `break`/`continue`). Labeled break/continue, nested
+  await-loops, and await in a match/switch inside a loop are rejected. Covered by
+  `start_bc` in `async_task_fn_test.fern` and `TestParseTaskFunctionDesugar`.
+- **Remaining:** `await` in a loop CONDITION, early returns before an await,
+  nested await-bearing loops, non-i32 carried/await types, and pairing with Phase
+  1/4 so awaited calls do real I/O rather than the in-memory reactor's
+  `register(value)`.
 - **Self-hosted parser port** (`examples/self_host/parser.fern`) — the
   desugar must be mirrored there before the Go compiler retires.
   Deferred while the self-host SSA-by-default migration is in flight

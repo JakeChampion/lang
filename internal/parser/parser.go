@@ -3480,40 +3480,52 @@ func buildTaskWhile(stmts []ast.Stmt, whileIdx int, rxName string, depth *int, s
 	*depth++
 	loopName := fmt.Sprintf("__task_loop_%d", d)
 	lrName := fmt.Sprintf("__task_lr_%d", d)
-
-	// loop body: each path ends in `return loopName(carried…, <reactor>)`.
-	loweredBody := buildLoopBody(body, lrName, depth, loopName, carried, fn, errp)
-	// exit continuation: `rest` as a normal segment in the loop's reactor.
-	exitSeg := buildTaskSegment(rest, lrName, depth, append([]string{}, localScope...), fn, errp)
+	exitName := fmt.Sprintf("__task_exit_%d", d)
+	erName := fmt.Sprintf("__task_er_%d", d)
 
 	// Carried vars are i32 — the task runtime is i32-throughout (Step.Done(i32),
 	// register(i32), woken values), so every loop-carried datum is an i32 here.
 	loopI32 := ast.NumberType{Width: 32, Signed: true}
-	loopParams := make([]ast.Param, 0, len(carried)+1)
-	for _, c := range carried {
-		loopParams = append(loopParams, ast.Param{Name: c, Type: loopI32})
+	paramsWith := func(reactorName string) []ast.Param {
+		ps := make([]ast.Param, 0, len(carried)+1)
+		for _, c := range carried {
+			ps = append(ps, ast.Param{Name: c, Type: loopI32})
+		}
+		return append(ps, ast.Param{Name: reactorName, Type: reactorType})
 	}
-	loopParams = append(loopParams, ast.Param{Name: lrName, Type: reactorType})
+	callWith := func(name, reactorName string) *ast.Return {
+		args := make([]ast.Expr, 0, len(carried)+1)
+		for _, c := range carried {
+			args = append(args, mkIdent(c))
+		}
+		args = append(args, mkIdent(reactorName))
+		return &ast.Return{P: p, Value: &ast.Call{P: p, Callee: mkIdent(name), Args: args}}
+	}
 
-	loopStmts := make([]ast.Stmt, 0, 2)
-	loopStmts = append(loopStmts, &ast.If{P: p, Cond: w.Cond, Then: &ast.Block{P: p, Stmts: loweredBody}})
-	loopStmts = append(loopStmts, exitSeg...)
+	// exit continuation: `rest` (code after the loop) as its own function so the
+	// loop's `!cond` path AND any `break` can both jump to it.
+	exitSeg := buildTaskSegment(rest, erName, depth, append([]string{}, localScope...), fn, errp)
+	exitFn := &ast.FuncDecl{
+		P: p, Name: exitName, IsLocal: true,
+		Params: paramsWith(erName), ReturnType: pairType,
+		Body: &ast.Block{P: p, Stmts: exitSeg},
+	}
+
+	// loop body: each path ends in a tail-call — next iteration (loopName), exit
+	// (exitName, for `break`/`!cond`), or `Done` (for `return`).
+	loweredBody := buildLoopBody(body, lrName, depth, loopName, exitName, carried, fn, errp)
 	loopFn := &ast.FuncDecl{
 		P: p, Name: loopName, IsLocal: true,
-		Params: loopParams, ReturnType: pairType,
-		Body: &ast.Block{P: p, Stmts: loopStmts},
+		Params: paramsWith(lrName), ReturnType: pairType,
+		Body: &ast.Block{P: p, Stmts: []ast.Stmt{
+			&ast.If{P: p, Cond: w.Cond, Then: &ast.Block{P: p, Stmts: loweredBody}},
+			callWith(exitName, lrName), // !cond → exit
+		}},
 	}
 
-	callArgs := make([]ast.Expr, 0, len(carried)+1)
-	for _, c := range carried {
-		callArgs = append(callArgs, mkIdent(c))
-	}
-	callArgs = append(callArgs, mkIdent(rxName))
-	startCall := &ast.Return{P: p, Value: &ast.Call{P: p, Callee: mkIdent(loopName), Args: callArgs}}
-
-	out := make([]ast.Stmt, 0, len(lead)+2)
+	out := make([]ast.Stmt, 0, len(lead)+3)
 	out = append(out, lead...)
-	out = append(out, loopFn, startCall)
+	out = append(out, exitFn, loopFn, callWith(loopName, rxName))
 	return out
 }
 
@@ -3559,7 +3571,7 @@ func rewriteForToWhile(stmts []ast.Stmt, forIdx int, p ast.Position) []ast.Stmt 
 // EXPR;` binding into register + resume, exactly like buildTaskSegment, but the
 // terminal is the tail-call. Rejects any nested control flow / `return` / `break`
 // / `continue` in the body (richer loop bodies are a later slice).
-func buildLoopBody(stmts []ast.Stmt, rxName string, depth *int, loopName string, carried []string, fn *ast.FuncDecl, errp *error) []ast.Stmt {
+func buildLoopBody(stmts []ast.Stmt, rxName string, depth *int, loopName, exitName string, carried []string, fn *ast.FuncDecl, errp *error) []ast.Stmt {
 	if *errp != nil {
 		return stmts
 	}
@@ -3568,36 +3580,110 @@ func buildLoopBody(stmts []ast.Stmt, rxName string, depth *int, loopName string,
 	reactorType := ast.StructType{Name: "task.Reactor"}
 	pairType := ast.TupleType{Elems: []ast.Type{ast.StructType{Name: "task.Step"}, reactorType}}
 	i32 := ast.NumberType{Width: 32, Signed: true}
+	branchStmts := func(s ast.Stmt) []ast.Stmt {
+		if b, ok := s.(*ast.Block); ok {
+			return append([]ast.Stmt{}, b.Stmts...)
+		}
+		if s == nil {
+			return nil
+		}
+		return []ast.Stmt{s}
+	}
 
+	// Flatten an await-bearing top-level Block (range loops desugar to one).
+	{
+		flat := make([]ast.Stmt, 0, len(stmts))
+		flattened := false
+		for _, s := range stmts {
+			if b, ok := s.(*ast.Block); ok && taskAwaitCount(b) > 0 {
+				flat = append(flat, b.Stmts...)
+				flattened = true
+			} else {
+				flat = append(flat, s)
+			}
+		}
+		if flattened {
+			return buildLoopBody(flat, rxName, depth, loopName, exitName, carried, fn, errp)
+		}
+	}
+
+	// A nested await-bearing loop inside a loop body is not supported yet.
+	for _, s := range stmts {
+		switch s.(type) {
+		case *ast.While, *ast.For, *ast.ForEach:
+			if taskAwaitCount(s) > 0 {
+				*errp = errorAt(fn.P, "function %q: a nested `await`-bearing loop is not supported yet (Phase 3b loops)", fn.Name)
+				return stmts
+			}
+		case *ast.Match, *ast.Switch:
+			if taskAwaitCount(s) > 0 {
+				*errp = errorAt(fn.P, "function %q: an `await` inside a match/switch in a loop body is not supported yet (Phase 3b loops)", fn.Name)
+				return stmts
+			}
+		}
+	}
+
+	// First await-bearing top-level `if`: lower like the conditional merge —
+	// push the post-if remainder into each non-terminating branch and recurse,
+	// so every branch ends in a terminator (return/break/continue/iteration).
+	for i, s := range stmts {
+		ifst, ok := s.(*ast.If)
+		if !ok || taskAwaitCount(ifst) == 0 {
+			if taskAwaitCount(s) > 0 {
+				break // an earlier await binding owns the split
+			}
+			continue
+		}
+		lead := stmts[:i]
+		rest := stmts[i+1:]
+		cloneStmts := func(ss []ast.Stmt) []ast.Stmt {
+			out := make([]ast.Stmt, len(ss))
+			for j, x := range ss {
+				out[j] = ast.CloneStmt(x)
+			}
+			return out
+		}
+		thenStmts := branchStmts(ifst.Then)
+		if !blockTerminates(thenStmts) {
+			thenStmts = append(thenStmts, cloneStmts(rest)...)
+		}
+		var elseStmts []ast.Stmt
+		if ifst.Else == nil {
+			elseStmts = cloneStmts(rest)
+		} else {
+			elseStmts = branchStmts(ifst.Else)
+			if !blockTerminates(elseStmts) {
+				elseStmts = append(elseStmts, cloneStmts(rest)...)
+			}
+		}
+		ifst.Then = &ast.Block{P: p, Stmts: buildLoopBody(thenStmts, rxName, depth, loopName, exitName, carried, fn, errp)}
+		ifst.Else = &ast.Block{P: p, Stmts: buildLoopBody(elseStmts, rxName, depth, loopName, exitName, carried, fn, errp)}
+		out := make([]ast.Stmt, 0, len(lead)+1)
+		out = append(out, lead...)
+		out = append(out, ifst)
+		return out
+	}
+
+	// First top-level `var NAME = await EXPR;` binding: split into register + resume.
 	awaitIdx := -1
 	for i, s := range stmts {
-		switch s.(type) {
-		case *ast.If, *ast.While, *ast.For, *ast.Match, *ast.Switch, *ast.Return, *ast.Break, *ast.Continue:
-			*errp = errorAt(fn.P, "function %q: this loop-body shape is not supported yet — Phase 3b loops slice 1 needs a straight-line body (top-level `await` bindings; no nested control flow, `break`, `continue`, or `return`)", fn.Name)
-			return stmts
-		case *ast.Var:
-			if v := s.(*ast.Var); v.Init != nil {
-				if _, isAwait := v.Init.(*ast.Await); isAwait && awaitIdx < 0 {
-					awaitIdx = i
-				}
+		if v, ok := s.(*ast.Var); ok {
+			if _, isAwait := v.Init.(*ast.Await); isAwait {
+				awaitIdx = i
+				break
 			}
 		}
 	}
 	if awaitIdx < 0 {
-		// End of a (sub)iteration: append the tail-call to the next iteration.
-		if taskAwaitCount(&ast.Block{Stmts: stmts}) > 0 {
-			*errp = errorAt(fn.P, "function %q: an `await` outside a top-level `var NAME = await EXPR;` binding is not supported yet (Phase 3b)", fn.Name)
-			return stmts
-		}
-		callArgs := make([]ast.Expr, 0, len(carried)+1)
-		for _, c := range carried {
-			callArgs = append(callArgs, mkIdent(c))
-		}
-		callArgs = append(callArgs, mkIdent(rxName))
-		tail := &ast.Return{P: p, Value: &ast.Call{P: p, Callee: mkIdent(loopName), Args: callArgs}}
+		// Leaf: map return/break/continue (wrapLoopReturns), then append the
+		// next-iteration tail-call unless control already left this path.
 		out := make([]ast.Stmt, 0, len(stmts)+1)
-		out = append(out, stmts...)
-		out = append(out, tail)
+		for _, s := range stmts {
+			out = append(out, wrapLoopReturns(s, rxName, loopName, exitName, carried, p, errp))
+		}
+		if !blockTerminates(stmts) {
+			out = append(out, loopTailCall(loopName, rxName, carried, p))
+		}
 		return out
 	}
 
@@ -3606,6 +3692,12 @@ func buildLoopBody(stmts []ast.Stmt, rxName string, depth *int, loopName string,
 	operand := v.Init.(*ast.Await).Operand
 	wokenName := v.Name
 	post := stmts[awaitIdx+1:]
+	for _, s := range pre {
+		if stmtHasTopReturn(s) {
+			*errp = errorAt(fn.P, "function %q: a `return`/`break`/`continue` before an `await` in a loop is not supported yet (Phase 3b)", fn.Name)
+			return stmts
+		}
+	}
 	if taskAwaitCount(&ast.Block{Stmts: pre}) > 0 {
 		*errp = errorAt(fn.P, "function %q: an `await` outside a top-level `var NAME = await EXPR;` binding is not supported yet (Phase 3b)", fn.Name)
 		return stmts
@@ -3618,7 +3710,7 @@ func buildLoopBody(stmts []ast.Stmt, rxName string, depth *int, loopName string,
 	rName := fmt.Sprintf("__task_r_%d", d)
 	resumeName := fmt.Sprintf("__task_resume_%d", d)
 
-	resumeBody := buildLoopBody(post, rName, depth, loopName, carried, fn, errp)
+	resumeBody := buildLoopBody(post, rName, depth, loopName, exitName, carried, fn, errp)
 	resume := &ast.FuncDecl{
 		P: p, Name: resumeName, IsLocal: true,
 		Params:     []ast.Param{{Name: wokenName, Type: i32}, {Name: rName, Type: reactorType}},
@@ -3636,6 +3728,57 @@ func buildLoopBody(stmts []ast.Stmt, rxName string, depth *int, loopName string,
 	out = append(out, pre...)
 	out = append(out, destr, resume, finalRet)
 	return out
+}
+
+// loopTailCall builds `return <name>(carried…, rxName);` — the next-iteration
+// (loopName) or exit (exitName) tail-call inside a lowered loop body.
+func loopTailCall(name, rxName string, carried []string, p ast.Position) *ast.Return {
+	args := make([]ast.Expr, 0, len(carried)+1)
+	for _, c := range carried {
+		args = append(args, &ast.Ident{P: p, Name: c})
+	}
+	args = append(args, &ast.Ident{P: p, Name: rxName})
+	return &ast.Return{P: p, Value: &ast.Call{P: p, Callee: &ast.Ident{P: p, Name: name}, Args: args}}
+}
+
+// wrapLoopReturns maps the control-flow terminators of a loop-body leaf to their
+// task-runtime forms (recursing through `if`/blocks, not nested functions): a
+// `return E` → `return (Done(E), rxName)` (exits the whole task), a `break` →
+// the exit tail-call, a `continue` → the next-iteration tail-call. Labeled
+// break/continue are rejected (only the innermost loop is supported).
+func wrapLoopReturns(s ast.Stmt, rxName, loopName, exitName string, carried []string, p ast.Position, errp *error) ast.Stmt {
+	switch x := s.(type) {
+	case *ast.Return:
+		if x.Value == nil {
+			if *errp == nil {
+				*errp = errorAt(x.P, "a task function cannot `return;` without a value (it must yield its i32 result)")
+			}
+			return x
+		}
+		done := &ast.Call{P: x.P, Callee: &ast.Ident{P: x.P, Name: "Done"}, Args: []ast.Expr{x.Value}}
+		x.Value = &ast.TupleLit{P: x.P, Elems: []ast.Expr{done, &ast.Ident{P: x.P, Name: rxName}}}
+		return x
+	case *ast.Break:
+		if x.Label != "" && *errp == nil {
+			*errp = errorAt(x.P, "a labeled `break` in an `await`-bearing loop is not supported yet (Phase 3b loops)")
+		}
+		return loopTailCall(exitName, rxName, carried, p)
+	case *ast.Continue:
+		if x.Label != "" && *errp == nil {
+			*errp = errorAt(x.P, "a labeled `continue` in an `await`-bearing loop is not supported yet (Phase 3b loops)")
+		}
+		return loopTailCall(loopName, rxName, carried, p)
+	case *ast.Block:
+		for i := range x.Stmts {
+			x.Stmts[i] = wrapLoopReturns(x.Stmts[i], rxName, loopName, exitName, carried, p, errp)
+		}
+	case *ast.If:
+		x.Then = wrapLoopReturns(x.Then, rxName, loopName, exitName, carried, p, errp)
+		if x.Else != nil {
+			x.Else = wrapLoopReturns(x.Else, rxName, loopName, exitName, carried, p, errp)
+		}
+	}
+	return s
 }
 
 // declsIn returns the variable names bound at the TOP level of a statement list
@@ -3740,6 +3883,10 @@ func blockTerminates(stmts []ast.Stmt) bool {
 	switch x := stmts[len(stmts)-1].(type) {
 	case *ast.Return:
 		return x.Value != nil
+	case *ast.Break, *ast.Continue:
+		// In a loop body these become tail-calls (exit / next iteration), so a
+		// branch ending in one is terminating — no fall-through continuation.
+		return true
 	case *ast.If:
 		if x.Else == nil {
 			return false

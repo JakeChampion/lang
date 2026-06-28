@@ -233,9 +233,32 @@ function test_expr_await(): test.TestOutcome {
     }
 }
 
+// `break` / `continue` + nested `if`s inside an await-bearing loop. The loop's
+// exit is factored into a function `break` jumps to; `continue` re-enters the loop.
+function start_bc(n: i32, step: i32): i32 {
+    var acc = 0;
+    var i = 0;
+    while (i < n) {
+        var x = await step;
+        i = i + 1;
+        if (x == 0) { continue; }   // skip (not hit here, but lowered)
+        if (acc > 40) { break; }    // stop once big enough
+        acc = acc + x;
+    }
+    return acc;
+}
+
+function test_break_continue(): test.TestOutcome {
+    concurrent {
+        var t = spawn start_bc(100, 14);  // 14,28,42 → acc>40 → break → 42
+        return test.assert_eq(await t, 42);
+    }
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("async-task-fn");
     r = r.it("expr_await", test_expr_await());
+    r = r.it("break_continue", test_break_continue());
     r = r.it("fanout", test_fanout());
     r = r.it("single", test_single());
     r = r.it("scaled", test_scaled());
