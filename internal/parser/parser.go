@@ -3321,6 +3321,19 @@ func hoistTaskExprAwaits(stmts []ast.Stmt, counter *int) []ast.Stmt {
 				x.Else = hoistStmtBody(x.Else, counter)
 			}
 		case *ast.While:
+			// An `await` in the loop CONDITION can't be hoisted out (it's
+			// re-evaluated each iteration). Rewrite `while (C) { B }` →
+			// `while (true) { if (!C) { break; } B }` so the condition's await
+			// becomes an ordinary in-body `if`-condition await (hoisted below) and
+			// `break` exits — both already supported.
+			if taskAwaitCount(x.Cond) > 0 {
+				guard := &ast.If{P: x.P,
+					Cond: &ast.Unary{P: x.P, Op: "!", Operand: x.Cond},
+					Then: &ast.Block{P: x.P, Stmts: []ast.Stmt{&ast.Break{P: x.P}}}}
+				inner := append([]ast.Stmt{guard}, branchBlockStmts(x.Body)...)
+				x.Cond = &ast.BoolLit{P: x.P, Value: true}
+				x.Body = &ast.Block{P: x.P, Stmts: inner}
+			}
 			x.Body = hoistStmtBody(x.Body, counter)
 		case *ast.For:
 			x.Body = hoistStmtBody(x.Body, counter)
@@ -3779,6 +3792,18 @@ func wrapLoopReturns(s ast.Stmt, rxName, loopName, exitName string, carried []st
 		}
 	}
 	return s
+}
+
+// branchBlockStmts returns the statements of a branch/body that is a `*ast.Block`
+// (or the single statement itself, or nil) — the common "unwrap a body" helper.
+func branchBlockStmts(s ast.Stmt) []ast.Stmt {
+	if s == nil {
+		return nil
+	}
+	if b, ok := s.(*ast.Block); ok {
+		return b.Stmts
+	}
+	return []ast.Stmt{s}
 }
 
 // declsIn returns the variable names bound at the TOP level of a statement list
