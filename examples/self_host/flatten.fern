@@ -52,7 +52,24 @@ import "./parser";
 // TestOutcome). The self-host compiler's own modules sidestep this by
 // always qualifying (`parser.ExprIdent`), so this only widens what
 // downstream code can spell, never changing existing resolution.
-pub struct RewriteCtx { modnames: string[], prefix: string, declnames: string[], locals: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[] }
+pub struct RewriteCtx { modnames: string[], modprefixes: string[], prefix: string, declnames: string[], locals: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[] }
+
+// resolve_prefix maps a qualifier (`io` in `io.foo`) to the mangle prefix the
+// module's decls actually carry (`io_buffered`). For a plain `import "std/x"` the
+// qualifier IS the prefix (basename); for `import "std/x" as y` they differ, so
+// modnames[i] holds the qualifier and modprefixes[i] the basename. Falls back to
+// the qualifier itself when no parallel entry exists (identity, the old behaviour).
+function resolve_prefix(qualifier: string, ctx: RewriteCtx): string {
+    var i: i32 = 0;
+    while (i < ctx.modnames.len()) {
+        if (ctx.modnames[i] == qualifier) {
+            if (i < ctx.modprefixes.len()) { return ctx.modprefixes[i]; }
+            return qualifier;
+        }
+        i = i + 1;
+    }
+    return qualifier;
+}
 
 // lookup_reexport redirects a naively-mangled qualified reference
 // (`facade__name`) to the original module's mangled symbol
@@ -138,6 +155,23 @@ pub function mod_names(mod: parser.Module): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < mod.imports.len()) {
+        // The QUALIFIER used in source: the alias when `import "p" as alias`, else
+        // the path basename. mod_prefixes returns the parallel mangle prefixes.
+        if (mod.imports[i].alias.len() > 0) { out = out.append(mod.imports[i].alias); }
+        else { out = out.append(basename(mod.imports[i].path)); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// mod_prefixes returns, parallel to mod_names, the mangle PREFIX each imported
+// module's decls carry — always the path basename (`io_buffered`), regardless of
+// any source alias (`io`). resolve_prefix pairs the two so `io.foo` mangles to
+// `io_buffered__foo`.
+pub function mod_prefixes(mod: parser.Module): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.imports.len()) {
         out = out.append(basename(mod.imports[i].path));
         i = i + 1;
     }
@@ -198,8 +232,10 @@ pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
     }
     var dot: i32 = first_dot(tn);
     if (dot >= 0) {
-        var prefix: string = tn[0:dot];
-        if (is_in(prefix, ctx.modnames)) {
+        var qual: string = tn[0:dot];
+        if (is_in(qual, ctx.modnames)) {
+            // Resolve the qualifier to the module's mangle prefix (alias-aware).
+            var prefix: string = resolve_prefix(qual, ctx);
             // Split any generic/array suffix off the base name so a
             // re-exported `facade.Point[]` redirects on `Point` and
             // re-attaches the `[]`.
@@ -259,7 +295,8 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
             match (fa.obj) {
                 parser.ExprIdent(id) => {
                     if (is_in(id.name, ctx.modnames)) {
-                        var mangled: string = lookup_reexport(id.name + "__" + fa.field, ctx);
+                        // Alias-aware: `io.foo` -> `io_buffered__foo`.
+                        var mangled: string = lookup_reexport(resolve_prefix(id.name, ctx) + "__" + fa.field, ctx);
                         return parser.ExprIdent { name: mangled, line: id.line, col: id.col };
                     }
                 },
@@ -546,7 +583,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         // Body/params rewrite under a ctx that knows this function's local
         // bindings, so a local shadowing a module decl is left unmangled.
         var bctx: RewriteCtx = RewriteCtx {
-            modnames: ctx.modnames, prefix: ctx.prefix,
+            modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix,
             declnames: ctx.declnames, locals: collect_local_names(fd),
             ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled,
             reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets
@@ -600,7 +637,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         aliases: aliases,
         imports: mod.imports,
         top_stmts: rewrite_block(mod.top_stmts, RewriteCtx {
-            modnames: ctx.modnames, prefix: ctx.prefix, declnames: ctx.declnames,
+            modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames,
             locals: collect_locals_stmts(mod.top_stmts, []),
             ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled,
             reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets
@@ -616,7 +653,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
 // the entry module (whose own decls keep their bare names).
 pub function flatten_qualified(mod: parser.Module, ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[]): parser.Module {
     var empty: string[] = [];
-    var ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), prefix: "", declnames: empty, locals: empty, ivar_names: ivar_names, ivar_mangled: ivar_mangled, reexport_keys: reexport_keys, reexport_targets: reexport_targets };
+    var ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), modprefixes: mod_prefixes(mod), prefix: "", declnames: empty, locals: empty, ivar_names: ivar_names, ivar_mangled: ivar_mangled, reexport_keys: reexport_keys, reexport_targets: reexport_targets };
     return rewrite_module_bodies(mod, ctx);
 }
 
@@ -652,6 +689,7 @@ pub function collect_decl_names(mod: parser.Module): string[] {
 pub function mangle_module(mod: parser.Module, prefix: string, ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[]): parser.Module {
     var ctx: RewriteCtx = RewriteCtx {
         modnames: mod_names(mod),
+        modprefixes: mod_prefixes(mod),
         prefix: prefix,
         declnames: collect_decl_names(mod),
         locals: [],
@@ -1010,7 +1048,7 @@ function main(): i32 {
     ivm = ivm.append("test__Fail");
     var rxk: string[] = [];
     var rxt: string[] = [];
-    var ctx: RewriteCtx = RewriteCtx { modnames: mn, prefix: "lx", declnames: dn, locals: [], ivar_names: ivn, ivar_mangled: ivm, reexport_keys: rxk, reexport_targets: rxt };
+    var ctx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, locals: [], ivar_names: ivn, ivar_mangled: ivm, reexport_keys: rxk, reexport_targets: rxt };
     if (rewrite_type_name("lexer.Token[]", ctx) != "lexer__Token[]") { return 90; }
     if (rewrite_type_name("Token[]", ctx) != "lx__Token[]") { return 91; }
     if (rewrite_type_name("Token", ctx) != "lx__Token") { return 92; }
@@ -1028,7 +1066,7 @@ function main(): i32 {
     rxk2 = rxk2.append("lexer__Token");
     var rxt2: string[] = [];
     rxt2 = rxt2.append("orig__Token");
-    var rctx: RewriteCtx = RewriteCtx { modnames: mn, prefix: "lx", declnames: dn, locals: [], ivar_names: ivn, ivar_mangled: ivm, reexport_keys: rxk2, reexport_targets: rxt2 };
+    var rctx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, locals: [], ivar_names: ivn, ivar_mangled: ivm, reexport_keys: rxk2, reexport_targets: rxt2 };
     if (rewrite_type_name("lexer.Token", rctx) != "orig__Token") { return 97; }
     if (rewrite_type_name("lexer.Token[]", rctx) != "orig__Token[]") { return 98; }
     // A non-re-exported qualified type still mangles normally.
