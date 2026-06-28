@@ -95,6 +95,14 @@ function ts_names_expr(e: parser.Expr, acc: string[]): string[] {
         // that simple name. Also recurse into the object.
         parser.ExprFieldAccess(fa) => {
             acc = acc.append(fa.field);
+            // An array-method call `arr.<m>(...)` (`.join` / `.concat` /
+            // `.reverse` / `.flat_map` / `.sort_by` / std/array's distinct,
+            // mode, …) dispatches to the auto-discovered `__method_Array_<m>`
+            // helper, but the syntax names only `<m>` — so without this the
+            // helper looks unreachable and gets pruned, dropping the whole
+            // module to the AST emitter (the IR path then bails `i32.<m>`).
+            // Append the helper's canonical token so ts_kept_name retains it.
+            acc = acc.append("__method_Array_" + fa.field);
             return ts_names_expr(fa.obj, acc);
         },
         // Walk the WHOLE lambda body — every function it calls is reachable.
@@ -164,6 +172,31 @@ function ts_func_names(fd: parser.FuncDecl, acc: string[]): string[] {
     return acc;
 }
 
+// ts_array_method_canon returns the canonical `__method_Array_<m>` token of an
+// array-method helper name — stripping any `<mod>__` mangling prefix modload
+// added — or "" if `name` is not such a helper. The method-call syntax
+// `arr.<m>(...)` references the helper only by `m`, so treeshake traces it by
+// this token (appended at every `.<m>` field access) rather than by the
+// mangled function name, which the syntax never spells.
+function ts_array_method_canon(name: string): string {
+    var marker: string = "__method_Array_";
+    if (name.len() < marker.len()) { return ""; }
+    var i: i32 = 0;
+    while (i <= name.len() - marker.len()) {
+        if (name[i : i + marker.len()] == marker) { return name[i : name.len()]; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// ts_kept_name reports whether function `name` is reachable: by exact name, or
+// — for an array-method helper — by its canonical token being in `refs`.
+function ts_kept_name(name: string, refs: string[]): boolean {
+    if (util.has_str(refs, name)) { return true; }
+    var canon: string = ts_array_method_canon(name);
+    return canon.len() > 0 && util.has_str(refs, canon);
+}
+
 // treeshake returns `mod` with `mod.funcs` pruned to those reachable, by name,
 // from the roots (`main`, top-level statements, WIT exports). Structs / enums /
 // aliases / imports / top_stmts / exports are preserved unchanged (only the
@@ -185,7 +218,7 @@ pub function treeshake(mod: parser.Module): parser.Module {
         changed = false;
         var fi: i32 = 0;
         while (fi < mod.funcs.len()) {
-            if (util.has_str(refs, mod.funcs[fi].name)) {
+            if (ts_kept_name(mod.funcs[fi].name, refs)) {
                 var body_names: string[] = ts_func_names(mod.funcs[fi], []);
                 var bi: i32 = 0;
                 while (bi < body_names.len()) {
@@ -204,7 +237,7 @@ pub function treeshake(mod: parser.Module): parser.Module {
     var kept: parser.FuncDecl[] = [];
     var ki: i32 = 0;
     while (ki < mod.funcs.len()) {
-        if (util.has_str(refs, mod.funcs[ki].name)) { kept = kept.append(mod.funcs[ki]); }
+        if (ts_kept_name(mod.funcs[ki].name, refs)) { kept = kept.append(mod.funcs[ki]); }
         ki = ki + 1;
     }
     return parser.Module { funcs: kept, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
