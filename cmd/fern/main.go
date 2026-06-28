@@ -50,6 +50,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -524,6 +525,16 @@ func writeGeneratedFile(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 
+// repeatedString collects a flag that may be passed multiple times (e.g.
+// `-async-provider a=x.wasm -async-provider b=y.wasm`).
+type repeatedString []string
+
+func (r *repeatedString) String() string { return strings.Join(*r, ",") }
+func (r *repeatedString) Set(v string) error {
+	*r = append(*r, v)
+	return nil
+}
+
 func main() {
 	out := flag.String("o", "", "output binary path; if unset, assembly is written to stdout")
 	target := flag.String("target", "arm64", "code-generation backend: arm64 (default, Linux ELF), arm64-android (arm64 Linux ELF as a static position-independent executable for Android), arm64-darwin (native Apple Silicon macOS), x86-64 (Linux ELF, in-process native backend by default), wasm (CLI component), wasi-http (HTTP handler component implementing wasi:http/incoming-handler), or wasm-ssa (experimental SSA-direct wasm core module; supports i32/i64/f32/f64, memory + alloc, string literals; pass -component-wrap-cli to lift as a wasi:cli/run component runnable via plain `wasmtime run`)")
@@ -538,7 +549,8 @@ func main() {
 	componentWrap := flag.Bool("component-wrap", false, "with -target wasm-bin: wrap the core module as a self-contained preview-2 component via internal/wasm/component (no wasm-tools shell-out, no preview-1 adapter). Lifts main() as a component-level u32-returning export. Supports any mix of the migrated preview-2 imports; unrecognised imports surface a clear error.")
 	componentWrapCli := flag.Bool("component-wrap-cli", false, "like -component-wrap but emits the wasi:cli/run@0.2.0 export shape so the produced component runs under plain `wasmtime run prog.wasm` (no --invoke). main()'s return value lowers to result<_, _>: 0 = ok, non-zero = err. void main is supported (auto-wrapped to return 0). Same WASI coverage as -component-wrap.")
 	asyncExport := flag.Bool("async-export", false, "with -target wasm-bin: wrap the core as a WASI Preview-3 component-model-async component exporting `run: async func() -> u32` (lifted from main, which must return i32). The result is delivered via `canon task.return`. Run with `wasmtime run -W component-model-async,component-model-async-stackful --invoke 'run()'`. See docs/WASI-PREVIEW3-ASYNC-PLAN.md.")
-	asyncProvider := flag.String("async-provider", "", "with -target wasm-bin and an `@import async` (WASI Preview-3) program: PATH to a pre-built provider *component* (.wasm) that exports the matching async function, BUNDLED so the result is a single self-contained runnable component (no separate host needed). Supports exactly one async `@import` with scalar parameters and a scalar result (e.g. `@import(\"iface\",\"name\") async function add(a: i32, b: i32): i32;`); the provider must export `name`. See docs/WASI-PREVIEW3-ASYNC-PLAN.md.")
+	var asyncProviders repeatedString
+	flag.Var(&asyncProviders, "async-provider", "with -target wasm-bin and an `@import async` (WASI Preview-3) program: bundle a pre-built provider *component* (.wasm) that exports the matching async function, so the result is a single self-contained runnable component (no separate host needed). Repeatable: `WITNAME=PATH` maps a provider to the async import whose WIT name is WITNAME; a single bare `PATH` is shorthand when the program has exactly one async import. Each provider must export its WITNAME. Scalar params + scalar result only (e.g. `@import(\"iface\",\"name\") async function add(a: i32, b: i32): i32;`). See docs/WASI-PREVIEW3-ASYNC-PLAN.md.")
 	doFmt := flag.Bool("fmt", false, "format the source file and write to stdout (use -w to write back in place, -d to print a diff)")
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite the input file with the formatted output")
 	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between the file and its formatted form; exits 1 when they differ")
@@ -679,7 +691,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "-async-export is mutually exclusive with -component-wrap / -component-wrap-cli")
 		os.Exit(1)
 	}
-	code, err := run(srcPath, *out, *target, *cc, *runIt, *native, *qemu, *componentWrap, *componentWrapCli, *asyncExport, *asyncProvider, *shared, *export, progArgs)
+	code, err := run(srcPath, *out, *target, *cc, *runIt, *native, *qemu, *componentWrap, *componentWrapCli, *asyncExport, asyncProviders, *shared, *export, progArgs)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -908,7 +920,7 @@ func runCheck(srcPath string) error {
 // run drives the full pipeline. The returned int is the exit code that
 // the fern process itself should exit with: 0 in compile-only mode, or
 // the program's own exit code under --run.
-func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, componentWrap, componentWrapCli, asyncExport bool, asyncProvider string, shared bool, export string, progArgs []string) (int, error) {
+func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, componentWrap, componentWrapCli, asyncExport bool, asyncProviders []string, shared bool, export string, progArgs []string) (int, error) {
 	e, err := loadEntry(srcPath)
 	if err != nil {
 		return 1, err
@@ -1012,47 +1024,81 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 					break
 				}
 			}
-			// -async-provider: BUNDLE a bring-your-own provider component so the
-			// program's single async `@import` is satisfied in-component, yielding
-			// one self-contained runnable artifact (rather than a component with an
-			// unresolved import for a separate host to satisfy). See
-			// docs/WASI-PREVIEW3-ASYNC-PLAN.md. Supports exactly one async import
-			// with scalar parameters and a scalar result (string/list/stream
-			// params + results are follow-ons).
-			if asyncProvider != "" {
+			// -async-provider: BUNDLE bring-your-own provider component(s) so the
+			// program's async `@import`s are satisfied in-component, yielding one
+			// self-contained runnable artifact (rather than a component with
+			// unresolved imports for a separate host to satisfy). See
+			// docs/WASI-PREVIEW3-ASYNC-PLAN.md. Each import is mapped to a provider
+			// by `WITNAME=PATH` (repeatable); a single bare `PATH` is shorthand for
+			// the sole import. Scalar params + scalar result only for now.
+			if len(asyncProviders) > 0 {
 				var imps []*ast.FuncDecl
 				for _, fn := range prog.Funcs {
 					if fn.ImportIface != "" && fn.Async {
 						imps = append(imps, fn)
 					}
 				}
-				if len(imps) != 1 {
-					return 1, fmt.Errorf("-async-provider: expected exactly one async @import to bundle, found %d", len(imps))
+				if len(imps) == 0 {
+					return 1, fmt.Errorf("-async-provider: the program has no async @import to bundle")
 				}
-				imp := imps[0]
-				// Lower signature: the scalar params (flattened) followed by the
-				// return-area pointer; the result is the i32 async status.
-				lowerParams := []byte{}
-				for _, p := range imp.Params {
-					vt, ok := asyncScalarCoreValtype(p.Type)
-					if !ok {
-						return 1, fmt.Errorf("-async-provider: async import %q parameter %q has non-scalar type %s; only scalar params are supported so far", imp.Name, p.Name, p.Type.String())
+				// Resolve provider entries to a WIT-name → path map. `WITNAME=PATH`
+				// is explicit; one bare `PATH` is allowed only for a single import.
+				byName := map[string]string{}
+				var bare []string
+				for _, entry := range asyncProviders {
+					if i := strings.IndexByte(entry, '='); i >= 0 {
+						byName[entry[:i]] = entry[i+1:]
+					} else {
+						bare = append(bare, entry)
 					}
-					lowerParams = append(lowerParams, vt)
 				}
-				lowerParams = append(lowerParams, 0x7f) // retptr (i32)
-				provBytes, err := os.ReadFile(asyncProvider)
-				if err != nil {
-					return 1, fmt.Errorf("-async-provider: reading provider component: %w", err)
+				if len(bare) > 0 {
+					if len(bare) == 1 && len(byName) == 0 && len(imps) == 1 {
+						byName[imps[0].ImportWITName] = bare[0]
+					} else {
+						return 1, fmt.Errorf("-async-provider: a bare PATH is only allowed with a single async import; use WITNAME=PATH for %d imports", len(imps))
+					}
 				}
-				comp := component.BuildAsyncImportsAwaitComponent(acore, []component.AsyncImportSpec{{
-					Iface:              imp.ImportIface,
-					WITName:            imp.ImportWITName,
-					Provider:           provBytes,
-					ProviderExportName: imp.ImportWITName,
-					LowerParams:        lowerParams,
-					LowerResults:       []byte{0x7f}, // i32 status
-				}}, "__async_run", asyncExportNm, rvt)
+				specs := make([]component.AsyncImportSpec, 0, len(imps))
+				for _, imp := range imps {
+					path, ok := byName[imp.ImportWITName]
+					if !ok {
+						return 1, fmt.Errorf("-async-provider: no provider for async import %q; pass -async-provider %s=PATH", imp.Name, imp.ImportWITName)
+					}
+					delete(byName, imp.ImportWITName) // mark consumed
+					// Lower signature: scalar params (flattened) + return-area ptr;
+					// the result is the i32 async status.
+					lowerParams := []byte{}
+					for _, p := range imp.Params {
+						vt, ok := asyncScalarCoreValtype(p.Type)
+						if !ok {
+							return 1, fmt.Errorf("-async-provider: async import %q parameter %q has non-scalar type %s; only scalar params are supported so far", imp.Name, p.Name, p.Type.String())
+						}
+						lowerParams = append(lowerParams, vt)
+					}
+					lowerParams = append(lowerParams, 0x7f) // retptr (i32)
+					provBytes, err := os.ReadFile(path)
+					if err != nil {
+						return 1, fmt.Errorf("-async-provider: reading provider %q: %w", path, err)
+					}
+					specs = append(specs, component.AsyncImportSpec{
+						Iface:              imp.ImportIface,
+						WITName:            imp.ImportWITName,
+						Provider:           provBytes,
+						ProviderExportName: imp.ImportWITName,
+						LowerParams:        lowerParams,
+						LowerResults:       []byte{0x7f}, // i32 status
+					})
+				}
+				if len(byName) > 0 {
+					unused := make([]string, 0, len(byName))
+					for name := range byName {
+						unused = append(unused, name)
+					}
+					sort.Strings(unused)
+					return 1, fmt.Errorf("-async-provider: no async import matches %v", unused)
+				}
+				comp := component.BuildAsyncImportsAwaitComponent(acore, specs, "__async_run", asyncExportNm, rvt)
 				if err := os.WriteFile(outPath, comp, 0o644); err != nil {
 					return 1, err
 				}
