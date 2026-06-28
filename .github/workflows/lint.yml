@@ -30,7 +30,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Local-CI sign-off gate. `gh signoff lint` on this commit skips every lint
+  # job below (see docs/CI-SIGNOFF.md). Fork PRs can't sign off; gate fails
+  # open on any error.
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: read
+    outputs:
+      skip: ${{ steps.s.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: s
+        uses: ./.github/actions/signoff-gate
+        with:
+          step: lint
+          sha: ${{ github.event.pull_request.head.sha || github.sha }}
+
   vet:
+    needs: gate
+    if: needs.gate.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,6 +58,8 @@ jobs:
       - run: go vet ./...
 
   build:
+    needs: gate
+    if: needs.gate.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,6 +67,8 @@ jobs:
       - run: go build ./...
 
   fmt-check:
+    needs: gate
+    if: needs.gate.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -52,6 +76,8 @@ jobs:
       - run: make fmt-check
 
   deadcode:
+    needs: gate
+    if: needs.gate.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

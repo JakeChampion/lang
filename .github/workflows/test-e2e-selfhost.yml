@@ -119,8 +119,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Local-CI sign-off gate. `gh signoff e2e-selfhost` on this commit skips the
+  # whole pipeline below (see docs/CI-SIGNOFF.md): `build` is gated directly and
+  # `warm` / `test` cascade-skip through their `needs: build` dependency. Fork
+  # PRs can't sign off; gate fails open on any error.
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: read
+    outputs:
+      skip: ${{ steps.s.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: s
+        uses: ./.github/actions/signoff-gate
+        with:
+          step: e2e-selfhost
+          sha: ${{ github.event.pull_request.head.sha || github.sha }}
+
   # Compile the e2e test binary ONCE per arch; the sharded test jobs reuse it.
   build:
+    needs: gate
+    if: needs.gate.outputs.skip != 'true'
     strategy:
       fail-fast: false
       matrix:
