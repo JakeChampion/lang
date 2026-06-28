@@ -123,3 +123,66 @@ func TestWASMTryDynMultiTrait(t *testing.T) {
 		t.Errorf("wasm exit = %d, want 149", code)
 	}
 }
+
+// Direct construction of `Err(concrete)` into a `Result[_, dyn Trait]` — i.e.
+// boxing the error WITHOUT the `?` operator (#3961). The enum-level coercion
+// `Result[_, Concrete] -> Result[_, dyn Trait]` used to be a no-op that left
+// the payload unboxed, so the concrete struct was stored straight into the
+// `dyn` slot and the later match-arm `e.message()` dispatched through a garbage
+// vtable (segfault on the compiled backends; the interpreter was fine). The
+// checker now injects the same `payload as dyn Trait` cast the `?`-desugar uses
+// (maybeWrapForUnion / variantDynPayloadTypes), so the payload boxes into the
+// `[data, vtable]` fat pointer. Two distinct concrete error types prove the
+// per-type boxing; the Ok arm proves the non-dyn payload is untouched.
+// 43 (Ok) + 7 ("missing") + 7 ("timeout") = 57.
+const directDynErrorSrc = `trait Error { function message(self: Self): string; }
+struct NotFound { what: string }
+impl Error for NotFound { function message(self: Self): string { return self.what; } }
+struct Timeout { secs: i32 }
+impl Error for Timeout { function message(self: Self): string { return "timeout"; } }
+function handler(which: i32): Result[i32, dyn Error] {
+    if (which == 0) { return Ok(43); }
+    if (which == 1) { return Err(NotFound { what: "missing" }); }
+    return Err(Timeout { secs: 5 });
+}
+function main(): i32 {
+    var a: i32 = match (handler(0)) { Ok(v) => v, Err(e) => 0 };
+    var b: i32 = match (handler(1)) { Ok(v) => 0, Err(e) => e.message().len() };
+    var c: i32 = match (handler(2)) { Ok(v) => 0, Err(e) => e.message().len() };
+    return a + b + c;
+}
+`
+
+func TestInterpDirectDynError(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(src, []byte(directDynErrorSrc), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 57 {
+		t.Errorf("exit = %d, want 57\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+}
+
+func TestX86_64DirectDynError(t *testing.T) {
+	if out, code := compileAndRunX86_64(t, directDynErrorSrc); code != 57 {
+		t.Errorf("exit = %d, want 57\n%s", code, out)
+	}
+}
+
+func TestArm64DirectDynError(t *testing.T) {
+	if out, code := compileAndRunArm64(t, directDynErrorSrc); code != 57 {
+		t.Errorf("exit = %d, want 57\n%s", code, out)
+	}
+}
+
+func TestWASMDirectDynError(t *testing.T) {
+	if code := runWasm(t, directDynErrorSrc); code != 57 {
+		t.Errorf("wasm exit = %d, want 57", code)
+	}
+}

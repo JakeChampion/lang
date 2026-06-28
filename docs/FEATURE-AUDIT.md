@@ -275,6 +275,28 @@ Some-mismatch / None arms via set/unset of `FERN_ENV_IR_TEST`, asserting the
 `__fern_env` IR path); the full `TestSelfHostStdTestE2E` differential gate
 (incl. `env_unreachable`) matches interp; Stage-2 fixpoint byte-identical.
 
+### 2026-06-28 — fix: direct `Err(concrete)` into `Result[_, dyn Trait]` (closes #3961)
+
+A `Result[T, dyn Trait]` whose `Err`/`Ok` payload was built by **direct
+construction** — `return Err(NotFound{…})` into `Result[_, dyn Error]`, the
+common `Error`-trait shape (#2707) — **segfaulted on the compiled backends**
+(x86-64/wasm/arm64) while the interpreter was correct. The enum-level coercion
+`Result[_, Concrete] → Result[_, dyn Trait]` was a no-op (assignable permits the
+payload-covariant widen), so the concrete struct was stored straight into the
+`dyn` slot and a later match-arm `e.message()` dispatched through a garbage
+vtable. Only the `?`-operator path worked, because its desugar emits the payload
+as an explicit `Err(errBind as dyn Trait)` cast. Fix: `maybeWrapForUnion` now
+detects a variant-constructor-call holder coerced to the same enum with a `dyn`
+payload slot (resolved via the enum's type-params ↔ dst type-args,
+`variantDynPayloadTypes`) and injects that same `payload as dyn Trait` cast, so
+the payload boxes into the `[data, vtable]` fat pointer. Skips a payload already
+typed `dyn` (re-casting an already-boxed value would over-release at drop).
+Checker-only — the backends already box given the cast (proven: an explicit
+`Err(x as dyn Error)` always compiled). Generalises to `Option[dyn]` and
+multi-trait `dyn A + B`. Gated by `Test{Interp,X86_64,Arm64,WASM}DirectDynError`
+(two distinct concrete error types + an `Ok` arm) +
+`TestX86_64/Arm64DynEnumPayloadNoUnderflow` (the already-dyn no-double-box
+guard). Unblocks #2707.
 ### 2026-06-28 — treeshake retains `__method_Array_*` helpers → array-method modules route IR
 
 The treeshaker (`treeshake.fern`) prunes the stdlib-merged module to functions
