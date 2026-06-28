@@ -2795,96 +2795,135 @@ func (p *parser) parseForEach(kw lexer.Token, label string) (ast.Stmt, error) {
 // body root: functions, hoisted methods, trait default methods, and const
 // initialisers (lambdas / block-exprs within are reached through the expr walk).
 func desugarForEachProgram(prog *ast.Program) {
+	// A `for x in f(args)` whose callee `f` is a module-local `@import async
+	// function f(): stream[T]` iterates the stream LAZILY (element-at-a-time off
+	// the wire), so its ForEach node is LEFT for the checker to desugar once the
+	// stream rewrite has run (docs/STREAM-TYPE-SURFACE.md, L2). Every other
+	// iterand (arrays, strings) is lowered here, at parse time, to the `.len()` +
+	// index C-style loop via ast.DesugarForEachArray. Build that stream-import
+	// name set first so the lowering can tell the two apart.
+	streamFns := map[string]bool{}
+	for _, fn := range prog.Funcs {
+		if fn.ImportIface != "" && fn.Async {
+			// Lazy iteration is u8-only for now: the per-element read returns an
+			// i32 with -1 as the EOF sentinel, which is unambiguous only for byte
+			// elements (0..255). A non-u8 stream still iterates EAGERLY via the
+			// array desugar (collect-then-iterate), unchanged. See
+			// docs/STREAM-TYPE-SURFACE.md.
+			if st, ok := fn.ReturnType.(ast.StreamType); ok {
+				if n, ok := st.Elem.(ast.NumberType); ok && n.NormalWidth() == 8 && !n.Signed {
+					streamFns[fn.Name] = true
+				}
+			}
+		}
+	}
 	for _, fn := range prog.Funcs {
 		if fn.Body != nil {
-			desugarForEachStmt(fn.Body)
+			desugarForEachStmt(fn.Body, streamFns)
 		}
 	}
 	for _, tr := range prog.Traits {
 		for i := range tr.Methods {
 			if tr.Methods[i].Body != nil {
-				desugarForEachStmt(tr.Methods[i].Body)
+				desugarForEachStmt(tr.Methods[i].Body, streamFns)
 			}
 		}
 	}
 	for _, cn := range prog.Consts {
-		desugarForEachExpr(cn.Value)
+		desugarForEachExpr(cn.Value, streamFns)
 	}
+}
+
+// isLazyStreamIter reports whether iterand `e` is a direct call `f(args)` to a
+// module-local async stream import `f` — the one for-in shape that iterates
+// lazily and therefore keeps its ast.ForEach node for the checker to lower.
+func isLazyStreamIter(e ast.Expr, streamFns map[string]bool) bool {
+	call, ok := e.(*ast.Call)
+	if !ok {
+		return false
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	return ok && streamFns[id.Name]
 }
 
 // desugarForEachStmt recursively lowers every ForEach reachable from s, returning
 // the replacement for s. `*ast.Block`-typed fields are mutated in place (return
 // ignored); plain `ast.Stmt` fields (brace-less loop/if bodies can be a bare
 // ForEach) get the return assigned back by the caller.
-func desugarForEachStmt(s ast.Stmt) ast.Stmt {
+func desugarForEachStmt(s ast.Stmt, streamFns map[string]bool) ast.Stmt {
 	switch x := s.(type) {
 	case nil:
 		return nil
 	case *ast.ForEach:
-		x.Body = desugarForEachStmt(x.Body)
-		desugarForEachExpr(x.Iter)
+		x.Body = desugarForEachStmt(x.Body, streamFns)
+		desugarForEachExpr(x.Iter, streamFns)
+		// A lazy stream iterand keeps its ForEach node for the checker (L2);
+		// every other iterand lowers to the array `.len()`+index loop here.
+		if isLazyStreamIter(x.Iter, streamFns) {
+			return x
+		}
 		return ast.DesugarForEachArray(x)
 	case *ast.Block:
 		for i := range x.Stmts {
-			x.Stmts[i] = desugarForEachStmt(x.Stmts[i])
+			x.Stmts[i] = desugarForEachStmt(x.Stmts[i], streamFns)
 		}
 	case *ast.If:
-		desugarForEachExpr(x.Cond)
-		x.Then = desugarForEachStmt(x.Then)
+		desugarForEachExpr(x.Cond, streamFns)
+		x.Then = desugarForEachStmt(x.Then, streamFns)
 		if x.Else != nil {
-			x.Else = desugarForEachStmt(x.Else)
+			x.Else = desugarForEachStmt(x.Else, streamFns)
 		}
 	case *ast.IfLet:
-		desugarForEachExpr(x.Source)
-		x.Then = desugarForEachStmt(x.Then)
+		desugarForEachExpr(x.Source, streamFns)
+		x.Then = desugarForEachStmt(x.Then, streamFns)
 		if x.Else != nil {
-			x.Else = desugarForEachStmt(x.Else)
+			x.Else = desugarForEachStmt(x.Else, streamFns)
 		}
 	case *ast.LetElse:
-		desugarForEachExpr(x.Source)
+		desugarForEachExpr(x.Source, streamFns)
 		if x.Else != nil {
-			desugarForEachStmt(x.Else)
+			desugarForEachStmt(x.Else, streamFns)
 		}
 	case *ast.While:
-		desugarForEachExpr(x.Cond)
-		x.Body = desugarForEachStmt(x.Body)
+		desugarForEachExpr(x.Cond, streamFns)
+		x.Body = desugarForEachStmt(x.Body, streamFns)
 	case *ast.For:
 		if x.Init != nil {
-			x.Init = desugarForEachStmt(x.Init)
+			x.Init = desugarForEachStmt(x.Init, streamFns)
 		}
-		desugarForEachExpr(x.Cond)
+		desugarForEachExpr(x.Cond, streamFns)
 		if x.Step != nil {
-			x.Step = desugarForEachStmt(x.Step)
+			x.Step = desugarForEachStmt(x.Step, streamFns)
 		}
-		x.Body = desugarForEachStmt(x.Body)
+		x.Body = desugarForEachStmt(x.Body, streamFns)
 	case *ast.Match:
-		desugarForEachExpr(x.Tag)
+		desugarForEachExpr(x.Tag, streamFns)
 		for _, arm := range x.Arms {
-			desugarForEachStmt(arm.Body)
+			desugarForEachStmt(arm.Body, streamFns)
 		}
 	case *ast.Switch:
-		desugarForEachExpr(x.Tag)
+		desugarForEachExpr(x.Tag, streamFns)
 		for _, k := range x.Cases {
-			desugarForEachStmt(k.Body)
+			desugarForEachStmt(k.Body, streamFns)
 		}
 		if x.Default != nil {
-			desugarForEachStmt(x.Default)
+			desugarForEachStmt(x.Default, streamFns)
 		}
 	case *ast.Var:
-		desugarForEachExpr(x.Init)
+		desugarForEachExpr(x.Init, streamFns)
 	case *ast.ExprStmt:
-		desugarForEachExpr(x.Expr)
+		desugarForEachExpr(x.Expr, streamFns)
 	case *ast.Return:
-		desugarForEachExpr(x.Value)
+		desugarForEachExpr(x.Value, streamFns)
 	case *ast.Destructure:
-		desugarForEachExpr(x.Init)
+		desugarForEachExpr(x.Init, streamFns)
 	}
 	return s
 }
 
 // desugarForEachExpr lowers for-in nested inside a block-expression or lambda
 // body within an expression tree.
-func desugarForEachExpr(e ast.Expr) {
+func desugarForEachExpr(e ast.Expr, streamFns map[string]bool) {
 	if e == nil {
 		return
 	}
@@ -2892,10 +2931,10 @@ func desugarForEachExpr(e ast.Expr) {
 		switch x := n.(type) {
 		case *ast.BlockExpr:
 			for i := range x.Stmts {
-				x.Stmts[i] = desugarForEachStmt(x.Stmts[i])
+				x.Stmts[i] = desugarForEachStmt(x.Stmts[i], streamFns)
 			}
 		case *ast.Lambda:
-			desugarForEachStmt(x.Body)
+			desugarForEachStmt(x.Body, streamFns)
 		}
 		return true
 	})

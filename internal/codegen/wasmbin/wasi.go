@@ -896,7 +896,12 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 		}
 	}
 	for _, ex := range prog.Externs {
-		if !used[ex.Name] {
+		// A lazily-iterated u8 stream import is reached only through its `f$open`
+		// companion (the checker desugars `for x in f()` to `f$open()` +
+		// `__stream_next_u8` + `__stream_drop`, never a bare `f()`), so the extern
+		// is "used" if EITHER its own name or its `$open` companion appears.
+		usedOpen := used[ex.Name+"$open"]
+		if !used[ex.Name] && !usedOpen {
 			continue
 		}
 		// Parameters must be scalar, `string`, a numeric array, or a record
@@ -1018,13 +1023,44 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 				rawParams := append(append([]byte{}, params...), encode.ValtypeI32) // scalar params + retptr
 				specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: rawParams, results: []byte{encode.ValtypeI32}}
 				in.add(rawName)
-				wrappers[ex.Name] = runtimeHelperSpec{
-					params:  params,
-					results: []byte{encode.ValtypeI32}, // Fern array (element pointer)
-					body:    buildExternAsyncStreamResultWrapper(len(ex.Params), rawName, scalarArrayElemStride(ex.ReturnType)),
-				}
-				helpers.add(ex.Name)
 				helpers.add("__fern_alloc")
+				// VALUE context (`var b: u8[] = f()`, or eager `for x in f()` over a
+				// non-u8 stream): the collect-wrapper drains the whole stream to EOF
+				// into a Fern array, materialised under the Fern name `f`.
+				if used[ex.Name] {
+					wrappers[ex.Name] = runtimeHelperSpec{
+						params:  params,
+						results: []byte{encode.ValtypeI32}, // Fern array (element pointer)
+						body:    buildExternAsyncStreamResultWrapper(len(ex.Params), rawName, scalarArrayElemStride(ex.ReturnType)),
+					}
+					helpers.add(ex.Name)
+				}
+				// LAZY context (`for x in f()` over a u8 stream): the checker desugared
+				// it to `f$open()` + `__stream_next_u8` + `__stream_drop`, so emit the
+				// open-wrapper (collect prologue → readable handle) plus the two generic
+				// per-element helpers (registered once, idempotent across stream imports).
+				// See docs/STREAM-TYPE-SURFACE.md (L2).
+				if usedOpen {
+					openName := ex.Name + "$open"
+					wrappers[openName] = runtimeHelperSpec{
+						params:  params,
+						results: []byte{encode.ValtypeI32}, // readable handle
+						body:    buildExternAsyncStreamOpenWrapper(len(ex.Params), rawName),
+					}
+					helpers.add(openName)
+					wrappers["__stream_next_u8"] = runtimeHelperSpec{
+						params:  []byte{encode.ValtypeI32},
+						results: []byte{encode.ValtypeI32},
+						body:    buildStreamNextU8(),
+					}
+					helpers.add("__stream_next_u8")
+					wrappers["__stream_drop"] = runtimeHelperSpec{
+						params:  []byte{encode.ValtypeI32},
+						results: nil,
+						body:    buildStreamDropReadable(),
+					}
+					helpers.add("__stream_drop")
+				}
 				continue
 			}
 			if hasMemParam {

@@ -1961,6 +1961,38 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		}
 	}
 
+	// Lazy stream iteration (L2): the parser leaves `for x in f(args)` as an
+	// ast.ForEach when `f` is a u8 async stream import (every other iterand was
+	// lowered to the array `.len()`+index loop at parse time). Lower those
+	// surviving ForEach nodes HERE — after modload has mangled cross-module call
+	// sites, so the synthesised `f$open` tracks the (possibly mangled) import
+	// name — into a per-element read loop (ast.DesugarForEachStream), and register
+	// the codegen-helper signatures the loop calls. The helpers (`f$open`,
+	// `__stream_next_u8`, `__stream_drop`) are emitted by wasmbin
+	// (internal/codegen/wasmbin/extern.go). See docs/STREAM-TYPE-SURFACE.md.
+	streamElem := map[string]ast.Type{}
+	for _, fn := range prog.Funcs {
+		if fn.ImportIface == "" || fn.StreamResultElem == nil {
+			continue
+		}
+		if n, ok := fn.StreamResultElem.(ast.NumberType); ok && n.NormalWidth() == 8 && !n.Signed {
+			streamElem[fn.Name] = fn.StreamResultElem
+			// Per-import open helper: the import's scalar params → an i32 readable
+			// handle (the awaited stream-result lower's return value).
+			params := make([]ast.Type, len(fn.Params))
+			for i, p := range fn.Params {
+				params[i] = p.Type
+			}
+			c.info.FuncSigs[fn.Name+"$open"] = &ast.FuncType{Params: params, Result: ast.NumberType{Width: 32, Signed: true}}
+		}
+	}
+	if len(streamElem) > 0 {
+		i32 := ast.NumberType{Width: 32, Signed: true}
+		c.info.FuncSigs["__stream_next_u8"] = &ast.FuncType{Params: []ast.Type{i32}, Result: i32}
+		c.info.FuncSigs["__stream_drop"] = &ast.FuncType{Params: []ast.Type{i32}, Result: ast.VoidType{}}
+		lowerStreamForEachProgram(prog, streamElem)
+	}
+
 	// First pass: gather all top-level signatures so functions can call
 	// each other in any order. Methods are hoisted to mangled
 	// top-level names (`__method_<Type>_<Name>`) with the receiver

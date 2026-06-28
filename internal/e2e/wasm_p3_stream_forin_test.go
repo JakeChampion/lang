@@ -16,25 +16,27 @@ import (
 )
 
 // TestWasmP3StreamForIn locks in that `for x in <stream-returning call>` iterates
-// a stream RESULT directly — no intermediate `var b: u8[] = …` needed:
+// a u8 stream RESULT directly — no intermediate `var b: u8[] = …` needed:
 //
 //	@import("test:dep/d","prod") async function body(): stream[u8];
 //	async function run(): i32 {
 //	    var sum: i32 = 0;
-//	    for x in body() { sum = sum + (x as i32); }   // colorless: collect then iterate
+//	    for x in body() { sum = sum + (x as i32); }   // LAZY: one element at a time
 //	    return sum;
 //	}
 //
-// This works "for free" and consistently with the colorless model: the checker
-// rewrites the `stream[u8]` result to `u8[]` (the eager collected array), so the
-// ordinary array `for-in` desugar (`.len()` + index) iterates it after the
-// collect-wrapper drains the stream to EOF. Runs against the EOF producer → 42.
+// This runs LAZILY (L2, docs/STREAM-TYPE-SURFACE.md): the parser leaves the
+// for-in as an ast.ForEach, and the checker lowers it to a per-element read loop
+// — `var h = body$open(); while (true) { var v = __stream_next_u8(h); if v < 0
+// break; var x = v as u8; BODY } __stream_drop(h)` — so each byte is pulled off
+// the wire (read + await) as the loop turns, never materialising the whole
+// sequence. Result is identical to the eager collect-then-iterate form; the
+// structural difference is pinned by the checker test
+// TestStreamForEachDesugarsToLazyLoop. Runs against the EOF producer → 42.
 //
-// NOTE on "lazy" iteration: true element-at-a-time iteration (process each item
-// as it arrives off the wire, before EOF) is intentionally NOT provided — it is
-// the *colored* async model (each step an implicit await) that Fern's colorless
-// design avoids. Iteration over a stream is therefore eager collect-then-iterate.
-// See docs/STREAM-TYPE-SURFACE.md.
+// (A non-u8 stream, or a value-context `var b: u8[] = body()`, still collects
+// eagerly via the collect-wrapper — the `-1` EOF sentinel of the per-element read
+// is unambiguous only for byte elements. See docs/STREAM-TYPE-SURFACE.md.)
 func TestWasmP3StreamForIn(t *testing.T) {
 	skipIfPreview2Missing(t)
 
