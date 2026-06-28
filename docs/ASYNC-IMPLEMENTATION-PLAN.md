@@ -391,14 +391,26 @@ protocol leak) and `await` can sit in arbitrary control flow.
   fall-through paths → 42) and `TestParseTaskFunctionDesugar` cases (incl.
   rejecting fall-through after an await, and a merge after an await-bearing
   `if/else`).
-- **Slice 3c — remaining (the hard core):** a NON-terminal `if/else` where an
-  await-bearing branch FALLS THROUGH to post-`if` code (a true merge — needs the
-  post-`if` code factored into a shared continuation, with live/mutated state
-  threaded, which the fixed `(i32, Reactor)` continuation shape can't carry today
-  — likely a state-struct or a richer continuation), awaits inside loops (a
-  self-referential / tail-recursive continuation), early returns before an await,
-  and pairing with Phase 1/4 so awaited calls do real I/O rather than the
-  in-memory reactor's `register(value)`.
+- **Slice 3c (merges) — DONE (no runtime change needed after all):** a NON-terminal
+  `if`/`if-else` where an await-bearing branch FALLS THROUGH to shared post-`if`
+  code that uses MUTATED state. The earlier worry — that this needs the `(i32,
+  Reactor)` continuation to carry arbitrary live state — was avoided by a simpler
+  insight: PUSH the post-`if` continuation (REST) into each branch (a deep clone
+  per branch), so every branch becomes terminating and reduces to the unified
+  conditional lowering. Each path's mutation and its use of REST then live in the
+  SAME resume continuation, so value-capture is correct; the branches are
+  mutually exclusive, so REST runs exactly once at runtime. `buildTaskSegment` now
+  handles every conditional shape (3a/3b/3c) with one rule, and `blockTerminates`
+  decides which branches need REST appended. Cost: REST is duplicated per branch
+  (fine in practice; deep nesting is the caveat). Covered by `start_merge` in
+  `async_task_fn_test.fern` (taken + skipped → 42) and `TestParseTaskFunctionDesugar`.
+- **Slice 3c (loops) — remaining (the hard core):** awaits inside `while`/`for`
+  loops — a self-referential / tail-recursive continuation (the loop body's resume
+  re-invokes the loop with updated loop-carried vars). Duplication can't bound this,
+  so it needs the recursive-loop-function lowering with loop-carried state threaded
+  as params. Also remaining: `await` in arbitrary EXPRESSION position (hoist to a
+  temp binding first), early returns before an await, and pairing with Phase 1/4 so
+  awaited calls do real I/O rather than the in-memory reactor's `register(value)`.
 - **Self-hosted parser port** (`examples/self_host/parser.fern`) — the
   desugar must be mirrored there before the Go compiler retires.
   Deferred while the self-host SSA-by-default migration is in flight

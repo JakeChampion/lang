@@ -3081,19 +3081,26 @@ func buildTaskSegment(stmts []ast.Stmt, rxName string, depth *int, fn *ast.FuncD
 			return stmts
 		}
 		// An `await` inside an `if` branch (no top-level binding matched). Find the
-		// first top-level `if` that CONTAINS an `await` and lower it:
-		//   - Slice 3a: a terminating `if/else` (both branches return) as the last
-		//     statement — recurse each branch as its own segment in the shared
-		//     reactor; the branches are mutually exclusive with nothing after.
-		//   - Slice 3b: an await-bearing `if` WITHOUT `else` whose then-branch
-		//     TERMINATES (ends in `return`) — the guard-clause shape. The code
-		//     after the if is the fall-through, reached only on the !cond path
-		//     (the awaiting path returned), so it is a continuation in the SAME
-		//     reactor scope with no live-state merge. Recurse the then-branch and
-		//     the fall-through as segments.
-		// Both are sound under the `(i32, Reactor)` continuation model precisely
-		// because no await-bearing path falls through to post-if code. Awaits in
-		// loops, fall-through after an await, and merge-after-`if/else` are slice 3c.
+		// first top-level `if` that CONTAINS an `await` and lower it by PUSHING the
+		// post-if continuation into each branch, so every branch becomes
+		// terminating and the whole thing reduces to mutually-exclusive segments:
+		//
+		//   `lead; if (c) { THEN } [else { ELSE }] REST`
+		//     → THEN' = THEN terminates ? THEN : THEN ++ REST
+		//       ELSE' = (ELSE ?? <fall-through>) terminates ? … : … ++ REST
+		//       lead; if (c) { <segment THEN'> } else { <segment ELSE'> }
+		//
+		// This unifies every conditional shape: a terminating `if/else` (3a) leaves
+		// the branches untouched; a no-else guard (3b) makes the fall-through the
+		// else; and a TRUE MERGE (3c) — an await-bearing branch that falls through
+		// to shared post-if code that uses mutated state — works because REST is
+		// duplicated into each branch's continuation chain, so each path's mutation
+		// and its use of REST are co-located in one resume (value-capture is
+		// correct). The branches are mutually exclusive, so REST still runs exactly
+		// once at runtime. No `std/task` change. (Cost: REST is duplicated per
+		// branch — fine in practice; pathological nesting is the one caveat.)
+		// Awaits inside LOOPS are not handled here (a self-referential continuation);
+		// they fall to the stray-`await` net below — slice 3c-loops.
 		ifIdx := -1
 		for i, s := range stmts {
 			if ifst, ok := s.(*ast.If); ok && taskAwaitCount(ifst) > 0 {
@@ -3117,36 +3124,43 @@ func buildTaskSegment(stmts []ast.Stmt, rxName string, depth *int, fn *ast.FuncD
 			}
 			branchStmts := func(s ast.Stmt) []ast.Stmt {
 				if b, ok := s.(*ast.Block); ok {
-					return b.Stmts
+					return append([]ast.Stmt{}, b.Stmts...)
+				}
+				if s == nil {
+					return nil
 				}
 				return []ast.Stmt{s}
 			}
-			if ifst.Else != nil {
-				// Slice 3a: terminating if/else; no merge after it.
-				if len(rest) > 0 {
-					*errp = errorAt(fn.P, "function %q: code after an `await`-bearing `if/else` is not supported yet (slice 3c)", fn.Name)
-					return stmts
+			// Push REST into any branch that doesn't already terminate. A nil else
+			// means the !cond path is exactly REST (the fall-through). Each pushed
+			// copy must be a DEEP CLONE — the same statement nodes mustn't be shared
+			// across branches, or the per-branch return-wrapping would mutate them
+			// twice (with the wrong reactor in the second branch).
+			cloneStmts := func(ss []ast.Stmt) []ast.Stmt {
+				out := make([]ast.Stmt, len(ss))
+				for i, s := range ss {
+					out[i] = ast.CloneStmt(s)
 				}
-				ifst.Then = &ast.Block{P: p, Stmts: buildTaskSegment(branchStmts(ifst.Then), rxName, depth, fn, errp)}
-				ifst.Else = &ast.Block{P: p, Stmts: buildTaskSegment(branchStmts(ifst.Else), rxName, depth, fn, errp)}
-				out := make([]ast.Stmt, 0, len(lead)+1)
-				out = append(out, lead...)
-				out = append(out, ifst)
 				return out
 			}
-			// Slice 3b: no-else guard. The then-branch must terminate in `return`
-			// so the awaiting path never falls through to the post-if code.
-			if !endsInReturn(branchStmts(ifst.Then)) {
-				*errp = errorAt(fn.P, "function %q: an `await`-bearing `if` branch must end in `return` (fall-through after `await` is slice 3c)", fn.Name)
-				return stmts
+			thenStmts := branchStmts(ifst.Then)
+			if !blockTerminates(thenStmts) {
+				thenStmts = append(thenStmts, cloneStmts(rest)...)
 			}
-			ifst.Then = &ast.Block{P: p, Stmts: buildTaskSegment(branchStmts(ifst.Then), rxName, depth, fn, errp)}
-			out := make([]ast.Stmt, 0, len(lead)+1+len(rest))
+			var elseStmts []ast.Stmt
+			if ifst.Else == nil {
+				elseStmts = cloneStmts(rest)
+			} else {
+				elseStmts = branchStmts(ifst.Else)
+				if !blockTerminates(elseStmts) {
+					elseStmts = append(elseStmts, cloneStmts(rest)...)
+				}
+			}
+			ifst.Then = &ast.Block{P: p, Stmts: buildTaskSegment(thenStmts, rxName, depth, fn, errp)}
+			ifst.Else = &ast.Block{P: p, Stmts: buildTaskSegment(elseStmts, rxName, depth, fn, errp)}
+			out := make([]ast.Stmt, 0, len(lead)+1)
 			out = append(out, lead...)
 			out = append(out, ifst)
-			// The fall-through (!cond path) is its own segment in the same reactor;
-			// it must end in `return` (validated by the recursion's leaf check).
-			out = append(out, buildTaskSegment(rest, rxName, depth, fn, errp)...)
 			return out
 		}
 		// Plain leaf: end in `return EXPR;`; wrap every return with Done + rxName.
@@ -3261,15 +3275,30 @@ func wrapTaskReturnsBlock(b *ast.Block, rname string, p ast.Position, errp *erro
 	}
 }
 
-// endsInReturn reports whether a statement list's last statement is a value
-// `return` — the terminating shape an await-bearing task branch must have so the
-// awaiting path never falls through to post-branch code (slice 3b).
-func endsInReturn(stmts []ast.Stmt) bool {
+// blockTerminates reports whether a statement list definitely ends control flow
+// (every path returns), so the task-function conditional lowering knows not to
+// append the post-if continuation to it. True when the last statement is a value
+// `return`, or an `if/else` whose both branches terminate (recursively).
+func blockTerminates(stmts []ast.Stmt) bool {
 	if len(stmts) == 0 {
 		return false
 	}
-	r, ok := stmts[len(stmts)-1].(*ast.Return)
-	return ok && r.Value != nil
+	switch x := stmts[len(stmts)-1].(type) {
+	case *ast.Return:
+		return x.Value != nil
+	case *ast.If:
+		if x.Else == nil {
+			return false
+		}
+		branch := func(s ast.Stmt) []ast.Stmt {
+			if b, ok := s.(*ast.Block); ok {
+				return b.Stmts
+			}
+			return []ast.Stmt{s}
+		}
+		return blockTerminates(branch(x.Then)) && blockTerminates(branch(x.Else))
+	}
+	return false
 }
 
 // stmtHasTopReturn reports whether s contains a `return` through ordinary control

@@ -2852,21 +2852,30 @@ func TestParseTaskFunctionDesugar(t *testing.T) {
 	}`); err != nil {
 		t.Errorf("guard-clause await (slice 3b) should transform, got error: %v", err)
 	}
-	// Merge after an await-bearing if/else (code after the merge): not supported yet.
-	if _, err := Parse(`function after(c: i32, a: i32): i32 {
-		if (c > 0) { var x = await a; return x; } else { return 0; }
-		return 5;
-	}`); err == nil {
-		t.Error("expected error for code after an await-bearing if/else (slice 3c)")
-	}
-	// A guard whose await-bearing branch does NOT return (would fall through after
-	// the await): not supported yet (slice 3c).
+	// A TRUE MERGE — an await-bearing branch that falls through to shared post-if
+	// code using mutated state — is now supported (slice 3c) by pushing the
+	// post-if continuation into each branch.
 	if _, err := Parse(`function fallthru(v: i32, hi: i32): i32 {
 		var got = await v;
 		if (got > 100) { var y = await hi; got = got + y; }
 		return got;
+	}`); err != nil {
+		t.Errorf("merge after an await-bearing if (slice 3c) should transform, got error: %v", err)
+	}
+	// Code after an await-bearing if/else (both branches return) — also fine.
+	if _, err := Parse(`function after(c: i32, a: i32): i32 {
+		if (c > 0) { var x = await a; return x; } else { return 0; }
+		return 5;
+	}`); err != nil {
+		t.Errorf("code after an await-bearing if/else (slice 3c) should transform, got error: %v", err)
+	}
+	// Awaits inside a LOOP are still unsupported (a self-referential continuation).
+	if _, err := Parse(`function loopy(n: i32, a: i32): i32 {
+		var acc = 0;
+		while (acc < n) { var x = await a; acc = acc + x; }
+		return acc;
 	}`); err == nil {
-		t.Error("expected error for fall-through after an await in an if branch (slice 3c)")
+		t.Error("expected error for `await` inside a loop (slice 3c-loops)")
 	}
 	// No terminal return after the await.
 	if _, err := Parse(`function noret(a: i32): i32 {

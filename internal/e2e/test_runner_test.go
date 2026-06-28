@@ -698,9 +698,10 @@ func TestRunnerAsyncConcurrentExamplePasses(t *testing.T) {
 // `(Reactor, args…) -> (Step, Reactor)` protocol automatically (no hand-written
 // state machine). Covers a single straight-line await, fan-out, a task with
 // pre-await setup + post-await arithmetic, TWO sequential awaits (slice 2,
-// nested continuations), `await`s inside a terminating if/else (slice 3a,
-// per-branch continuations), and a guard-clause `await` with fall-through
-// (slice 3b). Passing suite → exit 0.
+// nested continuations), `await`s inside a terminating if/else (slice 3a),
+// a guard-clause `await` with fall-through (slice 3b), and a TRUE MERGE — an
+// await-bearing branch that falls through to shared post-if code using mutated
+// state (slice 3c). Passing suite → exit 0.
 func TestRunnerAsyncTaskFnExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/async_task_fn_test.fern")
@@ -708,8 +709,8 @@ func TestRunnerAsyncTaskFnExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	if !strings.Contains(out, "# pass 8") || !strings.Contains(out, "# fail 0") {
-		t.Errorf("expected 8 passes, 0 fails\noutput:\n%s", out)
+	if !strings.Contains(out, "# pass 10") || !strings.Contains(out, "# fail 0") {
+		t.Errorf("expected 10 passes, 0 fails\noutput:\n%s", out)
 	}
 }
 
