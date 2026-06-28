@@ -702,8 +702,9 @@ func TestRunnerAsyncConcurrentExamplePasses(t *testing.T) {
 // nested continuations), `await`s inside a terminating if/else (slice 3a),
 // a guard-clause `await` with fall-through (slice 3b), a TRUE MERGE — an
 // await-bearing branch that falls through to shared post-if code using mutated
-// state (slice 3c) — and an `await` inside a `while` LOOP (loops slice 1, a
-// recursive loop function with loop-carried state). Passing suite → exit 0.
+// state (slice 3c), an `await` inside a `while` LOOP (loops slice 1, a recursive
+// loop function with loop-carried state), and an `await` inside a RANGE `for`
+// loop (loops slice 2, `for` → `while`). Passing suite → exit 0.
 func TestRunnerAsyncTaskFnExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/async_task_fn_test.fern")
@@ -711,8 +712,8 @@ func TestRunnerAsyncTaskFnExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	if !strings.Contains(out, "# pass 12") || !strings.Contains(out, "# fail 0") {
-		t.Errorf("expected 12 passes, 0 fails\noutput:\n%s", out)
+	if !strings.Contains(out, "# pass 13") || !strings.Contains(out, "# fail 0") {
+		t.Errorf("expected 13 passes, 0 fails\noutput:\n%s", out)
 	}
 }
 

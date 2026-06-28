@@ -3069,12 +3069,39 @@ func buildTaskSegment(stmts []ast.Stmt, rxName string, depth *int, scope []strin
 	pairType := ast.TupleType{Elems: []ast.Type{ast.StructType{Name: "task.Step"}, reactorType}}
 	i32 := ast.NumberType{Width: 32, Signed: true}
 
-	// First top-level `await`-bearing WHILE loop — handled before the binding/if
-	// scan so a loop preceding an await binding isn't mis-classified as `pre`.
-	whileIdx := -1
+	// Flatten an await-bearing top-level `Block` into this segment so its inner
+	// statements are visible to the scans below. A range loop `for i in 0..n` parses
+	// to a `Block` wrapping `[var __hi, for(...)]`, so without this its `for` (and
+	// the `await` inside) would be invisible. Synthetic desugar blocks use unique
+	// names, so flattening is safe.
+	{
+		flat := make([]ast.Stmt, 0, len(stmts))
+		flattened := false
+		for _, s := range stmts {
+			if b, ok := s.(*ast.Block); ok && taskAwaitCount(b) > 0 {
+				flat = append(flat, b.Stmts...)
+				flattened = true
+			} else {
+				flat = append(flat, s)
+			}
+		}
+		if flattened {
+			return buildTaskSegment(flat, rxName, depth, scope, fn, errp)
+		}
+	}
+
+	// First top-level `await`-bearing loop — handled before the binding/if scan so
+	// a loop preceding an await binding isn't mis-classified as `pre`. A C-style
+	// `for` (which `for i in 0..n` range loops desugar to at parse time) is first
+	// rewritten to `init; while (cond) { body; step }`, reusing the while lowering.
+	loopIdx, isFor := -1, false
 	for i, s := range stmts {
 		if w, ok := s.(*ast.While); ok && taskAwaitCount(w) > 0 {
-			whileIdx = i
+			loopIdx = i
+			break
+		}
+		if f, ok := s.(*ast.For); ok && taskAwaitCount(f) > 0 {
+			loopIdx, isFor = i, true
 			break
 		}
 		// Stop at the first OTHER await-bearing statement — the binding/if scan
@@ -3083,8 +3110,11 @@ func buildTaskSegment(stmts []ast.Stmt, rxName string, depth *int, scope []strin
 			break
 		}
 	}
-	if whileIdx >= 0 {
-		return buildTaskWhile(stmts, whileIdx, rxName, depth, scope, fn, errp)
+	if loopIdx >= 0 {
+		if isFor {
+			return buildTaskSegment(rewriteForToWhile(stmts, loopIdx, p), rxName, depth, scope, fn, errp)
+		}
+		return buildTaskWhile(stmts, loopIdx, rxName, depth, scope, fn, errp)
 	}
 
 	// First top-level `var NAME = await EXPR;` binding in this segment.
@@ -3344,6 +3374,42 @@ func buildTaskWhile(stmts []ast.Stmt, whileIdx int, rxName string, depth *int, s
 	out := make([]ast.Stmt, 0, len(lead)+2)
 	out = append(out, lead...)
 	out = append(out, loopFn, startCall)
+	return out
+}
+
+// rewriteForToWhile replaces the C-style `ast.For` at stmts[forIdx] with its
+// `while` equivalent — `init; while (cond) { body; step }` — so the task
+// while-loop lowering (buildTaskWhile) handles `for`/range loops too. `init`
+// (the loop-var decl) becomes a lead statement (in scope → carried), and `step`
+// is appended to the body so a normal fall-through advances it. A missing cond is
+// `true`. (`continue` would skip the step, which is why it's rejected for now.)
+func rewriteForToWhile(stmts []ast.Stmt, forIdx int, p ast.Position) []ast.Stmt {
+	f := stmts[forIdx].(*ast.For)
+	asBlock := func(s ast.Stmt) []ast.Stmt {
+		if s == nil {
+			return nil
+		}
+		if b, ok := s.(*ast.Block); ok {
+			return b.Stmts
+		}
+		return []ast.Stmt{s}
+	}
+	body := asBlock(f.Body)
+	if f.Step != nil {
+		body = append(body, f.Step)
+	}
+	cond := f.Cond
+	if cond == nil {
+		cond = &ast.BoolLit{P: p, Value: true}
+	}
+	w := &ast.While{P: f.P, Cond: cond, Body: &ast.Block{P: f.P, Stmts: body}, Label: f.Label}
+	out := make([]ast.Stmt, 0, len(stmts)+1)
+	out = append(out, stmts[:forIdx]...)
+	if f.Init != nil {
+		out = append(out, f.Init)
+	}
+	out = append(out, w)
+	out = append(out, stmts[forIdx+1:]...)
 	return out
 }
 

@@ -423,11 +423,19 @@ protocol leak) and `await` can sit in arbitrary control flow.
   plus a zero-iteration case) and `TestParseTaskFunctionDesugar`.
   Restricted to a STRAIGHT-LINE body (top-level `await` bindings; no nested control
   flow, `break`, `continue`, or `return`); a labeled loop is rejected too.
+- **Slice loops-2 — DONE (range / C-style `for` loops):** an await-bearing
+  C-style `for` (which `for i in 0..n` range loops desugar to at parse) is
+  rewritten to `init; while (cond) { body; step }` (`rewriteForToWhile`) and
+  reuses the while lowering; `init` becomes a lead decl (carried), `step` is
+  appended to the body. `buildTaskSegment` also flattens an await-bearing top-level
+  `Block` first (range loops parse to a `Block` wrapping `[var __hi, for]`).
+  Covered by `start_range` in `async_task_fn_test.fern` and `TestParseTaskFunctionDesugar`.
 - **Remaining:** richer loop bodies (`break` / `continue` / nested control flow /
-  `return` inside an await-bearing loop), `for` loops, `await` in arbitrary
-  EXPRESSION position (hoist to a temp binding first), early returns before an
-  await, non-i32 carried/await types, and pairing with Phase 1/4 so awaited calls
-  do real I/O rather than the in-memory reactor's `register(value)`.
+  `return` inside an await-bearing loop), array `for x in xs` loops (still an
+  `ast.ForEach` at task-transform time), `await` in arbitrary EXPRESSION position
+  (hoist to a temp binding first), early returns before an await, non-i32
+  carried/await types, and pairing with Phase 1/4 so awaited calls do real I/O
+  rather than the in-memory reactor's `register(value)`.
 - **Self-hosted parser port** (`examples/self_host/parser.fern`) — the
   desugar must be mirrored there before the Go compiler retires.
   Deferred while the self-host SSA-by-default migration is in flight

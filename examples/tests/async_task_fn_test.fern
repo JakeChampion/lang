@@ -178,6 +178,24 @@ function test_loop_zero(): test.TestOutcome {
     }
 }
 
+// An `await` inside a RANGE `for` loop (`for i in 0..n`, which parses to a
+// C-style `for` → rewritten to a `while`). Same recursive-loop lowering.
+function start_range(n: i32, step: i32): i32 {
+    var acc = 0;
+    for i in 0..n {
+        var x = await step;
+        acc = acc + x;
+    }
+    return acc;
+}
+
+function test_range_loop(): test.TestOutcome {
+    concurrent {
+        var t = spawn start_range(3, 14);   // 14 + 14 + 14 = 42
+        return test.assert_eq(await t, 42);
+    }
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("async-task-fn");
     r = r.it("fanout", test_fanout());
@@ -192,5 +210,6 @@ function main(): i32 {
     r = r.it("merge_skipped", test_merge_skipped());
     r = r.it("loop", test_loop());
     r = r.it("loop_zero", test_loop_zero());
+    r = r.it("range_loop", test_range_loop());
     return r.finish();
 }
