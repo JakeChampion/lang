@@ -251,6 +251,37 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-28 — arm64 `.text` wall lifted: per-function sections (`-ffunction-sections`)
+
+The self-host arm64 `.text` had reached ~133 MB, right against the AArch64
+`bl`/`R_AARCH64_CALL26` ±128 MiB (134.2 MB) branch range — beyond which `ld`
+fails with `relocation truncated to fit` (the wall flagged in the `subprocess`
+entry below). Root cause pinned with a minimal repro: GNU `ld` auto-inserts
+long-branch veneers BETWEEN input sections but NOT within a single one, and the
+native arm64 backend emitted every function into one monolithic `.text` input
+section. A single object whose `.text` exceeds 128 MiB therefore can't be
+veneered and won't link.
+
+Fix (native `internal/codegen/arm64`): emit each function into its own
+`.section .text.<name>,"ax",@progbits` (the `-ffunction-sections` shape). `ld`
+now veneers every cross-function call that's out of range, lifting the effective
+limit from ±128 MiB to the ±4 GiB ADRP range — so the self-host binary (and any
+arm64 program) can keep growing. ELF/Linux only: the arm64-darwin Mach-O path
+(clang+lld, which already inserts range-extension thunks within a section, and
+uses `__TEXT,__text`) is left unchanged (gated on `!g.darwin`).
+
+Gated by `TestArm64FunctionSectionsELF` / `…DarwinUnaffected`
+(`internal/codegen/arm64`); the full `internal/codegen/arm64` package, every
+`TestArm64*` native-qemu e2e, `TestSelfHostAsmArm64`, and
+`TestArm64DarwinNativeMachO` stay green. This retires the per-feature
+`.text`-shaving the `subprocess` increment needed; future IR-widening no longer
+has to fight the branch-range wall.
+
+> Note: the self-host arm64 **emitter** (`asm_arm64.fern`) does not yet mirror
+> this — a self-host-compiled arm64 binary still emits a single `.text`. That's a
+> follow-up; the native backend (which builds the self-host on arm64 in CI, the
+> path that hit the wall) is fixed.
+
 ### 2026-06-28 — `subprocess(cmd, args, stdin)` lowers on the IR path (flips 3 process modules)
 
 `subprocess(cmd, args, stdin): ProcessResult` (spawn a child, pipe its streams,

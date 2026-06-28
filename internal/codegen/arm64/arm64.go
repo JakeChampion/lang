@@ -6826,6 +6826,18 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	frameSize := 16 + localsSize
 
 	g.line("")
+	// Emit each function into its OWN section (`-ffunction-sections` style) rather
+	// than one monolithic `.text`. On AArch64 a `bl`/`R_AARCH64_CALL26` reaches only
+	// ±128 MiB; GNU `ld` auto-inserts long-branch veneers BETWEEN input sections but
+	// NOT within a single one, so a single `.text` larger than 128 MiB fails to link
+	// with `relocation truncated to fit` (the self-host compiler binary is ~133 MB
+	// and was right at that wall). Per-function sections let `ld` veneer every
+	// cross-function call, lifting the limit to the ±4 GiB ADRP range. ELF/Linux
+	// only — the arm64-darwin Mach-O path links via clang+lld, which already inserts
+	// range-extension thunks within a section, and uses `__TEXT,__text` sections.
+	if !g.darwin {
+		g.line(fmt.Sprintf(".section .text.%s,\"ax\",@progbits", fn.Name))
+	}
 	g.line(fmt.Sprintf(".global %s", fn.Name))
 	g.typeDirective(fn.Name)
 	g.label(fn.Name)
