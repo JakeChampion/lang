@@ -92,7 +92,11 @@ function ts_names_expr(e: parser.Expr, acc: string[]): string[] {
             return acc;
         },
         // A method/field name (`x.eq`) is a reference: keep every function with
-        // that simple name. Also recurse into the object.
+        // that simple name. Also recurse into the object. A method call on an
+        // ARRAY receiver (`p.join(...)`, `p.reversed()`) dispatches to the
+        // `<mod>__method_Array_<field>` helper free function (find_arr_method on
+        // the IR path; find_array_method_func on the AST path) — kept by ts_keep
+        // below, which ties such a helper to its bare-field reference here.
         parser.ExprFieldAccess(fa) => {
             acc = acc.append(fa.field);
             return ts_names_expr(fa.obj, acc);
@@ -168,6 +172,37 @@ function ts_func_names(fd: parser.FuncDecl, acc: string[]): string[] {
 // from the roots (`main`, top-level statements, WIT exports). Structs / enums /
 // aliases / imports / top_stmts / exports are preserved unchanged (only the
 // function list — the IR-budget axis — is pruned). Idempotent.
+// ts_last_index_of returns the start index of the LAST occurrence of `needle`
+// in `hay`, or -1. (No util sibling for substring search; the array-method
+// helper marker is the only caller.)
+function ts_last_index_of(hay: string, needle: string): i32 {
+    var nl: i32 = needle.len();
+    if (nl == 0) { return 0 - 1; }
+    var i: i32 = hay.len() - nl;
+    while (i >= 0) {
+        if (hay[i : i + nl] == needle) { return i; }
+        i = i - 1;
+    }
+    return 0 - 1;
+}
+
+// ts_keep decides whether function `fname` is reachable. Exact-name match is the
+// common case; additionally, an array-method helper `<mod>__method_Array_<m>` is
+// kept whenever the bare method name `<m>` is referenced (a `p.<m>(...)` method
+// call on an array receiver records only `<m>`, and modload mangles the helper's
+// name with a module prefix, so an exact match would miss it and the method
+// would bail to AST). Over-keeping a never-called helper only costs IR budget.
+function ts_keep(fname: string, refs: string[]): boolean {
+    if (util.has_str(refs, fname)) { return true; }
+    var marker: string = "__method_Array_";
+    var idx: i32 = ts_last_index_of(fname, marker);
+    if (idx >= 0) {
+        var method: string = fname[idx + marker.len() : fname.len()];
+        if (util.has_str(refs, method)) { return true; }
+    }
+    return false;
+}
+
 pub function treeshake(mod: parser.Module): parser.Module {
     // Seed the reachable-name set from the roots.
     var refs: string[] = ["main"];
@@ -185,7 +220,7 @@ pub function treeshake(mod: parser.Module): parser.Module {
         changed = false;
         var fi: i32 = 0;
         while (fi < mod.funcs.len()) {
-            if (util.has_str(refs, mod.funcs[fi].name)) {
+            if (ts_keep(mod.funcs[fi].name, refs)) {
                 var body_names: string[] = ts_func_names(mod.funcs[fi], []);
                 var bi: i32 = 0;
                 while (bi < body_names.len()) {
@@ -204,7 +239,7 @@ pub function treeshake(mod: parser.Module): parser.Module {
     var kept: parser.FuncDecl[] = [];
     var ki: i32 = 0;
     while (ki < mod.funcs.len()) {
-        if (util.has_str(refs, mod.funcs[ki].name)) { kept = kept.append(mod.funcs[ki]); }
+        if (ts_keep(mod.funcs[ki].name, refs)) { kept = kept.append(mod.funcs[ki]); }
         ki = ki + 1;
     }
     return parser.Module { funcs: kept, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };

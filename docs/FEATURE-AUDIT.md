@@ -251,6 +251,33 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-28 — self-host: tree-shaking keeps array-method helpers (flips 3 modules to IR)
+
+A method call on an array receiver (`p.join("|")`, `xs.reversed()`) dispatches to
+the `<mod>__method_Array_<field>` helper free function (find_arr_method on the IR
+path; find_array_method_func on the AST path). The tree-shaker recorded only the
+bare field (`"join"` / `"reversed"`) as a reachable name and kept functions by
+**exact name** — but modload mangles the helper with a module prefix
+(`array____method_Array_join`), so the exact match missed it, the helper was
+**pruned**, and the IR array-method dispatch then found nothing and bailed the
+whole module to the AST emitter.
+
+`treeshake.fern` now decides reachability through `ts_keep`: exact-name match as
+before, plus a `*__method_Array_<m>` helper is kept whenever the bare method name
+`<m>` is referenced. (Over-keeping a never-called helper only costs IR budget;
+dropping a referenced one is unsound — the existing prune contract.) This
+**flipped `strings` (15/15), `string_slice_extract` (19/19), and
+`array_combinators` (20/20) from AST to IR**; `array_combinators`' multi-element
+`map` lowers fine (the pre-existing multi-type reuse crash is specific to the
+2-param `concat` shape, not single-array-param helpers). The compiler's own
+sources don't import std/array, so no `__method_Array_*` functions exist there and
+the byte-identical bootstrap fixpoint is unchanged.
+
+Gated by `TestSelfHostArrayMethodTreeshakeIR` (join / reversed / split→join, each
+`-decide == "ir"`, the `__method_Array_` helper present in the asm, exit matching
+the interp oracle); `TestSelfHostBootstrapsItself` and `TestSelfHostStdTestE2E`
+(incl. the three flipped modules) stay green.
+
 ### 2026-06-28 — self-host: `sleep_ms(<i64>)` lowers on IR (flips the `timing` module)
 
 The clock builtins (`monotonic_ns` / `now_unix_ms` / `now_ns`) and `sleep_ms`
