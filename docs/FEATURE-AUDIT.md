@@ -251,6 +251,48 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-28 — self-host: generic array-receiver methods lower on IR (`xs.concat(ys)`, slice 1)
+
+A generic array-receiver method (`(xs: T[]) concat(other: T[]): T[]` in
+std/array) has no struct to instantiate, so it was skipped by *both* self-host
+monomorphisation passes — `monomorphize_module` skips receiver methods,
+`monomorphize_structs` only clones methods on generic *structs*, and an array is
+neither. `T` stayed a free var, so the legacy AST array-method dispatch typed the
+receiver as `i32` and mis-dispatched `i32.concat`, dragging the whole module to
+the AST emitter (the frontier map's highest-leverage target, shared by
+`array_structural_verbs` / `array_combinators` / `array_hof` / `strings`).
+
+`register_array_method_generics` (parser.fern) now folds such a method into a
+bounded free generic `__arrm_concat[T](xs: T[], other: T[])` (receiver as arg0)
+and drops the method decl; `mono_expr`'s new array-method arm rewrites each
+`xs.concat(ys)` call to a free `__arrm_concat(xs, ys)` call, which the existing
+free-generic worklist clones per element type (`__arrm_concat__i32`) — so generic
+array methods ride the proven free-generic monomorphiser instead of the
+i32-mis-dispatching AST path. This **flipped `array_structural_verbs_test.fern`
+from AST to IR** (13/13). The pass is a no-op when no generic array method is
+present, so the byte-identical bootstrap fixpoint is preserved (the compiler's own
+sources call the free `concat(xs, ys)` form, never `xs.concat(ys)`).
+
+Scope (slice 1): closure-free, type-param-free array methods (`concat`) whose
+receiver is a bare array local/param, at a **single element type per program**. A
+generic 2-param array helper (`concat`) lowered at two element types triggers a
+**pre-existing** self-host reuse-analysis crash (`self_overwrite_reuse_sites` →
+runaway `__fern_alloc`) — confirmed reproducible on clean `main` via a plain user
+generic `cat2[T]` with two `for x in <param> { append }` loops at i32+string, so
+it is independent of this change. A guard (`Insts.ihas_other`) keeps a method on
+one element type per program (a second leaves the call in method form → AST), so
+the new IR path never reaches that crash. Closure methods (`map`/`filter`/`fold`/
+`flat_map`/`reduce`/`sort_by`), method-call receivers (chained
+`a.concat(b).concat(c)` — needs array-method return-type inference in
+`mono_infer`), multi-element-type support, and the underlying reuse-analysis crash
+are documented follow-ups.
+
+Gated by `TestSelfHostArrayConcatMethodIR` (i32 / string / array-literal-arg, each
+`-decide == "ir"`, asm carries the `__arrm_concat__` clone, exit matches the
+interp oracle); `TestSelfHostBootstrapsItself`, `TestSelfHostArrayMethodSyntaxX86_64`
+(the `__method_Array_*` convention), `TestSelfHostOpTraitGenericIR`, and
+`TestSelfHostStdTestE2E` (incl. `array_structural_verbs`) stay green.
+
 ### 2026-06-28 — `@derive(json.Json)`'s `from_json` extracts `i64` fields (#2695 follow-up)
 
 The deserialise half of `@derive(json.Json)` (the `from_json` synthesis) handled

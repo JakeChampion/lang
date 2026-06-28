@@ -4043,6 +4043,20 @@ function (a: Insts) iadd(n: string, t: string): Insts {
     if (a.ihas(n, t)) { return a; }
     return Insts { inames: a.inames.append(n), itypes: a.itypes.append(t) };
 }
+// ihas_other reports whether `n` is already recorded at a DIFFERENT
+// concrete type than `t`. The array-method path uses this to keep a
+// generic array method on a single element type per program: a second
+// distinct element type leaves the `recv.m(args)` call in method form
+// (→ AST), avoiding a pre-existing self-host crash that lowering a
+// 2-param array helper (`concat`) at two element types triggers.
+function (a: Insts) ihas_other(n: string, t: string): boolean {
+    var i: i32 = 0;
+    while (i < a.inames.len()) {
+        if (a.inames[i] == n && a.itypes[i] != t) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
 
 struct RExpr { rexpr: Expr, rins: Insts }
 struct RStmtOne { rstmt: Stmt, renv: MEnv, rins2: Insts }
@@ -4477,6 +4491,40 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                         },
                         _ => {}
                     }
+                    // Value-receiver generic array method `recv.m(args)` —
+                    // m was folded to a bounded free generic `__arrm_m[T]`
+                    // by register_array_method_generics. When recv is
+                    // array-typed, fold it into arg0 and emit a free call
+                    // the worklist instantiates to `__arrm_m__<elem>`.
+                    // Checked after the module-qualified case so a real
+                    // `mod.f(args)` still wins.
+                    var amn: string = "__arrm_" + fac.field;
+                    var amg: i32 = bg_index(funcs, amn);
+                    if (amg >= 0) {
+                        var rty: string = mono_infer(fac.obj, env, funcs);
+                        if (type_ends_arr(rty)) {
+                            var raw: Expr[] = [fac.obj];
+                            var rk: i32 = 0;
+                            while (rk < c.args.len()) { raw = raw.append(c.args[rk]); rk = rk + 1; }
+                            var ct3: string = infer_inst(funcs[amg], raw, env, funcs);
+                            // Keep a generic array method on ONE element type per
+                            // program: a second distinct element type leaves the call
+                            // in method form (→ AST), sidestepping a pre-existing
+                            // self-host crash when a 2-param array helper (`concat`)
+                            // is lowered at two element types. Single-element-type use
+                            // (the common case) still rides the IR path.
+                            if (ct3.len() > 0 && cur.ihas_other(amn, ct3)) { ct3 = ""; }
+                            if (ct3.len() > 0) {
+                                var ro: RExpr = mono_expr(fac.obj, env, funcs, cur);
+                                cur = ro.rins;
+                                var folded: Expr[] = [ro.rexpr];
+                                var fk: i32 = 0;
+                                while (fk < nargs.len()) { folded = folded.append(nargs[fk]); fk = fk + 1; }
+                                cur = cur.iadd(amn, ct3);
+                                return RExpr { rexpr: ExprCall { callee: ExprIdent { name: amn + "__" + sanitize_key(ct3), line: fac.line, col: fac.col }, args: folded, line: c.line, col: c.col, type_argc: 0 }, rins: cur };
+                            }
+                        }
+                    }
                 },
                 _ => {}
             }
@@ -4883,6 +4931,109 @@ function clone_bg(fd: FuncDecl, key: string): FuncDecl {
         ret_type: subst_ty(fd.ret_type, tparams, cts),
         body: subst_stmts(fd.body, tparams, cts), line: fd.line, col: fd.col,
         import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count
+    };
+}
+
+// ---- generic array-method monomorphisation (slice 1) ----------------
+// A generic array-receiver method `(xs: T[]) m(args): R` (std/array's
+// `concat` etc.) has no struct to instantiate and is skipped by both
+// monomorphize_module (receiver methods are skipped) and
+// monomorphize_structs (an array is not a generic struct), so its `T`
+// stays a free var. The legacy AST array-method dispatch then types the
+// receiver as i32 and mis-dispatches `i32.m`, dragging the module to the
+// AST emitter. register_array_method_generics folds such a method into a
+// bounded free generic `__arrm_m[T](xs: T[], args): R` (receiver as
+// arg0) and DROPS the method decl; mono_expr's array-method arm rewrites
+// each `xs.m(ys)` call to `__arrm_m(xs, ys)`, and the existing
+// free-generic worklist clones one concrete `__arrm_m__<elem>` per
+// element type — so generic array methods ride the proven free-generic
+// monomorphiser instead of the i32-mis-dispatching AST path.
+
+// looks_type_var reports whether `s` names a generic type variable: a
+// single uppercase letter (T / U / K / V …), the spelling the stdlib's
+// generic receivers use (`(xs: T[]) concat(…)`). Concrete element types
+// (`i32`, `string`, `JsonValue`) and the type-specific `__method_Array_*`
+// helpers' `i32[]` / `string[]` receivers never match.
+function looks_type_var(s: string): boolean {
+    if (s.len() != 1) { return false; }
+    var c: i32 = s[0];
+    return c >= 65 && c <= 90;
+}
+
+// is_generic_array_method gates the slice-1 array-method path: a method
+// (`receiver_name` set) whose receiver is `<var>[]` for a single type
+// variable, with NO method-level type params and NO closure ("fn")
+// params. The closure / extra-type-param methods (map / filter / fold /
+// flat_map / reduce / sort_by / zip) are deferred follow-ups.
+function is_generic_array_method(fd: FuncDecl): boolean {
+    if (fd.receiver_name.len() == 0) { return false; }
+    if (!type_ends_arr(fd.receiver_type)) { return false; }
+    var elem: string = fd.receiver_type[0 : fd.receiver_type.len() - 2];
+    if (!looks_type_var(elem)) { return false; }
+    if (fd.type_param_count != 0) { return false; }
+    var i: i32 = 0;
+    while (i < fd.params.len()) {
+        if (fd.params[i].type_name == "fn") { return false; }
+        if (fd.params[i].type_name == "fn[]") { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// register_array_method_generics rewrites each generic array-receiver
+// method into a bounded free generic `__arrm_<name>[T]` with the
+// receiver folded to a leading param, and drops the original method. A
+// no-op when none is present (the compiler's own sources call the free
+// `concat(xs, ys)` form, never `xs.concat(ys)`, so the byte-identical
+// bootstrap fixpoint is preserved). Runs before monomorphize_module so
+// the folded body's free `concat(xs, other)` call is rewritten too.
+pub function register_array_method_generics(mod: Module): Module {
+    var any_am: boolean = false;
+    var ci: i32 = 0;
+    while (ci < mod.funcs.len()) {
+        if (is_generic_array_method(mod.funcs[ci])) { any_am = true; }
+        ci = ci + 1;
+    }
+    if (!any_am) { return mod; }
+
+    var out: FuncDecl[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var fd: FuncDecl = mod.funcs[i];
+        if (is_generic_array_method(fd)) {
+            var elem: string = fd.receiver_type[0 : fd.receiver_type.len() - 2];
+            var tps: string[] = [elem];
+            // Fold the receiver into a leading param named after the
+            // receiver, so the body's references to it resolve normally.
+            var nparams: ParamDecl[] = [ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" }];
+            var j: i32 = 0;
+            while (j < fd.params.len()) {
+                nparams = nparams.append(fd.params[j]);
+                j = j + 1;
+            }
+            out = out.append(FuncDecl {
+                name: "__arrm_" + fd.name,
+                receiver_name: "", receiver_type: "",
+                type_params: tps,
+                params: nparams,
+                ret_type: fd.ret_type,
+                body: fd.body, line: fd.line, col: fd.col,
+                import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: 1
+            });
+        } else {
+            out = out.append(fd);
+        }
+        i = i + 1;
+    }
+    return Module {
+        funcs: out,
+        structs: mod.structs,
+        aliases: mod.aliases,
+        imports: mod.imports,
+        top_stmts: mod.top_stmts,
+        enums: mod.enums,
+        resources: mod.resources,
+        exports: mod.exports
     };
 }
 
@@ -8372,7 +8523,7 @@ pub function module_with_builtins(mod: Module): Module {
     // Lower switches to if/else-if chains first (the type checker has
     // already run on the StmtSwitch shape for E025), so no later pass or
     // backend sees a StmtSwitch at runtime.
-    var mono: Module = inline_callonly_fn_values(monomorphize_enums(monomorphize_structs(monomorphize_module(lower_defers_module(insert_resource_drops(infer_ret_types_module(hoist_local_funcs_module(desugar_switches_module(desugar_ranges_module(fill_default_args_module(resolve_labels_module(mod))))))))))));
+    var mono: Module = inline_callonly_fn_values(monomorphize_enums(monomorphize_structs(monomorphize_module(register_array_method_generics(lower_defers_module(insert_resource_drops(infer_ret_types_module(hoist_local_funcs_module(desugar_switches_module(desugar_ranges_module(fill_default_args_module(resolve_labels_module(mod)))))))))))));
     return Module {
         funcs: mono.funcs,
         structs: inject_builtin_enums(mono.structs),
