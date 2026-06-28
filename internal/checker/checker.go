@@ -3247,6 +3247,30 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				method = synthHash(sd, recvType)
 			case "Json":
 				method = synthJson(sd, recvType)
+				// Also synthesise the deserialise companion `from_json(s):
+				// Result[Self, string]` — but ONLY when the real std/json is
+				// imported (its `json__json_parse` is in scope) and every field
+				// is supported (i32 / string / boolean). A user's own inline
+				// `trait Json` (no std/json) gets serialise-only, as does a
+				// struct with array / nested / wider fields — to_json still
+				// derives in both cases. See synthFromJson / #2695.
+				// Only synthesise from_json when the real std/json is imported
+				// (its `json__json_parse` was merged into prog.Funcs by modload).
+				// FuncSigs isn't populated yet at derive-synth time, so scan the
+				// merged function list.
+				haveStdJson := false
+				for _, pf := range prog.Funcs {
+					if pf.Name == "json__json_parse" {
+						haveStdJson = true
+						break
+					}
+				}
+				fj, fjOK := synthFromJson(sd, recvType)
+				if haveStdJson && fjOK {
+					fj.SourceModule = sd.SourceModule
+					bindDeriveTypeParams(fj, implTypeParams, dn)
+					prog.Funcs = append(prog.Funcs, fj)
+				}
 			case "Default":
 				m, badField, badType := synthDefault(sd, recvType)
 				if m == nil {
@@ -3968,7 +3992,86 @@ func synthJson(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
 	}
 }
 
-// synthEnumJson builds a variant-wise `to_json` using the externally-
+// synthFromJson builds the deserialise companion to synthJson: a receiver-less
+// associated `from_json(s: string): Result[Self, string]` that parses the JSON
+// text and extracts each field by name, returning `Err(...)` on invalid JSON or
+// a missing/wrong-typed field. v1 supports flat structs whose fields are i32 /
+// string / boolean (the types with a `json.json_get_*` accessor); a field of any
+// other type makes this return ok=false so the caller synthesises `to_json`
+// only (serialise still works; from_json over nested / array / Option / wider
+// numeric fields is a documented follow-up — see #2695). The body nests one
+// `match` per field over the field's accessor `Option`, so a missing field
+// short-circuits to `Err("missing field: <name>")` without a `?` operator. The
+// `json.*` calls resolve through the `@derive(json.Json)` site's own
+// `import "std/json"` (basename alias `json`).
+func synthFromJson(sd *ast.StructDecl, recv ast.StructType) (*ast.FuncDecl, bool) {
+	type fld struct{ name, accessor, bind string }
+	flds := make([]fld, 0, len(sd.Fields))
+	for _, f := range sd.Fields {
+		acc := ""
+		switch f.Type.(type) {
+		case ast.NumberType:
+			acc = "json_get_i32"
+		case ast.BoolType:
+			acc = "json_get_bool"
+		case ast.StringType:
+			acc = "json_get_string"
+		default:
+			return nil, false
+		}
+		flds = append(flds, fld{name: f.Name, accessor: acc, bind: "__fj_" + f.Name})
+	}
+	// The synthesis runs AFTER modload has rewritten module-qualified calls
+	// (`json.json_parse` → the flat `json__json_parse`), so emit the already-
+	// mangled basename-prefixed name directly — a post-modload `json.func`
+	// FieldAccess would leave `json` an undefined identifier.
+	jcall := func(fn string, args ...ast.Expr) ast.Expr {
+		return &ast.Call{Callee: &ast.Ident{Name: "json__" + fn}, Args: args}
+	}
+	variant := func(name string, arg ast.Expr) ast.Expr {
+		return &ast.Call{Callee: &ast.Ident{Name: name}, Args: []ast.Expr{arg}}
+	}
+	// Innermost: return Ok(Recv { f: __fj_f, … }).
+	fis := make([]ast.FieldInit, len(flds))
+	for i, fl := range flds {
+		fis[i] = ast.FieldInit{Name: fl.name, Value: &ast.Ident{Name: fl.bind}}
+	}
+	lit := &ast.StructLit{TypeName: recv.Name, Fields: fis, TypeArgs: recv.Args}
+	body := &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: variant("Ok", lit)}}}
+	// Wrap each field's accessor match, inner-to-outer.
+	for i := len(flds) - 1; i >= 0; i-- {
+		fl := flds[i]
+		missing := &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: variant("Err",
+			&ast.StringLit{Value: "missing field: " + fl.name})}}}
+		m := &ast.Match{
+			Tag: jcall(fl.accessor, &ast.Ident{Name: "__fj_jv"}, &ast.StringLit{Value: fl.name}),
+			Arms: []*ast.MatchArm{
+				{VariantName: "Some", Bindings: []string{fl.bind}, Body: body},
+				{VariantName: "None", Body: missing},
+			},
+		}
+		body = &ast.Block{Stmts: []ast.Stmt{m}}
+	}
+	// Outermost: parse the string, then run the field chain.
+	parseFail := &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: variant("Err",
+		&ast.StringLit{Value: "invalid JSON"})}}}
+	outer := &ast.Match{
+		Tag: jcall("json_parse", &ast.Ident{Name: "s"}),
+		Arms: []*ast.MatchArm{
+			{VariantName: "Some", Bindings: []string{"__fj_jv"}, Body: body},
+			{VariantName: "None", Body: parseFail},
+		},
+	}
+	resultType := ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StringType{}}}
+	return &ast.FuncDecl{
+		Name:       "from_json",
+		AssocType:  recv.Name,
+		Params:     []ast.Param{{Name: "s", Type: ast.StringType{}}},
+		ReturnType: resultType,
+		Body:       &ast.Block{Stmts: []ast.Stmt{outer}},
+	}, true
+}
+
 // tagged convention: a unit variant renders as the JSON string of its
 // name (`"Empty"`); a payload variant renders as a single-key object
 // (`{"Circle":<p0.to_json()>}`), with multiple payloads collected into a

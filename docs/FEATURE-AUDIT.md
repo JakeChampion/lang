@@ -283,6 +283,52 @@ exhausted; what's left clusters into a few deeper root causes:
   / `async_runtime` (async), `timing` (clock/sleep `BAIL lower`), `fuzz_corpus`
   (`BAIL lower`). `iter` / `batch7` / `env_unreachable` show only std/test helper
   generics post-mono (a monomorphisation artifact, not a construct gap).
+### 2026-06-23 — `@derive(json.Json)` now synthesises `from_json` (deserialise half of #2695)
+
+`@derive(json.Json)` already synthesised `to_json` (serialise); the deserialise
+half was missing. It now also synthesises a receiver-less associated
+**`from_json(s: string): Result[Self, string]`** that parses the JSON text and
+extracts each field by name — so `User.from_json(body)` round-trips with
+`user.to_json()`, the most-requested capability for the edge-handler use case.
+
+Scope (v1): flat structs whose fields are `i32` / `string` / `boolean` (the types
+with a `std/json.json_get_*` accessor); a missing field or invalid JSON returns
+`Err("missing field: <name>")` / `Err("invalid JSON")`. The synthesised body
+nests one `match` per field over its accessor `Option`, so a missing field
+short-circuits without a `?` operator. Two guards keep it safe and
+non-regressing: (a) it only fires when the real `std/json` is imported (its
+`json__json_parse` is in the modload-merged `prog.Funcs` — the synthesis runs
+post-modload, so it emits the already-mangled `json__*` names and a user's inline
+`trait Json` gets serialise-only); (b) a struct with any other field type
+(array / nested / `Option` / wider numeric) keeps serialise-only — `to_json`
+still derives. Nested/array/`Option`/`i64`/`f64` fields, `@json(name=)`, enum
+deserialise, and self-host parity are documented follow-ups.
+
+Gated by the `derive_from_json` native fixture (round-trip + field-order
+independence + missing-field + invalid-JSON, on interp / x86-64 / arm64 / wasm);
+`TestDeriveJson` continues to cover the inline-`Json` serialise-only path.
+
+### 2026-06-23 — self-host cycle-freedom enforcement at parity (closes #2678)
+
+Verified + pinned that the self-host compiler enforces the immutable-data
+cycle-freedom rules to the same extent as the native (Go) reference compiler —
+the guarantee #2678 flagged as compiler-dependent. Both of that issue's asks had
+already landed and are now fully covered:
+- **`checker.fern` enforces E057** (`Cell[T]` element must be cycle-free —
+  scalar/string only) — `checker.fern` ~L3485, with `all_well_typed` set false
+  on *any* diagnostic (L5782), so the interp/vm `run_pipeline` refuses.
+- **The self-host compile drivers gate on the cycle rules before codegen** —
+  `fern.fern`'s immutability gate (L528–553) filters `check_module` to
+  `filter_immutability` (E048/E049/E055/E056/E057) and rejects with a
+  `line:col: error[CODE]` diagnostic ahead of both the SSA and AST/IR emit paths
+  (the #2825 fix; previously the codegen paths compiled `p.x = v` straight to a
+  working binary).
+This PR closes the test gap: `self_host_immutability_gate_test.go` already pinned
+E048/E055/E056/E057 + the valid functional-update / scalar-`Cell` forms; added
+the **E049** (reference-capture write-back) case so the full cycle-rule set
+#2678 names is gate-tested end-to-end (compile via the self-host `asm_load_run`
+driver, assert rejection + the formatted diagnostic). Native oracle:
+`go run ./cmd/fern -check` reports `E049` on the same source.
 
 ### 2026-06-23 — lambda_captures excludes Some/Ok/Err → Option/Result-returning lambdas route IR
 
