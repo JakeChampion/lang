@@ -251,6 +251,58 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-28 — treeshake retains `__method_Array_*` helpers → array-method modules route IR
+
+The treeshaker (`treeshake.fern`) prunes the stdlib-merged module to functions
+reachable-by-name from `main` before codegen, so a stdlib-importing program fits
+asm_ir's IR budget. But an array-method call `arr.<m>(...)` (`.join` / `.reverse`
+/ std/array's `distinct` / `mode` / …) dispatches to the auto-discovered
+`__method_Array_<m>` helper, and the **syntax names only `<m>`** — never the
+helper, nor its `<mod>__`-mangled name. So the helper looked unreachable, got
+pruned, `find_arr_method` then resolved nothing, and the IR lowering bailed
+`i32.<m>` — dropping the **whole module** to the AST emitter.
+
+Fix: at every `.<m>` field access treeshake now also seeds the helper's canonical
+`__method_Array_<m>` token, and the keep/fixpoint decision matches an array-method
+helper by that token as a **suffix** (`ts_kept_name` / `ts_array_method_canon`) —
+so the helper (only the one(s) actually called) survives the prune and the module
+stays on the IR path. Over-keeping stays sound (the prune's stated invariant) and
+precise (only invoked methods are seeded).
+
+`array_combinators`, `strings`, `string_slice_extract` flip AST → IR. Gated by
+`TestSelfHostArrayMethodTreeshakeIR` (asserts `-decide` = `ir` **and** the
+compiled program runs to exit 0); the full `TestSelfHostStdTestE2E` differential
+gate confirms byte-identical output to interp; Stage-2 fixpoint byte-identical.
+
+This resolves the `__method_Array_*` half of the former "array-method desugar
+gap". The remaining two modules (`array_hof`, `array_structural_verbs`) turned
+out to be a **distinct** root cause — generic `T[]` receiver-methods
+(`.concat` / `.flat_map` / `.reduce` / `.sort_by`, defined as
+`pub function (xs: T[]) m(...)`) that monomorphise to an `i32.<m>` dispatch the
+IR path doesn't yet know; see the refined frontier below.
+
+**Frontier map** (refreshed) — remaining `examples/tests/*_test.fern` routing AST:
+
+- **Generic `T[]` receiver-method dispatch** — `.concat` / `.flat_map` /
+  `.reduce` / `.sort_by` are generic receiver methods that monomorphise to an
+  `i32.<m>` call the IR path treats as unknown (`BAIL call[i32.concat]`). Shared by
+  `array_hof` (also a `BAIL lower` on `reduce`) and `array_structural_verbs` —
+  the next array-cluster target; needs the IR dispatch to recognise a
+  monomorphised array receiver-method.
+- **`subprocess` not lowered on IR** — `process_assertions`,
+  `process_output_shortcuts`, `lang_binary_e2e` (3 modules; a heavy fork/exec
+  runtime returning a `ProcessResult` struct, same lowering recipe as the fs
+  builtins plus struct-result handling).
+- **`Map.iter` not intercepted on IR** — `json_roundtrip` (`m.iter()` →
+  `BAIL call[Map.iter]`; needs the map-iter builtin interception like keys/values).
+- **Tuple-array-returning method element typing** — `map_verbs`
+  (`for e in m.entries()`: the snapshot var doesn't recover the `(i32,i32)[]`
+  element tuple tags; needs a tuple-array return-type recovery).
+- **Deeper / parallel-owned** — `io_buffered` (BytesWriter, RC), `async_concurrent`
+  / `async_runtime` (async), `timing` (clock/sleep `BAIL lower`), `fuzz_corpus`
+  (`BAIL lower`). `iter` / `batch7` / `env_unreachable` show only std/test helper
+  generics post-mono (a monomorphisation artifact, not a construct gap).
+
 ### 2026-06-23 — `remove_file(path)` lowers on IR + remaining AST-router frontier map
 
 `remove_file` (unlink → `Option[IoError]`) had a full AST runtime
