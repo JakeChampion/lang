@@ -3818,6 +3818,21 @@ function lower_opt_make_payload_exp(tag: i32, arg: parser.Expr, exp_tag: string,
     return aw.emit(ir.op_opt_make_w(tag, 64, true));
 }
 
+// lower_subprocess_call lowers `subprocess(cmd, args, stdin)` — the three args
+// (cmd / args / stdin, so the dispatch pops stdin from TOS) then op_subprocess,
+// which pushes a fresh ProcessResult struct. Kept OUT of lower_expr's body: that
+// function is so large that any added block carrying LowerState locals + recursive
+// lower_expr calls inflates its arm64 codegen super-linearly (see the call site).
+pub function lower_subprocess_call(c: parser.ExprCall, s: LowerState): LowerState {
+    var sp: LowerState = lower_expr(c.args[0], s);
+    if (!sp.ok) { return sp; }
+    sp = lower_expr(c.args[1], sp);
+    if (!sp.ok) { return sp; }
+    sp = lower_expr(c.args[2], sp);
+    if (!sp.ok) { return sp; }
+    return sp.emit(ir.op_subprocess());
+}
+
 // lower_expr emits ops that leave the value of `e` on the operand stack.
 pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
     if (!s.ok) { return s; }
@@ -5279,15 +5294,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // / args / cmd. No wasm process spawn, so wasm_eligible rejects
                     // subprocess modules; x86 / arm64 lower it (the same
                     // __fern_subprocess runtime the AST path calls, #3457).
-                    if (cid.name == "subprocess" && c.args.len() == 3) {
-                        var sp0: LowerState = lower_expr(c.args[0], s);
-                        if (!sp0.ok) { return sp0; }
-                        var sp1: LowerState = lower_expr(c.args[1], sp0);
-                        if (!sp1.ok) { return sp1; }
-                        var sp2: LowerState = lower_expr(c.args[2], sp1);
-                        if (!sp2.ok) { return sp2; }
-                        return sp2.emit(ir.op_subprocess());
-                    }
+                    // Delegated to a SEPARATE function (not inlined here): adding
+                    // even a small block with LowerState locals + recursive
+                    // lower_expr calls to this already-enormous function tripped a
+                    // super-linear arm64 codegen blow-up (~1+ MB of extra .text per
+                    // such block — sp0/sp1/sp2 cost ~4 MB), enough to push the
+                    // self-host binary past the AArch64 bl/R_AARCH64_CALL26 ±128 MiB
+                    // branch range. Keeping the locals in their own small function
+                    // is size-neutral.
+                    if (cid.name == "subprocess" && c.args.len() == 3) { return lower_subprocess_call(c, s); }
                     // Built-in `args()` — the command-line argv accessor: push a
                     // fresh string[] (argv[0] first). A no-arg value op; the result
                     // str-array-tracks (expr_is_strarr's args case) so `a.len()` /
