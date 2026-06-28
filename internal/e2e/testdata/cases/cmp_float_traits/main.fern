@@ -1,0 +1,23 @@
+// f64 / f32 are first-class in the core/cmp traits: Eq (a.eq(b)), Display
+// (a.to_string(), adopted from std/float, now imported by core/cmp so the empty
+// impl resolves), Debug (a.to_debug()), and Ord (a.cmp(b) -> -1/0/1). Before,
+// f64 implemented none of these, so `assert_eq(3.14, 3.14)` and any `[T: Eq +
+// Display]` / `[T: Ord]` generic over a float were a hard E021. Paired with the
+// bare-float-literal generic-inference fix, a float literal binds T = f64 here.
+import "core/cmp";
+function eqd[T: cmp.Eq + cmp.Display + cmp.Debug](a: T, b: T): i32 {
+    var n: i32 = 0;
+    if (a.eq(b)) { n = n + 1; }       // f64.eq
+    n = n + a.to_string().len();      // f64 Display ("3.5" -> 3)
+    n = n + a.to_debug().len();       // f64 Debug   ("3.5" -> 3)
+    return n;                         // 1 + 3 + 3 = 7
+}
+function ord3[T: cmp.Ord](a: T, b: T): i32 { return a.cmp(b); }  // -1 / 0 / 1
+function main(): i32 {
+    var n: i32 = eqd(3.5, 3.5);                 // 7
+    var lt: i32 = ord3(1.5, 2.5);               // -1
+    var gt: i32 = ord3(9.5, 2.5);               //  1
+    var eq: i32 = ord3(4.5, 4.5);               //  0
+    // 7 * 10 + (-1 + 1) + (1 + 1) + (0 + 0) = 72
+    return n * 10 + (lt + 1) + (gt + 1) + eq;
+}
