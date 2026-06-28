@@ -17011,6 +17011,7 @@ function lambda_captures(lam: parser.ExprLambda, gfns: string[]): string[] {
         var u: string = used[ui];
         if (util.index_of_str(bound, u) < 0 && util.index_of_str(gfns, u) < 0
                 && u != "None" && u != "true" && u != "false"
+                && u != "Some" && u != "Ok" && u != "Err"
                 && util.index_of_str(caps, u) < 0) {
             caps = caps.append(u);
         }
