@@ -251,6 +251,32 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-28 — self-host: closure-taking array methods lower on IR (slice 3)
+
+The array-method monomorphisation (slices 1–2) folded only closure-free methods
+(`concat`); a method carrying a closure ("fn") parameter was excluded, so
+`xs.reduce(f)` / `xs.sort_by(cmp)` / `xs.filter(pred)` (and `any` / `all` /
+`find`) stayed in method form and bailed to AST.
+
+`is_generic_array_method` now admits closure params: the receiver alone fixes the
+instantiation `T`, and the closure rides through as a fn value.
+`register_array_method_generics` folds e.g. `(xs: T[]) reduce(f)` into a free
+generic `__arrm_reduce[T](xs, f)` whose body delegates to the free `reduce`,
+which already lowers closures on the IR path (verified: free `reduce` / `sort_by`
+/ `filter` all route IR at a single element type). The slice-1 `ihas_other` guard
+still keeps each method on one element type per program, so the pre-existing
+multi-type reuse crash is not reached.
+
+Methods carrying their OWN type params (`map[U]` / `flat_map[U]` / `fold[A]` /
+`zip[U]`) stay deferred: the result/extra type variable needs closure-return-type
+inference the receiver does not supply (the coarse `fn` tag drops it). That is the
+remaining blocker for `array_hof` (which uses `flat_map`).
+
+Gated by `TestSelfHostArrayClosureMethodIR` (reduce / sort_by / filter / find,
+each `-decide == "ir"`, the `__arrm_<m>__` clone in the asm, exit matching the
+interp oracle); `TestSelfHostArrayConcatMethodIR`, `TestSelfHostBootstrapsItself`,
+and `TestSelfHostStdTestE2E` stay green.
+
 ### 2026-06-28 — `env(name)` lowers on the IR path (flips the `env_unreachable` module)
 
 `env(name): Option[string]` (look up an environment variable) had a full AST

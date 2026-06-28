@@ -4974,23 +4974,22 @@ function looks_type_var(s: string): boolean {
     return c >= 65 && c <= 90;
 }
 
-// is_generic_array_method gates the slice-1 array-method path: a method
+// is_generic_array_method gates the array-method path: a method
 // (`receiver_name` set) whose receiver is `<var>[]` for a single type
-// variable, with NO method-level type params and NO closure ("fn")
-// params. The closure / extra-type-param methods (map / filter / fold /
-// flat_map / reduce / sort_by / zip) are deferred follow-ups.
+// variable, with NO method-level type params. Closure ("fn") params ARE
+// allowed (`reduce` / `sort_by` / `filter` / `any` / `all` / `find`) —
+// the receiver alone fixes the instantiation `T`, and the closure rides
+// through as a fn value; the folded body delegates to the free function,
+// which already lowers closures on the IR path. Only methods carrying
+// their OWN type params (`map[U]` / `flat_map[U]` / `fold[A]` / `zip[U]`)
+// stay deferred: their result/extra type variable needs separate
+// inference the receiver does not supply.
 function is_generic_array_method(fd: FuncDecl): boolean {
     if (fd.receiver_name.len() == 0) { return false; }
     if (!type_ends_arr(fd.receiver_type)) { return false; }
     var elem: string = fd.receiver_type[0 : fd.receiver_type.len() - 2];
     if (!looks_type_var(elem)) { return false; }
     if (fd.type_param_count != 0) { return false; }
-    var i: i32 = 0;
-    while (i < fd.params.len()) {
-        if (fd.params[i].type_name == "fn") { return false; }
-        if (fd.params[i].type_name == "fn[]") { return false; }
-        i = i + 1;
-    }
     return true;
 }
 
