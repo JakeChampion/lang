@@ -2960,6 +2960,16 @@ func TestParseTaskFunctionDesugar(t *testing.T) {
 	}`); err != nil {
 		t.Errorf("await in a range for loop should transform, got error: %v", err)
 	}
+	// `await` in EXPRESSION position (assignment RHS, return expr, if cond) is
+	// hoisted to preceding bindings.
+	if _, err := Parse(`function ex(a: i32, b: i32): i32 {
+		var acc = await a;
+		acc = acc + await b;
+		if (await a > 0) { return acc + await b; }
+		return acc;
+	}`); err != nil {
+		t.Errorf("expression-position awaits should hoist + transform, got error: %v", err)
+	}
 	// An ARRAY `for x in xs` loop with an await: supported (ForEach → array desugar
 	// → while). The array is captured; only the mutated accumulator is carried.
 	if _, err := Parse(`function arr(xs: i32[], a: i32): i32 {

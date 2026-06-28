@@ -3035,6 +3035,10 @@ func transformTaskFunction(fn *ast.FuncDecl) error {
 	for i, pm := range fn.Params {
 		scope[i] = pm.Name
 	}
+	// Normalise expression-position awaits to top-level bindings first, so the CPS
+	// transform below only ever sees `var NAME = await EXPR;` forms.
+	hc := 0
+	fn.Body.Stmts = hoistTaskExprAwaits(fn.Body.Stmts, &hc)
 	body := buildTaskSegment(fn.Body.Stmts, "__task_rx", &depth, scope, fn, &err)
 	if err != nil {
 		return err
@@ -3293,6 +3297,117 @@ func buildTaskSegment(stmts []ast.Stmt, rxName string, depth *int, scope []strin
 	out = append(out, pre...)
 	out = append(out, destr, resume, finalRet)
 	return out
+}
+
+// hoistTaskExprAwaits normalises a task function body so every `await` is a
+// top-level `var NAME = await EXPR;` binding: an `await` appearing in EXPRESSION
+// position (`acc = acc + await x`, `f(await a)`, `return g(await b)`, `if (await
+// c)`) is hoisted into a preceding `var __await_h_N = await …;` and replaced by
+// that temp, left-to-right (preserving evaluation/suspension order). It recurses
+// into nested statement bodies (blocks, if/else, loop bodies) but NOT into loop
+// CONDITIONS (re-evaluated per iteration — an await there is left for the
+// transform to reject) or nested functions / lambdas. After this, the CPS
+// transform only ever sees binding-form awaits.
+func hoistTaskExprAwaits(stmts []ast.Stmt, counter *int) []ast.Stmt {
+	out := make([]ast.Stmt, 0, len(stmts))
+	for _, s := range stmts {
+		// Recurse into nested statement bodies first (not loop conditions).
+		switch x := s.(type) {
+		case *ast.Block:
+			x.Stmts = hoistTaskExprAwaits(x.Stmts, counter)
+		case *ast.If:
+			x.Then = hoistStmtBody(x.Then, counter)
+			if x.Else != nil {
+				x.Else = hoistStmtBody(x.Else, counter)
+			}
+		case *ast.While:
+			x.Body = hoistStmtBody(x.Body, counter)
+		case *ast.For:
+			x.Body = hoistStmtBody(x.Body, counter)
+		case *ast.ForEach:
+			x.Body = hoistStmtBody(x.Body, counter)
+		}
+		// Hoist awaits in this statement's own top-level expressions.
+		var pre []ast.Stmt
+		switch x := s.(type) {
+		case *ast.Var:
+			if aw, ok := x.Init.(*ast.Await); ok {
+				aw.Operand = rewriteAwaitExpr(aw.Operand, counter, &pre) // keep the binding; hoist nested
+			} else {
+				x.Init = rewriteAwaitExpr(x.Init, counter, &pre)
+			}
+		case *ast.ExprStmt:
+			x.Expr = rewriteAwaitExpr(x.Expr, counter, &pre)
+		case *ast.Return:
+			x.Value = rewriteAwaitExpr(x.Value, counter, &pre)
+		case *ast.If:
+			x.Cond = rewriteAwaitExpr(x.Cond, counter, &pre)
+		case *ast.Destructure:
+			x.Init = rewriteAwaitExpr(x.Init, counter, &pre)
+		}
+		out = append(out, pre...)
+		out = append(out, s)
+	}
+	return out
+}
+
+// hoistStmtBody hoists expression-position awaits inside a loop/branch body
+// (a `*ast.Block` or a single statement), returning a `*ast.Block`.
+func hoistStmtBody(s ast.Stmt, counter *int) ast.Stmt {
+	if s == nil {
+		return nil
+	}
+	if b, ok := s.(*ast.Block); ok {
+		b.Stmts = hoistTaskExprAwaits(b.Stmts, counter)
+		return b
+	}
+	return &ast.Block{P: s.Pos(), Stmts: hoistTaskExprAwaits([]ast.Stmt{s}, counter)}
+}
+
+// rewriteAwaitExpr replaces every `await` in EXPRESSION position under e with a
+// fresh `__await_h_N` temp, emitting `var __await_h_N = await <hoisted operand>;`
+// into *pre (left-to-right). Recurses through the common operator/call/index/field
+// expression shapes; does NOT descend into nested functions / lambdas / block-
+// expressions (an await there is a different scope and is rejected later). An
+// await in an unhandled expression shape is left in place (also rejected later).
+func rewriteAwaitExpr(e ast.Expr, counter *int, pre *[]ast.Stmt) ast.Expr {
+	switch x := e.(type) {
+	case nil:
+		return nil
+	case *ast.Await:
+		x.Operand = rewriteAwaitExpr(x.Operand, counter, pre)
+		name := fmt.Sprintf("__await_h_%d", *counter)
+		*counter++
+		*pre = append(*pre, &ast.Var{P: x.P, Name: name, Init: x})
+		return &ast.Ident{P: x.P, Name: name}
+	case *ast.Binary:
+		x.Left = rewriteAwaitExpr(x.Left, counter, pre)
+		x.Right = rewriteAwaitExpr(x.Right, counter, pre)
+		return x
+	case *ast.Unary:
+		x.Operand = rewriteAwaitExpr(x.Operand, counter, pre)
+		return x
+	case *ast.CastExpr:
+		x.Inner = rewriteAwaitExpr(x.Inner, counter, pre)
+		return x
+	case *ast.Assign:
+		x.Value = rewriteAwaitExpr(x.Value, counter, pre)
+		return x
+	case *ast.Call:
+		x.Callee = rewriteAwaitExpr(x.Callee, counter, pre)
+		for i := range x.Args {
+			x.Args[i] = rewriteAwaitExpr(x.Args[i], counter, pre)
+		}
+		return x
+	case *ast.Index:
+		x.Array = rewriteAwaitExpr(x.Array, counter, pre)
+		x.Idx = rewriteAwaitExpr(x.Idx, counter, pre)
+		return x
+	case *ast.FieldAccess:
+		x.Target = rewriteAwaitExpr(x.Target, counter, pre)
+		return x
+	}
+	return e
 }
 
 // buildTaskWhile lowers a segment `lead; while (cond) { body } rest` whose loop
