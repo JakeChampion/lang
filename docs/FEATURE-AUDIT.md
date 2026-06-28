@@ -251,6 +251,27 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-28 — `@derive(json.Json)`'s `from_json` extracts `i64` fields (#2695 follow-up)
+
+The deserialise half of `@derive(json.Json)` (the `from_json` synthesis) handled
+`i32` / `string` / `boolean` fields but downgraded any struct with a wider
+numeric field to serialise-only. 64-bit integer fields — timestamps, ids beyond
+the i32 range — are the common case that gap blocked.
+
+`synthFromJson` now picks the accessor by integer width: an `i64` / `u64`
+(`ast.NumberType` with `Width == 64`) field extracts through a new
+**`std/json.json_get_i64`**, everything narrower stays on `json_get_i32`. The new
+accessor mirrors `json_get_i32` but accumulates in 64-bit (`n = n*10 + (digit as
+i64)`), so values like `9000000000` and `1717000000000` round-trip instead of
+truncating. A non-numeric value or non-digit body still returns `None`.
+
+Gated by the `derive_from_json_i64` native fixture (an `Event { id: i64, name:
+string, ts: i64 }` round-trip with values above the i32 range, on interp /
+x86-64 / arm64 / wasm); the existing `derive_from_json` fixture and `TestDeriveJson`
+continue to cover the i32 / string / boolean and inline-`Json` paths. `f64` fields
+(need an f64 string parser), nested / array / `Option` fields, and self-host parity
+remain documented follow-ups.
+
 ### 2026-06-23 — `remove_file(path)` lowers on IR + remaining AST-router frontier map
 
 `remove_file` (unlink → `Option[IoError]`) had a full AST runtime
