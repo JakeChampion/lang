@@ -251,6 +251,16 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-28 — `iter` routes IR (mono fix #3995) — added to the differential gate
+
+The frontier survey pinned `iter`'s sole blocker as `assert_eq__A: BAIL call[A.eq]`
+— the trait-bounded `assert_eq[T]` spuriously cloned at the bare type variable `A`.
+#3995 ("don't infer a bare type variable as a generic call's return type") fixed
+exactly that, so `iter` (the generic `Iterator[T]` protocol: `Range` / `ArrayIter`,
+`sum` / `count` / `fold` / `map` / `filter` / `nth` / `min` / …) now routes IR and
+runs **15/15**, output matching interp. Added `iter` to the `TestSelfHostStdTestE2E`
+differential gate to pin it (a verification-only change — the flip came from #3995).
+
 ### 2026-06-28 — self-host import aliases (`import "p" as q`) → `io_buffered` routes IR
 
 `io_buffered_test` does `import "std/io_buffered" as io;` then `io.bytes_writer_new()`.
