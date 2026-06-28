@@ -1,0 +1,28 @@
+// `@derive(json.Json)` synthesises a deserialise companion `from_json(s):
+// Result[Self, string]` alongside `to_json` (#2695). It parses the JSON text and
+// extracts each field by name (i32 / string / boolean fields, via std/json's
+// json_get_* accessors); a missing field or invalid JSON returns `Err`.
+import "std/json";
+@derive(json.Json) struct User { id: i32, name: string, admin: boolean }
+function main(): i32 {
+    var u: User = User { id: 7, name: "Gloin", admin: true };
+    var s: string = u.to_json();                      // round-trip through to_json
+    var sum: i32 = 0;
+    match (User.from_json(s)) {
+        Ok(u2) => { if (u2.id == 7 && u2.name == "Gloin" && u2.admin) { sum = sum + 20; } },
+        Err(e) => { sum = sum + 1; },
+    }
+    match (User.from_json("{\"admin\":false,\"name\":\"Bofur\",\"id\":9}")) {   // field order independent
+        Ok(u3) => { sum = sum + u3.id; },             // +9
+        Err(e) => { sum = sum + 100; },
+    }
+    match (User.from_json("{\"id\":1,\"name\":\"x\"}")) {                       // missing `admin`
+        Ok(u4) => { sum = sum + 100; },
+        Err(e) => { sum = sum + 7; },
+    }
+    match (User.from_json("not json")) {                                       // invalid
+        Ok(u5) => { sum = sum + 100; },
+        Err(e) => { sum = sum + 5; },
+    }
+    return sum;                                       // 20 + 9 + 7 + 5 = 41
+}
