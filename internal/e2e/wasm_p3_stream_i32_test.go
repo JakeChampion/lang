@@ -116,3 +116,77 @@ function main(): i32 { return 0; }
 		t.Errorf("Fern stream[i32] result: got %q, want 42 (10+20+12)", bytes.TrimSpace(out))
 	}
 }
+
+// TestWasmP3StreamI32ForIn exercises LAZY `for x in body()` over a NON-u8 stream
+// (i32) — the general-T coverage the u8 lazy e2e can't give. Real Fern:
+//
+//	@import("test:dep/d","prod") async function body(): stream[i32];
+//	async function run(): i32 { var sum: i32 = 0; for x in body() { sum = sum + x; } return sum; }
+//
+// The checker desugars it to the cursor loop (`var c = body$open(); while(true){
+// if (__stream_next(c) == 0) break; var x = __stream_elem_i32(c); … } __stream_drop(c)`)
+// — separating the EOF flag from the value read so a real `-1` element would
+// never be mistaken for EOF (the u8-only `-1` sentinel limitation L2 had). Each
+// i32 is pulled off the wire one at a time. Composed against the i32 EOF producer
+// (writes [10,20,12], write-awaits, drops) → 42. See docs/STREAM-TYPE-SURFACE.md.
+func TestWasmP3StreamI32ForIn(t *testing.T) {
+	skipIfPreview2Missing(t)
+
+	src := `@import("test:dep/d", "prod") async function body(): stream[i32];
+async function run(): i32 {
+	var sum: i32 = 0;
+	for x in body() {
+		sum = sum + x;
+	}
+	return sum;
+}
+function main(): i32 { return 0; }
+`
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prog, _, err := modload.Load(srcPath)
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+		Preview2WASI:    true,
+		AsyncExportName: "__async_run",
+		AsyncSourceFunc: "run",
+	})
+	if err != nil {
+		t.Fatalf("wasmbin.Build: %v", err)
+	}
+
+	comp := component.BuildAsyncStreamImportComponent(
+		core, p3StreamI32EOFProducerCore, p3Stream2SlotTramp, p3Stream2SlotFixup,
+		"test:dep/d", "prod", "__async_run", "run",
+		component.CValtypeS32, component.CValtypeU32,
+	)
+
+	p := filepath.Join(dir, "fern_stream_i32_forin.wasm")
+	if err := os.WriteFile(p, comp, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("wasmtime", "run",
+		"-W", "component-model-async,component-model-async-stackful",
+		"--invoke", "run()", p).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run (lazy for-in over stream[i32]): %v\n%s", err, out)
+	}
+	if !bytes.Contains(out, []byte("42")) {
+		t.Errorf("lazy for-in over stream[i32]: got %q, want 42 (10+20+12)", bytes.TrimSpace(out))
+	}
+}

@@ -1035,31 +1035,40 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 					}
 					helpers.add(ex.Name)
 				}
-				// LAZY context (`for x in f()` over a u8 stream): the checker desugared
-				// it to `f$open()` + `__stream_next_u8` + `__stream_drop`, so emit the
-				// open-wrapper (collect prologue → readable handle) plus the two generic
-				// per-element helpers (registered once, idempotent across stream imports).
-				// See docs/STREAM-TYPE-SURFACE.md (L2).
+				// LAZY context (`for x in f()` over a scalar stream): the checker
+				// desugared it to `f$open()` + `__stream_next` + `__stream_elem_<kind>`
+				// + `__stream_drop` (docs/STREAM-TYPE-SURFACE.md, L2). Emit the
+				// open-wrapper (collect prologue → cursor), the two generic helpers
+				// (`__stream_next` / `__stream_drop`, registered once, idempotent across
+				// stream imports), and the per-element-type value loader for THIS
+				// import's element kind.
 				if usedOpen {
 					openName := ex.Name + "$open"
 					wrappers[openName] = runtimeHelperSpec{
 						params:  params,
-						results: []byte{encode.ValtypeI32}, // readable handle
+						results: []byte{encode.ValtypeI32}, // cursor pointer
 						body:    buildExternAsyncStreamOpenWrapper(len(ex.Params), rawName),
 					}
 					helpers.add(openName)
-					wrappers["__stream_next_u8"] = runtimeHelperSpec{
+					wrappers["__stream_next"] = runtimeHelperSpec{
 						params:  []byte{encode.ValtypeI32},
-						results: []byte{encode.ValtypeI32},
-						body:    buildStreamNextU8(),
+						results: []byte{encode.ValtypeI32}, // 1 = element read, 0 = EOF
+						body:    buildStreamNext(),
 					}
-					helpers.add("__stream_next_u8")
+					helpers.add("__stream_next")
 					wrappers["__stream_drop"] = runtimeHelperSpec{
 						params:  []byte{encode.ValtypeI32},
 						results: nil,
 						body:    buildStreamDropReadable(),
 					}
 					helpers.add("__stream_drop")
+					elemName := "__stream_elem_" + ast.StreamElemKind(ex.StreamResultElem)
+					wrappers[elemName] = runtimeHelperSpec{
+						params:  []byte{encode.ValtypeI32},
+						results: []byte{externRecordFieldValtype(ex.StreamResultElem)},
+						body:    buildStreamElem(ex.StreamResultElem),
+					}
+					helpers.add(elemName)
 				}
 				continue
 			}

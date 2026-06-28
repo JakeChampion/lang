@@ -1971,14 +1971,16 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// `__stream_next_u8`, `__stream_drop`) are emitted by wasmbin
 	// (internal/codegen/wasmbin/extern.go). See docs/STREAM-TYPE-SURFACE.md.
 	streamElem := map[string]ast.Type{}
+	elemKinds := map[string]ast.Type{} // kind → element type, for the __stream_elem_<kind> sigs
 	for _, fn := range prog.Funcs {
 		if fn.ImportIface == "" || fn.StreamResultElem == nil {
 			continue
 		}
-		if n, ok := fn.StreamResultElem.(ast.NumberType); ok && n.NormalWidth() == 8 && !n.Signed {
+		if kind := ast.StreamElemKind(fn.StreamResultElem); kind != "" {
 			streamElem[fn.Name] = fn.StreamResultElem
-			// Per-import open helper: the import's scalar params → an i32 readable
-			// handle (the awaited stream-result lower's return value).
+			elemKinds[kind] = fn.StreamResultElem
+			// Per-import open helper: the import's scalar params → an i32 cursor
+			// pointer (the awaited stream-result lower wrapped in a read cursor).
 			params := make([]ast.Type, len(fn.Params))
 			for i, p := range fn.Params {
 				params[i] = p.Type
@@ -1988,8 +1990,15 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	}
 	if len(streamElem) > 0 {
 		i32 := ast.NumberType{Width: 32, Signed: true}
-		c.info.FuncSigs["__stream_next_u8"] = &ast.FuncType{Params: []ast.Type{i32}, Result: i32}
+		// __stream_next(cursor) -> i32 (1 = element read into the cursor, 0 = EOF);
+		// __stream_drop(cursor) -> () ; both element-type-agnostic.
+		c.info.FuncSigs["__stream_next"] = &ast.FuncType{Params: []ast.Type{i32}, Result: i32}
 		c.info.FuncSigs["__stream_drop"] = &ast.FuncType{Params: []ast.Type{i32}, Result: ast.VoidType{}}
+		// __stream_elem_<kind>(cursor) -> T : reads the buffered element as its
+		// scalar type, one per distinct element kind actually used.
+		for kind, elem := range elemKinds {
+			c.info.FuncSigs["__stream_elem_"+kind] = &ast.FuncType{Params: []ast.Type{i32}, Result: elem}
+		}
 		lowerStreamForEachProgram(prog, streamElem)
 	}
 

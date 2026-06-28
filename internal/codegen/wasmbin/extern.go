@@ -554,14 +554,29 @@ func buildExternAsyncStreamResultWrapper(nparams int, rawImport string, stride u
 	}
 }
 
+// A lazy-stream CURSOR is a small heap record `f$open` allocates and the other
+// three helpers operate on (docs/STREAM-TYPE-SURFACE.md, L2). Layout (8-byte
+// aligned so the element slot can hold an i64 / f64):
+//
+//	+0  rd    : i32   the stream readable handle
+//	+8  elem  : 8 B   one-element read buffer (the host writes here)
+//	+16 evt   : 8 B   waitable-set.wait event area (handle@+16, result@+20)
+const (
+	streamCursorBytes  = 24
+	streamCursorRdOff  = 0
+	streamCursorElmOff = 8
+	streamCursorEvtOff = 16
+)
+
 // buildExternAsyncStreamOpenWrapper builds the `f$open` helper for a LAZY
-// `for x in f(args)` over a u8 async stream import (docs/STREAM-TYPE-SURFACE.md,
-// L2). It is the collect-wrapper's prologue ONLY: allocate the lower's return
-// area, `canon lower async` the import (forwarding the scalar params + retptr),
-// await the lowered call (the dep task-returns the stream readable handle), and
-// return that handle — `load(rb+0)`. The per-element reads + EOF + drop are done
-// by `__stream_next_u8` / `__stream_drop`, so this wrapper does NOT drive the
-// collect loop. Wrapper type is `(scalar params…) -> i32` (the readable handle).
+// `for x in f(args)` over a scalar async stream import (docs/STREAM-TYPE-SURFACE.md,
+// L2). It allocates the lazy-stream cursor, runs the collect-wrapper's prologue —
+// allocate the lower's return area, `canon lower async` the import (forwarding the
+// scalar params + retptr), await the lowered call (the dep task-returns the stream
+// readable handle) — stores that handle in the cursor, and returns the cursor
+// pointer. The per-element reads + EOF + value loads + drop are done by
+// `__stream_next` / `__stream_elem_<kind>` / `__stream_drop`. Wrapper type is
+// `(scalar params…) -> i32` (the cursor pointer).
 func buildExternAsyncStreamOpenWrapper(nparams int, rawImport string) func(map[string]uint32) []byte {
 	return func(idxs map[string]uint32) []byte {
 		alloc := idxs["__fern_alloc"]
@@ -570,6 +585,7 @@ func buildExternAsyncStreamOpenWrapper(nparams int, rawImport string) func(map[s
 		statusL := uint32(nparams + 1)
 		taskL := uint32(nparams + 2)
 		wsAwaitL := uint32(nparams + 3)
+		cur := uint32(nparams + 4) // cursor pointer
 
 		var body []byte
 		// rb = (alloc(16)+7) & ~7 — 8-byte-aligned lower return area.
@@ -580,73 +596,89 @@ func buildExternAsyncStreamOpenWrapper(nparams int, rawImport string) func(map[s
 		body = inst.InstI32Const(body, -8)
 		body = numeric.InstI32And(body)
 		body = inst.InstLocalSet(body, rb)
-		// lower(scalar params…, rb) -> status; await it; return load(rb+0).
+		// cur = (alloc(streamCursorBytes)+7) & ~7 — 8-byte-aligned cursor.
+		body = inst.InstI32Const(body, streamCursorBytes)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstI32Const(body, 7)
+		body = numeric.InstI32Add(body)
+		body = inst.InstI32Const(body, -8)
+		body = numeric.InstI32And(body)
+		body = inst.InstLocalSet(body, cur)
+		// lower(scalar params…, rb) -> status; await it; cur.rd = load(rb+0).
 		for i := 0; i < nparams; i++ {
 			body = inst.InstLocalGet(body, uint32(i))
 		}
 		body = inst.InstLocalGet(body, rb)
 		body = inst.InstCall(body, imp)
 		body = emitAsyncAwaitLoop(body, idxs, rb, statusL, taskL, wsAwaitL)
+		body = inst.InstLocalGet(body, cur)
 		body = inst.InstLocalGet(body, rb)
 		body = memory.InstI32Load(body, 2, 0)
+		body = memory.InstI32Store(body, 2, streamCursorRdOff)
+		// return cur.
+		body = inst.InstLocalGet(body, cur)
 
-		locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32) // rb,status,task,wsAwait
+		locals := inst.PutLocalsOneGroup(nil, 5, encode.ValtypeI32) // rb,status,task,wsAwait,cur
 		return inst.PutFunctionBody(nil, locals, body)
 	}
 }
 
-// buildStreamNextU8 builds the generic `__stream_next_u8(rd) -> i32` helper: read
-// ONE byte off the stream readable handle `rd`, awaiting the read if it BLOCKs,
-// and return the byte (0..255) or `-1` at EOF (docs/STREAM-TYPE-SURFACE.md, L2).
-// It is the collect loop's body specialised to a single element with its own
-// per-call waitable-set: `ws.new(); join(rd, ws); rs = stream.read(rd, buf, 1);
-// if rs == BLOCKED { wait(ws, evt); rs = load(evt+4) }; join(rd, 0); ws.drop`,
-// then `count = rs >> 4` — `count >= 1` ⇒ the byte at `buf`, else `-1` (a CLOSED
-// read reports count 0). The `-1` sentinel is unambiguous for u8 elements.
-func buildStreamNextU8() func(map[string]uint32) []byte {
+// buildStreamNext builds the generic, element-type-AGNOSTIC `__stream_next(cur)
+// -> i32` helper: read ONE element off the cursor's stream into the cursor's
+// element slot, awaiting the read if it BLOCKs, and return 1 if an element
+// arrived or 0 at EOF (docs/STREAM-TYPE-SURFACE.md, L2). The read count is in
+// ELEMENTS (the per-element stride is implicit in the component's stream<T>
+// type), so this is the same for every scalar element width — only the value
+// LOAD (`__stream_elem_<kind>`) differs. Shape (the collect loop's body for a
+// single element, using the cursor's own waitable / event slots):
+// `ws.new(); join(rd, ws); rs = stream.read(rd, cur.elem, 1); if rs == BLOCKED {
+// wait(ws, cur.evt); rs = load(cur.evt+4) }; join(rd, 0); ws.drop`, then
+// `count = rs >> 4` — `count >= 1` ⇒ return 1 (element buffered at cur.elem),
+// else 0 (a CLOSED read reports count 0).
+func buildStreamNext() func(map[string]uint32) []byte {
 	return func(idxs map[string]uint32) []byte {
-		alloc := idxs["__fern_alloc"]
 		sread := idxs["async_stream_read"]
 		wsn := idxs["async_ws_new"]
 		wj := idxs["async_w_join"]
 		wsw := idxs["async_ws_wait"]
 		wsd := idxs["async_ws_drop"]
 
-		const rd = 0         // param: readable handle
-		scratch := uint32(1) // alloc(16): byte buffer @+0, wait event @+8
-		ws := uint32(2)      // per-call waitable-set
-		rs := uint32(3)      // read status / completed result
-		ret := uint32(4)     // return value (byte or -1)
+		const cur = 0   // param: cursor pointer
+		rd := uint32(1) // readable handle (cur.rd)
+		ws := uint32(2) // per-call waitable-set
+		rs := uint32(3) // read status / completed result
 
 		var body []byte
-		// scratch = alloc(16); ws = ws.new(); join(rd, ws).
-		body = inst.InstI32Const(body, 16)
-		body = inst.InstCall(body, alloc)
-		body = inst.InstLocalSet(body, scratch)
+		// rd = load(cur.rd); ws = ws.new(); join(rd, ws).
+		body = inst.InstLocalGet(body, cur)
+		body = memory.InstI32Load(body, 2, streamCursorRdOff)
+		body = inst.InstLocalSet(body, rd)
 		body = inst.InstCall(body, wsn)
 		body = inst.InstLocalSet(body, ws)
 		body = inst.InstLocalGet(body, rd)
 		body = inst.InstLocalGet(body, ws)
 		body = inst.InstCall(body, wj)
-		// rs = stream.read(rd, scratch, 1).
+		// rs = stream.read(rd, cur.elem, 1).
 		body = inst.InstLocalGet(body, rd)
-		body = inst.InstLocalGet(body, scratch)
+		body = inst.InstLocalGet(body, cur)
+		body = inst.InstI32Const(body, streamCursorElmOff)
+		body = numeric.InstI32Add(body)
 		body = inst.InstI32Const(body, 1)
 		body = inst.InstCall(body, sread)
 		body = inst.InstLocalSet(body, rs)
-		// if rs == BLOCKED(-1): wait(ws, scratch+8); rs = load(scratch+12).
+		// if rs == BLOCKED(-1): wait(ws, cur.evt); rs = load(cur.evt+4).
 		body = inst.InstLocalGet(body, rs)
 		body = inst.InstI32Const(body, -1)
 		body = numeric.InstI32Eq(body)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 		body = inst.InstLocalGet(body, ws)
-		body = inst.InstLocalGet(body, scratch)
-		body = inst.InstI32Const(body, 8)
+		body = inst.InstLocalGet(body, cur)
+		body = inst.InstI32Const(body, streamCursorEvtOff)
 		body = numeric.InstI32Add(body)
 		body = inst.InstCall(body, wsw)
 		body = inst.InstDrop(body)
-		body = inst.InstLocalGet(body, scratch)
-		body = memory.InstI32Load(body, 2, 12)
+		body = inst.InstLocalGet(body, cur)
+		body = memory.InstI32Load(body, 2, streamCursorEvtOff+4)
 		body = inst.InstLocalSet(body, rs)
 		body = inst.InstEnd(body)
 		// join(rd, 0); ws.drop(ws).
@@ -655,34 +687,42 @@ func buildStreamNextU8() func(map[string]uint32) []byte {
 		body = inst.InstCall(body, wj)
 		body = inst.InstLocalGet(body, ws)
 		body = inst.InstCall(body, wsd)
-		// ret = (rs >> 4) == 0 ? -1 : load8_u(scratch).
+		// return (rs >> 4) != 0 (1 = element read, 0 = EOF).
 		body = inst.InstLocalGet(body, rs)
 		body = inst.InstI32Const(body, 4)
 		body = numeric.InstI32ShrU(body)
-		body = numeric.InstI32Eqz(body) // count == 0  ⇒ EOF
-		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-		body = inst.InstI32Const(body, -1)
-		body = inst.InstLocalSet(body, ret)
-		body = inst.InstElse(body)
-		body = inst.InstLocalGet(body, scratch)
-		body = memory.InstI32Load8U(body, 0, 0)
-		body = inst.InstLocalSet(body, ret)
-		body = inst.InstEnd(body)
-		body = inst.InstLocalGet(body, ret)
+		body = inst.InstI32Const(body, 0)
+		body = numeric.InstI32Ne(body)
 
-		locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32) // scratch,ws,rs,ret
+		locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32) // rd,ws,rs
 		return inst.PutFunctionBody(nil, locals, body)
 	}
 }
 
-// buildStreamDropReadable builds the generic `__stream_drop(rd) -> ()` helper:
-// `stream.drop-readable(rd)`, releasing the readable end after a lazy stream
-// for-in finishes (docs/STREAM-TYPE-SURFACE.md, L2).
+// buildStreamElem builds the per-element-type `__stream_elem_<kind>(cur) -> T`
+// helper: load the element `__stream_next` buffered at `cur.elem` as its scalar
+// type (docs/STREAM-TYPE-SURFACE.md, L2). The load is width-/sign-/float-aware —
+// a sub-word integer is sign-/zero-extended into the i32 the canonical ABI uses,
+// an i64/u64 is an 8-byte load, f32/f64 their float loads. Helper type is
+// `(i32) -> <T's valtype>`.
+func buildStreamElem(elem ast.Type) func(map[string]uint32) []byte {
+	return func(_ map[string]uint32) []byte {
+		var body []byte
+		body = inst.InstLocalGet(body, 0) // cur
+		body = appendExternFieldLoad(body, elem, streamCursorElmOff)
+		return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+	}
+}
+
+// buildStreamDropReadable builds the generic `__stream_drop(cur) -> ()` helper:
+// `stream.drop-readable(load(cur.rd))`, releasing the readable end after a lazy
+// stream for-in finishes (docs/STREAM-TYPE-SURFACE.md, L2).
 func buildStreamDropReadable() func(map[string]uint32) []byte {
 	return func(idxs map[string]uint32) []byte {
 		sdropr := idxs["async_stream_drop_readable"]
 		var body []byte
-		body = inst.InstLocalGet(body, 0)
+		body = inst.InstLocalGet(body, 0) // cur
+		body = memory.InstI32Load(body, 2, streamCursorRdOff)
 		body = inst.InstCall(body, sdropr)
 		return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 	}
