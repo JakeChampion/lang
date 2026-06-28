@@ -251,6 +251,31 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — `@derive(json.Json)` now synthesises `from_json` (deserialise half of #2695)
+
+`@derive(json.Json)` already synthesised `to_json` (serialise); the deserialise
+half was missing. It now also synthesises a receiver-less associated
+**`from_json(s: string): Result[Self, string]`** that parses the JSON text and
+extracts each field by name — so `User.from_json(body)` round-trips with
+`user.to_json()`, the most-requested capability for the edge-handler use case.
+
+Scope (v1): flat structs whose fields are `i32` / `string` / `boolean` (the types
+with a `std/json.json_get_*` accessor); a missing field or invalid JSON returns
+`Err("missing field: <name>")` / `Err("invalid JSON")`. The synthesised body
+nests one `match` per field over its accessor `Option`, so a missing field
+short-circuits without a `?` operator. Two guards keep it safe and
+non-regressing: (a) it only fires when the real `std/json` is imported (its
+`json__json_parse` is in the modload-merged `prog.Funcs` — the synthesis runs
+post-modload, so it emits the already-mangled `json__*` names and a user's inline
+`trait Json` gets serialise-only); (b) a struct with any other field type
+(array / nested / `Option` / wider numeric) keeps serialise-only — `to_json`
+still derives. Nested/array/`Option`/`i64`/`f64` fields, `@json(name=)`, enum
+deserialise, and self-host parity are documented follow-ups.
+
+Gated by the `derive_from_json` native fixture (round-trip + field-order
+independence + missing-field + invalid-JSON, on interp / x86-64 / arm64 / wasm);
+`TestDeriveJson` continues to cover the inline-`Json` serialise-only path.
+
 ### 2026-06-23 — self-host cycle-freedom enforcement at parity (closes #2678)
 
 Verified + pinned that the self-host compiler enforces the immutable-data
