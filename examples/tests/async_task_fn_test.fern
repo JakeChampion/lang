@@ -122,6 +122,33 @@ function test_guard_taken(): test.TestOutcome {
     }
 }
 
+// A TRUE MERGE (slice 3c): the await-bearing `if` branch does NOT return — it
+// mutates `got` and FALLS THROUGH to the shared `return got`. The compiler pushes
+// the post-if continuation into each branch, so the awaiting path's mutation and
+// its use of `return got` are co-located in one resume.
+function start_merge(v: i32, bonus: i32): i32 {
+    var got = await v;
+    if (got < 40) {
+        var b = await bonus;       // await (binding), then...
+        got = got + b;             // ...mutate, and fall through
+    }
+    return got;                    // merge point — uses mutated got
+}
+
+function test_merge_taken(): test.TestOutcome {
+    concurrent {
+        var t = spawn start_merge(10, 32);  // got=10<40 → got = 10 + await 32 = 42
+        return test.assert_eq(await t, 42);
+    }
+}
+
+function test_merge_skipped(): test.TestOutcome {
+    concurrent {
+        var t = spawn start_merge(42, 99);  // got=42, not <40 → return 42 (bonus unused)
+        return test.assert_eq(await t, 42);
+    }
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("async-task-fn");
     r = r.it("fanout", test_fanout());
@@ -132,5 +159,7 @@ function main(): i32 {
     r = r.it("branch_else", test_branch_else());
     r = r.it("guard_fallthrough", test_guard_fallthrough());
     r = r.it("guard_taken", test_guard_taken());
+    r = r.it("merge_taken", test_merge_taken());
+    r = r.it("merge_skipped", test_merge_skipped());
     return r.finish();
 }
