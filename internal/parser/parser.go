@@ -3561,22 +3561,6 @@ func mutatedInLoop(scope []string, nodes ...ast.Node) map[string]bool {
 	return out
 }
 
-// identReferenced reports whether `name` appears as an identifier anywhere under
-// n (used to compute a loop's carried-variable set).
-func identReferenced(name string, n ast.Node) bool {
-	found := false
-	ast.Walk(n, func(x ast.Node) bool {
-		if found {
-			return false
-		}
-		if id, ok := x.(*ast.Ident); ok && id.Name == name {
-			found = true
-		}
-		return true
-	})
-	return found
-}
-
 // wrapTaskReturns rewrites each `return E;` reachable from s (through ordinary
 // control flow, but NOT into nested functions / lambdas) into `return (Done(E),
 // <rname>);` — the task's completion Step paired with the threaded reactor.
