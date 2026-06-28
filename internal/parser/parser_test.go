@@ -2879,6 +2879,15 @@ func TestParseTaskFunctionDesugar(t *testing.T) {
 	}`); err != nil {
 		t.Errorf("await in a straight-line while loop should transform, got error: %v", err)
 	}
+	// A RANGE `for` loop (`for i in 0..n`) with an await: supported (rewritten to
+	// a while).
+	if _, err := Parse(`function rng(n: i32, a: i32): i32 {
+		var acc = 0;
+		for i in 0..n { var x = await a; acc = acc + x; }
+		return acc;
+	}`); err != nil {
+		t.Errorf("await in a range for loop should transform, got error: %v", err)
+	}
 	// A `break` inside an await-bearing loop body: not supported yet (loops slice 2).
 	if _, err := Parse(`function brk(n: i32, a: i32): i32 {
 		var acc = 0;
