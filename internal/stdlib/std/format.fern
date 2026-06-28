@@ -25,11 +25,22 @@ import "std/i32";
 // subset.
 //
 // Format specs (the bit after the `:`) follow Rust's
-// `[[fill]align][width][.precision]` grammar, applied to the
-// already-stringified arg:
+// `[[fill]align][sign]['0'][width][.precision]` grammar, applied
+// to the already-stringified arg:
 //   - align: `<` left, `>` right, `^` center (default left).
 //   - fill: any char immediately before an align char, e.g.
 //     `{:*>8}` pads with `*`. Defaults to a space.
+//   - sign: `+` forces a leading `+` on a value that looks like a
+//     non-negative number (first byte a digit); `-` is the default
+//     no-op. A value that already carries a `-`/`+` is left as-is,
+//     and a non-numeric value never gets a sign — so `{:+}` of "42"
+//     is "+42", of "-42" stays "-42", of "ok" stays "ok".
+//   - `0`: sign-aware zero-padding. A leading `0` before the width
+//     digits pads with `0` instead of the fill char, inserting the
+//     zeros *after* any leading sign and counting the sign toward
+//     the width — so `{:05}` of "-42" is "-0042" and `{:+06}` of
+//     "42" is "+00042". The `0` flag overrides fill/align (matching
+//     Rust), so `{:<05}` of "42" is still "00042".
 //   - width: minimum field width; the value is padded (never
 //     truncated) up to it.
 //   - precision: `.N` truncates the string to at most N bytes
@@ -108,8 +119,8 @@ pub function format(fmt: string, args: string[]): string {
 // __format_apply_spec applies a `:`-prefixed format spec to an
 // already-stringified value. `spec` is either "" (plain `{}`,
 // returned unchanged) or starts with ':' followed by the
-// `[[fill]align][width][.precision]` grammar. Precision truncates
-// first, then width pads — matching Rust's ordering.
+// `[[fill]align][sign]['0'][width][.precision]` grammar. Precision
+// truncates first, then width pads — matching Rust's ordering.
 function __format_apply_spec(s: string, spec: string): string {
     if (spec.len() == 0) { return s; }
     var m: i32 = spec.len();
@@ -126,6 +137,17 @@ function __format_apply_spec(s: string, spec: string): string {
         align = __align_code(spec[p]);
         p = p + 1;
     }
+    // sign — `+` forces a leading `+` on non-negative numbers; `-`
+    // is the default and a no-op. Consumed here so it precedes the
+    // `0` flag and width, per Rust's `[sign]['0'][width]` order.
+    var plus: boolean = false;
+    if (p < m && spec[p] == 43) { plus = true; p = p + 1; }      // '+'
+    else if (p < m && spec[p] == 45) { p = p + 1; }              // '-'
+    // `0` flag — a leading `0` before the width digits selects
+    // sign-aware zero-padding (overriding fill/align). The flag is
+    // consumed here; any further digits are the width.
+    var zero: boolean = false;
+    if (p < m && spec[p] == 48) { zero = true; p = p + 1; }      // '0'
     // width — run of decimal digits.
     var width: i32 = 0;
     while (p < m && spec[p] >= 48 && spec[p] <= 57) {
@@ -143,10 +165,24 @@ function __format_apply_spec(s: string, spec: string): string {
         }
         if (val.len() > prec) { val = val[0:prec]; }
     }
+    // sign flag — prefix `+` on a value that looks like a non-negative
+    // number (first byte a digit). A value already carrying `-`/`+`,
+    // or a non-numeric one, is left untouched.
+    if (plus && val.len() > 0 && val[0] >= 48 && val[0] <= 57) {
+        val = "+" + val;
+    }
     // width padding — never truncates.
     var vlen: i32 = val.len();
     if (vlen >= width) { return val; }
     var pad: i32 = width - vlen;
+    // zero-pad — sign-aware: zeros go after a leading sign char, and
+    // the sign counts toward the width. Overrides fill/align.
+    if (zero) {
+        if (val.len() > 0 && (val[0] == 45 || val[0] == 43)) {
+            return val[0:1] + __repeat_char("0", pad) + val[1:val.len()];
+        }
+        return __repeat_char("0", pad) + val;
+    }
     if (align == 2) {
         return __repeat_char(fill, pad) + val;
     }

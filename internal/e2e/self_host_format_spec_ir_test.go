@@ -9,8 +9,10 @@ import (
 	"testing"
 )
 
-// formatSpecIRCases exercise std/format's Rust-style `{:fill|align|width.precision}`
-// format specs (issue #2684) through the self-host IR path on x86-64 + wasm.
+// formatSpecIRCases exercise std/format's Rust-style
+// `{:[fill]align[sign][0]width.precision}` format specs (issue #2684) through the
+// self-host IR path on x86-64 + wasm — including the `+` sign and sign-aware `0`
+// zero-pad flags (the latter slices a leading sign off with `val[1:val.len()]`).
 // (TestSelfHostFormatStringIR* already covers the bare `{}` substitution.) The
 // single-program driver resolves no imports, so the whole format + spec machinery
 // is inlined as `fmt_format` and helpers; this verifies the constructs the spec
@@ -47,6 +49,11 @@ function fmt_apply_spec(s: string, spec: string): string {
         align = fmt_align_code(spec[p]);
         p = p + 1;
     }
+    var plus: boolean = false;
+    if (p < m && spec[p] == 43) { plus = true; p = p + 1; }
+    else if (p < m && spec[p] == 45) { p = p + 1; }
+    var zero: boolean = false;
+    if (p < m && spec[p] == 48) { zero = true; p = p + 1; }
     var width: i32 = 0;
     while (p < m && spec[p] >= 48 && spec[p] <= 57) {
         width = width * 10 + (spec[p] - 48);
@@ -62,9 +69,18 @@ function fmt_apply_spec(s: string, spec: string): string {
         }
         if (val.len() > prec) { val = val[0:prec]; }
     }
+    if (plus && val.len() > 0 && val[0] >= 48 && val[0] <= 57) {
+        val = "+" + val;
+    }
     var vlen: i32 = val.len();
     if (vlen >= width) { return val; }
     var pad: i32 = width - vlen;
+    if (zero) {
+        if (val.len() > 0 && (val[0] == 45 || val[0] == 43)) {
+            return val[0:1] + fmt_repeat("0", pad) + val[1:val.len()];
+        }
+        return fmt_repeat("0", pad) + val;
+    }
     if (align == 2) { return fmt_repeat(fill, pad) + val; }
     if (align == 3) {
         var left: i32 = pad / 2;
@@ -137,6 +153,16 @@ var formatSpecIRCases = []struct {
 	{"underflow-spec", `var a: string[] = []; return fmt_format("{:>4}", a).len();`},
 	// plain `{}` still works: "{}" + ["x"] -> "x" (1).
 	{"plain", `var a: string[] = ["x"]; return fmt_format("{}", a).len();`},
+	// sign flag: "[{:+}]" + ["42"] -> "[+42]" (5).
+	{"sign-plus", `var a: string[] = ["42"]; return fmt_format("[{:+}]", a).len();`},
+	// sign flag is a no-op on a value that already carries '-': "[{:+}]" + ["-7"] -> "[-7]" (4).
+	{"sign-neg", `var a: string[] = ["-7"]; return fmt_format("[{:+}]", a).len();`},
+	// zero-pad: "[{:05}]" + ["42"] -> "[00042]" (7).
+	{"zero-pad", `var a: string[] = ["42"]; return fmt_format("[{:05}]", a).len();`},
+	// sign-aware zero-pad keeps '-' leading: "[{:05}]" + ["-42"] -> "[-0042]" (7).
+	{"zero-pad-neg", `var a: string[] = ["-42"]; return fmt_format("[{:05}]", a).len();`},
+	// sign + zero-pad combine: "[{:+06}]" + ["42"] -> "[+00042]" (8).
+	{"sign-zero-pad", `var a: string[] = ["42"]; return fmt_format("[{:+06}]", a).len();`},
 }
 
 func formatSpecIRSrc(mainBody string) string {
