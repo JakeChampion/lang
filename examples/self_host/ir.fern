@@ -544,6 +544,16 @@ pub function op_env(): Op { return op0("env"); }
 // interned "FileStat" name). No wasm file I/O here, so a stat module is wasm-
 // ineligible (wasm_eligible) and stays on the AST path there.
 pub function op_stat(): Op { return op0("stat"); }
+// `subprocess` pops three values — stdin string, args string[], cmd string (in
+// that pop order: rdx=stdin, rsi=args, rdi=cmd) — spawns the named command with
+// the given argv (PATH-resolved via /bin/ + /usr/bin/), feeds it stdin, waits
+// for it, and pushes a fresh ProcessResult{stdout, stderr, exit_code} (a VALUE
+// op — three args consumed, the box left on the stack). Lowers to each backend's
+// __fern_subprocess helper (the same one the AST path calls; it boxes a
+// ProcessResult struct whose shape pointer is the interned "ProcessResult"
+// name). No wasm process spawn here, so a subprocess module is wasm-ineligible
+// (wasm_eligible) and stays on the AST path there.
+pub function op_subprocess(): Op { return op0("subprocess"); }
 // `read_chunk` pops an i32 byte-count `n` and an i32 Reader fd (a stdin/file
 // handle from `stdin()`/`open_reader`), reads up to n bytes via `read(fd, …, n)`,
 // and pushes a fresh Option[string]: Some(chunk) on a non-empty read, None at EOF
@@ -862,6 +872,9 @@ pub function op_allocates(kind: string): boolean {
     if (kind == "env") { return true; }
     // stat boxes a fresh FileStat struct + a Result wrapper, so it needs the heap.
     if (kind == "stat") { return true; }
+    // subprocess boxes a fresh ProcessResult struct + its stdout/stderr string
+    // blocks, so it needs the heap runtime.
+    if (kind == "subprocess") { return true; }
     // read_line boxes the line into a fresh string block, so it needs the heap.
     // (read_int is NOT here: it parses into scratch + returns a bare i32, like
     // the register backends, so a read_int-only module needs no heap runtime.)

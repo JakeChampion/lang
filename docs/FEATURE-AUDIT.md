@@ -462,10 +462,11 @@ this treeshake fix keeps the auto-discovered concrete helpers reachable; the
   / 2a handle closure-free `concat`). `array_hof` still routes AST (also a
   `BAIL lower` on `reduce`); the next array-cluster target is extending the
   `__arrm_*` free-generic rewrite to closure-taking array methods.
-- **`subprocess` not lowered on IR** — `process_assertions`,
-  `process_output_shortcuts`, `lang_binary_e2e` (3 modules; a heavy fork/exec
-  runtime returning a `ProcessResult` struct, same lowering recipe as the fs
-  builtins plus struct-result handling).
+- ~~**`subprocess` not lowered on IR** — `process_assertions`,
+  `process_output_shortcuts`, `lang_binary_e2e`~~ — **DONE** (see the
+  `subprocess(...)` entry below): a heavy fork/exec runtime returning a bare
+  `ProcessResult` struct, the struct-RESULT recipe from `stat` plus a 3-arg
+  value op; all three modules flip to IR.
 - **`Map.iter` not intercepted on IR** — `json_roundtrip` (`m.iter()` →
   `BAIL call[Map.iter]`; needs the map-iter builtin interception like keys/values).
 - **Tuple-array-returning method element typing** — `map_verbs`

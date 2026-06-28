@@ -5261,6 +5261,25 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!sts.ok) { return sts; }
                         return sts.emit(ir.op_stat());
                     }
+                    // Built-in `subprocess(cmd, args, stdin)` — spawn a command,
+                    // push a fresh ProcessResult{stdout, stderr, exit_code} box.
+                    // Lower the three args in call order (cmd deepest, stdin on
+                    // top) so the runtime's pop order (rdx=stdin, rsi=args,
+                    // rdi=cmd) lines up. The ProcessResult type is resolved by
+                    // opt_ret_type's subprocess case so field reads on the result
+                    // bind via its injected layout. No wasm process spawn, so
+                    // wasm_eligible rejects subprocess modules; x86 / arm64 lower
+                    // it (the same __fern_subprocess runtime the AST path calls —
+                    // std/test's process assertions, lang_binary_e2e).
+                    if (cid.name == "subprocess" && c.args.len() == 3) {
+                        var spc: LowerState = lower_expr(c.args[0], s);
+                        if (!spc.ok) { return spc; }
+                        var spa: LowerState = lower_expr(c.args[1], spc);
+                        if (!spa.ok) { return spa; }
+                        var spi: LowerState = lower_expr(c.args[2], spa);
+                        if (!spi.ok) { return spi; }
+                        return spi.emit(ir.op_subprocess());
+                    }
                     // Built-in `args()` — the command-line argv accessor: push a
                     // fresh string[] (argv[0] first). A no-arg value op; the result
                     // str-array-tracks (expr_is_strarr's args case) so `a.len()` /
@@ -15871,6 +15890,7 @@ pub function (s: LowerState) opt_ret_type(name: string): string {
     if (name == "read_dir") { return "Result[string[], IoError]"; }
     if (name == "env") { return "Option[string]"; }
     if (name == "stat") { return "Result[FileStat, IoError]"; }
+    if (name == "subprocess") { return "ProcessResult"; }
     return "";
 }
 
