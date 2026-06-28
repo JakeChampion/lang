@@ -60,15 +60,55 @@ result to `T[]` (the eager collected array), so the ordinary parse-time array
 the stream to EOF — no intermediate `var b: u8[] = …` and no for-in rework
 needed. Locked by `internal/e2e` `TestWasmP3StreamForIn` (→ 42).
 
-What is intentionally **NOT** provided is true *element-at-a-time* lazy iteration
-(process each item as it arrives off the wire, before EOF). That is the *colored*
-model — each loop step an implicit await — which Fern's colorless design avoids,
-and mechanically it would require reworking the parse-time `for-in` into a
-type-driven desugar / Iterator protocol with per-step awaits. Iteration over a
-stream is therefore **eager collect-then-iterate**, which ships the useful 90%
-(edge handlers read a request/body to completion before responding). A
-colored/lazy variant could layer on top later if an Iterator protocol is ever
-introduced, but it is a separate, deliberate departure from colorless — not a gap.
+True *element-at-a-time* lazy iteration (process each item as it arrives off the
+wire, before EOF) is the *colored* model — each loop step an implicit await. It is
+being added behind the `for-in` node centralization (below); until L2 lands,
+`for x in stream` stays **eager collect-then-iterate** (locked by
+`TestWasmP3StreamForIn`).
+
+### Lazy `for x in stream` — design (L1 done, L2 pending)
+
+**L1 — DONE** (#3963): the plain `for x in expr` form parses to `ast.ForEach` and
+is lowered in one place (`ast.DesugarForEachArray`) at the end of parsing, so a
+single decl-aware step can choose the lowering. Behavior-preserving; every
+pre-checker statement-walker was taught the node (incl. the `Array.build`
+builder-threading desugar).
+
+**L2 — the lazy codegen** (the remaining vertical, must land atomically — it
+flips the eager semantics):
+
+- *Detection* (`desugarForEachProgram`): when `ForEach.Iter` is a call to a
+  module-local `@import async function f(): stream[T]` (look up the callee in
+  `prog.Funcs` for `ImportIface != "" && Async && ReturnType is StreamType`),
+  emit the lazy loop instead of `DesugarForEachArray`. (`prog` must be threaded
+  into the recursive desugar.)
+- *Desugar shape* — use stream intrinsics so the user `BODY` stays normal Fern:
+  ```
+  var __sh = __stream_open(f, args…)        // the import lower → readable handle (i32), NOT collected
+  loop {
+      match __stream_next(__sh) {            // read 1 + await; Some(x) | None at EOF
+          Some(x) => { BODY }
+          None    => break
+      }
+  }
+  __stream_drop(__sh)
+  ```
+- *Dual lowering of a stream import*: a `stream[T]` `@import` keeps its colorless
+  collect-wrapper for value context (`var b: u8[] = f()`); the lazy path needs the
+  RAW handle + a per-element read. So expose `__stream_open` (the `canon lower
+  async` result = the readable handle, no collect loop) and `__stream_next`
+  (`stream.read(handle, buf, 1)` + the await-via-event loop already pinned for the
+  collect side; decode `count`/`code` → `Some(buf[0])` / `None` on CLOSED) and
+  `__stream_drop` (`stream.drop-readable`). The per-element mechanics are exactly
+  the collect loop's body — already validated (`scollect2.wat`).
+- *Checker*: type the three intrinsics; `__stream_next` returns `Option[T]`. The
+  iterated `f()` must NOT be collect-rewritten in lazy position.
+- *Composer + e2e*: reuse `stream.read`/`drop-readable` provisioning; a real-Fern
+  e2e iterating `for x in body()` lazily → 42, against the EOF producer.
+
+This is a vertical on the scale of the collect-wrapper; it ships when detection +
+codegen + e2e are all green together (no half-step, since it changes the working
+eager behavior).
 
 ## Implementation slices (recon-grounded; file anchors in the recon)
 
@@ -222,9 +262,11 @@ yield one self-contained runnable component (`cmd/fern` `TestAsyncProviderBundle
 via `BuildAsyncImportsAwaitComponent`); plus `-async-export` lifting param'd async
 functions (`TestAsyncExportParamsCLI`).
 
+In progress: **colored/lazy `for x in stream`** — L1 (the `ast.ForEach`
+centralization, #3963) is merged; L2 (the lazy `__stream_open`/`__stream_next`
+codegen + atomic flip) is designed above and is the next vertical.
+
 **Possible follow-ons (new design efforts, not gaps in this surface):**
-colored/lazy `for x in stream` (element-at-a-time, per-step await — a deliberate
-departure from colorless, needs a type-driven for-in / Iterator protocol — see
-the analysis below); widening the CLI auto-bundle to **stream-result/param**
-providers (the stream composers currently take hand-built cores rather than a
-bring-your-own provider component) and to string/list-shaped async imports.
+widening the CLI auto-bundle to **stream-result/param** providers (the stream
+composers currently take hand-built cores rather than a bring-your-own provider
+component) and to string/list-shaped async imports.
