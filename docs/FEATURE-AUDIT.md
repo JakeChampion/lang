@@ -251,6 +251,35 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-28 — `stat(path)` lowers on the IR path — first struct-RESULT builtin (flips `batch7`)
+
+`stat(path): Result[FileStat, IoError]` had a full AST runtime (`__fern_stat`) but
+no IR lowering, so it bailed `BAIL call[stat]` → AST, dragging `batch7` (std/test's
+`assert_is_file` / `assert_is_dir` / `assert_file_size`, all `match (stat(p)) { Ok(s)
+=> s.is_file/is_dir/size, Err => … }`) to the legacy emitter.
+
+This is the **first builtin whose Ok payload is a STRUCT** (the injected `FileStat`
+`{is_file, is_dir, size}`), vs the `Option`/`Result`-of-scalar/string/array fs
+builtins so far. It Just Worked through the existing machinery: `opt_ret_type`
+returns `Result[FileStat, IoError]`, the StmtMatch `Ok(s)` arm binds `s` at its
+payload type (`FileStat`), and the field reads resolve against the injected struct
+layout — no new binding code. The one genuinely new piece is the **shape pointer**:
+the x86 runtime references the `FileStat` shape via `shape_ref` (the IR-native
+shape mechanism, matching how `op_struct_lit` constructs structs), pre-interned
+before the literal pool so the label resolves (the runtime emits after the pool);
+arm64 reuses asm_arm64's heap-block `__fern_stat` + its FileStat pre-intern (both
+heap-gated). wasm rejects stat modules.
+
+`batch7` flips AST → IR. Gated by `TestSelfHostStatIR` (a known regular file —
+asserting `is_file` + the exact byte `size` — a directory `is_dir`, and a
+nonexistent path `Err`, all via the `__fern_stat` IR path); the full
+`TestSelfHostStdTestE2E` differential gate (incl. `batch7`) matches interp;
+Stage-2 fixpoint byte-identical (no self-host source calls `stat`).
+
+This proves the struct-result mechanism end-to-end — the same shape the deferred
+`subprocess` builtin needs (its bare `ProcessResult` struct return, though
+un-wrapped by a `Result`, reuses this shape-pointer + field-read path).
+
 ### 2026-06-28 — `env(name)` lowers on the IR path (flips the `env_unreachable` module)
 
 `env(name): Option[string]` (look up an environment variable) had a full AST
@@ -345,11 +374,8 @@ this treeshake fix keeps the auto-discovered concrete helpers reachable; the
 - **Tuple-array-returning method element typing** — `map_verbs`
   (`for e in m.entries()`: the snapshot var doesn't recover the `(i32,i32)[]`
   element tuple tags; needs a tuple-array return-type recovery).
-- **`stat`-returning fs assertions** — `batch7` (`assert_is_file` / `assert_is_dir`
-  / `assert_file_size`) bails on the un-lowered `stat(path)` builtin, which returns
-  a `FileStat` STRUCT (`.is_file` / `.is_dir` / `.size`) — the same struct-result
-  shape as `subprocess`'s `ProcessResult`. Needs the fs-builtin recipe plus
-  struct-result handling.
+- ~~**`stat`-returning fs assertions** — `batch7`~~ — **DONE** (see the `stat(path)`
+  entry above): the first struct-RESULT builtin on the IR path; `batch7` flips to IR.
 - **Generic `eq` dispatch in monomorphised `assert_eq`** — `iter`
   (`assert_eq__A: BAIL call[A.eq]`: a `std/test` `assert_eq` clone at a user type
   whose `.eq` dispatch isn't resolved post-mono).

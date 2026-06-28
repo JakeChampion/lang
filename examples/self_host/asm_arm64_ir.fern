@@ -578,6 +578,13 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // name box into x0, push the result box.
             s = s.need("heap");
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_env\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "stat") {
+            // [pathbox] -> stat the named file, push a fresh Result[FileStat,
+            // IoError] box (asm_arm64.emit_runtime's __fern_stat, in its heap block;
+            // allocates a FileStat struct + Result wrapper, FileStat pre-interned
+            // there too — both heap-gated). Pop the path box into x0, push the box.
+            s = s.need("heap");
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_stat\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "read_chunk") {
             // [fd][n] -> read up to n bytes from the Reader fd, push a fresh
             // Option[string] box (asm_arm64.emit_runtime's __fern_reader_read_chunk,
