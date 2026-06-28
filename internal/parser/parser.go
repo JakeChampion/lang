@@ -3049,9 +3049,12 @@ func transformTaskFunction(fn *ast.FuncDecl) error {
 // top-level `var NAME = await EXPR;` binding into `rxName.register(EXPR)` plus a
 // `resume_d(NAME, r_d)` continuation whose body is buildTaskSegment(post, r_d) —
 // recursing so N sequential awaits nest into N continuations. Per-depth names
-// keep nested continuations distinct. Shapes beyond straight-line sequential
-// awaits (an `await` outside a top-level binding, a `return` before an `await`)
-// are rejected via *errp.
+// keep nested continuations distinct. A segment ending in a terminating
+// `if/else` may also carry `await`s inside its branches (slice 3a) — each branch
+// is recursed as its own segment sharing the in-scope reactor. Shapes still
+// unsupported (an `await` outside a top-level binding or a terminating if, a
+// `return` before an `await`, awaits in loops / after a merge) are rejected via
+// *errp.
 func buildTaskSegment(stmts []ast.Stmt, rxName string, depth *int, fn *ast.FuncDecl, errp *error) []ast.Stmt {
 	if *errp != nil {
 		return stmts
@@ -3073,11 +3076,43 @@ func buildTaskSegment(stmts []ast.Stmt, rxName string, depth *int, fn *ast.FuncD
 		}
 	}
 	if awaitIdx < 0 {
-		// Leaf: end in `return EXPR;`; wrap every return with Done + rxName.
 		if len(stmts) == 0 {
 			*errp = errorAt(fn.P, "function %q: a task function must end with `return EXPR;` (after its `await`s)", fn.Name)
 			return stmts
 		}
+		// Slice 3a: a segment whose LAST statement is a terminating `if/else`
+		// (both branches present) may have `await`s INSIDE its branches — each
+		// branch is its own segment ending in `return`, sharing the reactor
+		// in scope (the branches are mutually exclusive and there is no code
+		// after the if, so no merge-point continuation is needed). Recurse into
+		// each branch. Awaits in loops or in a non-terminal `if` (code after the
+		// merge) remain unsupported — slice 3b/3c.
+		if ifst, ok := stmts[len(stmts)-1].(*ast.If); ok && ifst.Else != nil {
+			lead := stmts[:len(stmts)-1]
+			for _, s := range lead {
+				if stmtHasTopReturn(s) {
+					*errp = errorAt(fn.P, "function %q: a `return` before an `await` is not supported yet (Phase 3b)", fn.Name)
+					return stmts
+				}
+			}
+			if taskAwaitCount(&ast.Block{Stmts: lead}) > 0 {
+				*errp = errorAt(fn.P, "function %q: an `await` outside a top-level `var NAME = await EXPR;` binding is not supported yet (Phase 3b)", fn.Name)
+				return stmts
+			}
+			branchStmts := func(s ast.Stmt) []ast.Stmt {
+				if b, ok := s.(*ast.Block); ok {
+					return b.Stmts
+				}
+				return []ast.Stmt{s}
+			}
+			ifst.Then = &ast.Block{P: p, Stmts: buildTaskSegment(branchStmts(ifst.Then), rxName, depth, fn, errp)}
+			ifst.Else = &ast.Block{P: p, Stmts: buildTaskSegment(branchStmts(ifst.Else), rxName, depth, fn, errp)}
+			out := make([]ast.Stmt, 0, len(lead)+1)
+			out = append(out, lead...)
+			out = append(out, ifst)
+			return out
+		}
+		// Plain leaf: end in `return EXPR;`; wrap every return with Done + rxName.
 		if r, ok := stmts[len(stmts)-1].(*ast.Return); !ok || r.Value == nil {
 			*errp = errorAt(fn.P, "function %q: a task function must end with `return EXPR;` (after its `await`s)", fn.Name)
 			return stmts

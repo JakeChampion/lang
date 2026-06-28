@@ -372,10 +372,19 @@ protocol leak) and `await` can sit in arbitrary control flow.
   function's injected `__task_rx` through each `resume`'s reactor param.
   Covered by `start_seq` in `async_task_fn_test.fern` (two awaits → 42) and a
   `TestParseTaskFunctionDesugar` case.
-- **Slice 3+ — remaining:** awaits inside loops/conditionals and early returns
-  before an await (the general control-flow body-split), and pairing with Phase
-  1/4 so awaited calls do real I/O rather than the in-memory reactor's
-  `register(value)`. Still the big rock.
+- **Slice 3a — DONE (awaits in terminating conditionals):** a segment whose last
+  statement is an `if/else` (both branches present, each ending in `return`) may
+  carry `await`s inside its branches. `buildTaskSegment` recurses into each branch
+  as its own segment sharing the in-scope reactor — the branches are mutually
+  exclusive and nothing follows the `if`, so no merge-point continuation is
+  needed. `else if` chains work if they end in a final `else`. Covered by
+  `start_branch` in `async_task_fn_test.fern` (then + else paths → 42) and
+  `TestParseTaskFunctionDesugar` cases (incl. rejecting code after the if).
+- **Slice 3b+ — remaining:** a NON-terminal `if` (code after the merge — needs the
+  post-if code factored into a shared continuation both branches call), awaits
+  inside loops (a self-referential / tail-recursive continuation — the hardest
+  case), early returns before an await, and pairing with Phase 1/4 so awaited
+  calls do real I/O rather than the in-memory reactor's `register(value)`.
 - **Self-hosted parser port** (`examples/self_host/parser.fern`) — the
   desugar must be mirrored there before the Go compiler retires.
   Deferred while the self-host SSA-by-default migration is in flight
