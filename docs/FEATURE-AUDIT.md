@@ -251,6 +251,30 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-28 — self-host: type-param array methods lower on IR (slice 4, flips `array_hof`)
+
+Slice 3 folded array methods whose only type variable was the receiver's `T`;
+`map[U]` / `flat_map[U]` / `fold[A]` / `zip[U]` also carry an UNBOUNDED extra type
+variable, so they stayed in method form (`xs.map(f)` bailed) — the last blocker
+for `array_hof`.
+
+`is_generic_array_method` now keys the exclusion on `fd.type_params.len()` (the
+BOUNDED params) rather than `type_param_count` (which counts unbounded ones too).
+An unbounded extra type variable (`U` / `A`) is ERASED by the self-host's uniform
+8-byte ABI exactly as it is in the free function: the result's element width is
+driven by the CALL SITE's annotation (`var ys: string[] = xs.map(f)`), not by
+cloning the body. So the receiver alone still fixes the monomorphised `T`, and the
+folded `__arrm_map[T](xs, f)` body delegates to the free `map` — which already
+lowers on IR for any `U`/`A`, including a width-changing one (i32 → string,
+verified). A bounded extra type param (none in std/array today) would land in
+`fd.type_params` and stays excluded, keeping the receiver-only fold sound.
+
+**`array_hof` flips AST → IR** (8/8). Gated by `TestSelfHostArrayTyparamMethodIR`
+(map / map-widen / flat_map / fold-widen / zip, each `-decide == "ir"`, an
+`__arrm_` clone in the asm, exit matching the interp oracle); the slice-1/2/3
+array-method tests, `TestSelfHostBootstrapsItself`, and `TestSelfHostStdTestE2E`
+(incl. `array_hof`) stay green.
+
 ### 2026-06-28 — self-host: closure-taking array methods lower on IR (slice 3)
 
 The array-method monomorphisation (slices 1–2) folded only closure-free methods
