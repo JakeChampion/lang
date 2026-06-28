@@ -5102,7 +5102,17 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // __fern_sleep_ms nanosleep helper. A reserved builtin, so it
                     // never shadows a user function (#2843 — self-host IR path).
                     if (cid.name == "sleep_ms" && c.args.len() == 1) {
-                        var sms: LowerState = lower_expr(c.args[0], s);
+                        // The ms count is read into a 64-bit register (rdi / x0),
+                        // so an i64 arg (`sleep_ms(5 as i64)`) lowers through the
+                        // i64 path; a plain i32 count keeps the 32-bit path. Without
+                        // the width dispatch an i64 arg bailed lower_expr -> the
+                        // whole timing module fell to the AST emitter.
+                        var sms: LowerState = s;
+                        if (infer_expr_width(c.args[0], s) == 64) {
+                            sms = lower_i64(c.args[0], s);
+                        } else {
+                            sms = lower_expr(c.args[0], s);
+                        }
                         if (!sms.ok) { return sms; }
                         return sms.emit(ir.op_sleep_ms());
                     }
