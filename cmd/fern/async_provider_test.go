@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
@@ -84,7 +85,7 @@ function main(): i32 { return 0; }
 	outPath := filepath.Join(dir, "bundled.wasm")
 
 	code, err := run(consumerPath, outPath, "wasm-bin", "", false, false, "qemu-aarch64",
-		false /*componentWrap*/, false /*componentWrapCli*/, false /*asyncExport*/, provPath, false /*shared*/, "", nil)
+		false /*componentWrap*/, false /*componentWrapCli*/, false /*asyncExport*/, []string{provPath}, false /*shared*/, "", nil)
 	if err != nil || code != 0 {
 		t.Fatalf("run(-async-provider): code=%d err=%v", code, err)
 	}
@@ -182,7 +183,7 @@ function main(): i32 { return 0; }
 	outPath := filepath.Join(dir, "bundled.wasm")
 
 	code, err := run(consumerPath, outPath, "wasm-bin", "", false, false, "qemu-aarch64",
-		false, false, false, provPath, false, "", nil)
+		false, false, false, []string{provPath}, false, "", nil)
 	if err != nil || code != 0 {
 		t.Fatalf("run(-async-provider, params): code=%d err=%v", code, err)
 	}
@@ -208,6 +209,96 @@ function main(): i32 { return 0; }
 	}
 }
 
+// TestAsyncProviderBundleMultiCLI covers bundling MULTIPLE async imports, each
+// mapped to its own provider via `-async-provider WITNAME=PATH` (repeatable):
+//
+//	@import("test:a/d","one") async function one(): i32;   // provider returns 20
+//	@import("test:b/d","two") async function two(): i32;   // provider returns 22
+//	async function run(): i32 { return one() + two(); }    // -> 42
+func TestAsyncProviderBundleMultiCLI(t *testing.T) {
+	dir := t.TempDir()
+
+	p1 := buildAsyncProviderComponent(t,
+		"async function compute(): i32 { return 20; }\nfunction main(): i32 { return 0; }\n",
+		"compute", "one")
+	p2 := buildAsyncProviderComponent(t,
+		"async function compute(): i32 { return 22; }\nfunction main(): i32 { return 0; }\n",
+		"compute", "two")
+	p1Path := filepath.Join(dir, "one.wasm")
+	p2Path := filepath.Join(dir, "two.wasm")
+	if err := os.WriteFile(p1Path, p1, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p2Path, p2, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	consumer := `@import("test:a/d", "one") async function one(): i32;
+@import("test:b/d", "two") async function two(): i32;
+async function run(): i32 { return one() + two(); }
+function main(): i32 { return 0; }
+`
+	consumerPath := filepath.Join(dir, "consumer.fern")
+	if err := os.WriteFile(consumerPath, []byte(consumer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outPath := filepath.Join(dir, "bundled.wasm")
+
+	code, err := run(consumerPath, outPath, "wasm-bin", "", false, false, "qemu-aarch64",
+		false, false, false, []string{"one=" + p1Path, "two=" + p2Path}, false, "", nil)
+	if err != nil || code != 0 {
+		t.Fatalf("run(-async-provider, multi): code=%d err=%v", code, err)
+	}
+	out, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) < 8 || !bytes.Equal(out[:4], []byte("\x00asm")) || out[6] != 0x01 {
+		t.Fatalf("output is not a component (magic/version = % x)", out[:min(8, len(out))])
+	}
+
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; emitted a valid component but skipping runtime check")
+	}
+	res, err := exec.Command("wasmtime", "run",
+		"-W", "component-model-async,component-model-async-stackful",
+		"--invoke", "run()", outPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run (multi async provider): %v\n%s", err, res)
+	}
+	if !bytes.Contains(res, []byte("42")) {
+		t.Errorf("multi async provider: got %q, want 42 (20+22)", bytes.TrimSpace(res))
+	}
+}
+
+// TestAsyncProviderBundleMissingCLI checks the clear error when an async import
+// has no matching -async-provider entry.
+func TestAsyncProviderBundleMissingCLI(t *testing.T) {
+	dir := t.TempDir()
+	p1 := buildAsyncProviderComponent(t,
+		"async function compute(): i32 { return 20; }\nfunction main(): i32 { return 0; }\n",
+		"compute", "one")
+	p1Path := filepath.Join(dir, "one.wasm")
+	if err := os.WriteFile(p1Path, p1, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	consumer := `@import("test:a/d", "one") async function one(): i32;
+@import("test:b/d", "two") async function two(): i32;
+async function run(): i32 { return one() + two(); }
+function main(): i32 { return 0; }
+`
+	consumerPath := filepath.Join(dir, "consumer.fern")
+	if err := os.WriteFile(consumerPath, []byte(consumer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Only `one` provided; `two` is unmapped → error mentioning two.
+	_, err := run(consumerPath, filepath.Join(dir, "o.wasm"), "wasm-bin", "", false, false, "qemu-aarch64",
+		false, false, false, []string{"one=" + p1Path}, false, "", nil)
+	if err == nil || !strings.Contains(err.Error(), "two") {
+		t.Fatalf("expected a 'no provider for two' error, got %v", err)
+	}
+}
+
 // TestAsyncExportParamsCLI covers `fern -target wasm-bin` lifting a param'd async
 // function as a component export: `async function add(a: i32, b: i32): i32` →
 // `add: async func(a, b: u32) -> u32`. The CLI now selects the param-aware lift
@@ -226,7 +317,7 @@ function main(): i32 { return 0; }
 	outPath := filepath.Join(dir, "add.wasm")
 
 	code, err := run(srcPath, outPath, "wasm-bin", "", false, false, "qemu-aarch64",
-		false, false, true /*asyncExport*/, "" /*asyncProvider*/, false, "", nil)
+		false, false, true /*asyncExport*/, nil /*asyncProviders*/, false, "", nil)
 	if err != nil || code != 0 {
 		t.Fatalf("run(-async-export, params): code=%d err=%v", code, err)
 	}

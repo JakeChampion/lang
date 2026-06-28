@@ -215,15 +215,16 @@ pinned + runnable (above), P2 codegen/composer/e2e remaining.
 Done since: `stream[T]` **parameters** (produce side from Fern source — P1/P2,
 `TestWasmP3StreamParamFromFern`); `u8`+`i32` **stride** coverage in both
 directions; `for x in stream` **eager** iteration (`TestWasmP3StreamForIn`); and
-the **CLI auto-bundle** MVP — `fern -target wasm-bin -async-provider PATH`
-bundles a bring-your-own provider component so a single no-param scalar-result
-async `@import` yields one self-contained runnable component
-(`cmd/fern` `TestAsyncProviderBundleCLI`, via `BuildAsyncImportsAwaitComponent`).
+the **CLI auto-bundle** — `fern -target wasm-bin -async-provider PATH` (or
+`-async-provider WITNAME=PATH`, repeatable) bundles bring-your-own provider
+component(s) so async `@import`s (scalar params + result, **single or multiple**)
+yield one self-contained runnable component (`cmd/fern` `TestAsyncProviderBundle*`,
+via `BuildAsyncImportsAwaitComponent`); plus `-async-export` lifting param'd async
+functions (`TestAsyncExportParamsCLI`).
 
 **Possible follow-ons (new design efforts, not gaps in this surface):**
 colored/lazy `for x in stream` (element-at-a-time, per-step await — a deliberate
-departure from colorless, needs an Iterator protocol); widening the CLI
-auto-bundle past the scalar/no-param/single-import MVP (params, multiple imports,
-and stream-result/param providers — the stream composers currently take
-hand-built cores rather than a bring-your-own provider component); today the
-composer is driven from tests).
+departure from colorless, needs a type-driven for-in / Iterator protocol — see
+the analysis below); widening the CLI auto-bundle to **stream-result/param**
+providers (the stream composers currently take hand-built cores rather than a
+bring-your-own provider component) and to string/list-shaped async imports.
