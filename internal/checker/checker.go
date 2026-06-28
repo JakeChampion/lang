@@ -6092,6 +6092,53 @@ func (c *checker) maybeWrapForUnion(dst ast.Type, holder *ast.Expr, srcType ast.
 	if !dok {
 		return srcType
 	}
+	// Enum-payload dyn coercion (#3961): a variant-constructor call whose
+	// result enum is being coerced to the SAME enum with a `dyn Trait`
+	// payload — `Err(NotFound{…})` into `Result[_, dyn Error]` — must box
+	// the payload into the `[data, vtable]` fat pointer. The enum-level
+	// coercion below is otherwise a no-op (assignable permits the payload-
+	// covariant widen), so the concrete payload would be stored straight
+	// into the dyn slot and a later match-arm `e.message()` would dispatch
+	// through a garbage vtable (segfault on the compiled backends). Inject
+	// the explicit `payload as dyn Trait` cast the `?`-desugar already emits
+	// (tryConvertErrViaDyn), per payload position whose declared slot
+	// resolves to a `dyn Trait` under dst's type args, then re-check.
+	if call, ok := (*holder).(*ast.Call); ok {
+		if id, idOk := call.Callee.(*ast.Ident); idOk {
+			if dts, found := c.variantDynPayloadTypes(du, id.Name); found && len(dts) == len(call.Args) {
+				// Source payload types, so a payload that's ALREADY `dyn` is
+				// left alone: that's a no-op coercion, and casting an already-
+				// boxed `dyn` value would re-box it and over-release at drop
+				// (the `enum Box { Wrap(dyn Shape) }` + `Box.Wrap(dc)` case
+				// with `dc: dyn Shape`). Only a CONCRETE src payload widening
+				// into a `dyn` dst slot needs the boxing cast.
+				var srcPayloads []ast.Type
+				if se, seOk := srcType.(ast.EnumType); seOk {
+					srcPayloads, _ = c.variantDynPayloadTypes(se, id.Name)
+				}
+				changed := false
+				for i := range call.Args {
+					dt, isDyn := dts[i].(ast.DynTraitType)
+					if !isDyn {
+						continue
+					}
+					if i < len(srcPayloads) {
+						if _, srcDyn := srcPayloads[i].(ast.DynTraitType); srcDyn {
+							continue
+						}
+					}
+					if _, already := call.Args[i].(*ast.CastExpr); already {
+						continue
+					}
+					call.Args[i] = &ast.CastExpr{P: call.Args[i].Pos(), Inner: call.Args[i], Target: dt}
+					changed = true
+				}
+				if changed {
+					return c.checkExpr(*holder, s)
+				}
+			}
+		}
+	}
 	ss, sok := srcType.(ast.StructType)
 	if !sok {
 		return srcType
@@ -6123,6 +6170,41 @@ func (c *checker) maybeWrapForUnion(dst ast.Type, holder *ast.Expr, srcType ast.
 	}
 	*holder = wrapped
 	return c.checkExpr(wrapped, s)
+}
+
+// variantDynPayloadTypes resolves the payload types of `du`'s variant
+// `variantName`, substituting the enum's type parameters with `du.Args` so a
+// generic payload `E` becomes the concrete instantiation (e.g. `Result[_, dyn
+// Error]`'s `Err` payload resolves to `dyn Error`). Returns (payloads, true)
+// when the enum has such a variant, else (nil, false). Used by maybeWrapForUnion
+// to spot a `dyn Trait` payload slot that needs the concrete arg boxed (#3961);
+// a bare `ParamType` payload is substituted positionally, a concrete payload is
+// returned as-is (a composite like `Box[E]` is never a `dyn Trait`, so leaving
+// it unsubstituted is sound for this use).
+func (c *checker) variantDynPayloadTypes(du ast.EnumType, variantName string) ([]ast.Type, bool) {
+	ed, ok := c.info.Enums[du.Name]
+	if !ok {
+		return nil, false
+	}
+	for _, v := range ed.Variants {
+		if v.Name != variantName {
+			continue
+		}
+		out := make([]ast.Type, len(v.Payloads))
+		for i, p := range v.Payloads {
+			out[i] = p
+			if pt, isParam := p.(ast.ParamType); isParam {
+				for idx, tp := range ed.TypeParams {
+					if tp == pt.Name && idx < len(du.Args) {
+						out[i] = du.Args[idx]
+						break
+					}
+				}
+			}
+		}
+		return out, true
+	}
+	return nil, false
 }
 
 // inStdlibContext reports whether the checker is currently inside a
