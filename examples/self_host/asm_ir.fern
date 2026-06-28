@@ -1691,6 +1691,81 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    popq %rbp\n");
         s = s.write("    ret\n");
     }
+    // __fern_env: %rdi = name string box -> Option[string] box. Walks __fern_envp
+    // (saved by the entry's _start, gated on the same env need) for an entry whose
+    // key matches name + '=', and boxes the value (kernel-immortal bytes, no copy).
+    // Transcribed verbatim from asm.fern's emit_runtime (the same body the AST path
+    // calls); gated on the env need; calls __fern_alloc (the heap runtime, present).
+    if (s.has_need("env")) {
+        s = s.write(".section .bss\n");
+        s = s.write("    .align 8\n");
+        s = s.write("__fern_envp: .quad 0\n");
+        s = s.write(".section .text\n");
+        s = s.write("__fern_env:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    pushq %r13\n");
+        s = s.write("    pushq %r14\n");
+        s = s.write("    pushq %r15\n");
+        s = s.write("    movq (%rdi), %r12\n");
+        s = s.write("    movq 8(%rdi), %r13\n");
+        s = s.write("    movq __fern_envp(%rip), %rbx\n");
+        s = s.write(".Lenv_loop:\n");
+        s = s.write("    movq (%rbx), %rdi\n");
+        s = s.write("    testq %rdi, %rdi\n");
+        s = s.write("    jz .Lenv_none\n");
+        s = s.write("    movq $0, %rcx\n");
+        s = s.write(".Lenv_cmp:\n");
+        s = s.write("    cmpq %r13, %rcx\n");
+        s = s.write("    jge .Lenv_cmpdone\n");
+        s = s.write("    movb (%rdi,%rcx,1), %al\n");
+        s = s.write("    movb (%r12,%rcx,1), %dl\n");
+        s = s.write("    cmpb %dl, %al\n");
+        s = s.write("    jne .Lenv_next\n");
+        s = s.write("    incq %rcx\n");
+        s = s.write("    jmp .Lenv_cmp\n");
+        s = s.write(".Lenv_cmpdone:\n");
+        s = s.write("    movb (%rdi,%r13,1), %al\n");
+        s = s.write("    cmpb $61, %al\n");
+        s = s.write("    jne .Lenv_next\n");
+        s = s.write("    leaq 1(%rdi,%r13,1), %r14\n");
+        s = s.write("    movq $0, %r15\n");
+        s = s.write(".Lenv_strlen:\n");
+        s = s.write("    movb (%r14,%r15,1), %al\n");
+        s = s.write("    testb %al, %al\n");
+        s = s.write("    jz .Lenv_strlen_done\n");
+        s = s.write("    incq %r15\n");
+        s = s.write("    jmp .Lenv_strlen\n");
+        s = s.write(".Lenv_strlen_done:\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %r14, (%rax)\n");
+        s = s.write("    movq %r15, 8(%rax)\n");
+        s = s.write("    movq %rax, %r14\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $0, (%rax)\n");
+        s = s.write("    movq %r14, 8(%rax)\n");
+        s = s.write("    jmp .Lenv_ret\n");
+        s = s.write(".Lenv_next:\n");
+        s = s.write("    addq $8, %rbx\n");
+        s = s.write("    jmp .Lenv_loop\n");
+        s = s.write(".Lenv_none:\n");
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $1, (%rax)\n");
+        s = s.write("    movq $0, 8(%rax)\n");
+        s = s.write(".Lenv_ret:\n");
+        s = s.write("    popq %r15\n");
+        s = s.write("    popq %r14\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+    }
     // __fern_argc / __fern_argv globals (.bss) + __fern_arg_at + __fern_args: the
     // command-line argv accessor. The entry's _start saves argc / argv from the
     // initial stack into these globals (gated on the same args need); __fern_args
@@ -3366,6 +3441,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_read_int", "__fern_read_line", "__fern_read_file",
         "__fern_reader_read_chunk", "__fern_reader_close", "__fern_write_file",
         "__fern_remove_dir_all", "__fern_temp_dir", "__fern_read_dir", "__fern_remove_file",
+        "__fern_env",
         "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
         "__fern_strbuf_reset", "__fern_strbuf_take", "__fern_random_i32",
         "__fern_random_bytes", "__fern_monotonic_ns", "__fern_now_ns",
@@ -3871,6 +3947,13 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // popped %rdi arg.
             s = s.write("    popq %rdi\n    call __fern_read_dir\n    pushq %rax\n");
             s = s.need("heap").need("read_dir");
+        } else if (o.kind == "env") {
+            // [namebox] -> look up an environment variable, push a fresh
+            // Option[string] box (Some(value) / None) — the AST path's __fern_env,
+            // which allocates the value into a fresh string block. The name box is
+            // the popped %rdi arg.
+            s = s.write("    popq %rdi\n    call __fern_env\n    pushq %rax\n");
+            s = s.need("heap").need("env");
         } else if (o.kind == "read_chunk") {
             // [fd][n] -> read up to n bytes from the Reader fd, push a fresh
             // Option[string] box (Some(chunk) / None at EOF). Reuses the AST path's
@@ -4687,6 +4770,15 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
             s = s.write("    leaq 8(%rsp), %rax\n");
             s = s.write("    movq %rax, __fern_argv(%rip)\n");
         }
+        // env() reads __fern_envp; save it from the initial stack BEFORE any push.
+        // envp follows argv's NULL terminator: envp = rsp + 16 + argc*8 (argc at
+        // [rsp], argv at rsp+8 with argc+1 slots incl. the NULL). Gated on the env
+        // need (not heap, unlike asm.fern) so a non-env program is byte-identical.
+        if (s.has_need("env")) {
+            s = s.write("    movq (%rsp), %rax\n");
+            s = s.write("    leaq 16(%rsp,%rax,8), %rax\n");
+            s = s.write("    movq %rax, __fern_envp(%rip)\n");
+        }
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
         s = s.write("    call __fn_main\n");
@@ -4740,7 +4832,7 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     // The freestanding allocator + RC runtime, only when the program allocates.
     // i32.to_string() allocates its box even in an otherwise heap-free program,
     // so its emit-time need pulls the runtime in too (its body calls __fern_alloc).
-    if (s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("print_int") || s.has_need("read_int") || s.has_need("str_read_line") || s.has_need("putchar") || s.has_need("strbuf") || s.has_need("reader") || s.has_need("write_file") || s.has_need("remove_dir_all") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_file")) { s = emit_ir_runtime(s); }
+    if (s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("print_int") || s.has_need("read_int") || s.has_need("str_read_line") || s.has_need("putchar") || s.has_need("strbuf") || s.has_need("reader") || s.has_need("write_file") || s.has_need("remove_dir_all") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_file") || s.has_need("env")) { s = emit_ir_runtime(s); }
     // String search predicates (starts_with / ends_with / index_of) are
     // allocation-free + self-contained, so they're emitted in their own helper
     // — kept OUT of emit_ir_runtime, whose size is near the self-host's

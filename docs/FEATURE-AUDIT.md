@@ -251,6 +251,30 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-28 — `env(name)` lowers on the IR path (flips the `env_unreachable` module)
+
+`env(name): Option[string]` (look up an environment variable) had a full AST
+runtime (`__fern_env`) but no IR lowering, so a program using it bailed
+`BAIL call[env]` → AST. std/test's `assert_env_set` / `assert_env_unset` /
+`assert_env_eq` all `match (env(name)) { Some/None }`, so the single un-lowered
+builtin dragged the whole `env_unreachable` module to the AST emitter — *not* the
+"std/test mono artifact" the prior frontier note guessed; the post-mono
+named-symbol probe pinned it to `env`.
+
+Now lowers as `op_env` → the same `__fern_env` runtime the AST path calls — the
+proven Option-returning fs-builtin recipe (`remove_file` / `read_dir` siblings):
+op + `op_allocates` (ir.fern), call-site + `opt_ret_type` "Option[string]"
+(irlower.fern), x86 dispatch + the runtime body transcribed verbatim + the
+**env-gated `_start` envp save** (so non-env IR programs stay byte-identical —
+unlike asm.fern, which heap-gates it) + known-list + emit_ir_runtime trigger
+(asm_ir.fern), arm64 dispatch reusing asm_arm64's heap-block `__fern_env` +
+heap-gated envp save (asm_arm64_ir.fern), and a wasm reject (no env access there).
+
+`env_unreachable` flips AST → IR. Gated by `TestSelfHostEnvIR` (Some-match /
+Some-mismatch / None arms via set/unset of `FERN_ENV_IR_TEST`, asserting the
+`__fern_env` IR path); the full `TestSelfHostStdTestE2E` differential gate
+(incl. `env_unreachable`) matches interp; Stage-2 fixpoint byte-identical.
+
 ### 2026-06-28 — fix: direct `Err(concrete)` into `Result[_, dyn Trait]` (closes #3961)
 
 A `Result[T, dyn Trait]` whose `Err`/`Ok` payload was built by **direct
@@ -321,11 +345,17 @@ this treeshake fix keeps the auto-discovered concrete helpers reachable; the
 - **Tuple-array-returning method element typing** — `map_verbs`
   (`for e in m.entries()`: the snapshot var doesn't recover the `(i32,i32)[]`
   element tuple tags; needs a tuple-array return-type recovery).
+- **`stat`-returning fs assertions** — `batch7` (`assert_is_file` / `assert_is_dir`
+  / `assert_file_size`) bails on the un-lowered `stat(path)` builtin, which returns
+  a `FileStat` STRUCT (`.is_file` / `.is_dir` / `.size`) — the same struct-result
+  shape as `subprocess`'s `ProcessResult`. Needs the fs-builtin recipe plus
+  struct-result handling.
+- **Generic `eq` dispatch in monomorphised `assert_eq`** — `iter`
+  (`assert_eq__A: BAIL call[A.eq]`: a `std/test` `assert_eq` clone at a user type
+  whose `.eq` dispatch isn't resolved post-mono).
 - **Deeper / parallel-owned** — `io_buffered` (BytesWriter, RC), `async_concurrent`
-  / `async_runtime` (async), `fuzz_corpus` (`BAIL lower`). `iter` / `batch7` /
-  `env_unreachable` show only std/test helper generics post-mono (a
-  monomorphisation artifact, not a construct gap). (`timing` was flipped to IR by
-  #3971 — see the `sleep_ms(<i64>)` entry below.)
+  / `async_runtime` (async), `fuzz_corpus` (`BAIL lower`). (`timing` was flipped to
+  IR by #3971; `env_unreachable` by the `env(name)` entry above.)
 
 ### 2026-06-28 — self-host: `sleep_ms(<i64>)` lowers on IR (flips the `timing` module)
 
