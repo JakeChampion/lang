@@ -45,11 +45,20 @@ func copySelfHostTree(t *testing.T) string {
 }
 
 // derive-heavy program: 4 derives (incl. string fields → pulls core/sort) +
-// JSON. Without treeshake its merged module exceeds the IR budget (→ ast); with
-// treeshake it fits (→ ir). Returns 4 (the count of passing checks) regardless
-// of hash internals, so it's a stable oracle.
+// JSON, plus three independent stdlib modules (std/http, std/regex, std/time)
+// that are NOT in the cmp/json transitive closure. Without treeshake the merged
+// module pulls all of them (~580 funcs) and exceeds the 512 IR budget (→ ast);
+// with treeshake only the reachable slice (~90) survives, so it fits (→ ir).
+// (The http/regex/time imports are load-bearing: cmp+json alone already lower
+// to ~480 funcs — under budget — so json's Map.iter flipping to IR removed the
+// old over-budget margin; the extra modules restore a genuine >512 closure.)
+// Returns 7 (the count of passing checks), a stable oracle independent of hash
+// internals.
 const treeshakeHeavyProg = `import "core/cmp";
 import "std/json";
+import "std/http" as http;
+import "std/regex" as regex;
+import "std/time" as time;
 @derive(cmp.Eq, cmp.Ord, cmp.Hash, json.Json)
 struct Rec { name: string, id: i32, tag: string }
 function main(): i32 {
@@ -60,6 +69,10 @@ function main(): i32 {
     if (a.cmp(b) < 0) { n = n + 1; }
     if (a.hash() != b.hash()) { n = n + 1; }
     if (a.to_json().len() > 0) { n = n + 1; }
+    if (http.http_status_text(200).len() > 0) { n = n + 1; }
+    if (regex.regex_match("a", "a")) { n = n + 1; }
+    var d = time.date_make(2026, 6, 28);
+    if (d.year == 2026) { n = n + 1; }
     return n;
 }`
 
@@ -132,8 +145,8 @@ func TestSelfHostTreeshakeStdlibIR(t *testing.T) {
 			t.Fatalf("write entry: %v", err)
 		}
 		// Oracle.
-		if _, code := runFixtureInterp(t, entry, ""); code != 4 {
-			t.Fatalf("heavy native interp = %d, want 4", code)
+		if _, code := runFixtureInterp(t, entry, ""); code != 7 {
+			t.Fatalf("heavy native interp = %d, want 7", code)
 		}
 		// The keystone: WITHOUT the prune (explicit -no-treeshake) the loaded
 		// module is over budget → ast; with the prune (the default once a stdlib
@@ -165,8 +178,8 @@ func TestSelfHostTreeshakeStdlibIR(t *testing.T) {
 				cmd = exec.Command(runner[0], append(runner[1:], bin)...)
 			}
 			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != 4 {
-				t.Errorf("heavy %s run = %d, want 4", tc.tag, code)
+			if code := cmd.ProcessState.ExitCode(); code != 7 {
+				t.Errorf("heavy %s run = %d, want 7", tc.tag, code)
 			}
 		}
 	})

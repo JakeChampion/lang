@@ -188,7 +188,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `Reader` / `Writer` | | | | | | ⬜ | |
 | `HttpRequest` / `HttpResponse` | | | | | | ⬜ | |
 | `Url` | | | | | | ⬜ | |
-| `Map[K, V]` / `MapIter[K, V]` | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | Map ops audited (i32+string keys); MapIter cursor pending |
+| `Map[K, V]` / `MapIter[K, V]` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | Map ops audited (i32+string keys); MapIter cursor (`iter`/`has_next`/`key`/`value`/`advance`) now lowers on the self-host **IR path** for x86-64/arm64 (wasm routes via the AST path) — flips `json_roundtrip` |
 | Time types (`Instant`/`Date`/…) | | | | | | ⬜ | via std/time |
 
 ## D. Standard library — `std/`
@@ -250,6 +250,57 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-06-28 — `Map.iter()` cluster lowers on the IR path (flips `json_roundtrip`)
+
+`Map[K,V].iter()` returns a `MapIter[K,V]` — a 16-byte cursor box
+`[map_ptr@0, cursor@8]` walked by `has_next()` / `key()` / `value()` /
+`advance()`. All five are **compiler builtins with no function body**; the legacy
+AST emitter handled them inline (`asm.fern:1258-1313`, `asm_arm64.fern:1243-1297`)
+keyed on `asmcore.is_map` / `is_mapiter`. The IR path intercepted none, so
+`m.iter()` lowered to a `Map.iter` `call_direct` that `calls_only_known` couldn't
+resolve → `BAIL call[Map.iter]` → AST, dragging `std/json`'s `json_encode`
+(`JObject` walk, `json.fern:109`) — and thus `json_roundtrip` — to the legacy
+emitter.
+
+Now lowers to dedicated ops — `op_map_iter` (the one allocating op: 16-byte box
+via `__fern_alloc`) + `op_mapiter_has_next` / `_key` / `_value` / `_advance`
+(pure loads / a cursor store) — transcribing the same parallel-array sequences
+the AST path emits. Type-threading: a `var it: MapIter[K,V] = m.iter()`
+annotation records the slot's MapIter type in the **same per-slot
+`local_map_type` column as `Map[K,V]`** (prefix-disjoint — `"MapIter["` vs
+`"Map["` — so neither dispatch sees the other), and the four method calls resolve
+their receiver against it. The MapIter method guard sits **before** the map
+dispatch (and the map dispatch's `mtype` set is now `is_map_type_name`-guarded)
+so a MapIter receiver never enters the map block and bails at its user-method
+fallthrough. `expr_is_str` recovers `it.key()` / `it.value()` as `string` when
+K / V is `string` (mirroring the `m.get_or(k,d)` map-value case), so a chained
+`it.key().len()` / `it.value().len()` lowers `.len()` as `str_len` rather than
+mis-reading the string box's data-ptr slot as an array length — `json_encode`'s
+`__json_escape(it.key())` (a direct arg, not `.len()`) didn't surface this, but
+the `TestSelfHostMapIterX86_64` AST-driver cases (`key().len()` + string-value
+`value().len()`) did. wasm rejects the cluster (`wasm_eligible`) — wasm maps are
+hash maps with no parallel-array iterator-box runtime, so it stays on the wasm
+AST path.
+
+`json_roundtrip` flips AST → IR (x86-64 **and** arm64, via the shared
+`asm_arm64_ir` dispatch). Gated by `TestSelfHostMapIterMethodIR`
+(`MapIter[string,i32]` sum, asserts the inline box-alloc reaches the asm + a
+compact-output IR proof) and the existing `TestSelfHostMapIterX86_64` /
+`…Arm64` AST-driver cases (which now route IR via the same ops — exercising
+`key().len()` + string `value().len()`); the `TestSelfHostStdTestE2E` / `…Arm64`
+differential gates confirm byte-for-byte parity with the interpreter on
+`json_roundtrip` / `json_detail` / `json_field_eq`; existing
+`TestSelfHostMapCoreIR` / `TestSelfHostMapIterIR` (keys/values borrow path) stay
+green.
+
+> Treeshake-budget interaction: with `json_roundtrip` flipped, the
+> `TestSelfHostTreeshakeStdlibIR` keystone's "heavy" program (which leaned on
+> std/json's `Map.iter` bail to stay over the 512-function IR budget without
+> treeshake) now fits IR on its own. It was made genuinely heavy again by
+> importing three modules outside the cmp/json closure (std/http, std/regex,
+> std/time → ~580 funcs untreeshaked, ~90 treeshaked) so the ast→ir flip still
+> demonstrates the prune.
 
 ### 2026-06-28 — `iter` routes IR (mono fix #3995) — added to the differential gate
 
@@ -316,20 +367,21 @@ flipped to IR upstream.
   alone (routes IR → crashes) and was reverted; map_verbs needs the lowering fix
   too, plus `for e in m.entries()` tuple-array element typing and `a.extend(b).len()`
   map-return-of-method-call recovery. Deep.
-- **`json_roundtrip`** — single blocker `BAIL call[Map.iter]`: the stateful
-  `MapIter` protocol (`iter`/`has_next`/`key`/`value`/`advance` over a heap cursor)
-  std/json's encoder walks. A multi-method heap-iterator runtime, deeper than the
-  flat keys/values ops.
+- ~~**`json_roundtrip`** — single blocker `BAIL call[Map.iter]`~~ — **DONE** (see
+  the `Map.iter()` cluster entry above): the stateful `MapIter` protocol
+  (`iter`/`has_next`/`key`/`value`/`advance` over a heap cursor) now lowers to
+  `op_map_iter` / `op_mapiter_*`; `json_roundtrip` flips to IR.
 - **`io_buffered`** — 9 functions bail `i32.bytes_writer_new` + `const_func[io]`:
   the `BytesWriter` (RC-backed byte buffer) type isn't recognised so its
   constructor/methods fall to the `i32` prim path, plus an `io`-module const_func.
 - **`async_concurrent` / `async_runtime`** — `BAIL lower` + `const_func[*$clo]`:
   async task closures. **Parallel-owned** (the active Phase-3b async slices) — leave.
 
-Upshot: the remaining AST→IR work is ~5 independent medium-to-deep fixes
-(monomorphiser correctness, tuple-element-`Map` lowering, stateful map iteration,
-`BytesWriter`/RC, async), not a shared lever. The most self-contained next target
-is `iter`'s monomorphiser artifact or `io_buffered`'s `BytesWriter` recognition.
+Upshot: with `json_roundtrip` flipped (the `Map.iter()` cluster entry above), the
+remaining AST→IR work is ~4 independent medium-to-deep fixes (monomorphiser
+correctness, tuple-element-`Map` lowering, `BytesWriter`/RC, async), not a shared
+lever. The most self-contained next target is `iter`'s monomorphiser artifact or
+`io_buffered`'s `BytesWriter` recognition.
 
 ### 2026-06-28 — arm64 `.text` wall lifted: per-function sections (`-ffunction-sections`)
 
@@ -618,8 +670,9 @@ this treeshake fix keeps the auto-discovered concrete helpers reachable; the
 - ~~**`subprocess` not lowered on IR** — `process_assertions` /
   `process_output_shortcuts` / `lang_binary_e2e`~~ — **DONE** (see the
   `subprocess(cmd, args, stdin)` entry above): bare `ProcessResult` struct result.
-- **`Map.iter` not intercepted on IR** — `json_roundtrip` (`m.iter()` →
-  `BAIL call[Map.iter]`; needs the map-iter builtin interception like keys/values).
+- ~~**`Map.iter` not intercepted on IR** — `json_roundtrip`~~ — **DONE** (see the
+  `Map.iter()` cluster entry above): the 5 builtins lower to `op_map_iter` /
+  `op_mapiter_*`; `json_roundtrip` flips to IR.
 - **Tuple-array-returning method element typing** — `map_verbs`
   (`for e in m.entries()`: the snapshot var doesn't recover the `(i32,i32)[]`
   element tuple tags; needs a tuple-array return-type recovery).
@@ -759,8 +812,9 @@ exhausted; what's left clusters into a few deeper root causes:
 - **`subprocess` not lowered on IR** — `process_assertions`,
   `process_output_shortcuts`, `lang_binary_e2e` (3 modules; a heavy fork/exec
   runtime, same lowering recipe as the fs builtins).
-- **`Map.iter` not intercepted on IR** — `json_roundtrip` (`m.iter()` →
-  `BAIL call[Map.iter]`; needs the map-iter builtin interception like keys/values).
+- ~~**`Map.iter` not intercepted on IR** — `json_roundtrip`~~ — **DONE** (see the
+  `Map.iter()` cluster entry above): the 5 builtins lower to `op_map_iter` /
+  `op_mapiter_*`; `json_roundtrip` flips to IR.
 - **Tuple-array-returning method element typing** — `map_verbs`
   (`for e in m.entries()`: the snapshot var doesn't recover the `(i32,i32)[]`
   element tuple tags; needs a tuple-array return-type recovery).

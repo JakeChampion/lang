@@ -678,6 +678,28 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
         } else if (o.kind == "map_values") {
             // parallel-array map: values[] pointer at box+8.
             s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #8]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "map_iter") {
+            // m.iter() -> 16-byte iterator box [map_ptr@0, cursor@8] (asm_arm64.fern:1243).
+            // arm64 has no central op_allocates heap gate, so mark_heap explicitly.
+            s = s.mark_heap();
+            s = s.write("    mov x0, #16\n    bl __fern_alloc\n");
+            s = s.write("    ldr x1, [sp], #16\n    str x1, [x0]\n    mov x1, #0\n    str x1, [x0, #8]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "mapiter_has_next") {
+            // cursor < keys.len: keys[] at map@0, len at keys@0 (asm_arm64.fern:1255).
+            s = s.write("    ldr x0, [sp], #16\n    ldr x1, [x0, #8]\n    ldr x2, [x0]\n");
+            s = s.write("    ldr x2, [x2]\n    ldr x2, [x2]\n");
+            s = s.write("    cmp x1, x2\n    cset x0, lt\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "mapiter_key") {
+            // keys[cursor]: keys[] at map@0, element[cursor] at keys[cursor+1].
+            s = s.write("    ldr x0, [sp], #16\n    ldr x1, [x0, #8]\n    ldr x2, [x0]\n    ldr x2, [x2]\n");
+            s = s.write("    add x1, x1, #1\n    ldr x0, [x2, x1, lsl #3]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "mapiter_value") {
+            // values[cursor]: values[] at map@8, element[cursor] at values[cursor+1].
+            s = s.write("    ldr x0, [sp], #16\n    ldr x1, [x0, #8]\n    ldr x2, [x0]\n    ldr x2, [x2, #8]\n");
+            s = s.write("    add x1, x1, #1\n    ldr x0, [x2, x1, lsl #3]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "mapiter_advance") {
+            // bump the stored cursor; push a dummy result for the statement drop.
+            s = s.write("    ldr x0, [sp], #16\n    ldr x1, [x0, #8]\n    add x1, x1, #1\n    str x1, [x0, #8]\n    mov x0, #0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "struct_make") {
             // nf field values on the operand stack (field nf-1 on top, decl
             // order). Box = [shape_ptr@0, f0@8, …]; shape = the interned
