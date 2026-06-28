@@ -4406,6 +4406,20 @@ function mono_infer(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
                     // the AST emitter (#3457: the std/u32 wrapping test's
                     // `rotr_roundtrip` asserts two computed `.to_string()`s).
                     if ((cfa.field == "to_string" || cfa.field == "to_debug") && c.args.len() == 0) { return "string"; }
+                    // Generic array method `recv.m(args)` whose receiver is an
+                    // array — folded to `__arrm_m[T]` by
+                    // register_array_method_generics. Infer the receiver's element
+                    // type and substitute it into the method's return type, so a
+                    // CHAINED call (`a.concat(b).concat(c)`) recovers the inner
+                    // result type and the outer call rewrites onto the IR path too.
+                    var amgi: i32 = bg_index(funcs, "__arrm_" + cfa.field);
+                    if (amgi >= 0) {
+                        var recvt: string = mono_infer(cfa.obj, env, funcs);
+                        if (type_ends_arr(recvt)) {
+                            var el: string = recvt[0 : recvt.len() - 2];
+                            return subst_ty(funcs[amgi].ret_type, funcs[amgi].type_params, [el]);
+                        }
+                    }
                     // Associated call `Type.method()` (e.g. `Inner.default()`):
                     // the object is a bare type name, so infer the method's
                     // return type — lets a generic constructor body infer its

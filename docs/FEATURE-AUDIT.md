@@ -251,6 +251,27 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-28 — self-host: chained generic array-method calls lower on IR (slice 2a)
+
+Follow-up to the array-method slice: a CHAINED call whose outer receiver is
+itself an array-method call (`a.concat(b).concat(c)`) stayed in method form and
+dragged the module to AST, because `mono_infer` did not recover an array-method
+call's RETURN type — so the outer `.concat(c)` could not see that its receiver
+was array-typed.
+
+`mono_infer`'s field-access arm now recognises a `recv.m(args)` call where
+`__arrm_m[T]` is a registered generic array method (from
+register_array_method_generics) and the receiver infers to an array: it strips
+the receiver's element type and substitutes it into the method's return type
+(`__arrm_concat[T]: T[]` → `i32[]`). With the inner result typed, `mono_expr`'s
+array-method arm rewrites the outer call onto the IR path too. Single element
+type per program (the slice-1 guard still applies), so the pre-existing
+multi-element-type reuse-analysis crash is not reached.
+
+Gated by `TestSelfHostArrayConcatMethodIR/chained` (added alongside i32 / string
+/ literal-arg); the bootstrap fixpoint and the other array/generic self-host
+suites stay green.
+
 ### 2026-06-28 — self-host: generic array-receiver methods lower on IR (`xs.concat(ys)`, slice 1)
 
 A generic array-receiver method (`(xs: T[]) concat(other: T[]): T[]` in
