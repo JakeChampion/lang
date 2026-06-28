@@ -251,6 +251,24 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — lambda_captures excludes Some/Ok/Err → Option/Result-returning lambdas route IR
+
+A no-capture lambda whose body constructs an Option/Result
+(`function(x){ return Some(x+1); }`) passed as a fn-value argument bailed
+`BAIL const_func`. `lambda_captures` excluded `None`/`true`/`false` but NOT the
+call-style variant constructors `Some`/`Ok`/`Err`, so it miscounted `Some` as a
+captured free variable, misrouted the lambda to the capturing-closure (`$clo`)
+path (which expects real i32 captures), and never hoisted it — leaving a
+`const_func` to a non-existent `<fn>$clo`. Excluding `Some`/`Ok`/`Err` (mirroring
+the existing `None` exclusion) routes them through the no-capture `$wrap`
+trampoline. `option_combinators` and `result_combinators` flip AST → IR and match
+the interpreter byte-for-byte (their `.and_then` / `.or_else` over Option/Result-
+returning lambdas). Gated by `TestSelfHostOptionLambdaIR` (free fn + method, Some
++ Ok); bootstrap fixpoint byte-identical (the self-host source passes no
+Option/Result-returning lambda as a fn-value, so its lift is unchanged). User
+enum constructors in a lambda body still over-count (the enum table isn't
+threaded into `lambda_captures`) — a narrower follow-up.
+
 ### 2026-06-23 — flatten mangles struct names inside tuple return types → cross-module tuple-struct destructure routes IR
 
 A tuple return type with an own-module struct element (`(string, TestRunner)`,
