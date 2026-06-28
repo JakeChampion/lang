@@ -1696,11 +1696,15 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // key matches name + '=', and boxes the value (kernel-immortal bytes, no copy).
     // Transcribed verbatim from asm.fern's emit_runtime (the same body the AST path
     // calls); gated on the env need; calls __fern_alloc (the heap runtime, present).
-    if (s.has_need("env")) {
+    // __fern_envp (.bss) is read by both __fern_env and __fern_subprocess (execve's
+    // envp), and saved by _start; declare it ONCE when either need is present.
+    if (s.has_need("env") || s.has_need("subprocess")) {
         s = s.write(".section .bss\n");
         s = s.write("    .align 8\n");
         s = s.write("__fern_envp: .quad 0\n");
         s = s.write(".section .text\n");
+    }
+    if (s.has_need("env")) {
         s = s.write("__fern_env:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
@@ -1841,6 +1845,322 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq $0, 8(%rax)\n");
         s = s.write(".Lstat_ret:\n");
         s = s.write("    addq $160, %rsp\n");
+        s = s.write("    popq %r15\n");
+        s = s.write("    popq %r14\n");
+        s = s.write("    popq %r13\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+    }
+    // __fern_subprocess: %rdi = cmd box, %rsi = args box (string[]), %rdx =
+    // stdin box -> ProcessResult struct {shape, stdout@8, stderr@16, exit_code@24}.
+    // 3 pipes + fork + execve(cmd, [cmd, args.., NULL], envp); parent writes stdin,
+    // reads stdout/stderr to EOF, waits, packs the result. Spawn failure -> exit
+    // 127. Transcribed verbatim from asm.fern's emit_runtime (the same body the AST
+    // path calls), with the ProcessResult shape via shape_ref (pre-interned before
+    // the literal pool). Gated on the subprocess need; calls __fern_alloc (heap).
+    if (s.has_need("subprocess")) {
+        var prLit: ShapeRefOut = shape_ref(s, "ProcessResult");
+        s = prLit.state;
+        s = s.write("__fern_subprocess:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    pushq %r13\n");
+        s = s.write("    pushq %r14\n");
+        s = s.write("    pushq %r15\n");
+        s = s.write("    subq $128, %rsp\n");
+        // Save input boxes into callee-saved regs.
+        s = s.write("    movq %rdi, %r12\n");   // cmd box
+        s = s.write("    movq %rsi, %r13\n");   // args box
+        s = s.write("    movq %rdx, %r14\n");   // stdin box
+        // Build cmdz at -64(%rbp): NUL-terminated cmd string.
+        s = s.write("    movq 8(%r12), %r15\n");  // cmd len
+        s = s.write("    leaq 1(%r15), %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, -64(%rbp)\n");
+        s = s.write("    movq (%r12), %rcx\n");   // cmd data
+        s = s.write("    movq $0, %r8\n");
+        s = s.write(".Lsp_ccmd:\n");
+        s = s.write("    cmpq %r15, %r8\n");
+        s = s.write("    jge .Lsp_ccmd_d\n");
+        s = s.write("    movb (%rcx, %r8, 1), %al\n");
+        s = s.write("    movq -64(%rbp), %r9\n");
+        s = s.write("    movb %al, (%r9, %r8, 1)\n");
+        s = s.write("    incq %r8\n");
+        s = s.write("    jmp .Lsp_ccmd\n");
+        s = s.write(".Lsp_ccmd_d:\n");
+        s = s.write("    movq -64(%rbp), %r9\n");
+        s = s.write("    movb $0, (%r9, %r15, 1)\n");
+        // Build argv at -56(%rbp): (nargs + 2) pointer slots.
+        s = s.write("    movq (%r13), %r15\n");   // nargs
+        s = s.write("    leaq 2(%r15), %rdi\n");
+        s = s.write("    shlq $3, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, -56(%rbp)\n");
+        // argv[0] = cmdz.
+        s = s.write("    movq -64(%rbp), %rcx\n");
+        s = s.write("    movq -56(%rbp), %r9\n");
+        s = s.write("    movq %rcx, (%r9)\n");
+        // argv[i+1] = NUL-terminated copy of args[i].
+        s = s.write("    movq $0, %rbx\n");
+        s = s.write(".Lsp_arg:\n");
+        s = s.write("    cmpq %r15, %rbx\n");
+        s = s.write("    jge .Lsp_arg_d\n");
+        s = s.write("    leaq 1(%rbx), %rcx\n");
+        s = s.write("    movq (%r13, %rcx, 8), %r10\n");   // args[i] box
+        s = s.write("    movq 8(%r10), %rsi\n");           // arg_len
+        s = s.write("    leaq 1(%rsi), %rdi\n");
+        s = s.write("    pushq %r10\n");
+        s = s.write("    pushq %rsi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    popq %rsi\n");
+        s = s.write("    popq %r10\n");
+        s = s.write("    movq (%r10), %rcx\n");
+        s = s.write("    movq $0, %r8\n");
+        s = s.write(".Lsp_acopy:\n");
+        s = s.write("    cmpq %rsi, %r8\n");
+        s = s.write("    jge .Lsp_acopy_d\n");
+        s = s.write("    movb (%rcx, %r8, 1), %dl\n");
+        s = s.write("    movb %dl, (%rax, %r8, 1)\n");
+        s = s.write("    incq %r8\n");
+        s = s.write("    jmp .Lsp_acopy\n");
+        s = s.write(".Lsp_acopy_d:\n");
+        s = s.write("    movb $0, (%rax, %rsi, 1)\n");
+        s = s.write("    movq -56(%rbp), %r9\n");
+        s = s.write("    leaq 1(%rbx), %rcx\n");
+        s = s.write("    movq %rax, (%r9, %rcx, 8)\n");
+        s = s.write("    incq %rbx\n");
+        s = s.write("    jmp .Lsp_arg\n");
+        s = s.write(".Lsp_arg_d:\n");
+        // argv[nargs+1] = NULL.
+        s = s.write("    movq -56(%rbp), %r9\n");
+        s = s.write("    leaq 1(%r15), %rcx\n");
+        s = s.write("    movq $0, (%r9, %rcx, 8)\n");
+        // Create 3 pipes (pipe2 syscall 293, flags 0). Layout in
+        // frame: in_r@-96, in_w@-92, out_r@-88, out_w@-84,
+        // err_r@-80, err_w@-76 (4-byte fds packed contiguously).
+        s = s.write("    leaq -96(%rbp), %rdi\n");
+        s = s.write("    movq $0, %rsi\n");
+        s = s.write("    movq $293, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    leaq -88(%rbp), %rdi\n");
+        s = s.write("    movq $0, %rsi\n");
+        s = s.write("    movq $293, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    leaq -80(%rbp), %rdi\n");
+        s = s.write("    movq $0, %rsi\n");
+        s = s.write("    movq $293, %rax\n");
+        s = s.write("    syscall\n");
+        // fork (syscall 57). rax = pid in parent, 0 in child, <0 on error.
+        s = s.write("    movq $57, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    testq %rax, %rax\n");
+        s = s.write("    jne .Lsp_parent\n");
+        // ---------- CHILD ----------
+        // dup2(in_r, 0), dup2(out_w, 1), dup2(err_w, 2).
+        s = s.write("    movl -96(%rbp), %edi\n");
+        s = s.write("    movq $0, %rsi\n");
+        s = s.write("    movq $33, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    movl -84(%rbp), %edi\n");
+        s = s.write("    movq $1, %rsi\n");
+        s = s.write("    movq $33, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    movl -76(%rbp), %edi\n");
+        s = s.write("    movq $2, %rsi\n");
+        s = s.write("    movq $33, %rax\n");
+        s = s.write("    syscall\n");
+        // Close all 6 original pipe fds.
+        s = s.write("    movl -96(%rbp), %edi\n    movq $3, %rax\n    syscall\n");
+        s = s.write("    movl -92(%rbp), %edi\n    movq $3, %rax\n    syscall\n");
+        s = s.write("    movl -88(%rbp), %edi\n    movq $3, %rax\n    syscall\n");
+        s = s.write("    movl -84(%rbp), %edi\n    movq $3, %rax\n    syscall\n");
+        s = s.write("    movl -80(%rbp), %edi\n    movq $3, %rax\n    syscall\n");
+        s = s.write("    movl -76(%rbp), %edi\n    movq $3, %rax\n    syscall\n");
+        // execve(cmdz, argv, envp).
+        // First try cmd as-given (handles absolute / relative paths).
+        s = s.write("    movq -64(%rbp), %rdi\n");
+        s = s.write("    movq -56(%rbp), %rsi\n");
+        s = s.write("    movq __fern_envp(%rip), %rdx\n");
+        s = s.write("    movq $59, %rax\n");
+        s = s.write("    syscall\n");
+        // execve only returns on failure. Fall back to common $PATH
+        // prefixes /bin/ and /usr/bin/ so bare names like "echo" /
+        // "sh" / "cat" — used heavily by std/test's process tests —
+        // resolve without re-implementing full PATH search.
+        // Allocate cmd_len + max-prefix-len + 1 byte buffer
+        // ("/usr/bin/" is 9 bytes), copy prefix + cmd + NUL, execve.
+        s = s.write("    movq -64(%rbp), %r12\n");   // cmdz (saved)
+        s = s.write("    movq $0, %rbx\n");          // cmd_len
+        s = s.write(".Lsp_clen:\n");
+        s = s.write("    movb (%r12, %rbx, 1), %al\n");
+        s = s.write("    cmpb $0, %al\n");
+        s = s.write("    je .Lsp_clen_d\n");
+        s = s.write("    incq %rbx\n");
+        s = s.write("    jmp .Lsp_clen\n");
+        s = s.write(".Lsp_clen_d:\n");
+        // Build "/bin/<cmd>" buffer (5 + cmd_len + 1).
+        s = s.write("    leaq 6(%rbx), %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %r13\n");
+        s = s.write("    movb $47, 0(%r13)\n");    // '/'
+        s = s.write("    movb $98, 1(%r13)\n");    // 'b'
+        s = s.write("    movb $105, 2(%r13)\n");   // 'i'
+        s = s.write("    movb $110, 3(%r13)\n");   // 'n'
+        s = s.write("    movb $47, 4(%r13)\n");    // '/'
+        s = s.write("    movq $0, %r8\n");
+        s = s.write(".Lsp_bcopy:\n");
+        s = s.write("    cmpq %rbx, %r8\n");
+        s = s.write("    jge .Lsp_bcopy_d\n");
+        s = s.write("    movb (%r12, %r8, 1), %al\n");
+        s = s.write("    leaq 5(%r8), %rcx\n");
+        s = s.write("    movb %al, (%r13, %rcx, 1)\n");
+        s = s.write("    incq %r8\n");
+        s = s.write("    jmp .Lsp_bcopy\n");
+        s = s.write(".Lsp_bcopy_d:\n");
+        s = s.write("    leaq 5(%rbx), %rcx\n");
+        s = s.write("    movb $0, (%r13, %rcx, 1)\n");   // NUL
+        s = s.write("    movq %r13, %rdi\n");
+        s = s.write("    movq -56(%rbp), %rsi\n");
+        s = s.write("    movq __fern_envp(%rip), %rdx\n");
+        s = s.write("    movq $59, %rax\n");
+        s = s.write("    syscall\n");
+        // Try /usr/bin/<cmd> (9 + cmd_len + 1).
+        s = s.write("    leaq 10(%rbx), %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %r13\n");
+        s = s.write("    movb $47, 0(%r13)\n");    // '/'
+        s = s.write("    movb $117, 1(%r13)\n");   // 'u'
+        s = s.write("    movb $115, 2(%r13)\n");   // 's'
+        s = s.write("    movb $114, 3(%r13)\n");   // 'r'
+        s = s.write("    movb $47, 4(%r13)\n");    // '/'
+        s = s.write("    movb $98, 5(%r13)\n");    // 'b'
+        s = s.write("    movb $105, 6(%r13)\n");   // 'i'
+        s = s.write("    movb $110, 7(%r13)\n");   // 'n'
+        s = s.write("    movb $47, 8(%r13)\n");    // '/'
+        s = s.write("    movq $0, %r8\n");
+        s = s.write(".Lsp_ucopy:\n");
+        s = s.write("    cmpq %rbx, %r8\n");
+        s = s.write("    jge .Lsp_ucopy_d\n");
+        s = s.write("    movb (%r12, %r8, 1), %al\n");
+        s = s.write("    leaq 9(%r8), %rcx\n");
+        s = s.write("    movb %al, (%r13, %rcx, 1)\n");
+        s = s.write("    incq %r8\n");
+        s = s.write("    jmp .Lsp_ucopy\n");
+        s = s.write(".Lsp_ucopy_d:\n");
+        s = s.write("    leaq 9(%rbx), %rcx\n");
+        s = s.write("    movb $0, (%r13, %rcx, 1)\n");
+        s = s.write("    movq %r13, %rdi\n");
+        s = s.write("    movq -56(%rbp), %rsi\n");
+        s = s.write("    movq __fern_envp(%rip), %rdx\n");
+        s = s.write("    movq $59, %rax\n");
+        s = s.write("    syscall\n");
+        // All execve attempts failed → exit(127).
+        s = s.write("    movq $127, %rdi\n");
+        s = s.write("    movq $60, %rax\n");
+        s = s.write("    syscall\n");
+        // ---------- PARENT ----------
+        s = s.write(".Lsp_parent:\n");
+        s = s.write("    movq %rax, %r15\n");   // child pid
+        // Close child ends in parent: in_r, out_w, err_w.
+        s = s.write("    movl -96(%rbp), %edi\n    movq $3, %rax\n    syscall\n");
+        s = s.write("    movl -84(%rbp), %edi\n    movq $3, %rax\n    syscall\n");
+        s = s.write("    movl -76(%rbp), %edi\n    movq $3, %rax\n    syscall\n");
+        // Write stdin payload (if any) to in_w, then close in_w.
+        s = s.write("    movq 8(%r14), %rdx\n");   // stdin len
+        s = s.write("    testq %rdx, %rdx\n");
+        s = s.write("    jz .Lsp_close_in\n");
+        s = s.write("    movl -92(%rbp), %edi\n");
+        s = s.write("    movq (%r14), %rsi\n");
+        s = s.write("    movq $1, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write(".Lsp_close_in:\n");
+        s = s.write("    movl -92(%rbp), %edi\n    movq $3, %rax\n    syscall\n");
+        // Read stdout to EOF into a 64 KiB buffer (rbx = buf,
+        // r12 = total bytes read).
+        s = s.write("    movq $65536, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %rbx\n");
+        s = s.write("    movq $0, %r12\n");
+        s = s.write(".Lsp_rdo:\n");
+        s = s.write("    movq $65536, %rdx\n");
+        s = s.write("    subq %r12, %rdx\n");
+        s = s.write("    testq %rdx, %rdx\n");
+        s = s.write("    jle .Lsp_rdo_d\n");
+        s = s.write("    movl -88(%rbp), %edi\n");
+        s = s.write("    leaq (%rbx, %r12, 1), %rsi\n");
+        s = s.write("    movq $0, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    testq %rax, %rax\n");
+        s = s.write("    jle .Lsp_rdo_d\n");
+        s = s.write("    addq %rax, %r12\n");
+        s = s.write("    jmp .Lsp_rdo\n");
+        s = s.write(".Lsp_rdo_d:\n");
+        s = s.write("    movl -88(%rbp), %edi\n    movq $3, %rax\n    syscall\n");
+        // Read stderr similarly (r13 = buf, r14 = total).
+        s = s.write("    movq $65536, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rax, %r13\n");
+        s = s.write("    movq $0, %r14\n");
+        s = s.write(".Lsp_rde:\n");
+        s = s.write("    movq $65536, %rdx\n");
+        s = s.write("    subq %r14, %rdx\n");
+        s = s.write("    testq %rdx, %rdx\n");
+        s = s.write("    jle .Lsp_rde_d\n");
+        s = s.write("    movl -80(%rbp), %edi\n");
+        s = s.write("    leaq (%r13, %r14, 1), %rsi\n");
+        s = s.write("    movq $0, %rax\n");
+        s = s.write("    syscall\n");
+        s = s.write("    testq %rax, %rax\n");
+        s = s.write("    jle .Lsp_rde_d\n");
+        s = s.write("    addq %rax, %r14\n");
+        s = s.write("    jmp .Lsp_rde\n");
+        s = s.write(".Lsp_rde_d:\n");
+        s = s.write("    movl -80(%rbp), %edi\n    movq $3, %rax\n    syscall\n");
+        // wait4(child_pid, &status @ -8, 0, NULL).
+        s = s.write("    movq %r15, %rdi\n");
+        s = s.write("    leaq -8(%rbp), %rsi\n");
+        s = s.write("    movq $0, %rdx\n");
+        s = s.write("    movq $0, %r10\n");
+        s = s.write("    movq $61, %rax\n");
+        s = s.write("    syscall\n");
+        // Decode exit status: WIFEXITED → status >> 8; signaled → 128+sig.
+        s = s.write("    movl -8(%rbp), %eax\n");
+        s = s.write("    testb $127, %al\n");
+        s = s.write("    jnz .Lsp_signaled\n");
+        s = s.write("    shrl $8, %eax\n");
+        s = s.write("    andl $255, %eax\n");
+        s = s.write("    jmp .Lsp_have_exit\n");
+        s = s.write(".Lsp_signaled:\n");
+        s = s.write("    andl $127, %eax\n");
+        s = s.write("    addl $128, %eax\n");
+        s = s.write(".Lsp_have_exit:\n");
+        s = s.write("    movl %eax, %r15d\n");
+        // Build stdout box {data=rbx, len=r12}.
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %rbx, (%rax)\n");
+        s = s.write("    movq %r12, 8(%rax)\n");
+        s = s.write("    movq %rax, %rbx\n");
+        // Build stderr box {data=r13, len=r14}.
+        s = s.write("    movq $16, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq %r13, (%rax)\n");
+        s = s.write("    movq %r14, 8(%rax)\n");
+        s = s.write("    movq %rax, %r13\n");
+        // Build ProcessResult struct: [shape, stdout, stderr, exit_code].
+        s = s.write("    movq $32, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    leaq " + prLit.label + "(%rip), %rcx\n");
+        s = s.write("    movq %rcx, (%rax)\n");
+        s = s.write("    movq %rbx, 8(%rax)\n");
+        s = s.write("    movq %r13, 16(%rax)\n");
+        s = s.write("    movq %r15, 24(%rax)\n");
+        // Epilogue.
+        s = s.write("    addq $128, %rsp\n");
         s = s.write("    popq %r15\n");
         s = s.write("    popq %r14\n");
         s = s.write("    popq %r13\n");
@@ -3524,7 +3844,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_read_int", "__fern_read_line", "__fern_read_file",
         "__fern_reader_read_chunk", "__fern_reader_close", "__fern_write_file",
         "__fern_remove_dir_all", "__fern_temp_dir", "__fern_read_dir", "__fern_remove_file",
-        "__fern_env", "__fern_stat",
+        "__fern_env", "__fern_stat", "__fern_subprocess",
         "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
         "__fern_strbuf_reset", "__fern_strbuf_take", "__fern_random_i32",
         "__fern_random_bytes", "__fern_monotonic_ns", "__fern_now_ns",
@@ -4043,6 +4363,13 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // struct + a Result wrapper). The path box is the popped %rdi arg.
             s = s.write("    popq %rdi\n    call __fern_stat\n    pushq %rax\n");
             s = s.need("heap").need("stat");
+        } else if (o.kind == "subprocess") {
+            // [cmdbox][argsbox][stdinbox] (stdin on TOS) -> spawn the child, push a
+            // fresh ProcessResult struct box (the AST path's __fern_subprocess, which
+            // allocates the struct + its stdout/stderr string blocks). Pop stdin into
+            // %rdx, args into %rsi, cmd into %rdi (the asm.fern arg order).
+            s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    call __fern_subprocess\n    pushq %rax\n");
+            s = s.need("heap").need("subprocess");
         } else if (o.kind == "read_chunk") {
             // [fd][n] -> read up to n bytes from the Reader fd, push a fresh
             // Option[string] box (Some(chunk) / None at EOF). Reuses the AST path's
@@ -4861,9 +5188,10 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
         }
         // env() reads __fern_envp; save it from the initial stack BEFORE any push.
         // envp follows argv's NULL terminator: envp = rsp + 16 + argc*8 (argc at
-        // [rsp], argv at rsp+8 with argc+1 slots incl. the NULL). Gated on the env
-        // need (not heap, unlike asm.fern) so a non-env program is byte-identical.
-        if (s.has_need("env")) {
+        // [rsp], argv at rsp+8 with argc+1 slots incl. the NULL). Gated on the env /
+        // subprocess needs (not heap, unlike asm.fern) so other programs stay
+        // byte-identical. Both __fern_env and __fern_subprocess (execve) read it.
+        if (s.has_need("env") || s.has_need("subprocess")) {
             s = s.write("    movq (%rsp), %rax\n");
             s = s.write("    leaq 16(%rsp,%rax,8), %rax\n");
             s = s.write("    movq %rax, __fern_envp(%rip)\n");
@@ -4883,6 +5211,12 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     if (s.has_need("stat")) {
         var fsPre: ShapeRefOut = shape_ref(s, "FileStat");
         s = fsPre.state;
+    }
+    // Pre-intern "ProcessResult" for the __fern_subprocess runtime's shape label
+    // (same reasoning as FileStat above). Gated on the subprocess need.
+    if (s.has_need("subprocess")) {
+        var prPre: ShapeRefOut = shape_ref(s, "ProcessResult");
+        s = prPre.state;
     }
     // .rodata: each interned string literal as a labelled `.ascii` directive
     // (GAS interprets the escapes), matching asm.fern's emit_module so the box's
@@ -4930,7 +5264,7 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     // The freestanding allocator + RC runtime, only when the program allocates.
     // i32.to_string() allocates its box even in an otherwise heap-free program,
     // so its emit-time need pulls the runtime in too (its body calls __fern_alloc).
-    if (s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("print_int") || s.has_need("read_int") || s.has_need("str_read_line") || s.has_need("putchar") || s.has_need("strbuf") || s.has_need("reader") || s.has_need("write_file") || s.has_need("remove_dir_all") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_file") || s.has_need("env") || s.has_need("stat")) { s = emit_ir_runtime(s); }
+    if (s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("print_int") || s.has_need("read_int") || s.has_need("str_read_line") || s.has_need("putchar") || s.has_need("strbuf") || s.has_need("reader") || s.has_need("write_file") || s.has_need("remove_dir_all") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_file") || s.has_need("env") || s.has_need("stat") || s.has_need("subprocess")) { s = emit_ir_runtime(s); }
     // String search predicates (starts_with / ends_with / index_of) are
     // allocation-free + self-contained, so they're emitted in their own helper
     // — kept OUT of emit_ir_runtime, whose size is near the self-host's

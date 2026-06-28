@@ -251,6 +251,34 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-28 — `subprocess(cmd, args, stdin)` lowers on the IR path (flips 3 process modules)
+
+`subprocess(cmd, args, stdin): ProcessResult` (spawn a child, pipe its streams,
+collect stdout/stderr/exit_code) had a full AST runtime (`__fern_subprocess`, a
+~320-line fork/exec/pipe helper) but no IR lowering, so it bailed
+`BAIL call[subprocess]` → AST, dragging `process_assertions`,
+`process_output_shortcuts`, and `lang_binary_e2e` to the legacy emitter.
+
+Building directly on the `stat` struct-result work, with one new wrinkle: the
+`ProcessResult` struct is returned **BARE** (not `Result`-wrapped), so there's no
+match to establish its type. A new `expr_struct_type` case types
+`subprocess(..)` as `ProcessResult` directly — the struct-valued analog of
+`stat`'s `opt_ret_type` — so `var r = subprocess(..)` marks `r` and `r.stdout` /
+`r.exit_code` resolve against the injected struct. (`ProcessResult` carries STRING
+fields, vs `FileStat`'s scalars — the reclaim analysis accepts it and routes IR.)
+The x86 runtime is transcribed verbatim from asm.fern with the shape via
+`shape_ref` + a `ProcessResult` pre-intern; `__fern_envp` (read by execve) is now
+declared + saved in `_start` for `env` **or** `subprocess`; arm64 reuses
+asm_arm64's heap-block `__fern_subprocess`; wasm rejects subprocess modules.
+
+`process_assertions` / `process_output_shortcuts` / `lang_binary_e2e` flip AST →
+IR. Gated by `TestSelfHostSubprocessIR` (`/bin/echo` stdout capture, `/bin/cat`
+stdin piping, a nonexistent binary → `exit_code` 127, all via the
+`__fern_subprocess` IR path); the full `TestSelfHostStdTestE2E` differential gate
+(incl. all 3 modules) matches interp; Stage-2 fixpoint byte-identical (no
+self-host source calls `subprocess`). The struct-result mechanism (Result-wrapped
+`FileStat` + bare `ProcessResult`) is now complete.
+
 ### 2026-06-28 — `stat(path)` lowers on the IR path — first struct-RESULT builtin (flips `batch7`)
 
 `stat(path): Result[FileStat, IoError]` had a full AST runtime (`__fern_stat`) but
@@ -415,10 +443,9 @@ this treeshake fix keeps the auto-discovered concrete helpers reachable; the
   / 2a handle closure-free `concat`). `array_hof` still routes AST (also a
   `BAIL lower` on `reduce`); the next array-cluster target is extending the
   `__arrm_*` free-generic rewrite to closure-taking array methods.
-- **`subprocess` not lowered on IR** — `process_assertions`,
-  `process_output_shortcuts`, `lang_binary_e2e` (3 modules; a heavy fork/exec
-  runtime returning a `ProcessResult` struct, same lowering recipe as the fs
-  builtins plus struct-result handling).
+- ~~**`subprocess` not lowered on IR** — `process_assertions` /
+  `process_output_shortcuts` / `lang_binary_e2e`~~ — **DONE** (see the
+  `subprocess(cmd, args, stdin)` entry above): bare `ProcessResult` struct result.
 - **`Map.iter` not intercepted on IR** — `json_roundtrip` (`m.iter()` →
   `BAIL call[Map.iter]`; needs the map-iter builtin interception like keys/values).
 - **Tuple-array-returning method element typing** — `map_verbs`

@@ -1964,7 +1964,15 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
             // A call to a struct-returning function evaluates to that struct type
             // (so `var p = make()` / `var p = obj.make()` then `p.x` resolves).
             match (c.callee) {
-                parser.ExprIdent(id) => { return s.struct_ret_type(id.name); },
+                parser.ExprIdent(id) => {
+                    // Built-in `subprocess(cmd, args, stdin)` returns a bare
+                    // ProcessResult struct (no Result wrapper), so type it directly
+                    // here — the analog of stat's opt_ret_type, for a struct-valued
+                    // builtin: `var r = subprocess(..)` marks r ProcessResult so
+                    // `r.stdout` / `r.exit_code` resolve.
+                    if (id.name == "subprocess" && c.args.len() == 3) { return "ProcessResult"; }
+                    return s.struct_ret_type(id.name);
+                },
                 parser.ExprFieldAccess(fa) => {
                     // Associated-function call `Type.make()` / `Enum.default()` —
                     // the object is a bare TYPE name (struct or enum), not a local
@@ -5260,6 +5268,25 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         var sts: LowerState = lower_expr(c.args[0], s);
                         if (!sts.ok) { return sts; }
                         return sts.emit(ir.op_stat());
+                    }
+                    // Built-in `subprocess(cmd, args, stdin)` — spawn a child, pipe
+                    // its streams, push a fresh ProcessResult struct {stdout, stderr,
+                    // exit_code}. Unlike stat (Result-wrapped), the struct is returned
+                    // BARE, so the result is typed by expr_struct_type's subprocess
+                    // case ("ProcessResult") rather than via opt_ret_type/match —
+                    // `var r = subprocess(..)` then binds `r.stdout` / `r.exit_code`.
+                    // Args lowered cmd / args / stdin so the dispatch pops stdin (TOS)
+                    // / args / cmd. No wasm process spawn, so wasm_eligible rejects
+                    // subprocess modules; x86 / arm64 lower it (the same
+                    // __fern_subprocess runtime the AST path calls, #3457).
+                    if (cid.name == "subprocess" && c.args.len() == 3) {
+                        var sp0: LowerState = lower_expr(c.args[0], s);
+                        if (!sp0.ok) { return sp0; }
+                        var sp1: LowerState = lower_expr(c.args[1], sp0);
+                        if (!sp1.ok) { return sp1; }
+                        var sp2: LowerState = lower_expr(c.args[2], sp1);
+                        if (!sp2.ok) { return sp2; }
+                        return sp2.emit(ir.op_subprocess());
                     }
                     // Built-in `args()` — the command-line argv accessor: push a
                     // fresh string[] (argv[0] first). A no-arg value op; the result
