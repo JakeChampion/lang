@@ -2829,13 +2829,13 @@ func TestParseTaskFunctionDesugar(t *testing.T) {
 	}`); err != nil {
 		t.Errorf("single-await task function should transform, got error: %v", err)
 	}
-	// Multiple awaits: not supported in slice 1.
-	if _, err := Parse(`function two(a: i32): i32 {
+	// Multiple SEQUENTIAL awaits: supported (slice 2) — each nests a continuation.
+	if _, err := Parse(`function two(a: i32, b: i32): i32 {
 		var x = await a;
-		var y = await a;
+		var y = await b;
 		return x + y;
-	}`); err == nil {
-		t.Error("expected error for multiple awaits (Phase 3b slice 1)")
+	}`); err != nil {
+		t.Errorf("sequential-await task function should transform, got error: %v", err)
 	}
 	// No terminal return after the await.
 	if _, err := Parse(`function noret(a: i32): i32 {

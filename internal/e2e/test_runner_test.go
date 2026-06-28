@@ -693,11 +693,12 @@ func TestRunnerAsyncConcurrentExamplePasses(t *testing.T) {
 }
 
 // `examples/tests/async_task_fn_test.fern` exercises the Phase-3b task-function
-// CPS transform: spawn targets written as ORDINARY functions with a suspending
-// `await` in the body, which the parser desugars into the std/task
+// CPS transform: spawn targets written as ORDINARY functions with suspending
+// `await`s in the body, which the parser desugars into the std/task
 // `(Reactor, args…) -> (Step, Reactor)` protocol automatically (no hand-written
-// state machine). Covers a single straight-line await, fan-out, and a task with
-// pre-await setup + post-await arithmetic. Passing suite → exit 0.
+// state machine). Covers a single straight-line await, fan-out, a task with
+// pre-await setup + post-await arithmetic, and TWO sequential awaits (slice 2,
+// nested continuations). Passing suite → exit 0.
 func TestRunnerAsyncTaskFnExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/async_task_fn_test.fern")
@@ -705,8 +706,8 @@ func TestRunnerAsyncTaskFnExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	if !strings.Contains(out, "# pass 3") || !strings.Contains(out, "# fail 0") {
-		t.Errorf("expected 3 passes, 0 fails\noutput:\n%s", out)
+	if !strings.Contains(out, "# pass 4") || !strings.Contains(out, "# fail 0") {
+		t.Errorf("expected 4 passes, 0 fails\noutput:\n%s", out)
 	}
 }
 
