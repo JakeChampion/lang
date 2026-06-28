@@ -2837,6 +2837,19 @@ func TestParseTaskFunctionDesugar(t *testing.T) {
 	}`); err != nil {
 		t.Errorf("sequential-await task function should transform, got error: %v", err)
 	}
+	// `await`s inside a terminating if/else: supported (slice 3a).
+	if _, err := Parse(`function br(pick: i32, a: i32, b: i32): i32 {
+		if (pick > 0) { var x = await a; return x; } else { var y = await b; return y; }
+	}`); err != nil {
+		t.Errorf("await in a terminating if/else should transform, got error: %v", err)
+	}
+	// A non-terminal if with an await (code after the merge): not supported yet.
+	if _, err := Parse(`function after(c: i32, a: i32): i32 {
+		if (c > 0) { var x = await a; return x; } else { return 0; }
+		return 5;
+	}`); err == nil {
+		t.Error("expected error for code after an await-bearing if (slice 3b+)")
+	}
 	// No terminal return after the await.
 	if _, err := Parse(`function noret(a: i32): i32 {
 		var x = await a;

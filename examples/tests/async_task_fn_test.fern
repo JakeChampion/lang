@@ -69,11 +69,40 @@ function test_sequential(): test.TestOutcome {
     }
 }
 
+// An `await` inside a terminating `if/else` (slice 3a): each branch is its own
+// continuation, sharing the reactor; both branches end in `return`. The compiler
+// splits each branch independently.
+function start_branch(pick: i32, a: i32, b: i32): i32 {
+    if (pick > 0) {
+        var x = await a;
+        return x + 2;
+    } else {
+        var y = await b;
+        return y;
+    }
+}
+
+function test_branch_then(): test.TestOutcome {
+    concurrent {
+        var t = spawn start_branch(1, 40, 99);   // pick>0 → await 40 → 40+2 = 42
+        return test.assert_eq(await t, 42);
+    }
+}
+
+function test_branch_else(): test.TestOutcome {
+    concurrent {
+        var t = spawn start_branch(0, 99, 42);   // pick==0 → await 42 → 42
+        return test.assert_eq(await t, 42);
+    }
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("async-task-fn");
     r = r.it("fanout", test_fanout());
     r = r.it("single", test_single());
     r = r.it("scaled", test_scaled());
     r = r.it("sequential", test_sequential());
+    r = r.it("branch_then", test_branch_then());
+    r = r.it("branch_else", test_branch_else());
     return r.finish();
 }
