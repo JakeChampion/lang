@@ -551,6 +551,12 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // calls). Pop the path box into x0, push the result box.
             s = s.need("heap");
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_remove_dir_all\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "remove_file") {
+            // [pathbox] -> unlink the named file, push a fresh Option[IoError] box
+            // (asm_arm64.emit_runtime's __fern_remove_file, in its heap block). Pop
+            // the path box into x0, push the result box.
+            s = s.need("heap");
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_remove_file\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "temp_dir") {
             // [prefixbox] -> make a uniquely-named /tmp dir, push a fresh
             // Result[string, IoError] box (asm_arm64.emit_runtime's __fern_temp_dir,

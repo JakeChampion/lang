@@ -5189,6 +5189,16 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!rdas.ok) { return rdas; }
                         return rdas.emit(ir.op_remove_dir_all());
                     }
+                    // Built-in `remove_file(path)` — unlink the named file, push a
+                    // fresh Option[IoError] box (None / Some(_)). opt_ret_type's
+                    // remove_file case resolves the Option so `match (remove_file(p))`
+                    // binds; wasm-ineligible, x86 / arm64 lower it (#3457:
+                    // filesystem_ops' remove_file).
+                    if (cid.name == "remove_file" && c.args.len() == 1) {
+                        var rfs: LowerState = lower_expr(c.args[0], s);
+                        if (!rfs.ok) { return rfs; }
+                        return rfs.emit(ir.op_remove_file());
+                    }
                     // Built-in `temp_dir(prefix)` — make a uniquely-named /tmp
                     // directory, push a fresh Result[string, IoError] box
                     // (Ok(path) / Err(_)). The Result type is resolved by
@@ -15820,6 +15830,7 @@ pub function (s: LowerState) opt_ret_type(name: string): string {
     if (name == "read_file") { return "Result[string, IoError]"; }
     if (name == "write_file") { return "Option[IoError]"; }
     if (name == "remove_dir_all") { return "Option[IoError]"; }
+    if (name == "remove_file") { return "Option[IoError]"; }
     if (name == "temp_dir") { return "Result[string, IoError]"; }
     if (name == "read_dir") { return "Result[string[], IoError]"; }
     return "";
