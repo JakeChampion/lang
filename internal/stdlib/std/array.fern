@@ -1324,3 +1324,35 @@ pub function (xs: T[]) reduce(f: (T, T) => T): Option[T] { return reduce(xs, f);
 
 // `xs.sort_by(cmp)` — comparator-driven stable sort (fresh array).
 pub function (xs: T[]) sort_by(cmp: (T, T) => i32): T[] { return sort_by(xs, cmp); }
+
+// ---- Element-polymorphic method forms of the Ord/Eq verbs ----------
+//
+// These are method-form companions to the `cmp.Ord` / `cmp.Eq` free
+// generics, so pipelines read left-to-right — `xs.map(f).is_sorted()`
+// instead of the inside-out `cmp.is_sorted(map(xs, f))` — for ANY bounded
+// element type (i32 / i64 / u32 / u64 / f32 / f64 / string and
+// `@derive(Ord)` / `@derive(Eq)` types), not just the i32- / string-
+// specific hand-written receivers. Each is READ-ONLY over its inputs
+// (no copy-on-write), so it is correct on the self-host IR path as well
+// as native; a *mutating* sort method (`xs.sorted()` → `cmp.sort`) is
+// deferred until the self-host RC copy-on-write story matches native.
+// (Bounded-receiver generic methods: carried on the self-host IR path by
+// the same fold that already lowers `map`/`filter`/`fold`.)
+
+// `xs.is_sorted()` — true iff `xs` is in non-decreasing `Ord` order
+// (vacuously true for length < 2).
+pub function (xs: T[]) is_sorted[T: cmp.Ord](): boolean { return cmp.is_sorted(xs); }
+
+// `xs.equal(other)` — structural element-wise equality (same length and
+// equal elements at every index). The method form of array.equal.
+pub function (xs: T[]) equal[T: cmp.Eq](other: T[]): boolean { return equal(xs, other); }
+
+// `xs.starts_with(prefix)` / `xs.ends_with(suffix)` — array analogues of
+// the string prefix/suffix tests, over any `T: cmp.Eq`.
+pub function (xs: T[]) starts_with[T: cmp.Eq](prefix: T[]): boolean { return starts_with(xs, prefix); }
+pub function (xs: T[]) ends_with[T: cmp.Eq](suffix: T[]): boolean { return ends_with(xs, suffix); }
+
+// `xs.index_of_last(target)` — `Some(i)` for the LAST index equal to
+// `target`, else `None`. The reverse-scan companion to the existing
+// string[] `.index_of`/`.position`, over any `T: cmp.Eq`.
+pub function (xs: T[]) index_of_last[T: cmp.Eq](target: T): Option[i32] { return index_of_last(xs, target); }
