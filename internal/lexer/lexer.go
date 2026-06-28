@@ -97,11 +97,16 @@ var keywords = map[string]bool{
 	"concurrent": true,
 	"spawn":      true,
 	"await":      true,
-	"true":       true,
-	"false":      true,
-	"boolean":    true,
-	"void":       true,
-	"string":     true,
+	// `race { spawn …; spawn …; }` — race spawned tasks, first-to-finish wins;
+	// an expression yielding (winnerIndex, result). Desugars onto std/task.select.
+	// (Named `race`, not `select`, so the runtime function `task.select` — already
+	// an identifier — keeps working.)
+	"race":    true,
+	"true":    true,
+	"false":   true,
+	"boolean": true,
+	"void":    true,
+	"string":  true,
 	// Sized numeric type names. Pre-i64/usize codebases shipped
 	// `number` / `float` as aliases for `i32` / `f32`; those were
 	// removed in the legacy-cleanup pass — use the sized names.
