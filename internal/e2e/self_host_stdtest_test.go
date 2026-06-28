@@ -263,6 +263,7 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"array_prefix_suffix_subseq", langSrcAbs(t, "examples/tests/array_prefix_suffix_subseq_test.fern"), ""},
 		{"batch7", langSrcAbs(t, "examples/tests/batch7_test.fern"), ""},
 		{"io_buffered", langSrcAbs(t, "examples/tests/io_buffered_test.fern"), ""},
+		{"iter", langSrcAbs(t, "examples/tests/iter_test.fern"), ""},
 		{"ci_string_and_log_kv", langSrcAbs(t, "examples/tests/ci_string_and_log_kv_test.fern"), ""},
 		{"env_unreachable", langSrcAbs(t, "examples/tests/env_unreachable_test.fern"), ""},
 		{"file_lines_and_timestamp", langSrcAbs(t, "examples/tests/file_lines_and_timestamp_test.fern"), ""},
