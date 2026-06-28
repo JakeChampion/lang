@@ -554,6 +554,140 @@ func buildExternAsyncStreamResultWrapper(nparams int, rawImport string, stride u
 	}
 }
 
+// buildExternAsyncStreamOpenWrapper builds the `f$open` helper for a LAZY
+// `for x in f(args)` over a u8 async stream import (docs/STREAM-TYPE-SURFACE.md,
+// L2). It is the collect-wrapper's prologue ONLY: allocate the lower's return
+// area, `canon lower async` the import (forwarding the scalar params + retptr),
+// await the lowered call (the dep task-returns the stream readable handle), and
+// return that handle — `load(rb+0)`. The per-element reads + EOF + drop are done
+// by `__stream_next_u8` / `__stream_drop`, so this wrapper does NOT drive the
+// collect loop. Wrapper type is `(scalar params…) -> i32` (the readable handle).
+func buildExternAsyncStreamOpenWrapper(nparams int, rawImport string) func(map[string]uint32) []byte {
+	return func(idxs map[string]uint32) []byte {
+		alloc := idxs["__fern_alloc"]
+		imp := idxs[rawImport]
+		rb := uint32(nparams) // lower return area (handle@+0, lower-await event@+8)
+		statusL := uint32(nparams + 1)
+		taskL := uint32(nparams + 2)
+		wsAwaitL := uint32(nparams + 3)
+
+		var body []byte
+		// rb = (alloc(16)+7) & ~7 — 8-byte-aligned lower return area.
+		body = inst.InstI32Const(body, 16)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstI32Const(body, 7)
+		body = numeric.InstI32Add(body)
+		body = inst.InstI32Const(body, -8)
+		body = numeric.InstI32And(body)
+		body = inst.InstLocalSet(body, rb)
+		// lower(scalar params…, rb) -> status; await it; return load(rb+0).
+		for i := 0; i < nparams; i++ {
+			body = inst.InstLocalGet(body, uint32(i))
+		}
+		body = inst.InstLocalGet(body, rb)
+		body = inst.InstCall(body, imp)
+		body = emitAsyncAwaitLoop(body, idxs, rb, statusL, taskL, wsAwaitL)
+		body = inst.InstLocalGet(body, rb)
+		body = memory.InstI32Load(body, 2, 0)
+
+		locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32) // rb,status,task,wsAwait
+		return inst.PutFunctionBody(nil, locals, body)
+	}
+}
+
+// buildStreamNextU8 builds the generic `__stream_next_u8(rd) -> i32` helper: read
+// ONE byte off the stream readable handle `rd`, awaiting the read if it BLOCKs,
+// and return the byte (0..255) or `-1` at EOF (docs/STREAM-TYPE-SURFACE.md, L2).
+// It is the collect loop's body specialised to a single element with its own
+// per-call waitable-set: `ws.new(); join(rd, ws); rs = stream.read(rd, buf, 1);
+// if rs == BLOCKED { wait(ws, evt); rs = load(evt+4) }; join(rd, 0); ws.drop`,
+// then `count = rs >> 4` — `count >= 1` ⇒ the byte at `buf`, else `-1` (a CLOSED
+// read reports count 0). The `-1` sentinel is unambiguous for u8 elements.
+func buildStreamNextU8() func(map[string]uint32) []byte {
+	return func(idxs map[string]uint32) []byte {
+		alloc := idxs["__fern_alloc"]
+		sread := idxs["async_stream_read"]
+		wsn := idxs["async_ws_new"]
+		wj := idxs["async_w_join"]
+		wsw := idxs["async_ws_wait"]
+		wsd := idxs["async_ws_drop"]
+
+		const rd = 0         // param: readable handle
+		scratch := uint32(1) // alloc(16): byte buffer @+0, wait event @+8
+		ws := uint32(2)      // per-call waitable-set
+		rs := uint32(3)      // read status / completed result
+		ret := uint32(4)     // return value (byte or -1)
+
+		var body []byte
+		// scratch = alloc(16); ws = ws.new(); join(rd, ws).
+		body = inst.InstI32Const(body, 16)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, scratch)
+		body = inst.InstCall(body, wsn)
+		body = inst.InstLocalSet(body, ws)
+		body = inst.InstLocalGet(body, rd)
+		body = inst.InstLocalGet(body, ws)
+		body = inst.InstCall(body, wj)
+		// rs = stream.read(rd, scratch, 1).
+		body = inst.InstLocalGet(body, rd)
+		body = inst.InstLocalGet(body, scratch)
+		body = inst.InstI32Const(body, 1)
+		body = inst.InstCall(body, sread)
+		body = inst.InstLocalSet(body, rs)
+		// if rs == BLOCKED(-1): wait(ws, scratch+8); rs = load(scratch+12).
+		body = inst.InstLocalGet(body, rs)
+		body = inst.InstI32Const(body, -1)
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, ws)
+		body = inst.InstLocalGet(body, scratch)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Add(body)
+		body = inst.InstCall(body, wsw)
+		body = inst.InstDrop(body)
+		body = inst.InstLocalGet(body, scratch)
+		body = memory.InstI32Load(body, 2, 12)
+		body = inst.InstLocalSet(body, rs)
+		body = inst.InstEnd(body)
+		// join(rd, 0); ws.drop(ws).
+		body = inst.InstLocalGet(body, rd)
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstCall(body, wj)
+		body = inst.InstLocalGet(body, ws)
+		body = inst.InstCall(body, wsd)
+		// ret = (rs >> 4) == 0 ? -1 : load8_u(scratch).
+		body = inst.InstLocalGet(body, rs)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32ShrU(body)
+		body = numeric.InstI32Eqz(body) // count == 0  ⇒ EOF
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstI32Const(body, -1)
+		body = inst.InstLocalSet(body, ret)
+		body = inst.InstElse(body)
+		body = inst.InstLocalGet(body, scratch)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = inst.InstLocalSet(body, ret)
+		body = inst.InstEnd(body)
+		body = inst.InstLocalGet(body, ret)
+
+		locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32) // scratch,ws,rs,ret
+		return inst.PutFunctionBody(nil, locals, body)
+	}
+}
+
+// buildStreamDropReadable builds the generic `__stream_drop(rd) -> ()` helper:
+// `stream.drop-readable(rd)`, releasing the readable end after a lazy stream
+// for-in finishes (docs/STREAM-TYPE-SURFACE.md, L2).
+func buildStreamDropReadable() func(map[string]uint32) []byte {
+	return func(idxs map[string]uint32) []byte {
+		sdropr := idxs["async_stream_drop_readable"]
+		var body []byte
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstCall(body, sdropr)
+		return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+	}
+}
+
 // buildExternAsyncStreamParamWrapper handles an `@import async function
 // sink(s: stream[T]): <scalar>` (the checker rewrote the param to `T[]` and set
 // StreamParamElems). The single Fern argument is an eager `T[]`; the wrapper
