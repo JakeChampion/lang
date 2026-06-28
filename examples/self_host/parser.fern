@@ -4393,8 +4393,22 @@ function mono_infer(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
             match (c.callee) {
                 ExprIdent(cid) => {
                     var crt: string = call_ret_type(funcs, cid.name, c.args, env);
-                    if (crt.len() > 0) { return crt; }
-                    return func_ret_of(funcs, cid.name);
+                    if (crt.len() == 0) { crt = func_ret_of(funcs, cid.name); }
+                    // A bare type variable as the inferred call type — `A` from a
+                    // generic whose return type IS an UNBOUNDED type param
+                    // (`fold[T, A, I]: A`): `A` is erased from `type_params`, so
+                    // call_ret_type's subst never replaces it (and a fully
+                    // unbounded `gfold[T, A]: A` has empty `type_params`, so its
+                    // raw `A` ret_type is returned verbatim). That bare `A` then
+                    // flows into any bounded generic it's passed to
+                    // (`var s = iter.fold(..); assert_eq(s, 6)`), keying a
+                    // spurious clone `assert_eq__A` whose `A.eq` / `A.to_string`
+                    // can't resolve — dragging the module to the AST emitter. A
+                    // bare type variable is never a usable concrete type, so
+                    // report "unknown" (the other, concrete-literal arg still
+                    // binds the call at `i32`).
+                    if (looks_type_var(crt)) { return ""; }
+                    return crt;
                 },
                 ExprFieldAccess(cfa) => {
                     // A `.to_string()` / `.to_debug()` method call yields a string
