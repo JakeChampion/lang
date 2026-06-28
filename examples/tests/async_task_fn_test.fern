@@ -96,6 +96,32 @@ function test_branch_else(): test.TestOutcome {
     }
 }
 
+// A guard clause with an `await` (slice 3b): the await-bearing `if` (no else)
+// RETURNS, so the code after it is the fall-through, reached only when the guard
+// is not taken. Both the guard branch and the fall-through can await.
+function start_guard(v: i32, hi: i32): i32 {
+    var got = await v;
+    if (got > 100) {
+        var y = await hi;     // guard branch awaits + returns
+        return y;
+    }
+    return got + 2;            // fall-through (!guard), same reactor scope
+}
+
+function test_guard_fallthrough(): test.TestOutcome {
+    concurrent {
+        var t = spawn start_guard(40, 99);   // got=40, not >100 → 40+2 = 42
+        return test.assert_eq(await t, 42);
+    }
+}
+
+function test_guard_taken(): test.TestOutcome {
+    concurrent {
+        var t = spawn start_guard(200, 42);  // got=200>100 → await 42 → 42
+        return test.assert_eq(await t, 42);
+    }
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("async-task-fn");
     r = r.it("fanout", test_fanout());
@@ -104,5 +130,7 @@ function main(): i32 {
     r = r.it("sequential", test_sequential());
     r = r.it("branch_then", test_branch_then());
     r = r.it("branch_else", test_branch_else());
+    r = r.it("guard_fallthrough", test_guard_fallthrough());
+    r = r.it("guard_taken", test_guard_taken());
     return r.finish();
 }
