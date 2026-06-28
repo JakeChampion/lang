@@ -364,10 +364,18 @@ protocol leak) and `await` can sit in arbitrary control flow.
   error, never miscompiled. Tests: `internal/parser` (`TestParseTaskFunctionDesugar`),
   `examples/tests/async_task_fn_test.fern` (e2e gate `TestRunnerAsyncTaskFnExamplePasses`,
   → 3 passes via interp; fan-out + pre/post-await).
-- **Slice 2+ — remaining:** multiple/sequential awaits (recurse the split into
-  nested continuations), awaits inside loops/conditionals (the general
-  body-split), and pairing with Phase 1/4 so awaited calls do real I/O rather
-  than the in-memory reactor's `register(value)`. Still the big rock.
+- **Slice 2 — DONE (multiple sequential awaits):** the split is now recursive
+  (`buildTaskSegment`): each top-level `var NAME = await EXPR;` becomes a
+  `register` + a `resume_d(NAME, r_d)` continuation whose body is the next
+  segment, so N sequential awaits nest into N continuations (the hand-written
+  `start_seq` shape), with per-depth names. The in-scope reactor threads from the
+  function's injected `__task_rx` through each `resume`'s reactor param.
+  Covered by `start_seq` in `async_task_fn_test.fern` (two awaits → 42) and a
+  `TestParseTaskFunctionDesugar` case.
+- **Slice 3+ — remaining:** awaits inside loops/conditionals and early returns
+  before an await (the general control-flow body-split), and pairing with Phase
+  1/4 so awaited calls do real I/O rather than the in-memory reactor's
+  `register(value)`. Still the big rock.
 - **Self-hosted parser port** (`examples/self_host/parser.fern`) — the
   desugar must be mirrored there before the Go compiler retires.
   Deferred while the self-host SSA-by-default migration is in flight

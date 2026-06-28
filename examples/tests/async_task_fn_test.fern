@@ -54,10 +54,26 @@ function test_scaled(): test.TestOutcome {
     }
 }
 
+// Two SEQUENTIAL awaits (slice 2): the compiler nests a second continuation
+// inside the first. `await a` then `await b`, finish with their sum + carry.
+function start_seq(a: i32, b: i32, carry: i32): i32 {
+    var x = await a;
+    var y = await b;
+    return x + y + carry;
+}
+
+function test_sequential(): test.TestOutcome {
+    concurrent {
+        var t = spawn start_seq(20, 20, 2);   // 20 + 20 + 2 = 42
+        return test.assert_eq(await t, 42);
+    }
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("async-task-fn");
     r = r.it("fanout", test_fanout());
     r = r.it("single", test_single());
     r = r.it("scaled", test_scaled());
+    r = r.it("sequential", test_sequential());
     return r.finish();
 }

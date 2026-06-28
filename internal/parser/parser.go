@@ -2993,9 +2993,10 @@ func desugarTaskFunctionsProgram(prog *ast.Program) error {
 		if n == 0 {
 			continue
 		}
-		// Slice 1 transforms only plain top-level functions.
+		// Transform only plain top-level functions (no methods / associated /
+		// generic / imported functions yet).
 		if fn.Receiver != nil || fn.AssocType != "" || fn.ImportIface != "" || fn.IsLocal || len(fn.TypeParams) > 0 {
-			return errorAt(fn.P, "`await` is not supported here yet — Phase 3b slice 1 transforms only plain top-level functions (no methods, associated, generic, or imported functions)")
+			return errorAt(fn.P, "`await` is not supported here yet — Phase 3b transforms only plain top-level functions (no methods, associated, generic, or imported functions)")
 		}
 		if err := transformTaskFunction(fn); err != nil {
 			return err
@@ -3021,13 +3022,47 @@ func desugarTaskFunctionsProgram(prog *ast.Program) error {
 	return nil
 }
 
-// transformTaskFunction rewrites a single slice-1 task function in place. See
-// desugarTaskFunctionsProgram for the supported shape.
+// transformTaskFunction rewrites a task function in place into the std/task
+// `(task.Reactor, args…) -> (task.Step, task.Reactor)` protocol, splitting the
+// body at each sequential `await` into nested `resume` continuations (the
+// hand-written `start_seq` shape). See desugarTaskFunctionsProgram.
 func transformTaskFunction(fn *ast.FuncDecl) error {
-	if taskAwaitCount(fn.Body) != 1 {
-		return errorAt(fn.P, "function %q: multiple or nested `await`s are not supported yet (Phase 3b slice 1 supports a single straight-line `await`)", fn.Name)
+	reactorType := ast.StructType{Name: "task.Reactor"}
+	pairType := ast.TupleType{Elems: []ast.Type{ast.StructType{Name: "task.Step"}, reactorType}}
+	var err error
+	depth := 0
+	body := buildTaskSegment(fn.Body.Stmts, "__task_rx", &depth, fn, &err)
+	if err != nil {
+		return err
 	}
-	stmts := fn.Body.Stmts
+	fn.Params = append([]ast.Param{{Name: "__task_rx", Type: reactorType}}, fn.Params...)
+	fn.ReturnType = pairType
+	fn.ReturnUnannotated = false
+	fn.Body.Stmts = body
+	return nil
+}
+
+// buildTaskSegment lowers one straight-line segment of a task body. `rxName` is
+// the reactor identifier in scope at the segment's start. If the segment has no
+// further `await`, it is a LEAF: it must end in `return EXPR;` and every `return
+// E` becomes `return (Done(E), rxName)`. Otherwise it is split at its first
+// top-level `var NAME = await EXPR;` binding into `rxName.register(EXPR)` plus a
+// `resume_d(NAME, r_d)` continuation whose body is buildTaskSegment(post, r_d) —
+// recursing so N sequential awaits nest into N continuations. Per-depth names
+// keep nested continuations distinct. Shapes beyond straight-line sequential
+// awaits (an `await` outside a top-level binding, a `return` before an `await`)
+// are rejected via *errp.
+func buildTaskSegment(stmts []ast.Stmt, rxName string, depth *int, fn *ast.FuncDecl, errp *error) []ast.Stmt {
+	if *errp != nil {
+		return stmts
+	}
+	p := fn.P
+	mkIdent := func(name string) *ast.Ident { return &ast.Ident{P: p, Name: name} }
+	reactorType := ast.StructType{Name: "task.Reactor"}
+	pairType := ast.TupleType{Elems: []ast.Type{ast.StructType{Name: "task.Step"}, reactorType}}
+	i32 := ast.NumberType{Width: 32, Signed: true}
+
+	// First top-level `var NAME = await EXPR;` binding in this segment.
 	awaitIdx := -1
 	for i, s := range stmts {
 		if v, ok := s.(*ast.Var); ok {
@@ -3038,75 +3073,67 @@ func transformTaskFunction(fn *ast.FuncDecl) error {
 		}
 	}
 	if awaitIdx < 0 {
-		return errorAt(fn.P, "function %q: `await` must be a top-level `var NAME = await EXPR;` binding (Phase 3b slice 1)", fn.Name)
+		// Leaf: end in `return EXPR;`; wrap every return with Done + rxName.
+		if len(stmts) == 0 {
+			*errp = errorAt(fn.P, "function %q: a task function must end with `return EXPR;` (after its `await`s)", fn.Name)
+			return stmts
+		}
+		if r, ok := stmts[len(stmts)-1].(*ast.Return); !ok || r.Value == nil {
+			*errp = errorAt(fn.P, "function %q: a task function must end with `return EXPR;` (after its `await`s)", fn.Name)
+			return stmts
+		}
+		out := make([]ast.Stmt, len(stmts))
+		for i, s := range stmts {
+			out[i] = wrapTaskReturns(s, rxName, p, errp)
+		}
+		return out
 	}
+
+	pre := stmts[:awaitIdx]
 	awaitVar := stmts[awaitIdx].(*ast.Var)
 	operand := awaitVar.Init.(*ast.Await).Operand
 	wokenName := awaitVar.Name
-	pre := stmts[:awaitIdx]
 	post := stmts[awaitIdx+1:]
 
+	// pre must be straight-line setup: no `return`, no `await`.
 	for _, s := range pre {
 		if stmtHasTopReturn(s) {
-			return errorAt(fn.P, "function %q: a `return` before the `await` is not supported yet (Phase 3b slice 1)", fn.Name)
+			*errp = errorAt(fn.P, "function %q: a `return` before an `await` is not supported yet (Phase 3b)", fn.Name)
+			return stmts
 		}
 	}
-	if len(post) == 0 {
-		return errorAt(fn.P, "function %q: a task function must end with `return EXPR;` after its `await` (Phase 3b slice 1)", fn.Name)
-	}
-	if r, ok := post[len(post)-1].(*ast.Return); !ok || r.Value == nil {
-		return errorAt(fn.P, "function %q: a task function must end with `return EXPR;` after its `await` (Phase 3b slice 1)", fn.Name)
+	if taskAwaitCount(&ast.Block{Stmts: pre}) > 0 {
+		*errp = errorAt(fn.P, "function %q: an `await` outside a top-level `var NAME = await EXPR;` binding is not supported yet (Phase 3b)", fn.Name)
+		return stmts
 	}
 
-	p := fn.P
-	mkIdent := func(name string) *ast.Ident { return &ast.Ident{P: p, Name: name} }
-	reactorType := ast.StructType{Name: "task.Reactor"}
-	stepType := ast.StructType{Name: "task.Step"}
-	pairType := ast.TupleType{Elems: []ast.Type{stepType, reactorType}}
-	i32 := ast.NumberType{Width: 32, Signed: true}
+	d := *depth
+	*depth++
+	tokName := fmt.Sprintf("__task_tok_%d", d)
+	rx2Name := fmt.Sprintf("__task_rx2_%d", d)
+	rName := fmt.Sprintf("__task_r_%d", d)
+	resumeName := fmt.Sprintf("__task_resume_%d", d)
 
-	// resume(NAME: i32, __task_r: task.Reactor): (task.Step, task.Reactor)
-	// { <post, with each `return E` → `return (Done(E), __task_r)`> }
-	var wrapErr error
-	resumeBody := &ast.Block{P: p, Stmts: make([]ast.Stmt, len(post))}
-	for i, s := range post {
-		resumeBody.Stmts[i] = wrapTaskReturns(s, "__task_r", p, &wrapErr)
-	}
-	if wrapErr != nil {
-		return wrapErr
-	}
+	resumeBody := buildTaskSegment(post, rName, depth, fn, errp)
 	resume := &ast.FuncDecl{
-		P:       p,
-		Name:    "__task_resume",
-		IsLocal: true,
-		Params: []ast.Param{
-			{Name: wokenName, Type: i32},
-			{Name: "__task_r", Type: reactorType},
-		},
+		P: p, Name: resumeName, IsLocal: true,
+		Params:     []ast.Param{{Name: wokenName, Type: i32}, {Name: rName, Type: reactorType}},
 		ReturnType: pairType,
-		Body:       resumeBody,
+		Body:       &ast.Block{P: p, Stmts: resumeBody},
 	}
-
-	// var (__task_tok, __task_rx2) = __task_rx.register(EXPR);
+	// var (__task_tok_d, __task_rx2_d) = <rxName>.register(EXPR);
 	registerCall := &ast.Call{P: p,
-		Callee: &ast.FieldAccess{P: p, Target: mkIdent("__task_rx"), Field: "register", FieldPos: p},
+		Callee: &ast.FieldAccess{P: p, Target: mkIdent(rxName), Field: "register", FieldPos: p},
 		Args:   []ast.Expr{operand}}
-	destr := &ast.Destructure{P: p, Names: []string{"__task_tok", "__task_rx2"}, Init: registerCall}
+	destr := &ast.Destructure{P: p, Names: []string{tokName, rx2Name}, Init: registerCall}
+	// return (Wait(__task_tok_d, __task_resume_d), __task_rx2_d);
+	waitCall := &ast.Call{P: p, Callee: mkIdent("Wait"), Args: []ast.Expr{mkIdent(tokName), mkIdent(resumeName)}}
+	finalRet := &ast.Return{P: p, Value: &ast.TupleLit{P: p, Elems: []ast.Expr{waitCall, mkIdent(rx2Name)}}}
 
-	// return (Wait(__task_tok, __task_resume), __task_rx2);
-	waitCall := &ast.Call{P: p, Callee: mkIdent("Wait"),
-		Args: []ast.Expr{mkIdent("__task_tok"), mkIdent("__task_resume")}}
-	finalRet := &ast.Return{P: p, Value: &ast.TupleLit{P: p, Elems: []ast.Expr{waitCall, mkIdent("__task_rx2")}}}
-
-	newStmts := make([]ast.Stmt, 0, len(pre)+3)
-	newStmts = append(newStmts, pre...)
-	newStmts = append(newStmts, destr, resume, finalRet)
-
-	fn.Params = append([]ast.Param{{Name: "__task_rx", Type: reactorType}}, fn.Params...)
-	fn.ReturnType = pairType
-	fn.ReturnUnannotated = false
-	fn.Body.Stmts = newStmts
-	return nil
+	out := make([]ast.Stmt, 0, len(pre)+3)
+	out = append(out, pre...)
+	out = append(out, destr, resume, finalRet)
+	return out
 }
 
 // wrapTaskReturns rewrites each `return E;` reachable from s (through ordinary
