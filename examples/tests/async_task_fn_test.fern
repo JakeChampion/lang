@@ -1,0 +1,63 @@
+import "std/test";
+import "std/task";
+
+// examples/tests/async_task_fn_test.fern — exercises the Phase-3b
+// task-function CPS transform (docs/ASYNC-IMPLEMENTATION-PLAN.md): spawn
+// targets are written as ORDINARY functions with a suspending `await` in the
+// body, and the parser desugars each into the std/task `(Reactor, args…) ->
+// (Step, Reactor)` protocol automatically — no hand-written state machine.
+// Where async_concurrent_test.fern hand-writes the `(Step, Reactor)` form, this
+// file writes plain functions and lets the compiler generate the continuation.
+//
+// Run:  fern -interp examples/tests/async_task_fn_test.fern
+
+// A single straight-line await: register `simulated`, resume by adding `addend`.
+// The compiler splits this at the `await` into the register + Wait(token, resume)
+// state machine, with `resume` capturing `addend`.
+function start_add(simulated: i32, addend: i32): i32 {
+    var woken = await simulated;
+    return woken + addend;
+}
+
+// Setup before the await + extra work after it — exercises the pre-await section
+// and a non-trivial post-await continuation body.
+function start_scaled(base: i32, factor: i32): i32 {
+    var seed = base + 1;
+    var woken = await seed;
+    var scaled = woken * factor;
+    return scaled;
+}
+
+// Two-task fan-out joined with `await` inside the concurrent block.
+function test_fanout(): test.TestOutcome {
+    concurrent {
+        var a = spawn start_add(10, 1);   // -> 11
+        var b = spawn start_add(20, 2);   // -> 22
+        if (await a != 11) { return test.fail("a wrong: " + a.to_string()); }
+        return test.assert_eq(await b, 22);
+    }
+}
+
+// A single spawn of an ordinary-form task → 42.
+function test_single(): test.TestOutcome {
+    concurrent {
+        var only = spawn start_add(40, 2);   // (40)+2 = 42
+        return test.assert_eq(await only, 42);
+    }
+}
+
+// Pre-await setup + post-await arithmetic: (6+1)*6 = 42.
+function test_scaled(): test.TestOutcome {
+    concurrent {
+        var s = spawn start_scaled(6, 6);   // seed=7, woken=7, 7*6=42
+        return test.assert_eq(await s, 42);
+    }
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("async-task-fn");
+    r = r.it("fanout", test_fanout());
+    r = r.it("single", test_single());
+    r = r.it("scaled", test_scaled());
+    return r.finish();
+}

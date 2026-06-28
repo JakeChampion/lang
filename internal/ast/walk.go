@@ -98,6 +98,8 @@ func rewriteExprChildren(n Node, fn func(Expr) Expr) {
 	switch x := n.(type) {
 	case *NumberLit, *BoolLit, *StringLit, *FloatLit, *Ident, *CaptureRef:
 		// leaves
+	case *Await:
+		x.Operand = rewriteExpr(x.Operand, fn)
 	case *CastExpr:
 		x.Inner = rewriteExpr(x.Inner, fn)
 	case *DowncastExpr:
@@ -304,6 +306,8 @@ func walkChildren(n Node, fn func(Node) bool) {
 		// leaves
 
 	// ---------- Expressions ----------
+	case *Await:
+		Walk(x.Operand, fn)
 	case *CastExpr:
 		Walk(x.Inner, fn)
 	case *DowncastExpr:
