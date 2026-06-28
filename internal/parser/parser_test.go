@@ -2843,12 +2843,30 @@ func TestParseTaskFunctionDesugar(t *testing.T) {
 	}`); err != nil {
 		t.Errorf("await in a terminating if/else should transform, got error: %v", err)
 	}
-	// A non-terminal if with an await (code after the merge): not supported yet.
+	// A guard clause: await-bearing `if` (no else) that RETURNS, with fall-through
+	// code after it — supported (slice 3b).
+	if _, err := Parse(`function guard(v: i32, hi: i32): i32 {
+		var got = await v;
+		if (got > 100) { var y = await hi; return y; }
+		return got + 2;
+	}`); err != nil {
+		t.Errorf("guard-clause await (slice 3b) should transform, got error: %v", err)
+	}
+	// Merge after an await-bearing if/else (code after the merge): not supported yet.
 	if _, err := Parse(`function after(c: i32, a: i32): i32 {
 		if (c > 0) { var x = await a; return x; } else { return 0; }
 		return 5;
 	}`); err == nil {
-		t.Error("expected error for code after an await-bearing if (slice 3b+)")
+		t.Error("expected error for code after an await-bearing if/else (slice 3c)")
+	}
+	// A guard whose await-bearing branch does NOT return (would fall through after
+	// the await): not supported yet (slice 3c).
+	if _, err := Parse(`function fallthru(v: i32, hi: i32): i32 {
+		var got = await v;
+		if (got > 100) { var y = await hi; got = got + y; }
+		return got;
+	}`); err == nil {
+		t.Error("expected error for fall-through after an await in an if branch (slice 3c)")
 	}
 	// No terminal return after the await.
 	if _, err := Parse(`function noret(a: i32): i32 {

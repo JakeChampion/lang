@@ -3080,15 +3080,31 @@ func buildTaskSegment(stmts []ast.Stmt, rxName string, depth *int, fn *ast.FuncD
 			*errp = errorAt(fn.P, "function %q: a task function must end with `return EXPR;` (after its `await`s)", fn.Name)
 			return stmts
 		}
-		// Slice 3a: a segment whose LAST statement is a terminating `if/else`
-		// (both branches present) may have `await`s INSIDE its branches — each
-		// branch is its own segment ending in `return`, sharing the reactor
-		// in scope (the branches are mutually exclusive and there is no code
-		// after the if, so no merge-point continuation is needed). Recurse into
-		// each branch. Awaits in loops or in a non-terminal `if` (code after the
-		// merge) remain unsupported — slice 3b/3c.
-		if ifst, ok := stmts[len(stmts)-1].(*ast.If); ok && ifst.Else != nil {
-			lead := stmts[:len(stmts)-1]
+		// An `await` inside an `if` branch (no top-level binding matched). Find the
+		// first top-level `if` that CONTAINS an `await` and lower it:
+		//   - Slice 3a: a terminating `if/else` (both branches return) as the last
+		//     statement — recurse each branch as its own segment in the shared
+		//     reactor; the branches are mutually exclusive with nothing after.
+		//   - Slice 3b: an await-bearing `if` WITHOUT `else` whose then-branch
+		//     TERMINATES (ends in `return`) — the guard-clause shape. The code
+		//     after the if is the fall-through, reached only on the !cond path
+		//     (the awaiting path returned), so it is a continuation in the SAME
+		//     reactor scope with no live-state merge. Recurse the then-branch and
+		//     the fall-through as segments.
+		// Both are sound under the `(i32, Reactor)` continuation model precisely
+		// because no await-bearing path falls through to post-if code. Awaits in
+		// loops, fall-through after an await, and merge-after-`if/else` are slice 3c.
+		ifIdx := -1
+		for i, s := range stmts {
+			if ifst, ok := s.(*ast.If); ok && taskAwaitCount(ifst) > 0 {
+				ifIdx = i
+				break
+			}
+		}
+		if ifIdx >= 0 {
+			lead := stmts[:ifIdx]
+			ifst := stmts[ifIdx].(*ast.If)
+			rest := stmts[ifIdx+1:]
 			for _, s := range lead {
 				if stmtHasTopReturn(s) {
 					*errp = errorAt(fn.P, "function %q: a `return` before an `await` is not supported yet (Phase 3b)", fn.Name)
@@ -3105,11 +3121,32 @@ func buildTaskSegment(stmts []ast.Stmt, rxName string, depth *int, fn *ast.FuncD
 				}
 				return []ast.Stmt{s}
 			}
+			if ifst.Else != nil {
+				// Slice 3a: terminating if/else; no merge after it.
+				if len(rest) > 0 {
+					*errp = errorAt(fn.P, "function %q: code after an `await`-bearing `if/else` is not supported yet (slice 3c)", fn.Name)
+					return stmts
+				}
+				ifst.Then = &ast.Block{P: p, Stmts: buildTaskSegment(branchStmts(ifst.Then), rxName, depth, fn, errp)}
+				ifst.Else = &ast.Block{P: p, Stmts: buildTaskSegment(branchStmts(ifst.Else), rxName, depth, fn, errp)}
+				out := make([]ast.Stmt, 0, len(lead)+1)
+				out = append(out, lead...)
+				out = append(out, ifst)
+				return out
+			}
+			// Slice 3b: no-else guard. The then-branch must terminate in `return`
+			// so the awaiting path never falls through to the post-if code.
+			if !endsInReturn(branchStmts(ifst.Then)) {
+				*errp = errorAt(fn.P, "function %q: an `await`-bearing `if` branch must end in `return` (fall-through after `await` is slice 3c)", fn.Name)
+				return stmts
+			}
 			ifst.Then = &ast.Block{P: p, Stmts: buildTaskSegment(branchStmts(ifst.Then), rxName, depth, fn, errp)}
-			ifst.Else = &ast.Block{P: p, Stmts: buildTaskSegment(branchStmts(ifst.Else), rxName, depth, fn, errp)}
-			out := make([]ast.Stmt, 0, len(lead)+1)
+			out := make([]ast.Stmt, 0, len(lead)+1+len(rest))
 			out = append(out, lead...)
 			out = append(out, ifst)
+			// The fall-through (!cond path) is its own segment in the same reactor;
+			// it must end in `return` (validated by the recursion's leaf check).
+			out = append(out, buildTaskSegment(rest, rxName, depth, fn, errp)...)
 			return out
 		}
 		// Plain leaf: end in `return EXPR;`; wrap every return with Done + rxName.
@@ -3222,6 +3259,17 @@ func wrapTaskReturnsBlock(b *ast.Block, rname string, p ast.Position, errp *erro
 	for i := range b.Stmts {
 		b.Stmts[i] = wrapTaskReturns(b.Stmts[i], rname, p, errp)
 	}
+}
+
+// endsInReturn reports whether a statement list's last statement is a value
+// `return` — the terminating shape an await-bearing task branch must have so the
+// awaiting path never falls through to post-branch code (slice 3b).
+func endsInReturn(stmts []ast.Stmt) bool {
+	if len(stmts) == 0 {
+		return false
+	}
+	r, ok := stmts[len(stmts)-1].(*ast.Return)
+	return ok && r.Value != nil
 }
 
 // stmtHasTopReturn reports whether s contains a `return` through ordinary control

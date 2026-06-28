@@ -380,11 +380,25 @@ protocol leak) and `await` can sit in arbitrary control flow.
   needed. `else if` chains work if they end in a final `else`. Covered by
   `start_branch` in `async_task_fn_test.fern` (then + else paths → 42) and
   `TestParseTaskFunctionDesugar` cases (incl. rejecting code after the if).
-- **Slice 3b+ — remaining:** a NON-terminal `if` (code after the merge — needs the
-  post-if code factored into a shared continuation both branches call), awaits
-  inside loops (a self-referential / tail-recursive continuation — the hardest
-  case), early returns before an await, and pairing with Phase 1/4 so awaited
-  calls do real I/O rather than the in-memory reactor's `register(value)`.
+- **Slice 3b — DONE (guard-clause await with fall-through):** an await-bearing
+  `if` WITHOUT `else` whose then-branch TERMINATES (ends in `return`), with code
+  after the `if`. Because the awaiting path returns, the post-`if` code is reached
+  only on the `!cond` path — a continuation in the SAME reactor scope, no
+  live-state merge — so `buildTaskSegment` recurses the then-branch and the
+  fall-through as independent segments. Sound under the `(i32, Reactor)`
+  continuation model precisely because no await-bearing path falls through to
+  post-`if` code. Covered by `start_guard` in `async_task_fn_test.fern` (taken +
+  fall-through paths → 42) and `TestParseTaskFunctionDesugar` cases (incl.
+  rejecting fall-through after an await, and a merge after an await-bearing
+  `if/else`).
+- **Slice 3c — remaining (the hard core):** a NON-terminal `if/else` where an
+  await-bearing branch FALLS THROUGH to post-`if` code (a true merge — needs the
+  post-`if` code factored into a shared continuation, with live/mutated state
+  threaded, which the fixed `(i32, Reactor)` continuation shape can't carry today
+  — likely a state-struct or a richer continuation), awaits inside loops (a
+  self-referential / tail-recursive continuation), early returns before an await,
+  and pairing with Phase 1/4 so awaited calls do real I/O rather than the
+  in-memory reactor's `register(value)`.
 - **Self-hosted parser port** (`examples/self_host/parser.fern`) — the
   desugar must be mirrored there before the Go compiler retires.
   Deferred while the self-host SSA-by-default migration is in flight
