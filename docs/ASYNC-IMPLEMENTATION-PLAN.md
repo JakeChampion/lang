@@ -438,11 +438,18 @@ protocol leak) and `await` can sit in arbitrary control flow.
   `len` (immutable) are CAPTURED by the recursive loop closure rather than passed
   as params, which also keeps every loop param an i32 (indices / accumulators).
   Covered by `start_arrsum` in `async_task_fn_test.fern` and `TestParseTaskFunctionDesugar`.
+- **Expression-position awaits — DONE:** an `await` in expression position
+  (`acc = acc + await x`, `f(await a)`, `return g(await b)`, `if (await c)`) is
+  hoisted to a preceding `var __await_h_N = await …;` binding by a pre-pass
+  (`hoistTaskExprAwaits` / `rewriteAwaitExpr`) that runs before the CPS transform,
+  left-to-right (preserving suspension order). It recurses into nested statement
+  bodies but not loop CONDITIONS (re-evaluated per iteration) or nested
+  functions / lambdas. So the transform only ever sees binding-form awaits.
+  Covered by `start_expr` in `async_task_fn_test.fern` and `TestParseTaskFunctionDesugar`.
 - **Remaining:** richer loop bodies (`break` / `continue` / nested control flow /
-  `return` inside an await-bearing loop), `await` in arbitrary EXPRESSION position
-  (hoist to a temp binding first), early returns before an await, non-i32
-  carried/await types, and pairing with Phase 1/4 so awaited calls do real I/O
-  rather than the in-memory reactor's `register(value)`.
+  `return` inside an await-bearing loop), `await` in a loop CONDITION, early
+  returns before an await, non-i32 carried/await types, and pairing with Phase 1/4
+  so awaited calls do real I/O rather than the in-memory reactor's `register(value)`.
 - **Self-hosted parser port** (`examples/self_host/parser.fern`) — the
   desugar must be mirrored there before the Go compiler retires.
   Deferred while the self-host SSA-by-default migration is in flight

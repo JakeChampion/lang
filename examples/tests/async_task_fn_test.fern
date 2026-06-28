@@ -214,8 +214,28 @@ function test_array_loop(): test.TestOutcome {
     }
 }
 
+// `await` in EXPRESSION positions (assignment RHS, return expr, if cond) — each
+// is hoisted to a preceding `var __await_h = await …;` binding before the CPS
+// transform runs, left-to-right.
+function start_expr(a: i32, b: i32): i32 {
+    var acc = await a;
+    acc = acc + await b;          // assignment RHS
+    if (await a > 0) {            // if condition
+        return acc + await b;     // return expression
+    }
+    return acc;
+}
+
+function test_expr_await(): test.TestOutcome {
+    concurrent {
+        var t = spawn start_expr(10, 11);  // acc=10; acc+=11→21; (10>0) → 21+11 = 32
+        return test.assert_eq(await t, 32);
+    }
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("async-task-fn");
+    r = r.it("expr_await", test_expr_await());
     r = r.it("fanout", test_fanout());
     r = r.it("single", test_single());
     r = r.it("scaled", test_scaled());
