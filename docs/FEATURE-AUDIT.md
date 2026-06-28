@@ -251,6 +251,50 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-28 — AST-router frontier, re-surveyed post-mono (precise per-module blockers)
+
+With the cheap builtin-recipe wins landed (env / stat / subprocess) and the arm64
+`.text` wall lifted, a fresh **post-monomorphisation, named-symbol** probe sweep
+(`asm_load_run -ir-probe` patched to lift_lambdas(module_with_builtins(...)) +
+emit the first unknown call/const_func symbol) over every remaining AST-routing
+`examples/tests/*_test.fern` gives the exact blockers. Key result: **no single
+blocker spans multiple modules** — each is its own module-specific root cause, and
+all are now medium-to-deep (no more one-line recipe flips). `fuzz_corpus` has since
+flipped to IR upstream.
+
+- **`iter`** — single blocker `test__assert_eq__A: BAIL call[A.eq]`. The
+  trait-bounded `assert_eq[T: cmp.Eq + cmp.Display]` got a spurious instantiation
+  keyed on the **type variable `A` itself** (not a concrete type), so `A.eq` can't
+  resolve. Every visible `assert_eq` call in `iter_test` is at `i32`, so this is a
+  **monomorphiser self-instantiation artifact** (a trait-bounded generic cloned at
+  its own bound's type-param), not a construct gap — fixing it is a monomorphiser
+  correctness change.
+- **`map_verbs`** — two layers. (1) TYPING: `var r: (Map[K,V], V) =
+  m.get_or_insert(..)` then `r.0.insert(..)` mis-dispatches `i32.<m>` because the
+  StmtVar method-call arm only recovers tuple element tags via
+  `expr_struct_type(recv)` (`""` for a `Map` receiver) with no tuple-annotation
+  fallback. Adding that fallback (depth-aware, so the `Map[K,V]` element survives)
+  routes it IR — BUT (2) LOWERING: the IR path then **segfaults**, so there's a
+  real tuple-element-`Map` lowering bug (the tuple-with-`Map`-element through a
+  user-method return) beneath the typing gap. The typing fix is therefore unsafe
+  alone (routes IR → crashes) and was reverted; map_verbs needs the lowering fix
+  too, plus `for e in m.entries()` tuple-array element typing and `a.extend(b).len()`
+  map-return-of-method-call recovery. Deep.
+- **`json_roundtrip`** — single blocker `BAIL call[Map.iter]`: the stateful
+  `MapIter` protocol (`iter`/`has_next`/`key`/`value`/`advance` over a heap cursor)
+  std/json's encoder walks. A multi-method heap-iterator runtime, deeper than the
+  flat keys/values ops.
+- **`io_buffered`** — 9 functions bail `i32.bytes_writer_new` + `const_func[io]`:
+  the `BytesWriter` (RC-backed byte buffer) type isn't recognised so its
+  constructor/methods fall to the `i32` prim path, plus an `io`-module const_func.
+- **`async_concurrent` / `async_runtime`** — `BAIL lower` + `const_func[*$clo]`:
+  async task closures. **Parallel-owned** (the active Phase-3b async slices) — leave.
+
+Upshot: the remaining AST→IR work is ~5 independent medium-to-deep fixes
+(monomorphiser correctness, tuple-element-`Map` lowering, stateful map iteration,
+`BytesWriter`/RC, async), not a shared lever. The most self-contained next target
+is `iter`'s monomorphiser artifact or `io_buffered`'s `BytesWriter` recognition.
+
 ### 2026-06-28 — arm64 `.text` wall lifted: per-function sections (`-ffunction-sections`)
 
 The self-host arm64 `.text` had reached ~133 MB, right against the AArch64
