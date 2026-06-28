@@ -2996,6 +2996,14 @@ func TestParseTaskFunctionDesugar(t *testing.T) {
 	}`); err != nil {
 		t.Errorf("break/continue in an await loop should transform, got error: %v", err)
 	}
+	// An EARLY RETURN before an await (guard clause): routed through the merge.
+	if _, err := Parse(`function grd(flag: i32, a: i32): i32 {
+		if (flag < 0) { return 7; }
+		var x = await a;
+		return x + 2;
+	}`); err != nil {
+		t.Errorf("early return before an await should transform, got error: %v", err)
+	}
 	// An `await` in the loop CONDITION: rewritten to `while(true){ if(!cond) break; … }`.
 	if _, err := Parse(`function cnd(seed: i32): i32 {
 		var acc = 0;

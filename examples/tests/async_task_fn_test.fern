@@ -274,11 +274,29 @@ function test_cond_await(): test.TestOutcome {
     }
 }
 
+// An EARLY RETURN before an `await` (a guard clause): the returning branch
+// terminates and the await code flows to the other path via the merge.
+function start_guarded(flag: i32, a: i32): i32 {
+    if (flag < 0) { return 7; }   // early return before the await
+    var x = await a;
+    return x + 2;
+}
+
+function test_early_return(): test.TestOutcome {
+    concurrent {
+        var hit = spawn start_guarded(0, 40);    // flag>=0 → await 40 → 42
+        var early = spawn start_guarded(-1, 99);  // flag<0 → return 7 (no await)
+        if (await early != 7) { return test.fail("early path wrong"); }
+        return test.assert_eq(await hit, 42);
+    }
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("async-task-fn");
     r = r.it("expr_await", test_expr_await());
     r = r.it("break_continue", test_break_continue());
     r = r.it("cond_await", test_cond_await());
+    r = r.it("early_return", test_early_return());
     r = r.it("fanout", test_fanout());
     r = r.it("single", test_single());
     r = r.it("scaled", test_scaled());
