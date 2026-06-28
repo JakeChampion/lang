@@ -249,7 +249,7 @@ pub struct TypeAlias { name: string, variants: string[], line: i32, col: i32 }
 // bundled), and the bundler reads the names to build the re-export table
 // that redirects a consumer's `facade.name` to the original module's
 // mangled symbol. See flatten.bundle / docs/PRELUDE-TO-MODULES.md.
-pub struct Import { path: string, is_reexport: boolean, reexport_names: string[] }
+pub struct Import { path: string, is_reexport: boolean, reexport_names: string[], alias: string }
 
 // A whole compilation unit: the funcs declared at top level and
 // any stmts that appear outside a function decl. The interp /
@@ -3733,8 +3733,19 @@ function parse_import(p: Par): ImportResult {
         lexer.TokString(s) => { path = s.value; p = p.advance(); },
         _ => { }
     }
+    // Optional `as <ident>` alias clause (`import "std/io_buffered" as io`): the
+    // alias becomes the qualifier for `io.foo` references; flatten maps it back to
+    // the module's mangle prefix (basename). An alias equal to the basename is the
+    // common, redundant form. `as` is a keyword (peek_keyword, like the cast `x as
+    // T`), so it never collides with an identifier.
+    var alias: string = "";
+    if (p.peek_keyword() == "as") {
+        p = p.advance();  // consume `as`
+        alias = p.peek_ident();
+        if (alias.len() > 0) { p = p.advance(); }
+    }
     if (p.peek_punct() == ";") { p = p.advance(); }
-    return ImportResult { par: p, imp: Import { path: path, is_reexport: false, reexport_names: [] } };
+    return ImportResult { par: p, imp: Import { path: path, is_reexport: false, reexport_names: [], alias: alias } };
 }
 
 // parse_pubuse consumes `use "path".{name1, name2, …};` (cursor on the
@@ -3766,7 +3777,7 @@ function parse_pubuse(p: Par): ImportResult {
         if (p.peek_punct() == "}") { p = p.advance(); }
     }
     if (p.peek_punct() == ";") { p = p.advance(); }
-    return ImportResult { par: p, imp: Import { path: path, is_reexport: true, reexport_names: names } };
+    return ImportResult { par: p, imp: Import { path: path, is_reexport: true, reexport_names: names, alias: "" } };
 }
 
 // parse_const_decl consumes `const NAME[: T] = EXPR;` (cursor on the

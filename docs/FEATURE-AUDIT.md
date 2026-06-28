@@ -251,6 +251,32 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-28 — self-host import aliases (`import "p" as q`) → `io_buffered` routes IR
+
+`io_buffered_test` does `import "std/io_buffered" as io;` then `io.bytes_writer_new()`.
+The self-host parser **dropped the `as` clause entirely** (`parse_import` consumed
+the path then expected `;`), so the `Import` carried no alias. flatten derives the
+qualifier set from import-path **basenames** (`io_buffered`) and assumes
+qualifier == mangle-prefix, so it didn't recognise `io` as a module qualifier:
+`io.bytes_writer_new()` stayed an unresolved field-access call and mis-lowered
+(`i32.bytes_writer_new` / `const_func[io]`), dragging all 9 functions to AST. (The
+common `import "std/crypto" as crypto` form works only because the alias *equals*
+the basename — `io` ≠ `io_buffered` is the case that breaks.)
+
+Fix: `parse_import` now consumes `as <ident>` (a keyword, like the `x as T` cast)
+into a new `Import.alias` field; flatten's `mod_names` returns the **qualifier**
+(alias when present, else basename) paired with a new `mod_prefixes` (always the
+basename), and `resolve_prefix` maps qualifier → prefix at both rewrite points so
+`io.foo` flattens to `io_buffered__foo`. A plain `import` (alias "") is identity —
+the self-host's own sources use no aliases, so the bootstrap fixpoint is preserved.
+
+`io_buffered` (a previously-untested module: `BytesWriter` — RC-backed byte buffer,
+struct-spread `{ ...w, data }`, `u8[]` append, `string_from_bytes`, chained fluent
+dispatch) flips AST → IR, **9/9 passing**, with no further changes needed. Gated by
+`TestSelfHostImportAliasIR` (alias ≠ basename → asm calls `io_buffered__bytes_writer_new`,
+runs exit 0) + `io_buffered` added to the `TestSelfHostStdTestE2E` differential
+gate (matches interp); Stage-2 fixpoint byte-identical.
+
 ### 2026-06-28 — AST-router frontier, re-surveyed post-mono (precise per-module blockers)
 
 With the cheap builtin-recipe wins landed (env / stat / subprocess) and the arm64
