@@ -7,13 +7,14 @@ import (
 	"github.com/jakechampion/lang/internal/parser"
 )
 
-// A `for x in f()` over a u8 async stream import iterates LAZILY: the parser
+// A `for x in f()` over a scalar async stream import iterates LAZILY: the parser
 // leaves the ast.ForEach and the checker lowers it to a per-element read loop
-// (ast.DesugarForEachStream) — `var h = f$open(); while (true) { var v =
-// __stream_next_u8(h); if v < 0 break; var x = v as u8; BODY } __stream_drop(h)`.
-// Output is identical to the eager collect-then-iterate form, so this pins the
-// lazy STRUCTURE (the three helper calls + the EOF break) that the e2e can't
-// distinguish from eager by its result alone. See docs/STREAM-TYPE-SURFACE.md.
+// (ast.DesugarForEachStream) — `var c = f$open(); while (true) { if
+// (__stream_next(c) == 0) break; var x = __stream_elem_u8(c); BODY }
+// __stream_drop(c)`. Output is identical to the eager collect-then-iterate form,
+// so this pins the lazy STRUCTURE (the cursor + helper calls + the EOF break)
+// that the e2e can't distinguish from eager by its result alone. See
+// docs/STREAM-TYPE-SURFACE.md.
 func TestStreamForEachDesugarsToLazyLoop(t *testing.T) {
 	prog, err := parser.Parse(`@import("test:dep/d", "prod") async function body(): stream[u8];
 async function run(): i32 {
@@ -46,9 +47,9 @@ async function run(): i32 {
 	if len(blk.Stmts) != 3 {
 		t.Fatalf("expected 3 stmts (open / while / drop), got %d", len(blk.Stmts))
 	}
-	declH, ok := blk.Stmts[0].(*ast.Var)
-	if !ok || !isCallTo(declH.Init, "body$open") {
-		t.Fatalf("stmt 0 should be `var h = body$open()`, got %#v", blk.Stmts[0])
+	declC, ok := blk.Stmts[0].(*ast.Var)
+	if !ok || !isCallTo(declC.Init, "body$open") {
+		t.Fatalf("stmt 0 should be `var c = body$open()`, got %#v", blk.Stmts[0])
 	}
 	loop, ok := blk.Stmts[1].(*ast.While)
 	if !ok {
@@ -56,18 +57,25 @@ async function run(): i32 {
 	}
 	drop, ok := blk.Stmts[2].(*ast.ExprStmt)
 	if !ok || !isCallTo(drop.Expr, "__stream_drop") {
-		t.Fatalf("stmt 2 should be `__stream_drop(h)`, got %#v", blk.Stmts[2])
+		t.Fatalf("stmt 2 should be `__stream_drop(c)`, got %#v", blk.Stmts[2])
 	}
 	loopBlk, ok := loop.Body.(*ast.Block)
-	if !ok || len(loopBlk.Stmts) < 3 {
-		t.Fatalf("loop body should open with read / EOF-break / bind, got %T", loop.Body)
+	if !ok || len(loopBlk.Stmts) < 2 {
+		t.Fatalf("loop body should open with EOF-break / bind, got %T", loop.Body)
 	}
-	readV, ok := loopBlk.Stmts[0].(*ast.Var)
-	if !ok || !isCallTo(readV.Init, "__stream_next_u8") {
-		t.Fatalf("loop stmt 0 should be `var v = __stream_next_u8(h)`, got %#v", loopBlk.Stmts[0])
+	// stmt 0: `if (__stream_next(c) == 0) { break; }`
+	eofIf, ok := loopBlk.Stmts[0].(*ast.If)
+	if !ok {
+		t.Fatalf("loop stmt 0 should be the EOF guard `if`, got %T", loopBlk.Stmts[0])
 	}
-	if _, ok := loopBlk.Stmts[1].(*ast.If); !ok {
-		t.Fatalf("loop stmt 1 should be the `if v < 0 { break }` EOF guard, got %T", loopBlk.Stmts[1])
+	cmp, ok := eofIf.Cond.(*ast.Binary)
+	if !ok || cmp.Op != "==" || !isCallTo(cmp.Left, "__stream_next") {
+		t.Fatalf("EOF guard should test `__stream_next(c) == 0`, got %#v", eofIf.Cond)
+	}
+	// stmt 1: `var x = __stream_elem_u8(c)`
+	bindV, ok := loopBlk.Stmts[1].(*ast.Var)
+	if !ok || !isCallTo(bindV.Init, "__stream_elem_u8") {
+		t.Fatalf("loop stmt 1 should be `var x = __stream_elem_u8(c)`, got %#v", loopBlk.Stmts[1])
 	}
 }
 

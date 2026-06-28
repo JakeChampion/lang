@@ -66,36 +66,47 @@ being added behind the `for-in` node centralization (below); until L2 lands,
 `for x in stream` stays **eager collect-then-iterate** (locked by
 `TestWasmP3StreamForIn`).
 
-### Lazy `for x in stream` — DONE (L1 + L2)
+### Lazy `for x in stream` — DONE (L1 + L2 + general-T)
 
-**L2 shipped** (this PR): `for x in body()` over a **u8** async stream import now
-iterates LAZILY — one element pulled off the wire (read + await) per loop turn,
-never materialising the whole sequence. The vertical landed exactly as the plan
-below specified:
+`for x in body()` over an async stream import iterates LAZILY — one element
+pulled off the wire (read + await) per loop turn, never materialising the whole
+sequence — for **any scalar element type** (`u8` / `i8` / `i16` / `u16` / `i32` /
+`u32` / `i64` / `u64` / `f32` / `f64`). The vertical:
 
-- *Parser* (`desugarForEachProgram`): builds the set of module-local `@import
-  async … : stream[u8]` names and **leaves** a `for x in f(args)` over one as an
-  `ast.ForEach` (every other iterand — arrays, strings, **non-u8** streams — still
-  lowers eagerly via `ast.DesugarForEachArray`). `isLazyStreamIter` is the test.
+- *Parser* (`desugarForEachProgram`): builds the set of module-local async stream
+  imports whose element is a **scalar** (`ast.StreamElemKind != ""`) and **leaves**
+  a `for x in f(args)` over one as an `ast.ForEach`; every other iterand — arrays,
+  strings, and non-scalar (string/struct/enum) streams — still lowers eagerly via
+  `ast.DesugarForEachArray`. `isLazyStreamIter` is the test.
 - *Checker* (`lowerStreamForEachProgram`, after the slice-2 stream rewrite so
   `StreamResultElem` is set, and after modload mangling so `f$open` tracks the
-  mangled import name): lowers each surviving stream `ast.ForEach` to the loop via
-  `ast.DesugarForEachStream`, and registers the helper `FuncSig`s (`f$open: () ->
-  i32`, `__stream_next_u8: (i32) -> i32`, `__stream_drop: (i32) -> ()`).
-- *wasmbin* (`extern.go` + scan in `wasi.go`): `buildExternAsyncStreamOpenWrapper`
-  (`f$open` — collect-wrapper prologue → readable handle), `buildStreamNextU8`
-  (read-1 + await + decode, `-1` = EOF), `buildStreamDropReadable`. The scan emits
-  `f$open` + the two generic helpers when the `$open` companion is used (gated by
+  mangled import name): lowers each surviving stream `ast.ForEach` to the cursor
+  loop via `ast.DesugarForEachStream`, and registers the helper `FuncSig`s
+  (`f$open: (params) -> i32`, `__stream_next: (i32) -> i32`, `__stream_drop: (i32)
+  -> ()`, and per element kind `__stream_elem_<kind>: (i32) -> T`).
+- *wasmbin* (`extern.go` + scan in `wasi.go`): a lazy stream is driven through a
+  small heap **cursor** (`{ rd:i32 @0, elem:8B @8, evt:8B @16 }`):
+  `buildExternAsyncStreamOpenWrapper` (`f$open` — collect-wrapper prologue, stores
+  the readable handle in a fresh cursor, returns it), `buildStreamNext`
+  (element-type-agnostic: `stream.read` ONE element into `cur.elem` + await,
+  returns 1/0 for read/EOF — the read count is in *elements*, so stride is
+  implicit in the component's `stream<T>` type), `buildStreamElem` (per-kind
+  width-/sign-/float-aware load of `cur.elem`), `buildStreamDropReadable`
+  (`drop-readable(cur.rd)`). The scan emits `f$open` + the two generic helpers +
+  this import's `__stream_elem_<kind>` when the `$open` companion is used (gated by
   `usedOpen`); the eager collect-wrapper still emits under `f` for value context.
-  `build.go` pins async stream imports past tree-shake (they're reached only via
-  `$open`).
+  `build.go` pins async stream imports past tree-shake (reached only via `$open`).
 - *Composer + e2e*: `BuildAsyncStreamImportComponent` reused unchanged;
-  `TestWasmP3StreamForIn` now exercises the lazy path → 42, with the desugar
-  structure pinned by `checker.TestStreamForEachDesugarsToLazyLoop`.
+  `TestWasmP3StreamForIn` (u8) and `TestWasmP3StreamI32ForIn` (i32) exercise the
+  lazy path → 42, with the desugar structure pinned by
+  `checker.TestStreamForEachDesugarsToLazyLoop`.
 
-The `i32` sentinel (`-1` = EOF) is unambiguous only for byte elements, so lazy
-iteration is **u8-only** for now; a general-`T` form (2-word `(ok, elem)` or an
-Option) is the follow-on. Below is the original design (kept for the mechanics).
+Separating the EOF flag (`__stream_next` → 1/0) from the value read
+(`__stream_elem_<kind>`) is what makes this work for ANY scalar — unlike a single
+`i32` with a `-1` EOF sentinel, which was unambiguous only for `u8`. Non-scalar
+(string / struct / enum) element streams still collect eagerly (their lazy form
+needs RC-aware per-element handling — a follow-on). Below is the original design
+(kept for the mechanics).
 
 ### Lazy `for x in stream` — design (L1 done, L2 pending)
 
@@ -311,11 +322,12 @@ yield one self-contained runnable component (`cmd/fern` `TestAsyncProviderBundle
 via `BuildAsyncImportsAwaitComponent`); plus `-async-export` lifting param'd async
 functions (`TestAsyncExportParamsCLI`).
 
-Done: **lazy `for x in stream`** — L1 (the `ast.ForEach` centralization, #3963)
-and L2 (the lazy `f$open` / `__stream_next_u8` / `__stream_drop` codegen + the
-atomic eager→lazy flip for u8 streams) both shipped; see the "DONE (L1 + L2)"
-section above. Follow-on: a general-`T` lazy element type (the u8-only `-1` EOF
-sentinel generalises to a 2-word `(ok, elem)` / Option).
+Done: **lazy `for x in stream`** — L1 (the `ast.ForEach` centralization, #3963),
+L2 (the lazy codegen + atomic eager→lazy flip for u8 streams), and the **general-T**
+generalisation (any scalar element via the cursor model: `f$open` /
+`__stream_next` / `__stream_elem_<kind>` / `__stream_drop`); see the "DONE
+(L1 + L2 + general-T)" section above. Follow-on: lazy iteration of non-scalar
+(string / struct / enum) element streams (needs RC-aware per-element handling).
 
 **Possible follow-ons (new design efforts, not gaps in this surface):**
 widening the CLI auto-bundle to **stream-result/param** providers (the stream

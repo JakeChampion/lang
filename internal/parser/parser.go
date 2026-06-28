@@ -2805,15 +2805,14 @@ func desugarForEachProgram(prog *ast.Program) {
 	streamFns := map[string]bool{}
 	for _, fn := range prog.Funcs {
 		if fn.ImportIface != "" && fn.Async {
-			// Lazy iteration is u8-only for now: the per-element read returns an
-			// i32 with -1 as the EOF sentinel, which is unambiguous only for byte
-			// elements (0..255). A non-u8 stream still iterates EAGERLY via the
-			// array desugar (collect-then-iterate), unchanged. See
-			// docs/STREAM-TYPE-SURFACE.md.
-			if st, ok := fn.ReturnType.(ast.StreamType); ok {
-				if n, ok := st.Elem.(ast.NumberType); ok && n.NormalWidth() == 8 && !n.Signed {
-					streamFns[fn.Name] = true
-				}
+			// Lazy iteration covers any SCALAR element (u8 / i32 / i64 / f64 / …):
+			// the cursor desugar separates the EOF flag from the value read, so
+			// there's no `-1`-sentinel ambiguity (ast.DesugarForEachStream). A
+			// non-scalar element (string / struct / enum) has no StreamElemKind and
+			// still iterates EAGERLY via the array desugar (collect-then-iterate).
+			// See docs/STREAM-TYPE-SURFACE.md.
+			if st, ok := fn.ReturnType.(ast.StreamType); ok && ast.StreamElemKind(st.Elem) != "" {
+				streamFns[fn.Name] = true
 			}
 		}
 	}
