@@ -3149,96 +3149,37 @@ func buildTaskSegment(stmts []ast.Stmt, rxName string, depth *int, scope []strin
 			}
 		}
 	}
+	// First top-level `if` that routes through the conditional-merge: either it
+	// CONTAINS an `await`, or it is a GUARD whose branch terminates (return/break/
+	// continue) with await-bearing code AFTER it (early-return-before-await). The
+	// merge (lowerTaskIfMerge) pushes the post-if remainder into each
+	// non-terminating branch, so every branch becomes a mutually-exclusive segment.
+	mergeIdx := -1
+	for i, s := range stmts {
+		ifst, ok := s.(*ast.If)
+		if !ok {
+			continue
+		}
+		if taskAwaitCount(ifst) > 0 {
+			mergeIdx = i
+			break
+		}
+		thenT := blockTerminates(branchBlockStmts(ifst.Then))
+		elseT := ifst.Else != nil && blockTerminates(branchBlockStmts(ifst.Else))
+		if (thenT || elseT) && taskAwaitCount(&ast.Block{Stmts: stmts[i+1:]}) > 0 {
+			mergeIdx = i
+			break
+		}
+	}
+	if mergeIdx >= 0 && (awaitIdx < 0 || mergeIdx < awaitIdx) {
+		return lowerTaskIfMerge(stmts, mergeIdx, rxName, depth, scope, fn, errp)
+	}
 	if awaitIdx < 0 {
+		// Plain leaf: end in `return EXPR;`; wrap every return with Done + rxName.
 		if len(stmts) == 0 {
 			*errp = errorAt(fn.P, "function %q: a task function must end with `return EXPR;` (after its `await`s)", fn.Name)
 			return stmts
 		}
-		// An `await` inside an `if` branch (no top-level binding matched). Find the
-		// first top-level `if` that CONTAINS an `await` and lower it by PUSHING the
-		// post-if continuation into each branch, so every branch becomes
-		// terminating and the whole thing reduces to mutually-exclusive segments:
-		//
-		//   `lead; if (c) { THEN } [else { ELSE }] REST`
-		//     → THEN' = THEN terminates ? THEN : THEN ++ REST
-		//       ELSE' = (ELSE ?? <fall-through>) terminates ? … : … ++ REST
-		//       lead; if (c) { <segment THEN'> } else { <segment ELSE'> }
-		//
-		// This unifies every conditional shape: a terminating `if/else` (3a) leaves
-		// the branches untouched; a no-else guard (3b) makes the fall-through the
-		// else; and a TRUE MERGE (3c) — an await-bearing branch that falls through
-		// to shared post-if code that uses mutated state — works because REST is
-		// duplicated into each branch's continuation chain, so each path's mutation
-		// and its use of REST are co-located in one resume (value-capture is
-		// correct). The branches are mutually exclusive, so REST still runs exactly
-		// once at runtime. No `std/task` change. (Cost: REST is duplicated per
-		// branch — fine in practice; pathological nesting is the one caveat.)
-		// Awaits inside LOOPS are not handled here (a self-referential continuation);
-		// they fall to the stray-`await` net below — slice 3c-loops.
-		ifIdx := -1
-		for i, s := range stmts {
-			if ifst, ok := s.(*ast.If); ok && taskAwaitCount(ifst) > 0 {
-				ifIdx = i
-				break
-			}
-		}
-		if ifIdx >= 0 {
-			lead := stmts[:ifIdx]
-			ifst := stmts[ifIdx].(*ast.If)
-			rest := stmts[ifIdx+1:]
-			for _, s := range lead {
-				if stmtHasTopReturn(s) {
-					*errp = errorAt(fn.P, "function %q: a `return` before an `await` is not supported yet (Phase 3b)", fn.Name)
-					return stmts
-				}
-			}
-			if taskAwaitCount(&ast.Block{Stmts: lead}) > 0 {
-				*errp = errorAt(fn.P, "function %q: an `await` outside a top-level `var NAME = await EXPR;` binding is not supported yet (Phase 3b)", fn.Name)
-				return stmts
-			}
-			branchStmts := func(s ast.Stmt) []ast.Stmt {
-				if b, ok := s.(*ast.Block); ok {
-					return append([]ast.Stmt{}, b.Stmts...)
-				}
-				if s == nil {
-					return nil
-				}
-				return []ast.Stmt{s}
-			}
-			// Push REST into any branch that doesn't already terminate. A nil else
-			// means the !cond path is exactly REST (the fall-through). Each pushed
-			// copy must be a DEEP CLONE — the same statement nodes mustn't be shared
-			// across branches, or the per-branch return-wrapping would mutate them
-			// twice (with the wrong reactor in the second branch).
-			cloneStmts := func(ss []ast.Stmt) []ast.Stmt {
-				out := make([]ast.Stmt, len(ss))
-				for i, s := range ss {
-					out[i] = ast.CloneStmt(s)
-				}
-				return out
-			}
-			thenStmts := branchStmts(ifst.Then)
-			if !blockTerminates(thenStmts) {
-				thenStmts = append(thenStmts, cloneStmts(rest)...)
-			}
-			var elseStmts []ast.Stmt
-			if ifst.Else == nil {
-				elseStmts = cloneStmts(rest)
-			} else {
-				elseStmts = branchStmts(ifst.Else)
-				if !blockTerminates(elseStmts) {
-					elseStmts = append(elseStmts, cloneStmts(rest)...)
-				}
-			}
-			branchScope := append(append([]string{}, scope...), declsIn(lead)...)
-			ifst.Then = &ast.Block{P: p, Stmts: buildTaskSegment(thenStmts, rxName, depth, branchScope, fn, errp)}
-			ifst.Else = &ast.Block{P: p, Stmts: buildTaskSegment(elseStmts, rxName, depth, branchScope, fn, errp)}
-			out := make([]ast.Stmt, 0, len(lead)+1)
-			out = append(out, lead...)
-			out = append(out, ifst)
-			return out
-		}
-		// Plain leaf: end in `return EXPR;`; wrap every return with Done + rxName.
 		if r, ok := stmts[len(stmts)-1].(*ast.Return); !ok || r.Value == nil {
 			*errp = errorAt(fn.P, "function %q: a task function must end with `return EXPR;` (after its `await`s)", fn.Name)
 			return stmts
@@ -3421,6 +3362,67 @@ func rewriteAwaitExpr(e ast.Expr, counter *int, pre *[]ast.Stmt) ast.Expr {
 		return x
 	}
 	return e
+}
+
+// lowerTaskIfMerge lowers a segment `lead; if (c) { THEN } [else { ELSE }] REST`
+// where the `if` is the async split point (it contains an `await`, or it's a
+// guard whose branch terminates with await-bearing code after it). It pushes the
+// post-if remainder REST (deep-cloned) into each non-terminating branch so every
+// branch becomes a mutually-exclusive segment, then recurses:
+//
+//	THEN' = THEN terminates ? THEN : THEN ++ REST
+//	ELSE' = (ELSE ?? <fall-through>) terminates ? … : … ++ REST
+//	lead; if (c) { <segment THEN'> } else { <segment ELSE'> }
+//
+// This unifies every conditional shape: a terminating `if/else` (branches
+// untouched), a no-else guard (REST becomes the else), a true merge with mutated
+// state (REST duplicated into each branch's continuation chain, so the mutation
+// and its use of REST are co-located in one resume — value-capture is correct),
+// and an early-return guard before an await (the returning branch terminates;
+// REST — the await code — flows to the other branch). The branches are mutually
+// exclusive, so REST still runs exactly once at runtime. No `std/task` change.
+func lowerTaskIfMerge(stmts []ast.Stmt, ifIdx int, rxName string, depth *int, scope []string, fn *ast.FuncDecl, errp *error) []ast.Stmt {
+	p := fn.P
+	lead := stmts[:ifIdx]
+	ifst := stmts[ifIdx].(*ast.If)
+	rest := stmts[ifIdx+1:]
+	for _, s := range lead {
+		if stmtHasTopReturn(s) {
+			*errp = errorAt(fn.P, "function %q: a `return` before an `await` is not supported yet (Phase 3b)", fn.Name)
+			return stmts
+		}
+	}
+	if taskAwaitCount(&ast.Block{Stmts: lead}) > 0 {
+		*errp = errorAt(fn.P, "function %q: an `await` outside a top-level `var NAME = await EXPR;` binding is not supported yet (Phase 3b)", fn.Name)
+		return stmts
+	}
+	cloneStmts := func(ss []ast.Stmt) []ast.Stmt {
+		out := make([]ast.Stmt, len(ss))
+		for i, s := range ss {
+			out[i] = ast.CloneStmt(s)
+		}
+		return out
+	}
+	thenStmts := branchBlockStmts(ifst.Then)
+	if !blockTerminates(thenStmts) {
+		thenStmts = append(append([]ast.Stmt{}, thenStmts...), cloneStmts(rest)...)
+	}
+	var elseStmts []ast.Stmt
+	if ifst.Else == nil {
+		elseStmts = cloneStmts(rest)
+	} else {
+		elseStmts = branchBlockStmts(ifst.Else)
+		if !blockTerminates(elseStmts) {
+			elseStmts = append(append([]ast.Stmt{}, elseStmts...), cloneStmts(rest)...)
+		}
+	}
+	branchScope := append(append([]string{}, scope...), declsIn(lead)...)
+	ifst.Then = &ast.Block{P: p, Stmts: buildTaskSegment(thenStmts, rxName, depth, branchScope, fn, errp)}
+	ifst.Else = &ast.Block{P: p, Stmts: buildTaskSegment(elseStmts, rxName, depth, branchScope, fn, errp)}
+	out := make([]ast.Stmt, 0, len(lead)+1)
+	out = append(out, lead...)
+	out = append(out, ifst)
+	return out
 }
 
 // buildTaskWhile lowers a segment `lead; while (cond) { body } rest` whose loop

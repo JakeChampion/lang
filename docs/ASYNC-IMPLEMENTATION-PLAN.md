@@ -460,10 +460,16 @@ protocol leak) and `await` can sit in arbitrary control flow.
   break; } B }`, turning the per-iteration condition await into an ordinary in-body
   `if`-condition await (hoisted) + a `break` — both already supported. Covered by
   `start_cond` in `async_task_fn_test.fern` and `TestParseTaskFunctionDesugar`.
-- **Remaining:** early returns before an await, nested await-bearing loops,
-  `await` in a `for`/range loop CONDITION (only `while`-cond handled), non-i32
-  carried/await types, and pairing with Phase 1/4 so awaited calls do real I/O
-  rather than the in-memory reactor's `register(value)`.
+- **Early return before an await — DONE:** a guard like `if (bad) { return e; }
+  var x = await …;` is routed through the conditional-merge (`lowerTaskIfMerge`):
+  the merge now triggers not only on an await-bearing `if` but on any `if` whose
+  branch TERMINATES (return/break/continue) with await-bearing code after it, so
+  the returning branch terminates and the await code flows to the other branch.
+  Covered by `start_guarded` in `async_task_fn_test.fern` and `TestParseTaskFunctionDesugar`.
+- **Remaining:** nested await-bearing loops, `await` in a `for`/range loop
+  CONDITION (only `while`-cond handled), non-i32 carried/await types, and pairing
+  with Phase 1/4 so awaited calls do real I/O rather than the in-memory reactor's
+  `register(value)`.
 - **Self-hosted parser port** (`examples/self_host/parser.fern`) — the
   desugar must be mirrored there before the Go compiler retires.
   Deferred while the self-host SSA-by-default migration is in flight
