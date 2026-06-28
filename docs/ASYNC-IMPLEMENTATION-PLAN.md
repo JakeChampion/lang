@@ -496,8 +496,19 @@ await both — the trigger condition that motivated the whole design
   cancel) — **DONE in the runtime** (`task.select`): runs tasks until
   the first reaches `Done`, returns `(winnerIndex, result)`, and
   abandons the losers. Verified (shallow-vs-deep race + already-done)
-  on interp / x86-64 / arm64(qemu); wasm compiles. The `select`
-  *surface syntax* still waits on Phase 3.
+  on interp / x86-64 / arm64(qemu); wasm compiles.
+  - **Surface syntax — DONE** (named `race`, since `task.select` is already an
+    identifier): `race { spawn f(a); spawn g(b); }` is an EXPRESSION yielding
+    `(winnerIndex, result)`, used as `var (w, v) = race { … };`. The parser
+    (`parseRaceExpr`, dispatched from `parsePrimary`) desugars it to a
+    block-expression — `reactor_new`, one `let (task, rx) = f(rx, args)` per
+    `spawn`, then a `task.select([...], rx)` tail — mirroring `concurrent`. All
+    racers start before the select, so their I/O overlaps; a 3b-transformed
+    ordinary task function works as a racer. Tests: `parser.TestParseRaceDesugar`
+    and the INLINE e2e `TestRunnerAsyncRaceInline` — not a corpus example, because
+    the parse-time desugar yields a block-expression in a `let (w, v) = { … }`
+    init that `fern -fmt` prints expanded and can't round-trip (the same
+    parse-time-desugar formatter limitation noted for `concurrent`).
 - Scope-bounded **cancellation** — landed structurally with `select`:
   a losing task is simply never resumed and its parked continuation
   (and captured frame) is dropped, which RC/Perceus reclaims (Koka

@@ -693,6 +693,55 @@ func TestRunnerAsyncConcurrentExamplePasses(t *testing.T) {
 	}
 }
 
+// `race { spawn …; spawn …; }` is a first-to-finish race expression yielding
+// (winnerIndex, result), desugared onto std/task.select. Tested with INLINE
+// source (not an examples/ corpus file) because the parse-time desugar produces
+// a block-expression in a `let (w, v) = { … }` destructure init that `fern -fmt`
+// prints expanded and can't round-trip — the same parse-time-desugar formatter
+// limitation noted for `concurrent`. Racer 0 (shallower) wins the in-memory
+// reactor's registration-order drain → winner 0, value 42.
+func TestRunnerAsyncRaceInline(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cmd := exec.Command(bin, "-interp", "-")
+	cmd.Stdin = strings.NewReader(`
+import "std/test";
+import "std/task";
+
+function racer(rx: task.Reactor, simulated: i32, addend: i32): (task.Step, task.Reactor) {
+    var (tok, rx2) = rx.register(simulated);
+    function resume(woken: i32, r: task.Reactor): (task.Step, task.Reactor) {
+        return (Done(woken + addend), r);
+    }
+    return (Wait(tok, resume), rx2);
+}
+
+function test_race(): test.TestOutcome {
+    var (winner, value) = race {
+        spawn racer(40, 2);   // racer 0 -> 42, wins
+        spawn racer(10, 1);   // racer 1 -> 11
+    };
+    if (winner != 0) { return test.fail("winner=" + winner.to_string()); }
+    return test.assert_eq(value, 42);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("race");
+    r = r.it("first-to-finish", test_race());
+    return r.finish();
+}
+`)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	if !strings.Contains(out.String(), "# pass 1") || !strings.Contains(out.String(), "# fail 0") {
+		t.Errorf("expected 1 pass, 0 fails\noutput:\n%s", out.String())
+	}
+}
+
 // `examples/tests/async_task_fn_test.fern` exercises the Phase-3b task-function
 // CPS transform: spawn targets written as ORDINARY functions with suspending
 // `await`s in the body, which the parser desugars into the std/task
