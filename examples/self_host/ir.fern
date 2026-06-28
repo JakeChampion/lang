@@ -615,6 +615,20 @@ pub function op_map_delete(keykind: i32): Op { return Op { kind: "map_delete", i
 // array. Order is backend-defined, so consumers must be order-independent.
 pub function op_map_keys(): Op { return op0("map_keys"); }
 pub function op_map_values(): Op { return op0("map_values"); }
+// Map iteration (the parallel-array backends, x86-64 / arm64). `map_iter` pops
+// [map] and pushes a fresh 16-byte iterator box [map_ptr@0, cursor@8] (cursor 0)
+// — the ONLY allocating op of the cluster. `mapiter_has_next` pops [iter] -> i32
+// 0/1 (cursor < keys.len). `mapiter_key` / `mapiter_value` pop [iter] -> the
+// keys[cursor] / values[cursor] element (cursor is 0-based; the element load is
+// keys[cursor+1], the +1 skipping the array box's len header). `mapiter_advance`
+// pops [iter], bumps the stored cursor, and pushes a dummy result for the drop.
+// No wasm IR runtime (wasm maps are hash maps, not parallel arrays), so a mapiter
+// module is wasm-ineligible (wasm_eligible) and stays on the wasm AST path.
+pub function op_map_iter(): Op { return op0("map_iter"); }
+pub function op_mapiter_has_next(): Op { return op0("mapiter_has_next"); }
+pub function op_mapiter_key(): Op { return op0("mapiter_key"); }
+pub function op_mapiter_value(): Op { return op0("mapiter_value"); }
+pub function op_mapiter_advance(): Op { return op0("mapiter_advance"); }
 
 // high-level struct ops — layout-agnostic, like the array/string ops. `str`
 // carries the struct's type name, `i32_imm` the field count (struct_make) or
@@ -848,6 +862,9 @@ pub function op_allocates(kind: string): boolean {
     if (kind == "struct_make" || kind == "tuple_make") { return true; }
     if (kind == "opt_make" || kind == "opt_none") { return true; }
     if (kind == "map_new" || kind == "map_set") { return true; }
+    // map_iter allocates the 16-byte iterator box via __fern_alloc; the other
+    // mapiter ops are pure loads / a cursor store (no allocation).
+    if (kind == "map_iter") { return true; }
     // Byte/string builders that materialise a fresh box.
     if (kind == "random_bytes" || kind == "str_bytes" || kind == "str_split") { return true; }
     // args() materialises a fresh string[] (the arr box + a string block per

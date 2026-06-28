@@ -615,7 +615,15 @@ pub function wasm_eligible(mod: parser.Module): boolean {
         && !module_emits_op(mod, "fcos")
         && !module_emits_op(mod, "fexp")
         && !module_emits_op(mod, "flog")
-        && !module_emits_op(mod, "fpow");
+        && !module_emits_op(mod, "fpow")
+        // Map iteration is parallel-array only (x86-64 / arm64); wasm maps are
+        // hash maps with no iterator-box runtime, so a mapiter module stays on the
+        // wasm AST path (where the legacy emitter handles m.iter()/has_next()/...).
+        && !module_emits_op(mod, "map_iter")
+        && !module_emits_op(mod, "mapiter_has_next")
+        && !module_emits_op(mod, "mapiter_key")
+        && !module_emits_op(mod, "mapiter_value")
+        && !module_emits_op(mod, "mapiter_advance");
 }
 
 // should_use_ir: the use_ir default is on AND the module is wasm-eligible — the

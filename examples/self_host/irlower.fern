@@ -2455,6 +2455,29 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                             _ => {}
                         }
                     }
+                    // `it.key()` / `it.value()` on a `MapIter[K, V]` receiver returns
+                    // the key / value box; when that side is `string` the result
+                    // feeds `.len()` / concat as a string. Without this `.len()`
+                    // mis-dispatches to arr_len, reading the string box's data-ptr
+                    // slot as a length (garbage) — the keys()/values() + get_or
+                    // siblings above type the same way off the slot's recorded type.
+                    if (cfa.field == "key" && c.args.len() == 0) {
+                        match (cfa.obj) {
+                            parser.ExprIdent(ikid) => {
+                                var ikt: string = s.map_type_of(s.slot_of(ikid.name));
+                                if (is_mapiter_type_name(ikt) && mapiter_key_kind_of(ikt) == 0) { return true; }
+                            },
+                            _ => {}
+                        }
+                    }
+                    if (cfa.field == "value" && c.args.len() == 0) {
+                        match (cfa.obj) {
+                            parser.ExprIdent(ivid) => {
+                                if (mapiter_value_of(s.map_type_of(s.slot_of(ivid.name))) == "string") { return true; }
+                            },
+                            _ => {}
+                        }
+                    }
                     // A string-returning METHOD call `recv.m(...)`. Methods store
                     // their bare name (`receiver_type` is separate), so str_ret_fns
                     // records `m` by bare name — same as the free-call lookup above.
@@ -5554,12 +5577,49 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             return tfs.emit(ir.op_call_indirect(c.args.len()));
                         }
                     }
+                    // A MapIter[K, V] receiver (`it.has_next()` / `.key()` /
+                    // `.value()` / `.advance()` on a `var it: MapIter[..]` local):
+                    // the four methods are compiler builtins with no body, lowered
+                    // inline to the mapiter ops (mirroring the AST emitter). Resolved
+                    // BEFORE the map-method block below so the MapIter type string
+                    // (stored in the same per-slot column as Map[K,V]) never enters
+                    // the map dispatch and bails at its user-method fallthrough.
+                    var itype: string = "";
+                    match (fa.obj) {
+                        parser.ExprIdent(itid) => {
+                            var itsl: i32 = s.slot_of(itid.name);
+                            if (itsl >= 0 && is_mapiter_type_name(s.map_type_of(itsl))) { itype = s.map_type_of(itsl); }
+                        },
+                        _ => {}
+                    }
+                    if (itype != "") {
+                        if (fa.field == "has_next" && c.args.len() == 0) {
+                            var ihn: LowerState = lower_expr(fa.obj, s);
+                            if (!ihn.ok) { return ihn; }
+                            return ihn.emit(ir.op_mapiter_has_next());
+                        }
+                        if (fa.field == "key" && c.args.len() == 0) {
+                            var ik: LowerState = lower_expr(fa.obj, s);
+                            if (!ik.ok) { return ik; }
+                            return ik.emit(ir.op_mapiter_key());
+                        }
+                        if (fa.field == "value" && c.args.len() == 0) {
+                            var iv2: LowerState = lower_expr(fa.obj, s);
+                            if (!iv2.ok) { return iv2; }
+                            return iv2.emit(ir.op_mapiter_value());
+                        }
+                        if (fa.field == "advance" && c.args.len() == 0) {
+                            var iadv: LowerState = lower_expr(fa.obj, s);
+                            if (!iadv.ok) { return iadv; }
+                            return iadv.emit(ir.op_mapiter_advance());
+                        }
+                    }
                     var mrslot: i32 = 0 - 1;
                     var mtype: string = "";
                     match (fa.obj) {
                         parser.ExprIdent(mrid) => {
                             mrslot = s.slot_of(mrid.name);
-                            if (mrslot >= 0) { mtype = s.map_type_of(mrslot); }
+                            if (mrslot >= 0 && is_map_type_name(s.map_type_of(mrslot))) { mtype = s.map_type_of(mrslot); }
                         },
                         // A Map-typed struct FIELD receiver (`c.m.get_or(k, d)`):
                         // resolve the map type from the field's declaration so the
@@ -5654,6 +5714,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             var mvs: LowerState = lower_expr(fa.obj, s);
                             if (!mvs.ok) { return mvs; }
                             return mvs.emit(ir.op_map_values());
+                        }
+                        if (fa.field == "iter" && c.args.len() == 0) {
+                            // m.iter() -> a fresh MapIter box [map_ptr@0, cursor@8].
+                            // The result's MapIter[K,V] type is recorded at the
+                            // annotated var-decl (so it.has_next()/key()/... dispatch);
+                            // here we just emit the box-building op.
+                            var mit: LowerState = lower_expr(fa.obj, s);
+                            if (!mit.ok) { return mit; }
+                            return mit.emit(ir.op_map_iter());
                         }
                         // Not a built-in map op — a USER method on Map[K, V]
                         // (`m.merge(other)`, `m.extend(...)`). Dispatch to the
@@ -9146,7 +9215,12 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // field (`var m: Map[K, V] = c.m`). An ARRAY-of-maps type
             // (`Map[K,V][]`) also prefix-matches is_map_type_name but is handled
             // by the element-type overload above — exclude it here.
-            if (is_map_type_name(v.type_name) && !is_array_type_name(v.type_name)) { sb = sb.mark_map_type(slot, v.type_name); }
+            // A `var it: MapIter[K, V] = m.iter()` annotation records the slot's
+            // MapIter type (in the same local_map_type column as Map[K,V], but
+            // prefix-disjoint) so a later it.has_next()/key()/value()/advance()
+            // dispatches as a mapiter op instead of bailing on a Map.<method> call.
+            if (is_mapiter_type_name(v.type_name)) { sb = sb.mark_map_type(slot, v.type_name); }
+            else if (is_map_type_name(v.type_name) && !is_array_type_name(v.type_name)) { sb = sb.mark_map_type(slot, v.type_name); }
             else {
                 // UNANNOTATED map binding — `var m = Map { k: v, … }` (no
                 // `: Map[K,V]`). The literal desugars to a
@@ -16059,6 +16133,27 @@ pub function map_value_of(typestr: string): string {
     while (ci < inner.len() && inner[ci] != 44) { ci = ci + 1; }   // first comma
     if (ci >= inner.len()) { return ""; }
     return trim_spaces(inner[ci + 1 : inner.len()]);
+}
+
+// is_mapiter_type_name reports whether `t` is a "MapIter[K, V]" type string. The
+// MapIter cluster (m.iter() + has_next/key/value/advance) is stored in the same
+// per-slot local_map_type column as Map[K, V], but the two are prefix-disjoint
+// ("MapIter[" vs "Map[") so a MapIter slot is invisible to is_map_type_name's
+// map-method dispatch and vice-versa.
+pub function is_mapiter_type_name(t: string): boolean {
+    return t.len() >= 9 && t[0:8] == "MapIter[";
+}
+
+// mapiter_value_of / mapiter_key_kind_of recover V / K-kind from a
+// "MapIter[K, V]" string by rewriting it to "Map[K, V]" (drop "Iter") and
+// delegating to the Map[K, V] parsers.
+pub function mapiter_value_of(t: string): string {
+    if (!is_mapiter_type_name(t)) { return ""; }
+    return map_value_of("Map[" + t[8 : t.len()]);
+}
+pub function mapiter_key_kind_of(t: string): i32 {
+    if (!is_mapiter_type_name(t)) { return 0; }
+    return map_key_kind_of("Map[" + t[8 : t.len()]);
 }
 
 // trim_spaces drops leading/trailing ASCII spaces.

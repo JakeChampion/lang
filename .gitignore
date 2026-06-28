@@ -7,6 +7,7 @@
 /lang-lsp
 /bin/
 /build/
+/.gotmp/
 *.s
 *.o
 # Ignore local Claude Code config, but track the shared SessionStart hook

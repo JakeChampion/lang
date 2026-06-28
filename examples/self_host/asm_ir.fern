@@ -4146,6 +4146,27 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
         } else if (o.kind == "map_values") {
             // parallel-array map: values[] pointer at box+8.
             s = s.write("    popq %rax\n    movq 8(%rax), %rax\n    pushq %rax\n");
+        } else if (o.kind == "map_iter") {
+            // m.iter() -> 16-byte iterator box [map_ptr@0, cursor@8] (asm.fern:1258).
+            // heap need is set centrally by op_allocates(map_iter); push the box.
+            s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
+            s = s.write("    popq %rcx\n    movq %rcx, (%rax)\n    movq $0, 8(%rax)\n    pushq %rax\n");
+        } else if (o.kind == "mapiter_has_next") {
+            // cursor < keys.len: keys[] at map@0, len at keys@0 (asm.fern:1269).
+            s = s.write("    popq %rax\n    movq 8(%rax), %rcx\n    movq (%rax), %rdx\n");
+            s = s.write("    movq (%rdx), %rdx\n    movq (%rdx), %rdx\n");
+            s = s.write("    cmpq %rdx, %rcx\n    movq $0, %rax\n    setl %al\n    movzbq %al, %rax\n    pushq %rax\n");
+        } else if (o.kind == "mapiter_key") {
+            // keys[cursor]: keys[] at map@0, element[cursor] at (keys, cursor+1, 8).
+            s = s.write("    popq %rax\n    movq 8(%rax), %rcx\n    movq (%rax), %rdx\n    movq (%rdx), %rdx\n");
+            s = s.write("    incq %rcx\n    movq (%rdx,%rcx,8), %rax\n    pushq %rax\n");
+        } else if (o.kind == "mapiter_value") {
+            // values[cursor]: values[] at map@8, element[cursor] at (values, cursor+1, 8).
+            s = s.write("    popq %rax\n    movq 8(%rax), %rcx\n    movq (%rax), %rdx\n    movq 8(%rdx), %rdx\n");
+            s = s.write("    incq %rcx\n    movq (%rdx,%rcx,8), %rax\n    pushq %rax\n");
+        } else if (o.kind == "mapiter_advance") {
+            // bump the stored cursor; push a dummy result for the statement drop.
+            s = s.write("    popq %rax\n    movq 8(%rax), %rcx\n    incq %rcx\n    movq %rcx, 8(%rax)\n    pushq $0\n");
         } else if (o.kind == "struct_get") {
             // pop struct box; field at (index+1)*8.
             s = s.write("    popq %rax\n    movq " + util.i32_to_string((o.i32_imm + 1) * 8) + "(%rax), %rax\n    pushq %rax\n");
