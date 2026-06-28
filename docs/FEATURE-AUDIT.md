@@ -251,6 +251,28 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-23 — self-host cycle-freedom enforcement at parity (closes #2678)
+
+Verified + pinned that the self-host compiler enforces the immutable-data
+cycle-freedom rules to the same extent as the native (Go) reference compiler —
+the guarantee #2678 flagged as compiler-dependent. Both of that issue's asks had
+already landed and are now fully covered:
+- **`checker.fern` enforces E057** (`Cell[T]` element must be cycle-free —
+  scalar/string only) — `checker.fern` ~L3485, with `all_well_typed` set false
+  on *any* diagnostic (L5782), so the interp/vm `run_pipeline` refuses.
+- **The self-host compile drivers gate on the cycle rules before codegen** —
+  `fern.fern`'s immutability gate (L528–553) filters `check_module` to
+  `filter_immutability` (E048/E049/E055/E056/E057) and rejects with a
+  `line:col: error[CODE]` diagnostic ahead of both the SSA and AST/IR emit paths
+  (the #2825 fix; previously the codegen paths compiled `p.x = v` straight to a
+  working binary).
+This PR closes the test gap: `self_host_immutability_gate_test.go` already pinned
+E048/E055/E056/E057 + the valid functional-update / scalar-`Cell` forms; added
+the **E049** (reference-capture write-back) case so the full cycle-rule set
+#2678 names is gate-tested end-to-end (compile via the self-host `asm_load_run`
+driver, assert rejection + the formatted diagnostic). Native oracle:
+`go run ./cmd/fern -check` reports `E049` on the same source.
+
 ### 2026-06-23 — lambda_captures excludes Some/Ok/Err → Option/Result-returning lambdas route IR
 
 A no-capture lambda whose body constructs an Option/Result

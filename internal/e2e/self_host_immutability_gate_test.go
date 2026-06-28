@@ -10,10 +10,12 @@ import (
 
 // TestSelfHostImmutabilityGateX86_64 verifies the self-host compile driver
 // (asm_load_run) ENFORCES the immutable-data cycle rules: a program that
-// violates E048 (field assign) / E055 (discarded pure result) / E056
-// (subscript assign) is rejected with a formatted diagnostic on stderr and a
-// non-zero exit, instead of silently compiling. The valid (functional-update)
-// form compiles cleanly. This is the self-host enforcement that the Go
+// violates E048 (field assign) / E049 (reference-capture write-back) / E055
+// (discarded pure result) / E056 (subscript assign) / E057 (Cell over a
+// composite) is rejected with a formatted diagnostic on stderr and a non-zero
+// exit, instead of silently compiling — the full cycle-rule set #2678 requires
+// the self-host drivers to gate. The valid (functional-update / scalar-Cell)
+// forms compile cleanly. This is the self-host enforcement that the Go
 // reference compiler has via its checker (docs/IMMUTABILITY-MIGRATION-PLAN.md
 // §4); the gate filters check_module to the cycle rules so the partial
 // checker's other rules can't false-positive-reject a valid program.
@@ -48,6 +50,16 @@ func TestSelfHostImmutabilityGateX86_64(t *testing.T) {
 			name:     "subscript-assign-E056",
 			src:      "function main(): i32 { var a: i32[] = [1, 2, 3]; a[0] = 9; return a[0]; }\n",
 			wantDiag: "error[E056]",
+		},
+		{
+			// E049: a reference-typed value (here an i32[]) captured by a closure
+			// is read-only — reassigning it inside the closure could close a
+			// reference cycle, so the native compiler rejects it before codegen.
+			// The self-host build gate must match (it filters check_module to the
+			// cycle rules, of which E049 is the reference-capture write-back one).
+			name:     "captured-ref-assign-E049",
+			src:      "function main(): i32 { var xs: i32[] = [1]; var f = function (): i32 { xs = xs.append(2); return xs.len(); }; return f(); }\n",
+			wantDiag: "error[E049]",
 		},
 		{
 			name:     "discarded-append-E055",
