@@ -430,9 +430,16 @@ protocol leak) and `await` can sit in arbitrary control flow.
   appended to the body. `buildTaskSegment` also flattens an await-bearing top-level
   `Block` first (range loops parse to a `Block` wrapping `[var __hi, for]`).
   Covered by `start_range` in `async_task_fn_test.fern` and `TestParseTaskFunctionDesugar`.
+- **Slice loops-3 — DONE (array `for x in xs` loops):** an await-bearing array
+  for-in (still an `ast.ForEach` at task-transform time) is lowered to its
+  `.len()`+index `for` form via `ast.DesugarForEachArray`, then flattened and
+  run through the for→while path. The carried-var computation was sharpened to
+  thread only MUTATED in-scope vars (`mutatedInLoop`) — so the iterated array and
+  `len` (immutable) are CAPTURED by the recursive loop closure rather than passed
+  as params, which also keeps every loop param an i32 (indices / accumulators).
+  Covered by `start_arrsum` in `async_task_fn_test.fern` and `TestParseTaskFunctionDesugar`.
 - **Remaining:** richer loop bodies (`break` / `continue` / nested control flow /
-  `return` inside an await-bearing loop), array `for x in xs` loops (still an
-  `ast.ForEach` at task-transform time), `await` in arbitrary EXPRESSION position
+  `return` inside an await-bearing loop), `await` in arbitrary EXPRESSION position
   (hoist to a temp binding first), early returns before an await, non-i32
   carried/await types, and pairing with Phase 1/4 so awaited calls do real I/O
   rather than the in-memory reactor's `register(value)`.

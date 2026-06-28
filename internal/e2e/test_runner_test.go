@@ -712,8 +712,8 @@ func TestRunnerAsyncTaskFnExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	if !strings.Contains(out, "# pass 13") || !strings.Contains(out, "# fail 0") {
-		t.Errorf("expected 13 passes, 0 fails\noutput:\n%s", out)
+	if !strings.Contains(out, "# pass 14") || !strings.Contains(out, "# fail 0") {
+		t.Errorf("expected 14 passes, 0 fails\noutput:\n%s", out)
 	}
 }
 

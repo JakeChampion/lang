@@ -196,6 +196,24 @@ function test_range_loop(): test.TestOutcome {
     }
 }
 
+// An `await` inside an ARRAY `for x in xs` loop. The array (immutable) is captured
+// by the recursive loop closure; only the mutated accumulator/index are threaded.
+function start_arrsum(xs: i32[], bonus: i32): i32 {
+    var acc = 0;
+    for x in xs {
+        var b = await bonus;
+        acc = acc + x + b;
+    }
+    return acc;
+}
+
+function test_array_loop(): test.TestOutcome {
+    concurrent {
+        var t = spawn start_arrsum([10, 20, 9], 1);   // (10+1)+(20+1)+(9+1) = 42
+        return test.assert_eq(await t, 42);
+    }
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("async-task-fn");
     r = r.it("fanout", test_fanout());
@@ -211,5 +229,6 @@ function main(): i32 {
     r = r.it("loop", test_loop());
     r = r.it("loop_zero", test_loop_zero());
     r = r.it("range_loop", test_range_loop());
+    r = r.it("array_loop", test_array_loop());
     return r.finish();
 }

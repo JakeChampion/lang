@@ -3069,6 +3069,24 @@ func buildTaskSegment(stmts []ast.Stmt, rxName string, depth *int, scope []strin
 	pairType := ast.TupleType{Elems: []ast.Type{ast.StructType{Name: "task.Step"}, reactorType}}
 	i32 := ast.NumberType{Width: 32, Signed: true}
 
+	// An await-bearing array `for x in xs` is still an `ast.ForEach` here (the
+	// parse-time array desugar runs after this pass). Lower it to its `.len()`+index
+	// `for` form now (ast.DesugarForEachArray → a `Block` wrapping `[var __iter,
+	// var __len, var __idx, for(...)]`), then recurse — the flatten + for→while
+	// steps below take it the rest of the way.
+	for i, s := range stmts {
+		if fe, ok := s.(*ast.ForEach); ok && taskAwaitCount(fe) > 0 {
+			repl := make([]ast.Stmt, 0, len(stmts)+1)
+			repl = append(repl, stmts[:i]...)
+			repl = append(repl, ast.DesugarForEachArray(fe))
+			repl = append(repl, stmts[i+1:]...)
+			return buildTaskSegment(repl, rxName, depth, scope, fn, errp)
+		}
+		if taskAwaitCount(s) > 0 {
+			break // an earlier await-bearing construct is handled below
+		}
+	}
+
 	// Flatten an await-bearing top-level `Block` into this segment so its inner
 	// statements are visible to the scans below. A range loop `for i in 0..n` parses
 	// to a `Block` wrapping `[var __hi, for(...)]`, so without this its `for` (and
@@ -3328,10 +3346,17 @@ func buildTaskWhile(stmts []ast.Stmt, whileIdx int, rxName string, depth *int, s
 	}
 	body := bodyStmts(w.Body)
 
-	// carried = in-scope data vars referenced anywhere in cond/body/rest.
+	// carried = in-scope data vars MUTATED in the loop (assigned in cond/body).
+	// Only mutated vars must be threaded as loop params so the update survives the
+	// iteration and reaches the exit (closure value-capture would freeze them).
+	// Immutable in-scope vars (e.g. the array a `for x in xs` iterates, or `len`)
+	// are simply CAPTURED by the recursive loop closure — so they need not be
+	// params, which also keeps every loop param an i32 (indices / accumulators).
+	bodyBlock := &ast.Block{P: p, Stmts: body}
+	mutated := mutatedInLoop(localScope, w.Cond, bodyBlock)
 	var carried []string
 	for _, name := range localScope {
-		if identReferenced(name, w.Cond) || identReferenced(name, &ast.Block{Stmts: body}) || identReferenced(name, &ast.Block{Stmts: rest}) {
+		if mutated[name] {
 			carried = append(carried, name)
 		}
 	}
@@ -3513,20 +3538,27 @@ func declsIn(stmts []ast.Stmt) []string {
 	return names
 }
 
-// identReferenced reports whether `name` appears as an identifier anywhere under
-// n (used to compute a loop's carried-variable set).
-func identReferenced(name string, n ast.Node) bool {
-	found := false
-	ast.Walk(n, func(x ast.Node) bool {
-		if found {
-			return false
-		}
-		if id, ok := x.(*ast.Ident); ok && id.Name == name {
-			found = true
-		}
-		return true
-	})
-	return found
+// mutatedInLoop returns the subset of `scope` variables that are ASSIGNED (the
+// target of an `=` assignment) anywhere under the given nodes — the loop-carried
+// vars that must be threaded as loop params (vs merely captured). Compound /
+// indexed targets aren't treated as scalar carried vars here.
+func mutatedInLoop(scope []string, nodes ...ast.Node) map[string]bool {
+	inScope := map[string]bool{}
+	for _, s := range scope {
+		inScope[s] = true
+	}
+	out := map[string]bool{}
+	for _, n := range nodes {
+		ast.Walk(n, func(x ast.Node) bool {
+			if as, ok := x.(*ast.Assign); ok {
+				if id, ok := as.Target.(*ast.Ident); ok && inScope[id.Name] {
+					out[id.Name] = true
+				}
+			}
+			return true
+		})
+	}
+	return out
 }
 
 // wrapTaskReturns rewrites each `return E;` reachable from s (through ordinary

@@ -2888,6 +2888,15 @@ func TestParseTaskFunctionDesugar(t *testing.T) {
 	}`); err != nil {
 		t.Errorf("await in a range for loop should transform, got error: %v", err)
 	}
+	// An ARRAY `for x in xs` loop with an await: supported (ForEach → array desugar
+	// → while). The array is captured; only the mutated accumulator is carried.
+	if _, err := Parse(`function arr(xs: i32[], a: i32): i32 {
+		var acc = 0;
+		for x in xs { var b = await a; acc = acc + x + b; }
+		return acc;
+	}`); err != nil {
+		t.Errorf("await in an array for-in loop should transform, got error: %v", err)
+	}
 	// A `break` inside an await-bearing loop body: not supported yet (loops slice 2).
 	if _, err := Parse(`function brk(n: i32, a: i32): i32 {
 		var acc = 0;
