@@ -248,6 +248,9 @@ func rewriteStmtChildren(n Node, fn func(Expr) Expr) {
 			rewriteStmtChildren(x.Step, fn)
 		}
 		rewriteStmtChildren(x.Body, fn)
+	case *ForEach:
+		x.Iter = rewriteExpr(x.Iter, fn)
+		rewriteStmtChildren(x.Body, fn)
 	case *Return:
 		if x.Value != nil {
 			x.Value = rewriteExpr(x.Value, fn)
@@ -424,6 +427,9 @@ func walkChildren(n Node, fn func(Node) bool) {
 		if x.Step != nil {
 			Walk(x.Step, fn)
 		}
+		Walk(x.Body, fn)
+	case *ForEach:
+		Walk(x.Iter, fn)
 		Walk(x.Body, fn)
 	case *Break, *Continue:
 		// leaves

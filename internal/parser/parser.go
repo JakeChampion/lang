@@ -73,6 +73,7 @@ func ParseContext(ctx context.Context, src string) (*ast.Program, error) {
 	if len(p.errors) > 0 {
 		return prog, diag.Errors(p.errors)
 	}
+	desugarForEachProgram(prog)
 	return prog, nil
 }
 
@@ -2769,80 +2770,135 @@ func (p *parser) parseForEach(kw lexer.Token, label string) (ast.Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	id := p.nextForeachID()
-	iterName := fmt.Sprintf("__foreach_iter_%d", id)
-	idxName := fmt.Sprintf("__foreach_idx_%d", id)
-	lenName := fmt.Sprintf("__foreach_len_%d", id)
-
-	mkIdent := func(name string) *ast.Ident { return &ast.Ident{P: kw.Pos, Name: name} }
-	mkNum := func(v int64) *ast.NumberLit { return &ast.NumberLit{P: kw.Pos, Value: v} }
-
-	// var __foreach_iter_N = expr;
-	declIter := &ast.Var{P: kw.Pos, Name: iterName, Init: expr}
-	// var __foreach_len_N = __foreach_iter_N.len();
-	declLen := &ast.Var{P: kw.Pos, Name: lenName, Init: &ast.Call{
-		P: kw.Pos,
-		Callee: &ast.FieldAccess{
-			P:        kw.Pos,
-			Target:   mkIdent(iterName),
-			Field:    "len",
-			FieldPos: kw.Pos,
-		},
-	}}
-	// var __foreach_idx_N = 0;
-	declIdx := &ast.Var{P: kw.Pos, Name: idxName, Init: mkNum(0)}
-
-	// var IDENT = __foreach_iter_N[__foreach_idx_N];
-	bindUser := &ast.Var{P: nameTok.Pos, Name: nameTok.Text, Init: &ast.Index{
-		P:     nameTok.Pos,
-		Array: mkIdent(iterName),
-		Idx:   mkIdent(idxName),
-	}}
-	// __foreach_idx_N = __foreach_idx_N + 1;
-	stepStmt := &ast.ExprStmt{P: kw.Pos, Expr: &ast.Assign{
+	// Emit the un-desugared ForEach; desugarForEachProgram (end of ParseContext)
+	// lowers it once all decls are known, so the choice can be decl-aware
+	// (array/string → `.len()` + index via ast.DesugarForEachArray; `stream[T]`
+	// → a lazy per-element read loop). The ID gives the lowering unique
+	// helper-var names, matching the old parse-time desugar.
+	return &ast.ForEach{
 		P:      kw.Pos,
-		Target: mkIdent(idxName),
-		Value: &ast.Binary{
-			P: kw.Pos, Op: "+",
-			Left:  mkIdent(idxName),
-			Right: mkNum(1),
-		},
-	}}
-
-	// User body wrapped in its own Block so the index-binding and
-	// the user's stmts share the loop-scope. The step lives on the
-	// enclosing For (not appended to the body) so `continue` jumps
-	// to the step before re-checking cond — without that the
-	// index never advances on continue and the loop hangs.
-	innerStmts := []ast.Stmt{bindUser}
-	if blk, ok := body.(*ast.Block); ok {
-		innerStmts = append(innerStmts, blk.Stmts...)
-	} else {
-		innerStmts = append(innerStmts, body)
-	}
-	innerBlock := &ast.Block{P: kw.Pos, Stmts: innerStmts}
-
-	forLoop := &ast.For{
-		P: kw.Pos,
-		// Init lives on the enclosing Block (declIter / declLen /
-		// declIdx); the For's Init slot is unused so the index
-		// doesn't get re-zeroed on every iteration of an outer
-		// loop that wraps this one.
-		Cond: &ast.Binary{
-			P: kw.Pos, Op: "<",
-			Left:  mkIdent(idxName),
-			Right: mkIdent(lenName),
-		},
-		Step:  stepStmt,
-		Body:  innerBlock,
-		Label: label,
-	}
-
-	return &ast.Block{
-		P:     kw.Pos,
-		Stmts: []ast.Stmt{declIter, declLen, declIdx, forLoop},
+		ID:     p.nextForeachID(),
+		Var:    nameTok.Text,
+		VarPos: nameTok.Pos,
+		Iter:   expr,
+		Body:   body,
+		Label:  label,
 	}, nil
+}
+
+// desugarForEachProgram lowers every `ast.ForEach` (the plain `for x in expr`
+// form) in a freshly-parsed program to its loop, right after parse and before
+// any downstream pass — so modload / constfold / the checker / codegen all see
+// the desugared block, exactly as the old parse-time desugar did. The ForEach
+// node exists only so a single decl-aware lowering owns the choice (array
+// `.len()`+index today; a `stream[T]` per-element read loop later). Covers every
+// body root: functions, hoisted methods, trait default methods, and const
+// initialisers (lambdas / block-exprs within are reached through the expr walk).
+func desugarForEachProgram(prog *ast.Program) {
+	for _, fn := range prog.Funcs {
+		if fn.Body != nil {
+			desugarForEachStmt(fn.Body)
+		}
+	}
+	for _, tr := range prog.Traits {
+		for i := range tr.Methods {
+			if tr.Methods[i].Body != nil {
+				desugarForEachStmt(tr.Methods[i].Body)
+			}
+		}
+	}
+	for _, cn := range prog.Consts {
+		desugarForEachExpr(cn.Value)
+	}
+}
+
+// desugarForEachStmt recursively lowers every ForEach reachable from s, returning
+// the replacement for s. `*ast.Block`-typed fields are mutated in place (return
+// ignored); plain `ast.Stmt` fields (brace-less loop/if bodies can be a bare
+// ForEach) get the return assigned back by the caller.
+func desugarForEachStmt(s ast.Stmt) ast.Stmt {
+	switch x := s.(type) {
+	case nil:
+		return nil
+	case *ast.ForEach:
+		x.Body = desugarForEachStmt(x.Body)
+		desugarForEachExpr(x.Iter)
+		return ast.DesugarForEachArray(x)
+	case *ast.Block:
+		for i := range x.Stmts {
+			x.Stmts[i] = desugarForEachStmt(x.Stmts[i])
+		}
+	case *ast.If:
+		desugarForEachExpr(x.Cond)
+		x.Then = desugarForEachStmt(x.Then)
+		if x.Else != nil {
+			x.Else = desugarForEachStmt(x.Else)
+		}
+	case *ast.IfLet:
+		desugarForEachExpr(x.Source)
+		x.Then = desugarForEachStmt(x.Then)
+		if x.Else != nil {
+			x.Else = desugarForEachStmt(x.Else)
+		}
+	case *ast.LetElse:
+		desugarForEachExpr(x.Source)
+		if x.Else != nil {
+			desugarForEachStmt(x.Else)
+		}
+	case *ast.While:
+		desugarForEachExpr(x.Cond)
+		x.Body = desugarForEachStmt(x.Body)
+	case *ast.For:
+		if x.Init != nil {
+			x.Init = desugarForEachStmt(x.Init)
+		}
+		desugarForEachExpr(x.Cond)
+		if x.Step != nil {
+			x.Step = desugarForEachStmt(x.Step)
+		}
+		x.Body = desugarForEachStmt(x.Body)
+	case *ast.Match:
+		desugarForEachExpr(x.Tag)
+		for _, arm := range x.Arms {
+			desugarForEachStmt(arm.Body)
+		}
+	case *ast.Switch:
+		desugarForEachExpr(x.Tag)
+		for _, k := range x.Cases {
+			desugarForEachStmt(k.Body)
+		}
+		if x.Default != nil {
+			desugarForEachStmt(x.Default)
+		}
+	case *ast.Var:
+		desugarForEachExpr(x.Init)
+	case *ast.ExprStmt:
+		desugarForEachExpr(x.Expr)
+	case *ast.Return:
+		desugarForEachExpr(x.Value)
+	case *ast.Destructure:
+		desugarForEachExpr(x.Init)
+	}
+	return s
+}
+
+// desugarForEachExpr lowers for-in nested inside a block-expression or lambda
+// body within an expression tree.
+func desugarForEachExpr(e ast.Expr) {
+	if e == nil {
+		return
+	}
+	ast.Walk(e, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.BlockExpr:
+			for i := range x.Stmts {
+				x.Stmts[i] = desugarForEachStmt(x.Stmts[i])
+			}
+		case *ast.Lambda:
+			desugarForEachStmt(x.Body)
+		}
+		return true
+	})
 }
 
 // parseForEachMapTuple desugars `for (K, V) in expr body` — the
@@ -4526,6 +4582,9 @@ func rewriteBuilderStmt(s ast.Stmt, b string) ast.Stmt {
 		n.Body = rewriteBuilderStmt(n.Body, b)
 		return n
 	case *ast.For:
+		n.Body = rewriteBuilderStmt(n.Body, b)
+		return n
+	case *ast.ForEach:
 		n.Body = rewriteBuilderStmt(n.Body, b)
 		return n
 	case *ast.Switch:

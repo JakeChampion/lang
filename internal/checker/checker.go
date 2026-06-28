@@ -4009,9 +4009,15 @@ func synthFromJson(sd *ast.StructDecl, recv ast.StructType) (*ast.FuncDecl, bool
 	flds := make([]fld, 0, len(sd.Fields))
 	for _, f := range sd.Fields {
 		acc := ""
-		switch f.Type.(type) {
+		switch ft := f.Type.(type) {
 		case ast.NumberType:
-			acc = "json_get_i32"
+			// 64-bit-wide integer fields (i64 / u64) extract through the
+			// i64 accessor; everything narrower through json_get_i32.
+			if ft.Width == 64 {
+				acc = "json_get_i64"
+			} else {
+				acc = "json_get_i32"
+			}
 		case ast.BoolType:
 			acc = "json_get_bool"
 		case ast.StringType:

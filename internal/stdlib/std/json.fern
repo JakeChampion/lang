@@ -575,6 +575,38 @@ pub function json_get_i32(obj: JsonValue, key: string): Option[i32] {
     return None;
 }
 
+// `json_get_i64(obj, key)` — typed-extract a JNumber as i64. Like
+// `json_get_i32` but accumulates in 64-bit, for fields wider than i32
+// (timestamps, large ids). A non-numeric value or a non-digit body returns
+// None; numeric overflow wraps (the JSON spec does not bound integer size).
+pub function json_get_i64(obj: JsonValue, key: string): Option[i64] {
+    match (json_get(obj, key)) {
+        Some(v) => {
+            match (v) {
+                JNumber(s) => {
+                    var n: i64 = 0;
+                    var i: i32 = 0;
+                    var sign: i64 = 1;
+                    var nlen: i32 = s.len();
+                    if (nlen == 0) { return None; }
+                    if (s[0] == 45) { sign = 0 - 1; i = 1; }
+                    if (i >= nlen) { return None; }
+                    while (i < nlen) {
+                        var b: i32 = s[i];
+                        if (b < 48 || b > 57) { return None; }
+                        n = n * 10 + ((b - 48) as i64);
+                        i = i + 1;
+                    }
+                    return Some(n * sign);
+                },
+                _ => { return None; }
+            }
+        },
+        None => { return None; }
+    }
+    return None;
+}
+
 // `json_get_bool(obj, key)` — typed-extract a JBool.
 pub function json_get_bool(obj: JsonValue, key: string): Option[boolean] {
     match (json_get(obj, key)) {
