@@ -251,6 +251,29 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-28 — checker: a bare-float-literal generic argument infers `f64`, not `i32`
+
+A type parameter pinned ONLY by a bare polymorphic float literal argument —
+`f(3.5, 4.5)` where `T` appears in no destination / result position that would
+settle it — was recorded as the instantiation `i32`. The monomorphiser then
+cloned `f__i32`, gave the clone `i32` params, and the post-monomorph re-check
+failed `argument 1: expected i32, got f64` — surfaced to the user as
+`monomorph: re-check failed (compiler bug)`. (Explicitly-typed float args —
+`f(3.5 as f64, …)`, `f64` locals, or a result that flows to an `f64` destination
+— already worked: those settle `T` or pin it via return-position inference.)
+
+The checker now settles a `FloatType{Polymorphic}` instantiation argument to its
+natural `f64` default when recording the call's type args (the mirror of the
+integer-polymorphic → `i32` default that already happened downstream). This is a
+prerequisite for f64 first-class trait support (`assert_eq(3.14, 3.14)` etc.) —
+which additionally needs `core/cmp` `Eq`/`Display`/`Debug` impls for `f64`/`f32`
+(blocked on an empty-`Display`-impl import-ordering wrinkle: `f64.to_string` lives
+in `std/float`, not visible to `core/cmp`) — both documented follow-ups.
+
+Gated by the `generic_float_literal_arg` fixture (T-only-in-params at f64, plus
+i32 / string regression arms, on interp / x86-64 / arm64 / wasm); the full
+`TestFernFixtures` suite, `internal/checker`, and `internal/monomorph` stay green.
+
 ### 2026-06-28 — `stat(path)` lowers on the IR path — first struct-RESULT builtin (flips `batch7`)
 
 `stat(path): Result[FileStat, IoError]` had a full AST runtime (`__fern_stat`) but
