@@ -9894,6 +9894,18 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			complete := true
 			for i, tp := range genericFn.TypeParams {
 				if v, ok := sub[tp]; ok {
+					// A type parameter pinned ONLY by a bare polymorphic
+					// float literal (`snd(3.5, 4.5)` — T appears in no
+					// destination/result position that would settle it)
+					// stays FloatType{Polymorphic}; settle it to its
+					// natural f64 default before recording the instantiation
+					// arg, or the monomorphiser keys it as i32 and the clone
+					// takes i32 params (re-check then fails "expected i32,
+					// got f64"). Integer-polymorphic args already default to
+					// i32 downstream; this is the float mirror.
+					if ft, isF := v.(ast.FloatType); isF && ft.Polymorphic {
+						v = ast.FloatType{Width: 64}
+					}
 					args[i] = v
 				} else {
 					c.errfCode(n.P, "E040", "could not infer type parameter %s for %s — explicit type args are not supported yet", tp, genericFn.Name)

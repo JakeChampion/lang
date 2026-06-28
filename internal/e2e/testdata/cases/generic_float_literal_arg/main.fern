@@ -1,0 +1,22 @@
+// A type parameter pinned ONLY by a bare polymorphic float literal argument
+// (`f(3.5, 4.5)` — T appears in no destination/result position that would
+// settle it) must default to f64, not i32. Before the fix the checker recorded
+// the instantiation as i32, the monomorphiser cloned `f__i32`, and the
+// post-monomorph re-check failed "argument 1: expected i32, got f64"
+// (surfaced as "compiler bug"). i32 / string bare-literal generics still pin
+// their natural defaults.
+function arity2[T](a: T, b: T): i32 { return 0; }
+function takes_one[T](x: T): i32 { return 0; }
+function main(): i32 {
+    var r: i32 = 0;
+    r = r + arity2(3.5, 4.5);   // T = f64 (the fix)
+    r = r + takes_one(2.5);     // T = f64
+    r = r + arity2(1, 2);       // T = i32 (still defaults i32)
+    r = r + arity2("a", "b");   // T = string
+    // A float arg that DOES flow to an f64 destination already worked
+    // (return-position pins T); keep one for coverage.
+    var v: f64 = pick(3.5, 4.5);
+    if (v > 3.4 && v < 3.6) { r = r + 1; }
+    return r + 41;
+}
+function pick[T](a: T, b: T): T { return a; }
