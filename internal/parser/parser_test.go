@@ -2806,8 +2806,7 @@ func TestParseConcurrentDesugar(t *testing.T) {
 	}
 }
 
-// A concurrent block must spawn at least one task; `await` is only
-// valid inside such a block.
+// A concurrent block must spawn at least one task.
 func TestParseConcurrentErrors(t *testing.T) {
 	if _, err := Parse(`function h(): i32 { concurrent { } return 0; }`); err == nil {
 		t.Error("expected error for empty concurrent block")
@@ -2815,7 +2814,38 @@ func TestParseConcurrentErrors(t *testing.T) {
 	if _, err := Parse(`function h(): i32 { concurrent { return 0; } }`); err == nil {
 		t.Error("expected error for concurrent block with no spawn")
 	}
-	if _, err := Parse(`function h(): i32 { var x = await f(); return x; }`); err == nil {
-		t.Error("expected error for `await` outside a concurrent block")
+}
+
+// Phase 3b: `await` in a plain top-level function body makes it a TASK function
+// (the parser CPS-desugars it onto std/task), so it is NO LONGER a parse error.
+// The slice-1 transform accepts a single straight-line await and rejects shapes
+// it doesn't yet handle; `await` with no enclosing function (e.g. a const
+// initialiser) stays invalid.
+func TestParseTaskFunctionDesugar(t *testing.T) {
+	// A single straight-line await transforms cleanly (no error).
+	if _, err := Parse(`function start_add(simulated: i32, addend: i32): i32 {
+		var woken = await simulated;
+		return woken + addend;
+	}`); err != nil {
+		t.Errorf("single-await task function should transform, got error: %v", err)
+	}
+	// Multiple SEQUENTIAL awaits: supported (slice 2) — each nests a continuation.
+	if _, err := Parse(`function two(a: i32, b: i32): i32 {
+		var x = await a;
+		var y = await b;
+		return x + y;
+	}`); err != nil {
+		t.Errorf("sequential-await task function should transform, got error: %v", err)
+	}
+	// No terminal return after the await.
+	if _, err := Parse(`function noret(a: i32): i32 {
+		var x = await a;
+		x = x + 1;
+	}`); err == nil {
+		t.Error("expected error for a task function not ending in `return EXPR;`")
+	}
+	// `await` outside any function body (const initialiser) is invalid.
+	if _, err := Parse(`const C: i32 = await 1;`); err == nil {
+		t.Error("expected error for `await` in a const initialiser")
 	}
 }

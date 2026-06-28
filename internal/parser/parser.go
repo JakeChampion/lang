@@ -73,6 +73,13 @@ func ParseContext(ctx context.Context, src string) (*ast.Program, error) {
 	if len(p.errors) > 0 {
 		return prog, diag.Errors(p.errors)
 	}
+	// Phase-3b task-function CPS transform: rewrite plain functions containing a
+	// suspending `await` into the std/task `(Reactor,…) -> (Step, Reactor)` form
+	// BEFORE the for-in desugar (so its output — incl. the resume continuation —
+	// is then itself scanned for `for x in …`). See docs/ASYNC-IMPLEMENTATION-PLAN.md.
+	if err := desugarTaskFunctionsProgram(prog); err != nil {
+		return prog, err
+	}
 	desugarForEachProgram(prog)
 	return prog, nil
 }
@@ -176,6 +183,13 @@ func (p *parser) advance() lexer.Token {
 }
 
 func (p *parser) errorf(pos ast.Position, format string, args ...any) *Error {
+	return &Error{Pos: pos, Msg: fmt.Sprintf(format, args...)}
+}
+
+// errorAt is the parser-instance-free sibling of errorf, for the post-parse
+// program desugars (e.g. the Phase-3b task-function transform) that operate on
+// the finished AST without a *parser in scope.
+func errorAt(pos ast.Position, format string, args ...any) *Error {
 	return &Error{Pos: pos, Msg: fmt.Sprintf(format, args...)}
 }
 
@@ -2939,6 +2953,284 @@ func desugarForEachExpr(e ast.Expr, streamFns map[string]bool) {
 	})
 }
 
+// taskAwaitCount returns the number of `ast.Await` nodes anywhere under n.
+func taskAwaitCount(n ast.Node) int {
+	c := 0
+	ast.Walk(n, func(x ast.Node) bool {
+		if _, ok := x.(*ast.Await); ok {
+			c++
+		}
+		return true
+	})
+	return c
+}
+
+// desugarTaskFunctionsProgram performs the Phase-3b task-function CPS transform
+// (docs/ASYNC-IMPLEMENTATION-PLAN.md). A top-level `function f(args): i32` whose
+// body contains a suspending `await` (an `ast.Await` — only produced for an
+// `await` in an ordinary function body, never the `concurrent` join marker) is a
+// TASK function: it is rewritten into the std/task runtime protocol
+// `(task.Reactor, args…) -> (task.Step, task.Reactor)` so it can be `spawn`ed,
+// with the body split at the await into a register + `Wait(token, resume)` and a
+// `resume` continuation carrying the post-await statements. This is the desugar
+// that removes the "protocol leak" — the user writes ordinary code, the compiler
+// generates the state machine.
+//
+// SLICE 1 (this PR) supports the smallest real shape: a single straight-line
+// await bound as `var NAME = await EXPR;`, with setup statements before it (no
+// `return`, no await) and a body that ends in `return EXPR;` after it. Anything
+// outside that shape (multiple/nested awaits, awaits in control flow, early
+// returns before the await, awaits in methods / local functions) is REJECTED
+// with a clear error rather than miscompiled — later slices generalise, each
+// with its own test. The generated AST is exactly the hand-written CPS form that
+// already lowers on every backend (examples/tests/async_concurrent_test.fern).
+func desugarTaskFunctionsProgram(prog *ast.Program) error {
+	for _, fn := range prog.Funcs {
+		if fn.Body == nil {
+			continue
+		}
+		n := taskAwaitCount(fn.Body)
+		if n == 0 {
+			continue
+		}
+		// Transform only plain top-level functions (no methods / associated /
+		// generic / imported functions yet).
+		if fn.Receiver != nil || fn.AssocType != "" || fn.ImportIface != "" || fn.IsLocal || len(fn.TypeParams) > 0 {
+			return errorAt(fn.P, "`await` is not supported here yet — Phase 3b transforms only plain top-level functions (no methods, associated, generic, or imported functions)")
+		}
+		if err := transformTaskFunction(fn); err != nil {
+			return err
+		}
+	}
+	// Safety net: every valid `await` was consumed by a task-function transform
+	// above. Anything left (an `await` in a const initialiser, a trait method, a
+	// struct field default, or some shape slice 1 doesn't cover) is invalid —
+	// reject it with a position rather than letting an ast.Await reach codegen.
+	var stray *ast.Await
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		if stray != nil {
+			return false
+		}
+		if a, ok := n.(*ast.Await); ok {
+			stray = a
+		}
+		return true
+	})
+	if stray != nil {
+		return errorAt(stray.P, "`await` is only valid inside a task function — a plain top-level function that is `spawn`ed in a `concurrent { … }` block (docs/ASYNC-IMPLEMENTATION-PLAN.md, Phase 3b)")
+	}
+	return nil
+}
+
+// transformTaskFunction rewrites a task function in place into the std/task
+// `(task.Reactor, args…) -> (task.Step, task.Reactor)` protocol, splitting the
+// body at each sequential `await` into nested `resume` continuations (the
+// hand-written `start_seq` shape). See desugarTaskFunctionsProgram.
+func transformTaskFunction(fn *ast.FuncDecl) error {
+	reactorType := ast.StructType{Name: "task.Reactor"}
+	pairType := ast.TupleType{Elems: []ast.Type{ast.StructType{Name: "task.Step"}, reactorType}}
+	var err error
+	depth := 0
+	body := buildTaskSegment(fn.Body.Stmts, "__task_rx", &depth, fn, &err)
+	if err != nil {
+		return err
+	}
+	fn.Params = append([]ast.Param{{Name: "__task_rx", Type: reactorType}}, fn.Params...)
+	fn.ReturnType = pairType
+	fn.ReturnUnannotated = false
+	fn.Body.Stmts = body
+	return nil
+}
+
+// buildTaskSegment lowers one straight-line segment of a task body. `rxName` is
+// the reactor identifier in scope at the segment's start. If the segment has no
+// further `await`, it is a LEAF: it must end in `return EXPR;` and every `return
+// E` becomes `return (Done(E), rxName)`. Otherwise it is split at its first
+// top-level `var NAME = await EXPR;` binding into `rxName.register(EXPR)` plus a
+// `resume_d(NAME, r_d)` continuation whose body is buildTaskSegment(post, r_d) —
+// recursing so N sequential awaits nest into N continuations. Per-depth names
+// keep nested continuations distinct. Shapes beyond straight-line sequential
+// awaits (an `await` outside a top-level binding, a `return` before an `await`)
+// are rejected via *errp.
+func buildTaskSegment(stmts []ast.Stmt, rxName string, depth *int, fn *ast.FuncDecl, errp *error) []ast.Stmt {
+	if *errp != nil {
+		return stmts
+	}
+	p := fn.P
+	mkIdent := func(name string) *ast.Ident { return &ast.Ident{P: p, Name: name} }
+	reactorType := ast.StructType{Name: "task.Reactor"}
+	pairType := ast.TupleType{Elems: []ast.Type{ast.StructType{Name: "task.Step"}, reactorType}}
+	i32 := ast.NumberType{Width: 32, Signed: true}
+
+	// First top-level `var NAME = await EXPR;` binding in this segment.
+	awaitIdx := -1
+	for i, s := range stmts {
+		if v, ok := s.(*ast.Var); ok {
+			if _, isAwait := v.Init.(*ast.Await); isAwait {
+				awaitIdx = i
+				break
+			}
+		}
+	}
+	if awaitIdx < 0 {
+		// Leaf: end in `return EXPR;`; wrap every return with Done + rxName.
+		if len(stmts) == 0 {
+			*errp = errorAt(fn.P, "function %q: a task function must end with `return EXPR;` (after its `await`s)", fn.Name)
+			return stmts
+		}
+		if r, ok := stmts[len(stmts)-1].(*ast.Return); !ok || r.Value == nil {
+			*errp = errorAt(fn.P, "function %q: a task function must end with `return EXPR;` (after its `await`s)", fn.Name)
+			return stmts
+		}
+		out := make([]ast.Stmt, len(stmts))
+		for i, s := range stmts {
+			out[i] = wrapTaskReturns(s, rxName, p, errp)
+		}
+		return out
+	}
+
+	pre := stmts[:awaitIdx]
+	awaitVar := stmts[awaitIdx].(*ast.Var)
+	operand := awaitVar.Init.(*ast.Await).Operand
+	wokenName := awaitVar.Name
+	post := stmts[awaitIdx+1:]
+
+	// pre must be straight-line setup: no `return`, no `await`.
+	for _, s := range pre {
+		if stmtHasTopReturn(s) {
+			*errp = errorAt(fn.P, "function %q: a `return` before an `await` is not supported yet (Phase 3b)", fn.Name)
+			return stmts
+		}
+	}
+	if taskAwaitCount(&ast.Block{Stmts: pre}) > 0 {
+		*errp = errorAt(fn.P, "function %q: an `await` outside a top-level `var NAME = await EXPR;` binding is not supported yet (Phase 3b)", fn.Name)
+		return stmts
+	}
+
+	d := *depth
+	*depth++
+	tokName := fmt.Sprintf("__task_tok_%d", d)
+	rx2Name := fmt.Sprintf("__task_rx2_%d", d)
+	rName := fmt.Sprintf("__task_r_%d", d)
+	resumeName := fmt.Sprintf("__task_resume_%d", d)
+
+	resumeBody := buildTaskSegment(post, rName, depth, fn, errp)
+	resume := &ast.FuncDecl{
+		P: p, Name: resumeName, IsLocal: true,
+		Params:     []ast.Param{{Name: wokenName, Type: i32}, {Name: rName, Type: reactorType}},
+		ReturnType: pairType,
+		Body:       &ast.Block{P: p, Stmts: resumeBody},
+	}
+	// var (__task_tok_d, __task_rx2_d) = <rxName>.register(EXPR);
+	registerCall := &ast.Call{P: p,
+		Callee: &ast.FieldAccess{P: p, Target: mkIdent(rxName), Field: "register", FieldPos: p},
+		Args:   []ast.Expr{operand}}
+	destr := &ast.Destructure{P: p, Names: []string{tokName, rx2Name}, Init: registerCall}
+	// return (Wait(__task_tok_d, __task_resume_d), __task_rx2_d);
+	waitCall := &ast.Call{P: p, Callee: mkIdent("Wait"), Args: []ast.Expr{mkIdent(tokName), mkIdent(resumeName)}}
+	finalRet := &ast.Return{P: p, Value: &ast.TupleLit{P: p, Elems: []ast.Expr{waitCall, mkIdent(rx2Name)}}}
+
+	out := make([]ast.Stmt, 0, len(pre)+3)
+	out = append(out, pre...)
+	out = append(out, destr, resume, finalRet)
+	return out
+}
+
+// wrapTaskReturns rewrites each `return E;` reachable from s (through ordinary
+// control flow, but NOT into nested functions / lambdas) into `return (Done(E),
+// <rname>);` — the task's completion Step paired with the threaded reactor.
+// Records an error in *errp for a value-less `return;` (a task must yield i32).
+func wrapTaskReturns(s ast.Stmt, rname string, p ast.Position, errp *error) ast.Stmt {
+	switch x := s.(type) {
+	case *ast.Return:
+		if x.Value == nil {
+			if *errp == nil {
+				*errp = errorAt(x.P, "a task function cannot `return;` without a value (it must yield its i32 result)")
+			}
+			return x
+		}
+		done := &ast.Call{P: x.P, Callee: &ast.Ident{P: x.P, Name: "Done"}, Args: []ast.Expr{x.Value}}
+		x.Value = &ast.TupleLit{P: x.P, Elems: []ast.Expr{done, &ast.Ident{P: x.P, Name: rname}}}
+		return x
+	case *ast.Block:
+		for i := range x.Stmts {
+			x.Stmts[i] = wrapTaskReturns(x.Stmts[i], rname, p, errp)
+		}
+	case *ast.If:
+		x.Then = wrapTaskReturns(x.Then, rname, p, errp)
+		if x.Else != nil {
+			x.Else = wrapTaskReturns(x.Else, rname, p, errp)
+		}
+	case *ast.While:
+		x.Body = wrapTaskReturns(x.Body, rname, p, errp)
+	case *ast.For:
+		x.Body = wrapTaskReturns(x.Body, rname, p, errp)
+	case *ast.Match:
+		for i := range x.Arms {
+			wrapTaskReturnsBlock(x.Arms[i].Body, rname, p, errp)
+		}
+	case *ast.Switch:
+		for i := range x.Cases {
+			wrapTaskReturnsBlock(x.Cases[i].Body, rname, p, errp)
+		}
+		wrapTaskReturnsBlock(x.Default, rname, p, errp)
+	}
+	return s
+}
+
+// wrapTaskReturnsBlock applies wrapTaskReturns to each statement of a *ast.Block
+// in place (for the block-typed bodies of match arms / switch cases).
+func wrapTaskReturnsBlock(b *ast.Block, rname string, p ast.Position, errp *error) {
+	if b == nil {
+		return
+	}
+	for i := range b.Stmts {
+		b.Stmts[i] = wrapTaskReturns(b.Stmts[i], rname, p, errp)
+	}
+}
+
+// stmtHasTopReturn reports whether s contains a `return` through ordinary control
+// flow (not descending into nested functions / lambdas).
+func stmtHasTopReturn(s ast.Stmt) bool {
+	switch x := s.(type) {
+	case *ast.Return:
+		return true
+	case *ast.Block:
+		for _, c := range x.Stmts {
+			if stmtHasTopReturn(c) {
+				return true
+			}
+		}
+	case *ast.If:
+		if stmtHasTopReturn(x.Then) {
+			return true
+		}
+		if x.Else != nil && stmtHasTopReturn(x.Else) {
+			return true
+		}
+	case *ast.While:
+		return stmtHasTopReturn(x.Body)
+	case *ast.For:
+		return stmtHasTopReturn(x.Body)
+	case *ast.Match:
+		for _, a := range x.Arms {
+			if stmtHasTopReturn(a.Body) {
+				return true
+			}
+		}
+	case *ast.Switch:
+		for _, c := range x.Cases {
+			if stmtHasTopReturn(c.Body) {
+				return true
+			}
+		}
+		if x.Default != nil {
+			return stmtHasTopReturn(x.Default)
+		}
+	}
+	return false
+}
+
 // parseForEachMapTuple desugars `for (K, V) in expr body` — the
 // only form this language supports for iterating a Map. Builds on
 // the MapIter cursor API (`m.iter()` / `it.has_next()` / `it.key()`
@@ -4170,17 +4462,24 @@ func (p *parser) parseMultiplicative() (ast.Expr, error) {
 func (p *parser) parseUnary() (ast.Expr, error) {
 	if t := p.peek(); t.Kind == lexer.Keyword && t.Text == "await" {
 		aw := p.advance()
-		if p.inConcurrent == 0 {
-			return nil, p.errorf(aw.Pos, "`await` is only valid inside a `concurrent { … }` block")
+		operand, err := p.parseUnary()
+		if err != nil {
+			return nil, err
 		}
-		// `await EXPR` is a join marker. By the time a concurrent
-		// block's trailing statements run, the scheduler (task.run,
-		// emitted by parseConcurrent) has already driven every spawned
-		// task to completion, so `await a` simply reads `a`'s resolved
-		// result. The keyword documents the join point and reserves the
-		// word for the future inline-await CPS transform; here it
-		// desugars to its operand.
-		return p.parseUnary()
+		if p.inConcurrent > 0 {
+			// Inside a `concurrent { … }` block, `await EXPR` is a JOIN marker:
+			// by the time the block's trailing statements run, the scheduler
+			// (task.run, emitted by parseConcurrent) has already driven every
+			// spawned task to completion, so `await a` simply reads a's resolved
+			// result — strip to the operand (Phase 3a).
+			return operand, nil
+		}
+		// In an ordinary function body, `await EXPR` is a real SUSPENSION point:
+		// keep it as an ast.Await node for the Phase-3b task-function desugar
+		// (desugarTaskFunctionsProgram), which splits the body at it into the
+		// std/task CPS form. A surviving Await (await outside any task context,
+		// or in an unsupported shape) is rejected by the checker / the desugar.
+		return &ast.Await{P: aw.Pos, Operand: operand}, nil
 	}
 	if t := p.peek(); t.Kind == lexer.Punct && (t.Text == "-" || t.Text == "!") {
 		op := p.advance()

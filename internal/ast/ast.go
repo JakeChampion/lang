@@ -1303,6 +1303,21 @@ type NumberLit struct {
 	FloatWidth int
 }
 
+// Await is `await EXPR` — a suspension point inside a task function
+// (docs/ASYNC-IMPLEMENTATION-PLAN.md, Phase 3b). The parser produces it only
+// for an `await` written in an ORDINARY function body (outside the
+// `concurrent { … }` join section, where `await` stays a parse-time strip-to-
+// operand join marker). The Phase-3b task-function desugar
+// (parser.desugarTaskFunctionsProgram) consumes every Await by splitting the
+// body at it into the std/task CPS form (register + Wait + resume continuation);
+// any Await that survives to the checker is an error (`await` outside a task
+// context). Operand is the awaited value (an i32 reactor-completion value in the
+// slice-1 in-memory-reactor model).
+type Await struct {
+	P       Position
+	Operand Expr
+}
+
 // CastExpr is `expr as Type`. The checker requires Target to be a
 // numeric type; it lowers to truncation/extension/sign-flip ops in
 // the IR. This is the only path between distinct numeric widths
@@ -1862,6 +1877,7 @@ type MakeClosure struct {
 }
 
 func (e *NumberLit) Pos() Position    { return e.P }
+func (e *Await) Pos() Position        { return e.P }
 func (e *CastExpr) Pos() Position     { return e.P }
 func (e *DowncastExpr) Pos() Position { return e.P }
 func (e *BlockExpr) Pos() Position    { return e.P }
@@ -1890,6 +1906,7 @@ func (e *MakeClosure) Pos() Position  { return e.P }
 func (e *Lambda) Pos() Position       { return e.P }
 
 func (*NumberLit) isExpr()    {}
+func (*Await) isExpr()        {}
 func (*CastExpr) isExpr()     {}
 func (*DowncastExpr) isExpr() {}
 

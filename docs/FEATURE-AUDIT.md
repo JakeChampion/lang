@@ -279,6 +279,44 @@ stdin piping, a nonexistent binary → `exit_code` 127, all via the
 self-host source calls `subprocess`). The struct-result mechanism (Result-wrapped
 `FileStat` + bare `ProcessResult`) is now complete.
 
+**Arm64 `.text` wall (worth knowing for future increments).** The self-host arm64
+`.text` is ~133 MB — close to the AArch64 `bl`/`R_AARCH64_CALL26` ±128 MiB
+(134.2 MB) branch range, beyond which `ld` reports `relocation truncated to fit`
+(no auto-veneer for these intra-`.text` calls). The native arm64 codegen inflates
+**super-linearly** when a giant function grows: inlining the 3-arg subprocess
+lowering into the already-enormous `lower_expr` added ~4 MB of `.text` (three
+`LowerState` locals), and emitting the ~320-line `__fern_subprocess` runtime as
+~305 separate `s.write` calls inside `emit_ir_runtime` added another chunk. Fixes:
+keep such lowerings in their OWN small functions (`lower_subprocess_call`) and emit
+long runtimes as a single coalesced multi-line `s.write`. Net subprocess cost fell
+from +4 MB to ~+0.3 MB. New large additions to `lower_expr` / `emit_ir_runtime`
+should follow the same pattern, and the project will eventually need a real
+headroom fix (linker veneers / far-call code model / `.text` splitting).
+
+### 2026-06-28 — stdlib: `f64` / `f32` are first-class in the core/cmp traits
+
+`core/cmp` had `Eq` / `Display` / `Debug` / `Ord` impls for every primitive
+**except the floats**, so `assert_eq(3.14, 3.14)` — and any `[T: Eq + Display]`
+(test asserts, `log` key=value) or `[T: Ord]` (sorting / relational asserts)
+generic over a float — was a hard `E021` ("f64 does not implement cmp.Eq").
+
+Added `impl Eq/Display/Debug/Ord for f64` and `f32`. `Eq` is bit-for-bit `==`;
+`Ord` is IEEE `< / >` (NaN compares false on both → `cmp` returns 0, fine for
+the assertion helpers and NaN-free sorting; a NaN-total-order is a follow-up);
+`Debug` adopts `to_string`. The `Display`/`Debug` impls are *empty* — they adopt
+the type's existing `to_string`, which for floats lives in `std/float`, so
+**core/cmp now `import`s std/float** (no cycle: std/float's deps — std/i32,
+std/i64 — are already core/cmp deps) to make `f64.to_string` visible where the
+empty impl is checked.
+
+Together with the bare-float-literal inference fix (previous entry), a float
+literal now binds `T = f64` AND satisfies the bounds — so `assert_eq` /
+`assert_lt` / `assert_gt` over floats compile and run correctly on every backend.
+Gated by the `cmp_float_traits` fixture (Eq + Display + Debug + Ord over f64, on
+interp / x86-64 / arm64 / wasm); `TestFernFixtures`, `internal/checker`,
+`internal/monomorph`, `TestSelfHostStdTestE2E`, and the Stage-2 fixpoint stay
+green.
+
 ### 2026-06-28 — checker: a bare-float-literal generic argument infers `f64`, not `i32`
 
 A type parameter pinned ONLY by a bare polymorphic float literal argument —

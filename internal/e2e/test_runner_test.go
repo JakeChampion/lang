@@ -692,6 +692,25 @@ func TestRunnerAsyncConcurrentExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/async_task_fn_test.fern` exercises the Phase-3b task-function
+// CPS transform: spawn targets written as ORDINARY functions with suspending
+// `await`s in the body, which the parser desugars into the std/task
+// `(Reactor, args…) -> (Step, Reactor)` protocol automatically (no hand-written
+// state machine). Covers a single straight-line await, fan-out, a task with
+// pre-await setup + post-await arithmetic, and TWO sequential awaits (slice 2,
+// nested continuations). Passing suite → exit 0.
+func TestRunnerAsyncTaskFnExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/async_task_fn_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	if !strings.Contains(out, "# pass 4") || !strings.Contains(out, "# fail 0") {
+		t.Errorf("expected 4 passes, 0 fails\noutput:\n%s", out)
+	}
+}
+
 // A failing suite exits 1 and emits `not ok` + a summary that
 // names the failure. Inline-source so the failure cases stay
 // adjacent to the assertions about them — a regression in the

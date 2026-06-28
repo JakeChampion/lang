@@ -345,13 +345,37 @@ interp / x86-64 / arm64(qemu); compiles on wasm. Tests:
 (e2e gate `TestRunnerAsyncConcurrentExamplePasses`). Requires `import
 "std/task"`.
 
-**Phase 3b — remaining:**
-- **Suspending `await` / the full body-splitting CPS transform** so
-  spawn targets are written as ordinary functions (no
-  `(Reactor) -> (Step, Reactor)` protocol leak) and `await` can sit in
-  arbitrary control flow. Today `await` is a scope-end join marker;
-  the suspending form is the big rock, best paired with Phase 1/4 so
-  awaited calls do real I/O.
+**Phase 3b — suspending `await` / the body-splitting CPS transform.** So spawn
+targets are written as ordinary functions (no `(Reactor) -> (Step, Reactor)`
+protocol leak) and `await` can sit in arbitrary control flow.
+
+- **Slice 1 — DONE (single straight-line await):** an `await` in an ORDINARY
+  top-level function body is now a real suspension point (`ast.Await`, produced
+  by `parseUnary` for awaits outside the `concurrent` join section). The
+  parse-time desugar `desugarTaskFunctionsProgram` rewrites a function shaped
+  `{ pre…; var NAME = await EXPR; post…; return E; }` into the std/task protocol
+  `(task.Reactor, args…) -> (task.Step, task.Reactor)`: the pre-section + a
+  `var (tok, rx2) = rx.register(EXPR)`, a generated `resume(NAME, r)`
+  continuation carrying the post-section (each `return E` → `return (Done(E), r)`),
+  and `return (Wait(tok, resume), rx2)`. The emitted AST is exactly the
+  hand-written CPS form (so it lowers on every backend). Shapes outside slice 1
+  (multiple/nested awaits, awaits in control flow, an early `return` before the
+  await, awaits in methods/local/generic functions) are REJECTED with a clear
+  error, never miscompiled. Tests: `internal/parser` (`TestParseTaskFunctionDesugar`),
+  `examples/tests/async_task_fn_test.fern` (e2e gate `TestRunnerAsyncTaskFnExamplePasses`,
+  → 3 passes via interp; fan-out + pre/post-await).
+- **Slice 2 — DONE (multiple sequential awaits):** the split is now recursive
+  (`buildTaskSegment`): each top-level `var NAME = await EXPR;` becomes a
+  `register` + a `resume_d(NAME, r_d)` continuation whose body is the next
+  segment, so N sequential awaits nest into N continuations (the hand-written
+  `start_seq` shape), with per-depth names. The in-scope reactor threads from the
+  function's injected `__task_rx` through each `resume`'s reactor param.
+  Covered by `start_seq` in `async_task_fn_test.fern` (two awaits → 42) and a
+  `TestParseTaskFunctionDesugar` case.
+- **Slice 3+ — remaining:** awaits inside loops/conditionals and early returns
+  before an await (the general control-flow body-split), and pairing with Phase
+  1/4 so awaited calls do real I/O rather than the in-memory reactor's
+  `register(value)`. Still the big rock.
 - **Self-hosted parser port** (`examples/self_host/parser.fern`) — the
   desugar must be mirrored there before the Go compiler retires.
   Deferred while the self-host SSA-by-default migration is in flight
