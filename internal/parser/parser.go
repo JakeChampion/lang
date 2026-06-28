@@ -3844,11 +3844,11 @@ func (p *parser) parseMatch() (ast.Stmt, error) {
 	}
 	m := &ast.Match{P: kw.Pos, Tag: tag}
 	for !p.match(lexer.Punct, "}") {
-		arm, err := p.parseMatchArm()
+		arms, err := p.parseMatchArm()
 		if err != nil {
 			return nil, err
 		}
-		m.Arms = append(m.Arms, arm)
+		m.Arms = append(m.Arms, arms...)
 		if _, ok := p.accept(lexer.Punct, ","); ok {
 			continue
 		}
@@ -3891,32 +3891,45 @@ func (p *parser) parseNamedFieldPattern() (bindings []string, ok bool, err error
 	return bindings, true, nil
 }
 
-func (p *parser) parseMatchArm() (*ast.MatchArm, error) {
+// matchPattern is the pattern half of a match arm — the fields that
+// distinguish wildcard / literal / variant patterns, with no guard or
+// body. Shared by the statement (MatchArm) and expression (MatchExprArm)
+// forms so or-pattern parsing (`P1 | P2 => …`) lives in one place.
+type matchPattern struct {
+	P             ast.Position
+	VariantName   string
+	VariantModule string
+	Bindings      []string
+	NamedFields   bool
+	IsWildcard    bool
+	Literal       ast.Expr
+}
+
+// parseMatchPattern parses a single pattern (wildcard / literal / variant
+// with optional `mod.` qualifier and positional or named bindings),
+// leaving the cursor at the optional `|`, `when`, or `=>` that follows.
+func (p *parser) parseMatchPattern() (matchPattern, error) {
 	t := p.peek()
-	arm := &ast.MatchArm{P: t.Pos}
-	if t.Kind == lexer.Punct && t.Text == "_" {
-		// `_` is lexed as a punct in our lexer? No — the lexer
-		// treats `_` as the start of an identifier. So this branch
-		// never fires; the wildcard always comes through as Ident.
+	pat := matchPattern{P: t.Pos}
+	if t.Kind == lexer.Ident && t.Text == "_" {
 		p.advance()
-		arm.IsWildcard = true
-	} else if t.Kind == lexer.Ident && t.Text == "_" {
-		p.advance()
-		arm.IsWildcard = true
+		pat.IsWildcard = true
 	} else if isLiteralPatternStart(t) {
 		// Literal pattern: `0 => …`, `"yes" => …`, `true => …`,
 		// `1.5f64 => …`. Dispatched via equality comparison
 		// against the scrutinee at IR-lower time. The checker
 		// verifies the literal's type unifies with the
-		// scrutinee's type.
+		// scrutinee's type. parsePrimary (not parseExpr) stops at
+		// the single literal, so a following `|` reads as an
+		// or-pattern separator rather than a bitwise-or operator.
 		lit, err := p.parsePrimary()
 		if err != nil {
-			return nil, err
+			return pat, err
 		}
-		arm.Literal = lit
+		pat.Literal = lit
 	} else if t.Kind == lexer.Ident {
 		p.advance()
-		arm.VariantName = t.Text
+		pat.VariantName = t.Text
 		// Optional `mod.` qualifier: `lexer.TokA(x) => …`. When the
 		// next token is `.`, the ident we just consumed was the
 		// module name, not the variant — re-consume after the dot.
@@ -3926,19 +3939,19 @@ func (p *parser) parseMatchArm() (*ast.MatchArm, error) {
 			p.advance()
 			nameTok, err := p.expect(lexer.Ident, "")
 			if err != nil {
-				return nil, err
+				return pat, err
 			}
-			arm.VariantModule = arm.VariantName
-			arm.VariantName = nameTok.Text
+			pat.VariantModule = pat.VariantName
+			pat.VariantName = nameTok.Text
 		}
 		if _, ok := p.accept(lexer.Punct, "("); ok {
 			if !p.match(lexer.Punct, ")") {
 				for {
 					nameTok, err := p.expect(lexer.Ident, "")
 					if err != nil {
-						return nil, err
+						return pat, err
 					}
-					arm.Bindings = append(arm.Bindings, nameTok.Text)
+					pat.Bindings = append(pat.Bindings, nameTok.Text)
 					if _, ok := p.accept(lexer.Punct, ","); ok {
 						if p.match(lexer.Punct, ")") {
 							break
@@ -3949,39 +3962,103 @@ func (p *parser) parseMatchArm() (*ast.MatchArm, error) {
 				}
 			}
 			if _, err := p.expect(lexer.Punct, ")"); err != nil {
-				return nil, err
+				return pat, err
 			}
 		} else if bindings, ok, err := p.parseNamedFieldPattern(); err != nil {
-			return nil, err
+			return pat, err
 		} else if ok {
-			arm.NamedFields = true
-			arm.Bindings = bindings
+			pat.NamedFields = true
+			pat.Bindings = bindings
 		}
 	} else {
-		return nil, p.errorfCode(t.Pos, "P001", "expected variant pattern, literal, or `_` in match arm, got %s", t.Text)
+		return pat, p.errorfCode(t.Pos, "P001", "expected variant pattern, literal, or `_` in match arm, got %s", t.Text)
 	}
-	// Optional guard: `<pattern> when <expr> => <body>`. The
-	// guard expression has bindings in scope (so a guard like
-	// `when n > 0` references the variant payload bound by the
-	// pattern). Pre-`=>` so the syntax reads in pattern → guard
-	// → body order.
-	if p.match(lexer.Keyword, "when") {
-		p.advance()
-		guard, err := p.parseExpr()
-		if err != nil {
-			return nil, err
-		}
-		arm.Guard = guard
-	}
-	if _, err := p.expect(lexer.Punct, "=>"); err != nil {
+	return pat, nil
+}
+
+// parseMatchArm parses one match arm, which may be an or-pattern
+// (`P1 | P2 | … [when g] => body`). Each alternative becomes its own
+// MatchArm sharing the (per-alternative cloned) guard + body, so every
+// downstream stage — checker exhaustiveness, binding resolution, IR
+// lowering — sees an ordinary flat arm list and needs no notion of
+// or-patterns. A binding referenced in the body is only in scope for the
+// alternatives that introduce it; the checker reports the rest.
+func (p *parser) parseMatchArm() ([]*ast.MatchArm, error) {
+	pats, guard, err := p.parseArmPatterns()
+	if err != nil {
 		return nil, err
 	}
 	body, err := p.parseBlock()
 	if err != nil {
 		return nil, err
 	}
-	arm.Body = body
-	return arm, nil
+	arms := make([]*ast.MatchArm, len(pats))
+	for i, pat := range pats {
+		g, b := guard, body
+		if i > 0 {
+			if guard != nil {
+				g = ast.CloneExpr(guard)
+			}
+			b = ast.CloneBlock(body)
+		}
+		arms[i] = &ast.MatchArm{
+			P: pat.P, VariantName: pat.VariantName, VariantModule: pat.VariantModule,
+			Bindings: pat.Bindings, NamedFields: pat.NamedFields, IsWildcard: pat.IsWildcard,
+			Literal: pat.Literal, Guard: g, Body: b,
+		}
+	}
+	return arms, nil
+}
+
+// parseArmPatterns parses the `P1 | P2 | … [when g] =>` head shared by
+// both arm forms: one-or-more `|`-separated patterns, an optional guard
+// (which applies to every alternative), and the consuming `=>`. The
+// cursor is left at the start of the arm body.
+func (p *parser) parseArmPatterns() ([]matchPattern, ast.Expr, error) {
+	first, err := p.parseMatchPattern()
+	if err != nil {
+		return nil, nil, err
+	}
+	pats := []matchPattern{first}
+	for p.match(lexer.Punct, "|") {
+		p.advance()
+		nxt, err := p.parseMatchPattern()
+		if err != nil {
+			return nil, nil, err
+		}
+		pats = append(pats, nxt)
+	}
+	// Or-patterns are restricted to variant / `_` patterns. A `|`
+	// joining literal patterns (`1 | 2 =>`) is disallowed because the
+	// bare `|` is the bitwise-or operator: a literal arm is parsed as
+	// a full expression on the self-host path, so `1 | 2` there means
+	// the value 3, not "1 or 2". Rejecting it keeps both compilers in
+	// agreement and avoids the silent footgun. Use separate arms.
+	if len(pats) > 1 {
+		for _, pt := range pats {
+			if pt.Literal != nil {
+				return nil, nil, p.errorfCode(pt.P, "P001",
+					"or-patterns (`|`) are only supported between variant patterns, not literals — use separate arms")
+			}
+		}
+	}
+	// Optional guard: `<pattern> when <expr> => <body>`. The guard
+	// expression has the pattern's bindings in scope and applies to
+	// every alternative. Pre-`=>` so the syntax reads pattern → guard
+	// → body order.
+	var guard ast.Expr
+	if p.match(lexer.Keyword, "when") {
+		p.advance()
+		g, err := p.parseExpr()
+		if err != nil {
+			return nil, nil, err
+		}
+		guard = g
+	}
+	if _, err := p.expect(lexer.Punct, "=>"); err != nil {
+		return nil, nil, err
+	}
+	return pats, guard, nil
 }
 
 // parseMatchExpr is the expression-position form of `match`. Same
@@ -4007,11 +4084,11 @@ func (p *parser) parseMatchExpr() (ast.Expr, error) {
 	}
 	m := &ast.MatchExpr{P: kw.Pos, Tag: tag}
 	for !p.match(lexer.Punct, "}") {
-		arm, err := p.parseMatchExprArm()
+		arms, err := p.parseMatchExprArm()
 		if err != nil {
 			return nil, err
 		}
-		m.Arms = append(m.Arms, arm)
+		m.Arms = append(m.Arms, arms...)
 		if _, ok := p.accept(lexer.Punct, ","); ok {
 			continue
 		}
@@ -4023,76 +4100,15 @@ func (p *parser) parseMatchExpr() (ast.Expr, error) {
 	return m, nil
 }
 
-// parseMatchExprArm parses one expression-form arm: `<pattern>
-// [when <guard>] => <expr>`. The pattern parsing (variant /
-// payload bindings / wildcard) is identical to parseMatchArm; the
-// only difference is body parsing — a single Expr rather than a
-// Block.
-func (p *parser) parseMatchExprArm() (*ast.MatchExprArm, error) {
-	t := p.peek()
-	arm := &ast.MatchExprArm{P: t.Pos}
-	if t.Kind == lexer.Ident && t.Text == "_" {
-		p.advance()
-		arm.IsWildcard = true
-	} else if isLiteralPatternStart(t) {
-		// Literal pattern in match-expr arm; same semantics as
-		// the stmt-form parseMatchArm path.
-		lit, err := p.parsePrimary()
-		if err != nil {
-			return nil, err
-		}
-		arm.Literal = lit
-	} else if t.Kind == lexer.Ident {
-		p.advance()
-		arm.VariantName = t.Text
-		// Optional `mod.` qualifier — same handling as parseMatchArm.
-		if p.match(lexer.Punct, ".") {
-			p.advance()
-			nameTok, err := p.expect(lexer.Ident, "")
-			if err != nil {
-				return nil, err
-			}
-			arm.VariantModule = arm.VariantName
-			arm.VariantName = nameTok.Text
-		}
-		if _, ok := p.accept(lexer.Punct, "("); ok {
-			if !p.match(lexer.Punct, ")") {
-				for {
-					nameTok, err := p.expect(lexer.Ident, "")
-					if err != nil {
-						return nil, err
-					}
-					arm.Bindings = append(arm.Bindings, nameTok.Text)
-					if _, ok := p.accept(lexer.Punct, ","); ok {
-						if p.match(lexer.Punct, ")") {
-							break
-						}
-						continue
-					}
-					break
-				}
-			}
-			if _, err := p.expect(lexer.Punct, ")"); err != nil {
-				return nil, err
-			}
-		} else if bindings, ok, err := p.parseNamedFieldPattern(); err != nil {
-			return nil, err
-		} else if ok {
-			arm.NamedFields = true
-			arm.Bindings = bindings
-		}
-	} else {
-		return nil, p.errorfCode(t.Pos, "P001", "expected variant pattern, literal, or `_` in match arm, got %s", t.Text)
-	}
-	if p.match(lexer.Keyword, "when") {
-		p.advance()
-		guard, err := p.parseExpr()
-		if err != nil {
-			return nil, err
-		}
-		arm.Guard = guard
-	}
-	if _, err := p.expect(lexer.Punct, "=>"); err != nil {
+// parseMatchExprArm parses one expression-form arm: `P1 | P2 | …
+// [when <guard>] => <expr>`. Pattern parsing (variant / payload
+// bindings / wildcard / or-patterns) is shared with parseMatchArm via
+// parseArmPatterns; the only difference is body parsing — a single Expr
+// rather than a Block. An or-pattern expands to one MatchExprArm per
+// alternative, each sharing the (per-alternative cloned) guard + body.
+func (p *parser) parseMatchExprArm() ([]*ast.MatchExprArm, error) {
+	pats, guard, err := p.parseArmPatterns()
+	if err != nil {
 		return nil, err
 	}
 	// A `{ … }` arm body is a block-expression (slice 1): statements
@@ -4101,7 +4117,6 @@ func (p *parser) parseMatchExprArm() (*ast.MatchExprArm, error) {
 	// no-statement single-expr `{ e }` back to `e`, so existing
 	// brace-wrapped single-expr arms are byte-identical.
 	var body ast.Expr
-	var err error
 	if p.match(lexer.Punct, "{") {
 		body, err = p.parseBranchBody()
 	} else {
@@ -4110,8 +4125,22 @@ func (p *parser) parseMatchExprArm() (*ast.MatchExprArm, error) {
 	if err != nil {
 		return nil, err
 	}
-	arm.Body = body
-	return arm, nil
+	arms := make([]*ast.MatchExprArm, len(pats))
+	for i, pat := range pats {
+		g, b := guard, body
+		if i > 0 {
+			if guard != nil {
+				g = ast.CloneExpr(guard)
+			}
+			b = ast.CloneExpr(body)
+		}
+		arms[i] = &ast.MatchExprArm{
+			P: pat.P, VariantName: pat.VariantName, VariantModule: pat.VariantModule,
+			Bindings: pat.Bindings, NamedFields: pat.NamedFields, IsWildcard: pat.IsWildcard,
+			Literal: pat.Literal, Guard: g, Body: b,
+		}
+	}
+	return arms, nil
 }
 
 // parseCaseBody collects statements up to the next `case`, `default`,

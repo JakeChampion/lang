@@ -2028,6 +2028,16 @@ function parse_match_expr(p: Par): IfChain {
         var acol: i32 = p.peek_col();
         var pr: PatternResult = parse_pattern(p);
         p = pr.par;
+        // Or-patterns: `A | B | … => expr` — one MatchArm per alternative,
+        // sharing the guard + body. Variant patterns only (see the stmt-form
+        // note); a literal-first match takes the build_literal_match path.
+        var pats: Pattern[] = [pr.pattern];
+        while (p.peek_punct() == "|") {
+            p = p.advance();
+            var pr2: PatternResult = parse_pattern(p);
+            p = pr2.par;
+            pats = pats.append(pr2.pattern);
+        }
         var arm_guard: Expr = e_bool(true);
         var arm_has_guard: boolean = false;
         if (p.peek_keyword() == "when") {
@@ -2055,7 +2065,11 @@ function parse_match_expr(p: Par): IfChain {
             art = if_expr_rt(er.expr);
         }
         if (first) { rt = art; first = false; }
-        arms = arms.append(MatchArm { pattern: pr.pattern, body: abody, line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard });
+        var pi: i32 = 0;
+        while (pi < pats.len()) {
+            arms = arms.append(MatchArm { pattern: pats[pi], body: abody, line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard });
+            pi = pi + 1;
+        }
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }
@@ -2312,8 +2326,22 @@ function parse_match_stmt(p: Par): MatchStmtResult {
         var acol: i32 = p.peek_col();
         var pr: PatternResult = parse_pattern(p);
         p = pr.par;
+        // Or-patterns: `A | B | … => body`. Each `|`-separated variant
+        // pattern becomes its own MatchArm sharing the guard + body, so the
+        // checker (exhaustiveness) and lowering see a flat arm list. Bindings
+        // are per-alternative; the body only sees those the alternative
+        // introduces. (Variant patterns only — a literal arm takes the
+        // build_literal_match path above, and bare `|` is bitwise-or there.)
+        var pats: Pattern[] = [pr.pattern];
+        while (p.peek_punct() == "|") {
+            p = p.advance();
+            var pr2: PatternResult = parse_pattern(p);
+            p = pr2.par;
+            pats = pats.append(pr2.pattern);
+        }
         // Optional guard: `Pattern when <expr> => …`. The arm matches only
-        // when the guard is true (E027 checks it is boolean).
+        // when the guard is true (E027 checks it is boolean). Applies to
+        // every alternative of an or-pattern.
         var arm_guard: Expr = e_bool(true);
         var arm_has_guard: boolean = false;
         if (p.peek_keyword() == "when") {
@@ -2329,7 +2357,11 @@ function parse_match_stmt(p: Par): MatchStmtResult {
         }
         var bb: BlockResult = parse_block(p);
         p = bb.par;
-        arms = arms.append(MatchArm { pattern: pr.pattern, body: bb.body, line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard });
+        var pi: i32 = 0;
+        while (pi < pats.len()) {
+            arms = arms.append(MatchArm { pattern: pats[pi], body: bb.body, line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard });
+            pi = pi + 1;
+        }
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }

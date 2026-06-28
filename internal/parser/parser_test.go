@@ -1442,6 +1442,78 @@ function f(): i32 {
 	}
 }
 
+// An or-pattern arm (`A | B => body`, #2698) desugars at parse time into one
+// MatchArm per alternative, each sharing a cloned guard + body. Exhaustiveness
+// and lowering then see an ordinary flat arm list. Verifies the alternatives
+// expand, the shared body is cloned (distinct pointers, not aliased), and a
+// per-alternative payload binding is preserved.
+func TestMatchOrPatternDesugars(t *testing.T) {
+	prog, err := Parse(`enum E { A, B(i32), C(i32), D }
+function f(e: E): i32 {
+	match (e) {
+		A | D => { return 0; },
+		B(n) | C(n) => { return n; }
+	}
+	return -1;
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m *ast.Match
+	for _, s := range prog.Funcs[0].Body.Stmts {
+		if mm, ok := s.(*ast.Match); ok {
+			m = mm
+			break
+		}
+	}
+	if m == nil {
+		t.Fatal("match stmt not found")
+	}
+	// `A | D` and `B(n) | C(n)` -> 4 flat arms.
+	if len(m.Arms) != 4 {
+		t.Fatalf("expected 4 desugared arms; got %d", len(m.Arms))
+	}
+	wantVariant := []string{"A", "D", "B", "C"}
+	for i, w := range wantVariant {
+		if m.Arms[i].VariantName != w {
+			t.Errorf("arm %d variant = %q, want %q", i, m.Arms[i].VariantName, w)
+		}
+	}
+	// Same-name binding preserved on each alternative of `B(n) | C(n)`.
+	if len(m.Arms[2].Bindings) != 1 || m.Arms[2].Bindings[0] != "n" {
+		t.Errorf("arm B should bind `n`; got %+v", m.Arms[2].Bindings)
+	}
+	if len(m.Arms[3].Bindings) != 1 || m.Arms[3].Bindings[0] != "n" {
+		t.Errorf("arm C should bind `n`; got %+v", m.Arms[3].Bindings)
+	}
+	// The shared body is cloned per alternative, not aliased — a later pass
+	// mutating one arm's body must not affect the other.
+	if m.Arms[0].Body == m.Arms[1].Body {
+		t.Error("or-pattern alternatives must not share the same *Block pointer")
+	}
+	if m.Arms[2].Body == m.Arms[3].Body {
+		t.Error("or-pattern alternatives must not share the same *Block pointer")
+	}
+}
+
+// Or-patterns are restricted to variant / `_` patterns: a `|` between literal
+// patterns is the bitwise-or operator on the literal-match path, so it is
+// rejected with a clear diagnostic rather than silently meaning `1 | 2 == 3`.
+func TestMatchLiteralOrPatternRejected(t *testing.T) {
+	_, err := Parse(`function f(n: i32): i32 {
+	return match (n) {
+		1 | 2 => 10,
+		_ => 0,
+	};
+}`)
+	if err == nil {
+		t.Fatal("expected a parse error for a literal or-pattern, got none")
+	}
+	if !strings.Contains(err.Error(), "or-patterns") {
+		t.Errorf("error should mention or-patterns; got %v", err)
+	}
+}
+
 // Generic enum decls carry positional type parameters in
 // brackets after the name. Variant payload types may reference
 // those parameters as bare identifiers; the parser preserves
