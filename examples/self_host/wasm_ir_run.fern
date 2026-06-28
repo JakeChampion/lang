@@ -43,7 +43,7 @@ function main(): i32 {
         // skipped it (#3893). Non-generic modules are unchanged (the passes
         // no-op when nothing is bounded-generic), so IR-eligible programs that
         // already worked keep their exact output.
-        mod = parser.monomorphize_enums(parser.monomorphize_structs(parser.monomorphize_module(lm)));
+        mod = parser.monomorphize_enums(parser.monomorphize_structs(parser.monomorphize_module(parser.register_array_method_generics(lm))));
         // Force the IR path: orchestrate the module wrapper + wasm's heap/RC
         // runtime + wasm_ir.emit_functions (the same orchestration
         // wasm.emit_module's use_ir dispatch does).
