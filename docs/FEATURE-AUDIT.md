@@ -251,6 +251,26 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-28 — self-host: `sleep_ms(<i64>)` lowers on IR (flips the `timing` module)
+
+The clock builtins (`monotonic_ns` / `now_unix_ms` / `now_ns`) and `sleep_ms`
+already had IR ops, but `sleep_ms` lowered its argument through the i32 path
+(`lower_expr`), which BAILed on an i64 argument — and the `timing` tests call
+`sleep_ms(N as i64)`. The single i64 argument dragged the whole `timing` module
+to the AST emitter (`test_*: BAIL lower`), even though the clock reads alongside
+it lowered fine.
+
+`sleep_ms` now width-dispatches its count: an i64 argument rides `lower_i64`, a
+plain i32 keeps the 32-bit path. Either way the count is read into a 64-bit
+register (rdi / x0) by the same `__fern_sleep_ms` nanosleep runtime the AST path
+calls, and the IR backends already pop the full 8-byte slot — so no backend
+change was needed. **`timing_test.fern` now decides `ir`** (was AST) and passes
+6/6.
+
+Gated by `TestSelfHostSleepMsI64IR` (monotonic_ns + `sleep_ms(1 as i64)`,
+asserting the `__fern_sleep_ms` IR runtime path and a forward clock);
+`TestSelfHostBootstrapsItself` stays byte-identical.
+
 ### 2026-06-28 — self-host: chained generic array-method calls lower on IR (slice 2a)
 
 Follow-up to the array-method slice: a CHAINED call whose outer receiver is
