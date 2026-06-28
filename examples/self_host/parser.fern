@@ -4987,16 +4987,28 @@ function looks_type_var(s: string): boolean {
 // folded body's delegation to the free `map` / `flat_map` / `fold` /
 // `zip` (all of which already lower on IR) carries it through.
 //
-// A BOUNDED extra type param (one whose body calls trait methods on it)
-// would land in `fd.type_params` and can't be erased; none of std/array's
-// array methods have one today, but exclude it so the receiver-only fold
-// stays sound (`type_params` must hold the receiver var alone).
+// A BOUNDED RECEIVER — `(xs: T[]) max[T: cmp.Ord]()`, whose body calls
+// trait methods on the receiver element (`xs[i].cmp(m)`) — re-declares the
+// receiver var `T` in `fd.type_params` (only BOUNDED params land there;
+// unbounded `U`/`A` are erased). That is folded too: the receiver still
+// fixes the monomorphised `T`, and substituting `T := <elem>` makes
+// `xs[i].cmp(m)` resolve by ordinary concrete-type dispatch — exactly the
+// path the equivalent free generic `max[T: cmp.Ord](xs: T[])` already rides.
+// What stays excluded is a bounded EXTRA type param (a bounded `U` not
+// fixed by the receiver): `fd.type_params` may hold the receiver var alone.
 function is_generic_array_method(fd: FuncDecl): boolean {
     if (fd.receiver_name.len() == 0) { return false; }
     if (!type_ends_arr(fd.receiver_type)) { return false; }
     var elem: string = fd.receiver_type[0 : fd.receiver_type.len() - 2];
     if (!looks_type_var(elem)) { return false; }
-    if (fd.type_params.len() != 0) { return false; }
+    // The only bounded type param permitted is the receiver element var
+    // itself (a bounded receiver); any other bounded param can't be erased
+    // and isn't fixed by the receiver, so it can't ride this fold.
+    var k: i32 = 0;
+    while (k < fd.type_params.len()) {
+        if (fd.type_params[k] != elem) { return false; }
+        k = k + 1;
+    }
     return true;
 }
 
