@@ -255,10 +255,30 @@ function test_break_continue(): test.TestOutcome {
     }
 }
 
+// `await` in the loop CONDITION: `while (await c …)` rewrites to
+// `while (true) { if (!(await c …)) break; … }` so the per-iteration condition
+// await is an ordinary in-body await.
+function start_cond(seed: i32): i32 {
+    var acc = 0;
+    while (await seed < 100) {
+        acc = acc + 14;
+        if (acc >= 42) { return acc; }
+    }
+    return acc;
+}
+
+function test_cond_await(): test.TestOutcome {
+    concurrent {
+        var t = spawn start_cond(10);  // 10<100 → acc 14,28,42 → return 42
+        return test.assert_eq(await t, 42);
+    }
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("async-task-fn");
     r = r.it("expr_await", test_expr_await());
     r = r.it("break_continue", test_break_continue());
+    r = r.it("cond_await", test_cond_await());
     r = r.it("fanout", test_fanout());
     r = r.it("single", test_single());
     r = r.it("scaled", test_scaled());

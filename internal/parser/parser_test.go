@@ -2996,6 +2996,14 @@ func TestParseTaskFunctionDesugar(t *testing.T) {
 	}`); err != nil {
 		t.Errorf("break/continue in an await loop should transform, got error: %v", err)
 	}
+	// An `await` in the loop CONDITION: rewritten to `while(true){ if(!cond) break; … }`.
+	if _, err := Parse(`function cnd(seed: i32): i32 {
+		var acc = 0;
+		while (await seed < 100) { acc = acc + 1; if (acc > 5) { return acc; } }
+		return acc;
+	}`); err != nil {
+		t.Errorf("await in a loop condition should transform, got error: %v", err)
+	}
 	// A LABELED break in an await loop: not supported yet.
 	if _, err := Parse(`function lbrk(n: i32, a: i32): i32 {
 		var acc = 0;

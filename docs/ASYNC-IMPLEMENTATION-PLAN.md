@@ -455,10 +455,15 @@ protocol leak) and `await` can sit in arbitrary control flow.
   (`blockTerminates` counts `break`/`continue`). Labeled break/continue, nested
   await-loops, and await in a match/switch inside a loop are rejected. Covered by
   `start_bc` in `async_task_fn_test.fern` and `TestParseTaskFunctionDesugar`.
-- **Remaining:** `await` in a loop CONDITION, early returns before an await,
-  nested await-bearing loops, non-i32 carried/await types, and pairing with Phase
-  1/4 so awaited calls do real I/O rather than the in-memory reactor's
-  `register(value)`.
+- **`await` in a loop CONDITION — DONE:** `while (C) { B }` where `C` contains an
+  `await` is rewritten (in `hoistTaskExprAwaits`) to `while (true) { if (!C) {
+  break; } B }`, turning the per-iteration condition await into an ordinary in-body
+  `if`-condition await (hoisted) + a `break` — both already supported. Covered by
+  `start_cond` in `async_task_fn_test.fern` and `TestParseTaskFunctionDesugar`.
+- **Remaining:** early returns before an await, nested await-bearing loops,
+  `await` in a `for`/range loop CONDITION (only `while`-cond handled), non-i32
+  carried/await types, and pairing with Phase 1/4 so awaited calls do real I/O
+  rather than the in-memory reactor's `register(value)`.
 - **Self-hosted parser port** (`examples/self_host/parser.fern`) — the
   desugar must be mirrored there before the Go compiler retires.
   Deferred while the self-host SSA-by-default migration is in flight
