@@ -4976,20 +4976,27 @@ function looks_type_var(s: string): boolean {
 
 // is_generic_array_method gates the array-method path: a method
 // (`receiver_name` set) whose receiver is `<var>[]` for a single type
-// variable, with NO method-level type params. Closure ("fn") params ARE
-// allowed (`reduce` / `sort_by` / `filter` / `any` / `all` / `find`) —
-// the receiver alone fixes the instantiation `T`, and the closure rides
-// through as a fn value; the folded body delegates to the free function,
-// which already lowers closures on the IR path. Only methods carrying
-// their OWN type params (`map[U]` / `flat_map[U]` / `fold[A]` / `zip[U]`)
-// stay deferred: their result/extra type variable needs separate
-// inference the receiver does not supply.
+// variable. Closure ("fn") params ARE allowed (`reduce` / `sort_by` /
+// `filter` / `any` / `all` / `find`) and so are the method's OWN
+// (unbounded) type params (`map[U]` / `flat_map[U]` / `fold[A]` /
+// `zip[U]`): the receiver alone fixes the monomorphised `T`, while an
+// unbounded extra type variable (`U` / `A`) is ERASED by the self-host's
+// uniform 8-byte ABI exactly as it is in the free function — its
+// result-element width is driven by the CALL SITE's annotation
+// (`var ys: string[] = xs.map(f)`), not by cloning the body, so the
+// folded body's delegation to the free `map` / `flat_map` / `fold` /
+// `zip` (all of which already lower on IR) carries it through.
+//
+// A BOUNDED extra type param (one whose body calls trait methods on it)
+// would land in `fd.type_params` and can't be erased; none of std/array's
+// array methods have one today, but exclude it so the receiver-only fold
+// stays sound (`type_params` must hold the receiver var alone).
 function is_generic_array_method(fd: FuncDecl): boolean {
     if (fd.receiver_name.len() == 0) { return false; }
     if (!type_ends_arr(fd.receiver_type)) { return false; }
     var elem: string = fd.receiver_type[0 : fd.receiver_type.len() - 2];
     if (!looks_type_var(elem)) { return false; }
-    if (fd.type_param_count != 0) { return false; }
+    if (fd.type_params.len() != 0) { return false; }
     return true;
 }
 
