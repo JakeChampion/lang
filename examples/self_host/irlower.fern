@@ -5247,6 +5247,20 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!envs.ok) { return envs; }
                         return envs.emit(ir.op_env());
                     }
+                    // Built-in `stat(path)` — pull file metadata, push a fresh
+                    // Result[FileStat, IoError] box (Ok(FileStat{is_file, is_dir,
+                    // size}) / Err(_)). The Result type is resolved by opt_ret_type's
+                    // stat case so `match (stat(p)) { Ok(s) => s.is_file .., Err => .. }`
+                    // binds `s` as the injected FileStat struct (field reads resolve
+                    // via its known layout). No wasm file I/O, so wasm_eligible rejects
+                    // stat modules; x86 / arm64 lower it (the same __fern_stat runtime
+                    // the AST path calls — std/test's assert_is_file / _is_dir /
+                    // _file_size, #3457).
+                    if (cid.name == "stat" && c.args.len() == 1) {
+                        var sts: LowerState = lower_expr(c.args[0], s);
+                        if (!sts.ok) { return sts; }
+                        return sts.emit(ir.op_stat());
+                    }
                     // Built-in `args()` — the command-line argv accessor: push a
                     // fresh string[] (argv[0] first). A no-arg value op; the result
                     // str-array-tracks (expr_is_strarr's args case) so `a.len()` /
@@ -15856,6 +15870,7 @@ pub function (s: LowerState) opt_ret_type(name: string): string {
     if (name == "temp_dir") { return "Result[string, IoError]"; }
     if (name == "read_dir") { return "Result[string[], IoError]"; }
     if (name == "env") { return "Option[string]"; }
+    if (name == "stat") { return "Result[FileStat, IoError]"; }
     return "";
 }
 
