@@ -41,13 +41,12 @@ function main(): i32 { var a: string[] = ["ab", "c"]; var b: string[] = ["de", "
 	// concat of a fresh array literal argument (receiver is still a bare local).
 	{"literal-arg", `import "std/array";
 function main(): i32 { var a: i32[] = [7, 8]; var c: i32[] = a.concat([9]); return c.len() * 10 + c[2]; }`},
+	// chained: the outer receiver is itself an array-method call, so mono_infer
+	// must recover `a.concat(b)`'s return type for the outer `.concat(a)` to
+	// rewrite onto the IR path too. Single element type → one instantiation.
+	{"chained", `import "std/array";
+function main(): i32 { var a: i32[] = [1]; var b: i32[] = [2, 3]; var c: i32[] = a.concat(b).concat(a); return c.len(); }`},
 }
-
-// Chained array-method calls (`a.concat(b).concat(c)`) where the outer
-// receiver is itself a method call are a documented follow-up: mono_infer
-// does not yet recover an array-method call's RETURN type, so the outer call
-// stays in method form and the module falls back to AST (gracefully — no
-// crash). Slice 1 covers calls whose receiver is a bare array local/param.
 
 func TestSelfHostArrayConcatMethodIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
