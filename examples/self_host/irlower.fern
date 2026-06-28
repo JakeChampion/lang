@@ -1964,7 +1964,15 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
             // A call to a struct-returning function evaluates to that struct type
             // (so `var p = make()` / `var p = obj.make()` then `p.x` resolves).
             match (c.callee) {
-                parser.ExprIdent(id) => { return s.struct_ret_type(id.name); },
+                parser.ExprIdent(id) => {
+                    // Built-in `subprocess(cmd, args, stdin)` returns a bare
+                    // ProcessResult struct (no Result wrapper), so type it directly
+                    // here — the analog of stat's opt_ret_type, for a struct-valued
+                    // builtin: `var r = subprocess(..)` marks r ProcessResult so
+                    // `r.stdout` / `r.exit_code` resolve.
+                    if (id.name == "subprocess" && c.args.len() == 3) { return "ProcessResult"; }
+                    return s.struct_ret_type(id.name);
+                },
                 parser.ExprFieldAccess(fa) => {
                     // Associated-function call `Type.make()` / `Enum.default()` —
                     // the object is a bare TYPE name (struct or enum), not a local
@@ -3810,6 +3818,21 @@ function lower_opt_make_payload_exp(tag: i32, arg: parser.Expr, exp_tag: string,
     return aw.emit(ir.op_opt_make_w(tag, 64, true));
 }
 
+// lower_subprocess_call lowers `subprocess(cmd, args, stdin)` — the three args
+// (cmd / args / stdin, so the dispatch pops stdin from TOS) then op_subprocess,
+// which pushes a fresh ProcessResult struct. Kept OUT of lower_expr's body: that
+// function is so large that any added block carrying LowerState locals + recursive
+// lower_expr calls inflates its arm64 codegen super-linearly (see the call site).
+pub function lower_subprocess_call(c: parser.ExprCall, s: LowerState): LowerState {
+    var sp: LowerState = lower_expr(c.args[0], s);
+    if (!sp.ok) { return sp; }
+    sp = lower_expr(c.args[1], sp);
+    if (!sp.ok) { return sp; }
+    sp = lower_expr(c.args[2], sp);
+    if (!sp.ok) { return sp; }
+    return sp.emit(ir.op_subprocess());
+}
+
 // lower_expr emits ops that leave the value of `e` on the operand stack.
 pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
     if (!s.ok) { return s; }
@@ -5261,6 +5284,25 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!sts.ok) { return sts; }
                         return sts.emit(ir.op_stat());
                     }
+                    // Built-in `subprocess(cmd, args, stdin)` — spawn a child, pipe
+                    // its streams, push a fresh ProcessResult struct {stdout, stderr,
+                    // exit_code}. Unlike stat (Result-wrapped), the struct is returned
+                    // BARE, so the result is typed by expr_struct_type's subprocess
+                    // case ("ProcessResult") rather than via opt_ret_type/match —
+                    // `var r = subprocess(..)` then binds `r.stdout` / `r.exit_code`.
+                    // Args lowered cmd / args / stdin so the dispatch pops stdin (TOS)
+                    // / args / cmd. No wasm process spawn, so wasm_eligible rejects
+                    // subprocess modules; x86 / arm64 lower it (the same
+                    // __fern_subprocess runtime the AST path calls, #3457).
+                    // Delegated to a SEPARATE function (not inlined here): adding
+                    // even a small block with LowerState locals + recursive
+                    // lower_expr calls to this already-enormous function tripped a
+                    // super-linear arm64 codegen blow-up (~1+ MB of extra .text per
+                    // such block — sp0/sp1/sp2 cost ~4 MB), enough to push the
+                    // self-host binary past the AArch64 bl/R_AARCH64_CALL26 ±128 MiB
+                    // branch range. Keeping the locals in their own small function
+                    // is size-neutral.
+                    if (cid.name == "subprocess" && c.args.len() == 3) { return lower_subprocess_call(c, s); }
                     // Built-in `args()` — the command-line argv accessor: push a
                     // fresh string[] (argv[0] first). A no-arg value op; the result
                     // str-array-tracks (expr_is_strarr's args case) so `a.len()` /
