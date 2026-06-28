@@ -66,6 +66,37 @@ being added behind the `for-in` node centralization (below); until L2 lands,
 `for x in stream` stays **eager collect-then-iterate** (locked by
 `TestWasmP3StreamForIn`).
 
+### Lazy `for x in stream` — DONE (L1 + L2)
+
+**L2 shipped** (this PR): `for x in body()` over a **u8** async stream import now
+iterates LAZILY — one element pulled off the wire (read + await) per loop turn,
+never materialising the whole sequence. The vertical landed exactly as the plan
+below specified:
+
+- *Parser* (`desugarForEachProgram`): builds the set of module-local `@import
+  async … : stream[u8]` names and **leaves** a `for x in f(args)` over one as an
+  `ast.ForEach` (every other iterand — arrays, strings, **non-u8** streams — still
+  lowers eagerly via `ast.DesugarForEachArray`). `isLazyStreamIter` is the test.
+- *Checker* (`lowerStreamForEachProgram`, after the slice-2 stream rewrite so
+  `StreamResultElem` is set, and after modload mangling so `f$open` tracks the
+  mangled import name): lowers each surviving stream `ast.ForEach` to the loop via
+  `ast.DesugarForEachStream`, and registers the helper `FuncSig`s (`f$open: () ->
+  i32`, `__stream_next_u8: (i32) -> i32`, `__stream_drop: (i32) -> ()`).
+- *wasmbin* (`extern.go` + scan in `wasi.go`): `buildExternAsyncStreamOpenWrapper`
+  (`f$open` — collect-wrapper prologue → readable handle), `buildStreamNextU8`
+  (read-1 + await + decode, `-1` = EOF), `buildStreamDropReadable`. The scan emits
+  `f$open` + the two generic helpers when the `$open` companion is used (gated by
+  `usedOpen`); the eager collect-wrapper still emits under `f` for value context.
+  `build.go` pins async stream imports past tree-shake (they're reached only via
+  `$open`).
+- *Composer + e2e*: `BuildAsyncStreamImportComponent` reused unchanged;
+  `TestWasmP3StreamForIn` now exercises the lazy path → 42, with the desugar
+  structure pinned by `checker.TestStreamForEachDesugarsToLazyLoop`.
+
+The `i32` sentinel (`-1` = EOF) is unambiguous only for byte elements, so lazy
+iteration is **u8-only** for now; a general-`T` form (2-word `(ok, elem)` or an
+Option) is the follow-on. Below is the original design (kept for the mechanics).
+
 ### Lazy `for x in stream` — design (L1 done, L2 pending)
 
 **L1 — DONE** (#3963): the plain `for x in expr` form parses to `ast.ForEach` and
@@ -280,9 +311,11 @@ yield one self-contained runnable component (`cmd/fern` `TestAsyncProviderBundle
 via `BuildAsyncImportsAwaitComponent`); plus `-async-export` lifting param'd async
 functions (`TestAsyncExportParamsCLI`).
 
-In progress: **colored/lazy `for x in stream`** — L1 (the `ast.ForEach`
-centralization, #3963) is merged; L2 (the lazy `__stream_open`/`__stream_next`
-codegen + atomic flip) is designed above and is the next vertical.
+Done: **lazy `for x in stream`** — L1 (the `ast.ForEach` centralization, #3963)
+and L2 (the lazy `f$open` / `__stream_next_u8` / `__stream_drop` codegen + the
+atomic eager→lazy flip for u8 streams) both shipped; see the "DONE (L1 + L2)"
+section above. Follow-on: a general-`T` lazy element type (the u8-only `-1` EOF
+sentinel generalises to a 2-word `(ok, elem)` / Option).
 
 **Possible follow-ons (new design efforts, not gaps in this surface):**
 widening the CLI auto-bundle to **stream-result/param** providers (the stream

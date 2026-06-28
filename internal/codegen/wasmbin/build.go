@@ -131,6 +131,18 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 		}
 	}
 	treeshakeExtras = append(treeshakeExtras, exportRoots...)
+	// A lazily-iterated stream import (`for x in body()`) is reached only through
+	// its synthesised `body$open` companion (the checker desugar), never a bare
+	// `body()` call the tree-shaker can see — so the extern decl would be culled
+	// before scanExternImports could register the `$open` / per-element helpers.
+	// Pin every async stream import so the extern survives; an unused one costs
+	// nothing (scanExternImports only emits an import that is actually called).
+	// See docs/STREAM-TYPE-SURFACE.md (L2).
+	for _, fn := range prog.Funcs {
+		if fn.ImportIface != "" && fn.Async && fn.StreamResultElem != nil {
+			treeshakeExtras = append(treeshakeExtras, fn.Name)
+		}
+	}
 	// `dyn Trait` impl methods are reached only through the runtime
 	// vtable (OpConstVtable names them by string), never via a static
 	// call the AST walker / IR reachability can see. Pin every impl

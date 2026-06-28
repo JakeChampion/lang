@@ -2063,6 +2063,63 @@ func DesugarForEachArray(fe *ForEach) *Block {
 	return &Block{P: kw, Stmts: []Stmt{declIter, declLen, declIdx, forLoop}}
 }
 
+// DesugarForEachStream lowers a LAZY stream `for x in f(args) { BODY }` — where
+// `f` is an `@import async function f(): stream[u8]` — to a real Fern loop that
+// pulls one element at a time off the wire (docs/STREAM-TYPE-SURFACE.md, L2).
+// Unlike the array form (collect-then-iterate), this never materialises the
+// whole sequence: it opens the stream once, reads-and-awaits a single element
+// per turn, and stops at EOF. It expands to
+//
+//	{
+//	    var __stream_h_<ID> = f$open(args);            // readable handle
+//	    while (true) {
+//	        var __stream_v_<ID> = __stream_next_u8(__stream_h_<ID>);
+//	        if (__stream_v_<ID> < 0) { break; }        // -1 = EOF
+//	        var x = __stream_v_<ID> as <elem>;
+//	        BODY
+//	    }
+//	    __stream_drop(__stream_h_<ID>);
+//	}
+//
+// The three callees (`f$open`, `__stream_next_u8`, `__stream_drop`) are codegen
+// helpers the checker registers FuncSigs for and wasmbin emits (see
+// internal/codegen/wasmbin/extern.go). The `i32` sentinel (-1 = EOF) is valid
+// for `u8` (elements are 0..255); a general-`T` form would use an Option. A real
+// `while` means `break` / `continue` / `return` / labels in BODY all work; the
+// per-turn read advances the cursor, so `continue` re-reads the next element.
+func DesugarForEachStream(fe *ForEach, elemType Type) *Block {
+	kw := fe.P
+	call := fe.Iter.(*Call)
+	openName := call.Callee.(*Ident).Name + "$open"
+	hName := fmt.Sprintf("__stream_h_%d", fe.ID)
+	vName := fmt.Sprintf("__stream_v_%d", fe.ID)
+	mkIdent := func(name string) *Ident { return &Ident{P: kw, Name: name} }
+
+	declH := &Var{P: kw, Name: hName, Init: &Call{P: kw, Callee: mkIdent(openName), Args: call.Args}}
+	readV := &Var{P: kw, Name: vName, Init: &Call{P: kw, Callee: mkIdent("__stream_next_u8"), Args: []Expr{mkIdent(hName)}}}
+	breakOnEOF := &If{
+		P:    kw,
+		Cond: &Binary{P: kw, Op: "<", Left: mkIdent(vName), Right: &NumberLit{P: kw, Value: 0}},
+		Then: &Block{P: kw, Stmts: []Stmt{&Break{P: kw}}},
+	}
+	bindUser := &Var{P: fe.VarPos, Name: fe.Var, Init: &CastExpr{P: fe.VarPos, Inner: mkIdent(vName), Target: elemType}}
+
+	innerStmts := []Stmt{readV, breakOnEOF, bindUser}
+	if blk, ok := fe.Body.(*Block); ok {
+		innerStmts = append(innerStmts, blk.Stmts...)
+	} else {
+		innerStmts = append(innerStmts, fe.Body)
+	}
+	loop := &While{
+		P:     kw,
+		Cond:  &BoolLit{P: kw, Value: true},
+		Body:  &Block{P: kw, Stmts: innerStmts},
+		Label: fe.Label,
+	}
+	drop := &ExprStmt{P: kw, Expr: &Call{P: kw, Callee: mkIdent("__stream_drop"), Args: []Expr{mkIdent(hName)}}}
+	return &Block{P: kw, Stmts: []Stmt{declH, loop, drop}}
+}
+
 // Break / Continue carry an optional Label naming an enclosing labeled
 // loop to target; empty means the innermost loop (the existing behaviour).
 type Break struct {
