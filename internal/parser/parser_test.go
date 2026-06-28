@@ -2979,13 +2979,30 @@ func TestParseTaskFunctionDesugar(t *testing.T) {
 	}`); err != nil {
 		t.Errorf("await in an array for-in loop should transform, got error: %v", err)
 	}
-	// A `break` inside an await-bearing loop body: not supported yet (loops slice 2).
+	// `break` / `continue` inside an await-bearing loop body: supported (the loop's
+	// exit is factored into a function `break` can jump to; `continue` tail-calls
+	// the loop). Nested `if`s in the body are handled by the merge machinery.
 	if _, err := Parse(`function brk(n: i32, a: i32): i32 {
 		var acc = 0;
-		while (acc < n) { var x = await a; acc = acc + x; if (acc > 5) { break; } }
+		var i = 0;
+		while (i < n) {
+			var x = await a;
+			i = i + 1;
+			if (x == 0) { continue; }
+			if (acc > 40) { break; }
+			acc = acc + x;
+		}
+		return acc;
+	}`); err != nil {
+		t.Errorf("break/continue in an await loop should transform, got error: %v", err)
+	}
+	// A LABELED break in an await loop: not supported yet.
+	if _, err := Parse(`function lbrk(n: i32, a: i32): i32 {
+		var acc = 0;
+		outer: while (acc < n) { var x = await a; acc = acc + x; if (acc > 5) { break outer; } }
 		return acc;
 	}`); err == nil {
-		t.Error("expected error for `break` in an await-bearing loop body (loops slice 2)")
+		t.Error("expected error for a labeled break in an await-bearing loop")
 	}
 	// No terminal return after the await.
 	if _, err := Parse(`function noret(a: i32): i32 {
