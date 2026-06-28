@@ -75,40 +75,58 @@ pre-checker statement-walker was taught the node (incl. the `Array.build`
 builder-threading desugar).
 
 **L2 — the lazy codegen** (the remaining vertical, must land atomically — it
-flips the eager semantics):
+flips the eager semantics). Concretised to a near-mechanical plan (this is the
+architecture validated by attempt; codegen lowers via `internal/ir`, so DON'T
+route ForEach through IR — instead the checker desugars the stream ForEach to a
+normal Fern loop calling codegen helpers, so IR/codegen only ever see ordinary
+constructs):
 
-- *Detection* (`desugarForEachProgram`): when `ForEach.Iter` is a call to a
-  module-local `@import async function f(): stream[T]` (look up the callee in
-  `prog.Funcs` for `ImportIface != "" && Async && ReturnType is StreamType`),
-  emit the lazy loop instead of `DesugarForEachArray`. (`prog` must be threaded
-  into the recursive desugar.)
-- *Desugar shape* — use stream intrinsics so the user `BODY` stays normal Fern:
+- *Parser* (done in attempt, ~30 LOC): `desugarForEachProgram` builds a set of
+  module-local `@import async … : stream[T]` names; a `for x in f(args)` over one
+  is **left as `ast.ForEach`** (the array case still lowers via
+  `ast.DesugarForEachArray`). modload/constfold/walk already traverse ForEach
+  (L1), so it reaches the checker.
+- *Checker* (~60 LOC): a pre-pass after the slice-2 stream rewrite (so
+  `StreamResultElem` is set) desugars each stream `ast.ForEach` into a Fern block,
+  and registers the helper FuncSigs. For `for x in body()` with `stream[u8]`:
   ```
-  var __sh = __stream_open(f, args…)        // the import lower → readable handle (i32), NOT collected
-  loop {
-      match __stream_next(__sh) {            // read 1 + await; Some(x) | None at EOF
-          Some(x) => { BODY }
-          None    => break
-      }
+  var __h: i32 = body$open();              // per-import: raw lower → readable handle
+  while (true) {
+      var __v: i32 = __stream_next_u8(__h); // read 1 + await; element (0..255) or -1 at EOF
+      if (__v < 0) { break; }
+      var x: u8 = __v as u8;
+      BODY                                  // real loop ⇒ break/continue/return work
   }
-  __stream_drop(__sh)
+  __stream_drop(__h);
   ```
-- *Dual lowering of a stream import*: a `stream[T]` `@import` keeps its colorless
-  collect-wrapper for value context (`var b: u8[] = f()`); the lazy path needs the
-  RAW handle + a per-element read. So expose `__stream_open` (the `canon lower
-  async` result = the readable handle, no collect loop) and `__stream_next`
-  (`stream.read(handle, buf, 1)` + the await-via-event loop already pinned for the
-  collect side; decode `count`/`code` → `Some(buf[0])` / `None` on CLOSED) and
-  `__stream_drop` (`stream.drop-readable`). The per-element mechanics are exactly
-  the collect loop's body — already validated (`scollect2.wat`).
-- *Checker*: type the three intrinsics; `__stream_next` returns `Option[T]`. The
-  iterated `f()` must NOT be collect-rewritten in lazy position.
-- *Composer + e2e*: reuse `stream.read`/`drop-readable` provisioning; a real-Fern
-  e2e iterating `for x in body()` lazily → 42, against the EOF producer.
+  Register sigs: `body$open: () -> i32` (per stream import, at the slice-2 site),
+  `__stream_next_u8: (i32) -> i32`, `__stream_drop: (i32) -> ()`. The `i32`
+  sentinel (`-1 = EOF`) avoids constructing `Option[T]` in wasm — fine for `u8`
+  (the MVP element type); a general-`T` form later uses a 2-word `(ok, elem)` or an
+  Option. `body()` is NOT collect-rewritten here (the call is replaced by
+  `body$open`).
+- *wasmbin* (~90 LOC; `extern.go` + scan in `wasi.go`): three helpers, all
+  adapted from `buildExternAsyncStreamResultWrapper`:
+  - `body$open` (per stream import): the collect-wrapper's prologue only — alloc
+    retarea, call `body$import`, `emitAsyncAwaitLoop`, return `load(rb+0)` (the
+    readable handle).
+  - `__stream_next_u8` (generic): `ws.new`+`join(h,ws)`; `stream.read(h, buf, 1)`;
+    if `0xffffffff`, `waitable-set.wait` + take `evt+4`; `join(h,0)`+`ws.drop`;
+    `count=rs>>4` ≥1 → return `load8_u(buf)`, else `-1`. (Needs `InstElse` +
+    `BlocktypeI32`.)
+  - `__stream_drop` (generic): `stream.drop-readable(h)`.
+  Scan: a `stream[T]` import still emits the collect-wrapper for value context AND
+  `body$open`; register `__stream_next_u8`/`__stream_drop` once; reuse the
+  `stream.read`/`drop-readable`/waitable intrinsics.
+- *Composer + e2e*: **reuse `BuildAsyncStreamImportComponent` unchanged** — it
+  already provisions `body$import` (dep-lower), `stream.read`, the waitable set,
+  and `stream.drop-readable`, which is exactly what `body$open`/`__stream_next_u8`/
+  `__stream_drop` consume. e2e: real Fern `for x in body() { sum += x as i32 }`
+  against the EOF producer → 42.
 
-This is a vertical on the scale of the collect-wrapper; it ships when detection +
-codegen + e2e are all green together (no half-step, since it changes the working
-eager behavior).
+Per-element mechanics are the already-validated collect-loop body (`scollect2.wat`)
+— no new derivation. Ships when parser + checker + wasmbin + e2e are green
+together (no half-step, since it flips the working eager behavior).
 
 ## Implementation slices (recon-grounded; file anchors in the recon)
 
