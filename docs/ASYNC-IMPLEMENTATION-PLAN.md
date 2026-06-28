@@ -404,13 +404,30 @@ protocol leak) and `await` can sit in arbitrary control flow.
   decides which branches need REST appended. Cost: REST is duplicated per branch
   (fine in practice; deep nesting is the caveat). Covered by `start_merge` in
   `async_task_fn_test.fern` (taken + skipped → 42) and `TestParseTaskFunctionDesugar`.
-- **Slice 3c (loops) — remaining (the hard core):** awaits inside `while`/`for`
-  loops — a self-referential / tail-recursive continuation (the loop body's resume
-  re-invokes the loop with updated loop-carried vars). Duplication can't bound this,
-  so it needs the recursive-loop-function lowering with loop-carried state threaded
-  as params. Also remaining: `await` in arbitrary EXPRESSION position (hoist to a
-  temp binding first), early returns before an await, and pairing with Phase 1/4 so
-  awaited calls do real I/O rather than the in-memory reactor's `register(value)`.
+- **Slice loops-1 — DONE (awaits in a straight-line `while`):** an await-bearing
+  `while (cond) { body } rest` lowers to a RECURSIVE loop function
+  (`buildTaskWhile` + `buildLoopBody`):
+  ```
+  function __task_loop_d(carried…, lr): (Step, Reactor) {
+      if (cond) { <body, each path ending in `return __task_loop_d(carried…, r)`> }
+      <rest as a segment in lr>          // exit, reached when !cond
+  }
+  return __task_loop_d(<carried initial>…, rxName);
+  ```
+  The carried set is the in-scope data vars referenced by cond/body/rest, threaded
+  as loop params (typed i32 — the task runtime is i32-throughout) so loop-carried
+  MUTATION survives across iterations (closure value-capture alone would freeze
+  it); the body's end-of-iteration is a raw tail-call to the loop, not a `Done`.
+  `buildTaskSegment` now threads a `scope` so the carried set can be computed.
+  Covered by `start_sum` in `async_task_fn_test.fern` (accumulate-with-await → 42,
+  plus a zero-iteration case) and `TestParseTaskFunctionDesugar`.
+  Restricted to a STRAIGHT-LINE body (top-level `await` bindings; no nested control
+  flow, `break`, `continue`, or `return`); a labeled loop is rejected too.
+- **Remaining:** richer loop bodies (`break` / `continue` / nested control flow /
+  `return` inside an await-bearing loop), `for` loops, `await` in arbitrary
+  EXPRESSION position (hoist to a temp binding first), early returns before an
+  await, non-i32 carried/await types, and pairing with Phase 1/4 so awaited calls
+  do real I/O rather than the in-memory reactor's `register(value)`.
 - **Self-hosted parser port** (`examples/self_host/parser.fern`) — the
   desugar must be mirrored there before the Go compiler retires.
   Deferred while the self-host SSA-by-default migration is in flight

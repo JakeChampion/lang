@@ -149,6 +149,35 @@ function test_merge_skipped(): test.TestOutcome {
     }
 }
 
+// An `await` inside a `while` LOOP (loops slice 1): the loop becomes a recursive
+// function whose loop-carried vars (acc, i) are threaded as params, so mutation
+// survives across iterations. Each turn awaits and accumulates.
+function start_sum(n: i32, step: i32): i32 {
+    var acc = 0;
+    var i = 0;
+    while (i < n) {
+        var x = await step;     // suspends each iteration
+        acc = acc + x;
+        i = i + 1;
+    }
+    return acc;
+}
+
+function test_loop(): test.TestOutcome {
+    concurrent {
+        var t = spawn start_sum(3, 14);   // 14 + 14 + 14 = 42
+        return test.assert_eq(await t, 42);
+    }
+}
+
+// Zero-iteration loop: the loop carried-state passes straight to the exit.
+function test_loop_zero(): test.TestOutcome {
+    concurrent {
+        var t = spawn start_sum(0, 99);   // loop never runs → acc stays 0
+        return test.assert_eq(await t, 0);
+    }
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("async-task-fn");
     r = r.it("fanout", test_fanout());
@@ -161,5 +190,7 @@ function main(): i32 {
     r = r.it("guard_taken", test_guard_taken());
     r = r.it("merge_taken", test_merge_taken());
     r = r.it("merge_skipped", test_merge_skipped());
+    r = r.it("loop", test_loop());
+    r = r.it("loop_zero", test_loop_zero());
     return r.finish();
 }

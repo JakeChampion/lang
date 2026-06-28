@@ -3031,7 +3031,11 @@ func transformTaskFunction(fn *ast.FuncDecl) error {
 	pairType := ast.TupleType{Elems: []ast.Type{ast.StructType{Name: "task.Step"}, reactorType}}
 	var err error
 	depth := 0
-	body := buildTaskSegment(fn.Body.Stmts, "__task_rx", &depth, fn, &err)
+	scope := make([]string, len(fn.Params))
+	for i, pm := range fn.Params {
+		scope[i] = pm.Name
+	}
+	body := buildTaskSegment(fn.Body.Stmts, "__task_rx", &depth, scope, fn, &err)
 	if err != nil {
 		return err
 	}
@@ -3055,7 +3059,7 @@ func transformTaskFunction(fn *ast.FuncDecl) error {
 // unsupported (an `await` outside a top-level binding or a terminating if, a
 // `return` before an `await`, awaits in loops / after a merge) are rejected via
 // *errp.
-func buildTaskSegment(stmts []ast.Stmt, rxName string, depth *int, fn *ast.FuncDecl, errp *error) []ast.Stmt {
+func buildTaskSegment(stmts []ast.Stmt, rxName string, depth *int, scope []string, fn *ast.FuncDecl, errp *error) []ast.Stmt {
 	if *errp != nil {
 		return stmts
 	}
@@ -3064,6 +3068,24 @@ func buildTaskSegment(stmts []ast.Stmt, rxName string, depth *int, fn *ast.FuncD
 	reactorType := ast.StructType{Name: "task.Reactor"}
 	pairType := ast.TupleType{Elems: []ast.Type{ast.StructType{Name: "task.Step"}, reactorType}}
 	i32 := ast.NumberType{Width: 32, Signed: true}
+
+	// First top-level `await`-bearing WHILE loop — handled before the binding/if
+	// scan so a loop preceding an await binding isn't mis-classified as `pre`.
+	whileIdx := -1
+	for i, s := range stmts {
+		if w, ok := s.(*ast.While); ok && taskAwaitCount(w) > 0 {
+			whileIdx = i
+			break
+		}
+		// Stop at the first OTHER await-bearing statement — the binding/if scan
+		// below owns it (so a `var x = await` or await-`if` before a loop wins).
+		if taskAwaitCount(s) > 0 {
+			break
+		}
+	}
+	if whileIdx >= 0 {
+		return buildTaskWhile(stmts, whileIdx, rxName, depth, scope, fn, errp)
+	}
 
 	// First top-level `var NAME = await EXPR;` binding in this segment.
 	awaitIdx := -1
@@ -3156,8 +3178,9 @@ func buildTaskSegment(stmts []ast.Stmt, rxName string, depth *int, fn *ast.FuncD
 					elseStmts = append(elseStmts, cloneStmts(rest)...)
 				}
 			}
-			ifst.Then = &ast.Block{P: p, Stmts: buildTaskSegment(thenStmts, rxName, depth, fn, errp)}
-			ifst.Else = &ast.Block{P: p, Stmts: buildTaskSegment(elseStmts, rxName, depth, fn, errp)}
+			branchScope := append(append([]string{}, scope...), declsIn(lead)...)
+			ifst.Then = &ast.Block{P: p, Stmts: buildTaskSegment(thenStmts, rxName, depth, branchScope, fn, errp)}
+			ifst.Else = &ast.Block{P: p, Stmts: buildTaskSegment(elseStmts, rxName, depth, branchScope, fn, errp)}
 			out := make([]ast.Stmt, 0, len(lead)+1)
 			out = append(out, lead...)
 			out = append(out, ifst)
@@ -3200,7 +3223,9 @@ func buildTaskSegment(stmts []ast.Stmt, rxName string, depth *int, fn *ast.FuncD
 	rName := fmt.Sprintf("__task_r_%d", d)
 	resumeName := fmt.Sprintf("__task_resume_%d", d)
 
-	resumeBody := buildTaskSegment(post, rName, depth, fn, errp)
+	postScope := append(append([]string{}, scope...), declsIn(pre)...)
+	postScope = append(postScope, wokenName)
+	resumeBody := buildTaskSegment(post, rName, depth, postScope, fn, errp)
 	resume := &ast.FuncDecl{
 		P: p, Name: resumeName, IsLocal: true,
 		Params:     []ast.Param{{Name: wokenName, Type: i32}, {Name: rName, Type: reactorType}},
@@ -3220,6 +3245,222 @@ func buildTaskSegment(stmts []ast.Stmt, rxName string, depth *int, fn *ast.FuncD
 	out = append(out, pre...)
 	out = append(out, destr, resume, finalRet)
 	return out
+}
+
+// buildTaskWhile lowers a segment `lead; while (cond) { body } rest` whose loop
+// body contains `await`s into a recursive loop function (the only Phase-3b shape
+// that needs recursion rather than duplication):
+//
+//	function __task_loop_d(carried…, __task_lr_d): (Step, Reactor) {
+//	    if (cond) { <body, ending each path in `return __task_loop_d(carried…, r)`> }
+//	    <rest as a segment in __task_lr_d>   // exit, reached when !cond
+//	}
+//	return __task_loop_d(<carried initial>…, rxName);
+//
+// `carried` is the in-scope data variable set referenced by cond/body/rest —
+// threaded as loop params so loop-carried MUTATION survives across iterations
+// (closure value-capture alone would freeze it). The body's end-of-iteration is a
+// raw tail-call to the loop (not a `Done`), so accumulation feeds the next turn.
+//
+// SLICE loops-v1 supports a STRAIGHT-LINE body (top-level `await` bindings, no
+// nested control flow, no `break` / `continue` / `return`); richer bodies are
+// rejected with a clear error.
+func buildTaskWhile(stmts []ast.Stmt, whileIdx int, rxName string, depth *int, scope []string, fn *ast.FuncDecl, errp *error) []ast.Stmt {
+	p := fn.P
+	mkIdent := func(name string) *ast.Ident { return &ast.Ident{P: p, Name: name} }
+	reactorType := ast.StructType{Name: "task.Reactor"}
+	pairType := ast.TupleType{Elems: []ast.Type{ast.StructType{Name: "task.Step"}, reactorType}}
+
+	lead := stmts[:whileIdx]
+	w := stmts[whileIdx].(*ast.While)
+	rest := stmts[whileIdx+1:]
+	for _, s := range lead {
+		if stmtHasTopReturn(s) {
+			*errp = errorAt(fn.P, "function %q: a `return` before a loop `await` is not supported yet (Phase 3b)", fn.Name)
+			return stmts
+		}
+	}
+	if taskAwaitCount(&ast.Block{Stmts: lead}) > 0 {
+		*errp = errorAt(fn.P, "function %q: an `await` outside a top-level `var NAME = await EXPR;` binding is not supported yet (Phase 3b)", fn.Name)
+		return stmts
+	}
+	if w.Label != "" {
+		*errp = errorAt(fn.P, "function %q: a labeled loop with an `await` is not supported yet (Phase 3b loops)", fn.Name)
+		return stmts
+	}
+
+	localScope := append(append([]string{}, scope...), declsIn(lead)...)
+	bodyStmts := func(s ast.Stmt) []ast.Stmt {
+		if b, ok := s.(*ast.Block); ok {
+			return b.Stmts
+		}
+		return []ast.Stmt{s}
+	}
+	body := bodyStmts(w.Body)
+
+	// carried = in-scope data vars referenced anywhere in cond/body/rest.
+	var carried []string
+	for _, name := range localScope {
+		if identReferenced(name, w.Cond) || identReferenced(name, &ast.Block{Stmts: body}) || identReferenced(name, &ast.Block{Stmts: rest}) {
+			carried = append(carried, name)
+		}
+	}
+
+	d := *depth
+	*depth++
+	loopName := fmt.Sprintf("__task_loop_%d", d)
+	lrName := fmt.Sprintf("__task_lr_%d", d)
+
+	// loop body: each path ends in `return loopName(carried…, <reactor>)`.
+	loweredBody := buildLoopBody(body, lrName, depth, loopName, carried, fn, errp)
+	// exit continuation: `rest` as a normal segment in the loop's reactor.
+	exitSeg := buildTaskSegment(rest, lrName, depth, append([]string{}, localScope...), fn, errp)
+
+	// Carried vars are i32 — the task runtime is i32-throughout (Step.Done(i32),
+	// register(i32), woken values), so every loop-carried datum is an i32 here.
+	loopI32 := ast.NumberType{Width: 32, Signed: true}
+	loopParams := make([]ast.Param, 0, len(carried)+1)
+	for _, c := range carried {
+		loopParams = append(loopParams, ast.Param{Name: c, Type: loopI32})
+	}
+	loopParams = append(loopParams, ast.Param{Name: lrName, Type: reactorType})
+
+	loopStmts := make([]ast.Stmt, 0, 2)
+	loopStmts = append(loopStmts, &ast.If{P: p, Cond: w.Cond, Then: &ast.Block{P: p, Stmts: loweredBody}})
+	loopStmts = append(loopStmts, exitSeg...)
+	loopFn := &ast.FuncDecl{
+		P: p, Name: loopName, IsLocal: true,
+		Params: loopParams, ReturnType: pairType,
+		Body: &ast.Block{P: p, Stmts: loopStmts},
+	}
+
+	callArgs := make([]ast.Expr, 0, len(carried)+1)
+	for _, c := range carried {
+		callArgs = append(callArgs, mkIdent(c))
+	}
+	callArgs = append(callArgs, mkIdent(rxName))
+	startCall := &ast.Return{P: p, Value: &ast.Call{P: p, Callee: mkIdent(loopName), Args: callArgs}}
+
+	out := make([]ast.Stmt, 0, len(lead)+2)
+	out = append(out, lead...)
+	out = append(out, loopFn, startCall)
+	return out
+}
+
+// buildLoopBody lowers a STRAIGHT-LINE loop body (slice loops-v1) so each path
+// ends in a raw tail-call `return loopName(carried…, reactor)` — the next loop
+// iteration — rather than a `Done`. Splits at each top-level `var NAME = await
+// EXPR;` binding into register + resume, exactly like buildTaskSegment, but the
+// terminal is the tail-call. Rejects any nested control flow / `return` / `break`
+// / `continue` in the body (richer loop bodies are a later slice).
+func buildLoopBody(stmts []ast.Stmt, rxName string, depth *int, loopName string, carried []string, fn *ast.FuncDecl, errp *error) []ast.Stmt {
+	if *errp != nil {
+		return stmts
+	}
+	p := fn.P
+	mkIdent := func(name string) *ast.Ident { return &ast.Ident{P: p, Name: name} }
+	reactorType := ast.StructType{Name: "task.Reactor"}
+	pairType := ast.TupleType{Elems: []ast.Type{ast.StructType{Name: "task.Step"}, reactorType}}
+	i32 := ast.NumberType{Width: 32, Signed: true}
+
+	awaitIdx := -1
+	for i, s := range stmts {
+		switch s.(type) {
+		case *ast.If, *ast.While, *ast.For, *ast.Match, *ast.Switch, *ast.Return, *ast.Break, *ast.Continue:
+			*errp = errorAt(fn.P, "function %q: this loop-body shape is not supported yet — Phase 3b loops slice 1 needs a straight-line body (top-level `await` bindings; no nested control flow, `break`, `continue`, or `return`)", fn.Name)
+			return stmts
+		case *ast.Var:
+			if v := s.(*ast.Var); v.Init != nil {
+				if _, isAwait := v.Init.(*ast.Await); isAwait && awaitIdx < 0 {
+					awaitIdx = i
+				}
+			}
+		}
+	}
+	if awaitIdx < 0 {
+		// End of a (sub)iteration: append the tail-call to the next iteration.
+		if taskAwaitCount(&ast.Block{Stmts: stmts}) > 0 {
+			*errp = errorAt(fn.P, "function %q: an `await` outside a top-level `var NAME = await EXPR;` binding is not supported yet (Phase 3b)", fn.Name)
+			return stmts
+		}
+		callArgs := make([]ast.Expr, 0, len(carried)+1)
+		for _, c := range carried {
+			callArgs = append(callArgs, mkIdent(c))
+		}
+		callArgs = append(callArgs, mkIdent(rxName))
+		tail := &ast.Return{P: p, Value: &ast.Call{P: p, Callee: mkIdent(loopName), Args: callArgs}}
+		out := make([]ast.Stmt, 0, len(stmts)+1)
+		out = append(out, stmts...)
+		out = append(out, tail)
+		return out
+	}
+
+	pre := stmts[:awaitIdx]
+	v := stmts[awaitIdx].(*ast.Var)
+	operand := v.Init.(*ast.Await).Operand
+	wokenName := v.Name
+	post := stmts[awaitIdx+1:]
+	if taskAwaitCount(&ast.Block{Stmts: pre}) > 0 {
+		*errp = errorAt(fn.P, "function %q: an `await` outside a top-level `var NAME = await EXPR;` binding is not supported yet (Phase 3b)", fn.Name)
+		return stmts
+	}
+
+	d := *depth
+	*depth++
+	tokName := fmt.Sprintf("__task_tok_%d", d)
+	rx2Name := fmt.Sprintf("__task_rx2_%d", d)
+	rName := fmt.Sprintf("__task_r_%d", d)
+	resumeName := fmt.Sprintf("__task_resume_%d", d)
+
+	resumeBody := buildLoopBody(post, rName, depth, loopName, carried, fn, errp)
+	resume := &ast.FuncDecl{
+		P: p, Name: resumeName, IsLocal: true,
+		Params:     []ast.Param{{Name: wokenName, Type: i32}, {Name: rName, Type: reactorType}},
+		ReturnType: pairType,
+		Body:       &ast.Block{P: p, Stmts: resumeBody},
+	}
+	registerCall := &ast.Call{P: p,
+		Callee: &ast.FieldAccess{P: p, Target: mkIdent(rxName), Field: "register", FieldPos: p},
+		Args:   []ast.Expr{operand}}
+	destr := &ast.Destructure{P: p, Names: []string{tokName, rx2Name}, Init: registerCall}
+	waitCall := &ast.Call{P: p, Callee: mkIdent("Wait"), Args: []ast.Expr{mkIdent(tokName), mkIdent(resumeName)}}
+	finalRet := &ast.Return{P: p, Value: &ast.TupleLit{P: p, Elems: []ast.Expr{waitCall, mkIdent(rx2Name)}}}
+
+	out := make([]ast.Stmt, 0, len(pre)+3)
+	out = append(out, pre...)
+	out = append(out, destr, resume, finalRet)
+	return out
+}
+
+// declsIn returns the variable names bound at the TOP level of a statement list
+// (`var NAME`, `var (A, B)` destructure) — the locals a following statement sees.
+func declsIn(stmts []ast.Stmt) []string {
+	var names []string
+	for _, s := range stmts {
+		switch x := s.(type) {
+		case *ast.Var:
+			names = append(names, x.Name)
+		case *ast.Destructure:
+			names = append(names, x.Names...)
+		}
+	}
+	return names
+}
+
+// identReferenced reports whether `name` appears as an identifier anywhere under
+// n (used to compute a loop's carried-variable set).
+func identReferenced(name string, n ast.Node) bool {
+	found := false
+	ast.Walk(n, func(x ast.Node) bool {
+		if found {
+			return false
+		}
+		if id, ok := x.(*ast.Ident); ok && id.Name == name {
+			found = true
+		}
+		return true
+	})
+	return found
 }
 
 // wrapTaskReturns rewrites each `return E;` reachable from s (through ordinary

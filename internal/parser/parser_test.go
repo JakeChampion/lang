@@ -2869,13 +2869,23 @@ func TestParseTaskFunctionDesugar(t *testing.T) {
 	}`); err != nil {
 		t.Errorf("code after an await-bearing if/else (slice 3c) should transform, got error: %v", err)
 	}
-	// Awaits inside a LOOP are still unsupported (a self-referential continuation).
+	// Awaits inside a straight-line `while` loop: supported (loops slice 1) — the
+	// loop becomes a recursive function with loop-carried vars threaded as params.
 	if _, err := Parse(`function loopy(n: i32, a: i32): i32 {
 		var acc = 0;
-		while (acc < n) { var x = await a; acc = acc + x; }
+		var i = 0;
+		while (i < n) { var x = await a; acc = acc + x; i = i + 1; }
+		return acc;
+	}`); err != nil {
+		t.Errorf("await in a straight-line while loop should transform, got error: %v", err)
+	}
+	// A `break` inside an await-bearing loop body: not supported yet (loops slice 2).
+	if _, err := Parse(`function brk(n: i32, a: i32): i32 {
+		var acc = 0;
+		while (acc < n) { var x = await a; acc = acc + x; if (acc > 5) { break; } }
 		return acc;
 	}`); err == nil {
-		t.Error("expected error for `await` inside a loop (slice 3c-loops)")
+		t.Error("expected error for `break` in an await-bearing loop body (loops slice 2)")
 	}
 	// No terminal return after the await.
 	if _, err := Parse(`function noret(a: i32): i32 {
