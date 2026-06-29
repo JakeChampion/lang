@@ -176,3 +176,87 @@ function main(): i32 {
     return build(seed) - 1218;
 }`, "snap_param_scalar_churn_arm64", 7, true)
 }
+
+// TestSelfHostSnapshotParamReclaimWasm is the wasm32 correctness gate for the
+// (already-real) wasm `$__fern_snapshot_dec`: the snapshot-param consume-rebind
+// frees the dead `old` box on a rebind, guarded so it never frees the live
+// result (`old != new`, cow), the caller's still-owned entry box (`old != snap`),
+// or a shared box (rc != 1 — a borrowed param carries no count to release). The
+// wasm body was landed without a wasm-level test (only x86 + arm64 were covered);
+// this fills that gap. Verified by CORRECTNESS under wasmtime — a wrong free of
+// the caller's snapshot corrupts the read-back — plus a WAT-content check that
+// the real guarded free body (rc==1 guard + `$__fern_arr_dec (local.get $old)`)
+// is emitted and dispatched. The heavy OOM-churn is x86-only.
+func TestSelfHostSnapshotParamReclaimWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping wasm snapshot-param reclaim e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+
+	run := func(t *testing.T, prog, name string, want int, wantFree bool) {
+		t.Helper()
+		wat := runCapture(t, gcc, runner, driverBin, []byte(prog))
+		if len(wat) == 0 {
+			t.Fatalf("%s: wasm emitter produced 0 bytes", name)
+		}
+		ws := string(wat)
+		// The real snapshot_dec body guards rc==1 (the borrow leave-shared check)
+		// then frees `old` via $__fern_arr_dec; a leak-safe pass-through body would
+		// be just `(local.get $new)` with neither substring. Both are unique to it.
+		if wantFree {
+			if !strings.Contains(ws, "(i32.ne (i32.load (i32.sub (local.get $old) (i32.const 8))) (i32.const 1))") ||
+				!strings.Contains(ws, "(call $__fern_arr_dec (local.get $old))") {
+				t.Errorf("%s: real $__fern_snapshot_dec free body not found in WAT (a pass-through?)", name)
+			}
+			if !strings.Contains(ws, "call $__fern_snapshot_dec") {
+				t.Errorf("%s: snapshot_dec not dispatched (struct-param consume-rebind did not lower through the wasm IR path?)", name)
+			}
+		}
+		watPath := filepath.Join(dir, name+".wat")
+		if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+			t.Fatalf("write wat: %v", err)
+		}
+		cmd := exec.Command("wasmtime", "run", "--dir", dir, watPath)
+		_, _ = cmd.Output()
+		if code := cmd.ProcessState.ExitCode(); code != want {
+			t.Errorf("%s exited %d, want %d — reclaim corrupted the caller's box?\n--- WAT ---\n%s", name, code, want, ws)
+		}
+	}
+
+	// CALLER-ORIGINAL-INTACT: a wrong free of the snapshot corrupts seed.a. 40.
+	run(t, `struct C { a: i32, n: i32 }
+function (c: C) step(v: i32): C { return C { a: c.a + v, n: c.n + 1 }; }
+function thread(c: C): i32 { c = c.step(10); c = c.step(20); return c.a; }
+function main(): i32 {
+    var seed: C = C { a: 5, n: 0 };
+    var t: i32 = thread(seed);
+    return seed.a + t;
+}`, "snap_param_caller_intact_wasm", 40, true)
+
+	// SCALAR-STRUCT CHURN: threads a scalar struct param 50x via a method receiver,
+	// so $__fern_snapshot_dec frees 50 intermediate boxes; returns an i32 (not c).
+	// A double-free / wrong free across the 50 rebinds would corrupt the read-back.
+	// sum(0..49) = 1225, so build == 1225 and the program returns 7.
+	run(t, `struct C { a: i32, n: i32 }
+function (c: C) step(v: i32): C { return C { a: c.a + v, n: c.n + 1 }; }
+function build(c: C): i32 {
+    var k: i32 = 0;
+    while (k < 50) { c = c.step(k); k = k + 1; }
+    return c.a;
+}
+function main(): i32 {
+    var seed: C = C { a: 0, n: 0 };
+    return build(seed) - 1218;
+}`, "snap_param_scalar_churn_wasm", 7, true)
+}
