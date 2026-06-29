@@ -15795,26 +15795,52 @@ function borrowable_key(fn: parser.FuncDecl): string {
 // only op a precise drop adds (__fern_arr_dec) is already emitted by the
 // function-exit dec-sweep, so no inspection result can flip.
 pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
-    // Least-fixpoint FROM BELOW, iterated to convergence: start with NOTHING
-    // borrowable, then repeatedly re-run the escape walker against the PREVIOUS
-    // iteration's complete registry and mark a param '1' wherever all its uses are
-    // borrows — including forwarding it to any borrowable callee, regardless of
-    // definition order or (mutual) recursion. Pass 1 (empty registry ⇒ every call
-    // arg escapes) is the conservative answer; each later pass only ADDS
-    // borrowability as more callees become known borrowable, so the set grows
-    // monotonically and the iteration converges when its size stops changing. The
-    // registry is kept stripped to the borrowable subset so `param_is_borrowable`'s
-    // scan stays cheap, and a small cap bounds pathological cases (convergence is
-    // normally 2-4 passes). This is the full inter-procedural inference; it is
-    // affordable because it is computed ONCE per module on the emit path (see the
-    // emit_function_via_ir / emit_function_ir call sites), not per lowered function.
-    // Encoded "callee|flags"; methods keyed "<Type>.<method>".
+    // Greatest-fixpoint FROM ABOVE (the native `inferParamEscapes`, ir.go): start
+    // OPTIMISTIC — EVERY param borrowable — then repeatedly re-run the escape
+    // walker; a param flips to NON-borrowable (and never back) the first pass the
+    // walker finds it escaping under the CURRENT registry. The non-call escape
+    // channels (return / alias / container store / slice / lambda capture) don't
+    // consult the registry, so they flip params off on their own; a call-arg
+    // escape only fires once the callee's position is known non-borrowable, so the
+    // set SHRINKS monotonically to the greatest sound fixpoint.
+    //
+    // This supersedes the old least-fixpoint FROM BELOW (start empty, grow): the
+    // from-below pass could never bootstrap a MUTUALLY RECURSIVE borrow — each
+    // param only became borrowable once its callee already was, so a cycle (e.g.
+    // the `expr_unsafe_for`/`stmt_unsafe_for`/`body_unsafe_for` walkers passing
+    // their read-only registry param around the cycle) stayed conservatively
+    // non-borrowable forever. From-above keeps a cyclic param borrowable unless an
+    // ACTUAL escape is proven, matching native and recovering those borrows for the
+    // downstream reclaim (`reclaimable_names_of`, snapshot/precise-drop gating).
+    //
+    // SOUNDNESS NOTE: from-below is fail-safe on its iteration cap (an un-converged
+    // result is SMALLER than the fixpoint ⇒ conservative). From-above is the
+    // opposite — an un-converged result is LARGER ⇒ would mark an escaping param
+    // borrowable. So convergence is detected EXACTLY (the registry signature stops
+    // changing) and the cap is a generous backstop only; real call graphs converge
+    // in a handful of passes (escapes propagate at call-graph-depth speed).
+    // Computed ONCE per module on the emit path (the emit_function_via_ir /
+    // emit_function_ir call sites), not per lowered function. Encoded
+    // "callee|flags"; methods keyed "<Type>.<method>".
+    //
+    // Seed: every param of every function optimistically borrowable.
     var reg: string[] = [];
-    var cap: i32 = 8;
+    var s0: i32 = 0;
+    while (s0 < funcs.len()) {
+        if (funcs[s0].params.len() > 0) {
+            var seedflags: string = "";
+            var sp: i32 = 0;
+            while (sp < funcs[s0].params.len()) { seedflags = seedflags + "1"; sp = sp + 1; }
+            reg = reg.append(borrowable_key(funcs[s0]) + "|" + seedflags);
+        }
+        s0 = s0 + 1;
+    }
+    var cap: i32 = 64;
     var iter: i32 = 0;
-    var prevsize: i32 = 0 - 1;
-    while (iter < cap && reg.len() != prevsize) {
-        prevsize = reg.len();
+    var prevsig: string = "";
+    var sig: string = borrowable_sig(reg);
+    while (iter < cap && sig != prevsig) {
+        prevsig = sig;
         var next: string[] = [];
         var i: i32 = 0;
         while (i < funcs.len()) {
@@ -15831,11 +15857,23 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
             }
             i = i + 1;
         }
-        // borrowability is monotone-increasing, so an unchanged size = converged.
+        // Monotone-DECREASING (flags only go 1->0), so the signature strictly
+        // shrinks until the fixpoint; equal signatures = truly converged.
         reg = next;
+        sig = borrowable_sig(reg);
         iter = iter + 1;
     }
     return reg;
+}
+
+// borrowable_sig serialises a borrowability registry to a single string for the
+// greatest-fixpoint convergence test — entries are produced in funcs order each
+// pass, so equal signatures across two passes means the registry is unchanged.
+function borrowable_sig(reg: string[]): string {
+    var s: string = "";
+    var i: i32 = 0;
+    while (i < reg.len()) { s = s + reg[i] + ";"; i = i + 1; }
+    return s;
 }
 
 // consume_safe_params_interproc: the consume-safe (escape) registry — a param is
