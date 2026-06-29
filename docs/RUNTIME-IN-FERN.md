@@ -1,0 +1,227 @@
+# Runtime helpers in Fern — migration design (issue #2649)
+
+Status: **design / not yet started**. This is the architecture document the
+end goal of [#2649](https://github.com/JakeChampion/lang/issues/2649) needs
+before any helper can move. The near-term stepping stone it references
+(declarative `runtime_need_deps` table + `close_needs` transitive closure +
+the symbol-closure link check) has already landed (PRs #2650, #3697); this
+doc picks up where that left off.
+
+## The end goal, restated
+
+The backend runtime helpers — `__fern_alloc`, `__fern_str_eq`,
+`__fern_map_set`, `__fern_arr_push`, `__fern_i32_pow`, … — are today
+**hand-written assembly strings**, emitted per-backend:
+
+| Backend | Emitter | Gating |
+| --- | --- | --- |
+| self-host x86-64 (legacy AST) | `asm.fern` `emit_runtime` | `need`/`has_need` + `runtime_need_deps`/`close_needs` |
+| self-host x86-64 (IR path) | `asm_ir.fern` `emit_ir_runtime` | same, shared via `asmcore.fern` |
+| self-host arm64 | `asm_arm64.fern` / `asm_arm64_ir.fern` | same |
+| self-host wasm | `wasm.fern` helper bundles | `module_uses_*` + ad-hoc `if` coupling |
+| native (Go) x86-64 | `internal/codegen/x86_64/x86_64.go` | `recordUse` use-flags |
+| native (Go) arm64 | `internal/codegen/arm64/arm64.go` | `recordUse` use-flags |
+| native (Go) wasm | `internal/codegen/wasmbin/runtime.go` | use-flags |
+
+Their inter-helper dependencies are tracked **out of band**: a helper body
+that `call`s another helper is a link-time edge nothing in the compiler
+statically owns. The declarative table made that edge *declared* and
+*transitively closed*, but it is still a parallel artifact that can drift
+from the asm, and the wasm side still couples helpers with ad-hoc `if`s.
+
+The principled end-state: **write the helpers as ordinary Fern functions in a
+`runtime` module compiled through the same pipeline.** Then
+
+- **dependencies are the call graph** — `map_set` calling `str_eq` is an
+  ordinary edge, no `mark_*`, no `runtime_need_deps`;
+- **gating is `treeshake`** (`examples/self_host/treeshake.fern`), the
+  reachability DCE that already prunes `mod.funcs` to what `main` reaches —
+  an unused helper is dropped for free, per program, per backend;
+- **a missing dependency is a compile error, not a link error**;
+- the hand-maintained per-backend asm and the manual dependency machinery
+  (`runtime_need_deps`, `close_needs`, `module_uses_*`, the OR-gates)
+  disappear.
+
+## The hard part: circularity and the primitive floor
+
+A runtime helper exists because the backend needs a routine for an operation.
+The trap: **you cannot write a helper in terms of the operation it
+implements.** `__fern_str_eq` implements `a == b` for strings; if you write
+
+```fern
+function __fern_str_eq(a: string, b: string): boolean { return a == b; }
+```
+
+the compiler lowers `a == b` to `call __fern_str_eq` — infinite regress.
+
+So a Fern-written helper must bottom out only in operations that lower
+**inline, without a helper call**. Call that set the *primitive floor*. It
+partitions the helpers into three tiers by how far they sit above the floor:
+
+### Tier 0 — pure scalar, already above the floor
+
+Helpers whose body is only integer/boolean arithmetic, comparison, and
+control flow. These lower entirely inline today and have **no helper
+dependency and no circularity**. `__fern_i32_pow` is the canonical example
+(`asm.fern:7857`):
+
+```fern
+// emits as the symbol __fern_i32_pow; ABI: (base, exp) -> base^exp
+fn __fern_i32_pow(base: i32, exp: i32): i32 {
+    var r: i32 = 1;
+    var e: i32 = exp;
+    while (e > 0) { r = r * base; e = e - 1; }
+    return r;
+}
+```
+
+Its body uses `*`, `-`, `>`, `while` — none of which is the `**`/pow operator
+that would call back into it. It compiles to standalone scalar code whose ABI
+(`base`, `exp` → result) already matches the asm version. **This is the
+slice-1 candidate.** Companions: `arr_i32_sum`/`product`/`min_max` (once array
+indexing is confirmed inline — see Tier 1), `str_cmp`/`str_eq` *given* a
+raw-byte-read primitive (Tier 2).
+
+### Tier 1 — composite access (arrays, struct/box fields)
+
+Helpers that read a `string`/array box's `{ptr, len}` layout or index
+elements. Array indexing (`xs[i]`) and `.len()` lower inline, so an
+`i32[]`-only helper like `__fern_arr_i32_sum` is expressible — *but* it
+receives an RC-managed array and the compiler's normal Perceus inc/dec would
+fire on the parameter. The helper ABI is "borrow, no refcount traffic," so we
+need either (a) a `borrow`/`@raw` parameter mode that suppresses RC on these
+functions, or (b) to accept and then strip the RC ops in a runtime-module
+pass. **Decision: (a)** — a function attribute (`@runtime` / `@raw`, see
+below) that marks the whole function as operating on borrowed, unmanaged
+values, suppressing inc/dec insertion and the implicit drop epilogue. This is
+also what keeps the emitted code byte-for-byte comparable to the asm version.
+
+### Tier 2 — raw memory (strings byte-by-byte, alloc, maps)
+
+`__fern_str_eq`, `__fern_str_concat`, `__fern_map_set`, and ultimately
+`__fern_alloc` itself read/write raw bytes at computed addresses and call the
+allocator. These are *below* the Fern surface language: there is no safe Fern
+expression for "load the byte at `ptr + i`." They require a small set of
+**intrinsics** that lower directly to a load/store/syscall with no helper:
+
+- `__raw_load8(ptr: i64, off: i64): i32` / `__raw_store8(ptr, off, v)`
+- `__raw_load64` / `__raw_store64`
+- `__raw_alloc(bytes: i64): i64` (the bump/freelist primitive — `__fern_alloc`
+  becomes a *thin Fern wrapper* over this, or the intrinsic *is*
+  `__fern_alloc` and stays asm the longest)
+- `__syscall3(nr, a, b, c): i64` for the I/O leaves (`read_file`,
+  `random_bytes`, the clock helpers)
+
+These intrinsics are the irreducible floor — the asm that *cannot* move. The
+goal is to shrink the hand-written runtime to exactly this floor plus
+`__fern_alloc`, with everything else expressed in Fern above it.
+
+**Migration ladder:** Tier 0 (pow, then the other pure-scalar/`arr_i32_*`
+reductions) → introduce `@runtime`/borrow attribute → Tier 1 (composite,
+borrow-safe) → introduce raw-memory intrinsics → Tier 2 (strings, maps) →
+`__fern_alloc`/syscalls stay as the floor.
+
+## How the runtime module reaches every program
+
+The auto-prelude injector was removed (CLAUDE.md, Phase 5): a program now sees
+only what it `import`s, and `modload` mangles + dedupes loaded modules. A Fern
+runtime must therefore be **auto-loaded by the driver**, not by the user. Two
+options:
+
+1. **Implicit import of `runtime`** — the driver prepends the runtime module
+   to every compilation's load set (a single, controlled, runtime-only
+   re-introduction of injection, *not* a general prelude). Helpers are normal
+   decls; `treeshake` drops the unreached ones before IR lowering, so a
+   trivial `main` still links tiny. **Recommended** — it is the most direct
+   route to "gating is the existing DCE pass."
+2. **Emit-time compile of `runtime.fern`** — keep the runtime out of the
+   user's module graph; the backend compiles `runtime.fern` separately and
+   appends only the reached helpers' emitted code where `emit_runtime` sits
+   today. More plumbing, but zero risk of the runtime's decls colliding with
+   user names or perturbing modload mangling.
+
+Either way the helpers must emit under their **exact existing symbol names**
+(`__fern_str_eq`, …) and ABIs so the transition is a drop-in: a backend can
+move one helper to Fern while the rest stay asm, and call sites are unchanged.
+That needs a way for a Fern function to fix its emitted symbol — a
+`@symbol("__fern_str_eq")` / `@runtime` attribute (also the natural carrier
+for the borrow/no-RC semantics of Tier 1/2). Defining the attribute is a
+prerequisite sub-task.
+
+## Gating: `treeshake` replaces the dependency machinery
+
+Once helpers are reachable Fern functions, `treeshake` (already a CI-gated
+pass, `examples/self_host/treeshake.fern`) prunes `mod.funcs` to those
+reachable from `main`. A helper calling another helper is an ordinary
+identifier reference the collector already follows — so the transitive
+closure that `close_needs` computes by hand becomes the reachability walk for
+free, **per backend**, with no table. As each helper moves to Fern, its entry
+is deleted from `runtime_need_deps` and its `has_need`/OR-gate from the
+emitter; when the table is empty, `runtime_need_deps`/`close_needs`/`need`/
+`has_need` and the wasm `module_uses_*` couplings are deleted outright.
+
+## Constraints the migration must hold
+
+- **Byte-identical self-host fixpoint.** `TestSelfHostLoadFixpointX86_64` /
+  `…ModloadFixpoint…` require `compiler(compiler)` to be stable. Moving a
+  helper changes the emitted bytes of *every* program (including the compiler
+  binary), so each slice must re-establish the fixpoint, and the differential
+  oracles must show the new emission is correct, not merely stable.
+- **Exact ABI parity during transition.** Each moved helper keeps its register
+  ABI (e.g. `__fern_i32_pow`: `%rdi=base, %rsi=exp → %rax`; string box =
+  `{ptr@0, len@8}`) so mixed asm/Fern runtimes interoperate.
+- **No RC traffic in helpers.** Tier 1/2 helpers borrow; the `@runtime`
+  attribute must suppress Perceus inc/dec and the drop epilogue, or the helper
+  changes the heap accounting the rest of the runtime assumes.
+- **IR 512-function budget.** `treeshake` already exists to keep
+  stdlib-importing programs under budget; the runtime module must shake down
+  to only the reached helpers so it does not push programs onto the AST
+  fallback.
+- **arm64 is CI-validated, not local.** Per CLAUDE.md, gate locally on the
+  x86-64 + wasm equivalents; the arm64 matrix runs in CI. Because the two asm
+  backends share `asmcore.fern`, an x86-64-green frontend change is almost
+  always arm64-green — but the per-helper instruction selection is the part
+  that is *not* shared, so a moved helper must still be differential-tested on
+  both.
+- **Goal ordering (CLAUDE.md).** The self-host **IR path** is the priority
+  (goal 1); the native Go backends are slated for retirement, so the migration
+  targets `asm_ir.fern`/`asm_arm64_ir.fern`/`wasm_ir.fern` first. A helper
+  that works on the IR + self-host path but not the legacy AST→asm backend is
+  acceptable per the project's stated gap policy.
+
+## Validation strategy per slice
+
+1. **Differential** — emit the program both ways (helper-as-asm vs
+   helper-as-Fern) and assert identical observable behaviour across the
+   x86-64 absolute-exit oracle, the wasm emit oracle, and the three
+   differential suites (`internal/e2e/feature_differential_test.go` et al.).
+2. **Symbol closure** — `internal/e2e/runtime_helper_closure_test.go` must
+   still pass: the emitted runtime stays symbol-closed whether a helper comes
+   from asm or from compiled Fern.
+3. **Fixpoint** — re-establish `TestSelfHostLoadFixpointX86_64` +
+   `…Modload…`.
+4. **The helper's own behaviour** — an e2e test exercising the operation the
+   helper backs (e.g. `2 ** 10`, `xs.sum()`), proving the Fern implementation
+   is correct, not just present.
+
+## Proposed first slice (slice 1)
+
+Move **`__fern_i32_pow`** to Fern on the self-host IR path:
+
+1. Add the `@runtime`/`@symbol(...)` function attribute (parser + checker +
+   the emit-name hook) — minimal: fix the emitted symbol and mark the function
+   as a runtime leaf. (`i32_pow` needs no RC suppression — it is pure scalar —
+   so this slice can ship the symbol-fixing half of the attribute and defer
+   the borrow half to the Tier 1 slice.)
+2. Add `runtime.fern` with `__fern_i32_pow` as above; wire the driver to load
+   it (option 1) or compile-and-append it (option 2).
+3. Stop emitting the `i32_pow` asm string in `emit_ir_runtime`; drop its
+   `need`/`has_need`/`mark_i32_pow` and its `runtime_need_deps` entry (it has
+   none) so `treeshake` reachability is the sole gate.
+4. Tests: differential `2 ** n` (incl. `n` overflowing i32 to prove the loop),
+   the closure link-test, the x86-64 + wasm oracles, and the fixpoint.
+
+`i32_pow` is chosen because it is Tier 0 (zero deps, zero circularity, pure
+scalar), so slice 1 proves the *plumbing* — attribute, module load, DCE
+gating, fixpoint re-establishment — with the least semantic risk, before the
+borrow attribute and raw-memory intrinsics that the string/map helpers need.
