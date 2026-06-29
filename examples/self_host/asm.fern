@@ -1475,11 +1475,14 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             return s;
         }
         if (fa.field == "pow" && c.args.len() == 1) {
-            s = emit_expr(fa.obj, s);
-            s = emit_expr(c.args[0], s);
-            s = s.write("    popq %rsi\n");
-            s = s.write("    popq %rdi\n");
-            s = s.write("    call __fern_i32_pow\n");
+            // __fern_i32_pow is now a Fern runtime function (#2649), not a
+            // hand-written asm string. Call it via the ordinary __fn_ stack
+            // convention: push args right-to-left (exp then base) so base lands
+            // as param[0] at +16(%rbp) and exp as param[1] at +24(%rbp).
+            s = emit_expr(c.args[0], s);   // exp
+            s = emit_expr(fa.obj, s);      // base
+            s = s.write("    call __fn___fern_i32_pow\n");
+            s = s.write("    addq $16, %rsp\n");
             s = s.write("    pushq %rax\n");
             s = s.mark_i32_pow();
             return s;
@@ -3957,6 +3960,23 @@ function emit_function(fd: parser.FuncDecl, s: asmcore.EmitState): asmcore.EmitS
     return s;
 }
 
+// emit_runtime_fern_fn is the migration primitive for issue #2649: a runtime
+// helper written in *Fern* (rather than a hand-written asm string) is parsed
+// and lowered through the normal function emitter, so it links as
+// `__fn_<name>` and is called via the ordinary stack convention. The body must
+// be self-contained — fully type-annotated and bottoming out in operations
+// that lower inline (scalar arithmetic, control flow), so it needs no checker
+// pass and calls no other helper (no circularity). As more leaf helpers move
+// to Fern, they reuse this entry point.
+function emit_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.EmitState {
+    var m: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var i: i32 = 0;
+    while (i < m.funcs.len()) {
+        s = emit_function(m.funcs[i], s);
+        i = i + 1;
+    }
+    return s;
+}
 
 
 
@@ -7854,21 +7874,14 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write(".Lai32_max_done:\n");
         s = s.write("    ret\n");
     }
-    // __fern_i32_pow: %rdi = base, %rsi = exp. Returns
-    // %rax = base^exp. Negative exp returns 1 (UB-ish, but
-    // matches the language's no-runtime-check stance —
-    // integer pow with negative exp is undefined for i32).
+    // __fern_i32_pow is the first runtime helper written in Fern instead of a
+    // hand-written asm string (#2649): emit_runtime_fern_fn compiles its source
+    // through the normal function emitter, so it links as __fn___fern_i32_pow
+    // and is called via the ordinary stack convention (see the `pow` call site).
+    // Negative exp returns 1 (UB-ish, matching the language's no-runtime-check
+    // stance — integer pow with negative exp is undefined for i32).
     if (s.has_need("i32_pow")) {
-        s = s.write("__fern_i32_pow:\n");
-        s = s.write("    movq $1, %rax\n");        // result
-        s = s.write(".Lpow_loop:\n");
-        s = s.write("    cmpq $0, %rsi\n");
-        s = s.write("    jle .Lpow_done\n");
-        s = s.write("    imulq %rdi, %rax\n");
-        s = s.write("    decq %rsi\n");
-        s = s.write("    jmp .Lpow_loop\n");
-        s = s.write(".Lpow_done:\n");
-        s = s.write("    ret\n");
+        s = emit_runtime_fern_fn(asmcore.rt_src_i32_pow(), s);
     }
     // __fern_str_reverse: %rdi = src box. Returns %rax =
     // new string box with bytes in reverse order.

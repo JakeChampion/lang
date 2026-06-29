@@ -1,8 +1,10 @@
 # Runtime helpers in Fern — migration design (issue #2649)
 
-Status: **design / not yet started**. This is the architecture document the
-end goal of [#2649](https://github.com/JakeChampion/lang/issues/2649) needs
-before any helper can move. The near-term stepping stone it references
+Status: **slice 1 landed** (`__fern_i32_pow`, the AST x86-64 + arm64 backends).
+This is the architecture document the end goal of
+[#2649](https://github.com/JakeChampion/lang/issues/2649) needs as more helpers
+move; see "Slice 1 (landed)" at the end for what the first migration actually
+took, which was simpler than first proposed. The near-term stepping stone it references
 (declarative `runtime_need_deps` table + `close_needs` transitive closure +
 the symbol-closure link check) has already landed (PRs #2650, #3697); this
 doc picks up where that left off.
@@ -204,24 +206,54 @@ emitter; when the table is empty, `runtime_need_deps`/`close_needs`/`need`/
    helper backs (e.g. `2 ** 10`, `xs.sum()`), proving the Fern implementation
    is correct, not just present.
 
-## Proposed first slice (slice 1)
+## Slice 1 (landed) — `__fern_i32_pow`
 
-Move **`__fern_i32_pow`** to Fern on the self-host IR path:
+`__fern_i32_pow` (the integer-power helper backing `n.pow(e)`) is the first
+helper moved off hand-written asm. It is **self-host-only** (the native Go
+backends lower `**`/`pow` their own way and never emit it) and lives only in
+the **AST** emitters (`asm.fern` x86-64, `asm_arm64.fern`) — the IR path
+doesn't lower `pow` at all — so the migration touched exactly those two
+backends plus their shared `asmcore`.
 
-1. Add the `@runtime`/`@symbol(...)` function attribute (parser + checker +
-   the emit-name hook) — minimal: fix the emitted symbol and mark the function
-   as a runtime leaf. (`i32_pow` needs no RC suppression — it is pure scalar —
-   so this slice can ship the symbol-fixing half of the attribute and defer
-   the borrow half to the Tier 1 slice.)
-2. Add `runtime.fern` with `__fern_i32_pow` as above; wire the driver to load
-   it (option 1) or compile-and-append it (option 2).
-3. Stop emitting the `i32_pow` asm string in `emit_ir_runtime`; drop its
-   `need`/`has_need`/`mark_i32_pow` and its `runtime_need_deps` entry (it has
-   none) so `treeshake` reachability is the sole gate.
-4. Tests: differential `2 ** n` (incl. `n` overflowing i32 to prove the loop),
-   the closure link-test, the x86-64 + wasm oracles, and the fixpoint.
+The implementation turned out **simpler than the attribute + module-injection
+plan above**, because `i32_pow` is gated by an explicit `need`, not by
+reachability, and is called only from backend-generated code (no Fern call
+site to rewrite through modload):
 
-`i32_pow` is chosen because it is Tier 0 (zero deps, zero circularity, pure
-scalar), so slice 1 proves the *plumbing* — attribute, module load, DCE
-gating, fixpoint re-establishment — with the least semantic risk, before the
-borrow attribute and raw-memory intrinsics that the string/map helpers need.
+1. **The helper is Fern source, compiled at emit time.**
+   `asmcore.rt_src_i32_pow()` returns the function text
+   (`function __fern_i32_pow(base, exp) { … multiply loop … }`) — shared in
+   `asmcore` so x86-64 and arm64 have one source of truth. Each backend has a
+   small `emit_runtime_fern_fn(src, s)` that does
+   `parser.parse_module(lexer.tokenize(src))` and runs each function through
+   the **normal `emit_function`**. No `@runtime`/`@symbol` attribute was
+   needed: a top-level Fern function already emits under `__fn_<name>`, and the
+   body is fully type-annotated pure scalar, so it needs no checker pass and
+   calls no other helper (no circularity).
+2. **The call site uses the ordinary stack convention.** `n.pow(e)` now pushes
+   args right-to-left and `call __fn___fern_i32_pow` (x86-64) / `bl` (arm64),
+   cleans the stack, and pushes the result — exactly how any user-function call
+   is lowered — instead of the old register-ABI `call __fern_i32_pow`.
+3. **Gating is unchanged.** The existing `i32_pow` `need` (`mark_i32_pow` /
+   `has_need("i32_pow")`) still gates emission, so a program that never calls
+   `.pow()` emits nothing new. The hand-written asm block and the bare
+   `__fern_i32_pow` symbol are gone.
+4. **Tests.** The behavioural pow cases in `TestSelfHostAsmRunX86_64`
+   (`i32-pow-2-10`, `-exp-zero`, `-base-zero`, `-3-5`) prove correctness;
+   `TestSelfHostRuntimeHelperI32PowIsFern` locks in the migration itself
+   (asserts the emitted symbol is `__fn___fern_i32_pow` and the hand-asm form
+   is gone). The x86-64 self-host fixpoint (`TestSelfHostLoadFixpointX86_64` /
+   `…Modload…`) re-establishes; arm64 runs in CI.
+
+### What this proved, and what the bigger migration still needs
+
+Slice 1 establishes the reusable primitive — **a runtime helper written in
+Fern, compiled through the real `emit_function`, linking under the right
+symbol** — for the cheap case: a Tier 0 leaf gated by an explicit `need` and
+called only from backend codegen. The `@runtime`/`@symbol` attribute, the
+driver-loaded `runtime.fern`, and `treeshake`-based gating from the sections
+above become necessary precisely when those conditions break — i.e. once a
+helper must be **reached from Fern call sites** (so modload/treeshake must keep
+and not-mangle it) or carry **borrowed, non-RC params** (Tier 1+). The next
+leaf candidates that fit slice 1's cheap shape (need-gated, scalar, backend-
+called) can reuse `emit_runtime_fern_fn` directly.
