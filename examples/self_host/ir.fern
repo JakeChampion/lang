@@ -457,7 +457,11 @@ pub function op_opt_tag(): Op { return op0("opt_tag"); }
 pub function op_opt_payload(): Op { return op0("opt_payload"); }
 // 8-byte payload read: width 64 + the i64 flag select i64.load vs f64.load.
 pub function op_opt_payload_w(width: i32, is_i64: boolean): Op { return Op { kind: "opt_payload", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" }; }
-pub function op_map_new(keykind: i32): Op { return Op { kind: "map_new", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
+// keykind 2 = struct/enum key: `fns` packs the derived "K.hash|K.eq" so the
+// wasm backend can thread their funcref-table indices into the hash-map box
+// (its hk/keq dispatch them via call_indirect). x86-64 ignores it — its
+// linear-scan map is key-type-agnostic and dispatches eq per op. "" otherwise.
+pub function op_map_new(keykind: i32, fns: string): Op { return Op { kind: "map_new", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: fns }; }
 // op_map_set: `i32_imm` is the KEY kind (0 = string, 1 = i32 — the x86-64
 // runtime's string-eq-vs-int loop selector); `unsigned` carries the VALUE
 // pointerness (the wasm runtime's `vis` RC-retain flag — true when the value

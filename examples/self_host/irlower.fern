@@ -5128,7 +5128,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!mn.ok) { return mn; }
                         var mkk: i32 = 0;
                         if (cid.name == "map_new_i32") { mkk = 1; }
-                        return mn.emit(ir.op_map_new(mkk));
+                        return mn.emit(ir.op_map_new(mkk, ""));
                     }
                     // Built-in Option / Result construction: Some(x)/Ok(x) wrap a
                     // payload with tag 0, Err(x) with tag 1 (None is a bare ident,
@@ -8616,10 +8616,18 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                 var ktag: string = "";
                                 if (inner2.len() >= 4 && inner2[0:4] == "i32,") { kkind = 1; ktag = "i32"; }
                                 else if (inner2.len() >= 7 && inner2[0:7] == "string,") { kkind = 0; ktag = "string"; }
+                                else if (map_key_eqfn(v.type_name) != "") {
+                                    // Struct/enum key: kind 2, dispatched by the key's
+                                    // derived hash/eq (the wasm hash map threads their
+                                    // funcref indices in; x86 ignores them). #2671.
+                                    kkind = 2; ktag = map_key_of(v.type_name);
+                                }
                                 if (kkind >= 0) {
                                     var mns: LowerState = lower_expr(mnc.args[0], s);
                                     if (!mns.ok) { return mns; }
-                                    mns = mns.emit(ir.op_map_new(kkind));
+                                    var mnfns: string = "";
+                                    if (kkind == 2) { mnfns = ktag + ".hash|" + ktag + ".eq"; }
+                                    mns = mns.emit(ir.op_map_new(kkind, mnfns));
                                     var mnsb: LowerState = mns.add_local(v.name);
                                     var mnslot: i32 = mnsb.slot_of(v.name);
                                     mnsb = mnsb.mark_map_type(mnslot, v.type_name);
