@@ -91,7 +91,8 @@ function main(): i32 {
 // The complete wasm edge payoff: two OVERLAPPED outbound fetches whose
 // response bodies come back via std/wasm_reactor.run over the
 // connections' pollables (tcp_pollable → tcp-socket.subscribe) — the
-// wasm analog of native TestReactorFanoutBodies. Task 0 talks to a
+// wasm analog of the native std/async fan-out (TestAsyncFetchFutureFanout
+// / TestAsyncCombinatorsRealFd). Task 0 talks to a
 // slow upstream (200ms) carrying "AAA", task 1 to a fast one (10ms)
 // carrying "BBB"; both reads overlap on one thread (the reactor blocks
 // in wasm_poll), and the results come back in TASK order regardless of
