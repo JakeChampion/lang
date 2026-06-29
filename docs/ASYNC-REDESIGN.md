@@ -220,11 +220,15 @@ user code or a desugar targets directly.
    `await`/`concurrent`/`race` keywords + `ast.Await`, and the desugar
    gates/tests. Net-negative LOC; unblocks self-host (no giant desugar
    to mirror).
-5. **PR5+ — promote `future<T>` to the IR.** Make it a first-class IR
-   type; native lowers it over the reactor, wasm over
-   component-model-async. Fold `std/reactor` / `std/wasm_reactor` /
-   `std/task` into the one abstraction. The deep unification; deferred,
-   sits alongside the goal-1 IR work.
+5. **PR5+ — finish the unification.** Make `Future[T]` resolve on wasm
+   (via the host scheduler) and fold `std/reactor` / `std/wasm_reactor`
+   / `std/task` into the one abstraction. See
+   [`ASYNC-FUTURE-UNIFICATION.md`](ASYNC-FUTURE-UNIFICATION.md) for the
+   design — which, after weighing a first-class IR `future<T>` type
+   (heavy) against keeping `Future[T]` a library type and making the
+   `poll` *wait primitive* universal-real on wasm (light), picks the
+   **light** option: PR5a wasm `poll` over pollables, PR5b wasm future
+   constructors, PR5c delete the leftover reactor modules, PR5d docs.
 
 Each slice: branch → commit → push → PR → subscribe → merge on green.
 PRs 2–4 are mechanical and low-risk given the reactor already exists and
