@@ -2570,3 +2570,23 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `__struct_drop_<T>` / `__field_reclaim_<T>` deep-drop bodies (still pass-throughs
   on arm64 — a RETURNED heap-field builder there still link-errors on
   `__field_reclaim_<T>`, the natural next parity target).
+- 2026-06-29: **Backend parity — `op_arr_push_owned` reclaim-on-grow is now REAL on
+  arm64** (was aliased to plain `__fern_arr_push`, leaking the old buffer). The
+  sole-owner self-append (irlower's `!aliased` `a = a.append(v)`) frees the dead old
+  buffer when the push GREW (reallocated) — only on x86 until now. Added an arm64
+  `__fern_arr_push_owned` wrapper (`asm_arm64.fern`, co-emitted with its
+  `__fern_arr_push` dependency): saves the old ptr, calls `__fern_arr_push`, and iff
+  the result differs frees the old box via the `__fern_arr_dec` freelist path
+  (rc-guarded sole-owner, ≤512 KiB tier — same heap layout used by `snapshot_dec`);
+  the `asm_arm64_ir.fern` `arr_push_owned` dispatch now `bl`s it instead of plain
+  push. Multi-unit `.globl` is already covered (the arm64 IR path reuses
+  `asm_ir.emit_runtime_globls`, which lists `__fern_arr_push_owned`). Verified:
+  `TestSelfHostArrPushOwnedReclaimArm64` (new — a 100× self-append grows several
+  times and the read-back sum = 7 is intact under qemu, asserting both `bl
+  __fern_arr_push_owned` is dispatched and the real freelist-push body is emitted);
+  `TestSelfHostFixpointArm64` byte-identical (the compiler's own self-appends now
+  reclaim on arm64 with no drift); `TestSelfHostRcArm64` self-append suite + the x86
+  self-mutate/free-reclaim/move-on-return suites unchanged. Remaining arm64 parity:
+  the per-type `__struct_drop_<T>` / `__field_reclaim_<T>` deep-drop bodies (still
+  pass-throughs; `__field_reclaim` is now UNBLOCKED — its prerequisite, `snapshot_dec`
+  freeing on arm64, landed above).

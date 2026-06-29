@@ -8203,6 +8203,46 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ldp x19, x20, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
+        // __fern_arr_push_owned — the sole-owner self-append (irlower's !aliased
+        // `a = a.append(v)`). Wraps __fern_arr_push and, iff the push GREW
+        // (reallocated, result != old), frees the dead old buffer onto its size
+        // class (the __fern_arr_dec free path: rc-guarded, sole-owner, ≤512 KiB
+        // tier). Sound only because the emit site proved the slot unaliased, so
+        // the superseded old buffer has no surviving reference. Same heap layout
+        // as __fern_arr_dec (rc @ [old-8], cap @ [old-16], base = old-16, idx =
+        // cap+3, freelist word-indexed, class cap 65536). arm64 mirror of asm_ir's
+        // __fern_arr_push_owned; co-emitted with __fern_arr_push (its dependency).
+        s = s.write("__fern_arr_push_owned:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");             // save old arr ptr
+        s = s.write("    bl __fern_arr_push\n");       // x0 = new (grew) or old (in place)
+        s = s.write("    cmp x0, x19\n");
+        s = s.write("    beq .Lapo_ret\n");            // in place — nothing freed
+        s = s.write("    mov x9, #0x10000\n");
+        s = s.write("    cmp x19, x9\n");              // grew: free the dead old box
+        s = s.write("    blo .Lapo_ret\n");            // low-addr / SSO sentinel
+        s = s.write("    ldur w1, [x19, #-8]\n");      // old rc
+        s = s.write("    tbnz w1, #31, .Lapo_ret\n");  // static sentinel (rc<0)
+        s = s.write("    cmp w1, #1\n");
+        s = s.write("    bne .Lapo_ret\n");            // not sole owner — leave (defensive)
+        s = s.write("    ldur x1, [x19, #-16]\n");     // old cap
+        s = s.write("    add x1, x1, #3\n");           // idx = cap + 3
+        s = s.write("    mov x9, #0x10000\n");         // freelist class cap (65536)
+        s = s.write("    cmp x1, x9\n");
+        s = s.write("    bhs .Lapo_ret\n");            // large tier — leak (matches arr_dec)
+        s = s.write("    stur wzr, [x19, #-8]\n");     // mark freed (clear rc)
+        s = s.write("    sub x2, x19, #16\n");         // old box base
+        s = s.write("    adrp x3, __fern_freelist\n");
+        s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
+        s = s.write("    ldr x9, [x3, x1, lsl #3]\n"); // old head
+        s = s.write("    str x9, [x2]\n");             // *base = old head
+        s = s.write("    str x2, [x3, x1, lsl #3]\n"); // freelist[idx] = base
+        s = s.write(".Lapo_ret:\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");                      // x0 = new
     }
     // __fern_arr_slice: return a fresh array containing
     // arr[start..end] (end exclusive). x0 = src arr ptr,
