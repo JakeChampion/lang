@@ -114,9 +114,9 @@ function main(): i32 {
 	runAsyncIOProgram(t, bin, dir, "race_timers", src, 42)
 }
 
-// with_deadline bounds the whole fan-out by a wall-clock deadline: a
-// future that resolves in time carries its result; one whose timer
-// outlives the deadline is abandoned (the on_timeout value). Both paths
+// with_deadline bounds the whole fan-out by a wall-clock deadline,
+// returning Option[T] per future: Some(result) for one that resolves in
+// time, None for one whose timer outlives the deadline. Both paths
 // deterministic via timerfds + monotonic_ns (no network).
 func TestAsyncWithDeadline(t *testing.T) {
 	bin := buildFernCLI(t)
@@ -135,23 +135,22 @@ function start_timer(ms: i32): async.Future[i32] {
 		want       int
 	}{
 		{
-			// 5ms timer, 500ms deadline → completes → result 5.
+			// 5ms timer, 500ms deadline → completes → Some(5).
 			name: "completes_in_time",
 			body: `function main(): i32 {
     var tasks: async.Future[i32][] = [start_timer(5)];
-    var r: i32[] = async.with_deadline(500, tasks, -1);
-    return r[0];
+    var r: Option[i32][] = async.with_deadline(500, tasks);
+    match (r[0]) { Some(v) => { return v; }, None => { return 99; } }
 }`,
 			want: 5,
 		},
 		{
-			// 500ms timer, 20ms deadline → times out → -1 → map to 42.
+			// 500ms timer, 20ms deadline → times out → None → map to 42.
 			name: "times_out",
 			body: `function main(): i32 {
     var tasks: async.Future[i32][] = [start_timer(500)];
-    var r: i32[] = async.with_deadline(20, tasks, -1);
-    if (r[0] < 0) { return 42; }
-    return 99;
+    var r: Option[i32][] = async.with_deadline(20, tasks);
+    match (r[0]) { Some(v) => { return 99; }, None => { return 42; } }
 }`,
 			want: 42,
 		},
