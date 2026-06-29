@@ -251,6 +251,50 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-29 — `map_verbs` flips to IR — the last non-async AST-router is retired 🎉
+
+The follow-up that closes the keystone below. With the generic map *methods*
+folded (#4016), `map_verbs` already DECIDED `ir` — but SIGSEGV'd at runtime in
+`test_from`, because the free function `from[K, V](pairs: (K, V)[]): Map[K, V]`
+is not a receiver method, so the fold didn't touch it; its `K`/`V` stayed erased
+and its `insert` defaulted to string-key dispatch (the integer key dereferenced
+as a pointer once a second key forced a compare). Four interlocking
+monomorphiser changes let `from` (and any free map generic over a tuple-array)
+monomorphise:
+
+1. **`bind_unify` tuple support** — destructure a `(K, V)` paren pattern and
+   unify pairwise (it only handled `Base[...]` brackets + arrays before), so a
+   `(K, V)[]` argument recovers both vars.
+2. **`mono_infer` tuple case** — a tuple literal `(e0, e1)` infers `(T0, T1)`,
+   so `from([(5, 50), …])` types its argument as `(i32, i32)[]` (the array case
+   already lifts the element type).
+3. **Promotion — `feeds_map_typearg`** — a type var feeding a `Map[...]` key/
+   value position is promoted to the monomorphiser (the Map-codegen sibling of
+   `feeds_user_parametric`'s struct-clone rule); `feeds_user_parametric`
+   deliberately excludes the built-in `Map`, but a generic body's map ops need
+   the concrete K/V to pick the key-kind.
+4. **Promotion — `token_in_tuple_param`** — a type var inside a tuple / tuple-
+   array param is bindable now that `bind_unify` destructures tuples (the tuple
+   sibling of `token_at_paren_depth0`).
+
+`from` now promotes (`feeds` via the `Map[K,V]` return, `bindable` via the
+`(K,V)[]` param), `infer_inst` binds `K=i32, V=i32` from the call's tuple-array
+arg, and the worklist clones `map__from__i32__i32` with `subst_ty` rewriting
+`Map[K,V] → Map[i32,i32]` — correct key-kind, no crash.
+
+`map_verbs` now decides `ir` and runs **byte-identical to the interpreter** (all
+16 tests). Enrolled in the differential gate (`selfHostStdTestCases`). Low blast
+radius: the self-host compiler's own sources use no free generic with a tuple-
+array / `Map[...]` param, so the byte-identical fixpoint is preserved.
+
+Verified: `TestSelfHostStdTestE2E{,Arm64}/map_verbs` (differential vs interp),
+`TestSelfHostStage2FixedPoint` (byte-identical), full x86-64 differential gate,
+`TestSelfHostMapVerbsIR` (the #4016 dedicated test still green).
+
+**The legacy AST→ASM emitters are now reached only by the parallel-owned async
+modules** (`async_concurrent` / `async_runtime`); every other
+`examples/tests/*_test.fern` routes IR.
+
 ### 2026-06-29 — chained ops on a BUILTIN map-method call lower correctly (`m.insert(k,v).len()`)
 
 Follow-up to #4016 below. That PR's map-op receiver `ExprCall` arm recovers the
