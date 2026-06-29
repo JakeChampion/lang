@@ -343,6 +343,19 @@ pub function (s: EmitState) mark_i32_pow(): EmitState {
     return s.need("i32_pow");
 }
 
+// rt_src_i32_pow is the Fern source for __fern_i32_pow(base, exp) = base^exp,
+// the integer-power runtime helper backing `n.pow(e)`. It is the first runtime
+// helper written in Fern instead of a hand-written asm string (issue #2649):
+// each backend's emit_runtime_fern_fn parses this and lowers it through the
+// normal function emitter, so it links as __fn___fern_i32_pow and is called via
+// the ordinary stack convention. Shared here (not per-backend) so the helper
+// logic has a single source of truth across x86-64 and arm64. Pure scalar (a
+// multiply loop) — Tier 0 in docs/RUNTIME-IN-FERN.md: no helper dependency and
+// no circularity (its body uses `*`/`-`/`while`, never `.pow()` itself).
+pub function rt_src_i32_pow(): string {
+    return "function __fern_i32_pow(base: i32, exp: i32): i32 { var r: i32 = 1; var e: i32 = exp; while (e > 0) { r = r * base; e = e - 1; } return r; }";
+}
+
 pub function match_payload_type(scrut: parser.Expr, s: EmitState): Ty {
     match (scrut) {
         parser.ExprIdent(id) => {
