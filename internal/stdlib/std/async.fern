@@ -1,0 +1,196 @@
+// std/async — structured-concurrency combinators over `Future[T]`.
+//
+// This is the BLESSED async surface (docs/ASYNC-REDESIGN.md). It
+// replaces the `concurrent { … }` / `await` / `race` keyword surface
+// (a parser-side CPS transform) with plain library functions over one
+// abstraction — a `Future[T]`, a not-yet-ready value of type `T`. The
+// concurrency points are explicit (you call `gather` / `race`), the
+// model is colorless (no function coloring, no compiler transform),
+// and it has a real wasm story (it drives the universal `poll`
+// builtin, not stackful green threads).
+//
+// PORTABILITY: every combinator compiles and runs on all backends.
+//   * `Ready(v)` futures resolve immediately everywhere — so a fan-out
+//     of ready futures (the unit-test shape) works on interp / wasm /
+//     native alike.
+//   * `Pending(fd, resume)` futures resolve when `fd` is readable,
+//     driven by the real `poll` builtin (poll(2) / ppoll(2)). On
+//     interp / wasm `poll` is a `-1` stub, so fd-backed futures never
+//     resolve there — real socket I/O is native today (the wasm path
+//     is component-model-async via `@import async`, folded in later —
+//     docs/ASYNC-REDESIGN.md PR5).
+//
+// Generic over `T`: the native compiler monomorphizes, so
+// `gather` over `Future[string]` (response bodies) is a first-class
+// case, not a hand-duplicated `…Str` twin. This is the shape that
+// drops the i32-throughout restriction of the old `std/task` runtime.
+
+// A pending computation yielding a value of type `T`.
+//
+//   Ready(value)         — already resolved with this value.
+//   Pending(fd, resume)  — suspended until `fd` is readable; the
+//                          driver calls `resume(fd)` to get the next
+//                          Future (typically a non-blocking read that
+//                          returns `Ready(...)`). Multi-step I/O
+//                          chains by returning another `Pending`.
+pub enum Future[T] {
+    Ready(T),
+    Pending(i32, (i32) => Future[T]),
+}
+
+// __all_ready(fs) — true once no future is still pending.
+function __all_ready[T](fs: Future[T][]): boolean {
+    var i: i32 = 0;
+    while (i < fs.len()) {
+        match (fs[i]) {
+            Ready(v) => { },
+            Pending(fd, c) => { return false; },
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// gather(fs, on_incomplete) — await ALL futures, returning their
+// values in input order. The canonical edge fan-out: issue N outbound
+// fetches, take every result (cache + primary). All pending futures'
+// fds are in flight simultaneously, so their I/O overlaps on one
+// thread. A future that never resolves (poll error / the interp-wasm
+// stub) lands `on_incomplete` in its slot — generic `T` has no default,
+// so the caller supplies the fallback (matching the realities of a
+// blocking poll, which otherwise always makes progress).
+pub function gather[T](fs_in: Future[T][], on_incomplete: T): T[] {
+    var fs: Future[T][] = fs_in;
+    while (true) {
+        if (__all_ready(fs)) { break; }
+        var fds: i32[] = [];
+        var idxs: i32[] = [];
+        var i: i32 = 0;
+        while (i < fs.len()) {
+            match (fs[i]) {
+                Ready(v) => { },
+                Pending(fd, c) => {
+                    fds = fds.append(fd);
+                    idxs = idxs.append(i);
+                },
+            }
+            i = i + 1;
+        }
+        var ready: i32 = poll(fds, -1);
+        if (ready < 0) { break; }
+        var ti: i32 = idxs[ready];
+        match (fs[ti]) {
+            Ready(v) => { },
+            Pending(fd, resume) => { fs = fs.with(ti, resume(fd)); },
+        }
+    }
+    var out: T[] = [];
+    var k: i32 = 0;
+    while (k < fs.len()) {
+        match (fs[k]) {
+            Ready(v) => { out = out.append(v); },
+            Pending(fd, c) => { out = out.append(on_incomplete); },
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
+// race(fs, none_val) — await the FIRST future to resolve, returning
+// `(winnerIndex, value)`. Happy-eyeballs: fan out to N upstreams, take
+// the fastest answer, abandon the rest. CANCELLATION is structural —
+// the losers are simply never driven again; their parked
+// continuations (and captured frames) are dropped and reference
+// counting reclaims them. An already-`Ready` future wins immediately
+// (lowest index). Returns `(-1, none_val)` only if no future can make
+// progress (poll error / no pending fds).
+pub function race[T](fs_in: Future[T][], none_val: T): (i32, T) {
+    var fs: Future[T][] = fs_in;
+    var j: i32 = 0;
+    while (j < fs.len()) {
+        match (fs[j]) {
+            Ready(v) => { return (j, v); },
+            Pending(fd, c) => { },
+        }
+        j = j + 1;
+    }
+    while (true) {
+        var fds: i32[] = [];
+        var idxs: i32[] = [];
+        var i: i32 = 0;
+        while (i < fs.len()) {
+            match (fs[i]) {
+                Ready(v) => { },
+                Pending(fd, c) => {
+                    fds = fds.append(fd);
+                    idxs = idxs.append(i);
+                },
+            }
+            i = i + 1;
+        }
+        if (fds.len() == 0) { return (-1, none_val); }
+        var ready: i32 = poll(fds, -1);
+        if (ready < 0) { return (-1, none_val); }
+        var ti: i32 = idxs[ready];
+        match (fs[ti]) {
+            Ready(v) => { return (ti, v); },
+            Pending(fd, resume) => {
+                var nx: Future[T] = resume(fd);
+                match (nx) {
+                    Ready(v) => { return (ti, v); },
+                    Pending(nfd, nc) => { fs = fs.with(ti, nx); },
+                }
+            },
+        }
+    }
+    return (-1, none_val);
+}
+
+// with_deadline(ms, fs, on_timeout) — await ALL futures, but bound the
+// whole fan-out by `ms` wall-clock milliseconds. A future that misses
+// the deadline is abandoned and lands `on_timeout` in its slot (a
+// cancelled straggler). This is happy-eyeballs with an SLA: fan out to
+// N upstreams, take whatever answers in time, drop the rest.
+pub function with_deadline[T](ms: i32, fs_in: Future[T][], on_timeout: T): T[] {
+    var fs: Future[T][] = fs_in;
+    var start_ns: i64 = monotonic_ns();
+    var ns_per_ms: i64 = 1000000;
+    var deadline_ns: i64 = (ms as i64) * ns_per_ms;
+    while (true) {
+        if (__all_ready(fs)) { break; }
+        var fds: i32[] = [];
+        var idxs: i32[] = [];
+        var i: i32 = 0;
+        while (i < fs.len()) {
+            match (fs[i]) {
+                Ready(v) => { },
+                Pending(fd, c) => {
+                    fds = fds.append(fd);
+                    idxs = idxs.append(i);
+                },
+            }
+            i = i + 1;
+        }
+        var remaining_ns: i64 = deadline_ns - (monotonic_ns() - start_ns);
+        if (remaining_ns <= 0) { break; }
+        var remaining_ms: i32 = (remaining_ns / ns_per_ms) as i32;
+        if (remaining_ms <= 0) { remaining_ms = 1; }
+        var ready: i32 = poll(fds, remaining_ms);
+        if (ready < 0) { break; }
+        var ti: i32 = idxs[ready];
+        match (fs[ti]) {
+            Ready(v) => { },
+            Pending(fd, resume) => { fs = fs.with(ti, resume(fd)); },
+        }
+    }
+    var out: T[] = [];
+    var k: i32 = 0;
+    while (k < fs.len()) {
+        match (fs[k]) {
+            Ready(v) => { out = out.append(v); },
+            Pending(fd, c) => { out = out.append(on_timeout); },
+        }
+        k = k + 1;
+    }
+    return out;
+}

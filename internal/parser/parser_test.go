@@ -2945,39 +2945,6 @@ func TestParseConcurrentDesugar(t *testing.T) {
 	}
 }
 
-// `race { spawn …; spawn …; }` is an expression desugaring onto task.select; it
-// yields (winner, value). Parses as a `var (w, v) = race { … };` destructure.
-func TestParseRaceDesugar(t *testing.T) {
-	prog, err := Parse(`function h(): i32 {
-		var (w, v) = race { spawn f(1); spawn g(2); };
-		return v;
-	}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	d, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Destructure)
-	if !ok || len(d.Names) != 2 {
-		t.Fatalf("stmt[0] should be a 2-name destructure, got %T", prog.Funcs[0].Body.Stmts[0])
-	}
-	be, ok := d.Init.(*ast.BlockExpr)
-	if !ok {
-		t.Fatalf("race init should be a *ast.BlockExpr, got %T", d.Init)
-	}
-	// Tail is task.select([...], rx).
-	call, ok := be.Tail.(*ast.Call)
-	if !ok {
-		t.Fatalf("race block tail should be a call, got %T", be.Tail)
-	}
-	fa, ok := call.Callee.(*ast.FieldAccess)
-	if !ok || fa.Field != "select" {
-		t.Errorf("race tail should call task.select, got %#v", call.Callee)
-	}
-	// An empty race is rejected.
-	if _, err := Parse(`function h(): i32 { var (w, v) = race { }; return v; }`); err == nil {
-		t.Error("expected error for an empty race block")
-	}
-}
-
 // A concurrent block must spawn at least one task.
 func TestParseConcurrentErrors(t *testing.T) {
 	if _, err := Parse(`function h(): i32 { concurrent { } return 0; }`); err == nil {

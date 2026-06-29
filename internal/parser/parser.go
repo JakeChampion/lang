@@ -4791,86 +4791,6 @@ func (p *parser) parseUse(parent *ast.Block) error {
 	return nil
 }
 
-// parseRaceExpr desugars a `race { spawn f(args); spawn g(args); }` first-to-
-// finish race (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 5) onto std/task.select.
-// Like `concurrent`, each racer is a spawn target with the runtime protocol
-// `(task.Reactor, args…) -> (task.Step, task.Reactor)` (a 3b-transformed ordinary
-// task function works too); the block injects the reactor as the first arg and
-// threads it. It is an EXPRESSION yielding `(winnerIndex, result)` — the first
-// task to reach `Done` wins and the rest are abandoned:
-//
-//	var (winner, value) = race {
-//	    spawn fetch(a);   // racer 0
-//	    spawn fetch(b);   // racer 1
-//	};
-//
-// desugars to a block-expression:
-//
-//	{
-//	    var __race_rx_0 = task.reactor_new();
-//	    let (__race_task_0, __race_rx_1) = fetch(__race_rx_0, a);
-//	    let (__race_task_1, __race_rx_2) = fetch(__race_rx_1, b);
-//	    task.select([__race_task_0, __race_task_1], __race_rx_2)   // tail → (i32, i32)
-//	}
-//
-// All racers start before the select, so their I/O overlaps. Requires `import
-// "std/task"`.
-func (p *parser) parseRaceExpr() (ast.Expr, error) {
-	kw := p.advance() // race
-	if _, err := p.expect(lexer.Punct, "{"); err != nil {
-		return nil, err
-	}
-	id := p.concN
-	p.concN++
-
-	mkIdent := func(name string) *ast.Ident { return &ast.Ident{P: kw.Pos, Name: name} }
-	rxName := func(v int) string { return fmt.Sprintf("__race_rx_%d_%d", id, v) }
-	taskName := func(k int) string { return fmt.Sprintf("__race_task_%d_%d", id, k) }
-	taskCall := func(fn string, args []ast.Expr) *ast.Call {
-		return &ast.Call{P: kw.Pos,
-			Callee: &ast.FieldAccess{P: kw.Pos, Target: mkIdent("task"), Field: fn, FieldPos: kw.Pos},
-			Args:   args}
-	}
-
-	stmts := []ast.Stmt{&ast.Var{P: kw.Pos, Name: rxName(0), Init: taskCall("reactor_new", nil)}}
-	nracers, rxVer := 0, 0
-	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
-		if !p.match(lexer.Keyword, "spawn") {
-			return nil, p.errorf(p.peek().Pos, "a `race` block contains only `spawn CALL;` racers")
-		}
-		p.advance() // spawn
-		callExpr, err := p.parseExpr()
-		if err != nil {
-			return nil, err
-		}
-		call, ok := callExpr.(*ast.Call)
-		if !ok {
-			return nil, p.errorf(kw.Pos, "`spawn` must be followed by a function call returning (task.Step, task.Reactor)")
-		}
-		if _, err := p.expect(lexer.Punct, ";"); err != nil {
-			return nil, err
-		}
-		call.Args = append([]ast.Expr{mkIdent(rxName(rxVer))}, call.Args...)
-		stmts = append(stmts, &ast.Destructure{P: kw.Pos,
-			Names: []string{taskName(nracers), rxName(rxVer + 1)}, Init: call})
-		nracers++
-		rxVer++
-	}
-	if _, err := p.expect(lexer.Punct, "}"); err != nil {
-		return nil, err
-	}
-	if nracers == 0 {
-		return nil, p.errorf(kw.Pos, "a `race` block must spawn at least one racer (`spawn CALL;`)")
-	}
-
-	taskElems := make([]ast.Expr, nracers)
-	for k := range taskElems {
-		taskElems[k] = mkIdent(taskName(k))
-	}
-	tail := taskCall("select", []ast.Expr{&ast.ArrayLit{P: kw.Pos, Elems: taskElems}, mkIdent(rxName(rxVer))})
-	return &ast.BlockExpr{P: kw.Pos, Stmts: stmts, Tail: tail}, nil
-}
-
 // parseConcurrent desugars a structured-concurrency block onto the
 // std/task runtime (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 3). The
 // shape is one or more spawn-bindings followed by ordinary statements
@@ -6087,12 +6007,6 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			// expression parsing ever sees it, so this branch only
 			// fires from a true expression context.
 			return p.parseMatchExpr()
-		case "race":
-			// `race { spawn f(); spawn g(); }` — a first-to-finish race over the
-			// spawned tasks, in expression position, yielding `(winnerIndex,
-			// result)`. Desugars onto std/task.select. Used as
-			// `var (w, v) = race { … };`.
-			return p.parseRaceExpr()
 		case "function":
 			// Anonymous function literal: `function (x: T): R { body }`.
 			// Produces a Lambda expression — same shape as a named

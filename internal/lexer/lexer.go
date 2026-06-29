@@ -101,7 +101,6 @@ var keywords = map[string]bool{
 	// an expression yielding (winnerIndex, result). Desugars onto std/task.select.
 	// (Named `race`, not `select`, so the runtime function `task.select` — already
 	// an identifier — keeps working.)
-	"race":    true,
 	"true":    true,
 	"false":   true,
 	"boolean": true,
