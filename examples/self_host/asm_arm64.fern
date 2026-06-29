@@ -3738,39 +3738,11 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
         s = asm_arm64_ir.emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, irlower.fn_names_of(mod.funcs), frsf, csparams, rfrsf);
         fi = fi + 1;
     }
-    // Per-type __field_reclaim_<T> pass-through bodies (#3457). arm64 does not
-    // reclaim the replaced field buffers yet — a leak-safe PASS-THROUGH (returns
-    // `new`), mirroring __fern_snapshot_dec / op_arr_push_owned's arm64 aliasing.
-    // Emitted per-unit + `.weak` (link-deduped) for each type this unit calls.
-    // Stack-arg ABI: [sp]=snap, [sp+16]=old, [sp+32]=new (16-byte slots).
-    var fri: i32 = 0;
-    while (fri < s.needed.len()) {
-        var frnd: string = s.needed[fri];
-        if (frnd.len() > 14 && frnd[0:14] == "field_reclaim:") {
-            var frsan: string = asmcore.sanitize_label(frnd[14 : frnd.len()]);
-            s = s.write(".weak __fn___field_reclaim_" + frsan + "\n");
-            s = s.write("__fn___field_reclaim_" + frsan + ":\n");
-            s = s.write("    ldr x0, [sp, #32]\n");      // new
-            s = s.write("    ret\n");
-        }
-        fri = fri + 1;
-    }
-    // Per-type __struct_drop_<T> pass-through bodies (#3457). arm64 does not deep-
-    // drop the struct's rc-array fields yet — a leak-safe PASS-THROUGH (returns
-    // the box arg), mirroring the field_reclaim pass-through above. Stack-arg ABI:
-    // [sp]=box (one 16-byte slot). Emitted per-unit + `.weak` (link-deduped).
-    var sdi: i32 = 0;
-    while (sdi < s.needed.len()) {
-        var sdnd: string = s.needed[sdi];
-        if (sdnd.len() > 12 && sdnd[0:12] == "struct_drop:") {
-            var sdsan: string = asmcore.sanitize_label(sdnd[12 : sdnd.len()]);
-            s = s.write(".weak __fn___struct_drop_" + sdsan + "\n");
-            s = s.write("__fn___struct_drop_" + sdsan + ":\n");
-            s = s.write("    ldr x0, [sp]\n");           // box
-            s = s.write("    ret\n");
-        }
-        sdi = sdi + 1;
-    }
+    // Per-type __field_reclaim_<T> + __struct_drop_<T> bodies (#3457). Shared
+    // with emit_module's single-unit IR path (so the load_run / emit_module
+    // route also emits them — previously only this multi-unit path did, so a
+    // reclaimable struct-with-array-field link-failed there).
+    s = emit_arm64_reclaim_drop_bodies(s);
     // Fold the whole-program need union (sibling modules' needs) into the entry's
     // single runtime BEFORE _start, so _start's args gating sees a sibling's
     // args() need. Inert (empty) on the single-unit path.
@@ -3808,6 +3780,107 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
         s = emit_rodata_pools_arm64(s);
     }
     return strbuf_take();
+}
+
+// emit_arm64_reclaim_drop_bodies emits this unit's per-type __field_reclaim_<T>
+// + __struct_drop_<T> helper bodies (#3457), `.weak` (link-deduped across units).
+// Called by BOTH arm64 IR emit paths — emit_module_ir_unit_arm64 (multi-unit)
+// and emit_module's single-unit IR dispatch — so a reclaimable struct with an
+// rc-array field links on either. field_reclaim is still a leak-safe PASS-THROUGH
+// (returns `new`; stack-arg ABI [sp]=snap,[sp+16]=old,[sp+32]=new) — slice 1b
+// makes it real once __fern_snapshot_dec frees on arm64; __struct_drop is the
+// REAL deep-drop (slice 1a).
+function emit_arm64_reclaim_drop_bodies(s: asmcore.EmitState): asmcore.EmitState {
+    var fri: i32 = 0;
+    while (fri < s.needed.len()) {
+        var frnd: string = s.needed[fri];
+        if (frnd.len() > 14 && frnd[0:14] == "field_reclaim:") {
+            var frsan: string = asmcore.sanitize_label(frnd[14 : frnd.len()]);
+            s = s.write(".weak __fn___field_reclaim_" + frsan + "\n");
+            s = s.write("__fn___field_reclaim_" + frsan + ":\n");
+            s = s.write("    ldr x0, [sp, #32]\n");      // new (pass-through)
+            s = s.write("    ret\n");
+        }
+        fri = fri + 1;
+    }
+    var sdi: i32 = 0;
+    while (sdi < s.needed.len()) {
+        var sdnd: string = s.needed[sdi];
+        if (sdnd.len() > 12 && sdnd[0:12] == "struct_drop:") {
+            s = emit_arm64_struct_drop_one(s, sdnd[12 : sdnd.len()]);
+        }
+        sdi = sdi + 1;
+    }
+    return s;
+}
+
+// emit_arm64_struct_drop_one emits one __struct_drop_<sty>(box) -> box body, the
+// arm64 transcription of asm_ir.emit_ir_struct_drop_one. Stack-arg ABI: [sp]=box.
+// For each rc-tracked ARRAY field (offset (k+1)*8 off the box's data pointer) it
+// releases the field BUFFER via __fn___fern_arr_dec (rc-guarded shallow dec/free);
+// for a struct/enum-array field it FIRST walks the buffer (when uniquely owned)
+// dec'ing each element box, then dec's the buffer. Returns `box` in x0 (the call
+// site drops it). x10/x11/x12 hold box/buffer/index across the field loop —
+// __fern_arr_dec and __fern_rc_is_unique clobber only x0..x3,x9, so they survive;
+// the low-addr guard uses `cmp #16, lsl #12` (= 0x10000) to avoid tying up x9
+// across the calls. The nested bls need LR saved, hence the stp x29,x30 frame;
+// each call's arg is pushed at [sp] (the helpers' frameless ABI) then popped.
+// IR array layout: len at buffer[0], element i at buffer[(i+1)*8], rc at buffer-8.
+function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.EmitState {
+    var san: string = asmcore.sanitize_label(sty);
+    var n: i32 = irlower.decl_field_count(s.struct_decls, sty);
+    s = s.write(".weak __fn___struct_drop_" + san + "\n");
+    s = s.write("__fn___struct_drop_" + san + ":\n");
+    s = s.write("    ldr x10, [sp]\n");                 // box (read before the frame push)
+    s = s.write("    mov x0, x10\n");                   // default return = box
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");     // save LR/FP for the nested bls
+    s = s.write("    cmp x10, #16, lsl #12\n");         // box null / low-addr -> skip fields
+    s = s.write("    blo .Lasd_" + san + "_ret\n");
+    var k: i32 = 0;
+    while (k < n) {
+        var fdt: string = irlower.decl_field_type_at(s.struct_decls, sty, k);
+        var k_scalar: boolean = irlower.is_leaksafe_array_field(fdt);
+        var k_box: boolean = !k_scalar && (irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt));
+        var off: string = util.i32_to_string((k + 1) * 8);
+        var ks: string = util.i32_to_string(k);
+        if (k_box) {
+            s = s.write("    ldr x11, [x10, #" + off + "]\n");      // buffer = box.field_k
+            s = s.write("    cmp x11, #16, lsl #12\n");             // null/low -> skip walk
+            s = s.write("    blo .Lasd_" + san + "_buf" + ks + "\n");
+            s = s.write("    str x11, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_rc_is_unique\n");       // shared (rc>1) -> skip element walk
+            s = s.write("    add sp, sp, #16\n");
+            s = s.write("    cbz x0, .Lasd_" + san + "_buf" + ks + "\n");
+            s = s.write("    mov x12, #0\n");                       // i = 0
+            s = s.write(".Lasd_" + san + "_loop" + ks + ":\n");
+            s = s.write("    ldr x0, [x11]\n");                     // len = buffer[0]
+            s = s.write("    cmp x12, x0\n");
+            s = s.write("    bge .Lasd_" + san + "_buf" + ks + "\n");  // i >= len -> done
+            s = s.write("    add x1, x12, #1\n");
+            s = s.write("    ldr x0, [x11, x1, lsl #3]\n");         // elem = buffer[(i+1)*8]
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_arr_dec\n");            // shallow dec the element box
+            s = s.write("    add sp, sp, #16\n");
+            s = s.write("    add x12, x12, #1\n");
+            s = s.write("    b .Lasd_" + san + "_loop" + ks + "\n");
+            s = s.write(".Lasd_" + san + "_buf" + ks + ":\n");
+            s = s.write("    ldr x0, [x10, #" + off + "]\n");       // reload buffer (x11 may be past-end)
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_arr_dec\n");            // shallow dec the buffer slab
+            s = s.write("    add sp, sp, #16\n");
+        } else if (k_scalar) {
+            s = s.write("    ldr x0, [x10, #" + off + "]\n");       // box.field_k buffer
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_arr_dec\n");
+            s = s.write("    add sp, sp, #16\n");
+        }
+        k = k + 1;
+    }
+    s = s.write("    mov x0, x10\n");                   // restore return (bls clobbered x0)
+    s = s.write(".Lasd_" + san + "_ret:\n");
+    s = s.write("    ldp x29, x30, [sp], #16\n");
+    s = s.write("    ret\n");
+    return s;
 }
 
 pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
@@ -8589,6 +8662,11 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         // mark "maps" but never its transitive deps, so the map runtime is
         // gated out and the program fails to link.
         s = s.close_needs();
+        // Per-type __field_reclaim_<T> / __struct_drop_<T> bodies (#3457) — the
+        // single-unit IR path must emit them too (emit_module_ir_unit_arm64 does
+        // for the multi-unit path), else a reclaimable struct-with-array-field
+        // link-fails on the `__struct_drop_<T>` call this path's emit_body wrote.
+        s = emit_arm64_reclaim_drop_bodies(s);
         s = emit_runtime(s, darwin);
         return strbuf_take();
     }

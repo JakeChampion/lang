@@ -308,6 +308,12 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"sort_by_and_ci", langSrcAbs(t, "examples/tests/sort_by_and_ci_test.fern"), ""},
 		{"option_combinators", langSrcAbs(t, "examples/tests/option_combinators_test.fern"), ""},
 		{"result_combinators", langSrcAbs(t, "examples/tests/result_combinators_test.fern"), ""},
+		// rc_struct_drop exercises __struct_drop_<T> deep-drop of a reclaimable
+		// struct's rc-array fields (scalar-array k_scalar + struct-array k_box
+		// paths) over many alloc→drop cycles. Differential vs interp catches a
+		// broken drop on x86-64 AND arm64 — the latter now a real deep-drop
+		// (Perceus self-host slice 1a) rather than a leak-safe pass-through.
+		{"rc_struct_drop", langSrcAbs(t, "examples/tests/rc_struct_drop_test.fern"), ""},
 		// map_verbs flips to IR now that generic map verbs monomorphise: the
 		// methods (merge/extend/get_or_insert/entries/…) via the __mapm_ fold
 		// (#4016), and the free `from[K,V](pairs: (K,V)[])` via promoting a
