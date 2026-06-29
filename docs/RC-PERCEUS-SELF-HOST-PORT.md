@@ -2550,3 +2550,23 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   (substantial dataflow; a false-positive freshness = UAF, caught by the per-module
   RUN gate), value unchanged (admits the `lower_func`/`parse_x` discarded-local hot
   path once it lands), prerequisite unchanged (`__struct_drop_<T>`, #3868).
+- 2026-06-29: **Backend parity — `__fern_snapshot_dec` is now a REAL reclaim on
+  arm64** (was a leak-safe pass-through). The snapshot-param consume-rebind free
+  (`f(s: S): R { s = s.step(x); … }`, #3456 slice 2) frees the old box —
+  rc-guarded, cow-guarded (≠ `new`), snapshot-guarded (≠ the caller's entry box)
+  — only on x86 until now; arm64 just returned `new` and leaked the intermediates.
+  Ported the x86 body (`asm_ir.emit_ir_runtime`) to `asm_arm64.fern`'s
+  `__fn___fern_snapshot_dec`, matching the arm64 `__fern_arr_dec` free path exactly
+  (rc @ `[old-8]`, cap @ `[old-16]`, base = `old-16`, idx = `cap+3`, `__fern_freelist`
+  word-indexed, class cap 65536; stack-arg ABI `[sp]=snap, [sp+16]=old, [sp+32]=new`).
+  Verified: `TestSelfHostSnapshotParamReclaimArm64` (caller-original-intact = 40 +
+  a 50× scalar-struct churn = 7, both under qemu, asserting the real freelist-push
+  body `str x5, [x6, x4, lsl #3]` is emitted, not the stub); `TestSelfHostFixpointArm64`
+  byte-identical (the compiler's own consume-rebind builders now reclaim on arm64
+  with no self-reproduction drift); x86 snapshot/reclaim suites unchanged. Low blast
+  radius — only converts a sound leak into a real free on one backend; the shared
+  analysis (`snapshot_param_names_of`) is already x86-validated. Remaining arm64
+  reclaim-parity slices: `op_arr_push_owned` reclaim-on-grow and the per-type
+  `__struct_drop_<T>` / `__field_reclaim_<T>` deep-drop bodies (still pass-throughs
+  on arm64 — a RETURNED heap-field builder there still link-errors on
+  `__field_reclaim_<T>`, the natural next parity target).

@@ -787,8 +787,10 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // stack-ABI __fn___fern_chr in asm_arm64.emit_runtime).
             if (o.str == "__fern_chr") { s = s.mark_chr(); }
             // __field_reclaim_<T> (#3457): record the type so emit_module_ir_unit_arm64
-            // emits a per-type pass-through body. arm64 does NOT reclaim yet (leak-safe
-            // pass-through, mirroring __fern_snapshot_dec); still needs the heap runtime.
+            // emits a per-type pass-through body. arm64 does NOT deep-drop struct
+            // fields yet (leak-safe pass-through); still needs the heap runtime.
+            // (__fern_snapshot_dec — the shallow consume-rebind free — IS real on
+            // arm64 now; only the per-type deep-drop helpers remain pass-throughs.)
             if (asm_ir.is_field_reclaim_name(o.str)) { s = s.mark_heap(); s = s.need("field_reclaim:" + asm_ir.field_reclaim_type(o.str)); }
             // __struct_drop_<T> (#3457): record the type so emit_module_ir_unit_arm64
             // emits a per-type pass-through body (leak-safe; arm64 does NOT deep-drop

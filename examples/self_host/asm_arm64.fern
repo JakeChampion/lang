@@ -5472,14 +5472,43 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    add x10, x10, :lo12:__fern_rc_underflow\n");
         s = s.write("    ldr w0, [x10]\n");
         s = s.write("    ret\n");
-        // __fern_snapshot_dec(new, old, snap) -> new (#3456 slice 2). arm64 does
-        // NOT reclaim yet — a leak-safe PASS-THROUGH (returns `new`), mirroring
-        // op_arr_push_owned's arm64 aliasing. Stack-arg ABI: [sp]=snap, [sp+16]=
-        // old, [sp+32]=new. The x86 backend (asm_ir.emit_ir_runtime) does the
-        // real rc-guarded shallow free; the arm64 owned helper is a later slice.
+        // __fern_snapshot_dec(new, old, snap) -> new (#3456 slice 2). Frees `old`
+        // (rc-guarded SHALLOW box release, the __fern_arr_dec free path) only when
+        // it differs from BOTH `new` (cow) AND `snap` (the caller's original, never
+        // freed). Returns `new` in x0. arm64 mirror of asm_ir.emit_ir_runtime's
+        // body — same heap layout as __fern_arr_dec below (rc @ [old-8], cap @
+        // [old-16], base = old-16, idx = cap+3, freelist word-indexed, class cap
+        // 65536). Stack-arg ABI: [sp]=snap, [sp+16]=old, [sp+32]=new. Clobbers
+        // x0..x6, x9.
         s = s.write("__fn___fern_snapshot_dec:\n");
-        s = s.write("    ldr x0, [sp, #32]\n");      // new
-        s = s.write("    ret\n");
+        s = s.write("    ldr x0, [sp, #32]\n");        // new (return value)
+        s = s.write("    ldr x1, [sp, #16]\n");        // old
+        s = s.write("    cmp x1, x0\n");               // old == new? (cow)
+        s = s.write("    beq .Lsd_ret\n");
+        s = s.write("    ldr x2, [sp]\n");             // snap
+        s = s.write("    cmp x1, x2\n");               // old == snap? (caller's original)
+        s = s.write("    beq .Lsd_ret\n");
+        s = s.write("    mov x9, #0x10000\n");
+        s = s.write("    cmp x1, x9\n");               // old < 0x10000? (low-addr / SSO)
+        s = s.write("    blo .Lsd_ret\n");
+        s = s.write("    ldur w3, [x1, #-8]\n");       // old rc
+        s = s.write("    tbnz w3, #31, .Lsd_ret\n");   // static sentinel (rc<0)
+        s = s.write("    cmp w3, #1\n");
+        s = s.write("    bne .Lsd_ret\n");             // shared/other — leave (defensive)
+        s = s.write("    ldur x4, [x1, #-16]\n");      // old cap
+        s = s.write("    add x4, x4, #3\n");           // idx = cap + 3
+        s = s.write("    mov x9, #0x10000\n");         // freelist class cap (65536)
+        s = s.write("    cmp x4, x9\n");
+        s = s.write("    bhs .Lsd_ret\n");             // large tier — leak (matches arr_dec)
+        s = s.write("    stur wzr, [x1, #-8]\n");      // mark freed (clear rc)
+        s = s.write("    sub x5, x1, #16\n");          // base = old - 16
+        s = s.write("    adrp x6, __fern_freelist\n");
+        s = s.write("    add x6, x6, :lo12:__fern_freelist\n");
+        s = s.write("    ldr x9, [x6, x4, lsl #3]\n"); // old head
+        s = s.write("    str x9, [x5]\n");             // *base = old head
+        s = s.write("    str x5, [x6, x4, lsl #3]\n"); // freelist[idx] = base
+        s = s.write(".Lsd_ret:\n");
+        s = s.write("    ret\n");                      // x0 = new
         // __fern_arr_dec(data) — Phase 3 array release (arm64 mirror).
         // rc>1 -> dec; rc==1 -> free buffer to the freelist
         // (base=data-16, size=(cap+3)*8, idx=cap+3); rc<=0 -> detector.
