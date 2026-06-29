@@ -1241,9 +1241,14 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // nf field values on the stack (field nf-1 on top, decl order). Box =
             // [type_id@0, f0@8, f1@16, …] via $__fern_str_box (rc-headered), an
             // 8-byte stride so an f64 field fits — header 8 + nf*8 bytes, field i
-            // at 8+i*8 (matching the register backends). An f64 field stores via
-            // f64.store through the f64 scratch; others via i32.store. $arrtmp
-            // holds the base across the field pops.
+            // at 8+i*8 (matching the register backends). An 8-byte INTEGER field
+            // (i64/u64) stores via i64.store; an 8-byte FLOAT field (f64/f32/float —
+            // f32 is f64-backed) via f64.store through the f64 scratch; others via
+            // i32.store. The width classification mirrors struct_set / struct_get
+            // and irlower.struct_field_width exactly: f32/float and u64 must NOT
+            // fall to the 4-byte i32.store, or only the low half of the 8-byte slot
+            // is written and the f64.load/i64.load read-back returns garbage.
+            // $arrtmp holds the base across the field pops.
             var nf: i32 = o.i32_imm;
             out = out + "    i32.const " + util.i32_to_string(8 + nf * 8) + "\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n";
             out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(struct_type_id(structs, o.str)) + "\n    i32.store\n";
@@ -1251,10 +1256,10 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             while (em >= 0) {
                 var emoff: i32 = 8 + em * 8;
                 var emft: string = irlower.decl_field_type_at(structs, o.str, em);
-                if (emft == "i64") {
+                if (emft == "i64" || emft == "u64") {
                     out = out + "    local.set " + util.i32_to_string(i64tmp) + "\n";
                     out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(emoff) + "\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n";
-                } else if (emft == "f64") {
+                } else if (emft == "f64" || emft == "f32" || emft == "float") {
                     out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n";
                     out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(emoff) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n";
                 } else {

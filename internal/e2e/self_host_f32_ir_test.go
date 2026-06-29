@@ -51,6 +51,30 @@ function main(): i32 { return ffloor32(7.8 as f32) as i32; }`},
 function main(): i32 { return fround32(2.5 as f32) as i32; }`},
 	// f32 local round-trip feeding an intrinsic.
 	{"via-local", `function main(): i32 { var y: f32 = 9.99 as f32; var f: f32 = __floor_f64(y as f64) as f32; return f as i32; }`},
+	// f32 ARRAY: element load round-trips an 8-byte (f64-backed) f32 slot.
+	{"array", `function main(): i32 { var a: f32[] = [1.0 as f32, 2.0 as f32, 3.0 as f32]; return a[1] as i32; }`},
+	// f32 array summed in a loop — exercises repeated 8-byte element load + f32 add.
+	{"array-sum", `function main(): i32 {
+    var a: f32[] = [1.5 as f32, 2.5 as f32, 3.0 as f32];
+    var s: f32 = 0.0 as f32; var i: i32 = 0;
+    while (i < a.len()) { s = s + a[i]; i = i + 1; }
+    return s as i32;
+}`},
+	// f32 STRUCT FIELDS: two f32 fields read back and added (8-byte field slots).
+	{"struct-field", `struct P { x: f32, y: f32 }
+function main(): i32 { var p: P = P { x: 3.0 as f32, y: 4.0 as f32 }; return (p.x + p.y) as i32; }`},
+	// f32 in a TUPLE alongside an i32 — mixed-width tuple element layout.
+	{"tuple", `function main(): i32 { var t: (f32, i32) = (3.5 as f32, 2); return (t.0 as i32) + t.1; }`},
+	// f32 passed THROUGH a struct field into a call and back.
+	{"struct-field-call", `struct P { v: f32 }
+function dbl(p: P): f32 { return p.v + p.v; }
+function main(): i32 { var p: P = P { v: 5.5 as f32 }; return dbl(p) as i32; }`},
+	// u64 STRUCT FIELD with bits above 2^32: guards the SAME struct_make 8-byte
+	// field store the f32 fix touches — before it, a u64 field stored via the
+	// 4-byte i32.store path, truncating the high word, so the read-back != the
+	// literal. 4294967297 == 0x1_0000_0001; a low-word-only store reads back 1.
+	{"u64-struct-field", `struct B { v: u64 }
+function main(): i32 { var b: B = B { v: 4294967297 as u64 }; if (b.v == 4294967297 as u64) { return 7; } return 0; }`},
 }
 
 // TestSelfHostF32IRX86_64 routes each case through the self-hosted x86-64 IR
@@ -146,6 +170,44 @@ func TestSelfHostF32IRWasm(t *testing.T) {
 			}
 			if code := run.ProcessState.ExitCode(); code != want {
 				t.Errorf("f32 wasm IR %q = %d, want %d (interp oracle)", tc.name, code, want)
+			}
+		})
+	}
+}
+
+// TestSelfHostF32IRArm64 runs the same cases through the self-hosted arm64
+// auto-decide driver (asm_arm64_run.fern), oracle-checked under qemu. The arm64
+// IR path shares eligibility with x86 (the asmcore frontend is common), so these
+// route IR there too; correctness is the gate. Mirrors TestSelfHostFloatArm64.
+func TestSelfHostF32IRArm64(t *testing.T) {
+	arm64gcc, qemu := arm64Tooling(t)
+	x86gcc, x86runner := x86_64Tooling(t)
+	interpBin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm_arm64_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_arm64_run.fern", "driver")
+
+	for _, tc := range f32IRCases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte(tc.main + "\n")
+			want := interpExit(t, interpBin, string(src))
+			asm := runCapture(t, x86gcc, x86runner, driverBin, src)
+			if len(asm) == 0 {
+				t.Fatal("self-host arm64 compiler emitted 0 bytes")
+			}
+			progBin := buildBin(t, arm64gcc, dir, tc.name, string(asm))
+			cmd := runArm64Bin(qemu, progBin)
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != want {
+				t.Errorf("f32 arm64 IR %q exited %d, want %d (interp oracle)", tc.name, code, want)
 			}
 		})
 	}
