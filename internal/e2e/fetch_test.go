@@ -87,8 +87,9 @@ function main(): i32 {
 
 // plat.fetch is the capability-scoped form a handler uses:
 // `plat.fetch("a.b.c.d", port, path)` (parses the literal IPv4, routes
-// through the Platform bag). Same upstream round-trip as fetch_get,
-// via the Platform method.
+// through the Platform bag). It returns the HTTP STATUS CODE as an i32
+// (the i32 result that flows through the std/task runtime); the body is
+// read via the lower-level fetch_get + http_body. Same upstream round-trip.
 func TestPlatformFetch(t *testing.T) {
 	bin := buildFernCLI(t)
 
@@ -119,10 +120,9 @@ import "std/string";
 
 function main(): i32 {
     var p: Platform = Platform { version: 1 };
-    var resp: string = p.fetch("127.0.0.1", %d, "/");
-    var body: string = fetch.http_body(resp);
-    if (body == "hello-world") { return 42; }
-    return 1;
+    var status: i32 = p.fetch("127.0.0.1", %d, "/");   // i32 status code
+    if (status == 200) { return 42; }
+    return status;
 }`, port)
 
 	dir := t.TempDir()

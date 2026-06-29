@@ -490,6 +490,21 @@ outgoing-handler on wasm). Now a handler can issue two fetches and
 await both — the trigger condition that motivated the whole design
 (`CONCURRENCY-RESEARCH.md`).
 
+- **i32-result step — DONE:** `(plat).fetch(host, port, path)` now returns the
+  HTTP **status code** as an `i32` (was the raw response string) plus a new
+  `http_status(resp)` parser, keeping `fetch_get` / `http_body` for the body. The
+  i32 result is the value type that flows through the i32-throughout `std/task`
+  runtime, so a `plat.fetch` task will be awaitable WITHOUT generalising the
+  runtime — once the awaitability blocker is closed (next). Breaking change;
+  `TestPlatformFetch` updated to assert the 200 status.
+- **The remaining blocker (awaitable + overlapping):** `std/task`'s reactor
+  (`poll()`) drains IN-MEMORY completion values; it does not poll real fds. So a
+  `plat.fetch` spawned in `concurrent`/`race` can't yet overlap real socket I/O —
+  it would block. Making it overlap requires wiring real `poll` into `std/task`'s
+  reactor (this phase's "replace the in-memory internals behind the same API").
+  Real poll-driven overlap already exists via `std/reactor.run_io`
+  (`reactor_socket_test.go`), just not through the `concurrent`/`race` surface.
+
 ### Phase 5 — composition: `select`, cancellation, timeouts
 
 - `select` / happy-eyeballs (first task to finish wins, the rest
