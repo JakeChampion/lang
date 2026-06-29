@@ -1033,7 +1033,6 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   value-correct + detector 0). With this, all three backends release
   re-bound array locals per-iteration. (The wasm slice landed this first;
   this brings x86-64 + arm64 to the same behaviour.)
-<<<<<<< HEAD
 - 2026-06-08: **wasm backend RC — reclaim fresh-array builtin/method
   results.** Final array-reclaim gap on wasm: locals inited from a builtin
   / method that returns a FRESH owned array — `args()`, `random_bytes(n)`,
@@ -1049,7 +1048,6 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   builtins/methods, construction stores, and loop/rebind churn — matching
   the asm backends' sweep-by-type completeness for the common cases.
   Remaining: Phase 1e (strings / structs / enums / maps).
-=======
 - 2026-06-08: **wasm backend RC — reclaim user-method array results.** The
   symmetric completion of the user-function call-result reclaim: a
   declared-array local inited from a user METHOD that returns an array
@@ -1068,7 +1066,6 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   for host-interop values); strings are the simplest next target (flat
   block, reuse __fern_arr_dec / freelist, static literals auto-excluded by
   the address guard).
->>>>>>> 7031dd4 (self-host wasm: reclaim user-method array results)
 - 2026-06-08: **Phase 1e begins — wasm string rc-box layout foundation.**
   First non-array heap type. New `$__fern_str_box(p)` rc-headers a heap
   string block (8-byte rc+bsz header, returns s = base+8 so [s] = len,
