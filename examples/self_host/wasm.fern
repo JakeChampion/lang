@@ -1161,6 +1161,53 @@ function emit_wasm_struct_drop_body(t: string, cx: Ctx): string {
     return o;
 }
 
+// emit_wasm_field_reclaim_body returns the WAT for
+// $__field_reclaim_<t>(new, old, snap) -> new — the wasm sibling of
+// asm_ir.emit_ir_field_reclaim_one (Perceus slice 1d). The consume-rebind
+// replaced-field reclaim: when a struct PARAM is reassigned (`a = T { … }`),
+// the superseded `old` struct's rc-array field buffers are freed, then `old`'s
+// box itself via $__fern_snapshot_dec. For each ARRAY field (struct_field_kind_char
+// == "a") it frees old.field_k (SHALLOW — $__fern_arr_dec, matching the register
+// backends; a pointer-element field's element boxes are a known one-level gap on
+// every backend) iff old.field_k differs from BOTH new.field_k (cow — the rebind
+// kept the buffer) and, when snap != 0, snap.field_k (the caller's borrowed
+// original). The field offset is the IR struct layout (`8 + i*8`), as in
+// emit_wasm_struct_drop_body. `old` null / below heap_base skips the field loop
+// (snapshot_dec null-guards the box free). Returns `new`. `hb` is the module's
+// heap base (the low-address guard threshold).
+function emit_wasm_field_reclaim_body(t: string, cx: Ctx, hb: i32): string {
+    var o: string = "  (func $__field_reclaim_" + t + " (param $new i32) (param $old i32) (param $snap i32) (result i32)\n";
+    o = o + "    (if (i32.ge_u (local.get $old) (i32.const " + util.i32_to_string(hb) + ")) (then\n";
+    var si: i32 = 0;
+    while (si < cx.structs.len()) {
+        if (cx.structs[si].name == t) {
+            var k: i32 = 0;
+            while (k < cx.structs[si].fields.len()) {
+                var ft: string = cx.structs[si].fields[k].type_name;
+                if (struct_field_kind_char(ft, cx) == "a") {
+                    var off: string = util.i32_to_string(8 + k * 8);
+                    var oldf: string = "(i32.load offset=" + off + " (local.get $old))";
+                    var newf: string = "(i32.load offset=" + off + " (local.get $new))";
+                    var snapf: string = "(i32.load offset=" + off + " (local.get $snap))";
+                    var dec: string = "(drop (call $__fern_arr_dec " + oldf + "))";
+                    // cow: skip if old.field_k == new.field_k. Then snap guard,
+                    // nested (NOT a flat i32.or) so snap.field_k is never loaded
+                    // when snap == 0: dec if snap == 0, else dec iff
+                    // old.field_k != snap.field_k.
+                    o = o + "      (if (i32.ne " + oldf + " " + newf + ") (then\n";
+                    o = o + "        (if (i32.eqz (local.get $snap)) (then " + dec + ")\n";
+                    o = o + "          (else (if (i32.ne " + oldf + " " + snapf + ") (then " + dec + "))))))\n";
+                }
+                k = k + 1;
+            }
+        }
+        si = si + 1;
+    }
+    o = o + "    ))\n";
+    o = o + "    (call $__fern_snapshot_dec (local.get $new) (local.get $old) (local.get $snap)))\n";
+    return o;
+}
+
 // emit_struct_release frees one owned struct/enum local with RECURSIVE
 // field-release: if it is the LAST owner (rc word at [s-8] == 1, i.e. the box
 // is about to be freed) first release each rc-tracked field (a string or
@@ -6708,11 +6755,25 @@ pub function rc_runtime_helpers(heap_base: i32): string {
     // __fern_rc_underflow_count() -> i32: the over-release detector.
     o = o + "  (func $__fern_rc_underflow_count (result i32)\n";
     o = o + "    (global.get $__fern_rc_underflow))\n";
-    // __fern_snapshot_dec(new, old, snap) -> new (#3456 slice 2). wasm does NOT
-    // reclaim yet — a leak-safe PASS-THROUGH returning `new` (mirrors
-    // op_arr_push_owned's wasm aliasing). The x86 backend does the real rc-guarded
-    // shallow free; the wasm owned helper is a later slice.
+    // __fern_snapshot_dec(new, old, snap) -> new (#3456 slice 2). REAL now
+    // (Perceus self-host slice 1d): the snapshot-param consume-rebind reclaim.
+    // Frees `old` (the superseded intermediate box) only when it is UNIQUELY
+    // owned (rc == 1) AND differs from BOTH `new` (cow — the rebind kept it) and
+    // `snap` (the caller's borrowed original — never freed). A shared box
+    // (rc > 1) is LEFT untouched, NOT decremented: the snapshot param is borrowed,
+    // so we hold no count to release — matching the x86 body's `cmpl $1 / jne`
+    // (free iff rc==1, else leave). The free reuses $__fern_arr_dec's rc==1 branch
+    // (freelist push by size class) — guarding rc==1 here first means arr_dec only
+    // ever sees the uniquely-owned case, so it frees rather than decrements.
+    // Returns `new`. ($__fern_arr_dec is emitted alongside, in heap_alloc_helpers.)
     o = o + "  (func $__fern_snapshot_dec (param $new i32) (param $old i32) (param $snap i32) (result i32)\n";
+    o = o + "    (if (i32.eq (local.get $old) (local.get $new)) (then (return (local.get $new))))\n";
+    o = o + "    (if (i32.eq (local.get $old) (local.get $snap)) (then (return (local.get $new))))\n";
+    o = o + "    (if (i32.eqz (local.get $old)) (then (return (local.get $new))))\n";
+    o = o + "    (if (i32.and (local.get $old) (i32.const 1)) (then (return (local.get $new))))\n";
+    o = o + "    (if (i32.lt_u (local.get $old) (i32.const " + lo + ")) (then (return (local.get $new))))\n";
+    o = o + "    (if (i32.ne (i32.load (i32.sub (local.get $old) (i32.const 8))) (i32.const 1)) (then (return (local.get $new))))\n";
+    o = o + "    (drop (call $__fern_arr_dec (local.get $old)))\n";
     o = o + "    (local.get $new))\n";
     return o;
 }
@@ -11389,14 +11450,16 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
             ir_out = ir_out + heap_alloc_helpers(wasm_ir.heap_base_for(mod), wasm_ir.fl_base_for(mod), wasm_ir.fl_cells());
             ir_out = ir_out + rc_runtime_helpers(wasm_ir.heap_base_for(mod));
         }
-        // Per-type $__field_reclaim_<T> bodies (#3457). wasm does not reclaim the
-        // replaced field buffers yet — a leak-safe PASS-THROUGH (returns `new`),
-        // mirroring $__fern_snapshot_dec. One body per type the module calls.
+        // Per-type $__field_reclaim_<T> + $__struct_drop_<T> bodies (#3457). REAL
+        // now (Perceus self-host slices 1c/1d): field_reclaim frees the superseded
+        // rc-array field buffers on a consume-rebind then frees the old box via
+        // $__fern_snapshot_dec (now real too); struct_drop deep-drops a struct's
+        // rc-array fields at scope exit. Both share one struct-decl ctx.
+        var rc_cx: Ctx = release_module_ctx(mod.structs, collect_method_types(mod), mod.funcs);
         var frt: string[] = wasm_ir.field_reclaim_types(mod);
         var frti: i32 = 0;
         while (frti < frt.len()) {
-            ir_out = ir_out + "  (func $__field_reclaim_" + frt[frti] + " (param $new i32) (param $old i32) (param $snap i32) (result i32)\n";
-            ir_out = ir_out + "    (local.get $new))\n";
+            ir_out = ir_out + emit_wasm_field_reclaim_body(frt[frti], rc_cx, wasm_ir.heap_base_for(mod));
             frti = frti + 1;
         }
         // Per-type $__struct_drop_<T> bodies (#3457 — the deep struct-drop). REAL
@@ -11408,10 +11471,9 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         // matching x86-64 / arm64. Non-array rc fields (string / nested struct)
         // stay a later slice, as on the register backends.
         var sdt: string[] = wasm_ir.struct_drop_types(mod);
-        var sd_cx: Ctx = release_module_ctx(mod.structs, collect_method_types(mod), mod.funcs);
         var sdti: i32 = 0;
         while (sdti < sdt.len()) {
-            ir_out = ir_out + emit_wasm_struct_drop_body(sdt[sdti], sd_cx);
+            ir_out = ir_out + emit_wasm_struct_drop_body(sdt[sdti], rc_cx);
             sdti = sdti + 1;
         }
         if (wasm_ir.module_uses_divrem(mod)) { ir_out = ir_out + divrem_helpers(); }
