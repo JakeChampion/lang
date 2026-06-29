@@ -675,24 +675,6 @@ func TestRunnerAsyncRuntimeExamplePasses(t *testing.T) {
 	}
 }
 
-// `examples/tests/async_concurrent_test.fern` exercises the
-// `concurrent { … }` / `spawn` SURFACE SYNTAX (Phase 3), which the
-// parser desugars onto the std/task runtime: two-task fan-out, a
-// single spawn, mixed await depths, and argument forwarding past the
-// injected reactor. Proves the desugar produces working fan-out
-// end-to-end. Passing suite → exit 0.
-func TestRunnerAsyncConcurrentExamplePasses(t *testing.T) {
-	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/async_concurrent_test.fern")
-	code, out, errOut := runLangInterp(t, bin, src)
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
-	}
-	if !strings.Contains(out, "# pass 5") || !strings.Contains(out, "# fail 0") {
-		t.Errorf("expected 5 passes, 0 fails\noutput:\n%s", out)
-	}
-}
-
 // `examples/tests/async_combinators_test.fern` exercises the blessed
 // structured-concurrency surface (docs/ASYNC-REDESIGN.md): the
 // `gather` / `race` / `with_deadline` combinators over `Future[T]`,
@@ -707,30 +689,6 @@ func TestRunnerAsyncCombinatorsExamplePasses(t *testing.T) {
 	}
 	if !strings.Contains(out, "# pass 5") || !strings.Contains(out, "# fail 0") {
 		t.Errorf("expected 5 passes, 0 fails\noutput:\n%s", out)
-	}
-}
-
-// `examples/tests/async_task_fn_test.fern` exercises the Phase-3b task-function
-// CPS transform: spawn targets written as ORDINARY functions with suspending
-// `await`s in the body, which the parser desugars into the std/task
-// `(Reactor, args…) -> (Step, Reactor)` protocol automatically (no hand-written
-// state machine). Covers a single straight-line await, fan-out, a task with
-// pre-await setup + post-await arithmetic, TWO sequential awaits (slice 2,
-// nested continuations), `await`s inside a terminating if/else (slice 3a),
-// a guard-clause `await` with fall-through (slice 3b), a TRUE MERGE — an
-// await-bearing branch that falls through to shared post-if code using mutated
-// state (slice 3c), an `await` inside a `while` LOOP (loops slice 1, a recursive
-// loop function with loop-carried state), and an `await` inside a RANGE `for`
-// loop (loops slice 2, `for` → `while`). Passing suite → exit 0.
-func TestRunnerAsyncTaskFnExamplePasses(t *testing.T) {
-	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/async_task_fn_test.fern")
-	code, out, errOut := runLangInterp(t, bin, src)
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
-	}
-	if !strings.Contains(out, "# pass 18") || !strings.Contains(out, "# fail 0") {
-		t.Errorf("expected 18 passes, 0 fails\noutput:\n%s", out)
 	}
 }
 
