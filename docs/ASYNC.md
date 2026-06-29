@@ -186,11 +186,15 @@ that every backend already lowers. See `docs/ASYNC-REDESIGN.md`.
   `Ready`-future path works everywhere).
 - `with_deadline`'s deadline is **native-only** for now: `poll` ignores its
   `timeout_ms` arg on wasm, so on wasm `with_deadline` waits for all futures
-  like `gather` (a host timeout needs a timer pollable added to the poll set).
-- On **wasm**, a `race` over real sockets currently leaks the losers' pollables
-  (they're never dropped, since only the winner's continuation runs) — fine for a
-  short-lived handler (process exit reclaims), but `gather` is the clean path
-  (every future resolves, so every pollable is dropped before its socket closes).
+  like `gather`. Enforcing it on wasm needs a timer pollable in the poll set,
+  which means using `monotonic-clock`'s `subscribe-duration` alongside `now`
+  (`monotonic_ns`) — a combination the wasm component composer doesn't yet
+  support (one monotonic-clock import instance can't export both). Tracked in
+  `docs/ASYNC-FUTURE-UNIFICATION.md`.
+- `race` / `gather` drop every abandoned future's pollable before teardown
+  (`__drop_losers` → `wasm_pollable_drop`), so a `race` over real wasm sockets
+  no longer leaks the losers' pollables (which are children of their sockets and
+  would otherwise trap wasmtime with "resource has children").
 - `fetch_future`'s continuation does a single `recv`, sufficient for the small
   responses of the edge fan-out; a multi-chunk body that re-suspends per chunk
   is folded in with the IR future.
