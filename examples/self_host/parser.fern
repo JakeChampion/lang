@@ -9382,15 +9382,29 @@ function parse_impl_decl(p: Par): ImplResult {
         }
         if (p.peek_punct() == "]") { p = p.advance(); }
     }
-    // Trait name (possibly `mod.Trait`) — retained so parse_module can
-    // match the impl against the trait's default methods.
+    // First name after `impl` (possibly `mod.Name`). For a trait impl
+    // (`impl Trait for Type`) it's the trait; for an inherent impl
+    // (`impl Type { … }`, #2700) there is no `for` and this name IS the
+    // impl type, with no trait.
     var tnr: TypeNameResult = parse_type_name(p);
     p = tnr.par;
-    var trait_name: string = tnr.name;
-    if (p.peek_keyword() == "for") { p = p.advance(); }
-    var ity: TypeNameResult = parse_type_name(p);
-    p = ity.par;
-    var impl_type: string = ity.name;
+    var first_name: string = tnr.name;
+    var trait_name: string = "";
+    var impl_type: string = "";
+    if (p.peek_keyword() == "for") {
+        p = p.advance();
+        // Trait name retained so parse_module can match the impl against
+        // the trait's default methods.
+        trait_name = first_name;
+        var ity: TypeNameResult = parse_type_name(p);
+        p = ity.par;
+        impl_type = ity.name;
+    } else {
+        // Inherent impl: the first name is the type; receiver-less methods
+        // are associated functions (`Type.f(args)`), `self`-taking ones are
+        // ordinary methods.
+        impl_type = first_name;
+    }
     if (p.peek_punct() == "{") { p = p.advance(); }
     while (!p.at_end()) {
         if (p.peek_punct() == "}") { break; }

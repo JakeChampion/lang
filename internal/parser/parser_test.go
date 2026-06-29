@@ -1908,6 +1908,73 @@ impl From[i32] for Celsius { function from(v: i32): Self { return Celsius { deg:
 	}
 }
 
+// An inherent impl block (`impl Type { … }`, no `for Trait`, #2700) records an
+// ImplDecl with an empty Trait and the named type as Type. A receiver-less
+// function becomes an associated function (AssocType set); a `self`-taking one
+// becomes a method (Receiver set).
+func TestInherentImplParse(t *testing.T) {
+	prog, err := Parse(`struct Pt { x: i32, y: i32 }
+impl Pt {
+	function make(a: i32, b: i32): Pt { return Pt { x: a, y: b }; }
+	function sum(self: Self): i32 { return self.x + self.y; }
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prog.Impls) != 1 {
+		t.Fatalf("expected 1 impl decl; got %d", len(prog.Impls))
+	}
+	impl := prog.Impls[0]
+	if impl.Trait != "" {
+		t.Errorf("inherent impl Trait = %q, want empty", impl.Trait)
+	}
+	st, ok := impl.Type.(ast.StructType)
+	if !ok || st.Name != "Pt" {
+		t.Errorf("inherent impl Type = %#v, want StructType{Pt}", impl.Type)
+	}
+	// Find the desugared functions among prog.Funcs.
+	var assoc, method *ast.FuncDecl
+	for _, fn := range prog.Funcs {
+		if fn.AssocType == "Pt" && fn.Name == "make" {
+			assoc = fn
+		}
+		if fn.Receiver != nil && fn.Name == "sum" {
+			method = fn
+		}
+	}
+	if assoc == nil {
+		t.Error("associated function `make` not desugared with AssocType=Pt")
+	}
+	if method == nil {
+		t.Error("method `sum` not desugared with a receiver")
+	} else if _, ok := method.Receiver.Type.(ast.StructType); !ok {
+		t.Errorf("method `sum` receiver type = %#v, want StructType{Pt}", method.Receiver.Type)
+	}
+}
+
+// A generic inherent impl (`impl[T] Box[T] { … }`) records the impl type's
+// generic args and carries the type params onto its functions.
+func TestGenericInherentImplParse(t *testing.T) {
+	prog, err := Parse(`struct Box[T] { v: T }
+impl[T] Box[T] {
+	function of(v: T): Box[T] { return Box { v: v }; }
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prog.Impls) != 1 {
+		t.Fatalf("expected 1 impl decl; got %d", len(prog.Impls))
+	}
+	impl := prog.Impls[0]
+	if impl.Trait != "" {
+		t.Errorf("generic inherent impl Trait = %q, want empty", impl.Trait)
+	}
+	et, ok := impl.Type.(ast.EnumType)
+	if !ok || et.Name != "Box" || len(et.Args) != 1 {
+		t.Errorf("generic inherent impl Type = %#v, want Box[T]", impl.Type)
+	}
+}
+
 // A trait may declare associated types (`type Item;`), an impl binds them
 // (`type Item = i32;`), and signatures reference them as `Self::Item` /
 // `T::Item` (parsed to ast.ProjType). See docs/ASSOCIATED-TYPES.md.
