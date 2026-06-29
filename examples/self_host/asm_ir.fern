@@ -602,6 +602,71 @@ function emit_ir_now_ns(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
+// emit_ir_poll appends __fern_poll(%rdi = i32[] box ptr, %rsi = timeout_ms) ->
+// i32 index of the first POLLIN-ready fd, or -1. Mirrors the native poll(2)
+// helper but reads the SELF-HOST array layout: len at [ptr+0] (8-byte), element
+// i (the fd, low 32 bits) at [ptr + (i+1)*8]. Allocates an nfds*8 pollfd[]
+// scratch via __fern_alloc; an empty set returns -1 without a syscall.
+function emit_ir_poll(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("__fern_poll:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    pushq %rbx\n");                 // nfds
+    s = s.write("    pushq %r12\n");                 // fds box ptr
+    s = s.write("    pushq %r13\n");                 // pollfd buffer
+    s = s.write("    pushq %r14\n");                 // timeout_ms
+    s = s.write("    pushq %r15\n");                 // loop index
+    s = s.write("    movq %rdi, %r12\n");            // fds box ptr
+    s = s.write("    movq %rsi, %r14\n");            // timeout_ms
+    s = s.write("    movq (%r12), %rbx\n");          // nfds = len at [ptr+0]
+    s = s.write("    testq %rbx, %rbx\n");
+    s = s.write("    jle .Lirpoll_none\n");
+    s = s.write("    movq %rbx, %rdi\n");            // buf = alloc(nfds*8)
+    s = s.write("    shlq $3, %rdi\n");
+    s = s.write("    call __fern_alloc\n");
+    s = s.write("    movq %rax, %r13\n");
+    s = s.write("    xorq %r15, %r15\n");            // fill pollfd[i]
+    s = s.write(".Lirpoll_fill:\n");
+    s = s.write("    cmpq %rbx, %r15\n");
+    s = s.write("    jge .Lirpoll_filled\n");
+    s = s.write("    leaq 1(%r15), %rcx\n");          // i+1 (skip len slot)
+    s = s.write("    movl (%r12,%rcx,8), %eax\n");    // fd = low32 of element i
+    s = s.write("    movl %eax, (%r13,%r15,8)\n");    // pollfd.fd
+    s = s.write("    movw $1, 4(%r13,%r15,8)\n");     // .events = POLLIN
+    s = s.write("    movw $0, 6(%r13,%r15,8)\n");     // .revents
+    s = s.write("    incq %r15\n");
+    s = s.write("    jmp .Lirpoll_fill\n");
+    s = s.write(".Lirpoll_filled:\n");
+    s = s.write("    movq %r13, %rdi\n");            // poll(buf, nfds, timeout)
+    s = s.write("    movl %ebx, %esi\n");
+    s = s.write("    movl %r14d, %edx\n");
+    s = s.write("    movq $7, %rax\n");              // SYS_poll
+    s = s.write("    syscall\n");
+    s = s.write("    xorq %r15, %r15\n");            // scan revents
+    s = s.write(".Lirpoll_scan:\n");
+    s = s.write("    cmpq %rbx, %r15\n");
+    s = s.write("    jge .Lirpoll_none\n");
+    s = s.write("    movzwl 6(%r13,%r15,8), %eax\n"); // revents
+    s = s.write("    testl $1, %eax\n");              // POLLIN
+    s = s.write("    jnz .Lirpoll_found\n");
+    s = s.write("    incq %r15\n");
+    s = s.write("    jmp .Lirpoll_scan\n");
+    s = s.write(".Lirpoll_found:\n");
+    s = s.write("    movq %r15, %rax\n");
+    s = s.write("    jmp .Lirpoll_ret\n");
+    s = s.write(".Lirpoll_none:\n");
+    s = s.write("    movq $-1, %rax\n");
+    s = s.write(".Lirpoll_ret:\n");
+    s = s.write("    popq %r15\n");
+    s = s.write("    popq %r14\n");
+    s = s.write("    popq %r13\n");
+    s = s.write("    popq %r12\n");
+    s = s.write("    popq %rbx\n");
+    s = s.write("    popq %rbp\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
 // emit_ir_sleep_ms appends the __fern_sleep_ms(%rdi = ms) helper, transcribed
 // verbatim from asm.fern's emit_runtime: split ms into a timespec
 // {sec=ms/1000, nsec=(ms%1000)*1e6} on the stack and nanosleep (syscall 35);
@@ -3626,7 +3691,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_env", "__fern_stat", "__fern_subprocess",
         "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
         "__fern_strbuf_reset", "__fern_strbuf_take", "__fern_random_i32",
-        "__fern_random_bytes", "__fern_monotonic_ns", "__fern_now_ns",
+        "__fern_random_bytes", "__fern_monotonic_ns", "__fern_now_ns", "__fern_poll",
         "__fern_now_unix_ms", "__fern_sleep_ms", "__fern_map_new",
         "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fern_map_delete",
         "__fn___fern_rc_inc", "__fn___fern_arr_dec", "__fn___fern_rc_is_unique",
@@ -4011,6 +4076,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // no operands; __fern_now_ns() -> i64 in %rax.
             s = s.write("    call __fern_now_ns\n    pushq %rax\n");
             s = s.need("now_ns");
+        } else if (o.kind == "poll") {
+            // operand stack [fds, timeout]; __fern_poll(%rdi=fds box ptr,
+            // %rsi=timeout_ms) -> i32 ready index (or -1) in %rax.
+            s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_poll\n    pushq %rax\n");
+            s = s.need("heap").need("poll");
         } else if (o.kind == "heap_bump_bytes") {
             // bump high-water mark = (__fern_heap_ptr == 0) ? 0 : ptr − base,
             // where base is the static __fern_heap symbol (movabs — it lives
@@ -5104,6 +5174,7 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     if (s.has_need("monotonic_ns")) { s = emit_ir_monotonic_ns(s); }
     if (s.has_need("now_unix_ms")) { s = emit_ir_now_unix_ms(s); }
     if (s.has_need("now_ns")) { s = emit_ir_now_ns(s); }
+    if (s.has_need("poll")) { s = emit_ir_poll(s); }
     if (s.has_need("sleep_ms")) { s = emit_ir_sleep_ms(s); }
     }
     return strbuf_take();
