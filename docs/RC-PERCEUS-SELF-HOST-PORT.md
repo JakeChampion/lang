@@ -95,6 +95,94 @@ landed in green, bounded slices.
 
 ---
 
+## 1b. Reconciliation — 2026-06-29 (the Perceus target has MOVED to the IR path)
+
+> **§1 above describes the AST→asm world and is now historical.** Two
+> things changed since this doc began (2026-06-07):
+>
+> 1. **A self-host IR path was built and is now the DEFAULT.** The
+>    pipeline `irlower.fern → asm_ir.fern (x86-64) / asm_arm64_ir.fern
+>    (arm64) / wasm_ir.fern (wasm)` lowers every non-async
+>    `examples/tests/*_test.fern` module (goal 1 of CLAUDE.md, completed
+>    by the `map_verbs` flip, #4026). The legacy AST→asm emitters
+>    (`asm.fern` / `asm_arm64.fern` / `wasm.fern`) are now reached **only**
+>    by the parallel-owned async modules.
+> 2. **The early RC work logged below (2026-06-07 … -22) targeted the
+>    AST path (`asm.fern` etc.).** That code still exists but is on the
+>    way out with the AST backends. **The Perceus port now means: complete
+>    RC on the IR path**, where a *partial* port already exists.
+
+### Current IR-path Perceus state (survey, 2026-06-29)
+
+- **x86-64 (`asm_ir.fern` + `irlower.fern`): substantial.** alias-inc at
+  aliasing sites; function-exit dec sweep (`emit_dec_sweep_except`);
+  COW-guarded reassign dec (`emit_arr_reassign`); snapshot-param reclaim
+  (`emit_snapshot_store` → `__fern_snapshot_dec`); per-type
+  `__field_reclaim_<T>` (replaced array-field buffers) and
+  `__struct_drop_<T>` (deep-drop rc-array fields, sole-owner gated) with
+  **real bodies**; conservative precise-drops (array-literal locals only);
+  rc header at `[data-8]` (uniform across backends, `asmcore.fern:802`).
+- **arm64 (`asm_arm64.fern`) + wasm (`wasm_ir.fern`): LEAK-SAFE
+  PASS-THROUGHS.** `__field_reclaim_<T>` and `__struct_drop_<T>` just
+  `return` their box — so **a struct with array fields leaks its field
+  buffers** on these two backends. This is the most concrete correctness
+  gap.
+- **Deferred on the IR path (all backends):** string RC (header-less /
+  leak-only), closure-env reclamation, `Option`/`Result` payload release,
+  tuple-element release, map element (key/value) RC, struct/enum
+  **non-array** rc fields (string / nested-struct / enum-payload), reuse /
+  FBIP, full drop-on-last-use.
+
+### LowerState RC/ownership fields (the analysis substrate that exists)
+
+`reclaimable_names` (escaping locals → struct dec), `aliased_names`
+(lasting array/map aliases → clone-not-mutate), `n_params` (borrow
+boundary — params < n_params are never swept), `local_is_arr`
+(drives alias-inc), plus the `*_ret_fns` move/type registries. Borrow
+inference itself (native `inferParamEscapes`) is only partially threaded.
+
+### Remaining slices to native parity (dependency-ordered)
+
+Correctness first (parity), then optimisation. Each slice ships green:
+byte-identical fixpoint + the differential gate + a **new RC-specific
+test** (rc-count / no-leak assertion — the self-host suite has none yet,
+so adding the harness is part of slice 1). arm64/wasm legs run in CI.
+
+1. **arm64 + wasm real `__field_reclaim_<T>` + `__struct_drop_<T>`
+   bodies** — transcribe the x86-64 bodies. Closes the live
+   struct-array-field leak on two of three backends. *Medium; highest
+   value first; establishes the RC-test harness.*
+2. **Borrow inference (`infer_param_escapes`) on the IR path** — borrowed
+   params skip the dec; gates everything below. *Medium.*
+3. **Struct/enum drop specialisation for NON-array rc fields** (string,
+   nested struct, enum payload) — extend the deep-drop walk. *Deep.*
+4. **`Option`/`Result` payload + tuple-element release.** *Medium.*
+5. **Closure-env reclamation** on the IR path (capture rc-tracking + env
+   drop; the AST path shipped this in 2 slices — see the wasm
+   closure-env log entries below). *Medium-deep.*
+6. **Map element (key/value) RC.** *Medium.*
+7. **String RC on the IR path** (two-word arm64/wasm; x86-64 inline-tag
+   SSO). *Deep.*
+8. **Reuse / FBIP** (`compute_reuse_sources` + reuse tokens) — pure
+   optimisation, last. *Deep.*
+9. **Full precise-drop** beyond the conservative array-literal cut.
+   *Deep.*
+
+### Strategy notes
+
+- **Direct port** stands: native is the source of truth, all analyses
+  read the AST, so they belong in `asmcore.fern` shared by all three
+  IR backends; only emission differs per backend.
+- **Emission de-duplication** is the architectural lever — the three IR
+  backends each hand-code rc-op emission today; a shared `RcOp` directive
+  layer (cf. `RC-PERCEUS-SELF-HOST-IR.md`) prevents triplication drift as
+  slices land.
+
+**Recommended next: slice 1** (arm64 + wasm reclaim/drop real bodies +
+the first RC leak test).
+
+---
+
 ## 2. Architecture mapping (native → self-host)
 
 | Native (Go) | Self-host (Fern) | Notes |
