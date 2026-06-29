@@ -138,11 +138,23 @@ sequences the safe consolidation first.
    i32 + string). `timeout_ms` is ignored on wasm (so `with_deadline`'s
    deadline is native-only — a host timeout would add a timer pollable to
    the set).
-   - **Remaining follow-ups:** a pollable-backed wasm `fetch_future`
-     (over `wasi:http` / `tcp_pollable`) so `async.gather` does a real
-     overlapping wasm *fetch* (the `TestAsyncFetchFutureFanout` shape on
-     wasm); host-timeout for `with_deadline`; and folding
-     `std/wasm_reactor` into `std/async`.
+   - **DONE — portable `fetch_future` (real overlapping wasm fetch).**
+     The wait token is now `tcp_pollable(c)`, made portable by giving
+     the existing `tcp_pollable` builtin a **native/interp identity**
+     lowering (the fd is its own readiness token on native) — so one
+     `fetch_future` builds `Pending(tcp_pollable(c), resume)` on every
+     backend. The wasm pollable is a *child* of the socket resource, so
+     `resume` drops it (`wasm_pollable_drop`, given a native/interp
+     **no-op** lowering) before `tcp_close`, avoiding the
+     "resource has children" trap. Verified:
+     `internal/e2e/async_wasm_fetch_e2e_test.go` — two parallel
+     `fetch.fetch_future` through `async.gather` over real sockets,
+     bodies returned in input order, overlapped, under stock wasmtime
+     (`-S inherit-network`, Preview 2).
+   - **Remaining follow-ups:** host-timeout for `with_deadline` on wasm
+     (a timer pollable in the poll set); dropping `race` losers'
+     pollables on wasm (currently leaked — fine for short-lived
+     handlers); and folding `std/wasm_reactor` into `std/async`.
 3. **PR5d — docs.** Fold the outcome into `ASYNC.md` (drop the "Pending
    resolves only on native" + "modules linger" limitations) and retire
    `ASYNC-IMPLEMENTATION-PLAN.md` / `WASM-REACTOR-PLAN.md` to historical.
