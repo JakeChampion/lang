@@ -2606,6 +2606,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// (calleeParamOwnedByDefault) consult this so they agree on which
 	// owned-by-default params are kept borrowed.
 	paramEscapes := inferParamEscapes(prog, info)
+	readOnlyComparators := computeReadOnlyComparators(info)
 	for _, fn := range prog.Funcs {
 		// Body-less `@import` functions are extern WASM-component imports, not
 		// defined functions: record their signature in out.Externs and skip
@@ -2660,7 +2661,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 			out.Externs = append(out.Externs, ef)
 			continue
 		}
-		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, trmcFuncs, trmcConsumeSafe, paramEscapes)
+		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, trmcFuncs, trmcConsumeSafe, paramEscapes, readOnlyComparators)
 		if err != nil {
 			return nil, err
 		}
@@ -4146,6 +4147,14 @@ type builder struct {
 	// NON-escaping owned-by-default param borrowed — no caller inc, no callee
 	// dec — read consistently on both the definition and call sides so they agree.
 	paramEscapes map[string][]bool
+	// readOnlyComparators is the set of Eq/Hash trait method names
+	// (`__method_<T>_eq` / `__method_<T>_hash`). They are read-only by
+	// contract, so they BORROW their params even under the owned model
+	// (borrow inference off) — the type-erased Map runtime calls them on
+	// BORROWED stored keys via a function value, so an owned-model exit-dec
+	// would free the map's own key (corruption). Gated on the escape facts
+	// proving non-escape, so it never elides a real ownership transfer. #2671.
+	readOnlyComparators map[string]bool
 	// trmcFuncs is the set of functions lowered via TRMC (findTrmcFuncs); Slice 2
 	// excludes their params from owned-by-default (their exit bypasses the sweep).
 	trmcFuncs map[string]bool
@@ -8516,7 +8525,26 @@ func enumVariantDropPlan(ed *ast.EnumDecl, ptrW int, dynRcSupported bool) ([]var
 	return plan, true
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool) (*Func, error) {
+// computeReadOnlyComparators collects the mangled names of every `eq` /
+// `hash` receiver method (the Eq / Hash trait methods). They are read-only
+// by contract, so the IR borrows their params even under the owned model —
+// see builder.readOnlyComparators / paramBorrowable. Keyed off the method
+// name being exactly `eq` / `hash` (the methodKey suffix), so an unrelated
+// method like `compute_hash` (`<T>.compute_hash`) is excluded.
+func computeReadOnlyComparators(info *checker.Info) map[string]bool {
+	if info == nil {
+		return nil
+	}
+	out := map[string]bool{}
+	for key, mangled := range info.Methods {
+		if strings.HasSuffix(key, ".eq") || strings.HasSuffix(key, ".hash") {
+			out[mangled] = true
+		}
+	}
+	return out
+}
+
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, readOnlyComparators map[string]bool) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -8540,6 +8568,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		trmcFuncs:            trmcFuncs,
 		trmcConsumeSafe:      trmcConsumeSafe,
 		paramEscapes:         paramEscapes,
+		readOnlyComparators:  readOnlyComparators,
 		thisIsPair:           pairForm[fn.Name],
 		dynCoerceDone:        map[ast.Expr]bool{},
 	}
@@ -9068,11 +9097,20 @@ func (b *builder) isOwnedByDefaultType(t ast.Type) bool {
 // a fresh-temp arg through the arg-temp path). Both the definition side and the
 // call site consult this so they agree on which params skip the inc/dec.
 func (b *builder) paramBorrowable(fnName string, i int) bool {
-	if !ast.BorrowInferEnabled {
-		return false
-	}
 	esc, ok := b.paramEscapes[fnName]
-	return ok && i < len(esc) && !esc[i]
+	nonEscaping := ok && i < len(esc) && !esc[i]
+	if !ast.BorrowInferEnabled {
+		// Owned model: params are reclaimed at the callee's exit — EXCEPT a
+		// read-only comparator (an Eq / Hash trait method). The type-erased
+		// Map runtime calls hash_fn / eq_fn on its BORROWED stored keys via a
+		// function value, so an owned-model exit-dec there would free the
+		// map's own key (corruption at scale). These methods never escape
+		// self / other, so borrowing is sound — gated on the escape facts as a
+		// safety net, and rooted in the same per-function escape analysis the
+		// borrow model uses, so owned and borrow agree on them. #2671.
+		return nonEscaping && b.readOnlyComparators[fnName]
+	}
+	return nonEscaping
 }
 
 // paramOwnedByDefault: a parameter of the CURRENT function is owned-by-default

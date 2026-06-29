@@ -1,0 +1,55 @@
+// Struct/enum Map keys across capacity GROWTH + rehash (#2671), and under
+// BOTH rc models (owned + borrow). Forces several __map_grow_keyed rehashes
+// (20 entries into a cap-4 map) and pairs a struct key with a STRUCT value,
+// so the keyed grow path + value reclamation are exercised together. The
+// owned model previously corrupted here: the derived `eq`, called by the
+// type-erased runtime on its BORROWED stored keys, freed the map's own keys
+// at the call's exit — fixed by treating Eq/Hash methods as read-only
+// (param-borrowing) on both rc models. Returns 0 iff every check holds.
+import "core/map";
+import "core/cmp";
+import "core/int";
+
+@derive(cmp.Eq, cmp.Hash)
+struct Coord { a: i32, b: i32 }
+
+struct Box { n: i32, tag: string }
+
+function main(): i32 {
+    var m: Map[Coord, Box] = map_new(4);   // small cap -> forces grows
+    var i: i32 = 0;
+    while (i < 20) {
+        m = m.insert(Coord { a: i, b: i * 2 }, Box { n: i * 10, tag: "v" });
+        i = i + 1;
+    }
+    if (m.len() != 20) { return 1; }
+
+    // every key retrievable after the rehashes, via a fresh value-equal key
+    i = 0;
+    while (i < 20) {
+        match (m.get(Coord { a: i, b: i * 2 })) {
+            Some(c) => { if (c.n != i * 10) { return 2; } },
+            None => { return 3; }
+        }
+        i = i + 1;
+    }
+    if (m.get_or(Coord { a: 99, b: 0 }, Box { n: 0 - 1, tag: "" }).n != 0 - 1) { return 4; }
+
+    // overwrite a key's struct value (post-grow), then re-read
+    m = m.insert(Coord { a: 7, b: 14 }, Box { n: 777, tag: "w" });
+    if (m.len() != 20) { return 5; }
+    match (m.get(Coord { a: 7, b: 14 })) {
+        Some(c) => { if (c.n != 777) { return 6; } },
+        None => { return 7; }
+    }
+
+    // delete shrinks; the deleted key misses, the rest survive
+    var (m2, ok) = m.without(Coord { a: 3, b: 6 });
+    m = m2;
+    if (!ok) { return 8; }
+    if (m.len() != 19) { return 9; }
+    if (m.has(Coord { a: 3, b: 6 })) { return 10; }
+    if (!m.has(Coord { a: 4, b: 8 })) { return 11; }
+
+    return 0;
+}
