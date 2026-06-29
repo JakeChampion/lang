@@ -61,6 +61,32 @@ pub function fetch_get(host_be: i32, port: i32, path: string): string {
     return fetch_raw(host_be, port, request);
 }
 
+// http_status(resp) — parse the numeric status code from an HTTP/1.1 response's
+// status line (`HTTP/1.1 200 OK` → 200), or -1 if the response is empty or the
+// status line is malformed. The code is the run of digits after the first space.
+pub function http_status(resp: string): i32 {
+    var sp: i32 = resp.index_of(" ");
+    if (sp < 0) {
+        return -1;
+    }
+    var i: i32 = sp + 1;
+    var code: i32 = 0;
+    var have: boolean = false;
+    while (i < resp.len()) {
+        var ch: i32 = resp[i];
+        if (ch < 48 || ch > 57) {
+            break;
+        }
+        code = code * 10 + (ch - 48);
+        have = true;
+        i = i + 1;
+    }
+    if (!have) {
+        return -1;
+    }
+    return code;
+}
+
 // http_body(resp) — return the body of an HTTP response (everything
 // after the first blank line `\r\n\r\n`), or "" if the response has no
 // header/body separator. Does not interpret Content-Length / chunked
@@ -103,20 +129,22 @@ pub function parse_ipv4(s: string): i32 {
     return ipv4(octets[0], octets[1], octets[2], octets[3]);
 }
 
-// (plat: Platform).fetch(host, port, path) — the capability-scoped
-// outbound GET an edge handler reaches for: `plat.fetch("a.b.c.d",
-// port, "/x")`. Routing outbound I/O through the `Platform` bag keeps
-// the capability model (docs/PLATFORM-RESEARCH.md Rec §1) — a handler
-// can only fetch through the platform it was handed. `host` is a
-// literal IPv4; returns the raw response (use `http_body`), or "" on a
-// parse / connect failure. Blocking; fan out via std/reactor for
-// overlap.
-pub function (plat: Platform) fetch(host: string, port: i32, path: string): string {
+// (plat: Platform).fetch(host, port, path) — the capability-scoped outbound GET
+// an edge handler reaches for: `plat.fetch("a.b.c.d", port, "/x")`. Routing
+// outbound I/O through the `Platform` bag keeps the capability model
+// (docs/PLATFORM-RESEARCH.md Rec §1) — a handler can only fetch through the
+// platform it was handed. `host` is a literal IPv4. Returns the HTTP STATUS CODE
+// (an i32, e.g. 200 / 404), or -1 on a parse / connect / malformed-response
+// failure. The i32 result is what flows through the `std/task` runtime, so a
+// `plat.fetch` task is awaitable once the reactor drives real I/O (Phase 4); for
+// the response BODY use the lower-level `fetch_get` + `http_body`. Blocking; fan
+// out via std/reactor for overlap.
+pub function (plat: Platform) fetch(host: string, port: i32, path: string): i32 {
     var h: i32 = parse_ipv4(host);
     if (h < 0) {
-        return "";
+        return -1;
     }
-    return fetch_get(h, port, path);
+    return http_status(fetch_get(h, port, path));
 }
 
 // get_url(url) — fetch a full `http://HOST[:PORT]/PATH` URL in one
