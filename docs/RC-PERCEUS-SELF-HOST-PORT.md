@@ -146,7 +146,9 @@ landed in green, bounded slices.
 (lasting array/map aliases → clone-not-mutate), `n_params` (borrow
 boundary — params < n_params are never swept), `local_is_arr`
 (drives alias-inc), plus the `*_ret_fns` move/type registries. Borrow
-inference itself (native `inferParamEscapes`) is only partially threaded.
+inference (`borrowable_params_interproc`, the self-host `inferParamEscapes`) is
+a **greatest-fixpoint from above** as of slice 2 — at parity with native's
+algorithm; it feeds `reclaimable_names_of` / snapshot / precise-drop gating.
 
 ### Remaining slices to native parity (dependency-ordered)
 
@@ -163,7 +165,11 @@ so adding the harness is part of slice 1). arm64/wasm legs run in CI.
    `__struct_drop`), 1d (wasm `__field_reclaim` + `__fern_snapshot_dec`).
    Reclaim parity across all three IR backends.**
 2. **Borrow inference (`infer_param_escapes`) on the IR path** — borrowed
-   params skip the dec; gates everything below. *Medium.*
+   params skip the dec; gates everything below. *Medium.* **DONE —
+   `borrowable_params_interproc` flipped from a least-fixpoint-from-below to
+   native's greatest-fixpoint-from-above, recovering mutually-recursive borrows
+   for the downstream reclaim. Behaviour-neutral on the existing corpus
+   (byte-identical bootstrap/fixpoint); capability-additive for cyclic borrows.**
 3. **Struct/enum drop specialisation for NON-array rc fields** (string,
    nested struct, enum payload) — extend the deep-drop walk. *Deep.*
 4. **`Option`/`Result` payload + tuple-element release.** *Medium.*
@@ -2682,3 +2688,34 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   driver (`wasm_ir_run.fern`) still omits the per-type field_reclaim/struct_drop
   bodies — a pre-existing gap shared with slice 1c, out of scope here.
   **Slice 1 (reclaim parity) is COMPLETE across all three IR backends.**
+- 2026-06-29: **Perceus slice 2 — borrow inference is now a GREATEST-fixpoint
+  (native `inferParamEscapes` parity).** `borrowable_params_interproc`
+  (`irlower.fern`) flipped from a least-fixpoint FROM BELOW (start with an empty
+  registry, grow) to a greatest-fixpoint FROM ABOVE (start with EVERY param
+  optimistically borrowable, flip one off only when an actual escape — return of
+  a derived value / alias / container store / slice / lambda capture — is proven
+  under the current registry). The from-below pass could never bootstrap a
+  MUTUALLY RECURSIVE borrow (a param only became borrowable once its callee
+  already was, and in a cycle neither could go first), so cyclic read-only params
+  — e.g. the `expr_unsafe_for`/`stmt_unsafe_for`/`body_unsafe_for` walkers' own
+  registry param — stayed conservatively non-borrowable. From-above keeps them
+  borrowable unless a real escape is found, matching native and feeding the
+  downstream reclaim (`reclaimable_names_of` + snapshot/precise-drop gating).
+  SOUNDNESS: from-below is fail-safe on its iteration cap (un-converged ⇒ smaller
+  ⇒ conservative); from-above is the opposite (un-converged ⇒ larger ⇒ would mark
+  an escaping param borrowable), so convergence is detected EXACTLY via the
+  registry signature (`borrowable_sig`) and the cap (64) is only a backstop — real
+  call graphs converge in a handful of passes. Verified: the change is
+  behaviour-neutral on the existing corpus — `TestSelfHostBootstrapsItself`
+  (native-Go ↔ self-host byte-identical) and `TestSelfHostStage2FixedPoint`
+  (self-reproduction) both still pass, so no self-host function's emitted reclaim
+  changed — yet capability-additive for cyclic borrows:
+  `TestSelfHostBorrowInferInterprocX86_64` exercises a mutually recursive
+  borrow-only `walk_a`/`walk_b` cycle threading a non-escaping struct LOCAL `nd`;
+  the greatest-fixpoint recognises the cycle's params as borrowable, so `nd` is
+  reclaimed at the caller's exit (the emitted asm calls `__fn___struct_drop_Node`)
+  — a 200M-iteration churn stays bounded (exit 0) where the least-fixpoint leaked
+  one box+buffer per call and exhausted the heap (SIGKILL 137), plus a
+  value/over-release case proving the reclaim is sound (not a double-free).
+  `TestSelfHostStdTestE2E` (differential vs interp) unchanged. **Next: slice 3 —
+  struct/enum drop for NON-array rc fields (needs struct-field construction-inc).**
