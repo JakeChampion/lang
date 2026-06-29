@@ -305,16 +305,20 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             else if (o.str == "i16") { s = s.write("    sxth x0, w0\n"); }
             else if (o.str == "i32") { s = s.write("    sxtw x0, w0\n"); }
             s = s.write("    str x0, [sp, #-16]!\n");
-        } else if (o.kind == "arr_push" || o.kind == "arr_push_i64" || o.kind == "arr_push_f64" || o.kind == "arr_push_owned") {
+        } else if (o.kind == "arr_push" || o.kind == "arr_push_i64" || o.kind == "arr_push_f64") {
             // [arr, val] -> grown array. __fern_arr_push(x0=arr, x1=val) -> x0.
             // arm64 array slots are 8 bytes, so i64/u64/f64 elements ride the SAME
             // helper (x1 holds the full 8-byte value); only wasm needs a distinct
-            // 8-byte-stride push. arr_push_owned (the sole-owner self-append) maps
-            // to the same plain push for now — reclaim-on-grow is an x86-only
-            // optimisation so far (asm_ir's __fern_arr_push_owned); arm64 stays
-            // leak-but-sound until its own owned helper lands.
+            // 8-byte-stride push.
             s = s.mark_arr_push();
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_arr_push\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "arr_push_owned") {
+            // The sole-owner self-append (irlower's !aliased `a = a.append(v)`):
+            // reclaims the old buffer on a grow-realloc (the arm64
+            // __fern_arr_push_owned wrapper, asm_arm64.emit_runtime — mirrors
+            // asm_ir's). Sound because the emit site proved the slot unaliased.
+            s = s.mark_arr_push();
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_arr_push_owned\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "alloc_u8") {
             // [n] -> fresh n-element array. __fern_alloc_u8(x0=n) -> x0 (in heap
             // block of asm_arm64.emit_runtime).
