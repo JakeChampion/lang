@@ -131,7 +131,7 @@ function match_multipunct(src: string, i: i32, n: i32): string {
         var s2: string = src[i:i + 2];
         if (s2 == "==" || s2 == "!=" || s2 == "<=" || s2 == ">="
             || s2 == "&&" || s2 == "||" || s2 == "<<" || s2 == ">>"
-            || s2 == "=>" || s2 == "|>" || s2 == ".."
+            || s2 == "=>" || s2 == "|>" || s2 == ".." || s2 == "::"
             || s2 == "+=" || s2 == "-=" || s2 == "*=" || s2 == "/="
             || s2 == "%=" || s2 == "&=" || s2 == "|=" || s2 == "^=") {
             return s2;
@@ -676,7 +676,15 @@ pub function tokenize(src: string): Token[] {
                 l = l.advance();
                 i = i + 1;
             }
-            out = out.append(TokPunct { text: mp, line: start_line, col: start_col });
+            // `::` is the path separator — pure surface syntax, equivalent to
+            // `.` (`Type::f` / `mod::g` / `Type::CONST`). The self-host AST
+            // carries no record of the separator, so normalise it to a `.`
+            // token here and every `.`-handling parser site (postfix access,
+            // qualified names, qualified patterns) treats it identically.
+            // Mirrors the native parser's `::` → FieldAccess. See #2700.
+            var ptext: string = mp;
+            if (mp == "::") { ptext = "."; }
+            out = out.append(TokPunct { text: ptext, line: start_line, col: start_col });
             after_dot = false;
             continue;
         }
