@@ -12945,6 +12945,23 @@ func (b *builder) callReturnType(c *ast.Call) ast.Type {
 	if !ok {
 		return nil
 	}
+	// Map / MapIter accessors return a bare K / V whose CONCRETE type is
+	// the call's TypeArg, not the generic FuncSig result (`__method_Map_*`
+	// is registered with a type-variable result). Without this, a struct
+	// value flowing into `m.get_or(k, d).field` — or `it.value().field` /
+	// `it.key().field` — resolves to an empty struct name and codegen
+	// aborts with "field access on unresolved struct". The checker stamps
+	// TypeArgs = [K, V] on every map method call.
+	switch id.Name {
+	case "__method_Map_get_or", "__method_MapIter_value":
+		if len(c.TypeArgs) >= 2 {
+			return c.TypeArgs[1]
+		}
+	case "__method_MapIter_key":
+		if len(c.TypeArgs) >= 1 {
+			return c.TypeArgs[0]
+		}
+	}
 	if b.info != nil {
 		if sig, ok := b.info.FuncSigs[id.Name]; ok && sig != nil {
 			return sig.Result
