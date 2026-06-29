@@ -8225,6 +8225,26 @@ pub function arr_push_helper(): string {
     return o;
 }
 
+// arr_push_owned_helper emits $__fern_arr_push_owned: the sole-owner self-append
+// (irlower's !aliased `a = a.append(v)`). Wraps $__fern_arr_push and, iff the push
+// GREW (reallocated, result != old), frees the dead old buffer via the shared
+// $__fern_arr_dec — which at rc==1 (sole owner) returns the block to its size-class
+// freelist, and is a no-op on null / low-addr / SSO / static-sentinel / rc!=1, so
+// the owned helper inherits all the defensive gating. Sound only because the emit
+// site proved the slot unaliased (no surviving reference to the superseded buffer).
+// wasm analog of asm_ir's __fern_arr_push_owned. Depends on $__fern_arr_push +
+// $__fern_arr_dec, both co-present whenever arr_push_owned is (module_allocates).
+pub function arr_push_owned_helper(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_arr_push_owned (param $a i32) (param $v i32) (result i32)\n";
+    o = o + "    (local $na i32)\n";
+    o = o + "    (local.set $na (call $__fern_arr_push (local.get $a) (local.get $v)))\n";
+    o = o + "    (if (i32.ne (local.get $na) (local.get $a)) (then\n";
+    o = o + "      (drop (call $__fern_arr_dec (local.get $a)))))\n";
+    o = o + "    (local.get $na))\n";
+    return o;
+}
+
 // str_lines_helper emits the IR-path $__fern_str_lines(s) — split s on '\n' then
 // drop a trailing empty segment when s is empty or ends with '\n' (so "a\nb\n"
 // is 2 lines). Builds a "\n" delim block, calls $__fern_str_split, then
@@ -11383,6 +11403,14 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         // module with only owned appends still needs the helper emitted.
         if ((wasm_ir.module_emits_op(mod, "arr_push") || wasm_ir.module_emits_op(mod, "arr_push_owned")) && !wasm_ir.module_emits_op(mod, "str_split")) {
             ir_out = ir_out + arr_push_helper();
+        }
+        // $__fern_arr_push_owned (the sole-owner self-append) reclaims the old
+        // buffer on a grow via $__fern_arr_dec. Emitted whenever the owned op is
+        // present; its deps $__fern_arr_push (above, or bundled by str_split_helper)
+        // and $__fern_arr_dec (heap_alloc_helpers, gated on module_allocates which
+        // the append implies) are co-present.
+        if (wasm_ir.module_emits_op(mod, "arr_push_owned")) {
+            ir_out = ir_out + arr_push_owned_helper();
         }
         // 8-byte i64[]/u64[] push — its own helper ($__fern_arr_push_i64), no
         // str_split entanglement (str_split builds 4-byte arrays).

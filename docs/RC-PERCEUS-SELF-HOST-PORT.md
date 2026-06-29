@@ -2590,3 +2590,27 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   the per-type `__struct_drop_<T>` / `__field_reclaim_<T>` deep-drop bodies (still
   pass-throughs; `__field_reclaim` is now UNBLOCKED — its prerequisite, `snapshot_dec`
   freeing on arm64, landed above).
+- 2026-06-29: **Backend parity — `op_arr_push_owned` reclaim-on-grow is now REAL on
+  wasm** (was aliased to plain `$__fern_arr_push`, leaking the old buffer). The
+  sole-owner self-append (irlower's `!aliased` `a = a.append(v)`) frees the dead old
+  buffer when the push GREW (reallocated) — previously only x86 + arm64 reclaimed;
+  wasm just returned the new array and leaked the intermediates. Added a wasm
+  `$__fern_arr_push_owned` wrapper (`wasm.fern`'s `arr_push_owned_helper`, gated on
+  `module_emits_op(mod, "arr_push_owned")`): calls `$__fern_arr_push`, and iff the
+  result differs from the input (the buffer reallocated) frees the old block via
+  `$__fern_arr_dec` — the existing rc-guarded freelist-push helper (real reusable
+  freelist on wasm, not bump-only), so the owned wrapper is a thin 4-liner. The
+  `wasm_ir.fern` `arr_push_owned` dispatch now `call`s `$__fern_arr_push_owned`
+  instead of plain push. **Both** wasm runtime-emission paths needed the body: the
+  `emit_module_mode` driver (AST auto-decide, used by `wasm_run.fern`) AND the
+  standalone `wasm_ir_run.fern` `-ir` driver, which has its own separate
+  emit-runtime block — only wiring one left the other emitting a `call` to an
+  undefined function (invalid module → wasmtime trap). Verified:
+  `TestSelfHostArrPushOwnedReclaimWasm` (new — a 100× self-append grows several
+  times and the read-back sum = 7 is intact under wasmtime, asserting both `call
+  $__fern_arr_push_owned` is dispatched and the `(func $__fern_arr_push_owned` body
+  is emitted); `TestSelfHostArrPushIRWasm` (the `-ir` standalone path, green after
+  the second-emission-path fix); `TestSelfHostRcFreeWasm` / `TestSelfHostRcCallResultWasm`
+  freelist-reuse suites unchanged. Remaining wasm parity: the per-type
+  `__fern_snapshot_dec` real body (still a pass-through at `wasm.fern`) and the
+  per-type `__struct_drop_<T>` / `__field_reclaim_<T>` deep-drop bodies.

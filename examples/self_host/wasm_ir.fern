@@ -835,13 +835,16 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             else if (o.str == "i8") { out = out + "    i32.extend8_s\n"; }
             else if (o.str == "i16") { out = out + "    i32.extend16_s\n"; }
             // u32 / i32: no-op (value already a 32-bit i32).
-        } else if (o.kind == "arr_push" || o.kind == "arr_push_owned") {
+        } else if (o.kind == "arr_push") {
             // stack: arr, val -> $__fern_arr_push(arr, val) -> grown array.
-            // arr_push_owned (the sole-owner self-append) maps to the same plain
-            // push for now — reclaim-on-grow is an x86-only optimisation so far
-            // (asm_ir's __fern_arr_push_owned); wasm stays leak-but-sound until its
-            // own owned helper lands.
             out = out + "    call $__fern_arr_push\n";
+        } else if (o.kind == "arr_push_owned") {
+            // The sole-owner self-append (irlower's !aliased `a = a.append(v)`):
+            // reclaims the old buffer on a grow-realloc via $__fern_arr_push_owned
+            // (wasm.fern's arr_push_owned_helper — wraps $__fern_arr_push + frees
+            // the dead old box through $__fern_arr_dec). Sound: the emit site
+            // proved the slot unaliased.
+            out = out + "    call $__fern_arr_push_owned\n";
         } else if (o.kind == "arr_push_i64") {
             // stack: arr, i64 val -> the 8-byte-stride push (wasm32 packs i32[] at
             // 4-byte but i64[]/u64[] at 8-byte, so this needs its own helper).
