@@ -122,11 +122,17 @@ landed in green, bounded slices.
   `__struct_drop_<T>` (deep-drop rc-array fields, sole-owner gated) with
   **real bodies**; conservative precise-drops (array-literal locals only);
   rc header at `[data-8]` (uniform across backends, `asmcore.fern:802`).
-- **arm64 (`asm_arm64.fern`) + wasm (`wasm_ir.fern`): LEAK-SAFE
-  PASS-THROUGHS.** `__field_reclaim_<T>` and `__struct_drop_<T>` just
-  `return` their box — so **a struct with array fields leaks its field
-  buffers** on these two backends. This is the most concrete correctness
-  gap.
+- **arm64 (`asm_arm64.fern`): real bodies (slice 1a/1b shipped).** Both
+  `__struct_drop_<T>` (deep-drop rc-array fields) and `__field_reclaim_<T>`
+  (replaced-field reclaim) emit real bodies, at parity with x86-64.
+- **wasm (`wasm.fern` IR path): `__struct_drop_<T>` real (slice 1c
+  shipped); `__field_reclaim_<T>` still a LEAK-SAFE PASS-THROUGH.**
+  `__struct_drop_<T>` now deep-drops a struct's rc-array fields at the IR
+  struct layout offset (`8 + i*8`) — a scalar-element array via
+  `__fern_arr_dec`, a pointer-element array via `__fern_arr_dec_ptr` (so its
+  element boxes are released too), closing the struct-array-field leak on the
+  wasm IR path. `__field_reclaim_<T>` (consume-rebind replaced-field reclaim)
+  is the remaining wasm pass-through — slice 1d.
 - **Deferred on the IR path (all backends):** string RC (header-less /
   leak-only), closure-env reclamation, `Option`/`Result` payload release,
   tuple-element release, map element (key/value) RC, struct/enum
@@ -151,7 +157,9 @@ so adding the harness is part of slice 1). arm64/wasm legs run in CI.
 1. **arm64 + wasm real `__field_reclaim_<T>` + `__struct_drop_<T>`
    bodies** — transcribe the x86-64 bodies. Closes the live
    struct-array-field leak on two of three backends. *Medium; highest
-   value first; establishes the RC-test harness.*
+   value first; establishes the RC-test harness.* **Shipped: 1a (arm64
+   `__struct_drop`), 1b (arm64 `__field_reclaim`), 1c (wasm
+   `__struct_drop`). Remaining: 1d (wasm `__field_reclaim`).**
 2. **Borrow inference (`infer_param_escapes`) on the IR path** — borrowed
    params skip the dec; gates everything below. *Medium.*
 3. **Struct/enum drop specialisation for NON-array rc fields** (string,
@@ -178,8 +186,8 @@ so adding the harness is part of slice 1). arm64/wasm legs run in CI.
   layer (cf. `RC-PERCEUS-SELF-HOST-IR.md`) prevents triplication drift as
   slices land.
 
-**Recommended next: slice 1** (arm64 + wasm reclaim/drop real bodies +
-the first RC leak test).
+**Recommended next: slice 1d** (wasm real `__field_reclaim_<T>` body — the
+last pass-through in slice 1), then slice 2 (borrow inference on the IR path).
 
 ---
 
@@ -2614,3 +2622,29 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   freelist-reuse suites unchanged. Remaining wasm parity: the per-type
   `__fern_snapshot_dec` real body (still a pass-through at `wasm.fern`) and the
   per-type `__struct_drop_<T>` / `__field_reclaim_<T>` deep-drop bodies.
+- 2026-06-29: **Perceus slice 1c — wasm `__struct_drop_<T>` is now a REAL
+  deep-drop** (was a leak-safe pass-through). The wasm IR path emits a real
+  per-type `$__struct_drop_<T>(box) -> box` body
+  (`emit_wasm_struct_drop_body` in `wasm.fern`, wired into `emit_module_mode`'s
+  IR dispatch): for each rc-ARRAY field it releases the buffer via
+  `$__fern_arr_dec` (scalar-element array — flat free) or `$__fern_arr_dec_ptr`
+  (pointer-element array — also releases its element boxes), both rc-guarded +
+  null-guarded internally. The critical detail was the field offset: the body
+  runs on the IR path, whose struct layout is `8 + i*8` (8-byte header then
+  8-byte slots, matching `wasm_ir`'s struct_make / struct_get / struct_set) —
+  NOT the AST path's `struct_field_off` (`4 + i*4`). The first cut read offset
+  4 and silently reclaimed nothing; reading the low 4 bytes of the IR slot at
+  `8 + i*8` recovers the buffer pointer. Closes the struct-array-field leak on
+  the wasm IR path, at parity with x86-64 and arm64 (1a/1b). The RC-introspection
+  builtins (`__fern_rc_underflow_count` / `__fern_arr_dec` / `__fern_rc_is_unique`)
+  all force a module onto the wasm AST path, so they can't appear in an
+  IR-routed reclaim test; reclaim is proven instead by a memory-pressure
+  differential — a 400–500k alloc→drop churn under a tight `max-memory-size`
+  cap with `trap-on-grow-failure` stays bounded (reuses freed blocks) with the
+  real drop and traps with the pass-through. Verified:
+  `TestSelfHostStructDropWasm` (scalar-array + struct-array fields, each pinning
+  the emitted real-body WAT shape and running under a 16 MiB cap); the existing
+  wasm RC/struct suites (`TestSelfHostRcStructBoxWasm`, `TestSelfHostRcFreeWasm`,
+  `TestSelfHostRcRuntimeWasm`, the arr/map-struct RC tests — all AST-routed)
+  unchanged. Remaining slice-1 parity target: 1d — wasm real
+  `__field_reclaim_<T>` body (still a pass-through).

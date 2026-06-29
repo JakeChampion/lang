@@ -1121,6 +1121,46 @@ function array_field_elem_is_ptr(ft: string, cx: Ctx): boolean {
     return struct_field_kind_char(ft[0:ft.len() - 2], cx) != "i";
 }
 
+// emit_wasm_struct_drop_body returns the WAT for $__struct_drop_<t>(box) -> box —
+// the wasm sibling of asm_ir.emit_ir_struct_drop_one (Perceus slice 1c). For each
+// ARRAY field (struct_field_kind_char == "a") it releases the field BUFFER via
+// $__fern_arr_dec_ptr (pointer-element array — releases ITS elements too, the
+// deep walk encapsulated in the helper) or $__fern_arr_dec (scalar-element array
+// — flat free). Both rc-guard (only free at rc==1) and null-/literal-guard
+// internally, so no explicit uniqueness or null check is needed. Non-array rc
+// fields (string / nested struct) are skipped — a later slice, matching the
+// register backends' array-only struct_drop. The field offset is the IR
+// struct layout (`8 + i*8` — an 8-byte header then 8-byte slots, matching
+// wasm_ir's struct_make / struct_get / struct_set), NOT the AST `struct_field_off`
+// (`4 + i*4`): this body runs on the IR path, where the box is laid out by the IR
+// emitter. A pointer field is stored as i32 in the low 4 bytes of its 8-byte slot,
+// so an `i32.load` at the slot offset recovers the buffer pointer. Returns box
+// (the call site drops it).
+function emit_wasm_struct_drop_body(t: string, cx: Ctx): string {
+    var o: string = "  (func $__struct_drop_" + t + " (param $box i32) (result i32)\n";
+    var si: i32 = 0;
+    while (si < cx.structs.len()) {
+        if (cx.structs[si].name == t) {
+            var k: i32 = 0;
+            while (k < cx.structs[si].fields.len()) {
+                var ft: string = cx.structs[si].fields[k].type_name;
+                if (struct_field_kind_char(ft, cx) == "a") {
+                    var load: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
+                    if (array_field_elem_is_ptr(ft, cx)) {
+                        o = o + "    (drop (call $__fern_arr_dec_ptr " + load + "))\n";
+                    } else {
+                        o = o + "    (drop (call $__fern_arr_dec " + load + "))\n";
+                    }
+                }
+                k = k + 1;
+            }
+        }
+        si = si + 1;
+    }
+    o = o + "    (local.get $box))\n";
+    return o;
+}
+
 // emit_struct_release frees one owned struct/enum local with RECURSIVE
 // field-release: if it is the LAST owner (rc word at [s-8] == 1, i.e. the box
 // is about to be freed) first release each rc-tracked field (a string or
@@ -11359,14 +11399,19 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
             ir_out = ir_out + "    (local.get $new))\n";
             frti = frti + 1;
         }
-        // Per-type $__struct_drop_<T> bodies (#3457 — the deep struct-drop). wasm
-        // does not deep-drop the struct's rc-array fields yet — a leak-safe PASS-
-        // THROUGH (returns `box`), mirroring the field_reclaim pass-through above.
+        // Per-type $__struct_drop_<T> bodies (#3457 — the deep struct-drop). REAL
+        // now (Perceus self-host slice 1c): for each rc-ARRAY field, release the
+        // buffer via $__fern_arr_dec_ptr (pointer-element — releases the elements
+        // too) or $__fern_arr_dec (scalar-element — flat free); both rc-guard +
+        // null-guard internally and are present (heap_alloc_helpers, emitted above
+        // for any allocating module). Closes the struct-array-field leak on wasm,
+        // matching x86-64 / arm64. Non-array rc fields (string / nested struct)
+        // stay a later slice, as on the register backends.
         var sdt: string[] = wasm_ir.struct_drop_types(mod);
+        var sd_cx: Ctx = release_module_ctx(mod.structs, collect_method_types(mod), mod.funcs);
         var sdti: i32 = 0;
         while (sdti < sdt.len()) {
-            ir_out = ir_out + "  (func $__struct_drop_" + sdt[sdti] + " (param $box i32) (result i32)\n";
-            ir_out = ir_out + "    (local.get $box))\n";
+            ir_out = ir_out + emit_wasm_struct_drop_body(sdt[sdti], sd_cx);
             sdti = sdti + 1;
         }
         if (wasm_ir.module_uses_divrem(mod)) { ir_out = ir_out + divrem_helpers(); }
