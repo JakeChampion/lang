@@ -70,10 +70,10 @@ pub function fetch_get(host_be: i32, port: i32, path: string): string {
 //   ], "");
 //
 // On a connect/send failure it resolves immediately to "" (a `Ready`
-// future), so a failed upstream doesn't stall the fan-out. The
-// continuation does a single `tcp_recv` after readiness (sufficient for
-// the small responses of the edge fan-out; a multi-chunk body would
-// loop, re-suspending — folded in later). PORTABLE native + wasm: the
+// future), so a failed upstream doesn't stall the fan-out. The read is
+// STREAMING — `__fetch_drain` re-suspends per chunk and accumulates, so
+// the whole response comes back (not just one `recv` buffer) while
+// staying overlapped with the other futures. PORTABLE native + wasm: the
 // wait token is `tcp_pollable(c)` — the raw fd on native (identity), a
 // real wasi:io/poll pollable handle on wasm — so `poll` (poll(2) /
 // ppoll(2) native, wasi:io/poll.poll on wasm) drives it either way. The
@@ -90,11 +90,29 @@ pub function fetch_future(host_be: i32, port: i32, path: string): async.Future[s
         tcp_close(c);
         return Ready("");
     }
+    return __fetch_drain(c, "");
+}
+
+// __fetch_drain(c, acc) — one step of the streaming response read: a `Future`
+// that, once `c` is readable, drops the woken pollable, `recv`s a chunk, and
+// either FINISHES (empty recv = EOF, since we send `Connection: close`) by
+// returning the parsed body, or RE-SUSPENDS to read more. `acc` carries the
+// bytes read so far across re-suspends, so a response spanning multiple recv
+// buffers / TCP segments is read in FULL — the previous single-`recv` version
+// truncated anything past one 4 KiB chunk. Re-suspending (rather than looping
+// `recv` synchronously) keeps the read overlapped with the other futures in a
+// `gather`/`race`. At most one pollable is live at a time (each step drops the
+// previous before subscribing the next), so the socket has no child pollable
+// when `tcp_close` runs.
+function __fetch_drain(c: i32, acc: string): async.Future[string] {
     function resume(woken: i32): async.Future[string] {
-        var resp: string = tcp_recv(c, 4096);
         var dropped: i32 = wasm_pollable_drop(woken);
-        tcp_close(c);
-        return Ready(http_body(resp));
+        var chunk: string = tcp_recv(c, 4096);
+        if (chunk.len() == 0) {
+            tcp_close(c);
+            return Ready(http_body(acc));
+        }
+        return __fetch_drain(c, acc + chunk);
     }
     return Pending(tcp_pollable(c), resume);
 }

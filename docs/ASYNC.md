@@ -194,9 +194,10 @@ that every backend already lowers. See `docs/ASYNC-REDESIGN.md`.
   (`__drop_losers` → `wasm_pollable_drop`), so a `race` over real wasm sockets
   no longer leaks the losers' pollables (which are children of their sockets and
   would otherwise trap wasmtime with "resource has children").
-- `fetch_future`'s continuation does a single `recv`, sufficient for the small
-  responses of the edge fan-out; a multi-chunk body that re-suspends per chunk
-  is folded in with the IR future.
+- `fetch_future` reads the **whole** response: its continuation re-suspends per
+  chunk (`__fetch_drain`), accumulating across reads until EOF, so a body larger
+  than one `recv` buffer / spread over TCP segments comes back in full while
+  staying overlapped with the other futures in a `gather`/`race`.
 - `std/async` is now the **single** reactor — the legacy `std/task`, `std/reactor`,
   and `std/wasm_reactor` modules it was distilled from have all been deleted.
   `gather` / `race` / `with_deadline` over `Future[T]` cover the native (fd) and
