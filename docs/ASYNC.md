@@ -177,11 +177,15 @@ that every backend already lowers. See `docs/ASYNC-REDESIGN.md`.
 
 ## Current limitations
 
-- `Pending` (real-fd) futures resolve only on the **native** backends today; on
-  interp / wasm the `poll` stub means they never complete (the portable
-  `Ready`-future path works everywhere). Real wasm async lands when `Future[T]`
-  becomes an IR type backed by component-model-async (`docs/ASYNC-REDESIGN.md`
-  PR5).
+- `Pending` futures resolve on **native** (fd-backed, via poll(2)/ppoll(2)) and
+  on **wasm** (pollable-backed, via wasi:io/poll — `poll` forwards to it). A wasm
+  `Pending`'s token is a pollable handle (e.g. `wasm_timer_pollable(ns)`); a
+  pollable-backed wasm `fetch_future` is the remaining follow-up. On **interp**
+  the `poll` stub means `Pending` never completes (the portable `Ready`-future
+  path works everywhere).
+- `with_deadline`'s deadline is **native-only** for now: `poll` ignores its
+  `timeout_ms` arg on wasm, so on wasm `with_deadline` waits for all futures
+  like `gather` (a host timeout needs a timer pollable added to the poll set).
 - `fetch_future`'s continuation does a single `recv`, sufficient for the small
   responses of the edge fan-out; a multi-chunk body that re-suspends per chunk
   is folded in with the IR future.

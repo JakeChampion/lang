@@ -124,18 +124,25 @@ sequences the safe consolidation first.
    stdlib + tests; collapses the duplicate native reactors into the one
    `Future[T]` abstraction with zero backend risk. (`std/wasm_reactor`
    stays until the wasm slice absorbs it.)
-2. **PR5-wasm — real wasm futures (combined 5a+5b; composer work).**
-   Together, because neither is safe alone:
-   - Lower the generic `poll(tokens: i32[], timeout_ms): i32` on wasm
-     to `__fern_wasm_poll` over the i32 pollable handles, **and** gate
-     the `wasi:io/poll` component wiring on a program actually producing
-     pollables (so `Ready`-only programs are unaffected and never trap).
-   - A wasm `fetch_future` (over `wasi:http` / `tcp_pollable`) returning
-     `Pending(pollable, resume)`, so `async.gather([...])` does a real
-     overlapping wasm fetch.
-   - e2e: the `TestAsyncFetchFutureFanout` shape, on wasm; plus a
-     deterministic two-`wasm_timer_pollable` `poll` test.
-   - Then fold `std/wasm_reactor` into `std/async` and delete it.
+2. **PR5-wasm — real wasm futures via poll-over-pollables. DONE (core).**
+   Lowered the generic `poll(tokens: i32[], timeout_ms): i32` on wasm to
+   `__fern_wasm_poll` over the i32 pollable handles. **The composer
+   gating turned out to be automatic**, not manual: `classify.go` sets
+   `req.Poll` by scanning the compiled module's imports, so emitting the
+   `wasi:io/poll.poll` import (via `__fern_wasm_poll`) wires the io/poll
+   instance on its own — no `compose_*.go` change. The trap concern is
+   moot because `gather`/`race` only call `poll` when a `Pending` exists,
+   and a wasm `Pending` carries a real pollable handle. Verified:
+   `async.gather` / `async.race` over two `wasm_timer_pollable` futures
+   resolve through the host on stock wasmtime (`async_wasm_e2e_test.go`,
+   i32 + string). `timeout_ms` is ignored on wasm (so `with_deadline`'s
+   deadline is native-only — a host timeout would add a timer pollable to
+   the set).
+   - **Remaining follow-ups:** a pollable-backed wasm `fetch_future`
+     (over `wasi:http` / `tcp_pollable`) so `async.gather` does a real
+     overlapping wasm *fetch* (the `TestAsyncFetchFutureFanout` shape on
+     wasm); host-timeout for `with_deadline`; and folding
+     `std/wasm_reactor` into `std/async`.
 3. **PR5d — docs.** Fold the outcome into `ASYNC.md` (drop the "Pending
    resolves only on native" + "modules linger" limitations) and retire
    `ASYNC-IMPLEMENTATION-PLAN.md` / `WASM-REACTOR-PLAN.md` to historical.
