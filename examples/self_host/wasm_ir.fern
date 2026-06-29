@@ -614,6 +614,16 @@ pub function wasm_eligible(mod: parser.Module): boolean {
         && !module_emits_op(mod, "timer_fd")
         && !module_emits_op(mod, "wasm_timer_pollable")
         && !module_emits_op(mod, "wasm_pollable_drop")
+        // tcp_* client primitives: native lowers them via the IR (socket
+        // syscalls + the self-host string ABI for recv/send), but the
+        // self-host wasm backend has no socket runtime (wasm sockets need the
+        // component-model wasi:sockets interfaces), so a tcp module stays on the
+        // wasm AST path. Same deferral as poll/timer_fd.
+        && !module_emits_op(mod, "tcp_connect")
+        && !module_emits_op(mod, "tcp_send")
+        && !module_emits_op(mod, "tcp_recv")
+        && !module_emits_op(mod, "tcp_close")
+        && !module_emits_op(mod, "tcp_pollable")
         && !module_emits_op(mod, "remove_dir_all")
         && !module_emits_op(mod, "temp_dir")
         && !module_emits_op(mod, "read_dir")

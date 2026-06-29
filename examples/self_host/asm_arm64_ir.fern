@@ -508,6 +508,24 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // [p] -> __fern_wasm_pollable_drop(x0=p) -> 0 (native shim) in x0.
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_wasm_pollable_drop\n    str x0, [sp, #-16]!\n");
             s = s.need("wasm_pollable_drop");
+        } else if (o.kind == "tcp_connect") {
+            // [host_be, port] -> __fern_tcp_connect(x0=host_be, x1=port) -> fd.
+            // The __fern_tcp_* bodies are emitted unconditionally by emit_runtime.
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_tcp_connect\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "tcp_send") {
+            // [fd, str box] -> __fern_tcp_send(x0=fd, x1=box) -> bytes / -errno.
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_tcp_send\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "tcp_recv") {
+            // [fd, max] -> __fern_tcp_recv(x0=fd, x1=max) -> string box. Allocates
+            // (calls __fern_alloc), so the heap runtime must be present.
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_tcp_recv\n    str x0, [sp, #-16]!\n");
+            s = s.need("heap");
+        } else if (o.kind == "tcp_close") {
+            // [fd] -> __fern_tcp_close(x0=fd) -> 0 / -errno.
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_tcp_close\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "tcp_pollable") {
+            // [fd] -> __fern_tcp_pollable(x0=fd) -> fd (native identity).
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_tcp_pollable\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "opt_make") {
             // Option/Result box [tag@0, payload@8], 16 bytes. Payload is on the
             // operand stack; alloc first (it survives, like struct_make), then
