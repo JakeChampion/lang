@@ -554,7 +554,14 @@ verified). A bounded extra type param (none in std/array today) would land in
 (map / map-widen / flat_map / fold-widen / zip, each `-decide == "ir"`, an
 `__arrm_` clone in the asm, exit matching the interp oracle); the slice-1/2/3
 array-method tests, `TestSelfHostBootstrapsItself`, and `TestSelfHostStdTestE2E`
-(incl. `array_hof`) stay green.
+stay green.
+
+> Follow-up (2026-06-28): the full 8-test `array_hof_test.fern` suite is now
+> actually enrolled in the `TestSelfHostStdTestE2E` / `…Arm64` **differential
+> gate** (`selfHostStdTestCases`) — earlier it was covered only by the synthetic
+> single-function closure/typaram IR tests, so a regression in the full-suite IR
+> routing could have slipped through. The gate now byte-compares the whole suite
+> against the interpreter on every run.
 
 ### 2026-06-28 — self-host: closure-taking array methods lower on IR (slice 3)
 
@@ -662,11 +669,10 @@ this treeshake fix keeps the auto-discovered concrete helpers reachable; the
 
 **Frontier map** (refreshed) — remaining `examples/tests/*_test.fern` routing AST:
 
-- **Generic array CLOSURE-methods** — `.flat_map` / `.reduce` / `.sort_by` take a
-  closure argument, so they're not yet covered by the `__arrm_*` slices (slices 1
-  / 2a handle closure-free `concat`). `array_hof` still routes AST (also a
-  `BAIL lower` on `reduce`); the next array-cluster target is extending the
-  `__arrm_*` free-generic rewrite to closure-taking array methods.
+- ~~**Generic array CLOSURE-methods** — `.flat_map` / `.reduce` / `.sort_by`~~ —
+  **DONE** (slices 3 + 4, #3976/#3977): the `__arrm_*` free-generic rewrite now
+  admits closure-taking and own-type-param array methods, so `array_hof` routes
+  IR (8/8) and is on the differential gate.
 - ~~**`subprocess` not lowered on IR** — `process_assertions` /
   `process_output_shortcuts` / `lang_binary_e2e`~~ — **DONE** (see the
   `subprocess(cmd, args, stdin)` entry above): bare `ProcessResult` struct result.

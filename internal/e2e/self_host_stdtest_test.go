@@ -291,6 +291,12 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"uuid", langSrcAbs(t, "examples/tests/uuid_test.fern"), ""},
 		{"json_roundtrip", langSrcAbs(t, "examples/tests/json_roundtrip_test.fern"), ""},
 		{"array_combinators", langSrcAbs(t, "examples/tests/array_combinators_test.fern"), ""},
+		// Generic array CLOSURE-methods (.reduce / .flat_map / .sort_by / .map[U] /
+		// .fold[A]) flipped to IR by the __arrm_* free-generic rewrite (slices 3+4,
+		// #3976/#3977); pin the whole 8-test suite on the differential gate so the
+		// IR routing can't silently regress (it was previously only covered by the
+		// synthetic single-function closure/typaram IR tests).
+		{"array_hof", langSrcAbs(t, "examples/tests/array_hof_test.fern"), ""},
 		{"iter_combinators", langSrcAbs(t, "examples/tests/iter_combinators_test.fern"), ""},
 		{"num_reducers", langSrcAbs(t, "examples/tests/num_reducers_test.fern"), ""},
 		{"time_iso_span", langSrcAbs(t, "examples/tests/time_iso_span_test.fern"), ""},
