@@ -185,6 +185,6 @@ that every backend already lowers. See `docs/ASYNC-REDESIGN.md`.
 - `fetch_future`'s continuation does a single `recv`, sufficient for the small
   responses of the edge fan-out; a multi-chunk body that re-suspends per chunk
   is folded in with the IR future.
-- The legacy `std/task` / `std/reactor` modules still exist (the in-memory and
-  native-fd reactors `std/async` was distilled from); they fold into the one
-  `Future[T]` abstraction at PR5.
+- `std/async` is now the single native reactor — the legacy `std/task` and
+  `std/reactor` modules it was distilled from have been deleted. `std/wasm_reactor`
+  (pollable-based) remains until the wasm slice folds it into `Future[T]`.

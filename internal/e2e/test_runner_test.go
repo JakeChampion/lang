@@ -656,25 +656,6 @@ func TestRunnerSelfTestPasses(t *testing.T) {
 	}
 }
 
-// `examples/tests/async_runtime_test.fern` exercises the cooperative
-// task runtime (std/task): the reactor's token allocation +
-// poll-drain, a single suspend/resume, a two-task fan-out whose waits
-// overlap on one thread, multi-await + mixed-depth scheduling, and
-// `select` (first-to-finish race with loser cancellation). It doubles
-// as the executable spec of the future `concurrent { … }` desugar's
-// output (docs/ASYNC-IMPLEMENTATION-PLAN.md). Passing suite → exit 0.
-func TestRunnerAsyncRuntimeExamplePasses(t *testing.T) {
-	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "examples/tests/async_runtime_test.fern")
-	code, out, errOut := runLangInterp(t, bin, src)
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
-	}
-	if !strings.Contains(out, "# pass 10") || !strings.Contains(out, "# fail 0") {
-		t.Errorf("expected 10 passes, 0 fails\noutput:\n%s", out)
-	}
-}
-
 // `examples/tests/async_combinators_test.fern` exercises the blessed
 // structured-concurrency surface (docs/ASYNC-REDESIGN.md): the
 // `gather` / `race` / `with_deadline` combinators over `Future[T]`,
