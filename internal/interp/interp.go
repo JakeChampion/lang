@@ -610,6 +610,7 @@ func New() *Interp {
 	i.Builtins["tcp_close"] = &Builtin{Fn: builtinTcpClose}
 	i.Builtins["tcp_pollable"] = &Builtin{Fn: builtinTcpPollable}
 	i.Builtins["wasm_pollable_drop"] = &Builtin{Fn: builtinWasmPollableDrop}
+	i.Builtins["wasm_timer_pollable"] = &Builtin{Fn: builtinWasmTimerPollable}
 	return i
 }
 
@@ -748,6 +749,17 @@ func builtinWasmPollableDrop(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("wasm_pollable_drop: expected number arg, got %T", args[0])
 	}
 	return Number(0), nil
+}
+
+// builtinWasmTimerPollable is the interpreter's `wasm_timer_pollable(ns)` —
+// returns -1 (no real pollable / no real poll under interp), matching the
+// native stub. std/async's with_deadline appends it to the poll set; the interp
+// `poll` stub returns -1 regardless, so timed waits never resolve here anyway.
+func builtinWasmTimerPollable(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("wasm_timer_pollable: expected 1 arg, got %d", len(args))
+	}
+	return Number(-1), nil
 }
 
 // builtinTcpPollable is the interpreter's `tcp_pollable(fd)` — identity, like

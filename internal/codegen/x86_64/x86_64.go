@@ -365,6 +365,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesWasmPollableDrop {
 		g.emitWasmPollableDropRuntime()
 	}
+	if g.usesWasmTimerPollable {
+		g.emitWasmTimerPollableRuntime()
+	}
 	if g.usesTimerFd {
 		g.emitTimerFdRuntime()
 	}
@@ -506,21 +509,22 @@ type generator struct {
 	// usesSleepMs pulls in `__fern_sleep_ms(ms)` — best-effort sleep
 	// for `ms` milliseconds via `nanosleep(&req, NULL)` (#35); ms <= 0
 	// returns immediately. Void.
-	usesSleepMs          bool
-	usesTcp              bool
-	usesEnv              bool
-	usesArgs             bool
-	usesAllocU8          bool
-	usesStringFromBytes  bool
-	usesStrSlice         bool
-	usesSliceMake        bool
-	usesRandomBytes      bool
-	usesRandomI32        bool
-	usesPoll             bool
-	usesWasmPollableDrop bool
-	usesTimerFd          bool
-	usesAsBytes          bool
-	usesReadLine         bool
+	usesSleepMs           bool
+	usesTcp               bool
+	usesEnv               bool
+	usesArgs              bool
+	usesAllocU8           bool
+	usesStringFromBytes   bool
+	usesStrSlice          bool
+	usesSliceMake         bool
+	usesRandomBytes       bool
+	usesRandomI32         bool
+	usesPoll              bool
+	usesWasmPollableDrop  bool
+	usesWasmTimerPollable bool
+	usesTimerFd           bool
+	usesAsBytes           bool
+	usesReadLine          bool
 	// usesStrIdx tracks whether any code emits the SSO-aware
 	// inlined __str_idx helper, which spills inline-tagged
 	// strings to the .bss `__fern_str_idx_scratch` slot before
@@ -812,6 +816,12 @@ func (g *generator) recordUse(target string) {
 		// fetch_future (which drops the wasm pollable before close)
 		// compiles + runs portably.
 		g.usesWasmPollableDrop = true
+	case "wasm_timer_pollable":
+		// On native there's no pollable to make — a deadline comes from
+		// poll(2)'s own timeout arg — so this returns -1 (an fd poll(2)
+		// ignores). Present so std/async's with_deadline (which appends a
+		// timer pollable to the poll set on wasm) is portable.
+		g.usesWasmTimerPollable = true
 	case "poll":
 		// poll(fds, timeout_ms) — readiness multiplex. The runtime
 		// helper allocates a scratch pollfd buffer.
@@ -2004,6 +2014,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_tcp_pollable"
 		case "wasm_pollable_drop":
 			target = "__fern_wasm_pollable_drop"
+		case "wasm_timer_pollable":
+			target = "__fern_wasm_timer_pollable"
 		case "tcp_close":
 			target = "__fern_tcp_close"
 		case "env":
@@ -5456,6 +5468,21 @@ func (g *generator) emitTcpSendRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_tcp_send, .-__fern_tcp_send")
+}
+
+// emitWasmTimerPollableRuntime emits `__fern_wasm_timer_pollable(ns)` — on
+// native there is no pollable to create (a deadline is enforced by poll(2)'s
+// own timeout arg), so this returns -1, an fd that poll(2) ignores. Lets
+// std/async's with_deadline append a "timer" to the poll set portably; on wasm
+// this symbol is the real subscribe-duration pollable instead.
+func (g *generator) emitWasmTimerPollableRuntime() {
+	g.line("")
+	g.line(".globl __fern_wasm_timer_pollable")
+	g.line(".type __fern_wasm_timer_pollable, @function")
+	g.label("__fern_wasm_timer_pollable")
+	g.emit("mov eax, -1") // no native pollable; -1 is ignored by poll(2)
+	g.emit("ret")
+	g.line(".size __fern_wasm_timer_pollable, .-__fern_wasm_timer_pollable")
 }
 
 // emitWasmPollableDropRuntime emits `__fern_wasm_pollable_drop(p)` — a no-op

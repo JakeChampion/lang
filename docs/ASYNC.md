@@ -184,13 +184,12 @@ that every backend already lowers. See `docs/ASYNC-REDESIGN.md`.
   overlapping `gather([fetch_future, …])` works on **both native and wasm**. On
   **interp** the `poll` stub means `Pending` never completes (the portable
   `Ready`-future path works everywhere).
-- `with_deadline`'s deadline is **native-only** for now: `poll` ignores its
-  `timeout_ms` arg on wasm, so on wasm `with_deadline` waits for all futures
-  like `gather`. Enforcing it on wasm needs a timer pollable in the poll set,
-  which means using `monotonic-clock`'s `subscribe-duration` alongside `now`
-  (`monotonic_ns`) — a combination the wasm component composer doesn't yet
-  support (one monotonic-clock import instance can't export both). Tracked in
-  `docs/ASYNC-FUTURE-UNIFICATION.md`.
+- `with_deadline` enforces its deadline on **both** native and wasm: native via
+  `poll(2)`'s timeout arg; wasm by appending a real timer pollable
+  (`monotonic-clock` `subscribe-duration`) to the poll set each round, so the
+  timer firing is the deadline. (This needed the composer to export both `now`
+  and `subscribe-duration` on one `monotonic-clock` import instance — see
+  `docs/ASYNC-FUTURE-UNIFICATION.md`.)
 - `race` / `gather` drop every abandoned future's pollable before teardown
   (`__drop_losers` → `wasm_pollable_drop`), so a `race` over real wasm sockets
   no longer leaks the losers' pollables (which are children of their sockets and

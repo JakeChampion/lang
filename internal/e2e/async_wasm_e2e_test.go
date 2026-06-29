@@ -61,6 +61,37 @@ function main(): i32 {
 	}
 }
 
+// with_deadline on wasm now ENFORCES the deadline (it appends a real
+// wasm_timer_pollable to the poll set each round): a fast future (10ms) beats
+// the 60ms budget and carries its result; a slow one (300ms) misses and lands
+// on_timeout. Proves the wasm host-timeout path (docs/ASYNC-FUTURE-UNIFICATION.md)
+// — previously with_deadline ignored its deadline on wasm (and the
+// monotonic_ns + timer-pollable combination didn't even compose).
+func TestAsyncWasmWithDeadline(t *testing.T) {
+	src := `import "std/async";
+
+function start_timer(ns: i64, label: i32): async.Future[i32] {
+    var p: i32 = wasm_timer_pollable(ns);
+    function resume(woken: i32): async.Future[i32] {
+        var d: i32 = wasm_pollable_drop(woken);
+        return Ready(label);
+    }
+    return Pending(p, resume);
+}
+
+function main(): i32 {
+    var fs: async.Future[i32][] = [start_timer(10000000, 7), start_timer(300000000, 35)];
+    var r: i32[] = async.with_deadline(60, fs, 0 - 1);
+    if (r.len() != 2) { return 90; }
+    if (r[0] != 7) { return 91; }        // beat the 60ms deadline
+    if (r[1] != (0 - 1)) { return 92; }  // missed it -> on_timeout (-1)
+    return 42;
+}`
+	if got := runWasm(t, src); got != 42 {
+		t.Errorf("async.with_deadline on wasm: got %d, want 42", got)
+	}
+}
+
 // gather over Future[string] on wasm — generic over T through the
 // host-driven poll resumption, with string results threaded back.
 func TestAsyncWasmGatherStrings(t *testing.T) {

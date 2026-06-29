@@ -158,22 +158,28 @@ sequences the safe consolidation first.
      pollables (children of their sockets → would trap with "resource
      has children"). Verified by
      `internal/e2e/async_wasm_fetch_e2e_test.go ▸ TestAsyncWasmRaceFetchDropsLoser`.
-   - **BLOCKED (composer) — `with_deadline` host-timeout on wasm.**
-     Enforcing the deadline on wasm needs a timer pollable
-     (`wasm_timer_pollable`, via monotonic-clock `subscribe-duration`)
-     in the poll set, while `with_deadline` also tracks elapsed time via
-     `monotonic_ns` (monotonic-clock `now`). The wasm component composer
-     does **not** support both on one interface: `ensureMonotonicTimer`
-     builds a monotonic-clock import instance exporting only
-     `subscribe-duration`, so a program that also uses `now` fails to
-     instantiate ("instance has no export named `now`" — explicitly
-     noted unsupported at `compose_general.go`). Unblocking it means a
-     combined monotonic-clock instance type (both `now` +
-     `subscribe-duration`) shared by the structured-`now` and timer
-     composition paths — a focused composer change. Until then
-     `with_deadline`'s deadline is native-only (it already works there
-     via `poll(2)`'s timeout); on wasm it waits like `gather`.
-   - **Remaining:** folding `std/wasm_reactor` into `std/async`.
+   - **DONE — `with_deadline` host-timeout on wasm (incl. the composer
+     fix).** `with_deadline` appends a deadline timer to the poll set
+     each round: native uses `poll(2)`'s timeout arg (the appended timer
+     is `-1`, ignored); wasm uses a real `wasm_timer_pollable`
+     (monotonic-clock `subscribe-duration`) whose firing IS the
+     deadline. A `ready` index of `nfds` (the timer's slot) means the
+     deadline elapsed; timed-out futures' pollables are dropped
+     (`__drop_losers`). Portable via `wasm_timer_pollable` getting a
+     native/interp identity-`-1` lowering (like `tcp_pollable` /
+     `wasm_pollable_drop`). **The composer blocker is fixed:** a new
+     `WasiClocksMonotonicTimerAndNowInstanceTypeBody` exports BOTH
+     `now` and `subscribe-duration` on one monotonic-clock import
+     instance, and `ensureMonotonicTimer(withNow)` uses it when the
+     program also imports `now` (the structured-`now` path reuses that
+     instance, since `importStructured` is a no-op once it exists).
+     Verified: the combined `monotonic_ns` + `wasm_timer_pollable` +
+     `poll` program now composes/validates/runs, and
+     `internal/e2e/async_wasm_e2e_test.go ▸ TestAsyncWasmWithDeadline`
+     (fast future beats the budget, slow one lands `on_timeout`).
+   - **Remaining:** folding `std/wasm_reactor` into `std/async` (the
+     last duplicate reactor module; its run/select/run_deadline are now
+     fully covered by `std/async` on wasm).
 3. **PR5d — docs.** Fold the outcome into `ASYNC.md` (drop the "Pending
    resolves only on native" + "modules linger" limitations) and retire
    `ASYNC-IMPLEMENTATION-PLAN.md` / `WASM-REACTOR-PLAN.md` to historical.
