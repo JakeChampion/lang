@@ -73,10 +73,13 @@ pub function fetch_get(host_be: i32, port: i32, path: string): string {
 // future), so a failed upstream doesn't stall the fan-out. The
 // continuation does a single `tcp_recv` after readiness (sufficient for
 // the small responses of the edge fan-out; a multi-chunk body would
-// loop, re-suspending on the fd — folded in with the IR future at
-// docs/ASYNC-REDESIGN.md PR5). Native real I/O; on interp/wasm the
-// `poll` stub means the `Pending` future never resolves (consistent
-// with the rest of std/async).
+// loop, re-suspending — folded in later). PORTABLE native + wasm: the
+// wait token is `tcp_pollable(c)` — the raw fd on native (identity), a
+// real wasi:io/poll pollable handle on wasm — so `poll` (poll(2) /
+// ppoll(2) native, wasi:io/poll.poll on wasm) drives it either way. The
+// continuation captures the connection `c` (it reads the socket, not the
+// woken token, which differs by backend). On interp the `poll` stub
+// means the `Pending` never resolves (consistent with std/async).
 pub function fetch_future(host_be: i32, port: i32, path: string): async.Future[string] {
     var request: string = "GET " + path + " HTTP/1.1\r\nHost: fern\r\nConnection: close\r\n\r\n";
     var c: i32 = tcp_connect(host_be, port);
@@ -87,12 +90,13 @@ pub function fetch_future(host_be: i32, port: i32, path: string): async.Future[s
         tcp_close(c);
         return Ready("");
     }
-    function resume(woken_fd: i32): async.Future[string] {
-        var resp: string = tcp_recv(woken_fd, 4096);
-        tcp_close(woken_fd);
+    function resume(woken: i32): async.Future[string] {
+        var resp: string = tcp_recv(c, 4096);
+        var dropped: i32 = wasm_pollable_drop(woken);
+        tcp_close(c);
         return Ready(http_body(resp));
     }
-    return Pending(c, resume);
+    return Pending(tcp_pollable(c), resume);
 }
 
 // http_status(resp) — parse the numeric status code from an HTTP/1.1 response's

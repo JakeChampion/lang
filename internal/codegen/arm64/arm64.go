@@ -448,9 +448,13 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.emitTcpRecvRuntime()
 		g.emitTcpSendRuntime()
 		g.emitTcpCloseRuntime()
+		g.emitTcpPollableRuntime()
 	}
 	if g.usesPoll {
 		g.emitPollRuntime()
+	}
+	if g.usesWasmPollableDrop {
+		g.emitWasmPollableDropRuntime()
 	}
 	if g.usesTimerFd {
 		g.emitTimerFdRuntime()
@@ -3338,6 +3342,35 @@ func (g *generator) emitTcpSendRuntime() {
 	g.line(".ltorg")
 }
 
+// emitWasmPollableDropRuntime emits `__fern_wasm_pollable_drop(p)` — a no-op
+// on native (a pollable is just an fd; the socket fd is closed via tcp_close).
+// Returns 0. Lets std/async's fetch_future drop the wasm pollable portably.
+func (g *generator) emitWasmPollableDropRuntime() {
+	g.line("")
+	g.line(".global __fern_wasm_pollable_drop")
+	g.typeDirective("__fern_wasm_pollable_drop")
+	g.label("__fern_wasm_pollable_drop")
+	g.emit("mov w0, #0") // return 0 (no-op)
+	g.emit("ret")
+	g.sizeDirective("__fern_wasm_pollable_drop")
+	g.line(".ltorg")
+}
+
+// emitTcpPollableRuntime emits `__fern_tcp_pollable(fd)` — on native the
+// readiness token for a socket IS its fd (ppoll(2) takes fds directly), so
+// this is the identity: the fd argument is already in w0/x0, just return it.
+// Lets `std/async`'s `fetch_future` build a portable `Pending(tcp_pollable(fd), …)`
+// (on wasm `tcp_pollable` yields a real wasi:io/poll pollable handle).
+func (g *generator) emitTcpPollableRuntime() {
+	g.line("")
+	g.line(".global __fern_tcp_pollable")
+	g.typeDirective("__fern_tcp_pollable")
+	g.label("__fern_tcp_pollable")
+	g.emit("ret") // fd argument already in w0/x0 → identity
+	g.sizeDirective("__fern_tcp_pollable")
+	g.line(".ltorg")
+}
+
 // emitTcpCloseRuntime emits `__fern_tcp_close(fd)` — thin
 // wrapper around `close(2)`. Returns 0 or `-errno`.
 func (g *generator) emitTcpCloseRuntime() {
@@ -4637,11 +4670,11 @@ func (g *generator) emitPollRuntime() {
 	g.label(".Lpoll_fill")
 	g.emit("cmp x22, x19")
 	g.emit("b.ge .Lpoll_filled")
-	g.emit("ldr w0, [x20, x22, lsl #2]")  // fd
-	g.emit("add x9, x21, x22, lsl #3")    // &pollfd[i]
-	g.emit("str w0, [x9]")                // .fd
+	g.emit("ldr w0, [x20, x22, lsl #2]") // fd
+	g.emit("add x9, x21, x22, lsl #3")   // &pollfd[i]
+	g.emit("str w0, [x9]")               // .fd
 	g.emit("mov w1, #%d", pollin)
-	g.emit("strh w1, [x9, #4]") // .events
+	g.emit("strh w1, [x9, #4]")  // .events
 	g.emit("strh wzr, [x9, #6]") // .revents
 	g.emit("add x22, x22, #1")
 	g.emit("b .Lpoll_fill")
@@ -6174,7 +6207,7 @@ type generator struct {
 	usesCCall    [5]bool
 	usesCCallF32 [5]bool
 	usesCCallF64 [5]bool
-	usesStrcmp bool
+	usesStrcmp   bool
 	// usesTcp pulls in the full TCP socket runtime
 	// (__fern_tcp_listen / __fern_tcp_accept / __fern_tcp_recv
 	// / __fern_tcp_send / __fern_tcp_close). Gated on call-
@@ -6185,6 +6218,10 @@ type generator struct {
 	// reactor's readiness multiplexer (ppoll(2) on Linux; -1 stub on
 	// Darwin pending kqueue).
 	usesPoll bool
+	// usesWasmPollableDrop pulls in the no-op `__fern_wasm_pollable_drop`
+	// (a pollable is just an fd on native) so std/async's fetch_future
+	// compiles + runs portably.
+	usesWasmPollableDrop bool
 	// usesTimerFd pulls in `__fern_timer_fd(ms)` — a CLOCK_MONOTONIC
 	// timerfd readable after `ms` (Linux; -1 stub on Darwin).
 	usesTimerFd bool
@@ -8876,6 +8913,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "tcp_close":
 			target = "__fern_tcp_close"
 			g.usesTcp = true
+		case "tcp_pollable":
+			target = "__fern_tcp_pollable"
+			g.usesTcp = true
+		case "wasm_pollable_drop":
+			target = "__fern_wasm_pollable_drop"
+			g.usesWasmPollableDrop = true
 		case "tcp_connect":
 			target = "__fern_tcp_connect"
 			g.usesTcp = true
