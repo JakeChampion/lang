@@ -1732,9 +1732,11 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
     // the sum of all elements (0 if empty).
     if (fa.field == "sum" && c.args.len() == 0
             && asmcore.ty_is_array_i32(prim_recv)) {
+        // __fern_arr_i32_sum is a Fern runtime function (#2649): call it via the
+        // ordinary __fn_ stack convention (the borrowed array is param[0]).
         s = emit_expr(fa.obj, s);
-        s = s.write("    ldr x0, [sp], #16\n");
-        s = s.write("    bl __fern_arr_i32_sum\n");
+        s = s.write("    bl __fn___fern_arr_i32_sum\n");
+        s = s.write("    add sp, sp, #16\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_arr_i32_sum();
         return s;
@@ -1744,9 +1746,10 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
     // empty, matching the empty-product identity).
     if (fa.field == "product" && c.args.len() == 0
             && asmcore.ty_is_array_i32(prim_recv)) {
+        // __fern_arr_i32_product is a Fern runtime function (#2649).
         s = emit_expr(fa.obj, s);
-        s = s.write("    ldr x0, [sp], #16\n");
-        s = s.write("    bl __fern_arr_i32_product\n");
+        s = s.write("    bl __fn___fern_arr_i32_product\n");
+        s = s.write("    add sp, sp, #16\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_arr_i32_product();
         return s;
@@ -1796,11 +1799,13 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
     // just uses register compare.
     if ((fa.field == "index_of" || fa.field == "contains")
             && c.args.len() == 1 && asmcore.ty_is_array_i32(prim_recv)) {
-        s = emit_expr(fa.obj, s);
-        s = emit_expr(c.args[0], s);
-        s = s.write("    ldr x1, [sp], #16\n");
-        s = s.write("    ldr x0, [sp], #16\n");
-        s = s.write("    bl __fern_arr_i32_index_of\n");
+        // __fern_arr_i32_index_of is a Fern runtime function (#2649): push args
+        // right-to-left (target then array) so the array is param[0] at [x29,#16]
+        // and target is param[1] at [x29,#32]; result (index or -1) in x0.
+        s = emit_expr(c.args[0], s);   // target
+        s = emit_expr(fa.obj, s);      // array
+        s = s.write("    bl __fn___fern_arr_i32_index_of\n");
+        s = s.write("    add sp, sp, #32\n");
         if (fa.field == "contains") {
             s = s.write("    cmp x0, #0\n");
             s = s.write("    cset x0, ge\n");
@@ -8866,44 +8871,15 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
-    // __fern_arr_i32_product: x0 = i32-array ptr. Returns
-    // x0 = product of all elements (1 if empty — matches the
-    // empty-product mathematical identity). Leaf — no frame.
+    // __fern_arr_i32_product / _sum are now Fern runtime functions (#2649),
+    // compiled through emit_function (see asmcore.rt_src_arr_i32_*). They link
+    // as __fn___fern_arr_i32_product / __fn___fern_arr_i32_sum and are called
+    // via the ordinary stack convention; the array param is borrowed.
     if (s.has_need("arr_i32_product")) {
-        s = s.write("__fern_arr_i32_product:\n");
-        s = s.write("    ldr x1, [x0]\n");          // len
-        s = s.write("    mov x2, #1\n");            // product
-        s = s.write("    mov x3, #0\n");            // i
-        s = s.write(".Lai32_prod_loop:\n");
-        s = s.write("    cmp x3, x1\n");
-        s = s.write("    b.ge .Lai32_prod_done\n");
-        s = s.write("    add x4, x3, #1\n");
-        s = s.write("    ldr x5, [x0, x4, lsl #3]\n");
-        s = s.write("    mul x2, x2, x5\n");
-        s = s.write("    add x3, x3, #1\n");
-        s = s.write("    b .Lai32_prod_loop\n");
-        s = s.write(".Lai32_prod_done:\n");
-        s = s.write("    mov x0, x2\n");
-        s = s.write("    ret\n");
+        s = emit_runtime_fern_fn(asmcore.rt_src_arr_i32_product(), s);
     }
-    // __fern_arr_i32_sum: x0 = i32-array ptr. Returns x0 =
-    // sum of all elements (0 if empty). Leaf — no frame needed.
     if (s.has_need("arr_i32_sum")) {
-        s = s.write("__fern_arr_i32_sum:\n");
-        s = s.write("    ldr x1, [x0]\n");          // len
-        s = s.write("    mov x2, #0\n");            // sum
-        s = s.write("    mov x3, #0\n");            // i
-        s = s.write(".Lai32_sum_loop:\n");
-        s = s.write("    cmp x3, x1\n");
-        s = s.write("    b.ge .Lai32_sum_done\n");
-        s = s.write("    add x4, x3, #1\n");
-        s = s.write("    ldr x5, [x0, x4, lsl #3]\n");
-        s = s.write("    add x2, x2, x5\n");
-        s = s.write("    add x3, x3, #1\n");
-        s = s.write("    b .Lai32_sum_loop\n");
-        s = s.write(".Lai32_sum_done:\n");
-        s = s.write("    mov x0, x2\n");
-        s = s.write("    ret\n");
+        s = emit_runtime_fern_fn(asmcore.rt_src_arr_i32_sum(), s);
     }
     // __fern_arr_str_index_of: x0 = string-array ptr,
     // x1 = target string-box ptr. Returns x0 = first index
@@ -8943,27 +8919,11 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
-    // __fern_arr_i32_index_of: x0 = i32-array ptr, x1 = target val.
-    // Returns x0 = first index where arr[i] == val, or -1 if none.
+    // __fern_arr_i32_index_of is now a Fern runtime function (#2649): see
+    // asmcore.rt_src_arr_i32_index_of. Linear scan returning the first index
+    // where arr[i] == target, or -1; called via the stack convention.
     if (s.has_need("arr_i32_index_of")) {
-        s = s.write("__fern_arr_i32_index_of:\n");
-        s = s.write("    ldr x2, [x0]\n");          // len
-        s = s.write("    mov x3, #0\n");            // i
-        s = s.write(".Lai32_idx_loop:\n");
-        s = s.write("    cmp x3, x2\n");
-        s = s.write("    b.ge .Lai32_idx_notfound\n");
-        s = s.write("    add x4, x3, #1\n");
-        s = s.write("    ldr x5, [x0, x4, lsl #3]\n");
-        s = s.write("    cmp x5, x1\n");
-        s = s.write("    b.eq .Lai32_idx_found\n");
-        s = s.write("    add x3, x3, #1\n");
-        s = s.write("    b .Lai32_idx_loop\n");
-        s = s.write(".Lai32_idx_found:\n");
-        s = s.write("    mov x0, x3\n");
-        s = s.write("    ret\n");
-        s = s.write(".Lai32_idx_notfound:\n");
-        s = s.write("    mov x0, #-1\n");
-        s = s.write("    ret\n");
+        s = emit_runtime_fern_fn(asmcore.rt_src_arr_i32_index_of(), s);
     }
     return s;
 }

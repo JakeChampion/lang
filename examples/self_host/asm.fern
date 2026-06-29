@@ -1795,9 +1795,11 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
     // the sum of all elements (0 if empty).
     if (fa.field == "sum" && c.args.len() == 0
             && asmcore.ty_is_array_i32(prim_recv)) {
+        // __fern_arr_i32_sum is a Fern runtime function (#2649): call it via
+        // the ordinary __fn_ stack convention (the borrowed array is param[0]).
         s = emit_expr(fa.obj, s);
-        s = s.write("    popq %rdi\n");
-        s = s.write("    call __fern_arr_i32_sum\n");
+        s = s.write("    call __fn___fern_arr_i32_sum\n");
+        s = s.write("    addq $8, %rsp\n");
         s = s.write("    pushq %rax\n");
         s = s.mark_arr_i32_sum();
         return s;
@@ -1807,9 +1809,10 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
     // empty, matching the empty-product identity).
     if (fa.field == "product" && c.args.len() == 0
             && asmcore.ty_is_array_i32(prim_recv)) {
+        // __fern_arr_i32_product is a Fern runtime function (#2649).
         s = emit_expr(fa.obj, s);
-        s = s.write("    popq %rdi\n");
-        s = s.write("    call __fern_arr_i32_product\n");
+        s = s.write("    call __fn___fern_arr_i32_product\n");
+        s = s.write("    addq $8, %rsp\n");
         s = s.write("    pushq %rax\n");
         s = s.mark_arr_i32_product();
         return s;
@@ -1856,11 +1859,13 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
     // `contains`.
     if ((fa.field == "index_of" || fa.field == "contains")
             && c.args.len() == 1 && asmcore.ty_is_array_i32(prim_recv)) {
-        s = emit_expr(fa.obj, s);
-        s = emit_expr(c.args[0], s);
-        s = s.write("    popq %rsi\n");
-        s = s.write("    popq %rdi\n");
-        s = s.write("    call __fern_arr_i32_index_of\n");
+        // __fern_arr_i32_index_of is a Fern runtime function (#2649): push args
+        // right-to-left (target then array) so the array is param[0] at +16 and
+        // target is param[1] at +24; result (index or -1) comes back in %rax.
+        s = emit_expr(c.args[0], s);   // target
+        s = emit_expr(fa.obj, s);      // array
+        s = s.write("    call __fn___fern_arr_i32_index_of\n");
+        s = s.write("    addq $16, %rsp\n");
         if (fa.field == "contains") {
             s = s.write("    cmpq $0, %rax\n");
             s = s.write("    movq $0, %rax\n");
@@ -8009,42 +8014,15 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
-    // __fern_arr_i32_product: %rdi = i32-array ptr. Returns
-    // %rax = product of all elements (1 if empty — matches
-    // the mathematical empty-product identity). Leaf.
+    // __fern_arr_i32_product / _sum are now Fern runtime functions (#2649),
+    // compiled through emit_function (see asmcore.rt_src_arr_i32_*). They link
+    // as __fn___fern_arr_i32_product / __fn___fern_arr_i32_sum and are called
+    // via the ordinary stack convention; the array param is borrowed.
     if (s.has_need("arr_i32_product")) {
-        s = s.write("__fern_arr_i32_product:\n");
-        s = s.write("    movq (%rdi), %rcx\n");      // len
-        s = s.write("    movq $1, %rax\n");          // product
-        s = s.write("    movq $0, %rdx\n");          // i
-        s = s.write(".Lai32_prod_loop:\n");
-        s = s.write("    cmpq %rcx, %rdx\n");
-        s = s.write("    jge .Lai32_prod_done\n");
-        s = s.write("    movq %rdx, %r8\n");
-        s = s.write("    incq %r8\n");
-        s = s.write("    imulq (%rdi,%r8,8), %rax\n");
-        s = s.write("    incq %rdx\n");
-        s = s.write("    jmp .Lai32_prod_loop\n");
-        s = s.write(".Lai32_prod_done:\n");
-        s = s.write("    ret\n");
+        s = emit_runtime_fern_fn(asmcore.rt_src_arr_i32_product(), s);
     }
-    // __fern_arr_i32_sum: %rdi = i32-array ptr. Returns %rax
-    // = sum of all elements (0 if empty). Leaf — no frame.
     if (s.has_need("arr_i32_sum")) {
-        s = s.write("__fern_arr_i32_sum:\n");
-        s = s.write("    movq (%rdi), %rcx\n");      // len
-        s = s.write("    movq $0, %rax\n");          // sum
-        s = s.write("    movq $0, %rdx\n");          // i
-        s = s.write(".Lai32_sum_loop:\n");
-        s = s.write("    cmpq %rcx, %rdx\n");
-        s = s.write("    jge .Lai32_sum_done\n");
-        s = s.write("    movq %rdx, %r8\n");
-        s = s.write("    incq %r8\n");
-        s = s.write("    addq (%rdi,%r8,8), %rax\n");
-        s = s.write("    incq %rdx\n");
-        s = s.write("    jmp .Lai32_sum_loop\n");
-        s = s.write(".Lai32_sum_done:\n");
-        s = s.write("    ret\n");
+        s = emit_runtime_fern_fn(asmcore.rt_src_arr_i32_sum(), s);
     }
     // __fern_arr_str_index_of: %rdi = string-array ptr,
     // %rsi = target string-box ptr. Returns %rax = first index
@@ -8090,28 +8068,11 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
-    // __fern_arr_i32_index_of: %rdi = arr ptr, %rsi = target val.
-    // Returns %rax = first index where arr[i] == val, or -1.
+    // __fern_arr_i32_index_of is now a Fern runtime function (#2649): see
+    // asmcore.rt_src_arr_i32_index_of. Linear scan returning the first index
+    // where arr[i] == target, or -1; called via the stack convention.
     if (s.has_need("arr_i32_index_of")) {
-        s = s.write("__fern_arr_i32_index_of:\n");
-        s = s.write("    movq (%rdi), %rdx\n");      // len
-        s = s.write("    movq $0, %rcx\n");          // i
-        s = s.write(".Lai32_idx_loop:\n");
-        s = s.write("    cmpq %rdx, %rcx\n");
-        s = s.write("    jge .Lai32_idx_notfound\n");
-        s = s.write("    movq %rcx, %r8\n");
-        s = s.write("    incq %r8\n");
-        s = s.write("    movq (%rdi,%r8,8), %r9\n");
-        s = s.write("    cmpq %rsi, %r9\n");
-        s = s.write("    je .Lai32_idx_found\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    jmp .Lai32_idx_loop\n");
-        s = s.write(".Lai32_idx_found:\n");
-        s = s.write("    movq %rcx, %rax\n");
-        s = s.write("    ret\n");
-        s = s.write(".Lai32_idx_notfound:\n");
-        s = s.write("    movq $-1, %rax\n");
-        s = s.write("    ret\n");
+        s = emit_runtime_fern_fn(asmcore.rt_src_arr_i32_index_of(), s);
     }
     // The multi-GiB heap reservation is emitted LAST so __fern_heap is the
     // final symbol in .bss — every other .bss symbol (strbuf / args / envp /

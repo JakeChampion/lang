@@ -1,10 +1,11 @@
 # Runtime helpers in Fern — migration design (issue #2649)
 
-Status: **slice 1 landed** (`__fern_i32_pow`, the AST x86-64 + arm64 backends).
-This is the architecture document the end goal of
+Status: **slices 1–2 landed** — `__fern_i32_pow` (Tier 0) and the
+`__fern_arr_i32_sum`/`_product`/`_index_of` reducers (Tier 1), on the AST
+x86-64 + arm64 backends. This is the architecture document the end goal of
 [#2649](https://github.com/JakeChampion/lang/issues/2649) needs as more helpers
-move; see "Slice 1 (landed)" at the end for what the first migration actually
-took, which was simpler than first proposed. The near-term stepping stone it references
+move; see the "Slice 1 / Slice 2 (landed)" sections at the end for what the
+first migrations actually took, which was simpler than first proposed. The near-term stepping stone it references
 (declarative `runtime_need_deps` table + `close_needs` transitive closure +
 the symbol-closure link check) has already landed (PRs #2650, #3697); this
 doc picks up where that left off.
@@ -255,5 +256,21 @@ driver-loaded `runtime.fern`, and `treeshake`-based gating from the sections
 above become necessary precisely when those conditions break — i.e. once a
 helper must be **reached from Fern call sites** (so modload/treeshake must keep
 and not-mangle it) or carry **borrowed, non-RC params** (Tier 1+). The next
-leaf candidates that fit slice 1's cheap shape (need-gated, scalar, backend-
-called) can reuse `emit_runtime_fern_fn` directly.
+leaf candidates that fit slice 1's cheap shape (need-gated, scalar/borrowed,
+backend-called) can reuse `emit_runtime_fern_fn` directly.
+
+## Slice 2 (landed) — the i32-array reducers
+
+`__fern_arr_i32_sum` / `_product` / `_index_of` (backing `xs.sum()` /
+`.product()` / `.index_of(x)` / `.contains(x)`) followed, reusing
+`emit_runtime_fern_fn` unchanged (`asmcore.rt_src_arr_i32_*`). They are the
+first **Tier 1** helpers — they take an array param — and the slice confirmed
+the borrowed-param assumption holds in practice with **no new machinery**:
+`emit_function` already records the receiver+param boundary so the Perceus exit
+sweep releases only locals, not params, and at the call site the array is
+passed by the same plain pointer-push the old register-ABI path used (no inc).
+The bodies bottom out in inline-lowered `xs.len()` / `xs[i]` indexing and i32
+arithmetic — still no helper call and no allocation — so a Tier 1 borrowed
+reducer needs nothing beyond what slice 1 built. (`min`/`max` stayed
+hand-written: they allocate an `Option[i32]` box at the call site, so they need
+the heap-returning shape, deferred.)

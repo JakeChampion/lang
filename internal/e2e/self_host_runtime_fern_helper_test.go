@@ -11,21 +11,19 @@ import (
 
 // Issue #2649 — runtime helpers written in Fern instead of hand-written asm.
 //
-// __fern_i32_pow (the integer-power helper backing `n.pow(e)`) is the first
-// runtime helper migrated from a hand-written asm string to a real Fern
-// function (asmcore.rt_src_i32_pow), compiled through the normal function
-// emitter. It therefore links as the ordinary user-function symbol
-// `__fn___fern_i32_pow` and is invoked via the stack-call convention, not as a
-// bare register-ABI `__fern_i32_pow`.
+// Helpers migrated from hand-written asm strings to real Fern functions
+// (asmcore.rt_src_*) are compiled through the normal function emitter, so they
+// link as the ordinary user-function symbol `__fn_<name>` and are invoked via
+// the stack-call convention, not as bare register-ABI `__fern_*` symbols.
 //
-// The behavioural pow cases in TestSelfHostAsmRunX86_64 already prove the
-// helper computes the right answer; they'd keep passing even if someone
-// reverted to the hand-written asm. This test locks in the *migration* itself:
-// the emitted symbol must be the Fern-compiled `__fn___fern_i32_pow` and the
-// old hand-asm form (the bare `__fern_i32_pow:` label / its `.Lpow_loop`) must
-// be gone. It shares the asm_run driver build with TestSelfHostAsmRunX86_64
-// (same sources → same driver-bin cache key), so it adds no driver rebuild.
-func TestSelfHostRuntimeHelperI32PowIsFern(t *testing.T) {
+// The behavioural cases in TestSelfHostAsmRunX86_64 already prove these helpers
+// compute the right answers; they'd keep passing even if someone reverted to
+// the hand-written asm. This test locks in the *migration* itself: for each
+// migrated helper the emitted symbol must be the Fern-compiled `__fn_<name>`
+// and the old hand-asm form (the bare label / its local loop label) must be
+// gone. It shares the asm_run driver build with TestSelfHostAsmRunX86_64 (same
+// sources → same driver-bin cache key), so it adds no driver rebuild.
+func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern", "asm_run.fern"} {
@@ -39,31 +37,67 @@ func TestSelfHostRuntimeHelperI32PowIsFern(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
 
-	const powSrc = "function main(): i32 { var n: i32 = 2; return n.pow(10); }"
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(driverBin)
-	} else {
-		cmd = exec.Command(runner[0], append(runner[1:], driverBin)...)
+	cases := []struct {
+		name string
+		src  string
+		sym  string   // the Fern-compiled symbol that must appear
+		gone []string // hand-asm markers that must NOT appear
+	}{
+		{
+			"i32_pow",
+			"function main(): i32 { var n: i32 = 2; return n.pow(10); }",
+			"__fn___fern_i32_pow",
+			[]string{"\n__fern_i32_pow:", ".Lpow_loop"},
+		},
+		{
+			"arr_i32_sum",
+			"function main(): i32 { var xs: i32[] = [1, 2, 3]; return xs.sum(); }",
+			"__fn___fern_arr_i32_sum",
+			[]string{"\n__fern_arr_i32_sum:", ".Lai32_sum_loop"},
+		},
+		{
+			"arr_i32_product",
+			"function main(): i32 { var xs: i32[] = [1, 2, 3]; return xs.product(); }",
+			"__fn___fern_arr_i32_product",
+			[]string{"\n__fern_arr_i32_product:", ".Lai32_prod_loop"},
+		},
+		{
+			"arr_i32_index_of",
+			"function main(): i32 { var xs: i32[] = [5, 6, 7]; return xs.index_of(6); }",
+			"__fn___fern_arr_i32_index_of",
+			[]string{"\n__fern_arr_i32_index_of:", ".Lai32_idx_loop"},
+		},
 	}
-	cmd.Stdin = bytes.NewReader([]byte(powSrc))
-	asm, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("driver run: %v", err)
-	}
-	got := string(asm)
 
-	// The migrated, Fern-compiled helper + its stack-call site must be present.
-	for _, want := range []string{"__fn___fern_i32_pow:", "call __fn___fern_i32_pow"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("emitted asm missing %q — __fern_i32_pow no longer compiled from Fern?\n", want)
-		}
-	}
-	// The old hand-written asm form must be gone. (Match the bare label with a
-	// trailing colon so it doesn't also match the `__fn___fern_i32_pow:` form.)
-	for _, bad := range []string{"\n__fern_i32_pow:", ".Lpow_loop"} {
-		if strings.Contains(got, bad) {
-			t.Errorf("emitted asm still contains hand-written form %q — migration regressed", bad)
-		}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(driverBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], driverBin)...)
+			}
+			cmd.Stdin = bytes.NewReader([]byte(tc.src))
+			asm, err := cmd.Output()
+			if err != nil {
+				t.Fatalf("driver run: %v", err)
+			}
+			got := string(asm)
+			// The migrated, Fern-compiled helper + its stack-call site.
+			if !strings.Contains(got, tc.sym+":") {
+				t.Errorf("emitted asm missing definition %q — %s no longer compiled from Fern?", tc.sym+":", tc.name)
+			}
+			if !strings.Contains(got, "call "+tc.sym) {
+				t.Errorf("emitted asm missing %q — call site not migrated to the Fern symbol", "call "+tc.sym)
+			}
+			// The old hand-written asm form must be gone.
+			for _, bad := range tc.gone {
+				if strings.Contains(got, bad) {
+					t.Errorf("emitted asm still contains hand-written form %q — %s migration regressed", bad, tc.name)
+				}
+			}
+		})
 	}
 }
