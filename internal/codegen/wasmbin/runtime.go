@@ -1382,7 +1382,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 	},
 	"__fern_tcp_pollable": {
 		// (conn: i32) → i32 — a wasi:io/poll pollable for the
-		// connection (tcp-socket.subscribe), so std/wasm_reactor can
+		// connection (tcp-socket.subscribe), so std/async can
 		// multiplex N connections for overlapped outbound fan-out.
 		// See buildTcpPollableBody.
 		params:  []byte{encode.ValtypeI32},

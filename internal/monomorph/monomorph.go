@@ -602,7 +602,7 @@ func Run(prog *ast.Program, info *checker.Info) error {
 			// the same `structInsts` map. A later fixpoint pass can surface
 			// a fresh enum key — e.g. a self-referential generic enum whose
 			// variant payload is a function returning the enum itself
-			// (`Wait(i32, (i32) => Step[T])`, std/wasm_reactor) — so this
+			// (`Wait(i32, (i32) => Step[T])`, std/async) — so this
 			// loop must build the enum clone too, exactly like the first
 			// worklist loop above; otherwise the GenericStructs lookup is
 			// nil and the clone is dropped (panic / dangling generic enum).
@@ -780,7 +780,7 @@ func typeRefsGenericNominal(t ast.Type, info *checker.Info) bool {
 		// A generic-nominal reference behind a FUNCTION boundary does
 		// NOT force an enum clone. A function-typed variant payload —
 		// e.g. the self-referential `Wait(i32, (i32) => Step[T])` of
-		// std/wasm_reactor's `Step[T]` — re-checks fine while the enum
+		// std/async's `Future[T]` — re-checks fine while the enum
 		// stays generic (lenient unify), the behavior before the
 		// composite-payload cloning (#3733/#3693). Cloning such an enum
 		// is both unnecessary and (for the self-referential / signature-

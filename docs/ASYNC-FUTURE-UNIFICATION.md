@@ -177,9 +177,19 @@ sequences the safe consolidation first.
      `poll` program now composes/validates/runs, and
      `internal/e2e/async_wasm_e2e_test.go ▸ TestAsyncWasmWithDeadline`
      (fast future beats the budget, slow one lands `on_timeout`).
-   - **Remaining:** folding `std/wasm_reactor` into `std/async` (the
-     last duplicate reactor module; its run/select/run_deadline are now
-     fully covered by `std/async` on wasm).
+   - **DONE — folded `std/wasm_reactor` into `std/async`.** Its
+     `run` / `select` / `run_deadline` (over pollable-tagged `Step[T]`)
+     are exactly `std/async`'s `gather` / `race` / `with_deadline` over
+     `Future[T]` now that those resolve `Pending` pollables on wasm, so
+     the module + its now-duplicate e2e tests were deleted (the wasm
+     primitive tests — `wasm_timer_pollable` / `wasm_poll` /
+     `wasm_block` / `wasm_pollable_drop` — stay; they exercise the
+     builtins `std/async` rides on). `std/async` is the single reactor;
+     `std/task` / `std/reactor` / `std/wasm_reactor` are all gone.
+
+The unification is complete: one `Future[T]` + `gather`/`race`/
+`with_deadline`, real overlapping I/O on native (fds) and wasm
+(pollables), no leftover reactor modules.
 3. **PR5d — docs.** Fold the outcome into `ASYNC.md` (drop the "Pending
    resolves only on native" + "modules linger" limitations) and retire
    `ASYNC-IMPLEMENTATION-PLAN.md` / `WASM-REACTOR-PLAN.md` to historical.

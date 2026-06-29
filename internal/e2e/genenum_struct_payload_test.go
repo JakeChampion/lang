@@ -45,7 +45,7 @@ function main(): i32 {
 
 // Generic enum with a FUNCTION-typed, SELF-referential variant payload —
 // `Wait(i32, (i32) => Step[T])` — used in function signatures and
-// instantiated. This is std/wasm_reactor's `Step[T]` minimized. It
+// instantiated. This is std/async's `Future[T]` minimized. It
 // re-checks fine while the enum stays generic (lenient unify), but the
 // composite-payload cloning (#3693/#3733) over-eagerly cloned it via the
 // function boundary and produced a broken clone (`Step[i32]` slots in
