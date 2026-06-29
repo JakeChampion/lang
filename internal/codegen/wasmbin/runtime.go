@@ -476,12 +476,17 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__ptr_width":
 					needs.add("__ptr_width")
 				case "poll":
-					// `poll(fds, timeout_ms)` readiness builtin: real fd polling is
-					// native-only, so on wasm it's a `-1` ("no fd ready") stub —
-					// present so modules referencing `poll` (std/reactor, the future
-					// real-fd std/task reactor) compile on wasm. Real wasm readiness
-					// is the separate wasi:io/poll pollable path.
+					// `poll(fds, timeout_ms)` readiness builtin. On wasm it
+					// forwards to __fern_wasm_poll (wasi:io/poll.poll over the i32
+					// tokens as pollable handles) — so pull in that helper and its
+					// deps (alloc for the 8-byte return area, cabi_realloc so the
+					// host can lower the returned ready-index list into memory).
+					// __fern_wasm_poll's presence adds the wasi:io/poll.poll import,
+					// which makes the composer wire the io/poll instance (classify.go).
 					needs.add("poll")
+					needs.add("__fern_alloc")
+					needs.add("cabi_realloc")
+					needs.add("__fern_wasm_poll")
 				case "__alloc", "__alloc_u8":
 					needs.add("__fern_alloc")
 					needs.add(op.Str)
@@ -1087,13 +1092,19 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		body:    buildPtrWidthBody,
 	},
 	"poll": {
-		// (fds: i32, timeout_ms: i32) → i32 — the readiness builtin. Real fd
-		// polling is native-only; on wasm this is a `-1` ("no fd ready") stub so
-		// modules referencing `poll` compile. Real wasm readiness uses the
-		// separate wasi:io/poll pollable path.
+		// (fds: i32, timeout_ms: i32) → i32 — the readiness builtin. On wasm
+		// it forwards to __fern_wasm_poll (wasi:io/poll.poll over the i32
+		// tokens as pollable handles), returning the array index of the first
+		// ready one (or -1). The `timeout_ms` arg is ignored for this cut (a
+		// host timeout would add a timer pollable to the set). std/async's
+		// combinators only call `poll` when a `Pending` future exists, and on
+		// wasm a `Pending` carries a real pollable handle, so the tokens are
+		// always valid pollables (no trap). Referencing `poll` pulls in the
+		// __fern_wasm_poll helper → the wasi:io/poll.poll import → the
+		// composer wires the io/poll instance automatically (classify.go).
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
-		body:    buildPollStubBody,
+		body:    buildPollWasmBody,
 	},
 	"__alloc": {
 		// (size) → i32 — same as __fern_alloc. Lives in the
@@ -2746,9 +2757,16 @@ func buildPtrWidthBody(_ map[string]uint32) []byte {
 // buildPollStubBody — (fds, timeout_ms) → i32, the wasm `poll` stub: ignores its
 // two params and returns -1 ("no fd ready"). Real wasm readiness is the separate
 // wasi:io/poll pollable path; this keeps poll-referencing modules compilable.
-func buildPollStubBody(_ map[string]uint32) []byte {
+// buildPollWasmBody — (fds: i32, timeout_ms: i32) → i32, the wasm `poll`
+// builtin. Forwards the fds list-data pointer (param 0) to
+// __fern_wasm_poll, which reads its length at fds-4 and multiplexes the
+// pollable handles through wasi:io/poll.poll, returning the index of the
+// first ready one (or -1). `timeout_ms` (param 1) is ignored for now.
+func buildPollWasmBody(idxs map[string]uint32) []byte {
+	wp := idxs["__fern_wasm_poll"]
 	var body []byte
-	body = inst.InstI32Const(body, -1)
+	body = inst.InstLocalGet(body, 0) // fds (list data ptr)
+	body = inst.InstCall(body, wp)    // __fern_wasm_poll(fds) → index | -1
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 

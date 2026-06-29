@@ -9,12 +9,11 @@ import (
 )
 
 // The `poll(fds, timeout_ms)` builtin is real on the native backends (poll(2) /
-// ppoll(2)); on interp and wasm it's a `-1` ("no fd ready") stub so modules that
-// reference `poll` — std/reactor, and the future real-fd std/task reactor — stay
-// compilable + runnable there (real wasm readiness is the separate wasi:io/poll
-// path). This pins that the stub is present: `poll([], 0)` returns -1 under
-// interp, and a poll-using program compiles on wasm. See
-// docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1/4.
+// ppoll(2)) and on wasm (forwards to wasi:io/poll.poll over the tokens as
+// pollable handles — docs/ASYNC-FUTURE-UNIFICATION.md). On interp it stays a
+// `-1` ("no fd ready") stub (no real fds). This pins that interp `poll([], 0)`
+// returns -1, and a poll-using program still compiles on wasm (now pulling the
+// io/poll composition rather than the old stub).
 func TestPollStubInterpWasm(t *testing.T) {
 	bin := buildFernCLI(t)
 	const src = `function main(): i32 {
