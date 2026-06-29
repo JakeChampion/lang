@@ -376,6 +376,16 @@ pub function op_now_ns(): Op { return op0("now_ns"); }
 // __fern_poll runtime helper (poll(2) over the fd set) — the self-host twin of
 // the native `poll` builtin. See docs/ASYNC-SELFHOST-IR.md.
 pub function op_poll(): Op { return op0("poll"); }
+// `timer_fd` takes one operand [ms] and pushes an i32: a CLOCK_MONOTONIC
+// one-shot timerfd readable after `ms` ms (or -errno). Lowers to __fern_timer_fd.
+pub function op_timer_fd(): Op { return op0("timer_fd"); }
+// `wasm_timer_pollable` takes one operand [ns] and pushes an i32. On native it
+// is -1 (no pollable; deadlines ride poll(2)'s timeout arg); on wasm it is a
+// real wasi timer pollable. Portability shim for std/async's with_deadline.
+pub function op_wasm_timer_pollable(): Op { return op0("wasm_timer_pollable"); }
+// `wasm_pollable_drop` takes one operand [p] and pushes an i32 (0 on native — a
+// pollable is just an fd, nothing to drop). Portability shim for fetch_future.
+pub function op_wasm_pollable_drop(): Op { return op0("wasm_pollable_drop"); }
 // `__heap_bump_bytes` takes no operands → an i32: the bump allocator's
 // high-water mark (cursor − region base; 0 before the first allocation). It
 // reads the heap runtime's cursor + base — so it does NOT allocate, but it

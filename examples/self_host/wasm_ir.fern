@@ -607,6 +607,13 @@ pub function wasm_eligible(mod: parser.Module): boolean {
         // preview1). x86-64 (poll(2)) and arm64 (ppoll(2)) lower it via the IR;
         // a poll module stays on the wasm AST path. Same deferral as sleep_ms.
         && !module_emits_op(mod, "poll")
+        // timer_fd / wasm_timer_pollable / wasm_pollable_drop ride the same
+        // readiness runtime: native lowers them via the IR (timerfd / -1 / 0),
+        // but the self-host wasm backend has no timer-pollable runtime, so a
+        // module using any stays on the wasm AST path (same deferral as poll).
+        && !module_emits_op(mod, "timer_fd")
+        && !module_emits_op(mod, "wasm_timer_pollable")
+        && !module_emits_op(mod, "wasm_pollable_drop")
         && !module_emits_op(mod, "remove_dir_all")
         && !module_emits_op(mod, "temp_dir")
         && !module_emits_op(mod, "read_dir")

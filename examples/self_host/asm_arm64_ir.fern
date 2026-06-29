@@ -496,6 +496,18 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // index (or -1) in x0. Gated helper in asm_arm64.emit_runtime.
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_poll\n    str x0, [sp, #-16]!\n");
             s = s.need("heap").need("poll");
+        } else if (o.kind == "timer_fd") {
+            // [ms] -> __fern_timer_fd(x0=ms) -> CLOCK_MONOTONIC timerfd fd in x0.
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_timer_fd\n    str x0, [sp, #-16]!\n");
+            s = s.need("timer_fd");
+        } else if (o.kind == "wasm_timer_pollable") {
+            // [ns] -> __fern_wasm_timer_pollable(x0=ns) -> -1 (native shim) in x0.
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_wasm_timer_pollable\n    str x0, [sp, #-16]!\n");
+            s = s.need("wasm_timer_pollable");
+        } else if (o.kind == "wasm_pollable_drop") {
+            // [p] -> __fern_wasm_pollable_drop(x0=p) -> 0 (native shim) in x0.
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_wasm_pollable_drop\n    str x0, [sp, #-16]!\n");
+            s = s.need("wasm_pollable_drop");
         } else if (o.kind == "opt_make") {
             // Option/Result box [tag@0, payload@8], 16 bytes. Payload is on the
             // operand stack; alloc first (it survives, like struct_make), then

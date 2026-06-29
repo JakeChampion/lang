@@ -4231,6 +4231,74 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         }
         s = s.write(".size __fern_poll, .-__fern_poll\n");
     }
+    // __fern_timer_fd(x0 = ms) -> a CLOCK_MONOTONIC one-shot timerfd fd readable
+    // after `ms` ms (or -errno), in x0. The arm64 mirror of the x86-64 helper:
+    // timerfd_create(CLOCK_MONOTONIC, 0) [#85], then timerfd_settime(fd, 0,
+    // &{it_interval=0, it_value={sec, nsec}}, NULL) [#86]. itimerspec scratch at
+    // [x29,#32..63]. Allocation-free, gated on the "timer_fd" need. Darwin has no
+    // timerfd, so a -1 stub. (`ldr =1000000` rides emit_runtime's pool flush.)
+    if (s.has_need("timer_fd")) {
+        s = s.write(".globl __fern_timer_fd\n");
+        s = s.write(".type __fern_timer_fd, %function\n");
+        s = s.write("__fern_timer_fd:\n");
+        if (darwin) {
+            s = s.write("    mov x0, #-1\n");
+            s = s.write("    ret\n");
+        } else {
+            s = s.write("    stp x29, x30, [sp, #-64]!\n");
+            s = s.write("    mov x29, sp\n");
+            s = s.write("    stp x19, x20, [sp, #16]\n");
+            s = s.write("    mov x19, x0\n");                 // ms
+            s = s.write("    mov x0, #1\n");                  // CLOCK_MONOTONIC
+            s = s.write("    mov x1, #0\n");
+            s = s.write("    mov x8, #85\n");                 // timerfd_create
+            s = s.write("    svc #0\n");
+            s = s.write("    mov x20, x0\n");
+            s = s.write("    cmp x0, #0\n");
+            s = s.write("    b.lt .Lir_tfd_ret\n");           // create failed -> -errno
+            s = s.write("    str xzr, [x29, #32]\n");         // it_interval = {0,0}
+            s = s.write("    str xzr, [x29, #40]\n");
+            s = s.write("    mov x9, #1000\n");
+            s = s.write("    udiv x10, x19, x9\n");           // sec
+            s = s.write("    msub x11, x10, x9, x19\n");      // rem ms
+            s = s.write("    ldr x12, =1000000\n");
+            s = s.write("    mul x11, x11, x12\n");           // nsec
+            s = s.write("    str x10, [x29, #48]\n");
+            s = s.write("    str x11, [x29, #56]\n");
+            s = s.write("    mov x0, x20\n");                 // settime(fd, 0, &its, NULL)
+            s = s.write("    mov x1, #0\n");
+            s = s.write("    add x2, x29, #32\n");
+            s = s.write("    mov x3, #0\n");
+            s = s.write("    mov x8, #86\n");                 // timerfd_settime
+            s = s.write("    svc #0\n");
+            s = s.write("    mov x0, x20\n");                 // return fd
+            s = s.write(".Lir_tfd_ret:\n");
+            s = s.write("    ldp x19, x20, [sp, #16]\n");
+            s = s.write("    ldp x29, x30, [sp], #64\n");
+            s = s.write("    ret\n");
+        }
+        s = s.write(".size __fern_timer_fd, .-__fern_timer_fd\n");
+    }
+    // __fern_wasm_timer_pollable(x0 = ns) -> -1: no native pollable (a deadline
+    // rides poll(2)'s timeout arg). Portability shim for with_deadline.
+    if (s.has_need("wasm_timer_pollable")) {
+        s = s.write(".globl __fern_wasm_timer_pollable\n");
+        s = s.write(".type __fern_wasm_timer_pollable, %function\n");
+        s = s.write("__fern_wasm_timer_pollable:\n");
+        s = s.write("    mov x0, #-1\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_wasm_timer_pollable, .-__fern_wasm_timer_pollable\n");
+    }
+    // __fern_wasm_pollable_drop(x0 = p) -> 0: a pollable is just an fd on native
+    // (closed via tcp_close), nothing to drop. Portability shim for fetch_future.
+    if (s.has_need("wasm_pollable_drop")) {
+        s = s.write(".globl __fern_wasm_pollable_drop\n");
+        s = s.write(".type __fern_wasm_pollable_drop, %function\n");
+        s = s.write("__fern_wasm_pollable_drop:\n");
+        s = s.write("    mov x0, #0\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_wasm_pollable_drop, .-__fern_wasm_pollable_drop\n");
+    }
     // __fern_read_int helper: reads up to 16 bytes from stdin
     // into a stack buffer, parses an optional leading `-`
     // followed by decimal digits, returns the value in x0.

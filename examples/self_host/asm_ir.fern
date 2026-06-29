@@ -667,6 +667,74 @@ function emit_ir_poll(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
+// emit_ir_timer_fd appends __fern_timer_fd(%rdi = ms) -> a CLOCK_MONOTONIC
+// one-shot timerfd fd, readable after `ms` ms (or -errno), in %rax. The mirror
+// of the native helper: timerfd_create(CLOCK_MONOTONIC, 0) [#283], then
+// timerfd_settime(fd, 0, &{it_interval=0, it_value={sec, nsec}}, NULL) [#286].
+// Allocation-free (32-byte stack itimerspec), gated on the timer_fd need.
+function emit_ir_timer_fd(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("__fern_timer_fd:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    pushq %rbx\n");                 // ms
+    s = s.write("    pushq %r12\n");                 // fd
+    s = s.write("    subq $32, %rsp\n");             // struct itimerspec
+    s = s.write("    movq %rdi, %rbx\n");            // ms
+    s = s.write("    movq $1, %rdi\n");              // CLOCK_MONOTONIC
+    s = s.write("    xorq %rsi, %rsi\n");
+    s = s.write("    movq $283, %rax\n");            // timerfd_create
+    s = s.write("    syscall\n");
+    s = s.write("    movq %rax, %r12\n");
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    js .Lir_tfd_ret\n");            // create failed -> -errno
+    s = s.write("    xorq %rax, %rax\n");            // it_interval = {0,0}
+    s = s.write("    movq %rax, (%rsp)\n");
+    s = s.write("    movq %rax, 8(%rsp)\n");
+    s = s.write("    movq %rbx, %rax\n");            // it_value = {ms/1000, (ms%1000)*1e6}
+    s = s.write("    xorq %rdx, %rdx\n");
+    s = s.write("    movq $1000, %rcx\n");
+    s = s.write("    divq %rcx\n");                  // rax=sec, rdx=rem ms
+    s = s.write("    movq %rax, 16(%rsp)\n");
+    s = s.write("    movq $1000000, %rax\n");
+    s = s.write("    imulq %rdx, %rax\n");           // nsec
+    s = s.write("    movq %rax, 24(%rsp)\n");
+    s = s.write("    movl %r12d, %edi\n");           // timerfd_settime(fd, 0, &its, NULL)
+    s = s.write("    xorq %rsi, %rsi\n");
+    s = s.write("    movq %rsp, %rdx\n");
+    s = s.write("    xorq %r10, %r10\n");
+    s = s.write("    movq $286, %rax\n");            // timerfd_settime
+    s = s.write("    syscall\n");
+    s = s.write("    movq %r12, %rax\n");            // return fd
+    s = s.write(".Lir_tfd_ret:\n");
+    s = s.write("    addq $32, %rsp\n");
+    s = s.write("    popq %r12\n");
+    s = s.write("    popq %rbx\n");
+    s = s.write("    popq %rbp\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
+// emit_ir_wasm_timer_pollable appends __fern_wasm_timer_pollable(ns) -> -1: on
+// native there's no pollable (a deadline rides poll(2)'s timeout arg), so it
+// returns -1 (an fd poll(2) ignores). Portability shim for with_deadline.
+function emit_ir_wasm_timer_pollable(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("__fern_wasm_timer_pollable:\n");
+    s = s.write("    movq $-1, %rax\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
+// emit_ir_wasm_pollable_drop appends __fern_wasm_pollable_drop(p) -> 0: on
+// native a pollable is just an fd (closed via tcp_close), so there's nothing to
+// drop. Portability shim so std/async's fetch_future drops the wasm pollable
+// portably.
+function emit_ir_wasm_pollable_drop(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("__fern_wasm_pollable_drop:\n");
+    s = s.write("    xorq %rax, %rax\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
 // emit_ir_sleep_ms appends the __fern_sleep_ms(%rdi = ms) helper, transcribed
 // verbatim from asm.fern's emit_runtime: split ms into a timespec
 // {sec=ms/1000, nsec=(ms%1000)*1e6} on the stack and nanosleep (syscall 35);
@@ -3692,6 +3760,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
         "__fern_strbuf_reset", "__fern_strbuf_take", "__fern_random_i32",
         "__fern_random_bytes", "__fern_monotonic_ns", "__fern_now_ns", "__fern_poll",
+        "__fern_timer_fd", "__fern_wasm_timer_pollable", "__fern_wasm_pollable_drop",
         "__fern_now_unix_ms", "__fern_sleep_ms", "__fern_map_new",
         "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fern_map_delete",
         "__fn___fern_rc_inc", "__fn___fern_arr_dec", "__fn___fern_rc_is_unique",
@@ -4081,6 +4150,22 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // %rsi=timeout_ms) -> i32 ready index (or -1) in %rax.
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_poll\n    pushq %rax\n");
             s = s.need("heap").need("poll");
+        } else if (o.kind == "timer_fd") {
+            // [ms]; __fern_timer_fd(%rdi=ms) -> a CLOCK_MONOTONIC timerfd fd
+            // (readable after ms), or -errno, in %rax.
+            s = s.write("    popq %rdi\n    call __fern_timer_fd\n    pushq %rax\n");
+            s = s.need("timer_fd");
+        } else if (o.kind == "wasm_timer_pollable") {
+            // [ns]; __fern_wasm_timer_pollable(%rdi=ns) -> -1 on native (no
+            // pollable; the deadline comes from poll(2)'s timeout). Portability
+            // shim for std/async's with_deadline.
+            s = s.write("    popq %rdi\n    call __fern_wasm_timer_pollable\n    pushq %rax\n");
+            s = s.need("wasm_timer_pollable");
+        } else if (o.kind == "wasm_pollable_drop") {
+            // [p]; __fern_wasm_pollable_drop(%rdi=p) -> 0 on native (a pollable
+            // is just an fd; nothing to drop). Portability shim.
+            s = s.write("    popq %rdi\n    call __fern_wasm_pollable_drop\n    pushq %rax\n");
+            s = s.need("wasm_pollable_drop");
         } else if (o.kind == "heap_bump_bytes") {
             // bump high-water mark = (__fern_heap_ptr == 0) ? 0 : ptr − base,
             // where base is the static __fern_heap symbol (movabs — it lives
@@ -5175,6 +5260,9 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     if (s.has_need("now_unix_ms")) { s = emit_ir_now_unix_ms(s); }
     if (s.has_need("now_ns")) { s = emit_ir_now_ns(s); }
     if (s.has_need("poll")) { s = emit_ir_poll(s); }
+    if (s.has_need("timer_fd")) { s = emit_ir_timer_fd(s); }
+    if (s.has_need("wasm_timer_pollable")) { s = emit_ir_wasm_timer_pollable(s); }
+    if (s.has_need("wasm_pollable_drop")) { s = emit_ir_wasm_pollable_drop(s); }
     if (s.has_need("sleep_ms")) { s = emit_ir_sleep_ms(s); }
     }
     return strbuf_take();
