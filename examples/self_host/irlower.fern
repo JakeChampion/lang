@@ -10952,6 +10952,19 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                     ms = ms.mark_i64(bslot, true);
                                 } else if (ev_ty == "f64") {
                                     ms = ms.mark_f64(bslot, true);
+                                } else if (ev_ty == "fn") {
+                                    // A function-typed payload (`Pending(i32,
+                                    // (i32) => Future)`): the i32 read above is the
+                                    // closure ENV box the constructor side wrapped
+                                    // (try_fn_field_value), borrowed from the enum
+                                    // box. Mark the bound name a closure local so
+                                    // `k(args)` dispatches env-first against the box
+                                    // — the same machinery Option/Result fn payloads
+                                    // use (Blocker 2 / 5b; Future[T]). MUST precede
+                                    // the enum/struct branch below: is_enum_like_name
+                                    // ("fn") is true, so it would otherwise claim the
+                                    // payload as a struct type and emit a bare call.
+                                    ms = ms.mark_closure_local(bname);
                                 } else if (decl_is_struct(ms.structs, ev_ty) || is_enum_like_name(ev_ty, ms.structs)) {
                                     ms = ms.mark_struct_type(bslot, ev_ty);
                                 } else if (is_map_type_name(ev_ty)) {
@@ -10974,17 +10987,6 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                     // array-element analog of the struct payload case).
                                     ms = ms.mark_arr(bslot, true);
                                     ms = ms.mark_struct_type(bslot, ev_ty[0 : ev_ty.len() - 2]);
-                                } else if (is_fn_payload_spelling(ev_ty)) {
-                                    // A function-typed payload (`Pending(i32,
-                                    // (i32) => Future)`): the i32 read above is
-                                    // the closure ENV box the constructor side
-                                    // wrapped, borrowed from the enum box. Mark
-                                    // the bound name a closure local so `f(args)`
-                                    // / passing `f` dispatch env-first against
-                                    // the box — the same machinery the
-                                    // Option/Result fn-payload path uses (~10817),
-                                    // now for user enums (Blocker 2; Future[T]).
-                                    ms = ms.mark_closure_local(bname);
                                 }
                             }
                             bidx = bidx + 1;
@@ -17985,6 +17987,19 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                 if (is_optvar && lift_arg_is_fn_value(call.args[ai], mfuncs)) {
                     var ofr: InlineCloRes = try_fn_field_value(call.args[ai], fd, fs, ct, gfns, mfuncs);
                     fs = ofr.funcs; ct = ofr.counter; nargs = nargs.append(ofr.expr);
+                } else if (!is_mkclo && cnm.len() > 0 && decl_is_struct(structs, cnm)
+                           && decl_field_type_at(structs, cnm, ai) == "fn"
+                           && lift_arg_is_fn_value(call.args[ai], mfuncs)) {
+                    // A USER-ENUM variant constructor (`Wrap(f)`, `Pending(n, k)`)
+                    // whose field at position ai is fn-typed: wrap the fn-value
+                    // payload into the uniform env box — exactly like the
+                    // Option/Result is_optvar path above — so a capturing
+                    // closure becomes a real box the slice-5 match-arm bind
+                    // (mark_closure_local) dispatches env-first against. Without
+                    // this, a capturing-lambda payload stayed raw and bailed the
+                    // module to AST (slice 5b; bare/non-capturing already worked).
+                    var vfr: InlineCloRes = try_fn_field_value(call.args[ai], fd, fs, ct, gfns, mfuncs);
+                    fs = vfr.funcs; ct = vfr.counter; nargs = nargs.append(vfr.expr);
                 } else if (!is_mkclo && cnm.len() > 0 && lift_callee_param_is_fn(mfuncs, cnm, ai)) {
                     var fr: InlineCloRes = try_fn_field_value(call.args[ai], fd, fs, ct, gfns, mfuncs);
                     fs = fr.funcs; ct = fr.counter; nargs = nargs.append(fr.expr);
