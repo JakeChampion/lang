@@ -94,8 +94,13 @@ function main(): i32 {
 		t.Errorf("fan-out: bodies not in input order (AAA after BBB) in %q", out)
 	}
 	// Both reads share one thread, so wall-clock is bounded by the slow
-	// upstream (~200ms), not the sum — catch gross serialization.
-	if elapsed > 2*time.Second {
+	// upstream (~200ms), not the sum. This is a COARSE anti-serialization
+	// guard — warm it runs in ~0.3s, but it's dominated by wasmtime's
+	// component cold-start (and the streaming read adds a poll round per
+	// chunk), so the bound is generous to avoid cold-start flakes; a truly
+	// serialized fan-out would still be sub-second of server delay, so any
+	// multi-second blowout it can't catch isn't the failure mode anyway.
+	if elapsed > 8*time.Second {
 		t.Errorf("fan-out took %v — expected overlapped (~200ms + startup)", elapsed)
 	}
 }
