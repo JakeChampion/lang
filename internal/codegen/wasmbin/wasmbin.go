@@ -2530,6 +2530,13 @@ var CallDirectAliases = map[string]string{
 	"__method_Map_get_or":       "__map_get_or_impl",
 	"__method_Map_set":          "__map_set_impl",
 	"__method_Map_delete":       "__map_delete_impl",
+	// Struct/enum (keyKind-3) keys: `_keyed` variants take the key
+	// type's derived hash/eq as trailing fn-value args (#2671).
+	"__method_Map_has_keyed":    "__map_has_keyed_impl",
+	"__method_Map_get_keyed":    "__map_get_keyed_impl",
+	"__method_Map_get_or_keyed": "__map_get_or_keyed_impl",
+	"__method_Map_set_keyed":    "__map_set_keyed_impl",
+	"__method_Map_delete_keyed": "__map_delete_keyed_impl",
 	"__method_Map_clear":        "__map_clear_impl",
 	"__method_Map_keys":         "__map_keys_impl",
 	"__method_Map_values":       "__map_values_impl",

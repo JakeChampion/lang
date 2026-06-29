@@ -1,0 +1,1 @@
+a struct used as a key must derive Eq and Hash

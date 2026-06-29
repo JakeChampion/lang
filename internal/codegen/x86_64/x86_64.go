@@ -2055,6 +2055,18 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__map_set_impl"
 		case "__method_Map_delete":
 			target = "__map_delete_impl"
+		// Struct/enum (keyKind-3) keys: the `_keyed` variants take the
+		// key type's derived hash/eq as trailing fn-value args (#2671).
+		case "__method_Map_has_keyed":
+			target = "__map_has_keyed_impl"
+		case "__method_Map_get_keyed":
+			target = "__map_get_keyed_impl"
+		case "__method_Map_get_or_keyed":
+			target = "__map_get_or_keyed_impl"
+		case "__method_Map_set_keyed":
+			target = "__map_set_keyed_impl"
+		case "__method_Map_delete_keyed":
+			target = "__map_delete_keyed_impl"
 		case "__method_Map_clear":
 			target = "__map_clear_impl"
 		case "__method_Map_keys":

@@ -1,0 +1,82 @@
+// Map keyed by a struct and an enum, dispatched through the key type's
+// derived Eq + Hash (the keyKind-3 keyed runtime — #2671). The struct
+// key carries a STRING field and the enum key a STRING payload, so a
+// passing run proves the runtime hashes + compares keys STRUCTURALLY
+// (a byte-blob of the key pointer / padding could not match a freshly
+// built, value-equal key whose string lives in a different buffer).
+// Covers insert / get / get_or / has / overwrite / without / keys().
+// Returns 0 iff every check holds, else the failing check's index.
+import "core/map";
+import "core/cmp";
+import "core/int";
+
+@derive(cmp.Eq, cmp.Hash)
+struct Name { first: string, rank: i32 }
+
+@derive(cmp.Eq, cmp.Hash)
+enum Tag { A(i32), B, C(string) }
+
+function main(): i32 {
+    // --- struct key with a string field ---
+    var m: Map[Name, i32] = map_new(8);
+    m = m.insert(Name { first: "ada", rank: 1 }, 10);
+    m = m.insert(Name { first: "bob", rank: 2 }, 20);
+    // Fresh, value-equal key built from a concatenation (distinct string
+    // buffer) must hit the same entry — structural hash + eq.
+    if (m.get_or(Name { first: "a" + "da", rank: 1 }, -1) != 10) { return 1; }
+    if (m.get_or(Name { first: "bob", rank: 2 }, -1) != 20) { return 2; }
+    if (m.get_or(Name { first: "ada", rank: 9 }, -1) != -1) { return 3; }  // absent
+    if (!m.has(Name { first: "ada", rank: 1 })) { return 4; }
+    if (m.has(Name { first: "zzz", rank: 1 })) { return 5; }
+    m = m.insert(Name { first: "ada", rank: 1 }, 99);  // overwrite, not grow
+    if (m.len() != 2) { return 6; }
+    if (m.get_or(Name { first: "ada", rank: 1 }, -1) != 99) { return 7; }
+    var (m2, removed) = m.without(Name { first: "ada", rank: 1 });
+    m = m2;
+    if (!removed) { return 8; }
+    if (m.has(Name { first: "ada", rank: 1 })) { return 9; }
+
+    // --- enum key with a string payload + unit/scalar variants ---
+    var em: Map[Tag, i32] = map_new(8);
+    em = em.insert(A(1), 100);
+    em = em.insert(B, 200);
+    em = em.insert(C("x" + "y"), 300);
+    if (em.get_or(A(1), 0) != 100) { return 10; }
+    if (em.get_or(B, 0) != 200) { return 11; }
+    if (em.get_or(C("xy"), 0) != 300) { return 12; }   // fresh string payload
+    if (em.get_or(A(2), -1) != -1) { return 13; }      // same variant, diff payload
+    if (em.get_or(C("zz"), -1) != -1) { return 14; }
+
+    // keys() snapshot — pointer column for struct/enum keys — re-probed
+    var total: i32 = 0;
+    for k in em.keys() {
+        total = total + em.get_or(k, 0);
+    }
+    if (total != 600) { return 15; }
+
+    // get() returns Option[V] — the rebox path (heap-box ABI, NOT
+    // pair-form: __map_get_keyed_impl must be excluded from pair-form
+    // or the call ABI mismatches and segfaults).
+    match (em.get(A(1))) { Some(v) => { if (v != 100) { return 16; } }, None => { return 17; } }
+    match (em.get(A(9))) { Some(v) => { return 18; }, None => {} }   // miss
+
+    // for (k, v) in m — MapIter; the struct/enum key binding must be
+    // retained so the per-iteration scope-exit drop doesn't free the
+    // map's own key box (which a later keys()/entries() walk would lose).
+    var keysum: i32 = 0;
+    for (k, v) in em { keysum = keysum + v; }
+    if (keysum != 600) { return 19; }
+    if (em.entries().len() != 3) { return 20; }   // entries intact after iteration
+
+    // merge() — last-write-wins on a shared struct key. m is {bob:20}
+    // here (ada was inserted, overwritten, then removed above).
+    var n: Map[Name, i32] = map_new(8);
+    n = n.insert(Name { first: "bob", rank: 2 }, 77);   // overlaps m's bob
+    n = n.insert(Name { first: "cat", rank: 3 }, 88);
+    var mg = m.merge(n);
+    if (mg.len() != 2) { return 21; }
+    if (mg.get_or(Name { first: "bob", rank: 2 }, 0) != 77) { return 22; }
+    if (mg.get_or(Name { first: "cat", rank: 3 }, 0) != 88) { return 23; }
+
+    return 0;
+}

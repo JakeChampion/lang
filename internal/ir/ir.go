@@ -3603,7 +3603,11 @@ func isPairFormEligible(fn *ast.FuncDecl, info *checker.Info, ptrW int, pairForm
 	// runtime's Option-returning helpers to the heap-box
 	// path so the call-site ABI and the function's actual
 	// return shape agree.
-	if fn.Name == "__map_get_impl" {
+	// The struct/enum-keyed get (`__map_get_keyed_impl`, #2671) goes
+	// through the SAME emitMapGetRebox heap-box call site, so it needs
+	// the identical exclusion — otherwise its pair-form return shape
+	// mismatches the call's heap-box ABI and segfaults on natives.
+	if fn.Name == "__map_get_impl" || fn.Name == "__map_get_keyed_impl" {
 		return false
 	}
 	enumT, ok := fn.ReturnType.(ast.EnumType)
@@ -11907,7 +11911,7 @@ func (b *builder) expr(e ast.Expr) error {
 			if err := b.pushMapMethodArg(ent.Value, n.ValueType, boxV, "__maplit_v"); err != nil {
 				return err
 			}
-			b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_set", I32: 3})
+			b.emitMapCall("__method_Map_set", 3, n.KeyType)
 			// __method_Map_set now returns the map (Phase 2c
 			// API audit). MapLit's per-entry call discards the
 			// return — the map's address didn't change, we
@@ -13554,18 +13558,48 @@ func floatOp(s string) (OpKind, bool) {
 //	    branches dereference the cell to hash / compare
 //	    the underlying 8-byte value.
 //
-// Other key types (struct / enum / float-on-narrow-ptr)
+//	3 = user struct / enum key, hashed + compared by its
+//	    derived `hash` / `eq` methods, which the codegen
+//	    threads in as per-call function VALUES (see
+//	    emitMapCall). The key is pointer-shaped and stored in
+//	    the entries column like a string key. The checker
+//	    guarantees any struct/enum reaching here implements
+//	    both Eq and Hash, so this can classify structurally
+//	    without consulting checker.Info. See #2671.
+//
+// Other key types (tuple / array / slice / float-on-narrow-ptr)
 // still aren't supported; they'd need their own runtime
 // branches.
 func mapKeyKindTag(t ast.Type, ptrW int) int32 {
 	switch t.(type) {
 	case ast.StringType:
 		return 1
+	case ast.StructType:
+		// Map is itself a StructType{Name:"Map"} but never reaches
+		// here as a KEY (it implements neither Eq nor Hash, so the
+		// checker rejects it). Every user struct that does reach here
+		// is a kind-3 key.
+		return 3
+	case ast.EnumType:
+		return 3
 	}
 	if isWideScalar(t) && ptrW < 8 {
 		return 2
 	}
 	return 0
+}
+
+// mapKeyTypeName returns the nominal type name of a struct/enum map
+// key — the basis for its derived `__method_<name>_hash` /
+// `__method_<name>_eq` function values. Empty for non-nominal types.
+func mapKeyTypeName(t ast.Type) string {
+	switch x := t.(type) {
+	case ast.StructType:
+		return x.Name
+	case ast.EnumType:
+		return x.Name
+	}
+	return ""
 }
 
 // mapValKindTag is mapKeyKindTag's V-side counterpart. Stored
@@ -14314,6 +14348,17 @@ func (b *builder) callBody(n *ast.Call) error {
 	// emitStringKMapCall when only K needs boxing.
 	needBoxK := len(n.TypeArgs) >= 1 && (isStringForBoxing(n.TypeArgs[0], b.ptrW) || mapKeyKindTag(n.TypeArgs[0], b.ptrW) == 2)
 	needBoxV := len(n.TypeArgs) >= 2 && (isWideScalar(n.TypeArgs[1]) || isStringForBoxing(n.TypeArgs[1], b.ptrW))
+	// keyKind3: a struct/enum key dispatched through its derived
+	// hash/eq (see emitMapCall). The key is a raw pointer (never
+	// boxed — needBoxK is false), so the boxing helpers handle it as
+	// a plain pointer; the only difference is the runtime call routes
+	// to the `_keyed` variant. The key-by-key value reclamation
+	// predrop gates below probe the map by KEY, which the type-erased
+	// i32 lookup would do with the wrong hash for a struct key — so
+	// those gates are disabled here (an overwrite leaks the replaced
+	// value; struct keys themselves are not yet rc-reclaimed either —
+	// a bounded leak, no corruption — tracked as a follow-up). See #2671.
+	keyKind3 := len(n.TypeArgs) >= 1 && mapKeyKindTag(n.TypeArgs[0], b.ptrW) == 3
 	// Map-value reclamation (write side): retain an aliased
 	// array-typed value (valKind 2/3) before it's stored, so the
 	// map co-owns it and map_drop's free balances the source
@@ -14430,7 +14475,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// there's no double free; the freed box isn't dereferenced by the set
 	// (it only probes keys, then overwrites the slot).
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
-		ast.RcFreeEnabled && !needBoxK &&
+		ast.RcFreeEnabled && !needBoxK && !keyKind3 &&
 		mapValKindTag(n.TypeArgs[1], b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW) == 4 &&
 		!exprContainsCall(n.Args[0]) && !exprContainsCall(n.Args[1]) {
 		if perVal, ok := mapValHasDrop(n.TypeArgs[1], b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
@@ -14463,7 +14508,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// call-free (the set below re-evaluates them — same idempotence
 	// as the kind-4 path).
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
-		ast.RcFreeEnabled && ast.UseTwoWordStrings(b.ptrW) && !needBoxK &&
+		ast.RcFreeEnabled && ast.UseTwoWordStrings(b.ptrW) && !needBoxK && !keyKind3 &&
 		!exprContainsCall(n.Args[0]) && !exprContainsCall(n.Args[1]) {
 		if _, isStr := n.TypeArgs[1].(ast.StringType); isStr {
 			if err := b.expr(n.Args[0]); err != nil { // m
@@ -14496,7 +14541,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// excluded — same gating as the rest of the native string-reclaim
 	// path, awaiting boxed-string runtime helpers.
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
-		ast.RcFreeEnabled && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) && !needBoxK &&
+		ast.RcFreeEnabled && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) && !needBoxK && !keyKind3 &&
 		!exprContainsCall(n.Args[0]) && !exprContainsCall(n.Args[1]) {
 		if _, isStr := n.TypeArgs[1].(ast.StringType); isStr {
 			if err := b.expr(n.Args[0]); err != nil { // m
@@ -14535,7 +14580,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// (UAF). Lower the call inline and __fern_rc_inc the returned pointer
 	// so the caller co-owns the buffer. Inline strings short-circuit on
 	// the low-bit guard; literals on the 0x80000000 sentinel.
-	if id.Name == "__method_Map_get_or" && len(n.TypeArgs) >= 2 &&
+	if id.Name == "__method_Map_get_or" && len(n.TypeArgs) >= 2 && !keyKind3 &&
 		b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) && !needBoxK && !needBoxV {
 		if _, isStr := n.TypeArgs[1].(ast.StringType); isStr {
 			for _, a := range n.Args {
@@ -14545,6 +14590,47 @@ func (b *builder) callBody(n *ast.Call) error {
 			}
 			b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_get_or", I32: int32(len(n.Args))})
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+			return nil
+		}
+	}
+	// Struct/enum (keyKind-3) key: the tail-bound ops (set, has, and
+	// non-boxed get_or — get / delete already routed through their
+	// keyed-aware helpers above) dispatch through the `_keyed` runtime
+	// variant. The struct key is a raw pointer (never boxed); only the
+	// hash/eq dispatch differs, so set reuses emitWideMapSet (which
+	// handles boxed AND non-boxed V and emits the keyed call via
+	// emitMapCall) and get_or reuses emitWideMapGetOr when V is boxed.
+	if keyKind3 {
+		switch id.Name {
+		case "__method_Map_set":
+			return b.emitWideMapSet(n, n.TypeArgs[0], n.TypeArgs[1])
+		case "__method_Map_has":
+			if err := b.expr(n.Args[0]); err != nil {
+				return err
+			}
+			if err := b.expr(n.Args[1]); err != nil {
+				return err
+			}
+			b.emitMapCall("__method_Map_has", 2, n.TypeArgs[0])
+			return nil
+		case "__method_Map_get_or":
+			if needBoxV {
+				return b.emitWideMapGetOr(n, n.TypeArgs[0], n.TypeArgs[1])
+			}
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emitMapCall("__method_Map_get_or", 3, n.TypeArgs[0])
+			// Map[K, string].get_or native single-word retain: the
+			// runtime hands back the string data pointer un-retained
+			// (see the !keyKind3 inline above) — co-own it so the map's
+			// drop doesn't free it from under the caller.
+			if _, isStr := n.TypeArgs[1].(ast.StringType); isStr &&
+				b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+			}
 			return nil
 		}
 	}
@@ -14606,6 +14692,24 @@ func (b *builder) callBody(n *ast.Call) error {
 				return nil
 			}
 		}
+	}
+	// MapIter.key() over a struct/enum (keyKind-3) key: __mapiter_key_impl
+	// returns the raw key pointer un-retained, but the `for (k, v) in m`
+	// loop binds `k` as an OWNED struct/enum and drops it at each
+	// iteration's scope exit — which would free the map's own key box and
+	// corrupt the map (observed: a later keys()/entries() walk loses the
+	// freed entry). rc_inc the returned pointer so the binding's drop
+	// balances and the map keeps its key. Target-independent: a struct
+	// key is a single pointer on every backend (#2671).
+	if id.Name == "__method_MapIter_key" && keyKind3 {
+		for _, a := range n.Args {
+			if err := b.expr(a); err != nil {
+				return err
+			}
+		}
+		b.emit(Op{Kind: OpCallDirect, Str: id.Name, I32: int32(len(n.Args))})
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
+		return nil
 	}
 	// MapIter.value() / MapIter.key() on native single-word string K/V:
 	// the runtime returns the string data pointer directly (the boxed
@@ -19250,6 +19354,48 @@ func (b *builder) pushMapMethodArg(arg ast.Expr, t ast.Type, shouldBox bool, slo
 	return b.expr(arg)
 }
 
+// keyedMapFns names the derived hash / eq function VALUES a kind-3
+// (struct / enum) map key dispatches through.
+type keyedMapFns struct{ hash, eq string }
+
+// keyedMapFnsFor returns the derived hash/eq method names for a
+// struct/enum (keyKind-3) map key, or ok=false for a scalar/string
+// key. The names are the receiver-hoisted mangling the checker stamps
+// onto a `(self: K) hash()` / `(self: K) eq(other: K)` method — for a
+// derived key these are synthesised by @derive(Eq, Hash).
+func (b *builder) keyedMapFnsFor(kType ast.Type) (keyedMapFns, bool) {
+	if mapKeyKindTag(kType, b.ptrW) != 3 {
+		return keyedMapFns{}, false
+	}
+	name := mapKeyTypeName(kType)
+	if name == "" {
+		return keyedMapFns{}, false
+	}
+	return keyedMapFns{
+		hash: "__method_" + name + "_hash",
+		eq:   "__method_" + name + "_eq",
+	}, true
+}
+
+// emitMapCall emits a Map runtime call, routing a struct/enum
+// (keyKind-3) key to the `_keyed` variant — which takes the key
+// type's derived hash / eq as two trailing function-value args
+// (`hash_fn: (usize)=>i32`, `eq_fn: (usize, usize)=>boolean`) so the
+// type-erased runtime can hash + compare the key structurally. Scalar
+// / string keys emit the ordinary call unchanged. `baseTarget` is the
+// IR-visible `__method_Map_*` name each backend rewrites to its
+// `__map_*_impl`; the keyed variant appends `_keyed` (→
+// `__map_*_keyed_impl`). `baseArgc` is the non-keyed argument count.
+func (b *builder) emitMapCall(baseTarget string, baseArgc int32, kType ast.Type) {
+	if kf, ok := b.keyedMapFnsFor(kType); ok {
+		b.emit(Op{Kind: OpConstFunc, Str: kf.hash})
+		b.emit(Op{Kind: OpConstFunc, Str: kf.eq})
+		b.emit(Op{Kind: OpCallDirect, Str: baseTarget + "_keyed", I32: baseArgc + 2})
+		return
+	}
+	b.emit(Op{Kind: OpCallDirect, Str: baseTarget, I32: baseArgc})
+}
+
 // emitWideMapSet lowers `m.set(k, v)` when K or V needs cell-
 // pointer boxing across the Map helper boundary — wide V
 // (i64 / u64 / f64) on every target, and string K / V on wasm32
@@ -19270,7 +19416,7 @@ func (b *builder) emitWideMapSet(n *ast.Call, kType, vType ast.Type) error {
 	if err := b.pushMapMethodArg(n.Args[2], vType, boxV, "__map_set_vbox"); err != nil {
 		return err
 	}
-	b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_set", I32: 3})
+	b.emitMapCall("__method_Map_set", 3, kType)
 	return nil
 }
 
@@ -19305,7 +19451,7 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 	} else if err := b.expr(n.Args[1]); err != nil {
 		return err
 	}
-	b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_get", I32: 2})
+	b.emitMapCall("__method_Map_get", 2, kType)
 	optPtrSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__map_get_optptr_%d", optPtrSlot)] = optPtrSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: optPtrSlot})
@@ -19488,7 +19634,7 @@ func (b *builder) emitMapDeleteReturningTuple(n *ast.Call, kType ast.Type) error
 			return err
 		}
 	}
-	b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_delete", I32: 2})
+	b.emitMapCall("__method_Map_delete", 2, kType)
 
 	// Save bool result.
 	boolSlot := b.allocSlot()
@@ -19590,7 +19736,7 @@ func (b *builder) emitWideMapGetOr(n *ast.Call, kType, vType ast.Type) error {
 	if err := b.boxIntoCell(n.Args[2], vType, "__map_or_box"); err != nil {
 		return err
 	}
-	b.emit(Op{Kind: OpCallDirect, Str: "__method_Map_get_or", I32: 3})
+	b.emitMapCall("__method_Map_get_or", 3, kType)
 	b.emit(payloadLoadOpFor(vType, b.ptrW))
 	// Map[K, string] get_or retain (two-word ABI — wasm + arm64-
 	// TwoWordOverride; boxed V): the returned (data, len) pair is

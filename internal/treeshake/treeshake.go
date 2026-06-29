@@ -218,6 +218,17 @@ var watHelperDeps = map[string][]string{
 	"__method_Map_get_or":       {"__map_get_or_impl", "__map_lookup", "__map_hash"},
 	"__method_Map_set":          {"__map_set_impl", "__map_grow", "__map_hash", "__map_lookup_val", "__map_clone"},
 	"__method_Map_delete":       {"__map_delete_impl", "__map_hash", "__map_clone"},
+	// Struct/enum (keyKind-3) keys route through the `_keyed` runtime
+	// variants (#2671). These alias names aren't real functions; the
+	// entries pull in the keyed impls (whose bodies — including the
+	// hash_fn/eq_fn params — are then walked normally). Enqueued from a
+	// map-method Call / MapLit only when the key TypeArg is a
+	// struct/enum, alongside that key type's derived hash/eq methods.
+	"__method_Map_has_keyed":    {"__map_has_keyed_impl", "__map_lookup_keyed"},
+	"__method_Map_get_keyed":    {"__map_get_keyed_impl", "__map_lookup_keyed"},
+	"__method_Map_get_or_keyed": {"__map_get_or_keyed_impl", "__map_lookup_keyed"},
+	"__method_Map_set_keyed":    {"__map_set_keyed_impl", "__map_grow_keyed", "__map_lookup_val_keyed", "__map_clone"},
+	"__method_Map_delete_keyed": {"__map_delete_keyed_impl", "__map_clone"},
 	"__method_Map_clear":        {"__map_clear_impl", "__map_clone"},
 	"__method_Map_keys":         {"__map_keys_impl", "__map_column"},
 	"__method_Map_values":       {"__map_values_impl", "__map_column"},
@@ -226,6 +237,46 @@ var watHelperDeps = map[string][]string{
 	"__method_MapIter_key":      {"__mapiter_key_impl", "__mapiter_entry_addr"},
 	"__method_MapIter_value":    {"__mapiter_value_impl", "__mapiter_entry_addr"},
 	"__method_MapIter_advance":  {"__mapiter_advance_impl"},
+}
+
+// keyedMapMethod reports whether a mangled method name is a Map
+// operation that dispatches by hash/eq (so a struct/enum key routes it
+// to the `_keyed` runtime variant — #2671). keys/values/iter/len/clear
+// walk entries without hashing and need no keyed variant.
+func keyedMapMethod(name string) bool {
+	switch name {
+	case "__method_Map_set", "__method_Map_get", "__method_Map_get_or",
+		"__method_Map_has", "__method_Map_delete":
+		return true
+	}
+	return false
+}
+
+// enqueueKeyedMapDeps pulls in the keyed-runtime impl + the key type's
+// derived hash/eq methods when `kType` is a struct/enum map key. A
+// non-nominal key (i32 / string / tuple) is a no-op — those don't use
+// the keyed path. Mirrors the IR's mapKeyKindTag==3 routing so the AST
+// tree-shake keeps exactly what codegen emits a call to.
+func enqueueKeyedMapDeps(method string, kType ast.Type, enqueue func(string)) {
+	name := nominalKeyName(kType)
+	if name == "" {
+		return
+	}
+	enqueue(method + "_keyed")
+	enqueue("__method_" + name + "_hash")
+	enqueue("__method_" + name + "_eq")
+}
+
+// nominalKeyName returns the struct/enum type name of a map key, or ""
+// for a non-nominal key. Matches the IR's mapKeyTypeName.
+func nominalKeyName(t ast.Type) string {
+	switch x := t.(type) {
+	case ast.StructType:
+		return x.Name
+	case ast.EnumType:
+		return x.Name
+	}
+	return ""
 }
 
 // Run mutates `prog.Funcs` to retain only functions reachable
@@ -414,6 +465,13 @@ func walkExpr(e ast.Expr, byName map[string]*ast.FuncDecl, enqueue func(string))
 		enqueue(x.Name)
 	case *ast.Call:
 		walkExpr(x.Callee, byName, enqueue)
+		// Struct/enum (keyKind-3) map key: the IR routes this op to the
+		// `_keyed` runtime variant (#2671), which dispatches through the
+		// key type's derived hash/eq. Pull both the keyed impl alias and
+		// those derived methods so codegen's emitted call resolves.
+		if id, ok := x.Callee.(*ast.Ident); ok && keyedMapMethod(id.Name) && len(x.TypeArgs) >= 1 {
+			enqueueKeyedMapDeps(id.Name, x.TypeArgs[0], enqueue)
+		}
 		for _, a := range x.Args {
 			walkExpr(a, byName, enqueue)
 		}
@@ -470,6 +528,9 @@ func walkExpr(e ast.Expr, byName map[string]*ast.FuncDecl, enqueue func(string))
 		// AST Call references them directly.
 		enqueue("map_new")
 		enqueue("__method_Map_set")
+		// A struct/enum-keyed map literal lowers to the keyed set
+		// variant (#2671); pull its impl + the key's derived hash/eq.
+		enqueueKeyedMapDeps("__method_Map_set", x.KeyType, enqueue)
 		for _, en := range x.Entries {
 			walkExpr(en.Key, byName, enqueue)
 			walkExpr(en.Value, byName, enqueue)

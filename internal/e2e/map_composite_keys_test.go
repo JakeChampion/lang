@@ -7,22 +7,25 @@ import (
 )
 
 // mapCompositeKeysProgram exercises Map[K, V] with COMPOSITE key types — a
-// struct, an enum, and a tuple — keyed by VALUE (#2671, slice 1). Two distinct
-// instances that are value-equal must hit the same entry; distinct values must
-// not collide. Covers insert / get / get_or / has / delete / overwrite.
+// struct, an enum, and a tuple — keyed by VALUE (#2671). Two distinct instances
+// that are value-equal must hit the same entry; distinct values must not
+// collide. Covers insert / get / get_or / has / delete / overwrite.
 //
-// This is the interpreter-oracle slice: `findKey` now deep-compares composite
-// values (interp.valuesEqual), so the reference compiler is value-correct for
-// composite keys. The compiled backends still hash composite keys by pointer
-// identity (the type-erased map runtime needs a Hash-trait value dispatch — the
-// raw-byte shortcut is unsound because struct_make leaves padding bytes
-// uninitialised), so this is gated through `-interp` only, mirroring the
-// interp-only closure combinators / map verbs. Compiled-backend support is a
-// follow-up slice. main returns 0 iff every check holds.
+// This is the interpreter oracle: `findKey` deep-compares composite values
+// (interp.valuesEqual), so the reference compiler is value-correct for every
+// composite key, INCLUDING tuples. The struct/enum legs now also lower on the
+// compiled backends (via the keyed hash/eq runtime — see the
+// map_struct_enum_keys fixture), but TUPLE keys still have no nominal type to
+// hang Eq/Hash on, so the compiled path can't dispatch them yet — this stays
+// interp-only because of the tuple section. main returns 0 iff every check
+// holds.
 const mapCompositeKeysProgram = `
 import "core/map";
+import "core/cmp" as cmp;
 
+@derive(cmp.Eq, cmp.Hash)
 struct Point { x: i32, y: i32 }
+@derive(cmp.Eq, cmp.Hash)
 enum Tag { A(i32), B, C(i32) }
 
 function main(): i32 {
