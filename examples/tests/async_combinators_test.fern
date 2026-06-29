@@ -1,0 +1,63 @@
+import "std/test";
+import "std/async";
+
+// examples/tests/async_combinators_test.fern — the blessed
+// structured-concurrency surface (docs/ASYNC-REDESIGN.md): the
+// `gather` / `race` / `with_deadline` combinators over `Future[T]`.
+//
+// These exercise the PORTABLE contract — fan-outs of already-`Ready`
+// futures, which resolve on every backend (interp / wasm / native).
+// `Pending` (real-fd) futures are proven separately in the Go e2e
+// suite (async_combinators_test.go, async_fetch_future_test.go) since
+// they need real sockets.
+//
+// Run:  fern -interp examples/tests/async_combinators_test.fern
+
+// gather collects every future's value in input order.
+function test_gather_all(): test.TestOutcome {
+    var fs: async.Future[i32][] = [Ready(5), Ready(7), Ready(30)];
+    var got: i32[] = async.gather(fs, -1);
+    if (got.len() != 3) { return test.fail("expected 3 results"); }
+    return test.assert_eq(got[0] + got[1] + got[2], 42);
+}
+
+// gather over string futures — generic over T (the i32-throughout
+// restriction is gone).
+function test_gather_strings(): test.TestOutcome {
+    var fs: async.Future[string][] = [Ready("hello"), Ready("world")];
+    var got: string[] = async.gather(fs, "");
+    return test.assert_eq(got[0] + "-" + got[1], "hello-world");
+}
+
+// race returns (winnerIndex, value); an already-Ready future at the
+// lowest index wins immediately.
+function test_race_first_ready(): test.TestOutcome {
+    var fs: async.Future[i32][] = [Ready(9), Ready(8), Ready(7)];
+    var (w, v) = async.race(fs, -1);
+    if (w != 0) { return test.fail("winner=" + w.to_string()); }
+    return test.assert_eq(v, 9);
+}
+
+// with_deadline collects all ready futures (none miss the budget).
+function test_deadline_all_ready(): test.TestOutcome {
+    var fs: async.Future[i32][] = [Ready(40), Ready(2)];
+    var got: i32[] = async.with_deadline(50, fs, -1);
+    return test.assert_eq(got[0] + got[1], 42);
+}
+
+// An empty fan-out gathers to an empty result.
+function test_gather_empty(): test.TestOutcome {
+    var fs: async.Future[i32][] = [];
+    var got: i32[] = async.gather(fs, -1);
+    return test.assert_eq(got.len(), 0);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("async combinators");
+    r = r.it("gather all", test_gather_all());
+    r = r.it("gather strings", test_gather_strings());
+    r = r.it("race first ready", test_race_first_ready());
+    r = r.it("with_deadline all ready", test_deadline_all_ready());
+    r = r.it("gather empty", test_gather_empty());
+    return r.finish();
+}

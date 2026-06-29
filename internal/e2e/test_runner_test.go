@@ -693,6 +693,23 @@ func TestRunnerAsyncConcurrentExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/async_combinators_test.fern` exercises the blessed
+// structured-concurrency surface (docs/ASYNC-REDESIGN.md): the
+// `gather` / `race` / `with_deadline` combinators over `Future[T]`,
+// on the portable `Ready`-future path (resolves on every backend).
+// Generic over T (gather over Future[string]). Passing suite → exit 0.
+func TestRunnerAsyncCombinatorsExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/async_combinators_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	if !strings.Contains(out, "# pass 5") || !strings.Contains(out, "# fail 0") {
+		t.Errorf("expected 5 passes, 0 fails\noutput:\n%s", out)
+	}
+}
+
 // `examples/tests/async_task_fn_test.fern` exercises the Phase-3b task-function
 // CPS transform: spawn targets written as ORDINARY functions with suspending
 // `await`s in the body, which the parser desugars into the std/task
