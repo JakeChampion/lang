@@ -48,6 +48,26 @@ pub function __map_pow2_ceil(n: i32): i32 {
     return p;
 }
 
+// __map_hdr_bytes returns the kv-buffer header size for a given key
+// kind. Scalar / string / wide-boxed keys (kinds 0 / 1 / 2) use the
+// 16-byte header (cap, len, keyKind, valTag). A *user* key (kind 3 —
+// struct / enum keyed by its derived hash/eq) needs two extra
+// pointer-width-ish slots for the hash_fn / eq_fn function values, so
+// its header is 24 bytes (hash_fn at +16, eq_fn at +20, buckets at
+// +24). Keeping kinds 0/1/2 at 16 leaves every existing map — and the
+// codegen intercepts that hardcode the 16-byte layout — byte-identical;
+// only the new user-key path pays the extra 8 bytes. See #2671.
+pub function __map_hdr_bytes(keyKind: i32): i32 {
+    if (keyKind == 3) { return 24; }
+    return 16;
+}
+
+// __map_hdr reads the kv buffer's keyKind (at +8) and returns its
+// header size — the buf-having counterpart to __map_hdr_bytes.
+function __map_hdr(buf: usize): i32 {
+    return __map_hdr_bytes(__load_i32(buf + 8));
+}
+
 // Hash function:
 //   keyKind 0 (i32-sized scalar)        : Wang's integer mix.
 //   keyKind 1 (string)                  : FNV-1a 32-bit over bytes.
@@ -120,12 +140,13 @@ pub function __map_hash(k: i32, keyKind: i32): i32 {
 pub function map_new_impl(cap_hint: i32, keyKind: i32, valKind: i32): usize {
     var cap: i32 = __map_pow2_ceil(cap_hint);
     var entryStride: i32 = 2 * __ptr_width();
-    var buf: usize = __alloc(16 + cap * (4 + entryStride));
+    var hdr: i32 = __map_hdr_bytes(keyKind);
+    var buf: usize = __alloc(hdr + cap * (4 + entryStride));
     __store_i32(buf,      cap);
     __store_i32(buf + 4,  0);
     __store_i32(buf + 8,  keyKind);
     __store_i32(buf + 12, valKind);
-    __memset(buf + 16, 255, cap * 4);            // buckets → all -1
+    __memset(buf + hdr, 255, cap * 4);            // buckets → all -1
     // Map handle is a heap-allocated pointer cell. 8 bytes
     // accommodates a 64-bit `buf` pointer on arm64; wasm32
     // only needs 4 but the extra padding is cheap and keeps
@@ -177,7 +198,7 @@ pub function __map_cow_inplace(m: usize): usize {
     var buf: usize = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
     var entryStride: i32 = 2 * __ptr_width();
-    var bufBytes: i32 = 16 + cap * (4 + entryStride);
+    var bufBytes: i32 = __map_hdr(buf) + cap * (4 + entryStride);
     var newBuf: usize = __alloc(bufBytes);
     __memcpy(newBuf, buf, bufBytes);
     var base: usize = __alloc(16);
@@ -204,7 +225,7 @@ pub function __map_clone(m: usize): usize {
     var buf: usize = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
     var entryStride: i32 = 2 * __ptr_width();
-    var bufBytes: i32 = 16 + cap * (4 + entryStride);
+    var bufBytes: i32 = __map_hdr(buf) + cap * (4 + entryStride);
     var newBuf: usize = __alloc(bufBytes);
     __memcpy(newBuf, buf, bufBytes);
     var base: usize = __alloc(16);
@@ -229,10 +250,10 @@ pub function __map_lookup(m: usize, k: usize): i32 {
     var keyKind: i32 = __load_i32(buf + 8);
     var mask: i32 = cap - 1;
     var entryStride: i32 = 2 * __ptr_width();
-    var entriesBase: usize = buf + 16 + cap * 4;
+    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
     var bucket: i32 = __map_hash(k, keyKind) & mask;
     while (true) {
-        var b: i32 = __load_i32(buf + 16 + bucket * 4);
+        var b: i32 = __load_i32(buf + __map_hdr(buf) + bucket * 4);
         if (b == 0 - 1) { return 0 - 1; }
         if (b != 0 - 2) {
             var entryK: usize = __load_ptr(entriesBase + b * entryStride);
@@ -307,7 +328,7 @@ pub function __map_get_impl(m: usize, k: usize): Option[usize] {
     var cap: i32 = __load_i32(buf);
     var ptrW: i32 = __ptr_width();
     var entryStride: i32 = 2 * ptrW;
-    var entriesBase: usize = buf + 16 + cap * 4;
+    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
     return Some(__map_retain_val(buf, __load_ptr(entriesBase + idx * entryStride + ptrW)));
 }
 
@@ -318,7 +339,7 @@ pub function __map_get_or_impl(m: usize, k: usize, fallback: usize): usize {
     var cap: i32 = __load_i32(buf);
     var ptrW: i32 = __ptr_width();
     var entryStride: i32 = 2 * ptrW;
-    var entriesBase: usize = buf + 16 + cap * 4;
+    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
     return __map_retain_val(buf, __load_ptr(entriesBase + idx * entryStride + ptrW));
 }
 
@@ -336,7 +357,7 @@ pub function __map_lookup_val(m: usize, k: usize): usize {
     var cap: i32 = __load_i32(buf);
     var ptrW: i32 = __ptr_width();
     var entryStride: i32 = 2 * ptrW;
-    var entriesBase: usize = buf + 16 + cap * 4;
+    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
     return __load_ptr(entriesBase + idx * entryStride + ptrW);
 }
 
@@ -352,19 +373,20 @@ pub function __map_grow(m: usize): usize {
     var oldLen: i32 = __load_i32(oldBuf + 4);
     var oldKK:  i32 = __load_i32(oldBuf + 8);
     var oldVK:  i32 = __load_i32(oldBuf + 12);
+    var hdr: i32 = __map_hdr_bytes(oldKK);
     var ptrW: i32 = __ptr_width();
     var entryStride: i32 = 2 * ptrW;
-    var oldEntries: usize = oldBuf + 16 + oldCap * 4;
+    var oldEntries: usize = oldBuf + hdr + oldCap * 4;
     var newCap: i32 = 4;
     if (oldCap != 0) { newCap = oldCap << 1; }
     var newMask: i32 = newCap - 1;
-    var newBuf: usize = __alloc(16 + newCap * (4 + entryStride));
+    var newBuf: usize = __alloc(hdr + newCap * (4 + entryStride));
     __store_i32(newBuf,      newCap);
     __store_i32(newBuf + 4,  oldLen);
     __store_i32(newBuf + 8,  oldKK);
     __store_i32(newBuf + 12, oldVK);
-    __memset(newBuf + 16, 255, newCap * 4);      // empty buckets
-    var newEntries: usize = newBuf + 16 + newCap * 4;
+    __memset(newBuf + hdr, 255, newCap * 4);      // empty buckets
+    var newEntries: usize = newBuf + hdr + newCap * 4;
     var i: i32 = 0;
     while (i < oldLen) {
         var key: usize = __load_ptr(oldEntries + i * entryStride);
@@ -373,9 +395,9 @@ pub function __map_grow(m: usize): usize {
         __store_ptr(newEntries + i * entryStride + ptrW, val);
         var bucket: i32 = __map_hash(key, oldKK) & newMask;
         while (true) {
-            var b: i32 = __load_i32(newBuf + 16 + bucket * 4);
+            var b: i32 = __load_i32(newBuf + hdr + bucket * 4);
             if (b == 0 - 1) {
-                __store_i32(newBuf + 16 + bucket * 4, i);
+                __store_i32(newBuf + hdr + bucket * 4, i);
                 break;
             }
             bucket = (bucket + 1) & newMask;
@@ -390,7 +412,7 @@ pub function __map_grow(m: usize): usize {
     // newBuf. __map_set_impl runs __map_cow_inplace first, so the map
     // is uniquely owned here — nothing else aliases oldBuf. `__free`
     // is a no-op when the freelist is disabled.
-    var oldBytes: i32 = 16 + oldCap * (4 + entryStride);
+    var oldBytes: i32 = hdr + oldCap * (4 + entryStride);
     __free(oldBuf, oldBytes);
     return newBuf;
 }
@@ -411,12 +433,12 @@ pub function __map_set_impl(m: usize, k: usize, v: usize): usize {
     var mask: i32 = cap - 1;
     var ptrW: i32 = __ptr_width();
     var entryStride: i32 = 2 * ptrW;
-    var entriesBase: usize = buf + 16 + cap * 4;
+    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
     var bucket: i32 = __map_hash(k, keyKind) & mask;
     var insertSlot: i32 = 0 - 1;
     var done: boolean = false;
     while (!done) {
-        var b: i32 = __load_i32(buf + 16 + bucket * 4);
+        var b: i32 = __load_i32(buf + __map_hdr(buf) + bucket * 4);
         if (b == 0 - 1) {
             if (insertSlot == 0 - 1) { insertSlot = bucket; }
             done = true;
@@ -448,7 +470,7 @@ pub function __map_set_impl(m: usize, k: usize, v: usize): usize {
     // Append entry at index = len.
     __store_ptr(entriesBase + len_ * entryStride,        k);
     __store_ptr(entriesBase + len_ * entryStride + ptrW, v);
-    __store_i32(buf + 16 + insertSlot * 4, len_);
+    __store_i32(buf + __map_hdr(buf) + insertSlot * 4, len_);
     __store_i32(buf + 4, len_ + 1);
     return m;
 }
@@ -469,7 +491,7 @@ pub function __map_column(m: usize, kvOffset: i32, destStride: i32): usize {
     var cap: i32 = __load_i32(buf);
     var len_: i32 = __load_i32(buf + 4);
     var entryStride: i32 = 2 * __ptr_width();
-    var entriesBase: usize = buf + 16 + cap * 4;
+    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
     // Standard rc-array layout: a 16-byte header carrying capacity
     // (data-12), rc=1 (data-8) and length (data-4); data = arr + hdr.
     // Without the cap/rc slots the snapshot's scope-exit drop reads
@@ -554,7 +576,7 @@ pub function __map_ptr_column(m: usize, kvOffset: i32, retainVals: i32): usize {
     var len_: i32 = __load_i32(buf + 4);
     var ptrW: i32 = __ptr_width();
     var entryStride: i32 = 2 * ptrW;
-    var entriesBase: usize = buf + 16 + cap * 4;
+    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
     var base: usize = __alloc(16 + len_ * ptrW);
     __store_i32(base + 4, len_);   // cap   (= data - 12)
     __store_i32(base + 8, 1);      // rc=1  (= data - 8)
@@ -585,7 +607,7 @@ pub function __map_string_column(m: usize, kvOffset: i32): usize {
     var len_: i32 = __load_i32(buf + 4);
     var ptrW: i32 = __ptr_width();
     var entryStride: i32 = 2 * ptrW;
-    var entriesBase: usize = buf + 16 + cap * 4;
+    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
     var out: string[] = [];
     var i: i32 = 0;
     while (i < len_) {
@@ -634,7 +656,7 @@ pub function __map_drop_values(m: usize): usize {
     var len_: i32 = __load_i32(buf + 4);
     var ptrW: i32 = __ptr_width();
     var entryStride: i32 = 2 * ptrW;
-    var entriesBase: usize = buf + 16 + cap * 4;
+    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
     var i: i32 = 0;
     while (i < len_) {
         __map_dec_value(buf, __load_ptr(entriesBase + i * entryStride + ptrW));
@@ -651,12 +673,12 @@ pub function __map_delete_impl(m: usize, k: usize): boolean {
     var mask: i32 = cap - 1;
     var ptrW: i32 = __ptr_width();
     var entryStride: i32 = 2 * ptrW;
-    var entriesBase: usize = buf + 16 + cap * 4;
+    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
     var bucket: i32 = __map_hash(k, keyKind) & mask;
     var foundBucket: i32 = 0 - 1;
     var idx: i32 = 0;
     while (true) {
-        var b: i32 = __load_i32(buf + 16 + bucket * 4);
+        var b: i32 = __load_i32(buf + __map_hdr(buf) + bucket * 4);
         if (b == 0 - 1) { break; }
         if (b != 0 - 2) {
             var entryK: usize = __load_ptr(entriesBase + b * entryStride);
@@ -678,7 +700,7 @@ pub function __map_delete_impl(m: usize, k: usize): boolean {
     }
     if (foundBucket == 0 - 1) { return false; }
     // Tombstone the bucket so subsequent probes skip past it.
-    __store_i32(buf + 16 + foundBucket * 4, 0 - 2);
+    __store_i32(buf + __map_hdr(buf) + foundBucket * 4, 0 - 2);
     var last: i32 = len_ - 1;
     if (idx != last) {
         // Swap-with-last in the entries array, then patch the
@@ -687,13 +709,13 @@ pub function __map_delete_impl(m: usize, k: usize): boolean {
         // probe will hit it.
         var lastKey: usize = __load_ptr(entriesBase + last * entryStride);
         var lastBucket: i32 = __map_hash(lastKey, keyKind) & mask;
-        while (__load_i32(buf + 16 + lastBucket * 4) != last) {
+        while (__load_i32(buf + __map_hdr(buf) + lastBucket * 4) != last) {
             lastBucket = (lastBucket + 1) & mask;
         }
         var lastVal: usize = __load_ptr(entriesBase + last * entryStride + ptrW);
         __store_ptr(entriesBase + idx * entryStride,        lastKey);
         __store_ptr(entriesBase + idx * entryStride + ptrW, lastVal);
-        __store_i32(buf + 16 + lastBucket * 4, idx);
+        __store_i32(buf + __map_hdr(buf) + lastBucket * 4, idx);
     }
     __store_i32(buf + 4, last);
     return true;
@@ -703,7 +725,7 @@ pub function __map_clear_impl(m: usize) {
     var buf: usize = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
     __store_i32(buf + 4, 0);
-    __memset(buf + 16, 255, cap * 4);
+    __memset(buf + __map_hdr(buf), 255, cap * 4);
 }
 
 // MapIter is a 16-byte heap object: [buf:8][cursor:4][pad:4].
@@ -739,7 +761,7 @@ pub function __mapiter_entry_addr(it: usize): usize {
     var cap: i32 = __load_i32(buf);
     var i: i32 = __load_i32(it + 8);
     var entryStride: i32 = 2 * __ptr_width();
-    return buf + 16 + cap * 4 + i * entryStride;
+    return buf + __map_hdr(buf) + cap * 4 + i * entryStride;
 }
 
 pub function __mapiter_key_impl(it: usize): usize {
