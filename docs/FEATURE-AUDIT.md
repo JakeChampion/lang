@@ -292,14 +292,33 @@ at **i32** keys — the case that SIGSEGV'd — AND at string keys),
 compiler's own sources, which never call the generic verbs), and the full x86-64
 differential gate (no regression).
 
-`map_verbs` does **not** flip yet: its last blocker is `for e in m.entries()` —
-a `for` loop whose iterable is a CALL returning a tuple-array `(K,V)[]`. The
-general tuple-array foreach already lowers (`for e in es` over a typed
-`var es: (i32,i32)[] = m.entries()` routes IR); only the inline-call form fails,
-because `lower_foreach_snapshot` binds the call to an *unannotated* hidden local,
-so the tuple element tags aren't recovered from the call's return type. That
-recovery (a tuple-array-return → element-tag resolver) is the clean follow-up
-that flips the module.
+`map_verbs` does **not** flip yet. **Correction (2026-06-29, empirically
+re-verified against a fresh driver):** the blocker is **NOT** `for e in
+m.entries()` — that lowers correctly (isolated it returns 66 == interp,
+byte-identical asm to the annotated-local form; `entries()`'s `e.0`/`e.1` are both
+i32 so the default 4-byte `op_tuple_get` is right even without recovered tuple
+tags). The `test_entries_sum: BAIL lower` in `-ir-probe` is a pre-mono artifact
+(same false-positive class as the `test_*: BAIL call` lines). The real silent
+miscompile is the **free generic `from[K, V]`** (`core/map.fern`): `map.from([(5,
+50),…])` decides `ir` and **SIGSEGVs at i32 keys** (runs-by-luck at string keys,
+where the string default is accidentally right). #4016's
+`register_map_method_generics` folds only **receiver** methods into `__mapm_*`;
+`from` is a **free function**, so it is never folded — its `[K, V]` are also
+stripped by targeted-promotion (`feeds_user_parametric` excludes `Map[K,V]` via
+`is_builtin_generic_base`, and K/V sit at paren-depth 1 inside `(K,V)[]`), leaving
+the erased `Map[K, V]` body whose `map_key_kind_of` returns the string default and
+dereferences an i32 key as a pointer. The bug is **backend-independent** (the AST
+emitter SIGSEGVs on i32-keyed `from` too — verified — so a "bail erased-generic
+maps to AST" guard is no fix; both paths crash). The clean fix is **Path A**:
+monomorphise the free generic `from` (a `register_map_freefn_generics` mirroring
+#4016's receiver-method fold, plus the two missing monomorphiser pieces a
+tuple-array literal needs — a `mono_infer` `ExprTuple` arm and a `bind_unify`
+paren-tuple arm — verified absent). map_verbs has no *IR* blocker beyond `from`
+(the `assert_eq[boolean]` → `bool.eq`/`bool.to_string` link error only appears on
+the **AST** path; the IR path emits them, and per the legacy-AST-gap policy that
+AST gap is out of scope). So Path A alone flips the module — once it lands,
+`map_verbs` should be added to `selfHostStdTestCases` (it is absent today, which
+is why the `from` miscompile went uncaught).
 
 ### 2026-06-29 — `map_verbs` root-caused to unbounded-`Map`-generic type erasure (the last non-async AST-router)
 
