@@ -5708,6 +5708,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     }
                     if (mtype != "") {
                         var mkk2: i32 = map_key_kind_of(mtype);
+                        var meqfn: string = map_key_eqfn(mtype);
                         if ((fa.field == "insert" || fa.field == "set") && c.args.len() == 2) {
                             var mset: LowerState = lower_expr(fa.obj, s);
                             if (!mset.ok) { return mset; }
@@ -5715,7 +5716,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!mset.ok) { return mset; }
                             mset = lower_expr(c.args[1], mset);
                             if (!mset.ok) { return mset; }
-                            return mset.emit(ir.op_map_set(mkk2, map_value_is_ptr(map_value_of(mtype))));
+                            return mset.emit(ir.op_map_set(mkk2, map_value_is_ptr(map_value_of(mtype)), meqfn));
                         }
                         if (fa.field == "len" && c.args.len() == 0) {
                             var mlen: LowerState = lower_expr(fa.obj, s);
@@ -5727,14 +5728,14 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!mget.ok) { return mget; }
                             mget = lower_expr(c.args[0], mget);
                             if (!mget.ok) { return mget; }
-                            return mget.emit(ir.op_map_get(mkk2));
+                            return mget.emit(ir.op_map_get(mkk2, meqfn));
                         }
                         if (fa.field == "has" && c.args.len() == 1) {
                             var mhas: LowerState = lower_expr(fa.obj, s);
                             if (!mhas.ok) { return mhas; }
                             mhas = lower_expr(c.args[0], mhas);
                             if (!mhas.ok) { return mhas; }
-                            return mhas.emit(ir.op_map_has(mkk2));
+                            return mhas.emit(ir.op_map_has(mkk2, meqfn));
                         }
                         if (fa.field == "get_or" && c.args.len() == 2) {
                             var mgo: LowerState = lower_expr(fa.obj, s);
@@ -5743,7 +5744,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!mgo.ok) { return mgo; }
                             mgo = lower_expr(c.args[1], mgo);
                             if (!mgo.ok) { return mgo; }
-                            return mgo.emit(ir.op_map_get_or(mkk2));
+                            return mgo.emit(ir.op_map_get_or(mkk2, meqfn));
                         }
                         if (fa.field == "without" && c.args.len() == 1) {
                             // Functional delete: `m.without(k)` -> the map with k
@@ -5752,7 +5753,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!mdel.ok) { return mdel; }
                             mdel = lower_expr(c.args[0], mdel);
                             if (!mdel.ok) { return mdel; }
-                            return mdel.emit(ir.op_map_delete(mkk2));
+                            return mdel.emit(ir.op_map_delete(mkk2, meqfn));
                         }
                         if (fa.field == "keys" && c.args.len() == 0) {
                             var mks: LowerState = lower_expr(fa.obj, s);
@@ -5813,7 +5814,8 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!emset.ok) { return emset; }
                             emset = lower_expr(c.args[1], emset);
                             if (!emset.ok) { return emset; }
-                            return emset.emit(ir.op_map_set(emk, map_value_is_ptr(map_value_of(expr_map_type_tag(fa.obj, s)))));
+                            var emtt: string = expr_map_type_tag(fa.obj, s);
+                            return emset.emit(ir.op_map_set(emk, map_value_is_ptr(map_value_of(emtt)), map_key_eqfn(emtt)));
                         }
                     }
                     // Qualified built-in Option/Result construction:
@@ -16182,6 +16184,33 @@ pub function map_value_of(typestr: string): string {
     while (ci < inner.len() && inner[ci] != 44) { ci = ci + 1; }   // first comma
     if (ci >= inner.len()) { return ""; }
     return trim_spaces(inner[ci + 1 : inner.len()]);
+}
+
+// map_key_of returns the key type K of a "Map[K, V]" type string, or ""
+// if not parseable — the K-side counterpart of map_value_of.
+pub function map_key_of(typestr: string): string {
+    if (typestr.len() < 5 || typestr[0:4] != "Map[") { return ""; }
+    var inner: string = typestr[4 : typestr.len() - 1];   // K, V
+    var ci: i32 = 0;
+    while (ci < inner.len() && inner[ci] != 44) { ci = ci + 1; }   // first comma
+    return trim_spaces(inner[0 : ci]);
+}
+
+// map_key_eqfn returns the derived equality symbol (`__fn_<K>__eq`) for a
+// struct/enum map key, or "" for a scalar/string key. A struct/enum key
+// is hashed/compared by VALUE through its `@derive(Eq)` method; the
+// x86-64 linear-scan map runtime threads this symbol in (per call) and
+// dispatches it for key comparison instead of pointer/string equality.
+// "" keys (i32 / string) keep the existing scalar/string compare. #2671.
+pub function map_key_eqfn(typestr: string): string {
+    var k: string = map_key_of(typestr);
+    if (k == "" || k == "i32" || k == "string") { return ""; }
+    if (k == "i64" || k == "u32" || k == "u64" || k == "i8" || k == "i16") { return ""; }
+    if (k == "u8" || k == "u16" || k == "f32" || k == "f64" || k == "bool" || k == "boolean") { return ""; }
+    // Bare receiver-method label `K.eq`; the backend builds the real
+    // symbol as `__fn_<sanitize(K.eq)>` (= __fn_K__eq), matching the
+    // const_func / receiver-method emission idiom.
+    return k + ".eq";
 }
 
 // is_mapiter_type_name reports whether `t` is a "MapIter[K, V]" type string. The
