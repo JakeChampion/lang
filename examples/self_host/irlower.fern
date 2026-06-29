@@ -10974,6 +10974,17 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                                     // array-element analog of the struct payload case).
                                     ms = ms.mark_arr(bslot, true);
                                     ms = ms.mark_struct_type(bslot, ev_ty[0 : ev_ty.len() - 2]);
+                                } else if (is_fn_payload_spelling(ev_ty)) {
+                                    // A function-typed payload (`Pending(i32,
+                                    // (i32) => Future)`): the i32 read above is
+                                    // the closure ENV box the constructor side
+                                    // wrapped, borrowed from the enum box. Mark
+                                    // the bound name a closure local so `f(args)`
+                                    // / passing `f` dispatch env-first against
+                                    // the box — the same machinery the
+                                    // Option/Result fn-payload path uses (~10817),
+                                    // now for user enums (Blocker 2; Future[T]).
+                                    ms = ms.mark_closure_local(bname);
                                 }
                             }
                             bidx = bidx + 1;
