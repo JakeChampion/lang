@@ -204,9 +204,15 @@ user code or a desugar targets directly.
 
 1. **PR1 — this doc.** Direction + plan. *(in progress)*
 2. **PR2 — `std/async`: portable `Future[T]` + `gather` / `race` /
-   `with_deadline`.** Wraps the existing reactors. The new blessed
-   surface; additive, nothing removed yet. Tests: portable in-memory
-   futures on interp; native real-fd `gather`/`race` over sockets.
+   `with_deadline`.** A self-contained module (its own `Future[T]`
+   enum + combinators over the universal `poll` builtin — it does not
+   depend on `std/reactor`/`std/task`, which fold in at PR5). The new
+   blessed surface. Also **retires the `race` keyword** here, since the
+   `race` combinator is its direct replacement and the keyword
+   otherwise shadows the function name (the rest of the CPS surface —
+   `concurrent`/`await` — is removed in PR4). Tests: portable
+   `Ready`-future `gather`/`race`/`with_deadline` on interp + wasm;
+   native real-fd `gather`/`race` over sockets (x86-64 + arm64).
 3. **PR3 — port examples + e2e to combinators.** Move the edge-handler
    examples to `std/async`; prove one real overlapping fetch through
    `gather` end-to-end (x86-64 + arm64). Add `fetch_future`.
