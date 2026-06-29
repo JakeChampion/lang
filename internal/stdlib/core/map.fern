@@ -21,7 +21,10 @@
 //
 //   +0   cap     : i32 — bucket count, power-of-2, ≥ 4
 //   +4   len     : i32 — live entry count
-//   +8   keyKind : i32 — 0 = i32-sized scalar, 1 = string
+//   +8   keyKind : i32 — 0 = i32-sized scalar, 1 = string,
+//        2 = wide-scalar-boxed (i64/f64 on a narrow-ptr target),
+//        3 = user struct/enum key (hashed/compared via its derived
+//        hash/eq, threaded in per call — see the keyKind-3 section)
 //   +12  valTag : i32 — low byte = valKind (0 = i32-scalar,
 //        1 = non-array pointer, 2 = array(plain elems),
 //        3 = array(rc elems)); high bytes = value element
@@ -49,16 +52,15 @@ pub function __map_pow2_ceil(n: i32): i32 {
 }
 
 // __map_hdr_bytes returns the kv-buffer header size for a given key
-// kind. Scalar / string / wide-boxed keys (kinds 0 / 1 / 2) use the
-// 16-byte header (cap, len, keyKind, valTag). A *user* key (kind 3 —
-// struct / enum keyed by its derived hash/eq) needs two extra
-// pointer-width-ish slots for the hash_fn / eq_fn function values, so
-// its header is 24 bytes (hash_fn at +16, eq_fn at +20, buckets at
-// +24). Keeping kinds 0/1/2 at 16 leaves every existing map — and the
-// codegen intercepts that hardcode the 16-byte layout — byte-identical;
-// only the new user-key path pays the extra 8 bytes. See #2671.
+// kind. Every kind — scalar / string / wide-boxed (0 / 1 / 2) and the
+// user struct/enum key (kind 3) — uses the same 16-byte header (cap,
+// len, keyKind, valTag); buckets start at +16. The user key's derived
+// hash/eq are threaded in as per-call function VALUES (there is no
+// usize->fn cast; E033), NOT stored in the buffer, so kind 3 needs no
+// extra header slots. The helper is retained (rather than inlining 16
+// at every site) so a future store-in-buffer optimisation can re-widen
+// one kind's header without touching the ~20 offset sites. See #2671.
 pub function __map_hdr_bytes(keyKind: i32): i32 {
-    if (keyKind == 3) { return 24; }
     return 16;
 }
 
@@ -531,6 +533,14 @@ pub function __map_keys_impl(m: usize): usize {
     var keyKind: i32 = __load_i32(buf + 8);
     if (keyKind == 1) {
         return __map_string_column(m, 0);
+    }
+    // Struct / enum (keyKind 3) keys are single heap pointers stored in
+    // the key column, so the snapshot is a pointer-stride `K[]` — NOT
+    // the 4-byte i32 column below (which would truncate the pointer and
+    // crash a consumer that dereferences it). Each key is retained so
+    // the snapshot co-owns it alongside the map (#2671).
+    if (keyKind == 3) {
+        return __map_ptr_column(m, 0, 1);
     }
     return __map_column(m, 0, 4);
 }
