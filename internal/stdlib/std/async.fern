@@ -178,12 +178,15 @@ pub function race[T](fs_in: Future[T][], none_val: T): (i32, T) {
     return (-1, none_val);
 }
 
-// with_deadline(ms, fs, on_timeout) — await ALL futures, but bound the
-// whole fan-out by `ms` wall-clock milliseconds. A future that misses
-// the deadline is abandoned and lands `on_timeout` in its slot (a
-// cancelled straggler). This is happy-eyeballs with an SLA: fan out to
+// with_deadline(ms, fs) — await ALL futures, but bound the whole fan-out
+// by `ms` wall-clock milliseconds, returning an `Option[T]` per future:
+// `Some(value)` for one that resolved in time, `None` for one abandoned
+// at the deadline. (None — rather than a caller-supplied sentinel —
+// because a timed-out slot must be distinguishable from a real result
+// that happens to equal the sentinel, e.g. an empty body.) This is
+// happy-eyeballs with an SLA: fan out to
 // N upstreams, take whatever answers in time, drop the rest.
-pub function with_deadline[T](ms: i32, fs_in: Future[T][], on_timeout: T): T[] {
+pub function with_deadline[T](ms: i32, fs_in: Future[T][]): Option[T][] {
     var fs: Future[T][] = fs_in;
     var start_ns: i64 = monotonic_ns();
     var ns_per_ms: i64 = 1000000;
@@ -234,12 +237,14 @@ pub function with_deadline[T](ms: i32, fs_in: Future[T][], on_timeout: T): T[] {
     // Drop the pollables of any future that timed out (still Pending) so wasm
     // doesn't trap with "resource has children" — no-op on native/interp.
     var dd: i32 = __drop_losers(fs, -1);
-    var out: T[] = [];
+    // Some(v) for a future that resolved in time; None for one that timed out
+    // (no sentinel ambiguity — an empty/zero result is distinct from absent).
+    var out: Option[T][] = [];
     var k: i32 = 0;
     while (k < fs.len()) {
         match (fs[k]) {
-            Ready(v) => { out = out.append(v); },
-            Pending(fd, c) => { out = out.append(on_timeout); },
+            Ready(v) => { out = out.append(Some(v)); },
+            Pending(fd, c) => { out = out.append(None); },
         }
         k = k + 1;
     }

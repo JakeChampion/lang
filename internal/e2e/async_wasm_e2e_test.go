@@ -81,10 +81,10 @@ function start_timer(ns: i64, label: i32): async.Future[i32] {
 
 function main(): i32 {
     var fs: async.Future[i32][] = [start_timer(10000000, 7), start_timer(300000000, 35)];
-    var r: i32[] = async.with_deadline(60, fs, 0 - 1);
+    var r: Option[i32][] = async.with_deadline(60, fs);
     if (r.len() != 2) { return 90; }
-    if (r[0] != 7) { return 91; }        // beat the 60ms deadline
-    if (r[1] != (0 - 1)) { return 92; }  // missed it -> on_timeout (-1)
+    match (r[0]) { Some(v) => { if (v != 7) { return 91; } }, None => { return 91; } }  // beat the 60ms deadline
+    match (r[1]) { Some(v) => { return 92; }, None => { } }                              // missed it -> None
     return 42;
 }`
 	if got := runWasm(t, src); got != 42 {

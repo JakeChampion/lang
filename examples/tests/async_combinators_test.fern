@@ -38,11 +38,15 @@ function test_race_first_ready(): test.TestOutcome {
     return test.assert_eq(v, 9);
 }
 
-// with_deadline collects all ready futures (none miss the budget).
+// with_deadline returns Option[T] per future: Some for ready, None for
+// timed out. All ready here (none miss the budget) → all Some.
 function test_deadline_all_ready(): test.TestOutcome {
     var fs: async.Future[i32][] = [Ready(40), Ready(2)];
-    var got: i32[] = async.with_deadline(50, fs, -1);
-    return test.assert_eq(got[0] + got[1], 42);
+    var got: Option[i32][] = async.with_deadline(50, fs);
+    var sum: i32 = 0;
+    match (got[0]) { Some(v) => { sum = sum + v; }, None => { } }
+    match (got[1]) { Some(v) => { sum = sum + v; }, None => { } }
+    return test.assert_eq(sum, 42);
 }
 
 // An empty fan-out gathers to an empty result.
