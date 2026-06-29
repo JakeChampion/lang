@@ -4596,6 +4596,32 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                             }
                         }
                     }
+                    // Value-receiver generic MAP method `recv.verb(args)` — verb
+                    // was folded to `__mapm_verb[K, V]` by
+                    // register_map_method_generics. When recv is map-typed, fold
+                    // it into arg0 and emit a free call the worklist instantiates
+                    // to `__mapm_verb__<K>;<V>`. The Map sibling of the array arm
+                    // above; checked after it so a `T[]` receiver still wins.
+                    var mmn: string = "__mapm_" + fac.field;
+                    var mmg: i32 = bg_index(funcs, mmn);
+                    if (mmg >= 0) {
+                        var mrty: string = mono_infer(fac.obj, env, funcs);
+                        if (mrty.len() >= 4 && mrty[0:4] == "Map[") {
+                            var mraw: Expr[] = [fac.obj];
+                            var mrk: i32 = 0;
+                            while (mrk < c.args.len()) { mraw = mraw.append(c.args[mrk]); mrk = mrk + 1; }
+                            var mct: string = infer_inst(funcs[mmg], mraw, env, funcs);
+                            if (mct.len() > 0) {
+                                var mro: RExpr = mono_expr(fac.obj, env, funcs, cur);
+                                cur = mro.rins;
+                                var mfolded: Expr[] = [mro.rexpr];
+                                var mfk: i32 = 0;
+                                while (mfk < nargs.len()) { mfolded = mfolded.append(nargs[mfk]); mfk = mfk + 1; }
+                                cur = cur.iadd(mmn, mct);
+                                return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mmn + "__" + sanitize_key(mct), line: fac.line, col: fac.col }, args: mfolded, line: c.line, col: c.col, type_argc: 0 }, rins: cur };
+                            }
+                        }
+                    }
                 },
                 _ => {}
             }
@@ -5108,6 +5134,118 @@ pub function register_array_method_generics(mod: Module): Module {
                 ret_type: fd.ret_type,
                 body: fd.body, line: fd.line, col: fd.col,
                 import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: 1
+            });
+        } else {
+            out = out.append(fd);
+        }
+        i = i + 1;
+    }
+    return Module {
+        funcs: out,
+        structs: mod.structs,
+        aliases: mod.aliases,
+        imports: mod.imports,
+        top_stmts: mod.top_stmts,
+        enums: mod.enums,
+        resources: mod.resources,
+        exports: mod.exports
+    };
+}
+
+// ---- generic map-method monomorphisation (the Map sibling of the array
+// fold above) ------------------------------------------------------------
+// A generic map-receiver method `(m: Map[K, V]) verb(args): R` (core/map's
+// `merge` / `extend` / `entries` / `contains_value` / …) is skipped by
+// monomorphize_module (receiver methods) and monomorphize_structs (Map is a
+// built-in, not a generic struct), so its `K` / `V` stay free vars. The body's
+// map ops then read the key-kind off the unsubstituted `Map[K, V]` type, where
+// map_key_kind_of (matching only the `Map[i32,` prefix) DEFAULTS to string —
+// miscompiling an i32-keyed map (the integer key is dereferenced as a string
+// pointer → SIGSEGV). register_map_method_generics folds such a method into a
+// free generic `__mapm_<verb>[K, V](m: Map[K, V], args): R` (receiver as arg0,
+// the receiver's type-vars as the clone's type params) and DROPS the method;
+// mono_expr's map-method arm rewrites each `m.verb(args)` call to
+// `__mapm_verb(m, args)`, so the proven free-generic worklist clones one
+// concrete `__mapm_verb__<K>;<V>` per key/value pair — with `subst_ty`
+// substituting `Map[K,V] → Map[i32,i32]`, so the cloned body's key-kind is
+// correct. Mirrors register_array_method_generics exactly.
+
+// map_receiver_typevars returns the type-variable arguments of a `Map[K, V]`
+// receiver type (e.g. ["K", "V"]), or [] if the receiver isn't a Map whose
+// args are all type variables. The args must ALL be type vars — a partially
+// concrete `Map[i32, V]` isn't a generic the worklist can key on.
+function map_receiver_typevars(recv: string): string[] {
+    var none: string[] = [];
+    if (recv.len() < 5 || recv[0:4] != "Map[" || recv[recv.len() - 1 : recv.len()] != "]") { return none; }
+    // split_top_commas splits on ", " (consuming the space), so each part is
+    // already trimmed — the normalised spelling every receiver type carries.
+    var parts: string[] = split_top_commas(recv[4 : recv.len() - 1]);
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < parts.len()) {
+        var tv: string = parts[i];
+        if (!looks_type_var(tv)) { return none; }
+        out = out.append(tv);
+        i = i + 1;
+    }
+    return out;
+}
+
+// is_generic_map_method gates the map-method fold: a method whose receiver is
+// `Map[<vars>]`, with no bounded type params other than the receiver's own
+// vars (closure / value params are allowed, exactly as the array path permits
+// `reduce` / `sort_by`). A 2-tuple-returning verb (`get_or_insert`) is folded
+// like any other — whether its tuple-with-Map result then lowers is the
+// lowering side's concern, not the fold's.
+function is_generic_map_method(fd: FuncDecl): boolean {
+    if (fd.receiver_name.len() == 0) { return false; }
+    var tvs: string[] = map_receiver_typevars(fd.receiver_type);
+    if (tvs.len() == 0) { return false; }
+    // Every bounded type param must be one of the receiver's vars (the receiver
+    // fixes them); an extra bounded param isn't fixed by the receiver.
+    var k: i32 = 0;
+    while (k < fd.type_params.len()) {
+        if (!str_in(tvs, fd.type_params[k])) { return false; }
+        k = k + 1;
+    }
+    return true;
+}
+
+// register_map_method_generics folds each generic map-receiver method into a
+// free generic `__mapm_<name>[<vars>]`, receiver folded to a leading param,
+// and drops the original. A no-op when none is present — the compiler's own
+// sources never call the generic core/map verbs, so the byte-identical
+// bootstrap fixpoint is preserved. Runs before monomorphize_module so the
+// folded body's own free calls rewrite too.
+pub function register_map_method_generics(mod: Module): Module {
+    var any_mm: boolean = false;
+    var ci: i32 = 0;
+    while (ci < mod.funcs.len()) {
+        if (is_generic_map_method(mod.funcs[ci])) { any_mm = true; }
+        ci = ci + 1;
+    }
+    if (!any_mm) { return mod; }
+
+    var out: FuncDecl[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var fd: FuncDecl = mod.funcs[i];
+        if (is_generic_map_method(fd)) {
+            var tps: string[] = map_receiver_typevars(fd.receiver_type);
+            var nparams: ParamDecl[] = [ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "" }];
+            var j: i32 = 0;
+            while (j < fd.params.len()) {
+                nparams = nparams.append(fd.params[j]);
+                j = j + 1;
+            }
+            out = out.append(FuncDecl {
+                name: "__mapm_" + fd.name,
+                receiver_name: "", receiver_type: "",
+                type_params: tps,
+                params: nparams,
+                ret_type: fd.ret_type,
+                body: fd.body, line: fd.line, col: fd.col,
+                import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: tps.len()
             });
         } else {
             out = out.append(fd);
@@ -8612,7 +8750,7 @@ pub function module_with_builtins(mod: Module): Module {
     // Lower switches to if/else-if chains first (the type checker has
     // already run on the StmtSwitch shape for E025), so no later pass or
     // backend sees a StmtSwitch at runtime.
-    var mono: Module = inline_callonly_fn_values(monomorphize_enums(monomorphize_structs(monomorphize_module(register_array_method_generics(lower_defers_module(insert_resource_drops(infer_ret_types_module(hoist_local_funcs_module(desugar_switches_module(desugar_ranges_module(fill_default_args_module(resolve_labels_module(mod)))))))))))));
+    var mono: Module = inline_callonly_fn_values(monomorphize_enums(monomorphize_structs(monomorphize_module(register_map_method_generics(register_array_method_generics(lower_defers_module(insert_resource_drops(infer_ret_types_module(hoist_local_funcs_module(desugar_switches_module(desugar_ranges_module(fill_default_args_module(resolve_labels_module(mod))))))))))))));
     return Module {
         funcs: mono.funcs,
         structs: inject_builtin_enums(mono.structs),

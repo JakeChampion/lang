@@ -5655,6 +5655,42 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                                 _ => {}
                             }
                         },
+                        // A map-returning CALL receiver (`a.merge(b).get_or(k, d)` —
+                        // after register_map_method_generics this is
+                        // `__mapm_merge(a, b).get_or(k, d)`, an ExprIdent callee; or a
+                        // map-returning free fn / a still-method form): recover the
+                        // map type from the callee's registered map return type
+                        // (map_ret_fns), so a map op chained directly onto the result
+                        // dispatches instead of mis-dispatching `i32.<op>`. The bound-
+                        // var form already works via the annotation / map_ret recovery;
+                        // this is the un-bound chained sibling. lower_expr(fa.obj) emits
+                        // the call and leaves the map ptr on the stack, same as a local.
+                        parser.ExprCall(mrcall) => {
+                            match (mrcall.callee) {
+                                parser.ExprIdent(mrcid) => {
+                                    var mrtf: string = s.map_ret_type(mrcid.name);
+                                    if (is_map_type_name(mrtf)) { mtype = mrtf; }
+                                },
+                                parser.ExprFieldAccess(mrcfa) => {
+                                    if (!util.is_all_digits(mrcfa.field)) {
+                                        var rbase: string = expr_struct_type(mrcfa.obj, s);
+                                        if (rbase == "") {
+                                            match (mrcfa.obj) {
+                                                parser.ExprIdent(mrcrid) => {
+                                                    if (is_map_type_name(s.map_type_of(s.slot_of(mrcrid.name)))) { rbase = "Map"; }
+                                                },
+                                                _ => {}
+                                            }
+                                        }
+                                        if (rbase != "") {
+                                            var mrtm: string = s.map_ret_type(rbase + "." + mrcfa.field);
+                                            if (is_map_type_name(mrtm)) { mtype = mrtm; }
+                                        }
+                                    }
+                                },
+                                _ => {}
+                            }
+                        },
                         _ => {}
                     }
                     if (mtype != "") {
