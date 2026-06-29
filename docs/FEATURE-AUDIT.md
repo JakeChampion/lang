@@ -251,6 +251,65 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-29 — `map_verbs` root-caused to unbounded-`Map`-generic type erasure (the last non-async AST-router)
+
+With `json_roundtrip` flipped (#3994), `map_verbs` is the **only remaining
+non-async AST-router** (the three async modules are parallel-owned). A
+precise probe sweep (`asm_load_run -ir-probe` with the first-unknown-call
+symbol exposed) over the isolated constructs pins its blockers and — more
+importantly — the **shared deep root cause** beneath them.
+
+Per-construct `-decide` / `-ir-probe` (each minimised to a standalone program):
+
+- `a.merge(b).get_or(k,d)` — `BAIL call[i32.get_or]`. `Map.merge` *resolves*
+  (lowers as a known call); only the **chained** `.get_or` on its result
+  mis-dispatches `i32.get_or` because the map-receiver-type resolution has no
+  `ExprCall` arm to recover a Map return type. A one-arm typing fix
+  (`map_ret_type` recovery for a method/free-fn-call receiver) routes it IR —
+  **but the result then segfaults**, so the typing fix is unsafe alone (it
+  converts a safe AST route into a crashing IR route). Reverted.
+- `m.get_or_insert(k,f)` then `r.0…` — `BAIL call[Map.get_or_insert]`:
+  `get_or_insert` returns `(Map,V)` (a tuple with a Map element) and doesn't
+  lower.
+- `for e in m.entries()` — `BAIL lower call[Map.entries]`: tuple-array
+  for-loop + `Map.entries` (returns `(K,V)[]`).
+- `test__assert_eq: BAIL call[T.eq]` is a **false blocker** — an
+  uninstantiated generic template the probe lowers but the decide path prunes
+  (a boolean-keyed `assert_eq` program still decides `ir`).
+
+**Root cause (the segfault).** A minimal generic `gmerge[K,V](m: Map[K,V],
+other: Map[K,V]): Map[K,V]` segfaults at i32 keys but **runs correctly at
+string keys**. The mechanism: `gmerge`'s `[K,V]` are **unbounded** type
+params, which are **erased at parse time** (`parse_func`'s targeted-promotion
+loop). Promotion deliberately *excludes* a type param that appears only inside
+a **built-in** generic base — and `feeds_user_parametric` explicitly lists
+`Map[K, V]` as a non-match (`is_builtin_generic_base("Map")`). So the erased
+generic is **never monomorphised**: one shared body keeps the literal
+`Map[K,V]`, and `map_key_kind_of("Map[K,V]")` (which only matches the
+`"Map[i32,"` prefix) **defaults to string-key dispatch**. For an i32-keyed
+map the integer key is then handed to the string path and dereferenced as a
+pointer → SIGSEGV; for a string-keyed map the default is *correct*, so it
+runs. core/map's verbs (`merge` / `extend` / `from` / `get_or_insert` /
+`entries`) are all unbounded `[K,V]` generics, so they all sit on this fault
+line. (`from` *appears* to work at i32 keys only because its store **and**
+load both use the same wrong key-kind — internally consistent until a
+correctly-typed reader at the call site touches the same map.)
+
+**Why this is deep, not a one-liner.** A correct fix is a monomorphiser
+change — promote a type param that feeds a `Map[…]` key/value position so the
+verb is cloned per concrete K/V (`subst_ty` already substitutes param types
+on clone) — and it has to span three binding shapes: a `Map[K,V]` **param**
+(`merge`/`get_or_insert`), a `(K,V)[]` **tuple-array param** (`from`, whose
+`K`/`V` sit at paren-depth ≥1 and so aren't `bindable` today), and a
+**receiver-only** type param (`entries`, whose `K`/`V` come from the
+`Map[K,V]` receiver, which the promotion loop doesn't scan). Each interacts
+with the documented 512-function bootstrap IR budget and must hold the
+byte-identical fixpoint — i.e. several careful, independently-validated
+slices, not a single edit. Logged here so the follow-up starts from the exact
+mechanism rather than re-deriving it; the exploratory typing arm + probe
+instrumentation used to find this were reverted (they're a regression risk
+without the monomorphiser fix).
+
 ### 2026-06-28 — `Map.iter()` cluster lowers on the IR path (flips `json_roundtrip`)
 
 `Map[K,V].iter()` returns a `MapIter[K,V]` — a 16-byte cursor box
