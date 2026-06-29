@@ -608,6 +608,8 @@ func New() *Interp {
 	i.Builtins["tcp_recv"] = &Builtin{Fn: builtinTcpRecv}
 	i.Builtins["tcp_send"] = &Builtin{Fn: builtinTcpSend}
 	i.Builtins["tcp_close"] = &Builtin{Fn: builtinTcpClose}
+	i.Builtins["tcp_pollable"] = &Builtin{Fn: builtinTcpPollable}
+	i.Builtins["wasm_pollable_drop"] = &Builtin{Fn: builtinWasmPollableDrop}
 	return i
 }
 
@@ -732,6 +734,36 @@ func builtinTcpClose(i *Interp, args []Value) (Value, error) {
 		return Number(0), nil
 	}
 	return Number(-1), nil
+}
+
+// builtinWasmPollableDrop is the interpreter's `wasm_pollable_drop(p)` — a
+// no-op (returns 0), like the native backends: a pollable is just an fd, with
+// no separate resource to drop. Present so std/async's fetch_future (which
+// drops the wasm pollable before close) runs portably under interp.
+func builtinWasmPollableDrop(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("wasm_pollable_drop: expected 1 arg, got %d", len(args))
+	}
+	if _, ok := args[0].(Number); !ok {
+		return nil, fmt.Errorf("wasm_pollable_drop: expected number arg, got %T", args[0])
+	}
+	return Number(0), nil
+}
+
+// builtinTcpPollable is the interpreter's `tcp_pollable(fd)` — identity, like
+// the native backends (a socket's readiness token IS its fd). It lets
+// std/async's `fetch_future` be portable; the interp has no real poll, so a
+// Pending future built from it never resolves (the in-interp `poll` stub
+// returns -1), exactly like the native/wasm portability story.
+func builtinTcpPollable(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("tcp_pollable: expected 1 arg, got %d", len(args))
+	}
+	fd, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_pollable: expected number arg, got %T", args[0])
+	}
+	return fd, nil
 }
 
 // builtinRandomBytes returns a string of n cryptographic-

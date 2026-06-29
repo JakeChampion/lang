@@ -357,9 +357,13 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.emitTcpSendRuntime()
 		g.emitTcpCloseRuntime()
 		g.emitTcpConnectRuntime()
+		g.emitTcpPollableRuntime()
 	}
 	if g.usesPoll {
 		g.emitPollRuntime()
+	}
+	if g.usesWasmPollableDrop {
+		g.emitWasmPollableDropRuntime()
 	}
 	if g.usesTimerFd {
 		g.emitTimerFdRuntime()
@@ -460,8 +464,8 @@ type generator struct {
 	// only emit the helper if the program references it,
 	// so trivial programs stay small. recordUse() sets
 	// these from a pre-scan of the IR's OpCallDirect ops.
-	usesAlloc   bool
-	usesMemcpy  bool
+	usesAlloc  bool
+	usesMemcpy bool
 	// usesCCall[n] gates the `__c_call<n>` FFI shim (call a C-ABI function
 	// pointer with n integer args). The F32/F64 variants gate byte-identical
 	// shims whose only difference is a checker FuncSig declaring an f32/f64
@@ -469,11 +473,11 @@ type generator struct {
 	usesCCall    [5]bool
 	usesCCallF32 [5]bool
 	usesCCallF64 [5]bool
-	usesStrcat  bool
-	usesStrcmp  bool
-	usesPuts    bool
-	usesWrite   bool
-	usesPutchar bool
+	usesStrcat   bool
+	usesStrcmp   bool
+	usesPuts     bool
+	usesWrite    bool
+	usesPutchar  bool
 	// usesEprint / usesExit — eprint(s) → stderr write+newline;
 	// exit(code) → direct exit_group syscall. Both mirror arm64.
 	usesEprint bool
@@ -502,20 +506,21 @@ type generator struct {
 	// usesSleepMs pulls in `__fern_sleep_ms(ms)` — best-effort sleep
 	// for `ms` milliseconds via `nanosleep(&req, NULL)` (#35); ms <= 0
 	// returns immediately. Void.
-	usesSleepMs         bool
-	usesTcp             bool
-	usesEnv             bool
-	usesArgs            bool
-	usesAllocU8         bool
-	usesStringFromBytes bool
-	usesStrSlice        bool
-	usesSliceMake       bool
-	usesRandomBytes     bool
-	usesRandomI32       bool
-	usesPoll            bool
-	usesTimerFd         bool
-	usesAsBytes         bool
-	usesReadLine        bool
+	usesSleepMs          bool
+	usesTcp              bool
+	usesEnv              bool
+	usesArgs             bool
+	usesAllocU8          bool
+	usesStringFromBytes  bool
+	usesStrSlice         bool
+	usesSliceMake        bool
+	usesRandomBytes      bool
+	usesRandomI32        bool
+	usesPoll             bool
+	usesWasmPollableDrop bool
+	usesTimerFd          bool
+	usesAsBytes          bool
+	usesReadLine         bool
 	// usesStrIdx tracks whether any code emits the SSO-aware
 	// inlined __str_idx helper, which spills inline-tagged
 	// strings to the .bss `__fern_str_idx_scratch` slot before
@@ -795,12 +800,18 @@ func (g *generator) recordUse(target string) {
 		g.usesNowNs = true
 	case "sleep_ms":
 		g.usesSleepMs = true
-	case "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close", "tcp_connect":
+	case "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close", "tcp_connect", "tcp_pollable":
 		g.usesTcp = true
 		// usesTcp always emits the __fern_tcp_recv helper, which calls
 		// __fern_alloc_rc1 for its read buffer — so any tcp builtin
 		// needs the alloc runtime present, even a connect-only program.
 		g.usesAlloc = true
+	case "wasm_pollable_drop":
+		// On native a pollable is just an fd (no separate resource to
+		// drop), so this is a no-op helper — present so std/async's
+		// fetch_future (which drops the wasm pollable before close)
+		// compiles + runs portably.
+		g.usesWasmPollableDrop = true
 	case "poll":
 		// poll(fds, timeout_ms) — readiness multiplex. The runtime
 		// helper allocates a scratch pollfd buffer.
@@ -1989,6 +2000,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_tcp_send"
 		case "tcp_connect":
 			target = "__fern_tcp_connect"
+		case "tcp_pollable":
+			target = "__fern_tcp_pollable"
+		case "wasm_pollable_drop":
+			target = "__fern_wasm_pollable_drop"
 		case "tcp_close":
 			target = "__fern_tcp_close"
 		case "env":
@@ -3923,6 +3938,7 @@ func (g *generator) emitClosureDropRuntime() {
 //   - below-heap (< 0x1000_0000): string LITERALS live in .rodata
 //     under the heap base, so they can never reach the rc==1 free
 //     path and have their read-only storage handed to the freelist.
+//
 // The high-bit static sentinel (the shared empty string) reads as a
 // negative rc, so the rc!=1 branch routes it to __fern_rc_dec, which
 // short-circuits on the sentinel. System V: rdi = data. Returns the
@@ -4583,7 +4599,7 @@ func (g *generator) emitDropArrStrRuntime() {
 	g.emit("test ecx, ecx")
 	g.emit("js .Ldrops_ret") // static sentinel
 	g.emit("cmp ecx, 1")
-	g.emit("jne .Ldrops_decarr") // shared array → no element walk
+	g.emit("jne .Ldrops_decarr")            // shared array → no element walk
 	g.emit("mov r12d, dword ptr [rbx - 4]") // len
 	g.emit("xor r13, r13")                  // i = 0
 	g.label(".Ldrops_loop")
@@ -5442,6 +5458,36 @@ func (g *generator) emitTcpSendRuntime() {
 	g.line(".size __fern_tcp_send, .-__fern_tcp_send")
 }
 
+// emitWasmPollableDropRuntime emits `__fern_wasm_pollable_drop(p)` — a no-op
+// on native (a pollable is just an fd; there's no separate wasi resource to
+// drop — the socket fd is closed via tcp_close). Returns 0. Lets std/async's
+// fetch_future drop the wasm pollable portably before closing the socket.
+func (g *generator) emitWasmPollableDropRuntime() {
+	g.line("")
+	g.line(".globl __fern_wasm_pollable_drop")
+	g.line(".type __fern_wasm_pollable_drop, @function")
+	g.label("__fern_wasm_pollable_drop")
+	g.emit("xor eax, eax") // return 0 (no-op)
+	g.emit("ret")
+	g.line(".size __fern_wasm_pollable_drop, .-__fern_wasm_pollable_drop")
+}
+
+// emitTcpPollableRuntime emits `__fern_tcp_pollable(fd)` — on native the
+// readiness token for a socket IS its file descriptor (poll(2) takes fds
+// directly), so this is the identity: return the fd unchanged. It exists
+// so `std/async`'s `fetch_future` can build a portable `Pending(tcp_pollable(fd),
+// …)` — on wasm `tcp_pollable` returns a real wasi:io/poll pollable handle;
+// on native the fd is its own token.
+func (g *generator) emitTcpPollableRuntime() {
+	g.line("")
+	g.line(".globl __fern_tcp_pollable")
+	g.line(".type __fern_tcp_pollable, @function")
+	g.label("__fern_tcp_pollable")
+	g.emit("mov eax, edi") // return the fd argument unchanged
+	g.emit("ret")
+	g.line(".size __fern_tcp_pollable, .-__fern_tcp_pollable")
+}
+
 // emitTcpCloseRuntime emits `__fern_tcp_close(fd)` —
 // closes the socket via the close syscall. Returns 0 or
 // -errno.
@@ -5709,10 +5755,10 @@ func (g *generator) emitPollRuntime() {
 	g.label(".Lpoll_fill")
 	g.emit("cmp r15, rbx")
 	g.emit("jge .Lpoll_filled")
-	g.emit("mov eax, [r12 + r15*4]")                            // fd
-	g.emit("mov [r13 + r15*8], eax")                            // pollfd.fd
+	g.emit("mov eax, [r12 + r15*4]")                                  // fd
+	g.emit("mov [r13 + r15*8], eax")                                  // pollfd.fd
 	g.emit(fmt.Sprintf("mov word ptr [r13 + r15*8 + 4], %d", pollin)) // .events
-	g.emit("mov word ptr [r13 + r15*8 + 6], 0")                // .revents
+	g.emit("mov word ptr [r13 + r15*8 + 6], 0")                       // .revents
 	g.emit("inc r15")
 	g.emit("jmp .Lpoll_fill")
 	g.label(".Lpoll_filled")
@@ -5761,9 +5807,9 @@ func (g *generator) emitTimerFdRuntime() {
 	g.label("__fern_timer_fd")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rbx") // ms
-	g.emit("push r12") // fd
-	g.emit("sub rsp, 32") // struct itimerspec { it_interval, it_value }
+	g.emit("push rbx")     // ms
+	g.emit("push r12")     // fd
+	g.emit("sub rsp, 32")  // struct itimerspec { it_interval, it_value }
 	g.emit("mov rbx, rdi") // ms
 	// fd = timerfd_create(CLOCK_MONOTONIC, 0)
 	g.emit(fmt.Sprintf("mov edi, %d", clockMonotonic))
@@ -5781,7 +5827,7 @@ func (g *generator) emitTimerFdRuntime() {
 	g.emit("mov rax, rbx")
 	g.emit("xor edx, edx")
 	g.emit("mov rcx, 1000")
-	g.emit("div rcx")         // rax = sec, rdx = rem ms
+	g.emit("div rcx") // rax = sec, rdx = rem ms
 	g.emit("mov [rsp + 16], rax")
 	g.emit("mov rax, 1000000")
 	g.emit("imul rax, rdx")

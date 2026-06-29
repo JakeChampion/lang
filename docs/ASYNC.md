@@ -178,14 +178,19 @@ that every backend already lowers. See `docs/ASYNC-REDESIGN.md`.
 ## Current limitations
 
 - `Pending` futures resolve on **native** (fd-backed, via poll(2)/ppoll(2)) and
-  on **wasm** (pollable-backed, via wasi:io/poll — `poll` forwards to it). A wasm
-  `Pending`'s token is a pollable handle (e.g. `wasm_timer_pollable(ns)`); a
-  pollable-backed wasm `fetch_future` is the remaining follow-up. On **interp**
-  the `poll` stub means `Pending` never completes (the portable `Ready`-future
-  path works everywhere).
+  on **wasm** (pollable-backed, via wasi:io/poll — `poll` forwards to it). The
+  wait token is portable: `fetch_future` uses `tcp_pollable(c)`, which is the raw
+  fd on native and a real wasi:io/poll pollable handle on wasm. So a real
+  overlapping `gather([fetch_future, …])` works on **both native and wasm**. On
+  **interp** the `poll` stub means `Pending` never completes (the portable
+  `Ready`-future path works everywhere).
 - `with_deadline`'s deadline is **native-only** for now: `poll` ignores its
   `timeout_ms` arg on wasm, so on wasm `with_deadline` waits for all futures
   like `gather` (a host timeout needs a timer pollable added to the poll set).
+- On **wasm**, a `race` over real sockets currently leaks the losers' pollables
+  (they're never dropped, since only the winner's continuation runs) — fine for a
+  short-lived handler (process exit reclaims), but `gather` is the clean path
+  (every future resolves, so every pollable is dropped before its socket closes).
 - `fetch_future`'s continuation does a single `recv`, sufficient for the small
   responses of the edge fan-out; a multi-chunk body that re-suspends per chunk
   is folded in with the IR future.
