@@ -189,6 +189,13 @@ kqueue path. Same deterministic file-fd tests now run on both native
 backends (`internal/e2e/poll_test.go`, x86-64 + arm64/qemu).
 
 **Phase 1c — IN PROGRESS:**
+- **DONE — `poll` builtin is now universal (the option-1 enabler):** real on the
+  native backends (poll(2) / ppoll(2)); a `-1` ("no fd ready") **stub** on interp
+  (`interp.builtinPoll`) and wasm (`wasmbin` runtime helper `buildPollStubBody`).
+  This lets a module reference `poll` on *every* target — the prerequisite for the
+  future real-fd `std/task` reactor to call `poll` behind its existing API while
+  staying compilable on wasm/interp (real wasm readiness is the separate
+  wasi:io/poll path below). Pinned by `internal/e2e/poll_stub_test.go`.
 - **DONE — `std/reactor` (native real-fd scheduler):** `run_io(states)`
   drives fd-tagged stackless tasks (`IoStep = IoDone | IoWait(fd,
   resume)`) to completion using the real `poll` builtin — the real-I/O
