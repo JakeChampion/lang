@@ -881,9 +881,12 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 		return nil, nil, err
 	}
 	tname := p.maybeQualify(tnameTok.Text)
-	// Optional trait type arguments: `impl From[i32] for Celsius`. Bound
-	// positionally to the trait's type parameters. See docs/TRAITS.md.
-	var traitArgs []ast.Type
+	// A `[…]` after the name is either the trait's type arguments
+	// (`impl From[i32] for Celsius`) or, for an inherent impl
+	// (`impl Box[T] { … }`), the impl type's own generic arguments. We
+	// can't tell which until we see whether `for` follows, so parse the
+	// list now and assign once the form is known.
+	var bracketTypes []ast.Type
 	if p.match(lexer.Punct, "[") {
 		p.advance() // consume `[`
 		for {
@@ -891,7 +894,7 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 			if err != nil {
 				return nil, nil, err
 			}
-			traitArgs = append(traitArgs, at)
+			bracketTypes = append(bracketTypes, at)
 			if _, ok := p.accept(lexer.Punct, ","); !ok {
 				break
 			}
@@ -900,21 +903,42 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 			return nil, nil, err
 		}
 	}
-	if _, err := p.expect(lexer.Keyword, "for"); err != nil {
-		return nil, nil, err
-	}
-	typePos := p.peek().Pos
-	implType, err := p.parseType()
-	if err != nil {
-		return nil, nil, err
-	}
-	if _, ok := implType.(ast.SelfType); ok {
-		return nil, nil, p.errorf(typePos, "`impl … for Self` is not allowed; name a concrete type")
+	var trait string
+	var traitArgs []ast.Type
+	var implType ast.Type
+	var typePos ast.Position
+	if p.match(lexer.Keyword, "for") {
+		// Trait impl: `impl Trait[args] for Type { … }`. The name is the
+		// trait; the bracket list (if any) is its type arguments.
+		trait = tname
+		traitArgs = bracketTypes
+		p.advance() // consume `for`
+		typePos = p.peek().Pos
+		implType, err = p.parseType()
+		if err != nil {
+			return nil, nil, err
+		}
+		if _, ok := implType.(ast.SelfType); ok {
+			return nil, nil, p.errorf(typePos, "`impl … for Self` is not allowed; name a concrete type")
+		}
+	} else {
+		// Inherent impl: `impl Type { … }` / `impl[T] Box[T] { … }`. There
+		// is no trait — the name (plus any generic args) is the impl type
+		// itself, and its receiver-less functions are associated functions
+		// (`Type.f(args)`) while `self`-taking ones are ordinary methods.
+		// See #2700.
+		trait = ""
+		typePos = tnameTok.Pos
+		if len(bracketTypes) > 0 {
+			implType = ast.EnumType{Name: tname, Args: bracketTypes}
+		} else {
+			implType = ast.StructType{Name: tname}
+		}
 	}
 	if _, err := p.expect(lexer.Punct, "{"); err != nil {
 		return nil, nil, err
 	}
-	id := &ast.ImplDecl{P: kw.Pos, Trait: tname, TraitPos: tnameTok.Pos, Type: implType, TypePos: typePos, TypeParams: implTypeParams, Bounds: implBounds, TraitArgs: traitArgs}
+	id := &ast.ImplDecl{P: kw.Pos, Trait: trait, TraitPos: tnameTok.Pos, Type: implType, TypePos: typePos, TypeParams: implTypeParams, Bounds: implBounds, TraitArgs: traitArgs}
 	var methods []*ast.FuncDecl
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
 		// Associated-type binding: `type Item = T;`. Records the concrete

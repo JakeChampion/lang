@@ -117,6 +117,33 @@ impl Eq for Point {
 - `trait` may be `pub`. Impls inherit visibility from the type/trait;
   there is no `pub impl`.
 
+### Inherent impls (`impl Type { … }`)
+
+An impl block with **no `for Trait`** is an *inherent* impl — methods and
+associated functions attached directly to a type, with no trait to conform
+to. This is the home for constructors and static helpers that don't belong
+to any trait (issue #2700):
+
+```fern
+struct Point { x: i32, y: i32 }
+
+impl Point {
+    function origin(): Self { return Point { x: 0, y: 0 }; }   // associated fn
+    function make(x: i32, y: i32): Point { return Point { x: x, y: y }; }
+    function sum(self: Self): i32 { return self.x + self.y; }   // method
+}
+
+var p: Point = Point.make(3, 4);   // Type.f(args) — associated function
+var n: i32 = p.sum();              // p.method()    — ordinary method
+```
+
+The desugaring is identical to a trait impl: a receiver-less function
+becomes an **associated function** called as `Type.f(args)`, a `self`-taking
+function becomes an ordinary **method**, and `Self` resolves to the impl
+type. Inherent impls may be generic (`impl[T] Box[T] { … }`). The only
+difference from a trait impl is that there is no conformance check — any set
+of functions is allowed.
+
 ### Default methods
 
 A trait method may carry a `{ … }` body instead of ending at `;`. That

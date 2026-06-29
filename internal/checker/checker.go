@@ -2178,6 +2178,14 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		}
 	}
 	for _, impl := range prog.Impls {
+		// Inherent impl (`impl Type { … }`, #2700): no trait, so there is
+		// nothing to check for conformance/coherence here. Its methods and
+		// associated functions were already desugared into ordinary
+		// FuncDecls (hoisted as `__method_*` / `__assoc_*`) by the parser,
+		// so they register and check through the normal paths.
+		if impl.Trait == "" {
+			continue
+		}
 		typeName, ok := methodTypeName(impl.Type)
 		if !ok {
 			c.errfCode(impl.TypePos, "E021", "`impl … for %s`: type must be a struct, enum, or built-in type", impl.Type)
