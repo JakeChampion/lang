@@ -1222,7 +1222,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Result: ast.NumberType{},
 	}
 	// tcp_pollable(conn): number — a wasi:io/poll pollable handle for a
-	// connection's readiness (tcp-socket.subscribe), so std/wasm_reactor
+	// connection's readiness (tcp-socket.subscribe), so std/async
 	// can multiplex N connections via wasm_poll for overlapped outbound
 	// fan-out. wasm-only (Preview-2 pollables); the native reactor polls
 	// the connection fd directly.

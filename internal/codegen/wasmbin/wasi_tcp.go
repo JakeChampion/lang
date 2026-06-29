@@ -405,7 +405,7 @@ func buildTcpConnectBody(idxs map[string]uint32) []byte {
 // Signature: (conn: i32) → i32
 //
 // Returns a wasi:io/poll pollable for the connection's tcp-socket
-// (mem[conn+0]) via tcp-socket.subscribe — the handle std/wasm_reactor
+// (mem[conn+0]) via tcp-socket.subscribe — the handle std/async
 // multiplexes through wasm_poll for overlapped outbound fan-out.
 func buildTcpPollableBody(idxs map[string]uint32) []byte {
 	subscribe := idxs["wasi_sockets_tcp_subscribe"]
