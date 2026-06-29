@@ -371,6 +371,11 @@ pub function op_now_unix_ms(): Op { return op0("now_unix_ms"); }
 // `now_ns` — wall-clock nanoseconds since the Unix epoch (the i64 nanosecond
 // twin of now_unix_ms); 0-arg, allocation-free. Lowers to __fern_now_ns.
 pub function op_now_ns(): Op { return op0("now_ns"); }
+// `poll` takes two operands [fds, timeout_ms] (fds an i32[] box pointer, timeout
+// an i32) and pushes the i32 index of the first ready fd, or -1. Lowers to the
+// __fern_poll runtime helper (poll(2) over the fd set) — the self-host twin of
+// the native `poll` builtin. See docs/ASYNC-SELFHOST-IR.md.
+pub function op_poll(): Op { return op0("poll"); }
 // `__heap_bump_bytes` takes no operands → an i32: the bump allocator's
 // high-water mark (cursor − region base; 0 before the first allocation). It
 // reads the heap runtime's cursor + base — so it does NOT allocate, but it

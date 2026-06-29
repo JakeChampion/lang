@@ -508,9 +508,10 @@ function is_builtin_function(name: string): boolean {
     if (name == "read_file" || name == "write_file" || name == "read_dir"
         || name == "remove_dir_all" || name == "remove_file" || name == "stat"
         || name == "temp_dir") { return true; }
-    // clocks + randomness + sleep
+    // clocks + randomness + sleep + reactor readiness
     if (name == "now_unix_ms" || name == "now_ns" || name == "monotonic_ns"
-        || name == "sleep_ms" || name == "random_bytes" || name == "random_i32") { return true; }
+        || name == "sleep_ms" || name == "random_bytes" || name == "random_i32"
+        || name == "poll") { return true; }
     // maps + string builder + bytes + the free-function `len(a)` form.
     // (`len` is a self-host emitter builtin — the self-host accepts both
     // `a.len()` and `len(a)`. The Go checker only accepts `a.len()` and

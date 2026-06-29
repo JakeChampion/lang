@@ -1421,6 +1421,8 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     // through the integer path without truncation.
                     if (id.name == "now_unix_ms") { return ty_i32(); }
                     if (id.name == "monotonic_ns") { return ty_i32(); }
+                    // poll(fds, timeout_ms) -> i32 (ready index, or -1).
+                    if (id.name == "poll") { return ty_i32(); }
                     // See asm.fern for rationale.
                     if (id.name == "sleep_ms") { return ty_i32(); }
                     if (id.name == "remove_file") { return ty_option(ty_unknown()); }
