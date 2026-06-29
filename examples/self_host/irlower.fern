@@ -5051,6 +5051,26 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!pl.ok) { return pl; }
                         return pl.emit(ir.op_poll());
                     }
+                    // timer_fd(ms): lower ms, then a dedicated op the backends
+                    // emit as a call into __fern_timer_fd (a CLOCK_MONOTONIC
+                    // one-shot timerfd) → the fd.
+                    if (cid.name == "timer_fd" && c.args.len() == 1) {
+                        var tf: LowerState = lower_expr(c.args[0], s);
+                        if (!tf.ok) { return tf; }
+                        return tf.emit(ir.op_timer_fd());
+                    }
+                    // wasm_timer_pollable(ns) / wasm_pollable_drop(p): portability
+                    // shims (native: -1 / 0). Lower the arg, then emit the op.
+                    if (cid.name == "wasm_timer_pollable" && c.args.len() == 1) {
+                        var wt: LowerState = lower_expr(c.args[0], s);
+                        if (!wt.ok) { return wt; }
+                        return wt.emit(ir.op_wasm_timer_pollable());
+                    }
+                    if (cid.name == "wasm_pollable_drop" && c.args.len() == 1) {
+                        var wd: LowerState = lower_expr(c.args[0], s);
+                        if (!wd.ok) { return wd; }
+                        return wd.emit(ir.op_wasm_pollable_drop());
+                    }
                     // __heap_bump_bytes(): the bump allocator's high-water mark
                     // (cursor − base) as an i32. Allocation-free introspection;
                     // the IR backends compute it inline from their heap cursor.

@@ -1423,6 +1423,11 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     if (id.name == "monotonic_ns") { return ty_i32(); }
                     // poll(fds, timeout_ms) -> i32 (ready index, or -1).
                     if (id.name == "poll") { return ty_i32(); }
+                    // timer_fd(ms) -> i32 fd; wasm_timer_pollable(ns) -> i32
+                    // (-1 native); wasm_pollable_drop(p) -> i32 (0 native).
+                    if (id.name == "timer_fd") { return ty_i32(); }
+                    if (id.name == "wasm_timer_pollable") { return ty_i32(); }
+                    if (id.name == "wasm_pollable_drop") { return ty_i32(); }
                     // See asm.fern for rationale.
                     if (id.name == "sleep_ms") { return ty_i32(); }
                     if (id.name == "remove_file") { return ty_option(ty_unknown()); }
