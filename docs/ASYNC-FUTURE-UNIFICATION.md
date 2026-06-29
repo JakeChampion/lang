@@ -151,10 +151,29 @@ sequences the safe consolidation first.
      `fetch.fetch_future` through `async.gather` over real sockets,
      bodies returned in input order, overlapped, under stock wasmtime
      (`-S inherit-network`, Preview 2).
-   - **Remaining follow-ups:** host-timeout for `with_deadline` on wasm
-     (a timer pollable in the poll set); dropping `race` losers'
-     pollables on wasm (currently leaked — fine for short-lived
-     handlers); and folding `std/wasm_reactor` into `std/async`.
+   - **DONE — drop abandoned pollables.** `race` (and `gather` /
+     `with_deadline`) now drop every still-`Pending` future's token via
+     `__drop_losers` → `wasm_pollable_drop` (a no-op on native/interp).
+     A `race` over real wasm sockets no longer leaks the losers'
+     pollables (children of their sockets → would trap with "resource
+     has children"). Verified by
+     `internal/e2e/async_wasm_fetch_e2e_test.go ▸ TestAsyncWasmRaceFetchDropsLoser`.
+   - **BLOCKED (composer) — `with_deadline` host-timeout on wasm.**
+     Enforcing the deadline on wasm needs a timer pollable
+     (`wasm_timer_pollable`, via monotonic-clock `subscribe-duration`)
+     in the poll set, while `with_deadline` also tracks elapsed time via
+     `monotonic_ns` (monotonic-clock `now`). The wasm component composer
+     does **not** support both on one interface: `ensureMonotonicTimer`
+     builds a monotonic-clock import instance exporting only
+     `subscribe-duration`, so a program that also uses `now` fails to
+     instantiate ("instance has no export named `now`" — explicitly
+     noted unsupported at `compose_general.go`). Unblocking it means a
+     combined monotonic-clock instance type (both `now` +
+     `subscribe-duration`) shared by the structured-`now` and timer
+     composition paths — a focused composer change. Until then
+     `with_deadline`'s deadline is native-only (it already works there
+     via `poll(2)`'s timeout); on wasm it waits like `gather`.
+   - **Remaining:** folding `std/wasm_reactor` into `std/async`.
 3. **PR5d — docs.** Fold the outcome into `ASYNC.md` (drop the "Pending
    resolves only on native" + "modules linger" limitations) and retire
    `ASYNC-IMPLEMENTATION-PLAN.md` / `WASM-REACTOR-PLAN.md` to historical.

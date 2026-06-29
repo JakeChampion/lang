@@ -104,12 +104,37 @@ pub function gather[T](fs_in: Future[T][], on_incomplete: T): T[] {
 // counting reclaims them. An already-`Ready` future wins immediately
 // (lowest index). Returns `(-1, none_val)` only if no future can make
 // progress (poll error / no pending fds).
+// __drop_losers(fs, winner) — drop the readiness token of every still-Pending
+// future EXCEPT `winner` (whose own continuation already consumed/dropped its
+// token — fetch_future's resume drops the woken pollable before closing). On
+// wasm a Pending's token is a wasi:io/poll pollable that is a CHILD of its
+// socket resource, so an abandoned `race` loser must drop it or wasmtime traps
+// with "resource has children" at teardown. `wasm_pollable_drop` is a no-op on
+// native/interp (a pollable is just an fd there), so this is portable. Pass
+// `winner = -1` to drop every Pending token (no resumed winner).
+function __drop_losers[T](fs: Future[T][], winner: i32): i32 {
+    var i: i32 = 0;
+    while (i < fs.len()) {
+        if (i != winner) {
+            match (fs[i]) {
+                Ready(v) => { },
+                Pending(tok, c) => { var d: i32 = wasm_pollable_drop(tok); },
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
 pub function race[T](fs_in: Future[T][], none_val: T): (i32, T) {
     var fs: Future[T][] = fs_in;
     var j: i32 = 0;
     while (j < fs.len()) {
         match (fs[j]) {
-            Ready(v) => { return (j, v); },
+            Ready(v) => {
+                var d0: i32 = __drop_losers(fs, j);
+                return (j, v);
+            },
             Pending(fd, c) => { },
         }
         j = j + 1;
@@ -130,14 +155,20 @@ pub function race[T](fs_in: Future[T][], none_val: T): (i32, T) {
         }
         if (fds.len() == 0) { return (-1, none_val); }
         var ready: i32 = poll(fds, -1);
-        if (ready < 0) { return (-1, none_val); }
+        if (ready < 0) {
+            var de: i32 = __drop_losers(fs, -1);
+            return (-1, none_val);
+        }
         var ti: i32 = idxs[ready];
         match (fs[ti]) {
             Ready(v) => { return (ti, v); },
             Pending(fd, resume) => {
                 var nx: Future[T] = resume(fd);
                 match (nx) {
-                    Ready(v) => { return (ti, v); },
+                    Ready(v) => {
+                        var dw: i32 = __drop_losers(fs, ti);
+                        return (ti, v);
+                    },
                     Pending(nfd, nc) => { fs = fs.with(ti, nx); },
                 }
             },

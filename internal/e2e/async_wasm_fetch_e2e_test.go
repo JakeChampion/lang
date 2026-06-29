@@ -99,3 +99,77 @@ function main(): i32 {
 		t.Errorf("fan-out took %v — expected overlapped (~200ms + startup)", elapsed)
 	}
 }
+
+// `async.race` over two real wasm sockets: one upstream wins, the other is
+// abandoned. On wasm the loser's pollable is a CHILD of its socket resource,
+// so `race` must drop it (`__drop_losers` → `wasm_pollable_drop`) or wasmtime
+// traps with "resource has children" at teardown. This pins the loser-drop:
+// the program runs CLEAN (exit 0, no trap) and returns a valid winner body —
+// before the fix this trapped at teardown. (Which upstream wins depends on
+// wasm pollable readiness semantics, orthogonal to the drop, so the assertion
+// accepts either body.)
+func TestAsyncWasmRaceFetchDropsLoser(t *testing.T) {
+	skipIfPreview2Missing(t)
+
+	serve := func(t *testing.T, body string, delay time.Duration) int {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("listen: %v", err)
+		}
+		t.Cleanup(func() { ln.Close() })
+		resp := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n%s", len(body), body)
+		go func() {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+			buf := make([]byte, 256)
+			_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+			_, _ = conn.Read(buf)
+			time.Sleep(delay)
+			_, _ = conn.Write([]byte(resp))
+		}()
+		return ln.Addr().(*net.TCPAddr).Port
+	}
+	pA := serve(t, "AAA", 10*time.Millisecond)
+	pB := serve(t, "BBB", 40*time.Millisecond)
+
+	src := `import "std/async";
+import "std/fetch";
+import "std/string";
+
+function parse(s: string): i32 {
+    var n: i32 = 0; var i: i32 = 0;
+    while (i < s.len()) { var b: i32 = s[i]; if (b < 48 || b > 57) { return 0; } n = n * 10 + (b - 48); i = i + 1; }
+    return n;
+}
+function port(key: string): i32 { match (env(key)) { Some(s) => { return parse(s); }, None => { return 0; } } }
+
+function main(): i32 {
+    var host: i32 = 127 | (1 << 24);
+    var fs: async.Future[string][] = [
+        fetch.fetch_future(host, port("PA"), "/a"),
+        fetch.fetch_future(host, port("PB"), "/b")
+    ];
+    var (winner, body) = async.race(fs, "");
+    if (winner < 0) { print("nowinner\n"); return 1; }
+    print(body);   // the winner's body ("AAA" or "BBB")
+    return 0;
+}`
+
+	compPath := buildComponent(t, src)
+	run := exec.Command("wasmtime", "run", "-S", "inherit-network",
+		"--env", "PA="+strconv.Itoa(pA), "--env", "PB="+strconv.Itoa(pB), compPath)
+	var sout, serr bytes.Buffer
+	run.Stdout = &sout
+	run.Stderr = &serr
+	// Clean exit (no "resource has children" trap) is the loser-drop proof.
+	if err := run.Run(); err != nil {
+		t.Fatalf("wasmtime run (race loser drop): %v\nstdout:\n%s\nstderr:\n%s", err, sout.String(), serr.String())
+	}
+	out := sout.String()
+	if !bytes.Contains(sout.Bytes(), []byte("AAA")) && !bytes.Contains(sout.Bytes(), []byte("BBB")) {
+		t.Errorf("race: want a winner body (AAA or BBB) in output, got %q\nstderr:\n%s", out, serr.String())
+	}
+}
