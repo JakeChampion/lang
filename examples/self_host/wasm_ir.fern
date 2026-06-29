@@ -667,6 +667,19 @@ pub function lift_lambdas(mod: parser.Module): parser.Module {
 // const_func ops) in first-seen, deduped order. The position of a name here is
 // its funcref-table slot index — both the const_func `i32.const <idx>` and the
 // elem segment in fn_support_section index into this list, so they agree.
+// pipe_before / pipe_after split op_map_new's packed struct "hash|eq" fns.
+pub function pipe_before(s: string): string {
+    var i: i32 = 0;
+    while (i < s.len() && s[i] != 124) { i = i + 1; }   // '|'
+    return s[0:i];
+}
+pub function pipe_after(s: string): string {
+    var i: i32 = 0;
+    while (i < s.len() && s[i] != 124) { i = i + 1; }
+    if (i >= s.len()) { return ""; }
+    return s[i + 1 : s.len()];
+}
+
 pub function fn_value_table(mod: parser.Module): string[] {
     var out: string[] = [];
     var fi: i32 = 0;
@@ -676,6 +689,16 @@ pub function fn_value_table(mod: parser.Module): string[] {
         while (i < r.ops.len()) {
             if (r.ops[i].kind == "const_func" && util.index_of_str(out, r.ops[i].str) < 0) {
                 out = out.append(r.ops[i].str);
+            }
+            // A struct/enum-keyed map (op_map_new kind 2) takes the derived
+            // hash/eq via call_indirect, so they are address-taken too — add
+            // them to the funcref table so map_new can store their slot indices
+            // in the box. #2671.
+            if (r.ops[i].kind == "map_new" && r.ops[i].i32_imm == 2 && r.ops[i].str.len() > 0) {
+                var hf: string = pipe_before(r.ops[i].str);
+                var ef: string = pipe_after(r.ops[i].str);
+                if (util.index_of_str(out, hf) < 0) { out = out.append(hf); }
+                if (util.index_of_str(out, ef) < 0) { out = out.append(ef); }
             }
             i = i + 1;
         }
@@ -701,6 +724,15 @@ function indirect_arities(mod: parser.Module): i32[] {
         }
         fi = fi + 1;
     }
+    // map_helpers' hk/keq reference (type $fn1) (derived hash) and (type $fn2)
+    // (derived eq) via call_indirect for struct/enum keys — and that wat is
+    // emitted whenever ANY map is used, not just a struct-keyed one. So both
+    // signature types must exist for every map-using module or the (dead, for
+    // i32/string keys) call_indirect fails validation. #2671.
+    if (module_uses_maps(mod)) {
+        if (!slot_in_list(out, 1)) { out = out.append(1); }
+        if (!slot_in_list(out, 2)) { out = out.append(2); }
+    }
     return out;
 }
 
@@ -711,9 +743,9 @@ function indirect_arities(mod: parser.Module): i32[] {
 // module has no function values, so non-closure modules are byte-unchanged.
 pub function fn_support_section(mod: parser.Module): string {
     var ft: string[] = fn_value_table(mod);
-    if (ft.len() == 0) { return ""; }
-    var out: string = "";
     var arities: i32[] = indirect_arities(mod);
+    if (ft.len() == 0 && arities.len() == 0) { return ""; }
+    var out: string = "";
     var ai: i32 = 0;
     while (ai < arities.len()) {
         out = out + "  (type $fn" + util.i32_to_string(arities[ai]) + " (func";
@@ -722,14 +754,22 @@ pub function fn_support_section(mod: parser.Module): string {
         out = out + " (result i32)))\n";
         ai = ai + 1;
     }
-    out = out + "  (table " + util.i32_to_string(ft.len()) + " funcref)\n";
-    out = out + "  (elem (i32.const 0)";
-    var ei: i32 = 0;
-    while (ei < ft.len()) {
-        out = out + " $" + ft[ei];
-        ei = ei + 1;
+    // The table must exist for any call_indirect to validate — including the
+    // map's struct-key hk/keq, which is emitted (but dead) even when no
+    // function VALUE is taken. Size it to the funcref set, or a minimal 1 slot
+    // when the only indirect calls are the (dead-for-i32/string) map ones.
+    var tsize: i32 = ft.len();
+    if (tsize == 0) { tsize = 1; }
+    out = out + "  (table " + util.i32_to_string(tsize) + " funcref)\n";
+    if (ft.len() > 0) {
+        out = out + "  (elem (i32.const 0)";
+        var ei: i32 = 0;
+        while (ei < ft.len()) {
+            out = out + " $" + ft[ei];
+            ei = ei + 1;
+        }
+        out = out + ")\n";
     }
-    out = out + ")\n";
     return out;
 }
 
@@ -1124,8 +1164,15 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // i32 payload at offset 4 (matches opt_make + the runtime map-get box).
             out = out + "    i32.const 4\n    i32.add\n    i32.load\n";
         } else if (o.kind == "map_new") {
-            // stack: hint -> fresh map. i32 keys vs string keys.
-            if (o.i32_imm == 1) { out = out + "    call $__fern_map_new\n"; }
+            // stack: hint -> fresh map. i32 / string / struct keys.
+            if (o.i32_imm == 2) {
+                // Struct/enum key: push the derived hash + eq funcref-table slot
+                // indices; $__fern_map_new_struct stores them in the box so
+                // hk/keq dispatch them via call_indirect. #2671.
+                out = out + "    i32.const " + util.i32_to_string(util.index_of_str(fn_table, pipe_before(o.str))) + "\n";
+                out = out + "    i32.const " + util.i32_to_string(util.index_of_str(fn_table, pipe_after(o.str))) + "\n";
+                out = out + "    call $__fern_map_new_struct\n";
+            } else if (o.i32_imm == 1) { out = out + "    call $__fern_map_new\n"; }
             else { out = out + "    call $__fern_map_new_str\n"; }
         } else if (o.kind == "print_int") {
             // stack: n -> write n's decimal text to stdout (no newline). The helper

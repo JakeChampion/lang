@@ -8990,8 +8990,9 @@ function synth_struct_hash(sd: StructDecl): FuncDecl {
     var stmts: Stmt[] = [s_var("__h", "i32", e_number("17", "", false))];
     var i: i32 = 0;
     while (i < sd.fields.len()) {
-        var fold: Expr = e_binary("+", e_binary("*", e_ident("__h"), e_number("31", "", false)), dv_call0(dv_self_field(sd.fields[i].name), "hash"));
-        stmts = stmts.append(s_assign("__h", fold));
+        var fs: Stmt[] = dv_hash_stmts("__h", sd.fields[i].type_name, dv_self_field(sd.fields[i].name), dl_itoa(i));
+        var k: i32 = 0;
+        while (k < fs.len()) { stmts = stmts.append(fs[k]); k = k + 1; }
         i = i + 1;
     }
     stmts = stmts.append(s_return(e_ident("__h")));
@@ -9158,8 +9159,9 @@ function synth_enum_hash(ename: string, variants: StructDecl[]): FuncDecl {
         var pat: string = "";
         if (v.fields.len() > 0) {
             pat = "__p0";
-            var fold: Expr = e_binary("+", e_binary("*", e_ident("__h"), e_number("31", "", false)), dv_call0(e_ident("__p0"), "hash"));
-            stmts = stmts.append(s_assign("__h", fold));
+            var fs: Stmt[] = dv_hash_stmts("__h", v.fields[0].type_name, e_ident("__p0"), dl_itoa(i));
+            var k: i32 = 0;
+            while (k < fs.len()) { stmts = stmts.append(fs[k]); k = k + 1; }
         }
         stmts = stmts.append(s_return(e_ident("__h")));
         arms = arms.append(MatchArm { pattern: p_variant(v.name, pat), body: stmts, line: 0, col: 0, guard: e_bool(true), has_guard: false });
@@ -9332,6 +9334,48 @@ function dv_cmp_stmts(vn: string, ty: string, lhs: Expr, rhs: Expr): Stmt[] {
         return out;
     }
     return [s_var(vn, "i32", dv_call1(lhs, "cmp", rhs))];
+}
+
+// dv_hash_stmts builds the statements that fold one field/payload's hash into
+// the i32 accumulator `hv` via `h = h * 31 + <field hash>`. A SCALAR inlines
+// its own hash — numeric: the value (cast to i32 for non-i32 widths); boolean:
+// 0 / 1; string: an FNV-style per-byte `h = h*31 + ch` fold — so the derive
+// needs NO `impl Hash for <primitive>`. The stdin-only self-host drivers
+// (wasm_ir_run / asm_run, which parse a single source with no core/cmp loaded)
+// don't provide those impls, so a primitive `.hash()` call would resolve to an
+// unknown function and BAIL the whole module to the AST backend (the exact gap
+// that kept struct/enum Map keys off the wasm self-host hash map — #2671). A
+// NOMINAL field/payload delegates to its own (local, derived) `.hash()`. The
+// only law the Map relies on is `a == b ⇒ a.hash() == b.hash()`, which the
+// value-wise fold preserves; the absolute hash need not match core/cmp's mix.
+// `sfx` disambiguates the per-string loop variable across fields. Mirrors the
+// inline-primitive approach dv_cmp_stmts takes for `Ord`.
+function dv_hash_stmts(hv: string, ty: string, recv: Expr, sfx: string): Stmt[] {
+    var mul: Expr = e_binary("*", e_ident(hv), e_number("31", "", false));
+    if (ty == "string") {
+        // h = h * 31; var i = 0; while (i < recv.len()) { h = h*31 + recv[i]; i = i+1; }
+        var iv: string = "__hsi" + sfx;
+        var body: Stmt[] = [s_assign(hv, e_binary("+",
+            e_binary("*", e_ident(hv), e_number("31", "", false)),
+            e_index(recv, e_ident(iv))))];
+        body = body.append(s_assign(iv, e_binary("+", e_ident(iv), e_number("1", "", false))));
+        var out: Stmt[] = [s_assign(hv, mul)];
+        out = out.append(s_var(iv, "i32", e_number("0", "", false)));
+        out = out.append(s_while(e_binary("<", e_ident(iv), dv_call0(recv, "len")), body));
+        return out;
+    }
+    if (ty == "boolean") {
+        // h = h * 31; if (recv) { h = h + 1; }
+        var t: Stmt[] = [s_assign(hv, e_binary("+", e_ident(hv), e_number("1", "", false)))];
+        return [s_assign(hv, mul), s_if(recv, t, [])];
+    }
+    if (dv_is_num_scalar(ty)) {
+        var v: Expr = recv;
+        if (ty != "i32") { v = e_unary("as_i32", recv); }
+        return [s_assign(hv, e_binary("+", mul, v))];
+    }
+    // Nominal struct/enum field: delegate to its own derived `.hash()`.
+    return [s_assign(hv, e_binary("+", mul, dv_call0(recv, "hash")))];
 }
 
 // dv_is_num_scalar reports whether `t` is a numeric scalar — the subset of

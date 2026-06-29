@@ -246,14 +246,22 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
     // AAPCS scratch, dead here (before the param copy).
     var nbody: i32 = r.n_locals - r.n_params;
     if (nbody > 0) {
+        // The zero-init loop labels must be unique per FUNCTION. Two methods
+        // sharing a bare name (e.g. a derived `Rec.hash` and core/cmp's
+        // `string.hash`, both routing IR with body locals) collide if the label
+        // is keyed on `fd.name` alone — the assembler then rejects the duplicate
+        // `.Lira_zi_hash`. Key on `label_name` (the receiver-qualified name the
+        // function SYMBOL already uses) so each is distinct. The x86 sibling has
+        // no such labels (it zero-inits with `rep stosq`), so it never hit this.
+        var zlab: string = asmcore.sanitize_label(label_name);
         s = fr_sub_imm(s, "x9", "x29", r.n_locals * 8);
         s = s.write("    mov x10, #" + util.i32_to_string(nbody) + "\n");
-        s = s.write(".Lira_zi_" + asmcore.sanitize_label(fd.name) + ":\n");
-        s = s.write("    cbz x10, .Lira_zd_" + asmcore.sanitize_label(fd.name) + "\n");
+        s = s.write(".Lira_zi_" + zlab + ":\n");
+        s = s.write("    cbz x10, .Lira_zd_" + zlab + "\n");
         s = s.write("    str xzr, [x9], #8\n");
         s = s.write("    sub x10, x10, #1\n");
-        s = s.write("    b .Lira_zi_" + asmcore.sanitize_label(fd.name) + "\n");
-        s = s.write(".Lira_zd_" + asmcore.sanitize_label(fd.name) + ":\n");
+        s = s.write("    b .Lira_zi_" + zlab + "\n");
+        s = s.write(".Lira_zd_" + zlab + ":\n");
     }
 
     // Copy params from the caller rt-stack into local slots: param[i] sits at
