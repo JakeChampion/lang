@@ -94,9 +94,6 @@ var keywords = map[string]bool{
 	// Structured-concurrency surface (docs/ASYNC-IMPLEMENTATION-PLAN.md
 	// Phase 3): `concurrent { var a = spawn f(...); … await a … }` fans
 	// out tasks; the parser desugars the block onto the std/task runtime.
-	"concurrent": true,
-	"spawn":      true,
-	"await":      true,
 	// `race { spawn …; spawn …; }` — race spawned tasks, first-to-finish wins;
 	// an expression yielding (winnerIndex, result). Desugars onto std/task.select.
 	// (Named `race`, not `select`, so the runtime function `task.select` — already

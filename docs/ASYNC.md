@@ -1,24 +1,25 @@
 # Async & concurrency in Fern (user guide)
 
 Fern's concurrency is **colorless**: there is no `async` function modifier and no
-`Future`/`Promise` type in the surface. You write straight-line code; `await`
-marks a suspension point, and `concurrent` / `race` blocks overlap work. Suspension
-is a property of the *block*, not the function signature — so an ordinary function
-can suspend without "infecting" its callers' types.
+function coloring in the surface you write. Concurrency is expressed with plain
+library combinators — `gather` / `race` / `with_deadline` — over a `Future[T]`
+(a not-yet-ready value). You write straight-line code and make the concurrency
+points **explicit** at the `gather`/`race` call. No stackful green threads, no
+parse-time CPS transform — just functions and values.
 
 This is the user-facing guide. For the design and internals see
-`docs/ASYNC-IMPLEMENTATION-PLAN.md`, `docs/STREAM-TYPE-SURFACE.md`, and
-`docs/WASI-PREVIEW3-ASYNC-PLAN.md`.
+`docs/ASYNC-REDESIGN.md` (the model + rationale), `docs/STREAM-TYPE-SURFACE.md`,
+and `docs/WASI-PREVIEW3-ASYNC-PLAN.md`.
 
-> Status: the in-language scheduler (`concurrent`/`spawn`/`await`/`race`) runs on
-> the `std/task` runtime; today its reactor delivers in-memory completion values
-> (great for composing and testing task logic). Real outbound I/O (`plat.fetch`
-> over the OS reactor) is the next milestone (Phase 4). The WASI Preview-3
-> `stream[T]` surface below already does real wire I/O.
+> Status: the combinator surface (`std/async`) drives REAL overlapping socket
+> I/O on the native backends (x86-64 / arm64) via the OS reactor; the portable
+> `Ready`-future path runs on every backend (interp / wasm / native). The WASI
+> Preview-3 `stream[T]` import surface below does real wire I/O on wasm. The next
+> milestone is promoting `Future[T]` to a first-class IR type so wasm futures use
+> the component-model-async host scheduler (`docs/ASYNC-REDESIGN.md` PR5).
 
-The patterns shown here are exercised by the test corpus under `examples/tests/`
-(`async_task_fn_test.fern`, `async_concurrent_test.fern`) and the Go e2e suite;
-a few snippets below combine features for illustration.
+The patterns shown here are exercised by `examples/tests/async_combinators_test.fern`
+and the Go e2e suite (`async_combinators_test.go`, `async_fetch_future_test.go`).
 
 ---
 
@@ -47,7 +48,7 @@ memory, no full buffer):
 ```fern
 async function sum(): i32 {
     var total = 0;
-    for x in body() {           // pulls + awaits one element per turn
+    for x in body() {           // pulls one element per turn
         total = total + (x as i32);
     }
     return total;
@@ -60,114 +61,130 @@ the wrapper streams its elements out over the wire.
 
 ---
 
-## 2. `await` and task functions
+## 2. `Future[T]` — a not-yet-ready value
 
-Inside a task, `await EXPR` suspends until the awaited value is ready, then
-resumes with it. A **task function** is just an ordinary function that uses
-`await` — no special signature:
+`std/async` defines:
 
 ```fern
-function fetch_and_add(simulated: i32, addend: i32): i32 {
-    var x = await simulated;    // suspend; resume with the value
-    return x + addend;
+pub enum Future[T] {
+    Ready(T),                          // already resolved
+    Pending(i32, (i32) => Future[T]),  // suspended on an fd; resume(fd) -> next
 }
 ```
 
-`await` works anywhere an expression does, and across control flow:
+You rarely construct a `Future` by hand — the I/O primitives return them
+(`fetch.fetch_future`, below). `Ready(v)` is occasionally useful for a value
+that's already available (and it resolves on every backend, including interp /
+wasm). A `Pending` future resolves when its file descriptor becomes readable,
+driven by the OS `poll` on native.
 
-```fern
-function process(items: i32[], bonus: i32): i32 {
-    var acc = 0;
-    for x in items {                 // loop with awaits in the body
-        var b = await bonus;
-        if (b < 0) { continue; }     // break / continue work
-        acc = acc + x + b;
-    }
-    while (await more() != 0) { … }   // await in a loop condition
-    if (acc > 100) { return acc; }    // early return before an await
-    var last = await final_step();
-    return acc + last;
-}
-```
-
-You can mix several awaits (sequential), await in `if` branches that merge
-afterward, and use `await` in sub-expressions (`acc + await x`) — the compiler
-hoists and sequences them left-to-right.
-
-Task functions are run by spawning them in a `concurrent` or `race` block (below);
-they are not called directly like ordinary functions.
+`Future[T]` is **generic over `T`** — `Future[string]` for response bodies,
+`Future[i32]` for status codes, etc.
 
 ---
 
-## 3. `concurrent { … }` — fan out and join
+## 3. `gather` — fan out and await all
 
-A `concurrent` block spawns tasks whose I/O **overlaps** on one thread, then joins
-them. All `spawn`s start before the work runs, so two fetches happen concurrently
-rather than one-after-another:
+`gather` issues every future's I/O concurrently and returns all results in input
+order. This is the canonical edge fan-out: hit a cache and a primary, take both.
 
 ```fern
-import "std/task";
+import "std/async";
+import "std/fetch";
 
 function handle(): i32 {
-    concurrent {
-        var a = spawn fetch_and_add(10, 1);   // -> 11
-        var b = spawn fetch_and_add(20, 2);   // -> 22
-        return combine(await a, await b);     // join both, then combine
-    }
+    var cache: i32   = fetch.ipv4(10, 0, 0, 1);
+    var primary: i32 = fetch.ipv4(10, 0, 0, 2);
+    var bodies: string[] = async.gather([
+        fetch.fetch_future(cache,   80, "/key"),
+        fetch.fetch_future(primary, 80, "/key"),
+    ], "");                       // "" is the fallback for a future that can't complete
+    return bodies.len();          // both fetches overlapped on one thread
 }
 ```
 
-- All `var NAME = spawn CALL;` bindings come first; ordinary join statements
-  follow.
-- `await a` reads a spawned task's result. (The bound name holds the same value,
-  so `await` here is documentation of the join point.)
-- The block is a structured-concurrency scope: the result names don't leak out.
-- Requires `import "std/task";`.
+`gather(fs, on_incomplete)` — the `on_incomplete` value fills any slot whose
+future never resolves (a `poll` error, or the `-1` `poll` stub on interp/wasm).
+With a blocking native `poll`, live futures always make progress.
 
 ---
 
-## 4. `race { … }` — first to finish wins
+## 4. `race` — first to finish wins
 
-A `race` block runs spawned tasks until the **first** reaches completion, returns
-its result, and abandons the rest (happy-eyeballs / first-wins). It is an
-*expression* yielding `(winnerIndex, result)`:
+`race` runs the futures until the **first** resolves, returns `(winnerIndex,
+value)`, and abandons the rest (happy-eyeballs / first-wins). Cancellation is
+structural: a loser is simply never resumed.
 
 ```fern
-import "std/task";
+import "std/async";
+import "std/fetch";
 
-function fastest(a: i32, b: i32): i32 {
-    var (winner, value) = race {
-        spawn fetch_and_add(a, 0);   // racer 0
-        spawn fetch_and_add(b, 0);   // racer 1
-    };
-    // `winner` is the index of the task that finished first; `value` its result.
-    return value;
+function fastest(a: i32, b: i32): string {
+    var fs: async.Future[string][] = [
+        fetch.fetch_future(a, 80, "/k"),
+        fetch.fetch_future(b, 80, "/k"),
+    ];
+    var (winner, body) = async.race(fs, "");
+    // `winner` is the index that finished first; `body` its result.
+    return body;
 }
 ```
 
-(It's spelled `race`, not `select`, because `task.select` — the runtime function
-it desugars onto — is already a name.)
+(It's spelled `race`; the older `race { … }` keyword block was removed in favour
+of this combinator.)
 
 ---
 
-## 5. How it works (one paragraph)
+## 5. `with_deadline` — await all within a budget
 
-`concurrent` / `race` desugar at parse time onto the `std/task` runtime: each task
-is a stackless state machine (`Step = Done(i32) | Wait(token, resume)`), and the
-parser splits a task function's body at each `await` into continuation closures
-that capture the live locals. A single-threaded readiness reactor multiplexes the
-spawned tasks. No function coloring, no green-thread stacks, and no per-backend
-codegen for the core mechanism — it rides closures, enums, and loops, which every
-backend already lowers. See `docs/ASYNC-IMPLEMENTATION-PLAN.md`.
+`with_deadline(ms, fs, on_timeout)` is `gather` with an SLA: fan out, take
+whatever answers within `ms` wall-clock milliseconds, and drop the stragglers
+(their slots get `on_timeout`).
+
+```fern
+var bodies: string[] = async.with_deadline(250, [
+    fetch.fetch_future(cache,   80, "/k"),
+    fetch.fetch_future(primary, 80, "/k"),
+], "");   // any upstream slower than 250ms lands as ""
+```
+
+---
+
+## 6. The awaitable fetch: `fetch.fetch_future`
+
+```fern
+pub function fetch_future(host_be: i32, port: i32, path: string): async.Future[string]
+```
+
+Opens the connection and sends the request **non-blocking**, then returns a
+`Pending` future that resolves to the response **body** once the socket is
+readable. Drive several through `gather` / `race` / `with_deadline` and their
+reads overlap on one thread. A connect/send failure resolves immediately to `""`
+so a dead upstream never stalls the fan-out. (`host_be` is the IPv4 address in
+network byte order — build it with `fetch.ipv4(a,b,c,d)`.)
+
+---
+
+## 7. How it works (one paragraph)
+
+A `Future[T]` is either a ready value or an fd plus a continuation. The
+combinators gather the pending futures' fds, block once in the universal `poll`
+builtin (poll(2) / ppoll(2) on native; a `-1` stub on interp/wasm), resume the
+future whose fd is ready (its continuation does the actual non-blocking read),
+and repeat until done. One thread, overlapping I/O, no function coloring, no
+green-thread stacks, no compiler transform — it rides enums, closures, and loops
+that every backend already lowers. See `docs/ASYNC-REDESIGN.md`.
 
 ## Current limitations
 
-- The task runtime is **i32-throughout** (task results and awaited values are
-  `i32`); non-scalar task results are a future generalization.
-- The in-language reactor currently delivers **in-memory** completion values; real
-  outbound I/O (`plat.fetch`) lands in Phase 4. The `stream[T]` import surface
-  already does real wire I/O.
-- `concurrent` / `race` are parse-time desugars, so `fern -fmt` prints the expanded
-  form rather than the block (consistent with the other parse-time desugars).
-- Not yet supported inside an `await`-bearing loop: a nested `await`-bearing loop,
-  and labeled `break`/`continue`.
+- `Pending` (real-fd) futures resolve only on the **native** backends today; on
+  interp / wasm the `poll` stub means they never complete (the portable
+  `Ready`-future path works everywhere). Real wasm async lands when `Future[T]`
+  becomes an IR type backed by component-model-async (`docs/ASYNC-REDESIGN.md`
+  PR5).
+- `fetch_future`'s continuation does a single `recv`, sufficient for the small
+  responses of the edge fan-out; a multi-chunk body that re-suspends per chunk
+  is folded in with the IR future.
+- The legacy `std/task` / `std/reactor` modules still exist (the in-memory and
+  native-fd reactors `std/async` was distilled from); they fold into the one
+  `Future[T]` abstraction at PR5.
