@@ -251,6 +251,38 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-29 — generic map verbs monomorphise on the IR path (`merge` / `extend` / `get_or_insert`) — 3 of `map_verbs`' 4 blockers cleared
+
+Follow-up to the root-cause entry below. `monomorphize_module` skips receiver
+methods, so generic *array* methods are folded into `__arrm_*` free functions
+(setting `type_params` directly, bypassing erasure) — `register_map_method_generics`
+now does the same for generic **map** methods: `(m: Map[K, V]) verb(args)` folds to
+a free generic `__mapm_verb[K, V](m, args)`, `mono_expr` rewrites `m.verb(args)` →
+`__mapm_verb(m, args)`, and the proven free-generic worklist clones one concrete
+`__mapm_verb__<K>__<V>` per key/value pair (with `subst_ty` rewriting
+`Map[K,V] → Map[i32,i32]`, so the cloned body's `map_key_kind_of` is correct).
+This eliminates the i32-keyed-generic-map-method SIGSEGV documented below: the
+key is no longer dereferenced through the string default. A map op chained
+directly onto a Map-returning call (`a.merge(b).get_or(k,d)`) also dispatches now
+(the map-op receiver resolution recovers the call's Map return type, the post-fold
+`ExprIdent` sibling of the bound-var path).
+
+Verified: `TestSelfHostMapVerbsIR` (new — `merge`/`extend`/`get_or_insert` + a
+chained `.get_or` + an `r.0` tuple-element-Map read decide `ir` and run to exit 0
+at **i32** keys — the case that SIGSEGV'd — AND at string keys),
+`TestSelfHostStage2FixedPoint` (byte-identical — the fold is a no-op on the
+compiler's own sources, which never call the generic verbs), and the full x86-64
+differential gate (no regression).
+
+`map_verbs` does **not** flip yet: its last blocker is `for e in m.entries()` —
+a `for` loop whose iterable is a CALL returning a tuple-array `(K,V)[]`. The
+general tuple-array foreach already lowers (`for e in es` over a typed
+`var es: (i32,i32)[] = m.entries()` routes IR); only the inline-call form fails,
+because `lower_foreach_snapshot` binds the call to an *unannotated* hidden local,
+so the tuple element tags aren't recovered from the call's return type. That
+recovery (a tuple-array-return → element-tag resolver) is the clean follow-up
+that flips the module.
+
 ### 2026-06-29 — `map_verbs` root-caused to unbounded-`Map`-generic type erasure (the last non-async AST-router)
 
 With `json_roundtrip` flipped (#3994), `map_verbs` is the **only remaining
