@@ -3244,6 +3244,54 @@ func deriveKind(name string) string {
 	return ""
 }
 
+// typeImplsEqAndHash reports whether the named struct/enum implements
+// BOTH Eq and Hash — the requirement for using it as a Map key, whose
+// derived `hash` / `eq` methods drive the type-erased map runtime's
+// keyed bucket choice + key comparison (#2671). Trait names in
+// c.info.Impls may be module-mangled (`cmp__Hash`), so classify by
+// simple name via deriveKind, which already strips the prefix.
+func (c *checker) typeImplsEqAndHash(typeName string) bool {
+	hasEq, hasHash := false, false
+	for trait, types := range c.info.Impls {
+		if !types[typeName] {
+			continue
+		}
+		switch deriveKind(trait) {
+		case "Eq":
+			hasEq = true
+		case "Hash":
+			hasHash = true
+		}
+	}
+	return hasEq && hasHash
+}
+
+// mapKeyTypeError returns an E045 message describing why `k` cannot be
+// a Map key, or "" if it is a usable key. Usable keys are i32-sized
+// scalars, strings, and struct/enum types that implement both Eq and
+// Hash (#2671). A struct/enum that lacks the derives gets a message
+// pointing at the fix; other composite types (tuple / array / slice /
+// float) keep the historical "not yet supported" wording. A type
+// parameter or polymorphic literal passes — it is resolved later (per
+// monomorph instantiation) and re-checked then.
+func (c *checker) mapKeyTypeError(k ast.Type) string {
+	switch kt := k.(type) {
+	case ast.NumberType, ast.StringType, ast.ParamType:
+		return ""
+	case ast.StructType:
+		if c.typeImplsEqAndHash(kt.Name) {
+			return ""
+		}
+		return fmt.Sprintf("map key type %s is not supported — a struct used as a key must derive Eq and Hash (`@derive(Eq, Hash)`)", k)
+	case ast.EnumType:
+		if c.typeImplsEqAndHash(kt.Name) {
+			return ""
+		}
+		return fmt.Sprintf("map key type %s is not supported — an enum used as a key must derive Eq and Hash (`@derive(Eq, Hash)`)", k)
+	}
+	return fmt.Sprintf("map key type %s is not yet supported (use i32, string, or a struct/enum with `@derive(Eq, Hash)`)", k)
+}
+
 // synthesizeDerives expands every struct's `@derive(Trait, …)` into a
 // field-wise `impl Trait for Struct`: the generated method bodies call
 // the corresponding trait method on each field (`self.f.eq(other.f)`,
@@ -10784,14 +10832,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			if vt != nil {
 				valueType = vt
 			}
-			// Reject keys we can't compare yet (i64 / float /
-			// struct / enum / array / slice). String + i32-
-			// sized scalar are allowed.
-			switch keyType.(type) {
-			case ast.NumberType, ast.StringType:
-				// fine
-			default:
-				c.errfCode(n.Entries[0].Key.Pos(), "E045", "map key type %s is not yet supported (use i32 or string)", keyType)
+			// Usable keys: i32-sized scalar, string, or a
+			// struct/enum that derives Eq + Hash (the keyed runtime
+			// dispatches through its hash/eq — #2671). Everything
+			// else (i64/float, tuple, array, slice, or an
+			// underived struct/enum) is rejected with a message
+			// pointing at the fix.
+			if msg := c.mapKeyTypeError(keyType); msg != "" {
+				c.errfCode(n.Entries[0].Key.Pos(), "E045", "%s", msg)
 			}
 		}
 		// Re-check entries with the inferred K / V as the
@@ -11309,6 +11357,24 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 		// `var m: Map[string, i64] = Map { "a": 1234567890123 };`
 		// keeps its inferred `Map[string, i32]` shape and
 		// the assignable check rejects.
+		// A destination-typed map (`var m: Map[K, V] = map_new(8)`,
+		// function arg, etc.) validates its annotated key type here so
+		// a bad struct/enum key (no Eq + Hash) errors cleanly instead
+		// of dangling at codegen as a missing `__method_<K>_hash`
+		// (#2671). A MapLit destination is skipped — the MapLit's own
+		// checkExpr validates its (possibly inferred) key type, so this
+		// would double-report. Only struct/enum keys are gated; scalar
+		// / string / tuple keys keep their existing treatment.
+		if hn.Name == "Map" && len(hn.Args) == 2 {
+			if _, isLit := e.(*ast.MapLit); !isLit {
+				switch hn.Args[0].(type) {
+				case ast.StructType, ast.EnumType:
+					if msg := c.mapKeyTypeError(hn.Args[0]); msg != "" {
+						c.errfCode(e.Pos(), "E045", "%s", msg)
+					}
+				}
+			}
+		}
 		if ml, ok := e.(*ast.MapLit); ok && hn.Name == "Map" && len(hn.Args) == 2 {
 			for _, ent := range ml.Entries {
 				c.settleNumeric(ent.Key, hn.Args[0])
