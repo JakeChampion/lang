@@ -16,6 +16,18 @@ import "std/test";
 struct Bag { items: i32[] }
 struct Inner { v: i32 }
 struct Nest { inners: Inner[] }
+struct Acc { items: i32[] }
+
+// consume-rebind builder: a struct PARAM reassigned, each rebind replacing the
+// rc-array field — drives __field_reclaim_<T> (slice 1b). The first rebind's old
+// box is the caller's original (the snapshot), so its field is NOT freed (snap
+// guard); later rebinds free the superseded intermediate's `items` buffer + box.
+function build(a: Acc): Acc {
+    a = Acc { items: [1] };
+    a = Acc { items: [2, 3] };
+    a = Acc { items: [4, 5, 6] };
+    return a;
+}
 
 // scalar-array field — k_scalar path.
 function bag_sum(): i32 {
@@ -49,9 +61,24 @@ function test_struct_array_field(): test.TestOutcome {
     return test.assert_eq(s, 1200);
 }
 
+// __field_reclaim_<T>: the consume-rebind path. Each `build` returns Acc with
+// items=[4,5,6] (sum 15) after freeing the two superseded intermediates.
+function test_field_reclaim(): test.TestOutcome {
+    var sum: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        var seed: Acc = Acc { items: [0] };
+        var r: Acc = build(seed);
+        sum = sum + r.items[0] + r.items[1] + r.items[2];
+        i = i + 1;
+    }
+    return test.assert_eq(sum, 750);
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("rc struct drop");
     r = r.it("scalar-array field drop", test_scalar_array_field());
     r = r.it("struct-array field drop", test_struct_array_field());
+    r = r.it("consume-rebind field reclaim", test_field_reclaim());
     return r.finish();
 }

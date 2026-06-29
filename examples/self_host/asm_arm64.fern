@@ -3786,20 +3786,15 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
 // + __struct_drop_<T> helper bodies (#3457), `.weak` (link-deduped across units).
 // Called by BOTH arm64 IR emit paths — emit_module_ir_unit_arm64 (multi-unit)
 // and emit_module's single-unit IR dispatch — so a reclaimable struct with an
-// rc-array field links on either. field_reclaim is still a leak-safe PASS-THROUGH
-// (returns `new`; stack-arg ABI [sp]=snap,[sp+16]=old,[sp+32]=new) — slice 1b
-// makes it real once __fern_snapshot_dec frees on arm64; __struct_drop is the
-// REAL deep-drop (slice 1a).
+// rc-array field links on either. Both are now REAL: __struct_drop the deep-drop
+// (slice 1a), __field_reclaim the consume-rebind replaced-field reclaim (slice
+// 1b, now that arm64's __fern_snapshot_dec frees the old box).
 function emit_arm64_reclaim_drop_bodies(s: asmcore.EmitState): asmcore.EmitState {
     var fri: i32 = 0;
     while (fri < s.needed.len()) {
         var frnd: string = s.needed[fri];
         if (frnd.len() > 14 && frnd[0:14] == "field_reclaim:") {
-            var frsan: string = asmcore.sanitize_label(frnd[14 : frnd.len()]);
-            s = s.write(".weak __fn___field_reclaim_" + frsan + "\n");
-            s = s.write("__fn___field_reclaim_" + frsan + ":\n");
-            s = s.write("    ldr x0, [sp, #32]\n");      // new (pass-through)
-            s = s.write("    ret\n");
+            s = emit_arm64_field_reclaim_one(s, frnd[14 : frnd.len()]);
         }
         fri = fri + 1;
     }
@@ -3811,6 +3806,61 @@ function emit_arm64_reclaim_drop_bodies(s: asmcore.EmitState): asmcore.EmitState
         }
         sdi = sdi + 1;
     }
+    return s;
+}
+
+// emit_arm64_field_reclaim_one emits one __field_reclaim_<sty> body, the arm64
+// transcription of asm_ir.emit_ir_field_reclaim_one. Stack-arg ABI: [sp]=snap,
+// [sp+16]=old, [sp+32]=new. For each rc-array field (offset (k+1)*8 off the
+// struct box) it SHALLOW-frees old.field_k via __fern_arr_dec iff it differs from
+// new.field_k (cow) AND, when snap != 0, from snap.field_k (the caller's
+// original); then frees the old BOX via __fern_snapshot_dec(new, old, snap) and
+// returns `new` in x0. x10/x11/x12 hold new/old/snap across the field loop —
+// __fern_arr_dec clobbers only x0..x3,x9, so they survive (snapshot_dec is the
+// last call, after the loop). stp x29,x30 saves LR for the bls; the low-addr
+// guard uses `cmp #16, lsl #12` (= 0x10000).
+function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.EmitState {
+    var san: string = asmcore.sanitize_label(sty);
+    var n: i32 = irlower.decl_field_count(s.struct_decls, sty);
+    s = s.write(".weak __fn___field_reclaim_" + san + "\n");
+    s = s.write("__fn___field_reclaim_" + san + ":\n");
+    s = s.write("    ldr x10, [sp, #32]\n");            // new
+    s = s.write("    ldr x11, [sp, #16]\n");            // old
+    s = s.write("    ldr x12, [sp]\n");                 // snap
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");     // save LR for the nested bls
+    s = s.write("    cmp x11, #16, lsl #12\n");         // old null/low -> skip fields
+    s = s.write("    blo .Lafr_" + san + "_box\n");
+    var k: i32 = 0;
+    while (k < n) {
+        var fdt: string = irlower.decl_field_type_at(s.struct_decls, sty, k);
+        if (irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
+            var off: string = util.i32_to_string((k + 1) * 8);
+            var ks: string = util.i32_to_string(k);
+            s = s.write("    ldr x1, [x11, #" + off + "]\n");      // old.field_k
+            s = s.write("    ldr x2, [x10, #" + off + "]\n");      // new.field_k
+            s = s.write("    cmp x1, x2\n");                       // == new? (cow)
+            s = s.write("    beq .Lafr_" + san + "_skip" + ks + "\n");
+            s = s.write("    cbz x12, .Lafr_" + san + "_dec" + ks + "\n");  // snap == 0 (local)?
+            s = s.write("    ldr x2, [x12, #" + off + "]\n");      // snap.field_k
+            s = s.write("    cmp x1, x2\n");                       // == snap? (caller's)
+            s = s.write("    beq .Lafr_" + san + "_skip" + ks + "\n");
+            s = s.write(".Lafr_" + san + "_dec" + ks + ":\n");
+            s = s.write("    str x1, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_arr_dec\n");           // shallow dec/free the dead buffer
+            s = s.write("    add sp, sp, #16\n");
+            s = s.write(".Lafr_" + san + "_skip" + ks + ":\n");
+        }
+        k = k + 1;
+    }
+    s = s.write(".Lafr_" + san + "_box:\n");
+    // snapshot_dec(new, old, snap): push so [sp]=snap, [sp+16]=old, [sp+32]=new.
+    s = s.write("    str x10, [sp, #-16]!\n");          // new
+    s = s.write("    str x11, [sp, #-16]!\n");          // old
+    s = s.write("    str x12, [sp, #-16]!\n");          // snap
+    s = s.write("    bl __fn___fern_snapshot_dec\n");   // free old box (cow + snap guarded); x0 = new
+    s = s.write("    add sp, sp, #48\n");
+    s = s.write("    ldp x29, x30, [sp], #16\n");
+    s = s.write("    ret\n");
     return s;
 }
 
