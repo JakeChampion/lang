@@ -3528,12 +3528,21 @@ function parse_func_decl(p: Par): FuncResult {
     var ui: i32 = 0;
     while (ui < unbounded_tps.len()) {
         var un: string = unbounded_tps[ui];
-        var feeds: boolean = feeds_user_parametric(ret_type, un);
+        // (a) feeds: a user-parametric type-arg (struct/enum clone needs it) OR a
+        //     Map[...] key/value position. The Map case is the IR-codegen sibling
+        //     of the struct-clone case: a generic body's map ops read the concrete
+        //     key-kind off the param/return type, so an erased `Map[K, V]` would
+        //     default to string-key dispatch and miscompile an i32-keyed map
+        //     (`from[K, V](pairs: (K, V)[]): Map[K, V]`). #map-generic.
+        var feeds: boolean = feeds_user_parametric(ret_type, un) || feeds_map_typearg(ret_type, un);
         var bindable: boolean = false;
         var pj: i32 = 0;
         while (pj < params.len()) {
-            if (feeds_user_parametric(params[pj].type_name, un)) { feeds = true; }
-            if (token_at_paren_depth0(params[pj].type_name, un)) { bindable = true; }
+            if (feeds_user_parametric(params[pj].type_name, un) || feeds_map_typearg(params[pj].type_name, un)) { feeds = true; }
+            // (b) bindable: a standalone token at paren-depth 0, OR inside a tuple /
+            //     tuple-array param — bind_unify now destructures `(K, V)` parens,
+            //     so a `(K, V)[]` param recovers both vars from the call's argument.
+            if (token_at_paren_depth0(params[pj].type_name, un) || token_in_tuple_param(params[pj].type_name, un)) { bindable = true; }
             pj = pj + 1;
         }
         if (feeds && bindable) { bounded_tps = bounded_tps.append(un); }
@@ -4246,6 +4255,24 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
     if (type_ends_arr(pattern) && type_ends_arr(concrete)) {
         return bind_unify(pattern[0 : pattern.len() - 2], concrete[0 : concrete.len() - 2], tparams, binds);
     }
+    // Tuple pattern `(K, V)` vs `(i32, i32)` — destructure the parens and unify
+    // pairwise, so a tuple (or tuple-array, via the array case above) parameter
+    // recovers its element type vars. first_bracket only finds `[`, so without
+    // this a tuple param's vars never bind (`from[K,V](pairs: (K,V)[])`).
+    if (pattern.len() >= 2 && pattern[0:1] == "(" && pattern[pattern.len() - 1 : pattern.len()] == ")"
+            && concrete.len() >= 2 && concrete[0:1] == "(" && concrete[concrete.len() - 1 : concrete.len()] == ")") {
+        var tpparts: string[] = split_top_commas(pattern[1 : pattern.len() - 1]);
+        var tcparts: string[] = split_top_commas(concrete[1 : concrete.len() - 1]);
+        if (tpparts.len() == tcparts.len()) {
+            var tb: MEnv = binds;
+            var tj: i32 = 0;
+            while (tj < tpparts.len()) {
+                tb = bind_unify(tpparts[tj], tcparts[tj], tparams, tb);
+                tj = tj + 1;
+            }
+            return tb;
+        }
+    }
     var pb: i32 = first_bracket(pattern);
     var cb: i32 = first_bracket(concrete);
     if (pb > 0 && cb > 0 && pattern[pattern.len() - 1 : pattern.len()] == "]" && concrete[concrete.len() - 1 : concrete.len()] == "]") {
@@ -4432,6 +4459,22 @@ function mono_infer(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
             return mono_infer(u.operand, env, funcs);
         },
         ExprStructLit(sl) => { return sl.type_name; },
+        ExprTuple(tu) => {
+            // A tuple literal `(e0, e1, …)` → `(T0, T1, …)`, so a `(K, V)[]`
+            // parameter (via the ExprArray case) recovers its element vars
+            // through bind_unify's tuple destructure. Any unknown element makes
+            // the whole tuple unknown (return "") — the call then stays generic.
+            var inner: string = "";
+            var ti: i32 = 0;
+            while (ti < tu.elements.len()) {
+                var et: string = mono_infer(tu.elements[ti], env, funcs);
+                if (et.len() == 0) { return ""; }
+                if (ti > 0) { inner = inner + ", "; }
+                inner = inner + et;
+                ti = ti + 1;
+            }
+            return "(" + inner + ")";
+        },
         ExprCall(c) => {
             match (c.callee) {
                 ExprIdent(cid) => {
@@ -9636,6 +9679,32 @@ function feeds_user_parametric(ty: string, name: string): boolean {
     }
     return false;
 }
+// feeds_map_typearg reports whether `name` appears as a bracketed type-ARGUMENT
+// to a `Map[...]` (key or value position) in `ty`. feeds_user_parametric
+// EXCLUDES the built-in `Map` base (a Map needs no struct clone) — but a generic
+// body's map ops DO need the concrete K/V to pick the key-kind / value-is-ptr,
+// so a `Map`-feeding type var must be promoted to the monomorphiser too, else
+// the erased body defaults to string-key dispatch and miscompiles an i32-keyed
+// map. This is the Map-codegen sibling of feeds_user_parametric's struct-clone
+// rule. The base checked is the INNERMOST enclosing bracket.
+function feeds_map_typearg(ty: string, name: string): boolean {
+    var i: i32 = 0;
+    var nl: i32 = name.len();
+    if (nl == 0) { return false; }
+    while (i < ty.len()) {
+        if (i + nl <= ty.len() && ty[i : i + nl] == name) {
+            var prev_ok: boolean = true;
+            if (i > 0 && ident_byte(ty[i - 1])) { prev_ok = false; }
+            var next_ok: boolean = true;
+            if (i + nl < ty.len() && ident_byte(ty[i + nl])) { next_ok = false; }
+            if (prev_ok && next_ok) {
+                if (enclosing_bracket_base(ty, i) == "Map") { return true; }
+            }
+        }
+        i = i + 1;
+    }
+    return false;
+}
 // token_at_paren_depth0 reports whether `name` appears as a standalone
 // identifier token at PAREN nesting depth 0 in `ty` — the positions a param
 // type lets `bind_unify` recover a type param from a call argument (`T`,
@@ -9656,6 +9725,33 @@ function token_at_paren_depth0(ty: string, name: string): boolean {
             if (i > 0 && ident_byte(ty[i - 1])) { prev_ok = false; }
             var next_ok: boolean = true;
             if (i + nl < ty.len() && ident_byte(ty[i + nl])) { next_ok = false; }
+            if (prev_ok && next_ok) { return true; }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+// token_in_tuple_param reports whether `name` appears as a standalone token
+// inside a TUPLE (or tuple-array) parameter type — `(K, V)` / `(K, V)[]`. A
+// function type `(T) => U` ends at its result (not `)`), so the start-`(`/end-
+// `)` shape check excludes it. bind_unify now destructures tuple parens, so a
+// var in this position binds from the call argument — the tuple sibling of
+// token_at_paren_depth0. Over-broadness is safe: if bind_unify can't recover the
+// var, infer_inst leaves it unbound and the call simply stays generic.
+function token_in_tuple_param(ty: string, name: string): boolean {
+    if (name.len() == 0) { return false; }
+    var t: string = ty;
+    while (type_ends_arr(t)) { t = t[0 : t.len() - 2]; }   // strip array markers
+    if (t.len() < 2 || t[0:1] != "(" || t[t.len() - 1 : t.len()] != ")") { return false; }
+    var inner: string = t[1 : t.len() - 1];
+    var i: i32 = 0;
+    var nl: i32 = name.len();
+    while (i < inner.len()) {
+        if (i + nl <= inner.len() && inner[i : i + nl] == name) {
+            var prev_ok: boolean = true;
+            if (i > 0 && ident_byte(inner[i - 1])) { prev_ok = false; }
+            var next_ok: boolean = true;
+            if (i + nl < inner.len() && ident_byte(inner[i + nl])) { next_ok = false; }
             if (prev_ok && next_ok) { return true; }
         }
         i = i + 1;

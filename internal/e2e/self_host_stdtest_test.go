@@ -308,6 +308,13 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"sort_by_and_ci", langSrcAbs(t, "examples/tests/sort_by_and_ci_test.fern"), ""},
 		{"option_combinators", langSrcAbs(t, "examples/tests/option_combinators_test.fern"), ""},
 		{"result_combinators", langSrcAbs(t, "examples/tests/result_combinators_test.fern"), ""},
+		// map_verbs flips to IR now that generic map verbs monomorphise: the
+		// methods (merge/extend/get_or_insert/entries/…) via the __mapm_ fold
+		// (#4016), and the free `from[K,V](pairs: (K,V)[])` via promoting a
+		// type-var that feeds a Map[...] position + bind_unify destructuring the
+		// `(K,V)[]` tuple arg + mono_infer typing the tuple literal. The last
+		// non-async AST-router (#3457).
+		{"map_verbs", langSrcAbs(t, "examples/tests/map_verbs_test.fern"), ""},
 		// crypto + u32 lower fully on the IR path now that remove_dir_all (the
 		// TestRunner.finish cleanup call) lowers there — previously the bail
 		// dragged every std/test module onto the AST emitter, whose u32
