@@ -1,0 +1,33 @@
+// Regression: field access on a map accessor's STRUCT-typed result —
+// `m.get_or(k, default).field` and `it.value().field` — must resolve the
+// concrete struct so codegen knows its layout. The map method is registered
+// with a type-variable result, so callReturnType has to recover the concrete
+// V from the call's TypeArgs; before that fix codegen aborted with
+// "field access on unresolved struct" (interp was fine — an interp/codegen
+// divergence). Orthogonal to the key type, so an i32 key suffices.
+// Returns 0 iff every check holds.
+import "core/map";
+import "core/int";
+
+struct Box { n: i32, tag: string }
+
+function main(): i32 {
+    var m: Map[i32, Box] = map_new(8);
+    m = m.insert(1, Box { n: 10, tag: "a" });
+    m = m.insert(2, Box { n: 20, tag: "b" });
+
+    // get_or(...).field on a hit and on a miss (the default's field)
+    if (m.get_or(1, Box { n: 0 - 1, tag: "" }).n != 10) { return 1; }
+    if (m.get_or(9, Box { n: 0 - 1, tag: "" }).n != 0 - 1) { return 2; }
+
+    // MapIter value().field
+    var total: i32 = 0;
+    var it = m.iter();
+    while (it.has_next()) {
+        total = total + it.value().n;
+        it.advance();
+    }
+    if (total != 30) { return 3; }
+
+    return 0;
+}
