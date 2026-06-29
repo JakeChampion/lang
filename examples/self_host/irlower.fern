@@ -5690,6 +5690,19 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                                 },
                                 _ => {}
                             }
+                            // Fallback for a chained BUILTIN map method
+                            // (`m.insert(k,v).len()` / `.set(..).get_or(..)`): the
+                            // registry above only knows the generic verbs
+                            // (merge/extend/...), and a nested-call receiver can't
+                            // resolve `rbase`, so recover the result's Map[K,V]
+                            // structurally via expr_map_type_tag (which recurses
+                            // through insert/set/delete). Without this the chained
+                            // op mis-dispatched to op_arr_len (read the map box's
+                            // keys[] ptr as a length → garbage).
+                            if (mtype == "") {
+                                var mctag: string = expr_map_type_tag(fa.obj, s);
+                                if (is_map_type_name(mctag)) { mtype = mctag; }
+                            }
                         },
                         _ => {}
                     }

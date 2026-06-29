@@ -251,6 +251,24 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-29 — chained ops on a BUILTIN map-method call lower correctly (`m.insert(k,v).len()`)
+
+Follow-up to #4016 below. That PR's map-op receiver `ExprCall` arm recovers the
+Map type for a chain onto a **generic verb** call (`a.merge(b).get_or(..)`, via
+the `map_ret_fns` registry) — but it can't resolve a chain onto a **builtin**
+`insert` / `set` / `delete` call, especially a nested one (`m.insert(..).insert(..)`):
+`map_ret_type("Map.insert")` isn't registered and the nested-call receiver has no
+`rbase`. So `m.insert(1,10).len()` fell through with `mtype == ""` and the chained
+`.len()` mis-dispatched to `op_arr_len`, reading the map box's `keys[]` pointer
+slot as a length — a silent miscompile that decided `ir` and returned a garbage
+**96** (not 1). The arm now falls back to `expr_map_type_tag(fa.obj)` (which
+already recurses through `insert`/`set`/`delete`) when the registry path yields
+`""`, so the builtin chain dispatches as a map op. Gated by
+`TestSelfHostMapMethodChainIR` (insert / double-insert / get_or chains, i32 +
+string keys, oracle-checked vs interp); full x86-64 differential + Stage-2
+fixpoint green. (`map_verbs` itself is still blocked on the `for e in m.entries()`
+inline-call tuple-array foreach — the one remaining blocker noted below.)
+
 ### 2026-06-29 — generic map verbs monomorphise on the IR path (`merge` / `extend` / `get_or_insert`) — 3 of `map_verbs`' 4 blockers cleared
 
 Follow-up to the root-cause entry below. `monomorphize_module` skips receiver
