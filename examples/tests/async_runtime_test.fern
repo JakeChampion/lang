@@ -22,12 +22,26 @@ function test_reactor_register_distinct_tokens(): test.TestOutcome {
     return test.assert_eq(rx2.pending(), 2);
 }
 
-// poll() drains every queued completion, then leaves the reactor empty.
+// register_fd() shares the token space with register() and is counted
+// by pending() the same way. (Its real-poll resolution is native-only,
+// so this checks only the portable bookkeeping — distinct tokens across
+// both registration kinds, and the combined pending count.)
+function test_reactor_register_fd_tokens(): test.TestOutcome {
+    var rx: task.Reactor = task.reactor_new();
+    var (a, rx1) = rx.register(100);
+    var (b, rx2) = rx1.register_fd(7);
+    var (c, rx3) = rx2.register_fd(8);
+    if (a == b) { return test.fail("token a/b should be distinct"); }
+    if (b == c) { return test.fail("token b/c should be distinct"); }
+    return test.assert_eq(rx3.pending(), 3);
+}
+
+// poll_ready() drains every queued completion, then leaves the reactor empty.
 function test_reactor_poll_drains(): test.TestOutcome {
     var rx: task.Reactor = task.reactor_new();
     var (t1, rx1) = rx.register(11);
     var (t2, rx2) = rx1.register(22);
-    var (toks, vals, rx3) = rx2.poll();
+    var (toks, vals, rx3) = rx2.poll_ready();
     if (toks.len() != 2) { return test.fail("expected 2 completions"); }
     if (vals.len() != 2) { return test.fail("expected 2 values"); }
     return test.assert_eq(rx3.pending(), 0);
@@ -151,6 +165,7 @@ function test_immediate_done(): test.TestOutcome {
 function main(): i32 {
     var r: test.TestRunner = test.test_new("async_runtime");
     r = r.it("reactor register distinct tokens", test_reactor_register_distinct_tokens());
+    r = r.it("reactor register_fd tokens", test_reactor_register_fd_tokens());
     r = r.it("reactor poll drains", test_reactor_poll_drains());
     r = r.it("single task resumes", test_single_task());
     r = r.it("fanout tasks overlap", test_fanout_overlap());

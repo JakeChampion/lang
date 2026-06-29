@@ -54,16 +54,33 @@ pub enum Step {
 
 // Reactor — the readiness registry that multiplexes pending I/O.
 //
-// Phase-2 in-memory model: `register(value)` allocates a token and
-// queues the value its completion will deliver (simulating a known
-// I/O result); `poll()` reports the completed (token, value) pairs.
-// Phase 1 replaces these fields with a poll(2)/epoll fd-set (native)
-// or a `list<pollable>` (wasm) and `poll()` blocks in the OS until at
-// least one fd is ready — the public method shapes stay identical.
+// It carries TWO token classes, drained by the same `poll_ready()`:
+//
+//   * In-memory completions — `register(value)` allocates a token and
+//     queues the value its completion will deliver (a simulated, known
+//     I/O result). Portable: works identically on every backend, so
+//     the suspend / resume / overlap model is testable in pure Fern.
+//
+//   * Real-fd waits — `register_fd(fd)` allocates a token bound to a
+//     file descriptor; `poll_ready()` blocks in the OS `poll` syscall until
+//     one of the registered fds is readable, then delivers that
+//     token with the fd as its value (the continuation does the
+//     actual non-blocking read). NATIVE-ONLY in effect: the `poll`
+//     builtin is real on x86-64 / arm64 and a `-1` stub on
+//     interp / wasm, so fd-backed tokens simply never resolve there
+//     (the in-memory path is unaffected — `std/task` stays portable).
+//
+// This is the reactor unification (docs/ASYNC-IMPLEMENTATION-PLAN.md
+// Phase 1/4 option 1): `concurrent` / `race` / `await` desugar onto
+// this one API and now drive REAL overlapping I/O on native without
+// a second, native-only reactor type — the public method shapes are
+// unchanged from the Phase-2 in-memory core.
 pub struct Reactor {
     next_token: i32,
     tokens: i32[],
     values: i32[],
+    fd_tokens: i32[],
+    fds: i32[],
 }
 
 // reactor_new() — a fresh, empty reactor. Tokens start at 1 so 0 can
@@ -71,13 +88,29 @@ pub struct Reactor {
 pub function reactor_new(): Reactor {
     var t: i32[] = [];
     var v: i32[] = [];
-    return Reactor { next_token: 1, tokens: t, values: v };
+    var ft: i32[] = [];
+    var fd: i32[] = [];
+    return Reactor { next_token: 1, tokens: t, values: v, fd_tokens: ft, fds: fd };
+}
+
+// __remove_at(xs, idx) — `xs` with the element at `idx` dropped (the
+// other elements keep their order). Used by `poll_ready()` to retire a
+// delivered fd-backed token from the parallel fd arrays.
+function __remove_at(xs: i32[], idx: i32): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (i != idx) { out = out.append(xs[i]); }
+        i = i + 1;
+    }
+    return out;
 }
 
 // (rx).register(value) — allocate a fresh token and queue its
 // completion value, returning `(token, advancedReactor)` per the
-// cursor idiom (docs/CURSOR-IDIOM.md). In Phase 1 `value` is supplied
-// by the syscall layer when the fd becomes ready rather than up front.
+// cursor idiom (docs/CURSOR-IDIOM.md). This is the in-memory
+// (portable, simulated-completion) path; `poll()` delivers these
+// completions immediately on the next round.
 pub function (rx: Reactor) register(value: i32): (i32, Reactor) {
     var tok: i32 = rx.next_token;
     var t2: i32[] = rx.tokens.append(tok);
@@ -85,22 +118,74 @@ pub function (rx: Reactor) register(value: i32): (i32, Reactor) {
     return (tok, Reactor { ...rx, next_token: tok + 1, tokens: t2, values: v2 });
 }
 
-// (rx).poll() — drain the completed (token, value) pairs, returning
-// `(tokens, values, drainedReactor)`. Phase 2 reports every queued
-// completion in one round; Phase 1 blocks in the OS poll and reports
-// only the fds that are actually ready. The scheduler re-polls until
-// every task finishes, so waits registered mid-run are picked up on a
-// later round.
-pub function (rx: Reactor) poll(): (i32[], i32[], Reactor) {
-    var empty_t: i32[] = [];
-    var empty_v: i32[] = [];
-    return (rx.tokens, rx.values, Reactor { ...rx, tokens: empty_t, values: empty_v });
+// (rx).register_fd(fd) — allocate a fresh token bound to a file
+// descriptor, returning `(token, advancedReactor)`. The completion
+// value is NOT known up front: `poll_ready()` blocks in the OS `poll`
+// syscall until `fd` is readable, then delivers this token with `fd`
+// as the woken value so the resumed continuation can do the actual
+// non-blocking read. On interp / wasm the `poll` builtin is a `-1`
+// stub, so fd-backed tokens never resolve there — register real fds
+// only on the native backends.
+pub function (rx: Reactor) register_fd(fd: i32): (i32, Reactor) {
+    var tok: i32 = rx.next_token;
+    var ft2: i32[] = rx.fd_tokens.append(tok);
+    var fd2: i32[] = rx.fds.append(fd);
+    return (tok, Reactor { ...rx, next_token: tok + 1, fd_tokens: ft2, fds: fd2 });
 }
 
-// (rx).pending() — how many registered tokens have not yet been
-// drained by `poll()`. Zero means no outstanding I/O.
+// (rx).poll_ready() — report the next batch of completed (token, value)
+// pairs, returning `(tokens, values, drainedReactor)`.
+//
+// In-memory completions take priority and drain ALL AT ONCE: if any
+// `register`ed value is queued, every queued (token, value) pair is
+// returned in this one round (they are simulated as already-ready) and
+// the in-memory queue is emptied. Only once the in-memory queue is
+// empty does it consult the real fds: it blocks in the OS `poll`
+// syscall until one registered fd is readable, then delivers THAT
+// single token with the fd as its value and retires it from the fd
+// set. The scheduler (`run` / `select`) re-polls until every task
+// finishes, so waits registered mid-run are picked up on a later
+// round.
+//
+// An empty return — no in-memory completions and either no fds or a
+// `poll` error / stub (-1, e.g. on interp / wasm) — signals the
+// scheduler's deadlock guard: no task can make further progress.
+pub function (rx: Reactor) poll_ready(): (i32[], i32[], Reactor) {
+    // In-memory completions first: drain the whole queue in one round.
+    if (rx.tokens.len() > 0) {
+        var empty_t: i32[] = [];
+        var empty_v: i32[] = [];
+        return (rx.tokens, rx.values, Reactor { ...rx, tokens: empty_t, values: empty_v });
+    }
+    // No simulated completions: block on the real fds (native only).
+    if (rx.fd_tokens.len() == 0) {
+        var none_t: i32[] = [];
+        var none_v: i32[] = [];
+        return (none_t, none_v, rx);
+    }
+    var ready: i32 = poll(rx.fds, -1);
+    if (ready < 0) {
+        // poll error, or the interp / wasm stub: no fd resolvable.
+        var err_t: i32[] = [];
+        var err_v: i32[] = [];
+        return (err_t, err_v, rx);
+    }
+    // Deliver the ready fd's token; the woken value is the fd itself so
+    // the resumed continuation can read it. Retire it from the fd set.
+    var tok: i32 = rx.fd_tokens[ready];
+    var woken_fd: i32 = rx.fds[ready];
+    var rt: i32[] = [tok];
+    var rv: i32[] = [woken_fd];
+    var nft: i32[] = __remove_at(rx.fd_tokens, ready);
+    var nfd: i32[] = __remove_at(rx.fds, ready);
+    return (rt, rv, Reactor { ...rx, fd_tokens: nft, fds: nfd });
+}
+
+// (rx).pending() — how many registered tokens (in-memory completions
+// plus real-fd waits) have not yet been drained by `poll()`. Zero
+// means no outstanding I/O.
 pub function (rx: Reactor) pending(): i32 {
-    return rx.tokens.len();
+    return rx.tokens.len() + rx.fd_tokens.len();
 }
 
 // __all_done(states) — true once no task is still waiting.
@@ -153,7 +238,7 @@ pub function run(states_in: Step[], rx_in: Reactor): i32[] {
     var rx: Reactor = rx_in;
     while (true) {
         if (__all_done(states)) { break; }
-        var (toks, vals, rx2) = rx.poll();
+        var (toks, vals, rx2) = rx.poll_ready();
         rx = rx2;
         if (toks.len() == 0) {
             // No completions yet tasks remain: the in-memory reactor
@@ -242,7 +327,7 @@ pub function select(states_in: Step[], rx_in: Reactor): (i32, i32) {
         return (pre, __result_at(states, pre));
     }
     while (true) {
-        var (toks, vals, rx2) = rx.poll();
+        var (toks, vals, rx2) = rx.poll_ready();
         rx = rx2;
         if (toks.len() == 0) {
             return (-1, -1);

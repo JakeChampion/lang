@@ -204,6 +204,30 @@ backends (`internal/e2e/poll_test.go`, x86-64 + arm64/qemu).
   desugar) never depends on a native-only builtin and stays compilable
   on wasm/interp. Verified on x86-64 + arm64/qemu with deterministic
   file-fd tasks (`internal/e2e/reactor_test.go`).
+- **DONE — reactor unification (option 1): `std/task` itself now does
+  real overlapping I/O.** Rather than keep two reactor types, the
+  portable `std/task` reactor (the one the `concurrent` / `race` /
+  `await` desugar emits onto) grew a real-fd path *behind its existing
+  API*: a new `register_fd(fd)` method allocates an fd-bound token in
+  the same token space as `register(value)`, and `poll_ready()` (the
+  reactor step method, renamed from `poll()` to free the name for the
+  builtin) drains any in-memory completions first, then — once that
+  queue is empty — blocks in the real `poll` builtin on the registered
+  fds and delivers the ready fd's token (the woken value is the fd, so
+  the resumed continuation reads it). The in-memory simulation is
+  untouched, so `std/task` stays fully portable: on interp / wasm the
+  `poll` stub returns -1, so fd-backed tokens simply never resolve
+  there. Net effect: `run` (await-all) and `select` (race) now overlap
+  real sockets on one thread on the native backends, through the very
+  API `concurrent { … }` / `race { … }` compile to — no second,
+  native-only reactor type needed for user code. Proven by
+  `internal/e2e/task_real_fd_test.go` (two parallel `tcp_connect`
+  fetches driven through `task.run` and `task.select` over real
+  sockets, x86-64 + arm64/qemu → exit 42) plus a portable
+  `register_fd`/`pending` bookkeeping case in
+  `examples/tests/async_runtime_test.fern`. (`std/reactor` remains as
+  the generic-`T`, single-purpose native scheduler; `std/task` is now
+  the unified one the desugar targets.)
 - **wasm:** `wasi:io/poll.poll(list<pollable>) -> list<u32>` — a
   *different shape* than raw fds (pollables, not ints), so the wasm
   reactor exposes the same `run_io`-style API over pollables rather
