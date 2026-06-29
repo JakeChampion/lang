@@ -475,6 +475,13 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__store_ptr")
 				case "__ptr_width":
 					needs.add("__ptr_width")
+				case "poll":
+					// `poll(fds, timeout_ms)` readiness builtin: real fd polling is
+					// native-only, so on wasm it's a `-1` ("no fd ready") stub —
+					// present so modules referencing `poll` (std/reactor, the future
+					// real-fd std/task reactor) compile on wasm. Real wasm readiness
+					// is the separate wasi:io/poll pollable path.
+					needs.add("poll")
 				case "__alloc", "__alloc_u8":
 					needs.add("__fern_alloc")
 					needs.add(op.Str)
@@ -1078,6 +1085,15 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  nil,
 		results: []byte{encode.ValtypeI32},
 		body:    buildPtrWidthBody,
+	},
+	"poll": {
+		// (fds: i32, timeout_ms: i32) → i32 — the readiness builtin. Real fd
+		// polling is native-only; on wasm this is a `-1` ("no fd ready") stub so
+		// modules referencing `poll` compile. Real wasm readiness uses the
+		// separate wasi:io/poll pollable path.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildPollStubBody,
 	},
 	"__alloc": {
 		// (size) → i32 — same as __fern_alloc. Lives in the
@@ -2724,6 +2740,15 @@ func buildStoreI64Body(_ map[string]uint32) []byte {
 func buildPtrWidthBody(_ map[string]uint32) []byte {
 	var body []byte
 	body = inst.InstI32Const(body, 4)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildPollStubBody — (fds, timeout_ms) → i32, the wasm `poll` stub: ignores its
+// two params and returns -1 ("no fd ready"). Real wasm readiness is the separate
+// wasi:io/poll pollable path; this keeps poll-referencing modules compilable.
+func buildPollStubBody(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstI32Const(body, -1)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 

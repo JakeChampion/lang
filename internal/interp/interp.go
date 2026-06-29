@@ -437,6 +437,7 @@ func New() *Interp {
 	i.Builtins["write"] = &Builtin{Fn: builtinWrite}
 	i.Builtins["eprint"] = &Builtin{Fn: builtinEprint}
 	i.Builtins["putchar"] = &Builtin{Fn: builtinPutchar}
+	i.Builtins["poll"] = &Builtin{Fn: builtinPoll}
 	// strbuf_reset() / strbuf_append(s) / strbuf_take() — the global
 	// string-builder primitive (see checker FuncSigs); the compiled
 	// backends back it with a 64 MiB BSS scratch buffer.
@@ -1995,6 +1996,19 @@ func builtinPutchar(i *Interp, args []Value) (Value, error) {
 	}
 	fmt.Fprintf(i.Stdout, "%c", rune(int64(n)))
 	return Void{}, nil
+}
+
+// builtinPoll is the interpreter's stub for the `poll(fds, timeout_ms)` readiness
+// builtin. The AST interpreter has no real file descriptors (the `tcp_*` socket
+// primitives are native-only), so it always reports "no fd ready" (-1). The
+// builtin exists here only so modules that reference `poll` (std/reactor, and the
+// future real-fd `std/task` reactor) stay compilable + runnable under -interp;
+// real readiness lives on the native backends.
+func builtinPoll(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("poll: expected 2 args, got %d", len(args))
+	}
+	return Number(-1), nil
 }
 
 // builtinStrbufReset zeroes the global string-builder buffer.
