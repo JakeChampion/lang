@@ -1168,6 +1168,33 @@ func WasiClocksMonotonicTimerInstanceTypeBody(pollableT uint32) []byte {
 	return body
 }
 
+// WasiClocksMonotonicTimerAndNowInstanceTypeBody is the combined
+// monotonic-clock import instance type, exporting BOTH `subscribe-duration`
+// (the timer pollable, for wasm_timer_pollable) AND `now` (an instant=u64, for
+// monotonic_ns). A program that uses both — e.g. std/async's with_deadline,
+// which tracks elapsed time with `now` AND arms a deadline pollable with
+// `subscribe-duration` — needs one instance exporting both, since a component
+// can only import a given interface once. (Using either alone keeps the
+// single-export timer body above / the structured `now` type.)
+func WasiClocksMonotonicTimerAndNowInstanceTypeBody(pollableT uint32) []byte {
+	body := []byte{0x01, 0x42, 0x06}                         // 6 decls
+	body = append(body, OuterAliasTypeDecl(1, pollableT)...) // 0: pollable (typeidx 0)
+	body = append(body, 0x01, 0x69, 0x00)                    // 1: own<pollable=0> (typeidx 1)
+	// 2: func(when: u64) -> own<pollable=1>  (typeidx 2)
+	body = append(body, tcpMethodFuncDecl("subscribe-duration",
+		[]string{"when"}, []byte{CValtypeU64}, 0x01)...)
+	// 3: export "subscribe-duration" (functype is typeidx 2)
+	const sd = "subscribe-duration"
+	body = append(body, 0x04, 0x00, byte(len(sd)))
+	body = append(body, sd...)
+	body = append(body, 0x01, 0x02)
+	// 4: type func() -> u64  (typeidx 3) — `now` returns instant (= u64)
+	body = append(body, 0x01, 0x40, 0x00, 0x00, CValtypeU64)
+	// 5: export "now" (functype is typeidx 3)
+	body = append(body, 0x04, 0x00, 0x03, 'n', 'o', 'w', 0x01, 0x03)
+	return body
+}
+
 // WasiSocketsNetworkErrorCodeNames is the ordered case list of the
 // `wasi:sockets/network@0.2.0` error-code enum (21 cases). Order
 // fixes the discriminant values, so it must match the WIT exactly

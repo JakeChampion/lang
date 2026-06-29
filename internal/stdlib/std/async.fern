@@ -96,14 +96,6 @@ pub function gather[T](fs_in: Future[T][], on_incomplete: T): T[] {
     return out;
 }
 
-// race(fs, none_val) — await the FIRST future to resolve, returning
-// `(winnerIndex, value)`. Happy-eyeballs: fan out to N upstreams, take
-// the fastest answer, abandon the rest. CANCELLATION is structural —
-// the losers are simply never driven again; their parked
-// continuations (and captured frames) are dropped and reference
-// counting reclaims them. An already-`Ready` future wins immediately
-// (lowest index). Returns `(-1, none_val)` only if no future can make
-// progress (poll error / no pending fds).
 // __drop_losers(fs, winner) — drop the readiness token of every still-Pending
 // future EXCEPT `winner` (whose own continuation already consumed/dropped its
 // token — fetch_future's resume drops the woken pollable before closing). On
@@ -126,6 +118,15 @@ function __drop_losers[T](fs: Future[T][], winner: i32): i32 {
     return 0;
 }
 
+// race(fs, none_val) — await the FIRST future to resolve, returning
+// `(winnerIndex, value)`. Happy-eyeballs: fan out to N upstreams, take
+// the fastest answer, abandon the rest. CANCELLATION is structural —
+// the losers are simply never driven again; their parked continuations
+// (and captured frames) are dropped and reference counting reclaims
+// them, and their readiness tokens are dropped (`__drop_losers`) so wasm
+// doesn't trap on an abandoned pollable. An already-`Ready` future wins
+// immediately (lowest index). Returns `(-1, none_val)` only if no future
+// can make progress (poll error / no pending fds).
 pub function race[T](fs_in: Future[T][], none_val: T): (i32, T) {
     var fs: Future[T][] = fs_in;
     var j: i32 = 0;
@@ -206,14 +207,33 @@ pub function with_deadline[T](ms: i32, fs_in: Future[T][], on_timeout: T): T[] {
         if (remaining_ns <= 0) { break; }
         var remaining_ms: i32 = (remaining_ns / ns_per_ms) as i32;
         if (remaining_ms <= 0) { remaining_ms = 1; }
-        var ready: i32 = poll(fds, remaining_ms);
-        if (ready < 0) { break; }
+        // Bound the wait on EVERY backend: native poll(2) honors `remaining_ms`
+        // and the appended timer is -1 (ignored); wasm `poll` ignores its
+        // timeout arg, so the real timer pollable in the set is what fires at
+        // the deadline. A `ready` of `nfds` (the timer's slot) = deadline hit.
+        // wasm_timer_pollable is -1 on native/interp, so this stays portable.
+        var nfds: i32 = fds.len();
+        var timer: i32 = wasm_timer_pollable(remaining_ns);
+        var pollset: i32[] = fds.append(timer);
+        var ready: i32 = poll(pollset, remaining_ms);
+        if (ready < 0) {
+            var dpe: i32 = wasm_pollable_drop(timer);
+            break;
+        }
+        if (ready == nfds) {
+            var dpt: i32 = wasm_pollable_drop(timer);
+            break;
+        }
+        var dpr: i32 = wasm_pollable_drop(timer);
         var ti: i32 = idxs[ready];
         match (fs[ti]) {
             Ready(v) => { },
             Pending(fd, resume) => { fs = fs.with(ti, resume(fd)); },
         }
     }
+    // Drop the pollables of any future that timed out (still Pending) so wasm
+    // doesn't trap with "resource has children" — no-op on native/interp.
+    var dd: i32 = __drop_losers(fs, -1);
     var out: T[] = [];
     var k: i32 = 0;
     while (k < fs.len()) {

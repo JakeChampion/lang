@@ -220,17 +220,25 @@ func (g *gComposer) ensureTcpCreate() {
 // io/poll block/poll methods consume — the cross-instance identity
 // the socket shapes already rely on, here without any socket.
 //
-// NOTE: a program that also uses monotonic-clock `now` (a scalar
-// Structured import on the same interface) would need a combined
-// instance type; that combination is not yet supported (the timer
-// path owns the interface). The reactor timer doesn't use `now`.
-func (g *gComposer) ensureMonotonicTimer() {
+// When `withNow` is set the program ALSO uses monotonic-clock `now` (the
+// scalar Structured import on the same interface — e.g. std/async's
+// with_deadline), so we build a COMBINED instance type exporting both
+// `subscribe-duration` and `now`. A component imports a given interface only
+// once, so the two exports must live on one instance; the structured-`now`
+// path then reuses this instance (importStructured is a no-op once it exists)
+// and its `now` core import lowers against the same instance.
+func (g *gComposer) ensureMonotonicTimer(withNow bool) {
 	if _, ok := g.inst["wasi:clocks/monotonic-clock@0.2.0"]; ok {
 		return
 	}
 	g.ensureIoPoll()
-	inst := g.c.importInstance("wasi:clocks/monotonic-clock@0.2.0",
-		g.c.typeRaw(WasiClocksMonotonicTimerInstanceTypeBody(g.surfaced["pollable"])))
+	var typeBody []byte
+	if withNow {
+		typeBody = WasiClocksMonotonicTimerAndNowInstanceTypeBody(g.surfaced["pollable"])
+	} else {
+		typeBody = WasiClocksMonotonicTimerInstanceTypeBody(g.surfaced["pollable"])
+	}
+	inst := g.c.importInstance("wasi:clocks/monotonic-clock@0.2.0", g.c.typeRaw(typeBody))
 	g.inst["wasi:clocks/monotonic-clock@0.2.0"] = inst
 }
 

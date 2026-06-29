@@ -115,7 +115,16 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 		g.ensureHttpTypes()
 	}
 	if req.Timer {
-		g.ensureMonotonicTimer()
+		// If the program also imports monotonic-clock `now` (monotonic_ns),
+		// build a combined instance exporting both it and subscribe-duration —
+		// a component can import the interface only once.
+		monoNow := false
+		for _, imp := range req.Structured {
+			if imp.InterfaceName == "wasi:clocks/monotonic-clock@0.2.0" {
+				monoNow = true
+			}
+		}
+		g.ensureMonotonicTimer(monoNow)
 	}
 	if req.Poll {
 		// The multiplexer needs the io/poll instance surfaced even
