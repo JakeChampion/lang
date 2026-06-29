@@ -1,0 +1,57 @@
+import "std/test";
+// examples/tests/rc_struct_drop_test.fern — the first self-host RC-reclaim
+// gate (Perceus port, slice 1a). Exercises __struct_drop_<T> deep-drop of a
+// reclaimable struct's rc-array fields at scope exit, on BOTH field shapes:
+//   - a SCALAR-array field (`i32[]`)  → the k_scalar path (dec the buffer)
+//   - a STRUCT-array field (`Inner[]`) → the k_box path (walk + dec each
+//     element box when uniquely owned, then dec the buffer)
+// Each helper builds a fresh struct LOCAL that does NOT escape (a derived i32
+// is returned, not the struct), so the struct is reclaimed at the helper's
+// exit and its field buffers are freed. The loops drive many alloc→drop
+// cycles, so a broken drop (double-free / wrong offset / clobbered register)
+// surfaces as a crash or a wrong sum on the differential gate — on x86-64
+// (where the deep-drop body was already real) AND on arm64 (slice 1a made its
+// __struct_drop_<T> a real deep-drop instead of a leak-safe pass-through).
+
+struct Bag { items: i32[] }
+struct Inner { v: i32 }
+struct Nest { inners: Inner[] }
+
+// scalar-array field — k_scalar path.
+function bag_sum(): i32 {
+    var b: Bag = Bag { items: [10, 20, 30] };
+    return b.items[0] + b.items[1] + b.items[2];
+}
+
+// struct-array field — k_box path (element walk).
+function nest_sum(): i32 {
+    var nz: Nest = Nest { inners: [Inner { v: 5 }, Inner { v: 7 }] };
+    return nz.inners[0].v + nz.inners[1].v;
+}
+
+function test_scalar_array_field(): test.TestOutcome {
+    var s: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        s = s + bag_sum();
+        i = i + 1;
+    }
+    return test.assert_eq(s, 6000);
+}
+
+function test_struct_array_field(): test.TestOutcome {
+    var s: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        s = s + nest_sum();
+        i = i + 1;
+    }
+    return test.assert_eq(s, 1200);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("rc struct drop");
+    r = r.it("scalar-array field drop", test_scalar_array_field());
+    r = r.it("struct-array field drop", test_struct_array_field());
+    return r.finish();
+}
