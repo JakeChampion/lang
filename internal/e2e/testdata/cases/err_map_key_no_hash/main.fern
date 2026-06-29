@@ -1,0 +1,14 @@
+// A struct used as a Map key must derive BOTH Eq and Hash — the keyed
+// map runtime dispatches through them (#2671). `Has` derives only Eq,
+// so it is rejected with E045 pointing at the missing @derive(Hash).
+import "core/map";
+import "core/cmp";
+
+@derive(cmp.Eq)
+struct Has { x: i32 }
+
+function main(): i32 {
+    var m: Map[Has, i32] = map_new(8);
+    m = m.insert(Has { x: 1 }, 10);
+    return 0;
+}
