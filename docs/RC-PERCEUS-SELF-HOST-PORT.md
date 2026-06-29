@@ -184,6 +184,64 @@ so adding the harness is part of slice 1). arm64/wasm legs run in CI.
 9. **Full precise-drop** beyond the conservative array-literal cut.
    *Deep.*
 
+### Slice 3 implementation plan (scoped 2026-06-29 — the NEXT increment)
+
+Survey conclusion (correcting the one-line slice-3 entry above): the three
+NON-array rc field kinds are **not** equal-difficulty, and string is blocked:
+
+- **String fields — BLOCKED, defer.** IR string boxes are header-less
+  (`irlower.fern:~11318`: "an rc-dec would corrupt the adjacent block"), so a
+  string field cannot carry an rc word to dec. Releasing it needs the separate
+  **string-RC** initiative (slice 7: add an rc header to string boxes, or a side
+  table) — a deep refactor, NOT part of slice 3.
+- **Enum-payload fields — defer.** Need variant-tag dispatch ("Stage C"):
+  read the tag, branch per variant, deep-drop that variant's payload. Orthogonal
+  to struct-field release and more complex; a later sub-slice.
+- **Nested-struct fields (`Outer { inner: Inner }`) — the slice-3 target.**
+  These are ALREADY IR-eligible in **leak mode** (`decl_is_leaksafe_d`,
+  `irlower.fern:1606` admits a struct-typed field whose struct is itself
+  leak-safe); the nested box (and its rc-array fields) simply leak because the
+  outer `__struct_drop_<Outer>` does not recurse into it. So slice 3 is **not** a
+  routing/eligibility change (low fixpoint risk) — it is additive reclaim, like
+  slice 1c.
+
+**The work (nested-struct), in dependency order:**
+
+1. **Construction-inc (shared, `irlower.fern` struct-literal lowering ~3936-4180)
+   — the soundness-critical part.** A nested-struct field flows through the
+   GENERIC field store today (no inc, no aliasing bail). Recursive drop is only
+   sound if the outer OWNS the field, so mirror the array-field `fav_alias_inc`
+   machinery for `decl_is_struct(cfft)` fields across EVERY source form: fresh
+   `Inner{…}` literal (move-in, NO inc), aliased bare ident (`Outer{inner: x}` →
+   Perceus dup), field-copy (`Outer{inner: o.inner}` → dup), fresh-returning call
+   (`Outer{inner: mk()}` → no inc), and the `{...base}` update idiom. Getting any
+   form wrong = double-free / UAF (the array-field code is littered with exactly
+   these warnings — e.g. the `reset_locals` self-build UAF). This is the bulk of
+   the risk and must be adversarially tested (over-release detector + value
+   read-back on every form).
+2. **Recursive drop (per-backend, 3×).** In `emit_ir_struct_drop_one`
+   (`asm_ir.fern`), `emit_arm64_struct_drop_one` (`asm_arm64.fern`),
+   `emit_wasm_struct_drop_body` (`wasm.fern`): for each nested-struct field, load
+   the field pointer (IR offset `8 + i*8` on wasm; `(i+1)*8` register) and call
+   `__struct_drop_<Inner>` (rc-guarded, null-guarded — the body is itself
+   rc==1-gated, so an aliased rc>1 inner just decs). Mirror the AST path's
+   `struct_release_field_inner` recursion (`wasm.fern:1252`,
+   `$__fern_release_<ft>`).
+3. **Transitive emission (per-backend need-set).** `__struct_drop_<Outer>` now
+   CALLS `__struct_drop_<Inner>` from its hand-emitted body — not a lowered op —
+   so `struct_drop_types` (`wasm_ir.fern`) / the `struct_drop:<T>` need-set
+   (`asm_ir.fern`) must be CLOSED under "Outer has a nested-struct field of type
+   Inner ⇒ also emit Inner's drop", or the call is undefined at link.
+4. **Validate** at each step on x86 first (bootstrap + fixpoint + differential +
+   a new nested-struct memory-differential test: a churn of `Outer{inner:
+   Inner{items:[…]}}` exit-reclaimed → bounded vs leak → heap-exhaust 137, plus a
+   `__fern_rc_underflow_count()==0` over-release case on every construction form),
+   THEN mirror the per-backend drop to arm64/wasm. Ship as its own PR.
+
+This is roughly slice 1c+1d combined in size and touches the most UAF-prone code
+in the lowering, so it warrants fresh-focus execution and adversarial
+double-free testing — not a tail-end-of-session rush.
+
 ### Strategy notes
 
 - **Direct port** stands: native is the source of truth, all analyses
