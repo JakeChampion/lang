@@ -728,6 +728,206 @@ pub function __map_clear_impl(m: usize) {
     __memset(buf + __map_hdr(buf), 255, cap * 4);
 }
 
+// ---- keyKind 3: user struct / enum keys ------------------------------
+//
+// A struct / enum key is pointer-shaped (the key pointer is stored in the
+// entries column, exactly like a string key), but the type-erased runtime
+// can't hash or compare it structurally. So the codegen threads the key
+// type's derived `hash(self): i32` and `eq(self, other): boolean` in as
+// function VALUES — `hash_fn` / `eq_fn` — and the *_keyed variants below
+// use them for bucket choice and key equality. This keeps the map fully
+// type-erased while using PROPER structural hash/eq, so a key containing a
+// string (or nested struct) works — not just fixed-width byte blobs.
+//
+// The functions can't be stored in the kv buffer (there is no usize→fn
+// cast; E033), so they're passed per call. They mirror the non-keyed
+// functions one-for-one; only the hash (`hash_fn(k)`) and the key compare
+// (`eq_fn(entryK, k)`) differ. See #2671.
+
+function __map_lookup_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): i32 {
+    var buf: usize = __load_ptr(m);
+    var cap: i32 = __load_i32(buf);
+    var mask: i32 = cap - 1;
+    var entryStride: i32 = 2 * __ptr_width();
+    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+    var bucket: i32 = hash_fn(k) & mask;
+    while (true) {
+        var b: i32 = __load_i32(buf + __map_hdr(buf) + bucket * 4);
+        if (b == 0 - 1) { return 0 - 1; }
+        if (b != 0 - 2) {
+            var entryK: usize = __load_ptr(entriesBase + b * entryStride);
+            if (eq_fn(entryK, k)) { return b; }
+        }
+        bucket = (bucket + 1) & mask;
+    }
+    return 0 - 1;
+}
+
+pub function __map_has_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): boolean {
+    return __map_lookup_keyed(m, k, hash_fn, eq_fn) != (0 - 1);
+}
+
+pub function __map_get_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): Option[usize] {
+    var idx: i32 = __map_lookup_keyed(m, k, hash_fn, eq_fn);
+    if (idx == 0 - 1) { return None; }
+    var buf: usize = __load_ptr(m);
+    var cap: i32 = __load_i32(buf);
+    var ptrW: i32 = __ptr_width();
+    var entryStride: i32 = 2 * ptrW;
+    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+    return Some(__map_retain_val(buf, __load_ptr(entriesBase + idx * entryStride + ptrW)));
+}
+
+pub function __map_get_or_keyed_impl(m: usize, k: usize, fallback: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): usize {
+    var idx: i32 = __map_lookup_keyed(m, k, hash_fn, eq_fn);
+    if (idx == 0 - 1) { return fallback; }
+    var buf: usize = __load_ptr(m);
+    var cap: i32 = __load_i32(buf);
+    var ptrW: i32 = __ptr_width();
+    var entryStride: i32 = 2 * ptrW;
+    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+    return __map_retain_val(buf, __load_ptr(entriesBase + idx * entryStride + ptrW));
+}
+
+pub function __map_lookup_val_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): usize {
+    var idx: i32 = __map_lookup_keyed(m, k, hash_fn, eq_fn);
+    if (idx == 0 - 1) { return 0; }
+    var buf: usize = __load_ptr(m);
+    var cap: i32 = __load_i32(buf);
+    var ptrW: i32 = __ptr_width();
+    var entryStride: i32 = 2 * ptrW;
+    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+    return __load_ptr(entriesBase + idx * entryStride + ptrW);
+}
+
+function __map_grow_keyed(m: usize, hash_fn: (usize) => i32): usize {
+    var oldBuf: usize = __load_ptr(m);
+    var oldCap: i32 = __load_i32(oldBuf);
+    var oldLen: i32 = __load_i32(oldBuf + 4);
+    var oldKK:  i32 = __load_i32(oldBuf + 8);
+    var oldVK:  i32 = __load_i32(oldBuf + 12);
+    var hdr: i32 = __map_hdr_bytes(oldKK);
+    var ptrW: i32 = __ptr_width();
+    var entryStride: i32 = 2 * ptrW;
+    var oldEntries: usize = oldBuf + hdr + oldCap * 4;
+    var newCap: i32 = 4;
+    if (oldCap != 0) { newCap = oldCap << 1; }
+    var newMask: i32 = newCap - 1;
+    var newBuf: usize = __alloc(hdr + newCap * (4 + entryStride));
+    __store_i32(newBuf,      newCap);
+    __store_i32(newBuf + 4,  oldLen);
+    __store_i32(newBuf + 8,  oldKK);
+    __store_i32(newBuf + 12, oldVK);
+    __memset(newBuf + hdr, 255, newCap * 4);
+    var newEntries: usize = newBuf + hdr + newCap * 4;
+    var i: i32 = 0;
+    while (i < oldLen) {
+        var key: usize = __load_ptr(oldEntries + i * entryStride);
+        var val: usize = __load_ptr(oldEntries + i * entryStride + ptrW);
+        __store_ptr(newEntries + i * entryStride,        key);
+        __store_ptr(newEntries + i * entryStride + ptrW, val);
+        var bucket: i32 = hash_fn(key) & newMask;
+        while (true) {
+            var b: i32 = __load_i32(newBuf + hdr + bucket * 4);
+            if (b == 0 - 1) {
+                __store_i32(newBuf + hdr + bucket * 4, i);
+                break;
+            }
+            bucket = (bucket + 1) & newMask;
+        }
+        i = i + 1;
+    }
+    __store_ptr(m, newBuf);
+    var oldBytes: i32 = hdr + oldCap * (4 + entryStride);
+    __free(oldBuf, oldBytes);
+    return newBuf;
+}
+
+pub function __map_set_keyed_impl(m: usize, k: usize, v: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): usize {
+    m = __map_cow_inplace(m);
+    var buf: usize = __load_ptr(m);
+    var cap: i32 = __load_i32(buf);
+    var len_: i32 = __load_i32(buf + 4);
+    if ((len_ + 1) * 4 >= cap * 3) {
+        __map_grow_keyed(m, hash_fn);
+        buf = __load_ptr(m);
+        cap = __load_i32(buf);
+        len_ = __load_i32(buf + 4);
+    }
+    var mask: i32 = cap - 1;
+    var ptrW: i32 = __ptr_width();
+    var entryStride: i32 = 2 * ptrW;
+    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+    var bucket: i32 = hash_fn(k) & mask;
+    var insertSlot: i32 = 0 - 1;
+    var done: boolean = false;
+    while (!done) {
+        var b: i32 = __load_i32(buf + __map_hdr(buf) + bucket * 4);
+        if (b == 0 - 1) {
+            if (insertSlot == 0 - 1) { insertSlot = bucket; }
+            done = true;
+        } else if (b == 0 - 2) {
+            if (insertSlot == 0 - 1) { insertSlot = bucket; }
+            bucket = (bucket + 1) & mask;
+        } else {
+            var entryK: usize = __load_ptr(entriesBase + b * entryStride);
+            if (eq_fn(entryK, k)) {
+                __map_dec_value(buf, __load_ptr(entriesBase + b * entryStride + ptrW));
+                __store_ptr(entriesBase + b * entryStride + ptrW, v);
+                return m;
+            }
+            bucket = (bucket + 1) & mask;
+        }
+    }
+    __store_ptr(entriesBase + len_ * entryStride,        k);
+    __store_ptr(entriesBase + len_ * entryStride + ptrW, v);
+    __store_i32(buf + __map_hdr(buf) + insertSlot * 4, len_);
+    __store_i32(buf + 4, len_ + 1);
+    return m;
+}
+
+pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): boolean {
+    var buf: usize = __load_ptr(m);
+    var cap: i32 = __load_i32(buf);
+    var len_: i32 = __load_i32(buf + 4);
+    var mask: i32 = cap - 1;
+    var ptrW: i32 = __ptr_width();
+    var entryStride: i32 = 2 * ptrW;
+    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+    var bucket: i32 = hash_fn(k) & mask;
+    var foundBucket: i32 = 0 - 1;
+    var idx: i32 = 0;
+    while (true) {
+        var b: i32 = __load_i32(buf + __map_hdr(buf) + bucket * 4);
+        if (b == 0 - 1) { break; }
+        if (b != 0 - 2) {
+            var entryK: usize = __load_ptr(entriesBase + b * entryStride);
+            if (eq_fn(entryK, k)) {
+                foundBucket = bucket;
+                idx = b;
+                break;
+            }
+        }
+        bucket = (bucket + 1) & mask;
+    }
+    if (foundBucket == 0 - 1) { return false; }
+    __store_i32(buf + __map_hdr(buf) + foundBucket * 4, 0 - 2);
+    var last: i32 = len_ - 1;
+    if (idx != last) {
+        var lastKey: usize = __load_ptr(entriesBase + last * entryStride);
+        var lastBucket: i32 = hash_fn(lastKey) & mask;
+        while (__load_i32(buf + __map_hdr(buf) + lastBucket * 4) != last) {
+            lastBucket = (lastBucket + 1) & mask;
+        }
+        var lastVal: usize = __load_ptr(entriesBase + last * entryStride + ptrW);
+        __store_ptr(entriesBase + idx * entryStride,        lastKey);
+        __store_ptr(entriesBase + idx * entryStride + ptrW, lastVal);
+        __store_i32(buf + __map_hdr(buf) + lastBucket * 4, idx);
+    }
+    __store_i32(buf + 4, last);
+    return true;
+}
+
 // MapIter is a 16-byte heap object: [buf:8][cursor:4][pad:4].
 // The cursor lives at offset +8 (not +4) so the layout is the
 // same on wasm32 (where __store_ptr is 4 bytes and the high 4
