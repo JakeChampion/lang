@@ -251,6 +251,49 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-06-29 — `Map.iter` (MapIter cursor protocol) lowers on the IR path → `json_roundtrip` flips to IR
+
+The post-mono frontier survey (2026-06-28) pinned `json_roundtrip`'s sole
+blocker as `BAIL call[Map.iter]`: std/json's `json_encode` walks a `JObject`'s
+`Map[string, JsonValue]` via the stateful **MapIter** protocol — `m.iter()` then
+`it.has_next()` / `it.key()` / `it.value()` / `it.advance()` over a heap cursor.
+`iter` fell through to the user-method path (`Map.iter` label, unresolved), so
+the whole module — and every module importing std/json — routed to the legacy
+AST emitter. This lowers the protocol on the IR path, flipping `json_roundtrip`
+(and unblocking the other std/json importers).
+
+The MapIter is a 16-byte box `[map_ptr@0, cursor@8]`; the IR map runtime already
+shares the AST path's `[keys@0, values@8]` layout, so the cursor walk
+(`keys[cursor]` / `values[cursor]` at `(cursor+1)*8`, `has_next` = `cursor <
+keys.len`) ports byte-for-byte from `asm.fern` / `asm_arm64.fern`.
+
+The recipe (mirrors the env / stat / subprocess builtin-recipe flips):
+- **`ir.fern`** — five ops: `op_map_iter` (allocates the box; `op_allocates`
+  admits it) + `op_mapiter_has_next` / `_key` / `_value` / `_advance` (pure
+  inline cursor reads, no runtime call).
+- **`irlower.fern`** — `m.iter()` interception in the map-op block (emits
+  `op_map_iter`); a `MapIter`-annotated `var` marks its slot `"MapIter"` via the
+  existing `mark_struct_type` (no new `LowerState` field → no arm64 codegen
+  blow-up; `MapIter` has no `StructDecl`, so `emit_struct_field_drops` never
+  fires — leak-safe, matching the leak-only IR map path); the four cursor methods
+  dispatch off that slot tag to the `mapiter_*` ops.
+- **`asm_ir.fern`** (x86-64) + **`asm_arm64_ir.fern`** (arm64) — the box alloc +
+  the four inline cursor reads, transcribed from each backend's AST `m.iter()`.
+- **`wasm_ir.fern`** — reject `map_iter` in `wasm_eligible` (the alloc site is
+  always present where the cursor ops are), so a MapIter module stays on the
+  wasm AST path (already handles it), exactly as subprocess / stat do.
+
+Verified: `TestSelfHostStdTestE2E{,Arm64}/json_roundtrip` (differential vs
+interp, both backends), `TestSelfHostMapIterProtocolIR` (new — `-decide` → `ir`
++ the actual parse→re-encode cursor walk runs to exit 0),
+`TestSelfHostStage2FixedPoint` (byte-identical self-reproduction), the full
+x86-64 differential gate (no regression), and the map/struct IR suite
+(`TestSelfHostMap{InsertAlias,Core,Iter}IR`, `TestSelfHostForKV*`,
+`TestSelfHostImportAliasIR`).
+
+Remaining AST-routers: `map_verbs` (tuple-element-`Map` lowering segfault +
+typing, deep), `async_concurrent` / `async_runtime` (parallel-owned — leave).
+
 ### 2026-06-28 — `iter` routes IR (mono fix #3995) — added to the differential gate
 
 The frontier survey pinned `iter`'s sole blocker as `assert_eq__A: BAIL call[A.eq]`

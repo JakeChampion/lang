@@ -616,6 +616,21 @@ pub function op_map_delete(keykind: i32): Op { return Op { kind: "map_delete", i
 pub function op_map_keys(): Op { return op0("map_keys"); }
 pub function op_map_values(): Op { return op0("map_values"); }
 
+// MapIter — the stateful map cursor std/json's encoder walks (`m.iter()` then
+// `it.has_next()` / `it.key()` / `it.value()` / `it.advance()`). `map_iter` pops
+// [map] → a fresh 16-byte iterator box [map_ptr@0, cursor@8] (so it allocates).
+// The four cursor ops pop [iter]: `mapiter_has_next` → i32 0/1 (cursor < keys.len),
+// `mapiter_key` / `mapiter_value` → keys[cursor] / values[cursor] (the parallel
+// arrays' element at cursor, read raw — every K/V is an 8-byte slot on the
+// register backends), `mapiter_advance` → bumps the cursor and pushes a dummy.
+// Mirrors the AST path (asm.fern) byte-for-byte; the IR map runtime shares the
+// `[keys@0, values@8]` box layout, so the cursor walk ports unchanged.
+pub function op_map_iter(): Op { return op0("map_iter"); }
+pub function op_mapiter_has_next(): Op { return op0("mapiter_has_next"); }
+pub function op_mapiter_key(): Op { return op0("mapiter_key"); }
+pub function op_mapiter_value(): Op { return op0("mapiter_value"); }
+pub function op_mapiter_advance(): Op { return op0("mapiter_advance"); }
+
 // high-level struct ops — layout-agnostic, like the array/string ops. `str`
 // carries the struct's type name, `i32_imm` the field count (struct_make) or
 // the field index in DECL order (struct_get). `struct_make` pops `i32_imm`
@@ -815,6 +830,11 @@ pub function render_op(o: Op): string {
     if (o.kind == "map_delete") { return "map_delete " + util.i32_to_string(o.i32_imm); }
     if (o.kind == "map_keys") { return "map_keys"; }
     if (o.kind == "map_values") { return "map_values"; }
+    if (o.kind == "map_iter") { return "map_iter"; }
+    if (o.kind == "mapiter_has_next") { return "mapiter_has_next"; }
+    if (o.kind == "mapiter_key") { return "mapiter_key"; }
+    if (o.kind == "mapiter_value") { return "mapiter_value"; }
+    if (o.kind == "mapiter_advance") { return "mapiter_advance"; }
     if (o.kind == "struct_make") { return "struct_make " + o.str + "/" + util.i32_to_string(o.i32_imm); }
     if (o.kind == "struct_get") { return "struct_get " + util.i32_to_string(o.i32_imm); }
     if (o.kind == "struct_set") { return "struct_set " + util.i32_to_string(o.i32_imm); }
@@ -848,6 +868,8 @@ pub function op_allocates(kind: string): boolean {
     if (kind == "struct_make" || kind == "tuple_make") { return true; }
     if (kind == "opt_make" || kind == "opt_none") { return true; }
     if (kind == "map_new" || kind == "map_set") { return true; }
+    // map_iter allocates the 16-byte [map@0, cursor@8] iterator box.
+    if (kind == "map_iter") { return true; }
     // Byte/string builders that materialise a fresh box.
     if (kind == "random_bytes" || kind == "str_bytes" || kind == "str_split") { return true; }
     // args() materialises a fresh string[] (the arr box + a string block per

@@ -5554,6 +5554,41 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             return tfs.emit(ir.op_call_indirect(c.args.len()));
                         }
                     }
+                    // MapIter cursor methods (`it.has_next()` / `.key()` /
+                    // `.value()` / `.advance()`): the receiver is a slot marked
+                    // "MapIter" when `var it: MapIter[..] = m.iter()` bound it.
+                    // Lower to the heap-cursor ops — the IR sibling of asm.fern's
+                    // inline 16-byte [map@0, cursor@8] box walk. std/json's encoder
+                    // walks a JObject's map this way; intercepting it here keeps
+                    // json_roundtrip on the IR path instead of bailing Map.iter.
+                    match (fa.obj) {
+                        parser.ExprIdent(miid) => {
+                            var mislot: i32 = s.slot_of(miid.name);
+                            if (mislot >= 0 && s.struct_type_of_slot(mislot) == "MapIter" && c.args.len() == 0) {
+                                if (fa.field == "has_next") {
+                                    var mih: LowerState = lower_expr(fa.obj, s);
+                                    if (!mih.ok) { return mih; }
+                                    return mih.emit(ir.op_mapiter_has_next());
+                                }
+                                if (fa.field == "key") {
+                                    var mik: LowerState = lower_expr(fa.obj, s);
+                                    if (!mik.ok) { return mik; }
+                                    return mik.emit(ir.op_mapiter_key());
+                                }
+                                if (fa.field == "value") {
+                                    var miv: LowerState = lower_expr(fa.obj, s);
+                                    if (!miv.ok) { return miv; }
+                                    return miv.emit(ir.op_mapiter_value());
+                                }
+                                if (fa.field == "advance") {
+                                    var mia: LowerState = lower_expr(fa.obj, s);
+                                    if (!mia.ok) { return mia; }
+                                    return mia.emit(ir.op_mapiter_advance());
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
                     var mrslot: i32 = 0 - 1;
                     var mtype: string = "";
                     match (fa.obj) {
@@ -5654,6 +5689,14 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             var mvs: LowerState = lower_expr(fa.obj, s);
                             if (!mvs.ok) { return mvs; }
                             return mvs.emit(ir.op_map_values());
+                        }
+                        if (fa.field == "iter" && c.args.len() == 0) {
+                            // `m.iter()` → a fresh MapIter box [map@0, cursor@8].
+                            // The bound slot is marked "MapIter" (StmtVar), so the
+                            // cursor methods below dispatch to the mapiter_* ops.
+                            var mit: LowerState = lower_expr(fa.obj, s);
+                            if (!mit.ok) { return mit; }
+                            return mit.emit(ir.op_map_iter());
                         }
                         // Not a built-in map op — a USER method on Map[K, V]
                         // (`m.merge(other)`, `m.extend(...)`). Dispatch to the
@@ -8697,6 +8740,13 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // enum name in local_struct_type too, so `a.method()` dispatches to
             // `<Enum>.<method>` (enum-receiver methods).
             else if (struct_ty == "" && is_enum_like_name(v.type_name, se.structs)) { struct_ty = v.type_name; }
+            // A MapIter annotation (`var it: MapIter[K, V] = m.iter()`): record the
+            // bare tag "MapIter" so `it.has_next()` / `.key()` / `.value()` /
+            // `.advance()` dispatch to the mapiter_* cursor ops. There's no
+            // StructDecl for MapIter (it's a runtime handle), so emit_struct_field_drops
+            // never fires on it (struct_has_reclaim_array_field is false) — leak-safe,
+            // matching the leak-only IR map path.
+            else if (struct_ty == "" && v.type_name.len() >= 7 && v.type_name[0:7] == "MapIter") { struct_ty = "MapIter"; }
             // A struct- or enum-ARRAY annotation (`var ps: P[]` / `var cs: C[]`)
             // carries the ELEMENT type (the slot is is_arr, so it reads as the
             // element type for `ps[i]` / `for x in ps`, not the slot's own type).
