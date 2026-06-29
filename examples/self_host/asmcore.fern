@@ -356,6 +356,25 @@ pub function rt_src_i32_pow(): string {
     return "function __fern_i32_pow(base: i32, exp: i32): i32 { var r: i32 = 1; var e: i32 = exp; while (e > 0) { r = r * base; e = e - 1; } return r; }";
 }
 
+// The i32-array reducers backing `xs.sum()` / `.product()` / `.index_of(x)` —
+// the next runtime helpers written in Fern instead of hand-written asm (#2649).
+// Tier 1 in docs/RUNTIME-IN-FERN.md: they take a borrowed array param (the
+// exit sweep skips params, so no RC traffic) and bottom out in inline-lowered
+// `xs.len()` / `xs[i]` indexing and i32 arithmetic — still no helper call and
+// no allocation, so they reuse emit_runtime_fern_fn unchanged. (`min`/`max`
+// stay hand-written for now: they build an Option[i32] box at the call site.)
+pub function rt_src_arr_i32_sum(): string {
+    return "function __fern_arr_i32_sum(xs: i32[]): i32 { var s: i32 = 0; var i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }";
+}
+
+pub function rt_src_arr_i32_product(): string {
+    return "function __fern_arr_i32_product(xs: i32[]): i32 { var p: i32 = 1; var i: i32 = 0; while (i < xs.len()) { p = p * xs[i]; i = i + 1; } return p; }";
+}
+
+pub function rt_src_arr_i32_index_of(): string {
+    return "function __fern_arr_i32_index_of(xs: i32[], target: i32): i32 { var i: i32 = 0; while (i < xs.len()) { if (xs[i] == target) { return i; } i = i + 1; } return 0 - 1; }";
+}
+
 pub function match_payload_type(scrut: parser.Expr, s: EmitState): Ty {
     match (scrut) {
         parser.ExprIdent(id) => {
