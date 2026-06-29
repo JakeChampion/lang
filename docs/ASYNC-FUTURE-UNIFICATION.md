@@ -226,3 +226,11 @@ tests / docs.
   `Future[T]` (so an `@import async` call yields a `Future`) is
   tempting but is the Option-A slope — explicitly deferred. PR5 makes
   the *combinators* work on wasm; it does not rebuild the import path.
+
+## Self-host IR (the remaining gap)
+
+All of the above is the **native + wasm** story via the Go compiler.
+The **self-hosted** compiler can't yet compile `std/async` through its
+IR path (it doesn't implement the I/O builtins at all). That's a
+separate goal-1 effort — scoped builtin-by-builtin in
+[`ASYNC-SELFHOST-IR.md`](ASYNC-SELFHOST-IR.md).
