@@ -451,7 +451,12 @@ pub function op_map_new(keykind: i32): Op { return Op { kind: "map_new", i32_imm
 // pointer value, so the caller's dec frees it under the map → use-after-free /
 // sibling-key aliasing (#3495). x86-64 ignores `unsigned` (its runtime never
 // RC-manages values; its arr_dec is leak-only).
-pub function op_map_set(keykind: i32, valptr: boolean): Op { return Op { kind: "map_set", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: valptr, str: "" }; }
+// `eqfn` is the symbol of the key type's derived equality function
+// (`__fn_<K>__eq`) for a struct/enum key, or "" for a scalar/string key.
+// The x86-64 linear-scan runtime dispatches struct keys through it
+// (passed in %r8); wasm ignores it (its hash map still only supports
+// scalar/string keys — struct keys there are a separate slice). #2671.
+pub function op_map_set(keykind: i32, valptr: boolean, eqfn: string): Op { return Op { kind: "map_set", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: valptr, str: eqfn }; }
 pub function op_map_len(): Op { return op0("map_len"); }
 // `print_int` pops an i32 and writes its decimal text to stdout (no newline),
 // pushing a dummy result (the syscall return) so a statement-level drop balances.
@@ -601,14 +606,14 @@ pub function op_sleep_ms(): Op { return op0("sleep_ms"); }
 // hit, None on a miss) — the SAME layout as opt_make, so it plugs into the
 // built-in Option match. `map_has` pops [map, key] → i32 0/1. Both carry the key
 // kind in i32_imm.
-pub function op_map_get(keykind: i32): Op { return Op { kind: "map_get", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
-pub function op_map_has(keykind: i32): Op { return Op { kind: "map_has", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
+pub function op_map_get(keykind: i32, eqfn: string): Op { return Op { kind: "map_get", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn }; }
+pub function op_map_has(keykind: i32, eqfn: string): Op { return Op { kind: "map_has", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn }; }
 // `map_get_or` pops [map, key, default] → the value at key, or default on a miss.
-pub function op_map_get_or(keykind: i32): Op { return Op { kind: "map_get_or", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
+pub function op_map_get_or(keykind: i32, eqfn: string): Op { return Op { kind: "map_get_or", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn }; }
 // `map_delete` pops [map, key] → the map with that key removed (Fern's functional
 // `m.without(k)`); reuses the same `__fern_map_delete` runtime as the AST path.
 // Key kind in i32_imm.
-pub function op_map_delete(keykind: i32): Op { return Op { kind: "map_delete", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
+pub function op_map_delete(keykind: i32, eqfn: string): Op { return Op { kind: "map_delete", i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn }; }
 // `map_keys` / `map_values` pop [map] → the array of live keys / values. On the
 // parallel-array backends (x86-64 / arm64) this is the map's internal keys[] /
 // values[] pointer (box @0 / @8); on wasm it snapshots the hash map into a fresh
