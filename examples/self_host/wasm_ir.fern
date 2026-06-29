@@ -601,6 +601,12 @@ pub function wasm_eligible(mod: parser.Module): boolean {
         && !module_emits_op(mod, "read_chunk")
         && !module_emits_op(mod, "reader_close")
         && !module_emits_op(mod, "sleep_ms")
+        // poll has no wasm IR runtime: real readiness on wasm needs the
+        // component-model wasi:io/poll multiplexer (list<pollable>), which the
+        // self-host wasm backend doesn't wire (it is bare core-wasm + WASI
+        // preview1). x86-64 (poll(2)) and arm64 (ppoll(2)) lower it via the IR;
+        // a poll module stays on the wasm AST path. Same deferral as sleep_ms.
+        && !module_emits_op(mod, "poll")
         && !module_emits_op(mod, "remove_dir_all")
         && !module_emits_op(mod, "temp_dir")
         && !module_emits_op(mod, "read_dir")

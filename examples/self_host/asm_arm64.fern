@@ -4141,6 +4141,96 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     s = s.write("    ldp x29, x30, [sp], #16\n");
     s = s.write("    ret\n");
     s = s.write(".size __fern_sleep_ms, .-__fern_sleep_ms\n");
+    // __fern_poll(x0 = fds box ptr, x1 = timeout_ms) -> i32 index of the first
+    // POLLIN-ready fd, or -1. The arm64 mirror of asm_ir.emit_ir_poll (x86-64),
+    // gated on the "poll" need. Reads the SELF-HOST array ABI: nfds at [ptr+0]
+    // (8-byte), element i (the fd, low 32 bits) at [ptr+(i+1)*8]. Builds a
+    // transient pollfd[] (each 8 bytes: i32 fd, i16 events, i16 revents) via
+    // __fern_alloc, requests POLLIN on each, calls ppoll(2) (#73 — arm64 has no
+    // bare `poll`), and scans revents. timeout_ms < 0 → NULL timespec (block).
+    // On Darwin the readiness path (kqueue) is not ported, so it returns -1.
+    if (s.has_need("poll")) {
+        s = s.write(".globl __fern_poll\n");
+        s = s.write(".type __fern_poll, %function\n");
+        s = s.write("__fern_poll:\n");
+        if (darwin) {
+            s = s.write("    mov x0, #-1\n");
+            s = s.write("    ret\n");
+        } else {
+            // Frame: fp/lr + callee-saves x19..x23 + a 16-byte timespec scratch
+            // at [x29, #64..79]. x19=nfds, x20=fds ptr, x21=pollfd buf, x22=i,
+            // x23=timeout_ms.
+            s = s.write("    stp x29, x30, [sp, #-80]!\n");
+            s = s.write("    mov x29, sp\n");
+            s = s.write("    stp x19, x20, [sp, #16]\n");
+            s = s.write("    stp x21, x22, [sp, #32]\n");
+            s = s.write("    stp x23, xzr, [sp, #48]\n");
+            s = s.write("    mov x20, x0\n");                 // fds ptr
+            s = s.write("    mov x23, x1\n");                 // timeout_ms
+            s = s.write("    ldr x19, [x20]\n");              // nfds = len at [ptr+0]
+            s = s.write("    cmp x19, #0\n");
+            s = s.write("    b.le .Lirpoll_none\n");
+            s = s.write("    lsl x0, x19, #3\n");             // buf = alloc(nfds*8)
+            s = s.write("    bl __fern_alloc\n");
+            s = s.write("    mov x21, x0\n");
+            s = s.write("    mov x22, #0\n");
+            s = s.write(".Lirpoll_fill:\n");
+            s = s.write("    cmp x22, x19\n");
+            s = s.write("    b.ge .Lirpoll_filled\n");
+            s = s.write("    add x9, x22, #1\n");             // i+1 (skip len slot)
+            s = s.write("    add x9, x20, x9, lsl #3\n");     // &element i (byte addr)
+            s = s.write("    ldr w0, [x9]\n");                // fd = low32 of element i
+            s = s.write("    add x10, x21, x22, lsl #3\n");   // &pollfd[i]
+            s = s.write("    str w0, [x10]\n");               // .fd
+            s = s.write("    mov w1, #1\n");
+            s = s.write("    strh w1, [x10, #4]\n");          // .events = POLLIN
+            s = s.write("    strh wzr, [x10, #6]\n");         // .revents = 0
+            s = s.write("    add x22, x22, #1\n");
+            s = s.write("    b .Lirpoll_fill\n");
+            s = s.write(".Lirpoll_filled:\n");
+            s = s.write("    cmp x23, #0\n");                 // timeout_ms < 0 → block
+            s = s.write("    b.lt .Lirpoll_infinite\n");
+            s = s.write("    mov x9, #1000\n");
+            s = s.write("    udiv x10, x23, x9\n");           // sec = ms / 1000
+            s = s.write("    msub x11, x10, x9, x23\n");      // rem ms
+            s = s.write("    ldr x12, =1000000\n");
+            s = s.write("    mul x11, x11, x12\n");           // nsec = rem * 1e6
+            s = s.write("    add x2, x29, #64\n");            // &timespec
+            s = s.write("    stp x10, x11, [x2]\n");
+            s = s.write("    b .Lirpoll_call\n");
+            s = s.write(".Lirpoll_infinite:\n");
+            s = s.write("    mov x2, #0\n");                  // NULL tmo_p → block
+            s = s.write(".Lirpoll_call:\n");
+            s = s.write("    mov x0, x21\n");                 // pollfd buf
+            s = s.write("    mov w1, w19\n");                 // nfds
+            s = s.write("    mov x3, #0\n");                  // sigmask = NULL
+            s = s.write("    mov x4, #0\n");                  // sigsetsize
+            s = s.write("    mov x8, #73\n");                 // ppoll
+            s = s.write("    svc #0\n");
+            s = s.write("    mov x22, #0\n");
+            s = s.write(".Lirpoll_scan:\n");
+            s = s.write("    cmp x22, x19\n");
+            s = s.write("    b.ge .Lirpoll_none\n");
+            s = s.write("    add x9, x21, x22, lsl #3\n");
+            s = s.write("    ldrh w0, [x9, #6]\n");           // revents
+            s = s.write("    and w0, w0, #1\n");              // POLLIN
+            s = s.write("    cbnz w0, .Lirpoll_found\n");
+            s = s.write("    add x22, x22, #1\n");
+            s = s.write("    b .Lirpoll_scan\n");
+            s = s.write(".Lirpoll_found:\n");
+            s = s.write("    mov x0, x22\n");
+            s = s.write("    b .Lirpoll_ret\n");
+            s = s.write(".Lirpoll_none:\n");
+            s = s.write("    mov x0, #-1\n");
+            s = s.write(".Lirpoll_ret:\n");
+            s = s.write("    ldp x19, x20, [sp, #16]\n");
+            s = s.write("    ldp x21, x22, [sp, #32]\n");
+            s = s.write("    ldr x23, [sp, #48]\n");
+            s = s.write("    ldp x29, x30, [sp], #80\n");
+            s = s.write("    ret\n");
+        }
+        s = s.write(".size __fern_poll, .-__fern_poll\n");
+    }
     // __fern_read_int helper: reads up to 16 bytes from stdin
     // into a stack buffer, parses an optional leading `-`
     // followed by decimal digits, returns the value in x0.

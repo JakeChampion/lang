@@ -490,6 +490,12 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
         } else if (o.kind == "now_ns") {
             // no operands; __fern_now_ns() -> i64 in x0. Unconditional helper.
             s = s.write("    bl __fern_now_ns\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "poll") {
+            // operand stack [fds, timeout]; pop timeout (x1, top) then fds box
+            // ptr (x0), call __fern_poll (ppoll(2) over the fd set) -> i32 ready
+            // index (or -1) in x0. Gated helper in asm_arm64.emit_runtime.
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_poll\n    str x0, [sp, #-16]!\n");
+            s = s.need("heap").need("poll");
         } else if (o.kind == "opt_make") {
             // Option/Result box [tag@0, payload@8], 16 bytes. Payload is on the
             // operand stack; alloc first (it survives, like struct_make), then
