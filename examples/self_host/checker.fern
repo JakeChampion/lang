@@ -530,7 +530,8 @@ function is_builtin_function(name: string): boolean {
         || name == "f32_bits" || name == "f32_from_bits") { return true; }
     // networking
     if (name == "tcp_listen" || name == "tcp_accept" || name == "tcp_recv"
-        || name == "tcp_send" || name == "tcp_close" || name == "udp_send") { return true; }
+        || name == "tcp_send" || name == "tcp_close" || name == "udp_send"
+        || name == "tcp_connect" || name == "tcp_pollable") { return true; }
     return false;
 }
 

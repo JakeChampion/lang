@@ -386,6 +386,18 @@ pub function op_wasm_timer_pollable(): Op { return op0("wasm_timer_pollable"); }
 // `wasm_pollable_drop` takes one operand [p] and pushes an i32 (0 on native — a
 // pollable is just an fd, nothing to drop). Portability shim for fetch_future.
 pub function op_wasm_pollable_drop(): Op { return op0("wasm_pollable_drop"); }
+// tcp_* client primitives (the self-host twins of the native socket builtins).
+// `tcp_connect` [host_be, port] -> i32 connected fd (or -errno); host_be is the
+// IPv4 in network byte order packed into an i32. `tcp_send` [fd, str box] -> i32
+// bytes written (or -errno). `tcp_recv` [fd, max] -> a string box (data, len) of
+// up to `max` bytes; allocates. `tcp_close` [fd] -> i32 0/-errno. `tcp_pollable`
+// [fd] -> i32: the readiness token (the fd itself on native). All lower to the
+// matching __fern_tcp_* runtime helper. See docs/ASYNC-SELFHOST-IR.md.
+pub function op_tcp_connect(): Op { return op0("tcp_connect"); }
+pub function op_tcp_send(): Op { return op0("tcp_send"); }
+pub function op_tcp_recv(): Op { return op0("tcp_recv"); }
+pub function op_tcp_close(): Op { return op0("tcp_close"); }
+pub function op_tcp_pollable(): Op { return op0("tcp_pollable"); }
 // `__heap_bump_bytes` takes no operands → an i32: the bump allocator's
 // high-water mark (cursor − region base; 0 before the first allocation). It
 // reads the heap runtime's cursor + base — so it does NOT allocate, but it

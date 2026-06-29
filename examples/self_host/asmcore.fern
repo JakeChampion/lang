@@ -1441,6 +1441,13 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     if (id.name == "timer_fd") { return ty_i32(); }
                     if (id.name == "wasm_timer_pollable") { return ty_i32(); }
                     if (id.name == "wasm_pollable_drop") { return ty_i32(); }
+                    // tcp_recv(fd, max) -> string box; the rest -> i32 (fd /
+                    // byte count / pollable token / -errno).
+                    if (id.name == "tcp_recv") { return ty_string(); }
+                    if (id.name == "tcp_connect") { return ty_i32(); }
+                    if (id.name == "tcp_send") { return ty_i32(); }
+                    if (id.name == "tcp_close") { return ty_i32(); }
+                    if (id.name == "tcp_pollable") { return ty_i32(); }
                     // See asm.fern for rationale.
                     if (id.name == "sleep_ms") { return ty_i32(); }
                     if (id.name == "remove_file") { return ty_option(ty_unknown()); }
