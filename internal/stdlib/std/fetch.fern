@@ -18,6 +18,7 @@
 // DNS parsing is a higher layer.
 
 import "std/string";
+import "std/async";
 
 // ipv4(a, b, c, d) — pack a dotted-quad into the network-byte-order
 // i32 that tcp_connect wants in sin_addr. ipv4(127,0,0,1) addresses
@@ -59,6 +60,44 @@ pub function fetch_raw(host_be: i32, port: i32, request: string): string {
 pub function fetch_get(host_be: i32, port: i32, path: string): string {
     var request: string = "GET " + path + " HTTP/1.1\r\nHost: fern\r\nConnection: close\r\n\r\n";
     return fetch_raw(host_be, port, request);
+}
+
+// fetch_future(host_be, port, path) — the AWAITABLE fetch: open a
+// connection and send the request NON-blocking, then return a
+// `Future[string]` that resolves to the response body once the socket
+// is readable. This is the combinator-surface fetch
+// (docs/ASYNC-REDESIGN.md): drive several through `async.gather` and
+// their reads overlap on one thread —
+//
+//   var bodies = async.gather([
+//       fetch.fetch_future(cache, 80, "/k"),
+//       fetch.fetch_future(primary, 80, "/k"),
+//   ], "");
+//
+// On a connect/send failure it resolves immediately to "" (a `Ready`
+// future), so a failed upstream doesn't stall the fan-out. The
+// continuation does a single `tcp_recv` after readiness (sufficient for
+// the small responses of the edge fan-out; a multi-chunk body would
+// loop, re-suspending on the fd — folded in with the IR future at
+// docs/ASYNC-REDESIGN.md PR5). Native real I/O; on interp/wasm the
+// `poll` stub means the `Pending` future never resolves (consistent
+// with the rest of std/async).
+pub function fetch_future(host_be: i32, port: i32, path: string): async.Future[string] {
+    var request: string = "GET " + path + " HTTP/1.1\r\nHost: fern\r\nConnection: close\r\n\r\n";
+    var c: i32 = tcp_connect(host_be, port);
+    if (c < 0) {
+        return Ready("");
+    }
+    if (tcp_send(c, request) < 0) {
+        tcp_close(c);
+        return Ready("");
+    }
+    function resume(woken_fd: i32): async.Future[string] {
+        var resp: string = tcp_recv(woken_fd, 4096);
+        tcp_close(woken_fd);
+        return Ready(http_body(resp));
+    }
+    return Pending(c, resume);
 }
 
 // http_status(resp) — parse the numeric status code from an HTTP/1.1 response's
