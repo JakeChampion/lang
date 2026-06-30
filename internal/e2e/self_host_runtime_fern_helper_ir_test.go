@@ -66,6 +66,15 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			"__fn___fern_str_eq",
 			[]string{"\n__fern_str_eq:", ".Lstreq_loop"},
 		},
+		{
+			// str_trim — migrated on the IR path too (the AST + IR str_trim both
+			// became Fern). The old hand-written IR body's local labels (.Lir_trim_*)
+			// must be gone.
+			"str_trim",
+			`function main(): i32 { return "  hi ".trim().len(); }`,
+			"__fn___fern_str_trim",
+			[]string{"\n__fern_str_trim:", ".Lir_trim_front", ".Ltrim_front"},
+		},
 	}
 
 	for _, tc := range cases {

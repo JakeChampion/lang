@@ -156,12 +156,12 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_str_repeat\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind == "str_trim") {
-        // operand stack [s box]; __fern_str_trim(x0=s) -> fresh string box in x0.
-        // asm_arm64.emit_runtime emits the body in its str_search block (it
-        // allocates), so set str_search + heap.
-        s = s.mark_str_search();
-        s = s.mark_heap();
-        return s.write("    ldr x0, [sp], #16\n    bl __fern_str_trim\n    str x0, [sp, #-16]!\n");
+        // operand stack [s box]; __fern_str_trim is a Fern runtime function now
+        // (#2649): asm_arm64.emit_runtime emits the shared body gated on the
+        // str_trim need (a zero-copy slice; mark_str_trim pulls in heap). The s box
+        // already on the stack IS param[0] (at [x29,#16]); call, pop arg, push result.
+        s = s.mark_str_trim();
+        return s.write("    bl __fn___fern_str_trim\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind == "str_reverse") {
         // operand stack [s box]; __fern_str_reverse(x0=s) -> fresh reversed string

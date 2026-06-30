@@ -2058,12 +2058,14 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             return s;
         }
         if (fa.field == "trim" && c.args.len() == 0) {
+            // __fern_str_trim is a Fern runtime function (#2649): __fn_ stack
+            // convention (s=param[0] at +16). mark_str_trim pulls in heap (the
+            // returned slice box allocates). No longer rides the str_search need.
             s = emit_expr(fa.obj, s);
-            s = s.write("    popq %rdi\n");
-            s = s.write("    call __fern_str_trim\n");
+            s = s.write("    call __fn___fern_str_trim\n");
+            s = s.write("    addq $8, %rsp\n");
             s = s.write("    pushq %rax\n");
-            s = s.mark_str_search();
-            s = s.mark_heap();
+            s = s.mark_str_trim();
             return s;
         }
         if (fa.field == "to_upper" && c.args.len() == 0) {
@@ -4519,67 +4521,13 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("str_search")) {
         // __fern_str_starts_with / _ends_with / _index_of are now Fern runtime
         // functions (#2649): see asmcore.rt_src_str_search, called via the __fn_
-        // stack convention. (str_trim / str_to_* below stay hand-written — they
-        // allocate.) Mirrors the x86-64 IR path + arm64.
+        // stack convention. (str_to_* below stay hand-written — they copy bytes
+        // into a fresh buffer, a Tier-2 op needing the raw-memory primitives.)
+        // str_trim is also Fern now (rt_src_str_trim) but gated on its own
+        // str_trim need, emitted in the migrated-helpers section below — it's a
+        // zero-copy slice, so it no longer rides the str_search bundle.
+        // Mirrors the x86-64 IR path + arm64.
         s = emit_runtime_fern_fn(asmcore.rt_src_str_search(), s);
-        // __fern_str_trim: %rdi = string box. Scans from the
-        // start past whitespace bytes (space/tab/'\n'/'\r'),
-        // then from the end backward past the same. Allocates
-        // a 16-byte box pointing into the original data.
-        s = s.write("__fern_str_trim:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    pushq %r13\n");
-        s = s.write("    movq (%rdi), %r12\n");      // data ptr
-        s = s.write("    movq 8(%rdi), %r13\n");     // len
-        // Advance %r12 past leading whitespace.
-        s = s.write(".Ltrim_front:\n");
-        s = s.write("    cmpq $0, %r13\n");
-        s = s.write("    je .Ltrim_box\n");
-        s = s.write("    movzbq (%r12), %rax\n");
-        s = s.write("    cmpq $32, %rax\n");
-        s = s.write("    je .Ltrim_front_step\n");
-        s = s.write("    cmpq $9, %rax\n");
-        s = s.write("    je .Ltrim_front_step\n");
-        s = s.write("    cmpq $10, %rax\n");
-        s = s.write("    je .Ltrim_front_step\n");
-        s = s.write("    cmpq $13, %rax\n");
-        s = s.write("    je .Ltrim_front_step\n");
-        s = s.write("    jmp .Ltrim_back\n");
-        s = s.write(".Ltrim_front_step:\n");
-        s = s.write("    incq %r12\n");
-        s = s.write("    decq %r13\n");
-        s = s.write("    jmp .Ltrim_front\n");
-        // Trim from the end: walk backwards from %r12+%r13-1.
-        s = s.write(".Ltrim_back:\n");
-        s = s.write("    cmpq $0, %r13\n");
-        s = s.write("    je .Ltrim_box\n");
-        s = s.write("    movq %r12, %rcx\n");
-        s = s.write("    addq %r13, %rcx\n");
-        s = s.write("    decq %rcx\n");
-        s = s.write("    movzbq (%rcx), %rax\n");
-        s = s.write("    cmpq $32, %rax\n");
-        s = s.write("    je .Ltrim_back_step\n");
-        s = s.write("    cmpq $9, %rax\n");
-        s = s.write("    je .Ltrim_back_step\n");
-        s = s.write("    cmpq $10, %rax\n");
-        s = s.write("    je .Ltrim_back_step\n");
-        s = s.write("    cmpq $13, %rax\n");
-        s = s.write("    je .Ltrim_back_step\n");
-        s = s.write("    jmp .Ltrim_box\n");
-        s = s.write(".Ltrim_back_step:\n");
-        s = s.write("    decq %r13\n");
-        s = s.write("    jmp .Ltrim_back\n");
-        s = s.write(".Ltrim_box:\n");
-        s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %r12, (%rax)\n");
-        s = s.write("    movq %r13, 8(%rax)\n");
-        s = s.write("    popq %r13\n");
-        s = s.write("    popq %r12\n");
-        s = s.write("    leave\n");
-        s = s.write("    ret\n");
         // __fern_str_to_upper / __fern_str_to_lower: %rdi =
         // string box. Allocates len bytes for new char data,
         // copies each byte (case-flipped if alpha), then
@@ -7655,6 +7603,12 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
     }
     if (s.has_need("i32_lcm")) {
         s = emit_runtime_fern_fn(asmcore.rt_src_i32_lcm(), s);
+    }
+    // __fern_str_trim — Fern runtime function (#2649), Tier-1: returns the
+    // zero-copy sub-slice s[start:end] after skipping leading/trailing
+    // whitespace. The slice box allocates (heap dep via mark_str_trim).
+    if (s.has_need("str_trim")) {
+        s = emit_runtime_fern_fn(asmcore.rt_src_str_trim(), s);
     }
     // __fern_str_reverse: %rdi = src box. Returns %rax =
     // new string box with bytes in reverse order.
