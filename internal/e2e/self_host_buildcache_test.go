@@ -253,7 +253,7 @@ func cachedDriverBin(t *testing.T, gcc, dir, fernName string) string {
 		if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
 			return "", err
 		}
-		if out, lerr := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); lerr != nil {
+		if out, lerr := exec.Command(gcc, driverLinkArgs(asmPath, binPath)...).CombinedOutput(); lerr != nil {
 			return "", fmt.Errorf("gcc %s: %w\n%s", fernName, lerr, out)
 		}
 		_ = os.Remove(asmPath) // never keep the ~680 MB .s around
@@ -275,6 +275,40 @@ func cachedDriverBin(t *testing.T, gcc, dir, fernName string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+var fastLinkOnce sync.Once
+var fastLinkFlagVal string
+
+// fastLinkFlag returns the gcc `-fuse-ld=lld` flag when the LLVM linker is
+// available, else "". The GNU bfd linker (gcc's default) is pathologically slow
+// and memory-heavy on the self-host drivers' ~680 MB emitted `.s` — 10+ minutes,
+// the source of the intermittent shard-link TIMEOUTS (a cold driver link hanging
+// past the job deadline). ld.lld links the same freestanding `-static -nostdlib
+// -no-pie` ELF in seconds at a fraction of the RSS. Detected once; degrades
+// cleanly — a fork / minimal image without lld falls back to bfd (slow but
+// correct). The cross-process driver-binary disk cache keys on the `.s` CONTENT,
+// not the linker, and an lld- and a bfd-linked binary from the same `.s` are both
+// valid freestanding executables with identical runtime behaviour, so a mixed
+// fleet stays sound; CI installs lld everywhere so every link takes the fast path.
+// (The arm64-darwin cross-link already uses `-fuse-ld=lld` — same precedent.)
+func fastLinkFlag() string {
+	fastLinkOnce.Do(func() {
+		if _, err := exec.LookPath("ld.lld"); err == nil {
+			fastLinkFlagVal = "-fuse-ld=lld"
+		}
+	})
+	return fastLinkFlagVal
+}
+
+// driverLinkArgs builds the gcc argv for linking a self-host driver / asm `.s`
+// into a static freestanding binary, preferring the fast linker when present.
+func driverLinkArgs(asmPath, binPath string) []string {
+	args := []string{"-static", "-nostdlib", "-no-pie"}
+	if f := fastLinkFlag(); f != "" {
+		args = append(args, f)
+	}
+	return append(args, asmPath, "-o", binPath)
 }
 
 // cachedLink links asm into a static binary once per (gcc, asm) and
@@ -318,7 +352,7 @@ func cachedLink(t *testing.T, gcc, asm string) string {
 		if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
 			return "", err
 		}
-		if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		if out, err := exec.Command(gcc, driverLinkArgs(asmPath, binPath)...).CombinedOutput(); err != nil {
 			return "", fmt.Errorf("gcc: %w\n%s", err, out)
 		}
 		if diskBin != "" {
