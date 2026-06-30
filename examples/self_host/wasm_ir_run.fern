@@ -109,7 +109,7 @@ function main(): i32 {
         // The clock builtins (monotonic_ns / now_unix_ms / now_ns) wrap the
         // preview1 wasi clock_time_get import — emitted (before the function
         // section, like the other imports) when the module reads any clock.
-        if (wasm_ir.module_emits_op(mod, "monotonic_ns") || wasm_ir.module_emits_op(mod, "now_unix_ms") || wasm_ir.module_emits_op(mod, "now_ns")) {
+        if (wasm_ir.module_emits_op(mod, "monotonic_ns") || wasm_ir.module_emits_op(mod, "now_unix_ms") || wasm_ir.module_emits_op(mod, "now_ns") || wasm_ir.module_emits_op(mod, "temp_dir")) {
             o = o + "  (import \"wasi_snapshot_preview1\" \"clock_time_get\" (func $clock_time_get (param i32 i64 i32) (result i32)))\n";
         }
         // args() reads the wasi argv vector — its args_sizes_get / args_get
@@ -129,6 +129,9 @@ function main(): i32 {
         if (wasm_ir.module_emits_op(mod, "remove_file") || wasm_ir.module_emits_op(mod, "remove_dir_all")) { o = o + wasm.remove_file_import(); }
         // remove_dir_all also rmdirs each emptied directory via path_remove_directory.
         if (wasm_ir.module_emits_op(mod, "remove_dir_all")) { o = o + wasm.remove_dir_import(); }
+        // temp_dir(prefix) mkdirs a unique dir under the preopen via
+        // path_create_directory (must precede the function section).
+        if (wasm_ir.module_emits_op(mod, "temp_dir")) { o = o + wasm.temp_dir_import(); }
         o = o + "  (memory (export \"memory\") 16)\n";
         // String literals -> data-section blocks `[len:i32 LE][bytes]`. Emitted
         // caller-side (wasm owns le32_escape/wat_escape); wasm_ir supplies the
@@ -140,7 +143,7 @@ function main(): i32 {
                 + wasm.le32_escape(sv[di].len()) + wasm.wat_escape(sv[di]) + "\")\n";
             di = di + 1;
         }
-        if (wasm_ir.module_allocates(mod) || wasm_ir.module_uses_i32_to_string(mod) || wasm_ir.module_uses_chr(mod) || wasm_ir.module_uses_strbuf(mod) || wasm_ir.module_emits_op(mod, "env") || wasm_ir.module_emits_op(mod, "stat") || wasm_ir.module_emits_op(mod, "remove_file") || wasm_ir.module_emits_op(mod, "read_dir") || wasm_ir.module_emits_op(mod, "remove_dir_all")) {
+        if (wasm_ir.module_allocates(mod) || wasm_ir.module_uses_i32_to_string(mod) || wasm_ir.module_uses_chr(mod) || wasm_ir.module_uses_strbuf(mod) || wasm_ir.module_emits_op(mod, "env") || wasm_ir.module_emits_op(mod, "stat") || wasm_ir.module_emits_op(mod, "remove_file") || wasm_ir.module_emits_op(mod, "read_dir") || wasm_ir.module_emits_op(mod, "remove_dir_all") || wasm_ir.module_emits_op(mod, "temp_dir")) {
             o = o + wasm.heap_alloc_helpers(wasm_ir.heap_base_for(mod), wasm_ir.fl_base_for(mod), wasm_ir.fl_cells());
             o = o + wasm.rc_runtime_helpers(wasm_ir.heap_base_for(mod));
         }
@@ -182,7 +185,7 @@ function main(): i32 {
         // clock builtins (each result i64), reading the preview1 clock_time_get
         // import into the 8-byte scratch at addr 16 — emitted as a trio (the AST
         // path does the same) when the module reads any clock.
-        if (wasm_ir.module_emits_op(mod, "monotonic_ns") || wasm_ir.module_emits_op(mod, "now_unix_ms") || wasm_ir.module_emits_op(mod, "now_ns")) { o = o + wasm.clock_funcs(); }
+        if (wasm_ir.module_emits_op(mod, "monotonic_ns") || wasm_ir.module_emits_op(mod, "now_unix_ms") || wasm_ir.module_emits_op(mod, "now_ns") || wasm_ir.module_emits_op(mod, "temp_dir")) { o = o + wasm.clock_funcs(); }
         // $__fern_args builds the argv string[] via the wasi args_get import +
         // the heap runtime (module_allocates pulls the heap in for an args
         // module — op_allocates admits "args"). Emitted when the module reads argv.
@@ -206,6 +209,9 @@ function main(): i32 {
         // $__fern_remove_dir_all(path): recursive rm -rf -> Option[IoError] box.
         // Heap-backed + uses $__fern_arr_push (both folded into the gates above).
         if (wasm_ir.module_emits_op(mod, "remove_dir_all")) { o = o + wasm.remove_dir_func(); }
+        // $__fern_temp_dir(prefix): mkdir a unique `<prefix>-<ns>` dir under the
+        // preopen -> Result[string, IoError]. Heap-backed + uses the clock helper.
+        if (wasm_ir.module_emits_op(mod, "temp_dir")) { o = o + wasm.temp_dir_func(); }
         // $__fern_read_file / $__fern_write_file: open under preopen fd 3 and
         // read/write the whole file, boxing a Result[string, IoError] /
         // Option[IoError]. They alloc via the heap runtime (module_allocates
