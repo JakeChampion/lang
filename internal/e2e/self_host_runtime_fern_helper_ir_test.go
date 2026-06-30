@@ -118,6 +118,15 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			"__fn___fern_str_concat",
 			[]string{"\n__fern_str_concat:", ".Lstrconcat_a_loop"},
 		},
+		{
+			// i32_to_string — migrated on the IR path too. The IR symbol
+			// __fn___fern_i32_to_string is unchanged, but the old hand-written body's
+			// loop label .Liri2s_div and stack-arg load `movq 8(%rsp), %rdi` are gone.
+			"i32_to_string",
+			`function main(): i32 { return i32_to_string(42).len(); }`,
+			"__fn___fern_i32_to_string",
+			[]string{".Liri2s_div", "movq 8(%rsp), %rdi"},
+		},
 	}
 
 	for _, tc := range cases {
