@@ -659,7 +659,6 @@ pub function wasm_eligible(mod: parser.Module): boolean {
         && !module_emits_op(mod, "tcp_pollable")
         && !module_emits_op(mod, "remove_dir_all")
         && !module_emits_op(mod, "temp_dir")
-        && !module_emits_op(mod, "read_dir")
         && !module_emits_op(mod, "subprocess")
         && !module_emits_op(mod, "fsin")
         && !module_emits_op(mod, "fcos")
@@ -1276,6 +1275,14 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // path_unlink_file import + heap) when the module removes a file. No
             // struct payload, so unlike stat it needs no type-id.
             out = out + "    call $__fern_remove_file\n";
+        } else if (o.kind == "read_dir") {
+            // stack: path strblock ptr -> list the directory's base-name children,
+            // push a Result[string[], IoError] box. $__fern_read_dir (param i32
+            // path, result i32) wraps preview1 path_open + fd_readdir (cookie loop,
+            // skipping . / ..) and builds the string[] via $__fern_arr_push;
+            // emitted caller-side in wasm_ir_run (with the path_open/fd_readdir/
+            // fd_close imports + heap + arr_push) when the module reads a directory.
+            out = out + "    call $__fern_read_dir\n";
         } else if (o.kind == "args") {
             // 0-arg -> build a fresh string[] of the command-line arguments and
             // push its block ptr. The helper ($__fern_args, result i32) reads the
