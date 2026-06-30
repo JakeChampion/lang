@@ -253,13 +253,18 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
             if (top < 0 || sc_kind[top] != "if" || sc_seen_else[top] == 1) { ok = false; }
             else {
                 var merge_id2: i32 = sc_target[top];
-                var reaches: i32 = 0; if (cur_term.kind == "") { reaches = 1; }
+                // The then-arm reaches the merge only if it ran off its end
+                // live — not if it returned, nor if it branched out (break /
+                // continue), which leaves cur_dead with an empty terminator.
+                var reaches: i32 = 0; if (cur_term.kind == "" && !cur_dead) { reaches = 1; }
                 if (reaches == 1) { cur_term = STerm_br(merge_id2); }
                 sc_then_blk = vset(sc_then_blk, top, cur_id);
                 sc_then_reaches = vset(sc_then_reaches, top, reaches);
                 var fs: i32 = 0;
                 while (fs < nslots) { sc_then_slots = vset(sc_then_slots, top * nslots + fs, slots[fs]); fs = fs + 1; }
-                blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
+                // Don't emit a phantom block for an arm that already branched
+                // out (its real terminated block was appended at the branch).
+                if (!cur_dead) { blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds }); }
                 sc_seen_else = vset(sc_seen_else, top, 1);
                 var rs: i32 = 0;
                 while (rs < nslots) { slots = vset(slots, rs, sc_snap[top * nslots + rs]); rs = rs + 1; }
@@ -349,11 +354,11 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
                 var parent3: i32 = sc_parent[t2];
                 if (sc_seen_else[t2] == 0) {
                     var else_id_a: i32 = sc_else[t2];
-                    var t_reaches: i32 = 0; if (cur_term.kind == "") { t_reaches = 1; }
+                    var t_reaches: i32 = 0; if (cur_term.kind == "" && !cur_dead) { t_reaches = 1; }
                     var then_blk: i32 = cur_id;
                     var then_slots_a: i32[] = slots;
                     if (t_reaches == 1) { cur_term = STerm_br(merge3); }
-                    blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
+                    if (!cur_dead) { blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds }); }
                     blocks = blocks.append(ssa.SBlock { id: else_id_a, insts: [], term: STerm_br(merge3), preds: [parent3] });
                     var preds_a: i32[] = [];
                     if (t_reaches == 1) { preds_a = preds_a.append(then_blk); }
@@ -373,17 +378,17 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
                         s2 = s2 + 1;
                     }
                 } else {
-                    var e_reaches: i32 = 0; if (cur_term.kind == "") { e_reaches = 1; }
+                    var e_reaches: i32 = 0; if (cur_term.kind == "" && !cur_dead) { e_reaches = 1; }
                     var else_blk: i32 = cur_id;
                     var else_slots_a: i32[] = slots;
                     if (e_reaches == 1) { cur_term = STerm_br(merge3); }
-                    blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
+                    if (!cur_dead) { blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds }); }
                     var then_blk2: i32 = sc_then_blk[t2];
                     var then_reaches2: i32 = sc_then_reaches[t2];
                     var preds_b: i32[] = [];
                     if (then_reaches2 == 1) { preds_b = preds_b.append(then_blk2); }
                     if (e_reaches == 1) { preds_b = preds_b.append(else_blk); }
-                    cur_id = merge3; cur_insts = []; cur_preds = preds_b; cur_term = STerm_none(); cur_dead = false;
+                    cur_id = merge3; cur_insts = []; cur_preds = preds_b; cur_term = STerm_none(); cur_dead = (preds_b.len() == 0);
                     var s3: i32 = 0;
                     while (s3 < nslots) {
                         var tvv: i32 = sc_then_slots[t2 * nslots + s3];
