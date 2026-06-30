@@ -89,11 +89,24 @@ fall-through) with a phi where the incoming values differ. This is the canonical
 `while` shape `irlower` emits (`block; loop; <cond> not; br_if 1; <body>; br 0;
 end; end`). Validated by running lifted loops through `ssa.eval_func` across
 iterations — `while`-sum (loop-carried `i`/`acc` phis) and an `if` nested inside
-a loop (exercising the unified scope-depth resolution). Still out of subset
-(→ `ok=false`): value-producing ifs (`BlockTypeI32`+), tagged `break`/`continue`
-to non-canonical depths, and memory / struct / map / float / i64 ops. Next:
-value-producing ifs + `break`/`continue`, then wiring the lift into a backend as
-an alternative to `build_func`.
+a loop (exercising the unified scope-depth resolution).
+
+**Slice 2 ✅ (landed — `break` / `continue` + dead-arm cleanup):** `break`
+(a `br` to an enclosing `block`'s exit) and `continue` (a `br` to an enclosing
+`loop`'s header) already routed through the generic `br`/`brif` edge machinery,
+but an arm that branched out left a **phantom dead block** with an empty
+terminator that the `if`/`else` merge then wired in as a bogus predecessor —
+invalid SSA that `eval_func` only tolerated because the block was unreachable.
+Fixed by folding the `cur_dead` flag into the arm-reaches test (`cur_term == ""
+&& !cur_dead`) and skipping the append of an already-branched-out arm, so a
+`break`/`continue` arm contributes no edge and emits no orphan block (and a
+both-arms-diverge merge is correctly marked unreachable). Validated by running
+lifted `break` and `continue` loops through `ssa.eval_func` and by inspecting
+the emitted SSA (no dead predecessors). Still out of subset (→ `ok=false`):
+value-producing ifs (`BlockTypeI32`+; `irlower` doesn't emit them — it carries
+values through locals) and memory / struct / map / float / i64 ops. Next:
+wiring the lift into a backend (e.g. `ssa_x86`) as an alternative to
+`build_func`, end-to-end IR → lift → SSA → asm.
 
 ## Phases
 

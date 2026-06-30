@@ -206,6 +206,50 @@ function main(): i32 {
     fails = fails + check_eval("evensum n=7", 1, 3, ev_ops, [7], 12);  // 0+2+4+6
     fails = fails + check_eval("evensum n=1", 1, 3, ev_ops, [1], 0);
 
+    // --- case L3: `break` out of a loop (br to the block exit) ------------
+    //   brk(n): var i=0,acc=0; while (i<n) { if (i==3) { break; } acc=acc+i; i=i+1; } return acc;
+    var brk_ops: ir.Op[] = [
+        ir.op_const_i32(0), ir.op_store_local(1),
+        ir.op_const_i32(0), ir.op_store_local(2),
+        ir.op_block(0),
+          ir.op_loop(0),
+            ir.op_load_local(1), ir.op_load_local(0), ir.op_bin("lt_s", 0, false), ir.op_bin("not", 0, false), ir.op_brif(1),
+            ir.op_load_local(1), ir.op_const_i32(3), ir.op_bin("eq", 0, false),
+            ir.op_if(0),
+              ir.op_br(2),                 // break: exit the block (if=0, loop=1, block=2)
+            ir.op_end(),
+            ir.op_load_local(2), ir.op_load_local(1), ir.op_bin("add", 0, false), ir.op_store_local(2),
+            ir.op_load_local(1), ir.op_const_i32(1), ir.op_bin("add", 0, false), ir.op_store_local(1),
+            ir.op_br(0),
+          ir.op_end(),
+        ir.op_end(),
+        ir.op_load_local(2), ir.op_return()
+    ];
+    fails = fails + check_eval("break n=10", 1, 3, brk_ops, [10], 3);   // 0+1+2, then i==3 breaks
+    fails = fails + check_eval("break n=2", 1, 3, brk_ops, [2], 1);     // normal exit before break
+
+    // --- case L4: `continue` in a loop (br to the loop header) ------------
+    //   cont(n): var i=0,acc=0; while (i<n) { i=i+1; if (i==3) { continue; } acc=acc+i; } return acc;
+    var cont_ops: ir.Op[] = [
+        ir.op_const_i32(0), ir.op_store_local(1),
+        ir.op_const_i32(0), ir.op_store_local(2),
+        ir.op_block(0),
+          ir.op_loop(0),
+            ir.op_load_local(1), ir.op_load_local(0), ir.op_bin("lt_s", 0, false), ir.op_bin("not", 0, false), ir.op_brif(1),
+            ir.op_load_local(1), ir.op_const_i32(1), ir.op_bin("add", 0, false), ir.op_store_local(1),
+            ir.op_load_local(1), ir.op_const_i32(3), ir.op_bin("eq", 0, false),
+            ir.op_if(0),
+              ir.op_br(1),                 // continue: back to the loop header (if=0, loop=1)
+            ir.op_end(),
+            ir.op_load_local(2), ir.op_load_local(1), ir.op_bin("add", 0, false), ir.op_store_local(2),
+            ir.op_br(0),
+          ir.op_end(),
+        ir.op_end(),
+        ir.op_load_local(2), ir.op_return()
+    ];
+    fails = fails + check_eval("continue n=5", 1, 3, cont_ops, [5], 12);  // skips i==3 (=3), sums 1+2+4+5
+    fails = fails + check_eval("continue n=4", 1, 3, cont_ops, [4], 7);   // sums 1+2+4
+
     // --- case 5: an out-of-subset op must bail (ok=false) ------------------
     var bad_ops: ir.Op[] = [
         ir.op_alloc()

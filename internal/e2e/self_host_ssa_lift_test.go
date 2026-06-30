@@ -57,6 +57,10 @@ func TestSelfHostSSALift(t *testing.T) {
 		"ok - evensum n=6 => 6\n" +
 		"ok - evensum n=7 => 12\n" +
 		"ok - evensum n=1 => 0\n" +
+		"ok - break n=10 => 3\n" +
+		"ok - break n=2 => 1\n" +
+		"ok - continue n=5 => 12\n" +
+		"ok - continue n=4 => 7\n" +
 		"ok - out-of-subset op bails\n" +
 		"# all lift checks passed\n"
 
