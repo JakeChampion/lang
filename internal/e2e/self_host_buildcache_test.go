@@ -282,16 +282,24 @@ var fastLinkFlagVal string
 
 // fastLinkFlag returns the gcc `-fuse-ld=lld` flag when the LLVM linker is
 // available, else "". The GNU bfd linker (gcc's default) is pathologically slow
-// and memory-heavy on the self-host drivers' ~680 MB emitted `.s` — 10+ minutes,
-// the source of the intermittent shard-link TIMEOUTS (a cold driver link hanging
-// past the job deadline). ld.lld links the same freestanding `-static -nostdlib
-// -no-pie` ELF in seconds at a fraction of the RSS. Detected once; degrades
-// cleanly — a fork / minimal image without lld falls back to bfd (slow but
-// correct). The cross-process driver-binary disk cache keys on the `.s` CONTENT,
-// not the linker, and an lld- and a bfd-linked binary from the same `.s` are both
-// valid freestanding executables with identical runtime behaviour, so a mixed
-// fleet stays sound; CI installs lld everywhere so every link takes the fast path.
-// (The arm64-darwin cross-link already uses `-fuse-ld=lld` — same precedent.)
+// and memory-heavy on the self-host DRIVER binaries' ~680 MB emitted `.s` — 10+
+// minutes, the source of the intermittent shard-link TIMEOUTS (a cold driver link
+// hanging past the job deadline). ld.lld links the same `.s` in seconds at a
+// fraction of the RSS. Detected once; degrades cleanly — a fork / minimal image
+// without lld falls back to bfd (slow but correct).
+//
+// IMPORTANT — only for the NATIVE-Go-emitted DRIVER asm (driverLinkArgs /
+// cachedDriverBin), NOT for SELF-HOST-emitted programs (cachedLink / buildBin):
+// the self-host x86-64 backend emits freestanding `-static -nostdlib -no-pie`
+// programs that lld links INCORRECTLY (e.g. `string[][]` -> exit 253 vs bfd's 5;
+// a section/heap-layout assumption the self-host asm makes that bfd honours and
+// lld lays out differently). The native Go backend's driver asm IS lld-correct
+// (the e2e suite passes with lld-linked drivers), and it is the only ~680 MB
+// link, so lld is scoped to it; the small self-host test-program links stay on
+// bfd (fast anyway). The driver-binary disk cache keys on the `.s` CONTENT and a
+// driver is always native-Go-emitted, so an lld- and a bfd-linked driver from the
+// same `.s` are interchangeable across the fleet. (The arm64-darwin cross-link
+// already uses `-fuse-ld=lld` — same precedent for the native backends.)
 func fastLinkFlag() string {
 	fastLinkOnce.Do(func() {
 		if _, err := exec.LookPath("ld.lld"); err == nil {
@@ -301,8 +309,10 @@ func fastLinkFlag() string {
 	return fastLinkFlagVal
 }
 
-// driverLinkArgs builds the gcc argv for linking a self-host driver / asm `.s`
-// into a static freestanding binary, preferring the fast linker when present.
+// driverLinkArgs builds the gcc argv for linking a NATIVE-Go-emitted self-host
+// DRIVER `.s` into a static freestanding binary, preferring lld when present (see
+// fastLinkFlag — lld is correct for the driver asm and is the slow link). NOT for
+// self-host-emitted programs, which lld mis-links (cachedLink stays on bfd).
 func driverLinkArgs(asmPath, binPath string) []string {
 	args := []string{"-static", "-nostdlib", "-no-pie"}
 	if f := fastLinkFlag(); f != "" {
@@ -352,7 +362,11 @@ func cachedLink(t *testing.T, gcc, asm string) string {
 		if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
 			return "", err
 		}
-		if out, err := exec.Command(gcc, driverLinkArgs(asmPath, binPath)...).CombinedOutput(); err != nil {
+		// bfd (NOT driverLinkArgs/lld): cachedLink links SELF-HOST-emitted programs
+		// (via buildBin), and lld mis-links those freestanding binaries (see
+		// fastLinkFlag — `string[][]` exits 253 under lld vs 5 under bfd). These are
+		// small, so bfd is fast; lld's win is only on the ~680 MB native-Go driver.
+		if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 			return "", fmt.Errorf("gcc: %w\n%s", err, out)
 		}
 		if diskBin != "" {
