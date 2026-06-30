@@ -1666,6 +1666,16 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     if (id.name == "str_repeat") { return ty_string(); }
                     if (id.name == "str_replace") { return ty_string(); }
                     if (id.name == "chr") { return ty_string(); }
+                    // Raw-memory intrinsics (#2649 Tier-2 floor). Pointers are
+                    // machine words carried as i32; __raw_string is the one that
+                    // produces a typed string. The stores return i32 (the value
+                    // written) so they stay value-expressions, not void.
+                    if (id.name == "__raw_alloc") { return ty_i32(); }
+                    if (id.name == "__raw_store8") { return ty_i32(); }
+                    if (id.name == "__raw_load8") { return ty_i32(); }
+                    if (id.name == "__raw_store_ptr") { return ty_i32(); }
+                    if (id.name == "__raw_load_ptr") { return ty_i32(); }
+                    if (id.name == "__raw_string") { return ty_string(); }
                     if (id.name == "exit") { return ty_i32(); }
                     if (id.name == "args_count") { return ty_i32(); }
                     if (id.name == "arg_at") { return ty_string(); }

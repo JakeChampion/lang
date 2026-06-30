@@ -349,6 +349,26 @@ pub function op_str_slice(): Op { return op0("str_slice"); }
 // helper. The register backends copy 8-byte slots regardless and ignore it.
 pub function op_arr_slice(width: i32): Op { return Op { kind: "arr_slice", i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
 
+// Raw-memory intrinsics (issue #2649, Tier-2 floor — see docs/RUNTIME-INTRINSICS.md).
+// Unsafe, unchecked, `__`-prefixed; only the audited Tier-2 runtime helpers use
+// them. Each lowers to a SINGLE instruction (or one __fern_alloc call), so they
+// add no runtime symbol. Pointers are machine words carried as i32 at the source
+// surface; the register backends use the native 8-byte width.
+//   raw_alloc   pops [n]            → ptr (call __fern_alloc)
+//   raw_store8  pops [ptr, off, v]  → v   (movb low byte of v to [ptr+off])
+//   raw_load8   pops [ptr, off]     → zero-extended byte at [ptr+off]
+//   raw_store_ptr pops [ptr, off, v]→ v   (store word slot at [ptr+off*W])
+//   raw_load_ptr  pops [ptr, off]   → word slot at [ptr+off*W]
+//   raw_string  pops [data, len]    → a fresh 16-byte string box {data, len}
+// The stores push v back (a value, not void) so the operand stack stays balanced
+// with the "every expr pushes one value" invariant; statement position drops it.
+pub function op_raw_alloc(): Op { return op0("raw_alloc"); }
+pub function op_raw_store8(): Op { return op0("raw_store8"); }
+pub function op_raw_load8(): Op { return op0("raw_load8"); }
+pub function op_raw_store_ptr(): Op { return op0("raw_store_ptr"); }
+pub function op_raw_load_ptr(): Op { return op0("raw_load_ptr"); }
+pub function op_raw_string(): Op { return op0("raw_string"); }
+
 // Random / byte-source builtins (issue #2747) — the cross-backend byte source
 // uuid (#2682) and a future std/crypto build on. Each lowers to a runtime
 // helper the IR backends emit (no `__fn_` body), so the eligibility gate treats
