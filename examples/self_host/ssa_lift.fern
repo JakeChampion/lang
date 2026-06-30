@@ -1,0 +1,373 @@
+// examples/self_host/ssa_lift.fern — lift the self-host STACK IR (ir.fern's
+// `Op[]`) into SSA form (ssa.fern's `SFunc`). This is the self-hosted mirror
+// of native's `internal/ssa/lift.go` (`LiftFromIR`): the native compiler
+// lowers AST -> ir.Op[] and then LIFTS that stack stream into SSA before its
+// ~14-pass optimiser and the `wasm-ssa` backend. The self-host has had the
+// inverse-of-this for a while — `ssa.build_func` builds SSA straight from the
+// AST — but that duplicates the frontend and is all-or-nothing per program.
+// Lifting from the IR instead makes SSA a clean DOWNSTREAM layer over the
+// stack IR that is already the default lowering path (goal 1), so it inherits
+// the IR's coverage rather than re-deriving it.
+//
+// SCOPE (slice 0): the straight-line integer spine + structured void `if` /
+// `else` / `end` with phi reconstruction at merges (the canonical SSA win —
+// locals that differ across the two arms become block phis). Concretely:
+//   const_i32, load_local / store_local / tee_local, the integer binary ops
+//   (add/sub/mul/div/rem, the comparisons, and the bitwise/shift ops), the
+//   `not` unary, call_direct, drop, return, and if/else/end (BlockTypeVoid).
+// Everything else — block / loop / br / brif, value-producing ifs
+// (BlockTypeI32+), memory / struct / map / float ops — sets `ok=false` so a
+// caller falls back exactly as native's lift returns an error. This mirrors
+// how the IR rebuild ships (one op family per slice, explicit fallback in
+// between), and is validated end-to-end without a backend by running the
+// lifted SFunc through `ssa.eval_func` (the ssa.fern pattern).
+//
+// The lift is a single linear pass over the op stream (no recursion — the
+// structured-control-flow scopes are tracked on an explicit stack), so unlike
+// `build_func`'s threaded `BState` it keeps its state in plain locals.
+
+import "./ir";
+import "./ssa";
+
+// LResult mirrors ssa.BResult: the lifted function plus an `ok` flag that is
+// false when the op stream used a construct outside this slice's subset.
+pub struct LResult { func: ssa.SFunc, ok: boolean }
+
+// ---- small array helpers (value-semantics, no slice syntax) -------------
+
+// vset returns a copy of `a` with element `idx` replaced by `val`.
+function vset(a: i32[], idx: i32, val: i32): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < a.len()) {
+        if (i == idx) { out = out.append(val); } else { out = out.append(a[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// drop_last / drop_last2 pop one / two elements off the end of a stack array.
+function drop_last(a: i32[]): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < a.len() - 1) { out = out.append(a[i]); i = i + 1; }
+    return out;
+}
+function drop_last2(a: i32[]): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < a.len() - 2) { out = out.append(a[i]); i = i + 1; }
+    return out;
+}
+
+// ---- IR binary-op kind -> SSA `binary`/`unary` op string ----------------
+//
+// The stack IR names its ops ("add", "lt_s", …); the SSA `binary` inst carries
+// the SOURCE-LEVEL symbol ("+", "<", …) that `ssa.eval_binary` and the SSA
+// backends switch on. The lift therefore translates. An empty result means
+// "not a (slice-0) binary op".
+function bin_sym(k: string): string {
+    if (k == "add") { return "+"; }
+    if (k == "sub") { return "-"; }
+    if (k == "mul") { return "*"; }
+    if (k == "div_s") { return "/"; }
+    if (k == "div_u") { return "/"; }
+    if (k == "rem_s") { return "%"; }
+    if (k == "rem_u") { return "%"; }
+    if (k == "eq") { return "=="; }
+    if (k == "ne") { return "!="; }
+    if (k == "lt_s") { return "<"; }
+    if (k == "lt_u") { return "<"; }
+    if (k == "le_s") { return "<="; }
+    if (k == "le_u") { return "<="; }
+    if (k == "gt_s") { return ">"; }
+    if (k == "gt_u") { return ">"; }
+    if (k == "ge_s") { return ">="; }
+    if (k == "ge_u") { return ">="; }
+    if (k == "and") { return "&"; }
+    if (k == "or") { return "|"; }
+    if (k == "xor") { return "^"; }
+    if (k == "shl") { return "<<"; }
+    if (k == "shr_s") { return ">>"; }
+    if (k == "shr_u") { return ">>"; }
+    return "";
+}
+
+// ---- the lift ------------------------------------------------------------
+//
+// `nparams` params occupy SSA value ids 0..nparams-1 (emitted as `param`
+// insts in the entry block, matching SFunc's contract). `nslots` is the
+// function's local-slot count (params plus declared locals); slots beyond the
+// params start life as an explicit `const_int 0` so every slot is defined
+// before any load (the value-semantics discipline ssa/build_func also keeps).
+pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResult {
+    var nvals: i32 = 0;
+    var next_blk: i32 = 0;
+
+    var blocks: ssa.SBlock[] = [];      // finished blocks
+    var cur_id: i32 = next_blk; next_blk = next_blk + 1;   // entry = block 0
+    var cur_insts: ssa.SInst[] = [];
+    var cur_preds: i32[] = [];
+    var cur_term: ssa.STerm = STerm_none();
+
+    var stack: i32[] = [];              // operand value-id stack
+    var slots: i32[] = [];             // local slot -> current value id
+    var ok: boolean = true;
+
+    // params -> value ids 0..nparams-1, each also seeding its slot.
+    var p: i32 = 0;
+    while (p < nparams) {
+        var pv: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind: "param", result: pv, args: [], imm: p, str: "" });
+        slots = slots.append(pv);
+        p = p + 1;
+    }
+    // declared locals beyond the params -> const_int 0.
+    while (slots.len() < nslots) {
+        var zv: i32 = nvals; nvals = nvals + 1;
+        cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: zv, args: [], imm: 0, str: "" });
+        slots = slots.append(zv);
+    }
+
+    // if-scope stack (parallel arrays; innermost scope is the last entry).
+    // *_flat arrays store one slot-vector per open scope, stride = nslots.
+    var sc_merge: i32[] = [];
+    var sc_else: i32[] = [];
+    var sc_parent: i32[] = [];
+    var sc_seen_else: i32[] = [];        // 0/1 — has the `else` been reached?
+    var sc_then_blk: i32[] = [];          // the then-arm's exit block id
+    var sc_then_reaches: i32[] = [];      // 0/1 — does the then-arm fall through?
+    var sc_then_slots: i32[] = [];        // then-arm exit slot vector (flat)
+    var sc_snap: i32[] = [];              // pre-if slot vector (flat)
+
+    var i: i32 = 0;
+    while (i < ops.len() && ok) {
+        var op: ir.Op = ops[i];
+        var k: string = op.kind;
+
+        // Dead code after a terminator (e.g. ops following a `return` inside an
+        // arm) is skipped — only `else` / `end` act on a terminated block.
+        if (cur_term.kind != "" && k != "else" && k != "end") {
+            i = i + 1;
+            continue;
+        }
+
+        if (k == "const_i32") {
+            var v: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: v, args: [], imm: op.i32_imm, str: "" });
+            stack = stack.append(v);
+        } else if (k == "load_local") {
+            if (op.i32_imm < 0 || op.i32_imm >= slots.len()) { ok = false; }
+            else { stack = stack.append(slots[op.i32_imm]); }
+        } else if (k == "store_local") {
+            if (stack.len() < 1) { ok = false; }
+            else {
+                var sv: i32 = stack[stack.len() - 1];
+                stack = drop_last(stack);
+                slots = vset(slots, op.i32_imm, sv);
+            }
+        } else if (k == "tee_local") {
+            if (stack.len() < 1) { ok = false; }
+            else {
+                var tv: i32 = stack[stack.len() - 1];   // peek — tee leaves it on the stack
+                slots = vset(slots, op.i32_imm, tv);
+            }
+        } else if (bin_sym(k) != "") {
+            if (stack.len() < 2) { ok = false; }
+            else {
+                var r: i32 = stack[stack.len() - 1];
+                var l: i32 = stack[stack.len() - 2];
+                stack = drop_last2(stack);
+                var bv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "binary", result: bv, args: [l, r], imm: 0, str: bin_sym(k) });
+                stack = stack.append(bv);
+            }
+        } else if (k == "not") {
+            if (stack.len() < 1) { ok = false; }
+            else {
+                var x: i32 = stack[stack.len() - 1];
+                stack = drop_last(stack);
+                var nv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "unary", result: nv, args: [x], imm: 0, str: "!" });
+                stack = stack.append(nv);
+            }
+        } else if (k == "call_direct") {
+            var argc: i32 = op.i32_imm;
+            if (stack.len() < argc) { ok = false; }
+            else {
+                // Pop argc values and restore their original (push) order.
+                var rev: i32[] = [];
+                var c: i32 = 0;
+                while (c < argc) { rev = rev.append(stack[stack.len() - 1 - c]); c = c + 1; }
+                var cargs: i32[] = [];
+                var d: i32 = argc - 1;
+                while (d >= 0) { cargs = cargs.append(rev[d]); d = d - 1; }
+                var e: i32 = 0;
+                while (e < argc) { stack = drop_last(stack); e = e + 1; }
+                var cv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "call", result: cv, args: cargs, imm: 0, str: op.str });
+                stack = stack.append(cv);
+            }
+        } else if (k == "drop") {
+            if (stack.len() < 1) { ok = false; } else { stack = drop_last(stack); }
+        } else if (k == "return") {
+            if (stack.len() < 1) { ok = false; }
+            else {
+                var rv: i32 = stack[stack.len() - 1];
+                stack = drop_last(stack);
+                cur_term = STerm_ret(rv);
+            }
+        } else if (k == "if") {
+            if (op.i32_imm != 0) { ok = false; }            // slice 0: void if only
+            else if (stack.len() < 1) { ok = false; }
+            else {
+                var cond: i32 = stack[stack.len() - 1];
+                stack = drop_last(stack);
+                var then_id: i32 = next_blk; next_blk = next_blk + 1;
+                var else_id: i32 = next_blk; next_blk = next_blk + 1;
+                var merge_id: i32 = next_blk; next_blk = next_blk + 1;
+                var parent_id: i32 = cur_id;
+                cur_term = STerm_brif(cond, then_id, else_id);
+                blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
+
+                sc_merge = sc_merge.append(merge_id);
+                sc_else = sc_else.append(else_id);
+                sc_parent = sc_parent.append(parent_id);
+                sc_seen_else = sc_seen_else.append(0);
+                sc_then_blk = sc_then_blk.append(0 - 1);
+                sc_then_reaches = sc_then_reaches.append(0);
+                var sn: i32 = 0;
+                while (sn < nslots) { sc_snap = sc_snap.append(slots[sn]); sc_then_slots = sc_then_slots.append(0); sn = sn + 1; }
+
+                // open the then-arm.
+                cur_id = then_id; cur_insts = []; cur_preds = [parent_id]; cur_term = STerm_none();
+            }
+        } else if (k == "else") {
+            var top: i32 = sc_merge.len() - 1;
+            if (top < 0 || sc_seen_else[top] == 1) { ok = false; }
+            else {
+                var merge_id2: i32 = sc_merge[top];
+                var reaches: i32 = 0; if (cur_term.kind == "") { reaches = 1; }
+                if (reaches == 1) { cur_term = STerm_br(merge_id2); }
+                sc_then_blk = vset(sc_then_blk, top, cur_id);
+                sc_then_reaches = vset(sc_then_reaches, top, reaches);
+                var fs: i32 = 0;
+                while (fs < nslots) { sc_then_slots = vset(sc_then_slots, top * nslots + fs, slots[fs]); fs = fs + 1; }
+                blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
+                sc_seen_else = vset(sc_seen_else, top, 1);
+                // restore slots to the pre-if snapshot for the else-arm.
+                var rs: i32 = 0;
+                while (rs < nslots) { slots = vset(slots, rs, sc_snap[top * nslots + rs]); rs = rs + 1; }
+                cur_id = sc_else[top]; cur_insts = []; cur_preds = [sc_parent[top]]; cur_term = STerm_none();
+            }
+        } else if (k == "end") {
+            var t2: i32 = sc_merge.len() - 1;
+            if (t2 < 0) { ok = false; }
+            else {
+                var merge3: i32 = sc_merge[t2];
+                var parent3: i32 = sc_parent[t2];
+                if (sc_seen_else[t2] == 0) {
+                    // `if` with no `else`: the false edge of the entry's brif
+                    // targets a synthesized empty else block that just falls
+                    // through to the merge (so the brif target is real and the
+                    // merge gets a proper else-predecessor). The else "arm"
+                    // leaves the slots at the pre-if snapshot.
+                    var else_id_a: i32 = sc_else[t2];
+                    var t_reaches: i32 = 0; if (cur_term.kind == "") { t_reaches = 1; }
+                    var then_blk: i32 = cur_id;
+                    var then_slots_a: i32[] = slots;
+                    if (t_reaches == 1) { cur_term = STerm_br(merge3); }
+                    blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
+                    // the empty else block.
+                    blocks = blocks.append(ssa.SBlock { id: else_id_a, insts: [], term: STerm_br(merge3), preds: [parent3] });
+
+                    var preds_a: i32[] = [];
+                    if (t_reaches == 1) { preds_a = preds_a.append(then_blk); }
+                    preds_a = preds_a.append(else_id_a);
+                    cur_id = merge3; cur_insts = []; cur_preds = preds_a; cur_term = STerm_none();
+
+                    var s2: i32 = 0;
+                    while (s2 < nslots) {
+                        var snapv: i32 = sc_snap[t2 * nslots + s2];
+                        if (t_reaches == 1) {
+                            var tv2: i32 = then_slots_a[s2];
+                            if (tv2 != snapv) {
+                                var ph: i32 = nvals; nvals = nvals + 1;
+                                cur_insts = cur_insts.append(ssa.SInst { kind: "phi", result: ph, args: [tv2, snapv], imm: 0, str: "" });
+                                slots = vset(slots, s2, ph);
+                            } else { slots = vset(slots, s2, tv2); }
+                        } else { slots = vset(slots, s2, snapv); }
+                        s2 = s2 + 1;
+                    }
+                } else {
+                    // `if`/`else`: the else-arm is current; the then-arm was saved.
+                    var e_reaches: i32 = 0; if (cur_term.kind == "") { e_reaches = 1; }
+                    var else_blk: i32 = cur_id;
+                    var else_slots_a: i32[] = slots;
+                    if (e_reaches == 1) { cur_term = STerm_br(merge3); }
+                    blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
+
+                    var then_blk2: i32 = sc_then_blk[t2];
+                    var then_reaches2: i32 = sc_then_reaches[t2];
+                    var preds_b: i32[] = [];
+                    if (then_reaches2 == 1) { preds_b = preds_b.append(then_blk2); }
+                    if (e_reaches == 1) { preds_b = preds_b.append(else_blk); }
+                    cur_id = merge3; cur_insts = []; cur_preds = preds_b; cur_term = STerm_none();
+
+                    var s3: i32 = 0;
+                    while (s3 < nslots) {
+                        var tvv: i32 = sc_then_slots[t2 * nslots + s3];
+                        var evv: i32 = else_slots_a[s3];
+                        if (then_reaches2 == 1 && e_reaches == 1) {
+                            if (tvv != evv) {
+                                // phi args are parallel to preds: [then, else].
+                                var ph2: i32 = nvals; nvals = nvals + 1;
+                                cur_insts = cur_insts.append(ssa.SInst { kind: "phi", result: ph2, args: [tvv, evv], imm: 0, str: "" });
+                                slots = vset(slots, s3, ph2);
+                            } else { slots = vset(slots, s3, tvv); }
+                        } else if (then_reaches2 == 1) { slots = vset(slots, s3, tvv); }
+                        else if (e_reaches == 1) { slots = vset(slots, s3, evv); }
+                        else { slots = vset(slots, s3, tvv); }   // both arms diverge; merge is dead
+                        s3 = s3 + 1;
+                    }
+                }
+                // pop the scope.
+                sc_merge = drop_last(sc_merge);
+                sc_else = drop_last(sc_else);
+                sc_parent = drop_last(sc_parent);
+                sc_seen_else = drop_last(sc_seen_else);
+                sc_then_blk = drop_last(sc_then_blk);
+                sc_then_reaches = drop_last(sc_then_reaches);
+                var pf: i32 = 0;
+                while (pf < nslots) { sc_snap = drop_last(sc_snap); sc_then_slots = drop_last(sc_then_slots); pf = pf + 1; }
+            }
+        } else {
+            ok = false;   // outside slice 0 — caller falls back (as native's lift errors)
+        }
+        i = i + 1;
+    }
+
+    if (ok && sc_merge.len() != 0) { ok = false; }   // unbalanced if/end
+
+    if (ok) {
+        // A well-formed function body ends in `return`; if the trailing block
+        // has no terminator but a value is on the stack, treat it as the result.
+        if (cur_term.kind == "" && stack.len() >= 1) {
+            cur_term = STerm_ret(stack[stack.len() - 1]);
+        }
+        // Append the final block unless it is an empty unterminated tail.
+        if (cur_term.kind != "" || cur_insts.len() > 0 || cur_id == 0) {
+            blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
+        }
+    }
+
+    var f: ssa.SFunc = ssa.SFunc { name: name, nparams: nparams, nvals: nvals, blocks: blocks, entry: 0, takes_env: false };
+    return LResult { func: f, ok: ok };
+}
+
+// ---- STerm constructors (ssa.fern's t_* helpers are module-private) ------
+
+function STerm_ret(value: i32): ssa.STerm { return ssa.STerm { kind: "ret", cond: 0, target: 0, t: 0, f: 0, value: value }; }
+function STerm_br(target: i32): ssa.STerm { return ssa.STerm { kind: "br", cond: 0, target: target, t: 0, f: 0, value: 0 }; }
+function STerm_brif(cond: i32, t: i32, f: i32): ssa.STerm { return ssa.STerm { kind: "brif", cond: cond, target: 0, t: t, f: f, value: 0 }; }
+function STerm_none(): ssa.STerm { return ssa.STerm { kind: "", cond: 0, target: 0, t: 0, f: 0, value: 0 }; }
