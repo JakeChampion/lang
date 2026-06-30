@@ -18,9 +18,10 @@ import (
 // the lift consumes the real production IR, not synthetic ops, all the way to
 // running native code on both backends.
 //
-// Coverage is the lift's current integer subset (straight-line, loops, if-merge,
-// break, cross-function calls, recursion). Out-of-subset programs make the
-// driver exit non-zero; only in-subset programs are listed here.
+// Coverage is the lift's current subset: integer control flow (straight-line,
+// loops, if-merge, break, cross-function calls, recursion) plus string literals
+// + length (const_str / str_len, which lower RC-free). Out-of-subset programs
+// make the driver exit non-zero; only in-subset programs are listed here.
 func TestSelfHostSSALiftIRLower(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	armgcc, qemu := arm64Tooling(t)
@@ -90,6 +91,9 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 		{"breakloop", `function main(): i32 { var i = 0; while (i < 100) { if (i == 42) { break; } i = i + 1; } return i; }`},
 		{"callsum", `function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return add(20, 22); }`},
 		{"factrec", `function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { return fact(5); }`},
+		{"strlen", `function main(): i32 { var s: string = "hello"; return s.len(); }`},
+		{"strlen2", `function main(): i32 { return ("abcd").len() + ("xy").len(); }`},
+		{"strpick", `function main(): i32 { var s: string = "hi"; var t: string = "world"; if (s.len() < t.len()) { return t.len(); } return s.len(); }`},
 	}
 	for _, tc := range cases {
 		tc := tc
