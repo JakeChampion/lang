@@ -13137,13 +13137,17 @@ function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructD
 // donated (the donor path overwrites fields without dropping old values — sound
 // only for scalar donors) and is freed by exactly one deep-drop here.
 
-// enum_field_rc_droppable: a payload field type whose value is a single
-// rc-headered box that one __fern_rc_dec fully releases — a leak-safe scalar array
-// (i32[]/i64[]/f64[]/boolean[]). NOT a scalar (no rc — released with the box),
-// NOT a string (a header-less {ptr,len} fat struct, leak-only on this path — see
-// the block comment above), NOT string[] / struct / enum / map / opt / tuple.
-function enum_field_rc_droppable(t: string): boolean {
-    return is_leaksafe_array_field(t);
+// enum_field_rc_droppable: a payload field type whose value is an rc-headered box
+// the match-consume reclaim can release — a leak-safe scalar array
+// (i32[]/i64[]/f64[]/boolean[], freed by one __fern_rc_dec) OR a deep-drop-ok
+// nested struct (Perceus enum-payload slice: an rc-array-carrying LEAF struct,
+// released by __struct_drop_<T> + a box dec, the same depth-1 recursion the
+// struct-field deep-drop uses — see emit_enum_variant_drops). NOT a scalar (no rc —
+// released with the box), NOT a string (a header-less {ptr,len} fat struct,
+// leak-only on this path — see the block comment above), NOT string[] / enum / map /
+// opt / tuple, and NOT a non-leaf (cycle-risk) struct.
+function enum_field_rc_droppable(structs: parser.StructDecl[], t: string): boolean {
+    return is_leaksafe_array_field(t) || (decl_is_struct(structs, t) && nested_field_deep_drop_ok(structs, t));
 }
 
 // enum_variant_rc_droppable: every payload field of variant `vname` is either a
@@ -13154,7 +13158,7 @@ function enum_variant_rc_droppable(structs: parser.StructDecl[], vname: string):
     var fi: i32 = 0;
     while (fi < n) {
         var t: string = decl_field_type_at(structs, vname, fi);
-        if (!reuse_field_is_scalar(t) && !enum_field_rc_droppable(t)) { return false; }
+        if (!reuse_field_is_scalar(t) && !enum_field_rc_droppable(structs, t)) { return false; }
         fi = fi + 1;
     }
     return true;
@@ -13166,7 +13170,7 @@ function enum_variant_has_rc_payload(structs: parser.StructDecl[], vname: string
     var n: i32 = decl_field_count(structs, vname);
     var fi: i32 = 0;
     while (fi < n) {
-        if (enum_field_rc_droppable(decl_field_type_at(structs, vname, fi))) { return true; }
+        if (enum_field_rc_droppable(structs, decl_field_type_at(structs, vname, fi))) { return true; }
         fi = fi + 1;
     }
     return false;
@@ -13191,16 +13195,48 @@ function enum_all_variants_rc_droppable(structs: parser.StructDecl[], enum_name:
     return any && rc;
 }
 
+// variant_struct_payloads_fresh: every deep-drop-ok STRUCT payload arg of this
+// variant construction `V(args...)` is a fresh struct LITERAL (sole-owned). The
+// enum reclaim deep-drops such a payload at the consuming match; a bare-ident / call
+// payload would alias a local whose own exit-sweep ALSO deep-drops it → a double-free
+// of the payload's inner buffers (the variant-construction alias-inc protects only
+// the box pointer, not the rc fields one level down — the exact hazard the struct-
+// field deep-drop guards with the same fresh-literal rule). Array payloads are exempt
+// here: their bare-ident aliasing IS balanced by the construction array alias-inc, so
+// they stay admissible. A non-struct / non-deep-drop-ok field imposes no constraint.
+function variant_struct_payloads_fresh(args: parser.Expr[], variant_name: string, structs: parser.StructDecl[]): boolean {
+    var n: i32 = decl_field_count(structs, variant_name);
+    var i: i32 = 0;
+    while (i < n && i < args.len()) {
+        var ft: string = decl_field_type_at(structs, variant_name, i);
+        if (decl_is_struct(structs, ft) && nested_field_deep_drop_ok(structs, ft)) {
+            var fresh: boolean = false;
+            match (args[i]) {
+                parser.ExprStructLit(_) => { fresh = true; },
+                _ => {}
+            }
+            if (!fresh) { return false; }
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
 // fresh_rcpayload_enum_init: `e` is a sole-owner construction of an rc-payload
 // (deep-droppable) enum — `V(args...)` or a bare unit variant `V`. Returns the
-// enum's name, or "". Mirrors fresh_scalar_enum_init for the widened set.
+// enum's name, or "". Mirrors fresh_scalar_enum_init for the widened set. A
+// deep-drop-ok STRUCT payload must be a fresh struct literal
+// (variant_struct_payloads_fresh) so its match-site deep-drop can't double-free a
+// local the payload aliases; array payloads ride the construction alias-inc and need
+// no such gate.
 function fresh_rcpayload_enum_init(e: parser.Expr, structs: parser.StructDecl[]): string {
     match (e) {
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(id) => {
                     var owner: string = variant_enum_owner(structs, id.name);
-                    if (owner != "" && enum_all_variants_rc_droppable(structs, owner)) { return owner; }
+                    if (owner != "" && enum_all_variants_rc_droppable(structs, owner)
+                        && variant_struct_payloads_fresh(c.args, id.name, structs)) { return owner; }
                     return "";
                 },
                 _ => { return ""; }
@@ -13254,7 +13290,7 @@ function match_arm_binds_rc_payload(st: parser.Stmt, structs: parser.StructDecl[
                         // `extra_bindings[eb]` mis-infers the receiver on the
                         // self-host path, emitting an undefined __fn_i32__len.)
                         if (pv.binding != "" && pv.binding != "_") {
-                            if (enum_field_rc_droppable(decl_field_type_at(structs, vname, 0))) {
+                            if (enum_field_rc_droppable(structs, decl_field_type_at(structs, vname, 0))) {
                                 if (binding_escapes_arm(arm, pv.binding, none)) { return true; }
                             }
                         }
@@ -13263,7 +13299,7 @@ function match_arm_binds_rc_payload(st: parser.Stmt, structs: parser.StructDecl[
                         while (eb < pv.extra_bindings.len()) {
                             var ebn: string = pv.extra_bindings[eb];
                             if (ebn != "" && ebn != "_") {
-                                if (enum_field_rc_droppable(decl_field_type_at(structs, vname, eb + 1))) {
+                                if (enum_field_rc_droppable(structs, decl_field_type_at(structs, vname, eb + 1))) {
                                     if (binding_escapes_arm(arm, ebn, none)) { return true; }
                                 }
                             }
@@ -13370,10 +13406,29 @@ function emit_enum_variant_drops(s: LowerState, slot: i32, enum_name: string): L
             var n: i32 = decl_field_count(st.structs, vname);
             var fk: i32 = 0;
             while (fk < n) {
-                if (enum_field_rc_droppable(decl_field_type_at(st.structs, vname, fk))) {
+                var eft: string = decl_field_type_at(st.structs, vname, fk);
+                if (is_leaksafe_array_field(eft)) {
+                    // scalar-element array payload: one dec frees the buffer (scalar
+                    // elements carry no inner pointers to release).
                     st = st.emit(ir.op_load_local(slot));
                     st = st.emit(ir.op_struct_get(fk, struct_field_width(st.structs, vname, fk)));
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    st = st.emit(ir.op_drop());
+                } else if (decl_is_struct(st.structs, eft) && nested_field_deep_drop_ok(st.structs, eft)) {
+                    // deep-drop-ok nested-struct payload (Perceus enum-payload slice):
+                    // __struct_drop_<T> releases the payload's rc-array fields (depth-1,
+                    // leaf — nested_field_deep_drop_ok), then __fern_rc_dec frees the
+                    // payload box. NO is_unique guard: consumed_rcpayload_enum_frees only
+                    // admits an enum whose struct payload was a FRESH struct LITERAL
+                    // (variant_struct_payloads_fresh), so the payload box is the sole
+                    // owner (rc == 1) — a bare-ident/call payload aliasing a swept local
+                    // is rejected (its inner buffers would double-free). The backend
+                    // auto-emits __struct_drop_<T> on seeing the call_direct (asm_ir op
+                    // scan / wasm struct_drop_types).
+                    st = st.emit(ir.op_load_local(slot));
+                    st = st.emit(ir.op_struct_get(fk, struct_field_width(st.structs, vname, fk)));
+                    st = st.emit(ir.op_call_direct("__struct_drop_" + eft, 1));   // release payload's rc fields; returns box
+                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));          // free the payload box
                     st = st.emit(ir.op_drop());
                 }
                 fk = fk + 1;
