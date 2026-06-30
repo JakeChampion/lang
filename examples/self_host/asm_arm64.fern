@@ -1389,23 +1389,24 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             return s;
         }
         if (fa.field == "gcd" && c.args.len() == 1) {
-            s = emit_expr(fa.obj, s);
-            s = emit_expr(c.args[0], s);
-            s = s.write("    ldr x1, [sp], #16\n");   // other
-            s = s.write("    ldr x0, [sp], #16\n");   // n
-            s = s.write("    bl __fern_i32_gcd\n");
+            // __fern_i32_gcd is a Fern runtime function (#2649): __fn_ stack
+            // convention — n=param[0] at [x29,#16], other=param[1] at [x29,#32].
+            s = emit_expr(c.args[0], s);   // other
+            s = emit_expr(fa.obj, s);      // n
+            s = s.write("    bl __fn___fern_i32_gcd\n");
+            s = s.write("    add sp, sp, #32\n");
             s = s.write("    str x0, [sp, #-16]!\n");
-            s = s.mark_heap();
+            s = s.mark_i32_gcd();
             return s;
         }
         if (fa.field == "lcm" && c.args.len() == 1) {
-            s = emit_expr(fa.obj, s);
-            s = emit_expr(c.args[0], s);
-            s = s.write("    ldr x1, [sp], #16\n");   // other
-            s = s.write("    ldr x0, [sp], #16\n");   // n
-            s = s.write("    bl __fern_i32_lcm\n");
+            // __fern_i32_lcm is a Fern runtime function (#2649); it calls gcd.
+            s = emit_expr(c.args[0], s);   // other
+            s = emit_expr(fa.obj, s);      // n
+            s = s.write("    bl __fn___fern_i32_lcm\n");
+            s = s.write("    add sp, sp, #32\n");
             s = s.write("    str x0, [sp, #-16]!\n");
-            s = s.mark_heap();
+            s = s.mark_i32_lcm();
             return s;
         }
         if (fa.field == "max" && c.args.len() == 1) {
@@ -7673,57 +7674,9 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         }
         s = s.write(".size __fern_random_bytes, .-__fern_random_bytes\n");
 
-        // __fern_i32_gcd(x0 = n, x1 = other) → gcd(|n|, |other|) by
-        // Euclid. Mirrors std/i32.gcd. (x9-x13 are temps; leaf fn.)
-        s = s.write(".globl __fern_i32_gcd\n");
-        s = s.write(".type __fern_i32_gcd, %function\n");
-        s = s.write("__fern_i32_gcd:\n");
-        s = s.write("    neg x10, x0\n");
-        s = s.write("    cmp x0, #0\n");
-        s = s.write("    csel x9, x10, x0, lt\n");    // a = |n|
-        s = s.write("    neg x10, x1\n");
-        s = s.write("    cmp x1, #0\n");
-        s = s.write("    csel x11, x10, x1, lt\n");   // b = |other|
-        s = s.write(".Lgcd_loop:\n");
-        s = s.write("    cbz x11, .Lgcd_done\n");
-        s = s.write("    mov x12, x11\n");            // t = b
-        s = s.write("    sdiv x13, x9, x11\n");       // q = a / b
-        s = s.write("    msub x11, x13, x11, x9\n");  // b = a - q*b = a%b
-        s = s.write("    mov x9, x12\n");             // a = t
-        s = s.write("    b .Lgcd_loop\n");
-        s = s.write(".Lgcd_done:\n");
-        s = s.write("    mov x0, x9\n");
-        s = s.write("    ret\n");
-        s = s.write(".size __fern_i32_gcd, .-__fern_i32_gcd\n");
-
-        // __fern_i32_lcm(x0 = n, x1 = other) → lcm. Mirrors
-        // std/i32.lcm: 0 if either is 0, else |n/gcd| * |other|.
-        s = s.write(".globl __fern_i32_lcm\n");
-        s = s.write(".type __fern_i32_lcm, %function\n");
-        s = s.write("__fern_i32_lcm:\n");
-        s = s.write("    cbz x0, .Llcm_zero\n");
-        s = s.write("    cbz x1, .Llcm_zero\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    mov x19, x0\n");             // n
-        s = s.write("    mov x20, x1\n");             // other
-        s = s.write("    bl __fern_i32_gcd\n");       // x0 = g
-        s = s.write("    sdiv x1, x19, x0\n");        // n / g
-        s = s.write("    neg x2, x1\n");
-        s = s.write("    cmp x1, #0\n");
-        s = s.write("    csel x1, x2, x1, lt\n");     // |n/g|
-        s = s.write("    neg x2, x20\n");
-        s = s.write("    cmp x20, #0\n");
-        s = s.write("    csel x2, x2, x20, lt\n");    // |other|
-        s = s.write("    mul x0, x1, x2\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
-        s = s.write(".Llcm_zero:\n");
-        s = s.write("    mov x0, #0\n");
-        s = s.write("    ret\n");
-        s = s.write(".size __fern_i32_lcm, .-__fern_i32_lcm\n");
+        // __fern_i32_gcd / __fern_i32_lcm are now Fern runtime functions (#2649):
+        // see asmcore.rt_src_i32_gcd / _lcm, emitted (need-gated) in the migrated-
+        // helpers section below. Pure scalar, so no longer in this heap block.
     }
     // Map runtime (string-keyed, 8-byte values). Mirror of asm.fern's
     // x86-64 runtime. A Map is a 16-byte box [keys: string[] @0,
@@ -8542,6 +8495,15 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     // language's no-runtime-check stance — i32 pow with negative exp is UB).
     if (s.has_need("i32_pow")) {
         s = emit_runtime_fern_fn(asmcore.rt_src_i32_pow(), s);
+    }
+    // __fern_i32_gcd / __fern_i32_lcm — Fern runtime functions (#2649), pure
+    // scalar (Tier 0). lcm's body calls `.gcd()`, so emit gcd first; close_needs
+    // pulls in i32_gcd whenever i32_lcm is needed (runtime_need_deps edge).
+    if (s.has_need("i32_gcd")) {
+        s = emit_runtime_fern_fn(asmcore.rt_src_i32_gcd(), s);
+    }
+    if (s.has_need("i32_lcm")) {
+        s = emit_runtime_fern_fn(asmcore.rt_src_i32_lcm(), s);
     }
     // __fern_str_reverse: x0 = src box. Returns x0 = new
     // string box with bytes in reverse order.

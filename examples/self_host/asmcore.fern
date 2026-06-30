@@ -343,6 +343,18 @@ pub function (s: EmitState) mark_i32_pow(): EmitState {
     return s.need("i32_pow");
 }
 
+pub function (s: EmitState) mark_i32_gcd(): EmitState {
+    return s.need("i32_gcd");
+}
+
+// lcm's helper calls gcd's. The AST emit path has no close_needs, so the mark
+// helper must pull in the transitive dep (i32_gcd) directly — same shape as
+// mark_arr_str_index_of marking str_eq. (runtime_need_deps declares the edge too,
+// for the IR path's close_needs; both kept in sync.)
+pub function (s: EmitState) mark_i32_lcm(): EmitState {
+    return s.need("i32_gcd").need("i32_lcm");
+}
+
 // rt_src_i32_pow is the Fern source for __fern_i32_pow(base, exp) = base^exp,
 // the integer-power runtime helper backing `n.pow(e)`. It is the first runtime
 // helper written in Fern instead of a hand-written asm string (issue #2649):
@@ -354,6 +366,19 @@ pub function (s: EmitState) mark_i32_pow(): EmitState {
 // no circularity (its body uses `*`/`-`/`while`, never `.pow()` itself).
 pub function rt_src_i32_pow(): string {
     return "function __fern_i32_pow(base: i32, exp: i32): i32 { var r: i32 = 1; var e: i32 = exp; while (e > 0) { r = r * base; e = e - 1; } return r; }";
+}
+
+// rt_src_i32_gcd / rt_src_i32_lcm back `n.gcd(m)` / `n.lcm(m)` (#2649), mirroring
+// std/i32.gcd / .lcm. gcd is pure scalar (Euclid on the absolute values — Tier 0,
+// no helper deps). lcm calls `.gcd()` (so its helper `call`s __fn___fern_i32_gcd):
+// runtime_need_deps maps i32_lcm → i32_gcd so close_needs emits gcd's body too.
+// gcd(0,0)=0, gcd(a,0)=|a|; lcm is 0 when either operand is 0, else |n/gcd|*|other|.
+pub function rt_src_i32_gcd(): string {
+    return "function __fern_i32_gcd(n: i32, other: i32): i32 { var a: i32 = n; if (a < 0) { a = 0 - a; } var b: i32 = other; if (b < 0) { b = 0 - b; } while (b != 0) { var t: i32 = b; b = a % b; a = t; } return a; }";
+}
+
+pub function rt_src_i32_lcm(): string {
+    return "function __fern_i32_lcm(n: i32, other: i32): i32 { if (n == 0) { return 0; } if (other == 0) { return 0; } var g: i32 = n.gcd(other); var q: i32 = n / g; if (q < 0) { q = 0 - q; } var b: i32 = other; if (b < 0) { b = 0 - b; } return q * b; }";
 }
 
 // The i32-array reducers backing `xs.sum()` / `.product()` / `.index_of(x)` /
@@ -1987,6 +2012,12 @@ pub function runtime_need_deps(name: string): string[] {
         // Linear scan comparing string elements with __fern_str_eq.
         var d3: string[] = ["str_eq"];
         return d3;
+    }
+    if (name == "i32_lcm") {
+        // __fern_i32_lcm's body calls `.gcd()` → __fn___fern_i32_gcd. Pure
+        // scalar, so no heap. (gcd itself has no deps.)
+        var dlcm: string[] = ["i32_gcd"];
+        return dlcm;
     }
     if (name == "arr_str_join") {
         // Joins with a separator via __fern_str_concat (which itself needs heap).
