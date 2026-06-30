@@ -2421,7 +2421,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                     s = emit_expr(b.right, s);
                     s = s.write("    popq %rsi\n");
                     s = s.write("    popq %rdi\n");
-                    s = s.write("    call __fern_str_eq\n");
+                    s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_eq\n    addq $16, %rsp\n");
                     if (b.op == "!=") {
                         s = s.write("    xorq $1, %rax\n");
                     }
@@ -4286,32 +4286,13 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
-    // __fern_str_eq: %rdi = box A, %rsi = box B. Returns 1 in
-    // %rax if both have the same length and bytes, else 0.
+    // __fern_str_eq is now a Fern runtime function (#2649): see
+    // asmcore.rt_src_str_eq, called via the __fn_ stack convention. Every caller
+    // (the == operator, the IR op, and the hand-asm map/arr_str internals) sets
+    // up %rdi=A/%rsi=B before the call, so the uniform push+stack-call works at
+    // all of them. Mirrors the x86-64 IR path + arm64.
     if (s.has_need("str_eq")) {
-        s = s.write("__fern_str_eq:\n");
-        s = s.write("    movq 8(%rdi), %rcx\n");
-        s = s.write("    cmpq 8(%rsi), %rcx\n");
-        s = s.write("    jne .Lstreq_no\n");
-        s = s.write("    movq (%rdi), %rdi\n");
-        s = s.write("    movq (%rsi), %rsi\n");
-        s = s.write("    cmpq $0, %rcx\n");
-        s = s.write("    je .Lstreq_yes\n");
-        s = s.write(".Lstreq_loop:\n");
-        s = s.write("    movzbq (%rdi), %rax\n");
-        s = s.write("    movzbq (%rsi), %rdx\n");
-        s = s.write("    cmpq %rdx, %rax\n");
-        s = s.write("    jne .Lstreq_no\n");
-        s = s.write("    incq %rdi\n");
-        s = s.write("    incq %rsi\n");
-        s = s.write("    decq %rcx\n");
-        s = s.write("    jne .Lstreq_loop\n");
-        s = s.write(".Lstreq_yes:\n");
-        s = s.write("    movq $1, %rax\n");
-        s = s.write("    ret\n");
-        s = s.write(".Lstreq_no:\n");
-        s = s.write("    movq $0, %rax\n");
-        s = s.write("    ret\n");
+        s = emit_runtime_fern_fn(asmcore.rt_src_str_eq(), s);
     }
     // __fern_str_cmp is now a Fern runtime function (#2649): see
     // asmcore.rt_src_str_cmp. Lexicographic byte compare with a length tiebreak,
@@ -7008,7 +6989,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    incq %rax\n");
         s = s.write("    movq (%r15,%rax,8), %rdi\n");  // keys[i+1]
         s = s.write("    movq %r13, %rsi\n");
-        s = s.write("    call __fern_str_eq\n");
+        s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_eq\n    addq $16, %rsp\n");
         s = s.write("    testq %rax, %rax\n");
         s = s.write("    jnz .Lms_found\n");
         s = s.write("    incq %rbx\n");
@@ -7081,7 +7062,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    incq %rax\n");
         s = s.write("    movq (%r15,%rax,8), %rdi\n");  // keys[i+1]
         s = s.write("    movq %r13, %rsi\n");
-        s = s.write("    call __fern_str_eq\n");
+        s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_eq\n    addq $16, %rsp\n");
         s = s.write("    testq %rax, %rax\n");
         s = s.write("    jnz .Lmd_found\n");
         s = s.write("    incq %rbx\n");
@@ -7181,7 +7162,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    incq %rax\n");
         s = s.write("    movq (%r15,%rax,8), %rdi\n");
         s = s.write("    movq %r13, %rsi\n");
-        s = s.write("    call __fern_str_eq\n");
+        s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_eq\n    addq $16, %rsp\n");
         s = s.write("    testq %rax, %rax\n");
         s = s.write("    jnz .Lmg_found\n");
         s = s.write("    incq %rbx\n");
@@ -7244,7 +7225,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    incq %rax\n");
         s = s.write("    movq (%r15,%rax,8), %rdi\n");
         s = s.write("    movq %r13, %rsi\n");
-        s = s.write("    call __fern_str_eq\n");
+        s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_eq\n    addq $16, %rsp\n");
         s = s.write("    testq %rax, %rax\n");
         s = s.write("    jnz .Lmh_yes\n");
         s = s.write("    incq %rbx\n");
@@ -7872,7 +7853,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    incq %rcx\n");
         s = s.write("    movq (%r12,%rcx,8), %rdi\n");
         s = s.write("    movq %r13, %rsi\n");
-        s = s.write("    call __fern_str_eq\n");
+        s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_eq\n    addq $16, %rsp\n");
         s = s.write("    testq %rax, %rax\n");
         s = s.write("    jnz .Las_idx_found\n");
         s = s.write("    incq %r15\n");
