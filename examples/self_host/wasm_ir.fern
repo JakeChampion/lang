@@ -661,7 +661,6 @@ pub function wasm_eligible(mod: parser.Module): boolean {
         && !module_emits_op(mod, "temp_dir")
         && !module_emits_op(mod, "read_dir")
         && !module_emits_op(mod, "remove_file")
-        && !module_emits_op(mod, "stat")
         && !module_emits_op(mod, "subprocess")
         && !module_emits_op(mod, "fsin")
         && !module_emits_op(mod, "fcos")
@@ -1262,6 +1261,14 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // allocates the value + box; emitted caller-side in wasm_ir_run (with the
             // environ imports + heap) when the module reads an env var.
             out = out + "    call $__fern_env\n";
+        } else if (o.kind == "stat") {
+            // stack: path strblock ptr -> stat the file, push a Result[FileStat,
+            // IoError] box. $__fern_stat (param i32 path, param i32 fstype) does the
+            // preview1 path_filestat_get + builds the FileStat struct box; it needs
+            // FileStat's module-specific type-id, which only the backend knows, so
+            // push it as the second arg before the call (emitted caller-side in
+            // wasm_ir_run with the path_filestat_get import + heap).
+            out = out + "    i32.const " + util.i32_to_string(struct_type_id(structs, "FileStat")) + "\n    call $__fern_stat\n";
         } else if (o.kind == "args") {
             // 0-arg -> build a fresh string[] of the command-line arguments and
             // push its block ptr. The helper ($__fern_args, result i32) reads the
