@@ -186,6 +186,18 @@ string literal and compute over its length — including `if` on a length
 comparison — now go source → `irlower` → lift → SSA → x86-64 / arm64 → run,
 checked against the interpreter (`strlen` / `strlen2` / `strpick` cases).
 
+**Slice 9 ✅ (landed — hardening the real-`irlower` subset):** with the next
+widening gated by the RC boundary (below), this slice deepens confidence in
+what already lifts. Six harder shapes were probed through `irlower` and added
+to the differential gate (all green on x86-64 + arm64 vs. the interpreter):
+**nested loops** (a `while` inside a `while` — nested loop-header phis),
+**mutual recursion** (`isodd`/`iseven` calling each other), the **bitwise**
+(`&`/`|`/`^`) and **shift** (`<<`/`>>`) operators, a **nested `if`** with
+multiple return paths, and an **early `return` out of a loop**. No lift changes
+were needed — they all already lower and run correctly — so this is pure
+coverage that pins the integer/string subset against real production IR before
+the RC boundary.
+
 Next: the array / heap subset is gated by the Perceus RC `call_direct`s the
 lowered IR inserts — lifting those needs the SSA backends to provide (or the
 lift to drop, where sound) the `__fern_rc_*` / `__fern_arr_*` runtime. That
