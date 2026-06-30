@@ -2287,11 +2287,18 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                 var olt: asmcore.Ty = asmcore.infer_expr_type(b.left, s);
                 var ort: asmcore.Ty = asmcore.infer_expr_type(b.right, s);
                 if (asmcore.ty_is_string(olt) || asmcore.ty_is_string(ort)) {
+                    // __fern_str_cmp is a Fern runtime function (#2649): call it
+                    // via the ordinary __fn_ stack convention. Operand stack has
+                    // [left, right] (right on top); re-push so left=a is param[0]
+                    // at [x29,#16] and right=b is param[1] at [x29,#32].
                     s = emit_expr(b.left, s);
                     s = emit_expr(b.right, s);
-                    s = s.write("    ldr x1, [sp], #16\n");
-                    s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    bl __fern_str_cmp\n");
+                    s = s.write("    ldr x1, [sp], #16\n");   // right (b)
+                    s = s.write("    ldr x0, [sp], #16\n");   // left (a)
+                    s = s.write("    str x1, [sp, #-16]!\n"); // b -> +32
+                    s = s.write("    str x0, [sp, #-16]!\n"); // a -> +16 (top)
+                    s = s.write("    bl __fn___fern_str_cmp\n");
+                    s = s.write("    add sp, sp, #32\n");
                     s = s.write("    cmp x0, #0\n");
                     if (b.op == "<") { s = s.write("    cset x0, lt\n"); }
                     else if (b.op == "<=") { s = s.write("    cset x0, le\n"); }
@@ -4481,35 +4488,12 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    mov x0, #0\n");
         s = s.write("    ret\n");
     }
-    // __fern_str_cmp: x0 = box A, x1 = box B → x0 = signed
-    // lexicographic compare (<0 / 0 / >0).
+    // __fern_str_cmp is now a Fern runtime function (#2649): see
+    // asmcore.rt_src_str_cmp, lowered through asm_arm64's normal function
+    // emitter. The single __fn___fern_str_cmp body serves BOTH the arm64 AST and
+    // IR call sites (they share this emit_runtime).
     if (s.has_need("str_cmp")) {
-        s = s.write("__fern_str_cmp:\n");
-        s = s.write("    ldr x2, [x0, #8]\n");   // lenA
-        s = s.write("    ldr x3, [x1, #8]\n");   // lenB
-        // min(lenA, lenB) → x4
-        s = s.write("    mov x4, x2\n");
-        s = s.write("    cmp x4, x3\n");
-        s = s.write("    b.le .Lstrcmp_min\n");
-        s = s.write("    mov x4, x3\n");
-        s = s.write(".Lstrcmp_min:\n");
-        s = s.write("    ldr x0, [x0]\n");
-        s = s.write("    ldr x1, [x1]\n");
-        s = s.write("    cbz x4, .Lstrcmp_len\n");
-        s = s.write(".Lstrcmp_loop:\n");
-        s = s.write("    ldrb w5, [x0], #1\n");
-        s = s.write("    ldrb w6, [x1], #1\n");
-        s = s.write("    cmp w5, w6\n");
-        s = s.write("    b.ne .Lstrcmp_byte_diff\n");
-        s = s.write("    subs x4, x4, #1\n");
-        s = s.write("    b.ne .Lstrcmp_loop\n");
-        s = s.write(".Lstrcmp_len:\n");
-        s = s.write("    sub x0, x2, x3\n");
-        s = s.write("    ret\n");
-        s = s.write(".Lstrcmp_byte_diff:\n");
-        s = s.write("    sub w0, w5, w6\n");
-        s = s.write("    sxtw x0, w0\n");
-        s = s.write("    ret\n");
+        s = emit_runtime_fern_fn(asmcore.rt_src_str_cmp(), s);
     }
     // __fern_read_line: no args. Reads up to 256 bytes from
     // stdin, scans for '\n', returns a 16-byte box ptr. Linux

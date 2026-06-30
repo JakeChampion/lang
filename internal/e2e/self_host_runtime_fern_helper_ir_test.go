@@ -34,29 +34,54 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "asm_ir_run.fern"), src, 0o644); err != nil {
 		t.Fatalf("write asm_ir_run.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "airun_s2i")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "airun_rt")
 
-	const prog = `function main(): i32 { return str_to_i32("42"); }`
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(driverBin)
-	} else {
-		cmd = exec.Command(runner[0], append(runner[1:], driverBin)...)
+	cases := []struct {
+		name string
+		prog string
+		sym  string   // Fern-compiled symbol the IR asm must define + call
+		gone []string // hand-asm labels of the old IR body/wrapper that must be gone
+	}{
+		{
+			"str_to_i32",
+			`function main(): i32 { return str_to_i32("42"); }`,
+			"__fn___fern_str_to_i32",
+			[]string{".Lirs2i_"},
+		},
+		{
+			"str_cmp",
+			`function main(): i32 { if ("abc" < "abd") { return 1; } return 0; }`,
+			"__fn___fern_str_cmp",
+			[]string{"\n__fern_str_cmp:", ".Lstrcmp_loop"},
+		},
 	}
-	cmd.Stdin = bytes.NewReader([]byte(prog))
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("driver run: %v", err)
-	}
-	got := string(out)
 
-	if !strings.Contains(got, "__fn___fern_str_to_i32:") {
-		t.Errorf("IR asm missing __fn___fern_str_to_i32: definition — helper no longer compiled from Fern on the IR path?")
-	}
-	if !strings.Contains(got, "call __fn___fern_str_to_i32") {
-		t.Errorf("IR asm missing call __fn___fern_str_to_i32 — call site not resolving to the Fern helper")
-	}
-	if strings.Contains(got, ".Lirs2i_") {
-		t.Errorf("IR asm still contains the hand-written wrapper's labels (.Lirs2i_*) — IR migration regressed")
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(driverBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], driverBin)...)
+			}
+			cmd.Stdin = bytes.NewReader([]byte(tc.prog))
+			out, err := cmd.Output()
+			if err != nil {
+				t.Fatalf("driver run: %v", err)
+			}
+			got := string(out)
+			if !strings.Contains(got, tc.sym+":") {
+				t.Errorf("IR asm missing %s: definition — helper no longer compiled from Fern on the IR path?", tc.sym)
+			}
+			if !strings.Contains(got, "call "+tc.sym) {
+				t.Errorf("IR asm missing call %s — call site not resolving to the Fern helper", tc.sym)
+			}
+			for _, bad := range tc.gone {
+				if strings.Contains(got, bad) {
+					t.Errorf("IR asm still contains hand-written form %q — IR migration regressed", bad)
+				}
+			}
+		})
 	}
 }

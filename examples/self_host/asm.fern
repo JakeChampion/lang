@@ -2438,11 +2438,18 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                 var olt: asmcore.Ty = asmcore.infer_expr_type(b.left, s);
                 var ort: asmcore.Ty = asmcore.infer_expr_type(b.right, s);
                 if (asmcore.ty_is_string(olt) || asmcore.ty_is_string(ort)) {
+                    // __fern_str_cmp is a Fern runtime function (#2649): call it
+                    // via the ordinary __fn_ stack convention. Operand stack has
+                    // [left, right] (right on top); re-push so left=a is param[0]
+                    // at +16 and right=b is param[1] at +24.
                     s = emit_expr(b.left, s);
                     s = emit_expr(b.right, s);
-                    s = s.write("    popq %rsi\n");
-                    s = s.write("    popq %rdi\n");
-                    s = s.write("    call __fern_str_cmp\n");
+                    s = s.write("    popq %rsi\n");   // right (b)
+                    s = s.write("    popq %rdi\n");   // left (a)
+                    s = s.write("    pushq %rsi\n");  // b -> +24
+                    s = s.write("    pushq %rdi\n");  // a -> +16 (top)
+                    s = s.write("    call __fn___fern_str_cmp\n");
+                    s = s.write("    addq $16, %rsp\n");
                     s = s.write("    cmpq $0, %rax\n");
                     s = s.write("    movq $0, %rax\n");
                     if (b.op == "<") { s = s.write("    setl %al\n"); }
@@ -4306,40 +4313,12 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq $0, %rax\n");
         s = s.write("    ret\n");
     }
-    // __fern_str_cmp: %rdi = box A, %rsi = box B. Returns
-    // signed i64 in %rax: <0 if A < B, 0 if equal, >0 if A > B.
-    // Lexicographic byte compare with length tiebreak.
+    // __fern_str_cmp is now a Fern runtime function (#2649): see
+    // asmcore.rt_src_str_cmp. Lexicographic byte compare with a length tiebreak,
+    // returning the signed difference (operators use the sign); stack convention.
+    // Mirrors the x86-64 IR path (asm_ir.emit_ir_runtime_fern_fn) and arm64.
     if (s.has_need("str_cmp")) {
-        s = s.write("__fern_str_cmp:\n");
-        s = s.write("    movq 8(%rdi), %rcx\n");    // lenA
-        s = s.write("    movq 8(%rsi), %rdx\n");    // lenB
-        // min(lenA, lenB) → %r8
-        s = s.write("    movq %rcx, %r8\n");
-        s = s.write("    cmpq %rdx, %r8\n");
-        s = s.write("    jle .Lstrcmp_min\n");
-        s = s.write("    movq %rdx, %r8\n");
-        s = s.write(".Lstrcmp_min:\n");
-        s = s.write("    movq (%rdi), %rdi\n");
-        s = s.write("    movq (%rsi), %rsi\n");
-        s = s.write("    cmpq $0, %r8\n");
-        s = s.write("    je .Lstrcmp_len\n");
-        s = s.write(".Lstrcmp_loop:\n");
-        s = s.write("    movzbq (%rdi), %rax\n");
-        s = s.write("    movzbq (%rsi), %r9\n");
-        s = s.write("    cmpq %r9, %rax\n");
-        s = s.write("    jne .Lstrcmp_byte_diff\n");
-        s = s.write("    incq %rdi\n");
-        s = s.write("    incq %rsi\n");
-        s = s.write("    decq %r8\n");
-        s = s.write("    jne .Lstrcmp_loop\n");
-        s = s.write(".Lstrcmp_len:\n");
-        // Common prefix equal — order by length difference.
-        s = s.write("    movq %rcx, %rax\n");
-        s = s.write("    subq %rdx, %rax\n");
-        s = s.write("    ret\n");
-        s = s.write(".Lstrcmp_byte_diff:\n");
-        s = s.write("    subq %r9, %rax\n");
-        s = s.write("    ret\n");
+        s = emit_runtime_fern_fn(asmcore.rt_src_str_cmp(), s);
     }
     // __fern_read_line: no args. Allocates a 256-byte heap
     // read buffer, syscalls sys_read(fd=0, buf, 256), scans
