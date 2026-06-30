@@ -1767,11 +1767,16 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
         s = s.write("    ldr x0, [sp], #16\n");   // arr
         s = s.write("    ldr x1, [x0]\n");         // len
         s = s.write("    cbz x1, " + mm_none.name + "\n");
+        // __fern_arr_i32_min/_max are Fern runtime functions (#2649): the
+        // len==0 case is handled above, so they take a non-empty borrowed array
+        // and return the extremum. Call via the ordinary __fn_ stack convention.
+        s = s.write("    str x0, [sp, #-16]!\n");  // arr arg
         if (fa.field == "min") {
-            s = s.write("    bl __fern_arr_i32_min\n");
+            s = s.write("    bl __fn___fern_arr_i32_min\n");
         } else {
-            s = s.write("    bl __fern_arr_i32_max\n");
+            s = s.write("    bl __fn___fern_arr_i32_max\n");
         }
+        s = s.write("    add sp, sp, #16\n");
         s = s.write("    str x0, [sp, #-16]!\n");  // save extremum
         s = s.write("    mov x0, #16\n");
         s = s.write("    bl __fern_alloc\n");
@@ -8645,43 +8650,13 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
-    // __fern_arr_i32_min: x0 = i32-array ptr (len >= 1).
-    // Returns x0 = smallest element.
-    // __fern_arr_i32_max: same but largest. Both are leaf
-    // helpers — no frame. UB if arr is empty.
+    // __fern_arr_i32_min / _max are now Fern runtime functions (#2649): see
+    // asmcore.rt_src_arr_i32_min / _max. Each takes a non-empty borrowed array
+    // (the call site handles the empty→None case) and returns the extremum;
+    // called via the stack convention.
     if (s.has_need("arr_i32_min_max")) {
-        s = s.write("__fern_arr_i32_min:\n");
-        s = s.write("    ldr x1, [x0]\n");          // len
-        s = s.write("    ldr x2, [x0, #8]\n");      // best = arr[0]
-        s = s.write("    mov x3, #1\n");            // i
-        s = s.write(".Lai32_min_loop:\n");
-        s = s.write("    cmp x3, x1\n");
-        s = s.write("    b.ge .Lai32_min_done\n");
-        s = s.write("    add x4, x3, #1\n");
-        s = s.write("    ldr x5, [x0, x4, lsl #3]\n");
-        s = s.write("    cmp x5, x2\n");
-        s = s.write("    csel x2, x5, x2, lt\n");
-        s = s.write("    add x3, x3, #1\n");
-        s = s.write("    b .Lai32_min_loop\n");
-        s = s.write(".Lai32_min_done:\n");
-        s = s.write("    mov x0, x2\n");
-        s = s.write("    ret\n");
-        s = s.write("__fern_arr_i32_max:\n");
-        s = s.write("    ldr x1, [x0]\n");
-        s = s.write("    ldr x2, [x0, #8]\n");
-        s = s.write("    mov x3, #1\n");
-        s = s.write(".Lai32_max_loop:\n");
-        s = s.write("    cmp x3, x1\n");
-        s = s.write("    b.ge .Lai32_max_done\n");
-        s = s.write("    add x4, x3, #1\n");
-        s = s.write("    ldr x5, [x0, x4, lsl #3]\n");
-        s = s.write("    cmp x5, x2\n");
-        s = s.write("    csel x2, x5, x2, gt\n");
-        s = s.write("    add x3, x3, #1\n");
-        s = s.write("    b .Lai32_max_loop\n");
-        s = s.write(".Lai32_max_done:\n");
-        s = s.write("    mov x0, x2\n");
-        s = s.write("    ret\n");
+        s = emit_runtime_fern_fn(asmcore.rt_src_arr_i32_min(), s);
+        s = emit_runtime_fern_fn(asmcore.rt_src_arr_i32_max(), s);
     }
     // __fern_i32_pow is the first runtime helper written in Fern instead of a
     // hand-written asm string (#2649): emit_runtime_fern_fn compiles its source
