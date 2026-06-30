@@ -90,10 +90,13 @@ function main(): i32 {
                 + wasm.le32_escape(sv[di].len()) + wasm.wat_escape(sv[di]) + "\")\n";
             di = di + 1;
         }
-        if (wasm_ir.module_allocates(mod) || wasm_ir.module_uses_i32_to_string(mod) || wasm_ir.module_uses_chr(mod)) {
+        if (wasm_ir.module_allocates(mod) || wasm_ir.module_uses_i32_to_string(mod) || wasm_ir.module_uses_chr(mod) || wasm_ir.module_uses_strbuf(mod)) {
             o = o + wasm.heap_alloc_helpers(wasm_ir.heap_base_for(mod), wasm_ir.fl_base_for(mod), wasm_ir.fl_cells());
             o = o + wasm.rc_runtime_helpers(wasm_ir.heap_base_for(mod));
         }
+        // $__fern_strbuf_* (global string-builder): a growable bump-heap buffer +
+        // reset/append/take. Heap-backed (str_box / alloc), emitted above.
+        if (wasm_ir.module_uses_strbuf(mod)) { o = o + wasm.strbuf_helpers(); }
         if (wasm_ir.module_uses_divrem(mod)) { o = o + wasm.divrem_helpers(); }
         if (wasm_ir.module_uses_i64_divrem(mod)) { o = o + wasm.divrem64_helpers(); }
         // $__fern_strcat + $__fern_streq (concat / equality); references
