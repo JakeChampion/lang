@@ -115,6 +115,9 @@ function main(): i32 {
         // stat(path) uses the preview1 path_filestat_get import (must precede the
         // function section), emitted when the module stats a file.
         if (wasm_ir.module_emits_op(mod, "stat")) { o = o + wasm.stat_import(); }
+        // remove_file(path) uses the preview1 path_unlink_file import (must precede
+        // the function section), emitted when the module removes a file.
+        if (wasm_ir.module_emits_op(mod, "remove_file")) { o = o + wasm.remove_file_import(); }
         o = o + "  (memory (export \"memory\") 16)\n";
         // String literals -> data-section blocks `[len:i32 LE][bytes]`. Emitted
         // caller-side (wasm owns le32_escape/wat_escape); wasm_ir supplies the
@@ -126,7 +129,7 @@ function main(): i32 {
                 + wasm.le32_escape(sv[di].len()) + wasm.wat_escape(sv[di]) + "\")\n";
             di = di + 1;
         }
-        if (wasm_ir.module_allocates(mod) || wasm_ir.module_uses_i32_to_string(mod) || wasm_ir.module_uses_chr(mod) || wasm_ir.module_uses_strbuf(mod) || wasm_ir.module_emits_op(mod, "env") || wasm_ir.module_emits_op(mod, "stat")) {
+        if (wasm_ir.module_allocates(mod) || wasm_ir.module_uses_i32_to_string(mod) || wasm_ir.module_uses_chr(mod) || wasm_ir.module_uses_strbuf(mod) || wasm_ir.module_emits_op(mod, "env") || wasm_ir.module_emits_op(mod, "stat") || wasm_ir.module_emits_op(mod, "remove_file")) {
             o = o + wasm.heap_alloc_helpers(wasm_ir.heap_base_for(mod), wasm_ir.fl_base_for(mod), wasm_ir.fl_cells());
             o = o + wasm.rc_runtime_helpers(wasm_ir.heap_base_for(mod));
         }
@@ -168,6 +171,9 @@ function main(): i32 {
         // Result box. Heap-backed (allocates the buffer + boxes), so folded into
         // the heap gate above.
         if (wasm_ir.module_emits_op(mod, "stat")) { o = o + wasm.stat_func(); }
+        // $__fern_remove_file(path): path_unlink_file -> Option[IoError] box.
+        // Heap-backed (allocates the box), so folded into the heap gate above.
+        if (wasm_ir.module_emits_op(mod, "remove_file")) { o = o + wasm.remove_file_func(); }
         // $__fern_read_file / $__fern_write_file: open under preopen fd 3 and
         // read/write the whole file, boxing a Result[string, IoError] /
         // Option[IoError]. They alloc via the heap runtime (module_allocates

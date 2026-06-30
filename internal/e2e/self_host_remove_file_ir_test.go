@@ -76,3 +76,84 @@ func TestSelfHostRemoveFileIR(t *testing.T) {
 		t.Errorf("remove_file IR program exited %d, want 0 (write + remove_file + read_dir(==0))", code)
 	}
 }
+
+// TestSelfHostRemoveFileIRWasm is the wasm mirror: remove_file now lowers through
+// the wasm IR path too (it was a wasm_eligible exclusion). The wasm op_remove_file
+// handler calls a fresh runtime ($__fern_remove_file: preview1 path_unlink_file ->
+// Option[IoError] box [tag@0, payload@4], None=1 on success / Some=0 on failure
+// with the same null-IoError placeholder $__fern_stat's Err arm uses — the match
+// binds it with a wildcard). Unlike the x86 test this exercises remove_file alone
+// (temp_dir / read_dir are not yet wasm-eligible): it removes a known file (None)
+// and a missing file (Some) under wasmtime with the temp dir as preopen, exiting 0
+// only if both resolve, and the test confirms the known file is gone on disk.
+func TestSelfHostRemoveFileIRWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host remove_file wasm IR e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	for _, name := range []string{
+		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
+		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm.fern", "wasm_ir.fern", "wasm_ir_run.fern",
+	} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+
+	// A known regular file under the temp dir — remove_file should unlink it.
+	target := filepath.Join(dir, "rmtarget.txt")
+	if err := os.WriteFile(target, []byte("delete me\n"), 0o644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	// Relative paths resolved against the preopen (the temp dir, mapped to /).
+	const src = `function main(): i32 {
+    match (remove_file("rmtarget.txt")) {
+        None => {
+            match (remove_file("does_not_exist.txt")) {
+                Some(_) => { return 0; },
+                None => { return 1; },
+            }
+        },
+        Some(_) => { return 2; },
+    }
+}`
+
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(driverBin, "-ir")
+	} else {
+		cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+	}
+	cmd.Stdin = bytes.NewReader([]byte(src))
+	wat, err := cmd.Output()
+	if err != nil || len(wat) == 0 {
+		t.Fatalf("driver failed: %v", err)
+	}
+	if !bytes.Contains(wat, []byte("call $__fern_remove_file")) {
+		t.Fatal("remove_file did not reach the wasm IR runtime path (no call $__fern_remove_file in WAT)")
+	}
+	watFile := filepath.Join(dir, "rm_prog.wat")
+	if err := os.WriteFile(watFile, wat, 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	run := exec.Command("wasmtime", "run", "--dir=.::/", watFile)
+	run.Dir = dir
+	_ = run.Run()
+	if run.ProcessState == nil || !run.ProcessState.Exited() {
+		t.Fatalf("wasmtime did not exit normally:\n%s", wat)
+	}
+	if code := run.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("remove_file wasm IR program exited %d, want 0 (known file -> None, missing -> Some)\n--- WAT ---\n%s", code, wat)
+	}
+	// The known file must actually be gone (the None path really unlinked it).
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Errorf("rmtarget.txt still present after remove_file (stat err = %v)", err)
+	}
+}
