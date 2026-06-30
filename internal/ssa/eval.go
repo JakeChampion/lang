@@ -39,7 +39,14 @@ func Eval(f *Func, args ...int64) (int64, error) {
 			return 0, fmt.Errorf("Eval: step limit exceeded (non-terminating?)")
 		}
 
-		// Phis first, resolved against the edge we arrived on.
+		// Phis first, resolved against the edge we arrived on. All phis in a
+		// block execute in PARALLEL: read every incoming arg before assigning
+		// any result, so a phi whose arg is another phi in the same block (the
+		// swap / cycle case, e.g. `a,b = b,a`) sees the old value, not one a
+		// sibling phi just overwrote. (A sequential read-then-assign here is the
+		// classic out-of-SSA bug.)
+		var phiResults []int32
+		var phiValues []int64
 		for _, op := range cur.Ops {
 			if op.Kind != OpPhi {
 				break
@@ -55,7 +62,11 @@ func Eval(f *Func, args ...int64) (int64, error) {
 			if err != nil {
 				return 0, err
 			}
-			vals[op.Result.ID] = v
+			phiResults = append(phiResults, op.Result.ID)
+			phiValues = append(phiValues, v)
+		}
+		for k, id := range phiResults {
+			vals[id] = phiValues[k]
 		}
 
 		// Then the straight-line ops.

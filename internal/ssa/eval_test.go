@@ -152,3 +152,52 @@ func TestEvalPreservedAcrossOptimize(t *testing.T) {
 		}
 	}
 }
+
+// Parallel phi semantics: a header that swaps two values across the back-edge
+// (a,b = b,a) must read both old values before assigning either. A sequential
+// read-then-assign would make both equal. After n iterations a is the original
+// a if n is even, b if odd.
+func TestEvalParallelPhiSwap(t *testing.T) {
+	f := NewFunc("swap")
+	n := f.AddParam()
+	entry := f.NewBlock()
+	header := f.NewBlock()
+	body := f.NewBlock()
+	exit := f.NewBlock()
+
+	a0 := f.AddOp(entry, OpConstInt)
+	entry.Ops[0].Imm = 100
+	b0 := f.AddOp(entry, OpConstInt)
+	entry.Ops[1].Imm = 200
+	i0 := f.AddOp(entry, OpConstInt)
+	entry.Ops[2].Imm = 0
+	f.SetBr(entry, header)
+
+	iNext := f.NewValue()
+	a := f.AddPhi(header, a0, b0) // back-edge arg patched below
+	b := f.AddPhi(header, b0, a0)
+	i := f.AddPhi(header, i0, iNext)
+	cond := f.AddOp(header, OpLt, i, n)
+	f.SetBrIf(header, cond, body, exit)
+
+	one := f.AddOp(body, OpConstInt)
+	body.Ops[0].Imm = 1
+	add := f.AddOpNoResult(body, OpAdd, i, one)
+	add.Result = iNext
+	f.SetBr(body, header)
+	// Back-edge: a's phi pulls b, b's phi pulls a (the swap).
+	header.Ops[0].Args[1] = b
+	header.Ops[1].Args[1] = a
+
+	f.SetRet(exit, a)
+
+	for _, tc := range []struct{ n, want int64 }{{0, 100}, {1, 200}, {2, 100}, {3, 200}, {4, 100}} {
+		got, err := Eval(f, tc.n)
+		if err != nil {
+			t.Fatalf("Eval(n=%d): %v", tc.n, err)
+		}
+		if got != tc.want {
+			t.Errorf("Eval(swap, n=%d) = %d, want %d", tc.n, got, tc.want)
+		}
+	}
+}
