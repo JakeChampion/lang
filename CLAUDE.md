@@ -168,6 +168,27 @@ next task is the next increment toward goal 1 (then goal 2).
   but is not one. CI doesn't hit this — it shards `internal/e2e` by
   test-name regex across the `test-e2e-*` workflows, each well under its
   10-min job timeout.
+- **Self-host driver builds peak at ~16–18 GB RAM — enable swap if they
+  get OOM-killed.** Every `buildSelfHostBin` / `buildBin` of a self-host
+  driver (`asm_run.fern` / `asm_load_run.fern` / `asm_arm64_run.fern` /
+  `wasm_ir_run.fern` / …) assembles a multi-thousand-function `.s`, and
+  `as` alone spikes to ~8 GB; with the `go test` package compile plus a
+  second concurrent `as`, the peak crosses ~16 GB. On the ~15 GB-RAM
+  container with **no swap** this trips the kernel OOM-killer: the build
+  dies with `signal: killed` / **exit 137** (reads like a test failure but
+  is an OOM — not a real failure) and can even bounce the whole container.
+  It is *total-RAM* pressure, not a cgroup cap (`memory.limit_in_bytes` is
+  effectively unlimited), so swap fixes it. Re-create swap each session if
+  self-host builds start OOM-ing (it's ephemeral — a container restart
+  wipes it):
+  ```
+  fallocate -l 8G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+  ```
+  Watch with `free -m` mid-build: a healthy run pushes a few GB into swap
+  at the assembler peak and completes. Also keep `/` from filling — stale
+  `/tmp/selfhost-bincache-*` dirs (~1 GB each, one per build) pile up;
+  `rm -rf /tmp/selfhost-bincache-*` reclaims them (regenerable caches), and
+  a swapfile needs the free space.
 - **Don't run arm64 / `qemu-aarch64` tests locally as a gate — let CI
   run them.** The aarch64 e2e + fixpoint tests under `qemu-aarch64` are
   the slow part of a local sweep (minutes). Locally, gate on the
