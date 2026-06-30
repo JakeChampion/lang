@@ -121,6 +121,13 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
         (cl) and `idiv` (rax/rdx) fixed-register handling, and i32 width.
       - [ ] 3c — wire behind a flag and diff against the existing stack-machine
         backend over the e2e corpus.
+- [~] Op-coverage broadening toward parity (each op validated against `Eval`
+  in the model before it reaches real assembly):
+  - [x] Direct integer calls + recursion — `ssa.EvalIn` (function-table eval),
+    `x86_64ssa.EmitModule` / `RunModule` / the `Call` op. (Model only; the
+    real-asm call ABI rides with the slice-3b parameter ABI.)
+  - [ ] Strings, structs, arrays, maps
+  - [ ] RC inc/dec (Perceus ordering)
 - [ ] Phase 3 — default x86-64 to SSA; measure binary-size win
 - [ ] Phase 4 — arm64 SSA emit + default
 - [ ] Phase 5 — retire the stack-machine backends
