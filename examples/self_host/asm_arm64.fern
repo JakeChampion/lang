@@ -1850,20 +1850,22 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             return s;
         }
         if (fa.field == "bytes" && c.args.len() == 0) {
+            // __fern_str_bytes is a Fern runtime function now (#2649): __fn_ stack
+            // convention (s=param[0] at [x29,#16]). mark_str_bytes pulls in arr_push.
             s = emit_expr(fa.obj, s);
-            s = s.write("    ldr x0, [sp], #16\n");
-            s = s.write("    bl __fern_str_bytes\n");
+            s = s.write("    bl __fn___fern_str_bytes\n");
+            s = s.write("    add sp, sp, #16\n");
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.mark_str_bytes();
             return s;
         }
         // `s.as_bytes()` — see asm.fern. Returns the
-        // same fresh u8[] as bytes() (no zero-copy slice
+        // same fresh i32[] as bytes() (no zero-copy slice
         // in the slot-array representation).
         if (fa.field == "as_bytes" && c.args.len() == 0) {
             s = emit_expr(fa.obj, s);
-            s = s.write("    ldr x0, [sp], #16\n");
-            s = s.write("    bl __fern_str_bytes\n");
+            s = s.write("    bl __fn___fern_str_bytes\n");
+            s = s.write("    add sp, sp, #16\n");
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.mark_str_bytes();
             return s;
@@ -8442,6 +8444,11 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     if (s.has_need("str_lines")) {
         s = emit_runtime_fern_fn(asmcore.rt_src_str_lines(), s);
     }
+    // __fern_str_bytes — Fern runtime function (#2649), Tier-1: builds the byte
+    // i32[] by appending each byte (arr_push). Shared by arm64 AST + IR.
+    if (s.has_need("str_bytes")) {
+        s = emit_runtime_fern_fn(asmcore.rt_src_str_bytes(), s);
+    }
     // __fern_str_reverse: x0 = src box. Returns x0 = new
     // string box with bytes in reverse order.
     if (s.has_need("str_reverse")) {
@@ -8478,37 +8485,11 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
-    // __fern_str_bytes: x0 = source string box. Returns
-    // x0 = i32[] of byte values (each zero-extended to 8
-    // bytes in the array's uniform 8-byte slot).
-    if (s.has_need("str_bytes")) {
-        s = s.write("__fern_str_bytes:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    stp x21, x22, [sp, #-16]!\n");
-        s = s.write("    ldr x19, [x0]\n");         // src data
-        s = s.write("    ldr x20, [x0, #8]\n");     // src len
-        s = s.write("    mov x0, x20\n");           // cap = len
-        s = s.write("    bl __fern_arr_box\n");      // -> data ptr in x0 (cap + len written)
-        s = s.write("    mov x21, x0\n");           // arr data ptr
-        s = s.write("    mov x22, #0\n");           // i
-        s = s.write(".Lbytes_loop:\n");
-        s = s.write("    cmp x22, x20\n");
-        s = s.write("    b.ge .Lbytes_done\n");
-        s = s.write("    add x4, x19, x22\n");
-        s = s.write("    ldrb w5, [x4]\n");
-        s = s.write("    add x6, x22, #1\n");
-        s = s.write("    str x5, [x21, x6, lsl #3]\n");
-        s = s.write("    add x22, x22, #1\n");
-        s = s.write("    b .Lbytes_loop\n");
-        s = s.write(".Lbytes_done:\n");
-        s = s.write("    mov x0, x21\n");
-        s = s.write("    ldp x21, x22, [sp], #16\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
-    }
+    // __fern_str_bytes is now a Fern runtime function (#2649): see
+    // asmcore.rt_src_str_bytes, emitted (need-gated) in the migrated-helpers
+    // section below. The single shared body serves both arm64 AST + IR. It builds
+    // the i32[] by appending each byte (arr_push) — its deps are declared by
+    // mark_str_bytes / runtime_need_deps.
     // __fern_random_i32() → a single CSPRNG i32: read 4 random bytes into a
     // stack slot and reload them as an i32. Linux getrandom (syscall 278);
     // Darwin getentropy (BSD 500). Heap-independent — gated by its own need

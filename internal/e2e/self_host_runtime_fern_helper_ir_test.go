@@ -83,6 +83,14 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			"__fn___fern_str_lines",
 			[]string{"\n__fern_str_lines:", ".Lir_lines_box"},
 		},
+		{
+			// str_bytes — migrated on the IR path too. The old hand-written IR body
+			// (__fern_str_bytes: / .Lir_bytes_loop) must be gone.
+			"str_bytes",
+			`function main(): i32 { return "abc".bytes().len(); }`,
+			"__fn___fern_str_bytes",
+			[]string{"\n__fern_str_bytes:", ".Lir_bytes_loop"},
+		},
 	}
 
 	for _, tc := range cases {
