@@ -4924,8 +4924,39 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
             s = s.write("    pushq %rdi\n");
             s = s.write("    call __fn___fern_arr_dec\n");              // shallow dec the buffer slab
             s = s.write("    addq $8, %rsp\n");
+        } else if (k_struct && irlower.nested_field_deep_drop_ok(s.struct_decls, fdt)) {
+            // DEEP nested-struct field drop (Perceus slice 3 deep-drop): when the
+            // inner box is UNIQUELY owned, first __struct_drop_<fdt> releases the
+            // inner's OWN rc-array buffers, THEN __fern_arr_dec frees the inner box —
+            // mirroring the k_box element walk. fdt is a LEAF (nested_field_deep_drop_ok),
+            // so __struct_drop_<fdt> makes no further recursive struct_drop call: the
+            // recursion is depth-1 and cannot cycle. Emit the inner's per-type body
+            // (transitive need: emit_ir_struct_drops re-checks needed.len(), and
+            // need() dedups). __fern_arr_dec / __fern_rc_is_unique preserve %r11, but
+            // __struct_drop_<fdt> CLOBBERS it, so reload box from the stable stack arg
+            // 8(%rsp) (this body pushes no frame) after the call.
+            var fsan: string = asmcore.sanitize_label(fdt);
+            s = s.need("struct_drop:" + fdt);
+            s = s.write("    movq " + off + "(%r11), %rax\n");          // inner = box.field_k
+            s = s.write("    cmpq $0x10000, %rax\n");                   // null / low -> skip field-release
+            s = s.write("    jb .Lstd_" + san + "_sdf" + ks + "\n");
+            s = s.write("    pushq %rax\n");
+            s = s.write("    call __fn___fern_rc_is_unique\n");         // shared (rc>1) -> skip field-release
+            s = s.write("    addq $8, %rsp\n");
+            s = s.write("    testq %rax, %rax\n");
+            s = s.write("    jz .Lstd_" + san + "_sdf" + ks + "\n");
+            s = s.write("    movq " + off + "(%r11), %rax\n");          // reload inner (r11 valid here)
+            s = s.write("    pushq %rax\n");
+            s = s.write("    call __fn___struct_drop_" + fsan + "\n");  // release inner's rc fields (clobbers r11)
+            s = s.write("    addq $8, %rsp\n");
+            s = s.write("    movq 8(%rsp), %r11\n");                    // reload box (struct_drop clobbered r11)
+            s = s.write(".Lstd_" + san + "_sdf" + ks + ":\n");
+            s = s.write("    movq " + off + "(%r11), %rdi\n");          // inner box
+            s = s.write("    pushq %rdi\n");
+            s = s.write("    call __fn___fern_arr_dec\n");              // free the inner box (rc-guarded)
+            s = s.write("    addq $8, %rsp\n");
         } else if (k_scalar || k_struct) {
-            s = s.write("    movq " + off + "(%r11), %rdi\n");          // box.field_k buffer / nested box
+            s = s.write("    movq " + off + "(%r11), %rdi\n");          // box.field_k buffer / nested box (shallow)
             s = s.write("    pushq %rdi\n");
             s = s.write("    call __fn___fern_arr_dec\n");
             s = s.write("    addq $8, %rsp\n");

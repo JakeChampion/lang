@@ -11338,6 +11338,34 @@ pub function struct_has_reclaim_array_field(structs: parser.StructDecl[], sty: s
     return false;
 }
 
+// nested_field_deep_drop_ok reports whether a DIRECT nested-struct field of type
+// `sty` is safe to DEEP-drop — i.e. its drop site may recursively release `sty`'s
+// OWN rc fields (via __struct_drop_<sty>) before freeing the inner box, instead of
+// the shallow box-only free. True iff `sty` is a LEAF struct: it has at least one
+// rc-ARRAY field to reclaim AND no nested-struct field of its own. The leaf
+// condition is the CYCLE-SAFETY guarantee: __struct_drop_<sty> for a leaf makes NO
+// recursive __struct_drop call, so the deep-drop is depth-1 and cannot loop. A
+// self-referential / mutually-recursive struct (a tree / linked list, admitted
+// leak-safe by decl_is_leaksafe via the back-edge rule) necessarily carries a
+// nested-struct field, so it is never a leaf — its field edge stays SHALLOW (the
+// existing cycle-safe one-level reclaim). Multi-level deep-drop (a non-leaf inner
+// whose nested struct is itself a leaf) needs proper back-edge analysis and is a
+// follow-up. Strings / enum / Option / tuple inner fields are not reclaimed yet,
+// so a leaf carrying only those (no array) returns false → shallow box free.
+pub function nested_field_deep_drop_ok(structs: parser.StructDecl[], sty: string): boolean {
+    if (sty.len() == 0) { return false; }
+    var n: i32 = decl_field_count(structs, sty);
+    var has_arr: boolean = false;
+    var fi: i32 = 0;
+    while (fi < n) {
+        var fdt: string = decl_field_type_at(structs, sty, fi);
+        if (decl_is_struct(structs, fdt)) { return false; }   // nested struct → not a leaf → shallow
+        if (is_leaksafe_array_field(fdt) || is_struct_array_field_type(structs, fdt) || is_enum_array_field_type(structs, fdt)) { has_arr = true; }
+        fi = fi + 1;
+    }
+    return has_arr;
+}
+
 // emit_field_reclaim_store stores `new` (already on the operand stack) into a
 // reclaimable struct slot (#3457 field-level move tracking) AND frees the REPLACED
 // array-field buffers of the OLD box before shallow-freeing the old box itself.
