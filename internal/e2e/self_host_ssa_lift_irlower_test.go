@@ -94,6 +94,15 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 		{"strlen", `function main(): i32 { var s: string = "hello"; return s.len(); }`},
 		{"strlen2", `function main(): i32 { return ("abcd").len() + ("xy").len(); }`},
 		{"strpick", `function main(): i32 { var s: string = "hi"; var t: string = "world"; if (s.len() < t.len()) { return t.len(); } return s.len(); }`},
+		// Harder shapes over real irlower output: nested loops, mutual recursion
+		// across two functions, bitwise / shift operators, nested if, and an
+		// early return out of a loop.
+		{"nestloop", `function main(): i32 { var t = 0; var i = 0; while (i < 4) { var j = 0; while (j < 3) { t = t + 1; j = j + 1; } i = i + 1; } return t; }`},
+		{"mutualrec", `function isodd(n: i32): boolean { if (n == 0) { return false; } return iseven(n - 1); } function iseven(n: i32): boolean { if (n == 0) { return true; } return isodd(n - 1); } function main(): i32 { if (iseven(10)) { return 1; } return 0; }`},
+		{"bitwise", `function main(): i32 { var a = 12; var b = 10; return (a & b) + (a | b) + (a ^ b); }`},
+		{"shift", `function main(): i32 { return (1 << 5) + (64 >> 2); }`},
+		{"nestif", `function main(): i32 { var x = 7; if (x > 5) { if (x > 10) { return 1; } return 2; } return 3; }`},
+		{"earlyret", `function main(): i32 { var i = 0; while (i < 100) { if (i * i > 50) { return i; } i = i + 1; } return 99; }`},
 	}
 	for _, tc := range cases {
 		tc := tc
