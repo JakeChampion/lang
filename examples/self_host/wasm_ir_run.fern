@@ -159,10 +159,14 @@ function main(): i32 {
         if (wasm_ir.module_uses_divrem(mod)) { o = o + wasm.divrem_helpers(); }
         if (wasm_ir.module_uses_i64_divrem(mod)) { o = o + wasm.divrem64_helpers(); }
         // $__fern_exp_f64: e^x via a polynomial (no transcendental wasm
-        // instruction). Self-contained f64 math — no imports or heap.
-        if (wasm_ir.module_emits_op(mod, "fexp")) { o = o + wasm.exp_func(); }
+        // instruction). Self-contained f64 math — no imports or heap. fpow (x^y =
+        // exp(y·ln x)) reuses it, so its gate folds fpow in (emitted once).
+        if (wasm_ir.module_emits_op(mod, "fexp") || wasm_ir.module_emits_op(mod, "fpow")) { o = o + wasm.exp_func(); }
         // $__fern_log_f64: ln x via a polynomial (same — self-contained f64 math).
-        if (wasm_ir.module_emits_op(mod, "flog")) { o = o + wasm.log_func(); }
+        // fpow reuses it too, so its gate folds fpow in.
+        if (wasm_ir.module_emits_op(mod, "flog") || wasm_ir.module_emits_op(mod, "fpow")) { o = o + wasm.log_func(); }
+        // $__fern_pow_f64: x^y = exp(y·ln x) — composes the two helpers above.
+        if (wasm_ir.module_emits_op(mod, "fpow")) { o = o + wasm.pow_func(); }
         // $__fern_strcat + $__fern_streq (concat / equality); references
         // $__fern_str_box from heap_alloc_helpers, which module_allocates pulls
         // in for any string program.

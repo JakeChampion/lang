@@ -7770,6 +7770,19 @@ pub function log_func(): string {
     return o;
 }
 
+// pow_func emits $__fern_pow_f64(x, y) -> x^y = exp(y·ln x) (x > 0) — the wasm
+// sibling of asm_arm64's __fern_pow_f64. Composes the exp + log runtimes
+// ($__fern_exp_f64 / $__fern_log_f64, which the caller emits alongside this), so
+// it is a one-liner. The two f64 operands arrive in stack order x then y
+// (irlower's op_fbin), matching the param order. Domain x <= 0 is the caller's
+// contract, as on the register backends.
+pub function pow_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_pow_f64 (param $x f64) (param $y f64) (result f64)\n";
+    o = o + "    (call $__fern_exp_f64 (f64.mul (local.get $y) (call $__fern_log_f64 (local.get $x)))))\n";
+    return o;
+}
+
 // stdin_fd_read_import emits the standalone wasi fd_read import that read_line /
 // read_int use to read stdin (fd 0). file_imports ALSO imports fd_read for
 // read_file, so the caller (wasm_ir_run) must emit only one of the two — this
