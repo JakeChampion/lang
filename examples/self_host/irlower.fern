@@ -2418,6 +2418,9 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     if (cid.name == "i32_to_string") { return true; }
                     // chr(n) yields a fresh 1-char string box.
                     if (cid.name == "chr") { return true; }
+                    // __raw_string(data, len) is the Tier-2 intrinsic that boxes raw
+                    // bytes back into a string (#2649 — docs/RUNTIME-INTRINSICS.md).
+                    if (cid.name == "__raw_string" && c.args.len() == 2) { return true; }
                     // strbuf_take() snapshots the global string-builder into a fresh
                     // string box (so `return strbuf_take()` str-tracks the result).
                     if (cid.name == "strbuf_take" && c.args.len() == 0) { return true; }
@@ -2593,6 +2596,9 @@ pub function expr_is_fresh_str(e: parser.Expr, s: LowerState): boolean {
                     if (cid.name == "str_to_upper" || cid.name == "str_to_lower"
                             || cid.name == "str_repeat") { return true; }
                     if (cid.name == "chr" || cid.name == "string_from_bytes") { return true; }
+                    // __raw_string boxes a freshly-__raw_alloc'd buffer → a fresh
+                    // owned string (#2649 Tier-2 floor).
+                    if (cid.name == "__raw_string" && c.args.len() == 2) { return true; }
                     return false;
                 },
                 parser.ExprFieldAccess(cfa) => {
@@ -5534,6 +5540,55 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         var chrs: LowerState = lower_expr(c.args[0], s);
                         if (!chrs.ok) { return chrs; }
                         return chrs.emit(ir.op_call_direct("__fern_chr", 1));
+                    }
+                    // Raw-memory intrinsics (#2649 Tier-2 floor — see
+                    // docs/RUNTIME-INTRINSICS.md). Each lowers its args left-to-right
+                    // then emits the single-instruction op (not a call_direct, so the
+                    // eligibility gate accepts them). Only the audited Tier-2 helpers
+                    // use these; unchecked by design.
+                    if (cid.name == "__raw_alloc" && c.args.len() == 1) {
+                        var ra: LowerState = lower_expr(c.args[0], s);
+                        if (!ra.ok) { return ra; }
+                        return ra.emit(ir.op_raw_alloc());
+                    }
+                    if (cid.name == "__raw_store8" && c.args.len() == 3) {
+                        var rs0: LowerState = lower_expr(c.args[0], s);
+                        if (!rs0.ok) { return rs0; }
+                        var rs1: LowerState = lower_expr(c.args[1], rs0);
+                        if (!rs1.ok) { return rs1; }
+                        var rs2: LowerState = lower_expr(c.args[2], rs1);
+                        if (!rs2.ok) { return rs2; }
+                        return rs2.emit(ir.op_raw_store8());
+                    }
+                    if (cid.name == "__raw_load8" && c.args.len() == 2) {
+                        var rl0: LowerState = lower_expr(c.args[0], s);
+                        if (!rl0.ok) { return rl0; }
+                        var rl1: LowerState = lower_expr(c.args[1], rl0);
+                        if (!rl1.ok) { return rl1; }
+                        return rl1.emit(ir.op_raw_load8());
+                    }
+                    if (cid.name == "__raw_store_ptr" && c.args.len() == 3) {
+                        var rps0: LowerState = lower_expr(c.args[0], s);
+                        if (!rps0.ok) { return rps0; }
+                        var rps1: LowerState = lower_expr(c.args[1], rps0);
+                        if (!rps1.ok) { return rps1; }
+                        var rps2: LowerState = lower_expr(c.args[2], rps1);
+                        if (!rps2.ok) { return rps2; }
+                        return rps2.emit(ir.op_raw_store_ptr());
+                    }
+                    if (cid.name == "__raw_load_ptr" && c.args.len() == 2) {
+                        var rlp0: LowerState = lower_expr(c.args[0], s);
+                        if (!rlp0.ok) { return rlp0; }
+                        var rlp1: LowerState = lower_expr(c.args[1], rlp0);
+                        if (!rlp1.ok) { return rlp1; }
+                        return rlp1.emit(ir.op_raw_load_ptr());
+                    }
+                    if (cid.name == "__raw_string" && c.args.len() == 2) {
+                        var rst0: LowerState = lower_expr(c.args[0], s);
+                        if (!rst0.ok) { return rst0; }
+                        var rst1: LowerState = lower_expr(c.args[1], rst0);
+                        if (!rst1.ok) { return rst1; }
+                        return rst1.emit(ir.op_raw_string());
                     }
                     // Built-in `exit(n)` — terminate the process with exit code n
                     // (an inline sys_exit / proc_exit per backend).

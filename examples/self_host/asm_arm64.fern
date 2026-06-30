@@ -216,6 +216,49 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = s.write("    str x0, [sp, #-16]!\n");
         return CallOut { state: s, done: true };
     }
+    // Raw-memory intrinsics (#2649 Tier-2 floor — docs/RUNTIME-INTRINSICS.md).
+    // Unsafe/unchecked; only the audited Tier-2 helpers use them. Args arrive on
+    // the operand stack left-to-right (16-byte slots; last arg on top). Stores
+    // push the value back to keep the one-value-per-expr invariant. Mirrors asm.fern.
+    if (name == "__raw_alloc" && c.args.len() == 1) {
+        s = emit_expr(c.args[0], s);
+        s = s.write("    ldr x0, [sp], #16\n    bl __fern_alloc\n    str x0, [sp, #-16]!\n");
+        s = s.mark_heap();
+        return CallOut { state: s, done: true };
+    }
+    if (name == "__raw_store8" && c.args.len() == 3) {
+        s = emit_expr(c.args[0], s);
+        s = emit_expr(c.args[1], s);
+        s = emit_expr(c.args[2], s);
+        s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    add x0, x0, x1\n    strb w2, [x0]\n    str x2, [sp, #-16]!\n");
+        return CallOut { state: s, done: true };
+    }
+    if (name == "__raw_load8" && c.args.len() == 2) {
+        s = emit_expr(c.args[0], s);
+        s = emit_expr(c.args[1], s);
+        s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    add x0, x0, x1\n    ldrb w0, [x0]\n    str x0, [sp, #-16]!\n");
+        return CallOut { state: s, done: true };
+    }
+    if (name == "__raw_store_ptr" && c.args.len() == 3) {
+        s = emit_expr(c.args[0], s);
+        s = emit_expr(c.args[1], s);
+        s = emit_expr(c.args[2], s);
+        s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x2, [x0, x1, lsl #3]\n    str x2, [sp, #-16]!\n");
+        return CallOut { state: s, done: true };
+    }
+    if (name == "__raw_load_ptr" && c.args.len() == 2) {
+        s = emit_expr(c.args[0], s);
+        s = emit_expr(c.args[1], s);
+        s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x0, [x0, x1, lsl #3]\n    str x0, [sp, #-16]!\n");
+        return CallOut { state: s, done: true };
+    }
+    if (name == "__raw_string" && c.args.len() == 2) {
+        s = emit_expr(c.args[0], s);
+        s = emit_expr(c.args[1], s);
+        s = s.write("    mov x0, #16\n    bl __fern_alloc\n    ldr x1, [sp], #16\n    str x1, [x0, #8]\n    ldr x1, [sp], #16\n    str x1, [x0]\n    str x0, [sp, #-16]!\n");
+        s = s.mark_heap();
+        return CallOut { state: s, done: true };
+    }
     // `write(s)` == `print(s)` here (the self-host print
     // runtime has no trailing newline); the bootstrap driver
     // uses write for byte-identical output. Mirrors asm.fern.

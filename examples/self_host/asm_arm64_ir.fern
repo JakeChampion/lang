@@ -444,6 +444,28 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
         } else if (o.kind == "arr_rc") {
             // pop base; 32-bit refcount field at [data-8] (ldur — unscaled neg).
             s = s.write("    ldr x0, [sp], #16\n    ldur w0, [x0, #-8]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "raw_alloc") {
+            // Tier-2 floor (#2649): pop n → x0, bl __fern_alloc, push ptr.
+            s = s.mark_heap();
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_alloc\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "raw_store8") {
+            // pop v (top), off, ptr; store low byte of v at [ptr+off]; push v back.
+            s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    add x0, x0, x1\n    strb w2, [x0]\n    str x2, [sp, #-16]!\n");
+        } else if (o.kind == "raw_load8") {
+            // pop off (top), ptr; zero-extended byte at [ptr+off].
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    add x0, x0, x1\n    ldrb w0, [x0]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "raw_store_ptr") {
+            // pop v (top), off, ptr; store word slot at [ptr+off*8]; push v back.
+            s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x2, [x0, x1, lsl #3]\n    str x2, [sp, #-16]!\n");
+        } else if (o.kind == "raw_load_ptr") {
+            // pop off (top), ptr; word slot at [ptr+off*8].
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x0, [x0, x1, lsl #3]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind == "raw_string") {
+            // pop [data, len] (len on top); alloc a 16-byte box {data@0, len@8}.
+            // bl doesn't touch sp, so data/len stay in the operand-stack slots.
+            s = s.mark_heap();
+            s = s.write("    mov x0, #16\n    bl __fern_alloc\n");
+            s = s.write("    ldr x1, [sp], #16\n    str x1, [x0, #8]\n    ldr x1, [sp], #16\n    str x1, [x0]\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "const_str") {
             // String literal: intern in .rodata, allocate a 16-byte box
             // `[data@0, len@8]`, push box ptr — identical to asm_arm64's

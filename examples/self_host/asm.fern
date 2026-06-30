@@ -182,6 +182,50 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = s.write("    pushq %rax\n");
         return CallOut { state: s, done: true };
     }
+    // Raw-memory intrinsics (#2649 Tier-2 floor — docs/RUNTIME-INTRINSICS.md).
+    // Unsafe/unchecked; only the audited Tier-2 helpers use them. Each is one
+    // instruction (or a __fern_alloc call). Args arrive on the operand stack
+    // left-to-right (last arg on top). Stores push the value back to keep the
+    // one-value-per-expr invariant; statement position drops it.
+    if (name == "__raw_alloc" && c.args.len() == 1) {
+        s = emit_expr(c.args[0], s);
+        s = s.write("    popq %rdi\n    call __fern_alloc\n    pushq %rax\n");
+        s = s.mark_heap();
+        return CallOut { state: s, done: true };
+    }
+    if (name == "__raw_store8" && c.args.len() == 3) {
+        s = emit_expr(c.args[0], s);
+        s = emit_expr(c.args[1], s);
+        s = emit_expr(c.args[2], s);
+        s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n    addq %rcx, %rax\n    movb %dl, (%rax)\n    pushq %rdx\n");
+        return CallOut { state: s, done: true };
+    }
+    if (name == "__raw_load8" && c.args.len() == 2) {
+        s = emit_expr(c.args[0], s);
+        s = emit_expr(c.args[1], s);
+        s = s.write("    popq %rcx\n    popq %rax\n    addq %rcx, %rax\n    movzbl (%rax), %eax\n    pushq %rax\n");
+        return CallOut { state: s, done: true };
+    }
+    if (name == "__raw_store_ptr" && c.args.len() == 3) {
+        s = emit_expr(c.args[0], s);
+        s = emit_expr(c.args[1], s);
+        s = emit_expr(c.args[2], s);
+        s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n    movq %rdx, (%rax,%rcx,8)\n    pushq %rdx\n");
+        return CallOut { state: s, done: true };
+    }
+    if (name == "__raw_load_ptr" && c.args.len() == 2) {
+        s = emit_expr(c.args[0], s);
+        s = emit_expr(c.args[1], s);
+        s = s.write("    popq %rcx\n    popq %rax\n    movq (%rax,%rcx,8), %rax\n    pushq %rax\n");
+        return CallOut { state: s, done: true };
+    }
+    if (name == "__raw_string" && c.args.len() == 2) {
+        s = emit_expr(c.args[0], s);
+        s = emit_expr(c.args[1], s);
+        s = s.write("    movq $16, %rdi\n    call __fern_alloc\n    popq %rcx\n    movq %rcx, 8(%rax)\n    popq %rcx\n    movq %rcx, (%rax)\n    pushq %rax\n");
+        s = s.mark_heap();
+        return CallOut { state: s, done: true };
+    }
     // `write(s)` is `print(s)` without a trailing newline. The
     // self-host print runtime already omits the newline, so
     // write and print share the same lowering here; the Go
