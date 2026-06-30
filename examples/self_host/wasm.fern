@@ -7468,6 +7468,36 @@ pub function stat_func(): string {
     return o;
 }
 
+// remove_file_import emits the preview1 path_unlink_file import (separate from
+// file_imports, so a remove_file-only module doesn't pull in path_open/fd_read).
+pub function remove_file_import(): string {
+    return "  (import \"wasi_snapshot_preview1\" \"path_unlink_file\" (func $path_unlink_file (param i32 i32 i32) (result i32)))\n";
+}
+
+// remove_file_func emits $__fern_remove_file(path) -> Option[IoError] box.
+// path_unlink_file(preopen fd 3, path bytes @path+4 / len @[path]) unlinks the
+// file; on success (errno 0) push Option.None [tag1, payload0], else push
+// Option.Some(IoError) [tag0, payload=0] with the same null-IoError placeholder
+// the register backends and $__fern_stat's Err arm use (the match binds the
+// payload with a wildcard, so its exact value is never read). Option's tag
+// convention matches opt_make / $__fern_env: Some=0, None=1. Boxes via
+// $__fern_str_box (the rc-boxed [tag@0,payload@4] shape).
+pub function remove_file_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_remove_file (param $path i32) (result i32)\n";
+    o = o + "    (local $err i32) (local $res i32)\n";
+    o = o + "    (local.set $err (call $path_unlink_file (i32.const 3) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path))))\n";
+    o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "    (if (i32.eq (local.get $err) (i32.const 0)) (then\n";
+    o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
+    o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (i32.const 0))\n";
+    o = o + "      (return (local.get $res))))\n";
+    o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
+    o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (i32.const 0))\n";
+    o = o + "    (local.get $res))\n";
+    return o;
+}
+
 // stdin_fd_read_import emits the standalone wasi fd_read import that read_line /
 // read_int use to read stdin (fd 0). file_imports ALSO imports fd_read for
 // read_file, so the caller (wasm_ir_run) must emit only one of the two — this
