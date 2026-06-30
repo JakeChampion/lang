@@ -118,3 +118,73 @@ func TestSelfHostSleepMsIRArm64(t *testing.T) {
 		})
 	}
 }
+
+// TestSelfHostSleepMsIRWasm closes the deferred #2843 item: sleep_ms now lowers on
+// the wasm IR path too. wasm has no sleep syscall, but a bare timed block needs
+// only preview1 poll_oneoff with a SINGLE monotonic-clock subscription (not the
+// reactor's wasi:io/poll multiplexer), so $__fern_sleep_ms is self-contained. The
+// op stays void-with-drop, like the register backends.
+//
+// Where the x86 / arm64 cases above can only observe a 1 ms sleep by exit code,
+// this one actually verifies the block happened: it reads monotonic_ns, sleeps
+// 50 ms, reads it again, and exits 0 only if >= 40 ms elapsed (a lower-bound
+// check — poll_oneoff blocks for >= the timeout, so it is robust to slow runners
+// and never flakes high). Pins that the IR path was taken (call $__fern_sleep_ms).
+func TestSelfHostSleepMsIRWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host sleep_ms wasm IR e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	for _, name := range []string{
+		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
+		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm.fern", "wasm_ir.fern", "wasm_ir_run.fern",
+	} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+
+	// 50 ms sleep; require >= 40 ms elapsed (40_000_000 ns) so a no-op "sleep"
+	// fails. No upper bound — a slow runner sleeping longer is still correct.
+	const src = `function main(): i32 {
+    var t0: i64 = monotonic_ns();
+    sleep_ms(50);
+    var t1: i64 = monotonic_ns();
+    var elapsed: i64 = t1 - t0;
+    if (elapsed < 40000000) { return 1; }
+    return 0;
+}`
+
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(driverBin, "-ir")
+	} else {
+		cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+	}
+	cmd.Stdin = bytes.NewReader([]byte(src))
+	wat, err := cmd.Output()
+	if err != nil || len(wat) == 0 {
+		t.Fatalf("driver failed: %v", err)
+	}
+	if !bytes.Contains(wat, []byte("call $__fern_sleep_ms")) {
+		t.Fatal("sleep_ms did not reach the wasm IR runtime path (no call $__fern_sleep_ms in WAT)")
+	}
+	watFile := filepath.Join(dir, "sleep_prog.wat")
+	if err := os.WriteFile(watFile, wat, 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	run := exec.Command("wasmtime", "run", watFile)
+	_ = run.Run()
+	if run.ProcessState == nil || !run.ProcessState.Exited() {
+		t.Fatalf("wasmtime did not exit normally:\n%s", wat)
+	}
+	if code := run.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("sleep_ms wasm IR program exited %d, want 0 (>= 40ms should have elapsed)\n--- WAT ---\n%s", code, wat)
+	}
+}

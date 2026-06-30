@@ -7890,6 +7890,39 @@ pub function temp_dir_import(): string {
     return "  (import \"wasi_snapshot_preview1\" \"path_create_directory\" (func $path_create_directory (param i32 i32 i32) (result i32)))\n";
 }
 
+// sleep_ms_import emits the preview1 poll_oneoff import that $__fern_sleep_ms
+// uses to block on a monotonic-clock timeout.
+pub function sleep_ms_import(): string {
+    return "  (import \"wasi_snapshot_preview1\" \"poll_oneoff\" (func $poll_oneoff (param i32 i32 i32 i32) (result i32)))\n";
+}
+
+// sleep_ms_func emits $__fern_sleep_ms(ms) -> i32 (a dummy the statement drops,
+// mirroring the x86 push). Where the register backends nanosleep a timespec, wasm
+// preview1 has no sleep syscall — but a bare timed block needs only poll_oneoff
+// with a SINGLE monotonic-clock subscription (NOT the wasi:io/poll multiplexer the
+// reactor needs). ms <= 0 returns immediately. Builds one preview1 `subscription`
+// in a fresh heap buffer (userdata u64 @0, eventtype tag u8 @8 = 0/clock, then the
+// subscription_clock at @16: clockid u32 @16 = 1/monotonic, timeout u64 @24 =
+// ms·1e6 ns, precision u64 @32 = 0, subclockflags u16 @40 = 0/RELATIVE), with the
+// 32-byte event-out at @48 and the nevents slot at @80, and poll_oneoff blocks for
+// the timeout. Heap-backed (the buffer), so gated into the heap runtime.
+pub function sleep_ms_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_sleep_ms (param $ms i32) (result i32)\n";
+    o = o + "    (local $buf i32)\n";
+    o = o + "    (if (i32.gt_s (local.get $ms) (i32.const 0)) (then\n";
+    o = o + "      (local.set $buf (call $__fern_alloc (i32.const 88)))\n";
+    o = o + "      (i64.store (local.get $buf) (i64.const 0))\n";
+    o = o + "      (i32.store8 (i32.add (local.get $buf) (i32.const 8)) (i32.const 0))\n";
+    o = o + "      (i32.store (i32.add (local.get $buf) (i32.const 16)) (i32.const 1))\n";
+    o = o + "      (i64.store (i32.add (local.get $buf) (i32.const 24)) (i64.mul (i64.extend_i32_s (local.get $ms)) (i64.const 1000000)))\n";
+    o = o + "      (i64.store (i32.add (local.get $buf) (i32.const 32)) (i64.const 0))\n";
+    o = o + "      (i32.store16 (i32.add (local.get $buf) (i32.const 40)) (i32.const 0))\n";
+    o = o + "      (drop (call $poll_oneoff (local.get $buf) (i32.add (local.get $buf) (i32.const 48)) (i32.const 1) (i32.add (local.get $buf) (i32.const 80))))))\n";
+    o = o + "    (i32.const 0))\n";
+    return o;
+}
+
 // temp_dir_func emits $__fern_temp_dir(prefix) -> Result[string, IoError] box.
 // Builds a unique name `<prefix>-<monotonic_ns>` and path_create_directorys it
 // under the preopen (fd 3), returning Ok(name) / Err(IoError). Mirrors asm_ir's
