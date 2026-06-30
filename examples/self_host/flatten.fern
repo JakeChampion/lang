@@ -711,6 +711,20 @@ pub function collect_decl_names(mod: parser.Module): string[] {
         names = names.append(mod.aliases[k].name);
         k = k + 1;
     }
+    // Enum NAMES too: an enum desugars to its variant structs (already counted
+    // above), but the enum's own name is also a usable type (`fs: Fut[T][]`).
+    // Without it, a same-module bare reference to the enum type stayed UNMANGLED
+    // (`Fut[T][]`) while a cross-module qualified use mangled (`mod__Fut[i32][]`),
+    // so monomorphization's bind_unify compared mismatched bases (`Fut` vs
+    // `mod__Fut`) and couldn't recover a type param whose ONLY source is a
+    // generic-enum argument (e.g. with_deadline(ms, fs: Future[T][]) — no bare-T
+    // param). Mangling the enum name makes param types, var annotations, and the
+    // EnumDecl name agree. (slice 6b)
+    var en: i32 = 0;
+    while (en < mod.enums.len()) {
+        names = names.append(mod.enums[en].name);
+        en = en + 1;
+    }
     return names;
 }
 
