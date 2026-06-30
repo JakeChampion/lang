@@ -161,6 +161,8 @@ function main(): i32 {
         // $__fern_exp_f64: e^x via a polynomial (no transcendental wasm
         // instruction). Self-contained f64 math — no imports or heap.
         if (wasm_ir.module_emits_op(mod, "fexp")) { o = o + wasm.exp_func(); }
+        // $__fern_log_f64: ln x via a polynomial (same — self-contained f64 math).
+        if (wasm_ir.module_emits_op(mod, "flog")) { o = o + wasm.log_func(); }
         // $__fern_strcat + $__fern_streq (concat / equality); references
         // $__fern_str_box from heap_alloc_helpers, which module_allocates pulls
         // in for any string program.
