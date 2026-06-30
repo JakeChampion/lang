@@ -315,8 +315,11 @@ pub function (s: EmitState) mark_str_lines(): EmitState {
     return s.need("heap").need("str_split").need("arr_slice").need("str_lines");
 }
 
+// str_bytes's helper builds the result array with `.append()` (→ __fern_arr_push).
+// The AST emit path has no close_needs, so mark the transitive dep directly;
+// runtime_need_deps declares the same edge for the IR path's close_needs.
 pub function (s: EmitState) mark_str_bytes(): EmitState {
-    return s.need("heap").need("str_bytes");
+    return s.need("heap").need("arr_push").need("str_bytes");
 }
 
 pub function (s: EmitState) mark_str_split(): EmitState {
@@ -491,6 +494,17 @@ pub function rt_src_arr_i32_max(): string {
 // `go` flag + nested if/else instead of `&&`/`||` to stay in the proven subset.
 // Empty / all-whitespace input → start==end → a zero-length slice, matching the
 // hand-asm it replaces.
+// rt_src_str_bytes backs `s.bytes()` / `s.as_bytes()` (#2649). Returns an i32[]
+// of the string's byte values (each zero-extended into the array's uniform 8-byte
+// slot). Composite / Tier-1: builds the result by appending each byte
+// (s[i] yields the zero-extended byte as i32) — .append() lowers to __fern_arr_push
+// (existing), so no new primitive. The hand-asm it replaces pre-sized the array to
+// len via __fern_arr_box; the append-loop grows it instead — same i32[] result
+// (logical length + elements), just a different internal capacity.
+pub function rt_src_str_bytes(): string {
+    return "function __fern_str_bytes(s: string): i32[] { var n: i32 = s.len(); var r: i32[] = []; var i: i32 = 0; while (i < n) { r = r.append(s[i]); i = i + 1; } return r; }";
+}
+
 // rt_src_str_lines backs `s.lines()` (#2649). It splits s on '\n' via str_split,
 // then drops the single trailing empty entry that a trailing newline (or an empty
 // input) produces — so "a\nb\nc\n".lines() is 3 lines, not 4, matching the interp
@@ -2058,6 +2072,11 @@ pub function runtime_need_deps(name: string): string[] {
         // trailing empty entry via an array slice (__fern_arr_slice).
         var d5: string[] = ["heap", "str_split", "arr_slice"];
         return d5;
+    }
+    if (name == "str_bytes") {
+        // __fern_str_bytes builds the byte array with .append() (__fern_arr_push).
+        var d6: string[] = ["heap", "arr_push"];
+        return d6;
     }
     var none: string[] = [];
     return none;

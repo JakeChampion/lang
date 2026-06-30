@@ -125,9 +125,12 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         return s.write("    ldr x21, [sp], #16\n    ldp x19, x20, [sp], #16\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind == "str_bytes") {
-        // operand stack [str box]; __fern_str_bytes(x0=box) -> fresh u8[] in x0.
+        // operand stack [str box]; __fern_str_bytes is a Fern runtime function now
+        // (#2649): asm_arm64.emit_runtime emits the shared body gated on str_bytes
+        // (it appends each byte; mark_str_bytes pulls in arr_push + heap). The box
+        // on the stack IS param[0] (at [x29,#16]); call, pop arg, push result.
         s = s.mark_str_bytes();
-        return s.write("    ldr x0, [sp], #16\n    bl __fern_str_bytes\n    str x0, [sp, #-16]!\n");
+        return s.write("    bl __fn___fern_str_bytes\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind == "str_split") {
         // operand stack [haystack box, sep box] (sep top); __fern_str_split(
