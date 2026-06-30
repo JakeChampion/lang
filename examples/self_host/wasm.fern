@@ -6824,7 +6824,7 @@ function module_uses_rcmem(mod: parser.Module): boolean {
 // box result (Some(value) / None). Value bytes are copied into a fresh
 // string block. Uses the iovec scratch (addr 0 / 4) for the two sizes —
 // safe because env() completes before any write/print reuses them.
-function env_helpers(): string {
+pub function env_helpers(): string {
     var o: string = "";
     o = o + "  (import \"wasi_snapshot_preview1\" \"environ_sizes_get\" (func $environ_sizes_get (param i32 i32) (result i32)))\n";
     o = o + "  (import \"wasi_snapshot_preview1\" \"environ_get\" (func $environ_get (param i32 i32) (result i32)))\n";
@@ -6899,7 +6899,7 @@ function env_func_p2(): string {
 
 // env_func emits the $__fern_env body (separate from env_helpers so the
 // imports can be placed in the import section, before functions).
-function env_func(): string {
+pub function env_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_env (param $np i32) (result i32)\n";
     o = o + "    (local $count i32) (local $bufsz i32) (local $ptrs i32) (local $buf i32)\n";

@@ -661,7 +661,6 @@ pub function wasm_eligible(mod: parser.Module): boolean {
         && !module_emits_op(mod, "temp_dir")
         && !module_emits_op(mod, "read_dir")
         && !module_emits_op(mod, "remove_file")
-        && !module_emits_op(mod, "env")
         && !module_emits_op(mod, "stat")
         && !module_emits_op(mod, "subprocess")
         && !module_emits_op(mod, "fsin")
@@ -1256,6 +1255,13 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // opens the path for write (path_open) and writes via fd_write (the
             // import print already pulls in; wasm_ir_run extends its gate).
             out = out + "    call $__fern_write_file\n";
+        } else if (o.kind == "env") {
+            // stack: name strblock ptr -> look up the env var, push a fresh
+            // Option[string] box (Some(value) / None). $__fern_env (param i32 name,
+            // result i32) wraps the preview1 environ_sizes_get/environ_get scan and
+            // allocates the value + box; emitted caller-side in wasm_ir_run (with the
+            // environ imports + heap) when the module reads an env var.
+            out = out + "    call $__fern_env\n";
         } else if (o.kind == "args") {
             // 0-arg -> build a fresh string[] of the command-line arguments and
             // push its block ptr. The helper ($__fern_args, result i32) reads the
