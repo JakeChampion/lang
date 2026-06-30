@@ -661,7 +661,6 @@ pub function wasm_eligible(mod: parser.Module): boolean {
         && !module_emits_op(mod, "subprocess")
         && !module_emits_op(mod, "fsin")
         && !module_emits_op(mod, "fcos")
-        && !module_emits_op(mod, "fexp")
         && !module_emits_op(mod, "flog")
         && !module_emits_op(mod, "fpow")
         // Map iteration is parallel-array only (x86-64 / arm64); wasm maps are
@@ -903,6 +902,13 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             out = out + "    f64.const 0.5\n";
             out = out + "    local.get " + util.i32_to_string(f64tmp) + "\n    f64.copysign\n";
             out = out + "    f64.add\n    f64.trunc\n";
+        } else if (o.kind == "fexp") {
+            // e^x: wasm has no transcendental instruction, so call the polynomial
+            // runtime $__fern_exp_f64 (emitted caller-side in wasm_ir_run). The f64
+            // operand is already on the stack; the call consumes it and pushes e^x.
+            // The arm64 backend lowers fexp the same way (bl __fern_exp_f64); this
+            // is the wasm sibling of that polynomial helper.
+            out = out + "    call $__fern_exp_f64\n";
         } else if (o.kind == "int_extend") {
             // i32 -> i64: distinct wasm types, so an explicit widen.
             if (o.unsigned) { out = out + "    i64.extend_i32_u\n"; }

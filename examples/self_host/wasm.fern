@@ -7703,6 +7703,34 @@ pub function remove_dir_func(): string {
     return o;
 }
 
+// exp_func emits $__fern_exp_f64(x) -> e^x — the wasm sibling of asm_arm64's
+// __fern_exp_f64 polynomial helper (x86 uses the x87 FPU; wasm has no
+// transcendental instruction). exp(x) = 2^k · poly(r) where k = round(x·log2e),
+// r = x − k·ln2 ∈ [−ln2/2, ln2/2], poly is the degree-7 Taylor of e^r (Horner),
+// and 2^k is built directly in the f64 exponent bits ((k+1023) << 52 reinterpreted
+// as f64). Same coefficients as the arm64 helper. Self-contained f64 math — no
+// imports, no heap. f64.nearest is ties-to-even vs arm64's frinta (ties-to-away),
+// but they differ only on exact .5 ties of x·log2e (measure zero), so the result
+// is identical for every practical input.
+pub function exp_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_exp_f64 (param $x f64) (result f64)\n";
+    o = o + "    (local $kf f64) (local $ki i64) (local $r f64) (local $p f64)\n";
+    o = o + "    (local.set $kf (f64.nearest (f64.mul (local.get $x) (f64.const 1.4426950408889634))))\n";
+    o = o + "    (local.set $ki (i64.trunc_f64_s (local.get $kf)))\n";
+    o = o + "    (local.set $r (f64.sub (local.get $x) (f64.mul (local.get $kf) (f64.const 0.6931471805599453))))\n";
+    o = o + "    (local.set $p (f64.const 0.00019841269841269841))\n";                                    // 1/5040
+    o = o + "    (local.set $p (f64.add (f64.mul (local.get $p) (local.get $r)) (f64.const 0.0013888888888888889)))\n"; // 1/720
+    o = o + "    (local.set $p (f64.add (f64.mul (local.get $p) (local.get $r)) (f64.const 0.0083333333333333332)))\n"; // 1/120
+    o = o + "    (local.set $p (f64.add (f64.mul (local.get $p) (local.get $r)) (f64.const 0.041666666666666664)))\n";  // 1/24
+    o = o + "    (local.set $p (f64.add (f64.mul (local.get $p) (local.get $r)) (f64.const 0.16666666666666666)))\n";   // 1/6
+    o = o + "    (local.set $p (f64.add (f64.mul (local.get $p) (local.get $r)) (f64.const 0.5)))\n";
+    o = o + "    (local.set $p (f64.add (f64.mul (local.get $p) (local.get $r)) (f64.const 1.0)))\n";
+    o = o + "    (local.set $p (f64.add (f64.mul (local.get $p) (local.get $r)) (f64.const 1.0)))\n";
+    o = o + "    (f64.mul (local.get $p) (f64.reinterpret_i64 (i64.shl (i64.add (local.get $ki) (i64.const 1023)) (i64.const 52)))))\n";
+    return o;
+}
+
 // stdin_fd_read_import emits the standalone wasi fd_read import that read_line /
 // read_int use to read stdin (fd 0). file_imports ALSO imports fd_read for
 // read_file, so the caller (wasm_ir_run) must emit only one of the two — this
