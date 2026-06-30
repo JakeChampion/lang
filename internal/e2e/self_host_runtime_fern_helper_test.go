@@ -92,6 +92,14 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_str_starts_with:", ".Lsw_loop", ".Lidx_outer"},
 		},
 		{
+			// str_eq backs == on strings (and the map / arr_str helpers). AST
+			// path; IR covered by the IR lock-in test.
+			"str_eq",
+			`function main(): i32 { if ("ab" == "ab") { return 1; } return 0; }`,
+			"__fn___fern_str_eq",
+			[]string{"\n__fern_str_eq:", ".Lstreq_loop"},
+		},
+		{
 			"arr_i32_min",
 			"function main(): i32 { var xs: i32[] = [5, 2, 7]; match (xs.min()) { Some(v) => { return v; }, None => { return 0; } } }",
 			"__fn___fern_arr_i32_min",

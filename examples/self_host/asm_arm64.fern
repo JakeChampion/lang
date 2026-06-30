@@ -2272,7 +2272,7 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                     s = emit_expr(b.right, s);
                     s = s.write("    ldr x1, [sp], #16\n");
                     s = s.write("    ldr x0, [sp], #16\n");
-                    s = s.write("    bl __fern_str_eq\n");
+                    s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_eq\n    add sp, sp, #32\n");
                     if (b.op == "!=") {
                         s = s.write("    eor x0, x0, #1\n");
                     }
@@ -4470,29 +4470,12 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
-    // __fern_str_eq: x0 = box A, x1 = box B → x0 = 1 / 0.
+    // __fern_str_eq is now a Fern runtime function (#2649): see
+    // asmcore.rt_src_str_eq. One __fn___fern_str_eq body serves both the arm64
+    // AST and IR call sites (shared emit_runtime) and the hand-asm map/arr_str
+    // internals (all set x0=A/x1=B before the call).
     if (s.has_need("str_eq")) {
-        s = s.write("__fern_str_eq:\n");
-        s = s.write("    ldr x2, [x0, #8]\n");
-        s = s.write("    ldr x3, [x1, #8]\n");
-        s = s.write("    cmp x2, x3\n");
-        s = s.write("    b.ne .Lstreq_no\n");
-        s = s.write("    ldr x0, [x0]\n");
-        s = s.write("    ldr x1, [x1]\n");
-        s = s.write("    cbz x2, .Lstreq_yes\n");
-        s = s.write(".Lstreq_loop:\n");
-        s = s.write("    ldrb w3, [x0], #1\n");
-        s = s.write("    ldrb w4, [x1], #1\n");
-        s = s.write("    cmp w3, w4\n");
-        s = s.write("    b.ne .Lstreq_no\n");
-        s = s.write("    subs x2, x2, #1\n");
-        s = s.write("    b.ne .Lstreq_loop\n");
-        s = s.write(".Lstreq_yes:\n");
-        s = s.write("    mov x0, #1\n");
-        s = s.write("    ret\n");
-        s = s.write(".Lstreq_no:\n");
-        s = s.write("    mov x0, #0\n");
-        s = s.write("    ret\n");
+        s = emit_runtime_fern_fn(asmcore.rt_src_str_eq(), s);
     }
     // __fern_str_cmp is now a Fern runtime function (#2649): see
     // asmcore.rt_src_str_cmp, lowered through asm_arm64's normal function
@@ -7736,7 +7719,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    add x9, x23, #1\n");
         s = s.write("    ldr x0, [x22, x9, lsl #3]\n");  // keys[i+1]
         s = s.write("    mov x1, x20\n");
-        s = s.write("    bl __fern_str_eq\n");
+        s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_eq\n    add sp, sp, #32\n");
         s = s.write("    cbnz x0, .Lms_found\n");
         s = s.write("    add x23, x23, #1\n");
         s = s.write("    b .Lms_loop\n");
@@ -7798,7 +7781,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    add x9, x23, #1\n");
         s = s.write("    ldr x0, [x22, x9, lsl #3]\n");  // keys[i+1]
         s = s.write("    mov x1, x20\n");
-        s = s.write("    bl __fern_str_eq\n");
+        s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_eq\n    add sp, sp, #32\n");
         s = s.write("    cbnz x0, .Lmd_found\n");
         s = s.write("    add x23, x23, #1\n");
         s = s.write("    b .Lmd_loop\n");
@@ -7881,7 +7864,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    add x9, x22, #1\n");
         s = s.write("    ldr x0, [x21, x9, lsl #3]\n");
         s = s.write("    mov x1, x20\n");
-        s = s.write("    bl __fern_str_eq\n");
+        s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_eq\n    add sp, sp, #32\n");
         s = s.write("    cbnz x0, .Lmg_found\n");
         s = s.write("    add x22, x22, #1\n");
         s = s.write("    b .Lmg_loop\n");
@@ -7937,7 +7920,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    add x9, x22, #1\n");
         s = s.write("    ldr x0, [x21, x9, lsl #3]\n");
         s = s.write("    mov x1, x20\n");
-        s = s.write("    bl __fern_str_eq\n");
+        s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_eq\n    add sp, sp, #32\n");
         s = s.write("    cbnz x0, .Lmh_yes\n");
         s = s.write("    add x22, x22, #1\n");
         s = s.write("    b .Lmh_loop\n");
@@ -8759,7 +8742,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    add x0, x22, #1\n");
         s = s.write("    ldr x0, [x19, x0, lsl #3]\n");
         s = s.write("    mov x1, x20\n");
-        s = s.write("    bl __fern_str_eq\n");
+        s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_eq\n    add sp, sp, #32\n");
         s = s.write("    cbnz x0, .Las_idx_found\n");
         s = s.write("    add x22, x22, #1\n");
         s = s.write("    b .Las_idx_loop\n");

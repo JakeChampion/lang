@@ -406,6 +406,16 @@ pub function rt_src_str_cmp(): string {
     return "function __fern_str_cmp(a: string, b: string): i32 { var la: i32 = a.len(); var lb: i32 = b.len(); var n: i32 = la; if (lb < n) { n = lb; } var i: i32 = 0; while (i < n) { var ca: i32 = a[i]; var cb: i32 = b[i]; if (ca != cb) { return ca - cb; } i = i + 1; } return la - lb; }";
 }
 
+// rt_src_str_eq backs string equality (== / !=) AND is called by the map and
+// arr_str helpers (#2649) — the exact map_set→str_eq edge that motivated the
+// issue. Returns 1 if a and b have equal length and bytes, else 0. Self-contained
+// (byte indexing, no alloc, no other helper call) and read-only params (borrowed).
+// Every call site (operator, IR op, and the hand-asm map/arr internals) sets up
+// the same a/b operands, so all route to the one Fern body.
+pub function rt_src_str_eq(): string {
+    return "function __fern_str_eq(a: string, b: string): i32 { var la: i32 = a.len(); if (la != b.len()) { return 0; } var i: i32 = 0; while (i < la) { if (a[i] != b[i]) { return 0; } i = i + 1; } return 1; }";
+}
+
 // rt_src_str_search backs the string-search predicates (#2649): all three are
 // gated by the single `str_search` need, so one source defines all three and
 // emit_*_runtime_fern_fn emits each. Self-contained — byte indexing only, no
