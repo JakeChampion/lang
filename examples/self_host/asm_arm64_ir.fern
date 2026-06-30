@@ -187,13 +187,13 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         return s.write("    ldr x0, [sp], #16\n    bl __fern_str_chars\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind == "str_lines") {
-        // operand stack [s box]; __fern_str_lines(x0=s) -> fresh string[] in x0.
-        // asm_arm64.emit_runtime emits the body gated on str_lines; it calls
-        // __fern_str_split (str_search) and allocates, so set all three needs.
+        // operand stack [s box]; __fern_str_lines is a Fern runtime function now
+        // (#2649): asm_arm64.emit_runtime emits the shared body gated on the
+        // str_lines need (it splits + array-slices; mark_str_lines pulls in
+        // str_split + arr_slice + heap). The s box on the stack IS param[0] (at
+        // [x29,#16]); call, pop arg, push result.
         s = s.mark_str_lines();
-        s = s.mark_str_search();
-        s = s.mark_heap();
-        return s.write("    ldr x0, [sp], #16\n    bl __fern_str_lines\n    str x0, [sp, #-16]!\n");
+        return s.write("    bl __fn___fern_str_lines\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind == "str_starts_with" || o.kind == "str_ends_with" || o.kind == "str_index_of") {
         // operand stack [s, p] (p top); the str_search predicates are now Fern
