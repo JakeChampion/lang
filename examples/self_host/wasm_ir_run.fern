@@ -167,6 +167,10 @@ function main(): i32 {
         if (wasm_ir.module_emits_op(mod, "flog") || wasm_ir.module_emits_op(mod, "fpow")) { o = o + wasm.log_func(); }
         // $__fern_pow_f64: x^y = exp(y·ln x) — composes the two helpers above.
         if (wasm_ir.module_emits_op(mod, "fpow")) { o = o + wasm.pow_func(); }
+        // $__fern_sin_f64 / $__fern_cos_f64: trig via argument reduction + Taylor
+        // polynomials (no transcendental wasm instruction). Self-contained f64 math.
+        if (wasm_ir.module_emits_op(mod, "fsin")) { o = o + wasm.sin_func(); }
+        if (wasm_ir.module_emits_op(mod, "fcos")) { o = o + wasm.cos_func(); }
         // $__fern_strcat + $__fern_streq (concat / equality); references
         // $__fern_str_box from heap_alloc_helpers, which module_allocates pulls
         // in for any string program.
