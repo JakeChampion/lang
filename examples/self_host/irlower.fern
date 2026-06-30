@@ -2192,6 +2192,17 @@ pub function expr_is_strarr(e: parser.Expr, s: LowerState): boolean {
             return expr_is_str(arr.elements[0], s);
         },
         parser.ExprIdent(id) => { return s.is_strarr_slot(s.slot_of(id.name)); },
+        // `m[i]` over a string[][] slot is itself a string[] (so `m[i][j]` reads
+        // as a string and `m[i][j].len()` dispatches to str_len, #4081). Mirrors
+        // the ExprIndex case in expr_is_f64arr; the slot's inner element kind is
+        // recorded "string" at the `var m: string[][] = …` binding.
+        parser.ExprIndex(ix) => {
+            match (ix.array) {
+                parser.ExprIdent(aid) => { return s.arrarr_elem_of_slot(s.slot_of(aid.name)) == "string"; },
+                _ => { return false; }
+            }
+            return false;
+        },
         parser.ExprCall(c) => {
             // A call to a string[]-returning user function (strarr_ret_fns), the
             // `str_split(s, sep)` builtin (string→string[]), or the `s.split(sep)`
@@ -9329,20 +9340,27 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 parser.ExprIdent(aaid) => { if (se.is_arrarr_slot(se.slot_of(aaid.name))) { is_arrarr = true; } },
                 _ => {}
             }
-            // Inner element kind of a T[][] binding ("i64"/"f64"/"") so a nested
-            // read m[i][j] picks the 8-byte load instead of truncating. #2691.
+            // Inner element kind of a T[][] binding ("i64"/"f64"/"string"/"") so a
+            // nested read m[i][j] picks the right load (8-byte instead of
+            // truncating, #2691) AND `.len()` on a nested string element dispatches
+            // to str_len not arr_len (#4081 — a string box's length is at offset 8,
+            // but arr_len reads offset 0, the data pointer, giving a layout-
+            // dependent garbage length). expr_is_strarr's ExprIndex case keys off
+            // the "string" tag to recognise `m[i]` of a string[][] as a string[].
             var arrarr_e: string = "";
             if (is_arrarr) {
                 if (is_array_type_name(v.type_name) && v.type_name.len() >= 4 && is_array_type_name(v.type_name[0 : v.type_name.len() - 2])) {
                     var innr: string = v.type_name[0 : v.type_name.len() - 4];
                     if (innr == "i64" || innr == "u64") { arrarr_e = "i64"; }
                     if (innr == "f64") { arrarr_e = "f64"; }
+                    if (innr == "string") { arrarr_e = "string"; }
                 }
                 match (v.init) {
                     parser.ExprArray(aarr2) => {
                         if (aarr2.elements.len() > 0) {
                             if (expr_is_i64arr(aarr2.elements[0], se)) { arrarr_e = "i64"; }
                             if (expr_is_f64arr(aarr2.elements[0], se)) { arrarr_e = "f64"; }
+                            if (expr_is_strarr(aarr2.elements[0], se)) { arrarr_e = "string"; }
                         }
                     },
                     parser.ExprIdent(aaid2) => { arrarr_e = se.arrarr_elem_of_slot(se.slot_of(aaid2.name)); },

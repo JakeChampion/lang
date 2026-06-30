@@ -152,6 +152,37 @@ The standing objective is, in order:
 When a PR merges and there's no more specific instruction, the default
 next task is the next increment toward goal 1 (then goal 2).
 
+**Finding real IR-subset gaps (probing methodology — learned the hard
+way).** The *per-function* IR subset is now mature: most valid
+constructs (closures incl. nested, matches incl. guards/nested,
+generics, `dyn` traits, `try`/`?`, tuples, iterators) already lower.
+When hunting for a gap, route a probe program through the single-program
+path-probe driver (`asm_pathprobe_run.fern`, which prints `ir`/`ast`) —
+**but** that driver routes *invalid* programs to `ast` too, so a bare
+"`ast`" verdict is NOT proof of a real gap. Always confirm the probe
+program is **native-valid first** (`go build -o /tmp/fern ./cmd/fern`
+then `/tmp/fern -interp prog.fern`) before treating a bail as a gap.
+Most apparent "gaps" turn out to be invalid programs — wrong keyword
+(match guards are `when`, not `if`), checker-rejected (a bare-ident
+arm on a SCALAR match is E035 — i32 matches only accept literals or
+`_`), parse errors (arrow lambdas take an EXPRESSION body, not a block:
+`(x) => x+1`, not `(x) => { … }`), or missing imports (the path-probe
+driver resolves no stdlib, so anything needing `std/iter`/`std/map`/…
+falsely reads `ast`). The genuine remaining AST fallbacks are
+documented, not probe-findable: the ~512-function merged-bundle budget
+(the bootstrap self-compile, tied to the native large-tier freelist
+#3425) and specific **wasm-IR runtime gaps** in `wasm_eligible`
+(`wasm_ir.fern`). The tractable wasm-IR gaps are the ones that REUSE the
+existing wasm AST runtime or return a struct-free box (`env` →
+`Option[string]`, done) or need a fresh self-contained buffer (`strbuf`,
+done). The remaining ones are substantial: the filesystem ops
+(`stat`/`read_dir`/`remove_file`/`temp_dir`) return `Result`/`Option`
+wrapping `IoError`/`FileStat` **structs**, whose wasm IR boxes need
+module-specific type-ids — so they need IR-side (not monolithic-helper)
+box construction; and the libm transcendentals (`fsin`/`fcos`/`fexp`/
+`flog`) need polynomial-approx WAT (no wasm instruction). The async /
+`tcp_*` / `poll` exclusions are actively being worked in parallel — avoid.
+
 ## Engineering bar (non-negotiable)
 
 - **Confirm passing tests before opening a PR.** Run the full relevant

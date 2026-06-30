@@ -288,18 +288,21 @@ var fastLinkFlagVal string
 // fraction of the RSS. Detected once; degrades cleanly — a fork / minimal image
 // without lld falls back to bfd (slow but correct).
 //
-// IMPORTANT — only for the NATIVE-Go-emitted DRIVER asm (driverLinkArgs /
-// cachedDriverBin), NOT for SELF-HOST-emitted programs (cachedLink / buildBin):
-// the self-host x86-64 backend emits freestanding `-static -nostdlib -no-pie`
-// programs that lld links INCORRECTLY (e.g. `string[][]` -> exit 253 vs bfd's 5;
-// a section/heap-layout assumption the self-host asm makes that bfd honours and
-// lld lays out differently). The native Go backend's driver asm IS lld-correct
-// (the e2e suite passes with lld-linked drivers), and it is the only ~680 MB
-// link, so lld is scoped to it; the small self-host test-program links stay on
-// bfd (fast anyway). The driver-binary disk cache keys on the `.s` CONTENT and a
-// driver is always native-Go-emitted, so an lld- and a bfd-linked driver from the
-// same `.s` are interchangeable across the fleet. (The arm64-darwin cross-link
-// already uses `-fuse-ld=lld` — same precedent for the native backends.)
+// Used for the NATIVE-Go-emitted DRIVER asm (driverLinkArgs / cachedDriverBin),
+// which is the only ~680 MB link and the source of the shard-link timeouts.
+// The small SELF-HOST-emitted program links (cachedLink / buildBin) stay on bfd
+// because there is no CI-speed payoff for them — bfd links a few-KB `.s` in
+// milliseconds. (Self-host freestanding output USED to link INCORRECTLY under
+// lld — `string[][]` -> exit 253 vs bfd's 5 — but that was a codegen +
+// heap-layout bug, now fixed: issue #4081 made the self-host x86-64 backend
+// emit linker-agnostic output (mmap'd heap, no .bss-ordering assumption; nested
+// string-element `.len()` reads the length field, not a layout-dependent data
+// pointer). TestSelfHostLinkerAgnosticIRX86_64 gates that property across bfd,
+// lld and mold. Switching the program links to lld too is a possible follow-up
+// with no measurable upside.) The driver-binary disk cache keys on the `.s`
+// CONTENT and a driver is always native-Go-emitted, so an lld- and a bfd-linked
+// driver from the same `.s` are interchangeable across the fleet. (The
+// arm64-darwin cross-link already uses `-fuse-ld=lld` — same precedent.)
 func fastLinkFlag() string {
 	fastLinkOnce.Do(func() {
 		if _, err := exec.LookPath("ld.lld"); err == nil {
@@ -311,8 +314,10 @@ func fastLinkFlag() string {
 
 // driverLinkArgs builds the gcc argv for linking a NATIVE-Go-emitted self-host
 // DRIVER `.s` into a static freestanding binary, preferring lld when present (see
-// fastLinkFlag — lld is correct for the driver asm and is the slow link). NOT for
-// self-host-emitted programs, which lld mis-links (cachedLink stays on bfd).
+// fastLinkFlag — lld is correct for the driver asm and is the slow link). The
+// small self-host program links (cachedLink) stay on bfd purely because they're
+// already fast; self-host output is lld-correct since #4081 (gated by
+// TestSelfHostLinkerAgnosticIRX86_64).
 func driverLinkArgs(asmPath, binPath string) []string {
 	args := []string{"-static", "-nostdlib", "-no-pie"}
 	if f := fastLinkFlag(); f != "" {
@@ -363,9 +368,10 @@ func cachedLink(t *testing.T, gcc, asm string) string {
 			return "", err
 		}
 		// bfd (NOT driverLinkArgs/lld): cachedLink links SELF-HOST-emitted programs
-		// (via buildBin), and lld mis-links those freestanding binaries (see
-		// fastLinkFlag — `string[][]` exits 253 under lld vs 5 under bfd). These are
-		// small, so bfd is fast; lld's win is only on the ~680 MB native-Go driver.
+		// (via buildBin). These are small, so bfd is fast; lld's win is only on the
+		// ~680 MB native-Go driver. Self-host output is lld-correct since #4081
+		// (TestSelfHostLinkerAgnosticIRX86_64 gates it); bfd here is just the
+		// no-payoff default, not a correctness requirement.
 		if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 			return "", fmt.Errorf("gcc: %w\n%s", err, out)
 		}
