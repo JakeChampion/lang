@@ -17452,7 +17452,7 @@ function closure_captures(lam: parser.ExprLambda, s: LowerState): string[] {
     return caps;
 }
 
-function lambda_captures(lam: parser.ExprLambda, gfns: string[]): string[] {
+function lambda_captures(lam: parser.ExprLambda, gfns: string[], fd: parser.FuncDecl): string[] {
     var used: string[] = [];
     var si: i32 = 0;
     while (si < lam.body.len()) { used = astwalk.collect_idents_stmt(lam.body[si], used); si = si + 1; }
@@ -17461,11 +17461,21 @@ function lambda_captures(lam: parser.ExprLambda, gfns: string[]): string[] {
     while (pi < lam.params.len()) { bound = bound.append(lam.params[pi].name); pi = pi + 1; }
     var bi: i32 = 0;
     while (bi < lam.body.len()) { bound = astwalk.collect_bound_stmt(lam.body[bi], bound); bi = bi + 1; }
+    // Only an ENCLOSING LOCAL can be a capture (fd's params + every name bound in
+    // fd.body). Without this, a free ident that is a USER enum constructor or an
+    // I/O builtin (not in gfns) was wrongly captured, making make_clo_func decline
+    // (not an i32 local). Globals are referenced directly in the hoisted body.
+    var encl: string[] = [];
+    var ep: i32 = 0;
+    while (ep < fd.params.len()) { encl = encl.append(fd.params[ep].name); ep = ep + 1; }
+    var eb: i32 = 0;
+    while (eb < fd.body.len()) { encl = astwalk.collect_bound_stmt(fd.body[eb], encl); eb = eb + 1; }
     var caps: string[] = [];
     var ui: i32 = 0;
     while (ui < used.len()) {
         var u: string = used[ui];
         if (util.index_of_str(bound, u) < 0 && util.index_of_str(gfns, u) < 0
+                && util.index_of_str(encl, u) >= 0
                 && u != "None" && u != "true" && u != "false"
                 && u != "Some" && u != "Ok" && u != "Err"
                 && util.index_of_str(caps, u) < 0) {
@@ -17660,7 +17670,7 @@ struct ClosureLift { body: parser.Stmt[], acc: LiftAcc, changed: boolean }
 // fname. Returns changed=true with the rewritten body + appended lifted fn when
 // every guard holds, else the inputs unchanged.
 function try_lift_binding(body: parser.Stmt[], idx: i32, fname: string, lam: parser.ExprLambda, fd: parser.FuncDecl, acc: LiftAcc, gfns: string[], assigns: string[]): ClosureLift {
-    var caps: string[] = lambda_captures(lam, gfns);
+    var caps: string[] = lambda_captures(lam, gfns, fd);
     // A capture-FREE lambda binding (`var f = function(x){…}; f(a)`) is lifted
     // the same way, with no capture args — `f(a)` becomes a direct call to the
     // hoisted `__lam_N(a)`. (Previously declined here, so it fell through to the
@@ -17746,7 +17756,7 @@ struct HoistResult { func: parser.FuncDecl, ok: boolean }
 // (`lift_inline_closures`) so the two agree byte-for-byte on the box layout.
 function make_clo_func(lam: parser.ExprLambda, cloname: string, fd: parser.FuncDecl, gfns: string[]): HoistResult {
     var none: parser.FuncDecl = fd;
-    var caps: string[] = lambda_captures(lam, gfns);
+    var caps: string[] = lambda_captures(lam, gfns, fd);
     if (caps.len() == 0) { return HoistResult { func: none, ok: false }; }
     var ci: i32 = 0;
     while (ci < caps.len()) {
@@ -17818,7 +17828,7 @@ struct InlineCloRes { expr: parser.Expr, funcs: parser.FuncDecl[], counter: i32 
 // aggregate position. On success returns the `__mkclo$<name>(caps…)` marker plus
 // the hoisted function appended; on decline returns the lambda unchanged.
 function try_inline_closure(lam: parser.ExprLambda, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[]): InlineCloRes {
-    var caps: string[] = lambda_captures(lam, gfns);
+    var caps: string[] = lambda_captures(lam, gfns, fd);
     if (caps.len() == 0) { return InlineCloRes { expr: parser.ExprLambda { params: lam.params, ret_type: lam.ret_type, body: lam.body }, funcs: funcs, counter: counter }; }
     var cloname: string = fd.name + "$clo" + util.i32_to_string(counter);
     var hr: HoistResult = make_clo_func(lam, cloname, fd, gfns);
@@ -17902,7 +17912,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: parser.F
 function try_fn_field_value(e: parser.Expr, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: parser.FuncDecl[]): InlineCloRes {
     match (e) {
         parser.ExprLambda(lam) => {
-            var caps: string[] = lambda_captures(lam, gfns);
+            var caps: string[] = lambda_captures(lam, gfns, fd);
             if (caps.len() > 0) { return try_inline_closure(lam, fd, funcs, counter, gfns); }
             // No-capture lambda → wrap trampoline (body inlined, __env ignored).
             var wn: string = fd.name + "$wrap" + util.i32_to_string(counter);
@@ -18156,6 +18166,116 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
     return InlineCloRes { expr: e, funcs: funcs, counter: counter };
 }
 
+// value_use_idents_expr collects every ident referenced in a VALUE position —
+// i.e. all idents EXCEPT the direct bare-name callee of a call `g(...)`. A
+// nested lambda's free vars all count (they ride the env box as values). Used to
+// decide whether a fn-value `var` binding must be env-boxed: a var that is only
+// ever CALLED is left to closure_lift_one's cheaper direct-call lift; one used
+// as a value (passed, returned, stored, captured) is boxed into a uniform box.
+function value_use_idents_expr(e: parser.Expr, acc: string[]): string[] {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(_) => {},
+                _ => { acc = value_use_idents_expr(c.callee, acc); }
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) { acc = value_use_idents_expr(c.args[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.ExprIdent(id) => { return acc.append(id.name); },
+        parser.ExprNumber(_) => { return acc; },
+        parser.ExprString(_) => { return acc; },
+        parser.ExprBool(_) => { return acc; },
+        parser.ExprBinary(b) => { acc = value_use_idents_expr(b.left, acc); return value_use_idents_expr(b.right, acc); },
+        parser.ExprUnary(u) => { return value_use_idents_expr(u.operand, acc); },
+        parser.ExprArray(a) => { var i: i32 = 0; while (i < a.elements.len()) { acc = value_use_idents_expr(a.elements[i], acc); i = i + 1; } return acc; },
+        parser.ExprTuple(t) => { var i: i32 = 0; while (i < t.elements.len()) { acc = value_use_idents_expr(t.elements[i], acc); i = i + 1; } return acc; },
+        parser.ExprIndex(x) => { acc = value_use_idents_expr(x.array, acc); return value_use_idents_expr(x.index, acc); },
+        parser.ExprSlice(sl) => { acc = value_use_idents_expr(sl.array, acc); acc = value_use_idents_expr(sl.start, acc); return value_use_idents_expr(sl.end, acc); },
+        parser.ExprStructLit(sl) => { if (sl.has_base) { acc = value_use_idents_expr(sl.base, acc); } var i: i32 = 0; while (i < sl.field_values.len()) { acc = value_use_idents_expr(sl.field_values[i], acc); i = i + 1; } return acc; },
+        parser.ExprFieldAccess(fa) => { return value_use_idents_expr(fa.obj, acc); },
+        parser.ExprLambda(lm) => {
+            // A nested lambda's VALUE-uses of the enclosing scope = its free vars
+            // collected with the SAME call-callee exclusion (a name only CALLED
+            // inside it is not a value-use of it), minus the lambda's own params +
+            // locals. Reusing astwalk.collect_idents_expr here would wrongly count a
+            // call-callee (e.g. `add` in `add(add(a))`) as a value-use and box a
+            // call-only sibling closure — regressing closure-calls-closure.
+            var inner: string[] = [];
+            var iu: i32 = 0;
+            while (iu < lm.body.len()) { inner = value_use_idents_stmt(lm.body[iu], inner); iu = iu + 1; }
+            var bound: string[] = [];
+            var ip: i32 = 0;
+            while (ip < lm.params.len()) { bound = bound.append(lm.params[ip].name); ip = ip + 1; }
+            var ib: i32 = 0;
+            while (ib < lm.body.len()) { bound = astwalk.collect_bound_stmt(lm.body[ib], bound); ib = ib + 1; }
+            var ik: i32 = 0;
+            while (ik < inner.len()) {
+                if (util.index_of_str(bound, inner[ik]) < 0) { acc = acc.append(inner[ik]); }
+                ik = ik + 1;
+            }
+            return acc;
+        },
+        parser.ExprUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
+function value_use_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
+    match (st) {
+        parser.StmtSwitch(_) => { return value_use_idents_stmt(parser.desugar_switch_in_stmt(st), acc); },
+        parser.StmtDefer(d) => { return value_use_idents_stmt(d.action, acc); },
+        parser.StmtVar(v) => { return value_use_idents_expr(v.init, acc); },
+        parser.StmtReturn(r) => { return value_use_idents_expr(r.value, acc); },
+        parser.StmtExpr(e) => { return value_use_idents_expr(e.value, acc); },
+        parser.StmtIf(i) => {
+            acc = value_use_idents_expr(i.cond, acc);
+            var ti: i32 = 0;
+            while (ti < i.then_body.len()) { acc = value_use_idents_stmt(i.then_body[ti], acc); ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < i.else_body.len()) { acc = value_use_idents_stmt(i.else_body[ei], acc); ei = ei + 1; }
+            return acc;
+        },
+        parser.StmtWhile(w) => {
+            acc = value_use_idents_expr(w.cond, acc);
+            var i: i32 = 0;
+            while (i < w.body.len()) { acc = value_use_idents_stmt(w.body[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.StmtAssign(a) => { acc = value_use_idents_expr(a.value, acc); return acc.append(a.target); },
+        parser.StmtMatch(m) => {
+            acc = value_use_idents_expr(m.scrutinee, acc);
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) { acc = value_use_idents_stmt(m.arms[ai].body[bi], acc); bi = bi + 1; }
+                ai = ai + 1;
+            }
+            return acc;
+        },
+        parser.StmtFor(f) => {
+            acc = value_use_idents_expr(f.iter, acc);
+            var i: i32 = 0;
+            while (i < f.body.len()) { acc = value_use_idents_stmt(f.body[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.StmtBreak(_) => { return acc; },
+        parser.StmtContinue(_) => { return acc; },
+        parser.StmtUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
+// stmts_value_use returns true iff `name` is referenced as a value (not merely
+// as a call callee) anywhere in `stmts`.
+function stmts_value_use(stmts: parser.Stmt[], name: string): boolean {
+    var used: string[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) { used = value_use_idents_stmt(stmts[i], used); i = i + 1; }
+    return util.index_of_str(used, name) >= 0;
+}
+
 // lift_inline_closures_stmts rewrites a statement body, threading the hoisted-fn
 // accumulator + per-function counter through the expression positions that can
 // hold an array / struct literal (var-init, return, expr-stmt, assign) and
@@ -18191,6 +18311,31 @@ function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, f
                                 fs = fs.append(hr.func); ct = ct + 1;
                                 out = out.append(parser.StmtVar { name: bn, type_name: bty, init: marker, line: bln, col: bco });
                                 boxed = true;
+                            }
+                        }
+                    },
+                    parser.ExprLambda(_) => {
+                        // A var-bound lambda USED AS A VALUE (passed, returned,
+                        // stored, captured) — not merely called — is env-boxed so
+                        // its slot holds the uniform env box every fn-value carries;
+                        // `g(args)` then rides the env-first call path. A var only
+                        // ever CALLED is left to closure_lift_one's cheaper
+                        // direct-call lift (boxing it would pre-empt that and
+                        // regress closure-calls-closure). try_fn_field_value boxes a
+                        // capturing (i32-only) / no-capture lambda into a `__mkclo$`
+                        // marker (ExprCall) and DECLINES (returns the lambda
+                        // unchanged) for non-i32 captures — only the ExprCall result
+                        // counts as boxed; a decline falls through to the walk so the
+                        // module bails to AST (correctness preserved).
+                        if (stmts_value_use(fd.body, bn)) {
+                            var lr: InlineCloRes = try_fn_field_value(v.init, fd, fs, ct, gfns, mfuncs);
+                            match (lr.expr) {
+                                parser.ExprCall(_) => {
+                                    fs = lr.funcs; ct = lr.counter;
+                                    out = out.append(parser.StmtVar { name: bn, type_name: bty, init: lr.expr, line: bln, col: bco });
+                                    boxed = true;
+                                },
+                                _ => {}
                             }
                         }
                     },
@@ -18455,7 +18600,7 @@ function box_mutated_scalar_captures(fd: parser.FuncDecl, gfns: string[]): parse
             _ => {}
         }
         if (lam_ok) {
-            var caps: string[] = lambda_captures(lam, gfns);
+            var caps: string[] = lambda_captures(lam, gfns, fd);
             var wtargets: string[] = body_assign_targets(lam.body);
             var ci: i32 = 0;
             while (ci < caps.len()) {
