@@ -1,0 +1,59 @@
+// examples/self_host/ssa_lift_irlower_run.fern — the production-shaped driver
+// for the stack-IR -> SSA lift: it reads a Fern SOURCE on stdin and lowers it
+// the way the real compiler does — AST -> ir.Op[] via `irlower.lower_func_for`
+// (the same per-function lowering the asm_ir backend consumes) — then LIFTS
+// that real IR to SSA (`ssa_lift.lift_from_ir`), optimises it, and emits
+// x86-64 / arm64 via the existing SSA backends. Where ssa_lift_emit_run drives
+// hand-built ir.Op[], this drives the ACTUAL irlower output, closing the loop
+// toward the lift becoming a real lowering path (not a proof-of-concept over
+// synthetic ops).
+//
+// Out-of-subset programs (anything whose lowered IR uses an op the lift doesn't
+// handle yet — heap / strings / structs / floats / RC) make lift_from_ir return
+// ok=false; the driver exits non-zero so the Go gate only asserts in-subset
+// programs (its differential oracle is the interpreter).
+//
+// `-target arm64` selects the backend; `-regalloc` the linear-scan allocator.
+
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./ssa";
+import "./ssa_x86";
+import "./ssa_arm64";
+import "./irlower";
+import "./ssa_lift";
+
+function main(): i32 {
+    var av: string[] = args();
+    var target: string = "x86-64";
+    var use_regalloc: boolean = false;
+    var ai: i32 = 1;
+    while (ai < av.len()) {
+        if (av[ai] == "-regalloc") { use_regalloc = true; }
+        else if (av[ai] == "-target") { ai = ai + 1; if (ai < av.len()) { target = av[ai]; } }
+        ai = ai + 1;
+    }
+
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(io.read_all_stdin()));
+    mod = parser.fill_default_args_module(mod);
+
+    var empty: string[] = [];
+    var funcs: ssa.SFunc[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var fn: parser.FuncDecl = mod.funcs[i];
+        // Real per-function lowering: AST -> ir.Op[] (the asm_ir backend's input).
+        var lr: irlower.LowerResult = irlower.lower_func_for(fn, [], mod.structs, mod.funcs);
+        if (!lr.ok) { return 3; }
+        // Lift the real IR to SSA. nslots = params + declared locals.
+        var lf: ssa_lift.LResult = ssa_lift.lift_from_ir(ssa.fn_sym(fn), lr.n_params, lr.n_params + lr.n_locals, lr.ops);
+        if (!lf.ok) { return 4; }
+        funcs = funcs.append(ssa.optimize(ssa.mark_float_calls(ssa.mark_ptr_calls(lf.func, empty), empty)));
+        i = i + 1;
+    }
+
+    if (target == "arm64") { write(ssa_arm64.emit_program(funcs, use_regalloc)); }
+    else { write(ssa_x86.emit_program(funcs, use_regalloc)); }
+    return 0;
+}
