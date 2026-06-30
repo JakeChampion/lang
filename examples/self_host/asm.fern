@@ -1429,23 +1429,24 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             return s;
         }
         if (fa.field == "gcd" && c.args.len() == 1) {
-            s = emit_expr(fa.obj, s);
-            s = emit_expr(c.args[0], s);
-            s = s.write("    popq %rsi\n");   // other
-            s = s.write("    popq %rdi\n");   // n
-            s = s.write("    call __fern_i32_gcd\n");
+            // __fern_i32_gcd is a Fern runtime function (#2649): __fn_ stack
+            // convention — n=param[0] at +16, other=param[1] at +24.
+            s = emit_expr(c.args[0], s);   // other
+            s = emit_expr(fa.obj, s);      // n
+            s = s.write("    call __fn___fern_i32_gcd\n");
+            s = s.write("    addq $16, %rsp\n");
             s = s.write("    pushq %rax\n");
-            s = s.mark_heap();
+            s = s.mark_i32_gcd();
             return s;
         }
         if (fa.field == "lcm" && c.args.len() == 1) {
-            s = emit_expr(fa.obj, s);
-            s = emit_expr(c.args[0], s);
-            s = s.write("    popq %rsi\n");   // other
-            s = s.write("    popq %rdi\n");   // n
-            s = s.write("    call __fern_i32_lcm\n");
+            // __fern_i32_lcm is a Fern runtime function (#2649); it calls gcd.
+            s = emit_expr(c.args[0], s);   // other
+            s = emit_expr(fa.obj, s);      // n
+            s = s.write("    call __fn___fern_i32_lcm\n");
+            s = s.write("    addq $16, %rsp\n");
             s = s.write("    pushq %rax\n");
-            s = s.mark_heap();
+            s = s.mark_i32_lcm();
             return s;
         }
         if (fa.field == "max" && c.args.len() == 1) {
@@ -6920,67 +6921,10 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    ret\n");
         s = s.write(".size __fern_random_bytes, .-__fern_random_bytes\n");
 
-        // __fern_i32_gcd(%rdi = n, %rsi = other) → gcd(|n|, |other|)
-        // by Euclid. Mirrors std/i32.gcd.
-        s = s.write(".globl __fern_i32_gcd\n");
-        s = s.write(".type __fern_i32_gcd, @function\n");
-        s = s.write("__fern_i32_gcd:\n");
-        s = s.write("    movq %rdi, %rax\n");        // a = |n|
-        s = s.write("    movq %rax, %rdx\n");
-        s = s.write("    negq %rdx\n");
-        s = s.write("    cmpq $0, %rax\n");
-        s = s.write("    cmovl %rdx, %rax\n");
-        s = s.write("    movq %rsi, %rcx\n");        // b = |other|
-        s = s.write("    movq %rcx, %rdx\n");
-        s = s.write("    negq %rdx\n");
-        s = s.write("    cmpq $0, %rcx\n");
-        s = s.write("    cmovl %rdx, %rcx\n");
-        s = s.write(".Lgcd_loop:\n");
-        s = s.write("    testq %rcx, %rcx\n");
-        s = s.write("    je .Lgcd_done\n");
-        s = s.write("    movq %rcx, %r8\n");          // t = b
-        s = s.write("    cqto\n");
-        s = s.write("    idivq %rcx\n");              // rdx = a % b
-        s = s.write("    movq %r8, %rax\n");          // a = t
-        s = s.write("    movq %rdx, %rcx\n");         // b = a%b
-        s = s.write("    jmp .Lgcd_loop\n");
-        s = s.write(".Lgcd_done:\n");
-        s = s.write("    ret\n");
-        s = s.write(".size __fern_i32_gcd, .-__fern_i32_gcd\n");
-
-        // __fern_i32_lcm(%rdi = n, %rsi = other) → lcm. Mirrors
-        // std/i32.lcm: 0 if either is 0, else |n/gcd| * |other|.
-        s = s.write(".globl __fern_i32_lcm\n");
-        s = s.write(".type __fern_i32_lcm, @function\n");
-        s = s.write("__fern_i32_lcm:\n");
-        s = s.write("    testq %rdi, %rdi\n");
-        s = s.write("    je .Llcm_zero\n");
-        s = s.write("    testq %rsi, %rsi\n");
-        s = s.write("    je .Llcm_zero\n");
-        s = s.write("    pushq %rdi\n");
-        s = s.write("    pushq %rsi\n");
-        s = s.write("    call __fern_i32_gcd\n");      // rax = g
-        s = s.write("    movq %rax, %rcx\n");          // g
-        s = s.write("    popq %rsi\n");
-        s = s.write("    popq %rdi\n");
-        s = s.write("    movq %rdi, %rax\n");          // n / g
-        s = s.write("    cqto\n");
-        s = s.write("    idivq %rcx\n");
-        s = s.write("    movq %rax, %rdx\n");          // |n/g|
-        s = s.write("    negq %rdx\n");
-        s = s.write("    cmpq $0, %rax\n");
-        s = s.write("    cmovl %rdx, %rax\n");
-        s = s.write("    movq %rsi, %rcx\n");          // |other|
-        s = s.write("    movq %rcx, %rdx\n");
-        s = s.write("    negq %rdx\n");
-        s = s.write("    cmpq $0, %rcx\n");
-        s = s.write("    cmovl %rdx, %rcx\n");
-        s = s.write("    imulq %rcx, %rax\n");
-        s = s.write("    ret\n");
-        s = s.write(".Llcm_zero:\n");
-        s = s.write("    movq $0, %rax\n");
-        s = s.write("    ret\n");
-        s = s.write(".size __fern_i32_lcm, .-__fern_i32_lcm\n");
+        // __fern_i32_gcd / __fern_i32_lcm are now Fern runtime functions (#2649):
+        // see asmcore.rt_src_i32_gcd / _lcm, emitted (need-gated) in the migrated-
+        // helpers section below. They are pure scalar, so they no longer belong in
+        // this heap-gated block.
 
         // Map runtime (string-keyed, 8-byte values). A Map is a 16-byte
         // box [keys: string[] @0, values: T[] @8]; both start empty.
@@ -7702,6 +7646,15 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // stance — integer pow with negative exp is undefined for i32).
     if (s.has_need("i32_pow")) {
         s = emit_runtime_fern_fn(asmcore.rt_src_i32_pow(), s);
+    }
+    // __fern_i32_gcd / __fern_i32_lcm — Fern runtime functions (#2649), pure
+    // scalar (Tier 0). lcm's body calls `.gcd()`, so emit gcd first; close_needs
+    // pulls in i32_gcd whenever i32_lcm is needed (runtime_need_deps edge).
+    if (s.has_need("i32_gcd")) {
+        s = emit_runtime_fern_fn(asmcore.rt_src_i32_gcd(), s);
+    }
+    if (s.has_need("i32_lcm")) {
+        s = emit_runtime_fern_fn(asmcore.rt_src_i32_lcm(), s);
     }
     // __fern_str_reverse: %rdi = src box. Returns %rax =
     // new string box with bytes in reverse order.
