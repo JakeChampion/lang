@@ -2433,11 +2433,15 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                 var lt: asmcore.Ty = asmcore.infer_expr_type(b.left, s);
                 var rt: asmcore.Ty = asmcore.infer_expr_type(b.right, s);
                 if (asmcore.ty_is_string(lt) || asmcore.ty_is_string(rt)) {
+                    // __fern_str_concat is a Fern runtime function now (#2649, via
+                    // the raw-memory intrinsics): __fn_ stack convention — a=param[0]
+                    // at +16, b=param[1] at +24. Eval lhs then rhs (side-effect
+                    // order), then re-push so a lands on top.
                     s = emit_expr(b.left, s);
                     s = emit_expr(b.right, s);
-                    s = s.write("    popq %rsi\n");      // rhs
-                    s = s.write("    popq %rdi\n");      // lhs
-                    s = s.write("    call __fern_str_concat\n");
+                    s = s.write("    popq %rsi\n");      // rhs (b)
+                    s = s.write("    popq %rdi\n");      // lhs (a)
+                    s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_concat\n    addq $16, %rsp\n");
                     s = s.write("    pushq %rax\n");
                     s = s.mark_str_concat();
                     return s;
@@ -4257,78 +4261,13 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    syscall\n");
         s = s.write("    ret\n");
     }
-    // __fern_str_concat: %rdi = box A, %rsi = box B. Allocates
-    // (lenA+lenB) bytes for new char data, copies A then B,
-    // then allocates a 16-byte box pointing at it. Returns
-    // box ptr in %rax. Uses callee-saved registers to survive
-    // the alloc calls.
+    // __fern_str_concat is now a Fern runtime function (#2649, via the raw-memory
+    // intrinsics): see asmcore.rt_src_str_concat — alloc lenA+lenB, copy A then B
+    // byte-by-byte (__raw_store8), box it (__raw_string). Backs `+` on strings,
+    // called via the __fn_ stack convention. heap is its sole dep (the intrinsics
+    // add no symbol). Mirrors the x86-64 IR path + arm64.
     if (s.has_need("str_concat")) {
-        s = s.write("__fern_str_concat:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    pushq %r13\n");
-        s = s.write("    pushq %r14\n");
-        s = s.write("    pushq %r15\n");
-        // %rbx is callee-saved (SysV) and used below as the result data
-        // buffer — save/restore it or the caller's live %rbx is trashed
-        // (the `subq $8` keeps %rsp 16-byte aligned for the __fern_alloc
-        // calls). Was the cause of an intermittent heap corruption once
-        // the self-host register allocator began holding values in %rbx
-        // across str_concat calls.
-        s = s.write("    pushq %rbx\n");
-        s = s.write("    subq $8, %rsp\n");
-        s = s.write("    movq %rdi, %r12\n");   // box A
-        s = s.write("    movq %rsi, %r13\n");   // box B
-        s = s.write("    movq 8(%r12), %r14\n");// lenA
-        s = s.write("    movq 8(%r13), %r15\n");// lenB
-        // Alloc lenA + lenB bytes for char data.
-        s = s.write("    movq %r14, %rdi\n");
-        s = s.write("    addq %r15, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %rbx\n");
-        // Copy A bytes into [%rbx ..].
-        s = s.write("    movq (%r12), %rsi\n");
-        s = s.write("    movq %rbx, %rdi\n");
-        s = s.write("    movq %r14, %rcx\n");
-        s = s.write("    cmpq $0, %rcx\n");
-        s = s.write("    je .Lstrconcat_b\n");
-        s = s.write(".Lstrconcat_a_loop:\n");
-        s = s.write("    movzbq (%rsi), %rax\n");
-        s = s.write("    movb %al, (%rdi)\n");
-        s = s.write("    incq %rsi\n");
-        s = s.write("    incq %rdi\n");
-        s = s.write("    decq %rcx\n");
-        s = s.write("    jne .Lstrconcat_a_loop\n");
-        s = s.write(".Lstrconcat_b:\n");
-        // Copy B bytes after A.
-        s = s.write("    movq (%r13), %rsi\n");
-        s = s.write("    movq %r15, %rcx\n");
-        s = s.write("    cmpq $0, %rcx\n");
-        s = s.write("    je .Lstrconcat_box\n");
-        s = s.write(".Lstrconcat_b_loop:\n");
-        s = s.write("    movzbq (%rsi), %rax\n");
-        s = s.write("    movb %al, (%rdi)\n");
-        s = s.write("    incq %rsi\n");
-        s = s.write("    incq %rdi\n");
-        s = s.write("    decq %rcx\n");
-        s = s.write("    jne .Lstrconcat_b_loop\n");
-        s = s.write(".Lstrconcat_box:\n");
-        // Allocate 16-byte box.
-        s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rbx, (%rax)\n");
-        s = s.write("    movq %r14, %rcx\n");
-        s = s.write("    addq %r15, %rcx\n");
-        s = s.write("    movq %rcx, 8(%rax)\n");
-        s = s.write("    addq $8, %rsp\n");
-        s = s.write("    popq %rbx\n");
-        s = s.write("    popq %r15\n");
-        s = s.write("    popq %r14\n");
-        s = s.write("    popq %r13\n");
-        s = s.write("    popq %r12\n");
-        s = s.write("    leave\n");
-        s = s.write("    ret\n");
+        s = emit_runtime_fern_fn(asmcore.rt_src_str_concat(), s);
     }
     // __fern_str_eq is now a Fern runtime function (#2649): see
     // asmcore.rt_src_str_eq, called via the __fn_ stack convention. Every caller

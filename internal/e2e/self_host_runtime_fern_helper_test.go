@@ -166,6 +166,15 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_chr:"},
 		},
 		{
+			// str_concat — backs `+` on strings, Tier-2 via the intrinsics (#2649).
+			// The old register-ABI hand-asm (__fern_str_concat: / .Lstrconcat_a_loop)
+			// is gone; the `+` call site now targets __fn___fern_str_concat.
+			"str_concat",
+			`function main(): i32 { var s: string = "ab" + "cd"; return s.len(); }`,
+			"__fn___fern_str_concat",
+			[]string{"\n__fern_str_concat:", ".Lstrconcat_a_loop"},
+		},
+		{
 			// arr_str_join (string[].join) — AST-only; calls str_concat via `+`.
 			"arr_str_join",
 			`function main(): i32 { var xs: string[] = ["a", "b"]; return xs.join(",").len(); }`,
