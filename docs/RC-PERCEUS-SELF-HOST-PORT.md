@@ -172,6 +172,20 @@ so adding the harness is part of slice 1). arm64/wasm legs run in CI.
    (byte-identical bootstrap/fixpoint); capability-additive for cyclic borrows.**
 3. **Struct/enum drop specialisation for NON-array rc fields** (string,
    nested struct, enum payload) — extend the deep-drop walk. *Deep.*
+   **DONE (nested-struct, all 3 backends) — 3a x86 (#4068), 3b/3c arm64+wasm
+   (#4070).** A DIRECT nested-struct field (`Outer { inner: Inner }`) is
+   SHALLOW-reclaimed (`__fern_arr_dec` on the inner box at field offset `8+i*8`,
+   one level like a struct-array element), gated into the reclaim set via
+   `struct_has_reclaim_array_field`, balanced by a construction alias-inc
+   (double-free-proof: a fresh literal is sole-owned → no inc; every other source
+   is retained). The IR round-trip eval models the reclaim helpers as
+   value-preserving. **Follow-ups (deferred):** (a) tighten the construction
+   no-inc set from fresh-LITERAL-only to fresh-RETURNING calls (needs threading
+   `fresh_struct_ret_fns` into `LowerState`) so the move / fresh-call cases
+   reclaim instead of leak; (b) DEEP-drop the inner's own rc fields (recursive
+   `__struct_drop_<Inner>` + transitive need-set closure) — the one-level gap,
+   shared with struct-array elements; (c) STRING fields (blocked on slice 7,
+   header-less IR strings) and ENUM-payload fields (needs variant-tag dispatch).
 4. **`Option`/`Result` payload + tuple-element release.** *Medium.*
 5. **Closure-env reclamation** on the IR path (capture rc-tracking + env
    drop; the AST path shipped this in 2 slices — see the wasm
@@ -2777,3 +2791,34 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   value/over-release case proving the reclaim is sound (not a double-free).
   `TestSelfHostStdTestE2E` (differential vs interp) unchanged. **Next: slice 3 —
   struct/enum drop for NON-array rc fields (needs struct-field construction-inc).**
+- 2026-06-30: **Perceus slice 3 (a/b/c) — DIRECT nested-struct field reclaim,
+  all three IR backends.** A struct with a direct nested-struct field
+  (`Outer { inner: Inner }`) now reclaims that field on the IR path instead of
+  leaking it — the first NON-array rc-field drop. The inner box is freed SHALLOW
+  via `__fern_arr_dec` at the IR field offset (`8 + i*8`), one level like a
+  struct-array element box (`arr_dec` frees struct boxes too); `k_struct` in
+  `emit_ir_struct_drop_one` / `emit_arm64_struct_drop_one` /
+  `emit_wasm_struct_drop_body`. The struct is admitted to the reclaim set via
+  `struct_has_reclaim_array_field` (now also true for a `decl_is_struct` field),
+  so its exit `__struct_drop_<T>` is emitted. SOUNDNESS — the construction
+  alias-inc (`irlower.fern`, `ExprStructLit` override + base-copy paths) is
+  DOUBLE-FREE-PROOF BY CONSTRUCTION: a fresh struct LITERAL is sole-owned (rc 1,
+  never aliased) so it needs no inc and is reclaimed; EVERY other source (bare
+  ident, field copy, base copy, call) is retained, so the shallow drop only decs
+  a counted reference — worst case a sound leak, never an over-release. The one
+  surprise was a TEST-HARNESS gap, not a correctness break: making a struct
+  reclaimable in the IR round-trip eval (`eval_ops`) emitted a `__struct_drop_<T>`
+  call that the i32 interpreter couldn't resolve (it is a backend runtime helper,
+  not a user fn) → it bailed to sentinel 198 instead of the value; fixed by
+  modeling the Perceus reclaim helpers (`is_reclaim_helper`: `__struct_drop_<T>` /
+  `__field_reclaim_<T>` / `__fern_snapshot_dec` / `__fern_arr_dec` /
+  `__fern_drop_arr_ptr`) as value-preserving identity on their box arg. CI proved
+  the broad reclaim is byte-identical-safe (the x86 + aarch64 fixpoint / bootstrap
+  / differential shards all green). Tests: `TestSelfHostStructDropWasm` gained a
+  `nested-struct-field-reclaim` memory-cap case (fresh-literal `Outer{Inner,…}`
+  churned 500k× stays bounded vs the slice-1c pass-through leak); the x86
+  construction forms (move / field-copy / base-copy + a 3-level nest with a
+  fresh-returning call) were hand-verified sound over 2–3M iters; arm64 rides the
+  self-host fixpoint + e2e differential. Follow-ups (see slice 3 above): tighten
+  the no-inc set to fresh-RETURNING calls; deep-drop the inner's own rc fields;
+  string / enum-payload fields.
