@@ -610,7 +610,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
             type_params: mod.structs[j].type_params,
             line: mod.structs[j].line,
             col: mod.structs[j].col,
-            enum_owner: mod.structs[j].enum_owner
+            enum_owner: mangle_bare(mod.structs[j].enum_owner, ctx)
         });
         j = j + 1;
     }
@@ -642,10 +642,41 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
             ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled,
             reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets
         }),
-        enums: mod.enums,
+        enums: mangle_enum_decls(mod.enums, ctx),
         resources: mod.resources,
         exports: mod.exports
     };
+}
+
+// mangle_enum_decls renames an imported module's EnumDecls to match the
+// prefix-mangled variant structs (`Full` -> `g3__Full`) the same module's
+// `mangle_bare` produces. Without this the EnumDecl (name + variant_names)
+// kept its bare spellings while the variant structs were mangled, so
+// monomorphize_enums — which drives instantiation off the EnumDecl's
+// variant_names — couldn't find a mangled variant struct, and an imported
+// generic enum matched inside the imported module bailed lower (the whole
+// merged program then routed AST). Slice 6 (end-to-end std/async).
+function mangle_enum_decls(enums: parser.EnumDecl[], ctx: RewriteCtx): parser.EnumDecl[] {
+    var out: parser.EnumDecl[] = [];
+    var i: i32 = 0;
+    while (i < enums.len()) {
+        var e: parser.EnumDecl = enums[i];
+        var nvn: string[] = [];
+        var v: i32 = 0;
+        while (v < e.variant_names.len()) {
+            nvn = nvn.append(mangle_bare(e.variant_names[v], ctx));
+            v = v + 1;
+        }
+        out = out.append(parser.EnumDecl {
+            name: mangle_bare(e.name, ctx),
+            variant_names: nvn,
+            type_params: e.type_params,
+            line: e.line,
+            col: e.col
+        });
+        i = i + 1;
+    }
+    return out;
 }
 
 // flatten_qualified rewrites only QUALIFIED cross-module references
