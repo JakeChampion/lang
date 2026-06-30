@@ -12989,12 +12989,24 @@ function fresh_scalar_enum_init(e: parser.Expr, structs: parser.StructDecl[]): s
                     if (owner != "" && enum_all_variants_scalar(structs, owner)) { return owner; }
                     return "";
                 },
+                // Qualified ctor `Enum.Variant(args...)` — resolve by field name.
+                parser.ExprFieldAccess(fa) => {
+                    var ownerq: string = variant_enum_owner(structs, fa.field);
+                    if (ownerq != "" && enum_all_variants_scalar(structs, ownerq)) { return ownerq; }
+                    return "";
+                },
                 _ => { return ""; }
             }
         },
         parser.ExprIdent(id) => {
             var owner2: string = variant_enum_owner(structs, id.name);
             if (owner2 != "" && enum_all_variants_scalar(structs, owner2)) { return owner2; }
+            return "";
+        },
+        // Qualified bare UNIT variant `Enum.Variant` (no call).
+        parser.ExprFieldAccess(fa) => {
+            var owner3: string = variant_enum_owner(structs, fa.field);
+            if (owner3 != "" && enum_all_variants_scalar(structs, owner3)) { return owner3; }
             return "";
         },
         _ => { return ""; }
@@ -13239,12 +13251,31 @@ function fresh_rcpayload_enum_init(e: parser.Expr, structs: parser.StructDecl[])
                         && variant_struct_payloads_fresh(c.args, id.name, structs)) { return owner; }
                     return "";
                 },
+                // Qualified ctor `Enum.Variant(args...)` — the callee is a field
+                // access (obj=Enum, field=Variant), not a bare ident. Resolve the
+                // variant by its field name, same gates. Without this a qualified-style
+                // construction never reaches the consume-by-match reclaim (the box +
+                // payload leak), unlike the unqualified form.
+                parser.ExprFieldAccess(fa) => {
+                    var ownerq: string = variant_enum_owner(structs, fa.field);
+                    if (ownerq != "" && enum_all_variants_rc_droppable(structs, ownerq)
+                        && variant_struct_payloads_fresh(c.args, fa.field, structs)) { return ownerq; }
+                    return "";
+                },
                 _ => { return ""; }
             }
         },
         parser.ExprIdent(id) => {
             var owner2: string = variant_enum_owner(structs, id.name);
             if (owner2 != "" && enum_all_variants_rc_droppable(structs, owner2)) { return owner2; }
+            return "";
+        },
+        // Qualified bare UNIT variant `Enum.Variant` (no call) — a payload-free init,
+        // admitted for parity with the unqualified unit case (the reclaim is a runtime
+        // variant_is no-op for a unit box, but keeps the analysis uniform).
+        parser.ExprFieldAccess(fa) => {
+            var owner3: string = variant_enum_owner(structs, fa.field);
+            if (owner3 != "" && enum_all_variants_rc_droppable(structs, owner3)) { return owner3; }
             return "";
         },
         _ => { return ""; }
