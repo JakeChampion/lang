@@ -402,9 +402,10 @@ pub function op_tcp_pollable(): Op { return op0("tcp_pollable"); }
 // high-water mark (cursor − region base; 0 before the first allocation). It
 // reads the heap runtime's cursor + base — so it does NOT allocate, but it
 // DOES need the heap runtime present (op_allocates admits it for the gate). The
-// register backends compute cursor − base inline (base is the static
-// __fern_heap symbol on x86, __fern_heap_end − heap_size on arm64); wasm reads
-// `$heap − heap_base`. Mirrors native's __fern_heap_bump_bytes.
+// register backends compute cursor − base inline (base recovered as
+// __fern_heap_end − heap_size on both x86 and arm64, since each mmap's its
+// arena and records the end); wasm reads `$heap − heap_base`. Mirrors
+// native's __fern_heap_bump_bytes.
 pub function op_heap_bump_bytes(): Op { return op0("heap_bump_bytes"); }
 // `str_bytes` pops [str] → a fresh u8[] (one i32 slot per byte). Backs both
 // `s.bytes()` (copying) and `s.as_bytes()` — the self-host's slot-array model

@@ -590,8 +590,8 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     var out: string = "    .globl _start\n";
     // Heap: a 1 GiB zero-initialised arena and an 8-byte bump pointer.
     // The arena is leak-everything (no reclamation yet — Perceus RC is a
-    // separate track), so it is sized like the AST backend's __fern_heap to
-    // leave room for a self-hosted SSA compiler to process a real source
+    // separate track), so it is sized generously (1 GiB) to leave room for
+    // a self-hosted SSA compiler to process a real source
     // bundle. It is .bss (demand-zero), so the large reservation costs
     // nothing on disk and no resident memory until actually touched.
     out = out + "    .bss\n    .align 16\n__fern_ssa_heap:\n    .zero 1073741824\n";

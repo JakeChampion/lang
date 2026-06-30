@@ -143,7 +143,7 @@ function elf_image_entry(body: i32[], flags: i32, machine: i32, entry_off: i32):
 // elf_image_entry_bss is elf_image_entry plus a trailing .bss of `bss`
 // bytes: the segment's p_memsz exceeds p_filesz by `bss`, so the loader
 // zero-fills that region in memory without it occupying any file bytes
-// (this is how asm.fern's 1 GB `__fern_heap` is reserved).
+// (the standard way to reserve zero-init globals without bloating the file).
 pub function elf_image_entry_bss(body: i32[], flags: i32, machine: i32, entry_off: i32, bss: i32): i32[] {
     var filesz: i64 = (elf_eh_size() + elf_ph_size() + body.len()) as i64;
     var memsz: i64 = filesz + elf_u32_to_i64(bss);
@@ -246,7 +246,7 @@ function elf_static_executable_data_x86_at(text: i32[], data: i32[], entry_off: 
 // plus a trailing zero-init .bss of `bss` bytes (R+W+X). The .bss lives in
 // memory just past the file content (p_memsz = p_filesz + bss); rip-
 // relative refs to .bss globals resolve into it. This is the form a real
-// program needs — asm.fern reserves its heap as `__fern_heap: .skip 1GB`.
+// program needs for its zero-init globals (cursors, scratch buffers, etc.).
 function elf_static_executable_bss_x86_at(text: i32[], data: i32[], bss: i32, entry_off: i32): i32[] {
     var body: i32[] = elf_cat([], text);
     body = elf_pad_to_8(body);
