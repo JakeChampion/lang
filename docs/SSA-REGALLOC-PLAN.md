@@ -92,7 +92,12 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
 
 - [x] Phase 0 — liveness analysis (`internal/ssa/liveness.go`, `liveness_test.go`)
 - [x] Phase 1 — live intervals + linear-scan allocator (`internal/ssa/regalloc.go`, `regalloc_test.go`): `LiveIntervals` (single conservative interval per value over the RPO linearisation) + `LinearScan` (Poletto–Sarazin) + `VerifyAllocation` (interference oracle). Still pure analysis.
-- [ ] Phase 2 — SSA→x86-64 emit (flagged) + differential validation
+- [~] Phase 2 — SSA→x86-64 emit (flagged) + differential validation
+  - [x] Oracle: `internal/ssa/eval.go` — reference interpreter for the
+    integer/control-flow subset, used to validate the emitter differentially
+    (and to guard semantic preservation across any SSA pass). Tested incl. an
+    `Eval == Eval∘Optimize` property.
+  - [ ] The SSA→x86-64 emitter itself (`internal/codegen/x86_64ssa`)
 - [ ] Phase 3 — default x86-64 to SSA; measure binary-size win
 - [ ] Phase 4 — arm64 SSA emit + default
 - [ ] Phase 5 — retire the stack-machine backends
