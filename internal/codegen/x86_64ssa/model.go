@@ -102,13 +102,13 @@ func runProg(m map[string]*Program, p *Program, h *modelHeap, args []int64) (int
 			case MemAlloc:
 				regs[in.Dst] = h.alloc(regs[in.Src])
 			case MemLoad:
-				v, err := h.load(regs[in.Src] + in.Imm)
+				v, err := h.load(regs[in.Src]+in.Imm, int(in.Bytes), in.Signed)
 				if err != nil {
 					return 0, err
 				}
 				regs[in.Dst] = maskW(in.W, v)
 			case MemStore:
-				if err := h.store(regs[in.Src]+in.Imm, regs[in.Src2]); err != nil {
+				if err := h.store(regs[in.Src]+in.Imm, regs[in.Src2], int(in.Bytes)); err != nil {
 					return 0, err
 				}
 			default:
@@ -151,30 +151,34 @@ func (h *modelHeap) alloc(size int64) int64 {
 	return base
 }
 
-func (h *modelHeap) check(addr int64) error {
-	if addr < 8 || addr+8 > int64(len(h.data)) {
+func (h *modelHeap) check(addr int64, n int) error {
+	if addr < 8 || addr+int64(n) > int64(len(h.data)) {
 		return fmt.Errorf("Run: out-of-bounds memory access at %d (heap %d bytes)", addr, len(h.data))
 	}
 	return nil
 }
 
-func (h *modelHeap) load(addr int64) (int64, error) {
-	if err := h.check(addr); err != nil {
+func (h *modelHeap) load(addr int64, n int, signed bool) (int64, error) {
+	if err := h.check(addr, n); err != nil {
 		return 0, err
 	}
 	var v uint64
-	for i := 0; i < 8; i++ {
+	for i := 0; i < n; i++ {
 		v |= uint64(h.data[addr+int64(i)]) << (8 * i)
+	}
+	if signed && n < 8 {
+		shift := uint(64 - 8*n)
+		return int64(v<<shift) >> shift, nil
 	}
 	return int64(v), nil
 }
 
-func (h *modelHeap) store(addr, val int64) error {
-	if err := h.check(addr); err != nil {
+func (h *modelHeap) store(addr, val int64, n int) error {
+	if err := h.check(addr, n); err != nil {
 		return err
 	}
 	u := uint64(val)
-	for i := 0; i < 8; i++ {
+	for i := 0; i < n; i++ {
 		h.data[addr+int64(i)] = byte(u >> (8 * i))
 	}
 	return nil

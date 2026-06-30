@@ -130,8 +130,13 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
     little-endian byte heap with a bump allocator + reserved null page, in both
     `ssa.Eval` and the `x86_64ssa` model (`Mem*` ops). The prerequisite for
     composite types. Validated: store/load roundtrip, heap shared across calls,
-    out-of-bounds error. (Model only; sub-word loads/stores, floats, and the
-    real-asm allocator runtime are follow-ups.)
+    out-of-bounds error. (Model only; floats and the real-asm allocator runtime
+    are follow-ups.)
+  - [x] Sub-word memory — `OpLoad8U/8S/16U/16S`, `OpStore8/16` (byte/halfword
+    access with sign- or zero-extension; stores write only the low N bytes),
+    in both `Eval` and the `x86_64ssa` model. Validated: byte signedness, a
+    byte-array sum, halfword sign-extension, and store-width-preserves-high-
+    bytes. The basis for string bytes and narrow array elements.
   - [ ] Composite types built on memory: strings, structs, arrays, maps
   - [ ] RC inc/dec (Perceus ordering)
 - [ ] Phase 3 — default x86-64 to SSA; measure binary-size win

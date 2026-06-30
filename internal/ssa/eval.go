@@ -52,33 +52,61 @@ func (h *heap) alloc(size int64) int64 {
 	return base
 }
 
-func (h *heap) check(addr int64) error {
-	if addr < 8 || addr+8 > int64(len(h.data)) {
+func (h *heap) check(addr int64, n int) error {
+	if addr < 8 || addr+int64(n) > int64(len(h.data)) {
 		return fmt.Errorf("Eval: out-of-bounds memory access at %d (heap %d bytes)", addr, len(h.data))
 	}
 	return nil
 }
 
-func (h *heap) load(addr int64) (int64, error) {
-	if err := h.check(addr); err != nil {
+// load reads n bytes (1/2/8) little-endian. When signed, the result is sign-
+// extended from the high bit of the n-byte value; otherwise zero-extended.
+func (h *heap) load(addr int64, n int, signed bool) (int64, error) {
+	if err := h.check(addr, n); err != nil {
 		return 0, err
 	}
 	var v uint64
-	for i := 0; i < 8; i++ {
+	for i := 0; i < n; i++ {
 		v |= uint64(h.data[addr+int64(i)]) << (8 * i)
+	}
+	if signed && n < 8 {
+		shift := uint(64 - 8*n)
+		return int64(v<<shift) >> shift, nil
 	}
 	return int64(v), nil
 }
 
-func (h *heap) store(addr, val int64) error {
-	if err := h.check(addr); err != nil {
+// store writes the low n bytes (1/2/8) of val little-endian, leaving higher
+// bytes untouched.
+func (h *heap) store(addr, val int64, n int) error {
+	if err := h.check(addr, n); err != nil {
 		return err
 	}
 	u := uint64(val)
-	for i := 0; i < 8; i++ {
+	for i := 0; i < n; i++ {
 		h.data[addr+int64(i)] = byte(u >> (8 * i))
 	}
 	return nil
+}
+
+// memAccess returns the byte width and signedness of a load/store op kind.
+func memAccess(k OpKind) (bytes int, signed bool) {
+	switch k {
+	case OpLoad8U:
+		return 1, false
+	case OpLoad8S:
+		return 1, true
+	case OpLoad16U:
+		return 2, false
+	case OpLoad16S:
+		return 2, true
+	case OpStore8:
+		return 1, false
+	case OpStore16:
+		return 2, false
+	default: // OpLoad / OpStore (full word)
+		return 8, false
+	}
 }
 
 func evalWith(funcs map[string]*Func, h *heap, f *Func, args ...int64) (int64, error) {
@@ -314,17 +342,18 @@ func evalOp(funcs map[string]*Func, h *heap, op *Op, vals map[int32]int64) error
 			return err
 		}
 		return set(h.alloc(size))
-	case OpLoad:
+	case OpLoad, OpLoad8U, OpLoad8S, OpLoad16U, OpLoad16S:
 		base, err := arg(0)
 		if err != nil {
 			return err
 		}
-		v, err := h.load(base + op.Imm)
+		n, signed := memAccess(op.Kind)
+		v, err := h.load(base+op.Imm, n, signed)
 		if err != nil {
 			return err
 		}
 		return set(v)
-	case OpStore:
+	case OpStore, OpStore8, OpStore16:
 		base, err := arg(0)
 		if err != nil {
 			return err
@@ -333,7 +362,8 @@ func evalOp(funcs map[string]*Func, h *heap, op *Op, vals map[int32]int64) error
 		if err != nil {
 			return err
 		}
-		return h.store(base+op.Imm, val) // no result
+		n, _ := memAccess(op.Kind)
+		return h.store(base+op.Imm, val, n) // no result
 
 	default:
 		return fmt.Errorf("Eval: unsupported op %v", op.Kind)
