@@ -145,10 +145,22 @@ inside an `if`/return with loop-free recursion). Both run on x86-64 + arm64,
 default + `-regalloc`. `call_direct` already lowered in slice 0; this proves it
 links and executes once the callee's lifted `SFunc` is emitted alongside.
 
-Next: a differential gate (lift-then-emit vs. `build_func`-then-emit, or vs.
-native, for the same source), widening the lifted-emit subset toward the
-strings / heap the SSA backends already support — then driving real `irlower`
-output (not hand-coded `Op[]`) through the lift.
+**Slice 6 ✅ (landed — differential gate vs. the interpreter):** the lift
+codegen path is now cross-checked against an INDEPENDENT oracle — the native
+tree-walking interpreter — rather than hand-derived constants.
+`self_host_ssa_lift_diff_test.go` pairs each program's hand-coded `ir.Op[]`
+(lifted → emitted → assembled → run on x86-64) with an *equivalent Fern source*
+run through `fern -interp`, and asserts the two exit codes agree. The `Op[]` and
+the source are equivalent by construction (same program, two front-ends); the
+interpreter is the source of truth for the value. So a miscompile anywhere in
+`lift_from_ir` / `ssa.optimize` / `ssa_x86` now surfaces as a divergence from
+reference semantics, across all six programs (straight-line, loop, if-merge,
+break, cross-function call, recursion).
+
+Next: widen the lifted-emit subset toward the strings / heap the SSA backends
+already support, then drive real `irlower` output (not hand-coded `Op[]`)
+through the lift — the step that turns this from a proof-of-concept into the
+production lowering path.
 
 ## Phases
 
