@@ -633,12 +633,13 @@ pub function wasm_eligible(mod: parser.Module): boolean {
     return asm_ir.eligible_core(mod)
         && !module_emits_op(mod, "read_chunk")
         && !module_emits_op(mod, "reader_close")
-        && !module_emits_op(mod, "sleep_ms")
         // poll has no wasm IR runtime: real readiness on wasm needs the
         // component-model wasi:io/poll multiplexer (list<pollable>), which the
         // self-host wasm backend doesn't wire (it is bare core-wasm + WASI
         // preview1). x86-64 (poll(2)) and arm64 (ppoll(2)) lower it via the IR;
-        // a poll module stays on the wasm AST path. Same deferral as sleep_ms.
+        // a poll module stays on the wasm AST path. (sleep_ms, by contrast, needs
+        // only a single-clock poll_oneoff and DOES lower on the wasm IR path — see
+        // $__fern_sleep_ms; it is no longer deferred.)
         && !module_emits_op(mod, "poll")
         // timer_fd / wasm_timer_pollable / wasm_pollable_drop ride the same
         // readiness runtime: native lowers them via the IR (timerfd / -1 / 0),
@@ -926,6 +927,13 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind == "mapiter_advance") {
             // bumps the box's cursor in place; pushes a dummy the statement drops.
             out = out + "    call $__fern_mapiter_advance\n";
+        } else if (o.kind == "sleep_ms") {
+            // sleep_ms(ms): block for ms milliseconds, then push a dummy i32 the
+            // statement drops (sleep_ms is void). wasm has no sleep syscall, so the
+            // runtime $__fern_sleep_ms uses preview1 poll_oneoff with a single
+            // monotonic-clock subscription (emitted caller-side in wasm_ir_run).
+            // Standalone, not the reactor's wasi:io/poll path.
+            out = out + "    call $__fern_sleep_ms\n";
         } else if (o.kind == "temp_dir") {
             // temp_dir(prefix) -> create a unique `<prefix>-<ns>` directory under
             // the preopen, push a Result[string, IoError] box. $__fern_temp_dir

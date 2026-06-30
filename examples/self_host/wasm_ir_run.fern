@@ -132,6 +132,8 @@ function main(): i32 {
         // temp_dir(prefix) mkdirs a unique dir under the preopen via
         // path_create_directory (must precede the function section).
         if (wasm_ir.module_emits_op(mod, "temp_dir")) { o = o + wasm.temp_dir_import(); }
+        // sleep_ms blocks on a monotonic-clock timeout via poll_oneoff.
+        if (wasm_ir.module_emits_op(mod, "sleep_ms")) { o = o + wasm.sleep_ms_import(); }
         o = o + "  (memory (export \"memory\") 16)\n";
         // String literals -> data-section blocks `[len:i32 LE][bytes]`. Emitted
         // caller-side (wasm owns le32_escape/wat_escape); wasm_ir supplies the
@@ -143,7 +145,7 @@ function main(): i32 {
                 + wasm.le32_escape(sv[di].len()) + wasm.wat_escape(sv[di]) + "\")\n";
             di = di + 1;
         }
-        if (wasm_ir.module_allocates(mod) || wasm_ir.module_uses_i32_to_string(mod) || wasm_ir.module_uses_chr(mod) || wasm_ir.module_uses_strbuf(mod) || wasm_ir.module_emits_op(mod, "env") || wasm_ir.module_emits_op(mod, "stat") || wasm_ir.module_emits_op(mod, "remove_file") || wasm_ir.module_emits_op(mod, "read_dir") || wasm_ir.module_emits_op(mod, "remove_dir_all") || wasm_ir.module_emits_op(mod, "temp_dir")) {
+        if (wasm_ir.module_allocates(mod) || wasm_ir.module_uses_i32_to_string(mod) || wasm_ir.module_uses_chr(mod) || wasm_ir.module_uses_strbuf(mod) || wasm_ir.module_emits_op(mod, "env") || wasm_ir.module_emits_op(mod, "stat") || wasm_ir.module_emits_op(mod, "remove_file") || wasm_ir.module_emits_op(mod, "read_dir") || wasm_ir.module_emits_op(mod, "remove_dir_all") || wasm_ir.module_emits_op(mod, "temp_dir") || wasm_ir.module_emits_op(mod, "sleep_ms")) {
             o = o + wasm.heap_alloc_helpers(wasm_ir.heap_base_for(mod), wasm_ir.fl_base_for(mod), wasm_ir.fl_cells());
             o = o + wasm.rc_runtime_helpers(wasm_ir.heap_base_for(mod));
         }
@@ -212,6 +214,8 @@ function main(): i32 {
         // $__fern_temp_dir(prefix): mkdir a unique `<prefix>-<ns>` dir under the
         // preopen -> Result[string, IoError]. Heap-backed + uses the clock helper.
         if (wasm_ir.module_emits_op(mod, "temp_dir")) { o = o + wasm.temp_dir_func(); }
+        // $__fern_sleep_ms(ms): block via poll_oneoff. Heap-backed (scratch buffer).
+        if (wasm_ir.module_emits_op(mod, "sleep_ms")) { o = o + wasm.sleep_ms_func(); }
         // $__fern_read_file / $__fern_write_file: open under preopen fd 3 and
         // read/write the whole file, boxing a Result[string, IoError] /
         // Option[IoError]. They alloc via the heap runtime (module_allocates
