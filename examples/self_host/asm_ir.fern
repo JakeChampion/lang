@@ -354,31 +354,11 @@ function emit_ir_str_chars(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
-// emit_ir_str_lines appends __fern_str_lines(s) — split s on '\n' then drop a
-// trailing empty segment when s is empty or ends with '\n' (so "a\nb\n".lines()
-// is 2, matching the AST path / Rust / Python). Builds a "\n" delim box (two
-// allocs, no static data) and calls __fern_str_split, then decrements the result
-// array's len word by the trim flag. Heap + str_split dependent; gated on the
-// str_lines need. Its own function — see emit_ir_str_search re #2720.
-function emit_ir_str_lines(s: asmcore.EmitState): asmcore.EmitState {
-    s = s.write("__fern_str_lines:\n");
-    s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n");
-    s = s.write("    pushq %r12\n    pushq %r13\n");
-    s = s.write("    movq %rdi, %r12\n");
-    s = s.write("    movq 8(%rdi), %rcx\n    movq $1, %r13\n");
-    s = s.write("    testq %rcx, %rcx\n    jz .Lir_lines_box\n");
-    s = s.write("    movq (%rdi), %rdx\n    decq %rcx\n    movzbq (%rdx,%rcx,1), %rcx\n");
-    s = s.write("    cmpq $10, %rcx\n    sete %r13b\n    movzbq %r13b, %r13\n");
-    s = s.write(".Lir_lines_box:\n");
-    s = s.write("    movq $1, %rdi\n    call __fern_alloc\n    movb $10, (%rax)\n");
-    s = s.write("    pushq %rax\n");
-    s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
-    s = s.write("    popq %rcx\n    movq %rcx, (%rax)\n    movq $1, 8(%rax)\n");
-    s = s.write("    movq %rax, %rsi\n    movq %r12, %rdi\n    call __fern_str_split\n");
-    s = s.write("    subq %r13, (%rax)\n");
-    s = s.write("    popq %r13\n    popq %r12\n    leave\n    ret\n");
-    return s;
-}
+// __fern_str_lines was hand-written here through #2649; it is now a Fern runtime
+// function (asmcore.rt_src_str_lines) lowered through the IR pipeline via
+// emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block — it splits on
+// '\n' (str_split) and drops the trailing empty entry with an array slice
+// (arr_slice). Heap + str_split + arr_slice dependent; gated on the str_lines need.
 
 // emit_ir_random_i32 appends the __fern_random_i32() helper. Kept OUT of
 // emit_ir_runtime (which is heap-gated) because random_i32 allocates nothing —
@@ -3668,7 +3648,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_arr_push_owned",
         "__fern_arr_slice", "__fern_str_concat", "__fn___fern_str_eq",
         "__fern_string_from_bytes", "__fern_str_bytes", "__fern_str_chars",
-        "__fern_str_lines", "__fern_str_split", "__fern_str_repeat",
+        "__fn___fern_str_lines", "__fern_str_split", "__fern_str_repeat",
         "__fern_str_replace", "__fern_str_reverse", "__fn___fern_str_trim",
         "__fern_str_to_lower", "__fern_str_to_upper", "__fn___fern_str_starts_with",
         "__fn___fern_str_ends_with", "__fn___fern_str_index_of", "__fern_print_str",
@@ -3772,10 +3752,12 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         return s.mark_str_chars();
     }
     if (o.kind == "str_lines") {
-        // operand stack [s box]; __fern_str_lines(%rdi=s) -> fresh string[] in
-        // %rax. The helper calls __fern_str_split, so pull in str_split too.
-        s = s.write("    popq %rdi\n    call __fern_str_lines\n    pushq %rax\n");
-        return s.mark_str_lines().mark_str_split();
+        // operand stack [s box]; __fern_str_lines is a Fern runtime function now
+        // (#2649): the s box already on the stack IS param[0] (at +16 after the
+        // call), so call directly, pop the arg, push the result string[].
+        // mark_str_lines pulls in its str_split + arr_slice + heap deps.
+        s = s.write("    call __fn___fern_str_lines\n    addq $8, %rsp\n    pushq %rax\n");
+        return s.mark_str_lines();
     }
     if (o.kind == "str_starts_with" || o.kind == "str_ends_with" || o.kind == "str_index_of") {
         // operand stack [s box, p box] (p on top); the str_search predicates are
@@ -4977,10 +4959,26 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], 
     var frsf: string[] = irlower.fresh_struct_ret_fns_of(fns, all_structs);
     var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(fns, all_structs);
     var fnames: string[] = irlower.fn_names_of(fns);
+    // String literals the helper body interns (e.g. "\n" in str_lines's
+    // s.split("\n")) land in string_lits AFTER the main .rodata pool was emitted
+    // (this runs in the entry block, past the pool), so flush any NEW ones here in
+    // their own .rodata block then return to .text. A literal-free helper (the
+    // str_search / str_eq / str_cmp / str_to_i32 / str_trim bodies) adds none, so
+    // this is a no-op for them. Mirrors the AST emit_runtime_fern_fn flush.
+    var lit0: i32 = s.string_lits.len();
     var i: i32 = 0;
     while (i < fns.len()) {
         s = emit_function_via_ir(fns[i], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, fnames, frsf, csparams, rfrsf);
         i = i + 1;
+    }
+    if (s.string_lits.len() > lit0) {
+        s = s.write("    .section .rodata\n");
+        var li: i32 = lit0;
+        while (li < s.string_lits.len()) {
+            s = s.write(str_lit_label(s, li) + ": .ascii \"" + asmcore.escape_for_ascii(s.string_lits[li]) + "\"\n");
+            li = li + 1;
+        }
+        s = s.write("    .text\n");
     }
     return s;
 }
@@ -5319,8 +5317,14 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     if (s.has_need("str_replace")) { s = emit_ir_str_replace(s); }
     // String chars — heap-dependent, gated on its str_chars need.
     if (s.has_need("str_chars")) { s = emit_ir_str_chars(s); }
-    // String lines — heap + str_split dependent, gated on its str_lines need.
-    if (s.has_need("str_lines")) { s = emit_ir_str_lines(s); }
+    // String lines — now a Fern runtime function (#2649), lowered through the IR
+    // pipeline: splits on '\n' (str_split) + drops the trailing empty via an array
+    // slice (arr_slice); both deps are present (heap runtime above + their own
+    // need-gated blocks). .text since the heap runtime left us in .bss.
+    if (s.has_need("str_lines")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_lines(), all_structs, s);
+    }
     // random_i32 allocates nothing, so its helper is emitted independently of
     // the heap runtime (a random_i32-only program is heap-free).
     if (s.has_need("random_i32")) { s = emit_ir_random_i32(s); }

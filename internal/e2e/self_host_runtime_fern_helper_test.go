@@ -132,6 +132,15 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_str_trim:", ".Ltrim_front"},
 		},
 		{
+			// str_lines (s.lines()) — was an INLINE lowering on the AST path; now a
+			// Fern helper composing str_split + an array slice. The old inline
+			// labels (.Llines_have_) must be gone.
+			"str_lines",
+			`function main(): i32 { return "a\nb\n".lines().len(); }`,
+			"__fn___fern_str_lines",
+			[]string{".Llines_have_"},
+		},
+		{
 			// arr_str_join (string[].join) — AST-only; calls str_concat via `+`.
 			"arr_str_join",
 			`function main(): i32 { var xs: string[] = ["a", "b"]; return xs.join(",").len(); }`,

@@ -307,8 +307,12 @@ pub function (s: EmitState) mark_str_chars(): EmitState {
     return s.need("heap").need("str_chars");
 }
 
+// str_lines's helper calls str_split (split on '\n') and arr_slice (drop the
+// trailing empty entry). The AST emit path has no close_needs, so mark the
+// transitive deps directly — same shape as mark_arr_str_join. runtime_need_deps
+// declares the same edges for the IR path's close_needs.
 pub function (s: EmitState) mark_str_lines(): EmitState {
-    return s.need("heap").need("str_lines");
+    return s.need("heap").need("str_split").need("arr_slice").need("str_lines");
 }
 
 pub function (s: EmitState) mark_str_bytes(): EmitState {
@@ -487,6 +491,18 @@ pub function rt_src_arr_i32_max(): string {
 // `go` flag + nested if/else instead of `&&`/`||` to stay in the proven subset.
 // Empty / all-whitespace input → start==end → a zero-length slice, matching the
 // hand-asm it replaces.
+// rt_src_str_lines backs `s.lines()` (#2649). It splits s on '\n' via str_split,
+// then drops the single trailing empty entry that a trailing newline (or an empty
+// input) produces — so "a\nb\nc\n".lines() is 3 lines, not 4, matching the interp
+// and Rust/Python. Composite / Tier-1: calls str_split (existing) and an array
+// slice parts[0:keep] (→ __fern_arr_slice, existing) — no new primitive. The
+// no-trim case returns `parts` directly to avoid a redundant full-array copy.
+// (The hand-asm it replaces trimmed by decrementing the result array's length
+// word in place; Fern can't mutate that word, so it slices instead — same lines.)
+pub function rt_src_str_lines(): string {
+    return "function __fern_str_lines(s: string): string[] { var parts: string[] = s.split(\"\\n\"); var n: i32 = parts.len(); var sl: i32 = s.len(); var keep: i32 = n; if (n > 0) { if (sl == 0) { keep = n - 1; } else { if (s[sl - 1] == 10) { keep = n - 1; } } } if (keep == n) { return parts; } return parts[0:keep]; }";
+}
+
 pub function rt_src_str_trim(): string {
     return "function __fern_str_trim(s: string): string { var n: i32 = s.len(); var start: i32 = 0; var go: i32 = 1; while (go == 1) { if (start >= n) { go = 0; } else { var c: i32 = s[start]; if (c == 32) { start = start + 1; } else { if (c == 9) { start = start + 1; } else { if (c == 10) { start = start + 1; } else { if (c == 13) { start = start + 1; } else { go = 0; } } } } } } var end: i32 = n; var go2: i32 = 1; while (go2 == 1) { if (end <= start) { go2 = 0; } else { var c2: i32 = s[end - 1]; if (c2 == 32) { end = end - 1; } else { if (c2 == 9) { end = end - 1; } else { if (c2 == 10) { end = end - 1; } else { if (c2 == 13) { end = end - 1; } else { go2 = 0; } } } } } } return s[start:end]; }";
 }
@@ -2038,8 +2054,9 @@ pub function runtime_need_deps(name: string): string[] {
         return d4;
     }
     if (name == "str_lines") {
-        // __fern_str_lines splits on '\n' by calling __fern_str_split.
-        var d5: string[] = ["heap", "str_split"];
+        // __fern_str_lines splits on '\n' (__fern_str_split) and drops the
+        // trailing empty entry via an array slice (__fern_arr_slice).
+        var d5: string[] = ["heap", "str_split", "arr_slice"];
         return d5;
     }
     var none: string[] = [];
