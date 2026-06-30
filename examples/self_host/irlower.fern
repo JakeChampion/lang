@@ -16547,6 +16547,22 @@ function bin_apply(kind: string, l: i32, r: i32): i32 {
     return 0;
 }
 
+// is_reclaim_helper reports whether a call_direct callee is a Perceus reclaim
+// runtime helper that this i32 round-trip evaluator models as VALUE-PRESERVING
+// identity on its primary box arg (the value is already computed before the
+// drop, and the evaluator does not model the heap free). These are backend
+// runtime functions, NOT user functions in `fns`, so without this they would
+// miss find_fn / eval_call and bail (sentinel 198). Covers the per-type
+// __struct_drop_<T> (box -> box) and __field_reclaim_<T> (new, old, snap -> new)
+// helpers plus the shared __fern_snapshot_dec / __fern_arr_dec / __fern_drop_arr_ptr.
+// Each returns its arg0 (the deepest of its args on the operand stack). The real
+// reclaim semantics are exercised by the differential / memory-churn suites.
+function is_reclaim_helper(name: string): boolean {
+    if (name.len() >= 14 && name[0:14] == "__struct_drop_") { return true; }
+    if (name.len() >= 16 && name[0:16] == "__field_reclaim_") { return true; }
+    return name == "__fern_snapshot_dec" || name == "__fern_arr_dec" || name == "__fern_drop_arr_ptr";
+}
+
 pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[], heap_in: i32[], freehead_in: i32): EvalOut {
     var nloc: i32 = n_locals;
     if (nloc < 1) { nloc = 1; }
@@ -16968,6 +16984,19 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
         else if (o.kind == "call_direct" && o.str == "__fern_heap_used") {
             // bytes bump-allocated = heap words * 4 minus the reserved word 0.
             stack = stack.with(sp, heap.len() * 4 - 4);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind == "call_direct" && is_reclaim_helper(o.str)) {
+            // A Perceus reclaim helper (see is_reclaim_helper): value-preserving
+            // identity on arg0 (the box / `new`). Pop its argc args and leave that
+            // primary arg as the result — the evaluator doesn't model the heap free
+            // (the value was read before the drop). Without this the call would miss
+            // find_fn and bail (198) the moment a struct becomes reclaimable.
+            var rargc: i32 = o.i32_imm;
+            var keepv: i32 = stack[sp - rargc];   // arg0 = deepest of the argc args
+            sp = sp - rargc;
+            stack = stack.with(sp, keepv);
             sp = sp + 1;
             pc = pc + 1;
         }
