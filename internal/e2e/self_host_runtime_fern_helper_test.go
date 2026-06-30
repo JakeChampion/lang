@@ -149,6 +149,14 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_str_bytes:", ".Lbytes_loop"},
 		},
 		{
+			// str_chars (s.chars()) — a Fern helper that appends each 1-char slice
+			// (arr_push). The old hand-asm (__fern_str_chars: / .Lchars_loop) gone.
+			"str_chars",
+			`function main(): i32 { return "abc".chars().len(); }`,
+			"__fn___fern_str_chars",
+			[]string{"\n__fern_str_chars:", ".Lchars_loop"},
+		},
+		{
 			// arr_str_join (string[].join) — AST-only; calls str_concat via `+`.
 			"arr_str_join",
 			`function main(): i32 { var xs: string[] = ["a", "b"]; return xs.join(",").len(); }`,
