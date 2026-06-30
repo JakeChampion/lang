@@ -157,6 +157,15 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_str_chars:", ".Lchars_loop"},
 		},
 		{
+			// chr — first Tier-2 helper via the raw-memory intrinsics (#2649).
+			// The old register-ABI hand-asm (a bare __fern_chr: label) is gone;
+			// only the Fern-compiled __fn___fern_chr remains.
+			"chr",
+			`function main(): i32 { return chr(65)[0]; }`,
+			"__fn___fern_chr",
+			[]string{"\n__fern_chr:"},
+		},
+		{
 			// arr_str_join (string[].join) — AST-only; calls str_concat via `+`.
 			"arr_str_join",
 			`function main(): i32 { var xs: string[] = ["a", "b"]; return xs.join(",").len(); }`,
