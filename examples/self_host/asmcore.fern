@@ -315,11 +315,12 @@ pub function (s: EmitState) mark_str_lines(): EmitState {
     return s.need("heap").need("str_split").need("arr_slice").need("str_lines");
 }
 
-// str_bytes's helper builds the result array with `.append()` (→ __fern_arr_push).
-// The AST emit path has no close_needs, so mark the transitive dep directly;
-// runtime_need_deps declares the same edge for the IR path's close_needs.
+// str_bytes's helper builds the result array with a SOLE-OWNER `a = a.append(b)`,
+// which lowers to __fern_arr_push_owned (NOT plain __fern_arr_push). The AST emit
+// path has no close_needs, so mark the transitive deps directly; runtime_need_deps
+// declares the same edges for the IR path's close_needs.
 pub function (s: EmitState) mark_str_bytes(): EmitState {
-    return s.need("heap").need("arr_push").need("str_bytes");
+    return s.need("heap").need("arr_push").need("arr_push_owned").need("str_bytes");
 }
 
 pub function (s: EmitState) mark_str_split(): EmitState {
@@ -2034,7 +2035,7 @@ pub function runtime_need_deps(name: string): string[] {
         || name == "chr" || name == "args" || name == "read_file" || name == "random_bytes"
         || name == "str_from_bytes" || name == "alloc_u8" || name == "strbuf"
         || name == "arr_push" || name == "arr_slice" || name == "arr_reverse"
-        || name == "arr_concat" || name == "str_chars" || name == "str_bytes"
+        || name == "arr_concat" || name == "str_chars"
         || name == "str_split" || name == "str_case" || name == "str_repeat"
         || name == "str_trim" || name == "str_reverse" || name == "str_replace"
         || name == "poll") {
@@ -2074,8 +2075,12 @@ pub function runtime_need_deps(name: string): string[] {
         return d5;
     }
     if (name == "str_bytes") {
-        // __fern_str_bytes builds the byte array with .append() (__fern_arr_push).
-        var d6: string[] = ["heap", "arr_push"];
+        // __fern_str_bytes builds the byte array with a SOLE-OWNER `a = a.append(b)`,
+        // which lowers to __fern_arr_push_owned (the reclaim-on-grow self-append), NOT
+        // plain __fern_arr_push. arr_push_owned transitively pulls arr_push, so listing
+        // it closes the symbol set (the missing edge caused an undefined reference to
+        // __fern_arr_push_owned when str_bytes was emitted in isolation).
+        var d6: string[] = ["heap", "arr_push", "arr_push_owned"];
         return d6;
     }
     var none: string[] = [];
