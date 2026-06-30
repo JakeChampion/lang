@@ -5016,6 +5016,16 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
         var fdt: string = irlower.decl_field_type_at(s.struct_decls, sty, k);
         var k_scalar: boolean = irlower.is_leaksafe_array_field(fdt);
         var k_box: boolean = !k_scalar && (irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt));
+        // A DIRECT nested-struct field (`inner: Inner`, not an array): the field
+        // slot holds the inner struct's box pointer, freed SHALLOW via the same
+        // __fern_arr_dec as a scalar-array buffer — one level, exactly like a
+        // struct-array element box (k_box's per-element dec). rc-guarded inside
+        // arr_dec, so an aliased (rc>1) inner just decs; only the sole owner frees.
+        // The inner's OWN rc fields leak (the one-level gap, a deep-drop follow-up),
+        // matching the struct-array-element model. Construction alias-incs the field
+        // (lower_expr's ExprStructLit arm) so this dec is balanced. Enums are NOT
+        // here (decl_is_struct excludes them — variant-payload drop is deferred).
+        var k_struct: boolean = !k_scalar && !k_box && irlower.decl_is_struct(s.struct_decls, fdt);
         var off: string = util.i32_to_string((k + 1) * 8);
         var ks: string = util.i32_to_string(k);
         if (k_box) {
@@ -5045,8 +5055,8 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
             s = s.write("    pushq %rdi\n");
             s = s.write("    call __fn___fern_arr_dec\n");              // shallow dec the buffer slab
             s = s.write("    addq $8, %rsp\n");
-        } else if (k_scalar) {
-            s = s.write("    movq " + off + "(%r11), %rdi\n");          // box.field_k buffer
+        } else if (k_scalar || k_struct) {
+            s = s.write("    movq " + off + "(%r11), %rdi\n");          // box.field_k buffer / nested box
             s = s.write("    pushq %rdi\n");
             s = s.write("    call __fn___fern_arr_dec\n");
             s = s.write("    addq $8, %rsp\n");

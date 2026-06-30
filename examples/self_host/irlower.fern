@@ -4110,6 +4110,27 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             _ => {}
                         }
                     }
+                    // A DIRECT nested-struct field (`inner: Inner`, decl_is_struct,
+                    // not an array): now SHALLOW-dropped on the struct's reclamation
+                    // (emit_ir_struct_drop_one's k_struct → arr_dec of the inner box,
+                    // one level). To balance that dec, retain the field whenever its
+                    // source could ALIAS a box another owner also drops. ONLY a fresh
+                    // struct LITERAL `Inner { … }` is provably sole-owned (rc 1) and
+                    // reclaimed with no inc; EVERY other source (a bare struct ident, a
+                    // field copy `o.inner`, a struct-returning call) is inc'd —
+                    // conservative and SOUND: a genuinely-fresh non-literal source then
+                    // just LEAKS (rc never reaches 0), never double-frees. (Tightening
+                    // the fresh set to fresh-returning calls is a follow-up.) The inc is
+                    // on a real rc-headered struct box (never a header-less string), so
+                    // it is sound — cf. the string-field skip below.
+                    if (!fav_alias_inc && decl_is_struct(s.structs, cfft)) {
+                        var nfv_fresh: boolean = false;
+                        match (slit.field_values[found]) {
+                            parser.ExprStructLit(_) => { nfv_fresh = true; },
+                            _ => {}
+                        }
+                        if (!nfv_fresh) { fav_alias_inc = true; }
+                    }
                     // A `string` field is rc-headered and deep-dropped on the
                     // struct's reclamation (emit_struct_field_drops). The values safe
                     // to FREE are exactly the fresh, sole-owned HEAP strings whose data
@@ -4170,6 +4191,19 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     }
                     if (struct_field_is_i64(s.structs, slit.type_name, di)) { sm = sm.emit(ir.op_struct_get_i64(di)); }
                     else { sm = sm.emit(ir.op_struct_get(di, struct_field_width(s.structs, slit.type_name, di))); }
+                    // A nested-struct field COPIED from the base (`Outer { ...base, … }`)
+                    // ALIASES base.<field> — both the new struct and the base now point
+                    // at the same inner box, and BOTH shallow-drop it on reclamation. So
+                    // retain it (the inner box read by struct_get is on the stack) with
+                    // the same Perceus dup as the field-override alias case, or the new
+                    // struct's drop would double-free base's inner. Array fields copied
+                    // from a base alias-inc via the array gates above (override path); a
+                    // base-copied ARRAY field is left as-is here (its prior behaviour),
+                    // only the newly-reclaimed nested-struct kind needs the retain.
+                    var cpft: string = decl_field_type_at(s.structs, slit.type_name, di);
+                    if (decl_is_struct(s.structs, cpft)) {
+                        sm = sm.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                    }
                 } else {
                     // a non-update literal must set every field
                     return s.fail();
@@ -11294,6 +11328,11 @@ pub function struct_has_reclaim_array_field(structs: parser.StructDecl[], sty: s
         if (is_leaksafe_array_field(fdt)) { return true; }
         if (is_struct_array_field_type(structs, fdt)) { return true; }
         if (is_enum_array_field_type(structs, fdt)) { return true; }
+        // A DIRECT nested-struct field (`inner: Inner`) is now SHALLOW-reclaimed
+        // (emit_ir_struct_drop_one's k_struct), so a struct carrying one needs its
+        // exit drop emitted too — admit it to the reclaim set (the construction
+        // alias-inc in the ExprStructLit lowering keeps it balanced).
+        if (decl_is_struct(structs, fdt)) { return true; }
         fi = fi + 1;
     }
     return false;
