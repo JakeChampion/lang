@@ -383,6 +383,17 @@ pub function rt_src_arr_i32_min(): string {
     return "function __fern_arr_i32_min(xs: i32[]): i32 { var m: i32 = xs[0]; var i: i32 = 1; while (i < xs.len()) { if (xs[i] < m) { m = xs[i]; } i = i + 1; } return m; }";
 }
 
+// rt_src_str_to_i32 backs `str_to_i32(s)` — parse a borrowed string into an
+// i32 (#2649). Written with `for b in s` (string byte iteration + break, both
+// IR-eligible) rather than s[i] indexing so it lowers cleanly on the IR path as
+// well as the AST path. Optional leading '-', then decimal digits, stopping at
+// the first non-digit (empty / non-numeric → 0) — matching the hand-written
+// helper it replaces. The string param is read-only (never returned/stored), so
+// borrow analysis keeps it borrowed: no RC free of the caller's string.
+pub function rt_src_str_to_i32(): string {
+    return "function __fern_str_to_i32(s: string): i32 { var acc: i32 = 0; var neg: i32 = 0; var first: i32 = 1; for b in s { if (first == 1 && b == 45) { neg = 1; } else { var d: i32 = b - 48; if (d < 0 || d > 9) { break; } acc = acc * 10 + d; } first = 0; } if (neg == 1) { return 0 - acc; } return acc; }";
+}
+
 pub function rt_src_arr_i32_max(): string {
     return "function __fern_arr_i32_max(xs: i32[]): i32 { var m: i32 = xs[0]; var i: i32 = 1; while (i < xs.len()) { if (xs[i] > m) { m = xs[i]; } i = i + 1; } return m; }";
 }
