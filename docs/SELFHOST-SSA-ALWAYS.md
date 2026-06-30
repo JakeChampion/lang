@@ -134,10 +134,21 @@ all sixteen combinations assemble and execute to the right exit code. This
 matters because arm64 is the project's *default* target; the lift now has
 backend parity for the integer control-flow subset.
 
+**Slice 5 ✅ (landed — multi-function programs + calls):** the lifted-emit path
+went from a single `main` to a **list of functions** lifted and emitted
+together, so cross-function `call_direct` resolves. A program is now an ordered
+`FnSpec[]` (entry `main` first); the driver lifts each, runs `ssa.optimize`, and
+hands the whole set to `emit_program`. Two new programs join the matrix: `callsum`
+(`main()` calls `add(20,22)` → 42 — a plain cross-function call) and `factrec`
+(`fact(5)` → 120 — **self-recursion** through the lifted SSA, exercising a call
+inside an `if`/return with loop-free recursion). Both run on x86-64 + arm64,
+default + `-regalloc`. `call_direct` already lowered in slice 0; this proves it
+links and executes once the callee's lifted `SFunc` is emitted alongside.
+
 Next: a differential gate (lift-then-emit vs. `build_func`-then-emit, or vs.
 native, for the same source), widening the lifted-emit subset toward the
-calls / strings / heap the SSA backends already support — then driving real
-`irlower` output (not hand-coded `Op[]`) through the lift.
+strings / heap the SSA backends already support — then driving real `irlower`
+output (not hand-coded `Op[]`) through the lift.
 
 ## Phases
 

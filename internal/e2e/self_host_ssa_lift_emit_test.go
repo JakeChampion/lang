@@ -18,7 +18,10 @@ import (
 // native code. Each program is run twice per target: once with the default
 // slot-addressed emit, once with -regalloc (the linear-scan allocator) over the
 // lifted SSA. The lifted SSA is target-agnostic — the same SFunc feeds either
-// backend, exactly as build_func's output does in ssa_emit_run.
+// backend, exactly as build_func's output does in ssa_emit_run. Programs range
+// from single-function integer control flow up to multi-function ones that
+// exercise cross-function call_direct (callsum) and self-recursion (factrec),
+// all lifted and emitted together so the calls resolve.
 func TestSelfHostSSALiftEmit(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	armgcc, qemu := arm64Tooling(t)
@@ -87,6 +90,8 @@ func TestSelfHostSSALiftEmit(t *testing.T) {
 		{"loopsum", 15},   // sum 1..5 — loop-header phis
 		{"branch", 42},    // void if-merge
 		{"breakloop", 42}, // break out of a loop
+		{"callsum", 42},   // cross-function call_direct: main() -> add(20,22)
+		{"factrec", 120},  // self-recursion: fact(5)
 	}
 	for _, tc := range cases {
 		tc := tc
