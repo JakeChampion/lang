@@ -221,6 +221,29 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// Two independent plain structs, both reclaimed at exit — both boxes freed,
 		// detector 0.
 		{"two-plain-structs-reclaim-detector", `struct P { x: i32, y: i32 } function main(): i32 { var a = P { x: 1, y: 2 }; var b = P { x: 3, y: 4 }; var s = a.x + a.y + b.x + b.y; if (s != 10) { return 99; } return __rc_underflow(); }`, 0},
+		// Precise drop for a fresh SCALAR-ONLY struct local, last-used at a later
+		// top-level statement: its box is freed right after that use (a single
+		// shallow __fern_rc_dec — no field to walk) and the slot zeroed, instead of
+		// at the function-exit sweep, bounding the live set. Sound because a
+		// scalar-only struct carries no rc field, so freeing the box early cannot
+		// dangle any reference; the exit sweep then decs a guarded null. Mirrors the
+		// array precise drop. (Native's TestPreciseDropControlFlowStruct.)
+		//
+		// FIRING: `p` is built, last-used inside an `if`, then dead — freed after the
+		// if-statement. f(5): p.x+p.y = 3, c = 3, return 3+5 = 8.
+		{"scalar-struct-precise-if-value", `struct P { x: i32, y: i32 } function f(n: i32): i32 { var p = P { x: 1, y: 2 }; var c = 0; if (n > 0) { c = p.x + p.y; } return c + n; } function main(): i32 { return f(5); }`, 8},
+		{"scalar-struct-precise-if-detector", `struct P { x: i32, y: i32 } function f(n: i32): i32 { var p = P { x: 1, y: 2 }; var c = 0; if (n > 0) { c = p.x + p.y; } return c + n; } function main(): i32 { var r = f(5); if (r != 8) { return 99; } return __rc_underflow(); }`, 0},
+		// FIRING + heap-reuse corruption probe: a FRESH array allocated AFTER the
+		// precise drop reads back intact. If the early free were unsound (double-free
+		// / freed a still-live box) the fresh alloc could recycle p's box and corrupt
+		// the read. c == 7 and 11+22+33 == 66; detector 0.
+		{"scalar-struct-precise-corruption-probe-detector", `struct P { x: i32, y: i32 } function go(): i32 { var p = P { x: 3, y: 4 }; var c = 0; var i = 0; while (i < 1) { c = p.x + p.y; i = i + 1; } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (c != 7) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// GUARD: a scalar-only struct local that is ALSO a cross-reuse donor (`a` dead
+		// before the same-type full construction `b`) must NOT be precise-dropped —
+		// cross-reuse recycles a's box into b, so an early free would race it. The
+		// emission-site donor guard skips the precise drop here; the box is freed
+		// exactly once (through b at exit). sa(3) + sb(7) = 10; detector 0.
+		{"scalar-struct-precise-cross-reuse-donor-guard-detector", `struct P { x: i32, y: i32 } function main(): i32 { var a = P { x: 1, y: 2 }; var sa = a.x + a.y; var b = P { x: 3, y: 4 }; var sb = b.x + b.y; if (sa + sb != 10) { return 99; } return __rc_underflow(); }`, 0},
 		// Struct with an i32[] field: the box is rc-headered and freed soundly, and
 		// the array field is deep-dropped (emit_struct_field_drops) exactly once.
 		// Detector 0 proves neither the box nor the array field over-releases.

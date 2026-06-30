@@ -2912,3 +2912,45 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   churn bounded for a fresh-literal payload AND a bare-ident payload (the latter also
   value-correct = no double-free), byte-identical fixpoint + bootstrap. Test:
   `TestSelfHostEnumQualifiedCtorReclaimIRX86_64`.
+- 2026-06-30: **Precise drop-on-last-use for fresh SCALAR-ONLY struct locals**
+  (native parity: `TestPreciseDropControlFlowStruct`). The self-host precise-drop
+  pass (`precise_drop_names`) previously admitted only scalar-element ARRAY locals
+  (`var a = [..]` / a scalar-array-returning free call); a fresh scalar-only struct
+  local (`var p = P { x: 1, y: 2 }`, P all flat scalar fields) fell to the
+  function-exit dec-sweep even when its last use was an earlier statement. It now
+  qualifies: a `var p = T { ...scalar literals... }` of a `struct_is_scalar_only`
+  type, no struct-update base, never reassigned, only borrow-read after, last-used
+  at a later top-level statement, is freed (a single shallow `__fern_rc_dec` — the
+  box owns no pointer to walk) and its slot zeroed right after that use, so the exit
+  sweep decs a guarded null. SOUNDNESS — a scalar-only struct carries no rc field,
+  so the early box free cannot dangle a reference; the same `body_unsafe_for` escape
+  gate the array path uses proves non-escape (a returned / stored / non-borrowable-
+  passed `p` is excluded). A donor guard at the emission site skips the precise drop
+  when the name is a reuse / cross-reuse / enum-donor / in-arm donor target (its box
+  is recycled by that path — an early free would race it; the `cross-reuse-donor-
+  guard` test pins this). FIRING confirmed in the emitted asm (the mid-function
+  `__fern_rc_dec` + slot-zeroing store after the `if`, the exit sweep then no-ops on
+  the null slot — the slot-zero is the signature, the exit sweep never zeroes).
+  Placement-granularity matches the existing array precise drop (after the top-level
+  statement of last use, not inside the branch); native places it inside the branch,
+  but for a struct the observable contract (a `__drop`/box-free is emitted at the
+  precise point vs only at exit) is the same. VERIFIED: new
+  `scalar-struct-precise-*` cases (route ir, value + `__rc_underflow()==0`, a heap-
+  reuse corruption probe, the donor guard) in `TestSelfHostRcPreciseDropX86IR`;
+  byte-identical FIXPOINT + BOOTSTRAP (assemble+link) unchanged; the broad self-host
+  RC/drop sweep stays green.
+
+  Investigation note (why this slice, not the discarded-fresh-array-ret reclaim):
+  the earlier fresh-array-ret fixpoint was reverted as INEFFECTIVE, and a churn /
+  RSS-under-`ulimit` harness was used to chase it. That harness is NOT a sound
+  Perceus signal: the native reference compiler ALSO leaks a discarded
+  `var b = S { items: gen() }` (and a plain discarded fresh-array local) under a
+  vmem cap — its emitted binary contains no `__fern_arr_dec` for that pattern at all
+  — so it was never a parity gap, and exit-code/RSS conflates allocator policy with
+  drop emission. The sound signal is emitted-reclaim inspection + the fixpoint /
+  bootstrap / `__rc_underflow` correctness gates (used here). Separately: the
+  `TestSelfHostBootstrapsItself` gate is an ASSEMBLE+LINK check (symbol-closure), not
+  a native↔self-host byte-identical comparison — the byte-identity gate is the
+  stage-2 FIXPOINT (self-reproduction / determinism). A Perceus emission change must
+  therefore preserve symbol-closure, determinism, and no-double-free — not match
+  native byte-for-byte.
