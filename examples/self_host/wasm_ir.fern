@@ -658,15 +658,7 @@ pub function wasm_eligible(mod: parser.Module): boolean {
         && !module_emits_op(mod, "tcp_close")
         && !module_emits_op(mod, "tcp_pollable")
         && !module_emits_op(mod, "temp_dir")
-        && !module_emits_op(mod, "subprocess")
-        // Map iteration is parallel-array only (x86-64 / arm64); wasm maps are
-        // hash maps with no iterator-box runtime, so a mapiter module stays on the
-        // wasm AST path (where the legacy emitter handles m.iter()/has_next()/...).
-        && !module_emits_op(mod, "map_iter")
-        && !module_emits_op(mod, "mapiter_has_next")
-        && !module_emits_op(mod, "mapiter_key")
-        && !module_emits_op(mod, "mapiter_value")
-        && !module_emits_op(mod, "mapiter_advance");
+        && !module_emits_op(mod, "subprocess");
 }
 
 // should_use_ir: the use_ir default is on AND the module is wasm-eligible — the
@@ -921,6 +913,20 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind == "fcos") {
             // cos(x): same as fsin, calling $__fern_cos_f64.
             out = out + "    call $__fern_cos_f64\n";
+        } else if (o.kind == "map_iter") {
+            // m.iter() -> a 12-byte iterator box [keys@0, vals@4, cursor@8].
+            // $__fern_map_iter materializes the live keys/values (map snapshots)
+            // and boxes them; emitted caller-side in wasm_ir_run with map_helpers.
+            out = out + "    call $__fern_map_iter\n";
+        } else if (o.kind == "mapiter_has_next") {
+            out = out + "    call $__fern_mapiter_has_next\n";
+        } else if (o.kind == "mapiter_key") {
+            out = out + "    call $__fern_mapiter_key\n";
+        } else if (o.kind == "mapiter_value") {
+            out = out + "    call $__fern_mapiter_value\n";
+        } else if (o.kind == "mapiter_advance") {
+            // bumps the box's cursor in place; pushes a dummy the statement drops.
+            out = out + "    call $__fern_mapiter_advance\n";
         } else if (o.kind == "int_extend") {
             // i32 -> i64: distinct wasm types, so an explicit widen.
             if (o.unsigned) { out = out + "    i64.extend_i32_u\n"; }

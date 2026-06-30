@@ -264,6 +264,10 @@ function main(): i32 {
         if (wasm_ir.module_emits_op(mod, "arr_push_i64")) { o = o + wasm.arr_push_i64_helper(); }
         if (wasm_ir.module_emits_op(mod, "arr_push_f64")) { o = o + wasm.arr_push_f64_helper(); }
         if (wasm_ir.module_uses_maps(mod)) { o = o + wasm.map_helpers(); }
+        // $__fern_map_iter + accessors: the wasm map-iterator runtime (materializes
+        // keys/values via map_helpers above, so gated after it). Emitted when the
+        // module iterates a map (m.iter() / for-in-map).
+        if (wasm_ir.module_emits_op(mod, "map_iter")) { o = o + wasm.map_iter_helpers(); }
         // Byte-source helpers (issue #2747). random_bytes returns a [len][bytes]
         // string block; str_bytes returns a u8[]; both reference the heap runtime
         // ($__fern_str_box / $__fern_arr_box) that module_allocates pulls in.
