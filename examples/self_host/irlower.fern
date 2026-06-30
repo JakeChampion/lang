@@ -17774,12 +17774,31 @@ function closure_lift_one(body: parser.Stmt[], fd: parser.FuncDecl, acc: LiftAcc
 
 struct HoistResult { func: parser.FuncDecl, ok: boolean }
 
+// cap_slot_ok reports whether a capture of type `t` fits the env box's single
+// (32-bit-op / 8-byte) slot. In the self-host's `-no-pie -static` binary every
+// heap / code address fits in 32 bits, so a pointer-shaped capture (string,
+// array, struct, enum, Option/Result, tuple, map — and a fn value) rides the
+// same 32-bit slot as an i32, exactly like a `string[]` element (which also uses
+// the 32-bit arr_get path). Only an 8-byte SCALAR (i64 / u64 / f64) needs a wide
+// slot the box doesn't carry, so those (and an unresolved "") still decline.
+function cap_slot_ok(t: string): boolean {
+    if (t.len() == 0) { return false; }
+    if (t == "i64") { return false; }
+    if (t == "u64") { return false; }
+    if (t == "f64") { return false; }
+    return true;
+}
+
 // make_clo_func builds the hoisted body of an escaping/inline closure: a top-
-// level `<cloname>(__env: i32[], origparams…)` whose body reads each i32 capture
-// from the env box (`var cap_i: i32 = __env[1+i]`; box slot 0 is the funcval,
-// caps follow) and then runs the lambda body. Captures must all be i32 (the box
-// is an i32[]); otherwise it declines (`ok:false`) so the closure stays an
-// ExprLambda and the module bails to AST. Shared by the return-position
+// level `<cloname>(__env: i32[], origparams…)` whose body reads each capture
+// from the env box (`var cap_i: <T> = __env[1+i]`; box slot 0 is the funcval,
+// caps follow) and then runs the lambda body. Each capture must fit the box's
+// 32-bit slot (cap_slot_ok: i32 or any pointer-shaped type — string, array,
+// struct, enum, …; an 8-byte scalar declines); otherwise it returns ok:false so
+// the closure stays an ExprLambda and the module bails to AST. The capture var
+// is declared with its REAL type so downstream uses (e.g. a captured string's
+// `.len()`) dispatch correctly even though the box is typed i32[] (the 32-bit
+// load yields the pointer, which fits). Shared by the return-position
 // (`hoist_escaping_closure`) and the array-element / struct-field inline lifts
 // (`lift_inline_closures`) so the two agree byte-for-byte on the box layout.
 function make_clo_func(lam: parser.ExprLambda, cloname: string, fd: parser.FuncDecl, gfns: string[]): HoistResult {
@@ -17788,19 +17807,22 @@ function make_clo_func(lam: parser.ExprLambda, cloname: string, fd: parser.FuncD
     if (caps.len() == 0) { return HoistResult { func: none, ok: false }; }
     var ci: i32 = 0;
     while (ci < caps.len()) {
-        if (cap_type(caps[ci], fd) != "i32") { return HoistResult { func: none, ok: false }; }
+        if (!cap_slot_ok(cap_type(caps[ci], fd))) { return HoistResult { func: none, ok: false }; }
         ci = ci + 1;
     }
     // params = __env first, then the lambda's declared params.
     var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "" }];
     var pj: i32 = 0;
     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
-    // body = capture reads (var cap = __env[1+i]) then the lambda body.
+    // body = capture reads (var cap: <T> = __env[1+i]) then the lambda body. The
+    // read is typed by the capture's real type (cap_type) so a pointer-shaped
+    // capture is a typed slot downstream; the i32[] 32-bit load still yields the
+    // (32-bit-fitting) pointer value.
     var bd: parser.Stmt[] = [];
     var cj: i32 = 0;
     while (cj < caps.len()) {
         var idx: parser.Expr = parser.ExprIndex { array: parser.ExprIdent { name: "__env", line: 0, col: 0 }, index: parser.ExprNumber { text: util.i32_to_string(1 + cj), suffix: "", is_float: false, line: 0, col: 0 } };
-        bd = bd.append(parser.StmtVar { name: caps[cj], type_name: "i32", init: idx, line: 0, col: 0 });
+        bd = bd.append(parser.StmtVar { name: caps[cj], type_name: cap_type(caps[cj], fd), init: idx, line: 0, col: 0 });
         cj = cj + 1;
     }
     var bk: i32 = 0;
