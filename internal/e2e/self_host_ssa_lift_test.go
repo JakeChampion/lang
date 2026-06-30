@@ -8,11 +8,12 @@ import (
 )
 
 // TestSelfHostSSALift exercises the self-hosted stack-IR -> SSA lift
-// (examples/self_host/ssa_lift.fern, slice 0 — see
+// (examples/self_host/ssa_lift.fern, slices 0+1 — see
 // docs/SELFHOST-SSA-ALWAYS.md). The ssa_lift_run driver hand-builds a few
 // ir.Op[] streams, lifts each into an ssa.SFunc, and RUNS the lifted SSA
 // through ssa.eval_func, validating value flow on both arms of the branch
-// cases (so the phi reconstruction is exercised, not just type-checked). This
+// cases and across loop iterations (so the if-merge AND loop-header phi
+// reconstruction is exercised, not just type-checked). This
 // pins the lift end-to-end through the self-host -> native pipeline, proving
 // ssa_lift.fern compiles (not just type-checks) and that the lifted SSA is
 // executable with the right semantics.
@@ -50,6 +51,12 @@ func TestSelfHostSSALift(t *testing.T) {
 		"ok - if-noelse c=1 => 7\n" +
 		"ok - if-noelse c=0 => 100\n" +
 		"ok - call_direct lifts to one call inst\n" +
+		"ok - while-sum n=5 => 15\n" +
+		"ok - while-sum n=1 => 1\n" +
+		"ok - while-sum n=0 => 0\n" +
+		"ok - evensum n=6 => 6\n" +
+		"ok - evensum n=7 => 12\n" +
+		"ok - evensum n=1 => 0\n" +
 		"ok - out-of-subset op bails\n" +
 		"# all lift checks passed\n"
 
