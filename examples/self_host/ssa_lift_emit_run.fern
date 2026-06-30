@@ -1,0 +1,106 @@
+// examples/self_host/ssa_lift_emit_run.fern — end-to-end driver for the
+// stack-IR -> SSA LIFT feeding a real backend. Where ssa_emit_run.fern drives
+// AST -> SSA (`build_func`) -> emit, this driver drives
+// hand-built ir.Op[] -> SSA (`ssa_lift.lift_from_ir`) -> `ssa.optimize` ->
+// `ssa_x86.emit_program` -> x86-64 assembly. The companion Go test
+// (internal/e2e/self_host_ssa_lift_emit_test.go) assembles the output
+// (`gcc -static -nostdlib -no-pie`) and runs it, asserting the process exit
+// code matches the program's value — the first proof that the lift's SSA is
+// not just interpretable (eval_func) but feeds the existing optimiser and
+// x86-64 codegen all the way to executing native code.
+//
+// The program to emit is selected by argv[1]; `-regalloc` exercises the
+// linear-scan allocator on the lifted SSA too.
+
+import "./ir";
+import "./ssa";
+import "./ssa_x86";
+import "./ssa_lift";
+
+// build_prog returns the ir.Op[] for the named program. nparams is 0 for all
+// (each is a `main`); the matching nslots is returned via slots_for.
+function build_prog(name: string): ir.Op[] {
+    if (name == "arith") {
+        // (3 + 4) * 2 - 1 = 13
+        return [
+            ir.op_const_i32(3), ir.op_const_i32(4), ir.op_bin("add", 0, false),
+            ir.op_const_i32(2), ir.op_bin("mul", 0, false),
+            ir.op_const_i32(1), ir.op_bin("sub", 0, false),
+            ir.op_return()
+        ];
+    }
+    if (name == "loopsum") {
+        // var i=1,acc=0; while (i<=5) { acc=acc+i; i=i+1; } return acc;  => 15
+        return [
+            ir.op_const_i32(1), ir.op_store_local(0),
+            ir.op_const_i32(0), ir.op_store_local(1),
+            ir.op_block(0), ir.op_loop(0),
+                ir.op_load_local(0), ir.op_const_i32(5), ir.op_bin("le_s", 0, false), ir.op_bin("not", 0, false), ir.op_brif(1),
+                ir.op_load_local(1), ir.op_load_local(0), ir.op_bin("add", 0, false), ir.op_store_local(1),
+                ir.op_load_local(0), ir.op_const_i32(1), ir.op_bin("add", 0, false), ir.op_store_local(0),
+                ir.op_br(0),
+            ir.op_end(), ir.op_end(),
+            ir.op_load_local(1), ir.op_return()
+        ];
+    }
+    if (name == "branch") {
+        // var x=0; if (7 > 3) { x = 42; } return x;  => 42
+        return [
+            ir.op_const_i32(0), ir.op_store_local(0),
+            ir.op_const_i32(7), ir.op_const_i32(3), ir.op_bin("gt_s", 0, false),
+            ir.op_if(0),
+                ir.op_const_i32(42), ir.op_store_local(0),
+            ir.op_end(),
+            ir.op_load_local(0), ir.op_return()
+        ];
+    }
+    if (name == "breakloop") {
+        // var i=0; while (i<100) { if (i==42) { break; } i=i+1; } return i;  => 42
+        return [
+            ir.op_const_i32(0), ir.op_store_local(0),
+            ir.op_block(0), ir.op_loop(0),
+                ir.op_load_local(0), ir.op_const_i32(100), ir.op_bin("lt_s", 0, false), ir.op_bin("not", 0, false), ir.op_brif(1),
+                ir.op_load_local(0), ir.op_const_i32(42), ir.op_bin("eq", 0, false),
+                ir.op_if(0), ir.op_br(2), ir.op_end(),
+                ir.op_load_local(0), ir.op_const_i32(1), ir.op_bin("add", 0, false), ir.op_store_local(0),
+                ir.op_br(0),
+            ir.op_end(), ir.op_end(),
+            ir.op_load_local(0), ir.op_return()
+        ];
+    }
+    return [];
+}
+
+// slots_for returns the local-slot count each program needs.
+function slots_for(name: string): i32 {
+    if (name == "arith") { return 0; }
+    if (name == "loopsum") { return 2; }
+    if (name == "branch") { return 1; }
+    if (name == "breakloop") { return 1; }
+    return 0;
+}
+
+function main(): i32 {
+    var av: string[] = args();
+    var prog: string = "loopsum";
+    var use_regalloc: boolean = false;
+    var ai: i32 = 1;
+    while (ai < av.len()) {
+        if (av[ai] == "-regalloc") { use_regalloc = true; }
+        else { prog = av[ai]; }
+        ai = ai + 1;
+    }
+
+    var ops: ir.Op[] = build_prog(prog);
+    var lr: ssa_lift.LResult = ssa_lift.lift_from_ir("main", 0, slots_for(prog), ops);
+    if (!lr.ok) { return 1; }
+    // The same pre-emit passes the build_func path runs. With no calls,
+    // mark_ptr_calls / mark_float_calls are no-ops, but keep them so the
+    // pipeline matches and stays correct if a program grows a call. optimise
+    // also proves the lifted SSA is accepted by the existing optimiser.
+    var empty: string[] = [];
+    var f: ssa.SFunc = ssa.optimize(ssa.mark_float_calls(ssa.mark_ptr_calls(lr.func, empty), empty));
+    var funcs: ssa.SFunc[] = [f];
+    write(ssa_x86.emit_program(funcs, use_regalloc));
+    return 0;
+}

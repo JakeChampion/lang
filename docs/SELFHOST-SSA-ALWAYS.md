@@ -104,9 +104,30 @@ both-arms-diverge merge is correctly marked unreachable). Validated by running
 lifted `break` and `continue` loops through `ssa.eval_func` and by inspecting
 the emitted SSA (no dead predecessors). Still out of subset (→ `ok=false`):
 value-producing ifs (`BlockTypeI32`+; `irlower` doesn't emit them — it carries
-values through locals) and memory / struct / map / float / i64 ops. Next:
-wiring the lift into a backend (e.g. `ssa_x86`) as an alternative to
-`build_func`, end-to-end IR → lift → SSA → asm.
+values through locals) and memory / struct / map / float / i64 ops.
+
+**Slice 3 ✅ (landed — the lift feeds real codegen):** the milestone — the
+lift's SSA is no longer only interpreted (`eval_func`); it now flows through the
+existing optimiser and backend to **native machine code**. A new driver
+(`ssa_lift_emit_run.fern`) builds a hand-coded `ir.Op[]` program, lifts it
+(`lift_from_ir`), runs `ssa.optimize` over the result (which proves the lifted
+SSA is accepted by the existing optimiser unchanged), and emits x86-64 via
+`ssa_x86.emit_program` — exactly the pipeline `ssa_emit_run` runs, with
+`lift_from_ir` swapped in for `build_func`. The Go gate
+(`self_host_ssa_lift_emit_test.go`) assembles the output (`gcc -static -nostdlib
+-no-pie`) and runs it, asserting the process exit code equals the program's
+value, across four programs (straight-line arithmetic, a `while`-loop sum,
+a void if-merge, and a `break`) **each in both the default slot-addressed emit
+and `-regalloc`** (the linear-scan allocator over lifted SSA). This is the
+end-to-end proof of the `stack-IR → SSA → backend` thesis on real hardware: the
+IR that is already the default lowering path lifts to SSA that the existing
+optimiser and x86-64 codegen consume all the way to a running binary.
+
+Next: a differential gate (lift-then-emit vs. `build_func`-then-emit, or vs.
+native, for the same source), an `ssa_arm64` path for the lifted SSA, and
+widening the lifted-emit subset toward the calls / strings / heap the SSA
+backends already support — then driving real `irlower` output (not hand-coded
+`Op[]`) through the lift.
 
 ## Phases
 
