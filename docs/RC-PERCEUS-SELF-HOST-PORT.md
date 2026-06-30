@@ -2867,3 +2867,29 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   alias-inc leak → SIGKILL; value-correctness 10). Follow-ups remain: string /
   enum-payload fields; extending fresh-ret freshness to non-leaf-safe struct returns
   once those become IR-lowerable.
+- 2026-06-30: **Perceus enum-payload slice — deep-drop a variant's nested-STRUCT
+  payload, all three IR backends.** A consume-by-match enum local
+  (`var b = Full(Inner { items: [..] }); match (b) { Full(_/inner) => .., Empty => .. }`)
+  whose variant carries a deep-drop-ok nested-struct payload is now reclaimed
+  recursively at the match: `enum_field_rc_droppable` (now `(structs, t)`) admits a
+  `decl_is_struct && nested_field_deep_drop_ok` payload, and emit_enum_variant_drops
+  emits, under the variant_is guard, `__struct_drop_<Inner>` (releases the payload's
+  rc-array fields) then `__fern_rc_dec` (frees the payload box) — instead of the whole
+  enum bailing the reclaim (the payload type was undroppable, so box + payload leaked).
+  The backend auto-emits the helper on seeing the IR call_direct (asm_ir op scan @4462
+  / wasm struct_drop_types + the slice-3 transitive closure / arm64 mirror). SOUNDNESS
+  — no is_unique guard is needed because consumed_rcpayload_enum_frees only admits the
+  enum when its struct payload was a FRESH struct LITERAL (new
+  variant_struct_payloads_fresh gate): the payload box is then the sole owner (rc==1),
+  and a bare-ident / call payload aliasing a swept local is rejected (deep-dropping it
+  would double-free its inner buffers — the same fresh-literal rule the struct-field
+  deep-drop uses). The depth-1 leaf rule (nested_field_deep_drop_ok) keeps it
+  cycle-safe. Covers the discard (`Full(_)`) AND the bound-borrow-only (`Full(inner) =>
+  inner.items[i]`) cases — match_arm_binds_rc_payload admits a borrow-only binding.
+  NOTE: only UNQUALIFIED variant ctors (`Full(..)`) are recognised — a qualified
+  `Box.Full(..)` callee is an ExprFieldAccess that fresh_rcpayload_enum_init doesn't
+  match (a pre-existing limitation, shared by the scalar path). VERIFIED END-TO-END
+  LOCALLY (swap enabled for the self-host driver builds): x86 churn bounded + value 17,
+  wasm memory-cap differential, byte-identical FIXPOINT and BOOTSTRAP (native-Go ↔
+  self-host). Tests: `TestSelfHostEnumStructPayloadDropIRX86_64` /
+  `…DropWasm` / `…DropIRArm64`.
