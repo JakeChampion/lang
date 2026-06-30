@@ -2822,3 +2822,48 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   self-host fixpoint + e2e differential. Follow-ups (see slice 3 above): tighten
   the no-inc set to fresh-RETURNING calls; deep-drop the inner's own rc fields;
   string / enum-payload fields.
+- 2026-06-30: **Perceus slice 3 deep-drop — RECURSIVE nested-struct field reclaim,
+  all three IR backends.** A direct nested-struct field (`Outer { inner: Inner }`)
+  whose inner is a deep-drop-ok LEAF (carries an rc-array field, no nested-struct
+  field of its own) is now RECURSIVELY reclaimed: when the inner box is uniquely
+  owned, `__struct_drop_<Inner>` releases the inner's rc-array buffers before the
+  inner box is freed, instead of the shallow box-only free that leaked them. x86
+  (`emit_ir_struct_drop_one`, #4075) is_unique-gates `call __fn___struct_drop_<Inner>`
+  then `__fern_arr_dec`, reloading the box from `8(%rsp)` after (struct_drop clobbers
+  %r11); arm64 (`emit_arm64_struct_drop_one`, #4083) mirrors it, reloading the box
+  from the frame-relative `[sp, #16]` after the call (the entry pushes an stp x29,x30
+  frame and the call clobbers x10); wasm (`emit_wasm_struct_drop_body`, #4083)
+  is_unique-gates a recursive `$__struct_drop_<Inner>` then `$__fern_arr_dec`. The
+  transitive inner type is emitted via the register backends' `need("struct_drop:")`
+  loop (re-reads needed.len()) and, on wasm, via a deep-drop CLOSURE added to
+  `struct_drop_types` (the recursive call is a backend instruction, invisible to the
+  call_direct scan). CYCLE SAFETY: deep-drop fires only for a LEAF inner, so the
+  recursion is depth-1; a self-referential / tree struct carries a nested-struct
+  field and stays shallow. Tests: `TestSelfHostStructDeepDropIRX86_64` (churn /
+  value / cyclic-safe), `TestSelfHostStructDeepDropIRArm64` (shape + value +
+  cyclic-safe under qemu), `TestSelfHostStructDropWasm/nested-struct-field-deep-drop`
+  (recursive-call + transitive-closure asserted, reclaim by the memory-cap
+  differential). CI fixpoint / bootstrap / differential all green.
+- 2026-06-30: **Perceus slice 3 deep-drop FOLLOW-UP — tighten the struct-construction
+  no-inc set to fresh-RETURNING calls.** A nested-struct field whose value is a CALL
+  to a strict-fresh-struct-returning fn (`Outer { inner: mk_inner() }`) is no longer
+  alias-inc'd: the callee handed back a fresh SOLE-owned box
+  (`return_fresh_struct_ret_fns`, already computed for the discarded-local reclaim),
+  so the new struct owns it outright and the field-drop reclaims the inner box,
+  instead of leaking the rc-2 retained box. Wired by threading
+  `return_fresh_struct_ret_fns` onto `LowerState` (read-only, like `reclaimable_names`)
+  and gating the `ExprStructLit` nested-struct construction-inc on
+  `is_fresh_ret_binding(field_value, cfft, …)`. SCOPE: a struct with an rc-array field
+  is not leaf-safe and a fn returning it bails to AST, so `return_fresh_struct_ret_fns`
+  holds only LEAF-SAFE-struct factories — the reclaim win is the inner BOX (a leaf-safe
+  inner has no rc fields to deep-drop), and soundness is trivial (no buffers to double-
+  free; the strict classifier guarantees the box is the sole owner). PARITY-DIRECTED:
+  the native-Go compiler (Perceus source of truth) emits ZERO inc for this pattern and
+  reclaims the box (churn bounded, exit 0, verified directly) — so the self-host change
+  moves it TOWARD native-Go, making the bootstrap/fixpoint strictly safer, never more
+  divergent. The looser `fresh_struct_ret_fns` is NOT used (its inner element buffers
+  may alias, which a deep-drop would double-free). Test:
+  `TestSelfHostStructFreshRetFieldIRX86_64` (150M churn bounded vs the pre-slice
+  alias-inc leak → SIGKILL; value-correctness 10). Follow-ups remain: string /
+  enum-payload fields; extending fresh-ret freshness to non-leaf-safe struct returns
+  once those become IR-lowerable.
