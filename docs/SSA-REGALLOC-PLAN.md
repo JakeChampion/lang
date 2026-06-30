@@ -91,7 +91,7 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
 ## Status
 
 - [x] Phase 0 — liveness analysis (`internal/ssa/liveness.go`, `liveness_test.go`)
-- [ ] Phase 1 — live intervals + linear-scan allocator
+- [x] Phase 1 — live intervals + linear-scan allocator (`internal/ssa/regalloc.go`, `regalloc_test.go`): `LiveIntervals` (single conservative interval per value over the RPO linearisation) + `LinearScan` (Poletto–Sarazin) + `VerifyAllocation` (interference oracle). Still pure analysis.
 - [ ] Phase 2 — SSA→x86-64 emit (flagged) + differential validation
 - [ ] Phase 3 — default x86-64 to SSA; measure binary-size win
 - [ ] Phase 4 — arm64 SSA emit + default
