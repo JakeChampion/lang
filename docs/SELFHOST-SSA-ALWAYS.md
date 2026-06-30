@@ -75,10 +75,25 @@ back, mirroring how native's lift errors. The lift is a single linear pass
 symbols `+` / `<` that `eval_binary` and the SSA backends switch on). Validated
 without a backend by running the lifted `SFunc` through `ssa.eval_func` on both
 arms of each branch case (the ssa.fern pattern). Gated by
-`self_host_ssa_lift_test.go` (driver: `ssa_lift_run.fern`). Next slices:
-`block` / `loop` / `br` / `brif` (CFG with back-edges + loop-header phis) and
-value-producing ifs, then wiring the lift into a backend as an alternative to
-`build_func`.
+`self_host_ssa_lift_test.go` (driver: `ssa_lift_run.fern`).
+
+**Slice 1 ✅ (landed — loops):** structured `block` / `loop` / `br` / `brif`
+(BlockTypeVoid) — i.e. real loops. The lift now tracks `if`, `block` and `loop`
+on ONE unified scope stack so `br` / `brif` relative depths resolve uniformly,
+and reconstructs **loop-header phis**: at a `loop` it emits a placeholder phi
+per local into the header, threads the entry edge + each `br`-back-edge as a
+predecessor (recorded as a global edge tagged by scope uid), and fills the phi
+operands when the loop's `end` is reached — exactly native's approach. A
+`block`'s `end` opens its exit, merging every `br`/`brif`-out edge (plus a live
+fall-through) with a phi where the incoming values differ. This is the canonical
+`while` shape `irlower` emits (`block; loop; <cond> not; br_if 1; <body>; br 0;
+end; end`). Validated by running lifted loops through `ssa.eval_func` across
+iterations — `while`-sum (loop-carried `i`/`acc` phis) and an `if` nested inside
+a loop (exercising the unified scope-depth resolution). Still out of subset
+(→ `ok=false`): value-producing ifs (`BlockTypeI32`+), tagged `break`/`continue`
+to non-canonical depths, and memory / struct / map / float / i64 ops. Next:
+value-producing ifs + `break`/`continue`, then wiring the lift into a backend as
+an alternative to `build_func`.
 
 ## Phases
 

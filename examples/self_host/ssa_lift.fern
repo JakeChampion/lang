@@ -1,41 +1,37 @@
 // examples/self_host/ssa_lift.fern — lift the self-host STACK IR (ir.fern's
-// `Op[]`) into SSA form (ssa.fern's `SFunc`). This is the self-hosted mirror
-// of native's `internal/ssa/lift.go` (`LiftFromIR`): the native compiler
-// lowers AST -> ir.Op[] and then LIFTS that stack stream into SSA before its
-// ~14-pass optimiser and the `wasm-ssa` backend. The self-host has had the
-// inverse-of-this for a while — `ssa.build_func` builds SSA straight from the
-// AST — but that duplicates the frontend and is all-or-nothing per program.
-// Lifting from the IR instead makes SSA a clean DOWNSTREAM layer over the
-// stack IR that is already the default lowering path (goal 1), so it inherits
-// the IR's coverage rather than re-deriving it.
+// `Op[]`) into SSA form (ssa.fern's `SFunc`). The self-hosted mirror of
+// native's `internal/ssa/lift.go` (`LiftFromIR`): the native compiler lowers
+// AST -> ir.Op[] and then LIFTS that stack stream into SSA before its
+// optimiser and the `wasm-ssa` backend. Lifting from the IR makes SSA a clean
+// DOWNSTREAM layer over the stack IR that is already the default lowering path
+// (goal 1), so it inherits the IR's coverage rather than re-deriving it (as
+// the parallel AST->SSA `ssa.build_func` does).
 //
-// SCOPE (slice 0): the straight-line integer spine + structured void `if` /
-// `else` / `end` with phi reconstruction at merges (the canonical SSA win —
-// locals that differ across the two arms become block phis). Concretely:
-//   const_i32, load_local / store_local / tee_local, the integer binary ops
-//   (add/sub/mul/div/rem, the comparisons, and the bitwise/shift ops), the
-//   `not` unary, call_direct, drop, return, and if/else/end (BlockTypeVoid).
-// Everything else — block / loop / br / brif, value-producing ifs
-// (BlockTypeI32+), memory / struct / map / float ops — sets `ok=false` so a
-// caller falls back exactly as native's lift returns an error. This mirrors
-// how the IR rebuild ships (one op family per slice, explicit fallback in
-// between), and is validated end-to-end without a backend by running the
-// lifted SFunc through `ssa.eval_func` (the ssa.fern pattern).
+// SCOPE (slices 0+1):
+//   - slice 0: the straight-line integer spine (const_i32, load/store/tee
+//     local, the integer binary ops, the `not` unary, call_direct, drop,
+//     return) and structured void `if` / `else` / `end` with phi merges.
+//   - slice 1: structured `block` / `loop` / `br` / `brif` (BlockTypeVoid),
+//     i.e. real LOOPS — the loop header carries a phi per local for every
+//     loop-carried variable (entry value vs. back-edge value), exactly as
+//     native's lift does, and a `block` exit merges all its `br`/`brif`-out
+//     edges. `if`, `block` and `loop` share ONE scope stack so `br`/`brif`
+//     relative depths resolve uniformly.
+// Everything else (value-producing ifs, memory / struct / map / float ops,
+// the i64 width) sets `ok=false` so a caller falls back, mirroring how
+// native's lift errors. Validated without a backend by running the lifted
+// SFunc through `ssa.eval_func` (the ssa.fern self-validation pattern).
 //
-// The lift is a single linear pass over the op stream (no recursion — the
-// structured-control-flow scopes are tracked on an explicit stack), so unlike
-// `build_func`'s threaded `BState` it keeps its state in plain locals.
+// The lift is a single linear pass over the op stream; the structured-control-
+// flow scopes are tracked on the explicit stack described above.
 
 import "./ir";
 import "./ssa";
 
-// LResult mirrors ssa.BResult: the lifted function plus an `ok` flag that is
-// false when the op stream used a construct outside this slice's subset.
 pub struct LResult { func: ssa.SFunc, ok: boolean }
 
 // ---- small array helpers (value-semantics, no slice syntax) -------------
 
-// vset returns a copy of `a` with element `idx` replaced by `val`.
 function vset(a: i32[], idx: i32, val: i32): i32[] {
     var out: i32[] = [];
     var i: i32 = 0;
@@ -45,8 +41,6 @@ function vset(a: i32[], idx: i32, val: i32): i32[] {
     }
     return out;
 }
-
-// drop_last / drop_last2 pop one / two elements off the end of a stack array.
 function drop_last(a: i32[]): i32[] {
     var out: i32[] = [];
     var i: i32 = 0;
@@ -59,13 +53,23 @@ function drop_last2(a: i32[]): i32[] {
     while (i < a.len() - 2) { out = out.append(a[i]); i = i + 1; }
     return out;
 }
+// drop_last_s is drop_last for a string[] (the scope-kind stack).
+function drop_last_s(a: string[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < a.len() - 1) { out = out.append(a[i]); i = i + 1; }
+    return out;
+}
+// drop_n drops the last n elements (used to pop a stride-nslots scope row).
+function drop_n(a: i32[], n: i32): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < a.len() - n) { out = out.append(a[i]); i = i + 1; }
+    return out;
+}
 
 // ---- IR binary-op kind -> SSA `binary`/`unary` op string ----------------
-//
-// The stack IR names its ops ("add", "lt_s", …); the SSA `binary` inst carries
-// the SOURCE-LEVEL symbol ("+", "<", …) that `ssa.eval_binary` and the SSA
-// backends switch on. The lift therefore translates. An empty result means
-// "not a (slice-0) binary op".
+
 function bin_sym(k: string): string {
     if (k == "add") { return "+"; }
     if (k == "sub") { return "-"; }
@@ -94,27 +98,23 @@ function bin_sym(k: string): string {
 }
 
 // ---- the lift ------------------------------------------------------------
-//
-// `nparams` params occupy SSA value ids 0..nparams-1 (emitted as `param`
-// insts in the entry block, matching SFunc's contract). `nslots` is the
-// function's local-slot count (params plus declared locals); slots beyond the
-// params start life as an explicit `const_int 0` so every slot is defined
-// before any load (the value-semantics discipline ssa/build_func also keeps).
+
 pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResult {
     var nvals: i32 = 0;
     var next_blk: i32 = 0;
 
-    var blocks: ssa.SBlock[] = [];      // finished blocks
+    var blocks: ssa.SBlock[] = [];
     var cur_id: i32 = next_blk; next_blk = next_blk + 1;   // entry = block 0
     var cur_insts: ssa.SInst[] = [];
     var cur_preds: i32[] = [];
     var cur_term: ssa.STerm = STerm_none();
+    var cur_dead: boolean = false;     // current block is unreachable (post-branch)
 
-    var stack: i32[] = [];              // operand value-id stack
-    var slots: i32[] = [];             // local slot -> current value id
+    var stack: i32[] = [];
+    var slots: i32[] = [];
     var ok: boolean = true;
 
-    // params -> value ids 0..nparams-1, each also seeding its slot.
+    // params -> value ids 0..nparams-1; declared locals -> const_int 0.
     var p: i32 = 0;
     while (p < nparams) {
         var pv: i32 = nvals; nvals = nvals + 1;
@@ -122,31 +122,44 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
         slots = slots.append(pv);
         p = p + 1;
     }
-    // declared locals beyond the params -> const_int 0.
     while (slots.len() < nslots) {
         var zv: i32 = nvals; nvals = nvals + 1;
         cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: zv, args: [], imm: 0, str: "" });
         slots = slots.append(zv);
     }
 
-    // if-scope stack (parallel arrays; innermost scope is the last entry).
-    // *_flat arrays store one slot-vector per open scope, stride = nslots.
-    var sc_merge: i32[] = [];
+    // ---- unified scope stack (if / block / loop), innermost = last entry --
+    // Per-scope (one entry each): kind, uid (edge ownership), target block id
+    // (if->merge, block->exit, loop->header), and the if-only bookkeeping.
+    var sc_kind: string[] = [];
+    var sc_uid: i32[] = [];
+    var sc_target: i32[] = [];
     var sc_else: i32[] = [];
+    var sc_seen_else: i32[] = [];
+    var sc_then_blk: i32[] = [];
+    var sc_then_reaches: i32[] = [];
     var sc_parent: i32[] = [];
-    var sc_seen_else: i32[] = [];        // 0/1 — has the `else` been reached?
-    var sc_then_blk: i32[] = [];          // the then-arm's exit block id
-    var sc_then_reaches: i32[] = [];      // 0/1 — does the then-arm fall through?
-    var sc_then_slots: i32[] = [];        // then-arm exit slot vector (flat)
-    var sc_snap: i32[] = [];              // pre-if slot vector (flat)
+    // Per-scope stride-nslots rows (kept for EVERY scope so positions align):
+    var sc_snap: i32[] = [];          // if: pre-if slots; else: unused
+    var sc_then_slots: i32[] = [];     // if: then-arm exit slots
+    var sc_header_phis: i32[] = [];    // loop: header phi value-id per slot
+    var next_uid: i32 = 1;
+
+    // ---- branch edges (global, tagged by owner scope uid) ----------------
+    // Each br/brif records the predecessor block + its slot vector; the target
+    // scope consumes its edges at `end` (loop -> header phis; block -> exit
+    // merge). edge_vals is flattened stride-nslots.
+    var edge_owner: i32[] = [];
+    var edge_block: i32[] = [];
+    var edge_vals: i32[] = [];
 
     var i: i32 = 0;
     while (i < ops.len() && ok) {
         var op: ir.Op = ops[i];
         var k: string = op.kind;
 
-        // Dead code after a terminator (e.g. ops following a `return` inside an
-        // arm) is skipped — only `else` / `end` act on a terminated block.
+        // Skip dead code after a terminator (e.g. ops after a `return`/`br`
+        // inside an arm); only else/end/the matching block delimiters act on it.
         if (cur_term.kind != "" && k != "else" && k != "end") {
             i = i + 1;
             continue;
@@ -168,10 +181,7 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
             }
         } else if (k == "tee_local") {
             if (stack.len() < 1) { ok = false; }
-            else {
-                var tv: i32 = stack[stack.len() - 1];   // peek — tee leaves it on the stack
-                slots = vset(slots, op.i32_imm, tv);
-            }
+            else { slots = vset(slots, op.i32_imm, stack[stack.len() - 1]); }
         } else if (bin_sym(k) != "") {
             if (stack.len() < 2) { ok = false; }
             else {
@@ -195,13 +205,9 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
             var argc: i32 = op.i32_imm;
             if (stack.len() < argc) { ok = false; }
             else {
-                // Pop argc values and restore their original (push) order.
-                var rev: i32[] = [];
-                var c: i32 = 0;
-                while (c < argc) { rev = rev.append(stack[stack.len() - 1 - c]); c = c + 1; }
                 var cargs: i32[] = [];
                 var d: i32 = argc - 1;
-                while (d >= 0) { cargs = cargs.append(rev[d]); d = d - 1; }
+                while (d >= 0) { cargs = cargs.append(stack[stack.len() - 1 - d]); d = d - 1; }
                 var e: i32 = 0;
                 while (e < argc) { stack = drop_last(stack); e = e + 1; }
                 var cv: i32 = nvals; nvals = nvals + 1;
@@ -218,7 +224,7 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
                 cur_term = STerm_ret(rv);
             }
         } else if (k == "if") {
-            if (op.i32_imm != 0) { ok = false; }            // slice 0: void if only
+            if (op.i32_imm != 0) { ok = false; }
             else if (stack.len() < 1) { ok = false; }
             else {
                 var cond: i32 = stack[stack.len() - 1];
@@ -229,24 +235,24 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
                 var parent_id: i32 = cur_id;
                 cur_term = STerm_brif(cond, then_id, else_id);
                 blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
-
-                sc_merge = sc_merge.append(merge_id);
+                // push an if-scope
+                sc_kind = sc_kind.append("if");
+                sc_uid = sc_uid.append(next_uid); next_uid = next_uid + 1;
+                sc_target = sc_target.append(merge_id);
                 sc_else = sc_else.append(else_id);
-                sc_parent = sc_parent.append(parent_id);
                 sc_seen_else = sc_seen_else.append(0);
                 sc_then_blk = sc_then_blk.append(0 - 1);
                 sc_then_reaches = sc_then_reaches.append(0);
+                sc_parent = sc_parent.append(parent_id);
                 var sn: i32 = 0;
-                while (sn < nslots) { sc_snap = sc_snap.append(slots[sn]); sc_then_slots = sc_then_slots.append(0); sn = sn + 1; }
-
-                // open the then-arm.
-                cur_id = then_id; cur_insts = []; cur_preds = [parent_id]; cur_term = STerm_none();
+                while (sn < nslots) { sc_snap = sc_snap.append(slots[sn]); sc_then_slots = sc_then_slots.append(0); sc_header_phis = sc_header_phis.append(0); sn = sn + 1; }
+                cur_id = then_id; cur_insts = []; cur_preds = [parent_id]; cur_term = STerm_none(); cur_dead = false;
             }
         } else if (k == "else") {
-            var top: i32 = sc_merge.len() - 1;
-            if (top < 0 || sc_seen_else[top] == 1) { ok = false; }
+            var top: i32 = sc_kind.len() - 1;
+            if (top < 0 || sc_kind[top] != "if" || sc_seen_else[top] == 1) { ok = false; }
             else {
-                var merge_id2: i32 = sc_merge[top];
+                var merge_id2: i32 = sc_target[top];
                 var reaches: i32 = 0; if (cur_term.kind == "") { reaches = 1; }
                 if (reaches == 1) { cur_term = STerm_br(merge_id2); }
                 sc_then_blk = vset(sc_then_blk, top, cur_id);
@@ -255,107 +261,253 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
                 while (fs < nslots) { sc_then_slots = vset(sc_then_slots, top * nslots + fs, slots[fs]); fs = fs + 1; }
                 blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
                 sc_seen_else = vset(sc_seen_else, top, 1);
-                // restore slots to the pre-if snapshot for the else-arm.
                 var rs: i32 = 0;
                 while (rs < nslots) { slots = vset(slots, rs, sc_snap[top * nslots + rs]); rs = rs + 1; }
-                cur_id = sc_else[top]; cur_insts = []; cur_preds = [sc_parent[top]]; cur_term = STerm_none();
+                cur_id = sc_else[top]; cur_insts = []; cur_preds = [sc_parent[top]]; cur_term = STerm_none(); cur_dead = false;
+            }
+        } else if (k == "block") {
+            var exit_id: i32 = next_blk; next_blk = next_blk + 1;
+            sc_kind = sc_kind.append("block");
+            sc_uid = sc_uid.append(next_uid); next_uid = next_uid + 1;
+            sc_target = sc_target.append(exit_id);
+            sc_else = sc_else.append(0);
+            sc_seen_else = sc_seen_else.append(0);
+            sc_then_blk = sc_then_blk.append(0);
+            sc_then_reaches = sc_then_reaches.append(0);
+            sc_parent = sc_parent.append(0);
+            var bsn: i32 = 0;
+            while (bsn < nslots) { sc_snap = sc_snap.append(0); sc_then_slots = sc_then_slots.append(0); sc_header_phis = sc_header_phis.append(0); bsn = bsn + 1; }
+        } else if (k == "loop") {
+            var hdr_id: i32 = next_blk; next_blk = next_blk + 1;
+            var entry_blk: i32 = cur_id;
+            var luid: i32 = next_uid; next_uid = next_uid + 1;
+            // close the entry block with a br to the header; record the entry edge.
+            cur_term = STerm_br(hdr_id);
+            blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
+            edge_owner = edge_owner.append(luid); edge_block = edge_block.append(entry_blk);
+            var ev: i32 = 0;
+            while (ev < nslots) { edge_vals = edge_vals.append(slots[ev]); ev = ev + 1; }
+            // header block: a placeholder phi per slot (args filled at `end`).
+            var hdr_insts: ssa.SInst[] = [];
+            var hp_row: i32[] = [];
+            var hs: i32 = 0;
+            while (hs < nslots) {
+                var ph: i32 = nvals; nvals = nvals + 1;
+                hdr_insts = hdr_insts.append(ssa.SInst { kind: "phi", result: ph, args: [], imm: 0, str: "" });
+                hp_row = hp_row.append(ph);
+                slots = vset(slots, hs, ph);
+                hs = hs + 1;
+            }
+            sc_kind = sc_kind.append("loop");
+            sc_uid = sc_uid.append(luid);
+            sc_target = sc_target.append(hdr_id);
+            sc_else = sc_else.append(0);
+            sc_seen_else = sc_seen_else.append(0);
+            sc_then_blk = sc_then_blk.append(0);
+            sc_then_reaches = sc_then_reaches.append(0);
+            sc_parent = sc_parent.append(entry_blk);
+            var ls: i32 = 0;
+            while (ls < nslots) { sc_snap = sc_snap.append(0); sc_then_slots = sc_then_slots.append(0); sc_header_phis = sc_header_phis.append(hp_row[ls]); ls = ls + 1; }
+            cur_id = hdr_id; cur_insts = hdr_insts; cur_preds = [entry_blk]; cur_term = STerm_none(); cur_dead = false;
+        } else if (k == "br" || k == "brif") {
+            var depth: i32 = op.i32_imm;
+            var pos: i32 = sc_kind.len() - 1 - depth;
+            if (pos < 0 || pos >= sc_kind.len()) { ok = false; }
+            else {
+                var cond_b: i32 = 0;
+                var ok_b: boolean = true;
+                if (k == "brif") {
+                    if (stack.len() < 1) { ok_b = false; }
+                    else { cond_b = stack[stack.len() - 1]; stack = drop_last(stack); }
+                }
+                if (!ok_b) { ok = false; }
+                else {
+                    var tgt: i32 = sc_target[pos];
+                    var owner: i32 = sc_uid[pos];
+                    var obid: i32 = cur_id;
+                    // record this out-edge for the target scope's merge.
+                    edge_owner = edge_owner.append(owner); edge_block = edge_block.append(obid);
+                    var bv2: i32 = 0;
+                    while (bv2 < nslots) { edge_vals = edge_vals.append(slots[bv2]); bv2 = bv2 + 1; }
+                    if (k == "br") {
+                        cur_term = STerm_br(tgt);
+                        blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
+                        cur_id = next_blk; next_blk = next_blk + 1; cur_insts = []; cur_preds = []; cur_term = STerm_none(); cur_dead = true;
+                    } else {
+                        var ftid: i32 = next_blk; next_blk = next_blk + 1;
+                        cur_term = STerm_brif(cond_b, tgt, ftid);
+                        blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
+                        cur_id = ftid; cur_insts = []; cur_preds = [obid]; cur_term = STerm_none(); cur_dead = false;
+                    }
+                }
             }
         } else if (k == "end") {
-            var t2: i32 = sc_merge.len() - 1;
+            var t2: i32 = sc_kind.len() - 1;
             if (t2 < 0) { ok = false; }
-            else {
-                var merge3: i32 = sc_merge[t2];
+            else if (sc_kind[t2] == "if") {
+                var merge3: i32 = sc_target[t2];
                 var parent3: i32 = sc_parent[t2];
                 if (sc_seen_else[t2] == 0) {
-                    // `if` with no `else`: the false edge of the entry's brif
-                    // targets a synthesized empty else block that just falls
-                    // through to the merge (so the brif target is real and the
-                    // merge gets a proper else-predecessor). The else "arm"
-                    // leaves the slots at the pre-if snapshot.
                     var else_id_a: i32 = sc_else[t2];
                     var t_reaches: i32 = 0; if (cur_term.kind == "") { t_reaches = 1; }
                     var then_blk: i32 = cur_id;
                     var then_slots_a: i32[] = slots;
                     if (t_reaches == 1) { cur_term = STerm_br(merge3); }
                     blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
-                    // the empty else block.
                     blocks = blocks.append(ssa.SBlock { id: else_id_a, insts: [], term: STerm_br(merge3), preds: [parent3] });
-
                     var preds_a: i32[] = [];
                     if (t_reaches == 1) { preds_a = preds_a.append(then_blk); }
                     preds_a = preds_a.append(else_id_a);
-                    cur_id = merge3; cur_insts = []; cur_preds = preds_a; cur_term = STerm_none();
-
+                    cur_id = merge3; cur_insts = []; cur_preds = preds_a; cur_term = STerm_none(); cur_dead = false;
                     var s2: i32 = 0;
                     while (s2 < nslots) {
                         var snapv: i32 = sc_snap[t2 * nslots + s2];
                         if (t_reaches == 1) {
                             var tv2: i32 = then_slots_a[s2];
                             if (tv2 != snapv) {
-                                var ph: i32 = nvals; nvals = nvals + 1;
-                                cur_insts = cur_insts.append(ssa.SInst { kind: "phi", result: ph, args: [tv2, snapv], imm: 0, str: "" });
-                                slots = vset(slots, s2, ph);
+                                var ph2a: i32 = nvals; nvals = nvals + 1;
+                                cur_insts = cur_insts.append(ssa.SInst { kind: "phi", result: ph2a, args: [tv2, snapv], imm: 0, str: "" });
+                                slots = vset(slots, s2, ph2a);
                             } else { slots = vset(slots, s2, tv2); }
                         } else { slots = vset(slots, s2, snapv); }
                         s2 = s2 + 1;
                     }
                 } else {
-                    // `if`/`else`: the else-arm is current; the then-arm was saved.
                     var e_reaches: i32 = 0; if (cur_term.kind == "") { e_reaches = 1; }
                     var else_blk: i32 = cur_id;
                     var else_slots_a: i32[] = slots;
                     if (e_reaches == 1) { cur_term = STerm_br(merge3); }
                     blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
-
                     var then_blk2: i32 = sc_then_blk[t2];
                     var then_reaches2: i32 = sc_then_reaches[t2];
                     var preds_b: i32[] = [];
                     if (then_reaches2 == 1) { preds_b = preds_b.append(then_blk2); }
                     if (e_reaches == 1) { preds_b = preds_b.append(else_blk); }
-                    cur_id = merge3; cur_insts = []; cur_preds = preds_b; cur_term = STerm_none();
-
+                    cur_id = merge3; cur_insts = []; cur_preds = preds_b; cur_term = STerm_none(); cur_dead = false;
                     var s3: i32 = 0;
                     while (s3 < nslots) {
                         var tvv: i32 = sc_then_slots[t2 * nslots + s3];
                         var evv: i32 = else_slots_a[s3];
                         if (then_reaches2 == 1 && e_reaches == 1) {
                             if (tvv != evv) {
-                                // phi args are parallel to preds: [then, else].
-                                var ph2: i32 = nvals; nvals = nvals + 1;
-                                cur_insts = cur_insts.append(ssa.SInst { kind: "phi", result: ph2, args: [tvv, evv], imm: 0, str: "" });
-                                slots = vset(slots, s3, ph2);
+                                var ph3: i32 = nvals; nvals = nvals + 1;
+                                cur_insts = cur_insts.append(ssa.SInst { kind: "phi", result: ph3, args: [tvv, evv], imm: 0, str: "" });
+                                slots = vset(slots, s3, ph3);
                             } else { slots = vset(slots, s3, tvv); }
                         } else if (then_reaches2 == 1) { slots = vset(slots, s3, tvv); }
                         else if (e_reaches == 1) { slots = vset(slots, s3, evv); }
-                        else { slots = vset(slots, s3, tvv); }   // both arms diverge; merge is dead
+                        else { slots = vset(slots, s3, tvv); }
                         s3 = s3 + 1;
                     }
                 }
-                // pop the scope.
-                sc_merge = drop_last(sc_merge);
-                sc_else = drop_last(sc_else);
-                sc_parent = drop_last(sc_parent);
-                sc_seen_else = drop_last(sc_seen_else);
-                sc_then_blk = drop_last(sc_then_blk);
-                sc_then_reaches = drop_last(sc_then_reaches);
-                var pf: i32 = 0;
-                while (pf < nslots) { sc_snap = drop_last(sc_snap); sc_then_slots = drop_last(sc_then_slots); pf = pf + 1; }
+                sc_kind = drop_last_s(sc_kind); sc_uid = drop_last(sc_uid); sc_target = drop_last(sc_target);
+                sc_else = drop_last(sc_else); sc_seen_else = drop_last(sc_seen_else); sc_then_blk = drop_last(sc_then_blk);
+                sc_then_reaches = drop_last(sc_then_reaches); sc_parent = drop_last(sc_parent);
+                sc_snap = drop_n(sc_snap, nslots); sc_then_slots = drop_n(sc_then_slots, nslots); sc_header_phis = drop_n(sc_header_phis, nslots);
+            } else if (sc_kind[t2] == "loop") {
+                var luid2: i32 = sc_uid[t2];
+                var hid: i32 = sc_target[t2];
+                // collect this loop's incoming edges (entry + back-edges).
+                var eidx: i32[] = [];
+                var j: i32 = 0;
+                while (j < edge_owner.len()) { if (edge_owner[j] == luid2) { eidx = eidx.append(j); } j = j + 1; }
+                var lpreds: i32[] = [];
+                var q: i32 = 0;
+                while (q < eidx.len()) { lpreds = lpreds.append(edge_block[eidx[q]]); q = q + 1; }
+                // rebuild the header block: fill each placeholder phi's args.
+                var nb: ssa.SBlock[] = [];
+                var bi: i32 = 0;
+                while (bi < blocks.len()) {
+                    var b: ssa.SBlock = blocks[bi];
+                    if (b.id == hid) {
+                        var ni: ssa.SInst[] = [];
+                        var ii: i32 = 0;
+                        while (ii < b.insts.len()) {
+                            var inst: ssa.SInst = b.insts[ii];
+                            var sslot: i32 = 0 - 1;
+                            var ss: i32 = 0;
+                            while (ss < nslots) { if (sc_header_phis[t2 * nslots + ss] == inst.result) { sslot = ss; } ss = ss + 1; }
+                            if (inst.kind == "phi" && sslot >= 0) {
+                                var pargs: i32[] = [];
+                                var qq: i32 = 0;
+                                while (qq < eidx.len()) { pargs = pargs.append(edge_vals[eidx[qq] * nslots + sslot]); qq = qq + 1; }
+                                ni = ni.append(ssa.SInst { kind: "phi", result: inst.result, args: pargs, imm: 0, str: "" });
+                            } else { ni = ni.append(inst); }
+                            ii = ii + 1;
+                        }
+                        nb = nb.append(ssa.SBlock { id: b.id, insts: ni, term: b.term, preds: lpreds });
+                    } else { nb = nb.append(b); }
+                    bi = bi + 1;
+                }
+                blocks = nb;
+                var rsl: i32 = 0;
+                while (rsl < nslots) { slots = vset(slots, rsl, sc_header_phis[t2 * nslots + rsl]); rsl = rsl + 1; }
+                cur_dead = true;
+                sc_kind = drop_last_s(sc_kind); sc_uid = drop_last(sc_uid); sc_target = drop_last(sc_target);
+                sc_else = drop_last(sc_else); sc_seen_else = drop_last(sc_seen_else); sc_then_blk = drop_last(sc_then_blk);
+                sc_then_reaches = drop_last(sc_then_reaches); sc_parent = drop_last(sc_parent);
+                sc_snap = drop_n(sc_snap, nslots); sc_then_slots = drop_n(sc_then_slots, nslots); sc_header_phis = drop_n(sc_header_phis, nslots);
+            } else {
+                // block: open the exit, merging all br/brif-out edges (+ a
+                // fall-through edge if the current block reaches `end` live).
+                var buid: i32 = sc_uid[t2];
+                var eid: i32 = sc_target[t2];
+                var bidx: i32[] = [];
+                var jb: i32 = 0;
+                while (jb < edge_owner.len()) { if (edge_owner[jb] == buid) { bidx = bidx.append(jb); } jb = jb + 1; }
+                var has_ft: boolean = (!cur_dead) && (cur_term.kind == "");
+                var fcur: i32 = cur_id;
+                var fslots: i32[] = slots;
+                if (has_ft) {
+                    cur_term = STerm_br(eid);
+                    blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
+                }
+                var bpreds: i32[] = [];
+                var qb: i32 = 0;
+                while (qb < bidx.len()) { bpreds = bpreds.append(edge_block[bidx[qb]]); qb = qb + 1; }
+                if (has_ft) { bpreds = bpreds.append(fcur); }
+                var eo_insts: ssa.SInst[] = [];
+                var es: i32 = 0;
+                while (es < nslots) {
+                    var vals: i32[] = [];
+                    var qe: i32 = 0;
+                    while (qe < bidx.len()) { vals = vals.append(edge_vals[bidx[qe] * nslots + es]); qe = qe + 1; }
+                    if (has_ft) { vals = vals.append(fslots[es]); }
+                    if (vals.len() == 0) {
+                        // unreachable exit; leave slot as-is.
+                    } else {
+                        var first: i32 = vals[0];
+                        var alleq: boolean = true;
+                        var qv: i32 = 0;
+                        while (qv < vals.len()) { if (vals[qv] != first) { alleq = false; } qv = qv + 1; }
+                        if (alleq) { slots = vset(slots, es, first); }
+                        else {
+                            var phe: i32 = nvals; nvals = nvals + 1;
+                            eo_insts = eo_insts.append(ssa.SInst { kind: "phi", result: phe, args: vals, imm: 0, str: "" });
+                            slots = vset(slots, es, phe);
+                        }
+                    }
+                    es = es + 1;
+                }
+                cur_id = eid; cur_insts = eo_insts; cur_preds = bpreds; cur_term = STerm_none();
+                cur_dead = (bpreds.len() == 0);
+                sc_kind = drop_last_s(sc_kind); sc_uid = drop_last(sc_uid); sc_target = drop_last(sc_target);
+                sc_else = drop_last(sc_else); sc_seen_else = drop_last(sc_seen_else); sc_then_blk = drop_last(sc_then_blk);
+                sc_then_reaches = drop_last(sc_then_reaches); sc_parent = drop_last(sc_parent);
+                sc_snap = drop_n(sc_snap, nslots); sc_then_slots = drop_n(sc_then_slots, nslots); sc_header_phis = drop_n(sc_header_phis, nslots);
             }
         } else {
-            ok = false;   // outside slice 0 — caller falls back (as native's lift errors)
+            ok = false;   // outside the slice — caller falls back.
         }
         i = i + 1;
     }
 
-    if (ok && sc_merge.len() != 0) { ok = false; }   // unbalanced if/end
+    if (ok && sc_kind.len() != 0) { ok = false; }   // unbalanced scopes
 
     if (ok) {
-        // A well-formed function body ends in `return`; if the trailing block
-        // has no terminator but a value is on the stack, treat it as the result.
         if (cur_term.kind == "" && stack.len() >= 1) {
             cur_term = STerm_ret(stack[stack.len() - 1]);
         }
-        // Append the final block unless it is an empty unterminated tail.
         if (cur_term.kind != "" || cur_insts.len() > 0 || cur_id == 0) {
             blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
         }
