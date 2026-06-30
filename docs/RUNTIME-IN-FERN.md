@@ -1,8 +1,9 @@
 # Runtime helpers in Fern — migration design (issue #2649)
 
-Status: **slices 1–2 landed** — `__fern_i32_pow` (Tier 0) and the five
-`__fern_arr_i32_*` reducers (`sum`/`product`/`index_of`/`min`/`max`, Tier 1),
-on the AST x86-64 + arm64 backends. This is the architecture document the end goal of
+Status: **slices 1–3 landed** — `__fern_i32_pow` (Tier 0) and the five
+`__fern_arr_i32_*` reducers (`sum`/`product`/`index_of`/`min`/`max`, Tier 1) on
+the AST x86-64 + arm64 backends, plus `__fern_str_to_i32` on the **x86-64 IR
+path** (the IR-hosting primitive `emit_ir_runtime_fern_fn`). This is the architecture document the end goal of
 [#2649](https://github.com/JakeChampion/lang/issues/2649) needs as more helpers
 move; see the "Slice 1 / Slice 2 (landed)" sections at the end for what the
 first migrations actually took, which was simpler than first proposed. The near-term stepping stone it references
@@ -306,3 +307,46 @@ So the next slice is a genuine step up: pick one IR-path helper and extend
 `emit_runtime_fern_fn` (or its IR equivalent) to emit the Fern function on the
 IR path too, **or** migrate the `str_eq` cluster together. Both want the IR
 side validated, not just the AST backends.
+
+## Slice 3 (landed) — the IR path hosts a Fern runtime helper (`str_to_i32`)
+
+The structural unblock: `asm_ir.fern` gained `emit_ir_runtime_fern_fn`, the
+**IR-path analog of `emit_runtime_fern_fn`** — it parses a helper's Fern source
+and lowers it through the *IR pipeline* (`irlower.lower_func` → `emit_function_via_ir`)
+so it emits as the ordinary user-function symbol `__fn_<name>`, which the IR
+call site (`op_call_direct("__fern_<name>")` → `ir_helper_symbol`) already
+targets. `__fern_str_to_i32` is the first helper moved this way: its hand-written
+stack-arg wrapper in `emit_ir_runtime` is gone, replaced by lowering
+`asmcore.rt_src_str_to_i32` (now written with `for b in s` + `break`, both
+IR-eligible, instead of `s[i]` indexing).
+
+Key mechanics that made it safe:
+
+- **Self-contained ⇒ singleton side-tables.** `emit_function_via_ir` needs ~18
+  return-type / signature side-tables. Because the helper calls no other user
+  function, computing them over the helper *alone* is complete — in particular
+  `borrowable_params_interproc([fd])` correctly marks the read-only `string`
+  param **borrowed**, so the lowering inserts no RC dec that would free the
+  caller's string. The `str2i32-roundtrip` test (which feeds a freshly-allocated
+  `i32_to_string(99)` straight into `str_to_i32`) is the use-after-free probe
+  that confirms this.
+- **Entry-only, in `.text`, after need-aggregation.** The shared runtime is
+  emitted only by the entry unit, after sibling `extra_needs` are folded and
+  `close_needs` runs, so the call is placed there gated on the `str_to_i32`
+  need (writing `.text` first, since the literal pools left us in `.rodata`).
+  `emit_runtime_globls` already `.globl`s `__fn___fern_str_to_i32`, so the
+  per-module link resolves it across units.
+
+Scope: this migrates `str_to_i32` on the **x86-64 IR path** only. The x86-64 AST
+register body (`asm.fern`) and the arm64 paths (whose AST+IR share
+`asm_arm64.emit_runtime`, so they need a coordinated change) keep their
+hand-written bodies for now — separate compiles, no symbol conflict. The point
+of this slice is the *primitive*: `emit_ir_runtime_fern_fn` now exists, so the
+remaining IR-path helpers (`i32_to_string`, `chr`, …) and the AST/arm64 copies
+can follow without inventing new machinery.
+
+Validated on x86-64: `TestSelfHostAsmIRPath/str2i32-*` (behaviour incl.
+roundtrip), `TestSelfHostIRRuntimeHelperClosure` (per-module link of all 46
+need-roots), both fixpoint suites (self-hosting preserved), and
+`TestSelfHostRuntimeHelperStrToI32IsFernIR` (locks in the Fern symbol + the
+absence of the hand-asm wrapper). arm64 unchanged.

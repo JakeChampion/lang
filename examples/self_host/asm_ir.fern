@@ -16,6 +16,7 @@
 // driver falls back to asm.emit_module otherwise. As the eligible subset
 // widens, this folds back into asm.fern's emit_module behind a flag.
 
+import "./lexer";
 import "./parser";
 import "./asmcore";
 import "./util";
@@ -3306,47 +3307,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    ret\n");
     }
 
-    // __fern_str_to_i32 — STACK-arg ABI for the IR path (the string box sits at
-    // 8(%rsp)). Loads it into %rdi, then runs asm.fern's register-ABI body
-    // verbatim (%rdi = box → %rax = parsed i32). Optional leading '-', decimal
-    // digits, stops at the first non-digit; empty box → 0. Allocation-free (all
-    // scratch in caller-saved %rcx/%r8/%r9/%r10/%rdx), so no frame / heap.
-    if (s.has_need("str_to_i32")) {
-        s = s.write("__fn___fern_str_to_i32:\n");
-        s = s.write("    movq 8(%rsp), %rdi\n");      // stack arg -> %rdi (string box)
-        s = s.write("    movq (%rdi), %rcx\n");        // data ptr
-        s = s.write("    movq 8(%rdi), %r8\n");        // len
-        s = s.write("    movq %rcx, %r9\n");
-        s = s.write("    addq %r8, %r9\n");            // end ptr
-        s = s.write("    movq $0, %rax\n");            // accumulator
-        s = s.write("    movq $0, %r10\n");            // neg flag
-        s = s.write("    cmpq %rcx, %r9\n");
-        s = s.write("    je .Lirs2i_done\n");
-        s = s.write("    movzbq (%rcx), %rdx\n");
-        s = s.write("    cmpq $45, %rdx\n");           // '-'
-        s = s.write("    jne .Lirs2i_loop\n");
-        s = s.write("    movq $1, %r10\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write(".Lirs2i_loop:\n");
-        s = s.write("    cmpq %rcx, %r9\n");
-        s = s.write("    je .Lirs2i_done\n");
-        s = s.write("    movzbq (%rcx), %rdx\n");
-        s = s.write("    subq $48, %rdx\n");
-        s = s.write("    cmpq $0, %rdx\n");
-        s = s.write("    jl .Lirs2i_done\n");
-        s = s.write("    cmpq $9, %rdx\n");
-        s = s.write("    jg .Lirs2i_done\n");
-        s = s.write("    imulq $10, %rax\n");
-        s = s.write("    addq %rdx, %rax\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    jmp .Lirs2i_loop\n");
-        s = s.write(".Lirs2i_done:\n");
-        s = s.write("    cmpq $0, %r10\n");
-        s = s.write("    je .Lirs2i_no_neg\n");
-        s = s.write("    negq %rax\n");
-        s = s.write(".Lirs2i_no_neg:\n");
-        s = s.write("    ret\n");
-    }
+    // __fern_str_to_i32 is now a Fern runtime function (#2649): emitted entry-
+    // only via emit_ir_runtime_fern_fn (lowered through the IR pipeline as
+    // __fn___fern_str_to_i32), not a hand-written stack-arg wrapper here. See
+    // the emit_ir_runtime_fern_fn call in emit_module_ir_unit's entry block.
 
     // __fern_chr — STACK-arg ABI for the IR path (the i32 byte value sits at
     // 8(%rsp)). Loads it into %rdi, then runs asm.fern's register-ABI body
@@ -5094,6 +5058,50 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
     return s;
 }
 
+// emit_ir_runtime_fern_fn lowers a runtime helper WRITTEN IN FERN through the
+// IR pipeline (issue #2649) — the IR-path analog of asm.fern's
+// emit_runtime_fern_fn. The helper emits as __fn_<name> exactly like a user
+// function (so the IR call site's `call __fn___fern_<name>` resolves to it),
+// replacing a hand-written stack-arg wrapper in emit_ir_runtime.
+//
+// The helper MUST be self-contained — it calls no other user function — so the
+// per-function side-tables computed over the helper ALONE are complete: in
+// particular its borrowability analysis correctly borrows a read-only
+// string/array param (never returned, stored, or consumed), so the lowering
+// inserts no RC dec that would free the caller's borrowed value. Emitted
+// entry-only and gated on the helper's need by the caller; emit_runtime_globls
+// already `.globl`s the symbol so the per-module link resolves it.
+function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], s: asmcore.EmitState): asmcore.EmitState {
+    var m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
+    var fns: parser.FuncDecl[] = m.funcs;
+    var bparams: string[] = irlower.borrowable_params_interproc(fns);
+    var csparams: string[] = irlower.consume_safe_params_interproc(fns, bparams);
+    var arf: string[] = array_ret_fns_of(fns);
+    var srf: string[] = irlower.str_ret_fns_of(fns);
+    var sarf: string[] = irlower.strarr_ret_fns_of(fns);
+    var amf: string[] = irlower.arr_method_fns_of(fns);
+    var orf: string[] = irlower.opt_ret_fns_of(fns);
+    var irf: string[] = irlower.i64_ret_fns_of(fns);
+    var trf: string[] = irlower.tuple_ret_fns_of(fns);
+    var srtf: string[] = irlower.struct_ret_fns_of(fns, all_structs);
+    var mrtf: string[] = irlower.map_ret_fns_of(fns);
+    var frf: string[] = irlower.f64_ret_fns_of(fns);
+    var farf: string[] = irlower.f64arr_ret_fns_of(fns);
+    var iarf: string[] = irlower.i64arr_ret_fns_of(fns);
+    var fps: string[] = irlower.fn_param_sigs_of(fns);
+    var cfs: string[] = irlower.closure_ret_fns_of(fns);
+    var cnf: string[] = irlower.const_fns_of(fns);
+    var frsf: string[] = irlower.fresh_struct_ret_fns_of(fns, all_structs);
+    var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(fns, all_structs);
+    var fnames: string[] = irlower.fn_names_of(fns);
+    var i: i32 = 0;
+    while (i < fns.len()) {
+        s = emit_function_via_ir(fns[i], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, fnames, frsf, csparams, rfrsf);
+        i = i + 1;
+    }
+    return s;
+}
+
 function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], s: asmcore.EmitState, globl_defs: boolean): asmcore.EmitState {
     var arf: string[] = array_ret_fns_of(all_funcs);
     // Inter-procedural borrowability computed ONCE per module (not per function —
@@ -5373,6 +5381,14 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     // the entry only knows its OWN needs; a non-entry module that itself
     // allocates relies on the entry having pulled the heap runtime in.)
     if (is_entry) {
+    // __fern_str_to_i32 (#2649): the first runtime helper hosted on the IR path
+    // as a Fern function — lowered through the IR pipeline rather than emitted
+    // as hand-written asm. Emitted in .text (we're in .rodata after the literal
+    // pools) and gated on its need; emit_runtime_globls already .globl'd it.
+    if (s.has_need("str_to_i32")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_to_i32(), all_structs, s);
+    }
     // The freestanding allocator + RC runtime, only when the program allocates.
     // i32.to_string() allocates its box even in an otherwise heap-free program,
     // so its emit-time need pulls the runtime in too (its body calls __fern_alloc).
