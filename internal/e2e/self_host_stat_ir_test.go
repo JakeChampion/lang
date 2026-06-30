@@ -94,3 +94,92 @@ func TestSelfHostStatIR(t *testing.T) {
 		t.Errorf("stat IR program exited %d, want 0 (file is_file+size / dir is_dir / missing Err)", code)
 	}
 }
+
+// TestSelfHostStatIRWasm is the wasm mirror: stat now lowers through the wasm IR
+// path too (it was a wasm_eligible exclusion). The wasm op_stat handler builds
+// the Result[FileStat, IoError] box INLINE — it pushes FileStat's module-specific
+// struct type-id and calls $__fern_stat (a fresh wasm runtime: preview1
+// path_filestat_get -> the FileStat struct box [type_id@0, is_file@8, is_dir@16,
+// size@24] wrapped Ok, or Result.Err on failure). The first struct-RESULT builtin
+// on the wasm IR path. Run under wasmtime with the temp dir as preopen (`--dir=.::/`,
+// CWD = temp dir) so the relative paths resolve; the program exits 0 only if the
+// regular file (is_file + 13-byte size), the directory (is_dir), and the missing
+// path (Err) all resolve correctly.
+func TestSelfHostStatIRWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host stat wasm IR e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	for _, name := range []string{
+		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
+		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm.fern", "wasm_ir.fern", "wasm_ir_run.fern",
+	} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	const fileBytes = "hello, stat!\n" // 13 bytes
+	if err := os.WriteFile(filepath.Join(dir, "stat_target.txt"), []byte(fileBytes), 0o644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "stat_subdir"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+
+	// Relative paths — resolved against the preopen (the temp dir, mapped to guest /).
+	src := fmt.Sprintf(`function main(): i32 {
+    match (stat("stat_target.txt")) {
+        Ok(s) => {
+            if (!s.is_file) { return 1; }
+            if (s.is_dir) { return 2; }
+            if (s.size != %d) { return 3; }
+            match (stat("stat_subdir")) {
+                Ok(d) => {
+                    if (!d.is_dir) { return 4; }
+                    if (d.is_file) { return 5; }
+                    match (stat("stat_does_not_exist")) {
+                        Ok(_) => { return 6; },
+                        Err(_) => { return 0; },
+                    }
+                },
+                Err(_) => { return 7; },
+            }
+        },
+        Err(_) => { return 8; },
+    }
+}`, len(fileBytes))
+
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(driverBin, "-ir")
+	} else {
+		cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+	}
+	cmd.Stdin = bytes.NewReader([]byte(src))
+	wat, err := cmd.Output()
+	if err != nil || len(wat) == 0 {
+		t.Fatalf("driver failed: %v", err)
+	}
+	if !bytes.Contains(wat, []byte("call $__fern_stat")) {
+		t.Fatal("stat did not reach the wasm IR runtime path (no call $__fern_stat in WAT)")
+	}
+	watFile := filepath.Join(dir, "stat_prog.wat")
+	if err := os.WriteFile(watFile, wat, 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	run := exec.Command("wasmtime", "run", "--dir=.::/", watFile)
+	run.Dir = dir
+	_ = run.Run()
+	if run.ProcessState == nil || !run.ProcessState.Exited() {
+		t.Fatalf("wasmtime did not exit normally:\n%s", wat)
+	}
+	if code := run.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("stat wasm IR program exited %d, want 0 (file is_file+size / dir is_dir / missing Err)\n--- WAT ---\n%s", code, wat)
+	}
+}

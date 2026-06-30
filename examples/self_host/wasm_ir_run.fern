@@ -28,7 +28,23 @@ function main(): i32 {
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
     var emitted: string = "";
     var lm: parser.Module = wasm_ir.lift_lambdas(mod);
-    if (use_ir && wasm_ir.wasm_eligible(lm)) {
+    // Eligibility must be judged with the builtin structs/enums injected
+    // (FileStat / ProcessResult / IoError variants) — a struct-returning builtin
+    // like stat() (whose match arm `Ok(s) => s.size` needs the FileStat layout to
+    // lower) is only judged eligible once FileStat is present; otherwise it falls
+    // to the AST path (which has no wasm stat runtime). Inject into a SEPARATE
+    // copy used only for the eligibility decision — `lm` itself stays un-injected
+    // so the monomorphise + post-monomorphize injection below assign struct
+    // type-ids in the exact order the AST path uses (injecting before
+    // monomorphize would renumber user structs and break struct programs).
+    var elm: parser.Module = parser.Module { funcs: lm.funcs, structs: parser.inject_builtin_enums(lm.structs), aliases: lm.aliases, imports: lm.imports, top_stmts: lm.top_stmts, enums: lm.enums, resources: lm.resources, exports: lm.exports };
+    // Judge eligibility BOTH ways: `lm_ok` is the exact verdict the un-injected
+    // module gets (the main-path behaviour — every program that lowered before
+    // still lowers identically), `elm_ok` additionally lets a struct-returning
+    // builtin like stat() — only lowerable once FileStat is injected — qualify.
+    var lm_ok: boolean = wasm_ir.wasm_eligible(lm);
+    var elm_ok: boolean = wasm_ir.wasm_eligible(elm);
+    if (use_ir && (lm_ok || elm_ok)) {
         // Hoist no-capture lambda arguments to top-level functions (closures
         // slice 2a) so callback-style lambdas ride the slice-1 function-value
         // path; lambda-free modules are unchanged. The AST fallback keeps the
@@ -44,6 +60,19 @@ function main(): i32 {
         // no-op when nothing is bounded-generic), so IR-eligible programs that
         // already worked keep their exact output.
         mod = parser.monomorphize_enums(parser.monomorphize_structs(parser.monomorphize_module(parser.register_map_method_generics(parser.register_array_method_generics(lm)))));
+        // Inject the builtin structs/enums (FileStat / ProcessResult / IoError
+        // variants) ONLY when they're what made the module eligible — i.e. a
+        // struct-returning builtin like stat() that the un-injected module can't
+        // lower (`!lm_ok && elm_ok`). Without them stat() has no FileStat layout,
+        // so the match arm `Ok(s) => s.size` can't resolve its field offsets AND
+        // the module_emits_op("stat") gate bails, so the $__fern_stat runtime +
+        // import are never emitted (invalid module). For every program that was
+        // already eligible un-injected (`lm_ok`), skip the injection so its IR
+        // output stays byte-identical to before — appending the builtin structs
+        // perturbs the emitter even when they're unused.
+        if (!lm_ok && elm_ok) {
+            mod = parser.Module { funcs: mod.funcs, structs: parser.inject_builtin_enums(mod.structs), aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports };
+        }
         // Force the IR path: orchestrate the module wrapper + wasm's heap/RC
         // runtime + wasm_ir.emit_functions (the same orchestration
         // wasm.emit_module's use_ir dispatch does).
@@ -83,6 +112,9 @@ function main(): i32 {
         // environ_get imports must precede the function section, emitted when the
         // module reads an env var.
         if (wasm_ir.module_emits_op(mod, "env")) { o = o + wasm.env_helpers(); }
+        // stat(path) uses the preview1 path_filestat_get import (must precede the
+        // function section), emitted when the module stats a file.
+        if (wasm_ir.module_emits_op(mod, "stat")) { o = o + wasm.stat_import(); }
         o = o + "  (memory (export \"memory\") 16)\n";
         // String literals -> data-section blocks `[len:i32 LE][bytes]`. Emitted
         // caller-side (wasm owns le32_escape/wat_escape); wasm_ir supplies the
@@ -94,7 +126,7 @@ function main(): i32 {
                 + wasm.le32_escape(sv[di].len()) + wasm.wat_escape(sv[di]) + "\")\n";
             di = di + 1;
         }
-        if (wasm_ir.module_allocates(mod) || wasm_ir.module_uses_i32_to_string(mod) || wasm_ir.module_uses_chr(mod) || wasm_ir.module_uses_strbuf(mod) || wasm_ir.module_emits_op(mod, "env")) {
+        if (wasm_ir.module_allocates(mod) || wasm_ir.module_uses_i32_to_string(mod) || wasm_ir.module_uses_chr(mod) || wasm_ir.module_uses_strbuf(mod) || wasm_ir.module_emits_op(mod, "env") || wasm_ir.module_emits_op(mod, "stat")) {
             o = o + wasm.heap_alloc_helpers(wasm_ir.heap_base_for(mod), wasm_ir.fl_base_for(mod), wasm_ir.fl_cells());
             o = o + wasm.rc_runtime_helpers(wasm_ir.heap_base_for(mod));
         }
@@ -132,6 +164,10 @@ function main(): i32 {
         // Option[string] (Some(value)/None). Heap-backed (allocates the value +
         // box), so the heap gate above folds env in.
         if (wasm_ir.module_emits_op(mod, "env")) { o = o + wasm.env_func(); }
+        // $__fern_stat(path, fstype): path_filestat_get -> FileStat struct +
+        // Result box. Heap-backed (allocates the buffer + boxes), so folded into
+        // the heap gate above.
+        if (wasm_ir.module_emits_op(mod, "stat")) { o = o + wasm.stat_func(); }
         // $__fern_read_file / $__fern_write_file: open under preopen fd 3 and
         // read/write the whole file, boxing a Result[string, IoError] /
         // Option[IoError]. They alloc via the heap runtime (module_allocates
