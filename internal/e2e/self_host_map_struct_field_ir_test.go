@@ -42,7 +42,13 @@ function f(): i32 {
 }
 function main(): i32 { return f(); }`
 	asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
-	if len(asm) == 0 || len(asm) > 20000 {
+	// The cap distinguishes IR admission from the ~35 KB AST-runtime bail. It
+	// sits comfortably below that floor with margin for legitimate IR growth:
+	// map-helper additions on the IR path (e.g. the struct/enum-key eq dispatch
+	// in #4037) push this module's IR output a little each time, and a too-tight
+	// cap turns into a false failure on an unrelated merge. 30000 still fails
+	// loudly on a real bail (which lands near 35 KB) without that brittleness.
+	if len(asm) == 0 || len(asm) > 30000 {
 		t.Fatalf("asm is %d bytes — expected IR output (with map helpers); the map-field module likely bailed to the AST runtime", len(asm))
 	}
 	progBin := buildBin(t, gcc, dir, "map_struct_field", string(asm))
