@@ -3932,6 +3932,12 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
         var fdt: string = irlower.decl_field_type_at(s.struct_decls, sty, k);
         var k_scalar: boolean = irlower.is_leaksafe_array_field(fdt);
         var k_box: boolean = !k_scalar && (irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt));
+        // A DIRECT nested-struct field (`inner: Inner`): freed SHALLOW via the
+        // same __fern_arr_dec as a scalar-array buffer — one level, like a struct-
+        // array element box (arr_dec already frees struct boxes). rc-guarded inside
+        // arr_dec; the construction alias-inc (shared irlower) balances it. Mirrors
+        // the x86 emit_ir_struct_drop_one k_struct case (Perceus slice 3b).
+        var k_struct: boolean = !k_scalar && !k_box && irlower.decl_is_struct(s.struct_decls, fdt);
         var off: string = util.i32_to_string((k + 1) * 8);
         var ks: string = util.i32_to_string(k);
         if (k_box) {
@@ -3959,8 +3965,8 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.write("    bl __fn___fern_arr_dec\n");            // shallow dec the buffer slab
             s = s.write("    add sp, sp, #16\n");
-        } else if (k_scalar) {
-            s = s.write("    ldr x0, [x10, #" + off + "]\n");       // box.field_k buffer
+        } else if (k_scalar || k_struct) {
+            s = s.write("    ldr x0, [x10, #" + off + "]\n");       // box.field_k buffer / nested box
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.write("    bl __fn___fern_arr_dec\n");
             s = s.write("    add sp, sp, #16\n");

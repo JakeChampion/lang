@@ -1151,6 +1151,17 @@ function emit_wasm_struct_drop_body(t: string, cx: Ctx): string {
                     } else {
                         o = o + "    (drop (call $__fern_arr_dec " + load + "))\n";
                     }
+                } else if (is_struct_type(cx.structs, ft)) {
+                    // A DIRECT nested-struct field (`inner: Inner`): freed SHALLOW
+                    // via the same $__fern_arr_dec as a scalar-array buffer — one
+                    // level, like a struct-array element box (arr_dec frees struct
+                    // boxes too). rc-guarded inside arr_dec; the construction
+                    // alias-inc (shared irlower) balances it. Mirrors the x86 /
+                    // arm64 k_struct case (Perceus slice 3c). Enum/tuple/Option
+                    // fields (also kind "S") stay leak-only — is_struct_type is
+                    // false for them, a later slice.
+                    var sload: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
+                    o = o + "    (drop (call $__fern_arr_dec " + sload + "))\n";
                 }
                 k = k + 1;
             }

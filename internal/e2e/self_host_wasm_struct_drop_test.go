@@ -81,6 +81,18 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 				"function main(): i32 { var s: i32 = 0; var k: i32 = 0; while (k < 400000) { s = mk(); k = k + 1; } return s - 9; }",
 			"(func $__struct_drop_Nest (param $box i32) (result i32)\n    (drop (call $__fern_arr_dec_ptr (i32.load offset=8 (local.get $box))))",
 		},
+		// DIRECT nested-struct field (Inner, not an array) — the k_struct path
+		// (Perceus slice 3c): the inner box is freed SHALLOW via $__fern_arr_dec at
+		// the field offset (8 + i*8). The inner is a fresh literal (sole-owned, no
+		// construction-inc), so 500k cycles stay bounded under the cap ⇒ the inner
+		// box is reclaimed each iteration; the slice-1c pass-through leaked it.
+		{
+			"nested-struct-field-reclaim",
+			"struct Inner { v: i32, w: i32 } struct Outer { inner: Inner, tag: i32 } " +
+				"function mk(): i32 { var o: Outer = Outer { inner: Inner { v: 5, w: 6 }, tag: 3 }; return o.inner.v + o.inner.w + o.tag; } " +
+				"function main(): i32 { var s: i32 = 0; var k: i32 = 0; while (k < 500000) { s = mk(); k = k + 1; } return s - 14; }",
+			"(func $__struct_drop_Outer (param $box i32) (result i32)\n    (drop (call $__fern_arr_dec (i32.load offset=8 (local.get $box))))",
+		},
 	}
 
 	for _, tc := range cases {
