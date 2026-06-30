@@ -657,7 +657,6 @@ pub function wasm_eligible(mod: parser.Module): boolean {
         && !module_emits_op(mod, "tcp_recv")
         && !module_emits_op(mod, "tcp_close")
         && !module_emits_op(mod, "tcp_pollable")
-        && !module_emits_op(mod, "remove_dir_all")
         && !module_emits_op(mod, "temp_dir")
         && !module_emits_op(mod, "subprocess")
         && !module_emits_op(mod, "fsin")
@@ -1283,6 +1282,14 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // emitted caller-side in wasm_ir_run (with the path_open/fd_readdir/
             // fd_close imports + heap + arr_push) when the module reads a directory.
             out = out + "    call $__fern_read_dir\n";
+        } else if (o.kind == "remove_dir_all") {
+            // stack: path strblock ptr -> recursively rm -rf the path, push an
+            // Option[IoError] box. $__fern_remove_dir_all (param i32 path, result
+            // i32) wraps preview1 path_open + fd_readdir + path_unlink_file +
+            // path_remove_directory and recurses; emitted caller-side in
+            // wasm_ir_run (with those imports + heap + arr_push) when the module
+            // removes a directory tree.
+            out = out + "    call $__fern_remove_dir_all\n";
         } else if (o.kind == "args") {
             // 0-arg -> build a fresh string[] of the command-line arguments and
             // push its block ptr. The helper ($__fern_args, result i32) reads the
