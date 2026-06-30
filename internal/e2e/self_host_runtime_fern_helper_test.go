@@ -84,6 +84,14 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_str_cmp:", ".Lstrcmp_loop"},
 		},
 		{
+			// str_search bundle (starts_with/ends_with/index_of); one need emits
+			// all three. AST path; IR covered by the IR lock-in test.
+			"str_search",
+			`function main(): i32 { if ("hello".starts_with("he")) { return 1; } return 0; }`,
+			"__fn___fern_str_starts_with",
+			[]string{"\n__fern_str_starts_with:", ".Lsw_loop", ".Lidx_outer"},
+		},
+		{
 			"arr_i32_min",
 			"function main(): i32 { var xs: i32[] = [5, 2, 7]; match (xs.min()) { Some(v) => { return v; }, None => { return 0; } } }",
 			"__fn___fern_arr_i32_min",

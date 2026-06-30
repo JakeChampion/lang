@@ -936,7 +936,7 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = emit_expr(c.args[1], s);
         s = s.write("    ldr x1, [sp], #16\n");
         s = s.write("    ldr x0, [sp], #16\n");
-        s = s.write("    bl __fern_str_starts_with\n");
+        s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_starts_with\n    add sp, sp, #32\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_str_search();
         return CallOut { state: s, done: true };
@@ -946,7 +946,7 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = emit_expr(c.args[1], s);
         s = s.write("    ldr x1, [sp], #16\n");
         s = s.write("    ldr x0, [sp], #16\n");
-        s = s.write("    bl __fern_str_ends_with\n");
+        s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_ends_with\n    add sp, sp, #32\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_str_search();
         return CallOut { state: s, done: true };
@@ -956,7 +956,7 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = emit_expr(c.args[1], s);
         s = s.write("    ldr x1, [sp], #16\n");
         s = s.write("    ldr x0, [sp], #16\n");
-        s = s.write("    bl __fern_str_index_of\n");
+        s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_index_of\n    add sp, sp, #32\n");
         s = s.write("    cmp x0, #0\n");
         s = s.write("    cset x0, ge\n");
         s = s.write("    str x0, [sp, #-16]!\n");
@@ -968,7 +968,7 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = emit_expr(c.args[1], s);
         s = s.write("    ldr x1, [sp], #16\n");
         s = s.write("    ldr x0, [sp], #16\n");
-        s = s.write("    bl __fern_str_index_of\n");
+        s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_index_of\n    add sp, sp, #32\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_str_search();
         return CallOut { state: s, done: true };
@@ -1943,7 +1943,7 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             s = emit_expr(c.args[0], s);
             s = s.write("    ldr x1, [sp], #16\n");
             s = s.write("    ldr x0, [sp], #16\n");
-            s = s.write("    bl __fern_str_index_of\n");
+            s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_index_of\n    add sp, sp, #32\n");
             s = s.write("    cmp x0, #0\n");
             s = s.write("    cset x0, ge\n");
             s = s.write("    str x0, [sp, #-16]!\n");
@@ -1955,7 +1955,7 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             s = emit_expr(c.args[0], s);
             s = s.write("    ldr x1, [sp], #16\n");
             s = s.write("    ldr x0, [sp], #16\n");
-            s = s.write("    bl __fern_str_starts_with\n");
+            s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_starts_with\n    add sp, sp, #32\n");
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.mark_str_search();
             return s;
@@ -1965,7 +1965,7 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             s = emit_expr(c.args[0], s);
             s = s.write("    ldr x1, [sp], #16\n");
             s = s.write("    ldr x0, [sp], #16\n");
-            s = s.write("    bl __fern_str_ends_with\n");
+            s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_ends_with\n    add sp, sp, #32\n");
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.mark_str_search();
             return s;
@@ -1975,7 +1975,7 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             s = emit_expr(c.args[0], s);
             s = s.write("    ldr x1, [sp], #16\n");
             s = s.write("    ldr x0, [sp], #16\n");
-            s = s.write("    bl __fern_str_index_of\n");
+            s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_index_of\n    add sp, sp, #32\n");
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.mark_str_search();
             return s;
@@ -4703,88 +4703,11 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     }
     // String search helpers. See asm.fern.
     if (s.has_need("str_search")) {
-        s = s.write("__fern_str_starts_with:\n");
-        s = s.write("    ldr x2, [x1, #8]\n");        // lenP
-        s = s.write("    ldr x3, [x0, #8]\n");        // lenS
-        s = s.write("    cmp x3, x2\n");
-        s = s.write("    b.lt .Lsw_no\n");
-        s = s.write("    ldr x0, [x0]\n");
-        s = s.write("    ldr x1, [x1]\n");
-        s = s.write("    cbz x2, .Lsw_yes\n");
-        s = s.write(".Lsw_loop:\n");
-        s = s.write("    ldrb w3, [x0], #1\n");
-        s = s.write("    ldrb w4, [x1], #1\n");
-        s = s.write("    cmp w3, w4\n");
-        s = s.write("    b.ne .Lsw_no\n");
-        s = s.write("    subs x2, x2, #1\n");
-        s = s.write("    b.ne .Lsw_loop\n");
-        s = s.write(".Lsw_yes:\n");
-        s = s.write("    mov x0, #1\n");
-        s = s.write("    ret\n");
-        s = s.write(".Lsw_no:\n");
-        s = s.write("    mov x0, #0\n");
-        s = s.write("    ret\n");
-        s = s.write("__fern_str_ends_with:\n");
-        s = s.write("    ldr x2, [x1, #8]\n");        // lenP
-        s = s.write("    ldr x3, [x0, #8]\n");        // lenS
-        s = s.write("    cmp x3, x2\n");
-        s = s.write("    b.lt .Lew_no\n");
-        s = s.write("    sub x3, x3, x2\n");          // offset = lenS - lenP
-        s = s.write("    ldr x0, [x0]\n");
-        s = s.write("    add x0, x0, x3\n");
-        s = s.write("    ldr x1, [x1]\n");
-        s = s.write("    cbz x2, .Lew_yes\n");
-        s = s.write(".Lew_loop:\n");
-        s = s.write("    ldrb w3, [x0], #1\n");
-        s = s.write("    ldrb w4, [x1], #1\n");
-        s = s.write("    cmp w3, w4\n");
-        s = s.write("    b.ne .Lew_no\n");
-        s = s.write("    subs x2, x2, #1\n");
-        s = s.write("    b.ne .Lew_loop\n");
-        s = s.write(".Lew_yes:\n");
-        s = s.write("    mov x0, #1\n");
-        s = s.write("    ret\n");
-        s = s.write(".Lew_no:\n");
-        s = s.write("    mov x0, #0\n");
-        s = s.write("    ret\n");
-        s = s.write("__fern_str_index_of:\n");
-        s = s.write("    ldr x2, [x0, #8]\n");        // lenS
-        s = s.write("    ldr x3, [x1, #8]\n");        // lenN
-        s = s.write("    cbz x3, .Lidx_zero\n");
-        s = s.write("    sub x4, x2, x3\n");          // limit
-        s = s.write("    cmp x4, #0\n");
-        s = s.write("    b.lt .Lidx_no\n");
-        s = s.write("    ldr x5, [x0]\n");            // data S
-        s = s.write("    ldr x6, [x1]\n");            // data N
-        s = s.write("    mov x7, #0\n");              // offset
-        s = s.write(".Lidx_outer:\n");
-        s = s.write("    cmp x7, x4\n");
-        s = s.write("    b.gt .Lidx_no\n");
-        s = s.write("    mov x8, #0\n");              // inner i
-        s = s.write(".Lidx_inner:\n");
-        s = s.write("    cmp x8, x3\n");
-        s = s.write("    b.eq .Lidx_match\n");
-        s = s.write("    add x9, x5, x7\n");
-        s = s.write("    add x9, x9, x8\n");
-        s = s.write("    ldrb w10, [x9]\n");
-        s = s.write("    add x9, x6, x8\n");
-        s = s.write("    ldrb w11, [x9]\n");
-        s = s.write("    cmp w10, w11\n");
-        s = s.write("    b.ne .Lidx_skip\n");
-        s = s.write("    add x8, x8, #1\n");
-        s = s.write("    b .Lidx_inner\n");
-        s = s.write(".Lidx_skip:\n");
-        s = s.write("    add x7, x7, #1\n");
-        s = s.write("    b .Lidx_outer\n");
-        s = s.write(".Lidx_match:\n");
-        s = s.write("    mov x0, x7\n");
-        s = s.write("    ret\n");
-        s = s.write(".Lidx_zero:\n");
-        s = s.write("    mov x0, #0\n");
-        s = s.write("    ret\n");
-        s = s.write(".Lidx_no:\n");
-        s = s.write("    mov x0, #-1\n");
-        s = s.write("    ret\n");
+        // __fern_str_starts_with / _ends_with / _index_of are now Fern runtime
+        // functions (#2649): see asmcore.rt_src_str_search, called via the __fn_
+        // stack convention. The single body serves both arm64 AST + IR (shared
+        // emit_runtime). (str_trim / str_to_* below stay hand-written — alloc.)
+        s = emit_runtime_fern_fn(asmcore.rt_src_str_search(), s);
         // __fern_str_trim: x0 = string box. Strip leading and
         // trailing ASCII whitespace. See asm.fern.
         s = s.write("__fern_str_trim:\n");

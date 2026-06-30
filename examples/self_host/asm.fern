@@ -909,7 +909,7 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = emit_expr(c.args[1], s);
         s = s.write("    popq %rsi\n");
         s = s.write("    popq %rdi\n");
-        s = s.write("    call __fern_str_starts_with\n");
+        s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_starts_with\n    addq $16, %rsp\n");
         s = s.write("    pushq %rax\n");
         s = s.mark_str_search();
         return CallOut { state: s, done: true };
@@ -919,7 +919,7 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = emit_expr(c.args[1], s);
         s = s.write("    popq %rsi\n");
         s = s.write("    popq %rdi\n");
-        s = s.write("    call __fern_str_ends_with\n");
+        s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_ends_with\n    addq $16, %rsp\n");
         s = s.write("    pushq %rax\n");
         s = s.mark_str_search();
         return CallOut { state: s, done: true };
@@ -930,7 +930,7 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = emit_expr(c.args[1], s);
         s = s.write("    popq %rsi\n");
         s = s.write("    popq %rdi\n");
-        s = s.write("    call __fern_str_index_of\n");
+        s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_index_of\n    addq $16, %rsp\n");
         // Convert -1 (not found) / >=0 to bool.
         s = s.write("    cmpq $0, %rax\n");
         s = s.write("    setge %al\n");
@@ -946,7 +946,7 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = emit_expr(c.args[1], s);
         s = s.write("    popq %rsi\n");
         s = s.write("    popq %rdi\n");
-        s = s.write("    call __fern_str_index_of\n");
+        s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_index_of\n    addq $16, %rsp\n");
         s = s.write("    pushq %rax\n");
         s = s.mark_str_search();
         return CallOut { state: s, done: true };
@@ -2007,7 +2007,7 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             s = emit_expr(c.args[0], s);
             s = s.write("    popq %rsi\n");
             s = s.write("    popq %rdi\n");
-            s = s.write("    call __fern_str_index_of\n");
+            s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_index_of\n    addq $16, %rsp\n");
             s = s.write("    cmpq $0, %rax\n");
             s = s.write("    movq $0, %rax\n");
             s = s.write("    setge %al\n");
@@ -2021,7 +2021,7 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             s = emit_expr(c.args[0], s);
             s = s.write("    popq %rsi\n");
             s = s.write("    popq %rdi\n");
-            s = s.write("    call __fern_str_starts_with\n");
+            s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_starts_with\n    addq $16, %rsp\n");
             s = s.write("    pushq %rax\n");
             s = s.mark_str_search();
             return s;
@@ -2031,7 +2031,7 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             s = emit_expr(c.args[0], s);
             s = s.write("    popq %rsi\n");
             s = s.write("    popq %rdi\n");
-            s = s.write("    call __fern_str_ends_with\n");
+            s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_ends_with\n    addq $16, %rsp\n");
             s = s.write("    pushq %rax\n");
             s = s.mark_str_search();
             return s;
@@ -2041,7 +2041,7 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             s = emit_expr(c.args[0], s);
             s = s.write("    popq %rsi\n");
             s = s.write("    popq %rdi\n");
-            s = s.write("    call __fern_str_index_of\n");
+            s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_index_of\n    addq $16, %rsp\n");
             s = s.write("    pushq %rax\n");
             s = s.mark_str_search();
             return s;
@@ -4511,109 +4511,11 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // Returns the first byte offset where needle matches, or
     // -1 if not found. Empty needle returns 0.
     if (s.has_need("str_search")) {
-        s = s.write("__fern_str_starts_with:\n");
-        s = s.write("    movq 8(%rsi), %rcx\n");      // lenP
-        s = s.write("    movq 8(%rdi), %rax\n");      // lenS
-        s = s.write("    cmpq %rcx, %rax\n");
-        s = s.write("    jl .Lsw_no\n");
-        s = s.write("    movq (%rdi), %rdi\n");
-        s = s.write("    movq (%rsi), %rsi\n");
-        s = s.write("    cmpq $0, %rcx\n");
-        s = s.write("    je .Lsw_yes\n");
-        s = s.write(".Lsw_loop:\n");
-        s = s.write("    movzbq (%rdi), %rax\n");
-        s = s.write("    movzbq (%rsi), %rdx\n");
-        s = s.write("    cmpq %rdx, %rax\n");
-        s = s.write("    jne .Lsw_no\n");
-        s = s.write("    incq %rdi\n");
-        s = s.write("    incq %rsi\n");
-        s = s.write("    decq %rcx\n");
-        s = s.write("    jne .Lsw_loop\n");
-        s = s.write(".Lsw_yes:\n");
-        s = s.write("    movq $1, %rax\n");
-        s = s.write("    ret\n");
-        s = s.write(".Lsw_no:\n");
-        s = s.write("    movq $0, %rax\n");
-        s = s.write("    ret\n");
-        // __fern_str_ends_with: %rdi = s, %rsi = suffix.
-        // Compares the last len(suffix) bytes of s against
-        // suffix. Empty suffix → 1. Suffix longer than s → 0.
-        s = s.write("__fern_str_ends_with:\n");
-        s = s.write("    movq 8(%rsi), %rcx\n");      // lenP
-        s = s.write("    movq 8(%rdi), %rax\n");      // lenS
-        s = s.write("    cmpq %rcx, %rax\n");
-        s = s.write("    jl .Lew_no\n");
-        s = s.write("    subq %rcx, %rax\n");         // offset = lenS - lenP
-        s = s.write("    movq (%rdi), %rdi\n");
-        s = s.write("    addq %rax, %rdi\n");
-        s = s.write("    movq (%rsi), %rsi\n");
-        s = s.write("    cmpq $0, %rcx\n");
-        s = s.write("    je .Lew_yes\n");
-        s = s.write(".Lew_loop:\n");
-        s = s.write("    movzbq (%rdi), %rax\n");
-        s = s.write("    movzbq (%rsi), %rdx\n");
-        s = s.write("    cmpq %rdx, %rax\n");
-        s = s.write("    jne .Lew_no\n");
-        s = s.write("    incq %rdi\n");
-        s = s.write("    incq %rsi\n");
-        s = s.write("    decq %rcx\n");
-        s = s.write("    jne .Lew_loop\n");
-        s = s.write(".Lew_yes:\n");
-        s = s.write("    movq $1, %rax\n");
-        s = s.write("    ret\n");
-        s = s.write(".Lew_no:\n");
-        s = s.write("    movq $0, %rax\n");
-        s = s.write("    ret\n");
-        // __fern_str_index_of.
-        s = s.write("__fern_str_index_of:\n");
-        s = s.write("    movq 8(%rdi), %r8\n");       // lenS
-        s = s.write("    movq 8(%rsi), %r9\n");       // lenN
-        s = s.write("    cmpq $0, %r9\n");
-        s = s.write("    je .Lidx_zero\n");
-        s = s.write("    movq %r8, %r10\n");          // limit = lenS - lenN
-        s = s.write("    subq %r9, %r10\n");
-        s = s.write("    cmpq $0, %r10\n");
-        s = s.write("    jl .Lidx_no\n");
-        s = s.write("    movq (%rdi), %r11\n");       // data S
-        s = s.write("    movq (%rsi), %rdi\n");       // data N (reuse)
-        s = s.write("    movq $0, %rcx\n");           // offset
-        s = s.write(".Lidx_outer:\n");
-        s = s.write("    cmpq %r10, %rcx\n");
-        s = s.write("    jg .Lidx_no\n");
-        s = s.write("    movq %rcx, %rdx\n");
-        s = s.write("    movq $0, %r12\n");           // inner i
-        // Save %r12 across, even though we don't call alloc.
-        // Use it as a scratch register; restore via the stack.
-        s = s.write("    pushq %r12\n");
-        s = s.write("    movq $0, %r12\n");
-        s = s.write(".Lidx_inner:\n");
-        s = s.write("    cmpq %r9, %r12\n");
-        s = s.write("    je .Lidx_match\n");
-        s = s.write("    movq %r11, %rax\n");
-        s = s.write("    addq %rcx, %rax\n");
-        s = s.write("    addq %r12, %rax\n");
-        s = s.write("    movzbq (%rax), %rdx\n");
-        s = s.write("    movq %rdi, %rax\n");
-        s = s.write("    addq %r12, %rax\n");
-        s = s.write("    movzbq (%rax), %rax\n");
-        s = s.write("    cmpq %rax, %rdx\n");
-        s = s.write("    jne .Lidx_skip\n");
-        s = s.write("    incq %r12\n");
-        s = s.write("    jmp .Lidx_inner\n");
-        s = s.write(".Lidx_skip:\n");
-        s = s.write("    popq %r12\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    jmp .Lidx_outer\n");
-        s = s.write(".Lidx_match:\n");
-        s = s.write("    popq %r12\n");
-        s = s.write("    movq %rcx, %rax\n");
-        s = s.write("    ret\n");
-        s = s.write(".Lidx_zero:\n");
-        s = s.write("    movq $0, %rax\n");
-        s = s.write("    ret\n");
-        s = s.write(".Lidx_no:\n");
-        s = s.write("    movq $-1, %rax\n");
-        s = s.write("    ret\n");
+        // __fern_str_starts_with / _ends_with / _index_of are now Fern runtime
+        // functions (#2649): see asmcore.rt_src_str_search, called via the __fn_
+        // stack convention. (str_trim / str_to_* below stay hand-written — they
+        // allocate.) Mirrors the x86-64 IR path + arm64.
+        s = emit_runtime_fern_fn(asmcore.rt_src_str_search(), s);
         // __fern_str_trim: %rdi = string box. Scans from the
         // start past whitespace bytes (space/tab/'\n'/'\r'),
         // then from the end backward past the same. Allocates

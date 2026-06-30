@@ -406,6 +406,19 @@ pub function rt_src_str_cmp(): string {
     return "function __fern_str_cmp(a: string, b: string): i32 { var la: i32 = a.len(); var lb: i32 = b.len(); var n: i32 = la; if (lb < n) { n = lb; } var i: i32 = 0; while (i < n) { var ca: i32 = a[i]; var cb: i32 = b[i]; if (ca != cb) { return ca - cb; } i = i + 1; } return la - lb; }";
 }
 
+// rt_src_str_search backs the string-search predicates (#2649): all three are
+// gated by the single `str_search` need, so one source defines all three and
+// emit_*_runtime_fern_fn emits each. Self-contained — byte indexing only, no
+// alloc, no other helper call — so they reuse the migration primitives as-is.
+// __fern_str_starts_with(s, p) / _ends_with(s, p): 1 if s has p as a prefix /
+// suffix (empty p → 1), else 0. __fern_str_index_of(s, needle): first byte
+// offset where needle occurs (empty needle → 0), or -1. Arg order matches the
+// hand-written helpers (s=param0, p/needle=param1); both params read-only →
+// borrowed. Semantics validated against the asm bodies they replace.
+pub function rt_src_str_search(): string {
+    return "function __fern_str_starts_with(s: string, p: string): i32 { var lp: i32 = p.len(); if (lp > s.len()) { return 0; } var i: i32 = 0; while (i < lp) { if (s[i] != p[i]) { return 0; } i = i + 1; } return 1; } function __fern_str_ends_with(s: string, p: string): i32 { var ls: i32 = s.len(); var lp: i32 = p.len(); if (lp > ls) { return 0; } var off: i32 = ls - lp; var i: i32 = 0; while (i < lp) { if (s[off + i] != p[i]) { return 0; } i = i + 1; } return 1; } function __fern_str_index_of(s: string, needle: string): i32 { var ls: i32 = s.len(); var ln: i32 = needle.len(); if (ln == 0) { return 0; } if (ln > ls) { return 0 - 1; } var last: i32 = ls - ln; var i: i32 = 0; while (i <= last) { var j: i32 = 0; var ok: i32 = 1; while (j < ln) { if (s[i + j] != needle[j]) { ok = 0; j = ln; } else { j = j + 1; } } if (ok == 1) { return i; } i = i + 1; } return 0 - 1; }";
+}
+
 pub function rt_src_arr_i32_max(): string {
     return "function __fern_arr_i32_max(xs: i32[]): i32 { var m: i32 = xs[0]; var i: i32 = 1; while (i < xs.len()) { if (xs[i] > m) { m = xs[i]; } i = i + 1; } return m; }";
 }
