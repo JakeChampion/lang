@@ -54,6 +54,9 @@ type Inst struct {
 	K    ssa.OpKind // BinOp / SetCmp operation
 	W    int8       // result width for MovImm/BinOp/UnNeg/Call (0/32 => i32, 64 => i64)
 
+	Bytes  int8 // MemLoad/MemStore access width in bytes (1/2/8)
+	Signed bool // MemLoad: sign-extend a sub-word value
+
 	Callee  string // Call: callee function name
 	ArgLocs []Loc  // Call: homes of the argument values, in order
 }
@@ -438,16 +441,17 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		e.place(op.Result, e.s2)
 		return nil
 
-	case ssa.OpLoad:
+	case ssa.OpLoad, ssa.OpLoad8U, ssa.OpLoad8S, ssa.OpLoad16U, ssa.OpLoad16S:
 		base, err := e.materialize(op.Args[0], e.s0)
 		if err != nil {
 			return err
 		}
-		e.push(Inst{Op: MemLoad, Dst: e.s2, Src: base, Imm: op.Imm, W: op.Width})
+		bytes, signed := memInfo(op.Kind)
+		e.push(Inst{Op: MemLoad, Dst: e.s2, Src: base, Imm: op.Imm, W: op.Width, Bytes: bytes, Signed: signed})
 		e.place(op.Result, e.s2)
 		return nil
 
-	case ssa.OpStore:
+	case ssa.OpStore, ssa.OpStore8, ssa.OpStore16:
 		base, err := e.materialize(op.Args[0], e.s0)
 		if err != nil {
 			return err
@@ -456,7 +460,8 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		if err != nil {
 			return err
 		}
-		e.push(Inst{Op: MemStore, Src: base, Src2: val, Imm: op.Imm})
+		bytes, _ := memInfo(op.Kind)
+		e.push(Inst{Op: MemStore, Src: base, Src2: val, Imm: op.Imm, Bytes: bytes})
 		return nil
 
 	default:
@@ -495,6 +500,26 @@ func (e *emitter) paramLocs() []Loc {
 		}
 	}
 	return out
+}
+
+// memInfo returns the byte width and signedness of a load/store op kind.
+func memInfo(k ssa.OpKind) (bytes int8, signed bool) {
+	switch k {
+	case ssa.OpLoad8U:
+		return 1, false
+	case ssa.OpLoad8S:
+		return 1, true
+	case ssa.OpLoad16U:
+		return 2, false
+	case ssa.OpLoad16S:
+		return 2, true
+	case ssa.OpStore8:
+		return 1, false
+	case ssa.OpStore16:
+		return 2, false
+	default: // OpLoad / OpStore (full word)
+		return 8, false
+	}
 }
 
 // maxPhiCount is the largest number of phi ops in any block — the number of
