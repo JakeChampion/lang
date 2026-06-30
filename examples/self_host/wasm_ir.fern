@@ -659,8 +659,6 @@ pub function wasm_eligible(mod: parser.Module): boolean {
         && !module_emits_op(mod, "tcp_pollable")
         && !module_emits_op(mod, "temp_dir")
         && !module_emits_op(mod, "subprocess")
-        && !module_emits_op(mod, "fsin")
-        && !module_emits_op(mod, "fcos")
         // Map iteration is parallel-array only (x86-64 / arm64); wasm maps are
         // hash maps with no iterator-box runtime, so a mapiter module stays on the
         // wasm AST path (where the legacy emitter handles m.iter()/has_next()/...).
@@ -914,6 +912,15 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // The arm64 backend lowers flog the same way (bl __fern_log_f64); this is
             // the wasm sibling of that polynomial helper.
             out = out + "    call $__fern_log_f64\n";
+        } else if (o.kind == "fsin") {
+            // sin(x): no wasm instruction -> call the polynomial runtime
+            // $__fern_sin_f64 (emitted caller-side in wasm_ir_run). f64 operand on
+            // the stack; the call consumes it and pushes sin(x). arm64 lowers fsin
+            // the same way (bl __fern_sin_f64).
+            out = out + "    call $__fern_sin_f64\n";
+        } else if (o.kind == "fcos") {
+            // cos(x): same as fsin, calling $__fern_cos_f64.
+            out = out + "    call $__fern_cos_f64\n";
         } else if (o.kind == "int_extend") {
             // i32 -> i64: distinct wasm types, so an explicit widen.
             if (o.unsigned) { out = out + "    i64.extend_i32_u\n"; }
