@@ -57,6 +57,28 @@ runs:
         restore-keys: |
           gobuild-${{ runner.os }}-${{ runner.arch }}-go1.24-
 
+    # The self-host driver binaries link a ~680 MB freestanding `.s`. The GNU
+    # bfd linker (gcc's default) is minutes-slow and memory-heavy on inputs that
+    # size — the source of intermittent self-host shard link TIMEOUTS (a cold
+    # driver link hanging past the job deadline). The e2e link path
+    # (driverLinkArgs / `-fuse-ld=lld`) uses ld.lld when present — seconds, low
+    # RSS — so make sure it is installed. Idempotent: `ubuntu-latest` already
+    # ships lld, so this is a no-op short-circuit on the hosted runners; it only
+    # fetches on an image that lacks it. If install fails, the Go side falls back
+    # to bfd (slow but correct), so this step never blocks a run.
+    - name: Ensure lld (fast linker for the self-host driver links)
+      shell: bash
+      run: |
+        if command -v ld.lld >/dev/null 2>&1; then
+          echo "ld.lld already present: $(ld.lld --version | head -1)"
+          exit 0
+        fi
+        sudo apt-get update -qq && sudo apt-get install -y -qq lld || {
+          echo "lld install failed; driver links fall back to bfd" >&2
+          exit 0
+        }
+        command -v ld.lld >/dev/null 2>&1 && ld.lld --version | head -1 || true
+
     - name: Detect host wasm-tools arch
       if: inputs.wasmtime == 'true'
       id: wasm-arch
