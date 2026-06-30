@@ -102,6 +102,11 @@ type Options struct {
 	// `main`) so a `-shared` .so can export functions the program never
 	// calls itself — e.g. JNI entry points, which only the JVM invokes.
 	Exports []string
+
+	// NoPeephole disables the streaming output peephole (see generator.put).
+	// The peephole is a pure size optimisation and on by default; this only
+	// exists so asm-shape tests can assert the un-collapsed emission.
+	NoPeephole bool
 }
 
 // Emit produces assembly text for prog targeting x86-64 Linux.
@@ -178,7 +183,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// `lea rax, [rip + __closure_cell_<name>]` against a static
 	// `.rodata` cell instead of a 16-byte heap-allocated pair.
 	ir.InlineZeroCaptureClosures(ip)
-	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, vtables: ip.Vtables, pie: opts.PIE}
+	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, vtables: ip.Vtables, pie: opts.PIE, noPeephole: opts.NoPeephole}
 	// Pre-scan call sites for runtime-helper use-flags before
 	// touching any code emission, so emitDataSections + the
 	// runtime emitters below know which helpers to include
@@ -430,6 +435,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// linker warns (or refuses, on hardened distros) about
 	// the binary having an implicit executable stack.
 	g.line(".section .note.GNU-stack,\"\",@progbits")
+	g.flushPeep()
 	return g.out.String(), nil
 }
 
@@ -441,6 +447,12 @@ type generator struct {
 	// pie emits the static-PIE self-relocation prologue at `_start`
 	// (see Options.PIE).
 	pie bool
+	// noPeephole disables the streaming output peephole (Options.NoPeephole).
+	noPeephole bool
+	// peepWin is the streaming peephole's sliding window of recently
+	// emitted logical lines (no trailing newline), held back from `out`
+	// until they can no longer participate in a rewrite. See put / flushPeep.
+	peepWin []string
 	// labelCounter generates unique branch / scope labels
 	// (`.Lret_main_0`, `.Lif_3` etc.). Per-program rather
 	// than per-function so labels stay globally unique even
@@ -2833,19 +2845,118 @@ func (g *generator) emitCallArgsCleanup(argc int) {
 }
 
 func (g *generator) line(s string) {
-	g.out.WriteString(s)
-	g.out.WriteByte('\n')
+	g.put(s)
 }
 
 func (g *generator) label(name string) {
-	g.out.WriteString(name)
-	g.out.WriteString(":\n")
+	g.put(name + ":")
 }
 
 func (g *generator) emit(s string) {
-	g.out.WriteByte('\t')
-	g.out.WriteString(s)
-	g.out.WriteByte('\n')
+	g.put("\t" + s)
+}
+
+// peepWindow is how many recently emitted logical lines are held back from
+// `out` so the streaming peephole can rewrite the tail in place. The longest
+// pattern is 4 lines; 6 leaves margin while bounding held memory to O(1) —
+// crucial because a self-host `.s` is hundreds of MB and a whole-text
+// post-pass would spike RAM.
+const peepWindow = 6
+
+// put appends one logical output line (without its trailing newline) to the
+// peephole window, applies the safe local rewrites at the tail, then flushes
+// any line that has aged out of the window to `out`. All emission funnels
+// through here (line / label / emit), so the peephole sees every line in
+// emission order regardless of which helper produced it.
+func (g *generator) put(s string) {
+	if g.noPeephole {
+		g.out.WriteString(s)
+		g.out.WriteByte('\n')
+		return
+	}
+	g.peepWin = append(g.peepWin, s)
+	g.peepholeTail()
+	for len(g.peepWin) > peepWindow {
+		g.out.WriteString(g.peepWin[0])
+		g.out.WriteByte('\n')
+		g.peepWin = g.peepWin[1:]
+	}
+}
+
+// flushPeep drains the remaining window to `out`. Call once, right before
+// returning the assembled text.
+func (g *generator) flushPeep() {
+	for _, l := range g.peepWin {
+		g.out.WriteString(l)
+		g.out.WriteByte('\n')
+	}
+	g.peepWin = g.peepWin[:0]
+}
+
+// peepholeTail applies the two safe stack-machine rewrites at the tail of the
+// window. Both are purely local (≤4 contiguous lines) so they never touch a
+// genuinely-live stack slot — those are left for the register allocator.
+func (g *generator) peepholeTail() {
+	w := g.peepWin
+	n := len(w)
+
+	// P1 — redundant store/reload: a push immediately followed by the
+	// matching pop. push() emits `sub rsp, N` / `mov [rsp], rax`; pop()
+	// emits `mov DST, [rsp]` / `add rsp, N`. When adjacent, the slot is
+	// allocated and freed within the four lines and nothing else reads it,
+	// so the net effect is just `DST := rax`:
+	//   sub rsp, N / mov [rsp], rax / mov DST, [rsp] / add rsp, N
+	//     => mov DST, rax     (or nothing when DST == rax)
+	if n >= 4 {
+		if k, ok := matchRspDelta(w[n-4], "sub"); ok && w[n-3] == "\tmov [rsp], rax" {
+			if dst, ok2 := matchPopDst(w[n-2]); ok2 {
+				if k2, ok3 := matchRspDelta(w[n-1], "add"); ok3 && k2 == k {
+					if dst == "rax" {
+						g.peepWin = w[:n-4]
+					} else {
+						g.peepWin = append(w[:n-4], "\tmov "+dst+", rax")
+					}
+					return
+				}
+			}
+		}
+	}
+
+	// P2 — dead jump: `jmp L` immediately followed by the label `L:` is a
+	// no-op fall-through. Drop the jmp; the label stays for other jumps.
+	if n >= 2 {
+		last := w[n-1]
+		if len(last) > 1 && last[len(last)-1] == ':' && last[0] != '\t' && !strings.ContainsRune(last, ' ') {
+			if w[n-2] == "\tjmp "+last[:len(last)-1] {
+				w[n-2] = last
+				g.peepWin = w[:n-1]
+			}
+		}
+	}
+}
+
+// matchRspDelta matches a `\t<op> rsp, <n>` line and returns the <n> token.
+func matchRspDelta(line, op string) (string, bool) {
+	pfx := "\t" + op + " rsp, "
+	if strings.HasPrefix(line, pfx) {
+		return line[len(pfx):], true
+	}
+	return "", false
+}
+
+// matchPopDst matches a `\tmov <reg>, [rsp]` pop into a single register and
+// returns <reg>. rsp is excluded: `mov rsp, [rsp]` would not be equivalent to
+// `mov rsp, rax` once the trailing `add rsp, N` is removed.
+func matchPopDst(line string) (string, bool) {
+	const pfx = "\tmov "
+	const sfx = ", [rsp]"
+	if strings.HasPrefix(line, pfx) && strings.HasSuffix(line, sfx) {
+		reg := line[len(pfx) : len(line)-len(sfx)]
+		if reg != "" && reg != "rsp" && !strings.ContainsAny(reg, " []") {
+			return reg, true
+		}
+	}
+	return "", false
 }
 
 // captureSlotSize mirrors closureconv.captureSlotSize for
