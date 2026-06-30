@@ -175,6 +175,15 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_str_concat:", ".Lstrconcat_a_loop"},
 		},
 		{
+			// i32_to_string — backs (n).to_string() / the free fn, Tier-2 via the
+			// intrinsics (#2649). The old register-ABI hand-asm (the bare
+			// __fern_i32_to_string: label + .Li2s_div loop) is gone.
+			"i32_to_string",
+			`function main(): i32 { return i32_to_string(42).len(); }`,
+			"__fn___fern_i32_to_string",
+			[]string{"\n__fern_i32_to_string:", ".Li2s_div"},
+		},
+		{
 			// arr_str_join (string[].join) — AST-only; calls str_concat via `+`.
 			"arr_str_join",
 			`function main(): i32 { var xs: string[] = ["a", "b"]; return xs.join(",").len(); }`,
