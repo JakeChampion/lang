@@ -917,9 +917,13 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
     }
     // str_to_i32(s) — parse string box to i32.
     if (name == "str_to_i32" && c.args.len() == 1) {
+        // __fern_str_to_i32 is a Fern runtime function (#2649): call it via the
+        // ordinary __fn_ stack convention (the borrowed string is param[0]).
+        // One Fern body serves both the AST and IR arm64 paths (they share
+        // asm_arm64.emit_runtime), since the IR call site also uses this symbol.
         s = emit_expr(c.args[0], s);
-        s = s.write("    ldr x0, [sp], #16\n");
-        s = s.write("    bl __fern_str_to_i32\n");
+        s = s.write("    bl __fn___fern_str_to_i32\n");
+        s = s.write("    add sp, sp, #16\n");
         s = s.write("    str x0, [sp, #-16]!\n");
         s = s.mark_str_to_i32();
         return CallOut { state: s, done: true };
@@ -4654,48 +4658,13 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ldr x0, [sp]\n");
         s = s.write("    b __fern_i32_to_string\n");
     }
-    // __fern_str_to_i32: x0 = string box → x0 = parsed i32.
-    // Optional leading '-', decimal digits, stops at first
-    // non-digit (incl. newline). Empty box → 0.
+    // __fern_str_to_i32 is now a Fern runtime function (#2649): see
+    // asmcore.rt_src_str_to_i32, lowered through asm_arm64's normal function
+    // emitter. The single __fn___fern_str_to_i32 body serves BOTH the arm64 AST
+    // and IR call sites (they share this emit_runtime), replacing the old
+    // register-ABI body + its stack-arg IR wrapper.
     if (s.has_need("str_to_i32")) {
-        s = s.write("__fern_str_to_i32:\n");
-        s = s.write("    ldr x1, [x0]\n");           // data ptr
-        s = s.write("    ldr x2, [x0, #8]\n");       // len
-        s = s.write("    add x3, x1, x2\n");         // end ptr
-        s = s.write("    mov x0, #0\n");             // accumulator
-        s = s.write("    mov x4, #0\n");             // neg flag
-        s = s.write("    cmp x1, x3\n");
-        s = s.write("    b.eq .Ls2i_done\n");
-        s = s.write("    ldrb w5, [x1]\n");
-        s = s.write("    cmp w5, #45\n");            // '-'
-        s = s.write("    b.ne .Ls2i_loop\n");
-        s = s.write("    mov x4, #1\n");
-        s = s.write("    add x1, x1, #1\n");
-        s = s.write(".Ls2i_loop:\n");
-        s = s.write("    cmp x1, x3\n");
-        s = s.write("    b.eq .Ls2i_done\n");
-        s = s.write("    ldrb w5, [x1]\n");
-        s = s.write("    sub x5, x5, #48\n");
-        s = s.write("    cmp x5, #0\n");
-        s = s.write("    b.lt .Ls2i_done\n");
-        s = s.write("    cmp x5, #9\n");
-        s = s.write("    b.gt .Ls2i_done\n");
-        s = s.write("    mov x6, #10\n");
-        s = s.write("    mul x0, x0, x6\n");
-        s = s.write("    add x0, x0, x5\n");
-        s = s.write("    add x1, x1, #1\n");
-        s = s.write("    b .Ls2i_loop\n");
-        s = s.write(".Ls2i_done:\n");
-        s = s.write("    cbz x4, .Ls2i_no_neg\n");
-        s = s.write("    neg x0, x0\n");
-        s = s.write(".Ls2i_no_neg:\n");
-        s = s.write("    ret\n");
-        // Stack-ABI wrapper for the IR path: the string box is on the rt-stack
-        // at [sp], not in x0. Load it, then tail-call the register-ABI body above
-        // (lr still points at the IR call site). Mirrors __fn___fern_i32_to_string.
-        s = s.write("__fn___fern_str_to_i32:\n");
-        s = s.write("    ldr x0, [sp]\n");
-        s = s.write("    b __fern_str_to_i32\n");
+        s = emit_runtime_fern_fn(asmcore.rt_src_str_to_i32(), s);
     }
     // __fn___fern_chr — STACK-arg ABI for the IR path (the i32 byte sits at
     // [sp]). Self-contained (only __fern_alloc), so no dependency on the

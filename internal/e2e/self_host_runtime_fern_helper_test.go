@@ -68,6 +68,14 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_arr_i32_index_of:", ".Lai32_idx_loop"},
 		},
 		{
+			// AST path; the x86-64 IR path is covered by
+			// TestSelfHostRuntimeHelperStrToI32IsFernIR.
+			"str_to_i32",
+			`function main(): i32 { return str_to_i32("42"); }`,
+			"__fn___fern_str_to_i32",
+			[]string{"\n__fern_str_to_i32:", ".Ls2i_loop"},
+		},
+		{
 			"arr_i32_min",
 			"function main(): i32 { var xs: i32[] = [5, 2, 7]; match (xs.min()) { Some(v) => { return v; }, None => { return 0; } } }",
 			"__fn___fern_arr_i32_min",
