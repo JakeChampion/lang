@@ -657,7 +657,6 @@ pub function wasm_eligible(mod: parser.Module): boolean {
         && !module_emits_op(mod, "tcp_recv")
         && !module_emits_op(mod, "tcp_close")
         && !module_emits_op(mod, "tcp_pollable")
-        && !module_emits_op(mod, "temp_dir")
         && !module_emits_op(mod, "subprocess");
 }
 
@@ -927,6 +926,14 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind == "mapiter_advance") {
             // bumps the box's cursor in place; pushes a dummy the statement drops.
             out = out + "    call $__fern_mapiter_advance\n";
+        } else if (o.kind == "temp_dir") {
+            // temp_dir(prefix) -> create a unique `<prefix>-<ns>` directory under
+            // the preopen, push a Result[string, IoError] box. $__fern_temp_dir
+            // (param i32 prefix, result i32) wraps preview1 path_create_directory +
+            // $__fern_monotonic_ns; emitted caller-side in wasm_ir_run. The returned
+            // path is preopen-relative (wasm has no absolute /tmp), matching the
+            // other wasm fs ops.
+            out = out + "    call $__fern_temp_dir\n";
         } else if (o.kind == "int_extend") {
             // i32 -> i64: distinct wasm types, so an explicit widen.
             if (o.unsigned) { out = out + "    i64.extend_i32_u\n"; }
