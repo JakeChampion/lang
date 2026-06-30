@@ -199,6 +199,26 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
             // inst. The subword / unsigned casts (u8/u16/u32/i8/i16), which
             // actually mask or re-extend, are out of the integer subset.
             if (op.str != "i32") { ok = false; }
+        } else if (k == "const_str") {
+            // A string literal → the SSA const_str inst (materialised as a
+            // [len, byte-per-word] block by ssa_x86 / eval_func). The value is
+            // a pointer that flows through slots like any other.
+            var csv: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind: "const_str", result: csv, args: [], imm: 0, str: op.str });
+            stack = stack.append(csv);
+        } else if (k == "str_len") {
+            // `s.len()` → the length stored at word 0 of the string block, i.e.
+            // load_elem(s, 0) — exactly how build_func lowers `.len()`.
+            if (stack.len() < 1) { ok = false; }
+            else {
+                var sp: i32 = stack[stack.len() - 1];
+                stack = drop_last(stack);
+                var zc: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: zc, args: [], imm: 0, str: "" });
+                var slv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "load_elem", result: slv, args: [sp, zc], imm: 0, str: "" });
+                stack = stack.append(slv);
+            }
         } else if (k == "load_local") {
             if (op.i32_imm < 0 || op.i32_imm >= slots.len()) { ok = false; }
             else { stack = stack.append(slots[op.i32_imm]); }

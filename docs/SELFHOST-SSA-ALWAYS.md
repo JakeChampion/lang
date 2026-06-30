@@ -174,11 +174,24 @@ against the **interpreter** for the same source. This is the step that turns the
 lift from a proof-of-concept over synthetic ops into a path over the real
 production IR.
 
-Next: widen the lifted subset toward the strings / heap / structs the SSA
-backends already support (the lowered IR for those uses `alloc` / `load` /
-`store` / `const_str` / RC `call_direct`s the lift still bails on), expanding how
-much real `irlower` output lifts — toward the lift becoming the production
-lowering path.
+**Slice 8 ✅ (landed — string literals + length):** the first non-integer
+widening of the real-`irlower` subset. Probing richer programs mapped the
+boundary precisely: **arrays** lower with Perceus RC ops (`call_direct
+__fern_rc_dec`) that don't link in the SSA backends — out of subset for now —
+but **a string's literal + `.len()`** lowers RC-free (`const_str` /
+`store_local` / `load_local` / `str_len`). So the lift now handles `const_str`
+(→ the SSA `const_str` block) and `str_len` (→ `load_elem(s, 0)`, the word-0
+length, exactly how `build_func` lowers `.len()`). Real programs that build a
+string literal and compute over its length — including `if` on a length
+comparison — now go source → `irlower` → lift → SSA → x86-64 / arm64 → run,
+checked against the interpreter (`strlen` / `strlen2` / `strpick` cases).
+
+Next: the array / heap subset is gated by the Perceus RC `call_direct`s the
+lowered IR inserts — lifting those needs the SSA backends to provide (or the
+lift to drop, where sound) the `__fern_rc_*` / `__fern_arr_*` runtime. That
+boundary is the natural meeting point with goal 2 (the Perceus port) — until
+then, the lift covers integer control flow + string-length over real `irlower`
+output, the production-shaped path proven end-to-end on both backends.
 
 ## Phases
 
