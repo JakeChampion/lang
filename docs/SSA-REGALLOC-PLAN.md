@@ -126,7 +126,13 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
   - [x] Direct integer calls + recursion — `ssa.EvalIn` (function-table eval),
     `x86_64ssa.EmitModule` / `RunModule` / the `Call` op. (Model only; the
     real-asm call ABI rides with the slice-3b parameter ABI.)
-  - [ ] Strings, structs, arrays, maps
+  - [x] Memory — `OpAlloc` / `OpLoad` / `OpStore` (full word) over a shared
+    little-endian byte heap with a bump allocator + reserved null page, in both
+    `ssa.Eval` and the `x86_64ssa` model (`Mem*` ops). The prerequisite for
+    composite types. Validated: store/load roundtrip, heap shared across calls,
+    out-of-bounds error. (Model only; sub-word loads/stores, floats, and the
+    real-asm allocator runtime are follow-ups.)
+  - [ ] Composite types built on memory: strings, structs, arrays, maps
   - [ ] RC inc/dec (Perceus ordering)
 - [ ] Phase 3 — default x86-64 to SSA; measure binary-size win
 - [ ] Phase 4 — arm64 SSA emit + default

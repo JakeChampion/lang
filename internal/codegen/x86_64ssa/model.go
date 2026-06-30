@@ -14,20 +14,21 @@ import (
 // emitter's operand wiring / two-address fixup / spill handling rather than a
 // semantic mismatch.
 func Run(p *Program, args []int64) (int64, error) {
-	return runProg(nil, p, args)
+	return runProg(nil, p, newModelHeap(), args)
 }
 
 // RunModule runs the named entry program, resolving Call instructions against
-// the module so direct calls (and recursion) execute.
+// the module so direct calls (and recursion) execute. A single heap is shared
+// across the whole call tree (OpAlloc state persists), matching the runtime.
 func RunModule(m map[string]*Program, entry string, args []int64) (int64, error) {
 	p, ok := m[entry]
 	if !ok {
 		return 0, fmt.Errorf("RunModule: unknown entry %q", entry)
 	}
-	return runProg(m, p, args)
+	return runProg(m, p, newModelHeap(), args)
 }
 
-func runProg(m map[string]*Program, p *Program, args []int64) (int64, error) {
+func runProg(m map[string]*Program, p *Program, h *modelHeap, args []int64) (int64, error) {
 	if len(args) != len(p.ParamLocs) {
 		return 0, fmt.Errorf("Run: got %d args, program has %d params", len(args), len(p.ParamLocs))
 	}
@@ -93,11 +94,23 @@ func runProg(m map[string]*Program, p *Program, args []int64) (int64, error) {
 				for _, l := range in.ArgLocs {
 					argvals = append(argvals, readLoc(l))
 				}
-				r, err := runProg(m, callee, argvals)
+				r, err := runProg(m, callee, h, argvals)
 				if err != nil {
 					return 0, err
 				}
 				regs[in.Dst] = maskW(in.W, r)
+			case MemAlloc:
+				regs[in.Dst] = h.alloc(regs[in.Src])
+			case MemLoad:
+				v, err := h.load(regs[in.Src] + in.Imm)
+				if err != nil {
+					return 0, err
+				}
+				regs[in.Dst] = maskW(in.W, v)
+			case MemStore:
+				if err := h.store(regs[in.Src]+in.Imm, regs[in.Src2]); err != nil {
+					return 0, err
+				}
 			default:
 				return 0, fmt.Errorf("Run: unknown opcode %d", in.Op)
 			}
@@ -117,6 +130,54 @@ func runProg(m map[string]*Program, p *Program, args []int64) (int64, error) {
 			return 0, fmt.Errorf("Run: unknown terminator %d", blk.Term.Kind)
 		}
 	}
+}
+
+// modelHeap mirrors ssa.Eval's memory model: a little-endian byte buffer with
+// a bump allocator and a reserved null page, so Run and Eval agree on memory
+// semantics for the differential check.
+type modelHeap struct{ data []byte }
+
+func newModelHeap() *modelHeap { return &modelHeap{data: make([]byte, 8)} }
+
+func (h *modelHeap) alloc(size int64) int64 {
+	base := int64(len(h.data))
+	if r := base % 8; r != 0 {
+		base += 8 - r
+	}
+	if size < 0 {
+		size = 0
+	}
+	h.data = append(h.data, make([]byte, base-int64(len(h.data))+size)...)
+	return base
+}
+
+func (h *modelHeap) check(addr int64) error {
+	if addr < 8 || addr+8 > int64(len(h.data)) {
+		return fmt.Errorf("Run: out-of-bounds memory access at %d (heap %d bytes)", addr, len(h.data))
+	}
+	return nil
+}
+
+func (h *modelHeap) load(addr int64) (int64, error) {
+	if err := h.check(addr); err != nil {
+		return 0, err
+	}
+	var v uint64
+	for i := 0; i < 8; i++ {
+		v |= uint64(h.data[addr+int64(i)]) << (8 * i)
+	}
+	return int64(v), nil
+}
+
+func (h *modelHeap) store(addr, val int64) error {
+	if err := h.check(addr); err != nil {
+		return err
+	}
+	u := uint64(val)
+	for i := 0; i < 8; i++ {
+		h.data[addr+int64(i)] = byte(u >> (8 * i))
+	}
+	return nil
 }
 
 func maskW(w int8, v int64) int64 {
