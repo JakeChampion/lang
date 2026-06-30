@@ -7498,6 +7498,89 @@ pub function remove_file_func(): string {
     return o;
 }
 
+// readdir_fd_import emits the preview1 fd_readdir import that $__fern_read_dir
+// uses. path_open / fd_close come from file_imports (emitted once for any module
+// doing path-based file I/O OR read_dir — an unused fd_read import there is valid
+// wasm), so this adds only the fd_readdir entry, avoiding a double import.
+pub function readdir_fd_import(): string {
+    return "  (import \"wasi_snapshot_preview1\" \"fd_readdir\" (func $fd_readdir (param i32 i32 i32 i64 i32) (result i32)))\n";
+}
+
+// read_dir_func emits $__fern_read_dir(path) -> Result[string[], IoError] box.
+// path_open(preopen fd 3, FD_READDIR right) the directory, then loop fd_readdir
+// over the WASI dirent stream (dirent header is 24 bytes: d_next u64 @0, d_ino
+// u64 @8, d_namlen u32 @16, d_type u8 @20; the name's d_namlen bytes follow),
+// skipping "." / "..", building a string[] via $__fern_arr_push (each entry a
+// fresh [len][bytes] block). The cookie loop pages through large directories and
+// resumes from the last COMPLETE entry when fd_readdir truncates the trailing
+// name (bufused == buflen). On path_open failure push Result.Err [tag1, errno];
+// otherwise Result.Ok [tag0, arrayptr]. The readdir buffer is alloc'd once before
+// the loop, so the name/array allocations that follow it never overlap the bytes
+// a later fd_readdir page overwrites. Needs the heap runtime + $__fern_arr_push.
+pub function read_dir_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_read_dir (param $path i32) (result i32)\n";
+    o = o + "    (local $err i32) (local $fd i32) (local $arr i32) (local $buf i32)\n";
+    o = o + "    (local $cookie i64) (local $lastnext i64) (local $used i32) (local $pos i32)\n";
+    o = o + "    (local $namlen i32) (local $nameptr i32) (local $blk i32) (local $i i32) (local $skip i32) (local $res i32)\n";
+    // path_open: dirflags = symlink_follow (1), oflags = 0, rights_base =
+    // FD_READDIR (1<<14 = 16384). fd written to scratch addr 16.
+    o = o + "    (local.set $err (call $path_open (i32.const 3) (i32.const 1) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path)) (i32.const 0) (i64.const 16384) (i64.const 0) (i32.const 0) (i32.const 16)))\n";
+    o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
+    o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
+    o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (local.get $err))\n";
+    o = o + "      (return (local.get $res))))\n";
+    o = o + "    (local.set $fd (i32.load (i32.const 16)))\n";
+    // Empty string[] (len = cap = 0); $__fern_arr_push grows it.
+    o = o + "    (local.set $arr (call $__fern_arr_box (i32.const 0)))\n";
+    o = o + "    (i32.store (local.get $arr) (i32.const 0))\n";
+    o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (i32.const 0))\n";
+    o = o + "    (local.set $buf (call $__fern_alloc (i32.const 4096)))\n";
+    o = o + "    (local.set $cookie (i64.const 0))\n";
+    o = o + "    (block $rdone (loop $rloop\n";
+    o = o + "      (drop (call $fd_readdir (local.get $fd) (local.get $buf) (i32.const 4096) (local.get $cookie) (i32.const 8)))\n";
+    o = o + "      (local.set $used (i32.load (i32.const 8)))\n";
+    o = o + "      (br_if $rdone (i32.eqz (local.get $used)))\n";
+    o = o + "      (local.set $pos (i32.const 0))\n";
+    o = o + "      (local.set $lastnext (local.get $cookie))\n";
+    o = o + "      (block $pdone (loop $ploop\n";
+    // Need a full 24-byte dirent header.
+    o = o + "        (br_if $pdone (i32.gt_u (i32.add (local.get $pos) (i32.const 24)) (local.get $used)))\n";
+    o = o + "        (local.set $lastnext (i64.load (i32.add (local.get $buf) (local.get $pos))))\n";
+    o = o + "        (local.set $namlen (i32.load (i32.add (local.get $buf) (i32.add (local.get $pos) (i32.const 16)))))\n";
+    // Name must be fully present, else fd_readdir truncated it — stop and resume.
+    o = o + "        (br_if $pdone (i32.gt_u (i32.add (i32.add (local.get $pos) (i32.const 24)) (local.get $namlen)) (local.get $used)))\n";
+    o = o + "        (local.set $nameptr (i32.add (local.get $buf) (i32.add (local.get $pos) (i32.const 24))))\n";
+    // Skip "." and "..".
+    o = o + "        (local.set $skip (i32.const 0))\n";
+    o = o + "        (if (i32.and (i32.eq (local.get $namlen) (i32.const 1)) (i32.eq (i32.load8_u (local.get $nameptr)) (i32.const 46))) (then (local.set $skip (i32.const 1))))\n";
+    o = o + "        (if (i32.and (i32.eq (local.get $namlen) (i32.const 2)) (i32.and (i32.eq (i32.load8_u (local.get $nameptr)) (i32.const 46)) (i32.eq (i32.load8_u (i32.add (local.get $nameptr) (i32.const 1))) (i32.const 46)))) (then (local.set $skip (i32.const 1))))\n";
+    o = o + "        (if (i32.eqz (local.get $skip)) (then\n";
+    o = o + "          (local.set $blk (call $__fern_alloc (i32.add (i32.const 4) (local.get $namlen))))\n";
+    o = o + "          (i32.store (local.get $blk) (local.get $namlen))\n";
+    o = o + "          (local.set $i (i32.const 0))\n";
+    o = o + "          (block $cd (loop $cc\n";
+    o = o + "            (br_if $cd (i32.ge_u (local.get $i) (local.get $namlen)))\n";
+    o = o + "            (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $i)) (i32.load8_u (i32.add (local.get $nameptr) (local.get $i))))\n";
+    o = o + "            (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "            (br $cc)))\n";
+    o = o + "          (local.set $arr (call $__fern_arr_push (local.get $arr) (local.get $blk)))))\n";
+    o = o + "        (local.set $pos (i32.add (i32.add (local.get $pos) (i32.const 24)) (local.get $namlen)))\n";
+    o = o + "        (br $ploop)))\n";
+    // bufused < buflen => the whole directory fit; otherwise resume from the last
+    // complete entry's cookie.
+    o = o + "      (br_if $rdone (i32.lt_u (local.get $used) (i32.const 4096)))\n";
+    o = o + "      (local.set $cookie (local.get $lastnext))\n";
+    o = o + "      (br $rloop)))\n";
+    o = o + "    (drop (call $fd_close (local.get $fd)))\n";
+    o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
+    o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (local.get $arr))\n";
+    o = o + "    (local.get $res))\n";
+    return o;
+}
+
 // stdin_fd_read_import emits the standalone wasi fd_read import that read_line /
 // read_int use to read stdin (fd 0). file_imports ALSO imports fd_read for
 // read_file, so the caller (wasm_ir_run) must emit only one of the two — this

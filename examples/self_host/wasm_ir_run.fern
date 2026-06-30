@@ -88,14 +88,19 @@ function main(): i32 {
         }
         // read_file / write_file open paths under preopen fd 3: path_open +
         // fd_read + fd_close (write_file also uses the fd_write import above).
-        // These imports must precede the function section, emitted when the
-        // module does file I/O.
-        if (wasm_ir.module_emits_op(mod, "read_file") || wasm_ir.module_emits_op(mod, "write_file")) { o = o + wasm.file_imports(); }
+        // read_dir ALSO needs path_open + fd_close, so it shares this bundle (an
+        // unused fd_read import for a read_dir-only module is valid wasm) and adds
+        // only fd_readdir below — avoiding a double path_open / fd_close import.
+        // These imports must precede the function section.
+        if (wasm_ir.module_emits_op(mod, "read_file") || wasm_ir.module_emits_op(mod, "write_file") || wasm_ir.module_emits_op(mod, "read_dir")) { o = o + wasm.file_imports(); }
+        // read_dir lists a directory via fd_readdir (path_open / fd_close come from
+        // file_imports above) — emit the standalone fd_readdir import.
+        if (wasm_ir.module_emits_op(mod, "read_dir")) { o = o + wasm.readdir_fd_import(); }
         // read_line / read_int read stdin via fd_read. file_imports above already
         // imports fd_read for path-based file I/O, so emit the standalone fd_read
         // import ONLY when the module reads stdin but does NOT do file I/O —
         // otherwise fd_read would be imported twice (an invalid module).
-        if ((wasm_ir.module_emits_op(mod, "read_line") || wasm_ir.module_emits_op(mod, "read_int")) && !(wasm_ir.module_emits_op(mod, "read_file") || wasm_ir.module_emits_op(mod, "write_file"))) {
+        if ((wasm_ir.module_emits_op(mod, "read_line") || wasm_ir.module_emits_op(mod, "read_int")) && !(wasm_ir.module_emits_op(mod, "read_file") || wasm_ir.module_emits_op(mod, "write_file") || wasm_ir.module_emits_op(mod, "read_dir"))) {
             o = o + wasm.stdin_fd_read_import();
         }
         // The clock builtins (monotonic_ns / now_unix_ms / now_ns) wrap the
@@ -129,7 +134,7 @@ function main(): i32 {
                 + wasm.le32_escape(sv[di].len()) + wasm.wat_escape(sv[di]) + "\")\n";
             di = di + 1;
         }
-        if (wasm_ir.module_allocates(mod) || wasm_ir.module_uses_i32_to_string(mod) || wasm_ir.module_uses_chr(mod) || wasm_ir.module_uses_strbuf(mod) || wasm_ir.module_emits_op(mod, "env") || wasm_ir.module_emits_op(mod, "stat") || wasm_ir.module_emits_op(mod, "remove_file")) {
+        if (wasm_ir.module_allocates(mod) || wasm_ir.module_uses_i32_to_string(mod) || wasm_ir.module_uses_chr(mod) || wasm_ir.module_uses_strbuf(mod) || wasm_ir.module_emits_op(mod, "env") || wasm_ir.module_emits_op(mod, "stat") || wasm_ir.module_emits_op(mod, "remove_file") || wasm_ir.module_emits_op(mod, "read_dir")) {
             o = o + wasm.heap_alloc_helpers(wasm_ir.heap_base_for(mod), wasm_ir.fl_base_for(mod), wasm_ir.fl_cells());
             o = o + wasm.rc_runtime_helpers(wasm_ir.heap_base_for(mod));
         }
@@ -174,6 +179,11 @@ function main(): i32 {
         // $__fern_remove_file(path): path_unlink_file -> Option[IoError] box.
         // Heap-backed (allocates the box), so folded into the heap gate above.
         if (wasm_ir.module_emits_op(mod, "remove_file")) { o = o + wasm.remove_file_func(); }
+        // $__fern_read_dir(path): path_open + fd_readdir loop -> Result[string[],
+        // IoError] box. Heap-backed (allocates names + array + box) and uses
+        // $__fern_arr_push (emitted by the arr_push gate below, which folds
+        // read_dir in).
+        if (wasm_ir.module_emits_op(mod, "read_dir")) { o = o + wasm.read_dir_func(); }
         // $__fern_read_file / $__fern_write_file: open under preopen fd 3 and
         // read/write the whole file, boxing a Result[string, IoError] /
         // Option[IoError]. They alloc via the heap runtime (module_allocates
@@ -224,7 +234,10 @@ function main(): i32 {
         // which calls $__fern_arr_push_owned (the reclaim-on-grow wrapper) — so it
         // must pull in BOTH $__fern_arr_push and the owned wrapper, else a program
         // whose only appends are self-reassigns calls an undefined function.
-        if (wasm_ir.module_emits_op(mod, "arr_push") || wasm_ir.module_emits_op(mod, "arr_push_owned")) { o = o + wasm.arr_push_helper(); }
+        // read_dir builds its string[] result via $__fern_arr_push, so it folds
+        // into this gate (emitted once — a read_dir module that ALSO uses .append
+        // shares the single definition).
+        if (wasm_ir.module_emits_op(mod, "arr_push") || wasm_ir.module_emits_op(mod, "arr_push_owned") || wasm_ir.module_emits_op(mod, "read_dir")) { o = o + wasm.arr_push_helper(); }
         if (wasm_ir.module_emits_op(mod, "arr_push_owned")) { o = o + wasm.arr_push_owned_helper(); }
         if (wasm_ir.module_emits_op(mod, "arr_push_i64")) { o = o + wasm.arr_push_i64_helper(); }
         if (wasm_ir.module_emits_op(mod, "arr_push_f64")) { o = o + wasm.arr_push_f64_helper(); }
