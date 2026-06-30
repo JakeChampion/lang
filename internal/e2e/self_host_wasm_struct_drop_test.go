@@ -93,6 +93,21 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 				"function main(): i32 { var s: i32 = 0; var k: i32 = 0; while (k < 500000) { s = mk(); k = k + 1; } return s - 14; }",
 			"(func $__struct_drop_Outer (param $box i32) (result i32)\n    (drop (call $__fern_arr_dec (i32.load offset=8 (local.get $box))))",
 		},
+		// DEEP nested-struct field (Perceus slice 3 deep-drop): the inner is a LEAF
+		// carrying its OWN rc-array field (`Inner { items: i32[] }`). When the inner
+		// box is uniquely owned, $__struct_drop_Outer first calls $__struct_drop_Inner
+		// (releasing inner.items) before freeing the inner box — instead of the shallow
+		// box-only free that leaked inner.items. The recursive call + the wasm_ir
+		// transitive closure (which emits $__struct_drop_Inner even though no lowered
+		// op references it) are both asserted. 400k churn cycles stay bounded under the
+		// cap ⇒ inner.items is reclaimed; the slice-3c shallow drop leaked it → trap.
+		{
+			"nested-struct-field-deep-drop",
+			"struct Inner { items: i32[] } struct Outer { inner: Inner, tag: i32 } " +
+				"function mk(): i32 { var o: Outer = Outer { inner: Inner { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, tag: 7 }; return o.inner.items[0] + o.inner.items[15] + o.tag; } " +
+				"function main(): i32 { var s: i32 = 0; var k: i32 = 0; while (k < 400000) { s = mk(); k = k + 1; } return s - 24; }",
+			"(func $__struct_drop_Outer (param $box i32) (result i32)\n    (if (call $__fern_rc_is_unique (i32.load offset=8 (local.get $box))) (then\n      (drop (call $__struct_drop_Inner (i32.load offset=8 (local.get $box))))))\n    (drop (call $__fern_arr_dec (i32.load offset=8 (local.get $box))))",
+		},
 	}
 
 	for _, tc := range cases {

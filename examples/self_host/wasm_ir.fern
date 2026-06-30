@@ -363,6 +363,27 @@ pub function struct_drop_types(mod: parser.Module): string[] {
         }
         fi = fi + 1;
     }
+    // Transitive deep-drop closure (Perceus slice 3 deep-drop): emit_wasm_struct_drop_body
+    // emits a recursive $__struct_drop_<Inner> call for a nested-struct field that is a
+    // deep-drop-ok LEAF. That recursive call is a backend instruction, not a lowered IR
+    // op, so it is invisible to the call_direct scan above — add those inner types here
+    // so their bodies are emitted too. Each added inner is a LEAF (no nested-struct
+    // field of its own, by nested_field_deep_drop_ok), so the closure is depth-1; the
+    // index-driven loop re-reads out.len() to absorb any deeper chain defensively.
+    var di: i32 = 0;
+    while (di < out.len()) {
+        var dt: string = out[di];
+        var fc: i32 = irlower.decl_field_count(mod.structs, dt);
+        var k: i32 = 0;
+        while (k < fc) {
+            var ft: string = irlower.decl_field_type_at(mod.structs, dt, k);
+            if (irlower.decl_is_struct(mod.structs, ft) && irlower.nested_field_deep_drop_ok(mod.structs, ft)) {
+                if (util.index_of_str(out, ft) < 0) { out = out.append(ft); }
+            }
+            k = k + 1;
+        }
+        di = di + 1;
+    }
     return out;
 }
 

@@ -3970,6 +3970,39 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.write("    bl __fn___fern_arr_dec\n");            // shallow dec the buffer slab
             s = s.write("    add sp, sp, #16\n");
+        } else if (k_struct && irlower.nested_field_deep_drop_ok(s.struct_decls, fdt)) {
+            // DEEP nested-struct field drop (Perceus slice 3 deep-drop): when the
+            // inner box is UNIQUELY owned, first __struct_drop_<fdt> releases the
+            // inner's OWN rc-array buffers, THEN __fern_arr_dec frees the inner box —
+            // mirroring the k_box element walk and the x86 emit_ir_struct_drop_one
+            // deep-drop arm. fdt is a LEAF (nested_field_deep_drop_ok), so
+            // __struct_drop_<fdt> makes no further recursive struct_drop call: the
+            // recursion is depth-1 and cannot cycle. Emit the inner's per-type body
+            // (transitive need: emit_arm64_reclaim_drop_bodies re-checks needed.len(),
+            // need() dedups). __fern_arr_dec / __fern_rc_is_unique preserve x10, but
+            // __struct_drop_<fdt> CLOBBERS it, so reload box from the frame-relative
+            // stack arg [sp, #16] after the call (entry pushed an stp x29,x30 frame,
+            // so the box stack arg sits one frame slot above sp once the per-call
+            // push is balanced off).
+            var fsan: string = asmcore.sanitize_label(fdt);
+            s = s.need("struct_drop:" + fdt);
+            s = s.write("    ldr x0, [x10, #" + off + "]\n");       // inner = box.field_k
+            s = s.write("    cmp x0, #16, lsl #12\n");              // null / low -> skip field-release
+            s = s.write("    blo .Lasd_" + san + "_sdf" + ks + "\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_rc_is_unique\n");       // shared (rc>1) -> skip field-release
+            s = s.write("    add sp, sp, #16\n");
+            s = s.write("    cbz x0, .Lasd_" + san + "_sdf" + ks + "\n");
+            s = s.write("    ldr x0, [x10, #" + off + "]\n");       // reload inner (x10 valid here)
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___struct_drop_" + fsan + "\n");  // release inner's rc fields (clobbers x10)
+            s = s.write("    add sp, sp, #16\n");
+            s = s.write("    ldr x10, [sp, #16]\n");                // reload box (struct_drop clobbered x10)
+            s = s.write(".Lasd_" + san + "_sdf" + ks + ":\n");
+            s = s.write("    ldr x0, [x10, #" + off + "]\n");       // inner box
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_arr_dec\n");            // free the inner box (rc-guarded)
+            s = s.write("    add sp, sp, #16\n");
         } else if (k_scalar || k_struct) {
             s = s.write("    ldr x0, [x10, #" + off + "]\n");       // box.field_k buffer / nested box
             s = s.write("    str x0, [sp, #-16]!\n");
