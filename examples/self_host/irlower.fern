@@ -11384,6 +11384,26 @@ pub function struct_has_reclaim_array_field(structs: parser.StructDecl[], sty: s
     return false;
 }
 
+// struct_is_scalar_only reports whether struct type `sty` has ONLY flat scalar
+// fields (i32 / boolean / i64 / f64 / u32 / u64) — no rc-tracked field of any
+// kind (no array, string, nested struct, enum, map, option, tuple). Such a
+// struct's box carries no pointer to walk, so its reclamation is a single shallow
+// box free (__fern_rc_dec) with no deep-drop helper. This is the precise-drop
+// admission set for a fresh scalar-only struct LOCAL: freeing the box early
+// cannot dangle any field reference (there are none). Empty / unknown structs
+// return false (nothing to admit).
+function struct_is_scalar_only(structs: parser.StructDecl[], sty: string): boolean {
+    if (sty.len() == 0) { return false; }
+    var n: i32 = decl_field_count(structs, sty);
+    if (n == 0) { return false; }
+    var fi: i32 = 0;
+    while (fi < n) {
+        if (!reuse_field_is_scalar(decl_field_type_at(structs, sty, fi))) { return false; }
+        fi = fi + 1;
+    }
+    return true;
+}
+
 // nested_field_deep_drop_ok reports whether a DIRECT nested-struct field of type
 // `sty` is safe to DEEP-drop — i.e. its drop site may recursively release `sty`'s
 // OWN rc fields (via __struct_drop_<sty>) before freeing the inner box, instead of
@@ -11884,7 +11904,7 @@ struct PreciseDrops { idxs: i32[], names: string[] }
 // is its LAST top-level statement reference; releasing after that whole
 // statement completes is sound even when the last reference sits inside a
 // nested block.
-function precise_drop_names(body: parser.Stmt[], arr_ret: string[], strarr_ret: string[], f64arr_ret: string[], i64arr_ret: string[], borrowable: string[]): PreciseDrops {
+function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], arr_ret: string[], strarr_ret: string[], f64arr_ret: string[], i64arr_ret: string[], borrowable: string[]): PreciseDrops {
     var idxs: i32[] = [];
     var names: string[] = [];
     var reassigned: string[] = body_assign_targets(body);
@@ -11915,6 +11935,17 @@ function precise_drop_names(body: parser.Stmt[], arr_ret: string[], strarr_ret: 
                             },
                             _ => {}
                         }
+                    },
+                    // A FRESH scalar-only struct literal (`var p = P { x: 1, y: 2 }`
+                    // where P has only flat scalar fields and every field value is a
+                    // scalar literal) is a precise-drop candidate too: the box owns no
+                    // pointer, so freeing it right after its last borrow-read is a
+                    // single shallow __fern_rc_dec that cannot dangle a field. A
+                    // struct-update base (`{ ...d, .. }`) is excluded — its box may
+                    // alias d. The emission-site slot guard (slot_is_reclaimable_struct
+                    // + struct_is_scalar_only) re-checks before freeing.
+                    parser.ExprStructLit(slit) => {
+                        if (!slit.has_base && struct_is_scalar_only(structs, slit.type_name) && all_scalar_literal_args(slit.field_values)) { is_lit = true; }
                     },
                     _ => {}
                 }
@@ -15117,7 +15148,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // after its last top-level use (drop-on-last-use), instead of at the exit
     // sweep — bounding the live set so its block recycles for later allocations.
     // Emitted as dec + zero the slot, so the exit sweep harmlessly decs null.
-    var pdrops: PreciseDrops = precise_drop_names(fn.body, arr_ret_fns, strarr_ret_fns, f64arr_ret_fns, i64arr_ret_fns, borrowable_params);
+    var pdrops: PreciseDrops = precise_drop_names(fn.body, structs, arr_ret_fns, strarr_ret_fns, f64arr_ret_fns, i64arr_ret_fns, borrowable_params);
     // Struct in-place reuse (FBIP): the functional-update self-overwrite sites
     // where `var c = T { ...d, .. }` reuses d's box in place (see
     // self_overwrite_reuse_sites). Each such statement is lowered by
@@ -15225,6 +15256,24 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                 // excluded — their buffers hold pointers needing an element walk.
                 if (dslot >= s.n_params && s.is_arr_slot(dslot)
                         && !s.is_strarr_slot(dslot) && !s.is_arrarr_slot(dslot)) {
+                    s = s.emit(ir.op_load_local(dslot));
+                    s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    s = s.emit(ir.op_drop());
+                    s = s.emit(ir.op_const_i32(0));
+                    s = s.emit(ir.op_store_local(dslot));
+                } else if (dslot >= s.n_params && slot_is_reclaimable_struct(s, dslot)
+                        && struct_is_scalar_only(s.structs, s.struct_type_of_slot(dslot))
+                        && util.index_of_str(xreuse.donors, pdrops.names[pi]) < 0
+                        && util.index_of_str(reuse.bases, pdrops.names[pi]) < 0
+                        && util.index_of_str(edon.donors, pdrops.names[pi]) < 0
+                        && util.index_of_str(inarm.donors, pdrops.names[pi]) < 0) {
+                    // Fresh scalar-only struct local, last-used at statement j: free
+                    // its box now (shallow __fern_rc_dec — no field to walk) and zero
+                    // the slot, so the exit sweep's struct loop decs a guarded null.
+                    // Mirrors the array precise drop; bounds the live set without
+                    // changing the exit-sweep contract. Skipped when the box is a
+                    // reuse/cross-reuse/donor target — freeing it here would race the
+                    // box recycling those paths perform (a double-free / UAF).
                     s = s.emit(ir.op_load_local(dslot));
                     s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     s = s.emit(ir.op_drop());
