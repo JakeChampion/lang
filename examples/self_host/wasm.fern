@@ -34,6 +34,7 @@
 import "./parser";
 import "./util";
 import "./wasm_ir";
+import "./irlower";
 
 // StrTable interns string-literal payloads as `[len:i32][bytes]` blocks
 // in linear memory (the data section); a string VALUE is the i32 pointer
@@ -1152,16 +1153,32 @@ function emit_wasm_struct_drop_body(t: string, cx: Ctx): string {
                         o = o + "    (drop (call $__fern_arr_dec " + load + "))\n";
                     }
                 } else if (is_struct_type(cx.structs, ft)) {
-                    // A DIRECT nested-struct field (`inner: Inner`): freed SHALLOW
-                    // via the same $__fern_arr_dec as a scalar-array buffer — one
-                    // level, like a struct-array element box (arr_dec frees struct
-                    // boxes too). rc-guarded inside arr_dec; the construction
-                    // alias-inc (shared irlower) balances it. Mirrors the x86 /
-                    // arm64 k_struct case (Perceus slice 3c). Enum/tuple/Option
-                    // fields (also kind "S") stay leak-only — is_struct_type is
-                    // false for them, a later slice.
                     var sload: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
-                    o = o + "    (drop (call $__fern_arr_dec " + sload + "))\n";
+                    if (irlower.nested_field_deep_drop_ok(cx.structs, ft)) {
+                        // DEEP nested-struct field drop (Perceus slice 3 deep-drop):
+                        // when the inner box is UNIQUELY owned, first $__struct_drop_<ft>
+                        // releases the inner's OWN rc-array buffers, THEN $__fern_arr_dec
+                        // frees the inner box — mirroring the x86 / arm64 deep-drop arm.
+                        // ft is a deep-drop-ok LEAF (no nested-struct field of its own),
+                        // so $__struct_drop_<ft> makes no further recursive call: depth-1,
+                        // no cycle. struct_drop_types' transitive closure emits the inner's
+                        // body. $__fern_rc_is_unique null-/rc-guards internally; a shared
+                        // inner (rc>1) skips the field-release and only the box decs.
+                        o = o + "    (if (call $__fern_rc_is_unique " + sload + ") (then\n";
+                        o = o + "      (drop (call $__struct_drop_" + ft + " " + sload + "))))\n";
+                        o = o + "    (drop (call $__fern_arr_dec " + sload + "))\n";
+                    } else {
+                        // A DIRECT nested-struct field (`inner: Inner`) that is NOT a
+                        // deep-drop-ok leaf (a self-referential / tree struct carries a
+                        // nested-struct field, so it stays here): freed SHALLOW via the
+                        // same $__fern_arr_dec as a scalar-array buffer — one level, like
+                        // a struct-array element box (arr_dec frees struct boxes too).
+                        // rc-guarded inside arr_dec; the construction alias-inc (shared
+                        // irlower) balances it. Mirrors the x86 / arm64 shallow k_struct
+                        // case (Perceus slice 3c). Enum/tuple/Option fields (also kind
+                        // "S") stay leak-only — is_struct_type is false for them.
+                        o = o + "    (drop (call $__fern_arr_dec " + sload + "))\n";
+                    }
                 }
                 k = k + 1;
             }
