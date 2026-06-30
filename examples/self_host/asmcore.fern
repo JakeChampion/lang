@@ -2053,7 +2053,7 @@ pub function runtime_need_deps(name: string): string[] {
         || name == "chr" || name == "args" || name == "read_file" || name == "random_bytes"
         || name == "str_from_bytes" || name == "alloc_u8" || name == "strbuf"
         || name == "arr_push" || name == "arr_slice" || name == "arr_reverse"
-        || name == "arr_concat" || name == "str_chars" || name == "str_bytes"
+        || name == "arr_concat"
         || name == "str_split" || name == "str_case" || name == "str_repeat"
         || name == "str_trim" || name == "str_reverse" || name == "str_replace"
         || name == "poll") {
