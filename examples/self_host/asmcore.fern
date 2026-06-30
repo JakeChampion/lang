@@ -251,6 +251,16 @@ pub function (s: EmitState) mark_chr(): EmitState {
     return s.need("heap").need("chr");
 }
 
+// rt_src_chr backs `chr(b)` (#2649) — the first Tier-2 helper written in Fern via
+// the raw-memory intrinsic floor (docs/RUNTIME-INTRINSICS.md). Allocate 1 byte,
+// store the low byte of b, box it back into a string. The whole Tier-2 vocabulary
+// (alloc, store a byte, box) in one helper — the end-to-end proof the floor works
+// through a real runtime helper. The intrinsics lower to single instructions
+// (+ one __fern_alloc), so chr's only dep stays `heap` (mark_chr).
+pub function rt_src_chr(): string {
+    return "function __fern_chr(b: i32): string { var p: i32 = __raw_alloc(1); __raw_store8(p, 0, b); return __raw_string(p, 1); }";
+}
+
 pub function (s: EmitState) mark_eprint(): EmitState {
     return s.need("eprint");
 }

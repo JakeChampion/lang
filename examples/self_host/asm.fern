@@ -1062,12 +1062,14 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
     // char string box. Useful for building up strings
     // byte by byte (e.g. constructing escape sequences).
     if (name == "chr" && c.args.len() == 1) {
+        // __fern_chr is a Fern runtime function now (#2649, via the raw-memory
+        // intrinsics): __fn_ stack convention (b=param[0] at +16). mark_chr pulls
+        // in heap. No longer rides the str_search bundle.
         s = emit_expr(c.args[0], s);
-        s = s.write("    popq %rdi\n");
-        s = s.write("    call __fern_chr\n");
+        s = s.write("    call __fn___fern_chr\n");
+        s = s.write("    addq $8, %rsp\n");
         s = s.write("    pushq %rax\n");
-        s = s.mark_str_search();
-        s = s.mark_heap();
+        s = s.mark_chr();
         return CallOut { state: s, done: true };
     }
     // strbuf_reset() / strbuf_append(s) / strbuf_take() —
@@ -4848,28 +4850,9 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    popq %rbx\n");
         s = s.write("    leave\n");
         s = s.write("    ret\n");
-        // __fern_chr: %rdi = i32 byte value. Allocates 1 byte
-        // for the char data + 16 bytes for the box. Stores the
-        // low byte of %rdi into the data and the length 1 into
-        // the box.
-        s = s.write("__fern_chr:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    pushq %r13\n");
-        s = s.write("    movq %rdi, %r13\n");        // save value
-        s = s.write("    movq $1, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %r12\n");        // buf ptr
-        s = s.write("    movb %r13b, (%r12)\n");
-        s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %r12, (%rax)\n");
-        s = s.write("    movq $1, 8(%rax)\n");
-        s = s.write("    popq %r13\n");
-        s = s.write("    popq %r12\n");
-        s = s.write("    leave\n");
-        s = s.write("    ret\n");
+        // __fern_chr is now a Fern runtime function (#2649): see asmcore.rt_src_chr,
+        // emitted (need-gated on chr) in the migrated-helpers section below via the
+        // raw-memory intrinsics. No longer hand-rolled in this str_search bundle.
         // __fern_str_split: %rdi = haystack box, %rsi = sep box.
         // Returns string[] (array of string boxes) of segments
         // split by sep. Empty sep → [haystack]. Two-pass:
@@ -7641,6 +7624,11 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // by appending each 1-char slice s[i:i+1] (arr_push, pre-marked by mark_str_chars).
     if (s.has_need("str_chars")) {
         s = emit_runtime_fern_fn(asmcore.rt_src_str_chars(), s);
+    }
+    // __fern_chr — Fern runtime function (#2649), the first Tier-2 helper via the
+    // raw-memory intrinsics: alloc 1 byte, store b, box it. Only dep is heap.
+    if (s.has_need("chr")) {
+        s = emit_runtime_fern_fn(asmcore.rt_src_chr(), s);
     }
     // __fern_str_reverse: %rdi = src box. Returns %rax =
     // new string box with bytes in reverse order.
