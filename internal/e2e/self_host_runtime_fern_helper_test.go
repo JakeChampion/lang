@@ -124,6 +124,14 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_arr_str_index_of:", ".Las_idx_loop"},
 		},
 		{
+			// str_trim (s.trim()) — AST-only; a zero-copy slice helper, un-bundled
+			// from the str_search need. The IR path keeps its own str_trim emission.
+			"str_trim",
+			`function main(): i32 { return "  hi ".trim().len(); }`,
+			"__fn___fern_str_trim",
+			[]string{"\n__fern_str_trim:", ".Ltrim_front"},
+		},
+		{
 			// arr_str_join (string[].join) — AST-only; calls str_concat via `+`.
 			"arr_str_join",
 			`function main(): i32 { var xs: string[] = ["a", "b"]; return xs.join(",").len(); }`,
