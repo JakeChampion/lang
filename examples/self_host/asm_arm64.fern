@@ -1719,11 +1719,16 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
     // when the .rodata slots differ.
     if ((fa.field == "index_of" || fa.field == "contains")
             && c.args.len() == 1 && asmcore.ty_is_array_string(prim_recv)) {
+        // __fern_arr_str_index_of is a Fern runtime function (#2649): call it via
+        // the __fn_ stack convention (xs=param[0] at [x29,#16], target=param[1]).
         s = emit_expr(fa.obj, s);
         s = emit_expr(c.args[0], s);
         s = s.write("    ldr x1, [sp], #16\n");
         s = s.write("    ldr x0, [sp], #16\n");
-        s = s.write("    bl __fern_arr_str_index_of\n");
+        s = s.write("    str x1, [sp, #-16]!\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.write("    bl __fn___fern_arr_str_index_of\n");
+        s = s.write("    add sp, sp, #32\n");
         if (fa.field == "contains") {
             s = s.write("    cmp x0, #0\n");
             s = s.write("    cset x0, ge\n");
@@ -8721,43 +8726,11 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     if (s.has_need("arr_i32_sum")) {
         s = emit_runtime_fern_fn(asmcore.rt_src_arr_i32_sum(), s);
     }
-    // __fern_arr_str_index_of: x0 = string-array ptr,
-    // x1 = target string-box ptr. Returns x0 = first index
-    // where __fern_str_eq(arr[i], target) is true, or -1 if
-    // none. Uses content equality so two strings with the
-    // same bytes but different .rodata slots still match.
+    // __fern_arr_str_index_of is now a Fern runtime function (#2649): see
+    // asmcore.rt_src_arr_str_index_of. It calls str_eq (also Fern); the dep is
+    // marked by mark_arr_str_index_of so str_eq's body is emitted alongside.
     if (s.has_need("arr_str_index_of")) {
-        s = s.write("__fern_arr_str_index_of:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    stp x21, x22, [sp, #-16]!\n");
-        s = s.write("    mov x19, x0\n");           // arr
-        s = s.write("    mov x20, x1\n");           // target
-        s = s.write("    ldr x21, [x19]\n");        // len
-        s = s.write("    mov x22, #0\n");           // i
-        s = s.write(".Las_idx_loop:\n");
-        s = s.write("    cmp x22, x21\n");
-        s = s.write("    b.ge .Las_idx_notfound\n");
-        s = s.write("    add x0, x22, #1\n");
-        s = s.write("    ldr x0, [x19, x0, lsl #3]\n");
-        s = s.write("    mov x1, x20\n");
-        s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_eq\n    add sp, sp, #32\n");
-        s = s.write("    cbnz x0, .Las_idx_found\n");
-        s = s.write("    add x22, x22, #1\n");
-        s = s.write("    b .Las_idx_loop\n");
-        s = s.write(".Las_idx_found:\n");
-        s = s.write("    mov x0, x22\n");
-        s = s.write("    ldp x21, x22, [sp], #16\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
-        s = s.write(".Las_idx_notfound:\n");
-        s = s.write("    mov x0, #-1\n");
-        s = s.write("    ldp x21, x22, [sp], #16\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
+        s = emit_runtime_fern_fn(asmcore.rt_src_arr_str_index_of(), s);
     }
     // __fern_arr_i32_index_of is now a Fern runtime function (#2649): see
     // asmcore.rt_src_arr_i32_index_of. Linear scan returning the first index

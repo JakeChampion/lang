@@ -416,6 +416,16 @@ pub function rt_src_str_eq(): string {
     return "function __fern_str_eq(a: string, b: string): i32 { var la: i32 = a.len(); if (la != b.len()) { return 0; } var i: i32 = 0; while (i < la) { if (a[i] != b[i]) { return 0; } i = i + 1; } return 1; }";
 }
 
+// rt_src_arr_str_index_of backs `xs.index_of(t)` / `.contains(t)` on string
+// arrays (#2649). It is the first migrated helper that CALLS another runtime
+// helper: `xs[i] == t` lowers to a str_eq call (str_eq is itself a Fern runtime
+// function now). The str_eq dependency is declared by mark_arr_str_index_of, so
+// str_eq's body is emitted alongside. Returns the first index where an element
+// equals the target (content equality), or -1. Both params read-only (borrowed).
+pub function rt_src_arr_str_index_of(): string {
+    return "function __fern_arr_str_index_of(xs: string[], target: string): i32 { var i: i32 = 0; while (i < xs.len()) { if (xs[i] == target) { return i; } i = i + 1; } return 0 - 1; }";
+}
+
 // rt_src_str_search backs the string-search predicates (#2649): all three are
 // gated by the single `str_search` need, so one source defines all three and
 // emit_*_runtime_fern_fn emits each. Self-contained — byte indexing only, no

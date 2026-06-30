@@ -100,6 +100,15 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_str_eq:", ".Lstreq_loop"},
 		},
 		{
+			// arr_str_index_of (string[].index_of/.contains) — AST-only, and the
+			// first migrated helper that calls another (str_eq). Both Fern bodies
+			// must be present + the hand-asm gone.
+			"arr_str_index_of",
+			`function main(): i32 { var xs: string[] = ["a", "b"]; return xs.index_of("b"); }`,
+			"__fn___fern_arr_str_index_of",
+			[]string{"\n__fern_arr_str_index_of:", ".Las_idx_loop"},
+		},
+		{
 			"arr_i32_min",
 			"function main(): i32 { var xs: i32[] = [5, 2, 7]; match (xs.min()) { Some(v) => { return v; }, None => { return 0; } } }",
 			"__fn___fern_arr_i32_min",

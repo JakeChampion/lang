@@ -1778,11 +1778,16 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
     // when the .rodata slots differ.
     if ((fa.field == "index_of" || fa.field == "contains")
             && c.args.len() == 1 && asmcore.ty_is_array_string(prim_recv)) {
+        // __fern_arr_str_index_of is a Fern runtime function (#2649): call it via
+        // the __fn_ stack convention (xs=param[0] at +16, target=param[1] at +24).
         s = emit_expr(fa.obj, s);
         s = emit_expr(c.args[0], s);
         s = s.write("    popq %rsi\n");
         s = s.write("    popq %rdi\n");
-        s = s.write("    call __fern_arr_str_index_of\n");
+        s = s.write("    pushq %rsi\n");
+        s = s.write("    pushq %rdi\n");
+        s = s.write("    call __fn___fern_arr_str_index_of\n");
+        s = s.write("    addq $16, %rsp\n");
         if (fa.field == "contains") {
             s = s.write("    cmpq $0, %rax\n");
             s = s.write("    movq $0, %rax\n");
@@ -7831,49 +7836,13 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("arr_i32_sum")) {
         s = emit_runtime_fern_fn(asmcore.rt_src_arr_i32_sum(), s);
     }
-    // __fern_arr_str_index_of: %rdi = string-array ptr,
-    // %rsi = target string-box ptr. Returns %rax = first index
-    // where __fern_str_eq(arr[i], target) is true, or -1.
+    // __fern_arr_str_index_of is now a Fern runtime function (#2649): see
+    // asmcore.rt_src_arr_str_index_of. It CALLS str_eq (also Fern now) — the
+    // first migrated helper that calls another; its str_eq dep is marked by
+    // mark_arr_str_index_of so str_eq's body is emitted too. Linear scan
+    // returning the first index where xs[i] == target, or -1.
     if (s.has_need("arr_str_index_of")) {
-        s = s.write("__fern_arr_str_index_of:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    pushq %r13\n");
-        s = s.write("    pushq %r14\n");
-        s = s.write("    pushq %r15\n");
-        s = s.write("    movq %rdi, %r12\n");      // arr
-        s = s.write("    movq %rsi, %r13\n");      // target
-        s = s.write("    movq (%r12), %r14\n");    // len
-        s = s.write("    movq $0, %r15\n");        // i
-        s = s.write(".Las_idx_loop:\n");
-        s = s.write("    cmpq %r14, %r15\n");
-        s = s.write("    jge .Las_idx_notfound\n");
-        s = s.write("    movq %r15, %rcx\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    movq (%r12,%rcx,8), %rdi\n");
-        s = s.write("    movq %r13, %rsi\n");
-        s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_eq\n    addq $16, %rsp\n");
-        s = s.write("    testq %rax, %rax\n");
-        s = s.write("    jnz .Las_idx_found\n");
-        s = s.write("    incq %r15\n");
-        s = s.write("    jmp .Las_idx_loop\n");
-        s = s.write(".Las_idx_found:\n");
-        s = s.write("    movq %r15, %rax\n");
-        s = s.write("    popq %r15\n");
-        s = s.write("    popq %r14\n");
-        s = s.write("    popq %r13\n");
-        s = s.write("    popq %r12\n");
-        s = s.write("    leave\n");
-        s = s.write("    ret\n");
-        s = s.write(".Las_idx_notfound:\n");
-        s = s.write("    movq $-1, %rax\n");
-        s = s.write("    popq %r15\n");
-        s = s.write("    popq %r14\n");
-        s = s.write("    popq %r13\n");
-        s = s.write("    popq %r12\n");
-        s = s.write("    leave\n");
-        s = s.write("    ret\n");
+        s = emit_runtime_fern_fn(asmcore.rt_src_arr_str_index_of(), s);
     }
     // __fern_arr_i32_index_of is now a Fern runtime function (#2649): see
     // asmcore.rt_src_arr_i32_index_of. Linear scan returning the first index
