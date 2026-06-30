@@ -17,7 +17,10 @@ import (
 // a string (identity: `"x".to_string() == "x"`) and an i32 (routed to the
 // `__fern_i32_to_string` runtime helper) — so importless f-strings that
 // interpolate i32 + string values lower entirely through the IR path (no AST
-// fallback). Each case builds an f-string and returns a small deterministic
+// fallback). This holds for COMPUTED i32 interpolants too (`${x.len()}`,
+// `${a + b}`), not just bare locals: the interpolant is re-parsed into a full
+// expression and its i32 result routes through the same `to_string` fast-path.
+// Each case builds an f-string and returns a small deterministic
 // int (a `.len()`, a byte value, or an equality flag; all <= 126), pinned to
 // the `"ir"` path; expectations were verified against the native interpreter
 // (with `import "std/i32";` so `to_string` resolves there). FEATURE-AUDIT
@@ -46,6 +49,21 @@ var fstringIRCases = []struct {
 	{"multi-digit", `var n: i32 = 100; var s: string = f"={n}="; return s.len();`, 5},
 	// empty f-string desugars to "" (len 0).
 	{"empty", `var s: string = f""; return s.len();`, 0},
+	// COMPUTED interpolants (not a bare local) — the interpolant is re-parsed by
+	// parser.parse_expr_from_text into a full expression, so `${e}` desugars to
+	// `(e).to_string()` for any i32-valued `e`. These pin that a method-call result
+	// and an arithmetic expression interpolate through the same i32 `to_string`
+	// fast-path the bare-local cases use (`expr_recv_prim_type` classifies the call
+	// / arith result as i32). The most common real f-string shape — `${x.len()}`.
+	// i32 method-call result: "L4" (len 2).
+	{"method-len", `var s: string = "abcd"; var t: string = f"L{s.len()}"; return t.len();`, 2},
+	// i32 method-call result, byte-checked: "3"[0] == '3' == 51 — proves the
+	// interpolated digit text is correct, not just the length.
+	{"method-byte", `var s: string = "abc"; var t: string = f"{s.len()}"; return t[0] as i32;`, 51},
+	// arithmetic interpolant: "=25=" (len 4).
+	{"arith", `var n: i32 = 20; var s: string = f"={n + 5}="; return s.len();`, 4},
+	// nested arithmetic, byte-checked: "9"[0] == '9' == 57.
+	{"arith-byte", `var a: i32 = 4; var b: i32 = 5; var s: string = f"{a + b}"; return s[0] as i32;`, 57},
 }
 
 func fstringIRSrc(mainBody string) string {
