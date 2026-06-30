@@ -123,11 +123,21 @@ end-to-end proof of the `stack-IR → SSA → backend` thesis on real hardware: 
 IR that is already the default lowering path lifts to SSA that the existing
 optimiser and x86-64 codegen consume all the way to a running binary.
 
+**Slice 4 ✅ (landed — arm64 backend parity):** the lifted SSA now feeds the
+*second* production backend too. `ssa_lift_emit_run` grew a `-target arm64`
+that routes the same lifted `SFunc` through `ssa_arm64.emit_program` (the lift's
+SSA is target-agnostic — one `SFunc` feeds either backend, exactly as
+`build_func`'s output does in `ssa_emit_run`). `self_host_ssa_lift_emit_test.go`
+now runs each of the four programs on **both** targets — x86-64 natively and
+arm64 under qemu — each in the default slot-addressed emit and `-regalloc`, so
+all sixteen combinations assemble and execute to the right exit code. This
+matters because arm64 is the project's *default* target; the lift now has
+backend parity for the integer control-flow subset.
+
 Next: a differential gate (lift-then-emit vs. `build_func`-then-emit, or vs.
-native, for the same source), an `ssa_arm64` path for the lifted SSA, and
-widening the lifted-emit subset toward the calls / strings / heap the SSA
-backends already support — then driving real `irlower` output (not hand-coded
-`Op[]`) through the lift.
+native, for the same source), widening the lifted-emit subset toward the
+calls / strings / heap the SSA backends already support — then driving real
+`irlower` output (not hand-coded `Op[]`) through the lift.
 
 ## Phases
 

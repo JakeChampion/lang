@@ -15,6 +15,7 @@
 import "./ir";
 import "./ssa";
 import "./ssa_x86";
+import "./ssa_arm64";
 import "./ssa_lift";
 
 // build_prog returns the ir.Op[] for the named program. nparams is 0 for all
@@ -83,10 +84,12 @@ function slots_for(name: string): i32 {
 function main(): i32 {
     var av: string[] = args();
     var prog: string = "loopsum";
+    var target: string = "x86-64";
     var use_regalloc: boolean = false;
     var ai: i32 = 1;
     while (ai < av.len()) {
         if (av[ai] == "-regalloc") { use_regalloc = true; }
+        else if (av[ai] == "-target") { ai = ai + 1; if (ai < av.len()) { target = av[ai]; } }
         else { prog = av[ai]; }
         ai = ai + 1;
     }
@@ -101,6 +104,9 @@ function main(): i32 {
     var empty: string[] = [];
     var f: ssa.SFunc = ssa.optimize(ssa.mark_float_calls(ssa.mark_ptr_calls(lr.func, empty), empty));
     var funcs: ssa.SFunc[] = [f];
-    write(ssa_x86.emit_program(funcs, use_regalloc));
+    // The lifted SSA is target-agnostic: the same SFunc feeds either backend,
+    // exactly as build_func's output does in ssa_emit_run.
+    if (target == "arm64") { write(ssa_arm64.emit_program(funcs, use_regalloc)); }
+    else { write(ssa_x86.emit_program(funcs, use_regalloc)); }
     return 0;
 }

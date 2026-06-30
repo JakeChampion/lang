@@ -10,22 +10,24 @@ import (
 // TestSelfHostSSALiftEmit is the end-to-end proof of the stack-IR -> SSA LIFT
 // feeding real codegen: the ssa_lift_emit_run driver builds a hand-coded
 // ir.Op[] program, lifts it to SSA (ssa_lift.lift_from_ir), runs the existing
-// ssa.optimize, and emits x86-64 via ssa_x86.emit_program. This test assembles
-// that output (gcc -static -nostdlib -no-pie) and runs it, asserting the exit
-// code equals the program's value — so the lifted SSA is proven not merely
-// interpretable (eval_func) but accepted by the existing optimiser and x86-64
-// backend all the way to executing native code. Each program is run twice:
-// once with the default slot-addressed emit, once with -regalloc (the
-// linear-scan allocator) over the lifted SSA.
+// ssa.optimize, and emits assembly via ssa_x86 / ssa_arm64. This test
+// assembles that output (gcc -static -nostdlib [-no-pie]) and runs it (arm64
+// under qemu), asserting the exit code equals the program's value — so the
+// lifted SSA is proven not merely interpretable (eval_func) but accepted by the
+// existing optimiser and BOTH production backends all the way to executing
+// native code. Each program is run twice per target: once with the default
+// slot-addressed emit, once with -regalloc (the linear-scan allocator) over the
+// lifted SSA. The lifted SSA is target-agnostic — the same SFunc feeds either
+// backend, exactly as build_func's output does in ssa_emit_run.
 func TestSelfHostSSALiftEmit(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
-	if len(x86runner) != 0 {
-		t.Skip("emitted x86-64 runs natively; skipping under an exec runner")
-	}
+	armgcc, qemu := arm64Tooling(t)
+
 	dir := t.TempDir()
 	for _, name := range []string{
 		"util.fern", "lexer.fern", "parser.fern", "astwalk.fern",
-		"ir.fern", "ssa.fern", "ssa_x86.fern", "ssa_lift.fern", "ssa_lift_emit_run.fern",
+		"ir.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern",
+		"ssa_lift.fern", "ssa_lift_emit_run.fern",
 	} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
@@ -37,25 +39,39 @@ func TestSelfHostSSALiftEmit(t *testing.T) {
 	}
 	bin := buildSelfHostBin(t, x86gcc, dir, "ssa_lift_emit_run.fern", "ssa_lift_emit_run")
 
+	// emit runs the driver (which executes natively on x86-64) with the given
+	// args and returns the emitted assembly.
 	emit := func(t *testing.T, args ...string) []byte {
 		t.Helper()
-		out, err := exec.Command(bin, args...).Output()
+		var cmd *exec.Cmd
+		if len(x86runner) == 0 {
+			cmd = exec.Command(bin, args...)
+		} else {
+			cmd = exec.Command(x86runner[0], append(append(x86runner[1:], bin), args...)...)
+		}
+		out, err := cmd.Output()
 		if err != nil {
 			t.Fatalf("emit driver failed for %v: %v", args, err)
 		}
 		return out
 	}
-	run := func(t *testing.T, asm []byte, tag string) int {
+	// run assembles asm and executes it, returning the process exit code.
+	run := func(t *testing.T, asm []byte, gcc string, pie bool, mk func(string, ...string) *exec.Cmd, tag string) int {
 		t.Helper()
 		asmPath := filepath.Join(dir, "le_"+tag+".s")
 		binPath := filepath.Join(dir, "le_"+tag)
 		if err := os.WriteFile(asmPath, asm, 0o644); err != nil {
 			t.Fatalf("write asm: %v", err)
 		}
-		if out, err := exec.Command(x86gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+		gccArgs := []string{"-static", "-nostdlib"}
+		if pie {
+			gccArgs = append(gccArgs, "-no-pie")
+		}
+		gccArgs = append(gccArgs, asmPath, "-o", binPath)
+		if out, err := exec.Command(gcc, gccArgs...).CombinedOutput(); err != nil {
 			t.Fatalf("gcc failed: %v\n%s\n--- asm ---\n%s", err, out, asm)
 		}
-		cmd := exec.Command(binPath)
+		cmd := mk(binPath)
 		_ = cmd.Run()
 		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 			t.Fatalf("emitted program did not exit normally")
@@ -74,14 +90,27 @@ func TestSelfHostSSALiftEmit(t *testing.T) {
 	}
 	for _, tc := range cases {
 		tc := tc
-		t.Run(tc.prog, func(t *testing.T) {
-			if got := run(t, emit(t, tc.prog), tc.prog); got != tc.want {
-				t.Errorf("lift->emit %s = %d, want %d", tc.prog, got, tc.want)
+		// x86-64 (native): default + regalloc.
+		t.Run("x86_64/"+tc.prog, func(t *testing.T) {
+			if len(x86runner) != 0 {
+				t.Skip("emitted x86-64 runs natively; skipping under an exec runner")
+			}
+			mk := func(b string, a ...string) *exec.Cmd { return exec.Command(b, a...) }
+			if got := run(t, emit(t, tc.prog), x86gcc, true, mk, "x86-"+tc.prog); got != tc.want {
+				t.Errorf("x86-64 lift->emit %s = %d, want %d", tc.prog, got, tc.want)
+			}
+			if got := run(t, emit(t, tc.prog, "-regalloc"), x86gcc, true, mk, "x86-ra-"+tc.prog); got != tc.want {
+				t.Errorf("x86-64 lift->emit -regalloc %s = %d, want %d", tc.prog, got, tc.want)
 			}
 		})
-		t.Run(tc.prog+"-regalloc", func(t *testing.T) {
-			if got := run(t, emit(t, tc.prog, "-regalloc"), tc.prog+"-ra"); got != tc.want {
-				t.Errorf("lift->emit -regalloc %s = %d, want %d", tc.prog, got, tc.want)
+		// arm64 (qemu): default + regalloc.
+		t.Run("arm64/"+tc.prog, func(t *testing.T) {
+			mk := func(b string, a ...string) *exec.Cmd { return runArm64Bin(qemu, b, a...) }
+			if got := run(t, emit(t, tc.prog, "-target", "arm64"), armgcc, false, mk, "arm-"+tc.prog); got != tc.want {
+				t.Errorf("arm64 lift->emit %s = %d, want %d", tc.prog, got, tc.want)
+			}
+			if got := run(t, emit(t, tc.prog, "-target", "arm64", "-regalloc"), armgcc, false, mk, "arm-ra-"+tc.prog); got != tc.want {
+				t.Errorf("arm64 lift->emit -regalloc %s = %d, want %d", tc.prog, got, tc.want)
 			}
 		})
 	}
