@@ -376,6 +376,23 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 		},
 		{
+			// u32.to_string() on a value with BIT 31 SET must format UNSIGNED
+			// (via the __fern_u32_to_string runtime helper), NOT through the
+			// signed __fern_i32_to_string, which reads the low 32 bits as a
+			// negative i32 and mis-renders. Regression guard for #2649 — the
+			// value-99 case above never exercised the high-bit path. No
+			// `import "std/u32"`: the helper is a builtin, so it works without it.
+			"u32-high-bit-to-string",
+			"function main(): i32 { " +
+				"if ((4294967295 as u32).to_string() != \"4294967295\") { return 1; } " +
+				"if (((1 as u32) << (31 as u32)).to_string() != \"2147483648\") { return 2; } " +
+				"if (((0 as u32) - (1 as u32)).to_string() != \"4294967295\") { return 3; } " +
+				"return 42; }",
+			42,
+			"",
+			"",
+		},
+		{
 			// IEEE NaN semantics for f64 compares. Per IEEE, every
 			// relation with NaN is false except `!=`. ucomisd sets
 			// CF=ZF=PF=1 on unordered, so naked setb / setbe / sete

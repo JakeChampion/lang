@@ -1379,6 +1379,23 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
         s = s.write("    pushq %rax\n");
         return s;
     }
+    // Built-in `.to_string()` on a u32 receiver routes to the UNSIGNED
+    // __fern_u32_to_string runtime helper, NOT the signed __fern_i32_to_string:
+    // the latter mis-renders a value with bit 31 set (e.g. `(0 as u32) - (1 as
+    // u32)` = 4294967295), reading the low 32 bits as a negative i32 in its
+    // digit loop. Must come before the is_int_tag shortcut below, which would
+    // otherwise catch u32. (#2649 — exposed when i32_to_string moved from the
+    // tolerant 64-bit hand-asm to the strict-i32 Fern helper. A runtime helper
+    // (not std/u32's method) so it works without `import "std/u32"`, as the i32
+    // builtin did.)
+    if (fa.field == "to_string" && c.args.len() == 0 && asmcore.ty_is_u32(prim_recv)) {
+        s = emit_expr(fa.obj, s);
+        s = s.write("    call __fn___fern_u32_to_string\n");
+        s = s.write("    addq $8, %rsp\n");
+        s = s.write("    pushq %rax\n");
+        s = s.mark_u32_to_string();
+        return s;
+    }
     // Built-in `.to_string()` on i32 and string —
     // i32 routes to the existing runtime helper,
     // string returns the receiver unchanged. The
@@ -4378,6 +4395,11 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // __fn_ stack convention; heap-only dep. Mirrors the x86-64 IR path + arm64.
     if (s.has_need("i32_to_string")) {
         s = emit_runtime_fern_fn(asmcore.rt_src_i32_to_string(), s);
+    }
+    // __fern_u32_to_string (#2649): the UNSIGNED sibling for `(u32).to_string()`,
+    // via the raw-memory intrinsics; heap-only dep. See asmcore.rt_src_u32_to_string.
+    if (s.has_need("u32_to_string")) {
+        s = emit_runtime_fern_fn(asmcore.rt_src_u32_to_string(), s);
     }
     // __fern_str_to_i32 is now a Fern runtime function (#2649): see
     // asmcore.rt_src_str_to_i32. Parses a borrowed string into an i32 (optional

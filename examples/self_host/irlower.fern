@@ -6217,6 +6217,27 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // returns "" for struct+enum, so those reach the method paths).
                     if (fa.field == "to_string" && c.args.len() == 0) {
                         if (expr_is_str(fa.obj, s)) { return lower_expr(fa.obj, s); }
+                        // A u32 VALUE expression — an `as u32` cast or u32
+                        // arithmetic/shift (expr_is_u32 is deliberately FALSE for a
+                        // u32-RETURNING call, which already resolves to the u32
+                        // to_string method via struct_ret_type/expr_struct_type).
+                        // Format it UNSIGNED via the __fern_u32_to_string runtime
+                        // helper: the signed __fern_i32_to_string mis-renders a value
+                        // with bit 31 set (e.g. `(0 as u32) - (1 as u32)` = 4294967295
+                        // → "/"), reading the low 32 bits as a negative i32 in its
+                        // digit loop. Must come BEFORE the i32 fallback. (#2649 —
+                        // exposed when i32_to_string moved from the tolerant 64-bit
+                        // hand-asm to the strict-i32 Fern helper.)
+                        if (expr_is_u32(fa.obj, s)) {
+                            var u2s: LowerState = lower_expr(fa.obj, s);
+                            if (!u2s.ok) { return u2s; }
+                            // Route to the UNSIGNED __fern_u32_to_string runtime
+                            // helper (an is_fern_helper, so calls_only_known keeps the
+                            // module IR-eligible; ir_helper_symbol targets
+                            // __fn___fern_u32_to_string). NOT std/u32's method — this
+                            // works without `import "std/u32"`, like the i32 builtin.
+                            return u2s.emit(ir.op_call_direct("__fern_u32_to_string", 1));
+                        }
                         if (expr_recv_prim_type(fa.obj, s) == "i32") {
                             var t2s: LowerState = lower_expr(fa.obj, s);
                             if (!t2s.ok) { return t2s; }

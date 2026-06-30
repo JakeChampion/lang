@@ -96,6 +96,10 @@ pub function is_fern_helper(name: string): boolean {
         // i32.to_string()'s decimal-text helper (emit_ir_runtime provides the
         // stack-arg body under __fn___fern_i32_to_string).
         || name == "__fern_i32_to_string"
+        // u32.to_string()'s UNSIGNED decimal-text helper (#2649). Emitted as a
+        // Fern runtime fn under __fn___fern_u32_to_string; the ir_helper_symbol
+        // default (__fn_ + name) targets it. Heap-dep.
+        || name == "__fern_u32_to_string"
         // str_to_i32(s)'s decimal-parse helper (allocation-free stack-arg body
         // under __fn___fern_str_to_i32, also from emit_ir_runtime).
         || name == "__fern_str_to_i32"
@@ -3446,7 +3450,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_now_unix_ms", "__fern_sleep_ms", "__fern_map_new",
         "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fern_map_delete",
         "__fn___fern_rc_inc", "__fn___fern_arr_dec", "__fn___fern_rc_is_unique",
-        "__fn___fern_rc_underflow_count", "__fn___fern_i32_to_string",
+        "__fn___fern_rc_underflow_count", "__fn___fern_i32_to_string", "__fn___fern_u32_to_string",
         "__fn___fern_str_to_i32", "__fn___fern_str_cmp", "__fn___fern_chr", "__fn___fern_snapshot_dec"
     ];
     var i: i32 = 0;
@@ -4209,6 +4213,8 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // __fern_i32_to_string allocates its result box, so it needs the
             // heap runtime + its own body (gated on this need in emit_ir_runtime).
             if (o.str == "__fern_i32_to_string") { s = s.need("heap").need("i32_to_string"); }
+            // __fern_u32_to_string likewise allocates its result box (#2649).
+            if (o.str == "__fern_u32_to_string") { s = s.need("heap").need("u32_to_string"); }
             // str_to_i32 is allocation-free (parses in registers), so it needs
             // only its own body — not the heap runtime.
             if (o.str == "__fern_str_to_i32") { s = s.need("str_to_i32"); }
@@ -4894,7 +4900,7 @@ pub function all_runtime_need_roots(): string[] {
         "arr_i32_product", "arr_i32_sum", "arr_push", "arr_push_owned", "arr_reverse", "arr_slice",
         "arr_str_index_of", "arr_str_join", "chr", "eprint", "heap", "i32_gcd",
         "i32_lcm", "i32_pow",
-        "i32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
+        "i32_to_string", "u32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
         "print_int", "putchar", "random_bytes", "random_i32", "read_file",
         "read_int", "sleep_ms", "str_bytes", "str_case", "str_chars", "str_cmp",
         "str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
@@ -5093,7 +5099,7 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     // The freestanding allocator + RC runtime, only when the program allocates.
     // i32.to_string() allocates its box even in an otherwise heap-free program,
     // so its emit-time need pulls the runtime in too (its body calls __fern_alloc).
-    if (s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("print_int") || s.has_need("read_int") || s.has_need("str_read_line") || s.has_need("putchar") || s.has_need("strbuf") || s.has_need("reader") || s.has_need("write_file") || s.has_need("remove_dir_all") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_file") || s.has_need("env") || s.has_need("stat") || s.has_need("subprocess")) { s = emit_ir_runtime(s); }
+    if (s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("u32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("print_int") || s.has_need("read_int") || s.has_need("str_read_line") || s.has_need("putchar") || s.has_need("strbuf") || s.has_need("reader") || s.has_need("write_file") || s.has_need("remove_dir_all") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_file") || s.has_need("env") || s.has_need("stat") || s.has_need("subprocess")) { s = emit_ir_runtime(s); }
     // String search predicates (starts_with / ends_with / index_of) are now
     // Fern runtime functions (#2649): allocation-free + self-contained, lowered
     // through the IR pipeline via emit_ir_runtime_fern_fn (entry-only, .text;
@@ -5176,6 +5182,11 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     if (s.has_need("i32_to_string")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_i32_to_string(), all_structs, s);
+    }
+    // u32_to_string — UNSIGNED sibling for (u32).to_string() (#2649). Heap-dep.
+    if (s.has_need("u32_to_string")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_u32_to_string(), all_structs, s);
     }
     // random_i32 allocates nothing, so its helper is emitted independently of
     // the heap runtime (a random_i32-only program is heap-free).

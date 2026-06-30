@@ -1351,6 +1351,19 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
     // generic path below would chase a
     // `__fn_i32.to_string` symbol that no FuncDecl
     // emits, producing a link error.
+    // `.to_string()` on a u32 receiver routes to the UNSIGNED
+    // __fern_u32_to_string runtime helper, NOT the signed __fern_i32_to_string,
+    // which mis-renders a value with bit 31 set (e.g. `(0 as u32) - (1 as u32)`
+    // = 4294967295). Must precede the is_int_tag shortcut below (which catches
+    // u32). #2649 — mirrors the x86-64 AST + IR-path fixes; import-free helper.
+    if (fa.field == "to_string" && c.args.len() == 0 && asmcore.ty_is_u32(prim_recv)) {
+        s = emit_expr(fa.obj, s);
+        s = s.write("    bl __fn___fern_u32_to_string\n");
+        s = s.write("    add sp, sp, #16\n");
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.mark_u32_to_string();
+        return s;
+    }
     if (fa.field == "to_string" && c.args.len() == 0
             && (asmcore.is_int_tag(prim_recv) || asmcore.ty_is_string(prim_recv))) {
         s = emit_expr(fa.obj, s);
@@ -4605,6 +4618,12 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     // register-ABI body + its stack-arg IR wrapper. heap-only dep.
     if (s.has_need("i32_to_string")) {
         s = emit_runtime_fern_fn(asmcore.rt_src_i32_to_string(), s);
+    }
+    // __fern_u32_to_string (#2649): the UNSIGNED sibling for `(u32).to_string()`.
+    // Single shared body for arm64 AST + IR; heap-only dep. See
+    // asmcore.rt_src_u32_to_string.
+    if (s.has_need("u32_to_string")) {
+        s = emit_runtime_fern_fn(asmcore.rt_src_u32_to_string(), s);
     }
     // __fern_str_to_i32 is now a Fern runtime function (#2649): see
     // asmcore.rt_src_str_to_i32, lowered through asm_arm64's normal function

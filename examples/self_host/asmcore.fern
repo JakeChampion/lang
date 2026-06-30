@@ -261,6 +261,23 @@ pub function rt_src_i32_to_string(): string {
     return "function __fern_i32_to_string(n: i32): string { if (n == 0) { var z: i32 = __raw_alloc(1); __raw_store8(z, 0, 48); return __raw_string(z, 1); } var neg: i32 = 0; var v: i32 = n; if (v < 0) { neg = 1; v = 0 - v; } var nd: i32 = 0; var t: i32 = v; while (t > 0) { nd = nd + 1; t = t / 10; } var total: i32 = nd + neg; var p: i32 = __raw_alloc(total); if (neg == 1) { __raw_store8(p, 0, 45); } var i: i32 = total - 1; while (v > 0) { __raw_store8(p, i, 48 + (v % 10)); v = v / 10; i = i - 1; } return __raw_string(p, total); }";
 }
 
+pub function (s: EmitState) mark_u32_to_string(): EmitState {
+    return s.need("heap").need("u32_to_string");
+}
+
+// rt_src_u32_to_string backs (n).to_string() on a u32 value (#2649). The signed
+// __fern_i32_to_string can't format a u32 with bit 31 set (it reads the low 32
+// bits as a negative i32), so a u32 receiver routes here instead. The magnitude
+// is recovered UNSIGNED as `(n as i64) & 0xFFFFFFFF` — correct no matter how the
+// caller extended the 32-bit value into its 8-byte arg slot (sign- or zero-
+// extended) — then formatted with i64 digit arithmetic (values up to
+// 4294967295 exceed i32). Heap is its sole dep. n==0 → \"0\". Never negative, so
+// no sign branch. Import-free: it is a runtime helper, so u32.to_string works
+// without `import \"std/u32\"` exactly as the i32 builtin did.
+pub function rt_src_u32_to_string(): string {
+    return "function __fern_u32_to_string(n: i32): string { var v: i64 = (n as i64) & (4294967295 as i64); if (v == (0 as i64)) { var z: i32 = __raw_alloc(1); __raw_store8(z, 0, 48); return __raw_string(z, 1); } var nd: i32 = 0; var t: i64 = v; while (t > (0 as i64)) { nd = nd + 1; t = t / (10 as i64); } var p: i32 = __raw_alloc(nd); var i: i32 = nd - 1; while (v > (0 as i64)) { __raw_store8(p, i, 48 + ((v % (10 as i64)) as i32)); v = v / (10 as i64); i = i - 1; } return __raw_string(p, nd); }";
+}
+
 pub function (s: EmitState) mark_str_to_i32(): EmitState {
     return s.need("str_to_i32");
 }
@@ -2103,6 +2120,7 @@ pub function runtime_need_deps(name: string): string[] {
     // heap, even though only take allocates.
     var heap: string[] = ["heap"];
     if (name == "str_concat" || name == "str_read_line" || name == "i32_to_string"
+        || name == "u32_to_string"
         || name == "chr" || name == "args" || name == "read_file" || name == "random_bytes"
         || name == "str_from_bytes" || name == "alloc_u8" || name == "strbuf"
         || name == "arr_push" || name == "arr_slice" || name == "arr_reverse"
