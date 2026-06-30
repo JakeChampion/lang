@@ -127,7 +127,7 @@ import "./astwalk";
 // br(ctrl - top - 1). Together they let break/continue compute relative br
 // depths through arbitrary if/match nesting.
 pub struct LocalInfo {
-    names: string,
+    slot_name: string,
     is_arr: boolean,
     is_str: boolean,
     is_strarr: boolean,
@@ -151,87 +151,87 @@ pub struct LocalInfo {
 
 // li_new(name) — a fresh local slot (defaults: every flag false, every type "").
 pub function li_new(name: string): LocalInfo {
-    return LocalInfo { names: name, is_arr: false, is_str: false, is_strarr: false, struct_type: "", opt_type: "", tuple_elems: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_i64arr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "" };
+    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, struct_type: "", opt_type: "", tuple_elems: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_i64arr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "" };
 }
 
 pub function li_set_names(li: LocalInfo, v: string): LocalInfo {
-    return LocalInfo { names: v, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: v, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
 }
 
 pub function li_set_is_arr(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { names: li.names, is_arr: v, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: v, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
 }
 
 pub function li_set_is_str(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { names: li.names, is_arr: li.is_arr, is_str: v, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: v, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
 }
 
 pub function li_set_is_strarr(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { names: li.names, is_arr: li.is_arr, is_str: li.is_str, is_strarr: v, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: v, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
 }
 
 pub function li_set_struct_type(li: LocalInfo, v: string): LocalInfo {
-    return LocalInfo { names: li.names, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: v, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: v, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
 }
 
 pub function li_set_opt_type(li: LocalInfo, v: string): LocalInfo {
-    return LocalInfo { names: li.names, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: v, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: v, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
 }
 
 pub function li_set_tuple_elems(li: LocalInfo, v: string): LocalInfo {
-    return LocalInfo { names: li.names, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: v, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: v, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
 }
 
 pub function li_set_map_type(li: LocalInfo, v: string): LocalInfo {
-    return LocalInfo { names: li.names, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: v, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: v, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
 }
 
 pub function li_set_is_i64(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { names: li.names, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: v, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: v, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
 }
 
 pub function li_set_is_f64(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { names: li.names, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: v, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: v, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
 }
 
 pub function li_set_is_f32(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { names: li.names, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: v, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: v, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
 }
 
 pub function li_set_is_f64arr(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { names: li.names, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: v, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: v, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
 }
 
 pub function li_set_is_i64arr(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { names: li.names, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: v, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: v, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
 }
 
 pub function li_set_is_closurearr(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { names: li.names, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: v, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: v, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
 }
 
 pub function li_set_is_fnarr(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { names: li.names, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: v, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: v, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
 }
 
 pub function li_set_is_arrarr(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { names: li.names, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: v, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: v, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
 }
 
 pub function li_set_arrarr_elem(li: LocalInfo, v: string): LocalInfo {
-    return LocalInfo { names: li.names, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: v, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: v, is_u32: li.is_u32, is_u64: li.is_u64, subword: li.subword };
 }
 
 pub function li_set_is_u32(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { names: li.names, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: v, is_u64: li.is_u64, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: v, is_u64: li.is_u64, subword: li.subword };
 }
 
 pub function li_set_is_u64(li: LocalInfo, v: boolean): LocalInfo {
-    return LocalInfo { names: li.names, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: v, subword: li.subword };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: v, subword: li.subword };
 }
 
 pub function li_set_subword(li: LocalInfo, v: string): LocalInfo {
-    return LocalInfo { names: li.names, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: v };
+    return LocalInfo { slot_name: li.slot_name, is_arr: li.is_arr, is_str: li.is_str, is_strarr: li.is_strarr, struct_type: li.struct_type, opt_type: li.opt_type, tuple_elems: li.tuple_elems, map_type: li.map_type, is_i64: li.is_i64, is_f64: li.is_f64, is_f32: li.is_f32, is_f64arr: li.is_f64arr, is_i64arr: li.is_i64arr, is_closurearr: li.is_closurearr, is_fnarr: li.is_fnarr, is_arrarr: li.is_arrarr, arrarr_elem: li.arrarr_elem, is_u32: li.is_u32, is_u64: li.is_u64, subword: v };
 }
 
 pub struct LowerState {
@@ -460,7 +460,7 @@ pub function (s: LowerState) slot_of(name: string): i32 {
     // found again. First-match here clobbered the outer slot on shadow (#3726).
     var i: i32 = s.locals.len() - 1;
     while (i >= 0) {
-        if (s.locals[i].names == name) { return i; }
+        if (s.locals[i].slot_name == name) { return i; }
         i = i - 1;
     }
     return 0 - 1;
@@ -10020,7 +10020,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // `LowerState { ops: s.ops.append(op), … }`) before freeing the box,
             // guarded so neither the new value nor the caller's snapshot is freed.
             if (slot_is_snapshot_param(s, slot)) {
-                var snsl: i32 = s.slot_of("$snap$" + s.locals[slot].names);
+                var snsl: i32 = s.slot_of("$snap$" + s.locals[slot].slot_name);
                 var snty: string = s.struct_type_of_slot(slot);
                 if (struct_has_reclaim_array_field(s.structs, snty)) {
                     return emit_field_reclaim_store(se, slot, snty, snsl);
@@ -13665,7 +13665,7 @@ function slot_is_reclaimable_struct(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.struct_type_of_slot(i).len() == 0) { return false; }
-    return util.index_of_str(s.reclaimable_names, s.locals[i].names) >= 0;
+    return util.index_of_str(s.reclaimable_names, s.locals[i].slot_name) >= 0;
 }
 
 // slot_is_snapshot_param: slot `i` is a struct PARAM / receiver lower_func
@@ -13678,7 +13678,7 @@ function slot_is_snapshot_param(s: LowerState, i: i32): boolean {
     if (i >= s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.struct_type_of_slot(i).len() == 0) { return false; }
-    return util.index_of_str(s.reclaimable_names, "SNAP:" + s.locals[i].names) >= 0;
+    return util.index_of_str(s.reclaimable_names, "SNAP:" + s.locals[i].slot_name) >= 0;
 }
 
 // --- struct in-place reuse (FBIP): functional-update self-overwrite ---------
@@ -15249,7 +15249,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     var locals0: LocalInfo[] = [];
     var lzi: i32 = 0;
     while (lzi < names.len()) {
-        locals0 = locals0.append(LocalInfo { names: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_i64arr: isi64arr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi] });
+        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_i64arr: isi64arr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi] });
         lzi = lzi + 1;
     }
     var s: LowerState = LowerState { ops: empty, locals: locals0,  ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_is_i64arr: ret_i64arr, ret_is_dyn: ret_dyn, i64_ret_fns: i64_ret_fns, fn_param_sigs: fn_param_sigs, cur_fn: fn.name, cur_ret: fn.ret_type, closure_fns: closure_fns, const_fns: const_fns, closure_locals: noclos, f64_ret_fns: f64_ret_fns, f64arr_ret_fns: f64arr_ret_fns, i64arr_ret_fns: i64arr_ret_fns, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns_aug, strarr_ret_fns: strarr_ret_fns, arr_method_fns: arr_method_fns, opt_ret_fns: opt_ret_fns, tuple_ret_fns: tuple_ret_fns, struct_ret_fns: struct_ret_fns_aug, map_ret_fns: map_ret_fns, reclaimable_names: reclaim, aliased_names: aliased, fn_names: fn_names, return_fresh_struct_ret_fns: return_fresh_struct_ret_fns, n_params: names.len(), ok: true };
