@@ -661,7 +661,6 @@ pub function wasm_eligible(mod: parser.Module): boolean {
         && !module_emits_op(mod, "subprocess")
         && !module_emits_op(mod, "fsin")
         && !module_emits_op(mod, "fcos")
-        && !module_emits_op(mod, "fpow")
         // Map iteration is parallel-array only (x86-64 / arm64); wasm maps are
         // hash maps with no iterator-box runtime, so a mapiter module stays on the
         // wasm AST path (where the legacy emitter handles m.iter()/has_next()/...).
@@ -1578,6 +1577,13 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // (the index pushed last, on top). Dispatch through the per-arity
             // signature `$fn<argc>` (all-i32 params/result this slice).
             out = out + "    call_indirect (type $fn" + util.i32_to_string(o.i32_imm) + ")\n";
+        } else if (o.kind == "fpow") {
+            // x^y: the one binary transcendental. Both f64 operands are on the
+            // stack (x pushed first, y on top — irlower's op_fbin order), matching
+            // $__fern_pow_f64(param x, param y). wasm has no pow instruction, so
+            // call the runtime (= exp(y·ln x)); the arm64 backend lowers fpow the
+            // same way (bl __fern_pow_f64).
+            out = out + "    call $__fern_pow_f64\n";
         } else {
             out = out + "    " + wasm_binop_w(o.kind, o.width) + "\n";
         }
