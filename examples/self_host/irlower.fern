@@ -4110,6 +4110,27 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             _ => {}
                         }
                     }
+                    // A DIRECT nested-struct field (`inner: Inner`, decl_is_struct,
+                    // not an array): now SHALLOW-dropped on the struct's reclamation
+                    // (emit_ir_struct_drop_one's k_struct → arr_dec of the inner box,
+                    // one level). To balance that dec, retain the field whenever its
+                    // source could ALIAS a box another owner also drops. ONLY a fresh
+                    // struct LITERAL `Inner { … }` is provably sole-owned (rc 1) and
+                    // reclaimed with no inc; EVERY other source (a bare struct ident, a
+                    // field copy `o.inner`, a struct-returning call) is inc'd —
+                    // conservative and SOUND: a genuinely-fresh non-literal source then
+                    // just LEAKS (rc never reaches 0), never double-frees. (Tightening
+                    // the fresh set to fresh-returning calls is a follow-up.) The inc is
+                    // on a real rc-headered struct box (never a header-less string), so
+                    // it is sound — cf. the string-field skip below.
+                    if (!fav_alias_inc && decl_is_struct(s.structs, cfft)) {
+                        var nfv_fresh: boolean = false;
+                        match (slit.field_values[found]) {
+                            parser.ExprStructLit(_) => { nfv_fresh = true; },
+                            _ => {}
+                        }
+                        if (!nfv_fresh) { fav_alias_inc = true; }
+                    }
                     // A `string` field is rc-headered and deep-dropped on the
                     // struct's reclamation (emit_struct_field_drops). The values safe
                     // to FREE are exactly the fresh, sole-owned HEAP strings whose data
@@ -4170,6 +4191,19 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     }
                     if (struct_field_is_i64(s.structs, slit.type_name, di)) { sm = sm.emit(ir.op_struct_get_i64(di)); }
                     else { sm = sm.emit(ir.op_struct_get(di, struct_field_width(s.structs, slit.type_name, di))); }
+                    // A nested-struct field COPIED from the base (`Outer { ...base, … }`)
+                    // ALIASES base.<field> — both the new struct and the base now point
+                    // at the same inner box, and BOTH shallow-drop it on reclamation. So
+                    // retain it (the inner box read by struct_get is on the stack) with
+                    // the same Perceus dup as the field-override alias case, or the new
+                    // struct's drop would double-free base's inner. Array fields copied
+                    // from a base alias-inc via the array gates above (override path); a
+                    // base-copied ARRAY field is left as-is here (its prior behaviour),
+                    // only the newly-reclaimed nested-struct kind needs the retain.
+                    var cpft: string = decl_field_type_at(s.structs, slit.type_name, di);
+                    if (decl_is_struct(s.structs, cpft)) {
+                        sm = sm.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                    }
                 } else {
                     // a non-update literal must set every field
                     return s.fail();
@@ -11294,6 +11328,11 @@ pub function struct_has_reclaim_array_field(structs: parser.StructDecl[], sty: s
         if (is_leaksafe_array_field(fdt)) { return true; }
         if (is_struct_array_field_type(structs, fdt)) { return true; }
         if (is_enum_array_field_type(structs, fdt)) { return true; }
+        // A DIRECT nested-struct field (`inner: Inner`) is now SHALLOW-reclaimed
+        // (emit_ir_struct_drop_one's k_struct), so a struct carrying one needs its
+        // exit drop emitted too — admit it to the reclaim set (the construction
+        // alias-inc in the ExprStructLit lowering keeps it balanced).
+        if (decl_is_struct(structs, fdt)) { return true; }
         fi = fi + 1;
     }
     return false;
@@ -16508,6 +16547,22 @@ function bin_apply(kind: string, l: i32, r: i32): i32 {
     return 0;
 }
 
+// is_reclaim_helper reports whether a call_direct callee is a Perceus reclaim
+// runtime helper that this i32 round-trip evaluator models as VALUE-PRESERVING
+// identity on its primary box arg (the value is already computed before the
+// drop, and the evaluator does not model the heap free). These are backend
+// runtime functions, NOT user functions in `fns`, so without this they would
+// miss find_fn / eval_call and bail (sentinel 198). Covers the per-type
+// __struct_drop_<T> (box -> box) and __field_reclaim_<T> (new, old, snap -> new)
+// helpers plus the shared __fern_snapshot_dec / __fern_arr_dec / __fern_drop_arr_ptr.
+// Each returns its arg0 (the deepest of its args on the operand stack). The real
+// reclaim semantics are exercised by the differential / memory-churn suites.
+function is_reclaim_helper(name: string): boolean {
+    if (name.len() >= 14 && name[0:14] == "__struct_drop_") { return true; }
+    if (name.len() >= 16 && name[0:16] == "__field_reclaim_") { return true; }
+    return name == "__fern_snapshot_dec" || name == "__fern_arr_dec" || name == "__fern_drop_arr_ptr";
+}
+
 pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[], heap_in: i32[], freehead_in: i32): EvalOut {
     var nloc: i32 = n_locals;
     if (nloc < 1) { nloc = 1; }
@@ -16929,6 +16984,19 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
         else if (o.kind == "call_direct" && o.str == "__fern_heap_used") {
             // bytes bump-allocated = heap words * 4 minus the reserved word 0.
             stack = stack.with(sp, heap.len() * 4 - 4);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind == "call_direct" && is_reclaim_helper(o.str)) {
+            // A Perceus reclaim helper (see is_reclaim_helper): value-preserving
+            // identity on arg0 (the box / `new`). Pop its argc args and leave that
+            // primary arg as the result — the evaluator doesn't model the heap free
+            // (the value was read before the drop). Without this the call would miss
+            // find_fn and bail (198) the moment a struct becomes reclaimable.
+            var rargc: i32 = o.i32_imm;
+            var keepv: i32 = stack[sp - rargc];   // arg0 = deepest of the argc args
+            sp = sp - rargc;
+            stack = stack.with(sp, keepv);
             sp = sp + 1;
             pc = pc + 1;
         }
