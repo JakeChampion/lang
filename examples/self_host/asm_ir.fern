@@ -2155,69 +2155,11 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    popq %rbp\n");
         s = s.write("    ret\n");
     }
-    // String helpers — register-arg ABI (%rdi = box A, %rsi = box B), transcribed
-    // verbatim from asm.fern's emit_runtime so the IR path's str_concat / str_eq
-    // call the identical bodies. Gated on the needs the op handlers marked.
-    if (s.has_need("str_concat")) {
-        // __fern_str_concat: alloc lenA+lenB bytes, copy A then B, wrap in a
-        // 16-byte box `[data@0, len@8]`. Returns box ptr in %rax.
-        s = s.write("__fern_str_concat:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    pushq %r13\n");
-        s = s.write("    pushq %r14\n");
-        s = s.write("    pushq %r15\n");
-        s = s.write("    pushq %rbx\n");
-        s = s.write("    subq $8, %rsp\n");
-        s = s.write("    movq %rdi, %r12\n");
-        s = s.write("    movq %rsi, %r13\n");
-        s = s.write("    movq 8(%r12), %r14\n");
-        s = s.write("    movq 8(%r13), %r15\n");
-        s = s.write("    movq %r14, %rdi\n");
-        s = s.write("    addq %r15, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %rbx\n");
-        s = s.write("    movq (%r12), %rsi\n");
-        s = s.write("    movq %rbx, %rdi\n");
-        s = s.write("    movq %r14, %rcx\n");
-        s = s.write("    cmpq $0, %rcx\n");
-        s = s.write("    je .Lstrconcat_b\n");
-        s = s.write(".Lstrconcat_a_loop:\n");
-        s = s.write("    movzbq (%rsi), %rax\n");
-        s = s.write("    movb %al, (%rdi)\n");
-        s = s.write("    incq %rsi\n");
-        s = s.write("    incq %rdi\n");
-        s = s.write("    decq %rcx\n");
-        s = s.write("    jne .Lstrconcat_a_loop\n");
-        s = s.write(".Lstrconcat_b:\n");
-        s = s.write("    movq (%r13), %rsi\n");
-        s = s.write("    movq %r15, %rcx\n");
-        s = s.write("    cmpq $0, %rcx\n");
-        s = s.write("    je .Lstrconcat_box\n");
-        s = s.write(".Lstrconcat_b_loop:\n");
-        s = s.write("    movzbq (%rsi), %rax\n");
-        s = s.write("    movb %al, (%rdi)\n");
-        s = s.write("    incq %rsi\n");
-        s = s.write("    incq %rdi\n");
-        s = s.write("    decq %rcx\n");
-        s = s.write("    jne .Lstrconcat_b_loop\n");
-        s = s.write(".Lstrconcat_box:\n");
-        s = s.write("    movq $16, %rdi\n");
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rbx, (%rax)\n");
-        s = s.write("    movq %r14, %rcx\n");
-        s = s.write("    addq %r15, %rcx\n");
-        s = s.write("    movq %rcx, 8(%rax)\n");
-        s = s.write("    addq $8, %rsp\n");
-        s = s.write("    popq %rbx\n");
-        s = s.write("    popq %r15\n");
-        s = s.write("    popq %r14\n");
-        s = s.write("    popq %r13\n");
-        s = s.write("    popq %r12\n");
-        s = s.write("    leave\n");
-        s = s.write("    ret\n");
-    }
+    // __fern_str_concat is now a Fern runtime function (#2649): emitted entry-only
+    // via emit_ir_runtime_fern_fn (lowered through the IR pipeline as
+    // __fn___fern_str_concat, using the raw-memory intrinsics), not a hand-written
+    // register-ABI body here. See the emit_ir_runtime_fern_fn call in
+    // emit_module_ir_unit's entry block.
     // __fern_str_eq is now a Fern runtime function (#2649): emitted entry-only
     // via emit_ir_runtime_fern_fn (as __fn___fern_str_eq), not a hand-written
     // register-ABI body here. See the emit_ir_runtime_fern_fn call in
@@ -3573,7 +3515,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
     var names: string[] = [
         "__fern_alloc", "__fern_alloc_u8", "__fern_arr_box", "__fern_arr_push",
         "__fern_arr_push_owned",
-        "__fern_arr_slice", "__fern_str_concat", "__fn___fern_str_eq",
+        "__fern_arr_slice", "__fn___fern_str_concat", "__fn___fern_str_eq",
         "__fern_string_from_bytes", "__fn___fern_str_bytes", "__fn___fern_str_chars",
         "__fn___fern_str_lines", "__fern_str_split", "__fern_str_repeat",
         "__fern_str_replace", "__fern_str_reverse", "__fn___fern_str_trim",
@@ -3702,9 +3644,10 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         return s.mark_str_search();
     }
     if (o.kind == "str_concat") {
-        // operand stack: [box A, box B] (B on top). __fern_str_concat takes
-        // %rdi = A, %rsi = B and returns the fresh box in %rax.
-        s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_str_concat\n    pushq %rax\n");
+        // operand stack: [box A, box B] (B on top). __fern_str_concat is a Fern
+        // runtime function now (#2649): __fn_ stack convention — re-push so A is
+        // param[0] at +16 and B is param[1] at +24.
+        s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_concat\n    addq $16, %rsp\n    pushq %rax\n");
         return s.mark_str_concat();
     }
     if (o.kind == "str_eq") {
@@ -5301,6 +5244,13 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     if (s.has_need("chr")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_chr(), all_structs, s);
+    }
+    // str_concat — backs `+` on strings, now Tier-2 via the intrinsics (#2649):
+    // alloc lenA+lenB, copy A then B byte-by-byte, box it. Heap-dependent (present
+    // above). .text since the heap runtime left us in .bss.
+    if (s.has_need("str_concat")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_concat(), all_structs, s);
     }
     // random_i32 allocates nothing, so its helper is emitted independently of
     // the heap runtime (a random_i32-only program is heap-free).

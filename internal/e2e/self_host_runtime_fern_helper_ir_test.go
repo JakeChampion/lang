@@ -109,6 +109,15 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			"__fn___fern_chr",
 			[]string{"movq 8(%rsp), %rdi"},
 		},
+		{
+			// str_concat — backs `+` on strings, migrated on the IR path too. The old
+			// hand-written register-ABI body (__fern_str_concat: / .Lstrconcat_a_loop)
+			// must be gone; the op now calls __fn___fern_str_concat.
+			"str_concat",
+			`function main(): i32 { var s: string = "ab" + "cd"; return s.len(); }`,
+			"__fn___fern_str_concat",
+			[]string{"\n__fern_str_concat:", ".Lstrconcat_a_loop"},
+		},
 	}
 
 	for _, tc := range cases {

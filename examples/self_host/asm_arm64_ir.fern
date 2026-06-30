@@ -211,10 +211,12 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl " + pfn + "\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind == "str_concat") {
-        // operand stack [A, B] (B on top); __fern_str_concat(x0=A, x1=B) -> x0.
+        // operand stack [A, B] (B on top); __fern_str_concat is a Fern runtime
+        // function now (#2649): __fn_ stack convention — A=param[0] at [x29,#16],
+        // B=param[1] at [x29,#32]. Re-push so A lands on top.
         s = s.mark_heap();
         s = s.mark_str_concat();
-        return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_str_concat\n    str x0, [sp, #-16]!\n");
+        return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_concat\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind == "str_eq") {
         // operand stack [A, B] (B top); __fern_str_eq is now a Fern runtime
