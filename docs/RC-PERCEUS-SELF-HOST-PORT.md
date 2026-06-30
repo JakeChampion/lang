@@ -2893,3 +2893,22 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   wasm memory-cap differential, byte-identical FIXPOINT and BOOTSTRAP (native-Go ↔
   self-host). Tests: `TestSelfHostEnumStructPayloadDropIRX86_64` /
   `…DropWasm` / `…DropIRArm64`.
+- 2026-06-30: **Perceus enum reclaim — recognise QUALIFIED variant constructors**
+  (lifts the limitation noted just above). A consume-by-match enum local built with a
+  qualified ctor (`Bag.Items(..)`, not bare `Items(..)`) is now reclaimed too.
+  fresh_rcpayload_enum_init / fresh_scalar_enum_init only matched a bare-ident callee,
+  so a qualified construction's callee — an ExprFieldAccess (obj=Enum, field=Variant) —
+  fell through and the enum box + payload leaked while the identical unqualified form
+  reclaimed. Both classifiers now resolve the variant by its field name
+  (variant_enum_owner on fa.field), covering the payload-carrying ctor
+  (ExprCall→ExprFieldAccess callee) and the bare qualified unit variant. SOUNDNESS —
+  the qualified construction path SHARES the unqualified lowering, so a bare-ident
+  array payload is array-alias-inc'd at construction exactly as the unqualified form
+  is, balancing the match-site dec (no double-free); a fresh-literal struct payload
+  rides the same fresh-literal gate. Frontend-only, uniform across all backends. The
+  self-host source uses only unqualified ctors, so fixpoint/bootstrap are unchanged
+  (they confirm the unqualified path didn't regress); the win is for user programs in
+  qualified style — native-Go already reclaims them (parity). VERIFIED LOCALLY: x86
+  churn bounded for a fresh-literal payload AND a bare-ident payload (the latter also
+  value-correct = no double-free), byte-identical fixpoint + bootstrap. Test:
+  `TestSelfHostEnumQualifiedCtorReclaimIRX86_64`.
