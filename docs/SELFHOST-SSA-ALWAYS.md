@@ -50,6 +50,36 @@ full parity and the self-hosting fixpoint is SSA-clean. At no point does
 the compiler emit worse or wrong code: anything SSA can't yet lower falls
 back exactly as today.
 
+## Note: an SSA-from-IR lift (the native-shaped entry)
+
+`ssa.build_func` builds SSA straight from the **AST**, in parallel with the
+stack IR (`ir.fern` / `irlower.fern`) that is now the default lowering path
+(goal 1). Native takes the other route: it lowers AST → `ir.Op[]` and then
+**lifts** that stack stream into SSA (`internal/ssa/lift.go`'s `LiftFromIR`)
+ahead of its optimiser and the `wasm-ssa` backend. Lifting from the IR makes
+SSA a clean *downstream* layer over the IR the compiler already produces —
+so it inherits the IR's (now ~100%) coverage instead of re-deriving it in a
+second all-or-nothing frontend.
+
+**Slice 0 ✅ (landed — `ssa_lift.fern`):** `lift_from_ir(name, nparams,
+nslots, ops) : LResult` lifts the straight-line integer spine (`const_i32`,
+`load_local` / `store_local` / `tee_local`, the integer binary ops, the `not`
+unary, `call_direct`, `drop`, `return`) plus structured **void `if` / `else`
+/ `end`** with phi reconstruction at merges — the canonical SSA win: locals
+that differ across the two arms become block phis, exactly as native's lift
+does, and `if`-without-`else` phis the then-arm against the fall-through.
+Anything outside the subset (`block` / `loop` / `br` / `brif`, value-producing
+ifs, memory / struct / map / float ops) returns `ok=false` so a caller falls
+back, mirroring how native's lift errors. The lift is a single linear pass
+(the IR op kinds, e.g. `add` / `lt_s`, are translated to the SSA `binary`
+symbols `+` / `<` that `eval_binary` and the SSA backends switch on). Validated
+without a backend by running the lifted `SFunc` through `ssa.eval_func` on both
+arms of each branch case (the ssa.fern pattern). Gated by
+`self_host_ssa_lift_test.go` (driver: `ssa_lift_run.fern`). Next slices:
+`block` / `loop` / `br` / `brif` (CFG with back-edges + loop-header phis) and
+value-producing ifs, then wiring the lift into a backend as an alternative to
+`build_func`.
+
 ## Phases
 
 ### Phase 1 — SSA on by default (x86-64 + arm64) ✅ this PR

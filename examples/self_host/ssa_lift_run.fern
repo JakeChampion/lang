@@ -1,0 +1,152 @@
+// examples/self_host/ssa_lift_run.fern — end-to-end driver for ssa_lift.fern
+// (lift the stack IR into SSA). For each case it hand-builds an `ir.Op[]`,
+// lifts it to an `ssa.SFunc`, and RUNS the lifted function through
+// `ssa.eval_func` (the SSA interpreter) — so it validates the lift's output
+// is executable SSA with the right value flow, not just that it type-checks.
+// Branch cases are evaluated on both arms to prove the phi reconstruction.
+// The companion Go test (internal/e2e/self_host_ssa_lift_test.go) asserts the
+// exact rendered report; main returns the number of failed checks (0 = green).
+//
+// eval_func has no `call` handler, so the call_direct case is checked
+// structurally (a `call` inst is present + the lift reports ok) rather than
+// evaluated.
+
+import "./ir";
+import "./ssa";
+import "./ssa_lift";
+
+function int_str(n: i32): string {
+    if (n == 0) { return "0"; }
+    var neg: boolean = false;
+    var x: i32 = n;
+    if (x < 0) { neg = true; x = 0 - x; }
+    var digits: string = "0123456789";
+    var s: string = "";
+    while (x > 0) { s = digits[x % 10 : x % 10 + 1] + s; x = x / 10; }
+    if (neg) { return "-" + s; }
+    return s;
+}
+
+// count_kind counts SSA instructions of a given kind across all blocks.
+function count_kind(f: ssa.SFunc, kind: string): i32 {
+    var n: i32 = 0;
+    var b: i32 = 0;
+    while (b < f.blocks.len()) {
+        var blk: ssa.SBlock = f.blocks[b];
+        var k: i32 = 0;
+        while (k < blk.insts.len()) {
+            if (blk.insts[k].kind == kind) { n = n + 1; }
+            k = k + 1;
+        }
+        b = b + 1;
+    }
+    return n;
+}
+
+// check_eval lifts ops, evaluates with args, and reports pass/fail.
+function check_eval(label: string, nparams: i32, nslots: i32, ops: ir.Op[], args: i32[], want: i32): i32 {
+    var lr: ssa_lift.LResult = ssa_lift.lift_from_ir(label, nparams, nslots, ops);
+    if (!lr.ok) {
+        print("not ok - " + label + " (lift bailed: ok=false)");
+        return 1;
+    }
+    var got: i32 = ssa.eval_func(lr.func, args);
+    if (got == want) {
+        print("ok - " + label + " => " + int_str(got));
+        return 0;
+    }
+    print("not ok - " + label + " => " + int_str(got) + " want " + int_str(want));
+    return 1;
+}
+
+function main(): i32 {
+    var fails: i32 = 0;
+
+    // --- case 1: add(a, b) = a + b ----------------------------------------
+    var add_ops: ir.Op[] = [
+        ir.op_load_local(0),
+        ir.op_load_local(1),
+        ir.op_bin("add", 0, false),
+        ir.op_return()
+    ];
+    fails = fails + check_eval("add(3,4)", 2, 2, add_ops, [3, 4], 7);
+    fails = fails + check_eval("add(10,32)", 2, 2, add_ops, [10, 32], 42);
+
+    // --- case 2: void if/else with a slot phi -----------------------------
+    //   f(c, a, b): var r; if (c) { r = a + 1; } else { r = b + 2; } return r;
+    // slots: 0=c, 1=a, 2=b, 3=r
+    var ife_ops: ir.Op[] = [
+        ir.op_load_local(0),          // c
+        ir.op_if(0),
+            ir.op_load_local(1),      // a
+            ir.op_const_i32(1),
+            ir.op_bin("add", 0, false),
+            ir.op_store_local(3),     // r = a + 1
+        ir.op_else(),
+            ir.op_load_local(2),      // b
+            ir.op_const_i32(2),
+            ir.op_bin("add", 0, false),
+            ir.op_store_local(3),     // r = b + 2
+        ir.op_end(),
+        ir.op_load_local(3),
+        ir.op_return()
+    ];
+    fails = fails + check_eval("ifelse c=1", 3, 4, ife_ops, [1, 10, 20], 11);
+    fails = fails + check_eval("ifelse c=0", 3, 4, ife_ops, [0, 10, 20], 22);
+    // structural: the merge must carry a phi for r.
+    var ife_f: ssa_lift.LResult = ssa_lift.lift_from_ir("ifelse", 3, 4, ife_ops);
+    if (ife_f.ok && count_kind(ife_f.func, "phi") == 1) {
+        print("ok - ifelse builds exactly one phi");
+    } else {
+        print("not ok - ifelse phi count = " + int_str(count_kind(ife_f.func, "phi")));
+        fails = fails + 1;
+    }
+
+    // --- case 3: if without else (phi against the fall-through) ------------
+    //   g(c, a): var r = 100; if (c) { r = a; } return r;
+    // slots: 0=c, 1=a, 2=r
+    var ifn_ops: ir.Op[] = [
+        ir.op_const_i32(100),
+        ir.op_store_local(2),         // r = 100
+        ir.op_load_local(0),          // c
+        ir.op_if(0),
+            ir.op_load_local(1),      // a
+            ir.op_store_local(2),     // r = a
+        ir.op_end(),
+        ir.op_load_local(2),
+        ir.op_return()
+    ];
+    fails = fails + check_eval("if-noelse c=1", 2, 3, ifn_ops, [1, 7], 7);
+    fails = fails + check_eval("if-noelse c=0", 2, 3, ifn_ops, [0, 7], 100);
+
+    // --- case 4: call_direct (structural — eval can't execute calls) ------
+    var call_ops: ir.Op[] = [
+        ir.op_load_local(0),
+        ir.op_call_direct("inc", 1),
+        ir.op_return()
+    ];
+    var call_lr: ssa_lift.LResult = ssa_lift.lift_from_ir("usef", 1, 1, call_ops);
+    if (call_lr.ok && count_kind(call_lr.func, "call") == 1) {
+        print("ok - call_direct lifts to one call inst");
+    } else {
+        print("not ok - call_direct lift");
+        fails = fails + 1;
+    }
+
+    // --- case 5: an out-of-subset op must bail (ok=false) ------------------
+    var bad_ops: ir.Op[] = [
+        ir.op_loop(0),
+        ir.op_end()
+    ];
+    var bad_lr: ssa_lift.LResult = ssa_lift.lift_from_ir("bad", 0, 0, bad_ops);
+    if (!bad_lr.ok) {
+        print("ok - out-of-subset op bails");
+    } else {
+        print("not ok - out-of-subset op did not bail");
+        fails = fails + 1;
+    }
+
+    if (fails == 0) { print("# all lift checks passed"); }
+    else { print("# " + int_str(fails) + " lift check(s) failed"); }
+    return fails;
+}
