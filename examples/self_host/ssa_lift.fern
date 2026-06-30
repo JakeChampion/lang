@@ -27,6 +27,7 @@
 
 import "./ir";
 import "./ssa";
+import "./util";
 
 pub struct LResult { func: ssa.SFunc, ok: boolean }
 
@@ -169,6 +170,35 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
             var v: i32 = nvals; nvals = nvals + 1;
             cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: v, args: [], imm: op.i32_imm, str: "" });
             stack = stack.append(v);
+        } else if (k == "const_i32_text") {
+            // irlower carries integer literals as their SOURCE TEXT (so the
+            // AST backends splice hex / full-u32 values straight into the
+            // immediate). The SSA `const_int` holds a parsed i32, so parse the
+            // text — but only plain DECIMAL (optionally signed); a hex / non-
+            // decimal literal (which util.digits_to_i32 can't parse) bails so a
+            // caller falls back rather than emitting a wrong constant.
+            var t: string = op.str;
+            var dec: boolean = t.len() > 0;
+            var ci: i32 = 0;
+            while (ci < t.len()) {
+                var c: i32 = t[ci];
+                if (ci == 0 && c == 45) {
+                    if (t.len() == 1) { dec = false; }
+                } else if (c < 48 || c > 57) { dec = false; }
+                ci = ci + 1;
+            }
+            if (!dec) { ok = false; }
+            else {
+                var ctv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: ctv, args: [], imm: util.digits_to_i32(t), str: "" });
+                stack = stack.append(ctv);
+            }
+        } else if (k == "int_cast") {
+            // `x as i32` lowers to a sign-extend of the low 32 bits (movslq) —
+            // identity for an i32 value, so the SSA value flows through with no
+            // inst. The subword / unsigned casts (u8/u16/u32/i8/i16), which
+            // actually mask or re-extend, are out of the integer subset.
+            if (op.str != "i32") { ok = false; }
         } else if (k == "load_local") {
             if (op.i32_imm < 0 || op.i32_imm >= slots.len()) { ok = false; }
             else { stack = stack.append(slots[op.i32_imm]); }

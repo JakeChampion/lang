@@ -157,10 +157,28 @@ interpreter is the source of truth for the value. So a miscompile anywhere in
 reference semantics, across all six programs (straight-line, loop, if-merge,
 break, cross-function call, recursion).
 
-Next: widen the lifted-emit subset toward the strings / heap the SSA backends
-already support, then drive real `irlower` output (not hand-coded `Op[]`)
-through the lift — the step that turns this from a proof-of-concept into the
-production lowering path.
+**Slice 7 ✅ (landed — real `irlower` output through the lift):** the lift now
+consumes the ACTUAL production IR, not hand-built `Op[]`. A new driver
+(`ssa_lift_irlower_run.fern`) reads a Fern source, lowers each function the way
+the real compiler does — `irlower.lower_func_for` (AST → `ir.Op[]`, the asm_ir
+backend's input) — then lifts that real IR to SSA and emits via `ssa_x86` /
+`ssa_arm64`. Driving real `irlower` exposed two ops the lift hadn't needed for
+hand-built programs: **`const_i32_text`** (irlower carries integer literals as
+source text — the lift parses the decimal; hex/non-decimal bails) and
+**`int_cast "i32"`** (the `movslq` sign-extend that's identity for an i32 value,
+lifted as a pass-through; subword/unsigned casts bail). With those, the same six
+programs (straight-line, loop, if-merge, break, cross-function call, recursion)
+go source → `irlower` → lift → SSA → x86-64 / arm64 → run, and
+`self_host_ssa_lift_irlower_test.go` checks each emitted binary's exit code
+against the **interpreter** for the same source. This is the step that turns the
+lift from a proof-of-concept over synthetic ops into a path over the real
+production IR.
+
+Next: widen the lifted subset toward the strings / heap / structs the SSA
+backends already support (the lowered IR for those uses `alloc` / `load` /
+`store` / `const_str` / RC `call_direct`s the lift still bails on), expanding how
+much real `irlower` output lifts — toward the lift becoming the production
+lowering path.
 
 ## Phases
 
