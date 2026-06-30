@@ -1,8 +1,8 @@
 # Runtime helpers in Fern — migration design (issue #2649)
 
-Status: **slices 1–2 landed** — `__fern_i32_pow` (Tier 0) and the
-`__fern_arr_i32_sum`/`_product`/`_index_of` reducers (Tier 1), on the AST
-x86-64 + arm64 backends. This is the architecture document the end goal of
+Status: **slices 1–2 landed** — `__fern_i32_pow` (Tier 0) and the five
+`__fern_arr_i32_*` reducers (`sum`/`product`/`index_of`/`min`/`max`, Tier 1),
+on the AST x86-64 + arm64 backends. This is the architecture document the end goal of
 [#2649](https://github.com/JakeChampion/lang/issues/2649) needs as more helpers
 move; see the "Slice 1 / Slice 2 (landed)" sections at the end for what the
 first migrations actually took, which was simpler than first proposed. The near-term stepping stone it references
@@ -271,6 +271,38 @@ sweep releases only locals, not params, and at the call site the array is
 passed by the same plain pointer-push the old register-ABI path used (no inc).
 The bodies bottom out in inline-lowered `xs.len()` / `xs[i]` indexing and i32
 arithmetic — still no helper call and no allocation — so a Tier 1 borrowed
-reducer needs nothing beyond what slice 1 built. (`min`/`max` stayed
-hand-written: they allocate an `Option[i32]` box at the call site, so they need
-the heap-returning shape, deferred.)
+reducer needs nothing beyond what slice 1 built.
+
+`__fern_arr_i32_min` / `_max` (backing `xs.min()` / `.max()`) followed in the
+same slice. They look like they'd need the heap-returning `Option[i32]` shape,
+but the call site already special-cases the empty array (→ `None`) and builds
+the `Option[i32]` box itself — so each helper only ever runs on a **non-empty**
+array and just returns the extremum `i32`. That makes them the identical clean
+Tier 1 reduce-with-comparison shape as sum/product: the Option boxing stays in
+the call site (unchanged), only the two reduce loops move to Fern.
+
+### After Slice 2 — the clean leaves are exhausted
+
+`i32_pow` and the five `arr_i32_*` reducers were the helpers that are
+**AST-only** (the IR path doesn't lower them), **call no other helper**, and
+**don't allocate**. Every remaining helper breaks at least one of those, which
+is what the next phase has to confront:
+
+- **IR-path-integrated** — `str_to_i32`, `i32_to_string`, `chr`, `str_cmp`,
+  `str_search`/`str_starts_with`/`str_index_of` are emitted *and* called on the
+  self-host IR path too (via register-ABI calls or `__fn___fern_*` stack
+  wrappers in `emit_ir_runtime` / `asm_arm64`'s runtime). Migrating one means
+  reconciling the IR call convention, not just the AST call site.
+- **Helper-to-helper** — `str_eq` is called by `__fern_map_set` and
+  `__fern_arr_str_index_of` via the register ABI; moving it to the `__fn_`
+  stack convention breaks those hand-written callers unless they move too
+  (a cluster migration).
+- **Tier 2 (heap / syscalls)** — `str_concat`, `str_split`, `str_repeat`,
+  `str_reverse`, the `arr_str_*` joins, the clock/random/`alloc` leaves all
+  allocate or syscall, and need the raw-memory intrinsics / borrow attribute
+  the upper sections describe.
+
+So the next slice is a genuine step up: pick one IR-path helper and extend
+`emit_runtime_fern_fn` (or its IR equivalent) to emit the Fern function on the
+IR path too, **or** migrate the `str_eq` cluster together. Both want the IR
+side validated, not just the AST backends.

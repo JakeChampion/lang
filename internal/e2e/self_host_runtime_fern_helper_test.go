@@ -67,6 +67,18 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			"__fn___fern_arr_i32_index_of",
 			[]string{"\n__fern_arr_i32_index_of:", ".Lai32_idx_loop"},
 		},
+		{
+			"arr_i32_min",
+			"function main(): i32 { var xs: i32[] = [5, 2, 7]; match (xs.min()) { Some(v) => { return v; }, None => { return 0; } } }",
+			"__fn___fern_arr_i32_min",
+			[]string{"\n__fern_arr_i32_min:", ".Lai32_min_loop"},
+		},
+		{
+			"arr_i32_max",
+			"function main(): i32 { var xs: i32[] = [5, 2, 7]; match (xs.max()) { Some(v) => { return v; }, None => { return 0; } } }",
+			"__fn___fern_arr_i32_max",
+			[]string{"\n__fern_arr_i32_max:", ".Lai32_max_loop"},
+		},
 	}
 
 	for _, tc := range cases {
