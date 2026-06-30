@@ -28,6 +28,60 @@ func Eval(f *Func, args ...int64) (int64, error) {
 // EvalIn is Eval with a function table so OpCall can recurse into callees
 // (resolved by name via Op.Str). Direct integer calls only.
 func EvalIn(funcs map[string]*Func, f *Func, args ...int64) (int64, error) {
+	return evalWith(funcs, newHeap(), f, args...)
+}
+
+// heap is the evaluator's model memory: a little-endian byte buffer with a bump
+// allocator. Address 0 is reserved (null) by starting the buffer at 8 bytes, so
+// a dereference of an unallocated pointer is caught rather than aliasing the
+// first allocation. Shared across calls (OpAlloc state persists), matching the
+// real bump allocator.
+type heap struct{ data []byte }
+
+func newHeap() *heap { return &heap{data: make([]byte, 8)} }
+
+func (h *heap) alloc(size int64) int64 {
+	base := int64(len(h.data))
+	if r := base % 8; r != 0 { // 8-byte align
+		base += 8 - r
+	}
+	if size < 0 {
+		size = 0
+	}
+	h.data = append(h.data, make([]byte, base-int64(len(h.data))+size)...)
+	return base
+}
+
+func (h *heap) check(addr int64) error {
+	if addr < 8 || addr+8 > int64(len(h.data)) {
+		return fmt.Errorf("Eval: out-of-bounds memory access at %d (heap %d bytes)", addr, len(h.data))
+	}
+	return nil
+}
+
+func (h *heap) load(addr int64) (int64, error) {
+	if err := h.check(addr); err != nil {
+		return 0, err
+	}
+	var v uint64
+	for i := 0; i < 8; i++ {
+		v |= uint64(h.data[addr+int64(i)]) << (8 * i)
+	}
+	return int64(v), nil
+}
+
+func (h *heap) store(addr, val int64) error {
+	if err := h.check(addr); err != nil {
+		return err
+	}
+	u := uint64(val)
+	for i := 0; i < 8; i++ {
+		h.data[addr+int64(i)] = byte(u >> (8 * i))
+	}
+	return nil
+}
+
+func evalWith(funcs map[string]*Func, h *heap, f *Func, args ...int64) (int64, error) {
 	vals := map[int32]int64{}
 
 	params := realParams(f)
@@ -81,7 +135,7 @@ func EvalIn(funcs map[string]*Func, f *Func, args ...int64) (int64, error) {
 			if op.Kind == OpPhi {
 				continue
 			}
-			if err := evalOp(funcs, op, vals); err != nil {
+			if err := evalOp(funcs, h, op, vals); err != nil {
 				return 0, err
 			}
 		}
@@ -152,7 +206,7 @@ func b2i(b bool) int64 {
 	return 0
 }
 
-func evalOp(funcs map[string]*Func, op *Op, vals map[int32]int64) error {
+func evalOp(funcs map[string]*Func, h *heap, op *Op, vals map[int32]int64) error {
 	// Binary integer ops read Args[0], Args[1]; unary read Args[0].
 	arg := func(i int) (int64, error) {
 		if i >= len(op.Args) {
@@ -248,11 +302,38 @@ func evalOp(funcs map[string]*Func, op *Op, vals map[int32]int64) error {
 			}
 			argvals = append(argvals, v)
 		}
-		r, err := EvalIn(funcs, callee, argvals...)
+		r, err := evalWith(funcs, h, callee, argvals...)
 		if err != nil {
 			return err
 		}
 		return set(r)
+
+	case OpAlloc:
+		size, err := arg(0)
+		if err != nil {
+			return err
+		}
+		return set(h.alloc(size))
+	case OpLoad:
+		base, err := arg(0)
+		if err != nil {
+			return err
+		}
+		v, err := h.load(base + op.Imm)
+		if err != nil {
+			return err
+		}
+		return set(v)
+	case OpStore:
+		base, err := arg(0)
+		if err != nil {
+			return err
+		}
+		val, err := arg(1)
+		if err != nil {
+			return err
+		}
+		return h.store(base+op.Imm, val) // no result
 
 	default:
 		return fmt.Errorf("Eval: unsupported op %v", op.Kind)

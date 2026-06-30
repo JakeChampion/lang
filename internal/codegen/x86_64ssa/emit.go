@@ -38,17 +38,21 @@ const (
 	LoadSlot                // reg[Dst] = slot[Imm]
 	StoreSlot               // slot[Imm] = reg[Src]
 	Call                    // reg[Dst] = Callee(ArgLocs...)   (model: recurse into callee Program)
+	MemAlloc                // reg[Dst] = heap.alloc(reg[Src])
+	MemLoad                 // reg[Dst] = heap[reg[Src] + Imm]
+	MemStore                // heap[reg[Src] + Imm] = reg[Src2]
 )
 
 // Inst is one straight-line abstract instruction. Registers are indices into a
 // flat file of size Program.NumRegFile (allocatable registers, then scratch).
 type Inst struct {
-	Op  Opcode
-	Dst int
-	Src int
-	Imm int64
-	K   ssa.OpKind // BinOp / SetCmp operation
-	W   int8       // result width for MovImm/BinOp/UnNeg/Call (0/32 => i32, 64 => i64)
+	Op   Opcode
+	Dst  int
+	Src  int
+	Src2 int // second source register (MemStore: the value)
+	Imm  int64
+	K    ssa.OpKind // BinOp / SetCmp operation
+	W    int8       // result width for MovImm/BinOp/UnNeg/Call (0/32 => i32, 64 => i64)
 
 	Callee  string // Call: callee function name
 	ArgLocs []Loc  // Call: homes of the argument values, in order
@@ -423,6 +427,36 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		}
 		e.push(Inst{Op: Call, Dst: e.s2, Callee: op.Str, ArgLocs: argLocs, W: op.Width})
 		e.place(op.Result, e.s2)
+		return nil
+
+	case ssa.OpAlloc:
+		size, err := e.materialize(op.Args[0], e.s0)
+		if err != nil {
+			return err
+		}
+		e.push(Inst{Op: MemAlloc, Dst: e.s2, Src: size})
+		e.place(op.Result, e.s2)
+		return nil
+
+	case ssa.OpLoad:
+		base, err := e.materialize(op.Args[0], e.s0)
+		if err != nil {
+			return err
+		}
+		e.push(Inst{Op: MemLoad, Dst: e.s2, Src: base, Imm: op.Imm, W: op.Width})
+		e.place(op.Result, e.s2)
+		return nil
+
+	case ssa.OpStore:
+		base, err := e.materialize(op.Args[0], e.s0)
+		if err != nil {
+			return err
+		}
+		val, err := e.materialize(op.Args[1], e.s1)
+		if err != nil {
+			return err
+		}
+		e.push(Inst{Op: MemStore, Src: base, Src2: val, Imm: op.Imm})
 		return nil
 
 	default:
