@@ -109,9 +109,18 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
       against `ssa.Eval` incl. diamond/loop/critical-edge/phi-swap. Also fixed a
       latent bug the swap test surfaced: `ssa.Eval` was resolving phis
       sequentially instead of in parallel.
-    - [ ] Slice 3 — real GAS-text emission + assemble/run validation (call ABI,
-      `idiv` rax/rdx, the ELF `_start` runtime), then diff against the existing
-      stack-machine backend over the e2e corpus.
+    - [~] Slice 3 — real GAS-text emission + assemble/run validation:
+      - [x] 3a — `EmitAsm` renders real x86-64 (Intel syntax) for no-parameter
+        integer functions and the slice-2 control flow; assembled via
+        `nativex86.AssembleProgram`, wrapped in a static ELF, and **run
+        natively**, with the exit code diffed against `ssa.Eval` (arithmetic,
+        bitwise+spill, comparison via cmp/setcc/movzx, branch, loop, and a
+        real back-edge **phi swap**). First runnable machine code from the SSA
+        path.
+      - [ ] 3b — System V parameter ABI (load args from arg registers), shifts
+        (cl) and `idiv` (rax/rdx) fixed-register handling, and i32 width.
+      - [ ] 3c — wire behind a flag and diff against the existing stack-machine
+        backend over the e2e corpus.
 - [ ] Phase 3 — default x86-64 to SSA; measure binary-size win
 - [ ] Phase 4 — arm64 SSA emit + default
 - [ ] Phase 5 — retire the stack-machine backends
