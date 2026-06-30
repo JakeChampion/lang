@@ -97,7 +97,17 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
     integer/control-flow subset, used to validate the emitter differentially
     (and to guard semantic preservation across any SSA pass). Tested incl. an
     `Eval == Eval∘Optimize` property.
-  - [ ] The SSA→x86-64 emitter itself (`internal/codegen/x86_64ssa`)
+  - [~] The SSA→x86-64 emitter (`internal/codegen/x86_64ssa`):
+    - [x] Slice 1 — straight-line integer subset → abstract register-machine
+      program, driven by `ssa.LinearScan`. Proves the regalloc-specific logic
+      (operand assignment, the x86 two-address fixup, spill load/store) via a
+      model interpreter (`Run`) diffed against `ssa.Eval`, incl. spill-forcing
+      cases. Dormant infrastructure — not yet wired into any codegen path.
+    - [ ] Slice 2 — control flow + phi resolution (parallel-moves on edges,
+      critical-edge splitting).
+    - [ ] Slice 3 — real GAS-text emission + assemble/run validation (call ABI,
+      `idiv` rax/rdx, the ELF `_start` runtime), then diff against the existing
+      stack-machine backend over the e2e corpus.
 - [ ] Phase 3 — default x86-64 to SSA; measure binary-size win
 - [ ] Phase 4 — arm64 SSA emit + default
 - [ ] Phase 5 — retire the stack-machine backends
