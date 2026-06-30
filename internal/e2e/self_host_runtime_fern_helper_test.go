@@ -109,6 +109,13 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_arr_str_index_of:", ".Las_idx_loop"},
 		},
 		{
+			// arr_str_join (string[].join) — AST-only; calls str_concat via `+`.
+			"arr_str_join",
+			`function main(): i32 { var xs: string[] = ["a", "b"]; return xs.join(",").len(); }`,
+			"__fn___fern_arr_str_join",
+			[]string{"\n__fern_arr_str_join:", ".Lasj_loop"},
+		},
+		{
 			"arr_i32_min",
 			"function main(): i32 { var xs: i32[] = [5, 2, 7]; match (xs.min()) { Some(v) => { return v; }, None => { return 0; } } }",
 			"__fn___fern_arr_i32_min",
