@@ -1026,21 +1026,21 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         return CallOut { state: s, done: true };
     }
     if (name == "str_to_upper" && c.args.len() == 1) {
+        // __fern_str_to_upper is a Fern runtime function now (#2649): __fn_ stack
+        // convention; mark_str_case pulls heap. Un-bundled from str_search.
         s = emit_expr(c.args[0], s);
-        s = s.write("    ldr x0, [sp], #16\n");
-        s = s.write("    bl __fern_str_to_upper\n");
+        s = s.write("    bl __fn___fern_str_to_upper\n");
+        s = s.write("    add sp, sp, #16\n");
         s = s.write("    str x0, [sp, #-16]!\n");
-        s = s.mark_str_search();
-        s = s.mark_heap();
+        s = s.mark_str_case();
         return CallOut { state: s, done: true };
     }
     if (name == "str_to_lower" && c.args.len() == 1) {
         s = emit_expr(c.args[0], s);
-        s = s.write("    ldr x0, [sp], #16\n");
-        s = s.write("    bl __fern_str_to_lower\n");
+        s = s.write("    bl __fn___fern_str_to_lower\n");
+        s = s.write("    add sp, sp, #16\n");
         s = s.write("    str x0, [sp, #-16]!\n");
-        s = s.mark_str_search();
-        s = s.mark_heap();
+        s = s.mark_str_case();
         return CallOut { state: s, done: true };
     }
     if (name == "str_repeat" && c.args.len() == 2) {
@@ -2021,20 +2021,18 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
         }
         if (fa.field == "to_upper" && c.args.len() == 0) {
             s = emit_expr(fa.obj, s);
-            s = s.write("    ldr x0, [sp], #16\n");
-            s = s.write("    bl __fern_str_to_upper\n");
+            s = s.write("    bl __fn___fern_str_to_upper\n");
+            s = s.write("    add sp, sp, #16\n");
             s = s.write("    str x0, [sp, #-16]!\n");
-            s = s.mark_str_search();
-            s = s.mark_heap();
+            s = s.mark_str_case();
             return s;
         }
         if (fa.field == "to_lower" && c.args.len() == 0) {
             s = emit_expr(fa.obj, s);
-            s = s.write("    ldr x0, [sp], #16\n");
-            s = s.write("    bl __fern_str_to_lower\n");
+            s = s.write("    bl __fn___fern_str_to_lower\n");
+            s = s.write("    add sp, sp, #16\n");
             s = s.write("    str x0, [sp, #-16]!\n");
-            s = s.mark_str_search();
-            s = s.mark_heap();
+            s = s.mark_str_case();
             return s;
         }
         if (fa.field == "repeat" && c.args.len() == 1) {
@@ -4622,6 +4620,13 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     if (s.has_need("chr")) {
         s = emit_runtime_fern_fn(asmcore.rt_src_chr(), s);
     }
+    // __fern_str_to_upper / __fern_str_to_lower — Fern runtime functions (#2649)
+    // via the raw-memory intrinsics; both gated on the single str_case need (the
+    // shared body serves arm64 AST + IR). Un-bundled from str_search.
+    if (s.has_need("str_case")) {
+        s = emit_runtime_fern_fn(asmcore.rt_src_str_to_upper(), s);
+        s = emit_runtime_fern_fn(asmcore.rt_src_str_to_lower(), s);
+    }
     // __fern_eprint_str: x0 = string box. write(2, data, len), then a trailing
     // newline (eprint is the stderr line-printer — mirrors `print` and the
     // Go-backend / interp / wasm `eprint`, which all append "\n"). The newline
@@ -4654,88 +4659,10 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         // emitted in the migrated-helpers section below — a zero-copy slice, so it
         // no longer rides the str_search bundle.
         s = emit_runtime_fern_fn(asmcore.rt_src_str_search(), s);
-        // __fern_str_to_upper / __fern_str_to_lower: ASCII
-        // case conversion. See asm.fern for the layout.
-        s = s.write("__fern_str_to_upper:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    stp x21, x22, [sp, #-16]!\n");
-        s = s.write("    ldr x19, [x0]\n");          // src data
-        s = s.write("    ldr x20, [x0, #8]\n");      // len
-        s = s.write("    mov x0, x20\n");
-        s = s.write("    cmp x0, #0\n");
-        s = s.write("    b.ne .Lupper_alloc\n");
-        s = s.write("    mov x0, #1\n");
-        s = s.write(".Lupper_alloc:\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x21, x0\n");            // dst
-        s = s.write("    mov x1, x19\n");
-        s = s.write("    mov x2, x21\n");
-        s = s.write("    mov x3, x20\n");
-        s = s.write("    cbz x3, .Lupper_box\n");
-        s = s.write(".Lupper_loop:\n");
-        s = s.write("    ldrb w4, [x1]\n");
-        s = s.write("    cmp w4, #97\n");
-        s = s.write("    b.lt .Lupper_skip\n");
-        s = s.write("    cmp w4, #122\n");
-        s = s.write("    b.gt .Lupper_skip\n");
-        s = s.write("    sub w4, w4, #32\n");
-        s = s.write(".Lupper_skip:\n");
-        s = s.write("    strb w4, [x2]\n");
-        s = s.write("    add x1, x1, #1\n");
-        s = s.write("    add x2, x2, #1\n");
-        s = s.write("    subs x3, x3, #1\n");
-        s = s.write("    b.ne .Lupper_loop\n");
-        s = s.write(".Lupper_box:\n");
-        s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    str x21, [x0]\n");
-        s = s.write("    str x20, [x0, #8]\n");
-        s = s.write("    ldp x21, x22, [sp], #16\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
-        s = s.write("__fern_str_to_lower:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    stp x21, x22, [sp, #-16]!\n");
-        s = s.write("    ldr x19, [x0]\n");
-        s = s.write("    ldr x20, [x0, #8]\n");
-        s = s.write("    mov x0, x20\n");
-        s = s.write("    cmp x0, #0\n");
-        s = s.write("    b.ne .Llower_alloc\n");
-        s = s.write("    mov x0, #1\n");
-        s = s.write(".Llower_alloc:\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x21, x0\n");
-        s = s.write("    mov x1, x19\n");
-        s = s.write("    mov x2, x21\n");
-        s = s.write("    mov x3, x20\n");
-        s = s.write("    cbz x3, .Llower_box\n");
-        s = s.write(".Llower_loop:\n");
-        s = s.write("    ldrb w4, [x1]\n");
-        s = s.write("    cmp w4, #65\n");
-        s = s.write("    b.lt .Llower_skip\n");
-        s = s.write("    cmp w4, #90\n");
-        s = s.write("    b.gt .Llower_skip\n");
-        s = s.write("    add w4, w4, #32\n");
-        s = s.write(".Llower_skip:\n");
-        s = s.write("    strb w4, [x2]\n");
-        s = s.write("    add x1, x1, #1\n");
-        s = s.write("    add x2, x2, #1\n");
-        s = s.write("    subs x3, x3, #1\n");
-        s = s.write("    b.ne .Llower_loop\n");
-        s = s.write(".Llower_box:\n");
-        s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    str x21, [x0]\n");
-        s = s.write("    str x20, [x0, #8]\n");
-        s = s.write("    ldp x21, x22, [sp], #16\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
+        // str_to_upper / str_to_lower are now Fern too (rt_src_str_to_upper/_lower
+        // via the raw-memory intrinsics) but gated on their own str_case need,
+        // emitted in the migrated-helpers section — no longer in this str_search
+        // bundle. The single shared body serves both arm64 AST + IR.
         // __fern_str_repeat: x0 = string box, x1 = n. See
         // asm.fern for rationale.
         s = s.write("__fern_str_repeat:\n");

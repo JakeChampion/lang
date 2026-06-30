@@ -367,6 +367,20 @@ pub function (s: EmitState) mark_str_case(): EmitState {
     return s.need("heap").need("str_case");
 }
 
+// rt_src_str_to_upper / rt_src_str_to_lower back `s.to_upper()` / `s.to_lower()`
+// (#2649), via the raw-memory intrinsic floor (docs/RUNTIME-INTRINSICS.md). Alloc
+// len bytes, copy each byte case-flipped if it's an ASCII letter (a-z 97-122 →
+// upper by -32; A-Z 65-90 → lower by +32), box it. Tier-2; heap is the sole dep.
+// Nested ifs instead of `&&` to stay in the proven subset (cf. rt_src_str_search).
+// Both gated on the single str_case need (mark_str_case emits both bodies).
+pub function rt_src_str_to_upper(): string {
+    return "function __fern_str_to_upper(s: string): string { var n: i32 = s.len(); var p: i32 = __raw_alloc(n); var i: i32 = 0; while (i < n) { var c: i32 = s[i]; if (c >= 97) { if (c <= 122) { c = c - 32; } } __raw_store8(p, i, c); i = i + 1; } return __raw_string(p, n); }";
+}
+
+pub function rt_src_str_to_lower(): string {
+    return "function __fern_str_to_lower(s: string): string { var n: i32 = s.len(); var p: i32 = __raw_alloc(n); var i: i32 = 0; while (i < n) { var c: i32 = s[i]; if (c >= 65) { if (c <= 90) { c = c + 32; } } __raw_store8(p, i, c); i = i + 1; } return __raw_string(p, n); }";
+}
+
 pub function (s: EmitState) mark_str_repeat(): EmitState {
     return s.need("heap").need("str_repeat");
 }

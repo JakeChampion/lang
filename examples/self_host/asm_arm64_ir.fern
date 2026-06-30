@@ -141,14 +141,14 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_str_split\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind == "str_to_upper" || o.kind == "str_to_lower") {
-        // operand stack [s box]; __fern_str_to_upper/_lower(x0=s) -> fresh cased
-        // string box in x0. asm_arm64.emit_runtime emits the bodies in its
-        // str_search block (they allocate), so set str_search + heap.
-        var cfn: string = "__fern_str_to_upper";
-        if (o.kind == "str_to_lower") { cfn = "__fern_str_to_lower"; }
-        s = s.mark_str_search();
-        s = s.mark_heap();
-        return s.write("    ldr x0, [sp], #16\n    bl " + cfn + "\n    str x0, [sp, #-16]!\n");
+        // operand stack [s box]; __fern_str_to_upper/_lower are Fern runtime
+        // functions now (#2649): asm_arm64.emit_runtime emits the shared bodies
+        // gated on the str_case need. __fn_ stack convention — s on the stack IS
+        // param[0] (at [x29,#16]); call, pop arg, push result.
+        var cfn: string = "__fn___fern_str_to_upper";
+        if (o.kind == "str_to_lower") { cfn = "__fn___fern_str_to_lower"; }
+        s = s.mark_str_case();
+        return s.write("    bl " + cfn + "\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind == "str_repeat") {
         // operand stack [s box, n] (n top); __fern_str_repeat(x0=s, x1=n) -> fresh
