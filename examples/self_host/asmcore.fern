@@ -394,6 +394,18 @@ pub function rt_src_str_to_i32(): string {
     return "function __fern_str_to_i32(s: string): i32 { var acc: i32 = 0; var neg: i32 = 0; var first: i32 = 1; for b in s { if (first == 1 && b == 45) { neg = 1; } else { var d: i32 = b - 48; if (d < 0 || d > 9) { break; } acc = acc * 10 + d; } first = 0; } if (neg == 1) { return 0 - acc; } return acc; }";
 }
 
+// rt_src_str_cmp backs string ordering (< <= > >=) → __fern_str_cmp(a, b),
+// returning a signed i32: <0 if a<b, 0 if equal, >0 if a>b (#2649). Lexicographic
+// byte compare (unsigned bytes, like the asm's movzbq) with a length tiebreak;
+// it returns the actual byte/length DIFFERENCE (the operators only use the sign),
+// matching the hand-written helper. Both string params are read-only, so borrow
+// analysis keeps them borrowed (no RC free). Uses a[i]/b[i] indexing — the
+// string byte-load lowers on both the AST and IR paths (parallel two-string
+// iteration can't use `for ... in`).
+pub function rt_src_str_cmp(): string {
+    return "function __fern_str_cmp(a: string, b: string): i32 { var la: i32 = a.len(); var lb: i32 = b.len(); var n: i32 = la; if (lb < n) { n = lb; } var i: i32 = 0; while (i < n) { var ca: i32 = a[i]; var cb: i32 = b[i]; if (ca != cb) { return ca - cb; } i = i + 1; } return la - lb; }";
+}
+
 pub function rt_src_arr_i32_max(): string {
     return "function __fern_arr_i32_max(xs: i32[]): i32 { var m: i32 = xs[0]; var i: i32 = 1; while (i < xs.len()) { if (xs[i] > m) { m = xs[i]; } i = i + 1; } return m; }";
 }
