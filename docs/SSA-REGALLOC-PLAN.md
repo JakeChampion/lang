@@ -103,8 +103,12 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
       (operand assignment, the x86 two-address fixup, spill load/store) via a
       model interpreter (`Run`) diffed against `ssa.Eval`, incl. spill-forcing
       cases. Dormant infrastructure — not yet wired into any codegen path.
-    - [ ] Slice 2 — control flow + phi resolution (parallel-moves on edges,
-      critical-edge splitting).
+    - [x] Slice 2 — control flow + phi resolution (out-of-SSA): multi-block,
+      Br/BrIf, parallel-copy phi moves (read-all-then-write-all via temp slots,
+      so swaps/cycles are correct), and critical-edge splitting. Validated
+      against `ssa.Eval` incl. diamond/loop/critical-edge/phi-swap. Also fixed a
+      latent bug the swap test surfaced: `ssa.Eval` was resolving phis
+      sequentially instead of in parallel.
     - [ ] Slice 3 — real GAS-text emission + assemble/run validation (call ABI,
       `idiv` rax/rdx, the ELF `_start` runtime), then diff against the existing
       stack-machine backend over the e2e corpus.

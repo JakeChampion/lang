@@ -31,33 +31,55 @@ func Run(p *Program, args []int64) (int64, error) {
 		}
 	}
 
-	for _, in := range p.Insts {
-		switch in.Op {
-		case MovImm:
-			regs[in.Dst] = maskW(in.W, in.Imm)
-		case MovReg:
-			regs[in.Dst] = regs[in.Src]
-		case BinOp:
-			r, err := binInt(in.K, regs[in.Dst], regs[in.Src])
-			if err != nil {
-				return 0, err
+	bi := p.Entry
+	const maxSteps = 1 << 22
+	for steps := 0; ; steps++ {
+		if steps > maxSteps {
+			return 0, fmt.Errorf("Run: step limit exceeded (non-terminating?)")
+		}
+		if bi < 0 || bi >= len(p.Blocks) {
+			return 0, fmt.Errorf("Run: branch to out-of-range block %d", bi)
+		}
+		blk := p.Blocks[bi]
+		for _, in := range blk.Insts {
+			switch in.Op {
+			case MovImm:
+				regs[in.Dst] = maskW(in.W, in.Imm)
+			case MovReg:
+				regs[in.Dst] = regs[in.Src]
+			case BinOp:
+				r, err := binInt(in.K, regs[in.Dst], regs[in.Src])
+				if err != nil {
+					return 0, err
+				}
+				regs[in.Dst] = maskW(in.W, r)
+			case UnNeg:
+				regs[in.Dst] = maskW(in.W, -regs[in.Dst])
+			case SetCmp:
+				regs[in.Dst] = cmpInt(in.K, regs[in.Dst], regs[in.Src])
+			case LoadSlot:
+				regs[in.Dst] = slots[in.Imm]
+			case StoreSlot:
+				slots[in.Imm] = regs[in.Src]
+			default:
+				return 0, fmt.Errorf("Run: unknown opcode %d", in.Op)
 			}
-			regs[in.Dst] = maskW(in.W, r)
-		case UnNeg:
-			regs[in.Dst] = maskW(in.W, -regs[in.Dst])
-		case SetCmp:
-			regs[in.Dst] = cmpInt(in.K, regs[in.Dst], regs[in.Src])
-		case LoadSlot:
-			regs[in.Dst] = slots[in.Imm]
-		case StoreSlot:
-			slots[in.Imm] = regs[in.Src]
-		case Ret:
-			return regs[in.Src], nil
+		}
+		switch blk.Term.Kind {
+		case TRet:
+			return regs[blk.Term.RetReg], nil
+		case TJmp:
+			bi = blk.Term.Target
+		case TBrIf:
+			if regs[blk.Term.CondReg] != 0 {
+				bi = blk.Term.True
+			} else {
+				bi = blk.Term.False
+			}
 		default:
-			return 0, fmt.Errorf("Run: unknown opcode %d", in.Op)
+			return 0, fmt.Errorf("Run: unknown terminator %d", blk.Term.Kind)
 		}
 	}
-	return 0, fmt.Errorf("Run: program fell off the end without Ret")
 }
 
 func maskW(w int8, v int64) int64 {

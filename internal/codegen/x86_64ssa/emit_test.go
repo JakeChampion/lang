@@ -129,19 +129,8 @@ func TestEmitForcesSpills(t *testing.T) {
 	}
 }
 
-// Unsupported shapes (multi-block, unsupported op) return a clear error, not a
-// silent wrong answer.
+// Unsupported ops return a clear error, not a silent wrong answer.
 func TestEmitRejectsUnsupported(t *testing.T) {
-	// Multi-block.
-	f := ssa.NewFunc("mb")
-	e := f.NewBlock()
-	b2 := f.NewBlock()
-	f.SetBr(e, b2)
-	f.SetRet(b2, ssa.Value{})
-	if _, err := Emit(f, 4); err == nil {
-		t.Error("expected an error for a multi-block function")
-	}
-
 	// Unsupported op (division — deferred to the real-asm slice for idiv).
 	g := ssa.NewFunc("dv")
 	x := g.AddParam()
