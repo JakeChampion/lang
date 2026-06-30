@@ -893,9 +893,11 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
     // Leading whitespace not handled; optional leading
     // `-`, then decimal digits, stops at first non-digit.
     if (name == "str_to_i32" && c.args.len() == 1) {
+        // __fern_str_to_i32 is a Fern runtime function (#2649): call it via the
+        // ordinary __fn_ stack convention (the borrowed string is param[0]).
         s = emit_expr(c.args[0], s);
-        s = s.write("    popq %rdi\n");
-        s = s.write("    call __fern_str_to_i32\n");
+        s = s.write("    call __fn___fern_str_to_i32\n");
+        s = s.write("    addq $8, %rsp\n");
         s = s.write("    pushq %rax\n");
         s = s.mark_str_to_i32();
         return CallOut { state: s, done: true };
@@ -4495,44 +4497,12 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
-    // __fern_str_to_i32: %rdi = string box. Returns parsed i32
-    // in %rax. Handles optional leading '-', then decimal
-    // digits; stops at first non-digit (including newline).
-    // Empty box → 0.
+    // __fern_str_to_i32 is now a Fern runtime function (#2649): see
+    // asmcore.rt_src_str_to_i32. Parses a borrowed string into an i32 (optional
+    // leading '-', decimal digits, stop at first non-digit); stack convention.
+    // Mirrors the x86-64 IR path (asm_ir.emit_ir_runtime_fern_fn) and arm64.
     if (s.has_need("str_to_i32")) {
-        s = s.write("__fern_str_to_i32:\n");
-        s = s.write("    movq (%rdi), %rcx\n");      // data ptr
-        s = s.write("    movq 8(%rdi), %r8\n");      // len
-        s = s.write("    movq %rcx, %r9\n");
-        s = s.write("    addq %r8, %r9\n");          // end ptr
-        s = s.write("    movq $0, %rax\n");          // accumulator
-        s = s.write("    movq $0, %r10\n");          // neg flag
-        s = s.write("    cmpq %rcx, %r9\n");
-        s = s.write("    je .Ls2i_done\n");
-        s = s.write("    movzbq (%rcx), %rdx\n");
-        s = s.write("    cmpq $45, %rdx\n");         // '-'
-        s = s.write("    jne .Ls2i_loop\n");
-        s = s.write("    movq $1, %r10\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write(".Ls2i_loop:\n");
-        s = s.write("    cmpq %rcx, %r9\n");
-        s = s.write("    je .Ls2i_done\n");
-        s = s.write("    movzbq (%rcx), %rdx\n");
-        s = s.write("    subq $48, %rdx\n");
-        s = s.write("    cmpq $0, %rdx\n");
-        s = s.write("    jl .Ls2i_done\n");
-        s = s.write("    cmpq $9, %rdx\n");
-        s = s.write("    jg .Ls2i_done\n");
-        s = s.write("    imulq $10, %rax\n");
-        s = s.write("    addq %rdx, %rax\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    jmp .Ls2i_loop\n");
-        s = s.write(".Ls2i_done:\n");
-        s = s.write("    cmpq $0, %r10\n");
-        s = s.write("    je .Ls2i_no_neg\n");
-        s = s.write("    negq %rax\n");
-        s = s.write(".Ls2i_no_neg:\n");
-        s = s.write("    ret\n");
+        s = emit_runtime_fern_fn(asmcore.rt_src_str_to_i32(), s);
     }
     // __fern_eprint_str: %rdi = string box ptr. Loads box.data
     // + box.len, issues a write(2, ptr, len) — stderr — then a
