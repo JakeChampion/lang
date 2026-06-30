@@ -196,14 +196,15 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         return s.write("    ldr x0, [sp], #16\n    bl __fern_str_lines\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind == "str_starts_with" || o.kind == "str_ends_with" || o.kind == "str_index_of") {
-        // operand stack [s, p] (p top); __fern_str_<pred>(x0=s, x1=p) -> 0/1
-        // (starts/ends) or first index / -1 (index_of) in x0. Allocation-free
-        // str_search predicates (asm_arm64.emit_runtime's str_search block).
-        var pfn: string = "__fern_str_starts_with";
-        if (o.kind == "str_ends_with") { pfn = "__fern_str_ends_with"; }
-        if (o.kind == "str_index_of") { pfn = "__fern_str_index_of"; }
+        // operand stack [s, p] (p top); the str_search predicates are now Fern
+        // runtime functions (#2649) called via the __fn_ stack convention —
+        // re-push so s=param[0] at [x29,#16] and p=param[1] at [x29,#32]. Body
+        // from asm_arm64.emit_runtime's (now Fern) str_search block.
+        var pfn: string = "__fn___fern_str_starts_with";
+        if (o.kind == "str_ends_with") { pfn = "__fn___fern_str_ends_with"; }
+        if (o.kind == "str_index_of") { pfn = "__fn___fern_str_index_of"; }
         s = s.mark_str_search();
-        return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl " + pfn + "\n    str x0, [sp, #-16]!\n");
+        return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl " + pfn + "\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind == "str_concat") {
         // operand stack [A, B] (B on top); __fern_str_concat(x0=A, x1=B) -> x0.

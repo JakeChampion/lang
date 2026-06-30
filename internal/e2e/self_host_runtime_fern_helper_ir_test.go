@@ -54,6 +54,12 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			"__fn___fern_str_cmp",
 			[]string{"\n__fern_str_cmp:", ".Lstrcmp_loop"},
 		},
+		{
+			"str_search",
+			`function main(): i32 { if ("hello".starts_with("he")) { return 1; } return 0; }`,
+			"__fn___fern_str_starts_with",
+			[]string{"\n__fern_str_starts_with:", ".Lir_sw_loop", ".Lir_idx_outer"},
+		},
 	}
 
 	for _, tc := range cases {

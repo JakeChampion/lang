@@ -162,113 +162,10 @@ pub function ir_helper_symbol(name: string): string {
     return "__fn_" + name;
 }
 
-// emit_ir_str_search appends the scalar string search predicates
-// (__fern_str_starts_with / _ends_with / _index_of), transcribed verbatim from
-// asm.fern's str_search block. All three only read the two string boxes — no
-// allocation, no calls — so they're emitted independently of the heap runtime
-// (a predicate-only program is heap-free) and kept in their OWN function: folding
-// them into emit_ir_runtime pushed it past the self-host's oversized-function
-// miscompile threshold (#2720 — the stage-2 self-compile crashed with signal 9).
-function emit_ir_str_search(s: asmcore.EmitState): asmcore.EmitState {
-    s = s.write("__fern_str_starts_with:\n");
-    s = s.write("    movq 8(%rsi), %rcx\n");
-    s = s.write("    movq 8(%rdi), %rax\n");
-    s = s.write("    cmpq %rcx, %rax\n");
-    s = s.write("    jl .Lir_sw_no\n");
-    s = s.write("    movq (%rdi), %rdi\n");
-    s = s.write("    movq (%rsi), %rsi\n");
-    s = s.write("    cmpq $0, %rcx\n");
-    s = s.write("    je .Lir_sw_yes\n");
-    s = s.write(".Lir_sw_loop:\n");
-    s = s.write("    movzbq (%rdi), %rax\n");
-    s = s.write("    movzbq (%rsi), %rdx\n");
-    s = s.write("    cmpq %rdx, %rax\n");
-    s = s.write("    jne .Lir_sw_no\n");
-    s = s.write("    incq %rdi\n");
-    s = s.write("    incq %rsi\n");
-    s = s.write("    decq %rcx\n");
-    s = s.write("    jne .Lir_sw_loop\n");
-    s = s.write(".Lir_sw_yes:\n");
-    s = s.write("    movq $1, %rax\n");
-    s = s.write("    ret\n");
-    s = s.write(".Lir_sw_no:\n");
-    s = s.write("    movq $0, %rax\n");
-    s = s.write("    ret\n");
-    s = s.write("__fern_str_ends_with:\n");
-    s = s.write("    movq 8(%rsi), %rcx\n");
-    s = s.write("    movq 8(%rdi), %rax\n");
-    s = s.write("    cmpq %rcx, %rax\n");
-    s = s.write("    jl .Lir_ew_no\n");
-    s = s.write("    subq %rcx, %rax\n");
-    s = s.write("    movq (%rdi), %rdi\n");
-    s = s.write("    addq %rax, %rdi\n");
-    s = s.write("    movq (%rsi), %rsi\n");
-    s = s.write("    cmpq $0, %rcx\n");
-    s = s.write("    je .Lir_ew_yes\n");
-    s = s.write(".Lir_ew_loop:\n");
-    s = s.write("    movzbq (%rdi), %rax\n");
-    s = s.write("    movzbq (%rsi), %rdx\n");
-    s = s.write("    cmpq %rdx, %rax\n");
-    s = s.write("    jne .Lir_ew_no\n");
-    s = s.write("    incq %rdi\n");
-    s = s.write("    incq %rsi\n");
-    s = s.write("    decq %rcx\n");
-    s = s.write("    jne .Lir_ew_loop\n");
-    s = s.write(".Lir_ew_yes:\n");
-    s = s.write("    movq $1, %rax\n");
-    s = s.write("    ret\n");
-    s = s.write(".Lir_ew_no:\n");
-    s = s.write("    movq $0, %rax\n");
-    s = s.write("    ret\n");
-    s = s.write("__fern_str_index_of:\n");
-    s = s.write("    movq 8(%rdi), %r8\n");
-    s = s.write("    movq 8(%rsi), %r9\n");
-    s = s.write("    cmpq $0, %r9\n");
-    s = s.write("    je .Lir_idx_zero\n");
-    s = s.write("    movq %r8, %r10\n");
-    s = s.write("    subq %r9, %r10\n");
-    s = s.write("    cmpq $0, %r10\n");
-    s = s.write("    jl .Lir_idx_no\n");
-    s = s.write("    movq (%rdi), %r11\n");
-    s = s.write("    movq (%rsi), %rdi\n");
-    s = s.write("    movq $0, %rcx\n");
-    s = s.write(".Lir_idx_outer:\n");
-    s = s.write("    cmpq %r10, %rcx\n");
-    s = s.write("    jg .Lir_idx_no\n");
-    s = s.write("    movq %rcx, %rdx\n");
-    s = s.write("    movq $0, %r12\n");
-    s = s.write("    pushq %r12\n");
-    s = s.write("    movq $0, %r12\n");
-    s = s.write(".Lir_idx_inner:\n");
-    s = s.write("    cmpq %r9, %r12\n");
-    s = s.write("    je .Lir_idx_match\n");
-    s = s.write("    movq %r11, %rax\n");
-    s = s.write("    addq %rcx, %rax\n");
-    s = s.write("    addq %r12, %rax\n");
-    s = s.write("    movzbq (%rax), %rdx\n");
-    s = s.write("    movq %rdi, %rax\n");
-    s = s.write("    addq %r12, %rax\n");
-    s = s.write("    movzbq (%rax), %rax\n");
-    s = s.write("    cmpq %rax, %rdx\n");
-    s = s.write("    jne .Lir_idx_skip\n");
-    s = s.write("    incq %r12\n");
-    s = s.write("    jmp .Lir_idx_inner\n");
-    s = s.write(".Lir_idx_skip:\n");
-    s = s.write("    popq %r12\n");
-    s = s.write("    incq %rcx\n");
-    s = s.write("    jmp .Lir_idx_outer\n");
-    s = s.write(".Lir_idx_match:\n");
-    s = s.write("    popq %r12\n");
-    s = s.write("    movq %rcx, %rax\n");
-    s = s.write("    ret\n");
-    s = s.write(".Lir_idx_zero:\n");
-    s = s.write("    movq $0, %rax\n");
-    s = s.write("    ret\n");
-    s = s.write(".Lir_idx_no:\n");
-    s = s.write("    movq $-1, %rax\n");
-    s = s.write("    ret\n");
-    return s;
-}
+// (The hand-written emit_ir_str_search was removed in #2649: the
+// __fern_str_starts_with / _ends_with / _index_of predicates are now Fern
+// runtime functions, emitted via emit_ir_runtime_fern_fn(asmcore.rt_src_str_search)
+// in emit_module_ir_unit's entry block.)
 
 // emit_ir_str_case appends the ASCII case transforms (__fern_str_to_upper /
 // _to_lower), transcribed verbatim from asm.fern. Each allocates a fresh char
@@ -3806,8 +3703,8 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_string_from_bytes", "__fern_str_bytes", "__fern_str_chars",
         "__fern_str_lines", "__fern_str_split", "__fern_str_repeat",
         "__fern_str_replace", "__fern_str_reverse", "__fern_str_trim",
-        "__fern_str_to_lower", "__fern_str_to_upper", "__fern_str_starts_with",
-        "__fern_str_ends_with", "__fern_str_index_of", "__fern_print_str",
+        "__fern_str_to_lower", "__fern_str_to_upper", "__fn___fern_str_starts_with",
+        "__fn___fern_str_ends_with", "__fn___fern_str_index_of", "__fern_print_str",
         "__fern_print_int", "__fern_eprint_str", "__fern_putchar",
         "__fern_read_int", "__fern_read_line", "__fern_read_file",
         "__fern_reader_read_chunk", "__fern_reader_close", "__fern_write_file",
@@ -3913,13 +3810,13 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         return s.mark_str_lines().mark_str_split();
     }
     if (o.kind == "str_starts_with" || o.kind == "str_ends_with" || o.kind == "str_index_of") {
-        // operand stack [s box, p box] (p on top); __fern_str_<pred>(%rdi=s,
-        // %rsi=p) -> 0/1 (starts/ends) or first index / -1 (index_of) in %rax.
-        // Allocation-free str_search predicates (helpers in emit_ir_str_search).
-        var pfn: string = "__fern_str_starts_with";
-        if (o.kind == "str_ends_with") { pfn = "__fern_str_ends_with"; }
-        if (o.kind == "str_index_of") { pfn = "__fern_str_index_of"; }
-        s = s.write("    popq %rsi\n    popq %rdi\n    call " + pfn + "\n    pushq %rax\n");
+        // operand stack [s box, p box] (p on top); the str_search predicates are
+        // now Fern runtime functions (#2649) called via the __fn_ stack
+        // convention — re-push so s=param[0] at +16 and p=param[1] at +24.
+        var pfn: string = "__fn___fern_str_starts_with";
+        if (o.kind == "str_ends_with") { pfn = "__fn___fern_str_ends_with"; }
+        if (o.kind == "str_index_of") { pfn = "__fn___fern_str_index_of"; }
+        s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n    call " + pfn + "\n    addq $16, %rsp\n    pushq %rax\n");
         return s.mark_str_search();
     }
     if (o.kind == "str_concat") {
@@ -5383,11 +5280,14 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     // i32.to_string() allocates its box even in an otherwise heap-free program,
     // so its emit-time need pulls the runtime in too (its body calls __fern_alloc).
     if (s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("print_int") || s.has_need("read_int") || s.has_need("str_read_line") || s.has_need("putchar") || s.has_need("strbuf") || s.has_need("reader") || s.has_need("write_file") || s.has_need("remove_dir_all") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_file") || s.has_need("env") || s.has_need("stat") || s.has_need("subprocess")) { s = emit_ir_runtime(s); }
-    // String search predicates (starts_with / ends_with / index_of) are
-    // allocation-free + self-contained, so they're emitted in their own helper
-    // — kept OUT of emit_ir_runtime, whose size is near the self-host's
-    // oversized-function miscompile threshold (#2720).
-    if (s.has_need("str_search")) { s = emit_ir_str_search(s); }
+    // String search predicates (starts_with / ends_with / index_of) are now
+    // Fern runtime functions (#2649): allocation-free + self-contained, lowered
+    // through the IR pipeline via emit_ir_runtime_fern_fn (entry-only, .text;
+    // emit_ir_runtime above left us in .bss). emit_runtime_globls .globl's them.
+    if (s.has_need("str_search")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_search(), all_structs, s);
+    }
     // ASCII case transforms (to_upper / to_lower) — heap-dependent, so the heap
     // runtime is already present; emitted on their own str_case need.
     if (s.has_need("str_case")) { s = emit_ir_str_case(s); }
