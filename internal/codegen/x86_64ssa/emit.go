@@ -37,6 +37,7 @@ const (
 	SetCmp                  // reg[Dst] = (reg[Dst] K reg[Src]) ? 1 : 0   (K a comparison)
 	LoadSlot                // reg[Dst] = slot[Imm]
 	StoreSlot               // slot[Imm] = reg[Src]
+	Call                    // reg[Dst] = Callee(ArgLocs...)   (model: recurse into callee Program)
 )
 
 // Inst is one straight-line abstract instruction. Registers are indices into a
@@ -47,7 +48,10 @@ type Inst struct {
 	Src int
 	Imm int64
 	K   ssa.OpKind // BinOp / SetCmp operation
-	W   int8       // result width for MovImm/BinOp/UnNeg (0/32 => i32, 64 => i64)
+	W   int8       // result width for MovImm/BinOp/UnNeg/Call (0/32 => i32, 64 => i64)
+
+	Callee  string // Call: callee function name
+	ArgLocs []Loc  // Call: homes of the argument values, in order
 }
 
 // TermKind is an MBlock terminator shape.
@@ -146,6 +150,21 @@ func Emit(f *ssa.Func, numAlloc int) (*Program, error) {
 		NumSlots:   e.numSlots,
 		ParamLocs:  e.paramLocs(),
 	}, nil
+}
+
+// EmitModule lowers a set of functions (keyed by name) to abstract Programs,
+// so direct calls between them resolve at Run time. Each function is allocated
+// independently over numAlloc registers.
+func EmitModule(funcs map[string]*ssa.Func, numAlloc int) (map[string]*Program, error) {
+	out := make(map[string]*Program, len(funcs))
+	for name, f := range funcs {
+		p, err := Emit(f, numAlloc)
+		if err != nil {
+			return nil, fmt.Errorf("emit %q: %w", name, err)
+		}
+		out[name] = p
+	}
+	return out, nil
 }
 
 type emitter struct {
@@ -387,6 +406,22 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		}
 		e.push(Inst{Op: MovReg, Dst: e.s2, Src: ra})
 		e.push(Inst{Op: UnNeg, Dst: e.s2, W: op.Width})
+		e.place(op.Result, e.s2)
+		return nil
+
+	case ssa.OpCall:
+		// Direct integer call. The argument homes are captured at the call
+		// point; the model interpreter reads them, recurses into the callee
+		// Program, and delivers the result into s2.
+		argLocs := make([]Loc, 0, len(op.Args))
+		for _, a := range op.Args {
+			l, ok := e.loc(a.ID)
+			if !ok {
+				return fmt.Errorf("x86_64ssa: call arg v%d has no allocation", a.ID)
+			}
+			argLocs = append(argLocs, l)
+		}
+		e.push(Inst{Op: Call, Dst: e.s2, Callee: op.Str, ArgLocs: argLocs, W: op.Width})
 		e.place(op.Result, e.s2)
 		return nil
 

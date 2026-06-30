@@ -19,8 +19,15 @@ import "fmt"
 
 // Eval interprets f with the given integer arguments (bound to f's params in
 // order) and returns the value its Ret terminator produces. Width is modelled
-// by masking i32 results to 32 bits; i64 ops use the full width.
+// by masking i32 results to 32 bits; i64 ops use the full width. It cannot
+// resolve OpCall — use EvalIn with a function table for programs that call.
 func Eval(f *Func, args ...int64) (int64, error) {
+	return EvalIn(nil, f, args...)
+}
+
+// EvalIn is Eval with a function table so OpCall can recurse into callees
+// (resolved by name via Op.Str). Direct integer calls only.
+func EvalIn(funcs map[string]*Func, f *Func, args ...int64) (int64, error) {
 	vals := map[int32]int64{}
 
 	params := realParams(f)
@@ -74,7 +81,7 @@ func Eval(f *Func, args ...int64) (int64, error) {
 			if op.Kind == OpPhi {
 				continue
 			}
-			if err := evalOp(op, vals); err != nil {
+			if err := evalOp(funcs, op, vals); err != nil {
 				return 0, err
 			}
 		}
@@ -145,7 +152,7 @@ func b2i(b bool) int64 {
 	return 0
 }
 
-func evalOp(op *Op, vals map[int32]int64) error {
+func evalOp(funcs map[string]*Func, op *Op, vals map[int32]int64) error {
 	// Binary integer ops read Args[0], Args[1]; unary read Args[0].
 	arg := func(i int) (int64, error) {
 		if i >= len(op.Args) {
@@ -224,6 +231,28 @@ func evalOp(op *Op, vals map[int32]int64) error {
 			return set(t)
 		}
 		return set(e)
+
+	case OpCall:
+		if funcs == nil {
+			return fmt.Errorf("Eval: OpCall %q requires a function table (use EvalIn)", op.Str)
+		}
+		callee, ok := funcs[op.Str]
+		if !ok {
+			return fmt.Errorf("Eval: unknown callee %q", op.Str)
+		}
+		argvals := make([]int64, 0, len(op.Args))
+		for i := range op.Args {
+			v, err := arg(i)
+			if err != nil {
+				return err
+			}
+			argvals = append(argvals, v)
+		}
+		r, err := EvalIn(funcs, callee, argvals...)
+		if err != nil {
+			return err
+		}
+		return set(r)
 
 	default:
 		return fmt.Errorf("Eval: unsupported op %v", op.Kind)

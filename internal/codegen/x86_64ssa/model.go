@@ -14,11 +14,31 @@ import (
 // emitter's operand wiring / two-address fixup / spill handling rather than a
 // semantic mismatch.
 func Run(p *Program, args []int64) (int64, error) {
+	return runProg(nil, p, args)
+}
+
+// RunModule runs the named entry program, resolving Call instructions against
+// the module so direct calls (and recursion) execute.
+func RunModule(m map[string]*Program, entry string, args []int64) (int64, error) {
+	p, ok := m[entry]
+	if !ok {
+		return 0, fmt.Errorf("RunModule: unknown entry %q", entry)
+	}
+	return runProg(m, p, args)
+}
+
+func runProg(m map[string]*Program, p *Program, args []int64) (int64, error) {
 	if len(args) != len(p.ParamLocs) {
 		return 0, fmt.Errorf("Run: got %d args, program has %d params", len(args), len(p.ParamLocs))
 	}
 	regs := make([]int64, p.NumRegFile)
 	slots := make([]int64, p.NumSlots)
+	readLoc := func(l Loc) int64 {
+		if l.IsReg {
+			return regs[l.Reg]
+		}
+		return slots[l.Slot]
+	}
 
 	for i, l := range p.ParamLocs {
 		if !l.IsReg && l.Slot < 0 {
@@ -61,6 +81,23 @@ func Run(p *Program, args []int64) (int64, error) {
 				regs[in.Dst] = slots[in.Imm]
 			case StoreSlot:
 				slots[in.Imm] = regs[in.Src]
+			case Call:
+				if m == nil {
+					return 0, fmt.Errorf("Run: Call %q requires a module (use RunModule)", in.Callee)
+				}
+				callee, ok := m[in.Callee]
+				if !ok {
+					return 0, fmt.Errorf("Run: unknown callee %q", in.Callee)
+				}
+				argvals := make([]int64, 0, len(in.ArgLocs))
+				for _, l := range in.ArgLocs {
+					argvals = append(argvals, readLoc(l))
+				}
+				r, err := runProg(m, callee, argvals)
+				if err != nil {
+					return 0, err
+				}
+				regs[in.Dst] = maskW(in.W, r)
 			default:
 				return 0, fmt.Errorf("Run: unknown opcode %d", in.Op)
 			}
