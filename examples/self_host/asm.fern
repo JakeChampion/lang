@@ -5074,15 +5074,22 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
             li = li + 1;
         }
     }
-    // Heap allocator: a 1 MiB .bss buffer + bump pointer. The
-    // pointer starts at `__fern_heap` and advances by `size`
-    // each `__fern_alloc(size)` call. No deallocation — fine
-    // for the small validation programs that exercise structs.
+    // Heap allocator: a bump pointer over a lazily-mmap'd arena. The
+    // arena is mmap'd at hint 0x10000000 on the first __fern_alloc call
+    // (mirrors the native x86-64 backend + the self-host arm64 backend)
+    // rather than reserved as a multi-GiB `.bss` block in the loaded
+    // image. The arena base comes from the kernel at runtime, so the
+    // emitted binary makes NO assumption about the linker's .bss layout —
+    // bfd, lld and mold all lay it out compatibly (issue #4081: the old
+    // static-.bss heap, addressed via `movabs $__fern_heap`, only linked
+    // correctly under bfd). No deallocation — leak-everything bump heap.
     if (s.has_need("heap")) {
-        var heap_size: string = "4160749568";   // 0xF8000000, 3.875 GiB — widening the IR subset + adding compiler source (most recently the strbuf_* IR ops) pushed the stage-2 x86 self-compile live set past 3.5 GiB (exit-137 alloc trap); 3.875 GiB restores headroom. x86-ONLY: lockstep with the .bss .skip below + asm_ir.fern + the native x86-64 backend. arm64 (asm_arm64.fern) stays at 3.5 GiB (0xE0000000), pinned by base 0x10000000 + size < 4 GiB. 0xF8000000 < 0xFFFFFFFF, so the native mmap u32 length still fits.
+        var heap_size: string = "4160749568";   // 0xF8000000, 3.875 GiB — widening the IR subset + adding compiler source (most recently the strbuf_* IR ops) pushed the stage-2 x86 self-compile live set past 3.5 GiB (exit-137 alloc trap); 3.875 GiB restores headroom. x86-ONLY: lockstep with asm_ir.fern + the native x86-64 backend. arm64 (asm_arm64.fern) stays at 3.5 GiB (0xE0000000). 0xF8000000 < 0xFFFFFFFF, so the mmap u32 length still fits.
         s = s.write("    .section .bss\n");
         s = s.write("    .align 8\n");
-        s = s.write("__fern_heap_ptr: .quad 0\n");
+        s = s.write("__fern_heap_ptr: .quad 0\n");       // bump cursor (0 until first mmap)
+        s = s.write("    .align 8\n");
+        s = s.write("__fern_heap_end: .quad 0\n");        // arena end (base + heap_size), set at mmap time
         s = s.write("    .align 8\n");
         // RC over-release (underflow) detector — Phase 0c. Bumped by
         // __fern_rc_dec when it sees rc <= 0 before decrementing; read
@@ -5093,15 +5100,11 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("__fern_rc_underflow: .quad 0\n");
         s = s.write("    .align 8\n");
         s = s.write("__fern_freelist: .skip 524288\n");
-        // NOTE: the multi-GiB `__fern_heap: .skip` reservation is NOT
-        // emitted here — it is emitted LAST in emit_runtime (just before
-        // `return s;`) so that __fern_heap is the final symbol in .bss.
-        // All other .bss symbols (strbuf / args / envp) thus land BELOW
-        // the heap (< 2 GiB) and keep cheap RIP-relative `leaq (%rip)`
-        // access; only __fern_heap's own base lives above 2 GiB and is
-        // reached via 64-bit-absolute `movabs $__fern_heap` (valid in the
-        // -no-pie static ELF). This is what keeps the heap's R_X86_64_PC32
-        // relocations from truncating when heap_base + heap_size > 2 GiB.
+        // NOTE: there is no static `.bss` heap reservation anymore — the
+        // arena is mmap'd at runtime (see .Lalloc_nofl below). Every .bss
+        // symbol here (cursor / end / underflow / freelist) is small and
+        // RIP-relative addressable regardless of linker layout, so the
+        // emitted binary is linker-agnostic (issue #4081).
         s = s.write("    .section .text\n");
         s = s.write(".globl __fern_alloc\n");
         s = s.write(".type __fern_alloc, @function\n");
@@ -5132,27 +5135,53 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");
         s = s.write("    testq %rax, %rax\n");
         s = s.write("    jne .Lalloc_inited\n");
-        s = s.write("    movabs $__fern_heap, %rax\n");
+        // First allocation: lazily mmap the arena at hint 0x10000000
+        // (MAP_PRIVATE | MAP_ANONYMOUS, R+W). Runs once. The kernel hands
+        // back the base, so the heap address is NOT derived from the
+        // linker's .bss layout (issue #4081 — mirrors the native x86-64
+        // backend's emitAllocRuntime + the self-host arm64 backend). The
+        // mmap syscall clobbers %rcx/%r11 plus its arg regs, so every
+        // register except %rax/%rdi (the alloc clobber contract) is
+        // saved across it; %rdi (the rounded size) is live and restored.
+        s = s.write("    pushq %rdi\n");
+        s = s.write("    pushq %rsi\n");
+        s = s.write("    pushq %rcx\n");
+        s = s.write("    pushq %rdx\n");
+        s = s.write("    pushq %r8\n");
+        s = s.write("    pushq %r9\n");
+        s = s.write("    pushq %r10\n");
+        s = s.write("    pushq %r11\n");
+        s = s.write("    movl $0x10000000, %edi\n");          // addr hint
+        s = s.write("    movl $" + heap_size + ", %esi\n");   // length (u32 zero-extend; 0xF8000000 < 0xFFFFFFFF)
+        s = s.write("    movl $3, %edx\n");                   // PROT_READ | PROT_WRITE
+        s = s.write("    movl $0x22, %r10d\n");               // MAP_PRIVATE | MAP_ANONYMOUS
+        s = s.write("    movq $-1, %r8\n");                   // fd
+        s = s.write("    xorl %r9d, %r9d\n");                 // offset
+        s = s.write("    movl $9, %eax\n");                   // __NR_mmap
+        s = s.write("    syscall\n");
+        s = s.write("    cmpq $0, %rax\n");                   // mmap returns -errno on failure
+        s = s.write("    jl .Lalloc_oom\n");
         s = s.write("    movq %rax, __fern_heap_ptr(%rip)\n");
+        s = s.write("    movl $" + heap_size + ", %ecx\n");   // heap_size (u32)
+        s = s.write("    addq %rax, %rcx\n");                 // %rcx = base + heap_size (END)
+        s = s.write("    movq %rcx, __fern_heap_end(%rip)\n");
+        s = s.write("    popq %r11\n");
+        s = s.write("    popq %r10\n");
+        s = s.write("    popq %r9\n");
+        s = s.write("    popq %r8\n");
+        s = s.write("    popq %rdx\n");
+        s = s.write("    popq %rcx\n");
+        s = s.write("    popq %rsi\n");
+        s = s.write("    popq %rdi\n");
         s = s.write(".Lalloc_inited:\n");
         s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");
         s = s.write("    addq %rax, %rdi\n");
-        // Bounds check: a bump heap has no GC, so an overflow would
-        // silently run past the buffer into adjacent .bss (e.g. the
-        // strbuf output accumulator) and corrupt it. Trap with a clean,
-        // recognisable exit code (137) instead of corrupting memory.
-        // %rcx is saved/restored so __fern_alloc keeps its original
-        // clobber contract (only %rax + %rdi) — callers hold live values
-        // in other registers across the call (e.g. to_ascii_string keeps
-        // the byte in %rcx). popq doesn't disturb the cmp's flags.
-        s = s.write("    pushq %rcx\n");
-        s = s.write("    pushq %rdx\n");
-        s = s.write("    movabs $__fern_heap, %rcx\n");
-        s = s.write("    movabs $" + heap_size + ", %rdx\n"); // heap_size > imm32, so movabs not addq imm
-        s = s.write("    addq %rdx, %rcx\n");                 // %rcx = heap_base + heap_size (END)
-        s = s.write("    cmpq %rcx, %rdi\n");
-        s = s.write("    popq %rdx\n");
-        s = s.write("    popq %rcx\n");
+        // Bounds check: a bump heap has no GC, so an overflow would run
+        // past the mmap'd arena and segfault. Trap with a clean,
+        // recognisable exit code (137) instead. The arena end was recorded
+        // at mmap time, so this is a single RIP-relative memory-operand
+        // compare — no scratch register to save.
+        s = s.write("    cmpq __fern_heap_end(%rip), %rdi\n");
         s = s.write("    ja .Lalloc_oom\n");
         s = s.write("    movq %rdi, __fern_heap_ptr(%rip)\n");
         s = s.write("    popq %rbp\n");
@@ -5275,11 +5304,11 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         // (low bit set => packed small string, not a pointer) ->
         // low-address (< 0x10000 => a non-pointer scalar / enum tag in
         // an rc slot, never a heap object) -> static sentinel (rc high
-        // bit set => immortal, never touch). The native backend uses a
-        // 0x10000000 below-heap guard because its heap is mmap'd high;
-        // the self-host heap is the __fern_heap .bss buffer (a low
-        // static address), so the < 0x10000 guard is the right cutoff
-        // here. Frameless: param[0] is at 8(%rsp) after the call;
+        // bit set => immortal, never touch). The heap is now mmap'd at
+        // hint 0x10000000 (issue #4081), so every real heap object sits
+        // well above the < 0x10000 cutoff and the guard stays correct
+        // (it conservatively rejects only true sub-64KiB scalars/tags).
+        // Frameless: param[0] is at 8(%rsp) after the call;
         // result returned in %rax (the input ptr), matching arm64 so a
         // caller can chain an inc into an expression.
         //
@@ -7850,17 +7879,11 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("arr_i32_index_of")) {
         s = emit_runtime_fern_fn(asmcore.rt_src_arr_i32_index_of(), s);
     }
-    // The multi-GiB heap reservation is emitted LAST so __fern_heap is the
-    // final symbol in .bss — every other .bss symbol (strbuf / args / envp /
-    // freelist) lands below it (< 2 GiB) and keeps RIP-relative access; only
-    // __fern_heap's base lives above 2 GiB, reached via `movabs $__fern_heap`.
-    // (Linker concatenates .bss input sections in emission order, so emitting
-    // this last guarantees nothing follows the giant .skip into > 2 GiB land.)
-    if (s.has_need("heap")) {
-        s = s.write("    .section .bss\n");
-        s = s.write("    .align 8\n");
-        s = s.write("__fern_heap: .skip 4160749568\n");   // 0xF8000000 (3.875 GiB) — matches the heap_size var above + asm_ir.fern + the native x86-64 backend; addressed 64-bit-absolute (movabs) so heap_base + heap_size may exceed 2 GiB
-    }
+    // The heap arena is no longer a static `.bss` reservation — it is
+    // mmap'd lazily on the first __fern_alloc call (see the .bss block +
+    // .Lalloc_nofl path in the heap runtime above). That removes the old
+    // linker-layout dependency (issue #4081): the arena base comes from
+    // the kernel, so bfd / lld / mold all produce a correct binary.
     return s;
 }
 
