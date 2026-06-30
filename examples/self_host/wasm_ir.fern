@@ -471,6 +471,16 @@ pub function module_uses_str_to_i32(mod: parser.Module): boolean {
     return false;
 }
 
+// module_uses_strbuf reports whether any function emits a global string-builder
+// op (strbuf_reset / strbuf_append / strbuf_take) — so wasm.strbuf_helpers + the
+// heap allocator are emitted. strbuf_take boxes its result via $__fern_str_box,
+// so the strbuf gate also pulls the heap in (folds into the heap gate alongside
+// module_allocates / module_uses_i32_to_string / module_uses_chr).
+pub function module_uses_strbuf(mod: parser.Module): boolean {
+    return module_emits_op(mod, "strbuf_reset") || module_emits_op(mod, "strbuf_append")
+        || module_emits_op(mod, "strbuf_take");
+}
+
 // module_uses_chr reports whether any function emits the chr(n) runtime call (a
 // call_direct to __fern_chr) — so wasm.chr_helper + the heap allocator are
 // emitted. chr allocates its 1-char box, so the chr gate also pulls the heap in.
@@ -590,8 +600,10 @@ pub function wasm_eligible(mod: parser.Module): boolean {
     // tuple-destructure reads it correctly (#2933 — previously it returned just
     // the box, a different ABI, so a delete module was pinned to the AST path).
     // The global string-builder ops (strbuf_reset / strbuf_append / strbuf_take)
-    // have no wasm IR runtime yet — a strbuf module stays on the wasm AST path
-    // (where the legacy emitter handles it), while x86 / arm64 lower it via the IR.
+    // now lower on the wasm IR path too: wasm_ir emits `call $__fern_strbuf_<op>`
+    // and the runtime (wasm.strbuf_helpers — a growable bump-heap buffer) is pulled
+    // in by module_uses_strbuf, which also folds into the heap gate. The wasm AST
+    // backend never had strbuf, so this is the only wasm strbuf path.
     // The libm transcendentals (sin / cos / exp / log / pow) lower through the IR
     // on x86 (x87 FPU) and arm64 (polynomial-approx runtime helpers), but wasm has
     // neither a transcendental instruction nor an IR runtime for them, so a module
@@ -631,9 +643,6 @@ pub function wasm_eligible(mod: parser.Module): boolean {
         && !module_emits_op(mod, "env")
         && !module_emits_op(mod, "stat")
         && !module_emits_op(mod, "subprocess")
-        && !module_emits_op(mod, "strbuf_reset")
-        && !module_emits_op(mod, "strbuf_append")
-        && !module_emits_op(mod, "strbuf_take")
         && !module_emits_op(mod, "fsin")
         && !module_emits_op(mod, "fcos")
         && !module_emits_op(mod, "fexp")
@@ -1250,6 +1259,18 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             out = out + "    i32.const 4\n    i32.const 1\n    i32.store\n";
             out = out + "    i32.const 1\n    i32.const 0\n    i32.const 1\n    i32.const 8\n    call $fd_write\n    drop\n";
             out = out + "    i32.const 0\n";
+        } else if (o.kind == "strbuf_reset") {
+            // no args -> clear the global string-builder length. Void helper, so
+            // push a dummy i32 for the statement-level drop (mirrors print_str).
+            out = out + "    call $__fern_strbuf_reset\n    i32.const 0\n";
+        } else if (o.kind == "strbuf_append") {
+            // stack: strblock ptr -> copy its bytes onto the builder. Void helper
+            // (consumes the arg); push a dummy i32 for the statement-level drop.
+            out = out + "    call $__fern_strbuf_append\n    i32.const 0\n";
+        } else if (o.kind == "strbuf_take") {
+            // no args -> snapshot the builder into a fresh string box and reset it
+            // (a value op, allocates). Pushes the box ptr.
+            out = out + "    call $__fern_strbuf_take\n";
         } else if (o.kind == "map_set") {
             // stack: map, k, v -> push vis -> map_set -> map. `vis` (value-is-
             // RC-pointer) comes from op_map_set's `unsigned` flag, set by
