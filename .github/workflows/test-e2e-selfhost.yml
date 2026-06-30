@@ -118,6 +118,25 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# ISOLATED WHOLE-COMPILER DRIVER TESTS — the `^TestSelfHost*` tests that build
+# examples/self_host/fern.fern, the ENTIRE self-hosted compiler and the single
+# largest driver (~245 MB linked). A cold fern.fern build is ~236 s; when the
+# `cli` warm cache is evicted/dropped on a shard (GitHub's 10 GB repo-cache
+# budget vs. the ~2 GB of decompressed driver binaries an x86 shard restores)
+# the shard re-emits fern.fern COLD mid-run — which is exactly when the long x86
+# shards crossed into the runner-preemption window (observed: shard kills landing
+# during TestSelfHostCLIX86_64 ~6 min in). These tests are pulled OUT of the
+# round-robin `test` shards (below) and run together in the short, warm-served
+# `driver-tests` job, which builds fern.fern at most ONCE (in-process cache →
+# instant for the rest). A single string is the source of truth for BOTH the
+# `driver-tests` `-test.run` filter and the `test` shards' `-test.list` exclusion,
+# so the two can't drift. ALL FOUR t.Skip on aarch64 (they need a native x86 run),
+# so this is x86-only and excluding them from the aarch64 round-robin loses no
+# coverage. Adding a NEW test that builds fern.fern? Add its name here too, or it
+# will cold-build inside a preemptable shard again.
+env:
+  ISOLATED_DRIVER_TESTS: "TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds"
+
 jobs:
   # Local-CI sign-off gate. `gh signoff e2e-selfhost` on this commit skips the
   # whole pipeline below (see docs/CI-SIGNOFF.md): `build` is gated directly and
@@ -222,6 +241,43 @@ jobs:
           key: selfhost-unicache-x86_64-${{ matrix.key }}-${{ github.sha }}
 
 
+  # The isolated fern.fern (whole-compiler) driver tests — see ISOLATED_DRIVER_TESTS
+  # at the top of this file. ONE short x86 job restores the `cli` warm cache and runs
+  # all four; the in-process driver cache means fern.fern is built/copied at most
+  # once, so the job stays well under the runner-reclaim window (short jobs are never
+  # preempted — the one robust correlation under RUNNER PREEMPTION). x86-only (all
+  # four t.Skip on aarch64). continue-on-error like the x86 shards, so even a stray
+  # reclaim can't fail the workflow; the strict aarch64 lane still guards the rest of
+  # the self-host pipeline. If the `cli` cache misses, this job cold-builds fern.fern
+  # ONCE (~236 s) and still finishes inside the budget — vs. the old behaviour where
+  # whichever round-robin shard drew the test paid that cold build mid-shard.
+  driver-tests:
+    needs: [build, warm]
+    name: test-e2e-selfhost-x86_64-driver-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-fern
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-test-x86_64
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/uc-cli
+          key: selfhost-unicache-x86_64-cli-${{ github.sha }}
+      - name: run isolated fern.fern driver tests (warm-served)
+        env:
+          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/uc-cli"
+        run: |
+          set -euo pipefail
+          chmod +x e2e.test
+          BIN="$PWD/e2e.test"
+          cd internal/e2e
+          echo "isolated driver tests: $ISOLATED_DRIVER_TESTS"
+          "$BIN" -test.run "^($ISOLATED_DRIVER_TESTS)\$" -test.v -test.timeout 18m
+
   test:
     needs: [build, warm]
     strategy:
@@ -308,11 +364,11 @@ jobs:
         with:
           path: ${{ runner.temp }}/uc-ssa
           key: selfhost-unicache-x86_64-ssa-${{ github.sha }}
-      - uses: actions/cache/restore@v4
-        if: matrix.host.name == 'x86_64'
-        with:
-          path: ${{ runner.temp }}/uc-cli
-          key: selfhost-unicache-x86_64-cli-${{ github.sha }}
+      # NOTE: the `cli` (fern.fern) warm cache is intentionally NOT restored here —
+      # the fern.fern driver tests are isolated into the `driver-tests` job (see
+      # ISOLATED_DRIVER_TESTS), so no round-robin shard builds fern.fern anymore.
+      # Dropping its ~245 MB restore also relieves the per-shard disk pressure that
+      # was causing the OTHER driver restores to be silently dropped.
       - uses: actions/cache/restore@v4
         if: matrix.host.name == 'x86_64'
         with:
@@ -327,7 +383,7 @@ jobs:
         env:
           SHARD: "${{ matrix.shard }}"
           NSHARD: "20"
-          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/uc-elig:${{ runner.temp }}/uc-asm:${{ runner.temp }}/uc-pathprobe:${{ runner.temp }}/uc-asmir:${{ runner.temp }}/uc-asmload:${{ runner.temp }}/uc-modload:${{ runner.temp }}/uc-checker:${{ runner.temp }}/uc-ssa:${{ runner.temp }}/uc-cli:${{ runner.temp }}/uc-irx86:${{ runner.temp }}/uc-asmfile"
+          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/uc-elig:${{ runner.temp }}/uc-asm:${{ runner.temp }}/uc-pathprobe:${{ runner.temp }}/uc-asmir:${{ runner.temp }}/uc-asmload:${{ runner.temp }}/uc-modload:${{ runner.temp }}/uc-checker:${{ runner.temp }}/uc-ssa:${{ runner.temp }}/uc-irx86:${{ runner.temp }}/uc-asmfile"
         run: |
           set -euo pipefail
           chmod +x e2e.test
@@ -335,8 +391,10 @@ jobs:
           # Sorted list of every TestSelfHost* function, partitioned round-robin
           # by list index so each shard runs a disjoint ~1/N slice. Read from the
           # prebuilt binary (no recompile). Sorting makes the partition
-          # deterministic and stable as tests are added.
-          mapfile -t ALL < <("$BIN" -test.list '^TestSelfHost' | grep '^TestSelfHost' | sort)
+          # deterministic and stable as tests are added. The isolated fern.fern
+          # driver tests (ISOLATED_DRIVER_TESTS) are filtered out here — they run
+          # in the dedicated `driver-tests` job, not the round-robin shards.
+          mapfile -t ALL < <("$BIN" -test.list '^TestSelfHost' | grep '^TestSelfHost' | grep -vE "^(${ISOLATED_DRIVER_TESTS})\$" | sort)
           SEL=()
           for i in "${!ALL[@]}"; do
             if [ $(( i % NSHARD )) -eq "$SHARD" ]; then SEL+=("${ALL[$i]}"); fi
