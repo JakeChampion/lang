@@ -101,6 +101,15 @@ function main(): i32 {
         // $__fern_strbuf_* (global string-builder): a growable bump-heap buffer +
         // reset/append/take. Heap-backed (str_box / alloc), emitted above.
         if (wasm_ir.module_uses_strbuf(mod)) { o = o + wasm.strbuf_helpers(); }
+        // Per-type $__field_reclaim_<T> + $__struct_drop_<T> RC helper bodies
+        // (#3457, Perceus slices 1c/1d + slice-3 nested deep-drop). emit_module's
+        // own IR orchestration emits these; this differential driver assembles the
+        // helper section itself, so it MUST emit them too — otherwise a struct
+        // program whose deep-drop lowering inserts a `call $__struct_drop_<T>`
+        // links against an undefined function and traps under wasmtime
+        // (`unknown func $__struct_drop_<T>`). Returns "" for modules with no rc
+        // fields, so non-struct programs are unchanged.
+        o = o + wasm.emit_ir_rc_bodies(mod);
         if (wasm_ir.module_uses_divrem(mod)) { o = o + wasm.divrem_helpers(); }
         if (wasm_ir.module_uses_i64_divrem(mod)) { o = o + wasm.divrem64_helpers(); }
         // $__fern_strcat + $__fern_streq (concat / equality); references
