@@ -126,14 +126,18 @@ concurrency:
 # the shard re-emits fern.fern COLD mid-run — which is exactly when the long x86
 # shards crossed into the runner-preemption window (observed: shard kills landing
 # during TestSelfHostCLIX86_64 ~6 min in). These tests are pulled OUT of the
-# round-robin `test` shards (below) and run together in the short, warm-served
-# `driver-tests` job, which builds fern.fern at most ONCE (in-process cache →
-# instant for the rest). A single string is the source of truth for BOTH the
-# `driver-tests` `-test.run` filter and the `test` shards' `-test.list` exclusion,
-# so the two can't drift. ALL FOUR t.Skip on aarch64 (they need a native x86 run),
-# so this is x86-only and excluding them from the aarch64 round-robin loses no
-# coverage. Adding a NEW test that builds fern.fern? Add its name here too, or it
-# will cold-build inside a preemptable shard again.
+# round-robin `test` shards (below) and run INSIDE the `cli` warm job, right after
+# it builds fern.fern — reading that just-built driver from the LOCAL on-disk cache
+# (in-process, one `go test` invocation), so fern.fern is cold-built exactly ONCE
+# per run and never via an evictable cross-job GitHub cache. (An earlier cut ran
+# them in a standalone `driver-tests` job that RESTORED the cli cache; under the
+# 10 GB repo-cache budget that restore was evicted, forcing a SECOND cold rebuild
+# that itself got preempted — hence the fold.) A single string is the source of
+# truth for BOTH the `cli` warm job's `-test.run` filter and the `test` shards'
+# `-test.list` exclusion, so the two can't drift. ALL FOUR t.Skip on aarch64 (they
+# need a native x86 run), so this is x86-only and excluding them from the aarch64
+# round-robin loses no coverage. Adding a NEW test that builds fern.fern? Add its
+# name here too, or it will cold-build inside a preemptable shard again.
 env:
   ISOLATED_DRIVER_TESTS: "TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds"
 
@@ -235,48 +239,41 @@ jobs:
           cd internal/e2e
           "$BIN" -test.run '^TestSelfHostWarmStockDriver$' -test.v -test.timeout 13m
           du -sh "$FERN_SELFHOST_BUILD_CACHE" || true
-      - uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/selfhost-unicache
-          key: selfhost-unicache-x86_64-${{ matrix.key }}-${{ github.sha }}
-
-
-  # The isolated fern.fern (whole-compiler) driver tests — see ISOLATED_DRIVER_TESTS
-  # at the top of this file. ONE short x86 job restores the `cli` warm cache and runs
-  # all four; the in-process driver cache means fern.fern is built/copied at most
-  # once, so the job stays well under the runner-reclaim window (short jobs are never
-  # preempted — the one robust correlation under RUNNER PREEMPTION). x86-only (all
-  # four t.Skip on aarch64). continue-on-error like the x86 shards, so even a stray
-  # reclaim can't fail the workflow; the strict aarch64 lane still guards the rest of
-  # the self-host pipeline. If the `cli` cache misses, this job cold-builds fern.fern
-  # ONCE (~236 s) and still finishes inside the budget — vs. the old behaviour where
-  # whichever round-robin shard drew the test paid that cold build mid-shard.
-  driver-tests:
-    needs: [build, warm]
-    name: test-e2e-selfhost-x86_64-driver-tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-fern
-      - uses: actions/download-artifact@v4
-        with:
-          name: e2e-test-x86_64
-      - uses: actions/cache/restore@v4
-        with:
-          path: ${{ runner.temp }}/uc-cli
-          key: selfhost-unicache-x86_64-cli-${{ github.sha }}
-      - name: run isolated fern.fern driver tests (warm-served)
+      # CLI/whole-compiler driver tests, folded into the `cli` warm job. Only the
+      # `cli` entry builds fern.fern (the entire self-hosted compiler, ~245 MB), so
+      # the four ISOLATED_DRIVER_TESTS that consume it run HERE, right after that
+      # build, reading the just-built driver from the LOCAL on-disk cache (instant —
+      # one `go test` invocation, in-process driver cache shared across all four).
+      # This is the whole point of the fold: no cross-job GitHub cache, so the
+      # 10 GB-budget eviction that dropped the old standalone `driver-tests` job's
+      # restore — sending it into a cold ~236 s rebuild that got preempted mid-build —
+      # cannot happen. fern.fern is now cold-built exactly ONCE per run (right above),
+      # not a second time. continue-on-error at the step level so a flaky test (e.g.
+      # a qemu-aarch64 float blip) is non-fatal: it must NOT fail the warm job, which
+      # the `test` shards depend on. x86-only — all four t.Skip on aarch64.
+      - name: run isolated fern.fern driver tests (in-process, local cache)
+        if: matrix.key == 'cli'
+        continue-on-error: true
         env:
-          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/uc-cli"
+          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
         run: |
           set -euo pipefail
           chmod +x e2e.test
           BIN="$PWD/e2e.test"
           cd internal/e2e
           echo "isolated driver tests: $ISOLATED_DRIVER_TESTS"
-          "$BIN" -test.run "^($ISOLATED_DRIVER_TESTS)\$" -test.v -test.timeout 18m
+          "$BIN" -test.run "^($ISOLATED_DRIVER_TESTS)\$" -test.v -test.timeout 13m
+      # Publish each warmed driver for the `test` shards to restore — EXCEPT `cli`:
+      # nothing consumes the fern.fern cache anymore (the shards stopped restoring it,
+      # and the tests that build it now run in the step above), so skipping its
+      # ~245 MB upload also frees that much of the 10 GB repo-cache budget, easing the
+      # eviction pressure that was dropping the OTHER drivers' restores.
+      - uses: actions/cache@v4
+        if: matrix.key != 'cli'
+        with:
+          path: ${{ runner.temp }}/selfhost-unicache
+          key: selfhost-unicache-x86_64-${{ matrix.key }}-${{ github.sha }}
+
 
   test:
     needs: [build, warm]
