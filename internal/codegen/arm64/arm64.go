@@ -192,6 +192,11 @@ type Options struct {
 	// `main`) so a `-shared` .so can export functions the program never
 	// calls itself — e.g. JNI entry points, which only the JVM invokes.
 	Exports []string
+
+	// NoPeephole disables the streaming output peephole (see generator.put).
+	// The peephole is a pure size optimisation and on by default; this only
+	// exists so asm-shape tests can assert the un-collapsed emission.
+	NoPeephole bool
 }
 
 // Emit produces the assembly text for prog.
@@ -264,7 +269,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// `adrp + add` of a static `.rodata` cell instead of a
 	// 16-byte heap-allocated pair.
 	ir.InlineZeroCaptureClosures(ip)
-	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, darwin: opts.Darwin, pie: opts.PIE, vtables: ip.Vtables}
+	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, darwin: opts.Darwin, pie: opts.PIE, vtables: ip.Vtables, noPeephole: opts.NoPeephole}
 	for _, fn := range prog.Funcs {
 		g.funcs[fn.Name] = fn
 	}
@@ -551,6 +556,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		// here rejects the directive on Darwin.
 		g.line(`.section .note.GNU-stack,"",%progbits`)
 	}
+	g.flushPeep()
 	return g.out.String(), nil
 }
 
@@ -6166,7 +6172,13 @@ func escapeForGAS(s string) string {
 }
 
 type generator struct {
-	out       strings.Builder
+	out strings.Builder
+	// noPeephole disables the streaming output peephole (Options.NoPeephole).
+	noPeephole bool
+	// peepWin is the streaming peephole's sliding window of recently emitted
+	// logical lines (no trailing newline), held back from `out` until they
+	// can no longer participate in a rewrite. See put / flushPeep.
+	peepWin   []string
 	info      *checker.Info
 	indent    int
 	labelN    int
@@ -6497,19 +6509,126 @@ type generator struct {
 }
 
 func (g *generator) line(s string) {
-	g.out.WriteString(s)
-	g.out.WriteByte('\n')
+	g.put(s)
 }
 
 func (g *generator) emit(format string, args ...any) {
-	g.out.WriteByte('\t')
-	g.out.WriteString(fmt.Sprintf(format, args...))
-	g.out.WriteByte('\n')
+	g.put("\t" + fmt.Sprintf(format, args...))
 }
 
 func (g *generator) label(name string) {
-	g.out.WriteString(name)
-	g.out.WriteString(":\n")
+	g.put(name + ":")
+}
+
+// peepWindow is how many recently emitted logical lines are held back from
+// `out` so the streaming peephole can rewrite the tail in place. The longest
+// arm64 pattern is 2 lines; 4 leaves margin while bounding held memory to
+// O(1) — a self-host `.s` is hundreds of MB and a whole-text post-pass would
+// spike RAM. (Mirror of the x86-64 backend's peephole.)
+const peepWindow = 4
+
+// put appends one logical output line (without its trailing newline) to the
+// peephole window, applies the safe local rewrites at the tail, then flushes
+// any line that has aged out of the window to `out`. All emission funnels
+// through here (line / emit / label), so the peephole sees every line in
+// emission order regardless of which helper produced it.
+func (g *generator) put(s string) {
+	if g.noPeephole {
+		g.out.WriteString(s)
+		g.out.WriteByte('\n')
+		return
+	}
+	g.peepWin = append(g.peepWin, s)
+	g.peepholeTail()
+	for len(g.peepWin) > peepWindow {
+		g.out.WriteString(g.peepWin[0])
+		g.out.WriteByte('\n')
+		g.peepWin = g.peepWin[1:]
+	}
+}
+
+// flushPeep drains the remaining window to `out`. Call once, right before
+// returning the assembled text.
+func (g *generator) flushPeep() {
+	for _, l := range g.peepWin {
+		g.out.WriteString(l)
+		g.out.WriteByte('\n')
+	}
+	g.peepWin = g.peepWin[:0]
+}
+
+// peepholeTail applies the two safe stack-machine rewrites at the tail of the
+// window. Both are purely local so they never touch a genuinely-live stack
+// slot — those are left for the register allocator.
+func (g *generator) peepholeTail() {
+	w := g.peepWin
+	n := len(w)
+
+	// P1 — redundant store/reload: a push immediately followed by the
+	// matching pop. push() emits `str x0, [sp, #-N]!`; pop() emits
+	// `ldr DST, [sp], #N`. When adjacent, the slot is allocated and freed
+	// across the two lines and nothing else reads it, so the net effect is
+	// just `DST := x0`:
+	//   str x0, [sp, #-N]! / ldr DST, [sp], #N  =>  mov DST, x0
+	//     (or nothing when DST == x0)
+	if n >= 2 {
+		if k, ok := matchPushImm(w[n-2]); ok {
+			if dst, k2, ok2 := matchPopReg(w[n-1]); ok2 && k2 == k {
+				if dst == "x0" {
+					g.peepWin = w[:n-2]
+				} else {
+					g.peepWin = append(w[:n-2], "\tmov "+dst+", x0")
+				}
+				return
+			}
+		}
+	}
+
+	// P2 — dead branch: an unconditional `b L` immediately followed by the
+	// label `L:` is a no-op fall-through. Drop the branch; the label stays
+	// for other branches. Only the bare unconditional `b ` matches — `bl`
+	// (call) and `b.cond`/`blt`/`bhi`/… (conditional) do not begin with
+	// "\tb ".
+	if n >= 2 {
+		last := w[n-1]
+		if len(last) > 1 && last[len(last)-1] == ':' && last[0] != '\t' && !strings.ContainsRune(last, ' ') {
+			if w[n-2] == "\tb "+last[:len(last)-1] {
+				w[n-2] = last
+				g.peepWin = w[:n-1]
+			}
+		}
+	}
+}
+
+// matchPushImm matches a `\tstr x0, [sp, #-N]!` push and returns the N token.
+func matchPushImm(line string) (string, bool) {
+	const pfx = "\tstr x0, [sp, #-"
+	const sfx = "]!"
+	if strings.HasPrefix(line, pfx) && strings.HasSuffix(line, sfx) {
+		return line[len(pfx) : len(line)-len(sfx)], true
+	}
+	return "", false
+}
+
+// matchPopReg matches a `\tldr <reg>, [sp], #N` pop into a single register and
+// returns (<reg>, N). sp is excluded as a destination.
+func matchPopReg(line string) (string, string, bool) {
+	const pfx = "\tldr "
+	const mid = ", [sp], #"
+	if !strings.HasPrefix(line, pfx) {
+		return "", "", false
+	}
+	rest := line[len(pfx):]
+	i := strings.Index(rest, mid)
+	if i <= 0 {
+		return "", "", false
+	}
+	reg := rest[:i]
+	imm := rest[i+len(mid):]
+	if reg == "" || reg == "sp" || strings.ContainsAny(reg, " [],") || imm == "" {
+		return "", "", false
+	}
+	return reg, imm, true
 }
 
 // fresh returns a unique numeric suffix for synthesised
