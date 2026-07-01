@@ -140,7 +140,8 @@ import (
 //	    OpReinterpretF64I64 → OpReinterpretI64ToF64
 //
 //	Phase 16:
-//	- OpConstFunc → OpConstInt (Imm = function-table index).
+//	- OpConstFunc → OpMakeClosure with zero captures (a static
+//	  {fn_idx, env_ptr=0} cell), Str = target name.
 //	- OpCallIndirect → OpCallIndirect with Args[0] = popped
 //	  callee index, Args[1..] = the popped argument values.
 //	  IR convention: the callee idx is the top of stack at
@@ -712,9 +713,16 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		result := l.out.AddOp(l.cur, OpCallIndirect, all...)
 		l.stack = append(l.stack, result)
 	case ir.OpConstFunc:
-		v := l.out.AddOp(l.cur, OpConstInt)
-		l.cur.Ops[len(l.cur.Ops)-1].Imm = int64(op.I32)
-		l.stack = append(l.stack, v)
+		// A bare function value is a zero-capture closure: it produces the
+		// same {fn_idx, env_ptr=0} cell an OpMakeClosure with no captures
+		// would (see internal/ir/inline_zero_capture.go, which rewrites one
+		// to the other). Lift it to OpMakeClosure with zero captures so it
+		// derefs identically to a real closure through OpCallIndirect
+		// (docs/SSA-CLOSURE-DISPATCH.md); fn_idx is resolved from op.Str via
+		// the module's function-index table, not the stale op.I32.
+		result := l.out.AddOp(l.cur, OpMakeClosure)
+		l.cur.Ops[len(l.cur.Ops)-1].Str = op.Str
+		l.stack = append(l.stack, result)
 	case ir.OpMakeSomeI32, ir.OpMakeOkI32:
 		// (payload) → (tag=0, payload)
 		if len(l.stack) < 1 {
