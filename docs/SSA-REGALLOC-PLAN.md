@@ -232,9 +232,15 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
           materialise. Fixed by emitting only `ssa.Reachable` blocks (never
           branch targets of a reachable block, so no jump dangles). Corpus now
           lifts+emits 11/11; the test asserts full emit coverage.
-        - [ ] Broaden the corpus (structs/arrays/matches/generics), then the
-          whole-program wiring (real entry/runtime/RC/closure-dispatch) + output
-          diff against the stack machine.
+        - [x] Broaden the corpus to composite types (struct field access, array
+          indexing, `match`, string `.len()`), closures (a returned closure over
+          a capture; a closure passed as an argument and called indirectly), and
+          `Option` construction + `match` (the pair-return path). All lift and
+          emit: **25/25** functions across the corpus. So the per-function
+          emitter is complete against *real* lowered code — the remaining gaps
+          are whole-program, not op-level.
+        - [ ] Whole-program wiring (real entry/runtime/RC/closure-dispatch) +
+          output diff against the stack machine.
 - [~] Op-coverage broadening toward parity (each op validated against `Eval`
   in the model before it reaches real assembly):
   - [x] Direct integer calls + recursion — `ssa.EvalIn` (function-table eval),
