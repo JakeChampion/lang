@@ -796,6 +796,7 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		l.stack = l.stack[:len(l.stack)-capc]
 		result := l.out.AddOp(l.cur, OpMakeClosure, caps...)
 		l.cur.Ops[len(l.cur.Ops)-1].Str = op.Str
+		l.cur.Ops[len(l.cur.Ops)-1].CaptureSlots = op.CaptureSlots
 		l.stack = append(l.stack, result)
 	case ir.OpMakeEnv:
 		// (cap_0 ... cap_{n-1}) → i32 env ptr.
@@ -807,6 +808,7 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		caps := append([]Value(nil), l.stack[len(l.stack)-capc:]...)
 		l.stack = l.stack[:len(l.stack)-capc]
 		result := l.out.AddOp(l.cur, OpMakeEnv, caps...)
+		l.cur.Ops[len(l.cur.Ops)-1].CaptureSlots = op.CaptureSlots
 		l.stack = append(l.stack, result)
 	case ir.OpIf:
 		switch op.I32 {

@@ -457,6 +457,13 @@ type Op struct {
 	// OpF32Add never materialised — floats are f64 in SSA);
 	// this field is only meaningful for integer kinds.
 	Width int8
+
+	// CaptureSlots is set on OpMakeClosure / OpMakeEnv to the per-capture
+	// env-block slot size in bytes (in capture order), carried from the IR
+	// so the backend packs its env stores at the offsets/widths the capture
+	// loads read. Nil means one 8-byte slot per capture (the uniform layout
+	// hand-built SSA closures assume).
+	CaptureSlots []int32
 }
 
 // TermKind enumerates terminator shapes. Every Block ends

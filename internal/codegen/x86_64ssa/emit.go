@@ -76,6 +76,10 @@ type Inst struct {
 	IdxLoc  Loc     // CallIndirect: home of the function-index value (Args[0])
 	Str     string  // ConstStr: the literal bytes to materialise
 	F64     float64 // FConst: the float value
+
+	// CaptureSlots: MakeEnv/MakeClosure per-capture env-slot byte sizes, in
+	// order (nil => one 8-byte slot each). Drives the packed env layout.
+	CaptureSlots []int32
 }
 
 // TermKind is an MBlock terminator shape.
@@ -639,7 +643,7 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		if op.Kind == ssa.OpMakeClosure {
 			mop = MakeClosure
 		}
-		e.push(Inst{Op: mop, Dst: e.s2, Callee: op.Str, ArgLocs: argLocs})
+		e.push(Inst{Op: mop, Dst: e.s2, Callee: op.Str, ArgLocs: argLocs, CaptureSlots: op.CaptureSlots})
 		e.place(op.Result, e.s2)
 		return nil
 
