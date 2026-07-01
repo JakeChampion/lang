@@ -245,8 +245,9 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__str_eq":            emitStrEqHelper,
 	"__str_concat":        emitStrConcatHelper,
 	"__fern_str_dec":      emitStrDecHelper,
-	"__fern_arr_dec":      emitArrDecHelper,
-	"__arr_idx":           emitArrIdxHelper,
+	"__fern_arr_dec":       emitArrDecHelper,
+	"__arr_idx":            emitArrIdxHelper,
+	"__fern_arr_push_grow": emitArrPushGrowHelper,
 }
 
 // runtimeHelperDeps records helper→helper call edges: a helper that tail-calls
@@ -260,7 +261,8 @@ var runtimeHelperDeps = map[string][]string{
 // .bss heap section + cursor must exist whenever one is referenced even if no
 // program body has a direct heap op.
 var heapUsingHelpers = map[string]bool{
-	"__str_concat": true,
+	"__str_concat":         true,
+	"__fern_arr_push_grow": true,
 }
 
 // collectStrings assigns a .rodata label to each unique OpConstString literal, in
@@ -581,6 +583,73 @@ func emitArrIdxHelper(w func(string, ...any)) {
 	w("\tsvc #0")
 	w(".Lssa_arridx_ok:")
 	w("\tadd x0, x0, x1, lsl #2") // base + idx*4
+	w("\tret")
+}
+
+// emitArrPushGrowHelper writes __fern_arr_push_grow(arr, oldLen, stride) ->
+// new_data: the array-append growth helper. Fast path — if the array is uniquely
+// held (rc==1) and has spare capacity (oldLen < cap) — bumps rc to 2 and the
+// length in place, returning arr. Otherwise it allocates a fresh, larger buffer
+// (newCap = max(2*newLen, 4)), lays the array header (cap@-12, rc=1@-8, len@-4
+// relative to the new data pointer, past a headerBytes = max(16, stride) prefix),
+// byte-copies the old elements, and returns the new data pointer. Unlike the
+// native helper (which calls __fern_alloc / __fern_memcpy) this inlines a raw
+// bump allocation and a byte-copy loop, so it is a leaf — mirroring __str_concat.
+// x0=arr, w1=oldLen, w2=stride. The bump heap doesn't reclaim, so the old buffer
+// leaks (docs/SSA-RC-RUNTIME.md).
+func emitArrPushGrowHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_arr_push_grow"))
+	// Fast path: rc == 1 and oldLen < cap → grow in place.
+	w("\tldur w3, [x0, #-8]") // rc
+	w("\tcmp w3, #1")
+	w("\tb.ne .Lssa_apg_copy")
+	w("\tldur w4, [x0, #-12]") // cap
+	w("\tcmp w1, w4")
+	w("\tb.ge .Lssa_apg_copy")
+	w("\tmov w3, #2")
+	w("\tstur w3, [x0, #-8]") // rc = 2
+	w("\tadd w4, w1, #1")
+	w("\tstur w4, [x0, #-4]") // len = oldLen + 1
+	w("\tret")
+	w(".Lssa_apg_copy:")
+	w("\tadd w4, w1, #1") // w4 = newLen
+	w("\tlsl w5, w4, #1")
+	w("\tmov w6, #4")
+	w("\tcmp w5, w6")
+	w("\tcsel w5, w5, w6, ge") // w5 = newCap = max(2*newLen, 4)
+	w("\tmov w6, #16")
+	w("\tcmp w2, w6")
+	w("\tcsel w6, w2, w6, ge") // w6 = headerBytes = max(stride, 16)
+	w("\tmul w7, w5, w2")
+	w("\tadd w7, w7, w6") // w7 = allocSize = headerBytes + newCap*stride
+	// Inline raw bump allocation of w7 bytes (no rc header — the array lays its
+	// own cap/rc/len header past the headerBytes prefix).
+	w("\tadrp x8, %s", heapPtrSym)
+	w("\tadd x8, x8, #:lo12:%s", heapPtrSym) // x8 = &cursor
+	w("\tldr x9, [x8]")
+	w("\tadd x9, x9, #7")
+	w("\tand x9, x9, #-8")        // x9 = base (8-aligned)
+	w("\tadd x10, x9, w7, uxtw")  // new cursor = base + allocSize
+	w("\tstr x10, [x8]")
+	w("\tadd x11, x9, w6, uxtw")  // x11 = new_data = base + headerBytes
+	w("\tsub x12, x11, #12")
+	w("\tstr w5, [x12]")          // cap = newCap
+	w("\tmov w13, #1")
+	w("\tstur w13, [x11, #-8]")   // rc = 1
+	w("\tstur w4, [x11, #-4]")    // len = newLen
+	// Byte-copy oldLen*stride bytes from arr (x0) to new_data (x11).
+	w("\tmul w14, w1, w2") // nbytes
+	w("\tmov w15, #0")     // i
+	w(".Lssa_apg_cp:")
+	w("\tcmp w15, w14")
+	w("\tb.hs .Lssa_apg_done")
+	w("\tldrb w16, [x0, x15]")
+	w("\tstrb w16, [x11, x15]")
+	w("\tadd w15, w15, #1")
+	w("\tb .Lssa_apg_cp")
+	w(".Lssa_apg_done:")
+	w("\tmov x0, x11") // return new_data
 	w("\tret")
 }
 
