@@ -159,6 +159,31 @@ function main(): i32 {
 			src:  `function main(): i32 { return 1000000 % 256; }`,
 			want: 64,
 		},
+		{
+			// Array append growth (__fern_arr_push_grow): a fresh array grown in a
+			// loop, then indexed. a[7] = 7*7 = 49.
+			name: "array_append",
+			src: `function main(): i32 {
+  var a: i32[] = [];
+  var i: i32 = 0;
+  while (i < 10) { a = a.append(i * i); i = i + 1; }
+  return a[7];
+}`,
+			want: 49,
+		},
+		{
+			// Append then iterate: sum of [1..5] appended one at a time = 15.
+			name: "array_append_sum",
+			src: `function main(): i32 {
+  var a: i32[] = [];
+  var i: i32 = 0;
+  while (i < 5) { a = a.append(i + 1); i = i + 1; }
+  var s: i32 = 0;
+  for x in a { s = s + x; }
+  return s;
+}`,
+			want: 15,
+		},
 	}
 
 	for _, c := range cases {
@@ -194,9 +219,10 @@ function main(): i32 {
 
 // TestArm64SSACoverageGapErrors confirms a program needing a runtime helper the
 // arm64-ssa path doesn't emit yet (here std/i32's to_string, which pulls in the
-// array-growth helper __fern_arr_push_grow) fails with a clean compile/link error
-// rather than a miscompile — the experimental-backend contract that lets the epic
-// widen coverage incrementally.
+// stride-8 index helper __arr_idx_8 — the arm64-ssa path currently emits only the
+// stride-4 __arr_idx) fails with a clean compile/link error rather than a
+// miscompile — the experimental-backend contract that lets the epic widen
+// coverage incrementally.
 func TestArm64SSACoverageGapErrors(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("arm64-ssa not exercised on windows")
