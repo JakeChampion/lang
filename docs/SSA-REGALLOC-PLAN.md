@@ -218,8 +218,23 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
         closures. Next: **3c** — gate the SSA path behind a flag and diff it
         against the stack-machine backend over the e2e corpus, then flip the
         x86-64 default and measure the self-host binary-size win.
-      - [ ] 3c — wire behind a flag and diff against the existing stack-machine
+      - [~] 3c — wire behind a flag and diff against the existing stack-machine
         backend over the e2e corpus.
+        - [x] Real-corpus coverage differential (`corpus_coverage_test.go`):
+          drive real programs through the actual pipeline (`parser → checker →
+          ir.LowerWith → ssa.LiftFromIR → x86_64ssa.Emit`) and tally how many
+          functions lift and emit, with a histogram of blocking ops — measuring
+          the emitter against *real* checker/lowerer output, not hand-built SSA.
+          First run surfaced a genuine robustness gap: the emitter walked *all*
+          blocks, but the allocator's liveness only covers the reachable CFG, so
+          a value defined solely in an unreachable block (a lowerer-left dead
+          epilogue after both `if` arms return) had no allocation and failed to
+          materialise. Fixed by emitting only `ssa.Reachable` blocks (never
+          branch targets of a reachable block, so no jump dangles). Corpus now
+          lifts+emits 11/11; the test asserts full emit coverage.
+        - [ ] Broaden the corpus (structs/arrays/matches/generics), then the
+          whole-program wiring (real entry/runtime/RC/closure-dispatch) + output
+          diff against the stack machine.
 - [~] Op-coverage broadening toward parity (each op validated against `Eval`
   in the model before it reaches real assembly):
   - [x] Direct integer calls + recursion — `ssa.EvalIn` (function-table eval),

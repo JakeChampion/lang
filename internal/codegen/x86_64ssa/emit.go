@@ -164,14 +164,28 @@ func Emit(f *ssa.Func, numAlloc int) (*Program, error) {
 	e.phiTempBase = alloc.NumSlots
 	e.numSlots = alloc.NumSlots + e.phiTempCap
 
-	// Pre-assign an MBlock index to every SSA block so branch targets resolve;
-	// split blocks for critical edges are appended afterwards.
+	// Only emit blocks reachable from entry. The allocator's liveness runs over
+	// the reachable CFG (RPO from entry), so values defined solely in an
+	// unreachable block get no allocation; emitting such a block would fail to
+	// materialise them. Unreachable blocks (e.g. a lowerer-left dead epilogue
+	// after both arms of an if return) are never branch targets of a reachable
+	// block, so skipping them can't dangle a jump.
+	reachable := ssa.Reachable(f)
+
+	// Pre-assign an MBlock index to every reachable SSA block so branch targets
+	// resolve; split blocks for critical edges are appended afterwards.
 	for _, b := range f.Blocks {
+		if !reachable[b] {
+			continue
+		}
 		e.idx[b] = len(e.blocks)
 		e.blocks = append(e.blocks, MBlock{})
 	}
 
 	for _, b := range f.Blocks {
+		if !reachable[b] {
+			continue
+		}
 		if err := e.emitBlock(b); err != nil {
 			return nil, err
 		}
