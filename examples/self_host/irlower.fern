@@ -12116,6 +12116,15 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                     parser.ExprStructLit(slit) => {
                         if (!slit.has_base && struct_is_scalar_only(structs, slit.type_name) && all_scalar_literal_args(slit.field_values)) { is_lit = true; }
                     },
+                    // A FRESH scalar tuple literal (`var t = (3, 4)`, all scalar-
+                    // literal elements) is a precise-drop candidate too — same as the
+                    // scalar-only struct: the rc-headered box (tuple_make → arr_box)
+                    // owns no pointer, so freeing it right after its last borrow-read
+                    // is a single shallow __fern_rc_dec that dangles nothing. The
+                    // emission-site slot guard (slot_is_reclaimable_tuple) re-checks.
+                    parser.ExprTuple(_) => {
+                        if (tuple_lit_is_fresh_scalar(v.init)) { is_lit = true; }
+                    },
                     _ => {}
                 }
                 var shadowed: boolean = util.index_of_str(seen, v.name) >= 0;
@@ -15555,6 +15564,19 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                     // changing the exit-sweep contract. Skipped when the box is a
                     // reuse/cross-reuse/donor target — freeing it here would race the
                     // box recycling those paths perform (a double-free / UAF).
+                    s = s.emit(ir.op_load_local(dslot));
+                    s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    s = s.emit(ir.op_drop());
+                    s = s.emit(ir.op_const_i32(0));
+                    s = s.emit(ir.op_store_local(dslot));
+                } else if (dslot >= s.n_params && slot_is_reclaimable_tuple(s, dslot)) {
+                    // Fresh scalar tuple local, last-used at statement j: free its box
+                    // now (shallow __fern_rc_dec — the scalar-literal gate means no rc
+                    // element to walk) and zero the slot, so the exit sweep's tuple
+                    // loop decs a guarded null. The tuple sibling of the struct precise
+                    // drop above. slot_is_reclaimable_tuple only admits fresh, proven-
+                    // non-escaping tuple locals; tuples are not reuse/donor targets, so
+                    // no donor guard is needed here.
                     s = s.emit(ir.op_load_local(dslot));
                     s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     s = s.emit(ir.op_drop());

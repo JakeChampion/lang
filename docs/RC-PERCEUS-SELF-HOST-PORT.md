@@ -2984,3 +2984,21 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   Follow-up: a precise drop-on-last-use for early-dead scalar tuples (this slice is
   exit-sweep only), and widening past scalar-literal elements (a fresh tuple with a
   reclaimable-array element would deep-drop that element).
+- 2026-07-01: **Precise drop-on-last-use for early-dead scalar tuples** (the tuple
+  sibling of the scalar-struct precise drop; follows the #4158 exit-sweep reclaim).
+  A fresh scalar tuple local (`var t = (3, 4)`, all scalar-literal elements) whose
+  last top-level use is an earlier statement is now freed (shallow `__fern_rc_dec`)
+  and its slot zeroed right after that use, instead of at the function-exit sweep —
+  bounding the live set. Added a tuple candidate to `precise_drop_names`
+  (tuple_lit_is_fresh_scalar) and a `slot_is_reclaimable_tuple` else-branch at the
+  lower_func precise-drop emission site (load + `__fern_rc_dec` + drop + const-0 +
+  store). No donor guard needed (tuples are never reuse/cross-reuse/enum-donor/
+  in-arm targets). SOUNDNESS is the same as the exit-sweep reclaim — the box holds
+  no rc element to walk (scalar-literal gate) and the shared body_unsafe_for escape
+  gate proves non-escape; the exit sweep then decs the zeroed slot's guarded null.
+  FIRING confirmed in the emitted asm (mid-function `__fern_arr_dec` + slot-zero
+  right after the `if`, the exit sweep no-ops on the null). VERIFIED: new
+  `scalar-tuple-precise-*` cases (route ir, value, `__rc_underflow()==0`, heap-reuse
+  corruption probe) in `TestSelfHostRcPreciseDropX86IR`; byte-identical FIXPOINT +
+  BOOTSTRAP stay green. Frontend-only (precise_drop_names + the emission site are
+  backend-agnostic — every backend that lowers tuples benefits).
