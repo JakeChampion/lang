@@ -252,6 +252,27 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__arr_idx_8":          emitArrIdxHelperN("__arr_idx_8", 3), // stride 8 (i64 / pointer)
 	"__arr_idx_16":         emitArrIdxHelperN("__arr_idx_16", 4), // stride 16 (two-word string[])
 	"__fern_arr_push_grow": emitArrPushGrowHelper,
+	"__abs_f64":            emitFloatUnaryHelper("__abs_f64", "fabs"),
+	"__sqrt_f64":           emitFloatUnaryHelper("__sqrt_f64", "fsqrt"),
+	"__floor_f64":          emitFloatUnaryHelper("__floor_f64", "frintm"),
+	"__ceil_f64":           emitFloatUnaryHelper("__ceil_f64", "frintp"),
+	"__trunc_f64":          emitFloatUnaryHelper("__trunc_f64", "frintz"),
+	"__round_f64":          emitFloatUnaryHelper("__round_f64", "frinta"),
+}
+
+// emitFloatUnaryHelper returns the emitter for a single-instruction f64 unary
+// math helper (abs/sqrt/floor/ceil/trunc/round). Floats arrive as f64 bits in x0
+// (the SSA GP-register convention); the helper shuttles them into d0, applies the
+// AArch64 FP op, and returns the result bits in x0. Leaf.
+func emitFloatUnaryHelper(name, mnem string) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tfmov d0, x0")
+		w("\t%s d0, d0", mnem)
+		w("\tfmov x0, d0")
+		w("\tret")
+	}
 }
 
 // runtimeHelperDeps records helper→helper call edges: a helper that tail-calls
@@ -259,6 +280,28 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 // it directly. Transitively closed by referencedRuntimeHelpers.
 var runtimeHelperDeps = map[string][]string{
 	"__fern_closure_drop": {"__fern_box_free", "__fern_rc_dec"},
+}
+
+// helperReturns64 lists runtime helpers whose result is a full 8-byte value — a
+// heap pointer or an f64 bit pattern — so the direct-call sequence must NOT apply
+// the i32 sign-extend mask to their result (it would truncate an f64's exponent
+// or, for a high heap address, the pointer). i32/void-returning helpers are
+// absent (the mask is correct or harmless for them).
+var helperReturns64 = map[string]bool{
+	"__str_concat":         true,
+	"__fern_box_free":      true,
+	"__fern_arr_push_grow": true,
+	"__arr_idx":            true,
+	"__arr_idx_1":          true,
+	"__arr_idx_2":          true,
+	"__arr_idx_8":          true,
+	"__arr_idx_16":         true,
+	"__abs_f64":            true,
+	"__sqrt_f64":           true,
+	"__floor_f64":          true,
+	"__ceil_f64":           true,
+	"__trunc_f64":          true,
+	"__round_f64":          true,
 }
 
 // heapUsingHelpers are runtime helpers that bump-allocate on the SSA heap, so the
@@ -864,7 +907,13 @@ func callLines(in x86.Inst, numAlloc, scratch, callSaveBase int) ([]string, erro
 		out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(saved[k]), 8*(callSaveBase+k)))
 	}
 	out = append(out, fmt.Sprintf("mov %s, %s", xreg(in.Dst), xreg(scratch))) // place tag / result
-	out = append(out, maskFix(in.Dst, in.W)...)
+	// An i32 return needs the sign-extend mask (the ABI defines only the low 32
+	// bits), but a runtime helper returning a full 8-byte value (an f64 whose high
+	// bits are its exponent, or a heap pointer) must skip it — the SSA lift can't
+	// tag helper return widths (no ssa.Func), so the backend knows them by name.
+	if !helperReturns64[in.Callee] {
+		out = append(out, maskFix(in.Dst, in.W)...)
+	}
 	if in.Op == x86.CallPair {
 		// Placed after the tag (whose home may be the payload's capture reg s3) so
 		// the tag is out of s3 before Dst2 (typically s3) is written.

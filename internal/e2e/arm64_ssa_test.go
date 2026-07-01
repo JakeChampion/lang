@@ -227,10 +227,11 @@ function main(): i32 {
 }
 
 // TestArm64SSACoverageGapErrors confirms a program needing a runtime helper the
-// arm64-ssa path doesn't emit yet (here std/i32's to_string, which pulls in the
-// libm-style float helper __abs_f64) fails with a clean compile/link error rather
-// than a miscompile — the experimental-backend contract that lets the epic widen
-// coverage incrementally.
+// arm64-ssa path doesn't emit yet (here std/i32's to_string, which — with no
+// dead-function elimination on this path — pulls in the whole std/float module,
+// including the transcendental __cos_f64 that still needs a polynomial-approx
+// port) fails with a clean compile/link error rather than a miscompile — the
+// experimental-backend contract that lets the epic widen coverage incrementally.
 func TestArm64SSACoverageGapErrors(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("arm64-ssa not exercised on windows")
