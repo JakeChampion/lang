@@ -375,8 +375,8 @@ func callLines(in Inst, numAlloc, scratch, s0 int) ([]string, error) {
 	}
 	saved := callSavedSet(in, numAlloc)
 	var out []string
-	// 16-byte stack alignment at the call: args are pushed then popped (net 0),
-	// so only the pad + saved pushes remain. Pad to make their count even.
+	// 16-byte stack alignment at the call: the args no longer touch the stack,
+	// so only the pad + saved pushes shift rsp. Pad to make their count even.
 	pad := (len(saved) % 2) * 8
 	if pad != 0 {
 		out = append(out, "sub rsp, 8")
@@ -384,21 +384,7 @@ func callLines(in Inst, numAlloc, scratch, s0 int) ([]string, error) {
 	for _, r := range saved {
 		out = append(out, fmt.Sprintf("push %s", reg(r)))
 	}
-	// Push argument values (arg0 first). Register homes still hold their values
-	// after the saves (push doesn't clear the source); slot homes are
-	// rbp-relative, unaffected by the pushes.
-	for _, l := range in.ArgLocs {
-		if l.IsReg {
-			out = append(out, fmt.Sprintf("mov %s, %s", reg(scratch), reg(l.Reg)))
-		} else {
-			out = append(out, fmt.Sprintf("mov %s, %s", reg(scratch), slotMem(l.Slot)))
-		}
-		out = append(out, fmt.Sprintf("push %s", reg(scratch)))
-	}
-	// Pop into arg registers in reverse (last pushed = last arg).
-	for i := len(in.ArgLocs) - 1; i >= 0; i-- {
-		out = append(out, fmt.Sprintf("pop %s", sysvArgRegs[i]))
-	}
+	out = append(out, argMoveLines(in.ArgLocs)...)
 	out = append(out, fmt.Sprintf("call %s", fnLabel(in.Callee)))
 	out = append(out, fmt.Sprintf("mov %s, rax", reg(scratch))) // capture result (tag)
 	if in.Op == CallPair {
@@ -569,6 +555,34 @@ func paramMoveLines(paramLocs []Loc) []string {
 		}
 	}
 	return append(out, resolveRegMoves(moves)...)
+}
+
+// argMoveLines moves call arguments from their allocated homes into the System V
+// argument registers (arg i → sysvArgRegs[i]), replacing the push-all/pop-all
+// stack round-trip. Reg-homed args are a parallel register copy — an argument
+// register may be another argument's home register, resolved by resolveRegMoves
+// (which breaks cycles with xchg; callee-saved home registers are never argument
+// registers, so they only ever appear as sources and are never clobbered).
+// Slot-homed args load from memory afterward: by then every reg-homed source has
+// been consumed, so a load into an argument register can't clobber one. Caller-
+// saved home registers that are also live across the call were already saved by
+// the surrounding sequence, so scrambling them here is undone by the restore.
+func argMoveLines(argLocs []Loc) []string {
+	var moves [][2]int // {dstArgReg, srcHomeReg} gpRegs indices
+	for i, l := range argLocs {
+		if l.IsReg {
+			if d := gpIndex(sysvArgRegs[i]); d != l.Reg {
+				moves = append(moves, [2]int{d, l.Reg})
+			}
+		}
+	}
+	out := resolveRegMoves(moves)
+	for i, l := range argLocs {
+		if !l.IsReg {
+			out = append(out, fmt.Sprintf("mov %s, %s", sysvArgRegs[i], slotMem(l.Slot)))
+		}
+	}
+	return out
 }
 
 // resolveRegMoves renders a parallel register copy (each {dst, src} entry; dsts
