@@ -3823,6 +3823,7 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     var cnf: string[] = irlower.const_fns_of(all_funcs);
     var frsf: string[] = irlower.fresh_struct_ret_fns_of(all_funcs, all_structs);
     var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(all_funcs, all_structs);
+    var sfrf: string[] = irlower.str_fresh_ret_fns_of(all_funcs);
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         if (globl_defs) {
@@ -3830,7 +3831,7 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
             if (mod.funcs[fi].receiver_type.len() > 0) { gname = util.base_type_name(mod.funcs[fi].receiver_type) + "." + mod.funcs[fi].name; }
             s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
         }
-        s = asm_arm64_ir.emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, irlower.fn_names_of(mod.funcs), frsf, csparams, rfrsf);
+        s = asm_arm64_ir.emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, irlower.fn_names_of(mod.funcs), frsf, csparams, rfrsf, sfrf);
         fi = fi + 1;
     }
     // Per-type __field_reclaim_<T> + __struct_drop_<T> bodies (#3457). Shared
