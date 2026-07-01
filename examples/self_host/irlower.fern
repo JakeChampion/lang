@@ -13878,6 +13878,178 @@ function emit_enum_variant_drops(s: LowerState, slot: i32, enum_name: string): L
     return st;
 }
 
+// --- consumed RC-PAYLOAD option/result deep-drop free -----------------------
+//
+// The Option/Result analogue of consumed_rcpayload_enum_frees. The scalar
+// Option/Result free (consumed_scalar_enum_frees via fresh_scalar_option_init)
+// only admits a SCALAR payload — a `var o = Some([1,2,3])` / `var r = Ok([..])`
+// with a leak-safe scalar-ARRAY payload still leaked both the box AND its array.
+// This widens the consume-by-match free to those: the constructed variant is
+// statically known, so the box's payload (offset 8 / 4 via op_opt_payload) is a
+// flat rc-headered scalar buffer a single __fern_rc_dec fully releases, then the
+// box itself is freed. DISJOINT from the scalar option set (that admits only
+// scalar payloads; this only array payloads), so an option is freed by at most
+// one path — never double-freed.
+
+// fresh_rcpayload_option_init: `v` binds a FRESH single-owner Option/Result local
+// whose CONSTRUCTED variant carries a leak-safe scalar-ARRAY payload — `var o =
+// Some([..])` / `var r = Ok([..])` / `Err([..])`, or an annotated `Option[i32[]]`
+// / `Result[i32[], _]` (Ok) / `Result[_, i32[]]` (Err). Returns the constructed
+// variant name ("Some"/"Ok"/"Err"), or "". The payload is a flat rc-headered
+// scalar buffer (i32[]/boolean[]/i64[]/f64[]/u32[]/subword — is_leaksafe_array_
+// field) that a single __fern_rc_dec releases with no inner-pointer walk. An
+// un-annotated Some([..]) is admitted via a fresh scalar-number array-literal
+// payload (Option infers the single type param); an un-annotated Ok/Err isn't
+// native-valid (Result's other param stays free), so only the annotated Result
+// form fires. None / a non-array payload / a non-literal un-annotated payload are
+// not admitted.
+function fresh_rcpayload_option_init(v: parser.StmtVar): string {
+    var kind: string = "";
+    match (v.init) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    if (id.name == "Some" || id.name == "Ok" || id.name == "Err") { kind = id.name; }
+                },
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field == "Some" || fa.field == "Ok" || fa.field == "Err") { kind = fa.field; }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    if (kind == "") { return ""; }
+    // Annotated: the constructed variant's payload type is a leak-safe scalar array
+    // (opt_payload_type reads T for Some/Ok, E for Err — variant-aware).
+    if (is_leaksafe_array_field(opt_payload_type(v.type_name, kind))) { return kind; }
+    // Un-annotated: admit a FRESH scalar-number array-literal payload (`Some([1,2,3])`).
+    match (v.init) {
+        parser.ExprCall(c) => {
+            if (c.args.len() == 1) {
+                match (c.args[0]) {
+                    parser.ExprArray(arrl) => {
+                        if (all_i32_number_elems(arrl.elements) || all_f64_number_elems(arrl.elements)) { return kind; }
+                    },
+                    _ => {}
+                }
+            }
+        },
+        _ => {}
+    }
+    return "";
+}
+
+// opt_arm_binding_escapes: for the consuming match `st` of an rc-payload option
+// whose constructed variant is `variant` (Some/Ok/Err), does that variant's arm
+// BIND its array payload to a name that ESCAPES the arm (stored / returned /
+// passed / aliased)? A borrow-only binding (indexing, `.len()`, arithmetic over
+// reads) is admitted — the box is deep-dropped AFTER the whole match runs, so a
+// borrow whose last use is inside the arm is sound. Reuses binding_escapes_arm
+// (the enum path's borrow-only gate, empty borrowable registry). Only the
+// CONSTRUCTED variant's arm is checked: the box always holds that variant's
+// payload, so the sibling arm never runs and binds nothing we free.
+function opt_arm_binding_escapes(st: parser.Stmt, variant: string): boolean {
+    var none: string[] = [];
+    match (st) {
+        parser.StmtMatch(m) => {
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var arm: parser.MatchArm = m.arms[ai];
+                match (arm.pattern) {
+                    parser.PatVariant(pv) => {
+                        // strip a qualified `Option.Some` to the bare variant name.
+                        var vname: string = pv.type_name;
+                        var vc: i32 = 0;
+                        while (vc < pv.type_name.len()) {
+                            if (pv.type_name[vc] == 46) { vname = pv.type_name[vc + 1 : pv.type_name.len()]; }
+                            vc = vc + 1;
+                        }
+                        if (vname == variant && pv.binding != "" && pv.binding != "_") {
+                            if (binding_escapes_arm(arm, pv.binding, none)) { return true; }
+                        }
+                    },
+                    _ => {}
+                }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+}
+
+// OptRcFrees: parallel arrays for the rc-payload option/result free — the
+// consuming match index and the freed local name.
+struct OptRcFrees { idxs: i32[], names: string[] }
+
+// consumed_rcpayload_option_frees: finds every function-local `var o = Some([..])`
+// / `Ok([..])` / `Err([..])` (leak-safe scalar-array payload) consumed by exactly
+// one `match (o)`, single-owner, dead-after, non-escaping, and whose constructed-
+// variant arm binds the array payload only as a borrow (opt_arm_binding_escapes
+// false). Each such box's payload is deep-dropped then the box freed right after
+// its match (emit_opt_payload_drop). Same shape / gates as
+// consumed_rcpayload_enum_frees; DISJOINT from consumed_scalar_enum_frees.
+function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.StructDecl[]): OptRcFrees {
+    var idxs: i32[] = [];
+    var names: string[] = [];
+    var reassigned: string[] = body_assign_targets(body);
+    var vi: i32 = 0;
+    while (vi < body.len()) {
+        match (body[vi]) {
+            parser.StmtVar(v) => {
+                var variant: string = fresh_rcpayload_option_init(v);
+                if (variant != "" && util.index_of_str(reassigned, v.name) < 0) {
+                    var match_idx: i32 = 0 - 1;
+                    var n_match: i32 = 0;
+                    var mj: i32 = 0;
+                    while (mj < body.len()) {
+                        if (match_scrutinee_is(body[mj], v.name)) { match_idx = mj; n_match = n_match + 1; }
+                        mj = mj + 1;
+                    }
+                    if (n_match == 1 && match_idx > vi) {
+                        var arms_use: boolean = match_arms_use_name(body[match_idx], v.name);
+                        var dead_after: boolean = !name_used_after(body, v.name, match_idx);
+                        var escapes: boolean = name_escapes_outside_stmt(body, v.name, match_idx);
+                        var binds_esc: boolean = opt_arm_binding_escapes(body[match_idx], variant);
+                        if (!arms_use && dead_after && !escapes && !binds_esc) {
+                            idxs = idxs.append(match_idx);
+                            names = names.append(v.name);
+                        }
+                    }
+                }
+            },
+            _ => {}
+        }
+        vi = vi + 1;
+    }
+    return OptRcFrees { idxs: idxs, names: names };
+}
+
+// emit_opt_payload_drop deep-drops the rc-array payload of the option box in
+// `slot`, then frees the box and zeroes the slot. The constructed variant is
+// statically known (the classifier admitted a specific Some/Ok/Err with an array
+// payload), so — unlike the enum path — this needs NO runtime variant_is guard:
+// the payload is always at offset 8 / 4 (op_opt_payload) and is a flat rc-headered
+// scalar buffer, so a single __fern_rc_dec releases it. The box is then dec'd and
+// the slot zeroed so the exit sweep harmlessly decs a null. Payload dropped BEFORE
+// the box, exactly once.
+function emit_opt_payload_drop(s: LowerState, slot: i32): LowerState {
+    var st: LowerState = s;
+    // release the payload array buffer (one dec — scalar elements, no inner pointers).
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_opt_payload());
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+    st = st.emit(ir.op_drop());
+    // free the box itself and zero the slot.
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_store_local(slot));
+    return st;
+}
+
 // slot_is_reclaimable_struct: slot i holds a reclaimable struct — a non-param
 // struct slot whose name was proven fresh + non-escaping. Such a box is the sole
 // reference (rc=1) and outlives nothing, so a shallow rc-dec at scope exit /
@@ -15783,6 +15955,13 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // its match (emit_enum_variant_drops). Kept DISJOINT from enumfrees and never
     // fed to the donor path, so an rc-payload box is freed exactly once here.
     var rcenumfrees: RcEnumFrees = consumed_rcpayload_enum_frees(fn.body, structs);
+    // Consumed RC-PAYLOAD option/result frees: a function-local `var o = Some([..])`
+    // / `Ok([..])` / `Err([..])` (leak-safe scalar-array payload) consumed by exactly
+    // one `match (o)`, single-owner, dead-after, non-escaping, and whose constructed-
+    // variant arm borrows (not escapes) the payload. The box's array payload is
+    // deep-dropped then the box freed right after its match (emit_opt_payload_drop).
+    // DISJOINT from enumfrees (that's scalar-payload options) — freed once here.
+    var rcoptfrees: OptRcFrees = consumed_rcpayload_option_frees(fn.body, structs);
     // Enum-donor cross-reuse (FBIP): a consumed-and-dead scalar-enum box donated to
     // a later same-size full struct construction instead of being freed (see
     // enum_donor_reuse_sites). The recipient is lowered by emit_enum_donor_reuse, and
@@ -15970,6 +16149,20 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                 }
             }
             rei = rei + 1;
+        }
+        // Consumed rc-payload option/result deep-drop free: if statement j is the
+        // consuming match of an rc-array-payload option local, deep-drop its payload
+        // (op_opt_payload → dec) then free the box now. Disjoint from enumfrees (a
+        // scalar-payload option is there, never here), so the box is freed once.
+        var roi: i32 = 0;
+        while (roi < rcoptfrees.idxs.len()) {
+            if (rcoptfrees.idxs[roi] == j) {
+                var roslot: i32 = s.slot_of(rcoptfrees.names[roi]);
+                if (roslot >= s.n_params) {
+                    s = emit_opt_payload_drop(s, roslot);
+                }
+            }
+            roi = roi + 1;
         }
         // Retire a top-level `for` / `match` statement's scoped bindings (loop
         // var / arm bindings) now — after the precise-drop / enum-free passes

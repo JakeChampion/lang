@@ -99,6 +99,20 @@ func TestSelfHostRcOptionBoxWasm(t *testing.T) {
 		// A churn building + freeing an Err(heap-string) 50k times: the Err
 		// string is reclaimed each cycle (no growth), detector clean.
 		{"result-err-string-churn-clean", "function fail(): Result[i32, string] { return Err(\"a\" + \"b\"); } function mk(): i32 { var r: Result[i32, string] = fail(); match (r) { Ok(x) => { return x; }, Err(e) => { return e.len(); } } } function main(): i32 { var k = 0; var s = 0; while (k < 50000) { s = mk(); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 2},
+		// RC-PAYLOAD (scalar-array) Option consume-by-match free on wasm: a fresh
+		// `var o = Some([..])` consumed by one match now DEEP-DROPS its array payload
+		// (op_opt_payload → dec) then frees the box, right after the match — the same
+		// shared irlower classifier (consumed_rcpayload_option_frees) that drives the
+		// register backends. Value intact + detector clean (payload + box each freed
+		// exactly once; the borrow `v[i]` ends before the post-match free).
+		{"option-arr-payload-freed", `function main(): i32 { var o: Option[i32[]] = Some([10, 20, 30]); var r = 0; match (o) { Some(v) => { r = v[0] + v[2]; }, None => {} } return r + __fern_rc_underflow_count(); }`, 40},
+		// Un-annotated Some([..]) (Option infers the single type param) fires too.
+		{"option-arr-unannotated-freed", `function main(): i32 { var o = Some([1, 2, 3]); var r = 0; match (o) { Some(v) => { r = v[0] + v[1] + v[2] + 36; }, None => {} } return r + __fern_rc_underflow_count(); }`, 42},
+		// Churn building + consuming Some([..]) 50k times: the array payload is
+		// reclaimed each cycle (no growth), detector clean across all cycles.
+		{"option-arr-payload-churn-clean", `function mk(): i32 { var o: Option[i32[]] = Some([1, 2, 3]); var r = 0; match (o) { Some(v) => { r = v.len(); }, None => {} } return r; } function main(): i32 { var k = 0; var s = 0; while (k < 50000) { s = mk(); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }`, 3},
+		// Result Ok([..]) array payload freed the same way on wasm (tag 0).
+		{"result-ok-arr-payload-freed", `function main(): i32 { var r: Result[i32[], i32] = Ok([5, 6, 7]); var x = 0; match (r) { Ok(v) => { x = v[0] + v[2] + 30; }, Err(e) => { x = e; } } return x + __fern_rc_underflow_count(); }`, 42},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
