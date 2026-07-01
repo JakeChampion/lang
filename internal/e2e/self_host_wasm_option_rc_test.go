@@ -117,6 +117,10 @@ func TestSelfHostRcOptionBoxWasm(t *testing.T) {
 		// the payload box (shallow — inline scalars) then the option box, right after
 		// its consuming match. Value intact + detector clean.
 		{"option-struct-payload-freed", `struct P { x: i32, y: i32 } function main(): i32 { var o: Option[P] = Some(P { x: 18, y: 24 }); var r = 0; match (o) { Some(p) => { r = p.x + p.y; }, None => {} } return r + __fern_rc_underflow_count(); }`, 42},
+		// Array-FIELD struct payload on wasm: `Some(Buf{xs:[..],n})` shallow-frees the
+		// Buf box + option box; the array field is machinery-owned (no deep-drop). Value
+		// + detector clean.
+		{"option-struct-arrfield-payload-freed", `struct Buf { xs: i32[], n: i32 } function main(): i32 { var o: Option[Buf] = Some(Buf { xs: [10, 20, 30], n: 9 }); var r = 0; match (o) { Some(b) => { r = b.xs[1] + b.n; }, None => {} } return r + 13 + __fern_rc_underflow_count(); }`, 42},
 		// PRECISE drop of a scalar Option last-used in a NESTED if-block (no top-level
 		// match) — precise_drop_names frees the rc box right after the if. Value +
 		// detector clean (the box is freed exactly once, on the shared classifier that
