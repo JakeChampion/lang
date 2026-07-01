@@ -7,13 +7,14 @@ import (
 	"github.com/jakechampion/lang/internal/ir"
 )
 
-// TestLiftConstFunc — OpConstFunc lifts to OpConstInt with the
-// function-table index in Imm.
+// TestLiftConstFunc — a bare function value (OpConstFunc) lifts to a
+// zero-capture OpMakeClosure carrying the target name, so it derefs as a
+// {fn_idx, env_ptr=0} cell through OpCallIndirect just like a real closure.
 func TestLiftConstFunc(t *testing.T) {
 	in := &ir.Func{
 		Name: "f",
 		Ops: []ir.Op{
-			{Kind: ir.OpConstFunc, I32: 7},
+			{Kind: ir.OpConstFunc, Str: "target"},
 			{Kind: ir.OpDrop},
 			{Kind: ir.OpReturnVoid},
 		},
@@ -23,8 +24,11 @@ func TestLiftConstFunc(t *testing.T) {
 		t.Fatalf("LiftFromIR: %v", err)
 	}
 	op := out.Blocks[0].Ops[0]
-	if op.Kind != OpConstInt || op.Imm != 7 {
-		t.Errorf("Op = {%v %d}, want {OpConstInt 7}", op.Kind, op.Imm)
+	if op.Kind != OpMakeClosure || op.Str != "target" {
+		t.Errorf("Op = {%v %q}, want {OpMakeClosure \"target\"}", op.Kind, op.Str)
+	}
+	if len(op.Args) != 0 {
+		t.Errorf("zero-capture closure should have no capture args, got %d", len(op.Args))
 	}
 }
 
