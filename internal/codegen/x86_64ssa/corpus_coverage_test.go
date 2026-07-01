@@ -53,8 +53,9 @@ var corpusPrograms = []string{
 // emit, plus a histogram of the ops that block emission. It asserts a floor so
 // a regression that drops real-corpus coverage is caught, and logs the detail.
 func TestCorpusEmitCoverage(t *testing.T) {
-	var total, lifted, emitted int
+	var total, lifted, verified, emitted int
 	liftFail := map[string]int{}
+	verifyFail := map[string]int{}
 	emitFail := map[string]int{}
 
 	for pi, src := range corpusPrograms {
@@ -78,6 +79,16 @@ func TestCorpusEmitCoverage(t *testing.T) {
 				continue
 			}
 			lifted++
+			// Verify the lifted SSA before emitting. Emitting invalid SSA is
+			// undefined, so a verify failure is a *lift* bug, tracked separately
+			// from emitter coverage. (This is how the corpus surfaced the
+			// match-on-Option join-phi bug — `match (opt) { Some(v) => v, None =>
+			// k }` lifts to `ret` of a value not defined on the None path.)
+			if err := ssa.Verify(f); err != nil {
+				verifyFail[firstErrToken(err)]++
+				continue
+			}
+			verified++
 			if _, err := x86.Emit(f, 4); err != nil {
 				emitFail[firstErrToken(err)]++
 				continue
@@ -86,23 +97,26 @@ func TestCorpusEmitCoverage(t *testing.T) {
 		}
 	}
 
-	t.Logf("corpus coverage: %d funcs, %d lifted (%d lift-failed), %d emitted (%d emit-failed)",
-		total, lifted, total-lifted, emitted, lifted-emitted)
+	t.Logf("corpus coverage: %d funcs, %d lifted, %d verified, %d emitted", total, lifted, verified, emitted)
 	if len(liftFail) > 0 {
 		t.Logf("lift failures: %v", liftFail)
+	}
+	if len(verifyFail) > 0 {
+		t.Logf("verify failures (lift bugs): %v", verifyFail)
 	}
 	if len(emitFail) > 0 {
 		t.Logf("emit failures: %v", emitFail)
 	}
 
-	if lifted == 0 || emitted == 0 {
-		t.Fatalf("expected some functions to lift and emit, got lifted=%d emitted=%d", lifted, emitted)
+	if verified == 0 || emitted == 0 {
+		t.Fatalf("expected some functions to verify and emit, got verified=%d emitted=%d", verified, emitted)
 	}
-	// Every function that lifts must also emit: these programs use only ops the
-	// real-asm path covers, so an emit failure is a real regression (e.g. the
-	// unreachable-block gap this corpus first surfaced).
-	if emitted != lifted {
-		t.Errorf("%d/%d lifted functions failed to emit: %v", lifted-emitted, lifted, emitFail)
+	// Every function that lifts to *valid* SSA must emit: these programs use only
+	// ops the real-asm path covers, so an emit failure on a verified function is a
+	// real emitter regression (e.g. the unreachable-block gap this corpus first
+	// surfaced).
+	if emitted != verified {
+		t.Errorf("%d/%d verified functions failed to emit: %v", verified-emitted, verified, emitFail)
 	}
 }
 

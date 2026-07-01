@@ -253,6 +253,25 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
           subset (programs whose whole call graph lifts+emits); RC inc/dec,
           runtime helpers, and closure dispatch layer on next, then the flag +
           e2e diff against the stack machine and the binary-size measurement.
+        - [~] Pair returns in real asm (`TRetPair` + `CallPair`) — the System V
+          pair-return convention (tag in `rax`, payload in `rdx`) used for
+          `Option`/`Result`. The callee epilogue moves (tag, payload) into
+          rax/rdx via a parallel copy (shared `resolveRegMoves` with the param
+          ABI); the caller (`CallPair`) captures both results, stashing the
+          payload in `s0` across the caller-saved restores. Validated natively
+          with hand-built SSA (a pair-returning callee summed by the caller,
+          incl. both results live across an intervening call). Probing the
+          *whole-program* `Option` path also surfaced a real **lift bug** (not
+          the emitter): `match (opt) { Some(v) => v, None => k }` lifts to
+          invalid SSA — the join block `ret`s a value not defined on the None
+          path (missing phi), caught by `ssa.Verify`. The corpus differential
+          now runs `ssa.Verify` on every lifted function and tracks verify
+          failures as a distinct (lift-bug) category, asserting every *valid*
+          function still emits. Fixing the match-`Option` join phi in
+          `ssa.LiftFromIR` is a follow-up (a separate subsystem from the
+          emitter; the shipping stack-machine backend doesn't use this lift, so
+          the bug was previously unexercised). Still ahead: closure dispatch
+          (`CallIndirect`), RC/runtime helpers, then the flag + e2e diff.
 - [~] Op-coverage broadening toward parity (each op validated against `Eval`
   in the model before it reaches real assembly):
   - [x] Direct integer calls + recursion — `ssa.EvalIn` (function-table eval),
