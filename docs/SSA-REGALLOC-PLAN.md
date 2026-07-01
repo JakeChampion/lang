@@ -437,3 +437,43 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
 - [ ] Phase 3 — default x86-64 to SSA; measure binary-size win
 - [ ] Phase 4 — arm64 SSA emit + default
 - [ ] Phase 5 — retire the stack-machine backends
+
+## Emit-quality phase — results
+
+After the whole-program coverage landed, a direct measurement showed the
+SSA path was initially emitting **larger** `.text` than the stack machine
+(fib 219%), because register allocation alone isn't enough — the emit was
+over-saving and over-moving. Four correctness-preserving slices fixed that,
+each diffed against the interpreter oracle:
+
+- **EQ-1** call-clobber-aware caller-save — save only the caller-saved
+  registers holding values live *across* a call, not all of them
+  (`ssa.Allocation.LiveAcross`).
+- **EQ-2** drop the redundant `movsxd` after an in-range `MovImm` (a
+  `mov r64, imm32` already sign-extends).
+- **EQ-3** pass call arguments by a parallel register move
+  (`argMoveLines` / `resolveRegMoves`) instead of a push/pop stack
+  round-trip.
+- **EQ-4** compute each op directly into its result's register home
+  (`coalesceDst` / `movReg`) instead of staging through the scratch `s2`
+  and placing — the biggest lever.
+
+`.text` size vs the stack machine, before → after the phase:
+
+| program            | before | after |
+|--------------------|--------|-------|
+| arith (straight)   | 113%   | 77%   |
+| loop               | 110%   | 89%   |
+| fib (recursive)    | 219%   | 154%  |
+| calls (many fns)   | 197%   | 175%  |
+| **large mixed (100–200 fns)** | — | **84%** |
+
+At codebase scale the SSA backend is a **stable ~84% of the stack
+machine** — a ~16% code-size reduction that holds as the program grows, so
+the binary-size premise of the epic is validated. Guarded by
+`TestCodeSizeSmallerThanStackMachine` (fails if the SSA path regresses to
+parity or worse). The residual call-heavy overhead (fib/calls) is the
+call sequence itself; shrinking it further needs call-clobber-aware
+*allocation* (prefer callee-saved registers for values live across calls),
+a deeper allocator change, before the Phase-3 flag-gate + end-to-end
+self-host binary measurement.
