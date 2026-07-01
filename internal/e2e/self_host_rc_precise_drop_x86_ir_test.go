@@ -265,6 +265,16 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// reclaim set. The caller reads it; box freed once (by nobody here — moved
 		// out, leak-as-before). Value + detector 0 (no over-release).
 		{"scalar-tuple-escapes-not-freed-detector", `function mk(): (i32, i32) { var t: (i32, i32) = (5, 6); return t; } function main(): i32 { var t = mk(); var r = t.0 + t.1; if (r != 11) { return 99; } return __rc_underflow(); }`, 0},
+		// PRECISE drop for an early-dead scalar tuple: `t` is last-used inside the
+		// `if`, so its box is freed + slot-zeroed right after the if-statement
+		// (instead of at the exit sweep), bounding the live set. The exit sweep's
+		// tuple loop then decs the guarded null. f(5): t.0+t.1 = 7, c = 7, ret 7+5=12.
+		{"scalar-tuple-precise-if-value", `function f(n: i32): i32 { var t: (i32, i32) = (3, 4); var c = 0; if (n > 0) { c = t.0 + t.1; } return c + n; } function main(): i32 { return f(5); }`, 12},
+		{"scalar-tuple-precise-if-detector", `function f(n: i32): i32 { var t: (i32, i32) = (3, 4); var c = 0; if (n > 0) { c = t.0 + t.1; } return c + n; } function main(): i32 { var r = f(5); if (r != 12) { return 99; } return __rc_underflow(); }`, 0},
+		// PRECISE drop + heap-reuse corruption probe: a FRESH array allocated AFTER
+		// the tuple's precise drop reads back intact (the early free was sound — no
+		// double-free / dangling slot the fresh alloc could recycle). c 7 + 66; det 0.
+		{"scalar-tuple-precise-corruption-probe-detector", `function go(): i32 { var t: (i32, i32) = (3, 4); var c = 0; var i = 0; while (i < 1) { c = t.0 + t.1; i = i + 1; } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (c != 7) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 		// Struct with an i32[] field: the box is rc-headered and freed soundly, and
 		// the array field is deep-dropped (emit_struct_field_drops) exactly once.
 		// Detector 0 proves neither the box nor the array field over-releases.
