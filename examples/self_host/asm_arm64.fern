@@ -3897,7 +3897,12 @@ function emit_arm64_reclaim_drop_bodies(s: asmcore.EmitState): asmcore.EmitState
     var sdi: i32 = 0;
     while (sdi < s.needed.len()) {
         var sdnd: string = s.needed[sdi];
-        if (sdnd.len() > 12 && sdnd[0:12] == "struct_drop:") {
+        // One index-driven loop over both prefixes so the transitive needs
+        // (arr_elems -> struct_drop, and a struct_drop k_box arm -> arr_elems) are all
+        // absorbed as they are appended, regardless of discovery order.
+        if (sdnd.len() > 22 && sdnd[0:22] == "struct_arr_elems_drop:") {
+            s = emit_arm64_struct_arr_elems_drop_one(s, sdnd[22 : sdnd.len()]);
+        } else if (sdnd.len() > 12 && sdnd[0:12] == "struct_drop:") {
             s = emit_arm64_struct_drop_one(s, sdnd[12 : sdnd.len()]);
         }
         sdi = sdi + 1;
@@ -3996,6 +4001,25 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
         var off: string = util.i32_to_string((k + 1) * 8);
         var ks: string = util.i32_to_string(k);
         if (k_box) {
+            // MULTI-LEVEL array-element deep-drop (#2649): a struct-ARRAY field `X[]`
+            // whose element struct X is deep-drop-ok releases each element's OWN rc
+            // fields via __struct_arr_elems_drop_X BEFORE the element/buffer arr_dec
+            // below frees the boxes. The helper calls __struct_drop_X, clobbering
+            // x10/x11/x12, so reload box from the frame-relative stack arg [sp, #16]
+            // (entry pushed one stp frame), mirroring the k_struct deep-drop arm.
+            // Enum-array elements have no __struct_drop, so they stay shallow.
+            if (irlower.is_struct_array_field_type(s.struct_decls, fdt)) {
+                var elem_ty: string = fdt[0 : fdt.len() - 2];
+                if (irlower.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
+                    var esan: string = asmcore.sanitize_label(elem_ty);
+                    s = s.need("struct_arr_elems_drop:" + elem_ty);
+                    s = s.write("    ldr x0, [x10, #" + off + "]\n");       // buffer
+                    s = s.write("    str x0, [sp, #-16]!\n");
+                    s = s.write("    bl __fn___struct_arr_elems_drop_" + esan + "\n");
+                    s = s.write("    add sp, sp, #16\n");
+                    s = s.write("    ldr x10, [sp, #16]\n");                // reload box (helper clobbered x10)
+                }
+            }
             s = s.write("    ldr x11, [x10, #" + off + "]\n");      // buffer = box.field_k
             s = s.write("    cmp x11, #16, lsl #12\n");             // null/low -> skip walk
             s = s.write("    blo .Lasd_" + san + "_buf" + ks + "\n");
@@ -4064,6 +4088,58 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
     }
     s = s.write("    mov x0, x10\n");                   // restore return (bls clobbered x0)
     s = s.write(".Lasd_" + san + "_ret:\n");
+    s = s.write("    ldp x29, x30, [sp], #16\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
+// emit_arm64_struct_arr_elems_drop_one is the arm64 transcription of
+// asm_ir.emit_ir_struct_arr_elems_drop_one: __struct_arr_elems_drop_<E>(buffer) walks a
+// uniquely-owned buffer and, per uniquely-owned element box, calls __struct_drop_<E> to
+// release the element's OWN rc fields (the level the shallow k_box walk leaked). It frees
+// neither the element boxes nor the buffer — the k_box caller's arr_dec does that. Stack-
+// arg ABI: [sp]=buffer at entry (at [sp, #32] after the two stp saves). x19=buffer,
+// x20=index are callee-saved so they survive the nested __struct_drop_<E> call (which
+// clobbers x10/x11/x12) and the arr_dec/is_unique calls (x0..x3,x9). Buffer + each element
+// are is_unique-gated. `.weak`, per-unit, needs __struct_drop_<E>.
+function emit_arm64_struct_arr_elems_drop_one(s: asmcore.EmitState, ety: string): asmcore.EmitState {
+    var san: string = asmcore.sanitize_label(ety);
+    s = s.need("struct_drop:" + ety);
+    s = s.write(".weak __fn___struct_arr_elems_drop_" + san + "\n");
+    s = s.write("__fn___struct_arr_elems_drop_" + san + ":\n");
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");             // save FP/LR for the bls
+    s = s.write("    stp x19, x20, [sp, #-16]!\n");             // save callee-saved x19/x20
+    s = s.write("    ldr x19, [sp, #32]\n");                    // buffer (arg + 32 for two stp saves)
+    s = s.write("    cmp x19, #16, lsl #12\n");                 // null / low -> nothing to walk
+    s = s.write("    blo .Lsaed_" + san + "_ret\n");
+    s = s.write("    str x19, [sp, #-16]!\n");
+    s = s.write("    bl __fn___fern_rc_is_unique\n");           // shared buffer -> elements shared -> skip
+    s = s.write("    add sp, sp, #16\n");
+    s = s.write("    cbz x0, .Lsaed_" + san + "_ret\n");
+    s = s.write("    mov x20, #0\n");                           // i = 0
+    s = s.write(".Lsaed_" + san + "_loop:\n");
+    s = s.write("    ldr x0, [x19]\n");                         // len = buffer[0]
+    s = s.write("    cmp x20, x0\n");
+    s = s.write("    bge .Lsaed_" + san + "_ret\n");            // i >= len -> done
+    s = s.write("    add x1, x20, #1\n");
+    s = s.write("    ldr x0, [x19, x1, lsl #3]\n");             // elem = buffer[(i+1)*8]
+    s = s.write("    cmp x0, #16, lsl #12\n");                  // null / low -> skip
+    s = s.write("    blo .Lsaed_" + san + "_next\n");
+    s = s.write("    str x0, [sp, #-16]!\n");
+    s = s.write("    bl __fn___fern_rc_is_unique\n");           // shared element (aliased out) -> skip
+    s = s.write("    add sp, sp, #16\n");
+    s = s.write("    cbz x0, .Lsaed_" + san + "_next\n");
+    s = s.write("    add x1, x20, #1\n");                       // recompute elem (x1 clobbered by call)
+    s = s.write("    ldr x0, [x19, x1, lsl #3]\n");
+    s = s.write("    str x0, [sp, #-16]!\n");
+    s = s.write("    bl __fn___struct_drop_" + san + "\n");     // release elem's OWN rc fields
+    s = s.write("    add sp, sp, #16\n");
+    s = s.write(".Lsaed_" + san + "_next:\n");
+    s = s.write("    add x20, x20, #1\n");
+    s = s.write("    b .Lsaed_" + san + "_loop\n");
+    s = s.write(".Lsaed_" + san + "_ret:\n");
+    s = s.write("    mov x0, x19\n");                           // return buffer (caller dec's it)
+    s = s.write("    ldp x19, x20, [sp], #16\n");
     s = s.write("    ldp x29, x30, [sp], #16\n");
     s = s.write("    ret\n");
     return s;

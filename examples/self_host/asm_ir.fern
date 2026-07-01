@@ -4493,7 +4493,14 @@ function emit_ir_struct_drops(s: asmcore.EmitState): asmcore.EmitState {
     var ni: i32 = 0;
     while (ni < s.needed.len()) {
         var nd: string = s.needed[ni];
-        if (nd.len() > 12 && nd[0:12] == "struct_drop:") {
+        // struct_arr_elems_drop: must be checked BEFORE struct_drop: (the former is not
+        // a prefix of the latter, but both start distinctly — order is not load-bearing,
+        // yet keep the more specific longer key first for clarity). Each emitter records
+        // its own transitive needs (arr_elems -> struct_drop), absorbed by this index-
+        // driven loop.
+        if (nd.len() > 22 && nd[0:22] == "struct_arr_elems_drop:") {
+            s = emit_ir_struct_arr_elems_drop_one(s, nd[22 : nd.len()]);
+        } else if (nd.len() > 12 && nd[0:12] == "struct_drop:") {
             s = emit_ir_struct_drop_one(s, nd[12 : nd.len()]);
         }
         ni = ni + 1;
@@ -4537,6 +4544,28 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
         var off: string = util.i32_to_string((k + 1) * 8);
         var ks: string = util.i32_to_string(k);
         if (k_box) {
+            // MULTI-LEVEL array-element deep-drop (#2649): for a struct-ARRAY field
+            // `X[]` whose element struct X is deep-drop-ok (acyclic + reclaimable),
+            // first release each element's OWN rc fields via the per-element helper
+            // __struct_arr_elems_drop_X (which is_unique-gates the buffer AND each
+            // element, then calls __struct_drop_X per uniquely-owned element). The
+            // existing element/buffer arr_dec below still frees the boxes — the helper
+            // only ADDS the field release the shallow walk used to leak. The helper
+            // calls __struct_drop_X, clobbering r9/r10/r11, so reload box from the
+            // frameless stack arg 8(%rsp) afterwards. Enum-array elements have no
+            // __struct_drop (enums aren't structs), so they stay shallow.
+            if (irlower.is_struct_array_field_type(s.struct_decls, fdt)) {
+                var elem_ty: string = fdt[0 : fdt.len() - 2];
+                if (irlower.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
+                    var esan: string = asmcore.sanitize_label(elem_ty);
+                    s = s.need("struct_arr_elems_drop:" + elem_ty);
+                    s = s.write("    movq " + off + "(%r11), %rdi\n");      // buffer
+                    s = s.write("    pushq %rdi\n");
+                    s = s.write("    call __fn___struct_arr_elems_drop_" + esan + "\n");
+                    s = s.write("    addq $8, %rsp\n");
+                    s = s.write("    movq 8(%rsp), %r11\n");                // reload box (helper clobbered r11)
+                }
+            }
             s = s.write("    movq " + off + "(%r11), %r10\n");          // a = box.field_k (buffer)
             s = s.write("    cmpq $0x10000, %r10\n");                   // null / low -> skip walk (buffer dec is a null no-op)
             s = s.write("    jb .Lstd_" + san + "_buf" + ks + "\n");
@@ -4605,6 +4634,65 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
         k = k + 1;
     }
     s = s.write(".Lstd_" + san + "_ret:\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
+// emit_ir_struct_arr_elems_drop_one emits __struct_arr_elems_drop_<E>(buffer) -> buffer,
+// the per-element-type deep-drop for a struct-ARRAY field (#2649 multi-level). It walks
+// a uniquely-owned buffer and, for each uniquely-owned element box, calls
+// __struct_drop_<E> to release the element's OWN rc fields — the level the shallow k_box
+// walk leaked. It does NOT free the element boxes or the buffer; the caller's existing
+// element/buffer arr_dec does that. Stack-arg ABI: 8(%rsp)=buffer (frame-relative 24 after
+// the two callee-saved pushes). rbx=buffer, r12=index are callee-saved so they survive the
+// nested __struct_drop_<E> call (which clobbers r9/r10/r11) and the arr_dec/is_unique calls
+// (which clobber only rax/rcx/rdx/rsi/rdi/r8). Buffer + each element are is_unique-gated:
+// a shared buffer (aliased array) or a shared element (aliased out) skips the field
+// release, exactly as the direct-field deep-drop does. `.weak`, per-unit, needs
+// __struct_drop_<E> so its body co-emits.
+function emit_ir_struct_arr_elems_drop_one(s: asmcore.EmitState, ety: string): asmcore.EmitState {
+    var san: string = asmcore.sanitize_label(ety);
+    s = s.need("struct_drop:" + ety);
+    s = s.write(".weak __fn___struct_arr_elems_drop_" + san + "\n");
+    s = s.write("__fn___struct_arr_elems_drop_" + san + ":\n");
+    s = s.write("    pushq %rbx\n");
+    s = s.write("    pushq %r12\n");
+    s = s.write("    movq 24(%rsp), %rbx\n");                    // buffer (arg 8 + 16 for two pushes)
+    s = s.write("    cmpq $0x10000, %rbx\n");                    // null / low -> nothing to walk
+    s = s.write("    jb .Lsaed_" + san + "_ret\n");
+    s = s.write("    pushq %rbx\n");
+    s = s.write("    call __fn___fern_rc_is_unique\n");          // shared buffer -> elements shared -> skip
+    s = s.write("    addq $8, %rsp\n");
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jz .Lsaed_" + san + "_ret\n");
+    s = s.write("    xorq %r12, %r12\n");                        // i = 0
+    s = s.write(".Lsaed_" + san + "_loop:\n");
+    s = s.write("    movq (%rbx), %rax\n");                      // len = buffer[0]
+    s = s.write("    cmpq %rax, %r12\n");
+    s = s.write("    jge .Lsaed_" + san + "_ret\n");             // i >= len -> done
+    s = s.write("    movq %r12, %rcx\n");
+    s = s.write("    incq %rcx\n");
+    s = s.write("    movq (%rbx,%rcx,8), %rdi\n");               // elem = buffer[(i+1)*8]
+    s = s.write("    cmpq $0x10000, %rdi\n");                    // null / low -> skip
+    s = s.write("    jb .Lsaed_" + san + "_next\n");
+    s = s.write("    pushq %rdi\n");
+    s = s.write("    call __fn___fern_rc_is_unique\n");          // shared element (aliased out) -> skip field release
+    s = s.write("    addq $8, %rsp\n");
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jz .Lsaed_" + san + "_next\n");
+    s = s.write("    movq %r12, %rcx\n");                        // recompute elem (rcx clobbered by call)
+    s = s.write("    incq %rcx\n");
+    s = s.write("    movq (%rbx,%rcx,8), %rdi\n");
+    s = s.write("    pushq %rdi\n");
+    s = s.write("    call __fn___struct_drop_" + san + "\n");    // release elem's OWN rc fields (clobbers r9/r10/r11)
+    s = s.write("    addq $8, %rsp\n");
+    s = s.write(".Lsaed_" + san + "_next:\n");
+    s = s.write("    incq %r12\n");
+    s = s.write("    jmp .Lsaed_" + san + "_loop\n");
+    s = s.write(".Lsaed_" + san + "_ret:\n");
+    s = s.write("    movq %rbx, %rax\n");                        // return buffer (caller dec's it)
+    s = s.write("    popq %r12\n");
+    s = s.write("    popq %rbx\n");
     s = s.write("    ret\n");
     return s;
 }

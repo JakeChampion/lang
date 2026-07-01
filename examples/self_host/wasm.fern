@@ -1162,7 +1162,43 @@ pub function emit_ir_rc_bodies(mod: parser.Module): string {
         out = out + emit_wasm_struct_drop_body(sdt[sdti], rc_cx);
         sdti = sdti + 1;
     }
+    // Per-element-type array deep-drop helpers (#2649): $__struct_arr_elems_drop_<E>
+    // for each struct-array element type E reachable from a struct_drop type. Emitted
+    // after the struct_drop bodies they call (order is irrelevant for wasm funcs, but
+    // struct_drop_types already added each E so $__struct_drop_<E> exists).
+    var aet: string[] = wasm_ir.struct_arr_elems_drop_types(mod);
+    var aeti: i32 = 0;
+    while (aeti < aet.len()) {
+        out = out + emit_wasm_struct_arr_elems_drop_body(aet[aeti], rc_cx);
+        aeti = aeti + 1;
+    }
     return out;
+}
+
+// emit_wasm_struct_arr_elems_drop_body returns the WAT for
+// $__struct_arr_elems_drop_<E>(buf) -> buf — the wasm sibling of
+// asm_ir.emit_ir_struct_arr_elems_drop_one (#2649 array-element deep-drop). For a
+// uniquely-owned buffer it walks the elements and, per uniquely-owned element box,
+// calls $__struct_drop_<E> to release the element's OWN rc fields — the level the
+// shallow $__fern_arr_dec_ptr walk leaked. It frees neither the element boxes nor the
+// buffer; the caller's arr_dec_ptr (emitted right after) still does that. $__fern_rc_is_unique
+// null-/low-/sentinel-guards internally, so a shared buffer or element is skipped.
+// wasm32 array layout: len at buf[0], element i at buf+8+i*4 (4-byte pointers), rc at buf-8.
+function emit_wasm_struct_arr_elems_drop_body(e: string, cx: Ctx): string {
+    var o: string = "  (func $__struct_arr_elems_drop_" + e + " (param $buf i32) (result i32)\n";
+    o = o + "    (local $i i32) (local $n i32) (local $e i32)\n";
+    o = o + "    (if (call $__fern_rc_is_unique (local.get $buf)) (then\n";
+    o = o + "      (local.set $n (i32.load (local.get $buf)))\n";
+    o = o + "      (local.set $i (i32.const 0))\n";
+    o = o + "      (block $saed_done (loop $saed_lp\n";
+    o = o + "        (br_if $saed_done (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "        (local.set $e (i32.load (i32.add (i32.add (local.get $buf) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))))\n";
+    o = o + "        (if (call $__fern_rc_is_unique (local.get $e)) (then\n";
+    o = o + "          (drop (call $__struct_drop_" + e + " (local.get $e)))))\n";
+    o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "        (br $saed_lp))))) \n";
+    o = o + "    (local.get $buf))\n";
+    return o;
 }
 
 function emit_wasm_struct_drop_body(t: string, cx: Ctx): string {
@@ -1175,6 +1211,17 @@ function emit_wasm_struct_drop_body(t: string, cx: Ctx): string {
                 var ft: string = cx.structs[si].fields[k].type_name;
                 if (struct_field_kind_char(ft, cx) == "a") {
                     var load: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
+                    // MULTI-LEVEL array-element deep-drop (#2649): a struct-ARRAY field
+                    // `X[]` whose element struct X is deep-drop-ok releases each element's
+                    // OWN rc fields via $__struct_arr_elems_drop_X BEFORE arr_dec_ptr frees
+                    // the element boxes + buffer. Enum-array elements have no $__struct_drop,
+                    // so they keep the plain arr_dec_ptr (one level).
+                    if (irlower.is_struct_array_field_type(cx.structs, ft)) {
+                        var elem_ty: string = ft[0 : ft.len() - 2];
+                        if (irlower.nested_field_deep_drop_ok(cx.structs, elem_ty)) {
+                            o = o + "    (drop (call $__struct_arr_elems_drop_" + elem_ty + " " + load + "))\n";
+                        }
+                    }
                     if (array_field_elem_is_ptr(ft, cx)) {
                         o = o + "    (drop (call $__fern_arr_dec_ptr " + load + "))\n";
                     } else {
