@@ -187,8 +187,8 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 	for bi, blk := range p.Blocks {
 		w(".L_%s_b%d:", label, bi)
 		for _, in := range blk.Insts {
-			if in.Op == Call {
-				lines, err := callLines(in, numAlloc, scratch)
+			if in.Op == Call || in.Op == CallPair {
+				lines, err := callLines(in, numAlloc, scratch, numAlloc)
 				if err != nil {
 					return err
 				}
@@ -224,6 +224,17 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 		switch blk.Term.Kind {
 		case TRet:
 			w("\tmov rax, %s", reg(blk.Term.RetReg))
+			restore()
+			w("\tmov rsp, rbp")
+			w("\tpop rbp")
+			w("\tret")
+		case TRetPair:
+			// System V pair return: tag in rax, payload in rdx. The two moves are
+			// a parallel copy (a home may already be rax/rdx), so resolve them
+			// before the callee-saved restore (which never touches rax/rdx).
+			for _, l := range pairRetMoves(blk.Term.RetReg, blk.Term.RetReg2) {
+				w("\t%s", l)
+			}
 			restore()
 			w("\tmov rsp, rbp")
 			w("\tpop rbp")
@@ -289,7 +300,7 @@ func calleeSavedUsed(numRegFile int) []int {
 // home→arg-register shuffle can't clobber a not-yet-consumed source. The result
 // (rax) is captured into the scratch register, which is never in the saved set,
 // so the restores don't overwrite it.
-func callLines(in Inst, numAlloc, scratch int) ([]string, error) {
+func callLines(in Inst, numAlloc, scratch, s0 int) ([]string, error) {
 	if len(in.ArgLocs) > len(sysvArgRegs) {
 		return nil, fmt.Errorf("x86_64ssa: real-asm call supports up to %d args, got %d", len(sysvArgRegs), len(in.ArgLocs))
 	}
@@ -325,7 +336,13 @@ func callLines(in Inst, numAlloc, scratch int) ([]string, error) {
 		out = append(out, fmt.Sprintf("pop %s", sysvArgRegs[i]))
 	}
 	out = append(out, fmt.Sprintf("call %s", fnLabel(in.Callee)))
-	out = append(out, fmt.Sprintf("mov %s, rax", reg(scratch))) // capture result
+	out = append(out, fmt.Sprintf("mov %s, rax", reg(scratch))) // capture result (tag)
+	if in.Op == CallPair {
+		// The second return (payload) is in rdx. Capture it into s0 — free during
+		// the call inst and not in the caller-saved set — so the restores below
+		// don't overwrite it.
+		out = append(out, fmt.Sprintf("mov %s, rdx", reg(s0)))
+	}
 	for i := len(saved) - 1; i >= 0; i-- {
 		out = append(out, fmt.Sprintf("pop %s", reg(saved[i])))
 	}
@@ -335,6 +352,9 @@ func callLines(in Inst, numAlloc, scratch int) ([]string, error) {
 	out = append(out, fmt.Sprintf("mov %s, %s", reg(in.Dst), reg(scratch))) // place result
 	if fix := maskFix(in.Dst, in.W); fix != "" {
 		out = append(out, strings.TrimPrefix(fix, "\n\t"))
+	}
+	if in.Op == CallPair {
+		out = append(out, fmt.Sprintf("mov %s, %s", reg(in.Dst2), reg(s0))) // place payload
 	}
 	return out, nil
 }
@@ -378,18 +398,26 @@ func paramMoveLines(paramLocs []Loc) []string {
 		}
 	}
 	// Step B: register-homed params — parallel register copy.
-	type mv struct{ dst, src int } // gpRegs indices
-	var moves []mv
+	var moves [][2]int // {dst, src} gpRegs indices
 	for i, loc := range paramLocs {
 		if loc.IsReg {
 			if src := gpIndex(sysvArgRegs[i]); src != loc.Reg {
-				moves = append(moves, mv{dst: loc.Reg, src: src})
+				moves = append(moves, [2]int{loc.Reg, src})
 			}
 		}
 	}
-	isSrc := func(ms []mv, r int) bool {
-		for _, m := range ms {
-			if m.src == r {
+	return append(out, resolveRegMoves(moves)...)
+}
+
+// resolveRegMoves renders a parallel register copy (each {dst, src} entry; dsts
+// distinct, srcs distinct). It emits any move whose destination is not still
+// needed as a source; when only cycles remain it breaks one with `xchg` and
+// redirects the moves that read the swapped register. Always terminates.
+func resolveRegMoves(moves [][2]int) []string {
+	var out []string
+	isSrc := func(r int) bool {
+		for _, m := range moves {
+			if m[1] == r {
 				return true
 			}
 		}
@@ -398,29 +426,41 @@ func paramMoveLines(paramLocs []Loc) []string {
 	for len(moves) > 0 {
 		idx := -1
 		for j, m := range moves {
-			if !isSrc(moves, m.dst) {
+			if !isSrc(m[0]) {
 				idx = j
 				break
 			}
 		}
 		if idx >= 0 {
 			m := moves[idx]
-			out = append(out, fmt.Sprintf("mov %s, %s", reg(m.dst), reg(m.src)))
+			out = append(out, fmt.Sprintf("mov %s, %s", reg(m[0]), reg(m[1])))
 			moves = append(moves[:idx], moves[idx+1:]...)
 			continue
 		}
-		// Only cycles remain: break one edge with xchg, then redirect any move
-		// that read the now-swapped destination register to read from src.
 		m := moves[0]
-		out = append(out, fmt.Sprintf("xchg %s, %s", reg(m.dst), reg(m.src)))
+		out = append(out, fmt.Sprintf("xchg %s, %s", reg(m[0]), reg(m[1])))
 		moves = moves[1:]
 		for k := range moves {
-			if moves[k].src == m.dst {
-				moves[k].src = m.src
+			if moves[k][1] == m[0] {
+				moves[k][1] = m[1]
 			}
 		}
 	}
 	return out
+}
+
+// pairRetMoves moves the pair-return (tag, payload) values into the System V
+// pair-return registers rax and rdx, resolving the parallel copy (either home
+// may already be rax/rdx).
+func pairRetMoves(tagReg, payReg int) []string {
+	var moves [][2]int
+	if tagReg != raxReg {
+		moves = append(moves, [2]int{raxReg, tagReg})
+	}
+	if payReg != rdxReg {
+		moves = append(moves, [2]int{rdxReg, payReg})
+	}
+	return resolveRegMoves(moves)
 }
 
 func reg(i int) string    { return gpRegs[i] }
