@@ -127,8 +127,21 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
         Up to six integer params (stack args a follow-up). Validated by
         assembling + running natively (`TestAsmRunParam*`: identity, 4-param
         sum, param-in-loop, the sixth/`r9` param, all over spill-forcing
-        register counts). Still to do in 3b: shifts (cl) and `idiv` (rax/rdx)
-        fixed-register handling, and i32 width in real asm.
+        register counts).
+      - [x] 3b (fixed registers) — shifts (`cl`) and `idiv`/`div` (`rdx:rax`)
+        on the real-asm path, WITHOUT allocator pre-coloring. `gas.go` emits a
+        self-contained sequence that `push`/`pop`s the pinned registers around
+        the op and stages operands through `s3` (the last register in the file,
+        always above `rax`/`rcx`/`rdx`): shifts copy the count into `rcx` and
+        read `cl`; divisions stash the divisor in `s3`, load the dividend into
+        `rax`, extend it (`cqo` signed / `xor rdx` unsigned), `idiv`/`div`, then
+        capture the result (quotient `rax` / remainder `rdx`) into `s3` **before**
+        the pops (so a dst that aliases `rdx` at `numAlloc==1` isn't clobbered)
+        and write it into dst afterwards. Validated natively: signed/unsigned
+        div+rem incl. a negative dividend (`cqo`+`idiv`), `sar` vs `shr` via a
+        negative operand, and operands/counts kept live across the op so the
+        push/pop preservation is exercised — all over spill-forcing counts.
+        Still to do: i32 width in real asm.
       - [ ] 3c — wire behind a flag and diff against the existing stack-machine
         backend over the e2e corpus.
 - [~] Op-coverage broadening toward parity (each op validated against `Eval`
