@@ -57,6 +57,18 @@ var loopReuseIRCases = []struct {
 	{"loop-struct-churn-safe",
 		`struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5000000) { var a: P = P { x: i, y: i + 1 }; var s: i32 = a.x + a.y; var b: P = P { x: i, y: 3 }; sum = (sum + b.x + b.y) % 1000; i = i + 1; } return sum; }`,
 		0, 1},
+	// Functional-update (self-overwrite) reuse in a loop: `c = P { ...d, y: 3 }`
+	// reuses the dead `d`'s box in place each iteration — ONE allocation. The
+	// immutable-state-threading loop shape. sum over i in 0..3 of (d.x=i) + 3 =
+	// (0+3)+(1+3)+(2+3)+(3+3) = 18.
+	{"loop-funcupdate-reuse",
+		`struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var d: P = P { x: i, y: 0 }; var c: P = P { ...d, y: 3 }; sum = sum + c.x + c.y; i = i + 1; } return sum; }`,
+		18, 1},
+	// Functional-update memory safety at scale: 5M iterations, balanced alloc/free
+	// (the recipient's prior box freed each turn), exit 0 (sum mod 1000).
+	{"loop-funcupdate-churn-safe",
+		`struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5000000) { var d: P = P { x: i, y: 0 }; var c: P = P { ...d, y: 3 }; sum = (sum + c.x + c.y) % 1000; i = i + 1; } return sum; }`,
+		0, 1},
 }
 
 // TestSelfHostLoopReuseIRX86_64 compiles each case through the self-hosted x86-64
