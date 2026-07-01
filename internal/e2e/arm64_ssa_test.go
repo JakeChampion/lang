@@ -87,6 +87,15 @@ function main(): i32 {
 }`,
 			want: 5,
 		},
+		{
+			// f64 arithmetic through a cross-function call — exercises the FP
+			// sequences and the call-result width propagation (an f64 return must
+			// not be masked back to i32).
+			name: "float_call",
+			src: `function scale(x: f64): f64 { return x * 2.0; }
+function main(): i32 { return scale(3.5) as i32; }`,
+			want: 7,
+		},
 	}
 
 	for _, c := range cases {
@@ -121,10 +130,10 @@ function main(): i32 {
 }
 
 // TestArm64SSACoverageGapErrors confirms a language construct outside the
-// SSA renderer's subset (here f64 arithmetic that survives constant
-// folding) fails with a clean compile error rather than a miscompile —
-// the experimental-backend contract that lets the epic widen coverage
-// incrementally.
+// SSA renderer's subset (here a closure, which lowers to OpMakeClosure /
+// OpCallIndirect) fails with a clean compile error rather than a
+// miscompile — the experimental-backend contract that lets the epic widen
+// coverage incrementally.
 func TestArm64SSACoverageGapErrors(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("arm64-ssa not exercised on windows")
@@ -136,13 +145,15 @@ func TestArm64SSACoverageGapErrors(t *testing.T) {
 		t.Fatalf("go build fern: %v\n%s", err, out)
 	}
 
-	srcPath := filepath.Join(dir, "float.fern")
-	src := `function scale(x: f64): f64 { return x * 2.0; }
-function main(): i32 { return scale(3.5) as i32; }`
+	srcPath := filepath.Join(dir, "closure.fern")
+	src := `function main(): i32 {
+  var add = (x: i32) => x + 1;
+  return add(41);
+}`
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	out := filepath.Join(dir, "float.bin")
+	out := filepath.Join(dir, "closure.bin")
 	emit := exec.Command(bin, "-target", "arm64-ssa", "-o", out, srcPath)
 	var eb bytes.Buffer
 	emit.Stderr = &eb
