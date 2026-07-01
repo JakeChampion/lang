@@ -7,18 +7,22 @@ import (
 	"testing"
 )
 
-// allocTrapSrc allocates without bound (string concat reallocates the
-// whole string each iteration, so cumulative allocation grows
-// quadratically and blows past the 2.5 GiB bump heap). The self-host's
-// __fern_alloc bounds check must trap with a clean, recognisable exit
-// code (137) rather than silently running past the heap into adjacent
-// .bss (the strbuf output accumulator) and corrupting it.
+// allocTrapSrc allocates without bound: each iteration grows `s` by concat and
+// STORES the grown string into the array `a`, so every intermediate stays live
+// (cumulative allocation grows quadratically and blows past the 2.5 GiB bump
+// heap). The self-host's __fern_alloc bounds check must trap with a clean,
+// recognisable exit code (137) rather than silently running past the heap into
+// adjacent .bss (the strbuf output accumulator) and corrupting it.
 //
-// 100000 iterations is ~4.66 GiB cumulative (n²/2), robustly past the
-// 2.5 GiB heap (and any heap ≤ 4 GiB) so it traps mid-loop on every
-// backend. (60000 ≈ 1.80 GiB was marginally UNDER the older 1.75 GiB heap,
-// so the program completed and returned 60000 → exit 96 instead of trapping.)
-const allocTrapSrc = "function main(): i32 { var s: string = \"\"; var i: i32 = 0; while (i < 100000) { s = s + \"x\"; i = i + 1; } return s.len(); }"
+// The `a.append(s)` is essential: it makes `s` ESCAPE, so `s` is NOT a
+// reclaimable string-builder accumulator (#2649) — without it, the consume-rebind
+// reclaim frees each superseded box and the program stays flat (~1.2 GiB) and
+// COMPLETES (return 100000 → exit 160) instead of trapping. Storing every
+// intermediate keeps them all live, so the heap genuinely overflows.
+//
+// 100000 iterations is ~4.66 GiB cumulative string bytes (n²/2), robustly past
+// the 2.5 GiB heap (and any heap ≤ 4 GiB) so it traps mid-loop on every backend.
+const allocTrapSrc = "function main(): i32 { var a: string[] = []; var s: string = \"\"; var i: i32 = 0; while (i < 100000) { s = s + \"x\"; a.append(s); i = i + 1; } return a.len(); }"
 
 // TestSelfHostAllocTrapX86_64 — heap-overflow trap, self-hosted x86-64.
 func TestSelfHostAllocTrapX86_64(t *testing.T) {
