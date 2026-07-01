@@ -3908,7 +3908,9 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    popq %rcx\n    popq %rax\n    movq %rcx, " + util.i32_to_string((o.i32_imm + 1) * 8) + "(%rax)\n");
         } else if (o.kind == "tuple_set") {
             // pop val (top), box; store val at element index*8 (no shape slot,
-            // unlike struct_set). Tuple constructor-reuse writer.
+            // unlike struct_set). One 8-byte movq for EVERY element kind (i32 / i64
+            // / f64 / pointer all ride the operand stack as 8 bytes), so width is
+            // ignored here — only wasm distinguishes it. Tuple constructor-reuse writer.
             s = s.write("    popq %rcx\n    popq %rax\n    movq %rcx, " + util.i32_to_string(o.i32_imm * 8) + "(%rax)\n");
         } else if (o.kind == "struct_set_shape") {
             // peek box (top of stack); write o.str's interned shape pointer (the

@@ -1466,10 +1466,18 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             }
         } else if (o.kind == "tuple_set") {
             // stack: box, val -> store val at box + index*8 (tuples have NO shape
-            // slot, unlike struct_set's box+8+index*8). i32-scalar tuples only (the
-            // reuse eligibility restricts to them), so a plain i32.store.
+            // slot, unlike struct_set's box+8+index*8). Uniform 8-byte slots; the
+            // store instruction matches the element KIND (width 64 + unsigned =>
+            // i64.store; width 64 => f64.store; else i32.store for i32 / pointer),
+            // mirroring tuple_make. The tuple constructor-reuse writer.
             var toff: i32 = o.i32_imm * 8;
-            out = out + "    local.set " + util.i32_to_string(eltmp) + "\n    i32.const " + util.i32_to_string(toff) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+            if (o.width == 64 && o.unsigned) {
+                out = out + "    local.set " + util.i32_to_string(i64tmp) + "\n    i32.const " + util.i32_to_string(toff) + "\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n";
+            } else if (o.width == 64) {
+                out = out + "    local.set " + util.i32_to_string(f64tmp) + "\n    i32.const " + util.i32_to_string(toff) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n";
+            } else {
+                out = out + "    local.set " + util.i32_to_string(eltmp) + "\n    i32.const " + util.i32_to_string(toff) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
+            }
         } else if (o.kind == "struct_set_shape") {
             // stack: box (kept). Write o.str's type-id (the SAME id struct_make
             // stores at offset 0 / variant_is compares) at box+0, leaving the box
