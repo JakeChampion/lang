@@ -54,6 +54,18 @@ func TestSelfHostStrReclaimWasmIR(t *testing.T) {
 		// Aliased fresh string must NOT be reclaimed (would double-free the shared
 		// block) — the analysis excludes it; underflow stays 0, value correct. 3+3=6.
 		{"aliased-safe", `function churn(): i32 { var s: string = "ab" + "c"; var t: string = s; return s.len() + t.len(); } function main(): i32 { var r: i32 = churn(); if (__fern_rc_underflow_count() != 0) { return 99; } return r; }`, 6},
+		// i32_to_string reclaimed each iteration. This one is VALUE-only (no
+		// __fern_rc_underflow_count in the module): the underflow builtin routes
+		// i32_to_string in every function to the legacy AST wasm path — which lacks
+		// the $i32_to_string helper (a legacy AST gap, not the IR reclaim) — so it
+		// must stay out of a module exercising i32_to_string on the IR path. Pure IR
+		// here: the loop reclaims s each iteration (proven double-free-safe by the
+		// concat/to_upper underflow cases above — the identical $__fern_arr_dec
+		// mechanism on an rc-headered str_box block). i in 0..49: 10*1 + 40*2 = 90.
+		{"loop-i32-to-string", `function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 50) { var s: string = i32_to_string(i); sum = sum + s.len(); i = i + 1; } return sum; }`, 90},
+		// Un-annotated chr(..) reclaimed each iteration (the rc-header fix makes the
+		// wasm chr block reclaimable). Value-only. 20 iters * len 1 = 20.
+		{"unannotated-chr", `function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 20) { var s = chr(65 + i); sum = sum + s.len(); i = i + 1; } return sum; }`, 20},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

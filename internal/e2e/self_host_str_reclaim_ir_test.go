@@ -70,6 +70,29 @@ var strReclaimIRCases = []struct {
 	{"returned-not-reclaimed",
 		`function h(): string { var s: string = "xy" + "z"; return s; } function main(): i32 { return h().len(); }`,
 		3, false},
+	// ANNOTATED i32_to_string in a loop: reclaimed each iter. On the self-host the
+	// helper boxes at an allocation boundary (unlike native's mid-buffer emitter),
+	// so it is cleanly reclaimable. i in 0..12 → "0".."11"; sum of digit-lengths =
+	// 10*1 + 2*2 = 14.
+	{"loop-i32-to-string",
+		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 12) { var s: string = i32_to_string(i); sum = sum + s.len(); i = i + 1; } return sum; }`,
+		14, true},
+	// UN-ANNOTATED unambiguous producer (`var s = i32_to_string(i)`, inferred string):
+	// reclaimed too — str_free_producer_ident admits it without the annotation, and
+	// expr_is_str marks the slot. Same value as above (14).
+	{"loop-unannotated-i32-to-string",
+		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 12) { var s = i32_to_string(i); sum = sum + s.len(); i = i + 1; } return sum; }`,
+		14, true},
+	// UN-ANNOTATED chr(..): reclaimed. s.len() == 1 each iter; sum over 5 = 5.
+	{"loop-unannotated-chr",
+		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5) { var s = chr(65 + i); sum = sum + s.len(); i = i + 1; } return sum; }`,
+		5, true},
+	// i32_to_string churn at scale: reclaimed per iteration (flat heap; a double
+	// free would corrupt the freelist and crash / return garbage). `ok` stays 0
+	// because every decimal string has len >= 1, so exit 0 proves the balance.
+	{"i32-to-string-churn-safe",
+		`function main(): i32 { var ok: i32 = 0; var i: i32 = 0; while (i < 5000000) { var s: string = i32_to_string(i); if (s.len() < 1) { ok = 1; } i = i + 1; } return ok; }`,
+		0, true},
 }
 
 // TestSelfHostStrReclaimIRX86_64 compiles each case through the self-hosted x86-64

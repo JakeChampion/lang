@@ -8736,7 +8736,11 @@ pub function chr_helper(): string {
     var o: string = "";
     o = o + "  (func $__fern_chr (param $n i32) (result i32)\n";
     o = o + "    (local $blk i32)\n";
-    o = o + "    (local.set $blk (call $__fern_alloc (i32.const 5)))\n";
+    // rc-header the 1-char block via $__fern_str_box (like every other heap
+    // string), so a fresh non-escaping `chr(..)` local is reclaimable through
+    // $__fern_arr_dec (#2649). The header is transparent to consumers: the block
+    // still exposes [len@0][bytes@4] at the returned pointer.
+    o = o + "    (local.set $blk (call $__fern_str_box (i32.const 5)))\n";
     o = o + "    (i32.store (local.get $blk) (i32.const 1))\n";
     o = o + "    (i32.store8 (i32.add (local.get $blk) (i32.const 4)) (local.get $n))\n";
     o = o + "    (local.get $blk))\n";
@@ -8750,7 +8754,11 @@ pub function to_string_helpers(): string {
     o = o + "  (func $__fern_i32_to_str (param $n i32) (result i32)\n";
     o = o + "    (local $neg i32) (local $mag i32) (local $len i32) (local $blk i32) (local $p i32)\n";
     o = o + "    (if (i32.eqz (local.get $n)) (then\n";
-    o = o + "      (local.set $blk (call $__fern_alloc (i32.const 5)))\n";
+    // rc-header the "0" block via $__fern_str_box like the general path below, so
+    // a fresh `i32_to_string(0)` local is reclaimable through $__fern_arr_dec
+    // (#2649) — previously this branch alone returned a header-less block, which
+    // a string reclaim would mis-free.
+    o = o + "      (local.set $blk (call $__fern_str_box (i32.const 5)))\n";
     o = o + "      (i32.store (local.get $blk) (i32.const 1))\n";
     o = o + "      (i32.store8 (i32.add (local.get $blk) (i32.const 4)) (i32.const 48))\n";
     o = o + "      (return (local.get $blk))))\n";
