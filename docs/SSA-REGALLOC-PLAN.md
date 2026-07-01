@@ -158,7 +158,12 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
   - [x] Integer `div`/`rem` (`OpDiv/DivU/Rem/RemU`) in the model, mirroring
     `Eval` (div-by-zero → error). Real-asm `idiv` (rax/rdx pinning) stays
     deferred to the wiring slice.
-  - [ ] `enum_sentinel`, call-pair/indirect, closures
+  - [x] `OpEnumSentinel` — the shared static per-tag sentinel pointer (memoised
+    by tag on the model heap; same tag → same pointer, tag stored at the
+    pointer), in `Eval` + the model. ~472 occurrences.
+  - [ ] Remaining tail: `OpCallPair` (two-result returns), `OpCallIndirect`
+    (fn-pointer dispatch), `OpMakeClosure`/`OpMakeEnv` (closures) — lower
+    frequency, more involved (multi-result Run / fn-ptr table)
   - [ ] RC inc/dec (Perceus ordering)
 
   **Coverage measurement (data-driven prioritisation).** Lifting the example
