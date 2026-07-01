@@ -12956,13 +12956,18 @@ function collect_fresh_in_stmt(st: parser.Stmt, structs: parser.StructDecl[], ac
     }
 }
 
-// tuple_lit_is_fresh_scalar reports whether `e` is a NON-EMPTY tuple literal
-// whose every element is a flat scalar LITERAL (a number or a boolean). Such a
-// `(3, 4)` builds a fresh, sole-owner tuple box holding no rc pointer, so a
-// shallow box free at scope exit cannot dangle any element (there is none to
-// walk) — the tuple analogue of the scalar-only struct reclaim. A string / array
-// / struct / call element is excluded (the value may alias a live local; leave
-// it to leak, as tuples did wholesale before).
+// tuple_lit_is_fresh_scalar reports whether `e` is a NON-EMPTY tuple literal whose
+// every element is a flat scalar LITERAL (number / boolean) or a bare IDENT. Such
+// a `(3, 4)` / `(i, 1)` builds a fresh, sole-owner tuple box; freeing it is a
+// SHALLOW __fern_rc_dec (the box release helper __fern_arr_dec, NOT the deep
+// element-walking __fern_arr_dec_ptr), so it never touches the elements — an ident
+// that happens to be a pointer (a string / struct / array local) simply stays
+// leak-mode, and freeing the box cannot dangle or double-free it (whatever else
+// references it is untouched). This makes the ubiquitous un-annotated `(i, 1)` loop
+// temporary reclaimable, not just all-literal tuples. Non-ident heap elements
+// (field access / call / nested literal) stay excluded — a conservative bound, not
+// a safety requirement. The escape gate (body_unsafe_for, in the callers) proves
+// the box is a sole owner before any of this fires.
 function tuple_lit_is_fresh_scalar(e: parser.Expr): boolean {
     match (e) {
         parser.ExprTuple(tl) => {
@@ -12972,6 +12977,7 @@ function tuple_lit_is_fresh_scalar(e: parser.Expr): boolean {
                 match (tl.elements[i]) {
                     parser.ExprNumber(_) => {},
                     parser.ExprBool(_) => {},
+                    parser.ExprIdent(_) => {},
                     _ => { return false; }
                 }
                 i = i + 1;
