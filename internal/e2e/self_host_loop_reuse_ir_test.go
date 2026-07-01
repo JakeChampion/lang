@@ -81,6 +81,20 @@ var loopReuseIRCases = []struct {
 	{"if-in-loop-churn-safe",
 		`struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5000000) { if (i > 0) { var a: P = P { x: i, y: 1 }; var s: i32 = a.x + a.y; var b: P = P { x: i, y: 2 }; sum = (sum + s + b.x + b.y) % 1000; } i = i + 1; } return sum; }`,
 		229, 1},
+	// ESCAPING RECIPIENT (regression): the reuse recipient `b` is moved into a
+	// container (`acc.append(b)`) each iteration, so its box is owned by `acc`, not
+	// by b's slot. The loop prior-release must NOT fire for it — freeing a box the
+	// container still references is a use-after-free. Guarded by
+	// slot_is_reclaimable_struct: an escaping recipient is not reclaimable, so no
+	// prior-release. Value: acc holds (i,100) for i in 0..4, summed with the outer
+	// loop's a.x+a.y … = 254 (a UAF corrupts this).
+	{"loop-escaping-recipient-struct",
+		`struct P { x: i32, y: i32 } function main(): i32 { var acc: P[] = []; var i: i32 = 0; while (i < 5) { var a: P = P { x: i, y: i + 1 }; var s: i32 = a.x + a.y; var b: P = P { x: i, y: 100 }; acc = acc.append(b); i = i + 1; } var sum: i32 = 0; var j: i32 = 0; while (j < acc.len()) { sum = sum + acc[j].x + acc[j].y; j = j + 1; } return sum; }`,
+		254, 3},
+	// Same regression for an escaping TUPLE recipient (slot_is_reclaimable_tuple).
+	{"loop-escaping-recipient-tuple",
+		`function main(): i32 { var acc: (i32, i32)[] = []; var i: i32 = 0; while (i < 5) { var a: (i32, i32) = (i, i + 1); var s: i32 = a.0 + a.1; var b: (i32, i32) = (i, 100); acc = acc.append(b); i = i + 1; } var sum: i32 = 0; var j: i32 = 0; while (j < acc.len()) { sum = sum + acc[j].0 + acc[j].1; j = j + 1; } return sum; }`,
+		254, 3},
 }
 
 // TestSelfHostLoopReuseIRX86_64 compiles each case through the self-hosted x86-64

@@ -14171,8 +14171,13 @@ function emit_self_overwrite_reuse(c_name: string, init: parser.Expr, base_name:
             var cb: LowerState = st.add_local(c_name);
             var cslot: i32 = cb.slot_of(c_name);
             cb = cb.mark_struct_type(cslot, slit.type_name);
-            // Loop body: free the recipient's prior (previous-iteration) box first.
-            if (release_prior) { cb = emit_reuse_recip_prior_release(cb, cslot, dslot); }
+            // Loop body: free the recipient's prior (previous-iteration) box first —
+            // but ONLY when the recipient is a RECLAIMABLE (non-escaping) local. An
+            // ESCAPING recipient's box is owned by the container it was moved into
+            // (structs are not rc-inc'd on escape / left non-reclaimable), so a
+            // prior-release would free a box the container still references — a UAF.
+            // Such a recipient is never swept either, matching the function-body path.
+            if (release_prior && slot_is_reclaimable_struct(cb, cslot)) { cb = emit_reuse_recip_prior_release(cb, cslot, dslot); }
             cb = cb.emit(ir.op_load_local(dslot));
             cb = cb.emit(ir.op_store_local(cslot));
             // Zero d's slot: c now owns the box; the exit sweep frees it once (via
@@ -14404,8 +14409,13 @@ function emit_cross_struct_reuse(c_name: string, init: parser.Expr, donor_name: 
             var cb: LowerState = st.add_local(c_name);
             var cslot: i32 = cb.slot_of(c_name);
             cb = cb.mark_struct_type(cslot, slit.type_name);
-            // Loop body: free the recipient's prior (previous-iteration) box first.
-            if (release_prior) { cb = emit_reuse_recip_prior_release(cb, cslot, dslot); }
+            // Loop body: free the recipient's prior (previous-iteration) box first —
+            // but ONLY when the recipient is a RECLAIMABLE (non-escaping) local. An
+            // ESCAPING recipient's box is owned by the container it was moved into
+            // (structs are not rc-inc'd on escape / left non-reclaimable), so a
+            // prior-release would free a box the container still references — a UAF.
+            // Such a recipient is never swept either, matching the function-body path.
+            if (release_prior && slot_is_reclaimable_struct(cb, cslot)) { cb = emit_reuse_recip_prior_release(cb, cslot, dslot); }
             cb = cb.emit(ir.op_load_local(dslot));
             cb = cb.emit(ir.op_store_local(cslot));
             // Zero d's slot: c now owns the box; the exit sweep frees it once (via
@@ -14596,8 +14606,12 @@ function emit_cross_tuple_reuse(c_name: string, init: parser.Expr, donor_name: s
             var cb: LowerState = st.add_local(c_name);
             var cslot: i32 = cb.slot_of(c_name);
             cb = cb.mark_tuple_elems(cslot, enc);
-            // Loop body: free the recipient's prior (previous-iteration) box first.
-            if (release_prior) { cb = emit_reuse_recip_prior_release(cb, cslot, dslot); }
+            // Loop body: free the recipient's prior (previous-iteration) box first —
+            // but ONLY when the recipient is a RECLAIMABLE (non-escaping) tuple local.
+            // An ESCAPING recipient's box is owned by the container it moved into, so
+            // a prior-release would free a still-referenced box (a UAF); such a
+            // recipient is never swept either, matching the function-body path.
+            if (release_prior && slot_is_reclaimable_tuple(cb, cslot)) { cb = emit_reuse_recip_prior_release(cb, cslot, dslot); }
             cb = cb.emit(ir.op_load_local(dslot));
             cb = cb.emit(ir.op_store_local(cslot));
             cb = cb.emit(ir.op_const_i32(0));
