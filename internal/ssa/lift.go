@@ -588,6 +588,15 @@ func (l *lifter) handle(i int, op ir.Op) error {
 			kind = OpReinterpretI64ToF64
 		}
 		v := l.out.AddOp(l.cur, kind, arg)
+		// Propagate a 64-bit destination width to the float→int conversions so the
+		// backend does not narrow the result back to i32 with its maskFix. Without
+		// this, `x as i64` on a value that needs the high 32 bits (e.g. the
+		// `(frac * 10^15) as i64` step in float-to-string) was sign-extended from
+		// bit 31 and silently truncated. i32 destinations keep Width 0 (maskFix
+		// sxtw is correct there).
+		if op.Width == 64 && (kind == OpFToIS || kind == OpFToIU) {
+			l.cur.Ops[len(l.cur.Ops)-1].Width = 64
+		}
 		l.stack = append(l.stack, v)
 	case ir.OpDrop:
 		if len(l.stack) < 1 {

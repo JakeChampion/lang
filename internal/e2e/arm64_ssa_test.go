@@ -325,6 +325,32 @@ function main(): i32 {
 }`,
 			want: 14,
 		},
+		{
+			// f64 -> i64 conversion that needs the high 32 bits. mult is built in a
+			// loop (so it can't constant-fold to a compile-time i64), forcing the
+			// runtime fcvtzs: (0.14 * 10^15) as i64 = 140000000000000, / 10^9 =
+			// 140000, exit 140000&0xFF = 224. A 32-bit-narrowed conversion gave 1.
+			name: "f64_to_i64_width",
+			src: `function main(): i32 {
+  var frac: f64 = 0.14;
+  var mult: f64 = 1.0;
+  var i: i32 = 0;
+  while (i < 15) { mult = mult * 10.0; i = i + 1; }
+  var fracInt: i64 = (frac * mult) as i64;
+  return (fracInt / 1000000000) as i32;
+}`,
+			want: 224,
+		},
+		{
+			// End-to-end float formatting: 3.14.to_string() = "3.14" (len 4). Before
+			// the f64->i64 width fix the fractional part came out as a 15-digit garbage
+			// tail ("3.000001246019584", len 17) because (frac * 10^15) as i64 was
+			// truncated to 32 bits.
+			name: "f64_to_string_frac",
+			src: `import "std/float";
+function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
+			want: 4,
+		},
 	}
 
 	for _, c := range cases {

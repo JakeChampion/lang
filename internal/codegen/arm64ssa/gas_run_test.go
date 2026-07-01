@@ -382,6 +382,29 @@ func TestArmRunUnsignedDivWidth(t *testing.T) {
 	}
 }
 
+// TestArmRunFloatToI64Width pins the f64 -> i64 conversion width. 5e9 needs more
+// than 32 bits, so a maskFix (sxtw) narrowing the fcvtzs result would corrupt it:
+// (5000000000 as i64) / 1000000 = 5000, exit 5000&0xFF = 136. A 32-bit-narrowed
+// conversion would yield 5e9 mod 2^32 = 705032704, /1e6 = 705, exit 193. The op
+// carries Width 64 (the i64 destination), so maskFix must be skipped. HARDCODED.
+func TestArmRunFloatToI64Width(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		n := f.AddOp(e, ssa.OpFToIS, constFloat(f, e, 5000000000.0))
+		e.Ops[len(e.Ops)-1].Width = 64 // i64 destination
+		q := f.AddOp(e, ssa.OpDiv, n, constOp(f, e, 1000000))
+		e.Ops[len(e.Ops)-1].Width = 64
+		f.SetRet(e, q)
+		return f
+	}
+	for _, nreg := range []int{2, 4, 8} {
+		if got := assembleRunArm(t, build(), nreg); got != 136 {
+			t.Errorf("nreg=%d: (5e9 as i64)/1e6 exit=%d, want 136", nreg, got)
+		}
+	}
+}
+
 // Heap round-trip: alloc 16 bytes, store 42/100 at offsets 0/8, load both, sum ->
 // 142 -> exit 142. Exercises the bump allocator + full-word ldr/str against the
 // writable .bss heap.
