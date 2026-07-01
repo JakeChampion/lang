@@ -12035,7 +12035,13 @@ function call_returns_scalar_array(name: string, arr: string[], strarr: string[]
 // the array, and the local name to release. (A flat pair, not a `string[][]`,
 // because the self-host compiler can't yet compile a nested string-array
 // `.append` on itself — the fixpoint link gate caught it.)
-struct PreciseDrops { idxs: i32[], names: string[] }
+// `kinds[i]` selects the emission-site free for drop i: "" = the type-based branches
+// (array / scalar struct / tuple, dispatched by slot flags); "opt-shallow" = a scalar
+// Option/Result box (a plain __fern_rc_dec — the scalar payload is an inline value);
+// "opt-rcpayload" = an rc-payload Option/Result (emit_opt_payload_drop: op_opt_payload
+// → payload dec → box dec). Carrying the kind lets the emission free a Result box
+// (whose Ok-vs-Err payload variant is otherwise ambiguous from the slot type alone).
+struct PreciseDrops { idxs: i32[], names: string[], kinds: string[] }
 
 // precise_drop_names computes the array-literal LOCAL drop-on-last-use points: a
 // name qualifies only if its init is a fresh `[ ... ]` literal, it is declared
@@ -12047,6 +12053,7 @@ struct PreciseDrops { idxs: i32[], names: string[] }
 function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], arr_ret: string[], strarr_ret: string[], f64arr_ret: string[], i64arr_ret: string[], borrowable: string[]): PreciseDrops {
     var idxs: i32[] = [];
     var names: string[] = [];
+    var kinds: string[] = [];
     var reassigned: string[] = body_assign_targets(body);
     var seen: string[] = [];
     var i: i32 = 0;
@@ -12118,20 +12125,22 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                     }
                     is_opt = !has_tlm;
                 }
-                // A fresh rc-PAYLOAD OPTION (`var o = Some([..])` / `Some(P{..})`),
+                // A fresh rc-PAYLOAD OPTION/RESULT (`var o = Some([..])` / `Ok(P{..})`),
                 // last-used in a nested block, is a precise-drop candidate too — the
                 // rc-payload sibling of the scalar-option case above. Same no-top-level-
                 // match disjointness (owned by consumed_rcpayload_option_frees there),
-                // AND the nested consuming match must borrow (not escape) the payload
-                // binding (opt_body_binding_escapes) — body_unsafe_for only proves the
-                // OPTION itself doesn't escape, not its bound payload. Restricted to
-                // Option (variant "Some"); Result's rc-payload precise-drop is deferred
-                // (its box payload-variant is ambiguous at the emission site). The box +
-                // payload are freed by emit_opt_payload_drop at the emission site.
+                // AND the nested consuming match must borrow (not escape) the CONSTRUCTED
+                // variant's payload binding (opt_body_binding_escapes) — body_unsafe_for
+                // only proves the OPTION itself doesn't escape, not its bound payload.
+                // Result is admitted too: emit_opt_payload_drop reads offset-8, which is
+                // the constructed variant's pointer payload regardless of Ok/Err, and the
+                // carried "opt-rcpayload" kind tells the emission it is a pointer (the
+                // slot type Result[T,E] alone can't distinguish an Ok-array box from an
+                // Err-scalar box).
                 var is_rcopt: boolean = false;
                 if (!is_lit && !is_opt) {
                     var rcc: OptRcCand = rcpayload_option_cand(v, structs);
-                    if (rcc.variant == "Some") {
+                    if (rcc.variant != "") {
                         var has_tlm2: boolean = false;
                         var mk2: i32 = 0;
                         while (mk2 < body.len()) {
@@ -12152,8 +12161,12 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                         k = k + 1;
                     }
                     if (last > i) {
+                        var kind: string = "";
+                        if (is_rcopt) { kind = "opt-rcpayload"; }
+                        else if (is_opt) { kind = "opt-shallow"; }
                         idxs = idxs.append(last);
                         names = names.append(v.name);
+                        kinds = kinds.append(kind);
                     }
                 }
             },
@@ -12161,7 +12174,7 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
         }
         i = i + 1;
     }
-    return PreciseDrops { idxs: idxs, names: names };
+    return PreciseDrops { idxs: idxs, names: names, kinds: kinds };
 }
 
 // slot_list_has reports whether slot index `v` is in `xs` — the keep-set
@@ -14314,21 +14327,6 @@ function opt_stmt_binding_escapes(st: parser.Stmt, name: string, variant: string
     }
 }
 
-// opt_slot_is_rcpayload: slot `i` holds an rc-PAYLOAD OPTION (`Option[<array>]` /
-// `Option[<leak-safe struct>]`) — a pointer payload the precise-drop path frees via
-// emit_opt_payload_drop (op_opt_payload + a payload dec + a box dec), NOT the plain
-// box dec a scalar option uses. Restricted to Option (not Result): a Result box's
-// payload variant (Ok vs Err) is ambiguous at the emission site, so its rc-payload
-// reclaim stays on the consume-by-match path (which records the constructed variant).
-pub function (s: LowerState) opt_slot_is_rcpayload(i: i32): boolean {
-    var ot: string = s.opt_type_of_slot(i);
-    if (ot.len() < 8 || ot[0:7] != "Option[") { return false; }
-    var pt: string = opt_payload_type(ot, "Some");
-    if (is_leaksafe_array_field(pt)) { return true; }
-    return decl_is_struct(s.structs, pt) && decl_is_leaksafe(s.structs, pt)
-        && (struct_is_scalar_only(s.structs, pt) || nested_field_deep_drop_ok(s.structs, pt));
-}
-
 // OptRcFrees: parallel arrays for the rc-payload option/result free — the
 // consuming match index and the freed local name.
 struct OptRcFrees { idxs: i32[], names: string[] }
@@ -16474,31 +16472,33 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                     s = s.emit(ir.op_drop());
                     s = s.emit(ir.op_const_i32(0));
                     s = s.emit(ir.op_store_local(dslot));
-                } else if (dslot >= s.n_params && type_is_scalar_option(s.opt_type_of_slot(dslot))) {
+                } else if (dslot >= s.n_params && pdrops.kinds[pi] == "opt-shallow") {
                     // Fresh SCALAR Option/Result local, last-used at statement j (a
                     // nested-block match / borrow — precise_drop_names admitted it only
                     // because it has NO top-level consuming match, so it is DISJOINT
                     // from consumed_scalar_enum_frees): free its rc-headered box now
                     // (shallow __fern_rc_dec — the scalar payload carries no rc pointer)
                     // and zero the slot. Options are never exit-swept, so this is the
-                    // box's only release — no double-free. The option sibling of the
-                    // scalar struct/tuple precise-if drops.
+                    // box's only release — no double-free. Kind-gated (not slot-type-
+                    // gated) so a scalar RESULT box — whose slot type Result[T,E] is not
+                    // type_is_scalar_option — is freed too, not just a scalar Option.
                     s = s.emit(ir.op_load_local(dslot));
                     s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     s = s.emit(ir.op_drop());
                     s = s.emit(ir.op_const_i32(0));
                     s = s.emit(ir.op_store_local(dslot));
-                } else if (dslot >= s.n_params && s.opt_slot_is_rcpayload(dslot)) {
-                    // Fresh rc-PAYLOAD OPTION (Option[<array>] / Option[<leak-safe
-                    // struct>]), last-used in a nested block — precise_drop_names
+                } else if (dslot >= s.n_params && pdrops.kinds[pi] == "opt-rcpayload") {
+                    // Fresh rc-PAYLOAD OPTION/RESULT (Option/Result of a leak-safe array
+                    // or struct), last-used in a nested block — precise_drop_names
                     // admitted it only with NO top-level match (disjoint from
                     // consumed_rcpayload_option_frees) and a borrow-only payload binding
                     // (opt_body_binding_escapes). Deep-drop the payload (op_opt_payload →
-                    // dec) then free the box, exactly like the consume-by-match rc-payload
-                    // free — emit_opt_payload_drop zeroes the slot too. NOT a scalar
-                    // option (that took the branch above; op_opt_payload on a scalar
-                    // payload would dec the inline VALUE — this branch only fires when
-                    // the payload is a pointer).
+                    // dec) then free the box (emit_opt_payload_drop zeroes the slot too).
+                    // The "opt-rcpayload" kind (recorded when the CONSTRUCTED variant was
+                    // known) guarantees offset-8 is a pointer — so this fires for a Result
+                    // Ok/Err box too, whose Ok-vs-Err payload can't be read from the slot
+                    // type. A scalar payload took the "opt-shallow" branch above (op_opt_
+                    // payload on an inline scalar would wrongly dec the value).
                     s = emit_opt_payload_drop(s, dslot);
                 }
             }

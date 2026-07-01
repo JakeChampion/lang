@@ -447,6 +447,21 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// array payload `v` to an outer var, so opt_body_binding_escapes rejects the
 		// precise-drop candidate — the option must NOT be freed (v moved out). Detector 0.
 		{"option-arr-precise-binding-escapes-detector", `function go(): i32 { var o: Option[i32[]] = Some([7, 8, 9]); var out: i32[] = [0]; if (true) { match (o) { Some(v) => { out = v; }, None => {} } } var r = out[0] + out[2]; if (r != 16) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// RESULT precise-drop parity: the emission now dispatches on a per-drop KIND
+		// (not the slot type), so a scalar RESULT box — whose slot type Result[T,E] is
+		// NOT type_is_scalar_option — is freed too (it previously leaked: never fired).
+		// f(5): Ok(4), c=4, 4+5=9.
+		{"result-scalar-precise-if-value", `function f(n: i32): i32 { var r: Result[i32, i32] = Ok(4); var c = 0; if (n > 0) { match (r) { Ok(v) => { c = v; }, Err(e) => { c = e; } } } return c + n; } function main(): i32 { return f(5); }`, 9},
+		{"result-scalar-precise-if-detector", `function f(n: i32): i32 { var r: Result[i32, i32] = Ok(4); var c = 0; if (n > 0) { match (r) { Ok(v) => { c = v; }, Err(e) => { c = e; } } } return c + n; } function main(): i32 { var z = f(5); if (z != 9) { return 99; } return __rc_underflow(); }`, 0},
+		// rc-PAYLOAD Result precise-drop: an Ok([..]) box freed by emit_opt_payload_drop
+		// after the nested if (the "opt-rcpayload" kind marks offset-8 a pointer).
+		{"result-arr-ok-precise-if-detector", `function f(n: i32): i32 { var r: Result[i32[], i32] = Ok([10, 20, 30]); var c = 0; if (n > 0) { match (r) { Ok(v) => { c = v[0] + v[2]; }, Err(e) => { c = e; } } } return c + n; } function main(): i32 { var z = f(5); if (z != 45) { return 99; } return __rc_underflow(); }`, 0},
+		// rc-PAYLOAD Result precise-drop, ERR-array side: an Err([..]) box (offset-8 is
+		// the Err array pointer) freed the same way — the case the slot type alone can't
+		// distinguish from an Ok-scalar box, resolved by the recorded kind.
+		{"result-arr-err-precise-if-detector", `function f(n: i32): i32 { var r: Result[i32, i32[]] = Err([3, 4, 5]); var c = 0; if (n > 0) { match (r) { Ok(v) => { c = v; }, Err(e) => { c = e[0] + e[2]; } } } return c + n; } function main(): i32 { var z = f(5); if (z != 13) { return 99; } return __rc_underflow(); }`, 0},
+		// rc-PAYLOAD Result precise-drop, scalar-STRUCT Ok payload.
+		{"result-struct-precise-if-detector", `struct P { x: i32, y: i32 } function f(n: i32): i32 { var r: Result[P, i32] = Ok(P { x: 3, y: 4 }); var c = 0; if (n > 0) { match (r) { Ok(p) => { c = p.x + p.y; }, Err(e) => { c = e; } } } return c + n; } function main(): i32 { var z = f(5); if (z != 12) { return 99; } return __rc_underflow(); }`, 0},
 		// Struct with an i32[] field: the box is rc-headered and freed soundly, and
 		// the array field is deep-dropped (emit_struct_field_drops) exactly once.
 		// Detector 0 proves neither the box nor the array field over-releases.

@@ -3197,3 +3197,29 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   guard in TestSelfHostRcPreciseDropX86IR; new wasm option-arr-precise-if-freed in
   TestSelfHostRcOptionBoxWasm; byte-identical FIXPOINT + BOOTSTRAP + TestSelfHostIRDiff
   all stay green.
+- 2026-07-01: **Precise-drop Option/Result parity via a per-drop kind** (fixes a
+  latent scalar-Result non-firing + adds rc-payload Result precise-drop). The
+  precise-drop emission dispatched options on the SLOT TYPE
+  (type_is_scalar_option / opt_slot_is_rcpayload), both Option-only — so a scalar
+  RESULT admitted by precise_drop_names matched NO emission branch and silently
+  never fired (its box leaked; sound but a missed reclaim), and rc-payload Result
+  had no precise-drop at all (the Ok-vs-Err payload variant can't be read from the
+  slot type Result[T,E]). Fix: PreciseDrops carries a parallel `kinds: string[]` —
+  "" (the array/struct/tuple type-based branches), "opt-shallow" (a scalar
+  Option/Result box → plain __fern_rc_dec), or "opt-rcpayload" (an rc-payload
+  Option/Result → emit_opt_payload_drop). precise_drop_names records the kind when
+  it admits the candidate (the constructed variant is known there via
+  rcpayload_option_cand / fresh_scalar_option_init), and the emission dispatches on
+  it. The is_rcopt gate widened from Option-only (variant "Some") to any Result/
+  Option constructor (variant != ""); emit_opt_payload_drop reads offset-8, which is
+  the constructed variant's pointer payload regardless of Ok/Err, so the recorded
+  "opt-rcpayload" kind is exactly the "offset-8 is a pointer" witness the slot type
+  lacks. opt_slot_is_rcpayload (the now-redundant Option-only emission predicate) is
+  removed. SOUNDNESS unchanged from the Option precise-drop: no-top-level-match
+  disjointness + borrow-only nested binding (opt_body_binding_escapes) + box/payload
+  exist on every path through the enclosing statement. VERIFIED: new result-scalar-
+  precise-if-* / result-arr-ok-precise-if / result-arr-ERR-precise-if / result-
+  struct-precise-if in TestSelfHostRcPreciseDropX86IR (the Err-array case pins the
+  kind-not-slot-type resolution); new wasm result-scalar-precise-if-freed /
+  result-arr-precise-if-freed in TestSelfHostRcOptionBoxWasm; byte-identical
+  FIXPOINT + BOOTSTRAP + TestSelfHostIRDiff all stay green.
