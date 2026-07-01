@@ -327,6 +327,17 @@ Fix options for the dominant half:
   share quadratic (the single `LocalInfo[]` still clones per local-add
   out of the shared record), but is a contained, independently-valuable
   step that stacks with the in-place rework.
+  > **LANDED.** Done: `LowerState`'s 20 `local_*` arrays are now one
+  > `locals: LocalInfo[]` (with `li_new` + per-field `li_set_*` helpers).
+  > The per-statement `LowerState` rebuild dropped from 45 → 26 fields,
+  > so it copies one local-table pointer instead of 20. **Measured
+  > ~30 % peak-RSS reduction** on a local-heavy single function (getrusage,
+  > `cmd/fern`-built `asm_ir_run`): 200 locals 83 → 60 MB, 400 locals
+  > 205 → 143 MB, 600 locals 390 → 269 MB. The shape stays super-linear
+  > (the clone-vs-share quadratic is untouched, as predicted) — this is
+  > the constant-factor step; lifting the 512 cap still needs the in-place
+  > rework below. Validated by the self-host fixpoint + the x86-64 / wasm
+  > IR differential matrices; the `local_*` field docs moved to `LocalInfo`.
 - The clone-free cons approach that works for ops (`OpsBuilder`) would
   also work for the local table, but inherits the same AST-backend
   union-miscompile blocker — so the mutable/in-place route is the
