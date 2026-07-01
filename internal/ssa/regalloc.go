@@ -47,17 +47,37 @@ type Allocation struct {
 	// Intervals is the live interval per value, retained for verification and
 	// for the emit phase (spill/reload placement).
 	Intervals map[int32]Interval
+	// OpPos maps each op to its program point in the same space the Intervals
+	// live in, so the emit phase can locate a call among the intervals (a value
+	// whose interval strictly spans a call's point is live across it). Nil until
+	// LinearScan populates it.
+	OpPos map[*Op]int
 }
 
-// LiveIntervals linearises the blocks in RPO and derives one conservative live
-// interval per value from the block-level liveness sets.
-func LiveIntervals(f *Func, live *Liveness) map[int32]Interval {
-	// Assign a program point to every op and to each block's entry and exit.
-	// Points increase monotonically in RPO so an interval's [start,end] is a
-	// contiguous range over the linear order.
-	blockStart := map[*Block]int{}
-	blockEnd := map[*Block]int{}
-	opPos := map[*Op]int{}
+// LiveAcross returns the set of Value IDs whose live interval strictly spans the
+// program point p — i.e. defined before p and still live after it. At a call's
+// point this is the set of values the callee must not clobber; the caller saves
+// (only) the registers holding them. A value defined at p (e.g. the call result)
+// or last-used at p (e.g. an argument) does not span it.
+func (a *Allocation) LiveAcross(p int) map[int32]bool {
+	out := map[int32]bool{}
+	for id, iv := range a.Intervals {
+		if iv.Start < p && iv.End > p {
+			out[id] = true
+		}
+	}
+	return out
+}
+
+// linearizePoints assigns a program point to each block entry, each op, and each
+// block exit, monotonically increasing over the RPO order — the point space the
+// live intervals live in. Shared by LiveIntervals (interval construction) and the
+// emit phase (locating a call site among the intervals for call-clobber-aware
+// saves), so both agree on the numbering.
+func linearizePoints(f *Func) (opPos map[*Op]int, blockStart, blockEnd map[*Block]int) {
+	blockStart = map[*Block]int{}
+	blockEnd = map[*Block]int{}
+	opPos = map[*Op]int{}
 	pos := 0
 	for _, b := range f.RPO() {
 		blockStart[b] = pos
@@ -69,6 +89,15 @@ func LiveIntervals(f *Func, live *Liveness) map[int32]Interval {
 		blockEnd[b] = pos // the terminator / block-exit point
 		pos++
 	}
+	return opPos, blockStart, blockEnd
+}
+
+// LiveIntervals linearises the blocks in RPO and derives one conservative live
+// interval per value from the block-level liveness sets.
+func LiveIntervals(f *Func, live *Liveness) map[int32]Interval {
+	// Points increase monotonically in RPO so an interval's [start,end] is a
+	// contiguous range over the linear order.
+	opPos, blockStart, blockEnd := linearizePoints(f)
 
 	iv := map[int32]Interval{}
 	extend := func(id int32, p int) {
@@ -134,7 +163,9 @@ func LiveIntervals(f *Func, live *Liveness) map[int32]Interval {
 func LinearScan(f *Func, target Target) *Allocation {
 	live := ComputeLiveness(f)
 	iv := LiveIntervals(f, live)
-	return allocateLinear(iv, target)
+	alloc := allocateLinear(iv, target)
+	alloc.OpPos, _, _ = linearizePoints(f)
+	return alloc
 }
 
 // allocateLinear is the register-assignment core, separated from interval

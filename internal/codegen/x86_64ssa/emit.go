@@ -17,6 +17,7 @@ package x86_64ssa
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/jakechampion/lang/internal/ssa"
 )
@@ -80,6 +81,13 @@ type Inst struct {
 	// CaptureSlots: MakeEnv/MakeClosure per-capture env-slot byte sizes, in
 	// order (nil => one 8-byte slot each). Drives the packed env layout.
 	CaptureSlots []int32
+
+	// SaveRegs (Call/CallPair/CallIndirect): the caller-saved allocatable
+	// registers holding values live ACROSS this call — the only ones the
+	// caller must preserve. Computed from liveness when SaveRegsSet is true;
+	// otherwise the emitter falls back to saving every caller-saved register.
+	SaveRegs    []int
+	SaveRegsSet bool
 }
 
 // TermKind is an MBlock terminator shape.
@@ -246,6 +254,31 @@ func (e *emitter) loc(id int32) (Loc, bool) {
 		return Loc{IsReg: false, Slot: s}, true
 	}
 	return Loc{}, false
+}
+
+// callSaveRegs returns the caller-saved allocatable registers holding values
+// live across the call op `op` — the minimal save set — and true when it could
+// be computed. Spilled values need no save (they survive on the stack) and
+// callee-saved registers are preserved by the callee, so only caller-saved
+// register homes of live-across values are returned. Returns (nil, false) when
+// the op has no program point (then the caller conservatively saves everything).
+func (e *emitter) callSaveRegs(op *ssa.Op) ([]int, bool) {
+	p, ok := e.alloc.OpPos[op]
+	if !ok {
+		return nil, false
+	}
+	seen := map[int]bool{}
+	var regs []int
+	for id := range e.alloc.LiveAcross(p) {
+		r, isReg := e.alloc.Reg[id]
+		if !isReg || r >= e.numAlloc || !isCallerSaved(r) || seen[r] {
+			continue
+		}
+		seen[r] = true
+		regs = append(regs, r)
+	}
+	sort.Ints(regs)
+	return regs, true
 }
 
 // emitBlock emits one SSA block's straight-line ops, its phi moves, and its
@@ -582,7 +615,8 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 			}
 			argLocs = append(argLocs, l)
 		}
-		e.push(Inst{Op: Call, Dst: e.s2, Callee: op.Str, ArgLocs: argLocs, W: op.Width})
+		saveRegs, saveSet := e.callSaveRegs(op)
+		e.push(Inst{Op: Call, Dst: e.s2, Callee: op.Str, ArgLocs: argLocs, W: op.Width, SaveRegs: saveRegs, SaveRegsSet: saveSet})
 		e.place(op.Result, e.s2)
 		return nil
 
@@ -598,7 +632,8 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 			}
 			argLocs = append(argLocs, l)
 		}
-		e.push(Inst{Op: CallPair, Dst: e.s2, Dst2: e.s3, Callee: op.Str, ArgLocs: argLocs, W: op.Width})
+		saveRegs, saveSet := e.callSaveRegs(op)
+		e.push(Inst{Op: CallPair, Dst: e.s2, Dst2: e.s3, Callee: op.Str, ArgLocs: argLocs, W: op.Width, SaveRegs: saveRegs, SaveRegsSet: saveSet})
 		e.place(op.Result, e.s2)
 		e.place(op.Result2, e.s3)
 		return nil
@@ -622,7 +657,8 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 			}
 			argLocs = append(argLocs, l)
 		}
-		e.push(Inst{Op: CallIndirect, Dst: e.s2, IdxLoc: idxLoc, ArgLocs: argLocs, W: op.Width})
+		saveRegs, saveSet := e.callSaveRegs(op)
+		e.push(Inst{Op: CallIndirect, Dst: e.s2, IdxLoc: idxLoc, ArgLocs: argLocs, W: op.Width, SaveRegs: saveRegs, SaveRegsSet: saveSet})
 		e.place(op.Result, e.s2)
 		return nil
 

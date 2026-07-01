@@ -344,17 +344,15 @@ func calleeSavedUsed(numRegFile int) []int {
 	return out
 }
 
-// callLines renders a direct call under the System V ABI. Because the allocator
-// doesn't yet track which values are live across a call, every caller-saved
-// allocatable register is conservatively saved (values in callee-saved registers
-// or spill slots survive a call on their own). Arguments are passed via the
-// stack — pushed from their homes then popped into the arg registers — so the
-// home→arg-register shuffle can't clobber a not-yet-consumed source. The result
-// (rax) is captured into the scratch register, which is never in the saved set,
-// so the restores don't overwrite it.
-func callLines(in Inst, numAlloc, scratch, s0 int) ([]string, error) {
-	if len(in.ArgLocs) > len(sysvArgRegs) {
-		return nil, fmt.Errorf("x86_64ssa: real-asm call supports up to %d args, got %d", len(sysvArgRegs), len(in.ArgLocs))
+// callSavedSet returns the caller-saved allocatable registers to preserve across
+// a call. When the emitter computed a live-across set (SaveRegsSet), only those
+// registers are saved — values in callee-saved registers or spill slots, and
+// caller-saved registers not live across the call, survive on their own. Absent
+// that (SaveRegsSet false), it falls back to conservatively saving every
+// caller-saved allocatable register.
+func callSavedSet(in Inst, numAlloc int) []int {
+	if in.SaveRegsSet {
+		return in.SaveRegs // already filtered to caller-saved + sorted by the emitter
 	}
 	var saved []int
 	for r := 0; r < numAlloc; r++ {
@@ -362,6 +360,20 @@ func callLines(in Inst, numAlloc, scratch, s0 int) ([]string, error) {
 			saved = append(saved, r)
 		}
 	}
+	return saved
+}
+
+// callLines renders a direct call under the System V ABI. Only the caller-saved
+// registers holding values live across the call are preserved (callSavedSet).
+// Arguments are passed via the stack — pushed from their homes then popped into
+// the arg registers — so the home→arg-register shuffle can't clobber a
+// not-yet-consumed source. The result (rax) is captured into the scratch
+// register, which is never in the saved set, so the restores don't overwrite it.
+func callLines(in Inst, numAlloc, scratch, s0 int) ([]string, error) {
+	if len(in.ArgLocs) > len(sysvArgRegs) {
+		return nil, fmt.Errorf("x86_64ssa: real-asm call supports up to %d args, got %d", len(sysvArgRegs), len(in.ArgLocs))
+	}
+	saved := callSavedSet(in, numAlloc)
 	var out []string
 	// 16-byte stack alignment at the call: args are pushed then popped (net 0),
 	// so only the pad + saved pushes remain. Pad to make their count even.
@@ -448,13 +460,8 @@ func callIndirectLines(in Inst, numAlloc, scratch int) ([]string, error) {
 		fmt.Sprintf("add %s, %s", reg(scratch), reg(s1)),
 		fmt.Sprintf("mov %s, %s", reg(s1), memRef(reg(scratch), 0)),
 	)
-	// Conservatively preserve caller-saved allocatable registers (see callLines).
-	var saved []int
-	for r := 0; r < numAlloc; r++ {
-		if isCallerSaved(r) {
-			saved = append(saved, r)
-		}
-	}
+	// Preserve the caller-saved registers live across the call (see callLines).
+	saved := callSavedSet(in, numAlloc)
 	pad := (len(saved) % 2) * 8
 	if pad != 0 {
 		out = append(out, "sub rsp, 8")

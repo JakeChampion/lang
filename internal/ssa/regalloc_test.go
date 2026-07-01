@@ -146,3 +146,26 @@ func TestLinearScanDeterministic(t *testing.T) {
 			a1.Reg, a2.Reg, a1.Slot, a2.Slot)
 	}
 }
+
+// TestLiveAcross checks that Allocation.LiveAcross returns exactly the values
+// whose interval strictly spans a program point — defined before it and still
+// live after it — excluding values defined at or last-used at the point.
+func TestLiveAcross(t *testing.T) {
+	a := &Allocation{Intervals: map[int32]Interval{
+		1: {Value: 1, Start: 0, End: 10}, // spans point 5
+		2: {Value: 2, Start: 5, End: 12}, // defined AT 5 → not across
+		3: {Value: 3, Start: 2, End: 5},  // last used AT 5 → not across
+		4: {Value: 4, Start: 6, End: 9},  // entirely after 5 → not across
+		5: {Value: 5, Start: 3, End: 8},  // spans point 5
+	}}
+	got := a.LiveAcross(5)
+	want := map[int32]bool{1: true, 5: true}
+	if len(got) != len(want) {
+		t.Fatalf("LiveAcross(5) = %v, want %v", got, want)
+	}
+	for id := range want {
+		if !got[id] {
+			t.Errorf("LiveAcross(5) missing v%d", id)
+		}
+	}
+}
