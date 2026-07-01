@@ -282,21 +282,61 @@ passes because it checks reuse *correctness* on a hand-shaped
 free-then-alloc, not the alloc-then-free-old steady state.)
 
 **Redirect.** The native string leak's blocker is **allocator freelist
-reuse for the alloc-before-free pattern**, NOT the RC eligibility gate.
-Widening `computeFreeEligible` is correct and a prerequisite, but it is
-**dead weight until the allocator reuses the freed class** — so it was
-**reverted** (no point shipping the extra `__fern_str_dec` calls for zero
-benefit). Next memory work should investigate why `__fern_alloc` **bumps a
-fresh box instead of pulling the just-freed class** in this steady state:
-either a size-class push/pull disagreement across
-`__fern_alloc_rc1` → `__fern_box_free` → `__fern_free`, or the
-alloc-new-*before*-free-old ordering starving the class at each alloc
-point (each iteration frees the box *after* it has already bump-allocated
-the replacement, so the freelist for that class is empty at every alloc).
-The gdb evidence: a string `box_free` passed `size=24` (→ 32-byte box,
-class 1), yet consecutive frees walked `0x10000008, 0x38, 0x68, …` — a
-pure bump, never a repeat — rather than any RC-side widening. This
-supersedes the "bare-local slice is the next lever" framing above.
+reuse**, NOT the RC eligibility gate. Widening `computeFreeEligible` is
+correct and a prerequisite, but it is **dead weight until the allocator
+reuses the freed class** — so it was **reverted** (no point shipping the
+extra `__fern_str_dec` calls for zero benefit).
+
+**ROOT CAUSE (2026-07-01, gdb-confirmed) — a size-class mismatch between
+string alloc and string free.** `__fern_strcat` requests `la + lb + 1`
+from `__fern_alloc_rc1` (`x86_64.go` ~4897 — the `+1` is a trailing NUL it
+writes at `data+la+lb`, needed so the NUL fits when `len+8` lands exactly
+on a 16-byte class boundary), but stores only the **length** at `[data-4]`.
+`__fern_str_dec` (and `__fern_box_free`) frees using that stored length:
+`box_free(data, len)` → `__fern_free(box, len+8)`. So the box is
+**allocated** at `class(len+1+8)` but **freed** to `class(len+8)`. These
+differ whenever `len ≡ 8 (mod 16)` (e.g. `len=24`: alloc `33`→48→**class
+2**, free `32`→**class 1**). gdb on a `len=24` churn: every alloc requests
+33 (→ class 2, whose freelist head stays `nil` → bump), while the freed
+boxes pile up unused in the **class-1** head (`0x10000000, 0x30, 0x60, …`).
+So `~1/16` of `strcat` results (the boundary-straddling lengths) are freed
+into a bucket their own re-allocation never consults — a permanent leak,
+no reuse, and **exactly** why every string-reclamation slice showed
+"~no self-compile impact." (`__str_slice` is consistent — it allocs
+exactly `new_len`, writes no NUL, and `str_dec`'s `len`-based free matches
+it; the bug is strcat-specific, but any producer that over- or
+under-allocates vs. the stored length has the same failure mode.)
+
+**Fix options (each string-ABI, heap-corruption class — validate on the
+x86-64 `rc_correctness` corpus + freelist harness + `RcFreeDebug` poison,
+and mirror the audit on arm64/wasm two-word `str_dec`):**
+1. *Make `str_dec` free `len+1`* — matches strcat, but is a UAF/overwrite
+   hazard for any producer that allocs exactly `len` (e.g. `__str_slice`),
+   so it requires first making **every** heap-string producer alloc
+   `len+1`+NUL. Broadest, riskiest.
+2. *Make `strcat` match `__str_slice`* (alloc `la+lb`, drop the NUL) — a
+   single-site fix that would make free/alloc agree at `class(len+8)`.
+   **BLOCKED (verified 2026-07-01):** `__fern_read_file` (and the other
+   path syscalls) pass the string's data bytes **directly** to `openat`
+   via `emitStrDataPtr` with no copy / self-termination, so a strcat'd
+   path (`dir + "/" + file`) relies on strcat's trailing NUL. Dropping it
+   would break `open`/`read_file` for concatenated paths. So the NUL must
+   stay, and the alloc must keep the `+1`.
+3. *Store the allocated payload size, not the length, in the free header* —
+   cleanest in principle but the header slot is dual-purpose (`len()` reads
+   `[data-4]`), so it needs a second word or a length-elsewhere scheme.
+
+With option 2 blocked, **option 1 is the path**: make every heap-string
+producer allocate `len+1`+NUL (audit `__str_slice`, `int_to_string`/radix,
+`chr`, `str_repeat`, case/reverse, `read_line`/`env`/`args`/`read_file`,
+strbuf-take), then flip `str_dec`/`box_free` to free `len+1`. Do it as one
+atomic change (a half-converted set over-/under-frees → heap corruption),
+gated on the full x86-64 RC corpus + freelist + poison, mirrored on the
+two-word `str_dec` path (arm64/wasm may carry the same latent straddle).
+This supersedes the "bare-local slice is the next lever" framing above:
+the lever is the **alloc/free size-class agreement**, after which the
+already-present `__fern_str_dec` + the (re-applied) `computeFreeEligible`
+widening reclaim string locals for real.
 
 ## Finding 2 — O(N²) `LowerState` rebuild in IR lowering
 
