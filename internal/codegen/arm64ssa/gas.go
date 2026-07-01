@@ -246,6 +246,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__str_concat":           emitStrConcatHelper,
 	"__fern_str_dec":         emitStrDecHelper,
 	"__fern_arr_dec":         emitArrDecHelper,
+	"__str_idx":              emitStrIdxHelper,
 	"__arr_idx":              emitArrIdxHelperN("__arr_idx", 2),    // stride 4 (i32)
 	"__arr_idx_1":            emitArrIdxHelperN("__arr_idx_1", 0),  // stride 1 (byte array)
 	"__arr_idx_2":            emitArrIdxHelperN("__arr_idx_2", 1),  // stride 2 (halfword)
@@ -298,6 +299,7 @@ var helperReturns64 = map[string]bool{
 	"__alloc_u8":             true,
 	"__fern_arr_cow_inplace": true,
 	"string_from_bytes":      true,
+	"__str_idx":              true,
 	"__arr_idx":              true,
 	"__arr_idx_1":            true,
 	"__arr_idx_2":            true,
@@ -619,6 +621,26 @@ func emitArrDecHelper(w func(string, ...any)) {
 	w("\tsub w2, w2, #1")
 	w("\tstur w2, [x0, #-8]")
 	w(".Lssa_arrdec_ret:")
+	w("\tret")
+}
+
+// emitStrIdxHelper writes __str_idx(base, idx) -> byte address: the char-index
+// helper behind `s[i]`. arm64ssa strings are always heap data pointers with no
+// small-string inline optimisation (byte length at [base-4]), so this is the
+// byte-stride sibling of __arr_idx: a single unsigned bounds compare against the
+// length (a negative idx is huge unsigned and fails too), exit 134 on
+// out-of-range, else base + idx. The caller's byte-load reads the char. Leaf.
+func emitStrIdxHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__str_idx"))
+	w("\tldur w2, [x0, #-4]") // len
+	w("\tcmp w1, w2")
+	w("\tb.lo .Lssa_stridx_ok") // idx < len (unsigned)
+	w("\tmov x0, #134")
+	w("\tmov x8, #94") // exit_group
+	w("\tsvc #0")
+	w(".Lssa_stridx_ok:")
+	w("\tadd x0, x0, x1") // base + idx (byte stride)
 	w("\tret")
 }
 
