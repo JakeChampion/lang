@@ -239,8 +239,20 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
           emit: **25/25** functions across the corpus. So the per-function
           emitter is complete against *real* lowered code — the remaining gaps
           are whole-program, not op-level.
-        - [ ] Whole-program wiring (real entry/runtime/RC/closure-dispatch) +
-          output diff against the stack machine.
+        - [~] Whole-program wiring. `EmitProgram(prog, info, numAlloc)` lowers a
+          whole checked program via the SSA path — `ir.LowerWith → ssa.LiftFromIR`
+          per function → `EmitAsmModule` with `main` as the entry (its `_start`
+          calls `main` and exits with the i32 return). `program_run_test.go`
+          compiles real programs to a native binary this way, runs them, and
+          diffs the exit code against the **tree-walking interpreter** (an
+          oracle independent of the SSA path) — the first end-to-end validation
+          of the SSA register-allocated native path against real language
+          semantics. Passing: constants, arithmetic, cross-function calls,
+          recursion (factorial), a `while` loop, conditionals, and div/mod, over
+          spill-forcing register counts. Scope so far: the integer/no-runtime
+          subset (programs whose whole call graph lifts+emits); RC inc/dec,
+          runtime helpers, and closure dispatch layer on next, then the flag +
+          e2e diff against the stack machine and the binary-size measurement.
 - [~] Op-coverage broadening toward parity (each op validated against `Eval`
   in the model before it reaches real assembly):
   - [x] Direct integer calls + recursion — `ssa.EvalIn` (function-table eval),
