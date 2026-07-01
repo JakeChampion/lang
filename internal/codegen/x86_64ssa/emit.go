@@ -34,6 +34,7 @@ const (
 	MovReg                  // reg[Dst] = reg[Src]
 	BinOp                   // reg[Dst] = reg[Dst] (K) reg[Src]   (K an integer arith op)
 	UnNeg                   // reg[Dst] = -reg[Dst]
+	UnOp                    // reg[Dst] = K(reg[Dst])   (K a unary: Not / Trunc / Extend*)
 	SetCmp                  // reg[Dst] = (reg[Dst] K reg[Src]) ? 1 : 0   (K a comparison)
 	LoadSlot                // reg[Dst] = slot[Imm]
 	StoreSlot               // slot[Imm] = reg[Src]
@@ -413,6 +414,16 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		}
 		e.push(Inst{Op: MovReg, Dst: e.s2, Src: ra})
 		e.push(Inst{Op: UnNeg, Dst: e.s2, W: op.Width})
+		e.place(op.Result, e.s2)
+		return nil
+
+	case ssa.OpNot, ssa.OpTrunc, ssa.OpExtendS, ssa.OpExtendU, ssa.OpExtend8S, ssa.OpExtend16S:
+		ra, err := e.materialize(op.Args[0], e.s0)
+		if err != nil {
+			return err
+		}
+		e.push(Inst{Op: MovReg, Dst: e.s2, Src: ra})
+		e.push(Inst{Op: UnOp, Dst: e.s2, K: op.Kind, W: op.Width})
 		e.place(op.Result, e.s2)
 		return nil
 

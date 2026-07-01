@@ -76,6 +76,8 @@ func runProg(m map[string]*Program, p *Program, h *modelHeap, args []int64) (int
 				regs[in.Dst] = maskW(in.W, r)
 			case UnNeg:
 				regs[in.Dst] = maskW(in.W, -regs[in.Dst])
+			case UnOp:
+				regs[in.Dst] = maskW(in.W, unInt(in.K, regs[in.Dst]))
 			case SetCmp:
 				regs[in.Dst] = cmpInt(in.K, regs[in.Dst], regs[in.Src])
 			case LoadSlot:
@@ -182,6 +184,24 @@ func (h *modelHeap) store(addr, val int64, n int) error {
 		h.data[addr+int64(i)] = byte(u >> (8 * i))
 	}
 	return nil
+}
+
+// unInt evaluates a unary integer transform, mirroring ssa.Eval.
+func unInt(k ssa.OpKind, v int64) int64 {
+	switch k {
+	case ssa.OpNot:
+		return b2i(v == 0)
+	case ssa.OpTrunc, ssa.OpExtendS:
+		return int64(int32(v))
+	case ssa.OpExtendU:
+		return int64(uint32(v))
+	case ssa.OpExtend8S:
+		return int64(int8(v))
+	case ssa.OpExtend16S:
+		return int64(int16(v))
+	default:
+		return v
+	}
 }
 
 func maskW(w int8, v int64) int64 {

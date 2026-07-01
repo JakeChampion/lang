@@ -137,8 +137,26 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
     in both `Eval` and the `x86_64ssa` model. Validated: byte signedness, a
     byte-array sum, halfword sign-extension, and store-width-preserves-high-
     bytes. The basis for string bytes and narrow array elements.
-  - [ ] Composite types built on memory: strings, structs, arrays, maps
+  - [x] Scalar unary completion — `OpNot` + the integer width conversions
+    (`OpTrunc`, `OpExtendS/U`, `OpExtend8S/16S`) via a generic `UnOp`, in
+    `Eval` + the model + **real assembly** (`Not` runs natively;
+    `movsxd`/`movsx`/`movzx` for the rest). Driven by the measurement below —
+    `OpNot` was the single most-frequent unhandled op.
+  - [ ] Composite types built on memory: strings (`OpConstString`), structs,
+    arrays, maps
+  - [ ] Integer `div`/`rem` (real-asm needs `idiv` rax/rdx) and floats
   - [ ] RC inc/dec (Perceus ordering)
+
+  **Coverage measurement (data-driven prioritisation).** Lifting the example
+  corpus (33 programs, 11,497 functions) through `ir.LowerWith` →
+  `ssa.LiftFromIR` and histogramming SSA op kinds: the lifter handled the whole
+  corpus (0 failures), and the `x86_64ssa` emitter covered **92.5%** of op
+  occurrences before this slice. So **wiring is gated on emitter op coverage,
+  not lift coverage.** Top unhandled ops were: `not` (7107 — added here),
+  `const_string` (3668), `extend_s` (1215 — added here), `const_float`/floats
+  (~3500), `div`/`rem` (~1460), `enum_sentinel` (472), `trunc`/`extend_u` (320 —
+  added here). Adding the scalar unary ops here lifts coverage to ~96%; strings
+  + floats are the next big blocks.
 - [ ] Phase 3 — default x86-64 to SSA; measure binary-size win
 - [ ] Phase 4 — arm64 SSA emit + default
 - [ ] Phase 5 — retire the stack-machine backends

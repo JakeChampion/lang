@@ -278,6 +278,36 @@ func evalOp(funcs map[string]*Func, h *heap, op *Op, vals map[int32]int64) error
 			return err
 		}
 		return set(-a)
+	case OpTrunc:
+		a, err := arg(0)
+		if err != nil {
+			return err
+		}
+		return set(int64(int32(a))) // i64 -> i32, sign-aware low 32
+	case OpExtendS:
+		a, err := arg(0)
+		if err != nil {
+			return err
+		}
+		return set(int64(int32(a))) // i32 -> i64 sign-extend
+	case OpExtendU:
+		a, err := arg(0)
+		if err != nil {
+			return err
+		}
+		return set(int64(uint32(a))) // i32 -> i64 zero-extend
+	case OpExtend8S:
+		a, err := arg(0)
+		if err != nil {
+			return err
+		}
+		return set(int64(int8(a)))
+	case OpExtend16S:
+		a, err := arg(0)
+		if err != nil {
+			return err
+		}
+		return set(int64(int16(a)))
 	case OpNot:
 		a, err := arg(0)
 		if err != nil {

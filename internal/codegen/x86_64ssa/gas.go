@@ -88,9 +88,13 @@ func EmitAsm(f *ssa.Func, numAlloc int) (string, error) {
 // frame). reg8 is the parallel 8-bit subregister used by setcc.
 var gpRegs = []string{"rax", "rbx", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"}
 var reg8 = []string{"al", "bl", "cl", "dl", "sil", "dil", "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b"}
+var reg32 = []string{"eax", "ebx", "ecx", "edx", "esi", "edi", "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d"}
+var reg16 = []string{"ax", "bx", "cx", "dx", "si", "di", "r8w", "r9w", "r10w", "r11w", "r12w", "r13w", "r14w", "r15w"}
 
-func reg(i int) string   { return gpRegs[i] }
-func reg8n(i int) string { return reg8[i] }
+func reg(i int) string    { return gpRegs[i] }
+func reg8n(i int) string  { return reg8[i] }
+func reg32n(i int) string { return reg32[i] }
+func reg16n(i int) string { return reg16[i] }
 
 // slotMem is the memory operand for spill slot n: [rbp - 8*(n+1)].
 func slotMem(n int) string { return fmt.Sprintf("[rbp - %d]", 8*(n+1)) }
@@ -110,6 +114,22 @@ func asmInst(in Inst) (string, error) {
 		return fmt.Sprintf("mov %s, %s", reg(in.Dst), reg(in.Src)), nil
 	case UnNeg:
 		return fmt.Sprintf("neg %s", reg(in.Dst)), nil
+	case UnOp:
+		d := in.Dst
+		switch in.K {
+		case ssa.OpNot:
+			return fmt.Sprintf("cmp %s, 0\n\tsete %s\n\tmovzx %s, %s", reg(d), reg8n(d), reg(d), reg8n(d)), nil
+		case ssa.OpTrunc, ssa.OpExtendS:
+			return fmt.Sprintf("movsxd %s, %s", reg(d), reg32n(d)), nil // sign-extend low 32
+		case ssa.OpExtendU:
+			return fmt.Sprintf("mov %s, %s", reg32n(d), reg32n(d)), nil // 32-bit mov zero-extends
+		case ssa.OpExtend8S:
+			return fmt.Sprintf("movsx %s, %s", reg(d), reg8n(d)), nil
+		case ssa.OpExtend16S:
+			return fmt.Sprintf("movsx %s, %s", reg(d), reg16n(d)), nil
+		default:
+			return "", fmt.Errorf("x86_64ssa: unsupported unary op %v", in.K)
+		}
 	case LoadSlot:
 		return fmt.Sprintf("mov %s, %s", reg(in.Dst), slotMem(int(in.Imm))), nil
 	case StoreSlot:
