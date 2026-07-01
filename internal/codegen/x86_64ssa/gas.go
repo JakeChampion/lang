@@ -86,6 +86,12 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 
 	heap := usesHeap(progs)
 	strLabels, strOrder := collectStrings(progs, names)
+	// fn_idx for closures: a function's index in the module's (sorted) emission
+	// order — the same value the model's function-index table carries.
+	fnIndex := make(map[string]int, len(names))
+	for i, n := range names {
+		fnIndex[n] = i
+	}
 
 	w(".intel_syntax noprefix")
 	w(".text")
@@ -110,7 +116,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	w("\tsyscall")
 	w("")
 	for _, name := range names {
-		if err := emitFuncBody(w, name, progs[name], numAlloc, strLabels); err != nil {
+		if err := emitFuncBody(w, name, progs[name], numAlloc, strLabels, fnIndex); err != nil {
 			return "", err
 		}
 	}
@@ -144,7 +150,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 // emitFuncBody writes one function's label, prologue, parameter moves, block
 // bodies, and epilogue. Block labels are namespaced by the function label so
 // several functions coexist in one program.
-func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int, strLabels map[string]string) error {
+func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int, strLabels map[string]string, fnIndex map[string]int) error {
 	label := fnLabel(name)
 	// s3 — the last register in the file — is the free scratch the div/shift and
 	// call sequences stage operands through. It is above the allocatable range
@@ -197,6 +203,16 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 					return fmt.Errorf("x86_64ssa: ConstStr %q has no .rodata label", in.Str)
 				}
 				w("\tlea %s, [rip + %s]", reg(in.Dst), lbl)
+				continue
+			}
+			if in.Op == MakeEnv || in.Op == MakeClosure {
+				lines, err := closureLines(in, numAlloc, fnIndex)
+				if err != nil {
+					return err
+				}
+				for _, l := range lines {
+					w("\t%s", l)
+				}
 				continue
 			}
 			line, err := asmInst(in, scratch)
@@ -650,6 +666,57 @@ func memRef(regName string, disp int64) string {
 	return fmt.Sprintf("[%s - %d]", regName, -disp)
 }
 
+// closureLines renders OpMakeEnv / OpMakeClosure on the .bss bump heap.
+// MakeEnv allocates an env block of the N captures (8-byte slots) and returns
+// the env pointer. MakeClosure additionally allocates a {fn_idx, env_ptr} cell
+// (fn_idx = the target's module index) and returns the cell pointer. The env
+// pointer is held in s0 (free during this instruction) across the second
+// allocation; s3 stages the bump cursor and capture values.
+func closureLines(in Inst, numAlloc int, fnIndex map[string]int) ([]string, error) {
+	scratch := numAlloc + 3 // s3
+	envReg := numAlloc      // s0 — unused by the MakeEnv/MakeClosure inst itself
+	var out []string
+	alloc := func(dst int, bytes int64) {
+		out = append(out,
+			fmt.Sprintf("mov %s, [rip + %s]", reg(dst), heapPtrSym),
+			fmt.Sprintf("add %s, 7", reg(dst)),
+			fmt.Sprintf("and %s, -8", reg(dst)),
+			fmt.Sprintf("mov %s, %s", reg(scratch), reg(dst)),
+			fmt.Sprintf("add %s, %d", reg(scratch), bytes),
+			fmt.Sprintf("mov [rip + %s], %s", heapPtrSym, reg(scratch)),
+		)
+	}
+	storeCaps := func(base int) {
+		for i, l := range in.ArgLocs {
+			if l.IsReg {
+				out = append(out, fmt.Sprintf("mov %s, %s", reg(scratch), reg(l.Reg)))
+			} else {
+				out = append(out, fmt.Sprintf("mov %s, %s", reg(scratch), slotMem(l.Slot)))
+			}
+			out = append(out, fmt.Sprintf("mov %s, %s", memRef(reg(base), int64(i*8)), reg(scratch)))
+		}
+	}
+	n := int64(len(in.ArgLocs))
+	if in.Op == MakeEnv {
+		alloc(in.Dst, n*8)
+		storeCaps(in.Dst)
+		return out, nil
+	}
+	idx, ok := fnIndex[in.Callee]
+	if !ok {
+		return nil, fmt.Errorf("x86_64ssa: MakeClosure target %q not in module", in.Callee)
+	}
+	alloc(envReg, n*8) // env block -> s0
+	storeCaps(envReg)
+	alloc(in.Dst, 16) // {fn_idx, env_ptr} cell -> Dst
+	out = append(out,
+		fmt.Sprintf("mov %s, %d", reg(scratch), idx),
+		fmt.Sprintf("mov %s, %s", memRef(reg(in.Dst), 0), reg(scratch)),
+		fmt.Sprintf("mov %s, %s", memRef(reg(in.Dst), 8), reg(envReg)),
+	)
+	return out, nil
+}
+
 // collectStrings assigns a .rodata label to each unique OpConstString literal
 // across the module (in a deterministic order: functions by sorted name, then
 // instruction order). Returns the literal→label map and the labels' emission
@@ -679,7 +746,7 @@ func usesHeap(progs map[string]*Program) bool {
 		for _, blk := range p.Blocks {
 			for _, in := range blk.Insts {
 				switch in.Op {
-				case MemAlloc, MemLoad, MemStore:
+				case MemAlloc, MemLoad, MemStore, MakeEnv, MakeClosure:
 					return true
 				}
 			}

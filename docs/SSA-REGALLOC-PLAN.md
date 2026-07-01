@@ -202,9 +202,22 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
         unsigned int↔float ≥ 2^63 are out of scope (finite/in-range values match
         `Eval`). Validated natively: arithmetic, all six compares, int↔float
         round-trips, negation, truncation, f32-width, and floats through memory
-        — over spill-forcing counts. Next: **3c** — gate the SSA path behind a
-        flag and diff against the stack machine over the e2e corpus (closures
-        are the last real-asm gap).
+        — over spill-forcing counts.
+      - [x] 3b (closures) — `OpMakeEnv` / `OpMakeClosure` on the real-asm path,
+        on the same `.bss` bump heap. `MakeEnv` allocates an env block of the N
+        captures (8-byte slots) and returns the env pointer; `MakeClosure`
+        additionally allocates a `{fn_idx, env_ptr}` cell — `fn_idx` = the
+        target's index in the module's sorted function order, threaded like the
+        string labels and matching the model's function-table index — and holds
+        the env pointer in `s0` (free during the instruction) across the second
+        allocation. Validated natively: env-block round-trip, a closure's
+        `fn_idx` + captures read back, and a zero-capture closure — over
+        spill-forcing counts. **This closes the real-asm op coverage**: the SSA
+        real-assembly path now handles the full per-function op set —
+        integers, parameters, direct calls, memory, strings, floats, and
+        closures. Next: **3c** — gate the SSA path behind a flag and diff it
+        against the stack-machine backend over the e2e corpus, then flip the
+        x86-64 default and measure the self-host binary-size win.
       - [ ] 3c — wire behind a flag and diff against the existing stack-machine
         backend over the e2e corpus.
 - [~] Op-coverage broadening toward parity (each op validated against `Eval`
