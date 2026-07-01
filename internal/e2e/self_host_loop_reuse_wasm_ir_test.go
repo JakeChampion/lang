@@ -57,6 +57,8 @@ func TestSelfHostLoopReuseWasmIR(t *testing.T) {
 		// Cross-block with recipients in BOTH arms and a single donor — one arm reuses
 		// it, the other allocates; value stays correct across the loop. 66.
 		{"cross-block-both-arms", `struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: P = P { x: i, y: 1 }; if (i % 2 == 0) { var b: P = P { x: i, y: 10 }; sum = sum + b.x + b.y; } else { var c: P = P { x: i, y: 20 }; sum = sum + c.x + c.y; } i = i + 1; } return sum; }`, 66},
+		// Cross-block TUPLE recipient: loop-body tuple donor reused by if-nested tuple. 31.
+		{"cross-block-tuple-reuse", `function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: (i32, i32) = (i, i + 1); var s: i32 = a.0 + a.1; if (i > 0) { var b: (i32, i32) = (i, 3); sum = sum + b.0 + b.1; } sum = sum + s; i = i + 1; } return sum; }`, 31},
 		// Higher iteration count: the prior-release must free each loop-carried box
 		// (a double-free would trap). 2000 iters, value kept small (sum mod 100 = 0).
 		{"loop-struct-churn", `struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 2000) { var a: P = P { x: i, y: i + 1 }; var s: i32 = a.x + a.y; var b: P = P { x: i, y: 3 }; sum = (sum + b.x + b.y) % 100; i = i + 1; } return sum; }`, 0},
