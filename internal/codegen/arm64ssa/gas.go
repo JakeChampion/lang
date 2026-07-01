@@ -246,7 +246,11 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__str_concat":        emitStrConcatHelper,
 	"__fern_str_dec":      emitStrDecHelper,
 	"__fern_arr_dec":       emitArrDecHelper,
-	"__arr_idx":            emitArrIdxHelper,
+	"__arr_idx":            emitArrIdxHelperN("__arr_idx", 2),   // stride 4 (i32)
+	"__arr_idx_1":          emitArrIdxHelperN("__arr_idx_1", 0), // stride 1 (byte array)
+	"__arr_idx_2":          emitArrIdxHelperN("__arr_idx_2", 1), // stride 2 (halfword)
+	"__arr_idx_8":          emitArrIdxHelperN("__arr_idx_8", 3), // stride 8 (i64 / pointer)
+	"__arr_idx_16":         emitArrIdxHelperN("__arr_idx_16", 4), // stride 16 (two-word string[])
 	"__fern_arr_push_grow": emitArrPushGrowHelper,
 }
 
@@ -566,24 +570,33 @@ func emitArrDecHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitArrIdxHelper writes __arr_idx(base, idx) -> elem address: a bounds-checked
-// index into a length-prefixed i32 (stride-4) array. Compares idx against the
-// length at [base-4] with a single unsigned compare (a negative idx is huge
-// unsigned, so it fails too) and, on out-of-range, exits 134 — matching the
-// native array-index trap and wasm's `unreachable`. Returns base + idx*4; the
-// caller's OpLoad reads the element. Leaf.
-func emitArrIdxHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("__arr_idx"))
-	w("\tldur w2, [x0, #-4]") // len
-	w("\tcmp w1, w2")
-	w("\tb.lo .Lssa_arridx_ok") // idx < len (unsigned)
-	w("\tmov x0, #134")
-	w("\tmov x8, #94") // exit_group
-	w("\tsvc #0")
-	w(".Lssa_arridx_ok:")
-	w("\tadd x0, x0, x1, lsl #2") // base + idx*4
-	w("\tret")
+// emitArrIdxHelperN returns the emitter for a bounds-checked array-index helper
+// of a given element stride (2^shift bytes): __arr_idx (stride 4), __arr_idx_1
+// (byte), __arr_idx_2 (halfword), __arr_idx_8 (i64/pointer), __arr_idx_16
+// (two-word string[]). Each compares idx against the length at [base-4] with a
+// single unsigned compare (a negative idx is huge unsigned, so it fails too) and,
+// on out-of-range, exits 134 — matching the native array-index trap / wasm's
+// `unreachable`. Returns base + idx*stride; the caller's OpLoad reads the element.
+// Leaf. The ok-label is namespaced by shift so all variants coexist in a module.
+func emitArrIdxHelperN(name string, shift int) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		ok := fmt.Sprintf(".Lssa_arridx%d_ok", shift)
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tldur w2, [x0, #-4]") // len
+		w("\tcmp w1, w2")
+		w("\tb.lo %s", ok) // idx < len (unsigned)
+		w("\tmov x0, #134")
+		w("\tmov x8, #94") // exit_group
+		w("\tsvc #0")
+		w("%s:", ok)
+		if shift == 0 {
+			w("\tadd x0, x0, x1") // base + idx*1
+		} else {
+			w("\tadd x0, x0, x1, lsl #%d", shift) // base + idx*stride
+		}
+		w("\tret")
+	}
 }
 
 // emitArrPushGrowHelper writes __fern_arr_push_grow(arr, oldLen, stride) ->
