@@ -399,9 +399,47 @@ pub function struct_drop_types(mod: parser.Module): string[] {
             if (irlower.decl_is_struct(mod.structs, ft) && irlower.nested_field_deep_drop_ok(mod.structs, ft)) {
                 if (util.index_of_str(out, ft) < 0) { out = out.append(ft); }
             }
+            // A struct-ARRAY field `X[]` whose element X is deep-drop-ok: the array-element
+            // deep-drop helper ($__struct_arr_elems_drop_X) calls $__struct_drop_X, so X
+            // must be a struct_drop type too. Add it here (the index-driven loop then
+            // expands X's own reclaimable fields transitively).
+            if (irlower.is_struct_array_field_type(mod.structs, ft)) {
+                var aelem: string = ft[0 : ft.len() - 2];
+                if (irlower.nested_field_deep_drop_ok(mod.structs, aelem)) {
+                    if (util.index_of_str(out, aelem) < 0) { out = out.append(aelem); }
+                }
+            }
             k = k + 1;
         }
         di = di + 1;
+    }
+    return out;
+}
+
+// struct_arr_elems_drop_types returns the distinct struct-array ELEMENT types E for
+// which a $__struct_arr_elems_drop_<E> helper must be emitted (#2649): every struct-
+// array field `E[]` with a deep-drop-ok element E, reachable from a struct_drop type.
+// struct_drop_types already includes each such E as a struct_drop type (so the
+// $__struct_drop_<E> the helper calls exists), so this walk over that closure finds
+// every needed helper.
+pub function struct_arr_elems_drop_types(mod: parser.Module): string[] {
+    var sdt: string[] = struct_drop_types(mod);
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < sdt.len()) {
+        var fc: i32 = irlower.decl_field_count(mod.structs, sdt[i]);
+        var k: i32 = 0;
+        while (k < fc) {
+            var ft: string = irlower.decl_field_type_at(mod.structs, sdt[i], k);
+            if (irlower.is_struct_array_field_type(mod.structs, ft)) {
+                var elem: string = ft[0 : ft.len() - 2];
+                if (irlower.nested_field_deep_drop_ok(mod.structs, elem) && util.index_of_str(out, elem) < 0) {
+                    out = out.append(elem);
+                }
+            }
+            k = k + 1;
+        }
+        i = i + 1;
     }
     return out;
 }
