@@ -335,3 +335,36 @@ func TestAddSubSPRegister(t *testing.T) {
 		}
 	}
 }
+
+// TestMovImmMovzMovk pins the movz/movk synthesis for immediates that fit
+// neither a single movz/movn nor a bitmask: `mov x0, #70000` (two 16-bit lanes)
+// must assemble to movz x0,#0x1170 ; movk x0,#1,lsl 16, and a value with a lane
+// gap keeps the movz on its lowest non-zero lane.
+func TestMovImmMovzMovk(t *testing.T) {
+	cases := []struct {
+		asm  string
+		want []uint32
+	}{
+		// 70000 = 0x00011170 -> lanes 0x1170 (sh 0), 0x0001 (sh 16).
+		{"\tmov x0, #70000\n", []uint32{arm64.MOVZ(0, 0x1170, 0), arm64.MOVK(0, 1, 16)}},
+		// 1000000 = 0x000F4240 -> lanes 0x4240 (sh 0), 0x000F (sh 16).
+		{"\tmov x1, #1000000\n", []uint32{arm64.MOVZ(1, 0x4240, 0), arm64.MOVK(1, 0xF, 16)}},
+		// 0x0001_0000_1234 -> lanes 0x1234 (sh 0), 0x0001 (sh 32); the sh-16 zero
+		// lane is skipped, so movk targets the high lane directly. (Not a bitmask
+		// pattern, so it reaches the movz/movk fallback.)
+		{"\tmov x2, #4294971956\n", []uint32{arm64.MOVZ(2, 0x1234, 0), arm64.MOVK(2, 1, 32)}},
+	}
+	for _, c := range cases {
+		got, err := arm64.Assemble(c.asm)
+		if err != nil {
+			t.Fatalf("Assemble(%q): %v", c.asm, err)
+		}
+		var want []byte
+		for _, w := range c.want {
+			want = arm64.Put(want, w)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("%q: got % x, want % x", c.asm, got, want)
+		}
+	}
+}
