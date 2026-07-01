@@ -131,14 +131,13 @@ func TestEmitForcesSpills(t *testing.T) {
 
 // Unsupported ops return a clear error, not a silent wrong answer.
 func TestEmitRejectsUnsupported(t *testing.T) {
-	// Unsupported op (division — deferred to the real-asm slice for idiv).
-	g := ssa.NewFunc("dv")
+	// OpMakeClosure is not yet modelled (closures are a later slice).
+	g := ssa.NewFunc("mk")
 	x := g.AddParam()
-	y := g.AddParam()
 	ge := g.NewBlock()
-	q := g.AddOp(ge, ssa.OpDiv, x, y)
+	q := g.AddOp(ge, ssa.OpMakeClosure, x)
 	g.SetRet(ge, q)
 	if _, err := Emit(g, 4); err == nil {
-		t.Error("expected an error for an unsupported op (OpDiv)")
+		t.Error("expected an error for an unsupported op (OpMakeClosure)")
 	}
 }

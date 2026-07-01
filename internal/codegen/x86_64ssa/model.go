@@ -323,6 +323,26 @@ func binInt(k ssa.OpKind, a, b int64) (int64, error) {
 		return a >> uint64(b), nil
 	case ssa.OpShrU:
 		return int64(uint64(a) >> uint64(b)), nil
+	case ssa.OpDiv:
+		if b == 0 {
+			return 0, fmt.Errorf("Run: division by zero")
+		}
+		return a / b, nil
+	case ssa.OpDivU:
+		if b == 0 {
+			return 0, fmt.Errorf("Run: division by zero")
+		}
+		return int64(uint64(a) / uint64(b)), nil
+	case ssa.OpRem:
+		if b == 0 {
+			return 0, fmt.Errorf("Run: remainder by zero")
+		}
+		return a % b, nil
+	case ssa.OpRemU:
+		if b == 0 {
+			return 0, fmt.Errorf("Run: remainder by zero")
+		}
+		return int64(uint64(a) % uint64(b)), nil
 	default:
 		return 0, fmt.Errorf("Run: not a supported binary op: %v", k)
 	}

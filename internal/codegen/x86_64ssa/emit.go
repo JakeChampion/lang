@@ -402,7 +402,8 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		return nil
 
 	case ssa.OpAdd, ssa.OpSub, ssa.OpMul, ssa.OpAnd, ssa.OpOr, ssa.OpXor,
-		ssa.OpShl, ssa.OpShr, ssa.OpShrU:
+		ssa.OpShl, ssa.OpShr, ssa.OpShrU,
+		ssa.OpDiv, ssa.OpDivU, ssa.OpRem, ssa.OpRemU:
 		ra, rb, err := e.binOperands(op)
 		if err != nil {
 			return err
