@@ -289,6 +289,13 @@ function slot_in_list(list: i32[], x: i32): boolean {
 function wasm_helper_symbol(name: string): string {
     if (name == "__fern_rc_inc") { return "$__fern_rc_inc"; }
     if (name == "__fern_rc_dec") { return "$__fern_arr_dec"; }
+    // string RC reclaim (#2649): unlike the header-less asm string boxes (which
+    // need the dedicated __fern_str_free box+buffer release), a wasm heap string
+    // is a single rc-headered INLINE block ($__fern_str_box: [rc][bsz][len][bytes])
+    // — so a plain $__fern_arr_dec frees it at rc==1 by size class, and a literal
+    // (data-section, below heap_base) is a guarded no-op. Double frees are caught
+    // by the rc-underflow detector, unlike the asm path.
+    if (name == "__fern_str_free") { return "$__fern_arr_dec"; }
     if (name == "__fern_rc_underflow_get") { return "$__fern_rc_underflow_count"; }
     // i32.to_string()'s decimal helper — wasm.fern's to_string_helpers emits it
     // as $__fern_i32_to_str (param i32 -> i32 box), gated on module_uses_tostring
