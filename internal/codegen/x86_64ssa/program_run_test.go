@@ -206,6 +206,31 @@ func TestProgramRunString(t *testing.T) {
 	}
 }
 
+// Whole-program arrays: an array literal is built with its cap/rc/len header,
+// indexed, and dropped at scope exit via __fern_arr_dec (reads the array's rc at
+// [data-8]). Runs the same result as the interpreter.
+func TestProgramRunArray(t *testing.T) {
+	srcs := []string{
+		// Literal + index reads: [10,20,12] -> a[0]+a[1]+a[2] = 42.
+		`function main(): i32 { var a: i32[] = [10, 20, 12]; return a[0] + a[1] + a[2]; }`,
+		// Array length via .len(): [1,2,3,4,5].len() = 5.
+		`function main(): i32 { var a: i32[] = [1, 2, 3, 4, 5]; return a.len(); }`,
+		// Sum by index over a known length.
+		`function main(): i32 {
+		   var a: i32[] = [3, 9, 15, 15];
+		   var t: i32 = 0;
+		   var i: i32 = 0;
+		   while (i < a.len()) { t = t + a[i]; i = i + 1; }
+		   return t;
+		 }`,
+	}
+	for _, n := range []int{1, 2, 8} {
+		for _, src := range srcs {
+			programMatchesInterp(t, src, n)
+		}
+	}
+}
+
 // Whole-program Option + match: the pair-return (Some/None), the box the match
 // reconstructs (i32 fields at 4-byte offsets — needs the 4-byte load/store), and
 // the match-join phi all combine. Runs the same result as the interpreter.

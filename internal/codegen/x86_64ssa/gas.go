@@ -1012,6 +1012,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_closure_drop": emitClosureDropHelper,
 	"__fern_box_free":     emitBoxFreeHelper,
 	"__str_len":           emitStrLenHelper,
+	"__fern_arr_dec":      emitArrDecHelper,
+	"__arr_idx":           emitArrIdxHelper,
 }
 
 // runtimeHelperDeps records the helper→helper call edges (a helper that tail-
@@ -1166,6 +1168,54 @@ func emitStrLenHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__str_len"))
 	w("\tmov eax, %s", memRef("rdi", -4))
+	w("\tret")
+}
+
+// emitArrDecHelper writes __fern_arr_dec(data, stride): the array-drop the IR
+// inserts at scope exit. The array element pointer carries a 16-byte header with
+// its reference count at [data-8] (ArrayLit builds it: cap@-12, rc@-8, len@-4).
+// Guarded (null / low-address / static sentinel); if the array is uniquely held
+// (rc == 1) the buffer would be freed — a no-op on the SSA bump heap, which
+// doesn't reclaim (docs/SSA-RC-RUNTIME.md: leak until a later reuse slice, which
+// also skips the recursive per-element drops), so we just return; otherwise it
+// drops a shared reference. The stride arg is unused until real reclamation
+// lands. Leaf.
+func emitArrDecHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_arr_dec"))
+	w("\ttest rdi, rdi")
+	w("\tjz .Lssa_arrdec_ret")
+	w("\tcmp rdi, 0x10000")
+	w("\tjb .Lssa_arrdec_ret")
+	w("\tmov eax, %s", memRef("rdi", -8)) // rc
+	w("\ttest eax, eax")
+	w("\tjs .Lssa_arrdec_ret") // static sentinel
+	w("\tcmp eax, 1")
+	w("\tjle .Lssa_arrdec_ret") // rc<=1: unique (leak, no free) or already dropped
+	w("\tsub eax, 1")
+	w("\tmov %s, eax", memRef("rdi", -8))
+	w(".Lssa_arrdec_ret:")
+	w("\tret")
+}
+
+// emitArrIdxHelper writes __arr_idx(base, idx) -> elem address: a bounds-checked
+// index into a length-prefixed i32 (stride-4) array. Compares idx against the
+// array's length at [base-4] with a single unsigned compare (a negative idx is
+// huge unsigned, so it fails too) and, on out-of-range, exits 134 — matching the
+// native array-index trap and wasm's `unreachable`. Returns base + idx*4; the
+// caller's OpLoad reads the element. The IR lowers `a[i]` to a call here (the
+// native backends inline the same address compute). Leaf.
+func emitArrIdxHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__arr_idx"))
+	w("\tmov edx, %s", memRef("rdi", -4)) // len
+	w("\tcmp esi, edx")
+	w("\tjb .Lssa_arridx_ok")
+	w("\tmov edi, 134")
+	w("\tmov eax, 231") // exit_group
+	w("\tsyscall")
+	w(".Lssa_arridx_ok:")
+	w("\tlea rax, [rdi + rsi*4]")
 	w("\tret")
 }
 
