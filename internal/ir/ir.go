@@ -4810,18 +4810,12 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			// (elements keep their own rc, freed where they're owned).
 			elig[v.Name] = true
 		case ast.StringType:
-			// A fresh owned heap string (concat / slice result —
-			// rhsTainted whitelists exactly those, since both COPY into a
-			// new headered buffer) frees at its last reference via
-			// __fern_str_dec. Two-word ABI only (wasm + arm64-
-			// TwoWordOverride — both back __fern_str_dec with the
-			// uniform L2 rc header); native single-word strings go
-			// through their own emitDec branch via __fern_rc_dec which
-			// doesn't need this eligibility flag. Aliases / views /
-			// literals are tainted above and skipped.
-			if ast.UseTwoWordStrings(b.ptrW) {
-				elig[v.Name] = true
-			}
+			// Fresh owned heap string (concat / slice — rhsTainted whitelists
+			// exactly those) frees at its last reference via __fern_str_dec on
+			// EVERY ptrW; emitDec's StringType arm carries the native branch.
+			// Balanced: aliases are retained by needsRcIncOnAlias, and every
+			// uncounted-alias source (FieldAccess/Index/Call) is tainted.
+			elig[v.Name] = true
 		case ast.DynTraitType:
 			// An owned `dyn Trait` local reclaims its erased concrete
 			// `data` object through the per-set __drop_dyn_<set> helper at
@@ -13158,15 +13152,17 @@ func (b *builder) binary(n *ast.Binary) error {
 			return err
 		}
 		b.emit(Op{Kind: OpStrConcat})
-		// Reclaim each stashed owned-temp operand. ABI-correct dec, matching
-		// the exit sweep: two-word ABIs (wasm + arm64-TwoWord) consume the
-		// (data,len) pair via __fern_str_dec; native single-word (x86_64)
-		// dec's the single pointer via __fern_rc_dec (its inline-tag / SSO
-		// guards make it safe for short concats that never heap-allocated).
-		decHelper := "__fern_rc_dec"
-		if ast.UseTwoWordStrings(b.ptrW) {
-			decHelper = "__fern_str_dec"
-		}
+		// Reclaim each stashed owned-temp operand via __fern_str_dec on EVERY
+		// ptrW: two-word ABIs (wasm + arm64-TwoWord) consume the (data,len)
+		// pair, and native single-word (x86_64) frees the buffer at rc==1 (else
+		// defers to __fern_rc_dec) — its inline-tag / SSO / literal guards make
+		// it safe for short concats that never heap-allocated. Native previously
+		// used the dec-only __fern_rc_dec here, which decremented but never
+		// freed, so a nested/chained concat leaked one buffer per join
+		// (docs/IR-SELFCOMPILE-OOM-FINDINGS.md); __fern_str_dec now reclaims it.
+		// The operand is a fresh sole-owner temp (isOwnedStringTemp), so freeing
+		// at rc==1 is balanced.
+		decHelper := "__fern_str_dec"
 		for _, sl := range []int32{slL, slR} {
 			if sl < 0 {
 				continue

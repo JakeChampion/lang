@@ -4081,8 +4081,14 @@ func (g *generator) emitStrDecRuntime() {
 	g.emit("mov ecx, dword ptr [rdi - 8]") // rc
 	g.emit("cmp ecx, 1")
 	g.emit("jne .Lstrdec_dec") // rc != 1 (shared, sentinel, or under) → dec
-	// rc == 1 → free the rc1 block; payload size at [data-4].
+	// rc == 1 → free the rc1 block. [data-4] holds the string LENGTH, but
+	// every heap-string producer requests length+1 from __fern_alloc_rc1 (the
+	// trailing-NUL byte), so the box was size-classed at length+1+8. Free it
+	// with the SAME length+1 payload, else the freed box lands in a smaller
+	// class than its re-allocation looks up (the len≡8 (mod 16) straddle that
+	// stranded freed strings). See docs/IR-SELFCOMPILE-OOM-FINDINGS.md.
 	g.emit("mov esi, dword ptr [rdi - 4]")
+	g.emit("add esi, 1")          // length -> allocated payload (length + NUL)
 	g.emit("jmp __fern_box_free") // tail-call: box_free(data, size) -> data
 	g.label(".Lstrdec_dec")
 	g.emit("jmp __fern_rc_dec") // tail-call: rc_dec(data) -> data
@@ -6264,8 +6270,9 @@ func (g *generator) emitStringFromBytesRuntime() {
 	g.emit("mov rax, [rbp - 24]")
 	g.emit("jmp .Lsfb_ret")
 	g.label(".Lsfb_heap")
-	// L2 rc-header layout — see __fern_strcat.
-	g.emit("mov edi, r12d")
+	// L2 rc-header layout — see __fern_strcat. Request length+1 so the box's
+	// size class matches __fern_str_dec's length+1 free (docs/IR-SELFCOMPILE-OOM).
+	g.emit("lea edi, [r12 + 1]")
 	g.emit("call __fern_alloc_rc1")
 	g.emit("mov rdi, rax")           // rdi = data ptr (= memcpy dst)
 	g.emitStrLenStore("r12d", "rdi") // length prefix at data-4
@@ -6351,9 +6358,9 @@ func (g *generator) emitStrSliceRuntime() {
 	// --- Heap output path (L2 rc-header layout — see __fern_strcat). ---
 	// alloc_rc1(new_len): rc + length share the 8-byte header, data at
 	// base+8 = rax. emitStrLenStore writes length at [data-4] = base+4,
-	// clobbering rc1's stashed payload-size slot (string-drop will compute
-	// alloc size from length, not from data-4).
-	g.emit("mov edi, r14d")
+	// clobbering rc1's stashed payload-size slot (string-drop computes alloc
+	// size from length+1, not from data-4). Request length+1 to match.
+	g.emit("lea edi, [r14 + 1]")
 	g.emit("call __fern_alloc_rc1")
 	g.emit("mov rdi, rax")           // rdi = data ptr (= memcpy dst)
 	g.emitStrLenStore("r14d", "rdi") // length prefix at data-4
@@ -6631,8 +6638,9 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("js .Lrf_err_close")
 	g.emit("mov r14, [rsp + 48]") // st_size
 
-	// L2 rc-header layout (see __fern_strcat): payload = size data only.
-	g.emit("mov edi, r14d")
+	// L2 rc-header layout (see __fern_strcat): payload = size data + NUL slack
+	// so the box class matches __fern_str_dec's length+1 free.
+	g.emit("lea edi, [r14 + 1]")
 	g.emit("call __fern_alloc_rc1")
 	g.emit("mov r13, rax") // r13 = data ptr (= base+8)
 	g.emitStrLenStore("r14d", "r13")
@@ -6979,8 +6987,9 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("sub rsp, 8")
 	g.emit("mov ebx, [rdi]") // fd
 	g.emit("mov r12, rsi")   // n
-	// L2 rc-header layout (see __fern_strcat): payload = n data only.
-	g.emit("mov edi, r12d")
+	// L2 rc-header layout (see __fern_strcat): payload = n data + NUL slack so
+	// the box class matches __fern_str_dec's length+1 free.
+	g.emit("lea edi, [r12 + 1]")
 	g.emit("call __fern_alloc_rc1")
 	g.emit("mov r13, rax") // r13 = data ptr (= base+8)
 	// read(fd, data, n)
