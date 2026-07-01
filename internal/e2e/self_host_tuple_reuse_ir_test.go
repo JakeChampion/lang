@@ -86,15 +86,16 @@ var tupleReuseIRCases = []struct {
 	{"reuse-struct-elem",
 		`struct P { x: i32, y: i32 } function main(): i32 { var a: (P, i32) = (P { x: 1, y: 2 }, 5); var s: i32 = a.1; var b: (P, i32) = (P { x: 10, y: 20 }, 9); return s + b.0.x + b.0.y + b.1; }`,
 		44, 3},
-	// Loop body: reuse is a function-body-level rewrite, so it does not fire
-	// inside a loop body — each iteration allocates both tuples (TWO static box
-	// call sites). This pins that the loop path is unaffected and stays correct:
-	// sum over i in 0..3 of ((i)+(i+1)) + (i)+(i*2) = (1+3+5+7) ... expanded:
+	// Loop body: reuse now fires INSIDE the loop body too (irlower
+	// lower_loop_body) — `b` reuses the dead `a`'s box every iteration, so the loop
+	// allocates ONE tuple box, not two. This pins the loop-body reuse and its value
+	// correctness: sum over i in 0..3 of ((i)+(i+1)) + (i)+(i*2):
 	// i=0: (0+1)+(0+0)=1; i=1: (1+2)+(1+2)=6; i=2: (2+3)+(2+4)=11;
-	// i=3: (3+4)+(3+6)=16; total = 34.
-	{"loop-body-value-correct",
+	// i=3: (3+4)+(3+6)=16; total = 34. (Dedicated loop-reuse coverage — including
+	// memory-safety at 5M iterations — lives in self_host_loop_reuse_ir_test.go.)
+	{"loop-body-reuse-fires",
 		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: (i32, i32) = (i, i + 1); var s: i32 = a.0 + a.1; var b: (i32, i32) = (i, i * 2); sum = sum + s + b.0 + b.1; i = i + 1; } return sum; }`,
-		34, 2},
+		34, 1},
 }
 
 // TestSelfHostTupleReuseIRX86_64 compiles each case through the self-hosted
