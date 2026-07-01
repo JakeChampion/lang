@@ -175,13 +175,13 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         return s.write("    bl __fn___fern_str_reverse\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind == "str_replace") {
-        // operand stack [haystack, old, new] (new top); __fern_str_replace(
-        // x0=haystack, x1=old, x2=new) -> fresh string box in x0. asm_arm64.emit_
-        // runtime emits the body in its str_search block (it allocates), so set
-        // str_search + heap.
-        s = s.mark_str_search();
-        s = s.mark_heap();
-        return s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_str_replace\n    str x0, [sp, #-16]!\n");
+        // operand stack [haystack, old, new] (new top). Call the Fern-compiled
+        // __fn___fern_str_replace via the stack ABI: param[0]=haystack on top
+        // (+16), param[1]=old (+32), param[2]=new (+48). Shared body, need-gated
+        // on str_replace. -> fresh string box in x0.
+        s = s.mark_str_replace();
+        s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+        return s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_replace\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind == "str_chars") {
         // operand stack [s box]; __fern_str_chars is a Fern runtime function now

@@ -1055,16 +1055,17 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         return CallOut { state: s, done: true };
     }
     if (name == "str_replace" && c.args.len() == 3) {
-        s = emit_expr(c.args[0], s);
-        s = emit_expr(c.args[1], s);
-        s = emit_expr(c.args[2], s);
-        s = s.write("    ldr x2, [sp], #16\n");
-        s = s.write("    ldr x1, [sp], #16\n");
-        s = s.write("    ldr x0, [sp], #16\n");
-        s = s.write("    bl __fern_str_replace\n");
+        s = emit_expr(c.args[0], s);   // h
+        s = emit_expr(c.args[1], s);   // o
+        s = emit_expr(c.args[2], s);   // nw
+        s = s.write("    ldr x2, [sp], #16\n");   // nw
+        s = s.write("    ldr x1, [sp], #16\n");   // o
+        s = s.write("    ldr x0, [sp], #16\n");   // h
+        // __fn_ stack convention: param[0]=h on top (+16), param[1]=o (+32),
+        // param[2]=nw (+48). Push param2, param1, param0.
+        s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_replace\n    add sp, sp, #48\n");
         s = s.write("    str x0, [sp, #-16]!\n");
-        s = s.mark_str_search();
-        s = s.mark_heap();
+        s = s.mark_str_replace();
         return CallOut { state: s, done: true };
     }
     if (name == "chr" && c.args.len() == 1) {
@@ -2058,16 +2059,15 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             return s;
         }
         if (fa.field == "replace" && c.args.len() == 2) {
-            s = emit_expr(fa.obj, s);
-            s = emit_expr(c.args[0], s);
-            s = emit_expr(c.args[1], s);
-            s = s.write("    ldr x2, [sp], #16\n");
-            s = s.write("    ldr x1, [sp], #16\n");
-            s = s.write("    ldr x0, [sp], #16\n");
-            s = s.write("    bl __fern_str_replace\n");
+            s = emit_expr(fa.obj, s);       // h
+            s = emit_expr(c.args[0], s);    // o
+            s = emit_expr(c.args[1], s);    // nw
+            s = s.write("    ldr x2, [sp], #16\n");   // nw
+            s = s.write("    ldr x1, [sp], #16\n");   // o
+            s = s.write("    ldr x0, [sp], #16\n");   // h
+            s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_replace\n    add sp, sp, #48\n");
             s = s.write("    str x0, [sp, #-16]!\n");
-            s = s.mark_str_search();
-            s = s.mark_heap();
+            s = s.mark_str_replace();
             return s;
         }
     }
@@ -4689,130 +4689,10 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         // asmcore.rt_src_str_repeat, emitted (need-gated on str_repeat) in the
         // migrated-helpers section via the raw-memory intrinsics. The single
         // shared body serves both arm64 AST + IR. No longer in this bundle.
-        // __fern_str_replace: x0 = haystack box, x1 = old box,
-        // x2 = new box. Mirror of asm.fern's two-pass logic.
-        // x19/x20/x21 hold the three box ptrs; x22 = count;
-        // x23 = total_len; x24 = dst buf.
-        s = s.write("__fern_str_replace:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    stp x21, x22, [sp, #-16]!\n");
-        s = s.write("    stp x23, x24, [sp, #-16]!\n");
-        s = s.write("    mov x19, x0\n");            // haystack box
-        s = s.write("    mov x20, x1\n");            // old box
-        s = s.write("    mov x21, x2\n");            // new box
-        s = s.write("    mov x22, #0\n");            // count
-        // If lenO == 0, return haystack.
-        s = s.write("    ldr x3, [x20, #8]\n");
-        s = s.write("    cbz x3, .Lrepl_passthru\n");
-        // First pass: count occurrences.
-        s = s.write("    ldr x4, [x19]\n");          // hd
-        s = s.write("    ldr x5, [x19, #8]\n");      // hlen
-        s = s.write("    ldr x6, [x20]\n");          // od
-        s = s.write("    mov x7, #0\n");             // i
-        s = s.write(".Lrepl_cl:\n");
-        s = s.write("    add x8, x7, x3\n");
-        s = s.write("    cmp x8, x5\n");
-        s = s.write("    b.gt .Lrepl_count_done\n");
-        s = s.write("    mov x9, #0\n");             // j
-        s = s.write(".Lrepl_clm:\n");
-        s = s.write("    cmp x9, x3\n");
-        s = s.write("    b.eq .Lrepl_match\n");
-        s = s.write("    add x10, x4, x7\n");
-        s = s.write("    add x10, x10, x9\n");
-        s = s.write("    ldrb w11, [x10]\n");
-        s = s.write("    add x10, x6, x9\n");
-        s = s.write("    ldrb w12, [x10]\n");
-        s = s.write("    cmp w11, w12\n");
-        s = s.write("    b.ne .Lrepl_clnomatch\n");
-        s = s.write("    add x9, x9, #1\n");
-        s = s.write("    b .Lrepl_clm\n");
-        s = s.write(".Lrepl_match:\n");
-        s = s.write("    add x22, x22, #1\n");
-        s = s.write("    add x7, x7, x3\n");
-        s = s.write("    b .Lrepl_cl\n");
-        s = s.write(".Lrepl_clnomatch:\n");
-        s = s.write("    add x7, x7, #1\n");
-        s = s.write("    b .Lrepl_cl\n");
-        s = s.write(".Lrepl_count_done:\n");
-        s = s.write("    cbz x22, .Lrepl_passthru\n");
-        // total = lenH + count * (lenN - lenO)
-        s = s.write("    ldr x10, [x21, #8]\n");     // lenN
-        s = s.write("    sub x10, x10, x3\n");
-        s = s.write("    mul x10, x10, x22\n");
-        s = s.write("    add x23, x10, x5\n");       // total_len
-        s = s.write("    mov x0, x23\n");
-        s = s.write("    cmp x0, #0\n");
-        s = s.write("    b.ne .Lrepl_alloc\n");
-        s = s.write("    mov x0, #1\n");
-        s = s.write(".Lrepl_alloc:\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x24, x0\n");            // dst buf
-        // Second pass.
-        s = s.write("    ldr x4, [x19]\n");
-        s = s.write("    ldr x5, [x19, #8]\n");
-        s = s.write("    ldr x6, [x20]\n");
-        s = s.write("    ldr x3, [x20, #8]\n");      // lenO
-        s = s.write("    mov x7, #0\n");             // i
-        s = s.write("    mov x8, x24\n");            // dst cursor
-        s = s.write(".Lrepl_walk:\n");
-        s = s.write("    add x9, x7, x3\n");
-        s = s.write("    cmp x9, x5\n");
-        s = s.write("    b.gt .Lrepl_tail\n");
-        s = s.write("    mov x9, #0\n");
-        s = s.write(".Lrepl_chk:\n");
-        s = s.write("    cmp x9, x3\n");
-        s = s.write("    b.eq .Lrepl_writenew\n");
-        s = s.write("    add x10, x4, x7\n");
-        s = s.write("    add x10, x10, x9\n");
-        s = s.write("    ldrb w11, [x10]\n");
-        s = s.write("    add x10, x6, x9\n");
-        s = s.write("    ldrb w12, [x10]\n");
-        s = s.write("    cmp w11, w12\n");
-        s = s.write("    b.ne .Lrepl_chknomatch\n");
-        s = s.write("    add x9, x9, #1\n");
-        s = s.write("    b .Lrepl_chk\n");
-        s = s.write(".Lrepl_writenew:\n");
-        s = s.write("    ldr x10, [x21]\n");
-        s = s.write("    ldr x11, [x21, #8]\n");
-        s = s.write("    cbz x11, .Lrepl_advance\n");
-        s = s.write(".Lrepl_wn_loop:\n");
-        s = s.write("    ldrb w12, [x10], #1\n");
-        s = s.write("    strb w12, [x8], #1\n");
-        s = s.write("    subs x11, x11, #1\n");
-        s = s.write("    b.ne .Lrepl_wn_loop\n");
-        s = s.write(".Lrepl_advance:\n");
-        s = s.write("    add x7, x7, x3\n");
-        s = s.write("    b .Lrepl_walk\n");
-        s = s.write(".Lrepl_chknomatch:\n");
-        s = s.write("    add x10, x4, x7\n");
-        s = s.write("    ldrb w11, [x10]\n");
-        s = s.write("    strb w11, [x8], #1\n");
-        s = s.write("    add x7, x7, #1\n");
-        s = s.write("    b .Lrepl_walk\n");
-        s = s.write(".Lrepl_tail:\n");
-        s = s.write("    cmp x7, x5\n");
-        s = s.write("    b.eq .Lrepl_box\n");
-        s = s.write("    add x10, x4, x7\n");
-        s = s.write("    ldrb w11, [x10]\n");
-        s = s.write("    strb w11, [x8], #1\n");
-        s = s.write("    add x7, x7, #1\n");
-        s = s.write("    b .Lrepl_tail\n");
-        s = s.write(".Lrepl_box:\n");
-        s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    str x24, [x0]\n");
-        s = s.write("    str x23, [x0, #8]\n");
-        s = s.write("    b .Lrepl_exit\n");
-        s = s.write(".Lrepl_passthru:\n");
-        s = s.write("    mov x0, x19\n");
-        s = s.write(".Lrepl_exit:\n");
-        s = s.write("    ldp x23, x24, [sp], #16\n");
-        s = s.write("    ldp x21, x22, [sp], #16\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
+        // __fern_str_replace is now a Fern runtime function (#2649): see
+        // asmcore.rt_src_str_replace, emitted (need-gated on str_replace) in the
+        // migrated-helpers section via the raw-memory intrinsics. The single
+        // shared body serves both arm64 AST + IR. No longer in this bundle.
         // __fern_chr is now a Fern runtime function (#2649) — the single shared
         // __fn___fern_chr body is emitted above via emit_runtime_fern_fn (the
         // raw-memory intrinsics), replacing both this register-ABI body and the
@@ -8278,6 +8158,11 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     // intrinsics; single shared body for arm64 AST + IR. heap-only dep.
     if (s.has_need("str_reverse")) {
         s = emit_runtime_fern_fn(asmcore.rt_src_str_reverse(), s);
+    }
+    // __fern_str_replace — Fern runtime function (#2649) via the raw-memory
+    // intrinsics; single shared body for arm64 AST + IR. heap-only dep.
+    if (s.has_need("str_replace")) {
+        s = emit_runtime_fern_fn(asmcore.rt_src_str_replace(), s);
     }
     // __fern_str_bytes is now a Fern runtime function (#2649): see
     // asmcore.rt_src_str_bytes, emitted (need-gated) in the migrated-helpers

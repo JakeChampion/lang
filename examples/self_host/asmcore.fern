@@ -431,6 +431,17 @@ pub function (s: EmitState) mark_str_replace(): EmitState {
     return s.need("heap").need("str_replace");
 }
 
+// rt_src_str_replace backs `s.replace(old, new)` / `str_replace(s, old, new)`
+// (#2649) — every non-overlapping occurrence of `o` in `h` replaced by `nw`,
+// via the raw-memory intrinsic floor. Empty `o` or no match → the haystack box
+// unchanged (no allocation). Otherwise two-pass: count matches, alloc the exact
+// target size (lenH + count*(lenN-lenO); min 1 for a valid box ptr), walk `h`
+// writing `nw` at each match (advancing lenO) and copying other bytes. Heap is
+// its sole dep. Replaces the hand-written register-ABI body on every backend.
+pub function rt_src_str_replace(): string {
+    return "function __fern_str_replace(h: string, o: string, nw: string): string { var lenH: i32 = h.len(); var lenO: i32 = o.len(); if (lenO == 0) { return h; } var lenN: i32 = nw.len(); var count: i32 = 0; var i: i32 = 0; while (i + lenO <= lenH) { var j: i32 = 0; var m: i32 = 1; while (j < lenO) { if (h[i + j] != o[j]) { m = 0; j = lenO; } else { j = j + 1; } } if (m == 1) { count = count + 1; i = i + lenO; } else { i = i + 1; } } if (count == 0) { return h; } var total: i32 = lenH + count * (lenN - lenO); var cap: i32 = total; if (cap == 0) { cap = 1; } var p: i32 = __raw_alloc(cap); var w: i32 = 0; var k: i32 = 0; while (k < lenH) { var m2: i32 = 0; if (k + lenO <= lenH) { var jj: i32 = 0; m2 = 1; while (jj < lenO) { if (h[k + jj] != o[jj]) { m2 = 0; jj = lenO; } else { jj = jj + 1; } } } if (m2 == 1) { var t: i32 = 0; while (t < lenN) { __raw_store8(p, w, nw[t]); w = w + 1; t = t + 1; } k = k + lenO; } else { __raw_store8(p, w, h[k]); w = w + 1; k = k + 1; } } return __raw_string(p, total); }";
+}
+
 pub function (s: EmitState) mark_i32_pow(): EmitState {
     return s.need("i32_pow");
 }

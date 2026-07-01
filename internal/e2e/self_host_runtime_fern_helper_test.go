@@ -220,6 +220,16 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_str_reverse:", ".Lstr_rev_loop"},
 		},
 		{
+			// str_replace (s.replace(old, new)) — the last per-byte string builder,
+			// Tier-2 via the raw-memory intrinsics (#2649). The old register-ABI
+			// hand-asm (a bare __fern_str_replace: label + .Lrepl_walk loop) is
+			// gone; the call site targets __fn___fern_str_replace via the stack ABI.
+			"str_replace",
+			`function main(): i32 { return "a.b".replace(".", "-").len(); }`,
+			"__fn___fern_str_replace",
+			[]string{"\n__fern_str_replace:", ".Lrepl_walk"},
+		},
+		{
 			// arr_str_join (string[].join) — AST-only; calls str_concat via `+`.
 			"arr_str_join",
 			`function main(): i32 { var xs: string[] = ["a", "b"]; return xs.join(",").len(); }`,
