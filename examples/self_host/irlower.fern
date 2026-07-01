@@ -15366,6 +15366,37 @@ function reuse_field_is_scalar(t: string): boolean {
     return t == "i32" || t == "boolean" || t == "i64" || t == "f64" || t == "u32" || t == "u64";
 }
 
+// structs_reuse_compatible: may a dead donor of type `dt` have its box reused by
+// a construction of type `rt`? Same type is always compatible (the existing
+// self-/cross-reuse case). CROSS-TYPE reuse (native's general-reuse
+// same-box-class, e.g. dead Point{x,y} → Pair{a,b}) is admitted ONLY under the
+// bulletproof-safe subset: BOTH structs are entirely SCALAR (no pointer fields,
+// so the reuse is a pure scalar overwrite — no old-value release, no offset-
+// aligned dec) AND have the SAME field count with per-position IDENTICAL slot
+// widths. Identical widths in order ⇒ byte-identical box layout ⇒ identical
+// freelist size class, so the reused box is exactly the right size and lands in
+// the same class the recipient would have allocated. emit_cross_struct_reuse
+// already writes every field with the RECIPIENT's type/offsets (the donor box is
+// only loaded as a raw pointer), so no emit change is needed. Array-field /
+// pointer-field cross-type reuse (which would need an offset-matched release of
+// the donor's old pointers) is deliberately left to same-type reuse only.
+function structs_reuse_compatible(structs: parser.StructDecl[], dt: string, rt: string): boolean {
+    if (dt == rt) { return dt.len() > 0; }
+    if (!decl_is_struct(structs, dt) || !decl_is_struct(structs, rt)) { return false; }
+    var dn: i32 = decl_field_count(structs, dt);
+    var rn: i32 = decl_field_count(structs, rt);
+    if (dn != rn || dn == 0) { return false; }
+    var i: i32 = 0;
+    while (i < dn) {
+        var dft: string = decl_field_type_at(structs, dt, i);
+        var rft: string = decl_field_type_at(structs, rt, i);
+        if (!reuse_field_is_scalar(dft) || !reuse_field_is_scalar(rft)) { return false; }
+        if (struct_field_width(structs, dt, i) != struct_field_width(structs, rt, i)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 // inarm_reuse_payload_type_ok: a payload field type the in-arm match-reuse lowering
 // can read into a temp and write back at the right width. Admits the i32-shaped
 // scalars (i32 / u32 / boolean — plain struct_get/struct_set) plus the 8-byte i64
@@ -15658,10 +15689,12 @@ function cross_construction_donor(body: parser.Stmt[], structs: parser.StructDec
         match (body[i]) {
             parser.StmtVar(dv) => {
                 var dname: string = dv.name;
-                // donor must differ from c, be a fresh full T{...} of the same type,
+                // donor must differ from c, be a fresh full T{...} whose box is
+                // reuse-compatible with c's type (same type, OR — cross-type — an
+                // all-scalar struct of the same box class; structs_reuse_compatible),
                 // not a self-overwrite donor, and not already consumed here.
                 var elig: boolean = dname != c_name
-                    && fresh_struct_lit_type(body, dname) == c_type
+                    && structs_reuse_compatible(structs, fresh_struct_lit_type(body, dname), c_type)
                     && util.index_of_str(so_bases, dname) < 0
                     && util.index_of_str(consumed, dname) < 0;
                 if (elig) {
