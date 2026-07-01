@@ -1187,11 +1187,13 @@ function emit_wasm_struct_drop_body(t: string, cx: Ctx): string {
                         // when the inner box is UNIQUELY owned, first $__struct_drop_<ft>
                         // releases the inner's OWN rc-array buffers, THEN $__fern_arr_dec
                         // frees the inner box — mirroring the x86 / arm64 deep-drop arm.
-                        // ft is a deep-drop-ok LEAF (no nested-struct field of its own),
-                        // so $__struct_drop_<ft> makes no further recursive call: depth-1,
-                        // no cycle. struct_drop_types' transitive closure emits the inner's
-                        // body. $__fern_rc_is_unique null-/rc-guards internally; a shared
-                        // inner (rc>1) skips the field-release and only the box decs.
+                        // ft is deep-drop-ok (its nested-struct closure is ACYCLIC per
+                        // nested_field_deep_drop_ok), so $__struct_drop_<ft> may itself
+                        // recurse into ft's own deep-drop-ok fields: the call graph is a
+                        // DAG (multi-level, no cycle). struct_drop_types' transitive
+                        // closure emits every reachable inner body. $__fern_rc_is_unique
+                        // null-/rc-guards internally; a shared inner (rc>1) skips the
+                        // field-release and only the box decs.
                         o = o + "    (if (call $__fern_rc_is_unique " + sload + ") (then\n";
                         o = o + "      (drop (call $__struct_drop_" + ft + " " + sload + "))))\n";
                         o = o + "    (drop (call $__fern_arr_dec " + sload + "))\n";

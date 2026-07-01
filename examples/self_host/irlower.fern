@@ -11744,29 +11744,61 @@ function struct_is_scalar_only(structs: parser.StructDecl[], sty: string): boole
 // nested_field_deep_drop_ok reports whether a DIRECT nested-struct field of type
 // `sty` is safe to DEEP-drop — i.e. its drop site may recursively release `sty`'s
 // OWN rc fields (via __struct_drop_<sty>) before freeing the inner box, instead of
-// the shallow box-only free. True iff `sty` is a LEAF struct: it has at least one
-// rc-ARRAY field to reclaim AND no nested-struct field of its own. The leaf
-// condition is the CYCLE-SAFETY guarantee: __struct_drop_<sty> for a leaf makes NO
-// recursive __struct_drop call, so the deep-drop is depth-1 and cannot loop. A
-// self-referential / mutually-recursive struct (a tree / linked list, admitted
-// leak-safe by decl_is_leaksafe via the back-edge rule) necessarily carries a
-// nested-struct field, so it is never a leaf — its field edge stays SHALLOW (the
-// existing cycle-safe one-level reclaim). Multi-level deep-drop (a non-leaf inner
-// whose nested struct is itself a leaf) needs proper back-edge analysis and is a
-// follow-up. Strings / enum / Option / tuple inner fields are not reclaimed yet,
-// so a leaf carrying only those (no array) returns false → shallow box free.
+// the shallow box-only free. True iff `sty`'s nested-struct-field closure is
+// ACYCLIC and reaches at least one rc-ARRAY field to reclaim.
+//
+// ACYCLICITY is the CYCLE-SAFETY guarantee: __struct_drop_<sty>'s emitted body
+// recurses `call __struct_drop_<fdt>` for each nested-struct field fdt admitted by
+// THIS predicate, so the emitted call graph edge sty→fdt exists iff fdt is itself
+// deep-drop-ok. If every type's nested-struct closure is acyclic, that call graph
+// is a DAG and the runtime recursion terminates (bounded by the number of distinct
+// struct types — a type cannot recur on the chain without a cycle). A back-edge
+// (sty reachable from fdt) poisons the whole ancestor chain: nddo_reach returns the
+// CYCLIC sentinel, so the field stays SHALLOW — a self-referential / mutually-
+// recursive struct (tree / linked list, admitted leak-safe by decl_is_leaksafe's
+// back-edge rule) keeps the existing one-level box-only reclaim, leak-safe.
+//
+// This generalises the former LEAF-only rule (depth-1, no nested-struct field) to
+// arbitrary acyclic depth: `A { b: B }` / `B { c: C }` / `C { xs: i32[] }` now
+// deep-drops all the way down (A's drop releases B's box AND, transitively, C's xs
+// buffer), reusing the per-level rc_is_unique guard the leaf case already applied.
+// Strings / enum / Option / tuple inner fields are still not reclaimed (decl_is_struct
+// is false for them), so a struct reaching only those (no array) returns false.
 pub function nested_field_deep_drop_ok(structs: parser.StructDecl[], sty: string): boolean {
     if (sty.len() == 0) { return false; }
+    var visiting: string[] = [];
+    return nddo_reach(structs, sty, visiting) == 1;
+}
+
+// nddo_reach is the cycle-detecting DFS behind nested_field_deep_drop_ok. It returns
+//   -1  a cycle is reachable from `sty` (a back-edge to a struct on the current path,
+//       or the depth backstop) — UNSAFE to deep-drop, and poisons every ancestor;
+//    1  `sty`'s closure is acyclic AND reaches an rc-ARRAY field (deep-drop-worthy);
+//    0  `sty`'s closure is acyclic but reaches NO rc-array (nothing to reclaim).
+// `visiting` is the set of struct types on the current recursion path (the same
+// back-edge mechanism as decl_is_leaksafe_d). A direct rc-array field (scalar / of-
+// struct / of-enum) sets the reclaimable flag; a nested-struct field recurses (its
+// cycle poisons via -1, its reclaimable content propagates up).
+function nddo_reach(structs: parser.StructDecl[], sty: string, visiting: string[]): i32 {
+    if (util.has_str(visiting, sty)) { return 0 - 1; }   // back-edge → cycle → unsafe
+    if (visiting.len() > 16) { return 0 - 1; }            // depth backstop → treat as unsafe
+    var nv: string[] = visiting.append(sty);
     var n: i32 = decl_field_count(structs, sty);
     var has_arr: boolean = false;
     var fi: i32 = 0;
     while (fi < n) {
         var fdt: string = decl_field_type_at(structs, sty, fi);
-        if (decl_is_struct(structs, fdt)) { return false; }   // nested struct → not a leaf → shallow
-        if (is_leaksafe_array_field(fdt) || is_struct_array_field_type(structs, fdt) || is_enum_array_field_type(structs, fdt)) { has_arr = true; }
+        if (decl_is_struct(structs, fdt)) {
+            var r: i32 = nddo_reach(structs, fdt, nv);
+            if (r < 0) { return 0 - 1; }   // a cycle below poisons this struct too
+            if (r == 1) { has_arr = true; }
+        } else if (is_leaksafe_array_field(fdt) || is_struct_array_field_type(structs, fdt) || is_enum_array_field_type(structs, fdt)) {
+            has_arr = true;
+        }
         fi = fi + 1;
     }
-    return has_arr;
+    if (has_arr) { return 1; }
+    return 0;
 }
 
 // emit_field_reclaim_store stores `new` (already on the operand stack) into a
@@ -11815,10 +11847,12 @@ function emit_field_reclaim_store(se: LowerState, slot: i32, sty: string, snap_s
 // sweep site exploded the native driver's per-function op arrays past the #3452
 // heap on the large modules. A per-type helper (the body emitted once, the call
 // site ~3 ops) keeps the broad struct reclaim within the emit budget, exactly as
-// __field_reclaim_<T> already does for the consume-rebind path. x86 emits a real
-// per-type body (emit_ir_struct_drops); arm64 / wasm emit a leak-safe pass-
-// through (return box). Guarded on a non-null box inside the helper. Emits
-// nothing when the struct has no rc-array field.
+// __field_reclaim_<T> already does for the consume-rebind path. All three backends
+// emit a real per-type body (x86 emit_ir_struct_drop_one, arm64
+// emit_arm64_struct_drop_one, wasm emit_wasm_struct_drop_body), each deep-dropping
+// rc-array fields plus acyclic nested-struct fields (nested_field_deep_drop_ok).
+// Guarded on a non-null box inside the helper. Emits nothing when the struct has no
+// rc-array field.
 function emit_struct_field_drops(s: LowerState, slot: i32): LowerState {
     var sty: string = s.struct_type_of_slot(slot);
     if (sty.len() == 0) { return s; }
