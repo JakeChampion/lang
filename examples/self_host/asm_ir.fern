@@ -177,35 +177,12 @@ pub function ir_helper_symbol(name: string): string {
 // case-flipping ASCII letters via the raw-memory intrinsics. Heap-dependent;
 // gated on the str_case need.
 
-// emit_ir_str_repeat appends __fern_str_repeat (s, n) — n copies of `s` in a
-// fresh buffer + box, transcribed verbatim from asm.fern. n <= 0 → empty box.
-// Heap-dependent (calls __fern_alloc), gated on the str_repeat need. Its own
-// function — see emit_ir_str_search re #2720.
-function emit_ir_str_repeat(s: asmcore.EmitState): asmcore.EmitState {
-    s = s.write("__fern_str_repeat:\n");
-    s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n");
-    s = s.write("    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n");
-    s = s.write("    movq (%rdi), %r12\n    movq 8(%rdi), %r13\n    movq %rsi, %r14\n");
-    s = s.write("    cmpq $0, %r14\n    jg .Lir_rep_compute\n");
-    s = s.write("    movq $0, %r13\n    movq $0, %r14\n");
-    s = s.write(".Lir_rep_compute:\n");
-    s = s.write("    movq %r13, %rax\n    imulq %r14, %rax\n    movq %rax, %r15\n");
-    s = s.write("    movq %r15, %rdi\n    cmpq $0, %rdi\n    jne .Lir_rep_alloc\n    movq $1, %rdi\n");
-    s = s.write(".Lir_rep_alloc:\n    call __fern_alloc\n");
-    s = s.write("    movq %rax, %rdi\n    movq %rax, %r8\n");
-    s = s.write("    cmpq $0, %r14\n    je .Lir_rep_box\n");
-    s = s.write(".Lir_rep_outer:\n");
-    s = s.write("    movq %r12, %rsi\n    movq %r13, %rcx\n    cmpq $0, %rcx\n    je .Lir_rep_next\n");
-    s = s.write(".Lir_rep_inner:\n");
-    s = s.write("    movzbq (%rsi), %rax\n    movb %al, (%rdi)\n");
-    s = s.write("    incq %rsi\n    incq %rdi\n    decq %rcx\n    jne .Lir_rep_inner\n");
-    s = s.write(".Lir_rep_next:\n    decq %r14\n    cmpq $0, %r14\n    jne .Lir_rep_outer\n");
-    s = s.write(".Lir_rep_box:\n");
-    s = s.write("    movq %r8, %r12\n    movq $16, %rdi\n    call __fern_alloc\n");
-    s = s.write("    movq %r12, (%rax)\n    movq %r15, 8(%rax)\n");
-    s = s.write("    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    leave\n    ret\n");
-    return s;
-}
+// __fern_str_repeat was hand-written here through #2649; it is now a Fern
+// runtime function (asmcore.rt_src_str_repeat) lowered through the IR pipeline
+// via emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block — n copies of
+// `s` in a fresh buffer + box via the raw-memory intrinsics. Heap-dependent,
+// gated on the str_repeat need. The op_str_repeat handler now calls the
+// stack-arg __fn___fern_str_repeat symbol.
 
 // __fern_str_trim was hand-written here through #2649; it is now a Fern runtime
 // function (asmcore.rt_src_str_trim) lowered through the IR pipeline via
@@ -3432,7 +3409,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_arr_push_owned",
         "__fern_arr_slice", "__fn___fern_str_concat", "__fn___fern_str_eq",
         "__fern_string_from_bytes", "__fn___fern_str_bytes", "__fn___fern_str_chars",
-        "__fn___fern_str_lines", "__fern_str_split", "__fern_str_repeat",
+        "__fn___fern_str_lines", "__fern_str_split", "__fn___fern_str_repeat",
         "__fern_str_replace", "__fern_str_reverse", "__fn___fern_str_trim",
         "__fn___fern_str_to_lower", "__fn___fern_str_to_upper", "__fn___fern_str_starts_with",
         "__fn___fern_str_ends_with", "__fn___fern_str_index_of", "__fern_print_str",
@@ -3508,9 +3485,11 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         return s.mark_str_case();
     }
     if (o.kind == "str_repeat") {
-        // operand stack [s box, n] (n on top); __fern_str_repeat(%rdi=s, %rsi=n)
-        // -> fresh string box in %rax (emit_ir_str_repeat provides the body).
-        s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_str_repeat\n    pushq %rax\n");
+        // operand stack [s box, n] (n on top). Call the Fern-compiled
+        // __fn___fern_str_repeat via the stack ABI: param[0]=s on top (+16),
+        // param[1]=n below (+24). -> fresh string box in %rax.
+        s = s.write("    popq %rsi\n    popq %rdi\n");
+        s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_repeat\n    addq $16, %rsp\n    pushq %rax\n");
         return s.mark_str_repeat();
     }
     if (o.kind == "str_trim") {
@@ -5126,8 +5105,13 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_to_lower(), all_structs, s);
     }
-    // String repeat — heap-dependent, gated on its str_repeat need.
-    if (s.has_need("str_repeat")) { s = emit_ir_str_repeat(s); }
+    // String repeat — now a Fern runtime function (#2649), lowered through the
+    // IR pipeline: n copies of `s` in a fresh buffer via the raw-memory
+    // intrinsics. Heap-dependent (present above).
+    if (s.has_need("str_repeat")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_repeat(), all_structs, s);
+    }
     // String trim — now a Fern runtime function (#2649), lowered through the IR
     // pipeline (zero-copy slice; the slice box allocates, so the heap runtime
     // above is present). .text since the heap runtime left us in .bss.

@@ -142,6 +142,15 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			"__fn___fern_str_to_lower",
 			[]string{"\n__fern_str_to_lower:", ".Lir_lower_loop"},
 		},
+		{
+			// str_repeat — migrated on the IR path too (#2649). The old hand-written
+			// IR body (__fern_str_repeat: / .Lir_rep_outer) must be gone; the
+			// op_str_repeat handler now calls __fn___fern_str_repeat via the stack ABI.
+			"str_repeat",
+			`function main(): i32 { return "ab".repeat(3).len(); }`,
+			"__fn___fern_str_repeat",
+			[]string{"\n__fern_str_repeat:", ".Lir_rep_outer"},
+		},
 	}
 
 	for _, tc := range cases {

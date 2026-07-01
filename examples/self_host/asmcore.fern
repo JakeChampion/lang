@@ -402,6 +402,15 @@ pub function (s: EmitState) mark_str_repeat(): EmitState {
     return s.need("heap").need("str_repeat");
 }
 
+// rt_src_str_repeat backs `str_repeat(s, n)` / `s.repeat(n)` (#2649) — n copies
+// of `s` in a fresh buffer, via the raw-memory intrinsic floor. Allocates
+// slen*count bytes (min 1 so a 0-length result still has a valid box ptr),
+// copies `s` byte-by-byte `count` times, boxes it. n <= 0 → empty string. Heap
+// is its sole dep. Replaces the hand-written register-ABI body on every backend.
+pub function rt_src_str_repeat(): string {
+    return "function __fern_str_repeat(s: string, n: i32): string { var slen: i32 = s.len(); var count: i32 = n; if (count < 0) { count = 0; } var total: i32 = slen * count; var cap: i32 = total; if (cap == 0) { cap = 1; } var p: i32 = __raw_alloc(cap); var w: i32 = 0; var k: i32 = 0; while (k < count) { var j: i32 = 0; while (j < slen) { __raw_store8(p, w, s[j]); w = w + 1; j = j + 1; } k = k + 1; } return __raw_string(p, total); }";
+}
+
 pub function (s: EmitState) mark_str_trim(): EmitState {
     return s.need("heap").need("str_trim");
 }

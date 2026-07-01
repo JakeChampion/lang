@@ -200,6 +200,16 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_str_to_lower:", ".Llower_loop"},
 		},
 		{
+			// str_repeat (s.repeat(n) / str_repeat(s, n)) — Tier-2 via the
+			// raw-memory intrinsics (#2649). The old register-ABI hand-asm (a bare
+			// __fern_str_repeat: label + .Lrep_outer loop) is gone; the call site
+			// targets __fn___fern_str_repeat via the stack ABI.
+			"str_repeat",
+			`function main(): i32 { return "ab".repeat(3).len(); }`,
+			"__fn___fern_str_repeat",
+			[]string{"\n__fern_str_repeat:", ".Lrep_outer"},
+		},
+		{
 			// arr_str_join (string[].join) — AST-only; calls str_concat via `+`.
 			"arr_str_join",
 			`function main(): i32 { var xs: string[] = ["a", "b"]; return xs.join(",").len(); }`,
