@@ -94,6 +94,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		}
 	}
 	withArgs := usesArgs(helpers)
+	withStrbuf := usesStrbuf(helpers)
 	strLabels, strOrder := collectStrings(progs, names)
 	sentLabels, sentOrder := collectSentinels(progs, names)
 	// fn_idx for closures: a function's index in the module's (sorted) emission
@@ -227,6 +228,18 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("%s:", argsCacheSym)
 		w("\t.quad 0")
 	}
+	if withStrbuf {
+		// The string-builder's length counter + byte buffer. BSS, so the large
+		// buffer costs no file space; it lands in the R+W data segment under the
+		// W^X layout, so appends can write to it.
+		w(".section .bss")
+		w(".align 8")
+		w("%s:", strbufLenSym)
+		w("\t.quad 0")
+		w(".align 8")
+		w("%s:", strbufDataSym)
+		w("\t.space %d", strbufBytes)
+	}
 	w(".section .note.GNU-stack,\"\",@progbits")
 	return b.String(), nil
 }
@@ -243,7 +256,31 @@ const (
 	argcSym      = "__ssa_argc"
 	argvSym      = "__ssa_argv"
 	argsCacheSym = "__ssa_args_cache"
+
+	// The global string-builder: an 8-byte length counter and a fixed .bss byte
+	// buffer that strbuf_append writes into and strbuf_take copies out of. The
+	// native backend uses 64 MiB, but the W^X ELF writer currently materialises
+	// the whole .bss in the file (the data segment's p_filesz == p_memsz), so an
+	// oversized buffer would bloat the binary. 1 MiB keeps a strbuf-using binary
+	// ~1 MB while still covering realistic string building; a follow-up that emits
+	// .bss as NOBITS (p_memsz > p_filesz) would let this grow back to 64 MiB at
+	// zero file cost and shrink every arm64-ssa binary by dropping the heap's file
+	// bytes too.
+	strbufLenSym  = "__ssa_strbuf_len"
+	strbufDataSym = "__ssa_strbuf_data"
+	strbufBytes   = 1 << 20 // 1 MiB (see note above)
 )
+
+// usesStrbuf reports whether the module references any strbuf builtin, so the
+// .bss counter + buffer are emitted only when needed.
+func usesStrbuf(helpers []string) bool {
+	for _, h := range helpers {
+		if h == "strbuf_reset" || h == "strbuf_append" || h == "strbuf_take" {
+			return true
+		}
+	}
+	return false
+}
 
 // usesArgs reports whether the module references the args() builtin, so _start
 // captures argc/argv and the .bss slots + cache are emitted.
@@ -307,6 +344,9 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"eprint":                 emitEprintHelper,
 	"putchar":                emitPutcharHelper,
 	"exit":                   emitExitHelper,
+	"strbuf_reset":           emitStrbufResetHelper,
+	"strbuf_append":          emitStrbufAppendHelper,
+	"strbuf_take":            emitStrbufTakeHelper,
 	"__abs_f64":              emitFloatUnaryHelper("__abs_f64", "fabs"),
 	"__sqrt_f64":             emitFloatUnaryHelper("__sqrt_f64", "fsqrt"),
 	"__floor_f64":            emitFloatUnaryHelper("__floor_f64", "frintm"),
@@ -352,6 +392,7 @@ var helperReturns64 = map[string]bool{
 	"string_from_bytes":      true,
 	"__str_slice":            true,
 	"args":                   true,
+	"strbuf_take":            true,
 	"__str_idx":              true,
 	"__arr_idx":              true,
 	"__arr_idx_1":            true,
@@ -377,6 +418,7 @@ var heapUsingHelpers = map[string]bool{
 	"string_from_bytes":      true,
 	"__str_slice":            true,
 	"args":                   true,
+	"strbuf_take":            true,
 }
 
 // collectStrings assigns a .rodata label to each unique OpConstString literal, in
@@ -1067,6 +1109,84 @@ func emitExitHelper(w func(string, ...any)) {
 	w("%s:", fnLabel("exit"))
 	w("\tmov x8, #94") // exit_group; status already in x0
 	w("\tsvc #0")
+}
+
+// emitStrbufResetHelper writes strbuf_reset(): zero the global string-builder
+// length counter. Leaf; unused return is 0.
+func emitStrbufResetHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("strbuf_reset"))
+	w("\tadrp x0, %s", strbufLenSym)
+	w("\tadd x0, x0, #:lo12:%s", strbufLenSym)
+	w("\tstr xzr, [x0]")
+	w("\tmov x0, xzr")
+	w("\tret")
+}
+
+// emitStrbufAppendHelper writes strbuf_append(s): copy the single-word string's
+// bytes (length at [s-4]) into the builder buffer past the current tail and bump
+// the length counter. Inlines the byte-copy, so it is a leaf. Unused return is 0.
+func emitStrbufAppendHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("strbuf_append"))
+	w("\tldur w2, [x0, #-4]") // w2 = append length (zero-extends into x2)
+	w("\tadrp x3, %s", strbufLenSym)
+	w("\tadd x3, x3, #:lo12:%s", strbufLenSym) // x3 = &len
+	w("\tldr x4, [x3]")                        // x4 = current len
+	w("\tadrp x5, %s", strbufDataSym)
+	w("\tadd x5, x5, #:lo12:%s", strbufDataSym)
+	w("\tadd x5, x5, x4") // x5 = dst = data + len
+	w("\tmov w6, #0")     // i
+	w(".Lssa_sba_cp:")
+	w("\tcmp w6, w2")
+	w("\tb.hs .Lssa_sba_done")
+	w("\tldrb w7, [x0, x6]")
+	w("\tstrb w7, [x5, x6]")
+	w("\tadd w6, w6, #1")
+	w("\tb .Lssa_sba_cp")
+	w(".Lssa_sba_done:")
+	w("\tadd x4, x4, x2") // len += append length
+	w("\tstr x4, [x3]")
+	w("\tmov x0, xzr")
+	w("\tret")
+}
+
+// emitStrbufTakeHelper writes strbuf_take() -> string: bump-allocate a fresh
+// single-word rc-headered string of the current builder length, copy the builder
+// bytes into it, reset the counter, and return the new string. Leaf.
+func emitStrbufTakeHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("strbuf_take"))
+	w("\tadrp x1, %s", strbufLenSym)
+	w("\tadd x1, x1, #:lo12:%s", strbufLenSym) // x1 = &len
+	w("\tldr x2, [x1]")                        // x2 = len
+	// Bump-allocate len+8: rc=1@base, len@base+4, data@base+8.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym) // x3 = &cursor
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8") // base
+	w("\tadd x5, x2, #8")  // allocSize = len + 8
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]") // bump
+	w("\tmov w7, #1")
+	w("\tstr w7, [x4]")     // rc = 1
+	w("\tstr w2, [x4, #4]") // len
+	w("\tadd x8, x4, #8")   // x8 = data
+	w("\tadrp x9, %s", strbufDataSym)
+	w("\tadd x9, x9, #:lo12:%s", strbufDataSym) // x9 = builder buffer
+	w("\tmov w10, #0")
+	w(".Lssa_sbt_cp:")
+	w("\tcmp w10, w2")
+	w("\tb.hs .Lssa_sbt_done")
+	w("\tldrb w11, [x9, x10]")
+	w("\tstrb w11, [x8, x10]")
+	w("\tadd w10, w10, #1")
+	w("\tb .Lssa_sbt_cp")
+	w(".Lssa_sbt_done:")
+	w("\tstr xzr, [x1]") // reset len = 0
+	w("\tmov x0, x8")    // return data pointer
+	w("\tret")
 }
 
 // emitStrSliceHelper writes __str_slice(base, low, high) -> data: allocate a
