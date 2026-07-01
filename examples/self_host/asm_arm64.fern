@@ -5260,6 +5260,44 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    str x0, [x3, #16]\n");        // freelist[2] = box
         s = s.write(".Lstrfree_ret:\n");
         s = s.write("    ret\n");
+        // __fern_map_free(box) — reclaim a FRESH, sole-owned map local (Perceus
+        // map-local slice), the arm64 sibling of the x86-64 body in
+        // asm_ir.emit_ir_runtime. The asm map box is a RAW 16-byte __fern_alloc(16)
+        // {keys@0, vals@8}; keys/vals are rc-headered __fern_arr_box buffers. Frees
+        // both (rc-guarded, via __fn___fern_arr_dec — no-op if aliased by a
+        // keys()/values() view) THEN returns the 16-byte box to the size-classed
+        // freelist (class 2). Called ONLY on compile-time-proven fresh, non-escaping,
+        // non-iterated map locals (irlower slot_is_reclaimable_map). Null / low-addr
+        // guarded (a null slot / the precise-drop + exit-sweep double-call are safe
+        // no-ops). String keys/values leak one level (a sound documented gap).
+        // Stack-arg ABI (box at [sp]); x19 holds the box across the nested arr_dec
+        // calls (callee-saved; __fern_arr_dec uses no bl so x30 survives too, but
+        // both are saved for safety). x9 scratch.
+        s = s.write("__fn___fern_map_free:\n");
+        s = s.write("    ldr x0, [sp]\n");                  // box
+        s = s.write("    cbz x0, .Lmapfree_ret\n");
+        s = s.write("    mov x9, #0x10000\n");
+        s = s.write("    cmp x0, x9\n");
+        s = s.write("    blo .Lmapfree_ret\n");             // low-addr guard
+        s = s.write("    stp x19, x30, [sp, #-16]!\n");     // save callee-saved + link
+        s = s.write("    mov x19, x0\n");                   // box
+        s = s.write("    ldr x0, [x19]\n");                 // keys = box[0]
+        s = s.write("    str x0, [sp, #-16]!\n");           // push stack arg (16-aligned)
+        s = s.write("    bl __fn___fern_arr_dec\n");
+        s = s.write("    add sp, sp, #16\n");
+        s = s.write("    ldr x0, [x19, #8]\n");             // vals = box[8]
+        s = s.write("    str x0, [sp, #-16]!\n");
+        s = s.write("    bl __fn___fern_arr_dec\n");
+        s = s.write("    add sp, sp, #16\n");
+        s = s.write("    adrp x3, __fern_freelist\n");
+        s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
+        s = s.write("    ldr x10, [x3, #16]\n");            // freelist[2] (16-byte box = 2 words)
+        s = s.write("    str x10, [x19]\n");                // *box = old head
+        s = s.write("    str x19, [x3, #16]\n");            // freelist[2] = box
+        s = s.write("    mov x0, x19\n");                   // return box (caller drops)
+        s = s.write("    ldp x19, x30, [sp], #16\n");
+        s = s.write(".Lmapfree_ret:\n");
+        s = s.write("    ret\n");
         s = s.write("__fn___fern_drop_arr_ptr:\n");
         s = s.write("    ret\n");
 

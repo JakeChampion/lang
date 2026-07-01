@@ -3351,3 +3351,31 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   BOOTSTRAP + wasm + IR-diff stay green (the compiler's own `for (k,v) in m` maps —
   and its explicit m.iter() uses, which stay excluded — self-compile correctly, the
   decisive soundness signal for the widening).
+- 2026-07-01: **Map local reclaim — slice 4 (mapbox reclaim + wasm-correctness fix
+  via a per-backend `__fern_map_free` helper)**. The prior slices freed a reclaimable
+  map's keys/values buffers by reading the mapbox words with `op_raw_load_ptr`
+  (mapbox[0]=keys, mapbox[1]=vals) and dec'ing each — an ASM-SHAPED sequence assuming
+  the register backends' raw 16-byte mapbox `{keys@0,vals@8}`. Two problems: (a) the
+  raw 16-byte box itself was left to leak; (b) — the real bug — `raw_load_ptr` does
+  NOT lower on the wasm backend (it fell through to a `;; unsupported bin raw_load_ptr`
+  comment), so a reclaimable map local in a wasm module left the operand stack
+  imbalanced and wasmtime REJECTED the module ("values remaining on stack at end of
+  block"). i.e. a valid program like `var m = Map{1:2}; return m.get_or(1,0);` failed
+  to compile on the wasm self-host IR backend. FIX: emit_map_buffers_free now emits a
+  single `call_direct("__fern_map_free", 1)` — a fern-helper routed per backend:
+  register backends get a new `__fn___fern_map_free` (asm_ir + asm_arm64 emit_runtime)
+  that frees the keys+vals buffers via `__fn___fern_arr_dec` (rc-guarded) AND returns
+  the raw 16-byte box to the size-class-2 freelist (the mapbox reclaim); wasm routes
+  (wasm_helper_symbol) to the AST path's `$__fern_map_release`, which null-guards,
+  rc-guards, DEEP-drops string K/V, and frees the 40-byte rc-headered box + all three
+  arrays. The helper is null-safe on every backend, so the outer null guard / block
+  is gone (the precise-drop + exit-sweep double-call is a safe null no-op via the
+  slot-zero). This makes map reclaim correct on wasm (the landmine) AND completes the
+  mapbox reclaim on the register backends. `$__fern_map_release` is always present
+  when a module uses maps (map_helpers is gated on module_uses_maps), so no new wasm
+  gating is needed. VERIFIED: new TestSelfHostMapReclaimIR{X86_64,Wasm} (borrow-only,
+  two-sequential-maps freelist stress, grown map) — the exact repro now compiles+runs
+  to the right exit on BOTH backends (pre-fix wasm produced invalid wat); byte-
+  identical FIXPOINT + BOOTSTRAP stay green (the compiler's own map reclaims now route
+  through __fern_map_free and self-compile identically), RcPreciseDropX86IR +
+  MapValuePtrIR + RcOptionBoxWasm unaffected.

@@ -96,6 +96,12 @@ pub function is_fern_helper(name: string): boolean {
         // __fn___fern_str_free; body in emit_ir_runtime. Never user-callable —
         // only the irlower reclaim sites emit the call.
         || name == "__fern_str_free"
+        // map reclaim (Perceus map-local slice): frees a fresh, non-escaping map
+        // local's keys + values buffers AND the raw 16-byte mapbox. Default
+        // ir_helper_symbol maps it to __fn___fern_map_free; wasm_helper_symbol
+        // routes it to $__fern_map_release (which additionally deep-drops string
+        // K/V). Never user-callable — only irlower's emit_map_buffers_free emits it.
+        || name == "__fern_map_free"
         || name == "__fern_rc_is_unique"
         || name == "__fern_rc_underflow_get"
         // i32.to_string()'s decimal-text helper (emit_ir_runtime provides the
@@ -824,6 +830,44 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rsi, (%rax)\n");         // *box = old head
     s = s.write("    movq %rax, 16(%r8)\n");        // freelist[2] = box
     s = s.write(".Lstrfree_ret:\n");
+    s = s.write("    ret\n");
+    // __fern_map_free(box) — reclaim a FRESH, sole-owned map local (Perceus
+    // map-local slice). The self-host asm map box is a RAW 16-byte __fern_alloc(16)
+    // {keys@0, vals@8}; keys/vals are rc-headered __fern_arr_box buffers. Frees
+    // both buffers (rc-guarded, via __fn___fern_arr_dec — a no-op if aliased by an
+    // outstanding m.keys()/values() view) THEN returns the 16-byte box to the
+    // size-classed freelist (class 2). Called ONLY on compile-time-proven fresh,
+    // non-escaping, non-iterated map locals (irlower slot_is_reclaimable_map), so
+    // single-ownership of the box is guaranteed by the emit site. Null / low-addr
+    // guarded so a conditionally-declared (null) slot AND the precise-drop /
+    // exit-sweep double-call (the slot is zeroed after the free) are safe no-ops.
+    // The string keys/values held in the buffers leak one level (a sound documented
+    // gap, matching the wasm AST path's generic release note). Stack-arg ABI (box at
+    // 8(%rsp)); %rbx holds the box across the two nested arr_dec calls (callee-saved,
+    // saved/restored; __fern_arr_dec preserves it).
+    s = s.write("__fn___fern_map_free:\n");
+    s = s.write("    movq 8(%rsp), %rax\n");         // box
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jz .Lmapfree_ret\n");
+    s = s.write("    cmpq $0x10000, %rax\n");        // low-addr guard
+    s = s.write("    jb .Lmapfree_ret\n");
+    s = s.write("    pushq %rbx\n");                 // save callee-saved
+    s = s.write("    movq %rax, %rbx\n");            // box
+    s = s.write("    movq (%rbx), %rax\n");          // keys = box[0]
+    s = s.write("    pushq %rax\n");                 // stack arg
+    s = s.write("    call __fn___fern_arr_dec\n");
+    s = s.write("    addq $8, %rsp\n");
+    s = s.write("    movq 8(%rbx), %rax\n");         // vals = box[8]
+    s = s.write("    pushq %rax\n");
+    s = s.write("    call __fn___fern_arr_dec\n");
+    s = s.write("    addq $8, %rsp\n");
+    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
+    s = s.write("    movq 16(%r8), %rsi\n");         // freelist[2] (16-byte box = 2 words)
+    s = s.write("    movq %rsi, (%rbx)\n");          // *box = old head
+    s = s.write("    movq %rbx, 16(%r8)\n");         // freelist[2] = box
+    s = s.write("    movq %rbx, %rax\n");            // return box (caller drops)
+    s = s.write("    popq %rbx\n");
+    s = s.write(".Lmapfree_ret:\n");
     s = s.write("    ret\n");
     // __fern_rc_is_unique(ptr) -> i32 — 1 iff a live heap object with rc == 1.
     // Gates the struct/enum-array field-drop's element walk (walk + free the

@@ -296,6 +296,15 @@ function wasm_helper_symbol(name: string): string {
     // (data-section, below heap_base) is a guarded no-op. Double frees are caught
     // by the rc-underflow detector, unlike the asm path.
     if (name == "__fern_str_free") { return "$__fern_arr_dec"; }
+    // map reclaim (Perceus map-local slice): route to $__fern_map_release, the
+    // wasm AST path's full map free — it null-guards, rc-guards (frees only at
+    // rc==1), DEEP-releases string keys + string values (a level the asm
+    // __fern_map_free leaks), and frees the keys/vals/used buffers + the box. The
+    // 40-byte wasm map box layout differs entirely from asm's raw 16-byte box, so
+    // routing to the wasm-native release (rather than a shared IR sequence) is
+    // what makes map reclaim correct on wasm. Always present when the module uses
+    // maps (map_helpers is gated on module_uses_maps).
+    if (name == "__fern_map_free") { return "$__fern_map_release"; }
     if (name == "__fern_rc_underflow_get") { return "$__fern_rc_underflow_count"; }
     // i32.to_string()'s decimal helper — wasm.fern's to_string_helpers emits it
     // as $__fern_i32_to_str (param i32 -> i32 box), gated on module_uses_tostring

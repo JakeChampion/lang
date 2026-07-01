@@ -15205,35 +15205,24 @@ function slot_is_reclaimable_map(s: LowerState, i: i32): boolean {
     return util.index_of_str(s.reclaimable_names, "MAP:" + s.locals[i].slot_name) >= 0;
 }
 
-// emit_map_buffers_free frees the keys + values buffers of the map in `slot` — both
-// are rc-headered arrays (__fern_alloc_u8 → __fern_arr_box), so a rc-guarded
-// __fern_rc_dec (== __fern_arr_dec) frees each at rc==1 and safe-decs if aliased
-// (m.keys()/values() views). raw_load_ptr reads mapbox word 0 (keys) / word 1
-// (values). The 16-byte RAW mapbox is left to leak (a raw-box free is a later slice).
-// A NULL GUARD wraps the reads (raw_load_ptr on a null mapbox would deref address 0):
-// this covers a conditionally-declared map slot AND the precise-drop / exit-sweep
-// coexistence — the precise drop zeroes the slot after freeing, so the exit sweep's
-// second call sees null and skips. The slot is zeroed at the end so both callers
-// leave a guarded-null slot behind.
+// emit_map_buffers_free frees the map in `slot` via the per-backend
+// __fern_map_free helper: on the register backends it frees the keys + values
+// buffers (rc-headered __fern_arr_box arrays) AND returns the raw 16-byte mapbox
+// to the freelist; on wasm __fern_map_free routes to $__fern_map_release (which
+// additionally deep-drops string K/V). Routing through a helper — rather than an
+// inline raw_load_ptr read of mapbox words — is REQUIRED for wasm: the wasm map
+// box is a 40-byte rc-headered layout (keys@8/vals@12), NOT asm's raw 16-byte
+// {keys@0,vals@8}, and raw_load_ptr does not even lower on the wasm backend (it
+// would emit an `unsupported bin` comment, leaving an imbalanced operand stack →
+// invalid wat). The helper is null-safe on every backend, so the precise-drop /
+// exit-sweep double-call is a safe no-op (the slot is zeroed after the free, so a
+// second call loads null); no outer null guard is needed. call_direct pushes the
+// helper's return (the box / count) which is dropped.
 function emit_map_buffers_free(s: LowerState, slot: i32): LowerState {
     var st: LowerState = s;
-    st = st.emit(ir.op_block(0));
     st = st.emit(ir.op_load_local(slot));
-    st = st.emit(ir.op_bin("not", 0, false));   // 1 if mapbox == null
-    st = st.emit(ir.op_brif(0));                 // null → skip the buffer frees
-    // keys = mapbox[word 0]
-    st = st.emit(ir.op_load_local(slot));
-    st = st.emit(ir.op_const_i32(0));
-    st = st.emit(ir.op_raw_load_ptr());
-    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+    st = st.emit(ir.op_call_direct("__fern_map_free", 1));
     st = st.emit(ir.op_drop());
-    // values = mapbox[word 1]
-    st = st.emit(ir.op_load_local(slot));
-    st = st.emit(ir.op_const_i32(1));
-    st = st.emit(ir.op_raw_load_ptr());
-    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
-    st = st.emit(ir.op_drop());
-    st = st.emit(ir.op_end());
     // zero the slot (a precise drop uses this so the exit-sweep re-call skips).
     st = st.emit(ir.op_const_i32(0));
     st = st.emit(ir.op_store_local(slot));
