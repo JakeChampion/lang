@@ -130,6 +130,11 @@ func TestSelfHostRcOptionBoxWasm(t *testing.T) {
 		// emit_opt_payload_drop frees the payload + box right after the if. Value +
 		// detector clean.
 		{"option-arr-precise-if-freed", `function f(n: i32): i32 { var o: Option[i32[]] = Some([10, 20, 30]); var c = 0; if (n > 0) { match (o) { Some(v) => { c = v[0] + v[2]; }, None => {} } } return c + 2 + __fern_rc_underflow_count(); } function main(): i32 { return f(5); }`, 42},
+		// PRECISE drop of a scalar RESULT in a nested if (kind-gated, so the Result box
+		// — not just an Option — is freed). Value + detector clean.
+		{"result-scalar-precise-if-freed", `function f(n: i32): i32 { var r: Result[i32, i32] = Ok(40); var c = 0; if (n > 0) { match (r) { Ok(v) => { c = v; }, Err(e) => { c = e; } } } return c + 2 + __fern_rc_underflow_count(); } function main(): i32 { return f(5); }`, 42},
+		// PRECISE drop of an rc-PAYLOAD (array) RESULT Ok box in a nested if.
+		{"result-arr-precise-if-freed", `function f(n: i32): i32 { var r: Result[i32[], i32] = Ok([10, 20, 30]); var c = 0; if (n > 0) { match (r) { Ok(v) => { c = v[0] + v[2]; }, Err(e) => { c = e; } } } return c + 2 + __fern_rc_underflow_count(); } function main(): i32 { return f(5); }`, 42},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
