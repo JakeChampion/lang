@@ -339,6 +339,49 @@ func TestArmRunArithShiftSigned(t *testing.T) {
 	}
 }
 
+// TestArmRunUnsignedShiftWidth pins the u32 logical-right-shift width fix with a
+// HARDCODED expected value (an Eval-diff would agree with the emit even if both
+// regressed). (0 - 3) is 0xFFFFFFFD at i32 width, stored sign-extended; as u32
+// that is 4294967293, and >>u 28 = 0xF = 15. A 64-bit `lsr` on the sign-extended
+// value instead yields 0xFF = 255 — the SHA-256 miscompile. The operand comes
+// from a runtime subtract (not a const-fold) so the sign-extension is live.
+func TestArmRunUnsignedShiftWidth(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		x := f.AddParam()
+		e := f.NewBlock()
+		n := f.AddOp(e, ssa.OpSub, constOp(f, e, 0), x) // -x (0xFFFFFFFD for x=3)
+		f.SetRet(e, f.AddOp(e, ssa.OpShrU, n, constOp(f, e, 28)))
+		return f
+	}
+	for _, nreg := range []int{2, 4, 8} {
+		if got := assembleRunArm(t, build(), nreg, 3); got != 15 {
+			t.Errorf("nreg=%d: (-3)>>u28 exit=%d, want 15", nreg, got)
+		}
+	}
+}
+
+// TestArmRunUnsignedDivWidth pins the u32 unsigned-divide width fix, again with a
+// HARDCODED value. (0 - 4) is 0xFFFFFFFC at i32 width; as u32 that is 4294967292,
+// and /u 1000000000 = 4. A signed 64-bit divide of the sign-extended -4 would
+// yield 0. Both operands are runtime values so no const-fold intervenes.
+func TestArmRunUnsignedDivWidth(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		x := f.AddParam()
+		d := f.AddParam()
+		e := f.NewBlock()
+		n := f.AddOp(e, ssa.OpSub, constOp(f, e, 0), x) // -x (0xFFFFFFFC for x=4)
+		f.SetRet(e, f.AddOp(e, ssa.OpDivU, n, d))
+		return f
+	}
+	for _, nreg := range []int{2, 4, 8} {
+		if got := assembleRunArm(t, build(), nreg, 4, 1000000000); got != 4 {
+			t.Errorf("nreg=%d: 0xFFFFFFFC /u 1e9 exit=%d, want 4", nreg, got)
+		}
+	}
+}
+
 // Heap round-trip: alloc 16 bytes, store 42/100 at offsets 0/8, load both, sum ->
 // 142 -> exit 142. Exercises the bump allocator + full-word ldr/str against the
 // writable .bss heap.
