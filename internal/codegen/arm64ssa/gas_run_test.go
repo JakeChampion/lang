@@ -1086,6 +1086,35 @@ func TestArmRunUnaryOps(t *testing.T) {
 	}
 }
 
+// Single-instruction f64 math helpers, each observed through FToIS. Also guards
+// the helper-return width fix: an f64 return must not be i32-masked (which would
+// zero its exponent bits). abs(-3.5)=3, sqrt(16)=4, floor(3.7)=3, ceil(3.2)=4,
+// trunc(3.9)=3, round(3.5)=4 (ties away).
+func TestArmRunFloatMathHelpers(t *testing.T) {
+	cases := []struct {
+		helper string
+		in     float64
+		want   int
+	}{
+		{"__abs_f64", -3.5, 3},
+		{"__sqrt_f64", 16.0, 4},
+		{"__floor_f64", 3.7, 3},
+		{"__ceil_f64", 3.2, 4},
+		{"__trunc_f64", 3.9, 3},
+		{"__round_f64", 3.5, 4},
+	}
+	for _, tc := range cases {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		r := callOp(f, e, tc.helper, constFloat(f, e, tc.in))
+		f.SetRet(e, f.AddOp(e, ssa.OpFToIS, r))
+		got := assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 8)
+		if got != tc.want {
+			t.Errorf("%s(%v) as i32 = %d, want %d", tc.helper, tc.in, got, tc.want)
+		}
+	}
+}
+
 // max via a comparison-selected branch: max(9, 4) = 9 -> exit 9.
 func TestArmRunMax(t *testing.T) {
 	build := func() *ssa.Func {
