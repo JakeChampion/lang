@@ -2796,6 +2796,75 @@ function str_local_binding_is_fresh(init: parser.Expr): boolean {
     return false;
 }
 
+// is_fresh_str_temp reports whether the string expression `e`, when lowered as a
+// concat OPERAND, produces a FRESH, ANONYMOUS box that this frame solely owns and
+// that is dead the instant the concat has read it — so it can be freed right after
+// (#2649 anonymous-temporary reclaim). An anonymous sub-expression has no name, so
+// it is referenced nowhere else and cannot alias a live value:
+//   - a string LITERAL ("x"): const_str allocates a fresh 16-byte box (its .rodata
+//     data is skipped by __fern_str_free's heap-base guard; the box is reclaimed on
+//     asm, and on wasm the whole literal is data-section so arr_dec is a guarded
+//     no-op) — this is the `s + "x"` per-iteration box leak;
+//   - a fresh producer (str_local_binding_is_fresh: a nested concat, a string
+//     method, or a named producer) — the intermediate of `a + b + c` / `x + f(y)`.
+// A bare ident / field / index (an ALIAS of a live string) is excluded — freeing it
+// would dangle the aliased value. The expr_is_str gate confirms it is a string (so
+// an int `+` operand or an array `.reverse()` never matches).
+function is_fresh_str_temp(e: parser.Expr, s: LowerState): boolean {
+    if (!expr_is_str(e, s)) { return false; }
+    match (e) { parser.ExprString(_) => { return true; }, _ => {} }
+    return str_local_binding_is_fresh(e);
+}
+
+// emit_str_concat_reclaim lowers a string concat `b.left + b.right`, and frees any
+// operand that is_fresh_str_temp classifies as a dead anonymous temp right after
+// the concat consumes it. Each fresh operand is captured into a scratch slot before
+// the concat (a store-then-reload that leaves the operand on the stack in place),
+// the result is parked in its own scratch, the captured temps are freed, then the
+// result is reloaded. A concat with NO fresh operand takes the plain fast path
+// (bare op_str_concat), so non-reclaiming concats are byte-unchanged.
+function emit_str_concat_reclaim(b: parser.ExprBinary, s: LowerState): LowerState {
+    var lf: boolean = is_fresh_str_temp(b.left, s);
+    var rf: boolean = is_fresh_str_temp(b.right, s);
+    var sl: LowerState = lower_expr(b.left, s);
+    if (!sl.ok) { return sl; }
+    var lt: i32 = 0 - 1;
+    if (lf) {
+        var lname: string = "$cclt" + util.i32_to_string(sl.locals.len());
+        sl = sl.add_local(lname);
+        lt = sl.slot_of(lname);
+        sl = sl.emit(ir.op_store_local(lt));
+        sl = sl.emit(ir.op_load_local(lt));
+    }
+    var sr: LowerState = lower_expr(b.right, sl);
+    if (!sr.ok) { return sr; }
+    var rt: i32 = 0 - 1;
+    if (rf) {
+        var rname: string = "$ccrt" + util.i32_to_string(sr.locals.len());
+        sr = sr.add_local(rname);
+        rt = sr.slot_of(rname);
+        sr = sr.emit(ir.op_store_local(rt));
+        sr = sr.emit(ir.op_load_local(rt));
+    }
+    sr = sr.emit(ir.op_str_concat());
+    if (!lf && !rf) { return sr; }
+    var resname: string = "$ccres" + util.i32_to_string(sr.locals.len());
+    sr = sr.add_local(resname);
+    var res: i32 = sr.slot_of(resname);
+    sr = sr.emit(ir.op_store_local(res));
+    if (lf) {
+        sr = sr.emit(ir.op_load_local(lt));
+        sr = sr.emit(ir.op_call_direct("__fern_str_free", 1));
+        sr = sr.emit(ir.op_drop());
+    }
+    if (rf) {
+        sr = sr.emit(ir.op_load_local(rt));
+        sr = sr.emit(ir.op_call_direct("__fern_str_free", 1));
+        sr = sr.emit(ir.op_drop());
+    }
+    return sr.emit(ir.op_load_local(res));
+}
+
 // to_unsigned_kind maps a signed IR op kind to its unsigned variant, for u64
 // operands (#2904): comparisons, shift-right, and div/rem. Sign-agnostic kinds
 // (add/sub/mul/and/or/xor/shl/eq/ne) pass through unchanged.
@@ -4600,12 +4669,17 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // (`<` `>` `<=` `>=`) lower to str_cmp (signed -/0/+) followed by the
             // relational op against 0.
             if (expr_is_str(b.left, s) || expr_is_str(b.right, s)) {
-                if (b.op == "+" || b.op == "==" || b.op == "!=") {
+                // `+` concat frees any fresh anonymous OPERAND temp right after the
+                // concat reads it (`s + "x"` box, `a + b + c` intermediates) — see
+                // emit_str_concat_reclaim; a non-fresh-operand concat takes its plain
+                // fast path. `==` / `!=` keep the bare lower (operands are read, not
+                // moved; the temp's own scope-exit / accumulator reclaim handles it).
+                if (b.op == "+") { return emit_str_concat_reclaim(b, s); }
+                if (b.op == "==" || b.op == "!=") {
                     var sl: LowerState = lower_expr(b.left, s);
                     if (!sl.ok) { return sl; }
                     var sr: LowerState = lower_expr(b.right, sl);
                     if (!sr.ok) { return sr; }
-                    if (b.op == "+") { return sr.emit(ir.op_str_concat()); }
                     var se: LowerState = sr.emit(ir.op_str_eq());
                     if (b.op == "!=") { return se.emit(ir.op_bin("not", 0, false)); }
                     return se;
