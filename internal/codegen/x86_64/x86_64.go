@@ -307,6 +307,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesArrCowInPlace {
 		g.emitArrCowInPlaceRuntime()
 	}
+	if g.usesArrCowInPlacePtr {
+		g.emitArrCowInPlacePtrRuntime()
+	}
 	if g.usesDropArrPtr {
 		g.emitDropArrPtrRuntime()
 	}
@@ -612,6 +615,15 @@ type generator struct {
 	// Phase 2b helper called by the IR's `arr[i] = v` lowering
 	// for local-ident array targets. See arm64's mirror.
 	usesArrCowInPlace bool
+	// usesArrCowInPlacePtr gates `__fern_arr_cow_inplace_ptr` — the
+	// pointer-element variant of __fern_arr_cow_inplace, used by the
+	// IR's `.with` / `arr[i]=v` lowering when the array element is a
+	// single-word rc-tracked pointer (struct / enum / array / tuple /
+	// closure). On the COPY path it inc's each copied element so the
+	// fresh buffer independently owns them (the plain helper's raw
+	// memcpy would leave the copy sharing the receiver's elements at
+	// unchanged rc — a use-after-free once either array is dropped).
+	usesArrCowInPlacePtr bool
 	// usesDropArrPtr gates `__fern_drop_arr_ptr` — the Phase 3
 	// drop handler for arrays of pointer-shaped rc-tracked
 	// elements. See arm64's mirror + the wasm runtime.
@@ -740,6 +752,11 @@ func (g *generator) recordUse(target string) {
 		g.usesArrCowInPlace = true
 		g.usesAlloc = true
 		g.usesMemcpy = true
+	case "__fern_arr_cow_inplace_ptr":
+		g.usesArrCowInPlacePtr = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
+		g.usesRcInc = true
 	case "__fern_drop_arr_ptr":
 		g.usesDropArrPtr = true
 		g.usesRcDec = true
@@ -4589,6 +4606,110 @@ func (g *generator) emitArrCowInPlaceRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_arr_cow_inplace, .-__fern_arr_cow_inplace")
+}
+
+// emitArrCowInPlacePtrRuntime emits `__fern_arr_cow_inplace_ptr(arr,
+// stride) -> buf` — the pointer-element variant of
+// __fern_arr_cow_inplace. Identical fast path (rc==1 → return arr
+// unchanged, in-place mutation). On the COPY path (rc>1) it does the
+// same alloc + memcpy, then walks the `len` elements and __fern_rc_inc's
+// each so the fresh buffer independently OWNS them. The plain helper's
+// raw memcpy leaves the copy sharing the receiver's element pointers at
+// unchanged rc; dropping either array then frees elements the other
+// still references (a use-after-free). stride is the pointer width, so
+// every element is a single-word pointer loaded 8 bytes wide.
+//
+// System V inputs: rdi=arr, esi=stride. Returns new data ptr in rax.
+func (g *generator) emitArrCowInPlacePtrRuntime() {
+	g.line("")
+	g.line(".globl __fern_arr_cow_inplace_ptr")
+	g.line(".type __fern_arr_cow_inplace_ptr, @function")
+	g.label("__fern_arr_cow_inplace_ptr")
+	// Fast path: rc == 1 → return arr (in-place; elements already owned).
+	g.emit("mov eax, dword ptr [rdi - 8]")
+	g.emit("cmp eax, 1")
+	g.emit("jne .Lcowp_slow")
+	g.emit("mov rax, rdi")
+	g.emit("ret")
+	g.label(".Lcowp_slow")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("push r13")
+	g.emit("push r14")
+	g.emit("push r15")
+	g.emit("sub rsp, 8")                     // pad to 16-byte align
+	g.emit("mov rbx, rdi")                   // rbx = arr
+	g.emit("mov r12d, esi")                  // r12d = stride
+	g.emit("mov r13d, dword ptr [rdi - 4]")  // r13d = len
+	g.emit("mov r14d, dword ptr [rdi - 12]") // r14d = cap
+	// Decrement arr's rc (taking the caller's reference as we copy).
+	// Skip when the rc word has its high bit set (static sentinel).
+	g.emit("mov eax, dword ptr [rbx - 8]")
+	g.emit("test eax, eax")
+	g.emit("js .Lcowp_skip_dec")
+	g.emit("sub eax, 1")
+	g.emit("mov dword ptr [rbx - 8], eax")
+	g.label(".Lcowp_skip_dec")
+	// headerBytes = max(16, stride) in r15d.
+	g.emit("mov r15d, 16")
+	g.emit("cmp r12d, 16")
+	g.emit("jle .Lcowp_hdr_set")
+	g.emit("mov r15d, r12d")
+	g.label(".Lcowp_hdr_set")
+	// allocSize = headerBytes + cap * stride
+	g.emit("mov eax, r14d")
+	g.emit("imul eax, r12d")
+	g.emit("add eax, r15d")
+	g.emit("mov edi, eax")
+	g.emit("call __fern_alloc")
+	// rax = base. new_data = base + headerBytes (in r15d → rcx).
+	g.emit("mov ecx, r15d")
+	g.emit("lea r11, [rax + rcx]")
+	// Store cap at [base + headerBytes - 12]
+	g.emit("lea rdx, [rax + rcx - 12]")
+	g.emit("mov dword ptr [rdx], r14d")
+	// Store rc = 1 at [base + headerBytes - 8]
+	g.emit("lea rdx, [rax + rcx - 8]")
+	g.emit("mov dword ptr [rdx], 1")
+	// Store len at [base + headerBytes - 4]
+	g.emit("lea rdx, [rax + rcx - 4]")
+	g.emit("mov dword ptr [rdx], r13d")
+	// memcpy(new_data, arr, len * stride). Stash new_data in the pad.
+	g.emit("mov rdi, r11")
+	g.emit("mov rsi, rbx")
+	g.emit("mov eax, r13d")
+	g.emit("imul eax, r12d")
+	g.emit("mov edx, eax")
+	g.emit("mov qword ptr [rsp], r11")
+	g.emit("call __fern_memcpy")
+	g.emit("mov rbx, qword ptr [rsp]") // rbx = new_data (survives rc_inc)
+	// Element-retain loop: inc each copied pointer element so the fresh
+	// buffer owns its own reference. r12 = stride, r13 = len both survive
+	// __fern_rc_inc (callee-saved). r15 = i.
+	g.emit("xor r15, r15")
+	g.label(".Lcowp_inc_loop")
+	g.emit("cmp r15d, r13d")
+	g.emit("jge .Lcowp_inc_done")
+	g.emit("mov rax, r15")
+	g.emit("imul rax, r12")
+	g.emit("mov rdi, qword ptr [rbx + rax]") // element pointer (8-byte)
+	g.emit("call __fern_rc_inc")             // guards null / low / sentinel
+	g.emit("inc r15")
+	g.emit("jmp .Lcowp_inc_loop")
+	g.label(".Lcowp_inc_done")
+	g.emit("mov rax, rbx") // return new_data
+	// Tear down (mirror the pad free before popping callee-saves).
+	g.emit("add rsp, 8")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_arr_cow_inplace_ptr, .-__fern_arr_cow_inplace_ptr")
 }
 
 // emitDropArrPtrRuntime emits `__fern_drop_arr_ptr(ptr, stride)
