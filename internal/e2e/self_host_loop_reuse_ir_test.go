@@ -131,6 +131,17 @@ var loopReuseIRCases = []struct {
 	{"cross-block-churn-safe",
 		`struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5000000) { var a: P = P { x: i, y: 1 }; var s: i32 = a.x + a.y; if (i > 0) { var b: P = P { x: i, y: 3 }; sum = (sum + b.x + b.y) % 1000; } i = i + 1; } return sum; }`,
 		229, 1},
+	// Cross-block reuse also fires for a TUPLE recipient: the loop-body tuple donor
+	// `a` is reused by the if-nested tuple `b` — ONE allocation. Value 31.
+	{"cross-block-tuple-reuse",
+		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: (i32, i32) = (i, i + 1); var s: i32 = a.0 + a.1; if (i > 0) { var b: (i32, i32) = (i, 3); sum = sum + b.0 + b.1; } sum = sum + s; i = i + 1; } return sum; }`,
+		31, 1},
+	// Cross-block tuple memory safety at scale: now that scalar tuple loop
+	// temporaries are reclaimed, the reused box is freed each turn — 5M iterations
+	// stay balanced (exit 229, one static allocation), not the pre-fix 190 MB leak.
+	{"cross-block-tuple-churn-safe",
+		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5000000) { var a: (i32, i32) = (i, 1); var s: i32 = a.0 + a.1; if (i > 0) { var b: (i32, i32) = (i, 3); sum = (sum + b.0 + b.1) % 1000; } i = i + 1; } return sum; }`,
+		229, 1},
 }
 
 // TestSelfHostLoopReuseIRX86_64 compiles each case through the self-hosted x86-64

@@ -12393,6 +12393,18 @@ function xblock_scan_body(body: parser.Stmt[], b_stmts: parser.Stmt[], k: i32, s
                             }
                         }
                     },
+                    // A tuple recipient pairs with a dead-from-k same-arity donor tuple
+                    // (element-eligibility is checked at consumption, where the lowering
+                    // state exists, like the same-block tuple path). Now that scalar
+                    // tuple loop temporaries are reclaimed (not leaked), the reused box
+                    // is freed each turn — no leak.
+                    parser.ExprTuple(tl) => {
+                        var tdonor: string = cross_tuple_construction_donor(b_stmts, k, tl.elements.len(), rv.name, cons);
+                        if (tdonor.len() > 0) {
+                            pairs = pairs.append(rv.name + "|" + tdonor);
+                            cons = cons.append(tdonor);
+                        }
+                    },
                     _ => {}
                 }
             },
@@ -12505,19 +12517,35 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
             // reuse that donor's box in place (release_prior, reclaimable-gated
             // inside emit_cross_struct_reuse), then drop the consumed pairing.
             var xbname: string = "";
-            var xb_is_struct: boolean = false;
+            var xb_kind: i32 = 0;   // 1 = struct construction, 2 = tuple construction
             match (stmts[i]) {
                 parser.StmtVar(rv) => {
                     xbname = rv.name;
-                    match (rv.init) { parser.ExprStructLit(_) => { xb_is_struct = true; }, _ => {} }
+                    match (rv.init) {
+                        parser.ExprStructLit(_) => { xb_kind = 1; },
+                        parser.ExprTuple(_) => { xb_kind = 2; },
+                        _ => {}
+                    }
                 },
                 _ => {}
             }
             var xbd: string = "";
-            if (xb_is_struct) { xbd = xblock_donor_for(st.xblock_pending, xbname); }
+            if (xb_kind > 0) { xbd = xblock_donor_for(st.xblock_pending, xbname); }
             if (xbd.len() > 0) {
+                // Reuse the donor's box in place (release_prior, reclaimable-gated in
+                // the emitter). Dispatch by the recipient's construction kind; a tuple
+                // whose elements aren't ctor-eligible falls back to normal lowering.
                 match (stmts[i]) {
-                    parser.StmtVar(rv) => { st = emit_cross_struct_reuse(rv.name, rv.init, xbd, true, st); },
+                    parser.StmtVar(rv) => {
+                        match (rv.init) {
+                            parser.ExprStructLit(_) => { st = emit_cross_struct_reuse(rv.name, rv.init, xbd, true, st); },
+                            parser.ExprTuple(tup) => {
+                                if (tuple_lit_ctor_eligible(tup, st)) { st = emit_cross_tuple_reuse(rv.name, rv.init, xbd, true, st); }
+                                else { st = lower_stmt(stmts[i], st); }
+                            },
+                            _ => { st = lower_stmt(stmts[i], st); },
+                        }
+                    },
                     _ => {},
                 }
                 st = st.with_xblock_pending(xblock_without(st.xblock_pending, xbname));
@@ -12525,9 +12553,12 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
                 // Lowering a NESTED block: set the cross-block pairings for THIS
                 // statement's if-arms (empty otherwise) so the recursive lower_block
                 // sees only its own donors, then restore the enclosing pending. The
-                // donor exclusion (xreuse.donors) keeps cross- and same-block reuse
-                // from claiming the same box.
-                var pairings: string[] = xblock_pairings_for(stmts, st.structs, i, so.bases, xreuse.donors);
+                // donor exclusion (same-block struct + tuple donors) keeps cross- and
+                // same-block reuse from claiming the same box.
+                var xbcons: string[] = xreuse.donors;
+                var xtc: i32 = 0;
+                while (xtc < xtuple.donors.len()) { xbcons = xbcons.append(xtuple.donors[xtc]); xtc = xtc + 1; }
+                var pairings: string[] = xblock_pairings_for(stmts, st.structs, i, so.bases, xbcons);
                 var prev: string[] = st.xblock_pending;
                 st = st.with_xblock_pending(pairings);
                 st = lower_stmt(stmts[i], st);
