@@ -3404,3 +3404,21 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   variant yields 2 (no reuse) — direct proof the optimization lowers in place. Byte-
   identical FIXPOINT + BOOTSTRAP stay green (the compiler's own cross-type reuses now
   fire and self-compile deterministically); RcPreciseDropX86IR unaffected.
+- 2026-07-01: **Reuse — cross-type reuse widened to leak-safe-array fields (pointer-field
+  general-reuse parity)**. The cross-type same-box-class reuse (prior slice) admitted only
+  ALL-SCALAR structs. Native's general reuse also reuses across types with POINTER fields
+  (TestGeneralReuseFiresCrossTypePointerField: dead Holder{id,items:i32[]} → Bag{tag,data:i32[]}).
+  structs_reuse_compatible now admits a per-position leak-safe-ARRAY field (i32[]/i64[]/f64[]/
+  boolean[]) when BOTH structs have an array at that position (matching KIND — the emit
+  dispatches scalar-overwrite vs array-dec by the RECIPIENT's field kind, so a scalar donor
+  slot under an array recipient position would be dec'd as a bogus pointer). emit_cross_struct_reuse
+  already rc-dec's the donor's OLD array at the field offset before writing the recipient's fresh
+  one — the dec is rc-GUARDED (frees at rc==1 else decrements, so a co-owned donor array is never
+  double-freed), and the recipient's array is separately required FRESH (cross_reuse_sites' `ok`
+  gate / xblock_struct_arrays_fresh), so no emit change was needed. Identical widths + kinds ⇒
+  byte-identical layout ⇒ same freelist class. String / nested-struct / map / option / tuple
+  fields (needing a deep element walk) stay excluded. VERIFIED: new array-field-cross +
+  array-field-cross-then-alloc-probe cases (x86 + wasm, __rc_underflow()==0 confirms exactly-once
+  array release) + a 200k-iter freelist-corruption stress + the fires-assertion extended with an
+  array-field 3-vs-4 arr_box dead/live pair (proves in-place lowering). Byte-identical FIXPOINT +
+  BOOTSTRAP stay green.

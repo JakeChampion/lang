@@ -19,12 +19,21 @@ import (
 const crossTypeReuseDeadDonor = `struct Point { x: i32, y: i32 } struct Pair { a: i32, b: i32 } function main(): i32 { var p = Point { x: 3, y: 4 }; var s = p.x + p.y; var q = Pair { a: s, b: 9 }; return q.a + q.b; }`
 const crossTypeReuseLiveDonor = `struct Point { x: i32, y: i32 } struct Pair { a: i32, b: i32 } function main(): i32 { var p = Point { x: 3, y: 4 }; var q = Pair { a: 5, b: 9 }; return q.a + q.b + p.x + p.y; }`
 
+// Array-field cross-type pair: a dead Holder{id,items} reused for Bag{tag,data}
+// (identical [i32, i32[]] layout). Dead donor → the struct box is reused (3
+// __fern_arr_box: donor box + donor items array + recipient data array); with the
+// donor read after the recipient, no reuse fires (4: both struct boxes + both
+// arrays). The delta proves the array-field cross-type reuse lowers in place.
+const crossTypeReuseArrDeadDonor = `struct Holder { id: i32, items: i32[] } struct Bag { tag: i32, data: i32[] } function main(): i32 { var h = Holder { id: 1, items: [1, 2] }; var s = h.id + h.items[0]; var b = Bag { tag: s, data: [3, 4] }; return b.tag + b.data[0]; }`
+const crossTypeReuseArrLiveDonor = `struct Holder { id: i32, items: i32[] } struct Bag { tag: i32, data: i32[] } function main(): i32 { var h = Holder { id: 1, items: [1, 2] }; var b = Bag { tag: 5, data: [3, 4] }; return b.tag + b.data[0] + h.id + h.items[1]; }`
+
 // crossTypeReuseIRCases exercise cross-TYPE FBIP reuse (structs_reuse_compatible):
-// a dead all-scalar struct donor whose box is reused in place by a LATER
-// construction of a DIFFERENT struct type with the same box class (identical
-// per-position field widths). Native does this (general_reuse
-// same-box-class); the self-host previously required the donor and recipient to
-// be the SAME type. Each case embeds a value check (returns 90/91 on mismatch)
+// a dead struct donor whose box is reused in place by a LATER construction of a
+// DIFFERENT struct type with the same box class (identical per-position field
+// widths + kinds — scalar↔scalar or leak-safe-array↔leak-safe-array). Native does
+// this (general_reuse same-box-class incl. pointer fields); the self-host
+// previously required the donor and recipient to be the SAME type. Each case
+// embeds a value check (returns 90/91 on mismatch)
 // and then returns __rc_underflow() — so want=0 means both the reused value is
 // correct AND no over-release occurred. A mis-sized reuse (wrong box class) would
 // corrupt the freelist and surface as a wrong value or non-zero underflow,
@@ -47,6 +56,15 @@ var crossTypeReuseIRCases = []struct {
 	// Different field COUNT must NOT cross-reuse (guard rejects), but the program
 	// stays correct: Trip allocates fresh. 3+4 read, 10+20+30 = 60.
 	{"different-count-no-reuse", `struct Point { x: i32, y: i32 } struct Trip { a: i32, b: i32, c: i32 } function main(): i32 { var p = Point { x: 3, y: 4 }; var u = p.x + p.y; var t = Trip { a: 10, b: 20, c: 30 }; if (t.a + t.b + t.c != 60) { return 90; } if (u != 7) { return 92; } return __rc_underflow(); }`, 0},
+	// ARRAY-FIELD cross-type: dead Holder{id:i32, items:i32[]} reused for
+	// Bag{tag:i32, data:i32[]} (identical [i32, i32[]] layout). The reuse rc-dec's
+	// the donor's OLD items array before writing the recipient's fresh data array;
+	// the rc-underflow detector confirms exactly-once release. 2+30+40+11 = 83.
+	{"array-field-cross", `struct Holder { id: i32, items: i32[] } struct Bag { tag: i32, data: i32[] } function main(): i32 { var h = Holder { id: 1, items: [10, 20] }; var u = h.id + h.items[0]; var b = Bag { tag: 2, data: [30, 40] }; if (b.tag + b.data[0] + b.data[1] + u != 83) { return 90; } return __rc_underflow(); }`, 0},
+	// ARRAY-FIELD reuse then a FRESH array: the donor's freed items buffer must not
+	// dangle into the recipient's data or the later fresh array. data=[10,20],
+	// fresh=[7,8,9]: 10+20 + 7+8+9 + u(11) + tag(2) = 67.
+	{"array-field-cross-then-alloc-probe", `struct Holder { id: i32, items: i32[] } struct Bag { tag: i32, data: i32[] } function main(): i32 { var h = Holder { id: 1, items: [10, 20] }; var u = h.id + h.items[0]; var b = Bag { tag: 2, data: [10, 20] }; var fresh = [7, 8, 9]; if (b.data[0] + b.data[1] + fresh[0] + fresh[1] + fresh[2] + u + b.tag != 67) { return 91; } return __rc_underflow(); }`, 0},
 }
 
 func crossTypeReuseIRSrc(mainBody string) string {
@@ -123,6 +141,14 @@ func TestSelfHostCrossTypeReuseFiresX86_64(t *testing.T) {
 	}
 	if got := countAllocs(crossTypeReuseLiveDonor); got != 2 {
 		t.Errorf("live cross-type donor: got %d struct-box allocs, want 2 (reuse must NOT fire)", got)
+	}
+	// Array-field cross-type: dead donor reuses the box (3 arr_box: donor box +
+	// donor items + recipient data); live donor allocates both boxes (4).
+	if got := countAllocs(crossTypeReuseArrDeadDonor); got != 3 {
+		t.Errorf("dead array-field cross-type donor: got %d arr_box, want 3 (reuse should fire)", got)
+	}
+	if got := countAllocs(crossTypeReuseArrLiveDonor); got != 4 {
+		t.Errorf("live array-field cross-type donor: got %d arr_box, want 4 (reuse must NOT fire)", got)
 	}
 }
 

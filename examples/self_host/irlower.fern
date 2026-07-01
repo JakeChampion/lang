@@ -15404,17 +15404,27 @@ function reuse_field_is_scalar(t: string): boolean {
 // structs_reuse_compatible: may a dead donor of type `dt` have its box reused by
 // a construction of type `rt`? Same type is always compatible (the existing
 // self-/cross-reuse case). CROSS-TYPE reuse (native's general-reuse
-// same-box-class, e.g. dead Point{x,y} → Pair{a,b}) is admitted ONLY under the
-// bulletproof-safe subset: BOTH structs are entirely SCALAR (no pointer fields,
-// so the reuse is a pure scalar overwrite — no old-value release, no offset-
-// aligned dec) AND have the SAME field count with per-position IDENTICAL slot
-// widths. Identical widths in order ⇒ byte-identical box layout ⇒ identical
-// freelist size class, so the reused box is exactly the right size and lands in
-// the same class the recipient would have allocated. emit_cross_struct_reuse
-// already writes every field with the RECIPIENT's type/offsets (the donor box is
-// only loaded as a raw pointer), so no emit change is needed. Array-field /
-// pointer-field cross-type reuse (which would need an offset-matched release of
-// the donor's old pointers) is deliberately left to same-type reuse only.
+// same-box-class, e.g. dead Point{x,y} → Pair{a,b}, or Holder{id,items} →
+// Bag{tag,data}) is admitted under a layout-identity subset: the two structs
+// have the SAME field count and, per position, either
+//   - both a leak-only SCALAR of the SAME slot width (a pure overwrite), OR
+//   - both a leak-safe ARRAY field (i32[]/i64[]/f64[]/boolean[] — a pointer slot):
+//     emit_cross_struct_reuse rc-dec's the donor's OLD array at that offset before
+//     writing the recipient's fresh one. The dec is rc-GUARDED (frees only at
+//     rc==1, else decrements), so a donor array co-owned elsewhere is never
+//     double-freed; the recipient's array is separately required to be a FRESH
+//     literal (cross_reuse_sites' `ok` gate / xblock_struct_arrays_fresh), so the
+//     reused box solely owns it going forward.
+// The per-position KIND must match (array↔array, scalar↔scalar): the emit chooses
+// scalar-overwrite vs array-dec by the RECIPIENT's field kind, so a scalar donor
+// slot under an array recipient position would be dec'd as a bogus pointer (and an
+// array donor slot under a scalar recipient position would leak). Identical
+// widths + kinds in order ⇒ byte-identical box layout ⇒ identical freelist size
+// class, so the reused box is exactly the right size and lands in the same class
+// the recipient would have allocated. emit_cross_struct_reuse writes every field
+// with the RECIPIENT's type/offsets (the donor box is only loaded as a raw
+// pointer), so no emit change is needed. String / nested-struct / map / option /
+// tuple fields (needing a deep element walk on release) are still excluded.
 function structs_reuse_compatible(structs: parser.StructDecl[], dt: string, rt: string): boolean {
     if (dt == rt) { return dt.len() > 0; }
     if (!decl_is_struct(structs, dt) || !decl_is_struct(structs, rt)) { return false; }
@@ -15425,7 +15435,11 @@ function structs_reuse_compatible(structs: parser.StructDecl[], dt: string, rt: 
     while (i < dn) {
         var dft: string = decl_field_type_at(structs, dt, i);
         var rft: string = decl_field_type_at(structs, rt, i);
-        if (!reuse_field_is_scalar(dft) || !reuse_field_is_scalar(rft)) { return false; }
+        var d_arr: boolean = is_leaksafe_array_field(dft);
+        var r_arr: boolean = is_leaksafe_array_field(rft);
+        if (!reuse_field_is_scalar(dft) && !d_arr) { return false; }
+        if (!reuse_field_is_scalar(rft) && !r_arr) { return false; }
+        if (d_arr != r_arr) { return false; }   // kinds must match (emit dispatches on recipient kind)
         if (struct_field_width(structs, dt, i) != struct_field_width(structs, rt, i)) { return false; }
         i = i + 1;
     }
