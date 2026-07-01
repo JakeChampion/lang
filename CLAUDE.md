@@ -171,17 +171,28 @@ driver resolves no stdlib, so anything needing `std/iter`/`std/map`/…
 falsely reads `ast`). The genuine remaining AST fallbacks are
 documented, not probe-findable: the ~512-function merged-bundle budget
 (the bootstrap self-compile, tied to the native large-tier freelist
-#3425) and specific **wasm-IR runtime gaps** in `wasm_eligible`
-(`wasm_ir.fern`). The tractable wasm-IR gaps are the ones that REUSE the
-existing wasm AST runtime or return a struct-free box (`env` →
-`Option[string]`, done) or need a fresh self-contained buffer (`strbuf`,
-done). The remaining ones are substantial: the filesystem ops
-(`stat`/`read_dir`/`remove_file`/`temp_dir`) return `Result`/`Option`
-wrapping `IoError`/`FileStat` **structs**, whose wasm IR boxes need
-module-specific type-ids — so they need IR-side (not monolithic-helper)
-box construction; and the libm transcendentals (`fsin`/`fcos`/`fexp`/
-`flog`) need polynomial-approx WAT (no wasm instruction). The async /
-`tcp_*` / `poll` exclusions are actively being worked in parallel — avoid.
+#3425) and the **deferred wasm-IR exclusions** in `wasm_eligible`
+(`wasm_ir.fern`). The per-function IR subset itself is mature: the
+runtime-helper migration to Fern is complete (chr, str_concat,
+i32_to_string, str_to_upper/lower, str_repeat, str_reverse, str_replace,
+string_from_bytes, str_split all lower as Fern functions via the
+raw-memory intrinsics), and the wasm-IR runtime gaps that were once
+listed here are now **closed**: the filesystem ops
+(`stat`/`read_dir`/`remove_file`/`remove_dir_all`/`temp_dir`) lower on
+the wasm IR path with IR-side struct-box construction (module type-ids
+via `struct_type_id`; see `TestSelfHostStatIRWasm` et al.), and the libm
+transcendentals (`fexp`/`flog`/`fsin`/`fcos`/`fpow`) lower via
+polynomial-approx WAT helpers (`wasm.exp_func`/`log_func`/`pow_func`/…,
+the wasm siblings of the arm64 helpers, wired in `wasm_ir_run`). The
+wasm-IR exclusions that genuinely REMAIN are all the async / readiness /
+socket set — `poll` / `timer_fd` / `wasm_timer_pollable` /
+`wasm_pollable_drop` / `tcp_*` / `subprocess` — which need the
+component-model wasi interfaces the bare core-wasm+preview1 backend
+doesn't wire; these are actively worked in parallel, **avoid**. Net: the
+tractable goal-1 IR-widening work is essentially done; the next frontier
+is **goal 2** (the Perceus port — reuse analysis is the remaining large,
+memory-safety-critical piece; inc/dec, borrow, drop-specialisation, and
+per-type struct-drop / field-reclaim slices already landed).
 
 ## Engineering bar (non-negotiable)
 
