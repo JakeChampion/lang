@@ -83,9 +83,20 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		fmt.Fprintf(&b, format, args...)
 		b.WriteByte('\n')
 	}
+	heap := usesHeap(progs)
+
 	w(".text")
 	w(".globl _start")
 	w("_start:")
+	// Initialise the bump-allocator cursor to the base of the .bss heap. x9/x10
+	// are scratch here (before the entry args are loaded into x0..x7).
+	if heap {
+		w("\tadrp x9, %s", heapSym)
+		w("\tadd x9, x9, #:lo12:%s", heapSym)
+		w("\tadrp x10, %s", heapPtrSym)
+		w("\tadd x10, x10, #:lo12:%s", heapPtrSym)
+		w("\tstr x9, [x10]")
+	}
 	// Load the entry arguments into the argument registers before the call.
 	for i := range progs[entry].ParamLocs {
 		var v int64
@@ -106,8 +117,43 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		}
 		w("")
 	}
+	if heap {
+		// A fixed .bss buffer backs the bump allocator (mirrors the x86-64 SSA
+		// path). Under the W^X ELF layout this lands in the R+W data segment, so
+		// stores to it succeed. The cursor sits just before the buffer.
+		w(".section .bss")
+		w(".align 8")
+		w("%s:", heapPtrSym)
+		w("\t.quad 0")
+		w("%s:", heapSym)
+		w("\t.space %d", heapBytes)
+	}
 	w(".section .note.GNU-stack,\"\",@progbits")
 	return b.String(), nil
+}
+
+// Heap symbols + size backing the arm64 SSA bump allocator, mirroring the x86-64
+// path's fixed .bss buffer (a lazy mmap/brk allocator is future work).
+const (
+	heapPtrSym = "__ssa_heap_ptr"
+	heapSym    = "__ssa_heap"
+	heapBytes  = 1 << 16 // 64 KiB
+)
+
+// usesHeap reports whether any program contains a heap op (so the .bss heap
+// section + cursor are emitted and initialised only when needed).
+func usesHeap(progs map[string]*x86.Program) bool {
+	for _, p := range progs {
+		for _, blk := range p.Blocks {
+			for _, in := range blk.Insts {
+				switch in.Op {
+				case x86.MemAlloc, x86.MemLoad, x86.MemStore:
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // emitFunc writes one function: its label, a stack frame (spill slots, plus a
@@ -316,6 +362,20 @@ func resolveRegMoves(moves [][2]int) []string {
 		return false
 	}
 	for len(moves) > 0 {
+		// Drop no-op self-moves. Redirecting a swap can turn the other half of a
+		// 2-cycle into {r, r}, which is already satisfied — and unlike x86's
+		// `xchg r, r`, a three-eor self-swap would ZERO the register, so these
+		// must be discarded rather than emitted.
+		for j := 0; j < len(moves); {
+			if moves[j][0] == moves[j][1] {
+				moves = append(moves[:j], moves[j+1:]...)
+			} else {
+				j++
+			}
+		}
+		if len(moves) == 0 {
+			break
+		}
 		idx := -1
 		for j, m := range moves {
 			if !isSrc(m[0]) {
@@ -400,6 +460,12 @@ func asmInst(in x86.Inst, scratch int) ([]string, error) {
 			fmt.Sprintf("cmp %s, %s", xreg(in.Dst), xreg(in.Src)),
 			fmt.Sprintf("cset %s, %s", xreg(in.Dst), cc),
 		}, nil
+	case x86.MemAlloc:
+		return memAllocSeq(in, scratch), nil
+	case x86.MemLoad:
+		return memLoadSeq(in), nil
+	case x86.MemStore:
+		return memStoreSeq(in), nil
 	default:
 		return nil, fmt.Errorf("arm64ssa: opcode %d not supported yet", in.Op)
 	}
@@ -437,6 +503,90 @@ func divShiftSeq(in x86.Inst, scratch int) []string {
 		}
 	}
 	return append(out, maskFix(in.Dst, in.W)...)
+}
+
+// memAllocSeq renders the bump allocator. It mirrors the x86-64 SSA layout: an
+// 8-byte rc header (rc=1 at base+0) precedes the data, and the returned pointer
+// is base+8, so the RC drop helpers (a later slice) find a valid count at
+// [data-8]. base = align8(cursor); the cursor advances past header+size.
+//
+// Unlike x86 (which stores the rc immediate straight to memory and addresses the
+// cursor RIP-relative, needing one staging register), AArch64 must form the
+// cursor address in a register and hold the rc value in a register. So it needs
+// two temporaries beyond the destination; they are drawn from the scratch pool
+// (the top four registers) avoiding Dst and Src — the emitter may itself have
+// homed this op's result in a low scratch register (s0..s2), so a fixed offset
+// from `scratch` could otherwise alias the base pointer mid-sequence.
+func memAllocSeq(in x86.Inst, scratch int) []string {
+	var tmps []int
+	for i := 0; i < 4 && len(tmps) < 2; i++ {
+		r := scratch - i
+		if r == in.Dst || r == in.Src {
+			continue
+		}
+		tmps = append(tmps, r)
+	}
+	d := xreg(in.Dst)
+	addr := xreg(tmps[0])
+	tmp := xreg(tmps[1])
+	wtmp := wreg(tmps[1])
+	return []string{
+		fmt.Sprintf("adrp %s, %s", addr, heapPtrSym),
+		fmt.Sprintf("add %s, %s, #:lo12:%s", addr, addr, heapPtrSym),
+		fmt.Sprintf("ldr %s, [%s]", d, addr), // d = cursor
+		fmt.Sprintf("add %s, %s, #7", d, d),
+		fmt.Sprintf("and %s, %s, #-8", d, d), // d = base (8-aligned)
+		fmt.Sprintf("mov %s, #1", wtmp),
+		fmt.Sprintf("str %s, [%s]", wtmp, d), // rc = 1 (4 bytes at base)
+		fmt.Sprintf("add %s, %s, %s", tmp, d, xreg(in.Src)),
+		fmt.Sprintf("add %s, %s, #8", tmp, tmp), // header bytes
+		fmt.Sprintf("str %s, [%s]", tmp, addr),  // cursor = base + size + 8
+		fmt.Sprintf("add %s, %s, #8", d, d),     // return data = base + 8
+	}
+}
+
+// memLoadSeq renders a load of in.Bytes bytes from [Src + Imm] into Dst. It
+// mirrors the x86-64 widths: 8-byte loads move a full word; 4-byte loads move
+// the low word (zero-extended); sub-word loads sign- or zero-extend per
+// in.Signed. The trailing maskFix reproduces the model's i32 width mask.
+func memLoadSeq(in x86.Inst) []string {
+	d, dw := xreg(in.Dst), wreg(in.Dst)
+	mem := fmt.Sprintf("[%s, #%d]", xreg(in.Src), in.Imm)
+	var out []string
+	switch in.Bytes {
+	case 8:
+		out = []string{fmt.Sprintf("ldr %s, %s", d, mem)}
+	case 4:
+		out = []string{fmt.Sprintf("ldr %s, %s", dw, mem)} // zero-extends to 64
+	case 2:
+		if in.Signed {
+			out = []string{fmt.Sprintf("ldrsh %s, %s", d, mem)}
+		} else {
+			out = []string{fmt.Sprintf("ldrh %s, %s", dw, mem)}
+		}
+	default: // 1 byte
+		if in.Signed {
+			out = []string{fmt.Sprintf("ldrsb %s, %s", d, mem)}
+		} else {
+			out = []string{fmt.Sprintf("ldrb %s, %s", dw, mem)}
+		}
+	}
+	return append(out, maskFix(in.Dst, in.W)...)
+}
+
+// memStoreSeq renders a store of the low in.Bytes bytes of Src2 to [Src + Imm].
+func memStoreSeq(in x86.Inst) []string {
+	mem := fmt.Sprintf("[%s, #%d]", xreg(in.Src), in.Imm)
+	switch in.Bytes {
+	case 1:
+		return []string{fmt.Sprintf("strb %s, %s", wreg(in.Src2), mem)}
+	case 2:
+		return []string{fmt.Sprintf("strh %s, %s", wreg(in.Src2), mem)}
+	case 4:
+		return []string{fmt.Sprintf("str %s, %s", wreg(in.Src2), mem)}
+	default: // 8 bytes
+		return []string{fmt.Sprintf("str %s, %s", xreg(in.Src2), mem)}
+	}
 }
 
 // binMnemonic maps an SSA integer arithmetic/bitwise op to its AArch64 mnemonic.

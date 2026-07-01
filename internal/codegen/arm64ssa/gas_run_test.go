@@ -13,6 +13,18 @@ import (
 	"github.com/jakechampion/lang/internal/ssa"
 )
 
+// assembleWX assembles a program into a W^X static AArch64 ELF (an R+X code
+// segment and a separate R+W data segment), so the .bss bump heap is writable at
+// runtime. Non-heap programs assemble fine too — their data blob is empty.
+func assembleWX(t *testing.T, asm string) []byte {
+	t.Helper()
+	text, rodata, err := nativearm64.AssembleProgramWX(asm, nativeelf.TextVAddrWX)
+	if err != nil {
+		t.Fatalf("AssembleProgramWX: %v\n--- asm ---\n%s", err, asm)
+	}
+	return nativeelf.StaticExecutableDataWX(text, rodata)
+}
+
 // constOp adds an integer constant op and returns its value.
 func constOp(f *ssa.Func, b *ssa.Block, imm int64) ssa.Value {
 	v := f.AddOp(b, ssa.OpConstInt)
@@ -25,6 +37,18 @@ func callOp(f *ssa.Func, b *ssa.Block, callee string, args ...ssa.Value) ssa.Val
 	v := f.AddOp(b, ssa.OpCall, args...)
 	b.Ops[len(b.Ops)-1].Str = callee
 	return v
+}
+
+// loadOp / storeOp add a full-word heap load / store at base+offset.
+func loadOp(f *ssa.Func, b *ssa.Block, base ssa.Value, offset int64) ssa.Value {
+	v := f.AddOp(b, ssa.OpLoad, base)
+	b.Ops[len(b.Ops)-1].Imm = offset
+	return v
+}
+
+func storeOp(f *ssa.Func, b *ssa.Block, base, val ssa.Value, offset int64) {
+	op := f.AddOpNoResult(b, ssa.OpStore, base, val)
+	op.Imm = offset
 }
 
 // assembleRunArmModule assembles a multi-function module's arm64 SSA output into
@@ -40,12 +64,8 @@ func assembleRunArmModule(t *testing.T, funcs map[string]*ssa.Func, entry string
 	if err != nil {
 		t.Fatalf("EmitAsmModule: %v", err)
 	}
-	text, rodata, err := nativearm64.AssembleProgram(asm, nativeelf.TextVAddr)
-	if err != nil {
-		t.Fatalf("AssembleProgram: %v\n--- asm ---\n%s", err, asm)
-	}
 	bin := filepath.Join(t.TempDir(), "prog")
-	if err := os.WriteFile(bin, nativeelf.StaticExecutableData(text, rodata), 0o755); err != nil {
+	if err := os.WriteFile(bin, assembleWX(t, asm), 0o755); err != nil {
 		t.Fatalf("write bin: %v", err)
 	}
 	if e := exec.Command(qemu, bin).Run(); e != nil {
@@ -89,12 +109,8 @@ func assembleRunArm(t *testing.T, f *ssa.Func, numAlloc int, entryArgs ...int64)
 	if err != nil {
 		t.Fatalf("EmitAsm: %v", err)
 	}
-	text, rodata, err := nativearm64.AssembleProgram(asm, nativeelf.TextVAddr)
-	if err != nil {
-		t.Fatalf("AssembleProgram: %v\n--- asm ---\n%s", err, asm)
-	}
 	bin := filepath.Join(t.TempDir(), "prog")
-	if err := os.WriteFile(bin, nativeelf.StaticExecutableData(text, rodata), 0o755); err != nil {
+	if err := os.WriteFile(bin, assembleWX(t, asm), 0o755); err != nil {
 		t.Fatalf("write bin: %v", err)
 	}
 	if e := exec.Command(qemu, bin).Run(); e != nil {
@@ -319,6 +335,77 @@ func TestArmRunArithShiftSigned(t *testing.T) {
 	}
 	for _, nreg := range []int{2, 4, 8} {
 		runMatchesEval(t, build(), nreg, 64)
+	}
+}
+
+// Heap round-trip: alloc 16 bytes, store 42/100 at offsets 0/8, load both, sum ->
+// 142 -> exit 142. Exercises the bump allocator + full-word ldr/str against the
+// writable .bss heap.
+func TestArmRunMemoryRoundtrip(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		p := f.AddOp(e, ssa.OpAlloc, constOp(f, e, 16))
+		storeOp(f, e, p, constOp(f, e, 42), 0)
+		storeOp(f, e, p, constOp(f, e, 100), 8)
+		a := loadOp(f, e, p, 0)
+		b := loadOp(f, e, p, 8)
+		f.SetRet(e, f.AddOp(e, ssa.OpAdd, a, b))
+		return f
+	}
+	for _, n := range []int{2, 4, 8} {
+		runMatchesEval(t, build(), n)
+	}
+}
+
+// Heap shared across a call: main allocs a cell, setCell stores into it via a
+// pointer arg, main reads it back -> 77. Validates that the heap survives the
+// call ABI (pointer passed in x0, caller-saved across the bl).
+func TestArmRunMemorySharedAcrossCalls(t *testing.T) {
+	build := func() map[string]*ssa.Func {
+		setCell := ssa.NewFunc("setCell")
+		ptr := setCell.AddParam()
+		val := setCell.AddParam()
+		se := setCell.NewBlock()
+		storeOp(setCell, se, ptr, val, 0)
+		setCell.SetRet(se, ssa.Value{})
+
+		main := ssa.NewFunc("main")
+		me := main.NewBlock()
+		p := main.AddOp(me, ssa.OpAlloc, constOp(main, me, 8))
+		_ = callOp(main, me, "setCell", p, constOp(main, me, 77))
+		main.SetRet(me, loadOp(main, me, p, 0))
+		return map[string]*ssa.Func{"setCell": setCell, "main": main}
+	}
+	moduleMatchesEval(t, build(), "main")
+}
+
+// Sub-word store/load widths: store a byte (200) and a halfword (4097) and read
+// them back unsigned; (200 & 0xff) + (4097 & 0xffff) = 200 + 4097 = 4297 ->
+// exit 4297 & 0xff = 201. Exercises strb/ldrb and strh/ldrh.
+func TestArmRunSubwordMemory(t *testing.T) {
+	byteOp := func(f *ssa.Func, b *ssa.Block, base, val ssa.Value, off int64, store ssa.OpKind) {
+		op := f.AddOpNoResult(b, store, base, val)
+		op.Imm = off
+	}
+	loadU := func(f *ssa.Func, b *ssa.Block, base ssa.Value, off int64, k ssa.OpKind) ssa.Value {
+		v := f.AddOp(b, k, base)
+		b.Ops[len(b.Ops)-1].Imm = off
+		return v
+	}
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		p := f.AddOp(e, ssa.OpAlloc, constOp(f, e, 8))
+		byteOp(f, e, p, constOp(f, e, 200), 0, ssa.OpStore8)
+		byteOp(f, e, p, constOp(f, e, 4097), 2, ssa.OpStore16)
+		a := loadU(f, e, p, 0, ssa.OpLoad8U)
+		b := loadU(f, e, p, 2, ssa.OpLoad16U)
+		f.SetRet(e, f.AddOp(e, ssa.OpAdd, a, b))
+		return f
+	}
+	for _, n := range []int{2, 4, 8} {
+		runMatchesEval(t, build(), n)
 	}
 }
 
