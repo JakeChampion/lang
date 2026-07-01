@@ -42,6 +42,7 @@ const (
 	MemAlloc                // reg[Dst] = heap.alloc(reg[Src])
 	MemLoad                 // reg[Dst] = heap[reg[Src] + Imm]
 	MemStore                // heap[reg[Src] + Imm] = reg[Src2]
+	ConstStr                // reg[Dst] = pointer to freshly heap-materialised Str bytes
 )
 
 // Inst is one straight-line abstract instruction. Registers are indices into a
@@ -60,6 +61,7 @@ type Inst struct {
 
 	Callee  string // Call: callee function name
 	ArgLocs []Loc  // Call: homes of the argument values, in order
+	Str     string // ConstStr: the literal bytes to materialise
 }
 
 // TermKind is an MBlock terminator shape.
@@ -132,6 +134,14 @@ func Emit(f *ssa.Func, numAlloc int) (*Program, error) {
 		s0:       numAlloc, s1: numAlloc + 1, s2: numAlloc + 2, s3: numAlloc + 3,
 		idx:        map[*ssa.Block]int{},
 		phiTempCap: maxPhiCount(f),
+		strLen:     map[int32]int{},
+	}
+	for _, b := range f.Blocks {
+		for _, op := range b.Ops {
+			if op.Kind == ssa.OpConstString && op.Result.IsValid() {
+				e.strLen[op.Result.ID] = len(op.Str)
+			}
+		}
 	}
 	// Phi-move temp slots live just above the allocator's spill slots and are
 	// reused across edges (edges never execute concurrently).
@@ -187,6 +197,7 @@ type emitter struct {
 	phiTempBase int
 	phiTempCap  int
 	numSlots    int
+	strLen      map[int32]int // OpConstString result ID -> literal byte length
 
 	cur []Inst // instruction accumulator for the block being emitted
 }
@@ -473,6 +484,23 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		}
 		bytes, _ := memInfo(op.Kind)
 		e.push(Inst{Op: MemStore, Src: base, Src2: val, Imm: op.Imm, Bytes: bytes})
+		return nil
+
+	case ssa.OpConstString:
+		e.push(Inst{Op: ConstStr, Dst: e.s2, Str: op.Str})
+		e.place(op.Result, e.s2)
+		return nil
+
+	case ssa.OpConstStringLen:
+		if len(op.Args) != 1 {
+			return fmt.Errorf("x86_64ssa: OpConstStringLen needs 1 arg")
+		}
+		n, ok := e.strLen[op.Args[0].ID]
+		if !ok {
+			return fmt.Errorf("x86_64ssa: OpConstStringLen arg is not an OpConstString result")
+		}
+		e.push(Inst{Op: MovImm, Dst: e.s2, Imm: int64(n), W: op.Width})
+		e.place(op.Result, e.s2)
 		return nil
 
 	default:

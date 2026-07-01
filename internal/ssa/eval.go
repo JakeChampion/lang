@@ -112,6 +112,18 @@ func memAccess(k OpKind) (bytes int, signed bool) {
 func evalWith(funcs map[string]*Func, h *heap, f *Func, args ...int64) (int64, error) {
 	vals := map[int32]int64{}
 
+	// strLen maps an OpConstString result to its literal byte length, so
+	// OpConstStringLen (which references the OpConstString result) resolves the
+	// compile-time length — matching how the backends lower it.
+	strLen := map[int32]int{}
+	for _, b := range f.Blocks {
+		for _, op := range b.Ops {
+			if op.Kind == OpConstString && op.Result.IsValid() {
+				strLen[op.Result.ID] = len(op.Str)
+			}
+		}
+	}
+
 	params := realParams(f)
 	if len(args) != len(params) {
 		return 0, fmt.Errorf("Eval: got %d args, function has %d params", len(args), len(params))
@@ -163,7 +175,7 @@ func evalWith(funcs map[string]*Func, h *heap, f *Func, args ...int64) (int64, e
 			if op.Kind == OpPhi {
 				continue
 			}
-			if err := evalOp(funcs, h, op, vals); err != nil {
+			if err := evalOp(funcs, h, strLen, op, vals); err != nil {
 				return 0, err
 			}
 		}
@@ -234,7 +246,7 @@ func b2i(b bool) int64 {
 	return 0
 }
 
-func evalOp(funcs map[string]*Func, h *heap, op *Op, vals map[int32]int64) error {
+func evalOp(funcs map[string]*Func, h *heap, strLen map[int32]int, op *Op, vals map[int32]int64) error {
 	// Binary integer ops read Args[0], Args[1]; unary read Args[0].
 	arg := func(i int) (int64, error) {
 		if i >= len(op.Args) {
@@ -394,6 +406,25 @@ func evalOp(funcs map[string]*Func, h *heap, op *Op, vals map[int32]int64) error
 		}
 		n, _ := memAccess(op.Kind)
 		return h.store(base+op.Imm, val, n) // no result
+
+	case OpConstString:
+		// Materialise the literal bytes on the heap and return a pointer.
+		p := h.alloc(int64(len(op.Str)))
+		for i := 0; i < len(op.Str); i++ {
+			if err := h.store(p+int64(i), int64(op.Str[i]), 1); err != nil {
+				return err
+			}
+		}
+		return set(p)
+	case OpConstStringLen:
+		if len(op.Args) != 1 {
+			return fmt.Errorf("Eval: OpConstStringLen needs 1 arg")
+		}
+		n, ok := strLen[op.Args[0].ID]
+		if !ok {
+			return fmt.Errorf("Eval: OpConstStringLen arg is not an OpConstString result")
+		}
+		return set(int64(n))
 
 	default:
 		return fmt.Errorf("Eval: unsupported op %v", op.Kind)
