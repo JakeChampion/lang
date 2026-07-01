@@ -573,18 +573,20 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // [fd] -> __fern_tcp_pollable(x0=fd) -> fd (native identity).
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_tcp_pollable\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "opt_make") {
-            // Option/Result box [tag@0, payload@8], 16 bytes. Payload is on the
-            // operand stack; alloc first (it survives, like struct_make), then
-            // store tag + payload.
+            // Option/Result box [tag@0, payload@8], 2 words. rc-HEADERED via
+            // __fern_arr_box(cap=2) — like struct_make/tuple_make — so a fresh,
+            // single-owner, dead-after-match scalar Option local can be freed
+            // (__fern_rc_dec) after its consuming match. Offsets unchanged (arr_box's
+            // len@0 word is overwritten by the tag; cap@data-16 drives the free size).
             s = s.mark_heap();
-            s = s.write("    mov x0, #16\n    bl __fern_alloc\n");
+            s = s.write("    mov x0, #2\n    bl __fern_arr_box\n");
             s = s.write("    mov x1, #" + util.i32_to_string(o.i32_imm) + "\n    str x1, [x0]\n");
             s = s.write("    ldr x1, [sp], #16\n    str x1, [x0, #8]\n");
             s = s.write("    str x0, [sp, #-16]!\n");
         } else if (o.kind == "opt_none") {
-            // Payloadless box with tag 1 (None).
+            // Payloadless box with tag 1 (None), rc-headered (arr_box cap=2).
             s = s.mark_heap();
-            s = s.write("    mov x0, #16\n    bl __fern_alloc\n");
+            s = s.write("    mov x0, #2\n    bl __fern_arr_box\n");
             s = s.write("    mov x1, #1\n    str x1, [x0]\n    str xzr, [x0, #8]\n");
             s = s.write("    str x0, [sp, #-16]!\n");
         } else if (o.kind == "opt_tag") {

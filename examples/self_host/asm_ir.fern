@@ -3691,15 +3691,19 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             }
             s = s.write("    pushq %rax\n");
         } else if (o.kind == "opt_make") {
-            // Option/Result box [tag@0, payload@8], 16 bytes. Payload is on the
-            // operand stack; alloc first (it survives on the machine stack, like
-            // struct_make), then store tag + payload.
-            s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
+            // Option/Result box [tag@0, payload@8], 2 words. rc-HEADERED via
+            // __fern_arr_box(cap=2) — exactly like struct_make/tuple_make — so a
+            // fresh, single-owner, dead-after-match scalar Option local can be freed
+            // (__fern_rc_dec) after its consuming match. Offsets unchanged (arr_box's
+            // len@0 word is overwritten by the tag; cap@data-16 drives the free size).
+            // Payload is on the operand stack; alloc first (it survives on the
+            // machine stack, like struct_make), then store tag + payload.
+            s = s.write("    movq $2, %rdi\n    call __fern_arr_box\n");
             s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", (%rax)\n");
             s = s.write("    popq %rcx\n    movq %rcx, 8(%rax)\n    pushq %rax\n");
         } else if (o.kind == "opt_none") {
-            // Payloadless box with tag 1 (None).
-            s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
+            // Payloadless box with tag 1 (None), rc-headered (arr_box cap=2).
+            s = s.write("    movq $2, %rdi\n    call __fern_arr_box\n");
             s = s.write("    movq $1, (%rax)\n    movq $0, 8(%rax)\n    pushq %rax\n");
         } else if (o.kind == "opt_tag") {
             // pop box; tag is the i32 at offset 0.

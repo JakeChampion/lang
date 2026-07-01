@@ -275,6 +275,29 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// the tuple's precise drop reads back intact (the early free was sound — no
 		// double-free / dangling slot the fresh alloc could recycle). c 7 + 66; det 0.
 		{"scalar-tuple-precise-corruption-probe-detector", `function go(): i32 { var t: (i32, i32) = (3, 4); var c = 0; var i = 0; while (i < 1) { c = t.0 + t.1; i = i + 1; } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (c != 7) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// Fresh scalar OPTION reclaim: opt_make / opt_none now rc-box via
+		// __fern_arr_box (like struct/tuple), so a fresh, single-owner, dead-after
+		// `var o = Some(scalar)` / `None` consumed by exactly one `match (o)` has its
+		// box freed right after that match (the Option sibling of the consumed-scalar-
+		// enum free) — instead of leaking. Value + `__rc_underflow()==0` pin the box
+		// is freed exactly once (the match read its tag/payload as borrows first).
+		{"option-reclaim-value", `function go(): i32 { var o: Option[i32] = Some(7); var r = 0; match (o) { Some(v) => { r = v; }, None => { r = 0; }, } return r; } function main(): i32 { return go(); }`, 7},
+		{"option-reclaim-detector", `function go(): i32 { var o: Option[i32] = Some(7); var r = 0; match (o) { Some(v) => { r = v; }, None => { r = 0; }, } if (r != 7) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// None box (payloadless, rc-headered) is freed the same way.
+		{"option-none-detector", `function go(): i32 { var o: Option[i32] = None; var r = 0; match (o) { Some(v) => { r = v; }, None => { r = 5; }, } if (r != 5) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// Un-annotated Some(scalar-literal) is admitted via the literal-payload gate.
+		{"option-unannotated-literal-detector", `function go(): i32 { var o = Some(9); var r = 0; match (o) { Some(v) => { r = v; }, None => { r = 0; }, } if (r != 9) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// i64-payload Option: 8-byte payload, same box free.
+		{"option-i64-payload-detector", `function go(): i32 { var o: Option[i64] = Some(100); var r: i64 = 0; match (o) { Some(v) => { r = v; }, None => { r = 0; }, } if (r as i32 != 100) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// Heap-reuse corruption probe: a fresh array allocated AFTER the option's
+		// consuming match reads back intact (the box free was sound). r 7 + 66; det 0.
+		{"option-corruption-probe-detector", `function go(): i32 { var o: Option[i32] = Some(7); var r = 0; match (o) { Some(v) => { r = v; }, None => { r = 0; }, } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (r != 7) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// NON-firing (used after the match): `o` is matched twice, so it is not dead
+		// after the first match — must NOT be freed there. Detector 0 (no over-release).
+		{"option-used-after-match-detector", `function go(): i32 { var o: Option[i32] = Some(7); var a = 0; match (o) { Some(v) => { a = v; }, None => { a = 0; }, } var b = 0; match (o) { Some(v) => { b = v; }, None => { b = 0; }, } if (a + b != 14) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// NON-firing (escapes / returned): a returned Option is moved to the caller, so
+		// mk must NOT free it. Detector 0.
+		{"option-escapes-not-freed-detector", `function mk(): Option[i32] { var o: Option[i32] = Some(7); return o; } function main(): i32 { var o = mk(); var r = 0; match (o) { Some(v) => { r = v; }, None => { r = 0; }, } if (r != 7) { return 99; } return __rc_underflow(); }`, 0},
 		// Struct with an i32[] field: the box is rc-headered and freed soundly, and
 		// the array field is deep-dropped (emit_struct_field_drops) exactly once.
 		// Detector 0 proves neither the box nor the array field over-releases.
