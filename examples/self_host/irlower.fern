@@ -9742,11 +9742,15 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // Retain (alias) + cow-guarded dec-on-overwrite of the slot's prior
             // value (the loop-rebind reclamation; null on the first binding, so
             // a no-op there). An owned array slot drives the release; a fresh,
-            // non-escaping struct local (slot_is_reclaimable_struct) drives the
-            // same release so a loop-allocated struct temporary is freed each
-            // iteration. No alias_inc for structs — an aliased struct is never
-            // reclaimable (its name escapes via the RHS), so it is left to leak.
-            return emit_arr_store(sb, slot, alias_inc, is_arr || slot_is_reclaimable_struct(sb, slot));
+            // non-escaping struct local (slot_is_reclaimable_struct) OR tuple local
+            // (slot_is_reclaimable_tuple) drives the same release so a loop-allocated
+            // struct / tuple temporary is freed each iteration instead of leaking
+            // (native reclaims it; the self-host must too). The dec is SHALLOW
+            // (__fern_rc_dec → box release), so a tuple's pointer elements stay
+            // leak-mode — only the box is reclaimed, matching the exit sweep. No
+            // alias_inc for structs / tuples — an aliased one is never reclaimable
+            // (its name escapes via the RHS), so it is left to leak.
+            return emit_arr_store(sb, slot, alias_inc, is_arr || slot_is_reclaimable_struct(sb, slot) || slot_is_reclaimable_tuple(sb, slot));
         },
         parser.StmtAssign(a) => {
             var slot: i32 = s.slot_of(a.target);
@@ -12928,6 +12932,29 @@ function tuple_lit_is_fresh_scalar(e: parser.Expr): boolean {
     return false;
 }
 
+// tuple_type_is_all_scalar reports whether `t` is a tuple TYPE annotation
+// `(t0, t1, …)` (≥1 element) whose every element is a primitive scalar (i32 / i64
+// / f64 / u32 / u64 / boolean). Such a tuple holds only by-value scalars — no
+// pointer that could alias a live local — so its box is a sole-owner and a SHALLOW
+// free (there is nothing to walk) is safe even when the elements are VARIABLES
+// (`(i, 1)`), not just literals. This lets a fresh, non-escaping annotated scalar
+// tuple be reclaimed per loop iteration like the native backend does, instead of
+// leaking (the literals-only tuple_lit_is_fresh_scalar was too conservative — it
+// left the common `(i, 1)` loop temporary to leak).
+function tuple_type_is_all_scalar(t: string): boolean {
+    if (t.len() < 3 || t[0:1] != "(") { return false; }
+    var n: i32 = 0;
+    var any: boolean = false;
+    while (n < 64) {
+        var tag: string = tuple_type_elem_tag(t, n);
+        if (tag == "") { return any; }
+        if (!is_scalar_type_name(tag)) { return false; }
+        any = true;
+        n = n + 1;
+    }
+    return any;
+}
+
 // collect_fresh_scalar_tuple_names collects the LOCAL names bound from a fresh
 // scalar tuple literal (`var t = (3, 4)`), recursing into nested control flow the
 // same way collect_fresh_struct_names does. The escape gate (body_unsafe_for) is
@@ -12942,7 +12969,15 @@ function collect_fresh_scalar_tuple_names(stmts: parser.Stmt[], acc: string[]): 
 function collect_fresh_tuple_in_stmt(st: parser.Stmt, acc: string[]): string[] {
     match (st) {
         parser.StmtVar(v) => {
-            if (tuple_lit_is_fresh_scalar(v.init)) { return push_str_unique(acc, v.name); }
+            // A fresh tuple local is reclaimable when its literal is all-scalar
+            // (tuple_lit_is_fresh_scalar) OR its binding annotation is an all-scalar
+            // tuple type (so `(i, 1): (i32, i32)` — variable scalar elements —
+            // qualifies too, not just all-literal tuples).
+            var tfresh: boolean = tuple_lit_is_fresh_scalar(v.init);
+            if (!tfresh && tuple_type_is_all_scalar(v.type_name)) {
+                match (v.init) { parser.ExprTuple(_) => { tfresh = true; }, _ => {} }
+            }
+            if (tfresh) { return push_str_unique(acc, v.name); }
             return acc;
         },
         parser.StmtIf(iff) => {
