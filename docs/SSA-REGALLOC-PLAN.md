@@ -190,9 +190,21 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
         constant), so no extra work. Validated natively: literal length + byte
         reads, the empty string, two coexisting literals, and a string passed
         across a call (pointer survives the ABI, bytes readable in the callee).
-        Next: **3c** — gate the SSA path behind a flag and diff against the
-        stack machine over the e2e corpus (remaining real-asm gaps first: floats
-        via SSE, closures).
+      - [x] 3b (floats via SSE) — `OpConstFloat`, `OpFAdd/FSub/FMul/FDiv`, float
+        compares, `OpFNeg/FPromote/FDemote/IToF*/FToI*` on the real-asm path.
+        Floats live in GP registers as their f64 bit pattern (matching the
+        model); each op shuttles operands into `xmm0`/`xmm1` with `movq`, runs
+        the scalar SSE op (`addsd`/`ucomisd`/`cvtsi2sd`/`cvttsd2si`/…), and
+        shuttles the result back — the same scheme the stack-machine backend
+        uses. f32 width rounds via a `cvtsd2ss`+`cvtss2sd` round-trip; `FNeg`
+        flips the sign bit in the GP register; `FPromote` is the identity;
+        `LoadF`/`StoreF` already ride the 8-byte memory path. NaN operands and
+        unsigned int↔float ≥ 2^63 are out of scope (finite/in-range values match
+        `Eval`). Validated natively: arithmetic, all six compares, int↔float
+        round-trips, negation, truncation, f32-width, and floats through memory
+        — over spill-forcing counts. Next: **3c** — gate the SSA path behind a
+        flag and diff against the stack machine over the e2e corpus (closures
+        are the last real-asm gap).
       - [ ] 3c — wire behind a flag and diff against the existing stack-machine
         backend over the e2e corpus.
 - [~] Op-coverage broadening toward parity (each op validated against `Eval`
