@@ -246,6 +246,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__str_concat":           emitStrConcatHelper,
 	"__fern_str_dec":         emitStrDecHelper,
 	"__fern_arr_dec":         emitArrDecHelper,
+	"__fern_drop_arr_str":    emitDropArrStrHelper,
 	"__str_idx":              emitStrIdxHelper,
 	"__arr_idx":              emitArrIdxHelperN("__arr_idx", 2),    // stride 4 (i32)
 	"__arr_idx_1":            emitArrIdxHelperN("__arr_idx_1", 0),  // stride 1 (byte array)
@@ -286,6 +287,7 @@ func emitFloatUnaryHelper(name, mnem string) func(w func(string, ...any)) {
 // it directly. Transitively closed by referencedRuntimeHelpers.
 var runtimeHelperDeps = map[string][]string{
 	"__fern_closure_drop": {"__fern_box_free", "__fern_rc_dec"},
+	"__fern_drop_arr_str": {"__fern_str_dec", "__fern_arr_dec"},
 }
 
 // helperReturns64 lists runtime helpers whose result is a full 8-byte value — a
@@ -645,6 +647,59 @@ func emitStrIdxHelper(w func(string, ...any)) {
 	w("\tsvc #0")
 	w(".Lssa_stridx_ok:")
 	w("\tadd x0, x0, x1") // base + idx (byte stride)
+	w("\tret")
+}
+
+// emitDropArrStrHelper writes __fern_drop_arr_str(ptr, stride) -> ptr: the
+// scope-exit drop for a string[] local. arm64ssa strings are single-word (one
+// data pointer per element, stride pointer-width), so — unlike the native
+// two-word walk — each element load is a single ldr. On the last reference
+// (rc == 1) it walks the `len` elements and __fern_str_dec's each, then dec's
+// the array box via __fern_arr_dec; a shared array (rc != 1) just dec's the box
+// (its elements stay alive for the other holder). Same null / low-address /
+// static-sentinel guards as __fern_arr_dec. Non-leaf (calls __fern_str_dec in a
+// loop), so it keeps a frame with callee-saved x19=ptr / x20=stride / x21=len /
+// x22=i across the calls. Returns the input ptr (the dec contract).
+func emitDropArrStrHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_drop_arr_str"))
+	w("\tstp x29, x30, [sp, #-48]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstp x21, x22, [sp, #32]")
+	w("\tmov x19, x0") // ptr
+	w("\tmov x20, x1") // stride
+	w("\tcbz x19, .Lssa_das_ret")
+	w("\tcmp x19, #0x10000")
+	w("\tb.lo .Lssa_das_ret")
+	w("\tldur w0, [x19, #-8]")         // rc
+	w("\ttbnz w0, #31, .Lssa_das_ret") // static sentinel
+	w("\tcmp w0, #1")
+	w("\tb.ne .Lssa_das_decarr") // shared: dec the box only
+	// rc == 1: walk elements, drop each single-word string.
+	w("\tldur w21, [x19, #-4]") // len
+	w("\tmov x22, #0")          // i
+	w(".Lssa_das_loop:")
+	w("\tcmp w22, w21")
+	w("\tb.ge .Lssa_das_decarr")
+	w("\tmul x0, x22, x20") // i*stride
+	w("\tadd x0, x19, x0")  // &elem[i]
+	w("\tldr x0, [x0]")     // elem = single-word string ptr
+	w("\tbl %s", fnLabel("__fern_str_dec"))
+	w("\tadd x22, x22, #1")
+	w("\tb .Lssa_das_loop")
+	w(".Lssa_das_decarr:")
+	w("\tmov x0, x19")
+	w("\tmov x1, x20")
+	w("\tbl %s", fnLabel("__fern_arr_dec"))
+	w("\tmov x0, x19") // return ptr
+	w("\tb .Lssa_das_done")
+	w(".Lssa_das_ret:")
+	w("\tmov x0, x19")
+	w(".Lssa_das_done:")
+	w("\tldp x21, x22, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #48")
 	w("\tret")
 }
 
