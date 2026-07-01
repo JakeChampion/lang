@@ -99,12 +99,19 @@ function main(): i32 {
         // fd_close come from file_imports above) — emit the standalone fd_readdir
         // import once across both.
         if (wasm_ir.module_emits_op(mod, "read_dir") || wasm_ir.module_emits_op(mod, "remove_dir_all")) { o = o + wasm.readdir_fd_import(); }
-        // read_line / read_int read stdin via fd_read. file_imports above already
-        // imports fd_read for path-based file I/O, so emit the standalone fd_read
-        // import ONLY when the module reads stdin but does NOT do file I/O —
-        // otherwise fd_read would be imported twice (an invalid module).
-        if ((wasm_ir.module_emits_op(mod, "read_line") || wasm_ir.module_emits_op(mod, "read_int")) && !(wasm_ir.module_emits_op(mod, "read_file") || wasm_ir.module_emits_op(mod, "write_file") || wasm_ir.module_emits_op(mod, "read_dir") || wasm_ir.module_emits_op(mod, "remove_dir_all"))) {
+        // read_line / read_int / read_chunk read stdin (fd 0) via fd_read.
+        // file_imports above already imports fd_read for path-based file I/O, so
+        // emit the standalone fd_read import ONLY when the module reads stdin but
+        // does NOT do file I/O — otherwise fd_read would be imported twice (an
+        // invalid module).
+        if ((wasm_ir.module_emits_op(mod, "read_line") || wasm_ir.module_emits_op(mod, "read_int") || wasm_ir.module_emits_op(mod, "read_chunk")) && !(wasm_ir.module_emits_op(mod, "read_file") || wasm_ir.module_emits_op(mod, "write_file") || wasm_ir.module_emits_op(mod, "read_dir") || wasm_ir.module_emits_op(mod, "remove_dir_all"))) {
             o = o + wasm.stdin_fd_read_import();
+        }
+        // reader_close calls preview1 fd_close. file_imports supplies fd_close for
+        // path I/O, so emit the standalone fd_close import ONLY for a reader that
+        // does no file I/O — otherwise fd_close would be imported twice.
+        if (wasm_ir.module_emits_op(mod, "reader_close") && !(wasm_ir.module_emits_op(mod, "read_file") || wasm_ir.module_emits_op(mod, "write_file") || wasm_ir.module_emits_op(mod, "read_dir") || wasm_ir.module_emits_op(mod, "remove_dir_all"))) {
+            o = o + wasm.reader_fd_close_import();
         }
         // The clock builtins (monotonic_ns / now_unix_ms / now_ns) wrap the
         // preview1 wasi clock_time_get import — emitted (before the function
@@ -145,7 +152,7 @@ function main(): i32 {
                 + wasm.le32_escape(sv[di].len()) + wasm.wat_escape(sv[di]) + "\")\n";
             di = di + 1;
         }
-        if (wasm_ir.module_allocates(mod) || wasm_ir.module_uses_i32_to_string(mod) || wasm_ir.module_uses_chr(mod) || wasm_ir.module_uses_strbuf(mod) || wasm_ir.module_emits_op(mod, "env") || wasm_ir.module_emits_op(mod, "stat") || wasm_ir.module_emits_op(mod, "remove_file") || wasm_ir.module_emits_op(mod, "read_dir") || wasm_ir.module_emits_op(mod, "remove_dir_all") || wasm_ir.module_emits_op(mod, "temp_dir") || wasm_ir.module_emits_op(mod, "sleep_ms")) {
+        if (wasm_ir.module_allocates(mod) || wasm_ir.module_uses_i32_to_string(mod) || wasm_ir.module_uses_chr(mod) || wasm_ir.module_uses_strbuf(mod) || wasm_ir.module_emits_op(mod, "env") || wasm_ir.module_emits_op(mod, "stat") || wasm_ir.module_emits_op(mod, "remove_file") || wasm_ir.module_emits_op(mod, "read_dir") || wasm_ir.module_emits_op(mod, "remove_dir_all") || wasm_ir.module_emits_op(mod, "temp_dir") || wasm_ir.module_emits_op(mod, "sleep_ms") || wasm_ir.module_emits_op(mod, "read_chunk") || wasm_ir.module_emits_op(mod, "reader_close")) {
             o = o + wasm.heap_alloc_helpers(wasm_ir.heap_base_for(mod), wasm_ir.fl_base_for(mod), wasm_ir.fl_cells());
             o = o + wasm.rc_runtime_helpers(wasm_ir.heap_base_for(mod));
         }
@@ -228,6 +235,13 @@ function main(): i32 {
         // module reads stdin.
         if (wasm_ir.module_emits_op(mod, "read_line")) { o = o + wasm.read_line_func(); }
         if (wasm_ir.module_emits_op(mod, "read_int")) { o = o + wasm.read_int_func(); }
+        // $__fern_reader_read_chunk(fd,n) / $__fern_reader_close(fd) back the
+        // Reader intrinsics (r.read_chunk(n) / r.close()) — a Reader is just its fd
+        // (stdin = fd 0). Both box (Option[string] / Option[IoError]), so they ride
+        // the heap runtime (gated in above); read_chunk reads via fd_read, close
+        // via fd_close (imports emitted above). Backs std/io read_all_stdin on wasm.
+        if (wasm_ir.module_emits_op(mod, "read_chunk")) { o = o + wasm.reader_read_chunk_func(); }
+        if (wasm_ir.module_emits_op(mod, "reader_close")) { o = o + wasm.reader_close_func(); }
         // $__fern_str_to_i32 backs str_to_i32(s); allocation-free, own gate.
         if (wasm_ir.module_uses_str_to_i32(mod)) { o = o + wasm.str_to_i32_helper(); }
         // $__fern_chr backs chr(n); allocates (heap gate ORs in module_uses_chr).
