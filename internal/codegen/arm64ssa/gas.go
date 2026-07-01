@@ -578,7 +578,7 @@ func emitFunc(w func(string, ...any), name string, p *x86.Program, numAlloc int,
 	for bi, blk := range p.Blocks {
 		w(".L%s_b%d:", label, bi)
 		for _, in := range blk.Insts {
-			if in.Op == x86.Call {
+			if in.Op == x86.Call || in.Op == x86.CallPair {
 				lines, err := callLines(in, numAlloc, scratch, callSaveBase)
 				if err != nil {
 					return err
@@ -610,6 +610,20 @@ func emitFunc(w func(string, ...any), name string, p *x86.Program, numAlloc int,
 		switch blk.Term.Kind {
 		case x86.TRet:
 			ret(blk.Term.RetReg)
+		case x86.TRetPair:
+			// AArch64 pair-return convention: tag in x0, payload in x1. A home may
+			// already be x0/x1, so resolve the two moves as a parallel copy before
+			// the frame teardown.
+			for _, l := range resolveRegMoves(pairRetMoves(blk.Term.RetReg, blk.Term.RetReg2)) {
+				w("\t%s", l)
+			}
+			if call {
+				w("\tldr x30, [sp, #%d]", 8*lrSlot)
+			}
+			if frame > 0 {
+				w("\tadd sp, sp, #%d", frame)
+			}
+			w("\tret")
 		case x86.TJmp:
 			w("\tb .L%s_b%d", label, blk.Term.Target)
 		case x86.TBrIf:
@@ -626,7 +640,7 @@ func emitFunc(w func(string, ...any), name string, p *x86.Program, numAlloc int,
 func funcHasCall(p *x86.Program) bool {
 	for _, blk := range p.Blocks {
 		for _, in := range blk.Insts {
-			if in.Op == x86.Call {
+			if in.Op == x86.Call || in.Op == x86.CallPair {
 				return true
 			}
 		}
@@ -647,19 +661,46 @@ func callLines(in x86.Inst, numAlloc, scratch, callSaveBase int) ([]string, erro
 		return nil, fmt.Errorf("arm64ssa: call supports up to %d args, got %d", argRegCount, len(in.ArgLocs))
 	}
 	saved := callSavedSet(in, numAlloc)
+	// s0 — the first scratch register — stages the pair-return payload. It is
+	// above the allocatable file (never in the save set) and distinct from the
+	// result-capture scratch (s3), so neither the restores nor the tag placement
+	// clobber it. AArch64 returns a pair in x0 (tag) / x1 (payload).
+	s0 := numAlloc
 	var out []string
 	for k, r := range saved {
 		out = append(out, fmt.Sprintf("str %s, [sp, #%d]", xreg(r), 8*(callSaveBase+k)))
 	}
 	out = append(out, argMoveLines(in.ArgLocs)...)
 	out = append(out, fmt.Sprintf("bl %s", fnLabel(in.Callee)))
-	out = append(out, fmt.Sprintf("mov %s, x0", xreg(scratch))) // capture result
+	out = append(out, fmt.Sprintf("mov %s, x0", xreg(scratch))) // capture tag / result
+	if in.Op == x86.CallPair {
+		out = append(out, fmt.Sprintf("mov %s, x1", xreg(s0))) // capture payload
+	}
 	for k := len(saved) - 1; k >= 0; k-- {
 		out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(saved[k]), 8*(callSaveBase+k)))
 	}
-	out = append(out, fmt.Sprintf("mov %s, %s", xreg(in.Dst), xreg(scratch))) // place result
+	out = append(out, fmt.Sprintf("mov %s, %s", xreg(in.Dst), xreg(scratch))) // place tag / result
 	out = append(out, maskFix(in.Dst, in.W)...)
+	if in.Op == x86.CallPair {
+		// Placed after the tag (whose home may be the payload's capture reg s3) so
+		// the tag is out of s3 before Dst2 (typically s3) is written.
+		out = append(out, fmt.Sprintf("mov %s, %s", xreg(in.Dst2), xreg(s0))) // place payload
+	}
 	return out, nil
+}
+
+// pairRetMoves builds the parallel-copy move list that places the pair-return
+// tag in x0 and payload in x1 (either home may already sit in x0/x1). Fed to
+// resolveRegMoves, which orders the copies and breaks a swap cycle with eor.
+func pairRetMoves(tagReg, payReg int) [][2]int {
+	var moves [][2]int
+	if tagReg != 0 {
+		moves = append(moves, [2]int{0, tagReg})
+	}
+	if payReg != 1 {
+		moves = append(moves, [2]int{1, payReg})
+	}
+	return moves
 }
 
 // callSavedSet returns the caller-saved allocatable registers to preserve across
