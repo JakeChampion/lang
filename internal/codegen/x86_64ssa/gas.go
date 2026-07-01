@@ -1014,6 +1014,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__str_len":           emitStrLenHelper,
 	"__fern_arr_dec":      emitArrDecHelper,
 	"__arr_idx":           emitArrIdxHelper,
+	"__str_eq":            emitStrEqHelper,
 }
 
 // runtimeHelperDeps records the helper→helper call edges (a helper that tail-
@@ -1216,6 +1217,37 @@ func emitArrIdxHelper(w func(string, ...any)) {
 	w("\tsyscall")
 	w(".Lssa_arridx_ok:")
 	w("\tlea rax, [rdi + rsi*4]")
+	w("\tret")
+}
+
+// emitStrEqHelper writes __str_eq(a, b) -> i32: 1 if the two single-word strings
+// are byte-equal, else 0. Fast paths on pointer identity and length mismatch
+// (length at [ptr-4]), then compares bytes. The IR lowers `a == b` on strings
+// (OpStrEq) to a call here. Leaf.
+func emitStrEqHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__str_eq"))
+	w("\tcmp rdi, rsi")
+	w("\tje .Lssa_streq_eq")              // same pointer → equal
+	w("\tmov ecx, %s", memRef("rdi", -4)) // len a
+	w("\tmov edx, %s", memRef("rsi", -4)) // len b
+	w("\tcmp ecx, edx")
+	w("\tjne .Lssa_streq_neq") // different lengths
+	w("\txor r8d, r8d")        // i = 0
+	w(".Lssa_streq_loop:")
+	w("\tcmp r8d, ecx")
+	w("\tjae .Lssa_streq_eq") // all bytes matched
+	w("\tmovzx r9d, byte ptr [rdi + r8]")
+	w("\tmovzx r10d, byte ptr [rsi + r8]")
+	w("\tcmp r9d, r10d")
+	w("\tjne .Lssa_streq_neq")
+	w("\tadd r8, 1")
+	w("\tjmp .Lssa_streq_loop")
+	w(".Lssa_streq_eq:")
+	w("\tmov eax, 1")
+	w("\tret")
+	w(".Lssa_streq_neq:")
+	w("\txor eax, eax")
 	w("\tret")
 }
 

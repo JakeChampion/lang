@@ -206,6 +206,26 @@ func TestProgramRunString(t *testing.T) {
 	}
 }
 
+// Whole-program string equality: `==` on strings lowers to __str_eq (compares
+// lengths at [ptr-4] then bytes). Runs the same result as the interpreter.
+func TestProgramRunStringEq(t *testing.T) {
+	srcs := []string{
+		// Equal contents (distinct literals): "hi" == "hi" -> 1 -> 7.
+		`function main(): i32 { var a: string = "hi"; if (a == "hi") { return 7; } return 0; }`,
+		// Different contents, same length: "ab" != "cd" -> 0 -> 9.
+		`function main(): i32 { var a: string = "ab"; if (a == "cd") { return 1; } return 9; }`,
+		// Different lengths: "abc" != "ab" -> 0 -> 5.
+		`function main(): i32 { var a: string = "abc"; if (a == "ab") { return 1; } return 5; }`,
+		// A longer match to exercise the byte loop past the first char.
+		`function main(): i32 { var a: string = "banana"; if (a == "banana") { return 3; } return 0; }`,
+	}
+	for _, n := range []int{1, 2, 8} {
+		for _, src := range srcs {
+			programMatchesInterp(t, src, n)
+		}
+	}
+}
+
 // Whole-program arrays: an array literal is built with its cap/rc/len header,
 // indexed, and dropped at scope exit via __fern_arr_dec (reads the array's rc at
 // [data-8]). Runs the same result as the interpreter.
