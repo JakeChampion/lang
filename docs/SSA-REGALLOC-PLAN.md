@@ -326,9 +326,17 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
             branch over a unique label (materialize returns operands' own home
             registers, so no operand may be clobbered; a branch-free mask would
             need a second scratch), `TestAsmRunSelect`.
-          Still ahead: the wasm `call_indirect` form and the RC/runtime-helper
-          slice (capturing/dropped closures emit `__fern_closure_drop`); then the
-          flag + e2e diff.
+          - [x] Whole-program closure test (`TestProgramRunClosure`) — a lambda
+            (and a bare named fn as a value) passed into a higher-order function
+            and called indirectly runs the same result as the interpreter through
+            the full pipeline. Non-escaping only; stored/capturing closures fail
+            at assembly on `__fern_closure_drop`/`__fern_rc_is_unique` (the RC
+            helpers), which pins the next sub-epic.
+          Still ahead: the RC/runtime-helper migration — see
+          **docs/SSA-RC-RUNTIME.md** for the design (rc-header allocator + the
+          leaf-first helper port: `__fern_rc_is_unique` → `rc_inc`/`rc_dec` →
+          `__fern_closure_drop`, then escaping-closure whole-program tests). The
+          wasm `call_indirect` form and the flag + e2e diff follow.
 - [~] Op-coverage broadening toward parity (each op validated against `Eval`
   in the model before it reaches real assembly):
   - [x] Direct integer calls + recursion — `ssa.EvalIn` (function-table eval),
