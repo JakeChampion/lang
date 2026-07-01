@@ -405,6 +405,36 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 }`,
 			want: 4,
 		},
+		{
+			// The global string builder: reset, append three fragments, take. The
+			// result is "Hello, Fern!" (len 12). Exercises strbuf_reset / _append /
+			// _take and the shared .bss buffer.
+			name: "strbuf_build",
+			src: `function main(): i32 {
+  strbuf_reset();
+  strbuf_append("Hello, ");
+  strbuf_append("Fern");
+  strbuf_append("!");
+  return strbuf_take().len();
+}`,
+			want: 12,
+		},
+		{
+			// Reuse after take: the counter resets, so a second build is independent.
+			// "ababababab" (10) then "xyz" (3): 10*100 + 3 = 1003, exit 1003&0xFF = 235.
+			name: "strbuf_reuse",
+			src: `function main(): i32 {
+  strbuf_reset();
+  var i: i32 = 0;
+  while (i < 5) { strbuf_append("ab"); i = i + 1; }
+  var s = strbuf_take();
+  strbuf_reset();
+  strbuf_append("xyz");
+  var t = strbuf_take();
+  return s.len() * 100 + t.len();
+}`,
+			want: 235,
+		},
 	}
 
 	for _, c := range cases {
@@ -439,8 +469,8 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 }
 
 // TestArm64SSACoverageGapErrors confirms a program needing a runtime builtin the
-// arm64-ssa path doesn't emit yet (here the strbuf string-builder builtins, which
-// reach the still-unported `strbuf_reset` helper) fails with a clean compile/link
+// arm64-ssa path doesn't emit yet (here the `env` environment-variable builtin,
+// which reaches the still-unported `env` helper) fails with a clean compile/link
 // error rather than a miscompile — the experimental-backend contract that lets
 // the epic widen coverage incrementally.
 func TestArm64SSACoverageGapErrors(t *testing.T) {
@@ -454,18 +484,18 @@ func TestArm64SSACoverageGapErrors(t *testing.T) {
 		t.Fatalf("go build fern: %v\n%s", err, out)
 	}
 
-	srcPath := filepath.Join(dir, "strbuf.fern")
-	src := `function main(): i32 { strbuf_reset(); strbuf_append("hi"); return strbuf_take().len(); }`
+	srcPath := filepath.Join(dir, "env.fern")
+	src := `function main(): i32 { return match (env("X")) { Some(v) => v.len(), None => 0 }; }`
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	out := filepath.Join(dir, "strbuf.bin")
+	out := filepath.Join(dir, "env.bin")
 	emit := exec.Command(bin, "-target", "arm64-ssa", "-o", out, srcPath)
 	var eb bytes.Buffer
 	emit.Stderr = &eb
 	err := emit.Run()
 	if err == nil {
-		t.Fatalf("expected a coverage-gap error for the strbuf builtins, got success")
+		t.Fatalf("expected a coverage-gap error for the env() builtin, got success")
 	}
 	if !bytes.Contains(eb.Bytes(), []byte("arm64-ssa")) {
 		t.Errorf("error not attributed to arm64-ssa:\n%s", eb.String())
