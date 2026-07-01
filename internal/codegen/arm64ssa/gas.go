@@ -94,6 +94,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		}
 	}
 	strLabels, strOrder := collectStrings(progs, names)
+	sentLabels, sentOrder := collectSentinels(progs, names)
 	// fn_idx for closures: a function's index in the module's (sorted) emission
 	// order — the value a closure cell carries, and the index into the function-
 	// address table (fnTableSym) that OpCallIndirect dereferences.
@@ -129,7 +130,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	w("\tsvc #0")
 	w("")
 	for _, name := range names {
-		if err := emitFunc(w, name, progs[name], numAlloc, strLabels, fnIndex); err != nil {
+		if err := emitFunc(w, name, progs[name], numAlloc, strLabels, sentLabels, fnIndex); err != nil {
 			return "", err
 		}
 		w("")
@@ -159,6 +160,22 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 				}
 				w("\t.byte %s", strings.Join(parts, ", "))
 			}
+		}
+	}
+	if len(sentOrder) > 0 {
+		// Shared static enum sentinels: one 4-byte cell per distinct tag, holding
+		// the tag at offset 0 (every match / try site reads it with the same
+		// [ptr+0] load a heap `[tag=N]` box uses). Each cell carries the same
+		// 8-byte immortal header as a string literal — rc sentinel (0x80000000) at
+		// [ptr-8], padding at [ptr-4] — so a scope-exit drop short-circuits on it
+		// instead of writing a read-only/​shared cell. Consecutive cells stay
+		// contiguous, so each label's header is exactly the 8 bytes before it.
+		w(".section .rodata")
+		for _, tag := range sentOrder {
+			w("\t.4byte 0x80000000")
+			w("\t.4byte 0")
+			w("%s:", sentLabels[tag])
+			w("\t.4byte %d", tag)
 		}
 	}
 	if usesCallIndirect(progs) {
@@ -259,6 +276,27 @@ func collectStrings(progs map[string]*x86.Program, names []string) (map[string]s
 					if _, ok := labels[in.Str]; !ok {
 						labels[in.Str] = fmt.Sprintf("str_%d", len(order))
 						order = append(order, in.Str)
+					}
+				}
+			}
+		}
+	}
+	return labels, order
+}
+
+// collectSentinels assigns a .rodata label to each distinct enum-sentinel tag
+// (EnumSentinel.Imm) used in the module, in first-seen order — so every
+// OpEnumSentinel for a given tag references the same shared static cell.
+func collectSentinels(progs map[string]*x86.Program, names []string) (map[int64]string, []int64) {
+	labels := map[int64]string{}
+	var order []int64
+	for _, name := range names {
+		for _, blk := range progs[name].Blocks {
+			for _, in := range blk.Insts {
+				if in.Op == x86.EnumSentinel {
+					if _, ok := labels[in.Imm]; !ok {
+						labels[in.Imm] = fmt.Sprintf("sent_%d", len(order))
+						order = append(order, in.Imm)
 					}
 				}
 			}
@@ -552,7 +590,7 @@ func emitArrIdxHelper(w func(string, ...any)) {
 // The stack pointer stays fixed for the whole body — call-crossing registers are
 // preserved in the reserved call-save area rather than by moving sp — so every
 // slot access is a stable sp-relative offset.
-func emitFunc(w func(string, ...any), name string, p *x86.Program, numAlloc int, strLabels map[string]string, fnIndex map[string]int) error {
+func emitFunc(w func(string, ...any), name string, p *x86.Program, numAlloc int, strLabels map[string]string, sentLabels map[int64]string, fnIndex map[string]int) error {
 	label := fnLabel(name)
 	call := funcHasCall(p)
 
@@ -634,6 +672,16 @@ func emitFunc(w func(string, ...any), name string, p *x86.Program, numAlloc int,
 				}
 				// Materialise the string's data pointer (the label; its 8-byte header
 				// sits just before it) via PC-relative page + offset.
+				w("\tadrp %s, %s", xreg(in.Dst), lbl)
+				w("\tadd %s, %s, #:lo12:%s", xreg(in.Dst), xreg(in.Dst), lbl)
+				continue
+			}
+			if in.Op == x86.EnumSentinel {
+				lbl, ok := sentLabels[in.Imm]
+				if !ok {
+					return fmt.Errorf("arm64ssa: EnumSentinel tag %d has no .rodata cell", in.Imm)
+				}
+				// Materialise the shared sentinel cell's address (tag at [ptr+0]).
 				w("\tadrp %s, %s", xreg(in.Dst), lbl)
 				w("\tadd %s, %s, #:lo12:%s", xreg(in.Dst), xreg(in.Dst), lbl)
 				continue
@@ -1097,6 +1145,10 @@ func asmInst(in x86.Inst, scratch int) ([]string, error) {
 		return fCmpSeq(in)
 	case x86.FConv:
 		return fConvSeq(in)
+	case x86.UnNeg:
+		return append([]string{fmt.Sprintf("neg %s, %s", xreg(in.Dst), xreg(in.Dst))}, maskFix(in.Dst, in.W)...), nil
+	case x86.UnOp:
+		return unOpSeq(in)
 	case x86.Select:
 		return selectSeq(in), nil
 	default:
@@ -1343,6 +1395,26 @@ func fcondCode(k ssa.OpKind) (string, bool) {
 		return "hs", true
 	}
 	return "", false
+}
+
+// unOpSeq renders the UnOp unary transforms. OpNot is a zero-test materialised
+// with cset (clean 0/1, no mask); the extends map onto the AArch64 sign/zero
+// extraction instructions, which already produce the model's width-masked value.
+func unOpSeq(in x86.Inst) ([]string, error) {
+	d := in.Dst
+	switch in.K {
+	case ssa.OpNot:
+		return []string{fmt.Sprintf("cmp %s, #0", xreg(d)), fmt.Sprintf("cset %s, eq", xreg(d))}, nil
+	case ssa.OpTrunc, ssa.OpExtendS:
+		return []string{fmt.Sprintf("sxtw %s, %s", xreg(d), wreg(d))}, nil // sign-extend low 32
+	case ssa.OpExtendU:
+		return []string{fmt.Sprintf("mov %s, %s", wreg(d), wreg(d))}, nil // 32-bit mov zero-extends
+	case ssa.OpExtend8S:
+		return []string{fmt.Sprintf("sxtb %s, %s", xreg(d), wreg(d))}, nil
+	case ssa.OpExtend16S:
+		return []string{fmt.Sprintf("sxth %s, %s", xreg(d), wreg(d))}, nil
+	}
+	return nil, fmt.Errorf("arm64ssa: unary op %v not supported yet", in.K)
 }
 
 // selectSeq renders OpSelect (reg[Dst] = reg[Src] != 0 ? reg[Src2] : reg[Src3])

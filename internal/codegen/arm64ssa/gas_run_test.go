@@ -1010,6 +1010,82 @@ func TestArmRunClosureCapture(t *testing.T) {
 	moduleMatchesEvalTable(t, funcs, []string{"addcap"}, "main") // 42
 }
 
+// enumSentinelOp adds an OpEnumSentinel for the given tag.
+func enumSentinelOp(f *ssa.Func, b *ssa.Block, tag int64) ssa.Value {
+	v := f.AddOp(b, ssa.OpEnumSentinel)
+	b.Ops[len(b.Ops)-1].Imm = tag
+	return v
+}
+
+// A payloadless enum sentinel: the value is a pointer to a shared static cell
+// whose byte at offset 0 is the tag. Reading it back must yield the tag.
+// sentinel(2) then load8u -> 2. Diffed against ssa.Eval (which models sentinels).
+func TestArmRunEnumSentinel(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		s := enumSentinelOp(f, e, 2)
+		f.SetRet(e, load8u(f, e, s, 0))
+		return f
+	}
+	for _, n := range []int{2, 4, 8} {
+		runMatchesEval(t, build(), n)
+	}
+}
+
+// Two sentinels with the same tag share one static cell, so their pointers are
+// equal; two different tags are not. (sent(1)==sent(1)) + (sent(1)==sent(3) ? 0)
+// -> exercised as (a==b) below. Diffed against ssa.Eval (memoised sentinels).
+func TestArmRunEnumSentinelIdentity(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		a := enumSentinelOp(f, e, 1)
+		b := enumSentinelOp(f, e, 1)
+		c := enumSentinelOp(f, e, 3)
+		same := f.AddOp(e, ssa.OpEq, a, b) // 1 (same cell)
+		diff := f.AddOp(e, ssa.OpEq, a, c) // 0 (different cells)
+		// 1*10 + 0 = 10, plus the tag of c read back (3) -> 13.
+		f.SetRet(e, f.AddOp(e, ssa.OpAdd,
+			f.AddOp(e, ssa.OpMul, same, constOp(f, e, 10)),
+			f.AddOp(e, ssa.OpAdd, diff, load8u(f, e, c, 0))))
+		return f
+	}
+	for _, n := range []int{2, 8} {
+		runMatchesEval(t, build(), n)
+	}
+}
+
+// UnNeg (unary minus) and UnOp (logical not, extends), diffed against ssa.Eval.
+func TestArmRunUnaryOps(t *testing.T) {
+	// neg: -(a - b) with a=2,b=9 -> -(2-9) = 7. Uses a param so no const-fold.
+	negBuild := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		a := f.AddParam()
+		e := f.NewBlock()
+		diff := f.AddOp(e, ssa.OpSub, a, constOp(f, e, 9))
+		f.SetRet(e, f.AddOp(e, ssa.OpNeg, diff))
+		return f
+	}
+	for _, n := range []int{2, 8} {
+		runMatchesEval(t, negBuild(), n, 2)
+	}
+	// not: !(x != 0) style — OpNot(a) with a=0 -> 1, plus OpNot(b) with b=5 -> 0.
+	notBuild := func(v int64) *ssa.Func {
+		f := ssa.NewFunc("main")
+		a := f.AddParam()
+		e := f.NewBlock()
+		f.SetRet(e, f.AddOp(e, ssa.OpNot, a))
+		return f
+	}
+	for _, tc := range []struct{ in, want int64 }{{0, 1}, {5, 0}} {
+		_ = tc.want
+		for _, n := range []int{2, 8} {
+			runMatchesEval(t, notBuild(tc.in), n, tc.in)
+		}
+	}
+}
+
 // max via a comparison-selected branch: max(9, 4) = 9 -> exit 9.
 func TestArmRunMax(t *testing.T) {
 	build := func() *ssa.Func {

@@ -141,6 +141,24 @@ function main(): i32 {
 }`,
 			want: 115,
 		},
+		{
+			// A bare (payloadless) enum matched by variant — OpEnumSentinel: the
+			// value is a pointer to a shared static tag cell; the match reads it.
+			name: "bare_enum",
+			src: `enum Color { Red, Green, Blue }
+function main(): i32 {
+  var c: Color = Color.Green;
+  return match (c) { Red => 1, Green => 2, Blue => 3 };
+}`,
+			want: 2,
+		},
+		{
+			// A constant too large for a single movz/bitmask — exercises the
+			// assembler's movz/movk synthesis. 1000000 % 256 = 64.
+			name: "large_const",
+			src:  `function main(): i32 { return 1000000 % 256; }`,
+			want: 64,
+		},
 	}
 
 	for _, c := range cases {
@@ -174,11 +192,11 @@ function main(): i32 {
 	}
 }
 
-// TestArm64SSACoverageGapErrors confirms a language construct outside the
-// SSA renderer's subset (here a bare enum, which lowers to OpEnumSentinel —
-// still unsupported on both the x86-64 and arm64 SSA real-asm paths) fails
-// with a clean compile error rather than a miscompile — the experimental-
-// backend contract that lets the epic widen coverage incrementally.
+// TestArm64SSACoverageGapErrors confirms a program needing a runtime helper the
+// arm64-ssa path doesn't emit yet (here std/i32's to_string, which pulls in the
+// array-growth helper __fern_arr_push_grow) fails with a clean compile/link error
+// rather than a miscompile — the experimental-backend contract that lets the epic
+// widen coverage incrementally.
 func TestArm64SSACoverageGapErrors(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("arm64-ssa not exercised on windows")
@@ -190,16 +208,13 @@ func TestArm64SSACoverageGapErrors(t *testing.T) {
 		t.Fatalf("go build fern: %v\n%s", err, out)
 	}
 
-	srcPath := filepath.Join(dir, "enum.fern")
-	src := `enum Color { Red, Green, Blue }
-function main(): i32 {
-  var c: Color = Color.Green;
-  return match (c) { Red => 1, Green => 2, Blue => 3 };
-}`
+	srcPath := filepath.Join(dir, "tostring.fern")
+	src := `import "std/i32";
+function main(): i32 { print((42).to_string()); return 0; }`
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	out := filepath.Join(dir, "enum.bin")
+	out := filepath.Join(dir, "tostring.bin")
 	emit := exec.Command(bin, "-target", "arm64-ssa", "-o", out, srcPath)
 	var eb bytes.Buffer
 	emit.Stderr = &eb

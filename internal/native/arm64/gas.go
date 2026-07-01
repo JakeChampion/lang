@@ -311,7 +311,32 @@ func emitMovImm(a *Assembler, rd uint32, v uint64, w bool, disp string) error {
 		a.Emit(insn)
 		return nil
 	}
-	return fmt.Errorf("mov %s: immediate needs a movz/movk sequence (not supported yet)", disp)
+	// General case: materialise the lowest non-zero 16-bit lane with movz (which
+	// zeroes the rest of the register), then overlay each remaining non-zero lane
+	// with movk. Two lanes for a w-register, four for an x-register.
+	lanes := uint32(4)
+	if w {
+		lanes = 2
+	}
+	first := true
+	for i := uint32(0); i < lanes; i++ {
+		sh := i * 16
+		lane := uint16((v >> sh) & 0xFFFF)
+		if lane == 0 {
+			continue
+		}
+		if first {
+			a.Emit(clearSF(MOVZ(rd, lane, sh), w))
+			first = false
+		} else {
+			a.Emit(clearSF(MOVK(rd, lane, sh), w))
+		}
+	}
+	if first {
+		// v == 0 — already handled by singleLane above, but stay safe.
+		a.Emit(clearSF(MOVZ(rd, 0, 0), w))
+	}
+	return nil
 }
 
 // singleLane returns (imm16, shift, ok): ok when v has at most one
