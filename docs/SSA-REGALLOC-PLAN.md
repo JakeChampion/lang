@@ -171,9 +171,21 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
         them at every return. Validated natively: cross-function calls,
         recursion (factorial — `n` live across the self-call), several values
         live across multiple calls in one block, and a six-arg callee filling
-        every arg register — all over spill-forcing counts. Next: **3c** — gate
+        every arg register — all over spill-forcing counts.
+      - [x] 3b (memory) — `OpAlloc`/`OpLoad`/`OpStore` (incl. the sub-word
+        variants) on the real-asm path. A fixed 64 KiB `.bss` heap with a bump
+        cursor (`__ssa_heap_ptr`) initialised at `_start`; `MemAlloc` is
+        `result = align8(cursor); cursor = result + size`; loads/stores use
+        `[base + disp]` with `movzx`/`movsx` + `byte/word ptr` for sub-word and
+        the value sub-register for narrow stores. The heap section + init are
+        emitted only when a program uses memory ops (a lazy mmap/brk allocator
+        like the stack machine's is a follow-up if programs outgrow 64 KiB).
+        Validated natively: full-word round-trip, sub-word zero/sign-extension,
+        a byte array, and a heap **shared across a call** (callee allocs, caller
+        reads the pointer back) — over spill-forcing counts. Next: **3c** — gate
         the SSA path behind a flag and diff against the stack machine over the
-        e2e corpus.
+        e2e corpus (remaining real-asm gaps first: strings→rodata, floats via
+        SSE, closures).
       - [ ] 3c — wire behind a flag and diff against the existing stack-machine
         backend over the e2e corpus.
 - [~] Op-coverage broadening toward parity (each op validated against `Eval`
