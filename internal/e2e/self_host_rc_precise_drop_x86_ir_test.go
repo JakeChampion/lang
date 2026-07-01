@@ -1137,10 +1137,13 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// reclaimable (body_unsafe_for flags the arg), so its buffers must NOT be freed
 		// here — the callee reads them. Detector 0.
 		{"map-passed-not-freed-detector", `function sum(m: Map[i32, i32]): i32 { return m.get_or(1, 0) + m.get_or(2, 0); } function go(): i32 { var m = Map { 1: 10, 2: 20 }; var r = sum(m); if (r != 30) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
-		// NON-firing (iterated): a `for (k, v) in m` builds a MapIter aliasing the
-		// buffers, so map_is_iterated excludes m from reclaim (the buffers stay live
-		// through the loop). Detector 0.
-		{"map-iterated-not-freed-detector", `function go(): i32 { var m = Map { 1: 10, 2: 20 }; var t = 0; for (k, v) in m { t = t + v; } if (t != 30) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// FIRING (for..in): a `for (k, v) in m` is now RECLAIMED (slice 3) — its iter is
+		// a scoped loop temp (dead by the free) and scalar k/v are copies, so freeing
+		// the buffers after the loop is sound. Value correct + detector 0 (freed once).
+		{"map-foreach-reclaimed-detector", `function go(): i32 { var m = Map { 1: 10, 2: 20 }; var t = 0; for (k, v) in m { t = t + v; } if (t != 30) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// FIRING + corruption probe: a fresh array after a `for..in m` loop's reclaim
+		// reads back intact (the buffers were freed soundly after the loop, once).
+		{"map-foreach-corruption-probe-detector", `function go(): i32 { var m = Map { 1: 10, 2: 20 }; var t = 0; for (k, v) in m { t = t + v; } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (t != 30) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 		// MAP precise-drop: a fresh map last-used in a NESTED block has its buffers
 		// freed right after that statement (emit_map_buffers_free, null-guarded +
 		// slot-zeroed) — earlier than the exit sweep, bounding peak heap. The exit

@@ -3335,3 +3335,19 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   identical FIXPOINT + BOOTSTRAP + wasm + IR-diff stay green (the null-guard changes
   the exit-sweep emission for the compiler's own map functions, so the self-compile
   re-verifies).
+- 2026-07-01: **Map local reclaim — slice 3 (admit `for (k,v) in m` iterated maps)**.
+  The prior slices excluded ANY iterated map (conservative). But a `for (k,v) in m`
+  is actually SOUND to reclaim: its iter is a scoped loop temp (dead by the free), and
+  the loop's k/v bindings are copies of scalars OR of pointers to SEPARATELY-allocated
+  (leaked) elements — freeing the keys/values BUFFERS never dangles them (the buffers
+  hold pointers, not the elements; the reclaim runs after the loop completes). The
+  ONLY real hole is an EXPLICIT `m.iter()` whose MapIter box (holding a raw pointer to
+  the buffers) can escape. So map_is_iterated → map_has_explicit_iter: the StmtFor case
+  now uses expr_iters_map(f.iter) (excludes only `for x in m.iter()`, admits
+  `for (k,v) in m`), keeping the explicit-iter expr exclusion everywhere else. This
+  reclaims the COMMON map-traversal shape (many of the compiler's own maps). VERIFIED:
+  map-iterated-not-freed → map-foreach-reclaimed-detector (now FIRING) + a
+  for..in corruption probe in TestSelfHostRcPreciseDropX86IR; byte-identical FIXPOINT +
+  BOOTSTRAP + wasm + IR-diff stay green (the compiler's own `for (k,v) in m` maps —
+  and its explicit m.iter() uses, which stay excluded — self-compile correctly, the
+  decisive soundness signal for the widening).

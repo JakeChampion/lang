@@ -12377,7 +12377,7 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                 // outer `if` adds not-reassigned + non-escaping).
                 var is_map: boolean = false;
                 if (!is_lit && !is_opt && !is_rcopt && !is_enum && !is_rcenum && is_fresh_map_init(v.init)) {
-                    if (util.index_of_str(aliased_array_names_of(body), v.name) < 0 && !map_is_iterated(body, v.name)) { is_map = true; }
+                    if (util.index_of_str(aliased_array_names_of(body), v.name) < 0 && !map_has_explicit_iter(body, v.name)) { is_map = true; }
                 }
                 var shadowed: boolean = util.index_of_str(seen, v.name) >= 0;
                 seen = seen.append(v.name);
@@ -13762,39 +13762,45 @@ function expr_iters_map(e: parser.Expr, name: string): boolean {
     }
 }
 
-// map_is_iterated: does the body iterate `name` — a `for (..) in name` (StmtFor iter
-// mentioning name) or a `name.iter()` call anywhere? Recurses through nested blocks
-// and statement expressions. A true result excludes the map from reclaim (see
-// expr_iters_map for why iteration aliases the buffers).
-function map_is_iterated(stmts: parser.Stmt[], name: string): boolean {
+// map_has_explicit_iter: does the body call `name.iter()` EXPLICITLY anywhere? Such an
+// iter binds a MapIter box holding a raw pointer to the mapbox / its buffers, and if
+// that box escapes (returned / stored), freeing the buffers is a UAF — so any explicit
+// iter conservatively excludes the map from reclaim. A `for (k, v) in name` is NOT
+// excluded: its iter is a scoped loop temp (dead by the free), and k/v are copies of
+// scalars or of pointers to SEPARATELY-allocated (leaked) elements, so freeing the
+// keys/values BUFFERS never dangles them — the reclaim runs after the loop completes.
+// Recurses through nested blocks and statement expressions.
+function map_has_explicit_iter(stmts: parser.Stmt[], name: string): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
-        if (map_is_iterated_stmt(stmts[i], name)) { return true; }
+        if (map_has_explicit_iter_stmt(stmts[i], name)) { return true; }
         i = i + 1;
     }
     return false;
 }
-function map_is_iterated_stmt(st: parser.Stmt, name: string): boolean {
+function map_has_explicit_iter_stmt(st: parser.Stmt, name: string): boolean {
     match (st) {
         parser.StmtFor(f) => {
-            if (parser.expr_mentions(f.iter, name)) { return true; }
-            return map_is_iterated(f.body, name);
+            // Admit `for (k,v) in m` (iter = a bare ident, not an m.iter() CALL); still
+            // exclude a `for x in m.iter()` (iter contains an explicit iter call).
+            if (expr_iters_map(f.iter, name)) { return true; }
+            return map_has_explicit_iter(f.body, name);
         },
         parser.StmtVar(v) => { return expr_iters_map(v.init, name); },
         parser.StmtAssign(a) => { return expr_iters_map(a.value, name); },
         parser.StmtExpr(ex) => { return expr_iters_map(ex.value, name); },
         parser.StmtReturn(r) => { return expr_iters_map(r.value, name); },
-        parser.StmtIf(iff) => { return map_is_iterated(iff.then_body, name) || map_is_iterated(iff.else_body, name); },
-        parser.StmtWhile(w) => { return expr_iters_map(w.cond, name) || map_is_iterated(w.body, name); },
+        parser.StmtIf(iff) => { return map_has_explicit_iter(iff.then_body, name) || map_has_explicit_iter(iff.else_body, name); },
+        parser.StmtWhile(w) => { return expr_iters_map(w.cond, name) || map_has_explicit_iter(w.body, name); },
         parser.StmtMatch(m) => {
             var i: i32 = 0;
-            while (i < m.arms.len()) { if (map_is_iterated(m.arms[i].body, name)) { return true; } i = i + 1; }
+            while (i < m.arms.len()) { if (map_has_explicit_iter(m.arms[i].body, name)) { return true; } i = i + 1; }
             return false;
         },
         parser.StmtSwitch(sw) => {
             var i: i32 = 0;
-            while (i < sw.cases.len()) { if (map_is_iterated(sw.cases[i].body, name)) { return true; } i = i + 1; }
-            if (sw.has_default) { return map_is_iterated(sw.default_body, name); }
+            while (i < sw.cases.len()) { if (map_has_explicit_iter(sw.cases[i].body, name)) { return true; } i = i + 1; }
+            if (sw.has_default) { return map_has_explicit_iter(sw.default_body, name); }
             return false;
         },
         _ => { return false; }
@@ -13888,8 +13894,9 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // 16-byte RAW mapbox leaks (a later slice reclaims it). Gates: fresh map init,
     // NOT reassigned (a rebind could leave a live alias in the slot), non-escaping
     // (body_unsafe_for — receiver-borrow method calls m.get/m.set/m.has/m.len are
-    // fine; passed / stored / returned is an escape), not aliased, and NOT iterated
-    // (map_is_iterated — m.iter()/`for..in m` aliases the buffers, the UAF hole).
+    // fine; passed / stored / returned is an escape), not aliased, and no EXPLICIT
+    // `m.iter()` (map_has_explicit_iter — its MapIter box can escape; `for (k,v) in m`
+    // is fine, its iter is a scoped loop temp dead by the free).
     var maps: string[] = collect_fresh_map_names(body, []);
     var aliased_m: string[] = aliased_array_names_of(body);
     var mi: i32 = 0;
@@ -13897,7 +13904,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         if (util.index_of_str(reassigned, maps[mi]) < 0
             && util.index_of_str(aliased_m, maps[mi]) < 0
             && !body_unsafe_for(body, maps[mi], borrowable)
-            && !map_is_iterated(body, maps[mi])) {
+            && !map_has_explicit_iter(body, maps[mi])) {
             out = out.append("MAP:" + maps[mi]);
         }
         mi = mi + 1;
