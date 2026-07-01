@@ -470,11 +470,38 @@ func (e *emitter) place(v ssa.Value, srcReg int) {
 	e.push(Inst{Op: StoreSlot, Imm: int64(l.Slot), Src: srcReg})
 }
 
+// movReg pushes a register-to-register move, eliding the no-op when the two
+// registers coincide (which happens once a result is coalesced into an operand's
+// own register home).
+func (e *emitter) movReg(dst, src int) {
+	if dst != src {
+		e.push(Inst{Op: MovReg, Dst: dst, Src: src})
+	}
+}
+
+// coalesceDst chooses the register an op computes its result into: the result's
+// own register home when it has one and that register isn't `avoid` — an operand
+// the op still reads after the compute-in move — so the result lands in place
+// without a separate placing move. Falls back to the scratch s2 (the caller then
+// place()s it) when the result is spilled, has no home, or its home collides with
+// `avoid`. Pass avoid = -1 for single-operand ops (no such collision). When the
+// returned register is not s2 the caller must skip place(): the value is already
+// home.
+func (e *emitter) coalesceDst(result ssa.Value, avoid int) int {
+	if l, ok := e.loc(result.ID); ok && l.IsReg && l.Reg != avoid {
+		return l.Reg
+	}
+	return e.s2
+}
+
 func (e *emitter) emitOp(op *ssa.Op) error {
 	switch op.Kind {
 	case ssa.OpConstInt, ssa.OpConstBool:
-		e.push(Inst{Op: MovImm, Dst: e.s2, Imm: op.Imm, W: op.Width})
-		e.place(op.Result, e.s2)
+		dst := e.coalesceDst(op.Result, -1)
+		e.push(Inst{Op: MovImm, Dst: dst, Imm: op.Imm, W: op.Width})
+		if dst == e.s2 {
+			e.place(op.Result, e.s2)
+		}
 		return nil
 
 	case ssa.OpAdd, ssa.OpSub, ssa.OpMul, ssa.OpAnd, ssa.OpOr, ssa.OpXor,
@@ -484,9 +511,19 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		if err != nil {
 			return err
 		}
-		e.push(Inst{Op: MovReg, Dst: e.s2, Src: ra})
-		e.push(Inst{Op: BinOp, Dst: e.s2, Src: rb, K: op.Kind, W: op.Width})
-		e.place(op.Result, e.s2)
+		// The direct-form ops (op dst, src) can land straight in the result's
+		// register home; div/rem/shift stage through fixed registers (rax/rdx,
+		// cl) inside asmInst, so they stay on the scratch s2.
+		dst := e.s2
+		switch op.Kind {
+		case ssa.OpAdd, ssa.OpSub, ssa.OpMul, ssa.OpAnd, ssa.OpOr, ssa.OpXor:
+			dst = e.coalesceDst(op.Result, rb)
+		}
+		e.movReg(dst, ra)
+		e.push(Inst{Op: BinOp, Dst: dst, Src: rb, K: op.Kind, W: op.Width})
+		if dst == e.s2 {
+			e.place(op.Result, e.s2)
+		}
 		return nil
 
 	case ssa.OpEq, ssa.OpNe, ssa.OpLt, ssa.OpLtU, ssa.OpLe, ssa.OpLeU,
@@ -495,9 +532,12 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		if err != nil {
 			return err
 		}
-		e.push(Inst{Op: MovReg, Dst: e.s2, Src: ra})
-		e.push(Inst{Op: SetCmp, Dst: e.s2, Src: rb, K: op.Kind})
-		e.place(op.Result, e.s2)
+		dst := e.coalesceDst(op.Result, rb)
+		e.movReg(dst, ra)
+		e.push(Inst{Op: SetCmp, Dst: dst, Src: rb, K: op.Kind})
+		if dst == e.s2 {
+			e.place(op.Result, e.s2)
+		}
 		return nil
 
 	case ssa.OpNeg:
@@ -505,9 +545,12 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		if err != nil {
 			return err
 		}
-		e.push(Inst{Op: MovReg, Dst: e.s2, Src: ra})
-		e.push(Inst{Op: UnNeg, Dst: e.s2, W: op.Width})
-		e.place(op.Result, e.s2)
+		dst := e.coalesceDst(op.Result, -1)
+		e.movReg(dst, ra)
+		e.push(Inst{Op: UnNeg, Dst: dst, W: op.Width})
+		if dst == e.s2 {
+			e.place(op.Result, e.s2)
+		}
 		return nil
 
 	case ssa.OpNot, ssa.OpTrunc, ssa.OpExtendS, ssa.OpExtendU, ssa.OpExtend8S, ssa.OpExtend16S:
@@ -515,9 +558,12 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		if err != nil {
 			return err
 		}
-		e.push(Inst{Op: MovReg, Dst: e.s2, Src: ra})
-		e.push(Inst{Op: UnOp, Dst: e.s2, K: op.Kind, W: op.Width})
-		e.place(op.Result, e.s2)
+		dst := e.coalesceDst(op.Result, -1)
+		e.movReg(dst, ra)
+		e.push(Inst{Op: UnOp, Dst: dst, K: op.Kind, W: op.Width})
+		if dst == e.s2 {
+			e.place(op.Result, e.s2)
+		}
 		return nil
 
 	case ssa.OpConstFloat:
