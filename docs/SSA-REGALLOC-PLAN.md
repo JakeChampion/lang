@@ -290,8 +290,19 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
           so no wasm regression; confirmed by the wasm suites). `EmitProgram` now
           runs `match half(n) { Some(v) => v, None => k }` with the interpreter's
           result on both arms (Some=42, None=99) — the phi fix + this width fix
-          together. Still ahead: closure dispatch (`CallIndirect`), RC/runtime
-          helpers, then the flag + e2e diff.
+          together.
+        - [~] Closure dispatch — **designed** in `docs/SSA-CLOSURE-DISPATCH.md`.
+          Unify function-value representation to a `{fn, env}` cell (mirroring
+          the native backend): `OpConstFunc` becomes a `{fn, env=0}` cell instead
+          of a raw index, and `OpCallIndirect` uniformly derefs `fn`/`env` and
+          appends `env` as the last arg (`env`-last confirmed for both
+          zero-capture and capturing lambdas). Real-asm stores the code address
+          and `call r11`s (register-indirect, assembler-supported — no dispatch
+          table). Sequenced model → real-asm → wasm → whole-program. Note: the
+          *simple* non-escaping case runs on dispatch alone, but capturing /
+          dropped closures also emit `__fern_closure_drop` → need the RC-helper
+          slice, shared with struct/array. Still ahead: implement per that
+          design; RC/runtime helpers; then the flag + e2e diff.
 - [~] Op-coverage broadening toward parity (each op validated against `Eval`
   in the model before it reaches real assembly):
   - [x] Direct integer calls + recursion — `ssa.EvalIn` (function-table eval),
