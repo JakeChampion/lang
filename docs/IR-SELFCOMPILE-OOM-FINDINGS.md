@@ -367,6 +367,74 @@ itself is, which is the **Effect-A** clone/leak (Finding 2). So the cap lever
 is the **op-array reclamation (Effect A)** exclusively; string-side
 reclamation is done and should not be revisited for the cap.
 
+### LANDED + measured (2026-07-01, #4187) — pointer-element `.with` UAF fixed, but ZERO self-compile impact
+
+#4187 fixed a genuine use-after-free: `arr.with(i, v)` on an array of
+single-word rc-tracked pointer elements (struct / enum / array / tuple /
+closure) miscompiled on the copy-on-write **copy** branch — the plain
+`__fern_arr_cow_inplace` `memcpy`'d the pointer elements without inc'ing
+them, so the fresh copy shared the receiver's element boxes at unchanged
+rc and dropping either array freed them under the other. The fix adds a
+pointer-aware `__fern_arr_cow_inplace_ptr` (all three backends) that
+retains each copied element, plus the overwritten-element drop and
+aliased-value retain in `emitArraySet`. **General-purpose win confirmed:**
+a functional-update `.with` churn on a struct-pointer-element array drops
+from ~141 MB → ~2 MB peak (fully recycles), and the latent UAF is gone
+(clean under `RcFreeDebug`).
+
+This is exactly the shape `irlower.fern` threads —
+`s.locals.with(i, li_set_X(s.locals[i], v))` on `locals: LocalInfo[]`
+(a struct-pointer-element array, updated on the CoW copy branch of the
+`LowerState { … }` functional update, ~20 `.with` per lowered function).
+So it was the natural candidate for the Effect-A lever.
+
+**But the self-compile is UNMOVED — byte-identical at every shape.**
+Direct measurement (the `asm_run` driver compiling a generated module,
+peak RSS via `getrusage(RUSAGE_CHILDREN)`, built from the SAME self-host
+sources with the pre-#4187 vs post-#4187 native compiler — the driver
+binaries genuinely differ, so the fix applied):
+
+| workload | pre-#4187 | post-#4187 |
+| --- | --- | --- |
+| 100 fns × 20 stmts | 93 MB | 93 MB |
+| 250 fns × 20 stmts | 180 MB | 180 MB |
+| 500 fns × 20 stmts | 331 MB | 331 MB |
+| 1 fn × 500 stmts | 137 MB | 137 MB |
+| 1 fn × 1000 stmts | 364 MB | 364 MB |
+| 1 fn × 2000 stmts | 1135 MB | 1135 MB |
+
+Identical **to the kilobyte** in every row. Two things fall out:
+
+1. **Small-function peak is LINEAR in function count** (persistent
+   whole-module output: the accumulated emitted asm / op-stream for all
+   functions, held to the end — not reclaimable, and not what the fix
+   touched).
+2. **Single-function peak is SUPER-LINEAR in statements** — 137 → 364 →
+   1135 MB for 500 → 1000 → 2000 statements (~O(N²)). This *is* Effect A
+   (Finding 2), and it is the shape the real 512-function bundle OOMs on
+   (large compiler functions). The fix does **not** move it.
+
+**Why the element-level fix can't move the Effect-A peak.** The O(N²)
+is the `LowerState` **record / `locals` array** being cloned-and-leaked
+per statement (Finding 2) — an ARRAY/RECORD-level lifecycle cost. #4187
+corrected the rc bookkeeping of the *elements inside* a `.with` copy; it
+does not change whether the *old locals array* (or the old `LowerState`
+record) is freed each iteration. Those still leak under Effect A, so the
+live set — and thus the peak — is unchanged. Like the string fix (#4174),
+#4187 is a real correctness/reclamation win that does **not** reduce the
+self-compile peak.
+
+**Net: the cap lever remains Effect A exclusively, and specifically at
+the record/array level** — either make the `LowerState` record reuse its
+box in place across the functional update (blocked today: `LowerState`
+has `string` fields, so it is `structReuseEligible = false` and the
+self-overwrite / cross-reuse constructor-reuse paths bail), or restructure
+the lowering so `locals` / `ops` are threaded as sole-owner *mutable*
+locals rather than immutable record fields rebuilt via `.with` / `.append`
+(so the per-statement clone disappears entirely). Element-level rc fixes
+(#4174 strings, #4187 pointer elements) are done and should not be
+revisited for the cap.
+
 ## Finding 2 — O(N²) `LowerState` rebuild in IR lowering
 
 `examples/self_host/irlower.fern` threads all per-function lowering
