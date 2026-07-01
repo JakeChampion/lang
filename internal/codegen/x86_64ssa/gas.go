@@ -120,6 +120,9 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 			return "", err
 		}
 	}
+	for _, h := range referencedRuntimeHelpers(progs) {
+		runtimeHelperEmitters[h](w)
+	}
 	if len(strOrder) > 0 {
 		w("")
 		w(".section .rodata")
@@ -669,15 +672,21 @@ func asmInst(in Inst, scratch int) (string, error) {
 		return fmt.Sprintf("cmp %s, %s\n\t%s %s\n\tmovzx %s, %s",
 			reg(in.Dst), reg(in.Src), cc, reg8n(in.Dst), reg(in.Dst), reg8n(in.Dst)), nil
 	case MemAlloc:
-		// Bump allocator: result = align8(cursor); cursor = result + size. The
-		// heap cursor lives in .bss (see the heap section emitted per module).
+		// Bump allocator with an 8-byte rc header (rc=1 at base+0), mirroring the
+		// native __fern_alloc_rc1 layout so __fern_rc_is_unique / the drop helpers
+		// find a valid reference count at [data-8]. base = align8(cursor); the
+		// returned data pointer is base+8; the cursor advances past header+size.
+		// See docs/SSA-RC-RUNTIME.md.
 		return strings.Join([]string{
 			fmt.Sprintf("mov %s, [rip + %s]", reg(in.Dst), heapPtrSym),
 			fmt.Sprintf("add %s, 7", reg(in.Dst)),
-			fmt.Sprintf("and %s, -8", reg(in.Dst)),
+			fmt.Sprintf("and %s, -8", reg(in.Dst)),                     // Dst = base (8-aligned)
+			fmt.Sprintf("mov dword ptr %s, 1", memRef(reg(in.Dst), 0)), // rc = 1
 			fmt.Sprintf("mov %s, %s", reg(scratch), reg(in.Dst)),
 			fmt.Sprintf("add %s, %s", reg(scratch), reg(in.Src)),
+			fmt.Sprintf("add %s, 8", reg(scratch)), // header bytes
 			fmt.Sprintf("mov [rip + %s], %s", heapPtrSym, reg(scratch)),
+			fmt.Sprintf("add %s, 8", reg(in.Dst)), // return data = base + 8
 		}, "\n\t"), nil
 	case MemLoad:
 		mem := memRef(reg(in.Src), in.Imm)
@@ -860,13 +869,18 @@ func closureLines(in Inst, numAlloc int, fnIndex map[string]int) ([]string, erro
 	envReg := numAlloc      // s0 — unused by the MakeEnv/MakeClosure inst itself
 	var out []string
 	alloc := func(dst int, bytes int64) {
+		// Same rc-headed bump as MemAlloc (see asmInst): rc=1 at base+0, data at
+		// base+8, cursor past header+bytes. Keeps env blocks and closure cells
+		// droppable through __fern_rc_is_unique / the drop helpers.
 		out = append(out,
 			fmt.Sprintf("mov %s, [rip + %s]", reg(dst), heapPtrSym),
 			fmt.Sprintf("add %s, 7", reg(dst)),
 			fmt.Sprintf("and %s, -8", reg(dst)),
+			fmt.Sprintf("mov dword ptr %s, 1", memRef(reg(dst), 0)), // rc = 1
 			fmt.Sprintf("mov %s, %s", reg(scratch), reg(dst)),
-			fmt.Sprintf("add %s, %d", reg(scratch), bytes),
+			fmt.Sprintf("add %s, %d", reg(scratch), bytes+8),
 			fmt.Sprintf("mov [rip + %s], %s", heapPtrSym, reg(scratch)),
+			fmt.Sprintf("add %s, 8", reg(dst)), // return data = base + 8
 		)
 	}
 	storeCaps := func(base int) {
@@ -951,6 +965,61 @@ func usesCallIndirect(progs map[string]*Program) bool {
 		}
 	}
 	return false
+}
+
+// runtimeHelperEmitters maps a __fern_* runtime-helper name to the code that
+// writes its body into the SSA .text. A helper is emitted iff the module calls
+// it (referencedRuntimeHelpers); the bodies mirror the native backends'
+// hand-written runtime asm (docs/SSA-RC-RUNTIME.md). Keyed by the exact callee
+// name the IR emits, so the `call fn_<name>` site links against the label
+// fnLabel(name) writes.
+var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
+	"__fern_rc_is_unique": emitRcIsUniqueHelper,
+}
+
+// referencedRuntimeHelpers returns, sorted, the runtime-helper names any emitted
+// program calls and for which an emitter exists — the set to append to .text.
+func referencedRuntimeHelpers(progs map[string]*Program) []string {
+	seen := map[string]bool{}
+	for _, p := range progs {
+		for _, blk := range p.Blocks {
+			for _, in := range blk.Insts {
+				if (in.Op == Call || in.Op == CallPair) && runtimeHelperEmitters[in.Callee] != nil {
+					seen[in.Callee] = true
+				}
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for n := range seen {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// emitRcIsUniqueHelper writes __fern_rc_is_unique(data) -> i32: 1 iff data is a
+// real, uniquely-owned heap value — non-null, above the low-address guard, not a
+// static sentinel (top bit of the rc word set), rc == 1; else 0. The guard chain
+// makes it safe on a slot that might hold a non-pointer scalar. Leaf (no calls,
+// no frame). Mirrors the arm64/x86-64 stack-machine backends' version.
+func emitRcIsUniqueHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_rc_is_unique"))
+	w("\ttest rdi, rdi")
+	w("\tjz .Lssa_rcuniq_no")
+	w("\tcmp rdi, 0x10000")
+	w("\tjb .Lssa_rcuniq_no")
+	w("\tmov eax, %s", memRef("rdi", -8)) // rc word (4-byte) at data-8
+	w("\ttest eax, eax")
+	w("\tjs .Lssa_rcuniq_no") // sign bit set = static sentinel (0x80000000)
+	w("\tcmp eax, 1")
+	w("\tjne .Lssa_rcuniq_no")
+	w("\tmov eax, 1")
+	w("\tret")
+	w(".Lssa_rcuniq_no:")
+	w("\txor eax, eax")
+	w("\tret")
 }
 
 // rcxReg/raxReg/rdxReg are the fixed registers the shift/div sequences pin.
