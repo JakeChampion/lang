@@ -49,6 +49,16 @@ var strAccumIRCases = []struct {
 	{"accum-churn-safe",
 		`function main(): i32 { var x: string = "yy"; var s: string = ""; var i: i32 = 0; while (i < 5000000) { s = s + x; if (s.len() > 40) { s = chr(65); } i = i + 1; } return 0; }`,
 		0, true},
+	// UN-ANNOTATED accumulator (`var s = ""`, no `: string`): reclaimed too — the
+	// annotation is not required; the is_str type gate at the reclaim site admits the
+	// actual string accumulator. len 4.
+	{"accum-unannotated",
+		`function main(): i32 { var s = ""; var i: i32 = 0; while (i < 4) { s = s + "x"; i = i + 1; } return s.len(); }`,
+		4, true},
+	// UN-ANNOTATED returned builder: intermediates freed, final moved out. len 6.
+	{"accum-unannotated-return",
+		`function build(n: i32): string { var s = ""; var i: i32 = 0; while (i < n) { s = s + "ab"; i = i + 1; } return s; } function main(): i32 { return build(3).len(); }`,
+		6, true},
 	// NEGATIVE: an int accumulator (`n = n + i`) matches the reassign SHAPE but is not
 	// is_str, so it is never reclaimed (no __fern_str_free) and stays correct. 0+1+2+3+4.
 	{"accum-int-not-reclaimed",
