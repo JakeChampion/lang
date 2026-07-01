@@ -115,6 +115,43 @@ func TestStaticExecutableDataWXHeader(t *testing.T) {
 	if dataStartPage := dataOff / page; dataStartPage <= codeEndPage {
 		t.Errorf("data page %d overlaps code end page %d", dataStartPage, codeEndPage)
 	}
+	// seg1 p_memsz (offset 160) covers the whole blob; with no trailing zeros it
+	// equals p_filesz.
+	if p_memsz := u64(bin, 160); p_memsz != uint64(len(data)) {
+		t.Errorf("seg1 p_memsz = %d, want %d", p_memsz, len(data))
+	}
+}
+
+// TestStaticExecutableDataWXBssNobits pins the .bss NOBITS optimisation: a data
+// blob whose tail is zero-filled (the bump heap / strbuf / args globals the
+// assembler materialises as trailing zeros) is stored in the file only up to its
+// last non-zero byte — p_filesz — while p_memsz still spans the whole blob so the
+// loader zero-fills the rest. This is what keeps arm64-ssa binaries from carrying
+// their (potentially huge) zero-init regions on disk.
+func TestStaticExecutableDataWXBssNobits(t *testing.T) {
+	text := []byte{0x00, 0x00, 0x80, 0xd2} // movz x0,#0
+	const initLen = 5
+	const zeroTail = 4096
+	data := make([]byte, initLen+zeroTail)
+	for i := 0; i < initLen; i++ {
+		data[i] = byte(i + 1) // 1..5, then a long zero tail (the "bss")
+	}
+	bin := elf.StaticExecutableDataWX(text, data)
+
+	const page = 0x10000
+	const headers = 64 + 2*56
+	dataOff := (uint64(headers+len(text)) + page - 1) &^ (page - 1)
+
+	// The file ends at the initialised prefix — the zero tail is NOT stored.
+	if want := int(dataOff) + initLen; len(bin) != want {
+		t.Fatalf("len(bin) = %d, want %d (zero tail must not be materialised)", len(bin), want)
+	}
+	if p_filesz := u64(bin, 152); p_filesz != initLen {
+		t.Errorf("seg1 p_filesz = %d, want %d (initialised prefix only)", p_filesz, initLen)
+	}
+	if p_memsz := u64(bin, 160); p_memsz != uint64(len(data)) {
+		t.Errorf("seg1 p_memsz = %d, want %d (full segment incl. zero-fill)", p_memsz, len(data))
+	}
 }
 
 // TestAssembledDataWXRunsUnderQemu is the W^X symbol-addressing gate: the
