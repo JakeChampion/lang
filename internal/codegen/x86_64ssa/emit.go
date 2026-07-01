@@ -48,6 +48,7 @@ const (
 	FCmp                       // reg[Dst] = (reg[Dst] K reg[Src]) as floats ? 1 : 0
 	FConv                      // reg[Dst] = K(reg[Dst])   (K a float unary/convert: FNeg/FPromote/FDemote/IToF*/FToI*)
 	EnumSentinel               // reg[Dst] = shared static sentinel pointer for tag Imm
+	CallPair                   // reg[Dst], reg[Dst2] = Callee(ArgLocs...)   (two-result direct call)
 )
 
 // Inst is one straight-line abstract instruction. Registers are indices into a
@@ -55,6 +56,7 @@ const (
 type Inst struct {
 	Op   Opcode
 	Dst  int
+	Dst2 int // second destination register (CallPair: the payload result)
 	Src  int
 	Src2 int // second source register (MemStore: the value)
 	Imm  int64
@@ -74,9 +76,10 @@ type Inst struct {
 type TermKind int
 
 const (
-	TJmp  TermKind = iota // unconditional jump to Target
-	TBrIf                 // if reg[CondReg] != 0 goto True else goto False
-	TRet                  // return reg[RetReg]
+	TJmp     TermKind = iota // unconditional jump to Target
+	TBrIf                    // if reg[CondReg] != 0 goto True else goto False
+	TRet                     // return reg[RetReg]
+	TRetPair                 // return (reg[RetReg], reg[RetReg2]) — pair-return convention
 )
 
 // Term ends an MBlock.
@@ -86,7 +89,8 @@ type Term struct {
 	CondReg int // TBrIf
 	True    int // TBrIf
 	False   int // TBrIf
-	RetReg  int // TRet
+	RetReg  int // TRet / TRetPair (tag)
+	RetReg2 int // TRetPair (payload)
 }
 
 // MBlock is a straight-line instruction run plus a terminator.
@@ -248,6 +252,20 @@ func (e *emitter) emitBlock(b *ssa.Block) error {
 		}
 		e.blocks[bi].Insts = e.cur
 		e.blocks[bi].Term = Term{Kind: TRet, RetReg: rr}
+
+	case ssa.TermRetPair:
+		// Materialise tag and payload into distinct scratch registers so loading
+		// the second (from a slot) can't clobber the first.
+		tag, err := e.materialize(b.Term.Value, e.s0)
+		if err != nil {
+			return err
+		}
+		payload, err := e.materialize(b.Term.Value2, e.s1)
+		if err != nil {
+			return err
+		}
+		e.blocks[bi].Insts = e.cur
+		e.blocks[bi].Term = Term{Kind: TRetPair, RetReg: tag, RetReg2: payload}
 
 	case ssa.TermBr:
 		// Single successor: phi moves go at the end of this block.
@@ -516,6 +534,23 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		}
 		e.push(Inst{Op: Call, Dst: e.s2, Callee: op.Str, ArgLocs: argLocs, W: op.Width})
 		e.place(op.Result, e.s2)
+		return nil
+
+	case ssa.OpCallPair:
+		// Two-result direct call: tag delivered into s2, payload into s3. The two
+		// results are placed independently; destinations are allocatable regs or
+		// slots, never s2/s3, so the second place can't clobber the first source.
+		argLocs := make([]Loc, 0, len(op.Args))
+		for _, a := range op.Args {
+			l, ok := e.loc(a.ID)
+			if !ok {
+				return fmt.Errorf("x86_64ssa: callpair arg v%d has no allocation", a.ID)
+			}
+			argLocs = append(argLocs, l)
+		}
+		e.push(Inst{Op: CallPair, Dst: e.s2, Dst2: e.s3, Callee: op.Str, ArgLocs: argLocs, W: op.Width})
+		e.place(op.Result, e.s2)
+		e.place(op.Result2, e.s3)
 		return nil
 
 	case ssa.OpAlloc:

@@ -161,9 +161,17 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
   - [x] `OpEnumSentinel` — the shared static per-tag sentinel pointer (memoised
     by tag on the model heap; same tag → same pointer, tag stored at the
     pointer), in `Eval` + the model. ~472 occurrences.
-  - [ ] Remaining tail: `OpCallPair` (two-result returns), `OpCallIndirect`
-    (fn-pointer dispatch), `OpMakeClosure`/`OpMakeEnv` (closures) — lower
-    frequency, more involved (multi-result Run / fn-ptr table)
+  - [x] `OpCallPair` (two-result returns) + `TermRetPair` — the pair-return
+    convention for Option/Result. `evalWith` / `runProg` now thread two return
+    values `(tag, payload)`; `EvalIn` / `Run` / `RunModule` keep their
+    single-value contract (returning the tag). The emitter delivers the tag into
+    `s2` and the payload into `s3`, placing each result independently; the model
+    recurses and writes both `Dst`/`Dst2`. Validated `RunModule == EvalIn` incl.
+    both results kept live across an intervening (callee-clobbering) call and
+    under spill-forcing register counts. ~132 occurrences.
+  - [ ] Remaining tail: `OpCallIndirect` (fn-pointer dispatch),
+    `OpMakeClosure`/`OpMakeEnv` (closures) — lower frequency, more involved
+    (fn-ptr table / env layout)
   - [ ] RC inc/dec (Perceus ordering)
 
   **Coverage measurement (data-driven prioritisation).** Lifting the example
