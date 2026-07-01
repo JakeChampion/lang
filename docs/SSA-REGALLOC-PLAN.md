@@ -147,9 +147,16 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
     const-string length map), in `Eval` + the model. The single biggest
     unhandled block in the measurement (~3668). Validated: length + byte reads,
     empty string, and a string passed across a call.
+  - [x] Floats — `OpConstFloat`, `OpFAdd/FSub/FMul/FDiv/FNeg`, float compares,
+    `OpFPromote/FDemote`, `OpIToFS/IToFU/FToIS/FToIU`, `OpLoadF/StoreF`, in
+    `Eval` + the model. Floats live as their f64 bit pattern in the int64
+    registers (like a hardware register), so `Run` and `Eval` agree bit-for-bit;
+    f32 modelled via precision rounding. ~3500 occurrences. (`LoadF/StoreF`
+    route through the 8-byte memory path.)
   - [ ] Composite types: structs, arrays, maps (mostly alloc+load/store, already
     covered post-lowering)
-  - [ ] Integer `div`/`rem` (real-asm needs `idiv` rax/rdx) and floats
+  - [ ] Integer `div`/`rem` (real-asm needs `idiv` rax/rdx)
+  - [ ] `enum_sentinel`, call-pair/indirect, closures
   - [ ] RC inc/dec (Perceus ordering)
 
   **Coverage measurement (data-driven prioritisation).** Lifting the example
