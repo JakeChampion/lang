@@ -31,7 +31,18 @@ func Eval(f *Func, args ...int64) (int64, error) {
 // EvalIn is Eval with a function table so OpCall can recurse into callees
 // (resolved by name via Op.Str). Direct integer calls only.
 func EvalIn(funcs map[string]*Func, f *Func, args ...int64) (int64, error) {
-	v, _, err := evalWith(funcs, newHeap(), f, args...)
+	v, _, err := evalWith(funcs, nil, newHeap(), f, args...)
+	return v, err
+}
+
+// EvalInTable is EvalIn plus an ordered function-index table so OpCallIndirect
+// can resolve a function value (an integer index, as produced by OpConstFunc →
+// OpConstInt) to a callee: table[idx] is the callee's name, looked up in funcs.
+// This mirrors the backends' function-table dispatch (wasm call_indirect / the
+// native closure-cell pool), where a function value is its position in the
+// module's ordered function list.
+func EvalInTable(funcs map[string]*Func, table []string, f *Func, args ...int64) (int64, error) {
+	v, _, err := evalWith(funcs, table, newHeap(), f, args...)
 	return v, err
 }
 
@@ -133,7 +144,7 @@ func memAccess(k OpKind) (bytes int, signed bool) {
 	}
 }
 
-func evalWith(funcs map[string]*Func, h *heap, f *Func, args ...int64) (int64, int64, error) {
+func evalWith(funcs map[string]*Func, table []string, h *heap, f *Func, args ...int64) (int64, int64, error) {
 	vals := map[int32]int64{}
 
 	// strLen maps an OpConstString result to its literal byte length, so
@@ -199,7 +210,7 @@ func evalWith(funcs map[string]*Func, h *heap, f *Func, args ...int64) (int64, i
 			if op.Kind == OpPhi {
 				continue
 			}
-			if err := evalOp(funcs, h, strLen, op, vals); err != nil {
+			if err := evalOp(funcs, table, h, strLen, op, vals); err != nil {
 				return 0, 0, err
 			}
 		}
@@ -281,7 +292,7 @@ func b2i(b bool) int64 {
 	return 0
 }
 
-func evalOp(funcs map[string]*Func, h *heap, strLen map[int32]int, op *Op, vals map[int32]int64) error {
+func evalOp(funcs map[string]*Func, table []string, h *heap, strLen map[int32]int, op *Op, vals map[int32]int64) error {
 	// Binary integer ops read Args[0], Args[1]; unary read Args[0].
 	arg := func(i int) (int64, error) {
 		if i >= len(op.Args) {
@@ -429,7 +440,7 @@ func evalOp(funcs map[string]*Func, h *heap, strLen map[int32]int, op *Op, vals 
 			}
 			argvals = append(argvals, v)
 		}
-		r0, r1, err := evalWith(funcs, h, callee, argvals...)
+		r0, r1, err := evalWith(funcs, table, h, callee, argvals...)
 		if err != nil {
 			return err
 		}
@@ -441,6 +452,40 @@ func evalOp(funcs map[string]*Func, h *heap, strLen map[int32]int, op *Op, vals 
 				vals[op.Result2.ID] = r1
 			}
 			return nil
+		}
+		return set(r0)
+
+	case OpCallIndirect:
+		// Args[0] is the callee: a function value (integer index into the
+		// module's ordered function table). Args[1..] are the call arguments.
+		if funcs == nil {
+			return fmt.Errorf("Eval: OpCallIndirect requires a function table (use EvalInTable)")
+		}
+		if len(op.Args) < 1 {
+			return fmt.Errorf("Eval: OpCallIndirect needs a callee operand")
+		}
+		idx, err := arg(0)
+		if err != nil {
+			return err
+		}
+		if idx < 0 || idx >= int64(len(table)) {
+			return fmt.Errorf("Eval: OpCallIndirect index %d out of range (table has %d entries)", idx, len(table))
+		}
+		callee, ok := funcs[table[idx]]
+		if !ok {
+			return fmt.Errorf("Eval: OpCallIndirect target %q (index %d) not in function table", table[idx], idx)
+		}
+		argvals := make([]int64, 0, len(op.Args)-1)
+		for i := 1; i < len(op.Args); i++ {
+			v, err := arg(i)
+			if err != nil {
+				return err
+			}
+			argvals = append(argvals, v)
+		}
+		r0, _, err := evalWith(funcs, table, h, callee, argvals...)
+		if err != nil {
+			return err
 		}
 		return set(r0)
 

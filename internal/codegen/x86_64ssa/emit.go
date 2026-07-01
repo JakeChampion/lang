@@ -49,6 +49,7 @@ const (
 	FConv                      // reg[Dst] = K(reg[Dst])   (K a float unary/convert: FNeg/FPromote/FDemote/IToF*/FToI*)
 	EnumSentinel               // reg[Dst] = shared static sentinel pointer for tag Imm
 	CallPair                   // reg[Dst], reg[Dst2] = Callee(ArgLocs...)   (two-result direct call)
+	CallIndirect               // reg[Dst] = table[readLoc(IdxLoc)](ArgLocs...)   (fn-index dispatch)
 )
 
 // Inst is one straight-line abstract instruction. Registers are indices into a
@@ -68,6 +69,7 @@ type Inst struct {
 
 	Callee  string  // Call: callee function name
 	ArgLocs []Loc   // Call: homes of the argument values, in order
+	IdxLoc  Loc     // CallIndirect: home of the function-index value (Args[0])
 	Str     string  // ConstStr: the literal bytes to materialise
 	F64     float64 // FConst: the float value
 }
@@ -551,6 +553,29 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		e.push(Inst{Op: CallPair, Dst: e.s2, Dst2: e.s3, Callee: op.Str, ArgLocs: argLocs, W: op.Width})
 		e.place(op.Result, e.s2)
 		e.place(op.Result2, e.s3)
+		return nil
+
+	case ssa.OpCallIndirect:
+		// Args[0] is the function-index value; Args[1..] are the call args. The
+		// index and arg homes are captured here; the model reads the index,
+		// resolves table[idx] → callee Program, recurses, and delivers into s2.
+		if len(op.Args) < 1 {
+			return fmt.Errorf("x86_64ssa: OpCallIndirect needs a callee operand")
+		}
+		idxLoc, ok := e.loc(op.Args[0].ID)
+		if !ok {
+			return fmt.Errorf("x86_64ssa: callindirect index v%d has no allocation", op.Args[0].ID)
+		}
+		argLocs := make([]Loc, 0, len(op.Args)-1)
+		for _, a := range op.Args[1:] {
+			l, ok := e.loc(a.ID)
+			if !ok {
+				return fmt.Errorf("x86_64ssa: callindirect arg v%d has no allocation", a.ID)
+			}
+			argLocs = append(argLocs, l)
+		}
+		e.push(Inst{Op: CallIndirect, Dst: e.s2, IdxLoc: idxLoc, ArgLocs: argLocs, W: op.Width})
+		e.place(op.Result, e.s2)
 		return nil
 
 	case ssa.OpAlloc:

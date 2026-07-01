@@ -15,7 +15,7 @@ import (
 // emitter's operand wiring / two-address fixup / spill handling rather than a
 // semantic mismatch.
 func Run(p *Program, args []int64) (int64, error) {
-	v, _, err := runProg(nil, p, newModelHeap(), args)
+	v, _, err := runProg(nil, nil, p, newModelHeap(), args)
 	return v, err
 }
 
@@ -23,15 +23,22 @@ func Run(p *Program, args []int64) (int64, error) {
 // the module so direct calls (and recursion) execute. A single heap is shared
 // across the whole call tree (OpAlloc state persists), matching the runtime.
 func RunModule(m map[string]*Program, entry string, args []int64) (int64, error) {
+	return RunModuleTable(m, nil, entry, args)
+}
+
+// RunModuleTable is RunModule plus an ordered function-index table so
+// CallIndirect can resolve a function value (an integer index) to a callee:
+// table[idx] names the callee, looked up in m. Mirrors ssa.EvalInTable.
+func RunModuleTable(m map[string]*Program, table []string, entry string, args []int64) (int64, error) {
 	p, ok := m[entry]
 	if !ok {
 		return 0, fmt.Errorf("RunModule: unknown entry %q", entry)
 	}
-	v, _, err := runProg(m, p, newModelHeap(), args)
+	v, _, err := runProg(m, table, p, newModelHeap(), args)
 	return v, err
 }
 
-func runProg(m map[string]*Program, p *Program, h *modelHeap, args []int64) (int64, int64, error) {
+func runProg(m map[string]*Program, table []string, p *Program, h *modelHeap, args []int64) (int64, int64, error) {
 	if len(args) != len(p.ParamLocs) {
 		return 0, 0, fmt.Errorf("Run: got %d args, program has %d params", len(args), len(p.ParamLocs))
 	}
@@ -99,7 +106,28 @@ func runProg(m map[string]*Program, p *Program, h *modelHeap, args []int64) (int
 				for _, l := range in.ArgLocs {
 					argvals = append(argvals, readLoc(l))
 				}
-				r0, _, err := runProg(m, callee, h, argvals)
+				r0, _, err := runProg(m, table, callee, h, argvals)
+				if err != nil {
+					return 0, 0, err
+				}
+				regs[in.Dst] = maskW(in.W, r0)
+			case CallIndirect:
+				if m == nil {
+					return 0, 0, fmt.Errorf("Run: CallIndirect requires a module (use RunModuleTable)")
+				}
+				idx := readLoc(in.IdxLoc)
+				if idx < 0 || idx >= int64(len(table)) {
+					return 0, 0, fmt.Errorf("Run: CallIndirect index %d out of range (table has %d entries)", idx, len(table))
+				}
+				callee, ok := m[table[idx]]
+				if !ok {
+					return 0, 0, fmt.Errorf("Run: CallIndirect target %q (index %d) not in module", table[idx], idx)
+				}
+				argvals := make([]int64, 0, len(in.ArgLocs))
+				for _, l := range in.ArgLocs {
+					argvals = append(argvals, readLoc(l))
+				}
+				r0, _, err := runProg(m, table, callee, h, argvals)
 				if err != nil {
 					return 0, 0, err
 				}
@@ -116,7 +144,7 @@ func runProg(m map[string]*Program, p *Program, h *modelHeap, args []int64) (int
 				for _, l := range in.ArgLocs {
 					argvals = append(argvals, readLoc(l))
 				}
-				r0, r1, err := runProg(m, callee, h, argvals)
+				r0, r1, err := runProg(m, table, callee, h, argvals)
 				if err != nil {
 					return 0, 0, err
 				}
