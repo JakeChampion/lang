@@ -2715,6 +2715,51 @@ pub function expr_is_fresh_str(e: parser.Expr, s: LowerState): boolean {
     return false;
 }
 
+// str_local_binding_is_fresh reports (purely SYNTACTICALLY, given the binding's
+// declared type) whether `var <name>: string = init` binds a FRESH, sole-owned
+// HEAP string whose box + data buffer this frame exclusively owns — the string
+// analogue of tuple_lit_is_fresh_scalar, and the collection-time subset of
+// expr_is_fresh_str (which needs a LowerState for the concat operand-type test).
+// Requiring the `: string` annotation makes every admitted form unambiguous
+// WITHOUT type inference: an annotated `a + b` is a string CONCAT (fresh buffer
+// + box, never int add — the checker typed the var string); an annotated
+// `.to_upper()` / `.to_lower()` / `.reverse()` / `.repeat(n)` is the string
+// method (each copies into a fresh buffer; a non-string receiver that would
+// alias is a checker type error, never compiled here); and the named
+// fresh-string builtins / free-fns (chr / string_from_bytes / str_to_upper /
+// str_to_lower / str_repeat / __raw_string) allocate fresh by construction.
+// DELIBERATELY EXCLUDED (each may ALIAS a live box → freeing would over-release):
+// a string LITERAL (static, not heap), a bare ident / field / index / slice
+// (aliases a live string), `.trim()` (zero-copy VIEW into the receiver buffer),
+// `.replace()` / `.to_string()` (receiver-identity fast-paths), and a general
+// call (may return a borrowed param). Mirrors expr_is_fresh_str's admitted set.
+function str_local_binding_is_fresh(init: parser.Expr, type_name: string): boolean {
+    if (type_name != "string") { return false; }
+    match (init) {
+        parser.ExprBinary(b) => { return b.op == "+"; },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (cid.name == "chr" || cid.name == "string_from_bytes") { return true; }
+                    if (cid.name == "str_to_upper" || cid.name == "str_to_lower"
+                            || cid.name == "str_repeat") { return true; }
+                    if (cid.name == "__raw_string" && c.args.len() == 2) { return true; }
+                    return false;
+                },
+                parser.ExprFieldAccess(cfa) => {
+                    if ((cfa.field == "to_upper" || cfa.field == "to_lower" || cfa.field == "reverse")
+                            && c.args.len() == 0) { return true; }
+                    if (cfa.field == "repeat" && c.args.len() == 1) { return true; }
+                    return false;
+                },
+                _ => { return false; },
+            }
+        },
+        _ => { return false; },
+    }
+    return false;
+}
+
 // to_unsigned_kind maps a signed IR op kind to its unsigned variant, for u64
 // operands (#2904): comparisons, shift-right, and div/rem. Sign-agnostic kinds
 // (add/sub/mul/and/or/xor/shl/eq/ne) pass through unchanged.
@@ -9750,6 +9795,13 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             // leak-mode — only the box is reclaimed, matching the exit sweep. No
             // alias_inc for structs / tuples — an aliased one is never reclaimable
             // (its name escapes via the RHS), so it is left to leak.
+            // A fresh, non-escaping heap-STRING local (slot_is_reclaimable_str)
+            // takes the string-specific reclaim store instead: its box is header-
+            // less on the asm backends, so it must free through __fern_str_free
+            // (box + data buffer), never the rc-word __fern_rc_dec emit_arr_store
+            // would emit. Loop-body re-binds free the prior iteration's box; the
+            // final value is freed by the exit string sweep.
+            if (slot_is_reclaimable_str(sb, slot)) { return emit_str_reclaim_store(sb, slot); }
             return emit_arr_store(sb, slot, alias_inc, is_arr || slot_is_reclaimable_struct(sb, slot) || slot_is_reclaimable_tuple(sb, slot));
         },
         parser.StmtAssign(a) => {
@@ -11482,6 +11534,33 @@ pub function emit_arr_store(se: LowerState, slot: i32, alias_inc: boolean, do_de
     return st.emit(ir.op_store_local(slot));
 }
 
+// emit_str_reclaim_store stores `new` (already on the operand stack) into a
+// reclaimable fresh-string slot and frees the slot's PRIOR value (the loop-rebind
+// reclamation) via __fern_str_free, cow-guarded (`if old != new`) so a self-store
+// never frees the live box. The string sibling of emit_arr_store's do_dec branch,
+// but with NO alias_inc — a reclaimable string is proven non-aliased, and its box
+// is header-less on the asm backends (an rc_inc would corrupt the adjacent block),
+// so it is never inc'd. The first binding sees old = the zero-initialised slot →
+// __fern_str_free's null guard makes it a no-op. On wasm __fern_str_free maps to
+// $__fern_arr_dec (rc-headered strings), which rc-guards the free; on asm it is
+// the box + data-buffer freelist release.
+pub function emit_str_reclaim_store(se: LowerState, slot: i32): LowerState {
+    var scratch: string = "$srea" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));
+    st = st.emit(ir.op_load_local(slot));       // OLD value the slot holds
+    st = st.emit(ir.op_load_local(tmp));         // new value
+    st = st.emit(ir.op_bin("ne", 0, false));     // old != new (cow guard)
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_str_free", 1));
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_load_local(tmp));
+    return st.emit(ir.op_store_local(slot));
+}
+
 // emit_snapshot_store stores `new` (on the operand stack) into a SNAPSHOT param
 // slot (#3456 slice 2) and frees the OLD box only when it differs from BOTH the
 // new value (cow) AND the entry snapshot at `snap_slot` (the caller's original).
@@ -12216,6 +12295,23 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
             st = st.emit(ir.op_drop());
         }
         tj = tj + 1;
+    }
+    // Reclaimable fresh heap-string locals — free the box + data buffer via
+    // __fern_str_free at scope exit (the sibling of the struct/tuple loops above).
+    // Only fresh, proven-non-escaping, non-reassigned string locals qualify
+    // (slot_is_reclaimable_str), so the box is the sole reference: a returned /
+    // stored / aliased string is escaping → never in the set → never swept (no
+    // move-on-return keep needed). Slots are zeroed at entry, so an untaken-branch
+    // slot frees a guarded null. A loop-body string local's per-iteration boxes
+    // were already freed at the rebind; this frees the final live one.
+    var sj: i32 = st.n_params;
+    while (sj < st.locals.len()) {
+        if (!slot_list_has(keeps, sj) && slot_is_reclaimable_str(st, sj)) {
+            st = st.emit(ir.op_load_local(sj));
+            st = st.emit(ir.op_call_direct("__fern_str_free", 1));
+            st = st.emit(ir.op_drop());
+        }
+        sj = sj + 1;
     }
     return st;
 }
@@ -13061,6 +13157,48 @@ function collect_fresh_tuple_in_stmt(st: parser.Stmt, acc: string[]): string[] {
     }
 }
 
+// collect_fresh_string_names / collect_fresh_string_in_stmt gather the LOCAL
+// names bound via `var s: string = <fresh producer>` (str_local_binding_is_fresh)
+// anywhere in the body — the string sibling of collect_fresh_scalar_tuple_names.
+// The escape gate (body_unsafe_for) and the not-reassigned gate are applied by
+// reclaimable_names_of before any name is credited "STR:", so a returned /
+// stored / aliased / reassigned string is never freed (only leaked, sound).
+function collect_fresh_string_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) { a = collect_fresh_string_in_stmt(stmts[i], a); i = i + 1; }
+    return a;
+}
+function collect_fresh_string_in_stmt(st: parser.Stmt, acc: string[]): string[] {
+    match (st) {
+        parser.StmtVar(v) => {
+            if (str_local_binding_is_fresh(v.init, v.type_name)) { return push_str_unique(acc, v.name); }
+            return acc;
+        },
+        parser.StmtIf(iff) => {
+            var a: string[] = collect_fresh_string_names(iff.then_body, acc);
+            return collect_fresh_string_names(iff.else_body, a);
+        },
+        parser.StmtWhile(w) => { return collect_fresh_string_names(w.body, acc); },
+        parser.StmtFor(f) => { return collect_fresh_string_names(f.body, acc); },
+        parser.StmtMatch(m) => {
+            var a: string[] = acc;
+            var i: i32 = 0;
+            while (i < m.arms.len()) { a = collect_fresh_string_names(m.arms[i].body, a); i = i + 1; }
+            return a;
+        },
+        parser.StmtSwitch(sw) => {
+            var a: string[] = acc;
+            var i: i32 = 0;
+            while (i < sw.cases.len()) { a = collect_fresh_string_names(sw.cases[i].body, a); i = i + 1; }
+            if (sw.has_default) { a = collect_fresh_string_names(sw.default_body, a); }
+            return a;
+        },
+        parser.StmtDefer(d) => { return collect_fresh_string_in_stmt(d.action, acc); },
+        _ => { return acc; },
+    }
+}
+
 // collect_fresh_ret_call_names credits a struct LOCAL bound from a fresh-ret
 // CALL (`var r: T = f(..)` / `var r: T = obj.m(..)`, f/m in fresh_ret) that is
 // NOT reassigned — the DISCARDED fresh-ret-call local (#3457 follow-up). A
@@ -13142,6 +13280,23 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     while (ti < tups.len()) {
         if (!body_unsafe_for(body, tups[ti], borrowable)) { out = out.append("TUP:" + tups[ti]); }
         ti = ti + 1;
+    }
+    // Fresh heap-string locals (`var s: string = a + b` / `.to_upper()` / chr(..)
+    // / …): credited under a "STR:" prefix so only slot_is_reclaimable_str matches
+    // (the struct / tuple / snapshot consumers never do). Two gates before a name
+    // is freed: (1) body_unsafe_for proves non-escape (no `return s`, no store into
+    // a container, no bare-ident alias `x = s`, no non-borrowable call arg), and
+    // (2) NOT reassigned — a `s = <non-fresh>` rebind could leave a live alias in
+    // the slot at exit, so only single-bind (incl. loop-body re-declared) string
+    // locals qualify. The reclaim frees the box + data buffer via __fern_str_free
+    // (asm) / $__fern_arr_dec (wasm) at the loop-rebind and at scope exit.
+    var strs: string[] = collect_fresh_string_names(body, []);
+    var si: i32 = 0;
+    while (si < strs.len()) {
+        if (util.index_of_str(reassigned, strs[si]) < 0 && !body_unsafe_for(body, strs[si], borrowable)) {
+            out = out.append("STR:" + strs[si]);
+        }
+        si = si + 1;
     }
     return out;
 }
@@ -14345,6 +14500,21 @@ function slot_is_reclaimable_tuple(s: LowerState, i: i32): boolean {
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].tuple_elems.len() == 0) { return false; }
     return util.index_of_str(s.reclaimable_names, "TUP:" + s.locals[i].slot_name) >= 0;
+}
+
+// slot_is_reclaimable_str: slot `i` is a fresh, non-escaping, non-reassigned
+// heap-STRING local (`var s: string = a + b`), credited "STR:" by
+// reclaimable_names_of. A non-param string slot whose name is in the reclaim
+// set. Its box + data buffer are freed via __fern_str_free (asm: box + separate
+// buffer; wasm: the rc-headered inline block through $__fern_arr_dec) at the
+// loop-rebind (emit_str_reclaim_store) and at scope exit (the string sweep).
+// String literals / aliasing forms never reach here (str_local_binding_is_fresh
+// admits only fresh producers), so a freed box is always this frame's sole own.
+function slot_is_reclaimable_str(s: LowerState, i: i32): boolean {
+    if (i < s.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    if (!s.locals[i].is_str) { return false; }
+    return util.index_of_str(s.reclaimable_names, "STR:" + s.locals[i].slot_name) >= 0;
 }
 
 // slot_is_snapshot_param: slot `i` is a struct PARAM / receiver lower_func

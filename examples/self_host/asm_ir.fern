@@ -91,6 +91,11 @@ pub function array_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 pub function is_fern_helper(name: string): boolean {
     return name == "__fern_rc_inc"
         || name == "__fern_rc_dec"
+        // string RC reclaim (#2649): frees a fresh, non-escaping heap string's
+        // data buffer + 16-byte box. Default ir_helper_symbol maps it to
+        // __fn___fern_str_free; body in emit_ir_runtime. Never user-callable —
+        // only the irlower reclaim sites emit the call.
+        || name == "__fern_str_free"
         || name == "__fern_rc_is_unique"
         || name == "__fern_rc_underflow_get"
         // i32.to_string()'s decimal-text helper (emit_ir_runtime provides the
@@ -759,6 +764,49 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rdi, (%rdx)\n");
     s = s.write("    movq %rdx, (%r8,%rcx,8)\n");
     s = s.write(".Larrdec_ret:\n");
+    s = s.write("    ret\n");
+    // __fern_str_free(box) — reclaim a FRESH, sole-owned HEAP string (#2649
+    // string RC). A self-host string is a header-LESS 16-byte box {data@0, len@8}
+    // whose data buffer was __fern_alloc'd (bump/freelist), so it carries no rc
+    // word — it cannot ride __fern_arr_dec. This helper frees BOTH the data buffer
+    // (size class = ceil(len/8) words, matching the __fern_alloc(len) that made it)
+    // AND the 16-byte box (class 2), returning each to the size-classed freelist.
+    // Called ONLY on compile-time-proven fresh, non-escaping, non-aliased heap
+    // string temporaries (irlower slot_is_reclaimable_str), so single-ownership —
+    // and therefore freeing exactly once — is guaranteed by the emit site (a cow-
+    // guarded rebind free + the exit sweep), never here: there is no rc word to
+    // detect a double free, unlike the array path. A literal (data in .rodata) is
+    // never passed (expr fresh-str classifier excludes it), so the data-buffer
+    // free never writes read-only memory. len==0 / large-tier buffers leak (sound).
+    // Stack-arg ABI (box at 8(%rsp)); %rax=box, %rcx/%rdx/%rsi/%r8 scratch.
+    s = s.write("__fn___fern_str_free:\n");
+    s = s.write("    movq 8(%rsp), %rax\n");        // box
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jz .Lstrfree_ret\n");
+    s = s.write("    testb $1, %al\n");             // tagged / SSO sentinel (defensive)
+    s = s.write("    jnz .Lstrfree_ret\n");
+    s = s.write("    cmpq $0x10000, %rax\n");       // low-addr guard
+    s = s.write("    jb .Lstrfree_ret\n");
+    s = s.write("    movq (%rax), %rcx\n");         // data = box[0]
+    s = s.write("    movq 8(%rax), %rdx\n");        // len  = box[8]
+    s = s.write("    cmpq $0x10000, %rcx\n");       // data null/low -> skip buffer free
+    s = s.write("    jb .Lstrfree_box\n");
+    s = s.write("    testq %rdx, %rdx\n");          // len <= 0 -> skip buffer free (leak, sound)
+    s = s.write("    jle .Lstrfree_box\n");
+    s = s.write("    addq $7, %rdx\n");             // words = ceil(len/8)
+    s = s.write("    shrq $3, %rdx\n");
+    s = s.write("    cmpq $65536, %rdx\n");         // large tier -> leak buffer
+    s = s.write("    jae .Lstrfree_box\n");
+    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
+    s = s.write("    movq (%r8,%rdx,8), %rsi\n");   // old head of class `words`
+    s = s.write("    movq %rsi, (%rcx)\n");         // *data = old head
+    s = s.write("    movq %rcx, (%r8,%rdx,8)\n");   // freelist[words] = data
+    s = s.write(".Lstrfree_box:\n");
+    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
+    s = s.write("    movq 16(%r8), %rsi\n");        // freelist[2] (16-byte box = 2 words)
+    s = s.write("    movq %rsi, (%rax)\n");         // *box = old head
+    s = s.write("    movq %rax, 16(%r8)\n");        // freelist[2] = box
+    s = s.write(".Lstrfree_ret:\n");
     s = s.write("    ret\n");
     // __fern_rc_is_unique(ptr) -> i32 — 1 iff a live heap object with rc == 1.
     // Gates the struct/enum-array field-drop's element walk (walk + free the
