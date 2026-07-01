@@ -3902,6 +3902,10 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
         } else if (o.kind == "struct_set") {
             // pop val (top), box; store val at field (index+1)*8.
             s = s.write("    popq %rcx\n    popq %rax\n    movq %rcx, " + util.i32_to_string((o.i32_imm + 1) * 8) + "(%rax)\n");
+        } else if (o.kind == "tuple_set") {
+            // pop val (top), box; store val at element index*8 (no shape slot,
+            // unlike struct_set). Tuple constructor-reuse writer.
+            s = s.write("    popq %rcx\n    popq %rax\n    movq %rcx, " + util.i32_to_string(o.i32_imm * 8) + "(%rax)\n");
         } else if (o.kind == "struct_set_shape") {
             // peek box (top of stack); write o.str's interned shape pointer (the
             // SAME .S label struct_make writes / variant_is compares) at offset 0.

@@ -1464,6 +1464,12 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             } else {
                 out = out + "    local.set " + util.i32_to_string(eltmp) + "\n    i32.const " + util.i32_to_string(soff) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
             }
+        } else if (o.kind == "tuple_set") {
+            // stack: box, val -> store val at box + index*8 (tuples have NO shape
+            // slot, unlike struct_set's box+8+index*8). i32-scalar tuples only (the
+            // reuse eligibility restricts to them), so a plain i32.store.
+            var toff: i32 = o.i32_imm * 8;
+            out = out + "    local.set " + util.i32_to_string(eltmp) + "\n    i32.const " + util.i32_to_string(toff) + "\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n";
         } else if (o.kind == "struct_set_shape") {
             // stack: box (kept). Write o.str's type-id (the SAME id struct_make
             // stores at offset 0 / variant_is compares) at box+0, leaving the box
