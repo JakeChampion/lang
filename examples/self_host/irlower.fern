@@ -13549,6 +13549,86 @@ function collect_str_accumulator_names(stmts: parser.Stmt[], reassigned: string[
     return a;
 }
 
+// --- fresh-string-return-call reclaim (#2649) ---------------------------------
+//
+// A `var r = f(..)` whose callee f ALWAYS returns a freshly-allocated string: r
+// solely owns the box the callee moved out, so reclaiming r at scope exit (and per
+// loop-rebind) closes the caller-side leak that survives the returned-builder
+// move-on-return (whose freed intermediates live inside f; its final was moved to
+// the caller and leaked here until now).
+
+// body_has_nonfresh_str_return: any return whose value is NOT a fresh string
+// producer (str_local_binding_is_fresh — a concat, a string method, or a named
+// producer). A bare `return ident` (an accumulator move-out) is conservatively
+// NOT admitted: proving that ident is a sole-owned local needs the per-callee
+// accumulator analysis, a follow-up. A `return param` / `return field` / `return
+// "lit"` is likewise not fresh (may alias / is static).
+function body_has_nonfresh_str_return(stmts: parser.Stmt[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => { if (!str_local_binding_is_fresh(r.value)) { return true; } },
+            parser.StmtIf(f) => { if (body_has_nonfresh_str_return(f.then_body) || body_has_nonfresh_str_return(f.else_body)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonfresh_str_return(w.body)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonfresh_str_return(fo.body)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_str_return(m.arms[a].body)) { return true; } a = a + 1; } },
+            parser.StmtSwitch(sw) => {
+                var c: i32 = 0;
+                while (c < sw.cases.len()) { if (body_has_nonfresh_str_return(sw.cases[c].body)) { return true; } c = c + 1; }
+                if (sw.has_default && body_has_nonfresh_str_return(sw.default_body)) { return true; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+// str_fresh_ret_fns_of: bare NAMES of FREE functions (no receiver) whose return is
+// ALWAYS a freshly-allocated string — so `var r = f(..)` owns a fresh box, never an
+// alias of a borrowed arg / field / literal. Only free functions: a method key
+// would need the receiver type the string binding can't supply (is_fresh_ret_binding
+// keys a method on recv_type, empty here).
+pub function str_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    var k: i32 = 0;
+    while (k < funcs.len()) {
+        if (funcs[k].ret_type == "string" && funcs[k].receiver_type.len() == 0
+                && body_has_return(funcs[k].body) && !body_has_nonfresh_str_return(funcs[k].body)) {
+            out = out.append(funcs[k].name);
+        }
+        k = k + 1;
+    }
+    return out;
+}
+// collect_fresh_str_ret_call_names: string LOCALS bound from a str-fresh-ret free
+// CALL (`var r = f(..)`, f in str_fresh_ret) that are NOT reassigned. The escape
+// gate (body_unsafe_for) is applied by reclaimable_names_of before crediting "STR:".
+function collect_fresh_str_ret_call_names(stmts: parser.Stmt[], str_fresh_ret: string[], reassigned: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (util.index_of_str(reassigned, v.name) < 0 && is_fresh_ret_binding(v.init, "", str_fresh_ret)) {
+                    a = push_str_unique(a, v.name);
+                }
+            },
+            parser.StmtIf(f) => { a = collect_fresh_str_ret_call_names(f.then_body, str_fresh_ret, reassigned, a); a = collect_fresh_str_ret_call_names(f.else_body, str_fresh_ret, reassigned, a); },
+            parser.StmtWhile(w) => { a = collect_fresh_str_ret_call_names(w.body, str_fresh_ret, reassigned, a); },
+            parser.StmtFor(fo) => { a = collect_fresh_str_ret_call_names(fo.body, str_fresh_ret, reassigned, a); },
+            parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_fresh_str_ret_call_names(m.arms[ai].body, str_fresh_ret, reassigned, a); ai = ai + 1; } },
+            parser.StmtSwitch(sw) => {
+                var c: i32 = 0;
+                while (c < sw.cases.len()) { a = collect_fresh_str_ret_call_names(sw.cases[c].body, str_fresh_ret, reassigned, a); c = c + 1; }
+                if (sw.has_default) { a = collect_fresh_str_ret_call_names(sw.default_body, str_fresh_ret, reassigned, a); }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
 // collect_fresh_ret_call_names credits a struct LOCAL bound from a fresh-ret
 // CALL (`var r: T = f(..)` / `var r: T = obj.m(..)`, f/m in fresh_ret) that is
 // NOT reassigned — the DISCARDED fresh-ret-call local (#3457 follow-up). A
@@ -13721,7 +13801,7 @@ function map_is_iterated_stmt(st: parser.Stmt, name: string): boolean {
     }
 }
 
-function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[]): string[] {
+function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, []);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
     // `var r = f(..)` whose result is read-then-dead. Excludes reassigned names
@@ -13791,6 +13871,16 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     while (ci < accs.len()) {
         if (!str_accum_unsafe_for(body, accs[ci], borrowable)) { out = out.append("STR:" + accs[ci]); }
         ci = ci + 1;
+    }
+    // Fresh-string-return-call locals (`var r = f(..)`, f a str-fresh-ret free
+    // function): r solely owns the fresh string the callee moved out, so — when r
+    // is not reassigned and never escapes (body_unsafe_for) — it is freed at scope
+    // exit / per loop-rebind, closing the caller-side leak the returned builder left.
+    var frets: string[] = collect_fresh_str_ret_call_names(body, str_fresh_ret, reassigned, []);
+    var fri: i32 = 0;
+    while (fri < frets.len()) {
+        if (!body_unsafe_for(body, frets[fri], borrowable)) { out = out.append("STR:" + frets[fri]); }
+        fri = fri + 1;
     }
     // Fresh MAP locals (`var m = Map { … }` / `map_new()`): credited under a "MAP:"
     // prefix so only slot_is_reclaimable_map matches. The keys + values buffers
@@ -16635,7 +16725,7 @@ function register_fnvalue_local_struct_rets(stmts: parser.Stmt[], reg: string[])
 }
 
 pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: parser.StructDecl[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[],
-    map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[], borrowable_params: string[], fn_names: string[], fresh_struct_ret_fns: string[], consume_safe_params: string[], return_fresh_struct_ret_fns: string[]): LowerResult {
+    map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[], borrowable_params: string[], fn_names: string[], fresh_struct_ret_fns: string[], consume_safe_params: string[], return_fresh_struct_ret_fns: string[], str_fresh_ret_fns: string[]): LowerResult {
     var empty: ir.Op[] = [];
     var noslots: i32[] = [];
     // ret_i64: does this function return i64 (so `return <i64expr>` lowers via
@@ -16940,7 +17030,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     struct_ret_fns_aug = register_fnvalue_local_struct_rets(fn.body, struct_ret_fns_aug);
     // Struct reclamation: the fresh, non-escaping struct locals this function may
     // free at scope exit / loop-rebind (conservative escape analysis above).
-    var reclaim: string[] = reclaimable_names_of(fn.body, structs, borrowable_params, return_fresh_struct_ret_fns);
+    var reclaim: string[] = reclaimable_names_of(fn.body, structs, borrowable_params, return_fresh_struct_ret_fns, str_fresh_ret_fns);
     // Snapshot-param reclaim (#3456 slice 2): struct params/receiver threaded
     // through a consume-rebind (`s = s.write(x); return s`). Piggybacked as
     // "SNAP:<name>" so slot_is_reclaimable_struct (bare-name lookup) stays false
@@ -18254,7 +18344,7 @@ pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // fixed-point `borrowable_params` that is deliberately NOT
 // `borrowable_params_of(funcs)`, so they keep calling lower_func directly.
 pub function lower_func_for(fn: parser.FuncDecl, arr_ret_fns: string[], structs: parser.StructDecl[], funcs: parser.FuncDecl[]): LowerResult {
-    return lower_func(fn, arr_ret_fns, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs));
+    return lower_func(fn, arr_ret_fns, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs));
 }
 
 // lower_func_for_noret is lower_func_for with the array- and string-return name
@@ -18279,7 +18369,7 @@ pub function lower_func_for_noret(fn: parser.FuncDecl, structs: parser.StructDec
         if (is_array_type_name(funcs[k].ret_type)) { arr_ret = arr_ret.append(funcs[k].name); }
         k = k + 1;
     }
-    return lower_func(fn, arr_ret, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs));
+    return lower_func(fn, arr_ret, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs));
 }
 
 // i64_sig_of returns the "<ret><params>" flag string for `name`, or "" if the
@@ -18627,7 +18717,7 @@ pub function lower_module(funcs: parser.FuncDecl[], structs: parser.StructDecl[]
     var out: LoweredFn[] = [];
     var i: i32 = 0;
     while (i < funcs.len()) {
-        var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs));
+        var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs));
         // A receiver method is registered under the receiver-qualified name
         // `<BaseType>.<method>` — the SAME label a method call lowers to
         // (op_call_direct(receiver_type + "." + field)) and the backends'
