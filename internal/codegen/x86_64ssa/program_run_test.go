@@ -139,6 +139,32 @@ func TestProgramRunClosure(t *testing.T) {
 	}
 }
 
+// Whole-program escaping closures: a closure bound to a local (so the IR inserts
+// a scope-exit __fern_closure_drop, which gates on __fern_rc_is_unique and
+// releases through __fern_box_free / __fern_rc_dec). Exercises the RC runtime
+// helpers (docs/SSA-RC-RUNTIME.md) end-to-end against the interpreter. Scope:
+// zero or one scalar capture, used linearly (rc stays 1, so drop takes the free
+// path). Multi-capture closures need the packed env-slot layout the SSA emit
+// doesn't yet apply (it uses uniform 8-byte slots, correct only at offset 0) —
+// a separate follow-up.
+func TestProgramRunClosureEscaping(t *testing.T) {
+	srcs := []string{
+		// Stored non-capturing closure: var g = (n) => n*2; g(21) = 42.
+		`function main(): i32 { var g: (i32) => i32 = (n: i32): i32 => n * 2; return g(21); }`,
+		// Scalar-capturing closure: captures a: i32. g(5) = 5 + 10 = 15.
+		`function main(): i32 {
+		   var a: i32 = 10;
+		   var g: (i32) => i32 = (n: i32): i32 => n + a;
+		   return g(5);
+		 }`,
+	}
+	for _, n := range []int{1, 2, 8} {
+		for _, src := range srcs {
+			programMatchesInterp(t, src, n)
+		}
+	}
+}
+
 // Whole-program Option + match: the pair-return (Some/None), the box the match
 // reconstructs (i32 fields at 4-byte offsets — needs the 4-byte load/store), and
 // the match-join phi all combine. Runs the same result as the interpreter.
