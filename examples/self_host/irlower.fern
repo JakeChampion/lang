@@ -12315,12 +12315,20 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
 // stranded. Mirrors lower_block otherwise (block-scoped slot retirement).
 pub function lower_loop_body(stmts: parser.Stmt[], s: LowerState): LowerState {
     var base: i32 = s.locals.len();
+    var so: ReuseSites = self_overwrite_reuse_sites(stmts, s.structs);
     var xreuse: CrossReuseSites = cross_reuse_sites(stmts, s.structs);
     var xtuple: CrossTupleReuseSites = cross_tuple_reuse_sites(stmts);
     var st: LowerState = s;
     var i: i32 = 0;
     while (i < stmts.len()) {
         var sbase: i32 = st.locals.len();
+        // Is statement i a self-overwrite (functional-update) reuse site?
+        var soi: i32 = 0 - 1;
+        var c: i32 = 0;
+        while (c < so.idxs.len()) {
+            if (so.idxs[c] == i) { soi = c; }
+            c = c + 1;
+        }
         // Is statement i a cross-struct reuse site?
         var xri: i32 = 0 - 1;
         var a: i32 = 0;
@@ -12335,7 +12343,12 @@ pub function lower_loop_body(stmts: parser.Stmt[], s: LowerState): LowerState {
             if (xtuple.idxs[b] == i) { xti = b; }
             b = b + 1;
         }
-        if (xri >= 0) {
+        if (soi >= 0) {
+            match (stmts[i]) {
+                parser.StmtVar(rv) => { st = emit_self_overwrite_reuse(rv.name, rv.init, so.bases[soi], true, st); },
+                _ => { st = lower_stmt(stmts[i], st); },
+            }
+        } else if (xri >= 0) {
             match (stmts[i]) {
                 parser.StmtVar(rv) => { st = emit_cross_struct_reuse(rv.name, rv.init, xreuse.donors[xri], true, st); },
                 _ => { st = lower_stmt(stmts[i], st); },
@@ -14111,7 +14124,7 @@ function self_overwrite_reuse_sites(body: parser.Stmt[], structs: parser.StructD
 // (through c, which now owns it) and harmlessly decs a null for d. The `slit` is
 // passed as the wrapped parser.Expr (not the unwrapped variant struct) and
 // re-matched here — passing a large unwrapped AST struct by value is avoided.
-function emit_self_overwrite_reuse(c_name: string, init: parser.Expr, base_name: string, s: LowerState): LowerState {
+function emit_self_overwrite_reuse(c_name: string, init: parser.Expr, base_name: string, release_prior: boolean, s: LowerState): LowerState {
     var dslot: i32 = s.slot_of(base_name);
     if (dslot < 0) { return s.fail(); }
     match (init) {
@@ -14155,6 +14168,8 @@ function emit_self_overwrite_reuse(c_name: string, init: parser.Expr, base_name:
             var cb: LowerState = st.add_local(c_name);
             var cslot: i32 = cb.slot_of(c_name);
             cb = cb.mark_struct_type(cslot, slit.type_name);
+            // Loop body: free the recipient's prior (previous-iteration) box first.
+            if (release_prior) { cb = emit_reuse_recip_prior_release(cb, cslot, dslot); }
             cb = cb.emit(ir.op_load_local(dslot));
             cb = cb.emit(ir.op_store_local(cslot));
             // Zero d's slot: c now owns the box; the exit sweep frees it once (via
@@ -15829,7 +15844,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
             }
         } else if (reuse_i >= 0) {
             match (fn.body[j]) {
-                parser.StmtVar(rv) => { s = emit_self_overwrite_reuse(rv.name, rv.init, reuse.bases[reuse_i], s); },
+                parser.StmtVar(rv) => { s = emit_self_overwrite_reuse(rv.name, rv.init, reuse.bases[reuse_i], false, s); },
                 _ => { s = lower_stmt(fn.body[j], s); },
             }
         } else if (xreuse_i >= 0) {
