@@ -13339,25 +13339,34 @@ function fresh_scalar_enum_init(e: parser.Expr, structs: parser.StructDecl[]): s
     }
 }
 
-// type_is_scalar_option reports whether a type annotation is `Option[<scalar>]`
-// (i32 / i64 / f64 / boolean / u32 / u64) — a payload that is COPIED, not
+// is_scalar_type_name reports whether `t` names a flat scalar type
+// (i32 / i64 / f64 / boolean / u32 / u64) — a value that is COPIED, not
 // rc-tracked, so a shallow box free needs no element walk and never entangles a
 // bound payload's lifetime.
+function is_scalar_type_name(t: string): boolean {
+    return t == "i32" || t == "i64" || t == "f64" || t == "boolean" || t == "u32" || t == "u64";
+}
+
+// type_is_scalar_option reports whether a type annotation is `Option[<scalar>]`.
 function type_is_scalar_option(tn: string): boolean {
     if (tn.len() < 9) { return false; }
     if (tn[0:7] != "Option[") { return false; }
-    var inner: string = tn[7 : tn.len() - 1];
-    return inner == "i32" || inner == "i64" || inner == "f64" || inner == "boolean" || inner == "u32" || inner == "u64";
+    return is_scalar_type_name(tn[7 : tn.len() - 1]);
 }
 
-// fresh_scalar_option_init reports whether `v` binds a FRESH scalar Option local —
-// `var o = None`, or `var o = Some(p)` whose payload is provably scalar (the
-// binding annotates `Option[<scalar>]`, or the payload is a bare number/boolean
-// literal). The Option box (now rc-headered via opt_make/opt_none → __fern_arr_box)
-// is then a single-owner box holding no rc pointer, so a shallow __fern_rc_dec is
-// the whole free — the Option sibling of fresh_scalar_enum_init. Some/None are
-// matched both bare and qualified (`Option.Some(..)`). An rc-payload Some
-// (Some([..]) / Some("x") / Some(struct)) is NOT admitted here (its payload would
+// fresh_scalar_option_init reports whether `v` binds a FRESH scalar Option OR
+// Result local — `var o = None`, `var o = Some(p)`, `var r = Ok(p)`, or
+// `var r = Err(p)` whose constructed-variant payload is provably scalar (the
+// binding annotates `Option[<scalar>]` / `Result[<scalar>, _]` (Ok) /
+// `Result[_, <scalar>]` (Err), or the payload is a bare number/boolean literal).
+// Some/Ok/Err all share the rc-headered opt_make box (→ __fern_arr_box) and None
+// the opt_none box, so the local is a single-owner box holding no rc pointer and a
+// shallow __fern_rc_dec is the whole free — the Option/Result sibling of
+// fresh_scalar_enum_init. The constructor tags are matched both bare and qualified
+// (`Option.Some(..)` / `Result.Ok(..)`). Only the CONSTRUCTED variant's payload
+// scalar-ness matters (a `var r = Ok(x)` box always holds Ok's payload; Err's
+// annotated type is irrelevant to this box). An rc-payload construction
+// (Some([..]) / Ok("x") / Err(struct)) is NOT admitted here (its payload would
 // leak — a deep-drop follow-up), and neither is a non-literal un-annotated payload
 // (the scalar-ness can't be proven without types in this classifier).
 function fresh_scalar_option_init(v: parser.StmtVar): boolean {
@@ -13365,8 +13374,12 @@ function fresh_scalar_option_init(v: parser.StmtVar): boolean {
     match (v.init) {
         parser.ExprCall(c) => {
             match (c.callee) {
-                parser.ExprIdent(id) => { if (id.name == "Some") { kind = "Some"; } },
-                parser.ExprFieldAccess(fa) => { if (fa.field == "Some") { kind = "Some"; } },
+                parser.ExprIdent(id) => {
+                    if (id.name == "Some" || id.name == "Ok" || id.name == "Err") { kind = id.name; }
+                },
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field == "Some" || fa.field == "Ok" || fa.field == "Err") { kind = fa.field; }
+                },
                 _ => {}
             }
         },
@@ -13376,8 +13389,11 @@ function fresh_scalar_option_init(v: parser.StmtVar): boolean {
     }
     if (kind == "") { return false; }
     if (kind == "None") { return true; }   // no payload — trivially scalar
-    if (type_is_scalar_option(v.type_name)) { return true; }
-    // Un-annotated: admit only a bare scalar-literal payload (`Some(5)`/`Some(true)`).
+    // Annotated: prove the CONSTRUCTED variant's payload is scalar. For Option this
+    // is Option[<scalar>]; for Result Ok reads T, Err reads E (opt_payload_type
+    // parses both, variant-aware).
+    if (is_scalar_type_name(opt_payload_type(v.type_name, kind))) { return true; }
+    // Un-annotated: admit only a bare scalar-literal payload (`Some(5)`/`Ok(true)`).
     match (v.init) {
         parser.ExprCall(c) => {
             if (c.args.len() == 1) {
