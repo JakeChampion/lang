@@ -93,6 +93,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 			break
 		}
 	}
+	withArgs := usesArgs(helpers)
 	strLabels, strOrder := collectStrings(progs, names)
 	sentLabels, sentOrder := collectSentinels(progs, names)
 	// fn_idx for closures: a function's index in the module's (sorted) emission
@@ -106,6 +107,20 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	w(".text")
 	w(".globl _start")
 	w("_start:")
+	if withArgs {
+		// Capture argc/argv from the process stack before any frame setup: the
+		// kernel leaves argc at [sp] and the argv[] vector at sp+8. Stash both into
+		// .bss globals the args() helper reads on demand. x9/x10 are scratch (entry
+		// args aren't loaded yet).
+		w("\tldr x9, [sp]") // argc
+		w("\tadrp x10, %s", argcSym)
+		w("\tadd x10, x10, #:lo12:%s", argcSym)
+		w("\tstr x9, [x10]")
+		w("\tadd x9, sp, #8") // &argv[0]
+		w("\tadrp x10, %s", argvSym)
+		w("\tadd x10, x10, #:lo12:%s", argvSym)
+		w("\tstr x9, [x10]")
+	}
 	// Initialise the bump-allocator cursor to the base of the .bss heap. x9/x10
 	// are scratch here (before the entry args are loaded into x0..x7).
 	if heap {
@@ -201,6 +216,17 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("%s:", heapSym)
 		w("\t.space %d", heapBytes)
 	}
+	if withArgs {
+		// argc / argv snapshot + the memoised args() container pointer.
+		w(".section .bss")
+		w(".align 8")
+		w("%s:", argcSym)
+		w("\t.quad 0")
+		w("%s:", argvSym)
+		w("\t.quad 0")
+		w("%s:", argsCacheSym)
+		w("\t.quad 0")
+	}
 	w(".section .note.GNU-stack,\"\",@progbits")
 	return b.String(), nil
 }
@@ -211,7 +237,24 @@ const (
 	heapPtrSym = "__ssa_heap_ptr"
 	heapSym    = "__ssa_heap"
 	heapBytes  = 1 << 16 // 64 KiB
+
+	// argc / argv captured from the process stack by _start, and the memoised
+	// string[] the args() helper builds from them.
+	argcSym      = "__ssa_argc"
+	argvSym      = "__ssa_argv"
+	argsCacheSym = "__ssa_args_cache"
 )
+
+// usesArgs reports whether the module references the args() builtin, so _start
+// captures argc/argv and the .bss slots + cache are emitted.
+func usesArgs(helpers []string) bool {
+	for _, h := range helpers {
+		if h == "args" {
+			return true
+		}
+	}
+	return false
+}
 
 // usesHeap reports whether any program contains a heap op (so the .bss heap
 // section + cursor are emitted and initialised only when needed).
@@ -258,6 +301,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_arr_cow_inplace": emitArrCowInplaceHelper,
 	"string_from_bytes":      emitStringFromBytesHelper,
 	"__str_slice":            emitStrSliceHelper,
+	"args":                   emitArgsHelper,
 	"print":                  emitPrintHelper,
 	"__abs_f64":              emitFloatUnaryHelper("__abs_f64", "fabs"),
 	"__sqrt_f64":             emitFloatUnaryHelper("__sqrt_f64", "fsqrt"),
@@ -303,6 +347,7 @@ var helperReturns64 = map[string]bool{
 	"__fern_arr_cow_inplace": true,
 	"string_from_bytes":      true,
 	"__str_slice":            true,
+	"args":                   true,
 	"__str_idx":              true,
 	"__arr_idx":              true,
 	"__arr_idx_1":            true,
@@ -327,6 +372,7 @@ var heapUsingHelpers = map[string]bool{
 	"__fern_arr_cow_inplace": true,
 	"string_from_bytes":      true,
 	"__str_slice":            true,
+	"args":                   true,
 }
 
 // collectStrings assigns a .rodata label to each unique OpConstString literal, in
@@ -647,6 +693,89 @@ func emitStrIdxHelper(w func(string, ...any)) {
 	w("\tsvc #0")
 	w(".Lssa_stridx_ok:")
 	w("\tadd x0, x0, x1") // base + idx (byte stride)
+	w("\tret")
+}
+
+// emitArgsHelper writes args() -> string[]: build a length-prefixed string[] of
+// the process arguments from the argc/argv snapshot _start captured. The result
+// is memoised in __ssa_args_cache so repeat calls are O(1). Each entry is a fresh
+// single-word rc-headered string (rc=1@base, len@base+4, data@base+8) holding the
+// argv[i] bytes plus a trailing NUL (for C-shaped consumers). The container is a
+// standard rc-headered array (cap/rc/len at data -12/-8/-4) of pointer-stride
+// entries. Everything is bump-allocated inline, so this is a leaf. Registers held
+// across the outer loop: x1=&cache, x2=argc, x3=argv, x9=container, x10=i.
+func emitArgsHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("args"))
+	// Fast path: return the memoised container if present.
+	w("\tadrp x1, %s", argsCacheSym)
+	w("\tadd x1, x1, #:lo12:%s", argsCacheSym)
+	w("\tldr x0, [x1]")
+	w("\tcbnz x0, .Lssa_args_ret")
+	// argc (x2), argv (x3).
+	w("\tadrp x2, %s", argcSym)
+	w("\tadd x2, x2, #:lo12:%s", argcSym)
+	w("\tldr x2, [x2]")
+	w("\tadrp x3, %s", argvSym)
+	w("\tadd x3, x3, #:lo12:%s", argvSym)
+	w("\tldr x3, [x3]")
+	// Allocate the container: 16-byte header + argc*8 entry pointers.
+	w("\tadrp x4, %s", heapPtrSym)
+	w("\tadd x4, x4, #:lo12:%s", heapPtrSym) // x4 = &cursor (held across the loop)
+	w("\tldr x5, [x4]")
+	w("\tadd x5, x5, #7")
+	w("\tand x5, x5, #-8") // base (8-aligned)
+	w("\tlsl x6, x2, #3")  // argc*8
+	w("\tadd x7, x6, #16") // allocSize = argc*8 + 16-byte header
+	w("\tadd x8, x5, x7")
+	w("\tstr x8, [x4]")        // bump
+	w("\tadd x9, x5, #16")     // x9 = container data (entries past the header)
+	w("\tstur w2, [x9, #-12]") // cap = argc
+	w("\tmov w6, #1")
+	w("\tstur w6, [x9, #-8]") // rc = 1
+	w("\tstur w2, [x9, #-4]") // len = argc
+	w("\tmov x10, #0")        // i
+	w(".Lssa_args_loop:")
+	w("\tcmp x10, x2")
+	w("\tb.hs .Lssa_args_done")
+	w("\tldr x11, [x3, x10, lsl #3]") // x11 = argv[i] (NUL-terminated C string)
+	// strlen(x11) -> x12.
+	w("\tmov x12, #0")
+	w(".Lssa_args_slen:")
+	w("\tldrb w13, [x11, x12]")
+	w("\tcbz w13, .Lssa_args_slen_done")
+	w("\tadd x12, x12, #1")
+	w("\tb .Lssa_args_slen")
+	w(".Lssa_args_slen_done:")
+	// Allocate a single-word string: 8-byte header + len bytes + 1 NUL.
+	w("\tldr x5, [x4]") // reload cursor
+	w("\tadd x5, x5, #7")
+	w("\tand x5, x5, #-8")
+	w("\tadd x6, x12, #9") // header(8) + len + NUL(1)
+	w("\tadd x7, x5, x6")
+	w("\tstr x7, [x4]") // bump
+	w("\tmov w6, #1")
+	w("\tstr w6, [x5]")      // rc = 1
+	w("\tstr w12, [x5, #4]") // len
+	w("\tadd x14, x5, #8")   // x14 = string data
+	// Copy the len bytes, then the NUL.
+	w("\tmov x15, #0")
+	w(".Lssa_args_cp:")
+	w("\tcmp x15, x12")
+	w("\tb.hs .Lssa_args_cp_done")
+	w("\tldrb w16, [x11, x15]")
+	w("\tstrb w16, [x14, x15]")
+	w("\tadd x15, x15, #1")
+	w("\tb .Lssa_args_cp")
+	w(".Lssa_args_cp_done:")
+	w("\tstrb wzr, [x14, x12]")       // trailing NUL
+	w("\tstr x14, [x9, x10, lsl #3]") // container[i] = string ptr
+	w("\tadd x10, x10, #1")
+	w("\tb .Lssa_args_loop")
+	w(".Lssa_args_done:")
+	w("\tstr x9, [x1]") // memoise
+	w("\tmov x0, x9")
+	w(".Lssa_args_ret:")
 	w("\tret")
 }
 
