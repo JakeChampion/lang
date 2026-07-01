@@ -117,8 +117,18 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
         bitwise+spill, comparison via cmp/setcc/movzx, branch, loop, and a
         real back-edge **phi swap**). First runnable machine code from the SSA
         path.
-      - [ ] 3b — System V parameter ABI (load args from arg registers), shifts
-        (cl) and `idiv` (rax/rdx) fixed-register handling, and i32 width.
+      - [~] 3b — System V parameter ABI on the real-asm path. The function
+        prologue moves each incoming arg register (`rdi`/`rsi`/`rdx`/`rcx`/`r8`/
+        `r9`) into that param's allocated home; `EmitAsmArgs` bakes the entry
+        args into `_start`. Because an arg register can be another param's home,
+        the moves are a **parallel copy** — slot-homed params first (read arg
+        regs, write memory), then a register parallel-copy that emits any move
+        whose dest isn't still a source and breaks leftover cycles with `xchg`.
+        Up to six integer params (stack args a follow-up). Validated by
+        assembling + running natively (`TestAsmRunParam*`: identity, 4-param
+        sum, param-in-loop, the sixth/`r9` param, all over spill-forcing
+        register counts). Still to do in 3b: shifts (cl) and `idiv` (rax/rdx)
+        fixed-register handling, and i32 width in real asm.
       - [ ] 3c — wire behind a flag and diff against the existing stack-machine
         backend over the e2e corpus.
 - [~] Op-coverage broadening toward parity (each op validated against `Eval`

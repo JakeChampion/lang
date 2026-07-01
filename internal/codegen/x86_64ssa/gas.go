@@ -7,25 +7,40 @@ import (
 	"github.com/jakechampion/lang/internal/ssa"
 )
 
+// sysvArgRegs is the System V AMD64 integer argument-register sequence: the
+// first six integer/pointer args arrive in these registers, in order.
+var sysvArgRegs = []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
+
 // EmitAsm lowers an SSA function to a complete, runnable x86-64 GAS program
+// (Intel syntax) with a `_start` that calls the function with no arguments and
+// exits with its return value. See EmitAsmArgs for the parameterised form.
+func EmitAsm(f *ssa.Func, numAlloc int) (string, error) {
+	return EmitAsmArgs(f, numAlloc, nil)
+}
+
+// EmitAsmArgs lowers an SSA function to a complete, runnable x86-64 GAS program
 // (Intel syntax) by first producing the abstract register program (Emit) and
 // then rendering real instructions for the allocated registers + spill slots.
 // The result is a self-contained static executable source: a `_start` that
-// calls the function and exits with its return value, plus the function itself.
+// loads `entryArgs` into the System V argument registers, calls the function,
+// and exits with its return value, plus the function itself.
 //
-// This is phase-2 slice 3a — the first path that produces real machine code,
-// validated by assembling + running (see gas_run_test.go). Scope: no-parameter
-// integer functions over the slice-2 op set MINUS shifts/div (which need fixed
-// registers — cl for shifts, rax/rdx for idiv — handled in a follow-up). The
-// System V parameter ABI is also a follow-up; a function with parameters is
-// rejected here so nothing is silently miscompiled.
-func EmitAsm(f *ssa.Func, numAlloc int) (string, error) {
+// This is phase-2 slice 3b — the System V parameter ABI on the real-asm path.
+// The function prologue moves each incoming argument register into that param's
+// allocated home (register or spill slot), so a parameterised function runs
+// natively. Scope: up to six integer parameters (stack args are a follow-up)
+// over the slice-2 op set MINUS shifts/div (cl / rax·rdx fixed registers, a
+// follow-up). Validated by assembling + running (see gas_run_test.go).
+func EmitAsmArgs(f *ssa.Func, numAlloc int, entryArgs []int64) (string, error) {
 	p, err := Emit(f, numAlloc)
 	if err != nil {
 		return "", err
 	}
-	if len(p.ParamLocs) > 0 {
-		return "", fmt.Errorf("x86_64ssa: real-asm path does not yet support parameters")
+	if len(p.ParamLocs) > len(sysvArgRegs) {
+		return "", fmt.Errorf("x86_64ssa: real-asm path supports up to %d params, got %d", len(sysvArgRegs), len(p.ParamLocs))
+	}
+	if len(entryArgs) != 0 && len(entryArgs) != len(p.ParamLocs) {
+		return "", fmt.Errorf("x86_64ssa: got %d entry args, function has %d params", len(entryArgs), len(p.ParamLocs))
 	}
 	if p.NumRegFile > len(gpRegs) {
 		return "", fmt.Errorf("x86_64ssa: need %d registers but only %d are available", p.NumRegFile, len(gpRegs))
@@ -42,6 +57,15 @@ func EmitAsm(f *ssa.Func, numAlloc int) (string, error) {
 	w(".text")
 	w(".globl _start")
 	w("_start:")
+	// Load the entry arguments into the SysV argument registers before the call.
+	// With no entryArgs, a parameterised function is called with zeroed args.
+	for i := range p.ParamLocs {
+		var v int64
+		if i < len(entryArgs) {
+			v = entryArgs[i]
+		}
+		w("\tmov %s, %d", sysvArgRegs[i], v)
+	}
 	w("\tcall %s", fn)
 	w("\tmov edi, eax")     // exit code = return value
 	w("\tmov eax, %d", 231) // sysExitGroup
@@ -53,6 +77,12 @@ func EmitAsm(f *ssa.Func, numAlloc int) (string, error) {
 	frame := align16(8 * p.NumSlots)
 	if frame > 0 {
 		w("\tsub rsp, %d", frame)
+	}
+	// System V parameter ABI: move each incoming arg register into its param's
+	// allocated home. Done after the frame is set up so spill-slot homes are
+	// addressable.
+	for _, line := range paramMoveLines(p.ParamLocs) {
+		w("\t%s", line)
 	}
 
 	for bi, blk := range p.Blocks {
@@ -90,6 +120,83 @@ var gpRegs = []string{"rax", "rbx", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10
 var reg8 = []string{"al", "bl", "cl", "dl", "sil", "dil", "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b"}
 var reg32 = []string{"eax", "ebx", "ecx", "edx", "esi", "edi", "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d"}
 var reg16 = []string{"ax", "bx", "cx", "dx", "si", "di", "r8w", "r9w", "r10w", "r11w", "r12w", "r13w", "r14w", "r15w"}
+
+// gpIndex returns the gpRegs index of a physical register name.
+func gpIndex(name string) int {
+	for i, r := range gpRegs {
+		if r == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// paramMoveLines emits the System V parameter-ABI prologue: move each incoming
+// argument register (rdi, rsi, …) into that param's allocated home. It is a
+// parallel copy — an arg register may be another param's home register — so it
+// resolves in two steps:
+//
+//   - Slot-homed params first (`mov [slot], argreg`). These only READ arg
+//     registers and write memory, so doing them before any register is
+//     overwritten is always safe.
+//   - Register-homed params as a parallel register copy: emit any move whose
+//     destination is not still needed as a source; when only cycles remain,
+//     break one with `xchg` and redirect the moves that read the swapped
+//     register. (Sources and destinations are each distinct, so this is the
+//     standard parallel-move resolution and always terminates.)
+func paramMoveLines(paramLocs []Loc) []string {
+	var out []string
+	// Step A: slot-homed params (read arg regs, write memory).
+	for i, loc := range paramLocs {
+		if !loc.IsReg && loc.Slot >= 0 {
+			out = append(out, fmt.Sprintf("mov %s, %s", slotMem(loc.Slot), sysvArgRegs[i]))
+		}
+	}
+	// Step B: register-homed params — parallel register copy.
+	type mv struct{ dst, src int } // gpRegs indices
+	var moves []mv
+	for i, loc := range paramLocs {
+		if loc.IsReg {
+			if src := gpIndex(sysvArgRegs[i]); src != loc.Reg {
+				moves = append(moves, mv{dst: loc.Reg, src: src})
+			}
+		}
+	}
+	isSrc := func(ms []mv, r int) bool {
+		for _, m := range ms {
+			if m.src == r {
+				return true
+			}
+		}
+		return false
+	}
+	for len(moves) > 0 {
+		idx := -1
+		for j, m := range moves {
+			if !isSrc(moves, m.dst) {
+				idx = j
+				break
+			}
+		}
+		if idx >= 0 {
+			m := moves[idx]
+			out = append(out, fmt.Sprintf("mov %s, %s", reg(m.dst), reg(m.src)))
+			moves = append(moves[:idx], moves[idx+1:]...)
+			continue
+		}
+		// Only cycles remain: break one edge with xchg, then redirect any move
+		// that read the now-swapped destination register to read from src.
+		m := moves[0]
+		out = append(out, fmt.Sprintf("xchg %s, %s", reg(m.dst), reg(m.src)))
+		moves = moves[1:]
+		for k := range moves {
+			if moves[k].src == m.dst {
+				moves[k].src = m.src
+			}
+		}
+	}
+	return out
+}
 
 func reg(i int) string    { return gpRegs[i] }
 func reg8n(i int) string  { return reg8[i] }
