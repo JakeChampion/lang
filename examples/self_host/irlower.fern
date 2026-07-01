@@ -12515,6 +12515,13 @@ function returned_moved_arr_slots(e: parser.Expr, s: LowerState, acc: i32[]): i3
             // otherwise the box just handed to the caller is double-freed. The
             // sweep's struct loop skips slots in this keeps list.
             if (slot_is_reclaimable_struct(s, sl) && !slot_list_has(out, sl)) { out = out.append(sl); }
+            // String move-on-return (#2649): a returned reclaimable-string LOCAL
+            // (an accumulator whose intermediates were freed by the consume-rebind)
+            // is MOVED OUT to the caller — keep it from the exit string sweep so the
+            // final box just handed back is not freed. slot_is_reclaimable_str is
+            // true only for an admitted accumulator (str_accum_unsafe_for now allows
+            // the bare `return name` move), so a non-accumulator string is untouched.
+            if (slot_is_reclaimable_str(s, sl) && !slot_list_has(out, sl)) { out = out.append(sl); }
         },
         parser.ExprCall(c) => {
             match (c.callee) {
@@ -13426,7 +13433,16 @@ function str_accum_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: st
 function stmt_accum_unsafe_for(st: parser.Stmt, name: string, borrowable: string[]): boolean {
     match (st) {
         parser.StmtVar(v) => { return expr_unsafe_for(v.init, name, borrowable); },
-        parser.StmtReturn(r) => { return expr_unsafe_for(r.value, name, borrowable); },
+        parser.StmtReturn(r) => {
+            // A bare `return name` MOVES the final builder value out to the caller —
+            // safe, and kept from the exit sweep by returned_moved_arr_slots (the
+            // intermediates were already freed by each consume-rebind). Any other
+            // returned expression must not otherwise leak name.
+            match (r.value) {
+                parser.ExprIdent(_) => { return false; },
+                _ => { return expr_unsafe_for(r.value, name, borrowable); }
+            }
+        },
         parser.StmtExpr(e) => { return expr_unsafe_for(e.value, name, borrowable); },
         parser.StmtAssign(a) => {
             if (a.target == name) {
