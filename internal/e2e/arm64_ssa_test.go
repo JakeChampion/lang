@@ -367,6 +367,27 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			src:  `function main(): i32 { var a = args(); return a[0][0] as i32; }`,
 			want: 47,
 		},
+		{
+			// write(s): print's no-newline sibling (a single write(2) to stdout).
+			// Runs the syscall and returns to main -> exit 7. (Content is verified by
+			// hand; the roundtrip harness only observes the exit code.)
+			name: "write_string",
+			src:  `function main(): i32 { write("hi from arm64-ssa"); return 7; }`,
+			want: 7,
+		},
+		{
+			// eprint(s): the stderr sibling (bytes + newline to fd 2), then returns.
+			name: "eprint_string",
+			src:  `function main(): i32 { eprint("err"); return 5; }`,
+			want: 5,
+		},
+		{
+			// putchar(c): write the low byte of the argument to stdout. 'A' then
+			// newline, then return 9.
+			name: "putchar_byte",
+			src:  `function main(): i32 { putchar(65); putchar(10); return 9; }`,
+			want: 9,
+		},
 	}
 
 	for _, c := range cases {
@@ -401,10 +422,10 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 }
 
 // TestArm64SSACoverageGapErrors confirms a program needing a runtime builtin the
-// arm64-ssa path doesn't emit yet (here the `write` output builtin — print's
-// no-newline sibling — which reaches the still-unported `write` helper) fails
-// with a clean compile/link error rather than a miscompile — the experimental-
-// backend contract that lets the epic widen coverage incrementally.
+// arm64-ssa path doesn't emit yet (here the `exit` builtin, which reaches the
+// still-unported `exit` helper) fails with a clean compile/link error rather than
+// a miscompile — the experimental-backend contract that lets the epic widen
+// coverage incrementally.
 func TestArm64SSACoverageGapErrors(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("arm64-ssa not exercised on windows")
@@ -416,18 +437,18 @@ func TestArm64SSACoverageGapErrors(t *testing.T) {
 		t.Fatalf("go build fern: %v\n%s", err, out)
 	}
 
-	srcPath := filepath.Join(dir, "write.fern")
-	src := `function main(): i32 { write("hi"); return 0; }`
+	srcPath := filepath.Join(dir, "exit.fern")
+	src := `function main(): i32 { exit(3); return 0; }`
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	out := filepath.Join(dir, "write.bin")
+	out := filepath.Join(dir, "exit.bin")
 	emit := exec.Command(bin, "-target", "arm64-ssa", "-o", out, srcPath)
 	var eb bytes.Buffer
 	emit.Stderr = &eb
 	err := emit.Run()
 	if err == nil {
-		t.Fatalf("expected a coverage-gap error for the write() builtin, got success")
+		t.Fatalf("expected a coverage-gap error for the exit() builtin, got success")
 	}
 	if !bytes.Contains(eb.Bytes(), []byte("arm64-ssa")) {
 		t.Errorf("error not attributed to arm64-ssa:\n%s", eb.String())
