@@ -2,6 +2,7 @@ package x86_64ssa
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -517,8 +518,115 @@ func asmInst(in Inst, scratch int) (string, error) {
 		default:
 			return fmt.Sprintf("mov %s, %s", mem, reg(in.Src2)), nil
 		}
+	case FConst:
+		// Floats live in GP registers as their f64 bit pattern (like ssa.Eval).
+		// Materialise the compile-time bits directly (rounded to f32 if W==32).
+		bits := math.Float64bits(in.F64)
+		if in.W == 32 {
+			bits = math.Float64bits(float64(float32(in.F64)))
+		}
+		return fmt.Sprintf("movabs %s, %d", reg(in.Dst), int64(bits)), nil
+	case FBin:
+		return fBinSeq(in), nil
+	case FCmp:
+		cc, ok := fcmpSetcc(in.K)
+		if !ok {
+			return "", fmt.Errorf("x86_64ssa: float compare %v unsupported", in.K)
+		}
+		// Shuttle both operands into xmm, ordered-compare, materialise 0/1.
+		return strings.Join([]string{
+			fmt.Sprintf("movq xmm0, %s", reg(in.Dst)),
+			fmt.Sprintf("movq xmm1, %s", reg(in.Src)),
+			"ucomisd xmm0, xmm1",
+			fmt.Sprintf("%s %s", cc, reg8n(in.Dst)),
+			fmt.Sprintf("movzx %s, %s", reg(in.Dst), reg8n(in.Dst)),
+		}, "\n\t"), nil
+	case FConv:
+		return fConvSeq(in, scratch)
 	default:
 		return "", fmt.Errorf("x86_64ssa: unknown opcode %d", in.Op)
+	}
+}
+
+// f32round rounds an f64-in-xmm0 to f32 precision (round-trip through f32),
+// mirroring the model's fbits when W==32.
+const f32round = "cvtsd2ss xmm0, xmm0\n\tcvtss2sd xmm0, xmm0"
+
+// fBinSeq renders a scalar float arithmetic op: shuttle both operands into xmm,
+// compute in f64, round to f32 if W==32, shuttle the result back.
+func fBinSeq(in Inst) string {
+	var mnem string
+	switch in.K {
+	case ssa.OpFAdd:
+		mnem = "addsd"
+	case ssa.OpFSub:
+		mnem = "subsd"
+	case ssa.OpFMul:
+		mnem = "mulsd"
+	case ssa.OpFDiv:
+		mnem = "divsd"
+	}
+	lines := []string{
+		fmt.Sprintf("movq xmm0, %s", reg(in.Dst)),
+		fmt.Sprintf("movq xmm1, %s", reg(in.Src)),
+		fmt.Sprintf("%s xmm0, xmm1", mnem),
+	}
+	if in.W == 32 {
+		lines = append(lines, f32round)
+	}
+	lines = append(lines, fmt.Sprintf("movq %s, xmm0", reg(in.Dst)))
+	return strings.Join(lines, "\n\t")
+}
+
+// fcmpSetcc maps a float comparison to its ordered setcc (ucomisd flags). NaN
+// operands are out of scope: for finite values these match ssa.Eval's Go
+// comparisons.
+func fcmpSetcc(k ssa.OpKind) (string, bool) {
+	switch k {
+	case ssa.OpFEq:
+		return "sete", true
+	case ssa.OpFNe:
+		return "setne", true
+	case ssa.OpFLt:
+		return "setb", true
+	case ssa.OpFLe:
+		return "setbe", true
+	case ssa.OpFGt:
+		return "seta", true
+	case ssa.OpFGe:
+		return "setae", true
+	default:
+		return "", false
+	}
+}
+
+// fConvSeq renders a float conversion / unary op. Integer results are
+// width-masked (maskFix); float results carry their f64 bit pattern.
+func fConvSeq(in Inst, scratch int) (string, error) {
+	d := reg(in.Dst)
+	round := ""
+	if in.W == 32 {
+		round = "\n\t" + f32round
+	}
+	switch in.K {
+	case ssa.OpFNeg:
+		// Flip the f64 sign bit (bit 63). Negating an f32-precision value keeps
+		// f32 precision, so no rounding is needed.
+		return fmt.Sprintf("movabs %s, %d\n\txor %s, %s", reg(scratch), int64(-0x8000000000000000), d, reg(scratch)), nil
+	case ssa.OpFPromote:
+		// f32 -> f64: the value already lives as f64 bits; identity.
+		return fmt.Sprintf("movq xmm0, %s\n\tmovq %s, xmm0", d, d), nil
+	case ssa.OpFDemote:
+		return fmt.Sprintf("movq xmm0, %s\n\t%s\n\tmovq %s, xmm0", d, f32round, d), nil
+	case ssa.OpIToFS, ssa.OpIToFU:
+		// int -> float. cvtsi2sd is signed; unsigned values >= 2^63 are out of
+		// scope (rare; a follow-up if needed).
+		return fmt.Sprintf("cvtsi2sd xmm0, %s%s\n\tmovq %s, xmm0", d, round, d), nil
+	case ssa.OpFToIS, ssa.OpFToIU:
+		// float -> int, truncating toward zero (Go semantics).
+		return fmt.Sprintf("movq xmm0, %s\n\tcvttsd2si %s, xmm0", d, d) + maskFix(in.Dst, in.W), nil
+	default:
+		return "", fmt.Errorf("x86_64ssa: float conversion %v unsupported", in.K)
 	}
 }
 
