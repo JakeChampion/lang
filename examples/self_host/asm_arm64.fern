@@ -4741,6 +4741,11 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    .align 3\n");
         s = s.write("__fern_heap_end: .quad 0\n");        // arena end (base + heap_size)
         s = s.write("    .align 3\n");
+        // arena BASE (mmap return), set once at first alloc — the freeable-range
+        // lower bound so __fern_str_free frees a heap string's data buffer but
+        // skips a static LITERAL's .rodata pointer (below the arena). #2649.
+        s = s.write("__fern_heap_base: .quad 0\n");
+        s = s.write("    .align 3\n");
         // RC over-release (underflow) detector — Phase 0c. Bumped by
         // __fern_rc_dec when it sees rc <= 0 before decrementing; read
         // back by __fern_rc_underflow_count(). Mirrors the x86-64
@@ -4807,6 +4812,9 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    adrp x1, __fern_heap_ptr\n");
         s = s.write("    add x1, x1, :lo12:__fern_heap_ptr\n");
         s = s.write("    str x0, [x1]\n");                // heap_ptr = arena base
+        s = s.write("    adrp x1, __fern_heap_base\n");   // record arena base (freeable-range lower bound)
+        s = s.write("    add x1, x1, :lo12:__fern_heap_base\n");
+        s = s.write("    str x0, [x1]\n");
         s = s.write("    mov x2, #14\n");
         s = s.write("    lsl x2, x2, #28\n");             // 3.5 GiB
         s = s.write("    add x2, x0, x2\n");              // arena end
@@ -5216,6 +5224,22 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ldr x2, [x0, #8]\n");         // len  = box[8]
         s = s.write("    cmp x1, x9\n");               // data null/low -> skip buffer free
         s = s.write("    blo .Lstrfree_box\n");
+        // Free the data buffer ONLY when it is a heap allocation, in
+        // [__fern_heap_base, __fern_heap_end). A string LITERAL's data is in
+        // .rodata (below the arena), so skip it — freeing it would push a
+        // read-only address onto the freelist and fault when written. This lets
+        // the accumulator's initial "" literal pass __fern_str_free harmlessly
+        // (its 16-byte box is still freed). x11/x12 scratch.
+        s = s.write("    adrp x11, __fern_heap_base\n");
+        s = s.write("    add x11, x11, :lo12:__fern_heap_base\n");
+        s = s.write("    ldr x11, [x11]\n");           // heap_base
+        s = s.write("    cmp x1, x11\n");              // data < heap_base -> literal/.rodata, skip
+        s = s.write("    blo .Lstrfree_box\n");
+        s = s.write("    adrp x12, __fern_heap_end\n");
+        s = s.write("    add x12, x12, :lo12:__fern_heap_end\n");
+        s = s.write("    ldr x12, [x12]\n");           // heap_end
+        s = s.write("    cmp x1, x12\n");              // data >= heap_end -> not our arena, skip
+        s = s.write("    bhs .Lstrfree_box\n");
         s = s.write("    cmp x2, #0\n");               // len <= 0 -> skip buffer free (leak, sound)
         s = s.write("    ble .Lstrfree_box\n");
         s = s.write("    add x2, x2, #7\n");           // words = ceil(len/8)

@@ -617,6 +617,13 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .align 8\n");
     s = s.write("__fern_heap_end: .quad 0\n");        // arena end (base + heap_size), set at mmap time
     s = s.write("    .align 8\n");
+    // arena BASE (the mmap return), set once at first alloc. Bounds the freeable
+    // heap range [base, end) so __fern_str_free can free a heap string's data
+    // buffer but skip a static string LITERAL's .rodata data pointer (which sits
+    // below the arena) — the heap-vs-literal test the header-less asm string box
+    // otherwise can't make. Used only by __fern_str_free (#2649 string RC).
+    s = s.write("__fern_heap_base: .quad 0\n");
+    s = s.write("    .align 8\n");
     s = s.write("__fern_rc_underflow: .quad 0\n");
     s = s.write("    .align 8\n");
     s = s.write("__fern_freelist: .skip 524288\n");
@@ -674,6 +681,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq $0, %rax\n");                   // mmap returns -errno on failure
     s = s.write("    jl .Lalloc_oom\n");
     s = s.write("    movq %rax, __fern_heap_ptr(%rip)\n");
+    s = s.write("    movq %rax, __fern_heap_base(%rip)\n"); // record arena base (freeable-range lower bound)
     s = s.write("    movl $4160749568, %ecx\n");          // heap_size (u32)
     s = s.write("    addq %rax, %rcx\n");                 // %rcx = base + heap_size (END)
     s = s.write("    movq %rcx, __fern_heap_end(%rip)\n");
@@ -789,8 +797,17 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jb .Lstrfree_ret\n");
     s = s.write("    movq (%rax), %rcx\n");         // data = box[0]
     s = s.write("    movq 8(%rax), %rdx\n");        // len  = box[8]
-    s = s.write("    cmpq $0x10000, %rcx\n");       // data null/low -> skip buffer free
+    // Free the data buffer ONLY when it is a heap allocation, i.e. in
+    // [__fern_heap_base, __fern_heap_end). A string LITERAL's data points into
+    // .rodata (below the arena), so this skips it — freeing it would push a
+    // read-only address onto the freelist and fault when written as a node. This
+    // is the heap-vs-literal test that lets the accumulator's initial "" literal
+    // pass through __fern_str_free harmlessly (its 16-byte box is still freed).
+    s = s.write("    movq __fern_heap_base(%rip), %rsi\n");
+    s = s.write("    cmpq %rsi, %rcx\n");           // data < heap_base -> literal/.rodata, skip
     s = s.write("    jb .Lstrfree_box\n");
+    s = s.write("    cmpq __fern_heap_end(%rip), %rcx\n");  // data >= heap_end -> not our arena, skip
+    s = s.write("    jae .Lstrfree_box\n");
     s = s.write("    testq %rdx, %rdx\n");          // len <= 0 -> skip buffer free (leak, sound)
     s = s.write("    jle .Lstrfree_box\n");
     s = s.write("    addq $7, %rdx\n");             // words = ceil(len/8)
