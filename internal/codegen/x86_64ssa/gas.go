@@ -84,7 +84,18 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		b.WriteByte('\n')
 	}
 
+	// Runtime helpers to append to .text (module-referenced + transitive deps).
+	// Some of them allocate (e.g. __str_concat bumps the heap cursor), so the
+	// heap section must exist whenever one is present, even if no direct heap op
+	// (MemAlloc / MakeClosure / …) does.
+	helpers := referencedRuntimeHelpers(progs)
 	heap := usesHeap(progs)
+	for _, h := range helpers {
+		if heapUsingHelpers[h] {
+			heap = true
+			break
+		}
+	}
 	strLabels, strOrder := collectStrings(progs, names)
 	// fn_idx for closures: a function's index in the module's (sorted) emission
 	// order — the same value the model's function-index table carries.
@@ -120,7 +131,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 			return "", err
 		}
 	}
-	for _, h := range referencedRuntimeHelpers(progs) {
+	for _, h := range helpers {
 		runtimeHelperEmitters[h](w)
 	}
 	if len(strOrder) > 0 {
@@ -128,10 +139,14 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w(".section .rodata")
 		for _, s := range strOrder {
 			// Length-prefixed single-word string layout (mirrors the native
-			// backends): a 4-byte byte-length sits immediately before the data,
-			// so the string pointer is the data pointer and __str_len reads
-			// [ptr-4]. Consecutive literals stay contiguous, so each label's own
-			// prefix is exactly the 4 bytes before it.
+			// backends): an 8-byte header — an immortal rc sentinel (0x80000000,
+			// top bit set) at [data-8] and the 4-byte byte-length at [data-4] —
+			// sits immediately before the data, so the string pointer is the data
+			// pointer. __str_len reads [ptr-4]; the sentinel makes __fern_str_dec
+			// / rc helpers short-circuit on literals (they never free .rodata).
+			// Consecutive literals stay contiguous, so each label's own header is
+			// exactly the 8 bytes before it.
+			w("\t.4byte 0x80000000")
 			w("\t.4byte %d", len(s))
 			w("%s:", strLabels[s])
 			if len(s) > 0 {
@@ -1015,6 +1030,15 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_arr_dec":      emitArrDecHelper,
 	"__arr_idx":           emitArrIdxHelper,
 	"__str_eq":            emitStrEqHelper,
+	"__str_concat":        emitStrConcatHelper,
+	"__fern_str_dec":      emitStrDecHelper,
+}
+
+// heapUsingHelpers are runtime helpers that allocate on the SSA bump heap, so
+// the .bss heap section + cursor must be emitted whenever one is referenced even
+// if the program body has no direct heap op.
+var heapUsingHelpers = map[string]bool{
+	"__str_concat": true,
 }
 
 // runtimeHelperDeps records the helper→helper call edges (a helper that tail-
@@ -1248,6 +1272,80 @@ func emitStrEqHelper(w func(string, ...any)) {
 	w("\tret")
 	w(".Lssa_streq_neq:")
 	w("\txor eax, eax")
+	w("\tret")
+}
+
+// emitStrConcatHelper writes __str_concat(a, b) -> new data pointer: allocate a
+// fresh length-prefixed string holding a's bytes followed by b's and return its
+// data pointer. Inline-bump-allocates the rc-headed block (rc=1 at base+0, total
+// length at base+4, data at base+8 — the same header ConstStr / heap strings
+// use) and byte-copies each operand, so it needs no calls (no __fern_memcpy /
+// callee-saves). The IR lowers `a + b` on strings (OpStrConcat) to a call here.
+// Lengths live at [ptr-4]. Leaf.
+func emitStrConcatHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__str_concat"))
+	w("\tmov ecx, %s", memRef("rdi", -4)) // la
+	w("\tmov edx, %s", memRef("rsi", -4)) // lb
+	w("\tmov r8d, ecx")
+	w("\tadd r8d, edx") // total = la + lb (zero-extends into r8)
+	// Bump-allocate total+8 bytes: base = align8(cursor); rc=1 at base+0, len at
+	// base+4; cursor advances past header+total; data = base+8.
+	w("\tmov r9, [rip + %s]", heapPtrSym)
+	w("\tadd r9, 7")
+	w("\tand r9, -8")
+	w("\tmov dword ptr [r9], 1") // rc = 1
+	w("\tmov [r9 + 4], r8d")     // len = total
+	w("\tmov r10, r9")
+	w("\tadd r10, 8")
+	w("\tadd r10, r8")
+	w("\tmov [rip + %s], r10", heapPtrSym)
+	w("\tlea rax, [r9 + 8]") // data (return value)
+	// Copy a's la bytes: [rax + i] = [rdi + i].
+	w("\txor r10, r10")
+	w(".Lssa_strcat_a:")
+	w("\tcmp r10d, ecx")
+	w("\tjae .Lssa_strcat_b")
+	w("\tmovzx r11d, byte ptr [rdi + r10]")
+	w("\tmov byte ptr [rax + r10], r11b")
+	w("\tadd r10, 1")
+	w("\tjmp .Lssa_strcat_a")
+	// Copy b's lb bytes after a: dest base = data + la.
+	w(".Lssa_strcat_b:")
+	w("\tlea r9, [rax + rcx]")
+	w("\txor r10, r10")
+	w(".Lssa_strcat_bl:")
+	w("\tcmp r10d, edx")
+	w("\tjae .Lssa_strcat_done")
+	w("\tmovzx r11d, byte ptr [rsi + r10]")
+	w("\tmov byte ptr [r9 + r10], r11b")
+	w("\tadd r10, 1")
+	w("\tjmp .Lssa_strcat_bl")
+	w(".Lssa_strcat_done:")
+	w("\tret")
+}
+
+// emitStrDecHelper writes __fern_str_dec(ptr): the scope-exit drop for a
+// string-valued local. Guarded (null / low-address / immortal-sentinel top bit —
+// so it skips .rodata literals); reads the rc at [ptr-8]; if uniquely held
+// (rc==1) the heap buffer would be freed — a no-op on the SSA bump heap, which
+// doesn't reclaim (leak-until-a-later-reuse slice) — else drops a shared
+// reference. Leaf.
+func emitStrDecHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_str_dec"))
+	w("\ttest rdi, rdi")
+	w("\tjz .Lssa_strdec_ret")
+	w("\tcmp rdi, 0x10000")
+	w("\tjb .Lssa_strdec_ret")
+	w("\tmov eax, %s", memRef("rdi", -8)) // rc
+	w("\ttest eax, eax")
+	w("\tjs .Lssa_strdec_ret") // top bit = immortal literal sentinel
+	w("\tcmp eax, 1")
+	w("\tjle .Lssa_strdec_ret") // rc<=1: unique (leak) or already dropped
+	w("\tsub eax, 1")
+	w("\tmov %s, eax", memRef("rdi", -8))
+	w(".Lssa_strdec_ret:")
 	w("\tret")
 }
 
