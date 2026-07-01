@@ -171,7 +171,7 @@ func emitFunc(w func(string, ...any), name string, p *x86.Program, numAlloc int)
 				}
 				continue
 			}
-			lines, err := asmInst(in)
+			lines, err := asmInst(in, scratch)
 			if err != nil {
 				return err
 			}
@@ -355,8 +355,10 @@ func align16(n int) int {
 	return (n + 15) &^ 15
 }
 
-// asmInst renders one abstract instruction to AArch64 GAS lines.
-func asmInst(in x86.Inst) ([]string, error) {
+// asmInst renders one abstract instruction to AArch64 GAS lines. scratch is a
+// free above-the-file register the remainder sequence stages its quotient
+// through.
+func asmInst(in x86.Inst, scratch int) ([]string, error) {
 	switch in.Op {
 	case x86.MovImm:
 		// The immediate is the value in the model's slot (already sign-extended for
@@ -373,6 +375,10 @@ func asmInst(in x86.Inst) ([]string, error) {
 	case x86.StoreSlot:
 		return []string{fmt.Sprintf("str %s, [sp, #%d]", xreg(in.Src), 8*in.Imm)}, nil
 	case x86.BinOp:
+		switch in.K {
+		case ssa.OpShl, ssa.OpShr, ssa.OpShrU, ssa.OpDiv, ssa.OpDivU, ssa.OpRem, ssa.OpRemU:
+			return divShiftSeq(in, scratch), nil
+		}
 		mnem, ok := binMnemonic(in.K)
 		if !ok {
 			return nil, fmt.Errorf("arm64ssa: binary op %v not supported yet", in.K)
@@ -397,6 +403,40 @@ func asmInst(in x86.Inst) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("arm64ssa: opcode %d not supported yet", in.Op)
 	}
+}
+
+// divShiftSeq renders the register-shift and divide/remainder BinOps, which
+// AArch64 spells with dedicated mnemonics rather than a plain 3-operand ALU op.
+// All operate on the full 64-bit (sign-extended) register values, exactly as the
+// abstract model does before its width mask, so a trailing maskFix reproduces the
+// i32 result. Remainder has no direct instruction: divide into the scratch
+// register, then msub (Xd = Xa - Xn*Xm) yields dividend - quotient*divisor.
+func divShiftSeq(in x86.Inst, scratch int) []string {
+	d, s := xreg(in.Dst), xreg(in.Src)
+	var out []string
+	switch in.K {
+	case ssa.OpShl:
+		out = []string{fmt.Sprintf("lsl %s, %s, %s", d, d, s)}
+	case ssa.OpShr:
+		out = []string{fmt.Sprintf("asr %s, %s, %s", d, d, s)} // arithmetic (signed)
+	case ssa.OpShrU:
+		out = []string{fmt.Sprintf("lsr %s, %s, %s", d, d, s)} // logical (unsigned)
+	case ssa.OpDiv:
+		out = []string{fmt.Sprintf("sdiv %s, %s, %s", d, d, s)}
+	case ssa.OpDivU:
+		out = []string{fmt.Sprintf("udiv %s, %s, %s", d, d, s)}
+	case ssa.OpRem, ssa.OpRemU:
+		q := xreg(scratch)
+		div := "sdiv"
+		if in.K == ssa.OpRemU {
+			div = "udiv"
+		}
+		out = []string{
+			fmt.Sprintf("%s %s, %s, %s", div, q, d, s), // q = d / s
+			fmt.Sprintf("msub %s, %s, %s, %s", d, q, s, d), // d = d - q*s
+		}
+	}
+	return append(out, maskFix(in.Dst, in.W)...)
 }
 
 // binMnemonic maps an SSA integer arithmetic/bitwise op to its AArch64 mnemonic.

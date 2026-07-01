@@ -268,6 +268,60 @@ func TestArmRunModuleRecursion(t *testing.T) {
 	moduleMatchesEval(t, build(), "factorial", 5)
 }
 
+// Division and remainder via the AArch64 sdiv / msub sequence: with (a,b)=(47,5),
+// (a/b)*10 + (a%b) = 9*10 + 2 = 92 -> exit 92. Params force a runtime divide (no
+// const-fold), diffed against ssa.Eval.
+func TestArmRunDivRem(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		a := f.AddParam()
+		b := f.AddParam()
+		e := f.NewBlock()
+		q := f.AddOp(e, ssa.OpDiv, a, b)
+		r := f.AddOp(e, ssa.OpRem, a, b)
+		f.SetRet(e, f.AddOp(e, ssa.OpAdd, f.AddOp(e, ssa.OpMul, q, constOp(f, e, 10)), r))
+		return f
+	}
+	for _, nreg := range []int{2, 4, 8} {
+		runMatchesEval(t, build(), nreg, 47, 5)
+	}
+}
+
+// Left shift + unsigned right shift: (a << sh) >>u 1 with (a,sh)=(5,4) = 80 >>u 1
+// = 40 -> exit 40. Exercises lsl / lsr against the model.
+func TestArmRunShifts(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		a := f.AddParam()
+		sh := f.AddParam()
+		e := f.NewBlock()
+		x := f.AddOp(e, ssa.OpShl, a, sh)
+		f.SetRet(e, f.AddOp(e, ssa.OpShrU, x, constOp(f, e, 1)))
+		return f
+	}
+	for _, nreg := range []int{2, 4, 8} {
+		runMatchesEval(t, build(), nreg, 5, 4)
+	}
+}
+
+// Arithmetic (signed) right shift on a negative value: with a=64, (0-a) asr 2 =
+// -16, then +80 = 64 -> exit 64. The param keeps the negative runtime (no
+// const-fold, no negative immediate in _start), validating asr's sign behaviour.
+func TestArmRunArithShiftSigned(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		a := f.AddParam()
+		e := f.NewBlock()
+		n := f.AddOp(e, ssa.OpSub, constOp(f, e, 0), a) // -a
+		s := f.AddOp(e, ssa.OpShr, n, constOp(f, e, 2)) // asr 2
+		f.SetRet(e, f.AddOp(e, ssa.OpAdd, s, constOp(f, e, 80)))
+		return f
+	}
+	for _, nreg := range []int{2, 4, 8} {
+		runMatchesEval(t, build(), nreg, 64)
+	}
+}
+
 // max via a comparison-selected branch: max(9, 4) = 9 -> exit 9.
 func TestArmRunMax(t *testing.T) {
 	build := func() *ssa.Func {
