@@ -267,11 +267,20 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
           path (missing phi), caught by `ssa.Verify`. The corpus differential
           now runs `ssa.Verify` on every lifted function and tracks verify
           failures as a distinct (lift-bug) category, asserting every *valid*
-          function still emits. Fixing the match-`Option` join phi in
-          `ssa.LiftFromIR` is a follow-up (a separate subsystem from the
-          emitter; the shipping stack-machine backend doesn't use this lift, so
-          the bug was previously unexercised). Still ahead: closure dispatch
-          (`CallIndirect`), RC/runtime helpers, then the flag + e2e diff.
+          function still emits. The match-`Option` join phi bug is now **fixed**
+          in `ssa.LiftFromIR` (`mergeSlotsViaPhi`): a result slot left undefined
+          on an unreachable predecessor edge (the impossible arm of an
+          exhaustive match) used to make the merge give up and pick one arm's
+          value; it now fills that edge's phi arg with an entry-block `const 0`
+          undef (which dominates every block) and builds the phi. Corpus
+          verified 24→25/25; guarded by `TestLiftMatchOptionJoinPhi`, and the
+          wasmssa suite (the other lift consumer) stays green. End-to-end
+          *execution* of `Option` additionally needs the IR's load/store
+          **bit-width** carried through the lift (the boxes pack i32 fields at
+          4-byte offsets, which the width-agnostic 8-byte memory path overruns)
+          — a separate follow-up. Still ahead: closure dispatch (`CallIndirect`),
+          the lift memory-width fix, RC/runtime helpers, then the flag + e2e
+          diff.
 - [~] Op-coverage broadening toward parity (each op validated against `Eval`
   in the model before it reaches real assembly):
   - [x] Direct integer calls + recursion — `ssa.EvalIn` (function-table eval),
