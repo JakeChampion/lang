@@ -103,6 +103,34 @@ var loopReuseIRCases = []struct {
 	{"loop-struct-array-field-reuse",
 		`struct P { xs: i32[], n: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: P = P { xs: [1, 2, 3], n: i }; var s: i32 = a.n + a.xs[0]; var b: P = P { xs: [4, 5], n: i * 2 }; sum = sum + s + b.xs[1] + b.n; i = i + 1; } return sum; }`,
 		42, 3},
+	// CROSS-BLOCK reuse (irlower xblock_pending): the donor `a` lives at the loop
+	// body's top level and is dead by the nested `if`, whose recipient `b` reuses
+	// a's box — ONE allocation even though a and b are in different blocks. This is
+	// native's cross-block pass (a loop-body value reused by a construction nested
+	// in an if inside the loop). sum over i in 1..3 of (i+3) + a-side s… computes
+	// to 31 (a corruption from a stranded a-read or bad reuse would differ).
+	{"cross-block-reuse",
+		`struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: P = P { x: i, y: i + 1 }; var s: i32 = a.x + a.y; if (i > 0) { var b: P = P { x: i, y: 3 }; sum = sum + b.x + b.y; } sum = sum + s; i = i + 1; } return sum; }`,
+		31, 1},
+	// Cross-block donor USED AFTER the if: `a` is read after the nested if, so it is
+	// NOT dead-from-k and reuse must be suppressed (both allocate — TWO boxes). A
+	// spurious reuse would strand the later a.x / a.y read. Value 25.
+	{"cross-block-donor-used-after",
+		`struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: P = P { x: i, y: 1 }; if (i > 0) { var b: P = P { x: i, y: 3 }; sum = sum + b.x + b.y; } sum = sum + a.x + a.y; i = i + 1; } return sum; }`,
+		25, 2},
+	// Cross-block ESCAPING recipient: `b` (in the nested if) is appended into acc, so
+	// its box is container-owned — the reuse fires but the reclaimable-gated
+	// prior-release must NOT free it (a UAF otherwise). Value 56.
+	{"cross-block-escaping-recipient",
+		`struct P { x: i32, y: i32 } function main(): i32 { var acc: P[] = []; var i: i32 = 0; while (i < 6) { var a: P = P { x: i, y: 1 }; var s: i32 = a.x + a.y; if (i > 2) { var b: P = P { x: i, y: 100 }; acc = acc.append(b); } i = i + 1; } var sum: i32 = 0; var j: i32 = 0; while (j < acc.len()) { sum = sum + acc[j].x + acc[j].y; j = j + 1; } return sum; }`,
+		56, 3},
+	// Cross-block memory safety at scale: 5M iterations of a loop-body donor reused
+	// by an if-nested recipient. The exit value matching the interp oracle (229)
+	// proves balanced alloc/free — a double-free would crash, a leaked recipient
+	// box would exhaust the heap. One static allocation (the reuse fires).
+	{"cross-block-churn-safe",
+		`struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5000000) { var a: P = P { x: i, y: 1 }; var s: i32 = a.x + a.y; if (i > 0) { var b: P = P { x: i, y: 3 }; sum = (sum + b.x + b.y) % 1000; } i = i + 1; } return sum; }`,
+		229, 1},
 }
 
 // TestSelfHostLoopReuseIRX86_64 compiles each case through the self-hosted x86-64
