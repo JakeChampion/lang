@@ -310,9 +310,25 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
             env param; validated `RunModuleTable == EvalInTable` incl. a
             runtime-selected closure (`OpSelect` between two cells). wasm
             untouched (it doesn't implement `OpCallIndirect`).
-          Still ahead: the `OpConstFunc`→cell lift change (bare fn values), the
-          real-asm slice (`call r11`), RC/runtime helpers; then the flag + e2e
-          diff.
+          - [x] Lift slice — `OpConstFunc` (a bare function value) now lifts to a
+            zero-capture `OpMakeClosure` (a static `{fn_idx, env_ptr=0}` cell)
+            instead of a raw `OpConstInt` index, so it derefs identically to a
+            real closure through the model-slice `OpCallIndirect`. `fn_idx`
+            resolves from the target name via the module table.
+          - [x] Real-asm slice — `OpCallIndirect` lowers in `gas.go`: read
+            `fn_idx`/`env` from the cell, index a `.rodata` function-address
+            dispatch table (`__ssa_fn_table`, one `.quad` per function in module
+            order — CallIndirect has no static `Callee`, so a table is required),
+            stash the resolved target across the arg shuffle and `call` it
+            register-indirect with `env` appended last. Validated by assembling +
+            running natively (`TestAsmRunCallIndirect*`). This surfaced (and this
+            slice also lands) the real-asm `OpSelect` lowering — a conditional
+            branch over a unique label (materialize returns operands' own home
+            registers, so no operand may be clobbered; a branch-free mask would
+            need a second scratch), `TestAsmRunSelect`.
+          Still ahead: the wasm `call_indirect` form and the RC/runtime-helper
+          slice (capturing/dropped closures emit `__fern_closure_drop`); then the
+          flag + e2e diff.
 - [~] Op-coverage broadening toward parity (each op validated against `Eval`
   in the model before it reaches real assembly):
   - [x] Direct integer calls + recursion — `ssa.EvalIn` (function-table eval),
