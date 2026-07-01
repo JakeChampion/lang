@@ -171,18 +171,37 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_rc_is_unique": emitRcIsUniqueHelper,
 	"__fern_rc_inc":       emitRcIncHelper,
 	"__fern_rc_dec":       emitRcDecHelper,
+	"__fern_box_free":     emitBoxFreeHelper,
+	"__fern_closure_drop": emitClosureDropHelper,
+}
+
+// runtimeHelperDeps records helper→helper call edges: a helper that tail-calls
+// another must have that callee emitted too, since the module never references
+// it directly. Transitively closed by referencedRuntimeHelpers.
+var runtimeHelperDeps = map[string][]string{
+	"__fern_closure_drop": {"__fern_box_free", "__fern_rc_dec"},
 }
 
 // referencedRuntimeHelpers returns, sorted, every runtime helper any emitted
-// program calls (that arm64 has an emitter for). Helper→helper dependencies are
-// added when those helpers land; the RC leaves have none.
+// program calls (that arm64 has an emitter for), plus the transitive closure of
+// their helper→helper dependencies (runtimeHelperDeps).
 func referencedRuntimeHelpers(progs map[string]*x86.Program) []string {
 	seen := map[string]bool{}
+	var add func(name string)
+	add = func(name string) {
+		if seen[name] || runtimeHelperEmitters[name] == nil {
+			return
+		}
+		seen[name] = true
+		for _, dep := range runtimeHelperDeps[name] {
+			add(dep)
+		}
+	}
 	for _, p := range progs {
 		for _, blk := range p.Blocks {
 			for _, in := range blk.Insts {
-				if in.Op == x86.Call && runtimeHelperEmitters[in.Callee] != nil {
-					seen[in.Callee] = true
+				if in.Op == x86.Call {
+					add(in.Callee)
 				}
 			}
 		}
@@ -251,6 +270,39 @@ func emitRcDecHelper(w func(string, ...any)) {
 	w("\tsub w1, w1, #1")
 	w("\tstur w1, [x0, #-8]")
 	w(".Lssa_rcdec_ret:")
+	w("\tret")
+}
+
+// emitBoxFreeHelper writes __fern_box_free(data, size) -> data: release an
+// rc-headed heap block. The SSA bump heap has no reclamation yet
+// (docs/SSA-RC-RUNTIME.md: leak until a later reuse slice), so this is a no-op
+// returning the data pointer — already in x0, so just ret. A real freelist
+// return is the follow-up that makes the size arg (x1) live.
+func emitBoxFreeHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_box_free"))
+	w("\tret") // return data (x0) unchanged; free is a no-op for now
+}
+
+// emitClosureDropHelper writes __fern_closure_drop(data): the scope-exit drop the
+// IR inserts for a closure-valued local. Guarded (the 0x10000 low-address check
+// also rejects null); reads the rc word at [data-8]; if uniquely held (rc == 1)
+// it tail-calls __fern_box_free(data, payload_size) to release the cell (size
+// from [data-4] into x1), otherwise tail-calls __fern_rc_dec(data) to drop a
+// shared reference. Tail calls use `b` so the callee's ret returns to our caller.
+func emitClosureDropHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_closure_drop"))
+	w("\tcmp x0, #0x10000")
+	w("\tb.lo .Lssa_cd_ret")
+	w("\tldur w1, [x0, #-8]") // rc
+	w("\tcmp w1, #1")
+	w("\tb.ne .Lssa_cd_dec")  // rc != 1 (shared or static sentinel) → dec
+	w("\tldur w1, [x0, #-4]") // payload size → arg2 (x1)
+	w("\tb %s", fnLabel("__fern_box_free"))
+	w(".Lssa_cd_dec:")
+	w("\tb %s", fnLabel("__fern_rc_dec"))
+	w(".Lssa_cd_ret:")
 	w("\tret")
 }
 

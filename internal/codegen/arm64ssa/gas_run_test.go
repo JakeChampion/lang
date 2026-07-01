@@ -463,6 +463,51 @@ func TestArmRunRcIncDec(t *testing.T) {
 	}
 }
 
+// __fern_closure_drop on the arm64 SSA path, observed through
+// __fern_rc_is_unique. Two paths: rc == 1 tail-calls __fern_box_free (a no-op on
+// the bump heap, so the cell stays unique); rc > 1 tail-calls __fern_rc_dec
+// (dropping a shared reference). __fern_box_free is pulled in transitively via
+// runtimeHelperDeps.
+func TestArmRunClosureDrop(t *testing.T) {
+	// isUniqueAfter allocs a cell, applies each mutation call in order, then
+	// returns is_unique(cell) as the exit code.
+	isUniqueAfter := func(ops ...string) int {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		c := f.AddOp(e, ssa.OpAlloc, constOp(f, e, 8)) // fresh rc=1 cell
+		for _, op := range ops {
+			callOp(f, e, op, c) // void, impure — kept + ordered
+		}
+		f.SetRet(e, callOp(f, e, "__fern_rc_is_unique", c))
+		return assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 8)
+	}
+	// rc=1 -> closure_drop -> box_free (no-op) -> still unique.
+	if got := isUniqueAfter("__fern_closure_drop"); got != 1 {
+		t.Errorf("is_unique after closure_drop(rc=1) = %d, want 1 (box_free no-op)", got)
+	}
+	// rc=1 -> inc -> 2 -> closure_drop -> rc_dec -> 1 -> unique again.
+	if got := isUniqueAfter("__fern_rc_inc", "__fern_closure_drop"); got != 1 {
+		t.Errorf("is_unique after inc,closure_drop = %d, want 1 (rc 2->1)", got)
+	}
+	// rc=1 -> inc -> inc -> 3 -> closure_drop -> rc_dec -> 2 -> not unique.
+	if got := isUniqueAfter("__fern_rc_inc", "__fern_rc_inc", "__fern_closure_drop"); got != 0 {
+		t.Errorf("is_unique after inc,inc,closure_drop = %d, want 0 (rc 3->2)", got)
+	}
+}
+
+// __fern_box_free returns the data pointer and leaves the cell intact (it's a
+// no-op until the reuse slice), so a fresh cell is still unique after it.
+func TestArmRunBoxFreeNoop(t *testing.T) {
+	f := ssa.NewFunc("main")
+	e := f.NewBlock()
+	c := f.AddOp(e, ssa.OpAlloc, constOp(f, e, 8))
+	callOp(f, e, "__fern_box_free", c) // no-op
+	f.SetRet(e, callOp(f, e, "__fern_rc_is_unique", c))
+	if got := assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 8); got != 1 {
+		t.Errorf("is_unique after box_free = %d, want 1 (no-op)", got)
+	}
+}
+
 // max via a comparison-selected branch: max(9, 4) = 9 -> exit 9.
 func TestArmRunMax(t *testing.T) {
 	build := func() *ssa.Func {
