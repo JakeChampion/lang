@@ -3002,3 +3002,32 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   corruption probe) in `TestSelfHostRcPreciseDropX86IR`; byte-identical FIXPOINT +
   BOOTSTRAP stay green. Frontend-only (precise_drop_names + the emission site are
   backend-agnostic — every backend that lowers tuples benefits).
+- 2026-07-01: **Reclaim fresh scalar Option locals** (they leaked on the register
+  backends). A scalar `var o: Option[i32] = Some(5)` / `var o = None` routed ir but
+  leaked — opt_make/opt_none used raw __fern_alloc(16) on x86 (asm_ir) / arm64
+  (asm_arm64_ir), a non-rc-headered block __fern_rc_dec can't free (0 decs). Native
+  reclaims Options. Fix: (1) opt_make + opt_none now rc-box via __fern_arr_box(cap=2)
+  on x86 + arm64 — exactly like struct_make/tuple_make; offsets unchanged (tag@0
+  overwrites arr_box's len@0, payload@8, cap@data-16 = free size). wasm already boxed
+  Options via $__fern_str_box (no change). (2) consumed_scalar_enum_frees — the
+  existing consume-by-match box-free classifier — now ALSO admits a fresh scalar
+  Option local (fresh_scalar_option_init: `Some(scalar-lit)`/`None`, or an annotated
+  `Option[<scalar>]`) consumed by exactly one `match (o)`, single-owner and dead-
+  after: its box is shallow-freed (__fern_rc_dec) right after the match, reusing the
+  enum-free emission verbatim. SOUNDNESS — the scalar-payload gate means the box owns
+  no rc pointer, so a shallow dec is the whole free; the match reads tag/payload as
+  borrows before the free; the same single-match / dead-after / non-escape gates the
+  scalar-enum path uses exclude a used-after / returned / aliased Option (a returned
+  Option is moved out, never freed here). rc-PAYLOAD Options (Some([..]) / Some("x") /
+  Some(struct)) are NOT admitted (payload would leak — a deep-drop follow-up), and
+  neither is an un-annotated non-literal payload (unprovable scalar-ness in the
+  classifier). FIRING confirmed in the emitted asm (opt builds via __fern_arr_box, one
+  __fern_arr_dec after the match, no raw __fern_alloc). VERIFIED: new `option-*` cases
+  (route ir, value, __rc_underflow()==0, None, un-annotated literal, i64 payload,
+  corruption probe, used-after + escapes non-firing guards) in
+  TestSelfHostRcPreciseDropX86IR; byte-identical FIXPOINT + BOOTSTRAP + the wasm
+  TestSelfHostRcOptionBoxWasm stay green. (Result[T,E] is the same box shape — a
+  follow-up widening.) NOTE: an UNRELATED pre-existing main regression — a wasm Map
+  literal `Map{1:10,2:20}` building only 1 entry (TestSelfHostRcCallResultWasm
+  freshbuiltin-mapkeys/values) — was found during verification and reproduces with
+  all this work stashed; tracked separately, not caused by this slice.

@@ -13315,6 +13315,60 @@ function fresh_scalar_enum_init(e: parser.Expr, structs: parser.StructDecl[]): s
     }
 }
 
+// type_is_scalar_option reports whether a type annotation is `Option[<scalar>]`
+// (i32 / i64 / f64 / boolean / u32 / u64) — a payload that is COPIED, not
+// rc-tracked, so a shallow box free needs no element walk and never entangles a
+// bound payload's lifetime.
+function type_is_scalar_option(tn: string): boolean {
+    if (tn.len() < 9) { return false; }
+    if (tn[0:7] != "Option[") { return false; }
+    var inner: string = tn[7 : tn.len() - 1];
+    return inner == "i32" || inner == "i64" || inner == "f64" || inner == "boolean" || inner == "u32" || inner == "u64";
+}
+
+// fresh_scalar_option_init reports whether `v` binds a FRESH scalar Option local —
+// `var o = None`, or `var o = Some(p)` whose payload is provably scalar (the
+// binding annotates `Option[<scalar>]`, or the payload is a bare number/boolean
+// literal). The Option box (now rc-headered via opt_make/opt_none → __fern_arr_box)
+// is then a single-owner box holding no rc pointer, so a shallow __fern_rc_dec is
+// the whole free — the Option sibling of fresh_scalar_enum_init. Some/None are
+// matched both bare and qualified (`Option.Some(..)`). An rc-payload Some
+// (Some([..]) / Some("x") / Some(struct)) is NOT admitted here (its payload would
+// leak — a deep-drop follow-up), and neither is a non-literal un-annotated payload
+// (the scalar-ness can't be proven without types in this classifier).
+function fresh_scalar_option_init(v: parser.StmtVar): boolean {
+    var kind: string = "";
+    match (v.init) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => { if (id.name == "Some") { kind = "Some"; } },
+                parser.ExprFieldAccess(fa) => { if (fa.field == "Some") { kind = "Some"; } },
+                _ => {}
+            }
+        },
+        parser.ExprIdent(id) => { if (id.name == "None") { kind = "None"; } },
+        parser.ExprFieldAccess(fa) => { if (fa.field == "None") { kind = "None"; } },
+        _ => {}
+    }
+    if (kind == "") { return false; }
+    if (kind == "None") { return true; }   // no payload — trivially scalar
+    if (type_is_scalar_option(v.type_name)) { return true; }
+    // Un-annotated: admit only a bare scalar-literal payload (`Some(5)`/`Some(true)`).
+    match (v.init) {
+        parser.ExprCall(c) => {
+            if (c.args.len() == 1) {
+                match (c.args[0]) {
+                    parser.ExprNumber(_) => { return true; },
+                    parser.ExprBool(_) => { return true; },
+                    _ => { return false; }
+                }
+            }
+        },
+        _ => {}
+    }
+    return false;
+}
+
 // match_scrutinee_ident: if top-level body statement `st` is a `match (x) { ... }`
 // whose scrutinee is the bare ident `name`, returns true.
 function match_scrutinee_is(st: parser.Stmt, name: string): boolean {
@@ -13378,8 +13432,13 @@ function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructD
     while (vi < body.len()) {
         match (body[vi]) {
             parser.StmtVar(v) => {
+                // An all-scalar user enum (`var x = Circle(r)`) OR a fresh scalar
+                // Option (`var o = Some(5)` / `None`) — both are single-owner rc-boxed
+                // values whose box is shallow-freed after their consuming match. The
+                // Option box gained its rc header from opt_make → __fern_arr_box.
                 var owner: string = fresh_scalar_enum_init(v.init, structs);
-                if (owner != "" && util.index_of_str(reassigned, v.name) < 0) {
+                var is_opt: boolean = fresh_scalar_option_init(v);
+                if ((owner != "" || is_opt) && util.index_of_str(reassigned, v.name) < 0) {
                     // Find the single consuming match: exactly one top-level
                     // statement whose scrutinee is the bare ident `v.name`.
                     var match_idx: i32 = 0 - 1;
