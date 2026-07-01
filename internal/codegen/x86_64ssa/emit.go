@@ -145,15 +145,9 @@ type Program struct {
 }
 
 // Emit lowers an integer SSA function (with control flow) to an abstract
-// register program, allocating over numAlloc physical registers.
+// register program, allocating over numAlloc physical registers, using the
+// x86-64 System V callee-saved partition (rbx / r12–r15).
 func Emit(f *ssa.Func, numAlloc int) (*Program, error) {
-	if numAlloc < 1 {
-		return nil, fmt.Errorf("x86_64ssa: numAlloc must be >= 1")
-	}
-	if f.Entry == nil {
-		return nil, fmt.Errorf("x86_64ssa: function has no entry block")
-	}
-
 	// Tell the allocator which allocatable registers are callee-saved, so it can
 	// steer call-crossing values there and avoid a per-call caller-save (EQ-1
 	// then leaves them out of the save set; the function prologue preserves them
@@ -161,6 +155,25 @@ func Emit(f *ssa.Func, numAlloc int) (*Program, error) {
 	calleeSaved := make([]bool, numAlloc)
 	for r := 0; r < numAlloc; r++ {
 		calleeSaved[r] = !isCallerSaved(r)
+	}
+	return EmitWithCalleeSaved(f, numAlloc, calleeSaved)
+}
+
+// EmitWithCalleeSaved is Emit with an explicit callee-saved partition, letting a
+// non-x86 backend describe its own ABI. calleeSaved[r] reports whether
+// allocatable register r survives a call; a target whose whole allocatable file
+// is caller-saved (e.g. arm64 mapping onto x0–x15) passes an all-false mask, so
+// the allocator marks every call-crossing value for caller-save (SaveRegsSet).
+// A nil mask defaults to all-false (every register caller-saved).
+func EmitWithCalleeSaved(f *ssa.Func, numAlloc int, calleeSaved []bool) (*Program, error) {
+	if numAlloc < 1 {
+		return nil, fmt.Errorf("x86_64ssa: numAlloc must be >= 1")
+	}
+	if f.Entry == nil {
+		return nil, fmt.Errorf("x86_64ssa: function has no entry block")
+	}
+	if calleeSaved != nil && len(calleeSaved) != numAlloc {
+		return nil, fmt.Errorf("x86_64ssa: calleeSaved has %d entries, want numAlloc=%d", len(calleeSaved), numAlloc)
 	}
 	alloc := ssa.LinearScan(f, ssa.Target{NumRegs: numAlloc, CalleeSaved: calleeSaved})
 	e := &emitter{
