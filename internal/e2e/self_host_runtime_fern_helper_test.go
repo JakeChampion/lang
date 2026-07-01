@@ -240,6 +240,16 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_string_from_bytes:", ".Lsfb_loop"},
 		},
 		{
+			// str_split (s.split(sep) / str_split(s, sep)) — string[] result, built
+			// with .append() + string slices (#2649). The old register-ABI hand-asm
+			// (a bare __fern_str_split: label + .Lsplit_cl count loop) is gone; the
+			// call site targets __fn___fern_str_split via the stack ABI.
+			"str_split",
+			`function main(): i32 { return "a,b,c".split(",").len(); }`,
+			"__fn___fern_str_split",
+			[]string{"\n__fern_str_split:", ".Lsplit_cl"},
+		},
+		{
 			// arr_str_join (string[].join) — AST-only; calls str_concat via `+`.
 			"arr_str_join",
 			`function main(): i32 { var xs: string[] = ["a", "b"]; return xs.join(",").len(); }`,

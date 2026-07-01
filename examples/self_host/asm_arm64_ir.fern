@@ -133,12 +133,12 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         return s.write("    bl __fn___fern_str_bytes\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind == "str_split") {
-        // operand stack [haystack box, sep box] (sep top); __fern_str_split(
-        // x0=haystack, x1=sep) -> fresh string[] in x0. asm_arm64.emit_runtime
-        // emits the helper inside its str_search-need block, so set both needs.
-        s = s.mark_str_search();
-        s = s.mark_heap();
-        return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_str_split\n    str x0, [sp, #-16]!\n");
+        // operand stack [haystack box, sep box] (sep top). Call the Fern-compiled
+        // __fn___fern_str_split via the stack ABI: param[0]=haystack on top (+16),
+        // param[1]=sep (+32). Shared body, need-gated on str_split. -> string[] in x0.
+        s = s.mark_str_split();
+        s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+        return s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_split\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind == "str_to_upper" || o.kind == "str_to_lower") {
         // operand stack [s box]; __fern_str_to_upper/_lower are Fern runtime

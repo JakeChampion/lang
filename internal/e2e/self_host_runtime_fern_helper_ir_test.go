@@ -178,6 +178,15 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			"__fn___fern_string_from_bytes",
 			[]string{"\n__fern_string_from_bytes:", ".Lir_sfb_loop"},
 		},
+		{
+			// str_split — migrated on the IR path too (#2649). The old hand-written
+			// IR body (__fern_str_split: / .Lir_split_cl) must be gone; op_str_split
+			// now calls __fn___fern_str_split via the stack ABI.
+			"str_split",
+			`function main(): i32 { return "a,b,c".split(",").len(); }`,
+			"__fn___fern_str_split",
+			[]string{"\n__fern_str_split:", ".Lir_split_cl"},
+		},
 	}
 
 	for _, tc := range cases {
