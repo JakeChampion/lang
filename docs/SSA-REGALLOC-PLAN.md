@@ -169,9 +169,19 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
     recurses and writes both `Dst`/`Dst2`. Validated `RunModule == EvalIn` incl.
     both results kept live across an intervening (callee-clobbering) call and
     under spill-forcing register counts. ~132 occurrences.
-  - [ ] Remaining tail: `OpCallIndirect` (fn-pointer dispatch),
-    `OpMakeClosure`/`OpMakeEnv` (closures) — lower frequency, more involved
-    (fn-ptr table / env layout)
+  - [x] `OpCallIndirect` (function-index dispatch). A function value is an
+    integer index into the module's ordered function list (as the backends model
+    it — wasm `call_indirect` / the native closure-cell pool; `OpConstFunc`
+    lifts to `OpConstInt`). `ssa.EvalInTable` / `x86_64ssa.RunModuleTable` take
+    an ordered `table []string` (index → callee name) threaded through
+    `evalWith` / `runProg`; `OpCallIndirect` reads `Args[0]` as the index,
+    resolves `table[idx]`, and recurses (`Args[1..]` are the call args, single
+    result). The emitter captures the index home (`IdxLoc`) + arg homes. Errors
+    on an out-of-range index rather than dispatching wrong. Validated
+    `RunModuleTable == EvalInTable` incl. a runtime-computed index (from a
+    comparison) surviving to the call under spill-forcing register counts.
+  - [ ] Remaining tail: `OpMakeClosure`/`OpMakeEnv` (closures) — env block
+    layout + {fn_idx, env_ptr} pair, dispatched via the same fn-index table.
   - [ ] RC inc/dec (Perceus ordering)
 
   **Coverage measurement (data-driven prioritisation).** Lifting the example
