@@ -203,6 +203,12 @@ func runProg(m map[string]*Program, table []string, p *Program, h *modelHeap, ar
 				regs[in.Dst] = fcmp(in.K, regs[in.Dst], regs[in.Src])
 			case FConv:
 				regs[in.Dst] = fconv(in.K, regs[in.Dst], in.W)
+			case Select:
+				if regs[in.Src] != 0 {
+					regs[in.Dst] = maskW(in.W, regs[in.Src2])
+				} else {
+					regs[in.Dst] = maskW(in.W, regs[in.Src3])
+				}
 			default:
 				return 0, 0, fmt.Errorf("Run: unknown opcode %d", in.Op)
 			}
@@ -382,6 +388,12 @@ func fconv(k ssa.OpKind, a int64, w int8) int64 {
 		return int64(ffrom(a))
 	case ssa.OpFToIU:
 		return int64(uint64(ffrom(a)))
+	case ssa.OpReinterpretF64ToI64, ssa.OpReinterpretI64ToF64:
+		return a // identity: floats live as their f64 bit pattern already
+	case ssa.OpReinterpretF32ToI32:
+		return int64(int32(math.Float32bits(float32(ffrom(a))))) // f32 bits as i32
+	case ssa.OpReinterpretI32ToF32:
+		return fbits(float64(math.Float32frombits(uint32(a))), 32) // i32 bits as f32 (stored as f64 bits)
 	default:
 		return a
 	}

@@ -672,6 +672,30 @@ func evalOp(funcs map[string]*Func, table []string, h *heap, strLen map[int32]in
 			return err
 		}
 		return set(int64(uint64(a)))
+
+	// Bit-reinterprets (no value conversion, just a type change on the same
+	// bits). Floats live in the int64 slots AS their f64 bit pattern, so the
+	// 64-bit reinterprets are the identity on the stored bits; the 32-bit ones
+	// go via the f32 bit pattern.
+	case OpReinterpretF64ToI64, OpReinterpretI64ToF64:
+		a, err := arg(0)
+		if err != nil {
+			return err
+		}
+		return set(a) // width 64: set() is the identity
+	case OpReinterpretF32ToI32:
+		f, err := farg(0)
+		if err != nil {
+			return err
+		}
+		return set(int64(math.Float32bits(float32(f)))) // f32 bits as i32 (set masks to 32)
+	case OpReinterpretI32ToF32:
+		a, err := arg(0)
+		if err != nil {
+			return err
+		}
+		return setF(float64(math.Float32frombits(uint32(a)))) // i32 bits as f32, stored as f64 bits
+
 	case OpLoadF:
 		base, err := arg(0)
 		if err != nil {
