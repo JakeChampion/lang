@@ -856,6 +856,8 @@ func asmInst(in x86.Inst, scratch int) ([]string, error) {
 		return fCmpSeq(in)
 	case x86.FConv:
 		return fConvSeq(in)
+	case x86.Select:
+		return selectSeq(in), nil
 	default:
 		return nil, fmt.Errorf("arm64ssa: opcode %d not supported yet", in.Op)
 	}
@@ -1100,6 +1102,19 @@ func fcondCode(k ssa.OpKind) (string, bool) {
 		return "hs", true
 	}
 	return "", false
+}
+
+// selectSeq renders OpSelect (reg[Dst] = reg[Src] != 0 ? reg[Src2] : reg[Src3])
+// with the branch-free conditional select: cmp the condition, then csel reads
+// both operands and writes Dst in one instruction — no intermediate move can
+// clobber a still-live operand (the hazard the x86 path avoids with a branch).
+// A trailing maskFix reproduces the model's i32 width mask.
+func selectSeq(in x86.Inst) []string {
+	out := []string{
+		fmt.Sprintf("cmp %s, #0", xreg(in.Src)),
+		fmt.Sprintf("csel %s, %s, %s, ne", xreg(in.Dst), xreg(in.Src2), xreg(in.Src3)),
+	}
+	return append(out, maskFix(in.Dst, in.W)...)
 }
 
 // binMnemonic maps an SSA integer arithmetic/bitwise op to its AArch64 mnemonic.

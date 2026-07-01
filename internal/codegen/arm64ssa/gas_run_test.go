@@ -808,6 +808,28 @@ func TestArmRunFloatReturnCall(t *testing.T) {
 	}
 }
 
+// OpSelect via csel, with a and b kept live across the select so the operands
+// exercise distinct registers: sel(cond,a,b) = (cond!=0 ? a : b) + (a - b).
+// Diffed against ssa.Eval over both branches and several register counts.
+func TestArmRunSelect(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		cond := f.AddParam()
+		a := f.AddParam()
+		b := f.AddParam()
+		e := f.NewBlock()
+		picked := f.AddOp(e, ssa.OpSelect, cond, a, b)
+		diff := f.AddOp(e, ssa.OpSub, a, b)
+		f.SetRet(e, f.AddOp(e, ssa.OpAdd, picked, diff))
+		return f
+	}
+	for _, args := range [][]int64{{1, 40, 2}, {0, 40, 2}, {7, 5, 9}, {0, 5, 9}} {
+		for _, n := range []int{2, 4, 8} {
+			runMatchesEval(t, build(), n, args...)
+		}
+	}
+}
+
 // max via a comparison-selected branch: max(9, 4) = 9 -> exit 9.
 func TestArmRunMax(t *testing.T) {
 	build := func() *ssa.Func {
