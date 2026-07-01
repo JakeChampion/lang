@@ -258,17 +258,14 @@ const (
 	argsCacheSym = "__ssa_args_cache"
 
 	// The global string-builder: an 8-byte length counter and a fixed .bss byte
-	// buffer that strbuf_append writes into and strbuf_take copies out of. The
-	// native backend uses 64 MiB, but the W^X ELF writer currently materialises
-	// the whole .bss in the file (the data segment's p_filesz == p_memsz), so an
-	// oversized buffer would bloat the binary. 1 MiB keeps a strbuf-using binary
-	// ~1 MB while still covering realistic string building; a follow-up that emits
-	// .bss as NOBITS (p_memsz > p_filesz) would let this grow back to 64 MiB at
-	// zero file cost and shrink every arm64-ssa binary by dropping the heap's file
-	// bytes too.
+	// buffer that strbuf_append writes into and strbuf_take copies out of. 64 MiB,
+	// matching the native backend. This costs no file space: the W^X ELF writer
+	// stores the data segment only up to its last non-zero byte (p_filesz) and
+	// lets the loader zero-fill the rest via p_memsz, so the whole zero-init buffer
+	// is NOBITS (see elf.imageWX / trailingTrimZeros).
 	strbufLenSym  = "__ssa_strbuf_len"
 	strbufDataSym = "__ssa_strbuf_data"
-	strbufBytes   = 1 << 20 // 1 MiB (see note above)
+	strbufBytes   = 64 << 20 // 64 MiB (NOBITS — no file cost)
 )
 
 // usesStrbuf reports whether the module references any strbuf builtin, so the

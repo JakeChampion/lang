@@ -88,12 +88,12 @@ const (
 // System.loadLibrary) can resolve the exported symbols. No section headers
 // are needed: the loader uses PT_DYNAMIC, not the section table.
 const (
-	dtHash    = 4  // DT_HASH:   .hash vaddr
-	dtStrtab  = 5  // DT_STRTAB: .dynstr vaddr
-	dtSymtab  = 6  // DT_SYMTAB: .dynsym vaddr
-	dtStrsz   = 10 // DT_STRSZ:  .dynstr size
-	dtSyment  = 11 // DT_SYMENT: Elf64_Sym size (24)
-	dtSoname  = 14 // DT_SONAME: soname offset in .dynstr
+	dtHash   = 4  // DT_HASH:   .hash vaddr
+	dtStrtab = 5  // DT_STRTAB: .dynstr vaddr
+	dtSymtab = 6  // DT_SYMTAB: .dynsym vaddr
+	dtStrsz  = 10 // DT_STRSZ:  .dynstr size
+	dtSyment = 11 // DT_SYMENT: Elf64_Sym size (24)
+	dtSoname = 14 // DT_SONAME: soname offset in .dynstr
 
 	symEntSize     = 24   // ELF64 Elf64_Sym
 	stInfoGlobFunc = 0x12 // st_info = (STB_GLOBAL<<4) | STT_FUNC
@@ -194,8 +194,16 @@ func imageWX(text, data []byte, machine uint16) []byte {
 	dataVAddr := uint64(baseVAddr) + dataOff // .rodata + writable globals
 	entry := uint64(TextVAddrWX)             // first instruction of .text
 	codeSz := textEnd                        // headers + .text live in one segment
-	dataSz := uint64(len(data))
-	total := dataOff + dataSz
+	dataSz := uint64(len(data))              // p_memsz: the full segment (incl. .bss)
+	// .bss is materialised as trailing zero bytes in `data`, and a PT_LOAD with
+	// p_filesz < p_memsz has the kernel zero-fill [filesz, memsz). So store only up
+	// to the last non-zero byte in the file and let the loader supply the rest —
+	// the in-memory image is byte-identical, but the file (and the on-disk binary)
+	// drops the zero-fill regions (the bump heap, strbuf, args globals). Trimming
+	// any trailing zero is safe whether it came from .bss or a rodata run that
+	// happens to end in zeros; the loaded bytes are the same either way.
+	dataFileSz := uint64(trailingTrimZeros(data))
+	total := dataOff + dataFileSz
 
 	buf := make([]byte, 0, total)
 
@@ -228,21 +236,33 @@ func imageWX(text, data []byte, machine uint16) []byte {
 	buf = le64(buf, pageAlign) // p_align
 
 	// ---- Program header 1 (56 bytes): R+W data (.rodata + globals) ----
-	buf = le32(buf, 1)         // p_type  = PT_LOAD
-	buf = le32(buf, 6)         // p_flags = PF_R | PF_W
-	buf = le64(buf, dataOff)   // p_offset
-	buf = le64(buf, dataVAddr) // p_vaddr
-	buf = le64(buf, dataVAddr) // p_paddr
-	buf = le64(buf, dataSz)    // p_filesz
-	buf = le64(buf, dataSz)    // p_memsz
-	buf = le64(buf, pageAlign) // p_align
+	buf = le32(buf, 1)          // p_type  = PT_LOAD
+	buf = le32(buf, 6)          // p_flags = PF_R | PF_W
+	buf = le64(buf, dataOff)    // p_offset
+	buf = le64(buf, dataVAddr)  // p_vaddr
+	buf = le64(buf, dataVAddr)  // p_paddr
+	buf = le64(buf, dataFileSz) // p_filesz (initialised prefix only; .bss is NOBITS)
+	buf = le64(buf, dataSz)     // p_memsz  (full segment incl. zero-filled .bss)
+	buf = le64(buf, pageAlign)  // p_align
 
-	// ---- body: .text, then page padding, then the data blob ----
+	// ---- body: .text, then page padding, then the data blob's initialised
+	// prefix (the trailing .bss zeros are supplied by the loader via memsz). ----
 	buf = append(buf, text...)
 	for uint64(len(buf)) < dataOff {
 		buf = append(buf, 0)
 	}
-	return append(buf, data...)
+	return append(buf, data[:dataFileSz]...)
+}
+
+// trailingTrimZeros returns the length of b with trailing zero bytes removed —
+// the size of the initialised prefix that must live in the file (the rest is
+// .bss / zero-fill the loader provides).
+func trailingTrimZeros(b []byte) int {
+	n := len(b)
+	for n > 0 && b[n-1] == 0 {
+		n--
+	}
+	return n
 }
 
 // StaticPieExecutable wraps .text + data + relocations into a static
