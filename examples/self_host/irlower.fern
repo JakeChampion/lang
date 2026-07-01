@@ -13963,9 +13963,10 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         fri = fri + 1;
     }
     // Fresh MAP locals (`var m = Map { … }` / `map_new()`): credited under a "MAP:"
-    // prefix so only slot_is_reclaimable_map matches. The keys + values buffers
-    // (arr-boxed via __fern_alloc_u8) are freed by __fern_rc_dec at scope exit; the
-    // 16-byte RAW mapbox leaks (a later slice reclaims it). Gates: fresh map init,
+    // prefix so only slot_is_reclaimable_map matches. __fern_map_free frees the keys
+    // + values buffers AND returns the 16-byte RAW mapbox to the freelist (x86/arm64
+    // asm), and $__fern_map_release does the same + deep-releases string K/V on wasm.
+    // Gates: fresh map init,
     // NOT reassigned (a rebind could leave a live alias in the slot), non-escaping
     // (body_unsafe_for — receiver-borrow method calls m.get/m.set/m.has/m.len are
     // fine; passed / stored / returned is an escape), not aliased, and no EXPLICIT

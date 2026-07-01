@@ -28,7 +28,8 @@ var strAccumIRCases = []struct {
 }{
 	// Basic accumulator: "" then 4× `s = s + "x"`. len 4. (The "x" literal temporary
 	// leaks — an anonymous const_str, orthogonal to the accumulator — but s itself is
-	// reclaimed each reassignment.)
+	// reclaimed each reassignment. Post-#4262 the "x" operand is ALSO reclaimed by
+	// emit_str_concat_reclaim, so this case now emits reclaims for both.)
 	{"accum-basic",
 		`function main(): i32 { var s: string = ""; var i: i32 = 0; while (i < 4) { s = s + "x"; i = i + 1; } return s.len(); }`,
 		4, true},
@@ -77,9 +78,11 @@ var strAccumIRCases = []struct {
 		9, true},
 	// NEGATIVE: a NON-FRESH reassignment (`s = "reset"`, a literal alias) must exclude
 	// the accumulator — freeing a later s could double-free the literal-shared box. No
-	// __fern_str_free emitted; value stays correct. Reaches len 5 ("hello") kept.
+	// loop operand is a bare IDENT x (not a fresh temp), so emit_str_concat_reclaim
+	// frees no operand either; this isolates the accumulator-exclusion contract. No
+	// __fern_str_free emitted; value stays correct. Reaches len 5 ("reset") kept.
 	{"accum-nonfresh-reassign-not-reclaimed",
-		`function main(): i32 { var s: string = ""; var i: i32 = 0; while (i < 3) { s = s + "x"; i = i + 1; } s = "reset"; return s.len(); }`,
+		`function main(): i32 { var x: string = "x"; var s: string = ""; var i: i32 = 0; while (i < 3) { s = s + x; i = i + 1; } s = "reset"; return s.len(); }`,
 		5, false},
 }
 
