@@ -1677,17 +1677,21 @@ func TestLowerStringAliasIncIsUniform(t *testing.T) {
 	}
 }
 
-// TestLowerStringNoReclaimOnNative verifies string reclamation is wasm-
-// only: on a native ptrW (8) — including the arm64 two-word override —
-// no __fern_str_dec is emitted (the helper is wasm-only).
-func TestLowerStringNoReclaimOnNative(t *testing.T) {
+// TestLowerStringReclaimOnNative verifies string reclamation now fires on a
+// native ptrW (8) too: a fresh owned string local (`s = pre + "x"`) is
+// free-eligible and drops via the freeing __fern_str_dec at its last
+// reference. This used to be gated to the two-word ABIs (wasm / arm64), so
+// native heap strings leaked; computeFreeEligible now admits native
+// single-word string locals and __fern_str_dec frees the box at rc==1 with
+// the size-class-matched length+1 payload. See docs/IR-SELFCOMPILE-OOM.
+func TestLowerStringReclaimOnNative(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
     var pre: string = "v";
     var s: string = pre + "x";
     return s.len();
 }`, 8)
-	if callsDirect(p, "build", "__fern_str_dec") {
-		t.Errorf("native (ptrW=8) must not emit __fern_str_dec:\n%s", p)
+	if !callsDirect(p, "build", "__fern_str_dec") {
+		t.Errorf("native (ptrW=8) must reclaim owned string locals via __fern_str_dec:\n%s", p)
 	}
 }
 
