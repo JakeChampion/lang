@@ -43,6 +43,10 @@ const (
 	MemLoad                 // reg[Dst] = heap[reg[Src] + Imm]
 	MemStore                // heap[reg[Src] + Imm] = reg[Src2]
 	ConstStr                // reg[Dst] = pointer to freshly heap-materialised Str bytes
+	FConst                  // reg[Dst] = f64 bits of F64 (rounded to f32 if W==32)
+	FBin                    // reg[Dst] = reg[Dst] (K) reg[Src] as floats   (K a float arith op)
+	FCmp                    // reg[Dst] = (reg[Dst] K reg[Src]) as floats ? 1 : 0
+	FConv                   // reg[Dst] = K(reg[Dst])   (K a float unary/convert: FNeg/FPromote/FDemote/IToF*/FToI*)
 )
 
 // Inst is one straight-line abstract instruction. Registers are indices into a
@@ -59,9 +63,10 @@ type Inst struct {
 	Bytes  int8 // MemLoad/MemStore access width in bytes (1/2/8)
 	Signed bool // MemLoad: sign-extend a sub-word value
 
-	Callee  string // Call: callee function name
-	ArgLocs []Loc  // Call: homes of the argument values, in order
-	Str     string // ConstStr: the literal bytes to materialise
+	Callee  string  // Call: callee function name
+	ArgLocs []Loc   // Call: homes of the argument values, in order
+	Str     string  // ConstStr: the literal bytes to materialise
+	F64     float64 // FConst: the float value
 }
 
 // TermKind is an MBlock terminator shape.
@@ -436,6 +441,63 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		e.push(Inst{Op: MovReg, Dst: e.s2, Src: ra})
 		e.push(Inst{Op: UnOp, Dst: e.s2, K: op.Kind, W: op.Width})
 		e.place(op.Result, e.s2)
+		return nil
+
+	case ssa.OpConstFloat:
+		e.push(Inst{Op: FConst, Dst: e.s2, F64: op.F64, W: op.Width})
+		e.place(op.Result, e.s2)
+		return nil
+
+	case ssa.OpFAdd, ssa.OpFSub, ssa.OpFMul, ssa.OpFDiv:
+		ra, rb, err := e.binOperands(op)
+		if err != nil {
+			return err
+		}
+		e.push(Inst{Op: MovReg, Dst: e.s2, Src: ra})
+		e.push(Inst{Op: FBin, Dst: e.s2, Src: rb, K: op.Kind, W: op.Width})
+		e.place(op.Result, e.s2)
+		return nil
+
+	case ssa.OpFEq, ssa.OpFNe, ssa.OpFLt, ssa.OpFLe, ssa.OpFGt, ssa.OpFGe:
+		ra, rb, err := e.binOperands(op)
+		if err != nil {
+			return err
+		}
+		e.push(Inst{Op: MovReg, Dst: e.s2, Src: ra})
+		e.push(Inst{Op: FCmp, Dst: e.s2, Src: rb, K: op.Kind})
+		e.place(op.Result, e.s2)
+		return nil
+
+	case ssa.OpFNeg, ssa.OpFPromote, ssa.OpFDemote,
+		ssa.OpIToFS, ssa.OpIToFU, ssa.OpFToIS, ssa.OpFToIU:
+		ra, err := e.materialize(op.Args[0], e.s0)
+		if err != nil {
+			return err
+		}
+		e.push(Inst{Op: MovReg, Dst: e.s2, Src: ra})
+		e.push(Inst{Op: FConv, Dst: e.s2, K: op.Kind, W: op.Width})
+		e.place(op.Result, e.s2)
+		return nil
+
+	case ssa.OpLoadF:
+		base, err := e.materialize(op.Args[0], e.s0)
+		if err != nil {
+			return err
+		}
+		e.push(Inst{Op: MemLoad, Dst: e.s2, Src: base, Imm: op.Imm, W: 64, Bytes: 8})
+		e.place(op.Result, e.s2)
+		return nil
+
+	case ssa.OpStoreF:
+		base, err := e.materialize(op.Args[0], e.s0)
+		if err != nil {
+			return err
+		}
+		val, err := e.materialize(op.Args[1], e.s1)
+		if err != nil {
+			return err
+		}
+		e.push(Inst{Op: MemStore, Src: base, Src2: val, Imm: op.Imm, Bytes: 8})
 		return nil
 
 	case ssa.OpCall:

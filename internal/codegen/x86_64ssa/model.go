@@ -2,6 +2,7 @@ package x86_64ssa
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/jakechampion/lang/internal/ssa"
 )
@@ -121,6 +122,14 @@ func runProg(m map[string]*Program, p *Program, h *modelHeap, args []int64) (int
 					}
 				}
 				regs[in.Dst] = p
+			case FConst:
+				regs[in.Dst] = fbits(in.F64, in.W)
+			case FBin:
+				regs[in.Dst] = fbin(in.K, regs[in.Dst], regs[in.Src], in.W)
+			case FCmp:
+				regs[in.Dst] = fcmp(in.K, regs[in.Dst], regs[in.Src])
+			case FConv:
+				regs[in.Dst] = fconv(in.K, regs[in.Dst], in.W)
 			default:
 				return 0, fmt.Errorf("Run: unknown opcode %d", in.Op)
 			}
@@ -192,6 +201,74 @@ func (h *modelHeap) store(addr, val int64, n int) error {
 		h.data[addr+int64(i)] = byte(u >> (8 * i))
 	}
 	return nil
+}
+
+// Float helpers. Floats live in the int64 registers as their IEEE-754 f64 bit
+// pattern, mirroring ssa.Eval, so Run and Eval agree bit-for-bit.
+func ffrom(b int64) float64 { return math.Float64frombits(uint64(b)) }
+
+func fbits(v float64, w int8) int64 {
+	if w == 32 {
+		v = float64(float32(v))
+	}
+	return int64(math.Float64bits(v))
+}
+
+func fbin(k ssa.OpKind, a, b int64, w int8) int64 {
+	x, y := ffrom(a), ffrom(b)
+	var r float64
+	switch k {
+	case ssa.OpFAdd:
+		r = x + y
+	case ssa.OpFSub:
+		r = x - y
+	case ssa.OpFMul:
+		r = x * y
+	case ssa.OpFDiv:
+		r = x / y
+	}
+	return fbits(r, w)
+}
+
+func fcmp(k ssa.OpKind, a, b int64) int64 {
+	x, y := ffrom(a), ffrom(b)
+	switch k {
+	case ssa.OpFEq:
+		return b2i(x == y)
+	case ssa.OpFNe:
+		return b2i(x != y)
+	case ssa.OpFLt:
+		return b2i(x < y)
+	case ssa.OpFLe:
+		return b2i(x <= y)
+	case ssa.OpFGt:
+		return b2i(x > y)
+	case ssa.OpFGe:
+		return b2i(x >= y)
+	default:
+		return 0
+	}
+}
+
+func fconv(k ssa.OpKind, a int64, w int8) int64 {
+	switch k {
+	case ssa.OpFNeg:
+		return fbits(-ffrom(a), w)
+	case ssa.OpFPromote:
+		return int64(math.Float64bits(ffrom(a)))
+	case ssa.OpFDemote:
+		return int64(math.Float64bits(float64(float32(ffrom(a)))))
+	case ssa.OpIToFS:
+		return fbits(float64(a), w)
+	case ssa.OpIToFU:
+		return fbits(float64(uint64(a)), w)
+	case ssa.OpFToIS:
+		return int64(ffrom(a))
+	case ssa.OpFToIU:
+		return int64(uint64(ffrom(a)))
+	default:
+		return a
+	}
 }
 
 // unInt evaluates a unary integer transform, mirroring ssa.Eval.

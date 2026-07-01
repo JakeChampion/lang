@@ -1,6 +1,9 @@
 package ssa
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+)
 
 // Eval is a reference interpreter for the integer/control-flow subset of SSA.
 // It exists as a correctness oracle: an optimisation pass must not change a
@@ -261,6 +264,28 @@ func evalOp(funcs map[string]*Func, h *heap, strLen map[int32]int, op *Op, vals 
 		vals[op.Result.ID] = mask(op.Width, v)
 		return nil
 	}
+	// setF stores a float result as its IEEE-754 f64 bit pattern (rounded to
+	// f32 precision when the op is 32-bit). Floats live in the same int64 slots
+	// as ints — as their bits — exactly like a hardware register, so they must
+	// NOT go through the integer-width mask in set().
+	setF := func(v float64) error {
+		if !op.Result.IsValid() {
+			return fmt.Errorf("Eval: %v has no result", op.Kind)
+		}
+		if op.Width == 32 {
+			v = float64(float32(v))
+		}
+		vals[op.Result.ID] = int64(math.Float64bits(v))
+		return nil
+	}
+	// farg reads a float operand back from its bit pattern.
+	farg := func(i int) (float64, error) {
+		b, err := arg(i)
+		if err != nil {
+			return 0, err
+		}
+		return math.Float64frombits(uint64(b)), nil
+	}
 
 	switch op.Kind {
 	case OpConstInt:
@@ -426,6 +451,104 @@ func evalOp(funcs map[string]*Func, h *heap, strLen map[int32]int, op *Op, vals 
 		}
 		return set(int64(n))
 
+	// --- floats (stored as f64 bits; see setF/farg) ---
+	case OpConstFloat:
+		return setF(op.F64)
+	case OpFAdd, OpFSub, OpFMul, OpFDiv:
+		a, err := farg(0)
+		if err != nil {
+			return err
+		}
+		b, err := farg(1)
+		if err != nil {
+			return err
+		}
+		switch op.Kind {
+		case OpFAdd:
+			return setF(a + b)
+		case OpFSub:
+			return setF(a - b)
+		case OpFMul:
+			return setF(a * b)
+		default:
+			return setF(a / b)
+		}
+	case OpFNeg:
+		a, err := farg(0)
+		if err != nil {
+			return err
+		}
+		return setF(-a)
+	case OpFEq, OpFNe, OpFLt, OpFLe, OpFGt, OpFGe:
+		a, err := farg(0)
+		if err != nil {
+			return err
+		}
+		b, err := farg(1)
+		if err != nil {
+			return err
+		}
+		return set(evalFCompare(op.Kind, a, b))
+	case OpFPromote: // f32 -> f64 (value already stored as f64 bits): identity
+		a, err := farg(0)
+		if err != nil {
+			return err
+		}
+		vals[op.Result.ID] = int64(math.Float64bits(a))
+		return nil
+	case OpFDemote: // f64 -> f32: round to f32 precision
+		a, err := farg(0)
+		if err != nil {
+			return err
+		}
+		vals[op.Result.ID] = int64(math.Float64bits(float64(float32(a))))
+		return nil
+	case OpIToFS:
+		a, err := arg(0)
+		if err != nil {
+			return err
+		}
+		return setF(float64(a))
+	case OpIToFU:
+		a, err := arg(0)
+		if err != nil {
+			return err
+		}
+		return setF(float64(uint64(a)))
+	case OpFToIS:
+		a, err := farg(0)
+		if err != nil {
+			return err
+		}
+		return set(int64(a))
+	case OpFToIU:
+		a, err := farg(0)
+		if err != nil {
+			return err
+		}
+		return set(int64(uint64(a)))
+	case OpLoadF:
+		base, err := arg(0)
+		if err != nil {
+			return err
+		}
+		v, err := h.load(base+op.Imm, 8, false)
+		if err != nil {
+			return err
+		}
+		vals[op.Result.ID] = v // raw f64 bits
+		return nil
+	case OpStoreF:
+		base, err := arg(0)
+		if err != nil {
+			return err
+		}
+		val, err := arg(1)
+		if err != nil {
+			return err
+		}
+		return h.store(base+op.Imm, val, 8) // no result
+
 	default:
 		return fmt.Errorf("Eval: unsupported op %v", op.Kind)
 	}
@@ -473,6 +596,25 @@ func evalBinaryInt(k OpKind, a, b int64) (int64, error) {
 		return int64(uint64(a) >> uint64(b)), nil
 	default:
 		return 0, fmt.Errorf("Eval: not a binary int op: %v", k)
+	}
+}
+
+func evalFCompare(k OpKind, a, b float64) int64 {
+	switch k {
+	case OpFEq:
+		return b2i(a == b)
+	case OpFNe:
+		return b2i(a != b)
+	case OpFLt:
+		return b2i(a < b)
+	case OpFLe:
+		return b2i(a <= b)
+	case OpFGt:
+		return b2i(a > b)
+	case OpFGe:
+		return b2i(a >= b)
+	default:
+		return 0
 	}
 }
 
