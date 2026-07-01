@@ -303,6 +303,28 @@ function main(): i32 {
 }`,
 			want: 98, // 'b'
 		},
+		{
+			// string[] from split, whose scope-exit drop uses __fern_drop_arr_str.
+			// "a,b,c".split(",") has 3 parts -> len 3.
+			name: "string_split_len",
+			src: `import "std/string";
+function main(): i32 { var p = "a,b,c".split(","); return p.len(); }`,
+			want: 3,
+		},
+		{
+			// Split then iterate the parts, summing their lengths — exercises the
+			// string[] element walk and per-element access alongside the drop.
+			// len("alpha")+len("beta")+len("gamma") = 5+4+5 = 14.
+			name: "string_split_iterate",
+			src: `import "std/string";
+function main(): i32 {
+  var parts = "alpha,beta,gamma".split(",");
+  var total: i32 = 0;
+  for p in parts { total = total + p.len(); }
+  return total;
+}`,
+			want: 14,
+		},
 	}
 
 	for _, c := range cases {
@@ -336,11 +358,11 @@ function main(): i32 {
 	}
 }
 
-// TestArm64SSACoverageGapErrors confirms a program needing a runtime helper the
-// arm64-ssa path doesn't emit yet (here string split, whose result is a string[]
-// whose scope-exit drop reaches the still-unported __fern_drop_arr_str helper)
-// fails with a clean compile/link error rather than a miscompile — the
-// experimental-backend contract that lets the epic widen coverage incrementally.
+// TestArm64SSACoverageGapErrors confirms a program needing a runtime builtin the
+// arm64-ssa path doesn't emit yet (here the process-arguments builtin `args()`,
+// which reaches the still-unported `args` helper) fails with a clean compile/link
+// error rather than a miscompile — the experimental-backend contract that lets
+// the epic widen coverage incrementally.
 func TestArm64SSACoverageGapErrors(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("arm64-ssa not exercised on windows")
@@ -352,19 +374,18 @@ func TestArm64SSACoverageGapErrors(t *testing.T) {
 		t.Fatalf("go build fern: %v\n%s", err, out)
 	}
 
-	srcPath := filepath.Join(dir, "split.fern")
-	src := `import "std/string";
-function main(): i32 { var p = "a,b,c".split(","); return p.len(); }`
+	srcPath := filepath.Join(dir, "args.fern")
+	src := `function main(): i32 { var a = args(); return a.len(); }`
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	out := filepath.Join(dir, "split.bin")
+	out := filepath.Join(dir, "args.bin")
 	emit := exec.Command(bin, "-target", "arm64-ssa", "-o", out, srcPath)
 	var eb bytes.Buffer
 	emit.Stderr = &eb
 	err := emit.Run()
 	if err == nil {
-		t.Fatalf("expected a coverage-gap error for string[] drop (__fern_drop_arr_str), got success")
+		t.Fatalf("expected a coverage-gap error for the args() builtin, got success")
 	}
 	if !bytes.Contains(eb.Bytes(), []byte("arm64-ssa")) {
 		t.Errorf("error not attributed to arm64-ssa:\n%s", eb.String())
