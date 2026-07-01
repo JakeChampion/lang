@@ -21,15 +21,16 @@ func constOp(f *ssa.Func, b *ssa.Block, imm int64) ssa.Value {
 }
 
 // assembleRunArm assembles f's arm64 SSA output into a static AArch64 ELF and
-// runs it under qemu-aarch64, returning the process exit code. Skips when qemu
-// is unavailable.
-func assembleRunArm(t *testing.T, f *ssa.Func, numAlloc int) int {
+// runs it under qemu-aarch64, returning the process exit code. entryArgs are
+// loaded into the argument registers before the entry call. Skips when qemu is
+// unavailable.
+func assembleRunArm(t *testing.T, f *ssa.Func, numAlloc int, entryArgs ...int64) int {
 	t.Helper()
 	qemu, err := exec.LookPath("qemu-aarch64")
 	if err != nil {
 		t.Skip("qemu-aarch64 not available")
 	}
-	asm, err := arm64ssa.EmitAsm(f, numAlloc)
+	asm, err := arm64ssa.EmitAsm(f, numAlloc, entryArgs...)
 	if err != nil {
 		t.Fatalf("EmitAsm: %v", err)
 	}
@@ -53,14 +54,14 @@ func assembleRunArm(t *testing.T, f *ssa.Func, numAlloc int) int {
 
 // runMatchesEval asserts the arm64 binary's exit code equals ssa.Eval(f) mod 256
 // — the target-neutral oracle — so the AArch64 rendering is validated against the
-// same model the x86-64 path uses.
-func runMatchesEval(t *testing.T, f *ssa.Func, numAlloc int) {
+// same model the x86-64 path uses. entryArgs feed both the model and the binary.
+func runMatchesEval(t *testing.T, f *ssa.Func, numAlloc int, entryArgs ...int64) {
 	t.Helper()
-	want, err := ssa.Eval(f)
+	want, err := ssa.Eval(f, entryArgs...)
 	if err != nil {
 		t.Fatalf("Eval: %v", err)
 	}
-	got := assembleRunArm(t, f, numAlloc)
+	got := assembleRunArm(t, f, numAlloc, entryArgs...)
 	if got != int(uint8(want)) {
 		t.Errorf("arm64 run exit=%d, want Eval&0xFF=%d (Eval=%d)", got, int(uint8(want)), want)
 	}
@@ -115,6 +116,57 @@ func TestArmRunAbs(t *testing.T) {
 	}
 	for _, nreg := range []int{2, 4, 8} {
 		runMatchesEval(t, build(), nreg)
+	}
+}
+
+// A single-param identity-ish function: f(n) = n + 1, called with n = 40 -> 41.
+// Exercises the parameter ABI (x0 -> home) and the entry-arg loader.
+func TestArmRunOneParam(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		n := f.AddParam()
+		e := f.NewBlock()
+		f.SetRet(e, f.AddOp(e, ssa.OpAdd, n, constOp(f, e, 1)))
+		return f
+	}
+	for _, nreg := range []int{2, 4, 8} {
+		runMatchesEval(t, build(), nreg, 40)
+	}
+}
+
+// Multi-param function whose homes force a parallel copy / swap: g(a, b) = a - b,
+// called with (50, 8) -> 42. Two params, so at least one incoming arg register
+// may collide with the other's home; the parallel-move resolver must be correct.
+func TestArmRunTwoParams(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		a := f.AddParam()
+		b := f.AddParam()
+		e := f.NewBlock()
+		f.SetRet(e, f.AddOp(e, ssa.OpSub, a, b))
+		return f
+	}
+	for _, nreg := range []int{2, 4, 8} {
+		runMatchesEval(t, build(), nreg, 50, 8)
+	}
+}
+
+// Order-sensitive multi-param: h(a, b, c) = (a - b) - c with (100, 30, 28) -> 42.
+// Three params flowing through arithmetic that is not commutative, so any
+// mis-shuffle of the argument registers changes the result.
+func TestArmRunThreeParams(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		a := f.AddParam()
+		b := f.AddParam()
+		c := f.AddParam()
+		e := f.NewBlock()
+		ab := f.AddOp(e, ssa.OpSub, a, b)
+		f.SetRet(e, f.AddOp(e, ssa.OpSub, ab, c))
+		return f
+	}
+	for _, nreg := range []int{2, 4, 8} {
+		runMatchesEval(t, build(), nreg, 100, 30, 28)
 	}
 }
 

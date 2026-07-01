@@ -32,10 +32,15 @@ var armW = []string{"w0", "w1", "w2", "w3", "w4", "w5", "w6", "w7", "w8", "w9", 
 func xreg(i int) string { return armX[i] }
 func wreg(i int) string { return armW[i] }
 
+// argRegCount is the number of integer argument registers under the AArch64 PCS
+// (x0..x7); the parameter ABI supports up to this many params.
+const argRegCount = 8
+
 // EmitAsm lowers an integer SSA function to a complete, runnable AArch64 GAS
-// program: a `_start` that calls the function and exits with its return value in
-// the low byte, plus the function itself. Allocation is over numAlloc registers.
-func EmitAsm(f *ssa.Func, numAlloc int) (string, error) {
+// program: a `_start` that loads entryArgs into the argument registers, calls
+// the function, and exits with its return value in the low byte, plus the
+// function itself. Allocation is over numAlloc registers.
+func EmitAsm(f *ssa.Func, numAlloc int, entryArgs ...int64) (string, error) {
 	p, err := x86.Emit(f, numAlloc)
 	if err != nil {
 		return "", fmt.Errorf("arm64ssa: %w", err)
@@ -43,8 +48,8 @@ func EmitAsm(f *ssa.Func, numAlloc int) (string, error) {
 	if p.NumRegFile > len(armX) {
 		return "", fmt.Errorf("arm64ssa: %q needs %d registers but only %d are wired", f.Name, p.NumRegFile, len(armX))
 	}
-	if len(p.ParamLocs) != 0 {
-		return "", fmt.Errorf("arm64ssa: parameters not supported yet")
+	if len(p.ParamLocs) > argRegCount {
+		return "", fmt.Errorf("arm64ssa: %q has %d params, arm64 SSA supports up to %d", f.Name, len(p.ParamLocs), argRegCount)
 	}
 
 	var b strings.Builder
@@ -55,6 +60,14 @@ func EmitAsm(f *ssa.Func, numAlloc int) (string, error) {
 	w(".text")
 	w(".globl _start")
 	w("_start:")
+	// Load the entry arguments into the argument registers before the call.
+	for i := range p.ParamLocs {
+		var v int64
+		if i < len(entryArgs) {
+			v = entryArgs[i]
+		}
+		w("\tmov %s, #%d", xreg(i), v)
+	}
 	w("\tbl %s", fnLabel(f.Name))
 	// exit_group(status): status is the function's return value in x0; the kernel
 	// keeps the low byte. x8 = 94 (exit_group on AArch64 Linux).
@@ -76,6 +89,12 @@ func emitFunc(w func(string, ...any), name string, p *x86.Program) error {
 	frame := align16(8 * p.NumSlots) // leaf: no saved regs / fp yet
 	if frame > 0 {
 		w("\tsub sp, sp, #%d", frame)
+	}
+	// Parameter ABI: move each incoming argument register (x0, x1, …) into that
+	// param's allocated home. Must follow the frame setup (slot-homed params store
+	// to [sp]).
+	for _, l := range paramMoveLines(p.ParamLocs) {
+		w("\t%s", l)
 	}
 	// Execution falls into block 0 (the entry) right after the prologue.
 	for bi, blk := range p.Blocks {
@@ -108,6 +127,83 @@ func emitFunc(w func(string, ...any), name string, p *x86.Program) error {
 		}
 	}
 	return nil
+}
+
+// paramMoveLines emits the AArch64 parameter-ABI prologue: move each incoming
+// argument register (x0, x1, …) into that param's allocated home. It is a
+// parallel copy — an arg register may be another param's home register — so it
+// resolves in two steps, mirroring the x86-64 path:
+//
+//   - Slot-homed params first (`str x{i}, [sp, #…]`). These only READ arg
+//     registers and write memory, so doing them before any register is
+//     overwritten is always safe.
+//   - Register-homed params as a parallel register copy. The abstract register
+//     file maps index i onto x{i}, so the incoming physical arg register for
+//     param i is exactly abstract register i — the parallel move is over
+//     abstract indices i → home.
+func paramMoveLines(paramLocs []x86.Loc) []string {
+	var out []string
+	// Step A: slot-homed params (read arg regs, write memory).
+	for i, loc := range paramLocs {
+		if !loc.IsReg && loc.Slot >= 0 {
+			out = append(out, fmt.Sprintf("str %s, [sp, #%d]", xreg(i), 8*loc.Slot))
+		}
+	}
+	// Step B: register-homed params — parallel register copy.
+	var moves [][2]int // {dst, src} abstract register indices
+	for i, loc := range paramLocs {
+		if loc.IsReg && loc.Reg != i {
+			moves = append(moves, [2]int{loc.Reg, i})
+		}
+	}
+	return append(out, resolveRegMoves(moves)...)
+}
+
+// resolveRegMoves renders a parallel register copy (each {dst, src} entry; dsts
+// distinct, srcs distinct). It emits any move whose destination is not still
+// needed as a source; when only cycles remain it breaks one with an eor-based
+// swap (AArch64 has no single-instruction xchg) and redirects the moves that
+// read the swapped register. Always terminates.
+func resolveRegMoves(moves [][2]int) []string {
+	var out []string
+	isSrc := func(r int) bool {
+		for _, m := range moves {
+			if m[1] == r {
+				return true
+			}
+		}
+		return false
+	}
+	for len(moves) > 0 {
+		idx := -1
+		for j, m := range moves {
+			if !isSrc(m[0]) {
+				idx = j
+				break
+			}
+		}
+		if idx >= 0 {
+			m := moves[idx]
+			out = append(out, fmt.Sprintf("mov %s, %s", xreg(m[0]), xreg(m[1])))
+			moves = append(moves[:idx], moves[idx+1:]...)
+			continue
+		}
+		// Only cycles remain: swap two registers with the three-eor trick.
+		m := moves[0]
+		a, b := xreg(m[0]), xreg(m[1])
+		out = append(out,
+			fmt.Sprintf("eor %s, %s, %s", a, a, b),
+			fmt.Sprintf("eor %s, %s, %s", b, a, b),
+			fmt.Sprintf("eor %s, %s, %s", a, a, b),
+		)
+		moves = moves[1:]
+		for k := range moves {
+			if moves[k][1] == m[0] {
+				moves[k][1] = m[1]
+			}
+		}
+	}
+	return out
 }
 
 // align16 rounds n up to a multiple of 16 (the AArch64 stack-alignment rule).
