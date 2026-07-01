@@ -245,6 +245,59 @@ Heap-corruption class — gate every slice on the x86-64 `rc_correctness`
 corpus + freelist harness + a `RcFreeDebug` poison run. Tracks
 `docs/RC-PERCEUS-PHASE-1E-PLAN.md`'s **Phase 1e-strings**.
 
+### Bare-local slice attempted (2026-07-01) — RC-correct but NO RSS win; the blocker is allocator reuse, not eligibility
+
+The "predicate widening, not just drop routing" note above is now **stale
+in one respect**: `rcTracked` (`ir.go`, "All non-zero ptrW with strings is
+rc-tracked") **already admits native single-word string locals**, and
+`emitDec`'s `StringType` arm **already carries the native `b.ptrW == 8`
+free branch** (`__fern_str_dec` — rc==1 `__fern_box_free`, else defer),
+gated on exactly `eligible`. The only thing still gating the bare-local
+free was `computeFreeEligible`'s `StringType` case, which set `elig` only
+`if ast.UseTwoWordStrings(b.ptrW)`. So the slice reduces to **one line**:
+drop that `if` so native string locals join `elig` (the loop already
+skips tainted / uncounted-alias sources — `rhsTainted` taints every
+`FieldAccess`/`Index`/`Call` RHS, and aliases are balanced by
+`needsRcIncOnAlias → __fern_rc_inc`).
+
+**That change was made and fully RC-validated** — the x86-64
+`rc_correctness` corpus, `FixturesFreeMatchesNoFree`, `ReuseMatchesNoReuse`,
+`FreelistReuse`, and the underflow detector all pass, and the emitted asm
+gains the `__fern_str_dec` calls (baseline emits **zero** string decs for a
+bare local — confirming the "never dropped" observation). **But it produced
+NO peak-RSS reduction.** A 2M-iter `var s = base + "_payload…"` reinit-drop
+loop stays at **~91 MB** (200k → 9 MB, 2M → 91 MB — linear, i.e. still
+leaking) both before and after.
+
+Root-caused by gdb: `__fern_str_dec` **does reach the free path** (rc==1,
+the `< 0x10000000` literal-guard passes for the mmap heap at 0x10000000),
+so the buffer **is** handed to `__fern_box_free` → `__fern_free`. The leak
+is that the freed box is **not reused**: consecutive freed string data
+pointers *grow* every iteration (`0x10000008, 0x38, 0x68, 0x98, …`) instead
+of cycling between two addresses. So the allocator **bumps a fresh box
+per iteration even with the freelist populated** — for the compiler's
+(and this loop's) **alloc-new-then-free-old** ordering, `__fern_alloc`
+isn't pulling the just-freed class back out. (The `FreelistReuse` corpus
+passes because it checks reuse *correctness* on a hand-shaped
+free-then-alloc, not the alloc-then-free-old steady state.)
+
+**Redirect.** The native string leak's blocker is **allocator freelist
+reuse for the alloc-before-free pattern**, NOT the RC eligibility gate.
+Widening `computeFreeEligible` is correct and a prerequisite, but it is
+**dead weight until the allocator reuses the freed class** — so it was
+**reverted** (no point shipping the extra `__fern_str_dec` calls for zero
+benefit). Next memory work should investigate why `__fern_alloc` **bumps a
+fresh box instead of pulling the just-freed class** in this steady state:
+either a size-class push/pull disagreement across
+`__fern_alloc_rc1` → `__fern_box_free` → `__fern_free`, or the
+alloc-new-*before*-free-old ordering starving the class at each alloc
+point (each iteration frees the box *after* it has already bump-allocated
+the replacement, so the freelist for that class is empty at every alloc).
+The gdb evidence: a string `box_free` passed `size=24` (→ 32-byte box,
+class 1), yet consecutive frees walked `0x10000008, 0x38, 0x68, …` — a
+pure bump, never a repeat — rather than any RC-side widening. This
+supersedes the "bare-local slice is the next lever" framing above.
+
 ## Finding 2 — O(N²) `LowerState` rebuild in IR lowering
 
 `examples/self_host/irlower.fern` threads all per-function lowering
