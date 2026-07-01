@@ -39,9 +39,29 @@ func EvalIn(funcs map[string]*Func, f *Func, args ...int64) (int64, error) {
 // a dereference of an unallocated pointer is caught rather than aliasing the
 // first allocation. Shared across calls (OpAlloc state persists), matching the
 // real bump allocator.
-type heap struct{ data []byte }
+type heap struct {
+	data []byte
+	// sent memoises OpEnumSentinel pointers by tag, so two sentinels with the
+	// same tag yield the same pointer (the shared-static contract).
+	sent map[int64]int64
+}
 
 func newHeap() *heap { return &heap{data: make([]byte, 8)} }
+
+// sentinel returns the shared 4-byte static pointer for the given tag, storing
+// the tag at the pointer on first use.
+func (h *heap) sentinel(tag int64) int64 {
+	if h.sent == nil {
+		h.sent = map[int64]int64{}
+	}
+	if a, ok := h.sent[tag]; ok {
+		return a
+	}
+	a := h.alloc(4)
+	_ = h.store(a, tag, 4)
+	h.sent[tag] = a
+	return a
+}
 
 func (h *heap) alloc(size int64) int64 {
 	base := int64(len(h.data))
@@ -548,6 +568,9 @@ func evalOp(funcs map[string]*Func, h *heap, strLen map[int32]int, op *Op, vals 
 			return err
 		}
 		return h.store(base+op.Imm, val, 8) // no result
+
+	case OpEnumSentinel:
+		return set(h.sentinel(op.Imm))
 
 	default:
 		return fmt.Errorf("Eval: unsupported op %v", op.Kind)

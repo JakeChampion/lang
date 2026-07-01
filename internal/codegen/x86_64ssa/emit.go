@@ -30,23 +30,24 @@ const numScratch = 4
 type Opcode int
 
 const (
-	MovImm    Opcode = iota // reg[Dst] = Imm
-	MovReg                  // reg[Dst] = reg[Src]
-	BinOp                   // reg[Dst] = reg[Dst] (K) reg[Src]   (K an integer arith op)
-	UnNeg                   // reg[Dst] = -reg[Dst]
-	UnOp                    // reg[Dst] = K(reg[Dst])   (K a unary: Not / Trunc / Extend*)
-	SetCmp                  // reg[Dst] = (reg[Dst] K reg[Src]) ? 1 : 0   (K a comparison)
-	LoadSlot                // reg[Dst] = slot[Imm]
-	StoreSlot               // slot[Imm] = reg[Src]
-	Call                    // reg[Dst] = Callee(ArgLocs...)   (model: recurse into callee Program)
-	MemAlloc                // reg[Dst] = heap.alloc(reg[Src])
-	MemLoad                 // reg[Dst] = heap[reg[Src] + Imm]
-	MemStore                // heap[reg[Src] + Imm] = reg[Src2]
-	ConstStr                // reg[Dst] = pointer to freshly heap-materialised Str bytes
-	FConst                  // reg[Dst] = f64 bits of F64 (rounded to f32 if W==32)
-	FBin                    // reg[Dst] = reg[Dst] (K) reg[Src] as floats   (K a float arith op)
-	FCmp                    // reg[Dst] = (reg[Dst] K reg[Src]) as floats ? 1 : 0
-	FConv                   // reg[Dst] = K(reg[Dst])   (K a float unary/convert: FNeg/FPromote/FDemote/IToF*/FToI*)
+	MovImm       Opcode = iota // reg[Dst] = Imm
+	MovReg                     // reg[Dst] = reg[Src]
+	BinOp                      // reg[Dst] = reg[Dst] (K) reg[Src]   (K an integer arith op)
+	UnNeg                      // reg[Dst] = -reg[Dst]
+	UnOp                       // reg[Dst] = K(reg[Dst])   (K a unary: Not / Trunc / Extend*)
+	SetCmp                     // reg[Dst] = (reg[Dst] K reg[Src]) ? 1 : 0   (K a comparison)
+	LoadSlot                   // reg[Dst] = slot[Imm]
+	StoreSlot                  // slot[Imm] = reg[Src]
+	Call                       // reg[Dst] = Callee(ArgLocs...)   (model: recurse into callee Program)
+	MemAlloc                   // reg[Dst] = heap.alloc(reg[Src])
+	MemLoad                    // reg[Dst] = heap[reg[Src] + Imm]
+	MemStore                   // heap[reg[Src] + Imm] = reg[Src2]
+	ConstStr                   // reg[Dst] = pointer to freshly heap-materialised Str bytes
+	FConst                     // reg[Dst] = f64 bits of F64 (rounded to f32 if W==32)
+	FBin                       // reg[Dst] = reg[Dst] (K) reg[Src] as floats   (K a float arith op)
+	FCmp                       // reg[Dst] = (reg[Dst] K reg[Src]) as floats ? 1 : 0
+	FConv                      // reg[Dst] = K(reg[Dst])   (K a float unary/convert: FNeg/FPromote/FDemote/IToF*/FToI*)
+	EnumSentinel               // reg[Dst] = shared static sentinel pointer for tag Imm
 )
 
 // Inst is one straight-line abstract instruction. Registers are indices into a
@@ -551,6 +552,11 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 
 	case ssa.OpConstString:
 		e.push(Inst{Op: ConstStr, Dst: e.s2, Str: op.Str})
+		e.place(op.Result, e.s2)
+		return nil
+
+	case ssa.OpEnumSentinel:
+		e.push(Inst{Op: EnumSentinel, Dst: e.s2, Imm: op.Imm})
 		e.place(op.Result, e.s2)
 		return nil
 

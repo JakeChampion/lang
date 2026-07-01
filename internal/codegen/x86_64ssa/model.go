@@ -122,6 +122,8 @@ func runProg(m map[string]*Program, p *Program, h *modelHeap, args []int64) (int
 					}
 				}
 				regs[in.Dst] = p
+			case EnumSentinel:
+				regs[in.Dst] = h.sentinel(in.Imm)
 			case FConst:
 				regs[in.Dst] = fbits(in.F64, in.W)
 			case FBin:
@@ -154,9 +156,25 @@ func runProg(m map[string]*Program, p *Program, h *modelHeap, args []int64) (int
 // modelHeap mirrors ssa.Eval's memory model: a little-endian byte buffer with
 // a bump allocator and a reserved null page, so Run and Eval agree on memory
 // semantics for the differential check.
-type modelHeap struct{ data []byte }
+type modelHeap struct {
+	data []byte
+	sent map[int64]int64 // OpEnumSentinel pointers memoised by tag
+}
 
 func newModelHeap() *modelHeap { return &modelHeap{data: make([]byte, 8)} }
+
+func (h *modelHeap) sentinel(tag int64) int64 {
+	if h.sent == nil {
+		h.sent = map[int64]int64{}
+	}
+	if a, ok := h.sent[tag]; ok {
+		return a
+	}
+	a := h.alloc(4)
+	_ = h.store(a, tag, 4)
+	h.sent[tag] = a
+	return a
+}
 
 func (h *modelHeap) alloc(size int64) int64 {
 	base := int64(len(h.data))
