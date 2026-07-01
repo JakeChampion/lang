@@ -236,28 +236,32 @@ func usesHeap(progs map[string]*x86.Program) bool {
 // (referencedRuntimeHelpers); its `bl fn_<name>` site links the label
 // fnLabel(name) writes. Leaf functions under the AArch64 PCS (arg/result x0).
 var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
-	"__fern_rc_is_unique": emitRcIsUniqueHelper,
-	"__fern_rc_inc":       emitRcIncHelper,
-	"__fern_rc_dec":       emitRcDecHelper,
-	"__fern_box_free":     emitBoxFreeHelper,
-	"__fern_closure_drop": emitClosureDropHelper,
-	"__str_len":           emitStrLenHelper,
-	"__str_eq":            emitStrEqHelper,
-	"__str_concat":        emitStrConcatHelper,
-	"__fern_str_dec":      emitStrDecHelper,
-	"__fern_arr_dec":       emitArrDecHelper,
-	"__arr_idx":            emitArrIdxHelperN("__arr_idx", 2),   // stride 4 (i32)
-	"__arr_idx_1":          emitArrIdxHelperN("__arr_idx_1", 0), // stride 1 (byte array)
-	"__arr_idx_2":          emitArrIdxHelperN("__arr_idx_2", 1), // stride 2 (halfword)
-	"__arr_idx_8":          emitArrIdxHelperN("__arr_idx_8", 3), // stride 8 (i64 / pointer)
-	"__arr_idx_16":         emitArrIdxHelperN("__arr_idx_16", 4), // stride 16 (two-word string[])
-	"__fern_arr_push_grow": emitArrPushGrowHelper,
-	"__abs_f64":            emitFloatUnaryHelper("__abs_f64", "fabs"),
-	"__sqrt_f64":           emitFloatUnaryHelper("__sqrt_f64", "fsqrt"),
-	"__floor_f64":          emitFloatUnaryHelper("__floor_f64", "frintm"),
-	"__ceil_f64":           emitFloatUnaryHelper("__ceil_f64", "frintp"),
-	"__trunc_f64":          emitFloatUnaryHelper("__trunc_f64", "frintz"),
-	"__round_f64":          emitFloatUnaryHelper("__round_f64", "frinta"),
+	"__fern_rc_is_unique":    emitRcIsUniqueHelper,
+	"__fern_rc_inc":          emitRcIncHelper,
+	"__fern_rc_dec":          emitRcDecHelper,
+	"__fern_box_free":        emitBoxFreeHelper,
+	"__fern_closure_drop":    emitClosureDropHelper,
+	"__str_len":              emitStrLenHelper,
+	"__str_eq":               emitStrEqHelper,
+	"__str_concat":           emitStrConcatHelper,
+	"__fern_str_dec":         emitStrDecHelper,
+	"__fern_arr_dec":         emitArrDecHelper,
+	"__arr_idx":              emitArrIdxHelperN("__arr_idx", 2),    // stride 4 (i32)
+	"__arr_idx_1":            emitArrIdxHelperN("__arr_idx_1", 0),  // stride 1 (byte array)
+	"__arr_idx_2":            emitArrIdxHelperN("__arr_idx_2", 1),  // stride 2 (halfword)
+	"__arr_idx_8":            emitArrIdxHelperN("__arr_idx_8", 3),  // stride 8 (i64 / pointer)
+	"__arr_idx_16":           emitArrIdxHelperN("__arr_idx_16", 4), // stride 16 (two-word string[])
+	"__fern_arr_push_grow":   emitArrPushGrowHelper,
+	"__alloc_u8":             emitAllocU8Helper,
+	"__fern_arr_cow_inplace": emitArrCowInplaceHelper,
+	"string_from_bytes":      emitStringFromBytesHelper,
+	"print":                  emitPrintHelper,
+	"__abs_f64":              emitFloatUnaryHelper("__abs_f64", "fabs"),
+	"__sqrt_f64":             emitFloatUnaryHelper("__sqrt_f64", "fsqrt"),
+	"__floor_f64":            emitFloatUnaryHelper("__floor_f64", "frintm"),
+	"__ceil_f64":             emitFloatUnaryHelper("__ceil_f64", "frintp"),
+	"__trunc_f64":            emitFloatUnaryHelper("__trunc_f64", "frintz"),
+	"__round_f64":            emitFloatUnaryHelper("__round_f64", "frinta"),
 }
 
 // emitFloatUnaryHelper returns the emitter for a single-instruction f64 unary
@@ -288,28 +292,33 @@ var runtimeHelperDeps = map[string][]string{
 // or, for a high heap address, the pointer). i32/void-returning helpers are
 // absent (the mask is correct or harmless for them).
 var helperReturns64 = map[string]bool{
-	"__str_concat":         true,
-	"__fern_box_free":      true,
-	"__fern_arr_push_grow": true,
-	"__arr_idx":            true,
-	"__arr_idx_1":          true,
-	"__arr_idx_2":          true,
-	"__arr_idx_8":          true,
-	"__arr_idx_16":         true,
-	"__abs_f64":            true,
-	"__sqrt_f64":           true,
-	"__floor_f64":          true,
-	"__ceil_f64":           true,
-	"__trunc_f64":          true,
-	"__round_f64":          true,
+	"__str_concat":           true,
+	"__fern_box_free":        true,
+	"__fern_arr_push_grow":   true,
+	"__alloc_u8":             true,
+	"__fern_arr_cow_inplace": true,
+	"string_from_bytes":      true,
+	"__arr_idx":              true,
+	"__arr_idx_1":            true,
+	"__arr_idx_2":            true,
+	"__arr_idx_8":            true,
+	"__arr_idx_16":           true,
+	"__abs_f64":              true,
+	"__sqrt_f64":             true,
+	"__floor_f64":            true,
+	"__ceil_f64":             true,
+	"__trunc_f64":            true,
+	"__round_f64":            true,
 }
 
 // heapUsingHelpers are runtime helpers that bump-allocate on the SSA heap, so the
 // .bss heap section + cursor must exist whenever one is referenced even if no
 // program body has a direct heap op.
 var heapUsingHelpers = map[string]bool{
-	"__str_concat":         true,
-	"__fern_arr_push_grow": true,
+	"__str_concat":           true,
+	"__fern_arr_push_grow":   true,
+	"__alloc_u8":             true,
+	"__fern_arr_cow_inplace": true,
 }
 
 // collectStrings assigns a .rodata label to each unique OpConstString literal, in
@@ -543,7 +552,7 @@ func emitStrConcatHelper(w func(string, ...any)) {
 	w("\tstr w7, [x6]")     // rc = 1
 	w("\tstr w4, [x6, #4]") // len = total
 	w("\tadd x7, x6, #8")
-	w("\tadd x7, x7, x4")   // new cursor = base + 8 + total
+	w("\tadd x7, x7, x4") // new cursor = base + 8 + total
 	w("\tstr x7, [x5]")
 	w("\tadd x9, x6, #8") // x9 = data
 	// Copy a's la bytes: [data + i] = [a + i].
@@ -685,15 +694,15 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 	w("\tadd x8, x8, #:lo12:%s", heapPtrSym) // x8 = &cursor
 	w("\tldr x9, [x8]")
 	w("\tadd x9, x9, #7")
-	w("\tand x9, x9, #-8")        // x9 = base (8-aligned)
-	w("\tadd x10, x9, w7, uxtw")  // new cursor = base + allocSize
+	w("\tand x9, x9, #-8")       // x9 = base (8-aligned)
+	w("\tadd x10, x9, w7, uxtw") // new cursor = base + allocSize
 	w("\tstr x10, [x8]")
-	w("\tadd x11, x9, w6, uxtw")  // x11 = new_data = base + headerBytes
+	w("\tadd x11, x9, w6, uxtw") // x11 = new_data = base + headerBytes
 	w("\tsub x12, x11, #12")
-	w("\tstr w5, [x12]")          // cap = newCap
+	w("\tstr w5, [x12]") // cap = newCap
 	w("\tmov w13, #1")
-	w("\tstur w13, [x11, #-8]")   // rc = 1
-	w("\tstur w4, [x11, #-4]")    // len = newLen
+	w("\tstur w13, [x11, #-8]") // rc = 1
+	w("\tstur w4, [x11, #-4]")  // len = newLen
 	// Byte-copy oldLen*stride bytes from arr (x0) to new_data (x11).
 	w("\tmul w14, w1, w2") // nbytes
 	w("\tmov w15, #0")     // i
@@ -705,6 +714,173 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 	w("\tadd w15, w15, #1")
 	w("\tb .Lssa_apg_cp")
 	w(".Lssa_apg_done:")
+	w("\tmov x0, x11") // return new_data
+	w("\tret")
+}
+
+// emitAllocU8Helper writes __alloc_u8(n) -> data: allocate a fresh
+// length-prefixed u8[] of n bytes and return the data pointer (past a 16-byte
+// header; cap@-12, rc=1@-8, len@-4). The n data bytes are zero-filled to match
+// the interpreter's zero-initialised u8[] (issue #2768: read-before-write
+// callers like SHA padding rely on it). Unlike the native helper (which calls
+// __fern_alloc) this inlines a raw bump allocation, so it is a leaf — mirroring
+// __fern_arr_push_grow. n==0 falls through with a zero-iteration zero loop,
+// yielding a valid header-only buffer whose len reads 0. x0=n, returns x0=data.
+func emitAllocU8Helper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__alloc_u8"))
+	w("\tmov w1, w0")      // w1 = n (preserve across the bump)
+	w("\tadd w2, w1, #16") // allocSize = n + 16-byte header
+	// Inline raw bump allocation of w2 bytes (8-aligned base).
+	w("\tadrp x8, %s", heapPtrSym)
+	w("\tadd x8, x8, #:lo12:%s", heapPtrSym) // x8 = &cursor
+	w("\tldr x9, [x8]")
+	w("\tadd x9, x9, #7")
+	w("\tand x9, x9, #-8")       // x9 = base (8-aligned)
+	w("\tadd x10, x9, w2, uxtw") // new cursor = base + allocSize
+	w("\tstr x10, [x8]")
+	w("\tadd x0, x9, #16")     // x0 = data ptr (past 16-byte header)
+	w("\tstur w1, [x0, #-12]") // cap = n
+	w("\tmov w11, #1")
+	w("\tstur w11, [x0, #-8]") // rc = 1
+	w("\tstur w1, [x0, #-4]")  // len = n
+	// Zero the n data bytes (0 iterations when n==0).
+	w("\tmov x12, x0") // cursor (x0 stays the return value)
+	w("\tmov w13, w1") // count = n
+	w(".Lssa_allocu8_zero:")
+	w("\tcbz w13, .Lssa_allocu8_ret")
+	w("\tstrb wzr, [x12], #1")
+	w("\tsub w13, w13, #1")
+	w("\tb .Lssa_allocu8_zero")
+	w(".Lssa_allocu8_ret:")
+	w("\tret")
+}
+
+// emitPrintHelper writes print(s): write the string's bytes to stdout (fd 1)
+// followed by a single trailing newline — two write(2) syscalls. The arm64ssa
+// string ABI passes the data pointer directly (byte length at [ptr-4]), so the
+// helper reads the length in place and writes from the pointer with no header
+// arithmetic. The newline is materialised on the stack rather than via a
+// .rodata symbol so the helper is self-contained. Clobbers x0-x2/x8/x9 (all
+// caller-saved; the emitter has already spilled any live-across values). print's
+// return value is unused by Fern code, so it returns 0.
+func emitPrintHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("print"))
+	w("\tldur w2, [x0, #-4]") // len
+	w("\tmov x1, x0")         // buf = data
+	w("\tmov x0, #1")         // fd = stdout
+	w("\tmov x8, #64")        // write(2)
+	w("\tsvc #0")
+	// Trailing newline: '\n' on the stack, one-byte write.
+	w("\tsub sp, sp, #16")
+	w("\tmov w9, #10")
+	w("\tstrb w9, [sp]")
+	w("\tmov x1, sp")
+	w("\tmov x2, #1")
+	w("\tmov x0, #1")
+	w("\tmov x8, #64")
+	w("\tsvc #0")
+	w("\tadd sp, sp, #16")
+	w("\tmov x0, xzr") // unused return
+	w("\tret")
+}
+
+// emitStringFromBytesHelper writes string_from_bytes(bs) -> data: copy a u8[]
+// payload into a fresh length-prefixed string and return its data pointer — the
+// round-trip companion to s.bytes(). arm64ssa strings are single-word and
+// rc-headered (rc=1@base+0, len@base+4, data@base+8 — the same layout ConstStr
+// and __str_concat use), with no small-string inline optimisation, so this is a
+// straight bump-allocate + byte-copy leaf. bs is the input u8[] data pointer;
+// its byte length is at [bs-4]. x0=bs; returns x0=data.
+func emitStringFromBytesHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("string_from_bytes"))
+	w("\tldur w1, [x0, #-4]") // w1 = byte length of bs (zero-extends into x1)
+	// Bump-allocate len+8: rc=1@base, len@base+4, data@base+8.
+	w("\tadrp x2, %s", heapPtrSym)
+	w("\tadd x2, x2, #:lo12:%s", heapPtrSym) // x2 = &cursor
+	w("\tldr x3, [x2]")
+	w("\tadd x3, x3, #7")
+	w("\tand x3, x3, #-8") // x3 = base (8-aligned)
+	w("\tmov w4, #1")
+	w("\tstr w4, [x3]")     // rc = 1
+	w("\tstr w1, [x3, #4]") // len
+	w("\tadd x5, x3, #8")
+	w("\tadd x5, x5, x1") // new cursor = base + 8 + len
+	w("\tstr x5, [x2]")
+	w("\tadd x6, x3, #8") // x6 = data
+	// Copy len bytes from bs (x0) to data (x6).
+	w("\tmov x7, #0")
+	w(".Lssa_sfb_cp:")
+	w("\tcmp w7, w1")
+	w("\tb.hs .Lssa_sfb_done")
+	w("\tldrb w8, [x0, x7]")
+	w("\tstrb w8, [x6, x7]")
+	w("\tadd x7, x7, #1")
+	w("\tb .Lssa_sfb_cp")
+	w(".Lssa_sfb_done:")
+	w("\tmov x0, x6") // return data
+	w("\tret")
+}
+
+// emitArrCowInplaceHelper writes __fern_arr_cow_inplace(arr, stride) -> buf —
+// the copy-on-write helper behind `arr[i] = v`. Fast path: rc == 1 → the array
+// is uniquely held, return it unchanged for an in-place store. Slow path (rc >
+// 1, shared): decrement arr's rc (taking the caller's reference as we copy;
+// skip a static sentinel whose rc word has the high bit set), bump-allocate a
+// fresh buffer with the SAME cap+len, byte-copy the payload, write rc=1 on the
+// new header, and return the new data pointer. Like __fern_arr_push_grow this
+// inlines the bump allocation + byte-copy so it is a leaf (the native helper
+// calls __fern_alloc / __fern_memcpy). x0=arr, w1=stride; returns x0=buf.
+func emitArrCowInplaceHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_arr_cow_inplace"))
+	// Fast path: rc == 1 → return arr unchanged.
+	w("\tldur w2, [x0, #-8]") // rc
+	w("\tcmp w2, #1")
+	w("\tb.ne .Lssa_cow_slow")
+	w("\tret")
+	w(".Lssa_cow_slow:")
+	w("\tldur w3, [x0, #-4]")  // w3 = len
+	w("\tldur w4, [x0, #-12]") // w4 = cap
+	// Decrement arr's rc; skip a static sentinel (rc high bit set).
+	w("\tldur w5, [x0, #-8]")
+	w("\ttbnz w5, #31, .Lssa_cow_skipdec")
+	w("\tsub w5, w5, #1")
+	w("\tstur w5, [x0, #-8]")
+	w(".Lssa_cow_skipdec:")
+	// headerBytes = max(16, stride); allocSize = headerBytes + cap*stride.
+	w("\tmov w6, #16")
+	w("\tcmp w1, w6")
+	w("\tcsel w6, w1, w6, ge") // w6 = headerBytes
+	w("\tmul w7, w4, w1")
+	w("\tadd w7, w7, w6") // w7 = allocSize
+	// Inline raw bump allocation of w7 bytes (8-aligned base).
+	w("\tadrp x8, %s", heapPtrSym)
+	w("\tadd x8, x8, #:lo12:%s", heapPtrSym) // x8 = &cursor
+	w("\tldr x9, [x8]")
+	w("\tadd x9, x9, #7")
+	w("\tand x9, x9, #-8")       // x9 = base (8-aligned)
+	w("\tadd x10, x9, w7, uxtw") // new cursor = base + allocSize
+	w("\tstr x10, [x8]")
+	w("\tadd x11, x9, w6, uxtw") // x11 = new_data = base + headerBytes
+	w("\tsub x12, x11, #12")
+	w("\tstr w4, [x12]") // cap
+	w("\tmov w13, #1")
+	w("\tstur w13, [x11, #-8]") // rc = 1
+	w("\tstur w3, [x11, #-4]")  // len
+	// Byte-copy len*stride bytes from arr (x0) to new_data (x11).
+	w("\tmul w14, w3, w1") // nbytes
+	w("\tmov w15, #0")     // i
+	w(".Lssa_cow_cp:")
+	w("\tcmp w15, w14")
+	w("\tb.hs .Lssa_cow_done")
+	w("\tldrb w16, [x0, x15]")
+	w("\tstrb w16, [x11, x15]")
+	w("\tadd w15, w15, #1")
+	w("\tb .Lssa_cow_cp")
+	w(".Lssa_cow_done:")
 	w("\tmov x0, x11") // return new_data
 	w("\tret")
 }
@@ -1314,7 +1490,7 @@ func divShiftSeq(in x86.Inst, scratch int) []string {
 			div = "udiv"
 		}
 		out = []string{
-			fmt.Sprintf("%s %s, %s, %s", div, q, d, s), // q = d / s
+			fmt.Sprintf("%s %s, %s, %s", div, q, d, s),     // q = d / s
 			fmt.Sprintf("msub %s, %s, %s, %s", d, q, s, d), // d = d - q*s
 		}
 	}
