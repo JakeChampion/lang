@@ -46,9 +46,6 @@ func EmitAsm(f *ssa.Func, numAlloc int) (string, error) {
 	if len(p.ParamLocs) != 0 {
 		return "", fmt.Errorf("arm64ssa: parameters not supported yet")
 	}
-	if len(p.Blocks) != 1 {
-		return "", fmt.Errorf("arm64ssa: control flow not supported yet (%d blocks)", len(p.Blocks))
-	}
 
 	var b strings.Builder
 	w := func(format string, args ...any) {
@@ -71,35 +68,44 @@ func EmitAsm(f *ssa.Func, numAlloc int) (string, error) {
 	return b.String(), nil
 }
 
-// emitFunc writes one function: its label, a stack frame for spill slots, the
-// straight-line body, and the return.
+// emitFunc writes one function: its label, a stack frame for spill slots, each
+// block's straight-line body under a namespaced label, and the terminators.
 func emitFunc(w func(string, ...any), name string, p *x86.Program) error {
-	w("%s:", fnLabel(name))
+	label := fnLabel(name)
+	w("%s:", label)
 	frame := align16(8 * p.NumSlots) // leaf: no saved regs / fp yet
 	if frame > 0 {
 		w("\tsub sp, sp, #%d", frame)
 	}
-	blk := p.Blocks[0]
-	for _, in := range blk.Insts {
-		lines, err := asmInst(in)
-		if err != nil {
-			return err
+	// Execution falls into block 0 (the entry) right after the prologue.
+	for bi, blk := range p.Blocks {
+		w(".L%s_b%d:", label, bi)
+		for _, in := range blk.Insts {
+			lines, err := asmInst(in)
+			if err != nil {
+				return err
+			}
+			for _, l := range lines {
+				w("\t%s", l)
+			}
 		}
-		for _, l := range lines {
-			w("\t%s", l)
+		switch blk.Term.Kind {
+		case x86.TRet:
+			if blk.Term.RetReg != 0 {
+				w("\tmov x0, %s", xreg(blk.Term.RetReg))
+			}
+			if frame > 0 {
+				w("\tadd sp, sp, #%d", frame)
+			}
+			w("\tret")
+		case x86.TJmp:
+			w("\tb .L%s_b%d", label, blk.Term.Target)
+		case x86.TBrIf:
+			w("\tcbnz %s, .L%s_b%d", xreg(blk.Term.CondReg), label, blk.Term.True)
+			w("\tb .L%s_b%d", label, blk.Term.False)
+		default:
+			return fmt.Errorf("arm64ssa: unsupported terminator %d", blk.Term.Kind)
 		}
-	}
-	switch blk.Term.Kind {
-	case x86.TRet:
-		if blk.Term.RetReg != 0 {
-			w("\tmov x0, %s", xreg(blk.Term.RetReg))
-		}
-		if frame > 0 {
-			w("\tadd sp, sp, #%d", frame)
-		}
-		w("\tret")
-	default:
-		return fmt.Errorf("arm64ssa: unsupported terminator %d", blk.Term.Kind)
 	}
 	return nil
 }
@@ -139,6 +145,18 @@ func asmInst(in x86.Inst) ([]string, error) {
 		out := []string{fmt.Sprintf("%s %s, %s, %s", mnem, xreg(in.Dst), xreg(in.Dst), xreg(in.Src))}
 		out = append(out, maskFix(in.Dst, in.W)...)
 		return out, nil
+	case x86.SetCmp:
+		cc, ok := condCode(in.K)
+		if !ok {
+			return nil, fmt.Errorf("arm64ssa: comparison %v not supported yet", in.K)
+		}
+		// 64-bit cmp on sign-extended i32 operands orders correctly for both
+		// signed and unsigned conditions; cset materialises the 0/1 result (no i32
+		// mask needed).
+		return []string{
+			fmt.Sprintf("cmp %s, %s", xreg(in.Dst), xreg(in.Src)),
+			fmt.Sprintf("cset %s, %s", xreg(in.Dst), cc),
+		}, nil
 	default:
 		return nil, fmt.Errorf("arm64ssa: opcode %d not supported yet", in.Op)
 	}
@@ -159,6 +177,34 @@ func binMnemonic(k ssa.OpKind) (string, bool) {
 		return "orr", true
 	case ssa.OpXor:
 		return "eor", true
+	}
+	return "", false
+}
+
+// condCode maps an SSA comparison op to its AArch64 condition mnemonic (signed:
+// lt/le/gt/ge; unsigned: lo/ls/hi/hs) for cset / conditional branches.
+func condCode(k ssa.OpKind) (string, bool) {
+	switch k {
+	case ssa.OpEq:
+		return "eq", true
+	case ssa.OpNe:
+		return "ne", true
+	case ssa.OpLt:
+		return "lt", true
+	case ssa.OpLe:
+		return "le", true
+	case ssa.OpGt:
+		return "gt", true
+	case ssa.OpGe:
+		return "ge", true
+	case ssa.OpLtU:
+		return "lo", true
+	case ssa.OpLeU:
+		return "ls", true
+	case ssa.OpGtU:
+		return "hi", true
+	case ssa.OpGeU:
+		return "hs", true
 	}
 	return "", false
 }

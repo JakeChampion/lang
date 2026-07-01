@@ -98,3 +98,42 @@ func TestArmRunBitwiseChain(t *testing.T) {
 		runMatchesEval(t, build(), n)
 	}
 }
+
+// abs(-7) via a conditional: if (n < 0) return 0 - n; return n.  = 7.
+func TestArmRunAbs(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		n := f.AddOp(e, ssa.OpSub, constOp(f, e, 0), constOp(f, e, 7)) // -7
+		neg := f.AddOp(e, ssa.OpLt, n, constOp(f, e, 0))               // n < 0
+		then := f.NewBlock()
+		els := f.NewBlock()
+		f.SetBrIf(e, neg, then, els)
+		f.SetRet(then, f.AddOp(then, ssa.OpSub, constOp(f, then, 0), n)) // 0 - n = 7
+		f.SetRet(els, n)
+		return f
+	}
+	for _, nreg := range []int{2, 4, 8} {
+		runMatchesEval(t, build(), nreg)
+	}
+}
+
+// max via a comparison-selected branch: max(9, 4) = 9 -> exit 9.
+func TestArmRunMax(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		a := constOp(f, e, 9)
+		b := constOp(f, e, 4)
+		agtb := f.AddOp(e, ssa.OpGt, a, b)
+		ta := f.NewBlock()
+		tb := f.NewBlock()
+		f.SetBrIf(e, agtb, ta, tb)
+		f.SetRet(ta, a)
+		f.SetRet(tb, b)
+		return f
+	}
+	for _, nreg := range []int{2, 4, 8} {
+		runMatchesEval(t, build(), nreg)
+	}
+}
