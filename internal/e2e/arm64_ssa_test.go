@@ -209,6 +209,22 @@ function main(): i32 { var x: f64 = 0.0 - 3.5; return (x.abs()) as i32; }`,
 function main(): i32 { var x: f64 = 16.0; return (x.sqrt()) as i32; }`,
 			want: 4,
 		},
+		{
+			// Integer to_string — the full digit-formatting chain: __alloc_u8
+			// (byte buffer), __fern_arr_cow_inplace (arr[i] = digit), and
+			// string_from_bytes (u8[] -> string). len("123456") = 6.
+			name: "int_to_string_len",
+			src: `import "std/i32";
+function main(): i32 { return (123456).to_string().len(); }`,
+			want: 6,
+		},
+		{
+			// print(s): the two-write puts helper — string bytes then a newline
+			// to fd 1. Runs the syscalls and returns to main, which exits 7.
+			name: "print_string",
+			src:  `function main(): i32 { print("hi from arm64-ssa"); return 7; }`,
+			want: 7,
+		},
 	}
 
 	for _, c := range cases {
@@ -243,10 +259,10 @@ function main(): i32 { var x: f64 = 16.0; return (x.sqrt()) as i32; }`,
 }
 
 // TestArm64SSACoverageGapErrors confirms a program needing a runtime helper the
-// arm64-ssa path doesn't emit yet (here std/i32's to_string, which reaches the
-// byte allocator __alloc_u8) fails with a clean compile/link error rather than a
-// miscompile — the experimental-backend contract that lets the epic widen
-// coverage incrementally.
+// arm64-ssa path doesn't emit yet (here string indexing `s[i]`, which reaches
+// the still-unported __str_idx char-index helper) fails with a clean
+// compile/link error rather than a miscompile — the experimental-backend
+// contract that lets the epic widen coverage incrementally.
 func TestArm64SSACoverageGapErrors(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("arm64-ssa not exercised on windows")
@@ -258,19 +274,21 @@ func TestArm64SSACoverageGapErrors(t *testing.T) {
 		t.Fatalf("go build fern: %v\n%s", err, out)
 	}
 
-	srcPath := filepath.Join(dir, "tostring.fern")
-	src := `import "std/i32";
-function main(): i32 { print((42).to_string()); return 0; }`
+	srcPath := filepath.Join(dir, "stridx.fern")
+	src := `function main(): i32 {
+  var s: string = "abc";
+  return s[1] as i32;
+}`
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	out := filepath.Join(dir, "tostring.bin")
+	out := filepath.Join(dir, "stridx.bin")
 	emit := exec.Command(bin, "-target", "arm64-ssa", "-o", out, srcPath)
 	var eb bytes.Buffer
 	emit.Stderr = &eb
 	err := emit.Run()
 	if err == nil {
-		t.Fatalf("expected a coverage-gap error for f64 arithmetic, got success")
+		t.Fatalf("expected a coverage-gap error for string indexing (__str_idx), got success")
 	}
 	if !bytes.Contains(eb.Bytes(), []byte("arm64-ssa")) {
 		t.Errorf("error not attributed to arm64-ssa:\n%s", eb.String())
