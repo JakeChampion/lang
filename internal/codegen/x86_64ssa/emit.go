@@ -652,7 +652,7 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		e.place(op.Result, e.s2)
 		return nil
 
-	case ssa.OpLoad, ssa.OpLoad8U, ssa.OpLoad8S, ssa.OpLoad16U, ssa.OpLoad16S:
+	case ssa.OpLoad, ssa.OpLoad8U, ssa.OpLoad8S, ssa.OpLoad16U, ssa.OpLoad16S, ssa.OpLoad32U:
 		base, err := e.materialize(op.Args[0], e.s0)
 		if err != nil {
 			return err
@@ -662,7 +662,7 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		e.place(op.Result, e.s2)
 		return nil
 
-	case ssa.OpStore, ssa.OpStore8, ssa.OpStore16:
+	case ssa.OpStore, ssa.OpStore8, ssa.OpStore16, ssa.OpStore32:
 		base, err := e.materialize(op.Args[0], e.s0)
 		if err != nil {
 			return err
@@ -750,7 +750,11 @@ func memInfo(k ssa.OpKind) (bytes int8, signed bool) {
 		return 1, false
 	case ssa.OpStore16:
 		return 2, false
-	default: // OpLoad / OpStore (full word)
+	case ssa.OpLoad32U:
+		return 4, false
+	case ssa.OpStore32:
+		return 4, false
+	default: // OpLoad / OpStore (full 8-byte word)
 		return 8, false
 	}
 }

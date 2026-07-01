@@ -574,7 +574,14 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		}
 		addr := l.stack[len(l.stack)-1]
 		l.stack = l.stack[:len(l.stack)-1]
-		v := l.out.AddOp(l.cur, OpLoad, addr)
+		// The IR's OpLoad is a 4-byte (i32-word) load by default; pointer-width
+		// values carry Width == WidthPtr (or an explicit 64). Mirror the stack
+		// machine: full 8-byte load for pointer width, 4-byte otherwise.
+		kind := OpLoad32U
+		if op.Width == 64 || op.Width == ir.WidthPtr {
+			kind = OpLoad
+		}
+		v := l.out.AddOp(l.cur, kind, addr)
 		l.stack = append(l.stack, v)
 	case ir.OpStore:
 		if len(l.stack) < 2 {
@@ -583,7 +590,11 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		val := l.stack[len(l.stack)-1]
 		addr := l.stack[len(l.stack)-2]
 		l.stack = l.stack[:len(l.stack)-2]
-		l.out.AddOpNoResult(l.cur, OpStore, addr, val)
+		kind := OpStore32
+		if op.Width == 64 || op.Width == ir.WidthPtr {
+			kind = OpStore
+		}
+		l.out.AddOpNoResult(l.cur, kind, addr, val)
 	case ir.OpLoadI8S, ir.OpLoadByte, ir.OpLoadI16S, ir.OpLoadI16U:
 		if len(l.stack) < 1 {
 			return fmt.Errorf("ssa.LiftFromIR: %v at op[%d] needs addr operand", op.Kind, i)
@@ -732,13 +743,13 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		l.cur.Ops[len(l.cur.Ops)-1].Imm = 0
 		l.stack = append(l.stack, tag, payload)
 	case ir.OpMatchTag:
-		// (ptr) → (tag at [ptr+0]). Same lowering as OpLoad.
+		// (ptr) → (i32 tag at [ptr+0]). A 4-byte load (the tag is an i32).
 		if len(l.stack) < 1 {
 			return fmt.Errorf("ssa.LiftFromIR: OpMatchTag at op[%d] needs ptr operand", i)
 		}
 		addr := l.stack[len(l.stack)-1]
 		l.stack = l.stack[:len(l.stack)-1]
-		v := l.out.AddOp(l.cur, OpLoad, addr)
+		v := l.out.AddOp(l.cur, OpLoad32U, addr)
 		l.stack = append(l.stack, v)
 	case ir.OpCallDirectPair:
 		// Pair-returning direct call. I32 = arg count; pushes

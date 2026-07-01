@@ -1426,8 +1426,45 @@ func TestLiftLoad(t *testing.T) {
 	if err := Verify(out); err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
-	if op := out.Blocks[0].Ops[0]; op.Kind != OpLoad {
-		t.Errorf("Op = %v, want OpLoad", op.Kind)
+	// A width-less ir.OpLoad is a 4-byte (i32-word) load.
+	if op := out.Blocks[0].Ops[0]; op.Kind != OpLoad32U {
+		t.Errorf("Op = %v, want OpLoad32U", op.Kind)
+	}
+}
+
+// TestLiftLoadStorePtrWidth — a pointer-width ir.OpLoad/OpStore (Width ==
+// WidthPtr) lifts to the full 8-byte OpLoad/OpStore, not the 4-byte variant.
+func TestLiftLoadStorePtrWidth(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "addr"}, {Name: "val"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpLoad, Width: ir.WidthPtr},
+			{Kind: ir.OpDrop},
+			{Kind: ir.OpLoadLocal, I32: 0},
+			{Kind: ir.OpLoadLocal, I32: 1},
+			{Kind: ir.OpStore, Width: ir.WidthPtr},
+			{Kind: ir.OpReturnVoid},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	var sawLoad, sawStore bool
+	for _, op := range out.Blocks[0].Ops {
+		switch op.Kind {
+		case OpLoad:
+			sawLoad = true
+		case OpStore:
+			sawStore = true
+		case OpLoad32U, OpStore32:
+			t.Errorf("pointer-width access lifted to 4-byte %v", op.Kind)
+		}
+	}
+	if !sawLoad || !sawStore {
+		t.Errorf("want OpLoad and OpStore, got load=%v store=%v", sawLoad, sawStore)
 	}
 }
 
@@ -1450,8 +1487,8 @@ func TestLiftStore(t *testing.T) {
 	if err := Verify(out); err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
-	if op := out.Blocks[0].Ops[0]; op.Kind != OpStore {
-		t.Errorf("Op = %v, want OpStore", op.Kind)
+	if op := out.Blocks[0].Ops[0]; op.Kind != OpStore32 {
+		t.Errorf("Op = %v, want OpStore32", op.Kind)
 	}
 	if out.Blocks[0].Ops[0].Result.IsValid() {
 		t.Errorf("OpStore should have no Result; got %v", out.Blocks[0].Ops[0].Result)
@@ -1482,13 +1519,14 @@ func TestLiftLoadStoreSurviveDCE(t *testing.T) {
 		t.Fatalf("LiftFromIR: %v", err)
 	}
 	Optimize(out)
-	// Both Load and Store survive Optimize/DCE.
+	// Both Load and Store survive Optimize/DCE. The width-less ir.OpLoad/OpStore
+	// lift to the 4-byte (i32-word) OpLoad32U/OpStore32.
 	var loadCount, storeCount int
 	for _, op := range out.Blocks[0].Ops {
-		if op.Kind == OpLoad {
+		if op.Kind == OpLoad32U {
 			loadCount++
 		}
-		if op.Kind == OpStore {
+		if op.Kind == OpStore32 {
 			storeCount++
 		}
 	}

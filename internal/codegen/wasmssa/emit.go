@@ -577,7 +577,7 @@ func inferResultType(op *ssa.Op, widthOf map[int32]int8, floatOf map[int32]bool)
 			}
 		}
 		return 32, false
-	case ssa.OpLoad, ssa.OpLoad8S, ssa.OpLoad8U, ssa.OpLoad16S, ssa.OpLoad16U:
+	case ssa.OpLoad, ssa.OpLoad8S, ssa.OpLoad8U, ssa.OpLoad16S, ssa.OpLoad16U, ssa.OpLoad32U:
 		return 32, false
 	case ssa.OpAlloc, ssa.OpConstString:
 		return 32, false // pointer
@@ -602,6 +602,7 @@ func usesMemory(f *ssa.Func) bool {
 				ssa.OpLoad8S, ssa.OpLoad8U,
 				ssa.OpLoad16S, ssa.OpLoad16U,
 				ssa.OpStore8, ssa.OpStore16,
+				ssa.OpLoad32U, ssa.OpStore32,
 				ssa.OpAlloc,
 				ssa.OpConstString:
 				return true
@@ -841,6 +842,12 @@ func emitOp(body []byte, op *ssa.Op, ctx *emitCtx) ([]byte, error) {
 		body = pushValue(body, op.Args[0], ctx)
 		body = memory.InstI32Load16U(body, memAlignHalf, uint32(op.Imm))
 		return storeResult(body, op, ctx), nil
+	case ssa.OpLoad32U:
+		// 4-byte i32 load — identical to OpLoad on wasm32 (pointer width is
+		// already 4 bytes / i32.load); distinct only on 64-bit backends.
+		body = pushValue(body, op.Args[0], ctx)
+		body = memory.InstI32Load(body, memAlignWord, uint32(op.Imm))
+		return storeResult(body, op, ctx), nil
 	case ssa.OpStore:
 		// store i32 value Args[1] to memory[Args[0] + imm].
 		body = pushValue(body, op.Args[0], ctx)
@@ -856,6 +863,11 @@ func emitOp(body []byte, op *ssa.Op, ctx *emitCtx) ([]byte, error) {
 		body = pushValue(body, op.Args[0], ctx)
 		body = pushValue(body, op.Args[1], ctx)
 		body = memory.InstI32Store16(body, memAlignHalf, uint32(op.Imm))
+		return body, nil
+	case ssa.OpStore32:
+		body = pushValue(body, op.Args[0], ctx)
+		body = pushValue(body, op.Args[1], ctx)
+		body = memory.InstI32Store(body, memAlignWord, uint32(op.Imm))
 		return body, nil
 	case ssa.OpAlloc:
 		// Bump allocator: push current heap_top (the result),

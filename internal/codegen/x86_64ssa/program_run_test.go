@@ -108,3 +108,24 @@ func TestProgramRunInteger(t *testing.T) {
 		}
 	}
 }
+
+// Whole-program Option + match: the pair-return (Some/None), the box the match
+// reconstructs (i32 fields at 4-byte offsets — needs the 4-byte load/store), and
+// the match-join phi all combine. Runs the same result as the interpreter.
+func TestProgramRunOption(t *testing.T) {
+	half := `function half(n: i32): Option[i32] {
+		if (n % 2 == 0) { return Some(n / 2); }
+		return None;
+	}`
+	srcs := []string{
+		// Some path: half(84) = Some(42) -> 42.
+		half + `function main(): i32 { return match (half(84)) { Some(v) => v, None => 0 }; }`,
+		// None path: half(7) = None -> 99.
+		half + `function main(): i32 { return match (half(7)) { Some(v) => v, None => 99 }; }`,
+	}
+	for _, n := range []int{1, 2, 8} {
+		for _, src := range srcs {
+			programMatchesInterp(t, src, n)
+		}
+	}
+}
