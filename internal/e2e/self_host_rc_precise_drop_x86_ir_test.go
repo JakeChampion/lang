@@ -322,6 +322,48 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// NON-firing (escapes / returned): a returned Result is moved to the caller, so
 		// mk must NOT free it. Detector 0.
 		{"result-escapes-not-freed-detector", `function mk(): Result[i32, i32] { var r: Result[i32, i32] = Ok(7); return r; } function main(): i32 { var r = mk(); var x = 0; match (r) { Ok(v) => { x = v; }, Err(e) => { x = e; }, } if (x != 7) { return 99; } return __rc_underflow(); }`, 0},
+		// RC-PAYLOAD (leak-safe scalar array) Option/Result deep-drop free: a
+		// `var o = Some([..])` / `Ok([..])` / `Err([..])` with a flat scalar-array
+		// payload now DEEP-DROPS its payload (op_opt_payload → __fern_rc_dec) then
+		// frees the box, right after its single consuming match — previously both the
+		// box AND the array leaked (fresh_scalar_option_init admits only scalar
+		// payloads). The constructed variant is statically known, so the drop is
+		// straight-line (no variant_is guard). A borrow-only arm binding (`Some(v) =>
+		// v[i] / v.len()`) is admitted (opt_arm_binding_escapes); the payload's last
+		// borrow ends before the post-match free. Value + `__rc_underflow()==0` pin
+		// the box AND the payload array are each freed exactly once.
+		{"option-arr-payload-value", `function go(): i32 { var o: Option[i32[]] = Some([10, 20, 30]); var r = 0; match (o) { Some(v) => { r = v[0] + v[2]; }, None => { r = 0; }, } return r; } function main(): i32 { return go(); }`, 40},
+		{"option-arr-payload-detector", `function go(): i32 { var o: Option[i32[]] = Some([10, 20, 30]); var r = 0; match (o) { Some(v) => { r = v[0] + v[2]; }, None => { r = 0; }, } if (r != 40) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// Un-annotated Some([..]) (Option infers the single type param) is admitted via
+		// the fresh scalar-number array-literal payload gate.
+		{"option-arr-unannotated-detector", `function go(): i32 { var o = Some([1, 2, 3]); var r = 0; match (o) { Some(v) => { r = v[1]; }, None => { r = 0; }, } if (r != 2) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// A borrow that reads .len() as well as indexing still fires + stays clean.
+		{"option-arr-len-borrow-detector", `function go(): i32 { var o: Option[i32[]] = Some([4, 5, 6, 7]); var r = 0; match (o) { Some(v) => { r = v.len() + v[0]; }, None => { r = 0; }, } if (r != 8) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// f64[] payload: the 8-byte-element array is still a flat scalar buffer, so the
+		// single-dec payload release + box free are the same. Value + detector 0.
+		{"option-f64arr-payload-detector", `function go(): i32 { var o: Option[f64[]] = Some([1.5, 2.5]); var r: f64 = 0.0; match (o) { Some(v) => { r = v[0] + v[1]; }, None => { r = 0.0; }, } if ((r as i32) != 4) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// Result Ok([..]): the array payload of an Ok box (tag 0) is deep-dropped the
+		// same way — the Result sibling of the option array-payload free.
+		{"result-ok-arr-payload-value", `function go(): i32 { var r: Result[i32[], i32] = Ok([5, 6, 7]); var x = 0; match (r) { Ok(v) => { x = v[0] + v[2]; }, Err(e) => { x = e; }, } return x; } function main(): i32 { return go(); }`, 12},
+		{"result-ok-arr-payload-detector", `function go(): i32 { var r: Result[i32[], i32] = Ok([5, 6, 7]); var x = 0; match (r) { Ok(v) => { x = v[0] + v[2]; }, Err(e) => { x = e; }, } if (x != 12) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// Result Err([..]): the Err payload (tag 1) is the array — opt_payload_type
+		// reads E for Err, so an Err([..]) box is admitted + its array deep-dropped.
+		{"result-err-arr-payload-detector", `function go(): i32 { var r: Result[i32, i32[]] = Err([3, 4]); var x = 0; match (r) { Ok(v) => { x = v; }, Err(e) => { x = e[0] + e[1]; }, } if (x != 7) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// Heap-reuse corruption probe: a fresh array allocated AFTER the option's
+		// consuming match + payload deep-drop reads back intact (the payload + box
+		// frees were sound — no double-free / dangling slot the alloc could recycle).
+		{"option-arr-corruption-probe-detector", `function go(): i32 { var o: Option[i32[]] = Some([1, 2, 3]); var r = 0; match (o) { Some(v) => { r = v[0] + v[2]; }, None => { r = 0; }, } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (r != 4) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// NON-firing (binding escapes the arm): the Some arm STORES its payload `v` to
+		// an outer array var, so the box's array must NOT be freed after the match
+		// (opt_arm_binding_escapes rejects it) — it moved out. Detector 0 (no
+		// over-release; the array leaks with the un-freed box / is swept via `out`).
+		{"option-arr-binding-escapes-detector", `function go(): i32 { var o: Option[i32[]] = Some([7, 8, 9]); var out: i32[] = [0]; match (o) { Some(v) => { out = v; }, None => {} } var r = out[0] + out[2]; if (r != 16) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// NON-firing (used after the match): `o` matched twice, so it is not dead after
+		// the first match — must NOT be freed there. Detector 0.
+		{"option-arr-used-after-detector", `function go(): i32 { var o: Option[i32[]] = Some([1, 2, 3]); var a = 0; match (o) { Some(v) => { a = v[0]; }, None => { a = 0; }, } var b = 0; match (o) { Some(v) => { b = v[1]; }, None => { b = 0; }, } if (a + b != 3) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// NON-firing (escapes / returned): a returned Option is moved to the caller, so
+		// mk must NOT free it (nor its array). Detector 0.
+		{"option-arr-escapes-not-freed-detector", `function mk(): Option[i32[]] { var o: Option[i32[]] = Some([1, 2, 3]); return o; } function main(): i32 { var o = mk(); var r = 0; match (o) { Some(v) => { r = v[0] + v[2]; }, None => { r = 0; }, } if (r != 4) { return 99; } return __rc_underflow(); }`, 0},
 		// Struct with an i32[] field: the box is rc-headered and freed soundly, and
 		// the array field is deep-dropped (emit_struct_field_drops) exactly once.
 		// Detector 0 proves neither the box nor the array field over-releases.

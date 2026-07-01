@@ -3062,3 +3062,41 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `TestSelfHostRcPreciseDropX86IR`; byte-identical FIXPOINT + BOOTSTRAP + the wasm
   `TestSelfHostRcOptionBoxWasm` + `TestSelfHostIRDiff` all stay green. Frontend-only
   (the classifier is backend-agnostic — every backend that lowers Results benefits).
+- 2026-07-01: **RC-payload (scalar-array) Option/Result deep-drop consume-by-match
+  free** — the deferred follow-up from the two scalar Option/Result slices. A
+  `var o = Some([1,2,3])` / `var r = Ok([..])` / `Err([..])` whose payload is a
+  leak-safe scalar ARRAY (i32[]/boolean[]/i64[]/f64[]/u32[]/subword) routed ir but
+  leaked BOTH the box AND its array: `fresh_scalar_option_init` only admits a SCALAR
+  payload, so the array-payload form fell through to leak-only. This widens the
+  consume-by-match free to those, mirroring `consumed_rcpayload_enum_frees` for the
+  Option/Result box shape. New in shared `irlower.fern`: (1)
+  `fresh_rcpayload_option_init(v)` — returns the constructed variant ("Some"/"Ok"/
+  "Err") when the payload is a leak-safe scalar array, proven by annotation
+  (`is_leaksafe_array_field(opt_payload_type(v.type_name, kind))`, variant-aware:
+  Ok→T, Err→E) OR a fresh scalar-number array-literal payload (`Some([1,2,3])`;
+  Option infers its single param — an un-annotated Ok/Err isn't native-valid so only
+  annotated Results fire). DISJOINT from `fresh_scalar_option_init` (scalar payload)
+  and from `fresh_rcpayload_enum_init` (Some/Ok/Err have no user-enum owner), so an
+  option is freed by at most one path. (2) `opt_arm_binding_escapes(st, variant)` —
+  the borrow-only-binding gate: only the CONSTRUCTED variant's arm is checked (the
+  box always holds that variant's payload; the sibling arm never runs), reusing
+  `binding_escapes_arm` so a `Some(v) => v[i] / v.len()` borrow is admitted but a
+  binding that stores/returns/passes `v` rejects. (3)
+  `consumed_rcpayload_option_frees` — same single-match / dead-after / non-escape
+  gates as the enum pass. (4) `emit_opt_payload_drop(s, slot)` — because the
+  constructed variant is statically known, the drop is STRAIGHT-LINE (no runtime
+  `variant_is` guard the enum path needs): `op_opt_payload` reads the payload
+  pointer (offset 8 / 4 per backend), one `__fern_rc_dec` releases the flat scalar
+  buffer, then the box is dec'd and the slot zeroed (exit sweep decs a null).
+  SOUNDNESS — a scalar-array payload is a flat rc-headered buffer with no inner
+  pointers, so a single dec is the whole payload free; the borrow-only gate proves
+  the bound `v` doesn't outlive the arm; payload dropped BEFORE the box, each freed
+  exactly once. VERIFIED: new `option-arr-*` / `result-*-arr-payload-*` cases (route
+  ir, value, `__rc_underflow()==0`: annotated + un-annotated Some, f64[]/Ok/Err
+  arrays, .len()+index borrow, heap-reuse corruption probe, binding-escapes +
+  used-after + returned non-firing guards) in `TestSelfHostRcPreciseDropX86IR`; new
+  wasm `option-arr-payload-*` / `result-ok-arr-payload-freed` + a 50k churn in
+  `TestSelfHostRcOptionBoxWasm` (the shared classifier drives wasm too); byte-
+  identical FIXPOINT + BOOTSTRAP + `TestSelfHostIRDiff` all stay green. Frontend-only
+  (classifier + emitter are backend-agnostic — every backend that lowers
+  Options/Results benefits).
