@@ -117,6 +117,11 @@ func TestSelfHostRcOptionBoxWasm(t *testing.T) {
 		// the payload box (shallow — inline scalars) then the option box, right after
 		// its consuming match. Value intact + detector clean.
 		{"option-struct-payload-freed", `struct P { x: i32, y: i32 } function main(): i32 { var o: Option[P] = Some(P { x: 18, y: 24 }); var r = 0; match (o) { Some(p) => { r = p.x + p.y; }, None => {} } return r + __fern_rc_underflow_count(); }`, 42},
+		// PRECISE drop of a scalar Option last-used in a NESTED if-block (no top-level
+		// match) — precise_drop_names frees the rc box right after the if. Value +
+		// detector clean (the box is freed exactly once, on the shared classifier that
+		// drives wasm too).
+		{"option-precise-if-freed", `function f(n: i32): i32 { var o: Option[i32] = Some(40); var c = 0; if (n > 0) { match (o) { Some(v) => { c = v; }, None => {} } } return c + 2 + __fern_rc_underflow_count(); } function main(): i32 { return f(5); }`, 42},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -3125,3 +3125,25 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   bare-ident + binding-escapes non-firing guards) in `TestSelfHostRcPreciseDropX86IR`;
   new wasm `option-struct-payload-freed` in `TestSelfHostRcOptionBoxWasm`; byte-
   identical FIXPOINT + BOOTSTRAP + `TestSelfHostIRDiff` all stay green.
+- 2026-07-01: **Precise drop-on-last-use for scalar Option/Result locals** — the
+  option sibling of the scalar struct/tuple precise-if drops (#16/#18). A fresh
+  `var o = Some(5)` / `None` / `Ok(4)` whose LAST use is a NESTED block (an if-body
+  `match (o)`, a `.is_some()` borrow) rather than a top-level consuming match
+  previously LEAKED: consumed_scalar_enum_frees only finds a TOP-LEVEL match
+  scrutinee, so a conditionally-consumed option box was never freed. precise_drop_
+  names now admits a fresh scalar Option/Result (fresh_scalar_option_init) and, at
+  its last-use statement, shallow-frees the rc-headered box (opt_make/opt_none →
+  __fern_arr_box; the scalar payload carries no rc pointer) + zeroes the slot — the
+  release moved earlier and bounded, exactly like the array/struct/tuple precise
+  drops. DISJOINTNESS from consumed_scalar_enum_frees is by construction: the option
+  is admitted to precise_drop_names ONLY when it has NO top-level match of its name
+  (a local `has_tlm` scan) — so an option with a top-level consuming match stays
+  owned by consumed_scalar_enum_frees (which also feeds the donor/reuse paths) and
+  is never freed twice. The emission-site guard is type_is_scalar_option(opt_type_
+  of_slot(slot)); options are never exit-swept, so the precise dec is the box's only
+  release. VERIFIED: new option-precise-if-* / result-precise-if / option-precise-
+  none / corruption-probe cases + an option-toplevel-match-not-double-freed
+  disjointness guard in TestSelfHostRcPreciseDropX86IR; new wasm option-precise-if-
+  freed in TestSelfHostRcOptionBoxWasm; byte-identical FIXPOINT + BOOTSTRAP +
+  TestSelfHostIRDiff all stay green. Frontend-only (precise_drop_names + the
+  emission branch are backend-agnostic).

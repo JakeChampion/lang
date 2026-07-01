@@ -12094,9 +12094,29 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                     },
                     _ => {}
                 }
+                // A fresh SCALAR Option/Result local (`var o = Some(5)` / `None`) is a
+                // precise-drop candidate too — but ONLY when it has NO top-level
+                // consuming match. That top-level-match case is owned by
+                // consumed_scalar_enum_frees (which also feeds the donor/reuse paths);
+                // admitting it here too would free the box twice. With no top-level
+                // match its last use is a nested block (an if-body match, a `.is_some()`
+                // borrow), so the rc-headered box (opt_make/opt_none) is shallow-freed
+                // after that whole statement — the option sibling of the scalar
+                // struct/tuple precise-if drops. The emission-site slot guard
+                // (opt_type_of_slot + type_is_scalar_option) re-checks before freeing.
+                var is_opt: boolean = false;
+                if (!is_lit && fresh_scalar_option_init(v)) {
+                    var has_tlm: boolean = false;
+                    var mk: i32 = 0;
+                    while (mk < body.len()) {
+                        if (match_scrutinee_is(body[mk], v.name)) { has_tlm = true; }
+                        mk = mk + 1;
+                    }
+                    is_opt = !has_tlm;
+                }
                 var shadowed: boolean = util.index_of_str(seen, v.name) >= 0;
                 seen = seen.append(v.name);
-                if (is_lit && !shadowed && util.index_of_str(reassigned, v.name) < 0 && !body_unsafe_for(body, v.name, borrowable)) {
+                if ((is_lit || is_opt) && !shadowed && util.index_of_str(reassigned, v.name) < 0 && !body_unsafe_for(body, v.name, borrowable)) {
                     var last: i32 = 0 - 1;
                     var k: i32 = i + 1;
                     var none: string[] = [];
@@ -16294,6 +16314,20 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                     // (xtuple.donors): emit_cross_tuple_reuse recycles its box for the
                     // recipient, so freeing it here would race that reuse (a
                     // double-free / write-to-freed box — the UAF this guard prevents).
+                    s = s.emit(ir.op_load_local(dslot));
+                    s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    s = s.emit(ir.op_drop());
+                    s = s.emit(ir.op_const_i32(0));
+                    s = s.emit(ir.op_store_local(dslot));
+                } else if (dslot >= s.n_params && type_is_scalar_option(s.opt_type_of_slot(dslot))) {
+                    // Fresh SCALAR Option/Result local, last-used at statement j (a
+                    // nested-block match / borrow — precise_drop_names admitted it only
+                    // because it has NO top-level consuming match, so it is DISJOINT
+                    // from consumed_scalar_enum_frees): free its rc-headered box now
+                    // (shallow __fern_rc_dec — the scalar payload carries no rc pointer)
+                    // and zero the slot. Options are never exit-swept, so this is the
+                    // box's only release — no double-free. The option sibling of the
+                    // scalar struct/tuple precise-if drops.
                     s = s.emit(ir.op_load_local(dslot));
                     s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     s = s.emit(ir.op_drop());
