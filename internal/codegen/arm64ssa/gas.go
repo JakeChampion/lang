@@ -208,6 +208,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__str_eq":            emitStrEqHelper,
 	"__str_concat":        emitStrConcatHelper,
 	"__fern_str_dec":      emitStrDecHelper,
+	"__fern_arr_dec":      emitArrDecHelper,
+	"__arr_idx":           emitArrIdxHelper,
 }
 
 // runtimeHelperDeps records helper→helper call edges: a helper that tail-calls
@@ -479,6 +481,48 @@ func emitStrDecHelper(w func(string, ...any)) {
 	w("\tsub w1, w1, #1")
 	w("\tstur w1, [x0, #-8]")
 	w(".Lssa_strdec_ret:")
+	w("\tret")
+}
+
+// emitArrDecHelper writes __fern_arr_dec(data, stride): the array-drop the IR
+// inserts at scope exit. The array element pointer carries a 16-byte header with
+// its rc at [data-8] (cap@-12, rc@-8, len@-4). Guarded (null / low-address /
+// static sentinel); rc<=1 leaks (unique — the bump heap doesn't reclaim, per
+// docs/SSA-RC-RUNTIME.md) else drops a shared reference. The stride arg (x1) is
+// unused until real reclamation. Leaf.
+func emitArrDecHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_arr_dec"))
+	w("\tcbz x0, .Lssa_arrdec_ret")
+	w("\tcmp x0, #0x10000")
+	w("\tb.lo .Lssa_arrdec_ret")
+	w("\tldur w2, [x0, #-8]")             // rc (x1 holds stride)
+	w("\ttbnz w2, #31, .Lssa_arrdec_ret") // static sentinel
+	w("\tcmp w2, #1")
+	w("\tb.le .Lssa_arrdec_ret") // rc<=1: unique (leak) or already dropped
+	w("\tsub w2, w2, #1")
+	w("\tstur w2, [x0, #-8]")
+	w(".Lssa_arrdec_ret:")
+	w("\tret")
+}
+
+// emitArrIdxHelper writes __arr_idx(base, idx) -> elem address: a bounds-checked
+// index into a length-prefixed i32 (stride-4) array. Compares idx against the
+// length at [base-4] with a single unsigned compare (a negative idx is huge
+// unsigned, so it fails too) and, on out-of-range, exits 134 — matching the
+// native array-index trap and wasm's `unreachable`. Returns base + idx*4; the
+// caller's OpLoad reads the element. Leaf.
+func emitArrIdxHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__arr_idx"))
+	w("\tldur w2, [x0, #-4]") // len
+	w("\tcmp w1, w2")
+	w("\tb.lo .Lssa_arridx_ok") // idx < len (unsigned)
+	w("\tmov x0, #134")
+	w("\tmov x8, #94") // exit_group
+	w("\tsvc #0")
+	w(".Lssa_arridx_ok:")
+	w("\tadd x0, x0, x1, lsl #2") // base + idx*4
 	w("\tret")
 }
 
