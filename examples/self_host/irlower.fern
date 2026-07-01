@@ -12118,9 +12118,12 @@ function call_returns_scalar_array(name: string, arr: string[], strarr: string[]
 // (array / scalar struct / tuple, dispatched by slot flags); "box-shallow" = a scalar
 // Option/Result/enum box (a plain __fern_rc_dec — the scalar payload is an inline
 // value, so no field/element walk); "opt-rcpayload" = an rc-payload Option/Result
-// (emit_opt_payload_drop: op_opt_payload → payload dec → box dec). Carrying the kind
-// lets the emission free a box whose type the slot alone can't classify — a Result
-// box (Ok-vs-Err payload ambiguous) or an un-annotated enum box (no struct_type).
+// (emit_opt_payload_drop: op_opt_payload → payload dec → box dec); "enum-rcpayload:<E>"
+// = an rc-payload user enum (emit_enum_variant_drops: runtime variant-dispatch deep-
+// drop of enum <E>, whose name rides in the kind). Carrying the kind lets the emission
+// free a box whose type the slot alone can't classify — a Result box (Ok-vs-Err
+// payload ambiguous), an un-annotated enum box (no struct_type), or the enum name for
+// the variant deep-drop.
 struct PreciseDrops { idxs: i32[], names: string[], kinds: string[] }
 
 // precise_drop_names computes the array-literal LOCAL drop-on-last-use points: a
@@ -12251,9 +12254,32 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                     }
                     is_enum = !has_tlm3;
                 }
+                // A fresh rc-PAYLOAD user-enum local (`var x = Poly([..])` — a variant
+                // carrying a leak-safe array / deep-drop-ok struct payload), last-used in
+                // a nested block, is a precise-drop candidate too — the rc-payload-enum
+                // sibling of the rc-payload OPTION case. Same no-top-level-match
+                // disjointness (owned by consumed_rcpayload_enum_frees), AND no arm may
+                // bind an rc payload that escapes (enum_body_binds_rc_payload, the
+                // nested-match lift of match_arm_binds_rc_payload). The enum NAME is
+                // carried in the kind ("enum-rcpayload:<Enum>") so the emission's
+                // emit_enum_variant_drops can dispatch the runtime variant deep-drop.
+                var rcenum_owner: string = "";
+                if (!is_lit && !is_opt && !is_rcopt && !is_enum) {
+                    var eo: string = fresh_rcpayload_enum_init(v.init, structs);
+                    if (eo != "") {
+                        var has_tlm4: boolean = false;
+                        var mk4: i32 = 0;
+                        while (mk4 < body.len()) {
+                            if (match_scrutinee_is(body[mk4], v.name)) { has_tlm4 = true; }
+                            mk4 = mk4 + 1;
+                        }
+                        if (!has_tlm4 && !enum_body_binds_rc_payload(body, v.name, structs)) { rcenum_owner = eo; }
+                    }
+                }
+                var is_rcenum: boolean = rcenum_owner != "";
                 var shadowed: boolean = util.index_of_str(seen, v.name) >= 0;
                 seen = seen.append(v.name);
-                if ((is_lit || is_opt || is_rcopt || is_enum) && !shadowed && util.index_of_str(reassigned, v.name) < 0 && !body_unsafe_for(body, v.name, borrowable)) {
+                if ((is_lit || is_opt || is_rcopt || is_enum || is_rcenum) && !shadowed && util.index_of_str(reassigned, v.name) < 0 && !body_unsafe_for(body, v.name, borrowable)) {
                     var last: i32 = 0 - 1;
                     var k: i32 = i + 1;
                     var none: string[] = [];
@@ -12265,6 +12291,7 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                         var kind: string = "";
                         if (is_rcopt) { kind = "opt-rcpayload"; }
                         else if (is_opt || is_enum) { kind = "box-shallow"; }
+                        else if (is_rcenum) { kind = "enum-rcpayload:" + rcenum_owner; }
                         idxs = idxs.append(last);
                         names = names.append(v.name);
                         kinds = kinds.append(kind);
@@ -14203,6 +14230,45 @@ function match_arm_binds_rc_payload(st: parser.Stmt, structs: parser.StructDecl[
             }
             return false;
         },
+        _ => { return false; }
+    }
+}
+
+// enum_body_binds_rc_payload: recursively scan `stmts` (through nested if/while/for/
+// match blocks) for a `match (name)` whose arms bind an rc payload that ESCAPES its
+// arm (match_arm_binds_rc_payload). The rc-payload-ENUM analogue of
+// opt_body_binding_escapes — used by the rc-payload enum precise-drop path, where the
+// consuming match sits in a NESTED block. A true result rejects the candidate.
+function enum_body_binds_rc_payload(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (enum_stmt_binds_rc_payload(stmts[i], name, structs)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+function enum_stmt_binds_rc_payload(st: parser.Stmt, name: string, structs: parser.StructDecl[]): boolean {
+    match (st) {
+        parser.StmtMatch(m) => {
+            match (m.scrutinee) {
+                parser.ExprIdent(id) => {
+                    if (id.name == name && match_arm_binds_rc_payload(st, structs)) { return true; }
+                },
+                _ => {}
+            }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (enum_body_binds_rc_payload(m.arms[ai].body, name, structs)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtIf(iff) => {
+            return enum_body_binds_rc_payload(iff.then_body, name, structs)
+                || enum_body_binds_rc_payload(iff.else_body, name, structs);
+        },
+        parser.StmtWhile(w) => { return enum_body_binds_rc_payload(w.body, name, structs); },
+        parser.StmtFor(f) => { return enum_body_binds_rc_payload(f.body, name, structs); },
         _ => { return false; }
     }
 }
@@ -16693,6 +16759,16 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                     // type. A scalar payload took the "box-shallow" branch above (op_opt_
                     // payload on an inline scalar would wrongly dec the value).
                     s = emit_opt_payload_drop(s, dslot);
+                } else if (dslot >= s.n_params && pdrops.kinds[pi].len() > 15 && pdrops.kinds[pi][0:15] == "enum-rcpayload:") {
+                    // Fresh rc-PAYLOAD user-enum (a variant with a leak-safe array /
+                    // deep-drop-ok struct payload), last-used in a nested block —
+                    // precise_drop_names admitted it with NO top-level match (disjoint
+                    // from consumed_rcpayload_enum_frees) and no escaping arm payload
+                    // binding (enum_body_binds_rc_payload). Deep-drop the runtime
+                    // variant's rc payload then free the box (emit_enum_variant_drops
+                    // zeroes the slot too). The enum NAME rides in the kind after the
+                    // "enum-rcpayload:" prefix (the slot type alone can't name it).
+                    s = emit_enum_variant_drops(s, dslot, pdrops.kinds[pi][15 : pdrops.kinds[pi].len()]);
                 }
             }
             pi = pi + 1;
