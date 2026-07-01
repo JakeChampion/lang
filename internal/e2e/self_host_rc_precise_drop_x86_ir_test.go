@@ -1123,6 +1123,24 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// f64 slot. `as i32` truncates 42.5 toward zero → 42.
 		{"iife-match-f64-struct-field-value", `struct P { v: f64 } enum E { V(P), N } function main(): i32 { var e: E = E.V(P { v: 42.5 }); var r: f64 = match (e) { V(p) => p.v, N => 0.0 }; return r as i32; }`, 42},
 		{"iife-match-f64-struct-field-detector", `struct P { v: f64 } enum E { V(P), N } function go(): i32 { var e: E = E.V(P { v: 42.5 }); var r: f64 = match (e) { V(p) => p.v, N => 0.0 }; if (r as i32 != 42) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// MAP local reclaim: a fresh `var m = Map{..}` used only via read methods
+		// (get_or), non-escaping + non-iterated, has its keys + values buffers freed
+		// (rc-guarded __fern_rc_dec) at scope exit — the raw 16-byte mapbox leaks. The
+		// buffers are sole-owned (rc==1), so the detector stays 0.
+		{"map-reclaim-value", `function go(): i32 { var m = Map { 1: 10, 2: 20 }; return m.get_or(1, 0) + m.get_or(2, 0); } function main(): i32 { return go(); }`, 30},
+		{"map-reclaim-detector", `function go(): i32 { var m = Map { 1: 10, 2: 20 }; var r = m.get_or(1, 0) + m.get_or(2, 0); if (r != 30) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// Heap-reuse corruption probe: fresh arrays allocated AFTER the map's buffer
+		// reclaim read back intact (the buffers were freed soundly, exactly once — no
+		// still-live buffer freed early that the fresh alloc could recycle).
+		{"map-reclaim-corruption-probe-detector", `function go(): i32 { var m = Map { 1: 10, 2: 20 }; var r = m.get_or(1, 0) + m.get_or(2, 0); var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (r != 30) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// NON-firing (escapes / passed to a fn): a map passed as an arg is NOT
+		// reclaimable (body_unsafe_for flags the arg), so its buffers must NOT be freed
+		// here — the callee reads them. Detector 0.
+		{"map-passed-not-freed-detector", `function sum(m: Map[i32, i32]): i32 { return m.get_or(1, 0) + m.get_or(2, 0); } function go(): i32 { var m = Map { 1: 10, 2: 20 }; var r = sum(m); if (r != 30) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// NON-firing (iterated): a `for (k, v) in m` builds a MapIter aliasing the
+		// buffers, so map_is_iterated excludes m from reclaim (the buffers stay live
+		// through the loop). Detector 0.
+		{"map-iterated-not-freed-detector", `function go(): i32 { var m = Map { 1: 10, 2: 20 }; var t = 0; for (k, v) in m { t = t + v; } if (t != 30) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

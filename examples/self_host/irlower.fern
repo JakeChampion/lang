@@ -12488,6 +12488,19 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
         }
         sj = sj + 1;
     }
+    // Reclaimable MAP locals — free the keys + values buffers (arr-boxed, rc-guarded
+    // __fern_rc_dec) at scope exit; the raw 16-byte mapbox leaks. Only fresh, non-
+    // escaping, non-iterated, non-aliased map locals qualify (slot_is_reclaimable_map
+    // via the "MAP:" reclaim set), so the buffers are sole-owned (rc==1) and freed
+    // exactly once. A returned/escaping map is never reclaimable → never swept (no
+    // move-on-return keep needed).
+    var mj: i32 = st.n_params;
+    while (mj < st.locals.len()) {
+        if (!slot_list_has(keeps, mj) && slot_is_reclaimable_map(st, mj)) {
+            st = emit_map_buffers_free(st, mj);
+        }
+        mj = mj + 1;
+    }
     return st;
 }
 
@@ -13546,6 +13559,135 @@ function collect_fresh_ret_call_names(stmts: parser.Stmt[], structs: parser.Stru
 }
 
 // reclaimable_names_of = fresh-bound struct names that never escape.
+// is_fresh_map_init: an init producing a FRESH map value — a `map_new()` /
+// `map_new_i32()` call, or a `Map { … }` literal (which desugars to
+// `map_new[_i32](n).insert(k0,v0).insert(…)`, a `.insert()` method chain whose root
+// is the map_new call). A bare-ident (`var m2 = m1`) or a map-returning call is NOT
+// fresh here (an alias / an un-owned move), so it is left to leak — conservative.
+function is_fresh_map_init(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => { return cid.name == "map_new" || cid.name == "map_new_i32"; },
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field == "insert") { return is_fresh_map_init(fa.obj); }
+                    return false;
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+}
+
+// collect_fresh_map_names gathers every var-name bound from a fresh map init,
+// recursing through nested blocks (the map sibling of collect_fresh_struct_names).
+function collect_fresh_map_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) { a = collect_fresh_map_in_stmt(stmts[i], a); i = i + 1; }
+    return a;
+}
+function collect_fresh_map_in_stmt(st: parser.Stmt, acc: string[]): string[] {
+    match (st) {
+        parser.StmtVar(v) => {
+            if (is_fresh_map_init(v.init)) { return push_str_unique(acc, v.name); }
+            return acc;
+        },
+        parser.StmtIf(iff) => {
+            var a: string[] = collect_fresh_map_names(iff.then_body, acc);
+            return collect_fresh_map_names(iff.else_body, a);
+        },
+        parser.StmtWhile(w) => { return collect_fresh_map_names(w.body, acc); },
+        parser.StmtFor(f) => { return collect_fresh_map_names(f.body, acc); },
+        parser.StmtMatch(m) => {
+            var a: string[] = acc;
+            var i: i32 = 0;
+            while (i < m.arms.len()) { a = collect_fresh_map_names(m.arms[i].body, a); i = i + 1; }
+            return a;
+        },
+        parser.StmtSwitch(sw) => {
+            var a: string[] = acc;
+            var i: i32 = 0;
+            while (i < sw.cases.len()) { a = collect_fresh_map_names(sw.cases[i].body, a); i = i + 1; }
+            if (sw.has_default) { a = collect_fresh_map_names(sw.default_body, a); }
+            return a;
+        },
+        parser.StmtDefer(d) => { return collect_fresh_map_in_stmt(d.action, acc); },
+        _ => { return acc; },
+    }
+}
+
+// expr_iters_map reports whether expr `e` calls `name.iter()` anywhere — the map
+// reclaim's soundness gate for the ITER-ALIASING hole: `m.iter()` builds a MapIter
+// box holding a raw pointer to m's mapbox (and thus to its keys/values buffers). If
+// that iter escapes, freeing the buffers at exit is a UAF. `for (k,v) in m` is safe
+// (the iter is a scoped loop temp, dead by exit) but indistinguishable cheaply from
+// an escaping iter, so ANY iter use conservatively excludes the map from reclaim.
+function expr_iters_map(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    match (fa.obj) {
+                        parser.ExprIdent(id) => { if (id.name == name && fa.field == "iter") { return true; } },
+                        _ => {}
+                    }
+                    if (expr_iters_map(fa.obj, name)) { return true; }
+                },
+                _ => { if (expr_iters_map(c.callee, name)) { return true; } }
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) { if (expr_iters_map(c.args[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprBinary(b) => { return expr_iters_map(b.left, name) || expr_iters_map(b.right, name); },
+        parser.ExprUnary(u) => { return expr_iters_map(u.operand, name); },
+        parser.ExprIndex(ix) => { return expr_iters_map(ix.array, name) || expr_iters_map(ix.index, name); },
+        parser.ExprFieldAccess(fa) => { return expr_iters_map(fa.obj, name); },
+        _ => { return false; }
+    }
+}
+
+// map_is_iterated: does the body iterate `name` — a `for (..) in name` (StmtFor iter
+// mentioning name) or a `name.iter()` call anywhere? Recurses through nested blocks
+// and statement expressions. A true result excludes the map from reclaim (see
+// expr_iters_map for why iteration aliases the buffers).
+function map_is_iterated(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (map_is_iterated_stmt(stmts[i], name)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+function map_is_iterated_stmt(st: parser.Stmt, name: string): boolean {
+    match (st) {
+        parser.StmtFor(f) => {
+            if (parser.expr_mentions(f.iter, name)) { return true; }
+            return map_is_iterated(f.body, name);
+        },
+        parser.StmtVar(v) => { return expr_iters_map(v.init, name); },
+        parser.StmtAssign(a) => { return expr_iters_map(a.value, name); },
+        parser.StmtExpr(ex) => { return expr_iters_map(ex.value, name); },
+        parser.StmtReturn(r) => { return expr_iters_map(r.value, name); },
+        parser.StmtIf(iff) => { return map_is_iterated(iff.then_body, name) || map_is_iterated(iff.else_body, name); },
+        parser.StmtWhile(w) => { return expr_iters_map(w.cond, name) || map_is_iterated(w.body, name); },
+        parser.StmtMatch(m) => {
+            var i: i32 = 0;
+            while (i < m.arms.len()) { if (map_is_iterated(m.arms[i].body, name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtSwitch(sw) => {
+            var i: i32 = 0;
+            while (i < sw.cases.len()) { if (map_is_iterated(sw.cases[i].body, name)) { return true; } i = i + 1; }
+            if (sw.has_default) { return map_is_iterated(sw.default_body, name); }
+            return false;
+        },
+        _ => { return false; }
+    }
+}
+
 function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, []);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
@@ -13616,6 +13758,26 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     while (ci < accs.len()) {
         if (!str_accum_unsafe_for(body, accs[ci], borrowable)) { out = out.append("STR:" + accs[ci]); }
         ci = ci + 1;
+    }
+    // Fresh MAP locals (`var m = Map { … }` / `map_new()`): credited under a "MAP:"
+    // prefix so only slot_is_reclaimable_map matches. The keys + values buffers
+    // (arr-boxed via __fern_alloc_u8) are freed by __fern_rc_dec at scope exit; the
+    // 16-byte RAW mapbox leaks (a later slice reclaims it). Gates: fresh map init,
+    // NOT reassigned (a rebind could leave a live alias in the slot), non-escaping
+    // (body_unsafe_for — receiver-borrow method calls m.get/m.set/m.has/m.len are
+    // fine; passed / stored / returned is an escape), not aliased, and NOT iterated
+    // (map_is_iterated — m.iter()/`for..in m` aliases the buffers, the UAF hole).
+    var maps: string[] = collect_fresh_map_names(body, []);
+    var aliased_m: string[] = aliased_array_names_of(body);
+    var mi: i32 = 0;
+    while (mi < maps.len()) {
+        if (util.index_of_str(reassigned, maps[mi]) < 0
+            && util.index_of_str(aliased_m, maps[mi]) < 0
+            && !body_unsafe_for(body, maps[mi], borrowable)
+            && !map_is_iterated(body, maps[mi])) {
+            out = out.append("MAP:" + maps[mi]);
+        }
+        mi = mi + 1;
     }
     return out;
 }
@@ -14899,6 +15061,41 @@ function slot_is_reclaimable_tuple(s: LowerState, i: i32): boolean {
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].tuple_elems.len() == 0) { return false; }
     return util.index_of_str(s.reclaimable_names, "TUP:" + s.locals[i].slot_name) >= 0;
+}
+
+// slot_is_reclaimable_map: slot `i` is a fresh, non-escaping, non-iterated MAP local
+// (`var m = Map { … }` / `map_new()`) credited under the "MAP:" prefix by
+// reclaimable_names_of. A non-param MAP slot (map_type set) whose name is in the
+// reclaim set. Its keys + values buffers (arr-boxed) are freed at scope exit by
+// emit_map_buffers_free; the raw 16-byte mapbox leaks.
+function slot_is_reclaimable_map(s: LowerState, i: i32): boolean {
+    if (i < s.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    if (s.locals[i].map_type.len() == 0) { return false; }
+    return util.index_of_str(s.reclaimable_names, "MAP:" + s.locals[i].slot_name) >= 0;
+}
+
+// emit_map_buffers_free frees the keys + values buffers of the map in `slot` — both
+// are rc-headered arrays (__fern_alloc_u8 → __fern_arr_box), so a rc-guarded
+// __fern_rc_dec (== __fern_arr_dec) frees each at rc==1 and safe-decs if aliased
+// (m.keys()/values() views). raw_load_ptr reads mapbox word 0 (keys) / word 1
+// (values). The 16-byte RAW mapbox is left to leak (a raw-box free is a later
+// slice). Order: read + free the buffers BEFORE any slot rewrite.
+function emit_map_buffers_free(s: LowerState, slot: i32): LowerState {
+    var st: LowerState = s;
+    // keys = mapbox[word 0]
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_raw_load_ptr());
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+    st = st.emit(ir.op_drop());
+    // values = mapbox[word 1]
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_const_i32(1));
+    st = st.emit(ir.op_raw_load_ptr());
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+    st = st.emit(ir.op_drop());
+    return st;
 }
 
 // slot_is_reclaimable_str: slot `i` is a fresh, non-escaping, non-reassigned

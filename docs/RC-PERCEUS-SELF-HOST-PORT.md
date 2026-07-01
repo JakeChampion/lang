@@ -3292,3 +3292,30 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   TestSelfHostRcPreciseDropX86IR; byte-identical FIXPOINT + BOOTSTRAP (the compiler's
   own array-field struct locals now drop early — the strongest test) + wasm + IR-diff
   gates verified.
+- 2026-07-01: **Map local reclaim — slice 1 (exit-sweep free of the keys/values
+  buffers)**. A fresh `var m = Map { … }` / `map_new()`, used only via read methods
+  (get_or/has/len) and NOT escaping / iterated, now has its KEYS and VALUES buffers
+  freed at scope exit — previously every map local leaked entirely. KEY MECHANISM (no
+  new runtime helper): the mapbox is a raw __fern_alloc(16) {keys@0, values@8}, but
+  the keys/values buffers come from __fern_alloc_u8 → __fern_arr_box, so they are
+  rc-headered arrays freeable by the EXISTING __fern_rc_dec (== __fn___fern_arr_dec,
+  rc-guarded: frees at rc==1, safe-decs an aliased m.keys()/values() view). op_raw_
+  load_ptr reads mapbox word 0 (keys) / word 1 (values); emit_map_buffers_free decs
+  each. The 16-byte RAW mapbox leaks for now (a raw-box free is a follow-up). Uses
+  only existing IR ops, so it lowers on all three backends unchanged. ESCAPE ANALYSIS
+  works out of the box: body_unsafe_for already treats a method-call receiver
+  (m.get/m.set/…) as a BORROW, so a method-only map is non-escaping; a map passed /
+  stored / returned escapes and is excluded. ITER-ALIASING HOLE closed: m.iter() (and
+  `for..in m`) builds a MapIter box holding a raw pointer to the mapbox / its buffers,
+  so map_is_iterated excludes any iterated map (conservative — `for..in m` is
+  actually safe but indistinguishable cheaply from an escaping iter). GATE
+  (reclaimable_names_of "MAP:" prefix, slot_is_reclaimable_map): fresh map init +
+  not reassigned + not aliased + body_unsafe_for false + not iterated. SOUNDNESS: the
+  gate proves the buffers are sole-owned (rc==1), so each is freed exactly once; the
+  rc-guard makes an aliased buffer a safe dec. VERIFIED: new map-reclaim-* cases
+  (value, __rc_underflow()==0 detector, heap-reuse corruption probe, passed-to-fn +
+  iterated non-firing guards) in TestSelfHostRcPreciseDropX86IR; byte-identical
+  FIXPOINT + BOOTSTRAP stay green (the compiler's own heavy map usage self-compiles
+  correctly — the decisive soundness signal). Follow-ups (task #22): widen to iterated
+  maps (precise iter-escape tracking), precise-drop for map locals, deep-drop string/
+  array VALUES, reclaim the 16-byte mapbox.
