@@ -56,6 +56,7 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
+	arm64ssa "github.com/jakechampion/lang/internal/codegen/arm64ssa"
 	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/codegen/wasmssa"
 	x86_64codegen "github.com/jakechampion/lang/internal/codegen/x86_64"
@@ -537,7 +538,7 @@ func (r *repeatedString) Set(v string) error {
 
 func main() {
 	out := flag.String("o", "", "output binary path; if unset, assembly is written to stdout")
-	target := flag.String("target", "arm64", "code-generation backend: arm64 (default, Linux ELF), arm64-android (arm64 Linux ELF as a static position-independent executable for Android), arm64-darwin (native Apple Silicon macOS), x86-64 (Linux ELF, in-process native backend by default), wasm (CLI component), wasi-http (HTTP handler component implementing wasi:http/incoming-handler), or wasm-ssa (experimental SSA-direct wasm core module; supports i32/i64/f32/f64, memory + alloc, string literals; pass -component-wrap-cli to lift as a wasi:cli/run component runnable via plain `wasmtime run`)")
+	target := flag.String("target", "arm64", "code-generation backend: arm64 (default, Linux ELF), arm64-android (arm64 Linux ELF as a static position-independent executable for Android), arm64-darwin (native Apple Silicon macOS), x86-64 (Linux ELF, in-process native backend by default), wasm (CLI component), wasi-http (HTTP handler component implementing wasi:http/incoming-handler), wasm-ssa (experimental SSA-direct wasm core module; supports i32/i64/f32/f64, memory + alloc, string literals; pass -component-wrap-cli to lift as a wasi:cli/run component runnable via plain `wasmtime run`), or arm64-ssa (experimental SSA-direct arm64 Linux ELF using register allocation for smaller .text; covers the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — an unsupported op errors rather than miscompiles)")
 	cc := flag.String("cc", "", "external assembler/linker invoked when -o or --run is set. arm64/x86-64 Linux and arm64-darwin all default to the in-process native backend (no external toolchain); passing -cc opts out to it (e.g. aarch64-linux-gnu-gcc / x86_64-linux-gnu-gcc on Linux, clang on darwin).")
 	runIt := flag.Bool("run", false, "link to a temporary binary and execute it (arm64 Linux only; uses qemu-aarch64 when not on an arm64 host)")
 	native := flag.Bool("native", false, "force the in-process pure-Go assembler+linker (internal/native). Already the DEFAULT for arm64/x86-64 Linux and arm64-darwin, so the flag is only needed to override an explicit -cc. No external assembler or linker; errors clearly on any unsupported instruction (pass -cc to fall back to an external toolchain).")
@@ -971,6 +972,30 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 		}
 		if err := os.WriteFile(outPath, bin, 0o644); err != nil {
 			return 1, err
+		}
+		return 0, nil
+	}
+
+	if target == "arm64-ssa" {
+		// Experimental SSA-direct arm64 backend (internal/codegen/arm64ssa)
+		// — lowers via parse → check → ir.LowerWith → ssa.LiftFromIR →
+		// ssa.Optimize → arm64ssa.EmitAsmModule, then links the same in-process
+		// W^X static ELF as -target arm64 (linkNative). It uses SSA register
+		// allocation instead of the stack-machine emitter, so the emitted .text
+		// is markedly smaller. Coverage is a subset of the language (the integer
+		// core, control flow, calls, memory, strings, arrays, and the RC runtime);
+		// an unsupported op surfaces as a clean error rather than a miscompile —
+		// this is the path the binary-size epic widens until the self-host
+		// compiler itself can be built through it.
+		if outPath == "" {
+			return 1, fmt.Errorf("-target arm64-ssa requires -o OUTPUT")
+		}
+		asm, err := buildArm64SSA(prog, info)
+		if err != nil {
+			return 1, fmt.Errorf("arm64-ssa: %v", err)
+		}
+		if err := linkNative(asm, outPath); err != nil {
+			return 1, fmt.Errorf("arm64-ssa link: %v", err)
 		}
 		return 0, nil
 	}
@@ -1414,6 +1439,35 @@ func buildWasmSSA(prog *ast.Program, info *checker.Info) ([]byte, error) {
 	}
 	ssa.Optimize(f)
 	return wasmssa.EmitModule(f, "main")
+}
+
+// buildArm64SSA lowers a whole program through the SSA-direct arm64 pipeline —
+// ir.LowerWith (ptr width 8) → ssa.LiftFromIR + ssa.Optimize per function →
+// arm64ssa.EmitAsmModule — and returns the AArch64 assembly text (a complete
+// `_start` + all functions + referenced runtime helpers), ready for linkNative.
+// Unlike buildWasmSSA (single `main`), it lifts every function so cross-function
+// calls and recursion work. Returns an error when the program has no `main`, the
+// lift fails, or emit rejects the SSA (a coverage gap) — never a miscompile.
+// Ptr width is fixed at 8 (arm64). numAlloc is 12, the largest register file the
+// renderer's x0..x15 mapping supports (12 allocatable + 4 scratch = 16).
+func buildArm64SSA(prog *ast.Program, info *checker.Info) (string, error) {
+	irProg, err := ir.LowerWith(prog, info, 8)
+	if err != nil {
+		return "", fmt.Errorf("ir.LowerWith: %v", err)
+	}
+	funcs := map[string]*ssa.Func{}
+	for _, fn := range irProg.Funcs {
+		f, err := ssa.LiftFromIR(fn)
+		if err != nil {
+			return "", fmt.Errorf("ssa.LiftFromIR %s: %v", fn.Name, err)
+		}
+		ssa.Optimize(f)
+		funcs[fn.Name] = f
+	}
+	if _, ok := funcs["main"]; !ok {
+		return "", fmt.Errorf("no `main` function in program")
+	}
+	return arm64ssa.EmitAsmModule(funcs, "main", 12, nil)
 }
 
 // Linux dev hosts (cross-compiling) and Macs natively as long
