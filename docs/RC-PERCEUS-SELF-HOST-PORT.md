@@ -3247,3 +3247,23 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   TestSelfHostRcPreciseDropX86IR; byte-identical FIXPOINT + BOOTSTRAP (the compiler's
   own enum-heavy code) + wasm TestSelfHostRcOptionBoxWasm + TestSelfHostIRDiff all
   stay green.
+- 2026-07-01: **Precise drop-on-last-use for rc-PAYLOAD user-enum locals in nested
+  blocks** (completes the precise-drop parity story — the rc-payload-enum sibling of
+  the rc-payload-option precise drop). A fresh `var x = Poly([..])` / `V(Buf{..})` —
+  a variant carrying a leak-safe array or deep-drop-ok struct payload — whose LAST
+  use is a NESTED block (an if-body `match (x)`) previously LEAKED its box + payload
+  (consumed_rcpayload_enum_frees only finds a TOP-LEVEL match). precise_drop_names
+  now admits such an enum (fresh_rcpayload_enum_init) when: no top-level match
+  (disjoint from consumed_rcpayload_enum_frees; and rc-payload enums are never fed to
+  the donor path, so no donor guard is needed), AND no arm binds an rc payload that
+  escapes — the nested-match lift enum_body_binds_rc_payload (through if/while/for/
+  match) of match_arm_binds_rc_payload (a borrow-only binding is admitted). The
+  emission deep-drops the runtime variant + frees the box via emit_enum_variant_drops;
+  the enum NAME (which the slot type can't provide) rides in the kind
+  "enum-rcpayload:<Enum>", parsed at the emission site. VERIFIED: new
+  enum-arr-precise-if-* / enum-struct-precise-if (deep-drop-ok Buf payload) /
+  corruption-probe + an enum-arr-binding-escapes non-firing guard in
+  TestSelfHostRcPreciseDropX86IR; fixpoint + bootstrap + wasm + IR-diff running.
+  Net: EVERY precise-drop shape now reclaims — scalar (struct / tuple / option /
+  result / enum) + rc-payload (option / result / enum), via both consume-by-match
+  (top-level) and precise-drop (nested-block).

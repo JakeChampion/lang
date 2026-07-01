@@ -478,6 +478,25 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// DISJOINTNESS guard: an enum WITH a top-level consuming match is owned by
 		// consumed_scalar_enum_frees, NOT the precise path — freed exactly once.
 		{"enum-toplevel-match-not-double-freed-detector", `enum Shape { Circle(i32), Square(i32) } function go(): i32 { var x = Circle(7); var t = 0; match (x) { Circle(r) => { t = r + r; }, Square(w) => { t = w * w; } } if (t != 14) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// rc-PAYLOAD user-enum precise-drop in a nested block — the rc-payload-enum
+		// sibling of the rc-payload-option precise drop. A `Poly([..])` (array-payload
+		// variant) with no top-level match and a borrow-only arm binding has its runtime
+		// variant deep-dropped + box freed (emit_enum_variant_drops) after the enclosing
+		// statement (previously leaked). The enum name rides in the "enum-rcpayload:<E>"
+		// kind. FIRING: f(5): x=Poly([10,20,30]), c=a[0]+a[2]=40, return 40+5=45.
+		{"enum-arr-precise-if-value", `enum Shape { Poly(i32[]), Dot(i32) } function f(n: i32): i32 { var x = Poly([10, 20, 30]); var c = 0; if (n > 0) { match (x) { Poly(a) => { c = a[0] + a[2]; }, Dot(d) => { c = d; } } } return c + n; } function main(): i32 { return f(5); }`, 45},
+		{"enum-arr-precise-if-detector", `enum Shape { Poly(i32[]), Dot(i32) } function f(n: i32): i32 { var x = Poly([10, 20, 30]); var c = 0; if (n > 0) { match (x) { Poly(a) => { c = a[0] + a[2]; }, Dot(d) => { c = d; } } } return c + n; } function main(): i32 { var z = f(5); if (z != 45) { return 99; } return __rc_underflow(); }`, 0},
+		// Deep-drop-ok STRUCT payload enum variant (`V(Buf)` with Buf{xs:i32[],n}):
+		// emit_enum_variant_drops releases the payload struct's array field via
+		// __struct_drop_<Buf> then frees the payload + box. Value + detector 0.
+		{"enum-struct-precise-if-detector", `struct Buf { xs: i32[], n: i32 } enum E { V(Buf), W(i32) } function f(n: i32): i32 { var x = V(Buf { xs: [10, 20, 30], n: 3 }); var c = 0; if (n > 0) { match (x) { V(b) => { c = b.xs[1] + b.n; }, W(k) => { c = k; } } } return c + n; } function main(): i32 { var z = f(5); if (z != 28) { return 99; } return __rc_underflow(); }`, 0},
+		// PRECISE drop + corruption probe: a fresh array after the rc-payload enum's
+		// precise deep-drop reads back intact (payload + box freed soundly, exactly once).
+		{"enum-arr-precise-corruption-probe-detector", `enum Shape { Poly(i32[]), Dot(i32) } function go(): i32 { var x = Poly([1, 2, 3]); var c = 0; var i = 0; while (i < 1) { match (x) { Poly(a) => { c = a[0] + a[2]; }, Dot(d) => { c = d; } } i = i + 1; } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (c != 4) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// NON-firing (arm binds an rc payload that ESCAPES): the Poly arm STORES its
+		// array payload `a` to an outer var, so enum_body_binds_rc_payload rejects the
+		// candidate — the enum must NOT be freed (a moved out). Detector 0.
+		{"enum-arr-precise-binding-escapes-detector", `enum Shape { Poly(i32[]), Dot(i32) } function go(): i32 { var x = Poly([7, 8, 9]); var out: i32[] = [0]; if (true) { match (x) { Poly(a) => { out = a; }, Dot(d) => {} } } var r = out[0] + out[2]; if (r != 16) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 		// Struct with an i32[] field: the box is rc-headered and freed soundly, and
 		// the array field is deep-dropped (emit_struct_field_drops) exactly once.
 		// Detector 0 proves neither the box nor the array field over-releases.
