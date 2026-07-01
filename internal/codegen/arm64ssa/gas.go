@@ -303,6 +303,9 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__str_slice":            emitStrSliceHelper,
 	"args":                   emitArgsHelper,
 	"print":                  emitPrintHelper,
+	"write":                  emitWriteHelper,
+	"eprint":                 emitEprintHelper,
+	"putchar":                emitPutcharHelper,
 	"__abs_f64":              emitFloatUnaryHelper("__abs_f64", "fabs"),
 	"__sqrt_f64":             emitFloatUnaryHelper("__sqrt_f64", "fsqrt"),
 	"__floor_f64":            emitFloatUnaryHelper("__floor_f64", "frintm"),
@@ -990,6 +993,63 @@ func emitPrintHelper(w func(string, ...any)) {
 	w("\tmov x2, #1")
 	w("\tmov x0, #1")
 	w("\tmov x8, #64")
+	w("\tsvc #0")
+	w("\tadd sp, sp, #16")
+	w("\tmov x0, xzr") // unused return
+	w("\tret")
+}
+
+// emitWriteHelper writes write(s): print's no-newline sibling — a single write(2)
+// of the string's bytes to stdout (fd 1). Same single-word string ABI (data
+// pointer in x0, byte length at [ptr-4]). Leaf; unused return is 0.
+func emitWriteHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("write"))
+	w("\tldur w2, [x0, #-4]") // len
+	w("\tmov x1, x0")         // buf = data
+	w("\tmov x0, #1")         // fd = stdout
+	w("\tmov x8, #64")        // write(2)
+	w("\tsvc #0")
+	w("\tmov x0, xzr") // unused return
+	w("\tret")
+}
+
+// emitEprintHelper writes eprint(s): print's stderr sibling — the string's bytes
+// then a trailing newline, both to fd 2. Two write(2) syscalls; the newline is
+// materialised on the stack. Leaf; unused return is 0.
+func emitEprintHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("eprint"))
+	w("\tldur w2, [x0, #-4]") // len
+	w("\tmov x1, x0")         // buf = data
+	w("\tmov x0, #2")         // fd = stderr
+	w("\tmov x8, #64")        // write(2)
+	w("\tsvc #0")
+	w("\tsub sp, sp, #16")
+	w("\tmov w9, #10")
+	w("\tstrb w9, [sp]")
+	w("\tmov x1, sp")
+	w("\tmov x2, #1")
+	w("\tmov x0, #2")
+	w("\tmov x8, #64")
+	w("\tsvc #0")
+	w("\tadd sp, sp, #16")
+	w("\tmov x0, xzr") // unused return
+	w("\tret")
+}
+
+// emitPutcharHelper writes putchar(c): write the low byte of x0 to stdout (fd 1).
+// The byte is materialised on the stack so the kernel has a real address to read.
+// Leaf; unused return is 0.
+func emitPutcharHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("putchar"))
+	w("\tsub sp, sp, #16")
+	w("\tstrb w0, [sp]") // byte on the stack
+	w("\tmov x1, sp")    // buf
+	w("\tmov x2, #1")    // len = 1
+	w("\tmov x0, #1")    // fd = stdout
+	w("\tmov x8, #64")   // write(2)
 	w("\tsvc #0")
 	w("\tadd sp, sp, #16")
 	w("\tmov x0, xzr") // unused return
