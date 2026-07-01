@@ -155,7 +155,9 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
     route through the 8-byte memory path.)
   - [ ] Composite types: structs, arrays, maps (mostly alloc+load/store, already
     covered post-lowering)
-  - [ ] Integer `div`/`rem` (real-asm needs `idiv` rax/rdx)
+  - [x] Integer `div`/`rem` (`OpDiv/DivU/Rem/RemU`) in the model, mirroring
+    `Eval` (div-by-zero → error). Real-asm `idiv` (rax/rdx pinning) stays
+    deferred to the wiring slice.
   - [ ] `enum_sentinel`, call-pair/indirect, closures
   - [ ] RC inc/dec (Perceus ordering)
 
