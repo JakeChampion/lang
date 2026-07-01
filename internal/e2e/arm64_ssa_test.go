@@ -277,6 +277,32 @@ function main(): i32 { return (123456).to_string().len(); }`,
 			src:  `function main(): i32 { var s: string = "abc"; return s[1:9].len(); }`,
 			want: 134,
 		},
+		{
+			// u32 logical right shift of a call result whose bit 31 is set. mk()
+			// returns 0x90000000; the call-result is stored sign-extended, so a
+			// 64-bit `lsr` would drag the high-bit 1s into the result. Correct u32:
+			// (0x90000000 >> 3) = 0x12000000, then >> 24 = 0x12 = 18. (The bug that
+			// miscompiled SHA-256 gave 0xF2 = 242.) HARDCODED want, so it catches a
+			// regression even if the model oracle regressed in lockstep.
+			name: "u32_shr_call_result",
+			src: `function mk(): u32 { var a: u32 = 2415919104; return a; }
+function main(): i32 { var v: u32 = mk(); return ((v >> 3) >> 24) as i32; }`,
+			want: 18,
+		},
+		{
+			// End-to-end SHA-256: the hex digest of "abc" is the fixed vector
+			// "ba7816bf...", so its first character is 'b' = 98. This exercises the
+			// whole u32 arithmetic surface (rotr via shifts, wrapping adds, big-
+			// endian packing, __str_slice) and is the strongest guard on the u32 `>>`
+			// width fix — before it, this digest came out wrong.
+			name: "sha256_first_char",
+			src: `import "std/crypto";
+function main(): i32 {
+  var h: string = crypto.sha256_hex("abc");
+  return h[0] as i32;
+}`,
+			want: 98, // 'b'
+		},
 	}
 
 	for _, c := range cases {

@@ -378,7 +378,7 @@ func evalOp(funcs map[string]*Func, table []string, h *heap, strLen map[int32]in
 		if err != nil {
 			return err
 		}
-		r, err := evalBinaryInt(op.Kind, a, c)
+		r, err := evalBinaryInt(op.Kind, a, c, op.Width)
 		if err != nil {
 			return err
 		}
@@ -742,7 +742,21 @@ func evalOp(funcs map[string]*Func, table []string, h *heap, strLen map[int32]in
 	}
 }
 
-func evalBinaryInt(k OpKind, a, b int64) (int64, error) {
+// evalBinaryInt evaluates an integer binary op. width is the operand width (64
+// for i64/u64, else 32): for the UNSIGNED ops (OpDivU / OpRemU / OpShrU) at
+// 32-bit width the operands must be reinterpreted as uint32, because 32-bit
+// values are stored sign-extended into the int64 slot (see mask), so a u32 with
+// bit 31 set carries 1s in bits 32-63. Reading those bits as part of an unsigned
+// 64-bit divide/shift yields a wrong result (the u32 `>>` bug that miscompiled
+// SHA-256). Signed ops want the sign-extended value as-is; masking would be wrong.
+func evalBinaryInt(k OpKind, a, b int64, width int8) (int64, error) {
+	if width != 64 {
+		switch k {
+		case OpDivU, OpRemU, OpShrU:
+			a = int64(uint32(a))
+			b = int64(uint32(b))
+		}
+	}
 	switch k {
 	case OpAdd:
 		return a + b, nil
@@ -806,6 +820,13 @@ func evalFCompare(k OpKind, a, b float64) int64 {
 	}
 }
 
+// evalCompare evaluates an integer comparison. Unlike the unsigned value ops
+// (see evalBinaryInt), the unsigned comparisons need NO 32-bit operand masking:
+// sign-extension is strictly monotonic over uint32 (every bit-31-set value maps
+// to 0xFFFFFFFF_xxxxxxxx, which sorts above every bit-31-clear value — exactly
+// the uint32 order), so an unsigned 64-bit compare of sign-extended operands
+// yields the same result as a uint32 compare. The arm64/x86-64 SSA backends rely
+// on the same property to emit a plain full-width unsigned compare.
 func evalCompare(k OpKind, a, b int64) int64 {
 	switch k {
 	case OpEq:

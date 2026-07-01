@@ -1400,10 +1400,21 @@ func shiftSeq(in Inst) string {
 	case ssa.OpShrU:
 		mnem = "shr" // logical (unsigned) right shift
 	}
+	// A logical right shift at 32-bit width must operate on the 32-bit register:
+	// a u32 with bit 31 set is stored sign-extended (1s in bits 32-63), so a
+	// 64-bit `shr` would drag those bits into the result (the u32 `>>` bug that
+	// miscompiled SHA-256). The 32-bit form reads only the low 32 bits and zero-
+	// extends; the caller's trailing maskFix re-sign-extends to the storage
+	// convention. `shl`/`sar` are correct on the full register (shl's excess bits
+	// are masked off by maskFix; sar wants the sign-extended operand).
+	dst := reg(in.Dst)
+	if in.K == ssa.OpShrU && in.W != 64 {
+		dst = reg32[in.Dst]
+	}
 	return strings.Join([]string{
 		"push rcx",
 		fmt.Sprintf("mov %s, %s", reg(rcxReg), reg(in.Src)),
-		fmt.Sprintf("%s %s, cl", mnem, reg(in.Dst)),
+		fmt.Sprintf("%s %s, cl", mnem, dst),
 		"pop rcx",
 	}, "\n\t")
 }
@@ -1420,23 +1431,36 @@ func shiftSeq(in Inst) string {
 func divSeq(in Inst, scratch int) string {
 	signed := in.K == ssa.OpDiv || in.K == ssa.OpRem
 	rem := in.K == ssa.OpRem || in.K == ssa.OpRemU
+	// Unsigned divide/remainder at 32-bit width uses the 32-bit registers so the
+	// sign-extended high bits of a u32 operand (1s in bits 32-63 when bit 31 is
+	// set) don't corrupt the unsigned 64-bit division. The result lands zero-
+	// extended and the caller's maskFix re-sign-extends. Signed and 64-bit ops use
+	// the full registers — their sign-extended operands are already correct.
+	u32 := !signed && in.W != 64
+	r := reg
+	if u32 {
+		r = func(i int) string { return reg32[i] }
+	}
 	lines := []string{
 		"push rax",
 		"push rdx",
-		fmt.Sprintf("mov %s, %s", reg(scratch), reg(in.Src)), // stash divisor
-		fmt.Sprintf("mov %s, %s", reg(raxReg), reg(in.Dst)),  // dividend -> rax
+		fmt.Sprintf("mov %s, %s", r(scratch), r(in.Src)), // stash divisor
+		fmt.Sprintf("mov %s, %s", r(raxReg), r(in.Dst)),  // dividend -> (r|e)ax
 	}
-	if signed {
-		lines = append(lines, "cqo", fmt.Sprintf("idiv %s", reg(scratch)))
-	} else {
-		lines = append(lines, "xor rdx, rdx", fmt.Sprintf("div %s", reg(scratch)))
+	switch {
+	case signed:
+		lines = append(lines, "cqo", fmt.Sprintf("idiv %s", r(scratch)))
+	case u32:
+		lines = append(lines, "xor edx, edx", fmt.Sprintf("div %s", r(scratch)))
+	default:
+		lines = append(lines, "xor rdx, rdx", fmt.Sprintf("div %s", r(scratch)))
 	}
 	resultReg := raxReg // quotient
 	if rem {
 		resultReg = rdxReg // remainder
 	}
 	lines = append(lines,
-		fmt.Sprintf("mov %s, %s", reg(scratch), reg(resultReg)), // capture result before pops
+		fmt.Sprintf("mov %s, %s", r(scratch), r(resultReg)), // capture result before pops
 		"pop rdx",
 		"pop rax",
 		fmt.Sprintf("mov %s, %s", reg(in.Dst), reg(scratch)), // place result into dst

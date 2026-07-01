@@ -1550,6 +1550,17 @@ func asmInst(in x86.Inst, scratch int) ([]string, error) {
 // register, then msub (Xd = Xa - Xn*Xm) yields dividend - quotient*divisor.
 func divShiftSeq(in x86.Inst, scratch int) []string {
 	d, s := xreg(in.Dst), xreg(in.Src)
+	// The UNSIGNED ops (lsr / udiv / unsigned rem) must not see the sign-extended
+	// high 32 bits of a 32-bit operand: a u32 with bit 31 set is stored sign-
+	// extended (all 1s in bits 32-63, per maskFix), so a 64-bit logical shift or
+	// unsigned divide would drag those bits in and miscompute (the u32 `>>` bug
+	// that broke SHA-256). At 32-bit width (in.W != 64) render them in the 32-bit
+	// w-form, which reads only the low 32 bits and zero-extends the result; the
+	// trailing maskFix then re-sign-extends to the storage convention. Signed and
+	// 64-bit ops keep the full-width x-form (their sign-extended operands are
+	// already correct).
+	unsigned32 := in.W != 64
+	dw, sw := wreg(in.Dst), wreg(in.Src)
 	var out []string
 	switch in.K {
 	case ssa.OpShl:
@@ -1557,20 +1568,36 @@ func divShiftSeq(in x86.Inst, scratch int) []string {
 	case ssa.OpShr:
 		out = []string{fmt.Sprintf("asr %s, %s, %s", d, d, s)} // arithmetic (signed)
 	case ssa.OpShrU:
-		out = []string{fmt.Sprintf("lsr %s, %s, %s", d, d, s)} // logical (unsigned)
+		if unsigned32 {
+			out = []string{fmt.Sprintf("lsr %s, %s, %s", dw, dw, sw)} // logical, 32-bit
+		} else {
+			out = []string{fmt.Sprintf("lsr %s, %s, %s", d, d, s)} // logical, 64-bit
+		}
 	case ssa.OpDiv:
 		out = []string{fmt.Sprintf("sdiv %s, %s, %s", d, d, s)}
 	case ssa.OpDivU:
-		out = []string{fmt.Sprintf("udiv %s, %s, %s", d, d, s)}
-	case ssa.OpRem, ssa.OpRemU:
-		q := xreg(scratch)
-		div := "sdiv"
-		if in.K == ssa.OpRemU {
-			div = "udiv"
+		if unsigned32 {
+			out = []string{fmt.Sprintf("udiv %s, %s, %s", dw, dw, sw)} // 32-bit
+		} else {
+			out = []string{fmt.Sprintf("udiv %s, %s, %s", d, d, s)} // 64-bit
 		}
-		out = []string{
-			fmt.Sprintf("%s %s, %s, %s", div, q, d, s),     // q = d / s
-			fmt.Sprintf("msub %s, %s, %s, %s", d, q, s, d), // d = d - q*s
+	case ssa.OpRem, ssa.OpRemU:
+		if in.K == ssa.OpRemU && unsigned32 {
+			q := wreg(scratch)
+			out = []string{
+				fmt.Sprintf("udiv %s, %s, %s", q, dw, sw),         // q = d / s (32-bit)
+				fmt.Sprintf("msub %s, %s, %s, %s", dw, q, sw, dw), // d = d - q*s
+			}
+		} else {
+			q := xreg(scratch)
+			div := "sdiv"
+			if in.K == ssa.OpRemU {
+				div = "udiv"
+			}
+			out = []string{
+				fmt.Sprintf("%s %s, %s, %s", div, q, d, s),     // q = d / s
+				fmt.Sprintf("msub %s, %s, %s, %s", d, q, s, d), // d = d - q*s
+			}
 		}
 	}
 	return append(out, maskFix(in.Dst, in.W)...)
