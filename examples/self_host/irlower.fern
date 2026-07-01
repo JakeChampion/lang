@@ -12115,11 +12115,12 @@ function call_returns_scalar_array(name: string, arr: string[], strarr: string[]
 // because the self-host compiler can't yet compile a nested string-array
 // `.append` on itself — the fixpoint link gate caught it.)
 // `kinds[i]` selects the emission-site free for drop i: "" = the type-based branches
-// (array / scalar struct / tuple, dispatched by slot flags); "opt-shallow" = a scalar
-// Option/Result box (a plain __fern_rc_dec — the scalar payload is an inline value);
-// "opt-rcpayload" = an rc-payload Option/Result (emit_opt_payload_drop: op_opt_payload
-// → payload dec → box dec). Carrying the kind lets the emission free a Result box
-// (whose Ok-vs-Err payload variant is otherwise ambiguous from the slot type alone).
+// (array / scalar struct / tuple, dispatched by slot flags); "box-shallow" = a scalar
+// Option/Result/enum box (a plain __fern_rc_dec — the scalar payload is an inline
+// value, so no field/element walk); "opt-rcpayload" = an rc-payload Option/Result
+// (emit_opt_payload_drop: op_opt_payload → payload dec → box dec). Carrying the kind
+// lets the emission free a box whose type the slot alone can't classify — a Result
+// box (Ok-vs-Err payload ambiguous) or an un-annotated enum box (no struct_type).
 struct PreciseDrops { idxs: i32[], names: string[], kinds: string[] }
 
 // precise_drop_names computes the array-literal LOCAL drop-on-last-use points: a
@@ -12229,9 +12230,30 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                         if (!has_tlm2 && !opt_body_binding_escapes(body, v.name, rcc.variant)) { is_rcopt = true; }
                     }
                 }
+                // A fresh SCALAR user-enum local (`var x = Circle(7)` of an all-scalar-
+                // variant enum), last-used in a nested block, is a precise-drop candidate
+                // too — the enum sibling of the scalar-option case. Same no-top-level-
+                // match disjointness (a top-level match is owned by
+                // consumed_scalar_enum_frees, which also feeds the donor/reuse paths, so
+                // a no-top-level-match enum is NEVER a reuse donor — no donor guard
+                // needed). Its box (struct_make → __fern_arr_box, rc-headered) is shallow-
+                // freed after the enclosing statement (kind "box-shallow"). The emission
+                // needs no struct_type for the slot — the kind IS the "shallow box dec"
+                // witness — so an UN-annotated `var x = Circle(7)` (whose slot carries no
+                // struct_type) is reclaimed too.
+                var is_enum: boolean = false;
+                if (!is_lit && !is_opt && !is_rcopt && fresh_scalar_enum_init(v.init, structs) != "") {
+                    var has_tlm3: boolean = false;
+                    var mk3: i32 = 0;
+                    while (mk3 < body.len()) {
+                        if (match_scrutinee_is(body[mk3], v.name)) { has_tlm3 = true; }
+                        mk3 = mk3 + 1;
+                    }
+                    is_enum = !has_tlm3;
+                }
                 var shadowed: boolean = util.index_of_str(seen, v.name) >= 0;
                 seen = seen.append(v.name);
-                if ((is_lit || is_opt || is_rcopt) && !shadowed && util.index_of_str(reassigned, v.name) < 0 && !body_unsafe_for(body, v.name, borrowable)) {
+                if ((is_lit || is_opt || is_rcopt || is_enum) && !shadowed && util.index_of_str(reassigned, v.name) < 0 && !body_unsafe_for(body, v.name, borrowable)) {
                     var last: i32 = 0 - 1;
                     var k: i32 = i + 1;
                     var none: string[] = [];
@@ -12242,7 +12264,7 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                     if (last > i) {
                         var kind: string = "";
                         if (is_rcopt) { kind = "opt-rcpayload"; }
-                        else if (is_opt) { kind = "opt-shallow"; }
+                        else if (is_opt || is_enum) { kind = "box-shallow"; }
                         idxs = idxs.append(last);
                         names = names.append(v.name);
                         kinds = kinds.append(kind);
@@ -16642,16 +16664,17 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                     s = s.emit(ir.op_drop());
                     s = s.emit(ir.op_const_i32(0));
                     s = s.emit(ir.op_store_local(dslot));
-                } else if (dslot >= s.n_params && pdrops.kinds[pi] == "opt-shallow") {
-                    // Fresh SCALAR Option/Result local, last-used at statement j (a
+                } else if (dslot >= s.n_params && pdrops.kinds[pi] == "box-shallow") {
+                    // Fresh SCALAR Option/Result/enum local, last-used at statement j (a
                     // nested-block match / borrow — precise_drop_names admitted it only
                     // because it has NO top-level consuming match, so it is DISJOINT
                     // from consumed_scalar_enum_frees): free its rc-headered box now
                     // (shallow __fern_rc_dec — the scalar payload carries no rc pointer)
-                    // and zero the slot. Options are never exit-swept, so this is the
-                    // box's only release — no double-free. Kind-gated (not slot-type-
-                    // gated) so a scalar RESULT box — whose slot type Result[T,E] is not
-                    // type_is_scalar_option — is freed too, not just a scalar Option.
+                    // and zero the slot. Options / enum boxes are never exit-swept, so
+                    // this is the box's only release — no double-free. Kind-gated (not
+                    // slot-type-gated) so a scalar RESULT box (slot type Result[T,E] is
+                    // not type_is_scalar_option) OR an un-annotated enum box (no
+                    // struct_type on the slot) is freed too, not just a scalar Option.
                     s = s.emit(ir.op_load_local(dslot));
                     s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     s = s.emit(ir.op_drop());
@@ -16667,7 +16690,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                     // The "opt-rcpayload" kind (recorded when the CONSTRUCTED variant was
                     // known) guarantees offset-8 is a pointer — so this fires for a Result
                     // Ok/Err box too, whose Ok-vs-Err payload can't be read from the slot
-                    // type. A scalar payload took the "opt-shallow" branch above (op_opt_
+                    // type. A scalar payload took the "box-shallow" branch above (op_opt_
                     // payload on an inline scalar would wrongly dec the value).
                     s = emit_opt_payload_drop(s, dslot);
                 }

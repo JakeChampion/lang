@@ -3223,3 +3223,27 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   kind-not-slot-type resolution); new wasm result-scalar-precise-if-freed /
   result-arr-precise-if-freed in TestSelfHostRcOptionBoxWasm; byte-identical
   FIXPOINT + BOOTSTRAP + TestSelfHostIRDiff all stay green.
+- 2026-07-01: **Precise drop-on-last-use for scalar user-enum locals** (the enum
+  sibling of the scalar-option precise-if drop, unlocked by the per-drop kind). A
+  fresh `var x = Circle(7)` of an all-scalar-variant enum whose LAST use is a NESTED
+  block (an if-body `match (x)`) — not a top-level consuming match — previously
+  LEAKED its box: consumed_scalar_enum_frees only finds a TOP-LEVEL match scrutinee.
+  precise_drop_names now admits such an enum (fresh_scalar_enum_init, no-top-level-
+  match) with kind "box-shallow", and the emission shallow-frees its rc-headered box
+  (struct_make → __fern_arr_box). KEY: this was previously blocked because an
+  UN-annotated `var x = Circle(7)` slot carries NO struct_type (expr_struct_type
+  returns "" for a bare variant ctor, and there's no annotation to fall back on), so
+  a slot-type-gated emission couldn't identify it — but the KIND ("box-shallow",
+  recorded at precise_drop_names time where the enum ctor IS visible) is itself the
+  "free this box shallowly" witness, needing no slot type. The "opt-shallow" kind was
+  renamed "box-shallow" (it now covers scalar Option / Result / enum boxes — all a
+  plain __fern_rc_dec). DISJOINTNESS + no donor-guard: a no-top-level-match enum is
+  never in consumed_scalar_enum_frees, and every reuse-donor path (enum_donor_reuse_
+  sites, struct/tuple reuse, inarm reuse) flows from a top-level match / a struct /
+  tuple — so such an enum is NEVER a donor, and the shallow free can't race a box
+  recycle. Enum boxes are never exit-swept, so the precise dec is the box's only
+  release. VERIFIED: new enum-scalar-precise-if-* / enum-annotated-precise-if /
+  corruption-probe + an enum-toplevel-match-not-double-freed disjointness guard in
+  TestSelfHostRcPreciseDropX86IR; byte-identical FIXPOINT + BOOTSTRAP (the compiler's
+  own enum-heavy code) + wasm TestSelfHostRcOptionBoxWasm + TestSelfHostIRDiff all
+  stay green.
