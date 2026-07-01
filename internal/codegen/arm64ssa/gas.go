@@ -256,6 +256,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__alloc_u8":             emitAllocU8Helper,
 	"__fern_arr_cow_inplace": emitArrCowInplaceHelper,
 	"string_from_bytes":      emitStringFromBytesHelper,
+	"__str_slice":            emitStrSliceHelper,
 	"print":                  emitPrintHelper,
 	"__abs_f64":              emitFloatUnaryHelper("__abs_f64", "fabs"),
 	"__sqrt_f64":             emitFloatUnaryHelper("__sqrt_f64", "fsqrt"),
@@ -299,6 +300,7 @@ var helperReturns64 = map[string]bool{
 	"__alloc_u8":             true,
 	"__fern_arr_cow_inplace": true,
 	"string_from_bytes":      true,
+	"__str_slice":            true,
 	"__str_idx":              true,
 	"__arr_idx":              true,
 	"__arr_idx_1":            true,
@@ -321,6 +323,8 @@ var heapUsingHelpers = map[string]bool{
 	"__fern_arr_push_grow":   true,
 	"__alloc_u8":             true,
 	"__fern_arr_cow_inplace": true,
+	"string_from_bytes":      true,
+	"__str_slice":            true,
 }
 
 // collectStrings assigns a .rodata label to each unique OpConstString literal, in
@@ -806,6 +810,59 @@ func emitPrintHelper(w func(string, ...any)) {
 	w("\tadd sp, sp, #16")
 	w("\tmov x0, xzr") // unused return
 	w("\tret")
+}
+
+// emitStrSliceHelper writes __str_slice(base, low, high) -> data: allocate a
+// fresh length-prefixed string holding base[low:high]. Bounds-traps (exit 134)
+// on low < 0, high > src_len, or low > high, matching the native helper. Like
+// the other string helpers it inlines the bump allocation + byte-copy (no
+// __fern_alloc / __fern_memcpy call) into a fresh single-word rc-headered string
+// (rc=1@base, len@base+4, data@base+8), so it is a leaf. low/high arrive as i32;
+// they are sign-extended for the signed bound checks. x0=base, w1=low, w2=high;
+// returns x0=data.
+func emitStrSliceHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__str_slice"))
+	w("\tsxtw x1, w1")        // low (signed)
+	w("\tsxtw x2, w2")        // high (signed)
+	w("\tldur w3, [x0, #-4]") // src_len (non-negative, zero-extends into x3)
+	// Bounds checks: low < 0, high > src_len, low > high → trap.
+	w("\tcmp x1, #0")
+	w("\tb.lt .Lssa_strslice_trap")
+	w("\tcmp x2, x3")
+	w("\tb.gt .Lssa_strslice_trap")
+	w("\tcmp x1, x2")
+	w("\tb.gt .Lssa_strslice_trap")
+	w("\tsub w4, w2, w1") // new_len = high - low
+	// Bump-allocate new_len+8: rc=1@base, len@base+4, data@base+8.
+	w("\tadrp x5, %s", heapPtrSym)
+	w("\tadd x5, x5, #:lo12:%s", heapPtrSym) // x5 = &cursor
+	w("\tldr x6, [x5]")
+	w("\tadd x6, x6, #7")
+	w("\tand x6, x6, #-8") // x6 = base (8-aligned)
+	w("\tmov w7, #1")
+	w("\tstr w7, [x6]")         // rc = 1
+	w("\tstr w4, [x6, #4]")     // len = new_len
+	w("\tadd x8, x6, #8")       // x8 = data
+	w("\tadd x9, x8, w4, uxtw") // new cursor = data + new_len
+	w("\tstr x9, [x5]")
+	// Copy new_len bytes from base+low (x0+x1) to data (x8).
+	w("\tadd x10, x0, x1") // src = base + low
+	w("\tmov w11, #0")     // i
+	w(".Lssa_strslice_cp:")
+	w("\tcmp w11, w4")
+	w("\tb.hs .Lssa_strslice_done")
+	w("\tldrb w12, [x10, x11]")
+	w("\tstrb w12, [x8, x11]")
+	w("\tadd w11, w11, #1")
+	w("\tb .Lssa_strslice_cp")
+	w(".Lssa_strslice_done:")
+	w("\tmov x0, x8") // return data
+	w("\tret")
+	w(".Lssa_strslice_trap:")
+	w("\tmov x0, #134")
+	w("\tmov x8, #94") // exit_group
+	w("\tsvc #0")
 }
 
 // emitStringFromBytesHelper writes string_from_bytes(bs) -> data: copy a u8[]
