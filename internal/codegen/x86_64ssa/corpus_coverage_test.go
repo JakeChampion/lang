@@ -32,6 +32,20 @@ var corpusPrograms = []string{
 	`function fcmp(a: f64, b: f64): boolean { return a < b; }`,
 	`function conv(n: i32): f64 { return n as f64; }`,
 	`function main(): i32 { return 1 + 2 + 3; }`,
+
+	// Composite types: struct field access, array indexing, match, string.
+	`struct Point { x: i32, y: i32 } function mk(a: i32, b: i32): i32 { var p = Point { x: a, y: b }; return p.x + p.y; }`,
+	`function arr(): i32 { var a = [1, 2, 3]; return a[0] + a[2]; }`,
+	`function m(n: i32): i32 { return match (n) { 0 => 10, 1 => 20, _ => 30 }; }`,
+	`function slen(): i32 { var x = "hi"; return x.len(); }`,
+
+	// Closures: a returned closure over a capture, and a closure passed as an
+	// argument then called indirectly.
+	`function adder(n: i32): (i32) => i32 { function add(x: i32): i32 { return x + n; } return add; } function useit(): i32 { var f = adder(3); return f(4); }`,
+	`function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function callit(): i32 { return apply(function(y: i32): i32 { return y * 2; }, 21); }`,
+
+	// Option construction + match (the pair-return path).
+	`function half(n: i32): Option[i32] { if (n % 2 == 0) { return Some(n / 2); } return None; } function opt(): i32 { return match (half(10)) { Some(v) => v, None => 0 }; }`,
 }
 
 // TestCorpusEmitCoverage lifts each corpus program to SSA and runs every
