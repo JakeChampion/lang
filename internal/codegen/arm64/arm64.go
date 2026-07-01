@@ -413,6 +413,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesArrCowInPlace {
 		g.emitArrCowInPlaceRuntime()
 	}
+	if g.usesArrCowInPlacePtr {
+		g.emitArrCowInPlacePtrRuntime()
+	}
 	if g.usesDropArrPtr {
 		g.emitDropArrPtrRuntime()
 	}
@@ -1830,6 +1833,97 @@ func (g *generator) emitArrCowInPlaceRuntime() {
 	g.emit("ldp x29, x30, [sp], #64")
 	g.emit("ret")
 	g.sizeDirective("__fern_arr_cow_inplace")
+	g.line(".ltorg")
+}
+
+// emitArrCowInPlacePtrRuntime emits `__fern_arr_cow_inplace_ptr(arr,
+// stride) -> buf` — the pointer-element variant of
+// __fern_arr_cow_inplace. Same fast path (rc==1 → return arr, in-place).
+// On the COPY path (rc>1) it does the same alloc + memcpy, then walks the
+// `len` elements and __fern_rc_inc's each so the fresh buffer OWNS its own
+// reference; the plain helper's raw memcpy would leave the copy sharing
+// the receiver's element pointers at unchanged rc — a use-after-free once
+// either array is dropped. stride is the pointer width (single-word
+// elements loaded 8 bytes wide).
+//
+// Inputs: x0 = arr, x1 = stride. Returns new data ptr in x0.
+func (g *generator) emitArrCowInPlacePtrRuntime() {
+	g.line("")
+	g.line(".global __fern_arr_cow_inplace_ptr")
+	g.typeDirective("__fern_arr_cow_inplace_ptr")
+	g.label("__fern_arr_cow_inplace_ptr")
+	// Fast path: rc == 1 → return arr (in-place; elements already owned).
+	g.emit("ldur w2, [x0, #-8]")
+	g.emit("cmp w2, #1")
+	g.emit("b.ne .Lcowp_slow")
+	g.emit("ret")
+	g.label(".Lcowp_slow")
+	// Copy path. Frame: x29/x30 (+0), x19/x20 (+16: arr/stride),
+	// x21/x22 (+32: len/cap→i), x23/x24 (+48: hdr/new_data).
+	g.emit("stp x29, x30, [sp, #-64]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("mov x19, x0")          // x19 = arr
+	g.emit("mov w20, w1")          // w20 = stride
+	g.emit("ldur w21, [x0, #-4]")  // w21 = len
+	g.emit("ldur w22, [x0, #-12]") // w22 = cap
+	// Decrement arr's rc (taking the caller's reference as we copy).
+	// Skip a static sentinel (high bit set).
+	g.emit("ldur w0, [x19, #-8]")
+	g.emit("tbnz w0, #31, .Lcowp_skip_dec")
+	g.emit("sub w0, w0, #1")
+	g.emit("stur w0, [x19, #-8]")
+	g.label(".Lcowp_skip_dec")
+	// headerBytes = max(16, stride).
+	g.emit("mov w23, #16")
+	g.emit("cmp w20, w23")
+	g.emit("csel w23, w20, w23, ge")
+	// allocSize = headerBytes + cap * stride.
+	g.emit("mul w0, w22, w20")
+	g.emit("add w0, w0, w23")
+	g.emit("bl __fern_alloc")
+	g.emit("add x24, x0, x23") // x24 = new_data = base + headerBytes
+	// [base + headerBytes - 12] = cap
+	g.emit("sub w1, w23, #12")
+	g.emit("add x2, x0, w1, uxtw")
+	g.emit("str w22, [x2]")
+	// [base + headerBytes - 8] = 1 (new buffer, rc=1)
+	g.emit("sub w1, w23, #8")
+	g.emit("add x2, x0, w1, uxtw")
+	g.emit("mov w3, #1")
+	g.emit("str w3, [x2]")
+	// [base + headerBytes - 4] = len
+	g.emit("sub w1, w23, #4")
+	g.emit("add x2, x0, w1, uxtw")
+	g.emit("str w21, [x2]")
+	// memcpy(new_data, arr, len * stride)
+	g.emit("mov x0, x24")
+	g.emit("mov x1, x19")
+	g.emit("mul w2, w21, w20")
+	g.emit("bl __fern_memcpy")
+	// Element-retain loop: inc each copied pointer element. x24 = new_data,
+	// w21 = len, w20 = stride all survive __fern_rc_inc (callee-saved);
+	// w22 = i (reuses the cap slot, no longer needed).
+	g.emit("mov w22, #0")
+	g.label(".Lcowp_inc_loop")
+	g.emit("cmp w22, w21")
+	g.emit("b.ge .Lcowp_inc_done")
+	g.emit("mul w0, w22, w20") // i*stride
+	g.emit("add x0, x24, w0, uxtw")
+	g.emit("ldr x0, [x0]")     // element pointer (8-byte)
+	g.emit("bl __fern_rc_inc") // guards null / low / sentinel
+	g.emit("add w22, w22, #1")
+	g.emit("b .Lcowp_inc_loop")
+	g.label(".Lcowp_inc_done")
+	g.emit("mov x0, x24") // return new_data
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #64")
+	g.emit("ret")
+	g.sizeDirective("__fern_arr_cow_inplace_ptr")
 	g.line(".ltorg")
 }
 
@@ -6363,6 +6457,11 @@ type generator struct {
 	// change), fresh memcpy'd copy on rc>1 (with arr's rc
 	// pre-dec'd inline so the caller doesn't double-dec).
 	usesArrCowInPlace bool
+	// usesArrCowInPlacePtr gates `__fern_arr_cow_inplace_ptr` — the
+	// pointer-element variant that also inc's each copied element on the
+	// COPY path so the fresh buffer independently owns them (see the
+	// x86_64 mirror for why the plain memcpy would UAF).
+	usesArrCowInPlacePtr bool
 	// usesDropArrPtr gates `__fern_drop_arr_ptr` — the Phase 3
 	// drop handler for arrays of pointer-shaped rc-tracked
 	// elements. See x86_64's mirror + the wasm runtime.
@@ -8963,6 +9062,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesArrCowInPlace = true
 			g.usesAlloc = true
 			g.usesMemcpy = true
+		case "__fern_arr_cow_inplace_ptr":
+			g.usesArrCowInPlacePtr = true
+			g.usesAlloc = true
+			g.usesMemcpy = true
+			g.usesRcInc = true
 		case "__fern_drop_arr_ptr":
 			g.usesDropArrPtr = true
 			g.usesRcDec = true

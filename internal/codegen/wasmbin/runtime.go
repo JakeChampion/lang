@@ -533,6 +533,11 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_arr_cow_inplace")
 					needs.add("__fern_alloc")
 					needs.add("__memcpy")
+				case "__fern_arr_cow_inplace_ptr":
+					needs.add("__fern_arr_cow_inplace_ptr")
+					needs.add("__fern_alloc")
+					needs.add("__memcpy")
+					needs.add("__fern_rc_inc")
 				case "__fern_drop_arr_ptr":
 					needs.add("__fern_drop_arr_ptr")
 					needs.add("__fern_rc_dec")
@@ -1245,6 +1250,18 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildArrCowInPlaceBody,
+	},
+	"__fern_arr_cow_inplace_ptr": {
+		// (arr, stride) → new_data. Pointer-element variant of
+		// __fern_arr_cow_inplace: identical fast path (rc==1 → arr,
+		// in-place), but on the COPY path (rc>1) it also inc's each
+		// copied element so the fresh buffer independently OWNS them.
+		// The plain helper's raw memcpy leaves the copy sharing the
+		// receiver's element pointers at unchanged rc — a UAF once
+		// either array is dropped. See buildArrCowInPlacePtrBody.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildArrCowInPlacePtrBody,
 	},
 	"__fern_drop_arr_ptr": {
 		// (ptr, stride) → ptr. Phase 3 step 3 drop handler for
@@ -3190,6 +3207,140 @@ func buildArrCowInPlaceBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstCall(body, memcpy)
 	body = inst.InstLocalGet(body, 5)
 	locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildArrCowInPlacePtrBody — (arr, stride) → new_data. Pointer-element
+// variant of buildArrCowInPlaceBody. Same fast path (rc==1 → arr) and
+// same alloc + memcpy on the copy path, then a per-element __fern_rc_inc
+// loop so the fresh buffer owns its own reference to each copied pointer
+// element. Mirrors buildDropArrPtrBody's element walk (inc instead of
+// dec). Locals: 0=arr, 1=stride (params); 2=len, 3=cap, 4=headerBytes,
+// 5=new_data, 6=i.
+func buildArrCowInPlacePtrBody(helperIdxs map[string]uint32) []byte {
+	alloc := helperIdxs["__fern_alloc"]
+	memcpy := helperIdxs["__memcpy"]
+	rcinc := helperIdxs["__fern_rc_inc"]
+	var body []byte
+	// Fast path: rc == 1 → return arr (in-place; elements already owned).
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Eq(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// Copy path. Decrement arr's rc inline (skip if static sentinel).
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = numeric.InstI32And(body)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstEnd(body)
+	// len = mem[arr - 4]
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 2)
+	// cap = mem[arr - 12]
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 12)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 3)
+	// headerBytes = max(16, stride)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 16)
+	body = numeric.InstI32GeS(body)
+	body = inst.InstSelect(body)
+	body = inst.InstLocalSet(body, 4)
+	// base = __fern_alloc(headerBytes + cap*stride) + headerBytes
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 1)
+	body = numeric.InstI32Mul(body)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalGet(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 5)
+	// mem[base - 12] = cap
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstI32Const(body, 12)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalGet(body, 3)
+	body = memory.InstI32Store(body, 2, 0)
+	// mem[base - 8] = 1 (rc=1)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	// mem[base - 4] = len
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Store(body, 2, 0)
+	// memcpy(base, arr, len * stride)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstLocalGet(body, 1)
+	body = numeric.InstI32Mul(body)
+	body = inst.InstCall(body, memcpy)
+	// Element-retain loop: inc each copied pointer element so the fresh
+	// buffer owns its own reference (mirrors buildDropArrPtrBody's walk).
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 6) // i = 0
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		// if i >= len: break
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstLocalGet(body, 2)
+		body = numeric.InstI32GeS(body)
+		body = inst.InstBrIf(body, 1)
+		// __fern_rc_inc(mem[base + i*stride]); drop result
+		body = inst.InstLocalGet(body, 5)
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstLocalGet(body, 1)
+		body = numeric.InstI32Mul(body)
+		body = numeric.InstI32Add(body)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstCall(body, rcinc)
+		body = inst.InstDrop(body)
+		// i = i + 1; continue
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 6)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body) // loop
+	body = inst.InstEnd(body) // block
+	// return new_data
+	body = inst.InstLocalGet(body, 5)
+	locals := inst.PutLocalsOneGroup(nil, 5, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

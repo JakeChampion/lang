@@ -3442,6 +3442,98 @@ function main(): i32 {
     return (b[0] + a[0] - 100) + __rc_underflow_count();
 }`,
 	},
+	{
+		// `.with` on an array of rc-tracked STRUCT elements through a functional
+		// record update, reassigned in a loop (`r = upd(r, i, ...)`). Each upd
+		// copies r.ops (the receiver stays live, forcing the CoW copy branch) and
+		// replaces one element. The copy shares the receiver's struct-pointer
+		// elements; the plain __fern_arr_cow_inplace memcpy'd them WITHOUT an inc,
+		// so when the previous r was dropped it freed the elements the new r still
+		// referenced — a use-after-free that recycled the boxes mid-loop and
+		// corrupted later reads (native returned the wrong sum). The
+		// pointer-aware __fern_arr_cow_inplace_ptr inc's each copied element so
+		// both arrays own it. sum = 3*(0+..+39) = 2340; -2340 → 0 when correct.
+		name: "with_struct_elem_functional_update_loop",
+		src: `
+struct Op2 { a: i32, c: i32 }
+struct R { ops: Op2[], p: i32 }
+function upd(r: R, i: i32, v: i32): R {
+    return R { ops: r.ops.with(i, Op2 { a: v, c: 7 }), p: r.p };
+}
+function main(): i32 {
+    var ops: Op2[] = [];
+    var k: i32 = 0;
+    while (k < 40) { ops = ops.append(Op2 { a: 0, c: 0 }); k = k + 1; }
+    var r: R = R { ops: ops, p: 0 };
+    var i: i32 = 0;
+    while (i < 40) { r = upd(r, i, i * 3); i = i + 1; }
+    var s: i32 = 0;
+    var j: i32 = 0;
+    while (j < 40) { s = s + r.ops[j].a; j = j + 1; }
+    return (s - 2340) + __rc_underflow_count();
+}`,
+	},
+	{
+		// `.with` on an array of struct elements where the receiver is a bare
+		// local that stays LIVE after the call (`b = a.with(0, ..)`; a read
+		// again), so the CoW copy branch fires. The old element being overwritten
+		// at index 0 is dropped, the rest are inc'd on the copy; a churn loop
+		// recycles any freed block to surface a stale-pointer read. a stays
+		// {10,20,30}, b is {99,20,30}. All four deltas 0 → 0 when correct.
+		name: "with_struct_elem_bare_ident_forced_copy",
+		src: `
+struct Op2 { a: i32, c: i32 }
+function main(): i32 {
+    var a: Op2[] = [Op2 { a: 10, c: 0 }, Op2 { a: 20, c: 0 }, Op2 { a: 30, c: 0 }];
+    var b: Op2[] = a.with(0, Op2 { a: 99, c: 0 });
+    var i: i32 = 0;
+    while (i < 30) { var z: Op2[] = [Op2 { a: i, c: i }]; i = i + 1; }
+    return (a[0].a - 10) + (a[1].a - 20) + (b[0].a - 99) + (b[1].a - 20) + __rc_underflow_count();
+}`,
+	},
+	{
+		// `.with` functional-update loop where the struct element carries a
+		// STRING field. On the CoW copy branch the old element being replaced is
+		// deep-dropped (__drop_struct_ frees its string when it is the last
+		// reference) and the carried elements are inc'd — so the string field's
+		// rc stays balanced (no double-free of "x"/"y", no over-release). sum =
+		// 0+1+..+29 = 435; -435 → 0 when correct.
+		name: "with_struct_string_elem_functional_update_loop",
+		src: `
+struct Op { a: i32, b: string }
+struct R { ops: Op[], p: i32 }
+function upd(r: R, i: i32, v: i32): R {
+    return R { ops: r.ops.with(i, Op { a: v, b: "y" }), p: r.p };
+}
+function main(): i32 {
+    var ops: Op[] = [];
+    var k: i32 = 0;
+    while (k < 30) { ops = ops.append(Op { a: 0, b: "x" }); k = k + 1; }
+    var r: R = R { ops: ops, p: 0 };
+    var i: i32 = 0;
+    while (i < 30) { r = upd(r, i, i); i = i + 1; }
+    var s: i32 = 0;
+    var j: i32 = 0;
+    while (j < 30) { s = s + r.ops[j].a; j = j + 1; }
+    return (s - 435) + __rc_underflow_count();
+}`,
+	},
+	{
+		// `.with` on an array-of-ARRAYS (rc-tracked pointer elements are the inner
+		// buffers), receiver live after the call → CoW copy branch. Exercises the
+		// ArrayType element arm of __fern_arr_cow_inplace_ptr / the old-element
+		// drop. g stays {[1,1],[2,2],[3,3]}, h is {[9,9],[2,2],[3,3]}. 0 when
+		// correct.
+		name: "with_array_elem_forced_copy",
+		src: `
+function main(): i32 {
+    var g: i32[][] = [[1, 1], [2, 2], [3, 3]];
+    var h: i32[][] = g.with(0, [9, 9]);
+    var i: i32 = 0;
+    while (i < 30) { var z: i32[] = [i, i, i]; i = i + 1; }
+    return (g[0][0] - 1) + (g[1][0] - 2) + (h[0][0] - 9) + (h[1][0] - 2) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

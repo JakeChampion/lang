@@ -18961,6 +18961,16 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 	if stride == 0 {
 		stride = 4
 	}
+	// An array of single-word rc-tracked pointer elements (struct / enum /
+	// array / tuple / closure) needs rc bookkeeping the scalar path skips:
+	//   - the COPY branch of the CoW helper must retain each copied element
+	//     (the pointer-aware __fern_arr_cow_inplace_ptr does this), else the
+	//     fresh buffer shares the receiver's elements at unchanged rc and
+	//     dropping either array frees them out from under the other (UAF);
+	//   - overwriting index i must drop the OLD element there (it is being
+	//     replaced) and retain the NEW value if it is an alias.
+	// Scalar-element arrays keep the byte-identical straight-line path.
+	rcTracked := arrElemIsRcTracked(elemType)
 	storeOp, storeWidth := arraySetStoreOp(elemType, b.ptrW)
 	idxHelper := "__arr_idx"
 	switch stride {
@@ -18981,6 +18991,12 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 	if err := b.expr(n.Args[2]); err != nil {
 		return err
 	}
+	// Retain an aliased rc-tracked value: it is now co-owned by the buffer
+	// slot (mirrors emitArrayPush / struct-field-init). A fresh temp / moved
+	// last-use value transfers its single reference in as-is.
+	if rcTracked && needsRcIncOnAlias(n.Args[2], b) && !b.moveSites[n.Args[2]] {
+		b.emitAliasInc(n.Args[2])
+	}
 	b.emit(Op{Kind: OpStoreLocal, I32: vSlot})
 	// Stash i in a scratch so we can use it after the helper
 	// call (the helper consumes the operand stack).
@@ -18990,7 +19006,7 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 		return err
 	}
 	b.emit(Op{Kind: OpStoreLocal, I32: iSlot})
-	// buf = __fern_arr_cow_inplace(arr, stride)
+	// buf = __fern_arr_cow_inplace[_ptr](arr, stride)
 	if err := b.expr(n.Args[0]); err != nil {
 		return err
 	}
@@ -19005,7 +19021,11 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 		b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_inc", I32: 1})
 	}
 	b.emit(Op{Kind: OpConstI32, I32: stride})
-	b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_cow_inplace", I32: 2})
+	cowHelper := "__fern_arr_cow_inplace"
+	if rcTracked {
+		cowHelper = "__fern_arr_cow_inplace_ptr"
+	}
+	b.emit(Op{Kind: OpCallDirect, Str: cowHelper, I32: 2})
 	bufSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__set_buf_%d", bufSlot)] = bufSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
@@ -19014,9 +19034,29 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
 	b.emit(Op{Kind: OpLoadLocal, I32: iSlot})
 	b.emit(Op{Kind: OpCallDirect, Str: idxHelper, I32: 2})
-	// Element value.
-	b.emit(Op{Kind: OpLoadLocal, I32: vSlot})
-	b.emit(Op{Kind: storeOp, Width: storeWidth})
+	if rcTracked {
+		// Stash the element address so we can both read the old element
+		// (to drop it) and write the new one at the same slot.
+		addrSlot := b.allocSlot()
+		b.locals[fmt.Sprintf("__set_addr_%d", addrSlot)] = addrSlot
+		b.emit(Op{Kind: OpStoreLocal, I32: addrSlot})
+		// Drop the OLD element being overwritten. On the copy branch the
+		// helper inc'd it, so this dec balances (the receiver keeps its
+		// reference); on the in-place branch it is the sole owner's release
+		// (frees on last reference). dropStructField is the type-appropriate
+		// deep drop, is_unique-gated internally, so a shared element only decs.
+		b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
+		b.emit(Op{Kind: OpLoad, Width: storeWidth})
+		b.dropStructField(elemType)
+		// Store the new element value.
+		b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
+		b.emit(Op{Kind: OpLoadLocal, I32: vSlot})
+		b.emit(Op{Kind: storeOp, Width: storeWidth})
+	} else {
+		// Element value.
+		b.emit(Op{Kind: OpLoadLocal, I32: vSlot})
+		b.emit(Op{Kind: storeOp, Width: storeWidth})
+	}
 	// Result: buf pointer (the array value).
 	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
 	return nil
