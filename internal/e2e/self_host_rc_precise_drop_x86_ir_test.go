@@ -238,6 +238,21 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// / freed a still-live box) the fresh alloc could recycle p's box and corrupt
 		// the read. c == 7 and 11+22+33 == 66; detector 0.
 		{"scalar-struct-precise-corruption-probe-detector", `struct P { x: i32, y: i32 } function go(): i32 { var p = P { x: 3, y: 4 }; var c = 0; var i = 0; while (i < 1) { c = p.x + p.y; i = i + 1; } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (c != 7) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// ARRAY-FIELD struct precise-drop (widened from scalar-only): a fresh
+		// `Buf { xs: [..], n }` last-used in a nested block is DEEP-DROPPED
+		// (emit_struct_field_drops frees the array field) + box-freed right after that
+		// statement — exactly the exit-sweep struct free, moved earlier to bound peak
+		// heap (the struct sibling of the array / tuple precise drops). f(5): b built,
+		// used in the if (c=b.xs[1]+b.n=23), freed after the if; return 23+5=28.
+		{"struct-arrfield-precise-if-value", `struct Buf { xs: i32[], n: i32 } function f(m: i32): i32 { var b = Buf { xs: [10, 20, 30], n: 3 }; var c = 0; if (m > 0) { c = b.xs[1] + b.n; } return c + m; } function main(): i32 { return f(5); }`, 28},
+		{"struct-arrfield-precise-if-detector", `struct Buf { xs: i32[], n: i32 } function f(m: i32): i32 { var b = Buf { xs: [10, 20, 30], n: 3 }; var c = 0; if (m > 0) { c = b.xs[1] + b.n; } return c + m; } function main(): i32 { var r = f(5); if (r != 28) { return 99; } return __rc_underflow(); }`, 0},
+		// Reordered fields (`Buf { n: 3, xs: [..] }`) — struct_lit_precise_ok maps by
+		// field NAME, so the array field is still recognised. Value + detector 0.
+		{"struct-arrfield-reordered-precise-if-detector", `struct Buf { xs: i32[], n: i32 } function f(m: i32): i32 { var b = Buf { n: 3, xs: [10, 20, 30] }; var c = 0; if (m > 0) { c = b.xs[0] + b.n; } return c + m; } function main(): i32 { var r = f(5); if (r != 18) { return 99; } return __rc_underflow(); }`, 0},
+		// PRECISE drop + corruption probe: a fresh array allocated AFTER the array-field
+		// struct's precise deep-drop reads back intact (the array field + box were
+		// freed soundly, exactly once — no early free of a still-live buffer).
+		{"struct-arrfield-precise-corruption-probe-detector", `struct Buf { xs: i32[], n: i32 } function go(): i32 { var b = Buf { xs: [1, 2, 3], n: 5 }; var c = 0; var i = 0; while (i < 1) { c = b.xs[0] + b.xs[2] + b.n; i = i + 1; } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (c != 9) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 		// GUARD: a scalar-only struct local that is ALSO a cross-reuse donor (`a` dead
 		// before the same-type full construction `b`) must NOT be precise-dropped —
 		// cross-reuse recycles a's box into b, so an early free would race it. The
