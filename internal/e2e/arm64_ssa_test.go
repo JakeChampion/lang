@@ -117,6 +117,30 @@ function main(): i32 { return match (half(84)) { Some(v) => v, None => 0 }; }`,
 function main(): i32 { return match (half(7)) { Some(v) => v, None => 99 }; }`,
 			want: 99,
 		},
+		{
+			// A capturing closure invoked directly (MakeClosure + CallIndirect):
+			// addBase captures base=100; addBase(23) = 123.
+			name: "closure_capture",
+			src: `function main(): i32 {
+  var base: i32 = 100;
+  var addBase = (x: i32) => x + base;
+  return addBase(23);
+}`,
+			want: 123,
+		},
+		{
+			// Higher-order: a multi-capture closure passed to another function that
+			// dispatches it indirectly. apply(g,100) with g capturing a=10,b=5 = 115.
+			name: "higher_order_closure",
+			src: `function apply(f: (i32) => i32, x: i32): i32 { return f(x); }
+function main(): i32 {
+  var a: i32 = 10;
+  var b: i32 = 5;
+  var g = (x: i32) => x + a + b;
+  return apply(g, 100);
+}`,
+			want: 115,
+		},
 	}
 
 	for _, c := range cases {
@@ -151,10 +175,10 @@ function main(): i32 { return match (half(7)) { Some(v) => v, None => 99 }; }`,
 }
 
 // TestArm64SSACoverageGapErrors confirms a language construct outside the
-// SSA renderer's subset (here a closure, which lowers to OpMakeClosure /
-// OpCallIndirect) fails with a clean compile error rather than a
-// miscompile — the experimental-backend contract that lets the epic widen
-// coverage incrementally.
+// SSA renderer's subset (here a bare enum, which lowers to OpEnumSentinel —
+// still unsupported on both the x86-64 and arm64 SSA real-asm paths) fails
+// with a clean compile error rather than a miscompile — the experimental-
+// backend contract that lets the epic widen coverage incrementally.
 func TestArm64SSACoverageGapErrors(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("arm64-ssa not exercised on windows")
@@ -166,15 +190,16 @@ func TestArm64SSACoverageGapErrors(t *testing.T) {
 		t.Fatalf("go build fern: %v\n%s", err, out)
 	}
 
-	srcPath := filepath.Join(dir, "closure.fern")
-	src := `function main(): i32 {
-  var add = (x: i32) => x + 1;
-  return add(41);
+	srcPath := filepath.Join(dir, "enum.fern")
+	src := `enum Color { Red, Green, Blue }
+function main(): i32 {
+  var c: Color = Color.Green;
+  return match (c) { Red => 1, Green => 2, Blue => 3 };
 }`
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	out := filepath.Join(dir, "closure.bin")
+	out := filepath.Join(dir, "enum.bin")
 	emit := exec.Command(bin, "-target", "arm64-ssa", "-o", out, srcPath)
 	var eb bytes.Buffer
 	emit.Stderr = &eb

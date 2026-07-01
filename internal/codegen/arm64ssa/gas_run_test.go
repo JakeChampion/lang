@@ -893,6 +893,123 @@ func TestArmRunPairReturnLiveAcrossCall(t *testing.T) {
 	}
 }
 
+// makeClosureOp / callIndirectOp build a closure cell and an indirect dispatch.
+func makeClosureOp(f *ssa.Func, b *ssa.Block, target string, caps ...ssa.Value) ssa.Value {
+	v := f.AddOp(b, ssa.OpMakeClosure, caps...)
+	b.Ops[len(b.Ops)-1].Str = target
+	return v
+}
+
+func callIndirectOp(f *ssa.Func, b *ssa.Block, callee ssa.Value, args ...ssa.Value) ssa.Value {
+	return f.AddOp(b, ssa.OpCallIndirect, append([]ssa.Value{callee}, args...)...)
+}
+
+// indirectFuncs: inc(x,env)=x+1, dbl(x,env)=x*2 (env unused, appended by the
+// dispatch); apply(fn,x)=fn(x) via OpCallIndirect. table = [inc, dbl].
+func indirectFuncs() (map[string]*ssa.Func, []string) {
+	inc := ssa.NewFunc("inc")
+	ix := inc.AddParam()
+	inc.AddParam() // env
+	ie := inc.NewBlock()
+	inc.SetRet(ie, inc.AddOp(ie, ssa.OpAdd, ix, constOp(inc, ie, 1)))
+
+	dbl := ssa.NewFunc("dbl")
+	dx := dbl.AddParam()
+	dbl.AddParam() // env
+	de := dbl.NewBlock()
+	dbl.SetRet(de, dbl.AddOp(de, ssa.OpMul, dx, constOp(dbl, de, 2)))
+
+	apply := ssa.NewFunc("apply")
+	fn := apply.AddParam()
+	x := apply.AddParam()
+	ae := apply.NewBlock()
+	apply.SetRet(ae, callIndirectOp(apply, ae, fn, x))
+
+	return map[string]*ssa.Func{"inc": inc, "dbl": dbl, "apply": apply}, []string{"inc", "dbl"}
+}
+
+// moduleMatchesEvalTable diffs the arm64 run against ssa.EvalInTable (the model
+// resolves OpCallIndirect / OpMakeClosure through `table`). The asm derives its
+// own fn_idx from the sorted emission order — each side is internally consistent,
+// so the observable result agrees even though the index numbers differ.
+func moduleMatchesEvalTable(t *testing.T, funcs map[string]*ssa.Func, table []string, entry string, entryArgs ...int64) {
+	t.Helper()
+	want, err := ssa.EvalInTable(funcs, table, funcs[entry], entryArgs...)
+	if err != nil {
+		t.Fatalf("EvalInTable: %v", err)
+	}
+	for _, n := range []int{2, 4, 8} {
+		got := assembleRunArmModule(t, funcs, entry, n, entryArgs...)
+		if got != int(uint8(want)) {
+			t.Errorf("nAlloc=%d arm64 run exit=%d, want EvalInTable&0xFF=%d (=%d)", n, got, int(uint8(want)), want)
+		}
+	}
+}
+
+// Closure dispatch through apply: cInc/cDbl are {fn,env} cells dispatched via the
+// function-address table; apply(cInc,10) + apply(cDbl,10) = 11 + 20 = 31.
+func TestArmRunCallIndirect(t *testing.T) {
+	funcs, table := indirectFuncs()
+	main := ssa.NewFunc("main")
+	me := main.NewBlock()
+	cInc := makeClosureOp(main, me, "inc")
+	cDbl := makeClosureOp(main, me, "dbl")
+	r0 := callOp(main, me, "apply", cInc, constOp(main, me, 10))
+	r1 := callOp(main, me, "apply", cDbl, constOp(main, me, 10))
+	main.SetRet(me, main.AddOp(me, ssa.OpAdd, r0, r1))
+	funcs["main"] = main
+	moduleMatchesEvalTable(t, funcs, table, "main") // 31
+}
+
+// A runtime-chosen closure dispatched directly: the chosen cell pointer and the
+// resolved target must survive the arg shuffle. main(sel,x) = (sel!=0 ? dbl : inc)(x).
+func TestArmRunCallIndirectComputedTarget(t *testing.T) {
+	build := func() (map[string]*ssa.Func, []string) {
+		funcs, table := indirectFuncs()
+		main := ssa.NewFunc("main")
+		sel := main.AddParam()
+		x := main.AddParam()
+		me := main.NewBlock()
+		cInc := makeClosureOp(main, me, "inc")
+		cDbl := makeClosureOp(main, me, "dbl")
+		cond := main.AddOp(me, ssa.OpNe, sel, constOp(main, me, 0))
+		chosen := main.AddOp(me, ssa.OpSelect, cond, cDbl, cInc)
+		main.SetRet(me, callIndirectOp(main, me, chosen, x))
+		funcs["main"] = main
+		return funcs, table
+	}
+	for _, args := range [][]int64{{0, 7}, {1, 7}, {0, 100}, {1, 50}} {
+		funcs, table := build()
+		moduleMatchesEvalTable(t, funcs, table, "main", args...)
+	}
+}
+
+// A capturing closure dispatched through apply: g captures c=7, g(x)=x+c;
+// apply(g, 35) = 42. Exercises MakeClosure with a real env + capture read-back.
+func TestArmRunClosureCapture(t *testing.T) {
+	add := ssa.NewFunc("addcap") // addcap(x, env): x + env[0]
+	ax := add.AddParam()
+	aenv := add.AddParam()
+	ae := add.NewBlock()
+	cap0 := add.AddOp(ae, ssa.OpLoad, aenv)
+	ae.Ops[len(ae.Ops)-1].Imm = 0
+	add.SetRet(ae, add.AddOp(ae, ssa.OpAdd, ax, cap0))
+
+	apply := ssa.NewFunc("apply")
+	fn := apply.AddParam()
+	x := apply.AddParam()
+	pe := apply.NewBlock()
+	apply.SetRet(pe, callIndirectOp(apply, pe, fn, x))
+
+	main := ssa.NewFunc("main")
+	me := main.NewBlock()
+	g := makeClosureOp(main, me, "addcap", constOp(main, me, 7)) // capture c=7
+	main.SetRet(me, callOp(main, me, "apply", g, constOp(main, me, 35)))
+
+	funcs := map[string]*ssa.Func{"addcap": add, "apply": apply, "main": main}
+	moduleMatchesEvalTable(t, funcs, []string{"addcap"}, "main") // 42
+}
+
 // max via a comparison-selected branch: max(9, 4) = 9 -> exit 9.
 func TestArmRunMax(t *testing.T) {
 	build := func() *ssa.Func {
