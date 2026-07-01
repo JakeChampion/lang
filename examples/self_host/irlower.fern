@@ -10082,6 +10082,14 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             var target_is_arr: boolean = s.is_arr_slot(slot) && slot >= s.n_params;
             var se: LowerState = lower_expr(a.value, s);
             if (!se.ok) { return se; }
+            // A reclaimable string-builder ACCUMULATOR reassign (`s = s + part`):
+            // free the SUPERSEDED box via __fern_str_free (box + data buffer),
+            // cow-guarded, then store the fresh value — the string sibling of the
+            // struct consume-rebind below. The RHS was lowered ABOVE (it borrow-read
+            // the old s to build the fresh result), so freeing old s now is sound.
+            // No rc-word inc (header-less asm box); heap-base-guarded so the initial
+            // "" literal's .rodata data is skipped. Closes the O(n) accumulator leak.
+            if (slot_is_reclaimable_str(s, slot)) { return emit_str_reclaim_store(se, slot); }
             // A reclaimable struct REASSIGN (`s = bump(s)` / `s = s.emit(op)`, the
             // builder consume-rebind) releases the OLD box the same way the StmtVar
             // branch does: emit_arr_store's cow-guarded, rc-guarded SHALLOW arr_dec
@@ -13366,6 +13374,135 @@ function collect_fresh_string_in_stmt(st: parser.Stmt, acc: string[]): string[] 
     }
 }
 
+// --- string-builder accumulator reclaim (#2649 consume-rebind) ----------------
+//
+// The canonical string leak is the accumulator `var s: string = ""; while (…) {
+// s = s + part; } … use(s)`: each `s = s + part` allocates a fresh box + buffer
+// and orphans the previous one, so the whole growth chain leaks (native's Perceus
+// frees the superseded box on each consume-rebind). This admits the NON-escaping
+// accumulator — the returned/moved-out builder needs move-on-return and is a
+// follow-up. Two analyses:
+//   - str_accum_reassign_ok proves a reassignment RHS BORROW-consumes `name` (as a
+//     `+` concat operand or a method receiver) and lets it escape nowhere else;
+//   - str_accum_unsafe_for is the whole-body escape gate: a `name = <fresh RHS
+//     that str_accum_reassign_ok admits>` is a safe consume-rebind (not an escape),
+//     ANY OTHER reassignment of `name` (a non-fresh alias, or one that leaks name)
+//     is unsafe, and a bare `return name` is unsafe (non-escaping only, for now).
+// Combined with the init being a literal or a fresh producer, `name` owns a fresh
+// (or static-literal) box at every point, so freeing the superseded box on each
+// reassignment (emit_str_reclaim_store, heap-base-guarded so the initial "" literal
+// is a no-op on its .rodata data) and the final at scope exit is sound.
+
+// str_accum_reassign_ok: `e` (a reassignment RHS already known to be a fresh
+// producer) references `name` ONLY in borrow-consume positions — a `+` concat
+// operand or (via expr_unsafe_for's receiver/borrow rules) a method receiver — and
+// lets it escape nowhere (no retaining call arg, no container store).
+function str_accum_reassign_ok(e: parser.Expr, name: string, borrowable: string[]): boolean {
+    match (e) {
+        parser.ExprBinary(b) => {
+            // A concat: each operand is a borrow-read (a bare ident operand — `name`
+            // or another string — is consumed to build the fresh result, not
+            // retained). Recurse so nested `a + name + b` is covered.
+            if (b.op == "+") { return str_accum_reassign_ok(b.left, name, borrowable) && str_accum_reassign_ok(b.right, name, borrowable); }
+            return !expr_unsafe_for(e, name, borrowable);
+        },
+        parser.ExprIdent(_) => { return true; },   // a concat-operand ident is a borrow-read
+        _ => { return !expr_unsafe_for(e, name, borrowable); },
+    }
+    return false;
+}
+
+// str_accum_unsafe_for / stmt_accum_unsafe_for: the accumulator escape gate — like
+// body_unsafe_for, but a `name = <fresh consume-rebind of name>` StmtAssign is
+// SAFE (not the crude expr_unsafe_for escape), while any other reassignment of
+// `name` is unsafe (a non-fresh RHS would alias a live box; freeing name later
+// would then be a UAF). `return name` stays unsafe (non-escaping accumulators
+// only; the move-out builder is a follow-up).
+function str_accum_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (stmt_accum_unsafe_for(stmts[i], name, borrowable)) { return true; } i = i + 1; }
+    return false;
+}
+function stmt_accum_unsafe_for(st: parser.Stmt, name: string, borrowable: string[]): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return expr_unsafe_for(v.init, name, borrowable); },
+        parser.StmtReturn(r) => { return expr_unsafe_for(r.value, name, borrowable); },
+        parser.StmtExpr(e) => { return expr_unsafe_for(e.value, name, borrowable); },
+        parser.StmtAssign(a) => {
+            if (a.target == name) {
+                // A consume-rebind of the accumulator: safe iff the new value is a
+                // FRESH producer (so `name` owns a fresh box afterwards, never an
+                // alias) that borrow-consumes `name`. Any other reassignment of
+                // `name` is unsafe (excludes the accumulator).
+                if (str_local_binding_is_fresh(a.value) && str_accum_reassign_ok(a.value, name, borrowable)) { return false; }
+                return true;
+            }
+            return expr_unsafe_for(a.value, name, borrowable);
+        },
+        parser.StmtIf(f) => {
+            if (expr_unsafe_for(f.cond, name, borrowable)) { return true; }
+            return str_accum_unsafe_for(f.then_body, name, borrowable) || str_accum_unsafe_for(f.else_body, name, borrowable);
+        },
+        parser.StmtWhile(w) => {
+            if (expr_unsafe_for(w.cond, name, borrowable)) { return true; }
+            return str_accum_unsafe_for(w.body, name, borrowable);
+        },
+        parser.StmtFor(fo) => {
+            var iter_unsafe: boolean = true;
+            match (fo.iter) {
+                parser.ExprIdent(_) => { iter_unsafe = false; },
+                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable); }
+            }
+            if (iter_unsafe) { return true; }
+            return str_accum_unsafe_for(fo.body, name, borrowable);
+        },
+        parser.StmtMatch(m) => {
+            if (expr_unsafe_for(m.scrutinee, name, borrowable)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable)) { return true; }
+                if (str_accum_unsafe_for(m.arms[ai].body, name, borrowable)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// collect_str_accumulator_names: string locals initialised `var s: string =
+// <literal or fresh>` that ARE reassigned (candidate accumulators). Whether every
+// reassignment is a valid consume-rebind and `s` never escapes is proven by
+// str_accum_unsafe_for at the crediting site, so this only screens the init shape.
+function collect_str_accumulator_names(stmts: parser.Stmt[], reassigned: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (v.type_name == "string" && util.index_of_str(reassigned, v.name) >= 0) {
+                    var init_ok: boolean = str_local_binding_is_fresh(v.init);
+                    match (v.init) { parser.ExprString(_) => { init_ok = true; }, _ => {} }
+                    if (init_ok) { a = push_str_unique(a, v.name); }
+                }
+            },
+            parser.StmtIf(f) => { a = collect_str_accumulator_names(f.then_body, reassigned, a); a = collect_str_accumulator_names(f.else_body, reassigned, a); },
+            parser.StmtWhile(w) => { a = collect_str_accumulator_names(w.body, reassigned, a); },
+            parser.StmtFor(fo) => { a = collect_str_accumulator_names(fo.body, reassigned, a); },
+            parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_str_accumulator_names(m.arms[ai].body, reassigned, a); ai = ai + 1; } },
+            parser.StmtSwitch(sw) => {
+                var c: i32 = 0;
+                while (c < sw.cases.len()) { a = collect_str_accumulator_names(sw.cases[c].body, reassigned, a); c = c + 1; }
+                if (sw.has_default) { a = collect_str_accumulator_names(sw.default_body, reassigned, a); }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
 // collect_fresh_ret_call_names credits a struct LOCAL bound from a fresh-ret
 // CALL (`var r: T = f(..)` / `var r: T = obj.m(..)`, f/m in fresh_ret) that is
 // NOT reassigned — the DISCARDED fresh-ret-call local (#3457 follow-up). A
@@ -13464,6 +13601,21 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
             out = out.append("STR:" + strs[si]);
         }
         si = si + 1;
+    }
+    // String-builder ACCUMULATORS (#2649 consume-rebind): a reassigned
+    // `var s: string = ""; while (…) { s = s + part; }` whose every reassignment is
+    // a fresh consume-rebind of s and that never escapes (str_accum_unsafe_for —
+    // which forbids `return s` for now, so a non-escaping accumulator only). Also
+    // credited "STR:", so slot_is_reclaimable_str drives both the per-reassignment
+    // free (emit_str_reclaim_store on the StmtAssign) and the scope-exit free. The
+    // superseded box freed each rebind is what closes the O(n) growth-chain leak;
+    // __fern_str_free's heap-base guard makes freeing the initial "" literal a
+    // no-op on its .rodata data (its 16-byte box is still reclaimed).
+    var accs: string[] = collect_str_accumulator_names(body, reassigned, []);
+    var ci: i32 = 0;
+    while (ci < accs.len()) {
+        if (!str_accum_unsafe_for(body, accs[ci], borrowable)) { out = out.append("STR:" + accs[ci]); }
+        ci = ci + 1;
     }
     return out;
 }
