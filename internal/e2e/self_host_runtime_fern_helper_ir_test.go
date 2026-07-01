@@ -160,6 +160,15 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			"__fn___fern_str_reverse",
 			[]string{"\n__fern_str_reverse:", ".Lir_str_rev_loop"},
 		},
+		{
+			// str_replace — migrated on the IR path too (#2649). The old hand-written
+			// IR body (__fern_str_replace: / .Lir_repl_walk) must be gone; the
+			// op_str_replace handler now calls __fn___fern_str_replace via the stack ABI.
+			"str_replace",
+			`function main(): i32 { return "a.b".replace(".", "-").len(); }`,
+			"__fn___fern_str_replace",
+			[]string{"\n__fern_str_replace:", ".Lir_repl_walk"},
+		},
 	}
 
 	for _, tc := range cases {
