@@ -210,6 +210,16 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_str_repeat:", ".Lrep_outer"},
 		},
 		{
+			// str_reverse (s.reverse()) — Tier-2 via the raw-memory intrinsics
+			// (#2649). The old register-ABI hand-asm (a bare __fern_str_reverse:
+			// label + .Lstr_rev_loop) is gone; the call site targets
+			// __fn___fern_str_reverse via the stack ABI.
+			"str_reverse",
+			`function main(): i32 { return "abc".reverse()[0]; }`,
+			"__fn___fern_str_reverse",
+			[]string{"\n__fern_str_reverse:", ".Lstr_rev_loop"},
+		},
+		{
 			// arr_str_join (string[].join) — AST-only; calls str_concat via `+`.
 			"arr_str_join",
 			`function main(): i32 { var xs: string[] = ["a", "b"]; return xs.join(",").len(); }`,
