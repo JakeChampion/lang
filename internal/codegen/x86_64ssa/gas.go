@@ -82,10 +82,17 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		b.WriteByte('\n')
 	}
 
+	heap := usesHeap(progs)
+
 	w(".intel_syntax noprefix")
 	w(".text")
 	w(".globl _start")
 	w("_start:")
+	// Initialise the bump-allocator cursor to the base of the .bss heap.
+	if heap {
+		w("\tlea rax, [rip + %s]", heapSym)
+		w("\tmov [rip + %s], rax", heapPtrSym)
+	}
 	// Load the entry arguments into the SysV argument registers before the call.
 	for i := range ep.ParamLocs {
 		var v int64
@@ -103,6 +110,15 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		if err := emitFuncBody(w, name, progs[name], numAlloc); err != nil {
 			return "", err
 		}
+	}
+	if heap {
+		w("")
+		w(".section .bss")
+		w(".align 8")
+		w("%s:", heapPtrSym)
+		w("\t.quad 0")
+		w("%s:", heapSym)
+		w("\t.space %d", heapBytes)
 	}
 	w(".section .note.GNU-stack,\"\",@progbits")
 	return b.String(), nil
@@ -440,9 +456,82 @@ func asmInst(in Inst, scratch int) (string, error) {
 		// dst = (dst CMP src): compare, set the low byte from flags, zero-extend.
 		return fmt.Sprintf("cmp %s, %s\n\t%s %s\n\tmovzx %s, %s",
 			reg(in.Dst), reg(in.Src), cc, reg8n(in.Dst), reg(in.Dst), reg8n(in.Dst)), nil
+	case MemAlloc:
+		// Bump allocator: result = align8(cursor); cursor = result + size. The
+		// heap cursor lives in .bss (see the heap section emitted per module).
+		return strings.Join([]string{
+			fmt.Sprintf("mov %s, [rip + %s]", reg(in.Dst), heapPtrSym),
+			fmt.Sprintf("add %s, 7", reg(in.Dst)),
+			fmt.Sprintf("and %s, -8", reg(in.Dst)),
+			fmt.Sprintf("mov %s, %s", reg(scratch), reg(in.Dst)),
+			fmt.Sprintf("add %s, %s", reg(scratch), reg(in.Src)),
+			fmt.Sprintf("mov [rip + %s], %s", heapPtrSym, reg(scratch)),
+		}, "\n\t"), nil
+	case MemLoad:
+		mem := memRef(reg(in.Src), in.Imm)
+		if in.Bytes == 8 {
+			return fmt.Sprintf("mov %s, %s", reg(in.Dst), mem) + maskFix(in.Dst, in.W), nil
+		}
+		size := "byte ptr"
+		if in.Bytes == 2 {
+			size = "word ptr"
+		}
+		if in.Signed {
+			if in.W == 64 {
+				return fmt.Sprintf("movsx %s, %s %s", reg(in.Dst), size, mem), nil
+			}
+			return fmt.Sprintf("movsx %s, %s %s", reg32n(in.Dst), size, mem) + maskFix(in.Dst, in.W), nil
+		}
+		return fmt.Sprintf("movzx %s, %s %s", reg32n(in.Dst), size, mem) + maskFix(in.Dst, in.W), nil
+	case MemStore:
+		mem := memRef(reg(in.Src), in.Imm)
+		switch in.Bytes {
+		case 1:
+			return fmt.Sprintf("mov byte ptr %s, %s", mem, reg8n(in.Src2)), nil
+		case 2:
+			return fmt.Sprintf("mov word ptr %s, %s", mem, reg16n(in.Src2)), nil
+		default:
+			return fmt.Sprintf("mov %s, %s", mem, reg(in.Src2)), nil
+		}
 	default:
 		return "", fmt.Errorf("x86_64ssa: unknown opcode %d", in.Op)
 	}
+}
+
+// heapPtrSym / heapSym / heapBytes back the SSA real-asm bump allocator. The
+// heap is a fixed .bss buffer; a lazy mmap/brk allocator (like the stack-machine
+// backend's) is a follow-up if real programs outgrow it.
+const (
+	heapPtrSym = "__ssa_heap_ptr"
+	heapSym    = "__ssa_heap"
+	heapBytes  = 1 << 16 // 64 KiB
+)
+
+// memRef renders a [base + disp] memory operand.
+func memRef(regName string, disp int64) string {
+	if disp == 0 {
+		return fmt.Sprintf("[%s]", regName)
+	}
+	if disp > 0 {
+		return fmt.Sprintf("[%s + %d]", regName, disp)
+	}
+	return fmt.Sprintf("[%s - %d]", regName, -disp)
+}
+
+// usesHeap reports whether any emitted program contains a heap op (so the heap
+// section + cursor init are only emitted when needed).
+func usesHeap(progs map[string]*Program) bool {
+	for _, p := range progs {
+		for _, blk := range p.Blocks {
+			for _, in := range blk.Insts {
+				switch in.Op {
+				case MemAlloc, MemLoad, MemStore:
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // rcxReg/raxReg/rdxReg are the fixed registers the shift/div sequences pin.
