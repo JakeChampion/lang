@@ -9,13 +9,14 @@ import (
 )
 
 // loopReuseIRCases exercise Perceus FBIP constructor reuse fired INSIDE a LOOP
-// BODY on the self-hosted stack-IR path (irlower `lower_loop_body`). Native's
-// high-value same-block reuse pass reclaims loop-churn allocations: a fresh
-// struct / tuple construction that reuses an earlier dead same-block donor's box
-// fires PER ITERATION (zero-alloc each turn) instead of only at the function-body
-// top level. The recipient slot is loop-carried, so the reuse emitter releases
-// its prior (previous-iteration) box (`emit_reuse_recip_prior_release`) before the
-// in-place overwrite — one alloc + one free per iteration, balanced.
+// BODY (and every nested block — if / match arms) on the self-hosted stack-IR
+// path (irlower `lower_block`). Native's high-value same-block reuse pass reclaims
+// loop-churn allocations: a fresh struct / tuple construction that reuses an
+// earlier dead same-block donor's box is lowered in place (zero-alloc) instead of
+// allocating a fresh box. In a loop the recipient slot is loop-carried, so the
+// reuse emitter releases its prior (previous-execution) box
+// (`emit_reuse_recip_prior_release`) before the in-place overwrite — one alloc +
+// one free per execution, balanced (this holds for an if-arm nested in a loop too).
 //
 // Two contracts per case:
 //   - exit code pins VALUE correctness (a reuse that mis-stored, double-freed, or
@@ -69,6 +70,17 @@ var loopReuseIRCases = []struct {
 	{"loop-funcupdate-churn-safe",
 		`struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5000000) { var d: P = P { x: i, y: 0 }; var c: P = P { ...d, y: 3 }; sum = (sum + c.x + c.y) % 1000; i = i + 1; } return sum; }`,
 		0, 1},
+	// Same-block reuse now fires in an IF-ARM body too (not just loops): `b` reuses
+	// the dead `a`'s box inside the `if` — ONE allocation. Value: (10+20) + (3+4) = 37.
+	{"if-arm-reuse",
+		`struct P { x: i32, y: i32 } function main(): i32 { var cond: i32 = 1; var r: i32 = 0; if (cond > 0) { var a: P = P { x: 10, y: 20 }; var s: i32 = a.x + a.y; var b: P = P { x: 3, y: 4 }; r = s + b.x + b.y; } return r; }`,
+		37, 1},
+	// An if-arm reuse NESTED in a loop churns per iteration: the recipient slot is
+	// loop-carried, so its prior box is released each turn (a double-free would
+	// crash, a leak would exhaust the heap). 5M iterations; exit = interp oracle.
+	{"if-in-loop-churn-safe",
+		`struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5000000) { if (i > 0) { var a: P = P { x: i, y: 1 }; var s: i32 = a.x + a.y; var b: P = P { x: i, y: 2 }; sum = (sum + s + b.x + b.y) % 1000; } i = i + 1; } return sum; }`,
+		229, 1},
 }
 
 // TestSelfHostLoopReuseIRX86_64 compiles each case through the self-hosted x86-64

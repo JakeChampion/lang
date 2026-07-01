@@ -2886,7 +2886,7 @@ pub function lower_range_for(var_name: string, iter: parser.Expr, body: parser.S
     rs = rs.emit(ir.op_bin(cond_kind, 0, false));
     rs = rs.emit(ir.op_bin("not", 0, false));
     rs = rs.emit(ir.op_brif(1));
-    rs = lower_loop_body(body, rs);
+    rs = lower_block(body, rs);
     if (!rs.ok) { return rs; }
     rs = rs.emit(ir.op_br(0));   // back-edge to header (re-advances)
     rs = rs.emit(ir.op_end());
@@ -10228,7 +10228,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             if (!w3.ok) { return w3; }
             var w4: LowerState = w3.emit(ir.op_bin("not", 0, false));
             var w5: LowerState = w4.emit(ir.op_brif(1));
-            var w6: LowerState = lower_loop_body(wh.body, w5);
+            var w6: LowerState = lower_block(wh.body, w5);
             if (!w6.ok) { return w6; }
             var w7: LowerState = w6.emit(ir.op_br(0));
             var w8: LowerState = w7.emit(ir.op_end());
@@ -10362,7 +10362,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                     mkf = mkf.emit(ir.op_load_local(mkidxslot));
                     mkf = mkf.emit(ir.op_arr_get(32));
                     mkf = mkf.emit(ir.op_store_local(mkivslot));
-                    mkf = lower_loop_body(fr.body, mkf);
+                    mkf = lower_block(fr.body, mkf);
                     if (!mkf.ok) { return mkf; }
                     mkf = mkf.emit(ir.op_br(0));
                     mkf = mkf.emit(ir.op_end());
@@ -10449,7 +10449,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                     lf = lf.emit(ir.op_load_local(fldidxslot));
                     lf = lf.emit(ir.op_arr_get(32));
                     lf = lf.emit(ir.op_store_local(fldvslot));
-                    lf = lower_loop_body(fr.body, lf);
+                    lf = lower_block(fr.body, lf);
                     if (!lf.ok) { return lf; }
                     lf = lf.emit(ir.op_br(0));
                     lf = lf.emit(ir.op_end());
@@ -10536,7 +10536,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 fm = fm.emit(ir.op_load_local(idxslot2));
                 fm = fm.emit(ir.op_arr_get(32));
                 fm = fm.emit(ir.op_store_local(vslot));
-                fm = lower_loop_body(fr.body, fm);
+                fm = lower_block(fr.body, fm);
                 if (!fm.ok) { return fm; }
                 fm = fm.emit(ir.op_br(0));
                 fm = fm.emit(ir.op_end());
@@ -10641,7 +10641,7 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             if (elem_is_i64 || elem_is_u64) { ff = ff.emit(ir.op_arr_get_i64()); }
             else { ff = ff.emit(ir.op_arr_get(elem_w)); }
             ff = ff.emit(ir.op_store_local(xslot));
-            ff = lower_loop_body(fr.body, ff);
+            ff = lower_block(fr.body, ff);
             if (!ff.ok) { return ff; }
             ff = ff.emit(ir.op_br(0));   // back-edge to header (re-advances)
             ff = ff.emit(ir.op_end());
@@ -12279,41 +12279,28 @@ function stmt_scopes_bindings(st: parser.Stmt): boolean {
     return false;
 }
 
+// lower_block lowers a nested block (loop body, if / match arm, bare block) with
+// same-block cross-reuse (FBIP) enabled: a fresh struct / tuple construction that
+// reuses an earlier dead SAME-BLOCK donor's box is lowered IN PLACE (zero-alloc)
+// instead of allocating a fresh box. This is native's same-block reuse pass over
+// EVERY block. Its highest-value instance is the loop-churn case — a `var a = …;
+// …; var b = …` in a loop body where a is dead by b reuses a's box each iteration
+// — but it also fires in if / match arm bodies (which, when nested in a loop,
+// churn too).
+//
+// Memory safety: the recipient slot is block-carried (re-used across executions of
+// the block at runtime — every iteration of an enclosing loop), so the reuse
+// emitter releases its prior box (release_prior); the donor's zeroed slot is
+// re-bound next execution (emit_arr_store prior-release for the normal binding),
+// and the final box rides the exit sweep — one alloc + one free per execution,
+// balanced. The analyses are block-scoped (self_overwrite / cross_reuse /
+// cross_tuple sites over `stmts`, dead-from-k within the block), so only
+// intra-block donors pair and no cross-execution read is stranded. The function
+// body itself is lowered by lower_func (with release_prior false — its recipient
+// slots are entry-zeroed, executed once), so this covers exactly the NESTED
+// blocks. Block-scoped slots are retired on exit so a SIBLING block (the other
+// match arm, the else branch) re-uses a fresh slot rather than colliding.
 pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
-    // Block scope: the locals this block introduces (slots >= base) are retired
-    // on exit so a SIBLING block (the other match arm, the else branch) re-uses
-    // a fresh slot rather than colliding on a same-named local of a different
-    // type — Fern is block-scoped, but the lowerer's slots are function-wide.
-    var base: i32 = s.locals.len();
-    var st: LowerState = s;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        var sbase: i32 = st.locals.len();
-        st = lower_stmt(stmts[i], st);
-        if (!st.ok) { return st; }
-        // A `for` / `match` statement's loop var / arm bindings are scoped to it,
-        // not the block — retire them now so they don't leak past the statement.
-        if (stmt_scopes_bindings(stmts[i])) { st = st.retire_locals(sbase); }
-        i = i + 1;
-    }
-    return st.retire_locals(base);
-}
-
-// lower_loop_body lowers a LOOP body (while / for) statement list with same-block
-// cross-reuse (FBIP) enabled: a fresh struct / tuple construction that reuses an
-// earlier dead SAME-BLOCK donor's box fires PER ITERATION — the loop-churn case
-// (a `var a = …; …; var b = …` where a is dead by b reuses a's box, zero-alloc
-// each turn). This is native's high-value same-block reuse pass, scoped here to
-// LOOP bodies only (if / match arms keep the plain lower_block, no reuse) to bound
-// the blast radius on the byte-identical self-compile. Memory safety: the recipient
-// slot is loop-carried, so the reuse emitter releases its prior box
-// (release_prior); the donor's zeroed slot is re-bound next iteration (emit_arr_store
-// prior-release for the normal binding), and the final box rides the exit sweep —
-// one alloc + one free per turn, balanced. The analyses are block-scoped
-// (cross_reuse_sites / cross_tuple_reuse_sites over `stmts`, dead-from-k within the
-// block), so only intra-iteration donors pair and no cross-iteration read is
-// stranded. Mirrors lower_block otherwise (block-scoped slot retirement).
-pub function lower_loop_body(stmts: parser.Stmt[], s: LowerState): LowerState {
     var base: i32 = s.locals.len();
     var so: ReuseSites = self_overwrite_reuse_sites(stmts, s.structs);
     var xreuse: CrossReuseSites = cross_reuse_sites(stmts, s.structs);
