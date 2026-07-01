@@ -179,6 +179,33 @@ func TestProgramRunClosureEscaping(t *testing.T) {
 	}
 }
 
+// Whole-program strings: a string literal is materialised length-prefixed in
+// .rodata, and s.len() lowers to __str_len (reads the byte length at [ptr-4]).
+// Runs the same result as the interpreter.
+func TestProgramRunString(t *testing.T) {
+	srcs := []string{
+		// Single literal length: "hello".len() = 5.
+		`function main(): i32 { var s: string = "hello"; return s.len(); }`,
+		// Sum of two literals' lengths: 5 + 3 = 8.
+		`function main(): i32 {
+		   var a: string = "hello";
+		   var b: string = "abc";
+		   return a.len() + b.len();
+		 }`,
+		// Empty string length is 0; a non-empty adds its length: 0 + 4 = 4.
+		`function main(): i32 {
+		   var e: string = "";
+		   var w: string = "abcd";
+		   return e.len() + w.len();
+		 }`,
+	}
+	for _, n := range []int{1, 2, 8} {
+		for _, src := range srcs {
+			programMatchesInterp(t, src, n)
+		}
+	}
+}
+
 // Whole-program Option + match: the pair-return (Some/None), the box the match
 // reconstructs (i32 fields at 4-byte offsets — needs the 4-byte load/store), and
 // the match-join phi all combine. Runs the same result as the interpreter.

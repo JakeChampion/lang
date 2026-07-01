@@ -127,6 +127,12 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("")
 		w(".section .rodata")
 		for _, s := range strOrder {
+			// Length-prefixed single-word string layout (mirrors the native
+			// backends): a 4-byte byte-length sits immediately before the data,
+			// so the string pointer is the data pointer and __str_len reads
+			// [ptr-4]. Consecutive literals stay contiguous, so each label's own
+			// prefix is exactly the 4 bytes before it.
+			w("\t.4byte %d", len(s))
 			w("%s:", strLabels[s])
 			if len(s) > 0 {
 				parts := make([]string, len(s))
@@ -1005,6 +1011,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_rc_dec":       emitRcDecHelper,
 	"__fern_closure_drop": emitClosureDropHelper,
 	"__fern_box_free":     emitBoxFreeHelper,
+	"__str_len":           emitStrLenHelper,
 }
 
 // runtimeHelperDeps records the helper→helper call edges (a helper that tail-
@@ -1148,6 +1155,17 @@ func emitBoxFreeHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_box_free"))
 	w("\tmov rax, rdi") // return data unchanged; free is a no-op for now
+	w("\tret")
+}
+
+// emitStrLenHelper writes __str_len(ptr) -> i32: the byte length of a
+// single-word string, stored as a 4-byte field immediately before the data
+// (the layout ConstStr emits and the native backends use — length at [ptr-4]).
+// Leaf. The IR lowers `s.len()` (OpStrLen) to a call here.
+func emitStrLenHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__str_len"))
+	w("\tmov eax, %s", memRef("rdi", -4))
 	w("\tret")
 }
 
