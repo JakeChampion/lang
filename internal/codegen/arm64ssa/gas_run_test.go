@@ -20,6 +20,61 @@ func constOp(f *ssa.Func, b *ssa.Block, imm int64) ssa.Value {
 	return v
 }
 
+// callOp adds a direct-call op to callee with args and returns its result.
+func callOp(f *ssa.Func, b *ssa.Block, callee string, args ...ssa.Value) ssa.Value {
+	v := f.AddOp(b, ssa.OpCall, args...)
+	b.Ops[len(b.Ops)-1].Str = callee
+	return v
+}
+
+// assembleRunArmModule assembles a multi-function module's arm64 SSA output into
+// a static AArch64 ELF and runs it under qemu-aarch64, returning the exit code.
+// Skips when qemu is unavailable.
+func assembleRunArmModule(t *testing.T, funcs map[string]*ssa.Func, entry string, numAlloc int, entryArgs ...int64) int {
+	t.Helper()
+	qemu, err := exec.LookPath("qemu-aarch64")
+	if err != nil {
+		t.Skip("qemu-aarch64 not available")
+	}
+	asm, err := arm64ssa.EmitAsmModule(funcs, entry, numAlloc, entryArgs)
+	if err != nil {
+		t.Fatalf("EmitAsmModule: %v", err)
+	}
+	text, rodata, err := nativearm64.AssembleProgram(asm, nativeelf.TextVAddr)
+	if err != nil {
+		t.Fatalf("AssembleProgram: %v\n--- asm ---\n%s", err, asm)
+	}
+	bin := filepath.Join(t.TempDir(), "prog")
+	if err := os.WriteFile(bin, nativeelf.StaticExecutableData(text, rodata), 0o755); err != nil {
+		t.Fatalf("write bin: %v", err)
+	}
+	if e := exec.Command(qemu, bin).Run(); e != nil {
+		var ee *exec.ExitError
+		if errors.As(e, &ee) {
+			return ee.ExitCode()
+		}
+		t.Fatalf("run: %v", e)
+	}
+	return 0
+}
+
+// moduleMatchesEval asserts the arm64 binary's exit code equals EvalIn(funcs,
+// entry) mod 256 across several register-file sizes (small ones force spills and
+// larger caller-save sets).
+func moduleMatchesEval(t *testing.T, funcs map[string]*ssa.Func, entry string, entryArgs ...int64) {
+	t.Helper()
+	want, err := ssa.EvalIn(funcs, funcs[entry], entryArgs...)
+	if err != nil {
+		t.Fatalf("EvalIn: %v", err)
+	}
+	for _, n := range []int{2, 4, 8} {
+		got := assembleRunArmModule(t, funcs, entry, n, entryArgs...)
+		if got != int(uint8(want)) {
+			t.Errorf("nAlloc=%d arm64 run exit=%d, want EvalIn&0xFF=%d (EvalIn=%d)", n, got, int(uint8(want)), want)
+		}
+	}
+}
+
 // assembleRunArm assembles f's arm64 SSA output into a static AArch64 ELF and
 // runs it under qemu-aarch64, returning the process exit code. entryArgs are
 // loaded into the argument registers before the entry call. Skips when qemu is
@@ -168,6 +223,49 @@ func TestArmRunThreeParams(t *testing.T) {
 	for _, nreg := range []int{2, 4, 8} {
 		runMatchesEval(t, build(), nreg, 100, 30, 28)
 	}
+}
+
+// Cross-function direct calls: add(a,b)=a+b; main()=add(3,4)+add(10,20)=37.
+// Exercises the call ABI (args in x0/x1, result in x0), x30 save/restore, and
+// caller-save of the value live across the second call.
+func TestArmRunModuleDirectCalls(t *testing.T) {
+	build := func() map[string]*ssa.Func {
+		add := ssa.NewFunc("add")
+		a := add.AddParam()
+		b := add.AddParam()
+		ae := add.NewBlock()
+		add.SetRet(ae, add.AddOp(ae, ssa.OpAdd, a, b))
+
+		main := ssa.NewFunc("main")
+		me := main.NewBlock()
+		t1 := callOp(main, me, "add", constOp(main, me, 3), constOp(main, me, 4))
+		t2 := callOp(main, me, "add", constOp(main, me, 10), constOp(main, me, 20))
+		main.SetRet(me, main.AddOp(me, ssa.OpAdd, t1, t2))
+		return map[string]*ssa.Func{"add": add, "main": main}
+	}
+	moduleMatchesEval(t, build(), "main")
+}
+
+// Self-recursion through the call ABI: factorial(5) = 120 -> exit 120. The
+// recursive result is live across nothing, but n is live across the call, so the
+// caller-save path is exercised, as are the branch-based base/rec split and the
+// frame's x30 preservation on every level.
+func TestArmRunModuleRecursion(t *testing.T) {
+	build := func() map[string]*ssa.Func {
+		f := ssa.NewFunc("factorial")
+		n := f.AddParam()
+		entry := f.NewBlock()
+		base := f.NewBlock()
+		rec := f.NewBlock()
+		cond := f.AddOp(entry, ssa.OpLe, n, constOp(f, entry, 1))
+		f.SetBrIf(entry, cond, base, rec)
+		f.SetRet(base, constOp(f, base, 1))
+		nm1 := f.AddOp(rec, ssa.OpSub, n, constOp(f, rec, 1))
+		fr := callOp(f, rec, "factorial", nm1)
+		f.SetRet(rec, f.AddOp(rec, ssa.OpMul, n, fr))
+		return map[string]*ssa.Func{"factorial": f}
+	}
+	moduleMatchesEval(t, build(), "factorial", 5)
 }
 
 // max via a comparison-selected branch: max(9, 4) = 9 -> exit 9.
