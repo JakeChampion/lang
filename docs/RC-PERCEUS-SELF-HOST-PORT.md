@@ -3319,3 +3319,19 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   correctly — the decisive soundness signal). Follow-ups (task #22): widen to iterated
   maps (precise iter-escape tracking), precise-drop for map locals, deep-drop string/
   array VALUES, reclaim the 16-byte mapbox.
+- 2026-07-01: **Map local reclaim — slice 2 (precise drop-on-last-use)**. A fresh
+  `var m = Map { … }` last-used in a NESTED block now has its keys/values buffers
+  freed right after that statement (precise_drop_names kind "map-buffers" →
+  emit_map_buffers_free), earlier than the function-exit sweep — bounding peak heap,
+  the map sibling of the array/tuple/struct/option/enum precise drops. Same gates as
+  the exit-sweep "MAP:" set (fresh init, not reassigned, not aliased, non-escaping,
+  not iterated). emit_map_buffers_free gained a NULL GUARD + slot-zero: the precise
+  drop zeroes the mapbox slot after freeing, so the exit sweep's second call on the
+  same slot sees null and skips (no double-free); the guard also hardens the
+  exit-sweep path itself against a conditionally-declared map (an untaken-branch slot
+  is null). op_block/op_brif with op_bin("not") is the emit_enum_variant_drops
+  null-guard idiom. VERIFIED: new map-precise-if-* / map-conditional-decl (null-guard)
+  / map-precise-corruption-probe cases in TestSelfHostRcPreciseDropX86IR; byte-
+  identical FIXPOINT + BOOTSTRAP + wasm + IR-diff stay green (the null-guard changes
+  the exit-sweep emission for the compiler's own map functions, so the self-compile
+  re-verifies).

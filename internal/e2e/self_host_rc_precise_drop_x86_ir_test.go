@@ -1141,6 +1141,23 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// buffers, so map_is_iterated excludes m from reclaim (the buffers stay live
 		// through the loop). Detector 0.
 		{"map-iterated-not-freed-detector", `function go(): i32 { var m = Map { 1: 10, 2: 20 }; var t = 0; for (k, v) in m { t = t + v; } if (t != 30) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// MAP precise-drop: a fresh map last-used in a NESTED block has its buffers
+		// freed right after that statement (emit_map_buffers_free, null-guarded +
+		// slot-zeroed) — earlier than the exit sweep, bounding peak heap. The exit
+		// sweep's re-call sees the zeroed (null) slot and skips (no double-free).
+		// f(5): m built, used in the if (c=35), freed after the if; return 35+5=40.
+		{"map-precise-if-value", `function f(n: i32): i32 { var m = Map { 1: 10, 2: 25 }; var c = 0; if (n > 0) { c = m.get_or(1, 0) + m.get_or(2, 0); } return c + n; } function main(): i32 { return f(5); }`, 40},
+		{"map-precise-if-detector", `function f(n: i32): i32 { var m = Map { 1: 10, 2: 25 }; var c = 0; if (n > 0) { c = m.get_or(1, 0) + m.get_or(2, 0); } return c + n; } function main(): i32 { var r = f(5); if (r != 40) { return 99; } return __rc_underflow(); }`, 0},
+		// CONDITIONALLY-DECLARED map: `m` is declared inside an if-branch. On the taken
+		// path it is precise-dropped after the if-body; the function-exit sweep also
+		// processes the slot — the NULL GUARD in emit_map_buffers_free makes the
+		// untaken-path (null slot) a no-op and the taken-path second-call a no-op.
+		// Detector 0 proves neither a double-free nor a null-deref.
+		{"map-conditional-decl-detector", `function f(n: i32): i32 { var t = 0; if (n > 0) { var m = Map { 1: 10, 2: 20 }; t = m.get_or(1, 0) + m.get_or(2, 0); } if (t != 30) { return 99; } return __rc_underflow(); } function main(): i32 { return f(5); }`, 0},
+		// PRECISE drop + heap-reuse corruption probe: fresh arrays allocated AFTER the
+		// map's precise buffer-free read back intact (the buffers were freed soundly,
+		// exactly once — no still-live buffer freed early that the alloc could recycle).
+		{"map-precise-corruption-probe-detector", `function go(): i32 { var m = Map { 1: 10, 2: 20 }; var c = 0; var i = 0; while (i < 1) { c = m.get_or(1, 0) + m.get_or(2, 0); i = i + 1; } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (c != 30) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -12367,9 +12367,21 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                     }
                 }
                 var is_rcenum: boolean = rcenum_owner != "";
+                // A fresh MAP local (`var m = Map { … }` / `map_new()`) last-used in a
+                // nested block, non-escaping + non-iterated, is a precise-drop candidate
+                // too — the map sibling of the exit-sweep reclaim (which frees the same
+                // keys/values buffers, just at function exit). emit_map_buffers_free
+                // null-guards + zeroes the slot, so the precise drop here and the exit
+                // sweep's re-call coexist (the second sees null and skips). Same gates
+                // as the "MAP:" exit set: fresh init, not aliased, not iterated (the
+                // outer `if` adds not-reassigned + non-escaping).
+                var is_map: boolean = false;
+                if (!is_lit && !is_opt && !is_rcopt && !is_enum && !is_rcenum && is_fresh_map_init(v.init)) {
+                    if (util.index_of_str(aliased_array_names_of(body), v.name) < 0 && !map_is_iterated(body, v.name)) { is_map = true; }
+                }
                 var shadowed: boolean = util.index_of_str(seen, v.name) >= 0;
                 seen = seen.append(v.name);
-                if ((is_lit || is_opt || is_rcopt || is_enum || is_rcenum) && !shadowed && util.index_of_str(reassigned, v.name) < 0 && !body_unsafe_for(body, v.name, borrowable)) {
+                if ((is_lit || is_opt || is_rcopt || is_enum || is_rcenum || is_map) && !shadowed && util.index_of_str(reassigned, v.name) < 0 && !body_unsafe_for(body, v.name, borrowable)) {
                     var last: i32 = 0 - 1;
                     var k: i32 = i + 1;
                     var none: string[] = [];
@@ -12382,6 +12394,7 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                         if (is_rcopt) { kind = "opt-rcpayload"; }
                         else if (is_opt || is_enum) { kind = "box-shallow"; }
                         else if (is_rcenum) { kind = "enum-rcpayload:" + rcenum_owner; }
+                        else if (is_map) { kind = "map-buffers"; }
                         idxs = idxs.append(last);
                         names = names.append(v.name);
                         kinds = kinds.append(kind);
@@ -15099,10 +15112,18 @@ function slot_is_reclaimable_map(s: LowerState, i: i32): boolean {
 // are rc-headered arrays (__fern_alloc_u8 → __fern_arr_box), so a rc-guarded
 // __fern_rc_dec (== __fern_arr_dec) frees each at rc==1 and safe-decs if aliased
 // (m.keys()/values() views). raw_load_ptr reads mapbox word 0 (keys) / word 1
-// (values). The 16-byte RAW mapbox is left to leak (a raw-box free is a later
-// slice). Order: read + free the buffers BEFORE any slot rewrite.
+// (values). The 16-byte RAW mapbox is left to leak (a raw-box free is a later slice).
+// A NULL GUARD wraps the reads (raw_load_ptr on a null mapbox would deref address 0):
+// this covers a conditionally-declared map slot AND the precise-drop / exit-sweep
+// coexistence — the precise drop zeroes the slot after freeing, so the exit sweep's
+// second call sees null and skips. The slot is zeroed at the end so both callers
+// leave a guarded-null slot behind.
 function emit_map_buffers_free(s: LowerState, slot: i32): LowerState {
     var st: LowerState = s;
+    st = st.emit(ir.op_block(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_bin("not", 0, false));   // 1 if mapbox == null
+    st = st.emit(ir.op_brif(0));                 // null → skip the buffer frees
     // keys = mapbox[word 0]
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_const_i32(0));
@@ -15115,6 +15136,10 @@ function emit_map_buffers_free(s: LowerState, slot: i32): LowerState {
     st = st.emit(ir.op_raw_load_ptr());
     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
     st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());
+    // zero the slot (a precise drop uses this so the exit-sweep re-call skips).
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_store_local(slot));
     return st;
 }
 
@@ -17224,6 +17249,13 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                     // zeroes the slot too). The enum NAME rides in the kind after the
                     // "enum-rcpayload:" prefix (the slot type alone can't name it).
                     s = emit_enum_variant_drops(s, dslot, pdrops.kinds[pi][15 : pdrops.kinds[pi].len()]);
+                } else if (dslot >= s.n_params && pdrops.kinds[pi] == "map-buffers") {
+                    // Fresh MAP local, last-used in a nested block — free its keys +
+                    // values buffers (emit_map_buffers_free: rc-guarded __fern_rc_dec via
+                    // raw_load_ptr) + zero the slot right after that statement, bounding
+                    // peak heap. The null guard + slot-zero mean the function-exit sweep's
+                    // re-call on the same slot sees null and skips (no double-free).
+                    s = emit_map_buffers_free(s, dslot);
                 }
             }
             pi = pi + 1;
