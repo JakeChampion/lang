@@ -553,6 +553,10 @@ func asmInst(in Inst, scratch int) (string, error) {
 		if in.Bytes == 8 {
 			return fmt.Sprintf("mov %s, %s", reg(in.Dst), mem) + maskFix(in.Dst, in.W), nil
 		}
+		if in.Bytes == 4 {
+			// 4-byte load: `mov r32, [mem]` zero-extends into the 64-bit reg.
+			return fmt.Sprintf("mov %s, %s", reg32n(in.Dst), mem) + maskFix(in.Dst, in.W), nil
+		}
 		size := "byte ptr"
 		if in.Bytes == 2 {
 			size = "word ptr"
@@ -571,6 +575,8 @@ func asmInst(in Inst, scratch int) (string, error) {
 			return fmt.Sprintf("mov byte ptr %s, %s", mem, reg8n(in.Src2)), nil
 		case 2:
 			return fmt.Sprintf("mov word ptr %s, %s", mem, reg16n(in.Src2)), nil
+		case 4:
+			return fmt.Sprintf("mov %s, %s", mem, reg32n(in.Src2)), nil
 		default:
 			return fmt.Sprintf("mov %s, %s", mem, reg(in.Src2)), nil
 		}

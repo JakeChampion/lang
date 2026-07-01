@@ -224,6 +224,14 @@ const (
 	OpStore8
 	OpStore16
 
+	// 4-byte (i32 word) load / store. OpLoad32U zero-extends the
+	// low 32 bits (matching a plain `mov eax, [addr]`); OpStore32
+	// writes only the low 4 bytes. These are the default width for
+	// the IR's OpLoad/OpStore (an i32 field); pointer-width
+	// (8-byte) access uses OpLoad/OpStore.
+	OpLoad32U
+	OpStore32
+
 	// Float load / store. The internal SSA float type is f64;
 	// backend codegen decides f32 vs f64 from the type-tagging
 	// story once it lands.
@@ -401,6 +409,10 @@ func (k OpKind) String() string {
 		return "store8"
 	case OpStore16:
 		return "store16"
+	case OpLoad32U:
+		return "load32_u"
+	case OpStore32:
+		return "store32"
 	case OpLoadF:
 		return "load_f"
 	case OpStoreF:

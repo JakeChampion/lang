@@ -139,7 +139,11 @@ func memAccess(k OpKind) (bytes int, signed bool) {
 		return 1, false
 	case OpStore16:
 		return 2, false
-	default: // OpLoad / OpStore (full word)
+	case OpLoad32U:
+		return 4, false
+	case OpStore32:
+		return 4, false
+	default: // OpLoad / OpStore (full 8-byte word)
 		return 8, false
 	}
 }
@@ -554,7 +558,7 @@ func evalOp(funcs map[string]*Func, table []string, h *heap, strLen map[int32]in
 			return err
 		}
 		return set(h.alloc(size))
-	case OpLoad, OpLoad8U, OpLoad8S, OpLoad16U, OpLoad16S:
+	case OpLoad, OpLoad8U, OpLoad8S, OpLoad16U, OpLoad16S, OpLoad32U:
 		base, err := arg(0)
 		if err != nil {
 			return err
@@ -565,7 +569,7 @@ func evalOp(funcs map[string]*Func, table []string, h *heap, strLen map[int32]in
 			return err
 		}
 		return set(v)
-	case OpStore, OpStore8, OpStore16:
+	case OpStore, OpStore8, OpStore16, OpStore32:
 		base, err := arg(0)
 		if err != nil {
 			return err

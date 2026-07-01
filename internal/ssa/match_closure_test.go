@@ -24,12 +24,12 @@ func TestLiftMatchTag(t *testing.T) {
 	if err := Verify(out); err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
-	// Expect: const_int 0x1000, then load.
+	// Expect: const_int 0x1000, then a 4-byte load of the i32 tag.
 	if len(out.Blocks[0].Ops) < 2 {
 		t.Fatalf("Ops len = %d, want ≥ 2", len(out.Blocks[0].Ops))
 	}
-	if out.Blocks[0].Ops[1].Kind != OpLoad {
-		t.Errorf("Op[1].Kind = %v, want OpLoad", out.Blocks[0].Ops[1].Kind)
+	if out.Blocks[0].Ops[1].Kind != OpLoad32U {
+		t.Errorf("Op[1].Kind = %v, want OpLoad32U", out.Blocks[0].Ops[1].Kind)
 	}
 }
 

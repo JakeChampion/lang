@@ -278,9 +278,20 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
           *execution* of `Option` additionally needs the IR's load/store
           **bit-width** carried through the lift (the boxes pack i32 fields at
           4-byte offsets, which the width-agnostic 8-byte memory path overruns)
-          — a separate follow-up. Still ahead: closure dispatch (`CallIndirect`),
-          the lift memory-width fix, RC/runtime helpers, then the flag + e2e
-          diff.
+          — a separate follow-up.
+        - [x] Lift memory-width fix — **`Option`/`match` now runs whole-program**.
+          The SSA gained a 4-byte `OpLoad32U`/`OpStore32` (mirroring the sub-word
+          ops); `ssa.LiftFromIR` now width-switches `ir.OpLoad`/`OpStore` (and
+          `OpMatchTag`): pointer-width (`Width == WidthPtr`/`64`) → the 8-byte
+          `OpLoad`/`OpStore`, else the 4-byte i32 variant — so a box's i32 fields
+          at 4-byte offsets no longer overrun. Wired through `Eval`, the
+          `x86_64ssa` model + real-asm emitter (`mov r32`/`mov m32`), and
+          **wasmssa** (`i32.load`/`i32.store` — where `OpLoad` was already 4-byte,
+          so no wasm regression; confirmed by the wasm suites). `EmitProgram` now
+          runs `match half(n) { Some(v) => v, None => k }` with the interpreter's
+          result on both arms (Some=42, None=99) — the phi fix + this width fix
+          together. Still ahead: closure dispatch (`CallIndirect`), RC/runtime
+          helpers, then the flag + e2e diff.
 - [~] Op-coverage broadening toward parity (each op validated against `Eval`
   in the model before it reaches real assembly):
   - [x] Direct integer calls + recursion — `ssa.EvalIn` (function-table eval),
