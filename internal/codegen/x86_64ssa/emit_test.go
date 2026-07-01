@@ -131,13 +131,15 @@ func TestEmitForcesSpills(t *testing.T) {
 
 // Unsupported ops return a clear error, not a silent wrong answer.
 func TestEmitRejectsUnsupported(t *testing.T) {
-	// OpMakeClosure is not yet modelled (closures are a later slice).
-	g := ssa.NewFunc("mk")
+	// OpSelect is not yet modelled by the emitter (later slice).
+	g := ssa.NewFunc("sel")
+	c := g.AddParam()
 	x := g.AddParam()
+	y := g.AddParam()
 	ge := g.NewBlock()
-	q := g.AddOp(ge, ssa.OpMakeClosure, x)
+	q := g.AddOp(ge, ssa.OpSelect, c, x, y)
 	g.SetRet(ge, q)
 	if _, err := Emit(g, 4); err == nil {
-		t.Error("expected an error for an unsupported op (OpMakeClosure)")
+		t.Error("expected an error for an unsupported op (OpSelect)")
 	}
 }

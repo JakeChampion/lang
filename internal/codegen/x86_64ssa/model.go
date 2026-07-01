@@ -150,6 +150,29 @@ func runProg(m map[string]*Program, table []string, p *Program, h *modelHeap, ar
 				}
 				regs[in.Dst] = maskW(in.W, r0)
 				regs[in.Dst2] = r1
+			case MakeEnv:
+				env, err := storeCaptures(h, in.ArgLocs, readLoc)
+				if err != nil {
+					return 0, 0, err
+				}
+				regs[in.Dst] = env
+			case MakeClosure:
+				idx, ok := funcIndexOf(table, in.Callee)
+				if !ok {
+					return 0, 0, fmt.Errorf("Run: MakeClosure target %q not in table (use RunModuleTable)", in.Callee)
+				}
+				env, err := storeCaptures(h, in.ArgLocs, readLoc)
+				if err != nil {
+					return 0, 0, err
+				}
+				cell := h.alloc(16)
+				if err := h.store(cell, idx, 8); err != nil {
+					return 0, 0, err
+				}
+				if err := h.store(cell+8, env, 8); err != nil {
+					return 0, 0, err
+				}
+				regs[in.Dst] = cell
 			case MemAlloc:
 				regs[in.Dst] = h.alloc(regs[in.Src])
 			case MemLoad:
@@ -201,6 +224,31 @@ func runProg(m map[string]*Program, table []string, p *Program, h *modelHeap, ar
 			return 0, 0, fmt.Errorf("Run: unknown terminator %d", blk.Term.Kind)
 		}
 	}
+}
+
+// funcIndexOf returns the position of name in the ordered function table (the
+// fn_idx a closure dispatches on), or false if absent.
+func funcIndexOf(table []string, name string) (int64, bool) {
+	for i, n := range table {
+		if n == name {
+			return int64(i), true
+		}
+	}
+	return 0, false
+}
+
+// storeCaptures allocates an env block of len(argLocs) 8-byte slots, stores each
+// capture (argLocs[i] at offset 8*i), and returns the env pointer. Shared by
+// MakeEnv and MakeClosure; mirrors ssa.Eval's storeCaptures byte-for-byte so the
+// differential check on the shared heap layout holds.
+func storeCaptures(h *modelHeap, argLocs []Loc, readLoc func(Loc) int64) (int64, error) {
+	env := h.alloc(int64(len(argLocs)) * 8)
+	for i, l := range argLocs {
+		if err := h.store(env+int64(i)*8, readLoc(l), 8); err != nil {
+			return 0, err
+		}
+	}
+	return env, nil
 }
 
 // modelHeap mirrors ssa.Eval's memory model: a little-endian byte buffer with
