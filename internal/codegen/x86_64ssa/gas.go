@@ -134,6 +134,18 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 			}
 		}
 	}
+	if usesCallIndirect(progs) {
+		// Function-address dispatch table: one .quad per function in module
+		// (sorted) order, so table[fn_idx] is the callee's absolute address. A
+		// closure cell carries fn_idx; OpCallIndirect indexes this table.
+		w("")
+		w(".section .rodata")
+		w(".align 8")
+		w("%s:", fnTableSym)
+		for _, name := range names {
+			w("\t.quad %s", fnLabel(name))
+		}
+	}
 	if heap {
 		w("")
 		w(".section .bss")
@@ -186,9 +198,25 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 
 	for bi, blk := range p.Blocks {
 		w(".L_%s_b%d:", label, bi)
-		for _, in := range blk.Insts {
+		for ii, in := range blk.Insts {
+			if in.Op == Select {
+				for _, l := range selectLines(in, fmt.Sprintf("%s_b%d_i%d", label, bi, ii)) {
+					w("\t%s", l)
+				}
+				continue
+			}
 			if in.Op == Call || in.Op == CallPair {
 				lines, err := callLines(in, numAlloc, scratch, numAlloc)
+				if err != nil {
+					return err
+				}
+				for _, l := range lines {
+					w("\t%s", l)
+				}
+				continue
+			}
+			if in.Op == CallIndirect {
+				lines, err := callIndirectLines(in, numAlloc, scratch)
 				if err != nil {
 					return err
 				}
@@ -357,6 +385,109 @@ func callLines(in Inst, numAlloc, scratch, s0 int) ([]string, error) {
 		out = append(out, fmt.Sprintf("mov %s, %s", reg(in.Dst2), reg(s0))) // place payload
 	}
 	return out, nil
+}
+
+// callIndirectLines renders a closure dispatch on the real-asm path. in.IdxLoc
+// is a pointer to a {fn_idx, env_ptr} cell: fn_idx (at +0) indexes the module
+// function-address table (fnTableSym); env_ptr (at +8) is appended as the
+// callee's LAST argument (docs/SSA-CLOSURE-DISPATCH.md). Caller-saved registers
+// are conservatively preserved as in callLines. The resolved target address is
+// stashed on the stack across the argument-register shuffle (so no scratch
+// register needs to dodge the arg registers), then popped into rax — never an
+// argument register, and its own live value is already in the caller-saved set —
+// and called register-indirect.
+func callIndirectLines(in Inst, numAlloc, scratch int) ([]string, error) {
+	if len(in.ArgLocs)+1 > len(sysvArgRegs) {
+		return nil, fmt.Errorf("x86_64ssa: real-asm indirect call supports up to %d args incl. env, got %d",
+			len(sysvArgRegs), len(in.ArgLocs)+1)
+	}
+	s0 := numAlloc     // env staging (free during this inst)
+	s1 := numAlloc + 1 // fn_idx, then the resolved target address
+	var out []string
+	stage := func(dst int, l Loc) {
+		if l.IsReg {
+			out = append(out, fmt.Sprintf("mov %s, %s", reg(dst), reg(l.Reg)))
+		} else {
+			out = append(out, fmt.Sprintf("mov %s, %s", reg(dst), slotMem(l.Slot)))
+		}
+	}
+	// Read env (+8) and fn_idx (+0) out of the cell before any register moves.
+	stage(scratch, in.IdxLoc)
+	out = append(out,
+		fmt.Sprintf("mov %s, %s", reg(s0), memRef(reg(scratch), 8)), // env  = cell[8]
+		fmt.Sprintf("mov %s, %s", reg(s1), memRef(reg(scratch), 0)), // fn_idx = cell[0]
+	)
+	// Resolve table[fn_idx] → absolute code address into s1.
+	out = append(out,
+		fmt.Sprintf("lea %s, [rip + %s]", reg(scratch), fnTableSym),
+		fmt.Sprintf("shl %s, 3", reg(s1)),
+		fmt.Sprintf("add %s, %s", reg(scratch), reg(s1)),
+		fmt.Sprintf("mov %s, %s", reg(s1), memRef(reg(scratch), 0)),
+	)
+	// Conservatively preserve caller-saved allocatable registers (see callLines).
+	var saved []int
+	for r := 0; r < numAlloc; r++ {
+		if isCallerSaved(r) {
+			saved = append(saved, r)
+		}
+	}
+	pad := (len(saved) % 2) * 8
+	if pad != 0 {
+		out = append(out, "sub rsp, 8")
+	}
+	for _, r := range saved {
+		out = append(out, fmt.Sprintf("push %s", reg(r)))
+	}
+	// Stash the target address (deepest), then push the args (arg0 first) and the
+	// env pointer last, so env lands in the callee's final parameter register.
+	out = append(out, fmt.Sprintf("push %s", reg(s1)))
+	for _, l := range in.ArgLocs {
+		stage(scratch, l)
+		out = append(out, fmt.Sprintf("push %s", reg(scratch)))
+	}
+	out = append(out, fmt.Sprintf("push %s", reg(s0))) // env — last argument
+	// Pop into arg registers in reverse (env is the highest-indexed arg), then
+	// recover the target address into rax and call it.
+	n := len(in.ArgLocs)
+	for i := n; i >= 0; i-- {
+		out = append(out, fmt.Sprintf("pop %s", sysvArgRegs[i]))
+	}
+	out = append(out,
+		"pop rax", // recover the stashed target address
+		"call rax",
+		fmt.Sprintf("mov %s, rax", reg(scratch)), // capture result
+	)
+	for i := len(saved) - 1; i >= 0; i-- {
+		out = append(out, fmt.Sprintf("pop %s", reg(saved[i])))
+	}
+	if pad != 0 {
+		out = append(out, "add rsp, 8")
+	}
+	out = append(out, fmt.Sprintf("mov %s, %s", reg(in.Dst), reg(scratch))) // place result
+	if fix := maskFix(in.Dst, in.W); fix != "" {
+		out = append(out, strings.TrimPrefix(fix, "\n\t"))
+	}
+	return out, nil
+}
+
+// selectLines renders `Dst = (Src != 0) ? Src2 : Src3` with a conditional branch
+// over a unique label. The assembler has no cmov, and a branch-free mask sequence
+// would need a second scratch — but materialize hands back the operands' own home
+// registers (not fresh copies), so no operand may be clobbered. Writing only Dst
+// (reading Src/Src2/Src3) sidesteps that. label must be unique per instruction.
+func selectLines(in Inst, label string) []string {
+	end := ".Lsel_end_" + label
+	out := []string{
+		fmt.Sprintf("cmp %s, 0", reg(in.Src)),
+		fmt.Sprintf("mov %s, %s", reg(in.Dst), reg(in.Src3)), // default: else
+		fmt.Sprintf("je %s", end),
+		fmt.Sprintf("mov %s, %s", reg(in.Dst), reg(in.Src2)), // cond != 0: then
+		end + ":",
+	}
+	if fix := maskFix(in.Dst, in.W); fix != "" {
+		out = append(out, strings.TrimPrefix(fix, "\n\t"))
+	}
+	return out
 }
 
 // gpRegs is the allocatable+scratch register pool (rsp/rbp reserved for the
@@ -701,6 +832,12 @@ const (
 	heapBytes  = 1 << 16 // 64 KiB
 )
 
+// fnTableSym labels the module's function-address dispatch table: one `.quad`
+// per function, in the module's (sorted) emission order — i.e. indexed by the
+// same fn_idx a closure cell carries. A real-asm OpCallIndirect resolves its
+// callee by indexing this table with the cell's fn_idx.
+const fnTableSym = "__ssa_fn_table"
+
 // memRef renders a [base + disp] memory operand.
 func memRef(regName string, disp int64) string {
 	if disp == 0 {
@@ -793,6 +930,21 @@ func usesHeap(progs map[string]*Program) bool {
 			for _, in := range blk.Insts {
 				switch in.Op {
 				case MemAlloc, MemLoad, MemStore, MakeEnv, MakeClosure:
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// usesCallIndirect reports whether any emitted program dispatches a closure
+// (so the function-address dispatch table is only emitted when needed).
+func usesCallIndirect(progs map[string]*Program) bool {
+	for _, p := range progs {
+		for _, blk := range p.Blocks {
+			for _, in := range blk.Insts {
+				if in.Op == CallIndirect {
 					return true
 				}
 			}
