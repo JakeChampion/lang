@@ -858,12 +858,34 @@ func memRef(regName string, disp int64) string {
 	return fmt.Sprintf("[%s - %d]", regName, -disp)
 }
 
+// captureEnvLayout returns each capture's byte offset and slot size in the env
+// block, plus the total env size, from in.CaptureSlots (the packed layout the
+// CaptureRef loads read). A nil/short CaptureSlots falls back to one 8-byte slot
+// per capture — the uniform layout hand-built SSA closures assume.
+func captureEnvLayout(in Inst) (offs, sizes []int64, total int64) {
+	n := len(in.ArgLocs)
+	offs = make([]int64, n)
+	sizes = make([]int64, n)
+	for i := 0; i < n; i++ {
+		sz := int64(8)
+		if len(in.CaptureSlots) == n {
+			sz = int64(in.CaptureSlots[i])
+		}
+		offs[i] = total
+		sizes[i] = sz
+		total += sz
+	}
+	return offs, sizes, total
+}
+
 // closureLines renders OpMakeEnv / OpMakeClosure on the .bss bump heap.
-// MakeEnv allocates an env block of the N captures (8-byte slots) and returns
-// the env pointer. MakeClosure additionally allocates a {fn_idx, env_ptr} cell
-// (fn_idx = the target's module index) and returns the cell pointer. The env
-// pointer is held in s0 (free during this instruction) across the second
-// allocation; s3 stages the bump cursor and capture values.
+// MakeEnv allocates a packed env block over the captures and returns the env
+// pointer. MakeClosure additionally allocates a {fn_idx, env_ptr} cell (fn_idx =
+// the target's module index) and returns the cell pointer. The env pointer is
+// held in s0 (free during this instruction) across the second allocation; s3
+// stages the bump cursor and capture values. Captures pack at per-type offsets
+// and store widths (i32 at 4-byte slots, pointers at 8) so the env matches the
+// CaptureRef load side (see captureEnvLayout / the IR's irCaptureSlotSize).
 func closureLines(in Inst, numAlloc int, fnIndex map[string]int) ([]string, error) {
 	scratch := numAlloc + 3 // s3
 	envReg := numAlloc      // s0 — unused by the MakeEnv/MakeClosure inst itself
@@ -883,6 +905,7 @@ func closureLines(in Inst, numAlloc int, fnIndex map[string]int) ([]string, erro
 			fmt.Sprintf("add %s, 8", reg(dst)), // return data = base + 8
 		)
 	}
+	offs, sizes, envBytes := captureEnvLayout(in)
 	storeCaps := func(base int) {
 		for i, l := range in.ArgLocs {
 			if l.IsReg {
@@ -890,12 +913,15 @@ func closureLines(in Inst, numAlloc int, fnIndex map[string]int) ([]string, erro
 			} else {
 				out = append(out, fmt.Sprintf("mov %s, %s", reg(scratch), slotMem(l.Slot)))
 			}
-			out = append(out, fmt.Sprintf("mov %s, %s", memRef(reg(base), int64(i*8)), reg(scratch)))
+			if sizes[i] == 4 {
+				out = append(out, fmt.Sprintf("mov dword ptr %s, %s", memRef(reg(base), offs[i]), reg32n(scratch)))
+			} else {
+				out = append(out, fmt.Sprintf("mov %s, %s", memRef(reg(base), offs[i]), reg(scratch)))
+			}
 		}
 	}
-	n := int64(len(in.ArgLocs))
 	if in.Op == MakeEnv {
-		alloc(in.Dst, n*8)
+		alloc(in.Dst, envBytes)
 		storeCaps(in.Dst)
 		return out, nil
 	}
@@ -903,7 +929,7 @@ func closureLines(in Inst, numAlloc int, fnIndex map[string]int) ([]string, erro
 	if !ok {
 		return nil, fmt.Errorf("x86_64ssa: MakeClosure target %q not in module", in.Callee)
 	}
-	alloc(envReg, n*8) // env block -> s0
+	alloc(envReg, envBytes) // env block -> s0
 	storeCaps(envReg)
 	alloc(in.Dst, 16) // {fn_idx, env_ptr} cell -> Dst
 	out = append(out,

@@ -142,11 +142,10 @@ func TestProgramRunClosure(t *testing.T) {
 // Whole-program escaping closures: a closure bound to a local (so the IR inserts
 // a scope-exit __fern_closure_drop, which gates on __fern_rc_is_unique and
 // releases through __fern_box_free / __fern_rc_dec). Exercises the RC runtime
-// helpers (docs/SSA-RC-RUNTIME.md) end-to-end against the interpreter. Scope:
-// zero or one scalar capture, used linearly (rc stays 1, so drop takes the free
-// path). Multi-capture closures need the packed env-slot layout the SSA emit
-// doesn't yet apply (it uses uniform 8-byte slots, correct only at offset 0) —
-// a separate follow-up.
+// helpers (docs/SSA-RC-RUNTIME.md) end-to-end against the interpreter, including
+// the packed multi-capture env layout (i32 captures pack at 4-byte slots — the
+// CaptureSlots carried from the IR). Scope: scalar captures, used linearly (rc
+// stays 1, so drop takes the free path).
 func TestProgramRunClosureEscaping(t *testing.T) {
 	srcs := []string{
 		// Stored non-capturing closure: var g = (n) => n*2; g(21) = 42.
@@ -156,6 +155,21 @@ func TestProgramRunClosureEscaping(t *testing.T) {
 		   var a: i32 = 10;
 		   var g: (i32) => i32 = (n: i32): i32 => n + a;
 		   return g(5);
+		 }`,
+		// Two i32 captures — packed at offsets 0 and 4: g(100) = 100+10+3 = 113.
+		`function main(): i32 {
+		   var a: i32 = 10;
+		   var b: i32 = 3;
+		   var g: (i32) => i32 = (n: i32): i32 => n + a + b;
+		   return g(100);
+		 }`,
+		// Three i32 captures — offsets 0, 4, 8: g(1) = 1+10+20+30 = 61.
+		`function main(): i32 {
+		   var a: i32 = 10;
+		   var b: i32 = 20;
+		   var c: i32 = 30;
+		   var g: (i32) => i32 = (n: i32): i32 => n + a + b + c;
+		   return g(1);
 		 }`,
 	}
 	for _, n := range []int{1, 2, 8} {

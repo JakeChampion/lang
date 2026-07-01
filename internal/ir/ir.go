@@ -614,6 +614,15 @@ type Op struct {
 	// the lowering pass synthesised without an obvious source span
 	// (e.g. trailing implicit returns).
 	Pos ast.Position
+	// CaptureSlots is set on OpMakeClosure / OpMakeEnv to the per-capture
+	// env-block slot size in bytes (irCaptureSlotSize of each capture's
+	// type, in capture order) — the packed layout the CaptureRef loads
+	// read. The native backends recompute it from the hoisted target's
+	// Captures list; the SSA path, which has no AST at emit time, carries
+	// it here so its env-store offsets/widths match the load side. Nil
+	// means "one 8-byte slot per capture" (the legacy uniform layout that
+	// hand-built SSA closures assume).
+	CaptureSlots []int32
 }
 
 // Func is a single lowered function: parameter / local list, ops, and
@@ -6671,6 +6680,22 @@ func arrElemIsRcTracked(elem ast.Type) bool {
 	return false
 }
 
+// captureSlotSizes returns the per-capture env-slot byte sizes (in capture
+// order) for a hoisted closure's Captures list — the packed layout stamped onto
+// OpMakeClosure / OpMakeEnv so the SSA backend, which has no AST at emit time,
+// can pack its env stores at the same offsets/widths the CaptureRef loads read.
+// Returns nil for a captureless closure (no env block).
+func captureSlotSizes(caps []ast.Param, ptrW int) []int32 {
+	if len(caps) == 0 {
+		return nil
+	}
+	slots := make([]int32, len(caps))
+	for i, c := range caps {
+		slots[i] = irCaptureSlotSize(c.Type, ptrW)
+	}
+	return slots
+}
+
 // irCaptureSlotSize mirrors closureconv.captureSlotSize: the env
 // slot footprint of a capture (8 for wide scalars, ptrW for
 // pointers, 2*ptrW for two-word strings, 4 otherwise). Kept in
@@ -12264,7 +12289,8 @@ func (b *builder) expr(e ast.Expr) error {
 				b.emitAliasInc(capExpr)
 			}
 		}
-		b.emit(Op{Kind: OpMakeClosure, Str: n.FuncName, I32: int32(len(n.Captures))})
+		b.emit(Op{Kind: OpMakeClosure, Str: n.FuncName, I32: int32(len(n.Captures)),
+			CaptureSlots: captureSlotSizes(b.closureCaps[n.FuncName], b.ptrW)})
 	case *ast.FieldAccess:
 		// Qualified payload-less variant reference: `Color.Red`
 		// in value position. The checker accepted it as an
