@@ -15,7 +15,8 @@ import (
 // emitter's operand wiring / two-address fixup / spill handling rather than a
 // semantic mismatch.
 func Run(p *Program, args []int64) (int64, error) {
-	return runProg(nil, p, newModelHeap(), args)
+	v, _, err := runProg(nil, p, newModelHeap(), args)
+	return v, err
 }
 
 // RunModule runs the named entry program, resolving Call instructions against
@@ -26,12 +27,13 @@ func RunModule(m map[string]*Program, entry string, args []int64) (int64, error)
 	if !ok {
 		return 0, fmt.Errorf("RunModule: unknown entry %q", entry)
 	}
-	return runProg(m, p, newModelHeap(), args)
+	v, _, err := runProg(m, p, newModelHeap(), args)
+	return v, err
 }
 
-func runProg(m map[string]*Program, p *Program, h *modelHeap, args []int64) (int64, error) {
+func runProg(m map[string]*Program, p *Program, h *modelHeap, args []int64) (int64, int64, error) {
 	if len(args) != len(p.ParamLocs) {
-		return 0, fmt.Errorf("Run: got %d args, program has %d params", len(args), len(p.ParamLocs))
+		return 0, 0, fmt.Errorf("Run: got %d args, program has %d params", len(args), len(p.ParamLocs))
 	}
 	regs := make([]int64, p.NumRegFile)
 	slots := make([]int64, p.NumSlots)
@@ -57,10 +59,10 @@ func runProg(m map[string]*Program, p *Program, h *modelHeap, args []int64) (int
 	const maxSteps = 1 << 22
 	for steps := 0; ; steps++ {
 		if steps > maxSteps {
-			return 0, fmt.Errorf("Run: step limit exceeded (non-terminating?)")
+			return 0, 0, fmt.Errorf("Run: step limit exceeded (non-terminating?)")
 		}
 		if bi < 0 || bi >= len(p.Blocks) {
-			return 0, fmt.Errorf("Run: branch to out-of-range block %d", bi)
+			return 0, 0, fmt.Errorf("Run: branch to out-of-range block %d", bi)
 		}
 		blk := p.Blocks[bi]
 		for _, in := range blk.Insts {
@@ -72,7 +74,7 @@ func runProg(m map[string]*Program, p *Program, h *modelHeap, args []int64) (int
 			case BinOp:
 				r, err := binInt(in.K, regs[in.Dst], regs[in.Src])
 				if err != nil {
-					return 0, err
+					return 0, 0, err
 				}
 				regs[in.Dst] = maskW(in.W, r)
 			case UnNeg:
@@ -87,38 +89,56 @@ func runProg(m map[string]*Program, p *Program, h *modelHeap, args []int64) (int
 				slots[in.Imm] = regs[in.Src]
 			case Call:
 				if m == nil {
-					return 0, fmt.Errorf("Run: Call %q requires a module (use RunModule)", in.Callee)
+					return 0, 0, fmt.Errorf("Run: Call %q requires a module (use RunModule)", in.Callee)
 				}
 				callee, ok := m[in.Callee]
 				if !ok {
-					return 0, fmt.Errorf("Run: unknown callee %q", in.Callee)
+					return 0, 0, fmt.Errorf("Run: unknown callee %q", in.Callee)
 				}
 				argvals := make([]int64, 0, len(in.ArgLocs))
 				for _, l := range in.ArgLocs {
 					argvals = append(argvals, readLoc(l))
 				}
-				r, err := runProg(m, callee, h, argvals)
+				r0, _, err := runProg(m, callee, h, argvals)
 				if err != nil {
-					return 0, err
+					return 0, 0, err
 				}
-				regs[in.Dst] = maskW(in.W, r)
+				regs[in.Dst] = maskW(in.W, r0)
+			case CallPair:
+				if m == nil {
+					return 0, 0, fmt.Errorf("Run: CallPair %q requires a module (use RunModule)", in.Callee)
+				}
+				callee, ok := m[in.Callee]
+				if !ok {
+					return 0, 0, fmt.Errorf("Run: unknown callee %q", in.Callee)
+				}
+				argvals := make([]int64, 0, len(in.ArgLocs))
+				for _, l := range in.ArgLocs {
+					argvals = append(argvals, readLoc(l))
+				}
+				r0, r1, err := runProg(m, callee, h, argvals)
+				if err != nil {
+					return 0, 0, err
+				}
+				regs[in.Dst] = maskW(in.W, r0)
+				regs[in.Dst2] = r1
 			case MemAlloc:
 				regs[in.Dst] = h.alloc(regs[in.Src])
 			case MemLoad:
 				v, err := h.load(regs[in.Src]+in.Imm, int(in.Bytes), in.Signed)
 				if err != nil {
-					return 0, err
+					return 0, 0, err
 				}
 				regs[in.Dst] = maskW(in.W, v)
 			case MemStore:
 				if err := h.store(regs[in.Src]+in.Imm, regs[in.Src2], int(in.Bytes)); err != nil {
-					return 0, err
+					return 0, 0, err
 				}
 			case ConstStr:
 				p := h.alloc(int64(len(in.Str)))
 				for i := 0; i < len(in.Str); i++ {
 					if err := h.store(p+int64(i), int64(in.Str[i]), 1); err != nil {
-						return 0, err
+						return 0, 0, err
 					}
 				}
 				regs[in.Dst] = p
@@ -133,12 +153,14 @@ func runProg(m map[string]*Program, p *Program, h *modelHeap, args []int64) (int
 			case FConv:
 				regs[in.Dst] = fconv(in.K, regs[in.Dst], in.W)
 			default:
-				return 0, fmt.Errorf("Run: unknown opcode %d", in.Op)
+				return 0, 0, fmt.Errorf("Run: unknown opcode %d", in.Op)
 			}
 		}
 		switch blk.Term.Kind {
 		case TRet:
-			return regs[blk.Term.RetReg], nil
+			return regs[blk.Term.RetReg], 0, nil
+		case TRetPair:
+			return regs[blk.Term.RetReg], regs[blk.Term.RetReg2], nil
 		case TJmp:
 			bi = blk.Term.Target
 		case TBrIf:
@@ -148,7 +170,7 @@ func runProg(m map[string]*Program, p *Program, h *modelHeap, args []int64) (int
 				bi = blk.Term.False
 			}
 		default:
-			return 0, fmt.Errorf("Run: unknown terminator %d", blk.Term.Kind)
+			return 0, 0, fmt.Errorf("Run: unknown terminator %d", blk.Term.Kind)
 		}
 	}
 }

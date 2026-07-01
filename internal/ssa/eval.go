@@ -31,7 +31,8 @@ func Eval(f *Func, args ...int64) (int64, error) {
 // EvalIn is Eval with a function table so OpCall can recurse into callees
 // (resolved by name via Op.Str). Direct integer calls only.
 func EvalIn(funcs map[string]*Func, f *Func, args ...int64) (int64, error) {
-	return evalWith(funcs, newHeap(), f, args...)
+	v, _, err := evalWith(funcs, newHeap(), f, args...)
+	return v, err
 }
 
 // heap is the evaluator's model memory: a little-endian byte buffer with a bump
@@ -132,7 +133,7 @@ func memAccess(k OpKind) (bytes int, signed bool) {
 	}
 }
 
-func evalWith(funcs map[string]*Func, h *heap, f *Func, args ...int64) (int64, error) {
+func evalWith(funcs map[string]*Func, h *heap, f *Func, args ...int64) (int64, int64, error) {
 	vals := map[int32]int64{}
 
 	// strLen maps an OpConstString result to its literal byte length, so
@@ -149,7 +150,7 @@ func evalWith(funcs map[string]*Func, h *heap, f *Func, args ...int64) (int64, e
 
 	params := realParams(f)
 	if len(args) != len(params) {
-		return 0, fmt.Errorf("Eval: got %d args, function has %d params", len(args), len(params))
+		return 0, 0, fmt.Errorf("Eval: got %d args, function has %d params", len(args), len(params))
 	}
 	for i, p := range params {
 		vals[p.ID] = args[i]
@@ -160,7 +161,7 @@ func evalWith(funcs map[string]*Func, h *heap, f *Func, args ...int64) (int64, e
 	const maxSteps = 1 << 20
 	for steps := 0; ; steps++ {
 		if steps > maxSteps {
-			return 0, fmt.Errorf("Eval: step limit exceeded (non-terminating?)")
+			return 0, 0, fmt.Errorf("Eval: step limit exceeded (non-terminating?)")
 		}
 
 		// Phis first, resolved against the edge we arrived on. All phis in a
@@ -176,15 +177,15 @@ func evalWith(funcs map[string]*Func, h *heap, f *Func, args ...int64) (int64, e
 				break
 			}
 			if from == nil {
-				return 0, fmt.Errorf("Eval: phi in entry block %d", cur.ID)
+				return 0, 0, fmt.Errorf("Eval: phi in entry block %d", cur.ID)
 			}
 			pi := predIndex(cur, from)
 			if pi < 0 || pi >= len(op.Args) {
-				return 0, fmt.Errorf("Eval: phi v%d has no arg for predecessor block %d", op.Result.ID, from.ID)
+				return 0, 0, fmt.Errorf("Eval: phi v%d has no arg for predecessor block %d", op.Result.ID, from.ID)
 			}
 			v, err := readVal(vals, op.Args[pi])
 			if err != nil {
-				return 0, err
+				return 0, 0, err
 			}
 			phiResults = append(phiResults, op.Result.ID)
 			phiValues = append(phiValues, v)
@@ -199,7 +200,7 @@ func evalWith(funcs map[string]*Func, h *heap, f *Func, args ...int64) (int64, e
 				continue
 			}
 			if err := evalOp(funcs, h, strLen, op, vals); err != nil {
-				return 0, err
+				return 0, 0, err
 			}
 		}
 
@@ -207,15 +208,26 @@ func evalWith(funcs map[string]*Func, h *heap, f *Func, args ...int64) (int64, e
 		switch cur.Term.Kind {
 		case TermRet:
 			if !cur.Term.Value.IsValid() {
-				return 0, nil // void return
+				return 0, 0, nil // void return
 			}
-			return readVal(vals, cur.Term.Value)
+			v, err := readVal(vals, cur.Term.Value)
+			return v, 0, err
+		case TermRetPair:
+			tag, err := readVal(vals, cur.Term.Value)
+			if err != nil {
+				return 0, 0, err
+			}
+			payload, err := readVal(vals, cur.Term.Value2)
+			if err != nil {
+				return 0, 0, err
+			}
+			return tag, payload, nil
 		case TermBr:
 			from, cur = cur, cur.Term.Target
 		case TermBrIf:
 			c, err := readVal(vals, cur.Term.Cond)
 			if err != nil {
-				return 0, err
+				return 0, 0, err
 			}
 			if c != 0 {
 				from, cur = cur, cur.Term.True
@@ -223,10 +235,10 @@ func evalWith(funcs map[string]*Func, h *heap, f *Func, args ...int64) (int64, e
 				from, cur = cur, cur.Term.False
 			}
 		default:
-			return 0, fmt.Errorf("Eval: unsupported terminator %v in block %d", cur.Term.Kind, cur.ID)
+			return 0, 0, fmt.Errorf("Eval: unsupported terminator %v in block %d", cur.Term.Kind, cur.ID)
 		}
 		if cur == nil {
-			return 0, fmt.Errorf("Eval: branch to nil block")
+			return 0, 0, fmt.Errorf("Eval: branch to nil block")
 		}
 	}
 }
@@ -401,9 +413,9 @@ func evalOp(funcs map[string]*Func, h *heap, strLen map[int32]int, op *Op, vals 
 		}
 		return set(e)
 
-	case OpCall:
+	case OpCall, OpCallPair:
 		if funcs == nil {
-			return fmt.Errorf("Eval: OpCall %q requires a function table (use EvalIn)", op.Str)
+			return fmt.Errorf("Eval: %v %q requires a function table (use EvalIn)", op.Kind, op.Str)
 		}
 		callee, ok := funcs[op.Str]
 		if !ok {
@@ -417,11 +429,20 @@ func evalOp(funcs map[string]*Func, h *heap, strLen map[int32]int, op *Op, vals 
 			}
 			argvals = append(argvals, v)
 		}
-		r, err := evalWith(funcs, h, callee, argvals...)
+		r0, r1, err := evalWith(funcs, h, callee, argvals...)
 		if err != nil {
 			return err
 		}
-		return set(r)
+		if op.Kind == OpCallPair {
+			if op.Result.IsValid() {
+				vals[op.Result.ID] = mask(op.Width, r0)
+			}
+			if op.Result2.IsValid() {
+				vals[op.Result2.ID] = r1
+			}
+			return nil
+		}
+		return set(r0)
 
 	case OpAlloc:
 		size, err := arg(0)
