@@ -488,26 +488,37 @@ func evalOp(funcs map[string]*Func, table []string, h *heap, strLen map[int32]in
 		return set(r0)
 
 	case OpCallIndirect:
-		// Args[0] is the callee: a function value (integer index into the
-		// module's ordered function table). Args[1..] are the call arguments.
+		// Args[0] is the callee: a function value, i.e. a pointer to a
+		// {fn, env} cell (fn = table index at +0, env_ptr at +8) — the shape
+		// OpMakeClosure / OpConstFunc build. Args[1..] are the call arguments.
+		// Dispatch derefs the cell and calls fn with env appended as the last
+		// argument (see docs/SSA-CLOSURE-DISPATCH.md).
 		if funcs == nil {
 			return fmt.Errorf("Eval: OpCallIndirect requires a function table (use EvalInTable)")
 		}
 		if len(op.Args) < 1 {
 			return fmt.Errorf("Eval: OpCallIndirect needs a callee operand")
 		}
-		idx, err := arg(0)
+		ptr, err := arg(0)
+		if err != nil {
+			return err
+		}
+		idx, err := h.load(ptr, 8, false) // fn = cell[0]
+		if err != nil {
+			return err
+		}
+		env, err := h.load(ptr+8, 8, false) // env_ptr = cell[8]
 		if err != nil {
 			return err
 		}
 		if idx < 0 || idx >= int64(len(table)) {
-			return fmt.Errorf("Eval: OpCallIndirect index %d out of range (table has %d entries)", idx, len(table))
+			return fmt.Errorf("Eval: OpCallIndirect fn index %d out of range (table has %d entries)", idx, len(table))
 		}
 		callee, ok := funcs[table[idx]]
 		if !ok {
 			return fmt.Errorf("Eval: OpCallIndirect target %q (index %d) not in function table", table[idx], idx)
 		}
-		argvals := make([]int64, 0, len(op.Args)-1)
+		argvals := make([]int64, 0, len(op.Args))
 		for i := 1; i < len(op.Args); i++ {
 			v, err := arg(i)
 			if err != nil {
@@ -515,6 +526,7 @@ func evalOp(funcs map[string]*Func, table []string, h *heap, strLen map[int32]in
 			}
 			argvals = append(argvals, v)
 		}
+		argvals = append(argvals, env) // env is the last parameter
 		r0, _, err := evalWith(funcs, table, h, callee, argvals...)
 		if err != nil {
 			return err

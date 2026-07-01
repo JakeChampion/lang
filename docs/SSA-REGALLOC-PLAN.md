@@ -301,8 +301,18 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
           table). Sequenced model → real-asm → wasm → whole-program. Note: the
           *simple* non-escaping case runs on dispatch alone, but capturing /
           dropped closures also emit `__fern_closure_drop` → need the RC-helper
-          slice, shared with struct/array. Still ahead: implement per that
-          design; RC/runtime helpers; then the flag + e2e diff.
+          slice, shared with struct/array.
+          - [x] Model slice — `OpCallIndirect` now treats `Args[0]` as a
+            `{fn, env}` cell pointer: derefs `fn` (table index at +0) and `env`
+            (+8) and calls `fn(args…, env)` (env last), in `Eval` + the
+            `x86_64ssa` model. The raw-index `call_indirect` tests were rewritten
+            to build the cell via `OpMakeClosure` and give dispatch targets an
+            env param; validated `RunModuleTable == EvalInTable` incl. a
+            runtime-selected closure (`OpSelect` between two cells). wasm
+            untouched (it doesn't implement `OpCallIndirect`).
+          Still ahead: the `OpConstFunc`→cell lift change (bare fn values), the
+          real-asm slice (`call r11`), RC/runtime helpers; then the flag + e2e
+          diff.
 - [~] Op-coverage broadening toward parity (each op validated against `Eval`
   in the model before it reaches real assembly):
   - [x] Direct integer calls + recursion — `ssa.EvalIn` (function-table eval),

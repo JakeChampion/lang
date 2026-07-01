@@ -115,18 +115,29 @@ func runProg(m map[string]*Program, table []string, p *Program, h *modelHeap, ar
 				if m == nil {
 					return 0, 0, fmt.Errorf("Run: CallIndirect requires a module (use RunModuleTable)")
 				}
-				idx := readLoc(in.IdxLoc)
+				// IdxLoc holds a {fn, env} cell pointer: fn (table index) at +0,
+				// env_ptr at +8. Deref and call fn with env appended last.
+				ptr := readLoc(in.IdxLoc)
+				idx, err := h.load(ptr, 8, false)
+				if err != nil {
+					return 0, 0, err
+				}
+				env, err := h.load(ptr+8, 8, false)
+				if err != nil {
+					return 0, 0, err
+				}
 				if idx < 0 || idx >= int64(len(table)) {
-					return 0, 0, fmt.Errorf("Run: CallIndirect index %d out of range (table has %d entries)", idx, len(table))
+					return 0, 0, fmt.Errorf("Run: CallIndirect fn index %d out of range (table has %d entries)", idx, len(table))
 				}
 				callee, ok := m[table[idx]]
 				if !ok {
 					return 0, 0, fmt.Errorf("Run: CallIndirect target %q (index %d) not in module", table[idx], idx)
 				}
-				argvals := make([]int64, 0, len(in.ArgLocs))
+				argvals := make([]int64, 0, len(in.ArgLocs)+1)
 				for _, l := range in.ArgLocs {
 					argvals = append(argvals, readLoc(l))
 				}
+				argvals = append(argvals, env) // env is the last parameter
 				r0, _, err := runProg(m, table, callee, h, argvals)
 				if err != nil {
 					return 0, 0, err

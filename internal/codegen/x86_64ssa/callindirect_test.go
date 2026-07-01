@@ -6,8 +6,8 @@ import (
 	"github.com/jakechampion/lang/internal/ssa"
 )
 
-// callIndirectOp adds an OpCallIndirect dispatching on callee (a function-index
-// value) with the given args, and returns its result.
+// callIndirectOp adds an OpCallIndirect dispatching on callee (a {fn, env} cell
+// pointer) with the given args, and returns its result.
 func callIndirectOp(f *ssa.Func, b *ssa.Block, callee ssa.Value, args ...ssa.Value) ssa.Value {
 	all := append([]ssa.Value{callee}, args...)
 	return f.AddOp(b, ssa.OpCallIndirect, all...)
@@ -38,15 +38,18 @@ func moduleMatchesEvalTable(t *testing.T, funcs map[string]*ssa.Func, table []st
 	}
 }
 
-// inc(x)=x+1, dbl(x)=x*2, table=[inc,dbl]. apply(fn,x)=fn(x) via OpCallIndirect.
+// inc(x, env)=x+1, dbl(x, env)=x*2 (env unused, appended by the dispatch);
+// apply(fn, x)=fn(x) via OpCallIndirect. table = [inc, dbl].
 func indirectFuncs() (map[string]*ssa.Func, []string) {
 	inc := ssa.NewFunc("inc")
 	ix := inc.AddParam()
+	inc.AddParam() // env
 	ie := inc.NewBlock()
 	inc.SetRet(ie, inc.AddOp(ie, ssa.OpAdd, ix, constOp(inc, ie, 1)))
 
 	dbl := ssa.NewFunc("dbl")
 	dx := dbl.AddParam()
+	dbl.AddParam() // env
 	de := dbl.NewBlock()
 	dbl.SetRet(de, dbl.AddOp(de, ssa.OpMul, dx, constOp(dbl, de, 2)))
 
@@ -60,26 +63,37 @@ func indirectFuncs() (map[string]*ssa.Func, []string) {
 	return funcs, []string{"inc", "dbl"}
 }
 
-// Indirect dispatch through a function-index value, validated RunModuleTable ==
-// EvalInTable over both table entries and spill-forcing register counts.
+// Closure dispatch through apply, validated RunModuleTable == EvalInTable over
+// both targets and spill-forcing register counts. main builds the {inc}/{dbl}
+// closures and sums apply(cInc,10)+apply(cDbl,10) = 31.
 func TestModuleCallIndirect(t *testing.T) {
 	funcs, table := indirectFuncs()
-	moduleMatchesEvalTable(t, funcs, table, "apply", [][]int64{{0, 10}, {1, 10}, {0, 41}, {1, 21}})
+	main := ssa.NewFunc("main")
+	me := main.NewBlock()
+	cInc := makeClosureOp(main, me, "inc")
+	cDbl := makeClosureOp(main, me, "dbl")
+	r0 := callOp(main, me, "apply", cInc, constOp(main, me, 10))
+	r1 := callOp(main, me, "apply", cDbl, constOp(main, me, 10))
+	main.SetRet(me, main.AddOp(me, ssa.OpAdd, r0, r1))
+	funcs["main"] = main
+	moduleMatchesEvalTable(t, funcs, table, "main", [][]int64{{}})
 }
 
-// A caller that picks the callee at runtime (index from a comparison) then
-// dispatches indirectly — the index must survive to the call, incl. under
-// spills. main(sel,x) = (sel!=0 ? dbl : inc)(x).
-func TestModuleCallIndirectComputedIndex(t *testing.T) {
+// A caller that picks the closure at runtime and dispatches it — the chosen
+// cell pointer must survive to the call, incl. under spills.
+// main(sel, x) = (sel != 0 ? dbl : inc)(x).
+func TestModuleCallIndirectComputedTarget(t *testing.T) {
 	funcs, table := indirectFuncs()
 
 	main := ssa.NewFunc("main")
 	sel := main.AddParam()
 	x := main.AddParam()
 	me := main.NewBlock()
-	// idx = (sel != 0) ? 1 : 0  — OpNe already yields 0/1, matching the table.
-	idx := main.AddOp(me, ssa.OpNe, sel, constOp(main, me, 0))
-	main.SetRet(me, callIndirectOp(main, me, idx, x))
+	cInc := makeClosureOp(main, me, "inc")
+	cDbl := makeClosureOp(main, me, "dbl")
+	cond := main.AddOp(me, ssa.OpNe, sel, constOp(main, me, 0))
+	chosen := main.AddOp(me, ssa.OpSelect, cond, cDbl, cInc)
+	main.SetRet(me, callIndirectOp(main, me, chosen, x))
 	funcs["main"] = main
 
 	moduleMatchesEvalTable(t, funcs, table, "main", [][]int64{{0, 7}, {1, 7}, {0, 100}, {1, 100}})
