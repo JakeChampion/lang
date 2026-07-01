@@ -361,9 +361,11 @@ pub function field_reclaim_types(mod: parser.Module): string[] {
 
 // struct_drop_types returns the distinct struct types `T` for which a
 // __struct_drop_<T> helper is called anywhere in the lowered module (#3457 — the
-// deep struct-drop, formerly inline). wasm emits a per-type PASS-THROUGH body for
-// each (no deep-drop yet — leak-safe, mirroring field_reclaim_types); collected by
-// scanning lowered call_direct ops, the same gating field_reclaim_types uses.
+// deep struct-drop, formerly inline). wasm emits a REAL per-type body for each
+// (emit_wasm_struct_drop_body — the sibling of the register backends' bodies,
+// deep-dropping rc-array + acyclic nested-struct fields); collected by scanning
+// lowered call_direct ops (the same gating field_reclaim_types uses) plus the
+// transitive nested-struct closure below.
 pub function struct_drop_types(mod: parser.Module): string[] {
     var out: string[] = [];
     var fi: i32 = 0;
@@ -380,12 +382,13 @@ pub function struct_drop_types(mod: parser.Module): string[] {
         fi = fi + 1;
     }
     // Transitive deep-drop closure (Perceus slice 3 deep-drop): emit_wasm_struct_drop_body
-    // emits a recursive $__struct_drop_<Inner> call for a nested-struct field that is a
-    // deep-drop-ok LEAF. That recursive call is a backend instruction, not a lowered IR
-    // op, so it is invisible to the call_direct scan above — add those inner types here
-    // so their bodies are emitted too. Each added inner is a LEAF (no nested-struct
-    // field of its own, by nested_field_deep_drop_ok), so the closure is depth-1; the
-    // index-driven loop re-reads out.len() to absorb any deeper chain defensively.
+    // emits a recursive $__struct_drop_<Inner> call for each nested-struct field that is
+    // deep-drop-ok. That recursive call is a backend instruction, not a lowered IR op, so
+    // it is invisible to the call_direct scan above — add those inner types here so their
+    // bodies are emitted too. nested_field_deep_drop_ok now admits ARBITRARY acyclic depth
+    // (not just leaves), so the closure can be multi-level; the index-driven loop re-reads
+    // out.len() as it appends, so each newly added inner is itself expanded (the ACYCLIC
+    // guarantee bounds this — a type cannot re-appear, so the walk terminates).
     var di: i32 = 0;
     while (di < out.len()) {
         var dt: string = out[di];

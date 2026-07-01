@@ -4025,10 +4025,11 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
             // inner box is UNIQUELY owned, first __struct_drop_<fdt> releases the
             // inner's OWN rc-array buffers, THEN __fern_arr_dec frees the inner box —
             // mirroring the k_box element walk and the x86 emit_ir_struct_drop_one
-            // deep-drop arm. fdt is a LEAF (nested_field_deep_drop_ok), so
-            // __struct_drop_<fdt> makes no further recursive struct_drop call: the
-            // recursion is depth-1 and cannot cycle. Emit the inner's per-type body
-            // (transitive need: emit_arm64_reclaim_drop_bodies re-checks needed.len(),
+            // deep-drop arm. fdt is deep-drop-ok (its nested-struct closure is ACYCLIC
+            // per nested_field_deep_drop_ok), so __struct_drop_<fdt> may itself recurse
+            // into fdt's own deep-drop-ok fields: the emitted call graph is a DAG (multi-
+            // level, bounded by the struct-type count, no cycle). Emit the inner's per-
+            // type body (transitive need: emit_arm64_reclaim_drop_bodies re-checks needed.len(),
             // need() dedups). __fern_arr_dec / __fern_rc_is_unique preserve x10, but
             // __struct_drop_<fdt> CLOBBERS it, so reload box from the frame-relative
             // stack arg [sp, #16] after the call (entry pushed an stp x29,x30 frame,

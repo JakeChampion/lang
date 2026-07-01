@@ -123,15 +123,17 @@ pub function is_fern_helper(name: string): boolean {
         || name == "__fern_snapshot_dec"
         // per-type field-level move tracking (#3457): __field_reclaim_<T> frees
         // the REPLACED array-field buffers of the superseded old box (cow + snap
-        // guarded) before freeing the box. x86 emits a real per-type body
-        // (emit_ir_field_reclaims); arm64 / wasm emit a leak-safe pass-through.
+        // guarded) before freeing the box. All three backends emit a real per-type
+        // body (x86 emit_ir_field_reclaims, arm64 emit_arm64_field_reclaim_one, wasm
+        // emit_wasm_field_reclaim_body).
         || is_field_reclaim_name(name)
         // per-type deep struct-drop (#3457): __struct_drop_<T> deep-drops the
         // rc-array FIELDS of a reclaimable struct box at scope exit (a scalar
-        // field's buffer; a struct/enum-array field's elements + buffer). x86
-        // emits a real per-type body (emit_ir_struct_drops); arm64 / wasm emit a
-        // leak-safe pass-through (return box). The per-type helper replaces the
-        // former inline field-drop so the broad struct reclaim fits #3452.
+        // field's buffer; a struct/enum-array field's elements + buffer; an acyclic
+        // nested-struct field, recursively). All three backends emit a real per-type
+        // body (x86 emit_ir_struct_drops, arm64 emit_arm64_struct_drop_one, wasm
+        // emit_wasm_struct_drop_body). The per-type helper replaces the former inline
+        // field-drop so the broad struct reclaim fits #3452.
         || is_struct_drop_name(name);
 }
 
@@ -4565,10 +4567,12 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
             // DEEP nested-struct field drop (Perceus slice 3 deep-drop): when the
             // inner box is UNIQUELY owned, first __struct_drop_<fdt> releases the
             // inner's OWN rc-array buffers, THEN __fern_arr_dec frees the inner box —
-            // mirroring the k_box element walk. fdt is a LEAF (nested_field_deep_drop_ok),
-            // so __struct_drop_<fdt> makes no further recursive struct_drop call: the
-            // recursion is depth-1 and cannot cycle. Emit the inner's per-type body
-            // (transitive need: emit_ir_struct_drops re-checks needed.len(), and
+            // mirroring the k_box element walk. fdt is deep-drop-ok (its nested-struct
+            // closure is ACYCLIC per nested_field_deep_drop_ok), so __struct_drop_<fdt>
+            // may itself recurse into fdt's own deep-drop-ok fields: the emitted call
+            // graph is a DAG (multi-level, bounded by the struct-type count, no cycle).
+            // Emit the inner's per-type body (transitive need: emit_ir_struct_drops re-
+            // checks needed.len() so each newly needed inner body is emitted in turn, and
             // need() dedups). __fern_arr_dec / __fern_rc_is_unique preserve %r11, but
             // __struct_drop_<fdt> CLOBBERS it, so reload box from the stable stack arg
             // 8(%rsp) (this body pushes no frame) after the call.
