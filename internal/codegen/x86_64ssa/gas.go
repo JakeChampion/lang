@@ -975,6 +975,8 @@ func usesCallIndirect(progs map[string]*Program) bool {
 // fnLabel(name) writes.
 var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_rc_is_unique": emitRcIsUniqueHelper,
+	"__fern_rc_inc":       emitRcIncHelper,
+	"__fern_rc_dec":       emitRcDecHelper,
 }
 
 // referencedRuntimeHelpers returns, sorted, the runtime-helper names any emitted
@@ -1019,6 +1021,51 @@ func emitRcIsUniqueHelper(w func(string, ...any)) {
 	w("\tret")
 	w(".Lssa_rcuniq_no:")
 	w("\txor eax, eax")
+	w("\tret")
+}
+
+// emitRcIncHelper writes __fern_rc_inc(data): bump the reference count at
+// [data-8] by one, guarded like __fern_rc_is_unique (null / low-address /
+// static-sentinel) so it is safe on a slot that might hold a non-pointer or a
+// static cell. Void, leaf. On the SSA path every rc-managed value is a heap
+// pointer (function values are heap cells, not code addresses), so the
+// 0x10000 low-address guard is sufficient — a code/rodata address never flows
+// in. Mirrors the native __fern_rc_inc (minus the SSO string tag, which the SSA
+// path has no equivalent of).
+func emitRcIncHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_rc_inc"))
+	w("\ttest rdi, rdi")
+	w("\tjz .Lssa_rcinc_ret")
+	w("\tcmp rdi, 0x10000")
+	w("\tjb .Lssa_rcinc_ret")
+	w("\tmov eax, %s", memRef("rdi", -8))
+	w("\ttest eax, eax")
+	w("\tjs .Lssa_rcinc_ret") // static sentinel
+	w("\tadd eax, 1")
+	w("\tmov %s, eax", memRef("rdi", -8))
+	w(".Lssa_rcinc_ret:")
+	w("\tret")
+}
+
+// emitRcDecHelper writes __fern_rc_dec(data): drop the reference count at
+// [data-8] by one, same guard chain as __fern_rc_inc. It does NOT free at rc==0
+// — the SSA bump heap never reclaims (docs/SSA-RC-RUNTIME.md: leak-until-a-later
+// reuse slice); the free-and-reclaim decision belongs to __fern_closure_drop /
+// the per-type drop thunks. Void, leaf.
+func emitRcDecHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_rc_dec"))
+	w("\ttest rdi, rdi")
+	w("\tjz .Lssa_rcdec_ret")
+	w("\tcmp rdi, 0x10000")
+	w("\tjb .Lssa_rcdec_ret")
+	w("\tmov eax, %s", memRef("rdi", -8))
+	w("\ttest eax, eax")
+	w("\tjs .Lssa_rcdec_ret") // static sentinel
+	w("\tsub eax, 1")
+	w("\tmov %s, eax", memRef("rdi", -8))
+	w(".Lssa_rcdec_ret:")
 	w("\tret")
 }
 

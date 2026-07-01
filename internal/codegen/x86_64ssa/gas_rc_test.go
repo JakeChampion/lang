@@ -41,3 +41,36 @@ func TestAsmRunRcIsUnique(t *testing.T) {
 		t.Errorf("is_unique(42) = %d, want 0", got)
 	}
 }
+
+// __fern_rc_inc / __fern_rc_dec on the real-asm path, observed through
+// __fern_rc_is_unique: bumping the rc past 1 makes a cell non-unique, and
+// dropping it back to 1 restores uniqueness. The void inc/dec calls survive DCE
+// (OpCall is impure) and run in order before the is_unique read. RC-2 of
+// docs/SSA-RC-RUNTIME.md.
+func TestAsmRunRcIncDec(t *testing.T) {
+	// isUniqueAfter allocs a cell, applies each mutation call in `ops` to it in
+	// order, then returns is_unique(cell) as the exit code.
+	isUniqueAfter := func(ops ...string) int {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		c := makeEnvOp(f, e, constOp(f, e, 7)) // fresh rc=1 cell
+		for _, op := range ops {
+			callOp(f, e, op, c) // void, impure — kept + ordered
+		}
+		f.SetRet(e, callOp(f, e, "__fern_rc_is_unique", c))
+		return assembleRunModule(t, map[string]*ssa.Func{"main": f}, "main", 8, nil)
+	}
+
+	// rc: 1 -> inc -> 2  => not unique.
+	if got := isUniqueAfter("__fern_rc_inc"); got != 0 {
+		t.Errorf("is_unique after inc = %d, want 0 (rc=2)", got)
+	}
+	// rc: 1 -> inc -> 2 -> dec -> 1  => unique again.
+	if got := isUniqueAfter("__fern_rc_inc", "__fern_rc_dec"); got != 1 {
+		t.Errorf("is_unique after inc,dec = %d, want 1 (rc=1)", got)
+	}
+	// rc: 1 -> inc -> inc -> dec -> 2  => still not unique.
+	if got := isUniqueAfter("__fern_rc_inc", "__fern_rc_inc", "__fern_rc_dec"); got != 0 {
+		t.Errorf("is_unique after inc,inc,dec = %d, want 0 (rc=2)", got)
+	}
+}
