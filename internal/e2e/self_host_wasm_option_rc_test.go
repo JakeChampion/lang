@@ -113,6 +113,10 @@ func TestSelfHostRcOptionBoxWasm(t *testing.T) {
 		{"option-arr-payload-churn-clean", `function mk(): i32 { var o: Option[i32[]] = Some([1, 2, 3]); var r = 0; match (o) { Some(v) => { r = v.len(); }, None => {} } return r; } function main(): i32 { var k = 0; var s = 0; while (k < 50000) { s = mk(); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }`, 3},
 		// Result Ok([..]) array payload freed the same way on wasm (tag 0).
 		{"result-ok-arr-payload-freed", `function main(): i32 { var r: Result[i32[], i32] = Ok([5, 6, 7]); var x = 0; match (r) { Ok(v) => { x = v[0] + v[2] + 30; }, Err(e) => { x = e; } } return x + __fern_rc_underflow_count(); }`, 42},
+		// Scalar-only STRUCT payload Option freed on wasm: a fresh `Some(P{..})` frees
+		// the payload box (shallow — inline scalars) then the option box, right after
+		// its consuming match. Value intact + detector clean.
+		{"option-struct-payload-freed", `struct P { x: i32, y: i32 } function main(): i32 { var o: Option[P] = Some(P { x: 18, y: 24 }); var r = 0; match (o) { Some(p) => { r = p.x + p.y; }, None => {} } return r + __fern_rc_underflow_count(); }`, 42},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

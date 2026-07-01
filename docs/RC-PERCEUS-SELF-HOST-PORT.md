@@ -3100,3 +3100,28 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   identical FIXPOINT + BOOTSTRAP + `TestSelfHostIRDiff` all stay green. Frontend-only
   (classifier + emitter are backend-agnostic — every backend that lowers
   Options/Results benefits).
+- 2026-07-01: **Widen the rc-payload Option/Result deep-drop to scalar-only STRUCT
+  payloads** (follow-up to the array-payload slice). A `var o = Some(P{..})` /
+  `Ok(P{..})` whose payload is a FRESH scalar-only struct literal now frees the
+  payload box (shallow — the box holds only inline scalars) then the option box,
+  right after its single consuming match — previously the struct payload leaked (the
+  rc-payload option admitted only array payloads). Changes in shared `irlower.fern`:
+  `fresh_rcpayload_option_init` → `rcpayload_option_cand(v, structs)` returning an
+  `OptRcCand { variant, ptype }`; it now also admits a `parser.ExprStructLit`
+  payload when the struct is leak-safe AND `struct_is_scalar_only` (a bare-ident
+  struct payload aliasing a swept local is rejected — the fresh-literal rule keeps
+  the payload box sole-owner rc==1, so a shallow dec can't double-free). Emission
+  (`emit_opt_payload_drop`) is UNCHANGED — a scalar-array buffer and a scalar-only
+  struct box are both released by one `__fern_rc_dec` on the `op_opt_payload`
+  pointer, so no per-type dispatch is needed. SOUNDNESS mirrors the array case: the
+  payload owns no rc pointer (scalar-only), the borrow-only arm-binding gate proves
+  the bound `p` doesn't outlive the arm, payload freed before the option box, each
+  once. DEFERRED: an array-FIELD-bearing struct payload (`Some(Buf{xs,n})`) is NOT
+  admitted — a `__struct_drop_<T>` field deep-drop through the option-payload path
+  over-releases by one (a subtle rc interaction distinct from the enum path, which
+  deep-drops such payloads cleanly); left to a follow-up. VERIFIED: new
+  `option-struct-payload-*` / `result-ok-struct-payload-*` cases (route ir, value,
+  `__rc_underflow()==0`: annotated + un-annotated Some(P), Ok(P), corruption probe,
+  bare-ident + binding-escapes non-firing guards) in `TestSelfHostRcPreciseDropX86IR`;
+  new wasm `option-struct-payload-freed` in `TestSelfHostRcOptionBoxWasm`; byte-
+  identical FIXPOINT + BOOTSTRAP + `TestSelfHostIRDiff` all stay green.

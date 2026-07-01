@@ -364,6 +364,31 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// NON-firing (escapes / returned): a returned Option is moved to the caller, so
 		// mk must NOT free it (nor its array). Detector 0.
 		{"option-arr-escapes-not-freed-detector", `function mk(): Option[i32[]] { var o: Option[i32[]] = Some([1, 2, 3]); return o; } function main(): i32 { var o = mk(); var r = 0; match (o) { Some(v) => { r = v[0] + v[2]; }, None => { r = 0; }, } if (r != 4) { return 99; } return __rc_underflow(); }`, 0},
+		// STRUCT-PAYLOAD Option/Result deep-drop free: a `var o = Some(P{..})` /
+		// `Ok(P{..})` with a FRESH leak-safe struct-LITERAL payload now frees the
+		// payload box (and, for an array-field struct, deep-drops its fields via
+		// __struct_drop_<P>) then the option box, right after its single consuming
+		// match. Previously the struct payload leaked (rc-payload option admitted only
+		// array payloads). The fresh-literal rule keeps the payload box sole-owner
+		// (rc==1). Borrow-only arm binding (`Some(p) => p.x + p.y`) admitted. Value +
+		// `__rc_underflow()==0` pin the payload box AND the option box freed once each.
+		{"option-struct-payload-value", `struct P { x: i32, y: i32 } function go(): i32 { var o: Option[P] = Some(P { x: 3, y: 4 }); var r = 0; match (o) { Some(p) => { r = p.x + p.y; }, None => { r = 0; }, } return r; } function main(): i32 { return go(); }`, 7},
+		{"option-struct-payload-detector", `struct P { x: i32, y: i32 } function go(): i32 { var o: Option[P] = Some(P { x: 3, y: 4 }); var r = 0; match (o) { Some(p) => { r = p.x + p.y; }, None => { r = 0; }, } if (r != 7) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// Un-annotated Some(P{..}) (Option infers the single param from the literal).
+		{"option-struct-payload-unannotated-detector", `struct P { x: i32, y: i32 } function go(): i32 { var o = Some(P { x: 3, y: 4 }); var r = 0; match (o) { Some(p) => { r = p.x + p.y; }, None => { r = 0; }, } if (r != 7) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// Result Ok(P{..}) struct payload freed the same way (tag 0).
+		{"result-ok-struct-payload-detector", `struct P { x: i32, y: i32 } function go(): i32 { var r: Result[P, i32] = Ok(P { x: 5, y: 6 }); var v = 0; match (r) { Ok(p) => { v = p.x + p.y; }, Err(e) => { v = e; }, } if (v != 11) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// Heap-reuse corruption probe: a fresh array allocated AFTER the struct-payload
+		// deep-drop reads back intact (the payload box + option box frees were sound).
+		{"option-struct-payload-corruption-probe-detector", `struct P { x: i32, y: i32 } function go(): i32 { var o: Option[P] = Some(P { x: 3, y: 4 }); var r = 0; match (o) { Some(p) => { r = p.x + p.y; }, None => { r = 0; }, } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (r != 7) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// NON-firing (bare-ident struct payload): `Some(p)` where p is a local aliases
+		// p's box — NOT a fresh literal, so it is NOT admitted (freeing it would
+		// double-free with p's own reclamation). The option leaks (sound). Detector 0.
+		{"option-struct-bareident-not-freed-detector", `struct P { x: i32, y: i32 } function go(): i32 { var p = P { x: 3, y: 4 }; var o: Option[P] = Some(p); var r = 0; match (o) { Some(q) => { r = q.x + q.y; }, None => { r = 0; }, } if (r != 7) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// NON-firing (binding escapes): the Some arm STORES its struct payload `p` to
+		// an outer var, so the option's payload must NOT be freed after the match
+		// (opt_arm_binding_escapes rejects it). Detector 0 (no over-release).
+		{"option-struct-binding-escapes-detector", `struct P { x: i32, y: i32 } function go(): i32 { var o: Option[P] = Some(P { x: 3, y: 4 }); var keep = P { x: 0, y: 0 }; match (o) { Some(p) => { keep = p; }, None => {} } var r = keep.x + keep.y; if (r != 7) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 		// Struct with an i32[] field: the box is rc-headered and freed soundly, and
 		// the array field is deep-dropped (emit_struct_field_drops) exactly once.
 		// Detector 0 proves neither the box nor the array field over-releases.
