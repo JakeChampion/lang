@@ -1,14 +1,22 @@
 # Design: porting Perceus constructor-reuse (FBIP) to the self-hosted compiler
 
-Status: **proposal / design** (no codegen yet). This is the design step for
-#2649 goal 2 — matching the self-hosted compiler's memory management to the
-native compiler's. The RC/ownership slices (inc/dec insertion, borrow inference,
-per-type deep `__struct_drop_<T>` / `__field_reclaim_<T>`, snapshot-param
-reclaim) have already landed on the self-host IR path. The one large remaining
-piece is **constructor reuse** — the Perceus "reuse token" / FBIP (functional
-but in-place) optimisation. This document describes the native mechanism, the
-self-host's current state, a sliced port plan, the soundness invariants, and the
-testing strategy, so the implementation can proceed incrementally and safely.
+Status: **CORRECTED — constructor reuse is largely already implemented.** This
+doc was written believing constructor reuse was the "one large remaining piece"
+of #2649 goal 2. On closer inspection of `irlower.fern` that premise was **wrong**:
+the self-host already implements self-overwrite, cross-local, enum-donor, and
+consuming-match reuse (enabled unconditionally, exercised by the byte-identical
+self-compile, and tested — see §2). The genuine remaining deltas vs the native
+reuse are narrow **optimisations** — tuple reuse and richer struct field types
+(§2, §3). Goal 2's memory-management-**behaviour** target (no leaks, in-place
+reuse of the common cases) is substantially met. The native-mechanism decode
+(§1, §6) remains accurate and useful; treat §3 as the (short) remaining-work
+list, not a from-scratch port plan.
+
+The RC/ownership slices (inc/dec insertion, borrow inference, per-type deep
+`__struct_drop_<T>` / `__field_reclaim_<T>`, snapshot-param reclaim) landed
+earlier on the self-host IR path. This document describes the native mechanism,
+the self-host's actual current state, the remaining deltas, the soundness
+invariants, and the testing strategy.
 
 Why it matters: reuse turns a `free(old) + alloc(new)` pair at a construction
 site into an in-place overwrite of the old box — zero-alloc updates for the
@@ -102,41 +110,76 @@ Already ported to the self-host IR path (`irlower.fern` + `asm_ir.fern` /
   else a value-producing clone (`lower_arr_with_value`) — *"correct, if leak-y,
   ahead of the full Perceus refcount-guarded reuse"* (`irlower.fern` ~L355).
 
-**Not yet ported**: the constructor-reuse layer itself — `computeReuseSources`
-(the C→D pairing), `emitReuseToken` (the reuse-vs-fresh alloc branch),
-`emitReuseOldFieldDrops` (old-field deep-drop on the reuse branch), the
-self-overwrite `tryStructReuseOverwrite`, and the `__fern_alloc_reuse` runtime
-wrapper. That is the scope of goal 2's remaining work.
+**CORRECTION (verified against `irlower.fern`)**: the constructor-reuse layer
+is **already ported** — the earlier claim that it was "not yet ported" was wrong
+(over-extrapolated from the `.with()`-only "ahead of the full Perceus reuse"
+comment). What exists today, enabled unconditionally (so the byte-identical
+self-compile already exercises it) and tested:
+
+- `self_overwrite_reuse_sites` / `emit_self_overwrite_reuse` — the
+  functional-update self-overwrite `var c = T{ ...d, f: v }` reusing d's dead
+  same-type box in place (the record-update idiom; native's
+  `tryStructReuseOverwrite`).
+- `cross_reuse_sites` / `emit_cross_struct_reuse` — the general cross-local
+  reuse (a dead donor local's box reused for a later same-type construction;
+  native's `computeReuseSources`).
+- `enum_donor_reuse_sites` / `emit_enum_donor_reuse` (re-shape a dead scalar-enum
+  box as a same-size struct via `op_struct_set_shape`) and
+  `consumed_inarm_reuse_sites` / `emit_inarm_match_reuse` (consuming-match FBIP;
+  native's `consumingReuseCtor`).
+- The runtime uniqueness guard `__fern_rc_is_unique` and the in-place field
+  stores (`op_struct_set`, `op_struct_set_shape`).
+- Tests: `internal/e2e/rc_heap_bump_general_reuse_test.go`,
+  `rc_heap_bump_enum_reuse_test.go`, `rc_c2_consuming_reuse_test.go`.
+
+**The genuine remaining deltas vs the native reuse** are narrow, not a large
+port:
+
+1. **Tuple reuse** — tuples are explicitly *not* reuse/donor targets
+   (`irlower.fern`: "tuples are not reuse/donor targets", "tuple payloads bail");
+   native reuses them (`tupleReuseEligible`, the `general_reuse_tuple` case).
+2. **Richer struct field types** — the self-host reuse-eligibility
+   (`struct_fields_reusable`) admits only *scalar* + *leak-safe-array* fields;
+   native additionally admits single-word rc-pointer fields (struct / enum /
+   Map / closure / tuple). A struct carrying such a field is currently
+   reuse-ineligible on the self-host (leak-safe, just not reused in place).
+
+Both are bounded optimisation deltas, not the memory-management-correctness gap
+the earlier framing implied. Goal 2's *behavioural* target (no leaks, in-place
+reuse of the common struct / enum / match cases) is substantially met.
 
 ---
 
 ## 3. Sliced port plan (smallest-safe-first)
 
-Each slice is a standalone PR: gated **off by default** behind a self-host
-reuse flag until its differential + fixpoint tests are green, then flipped on in
-a follow-up once proven. Ordering is by ascending analysis complexity.
+**Superseded by the §2 correction.** The self-overwrite / cross-local / enum /
+consuming-match slices this section originally proposed are **already
+implemented and enabled** — do not re-implement them. Only the two bounded
+deltas from §2 remain, and each is an *optimisation* (the excluded shapes are
+already leak-safe, just not reused in place), so each is best done ON its
+existing test scaffolding rather than gated off:
 
-- **Slice 0 — runtime + gate.** Add `__fern_alloc_reuse(candidatePtr, size)`
-  (reuses the existing `__fern_rc_is_unique`) on the x86-64 IR and arm64 IR
-  paths, plus a `reuse_enabled` gate in `EmitState`. No pairing yet; pure
-  plumbing + a unit test that the helper returns the candidate iff rc==1 and the
-  size/class matches, else a fresh box. **Lowest risk; unblocks the rest.**
-- **Slice 1 — struct self-overwrite.** Port `tryStructReuseOverwrite`: `a =
-  T{…}` where `a` is an owned, unaliased, `structReuseEligible` struct local —
-  reuse `a`'s own dead box (deep-drop its old fields, overwrite in place). D==C,
-  so no cross-local liveness needed; this is the simplest sound case.
-- **Slice 2 — general FBIP struct (cross-local).** Port `computeReuseSources`
-  for structs (the `general_reuse_struct` case: dead local `a` reused for a
-  later same-type `b`). Requires the block-scoped dead-from-C liveness walk +
-  slot-zeroing + consumed-name bookkeeping so precise-drop doesn't double-drop.
-- **Slice 3 — tuples.** Extend the pairing to tuple↔tuple
-  (`tupleReuseEligible`, the `general_reuse_tuple` case).
-- **Slice 4 — enums + consuming match.** `enumReuseLoads` + `consumingReuseCtor`
-  (the `enum_reuse_churn` / `c2_consuming_reuse` cases) — highest complexity
-  (non-uniform variant layouts, the consuming-match traversal); last.
+- **Delta A — tuple reuse.** Mirror `self_overwrite_reuse_sites` /
+  `cross_reuse_sites` for tuple locals: a dead same-arity/type tuple local's box
+  reused for a later tuple construction. Reuses the same `__fern_rc_is_unique`
+  guard + in-place stores; the only new work is a tuple-eligibility predicate
+  (all-scalar / leak-safe-array elements, same as `struct_fields_reusable`) and
+  the tuple emit path. Pin to native's `general_reuse_tuple` behaviour via a new
+  `rc_heap_bump_tuple_reuse` differential e2e.
+- **Delta B — richer struct field types.** Widen `struct_fields_reusable` (and
+  the donor/old-field-drop path) to admit single-word rc-pointer fields
+  (struct / enum / Map / closure / tuple), deep-dropping the old field on the
+  reuse branch exactly as the array-field path already does (the
+  `is_unique`-gated per-type drop machinery already exists). Higher risk (the
+  old-field deep-drop must balance the construction inc for carried fields), so
+  do it AFTER Delta A and lean hard on a churn differential that mixes carried +
+  replaced pointer fields.
 
-Each slice mirrors an existing native `internal/e2e/testdata/cases/*reuse*`
-case, so the target behaviour is pinned to a known-good oracle.
+Both are marginal wins; whether to pursue them is a value call (see §7).
+Validation for either: the reuse it changes is **on by default** (matching the
+existing reuse), so correctness rests on the new differential churn e2e (reuse
+result must match the interpreter byte-for-byte) **and** both fixpoint suites
+staying green (the self-compile must remain byte-identical).
 
 ---
 
