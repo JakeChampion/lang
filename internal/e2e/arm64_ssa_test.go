@@ -96,6 +96,27 @@ function main(): i32 {
 function main(): i32 { return scale(3.5) as i32; }`,
 			want: 7,
 		},
+		{
+			// Option Some path via the pair-return convention (CallPair + TRetPair
+			// + match): half(84) = Some(42).
+			name: "option_some",
+			src: `function half(n: i32): Option[i32] {
+  if (n % 2 == 0) { return Some(n / 2); }
+  return None;
+}
+function main(): i32 { return match (half(84)) { Some(v) => v, None => 0 }; }`,
+			want: 42,
+		},
+		{
+			// Option None path: half(7) = None -> 99.
+			name: "option_none",
+			src: `function half(n: i32): Option[i32] {
+  if (n % 2 == 0) { return Some(n / 2); }
+  return None;
+}
+function main(): i32 { return match (half(7)) { Some(v) => v, None => 99 }; }`,
+			want: 99,
+		},
 	}
 
 	for _, c := range cases {

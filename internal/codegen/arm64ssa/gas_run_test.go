@@ -830,6 +830,69 @@ func TestArmRunSelect(t *testing.T) {
 	}
 }
 
+// callPairOp adds a two-result direct call and returns (tag, payload).
+func callPairOp(f *ssa.Func, b *ssa.Block, callee string, args ...ssa.Value) (ssa.Value, ssa.Value) {
+	tag, payload := f.AddCallPair(b, args...)
+	b.Ops[len(b.Ops)-1].Str = callee
+	return tag, payload
+}
+
+// A pair-returning callee (TRetPair) reached via a two-result call (CallPair):
+// split(x) returns (x, x+100); main sums them. Exercises the AArch64 pair-return
+// convention (tag=x0, payload=x1) end to end.
+func TestArmRunPairReturn(t *testing.T) {
+	build := func() map[string]*ssa.Func {
+		split := ssa.NewFunc("split")
+		x := split.AddParam()
+		se := split.NewBlock()
+		hi := split.AddOp(se, ssa.OpAdd, x, constOp(split, se, 100))
+		split.SetRetPair(se, x, hi)
+
+		main := ssa.NewFunc("main")
+		me := main.NewBlock()
+		tag, pay := callPairOp(main, me, "split", constOp(main, me, 5))
+		main.SetRet(me, main.AddOp(me, ssa.OpAdd, tag, pay))
+		return map[string]*ssa.Func{"split": split, "main": main}
+	}
+	for _, n := range []int{2, 4, 8} {
+		got := assembleRunArmModule(t, build(), "main", n) // 5 + 105 = 110
+		if got != 110 {
+			t.Errorf("nAlloc=%d pair-return sum = %d, want 110", n, got)
+		}
+	}
+}
+
+// Both pair results kept live across an intervening call, so the pair capture
+// (x0/x1) and the caller-save handling must both hold: split(4) -> (4, 12), then
+// id(tag) + pay = 4 + 12 = 16.
+func TestArmRunPairReturnLiveAcrossCall(t *testing.T) {
+	build := func() map[string]*ssa.Func {
+		id := ssa.NewFunc("id")
+		iv := id.AddParam()
+		ie := id.NewBlock()
+		id.SetRet(ie, iv)
+
+		split := ssa.NewFunc("split")
+		x := split.AddParam()
+		se := split.NewBlock()
+		hi := split.AddOp(se, ssa.OpMul, x, constOp(split, se, 3))
+		split.SetRetPair(se, x, hi)
+
+		main := ssa.NewFunc("main")
+		me := main.NewBlock()
+		tag, pay := callPairOp(main, me, "split", constOp(main, me, 4))
+		idt := callOp(main, me, "id", tag)
+		main.SetRet(me, main.AddOp(me, ssa.OpAdd, idt, pay))
+		return map[string]*ssa.Func{"id": id, "split": split, "main": main}
+	}
+	for _, n := range []int{2, 4, 8} {
+		got := assembleRunArmModule(t, build(), "main", n)
+		if got != 16 {
+			t.Errorf("nAlloc=%d pair-return-live-across = %d, want 16", n, got)
+		}
+	}
+}
+
 // max via a comparison-selected branch: max(9, 4) = 9 -> exit 9.
 func TestArmRunMax(t *testing.T) {
 	build := func() *ssa.Func {
