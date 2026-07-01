@@ -388,6 +388,23 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			src:  `function main(): i32 { putchar(65); putchar(10); return 9; }`,
 			want: 9,
 		},
+		{
+			// exit(code): terminate immediately with the status. The `return 99` is
+			// never reached, so a correct exit yields 3 (not 99).
+			name: "exit_code",
+			src:  `function main(): i32 { exit(3); return 99; }`,
+			want: 3,
+		},
+		{
+			// A conditional exit from inside a loop: bail with the counter at 4.
+			name: "exit_in_loop",
+			src: `function main(): i32 {
+  var i: i32 = 0;
+  while (i < 10) { if (i == 4) { exit(i); } i = i + 1; }
+  return 88;
+}`,
+			want: 4,
+		},
 	}
 
 	for _, c := range cases {
@@ -422,10 +439,10 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 }
 
 // TestArm64SSACoverageGapErrors confirms a program needing a runtime builtin the
-// arm64-ssa path doesn't emit yet (here the `exit` builtin, which reaches the
-// still-unported `exit` helper) fails with a clean compile/link error rather than
-// a miscompile — the experimental-backend contract that lets the epic widen
-// coverage incrementally.
+// arm64-ssa path doesn't emit yet (here the strbuf string-builder builtins, which
+// reach the still-unported `strbuf_reset` helper) fails with a clean compile/link
+// error rather than a miscompile — the experimental-backend contract that lets
+// the epic widen coverage incrementally.
 func TestArm64SSACoverageGapErrors(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("arm64-ssa not exercised on windows")
@@ -437,18 +454,18 @@ func TestArm64SSACoverageGapErrors(t *testing.T) {
 		t.Fatalf("go build fern: %v\n%s", err, out)
 	}
 
-	srcPath := filepath.Join(dir, "exit.fern")
-	src := `function main(): i32 { exit(3); return 0; }`
+	srcPath := filepath.Join(dir, "strbuf.fern")
+	src := `function main(): i32 { strbuf_reset(); strbuf_append("hi"); return strbuf_take().len(); }`
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	out := filepath.Join(dir, "exit.bin")
+	out := filepath.Join(dir, "strbuf.bin")
 	emit := exec.Command(bin, "-target", "arm64-ssa", "-o", out, srcPath)
 	var eb bytes.Buffer
 	emit.Stderr = &eb
 	err := emit.Run()
 	if err == nil {
-		t.Fatalf("expected a coverage-gap error for the exit() builtin, got success")
+		t.Fatalf("expected a coverage-gap error for the strbuf builtins, got success")
 	}
 	if !bytes.Contains(eb.Bytes(), []byte("arm64-ssa")) {
 		t.Errorf("error not attributed to arm64-ssa:\n%s", eb.String())
