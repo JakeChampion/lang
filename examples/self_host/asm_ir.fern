@@ -3225,7 +3225,12 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fern_map_delete",
         "__fn___fern_rc_inc", "__fn___fern_arr_dec", "__fn___fern_rc_is_unique",
         "__fn___fern_rc_underflow_count", "__fn___fern_i32_to_string", "__fn___fern_u32_to_string",
-        "__fn___fern_str_to_i32", "__fn___fern_str_cmp", "__fn___fern_chr", "__fn___fern_snapshot_dec"
+        "__fn___fern_str_to_i32", "__fn___fern_str_cmp", "__fn___fern_chr", "__fn___fern_snapshot_dec",
+        // string RC reclaim (#2649): a LIBRARY module that reclaims a fresh string
+        // (`var b = a + a` → __fern_str_free) references this symbol; the entry
+        // owns the single definition (emit_ir_runtime), so export it for the
+        // per-module link like every other shared runtime helper.
+        "__fn___fern_str_free"
     ];
     var i: i32 = 0;
     while (i < names.len()) {

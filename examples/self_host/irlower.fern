@@ -2750,32 +2750,33 @@ function str_free_producer_ident(c: parser.ExprCall): boolean {
     return false;
 }
 
-// str_local_binding_is_fresh reports (purely SYNTACTICALLY) whether
-// `var <name>[: string] = init` binds a FRESH, sole-owned HEAP string whose box +
-// data buffer this frame exclusively owns — the string analogue of
-// tuple_lit_is_fresh_scalar, and the collection-time subset of expr_is_fresh_str
-// (which needs a LowerState for the concat operand-type test). Two tiers:
-//   1. an UNAMBIGUOUS named producer (str_free_producer_ident) — admitted with or
-//      without the annotation, since its result type is fixed by the callee name;
-//   2. an AMBIGUOUS form that needs the `: string` annotation to disambiguate —
-//      an `a + b` CONCAT (else it could be int add) or a `.to_upper()` /
-//      `.to_lower()` / `.reverse()` / `.repeat(n)` string method (`.reverse()` /
-//      `.repeat()` also exist on arrays; the annotation + checker validity prove a
-//      string receiver, so each copies into a fresh buffer). The methods stay
-//      annotation-gated even for the string-only `.to_upper()`/`.to_lower()` to
-//      keep one uniform rule.
-// DELIBERATELY EXCLUDED (each may ALIAS a live box → freeing would over-release):
+// str_local_binding_is_fresh reports (purely SYNTACTICALLY) whether `var <name> =
+// init` binds a value shaped like a FRESH, sole-owned HEAP string — the string
+// analogue of tuple_lit_is_fresh_scalar. It is the FRESH gate only; the TYPE gate
+// is applied separately by slot_is_reclaimable_str (the slot's `is_str`, set from
+// the type-aware expr_is_str at the StmtVar lowering). That two-gate split is why
+// NO `: string` annotation is needed here: an un-annotated `a + b` or `x.reverse()`
+// that is actually int-add / an array method has is_str == false, so it is never
+// reclaimed even though it matches syntactically. The admitted shapes each allocate
+// a fresh buffer + box when they ARE strings:
+//   - an UNAMBIGUOUS named producer (str_free_producer_ident) — chr /
+//     string_from_bytes / str_to_upper / str_to_lower / str_repeat / i32_to_string
+//     / __raw_string;
+//   - an `a + b` CONCAT (fresh buffer + box when either side is a string);
+//   - a `.to_upper()` / `.to_lower()` / `.reverse()` / `.repeat(n)` method (each
+//     copies into a fresh buffer on a string receiver; expr_is_str only marks the
+//     slot is_str for a STRING receiver, so an array `.reverse()`/`.repeat()` is
+//     never reclaimed).
+// DELIBERATELY EXCLUDED (each may ALIAS a live box → freeing would over-release,
+// and each is is_str yet NOT fresh, so the type gate alone would not stop them):
 // a string LITERAL (static, not heap), a bare ident / field / index / slice
 // (aliases a live string), `.trim()` (zero-copy VIEW into the receiver buffer),
 // `.replace()` / `.to_string()` (receiver-identity fast-paths), and a general
 // call (may return a borrowed param).
-function str_local_binding_is_fresh(init: parser.Expr, type_name: string): boolean {
+function str_local_binding_is_fresh(init: parser.Expr): boolean {
     match (init) {
         parser.ExprCall(c) => {
             if (str_free_producer_ident(c)) { return true; }
-            // The `.<m>()` string methods need the annotation to prove a string
-            // receiver (fall through to the annotated tier below).
-            if (type_name != "string") { return false; }
             match (c.callee) {
                 parser.ExprFieldAccess(cfa) => {
                     if ((cfa.field == "to_upper" || cfa.field == "to_lower" || cfa.field == "reverse")
@@ -2787,8 +2788,8 @@ function str_local_binding_is_fresh(init: parser.Expr, type_name: string): boole
             }
         },
         parser.ExprBinary(b) => {
-            // A CONCAT needs the annotation (a bare `+` could be int add).
-            return type_name == "string" && b.op == "+";
+            // A CONCAT (fresh when it is a string; int-add is filtered by is_str).
+            return b.op == "+";
         },
         _ => { return false; },
     }
@@ -13338,7 +13339,7 @@ function collect_fresh_string_names(stmts: parser.Stmt[], acc: string[]): string
 function collect_fresh_string_in_stmt(st: parser.Stmt, acc: string[]): string[] {
     match (st) {
         parser.StmtVar(v) => {
-            if (str_local_binding_is_fresh(v.init, v.type_name)) { return push_str_unique(acc, v.name); }
+            if (str_local_binding_is_fresh(v.init)) { return push_str_unique(acc, v.name); }
             return acc;
         },
         parser.StmtIf(iff) => {
