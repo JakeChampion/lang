@@ -322,6 +322,12 @@ type lifter struct {
 	in  *ir.Func
 	out *Func
 
+	// undef is a lazily-created `const 0` in the entry block, used to fill phi
+	// args on unreachable predecessor edges where a slot is undefined (e.g. the
+	// impossible arm of an exhaustive match). Defined in entry, it dominates
+	// every block, so it is valid as any phi's incoming value.
+	undef Value
+
 	// Active block: where AddOp emits next. Changes on
 	// OpIf/OpElse/OpEnd. nil after OpReturn/OpReturnVoid.
 	cur *Block
@@ -1127,6 +1133,18 @@ func (l *lifter) endIfScope(top scope) error {
 // sources; if any source differs in that slot, emit a phi at
 // `postB` with args in source order; otherwise the slot takes
 // the common value.
+// undefValue returns a `const 0` in the entry block, created on first use, for
+// filling phi args on unreachable edges where a slot is undefined. Entry
+// dominates every block, so it is a valid incoming value for any phi.
+func (l *lifter) undefValue() Value {
+	if !l.undef.IsValid() {
+		v := l.out.AddOp(l.out.Entry, OpConstInt)
+		l.out.Entry.Ops[len(l.out.Entry.Ops)-1].Imm = 0
+		l.undef = v
+	}
+	return l.undef
+}
+
 func (l *lifter) mergeSlotsViaPhi(postB *Block, sources []mergeSource) {
 	for i := range l.slots {
 		var seen Value
@@ -1157,21 +1175,28 @@ func (l *lifter) mergeSlotsViaPhi(postB *Block, sources []mergeSource) {
 				args[j] = s.slots[i]
 			}
 		}
-		phiable := true
+		// A slot may be undefined on some incoming edge — e.g. the impossible
+		// arm of an exhaustive match (`match opt { Some(v) => …, None => … }`
+		// still emits a CFG edge for a tag that can't occur), where the result
+		// slot was never stored. That edge is unreachable, so filling its phi
+		// arg with the entry-block undef keeps SSA well-formed (every predecessor
+		// gets an arg that dominates it) without changing behaviour on the
+		// reachable paths. Previously the merge gave up here and picked a single
+		// arm's value, producing a `ret`/use of a value defined on only one path.
+		anyValid := false
 		for _, a := range args {
-			if !a.IsValid() {
-				phiable = false
+			if a.IsValid() {
+				anyValid = true
 				break
 			}
 		}
-		if !phiable {
-			for _, a := range args {
-				if a.IsValid() {
-					l.slots[i] = a
-					break
-				}
+		if !anyValid {
+			continue // slot undefined on every edge — nothing to merge
+		}
+		for j := range args {
+			if !args[j].IsValid() {
+				args[j] = l.undefValue()
 			}
-			continue
 		}
 		l.slots[i] = l.out.AddPhi(postB, args...)
 	}
