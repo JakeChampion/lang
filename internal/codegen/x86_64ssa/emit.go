@@ -50,6 +50,8 @@ const (
 	EnumSentinel               // reg[Dst] = shared static sentinel pointer for tag Imm
 	CallPair                   // reg[Dst], reg[Dst2] = Callee(ArgLocs...)   (two-result direct call)
 	CallIndirect               // reg[Dst] = table[readLoc(IdxLoc)](ArgLocs...)   (fn-index dispatch)
+	MakeEnv                    // reg[Dst] = env block of the ArgLocs captures (8B slots)
+	MakeClosure                // reg[Dst] = {fn_idx(Callee), env_ptr} cell over the ArgLocs captures
 )
 
 // Inst is one straight-line abstract instruction. Registers are indices into a
@@ -575,6 +577,27 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 			argLocs = append(argLocs, l)
 		}
 		e.push(Inst{Op: CallIndirect, Dst: e.s2, IdxLoc: idxLoc, ArgLocs: argLocs, W: op.Width})
+		e.place(op.Result, e.s2)
+		return nil
+
+	case ssa.OpMakeEnv, ssa.OpMakeClosure:
+		// Closure construction. The capture homes are captured here; the model
+		// allocates the env block (and, for OpMakeClosure, the {fn_idx, env_ptr}
+		// cell), stores the captures, and delivers the pointer into s2. fn_idx is
+		// resolved from the callee name (Str) against the run-time table.
+		argLocs := make([]Loc, 0, len(op.Args))
+		for _, a := range op.Args {
+			l, ok := e.loc(a.ID)
+			if !ok {
+				return fmt.Errorf("x86_64ssa: %v capture v%d has no allocation", op.Kind, a.ID)
+			}
+			argLocs = append(argLocs, l)
+		}
+		mop := MakeEnv
+		if op.Kind == ssa.OpMakeClosure {
+			mop = MakeClosure
+		}
+		e.push(Inst{Op: mop, Dst: e.s2, Callee: op.Str, ArgLocs: argLocs})
 		e.place(op.Result, e.s2)
 		return nil
 

@@ -180,8 +180,22 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
     on an out-of-range index rather than dispatching wrong. Validated
     `RunModuleTable == EvalInTable` incl. a runtime-computed index (from a
     comparison) surviving to the call under spill-forcing register counts.
-  - [ ] Remaining tail: `OpMakeClosure`/`OpMakeEnv` (closures) — env block
-    layout + {fn_idx, env_ptr} pair, dispatched via the same fn-index table.
+  - [x] `OpMakeClosure`/`OpMakeEnv` (closures). `OpMakeEnv` allocates an env
+    block of the N captures (8-byte slots, capture `i` at offset `8*i`);
+    `OpMakeClosure` additionally allocates a `{fn_idx, env_ptr}` cell (fn_idx =
+    the target's index in the ordered function table, resolved from `Str`) and
+    returns the cell pointer. Modelled in `Eval` + the model over the shared
+    bump-allocator heap with byte-for-byte identical layout (a `storeCaptures`
+    helper on each side), so `RunModuleTable == EvalInTable` holds. Validated by
+    reading every field back (fn_idx + both captures via the env pointer) and
+    combining them so any field mismatch shows, over spill-forcing register
+    counts; unknown closure target errors. **This closes the call-tail** —
+    `OpCallPair` / `OpCallIndirect` / closures are all modelled. Closure
+    *dispatch* (a closure pointer flowing into a call — deref `{fn_idx,env}`,
+    prepend env to args) is deferred: the SSA lift makes `OpConstFunc` a raw
+    index while a closure is a pointer, so uniform dispatch likely wants a
+    dedicated `OpCallClosure` rather than overloading `OpCallIndirect`; that
+    resolves with the RC/Perceus + wiring work.
   - [ ] RC inc/dec (Perceus ordering)
 
   **Coverage measurement (data-driven prioritisation).** Lifting the example

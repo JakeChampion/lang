@@ -292,6 +292,34 @@ func b2i(b bool) int64 {
 	return 0
 }
 
+// funcIndex returns the position of name in the ordered function table (the
+// fn_idx an OpCallIndirect dispatches on), or false if absent.
+func funcIndex(table []string, name string) (int64, bool) {
+	for i, n := range table {
+		if n == name {
+			return int64(i), true
+		}
+	}
+	return 0, false
+}
+
+// storeCaptures allocates an env block of len(op.Args) pointer-width (8-byte)
+// slots on h, stores each capture value (Args[i] at offset 8*i), and returns
+// the env pointer. Shared by OpMakeEnv and OpMakeClosure.
+func storeCaptures(h *heap, op *Op, arg func(int) (int64, error)) (int64, error) {
+	env := h.alloc(int64(len(op.Args)) * 8)
+	for i := range op.Args {
+		v, err := arg(i)
+		if err != nil {
+			return 0, err
+		}
+		if err := h.store(env+int64(i)*8, v, 8); err != nil {
+			return 0, err
+		}
+	}
+	return env, nil
+}
+
 func evalOp(funcs map[string]*Func, table []string, h *heap, strLen map[int32]int, op *Op, vals map[int32]int64) error {
 	// Binary integer ops read Args[0], Args[1]; unary read Args[0].
 	arg := func(i int) (int64, error) {
@@ -488,6 +516,37 @@ func evalOp(funcs map[string]*Func, table []string, h *heap, strLen map[int32]in
 			return err
 		}
 		return set(r0)
+
+	case OpMakeEnv:
+		// Allocate an env block of len(Args) pointer-width (8-byte) slots and
+		// store each capture; return the env pointer.
+		env, err := storeCaptures(h, op, arg)
+		if err != nil {
+			return err
+		}
+		return set(env)
+
+	case OpMakeClosure:
+		// Allocate the env block (as OpMakeEnv) plus a {fn_idx, env_ptr} cell,
+		// and return the cell pointer. fn_idx is the target's index in the
+		// module's ordered function table — the value an OpCallIndirect on this
+		// closure would dispatch on.
+		idx, ok := funcIndex(table, op.Str)
+		if !ok {
+			return fmt.Errorf("Eval: OpMakeClosure target %q not in function table (use EvalInTable)", op.Str)
+		}
+		env, err := storeCaptures(h, op, arg)
+		if err != nil {
+			return err
+		}
+		cell := h.alloc(16)
+		if err := h.store(cell, idx, 8); err != nil {
+			return err
+		}
+		if err := h.store(cell+8, env, 8); err != nil {
+			return err
+		}
+		return set(cell)
 
 	case OpAlloc:
 		size, err := arg(0)
