@@ -152,9 +152,28 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
         at i32 width → 0, then `>>u 32`; the unmasked 64-bit product keeps bit 32
         and yields 1) plus negated-then-unsigned-shifted cases, over
         spill-forcing counts. **Slice 3b is complete** — the real-asm path now
-        covers the full integer op set with parameters. Next: **3c** — gate the
-        SSA path behind a flag and diff against the stack machine over the e2e
-        corpus.
+        covers the full integer op set with parameters.
+      - [x] 3b (direct calls / multi-function modules) — `EmitAsmModule` emits a
+        whole set of functions (each under a unique `fn_<name>` label, block
+        labels namespaced per function) with a `_start` that calls the entry;
+        `EmitAsmArgs`/`EmitAsm` are now single-function wrappers over it.
+        `OpCall` lowers to the System V call ABI. Two ABI obligations the model
+        never had to model are handled WITHOUT allocator call-clobber awareness:
+        (1) *caller-saved* — every caller-saved allocatable register is
+        conservatively saved around the call (callee-saved regs and spill slots
+        survive on their own); args are passed via the stack (push from homes →
+        pop into arg registers) so the home→arg-reg shuffle can't clobber a
+        not-yet-consumed source; the result is captured through the scratch reg,
+        which is never in the saved set; the stack is padded to stay 16-aligned
+        at the `call`. (2) *callee-saved* — each function saves the callee-saved
+        registers it may touch (rbx / r12–r15, reached via allocatable homes or
+        scratch) into fresh slots above the allocator's spill area and restores
+        them at every return. Validated natively: cross-function calls,
+        recursion (factorial — `n` live across the self-call), several values
+        live across multiple calls in one block, and a six-arg callee filling
+        every arg register — all over spill-forcing counts. Next: **3c** — gate
+        the SSA path behind a flag and diff against the stack machine over the
+        e2e corpus.
       - [ ] 3c — wire behind a flag and diff against the existing stack-machine
         backend over the e2e corpus.
 - [~] Op-coverage broadening toward parity (each op validated against `Eval`
