@@ -298,6 +298,30 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// NON-firing (escapes / returned): a returned Option is moved to the caller, so
 		// mk must NOT free it. Detector 0.
 		{"option-escapes-not-freed-detector", `function mk(): Option[i32] { var o: Option[i32] = Some(7); return o; } function main(): i32 { var o = mk(); var r = 0; match (o) { Some(v) => { r = v; }, None => { r = 0; }, } if (r != 7) { return 99; } return __rc_underflow(); }`, 0},
+		// Fresh scalar RESULT reclaim: Ok / Err share the same rc-headered opt_make box
+		// as Some (opt_make → __fern_arr_box), so a fresh, single-owner, dead-after
+		// `var r = Ok(scalar)` / `Err(scalar)` consumed by exactly one `match (r)` has
+		// its box freed right after that match — the Result sibling of the option free.
+		// Only the CONSTRUCTED variant's payload scalar-ness gates admission. Value +
+		// `__rc_underflow()==0` pin the box is freed exactly once.
+		{"result-ok-reclaim-value", `function go(): i32 { var r: Result[i32, i32] = Ok(7); var x = 0; match (r) { Ok(v) => { x = v; }, Err(e) => { x = e; }, } return x; } function main(): i32 { return go(); }`, 7},
+		{"result-ok-reclaim-detector", `function go(): i32 { var r: Result[i32, i32] = Ok(7); var x = 0; match (r) { Ok(v) => { x = v; }, Err(e) => { x = e; }, } if (x != 7) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// Err(scalar) box is freed the same way — the Err payload scalar-ness (E) gates it.
+		{"result-err-reclaim-detector", `function go(): i32 { var r: Result[i32, i32] = Err(4); var x = 0; match (r) { Ok(v) => { x = v; }, Err(e) => { x = e; }, } if (x != 4) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// Distinct Ok/Err scalar types: Ok reads T (i32), Err reads E (boolean) — both
+		// scalar, so a constructed Ok(i32) is admitted (its box holds only T's payload).
+		{"result-distinct-types-detector", `function go(): i32 { var r: Result[i32, boolean] = Ok(9); var x = 0; match (r) { Ok(v) => { x = v; }, Err(e) => { x = 1; }, } if (x != 9) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// i64-payload Result Ok: 8-byte payload, same box free.
+		{"result-i64-payload-detector", `function go(): i32 { var r: Result[i64, i32] = Ok(100); var x: i64 = 0; match (r) { Ok(v) => { x = v; }, Err(e) => { x = 0; }, } if (x as i32 != 100) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// Heap-reuse corruption probe: a fresh array allocated AFTER the result's
+		// consuming match reads back intact (the box free was sound). x 7 + 66; det 0.
+		{"result-corruption-probe-detector", `function go(): i32 { var r: Result[i32, i32] = Ok(7); var x = 0; match (r) { Ok(v) => { x = v; }, Err(e) => { x = e; }, } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (x != 7) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// NON-firing (used after the match): `r` is matched twice, so it is not dead
+		// after the first match — must NOT be freed there. Detector 0 (no over-release).
+		{"result-used-after-match-detector", `function go(): i32 { var r: Result[i32, i32] = Ok(7); var a = 0; match (r) { Ok(v) => { a = v; }, Err(e) => { a = e; }, } var b = 0; match (r) { Ok(v) => { b = v; }, Err(e) => { b = e; }, } if (a + b != 14) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// NON-firing (escapes / returned): a returned Result is moved to the caller, so
+		// mk must NOT free it. Detector 0.
+		{"result-escapes-not-freed-detector", `function mk(): Result[i32, i32] { var r: Result[i32, i32] = Ok(7); return r; } function main(): i32 { var r = mk(); var x = 0; match (r) { Ok(v) => { x = v; }, Err(e) => { x = e; }, } if (x != 7) { return 99; } return __rc_underflow(); }`, 0},
 		// Struct with an i32[] field: the box is rc-headered and freed soundly, and
 		// the array field is deep-dropped (emit_struct_field_drops) exactly once.
 		// Detector 0 proves neither the box nor the array field over-releases.

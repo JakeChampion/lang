@@ -3031,3 +3031,34 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   literal `Map{1:10,2:20}` building only 1 entry (TestSelfHostRcCallResultWasm
   freshbuiltin-mapkeys/values) — was found during verification and reproduces with
   all this work stashed; tracked separately, not caused by this slice.
+- 2026-07-01: **Widen the consume-by-match free to fresh scalar Result locals**
+  (the Result[T,E] sibling of the Option slice above). A scalar
+  `var r: Result[i32, i32] = Ok(7)` / `Err(4)` routed ir but leaked: Ok/Err share
+  the SAME rc-headered opt_make box as Some (tag 0 = Ok/Some, tag 1 = Err; opt_make
+  → __fern_arr_box on x86/arm64, $__fern_str_box on wasm), yet the consume-by-match
+  classifier only admitted Some/None, so a fresh Result box was never shallow-freed
+  after its match. Fix (classifier-only, in shared `irlower.fern`): (1) new
+  `is_scalar_type_name(t)` helper (i32/i64/f64/boolean/u32/u64), and
+  `type_is_scalar_option` now delegates to it. (2) `fresh_scalar_option_init` admits
+  `Ok`/`Err` (bare + qualified `Result.Ok(..)`) alongside `Some`/`None`, gating on
+  the CONSTRUCTED variant's payload scalar-ness via
+  `is_scalar_type_name(opt_payload_type(v.type_name, kind))` — Ok reads T, Err reads
+  E (opt_payload_type is already variant-aware, depth-counting `[`/`(` so a tuple/
+  nested-generic T's comma isn't mistaken for the T-E separator). Only the built
+  variant's payload matters: a `var r = Ok(x)` box always holds Ok's payload, so
+  Err's annotated type is irrelevant to THIS box; the bare scalar-literal gate
+  (`Ok(5)`/`Err(true)`) still covers the un-annotated-but-provable case. SOUNDNESS is
+  identical to the Option slice — the scalar-payload gate means the box owns no rc
+  pointer so a shallow `__fern_rc_dec` is the whole free; the match reads tag/payload
+  as borrows first; the single-match / dead-after / non-escape gates exclude
+  used-after / returned / aliased Results. rc-payload Ok/Err (Ok("x") / Err(struct))
+  are NOT admitted (payload leaks — a deep-drop follow-up), never double-freed. NOTE:
+  an un-annotated `var r = Ok(9)` is NOT native-valid (Result has two type params;
+  with no Err in context E stays a free variable — `cannot assign E to i32`), so
+  although the literal gate would admit it, no valid program reaches lowering that
+  way; the test suite only exercises annotated Results. VERIFIED: new `result-*`
+  cases (route ir, value, __rc_underflow()==0: ok/err reclaim, distinct Ok/Err scalar
+  types, i64 payload, corruption probe, used-after + escapes non-firing guards) in
+  `TestSelfHostRcPreciseDropX86IR`; byte-identical FIXPOINT + BOOTSTRAP + the wasm
+  `TestSelfHostRcOptionBoxWasm` + `TestSelfHostIRDiff` all stay green. Frontend-only
+  (the classifier is backend-agnostic — every backend that lowers Results benefits).
