@@ -389,6 +389,28 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// an outer var, so the option's payload must NOT be freed after the match
 		// (opt_arm_binding_escapes rejects it). Detector 0 (no over-release).
 		{"option-struct-binding-escapes-detector", `struct P { x: i32, y: i32 } function go(): i32 { var o: Option[P] = Some(P { x: 3, y: 4 }); var keep = P { x: 0, y: 0 }; match (o) { Some(p) => { keep = p; }, None => {} } var r = keep.x + keep.y; if (r != 7) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// PRECISE drop for a fresh scalar Option/Result last-used inside a NESTED block
+		// (an if-body match) — no top-level consuming match, so consumed_scalar_enum_
+		// frees never fires and (before this) the box leaked. precise_drop_names now
+		// admits it (disjoint: skipped if any top-level match of the name exists) and
+		// the rc-headered box is shallow-freed right after the whole if-statement — the
+		// option sibling of the scalar struct/tuple precise-if drops. FIRING: f(5):
+		// o=Some(3), the if runs the match, c=3, return 3+5=8.
+		{"option-precise-if-value", `function f(n: i32): i32 { var o: Option[i32] = Some(3); var c = 0; if (n > 0) { match (o) { Some(v) => { c = v; }, None => { c = 0; } } } return c + n; } function main(): i32 { return f(5); }`, 8},
+		{"option-precise-if-detector", `function f(n: i32): i32 { var o: Option[i32] = Some(3); var c = 0; if (n > 0) { match (o) { Some(v) => { c = v; }, None => { c = 0; } } } return c + n; } function main(): i32 { var r = f(5); if (r != 8) { return 99; } return __rc_underflow(); }`, 0},
+		// A None box (payloadless, rc-headered via opt_none) is precise-dropped the same.
+		{"option-precise-none-detector", `function f(n: i32): i32 { var o: Option[i32] = None; var c = 0; if (n > 0) { match (o) { Some(v) => { c = v; }, None => { c = 9; } } } return c + n; } function main(): i32 { var r = f(5); if (r != 14) { return 99; } return __rc_underflow(); }`, 0},
+		// Result last-used in a nested if-match — precise-dropped the same way.
+		{"result-precise-if-detector", `function f(n: i32): i32 { var r: Result[i32, i32] = Ok(4); var c = 0; if (n > 0) { match (r) { Ok(v) => { c = v; }, Err(e) => { c = e; } } } return c + n; } function main(): i32 { var z = f(5); if (z != 9) { return 99; } return __rc_underflow(); }`, 0},
+		// PRECISE drop + heap-reuse corruption probe: a FRESH array allocated AFTER the
+		// option's precise drop reads back intact (the early box free was sound — no
+		// double-free / dangling slot the fresh alloc could recycle). c 3 + 66; det 0.
+		{"option-precise-corruption-probe-detector", `function go(): i32 { var o: Option[i32] = Some(3); var c = 0; var i = 0; while (i < 1) { match (o) { Some(v) => { c = v; }, None => {} } i = i + 1; } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (c != 3) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// DISJOINTNESS guard: an option WITH a top-level consuming match is handled by
+		// consumed_scalar_enum_frees, NOT the precise path (precise_drop_names skips it
+		// when a top-level match of the name exists) — so the box is freed exactly once.
+		// Detector 0 proves adding options to precise_drop_names introduced no double-free.
+		{"option-toplevel-match-not-double-freed-detector", `function go(): i32 { var o: Option[i32] = Some(7); var r = 0; match (o) { Some(v) => { r = v; }, None => { r = 0; } } if (r != 7) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 		// Struct with an i32[] field: the box is rc-headered and freed soundly, and
 		// the array field is deep-dropped (emit_struct_field_drops) exactly once.
 		// Detector 0 proves neither the box nor the array field over-releases.
