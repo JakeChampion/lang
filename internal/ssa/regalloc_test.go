@@ -20,7 +20,7 @@ func TestAllocDisjointNoSpill(t *testing.T) {
 		Interval{Value: 2, Start: 2, End: 3},
 		Interval{Value: 3, Start: 4, End: 5},
 	)
-	a := allocateLinear(iv, Target{NumRegs: 2})
+	a := allocateLinear(iv, Target{NumRegs: 2}, nil)
 	if a.NumSlots != 0 {
 		t.Errorf("NumSlots = %d, want 0 (disjoint intervals fit in registers)", a.NumSlots)
 	}
@@ -37,7 +37,7 @@ func TestAllocOverlapSpillsFurthestEnd(t *testing.T) {
 		Interval{Value: 2, Start: 1, End: 11},
 		Interval{Value: 3, Start: 2, End: 12}, // ends last → spilled
 	)
-	a := allocateLinear(iv, Target{NumRegs: 2})
+	a := allocateLinear(iv, Target{NumRegs: 2}, nil)
 	if msg := VerifyAllocation(a); msg != "" {
 		t.Errorf("allocation not sound: %s", msg)
 	}
@@ -57,7 +57,7 @@ func TestAllocSpillStealsFromLongerLived(t *testing.T) {
 		Interval{Value: 2, Start: 1, End: 11},
 		Interval{Value: 3, Start: 2, End: 10},
 	)
-	a := allocateLinear(iv, Target{NumRegs: 2})
+	a := allocateLinear(iv, Target{NumRegs: 2}, nil)
 	if msg := VerifyAllocation(a); msg != "" {
 		t.Errorf("allocation not sound: %s", msg)
 	}
@@ -80,7 +80,7 @@ func TestAllocSingleRegister(t *testing.T) {
 		Interval{Value: 2, Start: 1, End: 6},
 		Interval{Value: 3, Start: 2, End: 7},
 	)
-	a := allocateLinear(iv, Target{NumRegs: 1})
+	a := allocateLinear(iv, Target{NumRegs: 1}, nil)
 	if msg := VerifyAllocation(a); msg != "" {
 		t.Errorf("allocation not sound: %s", msg)
 	}
@@ -167,5 +167,34 @@ func TestLiveAcross(t *testing.T) {
 		if !got[id] {
 			t.Errorf("LiveAcross(5) missing v%d", id)
 		}
+	}
+}
+
+// TestLinearScanPrefersCalleeSavedAcrossCall checks the call-clobber-aware
+// allocation bias: a value live across a call is steered into a callee-saved
+// register (cheaper — the callee preserves it) when one is free, while a value
+// that dies before the call takes a caller-saved register. main = x + foo(),
+// where x is live across the call to foo.
+func TestLinearScanPrefersCalleeSavedAcrossCall(t *testing.T) {
+	f := NewFunc("main")
+	e := f.NewBlock()
+	x := f.AddOp(e, OpConstInt) // live across the call below
+	e.Ops[len(e.Ops)-1].Imm = 7
+	r := f.AddOp(e, OpCall, x) // any call; x survives it (used after)
+	e.Ops[len(e.Ops)-1].Str = "foo"
+	f.SetRet(e, f.AddOp(e, OpAdd, x, r))
+
+	// Registers 0,1 caller-saved; 2,3 callee-saved.
+	target := Target{NumRegs: 4, CalleeSaved: []bool{false, false, true, true}}
+	a := LinearScan(f, target)
+	if msg := VerifyAllocation(a); msg != "" {
+		t.Fatalf("allocation not sound: %s", msg)
+	}
+	xr, ok := a.Reg[x.ID]
+	if !ok {
+		t.Fatal("x was spilled, expected a register")
+	}
+	if !target.CalleeSaved[xr] {
+		t.Errorf("x (live across the call) got register %d, want a callee-saved one (2 or 3)", xr)
 	}
 }

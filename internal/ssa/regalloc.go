@@ -24,6 +24,15 @@ type Target struct {
 	// NumRegs is the number of allocatable physical registers. Values that do
 	// not fit are spilled to stack slots.
 	NumRegs int
+	// CalleeSaved[r] reports whether allocatable register r maps to a
+	// callee-saved physical register on this target — one preserved across a
+	// call for free (the callee restores it), so a value living across a call is
+	// cheaper there than in a caller-saved register (which the caller must spill
+	// around every call). The allocator prefers callee-saved registers for
+	// call-crossing values and caller-saved for the rest. Nil (or shorter than
+	// NumRegs) means "no preference": every register is treated as caller-saved,
+	// so allocation is unchanged.
+	CalleeSaved []bool
 }
 
 // Interval is a value's single live range over linearised program points,
@@ -163,14 +172,38 @@ func LiveIntervals(f *Func, live *Liveness) map[int32]Interval {
 func LinearScan(f *Func, target Target) *Allocation {
 	live := ComputeLiveness(f)
 	iv := LiveIntervals(f, live)
-	alloc := allocateLinear(iv, target)
-	alloc.OpPos, _, _ = linearizePoints(f)
+	opPos, _, _ := linearizePoints(f)
+	// A value is call-crossing if its interval strictly spans any call op's
+	// point — the allocator steers those toward callee-saved registers.
+	crosses := map[int32]bool{}
+	tmp := &Allocation{Intervals: iv}
+	for _, b := range f.Blocks {
+		for _, op := range b.Ops {
+			if isCallOp(op.Kind) {
+				for id := range tmp.LiveAcross(opPos[op]) {
+					crosses[id] = true
+				}
+			}
+		}
+	}
+	alloc := allocateLinear(iv, target, crosses)
+	alloc.OpPos = opPos
 	return alloc
+}
+
+// isCallOp reports whether an op transfers control to a callee (so values live
+// across it must survive a call).
+func isCallOp(k OpKind) bool {
+	switch k {
+	case OpCall, OpCallPair, OpCallIndirect:
+		return true
+	}
+	return false
 }
 
 // allocateLinear is the register-assignment core, separated from interval
 // construction so it can be unit-tested on hand-built interval sets.
-func allocateLinear(iv map[int32]Interval, target Target) *Allocation {
+func allocateLinear(iv map[int32]Interval, target Target, crosses map[int32]bool) *Allocation {
 	order := make([]Interval, 0, len(iv))
 	for _, i := range iv {
 		order = append(order, i)
@@ -197,10 +230,39 @@ func allocateLinear(iv map[int32]Interval, target Target) *Allocation {
 	// active holds intervals currently in registers, sorted by increasing End.
 	var active []Interval
 
-	popLowestReg := func() int {
-		r := free[len(free)-1]
-		free = free[:len(free)-1]
-		return r
+	calleeSaved := func(r int) bool {
+		return r < len(target.CalleeSaved) && target.CalleeSaved[r]
+	}
+	// pickReg removes and returns a free register, preferring one whose
+	// callee-saved class matches wantCalleeSaved (so call-crossing values land in
+	// callee-saved registers and everything else in caller-saved ones); it falls
+	// back to any free register. Ties break to the lowest index for determinism.
+	// With no CalleeSaved hint every register is caller-saved, so this reduces to
+	// "pick the lowest free register" — the previous behaviour.
+	pickReg := func(wantCalleeSaved bool) int {
+		best := -1
+		for _, r := range free {
+			if calleeSaved(r) != wantCalleeSaved {
+				continue
+			}
+			if best == -1 || r < best {
+				best = r
+			}
+		}
+		if best == -1 { // no register of the preferred class; take any
+			for _, r := range free {
+				if best == -1 || r < best {
+					best = r
+				}
+			}
+		}
+		for idx, r := range free {
+			if r == best {
+				free = append(free[:idx], free[idx+1:]...)
+				break
+			}
+		}
+		return best
 	}
 	addActive := func(i Interval) {
 		active = append(active, i)
@@ -249,7 +311,7 @@ func allocateLinear(iv map[int32]Interval, target Target) *Allocation {
 			}
 			continue
 		}
-		alloc.Reg[i.Value] = popLowestReg()
+		alloc.Reg[i.Value] = pickReg(crosses[i.Value])
 		addActive(i)
 	}
 

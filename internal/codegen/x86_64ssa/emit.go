@@ -154,7 +154,15 @@ func Emit(f *ssa.Func, numAlloc int) (*Program, error) {
 		return nil, fmt.Errorf("x86_64ssa: function has no entry block")
 	}
 
-	alloc := ssa.LinearScan(f, ssa.Target{NumRegs: numAlloc})
+	// Tell the allocator which allocatable registers are callee-saved, so it can
+	// steer call-crossing values there and avoid a per-call caller-save (EQ-1
+	// then leaves them out of the save set; the function prologue preserves them
+	// once via calleeSavedUsed).
+	calleeSaved := make([]bool, numAlloc)
+	for r := 0; r < numAlloc; r++ {
+		calleeSaved[r] = !isCallerSaved(r)
+	}
+	alloc := ssa.LinearScan(f, ssa.Target{NumRegs: numAlloc, CalleeSaved: calleeSaved})
 	e := &emitter{
 		f:        f,
 		alloc:    alloc,
