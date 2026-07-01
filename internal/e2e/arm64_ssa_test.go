@@ -225,6 +225,58 @@ function main(): i32 { return (123456).to_string().len(); }`,
 			src:  `function main(): i32 { print("hi from arm64-ssa"); return 7; }`,
 			want: 7,
 		},
+		{
+			// String char index s[i] via __str_idx (bounds-checked byte address
+			// + a byte load). "abc"[1] = 'b' = 98.
+			name: "string_index",
+			src: `function main(): i32 {
+  var s: string = "abc";
+  return s[1] as i32;
+}`,
+			want: 98,
+		},
+		{
+			// A char-index loop: sum every byte of "hello" mod 256 =
+			// (104+101+108+108+111) % 256 = 532 % 256 = 20. Exercises __str_idx
+			// under a loop with a per-iteration bounds check.
+			name: "string_index_loop",
+			src: `function main(): i32 {
+  var s: string = "hello";
+  var sum: i32 = 0;
+  var i: i32 = 0;
+  while (i < s.len()) { sum = sum + (s[i] as i32); i = i + 1; }
+  return sum % 256;
+}`,
+			want: 20,
+		},
+		{
+			// String slice s[a:b] via __str_slice — allocates a fresh substring.
+			// len("hello world"[6:11]) = len("world") = 5.
+			name: "string_slice_len",
+			src: `function main(): i32 {
+  var s: string = "hello world";
+  return s[6:11].len();
+}`,
+			want: 5,
+		},
+		{
+			// Slice content check: the first byte of s[6:11] ("world") is 'w' = 119,
+			// confirming the copied bytes (not just the length) are correct.
+			name: "string_slice_content",
+			src: `function main(): i32 {
+  var s: string = "hello world";
+  var w: string = s[6:11];
+  return w[0] as i32;
+}`,
+			want: 119,
+		},
+		{
+			// Out-of-range slice traps with exit 134 (high > src_len), matching the
+			// native backend's bounds trap rather than a silent miscompile.
+			name: "string_slice_oob_trap",
+			src:  `function main(): i32 { var s: string = "abc"; return s[1:9].len(); }`,
+			want: 134,
+		},
 	}
 
 	for _, c := range cases {
@@ -259,10 +311,10 @@ function main(): i32 { return (123456).to_string().len(); }`,
 }
 
 // TestArm64SSACoverageGapErrors confirms a program needing a runtime helper the
-// arm64-ssa path doesn't emit yet (here string indexing `s[i]`, which reaches
-// the still-unported __str_idx char-index helper) fails with a clean
-// compile/link error rather than a miscompile — the experimental-backend
-// contract that lets the epic widen coverage incrementally.
+// arm64-ssa path doesn't emit yet (here string split, whose result is a string[]
+// whose scope-exit drop reaches the still-unported __fern_drop_arr_str helper)
+// fails with a clean compile/link error rather than a miscompile — the
+// experimental-backend contract that lets the epic widen coverage incrementally.
 func TestArm64SSACoverageGapErrors(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("arm64-ssa not exercised on windows")
@@ -274,21 +326,19 @@ func TestArm64SSACoverageGapErrors(t *testing.T) {
 		t.Fatalf("go build fern: %v\n%s", err, out)
 	}
 
-	srcPath := filepath.Join(dir, "stridx.fern")
-	src := `function main(): i32 {
-  var s: string = "abc";
-  return s[1] as i32;
-}`
+	srcPath := filepath.Join(dir, "split.fern")
+	src := `import "std/string";
+function main(): i32 { var p = "a,b,c".split(","); return p.len(); }`
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	out := filepath.Join(dir, "stridx.bin")
+	out := filepath.Join(dir, "split.bin")
 	emit := exec.Command(bin, "-target", "arm64-ssa", "-o", out, srcPath)
 	var eb bytes.Buffer
 	emit.Stderr = &eb
 	err := emit.Run()
 	if err == nil {
-		t.Fatalf("expected a coverage-gap error for string indexing (__str_idx), got success")
+		t.Fatalf("expected a coverage-gap error for string[] drop (__fern_drop_arr_str), got success")
 	}
 	if !bytes.Contains(eb.Bytes(), []byte("arm64-ssa")) {
 		t.Errorf("error not attributed to arm64-ssa:\n%s", eb.String())
