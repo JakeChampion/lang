@@ -17,6 +17,7 @@ package arm64ssa
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	x86 "github.com/jakechampion/lang/internal/codegen/x86_64ssa"
@@ -83,7 +84,15 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		fmt.Fprintf(&b, format, args...)
 		b.WriteByte('\n')
 	}
+	helpers := referencedRuntimeHelpers(progs)
 	heap := usesHeap(progs)
+	for _, h := range helpers {
+		if heapUsingHelpers[h] {
+			heap = true // e.g. __str_concat bump-allocates even with no direct heap op
+			break
+		}
+	}
+	strLabels, strOrder := collectStrings(progs, names)
 
 	w(".text")
 	w(".globl _start")
@@ -112,15 +121,37 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	w("\tsvc #0")
 	w("")
 	for _, name := range names {
-		if err := emitFunc(w, name, progs[name], numAlloc); err != nil {
+		if err := emitFunc(w, name, progs[name], numAlloc, strLabels); err != nil {
 			return "", err
 		}
 		w("")
 	}
 	// Runtime-helper bodies (hand-written leaf asm, AArch64 PCS: arg/result in
 	// x0), emitted only when the module calls them.
-	for _, h := range referencedRuntimeHelpers(progs) {
+	for _, h := range helpers {
 		runtimeHelperEmitters[h](w)
+	}
+	if len(strOrder) > 0 {
+		// Length-prefixed single-word string literals (mirrors the native backends
+		// + the x86-64 SSA path): an 8-byte header — an immortal rc sentinel
+		// (0x80000000, top bit set) at [data-8] and the 4-byte byte-length at
+		// [data-4] — sits immediately before the data, so the string pointer is the
+		// data pointer. The sentinel makes __fern_str_dec / rc helpers short-circuit
+		// on literals (they never free .rodata). Consecutive literals stay
+		// contiguous, so each label's header is exactly the 8 bytes before it.
+		w(".section .rodata")
+		for _, s := range strOrder {
+			w("\t.4byte 0x80000000")
+			w("\t.4byte %d", len(s))
+			w("%s:", strLabels[s])
+			if len(s) > 0 {
+				parts := make([]string, len(s))
+				for i := 0; i < len(s); i++ {
+					parts[i] = strconv.Itoa(int(s[i]))
+				}
+				w("\t.byte %s", strings.Join(parts, ", "))
+			}
+		}
 	}
 	if heap {
 		// A fixed .bss buffer backs the bump allocator (mirrors the x86-64 SSA
@@ -173,6 +204,10 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_rc_dec":       emitRcDecHelper,
 	"__fern_box_free":     emitBoxFreeHelper,
 	"__fern_closure_drop": emitClosureDropHelper,
+	"__str_len":           emitStrLenHelper,
+	"__str_eq":            emitStrEqHelper,
+	"__str_concat":        emitStrConcatHelper,
+	"__fern_str_dec":      emitStrDecHelper,
 }
 
 // runtimeHelperDeps records helper→helper call edges: a helper that tail-calls
@@ -180,6 +215,34 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 // it directly. Transitively closed by referencedRuntimeHelpers.
 var runtimeHelperDeps = map[string][]string{
 	"__fern_closure_drop": {"__fern_box_free", "__fern_rc_dec"},
+}
+
+// heapUsingHelpers are runtime helpers that bump-allocate on the SSA heap, so the
+// .bss heap section + cursor must exist whenever one is referenced even if no
+// program body has a direct heap op.
+var heapUsingHelpers = map[string]bool{
+	"__str_concat": true,
+}
+
+// collectStrings assigns a .rodata label to each unique OpConstString literal, in
+// first-seen order over the (sorted) module functions — the arm64 sibling of the
+// x86-64 path's collector.
+func collectStrings(progs map[string]*x86.Program, names []string) (map[string]string, []string) {
+	labels := map[string]string{}
+	var order []string
+	for _, name := range names {
+		for _, blk := range progs[name].Blocks {
+			for _, in := range blk.Insts {
+				if in.Op == x86.ConstStr {
+					if _, ok := labels[in.Str]; !ok {
+						labels[in.Str] = fmt.Sprintf("str_%d", len(order))
+						order = append(order, in.Str)
+					}
+				}
+			}
+		}
+	}
+	return labels, order
 }
 
 // referencedRuntimeHelpers returns, sorted, every runtime helper any emitted
@@ -306,13 +369,126 @@ func emitClosureDropHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
+// Single-word strings carry their byte length as a 4-byte field immediately
+// before the data (length at [ptr-4]); heap strings also have the rc word at
+// [ptr-8], literals an immortal sentinel there. The helpers below match that
+// layout, the arm64 siblings of the x86-64 string helpers.
+
+// emitStrLenHelper writes __str_len(ptr) -> i32: the byte length at [ptr-4].
+func emitStrLenHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__str_len"))
+	w("\tldur w0, [x0, #-4]")
+	w("\tret")
+}
+
+// emitStrEqHelper writes __str_eq(a, b) -> i32: 1 if the two single-word strings
+// are byte-equal, else 0. Fast paths on pointer identity and length mismatch,
+// then a byte loop. Leaf.
+func emitStrEqHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__str_eq"))
+	w("\tcmp x0, x1")
+	w("\tb.eq .Lssa_streq_eq") // same pointer → equal
+	w("\tldur w2, [x0, #-4]")  // len a
+	w("\tldur w3, [x1, #-4]")  // len b
+	w("\tcmp w2, w3")
+	w("\tb.ne .Lssa_streq_neq") // different lengths
+	w("\tmov w4, #0")           // i = 0
+	w(".Lssa_streq_loop:")
+	w("\tcmp w4, w2")
+	w("\tb.hs .Lssa_streq_eq") // i >= len → all bytes matched (unsigned)
+	w("\tldrb w5, [x0, x4]")
+	w("\tldrb w6, [x1, x4]")
+	w("\tcmp w5, w6")
+	w("\tb.ne .Lssa_streq_neq")
+	w("\tadd w4, w4, #1")
+	w("\tb .Lssa_streq_loop")
+	w(".Lssa_streq_eq:")
+	w("\tmov x0, #1")
+	w("\tret")
+	w(".Lssa_streq_neq:")
+	w("\tmov x0, #0")
+	w("\tret")
+}
+
+// emitStrConcatHelper writes __str_concat(a, b) -> new data pointer: bump-allocate
+// a fresh length-prefixed string holding a's bytes then b's, and return its data
+// pointer. Inline-allocates the rc-headed block (rc=1 at base+0, total length at
+// base+4, data at base+8 — the same header ConstStr / heap strings use) and
+// byte-copies each operand, so it needs no calls. Leaf.
+func emitStrConcatHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__str_concat"))
+	w("\tldur w2, [x0, #-4]") // la
+	w("\tldur w3, [x1, #-4]") // lb
+	w("\tadd w4, w2, w3")     // total = la + lb (zero-extends into x4)
+	// Bump-allocate total+8 bytes: base = align8(cursor); rc=1 at base+0, len at
+	// base+4; cursor advances past header+total; data = base+8.
+	w("\tadrp x5, %s", heapPtrSym)
+	w("\tadd x5, x5, #:lo12:%s", heapPtrSym) // x5 = &cursor
+	w("\tldr x6, [x5]")
+	w("\tadd x6, x6, #7")
+	w("\tand x6, x6, #-8") // x6 = base
+	w("\tmov w7, #1")
+	w("\tstr w7, [x6]")     // rc = 1
+	w("\tstr w4, [x6, #4]") // len = total
+	w("\tadd x7, x6, #8")
+	w("\tadd x7, x7, x4")   // new cursor = base + 8 + total
+	w("\tstr x7, [x5]")
+	w("\tadd x9, x6, #8") // x9 = data
+	// Copy a's la bytes: [data + i] = [a + i].
+	w("\tmov x10, #0")
+	w(".Lssa_strcat_a:")
+	w("\tcmp w10, w2")
+	w("\tb.hs .Lssa_strcat_b")
+	w("\tldrb w11, [x0, x10]")
+	w("\tstrb w11, [x9, x10]")
+	w("\tadd x10, x10, #1")
+	w("\tb .Lssa_strcat_a")
+	// Copy b's lb bytes after a: dest base = data + la.
+	w(".Lssa_strcat_b:")
+	w("\tadd x12, x9, x2") // x2 = la (zero-extended)
+	w("\tmov x10, #0")
+	w(".Lssa_strcat_bl:")
+	w("\tcmp w10, w3")
+	w("\tb.hs .Lssa_strcat_done")
+	w("\tldrb w11, [x1, x10]")
+	w("\tstrb w11, [x12, x10]")
+	w("\tadd x10, x10, #1")
+	w("\tb .Lssa_strcat_bl")
+	w(".Lssa_strcat_done:")
+	w("\tmov x0, x9") // return data
+	w("\tret")
+}
+
+// emitStrDecHelper writes __fern_str_dec(ptr): the scope-exit drop for a
+// string-valued local. Guarded (null / low-address / immortal-sentinel top bit —
+// so it skips .rodata literals); reads the rc at [ptr-8]; rc<=1 leaks (no
+// reclamation on the bump heap), else drops a shared reference. Leaf.
+func emitStrDecHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_str_dec"))
+	w("\tcbz x0, .Lssa_strdec_ret")
+	w("\tcmp x0, #0x10000")
+	w("\tb.lo .Lssa_strdec_ret")
+	w("\tldur w1, [x0, #-8]")             // rc
+	w("\ttbnz w1, #31, .Lssa_strdec_ret") // immortal literal sentinel
+	w("\tcmp w1, #1")
+	w("\tb.le .Lssa_strdec_ret") // rc<=1: unique (leak) or already dropped
+	w("\tsub w1, w1, #1")
+	w("\tstur w1, [x0, #-8]")
+	w(".Lssa_strdec_ret:")
+	w("\tret")
+}
+
 // emitFunc writes one function: its label, a stack frame (spill slots, plus a
 // call-save area and a saved-x30 slot when the function makes calls), each
 // block's straight-line body under a namespaced label, and the terminators.
 // The stack pointer stays fixed for the whole body — call-crossing registers are
 // preserved in the reserved call-save area rather than by moving sp — so every
 // slot access is a stable sp-relative offset.
-func emitFunc(w func(string, ...any), name string, p *x86.Program, numAlloc int) error {
+func emitFunc(w func(string, ...any), name string, p *x86.Program, numAlloc int, strLabels map[string]string) error {
 	label := fnLabel(name)
 	call := funcHasCall(p)
 
@@ -365,6 +541,17 @@ func emitFunc(w func(string, ...any), name string, p *x86.Program, numAlloc int)
 				for _, l := range lines {
 					w("\t%s", l)
 				}
+				continue
+			}
+			if in.Op == x86.ConstStr {
+				lbl, ok := strLabels[in.Str]
+				if !ok {
+					return fmt.Errorf("arm64ssa: ConstStr %q has no .rodata label", in.Str)
+				}
+				// Materialise the string's data pointer (the label; its 8-byte header
+				// sits just before it) via PC-relative page + offset.
+				w("\tadrp %s, %s", xreg(in.Dst), lbl)
+				w("\tadd %s, %s, #:lo12:%s", xreg(in.Dst), xreg(in.Dst), lbl)
 				continue
 			}
 			lines, err := asmInst(in, scratch)

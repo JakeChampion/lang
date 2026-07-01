@@ -508,6 +508,110 @@ func TestArmRunBoxFreeNoop(t *testing.T) {
 	}
 }
 
+// constStr adds an OpConstString literal and returns its data pointer.
+func constStr(f *ssa.Func, b *ssa.Block, s string) ssa.Value {
+	v := f.AddOp(b, ssa.OpConstString)
+	b.Ops[len(b.Ops)-1].Str = s
+	return v
+}
+
+// load8u adds an unsigned byte load at base+offset.
+func load8u(f *ssa.Func, b *ssa.Block, base ssa.Value, offset int64) ssa.Value {
+	v := f.AddOp(b, ssa.OpLoad8U, base)
+	b.Ops[len(b.Ops)-1].Imm = offset
+	return v
+}
+
+// A string literal materialised in .rodata: length + byte reads, diffed against
+// ssa.Eval (which models OpConstString/OpConstStringLen/OpLoad8U). "Hello": len 5
+// + 'H'(72) + 'e'(101) = 178.
+func TestArmRunConstString(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		s := constStr(f, e, "Hello")
+		l := f.AddOp(e, ssa.OpConstStringLen, s)
+		b0 := load8u(f, e, s, 0)
+		b1 := load8u(f, e, s, 1)
+		f.SetRet(e, f.AddOp(e, ssa.OpAdd, f.AddOp(e, ssa.OpAdd, l, b0), b1))
+		return f
+	}
+	for _, n := range []int{2, 4, 8} {
+		runMatchesEval(t, build(), n)
+	}
+}
+
+// Two distinct literals coexist in .rodata and read back independently:
+// 'A'(65) + 'x'(120) = 185.
+func TestArmRunTwoStrings(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		a := constStr(f, e, "AB")
+		b := constStr(f, e, "xy")
+		f.SetRet(e, f.AddOp(e, ssa.OpAdd, load8u(f, e, a, 0), load8u(f, e, b, 0)))
+		return f
+	}
+	for _, n := range []int{2, 4, 8} {
+		runMatchesEval(t, build(), n)
+	}
+}
+
+// __str_len on the arm64 SSA path: __str_len("Hello") = 5 (exit code direct, as
+// the helper call is not Eval-modellable).
+func TestArmRunStrLenHelper(t *testing.T) {
+	f := ssa.NewFunc("main")
+	e := f.NewBlock()
+	f.SetRet(e, callOp(f, e, "__str_len", constStr(f, e, "Hello")))
+	if got := assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 8); got != 5 {
+		t.Errorf("__str_len(\"Hello\") = %d, want 5", got)
+	}
+}
+
+// __str_eq on the arm64 SSA path: equal literals -> 1, differing byte or length
+// -> 0.
+func TestArmRunStrEqHelper(t *testing.T) {
+	eq := func(a, b string) int {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		f.SetRet(e, callOp(f, e, "__str_eq", constStr(f, e, a), constStr(f, e, b)))
+		return assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 8)
+	}
+	if got := eq("AB", "AB"); got != 1 {
+		t.Errorf("str_eq(AB,AB) = %d, want 1", got)
+	}
+	if got := eq("AB", "AC"); got != 0 {
+		t.Errorf("str_eq(AB,AC) = %d, want 0", got)
+	}
+	if got := eq("AB", "ABC"); got != 0 {
+		t.Errorf("str_eq(AB,ABC) = %d, want 0", got)
+	}
+}
+
+// __str_concat on the arm64 SSA path: concat("AB","CD") = "ABCD". The result is a
+// fresh heap string — check its length (4) and a byte (index 2 -> 'C' = 67).
+func TestArmRunStrConcatHelper(t *testing.T) {
+	// concatLen returns __str_len(concat(a,b)).
+	concatLen := func(a, b string) int {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		c := callOp(f, e, "__str_concat", constStr(f, e, a), constStr(f, e, b))
+		f.SetRet(e, callOp(f, e, "__str_len", c))
+		return assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 8)
+	}
+	if got := concatLen("AB", "CD"); got != 4 {
+		t.Errorf("len(concat(AB,CD)) = %d, want 4", got)
+	}
+	// Byte 2 of "ABCD" is 'C' = 67.
+	f := ssa.NewFunc("main")
+	e := f.NewBlock()
+	c := callOp(f, e, "__str_concat", constStr(f, e, "AB"), constStr(f, e, "CD"))
+	f.SetRet(e, load8u(f, e, c, 2))
+	if got := assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 8); got != 67 {
+		t.Errorf("concat(AB,CD)[2] = %d, want 67 ('C')", got)
+	}
+}
+
 // max via a comparison-selected branch: max(9, 4) = 9 -> exit 9.
 func TestArmRunMax(t *testing.T) {
 	build := func() *ssa.Func {
