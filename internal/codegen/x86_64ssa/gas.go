@@ -29,8 +29,9 @@ func EmitAsm(f *ssa.Func, numAlloc int) (string, error) {
 // The function prologue moves each incoming argument register into that param's
 // allocated home (register or spill slot), so a parameterised function runs
 // natively. Scope: up to six integer parameters (stack args are a follow-up)
-// over the slice-2 op set MINUS shifts/div (cl / rax·rdx fixed registers, a
-// follow-up). Validated by assembling + running (see gas_run_test.go).
+// over the full integer op set — arithmetic, bitwise, shifts (cl), div/rem
+// (rdx:rax), comparisons, control flow — with i32-width results sign-extended
+// to match the model. Validated by assembling + running (see gas_run_test.go).
 func EmitAsmArgs(f *ssa.Func, numAlloc int, entryArgs []int64) (string, error) {
 	p, err := Emit(f, numAlloc)
 	if err != nil {
@@ -217,14 +218,25 @@ func align16(n int) int {
 	return (n + 15) &^ 15
 }
 
+// maskFix mirrors the model's maskW: for an i32-width result (W != 64) it
+// sign-extends the low 32 bits back into the full register, so a value whose
+// high 32 bits are later observed (unsigned shift/div, unsigned compare) matches
+// ssa.Eval. Returns the empty string for 64-bit results (no fix needed).
+func maskFix(dst int, w int8) string {
+	if w == 64 {
+		return ""
+	}
+	return fmt.Sprintf("\n\tmovsxd %s, %s", reg(dst), reg32n(dst))
+}
+
 func asmInst(in Inst, scratch int) (string, error) {
 	switch in.Op {
 	case MovImm:
-		return fmt.Sprintf("mov %s, %d", reg(in.Dst), in.Imm), nil
+		return fmt.Sprintf("mov %s, %d", reg(in.Dst), in.Imm) + maskFix(in.Dst, in.W), nil
 	case MovReg:
 		return fmt.Sprintf("mov %s, %s", reg(in.Dst), reg(in.Src)), nil
 	case UnNeg:
-		return fmt.Sprintf("neg %s", reg(in.Dst)), nil
+		return fmt.Sprintf("neg %s", reg(in.Dst)) + maskFix(in.Dst, in.W), nil
 	case UnOp:
 		d := in.Dst
 		switch in.K {
@@ -248,15 +260,15 @@ func asmInst(in Inst, scratch int) (string, error) {
 	case BinOp:
 		switch in.K {
 		case ssa.OpShl, ssa.OpShr, ssa.OpShrU:
-			return shiftSeq(in), nil
+			return shiftSeq(in) + maskFix(in.Dst, in.W), nil
 		case ssa.OpDiv, ssa.OpDivU, ssa.OpRem, ssa.OpRemU:
-			return divSeq(in, scratch), nil
+			return divSeq(in, scratch) + maskFix(in.Dst, in.W), nil
 		}
 		op, ok := binMnemonic(in.K)
 		if !ok {
 			return "", fmt.Errorf("x86_64ssa: binary op %v unsupported in the real-asm slice", in.K)
 		}
-		return fmt.Sprintf("%s %s, %s", op, reg(in.Dst), reg(in.Src)), nil
+		return fmt.Sprintf("%s %s, %s", op, reg(in.Dst), reg(in.Src)) + maskFix(in.Dst, in.W), nil
 	case SetCmp:
 		cc, ok := setccMnemonic(in.K)
 		if !ok {
