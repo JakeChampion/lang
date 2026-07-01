@@ -168,11 +168,11 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         return s.write("    bl __fn___fern_str_trim\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind == "str_reverse") {
-        // operand stack [s box]; __fern_str_reverse(x0=s) -> fresh reversed string
-        // box in x0. asm_arm64.emit_runtime emits the body gated on the str_reverse
-        // need (it allocates), which mark_str_reverse sets along with heap.
+        // operand stack [s box] — the arg IS param[0] (+16). Call the
+        // Fern-compiled __fn___fern_str_reverse via the stack ABI (shared body,
+        // need-gated on str_reverse). -> fresh reversed string box in x0.
         s = s.mark_str_reverse();
-        return s.write("    ldr x0, [sp], #16\n    bl __fern_str_reverse\n    str x0, [sp, #-16]!\n");
+        return s.write("    bl __fn___fern_str_reverse\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind == "str_replace") {
         // operand stack [haystack, old, new] (new top); __fern_str_replace(

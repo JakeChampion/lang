@@ -1931,9 +1931,8 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             return s;
         }
         if (fa.field == "reverse" && c.args.len() == 0) {
-            s = emit_expr(fa.obj, s);
-            s = s.write("    ldr x0, [sp], #16\n");
-            s = s.write("    bl __fern_str_reverse\n");
+            s = emit_expr(fa.obj, s);   // s (arg stays on the stack = param[0])
+            s = s.write("    bl __fn___fern_str_reverse\n    add sp, sp, #16\n");
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.mark_str_reverse();
             return s;
@@ -8275,41 +8274,10 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     if (s.has_need("str_chars")) {
         s = emit_runtime_fern_fn(asmcore.rt_src_str_chars(), s);
     }
-    // __fern_str_reverse: x0 = src box. Returns x0 = new
-    // string box with bytes in reverse order.
+    // __fern_str_reverse — Fern runtime function (#2649) via the raw-memory
+    // intrinsics; single shared body for arm64 AST + IR. heap-only dep.
     if (s.has_need("str_reverse")) {
-        s = s.write("__fern_str_reverse:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    stp x21, x22, [sp, #-16]!\n");
-        s = s.write("    ldr x19, [x0]\n");         // src data
-        s = s.write("    ldr x20, [x0, #8]\n");     // src len
-        // Alloc len bytes for new data buffer.
-        s = s.write("    mov x0, x20\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x21, x0\n");           // dst data
-        // Reverse copy.
-        s = s.write("    mov x3, #0\n");            // i
-        s = s.write(".Lstr_rev_loop:\n");
-        s = s.write("    cmp x3, x20\n");
-        s = s.write("    b.ge .Lstr_rev_done\n");
-        s = s.write("    sub x4, x20, x3\n");
-        s = s.write("    sub x4, x4, #1\n");        // src idx = len-1-i
-        s = s.write("    ldrb w5, [x19, x4]\n");
-        s = s.write("    strb w5, [x21, x3]\n");
-        s = s.write("    add x3, x3, #1\n");
-        s = s.write("    b .Lstr_rev_loop\n");
-        s = s.write(".Lstr_rev_done:\n");
-        // Alloc box.
-        s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    str x21, [x0]\n");
-        s = s.write("    str x20, [x0, #8]\n");
-        s = s.write("    ldp x21, x22, [sp], #16\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
+        s = emit_runtime_fern_fn(asmcore.rt_src_str_reverse(), s);
     }
     // __fern_str_bytes is now a Fern runtime function (#2649): see
     // asmcore.rt_src_str_bytes, emitted (need-gated) in the migrated-helpers

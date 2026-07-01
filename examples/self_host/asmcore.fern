@@ -419,6 +419,14 @@ pub function (s: EmitState) mark_str_reverse(): EmitState {
     return s.need("heap").need("str_reverse");
 }
 
+// rt_src_str_reverse backs `s.reverse()` (#2649) — a fresh string box with `s`'s
+// bytes in reverse order, via the raw-memory intrinsic floor. Allocates n bytes,
+// copies s[n-1-i] into p[i], boxes it. Heap is its sole dep. Replaces the
+// hand-written register-ABI body on every backend.
+pub function rt_src_str_reverse(): string {
+    return "function __fern_str_reverse(s: string): string { var n: i32 = s.len(); var p: i32 = __raw_alloc(n); var i: i32 = 0; while (i < n) { __raw_store8(p, i, s[n - 1 - i]); i = i + 1; } return __raw_string(p, n); }";
+}
+
 pub function (s: EmitState) mark_str_replace(): EmitState {
     return s.need("heap").need("str_replace");
 }
