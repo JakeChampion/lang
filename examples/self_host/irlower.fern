@@ -13500,17 +13500,21 @@ function stmt_accum_unsafe_for(st: parser.Stmt, name: string, borrowable: string
     return false;
 }
 
-// collect_str_accumulator_names: string locals initialised `var s: string =
-// <literal or fresh>` that ARE reassigned (candidate accumulators). Whether every
-// reassignment is a valid consume-rebind and `s` never escapes is proven by
-// str_accum_unsafe_for at the crediting site, so this only screens the init shape.
+// collect_str_accumulator_names: locals initialised `var s [: string] =
+// <literal or fresh>` that ARE reassigned (candidate accumulators). No `: string`
+// annotation is required — the TYPE gate is applied by slot_is_reclaimable_str's
+// `is_str` at the reclaim site (set from the type-aware expr_is_str), so an
+// un-annotated int accumulator `var n = a + b; n = n + i` (whose init matches the
+// concat SHAPE but is not is_str) is credited yet never reclaimed. That the init is
+// a literal or fresh producer, and every reassignment is a valid consume-rebind of
+// s that never escapes, is proven by str_accum_unsafe_for at the crediting site.
 function collect_str_accumulator_names(stmts: parser.Stmt[], reassigned: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtVar(v) => {
-                if (v.type_name == "string" && util.index_of_str(reassigned, v.name) >= 0) {
+                if (util.index_of_str(reassigned, v.name) >= 0) {
                     var init_ok: boolean = str_local_binding_is_fresh(v.init);
                     match (v.init) { parser.ExprString(_) => { init_ok = true; }, _ => {} }
                     if (init_ok) { a = push_str_unique(a, v.name); }
