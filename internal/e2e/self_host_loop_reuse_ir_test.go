@@ -95,6 +95,14 @@ var loopReuseIRCases = []struct {
 	{"loop-escaping-recipient-tuple",
 		`function main(): i32 { var acc: (i32, i32)[] = []; var i: i32 = 0; while (i < 5) { var a: (i32, i32) = (i, i + 1); var s: i32 = a.0 + a.1; var b: (i32, i32) = (i, 100); acc = acc.append(b); i = i + 1; } var sum: i32 = 0; var j: i32 = 0; while (j < acc.len()) { sum = sum + acc[j].0 + acc[j].1; j = j + 1; } return sum; }`,
 		254, 3},
+	// Struct with a leak-safe ARRAY field, reused in a loop: the reuse must release
+	// the donor's OLD array (each iteration) before writing the recipient's fresh
+	// one, or the old array leaks / the box double-frees. Three static boxes (the
+	// two array literals + the reused struct box). sum over i in 0..3 of
+	// (n + xs[0]=1) + (b.xs[1]=5 + b.n=i*2) = (i+1) + (5 + 2i) = 3i + 6 = 6+9+12+15 = 42.
+	{"loop-struct-array-field-reuse",
+		`struct P { xs: i32[], n: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: P = P { xs: [1, 2, 3], n: i }; var s: i32 = a.n + a.xs[0]; var b: P = P { xs: [4, 5], n: i * 2 }; sum = sum + s + b.xs[1] + b.n; i = i + 1; } return sum; }`,
+		42, 3},
 }
 
 // TestSelfHostLoopReuseIRX86_64 compiles each case through the self-hosted x86-64
