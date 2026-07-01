@@ -113,6 +113,14 @@ func runProg(m map[string]*Program, p *Program, h *modelHeap, args []int64) (int
 				if err := h.store(regs[in.Src]+in.Imm, regs[in.Src2], int(in.Bytes)); err != nil {
 					return 0, err
 				}
+			case ConstStr:
+				p := h.alloc(int64(len(in.Str)))
+				for i := 0; i < len(in.Str); i++ {
+					if err := h.store(p+int64(i), int64(in.Str[i]), 1); err != nil {
+						return 0, err
+					}
+				}
+				regs[in.Dst] = p
 			default:
 				return 0, fmt.Errorf("Run: unknown opcode %d", in.Op)
 			}

@@ -142,8 +142,13 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
     `Eval` + the model + **real assembly** (`Not` runs natively;
     `movsxd`/`movsx`/`movzx` for the rest). Driven by the measurement below —
     `OpNot` was the single most-frequent unhandled op.
-  - [ ] Composite types built on memory: strings (`OpConstString`), structs,
-    arrays, maps
+  - [x] Strings — `OpConstString` (materialises the literal bytes on the model
+    heap, returns a pointer) + `OpConstStringLen` (compile-time length via a
+    const-string length map), in `Eval` + the model. The single biggest
+    unhandled block in the measurement (~3668). Validated: length + byte reads,
+    empty string, and a string passed across a call.
+  - [ ] Composite types: structs, arrays, maps (mostly alloc+load/store, already
+    covered post-lowering)
   - [ ] Integer `div`/`rem` (real-asm needs `idiv` rax/rdx) and floats
   - [ ] RC inc/dec (Perceus ordering)
 
