@@ -58,6 +58,67 @@ func TestSelfHostRcRuntimeWasm(t *testing.T) {
 	}
 }
 
+// TestSelfHostWasmMapValidWAT is a regression guard for the self-host wasm
+// AST-path bug where a map-using module emitted `call_indirect (type $fn1/$fn2)`
+// in the map hash/eq helpers (map_helpers, the derived struct/enum-key Hash/Eq
+// dispatch, #2671) WITHOUT declaring those signature types or a function table —
+// so the module failed wasm validation (and traps / mis-exits at run time).
+// The type+table section was gated on `lam_ctr > 0` (closures only), so:
+//   - a map program with NO closures declared no table and no $fn types; and
+//   - even a map program WITH closures declared only $clos<N>, never $fn1/$fn2.
+// Both cases now emit $fn1/$fn2 and a (>=1-slot) table whenever the module uses
+// maps — the AST-path mirror of wasm_ir.fn_support_section (the IR path). Each
+// case is success-coded (return 0 iff every map op is correct), so a non-zero
+// exit (incl. a validation/trap exit) fails the test.
+func TestSelfHostWasmMapValidWAT(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host wasm map-WAT e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	cases := []struct {
+		name string
+		src  string
+	}{
+		// Map literal, NO closures — the primary case (module declared no table,
+		// no $fn types, so map_helpers' call_indirect was undefined).
+		{"map-literal-no-closure", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; var ks: i32[] = m.keys(); if (ks.len() != 2) { return 1; } if (m.get_or(1, 0) != 10) { return 2; } if (m.get_or(2, 0) != 20) { return 3; } return 0; }"},
+		// map_new + inserts, no closures — same shape via the explicit builder API.
+		{"map-new-no-closure", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); if (m.len() != 2) { return 1; } if (!m.has(1)) { return 2; } if (m.get_or(2, 0) != 20) { return 3; } return 0; }"},
+		// Map AND a closure (call_indirect $clos) in the same module — before the
+		// fix the $clos block emitted only $clos<N>, never $fn1/$fn2, so this was
+		// invalid too. Both dispatch-type families must now coexist.
+		{"map-plus-closure", "function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var m = Map { 5: 50, 6: 60 }; var g: (i32) => i32 = (n: i32) => n + 1; var r = apply(g, 7); if (r != 8) { return 1; } if (m.len() != 2) { return 2; } if (m.get_or(5, 0) != 50) { return 3; } return 0; }"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wat := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			if len(wat) == 0 {
+				t.Fatal("wasm emitter produced 0 bytes")
+			}
+			watPath := filepath.Join(dir, tc.name+".wat")
+			if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+				t.Fatalf("write wat: %v", err)
+			}
+			cmd := exec.Command("wasmtime", "run", "--dir", dir, watPath)
+			_, _ = cmd.Output()
+			if code := cmd.ProcessState.ExitCode(); code != 0 {
+				t.Errorf("%s: wasm exited %d, want 0 (valid WAT + correct map ops)\n--- WAT ---\n%s", tc.name, code, wat)
+			}
+		})
+	}
+}
+
 // TestSelfHostRcFreeWasm exercises the wasm Perceus FREE flip: arrays are
 // now reclaimed via $__fern_arr_dec into a size-class freelist, and
 // $__fern_alloc pops a freed block before bumping. Reuse is observable as

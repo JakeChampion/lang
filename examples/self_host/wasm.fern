@@ -12565,27 +12565,47 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         out = out + emit_func(synth, tab, str_funcs, str_arr_funcs, mod.structs, sf_names, sf_types, of_names, of_payloads, mr_types, mr_names, mr_rets, i64_funcs, mod.funcs, f64_funcs, lam_ctr, lamdefs, [], [], [], [], [], []);
     }
 
-    // Closure support: the accumulated lambda functions, the shared
-    // call_indirect signature types ($clos<N> = env + N i32 args → i32),
-    // and the function table + elem segment indexing them.
-    if (lam_ctr.get() > 0) {
-        var ai: i32 = 0;
-        while (ai <= 8) {
-            out = out + "  (type $clos" + util.i32_to_string(ai) + " (func (param i32";
-            var pj: i32 = 0;
-            while (pj < ai) { out = out + " i32"; pj = pj + 1; }
-            out = out + ") (result i32)))\n";
-            ai = ai + 1;
+    // Closure + map-dispatch support: the accumulated lambda functions, the
+    // shared call_indirect signature types ($clos<N> = env + N i32 args → i32),
+    // the map hash/eq signature types ($fn1 = key→hash, $fn2 = (a,b)→eq — the
+    // derived struct/enum-key Hash/Eq dispatch, #2671), and the function table +
+    // elem segment indexing the lambdas. map_helpers() emits `call_indirect
+    // (type $fn1/$fn2)` for ANY map module (the branch is dead for i32/string
+    // keys, but wasm still validates the type + table), so a map-using module
+    // with no closures MUST still declare $fn1/$fn2 and a (≥1-slot) table or the
+    // module fails to validate — the IR path does this via fn_support_section;
+    // this is the AST-path mirror.
+    if (lam_ctr.get() > 0 || has_maps) {
+        if (lam_ctr.get() > 0) {
+            var ai: i32 = 0;
+            while (ai <= 8) {
+                out = out + "  (type $clos" + util.i32_to_string(ai) + " (func (param i32";
+                var pj: i32 = 0;
+                while (pj < ai) { out = out + " i32"; pj = pj + 1; }
+                out = out + ") (result i32)))\n";
+                ai = ai + 1;
+            }
+        }
+        if (has_maps) {
+            out = out + "  (type $fn1 (func (param i32) (result i32)))\n";
+            out = out + "  (type $fn2 (func (param i32) (param i32) (result i32)))\n";
         }
         out = out + lamdefs.get();
-        out = out + "  (table " + util.i32_to_string(lam_ctr.get()) + " funcref)\n";
-        out = out + "  (elem (i32.const 0)";
-        var ei: i32 = 0;
-        while (ei < lam_ctr.get()) {
-            out = out + " $__lambda" + util.i32_to_string(ei);
-            ei = ei + 1;
+        // A table must exist for any call_indirect to validate. Size it to the
+        // lambda set, or a minimal 1 slot when the only indirect calls are the
+        // (dead-for-i32/string) map hk/keq ones.
+        var tsize: i32 = lam_ctr.get();
+        if (tsize == 0) { tsize = 1; }
+        out = out + "  (table " + util.i32_to_string(tsize) + " funcref)\n";
+        if (lam_ctr.get() > 0) {
+            out = out + "  (elem (i32.const 0)";
+            var ei: i32 = 0;
+            while (ei < lam_ctr.get()) {
+                out = out + " $__lambda" + util.i32_to_string(ei);
+                ei = ei + 1;
+            }
+            out = out + ")\n";
         }
-        out = out + ")\n";
     }
 
     // P6: surface a core export `iface#wit-name` for each `@export` function so

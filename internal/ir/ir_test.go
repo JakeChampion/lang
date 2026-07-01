@@ -1695,6 +1695,26 @@ func TestLowerStringReclaimOnNative(t *testing.T) {
 	}
 }
 
+// TestLowerStringPassedToUserFnNotReclaimedNative pins the #4174 follow-up: a
+// native single-word STRING local passed as an argument to a USER function may
+// be RETAINED by the callee (stored into a container it returns — the
+// intraprocedural escape analysis can't see it), so it must NOT be reclaimed
+// caller-side (freeing it would dangle the retained copy — the nested
+// control-flow miscompile in ir_x86.fern's push_scope). `keep(s)` is a user
+// call, so `s` is tainted and no __fern_str_dec fires for it. (A builtin borrow
+// like `s.len()` — TestLowerStringReclaimOnNative — still reclaims: the method
+// receiver Args[0] is skipped.)
+func TestLowerStringPassedToUserFnNotReclaimedNative(t *testing.T) {
+	p := lowerSourceWith(t, `function keep(s: string): i32 { return 0; }
+function build(): i32 {
+    var s: string = "a" + "b";
+    return keep(s);
+}`, 8)
+	if callsDirect(p, "build", "__fern_str_dec") {
+		t.Errorf("native: a string moved into a user-fn arg must NOT be reclaimed caller-side (retained-copy UAF):\n%s", p)
+	}
+}
+
 // TestLowerStringStructFieldReclaim verifies a string struct field is
 // reclaimed. A top-level struct LOCAL reclaims inline at its last
 // reference (the emitDec struct branch), so `build` itself dec's the
