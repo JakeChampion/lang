@@ -193,6 +193,22 @@ function main(): i32 {
 }`,
 			want: 200,
 		},
+		{
+			// A stdlib float method — dead-function elimination drops the unused
+			// transcendentals std/float also defines (cos/sin/…), so only __abs_f64
+			// is pulled in. abs(-3.5) as i32 = 3.
+			name: "stdlib_float_abs",
+			src: `import "std/float";
+function main(): i32 { var x: f64 = 0.0 - 3.5; return (x.abs()) as i32; }`,
+			want: 3,
+		},
+		{
+			// Likewise sqrt — DFE keeps only __sqrt_f64. sqrt(16) = 4.
+			name: "stdlib_float_sqrt",
+			src: `import "std/float";
+function main(): i32 { var x: f64 = 16.0; return (x.sqrt()) as i32; }`,
+			want: 4,
+		},
 	}
 
 	for _, c := range cases {
@@ -227,11 +243,10 @@ function main(): i32 {
 }
 
 // TestArm64SSACoverageGapErrors confirms a program needing a runtime helper the
-// arm64-ssa path doesn't emit yet (here std/i32's to_string, which — with no
-// dead-function elimination on this path — pulls in the whole std/float module,
-// including the transcendental __cos_f64 that still needs a polynomial-approx
-// port) fails with a clean compile/link error rather than a miscompile — the
-// experimental-backend contract that lets the epic widen coverage incrementally.
+// arm64-ssa path doesn't emit yet (here std/i32's to_string, which reaches the
+// byte allocator __alloc_u8) fails with a clean compile/link error rather than a
+// miscompile — the experimental-backend contract that lets the epic widen
+// coverage incrementally.
 func TestArm64SSACoverageGapErrors(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("arm64-ssa not exercised on windows")

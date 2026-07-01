@@ -1455,8 +1455,18 @@ func buildArm64SSA(prog *ast.Program, info *checker.Info) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("ir.LowerWith: %v", err)
 	}
+	// Dead-function elimination: lift only the functions reachable from `main`
+	// (transitively, via direct/closure calls). Without this the whole of every
+	// imported stdlib module is lifted, so an `abs`-only program would drag in
+	// `cos` and bail on the still-unported __cos_f64 helper. A missing live
+	// function can only ever surface as a clean "undefined label" link error,
+	// never a miscompile. `nil` (no entry point) means keep everything.
+	live := ir.LiveFunctionsWithAliases(irProg, nil)
 	funcs := map[string]*ssa.Func{}
 	for _, fn := range irProg.Funcs {
+		if live != nil && !live[fn.Name] {
+			continue
+		}
 		f, err := ssa.LiftFromIR(fn)
 		if err != nil {
 			return "", fmt.Errorf("ssa.LiftFromIR %s: %v", fn.Name, err)
