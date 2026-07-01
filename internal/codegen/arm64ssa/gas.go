@@ -16,6 +16,7 @@ package arm64ssa
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -847,6 +848,14 @@ func asmInst(in x86.Inst, scratch int) ([]string, error) {
 		return memLoadSeq(in), nil
 	case x86.MemStore:
 		return memStoreSeq(in), nil
+	case x86.FConst:
+		return fConstSeq(in), nil
+	case x86.FBin:
+		return fBinSeq(in)
+	case x86.FCmp:
+		return fCmpSeq(in)
+	case x86.FConv:
+		return fConvSeq(in)
 	default:
 		return nil, fmt.Errorf("arm64ssa: opcode %d not supported yet", in.Op)
 	}
@@ -968,6 +977,129 @@ func memStoreSeq(in x86.Inst) []string {
 	default: // 8 bytes
 		return []string{fmt.Sprintf("str %s, %s", xreg(in.Src2), mem)}
 	}
+}
+
+// Floats live in GP registers as their f64 bit pattern (like ssa.Eval and the
+// x86-64 SSA path) — even an f32 value is stored as the f64 bits of its
+// f32-rounded value. The sequences below shuttle those bits into the FP file
+// (d0/d1 — always free, the abstract register file is GP-only) for the actual
+// arithmetic/compare/convert, then move the result back. When the result width
+// is 32, an fcvt round-trip (d->s->d) reproduces the model's f32 precision mask.
+
+// fConstSeq materialises a float literal's f64 bit pattern into Dst via a literal
+// load. For an f32 result the bits are those of the f32-rounded value.
+func fConstSeq(in x86.Inst) []string {
+	bits := math.Float64bits(in.F64)
+	if in.W == 32 {
+		bits = math.Float64bits(float64(float32(in.F64)))
+	}
+	return []string{fmt.Sprintf("ldr %s, =0x%x", xreg(in.Dst), bits)}
+}
+
+// fBinSeq renders a scalar float arithmetic op: shuttle both operands into d0/d1,
+// compute in f64, round to f32 if W==32, shuttle the result back.
+func fBinSeq(in x86.Inst) ([]string, error) {
+	mnem, ok := fbinMnemonic(in.K)
+	if !ok {
+		return nil, fmt.Errorf("arm64ssa: float op %v not supported yet", in.K)
+	}
+	d, s := xreg(in.Dst), xreg(in.Src)
+	out := []string{
+		fmt.Sprintf("fmov d0, %s", d),
+		fmt.Sprintf("fmov d1, %s", s),
+		fmt.Sprintf("%s d0, d0, d1", mnem),
+	}
+	out = fround32(out, in.W)
+	return append(out, fmt.Sprintf("fmov %s, d0", d)), nil
+}
+
+// fCmpSeq renders a scalar float comparison. AArch64 fcmp sets C/Z compatibly
+// with x86 ucomisd, so the unsigned condition codes (lo/ls/hi/hs) order finite
+// operands correctly; cset materialises the 0/1 result. NaN is out of scope (the
+// model uses ordered Go comparisons on finite values).
+func fCmpSeq(in x86.Inst) ([]string, error) {
+	cc, ok := fcondCode(in.K)
+	if !ok {
+		return nil, fmt.Errorf("arm64ssa: float compare %v not supported yet", in.K)
+	}
+	d, s := xreg(in.Dst), xreg(in.Src)
+	return []string{
+		fmt.Sprintf("fmov d0, %s", d),
+		fmt.Sprintf("fmov d1, %s", s),
+		"fcmp d0, d1",
+		fmt.Sprintf("cset %s, %s", d, cc),
+	}, nil
+}
+
+// fConvSeq renders a float conversion / unary op. Integer results are width-
+// masked (maskFix); float results carry their f64 bit pattern.
+func fConvSeq(in x86.Inst) ([]string, error) {
+	d := xreg(in.Dst)
+	switch in.K {
+	case ssa.OpFNeg:
+		// Flip the sign; negating an f32-precision value keeps f32 precision.
+		return []string{fmt.Sprintf("fmov d0, %s", d), "fneg d0, d0", fmt.Sprintf("fmov %s, d0", d)}, nil
+	case ssa.OpFPromote:
+		// f32 -> f64: the value already lives as f64 bits; identity.
+		return nil, nil
+	case ssa.OpFDemote:
+		return []string{fmt.Sprintf("fmov d0, %s", d), "fcvt s0, d0", "fcvt d0, s0", fmt.Sprintf("fmov %s, d0", d)}, nil
+	case ssa.OpIToFS:
+		return append(fround32([]string{fmt.Sprintf("scvtf d0, %s", d)}, in.W), fmt.Sprintf("fmov %s, d0", d)), nil
+	case ssa.OpIToFU:
+		return append(fround32([]string{fmt.Sprintf("ucvtf d0, %s", d)}, in.W), fmt.Sprintf("fmov %s, d0", d)), nil
+	case ssa.OpFToIS:
+		// float -> int, truncating toward zero (Go semantics).
+		return append([]string{fmt.Sprintf("fmov d0, %s", d), fmt.Sprintf("fcvtzs %s, d0", d)}, maskFix(in.Dst, in.W)...), nil
+	case ssa.OpFToIU:
+		return append([]string{fmt.Sprintf("fmov d0, %s", d), fmt.Sprintf("fcvtzu %s, d0", d)}, maskFix(in.Dst, in.W)...), nil
+	}
+	return nil, fmt.Errorf("arm64ssa: float conversion %v not supported yet", in.K)
+}
+
+// fround32 appends the d0 -> s0 -> d0 fcvt round-trip that reproduces f32
+// precision when the result width is 32; a no-op at width 64.
+func fround32(out []string, w int8) []string {
+	if w == 32 {
+		return append(out, "fcvt s0, d0", "fcvt d0, s0")
+	}
+	return out
+}
+
+// fbinMnemonic maps a float arithmetic op to its AArch64 mnemonic.
+func fbinMnemonic(k ssa.OpKind) (string, bool) {
+	switch k {
+	case ssa.OpFAdd:
+		return "fadd", true
+	case ssa.OpFSub:
+		return "fsub", true
+	case ssa.OpFMul:
+		return "fmul", true
+	case ssa.OpFDiv:
+		return "fdiv", true
+	}
+	return "", false
+}
+
+// fcondCode maps a float comparison to its AArch64 condition mnemonic. fcmp's
+// C/Z flags follow the unsigned interpretation for ordered finite operands, so
+// these mirror the integer unsigned codes (and x86's ucomisd setcc choices).
+func fcondCode(k ssa.OpKind) (string, bool) {
+	switch k {
+	case ssa.OpFEq:
+		return "eq", true
+	case ssa.OpFNe:
+		return "ne", true
+	case ssa.OpFLt:
+		return "lo", true
+	case ssa.OpFLe:
+		return "ls", true
+	case ssa.OpFGt:
+		return "hi", true
+	case ssa.OpFGe:
+		return "hs", true
+	}
+	return "", false
 }
 
 // binMnemonic maps an SSA integer arithmetic/bitwise op to its AArch64 mnemonic.

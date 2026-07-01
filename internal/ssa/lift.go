@@ -319,6 +319,31 @@ func widthOfAstType(t ast.Type) int8 {
 	}
 }
 
+// AnnotateCallWidths sets each OpCall's result Width from the callee's
+// ReturnWidth, for callees present in funcs. A backend sign-extends an i32-width
+// call result back into the full register (the AArch64/SysV ABI only defines the
+// low 32 bits of an i32 return), but a 64-bit return (i64 or an f64 whose high
+// bits are its exponent) must skip that mask or it is truncated to garbage. The
+// IR call op carries no return width, so this is resolved once per whole module
+// after lifting: look up the callee's ReturnWidth and, when it is 64, mark the
+// call. Callees absent from the map (runtime helpers emitted by the backend) are
+// left unchanged — their i32/pointer returns need no 64-bit annotation. Call
+// this after lifting all functions of a module and before emit.
+func AnnotateCallWidths(funcs map[string]*Func) {
+	for _, f := range funcs {
+		for _, b := range f.Blocks {
+			for _, op := range b.Ops {
+				if op.Kind != OpCall {
+					continue
+				}
+				if callee, ok := funcs[op.Str]; ok && callee.ReturnWidth == 64 {
+					op.Width = 64
+				}
+			}
+		}
+	}
+}
+
 type lifter struct {
 	in  *ir.Func
 	out *Func

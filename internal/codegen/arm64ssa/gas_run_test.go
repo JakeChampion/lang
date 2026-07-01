@@ -60,6 +60,7 @@ func assembleRunArmModule(t *testing.T, funcs map[string]*ssa.Func, entry string
 	if err != nil {
 		t.Skip("qemu-aarch64 not available")
 	}
+	ssa.AnnotateCallWidths(funcs) // match the CLI pipeline: 64-bit returns skip the i32 mask
 	asm, err := arm64ssa.EmitAsmModule(funcs, entry, numAlloc, entryArgs)
 	if err != nil {
 		t.Fatalf("EmitAsmModule: %v", err)
@@ -691,6 +692,119 @@ func TestArmRunArrIdx(t *testing.T) {
 	f2.SetRet(e2, load32u(f2, e2, bad, 0))
 	if got := assembleRunArmModule(t, map[string]*ssa.Func{"main": f2}, "main", 8); got != 134 {
 		t.Errorf("__arr_idx out-of-range exit = %d, want 134", got)
+	}
+}
+
+// constFloat adds an OpConstFloat literal.
+func constFloat(f *ssa.Func, b *ssa.Block, v float64) ssa.Value {
+	x := f.AddOp(b, ssa.OpConstFloat)
+	b.Ops[len(b.Ops)-1].F64 = v
+	return x
+}
+
+// Float arithmetic + convert, diffed against ssa.Eval (floats live as f64 bits,
+// so the arm64 FP round-trip must agree bit-for-bit): (1.5 + 2.5) * 2.0 = 8.0 ->
+// FToIS = 8.
+func TestArmRunFloatArith(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		s := f.AddOp(e, ssa.OpFAdd, constFloat(f, e, 1.5), constFloat(f, e, 2.5))
+		p := f.AddOp(e, ssa.OpFMul, s, constFloat(f, e, 2.0))
+		f.SetRet(e, f.AddOp(e, ssa.OpFToIS, p))
+		return f
+	}
+	for _, n := range []int{2, 4, 8} {
+		runMatchesEval(t, build(), n)
+	}
+}
+
+// Float comparison: 3.0 >= 3.0 -> 1 (fcmp + cset via the unsigned condition).
+func TestArmRunFloatCompare(t *testing.T) {
+	for _, tc := range []struct {
+		op   ssa.OpKind
+		a, b float64
+		want int64
+	}{
+		{ssa.OpFGe, 3.0, 3.0, 1},
+		{ssa.OpFLt, 2.0, 3.0, 1},
+		{ssa.OpFLt, 3.0, 3.0, 0},
+		{ssa.OpFGt, 3.5, 3.0, 1},
+		{ssa.OpFEq, 1.25, 1.25, 1},
+		{ssa.OpFNe, 1.25, 1.5, 1},
+	} {
+		build := func() *ssa.Func {
+			f := ssa.NewFunc("main")
+			e := f.NewBlock()
+			f.SetRet(e, f.AddOp(e, tc.op, constFloat(f, e, tc.a), constFloat(f, e, tc.b)))
+			return f
+		}
+		for _, n := range []int{2, 8} {
+			runMatchesEval(t, build(), n)
+		}
+	}
+}
+
+// int->float->store->load->int: IToFS(5) + 0.75 = 5.75, stored and reloaded as
+// f64 bits, then FToIS = 5. Exercises scvtf, float memory (8-byte load/store),
+// and fcvtzs. nAlloc=2 forces a spill so the f64 bits round-trip a slot.
+func TestArmRunFloatConvAndMemory(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		p := f.AddOp(e, ssa.OpAlloc, constOp(f, e, 8))
+		fv := f.AddOp(e, ssa.OpIToFS, constOp(f, e, 5))
+		sum := f.AddOp(e, ssa.OpFAdd, fv, constFloat(f, e, 0.75))
+		stf := f.AddOpNoResult(e, ssa.OpStoreF, p, sum)
+		stf.Imm = 0
+		ld := f.AddOp(e, ssa.OpLoadF, p)
+		e.Ops[len(e.Ops)-1].Imm = 0
+		f.SetRet(e, f.AddOp(e, ssa.OpFToIS, ld))
+		return f
+	}
+	for _, n := range []int{2, 4, 8} {
+		runMatchesEval(t, build(), n)
+	}
+}
+
+// Float negation and f32 demotion: -(2.5) demoted to f32 then back = -2.5 ->
+// FToIS = -2 (truncation toward zero) -> exit 254 (uint8 of -2).
+func TestArmRunFloatNegDemote(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		n := f.AddOp(e, ssa.OpFNeg, constFloat(f, e, 2.5))
+		d := f.AddOp(e, ssa.OpFDemote, n)
+		e.Ops[len(e.Ops)-1].Width = 32
+		f.SetRet(e, f.AddOp(e, ssa.OpFToIS, d))
+		return f
+	}
+	for _, n := range []int{2, 8} {
+		runMatchesEval(t, build(), n)
+	}
+}
+
+// A float-returning cross-function call: mk() = 7.0, main returns mk() as i32 ->
+// 7. Guards the call-result width propagation (ssa.AnnotateCallWidths): without
+// it the f64 return is sxtw-masked to i32, zeroing its exponent bits -> 0.
+func TestArmRunFloatReturnCall(t *testing.T) {
+	build := func() map[string]*ssa.Func {
+		mk := ssa.NewFunc("mk")
+		mk.ReturnWidth = 64
+		me := mk.NewBlock()
+		mk.SetRet(me, constFloat(mk, me, 7.0))
+
+		main := ssa.NewFunc("main")
+		e := main.NewBlock()
+		r := callOp(main, e, "mk")
+		main.SetRet(e, main.AddOp(e, ssa.OpFToIS, r))
+		return map[string]*ssa.Func{"mk": mk, "main": main}
+	}
+	for _, n := range []int{2, 8} {
+		got := assembleRunArmModule(t, build(), "main", n)
+		if got != 7 {
+			t.Errorf("nAlloc=%d float-return call = %d, want 7", n, got)
+		}
 	}
 }
 
