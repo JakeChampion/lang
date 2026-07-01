@@ -244,6 +244,27 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// emission-site donor guard skips the precise drop here; the box is freed
 		// exactly once (through b at exit). sa(3) + sb(7) = 10; detector 0.
 		{"scalar-struct-precise-cross-reuse-donor-guard-detector", `struct P { x: i32, y: i32 } function main(): i32 { var a = P { x: 1, y: 2 }; var sa = a.x + a.y; var b = P { x: 3, y: 4 }; var sb = b.x + b.y; if (sa + sb != 10) { return 99; } return __rc_underflow(); }`, 0},
+		// Fresh SCALAR-TUPLE local reclaim. tuple_make now boxes via __fern_arr_box
+		// (rc-headered, like struct_make) instead of raw __fern_alloc, so a fresh,
+		// non-escaping `var t = (3, 4)` (all scalar-literal elements) is freed by the
+		// exit dec-sweep (a shallow __fern_rc_dec — no rc element to walk) instead of
+		// leaking. Previously tuples were leak-only on every backend. Value + the
+		// over-release detector (`__rc_underflow()==0`) pin that the box is freed
+		// exactly once.
+		{"scalar-tuple-reclaim-value", `function go(): i32 { var t: (i32, i32) = (3, 4); return t.0 + t.1; } function main(): i32 { return go(); }`, 7},
+		{"scalar-tuple-reclaim-detector", `function go(): i32 { var t: (i32, i32) = (3, 4); var r = t.0 + t.1; return r; } function main(): i32 { var v = go(); if (v != 7) { return 99; } return __rc_underflow(); }`, 0},
+		// 3-element scalar tuple, same shallow free.
+		{"scalar-tuple-3elem-detector", `function go(): i32 { var t: (i32, i32, i32) = (10, 20, 30); var r = t.0 + t.1 + t.2; return r; } function main(): i32 { var v = go(); if (v != 60) { return 99; } return __rc_underflow(); }`, 0},
+		// Heap-reuse corruption probe: a FRESH array allocated AFTER the tuple's last
+		// use reads back intact. If the tuple box were freed unsoundly (double-free /
+		// freed a still-live box) the fresh alloc could recycle it and corrupt the
+		// read. sum 7 + 11+22+33 == 66; detector 0.
+		{"scalar-tuple-corruption-probe-detector", `function go(): i32 { var t: (i32, i32) = (3, 4); var s = t.0 + t.1; var fresh = [11, 22, 33]; var f = fresh[0] + fresh[1] + fresh[2]; if (s != 7) { return 90; } if (f != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// NON-firing (escapes): a tuple RETURNED whole (`return t`) escapes to the
+		// caller, so it must NOT be freed in mk — body_unsafe_for excludes it from the
+		// reclaim set. The caller reads it; box freed once (by nobody here — moved
+		// out, leak-as-before). Value + detector 0 (no over-release).
+		{"scalar-tuple-escapes-not-freed-detector", `function mk(): (i32, i32) { var t: (i32, i32) = (5, 6); return t; } function main(): i32 { var t = mk(); var r = t.0 + t.1; if (r != 11) { return 99; } return __rc_underflow(); }`, 0},
 		// Struct with an i32[] field: the box is rc-headered and freed soundly, and
 		// the array field is deep-dropped (emit_struct_field_drops) exactly once.
 		// Detector 0 proves neither the box nor the array field over-releases.

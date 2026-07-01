@@ -2954,3 +2954,33 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   stage-2 FIXPOINT (self-reproduction / determinism). A Perceus emission change must
   therefore preserve symbol-closure, determinism, and no-double-free — not match
   native byte-for-byte.
+- 2026-07-01: **Reclaim fresh scalar-only TUPLE locals** (they leaked wholesale
+  before). Tuples were "leak-only by design": `tuple_make` boxed via raw
+  `__fern_alloc` on the register backends (x86 asm_ir / arm64 asm_arm64_ir), a
+  non-rc-headered block that `__fern_rc_dec` cannot free, so a fresh
+  `var t = (3, 4)` was never reclaimed (0 decs). Native DOES reclaim tuples
+  (genTupleDrops / genArrTupleDropFn), so this was a real parity gap + per-call
+  leak. Fix, two parts: (1) `tuple_make` now boxes via `__fern_arr_box` (cap=n) on
+  x86 + arm64 — rc-headered exactly like `struct_make`, element offsets unchanged
+  (element i @ i*8; arr_box's len@0 word is overwritten by element 0, cap@data-16
+  drives the free size); wasm already boxed tuples via `$__fern_str_box`
+  (rc-headered), so it needed no backend change. (2) A fresh, non-escaping tuple
+  literal of all-scalar-literal elements (`tuple_lit_is_fresh_scalar` +
+  `collect_fresh_scalar_tuple_names`) is credited to `reclaimable_names` under a
+  "TUP:" prefix (so the struct/snapshot consumers, which look up a bare name or
+  "SNAP:<name>", never match it — only `slot_is_reclaimable_tuple` does), zeroed at
+  entry (arr_slots_of), and shallow-freed (`__fern_rc_dec`) by a new tuple loop in
+  the exit dec-sweep — the tuple sibling of the scalar-struct reclaim. SOUNDNESS —
+  the box holds no rc element to walk (scalar-literal gate), and the shared
+  body_unsafe_for escape gate excludes a returned / stored / non-borrowable-passed
+  tuple (`return t`, `(t, …)`, container store) so an escaping tuple is never freed
+  here (moved to its owner, leak-as-before). FIRING confirmed in the emitted asm
+  (tuple builds via `__fern_arr_box`, one `__fern_arr_dec` at scope exit, no raw
+  `__fern_alloc`). VERIFIED: new `scalar-tuple-*` cases (route ir, value,
+  `__rc_underflow()==0`, heap-reuse corruption probe, the escape-not-freed guard)
+  in `TestSelfHostRcPreciseDropX86IR`; byte-identical FIXPOINT + BOOTSTRAP; the full
+  self-host tuple suite (x86 + wasm, incl. `…WasmTupleRc`) and the broad RC/drop
+  sweep stay green. arm64 mirrors struct_make's proven pattern; CI backstops it.
+  Follow-up: a precise drop-on-last-use for early-dead scalar tuples (this slice is
+  exit-sweep only), and widening past scalar-literal elements (a fresh tuple with a
+  reclaimable-array element would deep-drop that element).

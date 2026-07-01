@@ -4098,9 +4098,16 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
         } else if (o.kind == "tuple_make") {
             // n element values on the operand stack (element n-1 on top). Box =
             // [e0@0, e1@8, …], n*8 bytes, NO shape slot (numeric `.i` access).
-            // Pop top-down; %rax (box) stays live across the pops.
+            // Pop top-down; %rax (box) stays live across the pops. The box is
+            // rc-HEADERED (via __fern_arr_box cap=n, exactly like struct_make) so
+            // a fresh, non-escaping SCALAR tuple local can be reclaimed by the exit
+            // dec-sweep (__fern_rc_dec → __fn___fern_arr_dec) at the right size —
+            // element offsets are unchanged (element i @ i*8; __fern_arr_box writes
+            // len=cap @ data+0, which element 0 overwrites, leaving cap@data-16 for
+            // the free size). Non-reclaimed / escaping tuples just carry the header
+            // and leak as before (no reader inspects it).
             var tn: i32 = o.i32_imm;
-            s = s.write("    movq $" + util.i32_to_string(tn * 8) + ", %rdi\n    call __fern_alloc\n");
+            s = s.write("    movq $" + util.i32_to_string(tn) + ", %rdi\n    call __fern_arr_box\n");
             var tem: i32 = tn - 1;
             while (tem >= 0) {
                 s = s.write("    popq %rcx\n    movq %rcx, " + util.i32_to_string(tem * 8) + "(%rax)\n");
