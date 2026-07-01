@@ -151,12 +151,13 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         return s.write("    bl " + cfn + "\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind == "str_repeat") {
-        // operand stack [s box, n] (n top); __fern_str_repeat(x0=s, x1=n) -> fresh
-        // string box in x0. asm_arm64.emit_runtime emits the body in its str_search
-        // block (it allocates), so set str_search + heap.
-        s = s.mark_str_search();
-        s = s.mark_heap();
-        return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_str_repeat\n    str x0, [sp, #-16]!\n");
+        // operand stack [s box, n] (n top). Call the Fern-compiled
+        // __fn___fern_str_repeat via the stack ABI: param[0]=s on top (+16),
+        // param[1]=n (+32). asm_arm64.emit_runtime emits the shared body,
+        // need-gated on str_repeat. -> fresh string box in x0.
+        s = s.mark_str_repeat();
+        s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+        return s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_repeat\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
     }
     if (o.kind == "str_trim") {
         // operand stack [s box]; __fern_str_trim is a Fern runtime function now
