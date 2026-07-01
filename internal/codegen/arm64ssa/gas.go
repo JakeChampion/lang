@@ -117,6 +117,11 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		}
 		w("")
 	}
+	// Runtime-helper bodies (hand-written leaf asm, AArch64 PCS: arg/result in
+	// x0), emitted only when the module calls them.
+	for _, h := range referencedRuntimeHelpers(progs) {
+		runtimeHelperEmitters[h](w)
+	}
 	if heap {
 		// A fixed .bss buffer backs the bump allocator (mirrors the x86-64 SSA
 		// path). Under the W^X ELF layout this lands in the R+W data segment, so
@@ -154,6 +159,99 @@ func usesHeap(progs map[string]*x86.Program) bool {
 		}
 	}
 	return false
+}
+
+// runtimeHelperEmitters maps a __fern_* runtime-helper name to the code that
+// writes its AArch64 body into .text — the arm64 siblings of the x86-64 helper
+// emitters, mirroring the native backends' hand-written runtime asm
+// (docs/SSA-RC-RUNTIME.md). A helper is emitted only when the module calls it
+// (referencedRuntimeHelpers); its `bl fn_<name>` site links the label
+// fnLabel(name) writes. Leaf functions under the AArch64 PCS (arg/result x0).
+var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
+	"__fern_rc_is_unique": emitRcIsUniqueHelper,
+	"__fern_rc_inc":       emitRcIncHelper,
+	"__fern_rc_dec":       emitRcDecHelper,
+}
+
+// referencedRuntimeHelpers returns, sorted, every runtime helper any emitted
+// program calls (that arm64 has an emitter for). Helper→helper dependencies are
+// added when those helpers land; the RC leaves have none.
+func referencedRuntimeHelpers(progs map[string]*x86.Program) []string {
+	seen := map[string]bool{}
+	for _, p := range progs {
+		for _, blk := range p.Blocks {
+			for _, in := range blk.Insts {
+				if in.Op == x86.Call && runtimeHelperEmitters[in.Callee] != nil {
+					seen[in.Callee] = true
+				}
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for n := range seen {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// The RC helpers read a 4-byte reference count at [data-8] (the header the bump
+// allocator lays down; data = base+8). They share a guard chain that makes them
+// safe on a slot that might hold a non-pointer scalar or a static cell: null,
+// below the 0x10000 low-address guard, or the static-sentinel top bit (0x80000000)
+// set — all short-circuit. The negative header offset needs the unscaled
+// ldur/stur form. Mirrors the native / x86-64 SSA versions.
+
+// emitRcIsUniqueHelper writes __fern_rc_is_unique(data) -> i32: 1 iff data is a
+// real, uniquely-owned heap value (rc == 1), else 0.
+func emitRcIsUniqueHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_rc_is_unique"))
+	w("\tcbz x0, .Lssa_rcuniq_no")
+	w("\tcmp x0, #0x10000")
+	w("\tb.lo .Lssa_rcuniq_no")
+	w("\tldur w1, [x0, #-8]") // rc word at data-8
+	w("\ttbnz w1, #31, .Lssa_rcuniq_no")
+	w("\tcmp w1, #1")
+	w("\tb.ne .Lssa_rcuniq_no")
+	w("\tmov x0, #1")
+	w("\tret")
+	w(".Lssa_rcuniq_no:")
+	w("\tmov x0, #0")
+	w("\tret")
+}
+
+// emitRcIncHelper writes __fern_rc_inc(data): bump the count at [data-8] by one,
+// guarded. Void, leaf.
+func emitRcIncHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_rc_inc"))
+	w("\tcbz x0, .Lssa_rcinc_ret")
+	w("\tcmp x0, #0x10000")
+	w("\tb.lo .Lssa_rcinc_ret")
+	w("\tldur w1, [x0, #-8]")
+	w("\ttbnz w1, #31, .Lssa_rcinc_ret") // static sentinel
+	w("\tadd w1, w1, #1")
+	w("\tstur w1, [x0, #-8]")
+	w(".Lssa_rcinc_ret:")
+	w("\tret")
+}
+
+// emitRcDecHelper writes __fern_rc_dec(data): drop the count at [data-8] by one,
+// same guard chain. Does NOT free at rc==0 — the SSA bump heap never reclaims
+// (docs/SSA-RC-RUNTIME.md). Void, leaf.
+func emitRcDecHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_rc_dec"))
+	w("\tcbz x0, .Lssa_rcdec_ret")
+	w("\tcmp x0, #0x10000")
+	w("\tb.lo .Lssa_rcdec_ret")
+	w("\tldur w1, [x0, #-8]")
+	w("\ttbnz w1, #31, .Lssa_rcdec_ret") // static sentinel
+	w("\tsub w1, w1, #1")
+	w("\tstur w1, [x0, #-8]")
+	w(".Lssa_rcdec_ret:")
+	w("\tret")
 }
 
 // emitFunc writes one function: its label, a stack frame (spill slots, plus a

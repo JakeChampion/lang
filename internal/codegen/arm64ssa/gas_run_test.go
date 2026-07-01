@@ -409,6 +409,60 @@ func TestArmRunSubwordMemory(t *testing.T) {
 	}
 }
 
+// __fern_rc_is_unique on the arm64 SSA path: a freshly rc-headed heap cell
+// (OpAlloc lays down rc == 1) is unique; a null or low-address non-pointer
+// scalar is not. Exit code is the helper result directly (not Eval-derived,
+// since Eval can't model runtime-helper calls).
+func TestArmRunRcIsUnique(t *testing.T) {
+	isUniqueOf := func(mkArg func(f *ssa.Func, b *ssa.Block) ssa.Value) int {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		f.SetRet(e, callOp(f, e, "__fern_rc_is_unique", mkArg(f, e)))
+		return assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 8)
+	}
+	if got := isUniqueOf(func(f *ssa.Func, b *ssa.Block) ssa.Value {
+		return f.AddOp(b, ssa.OpAlloc, constOp(f, b, 8)) // fresh rc=1 cell
+	}); got != 1 {
+		t.Errorf("is_unique(fresh cell) = %d, want 1", got)
+	}
+	if got := isUniqueOf(func(f *ssa.Func, b *ssa.Block) ssa.Value {
+		return constOp(f, b, 0) // null
+	}); got != 0 {
+		t.Errorf("is_unique(null) = %d, want 0", got)
+	}
+	if got := isUniqueOf(func(f *ssa.Func, b *ssa.Block) ssa.Value {
+		return constOp(f, b, 42) // low-address scalar below the 0x10000 guard
+	}); got != 0 {
+		t.Errorf("is_unique(42) = %d, want 0", got)
+	}
+}
+
+// __fern_rc_inc / __fern_rc_dec on the arm64 SSA path, observed through
+// __fern_rc_is_unique: bumping the rc past 1 makes a cell non-unique; dropping it
+// back to 1 restores uniqueness. The void inc/dec calls survive DCE and run in
+// order before the is_unique read.
+func TestArmRunRcIncDec(t *testing.T) {
+	isUniqueAfter := func(ops ...string) int {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		c := f.AddOp(e, ssa.OpAlloc, constOp(f, e, 8)) // fresh rc=1 cell
+		for _, op := range ops {
+			callOp(f, e, op, c) // void, impure — kept + ordered
+		}
+		f.SetRet(e, callOp(f, e, "__fern_rc_is_unique", c))
+		return assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 8)
+	}
+	if got := isUniqueAfter("__fern_rc_inc"); got != 0 {
+		t.Errorf("is_unique after inc = %d, want 0 (rc=2)", got)
+	}
+	if got := isUniqueAfter("__fern_rc_inc", "__fern_rc_dec"); got != 1 {
+		t.Errorf("is_unique after inc,dec = %d, want 1 (rc=1)", got)
+	}
+	if got := isUniqueAfter("__fern_rc_inc", "__fern_rc_inc", "__fern_rc_dec"); got != 0 {
+		t.Errorf("is_unique after inc,inc,dec = %d, want 0 (rc=2)", got)
+	}
+}
+
 // max via a comparison-selected branch: max(9, 4) = 9 -> exit 9.
 func TestArmRunMax(t *testing.T) {
 	build := func() *ssa.Func {
