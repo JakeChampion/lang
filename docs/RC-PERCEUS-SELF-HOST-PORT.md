@@ -3171,3 +3171,29 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   probe) in TestSelfHostRcPreciseDropX86IR; new wasm option-struct-arrfield-payload-
   freed in TestSelfHostRcOptionBoxWasm; byte-identical FIXPOINT + BOOTSTRAP +
   TestSelfHostIRDiff all stay green.
+- 2026-07-01: **Precise drop-on-last-use for rc-PAYLOAD Options in nested blocks**
+  (the rc-payload sibling of the scalar-option precise-if drop). An
+  `Option[i32[]]` / `Option[P]` / `Option[Buf]` whose LAST use is a NESTED block (an
+  if-body `match (o)`) — not a top-level consuming match — previously LEAKED its
+  payload + box. precise_drop_names now admits such an option (rcpayload_option_cand,
+  variant "Some") when: it has NO top-level match (disjoint from
+  consumed_rcpayload_option_frees), AND the nested consuming match borrows (does not
+  escape) its payload binding. Because the match is NESTED, the existing
+  opt_arm_binding_escapes (single-match) is lifted over the whole body by a new
+  recursive opt_body_binding_escapes (through if/while/for/match) — body_unsafe_for
+  only proves the OPTION escapes, never its bound payload. At the emission site,
+  the new opt_slot_is_rcpayload(slot) predicate dispatches: type_is_scalar_option →
+  the plain box dec (scalar payload is an inline value, never a pointer), else an
+  rc-payload Option → emit_opt_payload_drop (op_opt_payload → payload dec → box dec),
+  the same free the consume-by-match rc-payload path uses. RESTRICTED to Option (not
+  Result): a Result box's payload variant (Ok vs Err) is ambiguous at the emission
+  site (the slot carries only the type), so its rc-payload precise-drop stays
+  deferred — the consume-by-match path records the constructed variant and is
+  unaffected. SOUNDNESS: the box + payload exist on every path through the enclosing
+  statement (the ctor ran before it), so freeing after it is sound whether or not the
+  nested match executed; the borrow-only gate proves the payload isn't aliased past
+  the free. VERIFIED: new option-arr-precise-if-* / option-struct-precise-if /
+  option-arrfield-struct-precise-if / corruption-probe + a binding-escapes non-firing
+  guard in TestSelfHostRcPreciseDropX86IR; new wasm option-arr-precise-if-freed in
+  TestSelfHostRcOptionBoxWasm; byte-identical FIXPOINT + BOOTSTRAP + TestSelfHostIRDiff
+  all stay green.

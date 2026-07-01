@@ -12118,9 +12118,32 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                     }
                     is_opt = !has_tlm;
                 }
+                // A fresh rc-PAYLOAD OPTION (`var o = Some([..])` / `Some(P{..})`),
+                // last-used in a nested block, is a precise-drop candidate too — the
+                // rc-payload sibling of the scalar-option case above. Same no-top-level-
+                // match disjointness (owned by consumed_rcpayload_option_frees there),
+                // AND the nested consuming match must borrow (not escape) the payload
+                // binding (opt_body_binding_escapes) — body_unsafe_for only proves the
+                // OPTION itself doesn't escape, not its bound payload. Restricted to
+                // Option (variant "Some"); Result's rc-payload precise-drop is deferred
+                // (its box payload-variant is ambiguous at the emission site). The box +
+                // payload are freed by emit_opt_payload_drop at the emission site.
+                var is_rcopt: boolean = false;
+                if (!is_lit && !is_opt) {
+                    var rcc: OptRcCand = rcpayload_option_cand(v, structs);
+                    if (rcc.variant == "Some") {
+                        var has_tlm2: boolean = false;
+                        var mk2: i32 = 0;
+                        while (mk2 < body.len()) {
+                            if (match_scrutinee_is(body[mk2], v.name)) { has_tlm2 = true; }
+                            mk2 = mk2 + 1;
+                        }
+                        if (!has_tlm2 && !opt_body_binding_escapes(body, v.name, rcc.variant)) { is_rcopt = true; }
+                    }
+                }
                 var shadowed: boolean = util.index_of_str(seen, v.name) >= 0;
                 seen = seen.append(v.name);
-                if ((is_lit || is_opt) && !shadowed && util.index_of_str(reassigned, v.name) < 0 && !body_unsafe_for(body, v.name, borrowable)) {
+                if ((is_lit || is_opt || is_rcopt) && !shadowed && util.index_of_str(reassigned, v.name) < 0 && !body_unsafe_for(body, v.name, borrowable)) {
                     var last: i32 = 0 - 1;
                     var k: i32 = i + 1;
                     var none: string[] = [];
@@ -14248,6 +14271,62 @@ function opt_arm_binding_escapes(st: parser.Stmt, variant: string): boolean {
         },
         _ => { return false; }
     }
+}
+
+// opt_body_binding_escapes: recursively scan `stmts` (through nested if/while/for/
+// match blocks) for a `match (name)` whose constructed-variant (`variant`) arm binds
+// its payload to a name that ESCAPES the arm. Used by the rc-payload OPTION precise-
+// drop path, where the consuming match sits in a NESTED block (an if-body) rather
+// than at function top level — opt_arm_binding_escapes only inspects one match, so
+// this lifts it over the whole body. A true result rejects the precise-drop
+// candidate (its payload could be aliased past the box free).
+function opt_body_binding_escapes(stmts: parser.Stmt[], name: string, variant: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (opt_stmt_binding_escapes(stmts[i], name, variant)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+function opt_stmt_binding_escapes(st: parser.Stmt, name: string, variant: string): boolean {
+    match (st) {
+        parser.StmtMatch(m) => {
+            match (m.scrutinee) {
+                parser.ExprIdent(id) => {
+                    if (id.name == name && opt_arm_binding_escapes(st, variant)) { return true; }
+                },
+                _ => {}
+            }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (opt_body_binding_escapes(m.arms[ai].body, name, variant)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtIf(iff) => {
+            return opt_body_binding_escapes(iff.then_body, name, variant)
+                || opt_body_binding_escapes(iff.else_body, name, variant);
+        },
+        parser.StmtWhile(w) => { return opt_body_binding_escapes(w.body, name, variant); },
+        parser.StmtFor(f) => { return opt_body_binding_escapes(f.body, name, variant); },
+        _ => { return false; }
+    }
+}
+
+// opt_slot_is_rcpayload: slot `i` holds an rc-PAYLOAD OPTION (`Option[<array>]` /
+// `Option[<leak-safe struct>]`) — a pointer payload the precise-drop path frees via
+// emit_opt_payload_drop (op_opt_payload + a payload dec + a box dec), NOT the plain
+// box dec a scalar option uses. Restricted to Option (not Result): a Result box's
+// payload variant (Ok vs Err) is ambiguous at the emission site, so its rc-payload
+// reclaim stays on the consume-by-match path (which records the constructed variant).
+pub function (s: LowerState) opt_slot_is_rcpayload(i: i32): boolean {
+    var ot: string = s.opt_type_of_slot(i);
+    if (ot.len() < 8 || ot[0:7] != "Option[") { return false; }
+    var pt: string = opt_payload_type(ot, "Some");
+    if (is_leaksafe_array_field(pt)) { return true; }
+    return decl_is_struct(s.structs, pt) && decl_is_leaksafe(s.structs, pt)
+        && (struct_is_scalar_only(s.structs, pt) || nested_field_deep_drop_ok(s.structs, pt));
 }
 
 // OptRcFrees: parallel arrays for the rc-payload option/result free — the
@@ -16409,6 +16488,18 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                     s = s.emit(ir.op_drop());
                     s = s.emit(ir.op_const_i32(0));
                     s = s.emit(ir.op_store_local(dslot));
+                } else if (dslot >= s.n_params && s.opt_slot_is_rcpayload(dslot)) {
+                    // Fresh rc-PAYLOAD OPTION (Option[<array>] / Option[<leak-safe
+                    // struct>]), last-used in a nested block — precise_drop_names
+                    // admitted it only with NO top-level match (disjoint from
+                    // consumed_rcpayload_option_frees) and a borrow-only payload binding
+                    // (opt_body_binding_escapes). Deep-drop the payload (op_opt_payload →
+                    // dec) then free the box, exactly like the consume-by-match rc-payload
+                    // free — emit_opt_payload_drop zeroes the slot too. NOT a scalar
+                    // option (that took the branch above; op_opt_payload on a scalar
+                    // payload would dec the inline VALUE — this branch only fires when
+                    // the payload is a pointer).
+                    s = emit_opt_payload_drop(s, dslot);
                 }
             }
             pi = pi + 1;

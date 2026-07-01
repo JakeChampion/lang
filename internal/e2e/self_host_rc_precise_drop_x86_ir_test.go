@@ -425,6 +425,28 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// when a top-level match of the name exists) — so the box is freed exactly once.
 		// Detector 0 proves adding options to precise_drop_names introduced no double-free.
 		{"option-toplevel-match-not-double-freed-detector", `function go(): i32 { var o: Option[i32] = Some(7); var r = 0; match (o) { Some(v) => { r = v; }, None => { r = 0; } } if (r != 7) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// PRECISE drop for an rc-PAYLOAD Option last-used in a NESTED block — the
+		// rc-payload sibling of the scalar-option precise-if drop above. An
+		// `Option[i32[]]` / `Option[P]` / `Option[Buf]` with no top-level match and a
+		// borrow-only nested payload binding has its payload + box freed by
+		// emit_opt_payload_drop right after the enclosing statement (previously leaked).
+		// FIRING: f(5): o=Some([10,20,30]), the if runs the match, c=v[0]+v[2]=40,
+		// return 40+5=45.
+		{"option-arr-precise-if-value", `function f(n: i32): i32 { var o: Option[i32[]] = Some([10, 20, 30]); var c = 0; if (n > 0) { match (o) { Some(v) => { c = v[0] + v[2]; }, None => {} } } return c + n; } function main(): i32 { return f(5); }`, 45},
+		{"option-arr-precise-if-detector", `function f(n: i32): i32 { var o: Option[i32[]] = Some([10, 20, 30]); var c = 0; if (n > 0) { match (o) { Some(v) => { c = v[0] + v[2]; }, None => {} } } return c + n; } function main(): i32 { var r = f(5); if (r != 45) { return 99; } return __rc_underflow(); }`, 0},
+		// Scalar-struct payload option, nested-block last use — payload box + option box
+		// freed after the if.
+		{"option-struct-precise-if-detector", `struct P { x: i32, y: i32 } function f(n: i32): i32 { var o: Option[P] = Some(P { x: 3, y: 4 }); var c = 0; if (n > 0) { match (o) { Some(p) => { c = p.x + p.y; }, None => {} } } return c + n; } function main(): i32 { var r = f(5); if (r != 12) { return 99; } return __rc_underflow(); }`, 0},
+		// Array-field struct payload option, nested-block last use — shallow box free
+		// (the array field is machinery-owned, as in the consume-by-match case).
+		{"option-arrfield-struct-precise-if-detector", `struct Buf { xs: i32[], n: i32 } function f(k: i32): i32 { var o: Option[Buf] = Some(Buf { xs: [10, 20, 30], n: 3 }); var c = 0; if (k > 0) { match (o) { Some(b) => { c = b.xs[1] + b.n; }, None => {} } } return c + k; } function main(): i32 { var r = f(5); if (r != 28) { return 99; } return __rc_underflow(); }`, 0},
+		// PRECISE drop + corruption probe: fresh arrays after the array-payload option's
+		// precise drop read back intact (the early payload + box free was sound).
+		{"option-arr-precise-corruption-probe-detector", `function go(): i32 { var o: Option[i32[]] = Some([1, 2, 3]); var c = 0; var i = 0; while (i < 1) { match (o) { Some(v) => { c = v[0] + v[2]; }, None => {} } i = i + 1; } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (c != 4) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// NON-firing (binding escapes in the nested block): the Some arm STORES its
+		// array payload `v` to an outer var, so opt_body_binding_escapes rejects the
+		// precise-drop candidate — the option must NOT be freed (v moved out). Detector 0.
+		{"option-arr-precise-binding-escapes-detector", `function go(): i32 { var o: Option[i32[]] = Some([7, 8, 9]); var out: i32[] = [0]; if (true) { match (o) { Some(v) => { out = v; }, None => {} } } var r = out[0] + out[2]; if (r != 16) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 		// Struct with an i32[] field: the box is rc-headered and freed soundly, and
 		// the array field is deep-dropped (emit_struct_field_drops) exactly once.
 		// Detector 0 proves neither the box nor the array field over-releases.
