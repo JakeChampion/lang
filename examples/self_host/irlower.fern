@@ -13891,20 +13891,33 @@ function emit_enum_variant_drops(s: LowerState, slot: i32, enum_name: string): L
 // scalar payloads; this only array payloads), so an option is freed by at most
 // one path — never double-freed.
 
-// fresh_rcpayload_option_init: `v` binds a FRESH single-owner Option/Result local
-// whose CONSTRUCTED variant carries a leak-safe scalar-ARRAY payload — `var o =
-// Some([..])` / `var r = Ok([..])` / `Err([..])`, or an annotated `Option[i32[]]`
-// / `Result[i32[], _]` (Ok) / `Result[_, i32[]]` (Err). Returns the constructed
-// variant name ("Some"/"Ok"/"Err"), or "". The payload is a flat rc-headered
-// scalar buffer (i32[]/boolean[]/i64[]/f64[]/u32[]/subword — is_leaksafe_array_
-// field) that a single __fern_rc_dec releases with no inner-pointer walk. An
-// un-annotated Some([..]) is admitted via a fresh scalar-number array-literal
-// payload (Option infers the single type param); an un-annotated Ok/Err isn't
-// native-valid (Result's other param stays free), so only the annotated Result
-// form fires. None / a non-array payload / a non-literal un-annotated payload are
-// not admitted.
-function fresh_rcpayload_option_init(v: parser.StmtVar): string {
+// OptRcCand: a candidate rc-payload option — the constructed variant ("Some"/"Ok"/
+// "Err") and the payload TYPE (an array type like "i32[]", or a struct type like
+// "P"). An empty `variant` means "not admitted".
+struct OptRcCand { variant: string, ptype: string }
+
+// rcpayload_option_cand: `v` binds a FRESH single-owner Option/Result local whose
+// CONSTRUCTED variant carries an rc payload a bounded deep-drop fully releases —
+// `var o = Some([..])` / `Ok([..])` / `Err([..])` (leak-safe scalar ARRAY), or
+// `Some(P{..})` / `Ok(P{..})` (a FRESH leak-safe STRUCT literal — scalar-only or
+// array-field-bearing). Returns the variant + payload type, or an empty variant.
+//   - ARRAY payload: a flat rc-headered scalar buffer (i32[]/boolean[]/i64[]/f64[]/
+//     u32[]/subword — is_leaksafe_array_field) a single __fern_rc_dec releases with
+//     no inner walk. Admitted by annotation (opt_payload_type, variant-aware: T for
+//     Some/Ok, E for Err) or a fresh scalar-number array literal (`Some([1,2,3])`).
+//   - STRUCT payload: a FRESH struct LITERAL (`Some(P{..})`) whose struct is
+//     leak-safe and either scalar-only (shallow box free) or deep-drop-ok (array
+//     fields released via __struct_drop_<P> then box free). The fresh-literal rule
+//     makes the payload box the sole owner (rc==1) — a bare-ident struct payload
+//     aliasing a swept local is rejected (it would double-free), mirroring the enum
+//     path's variant_struct_payloads_fresh gate.
+// An un-annotated Ok/Err isn't native-valid (Result's other param stays free), so
+// only annotated Results fire; None / a non-fresh / a non-leak-safe payload aren't
+// admitted.
+function rcpayload_option_cand(v: parser.StmtVar, structs: parser.StructDecl[]): OptRcCand {
     var kind: string = "";
+    var arg0: parser.Expr = v.init;
+    var has_arg: boolean = false;
     match (v.init) {
         parser.ExprCall(c) => {
             match (c.callee) {
@@ -13916,28 +13929,36 @@ function fresh_rcpayload_option_init(v: parser.StmtVar): string {
                 },
                 _ => {}
             }
+            if (c.args.len() == 1) { arg0 = c.args[0]; has_arg = true; }
         },
         _ => {}
     }
-    if (kind == "") { return ""; }
-    // Annotated: the constructed variant's payload type is a leak-safe scalar array
-    // (opt_payload_type reads T for Some/Ok, E for Err — variant-aware).
-    if (is_leaksafe_array_field(opt_payload_type(v.type_name, kind))) { return kind; }
-    // Un-annotated: admit a FRESH scalar-number array-literal payload (`Some([1,2,3])`).
-    match (v.init) {
-        parser.ExprCall(c) => {
-            if (c.args.len() == 1) {
-                match (c.args[0]) {
-                    parser.ExprArray(arrl) => {
-                        if (all_i32_number_elems(arrl.elements) || all_f64_number_elems(arrl.elements)) { return kind; }
-                    },
-                    _ => {}
-                }
+    if (kind == "" || !has_arg) { return OptRcCand { variant: "", ptype: "" }; }
+    // Annotated array payload.
+    var pt: string = opt_payload_type(v.type_name, kind);
+    if (is_leaksafe_array_field(pt)) { return OptRcCand { variant: kind, ptype: pt }; }
+    // Un-annotated array literal (Option infers its single param) — the exact
+    // element type is immaterial to a shallow buffer dec, so tag it i32[]/f64[].
+    match (arg0) {
+        parser.ExprArray(arrl) => {
+            if (all_i32_number_elems(arrl.elements)) { return OptRcCand { variant: kind, ptype: "i32[]" }; }
+            if (all_f64_number_elems(arrl.elements)) { return OptRcCand { variant: kind, ptype: "f64[]" }; }
+        },
+        // FRESH scalar-only struct literal payload — sole owner (rc==1), and its box
+        // holds only inline scalars, so a shallow __fern_rc_dec is the whole free
+        // (no field to walk). The literal's own type_name names the struct. An
+        // array-FIELD-bearing struct payload is NOT admitted here (its field deep-drop
+        // over-releases through the option-payload path — a deferred follow-up).
+        parser.ExprStructLit(slit) => {
+            var sty: string = slit.type_name;
+            if (!slit.has_base && decl_is_struct(structs, sty) && decl_is_leaksafe(structs, sty)
+                && struct_is_scalar_only(structs, sty)) {
+                return OptRcCand { variant: kind, ptype: sty };
             }
         },
         _ => {}
     }
-    return "";
+    return OptRcCand { variant: "", ptype: "" };
 }
 
 // opt_arm_binding_escapes: for the consuming match `st` of an rc-payload option
@@ -13984,12 +14005,13 @@ function opt_arm_binding_escapes(st: parser.Stmt, variant: string): boolean {
 struct OptRcFrees { idxs: i32[], names: string[] }
 
 // consumed_rcpayload_option_frees: finds every function-local `var o = Some([..])`
-// / `Ok([..])` / `Err([..])` (leak-safe scalar-array payload) consumed by exactly
-// one `match (o)`, single-owner, dead-after, non-escaping, and whose constructed-
-// variant arm binds the array payload only as a borrow (opt_arm_binding_escapes
-// false). Each such box's payload is deep-dropped then the box freed right after
-// its match (emit_opt_payload_drop). Same shape / gates as
-// consumed_rcpayload_enum_frees; DISJOINT from consumed_scalar_enum_frees.
+// / `Ok([..])` / `Err([..])` (leak-safe scalar-array payload) or `Some(P{..})` /
+// `Ok(P{..})` (fresh scalar-only struct-literal payload) consumed by exactly one
+// `match (o)`, single-owner, dead-after, non-escaping, and whose constructed-
+// variant arm binds the payload only as a borrow (opt_arm_binding_escapes false).
+// Each such box's payload is freed then the box freed right after its match
+// (emit_opt_payload_drop). Same shape / gates as consumed_rcpayload_enum_frees;
+// DISJOINT from consumed_scalar_enum_frees (that's scalar-payload options).
 function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.StructDecl[]): OptRcFrees {
     var idxs: i32[] = [];
     var names: string[] = [];
@@ -13998,8 +14020,8 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
     while (vi < body.len()) {
         match (body[vi]) {
             parser.StmtVar(v) => {
-                var variant: string = fresh_rcpayload_option_init(v);
-                if (variant != "" && util.index_of_str(reassigned, v.name) < 0) {
+                var cand: OptRcCand = rcpayload_option_cand(v, structs);
+                if (cand.variant != "" && util.index_of_str(reassigned, v.name) < 0) {
                     var match_idx: i32 = 0 - 1;
                     var n_match: i32 = 0;
                     var mj: i32 = 0;
@@ -14011,7 +14033,7 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
                         var arms_use: boolean = match_arms_use_name(body[match_idx], v.name);
                         var dead_after: boolean = !name_used_after(body, v.name, match_idx);
                         var escapes: boolean = name_escapes_outside_stmt(body, v.name, match_idx);
-                        var binds_esc: boolean = opt_arm_binding_escapes(body[match_idx], variant);
+                        var binds_esc: boolean = opt_arm_binding_escapes(body[match_idx], cand.variant);
                         if (!arms_use && dead_after && !escapes && !binds_esc) {
                             idxs = idxs.append(match_idx);
                             names = names.append(v.name);
@@ -14026,22 +14048,22 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
     return OptRcFrees { idxs: idxs, names: names };
 }
 
-// emit_opt_payload_drop deep-drops the rc-array payload of the option box in
-// `slot`, then frees the box and zeroes the slot. The constructed variant is
-// statically known (the classifier admitted a specific Some/Ok/Err with an array
-// payload), so — unlike the enum path — this needs NO runtime variant_is guard:
-// the payload is always at offset 8 / 4 (op_opt_payload) and is a flat rc-headered
-// scalar buffer, so a single __fern_rc_dec releases it. The box is then dec'd and
-// the slot zeroed so the exit sweep harmlessly decs a null. Payload dropped BEFORE
-// the box, exactly once.
+// emit_opt_payload_drop frees the rc payload of the option box in `slot`, then
+// frees the box and zeroes the slot. The constructed variant is statically known
+// (the classifier admitted a specific Some/Ok/Err), so — unlike the enum path —
+// this needs NO runtime variant_is guard: the payload is always at offset 8 / 4
+// (op_opt_payload) and is either a flat scalar-array buffer OR a scalar-only struct
+// box, so a single __fern_rc_dec releases it with no inner walk. The option box is
+// then dec'd and the slot zeroed so the exit sweep decs a null. Payload dropped
+// BEFORE the box, each freed exactly once.
 function emit_opt_payload_drop(s: LowerState, slot: i32): LowerState {
     var st: LowerState = s;
-    // release the payload array buffer (one dec — scalar elements, no inner pointers).
+    // release the payload (flat scalar-array buffer or scalar-only struct box).
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_opt_payload());
     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
     st = st.emit(ir.op_drop());
-    // free the box itself and zero the slot.
+    // free the option box itself and zero the slot.
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
     st = st.emit(ir.op_drop());
