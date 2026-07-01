@@ -184,6 +184,9 @@ func EmitWithCalleeSaved(f *ssa.Func, numAlloc int, calleeSaved []bool) (*Progra
 		idx:        map[*ssa.Block]int{},
 		phiTempCap: maxPhiCount(f),
 		strLen:     map[int32]int{},
+		// A register is caller-saved under this target iff it is not in the
+		// callee-saved partition. nil mask => whole file caller-saved (arm64).
+		callerSaved: func(r int) bool { return calleeSaved == nil || !calleeSaved[r] },
 	}
 	for _, b := range f.Blocks {
 		for _, op := range b.Ops {
@@ -254,6 +257,13 @@ type emitter struct {
 	numAlloc       int
 	s0, s1, s2, s3 int
 
+	// callerSaved reports whether allocatable register r is caller-saved under
+	// the target ABI — the partition that decides which live-across register
+	// homes a call must preserve. It tracks the calleeSaved mask passed to
+	// EmitWithCalleeSaved, so a non-x86 backend (e.g. arm64, whole file
+	// caller-saved) computes the correct save set instead of the x86 default.
+	callerSaved func(int) bool
+
 	blocks []MBlock
 	idx    map[*ssa.Block]int
 
@@ -292,7 +302,7 @@ func (e *emitter) callSaveRegs(op *ssa.Op) ([]int, bool) {
 	var regs []int
 	for id := range e.alloc.LiveAcross(p) {
 		r, isReg := e.alloc.Reg[id]
-		if !isReg || r >= e.numAlloc || !isCallerSaved(r) || seen[r] {
+		if !isReg || r >= e.numAlloc || !e.callerSaved(r) || seen[r] {
 			continue
 		}
 		seen[r] = true
