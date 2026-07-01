@@ -14352,6 +14352,160 @@ function emit_cross_struct_reuse(c_name: string, init: parser.Expr, donor_name: 
     }
 }
 
+// --- tuple cross-reuse (FBIP): a dead tuple box reused for a later tuple ctor ---
+//
+// The tuple analogue of emit_cross_struct_reuse — the delta that closes native's
+// `general_reuse_tuple` parity (tuples were previously never reuse/donor targets).
+// A `var c = (…)` tuple construction reuses an earlier dead donor tuple local d's
+// box in place instead of allocating a fresh one. SIMPLER than the struct case:
+// tuples are leak-mode (their element boxes are never reclaimed by the exit
+// sweep), so d's OLD element values need NO release before the overwrite — they
+// would leak whether reused or not, so no NEW leak and no UAF. The box is
+// rc-headered (op_tuple_make → __fern_arr_box), so zeroing d's slot leaves the
+// single exit dec (via c) to free it once. FIRST CUT: i32-scalar elements only
+// (tuple_lit_all_i32, checked at the dispatch), so op_tuple_set is a plain
+// word/i32 store; wider (i64/f64) and heap elements are a follow-up.
+
+struct CrossTupleReuseSites { idxs: i32[], donors: string[] }
+
+// fresh_tuple_lit_arity returns the element count of the tuple a name was bound
+// from when its init is a direct tuple literal `(…)`, else -1 (the tuple analogue
+// of fresh_struct_lit_type).
+function fresh_tuple_lit_arity(body: parser.Stmt[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    match (v.init) {
+                        parser.ExprTuple(tl) => { return tl.elements.len(); },
+                        _ => { return 0 - 1; },
+                    }
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// cross_tuple_construction_donor mirrors cross_construction_donor for tuples: the
+// nearest earlier fresh SAME-ARITY tuple local that isn't the recipient, isn't
+// reassigned, never escapes, is dead from k onward, and isn't already consumed.
+// Arity match alone suffices for box reuse (the box is `arity` uniform 8-byte
+// slots; d's original element TYPES are overwritten by c's, so are irrelevant).
+function cross_tuple_construction_donor(body: parser.Stmt[], k: i32, arity: i32, c_name: string, consumed: string[]): string {
+    var i: i32 = 0;
+    while (i < k) {
+        match (body[i]) {
+            parser.StmtVar(dv) => {
+                var dname: string = dv.name;
+                var elig: boolean = dname != c_name
+                    && fresh_tuple_lit_arity(body, dname) == arity
+                    && util.index_of_str(consumed, dname) < 0;
+                if (elig) {
+                    if (util.index_of_str(body_assign_targets(body), dname) >= 0) { elig = false; }
+                }
+                if (elig) {
+                    var allesc: string[] = walk_stmts_escapes(body, []);
+                    if (util.index_of_str(allesc, dname) >= 0) { elig = false; }
+                }
+                if (elig) {
+                    var m: i32 = k;
+                    while (m < body.len()) {
+                        var none: string[] = [];
+                        if (util.index_of_str(astwalk.collect_idents_stmt(body[m], none), dname) >= 0) { elig = false; }
+                        m = m + 1;
+                    }
+                }
+                if (elig) { return dname; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// cross_tuple_reuse_sites pairs each `var c = (…)` tuple construction with an
+// earlier dead same-arity donor tuple. STRUCTURAL only (arity + donor liveness);
+// the i32-scalar element eligibility (tuple_lit_all_i32) is checked at the
+// dispatch, where the lowering state is available, and falls back to normal
+// lowering if not met. Each donor is consumed at most once.
+function cross_tuple_reuse_sites(body: parser.Stmt[]): CrossTupleReuseSites {
+    var idxs: i32[] = [];
+    var donors: string[] = [];
+    var k: i32 = 0;
+    while (k < body.len()) {
+        match (body[k]) {
+            parser.StmtVar(v) => {
+                match (v.init) {
+                    parser.ExprTuple(tl) => {
+                        var donor: string = cross_tuple_construction_donor(body, k, tl.elements.len(), v.name, donors);
+                        if (donor.len() > 0) {
+                            idxs = idxs.append(k);
+                            donors = donors.append(donor);
+                        }
+                    },
+                    _ => {}
+                }
+            },
+            _ => {}
+        }
+        k = k + 1;
+    }
+    return CrossTupleReuseSites { idxs: idxs, donors: donors };
+}
+
+// tuple_lit_all_i32 reports whether every element of tuple literal `tup` is an
+// i32-class scalar under the current lowering state — the first-cut restriction
+// that keeps op_tuple_set a plain word/i32 store.
+function tuple_lit_all_i32(tup: parser.ExprTuple, s: LowerState): boolean {
+    if (tup.elements.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < tup.elements.len()) {
+        if (elem_type_tag(iife_leaf_value(tup.elements[i]), s) != "i32") { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// emit_cross_tuple_reuse lowers `var c = (…)` as an IN-PLACE reuse of dead donor
+// d's tuple box: overwrite each element slot (op_tuple_set, offset i*8) with c's
+// value, bind c to d's box, tag c's slot (mark_tuple_elems), and zero d's slot so
+// the exit sweep frees the box once (via c) and decs a null for d.
+function emit_cross_tuple_reuse(c_name: string, init: parser.Expr, donor_name: string, s: LowerState): LowerState {
+    var dslot: i32 = s.slot_of(donor_name);
+    if (dslot < 0) { return s.fail(); }
+    match (init) {
+        parser.ExprTuple(tup) => {
+            var st: LowerState = s;
+            var n: i32 = tup.elements.len();
+            var enc: string = "";
+            var i: i32 = 0;
+            while (i < n) {
+                if (i > 0) { enc = enc + ","; }
+                enc = enc + elem_type_tag(iife_leaf_value(tup.elements[i]), st);
+                st = st.emit(ir.op_load_local(dslot));
+                st = lower_expr(tup.elements[i], st);
+                if (!st.ok) { return st; }
+                st = st.emit(ir.op_tuple_set(i));
+                i = i + 1;
+            }
+            var cb: LowerState = st.add_local(c_name);
+            var cslot: i32 = cb.slot_of(c_name);
+            cb = cb.mark_tuple_elems(cslot, enc);
+            cb = cb.emit(ir.op_load_local(dslot));
+            cb = cb.emit(ir.op_store_local(cslot));
+            cb = cb.emit(ir.op_const_i32(0));
+            cb = cb.emit(ir.op_store_local(dslot));
+            return cb;
+        },
+        _ => { return s.fail(); },
+    }
+}
+
 // --- enum-donor cross-reuse (FBIP): a dead scalar-enum box donates to a struct -
 //
 // A THIRD reuse shape. The `consumed_scalar_enum_frees` analysis already proves a
@@ -15507,6 +15661,12 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // earlier dead same-type donor's box (see cross_reuse_sites). Disjoint from the
     // self-overwrite sites by construction (it skips those indices + donors).
     var xreuse: CrossReuseSites = cross_reuse_sites(fn.body, structs);
+    // Tuple cross-reuse (FBIP): `var c = (…)` reusing an earlier dead same-arity
+    // donor tuple's box (see cross_tuple_reuse_sites). Structural pairing; the
+    // i32-scalar element eligibility (tuple_lit_all_i32) is checked at the dispatch
+    // below, falling back to normal lowering if not met. Disjoint from the struct /
+    // enum reuse sites (a tuple init is never a struct-lit / enum-ctor).
+    var xtuple: CrossTupleReuseSites = cross_tuple_reuse_sites(fn.body);
     // Consumed scalar-payload enum frees: a function-local `var x = V(scalar...)`
     // consumed by exactly one `match (x)` where x is single-owner and dead after
     // the match. The box is freed (dec + zero) right after its match statement —
@@ -15554,6 +15714,14 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
             if (xreuse.idxs[xri] == j) { xreuse_i = xri; }
             xri = xri + 1;
         }
+        // Is statement j a tuple cross-reuse site (`var c = (…)` reusing an earlier
+        // dead same-arity donor tuple's box)?
+        var xtuple_i: i32 = 0 - 1;
+        var xti: i32 = 0;
+        while (xti < xtuple.idxs.len()) {
+            if (xtuple.idxs[xti] == j) { xtuple_i = xti; }
+            xti = xti + 1;
+        }
         // Is statement j an enum-donor reuse site (a struct construction reusing a
         // consumed-and-dead scalar-enum box)?
         var edon_i: i32 = 0 - 1;
@@ -15583,6 +15751,22 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         } else if (xreuse_i >= 0) {
             match (fn.body[j]) {
                 parser.StmtVar(rv) => { s = emit_cross_struct_reuse(rv.name, rv.init, xreuse.donors[xreuse_i], s); },
+                _ => { s = lower_stmt(fn.body[j], s); },
+            }
+        } else if (xtuple_i >= 0) {
+            // Tuple cross-reuse — only when every element is an i32 scalar
+            // (first-cut restriction); otherwise fall back to a normal fresh
+            // construction, leaving the donor's ordinary drop untouched.
+            match (fn.body[j]) {
+                parser.StmtVar(rv) => {
+                    match (rv.init) {
+                        parser.ExprTuple(tup) => {
+                            if (tuple_lit_all_i32(tup, s)) { s = emit_cross_tuple_reuse(rv.name, rv.init, xtuple.donors[xtuple_i], s); }
+                            else { s = lower_stmt(fn.body[j], s); }
+                        },
+                        _ => { s = lower_stmt(fn.body[j], s); },
+                    }
+                },
                 _ => { s = lower_stmt(fn.body[j], s); },
             }
         } else if (edon_i >= 0) {
@@ -15628,14 +15812,16 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                     s = s.emit(ir.op_drop());
                     s = s.emit(ir.op_const_i32(0));
                     s = s.emit(ir.op_store_local(dslot));
-                } else if (dslot >= s.n_params && slot_is_reclaimable_tuple(s, dslot)) {
+                } else if (dslot >= s.n_params && slot_is_reclaimable_tuple(s, dslot)
+                        && util.index_of_str(xtuple.donors, pdrops.names[pi]) < 0) {
                     // Fresh scalar tuple local, last-used at statement j: free its box
                     // now (shallow __fern_rc_dec — the scalar-literal gate means no rc
                     // element to walk) and zero the slot, so the exit sweep's tuple
                     // loop decs a guarded null. The tuple sibling of the struct precise
-                    // drop above. slot_is_reclaimable_tuple only admits fresh, proven-
-                    // non-escaping tuple locals; tuples are not reuse/donor targets, so
-                    // no donor guard is needed here.
+                    // drop above. Skipped when the tuple is a tuple cross-reuse DONOR
+                    // (xtuple.donors): emit_cross_tuple_reuse recycles its box for the
+                    // recipient, so freeing it here would race that reuse (a
+                    // double-free / write-to-freed box — the UAF this guard prevents).
                     s = s.emit(ir.op_load_local(dslot));
                     s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     s = s.emit(ir.op_drop());

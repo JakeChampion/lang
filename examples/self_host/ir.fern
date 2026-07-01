@@ -757,6 +757,14 @@ pub function op_tuple_make_k(n: i32, kinds: string): Op {
 pub function op_tuple_get(idx: i32): Op {
     return Op { kind: "tuple_get", i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
+// `tuple_set` pops [tuple, value] and stores value into element `i32_imm` at
+// offset idx*8 (tuples have NO shape slot — element i lives at data+i*8, unlike
+// struct_set's (i+1)*8). Used only by the tuple constructor-reuse path
+// (emit_cross_tuple_reuse) to write a new tuple's elements into a reused dead
+// donor box in place. Tuples are otherwise immutable, so this is the sole writer.
+pub function op_tuple_set(idx: i32): Op {
+    return Op { kind: "tuple_set", i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
 // 8-byte tuple element reads: width 64 selects an 8-byte load; `unsigned` picks
 // i64.load (set) vs f64.load (clear). Offsets are a uniform 8-byte stride.
 pub function op_tuple_get_w(idx: i32, width: i32, is_i64: boolean): Op {
