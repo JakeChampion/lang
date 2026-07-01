@@ -12203,6 +12203,20 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
         }
         j = j + 1;
     }
+    // Reclaimable scalar-tuple locals — a shallow rc-dec of the (now rc-headered)
+    // box at scope exit, the tuple sibling of the struct loop above. Only fresh,
+    // proven-non-escaping, scalar-literal tuple locals qualify (slot_is_reclaimable
+    // _tuple), so the box is the sole reference and carries no rc element to walk.
+    // Slots are zeroed at entry, so an untaken-branch slot decs a guarded null.
+    var tj: i32 = st.n_params;
+    while (tj < st.locals.len()) {
+        if (!slot_list_has(keeps, tj) && slot_is_reclaimable_tuple(st, tj)) {
+            st = st.emit(ir.op_load_local(tj));
+            st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+            st = st.emit(ir.op_drop());
+        }
+        tj = tj + 1;
+    }
     return st;
 }
 
@@ -12343,11 +12357,11 @@ function arr_slots_of(s: LowerState): i32[] {
     var out: i32[] = [];
     var i: i32 = s.n_params;
     while (i < s.locals.len()) {
-        // Array locals AND reclaimable struct locals are zeroed at entry, so the
-        // exit dec-sweep / loop-rebind release never decs an uninitialised (e.g.
-        // untaken-branch) slot — __fern_arr_dec null-guards, but the slot must
-        // hold null not stack garbage.
-        if (s.is_arr_slot(i) || slot_is_reclaimable_struct(s, i)) { out = out.append(i); }
+        // Array locals AND reclaimable struct/tuple locals are zeroed at entry, so
+        // the exit dec-sweep / loop-rebind release never decs an uninitialised
+        // (e.g. untaken-branch) slot — __fern_arr_dec null-guards, but the slot
+        // must hold null not stack garbage.
+        if (s.is_arr_slot(i) || slot_is_reclaimable_struct(s, i) || slot_is_reclaimable_tuple(s, i)) { out = out.append(i); }
         i = i + 1;
     }
     return out;
@@ -12700,6 +12714,74 @@ function collect_fresh_in_stmt(st: parser.Stmt, structs: parser.StructDecl[], ac
     }
 }
 
+// tuple_lit_is_fresh_scalar reports whether `e` is a NON-EMPTY tuple literal
+// whose every element is a flat scalar LITERAL (a number or a boolean). Such a
+// `(3, 4)` builds a fresh, sole-owner tuple box holding no rc pointer, so a
+// shallow box free at scope exit cannot dangle any element (there is none to
+// walk) — the tuple analogue of the scalar-only struct reclaim. A string / array
+// / struct / call element is excluded (the value may alias a live local; leave
+// it to leak, as tuples did wholesale before).
+function tuple_lit_is_fresh_scalar(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprTuple(tl) => {
+            if (tl.elements.len() == 0) { return false; }
+            var i: i32 = 0;
+            while (i < tl.elements.len()) {
+                match (tl.elements[i]) {
+                    parser.ExprNumber(_) => {},
+                    parser.ExprBool(_) => {},
+                    _ => { return false; }
+                }
+                i = i + 1;
+            }
+            return true;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// collect_fresh_scalar_tuple_names collects the LOCAL names bound from a fresh
+// scalar tuple literal (`var t = (3, 4)`), recursing into nested control flow the
+// same way collect_fresh_struct_names does. The escape gate (body_unsafe_for) is
+// applied by reclaimable_names_of before any is credited, so a returned / stored /
+// escaping tuple local is excluded (never freed here — moved to its new owner).
+function collect_fresh_scalar_tuple_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) { a = collect_fresh_tuple_in_stmt(stmts[i], a); i = i + 1; }
+    return a;
+}
+function collect_fresh_tuple_in_stmt(st: parser.Stmt, acc: string[]): string[] {
+    match (st) {
+        parser.StmtVar(v) => {
+            if (tuple_lit_is_fresh_scalar(v.init)) { return push_str_unique(acc, v.name); }
+            return acc;
+        },
+        parser.StmtIf(iff) => {
+            var a: string[] = collect_fresh_scalar_tuple_names(iff.then_body, acc);
+            return collect_fresh_scalar_tuple_names(iff.else_body, a);
+        },
+        parser.StmtWhile(w) => { return collect_fresh_scalar_tuple_names(w.body, acc); },
+        parser.StmtFor(f) => { return collect_fresh_scalar_tuple_names(f.body, acc); },
+        parser.StmtMatch(m) => {
+            var a: string[] = acc;
+            var i: i32 = 0;
+            while (i < m.arms.len()) { a = collect_fresh_scalar_tuple_names(m.arms[i].body, a); i = i + 1; }
+            return a;
+        },
+        parser.StmtSwitch(sw) => {
+            var a: string[] = acc;
+            var i: i32 = 0;
+            while (i < sw.cases.len()) { a = collect_fresh_scalar_tuple_names(sw.cases[i].body, a); i = i + 1; }
+            if (sw.has_default) { a = collect_fresh_scalar_tuple_names(sw.default_body, a); }
+            return a;
+        },
+        parser.StmtDefer(d) => { return collect_fresh_tuple_in_stmt(d.action, acc); },
+        _ => { return acc; },
+    }
+}
+
 // collect_fresh_ret_call_names credits a struct LOCAL bound from a fresh-ret
 // CALL (`var r: T = f(..)` / `var r: T = obj.m(..)`, f/m in fresh_ret) that is
 // NOT reassigned — the DISCARDED fresh-ret-call local (#3457 follow-up). A
@@ -12770,6 +12852,17 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // returned builder is never reclaimed. (#3456 — escaping-struct reclaim.)
         if (!body_unsafe_for(body, fresh[i], borrowable)) { out = out.append(fresh[i]); }
         i = i + 1;
+    }
+    // Fresh scalar-tuple locals (`var t = (3, 4)`): credited under a "TUP:" prefix
+    // so the struct/snapshot consumers of reclaimable_names (which look up a bare
+    // name or "SNAP:<name>") never match them — only slot_is_reclaimable_tuple
+    // does. The same body_unsafe_for escape gate proves non-escape before the
+    // shallow box free is emitted at scope exit.
+    var tups: string[] = collect_fresh_scalar_tuple_names(body, []);
+    var ti: i32 = 0;
+    while (ti < tups.len()) {
+        if (!body_unsafe_for(body, tups[ti], borrowable)) { out = out.append("TUP:" + tups[ti]); }
+        ti = ti + 1;
     }
     return out;
 }
@@ -13687,6 +13780,19 @@ function slot_is_reclaimable_struct(s: LowerState, i: i32): boolean {
     if (i >= s.locals.len()) { return false; }
     if (s.struct_type_of_slot(i).len() == 0) { return false; }
     return util.index_of_str(s.reclaimable_names, s.locals[i].slot_name) >= 0;
+}
+
+// slot_is_reclaimable_tuple: slot `i` is a fresh, non-escaping SCALAR-tuple local
+// (`var t = (3, 4)`) credited under the "TUP:" prefix by reclaimable_names_of. A
+// non-param TUPLE slot whose name is in the reclaim set. Its box (now rc-headered
+// via tuple_make → __fern_arr_box) is shallow-freed at scope exit like a
+// scalar-only struct — no element walk (the collection gate admitted only scalar
+// literals, so no rc element to dangle).
+function slot_is_reclaimable_tuple(s: LowerState, i: i32): boolean {
+    if (i < s.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    if (s.locals[i].tuple_elems.len() == 0) { return false; }
+    return util.index_of_str(s.reclaimable_names, "TUP:" + s.locals[i].slot_name) >= 0;
 }
 
 // slot_is_snapshot_param: slot `i` is a struct PARAM / receiver lower_func

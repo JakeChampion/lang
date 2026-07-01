@@ -842,9 +842,15 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
         } else if (o.kind == "tuple_make") {
             // n elements on the operand stack (element n-1 on top). Box =
             // [e0@0, e1@8, …], n*8 bytes, no shape slot. x0 (box) stays live.
+            // rc-HEADERED (via __fern_arr_box cap=n, exactly like struct_make) so a
+            // fresh, non-escaping SCALAR tuple local can be reclaimed by the exit
+            // dec-sweep at the right size — element offsets are unchanged (element i
+            // @ i*8; __fern_arr_box writes len=cap @ data+0, which element 0
+            // overwrites, leaving cap@data-16 for the free size). Non-reclaimed /
+            // escaping tuples carry the header and leak as before.
             s = s.mark_heap();
             var tn: i32 = o.i32_imm;
-            s = s.write("    mov x0, #" + util.i32_to_string(tn * 8) + "\n    bl __fern_alloc\n");
+            s = s.write("    mov x0, #" + util.i32_to_string(tn) + "\n    bl __fern_arr_box\n");
             var tem: i32 = tn - 1;
             while (tem >= 0) {
                 s = s.write("    ldr x1, [sp], #16\n    str x1, [x0, #" + util.i32_to_string(tem * 8) + "]\n");
