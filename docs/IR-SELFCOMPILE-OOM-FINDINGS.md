@@ -338,6 +338,35 @@ the lever is the **alloc/free size-class agreement**, after which the
 already-present `__fern_str_dec` + the (re-applied) `computeFreeEligible`
 widening reclaim string locals for real.
 
+### LANDED + measured (2026-07-01, #4174) — real reclaim, but ZERO self-compile impact
+
+All three fixes shipped: (1) size-class agreement (`str_dec` frees
+`length+1`, the four `+0` producers request `length+1`); (2)
+`computeFreeEligible` admits native string locals; (3) the nested-concat
+operand drop routes to the freeing `__fern_str_dec`, not the dec-only
+`__fern_rc_dec`. **General-purpose win confirmed:** a `var s = base + "…"`
+churn drops **91 MB → 128 KB**, and a nested `a + b + a + b` loop goes from a
+multi-MB bump to bounded (freed *and* recycled, gdb-verified address reuse).
+
+**But the self-compile is UNMOVED — this closes the string avenue for the
+cap.** Direct measurement (cap raised to 100000, the `asm_run` driver
+compiling a 500×20 module, peak RSS via `getrusage`):
+
+| compiler | 500×20 peak RSS |
+| --- | --- |
+| pre-#4174 | 372 MB |
+| post-#4174 | 370 MB |
+
+i.e. **~0.6 %** — noise. The completed, fully-working string reclamation
+does **not** reduce the self-compile, confirming the earlier partial-slice
+observation with the finished fix. The reason is now definitive: the
+self-compile's dominant strings are **`Op.kind` / `Op.str` fields living in
+the persistent op-stream arrays**, never dropped as locals/temps (so
+`__fern_str_dec` never sees them) — they are freed only when the `Op` array
+itself is, which is the **Effect-A** clone/leak (Finding 2). So the cap lever
+is the **op-array reclamation (Effect A)** exclusively; string-side
+reclamation is done and should not be revisited for the cap.
+
 ## Finding 2 — O(N²) `LowerState` rebuild in IR lowering
 
 `examples/self_host/irlower.fern` threads all per-function lowering
