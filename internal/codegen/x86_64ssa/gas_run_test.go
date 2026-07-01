@@ -190,13 +190,140 @@ func TestAsmRunPhiSwap(t *testing.T) {
 	runMatchesEval(t, build(), 8)
 }
 
-// Parameters are rejected (clear error) until the ABI slice.
-func TestAsmRejectsParams(t *testing.T) {
-	f := ssa.NewFunc("p")
-	a := f.AddParam()
+// assembleRunArgs renders f to real x86-64 with the System V parameter ABI,
+// baking `args` into the entry, runs it, and returns the process exit code.
+func assembleRunArgs(t *testing.T, f *ssa.Func, numAlloc int, args []int64) int {
+	t.Helper()
+	if runtime.GOARCH != "amd64" || runtime.GOOS != "linux" {
+		t.Skipf("native x86-64 run needs amd64/linux, have %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	asm, err := EmitAsmArgs(f, numAlloc, args)
+	if err != nil {
+		t.Fatalf("EmitAsmArgs: %v", err)
+	}
+	text, rodata, err := nativex86.AssembleProgram(asm, nativeelf.TextVAddr)
+	if err != nil {
+		t.Fatalf("AssembleProgram: %v\n--- asm ---\n%s", err, asm)
+	}
+	bin := filepath.Join(t.TempDir(), "prog")
+	if err := os.WriteFile(bin, nativeelf.StaticExecutableDataX86(text, rodata), 0o755); err != nil {
+		t.Fatalf("write bin: %v", err)
+	}
+	err = exec.Command(bin).Run()
+	if err == nil {
+		return 0
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.ExitCode()
+	}
+	t.Fatalf("run: %v", err)
+	return -1
+}
+
+// runMatchesEvalArgs asserts the real binary's exit code equals ssa.Eval(f,
+// args) mod 256, exercising the parameter ABI.
+func runMatchesEvalArgs(t *testing.T, f *ssa.Func, numAlloc int, args []int64) {
+	t.Helper()
+	want, err := ssa.Eval(f, args...)
+	if err != nil {
+		t.Fatalf("Eval: %v", err)
+	}
+	got := assembleRunArgs(t, f, numAlloc, args)
+	if got != int(uint8(want)) {
+		t.Errorf("real run(%v) exit=%d, want Eval&0xFF=%d (Eval=%d)", args, got, int(uint8(want)), want)
+	}
+}
+
+// A single-parameter identity function returns its argument.
+func TestAsmRunParamIdentity(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("id")
+		a := f.AddParam()
+		e := f.NewBlock()
+		f.SetRet(e, a)
+		return f
+	}
+	for _, n := range []int{1, 2, 8} {
+		runMatchesEvalArgs(t, build(), n, []int64{42})
+	}
+}
+
+// sum4(a,b,c,d) = a+b+c+d — four params across rdi/rsi/rdx/rcx, kept live so
+// the allocator must place them, incl. spills at nAlloc=1.
+func TestAsmRunParamSum(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("sum4")
+		a := f.AddParam()
+		b := f.AddParam()
+		c := f.AddParam()
+		d := f.AddParam()
+		e := f.NewBlock()
+		ab := f.AddOp(e, ssa.OpAdd, a, b)
+		cd := f.AddOp(e, ssa.OpAdd, c, d)
+		f.SetRet(e, f.AddOp(e, ssa.OpAdd, ab, cd))
+		return f
+	}
+	for _, n := range []int{1, 2, 8} {
+		runMatchesEvalArgs(t, build(), n, []int64{10, 20, 30, 40})
+	}
+}
+
+// A parameter used in a loop bound: countTo(n) = 0..n sum's trip count -> n.
+// Exercises a param flowing into a phi + branch under the ABI.
+func TestAsmRunParamLoop(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("countTo")
+		limitP := f.AddParam()
+		entry := f.NewBlock()
+		header := f.NewBlock()
+		body := f.NewBlock()
+		exit := f.NewBlock()
+		init := constOp(f, entry, 0)
+		f.SetBr(entry, header)
+		iNext := f.NewValue()
+		i := f.AddPhi(header, init, iNext)
+		cond := f.AddOp(header, ssa.OpLt, i, limitP)
+		f.SetBrIf(header, cond, body, exit)
+		one := constOp(f, body, 1)
+		add := f.AddOpNoResult(body, ssa.OpAdd, i, one)
+		add.Result = iNext
+		f.SetBr(body, header)
+		f.SetRet(exit, i)
+		return f
+	}
+	for _, n := range []int{1, 2, 8} {
+		runMatchesEvalArgs(t, build(), n, []int64{7})
+	}
+}
+
+// Six parameters exhaust the SysV integer arg registers (rdi..r9); pick the
+// last so the ABI must thread r9 through.
+func TestAsmRunParamSixth(t *testing.T) {
+	build := func() *ssa.Func {
+		f := ssa.NewFunc("sixth")
+		var ps []ssa.Value
+		for i := 0; i < 6; i++ {
+			ps = append(ps, f.AddParam())
+		}
+		e := f.NewBlock()
+		f.SetRet(e, ps[5])
+		return f
+	}
+	for _, n := range []int{1, 2, 8} {
+		runMatchesEvalArgs(t, build(), n, []int64{1, 2, 3, 4, 5, 99})
+	}
+}
+
+// More than six parameters (stack args) are rejected with a clear error.
+func TestAsmRejectsTooManyParams(t *testing.T) {
+	f := ssa.NewFunc("p7")
+	for i := 0; i < 7; i++ {
+		f.AddParam()
+	}
 	e := f.NewBlock()
-	f.SetRet(e, a)
-	if _, err := EmitAsm(f, 4); err == nil {
-		t.Error("expected EmitAsm to reject a function with parameters")
+	f.SetRet(e, constOp(f, e, 0))
+	if _, err := EmitAsm(f, 8); err == nil {
+		t.Error("expected EmitAsm to reject >6 params (stack args not yet supported)")
 	}
 }
