@@ -3267,3 +3267,28 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   Net: EVERY precise-drop shape now reclaims — scalar (struct / tuple / option /
   result / enum) + rc-payload (option / result / enum), via both consume-by-match
   (top-level) and precise-drop (nested-block).
+- 2026-07-01: **Precise drop-on-last-use for array-FIELD struct locals** (widens the
+  scalar-only-struct precise drop #16 — a peak-heap bounding, the struct sibling of
+  the array / tuple precise drops). A fresh `var b = Buf { xs: [..], n }` last-used in
+  a NESTED block was reclaimed only by the function-exit sweep; it now deep-drops its
+  leak-safe array fields (emit_struct_field_drops) + shallow-frees the box right after
+  that statement, bounding the live set. This is EXACTLY the exit-sweep struct free
+  moved earlier (the exit sweep already did emit_struct_field_drops + rc_dec for
+  reclaimable structs regardless of scalar-only-ness; only the precise path was gated
+  on struct_is_scalar_only). precise_drop_names' struct admission widened from
+  `struct_is_scalar_only && all_scalar_literal_args` to struct_lit_precise_ok: every
+  declared field present and either a flat scalar initialised by a scalar literal OR a
+  leak-safe array (is_leaksafe_array_field) initialised by a FRESH scalar-number array
+  literal — sole-owner (rc==1), field order resolved by NAME (field_names) so a
+  reordered `Buf { n: 3, xs: [..] }` maps correctly. The emission dropped the
+  struct_is_scalar_only gate and now always calls emit_struct_field_drops (a no-op for
+  a scalar-only struct, subsuming the old branch) before the box dec; the reuse-donor
+  guards (xreuse/reuse/edon/inarm) are unchanged. SOUNDNESS: the fresh-literal gate
+  makes the box the sole owner of each array field, so the deep-drop frees each buffer
+  once; the slot is zeroed so the exit sweep decs a guarded null (no double-free). NOT
+  the #4219 option-payload quirk — a struct LOCAL owns a counted ref to its array
+  fields (the exit sweep deep-drops them), unlike an option payload struct. VERIFIED:
+  new struct-arrfield-precise-if-* / reordered / corruption-probe in
+  TestSelfHostRcPreciseDropX86IR; byte-identical FIXPOINT + BOOTSTRAP (the compiler's
+  own array-field struct locals now drop early — the strongest test) + wasm + IR-diff
+  gates verified.

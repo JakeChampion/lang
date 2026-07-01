@@ -12144,6 +12144,50 @@ function call_returns_scalar_array(name: string, arr: string[], strarr: string[]
         && util.index_of_str(strarr, name) < 0;
 }
 
+// struct_lit_precise_ok reports whether `slit` is a FRESH struct literal that a
+// precise drop can reclaim exactly like the exit sweep (emit_struct_field_drops +
+// a shallow box dec): every declared field is present and is either a flat SCALAR
+// (is_scalar_type_name) initialised by a scalar literal, OR a leak-safe ARRAY field
+// (is_leaksafe_array_field) initialised by a FRESH scalar-number array literal. The
+// literal-only field values keep the box the SOLE owner (rc==1) of each array — an
+// aliased field would need the construction alias-inc/field-drop balance the exit
+// sweep relies on, so it is excluded here (conservative). String / nested-struct /
+// enum / map / option / tuple fields are excluded (their precise deep-drop is a
+// separate concern). Field order is resolved by name (field_names), so a reordered
+// `Buf { n: 3, xs: [..] }` maps correctly. A struct-update base (`{ ...d }`) is
+// rejected by the caller (has_base). Subsumes the scalar-only case (a struct with
+// only scalar fields + scalar-literal values passes).
+function struct_lit_precise_ok(structs: parser.StructDecl[], slit: parser.ExprStructLit): boolean {
+    var sty: string = slit.type_name;
+    if (!decl_is_struct(structs, sty)) { return false; }
+    if (slit.field_names.len() != slit.field_values.len()) { return false; }
+    if (slit.field_values.len() != decl_field_count(structs, sty)) { return false; }
+    var i: i32 = 0;
+    while (i < slit.field_values.len()) {
+        var ft: string = decl_field_type(structs, sty, slit.field_names[i]);
+        if (is_leaksafe_array_field(ft)) {
+            var okarr: boolean = false;
+            match (slit.field_values[i]) {
+                parser.ExprArray(arrl) => { okarr = all_i32_number_elems(arrl.elements) || all_f64_number_elems(arrl.elements); },
+                _ => {}
+            }
+            if (!okarr) { return false; }
+        } else if (is_scalar_type_name(ft)) {
+            var oksc: boolean = false;
+            match (slit.field_values[i]) {
+                parser.ExprNumber(_) => { oksc = true; },
+                parser.ExprBool(_) => { oksc = true; },
+                _ => {}
+            }
+            if (!oksc) { return false; }
+        } else {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
 // PreciseDrops is the result of precise_drop_names: two PARALLEL arrays — for
 // each precise drop, the top-level body-statement index AFTER which to release
 // the array, and the local name to release. (A flat pair, not a `string[][]`,
@@ -12201,16 +12245,18 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                             _ => {}
                         }
                     },
-                    // A FRESH scalar-only struct literal (`var p = P { x: 1, y: 2 }`
-                    // where P has only flat scalar fields and every field value is a
-                    // scalar literal) is a precise-drop candidate too: the box owns no
-                    // pointer, so freeing it right after its last borrow-read is a
-                    // single shallow __fern_rc_dec that cannot dangle a field. A
-                    // struct-update base (`{ ...d, .. }`) is excluded — its box may
-                    // alias d. The emission-site slot guard (slot_is_reclaimable_struct
-                    // + struct_is_scalar_only) re-checks before freeing.
+                    // A FRESH struct literal (`var p = P { x: 1, y: 2 }` /
+                    // `var b = Buf { xs: [1,2,3], n: 3 }`) is a precise-drop candidate:
+                    // struct_lit_precise_ok admits a scalar-only struct AND one whose
+                    // fields are flat scalars + leak-safe arrays initialised by fresh
+                    // literals (sole owner). The precise drop then deep-drops the array
+                    // fields (emit_struct_field_drops) + shallow-frees the box, EXACTLY
+                    // like the exit sweep but earlier — bounding peak heap (the struct
+                    // sibling of the array / tuple precise drops). A struct-update base
+                    // (`{ ...d, .. }`) is excluded (its box may alias d). The emission
+                    // re-checks slot_is_reclaimable_struct + the reuse-donor guards.
                     parser.ExprStructLit(slit) => {
-                        if (!slit.has_base && struct_is_scalar_only(structs, slit.type_name) && all_scalar_literal_args(slit.field_values)) { is_lit = true; }
+                        if (!slit.has_base && struct_lit_precise_ok(structs, slit)) { is_lit = true; }
                     },
                     // A FRESH scalar tuple literal (`var t = (3, 4)`, all scalar-
                     // literal elements) is a precise-drop candidate too — same as the
@@ -16733,18 +16779,22 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                     s = s.emit(ir.op_const_i32(0));
                     s = s.emit(ir.op_store_local(dslot));
                 } else if (dslot >= s.n_params && slot_is_reclaimable_struct(s, dslot)
-                        && struct_is_scalar_only(s.structs, s.struct_type_of_slot(dslot))
                         && util.index_of_str(xreuse.donors, pdrops.names[pi]) < 0
                         && util.index_of_str(reuse.bases, pdrops.names[pi]) < 0
                         && util.index_of_str(edon.donors, pdrops.names[pi]) < 0
                         && util.index_of_str(inarm.donors, pdrops.names[pi]) < 0) {
-                    // Fresh scalar-only struct local, last-used at statement j: free
-                    // its box now (shallow __fern_rc_dec — no field to walk) and zero
-                    // the slot, so the exit sweep's struct loop decs a guarded null.
-                    // Mirrors the array precise drop; bounds the live set without
-                    // changing the exit-sweep contract. Skipped when the box is a
-                    // reuse/cross-reuse/donor target — freeing it here would race the
-                    // box recycling those paths perform (a double-free / UAF).
+                    // Fresh struct local, last-used at statement j: deep-drop its
+                    // leak-safe array fields (emit_struct_field_drops — a no-op for a
+                    // scalar-only struct, so this subsumes the old scalar-only branch)
+                    // then free its box now (shallow __fern_rc_dec) and zero the slot,
+                    // so the exit sweep's struct loop decs a guarded null. EXACTLY the
+                    // exit-sweep struct free, moved earlier — bounds the live set (peak
+                    // heap) without changing the exit contract. precise_drop_names only
+                    // admits sole-owner fresh literals (struct_lit_precise_ok), so the
+                    // array-field deep-drop frees each buffer once. Skipped when the box
+                    // is a reuse/cross-reuse/donor target — freeing it here would race
+                    // the box recycling those paths perform (a double-free / UAF).
+                    s = emit_struct_field_drops(s, dslot);
                     s = s.emit(ir.op_load_local(dslot));
                     s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     s = s.emit(ir.op_drop());
