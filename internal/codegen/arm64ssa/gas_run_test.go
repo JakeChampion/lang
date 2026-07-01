@@ -612,6 +612,88 @@ func TestArmRunStrConcatHelper(t *testing.T) {
 	}
 }
 
+// ptrAdd computes base + n as a 64-bit pointer op (Width 64 so no i32 sxtw
+// truncates the heap pointer).
+func ptrAdd(f *ssa.Func, b *ssa.Block, base ssa.Value, n int64) ssa.Value {
+	v := f.AddOp(b, ssa.OpAdd, base, constOp(f, b, n))
+	b.Ops[len(b.Ops)-1].Width = 64
+	return v
+}
+
+// store32 / load32u add a 4-byte (i32) store / load at base+offset.
+func store32(f *ssa.Func, b *ssa.Block, base, val ssa.Value, offset int64) {
+	op := f.AddOpNoResult(b, ssa.OpStore32, base, val)
+	op.Imm = offset
+}
+
+func load32u(f *ssa.Func, b *ssa.Block, base ssa.Value, offset int64) ssa.Value {
+	v := f.AddOp(b, ssa.OpLoad32U, base)
+	b.Ops[len(b.Ops)-1].Imm = offset
+	return v
+}
+
+// __fern_arr_dec on the arm64 SSA path, observed through __fern_rc_is_unique
+// (array rc lives at [data-8], same as other rc-headed cells). rc<=1 leaks
+// (unchanged); rc>1 drops one. The stride arg is ignored.
+func TestArmRunArrDec(t *testing.T) {
+	isUniqueAfterDec := func(incs int) int {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		c := f.AddOp(e, ssa.OpAlloc, constOp(f, e, 8)) // fresh rc=1 cell
+		for i := 0; i < incs; i++ {
+			callOp(f, e, "__fern_rc_inc", c)
+		}
+		callOp(f, e, "__fern_arr_dec", c, constOp(f, e, 4)) // (data, stride)
+		f.SetRet(e, callOp(f, e, "__fern_rc_is_unique", c))
+		return assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 8)
+	}
+	// rc=1 -> arr_dec -> leak, rc stays 1 -> unique.
+	if got := isUniqueAfterDec(0); got != 1 {
+		t.Errorf("is_unique after arr_dec(rc=1) = %d, want 1 (leak)", got)
+	}
+	// rc=2 -> arr_dec -> 1 -> unique.
+	if got := isUniqueAfterDec(1); got != 1 {
+		t.Errorf("is_unique after inc,arr_dec = %d, want 1 (rc 2->1)", got)
+	}
+	// rc=3 -> arr_dec -> 2 -> not unique.
+	if got := isUniqueAfterDec(2); got != 0 {
+		t.Errorf("is_unique after inc,inc,arr_dec = %d, want 0 (rc 3->2)", got)
+	}
+}
+
+// __arr_idx on the arm64 SSA path: a length-prefixed i32 array [10,20,30] with
+// its length at [arr-4]. In-bounds index returns the element address (a[1]=20);
+// an out-of-range index traps with exit 134.
+func TestArmRunArrIdx(t *testing.T) {
+	// buildArr lays a 3-element i32 array into a fresh allocation and returns
+	// (f, arr): arr = p+4, len=3 at [arr-4]=p, elements at arr+0/4/8.
+	buildArr := func() (*ssa.Func, *ssa.Block, ssa.Value) {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		p := f.AddOp(e, ssa.OpAlloc, constOp(f, e, 32))
+		arr := ptrAdd(f, e, p, 4)
+		store32(f, e, p, constOp(f, e, 3), 0) // len at [arr-4] = p+0
+		store32(f, e, p, constOp(f, e, 10), 4)
+		store32(f, e, p, constOp(f, e, 20), 8)
+		store32(f, e, p, constOp(f, e, 30), 12)
+		return f, e, arr
+	}
+	// In-bounds: a[1] = 20.
+	f, e, arr := buildArr()
+	addr := callOp(f, e, "__arr_idx", arr, constOp(f, e, 1))
+	f.SetRet(e, load32u(f, e, addr, 0))
+	if got := assembleRunArmModule(t, map[string]*ssa.Func{"main": f}, "main", 8); got != 20 {
+		t.Errorf("a[1] via __arr_idx = %d, want 20", got)
+	}
+	// Out-of-range: idx 5 >= len 3 -> trap (exit 134).
+	f2, e2, arr2 := buildArr()
+	bad := callOp(f2, e2, "__arr_idx", arr2, constOp(f2, e2, 5))
+	f2.SetRet(e2, load32u(f2, e2, bad, 0))
+	if got := assembleRunArmModule(t, map[string]*ssa.Func{"main": f2}, "main", 8); got != 134 {
+		t.Errorf("__arr_idx out-of-range exit = %d, want 134", got)
+	}
+}
+
 // max via a comparison-selected branch: max(9, 4) = 9 -> exit 9.
 func TestArmRunMax(t *testing.T) {
 	build := func() *ssa.Func {
