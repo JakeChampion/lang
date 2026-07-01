@@ -87,6 +87,23 @@ var strReclaimIRCases = []struct {
 	{"loop-unannotated-chr",
 		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5) { var s = chr(65 + i); sum = sum + s.len(); i = i + 1; } return sum; }`,
 		5, true},
+	// UN-ANNOTATED concat (`var s = tag + "!"`, inferred string): reclaimed too —
+	// the fresh gate is now syntax-only and the is_str type gate (set from the
+	// type-aware expr_is_str) admits the actual string concat. Same as the
+	// annotated case: "row!" len 4 × 4 = 16.
+	{"loop-unannotated-concat",
+		`function main(): i32 { var tag: string = "row"; var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var s = tag + "!"; sum = sum + s.len(); i = i + 1; } return sum; }`,
+		16, true},
+	// UN-ANNOTATED string method (`var s = base.to_upper()`): reclaimed. len 3 × 4 = 12.
+	{"loop-unannotated-to-upper",
+		`function main(): i32 { var base: string = "abc"; var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var s = base.to_upper(); sum = sum + s.len(); i = i + 1; } return sum; }`,
+		12, true},
+	// NEGATIVE: an un-annotated INT `var n = a + b` matches the concat SHAPE but is
+	// not is_str, so it is never reclaimed (no __fern_str_free) and stays correct.
+	// Ensures the syntax-only fresh gate is safely filtered by the is_str type gate.
+	{"unannotated-int-add-not-reclaimed",
+		`function main(): i32 { var a: i32 = 3; var b: i32 = 4; var n = a + b; return n; }`,
+		7, false},
 	// i32_to_string churn at scale: reclaimed per iteration (flat heap; a double
 	// free would corrupt the freelist and crash / return garbage). `ok` stays 0
 	// because every decimal string has len >= 1, so exit 0 proves the balance.
