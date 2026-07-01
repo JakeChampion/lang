@@ -606,8 +606,12 @@ pub function wasm_eligible(mod: parser.Module): boolean {
     // stripped), read_int parses a leading integer; args() reads argv (wasmtime
     // supplies it, argv[0] = program name); read_file / write_file open paths
     // under preopen fd 3 (run with `--dir`), returning Result[string, IoError] /
-    // Option[IoError]. read_chunk / reader_close (the streaming reader API) still
-    // have no wasm IR runtime, so a reader module stays on the wasm AST path.
+    // Option[IoError]. read_chunk / reader_close (the streaming reader API) now
+    // lower on the wasm IR path too: wasm_ir emits `call $__fern_reader_read_chunk`
+    // / `call $__fern_reader_close`, and wasm_ir_run pulls in the preview1 fd_read
+    // / fd_close imports + the reader helpers when the module uses them. A Reader is
+    // just its fd (stdin() = fd 0), so read_chunk reads stdin the same way read_line
+    // does; this backs the std/io read_all_stdin loop on wasm.
     // The clock builtins (monotonic_ns / now_unix_ms / now_ns) DO lower on the
     // wasm IR path now: wasm_ir emits `call $__fern_<clock>` for each op and
     // wasm_ir_run pulls in the preview1 wasi clock_time_get import + the
@@ -631,8 +635,6 @@ pub function wasm_eligible(mod: parser.Module): boolean {
     // calling one stays on the wasm AST path (where it is already deferred — see
     // wasm.fern: "sin/cos/exp/log/pow have no primitive and are deferred"). #2691.
     return asm_ir.eligible_core(mod)
-        && !module_emits_op(mod, "read_chunk")
-        && !module_emits_op(mod, "reader_close")
         // poll has no wasm IR runtime: real readiness on wasm needs the
         // component-model wasi:io/poll multiplexer (list<pollable>), which the
         // self-host wasm backend doesn't wire (it is bare core-wasm + WASI
@@ -913,6 +915,17 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind == "fcos") {
             // cos(x): same as fsin, calling $__fern_cos_f64.
             out = out + "    call $__fern_cos_f64\n";
+        } else if (o.kind == "read_chunk") {
+            // r.read_chunk(n) -> Option[string]. A Reader is just its fd (stdin =
+            // fd 0), so fd + n are on the stack; $__fern_reader_read_chunk reads up
+            // to n bytes via preview1 fd_read and boxes Some(chunk) / None at EOF.
+            // Emitted caller-side in wasm_ir_run. Mirrors asm_ir's read_chunk op.
+            out = out + "    call $__fern_reader_read_chunk\n";
+        } else if (o.kind == "reader_close") {
+            // r.close() -> Option[IoError] (always None). fd on the stack;
+            // $__fern_reader_close calls preview1 fd_close and boxes None. Emitted
+            // caller-side in wasm_ir_run. Mirrors asm_ir's reader_close op.
+            out = out + "    call $__fern_reader_close\n";
         } else if (o.kind == "map_iter") {
             // m.iter() -> a 12-byte iterator box [keys@0, vals@4, cursor@8].
             // $__fern_map_iter materializes the live keys/values (map snapshots)
