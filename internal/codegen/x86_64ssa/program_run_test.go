@@ -109,6 +109,36 @@ func TestProgramRunInteger(t *testing.T) {
 	}
 }
 
+// Whole-program closure dispatch: a lambda flows into a higher-order function
+// and is called indirectly, exercising the full chain — OpConstFunc/OpMakeClosure
+// lift to a {fn, env} cell, OpCallIndirect derefs it and dispatches through the
+// real-asm function-address table with env appended last. Scope here is the
+// non-escaping case (the closure is passed and called, never stored past its
+// use), so no RC drop helpers are emitted; stored/capturing closures need the
+// runtime-helper slice (__fern_closure_drop / __fern_rc_is_unique) and are a
+// follow-up. Runs the same result as the interpreter.
+func TestProgramRunClosure(t *testing.T) {
+	srcs := []string{
+		// Lambda passed to apply and called indirectly: apply(41, n => n+1) = 42.
+		`function apply(x: i32, f: (i32) => i32): i32 { return f(x); }
+		 function main(): i32 { return apply(41, (n: i32): i32 => n + 1); }`,
+		// Two different lambdas dispatched through the same higher-order function.
+		`function apply(x: i32, f: (i32) => i32): i32 { return f(x); }
+		 function main(): i32 {
+		   return apply(20, (n: i32): i32 => n + 1) + apply(10, (n: i32): i32 => n * 2);
+		 }`,
+		// A named top-level function used as a value (bare OpConstFunc, env=0).
+		`function inc(n: i32): i32 { return n + 1; }
+		 function apply(x: i32, f: (i32) => i32): i32 { return f(x); }
+		 function main(): i32 { return apply(41, inc); }`,
+	}
+	for _, n := range []int{1, 2, 8} {
+		for _, src := range srcs {
+			programMatchesInterp(t, src, n)
+		}
+	}
+}
+
 // Whole-program Option + match: the pair-return (Some/None), the box the match
 // reconstructs (i32 fields at 4-byte offsets — needs the 4-byte load/store), and
 // the match-join phi all combine. Runs the same result as the interpreter.
