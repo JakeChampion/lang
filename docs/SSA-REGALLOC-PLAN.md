@@ -182,10 +182,17 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
         like the stack machine's is a follow-up if programs outgrow 64 KiB).
         Validated natively: full-word round-trip, sub-word zero/sign-extension,
         a byte array, and a heap **shared across a call** (callee allocs, caller
-        reads the pointer back) — over spill-forcing counts. Next: **3c** — gate
-        the SSA path behind a flag and diff against the stack machine over the
-        e2e corpus (remaining real-asm gaps first: strings→rodata, floats via
-        SSE, closures).
+        reads the pointer back) — over spill-forcing counts.
+      - [x] 3b (strings) — `OpConstString` on the real-asm path.
+        `collectStrings` assigns each unique literal a `.rodata` label (emitted
+        as a `.byte` list); `ConstStr` lowers to `lea reg, [rip + str_N]`.
+        `OpConstStringLen` already rides `MovImm` (the length is a compile-time
+        constant), so no extra work. Validated natively: literal length + byte
+        reads, the empty string, two coexisting literals, and a string passed
+        across a call (pointer survives the ABI, bytes readable in the callee).
+        Next: **3c** — gate the SSA path behind a flag and diff against the
+        stack machine over the e2e corpus (remaining real-asm gaps first: floats
+        via SSE, closures).
       - [ ] 3c — wire behind a flag and diff against the existing stack-machine
         backend over the e2e corpus.
 - [~] Op-coverage broadening toward parity (each op validated against `Eval`
