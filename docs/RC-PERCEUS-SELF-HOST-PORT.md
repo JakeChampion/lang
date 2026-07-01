@@ -3379,3 +3379,28 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   identical FIXPOINT + BOOTSTRAP stay green (the compiler's own map reclaims now route
   through __fern_map_free and self-compile identically), RcPreciseDropX86IR +
   MapValuePtrIR + RcOptionBoxWasm unaffected.
+- 2026-07-01: **Reuse — cross-TYPE same-box-class struct reuse (general-reuse parity)**.
+  The same-block cross-construction reuse (a dead donor's box reused in place by a
+  later full construction) required the donor and recipient to be the SAME struct
+  type (`fresh_struct_lit_type(donor) == c_type`). Native's general reuse also does
+  CROSS-type same-box-class reuse (e.g. dead `Point{x,y}` → `Pair{a,b}`, both 16-byte
+  — TestGeneralReuseFiresCrossTypeSameClass). Ported via a new
+  `structs_reuse_compatible(structs, dt, rt)` gate: same type is always compatible;
+  cross-type is admitted ONLY under the bulletproof-safe subset — BOTH structs are
+  entirely SCALAR (no pointer fields → a pure scalar overwrite, no old-value release
+  and no offset-aligned dec) with the SAME field count and per-position IDENTICAL slot
+  widths. Identical widths in order ⇒ byte-identical box layout ⇒ identical freelist
+  size class, so the reused box is exactly the right size and the recipient's
+  struct_make overwrites it cleanly (the box's cap/rc header, sized at the donor's
+  alloc, stays valid). `emit_cross_struct_reuse` already writes every field with the
+  RECIPIENT's type/offsets (the donor box is only loaded as a raw pointer), so NO emit
+  change was needed — only the donor-eligibility gate widened. Array-/pointer-field
+  cross-type reuse (which would need an offset-matched release of the donor's old
+  pointers) stays same-type-only. VERIFIED: new TestSelfHostCrossTypeReuseIR{X86_64,
+  Wasm} (point→pair, mixed-width i64+i32, a reuse-then-alloc freelist corruption probe,
+  and a different-field-count case that must NOT reuse but stays correct) +
+  TestSelfHostCrossTypeReuseFiresX86_64, which asm-counts `call __fern_arr_box`:
+  the dead cross-type donor yields 1 struct-box alloc (box reused), the donor-read-after
+  variant yields 2 (no reuse) — direct proof the optimization lowers in place. Byte-
+  identical FIXPOINT + BOOTSTRAP stay green (the compiler's own cross-type reuses now
+  fire and self-compile deterministically); RcPreciseDropX86IR unaffected.
