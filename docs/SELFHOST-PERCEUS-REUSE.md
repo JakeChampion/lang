@@ -177,3 +177,79 @@ case, so the target behaviour is pinned to a known-good oracle.
   lands, the "leak-y clone" fallback for aliased `.with()` can potentially be
   upgraded to refcount-guarded in-place reuse — a nice follow-up, out of scope
   for the initial port.
+
+---
+
+## 6. Implementation notes (verified from source)
+
+Decoded from `internal/ir/ir.go` + `internal/codegen/x86_64/x86_64.go` +
+`examples/self_host/asm_ir.fern`, resolving the §5 open questions so Slice 0/1
+codegen is turn-key:
+
+### 6.1 Native `__fern_alloc_reuse(token, tokenSize, size)` (`emitAllocReuseRuntime`)
+
+Pure, no rc check of its own — the **caller** guarantees `token` is unique-or-null:
+
+1. `token == 0` → tail-call `__fern_alloc(size)` (fresh).
+2. else compare `class(tokenSize)` vs `class(size)`; **class match** → return
+   `token` (reuse the block in place).
+3. **mismatch** → `__fern_free(token)` (raw free by base), then fresh
+   `__fern_alloc(size)`.
+
+### 6.2 The call-site sequence (`emitReuseToken`) — the op recipe to mirror
+
+For a construction C paired with dead owned local D (base = `D_data − 8`):
+
+```
+uniq  = __fern_rc_is_unique(D)          # i32, into a fresh local
+if uniq { token = D_data − 8 }          # base pointer
+else    { __fern_rc_dec(D); token = 0 } # shared → D's alias keeps the box
+D_slot = 0                              # D consumed: zero its slot
+base   = __alloc_reuse(token, D_alloc, C_alloc)   # box base, where OpAlloc's would sit
+```
+
+Then `emitReuseOldFieldDrops` deep-drops D's OLD pointer fields **gated on
+`uniq`** (fresh box on the decline branch needs no drop), before C's stores
+overwrite them. The self-host emits the identical `ir.Op` sequence
+(`op_load_local` / `op_call_direct("__fern_rc_is_unique", 1)` / `op_if` /
+`op_store_local` / …) — `irlower` already uses exactly these ops.
+
+### 6.3 Self-host allocator specifics (differ from native — must adapt)
+
+- **Freelist class is 8-byte-granular**: `__fern_alloc` rounds `(bytes+7)&−8`,
+  then `class = bytes/8`, `< 65536`; `__fern_freelist` is 65536 × 8-byte
+  buckets, an intrusive singly-linked free list (next-pointer at the block's
+  first word). Native's class is `(bytes+15)&−16`. **The self-host
+  `__fern_alloc_reuse` must class by `bytes/8`** (two boxes reuse iff
+  `size1/8 == size2/8`, i.e. equal when both 8-aligned).
+- **No standalone `__fern_free`**: the freelist-push lives inside the rc-guarded
+  `__fn___fern_arr_dec` (push at rc==1). Slice 0 must factor a raw
+  `class`-indexed push (`freelist[size/8] = block; block[0] = old_head`) out of
+  that path — the mismatch branch frees a **known-unique** block, so it can push
+  directly without the rc guard.
+- **Box base / header**: struct boxes are `[rc@base, field0@base+8, …]` (rc is
+  the 32-bit word at `data−8`, matching `__fern_rc_is_unique`'s `movl -8(%rcx)`),
+  so `token = data − 8` and `alloc size = 8 + nfields*8`. (Array boxes differ —
+  `[cap, rc, len, e…]`, base = `data−16` — which is why the first slice targets
+  **structs only**; tuples/enums come later with their own base math.)
+
+### 6.4 The invasive point: `op_struct_make`
+
+The self-host lowers `T{…}` via a single `op_struct_make(type_name, ndecl)`
+(irlower ~L4351) that the backends expand to alloc + rc-init + field stores.
+Reuse must divert the ALLOC half only. Two options:
+
+- **(a) inline at the reuse site** in `irlower`: when the self-overwrite /
+  pairing fires, emit the §6.2 recipe + explicit `op_struct_set` field stores
+  instead of `op_struct_make`, so `op_struct_make` itself is untouched
+  (backend-agnostic; keeps the risky change in one file). **Recommended for
+  Slice 1.**
+- **(b) a reuse-aware `op_struct_make_reuse`** carrying a token operand — cleaner
+  long-term but touches every backend's struct-make handler. Defer.
+
+### 6.5 Gate
+
+Add `reuse_enabled` to `EmitState` (default **false**), mirroring native's
+`RcReuseEnabled`. All of Slices 0–4 land behind it; a final isolated PR flips the
+default once every slice's differential + both fixpoint suites are green — so any
+regression bisects to that one-line flip.
