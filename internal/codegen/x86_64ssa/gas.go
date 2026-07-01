@@ -3,6 +3,7 @@ package x86_64ssa
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ssa"
@@ -83,6 +84,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	}
 
 	heap := usesHeap(progs)
+	strLabels, strOrder := collectStrings(progs, names)
 
 	w(".intel_syntax noprefix")
 	w(".text")
@@ -107,8 +109,22 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	w("\tsyscall")
 	w("")
 	for _, name := range names {
-		if err := emitFuncBody(w, name, progs[name], numAlloc); err != nil {
+		if err := emitFuncBody(w, name, progs[name], numAlloc, strLabels); err != nil {
 			return "", err
+		}
+	}
+	if len(strOrder) > 0 {
+		w("")
+		w(".section .rodata")
+		for _, s := range strOrder {
+			w("%s:", strLabels[s])
+			if len(s) > 0 {
+				parts := make([]string, len(s))
+				for i := 0; i < len(s); i++ {
+					parts[i] = strconv.Itoa(int(s[i]))
+				}
+				w("\t.byte %s", strings.Join(parts, ", "))
+			}
 		}
 	}
 	if heap {
@@ -127,7 +143,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 // emitFuncBody writes one function's label, prologue, parameter moves, block
 // bodies, and epilogue. Block labels are namespaced by the function label so
 // several functions coexist in one program.
-func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int) error {
+func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int, strLabels map[string]string) error {
 	label := fnLabel(name)
 	// s3 — the last register in the file — is the free scratch the div/shift and
 	// call sequences stage operands through. It is above the allocatable range
@@ -172,6 +188,14 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int)
 				for _, l := range lines {
 					w("\t%s", l)
 				}
+				continue
+			}
+			if in.Op == ConstStr {
+				lbl, ok := strLabels[in.Str]
+				if !ok {
+					return fmt.Errorf("x86_64ssa: ConstStr %q has no .rodata label", in.Str)
+				}
+				w("\tlea %s, [rip + %s]", reg(in.Dst), lbl)
 				continue
 			}
 			line, err := asmInst(in, scratch)
@@ -516,6 +540,28 @@ func memRef(regName string, disp int64) string {
 		return fmt.Sprintf("[%s + %d]", regName, disp)
 	}
 	return fmt.Sprintf("[%s - %d]", regName, -disp)
+}
+
+// collectStrings assigns a .rodata label to each unique OpConstString literal
+// across the module (in a deterministic order: functions by sorted name, then
+// instruction order). Returns the literal→label map and the labels' emission
+// order.
+func collectStrings(progs map[string]*Program, names []string) (map[string]string, []string) {
+	labels := map[string]string{}
+	var order []string
+	for _, name := range names {
+		for _, blk := range progs[name].Blocks {
+			for _, in := range blk.Insts {
+				if in.Op == ConstStr {
+					if _, ok := labels[in.Str]; !ok {
+						labels[in.Str] = fmt.Sprintf("str_%d", len(order))
+						order = append(order, in.Str)
+					}
+				}
+			}
+		}
+	}
+	return labels, order
 }
 
 // usesHeap reports whether any emitted program contains a heap op (so the heap
