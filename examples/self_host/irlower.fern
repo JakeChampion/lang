@@ -14184,15 +14184,19 @@ function rcpayload_option_cand(v: parser.StmtVar, structs: parser.StructDecl[]):
             if (all_i32_number_elems(arrl.elements)) { return OptRcCand { variant: kind, ptype: "i32[]" }; }
             if (all_f64_number_elems(arrl.elements)) { return OptRcCand { variant: kind, ptype: "f64[]" }; }
         },
-        // FRESH scalar-only struct literal payload — sole owner (rc==1), and its box
-        // holds only inline scalars, so a shallow __fern_rc_dec is the whole free
-        // (no field to walk). The literal's own type_name names the struct. An
-        // array-FIELD-bearing struct payload is NOT admitted here (its field deep-drop
-        // over-releases through the option-payload path — a deferred follow-up).
+        // FRESH leak-safe struct literal payload — sole owner (rc==1). The box is
+        // freed by a shallow __fern_rc_dec (emit_opt_payload_drop). A scalar-only
+        // struct box holds only inline scalars (nothing to walk); a struct with
+        // leak-safe ARRAY fields is ALSO admitted with the SAME shallow free — its
+        // array fields are NOT owned by a counted ref from the payload struct (unlike
+        // the enum path, whose construction alias-incs the field), so they are
+        // reclaimed by the surrounding machinery and a __struct_drop_<T> deep-drop
+        // here would OVER-RELEASE them (double-free). The literal's own type_name
+        // names the struct.
         parser.ExprStructLit(slit) => {
             var sty: string = slit.type_name;
             if (!slit.has_base && decl_is_struct(structs, sty) && decl_is_leaksafe(structs, sty)
-                && struct_is_scalar_only(structs, sty)) {
+                && (struct_is_scalar_only(structs, sty) || nested_field_deep_drop_ok(structs, sty))) {
                 return OptRcCand { variant: kind, ptype: sty };
             }
         },

@@ -378,6 +378,20 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		{"option-struct-payload-unannotated-detector", `struct P { x: i32, y: i32 } function go(): i32 { var o = Some(P { x: 3, y: 4 }); var r = 0; match (o) { Some(p) => { r = p.x + p.y; }, None => { r = 0; }, } if (r != 7) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 		// Result Ok(P{..}) struct payload freed the same way (tag 0).
 		{"result-ok-struct-payload-detector", `struct P { x: i32, y: i32 } function go(): i32 { var r: Result[P, i32] = Ok(P { x: 5, y: 6 }); var v = 0; match (r) { Ok(p) => { v = p.x + p.y; }, Err(e) => { v = e; }, } if (v != 11) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// Array-FIELD struct payload: `Some(Buf{xs:[..], n})` is now admitted with the
+		// SAME shallow free as a scalar-only struct. The struct's array field is NOT
+		// owned by a counted ref from the option-payload struct (the surrounding
+		// machinery reclaims it), so a __struct_drop_<Buf> deep-drop here would
+		// OVER-RELEASE it — the shallow box free is correct. Reclaims the Buf box + the
+		// option box (both previously leaked). Value + detector 0.
+		{"option-struct-arrfield-payload-value", `struct Buf { xs: i32[], n: i32 } function go(): i32 { var o: Option[Buf] = Some(Buf { xs: [10, 20, 30], n: 3 }); var r = 0; match (o) { Some(b) => { r = b.xs[1] + b.n; }, None => { r = 0; } } return r; } function main(): i32 { return go(); }`, 23},
+		{"option-struct-arrfield-payload-detector", `struct Buf { xs: i32[], n: i32 } function go(): i32 { var o: Option[Buf] = Some(Buf { xs: [10, 20, 30], n: 3 }); var r = 0; match (o) { Some(b) => { r = b.xs[1] + b.n; }, None => { r = 0; } } if (r != 23) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// Wildcard arm (no binding / no field read) — still shallow-freed cleanly.
+		{"option-struct-arrfield-wildcard-detector", `struct Buf { xs: i32[], n: i32 } function go(): i32 { var o: Option[Buf] = Some(Buf { xs: [10, 20, 30], n: 3 }); var r = 0; match (o) { Some(_) => { r = 5; }, None => { r = 0; } } if (r != 5) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// Heap-reuse corruption probe: fresh arrays allocated AFTER the array-field
+		// struct payload's consuming match read back intact (the box frees were sound
+		// and did NOT free the still-machinery-owned array field early).
+		{"option-struct-arrfield-corruption-probe-detector", `struct Buf { xs: i32[], n: i32 } function go(): i32 { var o: Option[Buf] = Some(Buf { xs: [10, 20, 30], n: 3 }); var r = 0; match (o) { Some(b) => { r = b.xs[0] + b.xs[2]; }, None => { r = 0; } } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (r != 40) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 		// Heap-reuse corruption probe: a fresh array allocated AFTER the struct-payload
 		// deep-drop reads back intact (the payload box + option box frees were sound).
 		{"option-struct-payload-corruption-probe-detector", `struct P { x: i32, y: i32 } function go(): i32 { var o: Option[P] = Some(P { x: 3, y: 4 }); var r = 0; match (o) { Some(p) => { r = p.x + p.y; }, None => { r = 0; }, } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (r != 7) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},

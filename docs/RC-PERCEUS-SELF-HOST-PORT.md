@@ -3147,3 +3147,27 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   freed in TestSelfHostRcOptionBoxWasm; byte-identical FIXPOINT + BOOTSTRAP +
   TestSelfHostIRDiff all stay green. Frontend-only (precise_drop_names + the
   emission branch are backend-agnostic).
+- 2026-07-01: **Reclaim array-FIELD struct-payload Option/Result** (resolves the
+  #4210 deferred over-release). `Some(Buf{xs:[..], n})` / `Ok(Buf{..})` — an option
+  whose payload is a fresh struct literal with leak-safe ARRAY fields — is now
+  admitted to the consume-by-match free alongside the scalar-only-struct case, with
+  the SAME shallow box free. ROOT CAUSE of the earlier over-release: the deferred
+  attempt emitted __struct_drop_<Buf> to deep-drop the payload's array fields, but on
+  the OPTION-payload path the struct does NOT own a counted reference to those array
+  fields (unlike the enum path, whose construction alias-incs the field per
+  asm_ir.go:emit_ir_struct_drop_one's balance note) — the surrounding machinery
+  already reclaims them, so __struct_drop_ decremented xs a SECOND time and
+  underflowed (detector==1). Bisection confirmed: even a `Some(_)` wildcard arm
+  over-released, isolating the fault to the free itself (not any arm field-read /
+  binding). FIX: drop the __struct_drop_ deep-drop entirely — the shallow
+  __fern_rc_dec on the op_opt_payload struct box (reused verbatim from the scalar-
+  struct case) frees the payload box + the option box, each exactly once, while the
+  array fields ride their existing reclamation. rcpayload_option_cand now admits a
+  nested_field_deep_drop_ok struct payload; emit_opt_payload_drop is unchanged
+  (uniform shallow free). SOUNDNESS: the underflow-on-double-dec proves xs reaches 0
+  WITHOUT our dec (so it is machinery-owned, never leaked), and the corruption probe
+  (fresh arrays after the match read intact) rules out an early free / UAF. VERIFIED:
+  new option-struct-arrfield-payload-* (value, detector, wildcard arm, corruption
+  probe) in TestSelfHostRcPreciseDropX86IR; new wasm option-struct-arrfield-payload-
+  freed in TestSelfHostRcOptionBoxWasm; byte-identical FIXPOINT + BOOTSTRAP +
+  TestSelfHostIRDiff all stay green.
