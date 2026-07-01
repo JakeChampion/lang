@@ -977,17 +977,37 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_rc_is_unique": emitRcIsUniqueHelper,
 	"__fern_rc_inc":       emitRcIncHelper,
 	"__fern_rc_dec":       emitRcDecHelper,
+	"__fern_closure_drop": emitClosureDropHelper,
+	"__fern_box_free":     emitBoxFreeHelper,
 }
 
-// referencedRuntimeHelpers returns, sorted, the runtime-helper names any emitted
-// program calls and for which an emitter exists — the set to append to .text.
+// runtimeHelperDeps records the helper→helper call edges (a helper that tail-
+// calls another must have that callee emitted too — the module never references
+// it directly). Transitively closed by referencedRuntimeHelpers.
+var runtimeHelperDeps = map[string][]string{
+	"__fern_closure_drop": {"__fern_box_free", "__fern_rc_dec"},
+}
+
+// referencedRuntimeHelpers returns, sorted, the runtime-helper names to append to
+// .text: every helper any emitted program calls, plus the transitive closure of
+// their helper→helper dependencies (runtimeHelperDeps).
 func referencedRuntimeHelpers(progs map[string]*Program) []string {
 	seen := map[string]bool{}
+	var add func(name string)
+	add = func(name string) {
+		if seen[name] || runtimeHelperEmitters[name] == nil {
+			return
+		}
+		seen[name] = true
+		for _, dep := range runtimeHelperDeps[name] {
+			add(dep)
+		}
+	}
 	for _, p := range progs {
 		for _, blk := range p.Blocks {
 			for _, in := range blk.Insts {
-				if (in.Op == Call || in.Op == CallPair) && runtimeHelperEmitters[in.Callee] != nil {
-					seen[in.Callee] = true
+				if in.Op == Call || in.Op == CallPair {
+					add(in.Callee)
 				}
 			}
 		}
@@ -1066,6 +1086,42 @@ func emitRcDecHelper(w func(string, ...any)) {
 	w("\tsub eax, 1")
 	w("\tmov %s, eax", memRef("rdi", -8))
 	w(".Lssa_rcdec_ret:")
+	w("\tret")
+}
+
+// emitClosureDropHelper writes __fern_closure_drop(data): the scope-exit drop the
+// IR inserts for a closure-valued local. Guarded (null / low-address); reads the
+// rc word at [data-8]; if the closure is uniquely held (rc == 1) it tail-calls
+// __fern_box_free(data, payload_size) to release the cell, otherwise it
+// tail-calls __fern_rc_dec(data) to drop a shared reference. Mirrors the native
+// __fern_closure_drop. (Recursive drop of pointer-typed captures via a per-
+// closure __closure_drop_<name> thunk is a later slice — scalar captures need
+// only the cell release here.)
+func emitClosureDropHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_closure_drop"))
+	w("\tcmp rdi, 0x10000")
+	w("\tjb .Lssa_cd_ret")
+	w("\tmov eax, %s", memRef("rdi", -8)) // rc
+	w("\tcmp eax, 1")
+	w("\tjne .Lssa_cd_dec")               // rc != 1 (shared or static sentinel) → dec
+	w("\tmov esi, %s", memRef("rdi", -4)) // payload size → arg2
+	w("\tjmp %s", fnLabel("__fern_box_free"))
+	w(".Lssa_cd_dec:")
+	w("\tjmp %s", fnLabel("__fern_rc_dec"))
+	w(".Lssa_cd_ret:")
+	w("\tret")
+}
+
+// emitBoxFreeHelper writes __fern_box_free(data, size) -> data: release an
+// rc-headed heap block. On the SSA bump heap there is no reclamation yet
+// (docs/SSA-RC-RUNTIME.md: leak until a later reuse slice), so this is a no-op
+// that returns the data pointer — memory-safe and correct for short-lived
+// programs. A real freelist return is the follow-up that makes the size arg live.
+func emitBoxFreeHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_box_free"))
+	w("\tmov rax, rdi") // return data unchanged; free is a no-op for now
 	w("\tret")
 }
 
