@@ -762,8 +762,18 @@ pub function op_tuple_get(idx: i32): Op {
 // struct_set's (i+1)*8). Used only by the tuple constructor-reuse path
 // (emit_cross_tuple_reuse) to write a new tuple's elements into a reused dead
 // donor box in place. Tuples are otherwise immutable, so this is the sole writer.
+// Width 0 is the i32 / pointer (string / struct / array / Option / …) case:
+// wasm i32.store; the register backends use a uniform 8-byte movq / str slot for
+// EVERY element kind (element values ride the operand stack as 8 bytes), so they
+// ignore width — only wasm distinguishes it.
 pub function op_tuple_set(idx: i32): Op {
     return Op { kind: "tuple_set", i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+// 8-byte tuple element writes (the write mirror of op_tuple_get_w): width 64
+// selects an 8-byte wasm store; `unsigned` picks i64.store (set) vs f64.store
+// (clear). The register backends store 8 bytes for every element and ignore it.
+pub function op_tuple_set_w(idx: i32, width: i32, is_i64: boolean): Op {
+    return Op { kind: "tuple_set", i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
 }
 // 8-byte tuple element reads: width 64 selects an 8-byte load; `unsigned` picks
 // i64.load (set) vs f64.load (clear). Offsets are a uniform 8-byte stride.

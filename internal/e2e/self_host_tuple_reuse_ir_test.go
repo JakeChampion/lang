@@ -10,12 +10,15 @@ import (
 
 // tupleReuseIRCases exercise Perceus-style FBIP constructor reuse for tuples on
 // the self-hosted stack-IR path (irlower `cross_tuple_reuse_sites` /
-// `emit_cross_tuple_reuse`). When a fresh, same-arity, all-i32 tuple literal is
-// built into a local while an earlier tuple local is dead at that point, the new
-// tuple REUSES the dead donor's heap box in place (writing each element via
-// `op_tuple_set`) instead of allocating a fresh box — the donor slot is zeroed
-// and its box handed over, so no `call __fern_arr_box` is emitted for the
-// reused construction.
+// `emit_cross_tuple_reuse`). When a fresh, same-arity tuple literal is built into
+// a local while an earlier tuple local is dead at that point, the new tuple
+// REUSES the dead donor's heap box in place (writing each element via
+// `op_tuple_set` / `_w` at its width) instead of allocating a fresh box — the
+// donor slot is zeroed and its box handed over, so no `call __fern_arr_box` is
+// emitted for the reused tuple construction. Element coverage matches the tuple
+// CONSTRUCTOR (i32 / i64 / f64 scalars plus leak-mode pointer elements: string,
+// struct, array, …), each stored at its width (uniform 8-byte movq on the
+// register backends; i64.store / f64.store / i32.store on wasm).
 //
 // Two contracts are pinned per case:
 //   - exit code pins VALUE correctness: the reused box must be OVERWRITTEN with
@@ -58,6 +61,31 @@ var tupleReuseIRCases = []struct {
 	{"arity-mismatch-no-reuse",
 		`function main(): i32 { var a: (i32, i32) = (5, 7); var s: i32 = a.0 + a.1; var b: (i32, i32, i32) = (1, 2, 3); return s + b.0 + b.1 + b.2; }`,
 		18, 2},
+	// i64 elements: the donor box is overwritten with 8-byte i64 stores (i64.store
+	// on wasm; movq on the register backends). Reuse fires ⇒ ONE tuple box. Value:
+	// (5+7) + (30+20) = 62. A truncated store (i32.store) would corrupt the read.
+	{"reuse-i64",
+		`function main(): i32 { var a: (i64, i64) = (5, 7); var s: i64 = a.0 + a.1; var b: (i64, i64) = (30, 20); return (s + b.0 + b.1) as i32; }`,
+		62, 1},
+	// f64 elements: overwritten with 8-byte f64 stores. Reuse fires ⇒ ONE tuple
+	// box. Value: (1.5+2.5) + (10.0+3.0) = 17.0 → 17.
+	{"reuse-f64",
+		`function main(): i32 { var a: (f64, f64) = (1.5, 2.5); var s: f64 = a.0 + a.1; var b: (f64, f64) = (10.0, 3.0); return (s + b.0 + b.1) as i32; }`,
+		17, 1},
+	// String (pointer) element: the donor box's pointer slot is overwritten with
+	// b's string pointer. String literals are interned (no arr_box), so the only
+	// allocation is the ONE reused tuple box. Value: a.1(5) → s=5; b=("yo",9),
+	// 5 + 9 + len("yo")=2 = 16.
+	{"reuse-string",
+		`function main(): i32 { var a: (string, i32) = ("hi", 5); var s: i32 = a.1; var b: (string, i32) = ("yo", 9); return s + b.1 + b.0.len(); }`,
+		16, 1},
+	// Struct (pointer) element: the two struct literals each allocate their own box
+	// (2), and the tuple box is REUSED (1, not 2) — so THREE boxes total, proving
+	// the tuple-box reuse fires while the struct elements construct normally. Value:
+	// a.1(5) → s=5; b.0=P{10,20}, b.1=9; 5 + 10 + 20 + 9 = 44.
+	{"reuse-struct-elem",
+		`struct P { x: i32, y: i32 } function main(): i32 { var a: (P, i32) = (P { x: 1, y: 2 }, 5); var s: i32 = a.1; var b: (P, i32) = (P { x: 10, y: 20 }, 9); return s + b.0.x + b.0.y + b.1; }`,
+		44, 3},
 	// Loop body: reuse is a function-body-level rewrite, so it does not fire
 	// inside a loop body — each iteration allocates both tuples (TWO static box
 	// call sites). This pins that the loop path is unaffected and stays correct:

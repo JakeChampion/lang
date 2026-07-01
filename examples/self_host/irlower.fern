@@ -4804,53 +4804,13 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // elements still bail.
             var tei: i32 = 0;
             while (tei < tn) {
-                // An if-/match-EXPRESSION element (`(if (c) { 7 } else { 1 }, 3)`)
-                // is a 0-arg IIFE; classify it by its leaf branch value (a no-op for
-                // a non-IIFE element), so a scalar/string/struct/array/Option leaf is
-                // admitted. The original element still lowers via lower_expr below
-                // (lower_iife produces the branch value). #3168.
-                var el: parser.Expr = iife_leaf_value(tup.elements[tei]);
-                var el_arr_ok: boolean = expr_is_arr_src(el, s)
-                    && !expr_is_strarr(el, s) && !expr_is_f64arr(el, s) && !expr_is_i64arr(el, s);
-                // A typed-array element (string[]/f64[]) is a heap POINTER stored
-                // in one slot, like an i32[] element — admit it. Its element-typed
-                // tuple tag (elem_type_tag) lets `t.N[i]` read at the right
-                // type/width: a string[] element reads a string, an f64[] element
-                // an 8-byte f64, an i64[] element an 8-byte i64. The read-side
-                // recognition is in expr_is_strarr / arr_index_is_f64 /
-                // expr_is_i64arr's tuple-element cases. #3353.
-                var el_typedarr_ok: boolean = expr_is_strarr(el, s) || expr_is_f64arr(el, s) || expr_is_i64arr(el, s);
-                // An Option element (`(Some(7), 3)`) is a leak-only box stored in
-                // one pointer slot, like a string / struct element — admit it (its
-                // "Option[T]" tag lets `match (t.N)` recover the payload). #3018.
-                var el_opt_ok: boolean = expr_opt_elem_tag(el, s) != "";
-                // A NESTED tuple element (`(1, (2, 3))`) is itself a heap-tuple
-                // POINTER — one slot, like a struct/string/array/Option element —
-                // so admit it. Its `(t0,t1,…)` tag (elem_type_tag) round-trips
-                // through the depth-aware comma encoding for `t.N.M` typing.
-                var el_tuple_ok: boolean = expr_is_tuple(el, s);
-                // A Result element (`(1, Ok(5))`) is likewise a leak-only box —
-                // one pointer slot, like an Option element. Its full
-                // `Result[T, E]` tag (E is not knowable from a bare `Ok(x)`) comes
-                // from the binding's tuple TYPE annotation at marking time; the
-                // checker rejects an un-annotated Result, so the annotation is
-                // always present where it matters. The depth-aware comma encoding
-                // protects the inner `,` so `match (t.N)` recovers both payloads.
-                var el_result_ok: boolean = expr_is_result(el, s);
-                // A Map element (`(Map { … }, x)` / `(m, x)`) is a leak-only heap
-                // box stored in one pointer slot, like a struct / Option / array
-                // element — admit it. Its `Map[K, V]` tag (elem_type_tag) lets a
-                // later `t.N.get_or(…)` dispatch as a map op. #3317.
-                var el_map_ok: boolean = expr_map_type_tag(el, s) != "";
-                // A nominal-enum element (`(Green, 5)` / `(A(3), n)`) is a leak-only
-                // box in one pointer slot, like a struct / Option element — admit
-                // it. Its enum-name tag (elem_type_tag) lets `match (t.N)` /
-                // `t.N.method()` dispatch. The IR exit sweep never frees an enum
-                // box, so the box stored into the (leak-mode) tuple can't double-
-                // free. expr_enum_type recognises a variant construction / unit
-                // variant / enum-typed local.
-                var el_enum_ok: boolean = expr_enum_type(el, s) != "";
-                if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "" && !el_arr_ok && !el_typedarr_ok && !el_opt_ok && !el_tuple_ok && !el_result_ok && !el_map_ok && !el_enum_ok) { return s.fail(); }
+                // Each element must be a single leak-mode slot (scalar / string /
+                // struct / array-pointer / Option / nested-tuple / Result / Map /
+                // enum); tuple_elem_ctor_eligible is the shared admission (also
+                // gating tuple cross-reuse), classifying an if-/match-EXPRESSION
+                // element by its IIFE leaf branch value. A heap element outside the
+                // set bails to the AST path.
+                if (!tuple_elem_ctor_eligible(iife_leaf_value(tup.elements[tei]), s)) { return s.fail(); }
                 tei = tei + 1;
             }
             // Build the per-element KIND string (i32 / i64 / f64 / string / <struct>)
@@ -14362,9 +14322,12 @@ function emit_cross_struct_reuse(c_name: string, init: parser.Expr, donor_name: 
 // sweep), so d's OLD element values need NO release before the overwrite — they
 // would leak whether reused or not, so no NEW leak and no UAF. The box is
 // rc-headered (op_tuple_make → __fern_arr_box), so zeroing d's slot leaves the
-// single exit dec (via c) to free it once. FIRST CUT: i32-scalar elements only
-// (tuple_lit_all_i32, checked at the dispatch), so op_tuple_set is a plain
-// word/i32 store; wider (i64/f64) and heap elements are a follow-up.
+// single exit dec (via c) to free it once. Element coverage matches the tuple
+// CONSTRUCTOR (tuple_lit_ctor_eligible / op_tuple_make_k): i32 / i64 / f64
+// scalars plus leak-mode pointer elements (string / struct / array / Option /
+// nested tuple / Result / Map / enum), each written at its width via
+// op_tuple_set / _w (i64.store / f64.store / i32.store on wasm; a uniform 8-byte
+// movq / str on the register backends).
 
 struct CrossTupleReuseSites { idxs: i32[], donors: string[] }
 
@@ -14430,7 +14393,7 @@ function cross_tuple_construction_donor(body: parser.Stmt[], k: i32, arity: i32,
 
 // cross_tuple_reuse_sites pairs each `var c = (…)` tuple construction with an
 // earlier dead same-arity donor tuple. STRUCTURAL only (arity + donor liveness);
-// the i32-scalar element eligibility (tuple_lit_all_i32) is checked at the
+// the constructor-element eligibility (tuple_lit_ctor_eligible) is checked at the
 // dispatch, where the lowering state is available, and falls back to normal
 // lowering if not met. Each donor is consumed at most once.
 function cross_tuple_reuse_sites(body: parser.Stmt[]): CrossTupleReuseSites {
@@ -14458,23 +14421,50 @@ function cross_tuple_reuse_sites(body: parser.Stmt[]): CrossTupleReuseSites {
     return CrossTupleReuseSites { idxs: idxs, donors: donors };
 }
 
-// tuple_lit_all_i32 reports whether every element of tuple literal `tup` is an
-// i32-class scalar under the current lowering state — the first-cut restriction
-// that keeps op_tuple_set a plain word/i32 store.
-function tuple_lit_all_i32(tup: parser.ExprTuple, s: LowerState): boolean {
+// tuple_elem_ctor_eligible reports whether a tuple element (already IIFE-leaf-
+// resolved) is admissible in a tuple constructor / reuse: a scalar (i32 / i64 /
+// f64 / u32 / u64 / bool), string, struct, i32[] / typed-array pointer, Option,
+// nested tuple, Result, Map, or nominal-enum — each a single leak-mode 8-byte
+// slot. Shared by the op_tuple_make_k construction path and the tuple cross-reuse
+// eligibility so the admitted element set never drifts between the two.
+function tuple_elem_ctor_eligible(el: parser.Expr, s: LowerState): boolean {
+    // i32[] (but not string[]/f64[]/i64[], which are the typed-array case below).
+    var el_arr_ok: boolean = expr_is_arr_src(el, s)
+        && !expr_is_strarr(el, s) && !expr_is_f64arr(el, s) && !expr_is_i64arr(el, s);
+    // string[]/f64[]/i64[]: a heap POINTER in one slot; its element-typed tag lets
+    // `t.N[i]` read at the right type/width.
+    var el_typedarr_ok: boolean = expr_is_strarr(el, s) || expr_is_f64arr(el, s) || expr_is_i64arr(el, s);
+    var el_opt_ok: boolean = expr_opt_elem_tag(el, s) != "";       // Option (leak-only box, one slot)
+    var el_tuple_ok: boolean = expr_is_tuple(el, s);               // nested tuple (heap-tuple pointer)
+    var el_result_ok: boolean = expr_is_result(el, s);            // Result (leak-only box)
+    var el_map_ok: boolean = expr_map_type_tag(el, s) != "";       // Map (leak-only heap box)
+    var el_enum_ok: boolean = expr_enum_type(el, s) != "";        // nominal enum (leak-only box)
+    if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "" && !el_arr_ok && !el_typedarr_ok && !el_opt_ok && !el_tuple_ok && !el_result_ok && !el_map_ok && !el_enum_ok) { return false; }
+    return true;
+}
+
+// tuple_lit_ctor_eligible reports whether every element of tuple literal `tup` is
+// admissible for reuse — the SAME set op_tuple_make_k accepts for a fresh
+// construction, so a recipient that would build as a normal tuple box can instead
+// overwrite a same-arity dead donor's box (uniform 8-byte slots, leak-mode ⇒ no
+// old-element release, regardless of the donor's original element types).
+function tuple_lit_ctor_eligible(tup: parser.ExprTuple, s: LowerState): boolean {
     if (tup.elements.len() == 0) { return false; }
     var i: i32 = 0;
     while (i < tup.elements.len()) {
-        if (elem_type_tag(iife_leaf_value(tup.elements[i]), s) != "i32") { return false; }
+        if (!tuple_elem_ctor_eligible(iife_leaf_value(tup.elements[i]), s)) { return false; }
         i = i + 1;
     }
     return true;
 }
 
 // emit_cross_tuple_reuse lowers `var c = (…)` as an IN-PLACE reuse of dead donor
-// d's tuple box: overwrite each element slot (op_tuple_set, offset i*8) with c's
-// value, bind c to d's box, tag c's slot (mark_tuple_elems), and zero d's slot so
-// the exit sweep frees the box once (via c) and decs a null for d.
+// d's tuple box: overwrite each element slot (op_tuple_set / _w, offset i*8) with
+// c's value at its element WIDTH (i64 lowers via lower_i64 + tuple_set_w(64,i64);
+// f64 via lower_expr + tuple_set_w(64,f64); i32 / pointer via lower_expr +
+// tuple_set — mirroring op_tuple_make_k), bind c to d's box, tag c's slot
+// (mark_tuple_elems), and zero d's slot so the exit sweep frees the box once (via
+// c) and decs a null for d.
 function emit_cross_tuple_reuse(c_name: string, init: parser.Expr, donor_name: string, s: LowerState): LowerState {
     var dslot: i32 = s.slot_of(donor_name);
     if (dslot < 0) { return s.fail(); }
@@ -14485,12 +14475,16 @@ function emit_cross_tuple_reuse(c_name: string, init: parser.Expr, donor_name: s
             var enc: string = "";
             var i: i32 = 0;
             while (i < n) {
+                var tek: string = elem_type_tag(iife_leaf_value(tup.elements[i]), st);
                 if (i > 0) { enc = enc + ","; }
-                enc = enc + elem_type_tag(iife_leaf_value(tup.elements[i]), st);
+                enc = enc + tek;
                 st = st.emit(ir.op_load_local(dslot));
-                st = lower_expr(tup.elements[i], st);
+                if (tek == "i64") { st = lower_i64(tup.elements[i], st); }
+                else { st = lower_expr(tup.elements[i], st); }
                 if (!st.ok) { return st; }
-                st = st.emit(ir.op_tuple_set(i));
+                if (tek == "i64") { st = st.emit(ir.op_tuple_set_w(i, 64, true)); }
+                else if (tek == "f64") { st = st.emit(ir.op_tuple_set_w(i, 64, false)); }
+                else { st = st.emit(ir.op_tuple_set(i)); }
                 i = i + 1;
             }
             var cb: LowerState = st.add_local(c_name);
@@ -15663,9 +15657,9 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     var xreuse: CrossReuseSites = cross_reuse_sites(fn.body, structs);
     // Tuple cross-reuse (FBIP): `var c = (…)` reusing an earlier dead same-arity
     // donor tuple's box (see cross_tuple_reuse_sites). Structural pairing; the
-    // i32-scalar element eligibility (tuple_lit_all_i32) is checked at the dispatch
-    // below, falling back to normal lowering if not met. Disjoint from the struct /
-    // enum reuse sites (a tuple init is never a struct-lit / enum-ctor).
+    // constructor-element eligibility (tuple_lit_ctor_eligible) is checked at the
+    // dispatch below, falling back to normal lowering if not met. Disjoint from the
+    // struct / enum reuse sites (a tuple init is never a struct-lit / enum-ctor).
     var xtuple: CrossTupleReuseSites = cross_tuple_reuse_sites(fn.body);
     // Consumed scalar-payload enum frees: a function-local `var x = V(scalar...)`
     // consumed by exactly one `match (x)` where x is single-owner and dead after
@@ -15754,14 +15748,15 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                 _ => { s = lower_stmt(fn.body[j], s); },
             }
         } else if (xtuple_i >= 0) {
-            // Tuple cross-reuse — only when every element is an i32 scalar
-            // (first-cut restriction); otherwise fall back to a normal fresh
+            // Tuple cross-reuse — only when every element is admissible for a
+            // tuple constructor (tuple_lit_ctor_eligible, the same set
+            // op_tuple_make_k accepts); otherwise fall back to a normal fresh
             // construction, leaving the donor's ordinary drop untouched.
             match (fn.body[j]) {
                 parser.StmtVar(rv) => {
                     match (rv.init) {
                         parser.ExprTuple(tup) => {
-                            if (tuple_lit_all_i32(tup, s)) { s = emit_cross_tuple_reuse(rv.name, rv.init, xtuple.donors[xtuple_i], s); }
+                            if (tuple_lit_ctor_eligible(tup, s)) { s = emit_cross_tuple_reuse(rv.name, rv.init, xtuple.donors[xtuple_i], s); }
                             else { s = lower_stmt(fn.body[j], s); }
                         },
                         _ => { s = lower_stmt(fn.body[j], s); },
