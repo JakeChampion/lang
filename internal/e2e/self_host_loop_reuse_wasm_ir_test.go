@@ -52,6 +52,11 @@ func TestSelfHostLoopReuseWasmIR(t *testing.T) {
 		// Same-block reuse fires in an if-arm body too (irlower lowers every nested
 		// block with reuse). `b` reuses dead `a`'s box inside the `if`. (10+20)+(3+4)=37.
 		{"if-arm-reuse", `struct P { x: i32, y: i32 } function main(): i32 { var cond: i32 = 1; var r: i32 = 0; if (cond > 0) { var a: P = P { x: 10, y: 20 }; var s: i32 = a.x + a.y; var b: P = P { x: 3, y: 4 }; r = s + b.x + b.y; } return r; }`, 37},
+		// CROSS-BLOCK reuse: loop-body donor `a` reused by if-nested recipient `b`. 31.
+		{"cross-block-reuse", `struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: P = P { x: i, y: i + 1 }; var s: i32 = a.x + a.y; if (i > 0) { var b: P = P { x: i, y: 3 }; sum = sum + b.x + b.y; } sum = sum + s; i = i + 1; } return sum; }`, 31},
+		// Cross-block with recipients in BOTH arms and a single donor — one arm reuses
+		// it, the other allocates; value stays correct across the loop. 66.
+		{"cross-block-both-arms", `struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: P = P { x: i, y: 1 }; if (i % 2 == 0) { var b: P = P { x: i, y: 10 }; sum = sum + b.x + b.y; } else { var c: P = P { x: i, y: 20 }; sum = sum + c.x + c.y; } i = i + 1; } return sum; }`, 66},
 		// Higher iteration count: the prior-release must free each loop-carried box
 		// (a double-free would trap). 2000 iters, value kept small (sum mod 100 = 0).
 		{"loop-struct-churn", `struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 2000) { var a: P = P { x: i, y: i + 1 }; var s: i32 = a.x + a.y; var b: P = P { x: i, y: 3 }; sum = (sum + b.x + b.y) % 100; i = i + 1; } return sum; }`, 0},
