@@ -184,6 +184,15 @@ function main(): i32 {
 }`,
 			want: 15,
 		},
+		{
+			// An 8-byte-stride array (i64) — exercises __arr_idx_8. a[1] = 200.
+			name: "i64_array_index",
+			src: `function main(): i32 {
+  var a: i64[] = [100, 200, 300];
+  return (a[1]) as i32;
+}`,
+			want: 200,
+		},
 	}
 
 	for _, c := range cases {
@@ -219,9 +228,8 @@ function main(): i32 {
 
 // TestArm64SSACoverageGapErrors confirms a program needing a runtime helper the
 // arm64-ssa path doesn't emit yet (here std/i32's to_string, which pulls in the
-// stride-8 index helper __arr_idx_8 — the arm64-ssa path currently emits only the
-// stride-4 __arr_idx) fails with a clean compile/link error rather than a
-// miscompile — the experimental-backend contract that lets the epic widen
+// libm-style float helper __abs_f64) fails with a clean compile/link error rather
+// than a miscompile — the experimental-backend contract that lets the epic widen
 // coverage incrementally.
 func TestArm64SSACoverageGapErrors(t *testing.T) {
 	if runtime.GOOS == "windows" {
