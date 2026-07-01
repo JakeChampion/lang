@@ -94,6 +94,13 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		}
 	}
 	strLabels, strOrder := collectStrings(progs, names)
+	// fn_idx for closures: a function's index in the module's (sorted) emission
+	// order — the value a closure cell carries, and the index into the function-
+	// address table (fnTableSym) that OpCallIndirect dereferences.
+	fnIndex := make(map[string]int, len(names))
+	for i, n := range names {
+		fnIndex[n] = i
+	}
 
 	w(".text")
 	w(".globl _start")
@@ -122,7 +129,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	w("\tsvc #0")
 	w("")
 	for _, name := range names {
-		if err := emitFunc(w, name, progs[name], numAlloc, strLabels); err != nil {
+		if err := emitFunc(w, name, progs[name], numAlloc, strLabels, fnIndex); err != nil {
 			return "", err
 		}
 		w("")
@@ -152,6 +159,18 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 				}
 				w("\t.byte %s", strings.Join(parts, ", "))
 			}
+		}
+	}
+	if usesCallIndirect(progs) {
+		// Function-address dispatch table: one .quad per function in module
+		// (sorted) order, so table[fn_idx] is the callee's absolute address. A
+		// closure cell carries fn_idx; OpCallIndirect indexes this table. The
+		// assembler resolves each `.quad fn_<name>` to the label's address.
+		w(".section .rodata")
+		w(".align 8")
+		w("%s:", fnTableSym)
+		for _, name := range names {
+			w("\t.quad %s", fnLabel(name))
 		}
 	}
 	if heap {
@@ -184,7 +203,7 @@ func usesHeap(progs map[string]*x86.Program) bool {
 		for _, blk := range p.Blocks {
 			for _, in := range blk.Insts {
 				switch in.Op {
-				case x86.MemAlloc, x86.MemLoad, x86.MemStore:
+				case x86.MemAlloc, x86.MemLoad, x86.MemStore, x86.MakeEnv, x86.MakeClosure:
 					return true
 				}
 			}
@@ -533,7 +552,7 @@ func emitArrIdxHelper(w func(string, ...any)) {
 // The stack pointer stays fixed for the whole body — call-crossing registers are
 // preserved in the reserved call-save area rather than by moving sp — so every
 // slot access is a stable sp-relative offset.
-func emitFunc(w func(string, ...any), name string, p *x86.Program, numAlloc int, strLabels map[string]string) error {
+func emitFunc(w func(string, ...any), name string, p *x86.Program, numAlloc int, strLabels map[string]string, fnIndex map[string]int) error {
 	label := fnLabel(name)
 	call := funcHasCall(p)
 
@@ -580,6 +599,26 @@ func emitFunc(w func(string, ...any), name string, p *x86.Program, numAlloc int,
 		for _, in := range blk.Insts {
 			if in.Op == x86.Call || in.Op == x86.CallPair {
 				lines, err := callLines(in, numAlloc, scratch, callSaveBase)
+				if err != nil {
+					return err
+				}
+				for _, l := range lines {
+					w("\t%s", l)
+				}
+				continue
+			}
+			if in.Op == x86.CallIndirect {
+				lines, err := callIndirectLines(in, numAlloc, callSaveBase)
+				if err != nil {
+					return err
+				}
+				for _, l := range lines {
+					w("\t%s", l)
+				}
+				continue
+			}
+			if in.Op == x86.MakeEnv || in.Op == x86.MakeClosure {
+				lines, err := closureLines(in, numAlloc, fnIndex)
 				if err != nil {
 					return err
 				}
@@ -640,8 +679,23 @@ func emitFunc(w func(string, ...any), name string, p *x86.Program, numAlloc int,
 func funcHasCall(p *x86.Program) bool {
 	for _, blk := range p.Blocks {
 		for _, in := range blk.Insts {
-			if in.Op == x86.Call || in.Op == x86.CallPair {
+			if in.Op == x86.Call || in.Op == x86.CallPair || in.Op == x86.CallIndirect {
 				return true
+			}
+		}
+	}
+	return false
+}
+
+// usesCallIndirect reports whether any program dispatches a closure (so the
+// function-address table is emitted only when needed).
+func usesCallIndirect(progs map[string]*x86.Program) bool {
+	for _, p := range progs {
+		for _, blk := range p.Blocks {
+			for _, in := range blk.Insts {
+				if in.Op == x86.CallIndirect {
+					return true
+				}
 			}
 		}
 	}
@@ -716,6 +770,152 @@ func callSavedSet(in x86.Inst, numAlloc int) []int {
 		saved = append(saved, r)
 	}
 	return saved
+}
+
+// fnTableSym labels the module's function-address dispatch table: one .quad per
+// function in the module's (sorted) emission order — indexed by the same fn_idx a
+// closure cell carries. OpCallIndirect resolves its callee by loading
+// table[fn_idx].
+const fnTableSym = "__ssa_fn_table"
+
+// captureEnvLayout returns each capture's byte offset and slot size in the env
+// block, plus the total env size, from in.CaptureSlots (the packed layout the
+// CaptureRef loads expect). A nil/short CaptureSlots falls back to one 8-byte
+// slot per capture.
+func captureEnvLayout(in x86.Inst) (offs, sizes []int64, total int64) {
+	n := len(in.ArgLocs)
+	offs = make([]int64, n)
+	sizes = make([]int64, n)
+	for i := 0; i < n; i++ {
+		sz := int64(8)
+		if len(in.CaptureSlots) == n {
+			sz = int64(in.CaptureSlots[i])
+		}
+		offs[i] = total
+		sizes[i] = sz
+		total += sz
+	}
+	return offs, sizes, total
+}
+
+// closureLines renders OpMakeEnv / OpMakeClosure on the .bss bump heap. MakeEnv
+// allocates a packed env block and stores each capture; MakeClosure additionally
+// wraps it in a 16-byte {fn_idx, env_ptr} cell. Both blocks carry the rc header
+// (rc=1 at base+0, data at base+8) so they drop through the RC helpers. Bump
+// allocation forms the cursor address in a register (unlike x86's RIP-relative
+// mem-immediate), so each alloc draws two temporaries from the scratch pool
+// avoiding the destination and (for the cell) the env register that must survive.
+func closureLines(in x86.Inst, numAlloc int, fnIndex map[string]int) ([]string, error) {
+	stage := numAlloc + 3 // s3 — capture value staging
+	envReg := numAlloc    // s0 — env block held across the cell alloc
+	var out []string
+	alloc := func(dst int, bytes int64, avoid int) {
+		var t []int
+		for _, r := range []int{numAlloc + 3, numAlloc + 2, numAlloc + 1, numAlloc} {
+			if r == dst || r == avoid {
+				continue
+			}
+			t = append(t, r)
+			if len(t) == 2 {
+				break
+			}
+		}
+		d, addr, tmp, wtmp := xreg(dst), xreg(t[0]), xreg(t[1]), wreg(t[1])
+		out = append(out,
+			fmt.Sprintf("adrp %s, %s", addr, heapPtrSym),
+			fmt.Sprintf("add %s, %s, #:lo12:%s", addr, addr, heapPtrSym),
+			fmt.Sprintf("ldr %s, [%s]", d, addr), // cursor
+			fmt.Sprintf("add %s, %s, #7", d, d),
+			fmt.Sprintf("and %s, %s, #-8", d, d), // base (8-aligned)
+			fmt.Sprintf("mov %s, #1", wtmp),
+			fmt.Sprintf("str %s, [%s]", wtmp, d), // rc = 1
+			fmt.Sprintf("add %s, %s, #%d", tmp, d, bytes+8),
+			fmt.Sprintf("str %s, [%s]", tmp, addr), // cursor = base + bytes + 8
+			fmt.Sprintf("add %s, %s, #8", d, d),    // data = base + 8
+		)
+	}
+	offs, sizes, envBytes := captureEnvLayout(in)
+	storeCaps := func(base int) {
+		for i, l := range in.ArgLocs {
+			if l.IsReg {
+				out = append(out, fmt.Sprintf("mov %s, %s", xreg(stage), xreg(l.Reg)))
+			} else {
+				out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(stage), 8*l.Slot))
+			}
+			if sizes[i] == 4 {
+				out = append(out, fmt.Sprintf("str %s, [%s, #%d]", wreg(stage), xreg(base), offs[i]))
+			} else {
+				out = append(out, fmt.Sprintf("str %s, [%s, #%d]", xreg(stage), xreg(base), offs[i]))
+			}
+		}
+	}
+	if in.Op == x86.MakeEnv {
+		alloc(in.Dst, envBytes, -1)
+		storeCaps(in.Dst)
+		return out, nil
+	}
+	idx, ok := fnIndex[in.Callee]
+	if !ok {
+		return nil, fmt.Errorf("arm64ssa: MakeClosure target %q not in module", in.Callee)
+	}
+	alloc(envReg, envBytes, -1) // env block -> s0
+	storeCaps(envReg)
+	alloc(in.Dst, 16, envReg) // {fn_idx, env_ptr} cell -> Dst, preserving env in s0
+	out = append(out,
+		fmt.Sprintf("mov %s, #%d", xreg(stage), idx),
+		fmt.Sprintf("str %s, [%s, #0]", xreg(stage), xreg(in.Dst)),
+		fmt.Sprintf("str %s, [%s, #8]", xreg(envReg), xreg(in.Dst)),
+	)
+	return out, nil
+}
+
+// callIndirectLines renders a closure dispatch. in.IdxLoc points at a
+// {fn_idx, env_ptr} cell: fn_idx (at +0) indexes the function-address table
+// (fnTableSym), env_ptr (at +8) is appended as the callee's LAST argument
+// (docs/SSA-CLOSURE-DISPATCH.md). The scratch registers (s0..s3 = x12..x15) sit
+// above both the argument registers (x0..x7) and the allocatable homes
+// (x0..x11), so the resolved target (s1) and the env (s0) survive the argument
+// parallel-move untouched. Caller-saved live-across registers are preserved in
+// the call-save area exactly as callLines does.
+func callIndirectLines(in x86.Inst, numAlloc, callSaveBase int) ([]string, error) {
+	if len(in.ArgLocs)+1 > argRegCount {
+		return nil, fmt.Errorf("arm64ssa: indirect call supports up to %d args incl. env, got %d", argRegCount, len(in.ArgLocs)+1)
+	}
+	s0, s1, s2, s3 := numAlloc, numAlloc+1, numAlloc+2, numAlloc+3
+	var out []string
+	// Stage the cell pointer, then read env (+8) and fn_idx (+0) before any
+	// argument register is disturbed.
+	if in.IdxLoc.IsReg {
+		out = append(out, fmt.Sprintf("mov %s, %s", xreg(s2), xreg(in.IdxLoc.Reg)))
+	} else {
+		out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(s2), 8*in.IdxLoc.Slot))
+	}
+	out = append(out,
+		fmt.Sprintf("ldr %s, [%s, #8]", xreg(s0), xreg(s2)), // env  = cell[8]
+		fmt.Sprintf("ldr %s, [%s]", xreg(s3), xreg(s2)),     // fn_idx = cell[0]
+		// Resolve table[fn_idx] -> absolute code address into s1.
+		fmt.Sprintf("adrp %s, %s", xreg(s2), fnTableSym),
+		fmt.Sprintf("add %s, %s, #:lo12:%s", xreg(s2), xreg(s2), fnTableSym),
+		fmt.Sprintf("lsl %s, %s, #3", xreg(s3), xreg(s3)),
+		fmt.Sprintf("add %s, %s, %s", xreg(s2), xreg(s2), xreg(s3)),
+		fmt.Sprintf("ldr %s, [%s]", xreg(s1), xreg(s2)), // target -> s1
+	)
+	// Preserve the caller-saved registers live across the call.
+	saved := callSavedSet(in, numAlloc)
+	for k, r := range saved {
+		out = append(out, fmt.Sprintf("str %s, [sp, #%d]", xreg(r), 8*(callSaveBase+k)))
+	}
+	// Move the explicit args plus the env (as the final argument) into x0..x{n}.
+	argsWithEnv := append(append([]x86.Loc{}, in.ArgLocs...), x86.Loc{IsReg: true, Reg: s0})
+	out = append(out, argMoveLines(argsWithEnv)...)
+	out = append(out, fmt.Sprintf("blr %s", xreg(s1)))
+	out = append(out, fmt.Sprintf("mov %s, x0", xreg(s3))) // capture result
+	for k := len(saved) - 1; k >= 0; k-- {
+		out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(saved[k]), 8*(callSaveBase+k)))
+	}
+	out = append(out, fmt.Sprintf("mov %s, %s", xreg(in.Dst), xreg(s3))) // place result
+	out = append(out, maskFix(in.Dst, in.W)...)
+	return out, nil
 }
 
 // argMoveLines moves call arguments from their allocated homes into the AArch64
