@@ -325,6 +325,23 @@ pub function (s: EmitState) mark_arr_reverse(): EmitState {
     return s.need("heap").need("arr_reverse");
 }
 
+// mark_str_from_bytes gates the Fern __fern_string_from_bytes runtime function
+// (#2649) on its own str_from_bytes need. The AST call sites previously only
+// marked heap (the hand-asm body rode the always-emitted heap block); the Fern
+// body is now emitted in the migrated-helpers section like the string builders.
+pub function (s: EmitState) mark_str_from_bytes(): EmitState {
+    return s.need("heap").need("str_from_bytes");
+}
+
+// rt_src_string_from_bytes backs `string_from_bytes(arr)` (#2649) — pack each
+// array element's low byte into a fresh string, via the raw-memory intrinsic
+// floor. The parameter is typed i32[] (all self-host arrays use 8-byte element
+// slots, so a u8[] argument round-trips identically): a[i] reads the slot,
+// __raw_store8 keeps its low byte. Heap is its sole dep. Empty array → "".
+pub function rt_src_string_from_bytes(): string {
+    return "function __fern_string_from_bytes(a: i32[]): string { var n: i32 = a.len(); var p: i32 = __raw_alloc(n); var i: i32 = 0; while (i < n) { __raw_store8(p, i, a[i]); i = i + 1; } return __raw_string(p, n); }";
+}
+
 pub function (s: EmitState) mark_arr_concat(): EmitState {
     return s.need("heap").need("arr_concat");
 }

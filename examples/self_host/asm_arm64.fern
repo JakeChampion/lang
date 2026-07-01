@@ -781,11 +781,10 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
     // string_from_bytes(arr) — pack each element's low byte
     // into a fresh string.
     if (name == "string_from_bytes" && c.args.len() == 1) {
-        s = emit_expr(c.args[0], s);
-        s = s.write("    ldr x0, [sp], #16\n");
-        s = s.write("    bl __fern_string_from_bytes\n");
+        s = emit_expr(c.args[0], s);   // arr (stays on the stack = param[0])
+        s = s.write("    bl __fn___fern_string_from_bytes\n    add sp, sp, #16\n");
         s = s.write("    str x0, [sp, #-16]!\n");
-        s = s.mark_heap();
+        s = s.mark_str_from_bytes();
         return CallOut { state: s, done: true };
     }
     // map_new(n) — fresh empty Map. The capacity hint is
@@ -7203,40 +7202,10 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ret\n");
         s = s.write(".size __fern_alloc_u8, .-__fern_alloc_u8\n");
 
-        // __fern_string_from_bytes(x0 = arr ptr) → string box: pack
-        // the low byte of each element slot into a len-byte buffer.
-        s = s.write(".globl __fern_string_from_bytes\n");
-        s = s.write(".type __fern_string_from_bytes, %function\n");
-        s = s.write("__fern_string_from_bytes:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    stp x21, x22, [sp, #-16]!\n");
-        s = s.write("    mov x19, x0\n");           // arr
-        s = s.write("    ldr x20, [x19]\n");         // len
-        s = s.write("    mov x0, x20\n");
-        s = s.write("    bl __fern_alloc\n");        // len-byte buffer
-        s = s.write("    mov x21, x0\n");            // data buf
-        s = s.write("    mov x22, #0\n");            // i
-        s = s.write(".Lsfb_loop:\n");
-        s = s.write("    cmp x22, x20\n");
-        s = s.write("    b.ge .Lsfb_done\n");
-        s = s.write("    add x9, x22, #1\n");
-        s = s.write("    ldr x10, [x19, x9, lsl #3]\n");  // slot (i+1)*8
-        s = s.write("    strb w10, [x21, x22]\n");        // low byte
-        s = s.write("    add x22, x22, #1\n");
-        s = s.write("    b .Lsfb_loop\n");
-        s = s.write(".Lsfb_done:\n");
-        s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    str x21, [x0]\n");          // data@0
-        s = s.write("    str x20, [x0, #8]\n");      // len@8
-        s = s.write("    ldp x21, x22, [sp], #16\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
-        s = s.write(".size __fern_string_from_bytes, .-__fern_string_from_bytes\n");
-
+        // __fern_string_from_bytes is now a Fern runtime function (#2649): see
+        // asmcore.rt_src_string_from_bytes, emitted (need-gated on str_from_bytes)
+        // in the migrated-helpers section via the raw-memory intrinsics. The single
+        // shared body serves both arm64 AST + IR. No longer in this heap block.
         // __fern_random_bytes(x0 = n) → string box of n random bytes
         // via getrandom (aarch64 syscall 278).
         s = s.write(".globl __fern_random_bytes\n");
@@ -8163,6 +8132,11 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     // intrinsics; single shared body for arm64 AST + IR. heap-only dep.
     if (s.has_need("str_replace")) {
         s = emit_runtime_fern_fn(asmcore.rt_src_str_replace(), s);
+    }
+    // __fern_string_from_bytes — Fern runtime function (#2649) via the raw-memory
+    // intrinsics; single shared body for arm64 AST + IR. heap-only dep.
+    if (s.has_need("str_from_bytes")) {
+        s = emit_runtime_fern_fn(asmcore.rt_src_string_from_bytes(), s);
     }
     // __fern_str_bytes is now a Fern runtime function (#2649): see
     // asmcore.rt_src_str_bytes, emitted (need-gated) in the migrated-helpers
