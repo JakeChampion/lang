@@ -654,7 +654,16 @@ func maskFix(dst int, w int8) string {
 func asmInst(in Inst, scratch int) (string, error) {
 	switch in.Op {
 	case MovImm:
-		return fmt.Sprintf("mov %s, %d", reg(in.Dst), in.Imm) + maskFix(in.Dst, in.W), nil
+		// `mov r64, imm32` (REX.W C7 /0) sign-extends an i32-range immediate into
+		// the full register, which already matches the model's i32 sign-extension —
+		// so the movsxd fixup is redundant for the common in-range constant. Only a
+		// wider immediate (materialised without sign-extending its low 32 bits)
+		// still needs it.
+		line := fmt.Sprintf("mov %s, %d", reg(in.Dst), in.Imm)
+		if in.Imm < -(1<<31) || in.Imm >= (1<<31) {
+			line += maskFix(in.Dst, in.W)
+		}
+		return line, nil
 	case MovReg:
 		return fmt.Sprintf("mov %s, %s", reg(in.Dst), reg(in.Src)), nil
 	case UnNeg:
