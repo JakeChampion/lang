@@ -226,6 +226,28 @@ func TestProgramRunStringEq(t *testing.T) {
 	}
 }
 
+// Whole-program string concat: `a + b` on strings lowers to __str_concat (a
+// fresh rc-headed heap string), and the string-valued local's scope-exit drop
+// lowers to __fern_str_dec (skips .rodata literals via their immortal sentinel).
+// Runs the same result as the interpreter.
+func TestProgramRunStringConcat(t *testing.T) {
+	srcs := []string{
+		// Concatenated length: ("ab" + "cde").len() = 5.
+		`function main(): i32 { var a: string = "ab"; var b: string = "cde"; var c: string = a + b; return c.len(); }`,
+		// Empty + non-empty: ("" + "wxyz").len() = 4.
+		`function main(): i32 { var c: string = "" + "wxyz"; return c.len(); }`,
+		// Concatenation content is correct, checked via ==: "foo"+"bar" == "foobar".
+		`function main(): i32 { var c: string = "foo" + "bar"; if (c == "foobar") { return 6; } return 0; }`,
+		// Chained concat: (("a"+"b")+"c").len() = 3.
+		`function main(): i32 { var c: string = ("a" + "b") + "c"; return c.len(); }`,
+	}
+	for _, n := range []int{1, 2, 8} {
+		for _, src := range srcs {
+			programMatchesInterp(t, src, n)
+		}
+	}
+}
+
 // Whole-program arrays: an array literal is built with its cap/rc/len header,
 // indexed, and dropped at scope exit via __fern_arr_dec (reads the array's rc at
 // [data-8]). Runs the same result as the interpreter.
