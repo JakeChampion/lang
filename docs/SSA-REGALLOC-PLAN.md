@@ -141,7 +141,20 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
         div+rem incl. a negative dividend (`cqo`+`idiv`), `sar` vs `shr` via a
         negative operand, and operands/counts kept live across the op so the
         push/pop preservation is exercised — all over spill-forcing counts.
-        Still to do: i32 width in real asm.
+      - [x] 3b (i32 width) — an i32-width result (`W != 64`) is sign-extended
+        back into the full register (`movsxd dst, dst32`) after each computing
+        op, mirroring the model's `maskW` (`int32(v)`). This matters when a
+        later op reads the high 32 bits — unsigned shift/div or unsigned compare
+        — where a bare 64-bit computation would diverge from `Eval`. `maskFix`
+        is appended to `MovImm`/`UnNeg`/arithmetic-`BinOp`/shift/div; the
+        `movsx`/`movzx` unary ops already set width explicitly. Validated
+        natively by a case pinned to fail without the fix (`mul(0x10000,0x10000)`
+        at i32 width → 0, then `>>u 32`; the unmasked 64-bit product keeps bit 32
+        and yields 1) plus negated-then-unsigned-shifted cases, over
+        spill-forcing counts. **Slice 3b is complete** — the real-asm path now
+        covers the full integer op set with parameters. Next: **3c** — gate the
+        SSA path behind a flag and diff against the stack machine over the e2e
+        corpus.
       - [ ] 3c — wire behind a flag and diff against the existing stack-machine
         backend over the e2e corpus.
 - [~] Op-coverage broadening toward parity (each op validated against `Eval`
