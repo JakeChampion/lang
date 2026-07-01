@@ -85,10 +85,14 @@ func EmitAsmArgs(f *ssa.Func, numAlloc int, entryArgs []int64) (string, error) {
 		w("\t%s", line)
 	}
 
+	// s3 — the last register in the file — is the free scratch the div/shift
+	// sequences stage operands through. It is above the allocatable range and
+	// above rax/rcx/rdx, so it never aliases the fixed registers those ops pin.
+	scratch := p.NumRegFile - 1
 	for bi, blk := range p.Blocks {
 		w(".Lb%d:", bi)
 		for _, in := range blk.Insts {
-			line, err := asmInst(in)
+			line, err := asmInst(in, scratch)
 			if err != nil {
 				return "", err
 			}
@@ -213,7 +217,7 @@ func align16(n int) int {
 	return (n + 15) &^ 15
 }
 
-func asmInst(in Inst) (string, error) {
+func asmInst(in Inst, scratch int) (string, error) {
 	switch in.Op {
 	case MovImm:
 		return fmt.Sprintf("mov %s, %d", reg(in.Dst), in.Imm), nil
@@ -242,9 +246,15 @@ func asmInst(in Inst) (string, error) {
 	case StoreSlot:
 		return fmt.Sprintf("mov %s, %s", slotMem(int(in.Imm)), reg(in.Src)), nil
 	case BinOp:
+		switch in.K {
+		case ssa.OpShl, ssa.OpShr, ssa.OpShrU:
+			return shiftSeq(in), nil
+		case ssa.OpDiv, ssa.OpDivU, ssa.OpRem, ssa.OpRemU:
+			return divSeq(in, scratch), nil
+		}
 		op, ok := binMnemonic(in.K)
 		if !ok {
-			return "", fmt.Errorf("x86_64ssa: op %v not supported in the real-asm slice (shifts/div need fixed registers)", in.K)
+			return "", fmt.Errorf("x86_64ssa: binary op %v unsupported in the real-asm slice", in.K)
 		}
 		return fmt.Sprintf("%s %s, %s", op, reg(in.Dst), reg(in.Src)), nil
 	case SetCmp:
@@ -258,6 +268,71 @@ func asmInst(in Inst) (string, error) {
 	default:
 		return "", fmt.Errorf("x86_64ssa: unknown opcode %d", in.Op)
 	}
+}
+
+// rcxReg/raxReg/rdxReg are the fixed registers the shift/div sequences pin.
+const (
+	rcxReg = 2 // gpRegs index of rcx
+	raxReg = 0 // gpRegs index of rax
+	rdxReg = 3 // gpRegs index of rdx
+)
+
+// shiftSeq renders a variable shift (count in cl). dst holds the value, src the
+// count. rcx is preserved with push/pop so a live value there survives; the
+// count is copied into rcx and the shift reads cl. dst is a scratch reg (never
+// rcx), so `<op> dst, cl` is safe.
+func shiftSeq(in Inst) string {
+	var mnem string
+	switch in.K {
+	case ssa.OpShl:
+		mnem = "shl"
+	case ssa.OpShr:
+		mnem = "sar" // arithmetic (signed) right shift
+	case ssa.OpShrU:
+		mnem = "shr" // logical (unsigned) right shift
+	}
+	return strings.Join([]string{
+		"push rcx",
+		fmt.Sprintf("mov %s, %s", reg(rcxReg), reg(in.Src)),
+		fmt.Sprintf("%s %s, cl", mnem, reg(in.Dst)),
+		"pop rcx",
+	}, "\n\t")
+}
+
+// divSeq renders a division. dst holds the dividend, src the divisor; the result
+// (quotient for div, remainder for rem) lands back in dst. idiv/div pin rdx:rax,
+// so rax and rdx are preserved with push/pop, the divisor is staged into the
+// free scratch register (never rax/rdx), the dividend goes into rax, and the
+// dividend is extended into rdx (cqo signed / xor rdx zero unsigned).
+//
+// dst may itself be rdx (when numAlloc==1, s2==rdx), so the result is captured
+// into the scratch register BEFORE the pops restore rax/rdx, then written into
+// dst afterwards — otherwise `pop rdx` would clobber a result placed in rdx.
+func divSeq(in Inst, scratch int) string {
+	signed := in.K == ssa.OpDiv || in.K == ssa.OpRem
+	rem := in.K == ssa.OpRem || in.K == ssa.OpRemU
+	lines := []string{
+		"push rax",
+		"push rdx",
+		fmt.Sprintf("mov %s, %s", reg(scratch), reg(in.Src)), // stash divisor
+		fmt.Sprintf("mov %s, %s", reg(raxReg), reg(in.Dst)),  // dividend -> rax
+	}
+	if signed {
+		lines = append(lines, "cqo", fmt.Sprintf("idiv %s", reg(scratch)))
+	} else {
+		lines = append(lines, "xor rdx, rdx", fmt.Sprintf("div %s", reg(scratch)))
+	}
+	resultReg := raxReg // quotient
+	if rem {
+		resultReg = rdxReg // remainder
+	}
+	lines = append(lines,
+		fmt.Sprintf("mov %s, %s", reg(scratch), reg(resultReg)), // capture result before pops
+		"pop rdx",
+		"pop rax",
+		fmt.Sprintf("mov %s, %s", reg(in.Dst), reg(scratch)), // place result into dst
+	)
+	return strings.Join(lines, "\n\t")
 }
 
 func binMnemonic(k ssa.OpKind) (string, bool) {
