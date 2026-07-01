@@ -54,6 +54,17 @@ var strAccumIRCases = []struct {
 	{"accum-int-not-reclaimed",
 		`function main(): i32 { var n: i32 = 0; var i: i32 = 0; while (i < 5) { n = n + i; i = i + 1; } return n; }`,
 		10, false},
+	// MOVE-ON-RETURN: a returned string builder. The intermediates are freed by the
+	// consume-rebind inside build(), and the FINAL is moved out (kept from the exit
+	// sweep — freeing it would dangle the box handed to the caller). build(5) → len 5.
+	{"accum-return-builder",
+		`function build(n: i32): string { var s: string = ""; var i: i32 = 0; while (i < n) { s = s + "x"; i = i + 1; } return s; } function main(): i32 { return build(5).len(); }`,
+		5, true},
+	// Move-on-return with a loop-invariant operand + a BRANCHY return (early at
+	// len > 8 or the final return) — both return sites move s out. len 9.
+	{"accum-return-branchy",
+		`function build(n: i32): string { var s: string = "start"; var i: i32 = 0; while (i < n) { s = s + "z"; if (s.len() > 8) { return s; } i = i + 1; } return s; } function main(): i32 { return build(100).len(); }`,
+		9, true},
 	// NEGATIVE: a NON-FRESH reassignment (`s = "reset"`, a literal alias) must exclude
 	// the accumulator — freeing a later s could double-free the literal-shared box. No
 	// __fern_str_free emitted; value stays correct. Reaches len 5 ("hello") kept.
