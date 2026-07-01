@@ -129,17 +129,17 @@ func TestEmitForcesSpills(t *testing.T) {
 	}
 }
 
-// Unsupported ops return a clear error, not a silent wrong answer.
+// Unsupported ops return a clear error, not a silent wrong answer. OpInvalid
+// (the zero-value op kind) is the permanent sentinel — it can never be a real
+// emittable op, so this guards the emitOp default arm regardless of how much op
+// coverage grows.
 func TestEmitRejectsUnsupported(t *testing.T) {
-	// OpSelect is not yet modelled by the emitter (later slice).
-	g := ssa.NewFunc("sel")
-	c := g.AddParam()
+	g := ssa.NewFunc("bad")
 	x := g.AddParam()
-	y := g.AddParam()
 	ge := g.NewBlock()
-	q := g.AddOp(ge, ssa.OpSelect, c, x, y)
+	q := g.AddOp(ge, ssa.OpInvalid, x)
 	g.SetRet(ge, q)
 	if _, err := Emit(g, 4); err == nil {
-		t.Error("expected an error for an unsupported op (OpSelect)")
+		t.Error("expected an error for an unsupported op (OpInvalid)")
 	}
 }

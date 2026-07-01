@@ -52,6 +52,7 @@ const (
 	CallIndirect               // reg[Dst] = table[readLoc(IdxLoc)](ArgLocs...)   (fn-index dispatch)
 	MakeEnv                    // reg[Dst] = env block of the ArgLocs captures (8B slots)
 	MakeClosure                // reg[Dst] = {fn_idx(Callee), env_ptr} cell over the ArgLocs captures
+	Select                     // reg[Dst] = reg[Src] != 0 ? reg[Src2] : reg[Src3]
 )
 
 // Inst is one straight-line abstract instruction. Registers are indices into a
@@ -61,7 +62,8 @@ type Inst struct {
 	Dst  int
 	Dst2 int // second destination register (CallPair: the payload result)
 	Src  int
-	Src2 int // second source register (MemStore: the value)
+	Src2 int // second source register (MemStore: the value; Select: the then value)
+	Src3 int // third source register (Select: the else value)
 	Imm  int64
 	K    ssa.OpKind // BinOp / SetCmp operation
 	W    int8       // result width for MovImm/BinOp/UnNeg/Call (0/32 => i32, 64 => i64)
@@ -493,13 +495,39 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		return nil
 
 	case ssa.OpFNeg, ssa.OpFPromote, ssa.OpFDemote,
-		ssa.OpIToFS, ssa.OpIToFU, ssa.OpFToIS, ssa.OpFToIU:
+		ssa.OpIToFS, ssa.OpIToFU, ssa.OpFToIS, ssa.OpFToIU,
+		ssa.OpReinterpretF32ToI32, ssa.OpReinterpretI32ToF32,
+		ssa.OpReinterpretF64ToI64, ssa.OpReinterpretI64ToF64:
 		ra, err := e.materialize(op.Args[0], e.s0)
 		if err != nil {
 			return err
 		}
 		e.push(Inst{Op: MovReg, Dst: e.s2, Src: ra})
 		e.push(Inst{Op: FConv, Dst: e.s2, K: op.Kind, W: op.Width})
+		e.place(op.Result, e.s2)
+		return nil
+
+	case ssa.OpSelect:
+		// Ternary select. cond → s0, then → s1, else → s3 (s3 is free during op
+		// emission — it only stages slot↔slot moves at edge boundaries), result
+		// accumulated in s2. The three scratch regs are distinct, so spilled
+		// operands can't clobber one another.
+		if len(op.Args) != 3 {
+			return fmt.Errorf("x86_64ssa: OpSelect expects 3 args, got %d", len(op.Args))
+		}
+		rc, err := e.materialize(op.Args[0], e.s0)
+		if err != nil {
+			return err
+		}
+		rt, err := e.materialize(op.Args[1], e.s1)
+		if err != nil {
+			return err
+		}
+		re, err := e.materialize(op.Args[2], e.s3)
+		if err != nil {
+			return err
+		}
+		e.push(Inst{Op: Select, Dst: e.s2, Src: rc, Src2: rt, Src3: re, W: op.Width})
 		e.place(op.Result, e.s2)
 		return nil
 

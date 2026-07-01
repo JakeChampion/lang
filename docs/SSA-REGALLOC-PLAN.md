@@ -196,6 +196,16 @@ Each phase is an independently reviewable, tested PR. Earlier phases are inert
     index while a closure is a pointer, so uniform dispatch likely wants a
     dedicated `OpCallClosure` rather than overloading `OpCallIndirect`; that
     resolves with the RC/Perceus + wiring work.
+  - [x] `OpSelect` (ternary select) + the four `OpReinterpret*` bit-casts
+    (`F32ToI32`/`I32ToF32`/`F64ToI64`/`I64ToF64`) in `Eval` + the model +
+    emitter. Select is a `Select` inst (cond → then/else, three distinct scratch
+    regs so spilled operands can't clobber). The reinterprets ride the existing
+    `FConv` path: since floats live in the int64 slots AS their f64 bit pattern,
+    the 64-bit reinterprets are the identity on the stored bits and the 32-bit
+    ones round-trip through the f32 pattern. Validated `RunModule == Eval` incl.
+    round-trips and a spill-forcing select. **This closes the per-function
+    scalar op set** — `TestEmitRejectsUnsupported` now pins `OpInvalid` (the
+    permanent zero-value sentinel) since every real op is handled.
   - [ ] RC inc/dec (Perceus ordering)
 
   **Coverage measurement (data-driven prioritisation).** Lifting the example
