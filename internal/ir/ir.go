@@ -4697,6 +4697,31 @@ func (b *builder) computeFreeEligible() map[string]bool {
 									escape(a)
 								}
 							}
+						} else if !ast.UseTwoWordStrings(b.ptrW) {
+							// User-function call: a native single-word STRING local passed as an
+							// argument may be RETAINED by the callee (stored into a container it
+							// returns — a struct field / array element that flows back out), which
+							// the intraprocedural escape analysis cannot see. Freeing it caller-
+							// side at last use then dangles the retained copy (observed:
+							// push_scope(kind, le, …) in ir_x86.fern stores `le` into an array
+							// field of the returned struct, and the native caller-side str_dec
+							// recycled its box — corrupting nested control-flow codegen).
+							// Conservatively taint string-typed idents passed to a user function
+							// so they are not reclaimed here; the retained copy stays live (a leak
+							// at worst, never a use-after-free). Gated to native — the two-word
+							// ABIs' string reclaim is already correct and stays byte-identical.
+							// #4174 follow-up.
+							argStart := 0
+							if strings.HasPrefix(id.Name, "__method_") {
+								argStart = 1
+							}
+							for _, a := range s.Args[argStart:] {
+								if aid, ok := a.(*ast.Ident); ok {
+									if _, isStr := b.exprType(aid).(ast.StringType); isStr {
+										tainted[aid.Name] = true
+									}
+								}
+							}
 						}
 					}
 				}
