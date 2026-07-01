@@ -462,6 +462,22 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		{"result-arr-err-precise-if-detector", `function f(n: i32): i32 { var r: Result[i32, i32[]] = Err([3, 4, 5]); var c = 0; if (n > 0) { match (r) { Ok(v) => { c = v; }, Err(e) => { c = e[0] + e[2]; } } } return c + n; } function main(): i32 { var z = f(5); if (z != 13) { return 99; } return __rc_underflow(); }`, 0},
 		// rc-PAYLOAD Result precise-drop, scalar-STRUCT Ok payload.
 		{"result-struct-precise-if-detector", `struct P { x: i32, y: i32 } function f(n: i32): i32 { var r: Result[P, i32] = Ok(P { x: 3, y: 4 }); var c = 0; if (n > 0) { match (r) { Ok(p) => { c = p.x + p.y; }, Err(e) => { c = e; } } } return c + n; } function main(): i32 { var z = f(5); if (z != 12) { return 99; } return __rc_underflow(); }`, 0},
+		// SCALAR user-enum precise-drop in a nested block — the enum sibling of the
+		// scalar-option precise-if drop, enabled by the per-drop kind ("box-shallow"):
+		// the emission needs no struct_type for the slot, so an UN-annotated
+		// `var x = Circle(7)` (whose slot carries no struct_type) is freed too. No
+		// top-level match, so DISJOINT from consumed_scalar_enum_frees (and never a
+		// reuse donor). FIRING: f(5): x=Circle(7), c=r+r=14, return 14+5=19.
+		{"enum-scalar-precise-if-value", `enum Shape { Circle(i32), Square(i32) } function f(n: i32): i32 { var x = Circle(7); var c = 0; if (n > 0) { match (x) { Circle(r) => { c = r + r; }, Square(w) => { c = w; } } } return c + n; } function main(): i32 { return f(5); }`, 19},
+		{"enum-scalar-precise-if-detector", `enum Shape { Circle(i32), Square(i32) } function f(n: i32): i32 { var x = Circle(7); var c = 0; if (n > 0) { match (x) { Circle(r) => { c = r + r; }, Square(w) => { c = w; } } } return c + n; } function main(): i32 { var z = f(5); if (z != 19) { return 99; } return __rc_underflow(); }`, 0},
+		// Annotated variant (`var x: Shape = Square(6)`) — same free.
+		{"enum-annotated-precise-if-detector", `enum Shape { Circle(i32), Square(i32) } function f(n: i32): i32 { var x: Shape = Square(6); var c = 0; if (n > 0) { match (x) { Circle(r) => { c = r; }, Square(w) => { c = w * 2; } } } return c + n; } function main(): i32 { var z = f(5); if (z != 17) { return 99; } return __rc_underflow(); }`, 0},
+		// PRECISE drop + corruption probe: a fresh array after the enum's precise drop
+		// reads back intact (the early box free was sound).
+		{"enum-scalar-precise-corruption-probe-detector", `enum Shape { Circle(i32), Square(i32) } function go(): i32 { var x = Circle(7); var c = 0; var i = 0; while (i < 1) { match (x) { Circle(r) => { c = r; }, Square(w) => { c = w; } } i = i + 1; } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (c != 7) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// DISJOINTNESS guard: an enum WITH a top-level consuming match is owned by
+		// consumed_scalar_enum_frees, NOT the precise path — freed exactly once.
+		{"enum-toplevel-match-not-double-freed-detector", `enum Shape { Circle(i32), Square(i32) } function go(): i32 { var x = Circle(7); var t = 0; match (x) { Circle(r) => { t = r + r; }, Square(w) => { t = w * w; } } if (t != 14) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 		// Struct with an i32[] field: the box is rc-headered and freed soundly, and
 		// the array field is deep-dropped (emit_struct_field_drops) exactly once.
 		// Detector 0 proves neither the box nor the array field over-releases.
