@@ -51,6 +51,18 @@ var tupleReclaimIRCases = []struct {
 	{"scalar-tuple-churn-safe",
 		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5000000) { var a: (i32, i32) = (i, 1); sum = (sum + a.0 + a.1) % 1000; i = i + 1; } return sum; }`,
 		0, true},
+	// UN-ANNOTATED scalar tuple (`var a = (i, 1)`, inferred type): reclaimed too —
+	// the reclaimability check now accepts number / boolean / IDENT elements (a
+	// SHALLOW box free never touches them), not just all-literal tuples, so the
+	// annotation is no longer required. sum over i in 0..3 of (i + 1) = 10.
+	{"unannotated-scalar-tuple",
+		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a = (i, 1); sum = sum + a.0 + a.1; i = i + 1; } return sum; }`,
+		10, true},
+	// Un-annotated churn at scale: the inferred `(i, 1)` reclaims per iteration
+	// (flat heap), exit 0.
+	{"unannotated-scalar-tuple-churn-safe",
+		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5000000) { var a = (i, 1); sum = (sum + a.0 + a.1) % 1000; i = i + 1; } return sum; }`,
+		0, true},
 }
 
 // TestSelfHostTupleReclaimIRX86_64 compiles each case through the self-hosted
