@@ -306,6 +306,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"write":                  emitWriteHelper,
 	"eprint":                 emitEprintHelper,
 	"putchar":                emitPutcharHelper,
+	"exit":                   emitExitHelper,
 	"__abs_f64":              emitFloatUnaryHelper("__abs_f64", "fabs"),
 	"__sqrt_f64":             emitFloatUnaryHelper("__sqrt_f64", "fsqrt"),
 	"__floor_f64":            emitFloatUnaryHelper("__floor_f64", "frintm"),
@@ -1054,6 +1055,18 @@ func emitPutcharHelper(w func(string, ...any)) {
 	w("\tadd sp, sp, #16")
 	w("\tmov x0, xzr") // unused return
 	w("\tret")
+}
+
+// emitExitHelper writes exit(code): terminate the process immediately with the
+// given status via the exit_group syscall (x8 = 94; the code is already in x0).
+// It never returns, so there is no ret — but the IR still emits the post-call
+// stack discipline at the call site, which is harmless because control never
+// comes back. Leaf.
+func emitExitHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("exit"))
+	w("\tmov x8, #94") // exit_group; status already in x0
+	w("\tsvc #0")
 }
 
 // emitStrSliceHelper writes __str_slice(base, low, high) -> data: allocate a
