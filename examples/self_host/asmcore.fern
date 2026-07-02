@@ -1747,10 +1747,12 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     // poll(fds, timeout_ms) -> i32 (ready index, or -1).
                     if (id.name == "poll") { return ty_i32(); }
                     // timer_fd(ms) -> i32 fd; wasm_timer_pollable(ns) -> i32
-                    // (-1 native); wasm_pollable_drop(p) -> i32 (0 native).
+                    // (-1 native); wasm_pollable_drop(p) -> i32 (0 native);
+                    // wasm_block(p) -> i32 (0 native; on wasm blocks until ready).
                     if (id.name == "timer_fd") { return ty_i32(); }
                     if (id.name == "wasm_timer_pollable") { return ty_i32(); }
                     if (id.name == "wasm_pollable_drop") { return ty_i32(); }
+                    if (id.name == "wasm_block") { return ty_i32(); }
                     // tcp_recv(fd, max) -> string box; the rest -> i32 (fd /
                     // byte count / pollable token / -errno).
                     if (id.name == "tcp_recv") { return ty_string(); }

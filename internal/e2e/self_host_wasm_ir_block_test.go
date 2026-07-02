@@ -65,9 +65,9 @@ func TestSelfHostWasmIRBlock(t *testing.T) {
 	const src = `function main(): i32 {
     var d: i64 = 20000000i64;
     var p: i32 = wasm_timer_pollable(d);
-    wasm_block(p);
+    var r: i32 = wasm_block(p);
     wasm_pollable_drop(p);
-    return 0;
+    return r;
 }`
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
