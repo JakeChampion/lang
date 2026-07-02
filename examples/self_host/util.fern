@@ -38,6 +38,32 @@ pub function i32_to_string(n: i32): string {
     return out;
 }
 
+// hash_key maps a string to a content-addressed key string, used by the
+// per-module incremental-codegen cache (#3451 step 6 / #3458) to fingerprint
+// a module's compilation inputs (its own source, and the public signatures of
+// the modules it calls into). Two independent 30-bit polynomial rolls with
+// distinct seeds/multipliers are concatenated, so the effective key space is
+// ~60 bits — ample to make an accidental collision (which would silently reuse
+// stale codegen) vanishingly unlikely for the module-sized inputs it hashes.
+// Masking to 0x3FFFFFFF keeps each roll non-negative so i32_to_string renders
+// it without a sign, and makes the result independent of i32 overflow wrap.
+pub function hash_key(s: string): string {
+    var a: i32 = 208357;
+    var b: i32 = 5381;
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var c: i32 = s[i];
+        a = (a * 31 + c + 1) & 1073741823;
+        b = (b * 131 + c + 7) & 1073741823;
+        i = i + 1;
+    }
+    // Fold the length in too, so distinct-length inputs that happen to roll to
+    // the same accumulators still differ.
+    a = (a * 31 + s.len()) & 1073741823;
+    b = (b * 131 + s.len()) & 1073741823;
+    return i32_to_string(a) + "_" + i32_to_string(b);
+}
+
 // digits_to_i32 parses a leading optional `-` then a run of decimal
 // digits, stopping at the first non-digit. The canonical sign-aware
 // version — several self-host copies were sign-naive (SH-010).

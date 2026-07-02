@@ -38,7 +38,7 @@ pub function dirname(path: string): string {
 
 // base_name strips the directory and the import-relative `./` prefix from
 // an import path: "./lexer" → "lexer", "std/io" → "io".
-function base_name(path: string): string {
+pub function base_name(path: string): string {
     var start: i32 = 0;
     var i: i32 = 0;
     while (i < path.len()) {
