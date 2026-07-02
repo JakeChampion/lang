@@ -3471,3 +3471,29 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   lower_stmt's match handler; the bootstrap keeps the `!= ""` standalone workaround. Once the
   self-host reclaim lands and per-module emit fits, the mangled-lookup flip + a two-module
   user-program e2e test can go in unblocked.
+- 2026-07-02: **Perceus reuse — IN-PLACE enum self-reassign box reuse (native FBIP parity).**
+  The enum self-reassign reclaim (previous entry) closed the payload leak via FREE+ALLOC
+  (emit_enum_reclaim_store: deep-drop the old box, then store the freshly-allocated new box).
+  Native instead reuses the box IN PLACE — zero alloc/free churn per reassign. This ports that:
+  a loop-carried array-payload enum `var b = V0([..]); while (..) { b = V1([..]); b = V2([..]); }`
+  whose enum has UNIFORM variant layout (enum_all_variants_same_field_count — every variant the
+  same box size, so any variant fits b's existing box) now lowers each `b = V(args)` reassign as
+  emit_enum_inplace_reassign: (1) release b's OLD variant payload arrays via
+  emit_enum_variant_payload_drops (emit_enum_variant_drops MINUS the box free + slot zero — the
+  box is kept), (2) re-shape the box to V (op_struct_set_shape, mirroring emit_enum_donor_reuse),
+  (3) write V's fresh array-literal payloads into the SAME box (op_struct_set). The slot is
+  untouched, so the exit sweep still frees the box exactly once. Wired in StmtAssign BEFORE the
+  RHS is lowered (lowering `V([..])` would allocate a fresh box, defeating the reuse); a RAGGED
+  enum (differing variant box sizes) or any non-`V(args)` RHS falls through to the still-correct
+  free+alloc emit_enum_reclaim_store. SOUND: b's payload is never aliased
+  (enum_only_wildcard_used_rec) and payloads are FRESH array literals
+  (variant_ctor_array_payloads_fresh), so releasing the old arrays + owning the new ones is
+  balanced; the over-release detector confirms it. NET vs main: 2 fewer enum-box allocations AND
+  2 fewer box frees per reassign site (the box is recycled), a real churn reduction on the
+  register backends; on wasm (already flat) it stays correct. VERIFIED: 4 new x86 IR cases in
+  TestSelfHostRcPreciseDropX86IR (wildcard-churn value=2 + `__rc_underflow()==0` detector, a
+  fresh-array heap-reuse corruption probe=150 detector, and a payload-bound fallback that is
+  disqualified from the reclaim and keeps the box-only free) — the detector==0 is the soundness
+  gate for the in-place MUTATION (a mis-balanced old-payload release or corrupted reshape would
+  double-free) — plus the existing TestSelfHostEnumReassignReclaim{X86_64,Wasm} and byte-identical
+  BOOTSTRAP + Stage2 FIXPOINT.

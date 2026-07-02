@@ -198,7 +198,7 @@ function module_cache_key(parts: flatten.PerModule[], infmods: parser.Module[], 
     return key;
 }
 
-function run_per_module(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], pm_mode: string, pm_index: i32, pm_extra: string[], cache_dir: string): i32 {
+function run_per_module(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], pm_mode: string, pm_index: i32, pm_extra: string[], cache_dir: string, pm_lo: i32, pm_hi: i32): i32 {
     var parts: flatten.PerModule[] = flatten.bundle_per_module(entry, loaded);
     if (pm_mode == "count") {
         print(util.i32_to_string(parts.len()) + "\n");
@@ -229,6 +229,15 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     }
     // Extend the struct view with the built-in type layouts (see builtin_view).
     all_structs = builtin_view(dir, all_structs);
+    if (pm_mode == "func-counts") {
+        // Per-module function count (post lift_lambdas / infer — the exact count
+        // emit_module_funcs windows over), one per line. A build orchestrator
+        // uses this to size `-func-range` shards for an oversized module (#3425)
+        // without hardcoding a source-specific function count.
+        var fci: i32 = 0;
+        while (fci < infmods.len()) { print(util.i32_to_string(infmods[fci].funcs.len()) + "\n"); fci = fci + 1; }
+        return 0;
+    }
     // Per-module signature hashes (aligned with parts) — the cross-module
     // dependency fingerprints the manifest reports and the cache key folds in.
     // Computed ONLY when a caller needs them (the manifest, or a cached emit):
@@ -326,7 +335,18 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         eprint("\n");
         return 1;
     }
-    var unit: string = asm_ir.emit_module_ir_unit(infmods[pm_index], parts[pm_index].is_entry, true, parts[pm_index].ns, extra, all_funcs, all_structs);
+    // Function-sharding (#3425): emit only the [pm_lo, pm_hi) window of this
+    // module's functions. A full window (pm_lo=0, pm_hi<0) is byte-identical to
+    // the unsharded emit and keeps the base ns; a partial shard (pm_lo>0) gets a
+    // shard-distinct string namespace (base ns + "_s<pm_lo>") so each shard's
+    // `.rodata` string labels don't collide at link. The lo=0 shard keeps the
+    // base ns, so a full-range emit stays byte-identical (the byte-identity
+    // invariant), and disjoint windows have disjoint lo values → distinct ns.
+    // (Sharding uses -func-range, the cache uses -cache-dir; they are not
+    // combined — a full-range cached emit keeps shard_ns == base ns.)
+    var shard_ns: string = parts[pm_index].ns;
+    if (pm_lo > 0) { shard_ns = shard_ns + "_s" + util.i32_to_string(pm_lo); }
+    var unit: string = asm_ir.emit_module_ir_unit(infmods[pm_index], parts[pm_index].is_entry, true, shard_ns, extra, all_funcs, all_structs, pm_lo, pm_hi);
     // Emit to stdout first, then populate the cache. Both consume `unit`; doing
     // the file write last keeps the ordering unambiguous and avoids relying on
     // write_file's borrow/consume semantics for the unit box.
@@ -363,20 +383,36 @@ function main(): i32 {
     var pm_index: i32 = 0 - 1;
     var pm_extra: string[] = [];
     var cache_dir: string = "";
+    // Function-index window [pm_lo, pm_hi) for the emitted module (#3425). The
+    // default (pm_lo=0, pm_hi=-1) is the full range — inert / byte-identical.
+    // `-func-range LO:HI` shards one oversized module's emit across processes.
+    var pm_lo: i32 = 0;
+    var pm_hi: i32 = 0 - 1;
     var ai: i32 = 1;
     while (ai < a.len()) {
         if (a[ai] == "-ir-probe") { probe = true; }
         else if (a[ai] == "-per-module-count") { pm_mode = "count"; }
         else if (a[ai] == "-per-module-needs") { pm_mode = "needs"; }
+        else if (a[ai] == "-per-module-func-counts") { pm_mode = "func-counts"; }
         else if (a[ai] == "-per-module-manifest") { pm_mode = "manifest"; }
         else if (a[ai] == "-per-module-emit" && ai + 1 < a.len()) { pm_mode = "emit"; pm_index = util.digits_to_i32(a[ai + 1]); ai = ai + 1; }
         else if (a[ai] == "-extra-need" && ai + 1 < a.len()) { pm_extra = pm_extra.append(a[ai + 1]); ai = ai + 1; }
         else if (a[ai] == "-cache-dir" && ai + 1 < a.len()) { cache_dir = a[ai + 1]; ai = ai + 1; }
+        else if (a[ai] == "-func-range" && ai + 1 < a.len()) {
+            // Parse "LO:HI" — digits_to_i32 stops at the ':' for LO; slice past
+            // the colon for HI.
+            var rng: string = a[ai + 1];
+            var ci: i32 = 0;
+            while (ci < rng.len() && rng[ci] != 58) { ci = ci + 1; }  // 58 = ':'
+            pm_lo = util.digits_to_i32(rng);
+            if (ci + 1 <= rng.len()) { pm_hi = util.digits_to_i32(rng[ci + 1:rng.len()]); }
+            ai = ai + 1;
+        }
         else if (entry_path == "") { entry_path = a[ai]; }
         ai = ai + 1;
     }
     if (entry_path == "") {
-        eprint("usage: asm_modload_run <entry.fern> [-ir-probe | -per-module-count | -per-module-needs | -per-module-manifest | -per-module-emit N [-cache-dir DIR]]\n");
+        eprint("usage: asm_modload_run <entry.fern> [-ir-probe | -per-module-count | -per-module-needs | -per-module-func-counts | -per-module-manifest | -per-module-emit N [-cache-dir DIR] [-func-range LO:HI]]\n");
         return 2;
     }
     var dir: string = modloader.dirname(entry_path);
@@ -385,7 +421,7 @@ function main(): i32 {
             var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
             var loaded: flatten.LoadedModule[] = modloader.load_imports(dir, entry);
             if (pm_mode.len() > 0) {
-                return run_per_module(dir, entry_path, entry, loaded, pm_mode, pm_index, pm_extra, cache_dir);
+                return run_per_module(dir, entry_path, entry, loaded, pm_mode, pm_index, pm_extra, cache_dir, pm_lo, pm_hi);
             }
             var merged: parser.Module = flatten.bundle(entry, loaded);
             merged = modloader.merge_builtins(dir, merged);

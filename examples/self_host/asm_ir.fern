@@ -4805,7 +4805,16 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], 
     return s;
 }
 
-function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], s: asmcore.EmitState, globl_defs: boolean): asmcore.EmitState {
+// emit_module_funcs emits mod's function bodies in the index window [lo, hi).
+// A full window (lo=0, hi=mod.funcs.len(), or hi<0 as a "to the end" sentinel)
+// reproduces the whole-module emit byte-for-byte; a partial window emits only
+// that slice's `__fn_*` defs (its own string pool, its weak field-reclaims /
+// struct-drops), so an oversized module (irlower, 511 funcs — #3425) can be
+// sharded across separate process invocations to keep each emit's peak heap
+// under the leak-mode ceiling. The hoisted side-tables below are ALWAYS
+// computed over the WHOLE all_funcs (never windowed) so cross-window call
+// tagging is identical to the unsharded emit; only the emit loop is windowed.
+function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32): asmcore.EmitState {
     var arf: string[] = array_ret_fns_of(all_funcs);
     // Inter-procedural borrowability computed ONCE per module (not per function —
     // that OOMs the arm64 self-compile); threaded into every emit_function_via_ir.
@@ -4834,8 +4843,12 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
     var frsf: string[] = irlower.fresh_struct_ret_fns_of(all_funcs, all_structs);
     var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(all_funcs, all_structs);
     var sfrf: string[] = irlower.str_fresh_ret_fns_of(all_funcs);
-    var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
+    // hi<0 is the "to the end" sentinel; an over-large hi is clamped so a shard
+    // window that overshoots the module length can't index past mod.funcs.
+    var hh: i32 = hi;
+    if (hh < 0 || hh > mod.funcs.len()) { hh = mod.funcs.len(); }
+    var fi: i32 = lo;
+    while (fi < hh) {
         // Per-module: mark the definition `.globl` so a sibling module's
         // `call __fn_<label>` (an unresolved extern in that module) links
         // against it. The label is computed exactly as emit_function_via_ir
@@ -4869,7 +4882,7 @@ pub function module_runtime_needs(mod: parser.Module): string[] {
     // Needs depend only on this module's own ops, so the single-module
     // signature view suffices (a cross-module call's NEED set is the callee's,
     // aggregated separately via module_runtime_needs over each module).
-    s = emit_module_funcs(mod, mod.funcs, mod.structs, s, false);
+    s = emit_module_funcs(mod, mod.funcs, mod.structs, s, false, 0, 0 - 1);
     s = s.close_needs();
     strbuf_reset();
     return s.needed;
@@ -4923,7 +4936,7 @@ pub function emit_module_ir(mod: parser.Module): string {
     // emit_module_ir_unit re-infers `mod` (idempotent), keeping the emitted
     // module and the analysis set consistent.
     var im: parser.Module = parser.infer_ret_types_module(mod);
-    return emit_module_ir_unit(im, true, false, "", [], im.funcs, im.structs);
+    return emit_module_ir_unit(im, true, false, "", [], im.funcs, im.structs, 0, 0 - 1);
 }
 
 // emit_module_ir_unit is emit_module_ir parameterised for per-module
@@ -4963,7 +4976,16 @@ pub function emit_module_ir(mod: parser.Module): string {
 //            cross-module call is tagged by the callee's real signature. Only
 //            `mod.funcs` are emitted. For the single-unit path pass mod.funcs /
 //            mod.structs (byte-identical).
-pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[]): string {
+//   lo / hi — the [lo, hi) function-index window this unit emits (function-
+//            sharding, #3425). A full window (lo=0, hi=mod.funcs.len(), or
+//            hi<0 as a "to the end" sentinel) is byte-identical to the
+//            unsharded emit; a partial window emits only that slice's `__fn_*`
+//            defs plus its own (str_ns-namespaced) string pool and its
+//            weak-deduped field-reclaims / struct-drops, so an oversized module
+//            can be emitted across separate processes without any single emit's
+//            leak-mode heap crossing the arena ceiling. Only non-entry library
+//            shards are windowed; the entry emits its full window.
+pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], lo: i32, hi: i32): string {
     // Infer return types for unannotated functions so the IR path's
     // ret-type-keyed call tagging (str_ret_fns_of / opt_ret_fns_of / …)
     // matches the AST path, which gets the same via module_with_builtins.
@@ -4978,7 +5000,7 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     // Per-module: the entry exports its shared runtime entry points so sibling
     // library modules can link their `call __fern_*` externs against them.
     if (is_entry && globl_defs) { s = emit_runtime_globls(s); }
-    s = emit_module_funcs(mod, all_funcs, all_structs, s, globl_defs);
+    s = emit_module_funcs(mod, all_funcs, all_structs, s, globl_defs, lo, hi);
     // Per-type __field_reclaim_<T> bodies (#3457), in .text alongside the module
     // funcs — emitted by EVERY unit that uses one (weak-deduped at link), so a
     // library module's call resolves locally rather than relying on the entry's

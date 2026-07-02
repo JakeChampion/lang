@@ -79,27 +79,88 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 		}
 	}
 
-	// 3. Emit every module as its own unit (the entry folds in the need union).
+	// Per-module function counts (post lift_lambdas / infer — the exact set
+	// emit_module_funcs windows over). An oversized module (irlower, ~511 funcs)
+	// OOMs (exit 137) if emitted in one process: the leak-mode runtime never
+	// reclaims the per-function IR-op lists, so they accumulate past the arena
+	// ceiling. The #3425 fix shards such a module's emit by a [lo,hi) FUNCTION
+	// WINDOW across separate process invocations (-func-range LO:HI) — each shard
+	// emits a non-entry library sub-unit that links exactly like a per-module unit.
+	fcOut, err := drive(t, "-per-module-func-counts")
+	if err != nil {
+		t.Fatalf("-per-module-func-counts: %v", err)
+	}
+	var funcCounts []int
+	for _, ln := range strings.Split(strings.TrimSpace(fcOut), "\n") {
+		if s := strings.TrimSpace(ln); s != "" {
+			c, cerr := strconv.Atoi(s)
+			if cerr != nil {
+				t.Fatalf("-per-module-func-counts: non-int line %q: %v", s, cerr)
+			}
+			funcCounts = append(funcCounts, c)
+		}
+	}
+	if len(funcCounts) != n {
+		t.Fatalf("-per-module-func-counts returned %d counts, want %d (module count)", len(funcCounts), n)
+	}
+
+	// Any module with more than shardThreshold functions is emitted in
+	// ceil(count/shardThreshold) function-index windows, keeping each emit's peak
+	// heap under the OOM ceiling (#3425). Modules under the threshold emit whole
+	// (full range — byte-identical to the unsharded emit). irlower (~511 funcs)
+	// OOMs whole (~2.8 GB, exit 137); its heaviest lowering functions cluster
+	// around index ~200, so peak scales with which functions a window holds, not
+	// just the count. 100-func windows keep the worst shard's measured peak
+	// ~2.3 GB — comfortably clear of the kill point — while a coarser split (e.g.
+	// 150) can land the whole heavy cluster in one window (~2.6 GB). The ~1.9 GB
+	// per-process floor (whole-program parse + all_funcs/all_structs + the emit
+	// side-tables, rebuilt each invocation) is the irreducible base; the shard
+	// window bounds only the per-function IR-op accumulation on top of it.
+	const shardThreshold = 100
+
+	// 3. Emit every module as its own unit(s) (the entry folds in the need union).
 	// Every module emitting proves the 12/12 per-module eligibility frontier.
 	var objs []string
-	sawEntry := false
-	for i := 0; i < n; i++ {
-		emitArgs := append([]string{"-per-module-emit", strconv.Itoa(i)}, needArgs...)
+	entryUnits := 0
+	emitUnit := func(t *testing.T, modIdx int, tag string, rangeArgs []string) {
+		t.Helper()
+		emitArgs := append([]string{"-per-module-emit", strconv.Itoa(modIdx)}, needArgs...)
+		emitArgs = append(emitArgs, rangeArgs...)
 		unit, err := drive(t, emitArgs...)
 		if err != nil || len(unit) == 0 {
-			t.Fatalf("module %d: per-module emit bailed (err=%v, %d bytes) — a module is not IR-eligible", i, err, len(unit))
+			t.Fatalf("module %d%s: per-module emit bailed (err=%v, %d bytes) — a module is not IR-eligible or a shard OOMed", modIdx, tag, err, len(unit))
 		}
 		if strings.Contains(unit, "\n_start:\n") || strings.HasPrefix(unit, "_start:\n") {
-			sawEntry = true
+			entryUnits++
 		}
-		p := filepath.Join(dir, "wc_unit_"+strconv.Itoa(i)+".s")
+		p := filepath.Join(dir, "wc_unit_"+strconv.Itoa(modIdx)+tag+".s")
 		if err := os.WriteFile(p, []byte(unit), 0o644); err != nil {
-			t.Fatalf("write unit %d: %v", i, err)
+			t.Fatalf("write unit %d%s: %v", modIdx, tag, err)
 		}
 		objs = append(objs, p)
 	}
-	if !sawEntry {
-		t.Fatalf("no entry unit (_start) among the %d per-module units", n)
+	for i := 0; i < n; i++ {
+		if funcCounts[i] <= shardThreshold {
+			emitUnit(t, i, "", nil)
+			continue
+		}
+		// Oversized module: emit in threshold-sized [lo,hi) function windows.
+		for lo := 0; lo < funcCounts[i]; lo += shardThreshold {
+			hi := lo + shardThreshold
+			if hi > funcCounts[i] {
+				hi = funcCounts[i]
+			}
+			rng := strconv.Itoa(lo) + ":" + strconv.Itoa(hi)
+			emitUnit(t, i, "_s"+strconv.Itoa(lo), []string{"-func-range", rng})
+		}
+	}
+	if entryUnits == 0 {
+		t.Fatalf("no entry unit (_start) among the per-module units")
+	}
+	// Exactly one _start must exist — more than one means the entry module was
+	// (incorrectly) sharded, which would collide _start at link.
+	if entryUnits != 1 {
+		t.Fatalf("expected exactly one entry unit (_start), got %d — was the entry module sharded?", entryUnits)
 	}
 
 	// 4. Link all units — no undefined symbols proves the runtime-need union is

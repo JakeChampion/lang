@@ -288,7 +288,7 @@ function main(): i32 {
         // from the -per-module-needs invocation) into its single shared runtime.
         var extra: string[] = [];
         if (parts[pm_index].is_entry) { extra = pm_extra; }
-        write(asm_ir.emit_module_ir_unit(infmods[pm_index], parts[pm_index].is_entry, true, parts[pm_index].ns, extra, all_funcs, all_structs));
+        write(asm_ir.emit_module_ir_unit(infmods[pm_index], parts[pm_index].is_entry, true, parts[pm_index].ns, extra, all_funcs, all_structs, 0, 0 - 1));
         return 0;
     }
 

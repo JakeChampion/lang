@@ -1161,6 +1161,26 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// map's precise buffer-free read back intact (the buffers were freed soundly,
 		// exactly once — no still-live buffer freed early that the alloc could recycle).
 		{"map-precise-corruption-probe-detector", `function go(): i32 { var m = Map { 1: 10, 2: 20 }; var c = 0; var i = 0; while (i < 1) { c = m.get_or(1, 0) + m.get_or(2, 0); i = i + 1; } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (c != 30) { return 90; } if (s != 66) { return 91; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
+		// IN-PLACE enum self-reassign reuse (FBIP, native parity): a loop-carried
+		// array-payload enum `var b = V0([..]); while(..) { b = V1([..]); b = V2([..]); }`
+		// whose enum has UNIFORM variant layout (every variant one array field) reuses
+		// b's box IN PLACE across each reassign — the old payload array is released, the
+		// box is re-shaped to the new variant, and the fresh payload written into the
+		// SAME box — instead of the free+alloc churn of emit_enum_reclaim_store. The
+		// over-release detector (`__rc_underflow()==0`) is the soundness gate for the
+		// in-place mutation: a mis-balanced old-payload release or a corrupted reshape
+		// would double-free (detector > 0). wildcard-churn value = 2 (last b is Swap).
+		{"enum-reassign-inplace-value", `enum Bag { Keep(i32[]), Swap(i32[]) } function churn(n: i32): i32 { var b: Bag = Keep([0, 0, 0, 0]); var i = 0; while (i < n) { b = Keep([i, i, i, i]); b = Swap([i, i, i, i]); i = i + 1; } match (b) { Keep(_) => { return 1; }, Swap(_) => { return 2; }, } return 0; } function main(): i32 { return churn(5); }`, 2},
+		{"enum-reassign-inplace-detector", `enum Bag { Keep(i32[]), Swap(i32[]) } function churn(n: i32): i32 { var b: Bag = Keep([0, 0, 0, 0]); var i = 0; while (i < n) { b = Keep([i, i, i, i]); b = Swap([i, i, i, i]); i = i + 1; } var r = 0; match (b) { Keep(_) => { r = 1; }, Swap(_) => { r = 2; }, } if (r != 2) { return 99; } return __rc_underflow(); } function main(): i32 { return churn(5); }`, 0},
+		// IN-PLACE + heap-reuse corruption probe: a fresh array allocated in the same
+		// scope as the reassigns reads back intact (a mis-freed superseded payload, or a
+		// box freed while still live, would poison the recycled buffer). acc = 10*(7+8)=150.
+		{"enum-reassign-inplace-corruption-probe-detector", `enum Bag { Keep(i32[]), Swap(i32[]) } function churn(n: i32): i32 { var b: Bag = Keep([9, 9]); var i = 0; var acc = 0; while (i < n) { b = Keep([1, 2]); b = Swap([3, 4]); var fresh: i32[] = [7, 8]; acc = acc + fresh[0] + fresh[1]; i = i + 1; } var r = 0; match (b) { Keep(_) => { r = 1; }, Swap(_) => { r = 0; }, } if (acc != 150) { return 90; } return __rc_underflow(); } function main(): i32 { return churn(10); }`, 0},
+		// PAYLOAD-BOUND fallback: the payload IS bound (`Keep(a) => a[0]`), so b is
+		// disqualified from the reclaim entirely (enum_only_wildcard_used_rec) and keeps
+		// the safe box-only free — in-place must NOT fire. Value stays correct + detector
+		// clean. churn(3): last b = Swap([2,..]) -> a[1] = 2.
+		{"enum-reassign-bound-fallback-value", `enum Bag { Keep(i32[]), Swap(i32[]) } function churn(n: i32): i32 { var b: Bag = Keep([0, 0, 0, 0]); var i = 0; while (i < n) { b = Keep([i, i, i, i]); b = Swap([i, i, i, i]); match (b) { Keep(a) => { }, Swap(a) => { }, } i = i + 1; } match (b) { Keep(a) => { return a[0]; }, Swap(a) => { return a[1]; }, } return 0; } function main(): i32 { return churn(3); }`, 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
