@@ -489,6 +489,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"poll":                    emitPollHelper,
 	"wasm_timer_pollable":     emitWasmTimerPollableHelper,
 	"wasm_pollable_drop":      emitWasmPollableDropHelper,
+	"wasm_block":              emitWasmBlockHelper,
 	"open_writer":             emitOpenWriterHelper,
 	"__method_Writer_write":   emitWriterWriteHelper,
 	"__method_Writer_close":   emitWriterCloseHelper,
@@ -1033,6 +1034,17 @@ func emitWasmTimerPollableHelper(w func(string, ...any)) {
 func emitWasmPollableDropHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("wasm_pollable_drop"))
+	w("\tmov x0, #0") // no-op
+	w("\tret")
+}
+
+// emitWasmBlockHelper writes wasm_block(p) → i32: a no-op on native (there's no
+// pollable to wait on; a deadline comes from poll(2)'s own timeout arg). Returns
+// 0. Lets std/async's with_deadline block on a timer pollable portably; on wasm
+// this symbol is the real wasi:io/poll.[method]pollable.block instead. Leaf.
+func emitWasmBlockHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("wasm_block"))
 	w("\tmov x0, #0") // no-op
 	w("\tret")
 }

@@ -560,6 +560,11 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // [p] -> __fern_wasm_pollable_drop(x0=p) -> 0 (native shim) in x0.
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_wasm_pollable_drop\n    str x0, [sp, #-16]!\n");
             s = s.need("wasm_pollable_drop");
+        } else if (o.kind == "wasm_block") {
+            // [p] -> __fern_wasm_block(x0=p) -> 0 (native shim; no pollable to wait
+            // on, a deadline rides poll(2)) in x0.
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_wasm_block\n    str x0, [sp, #-16]!\n");
+            s = s.need("wasm_block");
         } else if (o.kind == "tcp_connect") {
             // [host_be, port] -> __fern_tcp_connect(x0=host_be, x1=port) -> fd.
             // The __fern_tcp_* bodies are emitted unconditionally by emit_runtime.

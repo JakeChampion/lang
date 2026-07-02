@@ -4524,6 +4524,17 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ret\n");
         s = s.write(".size __fern_wasm_pollable_drop, .-__fern_wasm_pollable_drop\n");
     }
+    // __fern_wasm_block(x0 = p) -> 0: no native pollable to wait on (a deadline
+    // rides poll(2)'s timeout arg), so blocking is a 0 no-op. Portability shim
+    // for the reactor's with_deadline.
+    if (s.has_need("wasm_block")) {
+        s = s.write(".globl __fern_wasm_block\n");
+        s = s.write(".type __fern_wasm_block, %function\n");
+        s = s.write("__fern_wasm_block:\n");
+        s = s.write("    mov x0, #0\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_wasm_block, .-__fern_wasm_block\n");
+    }
     // __fern_read_int helper: reads up to 16 bytes from stdin
     // into a stack buffer, parses an optional leading `-`
     // followed by decimal digits, returns the value in x0.
