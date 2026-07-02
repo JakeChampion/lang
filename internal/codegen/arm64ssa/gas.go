@@ -380,6 +380,12 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"temp_dir":               emitTempDirHelper,
 	"read_dir":               emitReadDirHelper,
 	"__fern_io_error":        emitIoErrorHelper,
+	"tcp_listen":              emitTcpListenHelper,
+	"tcp_accept":              emitTcpAcceptHelper,
+	"tcp_recv":                emitTcpRecvHelper,
+	"tcp_send":                emitTcpSendHelper,
+	"tcp_close":               emitTcpCloseHelper,
+	"tcp_pollable":            emitTcpPollableHelper,
 	"print":                  emitPrintHelper,
 	"write":                  emitWriteHelper,
 	"eprint":                 emitEprintHelper,
@@ -763,6 +769,138 @@ func emitRandomBytesHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
+// emitTcpListenHelper writes tcp_listen(port) → i32: create an AF_INET TCP
+// listener bound to 0.0.0.0:port and return its fd, or -errno on any syscall
+// failure. socket(2)/bind(2)/listen(2); the 16-byte sockaddr_in is built on the
+// stack (htons the port via rev16). x19=port / x20=fd across the syscalls.
+func emitTcpListenHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("tcp_listen"))
+	w("\tstp x29, x30, [sp, #-32]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tmov x19, x0") // port
+	// socket(AF_INET=2, SOCK_STREAM=1, 0)
+	w("\tmov x0, #2")
+	w("\tmov x1, #1")
+	w("\tmov x2, #0")
+	w("\tmov x8, #198") // socket
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_tcpl_err")
+	w("\tmov x20, x0") // listener fd
+	// Build sockaddr_in { family=AF_INET, port=htons(port), addr=0 } on the stack.
+	w("\tsub sp, sp, #16")
+	w("\tmov w0, #2")
+	w("\tstrh w0, [sp]")   // sin_family
+	w("\trev16 w0, w19")   // htons(port)
+	w("\tstrh w0, [sp, #2]")
+	w("\tstr wzr, [sp, #4]") // sin_addr = 0.0.0.0
+	w("\tstr xzr, [sp, #8]") // sin_zero
+	// bind(fd, sa, 16)
+	w("\tmov x0, x20")
+	w("\tmov x1, sp")
+	w("\tmov x2, #16")
+	w("\tmov x8, #200") // bind
+	w("\tsvc #0")
+	w("\tadd sp, sp, #16") // pop sockaddr_in before any branch
+	w("\ttbnz x0, #63, .Lssa_tcpl_err")
+	// listen(fd, 128)
+	w("\tmov x0, x20")
+	w("\tmov x1, #128")
+	w("\tmov x8, #201") // listen
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_tcpl_err")
+	w("\tmov x0, x20") // return fd
+	w("\tb .Lssa_tcpl_ret")
+	w(".Lssa_tcpl_err:")
+	// x0 holds -errno from the failed syscall.
+	w(".Lssa_tcpl_ret:")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #32")
+	w("\tret")
+}
+
+// emitTcpAcceptHelper writes tcp_accept(fd) → i32: accept(2) a connection on the
+// listener fd (NULL addr/addrlen — callers don't need the peer address) and
+// return the new connection fd, or -errno. Leaf. x0=listener fd.
+func emitTcpAcceptHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("tcp_accept"))
+	w("\tmov x1, #0") // addr = NULL
+	w("\tmov x2, #0") // addrlen = NULL
+	w("\tmov x8, #202") // accept
+	w("\tsvc #0")
+	w("\tret")
+}
+
+// emitTcpRecvHelper writes tcp_recv(fd, max) → string: read up to max bytes from
+// the socket fd into a fresh single-word rc string (its length set to the actual
+// count; 0 on EOF/error). Leaf: bump-allocates inline and read's svc preserves
+// every register but x0, so fd/max/data survive without spills. x0=fd, x1=max.
+func emitTcpRecvHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("tcp_recv"))
+	w("\tmov x9, x0")  // fd
+	w("\tmov x10, x1") // max
+	// Allocate a single-word rc string: 8-byte header + max + 1 NUL.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x10, #9")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	w("\tmov w7, #1")
+	w("\tstr w7, [x4]")    // rc = 1
+	w("\tadd x11, x4, #8") // data ptr
+	// read(fd, data, max)
+	w("\tmov x0, x9")
+	w("\tmov x1, x11")
+	w("\tmov x2, x10")
+	w("\tmov x8, #63") // read
+	w("\tsvc #0")
+	// actual = max(x0, 0)
+	w("\tcmp x0, #0")
+	w("\tcsel x0, x0, xzr, ge")
+	w("\tstur w0, [x11, #-4]") // len = actual
+	w("\tadd x1, x11, x0")
+	w("\tstrb wzr, [x1]") // trailing NUL
+	w("\tmov x0, x11")    // return data ptr
+	w("\tret")
+}
+
+// emitTcpSendHelper writes tcp_send(fd, data) → i32: write(2) the whole
+// single-word string to the fd; returns the byte count written or -errno. Leaf.
+// x0=fd, x1=data (single-word string; length at [data-4]).
+func emitTcpSendHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("tcp_send"))
+	w("\tldur w2, [x1, #-4]") // byte length
+	w("\tmov x8, #64")        // write (x0=fd, x1=data already in place)
+	w("\tsvc #0")
+	w("\tret")
+}
+
+// emitTcpCloseHelper writes tcp_close(fd) → i32: close(2) the fd; returns 0 or
+// -errno. Leaf. x0=fd.
+func emitTcpCloseHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("tcp_close"))
+	w("\tmov x8, #57") // close
+	w("\tsvc #0")
+	w("\tret")
+}
+
+// emitTcpPollableHelper writes tcp_pollable(fd) → i32: on native the readiness
+// token for a socket IS its fd (poll(2) takes fds directly), so this is the
+// identity — the fd is already in x0. Leaf.
+func emitTcpPollableHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("tcp_pollable"))
+	w("\tret")
+}
+
 // runtimeHelperDeps records helper→helper call edges: a helper that tail-calls
 // another must have that callee emitted too, since the module never references
 // it directly. Transitively closed by referencedRuntimeHelpers.
@@ -799,6 +937,7 @@ var helperReturns64 = map[string]bool{
 	"temp_dir":               true,
 	"read_dir":               true,
 	"random_bytes":           true,
+	"tcp_recv":                true,
 	"__str_idx":              true,
 	"__arr_idx":              true,
 	"__arr_idx_1":            true,
@@ -837,6 +976,7 @@ var heapUsingHelpers = map[string]bool{
 	"temp_dir":               true,
 	"read_dir":               true,
 	"random_bytes":           true,
+	"tcp_recv":                true,
 	"__fern_io_error":        true,
 }
 
