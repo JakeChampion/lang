@@ -5,20 +5,24 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/modload"
 )
 
 // Cross-validation across the three execution engines in the
-// fern-port: the tree-walking interpreter (interp.fern), the
-// bytecode VM (vm.fern), and the native asm emitter (asm.fern).
-// Every test source is piped through ALL THREE drivers
-// (interp_run.fern, vm_run.fern, asm_run.fern) and the test
-// asserts they all return the same exit code.
+// fern-port: the self-hosted tree-walking interpreter
+// (interp.fern), the native (Go) tree-walking interpreter
+// (internal/interp), and the self-hosted native asm emitter
+// (asm.fern). Every test source is piped through the self-host
+// interp driver (interp_run.fern) and the self-host asm driver
+// (asm_run.fern), and run directly against the native interp,
+// and the test asserts all three return the same exit code.
 //
 // This is the "every layer agrees" demo — a regression suite
 // for the consistency of the fern-port's semantics across
@@ -29,6 +33,11 @@ import (
 // var/assign, function decls + recursion. No arrays / strings
 // / print* because those aren't all supported by the asm
 // emitter today.
+//
+// (A fourth engine — a bytecode VM, vm.fern — used to sit here
+// too. It was retired in #4392: an unreachable fifth
+// implementation of Fern semantics with no production consumer
+// and known semantic drift from the other engines.)
 
 func TestSelfHostCrossValidationX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -39,8 +48,8 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 	// three side-by-side.)
 	for _, name := range []string{
 		"asmcore.fern", "lexer.fern", "parser.fern", "util.fern",
-		"interp.fern", "astwalk.fern", "vm.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern",
-		"interp_run.fern", "vm_run.fern", "asm_run.fern",
+		"interp.fern", "astwalk.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern",
+		"interp_run.fern", "asm_run.fern",
 	} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
@@ -80,7 +89,6 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 	}
 
 	interpBin := buildDriver(t, "interp_run.fern")
-	vmBin := buildDriver(t, "vm_run.fern")
 	asmBin := buildDriver(t, "asm_run.fern")
 
 	runDriver := func(t *testing.T, bin string, source string, captureStdout bool) (int, string) {
@@ -123,6 +131,57 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 		}
 		_, _ = inner.CombinedOutput()
 		return inner.ProcessState.ExitCode()
+	}
+
+	// runNativeInterp runs `source` directly against the native
+	// (Go) tree-walking interpreter — the third leg. Skips
+	// checker.Check (unlike cmd/fern's `-interp` pipeline):
+	// several cases below return a boolean from an `i32`-typed
+	// `main` (e.g. "comparison-true"), which the self-host legs'
+	// untyped bootstrap language accepts but the native checker's
+	// strict return-type rule rejects. The interpreter itself
+	// evaluates the AST directly and needs no type info for this
+	// program subset.
+	//
+	// Unlike the self-host mini-lexer/parser the other two legs
+	// run on, the real Fern grammar has no implicit top-level
+	// entry point — a source with no `function main` is a parse
+	// error. Wrap bare-statement sources in a `main` so the same
+	// test-case sources exercise all three legs.
+	runNativeInterp := func(t *testing.T, source string) int {
+		t.Helper()
+		if !strings.Contains(source, "function main") {
+			source = "function main(): i32 {\n" + source + "\n}\n"
+		}
+		prog, _, err := modload.LoadSource(source)
+		if err != nil {
+			t.Fatalf("native interp modload: %v\n--- source ---\n%s", err, source)
+		}
+		if err := constfold.Fold(prog); err != nil {
+			t.Fatalf("native interp constfold: %v\n--- source ---\n%s", err, source)
+		}
+		ip := interp.New()
+		for _, ed := range prog.Enums {
+			ip.RegisterEnum(ed)
+		}
+		for _, fn := range prog.Funcs {
+			ip.Register(fn)
+		}
+		v, err := ip.CallByName("main", nil)
+		if err != nil {
+			t.Fatalf("native interp run: %v\n--- source ---\n%s", err, source)
+		}
+		switch n := v.(type) {
+		case interp.Number:
+			return int(n) & 0xFF
+		case interp.Bool:
+			if n {
+				return 1
+			}
+			return 0
+		default:
+			return 254
+		}
 	}
 
 	cases := []struct {
@@ -172,11 +231,10 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 			1024 % 256, // = 0
 		},
 		// Struct-update `P { ...base, f: v }` — exercises the new
-		// has_base path through all three engines (interp copies+
-		// overrides the base's fields, vm's OpStructUpdate does the
-		// same, asm copies non-overridden decl fields + stores
-		// overrides). i32-only fields stay within the engines' common
-		// subset.
+		// has_base path through all three engines (both interp
+		// evaluators copy+override the base's fields; asm copies
+		// non-overridden decl fields + stores overrides). i32-only
+		// fields stay within the engines' common subset.
 		{
 			"struct-update-single-override",
 			"struct P { x: i32, y: i32, z: i32 } function main(): i32 { var p: P = P { x: 1, y: 2, z: 3 }; var q: P = P { ...p, y: 20 }; return q.x + q.y + q.z; }",
@@ -197,11 +255,11 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			interpExit, _ := runDriver(t, interpBin, tc.source, false)
-			vmExit, _ := runDriver(t, vmBin, tc.source, false)
+			nativeInterpExit := runNativeInterp(t, tc.source)
 			asmExit := runAsm(t, tc.source)
-			if interpExit != tc.want || vmExit != tc.want || asmExit != tc.want {
-				t.Errorf("disagreement: interp=%d, vm=%d, asm=%d, want=%d\n--- source ---\n%s",
-					interpExit, vmExit, asmExit, tc.want, tc.source)
+			if interpExit != tc.want || nativeInterpExit != tc.want || asmExit != tc.want {
+				t.Errorf("disagreement: interp=%d, native-interp=%d, asm=%d, want=%d\n--- source ---\n%s",
+					interpExit, nativeInterpExit, asmExit, tc.want, tc.source)
 			}
 		})
 	}

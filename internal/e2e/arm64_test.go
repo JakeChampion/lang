@@ -13192,7 +13192,7 @@ function main(): i32 {
 // The arm64 __fern_drop_arr_ptr carries __fern_rc_dec's
 // low-address guard so an array-typed slot holding a non-pointer
 // (enum tag, never-taken-branch garbage) is passed through rather
-// than faulting — exercised end-to-end by TestSelfHostVMArm64.
+// than faulting.
 func TestArm64RcDropArrayElements(t *testing.T) {
 	fires := `function consume(inner: u8[]): i32 {
     var outer: u8[][] = [inner];

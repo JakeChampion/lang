@@ -23,8 +23,10 @@ assume a single `i32` enum payload and 4-byte struct fields:
   `asm.fern` (→x86-64), `asm_arm64.fern` (→arm64).
 - **SSA pipeline** (shared IR→target): `ssa.fern` → `ssa_wasm.fern` /
   `ssa_x86.fern` / `ssa_arm64.fern`.
-- **Interpreter / VM**: `interp.fern`, `vm.fern` (the self-compile/stage-2
-  path; i32-only).
+- **Interpreter**: `interp.fern` (the self-compile/stage-2 path; i32-only).
+  (A second evaluator, the bytecode VM `vm.fern`, used to sit alongside it
+  here but was retired in #4392 — an unreachable fifth implementation of
+  Fern semantics with no production consumer.)
 
 **Key facts.**
 

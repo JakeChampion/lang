@@ -1343,9 +1343,11 @@ the wasm self-test harness like the LEB128 / wat_encode slices:
 
 With 1–4 in Fern, the self-host wires `asm.fern` → assembler →
 `elf.fern` → file (and the arm64 / Darwin equivalents), and the
-`clang` / `lld` / `as` / `ld` shell-outs go away. The self-host
-already has a `disasm.fern` that doubles as a cross-check for an
-emitted-bytes assembler.
+`clang` / `lld` / `as` / `ld` shell-outs go away. (`disasm.fern`,
+which used to double as a cross-check for an emitted-bytes
+assembler, was retired in #4392 along with the bytecode VM it
+disassembled; a future in-Fern assembler cross-check would need
+its own disassembler over the new emitted-bytes format.)
 
 (`wasi:system/process` is no longer on the critical path: with the
 in-Fern assembler + writer there is nothing left to spawn. A WASI
