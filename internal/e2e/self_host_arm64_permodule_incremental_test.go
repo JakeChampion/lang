@@ -26,15 +26,8 @@ import (
 // file I/O) runs on the host; only its OUTPUT is arm64 asm — so this test needs
 // no aarch64 toolchain and runs in the x86 shard.
 //
-// It deliberately does NOT assemble+link+run the emitted arm64 units. A minimal
-// program's entry emits the whole runtime (the static need over-approximation,
-// #3456), and the arm64 runtime helpers arr_str_join / str_lines reference
-// string-literal labels (.S0 / .S1) that the per-module unit emit does not
-// DEFINE in the unit — a pre-existing arm64 emit gap, orthogonal to the cache
-// (it reproduces with a plain `-per-module-emit` + link, no -cache-dir). The
-// whole-compiler arm64 per-module link only survives it because unrelated
-// library modules happen to define those labels; a leaf-only tree exposes the
-// undefined reference. The arm64 emit+link+run path is already covered by
+// It does not assemble+link+run the emitted arm64 units — that path is covered
+// by TestSelfHostPerModuleArm64LeafOnlyLinkRun (the #4305 regression guard) and
 // TestSelfHostModloadPerModuleWholeCompilerArm64. What this test guards is the
 // CACHE contract: correct hit/miss invalidation and byte-identical reuse of
 // whatever arm64 asm the emitter produced.
