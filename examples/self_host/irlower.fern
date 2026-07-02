@@ -10153,6 +10153,19 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                 },
                 _ => {}
             }
+            // A reclaimable REASSIGNED array-payload ENUM local (`b = V([..])`, ENUMRE)
+            // whose enum has UNIFORM variant layout: reuse b's existing box IN PLACE —
+            // release the old payload arrays, re-shape to V, write V's fresh payloads into
+            // the SAME box (emit_enum_inplace_reassign) — the native-parity FBIP form that
+            // avoids the free+alloc churn. Must run BEFORE the RHS is lowered: lowering
+            // `V([..])` would allocate a fresh box, defeating the reuse. A ragged enum
+            // (differing variant box sizes) or any non-`V(args)` RHS falls through to the
+            // free+alloc emit_enum_reclaim_store below (still leak-free).
+            var ere_ip: string = slot_enum_reassign_reclaim(s, slot);
+            if (ere_ip.len() > 0 && enum_all_variants_same_field_count(s.structs, ere_ip)) {
+                var ip: LowerState = emit_enum_inplace_reassign(a.value, slot, ere_ip, s);
+                if (ip.ok) { return ip; }
+            }
             var target_is_arr: boolean = s.is_arr_slot(slot) && slot >= s.n_params;
             var se: LowerState = lower_expr(a.value, s);
             if (!se.ok) { return se; }
@@ -15107,6 +15120,30 @@ function enum_all_variants_array_payload(structs: parser.StructDecl[], enum_name
     return any && arr;
 }
 
+// enum_all_variants_same_field_count: every variant of `enum_name` has the SAME decl
+// field count (so every variant's box — `op_struct_make(V, field_count)`, a per-variant
+// size — is byte-identical in layout). This is the size-safety gate for IN-PLACE enum
+// self-reassign reuse: b's box, allocated for whatever variant it currently holds, can
+// only be re-shaped to a different variant in place when that variant's box is the same
+// size. Array-payload-only variants (enum_all_variants_array_payload) already have
+// pointer-width fields throughout, so equal field COUNT ⇒ identical box size ⇒ same
+// freelist class. A ragged enum (`Keep(i32[])` vs `Swap(i32[], i32[])`) fails here and
+// keeps the safe free+alloc reclaim (emit_enum_reclaim_store).
+function enum_all_variants_same_field_count(structs: parser.StructDecl[], enum_name: string): boolean {
+    var seen: boolean = false;
+    var want: i32 = 0;
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].enum_owner == enum_name) {
+            var fc: i32 = structs[i].fields.len();
+            if (!seen) { want = fc; seen = true; }
+            else if (fc != want) { return false; }
+        }
+        i = i + 1;
+    }
+    return seen;
+}
+
 // variant_ctor_enum_owner: the enum E a variant-constructor expr `V(args)` / bare `V`
 // belongs to, or "".
 function variant_ctor_enum_owner(e: parser.Expr, structs: parser.StructDecl[]): string {
@@ -15298,6 +15335,95 @@ function emit_enum_reclaim_store(se: LowerState, slot: i32, enum_name: string): 
     st = emit_enum_variant_drops(st, slot, enum_name);   // deep-drop old payload + box, zeroes slot
     st = st.emit(ir.op_load_local(tmp));         // new box
     return st.emit(ir.op_store_local(slot));     // slot = new
+}
+
+// emit_enum_variant_payload_drops is emit_enum_variant_drops MINUS the box free + slot
+// zero: it runtime-dispatches on the box's current variant and releases each array
+// payload (arr_dec), but LEAVES the box allocated and the slot pointing at it. It is the
+// old-payload release for IN-PLACE self-reassign reuse (emit_enum_inplace_reassign),
+// where the same box is re-shaped to the new variant rather than freed. Array-payload
+// only (the enum_all_variants_array_payload gate guarantees every rc field is a leaf
+// scalar array a single arr_dec fully releases — no nested struct/box to walk).
+function emit_enum_variant_payload_drops(s: LowerState, slot: i32, enum_name: string): LowerState {
+    var st: LowerState = s;
+    var vi: i32 = 0;
+    while (vi < st.structs.len()) {
+        if (st.structs[vi].enum_owner == enum_name && enum_variant_has_rc_payload(st.structs, st.structs[vi].name)) {
+            var vname: string = st.structs[vi].name;
+            st = st.emit(ir.op_block(0));
+            st = st.emit(ir.op_load_local(slot));
+            st = st.emit(ir.op_variant_is(vname));
+            st = st.emit(ir.op_bin("not", 0, false));   // 1 if NOT this variant
+            st = st.emit(ir.op_brif(0));                // -> skip on mismatch / null
+            var n: i32 = decl_field_count(st.structs, vname);
+            var fk: i32 = 0;
+            while (fk < n) {
+                var eft: string = decl_field_type_at(st.structs, vname, fk);
+                if (is_leaksafe_array_field(eft)) {
+                    st = st.emit(ir.op_load_local(slot));
+                    st = st.emit(ir.op_struct_get(fk, struct_field_width(st.structs, vname, fk)));
+                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    st = st.emit(ir.op_drop());
+                }
+                fk = fk + 1;
+            }
+            st = st.emit(ir.op_end());
+        }
+        vi = vi + 1;
+    }
+    return st;
+}
+
+// emit_enum_inplace_reassign lowers `b = V(args)` (b a reclaimable array-payload enum
+// local, credited ENUMRE) as an IN-PLACE reuse of b's existing box — the native-parity
+// optimisation over emit_enum_reclaim_store's free+alloc churn. It (1) releases b's OLD
+// variant payload arrays via emit_enum_variant_payload_drops (box kept), (2) re-shapes
+// the box to V (op_struct_set_shape, mirroring emit_enum_donor_reuse), and (3) writes V's
+// fresh array-literal payloads into the SAME box (op_struct_set). The slot is untouched:
+// b keeps pointing at its box, now the V variant, so the exit sweep still frees it once.
+// SIZE-SAFE only under enum_all_variants_same_field_count (every variant's box is the
+// same layout) — a ragged enum keeps the free+alloc path. Payloads are guaranteed FRESH
+// array literals by the ENUMRE gate (variant_ctor_array_payloads_fresh), so the reused
+// box solely owns each new array; b's payload is never aliased (enum_only_wildcard_used_rec),
+// so releasing the old arrays is sound. Falls back to fail() on any non-`V(args)` shape.
+function emit_enum_inplace_reassign(value: parser.Expr, slot: i32, enum_name: string, s: LowerState): LowerState {
+    match (value) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(vid) => {
+                    var vname: string = vid.name;
+                    if (variant_enum_owner(s.structs, vname) != enum_name) { return s.fail(); }
+                    if (decl_field_count(s.structs, vname) != c.args.len()) { return s.fail(); }
+                    // 1. release b's old variant payload arrays (box kept).
+                    var st: LowerState = emit_enum_variant_payload_drops(s, slot, enum_name);
+                    // 2. re-shape the box to V.
+                    st = st.emit(ir.op_load_local(slot));
+                    st = st.emit(ir.op_struct_set_shape(vname));
+                    st = st.emit(ir.op_drop());
+                    // 3. write V's fresh payloads into the same box, in decl order.
+                    var di: i32 = 0;
+                    while (di < c.args.len()) {
+                        if (struct_field_is_i64(st.structs, vname, di)) {
+                            st = st.emit(ir.op_load_local(slot));
+                            st = lower_i64(c.args[di], st);
+                            if (!st.ok) { return st; }
+                            st = st.emit(ir.op_struct_set_i64(di));
+                        } else {
+                            st = st.emit(ir.op_load_local(slot));
+                            st = lower_expr(c.args[di], st);
+                            if (!st.ok) { return st; }
+                            st = st.emit(ir.op_struct_set(di, struct_field_width(st.structs, vname, di)));
+                        }
+                        di = di + 1;
+                    }
+                    // slot already holds the (reused) box — no store needed.
+                    return st;
+                },
+                _ => { return s.fail(); }
+            }
+        },
+        _ => { return s.fail(); }
+    }
 }
 
 // --- consumed RC-PAYLOAD option/result deep-drop free -----------------------
