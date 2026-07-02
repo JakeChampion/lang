@@ -16,6 +16,10 @@
 //                         last component, or "" if none. A
 //                         leading-dot file (`.bashrc`) has no
 //                         extension.
+//   path_clean(p)       — lexically normalise a path: collapse
+//                         duplicate `/`, drop `.` elements, and
+//                         resolve `..` against the preceding
+//                         element (Go `path.Clean`, Unix).
 //
 // Migrated from the auto-injected prelude per
 // docs/PRELUDE-TO-MODULES.md.
@@ -95,4 +99,71 @@ pub function path_extension(p: string): string {
     // extension: `.bashrc` → "", not "bashrc".
     if (i <= 0) { return ""; }
     return name[i + 1:n];
+}
+
+// path_clean lexically normalises `p` (no FS access), matching Go
+// `path.Clean` in Unix mode. It applies, purely on the string:
+//   - collapse runs of `/` into a single separator;
+//   - drop `.` (current-dir) elements;
+//   - resolve each `..` (parent-dir) against the preceding non-`..`
+//     element, popping it — but a `..` that would climb above the
+//     root of a ROOTED path is dropped (can't go above `/`), while a
+//     leading `..` in a RELATIVE path is kept (it can climb).
+// The result keeps a leading `/` iff `p` was rooted, ends in `/` only
+// when it is the bare root, and is never empty: an empty input or a
+// path that cleans away entirely (e.g. "a/..", "./") returns ".".
+// seg_pop returns a fresh array with the last element of `xs` removed
+// (path_clean's `..` resolution). A rebuild-by-append, mirroring
+// std/array's `take` idiom — array slice-assignment yields a distinct
+// slice type, and std/path keeps zero module dependencies.
+function seg_pop(xs: string[]): string[] {
+    var out: string[] = [];
+    var last: i32 = xs.len() - 1;
+    var i: i32 = 0;
+    while (i < last) { out = out.append(xs[i]); i = i + 1; }
+    return out;
+}
+
+pub function path_clean(p: string): string {
+    var n: i32 = p.len();
+    if (n == 0) { return "."; }
+    var rooted: boolean = p[0] == 47; // leading '/'
+    // Walk the segments, maintaining a stack. `.` is skipped; `..`
+    // pops a real preceding element or (relative only) is pushed.
+    var segs: string[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        // Skip separator run.
+        while (i < n && p[i] == 47) { i = i + 1; }
+        if (i >= n) { i = n; }
+        else {
+            var start: i32 = i;
+            while (i < n && p[i] != 47) { i = i + 1; }
+            var seg: string = p[start:i];
+            if (seg == ".") {
+                // current dir — drop
+            } else if (seg == "..") {
+                var slen: i32 = segs.len();
+                if (slen > 0 && segs[slen - 1] != "..") {
+                    segs = seg_pop(segs); // pop the preceding element
+                } else if (!rooted) {
+                    segs = segs.append(".."); // relative path may climb
+                }
+                // rooted with nothing to pop: drop (can't pass root)
+            } else {
+                segs = segs.append(seg);
+            }
+        }
+    }
+    // Re-join the surviving segments with single separators.
+    var joined: string = "";
+    var k: i32 = 0;
+    while (k < segs.len()) {
+        if (k > 0) { joined = joined + "/"; }
+        joined = joined + segs[k];
+        k = k + 1;
+    }
+    if (rooted) { return "/" + joined; } // "/"+"" = "/" (bare root)
+    if (joined.len() == 0) { return "."; }
+    return joined;
 }

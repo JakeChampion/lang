@@ -80,6 +80,46 @@ function test_extension_none(): test.TestOutcome {
     return test.assert_eq(path.path_extension("noext"), "");
 }
 
+function test_clean_dots(): test.TestOutcome {
+    // `.` elements and duplicate separators collapse.
+    return test.assert_eq(path.path_clean("a/./b//c"), "a/b/c");
+}
+
+function test_clean_dotdot(): test.TestOutcome {
+    // `..` resolves against the preceding element.
+    return test.assert_eq(path.path_clean("a/b/../c"), "a/c");
+}
+
+function test_clean_rooted_above_root(): test.TestOutcome {
+    // A `..` cannot climb above the root of a rooted path.
+    return test.assert_eq(path.path_clean("/../a"), "/a");
+}
+
+function test_clean_relative_climb(): test.TestOutcome {
+    // A leading `..` in a relative path is kept.
+    return test.assert_eq(path.path_clean("foo/../../bar"), "../bar");
+}
+
+function test_clean_empty(): test.TestOutcome {
+    // Empty input cleans to the current dir ".".
+    return test.assert_eq(path.path_clean(""), ".");
+}
+
+function test_clean_to_dot(): test.TestOutcome {
+    // A path that cancels out cleans to ".".
+    return test.assert_eq(path.path_clean("a/.."), ".");
+}
+
+function test_clean_root(): test.TestOutcome {
+    // The bare root is preserved (and keeps its trailing slash).
+    return test.assert_eq(path.path_clean("///"), "/");
+}
+
+function test_clean_trailing_slash(): test.TestOutcome {
+    // A trailing separator is dropped for non-root paths.
+    return test.assert_eq(path.path_clean("/a/b/"), "/a/b");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/path");
     r = r.it("join",                    test_join());
@@ -99,5 +139,13 @@ function main(): i32 {
     r = r.it("extension last dot",      test_extension_last_dot());
     r = r.it("extension hidden file",   test_extension_hidden());
     r = r.it("extension none",          test_extension_none());
+    r = r.it("clean dots + dup seps",   test_clean_dots());
+    r = r.it("clean dotdot",            test_clean_dotdot());
+    r = r.it("clean rooted above root", test_clean_rooted_above_root());
+    r = r.it("clean relative climb",    test_clean_relative_climb());
+    r = r.it("clean empty",             test_clean_empty());
+    r = r.it("clean cancels to dot",    test_clean_to_dot());
+    r = r.it("clean bare root",         test_clean_root());
+    r = r.it("clean trailing slash",    test_clean_trailing_slash());
     return r.finish();
 }
