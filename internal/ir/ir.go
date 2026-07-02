@@ -4942,6 +4942,21 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// raw-pointer liveness such code threads via `buf as usize` is held by
 		// the CastExpr escape taint in computeFreeEligible, not here.
 		return false
+	case *ast.StringLit:
+		// A string literal has Static ownership (ExprResultOwnership) — it
+		// aliases nothing, so a local initialised from a bare literal is
+		// eligible, exactly like the scalar-literal case above. This is what
+		// makes the `var s = ""; loop { s = s + p }` accumulator reclaim each
+		// intermediate concat: the dec-on-overwrite (ir.go ~17183) requires
+		// freeEligible[s], and without this case `""` fell to the tainted
+		// default and stranded every intermediate buffer (O(n²) bump-heap
+		// growth on the hot response-assembly path). Dec'ing the literal itself
+		// is safe — the overwrite str_dec / __fern_rc_dec sentinel + SSO guards
+		// no-op on non-heap (literal / Static) sources, and only the later
+		// fresh heap concats actually reclaim. An escaping accumulator is still
+		// caught by the escape taint in computeFreeEligible, same as the other
+		// untainted-owned cases.
+		return false
 	case *ast.FieldAccess, *ast.Index:
 		return true
 	case *ast.SliceExpr:
