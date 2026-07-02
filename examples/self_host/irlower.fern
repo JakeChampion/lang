@@ -6887,12 +6887,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
 // lower_try lowers the try-operator `inner?` (parser desugar: unary "try_").
 // `inner` evaluates to an Option[T] / Result[T, E] box; `?` unwraps the success
 // payload (Some/Ok) as the expression's value, or early-returns the failure box
-// from the enclosing (Option/Result-returning) function. The self-host runtime
-// leaks (no rc / defer / errdefer), so the failure path is simply: Option ->
-// return a fresh None (payloadless tag box); Result -> forward the source Err
-// box unchanged (its tag=Err + E payload already satisfy the enclosing return,
-// checker-verified). Mirrors the native ir.go `*ast.TryOp` lowering minus the
-// cleanup the leak-only path doesn't need. Gated to scalar i32 / boolean
+// from the enclosing (Option/Result-returning) function. The failure path is:
+// Option -> return a fresh None (payloadless tag box); Result -> forward the
+// source Err box unchanged (its tag=Err + E payload already satisfy the
+// enclosing return, checker-verified), or `Err(E2.from(e))` when the error type
+// converts. Before that early return it runs the SAME exit RC dec-sweep as a
+// normal StmtReturn (emit_dec_sweep_except below) so owned locals live at the
+// `?` are released, not leaked — mirroring native's ir.go `*ast.TryOp` cleanup.
+// (defer / errdefer are still parse-level and do not yet see `?` — parser.fern
+// ~6928.) Gated to scalar i32 / boolean
 // payloads for now: those need no extra slot-typing at the `var x = inner?`
 // binding (x defaults to a width-32 i32 slot), so a string / i64 / f64 /
 // composite payload bails to AST until the success value's slot typing is
@@ -6980,6 +6983,20 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
     } else {
         ts = ts.emit(ir.op_opt_none());          // fresh None
     }
+    // Release owned locals live at this early exit. The `?` failure path is an
+    // early return and must run the SAME exit dec-sweep as StmtReturn, otherwise
+    // every owned array / struct / string / tuple / map local live at the `?`
+    // leaks — this was the only uncleaned return on the IR path (the stale
+    // comment above predated the RC arc). The failure box built just above sits
+    // on the operand stack; the sweep is net-zero on the stack (a load / dec /
+    // drop triple per swept slot), so the box stays on top for op_return. The
+    // `$try` temp holds the Option/Result box (forwarded unchanged on the Result
+    // path) but is not a swept slot type, so keep=-1 (sweep everything) never
+    // frees the value being returned. Mirrors native's emitRcDecLocalsAtExit at
+    // the TryOp failure edge (ir.go ~11486). Deferred / errdefer actions are a
+    // separate parse-level pass that does not yet see `?` (parser.fern ~6928) —
+    // tracked apart from this RC fix.
+    ts = emit_dec_sweep_except(ts, 0 - 1);
     ts = ts.emit(ir.op_return());
     ts = ts.emit(ir.op_end());
     // Success path: load the payload (offset abstracted by op_opt_payload). An
