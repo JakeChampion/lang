@@ -10999,9 +10999,19 @@ function main(): i32 {
     if (modBT.funcs[0].type_params[0] != "T") { return 1087; }
     // The bound list is consumed; the param type stays the bare `T`.
     if (modBT.funcs[0].params[0].type_name != "T") { return 1088; }
-    var srcUT: string = "function id[T](x: T): T { return x; }";
+    // An UNBOUNDED param used ONLY through `T[]` (never as a bare value) stays
+    // erased — the uniform 8-byte array-slot ABI fits every element type.
+    var srcUT: string = "function count[T](xs: T[]): i32 { return 0; }";
     var modUT: Module = parse_module(lexer.tokenize(srcUT));
     if (modUT.funcs[0].type_params.len() != 0) { return 1089; }
+    // But an UNBOUNDED param that appears as a BARE VALUE param (`x: T`) is
+    // PROMOTED to the monomorphised set: a wide value (`string` is a 16-byte
+    // {ptr,len}) has a different ABI than the erased 8-byte slot, so the body
+    // must be cloned per type. `id[T](x: T)` therefore records T.
+    var srcUV: string = "function id[T](x: T): T { return x; }";
+    var modUV: Module = parse_module(lexer.tokenize(srcUV));
+    if (modUV.funcs[0].type_params.len() != 1) { return 1189; }
+    if (modUV.funcs[0].type_params[0] != "T") { return 1190; }
 
     // Module merge — flat-concatenate decls from a "main"
     // module with an "imported" module's decls.
