@@ -371,6 +371,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"env":                    emitEnvHelper,
 	"write_file":             emitWriteFileHelper,
 	"read_file":              emitReadFileHelper,
+	"remove_file":            emitRemoveFileHelper,
 	"__fern_io_error":        emitIoErrorHelper,
 	"print":                  emitPrintHelper,
 	"write":                  emitWriteHelper,
@@ -411,6 +412,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_drop_arr_str": {"__fern_str_dec", "__fern_arr_dec"},
 	"write_file":          {"__fern_io_error"},
 	"read_file":           {"__fern_io_error"},
+	"remove_file":         {"__fern_io_error"},
 }
 
 // helperReturns64 lists runtime helpers whose result is a full 8-byte value — a
@@ -431,6 +433,7 @@ var helperReturns64 = map[string]bool{
 	"env":                    true,
 	"write_file":             true,
 	"read_file":              true,
+	"remove_file":            true,
 	"__str_idx":              true,
 	"__arr_idx":              true,
 	"__arr_idx_1":            true,
@@ -460,6 +463,7 @@ var heapUsingHelpers = map[string]bool{
 	"env":                    true,
 	"write_file":             true,
 	"read_file":              true,
+	"remove_file":            true,
 	"__fern_io_error":        true,
 }
 
@@ -1280,6 +1284,88 @@ func emitReadFileHelper(w func(string, ...any)) {
 	w("\tldp x21, x22, [sp, #32]")
 	w("\tldp x19, x20, [sp, #16]")
 	w("\tldp x29, x30, [sp], #256")
+	w("\tret")
+}
+
+// emitRemoveFileHelper writes remove_file(path) -> Option[IoError]: unlink the
+// file at `path`. Returns None (tag 1) on success and Some(IoError) (tag 0,
+// box@8) on failure (mirroring os.Remove, a missing target is an ENOENT error,
+// not a silent success). The path is NUL-terminated into a fresh heap buffer
+// first, then unlinkat(AT_FDCWD, path_nul, 0). A negative result maps -errno
+// through __fern_io_error. Non-leaf (calls __fern_io_error), so it keeps a frame
+// with callee-saved x19=path / x20=path_nul across the syscall and the call.
+// x0=path.
+func emitRemoveFileHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("remove_file"))
+	w("\tstp x29, x30, [sp, #-32]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tmov x19, x0") // path
+	// NUL-terminate the path into a fresh heap buffer (x20).
+	w("\tldur w2, [x19, #-4]") // path len
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8") // base
+	w("\tadd x5, x2, #1")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]") // bump
+	w("\tmov w7, #0")
+	w(".Lssa_rmf_cp:")
+	w("\tcmp w7, w2")
+	w("\tb.hs .Lssa_rmf_cpd")
+	w("\tldrb w8, [x19, x7]")
+	w("\tstrb w8, [x4, x7]")
+	w("\tadd w7, w7, #1")
+	w("\tb .Lssa_rmf_cp")
+	w(".Lssa_rmf_cpd:")
+	w("\tstrb wzr, [x4, x2]") // NUL
+	w("\tmov x20, x4")        // path_nul
+	// unlinkat(AT_FDCWD, path_nul, 0).
+	w("\tmov x0, #100")
+	w("\tneg x0, x0") // AT_FDCWD = -100
+	w("\tmov x1, x20")
+	w("\tmov x2, #0") // flags
+	w("\tmov x8, #35") // unlinkat
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_rmf_err") // < 0 → error
+	// return None box {rc=1, tag=1}.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x4, #16")
+	w("\tstr x5, [x3]")
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")   // rc = 1
+	w("\tadd x0, x4, #8") // box data
+	w("\tmov w6, #1")
+	w("\tstr w6, [x0]") // tag = 1 (None)
+	w("\tb .Lssa_rmf_ret")
+	w(".Lssa_rmf_err:")
+	w("\tneg x0, x0") // errno = -ret
+	w("\tmov x1, x19")
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x20, x0") // IoError box
+	// return Some(IoError) box {rc=1, tag=0, ioerr@8}.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")   // rc = 1
+	w("\tadd x0, x4, #8") // box data
+	w("\tstr wzr, [x0]")  // tag = 0 (Some)
+	w("\tstr x20, [x0, #8]")
+	w(".Lssa_rmf_ret:")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #32")
 	w("\tret")
 }
 

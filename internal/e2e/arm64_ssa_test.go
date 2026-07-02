@@ -493,6 +493,32 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 }`,
 			want: 10,
 		},
+		{
+			// remove_file success: write a file, remove it (None), then confirm it's
+			// gone by re-reading (Err(NotFound)). Exercises the unlinkat syscall and
+			// the None (tag 1) path of the Option[IoError] box.
+			name: "remove_file_ok",
+			src: `function main(): i32 {
+  var w = write_file("/tmp/fern_ssa_e2e_rmf.txt", "gone");
+  var r = match (remove_file("/tmp/fern_ssa_e2e_rmf.txt")) { Some(e) => 1, None => 5 };
+  var g = match (read_file("/tmp/fern_ssa_e2e_rmf.txt")) { Ok(s) => 0, Err(e) => 2 };
+  return r + g;
+}`,
+			want: 7,
+		},
+		{
+			// remove_file failure: removing a nonexistent file yields Some(NotFound)
+			// (os.Remove-style: a missing target is an error). Exercises the errno ->
+			// IoError mapping on the unlink path.
+			name: "remove_file_err",
+			src: `function main(): i32 {
+  return match (remove_file("/no_such_file_ssa_rmf_9137")) {
+    None => 1,
+    Some(e) => match (e) { NotFound(p) => 10, _ => 19 }
+  };
+}`,
+			want: 10,
+		},
 	}
 
 	for _, c := range cases {
