@@ -552,6 +552,51 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			src:  `function main(): i32 { return match (temp_dir("no_such_ssa/x")) { Ok(p) => 0, Err(e) => 1 }; }`,
 			want: 1,
 		},
+		{
+			// read_dir success: create a temp dir, write two files into it, then list
+			// it — "." and ".." are excluded, so the count is 2. Exercises openat
+			// O_DIRECTORY / the getdents64 two-pass count+fill / lseek rewind / the
+			// string[] container Ok box.
+			name: "read_dir_count",
+			src: `function main(): i32 {
+  return match (temp_dir("fern_rd")) {
+    Ok(d) => {
+      var a = write_file(d + "/a.txt", "x");
+      var b = write_file(d + "/b.txt", "y");
+      match (read_dir(d)) { Ok(es) => es.len(), Err(e) => 100 }
+    },
+    Err(e) => 200
+  };
+}`,
+			want: 2,
+		},
+		{
+			// read_dir element: a single-entry directory, so es[0] is deterministic.
+			// The base name "hello.txt" has length 9 — proves the per-entry string is
+			// constructed correctly and is indexable out of the container.
+			name: "read_dir_elem",
+			src: `function main(): i32 {
+  return match (temp_dir("fern_rd")) {
+    Ok(d) => {
+      var a = write_file(d + "/hello.txt", "z");
+      match (read_dir(d)) { Ok(es) => es[0].len(), Err(e) => 100 }
+    },
+    Err(e) => 200
+  };
+}`,
+			want: 9,
+		},
+		{
+			// read_dir failure: a nonexistent directory yields ENOENT → Err(NotFound).
+			name: "read_dir_err",
+			src: `function main(): i32 {
+  return match (read_dir("/no_such_dir_ssa_rd_9137")) {
+    Ok(es) => 0,
+    Err(e) => match (e) { NotFound(p) => 10, _ => 19 }
+  };
+}`,
+			want: 10,
+		},
 	}
 
 	for _, c := range cases {
