@@ -79,10 +79,21 @@ direction). Each slice below is independently shippable and validated.
   (`Owned | Borrowed | View | Static`) and `ast.StructuralOwnership(Type)
   Ownership` — the *default* ownership implied by a type's shape (`SliceType` →
   `View`, scalars → `Owned`/N/A, everything pointer-shaped → `Owned`). Pure
-  addition + unit tests; nothing reads it yet. **This PR.**
-- **C2.** Consolidate `Param.Own` into the enum: `Param.Ownership Ownership`
-  with `Own` derived for back-compat. Mechanical, tested by the existing
-  owned-param suite (E050) staying green.
+  addition + unit tests; nothing reads it yet. **Landed (#4302).**
+- **C2 (producer classifier, additive).** `ast.ExprResultOwnership(Expr, Type)`
+  — the ownership an expression *produces*, resolved from syntax + type (string
+  literal → `Static`; string slice → `Owned` copy; array slice → `View`; fresh
+  construction / call → `Owned`; else the type's structural default). This is
+  the typed counterpart of the self-host `expr_is_fresh_str` heuristics — the
+  input the checker-enforcement (C5) and the self-host port (CS2) consume.
+  Binding-precise refinement of a bare identifier (borrowed param vs owned
+  local) needs the symbol table and is folded into C3. **This PR.**
+  - *Deferred (was C2): folding `Param.Own` into the enum.* On inspection this
+    is low-value churn — `Param` is overloaded for params AND struct fields with
+    dozens of literals that omit `Own`, so a field swap flips the zero-value
+    default (borrowed → owned) across un-audited sites, and `Param.Own` reads
+    cleanly as a bool. Ownership on params is surfaced instead via C3 (the
+    inference result), where it carries real information.
 - **C3.** Expose the `inferParamEscapes` result as ownership on the param type
   rather than a bare bool side-table (keep the side-table as the computation;
   surface the *result* onto the type). Gated by `rc_borrow_infer` differential
