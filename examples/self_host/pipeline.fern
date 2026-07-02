@@ -1,15 +1,15 @@
 // examples/self_host/pipeline.fern — tenth concrete step of
 // the self-host port and the first "everything composes" demo.
-// Imports lexer + parser + constfold + checker + vm and drives
-// a single non-trivial source program through every layer:
+// Imports lexer + parser + constfold + checker + interp and
+// drives a single non-trivial source program through every
+// layer:
 //
 //   source text
 //     → lexer.tokenize     (bytes → Token[])
 //     → parser.parse_module(Token[] → Module)
 //     → constfold.fold_module        (Module → Module)
 //     → checker.check_module         (Module → ModuleTypes)
-//     → vm.compile_program           (Module → CompiledProgram)
-//     → vm.exec_program              (CompiledProgram → Value)
+//     → interp.eval_module           (Module → Value)
 //
 // Each layer was already exercised individually by its own
 // `main()` — this file glues them together and asserts the
@@ -35,24 +35,23 @@ import "./lexer";
 import "./parser";
 import "./constfold";
 import "./checker";
-import "./vm";
+import "./interp";
 
 // run_pipeline glues the layers together. Returns a Value
-// (vm.Value) so the caller can match on the variant — VInt for
-// success, VErr if anything along the way refused.
-function run_pipeline(src: string): vm.Value {
+// (interp.Value) so the caller can match on the variant — VInt
+// for success, VErr if anything along the way refused.
+function run_pipeline(src: string): interp.Value {
     var toks: lexer.Token[] = lexer.tokenize(src);
     var mod: parser.Module = parser.parse_module(toks);
-    // constfold runs ahead of checker / vm so they see the
+    // constfold runs ahead of checker / interp so they see the
     // smaller, more concrete tree. Idempotent — running it
     // twice would produce the same result.
     var folded: parser.Module = constfold.fold_module(mod);
     var mt: checker.ModuleTypes = checker.check_module(folded);
     if (!mt.all_well_typed) {
-        return vm.VErr { msg: "pipeline: program does not type-check" };
+        return interp.VErr { msg: "pipeline: program does not type-check" };
     }
-    var prog: vm.CompiledProgram = vm.compile_program(folded);
-    return vm.exec_program(prog);
+    return interp.eval_module(folded);
 }
 
 function main(): i32 {
@@ -61,10 +60,10 @@ function main(): i32 {
     var src: string =
         "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); }"
         + " function main(): i32 { var c = 2 + 3; return fact(c); }";
-    var r1: vm.Value = run_pipeline(src);
+    var r1: interp.Value = run_pipeline(src);
     match (r1) {
-        vm.VInt(i) => { if (i.v != 120) { return 10; } },
-        vm.VErr(e) => { return 11; },
+        interp.VInt(i) => { if (i.v != 120) { return 10; } },
+        interp.VErr(e) => { return 11; },
         _ => { return 12; }
     }
 
@@ -90,35 +89,35 @@ function main(): i32 {
 
     // Negative path: ill-typed program. Checker says it
     // doesn't type-check, run_pipeline surfaces VErr without
-    // ever calling the VM.
+    // ever calling the interpreter.
     var bad: string = "function f(): i32 { return \"oops\"; } function main(): i32 { return f() + 1; }";
-    var r3: vm.Value = run_pipeline(bad);
+    var r3: interp.Value = run_pipeline(bad);
     match (r3) {
-        vm.VErr(_) => { },
+        interp.VErr(_) => { },
         _ => { return 30; }
     }
 
     // Array path: array literal + indexing flows through the
-    // VM too. Sum of [3, 5, 7, 9] = 24 via while loop.
+    // interpreter too. Sum of [3, 5, 7, 9] = 24 via while loop.
     var arr_src: string =
         "function main(): i32 {"
         + " var a = [3, 5, 7, 9];"
         + " var i = 0; var s = 0;"
         + " while (i < len(a)) { s = s + a[i]; i = i + 1; }"
         + " return s; }";
-    var r4: vm.Value = run_pipeline(arr_src);
+    var r4: interp.Value = run_pipeline(arr_src);
     match (r4) {
-        vm.VInt(i) => { if (i.v != 24) { return 40; } },
+        interp.VInt(i) => { if (i.v != 24) { return 40; } },
         _ => { return 41; }
     }
 
     // No-function path: a top-level-stmts-only program still
-    // composes — there's no `main` to call, so vm runs the
+    // composes — there's no `main` to call, so interp runs the
     // top_stmts in the implicit entry.
     var top_src: string = "var x = 7; var y = 11; return x + y;";
-    var r5: vm.Value = run_pipeline(top_src);
+    var r5: interp.Value = run_pipeline(top_src);
     match (r5) {
-        vm.VInt(i) => { if (i.v != 18) { return 50; } },
+        interp.VInt(i) => { if (i.v != 18) { return 50; } },
         _ => { return 51; }
     }
 

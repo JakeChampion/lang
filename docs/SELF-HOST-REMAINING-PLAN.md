@@ -1645,5 +1645,7 @@ smallest → largest:
 
 Wiring (final slice): the self-host driver routes `asm.fern` → x86-64
 assembler → `elf.fern` → write `0o755` (and the arm64 / Darwin
-equivalents), dropping the external link step. `examples/self_host/
-disasm.fern` doubles as a cross-check for the emitted-bytes assemblers.
+equivalents), dropping the external link step. (`examples/self_host/
+disasm.fern`, which used to double as a cross-check for the
+emitted-bytes assemblers, was retired in #4392 along with the
+bytecode VM it disassembled.)

@@ -3234,8 +3234,7 @@ function main(): i32 {
 // carries the low-address guard __fern_rc_dec has, so an
 // array-typed slot that actually holds a non-pointer (an enum
 // tag, stack garbage from a never-taken branch) is passed through
-// instead of faulting — that case is exercised end-to-end by
-// TestSelfHostVMX86_64.
+// instead of faulting.
 func TestX86_64RcDropArrayElements(t *testing.T) {
 	// Proof the drop FIRES: `consume` nests `inner` into a local
 	// array and drops it on exit; inner's rc must return to its
