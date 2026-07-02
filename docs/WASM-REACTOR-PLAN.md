@@ -286,6 +286,65 @@ piece; Layer 1 is trivial on top of it.
 wasmtime (v34.0.1, /root/.fern-wasm/wasmtime) + wasm-tools are
 available, so it's fully testable once Layer 2 lands.
 
+## SELF-HOST wasm-IR path — a SEPARATE component-composition blocker (poll/tcp)
+
+Everything above is the **native** (Go) reactor: `fern -target wasm`
+wraps the core module with `internal/wasm/component` (the Go composer,
+`compose_*.go` + `componenttype`), which declares + canonically lowers
+`wasi:io/poll.poll(list<pollable>)`, the tcp streams/resources, etc. —
+so the native path handles poll/tcp end to end (verified above).
+
+The **self-host** wasm backend is a *different composition path* and does
+NOT reach this. `examples/self_host/wasm_ir_run.fern` emits a bare
+**Preview-1 core module** (WAT text) and the driver/e2e composes it with
+`wasm-tools component new --adapt wasi_snapshot_preview1=<adapter>`. The
+scalar Preview-2 pollable ops compose on this path (verified — #4317):
+`monotonic-clock.subscribe-duration` (i64→i32), `io/poll
+[method]pollable.block` (i32→()), `[resource-drop]pollable` (i32→()) all
+have core signatures `--adapt` can lower directly.
+
+`wasm_poll` does NOT compose on this path. Investigation (2026-07, while
+lowering `wasm_poll` for #4316) established:
+
+- The WAT emits correctly — the `$__fern_wasm_poll` wrapper (array
+  `[len@0,cap@4,elems@8]` → canonical `(data=a+8, len=[a])` list; ready
+  `list<u32>` back through an alloc'd 8-byte return area) + the
+  `wasi:io/poll@0.2.0 "poll" (param i32 i32 i32)` import.
+- But `wasm-tools component new --adapt` fails: **"missing component
+  metadata for import of `wasi:io/poll@0.2.0::poll`"**. The `--adapt`
+  flow is Preview-1-core-oriented and can lower a direct Preview-2 import
+  only when its core signature maps trivially (the scalars above); a
+  **list-typed** import (`list<pollable> -> list<u32>`) needs the
+  canonical-ABI lowering metadata `--adapt` won't synthesise.
+- Embedding the full `fern` world via `wasm-tools component embed -w
+  fern` does NOT unblock `--adapt` (same error); and `component new`
+  *without* `--adapt` then fails **"import interface wasi:io/poll is
+  missing function poll"** — because the vendored WIT
+  `cmd/fern/wit/deps/io/poll.wit` is a *reduced subset* (only
+  `pollable.block` + drop; no top-level `poll` function). The native
+  path declares poll's type in Go (`internal/wasm/component`), not from
+  that WIT, which is why native works but the WIT-embed route does not.
+
+**Conclusion.** Poll/tcp on the *self-host* wasm path is NOT a small
+metadata blob — it needs a **Preview-2-native self-host composition
+path**: lift `main` as `wasi:cli/run`, move all I/O off Preview-1 fd ops
+onto `wasi:io/streams`, extend the vendored WIT (add `poll`, the full
+tcp/udp), and emit + compose the full world metadata (a Fern port of
+`internal/wasm/component`, or an equivalent `wasm-tools embed`+direct
+`component new` flow). That is a major subsystem — the shared
+prerequisite for BOTH `wasm_poll` and `tcp_*` on self-host wasm — and is
+distinct from (and downstream of) the already-solved native composer.
+
+Until then, `wasm_poll` / `tcp_*` DO lower as portable shims on every
+OTHER backend — native x86-64/arm64 + interp + the self-host register IR
+paths (`asm_ir` / `asm_arm64_ir`), returning the native no-pollable
+values (`wasm_poll` → -1). They are excluded from `wasm_eligible`
+(`examples/self_host/wasm_ir.fern`) so a self-host wasm module using them
+stays off the IR path rather than emitting output that can't compose.
+(`wasm_poll` landed this way in #4316/#4421; `wasm_block` +
+`wasm_timer_pollable` + `wasm_pollable_drop` DO compose on self-host wasm
+because they are scalar-ABI.)
+
 ## Status of the broader async work
 
 Native async/edge-handler feature: COMPLETE + merged (serve,
