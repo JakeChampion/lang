@@ -35,7 +35,8 @@ func IsPure(k OpKind) bool {
 		OpLoad32U, OpStore32,
 		OpLoadF, OpStoreF,
 		OpAlloc,
-		OpMakeClosure, OpMakeEnv:
+		OpMakeClosure, OpMakeEnv,
+		OpBoxDyn, OpCallDyn:
 		return false
 	default:
 		return true

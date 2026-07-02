@@ -925,6 +925,54 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 }`,
 			want: 7,
 		},
+		{
+			// `dyn Trait` dispatch (OpConstVtable + OpBoxDyn + OpCallDyn): two
+			// concrete structs coerced to `dyn Producer`, each boxed into a
+			// {data, vtable} cell, dispatched through the vtable's slot-0 pointer.
+			// sum(IntBox{40}) + sum(Pair{1,1}) = 40 + 2 = 42. Exercises the vtable
+			// `.rodata` cell, the inline box alloc, and the indirect slot call.
+			name: "dyn_trait_dispatch",
+			src: `trait Producer { function get(self: Self): i32; }
+struct IntBox { v: i32 }
+impl Producer for IntBox { function get(self: Self): i32 { return self.v; } }
+struct Pair { a: i32, b: i32 }
+impl Producer for Pair { function get(self: Self): i32 { return self.a + self.b; } }
+function sum(p: dyn Producer): i32 { return p.get(); }
+function main(): i32 {
+  var x: dyn Producer = IntBox { v: 40 };
+  var y: dyn Producer = Pair { a: 1, b: 1 };
+  return sum(x) + sum(y);
+}`,
+			want: 42,
+		},
+		{
+			// A multi-method trait dispatched via `dyn` — two vtable slots, one of
+			// them taking an extra argument. describe(Square{5}) = area 25 +
+			// scaled(3) 15 = 40; describe(Rect{2,4}) = 8 + (2+4)*3=18 → 26. 40+26=66.
+			// Exercises OpCallDyn's slot math (slot 1) and its receiver-first arg ABI.
+			name: "dyn_trait_multi_method",
+			src: `trait Shape {
+  function area(self: Self): i32;
+  function scaled(self: Self, k: i32): i32;
+}
+struct Square { side: i32 }
+impl Shape for Square {
+  function area(self: Self): i32 { return self.side * self.side; }
+  function scaled(self: Self, k: i32): i32 { return self.side * k; }
+}
+struct Rect { w: i32, h: i32 }
+impl Shape for Rect {
+  function area(self: Self): i32 { return self.w * self.h; }
+  function scaled(self: Self, k: i32): i32 { return (self.w + self.h) * k; }
+}
+function describe(s: dyn Shape): i32 { return s.area() + s.scaled(3); }
+function main(): i32 {
+  var a: dyn Shape = Square { side: 5 };
+  var b: dyn Shape = Rect { w: 2, h: 4 };
+  return describe(a) + describe(b);
+}`,
+			want: 66,
+		},
 	}
 
 	for _, c := range cases {

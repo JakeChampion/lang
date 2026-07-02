@@ -54,6 +54,13 @@ const (
 	MakeEnv                    // reg[Dst] = env block of the ArgLocs captures (8B slots)
 	MakeClosure                // reg[Dst] = {fn_idx(Callee), env_ptr} cell over the ArgLocs captures
 	Select                     // reg[Dst] = reg[Src] != 0 ? reg[Src2] : reg[Src3]
+
+	// dyn Trait dispatch (docs/DYN-TRAITS.md §4.2.2, BOXED one-word). Only the
+	// arm64-ssa render path emits these to asm; the x86-64-ssa render path
+	// never receives them (only arm64-ssa opts into ir.DynSupported).
+	ConstVtable // reg[Dst] = &vtable(Str)   (.rodata address of a (trait-set/concrete) vtable)
+	BoxDyn      // reg[Dst] = {data=ArgLocs[0], vtable=ArgLocs[1]} 16-byte cell (calls the allocator)
+	CallDyn     // reg[Dst] = (*(ArgLocs[last] + Imm*8))(ArgLocs[0..last-1])   (vtable-slot indirect call)
 )
 
 // Inst is one straight-line abstract instruction. Registers are indices into a
@@ -757,6 +764,47 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 			mop = MakeClosure
 		}
 		e.push(Inst{Op: mop, Dst: e.s2, Callee: op.Str, ArgLocs: argLocs, CaptureSlots: op.CaptureSlots})
+		e.place(op.Result, e.s2)
+		return nil
+
+	case ssa.OpConstVtable:
+		// A static .rodata address — same shape as ConstStr (Dst := &vtable).
+		e.push(Inst{Op: ConstVtable, Dst: e.s2, Str: op.Str})
+		e.place(op.Result, e.s2)
+		return nil
+
+	case ssa.OpBoxDyn:
+		// Allocate a {data, vtable} cell — a call to the allocator, so its
+		// operand homes plus the caller-save set are captured like a call.
+		argLocs := make([]Loc, 0, len(op.Args))
+		for _, a := range op.Args {
+			l, ok := e.loc(a.ID)
+			if !ok {
+				return fmt.Errorf("x86_64ssa: OpBoxDyn operand v%d has no allocation", a.ID)
+			}
+			argLocs = append(argLocs, l)
+		}
+		saveRegs, saveSet := e.callSaveRegs(op)
+		e.push(Inst{Op: BoxDyn, Dst: e.s2, ArgLocs: argLocs, SaveRegs: saveRegs, SaveRegsSet: saveSet})
+		e.place(op.Result, e.s2)
+		return nil
+
+	case ssa.OpCallDyn:
+		// Vtable-slot indirect dispatch. ArgLocs = [data, method-args..., vtable];
+		// Imm = the method slot. Like a call (caller-save set captured).
+		if len(op.Args) < 1 {
+			return fmt.Errorf("x86_64ssa: OpCallDyn needs at least the vtable operand")
+		}
+		argLocs := make([]Loc, 0, len(op.Args))
+		for _, a := range op.Args {
+			l, ok := e.loc(a.ID)
+			if !ok {
+				return fmt.Errorf("x86_64ssa: OpCallDyn operand v%d has no allocation", a.ID)
+			}
+			argLocs = append(argLocs, l)
+		}
+		saveRegs, saveSet := e.callSaveRegs(op)
+		e.push(Inst{Op: CallDyn, Dst: e.s2, ArgLocs: argLocs, Imm: op.Imm, W: op.Width, SaveRegs: saveRegs, SaveRegsSet: saveSet})
 		e.place(op.Result, e.s2)
 		return nil
 

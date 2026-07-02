@@ -259,6 +259,27 @@ const (
 	// other constant.
 	OpConstStringLen
 
+	// dyn Trait dispatch (docs/DYN-TRAITS.md §4.2.2, BOXED one-word). Lifted
+	// 1:1 from the IR's OpConstVtable / OpBoxDyn / OpCallDyn; only the
+	// arm64-ssa path (which opts into ir.DynSupported) ever produces them.
+	//
+	// OpConstVtable: Str = "<traitSetKey>/<concrete>" — pushes the address of
+	// the static (trait-set, concrete) vtable (a .rodata array of absolute
+	// method function pointers, trait declaration order). Pure-ish, but kept
+	// impure for simplicity (a rodata address; never CSE-merged in practice).
+	OpConstVtable
+
+	// OpBoxDyn: Args = [data, vtable]. Allocates a 16-byte {data@0, vtable@8}
+	// cell and returns its pointer. Impure (heap alloc + a call to the
+	// allocator across which caller-saved values must be preserved).
+	OpBoxDyn
+
+	// OpCallDyn: Args = [data, method-args..., vtable]; Imm = the method slot
+	// index. Loads vtable[Imm] (an absolute fn pointer) and indirect-calls it
+	// with (data, method-args...) as receiver-first args. Width carries the
+	// result width (0 => void/i32, 64 => i64). Impure (a call).
+	OpCallDyn
+
 	// Phi — SSA merge. In a block B with predecessors
 	// P[0..n-1], a Phi op's Args[i] is the Value flowing in
 	// from P[i]. Phi ops MUST appear at the top of B before
@@ -423,6 +444,12 @@ func (k OpKind) String() string {
 		return "enum_sentinel"
 	case OpConstStringLen:
 		return "const_string_len"
+	case OpConstVtable:
+		return "const_vtable"
+	case OpBoxDyn:
+		return "box_dyn"
+	case OpCallDyn:
+		return "call_dyn"
 	case OpPhi:
 		return "phi"
 	default:

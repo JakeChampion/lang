@@ -757,6 +757,47 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		result := l.out.AddOp(l.cur, OpMakeClosure)
 		l.cur.Ops[len(l.cur.Ops)-1].Str = op.Str
 		l.stack = append(l.stack, result)
+	case ir.OpConstVtable:
+		// () → vtable address. The IR names the (trait-set, concrete) pair in
+		// Str/Str2; pack both into the SSA op's single Str field (the backend
+		// splits on '/' for the .rodata label), mirroring the native emitter.
+		result := l.out.AddOp(l.cur, OpConstVtable)
+		l.cur.Ops[len(l.cur.Ops)-1].Str = op.Str + "/" + op.Str2
+		l.stack = append(l.stack, result)
+	case ir.OpBoxDyn:
+		// [data, vtable] (vtable on top) → cell pointer. Args = [data, vtable].
+		if len(l.stack) < 2 {
+			return fmt.Errorf("ssa.LiftFromIR: OpBoxDyn at op[%d] needs [data, vtable], stack has %d", i, len(l.stack))
+		}
+		vtable := l.stack[len(l.stack)-1]
+		data := l.stack[len(l.stack)-2]
+		l.stack = l.stack[:len(l.stack)-2]
+		result := l.out.AddOp(l.cur, OpBoxDyn, data, vtable)
+		l.stack = append(l.stack, result)
+	case ir.OpCallDyn:
+		// [data, args..., vtable] (vtable on top) → result | (). op.Sig is the
+		// receiver-first method signature (Params[0] = receiver/data), so the
+		// number of call-arg values is len(Sig.Params); the vtable sits above
+		// them. Args = [data, args..., vtable]; Imm = the method slot; Width =
+		// the result width. Pushes a result iff the method is non-void.
+		if op.Sig == nil {
+			return fmt.Errorf("ssa.LiftFromIR: OpCallDyn at op[%d] missing Sig", i)
+		}
+		argc := len(op.Sig.Params)
+		if len(l.stack) < argc+1 {
+			return fmt.Errorf("ssa.LiftFromIR: OpCallDyn at op[%d] needs %d args + vtable, stack has %d", i, argc, len(l.stack))
+		}
+		vtable := l.stack[len(l.stack)-1]
+		callArgs := append([]Value(nil), l.stack[len(l.stack)-1-argc:len(l.stack)-1]...)
+		l.stack = l.stack[:len(l.stack)-argc-1]
+		all := append(callArgs, vtable)
+		result := l.out.AddOp(l.cur, OpCallDyn, all...)
+		o := l.cur.Ops[len(l.cur.Ops)-1]
+		o.Imm = int64(op.I32) // method slot
+		if op.Sig.Result != nil {
+			o.Width = widthOfAstType(op.Sig.Result)
+			l.stack = append(l.stack, result)
+		}
 	case ir.OpMakeSomeI32, ir.OpMakeOkI32:
 		// (payload) → (tag=0, payload)
 		if len(l.stack) < 1 {
