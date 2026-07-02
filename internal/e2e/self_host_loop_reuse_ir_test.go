@@ -142,6 +142,29 @@ var loopReuseIRCases = []struct {
 	{"cross-block-tuple-churn-safe",
 		`function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5000000) { var a: (i32, i32) = (i, 1); var s: i32 = a.0 + a.1; if (i > 0) { var b: (i32, i32) = (i, 3); sum = (sum + b.0 + b.1) % 1000; } i = i + 1; } return sum; }`,
 		229, 1},
+	// NESTED-STRUCT FIELD reuse (Delta B): `d` has a nested-struct field
+	// (`inner: Inner`) and is dead by the time `c` is built, so c reuses d's Outer
+	// box in place — the recipient's Outer alloc is elided. The reuse RELEASES d's
+	// OLD inner box (full freeing drop) before writing c's fresh inner, so no leak /
+	// double-free. Static box sites: d's Outer + d's Inner + c's Inner = THREE (the
+	// reused c.Outer is not allocated). Value: sum over i in 0..3 of
+	// (d.inner.a+d.inner.b+d.n) + (c.inner.a=2i + 3 + 5) = (3i+1)+(2i+8) = 5i+9 →
+	// 9+14+19+24 = 66.
+	{"loop-nested-struct-field-reuse",
+		`struct Inner { a: i32, b: i32 } struct Outer { inner: Inner, n: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var d: Outer = Outer { inner: Inner { a: i, b: i + 1 }, n: i }; var s: i32 = d.inner.a + d.inner.b + d.n; var c: Outer = Outer { inner: Inner { a: i * 2, b: 3 }, n: 5 }; sum = sum + s + c.inner.a + c.inner.b + c.n; i = i + 1; } return sum; }`,
+		66, 3},
+	// Nested-struct donor-LIVE control: `d` is read AFTER `c` is built, so reuse is
+	// suppressed and c's Outer allocates too — FOUR box sites. Same value 66.
+	{"loop-nested-struct-field-donor-live",
+		`struct Inner { a: i32, b: i32 } struct Outer { inner: Inner, n: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var d: Outer = Outer { inner: Inner { a: i, b: i + 1 }, n: i }; var c: Outer = Outer { inner: Inner { a: i * 2, b: 3 }, n: 5 }; sum = sum + d.inner.a + d.inner.b + d.n + c.inner.a + c.inner.b + c.n; i = i + 1; } return sum; }`,
+		66, 4},
+	// Nested-struct field reuse memory safety at scale: 5M iterations. A leaked old
+	// inner box would exhaust the heap; a double-free of it (or of the reused Outer
+	// box) would crash. Exit 0 (sum mod 1000) with THREE static box sites proves the
+	// per-iteration inner alloc/free stays balanced through the full-freeing-drop.
+	{"loop-nested-struct-field-churn-safe",
+		`struct Inner { a: i32, b: i32 } struct Outer { inner: Inner, n: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5000000) { var d: Outer = Outer { inner: Inner { a: i, b: i + 1 }, n: i }; var s: i32 = d.inner.a + d.inner.b + d.n; var c: Outer = Outer { inner: Inner { a: i, b: 3 }, n: 5 }; sum = (sum + s + c.inner.a + c.inner.b + c.n) % 1000; i = i + 1; } return sum; }`,
+		0, 3},
 }
 
 // TestSelfHostLoopReuseIRX86_64 compiles each case through the self-hosted x86-64
