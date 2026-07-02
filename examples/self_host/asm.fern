@@ -222,7 +222,10 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
     if (name == "__raw_string" && c.args.len() == 2) {
         s = emit_expr(c.args[0], s);
         s = emit_expr(c.args[1], s);
-        s = s.write("    movq $16, %rdi\n    call __fern_alloc\n    popq %rcx\n    movq %rcx, 8(%rax)\n    popq %rcx\n    movq %rcx, (%rax)\n    pushq %rax\n");
+        // rc-headered box via __fern_str_box (#2649 Option A): len (top) -> %rsi,
+        // data -> %rdi. A legacy-path box can flow into an IR caller that reclaims it,
+        // so it must carry the same rc header as the IR path's boxes.
+        s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_str_box\n    pushq %rax\n");
         s = s.mark_heap();
         return CallOut { state: s, done: true };
     }
@@ -2810,20 +2813,18 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             return s;
         },
         parser.ExprString(sv) => {
-            // String literal lowering: intern the bytes in
-            // .rodata, then allocate a 16-byte box on the heap
-            // `[data_ptr: 8, len: 8]` and push the box pointer.
-            // The box layout is shared with __fern_str_concat
-            // / _eq / _slice / _print runtime helpers.
+            // String literal lowering: intern the bytes in .rodata, then build an
+            // rc-headered box via __fern_str_box (#2649 Option A) — data = .rodata
+            // label, len = byte count. box = [rc=1][data][len]; data@box+0 / len@box+8
+            // unchanged, so __fern_str_concat / _eq / _slice / _print are unaffected,
+            // and the rc header keeps the box consistent with the IR path (a box may
+            // cross the legacy/IR boundary in a merged bundle).
             var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, sv.value);
             s = lo.state;
-            s = s.write("    movq $16, %rdi\n");
-            s = s.write("    call __fern_alloc\n");
             s = s.mark_heap();
-            s = s.write("    leaq .S" + util.i32_to_string(lo.idx) + "(%rip), %rcx\n");
-            s = s.write("    movq %rcx, (%rax)\n");
-            s = s.write("    movq $" + util.i32_to_string(sv.value.len()) + ", %rcx\n");
-            s = s.write("    movq %rcx, 8(%rax)\n");
+            s = s.write("    leaq .S" + util.i32_to_string(lo.idx) + "(%rip), %rdi\n");
+            s = s.write("    movq $" + util.i32_to_string(sv.value.len()) + ", %rsi\n");
+            s = s.write("    call __fern_str_box\n");
             s = s.write("    pushq %rax\n");
             return s;
         },
@@ -4633,6 +4634,24 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq %rdi, 16(%rax)\n");    // len = cap at base+16 (= data)
         s = s.write("    addq $16, %rax\n");         // data ptr = base+16
         s = s.write("    leave\n");
+        s = s.write("    ret\n");
+        // __fern_str_box(%rdi = data, %rsi = len) -> %rax = box (rc-headered, #2649
+        // Option A). Block = [rc=1@base, data@base+8, len@base+16] (24B, class 3);
+        // box = base+8 so data@box+0 / len@box+8 are unchanged and rc@box-8 rides the
+        // shared rc word. The pure-legacy sibling of the IR runtime's copy (only one
+        // runtime is linked per compile). Legacy strings are never reclaimed, but the
+        // rc header keeps the box layout identical to the IR path for merged bundles.
+        s = s.write("__fern_str_box:\n");
+        s = s.write("    pushq %rsi\n");
+        s = s.write("    pushq %rdi\n");
+        s = s.write("    movq $24, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        s = s.write("    movq $1, (%rax)\n");
+        s = s.write("    popq %rdi\n");
+        s = s.write("    popq %rsi\n");
+        s = s.write("    movq %rdi, 8(%rax)\n");
+        s = s.write("    movq %rsi, 16(%rax)\n");
+        s = s.write("    addq $8, %rax\n");
         s = s.write("    ret\n");
 
         // Low-level memory intrinsics (`__alloc` / `__free` / the
