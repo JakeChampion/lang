@@ -15773,6 +15773,36 @@ function struct_fields_reusable(structs: parser.StructDecl[], struct_name: strin
     return false;
 }
 
+// struct_fields_reusable_cross is the CROSS-STATEMENT (dead-donor) analogue of
+// struct_fields_reusable, admitting one extra field kind: a DIRECT nested-struct
+// pointer field (`inner: Inner`). This is sound ONLY for the cross path
+// (emit_cross_struct_reuse), where the donor d is DEAD at the construction c, so
+// EVERY one of d's old fields is RELEASED (nothing is carried over) and each of
+// c's new fields is a fresh literal — there is no read-after-overwrite hazard the
+// functional-update self-overwrite path has (which is why self_overwrite_reuse_sites
+// keeps the narrower struct_fields_reusable). The old nested-struct field is
+// released with a FULL freeing drop (__struct_drop_<FT> deep-drops its rc fields
+// when it has any, then a box dec frees the inner box — emit_cross_struct_reuse),
+// the analogue of native's emitFieldDropOnStack. String / enum / map / option /
+// tuple pointer fields are still excluded (no full-drop wired for them here).
+function struct_fields_reusable_cross(structs: parser.StructDecl[], struct_name: string): boolean {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == struct_name) {
+            if (structs[i].fields.len() == 0) { return false; }
+            var fi: i32 = 0;
+            while (fi < structs[i].fields.len()) {
+                var t: string = structs[i].fields[fi].type_name;
+                if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t)) { return false; }
+                fi = fi + 1;
+            }
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 // ReuseSites: parallel arrays — for each self-overwrite reuse site, the
 // top-level body-statement index and the base local name d whose box is reused
 // in place. A flat pair (not string[][]) for the same self-host nested-array
@@ -16084,9 +16114,13 @@ function cross_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[]): C
                 parser.StmtVar(v) => {
                     match (v.init) {
                         parser.ExprStructLit(slit) => {
-                            if (!slit.has_base && struct_fields_reusable(structs, slit.type_name)) {
+                            if (!slit.has_base && struct_fields_reusable_cross(structs, slit.type_name)) {
                                 // every leak-safe array field VALUE must be a fresh
-                                // array literal (the reused box then owns it).
+                                // array literal (the reused box then owns it); likewise
+                                // a nested-struct field value must be a fresh (no-base)
+                                // struct literal, so the reused box solely owns the new
+                                // inner box (rc=1, no alias-inc) once the old inner is
+                                // full-freeing-dropped in emit_cross_struct_reuse.
                                 var ok: boolean = true;
                                 var fk: i32 = 0;
                                 while (fk < slit.field_names.len()) {
@@ -16094,6 +16128,11 @@ function cross_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[]): C
                                     if (is_leaksafe_array_field(fkt)) {
                                         match (slit.field_values[fk]) {
                                             parser.ExprArray(_) => {},
+                                            _ => { ok = false; }
+                                        }
+                                    } else if (decl_is_struct(structs, fkt)) {
+                                        match (slit.field_values[fk]) {
+                                            parser.ExprStructLit(isl) => { if (isl.has_base) { ok = false; } },
                                             _ => { ok = false; }
                                         }
                                     }
@@ -16176,6 +16215,26 @@ function emit_cross_struct_reuse(c_name: string, init: parser.Expr, donor_name: 
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     st = st.emit(ir.op_drop());
                     // write the new (fresh) array: [box, value] -> struct_set.
+                    st = st.emit(ir.op_load_local(dslot));
+                    st = lower_expr(slit.field_values[found], st);
+                    if (!st.ok) { return st; }
+                    st = st.emit(ir.op_struct_set(di, struct_field_width(st.structs, slit.type_name, di)));
+                } else if (decl_is_struct(st.structs, fty)) {
+                    // Nested-struct pointer field: FULL freeing drop of d's OLD inner
+                    // box before overwriting it (native's emitFieldDropOnStack). When
+                    // the inner type owns rc fields, __struct_drop_<fty> deep-drops
+                    // them first (each self-guarded on rc==1); then __fern_rc_dec frees
+                    // the inner box header. c's new value is a fresh no-base struct
+                    // literal (cross_reuse_sites gate), so lower_expr allocates a fresh
+                    // rc=1 inner box the reused box then solely owns — balanced against
+                    // this release and freed at exit via c's __struct_drop sweep.
+                    st = st.emit(ir.op_load_local(dslot));
+                    st = st.emit(ir.op_struct_get(di, struct_field_width(st.structs, slit.type_name, di)));
+                    if (struct_has_reclaim_array_field(st.structs, fty)) {
+                        st = st.emit(ir.op_call_direct("__struct_drop_" + fty, 1));
+                    }
+                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    st = st.emit(ir.op_drop());
                     st = st.emit(ir.op_load_local(dslot));
                     st = lower_expr(slit.field_values[found], st);
                     if (!st.ok) { return st; }

@@ -135,16 +135,25 @@ self-compile already exercises it) and tested:
 **The genuine remaining deltas vs the native reuse** are narrow, not a large
 port:
 
-1. **Tuple reuse** — tuples are explicitly *not* reuse/donor targets
-   (`irlower.fern`: "tuples are not reuse/donor targets", "tuple payloads bail");
-   native reuses them (`tupleReuseEligible`, the `general_reuse_tuple` case).
-2. **Richer struct field types** — the self-host reuse-eligibility
-   (`struct_fields_reusable`) admits only *scalar* + *leak-safe-array* fields;
-   native additionally admits single-word rc-pointer fields (struct / enum /
-   Map / closure / tuple). A struct carrying such a field is currently
-   reuse-ineligible on the self-host (leak-safe, just not reused in place).
+1. **Tuple reuse — DONE.** Tuple locals are now reuse/donor targets on both the
+   self-overwrite and cross-statement paths (`cross_tuple_reuse_sites` /
+   `emit_cross_tuple_reuse`, `tuple_lit_ctor_eligible`), matching native's
+   `general_reuse_tuple`. Covered by `TestSelfHostTupleReuseIRX86_64` and the
+   `loop-tuple-*` / `cross-block-tuple-*` cases in the loop-reuse suite.
+2. **Richer struct field types — PARTIALLY DONE.** The self-host reuse-eligibility
+   (`struct_fields_reusable`) admits *scalar* + *leak-safe-array* fields; native
+   additionally admits single-word rc-pointer fields (struct / enum / Map /
+   closure / tuple). The **nested-struct** field kind is now reused in the
+   **cross-statement** path (`struct_fields_reusable_cross` /
+   `emit_cross_struct_reuse`): a dead donor with an `inner: Inner` field is reused
+   in place, the old inner box full-freeing-dropped (`__struct_drop_<FT>` when it
+   has rc fields, then a box dec — native's `emitFieldDropOnStack`) before the
+   fresh inner is written. Covered by the `loop-nested-struct-field-*` cases. The
+   remaining excluded kinds — enum / Map / closure / tuple pointer fields, and
+   nested-struct fields on the (carried-field-hazardous) self-overwrite path —
+   stay reuse-ineligible (leak-safe, just not reused in place).
 
-Both are bounded optimisation deltas, not the memory-management-correctness gap
+Both were bounded optimisation deltas, not the memory-management-correctness gap
 the earlier framing implied. Goal 2's *behavioural* target (no leaks, in-place
 reuse of the common struct / enum / match cases) is substantially met.
 
@@ -159,23 +168,28 @@ deltas from §2 remain, and each is an *optimisation* (the excluded shapes are
 already leak-safe, just not reused in place), so each is best done ON its
 existing test scaffolding rather than gated off:
 
-- **Delta A — tuple reuse.** Mirror `self_overwrite_reuse_sites` /
-  `cross_reuse_sites` for tuple locals: a dead same-arity/type tuple local's box
-  reused for a later tuple construction. Reuses the same `__fern_rc_is_unique`
-  guard + in-place stores; the only new work is a tuple-eligibility predicate
-  (all-scalar / leak-safe-array elements, same as `struct_fields_reusable`) and
-  the tuple emit path. Pin to native's `general_reuse_tuple` behaviour via a new
-  `rc_heap_bump_tuple_reuse` differential e2e.
-- **Delta B — richer struct field types.** Widen `struct_fields_reusable` (and
-  the donor/old-field-drop path) to admit single-word rc-pointer fields
-  (struct / enum / Map / closure / tuple), deep-dropping the old field on the
-  reuse branch exactly as the array-field path already does (the
-  `is_unique`-gated per-type drop machinery already exists). Higher risk (the
-  old-field deep-drop must balance the construction inc for carried fields), so
-  do it AFTER Delta A and lean hard on a churn differential that mixes carried +
-  replaced pointer fields.
+- **Delta A — tuple reuse. DONE.** Tuple locals are reused on the self-overwrite
+  and cross-statement paths (`cross_tuple_reuse_sites` / `emit_cross_tuple_reuse`),
+  reusing the same `__fern_rc_is_unique` guard + in-place stores. Pinned to
+  native's `general_reuse_tuple` behaviour via `TestSelfHostTupleReuseIRX86_64`
+  and the loop-reuse suite's `loop-tuple-*` / `cross-block-tuple-*` cases.
+- **Delta B — richer struct field types. NESTED-STRUCT DONE (cross path).** A
+  cross-path-only predicate `struct_fields_reusable_cross` admits a direct
+  nested-struct pointer field; `emit_cross_struct_reuse` releases the donor's old
+  inner box with a FULL freeing drop (`__struct_drop_<FT>` when it owns rc fields,
+  then a box dec — native's `emitFieldDropOnStack`) before writing c's fresh inner
+  literal (required by the eligibility gate, so the reused box solely owns it —
+  rc=1, no alias-inc). This is sound on the cross path because the donor is DEAD
+  (nothing is carried, so no read-after-overwrite hazard); the narrower
+  `struct_fields_reusable` still gates the self-overwrite path, which carries
+  fields and can't take it. Cross-*type* reuse stays scalar/array-only
+  (`structs_reuse_compatible`'s per-position check rejects struct fields).
+  Covered by the `loop-nested-struct-field-*` cases (reuse fires: box 3 not 4;
+  5M-iter churn stays balanced). REMAINING: enum / Map / closure / tuple pointer
+  fields, and nested-struct fields on the self-overwrite path (the carried-field
+  inc/drop balance native's `tryStructReuseOverwrite` handles).
 
-Both are marginal wins; whether to pursue them is a value call (see §7).
+These are marginal wins; whether to pursue the rest is a value call (see §7).
 Validation for either: the reuse it changes is **on by default** (matching the
 existing reuse), so correctness rests on the new differential churn e2e (reuse
 result must match the interpreter byte-for-byte) **and** both fixpoint suites
