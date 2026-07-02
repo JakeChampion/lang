@@ -403,6 +403,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"write_file":             emitWriteFileHelper,
 	"read_file":              emitReadFileHelper,
 	"remove_file":            emitRemoveFileHelper,
+	"remove_dir_all":         emitRemoveDirAllHelper,
 	"temp_dir":               emitTempDirHelper,
 	"read_dir":               emitReadDirHelper,
 	"__fern_io_error":        emitIoErrorHelper,
@@ -1459,6 +1460,7 @@ var runtimeHelperDeps = map[string][]string{
 	"write_file":          {"__fern_io_error"},
 	"read_file":           {"__fern_io_error"},
 	"remove_file":         {"__fern_io_error"},
+	"remove_dir_all":       {"__fern_io_error"},
 	"temp_dir":            {"__fern_io_error"},
 	"read_dir":            {"__fern_io_error"},
 	"open_writer":          {"__fern_io_error"},
@@ -1489,6 +1491,7 @@ var helperReturns64 = map[string]bool{
 	"write_file":             true,
 	"read_file":              true,
 	"remove_file":            true,
+	"remove_dir_all":         true,
 	"temp_dir":               true,
 	"read_dir":               true,
 	"random_bytes":           true,
@@ -1539,6 +1542,7 @@ var heapUsingHelpers = map[string]bool{
 	"write_file":             true,
 	"read_file":              true,
 	"remove_file":            true,
+	"remove_dir_all":         true,
 	"temp_dir":               true,
 	"read_dir":               true,
 	"random_bytes":           true,
@@ -2457,6 +2461,209 @@ func emitRemoveFileHelper(w func(string, ...any)) {
 	w(".Lssa_rmf_ret:")
 	w("\tldp x19, x20, [sp, #16]")
 	w("\tldp x29, x30, [sp], #32")
+	w("\tret")
+}
+
+// emitRemoveDirAllHelper writes remove_dir_all(path) -> Option[IoError]: a
+// recursive rm -rf, ported from the self-hosted asm_arm64.fern. It opens the path
+// O_DIRECTORY; a directory is drained (getdents64) and each non-"."/".." child is
+// recursed into (a child that is a plain file hits ENOTDIR and is unlinked), then
+// the now-empty directory is rmdir'd via unlinkat(AT_REMOVEDIR); a plain-file path
+// (ENOTDIR at the top) is unlinked; a missing path (ENOENT) is a silent success
+// (matching os.RemoveAll). Returns None on success, or Some(IoError) for a
+// top-level open error other than ENOENT/ENOTDIR. Child errors are best-effort
+// (not propagated), mirroring the self-host. Non-leaf + self-recursive; callee-
+// saved x19=pathz / x20=fd / x21=buf / x22=total / x23=offset / x24=name-or-errno.
+//
+// NOTE: each recursion level bump-allocates a 1 KiB getdents buffer that the
+// arm64-ssa heap (64 KiB, never freed) does not reclaim, so remove_dir_all is
+// bounded to small trees (a few dozen directories) and to directories whose
+// entries fit in 1 KiB per level — sufficient for the CLI use case. The native
+// backend uses a 64 KiB buffer and mmap-backed alloc without this cap.
+func emitRemoveDirAllHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("remove_dir_all"))
+	w("\tstp x29, x30, [sp, #-16]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #-16]!")
+	w("\tstp x21, x22, [sp, #-16]!")
+	w("\tstp x23, x24, [sp, #-16]!")
+	w("\tmov x20, x0")         // path data (single-word string)
+	w("\tldur w21, [x0, #-4]") // path len
+	// NUL-terminate the path into a heap buffer (x19 = pathz).
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x21, #1")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	w("\tmov x19, x4")
+	w("\tmov x9, #0")
+	w(".Lssa_rda_cp:")
+	w("\tcmp x9, x21")
+	w("\tb.hs .Lssa_rda_cpd")
+	w("\tldrb w10, [x20, x9]")
+	w("\tstrb w10, [x19, x9]")
+	w("\tadd x9, x9, #1")
+	w("\tb .Lssa_rda_cp")
+	w(".Lssa_rda_cpd:")
+	w("\tstrb wzr, [x19, x21]")
+	// openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY=16384, 0).
+	w("\tmov x0, #100")
+	w("\tneg x0, x0")
+	w("\tmov x1, x19")
+	w("\tmov x2, #16384")
+	w("\tmov x3, #0")
+	w("\tmov x8, #56") // openat
+	w("\tsvc #0")
+	w("\tcmp x0, #0")
+	w("\tb.ge .Lssa_rda_dir")
+	w("\tcmn x0, #2") // -ENOENT → already gone (None)
+	w("\tb.eq .Lssa_rda_none")
+	w("\tcmn x0, #20") // -ENOTDIR → it's a file
+	w("\tb.ne .Lssa_rda_some")
+	// unlinkat(AT_FDCWD, pathz, 0) — remove the file.
+	w("\tmov x0, #100")
+	w("\tneg x0, x0")
+	w("\tmov x1, x19")
+	w("\tmov x2, #0")
+	w("\tmov x8, #35") // unlinkat
+	w("\tsvc #0")
+	w("\tb .Lssa_rda_none")
+	w(".Lssa_rda_dir:")
+	w("\tmov x20, x0") // dir fd
+	// Allocate a 1 KiB dirent buffer (x21) and drain the directory into it.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x6, x4, #1024")
+	w("\tstr x6, [x3]")
+	w("\tmov x21, x4")
+	w("\tmov x22, #0") // total
+	w(".Lssa_rda_g:")
+	w("\tmov x2, #1024")
+	w("\tsub x2, x2, x22")
+	w("\tcbz x2, .Lssa_rda_gd") // buffer full → stop (small-tree cap)
+	w("\tmov x0, x20")
+	w("\tadd x1, x21, x22")
+	w("\tmov x8, #61") // getdents64
+	w("\tsvc #0")
+	w("\tcmp x0, #0")
+	w("\tble .Lssa_rda_gd")
+	w("\tadd x22, x22, x0")
+	w("\tb .Lssa_rda_g")
+	w(".Lssa_rda_gd:")
+	w("\tmov x23, #0") // offset
+	w(".Lssa_rda_it:")
+	w("\tcmp x23, x22")
+	w("\tb.ge .Lssa_rda_itd")
+	w("\tadd x10, x21, x23")
+	w("\tadd x10, x10, #19") // d_name ptr
+	w("\tldrb w11, [x10]")
+	w("\tcmp w11, #46")
+	w("\tb.ne .Lssa_rda_ch")
+	w("\tldrb w11, [x10, #1]")
+	w("\tcbz w11, .Lssa_rda_adv") // "."
+	w("\tcmp w11, #46")
+	w("\tb.ne .Lssa_rda_ch")
+	w("\tldrb w11, [x10, #2]")
+	w("\tcbz w11, .Lssa_rda_adv") // ".."
+	w(".Lssa_rda_ch:")
+	w("\tmov x24, x10") // name ptr (callee-saved — survives the recursion)
+	// plen = strlen(pathz).
+	w("\tmov x9, #0")
+	w(".Lssa_rda_pl:")
+	w("\tldrb w11, [x19, x9]")
+	w("\tcbz w11, .Lssa_rda_pld")
+	w("\tadd x9, x9, #1")
+	w("\tb .Lssa_rda_pl")
+	w(".Lssa_rda_pld:")
+	// nlen = strlen(name).
+	w("\tmov x13, #0")
+	w(".Lssa_rda_nl:")
+	w("\tldrb w11, [x24, x13]")
+	w("\tcbz w11, .Lssa_rda_nld")
+	w("\tadd x13, x13, #1")
+	w("\tb .Lssa_rda_nl")
+	w(".Lssa_rda_nld:")
+	// Build the child single-word rc string "pathz/name" (len = plen+1+nlen).
+	w("\tadd x14, x9, x13")
+	w("\tadd x14, x14, #1") // childlen
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x14, #9")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	w("\tmov w7, #1")
+	w("\tstr w7, [x4]")      // rc = 1
+	w("\tstr w14, [x4, #4]") // len = childlen
+	w("\tadd x12, x4, #8")   // child data ptr
+	// copy pathz[0..plen]
+	w("\tmov x15, #0")
+	w(".Lssa_rda_c1:")
+	w("\tcmp x15, x9")
+	w("\tb.hs .Lssa_rda_c1d")
+	w("\tldrb w11, [x19, x15]")
+	w("\tstrb w11, [x12, x15]")
+	w("\tadd x15, x15, #1")
+	w("\tb .Lssa_rda_c1")
+	w(".Lssa_rda_c1d:")
+	w("\tmov w11, #47")        // '/'
+	w("\tstrb w11, [x12, x9]")
+	// copy name at plen+1
+	w("\tmov x15, #0")
+	w(".Lssa_rda_c2:")
+	w("\tcmp x15, x13")
+	w("\tb.hs .Lssa_rda_c2d")
+	w("\tldrb w11, [x24, x15]")
+	w("\tadd x16, x9, #1")
+	w("\tadd x16, x16, x15")
+	w("\tstrb w11, [x12, x16]")
+	w("\tadd x15, x15, #1")
+	w("\tb .Lssa_rda_c2")
+	w(".Lssa_rda_c2d:")
+	w("\tstrb wzr, [x12, x14]") // NUL at childlen
+	// recurse: remove_dir_all(child).
+	w("\tmov x0, x12")
+	w("\tbl %s", fnLabel("remove_dir_all"))
+	w(".Lssa_rda_adv:")
+	w("\tadd x12, x21, x23")
+	w("\tldrh w11, [x12, #16]") // d_reclen
+	w("\tadd x23, x23, x11")
+	w("\tb .Lssa_rda_it")
+	w(".Lssa_rda_itd:")
+	// close(fd), then rmdir the now-empty directory.
+	w("\tmov x0, x20")
+	w("\tmov x8, #57") // close
+	w("\tsvc #0")
+	w("\tmov x0, #100")
+	w("\tneg x0, x0")
+	w("\tmov x1, x19")
+	w("\tmov x2, #512") // AT_REMOVEDIR
+	w("\tmov x8, #35")  // unlinkat
+	w("\tsvc #0")
+	w(".Lssa_rda_none:")
+	emitOptionBox(w, 1, "")
+	w("\tb .Lssa_rda_ret")
+	w(".Lssa_rda_some:")
+	w("\tneg x24, x0") // errno
+	emitEmptyString(w, "x1")
+	w("\tmov x0, x24")
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x24, x0") // IoError box
+	emitOptionBox(w, 0, "x24")
+	w(".Lssa_rda_ret:")
+	w("\tldp x23, x24, [sp], #16")
+	w("\tldp x21, x22, [sp], #16")
+	w("\tldp x19, x20, [sp], #16")
+	w("\tldp x29, x30, [sp], #16")
 	w("\tret")
 }
 
