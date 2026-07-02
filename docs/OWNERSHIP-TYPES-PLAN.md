@@ -101,30 +101,49 @@ direction). Each slice below is independently shippable and validated.
   cases are unchanged; only the identifier fallback consults the resolver. This
   is the mechanism the next slice's inference-fed resolver plugs into. **This
   PR.**
-- **C4 (wire inference → the resolver).** Feed the `inferParamEscapes` result
-  (and the local-binding ownership derived at each `StmtVar` from
-  `ExprResultOwnership`) into the resolver at the RC-insertion sites, reading
-  ownership through the axis rather than the bare bool side-table + per-shape
-  reasoning. Gated by `rc_borrow_infer` differential tests staying
-  byte-identical — this is the consolidation, so output must not move.
-- **C5.** Fold `HandleType.Borrowed` into the same axis.
-- **C6.** Add a checker validation pass that flags an *ownership mismatch* — the
-  first real enforcement, catching the class of bug the checker missed (a value
-  used as owned where its type says `View`/`Borrowed`).
+- **C4–C6 (native RC rewire + native enforcement) — DEPRIORITIZED.** On
+  inspection the native compiler's ownership facts are *already cleanly
+  factored*: `Param.Own` (the affine annotation), `paramBorrowable` (the
+  `inferParamEscapes` result, `ir.go:9143`), and the per-shape RC gating are
+  distinct, non-redundant queries. Routing them through the axis would be a
+  byte-identical **rename** with nothing to consolidate, on mature,
+  already-memory-safe code — high regression surface, ~zero payoff, and native
+  copies string slices so there's no view hazard for a checker rule (C6) to
+  catch. The value of the axis is realised where the representation is *messy* —
+  the self-host (below), not here. Revisit native enforcement only if a concrete
+  native ownership gap surfaces.
 
-### Phase C-selfhost — port the axis to the self-host `Ty`
+### Phase C-selfhost — port the axis to the self-host (where the value is)
 
-The self-host is where the fragile heuristics live and where #4294's bug was.
-Each slice **must** be validated with `TestSelfHostModloadPerModuleWholeCompilerX86_64`
-(runs the built compiler — catches the corrupting UAFs that byte-identity
-fixpoints miss), not just the fixpoints.
+The self-host is where ownership is reconstructed from the fragile
+`expr_is_fresh_str`-style heuristics + runtime rc sentinels that caused #4294 and
+blocked the A2 struct-field reclaim three times. This is the phase that earns the
+axis its keep. Each slice **must** be validated with
+`TestSelfHostModloadPerModuleWholeCompilerX86_64` (runs the built compiler —
+catches the corrupting UAFs that byte-identity fixpoints miss), not just the
+fixpoints.
 
-- **CS1.** Add `ownership` to the self-host `Ty` (`asmcore.fern:956`), defaulted
-  to the structural value. No consumer yet.
-- **CS2.** Derive the string ownership at `StmtVar` / struct-field lowering from
-  the *type* fact instead of `expr_is_fresh_str` & friends; keep the heuristics
-  as a fallback until parity is proven.
-- **CS3.** Retire the heuristics for the cases the type now covers.
+- **CS1 (classifier, behaviour-identical).** `irlower.str_producer_ownership(e)`
+  — the self-host counterpart of `ast.ExprResultOwnership`, classifying a
+  string-producing expression as Owned / Borrowed / View / Static (codes
+  mirroring native `ast.Ownership`). `expr_is_fresh_str` is redefined as exactly
+  `== Owned`, so every caller is byte-for-byte unchanged; the View / Static /
+  Borrowed distinctions (lost by the old boolean) are what CS2 consumes.
+  Validated: the per-module run gate + the Load/Modload x86 fixpoints, both
+  green. **Landed (this PR).**
+- **CS2.** Consume the richer classification where the boolean was lossy — e.g.
+  a `View` (slice / `.trim()`) field is retained as immortal (its inc/free are
+  rc-sentinel no-ops) *by classification* rather than by the case-by-case
+  `.trim()` / slice exclusions scattered through the reclaim gates. This is the
+  path toward a sound struct string-field reclaim (the A2 goal) driven by the
+  ownership fact instead of ad-hoc syntax checks.
+- **CS3.** Migrate the remaining scattered predicates
+  (`str_local_binding_is_fresh`, `str_free_producer_ident`,
+  `needs_rc_inc_on_alias`'s string exclusion) to derive from the classifier;
+  retire the duplicated logic once parity holds under the per-module gate.
+- **CS4.** Carry `ownership` on the self-host `Ty` itself (`asmcore.fern:956`) so
+  a bound local / field remembers its classification, not just the producing
+  expression — the self-host analogue of C1's structural axis.
 
 ### Phase A — the `str` view type (user-facing), layered on C
 

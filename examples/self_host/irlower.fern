@@ -2684,35 +2684,64 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
 //     (each aliases a live box the IR path never sweeps)
 // Every excluded form stays inc'd at construction → the field-drop only decs the
 // dup (sound, leaks, never an over-release).
-pub function expr_is_fresh_str(e: parser.Expr, s: LowerState): boolean {
+// str_producer_ownership classifies the OWNERSHIP a value-producing string
+// expression yields — the self-host counterpart of native ast.ExprResultOwnership
+// (issue #4297 Option C, slice CS1). It names, as one classification, the
+// scattered freshness heuristics: which producers hand back a FRESH owned box,
+// which a borrowed alias, which a zero-copy VIEW, which an immortal literal.
+// Codes mirror native ast.Ownership: 0 = Owned, 1 = Borrowed, 2 = View, 3 = Static.
+//   - a fresh producer — a concat `a + b`, the alloc builtins chr /
+//     string_from_bytes / __raw_string, the str_to_upper / str_to_lower /
+//     str_repeat free-fns, and the .to_upper / .to_lower / .reverse / .repeat
+//     methods — is OWNED: a fresh rc=1 box the field-drop reclaims;
+//   - a slice `s[a:b]` / `.trim()` is a VIEW: a zero-copy immortal box (rc=-1,
+//     #4294) sharing the source buffer, never freed;
+//   - a string LITERAL is STATIC (its data is interned .rodata);
+//   - everything else — a bare ident / field-read / general call — is BORROWED:
+//     it aliases a live box a live owner still holds.
+// The View / Static / Borrowed distinctions are consumed by later slices (CS2)
+// where the old boolean was lossy; expr_is_fresh_str below is exactly `== Owned`,
+// so every existing caller is byte-for-byte unchanged.
+pub function str_producer_ownership(e: parser.Expr, s: LowerState): i32 {
     match (e) {
+        parser.ExprString(_) => { return 3; },   // static / immortal literal
+        parser.ExprSlice(_) => { return 2; },     // zero-copy view (rc=-1 box)
         parser.ExprBinary(b) => {
-            if (b.op == "+") { return expr_is_str(b.left, s) || expr_is_str(b.right, s); }
-            return false;
+            if (b.op == "+") { if (expr_is_str(b.left, s) || expr_is_str(b.right, s)) { return 0; } }
+            return 1;
         },
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(cid) => {
                     if (cid.name == "str_to_upper" || cid.name == "str_to_lower"
-                            || cid.name == "str_repeat") { return true; }
-                    if (cid.name == "chr" || cid.name == "string_from_bytes") { return true; }
+                            || cid.name == "str_repeat") { return 0; }
+                    if (cid.name == "chr" || cid.name == "string_from_bytes") { return 0; }
                     // __raw_string boxes a freshly-__raw_alloc'd buffer → a fresh
                     // owned string (#2649 Tier-2 floor).
-                    if (cid.name == "__raw_string" && c.args.len() == 2) { return true; }
-                    return false;
+                    if (cid.name == "__raw_string" && c.args.len() == 2) { return 0; }
+                    return 1;
                 },
                 parser.ExprFieldAccess(cfa) => {
+                    if (cfa.field == "trim" && c.args.len() == 0) { return 2; }   // zero-copy view
                     if ((cfa.field == "to_upper" || cfa.field == "to_lower" || cfa.field == "reverse")
-                            && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return true; }
-                    if (cfa.field == "repeat" && c.args.len() == 1 && expr_is_str(cfa.obj, s)) { return true; }
-                    return false;
+                            && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return 0; }
+                    if (cfa.field == "repeat" && c.args.len() == 1 && expr_is_str(cfa.obj, s)) { return 0; }
+                    return 1;
                 },
-                _ => { return false; }
+                _ => { return 1; }
             }
         },
-        _ => { return false; }
+        _ => { return 1; }
     }
-    return false;
+    return 1;
+}
+
+// expr_is_fresh_str reports whether `e` produces a FRESH, sole-owned heap string
+// — the retain gate for a struct string field / reclaim temp. Derived from
+// str_producer_ownership (Owned == fresh); see the classifier for the
+// per-producer rationale and the excluded (aliasing / view / literal) forms.
+pub function expr_is_fresh_str(e: parser.Expr, s: LowerState): boolean {
+    return str_producer_ownership(e, s) == 0;
 }
 
 // str_free_producer_ident reports whether an UNAMBIGUOUS named fresh-string
