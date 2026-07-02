@@ -4571,6 +4571,17 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     if (decl_is_struct(s.structs, cpft)) {
                         sm = sm.emit(ir.op_call_direct("__fern_rc_inc", 1));
                     }
+                    // A `string` field COPIED from the base (`R { ...base, other: v }`,
+                    // `name` un-overridden) ALIASES base.name — both boxes now point at
+                    // the same rc string, and the new struct's k_str field-drop would
+                    // free it out from under the base. Retain it (#4297 A2) so the drop
+                    // only decs the dup, exactly like the nested-struct copy above. Gated
+                    // on slit_reclaim: an unreclaimable (string-only) struct emits no
+                    // __struct_drop, so incing would only inflate the shared rc and leak —
+                    // leave it as-is there (no drop, no over-release either way).
+                    if (cpft == "string" && slit_reclaim) {
+                        sm = sm.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                    }
                 } else {
                     // a non-update literal must set every field
                     return s.fail();
