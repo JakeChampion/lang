@@ -4588,6 +4588,14 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
         // (lower_expr's ExprStructLit arm) so this dec is balanced. Enums are NOT
         // here (decl_is_struct excludes them — variant-payload drop is deferred).
         var k_struct: boolean = !k_scalar && !k_box && irlower.decl_is_struct(s.struct_decls, fdt);
+        // A `string` field is rc-headered on the asm IR path (#4294), reclaimed via
+        // the rc-aware __fern_str_free — frees a fresh (rc=1) field, decs a shared
+        // (rc>1) one, skips an immortal slice/trim view or literal (rc<0). The
+        // struct-lit alias-inc (irlower, gated on the per-lit ownership precompute)
+        // retains non-fresh values so this dec is balanced; a fresh field is
+        // sole-owned (this drop only fires for a reclaimable, non-escaping struct
+        // local) → freed here, the #4297 A2 heap-leak win.
+        var k_str: boolean = !k_scalar && !k_box && !k_struct && fdt == "string";
         var off: string = util.i32_to_string((k + 1) * 8);
         var ks: string = util.i32_to_string(k);
         if (k_box) {
@@ -4671,6 +4679,11 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
             s = s.write("    movq " + off + "(%r11), %rdi\n");          // inner box
             s = s.write("    pushq %rdi\n");
             s = s.write("    call __fn___fern_arr_dec\n");              // free the inner box (rc-guarded)
+            s = s.write("    addq $8, %rsp\n");
+        } else if (k_str) {
+            s = s.write("    movq " + off + "(%r11), %rdi\n");          // box.field_k string box
+            s = s.write("    pushq %rdi\n");
+            s = s.write("    call __fn___fern_str_free\n");             // rc-aware: free rc==1, dec rc>1, skip view/literal rc<0
             s = s.write("    addq $8, %rsp\n");
         } else if (k_scalar || k_struct) {
             s = s.write("    movq " + off + "(%r11), %rdi\n");          // box.field_k buffer / nested box (shallow)

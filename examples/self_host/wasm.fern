@@ -1256,6 +1256,15 @@ function emit_wasm_struct_drop_body(t: string, cx: Ctx): string {
                         // "S") stay leak-only — is_struct_type is false for them.
                         o = o + "    (drop (call $__fern_arr_dec " + sload + "))\n";
                     }
+                } else if (ft == "string") {
+                    // A `string` field is an rc-headered INLINE block on wasm
+                    // ([rc][bsz][len][bytes]); reclaim it with $__fern_arr_dec — frees
+                    // at rc==1 by size class, guards a data-section literal (below
+                    // heap_base), decs a shared box, and the rc-underflow detector
+                    // catches a double free. Balanced by the shared-irlower
+                    // construction alias-inc. Mirrors the x86 / arm64 k_str arm (#4297 A2).
+                    var strload: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
+                    o = o + "    (drop (call $__fern_arr_dec " + strload + "))\n";
                 }
                 k = k + 1;
             }

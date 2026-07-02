@@ -4001,6 +4001,11 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
         // arr_dec; the construction alias-inc (shared irlower) balances it. Mirrors
         // the x86 emit_ir_struct_drop_one k_struct case (Perceus slice 3b).
         var k_struct: boolean = !k_scalar && !k_box && irlower.decl_is_struct(s.struct_decls, fdt);
+        // A `string` field is rc-headered (#4294); reclaimed via the rc-aware
+        // __fern_str_free (free rc==1, dec rc>1, skip view/literal rc<0), balanced
+        // by the shared-irlower construction alias-inc. Mirrors the x86 k_str arm
+        // (#4297 A2). Fires only for reclaimable, non-escaping struct locals.
+        var k_str: boolean = !k_scalar && !k_box && !k_struct && fdt == "string";
         var off: string = util.i32_to_string((k + 1) * 8);
         var ks: string = util.i32_to_string(k);
         if (k_box) {
@@ -4080,6 +4085,11 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
             s = s.write("    ldr x0, [x10, #" + off + "]\n");       // inner box
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.write("    bl __fn___fern_arr_dec\n");            // free the inner box (rc-guarded)
+            s = s.write("    add sp, sp, #16\n");
+        } else if (k_str) {
+            s = s.write("    ldr x0, [x10, #" + off + "]\n");       // box.field_k string box
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_str_free\n");           // rc-aware: free rc==1, dec rc>1, skip view/literal rc<0
             s = s.write("    add sp, sp, #16\n");
         } else if (k_scalar || k_struct) {
             s = s.write("    ldr x0, [x10, #" + off + "]\n");       // box.field_k buffer / nested box

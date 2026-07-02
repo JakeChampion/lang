@@ -2744,6 +2744,27 @@ pub function expr_is_fresh_str(e: parser.Expr, s: LowerState): boolean {
     return str_producer_ownership(e, s) == 0;
 }
 
+// field_ownerships precomputes str_producer_ownership for EVERY override value of
+// a struct literal, ONCE per struct-lit, returning an i32[] parallel to
+// slit.field_values (indexed by the override position `found`). This is the
+// #4297 A2 unblock (see docs/OWNERSHIP-TYPES-PLAN.md): the freshness/ownership
+// classification reads each field-value EXPRESSION — an aliasing read that the
+// native Perceus taint model turns into a leak. Confining those reads to this
+// COLD helper (called once per struct-lit) instead of the HOT lower_expr path
+// (millions of calls emitting a large module) keeps lower_expr's locals
+// taint-free: it consults the precomputed SCALAR i32[] (a scalar-array element
+// read does not taint), while its single lower_expr(field_value) read still
+// MOVES the value. Bounded per-struct-lit leak instead of the emit runaway.
+pub function field_ownerships(slit: parser.ExprStructLit, s: LowerState): i32[] {
+    var out: i32[] = [];
+    var j: i32 = 0;
+    while (j < slit.field_values.len()) {
+        out = out.append(str_producer_ownership(slit.field_values[j], s));
+        j = j + 1;
+    }
+    return out;
+}
+
 // str_free_producer_ident reports whether an UNAMBIGUOUS named fresh-string
 // producer — a builtin / free-function that ALWAYS returns a freshly-allocated,
 // sole-owned heap string boxed at an allocation boundary — is being called. Each
@@ -4219,6 +4240,16 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 }
             }
             var ndecl: i32 = decl_field_count(s.structs, slit.type_name);
+            // #4297 A2: per-struct-lit ownership precompute (COLD — once per lit) so
+            // the hot per-field path below reads only scalars, never re-reading a
+            // field-value expression (which would taint lower_expr's locals → the
+            // documented emit runaway). slit_own[found] is the field's ownership;
+            // slit_reclaim gates the string-field retain on the struct being
+            // reclaimable at all (has an rc-array / nested-struct field — the k_str
+            // drop only fires for those; a string-only struct is left leak-only to
+            // avoid broadening slot_is_reclaimable_struct).
+            var slit_own: i32[] = field_ownerships(slit, s);
+            var slit_reclaim: boolean = struct_has_reclaim_array_field(s.structs, slit.type_name);
             var sm: LowerState = s;
             // Spill a non-ident functional-update base into a scratch local once
             // (composed of existing store/load_local ops, so every backend +
@@ -4484,6 +4515,18 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // the adjacent funcs array's length, so parse_module returned the
                     // wrong function count / crashed.) Strings leak instead (sound);
                     // matched by the string skip in emit_struct_field_drops.
+                    // #4297 A2: retain (rc_inc) a NON-fresh string field of a
+                    // reclaimable struct so the k_str field-drop's rc-aware dec is
+                    // balanced; a fresh (Owned) field is handed over with no inc and
+                    // reclaimed by the drop. Ownership comes from the per-lit precompute
+                    // (slit_own[found]) — a scalar read, so it does NOT re-taint
+                    // lower_expr. (Owned=0; Borrowed/View/Static != 0 → retain: a real
+                    // aliased box's dec is balanced, an immortal view/literal's inc is
+                    // an rc-sentinel no-op.)
+                    if (!fav_alias_inc && cfft == "string" && slit_reclaim
+                            && found < slit_own.len() && slit_own[found] != 0) {
+                        fav_alias_inc = true;
+                    }
                     // An i64 field value is an 8-byte i64 (a bare integer literal
                     // isn't self-evidently i64), so lower it via lower_i64.
                     if (struct_field_is_i64(s.structs, slit.type_name, di)) {

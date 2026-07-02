@@ -131,12 +131,22 @@ fixpoints.
   Borrowed distinctions (lost by the old boolean) are what CS2 consumes.
   Validated: the per-module run gate + the Load/Modload x86 fixpoints, both
   green. **Landed (this PR).**
-- **CS2.** Consume the richer classification where the boolean was lossy — e.g.
-  a `View` (slice / `.trim()`) field is retained as immortal (its inc/free are
-  rc-sentinel no-ops) *by classification* rather than by the case-by-case
-  `.trim()` / slice exclusions scattered through the reclaim gates. This is the
-  path toward a sound struct string-field reclaim (the A2 goal) driven by the
-  ownership fact instead of ad-hoc syntax checks.
+- **CS2 (struct string-field reclaim — the A2 goal, LANDED).** A `string` field
+  of a reclaimable, non-escaping struct local is now reclaimed on the struct's
+  drop, on all three backends. Construction retains (rc_inc) a non-fresh field
+  and hands over a fresh one with no inc; the per-type `__struct_drop`'s k_str
+  arm frees it via the rc-aware `__fern_str_free` (free rc==1, dec rc>1, skip an
+  immortal view/literal rc<0). The classification comes from `str_producer_owner
+  ship` (CS1), and — crucially — via the **precompute unblock** the root-cause
+  section prescribes: `field_ownerships(slit) -> i32[]` runs once per struct-lit
+  (cold), so `lower_expr` consults only scalars and never re-reads a field-value
+  expression, keeping its hot locals taint-free (no emit runaway). Validated: the
+  per-module run gate, the Load/Modload x86 fixpoints, a dedicated x86 reclaim
+  test (fresh field freed + aliased field balanced, 2M cycles, underflow 0), and
+  a wasm struct-drop churn case (emission + 400k cycles bounded under a 16 MiB
+  cap). Gated NARROW — only structs already reclaimable via an rc-array / nested
+  field get a `__struct_drop`, so a string-only struct stays leak-only (avoiding
+  the `slot_is_reclaimable_struct` broadening that OOM'd an earlier attempt).
 - **CS3.** Migrate the remaining scattered predicates
   (`str_local_binding_is_fresh`, `str_free_producer_ident`,
   `needs_rc_inc_on_alias`'s string exclusion) to derive from the classifier;

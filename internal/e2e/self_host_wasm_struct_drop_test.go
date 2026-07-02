@@ -108,6 +108,20 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 				"function main(): i32 { var s: i32 = 0; var k: i32 = 0; while (k < 400000) { s = mk(); k = k + 1; } return s - 24; }",
 			"(func $__struct_drop_Outer (param $box i32) (result i32)\n    (if (call $__fern_rc_is_unique (i32.load offset=8 (local.get $box))) (then\n      (drop (call $__struct_drop_Inner (i32.load offset=8 (local.get $box))))))\n    (drop (call $__fern_arr_dec (i32.load offset=8 (local.get $box))))",
 		},
+		// STRING field (#4297 A2 — the k_str path): a reclaimable struct (it has the
+		// `items` rc-array field, so it gets a $__struct_drop) whose `name: string`
+		// field is now freed too. `name` is a FRESH concat (sole-owned rc=1, no
+		// construction-inc), stored at field offset 8; the drop frees it via the
+		// rc-aware $__fern_arr_dec. 400k churn cycles under the cap stay bounded ⇒
+		// the fresh name box is reclaimed each iteration (a pass-through leaked a
+		// fresh string/iter → over the cap → trap).
+		{
+			"string-field-reclaim",
+			"struct R { name: string, items: i32[] } " +
+				"function mk(pre: string): i32 { var r: R = R { name: pre + \"x\", items: [1,2,3,4] }; return r.name.len() + r.items[0]; } " +
+				"function main(): i32 { var p: string = \"aa\"; var s: i32 = 0; var k: i32 = 0; while (k < 400000) { s = mk(p); k = k + 1; } return s - 4; }",
+			"(func $__struct_drop_R (param $box i32) (result i32)\n    (drop (call $__fern_arr_dec (i32.load offset=8 (local.get $box))))",
+		},
 	}
 
 	for _, tc := range cases {
