@@ -389,6 +389,9 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"poll":                    emitPollHelper,
 	"wasm_timer_pollable":     emitWasmTimerPollableHelper,
 	"wasm_pollable_drop":      emitWasmPollableDropHelper,
+	"open_writer":             emitOpenWriterHelper,
+	"__method_Writer_write":   emitWriterWriteHelper,
+	"__method_Writer_close":   emitWriterCloseHelper,
 	"print":                  emitPrintHelper,
 	"write":                  emitWriteHelper,
 	"eprint":                 emitEprintHelper,
@@ -926,6 +929,231 @@ func emitWasmPollableDropHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
+// emitWriterHandleAlloc bump-allocates a Reader/Writer handle and leaves its
+// value-pointer in `dst`. The handle mirrors arm64-ssa's generic struct box: an
+// rc word at [ptr-8], an (unused) struct-type-id slot at [ptr+0], and the fd at
+// [ptr+8] (the first — and only — field, which a `.fd` read loads at ptr+8). The
+// rc word is the immortal sentinel 0x80000000, so the handle is runtime-owned:
+// __fern_rc_dec / is_unique short-circuit on it (tbnz #31), so it is never freed
+// and its type-id slot is never dispatched on. `fdReg` holds the fd (w-reg).
+// Clobbers x3-x7. Emitted inline (no call) so callers stay leaf-or-simple.
+func emitWriterHandleAlloc(w func(string, ...any), dst, fdReg string) {
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	w("\tmov w6, #1")
+	w("\tlsl w6, w6, #31")     // 0x80000000 immortal-rc sentinel
+	w("\tstr w6, [x4]")        // rc @ base (= ptr-8)
+	w("\tstr xzr, [x4, #8]")   // struct-type-id slot @ ptr+0 (unused)
+	w("\tstr %s, [x4, #16]", fdReg) // fd @ ptr+8
+	w("\tadd %s, x4, #8", dst) // value pointer = base + 8
+}
+
+// emitOptionBox writes an Option[IoError] heap box and leaves its value pointer
+// in x0. Layout {rc@base, tag@base+8, payload@base+16}, value pointer = base+8.
+// `tag` is 1 for None (rc + tag only), 0 for Some (rc + tag + payload), where
+// `payloadReg` (a 64-bit reg) holds the IoError pointer stored at box+8. Clobbers
+// x3-x6.
+func emitOptionBox(w func(string, ...any), tag int, payloadReg string) {
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	if tag == 1 {
+		w("\tadd x5, x4, #16") // None: rc + tag only
+	} else {
+		w("\tadd x5, x4, #24") // Some: rc + tag + payload
+	}
+	w("\tstr x5, [x3]")
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")   // rc = 1
+	w("\tadd x0, x4, #8") // box data
+	if tag == 1 {
+		w("\tmov w6, #1")
+		w("\tstr w6, [x0]") // tag = 1 (None)
+	} else {
+		w("\tstr wzr, [x0]")          // tag = 0 (Some)
+		w("\tstr %s, [x0, #8]", payloadReg) // IoError payload
+	}
+}
+
+// emitEmptyString bump-allocates a zero-length single-word rc string into `dst`
+// (rc=1, len=0, one NUL byte). Used to supply a valid (empty) path to
+// __fern_io_error for write/close errors, which carry no path. Clobbers x3-x7.
+func emitEmptyString(w func(string, ...any), dst string) {
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x6, x4, #9")
+	w("\tstr x6, [x3]")
+	w("\tmov w7, #1")
+	w("\tstr w7, [x4]")     // rc = 1
+	w("\tstr wzr, [x4, #4]") // len = 0
+	w("\tadd %s, x4, #8", dst)
+	w("\tstrb wzr, [%s]", dst) // NUL
+}
+
+// emitOpenWriterHelper writes open_writer(path) -> Result[Writer, IoError]:
+// openat the path O_WRONLY|O_CREAT|O_TRUNC (0644), wrap the fd in a Writer handle
+// and return Ok(Writer), or map -errno through __fern_io_error and return
+// Err(IoError). Non-leaf (calls __fern_io_error). x19=path / x20=pathz. x0=path.
+func emitOpenWriterHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("open_writer"))
+	w("\tstp x29, x30, [sp, #-32]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tmov x19, x0") // path
+	// NUL-terminate the path into a fresh heap buffer (x20).
+	w("\tldur w2, [x19, #-4]")
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x2, #1")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	w("\tmov w7, #0")
+	w(".Lssa_ow_cp:")
+	w("\tcmp w7, w2")
+	w("\tb.hs .Lssa_ow_cpd")
+	w("\tldrb w8, [x19, x7]")
+	w("\tstrb w8, [x4, x7]")
+	w("\tadd w7, w7, #1")
+	w("\tb .Lssa_ow_cp")
+	w(".Lssa_ow_cpd:")
+	w("\tstrb wzr, [x4, x2]")
+	w("\tmov x20, x4") // pathz
+	// openat(AT_FDCWD, pathz, O_WRONLY|O_CREAT|O_TRUNC=577, 0644).
+	w("\tmov x0, #100")
+	w("\tneg x0, x0")
+	w("\tmov x1, x20")
+	w("\tmov x2, #577")
+	w("\tmov x3, #420")
+	w("\tmov x8, #56") // openat
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_ow_err")
+	// Success: wrap the fd in a Writer handle (x19), then Ok(Writer).
+	w("\tmov w9, w0") // fd (survives the inline alloc — no call/svc)
+	emitWriterHandleAlloc(w, "x19", "w9")
+	// Result.Ok(Writer): box {rc=1, tag=0, handle@8}.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")   // rc = 1
+	w("\tadd x0, x4, #8") // box data
+	w("\tstr wzr, [x0]")  // tag = 0 (Ok)
+	w("\tstr x19, [x0, #8]")
+	w("\tb .Lssa_ow_ret")
+	w(".Lssa_ow_err:")
+	w("\tneg x0, x0") // errno
+	w("\tmov x1, x19") // path
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x19, x0") // IoError box
+	// Result.Err(IoError): box {rc=1, tag=1, ioerr@8}.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")   // rc = 1
+	w("\tadd x0, x4, #8") // box data
+	w("\tmov w6, #1")
+	w("\tstr w6, [x0]") // tag = 1 (Err)
+	w("\tstr x19, [x0, #8]")
+	w(".Lssa_ow_ret:")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #32")
+	w("\tret")
+}
+
+// emitWriterWriteHelper writes __method_Writer_write(writer, data) ->
+// Option[IoError]: loop write(2) the whole single-word string to the handle's fd
+// (loaded from [writer+8]); return None on success, or map -errno through
+// __fern_io_error (with an empty path, since a write carries none) and return
+// Some(IoError). Non-leaf. x19=fd / x20=data / x21=written / x22=len.
+// x0=writer handle, x1=data.
+func emitWriterWriteHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__method_Writer_write"))
+	w("\tstp x29, x30, [sp, #-48]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstp x21, x22, [sp, #32]")
+	w("\tldr w19, [x0, #8]")   // fd @ ptr+8
+	w("\tmov x20, x1")         // data ptr
+	w("\tldur w22, [x20, #-4]") // byte length
+	w("\tmov x21, #0")         // bytes written
+	w(".Lssa_wrw_loop:")
+	w("\tcmp x21, x22")
+	w("\tb.ge .Lssa_wrw_done")
+	w("\tmov w0, w19")
+	w("\tadd x1, x20, x21")
+	w("\tsub x2, x22, x21")
+	w("\tmov x8, #64") // write
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_wrw_err")
+	w("\tadd x21, x21, x0")
+	w("\tb .Lssa_wrw_loop")
+	w(".Lssa_wrw_done:")
+	emitOptionBox(w, 1, "")
+	w("\tb .Lssa_wrw_ret")
+	w(".Lssa_wrw_err:")
+	w("\tneg x19, x0") // errno (reuse x19; fd no longer needed)
+	emitEmptyString(w, "x1")
+	w("\tmov x0, x19") // errno
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x19, x0") // IoError box
+	emitOptionBox(w, 0, "x19")
+	w(".Lssa_wrw_ret:")
+	w("\tldp x21, x22, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #48")
+	w("\tret")
+}
+
+// emitWriterCloseHelper writes __method_Writer_close(writer) -> Option[IoError]:
+// close(2) the handle's fd (from [writer+8]); return None on success or
+// Some(IoError) on failure. Non-leaf. x0=writer handle.
+func emitWriterCloseHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__method_Writer_close"))
+	w("\tstp x29, x30, [sp, #-16]!")
+	w("\tmov x29, sp")
+	w("\tldr w0, [x0, #8]") // fd @ ptr+8
+	w("\tmov x8, #57")      // close
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_wrc_err")
+	emitOptionBox(w, 1, "")
+	w("\tb .Lssa_wrc_ret")
+	w(".Lssa_wrc_err:")
+	w("\tneg x9, x0") // errno (x9 survives the inline empty-string alloc)
+	emitEmptyString(w, "x1")
+	w("\tmov x0, x9") // errno
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x9, x0") // IoError box (x9 survives the box alloc below)
+	emitOptionBox(w, 0, "x9")
+	w(".Lssa_wrc_ret:")
+	w("\tldp x29, x30, [sp], #16")
+	w("\tret")
+}
+
 // emitPollHelper writes poll(fds, timeout_ms) → i32: the std/task reactor's
 // readiness multiplexer. `fds` is a single-word i32[] (len at [ptr-4], stride 4);
 // the helper bump-allocates a transient struct pollfd[] (8 bytes each: i32 fd,
@@ -1026,6 +1254,9 @@ var runtimeHelperDeps = map[string][]string{
 	"remove_file":         {"__fern_io_error"},
 	"temp_dir":            {"__fern_io_error"},
 	"read_dir":            {"__fern_io_error"},
+	"open_writer":          {"__fern_io_error"},
+	"__method_Writer_write": {"__fern_io_error"},
+	"__method_Writer_close": {"__fern_io_error"},
 	"__pow_f64":           {"__log_f64", "__exp_f64"},
 }
 
@@ -1052,6 +1283,9 @@ var helperReturns64 = map[string]bool{
 	"read_dir":               true,
 	"random_bytes":           true,
 	"tcp_recv":                true,
+	"open_writer":             true,
+	"__method_Writer_write":   true,
+	"__method_Writer_close":   true,
 	"__str_idx":              true,
 	"__arr_idx":              true,
 	"__arr_idx_1":            true,
@@ -1092,6 +1326,9 @@ var heapUsingHelpers = map[string]bool{
 	"random_bytes":           true,
 	"tcp_recv":                true,
 	"poll":                    true,
+	"open_writer":             true,
+	"__method_Writer_write":   true,
+	"__method_Writer_close":   true,
 	"__fern_io_error":        true,
 }
 

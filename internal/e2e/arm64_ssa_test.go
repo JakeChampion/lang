@@ -363,6 +363,39 @@ function main(): i32 {
 			want: 4,
 		},
 		{
+			// Writer write-path round-trip: open_writer creates the file and returns a
+			// Writer handle (fd at handle+8, immortal-rc so it's never freed); w.write
+			// streams the bytes; w.close closes the fd; read_file reads it back (len 5).
+			// Exercises the handle box, the Result[Writer, IoError] Ok box, and the
+			// Option[IoError] None boxes.
+			name: "writer_roundtrip",
+			src: `function main(): i32 {
+  var wr = match (open_writer("/tmp/fern_ssa_e2e_wpath.txt")) {
+    Ok(w) => match (w.write("hello")) {
+      Some(e) => 30,
+      None => match (w.close()) { Some(e) => 40, None => 0 }
+    },
+    Err(e) => 50
+  };
+  if (wr != 0) { return wr; }
+  return match (read_file("/tmp/fern_ssa_e2e_wpath.txt")) { Ok(s) => s.len(), Err(e) => 60 };
+}`,
+			want: 5,
+		},
+		{
+			// open_writer failure: a path under a nonexistent directory yields ENOENT,
+			// mapped through __fern_io_error to Err(NotFound). Exercises the open_writer
+			// error path + the Result Err box.
+			name: "open_writer_err",
+			src: `function main(): i32 {
+  return match (open_writer("/no_such_dir_ssa_ow/f.txt")) {
+    Ok(w) => 0,
+    Err(e) => match (e) { NotFound(p) => 10, _ => 19 }
+  };
+}`,
+			want: 10,
+		},
+		{
 			// Integer to_string — the full digit-formatting chain: __alloc_u8
 			// (byte buffer), __fern_arr_cow_inplace (arr[i] = digit), and
 			// string_from_bytes (u8[] -> string). len("123456") = 6.
