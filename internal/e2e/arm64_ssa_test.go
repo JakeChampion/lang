@@ -287,6 +287,46 @@ function main(): i32 {
 			want: 5,
 		},
 		{
+			// tcp_listen(0) binds an ephemeral port on 0.0.0.0 — a real
+			// socket(2)/bind(2)/listen(2) round-trip under qemu-user (the syscalls pass
+			// through to the host). A non-negative fd means success; then tcp_close it.
+			name: "tcp_listen_close",
+			src: `function main(): i32 {
+  var fd = tcp_listen(0);
+  if (fd < 0) { return 99; }
+  var c = tcp_close(fd);
+  return if (fd >= 0) { 1 } else { 0 };
+}`,
+			want: 1,
+		},
+		{
+			// tcp_pollable is the identity on native (a socket's readiness token IS its
+			// fd), so tcp_pollable(42) == 42.
+			name: "tcp_pollable_id",
+			src:  `function main(): i32 { return tcp_pollable(42); }`,
+			want: 42,
+		},
+		{
+			// tcp_recv on a bad fd → read(2) returns -EBADF, which the helper clamps to
+			// a zero-length string. Exercises the recv alloc + read + len-clamp path.
+			name: "tcp_recv_badfd",
+			src:  `function main(): i32 { var s = tcp_recv(999, 10); return s.len(); }`,
+			want: 0,
+		},
+		{
+			// tcp_send / tcp_accept on a bad fd return -errno (negative). Confirms the
+			// write(2) / accept(2) syscall paths and the negative-errno passthrough.
+			name: "tcp_send_accept_badfd",
+			src: `function main(): i32 {
+  var s = tcp_send(999, "hi");
+  var a = tcp_accept(999);
+  var sn: i32 = if (s < 0) { 1 } else { 0 };
+  var an: i32 = if (a < 0) { 1 } else { 0 };
+  return sn + an;
+}`,
+			want: 2,
+		},
+		{
 			// Integer to_string — the full digit-formatting chain: __alloc_u8
 			// (byte buffer), __fern_arr_cow_inplace (arr[i] = digit), and
 			// string_from_bytes (u8[] -> string). len("123456") = 6.
@@ -712,10 +752,10 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 }
 
 // TestArm64SSACoverageGapErrors confirms a program needing a runtime builtin the
-// arm64-ssa path doesn't emit yet (here the `tcp_listen` socket builtin, which
-// reaches the still-unported `tcp_listen` helper) fails with a clean compile/link
-// error rather than a miscompile — the experimental-backend contract that lets
-// the epic widen coverage incrementally.
+// arm64-ssa path doesn't emit yet (here the `subprocess` builtin, which reaches
+// the still-unported `subprocess` helper) fails with a clean compile/link error
+// rather than a miscompile — the experimental-backend contract that lets the epic
+// widen coverage incrementally.
 func TestArm64SSACoverageGapErrors(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("arm64-ssa not exercised on windows")
@@ -727,18 +767,18 @@ func TestArm64SSACoverageGapErrors(t *testing.T) {
 		t.Fatalf("go build fern: %v\n%s", err, out)
 	}
 
-	srcPath := filepath.Join(dir, "tcp.fern")
-	src := `function main(): i32 { return tcp_listen(8080); }`
+	srcPath := filepath.Join(dir, "sub.fern")
+	src := `function main(): i32 { var p = subprocess("echo", [], ""); return p.exit_code; }`
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	out := filepath.Join(dir, "tcp.bin")
+	out := filepath.Join(dir, "sub.bin")
 	emit := exec.Command(bin, "-target", "arm64-ssa", "-o", out, srcPath)
 	var eb bytes.Buffer
 	emit.Stderr = &eb
 	err := emit.Run()
 	if err == nil {
-		t.Fatalf("expected a coverage-gap error for the tcp_listen() builtin, got success")
+		t.Fatalf("expected a coverage-gap error for the subprocess() builtin, got success")
 	}
 	if !bytes.Contains(eb.Bytes(), []byte("arm64-ssa")) {
 		t.Errorf("error not attributed to arm64-ssa:\n%s", eb.String())
