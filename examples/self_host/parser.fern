@@ -3536,6 +3536,14 @@ function parse_func_decl(p: Par): FuncResult {
         //     (`from[K, V](pairs: (K, V)[]): Map[K, V]`). #map-generic.
         var feeds: boolean = feeds_user_parametric(ret_type, un) || feeds_map_typearg(ret_type, un);
         var bindable: boolean = false;
+        // (c) a BARE value param (`sep: T`, param type is exactly the var): a wide
+        //     type (`string` is a 16-byte {ptr,len} value) has a different value
+        //     ABI than the erased uniform-8-byte slot, so an erased body built for
+        //     one element type miscompiles the other (`intersperse(xs, sep)` /
+        //     `push(xs, x)` at both i32 and string). Monomorphising per element
+        //     type gives each clone the concrete param ABI. `bind_unify` binds a
+        //     bare param directly, so it is bindable by construction.
+        var bare_val: boolean = false;
         var pj: i32 = 0;
         while (pj < params.len()) {
             if (feeds_user_parametric(params[pj].type_name, un) || feeds_map_typearg(params[pj].type_name, un)) { feeds = true; }
@@ -3543,9 +3551,10 @@ function parse_func_decl(p: Par): FuncResult {
             //     tuple-array param — bind_unify now destructures `(K, V)` parens,
             //     so a `(K, V)[]` param recovers both vars from the call's argument.
             if (token_at_paren_depth0(params[pj].type_name, un) || token_in_tuple_param(params[pj].type_name, un)) { bindable = true; }
+            if (params[pj].type_name == un) { bare_val = true; }
             pj = pj + 1;
         }
-        if (feeds && bindable) { bounded_tps = bounded_tps.append(un); }
+        if ((feeds && bindable) || bare_val) { bounded_tps = bounded_tps.append(un); }
         ui = ui + 1;
     }
     // A body-less function (`function f(): T;`) is an extern import
@@ -4114,6 +4123,24 @@ struct RExpr { rexpr: Expr, rins: Insts }
 struct RStmtOne { rstmt: Stmt, renv: MEnv, rins2: Insts }
 struct RStmts { rstmts: Stmt[], rins3: Insts }
 
+// arrm_has_bare_elem_param reports whether a folded generic array method
+// `__arrm_m[T]` takes a BARE value param of the element type (`sep: T` in
+// `intersperse`, `x: T` in `push`) — its element var is type_params[0]. Such a
+// method's AST fallback miscompiles a 16-byte value (`string`), so unlike
+// `concat` / `reverse` (only `T[]` params) it must ride the per-element-type
+// free-generic clone at EVERY element type, not just the first. Gates the
+// ihas_other single-element-type restriction below.
+function arrm_has_bare_elem_param(fd: FuncDecl): boolean {
+    if (fd.type_params.len() == 0) { return false; }
+    var ev: string = fd.type_params[0];
+    var i: i32 = 0;
+    while (i < fd.params.len()) {
+        if (fd.params[i].type_name == ev) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // bg_index returns the index in `funcs` of a bounded-generic function
 // named `name` (type_params non-empty, plain function), or -1.
 function bg_index(funcs: FuncDecl[], name: string): i32 {
@@ -4621,13 +4648,18 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                             var rk: i32 = 0;
                             while (rk < c.args.len()) { raw = raw.append(c.args[rk]); rk = rk + 1; }
                             var ct3: string = infer_inst(funcs[amg], raw, env, funcs);
-                            // Keep a generic array method on ONE element type per
-                            // program: a second distinct element type leaves the call
-                            // in method form (→ AST), sidestepping a pre-existing
-                            // self-host crash when a 2-param array helper (`concat`)
-                            // is lowered at two element types. Single-element-type use
-                            // (the common case) still rides the IR path.
-                            if (ct3.len() > 0 && cur.ihas_other(amn, ct3)) { ct3 = ""; }
+                            // Keep a generic array method with only `T[]` params
+                            // (`concat` / `reverse`) on ONE element type per program:
+                            // a second distinct element type leaves the call in method
+                            // form (→ AST), sidestepping a self-host crash lowering
+                            // such a helper at two element types. A method taking a
+                            // BARE element-typed value param (`intersperse(sep: T)` /
+                            // `push(x: T)`) is EXEMPT: its AST fallback miscompiles a
+                            // 16-byte `string` value, so it must clone per element type
+                            // at every element type — the free `intersperse[T]` it
+                            // delegates to is now monomorphised (bare-value-param
+                            // promotion), so both clones carry the concrete param ABI.
+                            if (ct3.len() > 0 && cur.ihas_other(amn, ct3) && !arrm_has_bare_elem_param(funcs[amg])) { ct3 = ""; }
                             if (ct3.len() > 0) {
                                 var ro: RExpr = mono_expr(fac.obj, env, funcs, cur);
                                 cur = ro.rins;
