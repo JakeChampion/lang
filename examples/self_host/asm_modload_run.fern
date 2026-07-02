@@ -118,17 +118,48 @@ function module_import_ns(mod: parser.Module): string {
     return out;
 }
 
-// module_src_hash fingerprints a module's own source. It reads the module's
-// source file (flat sibling layout <dir><ns>.fern — the whole-compiler self-host
-// case; the entry reads entry_path). A read failure (e.g. a subdir-resolved
-// module) yields "?", which callers MUST treat as always-rebuild: sound (never
-// reuses stale codegen), just not incremental for that module. A subdir-aware
-// version threading each module's resolved path through the loader is a
-// follow-up on #3458.
-function module_src_hash(dir: string, entry_path: string, part: flatten.PerModule): string {
-    var srcpath: string = dir + part.ns + ".fern";
-    if (part.is_entry) { srcpath = entry_path; }
-    match (read_file(srcpath)) {
+// module_import_path finds the ORIGINAL import path (e.g. "./sub/leaf",
+// "std/io") whose basename is `ns`, by scanning every loaded module's imports.
+// The bundler keys modules by basename, but resolving a module's source needs
+// its full sub-path — so we recover it from whichever module imported it.
+// Returns "" if no import edge names `ns` (i.e. the entry, or a not-found case).
+function module_import_path(parts: flatten.PerModule[], ns: string): string {
+    var j: i32 = 0;
+    while (j < parts.len()) {
+        var imps: parser.Import[] = parts[j].mod.imports;
+        var ii: i32 = 0;
+        while (ii < imps.len()) {
+            if (modloader.base_name(imps[ii].path) == ns) { return imps[ii].path; }
+            ii = ii + 1;
+        }
+        j = j + 1;
+    }
+    return "";
+}
+
+// module_src_hash fingerprints a module's own source. It resolves the module's
+// source THROUGH THE LOADER (modloader.resolve_module_src, keyed by the original
+// import path recovered via module_import_path) so a sub-directory module
+// (`import "std/io"` → <dir>/std/io.fern) is hashed at its real path, not just
+// the flat <dir><ns>.fern. The entry reads entry_path. Only a genuinely
+// unresolvable source yields "?", which callers MUST treat as always-rebuild:
+// sound (never reuses stale codegen), just not incremental for that module.
+function module_src_hash(dir: string, entry_path: string, parts: flatten.PerModule[], idx: i32): string {
+    if (parts[idx].is_entry) {
+        match (read_file(entry_path)) {
+            Ok(esrc) => { return util.hash_key(esrc); },
+            Err(e) => { return "?"; },
+        }
+    }
+    var ip: string = module_import_path(parts, parts[idx].ns);
+    if (ip.len() > 0) {
+        match (modloader.resolve_module_src(dir, ip, parts[idx].ns)) {
+            Some(src) => { return util.hash_key(src); },
+            None => { },
+        }
+    }
+    // Fallback: flat sibling layout (no import edge found, e.g. a degenerate view).
+    match (read_file(dir + parts[idx].ns + ".fern")) {
         Ok(msrc) => { return util.hash_key(msrc); },
         Err(e) => { return "?"; },
     }
@@ -236,7 +267,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         // path through the loader; tracked as a follow-up on #3458.
         var mi: i32 = 0;
         while (mi < parts.len()) {
-            var src_hash: string = module_src_hash(dir, entry_path, parts[mi]);
+            var src_hash: string = module_src_hash(dir, entry_path, parts, mi);
             print(parts[mi].ns + "|" + src_hash + "|" + sighashes[mi] + "|" + module_import_ns(infmods[mi]) + "\n");
             mi = mi + 1;
         }
@@ -273,7 +304,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     // module_src_hash).
     var cachefile: string = "";
     if (cache_dir.len() > 0) {
-        var src_hash: string = module_src_hash(dir, entry_path, parts[pm_index]);
+        var src_hash: string = module_src_hash(dir, entry_path, parts, pm_index);
         var key: string = module_cache_key(parts, infmods, sighashes, pm_index, src_hash, extra);
         if (key.len() > 0) {
             cachefile = cache_dir + "/" + parts[pm_index].ns + "__" + util.hash_key(key) + ".s";

@@ -94,7 +94,7 @@ function try_read(dir: string, rel: string): Option[string] {
 // (possibly `std/`-prefixed) path first, then the flat basename in the
 // entry directory — so `import "std/io"` resolves to `<dir>/std/io.fern`
 // when vendored there, or `<dir>/io.fern` when laid out flat.
-function resolve_module_src(dir: string, path: string, name: string): Option[string] {
+pub function resolve_module_src(dir: string, path: string, name: string): Option[string] {
     match (try_read(dir, rel_path(path))) {
         Some(s) => { return Some(s); },
         None => { return try_read(dir, name); },

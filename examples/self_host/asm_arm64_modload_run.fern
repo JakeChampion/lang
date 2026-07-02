@@ -99,10 +99,40 @@ function module_import_ns(mod: parser.Module): string {
     return out;
 }
 
-function module_src_hash(dir: string, entry_path: string, part: flatten.PerModule): string {
-    var srcpath: string = dir + part.ns + ".fern";
-    if (part.is_entry) { srcpath = entry_path; }
-    match (read_file(srcpath)) {
+// module_import_path recovers a module's ORIGINAL import path (with sub-path)
+// from whichever module imports it — see the x86 driver for the rationale.
+function module_import_path(parts: flatten.PerModule[], ns: string): string {
+    var j: i32 = 0;
+    while (j < parts.len()) {
+        var imps: parser.Import[] = parts[j].mod.imports;
+        var ii: i32 = 0;
+        while (ii < imps.len()) {
+            if (modloader.base_name(imps[ii].path) == ns) { return imps[ii].path; }
+            ii = ii + 1;
+        }
+        j = j + 1;
+    }
+    return "";
+}
+
+// module_src_hash resolves the module's source through the loader (so subdir
+// modules hash at their real path, not just <dir><ns>.fern) — the arm64 twin of
+// the x86 driver's; see there for details.
+function module_src_hash(dir: string, entry_path: string, parts: flatten.PerModule[], idx: i32): string {
+    if (parts[idx].is_entry) {
+        match (read_file(entry_path)) {
+            Ok(esrc) => { return util.hash_key(esrc); },
+            Err(e) => { return "?"; },
+        }
+    }
+    var ip: string = module_import_path(parts, parts[idx].ns);
+    if (ip.len() > 0) {
+        match (modloader.resolve_module_src(dir, ip, parts[idx].ns)) {
+            Some(src) => { return util.hash_key(src); },
+            None => { },
+        }
+    }
+    match (read_file(dir + parts[idx].ns + ".fern")) {
         Ok(msrc) => { return util.hash_key(msrc); },
         Err(e) => { return "?"; },
     }
@@ -180,7 +210,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         // same signatures), so an arm64 manifest matches the x86 one.
         var mi: i32 = 0;
         while (mi < parts.len()) {
-            var src_hash: string = module_src_hash(dir, entry_path, parts[mi]);
+            var src_hash: string = module_src_hash(dir, entry_path, parts, mi);
             print(parts[mi].ns + "|" + src_hash + "|" + sighashes[mi] + "|" + module_import_ns(infmods[mi]) + "\n");
             mi = mi + 1;
         }
@@ -209,7 +239,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     // hit/miss is reported on stderr; stdout stays the unit asm.
     var cachefile: string = "";
     if (cache_dir.len() > 0) {
-        var src_hash: string = module_src_hash(dir, entry_path, parts[pm_index]);
+        var src_hash: string = module_src_hash(dir, entry_path, parts, pm_index);
         var key: string = module_cache_key(parts, infmods, sighashes, pm_index, src_hash, extra);
         if (key.len() > 0) {
             cachefile = cache_dir + "/" + parts[pm_index].ns + "__" + util.hash_key(key) + ".s";
