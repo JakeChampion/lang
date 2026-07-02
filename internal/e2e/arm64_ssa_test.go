@@ -396,6 +396,47 @@ function main(): i32 {
 			want: 10,
 		},
 		{
+			// Reader read-path round-trip: write a file, open_reader it, read_chunk(4)
+			// returns Some("abcd") (len 4), then r.close(). Exercises the Reader handle,
+			// Result[Reader, IoError] Ok box, and the Option[string] Some box.
+			name: "reader_roundtrip",
+			src: `function main(): i32 {
+  var w = write_file("/tmp/fern_ssa_e2e_rdr.txt", "abcdefg");
+  return match (open_reader("/tmp/fern_ssa_e2e_rdr.txt")) {
+    Ok(r) => match (r.read_chunk(4)) {
+      Some(s) => match (r.close()) { Some(e) => 40, None => s.len() },
+      None => 30
+    },
+    Err(e) => 50
+  };
+}`,
+			want: 4,
+		},
+		{
+			// read_chunk at EOF (an empty file) yields None. Exercises the read <= 0
+			// -> None branch of the Option[string] box.
+			name: "reader_read_chunk_eof",
+			src: `function main(): i32 {
+  var w = write_file("/tmp/fern_ssa_e2e_rdeof.txt", "");
+  return match (open_reader("/tmp/fern_ssa_e2e_rdeof.txt")) {
+    Ok(r) => match (r.read_chunk(8)) { Some(s) => 1, None => 7 },
+    Err(e) => 50
+  };
+}`,
+			want: 7,
+		},
+		{
+			// open_reader failure: a nonexistent path yields Err(NotFound).
+			name: "open_reader_err",
+			src: `function main(): i32 {
+  return match (open_reader("/no_such_ssa_rd_dir/x.txt")) {
+    Ok(r) => 0,
+    Err(e) => match (e) { NotFound(p) => 10, _ => 19 }
+  };
+}`,
+			want: 10,
+		},
+		{
 			// Integer to_string — the full digit-formatting chain: __alloc_u8
 			// (byte buffer), __fern_arr_cow_inplace (arr[i] = digit), and
 			// string_from_bytes (u8[] -> string). len("123456") = 6.

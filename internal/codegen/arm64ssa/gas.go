@@ -392,6 +392,9 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"open_writer":             emitOpenWriterHelper,
 	"__method_Writer_write":   emitWriterWriteHelper,
 	"__method_Writer_close":   emitWriterCloseHelper,
+	"open_reader":             emitOpenReaderHelper,
+	"__method_Reader_read_chunk": emitReaderReadChunkHelper,
+	"__method_Reader_close":   emitReaderCloseHelper,
 	"print":                  emitPrintHelper,
 	"write":                  emitWriteHelper,
 	"eprint":                 emitEprintHelper,
@@ -1154,6 +1157,157 @@ func emitWriterCloseHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
+// emitOpenReaderHelper writes open_reader(path) -> Result[Reader, IoError]: the
+// read-only sibling of open_writer — openat the path O_RDONLY, wrap the fd in a
+// handle (identical shape to a Writer handle: fd at [ptr+8], immortal rc), and
+// return Ok(Reader), or map -errno through __fern_io_error and return
+// Err(IoError). Non-leaf. x19=path / x20=pathz. x0=path.
+func emitOpenReaderHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("open_reader"))
+	w("\tstp x29, x30, [sp, #-32]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tmov x19, x0") // path
+	// NUL-terminate the path into a fresh heap buffer (x20).
+	w("\tldur w2, [x19, #-4]")
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x2, #1")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	w("\tmov w7, #0")
+	w(".Lssa_or_cp:")
+	w("\tcmp w7, w2")
+	w("\tb.hs .Lssa_or_cpd")
+	w("\tldrb w8, [x19, x7]")
+	w("\tstrb w8, [x4, x7]")
+	w("\tadd w7, w7, #1")
+	w("\tb .Lssa_or_cp")
+	w(".Lssa_or_cpd:")
+	w("\tstrb wzr, [x4, x2]")
+	w("\tmov x20, x4") // pathz
+	// openat(AT_FDCWD, pathz, O_RDONLY, 0).
+	w("\tmov x0, #100")
+	w("\tneg x0, x0")
+	w("\tmov x1, x20")
+	w("\tmov x2, #0") // O_RDONLY
+	w("\tmov x3, #0")
+	w("\tmov x8, #56") // openat
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_or_err")
+	w("\tmov w9, w0") // fd
+	emitWriterHandleAlloc(w, "x19", "w9")
+	// Result.Ok(Reader): box {rc=1, tag=0, handle@8}.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")
+	w("\tadd x0, x4, #8")
+	w("\tstr wzr, [x0]") // tag = 0 (Ok)
+	w("\tstr x19, [x0, #8]")
+	w("\tb .Lssa_or_ret")
+	w(".Lssa_or_err:")
+	w("\tneg x0, x0") // errno
+	w("\tmov x1, x19") // path
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x19, x0") // IoError box
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")
+	w("\tadd x0, x4, #8")
+	w("\tmov w6, #1")
+	w("\tstr w6, [x0]") // tag = 1 (Err)
+	w("\tstr x19, [x0, #8]")
+	w(".Lssa_or_ret:")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #32")
+	w("\tret")
+}
+
+// emitReaderReadChunkHelper writes __method_Reader_read_chunk(reader, n) ->
+// Option[string]: a single read(2) of up to n bytes from the handle's fd (loaded
+// from [reader+8]) into a fresh single-word rc string. Returns None on EOF/error
+// (read <= 0) or Some(string) with the actual byte count as its length. Leaf: the
+// read svc preserves every register but x0, so fd/n/data survive without spills.
+// x0=reader handle, x1=n.
+func emitReaderReadChunkHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__method_Reader_read_chunk"))
+	w("\tldr w9, [x0, #8]") // fd @ ptr+8
+	w("\tmov x10, x1")      // n
+	// Allocate a single-word rc string: 8-byte header + n + 1 NUL.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x10, #9")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	w("\tmov w7, #1")
+	w("\tstr w7, [x4]")    // rc = 1
+	w("\tadd x11, x4, #8") // data ptr
+	// read(fd, data, n)
+	w("\tmov x0, x9")
+	w("\tmov x1, x11")
+	w("\tmov x2, x10")
+	w("\tmov x8, #63") // read
+	w("\tsvc #0")
+	w("\tcmp x0, #0")
+	w("\tble .Lssa_rrc_none") // EOF or error → None
+	w("\tstur w0, [x11, #-4]") // len = bytes read
+	w("\tadd x1, x11, x0")
+	w("\tstrb wzr, [x1]") // trailing NUL
+	// Some(string): box {rc=1, tag=0, string@8}.
+	emitOptionBox(w, 0, "x11")
+	w("\tret")
+	w(".Lssa_rrc_none:")
+	// None: box {rc=1, tag=1}.
+	emitOptionBox(w, 1, "")
+	w("\tret")
+}
+
+// emitReaderCloseHelper writes __method_Reader_close(reader) -> Option[IoError]:
+// close(2) the handle's fd (from [reader+8]); the read-side twin of Writer.close.
+// Non-leaf. x0=reader handle.
+func emitReaderCloseHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__method_Reader_close"))
+	w("\tstp x29, x30, [sp, #-16]!")
+	w("\tmov x29, sp")
+	w("\tldr w0, [x0, #8]") // fd @ ptr+8
+	w("\tmov x8, #57")      // close
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_rdc_err")
+	emitOptionBox(w, 1, "")
+	w("\tb .Lssa_rdc_ret")
+	w(".Lssa_rdc_err:")
+	w("\tneg x9, x0") // errno
+	emitEmptyString(w, "x1")
+	w("\tmov x0, x9")
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x9, x0")
+	emitOptionBox(w, 0, "x9")
+	w(".Lssa_rdc_ret:")
+	w("\tldp x29, x30, [sp], #16")
+	w("\tret")
+}
+
 // emitPollHelper writes poll(fds, timeout_ms) → i32: the std/task reactor's
 // readiness multiplexer. `fds` is a single-word i32[] (len at [ptr-4], stride 4);
 // the helper bump-allocates a transient struct pollfd[] (8 bytes each: i32 fd,
@@ -1257,6 +1411,8 @@ var runtimeHelperDeps = map[string][]string{
 	"open_writer":          {"__fern_io_error"},
 	"__method_Writer_write": {"__fern_io_error"},
 	"__method_Writer_close": {"__fern_io_error"},
+	"open_reader":           {"__fern_io_error"},
+	"__method_Reader_close": {"__fern_io_error"},
 	"__pow_f64":           {"__log_f64", "__exp_f64"},
 }
 
@@ -1286,6 +1442,9 @@ var helperReturns64 = map[string]bool{
 	"open_writer":             true,
 	"__method_Writer_write":   true,
 	"__method_Writer_close":   true,
+	"open_reader":             true,
+	"__method_Reader_read_chunk": true,
+	"__method_Reader_close":   true,
 	"__str_idx":              true,
 	"__arr_idx":              true,
 	"__arr_idx_1":            true,
@@ -1329,6 +1488,9 @@ var heapUsingHelpers = map[string]bool{
 	"open_writer":             true,
 	"__method_Writer_write":   true,
 	"__method_Writer_close":   true,
+	"open_reader":             true,
+	"__method_Reader_read_chunk": true,
+	"__method_Reader_close":   true,
 	"__fern_io_error":        true,
 }
 
