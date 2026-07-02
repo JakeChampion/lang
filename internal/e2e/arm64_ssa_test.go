@@ -210,6 +210,40 @@ function main(): i32 { var x: f64 = 16.0; return (x.sqrt()) as i32; }`,
 			want: 4,
 		},
 		{
+			// exp — a range-reduced degree-7 Taylor polynomial (the __exp_f64 helper +
+			// the shared .rodata coefficient table). exp(1) ≈ e; the tolerance check
+			// (a few ulp of the polynomial approx) returns 1 when within 0.001.
+			name: "stdlib_float_exp",
+			src: `import "std/float";
+function main(): i32 {
+  var e = (1.0).exp();
+  return if ((e - 2.718281828459045).abs() < 0.001) { 1 } else { 0 };
+}`,
+			want: 1,
+		},
+		{
+			// log — mantissa normalisation + an odd-power series for ln(m) (__log_f64).
+			// log(e) ≈ 1; within-tolerance → 1.
+			name: "stdlib_float_log",
+			src: `import "std/float";
+function main(): i32 {
+  var l = (2.718281828459045).log();
+  return if ((l - 1.0).abs() < 0.001) { 1 } else { 0 };
+}`,
+			want: 1,
+		},
+		{
+			// pow — exp(y·ln x), exercising __pow_f64's chained calls into __log_f64 /
+			// __exp_f64 through their x0-bits ABI. pow(2, 10) ≈ 1024; within 0.5 → 1.
+			name: "stdlib_float_pow",
+			src: `import "std/float";
+function main(): i32 {
+  var p = (2.0).pow(10.0);
+  return if ((p - 1024.0).abs() < 0.5) { 1 } else { 0 };
+}`,
+			want: 1,
+		},
+		{
 			// Integer to_string — the full digit-formatting chain: __alloc_u8
 			// (byte buffer), __fern_arr_cow_inplace (arr[i] = digit), and
 			// string_from_bytes (u8[] -> string). len("123456") = 6.

@@ -167,6 +167,11 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	for _, h := range helpers {
 		runtimeHelperEmitters[h](w)
 	}
+	if usesTranscendentals(helpers) {
+		// Shared .rodata coefficient table for the exp/log/pow polynomials, emitted
+		// once (the helper bodies above reference its labels via adrp/:lo12:).
+		emitTranscendentalRodata(w)
+	}
 	if len(strOrder) > 0 {
 		// Length-prefixed single-word string literals (mirrors the native backends
 		// + the x86-64 SSA path): an 8-byte header — an immortal rc sentinel
@@ -389,6 +394,9 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__ceil_f64":             emitFloatUnaryHelper("__ceil_f64", "frintp"),
 	"__trunc_f64":            emitFloatUnaryHelper("__trunc_f64", "frintz"),
 	"__round_f64":            emitFloatUnaryHelper("__round_f64", "frinta"),
+	"__exp_f64":              emitExpF64Helper,
+	"__log_f64":              emitLogF64Helper,
+	"__pow_f64":              emitPowF64Helper,
 }
 
 // emitFloatUnaryHelper returns the emitter for a single-instruction f64 unary
@@ -406,6 +414,191 @@ func emitFloatUnaryHelper(name, mnem string) func(w func(string, ...any)) {
 	}
 }
 
+// transcendentalHelpers are the polynomial-approximation f64 math helpers
+// (exp/log/pow, plus sin/cos when ported). They share a single .rodata table of
+// minimax/Taylor coefficients (emitTranscendentalRodata), emitted once whenever
+// any of them is referenced.
+var transcendentalHelpers = map[string]bool{
+	"__exp_f64": true,
+	"__log_f64": true,
+	"__pow_f64": true,
+}
+
+// usesTranscendentals reports whether any referenced helper needs the shared
+// transcendental .rodata coefficient table.
+func usesTranscendentals(helpers []string) bool {
+	for _, h := range helpers {
+		if transcendentalHelpers[h] {
+			return true
+		}
+	}
+	return false
+}
+
+// emitTranscendentalRodata emits the shared .rodata coefficient table read by the
+// exp/log/pow helpers (via adrp/:lo12: + ldr), then switches back to .text. arm64
+// has no hardware transcendental instruction, so each helper is a range reduction
+// followed by a minimax/Taylor polynomial (a few ulp — the test contract is
+// tolerance-based). The coefficients are the exact table from the native arm64
+// backend (emitFloatTranscendentalsRuntime), itself ported from asm_arm64.fern.
+func emitTranscendentalRodata(w func(string, ...any)) {
+	w("")
+	w(".section .rodata")
+	w(".align 3")
+	for _, c := range []struct{ lbl, val string }{
+		{".Lfc_log2e", "1.4426950408889634"},
+		{".Lfc_ln2", "0.6931471805599453"},
+		{".Lfc_sqrt2", "1.4142135623730951"},
+		{".Lfc_one", "1.0"},
+		{".Lfc_half", "0.5"},
+		{".Lfc_e7", "0.00019841269841269841"},
+		{".Lfc_e6", "0.0013888888888888889"},
+		{".Lfc_e5", "0.0083333333333333332"},
+		{".Lfc_e4", "0.041666666666666664"},
+		{".Lfc_e3", "0.16666666666666666"},
+		{".Lfc_l11", "0.090909090909090912"},
+		{".Lfc_l9", "0.1111111111111111"},
+		{".Lfc_l7", "0.14285714285714285"},
+		{".Lfc_l5", "0.2"},
+		{".Lfc_l3", "0.33333333333333331"},
+	} {
+		w("%s:", c.lbl)
+		w("\t.double %s", c.val)
+	}
+	w(".text")
+}
+
+// emitExpF64Helper writes __exp_f64(x) → e^x. x arrives as f64 bits in x0 (the SSA
+// GP convention); the body computes e^x = 2^k·poly(r) with k = round(x·log2 e) and
+// r = x − k·ln2 ∈ [−ln2/2, ln2/2] (degree-7 Taylor of e^r), and returns the result
+// bits in x0. Leaf; reads the shared .rodata table.
+func emitExpF64Helper(w func(string, ...any)) {
+	ldc := func(reg, lbl string) {
+		w("\tadrp x12, %s", lbl)
+		w("\tadd x12, x12, #:lo12:%s", lbl)
+		w("\tldr %s, [x12]", reg)
+	}
+	w("")
+	w("%s:", fnLabel("__exp_f64"))
+	w("\tfmov d0, x0")
+	ldc("d1", ".Lfc_log2e")
+	w("\tfmul d2, d0, d1")
+	w("\tfrinta d3, d2")
+	w("\tfcvtzs x10, d3")
+	ldc("d4", ".Lfc_ln2")
+	w("\tfmul d5, d3, d4")
+	w("\tfsub d0, d0, d5")
+	ldc("d6", ".Lfc_e7")
+	ldc("d7", ".Lfc_e6")
+	w("\tfmul d6, d6, d0")
+	w("\tfadd d6, d6, d7")
+	ldc("d7", ".Lfc_e5")
+	w("\tfmul d6, d6, d0")
+	w("\tfadd d6, d6, d7")
+	ldc("d7", ".Lfc_e4")
+	w("\tfmul d6, d6, d0")
+	w("\tfadd d6, d6, d7")
+	ldc("d7", ".Lfc_e3")
+	w("\tfmul d6, d6, d0")
+	w("\tfadd d6, d6, d7")
+	ldc("d7", ".Lfc_half")
+	w("\tfmul d6, d6, d0")
+	w("\tfadd d6, d6, d7")
+	ldc("d7", ".Lfc_one")
+	w("\tfmul d6, d6, d0")
+	w("\tfadd d6, d6, d7")
+	w("\tfmul d6, d6, d0")
+	w("\tfadd d6, d6, d7")
+	w("\tadd x10, x10, #1023")
+	w("\tlsl x10, x10, #52")
+	w("\tfmov d1, x10")
+	w("\tfmul d0, d6, d1")
+	w("\tfmov x0, d0")
+	w("\tret")
+}
+
+// emitLogF64Helper writes __log_f64(x) → ln x (x>0). x = m·2^e with m normalised to
+// [√2/2, √2); f = (m−1)/(m+1); ln(m) = 2·(f + f³/3 + … + f¹¹/11); ln(x) = e·ln2 +
+// ln(m). x0 in/out (f64 bits). Leaf; reads the shared .rodata table.
+func emitLogF64Helper(w func(string, ...any)) {
+	ldc := func(reg, lbl string) {
+		w("\tadrp x12, %s", lbl)
+		w("\tadd x12, x12, #:lo12:%s", lbl)
+		w("\tldr %s, [x12]", reg)
+	}
+	w("")
+	w("%s:", fnLabel("__log_f64"))
+	w("\tfmov d0, x0")
+	w("\tfmov x10, d0")
+	w("\tlsr x11, x10, #52")
+	w("\tand x11, x11, #0x7ff")
+	w("\tsub x11, x11, #1023") // e
+	w("\tmov x13, #1")
+	w("\tlsl x13, x13, #52")
+	w("\tsub x13, x13, #1")  // (1<<52)-1
+	w("\tand x10, x10, x13") // mantissa
+	w("\tmov x14, #1023")
+	w("\tlsl x14, x14, #52")
+	w("\torr x10, x10, x14")
+	w("\tfmov d1, x10") // m in [1,2)
+	ldc("d2", ".Lfc_sqrt2")
+	w("\tfcmp d1, d2")
+	w("\tb.le .Lssa_log_nohalf")
+	ldc("d3", ".Lfc_half")
+	w("\tfmul d1, d1, d3")
+	w("\tadd x11, x11, #1")
+	w(".Lssa_log_nohalf:")
+	ldc("d4", ".Lfc_one")
+	w("\tfsub d5, d1, d4") // m-1
+	w("\tfadd d6, d1, d4") // m+1
+	w("\tfdiv d0, d5, d6") // f
+	w("\tfmul d7, d0, d0") // f2
+	ldc("d2", ".Lfc_l11")
+	ldc("d3", ".Lfc_l9")
+	w("\tfmul d2, d2, d7")
+	w("\tfadd d2, d2, d3")
+	ldc("d3", ".Lfc_l7")
+	w("\tfmul d2, d2, d7")
+	w("\tfadd d2, d2, d3")
+	ldc("d3", ".Lfc_l5")
+	w("\tfmul d2, d2, d7")
+	w("\tfadd d2, d2, d3")
+	ldc("d3", ".Lfc_l3")
+	w("\tfmul d2, d2, d7")
+	w("\tfadd d2, d2, d3")
+	w("\tfmul d2, d2, d7")
+	w("\tfadd d2, d2, d4") // poly + 1
+	w("\tfmul d2, d2, d0") // f*poly
+	w("\tfadd d2, d2, d2") // 2*f*poly = ln(m)
+	w("\tscvtf d3, x11")   // e
+	ldc("d4", ".Lfc_ln2")
+	w("\tfmul d3, d3, d4") // e*ln2
+	w("\tfadd d0, d3, d2")
+	w("\tfmov x0, d0")
+	w("\tret")
+}
+
+// emitPowF64Helper writes __pow_f64(x, y) → x^y = exp(y·ln x), x>0. x arrives as
+// f64 bits in x0 and y in x1. It calls __log_f64 / __exp_f64 through their x0-bits
+// ABI, stashing y in callee-saved x19 across the log call. Non-leaf.
+func emitPowF64Helper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__pow_f64"))
+	w("\tstp x29, x30, [sp, #-32]!")
+	w("\tmov x29, sp")
+	w("\tstr x19, [sp, #16]")
+	w("\tmov x19, x1")               // y bits (x0 already = x bits)
+	w("\tbl %s", fnLabel("__log_f64")) // x0 = ln(x) bits
+	w("\tfmov d0, x0")
+	w("\tfmov d1, x19") // y
+	w("\tfmul d0, d1, d0")
+	w("\tfmov x0, d0")
+	w("\tbl %s", fnLabel("__exp_f64")) // x0 = exp(y·ln x) bits
+	w("\tldr x19, [sp, #16]")
+	w("\tldp x29, x30, [sp], #32")
+	w("\tret")
+}
+
 // runtimeHelperDeps records helper→helper call edges: a helper that tail-calls
 // another must have that callee emitted too, since the module never references
 // it directly. Transitively closed by referencedRuntimeHelpers.
@@ -417,6 +610,7 @@ var runtimeHelperDeps = map[string][]string{
 	"remove_file":         {"__fern_io_error"},
 	"temp_dir":            {"__fern_io_error"},
 	"read_dir":            {"__fern_io_error"},
+	"__pow_f64":           {"__log_f64", "__exp_f64"},
 }
 
 // helperReturns64 lists runtime helpers whose result is a full 8-byte value — a
@@ -452,6 +646,9 @@ var helperReturns64 = map[string]bool{
 	"__ceil_f64":             true,
 	"__trunc_f64":            true,
 	"__round_f64":            true,
+	"__exp_f64":              true,
+	"__log_f64":              true,
+	"__pow_f64":              true,
 }
 
 // heapUsingHelpers are runtime helpers that bump-allocate on the SSA heap, so the
