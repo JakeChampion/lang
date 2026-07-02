@@ -369,6 +369,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__str_slice":            emitStrSliceHelper,
 	"args":                   emitArgsHelper,
 	"env":                    emitEnvHelper,
+	"write_file":             emitWriteFileHelper,
+	"__fern_io_error":        emitIoErrorHelper,
 	"print":                  emitPrintHelper,
 	"write":                  emitWriteHelper,
 	"eprint":                 emitEprintHelper,
@@ -406,6 +408,7 @@ func emitFloatUnaryHelper(name, mnem string) func(w func(string, ...any)) {
 var runtimeHelperDeps = map[string][]string{
 	"__fern_closure_drop": {"__fern_box_free", "__fern_rc_dec"},
 	"__fern_drop_arr_str": {"__fern_str_dec", "__fern_arr_dec"},
+	"write_file":          {"__fern_io_error"},
 }
 
 // helperReturns64 lists runtime helpers whose result is a full 8-byte value — a
@@ -424,6 +427,7 @@ var helperReturns64 = map[string]bool{
 	"args":                   true,
 	"strbuf_take":            true,
 	"env":                    true,
+	"write_file":             true,
 	"__str_idx":              true,
 	"__arr_idx":              true,
 	"__arr_idx_1":            true,
@@ -451,6 +455,8 @@ var heapUsingHelpers = map[string]bool{
 	"args":                   true,
 	"strbuf_take":            true,
 	"env":                    true,
+	"write_file":             true,
+	"__fern_io_error":        true,
 }
 
 // collectStrings assigns a .rodata label to each unique OpConstString literal, in
@@ -955,6 +961,185 @@ func emitEnvHelper(w func(string, ...any)) {
 	w("\tmov w14, #1")
 	w("\tstr w14, [x0]")     // tag = 1 (None)
 	w("\tstr xzr, [x0, #8]") // payload = 0
+	w("\tret")
+}
+
+// emitIoErrorHelper writes __fern_io_error(errno, path) -> IoError box: map a
+// (positive) errno to the matching IoError variant and build its heap box,
+// matching the native layout so a Match on the value reads the right tag/payload.
+// Payloaded path variants — NotFound(0)/PermissionDenied(1)/AlreadyExists(2) —
+// are {tag@0, path@8}; Interrupted(4) is tag-only; the Other(6) fallback carries
+// {tag@0, path@8, msg@16} with an empty msg string built on the heap. Every box
+// carries the standard rc header (rc=1 at [box-8]). Leaf; x0=errno, x1=path.
+func emitIoErrorHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_io_error"))
+	w("\tcmp w0, #2") // ENOENT
+	w("\tb.eq .Lssa_ioe_nf")
+	w("\tcmp w0, #13") // EACCES
+	w("\tb.eq .Lssa_ioe_pm")
+	w("\tcmp w0, #17") // EEXIST
+	w("\tb.eq .Lssa_ioe_ex")
+	w("\tcmp w0, #4") // EINTR
+	w("\tb.eq .Lssa_ioe_intr")
+	// Other(path, ""): build the empty msg string, then a 3-slot box.
+	w("\tadrp x2, %s", heapPtrSym)
+	w("\tadd x2, x2, #:lo12:%s", heapPtrSym) // x2 = &cursor
+	w("\tldr x3, [x2]")
+	w("\tadd x3, x3, #7")
+	w("\tand x3, x3, #-8") // base_msg
+	w("\tadd x4, x3, #9")  // 8 header + 0 len + 1 NUL
+	w("\tstr x4, [x2]")
+	w("\tmov w5, #1")
+	w("\tstr w5, [x3]")      // rc = 1
+	w("\tstr wzr, [x3, #4]") // len = 0
+	w("\tadd x6, x3, #8")    // x6 = empty msg ptr
+	w("\tstrb wzr, [x6]")    // NUL
+	w("\tldr x3, [x2]")      // box alloc
+	w("\tadd x3, x3, #7")
+	w("\tand x3, x3, #-8")
+	w("\tadd x4, x3, #32") // 8 header + 24 box (tag + path + msg)
+	w("\tstr x4, [x2]")
+	w("\tmov w5, #1")
+	w("\tstr w5, [x3]")   // rc = 1
+	w("\tadd x0, x3, #8") // box data ptr (return)
+	w("\tmov w5, #6")
+	w("\tstr w5, [x0]")      // tag = 6 (Other)
+	w("\tstr x1, [x0, #8]")  // path
+	w("\tstr x6, [x0, #16]") // msg = ""
+	w("\tret")
+	w(".Lssa_ioe_intr:")
+	w("\tadrp x2, %s", heapPtrSym)
+	w("\tadd x2, x2, #:lo12:%s", heapPtrSym)
+	w("\tldr x3, [x2]")
+	w("\tadd x3, x3, #7")
+	w("\tand x3, x3, #-8")
+	w("\tadd x4, x3, #16") // 8 header + 8 (tag only)
+	w("\tstr x4, [x2]")
+	w("\tmov w5, #1")
+	w("\tstr w5, [x3]")
+	w("\tadd x0, x3, #8")
+	w("\tmov w5, #4")
+	w("\tstr w5, [x0]") // tag = 4 (Interrupted)
+	w("\tret")
+	w(".Lssa_ioe_nf:")
+	w("\tmov w7, #0")
+	w("\tb .Lssa_ioe_path")
+	w(".Lssa_ioe_pm:")
+	w("\tmov w7, #1")
+	w("\tb .Lssa_ioe_path")
+	w(".Lssa_ioe_ex:")
+	w("\tmov w7, #2")
+	w(".Lssa_ioe_path:")
+	w("\tadrp x2, %s", heapPtrSym)
+	w("\tadd x2, x2, #:lo12:%s", heapPtrSym)
+	w("\tldr x3, [x2]")
+	w("\tadd x3, x3, #7")
+	w("\tand x3, x3, #-8")
+	w("\tadd x4, x3, #24") // 8 header + 16 (tag + path)
+	w("\tstr x4, [x2]")
+	w("\tmov w5, #1")
+	w("\tstr w5, [x3]")
+	w("\tadd x0, x3, #8")
+	w("\tstr w7, [x0]")     // tag
+	w("\tstr x1, [x0, #8]") // path
+	w("\tret")
+}
+
+// emitWriteFileHelper writes write_file(path, content) -> Option[IoError]:
+// truncate-create the file and write the content. Returns None (tag 1) on
+// success and Some(IoError) (tag 0, box@8) on failure. The path is NUL-terminated
+// into a fresh heap buffer (Fern strings aren't NUL-terminated) before openat;
+// the content bytes come straight from the single-word string. On a negative
+// openat result the errno (-fd) is mapped by __fern_io_error. Non-leaf (calls
+// __fern_io_error), so it keeps a frame with callee-saved x19=path / x20=content
+// / x21=path_nul / x22=fd across the syscalls and the call. x0=path, x1=content.
+func emitWriteFileHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("write_file"))
+	w("\tstp x29, x30, [sp, #-48]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstp x21, x22, [sp, #32]")
+	w("\tmov x19, x0") // path
+	w("\tmov x20, x1") // content
+	// NUL-terminate the path into a fresh heap buffer (x21).
+	w("\tldur w2, [x19, #-4]") // path len
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8") // base
+	w("\tadd x5, x2, #1")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]") // bump
+	w("\tmov w7, #0")
+	w(".Lssa_wf_cp:")
+	w("\tcmp w7, w2")
+	w("\tb.hs .Lssa_wf_cpd")
+	w("\tldrb w8, [x19, x7]")
+	w("\tstrb w8, [x4, x7]")
+	w("\tadd w7, w7, #1")
+	w("\tb .Lssa_wf_cp")
+	w(".Lssa_wf_cpd:")
+	w("\tstrb wzr, [x4, x2]") // NUL
+	w("\tmov x21, x4")        // path_nul
+	// openat(AT_FDCWD, path_nul, O_WRONLY|O_CREAT|O_TRUNC, 0644).
+	w("\tmov x0, #100")
+	w("\tneg x0, x0") // AT_FDCWD = -100
+	w("\tmov x1, x21")
+	w("\tmov x2, #577") // 0x241
+	w("\tmov x3, #420") // 0644
+	w("\tmov x8, #56")  // openat
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_wf_err") // fd < 0 → error
+	w("\tmov x22, x0")                // fd
+	// write(fd, content_data, content_len).
+	w("\tmov x0, x22")
+	w("\tmov x1, x20")
+	w("\tldur w2, [x20, #-4]")
+	w("\tmov x8, #64") // write
+	w("\tsvc #0")
+	// close(fd).
+	w("\tmov x0, x22")
+	w("\tmov x8, #57") // close
+	w("\tsvc #0")
+	// return None box {rc=1, tag=1}.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x4, #16")
+	w("\tstr x5, [x3]")
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")   // rc = 1
+	w("\tadd x0, x4, #8") // box data
+	w("\tmov w6, #1")
+	w("\tstr w6, [x0]") // tag = 1 (None)
+	w("\tb .Lssa_wf_ret")
+	w(".Lssa_wf_err:")
+	w("\tneg x0, x0") // errno = -fd
+	w("\tmov x1, x19")
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x22, x0") // IoError box
+	// return Some(IoError) box {rc=1, tag=0, ioerr@8}.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")   // rc = 1
+	w("\tadd x0, x4, #8") // box data
+	w("\tstr wzr, [x0]")  // tag = 0 (Some)
+	w("\tstr x22, [x0, #8]")
+	w(".Lssa_wf_ret:")
+	w("\tldp x21, x22, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #48")
 	w("\tret")
 }
 
