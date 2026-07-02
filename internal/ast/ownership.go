@@ -83,3 +83,48 @@ func StructuralOwnership(t Type) Ownership {
 	}
 	return Owned
 }
+
+// ExprResultOwnership classifies the ownership of the value an expression
+// *produces*, from the expression's syntax plus its resolved type `t`. This is
+// the typed counterpart of the self-host path's syntactic freshness heuristics
+// (`expr_is_fresh_str` / `str_local_binding_is_fresh` / …): it names, as one
+// type fact, which producers yield a fresh owned value, which yield a view, and
+// which yield an immortal literal.
+//
+// It resolves the cases that are unambiguous from syntax:
+//   - a string literal is Static (interned .rodata / immortal);
+//   - a string slice `s[a:b]` is Owned — the checker lowers it to a
+//     copy-into-fresh-string (`__str_slice`), so it owns its buffer (IsString);
+//   - an array slice `a[lo:hi]` is a View — it aliases the parent's storage;
+//   - a fresh construction (array / struct / tuple / map literal) is Owned;
+//   - a scalar literal is Owned (inert — NeedsRC() is false for it anyway);
+//   - a call yields an Owned fresh result (the borrowed-return refinement, for
+//     a callee that hands back one of its borrowed params, needs call-graph
+//     info — a later slice; Owned is the common, conservative-for-leaks case).
+//
+// Everything else — a bare identifier / field read / index, whose ownership
+// depends on the referent's binding (a borrowed param vs an owned local) —
+// falls back to the type's StructuralOwnership. That fallback is a DEFAULT, not
+// a sound reclaim decision on its own: refining an identifier to its binding's
+// ownership needs the symbol table and is a later consolidation slice. Callers
+// that must be sound about aliases (the RC-insertion passes) supply that
+// context; callers that only need the producer classification (the checker's
+// view/owned diagnostics) use this directly.
+func ExprResultOwnership(e Expr, t Type) Ownership {
+	switch ex := e.(type) {
+	case *StringLit:
+		return Static
+	case *SliceExpr:
+		if ex.IsString {
+			return Owned // __str_slice copies into a fresh owned string
+		}
+		return View // array slice aliases the parent's storage
+	case *ArrayLit, *StructLit, *TupleLit, *MapLit:
+		return Owned // fresh construction, sole-owned
+	case *NumberLit, *BoolLit, *FloatLit:
+		return Owned // scalar (inert; NeedsRC() is false)
+	case *Call:
+		return Owned // fresh result (borrowed-return refinement is a later slice)
+	}
+	return StructuralOwnership(t)
+}
