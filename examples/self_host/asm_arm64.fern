@@ -255,7 +255,10 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
     if (name == "__raw_string" && c.args.len() == 2) {
         s = emit_expr(c.args[0], s);
         s = emit_expr(c.args[1], s);
-        s = s.write("    mov x0, #16\n    bl __fern_alloc\n    ldr x1, [sp], #16\n    str x1, [x0, #8]\n    ldr x1, [sp], #16\n    str x1, [x0]\n    str x0, [sp, #-16]!\n");
+        // rc-headered box via __fern_str_box (#2649 Option A A1b): len (top) -> x1,
+        // data -> x0. A legacy-path box can flow into an IR caller that reclaims it,
+        // so it carries the same rc header as the IR path's boxes.
+        s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_str_box\n    str x0, [sp, #-16]!\n");
         s = s.mark_heap();
         return CallOut { state: s, done: true };
     }
@@ -2623,18 +2626,18 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             return s;
         },
         parser.ExprString(sv) => {
-            // String literal: intern bytes in .rodata, allocate
-            // 16-byte heap box [data_ptr, len], push box ptr.
+            // String literal: intern bytes in .rodata, build an rc-headered box via
+            // __fern_str_box (#2649 Option A A1b) — data = .rodata label, len = byte
+            // count. box = [rc=1][data][len]; data@box+0 / len@box+8 unchanged (so the
+            // string runtime helpers are unaffected), rc header keeps the layout
+            // consistent with the IR path across a merged legacy/IR bundle.
             var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, sv.value);
             s = lo.state;
-            s = s.write("    mov x0, #16\n");
-            s = s.write("    bl __fern_alloc\n");
             s = s.mark_heap();
-            s = s.write("    adrp x1, .S" + util.i32_to_string(lo.idx) + "\n");
-            s = s.write("    add x1, x1, :lo12:.S" + util.i32_to_string(lo.idx) + "\n");
-            s = s.write("    str x1, [x0]\n");
+            s = s.write("    adrp x0, .S" + util.i32_to_string(lo.idx) + "\n");
+            s = s.write("    add x0, x0, :lo12:.S" + util.i32_to_string(lo.idx) + "\n");
             s = s.write("    mov x1, #" + util.i32_to_string(sv.value.len()) + "\n");
-            s = s.write("    str x1, [x0, #8]\n");
+            s = s.write("    bl __fern_str_box\n");
             s = s.write("    str x0, [sp, #-16]!\n");
             return s;
         },
@@ -4957,6 +4960,26 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    add sp, sp, #16\n");          // pop saved cap
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
+        // __fern_str_box(x0 = data, x1 = len) -> x0 = box (rc-HEADERED, #2649 Option A
+        // A1b). Block = [rc=1@base, data@base+8, len@base+16] (24B, freelist class 3);
+        // box = base+8, so data@box+0 / len@box+8 are UNCHANGED (every string consumer
+        // is untouched) and rc@box-8 rides the SAME 32-bit rc word arrays use
+        // (__fn___fern_rc_is_unique / rc_inc read [ptr,#-8]). Freed by the rc-aware
+        // __fn___fern_str_free at rc==1. The arm64 sibling of the x86 __fern_str_box.
+        s = s.write("__fern_str_box:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x0, x1, [sp, #-16]!\n");   // save data, len
+        s = s.write("    mov x0, #24\n");
+        s = s.write("    bl __fern_alloc\n");           // x0 = base
+        s = s.write("    mov x2, #1\n");
+        s = s.write("    str x2, [x0]\n");              // rc = 1 @ base (64-bit write zeroes the word)
+        s = s.write("    ldp x2, x3, [sp], #16\n");     // x2 = data, x3 = len
+        s = s.write("    str x2, [x0, #8]\n");          // data @ base+8
+        s = s.write("    str x3, [x0, #16]\n");         // len  @ base+16
+        s = s.write("    add x0, x0, #8\n");            // box = base+8
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
 
         // Global string-builder primitive — the amortised-O(1) output
         // accumulator (strbuf_reset / strbuf_append / strbuf_take).
@@ -5298,6 +5321,16 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    mov x9, #0x10000\n");
         s = s.write("    cmp x0, x9\n");
         s = s.write("    blo .Lstrfree_ret\n");        // low-addr guard
+        // rc word @ box-8 (#2649 Option A A1b rc-headered box): negative = immortal
+        // sentinel (skip); rc>1 decrements without freeing; rc==1 frees data + box;
+        // rc==0 is a double-free, caught by __fern_rc_underflow (matching arr_dec)
+        // rather than corrupting the heap. w4 holds rc across the free (x1/x2 = data/len).
+        s = s.write("    ldur w4, [x0, #-8]\n");       // rc
+        s = s.write("    tbnz w4, #31, .Lstrfree_ret\n");  // negative = immortal -> skip
+        s = s.write("    cmp w4, #1\n");
+        s = s.write("    bgt .Lstrfree_dec\n");        // rc>1 -> dec, keep
+        s = s.write("    blt .Lstrfree_uf\n");         // rc==0 -> underflow (double free)
+        // rc==1: sole owner -> free data buffer (heap-guarded) then the 24-byte box.
         s = s.write("    ldr x1, [x0]\n");             // data = box[0]
         s = s.write("    ldr x2, [x0, #8]\n");         // len  = box[8]
         s = s.write("    cmp x1, x9\n");               // data null/low -> skip buffer free
@@ -5330,11 +5363,26 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    str x10, [x1]\n");            // *data = old head
         s = s.write("    str x1, [x3, x2, lsl #3]\n"); // freelist[words] = data
         s = s.write(".Lstrfree_box:\n");
+        // The rc-headered block is base = box-8 (24 bytes = class 3). Clear rc first
+        // (defensive vs a re-free reading a live rc), then push base onto freelist[3].
+        s = s.write("    stur wzr, [x0, #-8]\n");      // rc = 0
+        s = s.write("    sub x1, x0, #8\n");           // base = box-8
         s = s.write("    adrp x3, __fern_freelist\n");
         s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
-        s = s.write("    ldr x10, [x3, #16]\n");       // freelist[2] (16-byte box = 2 words)
-        s = s.write("    str x10, [x0]\n");            // *box = old head
-        s = s.write("    str x0, [x3, #16]\n");        // freelist[2] = box
+        s = s.write("    ldr x10, [x3, #24]\n");       // freelist[3] (24-byte block = 3 words)
+        s = s.write("    str x10, [x1]\n");            // *base = old head
+        s = s.write("    str x1, [x3, #24]\n");        // freelist[3] = base
+        s = s.write("    b .Lstrfree_ret\n");
+        s = s.write(".Lstrfree_dec:\n");
+        s = s.write("    sub w4, w4, #1\n");
+        s = s.write("    stur w4, [x0, #-8]\n");
+        s = s.write("    b .Lstrfree_ret\n");
+        s = s.write(".Lstrfree_uf:\n");
+        s = s.write("    adrp x2, __fern_rc_underflow\n");
+        s = s.write("    add x2, x2, :lo12:__fern_rc_underflow\n");
+        s = s.write("    ldr w3, [x2]\n");
+        s = s.write("    add w3, w3, #1\n");
+        s = s.write("    str w3, [x2]\n");
         s = s.write(".Lstrfree_ret:\n");
         s = s.write("    ret\n");
         // __fern_map_free(box) — reclaim a FRESH, sole-owned map local (Perceus
