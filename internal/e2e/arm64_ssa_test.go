@@ -470,6 +470,29 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 }`,
 			want: 10,
 		},
+		{
+			// read_file round-trip: write "abcde" then read it back. Ok(s).len() = 5.
+			// Exercises openat(O_RDONLY) / fstat sizing / the read loop / the
+			// Result[string, IoError] Ok box, and pairs with write_file.
+			name: "read_file_roundtrip",
+			src: `function main(): i32 {
+  var w = write_file("/tmp/fern_ssa_e2e_rf.txt", "abcde");
+  return match (read_file("/tmp/fern_ssa_e2e_rf.txt")) { Ok(s) => s.len(), Err(e) => 0 };
+}`,
+			want: 5,
+		},
+		{
+			// read_file failure: a nonexistent file yields Err(NotFound). Destructuring
+			// confirms the errno -> IoError mapping on the read path.
+			name: "read_file_err",
+			src: `function main(): i32 {
+  return match (read_file("/no_such_file_ssa_9137")) {
+    Ok(s) => 1,
+    Err(e) => match (e) { NotFound(p) => 10, _ => 19 }
+  };
+}`,
+			want: 10,
+		},
 	}
 
 	for _, c := range cases {
@@ -508,10 +531,10 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 }
 
 // TestArm64SSACoverageGapErrors confirms a program needing a runtime builtin the
-// arm64-ssa path doesn't emit yet (here the `read_file` builtin, which reaches
-// the still-unported `read_file` helper) fails with a clean compile/link error
-// rather than a miscompile — the experimental-backend contract that lets the epic
-// widen coverage incrementally.
+// arm64-ssa path doesn't emit yet (here the `tcp_listen` socket builtin, which
+// reaches the still-unported `tcp_listen` helper) fails with a clean compile/link
+// error rather than a miscompile — the experimental-backend contract that lets
+// the epic widen coverage incrementally.
 func TestArm64SSACoverageGapErrors(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("arm64-ssa not exercised on windows")
@@ -523,18 +546,18 @@ func TestArm64SSACoverageGapErrors(t *testing.T) {
 		t.Fatalf("go build fern: %v\n%s", err, out)
 	}
 
-	srcPath := filepath.Join(dir, "readfile.fern")
-	src := `function main(): i32 { return match (read_file("/x")) { Ok(s) => s.len(), Err(e) => 0 }; }`
+	srcPath := filepath.Join(dir, "tcp.fern")
+	src := `function main(): i32 { return tcp_listen(8080); }`
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	out := filepath.Join(dir, "readfile.bin")
+	out := filepath.Join(dir, "tcp.bin")
 	emit := exec.Command(bin, "-target", "arm64-ssa", "-o", out, srcPath)
 	var eb bytes.Buffer
 	emit.Stderr = &eb
 	err := emit.Run()
 	if err == nil {
-		t.Fatalf("expected a coverage-gap error for the read_file() builtin, got success")
+		t.Fatalf("expected a coverage-gap error for the tcp_listen() builtin, got success")
 	}
 	if !bytes.Contains(eb.Bytes(), []byte("arm64-ssa")) {
 		t.Errorf("error not attributed to arm64-ssa:\n%s", eb.String())
