@@ -455,6 +455,38 @@ function main(): i32 {
 			// open_appender opens O_WRONLY|O_CREAT|O_APPEND: two open→write→close
 			// cycles accumulate rather than truncate. write_file("") first gives a
 			// deterministic empty starting point, so the final length is 4 ("ABCD").
+			name: "read_line_two_lines",
+			src: `function main(): i32 {
+  var t = write_file("/tmp/fern_ssa_e2e_rl.txt", "abc\nde\n");
+  return match (open_reader("/tmp/fern_ssa_e2e_rl.txt")) {
+    Ok(r) => match (r.read_line()) {
+      Some(l1) => match (r.read_line()) { Some(l2) => l1.len() + l2.len(), None => 80 },
+      None => 70
+    },
+    Err(e) => 50
+  };
+}`,
+			// "abc\n" (len 4, newline kept) + "de\n" (len 3) = 7. Exercises the .bss
+			// line buffer, the byte-at-a-time read loop, and the Option[string] Some box.
+			want: 7,
+		},
+		{
+			// read_line at EOF (after the file's only line) yields None. Exercises the
+			// first-read-returns-0 -> None branch.
+			name: "read_line_eof_none",
+			src: `function main(): i32 {
+  var t = write_file("/tmp/fern_ssa_e2e_rl2.txt", "x\n");
+  return match (open_reader("/tmp/fern_ssa_e2e_rl2.txt")) {
+    Ok(r) => match (r.read_line()) {
+      Some(l1) => match (r.read_line()) { Some(l2) => 1, None => 9 },
+      None => 70
+    },
+    Err(e) => 50
+  };
+}`,
+			want: 9,
+		},
+		{
 			name: "open_appender_accumulates",
 			src: `function main(): i32 {
   var t = write_file("/tmp/fern_ssa_e2e_app.txt", "");
