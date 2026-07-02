@@ -250,7 +250,7 @@ complete the set. Covered by `internal/e2e/map_verbs_test.go`
 (interp + wasm) and `examples/tests/map_verbs_test.fern` (the
 pure-Fern runner). `from_entries` is spelled `map.from(pairs)`.
 
-### 8. Path manipulation (string-level) · small · ☑ (partial)
+### 8. Path manipulation (string-level) · small · ☑
 
 **Surface**: `path_join(parts: string[])`, `path_parent(p)`,
 `path_file_name(p)`, `path_extension(p)`, `path_clean(p)`.
@@ -260,10 +260,11 @@ FS interaction required.
 
 **Inspiration**: Go `path/filepath`, Zig `fs.path`.
 
-**Status**: `path_join` / `path_parent` / `path_file_name` /
-`path_extension` shipped. `path_clean` (resolving `..`, `.`,
-duplicate `/`) deferred — more complex semantics; punt to a
-follow-up if real demand surfaces.
+**Status**: shipped — `path_join` / `path_parent` /
+`path_file_name` / `path_extension` / `path_clean`. `path_clean`
+resolves `..`, `.`, and duplicate `/` lexically (Go `path.Clean`,
+Unix mode); a rooted `..` cannot climb above `/`, a relative
+leading `..` is kept, and a path that cancels out cleans to `.`.
 
 ### 9. stdin + println + io.Copy · small · ☑ (partial)
 
