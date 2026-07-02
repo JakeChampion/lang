@@ -145,6 +145,46 @@ fixpoints.
   a bound local / field remembers its classification, not just the producing
   expression — the self-host analogue of C1's structural axis.
 
+## Root cause of the A2 struct-field-reclaim runaway (resolved)
+
+The A2 attempt (reclaim struct string fields) failed three times; the third,
+undiagnosed wall was a **~2–3 GB/s allocation runaway** that OOM-killed the
+per-module emit of the `irlower` module. It is now root-caused (gdb-sampled +
+bisected), and it is **not** a flaw in the reclaim inc/dec logic.
+
+**Mechanism.** A2's construction gate adds, in the hot `lower_expr`
+`ExprStructLit` path, an *extra read* of the field-value expression
+`slit.field_values[found]` (to classify its freshness — whether via
+`expr_is_fresh_str`, a `match`, or a bound local). An array-element / match /
+field access is an **aliasing** read: the native Perceus taint analysis
+(`computeFreeEligible`, `ir.go:4520`) marks its result and — through backward
+propagation — surrounding locals as *tainted* (borrowed-derived → "retained
+without an inc, so the owner must not free"), i.e. **not free-eligible**. Those
+locals then leak on *every* `lower_expr` call. `lower_expr` runs millions of
+times emitting `irlower` (the largest module), so the per-call leak accumulates
+to gigabytes → OOM. Bisection is decisive: the one variant that does **not**
+read `slit.field_values[found]` in the added gate (a plain always-inc) passes
+cleanly; every variant that reads it — match, bound local, or borrow-arg to a
+predicate — OOMs, regardless of the inc/dec decision.
+
+This is precisely **"Leak #1: borrowed / borrowed-derived buffers"** from
+`OWNERSHIP-INFERENCE-PLAN.md` — the conservative "safe leak" the ownership /
+Perceus work exists to shrink. So A2 is blocked *by the compiler's own
+incomplete reclamation of borrowed-derived values*, not by anything about
+string fields — which is why the type-driven ownership approach (this plan), not
+another ad-hoc reclaim attempt, is the right unblock.
+
+**Concrete unblock for a future A2 (CS-phase).** Do not read the field-value
+expression a second time inside `lower_expr`. Instead compute the per-field
+ownership in a **single separate pass** — a helper
+`field_ownerships(slit, s) -> i32[]` called *once per struct-lit* — and have
+`lower_expr` consult the precomputed `i32[]` (scalars, which don't taint) while
+the existing single `lower_expr(slit.field_values[found], …)` read *moves* the
+value (no taint). That confines the aliasing reads to a cold helper instead of
+tainting the hot `lower_expr` locals, so the driver stops leaking. CS2/CS3
+should build the reclaim on top of `str_producer_ownership` (CS1) via this
+precompute shape.
+
 ### Phase A — the `str` view type (user-facing), layered on C
 
 - **A1.** `str` as the borrowed-string sibling of `SliceType`: `string` owned,
