@@ -71,4 +71,16 @@ function main(): i32 { var v: i32 = churn(2000000); if (__fern_rc_underflow_coun
 function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var nm: string = "abc"; var r: R = R { name: nm, items: [1] }; if (r.name.len() != 3) { bad = 1; } if (nm.len() != 3) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(2000000); if (__fern_rc_underflow_count() != 0) { return 99; } return v; }`,
 		"struct-str-field-aliased-balanced", 0)
+
+	// FUNCTIONAL-UPDATE base-copy: `r2 = R { ...r1, items: [...] }` copies `name`
+	// from r1 (un-overridden), so r2.name ALIASES r1.name. The base-copy retain
+	// (rc_inc, gated on the struct being reclaimable) lets r2's field-drop only DEC
+	// the dup; without it r2's drop would free r1's name → over-release. Both r1 and
+	// r2 are reclaimable non-escaping locals swept each iteration. Balanced across
+	// 2,000,000 cycles (underflow 0) with r1.name still valid (len 3) → exit 0;
+	// the pre-fix double-free would tick the underflow counter → exit 99.
+	run(t, `struct R { name: string, items: i32[] }
+function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var nm: string = "abc"; var r1: R = R { name: nm, items: [1] }; var r2: R = R { ...r1, items: [2, 3] }; if (r2.name.len() != 3) { bad = 1; } if (r1.name.len() != 3) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { var v: i32 = churn(2000000); if (__fern_rc_underflow_count() != 0) { return 99; } return v; }`,
+		"struct-str-field-base-copy-balanced", 0)
 }
