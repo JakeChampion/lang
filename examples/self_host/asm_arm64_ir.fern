@@ -466,26 +466,24 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // pop off (top), ptr; word slot at [ptr+off*8].
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x0, [x0, x1, lsl #3]\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "raw_string") {
-            // pop [data, len] (len on top); alloc a 16-byte box {data@0, len@8}.
-            // bl doesn't touch sp, so data/len stay in the operand-stack slots.
+            // pop [data, len] (len on top); build an rc-headered box via __fern_str_box
+            // (#2649 Option A A1b). len -> x1, data -> x0, call, push the box.
             s = s.mark_heap();
-            s = s.write("    mov x0, #16\n    bl __fern_alloc\n");
-            s = s.write("    ldr x1, [sp], #16\n    str x1, [x0, #8]\n    ldr x1, [sp], #16\n    str x1, [x0]\n    str x0, [sp, #-16]!\n");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_str_box\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "const_str") {
-            // String literal: intern in .rodata, allocate a 16-byte box
-            // `[data@0, len@8]`, push box ptr — identical to asm_arm64's
-            // ExprString so __fern_str_concat / _eq see the same layout. Not RC'd.
+            // String literal: intern in .rodata, build an rc-headered box via
+            // __fern_str_box (#2649 Option A A1b) — data = .rodata label, len = byte
+            // count. box = [rc=1][data][len]; data@box+0 / len@box+8 unchanged, so
+            // __fern_str_concat / _eq see the same layout, and the rc header lets a
+            // fresh literal box (e.g. an accumulator's initial "") be reclaimed.
             s = s.mark_heap();
             var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
             s = lo.state;
             var lolbl: string = asm_ir.str_lit_label(s, lo.idx);
-            s = s.write("    mov x0, #16\n");
-            s = s.write("    bl __fern_alloc\n");
-            s = s.write("    adrp x1, " + lolbl + "\n");
-            s = s.write("    add x1, x1, :lo12:" + lolbl + "\n");
-            s = s.write("    str x1, [x0]\n");
+            s = s.write("    adrp x0, " + lolbl + "\n");
+            s = s.write("    add x0, x0, :lo12:" + lolbl + "\n");
             s = s.write("    mov x1, #" + util.i32_to_string(o.str.len()) + "\n");
-            s = s.write("    str x1, [x0, #8]\n");
+            s = s.write("    bl __fern_str_box\n");
             s = s.write("    str x0, [sp, #-16]!\n");
         } else if (ir.is_str_op_kind(o.kind)) {
             // All string operand-stack ops (len/index/slice/bytes/split/
