@@ -373,6 +373,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"read_file":              emitReadFileHelper,
 	"remove_file":            emitRemoveFileHelper,
 	"temp_dir":               emitTempDirHelper,
+	"read_dir":               emitReadDirHelper,
 	"__fern_io_error":        emitIoErrorHelper,
 	"print":                  emitPrintHelper,
 	"write":                  emitWriteHelper,
@@ -415,6 +416,7 @@ var runtimeHelperDeps = map[string][]string{
 	"read_file":           {"__fern_io_error"},
 	"remove_file":         {"__fern_io_error"},
 	"temp_dir":            {"__fern_io_error"},
+	"read_dir":            {"__fern_io_error"},
 }
 
 // helperReturns64 lists runtime helpers whose result is a full 8-byte value — a
@@ -437,6 +439,7 @@ var helperReturns64 = map[string]bool{
 	"read_file":              true,
 	"remove_file":            true,
 	"temp_dir":               true,
+	"read_dir":               true,
 	"__str_idx":              true,
 	"__arr_idx":              true,
 	"__arr_idx_1":            true,
@@ -468,6 +471,7 @@ var heapUsingHelpers = map[string]bool{
 	"read_file":              true,
 	"remove_file":            true,
 	"temp_dir":               true,
+	"read_dir":               true,
 	"__fern_io_error":        true,
 }
 
@@ -1539,6 +1543,250 @@ func emitTempDirHelper(w func(string, ...any)) {
 	w("\tldp x21, x22, [sp, #32]")
 	w("\tldp x19, x20, [sp, #16]")
 	w("\tldp x29, x30, [sp], #128")
+	w("\tret")
+}
+
+// emitReadDirHelper writes read_dir(path) -> Result[string[], IoError]: list the
+// immediate children of a directory (base names only, no recursion, "." and ".."
+// excluded), matching os.ReadDir. It NUL-terminates the path, opens it with
+// O_DIRECTORY (16384 — the arm64 Linux arch-specific value, NOT the asm-generic
+// 65536), then makes two getdents64 passes over a small 4 KiB scratch buffer
+// (the arm64-ssa bump heap is only 64 KiB, so the native 1 MiB-buffer approach
+// won't fit): pass 1 counts the kept entries to size the array, an lseek rewinds
+// the directory, and pass 2 allocates a single-word rc string per base name and
+// stores it into the string[] container (16-byte header: cap@[data-12],
+// rc@[data-8], len@[data-4]; element pointers at [data + i*8]). Each pass loops
+// getdents until it returns 0, so directories of any size are listed (bounded
+// only by the total 64 KiB heap the strings must fit in). The container is
+// wrapped in the Result Ok box (tag 0, arr@8). Any openat/getdents failure maps
+// -errno through __fern_io_error and returns Err(IoError). Non-leaf; 96-byte
+// frame with callee-saved x19=offset / x20=fd / x21=buffer / x22=chunk-len /
+// x23=count / x24=fill-index / x25=path / x26=pathz / x27=container. x0=path.
+func emitReadDirHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("read_dir"))
+	w("\tstp x29, x30, [sp, #-96]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstp x21, x22, [sp, #32]")
+	w("\tstp x23, x24, [sp, #48]")
+	w("\tstp x25, x26, [sp, #64]")
+	w("\tstp x27, x28, [sp, #80]")
+	w("\tmov x25, x0") // path
+	// NUL-terminate the path into a fresh heap buffer (x26).
+	w("\tldur w2, [x25, #-4]") // path len
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x2, #1")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	w("\tmov w7, #0")
+	w(".Lssa_rd_cp:")
+	w("\tcmp w7, w2")
+	w("\tb.hs .Lssa_rd_cpd")
+	w("\tldrb w8, [x25, x7]")
+	w("\tstrb w8, [x4, x7]")
+	w("\tadd w7, w7, #1")
+	w("\tb .Lssa_rd_cp")
+	w(".Lssa_rd_cpd:")
+	w("\tstrb wzr, [x4, x2]")
+	w("\tmov x26, x4") // pathz
+	// openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY, 0).
+	w("\tmov x0, #100")
+	w("\tneg x0, x0")
+	w("\tmov x1, x26")
+	w("\tmov x2, #16384") // O_DIRECTORY (arm64 Linux)
+	w("\tmov x3, #0")
+	w("\tmov x8, #56") // openat
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_rd_err_open")
+	w("\tmov x20, x0") // fd
+	// Allocate a 4 KiB dirent scratch buffer (x21), reused across both passes.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x6, x4, #4096")
+	w("\tstr x6, [x3]")
+	w("\tmov x21, x4") // buffer
+	// Pass 1: getdents loop counting kept entries (excluding "." / "..") into x23.
+	w("\tmov x23, #0")
+	w(".Lssa_rd_g1:")
+	w("\tmov x0, x20")
+	w("\tmov x1, x21")
+	w("\tmov x2, #4096")
+	w("\tmov x8, #61") // getdents64
+	w("\tsvc #0")
+	w("\tcbz x0, .Lssa_rd_g1d")             // end of directory
+	w("\ttbnz x0, #63, .Lssa_rd_err_close") // error
+	w("\tmov x22, x0")                      // chunk len
+	w("\tmov x19, #0")                      // offset
+	w(".Lssa_rd_c1:")
+	w("\tcmp x19, x22")
+	w("\tb.hs .Lssa_rd_g1") // chunk consumed → read the next
+	w("\tadd x10, x21, x19")
+	w("\tadd x10, x10, #19") // d_name ptr
+	w("\tldrb w11, [x10]")
+	w("\tcmp w11, #46") // '.'
+	w("\tb.ne .Lssa_rd_c1n")
+	w("\tldrb w11, [x10, #1]")
+	w("\tcbz w11, .Lssa_rd_c1s") // "." → skip
+	w("\tcmp w11, #46")
+	w("\tb.ne .Lssa_rd_c1n")
+	w("\tldrb w11, [x10, #2]")
+	w("\tcbz w11, .Lssa_rd_c1s") // ".." → skip
+	w(".Lssa_rd_c1n:")
+	w("\tadd x23, x23, #1")
+	w(".Lssa_rd_c1s:")
+	w("\tadd x12, x21, x19")
+	w("\tldrh w11, [x12, #16]") // d_reclen
+	w("\tadd x19, x19, x11")
+	w("\tb .Lssa_rd_c1")
+	w(".Lssa_rd_g1d:")
+	// Rewind the directory for pass 2: lseek(fd, 0, SEEK_SET).
+	w("\tmov x0, x20")
+	w("\tmov x1, #0")
+	w("\tmov x2, #0")
+	w("\tmov x8, #62") // lseek
+	w("\tsvc #0")
+	// Allocate the string[] container: 16-byte header + count*8 pointers (x27).
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tlsl x5, x23, #3")
+	w("\tadd x6, x5, #16")
+	w("\tadd x7, x4, x6")
+	w("\tstr x7, [x3]")
+	w("\tadd x27, x4, #16")     // container data
+	w("\tstur w23, [x27, #-12]") // cap = count
+	w("\tmov w9, #1")
+	w("\tstur w9, [x27, #-8]")  // rc = 1
+	w("\tstur w23, [x27, #-4]") // len = count
+	// Pass 2: getdents loop again, filling the container with a fresh string per
+	// kept entry.
+	w("\tmov x24, #0") // fill index
+	w(".Lssa_rd_g2:")
+	w("\tmov x0, x20")
+	w("\tmov x1, x21")
+	w("\tmov x2, #4096")
+	w("\tmov x8, #61") // getdents64
+	w("\tsvc #0")
+	w("\tcbz x0, .Lssa_rd_g2d")
+	w("\ttbnz x0, #63, .Lssa_rd_err_close")
+	w("\tmov x22, x0") // chunk len
+	w("\tmov x19, #0") // offset
+	w(".Lssa_rd_p2:")
+	w("\tcmp x19, x22")
+	w("\tb.hs .Lssa_rd_g2") // chunk consumed → read the next
+	w("\tadd x10, x21, x19")
+	w("\tadd x10, x10, #19") // d_name ptr
+	w("\tldrb w11, [x10]")
+	w("\tcmp w11, #46")
+	w("\tb.ne .Lssa_rd_p2t")
+	w("\tldrb w11, [x10, #1]")
+	w("\tcbz w11, .Lssa_rd_p2a")
+	w("\tcmp w11, #46")
+	w("\tb.ne .Lssa_rd_p2t")
+	w("\tldrb w11, [x10, #2]")
+	w("\tcbz w11, .Lssa_rd_p2a")
+	w(".Lssa_rd_p2t:")
+	// strlen(d_name) → x12.
+	w("\tmov x12, #0")
+	w(".Lssa_rd_p2sl:")
+	w("\tldrb w13, [x10, x12]")
+	w("\tcbz w13, .Lssa_rd_p2sd")
+	w("\tadd x12, x12, #1")
+	w("\tb .Lssa_rd_p2sl")
+	w(".Lssa_rd_p2sd:")
+	// Allocate a single-word rc string: 8-byte header + len + NUL.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x12, #9")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	w("\tmov w7, #1")
+	w("\tstr w7, [x4]")      // rc = 1
+	w("\tstr w12, [x4, #4]") // len
+	w("\tadd x14, x4, #8")   // string data
+	w("\tmov x15, #0")
+	w(".Lssa_rd_p2cp:")
+	w("\tcmp x15, x12")
+	w("\tb.hs .Lssa_rd_p2cpd")
+	w("\tldrb w16, [x10, x15]")
+	w("\tstrb w16, [x14, x15]")
+	w("\tadd x15, x15, #1")
+	w("\tb .Lssa_rd_p2cp")
+	w(".Lssa_rd_p2cpd:")
+	w("\tstrb wzr, [x14, x12]")        // trailing NUL
+	w("\tstr x14, [x27, x24, lsl #3]") // container[idx] = string
+	w("\tadd x24, x24, #1")
+	w(".Lssa_rd_p2a:")
+	w("\tadd x12, x21, x19")
+	w("\tldrh w11, [x12, #16]") // d_reclen
+	w("\tadd x19, x19, x11")
+	w("\tb .Lssa_rd_p2")
+	w(".Lssa_rd_g2d:")
+	// close(fd).
+	w("\tmov x0, x20")
+	w("\tmov x8, #57") // close
+	w("\tsvc #0")
+	// Result.Ok(container): box {rc=1, tag=0, arr@8}.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")   // rc = 1
+	w("\tadd x0, x4, #8") // box data
+	w("\tstr wzr, [x0]")  // tag = 0 (Ok)
+	w("\tstr x27, [x0, #8]")
+	w("\tb .Lssa_rd_ret")
+	w(".Lssa_rd_err_close:")
+	w("\tneg x9, x0") // errno (x9 survives the close syscall)
+	w("\tmov x0, x20")
+	w("\tmov x8, #57") // close
+	w("\tsvc #0")
+	w("\tmov x0, x9")
+	w("\tb .Lssa_rd_err_dispatch")
+	w(".Lssa_rd_err_open:")
+	w("\tneg x0, x0") // errno
+	w(".Lssa_rd_err_dispatch:")
+	w("\tmov x1, x25") // path
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x25, x0") // IoError box
+	// Result.Err(IoError): box {rc=1, tag=1, ioerr@8}.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")   // rc = 1
+	w("\tadd x0, x4, #8") // box data
+	w("\tmov w6, #1")
+	w("\tstr w6, [x0]") // tag = 1 (Err)
+	w("\tstr x25, [x0, #8]")
+	w(".Lssa_rd_ret:")
+	w("\tldp x27, x28, [sp, #80]")
+	w("\tldp x25, x26, [sp, #64]")
+	w("\tldp x23, x24, [sp, #48]")
+	w("\tldp x21, x22, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #96")
 	w("\tret")
 }
 
