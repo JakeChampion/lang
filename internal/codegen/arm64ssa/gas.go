@@ -395,6 +395,10 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"open_reader":             emitOpenReaderHelper,
 	"__method_Reader_read_chunk": emitReaderReadChunkHelper,
 	"__method_Reader_close":   emitReaderCloseHelper,
+	"open_appender":           emitOpenAppenderHelper,
+	"stdin":                   emitStdHandleHelper("stdin", 0),
+	"stdout":                  emitStdHandleHelper("stdout", 1),
+	"stderr":                  emitStdHandleHelper("stderr", 2),
 	"print":                  emitPrintHelper,
 	"write":                  emitWriteHelper,
 	"eprint":                 emitEprintHelper,
@@ -1003,13 +1007,15 @@ func emitEmptyString(w func(string, ...any), dst string) {
 	w("\tstrb wzr, [%s]", dst) // NUL
 }
 
-// emitOpenWriterHelper writes open_writer(path) -> Result[Writer, IoError]:
-// openat the path O_WRONLY|O_CREAT|O_TRUNC (0644), wrap the fd in a Writer handle
-// and return Ok(Writer), or map -errno through __fern_io_error and return
-// Err(IoError). Non-leaf (calls __fern_io_error). x19=path / x20=pathz. x0=path.
-func emitOpenWriterHelper(w func(string, ...any)) {
+// emitOpenHandleHelper writes an open_reader / open_writer / open_appender
+// builtin -> Result[Reader|Writer, IoError]: NUL-terminate the path, openat it
+// with the given flags/mode, wrap the fd in a handle (fd at [ptr+8], immortal
+// rc), and return Ok(handle), or map -errno through __fern_io_error and return
+// Err(IoError). `name` is the builtin symbol and `lbl` a unique label infix.
+// Non-leaf (calls __fern_io_error). x19=path / x20=pathz. x0=path.
+func emitOpenHandleHelper(w func(string, ...any), name, lbl string, flags, mode int) {
 	w("")
-	w("%s:", fnLabel("open_writer"))
+	w("%s:", fnLabel(name))
 	w("\tstp x29, x30, [sp, #-32]!")
 	w("\tmov x29, sp")
 	w("\tstp x19, x20, [sp, #16]")
@@ -1025,29 +1031,29 @@ func emitOpenWriterHelper(w func(string, ...any)) {
 	w("\tadd x6, x4, x5")
 	w("\tstr x6, [x3]")
 	w("\tmov w7, #0")
-	w(".Lssa_ow_cp:")
+	w(".Lssa_%s_cp:", lbl)
 	w("\tcmp w7, w2")
-	w("\tb.hs .Lssa_ow_cpd")
+	w("\tb.hs .Lssa_%s_cpd", lbl)
 	w("\tldrb w8, [x19, x7]")
 	w("\tstrb w8, [x4, x7]")
 	w("\tadd w7, w7, #1")
-	w("\tb .Lssa_ow_cp")
-	w(".Lssa_ow_cpd:")
+	w("\tb .Lssa_%s_cp", lbl)
+	w(".Lssa_%s_cpd:", lbl)
 	w("\tstrb wzr, [x4, x2]")
 	w("\tmov x20, x4") // pathz
-	// openat(AT_FDCWD, pathz, O_WRONLY|O_CREAT|O_TRUNC=577, 0644).
+	// openat(AT_FDCWD, pathz, flags, mode).
 	w("\tmov x0, #100")
 	w("\tneg x0, x0")
 	w("\tmov x1, x20")
-	w("\tmov x2, #577")
-	w("\tmov x3, #420")
+	w("\tmov x2, #%d", flags)
+	w("\tmov x3, #%d", mode)
 	w("\tmov x8, #56") // openat
 	w("\tsvc #0")
-	w("\ttbnz x0, #63, .Lssa_ow_err")
-	// Success: wrap the fd in a Writer handle (x19), then Ok(Writer).
+	w("\ttbnz x0, #63, .Lssa_%s_err", lbl)
+	// Success: wrap the fd in a handle (x19), then Ok(handle).
 	w("\tmov w9, w0") // fd (survives the inline alloc — no call/svc)
 	emitWriterHandleAlloc(w, "x19", "w9")
-	// Result.Ok(Writer): box {rc=1, tag=0, handle@8}.
+	// Result.Ok(handle): box {rc=1, tag=0, handle@8}.
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
 	w("\tldr x4, [x3]")
@@ -1060,8 +1066,8 @@ func emitOpenWriterHelper(w func(string, ...any)) {
 	w("\tadd x0, x4, #8") // box data
 	w("\tstr wzr, [x0]")  // tag = 0 (Ok)
 	w("\tstr x19, [x0, #8]")
-	w("\tb .Lssa_ow_ret")
-	w(".Lssa_ow_err:")
+	w("\tb .Lssa_%s_ret", lbl)
+	w(".Lssa_%s_err:", lbl)
 	w("\tneg x0, x0") // errno
 	w("\tmov x1, x19") // path
 	w("\tbl %s", fnLabel("__fern_io_error"))
@@ -1080,10 +1086,21 @@ func emitOpenWriterHelper(w func(string, ...any)) {
 	w("\tmov w6, #1")
 	w("\tstr w6, [x0]") // tag = 1 (Err)
 	w("\tstr x19, [x0, #8]")
-	w(".Lssa_ow_ret:")
+	w(".Lssa_%s_ret:", lbl)
 	w("\tldp x19, x20, [sp, #16]")
 	w("\tldp x29, x30, [sp], #32")
 	w("\tret")
+}
+
+// emitOpenWriterHelper: open_writer(path) — O_WRONLY|O_CREAT|O_TRUNC (577), 0644.
+func emitOpenWriterHelper(w func(string, ...any)) {
+	emitOpenHandleHelper(w, "open_writer", "ow", 577, 420)
+}
+
+// emitOpenAppenderHelper: open_appender(path) — O_WRONLY|O_CREAT|O_APPEND (1089),
+// 0644. Opens (creating if needed) for appending rather than truncating.
+func emitOpenAppenderHelper(w func(string, ...any)) {
+	emitOpenHandleHelper(w, "open_appender", "oa", 1089, 420)
 }
 
 // emitWriterWriteHelper writes __method_Writer_write(writer, data) ->
@@ -1157,86 +1174,23 @@ func emitWriterCloseHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitOpenReaderHelper writes open_reader(path) -> Result[Reader, IoError]: the
-// read-only sibling of open_writer — openat the path O_RDONLY, wrap the fd in a
-// handle (identical shape to a Writer handle: fd at [ptr+8], immortal rc), and
-// return Ok(Reader), or map -errno through __fern_io_error and return
-// Err(IoError). Non-leaf. x19=path / x20=pathz. x0=path.
+// emitOpenReaderHelper: open_reader(path) — O_RDONLY. The read-only sibling of
+// open_writer (identical handle shape: fd at [ptr+8], immortal rc).
 func emitOpenReaderHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("open_reader"))
-	w("\tstp x29, x30, [sp, #-32]!")
-	w("\tmov x29, sp")
-	w("\tstp x19, x20, [sp, #16]")
-	w("\tmov x19, x0") // path
-	// NUL-terminate the path into a fresh heap buffer (x20).
-	w("\tldur w2, [x19, #-4]")
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #7")
-	w("\tand x4, x4, #-8")
-	w("\tadd x5, x2, #1")
-	w("\tadd x6, x4, x5")
-	w("\tstr x6, [x3]")
-	w("\tmov w7, #0")
-	w(".Lssa_or_cp:")
-	w("\tcmp w7, w2")
-	w("\tb.hs .Lssa_or_cpd")
-	w("\tldrb w8, [x19, x7]")
-	w("\tstrb w8, [x4, x7]")
-	w("\tadd w7, w7, #1")
-	w("\tb .Lssa_or_cp")
-	w(".Lssa_or_cpd:")
-	w("\tstrb wzr, [x4, x2]")
-	w("\tmov x20, x4") // pathz
-	// openat(AT_FDCWD, pathz, O_RDONLY, 0).
-	w("\tmov x0, #100")
-	w("\tneg x0, x0")
-	w("\tmov x1, x20")
-	w("\tmov x2, #0") // O_RDONLY
-	w("\tmov x3, #0")
-	w("\tmov x8, #56") // openat
-	w("\tsvc #0")
-	w("\ttbnz x0, #63, .Lssa_or_err")
-	w("\tmov w9, w0") // fd
-	emitWriterHandleAlloc(w, "x19", "w9")
-	// Result.Ok(Reader): box {rc=1, tag=0, handle@8}.
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #7")
-	w("\tand x4, x4, #-8")
-	w("\tadd x5, x4, #24")
-	w("\tstr x5, [x3]")
-	w("\tmov w6, #1")
-	w("\tstr w6, [x4]")
-	w("\tadd x0, x4, #8")
-	w("\tstr wzr, [x0]") // tag = 0 (Ok)
-	w("\tstr x19, [x0, #8]")
-	w("\tb .Lssa_or_ret")
-	w(".Lssa_or_err:")
-	w("\tneg x0, x0") // errno
-	w("\tmov x1, x19") // path
-	w("\tbl %s", fnLabel("__fern_io_error"))
-	w("\tmov x19, x0") // IoError box
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #7")
-	w("\tand x4, x4, #-8")
-	w("\tadd x5, x4, #24")
-	w("\tstr x5, [x3]")
-	w("\tmov w6, #1")
-	w("\tstr w6, [x4]")
-	w("\tadd x0, x4, #8")
-	w("\tmov w6, #1")
-	w("\tstr w6, [x0]") // tag = 1 (Err)
-	w("\tstr x19, [x0, #8]")
-	w(".Lssa_or_ret:")
-	w("\tldp x19, x20, [sp, #16]")
-	w("\tldp x29, x30, [sp], #32")
-	w("\tret")
+	emitOpenHandleHelper(w, "open_reader", "or", 0, 0)
+}
+
+// emitStdHandleHelper writes stdin / stdout / stderr → a Reader/Writer handle
+// wrapping the fixed fd (0 / 1 / 2). The result is a bare handle (no Result
+// wrapper); the value pointer is returned in x0. Leaf.
+func emitStdHandleHelper(name string, fd int) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tmov w9, #%d", fd)
+		emitWriterHandleAlloc(w, "x0", "w9")
+		w("\tret")
+	}
 }
 
 // emitReaderReadChunkHelper writes __method_Reader_read_chunk(reader, n) ->
@@ -1413,6 +1367,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__method_Writer_close": {"__fern_io_error"},
 	"open_reader":           {"__fern_io_error"},
 	"__method_Reader_close": {"__fern_io_error"},
+	"open_appender":         {"__fern_io_error"},
 	"__pow_f64":           {"__log_f64", "__exp_f64"},
 }
 
@@ -1445,6 +1400,10 @@ var helperReturns64 = map[string]bool{
 	"open_reader":             true,
 	"__method_Reader_read_chunk": true,
 	"__method_Reader_close":   true,
+	"open_appender":           true,
+	"stdin":                   true,
+	"stdout":                  true,
+	"stderr":                  true,
 	"__str_idx":              true,
 	"__arr_idx":              true,
 	"__arr_idx_1":            true,
@@ -1491,6 +1450,10 @@ var heapUsingHelpers = map[string]bool{
 	"open_reader":             true,
 	"__method_Reader_read_chunk": true,
 	"__method_Reader_close":   true,
+	"open_appender":           true,
+	"stdin":                   true,
+	"stdout":                  true,
+	"stderr":                  true,
 	"__fern_io_error":        true,
 }
 
