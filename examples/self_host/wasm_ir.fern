@@ -708,12 +708,20 @@ pub function wasm_eligible(mod: parser.Module): boolean {
         // wasm_timer_pollable / wasm_pollable_drop / wasm_block DO lower on the
         // wasm IR path now (#3457 / #4317): wasm_ir emits direct preview2 calls
         // (wasi:clocks/monotonic-clock.subscribe-duration, wasi:io/poll
-        // [method]pollable.block, wasi:io/poll [resource-drop]pollable) and
-        // wasm_ir_run adds the matching component imports; the module composes to a
-        // component via `wasm-tools component new`. wasm_block makes a
-        // wasm_timer_pollable timer observably block (subscribe → block → the
-        // duration elapses). poll() (the list<pollable> multiplexer) is still
-        // deferred below.
+        // [method]pollable.block, [resource-drop]pollable) and wasm_ir_run adds the
+        // matching component imports; the module composes to a component via
+        // `wasm-tools component new`. wasm_block makes a wasm_timer_pollable timer
+        // observably block (subscribe → block → the duration elapses).
+        // wasm_poll (the wasi:io/poll.poll list<pollable> -> list<u32> readiness
+        // multiplexer) does NOT lower on the wasm IR path yet (#4316): its LIST
+        // params/results need component-type metadata (encoded WIT in a custom
+        // section) for `wasm-tools component new` to synthesise the canonical-ABI
+        // adapters — the scalar pollable ops above compose without it, but a
+        // list-typed import cannot. That metadata-emission subsystem (the shared
+        // prerequisite for poll AND the tcp stream/resource imports) is the next
+        // slice. wasm_poll DOES lower on every other backend (native x86-64/arm64
+        // + interp + the self-host register IR paths) as a -1 portability shim.
+        && !module_emits_op(mod, "wasm_poll")
         // tcp_* client primitives: native lowers them via the IR (socket
         // syscalls + the self-host string ABI for recv/send), but the
         // self-host wasm backend has no socket runtime (wasm sockets need the

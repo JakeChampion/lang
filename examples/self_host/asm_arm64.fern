@@ -4535,6 +4535,17 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ret\n");
         s = s.write(".size __fern_wasm_block, .-__fern_wasm_block\n");
     }
+    // __fern_wasm_poll(x0 = pollables) -> -1: no real native pollables (readiness
+    // rides poll(2) directly), so nothing is ready; ignores its array arg.
+    // Portability shim for the wasm reactor's poll.
+    if (s.has_need("wasm_poll")) {
+        s = s.write(".globl __fern_wasm_poll\n");
+        s = s.write(".type __fern_wasm_poll, %function\n");
+        s = s.write("__fern_wasm_poll:\n");
+        s = s.write("    mov x0, #-1\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_wasm_poll, .-__fern_wasm_poll\n");
+    }
     // __fern_read_int helper: reads up to 16 bytes from stdin
     // into a stack buffer, parses an optional leading `-`
     // followed by decimal digits, returns the value in x0.

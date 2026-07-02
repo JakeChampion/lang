@@ -512,7 +512,8 @@ function is_builtin_function(name: string): boolean {
     if (name == "now_unix_ms" || name == "now_ns" || name == "monotonic_ns"
         || name == "sleep_ms" || name == "random_bytes" || name == "random_i32"
         || name == "poll" || name == "timer_fd" || name == "wasm_timer_pollable"
-        || name == "wasm_pollable_drop" || name == "wasm_block") { return true; }
+        || name == "wasm_pollable_drop" || name == "wasm_block"
+        || name == "wasm_poll") { return true; }
     // maps + string builder + bytes + the free-function `len(a)` form.
     // (`len` is a self-host emitter builtin — the self-host accepts both
     // `a.len()` and `len(a)`. The Go checker only accepts `a.len()` and

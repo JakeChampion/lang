@@ -612,6 +612,7 @@ func New() *Interp {
 	i.Builtins["wasm_pollable_drop"] = &Builtin{Fn: builtinWasmPollableDrop}
 	i.Builtins["wasm_timer_pollable"] = &Builtin{Fn: builtinWasmTimerPollable}
 	i.Builtins["wasm_block"] = &Builtin{Fn: builtinWasmBlock}
+	i.Builtins["wasm_poll"] = &Builtin{Fn: builtinWasmPoll}
 	return i
 }
 
@@ -764,6 +765,22 @@ func builtinWasmBlock(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("wasm_block: expected number arg, got %T", args[0])
 	}
 	return Number(0), nil
+}
+
+// builtinWasmPoll is the interpreter's `wasm_poll(pollables)` — returns -1 (no
+// ready index), matching the native stub: the interp has no real pollables (a
+// wasm_timer_pollable is -1), so nothing is ever ready. On wasm this is the real
+// wasi:io/poll.poll(list<pollable>) readiness multiplexer. std/async's reactor
+// uses `poll` (real) natively and `wasm_poll` on wasm; this keeps the wasm path
+// portable under interp.
+func builtinWasmPoll(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("wasm_poll: expected 1 arg, got %d", len(args))
+	}
+	if _, ok := args[0].(Array); !ok {
+		return nil, fmt.Errorf("wasm_poll: expected array arg, got %T", args[0])
+	}
+	return Number(-1), nil
 }
 
 // builtinWasmTimerPollable is the interpreter's `wasm_timer_pollable(ns)` —

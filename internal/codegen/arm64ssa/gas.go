@@ -488,6 +488,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"tcp_pollable":            emitTcpPollableHelper,
 	"poll":                    emitPollHelper,
 	"wasm_timer_pollable":     emitWasmTimerPollableHelper,
+	"wasm_poll":               emitWasmPollHelper,
 	"wasm_pollable_drop":      emitWasmPollableDropHelper,
 	"wasm_block":              emitWasmBlockHelper,
 	"open_writer":             emitOpenWriterHelper,
@@ -1025,6 +1026,16 @@ func emitWasmTimerPollableHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("wasm_timer_pollable"))
 	w("\tmov x0, #-1") // no native pollable; -1 is ignored by poll(2)
+	w("\tret")
+}
+
+// emitWasmPollHelper writes wasm_poll(pollables) → i32: returns -1 on native (no
+// real pollables; native readiness rides poll(2)), ignoring its array arg. On
+// wasm this is the real wasi:io/poll.poll(list<pollable>) multiplexer. Leaf.
+func emitWasmPollHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("wasm_poll"))
+	w("\tmov x0, #-1") // no native pollables; nothing ready
 	w("\tret")
 }
 

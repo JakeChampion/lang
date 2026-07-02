@@ -412,6 +412,12 @@ pub function op_wasm_pollable_drop(): Op { return op0("wasm_pollable_drop"); }
 // observably block; on native there is no pollable (deadlines ride poll(2)), so
 // it is a 0 no-op. Portability shim for the wasm reactor's with_deadline.
 pub function op_wasm_block(): Op { return op0("wasm_block"); }
+// `wasm_poll` takes one operand [pollables array ptr] and pushes an i32: the
+// index of the first ready pollable, or -1 if none. On native there are no real
+// pollables (readiness rides poll(2) directly), so it is -1; on wasm it is the
+// real wasi:io/poll.poll(list<pollable>) readiness multiplexer. The wasm
+// reactor's poll — the pollable-array analog of the native poll(fds).
+pub function op_wasm_poll(): Op { return op0("wasm_poll"); }
 // tcp_* client primitives (the self-host twins of the native socket builtins).
 // `tcp_connect` [host_be, port] -> i32 connected fd (or -errno); host_be is the
 // IPv4 in network byte order packed into an i32. `tcp_send` [fd, str box] -> i32

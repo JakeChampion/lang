@@ -379,6 +379,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesWasmTimerPollable {
 		g.emitWasmTimerPollableRuntime()
 	}
+	if g.usesWasmPoll {
+		g.emitWasmPollRuntime()
+	}
 	if g.usesTimerFd {
 		g.emitTimerFdRuntime()
 	}
@@ -540,6 +543,7 @@ type generator struct {
 	usesPoll              bool
 	usesWasmPollableDrop  bool
 	usesWasmTimerPollable bool
+	usesWasmPoll          bool
 	usesWasmBlock         bool
 	usesTimerFd           bool
 	usesAsBytes           bool
@@ -861,6 +865,13 @@ func (g *generator) recordUse(target string) {
 		// ignores). Present so std/async's with_deadline (which appends a
 		// timer pollable to the poll set on wasm) is portable.
 		g.usesWasmTimerPollable = true
+	case "wasm_poll":
+		// wasm_poll(pollables) — the wasm reactor's readiness multiplexer
+		// (wasi:io/poll.poll on wasm). Native has no real pollables (a
+		// timer pollable is -1 and native uses poll(2) directly), so this
+		// returns -1 (nothing ready). Present so std/async's wasm reactor
+		// path is portable.
+		g.usesWasmPoll = true
 	case "poll":
 		// poll(fds, timeout_ms) — readiness multiplex. The runtime
 		// helper allocates a scratch pollfd buffer.
@@ -2057,6 +2068,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_wasm_block"
 		case "wasm_timer_pollable":
 			target = "__fern_wasm_timer_pollable"
+		case "wasm_poll":
+			target = "__fern_wasm_poll"
 		case "tcp_close":
 			target = "__fern_tcp_close"
 		case "env":
@@ -5733,6 +5746,20 @@ func (g *generator) emitWasmTimerPollableRuntime() {
 	g.emit("mov eax, -1") // no native pollable; -1 is ignored by poll(2)
 	g.emit("ret")
 	g.line(".size __fern_wasm_timer_pollable, .-__fern_wasm_timer_pollable")
+}
+
+// emitWasmPollRuntime emits `__fern_wasm_poll(pollables)` — on native there are
+// no real pollables (a timer pollable is -1 and native readiness rides poll(2)
+// directly), so this returns -1 (nothing ready), ignoring its array arg. On wasm
+// this symbol is the real wasi:io/poll.poll(list<pollable>) multiplexer instead.
+func (g *generator) emitWasmPollRuntime() {
+	g.line("")
+	g.line(".globl __fern_wasm_poll")
+	g.line(".type __fern_wasm_poll, @function")
+	g.label("__fern_wasm_poll")
+	g.emit("mov eax, -1") // no native pollables; nothing ready
+	g.emit("ret")
+	g.line(".size __fern_wasm_poll, .-__fern_wasm_poll")
 }
 
 // emitWasmPollableDropRuntime emits `__fern_wasm_pollable_drop(p)` — a no-op

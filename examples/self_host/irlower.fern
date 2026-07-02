@@ -5455,6 +5455,14 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!wb.ok) { return wb; }
                         return wb.emit(ir.op_wasm_block());
                     }
+                    // wasm_poll(pollables): lower the array arg (its ptr lands on
+                    // the stack), then the op (native: -1; wasm: wasi:io/poll.poll
+                    // over the length-prefixed array as a canonical (ptr, len) list).
+                    if (cid.name == "wasm_poll" && c.args.len() == 1) {
+                        var wp: LowerState = lower_expr(c.args[0], s);
+                        if (!wp.ok) { return wp; }
+                        return wp.emit(ir.op_wasm_poll());
+                    }
                     // tcp_connect(host_be, port) / tcp_send(fd, str) /
                     // tcp_recv(fd, max): 2-arg client primitives. Lower both
                     // operands (left then right), then the matching op.

@@ -470,6 +470,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesWasmTimerPollable {
 		g.emitWasmTimerPollableRuntime()
 	}
+	if g.usesWasmPoll {
+		g.emitWasmPollRuntime()
+	}
 	if g.usesTimerFd {
 		g.emitTimerFdRuntime()
 	}
@@ -3463,6 +3466,21 @@ func (g *generator) emitWasmTimerPollableRuntime() {
 	g.line(".ltorg")
 }
 
+// emitWasmPollRuntime emits `__fern_wasm_poll(pollables)` — returns -1 on native
+// (no real pollables; native readiness rides poll(2) directly), ignoring its
+// array arg. On wasm this symbol is the real wasi:io/poll.poll(list<pollable>)
+// multiplexer instead.
+func (g *generator) emitWasmPollRuntime() {
+	g.line("")
+	g.line(".global __fern_wasm_poll")
+	g.typeDirective("__fern_wasm_poll")
+	g.label("__fern_wasm_poll")
+	g.emit("mov w0, #-1") // no native pollables; nothing ready
+	g.emit("ret")
+	g.sizeDirective("__fern_wasm_poll")
+	g.line(".ltorg")
+}
+
 // emitWasmPollableDropRuntime emits `__fern_wasm_pollable_drop(p)` — a no-op
 // on native (a pollable is just an fd; the socket fd is closed via tcp_close).
 // Returns 0. Lets std/async's fetch_future drop the wasm pollable portably.
@@ -6372,6 +6390,10 @@ type generator struct {
 	// -1 on native (the deadline is poll(2)'s timeout arg) so std/async's
 	// with_deadline is portable.
 	usesWasmTimerPollable bool
+	// usesWasmPoll pulls in `__fern_wasm_poll` returning -1 on native (no real
+	// pollables; native readiness rides poll(2)) so std/async's wasm reactor
+	// path is portable.
+	usesWasmPoll bool
 	// usesTimerFd pulls in `__fern_timer_fd(ms)` — a CLOCK_MONOTONIC
 	// timerfd readable after `ms` (Linux; -1 stub on Darwin).
 	usesTimerFd bool
@@ -9192,6 +9214,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "wasm_timer_pollable":
 			target = "__fern_wasm_timer_pollable"
 			g.usesWasmTimerPollable = true
+		case "wasm_poll":
+			target = "__fern_wasm_poll"
+			g.usesWasmPoll = true
 		case "tcp_connect":
 			target = "__fern_tcp_connect"
 			g.usesTcp = true
