@@ -147,6 +147,12 @@ fixpoints.
   cap). Gated NARROW — only structs already reclaimable via an rc-array / nested
   field get a `__struct_drop`, so a string-only struct stays leak-only (avoiding
   the `slot_is_reclaimable_struct` broadening that OOM'd an earlier attempt).
+  Extended to **nested** string fields: `nddo_reach` now treats a `string` field
+  as deep-drop-worthy, so a container's drop deep-drops a nested string-only
+  struct (rc_is_unique-gated) and its `__struct_drop`'s k_str arm reclaims the
+  string — closing the leak for a string-only struct nested in a reclaimable one.
+  And a base-copied string field (`R { ...base, … }`) is retained so the drop
+  only decs the alias (no over-release).
 - **CS3.** Migrate the remaining scattered predicates
   (`str_local_binding_is_fresh`, `str_free_producer_ident`,
   `needs_rc_inc_on_alias`'s string exclusion) to derive from the classifier;
