@@ -266,6 +266,27 @@ function main(): i32 {
 			want: 1,
 		},
 		{
+			// random_i32 — a single getrandom(2) read into a stack slot. The value is
+			// nondeterministic, so the test only asserts it lowers and runs (r == r).
+			name: "random_i32_call",
+			src:  `function main(): i32 { var r = random_i32(); return if (r == r) { 7 } else { 0 }; }`,
+			want: 7,
+		},
+		{
+			// random_bytes(n) — a fresh single-word rc string of n CSPRNG bytes; the
+			// length is deterministic (n) even though the contents aren't. len = 16.
+			name: "random_bytes_len",
+			src:  `function main(): i32 { var b: string = random_bytes(16); return b.len(); }`,
+			want: 16,
+		},
+		{
+			// random_bytes(0) edge — a zero-length string (getrandom is a no-op); the
+			// 8-byte header + trailing NUL are still written. len = 0, +5 = 5.
+			name: "random_bytes_zero",
+			src:  `function main(): i32 { var b: string = random_bytes(0); return b.len() + 5; }`,
+			want: 5,
+		},
+		{
 			// Integer to_string — the full digit-formatting chain: __alloc_u8
 			// (byte buffer), __fern_arr_cow_inplace (arr[i] = digit), and
 			// string_from_bytes (u8[] -> string). len("123456") = 6.
