@@ -65,6 +65,28 @@ function test_sort_by_desc(): test.TestOutcome {
     return test.assert_eq_array(out, [5, 4, 3, 2, 1]);
 }
 
+function test_intersperse(): test.TestOutcome {
+    var xs: i32[] = [1, 2, 3];
+    return test.assert_eq_array(xs.intersperse(0), [1, 0, 2, 0, 3]);
+}
+
+function test_intersperse_single(): test.TestOutcome {
+    // A single element has no gap to fill — returned unchanged.
+    var xs: i32[] = [7];
+    return test.assert_eq_array(xs.intersperse(0), [7]);
+}
+
+function test_intersperse_empty(): test.TestOutcome {
+    var xs: i32[] = [];
+    return test.assert_eq(xs.intersperse(0).len(), 0);
+}
+
+function test_intersperse_strings(): test.TestOutcome {
+    // Structural (no callback) → works for any element type.
+    var xs: string[] = ["a", "b", "c"];
+    return test.assert_eq_array(xs.intersperse("-"), ["a", "-", "b", "-", "c"]);
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/array higher-order");
     r = r.it("flat_map",         test_flat_map());
@@ -75,5 +97,9 @@ function main(): i32 {
     r = r.it("reduce max",       test_reduce_max());
     r = r.it("sort_by asc",      test_sort_by_asc());
     r = r.it("sort_by desc",     test_sort_by_desc());
+    r = r.it("intersperse",         test_intersperse());
+    r = r.it("intersperse single",  test_intersperse_single());
+    r = r.it("intersperse empty",   test_intersperse_empty());
+    r = r.it("intersperse strings", test_intersperse_strings());
     return r.finish();
 }

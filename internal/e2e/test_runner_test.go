@@ -583,7 +583,8 @@ func TestRunnerResultCombinatorsExamplePasses(t *testing.T) {
 
 // `examples/tests/array_hof_test.fern` covers the std/array higher-order
 // combinators NOT already in array_combinators_test (map/filter/fold/any/all/
-// find): flat_map, reduce (→ Option[T]), and sort_by (a comparator closure).
+// find): flat_map, reduce (→ Option[T]), sort_by (a comparator closure), and
+// intersperse (structural, no callback).
 // Interp-gated only: these three crash the self-hosted binary at program exit
 // (a drop/RC-at-exit bug — the tests all PASS, output is byte-correct, then
 // teardown traps; see the audit log), so the suite is intentionally NOT in
@@ -595,7 +596,7 @@ func TestRunnerArrayHofExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/array higher-order", "# pass 8", "# fail 0", "1..8"} {
+	for _, w := range []string{"# Suite: std/array higher-order", "# pass 12", "# fail 0", "1..12"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
