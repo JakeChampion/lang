@@ -4884,11 +4884,13 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             if (u.op == "try_") { return lower_try(u.operand, s); }
             if (u.op == "-") {
                 if (expr_is_f64(u.operand, s)) {
-                    // -x  ==  0.0 - x  (float negate).
-                    var fz: LowerState = s.emit(ir.op_const_f64_text("0"));
-                    var fx: LowerState = lower_expr(u.operand, fz);
+                    // -x flips the f64 sign bit (op_funary "fneg"). The old
+                    // `0.0 - x` lowering flushed -0.0 to +0.0 (IEEE 0-0 = +0),
+                    // so `1.0 / -(0.0)` gave +inf instead of -inf (#4333). A
+                    // sign-bit flip preserves signed zero, matching native.
+                    var fx: LowerState = lower_expr(u.operand, s);
                     if (!fx.ok) { return fx; }
-                    return fx.emit(ir.op_fbin("fsub"));
+                    return fx.emit(ir.op_funary("fneg"));
                 }
                 // Composite unary minus (#2706): `-a` on a struct/enum lowers
                 // to `a.neg()`, mirroring the native checker's NegCall desugar.

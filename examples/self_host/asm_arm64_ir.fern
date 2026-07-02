@@ -1068,8 +1068,11 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // signed i32 -> f64 (scvtf); value rides the stack as bits.
             s = s.write("    ldr x0, [sp], #16\n    scvtf d0, x0\n    fmov x0, d0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "f64_to_i32") {
-            // f64 -> signed i32, truncating toward zero (fcvtzs).
-            s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n    fcvtzs x0, d0\n    str x0, [sp, #-16]!\n");
+            // f64 -> signed i32, saturating (fcvtzs to a 32-bit dest: NaN -> 0,
+            // out-of-range clamps to INT32_MIN/MAX), then sign-extend into the
+            // 64-bit slot. The old `fcvtzs x0, d0` saturated to i64 and kept the
+            // low 32 bits, so e.g. 1e12 wrapped instead of clamping (#4332).
+            s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n    fcvtzs w0, d0\n    sxtw x0, w0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "f64_to_i64") {
             // f64 -> signed i64, truncating toward zero. fcvtzs x0, d0 already
             // produces the full 64-bit result, so it is the same instruction as
@@ -1093,7 +1096,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             else if (o.kind == "fmul") { s = s.write("    fmul d0, d1, d0\n"); }
             else { s = s.write("    fdiv d0, d1, d0\n"); }
             s = s.write("    fmov x0, d0\n    str x0, [sp, #-16]!\n");
-        } else if (o.kind == "fsqrt" || o.kind == "ffloor" || o.kind == "fceil" || o.kind == "ftrunc" || o.kind == "fabs" || o.kind == "fround") {
+        } else if (o.kind == "fsqrt" || o.kind == "ffloor" || o.kind == "fceil" || o.kind == "ftrunc" || o.kind == "fabs" || o.kind == "fround" || o.kind == "fneg") {
             // f64 unary math (op_funary): pop the operand into d0, apply the single
             // FP instruction, push. frintm/frintp/frintz are round toward -inf /
             // +inf / zero; frinta is round-to-nearest ties-AWAY (= Go's math.Round,
@@ -1105,6 +1108,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             else if (o.kind == "fceil") { s = s.write("    frintp d0, d0\n"); }
             else if (o.kind == "ftrunc") { s = s.write("    frintz d0, d0\n"); }
             else if (o.kind == "fround") { s = s.write("    frinta d0, d0\n"); }
+            else if (o.kind == "fneg") { s = s.write("    fneg d0, d0\n"); }
             else { s = s.write("    fabs d0, d0\n"); }
             s = s.write("    fmov x0, d0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind == "fsin" || o.kind == "fcos" || o.kind == "fexp" || o.kind == "flog") {
