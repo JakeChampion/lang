@@ -4895,11 +4895,13 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             if (u.op == "try_") { return lower_try(u.operand, s); }
             if (u.op == "-") {
                 if (expr_is_f64(u.operand, s)) {
-                    // -x  ==  0.0 - x  (float negate).
-                    var fz: LowerState = s.emit(ir.op_const_f64_text("0"));
-                    var fx: LowerState = lower_expr(u.operand, fz);
+                    // -x flips the f64 sign bit (op_funary "fneg"). The old
+                    // `0.0 - x` lowering flushed -0.0 to +0.0 (IEEE 0-0 = +0),
+                    // so `1.0 / -(0.0)` gave +inf instead of -inf (#4333). A
+                    // sign-bit flip preserves signed zero, matching native.
+                    var fx: LowerState = lower_expr(u.operand, s);
                     if (!fx.ok) { return fx; }
-                    return fx.emit(ir.op_fbin("fsub"));
+                    return fx.emit(ir.op_funary("fneg"));
                 }
                 // Composite unary minus (#2706): `-a` on a struct/enum lowers
                 // to `a.neg()`, mirroring the native checker's NegCall desugar.
@@ -17626,6 +17628,66 @@ function register_fnvalue_local_struct_rets(stmts: parser.Stmt[], reg: string[])
     return reg;
 }
 
+// has_self_tail reports whether `ops` contains at least one
+// `call_direct <name>/<nparams> ; return` pair worth rewriting — the tail-call
+// shape TCO fires on. The pre-walk lets tco_self_tail skip the loop wrapper
+// entirely for a function with no self-tail call.
+function has_self_tail(ops: ir.Op[], name: string, nparams: i32): boolean {
+    var i: i32 = 0;
+    while (i + 1 < ops.len()) {
+        var o: ir.Op = ops[i];
+        if (o.kind == "call_direct" && o.str == name && o.i32_imm == nparams) {
+            if (ops[i + 1].kind == "return") { return true; }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// tco_self_tail is the self-host port of native internal/ir/tco.go (#4328). A
+// self-recursive call in tail position (`return f(args)` inside `function f`)
+// lowers to two adjacent ops `call_direct f/N ; return`; this rewrites every
+// such pair into a parameter rebind + a backward branch to a synthetic outer
+// loop wrapping the body, so the recursion reuses the current activation
+// (O(1) stack) instead of growing it until it SIGSEGVs. Conservative — only
+// direct calls to the enclosing function with a matching arg count fire (the
+// args were pushed left-to-right, so the store_locals pop them in reverse into
+// param slots N-1..0). Functions with no self-tail call are returned unchanged
+// (no wrapper). Applies to every IR backend since all lower through lower_func.
+function tco_self_tail(ops: ir.Op[], name: string, nparams: i32): ir.Op[] {
+    if (name.len() == 0) { return ops; }
+    if (!has_self_tail(ops, name, nparams)) { return ops; }
+    // Wrap the body in `loop { ... } end` (blocktype 0 = void header, as the
+    // existing while-loop lowering uses; br targets the loop header to iterate).
+    var wrapped: ir.Op[] = [ir.op_loop(0)];
+    var wi: i32 = 0;
+    while (wi < ops.len()) { wrapped = wrapped.append(ops[wi]); wi = wi + 1; }
+    wrapped = wrapped.append(ir.op_end());
+    var out: ir.Op[] = [];
+    var depth: i32 = 0;
+    var i: i32 = 0;
+    while (i < wrapped.len()) {
+        var o: ir.Op = wrapped[i];
+        // Track scope depth BEFORE the rewrite check, so a tail call sees the
+        // depth of the scope it currently sits inside (matches native applyTCO).
+        if (o.kind == "block" || o.kind == "loop" || o.kind == "if") { depth = depth + 1; }
+        else if (o.kind == "end") { depth = depth - 1; }
+        var is_stc: boolean = (o.kind == "call_direct" && o.str == name && o.i32_imm == nparams);
+        if (is_stc && i + 1 < wrapped.len() && wrapped[i + 1].kind == "return") {
+            var p: i32 = nparams - 1;
+            while (p >= 0) { out = out.append(ir.op_store_local(p)); p = p - 1; }
+            // The wrapper is the outermost open scope, depth-1 levels out from
+            // the innermost — a `br depth-1` to a loop re-enters its header.
+            out = out.append(ir.op_br(depth - 1));
+            i = i + 2;    // consume both the call_direct and the return
+        } else {
+            out = out.append(o);
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
 pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: parser.StructDecl[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[],
     map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[], borrowable_params: string[], fn_names: string[], fresh_struct_ret_fns: string[], consume_safe_params: string[], return_fresh_struct_ret_fns: string[], str_fresh_ret_fns: string[]): LowerResult {
     var empty: ir.Op[] = [];
@@ -18340,7 +18402,11 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         if (stmt_scopes_bindings(fn.body[j])) { s = s.retire_locals(stmt_sbase); }
         j = j + 1;
     }
-    return LowerResult { ok: true, ops: s.ops, n_locals: s.locals.len(), n_params: s.n_params, arr_slots: arr_slots_of(s), i64_slots: i64_slots_of(s), f64_slots: f64_slots_of(s) };
+    // Tail-call optimisation (#4328): rewrite self-tail recursion into a loop +
+    // param-rebind so deep recursion is O(1) stack instead of a SIGSEGV. A no-op
+    // for functions without an adjacent `call_direct self ; return` pair.
+    var tco_ops: ir.Op[] = tco_self_tail(s.ops, fn.name, s.n_params);
+    return LowerResult { ok: true, ops: tco_ops, n_locals: s.locals.len(), n_params: s.n_params, arr_slots: arr_slots_of(s), i64_slots: i64_slots_of(s), f64_slots: f64_slots_of(s) };
 }
 
 // LoweredFn is one function's lowered form, tagged with its name + arity so

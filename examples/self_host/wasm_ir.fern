@@ -262,6 +262,7 @@ function wasm_binop_w(kind: string, width: i32): string {
     if (kind == "fceil") { return "f64.ceil"; }
     if (kind == "ftrunc") { return "f64.trunc"; }
     if (kind == "fabs") { return "f64.abs"; }
+    if (kind == "fneg") { return "f64.neg"; }
     if (kind == "feq") { return "f64.eq"; }
     if (kind == "fne") { return "f64.ne"; }
     if (kind == "flt") { return "f64.lt"; }
@@ -941,9 +942,12 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
         } else if (o.kind == "i32_to_f64") {
             out = out + "    f64.convert_i32_s\n";
         } else if (o.kind == "f64_to_i32") {
-            out = out + "    i32.trunc_f64_s\n";
+            // Saturating truncation: NaN -> 0, overflow -> clamp (#4332). The
+            // non-saturating i32.trunc_f64_s TRAPS on NaN/overflow, aborting the
+            // module; the contract (docs/FLOAT-SEMANTICS.md) is total-saturating.
+            out = out + "    i32.trunc_sat_f64_s\n";
         } else if (o.kind == "f64_to_i64") {
-            out = out + "    i64.trunc_f64_s\n";
+            out = out + "    i64.trunc_sat_f64_s\n";
         } else if (o.kind == "f64_bits") {
             // f64 -> i64 bit reinterpret (typed stack flips f64 -> i64).
             out = out + "    i64.reinterpret_f64\n";

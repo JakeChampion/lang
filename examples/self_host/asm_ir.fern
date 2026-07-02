@@ -3217,23 +3217,29 @@ function ir_bin_asm(kind: string, width: i32): string {
     if (kind == "add") { return "    addq %rcx, %rax\n"; }
     if (kind == "sub") { return "    subq %rcx, %rax\n"; }
     if (kind == "mul") { return "    imulq %rcx, %rax\n"; }
-    // i64 div/rem operate on the full 64-bit operands (no movslq truncation);
-    // i32 div/rem sign-extend the low 32 first so dirty upper bits don't skew
-    // the 64-bit idivq.
-    if (kind == "div_s" && width == 64) { return "    cqto\n    idivq %rcx\n"; }
-    if (kind == "rem_s" && width == 64) { return "    cqto\n    idivq %rcx\n    movq %rdx, %rax\n"; }
-    if (kind == "div_s") { return "    movslq %eax, %rax\n    movslq %ecx, %rcx\n    cqto\n    idivq %rcx\n"; }
-    if (kind == "rem_s") { return "    movslq %eax, %rax\n    movslq %ecx, %rcx\n    cqto\n    idivq %rcx\n    movq %rdx, %rax\n"; }
-    // Unsigned 64-bit div/rem (u64, #2904): zero RDX, divq (no sign-extend). The
-    // operands are full 64-bit u64 values, so no movslq truncation.
-    if (kind == "div_u") { return "    xorl %edx, %edx\n    divq %rcx\n"; }
-    if (kind == "rem_u") { return "    xorl %edx, %edx\n    divq %rcx\n    movq %rdx, %rax\n"; }
+    // div_s / rem_s / div_u / rem_u are NOT handled here — the op loop routes
+    // them through ir_div_guarded (below) so a divide-by-zero / INT_MIN/-1 does
+    // not raise #DE. The language contract is total, never-trapping (#4329).
     if (kind == "and") { return "    andq %rcx, %rax\n"; }
     if (kind == "or") { return "    orq %rcx, %rax\n"; }
     if (kind == "xor") { return "    xorq %rcx, %rax\n"; }
-    if (kind == "shl") { return "    shlq %cl, %rax\n"; }
-    if (kind == "shr_s") { return "    sarq %cl, %rax\n"; }
-    if (kind == "shr_u") { return "    shrq %cl, %rax\n"; }
+    // Shift counts mask to the operand width: mod 64 for i64 (the q-form masks
+    // %cl to 6 bits in hardware), mod 32 for i32/u32. A 32-bit i32 shift used
+    // to emit the q-form, so a count >= 32 wrapped mod 64 instead of mod 32
+    // (#4330). Fix by masking the count to 5 bits BUT keeping the 64-bit shift
+    // instruction, so the operand's slot extension is preserved: a u32 value is
+    // zero-extended (bit 63 = 0) and an i32 value sign-extended (bit 63 = bit
+    // 31), and `sarq`/`shrq`/`shlq` on the full register does the right thing for
+    // both. (A 32-bit `sarl` would fill from bit 31, corrupting a u32 `>>` —
+    // which lowers through shr_s — whose bit 31 is a data bit, not a sign bit.)
+    if (width == 64) {
+        if (kind == "shl") { return "    shlq %cl, %rax\n"; }
+        if (kind == "shr_s") { return "    sarq %cl, %rax\n"; }
+        if (kind == "shr_u") { return "    shrq %cl, %rax\n"; }
+    }
+    if (kind == "shl") { return "    andl $31, %ecx\n    shlq %cl, %rax\n"; }
+    if (kind == "shr_s") { return "    andl $31, %ecx\n    sarq %cl, %rax\n"; }
+    if (kind == "shr_u") { return "    andl $31, %ecx\n    shrq %cl, %rax\n"; }
     if (kind == "eq") { return "    cmpq %rcx, %rax\n    sete %al\n    movzbq %al, %rax\n"; }
     if (kind == "ne") { return "    cmpq %rcx, %rax\n    setne %al\n    movzbq %al, %rax\n"; }
     if (kind == "lt_s") { return "    cmpq %rcx, %rax\n    setl %al\n    movzbq %al, %rax\n"; }
@@ -3247,6 +3253,92 @@ function ir_bin_asm(kind: string, width: i32): string {
     if (kind == "gt_u") { return "    cmpq %rcx, %rax\n    seta %al\n    movzbq %al, %rax\n"; }
     if (kind == "ge_u") { return "    cmpq %rcx, %rax\n    setae %al\n    movzbq %al, %rax\n"; }
     return "    # ir: unsupported bin " + kind + "\n";
+}
+
+// ir_div_guarded renders a non-trapping i32/i64 signed/unsigned div or rem
+// (dividend in %rax, divisor in %rcx, result in %rax). x86 idivq/divq raise
+// #DE (SIGFPE) on a zero divisor and on INT_MIN/-1 overflow, but the language
+// contract (docs/INTEGER-SEMANTICS.md) is total: x/0 = 0, x%0 = x,
+// INT_MIN/-1 = INT_MIN, INT_MIN%-1 = 0. Guard both faults inline, mirroring
+// native codegen (internal/codegen/x86_64 emitFloatToIntSat's div sibling).
+// `lb` is a per-op-unique label base (loop prefix + op index). (#4329)
+function ir_div_guarded(kind: string, width: i32, lb: string): string {
+    var sext: boolean = (width != 64);
+    if (kind == "div_u" || kind == "rem_u") {
+        // Unsigned (u32/u64, #2904): only the divide-by-zero fault to guard —
+        // unsigned division has no overflow case.
+        var u: string = "    testq %rcx, %rcx\n";
+        if (kind == "div_u") {
+            u = u + "    jz " + lb + "_dz\n";
+            u = u + "    xorl %edx, %edx\n    divq %rcx\n";
+            u = u + "    jmp " + lb + "_dn\n";
+            u = u + lb + "_dz:\n    xorl %eax, %eax\n";
+            u = u + lb + "_dn:\n";
+        } else {
+            u = u + "    jz " + lb + "_dn\n";      // divisor 0 -> rem = dividend (rax)
+            u = u + "    xorl %edx, %edx\n    divq %rcx\n    movq %rdx, %rax\n";
+            u = u + lb + "_dn:\n";
+        }
+        return u;
+    }
+    // Signed. Sign-extend i32 operands so dirty upper bits don't skew idivq.
+    var s: string = "";
+    if (sext) { s = s + "    movslq %eax, %rax\n    movslq %ecx, %rcx\n"; }
+    s = s + "    testq %rcx, %rcx\n";
+    if (kind == "div_s") {
+        s = s + "    jz " + lb + "_dz\n";                          // /0 -> 0
+        s = s + "    cmpq $-1, %rcx\n    je " + lb + "_ng\n";      // /-1 -> -dividend (wraps at INT_MIN)
+        s = s + "    cqto\n    idivq %rcx\n";
+        s = s + "    jmp " + lb + "_dn\n";
+        s = s + lb + "_ng:\n    negq %rax\n    jmp " + lb + "_dn\n";
+        s = s + lb + "_dz:\n    xorl %eax, %eax\n";
+        s = s + lb + "_dn:\n";
+    } else {
+        s = s + "    jz " + lb + "_dn\n";                          // %0 -> dividend (rax)
+        s = s + "    cmpq $-1, %rcx\n    je " + lb + "_z0\n";      // %-1 -> 0
+        s = s + "    cqto\n    idivq %rcx\n    movq %rdx, %rax\n";
+        s = s + "    jmp " + lb + "_dn\n";
+        s = s + lb + "_z0:\n    xorl %eax, %eax\n";
+        s = s + lb + "_dn:\n";
+    }
+    // Renormalise an i32 result to its width (sign-extend low 32) so
+    // INT32_MIN/-1 reads as INT32_MIN, not +2^31, across a slot boundary.
+    if (sext) { s = s + "    movslq %eax, %rax\n"; }
+    return s;
+}
+
+// ir_f2i_sat renders a saturating f64 -> signed integer truncation (operand
+// bits on the rt-stack, result on the rt-stack). x86 cvttsd2si is NOT
+// saturating — it returns the 0x8000.. "integer indefinite" on NaN/overflow
+// and otherwise wraps — but the contract (docs/FLOAT-SEMANTICS.md) is total:
+// NaN -> 0, +overflow -> INT_MAX, -overflow -> INT_MIN. Mirror native
+// emitFloatToIntSat. `lb` is a per-op-unique label base. width is 32 or 64. (#4332)
+function ir_f2i_sat(width: i32, lb: string): string {
+    if (width != 64) {
+        // i32: clamp the DOUBLE into [INT32_MIN, INT32_MAX] (as f64 bit
+        // patterns) so cvttsd2si never hits its sentinel, after an explicit
+        // NaN -> 0. minsd/maxsd here are safe because NaN is already handled.
+        var s: string = "    popq %rax\n    movq %rax, %xmm0\n";
+        s = s + "    ucomisd %xmm0, %xmm0\n    jp " + lb + "_nan\n";
+        s = s + "    movabsq $0x41dfffffffc00000, %rcx\n    movq %rcx, %xmm1\n    minsd %xmm1, %xmm0\n";   // INT32_MAX as f64
+        s = s + "    movabsq $0xc1e0000000000000, %rcx\n    movq %rcx, %xmm1\n    maxsd %xmm1, %xmm0\n";   // INT32_MIN as f64
+        s = s + "    cvttsd2si %xmm0, %eax\n    movslq %eax, %rax\n    jmp " + lb + "_done\n";
+        s = s + lb + "_nan:\n    xorl %eax, %eax\n";
+        s = s + lb + "_done:\n    pushq %rax\n";
+        return s;
+    }
+    // i64: cvttsd2si is exact for in-range values; only NaN and |x| >= 2^63
+    // yield the INT64_MIN sentinel. On the sentinel, disambiguate via x:
+    // NaN -> 0, x > 0 -> INT64_MAX, else keep INT64_MIN (also the correct
+    // answer for the exact -2^63 input).
+    var s64: string = "    popq %rax\n    movq %rax, %xmm0\n    cvttsd2si %xmm0, %rax\n";
+    s64 = s64 + "    movabsq $0x8000000000000000, %rcx\n    cmpq %rcx, %rax\n    jne " + lb + "_done\n";
+    s64 = s64 + "    ucomisd %xmm0, %xmm0\n    jp " + lb + "_nan\n";
+    s64 = s64 + "    xorpd %xmm1, %xmm1\n    ucomisd %xmm1, %xmm0\n    jbe " + lb + "_done\n";
+    s64 = s64 + "    movabsq $0x7fffffffffffffff, %rax\n    jmp " + lb + "_done\n";
+    s64 = s64 + lb + "_nan:\n    xorl %eax, %eax\n";
+    s64 = s64 + lb + "_done:\n    pushq %rax\n";
+    return s64;
 }
 
 // br_target resolves a `br d` / `br_if d` at op index `i` to its label: a
@@ -4297,13 +4389,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // signed i32 -> f64 (cvtsi2sd); value rides the stack as bits.
             s = s.write("    popq %rax\n    cvtsi2sd %rax, %xmm0\n    movq %xmm0, %rax\n    pushq %rax\n");
         } else if (o.kind == "f64_to_i32") {
-            // f64 -> signed i32, truncating toward zero (cvttsd2si).
-            s = s.write("    popq %rax\n    movq %rax, %xmm0\n    cvttsd2si %xmm0, %rax\n    pushq %rax\n");
+            // Saturating f64 -> i32 (#4332); needs a per-op-unique label base.
+            s = s.write(ir_f2i_sat(32, lp + util.i32_to_string(i)));
         } else if (o.kind == "f64_to_i64") {
-            // f64 -> signed i64, truncating toward zero. cvttsd2si already
-            // writes the full 64-bit %rax, so it is the same instruction as
-            // f64_to_i32 (which only keeps the low 32 bits).
-            s = s.write("    popq %rax\n    movq %rax, %xmm0\n    cvttsd2si %xmm0, %rax\n    pushq %rax\n");
+            // Saturating f64 -> i64 (#4332).
+            s = s.write(ir_f2i_sat(64, lp + util.i32_to_string(i)));
         } else if (o.kind == "f64_bits" || o.kind == "f64_from_bits") {
             // No-op reinterpret: the 8-byte rt-stack slot already holds the
             // IEEE-754 bit pattern, identical to the i64 bits.
@@ -4377,6 +4467,10 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // |x| clears the f64 sign bit — a plain mask on the bits in %rax, no
             // xmm needed (mirrors asm.fern's __abs_f64).
             s = s.write("    popq %rax\n    movabsq $0x7fffffffffffffff, %rcx\n    andq %rcx, %rax\n    pushq %rax\n");
+        } else if (o.kind == "fneg") {
+            // -x flips the f64 sign bit (XOR), preserving signed zero — unlike
+            // the old 0.0 - x lowering which flushed -0.0 to +0.0 (#4333).
+            s = s.write("    popq %rax\n    movabsq $0x8000000000000000, %rcx\n    xorq %rcx, %rax\n    pushq %rax\n");
         } else if (o.kind == "fround") {
             // round-half-away-from-zero (Go's math.Round): roundsd only offers
             // ties-to-even / floor / ceil / trunc, so emulate via
@@ -4410,7 +4504,13 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
         } else {
             // binary op: pop rhs (rcx), lhs (rax), combine, push.
             s = s.write("    popq %rcx\n    popq %rax\n");
-            s = s.write(ir_bin_asm(o.kind, o.width));
+            if (o.kind == "div_s" || o.kind == "rem_s" || o.kind == "div_u" || o.kind == "rem_u") {
+                // Non-trapping guarded div/rem (#4329); needs a per-op-unique
+                // label base — reuse the loop prefix + this op's index.
+                s = s.write(ir_div_guarded(o.kind, o.width, lp + util.i32_to_string(i)));
+            } else {
+                s = s.write(ir_bin_asm(o.kind, o.width));
+            }
             s = s.write("    pushq %rax\n");
         }
         i = i + 1;
