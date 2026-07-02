@@ -7134,19 +7134,6 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 pub function emit_module(mod: parser.Module): string {
-    // IR code path (parallel-path migration, docs/RC-PERCEUS-SELF-HOST-IR-
-    // REBUILD.md §3): when use_ir is set AND the whole module is in the IR
-    // subset, lower it AST -> stack IR -> asm via asm_ir.emit_module_ir
-    // (proven behaviour-equivalent to the AST emit below). use_ir defaults
-    // false, so this is inert until a follow-up flips the default; the import
-    // already brings the IR path into asm.fern's world (and the bootstrap).
-    // Hoist no-capture lambda arguments to top-level functions first (closures
-    // slice 2a) so a callback-style lambda rides the slice-1 function-value path.
-    // A lambda-free module is returned unchanged, so this is inert for them.
-    var lm: parser.Module = asm_ir.lift_lambdas(mod);
-    if (asmcore.new_state().use_ir && asm_ir.all_eligible(lm)) {
-        return asm_ir.emit_module_ir(lm);
-    }
     // Reset the global strbuf before any .write calls. Output is
     // accumulated there (amortised O(1) per append) and materialised
     // into a fresh string at the tail via strbuf_take().
@@ -7157,13 +7144,30 @@ pub function emit_module(mod: parser.Module): string {
     // injection (JsonValue / IoError) happens in the driver via
     // parser.module_with_builtins, so emit_module stays pure.
     s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
-    // Type-check before codegen. On any diagnostic, report and abort —
-    // emitting assembly for ill-typed input would miscompile silently.
+    // Type-check before codegen, on BOTH the IR and AST paths. Emitting
+    // assembly for ill-typed input would miscompile silently (#4327): the
+    // IR fast-path below used to `return` before this check ran, so a
+    // type-invalid but IR-eligible module (e.g. returning Option[i32] as
+    // i32) compiled cleanly to a wrong binary. The arm64 mirror
+    // (asm_arm64.emit_module) already checks first; this matches it.
     var check_errs: string = asmcore.check_module(mod, s);
     if (check_errs.len() > 0) {
         eprint(check_errs);
         exit(1);
         return "";
+    }
+    // IR code path (parallel-path migration, docs/RC-PERCEUS-SELF-HOST-IR-
+    // REBUILD.md §3): when use_ir is set AND the whole module is in the IR
+    // subset, lower it AST -> stack IR -> asm via asm_ir.emit_module_ir
+    // (proven behaviour-equivalent to the AST emit below). use_ir defaults
+    // true (asmcore.new_state), so the IR path is the default; the AST emit
+    // below is the fallback for out-of-subset modules.
+    // Hoist no-capture lambda arguments to top-level functions first (closures
+    // slice 2a) so a callback-style lambda rides the slice-1 function-value path.
+    // A lambda-free module is returned unchanged, so this is inert for them.
+    var lm: parser.Module = asm_ir.lift_lambdas(mod);
+    if (asmcore.new_state().use_ir && asm_ir.all_eligible(lm)) {
+        return asm_ir.emit_module_ir(lm);
     }
     s = s.write("    .globl _start\n");
     s = s.write("    .text\n");
