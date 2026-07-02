@@ -3497,3 +3497,24 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   gate for the in-place MUTATION (a mis-balanced old-payload release or corrupted reshape would
   double-free) — plus the existing TestSelfHostEnumReassignReclaim{X86_64,Wasm} and byte-identical
   BOOTSTRAP + Stage2 FIXPOINT.
+- 2026-07-02: **Landed the qualified-imported-union match-payload widening (task #24) — unblocked
+  by the #3425 sharding.** A QUALIFIED pattern on an imported UNION member (`match (v) {
+  mod.Struct(x) => ... }`, whose flattened decl is the mangled `mod__Struct`) used to BAIL the
+  whole function to the AST emitter — the lowering stripped the qualifier to the bare `Struct`,
+  which only names a same-module ENUM variant. On the AST fallback the untyped payload's
+  `x.field.len()` on a `string[]` field mis-dispatched to an undefined `__fn_i32__len`. The
+  match-lowering now builds the `'.'→'__'` mangled candidate and prefers it when it names a
+  declared struct, so the member lowers through the IR path AND binds the payload typed
+  `mod__Struct` (a later `x.field` read dispatches correctly). This was ROOT-CAUSED and the fix
+  BUILT earlier, but flipping the self-host's own many `parser.*` AST-node matches from AST to IR
+  at once added ~26 KB of irlower asm and OOM'd the whole-compiler module-9 per-module emit
+  (#3425). With the per-module-emit function-window sharding now landed, that extra codegen is
+  bounded per shard, so the widening fits: TestSelfHostModloadPerModuleWholeCompilerX86_64 stays
+  green (220 s vs 154 s — bigger emit, more shards, still under the ceiling). VERIFIED:
+  TestSelfHostUnionVariantFieldIR (a two-module `Row | Blank` union matched via qualified patterns
+  reading a `string[]` payload field — decides `ir`, emits no `__fn_i32__len`, matches the
+  interpreter oracle) + byte-identical BOOTSTRAP + Stage2 FIXPOINT (incl. the whole-compiler
+  self-compile). The bootstrap's own standalone compile (asm_run, AST path — imported modules'
+  struct decls not loaded) still can't type these payloads, so enum_only_wildcard_used_rec keeps
+  its `!= ""` standalone workaround; the widening helps every module-LOADING path (the per-module
+  build and user programs).
