@@ -276,7 +276,7 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
                 if (add_nl) { lit_val = sv.value + "\n"; }
                 var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, lit_val);
                 s = lo.state;
-                var lbl: string = ".S" + util.i32_to_string(lo.idx);
+                var lbl: string = "" + asm_ir.str_lit_label(s, lo.idx);
                 s = s.write("    mov x0, #1\n");     // fd
                 s = s.write("    adrp x1, " + lbl + "\n");
                 s = s.write("    add x1, x1, :lo12:" + lbl + "\n");
@@ -299,7 +299,7 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
             if (add_nl) {
                 var nlo: asmcore.StringLitOut = asmcore.add_string_lit(s, "\n");
                 s = nlo.state;
-                var nlbl: string = ".S" + util.i32_to_string(nlo.idx);
+                var nlbl: string = "" + asm_ir.str_lit_label(s, nlo.idx);
                 s = s.write("    mov x0, #1\n");
                 s = s.write("    adrp x1, " + nlbl + "\n");
                 s = s.write("    add x1, x1, :lo12:" + nlbl + "\n");
@@ -323,7 +323,7 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
                 var elit: string = esv.value + "\n";
                 var elo: asmcore.StringLitOut = asmcore.add_string_lit(s, elit);
                 s = elo.state;
-                var elbl: string = ".S" + util.i32_to_string(elo.idx);
+                var elbl: string = "" + asm_ir.str_lit_label(s, elo.idx);
                 s = s.write("    mov x0, #2\n");     // fd 2 stderr
                 s = s.write("    adrp x1, " + elbl + "\n");
                 s = s.write("    add x1, x1, :lo12:" + elbl + "\n");
@@ -868,8 +868,8 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
                 var sf_lit: asmcore.StringLitOut = asmcore.add_string_lit(s, sfsd.name);
                 s = sf_lit.state;
                 s = s.write("    ldr x2, [x0]\n");
-                s = s.write("    adrp x3, .S" + util.i32_to_string(sf_lit.idx) + "\n");
-                s = s.write("    add x3, x3, :lo12:.S" + util.i32_to_string(sf_lit.idx) + "\n");
+                s = s.write("    adrp x3, " + asm_ir.str_lit_label(s, sf_lit.idx) + "\n");
+                s = s.write("    add x3, x3, :lo12:" + asm_ir.str_lit_label(s, sf_lit.idx) + "\n");
                 s = s.write("    cmp x2, x3\n");
                 s = s.write("    b.ne " + sf_next.name + "\n");
                 s = s.write("    str x1, [x0, #" + util.i32_to_string((sf_found + 1) * 8) + "]\n");
@@ -935,8 +935,8 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = enum_payload_retain(c.args[0], s);    // Perceus: retain an rc-tracked array payload
         var evLit: asmcore.StringLitOut = asmcore.add_string_lit(s, name);
         s = evLit.state;
-        s = s.write("    adrp x2, .S" + util.i32_to_string(evLit.idx) + "\n");
-        s = s.write("    add x2, x2, :lo12:.S" + util.i32_to_string(evLit.idx) + "\n");
+        s = s.write("    adrp x2, " + asm_ir.str_lit_label(s, evLit.idx) + "\n");
+        s = s.write("    add x2, x2, :lo12:" + asm_ir.str_lit_label(s, evLit.idx) + "\n");
         s = s.write("    str x2, [x0]\n");         // shape ptr
         s = s.write("    str x1, [x0, #8]\n");     // payload
         s = s.write("    str x0, [sp, #-16]!\n");
@@ -2135,8 +2135,8 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             s = arm_lit.state;
             var next_l: asmcore.LabelOut = asmcore.fresh_label(s);
             s = next_l.state;
-            s = s.write("    adrp x2, .S" + util.i32_to_string(arm_lit.idx) + "\n");
-            s = s.write("    add x2, x2, :lo12:.S" + util.i32_to_string(arm_lit.idx) + "\n");
+            s = s.write("    adrp x2, " + asm_ir.str_lit_label(s, arm_lit.idx) + "\n");
+            s = s.write("    add x2, x2, :lo12:" + asm_ir.str_lit_label(s, arm_lit.idx) + "\n");
             s = s.write("    cmp x1, x2\n");
             s = s.write("    b.ne " + next_l.name + "\n");
             s = s.write("    bl __fn_" + asmcore.sanitize_label(util.base_type_name(fd_m.receiver_type) + "." + fd_m.name) + "\n");
@@ -2614,8 +2614,8 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                 s = s.mark_heap();
                 var uvLit: asmcore.StringLitOut = asmcore.add_string_lit(s, id.name);
                 s = uvLit.state;
-                s = s.write("    adrp x1, .S" + util.i32_to_string(uvLit.idx) + "\n");
-                s = s.write("    add x1, x1, :lo12:.S" + util.i32_to_string(uvLit.idx) + "\n");
+                s = s.write("    adrp x1, " + asm_ir.str_lit_label(s, uvLit.idx) + "\n");
+                s = s.write("    add x1, x1, :lo12:" + asm_ir.str_lit_label(s, uvLit.idx) + "\n");
                 s = s.write("    str x1, [x0]\n");
                 s = s.write("    str x0, [sp, #-16]!\n");
                 return s;
@@ -2634,8 +2634,8 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, sv.value);
             s = lo.state;
             s = s.mark_heap();
-            s = s.write("    adrp x0, .S" + util.i32_to_string(lo.idx) + "\n");
-            s = s.write("    add x0, x0, :lo12:.S" + util.i32_to_string(lo.idx) + "\n");
+            s = s.write("    adrp x0, " + asm_ir.str_lit_label(s, lo.idx) + "\n");
+            s = s.write("    add x0, x0, :lo12:" + asm_ir.str_lit_label(s, lo.idx) + "\n");
             s = s.write("    mov x1, #" + util.i32_to_string(sv.value.len()) + "\n");
             s = s.write("    bl __fern_str_box\n");
             s = s.write("    str x0, [sp, #-16]!\n");
@@ -2812,8 +2812,8 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                 // x0 = box. Shape pointer at [x0].
                 var suNameLit: asmcore.StringLitOut = asmcore.add_string_lit(s, sl.type_name);
                 s = suNameLit.state;
-                s = s.write("    adrp x1, .S" + util.i32_to_string(suNameLit.idx) + "\n");
-                s = s.write("    add x1, x1, :lo12:.S" + util.i32_to_string(suNameLit.idx) + "\n");
+                s = s.write("    adrp x1, " + asm_ir.str_lit_label(s, suNameLit.idx) + "\n");
+                s = s.write("    add x1, x1, :lo12:" + asm_ir.str_lit_label(s, suNameLit.idx) + "\n");
                 s = s.write("    str x1, [x0]\n");
                 // Pop the base pointer into x2. The copy loop may call
                 // __fern_rc_inc to retain array fields; x2 (base) and x0
@@ -2891,8 +2891,8 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
             // x0 now holds the struct pointer.
             var nameLit: asmcore.StringLitOut = asmcore.add_string_lit(s, sl.type_name);
             s = nameLit.state;
-            s = s.write("    adrp x1, .S" + util.i32_to_string(nameLit.idx) + "\n");
-            s = s.write("    add x1, x1, :lo12:.S" + util.i32_to_string(nameLit.idx) + "\n");
+            s = s.write("    adrp x1, " + asm_ir.str_lit_label(s, nameLit.idx) + "\n");
+            s = s.write("    add x1, x1, :lo12:" + asm_ir.str_lit_label(s, nameLit.idx) + "\n");
             s = s.write("    str x1, [x0]\n");
             // Pop field values into [x0 + (j+1)*8]. Perceus construction
             // inc (Phase 1d): a field initialised from an rc-tracked
@@ -2945,8 +2945,8 @@ function emit_expr(e: parser.Expr, s: asmcore.EmitState): asmcore.EmitState {
                     var arm_lit: asmcore.StringLitOut = asmcore.add_string_lit(s, sd.name);
                     s = arm_lit.state;
                     s = s.write("    ldr x1, [x0]\n");
-                    s = s.write("    adrp x2, .S" + util.i32_to_string(arm_lit.idx) + "\n");
-                    s = s.write("    add x2, x2, :lo12:.S" + util.i32_to_string(arm_lit.idx) + "\n");
+                    s = s.write("    adrp x2, " + asm_ir.str_lit_label(s, arm_lit.idx) + "\n");
+                    s = s.write("    add x2, x2, :lo12:" + asm_ir.str_lit_label(s, arm_lit.idx) + "\n");
                     s = s.write("    cmp x1, x2\n");
                     s = s.write("    b.ne .Lfa_next_" + util.i32_to_string(s.label_n) + "\n");
                     s = s.write("    ldr x0, [x0, #" + util.i32_to_string((found_idx + 1) * 8) + "]\n");
@@ -3467,8 +3467,8 @@ function emit_stmt(stmt: parser.Stmt, s: asmcore.EmitState): asmcore.EmitState {
                         s = s.write("    ldr x1, [x0]\n");
                         var nameLit: asmcore.StringLitOut = asmcore.add_string_lit(s, pv.type_name);
                         s = nameLit.state;
-                        s = s.write("    adrp x2, .S" + util.i32_to_string(nameLit.idx) + "\n");
-                        s = s.write("    add x2, x2, :lo12:.S" + util.i32_to_string(nameLit.idx) + "\n");
+                        s = s.write("    adrp x2, " + asm_ir.str_lit_label(s, nameLit.idx) + "\n");
+                        s = s.write("    add x2, x2, :lo12:" + asm_ir.str_lit_label(s, nameLit.idx) + "\n");
                         s = s.write("    cmp x1, x2\n");
                         s = s.write("    b.ne .Lmatch_next_" + util.i32_to_string(next_lbl) + "\n");
                         if (pv.binding.len() > 0 && pv.binding != "_") {
