@@ -11273,6 +11273,18 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                             if (pv.type_name[vld] == 46) { vname = pv.type_name[vld + 1 : pv.type_name.len()]; }
                             vld = vld + 1;
                         }
+                        // NOTE a QUALIFIED pattern on an imported UNION member
+                        // (`mod.Struct`, where the flattened decl is the mangled
+                        // `mod__Struct`) still bails here: the bare-strip yields
+                        // `Struct`, which only matches a same-module ENUM variant
+                        // (`E.V` → struct `V`). Lowering it through the IR path
+                        // (a `mod__Struct` mangled lookup) is correct and works for
+                        // user programs, but flipping the self-host's OWN modules'
+                        // many `parser.*` matches from AST to IR at once exhausts the
+                        // per-module-emit memory frontier (un-reclaimed IR-op
+                        // allocations, #3425) — it OOMs the whole-compiler module 9
+                        // build. So it stays BLOCKED on the goal-2 reclaim; see
+                        // docs/RC-PERCEUS-SELF-HOST-PORT.md.
                         if (!decl_is_struct(ms.structs, vname)) { return s.fail(); }
                         if (!decl_is_leaksafe(ms.structs, vname)) { return s.fail(); }
                         var has_bind: boolean = pv.binding.len() > 0 && pv.binding != "_";
@@ -15171,10 +15183,21 @@ function enum_only_wildcard_used_rec(stmts: parser.Stmt[], name: string, enum_na
                     while (ai < m.arms.len()) {
                         match (m.arms[ai].pattern) {
                             parser.PatVariant(pv) => {
-                                // Bind to explicitly-typed string locals: the self-host
-                                // checker otherwise mis-infers the string[]-element index
-                                // `pv.extra_bindings[ei]` as i32 (emitting an undefined
-                                // __fn_i32__len). The native checker types it correctly.
+                                // Compare against "" via explicitly-typed string locals
+                                // rather than calling `.len()`: this function is itself a
+                                // module in the self-host BOOTSTRAP, where each file is
+                                // compiled STANDALONE (imported modules' struct decls are
+                                // not loaded). So the `parser.PatVariant(pv)` match here
+                                // bails to the AST emitter, which — with no PatVariant
+                                // field info — mis-infers the `string[]`-element receiver
+                                // `pv.extra_bindings[ei]` as i32 and emits an undefined
+                                // `__fn_i32__len` (a link error). A typed `string` local +
+                                // `!= ""` sidesteps the `.len()` dispatch entirely and
+                                // compares as strings. (Typing the payload properly means
+                                // lowering the qualified imported-union match through the
+                                // IR path, which is blocked on the #3425 per-module-emit
+                                // memory frontier — see the NOTE in lower_stmt's match
+                                // handler and docs/RC-PERCEUS-SELF-HOST-PORT.md.)
                                 var pvb: string = pv.binding;
                                 if (pvb != "" && pvb != "_") { return false; }
                                 var ei: i32 = 0;

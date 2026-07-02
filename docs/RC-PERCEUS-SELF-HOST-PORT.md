@@ -3449,3 +3449,25 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   mis-infers a `string[]`-element `.len()` receiver as i32 — emitting an undefined
   __fn_i32__len that broke the bootstrap link — worked around by comparing `!= ""` on a
   typed local; the native checker types it correctly.)
+- 2026-07-02: **Investigation — typing match-payload bindings for imported union members
+  is blocked on the #3425 per-module-emit memory frontier.** The self-host-checker quirk noted
+  in the previous entry (a `string[]`-element `.len()` receiver mis-inferred as i32 →
+  undefined `__fn_i32__len`) root-causes to match-payload TYPING: a QUALIFIED pattern on an
+  imported UNION member (`mod.Struct(x)`, whose flattened decl is the mangled `mod__Struct`)
+  bails the whole function to the AST emitter, because the lowering strips the qualifier to
+  the bare `Struct` (which only names a same-module ENUM variant). Same-module user-variant
+  payloads are ALREADY typed (the union_member binding marks the slot with the variant struct
+  name); only the qualified/imported case misses. The IR-path fix is small and correct — build
+  the `mod__Struct` mangled candidate and prefer it when it names a declared struct, so the
+  member lowers AND binds the payload typed `mod__Struct` (verified end-to-end on a two-module
+  user program: the match decides `ir`, emits no `__fn_i32__len`, and matches the interpreter
+  oracle). BUT flipping the self-host's OWN many `parser.*` / AST-node matches from AST to IR
+  all at once exhausts the per-module-emit memory ceiling: the whole-compiler module-9 build
+  climbs steadily to the ~3.9 GiB self-host arena and traps (exit 137) —
+  TestSelfHostModloadPerModuleWholeCompilerX86_64 needs all 12 units to emit + link, so no
+  partial exclusion is possible. This is the same un-reclaimed per-function IR-op allocation
+  limitation (#3425) that pins the merged-bundle budget, i.e. it is gated on GOAL 2 (the
+  self-host Perceus reclaim). The widening therefore stays deferred behind a NOTE in
+  lower_stmt's match handler; the bootstrap keeps the `!= ""` standalone workaround. Once the
+  self-host reclaim lands and per-module emit fits, the mangled-lookup flip + a two-module
+  user-program e2e test can go in unblocked.
