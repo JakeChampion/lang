@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	x86 "github.com/jakechampion/lang/internal/codegen/x86_64ssa"
+	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/ssa"
 )
 
@@ -53,7 +54,7 @@ func EmitAsm(f *ssa.Func, numAlloc int, entryArgs ...int64) (string, error) {
 // whole allocatable file (x0..x15) is caller-saved under the PCS, so every
 // call-crossing value is preserved by the caller (the allocator marks them via
 // EmitWithCalleeSaved's all-caller-saved partition).
-func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entryArgs []int64) (string, error) {
+func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entryArgs []int64, vtables ...ir.VtableDecl) (string, error) {
 	if _, ok := funcs[entry]; !ok {
 		return "", fmt.Errorf("arm64ssa: unknown entry %q", entry)
 	}
@@ -223,6 +224,37 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 			w("\t.quad %s", fnLabel(name))
 		}
 	}
+	if keys := referencedVtables(progs); len(keys) > 0 {
+		// Static `dyn Trait` vtables: one `.rodata` cell per (trait-set,
+		// concrete) pair an OpConstVtable materialised, holding the concrete
+		// type's `__method_*` implementations as absolute function pointers in
+		// trait declaration order (docs/DYN-TRAITS.md §4.2.2). OpCallDyn loads
+		// slot k (`vtable + k*8`) and `blr`s through it. Each method points at a
+		// module function, so the pointer is that function's `fn_<name>` label.
+		// The trailing per-type drop slot the native backend emits (§4.4) is
+		// omitted here: this path does not wire `dyn` RC (no DynRcSupported), so
+		// nothing reads it and its drop fn is never emitted.
+		byPair := map[string]ir.VtableDecl{}
+		for _, vt := range vtables {
+			byPair[vt.Trait+"/"+vt.Concrete] = vt
+		}
+		w(".section .rodata")
+		for _, key := range keys {
+			w(".align 8")
+			tr, co := splitDynPair(key)
+			w("%s:", dynVtableLabel(tr, co))
+			vt, ok := byPair[key]
+			if !ok {
+				// OpConstVtable only names pairs collectVtables produced; a missing
+				// entry would be a lowering bug. Emit an empty labelled cell so the
+				// link fails on the dispatch, not an undefined symbol.
+				continue
+			}
+			for _, m := range vt.Methods {
+				w("\t.quad %s", fnLabel(m.Func))
+			}
+		}
+	}
 	if heap {
 		// A fixed .bss buffer backs the bump allocator (mirrors the x86-64 SSA
 		// path). Under the W^X ELF layout this lands in the R+W data segment, so
@@ -360,13 +392,54 @@ func usesHeap(progs map[string]*x86.Program) bool {
 		for _, blk := range p.Blocks {
 			for _, in := range blk.Insts {
 				switch in.Op {
-				case x86.MemAlloc, x86.MemLoad, x86.MemStore, x86.MakeEnv, x86.MakeClosure:
+				case x86.MemAlloc, x86.MemLoad, x86.MemStore, x86.MakeEnv, x86.MakeClosure, x86.BoxDyn:
 					return true
 				}
 			}
 		}
 	}
 	return false
+}
+
+// referencedVtables returns the sorted set of "<trait-set>/<concrete>" keys
+// named by an OpConstVtable (x86.ConstVtable) anywhere in the module, so only
+// the vtables a `dyn` value can actually reach get `.rodata` cells.
+func referencedVtables(progs map[string]*x86.Program) []string {
+	seen := map[string]bool{}
+	for _, p := range progs {
+		for _, blk := range p.Blocks {
+			for _, in := range blk.Insts {
+				if in.Op == x86.ConstVtable {
+					seen[in.Str] = true
+				}
+			}
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(seen))
+	for k := range seen {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// dynVtableLabel is the GAS symbol for the (trait-set, concrete) `dyn Trait`
+// vtable cell. A merged multi-trait set key joins traits with '+' (not a valid
+// label char), sanitized to "_x_" — matching the native backends so the two
+// emit identically-named cells.
+func dynVtableLabel(trait, concrete string) string {
+	return "__vtable_" + strings.ReplaceAll(trait, "+", "_x_") + "_" + concrete
+}
+
+// splitDynPair undoes the "<trait-set>/<concrete>" key ConstVtable carries.
+func splitDynPair(key string) (string, string) {
+	if i := strings.IndexByte(key, '/'); i >= 0 {
+		return key[:i], key[i+1:]
+	}
+	return key, ""
 }
 
 // runtimeHelperEmitters maps a __fern_* runtime-helper name to the code that
@@ -3677,6 +3750,30 @@ func emitFunc(w func(string, ...any), name string, p *x86.Program, numAlloc int,
 				}
 				continue
 			}
+			if in.Op == x86.ConstVtable {
+				tr, co := splitDynPair(in.Str)
+				// Materialise the static vtable cell's address (PC-relative page +
+				// offset), the same shape ConstStr / the fn-table use.
+				w("\tadrp %s, %s", xreg(in.Dst), dynVtableLabel(tr, co))
+				w("\tadd %s, %s, #:lo12:%s", xreg(in.Dst), xreg(in.Dst), dynVtableLabel(tr, co))
+				continue
+			}
+			if in.Op == x86.BoxDyn {
+				for _, l := range boxDynLines(in, numAlloc) {
+					w("\t%s", l)
+				}
+				continue
+			}
+			if in.Op == x86.CallDyn {
+				lines, err := callDynLines(in, numAlloc, callSaveBase)
+				if err != nil {
+					return err
+				}
+				for _, l := range lines {
+					w("\t%s", l)
+				}
+				continue
+			}
 			if in.Op == x86.ConstStr {
 				lbl, ok := strLabels[in.Str]
 				if !ok {
@@ -3739,7 +3836,7 @@ func emitFunc(w func(string, ...any), name string, p *x86.Program, numAlloc int,
 func funcHasCall(p *x86.Program) bool {
 	for _, blk := range p.Blocks {
 		for _, in := range blk.Insts {
-			if in.Op == x86.Call || in.Op == x86.CallPair || in.Op == x86.CallIndirect {
+			if in.Op == x86.Call || in.Op == x86.CallPair || in.Op == x86.CallIndirect || in.Op == x86.CallDyn {
 				return true
 			}
 		}
@@ -3974,6 +4071,100 @@ func callIndirectLines(in x86.Inst, numAlloc, callSaveBase int) ([]string, error
 	// Move the explicit args plus the env (as the final argument) into x0..x{n}.
 	argsWithEnv := append(append([]x86.Loc{}, in.ArgLocs...), x86.Loc{IsReg: true, Reg: s0})
 	out = append(out, argMoveLines(argsWithEnv)...)
+	out = append(out, fmt.Sprintf("blr %s", xreg(s1)))
+	out = append(out, fmt.Sprintf("mov %s, x0", xreg(s3))) // capture result
+	for k := len(saved) - 1; k >= 0; k-- {
+		out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(saved[k]), 8*(callSaveBase+k)))
+	}
+	out = append(out, fmt.Sprintf("mov %s, %s", xreg(in.Dst), xreg(s3))) // place result
+	out = append(out, maskFix(in.Dst, in.W)...)
+	return out, nil
+}
+
+// boxDynLines renders OpBoxDyn: pack a boxed one-word `dyn Trait` value
+// (docs/DYN-TRAITS.md §4.2.2) as a 16-byte {data @0, vtable @8} cell on the
+// .bss bump heap. ArgLocs = [data, vtable]. Unlike the native backend — which
+// routes through __fern_alloc and must park the operands in callee-saved
+// registers across the clobbering call — this path bump-allocates inline (no
+// call, only the scratch pool is touched), so the operand homes in the
+// allocatable file survive untouched and no save/restore is needed. The cell
+// carries the standard rc header (rc=1 at base, payload at base+8) so it is a
+// well-formed heap object; it leaks (this path does not wire `dyn` RC), matching
+// the arm64 native `dyn` slice.
+func boxDynLines(in x86.Inst, numAlloc int) []string {
+	s0, s1, s2 := numAlloc, numAlloc+1, numAlloc+2
+	// Allocate the 16-byte payload cell into s2 (the Dst home), using s0 as the
+	// cursor-address temp and s1 as the rc/​bump temp.
+	out := []string{
+		fmt.Sprintf("adrp %s, %s", xreg(s0), heapPtrSym),
+		fmt.Sprintf("add %s, %s, #:lo12:%s", xreg(s0), xreg(s0), heapPtrSym),
+		fmt.Sprintf("ldr %s, [%s]", xreg(s2), xreg(s0)), // cursor
+		fmt.Sprintf("add %s, %s, #7", xreg(s2), xreg(s2)),
+		fmt.Sprintf("and %s, %s, #-8", xreg(s2), xreg(s2)), // base (8-aligned)
+		fmt.Sprintf("mov %s, #1", wreg(s1)),
+		fmt.Sprintf("str %s, [%s]", wreg(s1), xreg(s2)), // rc = 1
+		fmt.Sprintf("add %s, %s, #24", xreg(s1), xreg(s2)),
+		fmt.Sprintf("str %s, [%s]", xreg(s1), xreg(s0)), // cursor = base + 16 + 8
+		fmt.Sprintf("add %s, %s, #8", xreg(s2), xreg(s2)), // payload = base + 8
+	}
+	// Store data @+0 and vtable @+8. The allocatable-file / slot homes the
+	// operands live in are untouched by the inline alloc above (only s0..s2),
+	// so staging them now through s0 is safe.
+	stage := func(l x86.Loc) {
+		if l.IsReg {
+			out = append(out, fmt.Sprintf("mov %s, %s", xreg(s0), xreg(l.Reg)))
+		} else {
+			out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(s0), 8*l.Slot))
+		}
+	}
+	stage(in.ArgLocs[0])
+	out = append(out, fmt.Sprintf("str %s, [%s]", xreg(s0), xreg(s2))) // data @+0
+	stage(in.ArgLocs[1])
+	out = append(out, fmt.Sprintf("str %s, [%s, #8]", xreg(s0), xreg(s2))) // vtable @+8
+	out = append(out, fmt.Sprintf("mov %s, %s", xreg(in.Dst), xreg(s2)))   // place cell ptr
+	return out
+}
+
+// callDynLines renders OpCallDyn: dispatch a `dyn Trait` method call
+// (docs/DYN-TRAITS.md §4.2.2). ArgLocs = [data, method-args..., vtable] — the
+// vtable is the LAST operand, not a call argument. Load the vtable, read slot
+// `in.Imm`'s absolute function pointer (`vtable + slot*8`) into a scratch, then
+// call it with [data, method-args...] as the AArch64 PCS args (receiver-first,
+// plain — no closure env). Mirrors callIndirectLines' save/restore + argument
+// parallel-move; the scratch registers (s1..s3 = x13..x15) sit above the arg
+// registers (x0..x7) and allocatable homes (x0..x11), so the resolved target
+// (s1) survives the argument move.
+func callDynLines(in x86.Inst, numAlloc, callSaveBase int) ([]string, error) {
+	n := len(in.ArgLocs)
+	if n < 1 {
+		return nil, fmt.Errorf("arm64ssa: OpCallDyn needs the vtable operand")
+	}
+	callArgs := in.ArgLocs[:n-1]
+	vtLoc := in.ArgLocs[n-1]
+	if len(callArgs) > argRegCount {
+		return nil, fmt.Errorf("arm64ssa: dyn call supports up to %d args, got %d", argRegCount, len(callArgs))
+	}
+	s1, s2, s3 := numAlloc+1, numAlloc+2, numAlloc+3
+	var out []string
+	// Stage the vtable into s2, then load slot -> target s1, before any argument
+	// register is disturbed.
+	if vtLoc.IsReg {
+		out = append(out, fmt.Sprintf("mov %s, %s", xreg(s2), xreg(vtLoc.Reg)))
+	} else {
+		out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(s2), 8*vtLoc.Slot))
+	}
+	if in.Imm != 0 {
+		out = append(out, fmt.Sprintf("ldr %s, [%s, #%d]", xreg(s1), xreg(s2), in.Imm*8))
+	} else {
+		out = append(out, fmt.Sprintf("ldr %s, [%s]", xreg(s1), xreg(s2)))
+	}
+	// Preserve the caller-saved registers live across the call.
+	saved := callSavedSet(in, numAlloc)
+	for k, r := range saved {
+		out = append(out, fmt.Sprintf("str %s, [sp, #%d]", xreg(r), 8*(callSaveBase+k)))
+	}
+	// Move [data, method-args...] into x0..x{n-1} and dispatch.
+	out = append(out, argMoveLines(callArgs)...)
 	out = append(out, fmt.Sprintf("blr %s", xreg(s1)))
 	out = append(out, fmt.Sprintf("mov %s, x0", xreg(s3))) // capture result
 	for k := len(saved) - 1; k >= 0; k-- {

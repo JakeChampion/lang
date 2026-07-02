@@ -1451,7 +1451,12 @@ func buildWasmSSA(prog *ast.Program, info *checker.Info) ([]byte, error) {
 // Ptr width is fixed at 8 (arm64). numAlloc is 12, the largest register file the
 // renderer's x0..x15 mapping supports (12 allocatable + 4 scratch = 16).
 func buildArm64SSA(prog *ast.Program, info *checker.Info) (string, error) {
-	irProg, err := ir.LowerWith(prog, info, 8)
+	// DynSupported enables `dyn Trait` lowering (OpConstVtable / OpBoxDyn /
+	// OpCallDyn + the per-(trait,concrete) vtables). DynRcSupported is
+	// deliberately NOT passed: this path does not yet reclaim `dyn` values
+	// (no `__drop_dyn_*` helper), so the box leaks — matching the arm64 native
+	// `dyn` slice. See docs/DYN-TRAITS.md §4.2.2 / §4.4.
+	irProg, err := ir.LowerWith(prog, info, 8, ir.DynSupported())
 	if err != nil {
 		return "", fmt.Errorf("ir.LowerWith: %v", err)
 	}
@@ -1461,7 +1466,20 @@ func buildArm64SSA(prog *ast.Program, info *checker.Info) (string, error) {
 	// `cos` and bail on the still-unported __cos_f64 helper. A missing live
 	// function can only ever surface as a clean "undefined label" link error,
 	// never a miscompile. `nil` (no entry point) means keep everything.
-	live := ir.LiveFunctionsWithAliases(irProg, nil)
+	// A `dyn Trait` vtable's method implementations (`__method_<C>_<m>`) are
+	// reached ONLY through the vtable's function-pointer slots — an indirect
+	// dispatch the reachability walk can't follow — so root them explicitly or
+	// dead-function elimination culls them and OpConstVtable's `.rodata` cell
+	// references a missing symbol (docs/DYN-TRAITS.md §4.2.2; mirrors the wasm
+	// backend's `dynImplMethods` roots). The trailing drop slot isn't emitted
+	// on this path (no `dyn` RC), so its Drop fn needs no rooting.
+	var dynRoots []string
+	for _, vt := range irProg.Vtables {
+		for _, m := range vt.Methods {
+			dynRoots = append(dynRoots, m.Func)
+		}
+	}
+	live := ir.LiveFunctionsWithAliases(irProg, nil, dynRoots...)
 	funcs := map[string]*ssa.Func{}
 	for _, fn := range irProg.Funcs {
 		if live != nil && !live[fn.Name] {
@@ -1481,7 +1499,7 @@ func buildArm64SSA(prog *ast.Program, info *checker.Info) (string, error) {
 	// 64-bit (i64/f64) return isn't masked back to i32 by the backend. The IR
 	// call op carries no return width, so this needs the whole module.
 	ssa.AnnotateCallWidths(funcs)
-	return arm64ssa.EmitAsmModule(funcs, "main", 12, nil)
+	return arm64ssa.EmitAsmModule(funcs, "main", 12, nil, irProg.Vtables...)
 }
 
 // Linux dev hosts (cross-compiling) and Macs natively as long
