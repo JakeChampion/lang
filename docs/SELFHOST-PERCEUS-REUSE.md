@@ -316,3 +316,68 @@ Add `reuse_enabled` to `EmitState` (default **false**), mirroring native's
 `RcReuseEnabled`. All of Slices 0–4 land behind it; a final isolated PR flips the
 default once every slice's differential + both fixpoint suites are green — so any
 regression bisects to that one-line flip.
+
+---
+
+## 7. Field-kind status & the exit-reclaim dependency (2026-07)
+
+Constructor reuse now covers, on **both** the cross-statement
+(`emit_cross_struct_reuse`) and functional-update self-overwrite
+(`emit_self_overwrite_reuse`) paths, structs whose every field is:
+
+- a flat scalar (`reuse_field_is_scalar`),
+- a leak-safe rc array (`is_leaksafe_array_field` — `i32[]`/`boolean[]`/`i64[]`/`f64[]`),
+- or a **direct nested-struct** pointer field (`inner: Inner`, `decl_is_struct`).
+
+All gated by the single `struct_fields_reusable` predicate; an overwritten
+nested-struct field's old inner box is released with a full freeing drop
+(`__struct_drop_<FT>` when it owns rc fields, then a box dec) before the fresh
+inner is written. Coverage: `internal/e2e/self_host_loop_reuse_ir_test.go`
+`loop-nested-struct-field-*` (cross) and `loop-funcupdate-nested-struct-*`
+(self-overwrite) — reuse fires (box 3 not 4) and 5M-iter churn stays balanced.
+
+### The blocker for the remaining kinds (enum / tuple / Map / closure fields)
+
+These are **not** admissible yet, and the blocker is NOT reuse — it is
+**struct-field exit-reclaim**. A struct with a direct enum/tuple/Map/closure
+field is not in the exit-drop set today (`struct_has_reclaim_array_field`
+excludes them; it admits only leak-safe arrays, struct/enum ARRAYS, and direct
+nested-structs). Consequences if reuse admitted such a kind without exit-reclaim:
+
+- reuse would release the *old* field on overwrite but the *new* field would
+  never be dropped when the reused box is finally freed → a **per-iteration
+  leak**, so the churn e2e (5M iters) would exhaust the heap and fail.
+
+So each remaining field kind requires its exit-reclaim to land FIRST (extend
+`struct_has_reclaim_array_field` + `emit_struct_field_drops` + each backend's
+`__struct_drop` k-arm for the kind). That is the **A2 struct-field-reclaim**
+work (issue #4297; `docs` #4314 root-cause; #4322 landed the `string`-field
+case). It is memory-safety-critical and has been OOM-runaway-prone (see the
+per-module note below), so the reuse layer deliberately waits on it rather than
+editing it in parallel.
+
+### Re-entry recipe (once a kind's exit-reclaim lands)
+
+Mechanically identical to the nested-struct slice — for field kind K:
+
+1. widen `struct_fields_reusable` to admit K (e.g. `decl_is_enum` / a tuple
+   predicate), only after `struct_has_reclaim_array_field` reclaims K at exit;
+2. add K's fresh-literal eligibility gate in `cross_reuse_sites` and
+   `self_overwrite_reuse_sites` (so the reused box solely owns the new value);
+3. add K's full-freeing-drop branch in both `emit_cross_struct_reuse` and
+   `emit_self_overwrite_reuse` (K's per-type drop helper + a box dec), mirroring
+   the nested-struct branch;
+4. add the `loop-<K>-field-{reuse,donor-live,churn-safe}` test trio, and keep
+   both x86-64 fixpoint suites byte-identical.
+
+### Related: the per-module emit OOM (`module 9`, exit 137)
+
+`TestSelfHostModloadPerModuleWholeCompilerX86_64` OOM-kills (exit 137) on
+`module 9`'s isolated `-per-module-emit`. Reproduces on clean `main` (not
+PR-specific), deterministically at ~24 GB local (16 GB RAM + 8 GB swap); standard
+16 GB CI runners hit it under concurrent shard load, so
+`test-e2e-selfhost-x86_64-shard9` flakes on every PR (non-blocking — the merge
+API accepts a PR with it red). The arm64 sibling and the whole-compiler fixpoint
+both pass, so it is specifically the per-module path peaking over runner memory —
+the same class as the #4314 "per-call leak that OOMs irlower's emit" root cause,
+i.e. part of the A2 track's surface, not the reuse layer's.
