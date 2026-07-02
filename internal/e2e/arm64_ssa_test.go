@@ -437,6 +437,41 @@ function main(): i32 {
 			want: 10,
 		},
 		{
+			// stdout() returns a Writer handle wrapping fd 1; a small write succeeds
+			// (None). The handle construction (fixed-fd, immortal rc) is the same as
+			// open_writer's, just without a syscall. Output goes to the harness's null
+			// stdout, so it's invisible.
+			name: "stdout_handle",
+			src:  `function main(): i32 { return match (stdout().write("x")) { Some(e) => 0, None => 5 }; }`,
+			want: 5,
+		},
+		{
+			// stderr() returns a Writer handle wrapping fd 2.
+			name: "stderr_handle",
+			src:  `function main(): i32 { return match (stderr().write("y")) { Some(e) => 0, None => 6 }; }`,
+			want: 6,
+		},
+		{
+			// open_appender opens O_WRONLY|O_CREAT|O_APPEND: two open→write→close
+			// cycles accumulate rather than truncate. write_file("") first gives a
+			// deterministic empty starting point, so the final length is 4 ("ABCD").
+			name: "open_appender_accumulates",
+			src: `function main(): i32 {
+  var t = write_file("/tmp/fern_ssa_e2e_app.txt", "");
+  var w1 = match (open_appender("/tmp/fern_ssa_e2e_app.txt")) {
+    Ok(w) => match (w.write("AB")) { Some(e) => 9, None => match (w.close()) { Some(e2) => 8, None => 0 } },
+    Err(e) => 7
+  };
+  var w2 = match (open_appender("/tmp/fern_ssa_e2e_app.txt")) {
+    Ok(w) => match (w.write("CD")) { Some(e) => 9, None => match (w.close()) { Some(e2) => 8, None => 0 } },
+    Err(e) => 7
+  };
+  if (w1 + w2 != 0) { return 90; }
+  return match (read_file("/tmp/fern_ssa_e2e_app.txt")) { Ok(s) => s.len(), Err(e) => 60 };
+}`,
+			want: 4,
+		},
+		{
 			// Integer to_string — the full digit-formatting chain: __alloc_u8
 			// (byte buffer), __fern_arr_cow_inplace (arr[i] = digit), and
 			// string_from_bytes (u8[] -> string). len("123456") = 6.
