@@ -165,6 +165,29 @@ var loopReuseIRCases = []struct {
 	{"loop-nested-struct-field-churn-safe",
 		`struct Inner { a: i32, b: i32 } struct Outer { inner: Inner, n: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5000000) { var d: Outer = Outer { inner: Inner { a: i, b: i + 1 }, n: i }; var s: i32 = d.inner.a + d.inner.b + d.n; var c: Outer = Outer { inner: Inner { a: i, b: 3 }, n: 5 }; sum = (sum + s + c.inner.a + c.inner.b + c.n) % 1000; i = i + 1; } return sum; }`,
 		0, 3},
+	// FUNCTIONAL-UPDATE (self-overwrite) reuse of a struct with a nested-struct
+	// field: `c = Outer { ...d, inner: Inner{...} }` reuses d's dead box in place.
+	// The OVERRIDDEN `inner` field full-freeing-drops d's old inner before writing
+	// c's fresh inner; the CARRIED `n` field moves with the reused box. Static box
+	// sites: d's Outer + d's Inner + c's fresh Inner = THREE (c's Outer reuses d's).
+	// Value: sum over i in 0..3 of (c.inner.a=2i + c.inner.b=3 + c.n=i) = 3i+3 →
+	// 3+6+9+12 = 30.
+	{"loop-funcupdate-nested-struct-reuse",
+		`struct Inner { a: i32, b: i32 } struct Outer { inner: Inner, n: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var d: Outer = Outer { inner: Inner { a: i, b: i + 1 }, n: i }; var c: Outer = Outer { ...d, inner: Inner { a: i * 2, b: 3 } }; sum = sum + c.inner.a + c.inner.b + c.n; i = i + 1; } return sum; }`,
+		30, 3},
+	// Funcupdate nested-struct donor-LIVE control: `d` is read after `c` is built,
+	// so d is not dead-after and reuse is suppressed — c allocates a fresh Outer too
+	// (FOUR box sites). Value 46 (d.inner.a+d.inner.b added on top).
+	{"loop-funcupdate-nested-struct-donor-live",
+		`struct Inner { a: i32, b: i32 } struct Outer { inner: Inner, n: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var d: Outer = Outer { inner: Inner { a: i, b: i + 1 }, n: i }; var c: Outer = Outer { ...d, inner: Inner { a: i * 2, b: 3 } }; sum = sum + d.inner.a + d.inner.b + c.inner.a + c.inner.b + c.n; i = i + 1; } return sum; }`,
+		46, 4},
+	// Funcupdate nested-struct memory safety at scale: 5M iterations. The overwritten
+	// inner box is full-freeing-dropped each turn and the reused Outer box carried;
+	// exit 0 (sum mod 1000) with THREE box sites proves alloc/free stays balanced (a
+	// leaked inner would exhaust the heap, a double-free would crash).
+	{"loop-funcupdate-nested-struct-churn-safe",
+		`struct Inner { a: i32, b: i32 } struct Outer { inner: Inner, n: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 5000000) { var d: Outer = Outer { inner: Inner { a: i, b: i + 1 }, n: i }; var c: Outer = Outer { ...d, inner: Inner { a: i, b: 3 } }; sum = (sum + c.inner.a + c.inner.b + c.n) % 1000; i = i + 1; } return sum; }`,
+		0, 3},
 }
 
 // TestSelfHostLoopReuseIRX86_64 compiles each case through the self-hosted x86-64
