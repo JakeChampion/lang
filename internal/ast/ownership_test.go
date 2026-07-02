@@ -109,3 +109,33 @@ func TestExprResultOwnership(t *testing.T) {
 		t.Errorf("ExprResultOwnership(string ident) = %s, want owned", got)
 	}
 }
+
+func TestExprResultOwnershipWith(t *testing.T) {
+	// A resolver makes an identifier read reflect its binding's ownership
+	// rather than the type's structural default. Here `p` is a borrowed param
+	// and `local` an owned local, both string-typed (structurally Owned).
+	resolve := func(name string) (Ownership, bool) {
+		switch name {
+		case "p":
+			return Borrowed, true
+		case "local":
+			return Owned, true
+		}
+		return 0, false
+	}
+	if got := ExprResultOwnershipWith(&Ident{Name: "p"}, StringType{}, resolve); got != Borrowed {
+		t.Errorf("ExprResultOwnershipWith(borrowed param) = %s, want borrowed", got)
+	}
+	if got := ExprResultOwnershipWith(&Ident{Name: "local"}, StringType{}, resolve); got != Owned {
+		t.Errorf("ExprResultOwnershipWith(owned local) = %s, want owned", got)
+	}
+	// An unknown name (not in scope for the resolver) falls back to structural.
+	if got := ExprResultOwnershipWith(&Ident{Name: "other"}, SliceType{Elem: NumberType{}}, resolve); got != View {
+		t.Errorf("ExprResultOwnershipWith(unknown slice ident) = %s, want view", got)
+	}
+	// The producer cases never consult the resolver — a string literal stays
+	// Static even if a same-named binding exists.
+	if got := ExprResultOwnershipWith(&StringLit{Value: "p"}, StringType{}, resolve); got != Static {
+		t.Errorf("ExprResultOwnershipWith(string literal) = %s, want static", got)
+	}
+}

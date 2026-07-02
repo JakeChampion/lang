@@ -111,6 +111,23 @@ func StructuralOwnership(t Type) Ownership {
 // context; callers that only need the producer classification (the checker's
 // view/owned diagnostics) use this directly.
 func ExprResultOwnership(e Expr, t Type) Ownership {
+	return ExprResultOwnershipWith(e, t, nil)
+}
+
+// ExprResultOwnershipWith is ExprResultOwnership with binding-precise resolution
+// of a bare identifier. `resolve` maps an in-scope name to its binding's
+// ownership — a borrowed parameter, an owned local, a `View` local bound from a
+// slice — returning (_, false) when the name is unknown. A caller with a symbol
+// table (the checker, the RC-insertion passes) supplies it to make an identifier
+// read reflect what it aliases rather than the type's structural default; a
+// caller that only needs the producer classification passes nil (the
+// ExprResultOwnership shorthand).
+//
+// The precise cases (literals, slices, fresh constructions, calls) are
+// unchanged — they classify from syntax and don't consult `resolve`, since what
+// a producer yields doesn't depend on any binding. Only the identifier fallback
+// uses it.
+func ExprResultOwnershipWith(e Expr, t Type, resolve func(name string) (Ownership, bool)) Ownership {
 	switch ex := e.(type) {
 	case *StringLit:
 		return Static
@@ -125,6 +142,12 @@ func ExprResultOwnership(e Expr, t Type) Ownership {
 		return Owned // scalar (inert; NeedsRC() is false)
 	case *Call:
 		return Owned // fresh result (borrowed-return refinement is a later slice)
+	case *Ident:
+		if resolve != nil {
+			if o, ok := resolve(ex.Name); ok {
+				return o
+			}
+		}
 	}
 	return StructuralOwnership(t)
 }
