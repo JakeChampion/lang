@@ -112,8 +112,8 @@ function main(): i32 {
     // exported `.globl`; `_start`/runtime only for the entry). Separately-
     // emitted units of a multi-module program link into one binary. The entry
     // folds -ir-extra-need (the whole-program need union) into its runtime.
-    if (unit == "entry") { print(asm_ir.emit_module_ir_unit(lm_inf, true, true, ns, extra, all_funcs, all_structs)); return 0; }
-    if (unit == "lib") { print(asm_ir.emit_module_ir_unit(lm_inf, false, true, ns, [], all_funcs, all_structs)); return 0; }
+    if (unit == "entry") { print(asm_ir.emit_module_ir_unit(lm_inf, true, true, ns, extra, all_funcs, all_structs, 0, 0 - 1)); return 0; }
+    if (unit == "lib") { print(asm_ir.emit_module_ir_unit(lm_inf, false, true, ns, [], all_funcs, all_structs, 0, 0 - 1)); return 0; }
     var emitted: string = "";
     if (use_ir && asm_ir.all_eligible_known(lm, known)) {
         emitted = asm_ir.emit_module_ir(lm);
