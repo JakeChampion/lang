@@ -94,12 +94,21 @@ direction). Each slice below is independently shippable and validated.
     default (borrowed → owned) across un-audited sites, and `Param.Own` reads
     cleanly as a bool. Ownership on params is surfaced instead via C3 (the
     inference result), where it carries real information.
-- **C3.** Expose the `inferParamEscapes` result as ownership on the param type
-  rather than a bare bool side-table (keep the side-table as the computation;
-  surface the *result* onto the type). Gated by `rc_borrow_infer` differential
-  tests staying byte-identical.
-- **C4.** Fold `HandleType.Borrowed` into the same axis.
-- **C5.** Add a checker validation pass that flags an *ownership mismatch* — the
+- **C3 (binding-precise resolution, additive).** `ast.ExprResultOwnershipWith`
+  — the classifier with a `resolve(name) (Ownership, bool)` hook, so a bare
+  identifier read reflects its binding's ownership (a borrowed param, an owned
+  local, a `View` local) instead of the type's structural default. The producer
+  cases are unchanged; only the identifier fallback consults the resolver. This
+  is the mechanism the next slice's inference-fed resolver plugs into. **This
+  PR.**
+- **C4 (wire inference → the resolver).** Feed the `inferParamEscapes` result
+  (and the local-binding ownership derived at each `StmtVar` from
+  `ExprResultOwnership`) into the resolver at the RC-insertion sites, reading
+  ownership through the axis rather than the bare bool side-table + per-shape
+  reasoning. Gated by `rc_borrow_infer` differential tests staying
+  byte-identical — this is the consolidation, so output must not move.
+- **C5.** Fold `HandleType.Borrowed` into the same axis.
+- **C6.** Add a checker validation pass that flags an *ownership mismatch* — the
   first real enforcement, catching the class of bug the checker missed (a value
   used as owned where its type says `View`/`Borrowed`).
 
