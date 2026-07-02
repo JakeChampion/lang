@@ -345,3 +345,224 @@ func TestSelfHostPerModuleIncrementalCodegenX86_64(t *testing.T) {
 		t.Fatalf("B: incremental build not byte-identical to clean build")
 	}
 }
+
+// TestSelfHostPerModuleObjectCacheX86_64 exercises the driver's OWN on-disk
+// object cache (#3451 step 6 / #3458): `-per-module-emit N -cache-dir DIR`.
+// Where TestSelfHostPerModuleIncrementalCodegen models the cache in the test
+// harness off the manifest, this proves the driver itself computes the cache
+// key, serves a hit from disk (skipping codegen), and populates on a miss —
+// reporting hit/miss per module on stderr while stdout stays exactly the unit
+// asm. The invalidation contract is identical: a body-only edit re-emits just
+// that module; a dependency's signature change re-emits that module and its
+// importers, with everything else served byte-for-byte from cache.
+func TestSelfHostPerModuleObjectCacheX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	shDir := writeSelfHostModloadProject(t)
+	driverBin := buildSelfHostBin(t, gcc, shDir, "asm_modload_run.fern", "driver")
+
+	proj := t.TempDir()
+	cacheDir := filepath.Join(proj, "cache")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("mkdir cache: %v", err)
+	}
+	writeLeaf := func(body string) {
+		if err := os.WriteFile(filepath.Join(proj, "leaf.fern"), []byte(body), 0o644); err != nil {
+			t.Fatalf("write leaf.fern: %v", err)
+		}
+	}
+	writeLeaf("pub function leaf_val(): i32 { return 40; }\n")
+	if err := os.WriteFile(filepath.Join(proj, "mid.fern"), []byte(
+		"import \"./leaf\";\n"+
+			"pub function mid_val(): i32 {\n"+
+			"    var x = leaf.leaf_val();\n"+
+			"    if (x > 0) { return 42; }\n"+
+			"    return 0;\n"+
+			"}\n"), 0o644); err != nil {
+		t.Fatalf("write mid.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, "main.fern"), []byte(
+		"import \"./mid\";\nfunction main(): i32 { return mid.mid_val(); }\n"), 0o644); err != nil {
+		t.Fatalf("write main.fern: %v", err)
+	}
+	entry := filepath.Join(proj, "main.fern")
+
+	// drive returns (stdout, stderr); stderr carries the cache-hit/miss lines.
+	drive := func(args ...string) (string, string) {
+		t.Helper()
+		full := append([]string{entry}, args...)
+		var cmd *exec.Cmd
+		if len(runner) == 0 {
+			cmd = exec.Command(driverBin, full...)
+		} else {
+			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), full...)...)
+		}
+		var errb strings.Builder
+		cmd.Stderr = &errb
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("driver %v: %v\nstderr:\n%s", args, err, errb.String())
+		}
+		return string(out), errb.String()
+	}
+
+	// Module namespaces in emit-index order (from the manifest).
+	var nsOrder []string
+	for _, ln := range strings.Split(mustStdout(drive("-per-module-manifest")), "\n") {
+		if ln = strings.TrimSpace(ln); ln != "" {
+			nsOrder = append(nsOrder, strings.SplitN(ln, "|", 2)[0])
+		}
+	}
+	if len(nsOrder) < 3 {
+		t.Fatalf("expected >=3 modules, got %v", nsOrder)
+	}
+
+	var needArgs []string
+	for _, ln := range strings.Split(mustStdout(drive("-per-module-needs")), "\n") {
+		if s := strings.TrimSpace(ln); s != "" {
+			needArgs = append(needArgs, "-extra-need", s)
+		}
+	}
+
+	// buildWithCache emits every module through the cache, returning the per-ns
+	// unit asm and the sets of cache hits / misses observed.
+	buildWithCache := func() (map[string]string, []string, []string) {
+		units := map[string]string{}
+		var hits, misses []string
+		for i, ns := range nsOrder {
+			args := append([]string{"-per-module-emit", strconv.Itoa(i), "-cache-dir", cacheDir}, needArgs...)
+			out, errs := drive(args...)
+			units[ns] = out
+			for _, ln := range strings.Split(errs, "\n") {
+				ln = strings.TrimSpace(ln)
+				if m := strings.TrimPrefix(ln, "cache-hit "); m != ln {
+					hits = append(hits, m)
+				} else if m := strings.TrimPrefix(ln, "cache-miss "); m != ln {
+					misses = append(misses, m)
+				}
+			}
+		}
+		sort.Strings(hits)
+		sort.Strings(misses)
+		return units, hits, misses
+	}
+
+	// cleanUnits emits every module fresh (no cache) — the reference a cached
+	// build must match byte-for-byte.
+	cleanUnits := func() map[string]string {
+		units := map[string]string{}
+		for i, ns := range nsOrder {
+			out, _ := drive(append([]string{"-per-module-emit", strconv.Itoa(i)}, needArgs...)...)
+			units[ns] = out
+		}
+		return units
+	}
+
+	linkRun := func(tag string, units map[string]string) int {
+		var objs []string
+		for i, ns := range nsOrder {
+			p := filepath.Join(proj, tag+"_u"+strconv.Itoa(i)+".s")
+			if err := os.WriteFile(p, []byte(units[ns]), 0o644); err != nil {
+				t.Fatalf("write %s: %v", p, err)
+			}
+			objs = append(objs, p)
+		}
+		bin := filepath.Join(proj, tag+"_bin")
+		linkArgs := append([]string{"-static", "-nostdlib", "-no-pie"}, append(objs, "-o", bin)...)
+		if lout, err := exec.Command(gcc, linkArgs...).CombinedOutput(); err != nil {
+			t.Fatalf("%s link: %v\n%s", tag, err, lout)
+		}
+		var rcmd *exec.Cmd
+		if len(runner) == 0 {
+			rcmd = exec.Command(bin)
+		} else {
+			rcmd = exec.Command(runner[0], append(runner[1:], bin)...)
+		}
+		_ = rcmd.Run()
+		return rcmd.ProcessState.ExitCode()
+	}
+
+	assertUnitsMatch := func(tag string, got map[string]string) {
+		clean := cleanUnits()
+		for _, ns := range nsOrder {
+			if got[ns] != clean[ns] {
+				t.Errorf("%s: unit %q not byte-identical to a clean emit", tag, ns)
+			}
+		}
+	}
+
+	// eq reports whether sorted `a` equals the set `want`. It copies `want`
+	// before sorting: a bare sort.Strings(want) would mutate the caller's slice
+	// in place, because a variadic argument passed as `nsOrder...` aliases
+	// nsOrder — reordering it under the later cleanUnits loop.
+	eq := func(a []string, want ...string) bool {
+		b := append([]string(nil), want...)
+		sort.Strings(b)
+		if len(a) != len(b) {
+			return false
+		}
+		for i := range a {
+			if a[i] != b[i] {
+				return false
+			}
+		}
+		return true
+	}
+
+	// --- Cold build: every module a miss, cache populated. ---
+	units, hits, misses := buildWithCache()
+	if len(hits) != 0 || !eq(misses, nsOrder...) {
+		t.Fatalf("cold build: hits=%v misses=%v, want no hits and all-miss", hits, misses)
+	}
+	if code := linkRun("cold", units); code != 42 {
+		t.Fatalf("cold build exit %d, want 42", code)
+	}
+	assertUnitsMatch("cold", units)
+
+	// --- Warm build, no edits: every module a hit, bytes unchanged. ---
+	units2, hits2, misses2 := buildWithCache()
+	if !eq(hits2, nsOrder...) || len(misses2) != 0 {
+		t.Fatalf("warm build: hits=%v misses=%v, want all-hit and no miss", hits2, misses2)
+	}
+	for _, ns := range nsOrder {
+		if units2[ns] != units[ns] {
+			t.Errorf("warm build: unit %q changed despite no edit", ns)
+		}
+	}
+	if code := linkRun("warm", units2); code != 42 {
+		t.Fatalf("warm build exit %d, want 42", code)
+	}
+
+	// --- Body-only edit to leaf: only leaf re-emits; mid/__entry served. ---
+	writeLeaf("pub function leaf_val(): i32 { return 41; }\n")
+	unitsA, hitsA, missesA := buildWithCache()
+	if !eq(missesA, "leaf") {
+		t.Fatalf("body edit: misses=%v, want exactly [leaf]", missesA)
+	}
+	if !eq(hitsA, "mid", "__entry") {
+		t.Fatalf("body edit: hits=%v, want exactly [mid __entry]", hitsA)
+	}
+	if code := linkRun("bodyedit", unitsA); code != 42 {
+		t.Fatalf("body-edit build exit %d, want 42", code)
+	}
+	assertUnitsMatch("bodyedit", unitsA)
+
+	// --- Signature edit to leaf (i32 -> i64): leaf AND mid re-emit (mid's
+	// call-site codegen depends on leaf's return type), __entry served. This is
+	// the guard: a source-only cache would serve a stale mid unit. ---
+	writeLeaf("pub function leaf_val(): i64 { return 41i64; }\n")
+	unitsB, hitsB, missesB := buildWithCache()
+	if !eq(missesB, "leaf", "mid") {
+		t.Fatalf("sig edit: misses=%v, want exactly [leaf mid]", missesB)
+	}
+	if !eq(hitsB, "__entry") {
+		t.Fatalf("sig edit: hits=%v, want exactly [__entry]", hitsB)
+	}
+	if code := linkRun("sigedit", unitsB); code != 42 {
+		t.Fatalf("sig-edit build exit %d, want 42", code)
+	}
+	assertUnitsMatch("sigedit", unitsB)
+}
+
+// mustStdout is a tiny adapter for the (stdout, stderr) drive helper when only
+// stdout matters.
+func mustStdout(stdout, _ string) string { return stdout }
