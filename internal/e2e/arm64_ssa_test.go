@@ -363,6 +363,13 @@ function main(): i32 {
 			want: 4,
 		},
 		{
+			// wasm_poll is -1 on native (no real pollables; readiness rides poll(2)),
+			// ignoring its array arg. On wasm it's the real wasi:io/poll.poll.
+			name: "wasm_poll_stub",
+			src:  `function main(): i32 { var ps: i32[] = [3, 7]; var i = wasm_poll(ps); return if (i == -1) { 5 } else { 0 }; }`,
+			want: 5,
+		},
+		{
 			// Writer write-path round-trip: open_writer creates the file and returns a
 			// Writer handle (fd at handle+8, immortal-rc so it's never freed); w.write
 			// streams the bytes; w.close closes the fd; read_file reads it back (len 5).

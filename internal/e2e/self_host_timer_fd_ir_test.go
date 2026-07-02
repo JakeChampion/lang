@@ -20,6 +20,9 @@ import (
 //     deadline rides poll(2)'s timeout arg).
 //   - wasm_pollable_drop(p)    -> __fern_wasm_pollable_drop: 0 on native (a
 //     pollable is just an fd; nothing to drop).
+//   - wasm_poll(pollables)     -> __fern_wasm_poll: -1 on native (no real
+//     pollables; readiness rides poll(2) directly). On wasm this is the real
+//     wasi:io/poll.poll(list<pollable>) multiplexer.
 //
 // Two programs: (a) a with_deadline-shape readiness case — arm a 1 ms timerfd,
 // poll it with a 500 ms budget, and expect index 0 (the timer fires) — which
@@ -59,6 +62,15 @@ func TestSelfHostTimerFdIRX86_64(t *testing.T) {
     var d: i32 = wasm_pollable_drop(p);
     return d - p;
 }`, 1},
+		// wasm_poll over a one-pollable array: -1 on native (no real pollables),
+		// and wasm_timer_pollable(0) is also -1, so idx - p == -1 - (-1) == 0. Pins
+		// the wasm_poll shim + its i32[]-arg lowering on the register IR path.
+		{"wasm-poll-shim", `function main(): i32 {
+    var p: i32 = wasm_timer_pollable(0);
+    var ps: i32[] = [p];
+    var idx: i32 = wasm_poll(ps);
+    return idx - p;
+}`, 0},
 	}
 
 	for _, tc := range cases {

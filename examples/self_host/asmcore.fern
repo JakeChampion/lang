@@ -1753,6 +1753,8 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     if (id.name == "wasm_timer_pollable") { return ty_i32(); }
                     if (id.name == "wasm_pollable_drop") { return ty_i32(); }
                     if (id.name == "wasm_block") { return ty_i32(); }
+                    // wasm_poll(pollables: i32[]) -> i32 (first ready index, or -1).
+                    if (id.name == "wasm_poll") { return ty_i32(); }
                     // tcp_recv(fd, max) -> string box; the rest -> i32 (fd /
                     // byte count / pollable token / -errno).
                     if (id.name == "tcp_recv") { return ty_string(); }
