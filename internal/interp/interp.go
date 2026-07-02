@@ -611,6 +611,7 @@ func New() *Interp {
 	i.Builtins["tcp_pollable"] = &Builtin{Fn: builtinTcpPollable}
 	i.Builtins["wasm_pollable_drop"] = &Builtin{Fn: builtinWasmPollableDrop}
 	i.Builtins["wasm_timer_pollable"] = &Builtin{Fn: builtinWasmTimerPollable}
+	i.Builtins["wasm_block"] = &Builtin{Fn: builtinWasmBlock}
 	return i
 }
 
@@ -747,6 +748,20 @@ func builtinWasmPollableDrop(_ *Interp, args []Value) (Value, error) {
 	}
 	if _, ok := args[0].(Number); !ok {
 		return nil, fmt.Errorf("wasm_pollable_drop: expected number arg, got %T", args[0])
+	}
+	return Number(0), nil
+}
+
+// builtinWasmBlock is the interpreter's `wasm_block(p)` — a no-op (returns 0),
+// like the native backends: there's no pollable to wait on (a deadline is
+// poll(2)'s timeout arg). Present so std/async's with_deadline (which blocks on
+// a timer pollable on wasm) runs portably under interp.
+func builtinWasmBlock(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("wasm_block: expected 1 arg, got %d", len(args))
+	}
+	if _, ok := args[0].(Number); !ok {
+		return nil, fmt.Errorf("wasm_block: expected number arg, got %T", args[0])
 	}
 	return Number(0), nil
 }

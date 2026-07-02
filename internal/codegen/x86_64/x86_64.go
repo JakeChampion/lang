@@ -373,6 +373,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesWasmPollableDrop {
 		g.emitWasmPollableDropRuntime()
 	}
+	if g.usesWasmBlock {
+		g.emitWasmBlockRuntime()
+	}
 	if g.usesWasmTimerPollable {
 		g.emitWasmTimerPollableRuntime()
 	}
@@ -537,6 +540,7 @@ type generator struct {
 	usesPoll              bool
 	usesWasmPollableDrop  bool
 	usesWasmTimerPollable bool
+	usesWasmBlock         bool
 	usesTimerFd           bool
 	usesAsBytes           bool
 	usesReadLine          bool
@@ -845,6 +849,12 @@ func (g *generator) recordUse(target string) {
 		// fetch_future (which drops the wasm pollable before close)
 		// compiles + runs portably.
 		g.usesWasmPollableDrop = true
+	case "wasm_block":
+		// On native there's no pollable to wait on (a deadline comes from
+		// poll(2)'s own timeout arg — wasm_timer_pollable returns -1), so
+		// blocking is a no-op returning 0. Present so std/async's
+		// with_deadline (which blocks on a timer pollable on wasm) is portable.
+		g.usesWasmBlock = true
 	case "wasm_timer_pollable":
 		// On native there's no pollable to make — a deadline comes from
 		// poll(2)'s own timeout arg — so this returns -1 (an fd poll(2)
@@ -2043,6 +2053,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_tcp_pollable"
 		case "wasm_pollable_drop":
 			target = "__fern_wasm_pollable_drop"
+		case "wasm_block":
+			target = "__fern_wasm_block"
 		case "wasm_timer_pollable":
 			target = "__fern_wasm_timer_pollable"
 		case "tcp_close":
@@ -5735,6 +5747,20 @@ func (g *generator) emitWasmPollableDropRuntime() {
 	g.emit("xor eax, eax") // return 0 (no-op)
 	g.emit("ret")
 	g.line(".size __fern_wasm_pollable_drop, .-__fern_wasm_pollable_drop")
+}
+
+// emitWasmBlockRuntime emits `__fern_wasm_block(p)` — a no-op on native (there's
+// no pollable to wait on; a deadline comes from poll(2)'s own timeout arg).
+// Returns 0. Lets std/async's with_deadline block on a timer pollable portably;
+// on wasm this symbol is the real wasi:io/poll.[method]pollable.block instead.
+func (g *generator) emitWasmBlockRuntime() {
+	g.line("")
+	g.line(".globl __fern_wasm_block")
+	g.line(".type __fern_wasm_block, @function")
+	g.label("__fern_wasm_block")
+	g.emit("xor eax, eax") // return 0 (no-op)
+	g.emit("ret")
+	g.line(".size __fern_wasm_block, .-__fern_wasm_block")
 }
 
 // emitTcpPollableRuntime emits `__fern_tcp_pollable(fd)` — on native the

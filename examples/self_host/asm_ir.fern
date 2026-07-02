@@ -450,6 +450,18 @@ function emit_ir_wasm_pollable_drop(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
+// emit_ir_wasm_block appends __fern_wasm_block(p) -> 0: on native there's no
+// pollable to wait on (a deadline rides poll(2)'s timeout arg — wasm_timer_pollable
+// returned -1), so blocking is a 0 no-op. On wasm this is a real
+// wasi:io/poll.[method]pollable.block. Portability shim for the reactor's
+// with_deadline.
+function emit_ir_wasm_block(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("__fern_wasm_block:\n");
+    s = s.write("    xorq %rax, %rax\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
 // emit_ir_tcp_connect appends __fern_tcp_connect(%rdi = host_be, %rsi = port) ->
 // the connected fd (or -errno) in %rax. Mirrors the native helper: socket(AF_INET
 // =2, SOCK_STREAM=1, 0) [#41], build a 16-byte sockaddr_in {family=2,
@@ -3417,6 +3429,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_strbuf_reset", "__fern_strbuf_take", "__fern_random_i32",
         "__fern_random_bytes", "__fern_monotonic_ns", "__fern_now_ns", "__fern_poll",
         "__fern_timer_fd", "__fern_wasm_timer_pollable", "__fern_wasm_pollable_drop",
+        "__fern_wasm_block",
         "__fern_tcp_connect", "__fern_tcp_pollable", "__fern_tcp_close",
         "__fern_tcp_recv", "__fern_tcp_send",
         "__fern_now_unix_ms", "__fern_sleep_ms", "__fern_map_new",
@@ -3878,6 +3891,11 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // is just an fd; nothing to drop). Portability shim.
             s = s.write("    popq %rdi\n    call __fern_wasm_pollable_drop\n    pushq %rax\n");
             s = s.need("wasm_pollable_drop");
+        } else if (o.kind == "wasm_block") {
+            // [p]; __fern_wasm_block(%rdi=p) -> 0 on native (no pollable to wait
+            // on; a deadline rides poll(2)). Push the 0 result.
+            s = s.write("    popq %rdi\n    call __fern_wasm_block\n    pushq %rax\n");
+            s = s.need("wasm_block");
         } else if (o.kind == "tcp_connect") {
             // [host_be, port]; __fern_tcp_connect(%rdi=host_be, %rsi=port) -> fd
             // (or -errno) in %rax.
@@ -5370,6 +5388,7 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     if (s.has_need("timer_fd")) { s = emit_ir_timer_fd(s); }
     if (s.has_need("wasm_timer_pollable")) { s = emit_ir_wasm_timer_pollable(s); }
     if (s.has_need("wasm_pollable_drop")) { s = emit_ir_wasm_pollable_drop(s); }
+    if (s.has_need("wasm_block")) { s = emit_ir_wasm_block(s); }
     if (s.has_need("tcp_connect")) { s = emit_ir_tcp_connect(s); }
     if (s.has_need("tcp_pollable")) { s = emit_ir_tcp_pollable(s); }
     if (s.has_need("tcp_close")) { s = emit_ir_tcp_close(s); }

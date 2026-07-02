@@ -464,6 +464,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesWasmPollableDrop {
 		g.emitWasmPollableDropRuntime()
 	}
+	if g.usesWasmBlock {
+		g.emitWasmBlockRuntime()
+	}
 	if g.usesWasmTimerPollable {
 		g.emitWasmTimerPollableRuntime()
 	}
@@ -3474,6 +3477,21 @@ func (g *generator) emitWasmPollableDropRuntime() {
 	g.line(".ltorg")
 }
 
+// emitWasmBlockRuntime emits `__fern_wasm_block(p)` — a no-op on native (there's
+// no pollable to wait on; a deadline comes from poll(2)'s own timeout arg).
+// Returns 0. Lets std/async's with_deadline block on a timer pollable portably;
+// on wasm this symbol is the real wasi:io/poll.[method]pollable.block instead.
+func (g *generator) emitWasmBlockRuntime() {
+	g.line("")
+	g.line(".global __fern_wasm_block")
+	g.typeDirective("__fern_wasm_block")
+	g.label("__fern_wasm_block")
+	g.emit("mov w0, #0") // return 0 (no-op)
+	g.emit("ret")
+	g.sizeDirective("__fern_wasm_block")
+	g.line(".ltorg")
+}
+
 // emitTcpPollableRuntime emits `__fern_tcp_pollable(fd)` — on native the
 // readiness token for a socket IS its fd (ppoll(2) takes fds directly), so
 // this is the identity: the fd argument is already in w0/x0, just return it.
@@ -6346,6 +6364,10 @@ type generator struct {
 	// (a pollable is just an fd on native) so std/async's fetch_future
 	// compiles + runs portably.
 	usesWasmPollableDrop bool
+	// usesWasmBlock pulls in the no-op `__fern_wasm_block` (no native pollable
+	// to wait on — a deadline is poll(2)'s timeout arg) so std/async's
+	// with_deadline blocks portably.
+	usesWasmBlock bool
 	// usesWasmTimerPollable pulls in `__fern_wasm_timer_pollable` returning
 	// -1 on native (the deadline is poll(2)'s timeout arg) so std/async's
 	// with_deadline is portable.
@@ -9164,6 +9186,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "wasm_pollable_drop":
 			target = "__fern_wasm_pollable_drop"
 			g.usesWasmPollableDrop = true
+		case "wasm_block":
+			target = "__fern_wasm_block"
+			g.usesWasmBlock = true
 		case "wasm_timer_pollable":
 			target = "__fern_wasm_timer_pollable"
 			g.usesWasmTimerPollable = true

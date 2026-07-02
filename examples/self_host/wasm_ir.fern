@@ -705,12 +705,15 @@ pub function wasm_eligible(mod: parser.Module): boolean {
         // preview2 analog (the wasm reactor uses wasm_timer_pollable instead), so
         // a timer_fd module stays on the wasm AST path for now.
         && !module_emits_op(mod, "timer_fd")
-        // wasm_timer_pollable / wasm_pollable_drop DO lower on the wasm IR path
-        // now (#3457 / #4317): wasm_ir emits direct preview2 calls
+        // wasm_timer_pollable / wasm_pollable_drop / wasm_block DO lower on the
+        // wasm IR path now (#3457 / #4317): wasm_ir emits direct preview2 calls
         // (wasi:clocks/monotonic-clock.subscribe-duration, wasi:io/poll
-        // [resource-drop]pollable) and wasm_ir_run adds the matching component
-        // imports; the module composes to a component via `wasm-tools component
-        // new`. poll() (the list<pollable> multiplexer) is still deferred below.
+        // [method]pollable.block, wasi:io/poll [resource-drop]pollable) and
+        // wasm_ir_run adds the matching component imports; the module composes to a
+        // component via `wasm-tools component new`. wasm_block makes a
+        // wasm_timer_pollable timer observably block (subscribe → block → the
+        // duration elapses). poll() (the list<pollable> multiplexer) is still
+        // deferred below.
         // tcp_* client primitives: native lowers them via the IR (socket
         // syscalls + the self-host string ABI for recv/send), but the
         // self-host wasm backend has no socket runtime (wasm sockets need the
@@ -744,6 +747,12 @@ pub function wasi_subscribe_duration_import(): string {
 }
 pub function wasi_pollable_drop_import(): string {
     return "  (import \"wasi:io/poll@0.2.0\" \"[resource-drop]pollable\" (func $__fern_wasi_pollable_drop (param i32)))\n";
+}
+// wasm_block: [method]pollable.block synchronously waits (param i32 self, no
+// result) until the pollable is ready. The primitive that makes
+// wasm_timer_pollable observably block. Same wasi:io/poll interface as the drop.
+pub function wasi_pollable_block_import(): string {
+    return "  (import \"wasi:io/poll@0.2.0\" \"[method]pollable.block\" (func $__fern_wasi_pollable_block (param i32)))\n";
 }
 
 // lift_lambdas re-exports irlower's lambda-lift pre-pass (closures slice 2a) so
@@ -1040,6 +1049,15 @@ function emit_function_ir(fd: parser.FuncDecl, str_vals: string[], structs: pars
             // resource (wasi:io/poll.[resource-drop]pollable), then push 0 for the
             // op's i32 result. Preview-2 direct import, same component path.
             out = out + "    call $__fern_wasi_pollable_drop\n";
+            out = out + "    i32.const 0\n";
+        } else if (o.kind == "wasm_block") {
+            // wasm_block(p: i32) -> i32. Synchronously wait until the pollable is
+            // ready (wasi:io/poll.[method]pollable.block), then push 0 for the op's
+            // i32 result. This is what makes wasm_timer_pollable observably block:
+            // subscribe a timer, block on its pollable, and control returns after
+            // the duration elapses. Preview-2 direct import, same component path as
+            // the other pollable ops. The pollable handle is already on the stack.
+            out = out + "    call $__fern_wasi_pollable_block\n";
             out = out + "    i32.const 0\n";
         } else if (o.kind == "temp_dir") {
             // temp_dir(prefix) -> create a unique `<prefix>-<ns>` directory under
