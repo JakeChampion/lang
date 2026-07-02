@@ -387,6 +387,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"tcp_close":               emitTcpCloseHelper,
 	"tcp_pollable":            emitTcpPollableHelper,
 	"poll":                    emitPollHelper,
+	"wasm_timer_pollable":     emitWasmTimerPollableHelper,
+	"wasm_pollable_drop":      emitWasmPollableDropHelper,
 	"print":                  emitPrintHelper,
 	"write":                  emitWriteHelper,
 	"eprint":                 emitEprintHelper,
@@ -899,6 +901,28 @@ func emitTcpCloseHelper(w func(string, ...any)) {
 func emitTcpPollableHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("tcp_pollable"))
+	w("\tret")
+}
+
+// emitWasmTimerPollableHelper writes wasm_timer_pollable(ns) → i32: on native
+// there's no pollable to make for a deadline (the timeout is poll(2)'s argument),
+// so it returns -1 — an fd poll(2) ignores. Lets std/async's with_deadline append
+// a portable "timer" slot to its poll set (on wasm this yields a real pollable).
+// Leaf.
+func emitWasmTimerPollableHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("wasm_timer_pollable"))
+	w("\tmov x0, #-1") // no native pollable; -1 is ignored by poll(2)
+	w("\tret")
+}
+
+// emitWasmPollableDropHelper writes wasm_pollable_drop(p) → i32: a no-op on
+// native (a pollable is just an fd; the socket fd is closed via tcp_close).
+// Returns 0. Lets std/async drop the wasm pollable portably. Leaf.
+func emitWasmPollableDropHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("wasm_pollable_drop"))
+	w("\tmov x0, #0") // no-op
 	w("\tret")
 }
 

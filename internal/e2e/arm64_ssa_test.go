@@ -348,6 +348,21 @@ function main(): i32 {
 			want: 3,
 		},
 		{
+			// wasm_timer_pollable is a native stub returning -1 (no pollable to make;
+			// the deadline is poll(2)'s timeout arg). Lets std/async's with_deadline
+			// stay portable across native + wasm.
+			name: "wasm_timer_pollable_stub",
+			src:  `function main(): i32 { var t = wasm_timer_pollable(1000000); return if (t == -1) { 1 } else { 0 }; }`,
+			want: 1,
+		},
+		{
+			// wasm_pollable_drop is a native no-op returning 0 (a pollable is just an
+			// fd, closed via tcp_close).
+			name: "wasm_pollable_drop_stub",
+			src:  `function main(): i32 { return wasm_pollable_drop(5) + 4; }`,
+			want: 4,
+		},
+		{
 			// Integer to_string — the full digit-formatting chain: __alloc_u8
 			// (byte buffer), __fern_arr_cow_inplace (arr[i] = digit), and
 			// string_from_bytes (u8[] -> string). len("123456") = 6.
