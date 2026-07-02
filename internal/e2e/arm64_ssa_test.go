@@ -891,6 +891,40 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 }`,
 			want: 10,
 		},
+		{
+			// remove_dir_all (recursive rm -rf): create a temp dir with two files,
+			// remove_dir_all it (None), then read_dir confirms it's gone (Err). Each
+			// child file drives a recursion that hits ENOTDIR and unlinks; the emptied
+			// directory is then rmdir'd.
+			name: "remove_dir_all_dir",
+			src: `function main(): i32 {
+  return match (temp_dir("fern_rda")) {
+    Ok(d) => {
+      var a = write_file(d + "/a.txt", "x");
+      var b = write_file(d + "/b.txt", "y");
+      var r = match (remove_dir_all(d)) { Some(e) => 40, None => 0 };
+      var g = match (read_dir(d)) { Ok(es) => 50, Err(e) => 0 };
+      r + g + 5
+    },
+    Err(e) => 60
+  };
+}`,
+			want: 5,
+		},
+		{
+			// remove_dir_all on a missing path is a silent success (None, matching
+			// os.RemoveAll); on a plain file it unlinks (ENOTDIR path) and the file is
+			// gone afterward.
+			name: "remove_dir_all_missing_and_file",
+			src: `function main(): i32 {
+  var m = match (remove_dir_all("/no_such_ssa_rda_dir")) { Some(e) => 1, None => 0 };
+  var t = write_file("/tmp/fern_ssa_e2e_rda_file.txt", "z");
+  var f = match (remove_dir_all("/tmp/fern_ssa_e2e_rda_file.txt")) { Some(e) => 2, None => 0 };
+  var g = match (read_file("/tmp/fern_ssa_e2e_rda_file.txt")) { Ok(s) => 4, Err(e) => 0 };
+  return m + f + g + 7;
+}`,
+			want: 7,
+		},
 	}
 
 	for _, c := range cases {
