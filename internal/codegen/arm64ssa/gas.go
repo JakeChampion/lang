@@ -397,6 +397,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__exp_f64":              emitExpF64Helper,
 	"__log_f64":              emitLogF64Helper,
 	"__pow_f64":              emitPowF64Helper,
+	"__sin_f64":              emitSinF64Helper,
+	"__cos_f64":              emitCosF64Helper,
 }
 
 // emitFloatUnaryHelper returns the emitter for a single-instruction f64 unary
@@ -422,6 +424,8 @@ var transcendentalHelpers = map[string]bool{
 	"__exp_f64": true,
 	"__log_f64": true,
 	"__pow_f64": true,
+	"__sin_f64": true,
+	"__cos_f64": true,
 }
 
 // usesTranscendentals reports whether any referenced helper needs the shared
@@ -448,6 +452,7 @@ func emitTranscendentalRodata(w func(string, ...any)) {
 	for _, c := range []struct{ lbl, val string }{
 		{".Lfc_log2e", "1.4426950408889634"},
 		{".Lfc_ln2", "0.6931471805599453"},
+		{".Lfc_halfpi", "1.5707963267948966"},
 		{".Lfc_sqrt2", "1.4142135623730951"},
 		{".Lfc_one", "1.0"},
 		{".Lfc_half", "0.5"},
@@ -456,6 +461,12 @@ func emitTranscendentalRodata(w func(string, ...any)) {
 		{".Lfc_e5", "0.0083333333333333332"},
 		{".Lfc_e4", "0.041666666666666664"},
 		{".Lfc_e3", "0.16666666666666666"},
+		{".Lfc_s7", "-0.00019841269841269841"},
+		{".Lfc_s5", "0.0083333333333333332"},
+		{".Lfc_s3", "-0.16666666666666666"},
+		{".Lfc_c6", "-0.0013888888888888889"},
+		{".Lfc_c4", "0.041666666666666664"},
+		{".Lfc_c2", "-0.5"},
 		{".Lfc_l11", "0.090909090909090912"},
 		{".Lfc_l9", "0.1111111111111111"},
 		{".Lfc_l7", "0.14285714285714285"},
@@ -599,6 +610,104 @@ func emitPowF64Helper(w func(string, ...any)) {
 	w("\tret")
 }
 
+// emitSinCosReduction emits the shared argument-reduction + sin(r)/cos(r)
+// polynomial prologue for __sin_f64 / __cos_f64. It assumes the argument is in d0
+// and, on exit: x10 = quadrant (k&3), d6 = sin(r), d16 = cos(r), r ∈ [−π/4, π/4].
+// The arm64 sibling of the native emitSinCosReduction.
+func emitSinCosReduction(w func(string, ...any)) {
+	ldc := func(reg, lbl string) {
+		w("\tadrp x12, %s", lbl)
+		w("\tadd x12, x12, #:lo12:%s", lbl)
+		w("\tldr %s, [x12]", reg)
+	}
+	ldc("d1", ".Lfc_halfpi")
+	w("\tfdiv d2, d0, d1")
+	w("\tfrinta d3, d2")
+	w("\tfcvtzs x10, d3")
+	w("\tfmul d4, d3, d1")
+	w("\tfsub d0, d0, d4")  // r
+	w("\tand x10, x10, #3") // quadrant
+	w("\tfmul d5, d0, d0")  // r2
+	ldc("d6", ".Lfc_s7")
+	ldc("d7", ".Lfc_s5")
+	w("\tfmul d6, d6, d5")
+	w("\tfadd d6, d6, d7")
+	ldc("d7", ".Lfc_s3")
+	w("\tfmul d6, d6, d5")
+	w("\tfadd d6, d6, d7")
+	ldc("d7", ".Lfc_one")
+	w("\tfmul d6, d6, d5")
+	w("\tfadd d6, d6, d7")
+	w("\tfmul d6, d6, d0") // sin(r)
+	ldc("d16", ".Lfc_c6")
+	ldc("d17", ".Lfc_c4")
+	w("\tfmul d16, d16, d5")
+	w("\tfadd d16, d16, d17")
+	ldc("d17", ".Lfc_c2")
+	w("\tfmul d16, d16, d5")
+	w("\tfadd d16, d16, d17")
+	ldc("d17", ".Lfc_one")
+	w("\tfmul d16, d16, d5")
+	w("\tfadd d16, d16, d17") // cos(r)
+}
+
+// emitSinF64Helper writes __sin_f64(x) → sin x via the shared reduction: k =
+// round(x/(π/2)), r = x − k·(π/2) ∈ [−π/4, π/4]; the quadrant q = k&3 selects
+// ±sin(r)/±cos(r). x0 in/out (f64 bits). Leaf; reads the shared .rodata table.
+func emitSinF64Helper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__sin_f64"))
+	w("\tfmov d0, x0")
+	emitSinCosReduction(w)
+	w("\tcmp x10, #0")
+	w("\tb.eq .Lssa_sin_sr")
+	w("\tcmp x10, #1")
+	w("\tb.eq .Lssa_sin_cr")
+	w("\tcmp x10, #2")
+	w("\tb.eq .Lssa_sin_nsr")
+	w("\tfneg d0, d16") // q3: -cos(r)
+	w("\tb .Lssa_sin_ret")
+	w(".Lssa_sin_sr:")
+	w("\tfmov d0, d6")
+	w("\tb .Lssa_sin_ret")
+	w(".Lssa_sin_cr:")
+	w("\tfmov d0, d16")
+	w("\tb .Lssa_sin_ret")
+	w(".Lssa_sin_nsr:")
+	w("\tfneg d0, d6")
+	w(".Lssa_sin_ret:")
+	w("\tfmov x0, d0")
+	w("\tret")
+}
+
+// emitCosF64Helper writes __cos_f64(x) → cos x. Same reduction as __sin_f64; the
+// quadrant selects cos(r)/−sin(r)/−cos(r)/sin(r). x0 in/out (f64 bits). Leaf.
+func emitCosF64Helper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__cos_f64"))
+	w("\tfmov d0, x0")
+	emitSinCosReduction(w)
+	w("\tcmp x10, #0")
+	w("\tb.eq .Lssa_cos_cr")
+	w("\tcmp x10, #1")
+	w("\tb.eq .Lssa_cos_nsr")
+	w("\tcmp x10, #2")
+	w("\tb.eq .Lssa_cos_ncr")
+	w("\tfmov d0, d6") // q3: sin(r)
+	w("\tb .Lssa_cos_ret")
+	w(".Lssa_cos_cr:")
+	w("\tfmov d0, d16")
+	w("\tb .Lssa_cos_ret")
+	w(".Lssa_cos_nsr:")
+	w("\tfneg d0, d6")
+	w("\tb .Lssa_cos_ret")
+	w(".Lssa_cos_ncr:")
+	w("\tfneg d0, d16")
+	w(".Lssa_cos_ret:")
+	w("\tfmov x0, d0")
+	w("\tret")
+}
+
 // runtimeHelperDeps records helper→helper call edges: a helper that tail-calls
 // another must have that callee emitted too, since the module never references
 // it directly. Transitively closed by referencedRuntimeHelpers.
@@ -649,6 +758,8 @@ var helperReturns64 = map[string]bool{
 	"__exp_f64":              true,
 	"__log_f64":              true,
 	"__pow_f64":              true,
+	"__sin_f64":              true,
+	"__cos_f64":              true,
 }
 
 // heapUsingHelpers are runtime helpers that bump-allocate on the SSA heap, so the

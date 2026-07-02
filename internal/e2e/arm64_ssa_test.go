@@ -244,6 +244,28 @@ function main(): i32 {
 			want: 1,
 		},
 		{
+			// sin — quadrant-reduced (k=round(x/(π/2))) odd-power series via the shared
+			// reduction (__sin_f64). sin(π/2) ≈ 1; within-tolerance → 1.
+			name: "stdlib_float_sin",
+			src: `import "std/float";
+function main(): i32 {
+  var s = (1.5707963267948966).sin();
+  return if ((s - 1.0).abs() < 0.001) { 1 } else { 0 };
+}`,
+			want: 1,
+		},
+		{
+			// cos — same reduction, cos-quadrant selection (__cos_f64). cos(π) ≈ -1;
+			// within-tolerance → 1.
+			name: "stdlib_float_cos",
+			src: `import "std/float";
+function main(): i32 {
+  var c = (3.141592653589793).cos();
+  return if ((c + 1.0).abs() < 0.001) { 1 } else { 0 };
+}`,
+			want: 1,
+		},
+		{
 			// Integer to_string — the full digit-formatting chain: __alloc_u8
 			// (byte buffer), __fern_arr_cow_inplace (arr[i] = digit), and
 			// string_from_bytes (u8[] -> string). len("123456") = 6.
