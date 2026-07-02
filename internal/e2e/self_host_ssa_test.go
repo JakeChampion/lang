@@ -49,6 +49,11 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		want int
 	}{
 		{"const", "function main(): i32 { return 42; }", 42},
+		// Hex integer literals (#4341): the SSA builder folded a number literal's
+		// text into the const_int imm via the decimal-only util.digits_to_i32,
+		// which stopped at the `x` and emitted imm 0. Now via util.lit_to_i32.
+		{"hex-const", "function main(): i32 { return 0x1F; }", 31},
+		{"hex-arith", "function main(): i32 { return 0x10 + 1; }", 17},
 		{"arith-precedence", "function main(): i32 { return 2 + 3 * 4; }", 14},
 		{"parens", "function main(): i32 { return (1 + 2) * 3; }", 9},
 		{"locals", "function main(): i32 { var x = 2 + 3 * 4; var y = x - 5; return y * 2; }", 18},
