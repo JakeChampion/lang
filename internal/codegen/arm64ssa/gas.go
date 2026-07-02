@@ -95,6 +95,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	}
 	withArgs := usesArgs(helpers)
 	withStrbuf := usesStrbuf(helpers)
+	withEnv := usesEnv(helpers)
 	strLabels, strOrder := collectStrings(progs, names)
 	sentLabels, sentOrder := collectSentinels(progs, names)
 	// fn_idx for closures: a function's index in the module's (sorted) emission
@@ -121,6 +122,16 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("\tadrp x10, %s", argvSym)
 		w("\tadd x10, x10, #:lo12:%s", argvSym)
 		w("\tstr x9, [x10]")
+	}
+	if withEnv {
+		// envp sits just past argv's NULL terminator: [sp]=argc, argv[] at sp+8
+		// (argc entries + a NULL), so envp = sp + 16 + argc*8. Stash it for env().
+		w("\tldr x9, [sp]") // argc
+		w("\tadd x10, sp, #16")
+		w("\tadd x10, x10, x9, lsl #3") // envp = sp + 16 + argc*8
+		w("\tadrp x11, %s", envpSym)
+		w("\tadd x11, x11, #:lo12:%s", envpSym)
+		w("\tstr x10, [x11]")
 	}
 	// Initialise the bump-allocator cursor to the base of the .bss heap. x9/x10
 	// are scratch here (before the entry args are loaded into x0..x7).
@@ -228,6 +239,13 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("%s:", argsCacheSym)
 		w("\t.quad 0")
 	}
+	if withEnv {
+		// envp snapshot for the env() helper.
+		w(".section .bss")
+		w(".align 8")
+		w("%s:", envpSym)
+		w("\t.quad 0")
+	}
 	if withStrbuf {
 		// The string-builder's length counter + byte buffer. BSS, so the large
 		// buffer costs no file space; it lands in the R+W data segment under the
@@ -257,6 +275,9 @@ const (
 	argvSym      = "__ssa_argv"
 	argsCacheSym = "__ssa_args_cache"
 
+	// envp captured from the process stack by _start, walked by env().
+	envpSym = "__ssa_envp"
+
 	// The global string-builder: an 8-byte length counter and a fixed .bss byte
 	// buffer that strbuf_append writes into and strbuf_take copies out of. 64 MiB,
 	// matching the native backend. This costs no file space: the W^X ELF writer
@@ -273,6 +294,17 @@ const (
 func usesStrbuf(helpers []string) bool {
 	for _, h := range helpers {
 		if h == "strbuf_reset" || h == "strbuf_append" || h == "strbuf_take" {
+			return true
+		}
+	}
+	return false
+}
+
+// usesEnv reports whether the module references the env() builtin, so _start
+// captures envp and the .bss slot is emitted.
+func usesEnv(helpers []string) bool {
+	for _, h := range helpers {
+		if h == "env" {
 			return true
 		}
 	}
@@ -336,6 +368,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"string_from_bytes":      emitStringFromBytesHelper,
 	"__str_slice":            emitStrSliceHelper,
 	"args":                   emitArgsHelper,
+	"env":                    emitEnvHelper,
 	"print":                  emitPrintHelper,
 	"write":                  emitWriteHelper,
 	"eprint":                 emitEprintHelper,
@@ -390,6 +423,7 @@ var helperReturns64 = map[string]bool{
 	"__str_slice":            true,
 	"args":                   true,
 	"strbuf_take":            true,
+	"env":                    true,
 	"__str_idx":              true,
 	"__arr_idx":              true,
 	"__arr_idx_1":            true,
@@ -416,6 +450,7 @@ var heapUsingHelpers = map[string]bool{
 	"__str_slice":            true,
 	"args":                   true,
 	"strbuf_take":            true,
+	"env":                    true,
 }
 
 // collectStrings assigns a .rodata label to each unique OpConstString literal, in
@@ -819,6 +854,107 @@ func emitArgsHelper(w func(string, ...any)) {
 	w("\tstr x9, [x1]") // memoise
 	w("\tmov x0, x9")
 	w(".Lssa_args_ret:")
+	w("\tret")
+}
+
+// emitEnvHelper writes env(name) -> Option[string]: walk the captured envp for a
+// "NAME=VALUE" entry and return a heap Option box {tag@0 (i32), value-ptr@8}. On
+// a match the value (after '=') is copied into a fresh single-word rc string and
+// the box tag is 0 (Some); otherwise tag is 1 (None) and the payload slot is 0.
+// The box carries the standard rc header (rc=1 at [box-8]) so its scope-exit drop
+// finds a valid count. Single-return (box pointer in x0); env is a builtin, not a
+// user pair-form function, so its result is the box the match reads at [box+0] /
+// [box+8], matching the native backend. Everything is bump-allocated inline, so
+// it is a leaf. x0=name (single-word string; length at [name-4]).
+func emitEnvHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("env"))
+	w("\tldur w2, [x0, #-4]") // name_len (zero-extends into x2)
+	w("\tmov x3, x0")         // name ptr
+	w("\tadrp x4, %s", envpSym)
+	w("\tadd x4, x4, #:lo12:%s", envpSym)
+	w("\tldr x4, [x4]") // x4 = envp
+	w(".Lssa_env_loop:")
+	w("\tldr x5, [x4]") // x5 = envp[i]
+	w("\tcbz x5, .Lssa_env_none")
+	// Compare the first name_len bytes of envp[i] with name.
+	w("\tmov w6, #0")
+	w(".Lssa_env_cmp:")
+	w("\tcmp w6, w2")
+	w("\tb.hs .Lssa_env_eq") // matched all name_len bytes
+	w("\tldrb w7, [x5, x6]")
+	w("\tldrb w8, [x3, x6]")
+	w("\tcmp w7, w8")
+	w("\tb.ne .Lssa_env_next")
+	w("\tadd w6, w6, #1")
+	w("\tb .Lssa_env_cmp")
+	w(".Lssa_env_eq:")
+	w("\tldrb w7, [x5, x2]") // the byte after the name must be '='
+	w("\tcmp w7, #61")
+	w("\tb.ne .Lssa_env_next")
+	// Found: value is the NUL-terminated string at envp[i] + name_len + 1.
+	w("\tadd x9, x5, x2")
+	w("\tadd x9, x9, #1") // x9 = value src
+	w("\tmov x10, #0")    // value len
+	w(".Lssa_env_slen:")
+	w("\tldrb w11, [x9, x10]")
+	w("\tcbz w11, .Lssa_env_slen_done")
+	w("\tadd x10, x10, #1")
+	w("\tb .Lssa_env_slen")
+	w(".Lssa_env_slen_done:")
+	// Allocate a single-word rc string of the value: rc=1@base, len@base+4, data@base+8, +1 NUL.
+	w("\tadrp x12, %s", heapPtrSym)
+	w("\tadd x12, x12, #:lo12:%s", heapPtrSym) // x12 = &cursor (held across both allocs)
+	w("\tldr x13, [x12]")
+	w("\tadd x13, x13, #7")
+	w("\tand x13, x13, #-8") // base
+	w("\tadd x14, x10, #9")  // header(8) + len + NUL(1)
+	w("\tadd x15, x13, x14")
+	w("\tstr x15, [x12]") // bump
+	w("\tmov w14, #1")
+	w("\tstr w14, [x13]")     // rc = 1
+	w("\tstr w10, [x13, #4]") // len
+	w("\tadd x16, x13, #8")   // x16 = value data ptr
+	w("\tmov w6, #0")         // copy i (reuse w6)
+	w(".Lssa_env_cp:")
+	w("\tcmp w6, w10")
+	w("\tb.hs .Lssa_env_cpdone")
+	w("\tldrb w7, [x9, x6]")
+	w("\tstrb w7, [x16, x6]")
+	w("\tadd w6, w6, #1")
+	w("\tb .Lssa_env_cp")
+	w(".Lssa_env_cpdone:")
+	w("\tstrb wzr, [x16, x10]") // NUL
+	// Allocate the Option box (rc=1@base, tag@base+8, value-ptr@base+16); return base+8.
+	w("\tldr x13, [x12]")
+	w("\tadd x13, x13, #7")
+	w("\tand x13, x13, #-8")
+	w("\tadd x15, x13, #24") // 8 header + 16 box (tag + pad + ptr)
+	w("\tstr x15, [x12]")    // bump
+	w("\tmov w14, #1")
+	w("\tstr w14, [x13]")    // rc = 1
+	w("\tadd x0, x13, #8")   // x0 = box data ptr (return)
+	w("\tstr wzr, [x0]")     // tag = 0 (Some)
+	w("\tstr x16, [x0, #8]") // value string ptr
+	w("\tret")
+	w(".Lssa_env_next:")
+	w("\tadd x4, x4, #8")
+	w("\tb .Lssa_env_loop")
+	w(".Lssa_env_none:")
+	// None: box {rc=1, tag=1, ptr=0}.
+	w("\tadrp x12, %s", heapPtrSym)
+	w("\tadd x12, x12, #:lo12:%s", heapPtrSym)
+	w("\tldr x13, [x12]")
+	w("\tadd x13, x13, #7")
+	w("\tand x13, x13, #-8")
+	w("\tadd x15, x13, #24")
+	w("\tstr x15, [x12]")
+	w("\tmov w14, #1")
+	w("\tstr w14, [x13]")  // rc = 1
+	w("\tadd x0, x13, #8") // box data ptr
+	w("\tmov w14, #1")
+	w("\tstr w14, [x0]")     // tag = 1 (None)
+	w("\tstr xzr, [x0, #8]") // payload = 0
 	w("\tret")
 }
 

@@ -435,6 +435,20 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 }`,
 			want: 235,
 		},
+		{
+			// env() Some path: FERN_E2E_VAR=hi is injected into the run environment,
+			// so env("FERN_E2E_VAR") = Some("hi") and v.len() = 2. Exercises _start's
+			// envp capture and the Option-box the match reads at [box+0]/[box+8].
+			name: "env_present",
+			src:  `function main(): i32 { return match (env("FERN_E2E_VAR")) { Some(v) => v.len(), None => 0 }; }`,
+			want: 2,
+		},
+		{
+			// env() None path: a variable that is not set yields None -> 42.
+			name: "env_absent",
+			src:  `function main(): i32 { return match (env("FERN_UNSET_ZZZ_9137")) { Some(v) => 1, None => 42 }; }`,
+			want: 42,
+		},
 	}
 
 	for _, c := range cases {
@@ -451,6 +465,10 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 				t.Fatalf("fern -target arm64-ssa: %v\nstderr:\n%s", err, eb.String())
 			}
 			run := exec.Command(qemu, out)
+			// qemu-user forwards the host environment to the guest, so a known
+			// variable makes the env() Some-path deterministic. Harmless to the
+			// cases that don't read it.
+			run.Env = append(os.Environ(), "FERN_E2E_VAR=hi")
 			err := run.Run()
 			got := 0
 			if err != nil {
@@ -469,8 +487,8 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 }
 
 // TestArm64SSACoverageGapErrors confirms a program needing a runtime builtin the
-// arm64-ssa path doesn't emit yet (here the `env` environment-variable builtin,
-// which reaches the still-unported `env` helper) fails with a clean compile/link
+// arm64-ssa path doesn't emit yet (here the `tcp_listen` socket builtin, which
+// reaches the still-unported `tcp_listen` helper) fails with a clean compile/link
 // error rather than a miscompile — the experimental-backend contract that lets
 // the epic widen coverage incrementally.
 func TestArm64SSACoverageGapErrors(t *testing.T) {
@@ -484,18 +502,18 @@ func TestArm64SSACoverageGapErrors(t *testing.T) {
 		t.Fatalf("go build fern: %v\n%s", err, out)
 	}
 
-	srcPath := filepath.Join(dir, "env.fern")
-	src := `function main(): i32 { return match (env("X")) { Some(v) => v.len(), None => 0 }; }`
+	srcPath := filepath.Join(dir, "tcp.fern")
+	src := `function main(): i32 { return tcp_listen(8080); }`
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	out := filepath.Join(dir, "env.bin")
+	out := filepath.Join(dir, "tcp.bin")
 	emit := exec.Command(bin, "-target", "arm64-ssa", "-o", out, srcPath)
 	var eb bytes.Buffer
 	emit.Stderr = &eb
 	err := emit.Run()
 	if err == nil {
-		t.Fatalf("expected a coverage-gap error for the env() builtin, got success")
+		t.Fatalf("expected a coverage-gap error for the tcp_listen() builtin, got success")
 	}
 	if !bytes.Contains(eb.Bytes(), []byte("arm64-ssa")) {
 		t.Errorf("error not attributed to arm64-ssa:\n%s", eb.String())
