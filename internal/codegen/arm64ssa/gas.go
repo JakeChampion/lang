@@ -370,6 +370,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"args":                   emitArgsHelper,
 	"env":                    emitEnvHelper,
 	"write_file":             emitWriteFileHelper,
+	"read_file":              emitReadFileHelper,
 	"__fern_io_error":        emitIoErrorHelper,
 	"print":                  emitPrintHelper,
 	"write":                  emitWriteHelper,
@@ -409,6 +410,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_closure_drop": {"__fern_box_free", "__fern_rc_dec"},
 	"__fern_drop_arr_str": {"__fern_str_dec", "__fern_arr_dec"},
 	"write_file":          {"__fern_io_error"},
+	"read_file":           {"__fern_io_error"},
 }
 
 // helperReturns64 lists runtime helpers whose result is a full 8-byte value — a
@@ -428,6 +430,7 @@ var helperReturns64 = map[string]bool{
 	"strbuf_take":            true,
 	"env":                    true,
 	"write_file":             true,
+	"read_file":              true,
 	"__str_idx":              true,
 	"__arr_idx":              true,
 	"__arr_idx_1":            true,
@@ -456,6 +459,7 @@ var heapUsingHelpers = map[string]bool{
 	"strbuf_take":            true,
 	"env":                    true,
 	"write_file":             true,
+	"read_file":              true,
 	"__fern_io_error":        true,
 }
 
@@ -1140,6 +1144,142 @@ func emitWriteFileHelper(w func(string, ...any)) {
 	w("\tldp x21, x22, [sp, #32]")
 	w("\tldp x19, x20, [sp, #16]")
 	w("\tldp x29, x30, [sp], #48")
+	w("\tret")
+}
+
+// emitReadFileHelper writes read_file(path) -> Result[string, IoError]: open the
+// file read-only, fstat it for the size, read the whole thing into a fresh
+// single-word rc string, and return Ok(string) (tag 0, string@8). Any syscall
+// failure maps -errno through __fern_io_error and returns Err(IoError) (tag 1,
+// box@8). The path is NUL-terminated into a heap buffer first. Non-leaf (calls
+// __fern_io_error); frame carries a 192-byte statbuf scratch plus callee-saved
+// x19=path / x20=fd / x21=data-or-errno / x22=size / x23=bytes_read / x24=path_nul.
+// x0=path.
+func emitReadFileHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("read_file"))
+	w("\tstp x29, x30, [sp, #-256]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstp x21, x22, [sp, #32]")
+	w("\tstp x23, x24, [sp, #48]")
+	w("\tmov x19, x0") // path
+	// NUL-terminate the path into a heap buffer (x24).
+	w("\tldur w2, [x19, #-4]")
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x2, #1")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	w("\tmov w7, #0")
+	w(".Lssa_rf_cp:")
+	w("\tcmp w7, w2")
+	w("\tb.hs .Lssa_rf_cpd")
+	w("\tldrb w8, [x19, x7]")
+	w("\tstrb w8, [x4, x7]")
+	w("\tadd w7, w7, #1")
+	w("\tb .Lssa_rf_cp")
+	w(".Lssa_rf_cpd:")
+	w("\tstrb wzr, [x4, x2]")
+	w("\tmov x24, x4") // path_nul
+	// openat(AT_FDCWD, path_nul, O_RDONLY, 0).
+	w("\tmov x0, #100")
+	w("\tneg x0, x0")
+	w("\tmov x1, x24")
+	w("\tmov x2, #0") // O_RDONLY
+	w("\tmov x3, #0")
+	w("\tmov x8, #56") // openat
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_rf_err_open")
+	w("\tmov x20, x0") // fd
+	// fstat(fd, statbuf@sp+64); st_size at statbuf+48 → [sp+112].
+	w("\tmov x0, x20")
+	w("\tadd x1, sp, #64")
+	w("\tmov x8, #80") // fstat
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_rf_err_close")
+	w("\tldr x22, [sp, #112]") // st_size
+	// Allocate a single-word rc string of size bytes (+ NUL).
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x22, #9") // 8 header + size + 1 NUL
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	w("\tmov w7, #1")
+	w("\tstr w7, [x4]")      // rc = 1
+	w("\tstr w22, [x4, #4]") // len = size
+	w("\tadd x21, x4, #8")   // x21 = string data ptr
+	// Read loop: x23 = cumulative bytes read.
+	w("\tmov x23, #0")
+	w(".Lssa_rf_loop:")
+	w("\tcmp x23, x22")
+	w("\tb.ge .Lssa_rf_done")
+	w("\tmov x0, x20")
+	w("\tadd x1, x21, x23")
+	w("\tsub x2, x22, x23")
+	w("\tmov x8, #63") // read
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_rf_err_close")
+	w("\tcbz x0, .Lssa_rf_done") // EOF
+	w("\tadd x23, x23, x0")
+	w("\tb .Lssa_rf_loop")
+	w(".Lssa_rf_done:")
+	w("\tstrb wzr, [x21, x22]") // trailing NUL
+	w("\tmov x0, x20")
+	w("\tmov x8, #57") // close
+	w("\tsvc #0")
+	// Result.Ok(string): box {rc=1, tag=0, string@8}.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")   // rc = 1
+	w("\tadd x0, x4, #8") // box data
+	w("\tstr wzr, [x0]")  // tag = 0 (Ok)
+	w("\tstr x21, [x0, #8]")
+	w("\tb .Lssa_rf_ret")
+	w(".Lssa_rf_err_close:")
+	w("\tneg x21, x0") // errno (x21 no longer needed as data)
+	w("\tmov x0, x20")
+	w("\tmov x8, #57") // close
+	w("\tsvc #0")
+	w("\tb .Lssa_rf_err_dispatch")
+	w(".Lssa_rf_err_open:")
+	w("\tneg x21, x0") // errno
+	w(".Lssa_rf_err_dispatch:")
+	w("\tmov x0, x21") // errno
+	w("\tmov x1, x19") // path
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x19, x0") // IoError box (path no longer needed)
+	// Result.Err(IoError): box {rc=1, tag=1, ioerr@8}.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")   // rc = 1
+	w("\tadd x0, x4, #8") // box data
+	w("\tmov w6, #1")
+	w("\tstr w6, [x0]") // tag = 1 (Err)
+	w("\tstr x19, [x0, #8]")
+	w(".Lssa_rf_ret:")
+	w("\tldp x23, x24, [sp, #48]")
+	w("\tldp x21, x22, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #256")
 	w("\tret")
 }
 
