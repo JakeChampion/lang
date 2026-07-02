@@ -95,6 +95,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	}
 	withArgs := usesArgs(helpers)
 	withStrbuf := usesStrbuf(helpers)
+	withReadLine := usesReadLine(helpers)
 	withEnv := usesEnv(helpers)
 	strLabels, strOrder := collectStrings(progs, names)
 	sentLabels, sentOrder := collectSentinels(progs, names)
@@ -263,6 +264,13 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("%s:", strbufDataSym)
 		w("\t.space %d", strbufBytes)
 	}
+	if withReadLine {
+		// The Reader.read_line scratch buffer (reused across calls; NOBITS).
+		w(".section .bss")
+		w(".align 8")
+		w("%s:", readlineBufSym)
+		w("\t.space %d", readlineBytes)
+	}
 	w(".section .note.GNU-stack,\"\",@progbits")
 	return b.String(), nil
 }
@@ -292,7 +300,25 @@ const (
 	strbufLenSym  = "__ssa_strbuf_len"
 	strbufDataSym = "__ssa_strbuf_data"
 	strbufBytes   = 64 << 20 // 64 MiB (NOBITS — no file cost)
+
+	// The Reader.read_line scratch buffer: read_line reads one byte at a time into
+	// this fixed .bss buffer (reused across calls, so a read-loop doesn't leak the
+	// bump heap), then copies the line into a right-sized string. 4 KiB; longer
+	// lines are truncated (matching the native backend).
+	readlineBufSym = "__ssa_readline_buf"
+	readlineBytes  = 4096
 )
+
+// usesReadLine reports whether the module references Reader.read_line, so the
+// .bss line buffer is emitted only when needed.
+func usesReadLine(helpers []string) bool {
+	for _, h := range helpers {
+		if h == "__method_Reader_read_line" {
+			return true
+		}
+	}
+	return false
+}
 
 // usesStrbuf reports whether the module references any strbuf builtin, so the
 // .bss counter + buffer are emitted only when needed.
@@ -394,6 +420,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__method_Writer_close":   emitWriterCloseHelper,
 	"open_reader":             emitOpenReaderHelper,
 	"__method_Reader_read_chunk": emitReaderReadChunkHelper,
+	"__method_Reader_read_line": emitReaderReadLineHelper,
 	"__method_Reader_close":   emitReaderCloseHelper,
 	"open_appender":           emitOpenAppenderHelper,
 	"stdin":                   emitStdHandleHelper("stdin", 0),
@@ -1236,6 +1263,78 @@ func emitReaderReadChunkHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
+// emitReaderReadLineHelper writes __method_Reader_read_line(reader) ->
+// Option[string]: read one byte at a time from the handle's fd (loaded from
+// [reader+8]) into the shared 4 KiB .bss line buffer until '\n' (kept), 4 KiB, or
+// EOF/error, then copy the line into a fresh right-sized single-word rc string.
+// Returns None when the first read returns 0 (EOF before any byte), else
+// Some(line). Leaf: the read svc preserves every register but x0. x19=buffer /
+// x20=bytes read / x21=scratch-then-data / x22=fd. x0=reader handle.
+func emitReaderReadLineHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__method_Reader_read_line"))
+	w("\tstp x29, x30, [sp, #-48]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstp x21, x22, [sp, #32]")
+	w("\tldr w22, [x0, #8]") // fd @ ptr+8
+	w("\tadrp x19, %s", readlineBufSym)
+	w("\tadd x19, x19, #:lo12:%s", readlineBufSym)
+	w("\tmov x20, #0") // bytes read
+	w(".Lssa_rrl_loop:")
+	w("\tcmp x20, #%d", readlineBytes)
+	w("\tb.ge .Lssa_rrl_done")
+	// read(fd, buf + bytes, 1)
+	w("\tmov w0, w22")
+	w("\tadd x1, x19, x20")
+	w("\tmov x2, #1")
+	w("\tmov x8, #63") // read
+	w("\tsvc #0")
+	w("\tcmp x0, #1")
+	w("\tb.lt .Lssa_rrl_done") // EOF (0) or error (<0) → finish
+	w("\tadd x21, x19, x20")
+	w("\tldrb w21, [x21]") // the byte just read
+	w("\tadd x20, x20, #1")
+	w("\tcmp w21, #10") // '\n' — kept in the line
+	w("\tb.eq .Lssa_rrl_done")
+	w("\tb .Lssa_rrl_loop")
+	w(".Lssa_rrl_done:")
+	w("\tcbz x20, .Lssa_rrl_none") // no bytes → None (EOF)
+	// Allocate a single-word rc string of x20 bytes (+ NUL) and copy the line.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x20, #9")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	w("\tmov w7, #1")
+	w("\tstr w7, [x4]")      // rc = 1
+	w("\tstr w20, [x4, #4]") // len = bytes read
+	w("\tadd x21, x4, #8")   // data ptr
+	w("\tmov x9, #0")
+	w(".Lssa_rrl_cp:")
+	w("\tcmp x9, x20")
+	w("\tb.hs .Lssa_rrl_cpd")
+	w("\tldrb w10, [x19, x9]")
+	w("\tstrb w10, [x21, x9]")
+	w("\tadd x9, x9, #1")
+	w("\tb .Lssa_rrl_cp")
+	w(".Lssa_rrl_cpd:")
+	w("\tstrb wzr, [x21, x20]") // trailing NUL
+	// Some(string): box {rc=1, tag=0, string@8}.
+	emitOptionBox(w, 0, "x21")
+	w("\tb .Lssa_rrl_ret")
+	w(".Lssa_rrl_none:")
+	emitOptionBox(w, 1, "")
+	w(".Lssa_rrl_ret:")
+	w("\tldp x21, x22, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #48")
+	w("\tret")
+}
+
 // emitReaderCloseHelper writes __method_Reader_close(reader) -> Option[IoError]:
 // close(2) the handle's fd (from [reader+8]); the read-side twin of Writer.close.
 // Non-leaf. x0=reader handle.
@@ -1399,6 +1498,7 @@ var helperReturns64 = map[string]bool{
 	"__method_Writer_close":   true,
 	"open_reader":             true,
 	"__method_Reader_read_chunk": true,
+	"__method_Reader_read_line": true,
 	"__method_Reader_close":   true,
 	"open_appender":           true,
 	"stdin":                   true,
@@ -1449,6 +1549,7 @@ var heapUsingHelpers = map[string]bool{
 	"__method_Writer_close":   true,
 	"open_reader":             true,
 	"__method_Reader_read_chunk": true,
+	"__method_Reader_read_line": true,
 	"__method_Reader_close":   true,
 	"open_appender":           true,
 	"stdin":                   true,
