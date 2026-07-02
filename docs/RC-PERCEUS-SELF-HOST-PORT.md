@@ -3422,3 +3422,30 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   array release) + a 200k-iter freelist-corruption stress + the fires-assertion extended with an
   array-field 3-vs-4 arr_box dead/live pair (proves in-place lowering). Byte-identical FIXPOINT +
   BOOTSTRAP stay green.
+- 2026-07-02: **Perceus — close the enum self-reassign payload-array leak**. A loop-carried
+  array-payload enum `var b: E = V0([..]); while (..) { b = V1([..]); b = V2([..]); }`
+  shallow-freed each superseded box (box-only arr_dec) but LEAKED the superseded variant's
+  payload array on the register backends — an O(n) growth leak (a 50M-iter 8-elem churn
+  OOMs on x86; native reuses the box in place, TestEnumReuseFiresAcrossVariants). Fix:
+  reassigned array-payload enum locals are credited "ENUMRE:<E>:<name>"
+  (enum_reassign_reclaim_names, appended in reclaimable_names_of); the StmtAssign routes
+  them to emit_enum_reclaim_store, which DEEP-DROPS the superseded box (payload arrays +
+  box, runtime variant-dispatch via the existing emit_enum_variant_drops) before storing
+  the fresh one. SOUNDNESS gates (enum_only_wildcard_used_rec + enum_all_variants_array_payload):
+  every variant payload is a leak-safe SCALAR ARRAY (a single arr_dec fully releases it —
+  NO nested-struct payload, whose __struct_drop would double-free a shared value), every
+  reassign RHS is a FRESH variant ctor with fresh array-literal payloads (sole ownership),
+  and b's payload is NEVER bound in any match (all-`_` arms, no arm re-references b) so it
+  can never be aliased — anything else (a payload binding, a return/store/call-arg escape,
+  an iife-match) disqualifies b, keeping the safe box-only free. DISJOINT from the
+  consume-by-match enum frees (which require b NOT reassigned). No cow guard (a fresh ctor
+  never equals the old box). On WASM this pattern is ALREADY reclaimed (verified: a 50M-iter
+  literal-payload churn is flat on clean wasm), so the extra dec is a rc-GUARDED no-op there
+  (RcOptionBoxWasm's underflow==0 assertion stays green). VERIFIED: new
+  TestSelfHostEnumReassignReclaim{X86_64,Wasm} — wildcard churn, a 3M-iter flat-heap check
+  (exit 137 if the payload leaks), a fresh-array corruption probe, and a payload-bound
+  fallback (disqualified, stays correct) — plus byte-identical FIXPOINT + BOOTSTRAP +
+  RcPreciseDropX86IR + RcOptionBoxWasm. (A self-host-checker quirk surfaced en route: it
+  mis-infers a `string[]`-element `.len()` receiver as i32 — emitting an undefined
+  __fn_i32__len that broke the bootstrap link — worked around by comparing `!= ""` on a
+  typed local; the native checker types it correctly.)
