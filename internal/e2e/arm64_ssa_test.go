@@ -519,6 +519,39 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 }`,
 			want: 10,
 		},
+		{
+			// temp_dir success: create "/tmp/<prefix>-XXXXXXXX" and return the path.
+			// The arm64-ssa suffix is a fixed 8 hex digits, so the length is
+			// deterministic: 5 ("/tmp/") + 8 (prefix) + 1 ("-") + 8 (hex) = 22.
+			// Exercises getrandom / the hex-format loop / mkdirat / the string Ok box.
+			name: "temp_dir_ok",
+			src:  `function main(): i32 { return match (temp_dir("fern_ssa")) { Ok(p) => p.len(), Err(e) => 0 }; }`,
+			want: 22,
+		},
+		{
+			// temp_dir usable: the returned directory is real and writable — build a
+			// path inside it, write_file "hello", then read it back (len 5). Proves
+			// the created directory actually exists on disk.
+			name: "temp_dir_usable",
+			src: `function main(): i32 {
+  return match (temp_dir("fern_ssa")) {
+    Ok(p) => match (write_file(p + "/g.txt", "hello")) {
+      Some(e) => 3,
+      None => match (read_file(p + "/g.txt")) { Ok(s) => s.len(), Err(e) => 1 }
+    },
+    Err(e) => 2
+  };
+}`,
+			want: 5,
+		},
+		{
+			// temp_dir failure: a prefix that puts the target under a nonexistent
+			// parent yields ENOENT, so mkdirat fails and the errno maps through
+			// __fern_io_error to Err(IoError). Exercises the temp_dir error path.
+			name: "temp_dir_err",
+			src:  `function main(): i32 { return match (temp_dir("no_such_ssa/x")) { Ok(p) => 0, Err(e) => 1 }; }`,
+			want: 1,
+		},
 	}
 
 	for _, c := range cases {
