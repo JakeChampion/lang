@@ -386,6 +386,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"tcp_send":                emitTcpSendHelper,
 	"tcp_close":               emitTcpCloseHelper,
 	"tcp_pollable":            emitTcpPollableHelper,
+	"poll":                    emitPollHelper,
 	"print":                  emitPrintHelper,
 	"write":                  emitWriteHelper,
 	"eprint":                 emitEprintHelper,
@@ -901,6 +902,95 @@ func emitTcpPollableHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
+// emitPollHelper writes poll(fds, timeout_ms) → i32: the std/task reactor's
+// readiness multiplexer. `fds` is a single-word i32[] (len at [ptr-4], stride 4);
+// the helper bump-allocates a transient struct pollfd[] (8 bytes each: i32 fd,
+// i16 events, i16 revents), requests POLLIN on every fd, calls ppoll(2), and
+// returns the INDEX of the first readable fd, or -1 on timeout / none. A
+// timeout_ms < 0 blocks indefinitely (NULL timespec); >= 0 builds a timespec.
+// x19=nfds / x20=fds ptr / x21=pollfd buf / x22=loop i / x23=timeout_ms; the
+// 16-byte timespec scratch lives at [x29,#64].
+func emitPollHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("poll"))
+	w("\tstp x29, x30, [sp, #-80]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstp x21, x22, [sp, #32]")
+	w("\tstr x23, [sp, #48]")
+	w("\tmov x20, x0")        // fds ptr
+	w("\tmov x23, x1")        // timeout_ms
+	w("\tldur w19, [x20, #-4]") // nfds
+	w("\tcmp w19, #0")
+	w("\tb.le .Lssa_poll_none")
+	// Bump-allocate the transient pollfd[]: nfds * 8 bytes.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tlsl x5, x19, #3")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	w("\tmov x21, x4") // pollfd buf
+	// Marshal: pollfd[i] = { fd = fds[i], events = POLLIN, revents = 0 }.
+	w("\tmov x22, #0")
+	w(".Lssa_poll_fill:")
+	w("\tcmp x22, x19")
+	w("\tb.ge .Lssa_poll_filled")
+	w("\tldr w0, [x20, x22, lsl #2]") // fd = fds[i]
+	w("\tadd x9, x21, x22, lsl #3")   // &pollfd[i]
+	w("\tstr w0, [x9]")               // .fd
+	w("\tmov w1, #1")
+	w("\tstrh w1, [x9, #4]")  // .events = POLLIN
+	w("\tstrh wzr, [x9, #6]") // .revents = 0
+	w("\tadd x22, x22, #1")
+	w("\tb .Lssa_poll_fill")
+	w(".Lssa_poll_filled:")
+	// timespec: timeout_ms < 0 → NULL (block); else { sec, nsec }.
+	w("\tcmp x23, #0")
+	w("\tb.lt .Lssa_poll_infinite")
+	w("\tmov x9, #1000")
+	w("\tudiv x10, x23, x9")      // sec = ms / 1000
+	w("\tmsub x11, x10, x9, x23") // rem ms
+	w("\tmov x12, #1000000")
+	w("\tmul x11, x11, x12") // nsec = rem * 1e6
+	w("\tadd x2, x29, #64")  // &timespec
+	w("\tstp x10, x11, [x2]")
+	w("\tb .Lssa_poll_call")
+	w(".Lssa_poll_infinite:")
+	w("\tmov x2, #0") // NULL tmo_p → block
+	w(".Lssa_poll_call:")
+	w("\tmov x0, x21") // fds buf
+	w("\tmov w1, w19") // nfds
+	w("\tmov x3, #0")  // sigmask = NULL
+	w("\tmov x4, #0")  // sigsetsize
+	w("\tmov x8, #73") // ppoll
+	w("\tsvc #0")
+	// Scan revents for the first POLLIN-ready fd.
+	w("\tmov x22, #0")
+	w(".Lssa_poll_scan:")
+	w("\tcmp x22, x19")
+	w("\tb.ge .Lssa_poll_none")
+	w("\tadd x9, x21, x22, lsl #3")
+	w("\tldrh w0, [x9, #6]") // revents
+	w("\tand w0, w0, #1")    // POLLIN
+	w("\tcbnz w0, .Lssa_poll_found")
+	w("\tadd x22, x22, #1")
+	w("\tb .Lssa_poll_scan")
+	w(".Lssa_poll_found:")
+	w("\tmov x0, x22")
+	w("\tb .Lssa_poll_ret")
+	w(".Lssa_poll_none:")
+	w("\tmov x0, #-1")
+	w(".Lssa_poll_ret:")
+	w("\tldr x23, [sp, #48]")
+	w("\tldp x21, x22, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #80")
+	w("\tret")
+}
+
 // runtimeHelperDeps records helper→helper call edges: a helper that tail-calls
 // another must have that callee emitted too, since the module never references
 // it directly. Transitively closed by referencedRuntimeHelpers.
@@ -977,6 +1067,7 @@ var heapUsingHelpers = map[string]bool{
 	"read_dir":               true,
 	"random_bytes":           true,
 	"tcp_recv":                true,
+	"poll":                    true,
 	"__fern_io_error":        true,
 }
 

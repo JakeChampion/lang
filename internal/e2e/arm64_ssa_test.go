@@ -327,6 +327,27 @@ function main(): i32 {
 			want: 2,
 		},
 		{
+			// poll on an empty fd set short-circuits to -1 (nothing to wait on).
+			// Exercises the nfds == 0 guard.
+			name: "poll_empty",
+			src:  `function main(): i32 { var fds: i32[] = []; var r = poll(fds, 0); return if (r == -1) { 1 } else { 0 }; }`,
+			want: 1,
+		},
+		{
+			// poll over a real pollfd set: a live listener fd that has no pending
+			// connection is not POLLIN-ready, so a 0 ms poll returns -1. Exercises the
+			// pollfd[] marshal, the ppoll(2) syscall, and the revents scan.
+			name: "poll_listener_not_ready",
+			src: `function main(): i32 {
+  var fd = tcp_listen(0);
+  var fds: i32[] = [fd];
+  var r = poll(fds, 0);
+  var c = tcp_close(fd);
+  return if (r == -1) { 3 } else { 0 };
+}`,
+			want: 3,
+		},
+		{
 			// Integer to_string — the full digit-formatting chain: __alloc_u8
 			// (byte buffer), __fern_arr_cow_inplace (arr[i] = digit), and
 			// string_from_bytes (u8[] -> string). len("123456") = 6.
