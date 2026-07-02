@@ -729,6 +729,26 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    addq $16, %rax\n");
     s = s.write("    leave\n");
     s = s.write("    ret\n");
+    // __fern_str_box(%rdi = data ptr, %rsi = len) -> %rax = box (rc-HEADERED, #2649
+    // Option A). Block = [rc=1@base, data@base+8, len@base+16] (24 bytes, freelist
+    // class 3); box = base+8, so data@box+0 / len@box+8 (byte-identical to the old
+    // raw-16 layout, so every string CONSUMER — len/index/slice/concat/eq — is
+    // unchanged) and rc@box-8 rides the SAME rc word as arrays (__fern_rc_inc /
+    // __fn___fern_rc_is_unique read -8(ptr)). Freed by the rc-aware __fern_str_free at
+    // rc==1. The single choke point for every reclaimable string box (const_str +
+    // raw_string), the asm sibling of the wasm $__fern_str_box.
+    s = s.write("__fern_str_box:\n");
+    s = s.write("    pushq %rsi\n");                 // save len
+    s = s.write("    pushq %rdi\n");                 // save data (alloc consumes %rdi)
+    s = s.write("    movq $24, %rdi\n");
+    s = s.write("    call __fern_alloc\n");          // %rax = base
+    s = s.write("    movq $1, (%rax)\n");            // rc = 1 @ base
+    s = s.write("    popq %rdi\n");                  // data
+    s = s.write("    popq %rsi\n");                  // len
+    s = s.write("    movq %rdi, 8(%rax)\n");         // data @ base+8
+    s = s.write("    movq %rsi, 16(%rax)\n");        // len  @ base+16
+    s = s.write("    addq $8, %rax\n");              // box = base+8
+    s = s.write("    ret\n");
     // RC helpers — stack-arg ABI (arg at 8(%rsp)); rc is the 32-bit field at
     // data-8. Guard chain: null / SSO inline tag / low-address / static
     // sentinel. __fn___fern_arr_dec frees (size-class freelist) at rc==1.
@@ -803,6 +823,18 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jnz .Lstrfree_ret\n");
     s = s.write("    cmpq $0x10000, %rax\n");       // low-addr guard
     s = s.write("    jb .Lstrfree_ret\n");
+    // rc word @ box-8 (#2649 Option A rc-headered string box): a negative rc is the
+    // immortal/sentinel marker (skip); rc>1 decrements without freeing (the box is
+    // still shared — once inc-on-alias is wired in A2, an aliased string survives);
+    // rc==1 frees the data buffer + the box; rc==0 is a double-free, caught by the
+    // underflow counter (matching __fn___fern_arr_dec) rather than corrupting the heap.
+    s = s.write("    movl -8(%rax), %ecx\n");       // rc
+    s = s.write("    testl %ecx, %ecx\n");
+    s = s.write("    js .Lstrfree_ret\n");          // negative = immortal -> skip
+    s = s.write("    cmpl $1, %ecx\n");
+    s = s.write("    jg .Lstrfree_dec\n");          // rc>1 -> dec, keep
+    s = s.write("    jl .Lstrfree_uf\n");           // rc==0 -> underflow (double free)
+    // rc==1: sole owner -> free data buffer (heap-guarded) then the 24-byte box.
     s = s.write("    movq (%rax), %rcx\n");         // data = box[0]
     s = s.write("    movq 8(%rax), %rdx\n");        // len  = box[8]
     // Free the data buffer ONLY when it is a heap allocation, i.e. in
@@ -810,7 +842,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // .rodata (below the arena), so this skips it — freeing it would push a
     // read-only address onto the freelist and fault when written as a node. This
     // is the heap-vs-literal test that lets the accumulator's initial "" literal
-    // pass through __fern_str_free harmlessly (its 16-byte box is still freed).
+    // pass through __fern_str_free harmlessly (its box is still freed).
     s = s.write("    movq __fern_heap_base(%rip), %rsi\n");
     s = s.write("    cmpq %rsi, %rcx\n");           // data < heap_base -> literal/.rodata, skip
     s = s.write("    jb .Lstrfree_box\n");
@@ -827,10 +859,21 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rsi, (%rcx)\n");         // *data = old head
     s = s.write("    movq %rcx, (%r8,%rdx,8)\n");   // freelist[words] = data
     s = s.write(".Lstrfree_box:\n");
+    // The rc-headered block is base = box-8 (24 bytes = class 3). Zero the rc first
+    // (defensive against a re-free reading a live rc), then push base onto freelist[3].
+    s = s.write("    movl $0, -8(%rax)\n");         // rc = 0
+    s = s.write("    leaq -8(%rax), %rdx\n");       // base = box-8
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
-    s = s.write("    movq 16(%r8), %rsi\n");        // freelist[2] (16-byte box = 2 words)
-    s = s.write("    movq %rsi, (%rax)\n");         // *box = old head
-    s = s.write("    movq %rax, 16(%r8)\n");        // freelist[2] = box
+    s = s.write("    movq 24(%r8), %rsi\n");        // freelist[3] (24-byte block = 3 words)
+    s = s.write("    movq %rsi, (%rdx)\n");         // *base = old head
+    s = s.write("    movq %rdx, 24(%r8)\n");        // freelist[3] = base
+    s = s.write("    jmp .Lstrfree_ret\n");
+    s = s.write(".Lstrfree_dec:\n");
+    s = s.write("    subl $1, %ecx\n");
+    s = s.write("    movl %ecx, -8(%rax)\n");
+    s = s.write("    jmp .Lstrfree_ret\n");
+    s = s.write(".Lstrfree_uf:\n");
+    s = s.write("    incl __fern_rc_underflow(%rip)\n");
     s = s.write(".Lstrfree_ret:\n");
     s = s.write("    ret\n");
     // __fern_map_free(box) — reclaim a FRESH, sole-owned map local (Perceus
@@ -3265,7 +3308,7 @@ pub function shape_ref(s: asmcore.EmitState, name: string): ShapeRefOut {
 // is unchanged.
 pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
     var names: string[] = [
-        "__fern_alloc", "__fern_alloc_u8", "__fern_arr_box", "__fern_arr_push",
+        "__fern_alloc", "__fern_alloc_u8", "__fern_arr_box", "__fern_str_box", "__fern_arr_push",
         "__fern_arr_push_owned",
         "__fern_arr_slice", "__fn___fern_str_concat", "__fn___fern_str_eq",
         "__fn___fern_string_from_bytes", "__fn___fern_str_bytes", "__fn___fern_str_chars",
@@ -3667,26 +3710,21 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // pop off (top), ptr; word slot at [ptr+off*8].
             s = s.write("    popq %rcx\n    popq %rax\n    movq (%rax,%rcx,8), %rax\n    pushq %rax\n");
         } else if (o.kind == "raw_string") {
-            // pop [data, len] (len on top); alloc a 16-byte box {data@0, len@8}.
-            // data/len sit in operand-stack (machine-stack) memory across the
-            // __fern_alloc call (the call balances %rsp), so reload after.
-            s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
-            s = s.write("    popq %rcx\n    movq %rcx, 8(%rax)\n    popq %rcx\n    movq %rcx, (%rax)\n    pushq %rax\n");
+            // pop [data, len] (len on top); build an rc-headered box via __fern_str_box
+            // (#2649 Option A). len -> %rsi, data -> %rdi, call, push the box.
+            s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_str_box\n    pushq %rax\n");
             s = s.mark_heap();
         } else if (o.kind == "const_str") {
-            // String literal: intern the bytes in .rodata, allocate a 16-byte
-            // box `[data_ptr@0, len@8]`, push the box ptr — byte-identical to
-            // asm.fern's ExprString so __fern_str_concat / _eq see the same
-            // layout. Strings are not RC'd (no header), so they leak (matching
-            // the AST path; fine for short-lived programs).
+            // String literal: intern the bytes in .rodata, build an rc-headered box
+            // via __fern_str_box (#2649 Option A) — data = .rodata label, len = byte
+            // count. box = [rc=1][data][len]; data@box+0 / len@box+8 unchanged, so
+            // __fern_str_concat / _eq see the same layout. The rc header lets a fresh
+            // literal box (e.g. an accumulator's initial "") be reclaimed at rc==1.
             var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
             s = lo.state;
-            s = s.write("    movq $16, %rdi\n");
-            s = s.write("    call __fern_alloc\n");
-            s = s.write("    leaq " + str_lit_label(s, lo.idx) + "(%rip), %rcx\n");
-            s = s.write("    movq %rcx, (%rax)\n");
-            s = s.write("    movq $" + util.i32_to_string(o.str.len()) + ", %rcx\n");
-            s = s.write("    movq %rcx, 8(%rax)\n");
+            s = s.write("    leaq " + str_lit_label(s, lo.idx) + "(%rip), %rdi\n");
+            s = s.write("    movq $" + util.i32_to_string(o.str.len()) + ", %rsi\n");
+            s = s.write("    call __fern_str_box\n");
             s = s.write("    pushq %rax\n");
         } else if (ir.is_str_op_kind(o.kind)) {
             // All string operand-stack ops (len/index/slice/bytes/split/
