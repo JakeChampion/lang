@@ -3223,17 +3223,23 @@ function ir_bin_asm(kind: string, width: i32): string {
     if (kind == "and") { return "    andq %rcx, %rax\n"; }
     if (kind == "or") { return "    orq %rcx, %rax\n"; }
     if (kind == "xor") { return "    xorq %rcx, %rax\n"; }
-    // Shift counts mask to the operand width (mod 64 for i64, mod 32 for i32) —
-    // the hardware masks %cl to 6 bits for the q-form and 5 bits for the l-form,
-    // so an i32 shift MUST use the 32-bit instruction or a count >= 32 wraps mod
-    // 64 instead of mod 32 (#4330). i32 results are sign-extended back to the
-    // slot (shr_u is logical, so it stays zero-extended — correct for unsigned).
-    if (kind == "shl" && width == 64) { return "    shlq %cl, %rax\n"; }
-    if (kind == "shr_s" && width == 64) { return "    sarq %cl, %rax\n"; }
-    if (kind == "shr_u" && width == 64) { return "    shrq %cl, %rax\n"; }
-    if (kind == "shl") { return "    shll %cl, %eax\n    movslq %eax, %rax\n"; }
-    if (kind == "shr_s") { return "    sarl %cl, %eax\n    movslq %eax, %rax\n"; }
-    if (kind == "shr_u") { return "    shrl %cl, %eax\n"; }
+    // Shift counts mask to the operand width: mod 64 for i64 (the q-form masks
+    // %cl to 6 bits in hardware), mod 32 for i32/u32. A 32-bit i32 shift used
+    // to emit the q-form, so a count >= 32 wrapped mod 64 instead of mod 32
+    // (#4330). Fix by masking the count to 5 bits BUT keeping the 64-bit shift
+    // instruction, so the operand's slot extension is preserved: a u32 value is
+    // zero-extended (bit 63 = 0) and an i32 value sign-extended (bit 63 = bit
+    // 31), and `sarq`/`shrq`/`shlq` on the full register does the right thing for
+    // both. (A 32-bit `sarl` would fill from bit 31, corrupting a u32 `>>` —
+    // which lowers through shr_s — whose bit 31 is a data bit, not a sign bit.)
+    if (width == 64) {
+        if (kind == "shl") { return "    shlq %cl, %rax\n"; }
+        if (kind == "shr_s") { return "    sarq %cl, %rax\n"; }
+        if (kind == "shr_u") { return "    shrq %cl, %rax\n"; }
+    }
+    if (kind == "shl") { return "    andl $31, %ecx\n    shlq %cl, %rax\n"; }
+    if (kind == "shr_s") { return "    andl $31, %ecx\n    sarq %cl, %rax\n"; }
+    if (kind == "shr_u") { return "    andl $31, %ecx\n    shrq %cl, %rax\n"; }
     if (kind == "eq") { return "    cmpq %rcx, %rax\n    sete %al\n    movzbq %al, %rax\n"; }
     if (kind == "ne") { return "    cmpq %rcx, %rax\n    setne %al\n    movzbq %al, %rax\n"; }
     if (kind == "lt_s") { return "    cmpq %rcx, %rax\n    setl %al\n    movzbq %al, %rax\n"; }
