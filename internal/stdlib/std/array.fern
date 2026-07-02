@@ -1047,6 +1047,23 @@ pub function flat_map[T, U](xs: T[], f: (T) => U[]): U[] {
     return out;
 }
 
+// `intersperse(xs, sep)` — a fresh `T[]` with `sep` inserted between
+// each pair of adjacent elements (never before the first or after the
+// last). Structural (no callback), so it works for any element type.
+// `intersperse([1,2,3], 0)` → `[1,0,2,0,3]`; a 0- or 1-element input is
+// returned element-for-element (no gap to fill).
+pub function intersperse[T](xs: T[], sep: T): T[] {
+    var out: T[] = [];
+    var i: i32 = 0;
+    var n: i32 = xs.len();
+    while (i < n) {
+        if (i > 0) { out = out.append(sep); }
+        out = out.append(xs[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
 // `reduce(xs, f)` — left fold with no explicit seed: the first element
 // is the initial accumulator and `f` combines it with each remaining
 // element. `None` for an empty array (there is no value to start from) —
@@ -1318,6 +1335,10 @@ pub function (xs: T[]) zip[U](other: U[]): (T, U)[] { return zip(xs, other); }
 
 // `xs.flat_map(f)` — map to `U[]` per element, then flatten.
 pub function (xs: T[]) flat_map[U](f: (T) => U[]): U[] { return flat_map(xs, f); }
+
+// `xs.intersperse(sep)` — insert `sep` between each pair of adjacent
+// elements (fresh array).
+pub function (xs: T[]) intersperse(sep: T): T[] { return intersperse(xs, sep); }
 
 // `xs.reduce(f)` — seedless left fold; `None` on an empty array.
 pub function (xs: T[]) reduce(f: (T, T) => T): Option[T] { return reduce(xs, f); }
