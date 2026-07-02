@@ -399,6 +399,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__pow_f64":              emitPowF64Helper,
 	"__sin_f64":              emitSinF64Helper,
 	"__cos_f64":              emitCosF64Helper,
+	"random_i32":             emitRandomI32Helper,
+	"random_bytes":           emitRandomBytesHelper,
 }
 
 // emitFloatUnaryHelper returns the emitter for a single-instruction f64 unary
@@ -708,6 +710,59 @@ func emitCosF64Helper(w func(string, ...any)) {
 	w("\tret")
 }
 
+// emitRandomI32Helper writes random_i32() → a single kernel-CSPRNG i32 via a
+// getrandom(2) read of 4 bytes into a stack slot. Leaf; the svc preserves all
+// registers but x0, so no frame save is needed. Returns the 4 random bytes as
+// i32 in x0 (the caller's i32 sxtw mask applies the signed interpretation).
+func emitRandomI32Helper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("random_i32"))
+	w("\tsub sp, sp, #16")
+	w("\tmov x0, sp")
+	w("\tmov x1, #4")
+	w("\tmov x2, #0")
+	w("\tmov x8, #278") // getrandom
+	w("\tsvc #0")
+	w("\tldr w0, [sp]") // 4 random bytes → i32
+	w("\tadd sp, sp, #16")
+	w("\tret")
+}
+
+// emitRandomBytesHelper writes random_bytes(n) → a fresh single-word rc string of
+// n kernel-CSPRNG bytes (getrandom(2), flags=0), NUL-terminated past the end.
+// Returns the data pointer in x0. Leaf: it bump-allocates inline and the getrandom
+// svc preserves all registers but x0, so n (x9) and the data pointer (x10) survive
+// the syscall without callee-saved spills. x0=n.
+func emitRandomBytesHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("random_bytes"))
+	w("\tmov x9, x0") // n
+	// Allocate a single-word rc string: 8-byte header + n + 1 NUL.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x9, #9")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	w("\tmov w7, #1")
+	w("\tstr w7, [x4]")     // rc = 1
+	w("\tstr w9, [x4, #4]") // len = n
+	w("\tadd x10, x4, #8")  // data ptr
+	// getrandom(data, n, 0).
+	w("\tmov x0, x10")
+	w("\tmov x1, x9")
+	w("\tmov x2, #0")
+	w("\tmov x8, #278") // getrandom
+	w("\tsvc #0")
+	// Trailing NUL at data[n].
+	w("\tadd x1, x10, x9")
+	w("\tstrb wzr, [x1]")
+	w("\tmov x0, x10") // return data ptr
+	w("\tret")
+}
+
 // runtimeHelperDeps records helper→helper call edges: a helper that tail-calls
 // another must have that callee emitted too, since the module never references
 // it directly. Transitively closed by referencedRuntimeHelpers.
@@ -743,6 +798,7 @@ var helperReturns64 = map[string]bool{
 	"remove_file":            true,
 	"temp_dir":               true,
 	"read_dir":               true,
+	"random_bytes":           true,
 	"__str_idx":              true,
 	"__arr_idx":              true,
 	"__arr_idx_1":            true,
@@ -780,6 +836,7 @@ var heapUsingHelpers = map[string]bool{
 	"remove_file":            true,
 	"temp_dir":               true,
 	"read_dir":               true,
+	"random_bytes":           true,
 	"__fern_io_error":        true,
 }
 
