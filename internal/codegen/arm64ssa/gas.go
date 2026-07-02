@@ -372,6 +372,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"write_file":             emitWriteFileHelper,
 	"read_file":              emitReadFileHelper,
 	"remove_file":            emitRemoveFileHelper,
+	"temp_dir":               emitTempDirHelper,
 	"__fern_io_error":        emitIoErrorHelper,
 	"print":                  emitPrintHelper,
 	"write":                  emitWriteHelper,
@@ -413,6 +414,7 @@ var runtimeHelperDeps = map[string][]string{
 	"write_file":          {"__fern_io_error"},
 	"read_file":           {"__fern_io_error"},
 	"remove_file":         {"__fern_io_error"},
+	"temp_dir":            {"__fern_io_error"},
 }
 
 // helperReturns64 lists runtime helpers whose result is a full 8-byte value — a
@@ -434,6 +436,7 @@ var helperReturns64 = map[string]bool{
 	"write_file":             true,
 	"read_file":              true,
 	"remove_file":            true,
+	"temp_dir":               true,
 	"__str_idx":              true,
 	"__arr_idx":              true,
 	"__arr_idx_1":            true,
@@ -464,6 +467,7 @@ var heapUsingHelpers = map[string]bool{
 	"write_file":             true,
 	"read_file":              true,
 	"remove_file":            true,
+	"temp_dir":               true,
 	"__fern_io_error":        true,
 }
 
@@ -1366,6 +1370,175 @@ func emitRemoveFileHelper(w func(string, ...any)) {
 	w(".Lssa_rmf_ret:")
 	w("\tldp x19, x20, [sp, #16]")
 	w("\tldp x29, x30, [sp], #32")
+	w("\tret")
+}
+
+// emitTempDirHelper writes temp_dir(prefix) -> Result[string, IoError]: create a
+// fresh uniquely-named directory "/tmp/<prefix>-XXXXXXXX" (8 lowercase-hex random
+// digits) and return Ok(path) with the created directory's path. Any mkdirat
+// failure maps -errno through __fern_io_error (passing the prefix as the path, as
+// the interpreter does) and returns Err(IoError). The base is always /tmp — the
+// arm64-ssa backend doesn't honour $TMPDIR (a documented simplification vs the
+// interpreter's os.TempDir()), which is sufficient for the edge/CLI use case.
+// The path is built into a scratch heap buffer; on EEXIST (a suffix collision) a
+// fresh random suffix is drawn and mkdirat retried. On success a single-word rc
+// string of the path is allocated and wrapped in the Result Ok box (tag 0,
+// string@8). Non-leaf (calls __fern_io_error); 128-byte frame with callee-saved
+// x19=prefix / x20=pathbuf / x21=path_len / x22=hex_start / x24=string. x0=prefix.
+func emitTempDirHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("temp_dir"))
+	w("\tstp x29, x30, [sp, #-128]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstp x21, x22, [sp, #32]")
+	w("\tstp x23, x24, [sp, #48]")
+	w("\tmov x19, x0") // prefix
+	// Allocate a scratch path buffer of prefix_len + 15 bytes:
+	// "/tmp/"(5) + prefix + "-"(1) + 8 hex + NUL(1).
+	w("\tldur w2, [x19, #-4]") // prefix_len
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x2, #15")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	w("\tmov x20, x4") // pathbuf
+	// path_len = prefix_len + 14; hex_start = pathbuf + 6 + prefix_len.
+	w("\tadd x21, x2, #14")
+	w("\tadd x22, x20, #6")
+	w("\tadd x22, x22, x2")
+	// Write the "/tmp/" prefix.
+	w("\tmov w9, #47") // '/'
+	w("\tstrb w9, [x20]")
+	w("\tmov w9, #116") // 't'
+	w("\tstrb w9, [x20, #1]")
+	w("\tmov w9, #109") // 'm'
+	w("\tstrb w9, [x20, #2]")
+	w("\tmov w9, #112") // 'p'
+	w("\tstrb w9, [x20, #3]")
+	w("\tmov w9, #47") // '/'
+	w("\tstrb w9, [x20, #4]")
+	// Copy the prefix bytes to pathbuf+5.
+	w("\tadd x13, x20, #5")
+	w("\tmov w10, #0")
+	w(".Lssa_td_cp:")
+	w("\tcmp w10, w2")
+	w("\tb.hs .Lssa_td_cpd")
+	w("\tldrb w11, [x19, x10]")
+	w("\tstrb w11, [x13, x10]")
+	w("\tadd w10, w10, #1")
+	w("\tb .Lssa_td_cp")
+	w(".Lssa_td_cpd:")
+	// Write the '-' separator at pathbuf+5+prefix_len.
+	w("\tadd x13, x13, x2") // pathbuf + 5 + prefix_len
+	w("\tmov w11, #45")     // '-'
+	w("\tstrb w11, [x13]")
+	// NUL-terminate at pathbuf+path_len (fixed regardless of the random suffix).
+	w("\tstrb wzr, [x20, x21]")
+	w(".Lssa_td_retry:")
+	// getrandom(sp+64, 4, 0) — 4 random bytes into the scratch slot.
+	w("\tadd x0, sp, #64")
+	w("\tmov x1, #4")
+	w("\tmov x2, #0")
+	w("\tmov x8, #278") // getrandom
+	w("\tsvc #0")
+	w("\tldr w15, [sp, #64]") // 32-bit random
+	// Format 8 lowercase-hex digits into [hex_start .. hex_start+8], low nibble
+	// first (a deterministic-but-reversed rendering — order is irrelevant, the
+	// suffix only needs to be unique).
+	w("\tmov w9, #0")
+	w(".Lssa_td_hex:")
+	w("\tcmp w9, #8")
+	w("\tb.hs .Lssa_td_hexd")
+	w("\tand w12, w15, #0xf")
+	w("\tcmp w12, #10")
+	w("\tb.lo .Lssa_td_dig")
+	w("\tadd w12, w12, #87") // 'a' - 10
+	w("\tb .Lssa_td_put")
+	w(".Lssa_td_dig:")
+	w("\tadd w12, w12, #48") // '0'
+	w(".Lssa_td_put:")
+	w("\tstrb w12, [x22, x9]")
+	w("\tlsr x15, x15, #4")
+	w("\tadd w9, w9, #1")
+	w("\tb .Lssa_td_hex")
+	w(".Lssa_td_hexd:")
+	// mkdirat(AT_FDCWD, pathbuf, 0700).
+	w("\tmov x0, #100")
+	w("\tneg x0, x0")
+	w("\tmov x1, x20")
+	w("\tmov x2, #448") // 0o700
+	w("\tmov x8, #34")  // mkdirat
+	w("\tsvc #0")
+	w("\tcbz x0, .Lssa_td_ok")
+	w("\tcmn x0, #17") // -EEXIST → retry with a fresh suffix
+	w("\tb.eq .Lssa_td_retry")
+	// Other error: map -errno through __fern_io_error(errno, prefix).
+	w("\tneg x0, x0")
+	w("\tmov x1, x19")
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x19, x0") // IoError box
+	// Result.Err(IoError): box {rc=1, tag=1, ioerr@8}.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")   // rc = 1
+	w("\tadd x0, x4, #8") // box data
+	w("\tmov w6, #1")
+	w("\tstr w6, [x0]") // tag = 1 (Err)
+	w("\tstr x19, [x0, #8]")
+	w("\tb .Lssa_td_ret")
+	w(".Lssa_td_ok:")
+	// Allocate a single-word rc string of path_len bytes (+ NUL).
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x21, #9")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]")
+	w("\tmov w7, #1")
+	w("\tstr w7, [x4]")      // rc = 1
+	w("\tstr w21, [x4, #4]") // len = path_len
+	w("\tadd x24, x4, #8")   // string data ptr
+	// Copy path_len bytes from pathbuf to the string.
+	w("\tmov w9, #0")
+	w(".Lssa_td_scp:")
+	w("\tcmp w9, w21")
+	w("\tb.hs .Lssa_td_scpd")
+	w("\tldrb w10, [x20, x9]")
+	w("\tstrb w10, [x24, x9]")
+	w("\tadd w9, w9, #1")
+	w("\tb .Lssa_td_scp")
+	w(".Lssa_td_scpd:")
+	w("\tstrb wzr, [x24, x21]") // trailing NUL
+	// Result.Ok(string): box {rc=1, tag=0, string@8}.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")   // rc = 1
+	w("\tadd x0, x4, #8") // box data
+	w("\tstr wzr, [x0]")  // tag = 0 (Ok)
+	w("\tstr x24, [x0, #8]")
+	w(".Lssa_td_ret:")
+	w("\tldp x23, x24, [sp, #48]")
+	w("\tldp x21, x22, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #128")
 	w("\tret")
 }
 
