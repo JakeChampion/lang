@@ -10156,6 +10156,13 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
             var target_is_arr: boolean = s.is_arr_slot(slot) && slot >= s.n_params;
             var se: LowerState = lower_expr(a.value, s);
             if (!se.ok) { return se; }
+            // A reclaimable REASSIGNED array-payload ENUM local (`b = V([..])`, credited
+            // "ENUMRE:<E>"): DEEP-DROP the superseded box (payload arrays + box) before
+            // storing the fresh one — closes the register-backend per-reassign payload leak
+            // (a rc-guarded no-op on wasm, which already reclaims). Sound only because b's
+            // payload is never aliased (enum_only_wildcard_used_rec gate).
+            var ere_enum: string = slot_enum_reassign_reclaim(s, slot);
+            if (ere_enum.len() > 0) { return emit_enum_reclaim_store(se, slot, ere_enum); }
             // A reclaimable string-builder ACCUMULATOR reassign (`s = s + part`):
             // free the SUPERSEDED box via __fern_str_free (box + data buffer),
             // cow-guarded, then store the fresh value — the string sibling of the
@@ -14018,6 +14025,12 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         }
         mi = mi + 1;
     }
+    // Reassigned array-payload ENUM locals: credited "ENUMRE:<E>:<name>" so the StmtAssign
+    // deep-drops each superseded box's payload (emit_enum_reclaim_store) instead of the
+    // box-only shallow free that leaked it on the register backends. Gated
+    // (enum_only_wildcard_used_rec + array-payload-only) so b's payload is never aliased;
+    // DISJOINT from the consume-by-match enum frees (those require b NOT reassigned).
+    out = enum_reassign_reclaim_names(body, structs, out);
     return out;
 }
 
@@ -15036,6 +15049,232 @@ function emit_enum_variant_drops(s: LowerState, slot: i32, enum_name: string): L
     st = st.emit(ir.op_const_i32(0));
     st = st.emit(ir.op_store_local(slot));
     return st;
+}
+
+// --- enum self-reassign deep-drop (Perceus: close the reassigned-enum payload leak) ---
+//
+// A loop-carried enum with a scalar-ARRAY payload — `var b: E = V0([..]); while (..) {
+// b = V1([..]); b = V2([..]); }` — leaks the superseded variant's payload array on the
+// register backends (box-only shallow free; a 50M-iter churn OOMs on x86). This routes
+// such a reassign through a variant-dispatch DEEP-DROP of the OLD box before storing the
+// new one. On WASM this pattern is already reclaimed (verified flat), so the extra dec is
+// a rc-GUARDED no-op there (arr_dec on an already-released buffer bumps the underflow
+// detector without re-freeing). SOUND only when b's payload is never aliased AND every
+// variant payload is a leak-safe SCALAR ARRAY (single arr_dec fully releases it — NOT a
+// nested struct, whose __struct_drop would double-free a shared payload). The reassign
+// RHS is always a FRESH variant ctor, so the new box never equals the old — no cow guard.
+
+// enum_variant_array_payload_only: every field of variant `vname` is a flat scalar or a
+// leak-safe SCALAR ARRAY. String / nested-struct / enum / map / option / tuple payloads
+// bail — the deep-drop must be a single arr_dec per rc field, never a __struct_drop.
+function enum_variant_array_payload_only(structs: parser.StructDecl[], vname: string): boolean {
+    var n: i32 = decl_field_count(structs, vname);
+    var fi: i32 = 0;
+    while (fi < n) {
+        var t: string = decl_field_type_at(structs, vname, fi);
+        if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t)) { return false; }
+        fi = fi + 1;
+    }
+    return true;
+}
+
+// enum_all_variants_array_payload: every variant of `enum_name` is array-payload-only AND
+// at least one variant carries an array (so there is a payload to reclaim).
+function enum_all_variants_array_payload(structs: parser.StructDecl[], enum_name: string): boolean {
+    var any: boolean = false;
+    var arr: boolean = false;
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].enum_owner == enum_name) {
+            any = true;
+            if (!enum_variant_array_payload_only(structs, structs[i].name)) { return false; }
+            if (enum_variant_has_rc_payload(structs, structs[i].name)) { arr = true; }
+        }
+        i = i + 1;
+    }
+    return any && arr;
+}
+
+// variant_ctor_enum_owner: the enum E a variant-constructor expr `V(args)` / bare `V`
+// belongs to, or "".
+function variant_ctor_enum_owner(e: parser.Expr, structs: parser.StructDecl[]): string {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => { return variant_enum_owner(structs, id.name); },
+                _ => { return ""; }
+            }
+        },
+        parser.ExprIdent(id) => { return variant_enum_owner(structs, id.name); },
+        _ => { return ""; }
+    }
+}
+
+// variant_ctor_array_payloads_fresh: every leak-safe-array-typed payload arg of the
+// variant ctor is a FRESH array LITERAL (so the constructed box solely owns each array).
+function variant_ctor_array_payloads_fresh(e: parser.Expr, structs: parser.StructDecl[]): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    var n: i32 = decl_field_count(structs, id.name);
+                    var i: i32 = 0;
+                    while (i < n && i < c.args.len()) {
+                        var ft: string = decl_field_type_at(structs, id.name, i);
+                        if (is_leaksafe_array_field(ft)) {
+                            var fresh: boolean = false;
+                            match (c.args[i]) { parser.ExprArray(_) => { fresh = true; }, _ => {} }
+                            if (!fresh) { return false; }
+                        }
+                        i = i + 1;
+                    }
+                    return true;
+                },
+                _ => { return false; }
+            }
+        },
+        parser.ExprIdent(_) => { return true; },
+        _ => { return false; }
+    }
+}
+
+// enum_only_wildcard_used_rec: every mention of `name` in `stmts` (recursively) is a SAFE
+// use for the enum self-reassign deep-drop — its decl, a reassignment to a fresh
+// `enum_name` variant ctor (no self-reference), or a match scrutinee whose arms bind no
+// payload and never re-reference name. ANY other mention disqualifies (the payload could
+// then be aliased/escape).
+function enum_only_wildcard_used_rec(stmts: parser.Stmt[], name: string, enum_name: string, structs: parser.StructDecl[]): boolean {
+    var none: string[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var st: parser.Stmt = stmts[i];
+        if (util.index_of_str(astwalk.collect_idents_stmt(st, none), name) >= 0) {
+            match (st) {
+                parser.StmtVar(v) => {
+                    if (v.name != name) { return false; }
+                    if (parser.expr_mentions(v.init, name)) { return false; }
+                },
+                parser.StmtAssign(a) => {
+                    if (a.target != name) { return false; }
+                    if (parser.expr_mentions(a.value, name)) { return false; }
+                    if (variant_ctor_enum_owner(a.value, structs) != enum_name) { return false; }
+                    if (!variant_ctor_array_payloads_fresh(a.value, structs)) { return false; }
+                },
+                parser.StmtMatch(m) => {
+                    var scrut_ok: boolean = false;
+                    match (m.scrutinee) {
+                        parser.ExprIdent(sid) => { if (sid.name == name) { scrut_ok = true; } },
+                        _ => {}
+                    }
+                    if (!scrut_ok) { return false; }
+                    var ai: i32 = 0;
+                    while (ai < m.arms.len()) {
+                        match (m.arms[ai].pattern) {
+                            parser.PatVariant(pv) => {
+                                // Bind to explicitly-typed string locals: the self-host
+                                // checker otherwise mis-infers the string[]-element index
+                                // `pv.extra_bindings[ei]` as i32 (emitting an undefined
+                                // __fn_i32__len). The native checker types it correctly.
+                                var pvb: string = pv.binding;
+                                if (pvb != "" && pvb != "_") { return false; }
+                                var ei: i32 = 0;
+                                while (ei < pv.extra_bindings.len()) {
+                                    var eb: string = pv.extra_bindings[ei];
+                                    if (eb != "" && eb != "_") { return false; }
+                                    ei = ei + 1;
+                                }
+                            },
+                            _ => {}
+                        }
+                        if (m.arms[ai].has_guard && parser.expr_mentions(m.arms[ai].guard, name)) { return false; }
+                        var bi: i32 = 0;
+                        while (bi < m.arms[ai].body.len()) {
+                            if (util.index_of_str(astwalk.collect_idents_stmt(m.arms[ai].body[bi], none), name) >= 0) { return false; }
+                            bi = bi + 1;
+                        }
+                        ai = ai + 1;
+                    }
+                },
+                parser.StmtWhile(w) => {
+                    if (parser.expr_mentions(w.cond, name)) { return false; }
+                    if (!enum_only_wildcard_used_rec(w.body, name, enum_name, structs)) { return false; }
+                },
+                parser.StmtIf(f) => {
+                    if (parser.expr_mentions(f.cond, name)) { return false; }
+                    if (!enum_only_wildcard_used_rec(f.then_body, name, enum_name, structs)) { return false; }
+                    if (!enum_only_wildcard_used_rec(f.else_body, name, enum_name, structs)) { return false; }
+                },
+                parser.StmtFor(fr) => {
+                    if (parser.expr_mentions(fr.iter, name)) { return false; }
+                    if (!enum_only_wildcard_used_rec(fr.body, name, enum_name, structs)) { return false; }
+                },
+                _ => { return false; }
+            }
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// enum_reassign_reclaim_names: enum locals safe for the per-reassign deep-drop, credited
+// "ENUMRE:<E>:<name>". Array-payload-only enum E, fresh array payloads, b IS reassigned
+// (DISJOINT from the consume-by-match frees, which require NOT reassigned), and
+// enum_only_wildcard_used_rec proves the payload is never aliased.
+function enum_reassign_reclaim_names(body: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
+    var out: string[] = acc;
+    var reassigned: string[] = body_assign_targets(body);
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                var e0: string = variant_ctor_enum_owner(v.init, structs);
+                if (e0.len() > 0 && enum_all_variants_array_payload(structs, e0)
+                        && variant_ctor_array_payloads_fresh(v.init, structs)
+                        && util.index_of_str(reassigned, v.name) >= 0
+                        && enum_only_wildcard_used_rec(body, v.name, e0, structs)) {
+                    out = out.append("ENUMRE:" + e0 + ":" + v.name);
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// slot_enum_reassign_reclaim: the enum E credited "ENUMRE:<E>:<slot-name>" for a
+// non-param slot, or "". Drives emit_enum_reclaim_store on the StmtAssign.
+function slot_enum_reassign_reclaim(s: LowerState, i: i32): string {
+    if (i < s.n_params) { return ""; }
+    if (i >= s.locals.len()) { return ""; }
+    var nm: string = s.locals[i].slot_name;
+    var j: i32 = 0;
+    while (j < s.reclaimable_names.len()) {
+        var r: string = s.reclaimable_names[j];
+        if (r.len() > 7 && r[0:7] == "ENUMRE:") {
+            var k: i32 = 7;
+            while (k < r.len() && r[k:k + 1] != ":") { k = k + 1; }
+            if (k < r.len() && r[k + 1:r.len()] == nm) { return r[7:k]; }
+        }
+        j = j + 1;
+    }
+    return "";
+}
+
+// emit_enum_reclaim_store stores the NEW box (on the operand stack) into `slot`, first
+// DEEP-DROPPING the superseded old box (payload arrays + box, runtime variant-dispatch
+// via emit_enum_variant_drops, which reads the slot and zeroes it). NO cow guard: the
+// reassign RHS is always a fresh variant ctor, so the new value never equals the old box.
+// The new box is parked in a scratch across the drop (emit_enum_variant_drops touches only
+// `slot`).
+function emit_enum_reclaim_store(se: LowerState, slot: i32, enum_name: string): LowerState {
+    var scratch: string = "$erea" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));        // park the new box
+    st = emit_enum_variant_drops(st, slot, enum_name);   // deep-drop old payload + box, zeroes slot
+    st = st.emit(ir.op_load_local(tmp));         // new box
+    return st.emit(ir.op_store_local(slot));     // slot = new
 }
 
 // --- consumed RC-PAYLOAD option/result deep-drop free -----------------------
