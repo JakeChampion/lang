@@ -11310,23 +11310,33 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
                         // local variant struct still bails just below (cross-module
                         // enums stay on the AST path).
                         var vname: string = pv.type_name;
+                        var vdot: i32 = 0 - 1;
                         var vld: i32 = 0;
                         while (vld < pv.type_name.len()) {
-                            if (pv.type_name[vld] == 46) { vname = pv.type_name[vld + 1 : pv.type_name.len()]; }
+                            if (pv.type_name[vld] == 46) { vname = pv.type_name[vld + 1 : pv.type_name.len()]; vdot = vld; }
                             vld = vld + 1;
                         }
-                        // NOTE a QUALIFIED pattern on an imported UNION member
-                        // (`mod.Struct`, where the flattened decl is the mangled
-                        // `mod__Struct`) still bails here: the bare-strip yields
-                        // `Struct`, which only matches a same-module ENUM variant
-                        // (`E.V` → struct `V`). Lowering it through the IR path
-                        // (a `mod__Struct` mangled lookup) is correct and works for
-                        // user programs, but flipping the self-host's OWN modules'
-                        // many `parser.*` matches from AST to IR at once exhausts the
-                        // per-module-emit memory frontier (un-reclaimed IR-op
-                        // allocations, #3425) — it OOMs the whole-compiler module 9
-                        // build. So it stays BLOCKED on the goal-2 reclaim; see
-                        // docs/RC-PERCEUS-SELF-HOST-PORT.md.
+                        // A QUALIFIED pattern on an imported UNION member
+                        // (`mod.Struct`) — whose flattened decl is the MANGLED
+                        // `mod__Struct` (flatten's rewrite_pattern leaves the pattern's
+                        // type_name qualified, unlike ctor / field refs which it
+                        // mangles) — bare-strips to `Struct`, which only matches a
+                        // same-module ENUM variant (`E.V` → struct `V`). Only when the
+                        // bare name is NOT a declared struct, try the '.'→'__' mangled
+                        // form (built in two concatenations, NOT char-by-char, since
+                        // each `+` leaks in the un-reclaimed runtime and this runs per
+                        // arm). A hit lets the member lower through the IR path AND
+                        // binds `pv` typed `mod__Struct` (so a later `pv.field` read
+                        // dispatches correctly instead of mis-inferring i32). This
+                        // flips the self-host's own many `parser.*` matches from AST to
+                        // IR; that extra codegen once OOM'd the whole-compiler module-9
+                        // per-module emit (#3425), now bounded by the function-window
+                        // sharding (asm_modload_run -func-range). Enum variants are
+                        // unaffected: their mangled candidate is not a declared struct.
+                        if (!decl_is_struct(ms.structs, vname) && vdot >= 0) {
+                            var vmangled: string = pv.type_name[0 : vdot] + "__" + pv.type_name[vdot + 1 : pv.type_name.len()];
+                            if (decl_is_struct(ms.structs, vmangled)) { vname = vmangled; }
+                        }
                         if (!decl_is_struct(ms.structs, vname)) { return s.fail(); }
                         if (!decl_is_leaksafe(ms.structs, vname)) { return s.fail(); }
                         var has_bind: boolean = pv.binding.len() > 0 && pv.binding != "_";
