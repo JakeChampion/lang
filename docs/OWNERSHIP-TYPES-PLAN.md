@@ -153,13 +153,30 @@ fixpoints.
   string — closing the leak for a string-only struct nested in a reclaimable one.
   And a base-copied string field (`R { ...base, … }`) is retained so the drop
   only decs the alias (no over-release).
-- **CS3.** Migrate the remaining scattered predicates
-  (`str_local_binding_is_fresh`, `str_free_producer_ident`,
-  `needs_rc_inc_on_alias`'s string exclusion) to derive from the classifier;
-  retire the duplicated logic once parity holds under the per-module gate.
+- **CS3 (`string[]`-element reclaim) — NEXT, needs element-string RC first.** A
+  `string[]` struct field (IR-eligible via `decl_is_leaksafe_d`) still leaks BOTH
+  its buffer AND its element strings — it is no reclaim kind in
+  `emit_ir_struct_drop_one`. A `k_strarr` drop arm mirroring `k_box` (walk the
+  buffer, but `__fern_str_free` each element instead of `__fern_arr_dec`, then
+  free the buffer) is the shape. **Blocker:** freeing element strings on the
+  drop is only sound if each element is sole-owned, but the `rc_is_unique` gate
+  guards the *buffer*, not element aliasing — a shared string sitting in a
+  uniquely-owned array would be over-released. So this needs **element-string
+  RC** first: retain (`rc_inc`) an aliased string when it is pushed / built into
+  a `string[]` (the array-element analogue of the struct-field construction
+  inc), so the per-element `__fern_str_free` only decs the dup. That is a
+  genuine, separate slice (touches array construction / `__fern_arr_push`), not
+  a session-tail add-on. Keep it NARROW (only `string[]` fields of
+  already-reclaimable structs; no `struct_has_reclaim_array_field` broadening)
+  to avoid the `slot_is_reclaimable_struct` OOM.
 - **CS4.** Carry `ownership` on the self-host `Ty` itself (`asmcore.fern:956`) so
   a bound local / field remembers its classification, not just the producing
   expression — the self-host analogue of C1's structural axis.
+- **Not doing:** migrating `str_local_binding_is_fresh` / `str_free_producer_
+  ident` to derive from `str_producer_ownership` — inspection shows genuinely
+  different admit-sets (syntactic-vs-typed, box-freshness-vs-ownership, even
+  `i32_to_string` differs), so it is not a clean behaviour-preserving refactor;
+  forcing it would risk the fragile reclaim path for ~no gain.
 
 ## Root cause of the A2 struct-field-reclaim runaway (resolved)
 
