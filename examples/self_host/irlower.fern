@@ -16875,6 +16875,199 @@ function emit_enum_donor_reuse(y_name: string, init: parser.Expr, recip: string,
     }
 }
 
+// --- general enum->enum cross-local box reuse (FBIP) --------------------------
+//
+// The enum analog of emit_cross_struct_reuse. A `var c = V([..])` construction of
+// an array-payload enum E reuses the (dead, non-escaping, non-aliased) box of an
+// EARLIER same-enum donor local `a = W([..])` instead of allocating a fresh box:
+//   - RELEASE a's OLD variant payload arrays (runtime variant-dispatch arr_dec via
+//     emit_enum_variant_payload_drops — box kept), since a is dead and its payload
+//     provably never aliased (enum_only_wildcard_used_rec), so releasing the old
+//     arrays dangles nothing;
+//   - RE-SHAPE a's box to V (op_struct_set_shape) and write V's FRESH array-literal
+//     payloads into the SAME box — SIZE-SAFE only because every variant of E has
+//     the same field count (enum_all_variants_same_field_count) so a's box (sized
+//     for W) has room for V;
+//   - BIND c to a's box (marked enum E, mirroring a normal `var c = V(..)` decl),
+//     then ZERO a's slot so a's box is reclaimed exactly once — via c, at c's own
+//     reclamation point (precise_drop / rcenumfrees, which see `var c = V([..])` in
+//     the AST). Net: one fewer __fern_arr_box + one fewer free per construction.
+//
+// SOUNDNESS / disjointness. The donor pool is DEAD rc-payload enum locals, which is
+// structurally disjoint from every existing donor pool (fresh struct lits for the
+// struct-cross / self-overwrite donors; SCALAR enums in enumfrees for the enum-donor
+// path; tuples for the tuple-cross donor). The recipient is an enum-ctor var-decl,
+// which none of self-overwrite / cross-struct / enum-donor / in-arm claim (they claim
+// struct lits / IIFE matches). CRITICAL: a dead rc-payload enum donor is otherwise
+// freed BEFORE k — by rcenumfrees (a top-level wildcard `match (a)`) or by the
+// enum-rcpayload precise drop (a nested use) — so lower_func SUPPRESSES both for a
+// chosen donor (index_of_str(ecross.donors, ..) guards), exactly as it suppresses the
+// enum-donor and struct-cross donors. With those suppressions a's box survives to k,
+// flows into c, and is freed once via c. Each donor is consumed at most once; the
+// FIRST (nearest-from-front) eligible donor is chosen for determinism (the
+// byte-identical fixpoint demands a deterministic AST->pairing function).
+
+// EnumCrossSites: parallel arrays — for each enum->enum cross-reuse site, the
+// recipient construction's body-statement index, the donor enum local name, and the
+// enum E. Flat triple for the self-host nested-array limit.
+struct EnumCrossSites { idxs: i32[], donors: string[], enums: string[] }
+
+// enum_cross_reuse_sites pairs each `var c = V([..])` array-payload-enum construction
+// with an earlier dead same-enum donor `a = W([..])` whose box it reuses in place. It
+// is given the already-computed self-overwrite / cross-struct / enum-donor sites so it
+// never re-claims one of their construction indices, and so its donor is disjoint from
+// their donor pools. A statement k qualifies when: c's init is a fresh same-count
+// array-payload variant ctor of E (variant_ctor_enum_owner + enum_all_variants_array_
+// payload + enum_all_variants_same_field_count + variant_ctor_array_payloads_fresh);
+// k is not already a so/xr/edr site; and there is a DEAD donor `a` of the SAME enum E,
+// matching box size (enum_init_box_fields == want), never reassigned, never escaping,
+// dead from k onward, not already consumed, a != c, whose payload is provably never
+// aliased (enum_only_wildcard_used_rec). Each donor is consumed at most once.
+function enum_cross_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[], so: ReuseSites, xr: CrossReuseSites, edr: EnumDonorSites): EnumCrossSites {
+    var idxs: i32[] = [];
+    var donors: string[] = [];
+    var enums: string[] = [];
+    var reassigned: string[] = body_assign_targets(body);
+    var k: i32 = 0;
+    while (k < body.len()) {
+        // skip a statement already owned by a self-overwrite / cross-struct /
+        // enum-donor site (defensive — an enum-ctor var-decl is not a struct-lit
+        // construction, so those never claim it, but mirror the taken/skip logic).
+        var taken: boolean = false;
+        var si: i32 = 0;
+        while (si < so.idxs.len()) { if (so.idxs[si] == k) { taken = true; } si = si + 1; }
+        var xi: i32 = 0;
+        while (xi < xr.idxs.len()) { if (xr.idxs[xi] == k) { taken = true; } xi = xi + 1; }
+        var ei: i32 = 0;
+        while (ei < edr.idxs.len()) { if (edr.idxs[ei] == k) { taken = true; } ei = ei + 1; }
+        if (!taken) {
+            match (body[k]) {
+                parser.StmtVar(v) => {
+                    var e0: string = variant_ctor_enum_owner(v.init, structs);
+                    if (e0.len() > 0
+                            && enum_all_variants_array_payload(structs, e0)
+                            && enum_all_variants_same_field_count(structs, e0)
+                            && variant_ctor_array_payloads_fresh(v.init, structs)) {
+                        var want: i32 = enum_init_box_fields(body, structs, v.name);
+                        // scan earlier statements for the nearest eligible donor.
+                        var i: i32 = 0;
+                        var chosen: string = "";
+                        while (i < k && chosen == "") {
+                            match (body[i]) {
+                                parser.StmtVar(dv) => {
+                                    var dname: string = dv.name;
+                                    var elig: boolean = dname != v.name
+                                        && variant_ctor_enum_owner(dv.init, structs) == e0
+                                        && enum_init_box_fields(body, structs, dname) == want
+                                        && util.index_of_str(donors, dname) < 0
+                                        && util.index_of_str(so.bases, dname) < 0
+                                        && util.index_of_str(xr.donors, dname) < 0
+                                        && util.index_of_str(edr.donors, dname) < 0;
+                                    // not reassigned: keeps the donor out of the enum
+                                    // self-reassign path (emit_enum_inplace_reassign),
+                                    // which owns a reassigned array-payload enum local.
+                                    if (elig && util.index_of_str(reassigned, dname) >= 0) { elig = false; }
+                                    // NO separate walk_stmts_escapes gate: an enum's only
+                                    // non-decl use is a bare-ident `match` scrutinee, which
+                                    // walk_stmts_escapes flags as an escape. enum_only_
+                                    // wildcard_used_rec (below) is the PRECISE non-alias /
+                                    // non-escape proof — it rejects any mention that isn't
+                                    // the decl, a fresh same-enum reassign, or a bind-free
+                                    // wildcard match scrutinee (return/pass/alias all fail).
+                                    if (elig) {
+                                        // dead from statement k onward: no mention of
+                                        // dname at index >= k (covers c's own payloads).
+                                        var m: i32 = k;
+                                        while (m < body.len()) {
+                                            var none: string[] = [];
+                                            if (util.index_of_str(astwalk.collect_idents_stmt(body[m], none), dname) >= 0) { elig = false; }
+                                            m = m + 1;
+                                        }
+                                    }
+                                    // non-aliasing proof: every mention of the donor is
+                                    // a safe use (decl / fresh same-enum reassign / bind-
+                                    // free wildcard match) — so releasing its old arrays
+                                    // in emit_enum_cross_reuse dangles nothing.
+                                    if (elig && !enum_only_wildcard_used_rec(body, dname, e0, structs)) { elig = false; }
+                                    if (elig) { chosen = dname; }
+                                },
+                                _ => {}
+                            }
+                            i = i + 1;
+                        }
+                        if (chosen != "") {
+                            idxs = idxs.append(k);
+                            donors = donors.append(chosen);
+                            enums = enums.append(e0);
+                        }
+                    }
+                },
+                _ => {}
+            }
+        }
+        k = k + 1;
+    }
+    return EnumCrossSites { idxs: idxs, donors: donors, enums: enums };
+}
+
+// emit_enum_cross_reuse lowers `var c = V([..])` (V a variant of array-payload enum
+// `enum_name`) as an IN-PLACE reuse of dead donor `donor_name`'s box — the enum analog
+// of emit_cross_struct_reuse, built on the self-reassign primitives. It (1) releases
+// the donor's OLD variant payload arrays (emit_enum_variant_payload_drops — box kept),
+// (2) re-shapes the donor box to V and writes V's fresh array-literal payloads into it
+// (the write loop copied from emit_enum_inplace_reassign), (3) binds c to the donor box
+// (marked enum E, like a normal enum-ctor decl), loads donor->stores c, and ZEROES the
+// donor slot so the box is freed exactly once via c. SIZE-SAFE by enum_all_variants_
+// same_field_count (enforced at the site). Returns fail() on any non-`V([..])` shape.
+function emit_enum_cross_reuse(c_name: string, value: parser.Expr, donor_name: string, enum_name: string, s: LowerState): LowerState {
+    var dslot: i32 = s.slot_of(donor_name);
+    if (dslot < 0) { return s.fail(); }
+    match (value) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(vid) => {
+                    var vname: string = vid.name;
+                    if (variant_enum_owner(s.structs, vname) != enum_name) { return s.fail(); }
+                    if (decl_field_count(s.structs, vname) != c.args.len()) { return s.fail(); }
+                    // 1. release the donor's old variant payload arrays (box kept).
+                    var st: LowerState = emit_enum_variant_payload_drops(s, dslot, enum_name);
+                    // 2. re-shape the donor box to V.
+                    st = st.emit(ir.op_load_local(dslot));
+                    st = st.emit(ir.op_struct_set_shape(vname));
+                    st = st.emit(ir.op_drop());
+                    // 3. write V's fresh payloads into the donor box, in decl order.
+                    var di: i32 = 0;
+                    while (di < c.args.len()) {
+                        if (struct_field_is_i64(st.structs, vname, di)) {
+                            st = st.emit(ir.op_load_local(dslot));
+                            st = lower_i64(c.args[di], st);
+                            if (!st.ok) { return st; }
+                            st = st.emit(ir.op_struct_set_i64(di));
+                        } else {
+                            st = st.emit(ir.op_load_local(dslot));
+                            st = lower_expr(c.args[di], st);
+                            if (!st.ok) { return st; }
+                            st = st.emit(ir.op_struct_set(di, struct_field_width(st.structs, vname, di)));
+                        }
+                        di = di + 1;
+                    }
+                    // 4. bind c to the donor box; zero the donor slot.
+                    var cb: LowerState = st.add_local(c_name);
+                    var cslot: i32 = cb.slot_of(c_name);
+                    cb = cb.mark_struct_type(cslot, enum_name);
+                    cb = cb.emit(ir.op_load_local(dslot));
+                    cb = cb.emit(ir.op_store_local(cslot));
+                    cb = cb.emit(ir.op_const_i32(0));
+                    cb = cb.emit(ir.op_store_local(dslot));
+                    return cb;
+                },
+                _ => { return s.fail(); }
+            }
+        },
+        _ => { return s.fail(); }
+    }
+}
+
 // --- in-arm consuming-match box reuse (FBIP) ---------------------------------
 //
 // The marquee Perceus "functional but in-place" win: `var y = match (x) { ... }`
@@ -17862,6 +18055,13 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // (emit_inarm_match_reuse). No post-match free exists for an in-arm scrutinee, so
     // nothing to suppress; y owns the box on every path, freed once at its reclamation.
     var inarm: InArmReuseSites = consumed_inarm_reuse_sites(fn.body, structs);
+    // General enum->enum cross-local box reuse (FBIP): a `var c = V([..])` array-
+    // payload-enum construction reuses an earlier dead same-enum donor `a = W([..])`'s
+    // box in place instead of allocating (see enum_cross_reuse_sites). The recipient is
+    // lowered by emit_enum_cross_reuse; the donor's otherwise-earlier reclamation (via
+    // rcenumfrees / the enum-rcpayload precise drop) is SUPPRESSED below so its box
+    // survives to the reuse and is freed exactly once via c.
+    var ecross: EnumCrossSites = enum_cross_reuse_sites(fn.body, structs, reuse, xreuse, edon);
     var j: i32 = 0;
     while (j < fn.body.len()) {
         // Slot count before this statement, so a `for` / `match` at function-body
@@ -17908,7 +18108,20 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
             if (inarm.idxs[ini] == j) { inarm_i = ini; }
             ini = ini + 1;
         }
-        if (inarm_i >= 0) {
+        // Is statement j an enum->enum cross-reuse site (`var c = V([..])` reusing an
+        // earlier dead same-enum donor's box in place)?
+        var ecross_i: i32 = 0 - 1;
+        var eci: i32 = 0;
+        while (eci < ecross.idxs.len()) {
+            if (ecross.idxs[eci] == j) { ecross_i = eci; }
+            eci = eci + 1;
+        }
+        if (ecross_i >= 0) {
+            match (fn.body[j]) {
+                parser.StmtVar(rv) => { s = emit_enum_cross_reuse(rv.name, rv.init, ecross.donors[ecross_i], ecross.enums[ecross_i], s); },
+                _ => { s = lower_stmt(fn.body[j], s); },
+            }
+        } else if (inarm_i >= 0) {
             match (fn.body[j]) {
                 parser.StmtVar(rv) => { s = emit_inarm_match_reuse(rv.name, rv.init, inarm.donors[inarm_i], s); },
                 _ => { s = lower_stmt(fn.body[j], s); },
@@ -18031,7 +18244,8 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                     // type. A scalar payload took the "box-shallow" branch above (op_opt_
                     // payload on an inline scalar would wrongly dec the value).
                     s = emit_opt_payload_drop(s, dslot);
-                } else if (dslot >= s.n_params && pdrops.kinds[pi].len() > 15 && pdrops.kinds[pi][0:15] == "enum-rcpayload:") {
+                } else if (dslot >= s.n_params && pdrops.kinds[pi].len() > 15 && pdrops.kinds[pi][0:15] == "enum-rcpayload:"
+                        && util.index_of_str(ecross.donors, pdrops.names[pi]) < 0) {
                     // Fresh rc-PAYLOAD user-enum (a variant with a leak-safe array /
                     // deep-drop-ok struct payload), last-used in a nested block —
                     // precise_drop_names admitted it with NO top-level match (disjoint
@@ -18040,6 +18254,11 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
                     // variant's rc payload then free the box (emit_enum_variant_drops
                     // zeroes the slot too). The enum NAME rides in the kind after the
                     // "enum-rcpayload:" prefix (the slot type alone can't name it).
+                    // SKIPPED when this enum local is an enum->enum cross-reuse DONOR
+                    // (ecross.donors): emit_enum_cross_reuse recycles its box into the
+                    // recipient c (releasing only the OLD payload arrays, keeping the
+                    // box), so freeing the box here would race that reuse — a UAF /
+                    // double-free. The box is then freed exactly once via c.
                     s = emit_enum_variant_drops(s, dslot, pdrops.kinds[pi][15 : pdrops.kinds[pi].len()]);
                 } else if (dslot >= s.n_params && pdrops.kinds[pi] == "map-buffers") {
                     // Fresh MAP local, last-used in a nested block — free its keys +
@@ -18081,7 +18300,11 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         // box is freed exactly once.
         var rei: i32 = 0;
         while (rei < rcenumfrees.idxs.len()) {
-            if (rcenumfrees.idxs[rei] == j) {
+            // Suppress the deep-drop free if this donor's box was donated to a later
+            // enum->enum cross-reuse site (emit_enum_cross_reuse recycles the box into
+            // the recipient; freeing it here too is a double-free / UAF). The box is
+            // then freed exactly once via the recipient c.
+            if (rcenumfrees.idxs[rei] == j && util.index_of_str(ecross.donors, rcenumfrees.names[rei]) < 0) {
                 var rxslot: i32 = s.slot_of(rcenumfrees.names[rei]);
                 if (rxslot >= s.n_params) {
                     s = emit_enum_variant_drops(s, rxslot, rcenumfrees.enums[rei]);
