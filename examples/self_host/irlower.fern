@@ -11898,12 +11898,17 @@ pub function nested_field_deep_drop_ok(structs: parser.StructDecl[], sty: string
 // nddo_reach is the cycle-detecting DFS behind nested_field_deep_drop_ok. It returns
 //   -1  a cycle is reachable from `sty` (a back-edge to a struct on the current path,
 //       or the depth backstop) — UNSAFE to deep-drop, and poisons every ancestor;
-//    1  `sty`'s closure is acyclic AND reaches an rc-ARRAY field (deep-drop-worthy);
-//    0  `sty`'s closure is acyclic but reaches NO rc-array (nothing to reclaim).
+//    1  `sty`'s closure is acyclic AND reaches a RECLAIMABLE field — an rc-ARRAY or,
+//       since #4297 A2, a `string` field (deep-drop-worthy);
+//    0  `sty`'s closure is acyclic but reaches nothing reclaimable.
 // `visiting` is the set of struct types on the current recursion path (the same
-// back-edge mechanism as decl_is_leaksafe_d). A direct rc-array field (scalar / of-
-// struct / of-enum) sets the reclaimable flag; a nested-struct field recurses (its
-// cycle poisons via -1, its reclaimable content propagates up).
+// back-edge mechanism as decl_is_leaksafe_d). A direct rc-array / string field sets
+// the reclaimable flag; a nested-struct field recurses (its cycle poisons via -1,
+// its reclaimable content propagates up). Deep-dropping a nested string-only struct
+// is sound: the deep-drop is rc_is_unique-gated, so a SHARED nested struct skips it
+// (no over-release), and a uniquely-owned one runs its own __struct_drop whose k_str
+// arm reclaims the string exactly as at top level (the construction alias-inc
+// balances a non-fresh field; a fresh field is freed).
 function nddo_reach(structs: parser.StructDecl[], sty: string, visiting: string[]): i32 {
     if (util.has_str(visiting, sty)) { return 0 - 1; }   // back-edge → cycle → unsafe
     if (visiting.len() > 16) { return 0 - 1; }            // depth backstop → treat as unsafe
@@ -11919,6 +11924,8 @@ function nddo_reach(structs: parser.StructDecl[], sty: string, visiting: string[
             if (r == 1) { has_arr = true; }
         } else if (is_leaksafe_array_field(fdt) || is_struct_array_field_type(structs, fdt) || is_enum_array_field_type(structs, fdt)) {
             has_arr = true;
+        } else if (fdt == "string") {
+            has_arr = true;   // #4297 A2: a string field is reclaimable (k_str drop)
         }
         fi = fi + 1;
     }

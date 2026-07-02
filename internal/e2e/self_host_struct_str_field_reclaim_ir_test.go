@@ -83,4 +83,17 @@ function main(): i32 { var v: i32 = churn(2000000); if (__fern_rc_underflow_coun
 function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var nm: string = "abc"; var r1: R = R { name: nm, items: [1] }; var r2: R = R { ...r1, items: [2, 3] }; if (r2.name.len() != 3) { bad = 1; } if (r1.name.len() != 3) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(2000000); if (__fern_rc_underflow_count() != 0) { return 99; } return v; }`,
 		"struct-str-field-base-copy-balanced", 0)
+
+	// NESTED string-only struct (deep-drop): `B { name: string }` has no rc-array
+	// field, so before #4297 A2's nddo_reach extension it was NOT deep-drop-worthy —
+	// dropping the outer `A` shallow-freed the inner B box and LEAKED B.name. Now B
+	// is deep-drop-worthy, so A's drop (when B is uniquely owned — a fresh literal
+	// here) runs $__struct_drop_B, whose k_str arm frees B.name (a fresh concat, rc=1).
+	// A is reclaimable (its `items` array) and non-escaping, swept each iteration.
+	// 1,500,000 cycles stay flat (B.name freed) → exit 0; a leak SIGKILLs (137).
+	run(t, `struct B { name: string }
+struct A { inner: B, items: i32[] }
+function churn(n: i32): i32 { var pre: string = "z"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { var a: A = A { inner: B { name: pre + "xy" }, items: [1, 2] }; if (a.inner.name.len() != 3) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { var v: i32 = churn(1500000); if (__fern_rc_underflow_count() != 0) { return 99; } return v; }`,
+		"nested-string-only-struct-reclaim", 0)
 }
