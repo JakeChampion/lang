@@ -30,8 +30,10 @@ import (
 // (print_str / eprint_str / exit), string indexing (str_index), and
 // Option / Result (opt_make / opt_none / opt_tag / opt_payload), args()
 // (the argv string[]), closures (const_func -> funcaddr + call_indirect,
-// the lambda hoisted via lift_lambdas), and user enum matching
-// (struct_make tag + variant_is over the module's variant structs), with
+// the lambda hoisted via lift_lambdas), user enum matching
+// (struct_make tag + variant_is over the module's variant structs), and
+// array append / slice (arr_push / arr_push_owned / arr_slice / str_slice
+// via the injected __ssa_arr_push / __ssa_arr_slice helpers), with
 // irlower's RC-helper calls stripped. Out-of-subset
 // programs make the driver exit non-zero; only in-subset programs are
 // listed here.
@@ -210,6 +212,21 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 		{"enumbare", `enum Color { Red, Green, Blue } function code(c: Color): i32 { match (c) { Red => { return 1; }, Green => { return 2; }, Blue => { return 3; } } } function main(): i32 { return code(Red) * 100 + code(Green) * 10 + code(Blue); }`},
 		{"enumvar", `enum Expr { Lit(i32), Neg(i32) } function eval(e: Expr): i32 { match (e) { Lit(v) => { return v; }, Neg(v) => { return 0 - v; } } } function main(): i32 { var e: Expr = Lit(7); var a = eval(e); return a + eval(Neg(5)); }`},
 		{"enumthree", `enum Dir { N, E, S, W } function turn(d: Dir): i32 { match (d) { N => { return 10; }, E => { return 20; }, S => { return 30; }, W => { return 40; } } } function main(): i32 { return turn(S) + turn(W); }`},
+		// Array append + slice over real irlower output (slice 15): `.append`
+		// (arr_push), the sole-owner self-append `a = a.append(v)` in a loop
+		// (arr_push_owned), an array slice `a[lo:hi]` (arr_slice), and a string
+		// slice `s[lo:hi]` (str_slice). Each lowers to a call to a pure-Fern runtime
+		// helper — __ssa_arr_push / __ssa_arr_slice, the same helpers build_func's
+		// `.append` / `a[lo:hi]` lowerings call — which the driver injects
+		// (build_func over ssa.ssa_helpers_src) when the lifted program calls it.
+		// arr_push_owned collapses to the copying push on the leak-only bump heap
+		// (no in-place realloc), and str_slice copies a fresh substring rather than
+		// the native zero-copy immortal view. These were the largest lift-bail
+		// buckets in the coverage scan; the scan of parser.fern rises 58% -> 99%.
+		{"arrpush", `function main(): i32 { var a: i32[] = [1, 2, 3]; a = a.append(4); return a[3] + a.len(); }`},
+		{"arrpushloop", `function main(): i32 { var a: i32[] = []; var i = 0; while (i < 5) { a = a.append(i * 2); i = i + 1; } return a.len() * 10 + a[4]; }`},
+		{"arrslice", `function main(): i32 { var a: i32[] = [10, 20, 30, 40, 50]; var b = a[1:4]; return b.len() * 100 + b[0] + b[2]; }`},
+		{"strslice", `function main(): i32 { var s: string = "hello world"; var t = s[0:5]; return t.len() + s[6:11].len(); }`},
 	}
 	for _, tc := range cases {
 		tc := tc
