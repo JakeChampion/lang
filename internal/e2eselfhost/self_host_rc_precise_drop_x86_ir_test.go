@@ -1187,6 +1187,25 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		})
 	}
 
+	// #4350 slice 1: the self-overwrite reuse site is RUNTIME-GUARDED — the
+	// emitted asm must carry the uniqueness probe and the token-degrade
+	// allocator (native tryStructReuseOverwrite's shape: reused =
+	// __fern_rc_is_unique(d); box = __fern_alloc_reuse(token, nfields)). The
+	// degrade arm is unreachable from any valid program today (the static
+	// escape walk admits only sole-owner donors), so it is pinned structurally
+	// here — and at scale by the self-compile fixpoints, which run every
+	// self-overwrite site in the compiler's own source through the guard —
+	// rather than by an end-to-end case.
+	t.Run("self-overwrite-guard-emitted", func(t *testing.T) {
+		asm := emit(t, `struct Point { x: i32, y: i32 } function main(): i32 { var d = Point { x: 3, y: 4 }; var c = Point { ...d, x: 10 }; return c.x + c.y; }`)
+		if !strings.Contains(asm, "call __fn___fern_rc_is_unique") {
+			t.Error("self-overwrite reuse site emitted no __fern_rc_is_unique guard")
+		}
+		if !strings.Contains(asm, "call __fn___fern_alloc_reuse") {
+			t.Error("self-overwrite reuse site emitted no __fern_alloc_reuse token-degrade call")
+		}
+	})
+
 	// (The former `field-with-call-stays-ast` negative is now obsolete: a
 	// `.with(i,v)` / `.append(v)` array-field value lowers via IR through the
 	// value-producing clone path added in this slice — covered by the

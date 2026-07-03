@@ -6733,6 +6733,31 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): st
     o = o + "    (i32.store (local.get $base) (i32.const 1))\n";
     o = o + "    (i32.store (i32.add (local.get $base) (i32.const 4)) (local.get $n))\n";
     o = o + "    (i32.add (local.get $base) (i32.const 8)))\n";
+    // $__fern_alloc_reuse(token, nfields) -> box (#4350): the FBIP reuse-
+    // degrade primitive, wasm twin of the asm __fn___fern_alloc_reuse, adapted
+    // to the str_box layout (rc@box-8, bsz@box-4). A struct box for nf fields
+    // is $__fern_str_box(8 + nf*8), i.e. block size 16 + nf*8 (8-byte header +
+    // type-id slot + fields; already 8-aligned). null token -> fresh box; size
+    // match -> hand the SAME block back (rc stays 1 — the caller's
+    // $__fern_rc_is_unique gate guaranteed sole ownership; the caller
+    // overwrites the type-id slot before any read); mismatch -> free the donor
+    // block exactly as $__fern_arr_dec's rc==1 path does (rc=0, next parked in
+    // the bsz slot, pushed onto its size class) and alloc fresh — a mispaired
+    // reuse is only ever slower, never unsound.
+    o = o + "  (func $__fern_alloc_reuse (param $t i32) (param $nf i32) (result i32)\n";
+    o = o + "    (local $want i32) (local $base i32) (local $cls i32)\n";
+    o = o + "    (local.set $want (i32.add (i32.const 16) (i32.mul (local.get $nf) (i32.const 8))))\n";
+    o = o + "    (if (i32.eqz (local.get $t)) (then\n";
+    o = o + "      (return (call $__fern_str_box (i32.add (i32.const 8) (i32.mul (local.get $nf) (i32.const 8)))))))\n";
+    o = o + "    (local.set $base (i32.sub (local.get $t) (i32.const 8)))\n";
+    o = o + "    (if (i32.eq (i32.load (i32.add (local.get $base) (i32.const 4))) (local.get $want)) (then\n";
+    o = o + "      (return (local.get $t))))\n";
+    o = o + "    (local.set $cls (i32.shr_u (i32.load (i32.add (local.get $base) (i32.const 4))) (i32.const 3)))\n";
+    o = o + "    (i32.store (local.get $base) (i32.const 0))\n";
+    o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
+    o = o + "      (i32.store (i32.add (local.get $base) (i32.const 4)) (i32.load (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
+    o = o + "      (i32.store (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4))) (local.get $base))))\n";
+    o = o + "    (call $__fern_str_box (i32.add (i32.const 8) (i32.mul (local.get $nf) (i32.const 8)))))\n";
     // $__fern_arr_dec(a) -> a: Perceus array release. Same guard chain as
     // the rc helpers (null / SSO low-bit / low-addr / sentinel). rc > 1:
     // decrement. rc <= 0: over-release (detector++), no free. rc == 1:

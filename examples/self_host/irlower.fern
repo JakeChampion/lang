@@ -16559,97 +16559,193 @@ function self_overwrite_reuse_sites(body: parser.Stmt[], structs: parser.StructD
     return ReuseSites { idxs: idxs, bases: bases };
 }
 
-// emit_self_overwrite_reuse lowers `var c = T { ...d, f: v, ... }` as an
-// IN-PLACE reuse of d's box (the reuse site found by self_overwrite_reuse_sites).
-// `c_name` is the new local; `slit` the struct-update literal; `base_name` is d.
-// For each override field it writes the new value into d's box via struct_set,
-// binds c to d's box (a plain alias — leak-only scalar structs need no rc inc),
-// then ZEROES d's slot so the function-exit dec-sweep frees the box exactly once
-// (through c, which now owns it) and harmlessly decs a null for d. The `slit` is
-// passed as the wrapped parser.Expr (not the unwrapped variant struct) and
-// re-matched here — passing a large unwrapped AST struct by value is avoided.
+// emit_self_overwrite_reuse lowers `var c = T { ...d, f: v, ... }` as a
+// RUNTIME-GUARDED in-place reuse of d's box (#4350, native's token shape;
+// the reuse site found by self_overwrite_reuse_sites). `c_name` is the new
+// local; `slit` the struct-update literal; `base_name` is d.
+//
+// The static escape walk proves d is sole-owner; the __fern_rc_is_unique
+// guard makes any FUTURE hole in that walk degrade instead of corrupting:
+//   1. every override value is evaluated into a temp (reads of d's old
+//      fields complete before any box surgery, on both branches);
+//   2. reused = __fern_rc_is_unique(d); token = reused ? d : 0;
+//   3. box = __fern_alloc_reuse(token, nfields) — the SAME block on the
+//      reuse path (same type -> the cap always fits), a fresh rc=1 arr-box
+//      otherwise;
+//   4. reuse arm: release each OVERRIDDEN field's old value (it is about to
+//      be overwritten — or it leaks). Fresh arm: copy the shape word and
+//      every NON-overridden field from d's still-live box (the aliases hold
+//      it), rc-inc'ing pointer-kinded copies, then dec d's own reference
+//      (rc >= 2 here, so the dec never frees);
+//   5. store the override temps, bind c to the box, and ZERO d's slot so
+//      the exit dec-sweep frees the box exactly once (through c) and
+//      harmlessly decs a null for d.
+// The `slit` is passed as the wrapped parser.Expr (not the unwrapped variant
+// struct) and re-matched here — passing a large unwrapped AST struct by
+// value is avoided.
 function emit_self_overwrite_reuse(c_name: string, init: parser.Expr, base_name: string, release_prior: boolean, s: LowerState): LowerState {
     var dslot: i32 = s.slot_of(base_name);
     if (dslot < 0) { return s.fail(); }
     match (init) {
         parser.ExprStructLit(slit) => {
+            var nf: i32 = decl_field_count(s.structs, slit.type_name);
+            // 1. Evaluate every OVERRIDE value into a temp local FIRST (native
+            //    tryStructReuseOverwrite step 1): the reads of d's old fields all
+            //    complete before any box surgery, on both branches.
             var st: LowerState = s;
-            // Write each override field into d's box. For a leak-safe ARRAY field,
-            // first RELEASE the old array already in d's box (load box; struct_get;
-            // __fern_rc_dec; drop) — or it leaks — then write the new (fresh) array.
-            // For an i64 field, lower via lower_i64 and store 8 bytes (struct_set_i64).
-            // For a plain scalar / f64 field, lower_expr + struct_set(width).
+            var tslots: i32[] = [];
+            var fidxs: i32[] = [];
             var fj: i32 = 0;
             while (fj < slit.field_names.len()) {
                 var fidx: i32 = st.field_index_in(slit.type_name, slit.field_names[fj]);
                 if (fidx < 0) { return st.fail(); }
-                var fty: string = decl_field_type(st.structs, slit.type_name, slit.field_names[fj]);
-                if (is_leaksafe_array_field(fty)) {
-                    // dec the OLD array value in d's box before overwriting it.
-                    st = st.emit(ir.op_load_local(dslot));
-                    st = st.emit(ir.op_struct_get(fidx, struct_field_width(st.structs, slit.type_name, fidx)));
+                var tname: string = "$sor" + util.i32_to_string(dslot) + "_" + util.i32_to_string(fj);
+                st = st.add_local(tname);
+                var tslot: i32 = st.slot_of(tname);
+                if (struct_field_is_i64(st.structs, slit.type_name, fidx)) {
+                    st = lower_i64(slit.field_values[fj], st);
+                } else {
+                    st = lower_expr(slit.field_values[fj], st);
+                }
+                if (!st.ok) { return st; }
+                st = st.emit(ir.op_store_local(tslot));
+                tslots = tslots.append(tslot);
+                fidxs = fidxs.append(fidx);
+                fj = fj + 1;
+            }
+            // Bind c's slot up front — both branches store the result box there.
+            st = st.add_local(c_name);
+            var cslot: i32 = st.slot_of(c_name);
+            st = st.mark_struct_type(cslot, slit.type_name);
+            // Loop body: free the recipient's prior (previous-iteration) box first —
+            // only when the recipient is a RECLAIMABLE (non-escaping) local (an
+            // escaping recipient's box is owned by the container it moved into; a
+            // prior-release would be a UAF). Runs before the branch: it reads only
+            // c's old slot + d's slot, both still untouched.
+            if (release_prior && slot_is_reclaimable_struct(st, cslot)) { st = emit_reuse_recip_prior_release(st, cslot, dslot); }
+            // 2. Runtime uniqueness guard (#4350, native's token shape): the
+            //    static escape walk proves d is sole-owner, and this guard makes a
+            //    future hole in that walk DEGRADE (fresh box) instead of corrupting
+            //    (in-place write over a shared box). reused = __fern_rc_is_unique(d).
+            var uname: string = "$sor_uniq" + util.i32_to_string(dslot);
+            st = st.add_local(uname);
+            var uslot: i32 = st.slot_of(uname);
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+            st = st.emit(ir.op_store_local(uslot));
+            // 3. token = reused ? d : 0. (The not-unique branch's release of d's
+            //    own reference happens at the END of the fresh arm below, after
+            //    the carried-field copies read d's box.)
+            var kname: string = "$sor_tok" + util.i32_to_string(dslot);
+            st = st.add_local(kname);
+            var kslot: i32 = st.slot_of(kname);
+            st = st.emit(ir.op_load_local(uslot));
+            st = st.emit(ir.op_if(0));
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_store_local(kslot));
+            st = st.emit(ir.op_else());
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(kslot));
+            st = st.emit(ir.op_end());
+            // 4. box = __fern_alloc_reuse(token, nfields): the token's block when
+            //    it fits (same type -> always, on the reuse path), else a fresh
+            //    rc=1 arr-box of the same shape struct_make allocates.
+            var bname: string = "$sor_box" + util.i32_to_string(dslot);
+            st = st.add_local(bname);
+            var bslot: i32 = st.slot_of(bname);
+            st = st.emit(ir.op_load_local(kslot));
+            st = st.emit(ir.op_const_i32(nf));
+            st = st.emit(ir.op_call_direct("__fern_alloc_reuse", 2));
+            st = st.emit(ir.op_store_local(bslot));
+            // 5. Branch-specific box preparation.
+            st = st.emit(ir.op_load_local(uslot));
+            st = st.emit(ir.op_if(0));
+            // REUSE arm (box == d's box): release each OVERRIDDEN field's OLD
+            // value before the store below overwrites it (or it leaks). Same
+            // per-kind logic the pre-guard emitter applied unconditionally.
+            var rj: i32 = 0;
+            while (rj < fidxs.len()) {
+                var rfty: string = decl_field_type(st.structs, slit.type_name, slit.field_names[rj]);
+                if (is_leaksafe_array_field(rfty)) {
+                    st = st.emit(ir.op_load_local(bslot));
+                    st = st.emit(ir.op_struct_get(fidxs[rj], struct_field_width(st.structs, slit.type_name, fidxs[rj])));
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     st = st.emit(ir.op_drop());
-                    // write the new (fresh) array: [box, value] -> struct_set.
-                    st = st.emit(ir.op_load_local(dslot));
-                    st = lower_expr(slit.field_values[fj], st);
-                    if (!st.ok) { return st; }
-                    st = st.emit(ir.op_struct_set(fidx, struct_field_width(st.structs, slit.type_name, fidx)));
-                } else if (decl_is_struct(st.structs, fty)) {
-                    // Nested-struct override field: FULL freeing drop of d's OLD inner
-                    // box before overwriting it (mirrors emit_cross_struct_reuse /
-                    // native's emitFieldDropOnStack). When the inner type owns rc
-                    // fields, __struct_drop_<fty> deep-drops them first (each self-
-                    // guarded on rc==1); then __fern_rc_dec frees the inner box header.
-                    // The override value is a fresh no-base struct literal
-                    // (self_overwrite_reuse_sites gate) that does NOT reference d, so
-                    // lower_expr allocates a fresh rc=1 inner the reused box then solely
-                    // owns — freed once at exit via c's __struct_drop_<T> sweep.
-                    st = st.emit(ir.op_load_local(dslot));
-                    st = st.emit(ir.op_struct_get(fidx, struct_field_width(st.structs, slit.type_name, fidx)));
-                    if (struct_has_reclaim_array_field(st.structs, fty)) {
-                        st = st.emit(ir.op_call_direct("__struct_drop_" + fty, 1));
+                } else if (decl_is_struct(st.structs, rfty)) {
+                    // Nested-struct override: FULL freeing drop of the OLD inner box
+                    // (deep-drop its rc fields first when it owns any — each self-
+                    // guarded on rc==1 — then free the inner box header).
+                    st = st.emit(ir.op_load_local(bslot));
+                    st = st.emit(ir.op_struct_get(fidxs[rj], struct_field_width(st.structs, slit.type_name, fidxs[rj])));
+                    if (struct_has_reclaim_array_field(st.structs, rfty)) {
+                        st = st.emit(ir.op_call_direct("__struct_drop_" + rfty, 1));
                     }
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     st = st.emit(ir.op_drop());
-                    st = st.emit(ir.op_load_local(dslot));
-                    st = lower_expr(slit.field_values[fj], st);
-                    if (!st.ok) { return st; }
-                    st = st.emit(ir.op_struct_set(fidx, struct_field_width(st.structs, slit.type_name, fidx)));
-                } else if (struct_field_is_i64(st.structs, slit.type_name, fidx)) {
-                    st = st.emit(ir.op_load_local(dslot));
-                    st = lower_i64(slit.field_values[fj], st);
-                    if (!st.ok) { return st; }
-                    st = st.emit(ir.op_struct_set_i64(fidx));
-                } else {
-                    st = st.emit(ir.op_load_local(dslot));
-                    st = lower_expr(slit.field_values[fj], st);
-                    if (!st.ok) { return st; }
-                    st = st.emit(ir.op_struct_set(fidx, struct_field_width(st.structs, slit.type_name, fidx)));
                 }
-                fj = fj + 1;
+                rj = rj + 1;
             }
-            // Bind c to d's box (the reused box is the result of the update).
-            var cb: LowerState = st.add_local(c_name);
-            var cslot: i32 = cb.slot_of(c_name);
-            cb = cb.mark_struct_type(cslot, slit.type_name);
-            // Loop body: free the recipient's prior (previous-iteration) box first —
-            // but ONLY when the recipient is a RECLAIMABLE (non-escaping) local. An
-            // ESCAPING recipient's box is owned by the container it was moved into
-            // (structs are not rc-inc'd on escape / left non-reclaimable), so a
-            // prior-release would free a box the container still references — a UAF.
-            // Such a recipient is never swept either, matching the function-body path.
-            if (release_prior && slot_is_reclaimable_struct(cb, cslot)) { cb = emit_reuse_recip_prior_release(cb, cslot, dslot); }
-            cb = cb.emit(ir.op_load_local(dslot));
-            cb = cb.emit(ir.op_store_local(cslot));
-            // Zero d's slot: c now owns the box; the exit sweep frees it once (via
-            // c) and decs a null for d. (c is an alias binding, not in the
-            // reclaimable set, so it is itself left to leak — the same shallow
-            // leak the pre-reuse path had for the freshly-allocated box; sound,
-            // no double-free.)
-            cb = cb.emit(ir.op_const_i32(0));
-            cb = cb.emit(ir.op_store_local(dslot));
-            return cb;
+            st = st.emit(ir.op_else());
+            // FRESH arm (d's box is SHARED; box is a new rc=1 block): the spread's
+            // carried fields don't come along for free — copy the shape word and
+            // every NON-overridden field from d's still-live box (the aliases hold
+            // it), rc-inc'ing pointer-kinded copies (array / nested struct) so the
+            // alias's eventual deep-drop and this box's own release stay balanced.
+            // Then release d's reference: rc >= 2 here, so the dec never frees.
+            st = st.emit(ir.op_load_local(bslot));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_raw_load_ptr());
+            st = st.emit(ir.op_raw_store_ptr());
+            st = st.emit(ir.op_drop());
+            var di: i32 = 0;
+            while (di < nf) {
+                var over: boolean = false;
+                var oj: i32 = 0;
+                while (oj < fidxs.len()) {
+                    if (fidxs[oj] == di) { over = true; }
+                    oj = oj + 1;
+                }
+                if (!over) {
+                    var cfty: string = decl_field_type_at(st.structs, slit.type_name, di);
+                    st = st.emit(ir.op_load_local(bslot));
+                    st = st.emit(ir.op_load_local(dslot));
+                    st = st.emit(ir.op_struct_get(di, struct_field_width(st.structs, slit.type_name, di)));
+                    if (is_leaksafe_array_field(cfty) || decl_is_struct(st.structs, cfty)) {
+                        st = st.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                    }
+                    st = st.emit(ir.op_struct_set(di, struct_field_width(st.structs, slit.type_name, di)));
+                }
+                di = di + 1;
+            }
+            st = st.emit(ir.op_load_local(dslot));
+            st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+            st = st.emit(ir.op_drop());
+            st = st.emit(ir.op_end());
+            // 6. Store the override temps into the box (both branches).
+            var wj: i32 = 0;
+            while (wj < fidxs.len()) {
+                st = st.emit(ir.op_load_local(bslot));
+                st = st.emit(ir.op_load_local(tslots[wj]));
+                if (struct_field_is_i64(st.structs, slit.type_name, fidxs[wj])) {
+                    st = st.emit(ir.op_struct_set_i64(fidxs[wj]));
+                } else {
+                    st = st.emit(ir.op_struct_set(fidxs[wj], struct_field_width(st.structs, slit.type_name, fidxs[wj])));
+                }
+                wj = wj + 1;
+            }
+            // 7. Bind c to the result box and zero d's slot: on the reuse arm the
+            //    exit sweep frees the box once (via c) and decs a null for d; on
+            //    the fresh arm d's reference was released above and the aliases
+            //    own the old box. (c stays an alias binding outside the
+            //    reclaimable set — the same shallow-leak policy as the pre-guard
+            //    path and the plain fresh construction.)
+            st = st.emit(ir.op_load_local(bslot));
+            st = st.emit(ir.op_store_local(cslot));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(dslot));
+            return st;
         },
         _ => { return s.fail(); },
     }
@@ -21027,6 +21123,82 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
         }
         else if (o.kind_tag == 149 && o.str == "__fern_rc_underflow_get") {  // call_direct
             stack = stack.with(sp, heap[0]);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 149 && o.str == "__fern_rc_is_unique") {  // call_direct
+            // Sole-ownership probe (#4350): 1 iff a live box with rc == 1 (rc at
+            // base-4 in this interpreter's 4-byte model). Null / sub-heap: 0.
+            sp = sp - 1;
+            var qb: i32 = stack[sp];
+            var qr: i32 = 0;
+            if (qb >= 8) {
+                if (heap[(qb - 4) / 4] == 1) { qr = 1; }
+            }
+            stack = stack.with(sp, qr);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 149 && o.str == "__fern_alloc_reuse") {  // call_direct
+            // FBIP reuse-degrade (#4350): pops [token, nfields]. A non-null token
+            // is handed straight back (same-type reuse — the class always fits);
+            // a null token allocates the same [rc, shape, fields…] block
+            // struct_make does (rc=1; shape left for the caller's raw copy).
+            sp = sp - 1;
+            var arnf: i32 = stack[sp];
+            sp = sp - 1;
+            var artok: i32 = stack[sp];
+            var arbase: i32 = artok;
+            if (artok == 0) {
+                var arsize: i32 = (arnf + 2) * 4;
+                var arreuse: i32 = 0;
+                var arcur: i32 = freehead;
+                var arprev: i32 = 0;
+                while (arcur != 0) {
+                    if (heap[arcur / 4 + 1] == arsize) {
+                        var arnxt: i32 = heap[arcur / 4];
+                        if (arprev == 0) { freehead = arnxt; } else { heap = heap.with(arprev / 4, arnxt); }
+                        arreuse = arcur;
+                        arcur = 0;
+                    } else {
+                        arprev = arcur;
+                        arcur = heap[arcur / 4];
+                    }
+                }
+                var arraw: i32 = 0;
+                if (arreuse != 0) {
+                    arraw = arreuse;
+                } else {
+                    arraw = heap.len() * 4;
+                    var arnw: i32 = arsize / 4;
+                    var arq: i32 = 0;
+                    while (arq < arnw) { heap = heap.append(0); arq = arq + 1; }
+                }
+                arbase = arraw + 4;
+                heap = heap.with((arbase - 4) / 4, 1);
+            }
+            stack = stack.with(sp, arbase);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 85) {  // raw_load_ptr: pops [ptr, off] -> word at ptr+off*4
+            sp = sp - 1;
+            var rlo: i32 = stack[sp];
+            sp = sp - 1;
+            var rlp: i32 = stack[sp];
+            stack = stack.with(sp, heap[(rlp + rlo * 4) / 4]);
+            sp = sp + 1;
+            pc = pc + 1;
+        }
+        else if (o.kind_tag == 84) {  // raw_store_ptr: pops [ptr, off, v] -> v; word store
+            sp = sp - 1;
+            var rsv: i32 = stack[sp];
+            sp = sp - 1;
+            var rso: i32 = stack[sp];
+            sp = sp - 1;
+            var rsp2: i32 = stack[sp];
+            heap = heap.with((rsp2 + rso * 4) / 4, rsv);
+            stack = stack.with(sp, rsv);
             sp = sp + 1;
             pc = pc + 1;
         }
