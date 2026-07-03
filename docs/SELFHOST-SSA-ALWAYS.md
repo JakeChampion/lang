@@ -1,5 +1,16 @@
 # Self-hosted compiler: SSA always-on, every backend on the IR
 
+> **⚠️ SHELVED (2026-07-03, #4391).** This plan is superseded. The self-host
+> backend has **one** production lowering — the stack **IR** path
+> (`irlower.fern` → `asm_ir` / `asm_arm64_ir` / `wasm_ir`), not SSA
+> `build_func`. See **`docs/SELFHOST-SSA-DECISION.md`** for the decision and
+> rationale. Concretely: `fern.fern`'s default is flipped — SSA is now opt-in
+> via `-ssa` (experimental), so **Phases 1–4 below are shelved**. The SSA
+> framework, its optimiser, its register allocator, and `ssa_lift.fern`
+> (stack-IR → SSA, the *downstream* optimiser entry) are **kept**; only the
+> redundant `build_func` frontend is slated for retirement. The historical
+> record below is preserved for context — it is no longer the roadmap.
+
 ## Goal
 
 Make the self-hosted Fern compiler (`examples/self_host/`) compile

@@ -196,20 +196,22 @@ function is_flag(a: string): boolean {
 }
 
 function usage(): i32 {
-    eprint("usage: fern [-check | -interp | -fmt] [-no-ssa] [-target x86-64|arm64|arm64-darwin|wasm] [-o OUT] <entry.fern> [stdlib-root]\n");
+    eprint("usage: fern [-check | -interp | -fmt] [-ssa] [-target x86-64|arm64|arm64-darwin|wasm] [-o OUT] <entry.fern> [stdlib-root]\n");
     return 2;
 }
 
 // SsaResult carries the SSA backend's output and whether it applied.
 struct SsaResult { asm: string, ok: boolean }
 
-// try_ssa attempts to compile the whole program through the SSA pipeline
-// (build_func → optimise → emit). It applies only when EVERY function is in
-// the SSA subset (build_func ok) and a `main` exists; otherwise it returns
-// ok=false so the caller falls back to the AST emitter. The SSA backends
-// cover x86-64, arm64, and (a core integer subset of) wasm; arm64-darwin
-// and the wasm-bin / wasm-component targets always fall back. Register
-// allocation is always on for the native path.
+// try_ssa attempts to compile the whole program through the experimental SSA
+// pipeline (build_func → optimise → emit). It is opt-in via -ssa now that the
+// IR path is the production default (issue #4391); it applies only when EVERY
+// function is in the SSA subset (build_func ok) and a `main` exists, otherwise
+// it returns ok=false so the caller falls back to the AST shell (which itself
+// routes eligible modules through the IR path). The SSA backends cover x86-64,
+// arm64, and (a core integer subset of) wasm; arm64-darwin and the wasm-bin /
+// wasm-component targets always fall back. Register allocation is always on for
+// the native path.
 function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target: string): SsaResult {
     if (target != "x86-64" && target != "arm64" && target != "arm64-android" && target != "wasm") { return SsaResult { asm: "", ok: false }; }
     // The set of user-defined function names the SSA backend can `call`, and
@@ -357,7 +359,7 @@ function main(): i32 {
     var mode_check: boolean = false;
     var mode_interp: boolean = false;
     var mode_fmt: boolean = false;
-    var no_ssa: boolean = false;
+    var use_ssa: boolean = false;
     var mode_scan: boolean = false;
     var optimize: boolean = false;
     var have_entry: boolean = false;
@@ -372,9 +374,15 @@ function main(): i32 {
         } else if (a == "-fmt") {
             mode_fmt = true;
         } else if (a == "-ssa") {
-            // SSA is the default now; accept -ssa as a no-op for back-compat.
+            // Opt into the experimental SSA lowering pipeline (build_func →
+            // optimise → regalloc → emit) for x86-64 / arm64 / a wasm subset.
+            // The IR path is the production default now (issue #4391 /
+            // docs/SELFHOST-SSA-DECISION.md); -ssa is opt-in/experimental.
+            use_ssa = true;
         } else if (a == "-no-ssa") {
-            no_ssa = true;
+            // Back-compat no-op: the IR/AST path is already the default, so
+            // there is nothing to disable. Accepted so existing invocations
+            // (and the AST-baseline tests) keep working unchanged.
         } else if (a == "-ssa-scan") {
             // Diagnostic: report every build_func failure + unknown callee across
             // the whole merged program (non-bailing), then exit. Measures
@@ -562,14 +570,16 @@ function main(): i32 {
         merged = constfold.fold_module(merged);
     }
 
-    // Default SSA backend: route through the AST → SSA → optimise →
-    // regalloc → emit pipeline for the x86-64 / arm64 targets unless
-    // -no-ssa was given. try_ssa applies only if every function is in the
-    // SSA subset (else we fall through to the AST emitter below), so it
-    // never changes the output of programs it can't yet handle. -no-ssa
-    // forces the AST emitter; arm64-darwin and the wasm-bin / wasm-component
-    // targets have no SSA consumer yet and always use the AST emitter.
-    if (!no_ssa) {
+    // Production default: the IR path. The compile falls through to the AST
+    // shell below (asm.fern / asm_arm64.fern / wasm.fern), which itself routes
+    // eligible modules AST → stack IR → asm via asm_ir.emit_module_ir
+    // (use_ir=true, asmcore.fern) — so the IR is the single production lowering
+    // (issue #4391 / docs/SELFHOST-SSA-DECISION.md). The SSA pipeline is opt-in
+    // via -ssa (experimental): it applies only if every function is in the SSA
+    // subset (else it too falls through), covering x86-64 / arm64 / a wasm
+    // subset. arm64-darwin and the wasm-bin / wasm-component targets have no SSA
+    // consumer and always use the AST shell.
+    if (use_ssa) {
         var sr: SsaResult = try_ssa(merged.funcs, merged.structs, target);
         if (sr.ok) {
             // arm64 (Linux) emits a runnable ELF in-process (arm64_native +
@@ -603,8 +613,9 @@ function main(): i32 {
     var full: parser.Module = parser.module_with_builtins(merged);
     var out_asm: string = "";
     if (target == "arm64") {
-        // In-process ELF (arm64_native + elf.fern) — no `.s` + gcc/ld. The
-        // SSA path above already flipped; this is the AST-emitter fallback.
+        // In-process ELF (arm64_native + elf.fern) — no `.s` + gcc/ld. This is
+        // the production default (AST shell → IR path); -ssa opts into the SSA
+        // pipeline above instead.
         out_asm = arm64_elf_binary(asm_arm64.emit_module(full, false));
         if (out_asm.len() == 0) { return 2; }
     } else if (target == "arm64-android") {

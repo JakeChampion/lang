@@ -123,21 +123,22 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 	})
 
 	t.Run("emit-ssa-array", func(t *testing.T) {
-		// An array program is in the SSA subset on x86-64: the default (SSA)
-		// path compiles it through the heap-aware backend (not a fallback).
-		// The AST baseline is -no-ssa now that SSA is the default. Run it.
+		// An array program is in the SSA subset on x86-64: the opt-in -ssa
+		// path compiles it through the heap-aware backend. The IR/AST baseline
+		// is the default (== -no-ssa) now that the IR path is production and
+		// -ssa is opt-in (issue #4391). The -ssa output must differ from it.
 		srcPath := filepath.Join(dir, "ssa_arr.fern")
 		src := "function main(): i32 { var a = [5, 10, 15, 20, 25]; var i = 0; var s = 0; while (i < 5) { s = s + a[i]; i = i + 1; } return s; }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		ssaAsm, code := runDriver(t, srcPath)
+		ssaAsm, code := runDriver(t, "-ssa", srcPath)
 		if code != 0 {
 			t.Fatalf("emit exited %d, want 0", code)
 		}
 		astAsm, _ := runDriver(t, "-no-ssa", srcPath)
 		if string(ssaAsm) == string(astAsm) {
-			t.Error("default codegen fell back to AST for an array program (expected the SSA heap backend)")
+			t.Error("-ssa fell back to AST for an array program (expected the SSA heap backend)")
 		}
 		progBin := buildBin(t, gcc, dir, "ssa_arr", string(ssaAsm))
 		cmd := exec.Command(progBin)
@@ -152,20 +153,20 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		// (__ssa_arr_push / __ssa_arr_slice). try_ssa must inject those helper
 		// bodies AND admit their names to the known set; otherwise calls_all_known
 		// rejects the call and the whole program falls back to the AST emitter.
-		// Asserting the default (SSA) output differs from -no-ssa (AST) proves
+		// Asserting the opt-in -ssa output differs from -no-ssa (AST) proves
 		// the SSA path (with injected helpers) was taken.
 		srcPath := filepath.Join(dir, "ssa_helpers.fern")
 		src := "function main(): i32 { var a = [1, 2]; a = a.append(3); var b = a[1:3]; return b[0] + b[1] + b.len() + a.len(); }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		ssaAsm, code := runDriver(t, srcPath)
+		ssaAsm, code := runDriver(t, "-ssa", srcPath)
 		if code != 0 {
 			t.Fatalf("emit exited %d, want 0", code)
 		}
 		astAsm, _ := runDriver(t, "-no-ssa", srcPath)
 		if string(ssaAsm) == string(astAsm) {
-			t.Error("default codegen fell back to AST for a push/slice program (runtime helpers not injected)")
+			t.Error("-ssa fell back to AST for a push/slice program (runtime helpers not injected)")
 		}
 		progBin := buildBin(t, gcc, dir, "ssa_helpers", string(ssaAsm))
 		cmd := exec.Command(progBin)
@@ -175,12 +176,12 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 	})
 
-	t.Run("ssa-default-on", func(t *testing.T) {
-		// SSA is the DEFAULT now (no -ssa flag needed). For an in-subset
-		// program the default output must equal the explicit -ssa output and
-		// differ from the -no-ssa (AST) output — proving the default routes
-		// through the SSA backend and -no-ssa forces the AST emitter.
-		srcPath := filepath.Join(dir, "default_ssa.fern")
+	t.Run("ssa-opt-in", func(t *testing.T) {
+		// The IR path is the DEFAULT now; SSA is opt-in via -ssa (issue #4391).
+		// For an in-subset program the default output must equal the -no-ssa
+		// (AST/IR) output and differ from the explicit -ssa output — proving the
+		// default routes through the IR path and -ssa opts into the SSA backend.
+		srcPath := filepath.Join(dir, "default_ir.fern")
 		src := "function main(): i32 { var a = [5, 10, 15, 20, 25]; var i = 0; var s = 0; while (i < 5) { s = s + a[i]; i = i + 1; } return s; }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -189,20 +190,20 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("default emit exited %d, want 0", code)
 		}
-		explicit, _ := runDriver(t, "-ssa", srcPath)
-		if string(def) != string(explicit) {
-			t.Error("default codegen differs from explicit -ssa (SSA is not the default)")
-		}
 		ast, _ := runDriver(t, "-no-ssa", srcPath)
-		if string(def) == string(ast) {
-			t.Error("default codegen equals -no-ssa for an in-subset program (default did not use SSA)")
+		if string(def) != string(ast) {
+			t.Error("default codegen differs from -no-ssa (IR path is not the default)")
+		}
+		explicit, _ := runDriver(t, "-ssa", srcPath)
+		if string(def) == string(explicit) {
+			t.Error("default codegen equals -ssa for an in-subset program (default incorrectly used SSA)")
 		}
 	})
 
 	t.Run("ssa-fallback", func(t *testing.T) {
-		// A program outside the SSA subset falls back to the AST emitter
-		// transparently: the default output is byte-identical to the -no-ssa
-		// (AST) output, so the default never emits wrong code for programs SSA
+		// A program outside the SSA subset falls back from -ssa to the AST/IR
+		// shell transparently: the -ssa output is byte-identical to the -no-ssa
+		// output, so opting into SSA never emits wrong code for programs it
 		// can't yet lower. An `enum` match is one such construct build_func
 		// still declines (floats, struct spread, and int-literal match — the
 		// latter desugared to if/else by the parser — now lower through SSA).
@@ -210,23 +211,23 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		if err := os.WriteFile(srcPath, []byte("enum Color { Red, Green } function main(): i32 { var c: Color = Green; match (c) { Red => { return 1; }, Green => { return 2; }, _ => { return 0; } } }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		def, code1 := runDriver(t, srcPath)
+		ssaOut, code1 := runDriver(t, "-ssa", srcPath)
 		astOnly, code2 := runDriver(t, "-no-ssa", srcPath)
 		if code1 != 0 || code2 != 0 {
 			t.Fatalf("emit exited %d / %d, want 0", code1, code2)
 		}
-		if string(def) != string(astOnly) {
-			t.Errorf("default did not fall back cleanly for an out-of-subset program (output differs from -no-ssa AST)")
+		if string(ssaOut) != string(astOnly) {
+			t.Errorf("-ssa did not fall back cleanly for an out-of-subset program (output differs from -no-ssa AST)")
 		}
 	})
 
 	t.Run("emit-ssa-wasm", func(t *testing.T) {
 		// The wasm target is the third SSA consumer (ssa_wasm.fern), now
 		// covering the whole SSA subset: integer, heap (array), string-concat,
-		// print, and closures all compile through the SSA backend by default —
-		// each program's WAT differs from the -no-ssa (AST wasm.fern) output
-		// and runs to its value / output. A program outside the subset (a float
-		// local) still falls back via the supported() gate (identical WAT).
+		// print, and closures all compile through the SSA backend when opted in
+		// via -ssa — each program's WAT differs from the -no-ssa (AST wasm.fern)
+		// output and runs to its value / output. A program outside the subset (a
+		// float local) still falls back via the supported() gate (identical WAT).
 		if _, err := exec.LookPath("wasmtime"); err != nil {
 			t.Skip("wasmtime not on PATH; skipping -target wasm SSA path")
 		}
@@ -241,19 +242,19 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 			return cmd.ProcessState.ExitCode()
 		}
 
-		// Core program: default (SSA) WAT differs from -no-ssa (AST) WAT.
+		// Core program: -ssa WAT differs from -no-ssa (AST) WAT.
 		coreSrc := "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { var s = 0; var i = 0; while (i < 10) { s = s + fib(i); i = i + 1; } return s; }\n"
 		corePath := filepath.Join(dir, "wasm_core.fern")
 		if err := os.WriteFile(corePath, []byte(coreSrc), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		ssaWat, code := runDriver(t, "-target", "wasm", corePath)
+		ssaWat, code := runDriver(t, "-ssa", "-target", "wasm", corePath)
 		if code != 0 {
 			t.Fatalf("-target wasm emit exited %d, want 0", code)
 		}
 		astWat, _ := runDriver(t, "-no-ssa", "-target", "wasm", corePath)
 		if string(ssaWat) == string(astWat) {
-			t.Error("default -target wasm fell back to AST for a core program (expected the SSA wasm backend)")
+			t.Error("-ssa -target wasm fell back to AST for a core program (expected the SSA wasm backend)")
 		}
 		if got := runWat(t, "wasm_core", ssaWat); got != 88 {
 			t.Errorf("SSA wasm core program exited %d, want 88", got)
@@ -267,10 +268,10 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		if err := os.WriteFile(arrPath, []byte(arrSrc), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		defArr, _ := runDriver(t, "-target", "wasm", arrPath)
+		defArr, _ := runDriver(t, "-ssa", "-target", "wasm", arrPath)
 		astArr, _ := runDriver(t, "-no-ssa", "-target", "wasm", arrPath)
 		if string(defArr) == string(astArr) {
-			t.Error("default -target wasm fell back to AST for an array program (expected the SSA heap backend)")
+			t.Error("-ssa -target wasm fell back to AST for an array program (expected the SSA heap backend)")
 		}
 		if got := runWat(t, "wasm_arr", defArr); got != 75 {
 			t.Errorf("SSA wasm array program exited %d, want 75", got)
@@ -283,10 +284,10 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		if err := os.WriteFile(catPath, []byte(catSrc), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		defCat, _ := runDriver(t, "-target", "wasm", catPath)
+		defCat, _ := runDriver(t, "-ssa", "-target", "wasm", catPath)
 		astCat, _ := runDriver(t, "-no-ssa", "-target", "wasm", catPath)
 		if string(defCat) == string(astCat) {
-			t.Error("default -target wasm fell back to AST for a string-concat program (expected the SSA concat helper)")
+			t.Error("-ssa -target wasm fell back to AST for a string-concat program (expected the SSA concat helper)")
 		}
 		if got := runWat(t, "wasm_cat", defCat); got != 6 {
 			t.Errorf("SSA wasm string-concat program exited %d, want 6", got)
@@ -300,10 +301,10 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		if err := os.WriteFile(prPath, []byte(prSrc), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		defPr, _ := runDriver(t, "-target", "wasm", prPath)
+		defPr, _ := runDriver(t, "-ssa", "-target", "wasm", prPath)
 		astPr, _ := runDriver(t, "-no-ssa", "-target", "wasm", prPath)
 		if string(defPr) == string(astPr) {
-			t.Error("default -target wasm fell back to AST for a print program (expected the SSA print helper)")
+			t.Error("-ssa -target wasm fell back to AST for a print program (expected the SSA print helper)")
 		}
 		prWatPath := filepath.Join(dir, "wasm_print.wat")
 		if err := os.WriteFile(prWatPath, defPr, 0o644); err != nil {
@@ -325,10 +326,10 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		if err := os.WriteFile(capPath, []byte(capSrc), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		defCap, _ := runDriver(t, "-target", "wasm", capPath)
+		defCap, _ := runDriver(t, "-ssa", "-target", "wasm", capPath)
 		astCap, _ := runDriver(t, "-no-ssa", "-target", "wasm", capPath)
 		if string(defCap) == string(astCap) {
-			t.Error("default -target wasm fell back to AST for a capturing-lambda program (expected the SSA closure path)")
+			t.Error("-ssa -target wasm fell back to AST for a capturing-lambda program (expected the SSA closure path)")
 		}
 		if got := runWat(t, "wasm_cap", defCap); got != 15 {
 			t.Errorf("SSA wasm capturing-lambda program exited %d, want 15", got)
@@ -340,17 +341,17 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		// try_ssa first; it used to append `__env` to the lambda's params in
 		// place, corrupting the AST the fallback emitter then reused (duplicate
 		// $__env → invalid WAT). Guard it: a while-true + capturing-lambda
-		// program falls back to the AST emitter (default WAT == -no-ssa WAT) and
+		// program falls back to the AST emitter (-ssa WAT == -no-ssa WAT) and
 		// runs correctly.
 		fbSrc := "function main(): i32 { var n = 5; var f = function (z: i32): i32 { return z + n; }; var r = f(2); var i = 0; while (true) { i = i + 1; if (i >= r) { return r; } } }\n"
 		fbPath := filepath.Join(dir, "wasm_fb.fern")
 		if err := os.WriteFile(fbPath, []byte(fbSrc), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		defFb, _ := runDriver(t, "-target", "wasm", fbPath)
+		defFb, _ := runDriver(t, "-ssa", "-target", "wasm", fbPath)
 		astFb, _ := runDriver(t, "-no-ssa", "-target", "wasm", fbPath)
 		if string(defFb) != string(astFb) {
-			t.Error("default -target wasm corrupted the AST for a fallback program (try_ssa has a side effect)")
+			t.Error("-ssa -target wasm corrupted the AST for a fallback program (try_ssa has a side effect)")
 		}
 		if got := runWat(t, "wasm_fb", defFb); got != 7 {
 			t.Errorf("while-true+lambda fallback program exited %d, want 7", got)

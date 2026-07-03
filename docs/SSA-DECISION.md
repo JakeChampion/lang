@@ -90,3 +90,34 @@ So the framework doesn't rot:
   layer while it is shelved — but if `wasm-ssa` can't express a feature, that
   gap is logged here, because a growing gap raises the cutover cost and is
   itself a signal.
+
+## Reconciliation: the native `x86_64ssa` / `arm64ssa` backends (2026-07-03, #4391)
+
+Since this doc was written, two native SSA backends grew —
+`internal/codegen/x86_64ssa` (#4266) and `internal/codegen/arm64ssa`
+(#4310) — joining `wasmssa`. This is **not** the September re-eval happening
+early: it is an **extension of the "keep an experimental proving ground"
+maintenance contract above**, not a production cutover. The decision stands —
+SSA remains shelved for production; these backends are the sanctioned proving
+ground on the native side, exactly as `wasm-ssa` is.
+
+**Their gate (so the status is explicit, not ambient):**
+
+- **Not on any production path.** The shipping backends stay
+  `internal/codegen/{arm64,x86_64,wasmbin}` over the flat `ir.Program`. No
+  compile reaches `x86_64ssa` / `arm64ssa` unless a test / experimental flag
+  selects it.
+- **Differential-gated.** Each carries its own emit + run tests
+  (`internal/codegen/x86_64ssa/*_test.go`, `arm64ssa/gas_run_test.go`, …) and
+  must stay byte-identical-in-behaviour to the flat-IR backends and the
+  interpreter across their covered subset. A divergence is a bug in the
+  proving ground, not a reason to ship it.
+- **Not required to carry new features.** As with `wasm-ssa`, a language
+  feature these backends can't yet express is a logged gap, not a blocker.
+
+**The 2026-09-01 re-evaluation is unchanged.** If a tripwire fires before then
+(or the re-eval decides to cut over), the cutover point is still the shared
+one — IR → SSA → *all* native backends — never one backend in isolation. The
+self-host mirror of this decision (the IR path is the single self-host
+production lowering; SSA `build_func` demoted to opt-in) is
+`docs/SELFHOST-SSA-DECISION.md`.
