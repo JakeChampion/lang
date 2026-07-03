@@ -143,7 +143,19 @@ two separable moves:
   last-use micro-analyses factored behind `identOrder`/`isLast` +
   `stmtReferencesName` — #4480; the C2 consuming-match pairing
   folded into the plan (`computeConsumingMatchReuse`) — #4475.
-- **Stage-boundary alignment** (related, not blocking): native
-  runs closure conversion inside `ir.LowerWith` while the
-  self-host runs `lift_lambdas` as an explicit pass — align the
-  boundaries (either side) before the goal-2 port deepens.
+- **Stage-boundary CONTRACT** (#4481 — resolved as a contract, not
+  a pass move): native runs closure conversion inside
+  `ir.LowerWith` while the self-host runs `lift_lambdas` as an
+  explicit driver-level pass, and neither side's move is cheap
+  (`LowerWith` has a caller per backend; `lift_lambdas` also
+  feeds the legacy AST backends and the eligibility report). What
+  goal 2 actually needs is invariant, not structural: **the RC
+  decision analyses run on the post-closure-conversion,
+  post-shadowrename AST on BOTH compilers** — native via
+  `computeRcAnalyses` inside `LowerWith` (after
+  `closureconv.ConvertWith`), self-host by running its analyses
+  on the `lift_lambdas` output. The rcPlan differential harness
+  (#4482) enforces this operationally: analyses run at a
+  different pipeline point see different ASTs and the table diffs
+  go noisy immediately. Revisit a structural move only if the
+  harness shows a divergence actually caused by pass position.
