@@ -614,3 +614,24 @@ func TestInterpTupleDestructure(t *testing.T) {
 		t.Errorf("destructure: got %v, want 6", v)
 	}
 }
+
+// Tuple-destructuring parameters `(a, b): (T, U)` — the parse-time
+// desugar routes through the same Destructure evaluation, covering a
+// named function, a mixed param list, and both lambda forms.
+func TestInterpParamDestructure(t *testing.T) {
+	src := `function add((a, b): (i32, i32)): i32 {
+		return a + b;
+	}
+	function scale(k: i32, (lo, hi): (i32, i32)): i32 {
+		return k * (hi - lo);
+	}
+	function main(): i32 {
+		var f = function((x, y): (i32, i32)): i32 { return x * y; };
+		var g = ((lo, hi): (i32, i32)) => hi - lo;
+		return add((30, 5)) + scale(2, (3, 5)) + f((1, 2)) + g((5, 6));
+	}`
+	v, _ := evalProgram(t, src)
+	if n, ok := v.(Number); !ok || n != 42 {
+		t.Errorf("param destructure: got %v, want 42", v)
+	}
+}

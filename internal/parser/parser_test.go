@@ -1606,6 +1606,90 @@ func TestTupleDestructureSingleNameError(t *testing.T) {
 	}
 }
 
+// TestTupleParamDestructureParses pins the parse-time desugar of a
+// tuple-destructuring parameter `(a, b): (T, U)`: the param list gets
+// a synthetic `__ptuple_<line>_<col>` holder of the annotated type and
+// the body is prepended with `let (a, b) = <synth>;` (an ordinary
+// ast.Destructure whose Init is the synthetic param), so the checker /
+// interp / IR reuse the statement-destructure path unchanged.
+func TestTupleParamDestructureParses(t *testing.T) {
+	prog, err := Parse(`function add((a, b): (i32, i32), k: i32): i32 {
+		return a + b + k;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := prog.Funcs[0]
+	if len(fn.Params) != 2 {
+		t.Fatalf("params = %d, want 2", len(fn.Params))
+	}
+	if !strings.HasPrefix(fn.Params[0].Name, "__ptuple_") {
+		t.Errorf("synthetic param name = %q, want __ptuple_ prefix", fn.Params[0].Name)
+	}
+	if _, ok := fn.Params[0].Type.(ast.TupleType); !ok {
+		t.Errorf("synthetic param type = %T, want ast.TupleType", fn.Params[0].Type)
+	}
+	if fn.Params[1].Name != "k" {
+		t.Errorf("second param = %q, want k", fn.Params[1].Name)
+	}
+	d, ok := fn.Body.Stmts[0].(*ast.Destructure)
+	if !ok {
+		t.Fatalf("first body stmt should be *ast.Destructure; got %T", fn.Body.Stmts[0])
+	}
+	if len(d.Names) != 2 || d.Names[0] != "a" || d.Names[1] != "b" {
+		t.Errorf("names = %v, want [a b]", d.Names)
+	}
+	id, ok := d.Init.(*ast.Ident)
+	if !ok || id.Name != fn.Params[0].Name {
+		t.Errorf("destructure Init = %#v, want Ident %q", d.Init, fn.Params[0].Name)
+	}
+}
+
+// Both lambda forms accept a tuple-destructuring parameter and get the
+// same body-prelude desugar as named functions.
+func TestTupleParamDestructureLambdas(t *testing.T) {
+	prog, err := Parse(`function f(): i32 {
+		var g = function((x, y): (i32, i32)): i32 { return x * y; };
+		var h = ((lo, hi): (i32, i32)) => hi - lo;
+		return g((2, 3)) + h((1, 5));
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmts := prog.Funcs[0].Body.Stmts
+	for i, name := range []string{"g", "h"} {
+		v, ok := stmts[i].(*ast.Var)
+		if !ok {
+			t.Fatalf("stmt %d should be *ast.Var %s; got %T", i, name, stmts[i])
+		}
+		lam, ok := v.Init.(*ast.Lambda)
+		if !ok {
+			t.Fatalf("%s should bind a *ast.Lambda; got %T", name, v.Init)
+		}
+		if len(lam.Params) != 1 || !strings.HasPrefix(lam.Params[0].Name, "__ptuple_") {
+			t.Errorf("%s params = %v, want one synthetic __ptuple_ param", name, lam.Params)
+		}
+		if _, ok := lam.Body.Stmts[0].(*ast.Destructure); !ok {
+			t.Errorf("%s first body stmt = %T, want *ast.Destructure", name, lam.Body.Stmts[0])
+		}
+	}
+}
+
+// Error shapes: single-name pattern, default value on a destructured
+// param, and a body-less (@import) decl are all parse errors.
+func TestTupleParamDestructureErrors(t *testing.T) {
+	cases := map[string]string{
+		"single-name": `function f((a): (i32, i32)): i32 { return a; }`,
+		"default":     `function f((a, b): (i32, i32) = (1, 2)): i32 { return a; }`,
+		"bodyless":    `function f((a, b): (i32, i32)): i32;`,
+	}
+	for name, src := range cases {
+		if _, err := Parse(src); err == nil {
+			t.Errorf("%s: expected parse error", name)
+		}
+	}
+}
+
 // `let Variant(b) = …` continues to route to LetElse — the
 // tuple-destructure branch must not steal it. Smoke test.
 func TestLetVariantStillParses(t *testing.T) {

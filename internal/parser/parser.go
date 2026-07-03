@@ -1326,8 +1326,24 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 		return nil, err
 	}
 	var params []ast.Param
+	var paramDestrs []*ast.Destructure
 	if !p.match(lexer.Punct, ")") {
 		for {
+			// Tuple-destructuring parameter: `(a, b): (T, U)`. Parsed
+			// into a synthetic param + a body-prelude destructure
+			// (prepended after the body parse below).
+			if p.match(lexer.Punct, "(") {
+				prm, d, err := p.parseTupleParam()
+				if err != nil {
+					return nil, err
+				}
+				params = append(params, prm)
+				paramDestrs = append(paramDestrs, d)
+				if _, ok := p.accept(lexer.Punct, ","); !ok {
+					break
+				}
+				continue
+			}
 			// `own` is a CONTEXTUAL keyword: `own xs: T` marks an owned
 			// (consuming) param, but `own: T` is still a param named `own`.
 			// Disambiguate by the token AFTER `own` — a param name (Ident)
@@ -1401,6 +1417,14 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+	if len(paramDestrs) > 0 {
+		// A body-less decl is an `@import` signature — a binding
+		// pattern has nothing to bind into there.
+		if body == nil {
+			return nil, p.errorf(funcNamePos, "a destructured parameter requires a function body")
+		}
+		prependParamDestructures(body, paramDestrs)
 	}
 	return &ast.FuncDecl{
 		P:                 kw.Pos,
@@ -2301,10 +2325,38 @@ func (p *parser) looksLikeArrowLambda() bool {
 	if p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == ")" {
 		return followedByArrowOrColon(p.i + 2)
 	}
-	// Non-empty: must start with a typed param `IDENT :`.
-	if p.i+2 >= len(p.tokens) ||
+	// Tuple-destructuring first param: `((a, b): (T, U), …) => …`.
+	// After the outer `(` comes an inner `( IDENT` binding list whose
+	// matching `)` is immediately followed by `:` — a shape no
+	// expression has (`((a, b), c)` / `((a + b) * c)` never put a `:`
+	// after the inner close). Scan the inner parens to check.
+	if p.i+2 < len(p.tokens) &&
+		p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == "(" &&
+		p.tokens[p.i+2].Kind == lexer.Ident {
+		depth := 0
+		innerTyped := false
+		for j := p.i + 1; j < len(p.tokens); j++ {
+			t := p.tokens[j]
+			if t.Kind == lexer.EOF {
+				return false
+			}
+			if t.Kind == lexer.Punct && t.Text == "(" {
+				depth++
+			} else if t.Kind == lexer.Punct && t.Text == ")" {
+				depth--
+				if depth == 0 {
+					innerTyped = followedByArrowOrColon(j + 1)
+					break
+				}
+			}
+		}
+		if !innerTyped {
+			return false
+		}
+	} else if p.i+2 >= len(p.tokens) ||
 		p.tokens[p.i+1].Kind != lexer.Ident ||
 		!(p.tokens[p.i+2].Kind == lexer.Punct && p.tokens[p.i+2].Text == ":") {
+		// Non-empty: must otherwise start with a typed param `IDENT :`.
 		return false
 	}
 	// Scan to the matching `)` and check the token after it.
@@ -2333,8 +2385,21 @@ func (p *parser) looksLikeArrowLambda() bool {
 func (p *parser) parseArrowLambda() (ast.Expr, error) {
 	open := p.advance() // "("
 	var params []ast.Param
+	var paramDestrs []*ast.Destructure
 	if !p.match(lexer.Punct, ")") {
 		for {
+			if p.match(lexer.Punct, "(") {
+				prm, d, err := p.parseTupleParam()
+				if err != nil {
+					return nil, err
+				}
+				params = append(params, prm)
+				paramDestrs = append(paramDestrs, d)
+				if _, ok := p.accept(lexer.Punct, ","); !ok {
+					break
+				}
+				continue
+			}
 			pname, err := p.expect(lexer.Ident, "")
 			if err != nil {
 				return nil, err
@@ -2375,6 +2440,7 @@ func (p *parser) parseArrowLambda() (ast.Expr, error) {
 		return nil, err
 	}
 	body := &ast.Block{P: open.Pos, Stmts: []ast.Stmt{&ast.Return{P: open.Pos, Value: bodyExpr}}}
+	prependParamDestructures(body, paramDestrs)
 	return &ast.Lambda{P: open.Pos, Params: params, ReturnType: ret, ReturnUnannotated: unannotated, Body: body}, nil
 }
 
@@ -2384,8 +2450,21 @@ func (p *parser) parseLambda() (ast.Expr, error) {
 		return nil, err
 	}
 	var params []ast.Param
+	var paramDestrs []*ast.Destructure
 	if !p.match(lexer.Punct, ")") {
 		for {
+			if p.match(lexer.Punct, "(") {
+				prm, d, err := p.parseTupleParam()
+				if err != nil {
+					return nil, err
+				}
+				params = append(params, prm)
+				paramDestrs = append(paramDestrs, d)
+				if _, ok := p.accept(lexer.Punct, ","); !ok {
+					break
+				}
+				continue
+			}
 			pname, err := p.expect(lexer.Ident, "")
 			if err != nil {
 				return nil, err
@@ -2420,6 +2499,7 @@ func (p *parser) parseLambda() (ast.Expr, error) {
 	if err != nil {
 		return nil, err
 	}
+	prependParamDestructures(body, paramDestrs)
 	return &ast.Lambda{P: kw.Pos, Params: params, ReturnType: ret, Body: body}, nil
 }
 
@@ -3737,6 +3817,74 @@ func (p *parser) parseTupleDestructure(letPos ast.Position) (ast.Stmt, error) {
 		return nil, err
 	}
 	return &ast.Destructure{P: letPos, Names: names, Init: src}, nil
+}
+
+// parseTupleParam handles a tuple-destructuring parameter
+// `(a, b): (T, U)` — the cursor is on the opening `(` of the
+// binding list. Desugared at parse time into a synthetic named
+// parameter of the annotated type plus a `let (a, b) = <synth>;`
+// destructure the caller prepends to the function body, so the
+// checker / interp / IR all reuse the proven Destructure path
+// (the annotation not being a tuple type, or an arity mismatch,
+// surfaces as the usual E024 at the parameter's position). At
+// least 2 names are required (no-singleton-tuples rule), and a
+// destructured parameter can't carry a default value.
+func (p *parser) parseTupleParam() (ast.Param, *ast.Destructure, error) {
+	open := p.advance() // `(`
+	var names []string
+	if !p.match(lexer.Punct, ")") {
+		for {
+			nameTok, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return ast.Param{}, nil, err
+			}
+			names = append(names, nameTok.Text)
+			if _, ok := p.accept(lexer.Punct, ","); ok {
+				if p.match(lexer.Punct, ")") {
+					break
+				}
+				continue
+			}
+			break
+		}
+	}
+	if _, err := p.expect(lexer.Punct, ")"); err != nil {
+		return ast.Param{}, nil, err
+	}
+	if len(names) < 2 {
+		return ast.Param{}, nil, p.errorf(open.Pos, "tuple destructure needs at least 2 names")
+	}
+	if _, err := p.expect(lexer.Punct, ":"); err != nil {
+		return ast.Param{}, nil, err
+	}
+	ptype, err := p.parseType()
+	if err != nil {
+		return ast.Param{}, nil, err
+	}
+	if p.match(lexer.Punct, "=") {
+		return ast.Param{}, nil, p.errorf(open.Pos, "a destructured parameter cannot have a default value")
+	}
+	// Synthetic holder name is uniqued by source position so two
+	// destructured params (even across nested lambdas) can't collide,
+	// mirroring the checker's __destruct_<line>_<col> temp.
+	synth := fmt.Sprintf("__ptuple_%d_%d", open.Pos.Line, open.Pos.Col)
+	param := ast.Param{Name: synth, NamePos: open.Pos, Type: ptype}
+	d := &ast.Destructure{P: open.Pos, Names: names, Init: &ast.Ident{P: open.Pos, Name: synth}}
+	return param, d, nil
+}
+
+// prependParamDestructures splices the desugared `let (a, b) = <synth>;`
+// statements for any tuple-destructuring parameters at the front of a
+// function body, in parameter order.
+func prependParamDestructures(body *ast.Block, destrs []*ast.Destructure) {
+	if body == nil || len(destrs) == 0 {
+		return
+	}
+	stmts := make([]ast.Stmt, 0, len(destrs)+len(body.Stmts))
+	for _, d := range destrs {
+		stmts = append(stmts, d)
+	}
+	body.Stmts = append(stmts, body.Stmts...)
 }
 
 // ---------- Expressions ----------

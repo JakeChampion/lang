@@ -100,3 +100,7 @@ avoids changing every helper's result type to `Result`.
 - A `let (a, b, c) = ` arity>2 form isn't needed here (all returns are
   2-tuples), but if a parser ever needs `(value, cursor, extra)` the
   destructure already supports N≥2.
+- Tuple-destructuring parameters shipped (#4406): a helper whose first
+  move is unpacking an incoming pair can take it destructured directly —
+  `function step((v, c): (T, Cur)): (T, Cur) { … }` — instead of a named
+  param + `let (v, c) = p;`.
