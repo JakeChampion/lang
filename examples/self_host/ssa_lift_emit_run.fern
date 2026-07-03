@@ -191,6 +191,21 @@ function fn_specs(name: string): FnSpec[] {
             ] }
         ];
     }
+    if (name == "strbuf") {
+        // strbuf_reset(); strbuf_append("ab"); strbuf_append("cde");
+        // return strbuf_take().len();  => 5
+        // Exercises the slice-8 string-builder lift (strbuf_reset / _append /
+        // _take) through optimise / regalloc / emit on both backends.
+        return [
+            FnSpec { name: "main", nparams: 0, nslots: 0, ops: [
+                ir.op_strbuf_reset(),
+                ir.op_const_str("ab"), ir.op_strbuf_append(),
+                ir.op_const_str("cde"), ir.op_strbuf_append(),
+                ir.op_strbuf_take(), ir.op_str_len(),
+                ir.op_return()
+            ] }
+        ];
+    }
     return [];
 }
 
