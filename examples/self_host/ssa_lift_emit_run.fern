@@ -166,6 +166,19 @@ function fn_specs(name: string): FnSpec[] {
             ] }
         ];
     }
+    if (name == "castrt") {
+        // return ((10 as f64) * 1.5) as i32;  => 15
+        // Exercises the slice-6 casts (i32_to_f64 + f64_to_i32) around an f64
+        // multiply, through optimise / regalloc / emit on both backends.
+        return [
+            FnSpec { name: "main", nparams: 0, nslots: 0, ops: [
+                ir.op_const_i32(10), ir.op_i32_to_f64(),
+                ir.op_const_f64_text("1.5"), ir.op_fbin("fmul"),
+                ir.op_f64_to_i32(),
+                ir.op_return()
+            ] }
+        ];
+    }
     return [];
 }
 
