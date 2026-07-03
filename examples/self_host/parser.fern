@@ -2203,6 +2203,26 @@ function parse_block(p: Par): BlockResult {
     return BlockResult { par: p, body: body };
 }
 
+// parse_block_or_stmt accepts EITHER a braced `{ … }` block OR a single
+// braceless statement, wrapping the latter in a one-element body. Native
+// control-flow bodies (if-then/else, while, loop, `for x in it`) are a
+// `parseStmt`, so `if (x == 0) x = 40;` is valid there; the self-host used
+// to require `{` and mis-parsed a braceless body into an
+// `/*unknown-stmt: missing { in block*/` with the real statement hoisted to
+// run unconditionally (#4337). Only the control-flow body sites route here;
+// function / match-arm / lambda blocks still require braces.
+function parse_block_or_stmt(p: Par): BlockResult {
+    if (p.peek_punct() == "{") { return parse_block(p); }
+    var r: StmtResult = parse_stmt(p);
+    // Guarantee progress on a malformed body token rather than spinning.
+    if (r.par.pos == p.pos) {
+        var none: Stmt[] = [s_unknown("missing statement in braceless body")];
+        return BlockResult { par: p.advance(), body: none };
+    }
+    var one: Stmt[] = [r.stmt];
+    return BlockResult { par: r.par, body: one };
+}
+
 // parse_pattern reads a single match-arm pattern. Forms accepted:
 //   _                  — PatWildcard
 //   Name               — PatVariant { type_name: Name, binding: "" }
@@ -2544,7 +2564,7 @@ pub function stmts_mention(stmts: Stmt[], name: string): boolean {
 // grow — an oversized function miscompiles on the native backend (#2720).
 function parse_loop_stmt(p: Par): StmtResult {
     var p2: Par = p.advance();
-    var lb: BlockResult = parse_block(p2);
+    var lb: BlockResult = parse_block_or_stmt(p2);
     return StmtResult { par: lb.par, stmt: s_while(e_bool(true), lb.body) };
 }
 
@@ -2700,7 +2720,7 @@ function parse_for_stmt(p: Par): StmtResult {
         if (range_punct == "..=") { range_fn = "__range_incl"; }
         iter_expr = e_call(e_ident(range_fn), rargs);
     }
-    var fb: BlockResult = parse_block(p);
+    var fb: BlockResult = parse_block_or_stmt(p);
     p = fb.par;
     return StmtResult { par: p, stmt: s_for(fvar, iter_expr, fb.body) };
 }
@@ -2824,7 +2844,7 @@ function parse_stmt(p: Par): StmtResult {
         var c = parse_expr(p);
         p = c.par;
         if (p.peek_punct() == ")") { p = p.advance(); }
-        var then_blk: BlockResult = parse_block(p);
+        var then_blk: BlockResult = parse_block_or_stmt(p);
         p = then_blk.par;
         var else_body: Stmt[] = [];
         if (p.peek_keyword() == "else") {
@@ -2836,7 +2856,7 @@ function parse_stmt(p: Par): StmtResult {
                 p = nested.par;
                 else_body = else_body.append(nested.stmt);
             } else {
-                var else_blk: BlockResult = parse_block(p);
+                var else_blk: BlockResult = parse_block_or_stmt(p);
                 p = else_blk.par;
                 else_body = else_blk.body;
             }
@@ -2852,7 +2872,7 @@ function parse_stmt(p: Par): StmtResult {
         var wc = parse_expr(p);
         p = wc.par;
         if (p.peek_punct() == ")") { p = p.advance(); }
-        var wb: BlockResult = parse_block(p);
+        var wb: BlockResult = parse_block_or_stmt(p);
         p = wb.par;
         return StmtResult { par: p, stmt: with_loop_label(s_while(wc.expr, wb.body), loop_label) };
     }
