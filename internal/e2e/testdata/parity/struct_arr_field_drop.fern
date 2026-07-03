@@ -1,0 +1,8 @@
+// A reclaimable struct-with-array-field whose exit sweep calls the per-type
+// __struct_drop_<T> helper (#3457). The arm64 IR driver's hand-copied emit
+// orchestration missed the reclaim/drop-body emission, so this shape
+// link-failed there ("undefined reference to __fn___struct_drop_B") — found
+// while folding the mirror drivers behind -target (#4398 part 1). Returns
+// 3 + 7 = 10.
+struct B { xs: i32[] }
+function main(): i32 { var b = B { xs: [7, 8, 9] }; return b.xs.len() + b.xs[0]; }

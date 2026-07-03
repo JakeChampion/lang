@@ -18,7 +18,7 @@
 // codegen for the op stream.
 //
 // Like asm_ir, this is a SEPARATE module imported only by its differential
-// driver (asm_arm64_ir_run) — asm_arm64.fern and the arm64 bootstrap stay
+// driver (asm_ir_run -target arm64) — asm_arm64.fern and the arm64 bootstrap stay
 // untouched until a later fold/flip slice.
 
 import "./parser";
@@ -610,7 +610,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #8]\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 124) {  // map_new
             // pop capacity (ignored), fresh map box. Mark the map runtime + its
-            // str_eq/arr_push/heap deps (close_needs in asm_arm64_ir_run expands).
+            // str_eq/arr_push/heap deps (close_needs in asm_ir_run's arm64 leg expands).
             s = s.need("maps");
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_map_new\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 161) {  // print_int

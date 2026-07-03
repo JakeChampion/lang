@@ -223,8 +223,8 @@ and compiles the merged set — no stdin marker-bundle. It reaches its
 own **file-driven self-hosting fixpoint** (`TestSelfHostLoadFixpointX86_64`):
 the Go-built loader compiles its own source resolving
 lexer + parser + flatten + asm from disk → gen1, and gen1 → gen2
-byte-identical. `examples/self_host/asm_file_run.fern` is the simpler
-single-file CLI shape (compile one file by path).
+byte-identical. (`asm_file_run.fern`, the simpler single-file CLI shape,
+was retired in #4398 — it was a strict subset of `asm_load_run`.)
 
 ### ✅ UPDATE (2026-06): unified `fern` CLI + a self-hosted wasm backend
 

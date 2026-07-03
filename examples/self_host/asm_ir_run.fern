@@ -7,6 +7,13 @@
 // asserts identical exit codes — proving the IR path is behaviour-equivalent
 // to the production AST path (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md §3).
 //
+// `-target arm64` selects the arm64 backends instead (#4398 part 1): the IR
+// path via asm_arm64.emit_module_ir, the AST fallback via
+// asm_arm64.emit_module — replacing the retired asm_arm64_ir_run mirror
+// driver. The target-independent probe modes (`-ir-probe` / `-ir-needs`)
+// work for both targets; the per-module unit flags (`-ir-unit` / `-ir-ns` /
+// `-ir-extern` / `-ir-extra-need` / `-ir-sigs`) remain x86-64-only.
+//
 // This is a SEPARATE driver so neither asm.fern nor the widely-built asm_run
 // driver gains an `ir` dependency — the byte-identical self-bootstrap and the
 // ~50 asm_run-based harnesses stay untouched.
@@ -16,6 +23,7 @@ import "./lexer";
 import "./parser";
 import "./asm";
 import "./asm_ir";
+import "./asm_arm64";
 
 function main(): i32 {
     var av: string[] = args();
@@ -53,9 +61,13 @@ function main(): i32 {
     // per-module driver supplies from the loaded import set; the named module's
     // bodies are NOT emitted here (it is emitted as its own unit).
     var sig_paths: string[] = [];
+    // `-target x86_64|arm64` selects the backend pair; default x86_64 keeps
+    // every pre-fold caller byte-identical.
+    var target: string = "x86_64";
     var ai: i32 = 1;
     while (ai < av.len()) {
         if (av[ai] == "-ir") { use_ir = true; }
+        if (av[ai] == "-target" && ai + 1 < av.len()) { target = av[ai + 1]; ai = ai + 1; }
         if (av[ai] == "-ir-probe") { probe = true; }
         if (av[ai] == "-ir-needs") { needs_probe = true; }
         if (av[ai] == "-ir-extern" && ai + 1 < av.len()) { known = known.append(av[ai + 1]); ai = ai + 1; }
@@ -106,6 +118,22 @@ function main(): i32 {
         var nds: string[] = asm_ir.module_runtime_needs(lm);
         var ni: i32 = 0;
         while (ni < nds.len()) { print(nds[ni] + "\n"); ni = ni + 1; }
+        return 0;
+    }
+    // `-target arm64`: the arm64 leg (replacing the retired asm_arm64_ir_run
+    // mirror). `-ir` + fully-eligible routes IR via asm_arm64.emit_module_ir —
+    // the SAME orchestration emit_module's use_ir dispatch runs (the old
+    // mirror hand-copied that sequence and drifted: it missed the #3457
+    // reclaim/drop bodies, so struct-with-array-field programs link-failed on
+    // `__struct_drop_<T>`). Anything else falls back to the arm64 AST backend.
+    // The unit/extern/sigs flags are x86-64-only and ignored here, matching
+    // the old mirror driver (which ignored unknown flags).
+    if (target == "arm64") {
+        if (use_ir && asm_ir.all_eligible(lm)) {
+            print(asm_arm64.emit_module_ir(lm, false));
+        } else {
+            print(asm_arm64.emit_module(parser.module_with_builtins(mod), false));
+        }
         return 0;
     }
     // `-ir-unit entry|lib`: emit a single per-module translation unit (defs

@@ -2,9 +2,7 @@ package e2e
 
 import (
 	"bytes"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -56,13 +54,7 @@ function main(): i32 {
 func TestSelfHostScopeCollisionIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile(filepath.Join("../../examples/self_host", "asm_ir_run.fern"))
-	if err != nil {
-		t.Fatalf("read asm_ir_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_ir_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_ir_run.fern: %v", err)
-	}
+	copySelfHostFiles(t, dir, "asm_arm64.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "airun")
 
 	run := func(args ...string) ([]byte, int) {

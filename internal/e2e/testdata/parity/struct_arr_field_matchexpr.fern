@@ -1,0 +1,6 @@
+// The match-expression-initializer variant of struct_arr_field_drop (#4321's
+// struct-fld-matchexpr-arr differential case): the field buffer comes from a
+// match arm, and the struct's exit sweep still needs the __struct_drop_<T>
+// body emitted. Returns 3 + 7 = 10.
+struct B { xs: i32[] }
+function main(): i32 { var k = 1; var b = B { xs: match (k) { 1 => [7, 8, 9], _ => [0] } }; return b.xs.len() + b.xs[0]; }

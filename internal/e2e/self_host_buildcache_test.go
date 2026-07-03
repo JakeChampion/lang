@@ -215,6 +215,37 @@ func hashSelfHostSources(t *testing.T, dir, fernName string) string {
 // rationale on cachedLink's disk key). The emit is held in memory and the
 // scratch `.s` lives only in the process-local link dir until the link
 // completes, then is removed — it never reaches the disk cache.
+// copySelfHostFiles copies the named examples/self_host sources into dir —
+// the staging step before buildSelfHostBin for tests that hand-pick a driver's
+// import closure instead of copySelfHostTree'ing the whole directory.
+func copySelfHostFiles(t *testing.T, dir string, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+}
+
+// buildSelfHostBin loads a self-host driver .fern (by file name in dir),
+// compiles it with the Go x86-64 backend, links it, and returns dir/out.
+// BOTH steps are cached (see below): the source→asm compile by source-set
+// hash, and the link by asm hash. The link cache matters for the large
+// drivers (e.g. asm_ir_run / asm_load_run, which pull in asm_ir) whose gcc
+// link alone runs ~minute — without it a CI shard re-links the same driver
+// per test. The linked binary is copied to dir/out so callers that exec it
+// (or drop sibling files next to it) see a real file in their own dir.
+func buildSelfHostBin(t *testing.T, gcc, dir, fernName, out string) string {
+	t.Helper()
+	dst := filepath.Join(dir, out)
+	copyExecutable(t, cachedDriverBin(t, gcc, dir, fernName), dst)
+	return dst
+}
+
 func cachedDriverBin(t *testing.T, gcc, dir, fernName string) string {
 	t.Helper()
 	key := hashSelfHostSources(t, dir, fernName)

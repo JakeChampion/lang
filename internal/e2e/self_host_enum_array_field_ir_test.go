@@ -101,7 +101,7 @@ func TestSelfHostEnumArrayFieldIRX86_64(t *testing.T) {
 // the load-bearing arm64 check: an enum-array struct field's deep-drop rides
 // arm64's heap-element reclamation, so an over-release here surfaces as a wrong
 // exit code / crash under qemu. Routing through asm_arm64_run (not the
-// standalone asm_arm64_ir_run) is deliberate — only the production driver
+// differential asm_ir_run -target arm64 mode) is deliberate — only the production driver
 // injects the builtin enums (module_with_builtins) that enum-eligibility needs;
 // the differential -ir driver bails every enum program to AST. IR routing is
 // pinned by the arm64 IR emitter's `.Lira_` label marker rather than a size

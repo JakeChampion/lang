@@ -8327,6 +8327,28 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     return s;
 }
 
+// emit_module_ir is the FORCED-IR whole-program emit — the use_ir branch of
+// emit_module without the eligibility fallback or the pre-codegen check, the
+// arm64 sibling of asm_ir.emit_module_ir. The asm_ir_run `-target arm64 -ir`
+// differential driver calls this (with an already lambda-lifted module) so the
+// IR orchestration lives in ONE place: the driver's old hand-copy of this
+// sequence drifted when emit_arm64_reclaim_drop_bodies was added to
+// emit_module's dispatch (#3457) but not to the driver, so a reclaimable
+// struct-with-array-field program link-failed on `__struct_drop_<T>` there.
+pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
+    strbuf_reset();
+    var s: asmcore.EmitState = asmcore.new_state();
+    s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
+    s = asm_arm64_ir.emit_body(mod, s);
+    // Expand the declarative runtime-dependency closure (see emit_module's IR
+    // dispatch) before emit_runtime gates each helper on has_need.
+    s = s.close_needs();
+    // Per-type __field_reclaim_<T> / __struct_drop_<T> bodies (#3457).
+    s = emit_arm64_reclaim_drop_bodies(s);
+    s = emit_runtime(s, darwin);
+    return strbuf_take();
+}
+
 pub function emit_module(mod: parser.Module, darwin: boolean): string {
     // Reset the global strbuf before any .write calls. Output is
     // accumulated there (amortised O(1) per append) and materialised
@@ -8358,25 +8380,11 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
     var lm: parser.Module = asm_ir.lift_lambdas(mod);
     if (asmcore.new_state().use_ir && asm_ir.all_eligible(lm)) {
         // Hoist no-capture lambda call-args (closures slice 2a); lambda-free
-        // modules are unchanged. Re-seed s with the lifted funcs (the earlier
-        // seeding used the original mod) so the IR path sees __lam_<k>.
-        mod = lm;
-        s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
-        s = asm_arm64_ir.emit_body(mod, s);
-        // Expand the declarative runtime-dependency closure (e.g. a map op
-        // marks need("maps"), which pulls in arr_push / str_eq / heap) before
-        // emit_runtime gates each helper on has_need — the standalone IR
-        // driver (asm_arm64_ir_run) does the same. Without this, map programs
-        // mark "maps" but never its transitive deps, so the map runtime is
-        // gated out and the program fails to link.
-        s = s.close_needs();
-        // Per-type __field_reclaim_<T> / __struct_drop_<T> bodies (#3457) — the
-        // single-unit IR path must emit them too (emit_module_ir_unit_arm64 does
-        // for the multi-unit path), else a reclaimable struct-with-array-field
-        // link-fails on the `__struct_drop_<T>` call this path's emit_body wrote.
-        s = emit_arm64_reclaim_drop_bodies(s);
-        s = emit_runtime(s, darwin);
-        return strbuf_take();
+        // modules are unchanged. The single shared IR orchestration
+        // (emit_body -> close_needs -> reclaim/drop bodies -> emit_runtime)
+        // lives in emit_module_ir; nothing has been written to the strbuf
+        // yet, so its internal reset keeps this byte-identical.
+        return emit_module_ir(lm, darwin);
     }
     s = s.write("    .globl _start\n");
     s = s.write("    .text\n");

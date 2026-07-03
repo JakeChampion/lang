@@ -1,5 +1,5 @@
 // examples/self_host/wasm_ir_run.fern — differential driver for the wasm IR
-// code path (the wasm sibling of asm_ir_run / asm_arm64_ir_run). With a `-ir`
+// code path (the wasm sibling of asm_ir_run, whose -target flag also covers arm64). With a `-ir`
 // flag: when set AND the module is in the pure-i32 IR subset, it emits via the
 // IR path (wasm_ir.emit_module_ir: AST -> stack IR -> WAT); otherwise it uses
 // the unchanged AST backend (wasm.emit_module). The companion Go test pipes
