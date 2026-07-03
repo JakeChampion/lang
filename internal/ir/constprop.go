@@ -73,8 +73,18 @@ func slotIsWide(fn *Func, idx int32) bool {
 	if t == nil {
 		return false
 	}
-	_, isStr := t.(ast.StringType)
-	return isStr
+	if _, isStr := t.(ast.StringType); isStr {
+		return true
+	}
+	// A `dyn Trait` slot is the inline two-word [data, vtable] pair on
+	// wasm32 (the backend's isTwoWordType) — its store/load fan out to two
+	// operand values, so the single-const slot model here is wrong for it.
+	// Latent today (nothing const-stores into a dyn slot on the wasm path),
+	// but any future const store — e.g. a wasm-side entry zero-init like
+	// the natives grew in #4495 — would otherwise propagate one value into
+	// a two-value load and emit a validation-failing module.
+	_, isDyn := t.(ast.DynTraitType)
+	return isDyn
 }
 
 // slotTypeAt resolves a slot index against the function's param /

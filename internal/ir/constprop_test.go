@@ -1,6 +1,10 @@
 package ir
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/jakechampion/lang/internal/ast"
+)
 
 // A non-adjacent store / load with no other slot use: ConstPropagate
 // rewrites the load to the stored constant. The intervening op
@@ -496,5 +500,41 @@ func TestConstPropIsIdempotent(t *testing.T) {
 	after := p.String()
 	if before != after {
 		t.Errorf("ConstPropagate not idempotent:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+// A `dyn Trait` slot is an inline two-word [data, vtable] pair on wasm32:
+// its store consumes two operand values and its load pushes two, so the
+// single-const slot model must never bind through it (slotIsWide's dyn
+// arm). If it did, the load below would be rewritten to ONE const — a
+// stack underflow at emit time (a validation-failing module). Latent
+// until something const-stores into a dyn slot (e.g. a wasm-side entry
+// zero-init like the natives grew in #4495) — pinned here at the pass
+// layer so that day is a non-event.
+func TestConstPropSkipsTwoWordDynSlot(t *testing.T) {
+	fn := &Func{
+		Name:   "f",
+		Locals: []*ast.Var{{Name: "d", Type: ast.DynTraitType{Traits: []string{"Show"}}}},
+		Ops: []Op{
+			{Kind: OpConstI32, I32: 0},
+			{Kind: OpConstI32, I32: 0},
+			{Kind: OpStoreLocal, I32: 0}, // two-word store: consumes both zeros
+			{Kind: OpConstStr, Str: "hi"},
+			{Kind: OpCallDirect, Str: "print", I32: 1},
+			{Kind: OpLoadLocal, I32: 0}, // two-word load: must NOT become one const
+			{Kind: OpCallDirect, Str: "__drop_dyn_Show", I32: 2},
+			{Kind: OpReturnVoid},
+		},
+	}
+	p := &Program{Funcs: []*Func{fn}}
+	ConstPropagate(p)
+	found := false
+	for _, op := range fn.Ops {
+		if op.Kind == OpLoadLocal && op.I32 == 0 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("two-word dyn slot load must survive const propagation:\n%s", p)
 	}
 }

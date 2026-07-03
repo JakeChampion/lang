@@ -49,10 +49,12 @@ func PropagateCopies(prog *Program) {
 }
 
 // slotIsTwoWord reports whether slot `idx` in `fn` materialises
-// as two wasm32 operand-stack values — the two-word string ABI.
-// Used by the dead-store rewrite below: a dead OpStoreLocal that
-// targets a two-word slot has to pop both halves, not one, so
-// the replacement is two OpDrops instead of a single one.
+// as two wasm32 operand-stack values — a two-word-ABI string
+// (data, len) or a `dyn Trait` inline [data, vtable] pair, the
+// same set as the wasm backend's isTwoWordType. Used by the
+// dead-store rewrite below: a dead OpStoreLocal that targets a
+// two-word slot has to pop both halves, not one, so the
+// replacement drop must fan out to two `drop`s.
 func slotIsTwoWord(fn *Func, idx int32, ptrW int) bool {
 	if ptrW != 4 {
 		return false
@@ -68,8 +70,14 @@ func slotIsTwoWord(fn *Func, idx int32, ptrW int) bool {
 			t = fn.ScratchTypes[i]
 		}
 	}
-	_, isString := t.(ast.StringType)
-	return isString
+	if _, isString := t.(ast.StringType); isString {
+		return true
+	}
+	// Latent today (nothing dead-stores into a dyn slot on the wasm
+	// path), but a single-drop rewrite of a two-value store would emit a
+	// stack-imbalanced module — see slotIsWide's dyn arm in constprop.go.
+	_, isDyn := t.(ast.DynTraitType)
+	return isDyn
 }
 
 func propagateCopiesOps(fn *Func, ops []Op, ptrW int) []Op {
