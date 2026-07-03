@@ -4141,6 +4141,14 @@ type builder struct {
 	// `len(b.locals)` is no longer authoritative — always go
 	// through allocSlot().
 	nextSlot int32
+	// enumDropTagSlot is the ONE per-function tag-stash scratch slot every
+	// inline enum slot-drop (emitEnumSlotDrop's variant-plan tier) shares —
+	// allocated on first use, -1 until then (#4476). The stash is written
+	// and read strictly within a single drop sequence and sequences never
+	// interleave, so sharing is exact; per-invocation allocation was what
+	// interleaved sweep scratch with body scratch and blocked converting
+	// the exit dec sweep to post-lowering insertion.
+	enumDropTagSlot int32
 	// depth is the current control-stack depth (number of open
 	// block/loop/if scopes). Used to compute relative branch
 	// distances for break/continue.
@@ -4494,6 +4502,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		b.locals[v.Name] = int32(len(fn.Params) + i)
 	}
 	b.nextSlot = int32(len(fn.Params) + len(info.Locals[fn]))
+	b.enumDropTagSlot = -1
 	// Per-function Perceus RC plan — every decision analysis (consumed
 	// params, borrow-aware free eligibility, moves, array-set incs, reuse)
 	// computed up front in one place; see rc_analysis.go (#4393).
@@ -12030,8 +12039,16 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_rc_is_unique", I32: 1})
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-			tagSlot := b.allocSlot()
-			b.locals[fmt.Sprintf("__enum_drop_tag_%d", tagSlot)] = tagSlot
+			// One shared per-function tag stash (#4476): allocated on first
+			// use, reused by every later inline enum slot-drop. Sound because
+			// the stash is stored and fully consumed within this one drop
+			// sequence (the per-variant tag compares below) before any other
+			// drop sequence can run.
+			if b.enumDropTagSlot < 0 {
+				b.enumDropTagSlot = b.allocSlot()
+				b.locals[fmt.Sprintf("__enum_drop_tag_%d", b.enumDropTagSlot)] = b.enumDropTagSlot
+			}
+			tagSlot := b.enumDropTagSlot
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 			b.emit(Op{Kind: OpLoad}) // tag at [data+0]
 			b.emit(Op{Kind: OpStoreLocal, I32: tagSlot})
