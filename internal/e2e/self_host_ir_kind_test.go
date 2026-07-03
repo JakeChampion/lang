@@ -55,7 +55,8 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 		"is_const const_i32=1 const_str=1 add=0\n" +
 		"is_term return=1 br=1 exit=1 brif=0\n" +
 		"is_fold add=1 div_s=1 ge_s=1 fadd=0\n" +
-		"is_commute add=1 xor=1 sub=0 shl=0\n"
+		"is_commute add=1 xor=1 sub=0 shl=0\n" +
+		"tag_consistency ok=21 bad=0\n"
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()

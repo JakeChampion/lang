@@ -3069,9 +3069,9 @@ function func_eligible(fd: parser.FuncDecl, mod: parser.Module, sview: parser.St
     var i: i32 = 0;
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
-        if (o.kind == "call_direct") {
+        if (o.kind_tag == 149) {  // call_direct
             if (!is_fern_helper(o.str) && !module_has_func(mod, o.str) && !known_includes(known, o.str)) { return false; }
-        } else if (o.kind == "const_func") {
+        } else if (o.kind_tag == 6) {  // const_func
             if (!module_has_func(mod, o.str) && !known_includes(known, o.str)) { return false; }
         }
         i = i + 1;
@@ -3225,7 +3225,7 @@ function calls_only_known(fd: parser.FuncDecl, mod: parser.Module, known: string
     var i: i32 = 0;
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
-        if (o.kind == "call_direct") {
+        if (o.kind_tag == 149) {  // call_direct
             if (!is_fern_helper(o.str) && !module_has_func(mod, o.str) && !known_includes(known, o.str)) { return false; }
         }
         i = i + 1;
@@ -3468,16 +3468,16 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
-    if (o.kind == "str_len") {
+    if (o.kind_tag == 97) {  // str_len
         // pop string box; length is at box+8.
         return s.write("    popq %rax\n    movq 8(%rax), %rax\n    pushq %rax\n");
     }
-    if (o.kind == "str_index") {
+    if (o.kind_tag == 101) {  // str_index
         // pop index (top), string box; box = [data@0, len@8], so the byte is
         // at [data + i]; zero-extend to an i32.
         return s.write("    popq %rcx\n    popq %rax\n    movq (%rax), %rax\n    movzbl (%rax,%rcx), %eax\n    pushq %rax\n");
     }
-    if (o.kind == "str_slice") {
+    if (o.kind_tag == 102) {  // str_slice
         // operand stack [src box, start, end] (end on top). Zero-copy view, but now
         // rc-HEADERED with an IMMORTAL sentinel (#2649): a 24-byte box
         // [rc=-1@base, data=src.data+start@base+8, len=end-start@base+16], box=base+8
@@ -3499,7 +3499,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    addq $8, %rax\n");
         return s.write("    popq %r14\n    popq %r13\n    popq %r12\n    pushq %rax\n");
     }
-    if (o.kind == "str_bytes") {
+    if (o.kind_tag == 104) {  // str_bytes
         // operand stack [str box]; __fern_str_bytes is a Fern runtime function now
         // (#2649): the box on the stack IS param[0] (at +16 after the call), so call
         // directly, pop the arg, push the result i32[]. mark_str_bytes pulls in
@@ -3507,7 +3507,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    call __fn___fern_str_bytes\n    addq $8, %rsp\n    pushq %rax\n");
         return s.mark_str_bytes();
     }
-    if (o.kind == "str_split") {
+    if (o.kind_tag == 105) {  // str_split
         // operand stack [haystack box, sep box] (sep on top). Call the
         // Fern-compiled __fn___fern_str_split via the stack ABI: param[0]=haystack
         // on top (+16), param[1]=sep (+24). -> fresh string[] in %rax.
@@ -3515,16 +3515,16 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_split\n    addq $16, %rsp\n    pushq %rax\n");
         return s.mark_str_split();
     }
-    if (o.kind == "str_to_upper" || o.kind == "str_to_lower") {
+    if (o.kind_tag == 106 || o.kind_tag == 107) {  // str_to_upper, str_to_lower
         // operand stack [s box]; __fern_str_to_upper/_lower are Fern runtime
         // functions now (#2649): __fn_ stack convention — s already on the stack IS
         // param[0] (at +16), so call directly, pop the arg, push the result.
         var cfn: string = "__fn___fern_str_to_upper";
-        if (o.kind == "str_to_lower") { cfn = "__fn___fern_str_to_lower"; }
+        if (o.kind_tag == 107) { cfn = "__fn___fern_str_to_lower"; }  // str_to_lower
         s = s.write("    call " + cfn + "\n    addq $8, %rsp\n    pushq %rax\n");
         return s.mark_str_case();
     }
-    if (o.kind == "str_repeat") {
+    if (o.kind_tag == 108) {  // str_repeat
         // operand stack [s box, n] (n on top). Call the Fern-compiled
         // __fn___fern_str_repeat via the stack ABI: param[0]=s on top (+16),
         // param[1]=n below (+24). -> fresh string box in %rax.
@@ -3532,21 +3532,21 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_repeat\n    addq $16, %rsp\n    pushq %rax\n");
         return s.mark_str_repeat();
     }
-    if (o.kind == "str_trim") {
+    if (o.kind_tag == 109) {  // str_trim
         // operand stack [s box]; __fern_str_trim is a Fern runtime function now
         // (#2649): the s box already on the operand stack IS param[0] (at +16
         // after the call), so call directly, pop the arg, push the result.
         s = s.write("    call __fn___fern_str_trim\n    addq $8, %rsp\n    pushq %rax\n");
         return s.mark_str_trim();
     }
-    if (o.kind == "str_reverse") {
+    if (o.kind_tag == 110) {  // str_reverse
         // operand stack [s box] — the arg IS param[0] (+16). Call the
         // Fern-compiled __fn___fern_str_reverse via the stack ABI -> fresh
         // reversed string box in %rax.
         s = s.write("    call __fn___fern_str_reverse\n    addq $8, %rsp\n    pushq %rax\n");
         return s.mark_str_reverse();
     }
-    if (o.kind == "str_replace") {
+    if (o.kind_tag == 111) {  // str_replace
         // operand stack [haystack, old, new] (new on top). Call the Fern-compiled
         // __fn___fern_str_replace via the stack ABI: param[0]=haystack on top
         // (+16), param[1]=old (+24), param[2]=new (+32). -> fresh string box in %rax.
@@ -3554,7 +3554,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_replace\n    addq $24, %rsp\n    pushq %rax\n");
         return s.mark_str_replace();
     }
-    if (o.kind == "str_chars") {
+    if (o.kind_tag == 112) {  // str_chars
         // operand stack [s box]; __fern_str_chars is a Fern runtime function now
         // (#2649): the box on the stack IS param[0] (at +16 after the call), so call
         // directly, pop the arg, push the result string[]. mark_str_chars pulls in
@@ -3562,7 +3562,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    call __fn___fern_str_chars\n    addq $8, %rsp\n    pushq %rax\n");
         return s.mark_str_chars();
     }
-    if (o.kind == "str_lines") {
+    if (o.kind_tag == 113) {  // str_lines
         // operand stack [s box]; __fern_str_lines is a Fern runtime function now
         // (#2649): the s box already on the stack IS param[0] (at +16 after the
         // call), so call directly, pop the arg, push the result string[].
@@ -3570,24 +3570,24 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    call __fn___fern_str_lines\n    addq $8, %rsp\n    pushq %rax\n");
         return s.mark_str_lines();
     }
-    if (o.kind == "str_starts_with" || o.kind == "str_ends_with" || o.kind == "str_index_of") {
+    if (o.kind_tag == 114 || o.kind_tag == 115 || o.kind_tag == 116) {  // str_starts_with, str_ends_with, str_index_of
         // operand stack [s box, p box] (p on top); the str_search predicates are
         // now Fern runtime functions (#2649) called via the __fn_ stack
         // convention — re-push so s=param[0] at +16 and p=param[1] at +24.
         var pfn: string = "__fn___fern_str_starts_with";
-        if (o.kind == "str_ends_with") { pfn = "__fn___fern_str_ends_with"; }
-        if (o.kind == "str_index_of") { pfn = "__fn___fern_str_index_of"; }
+        if (o.kind_tag == 115) { pfn = "__fn___fern_str_ends_with"; }  // str_ends_with
+        if (o.kind_tag == 116) { pfn = "__fn___fern_str_index_of"; }  // str_index_of
         s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n    call " + pfn + "\n    addq $16, %rsp\n    pushq %rax\n");
         return s.mark_str_search();
     }
-    if (o.kind == "str_concat") {
+    if (o.kind_tag == 98) {  // str_concat
         // operand stack: [box A, box B] (B on top). __fern_str_concat is a Fern
         // runtime function now (#2649): __fn_ stack convention — re-push so A is
         // param[0] at +16 and B is param[1] at +24.
         s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_concat\n    addq $16, %rsp\n    pushq %rax\n");
         return s.mark_str_concat();
     }
-    if (o.kind == "str_eq") {
+    if (o.kind_tag == 99) {  // str_eq
         // operand stack: [box A, box B] (B on top); __fern_str_eq is now a Fern
         // runtime function (#2649) called via the __fn_ stack convention —
         // re-push so A=a is param[0] at +16 and B=b is param[1] at +24.
@@ -3628,7 +3628,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
     var dop: i32 = 0;
     while (dop < r.ops.len()) {
         var dopop: ir.Op = r.ops[dop];
-        if (dopop.kind == "map_new" || dopop.kind == "map_set" || dopop.kind == "map_len") { s = s.need("maps"); }
+        if (dopop.kind_tag == 124 || dopop.kind_tag == 125 || dopop.kind_tag == 126) { s = s.need("maps"); }  // map_new, map_set, map_len
         if (ir.op_allocates(dopop.kind)) { s = s.need("heap"); }
         dop = dop + 1;
     }
@@ -3681,118 +3681,118 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
     var i: i32 = 0;
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
-        if (o.kind == "const_i32") {
+        if (o.kind_tag == 1) {  // const_i32
             s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rax\n    pushq %rax\n");
-        } else if (o.kind == "const_i32_text") {
+        } else if (o.kind_tag == 2) {  // const_i32_text
             // Integer literal source text spliced into a 32-bit immediate (hex /
             // full u32 range) — byte-identical to asm.fern's ExprNumber.
             s = s.write("    movq $" + o.str + ", %rax\n    pushq %rax\n");
-        } else if (o.kind == "const_i64") {
+        } else if (o.kind_tag == 3) {  // const_i64
             // 64-bit immediate (source text): movabsq handles the full range.
             // i64 add/sub/mul/cmp/bitwise then reuse the existing 64-bit-register
             // bin ops unchanged — only the load differs from i32.
             s = s.write("    movabsq $" + o.str + ", %rax\n    pushq %rax\n");
-        } else if (o.kind == "int_extend" || o.kind == "int_wrap") {
+        } else if (o.kind_tag == 7 || o.kind_tag == 8) {  // int_extend, int_wrap
             // i32<->i64 in 64-bit slots: signed -> sign-extend low 32 (movslq),
             // unsigned -> zero-extend low 32 (movl). Same sequence either way.
             s = s.write("    popq %rax\n");
             if (o.unsigned) { s = s.write("    movl %eax, %eax\n"); }
             else { s = s.write("    movslq %eax, %rax\n"); }
             s = s.write("    pushq %rax\n");
-        } else if (o.kind == "u32_wrap") {
+        } else if (o.kind_tag == 10) {  // u32_wrap
             // Reduce to the u32 range (zero-extend low 32) — wraps a u32 arith
             // result at 2^32 on this 64-bit-register backend.
             s = s.write("    popq %rax\n    movl %eax, %eax\n    pushq %rax\n");
-        } else if (o.kind == "int_cast") {
+        } else if (o.kind_tag == 9) {  // int_cast
             // `x as <ty>` int→int width mask/extend — byte-identical to asm.fern.
             s = s.write("    popq %rax\n");
             if (o.str == "u8") { s = s.write("    andq $255, %rax\n"); }
             else if (o.str == "u32") { s = s.write("    movl %eax, %eax\n"); }
             else if (o.str == "i32") { s = s.write("    movslq %eax, %rax\n"); }
             s = s.write("    pushq %rax\n");
-        } else if (o.kind == "arr_push" || o.kind == "arr_push_i64" || o.kind == "arr_push_f64") {
+        } else if (o.kind_tag == 92 || o.kind_tag == 94 || o.kind_tag == 95) {  // arr_push, arr_push_i64, arr_push_f64
             // [arr, val] -> grown array. __fern_arr_push(%rdi=arr, %rsi=val). Every
             // array slot is 8 bytes here, so the i64/u64/f64 element rides the SAME
             // helper (the popped operand-stack slot already holds the full 8-byte
             // value); only wasm needs a distinct 8-byte-stride push.
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_arr_push\n    pushq %rax\n");
             s = s.mark_arr_push();
-        } else if (o.kind == "arr_push_owned") {
+        } else if (o.kind_tag == 93) {  // arr_push_owned
             // Sole-owner self-append (irlower's !aliased `a = a.append(v)`):
             // __fern_arr_push_owned reclaims the old buffer on a grow-realloc.
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_arr_push_owned\n    pushq %rax\n");
             s = s.mark_arr_push().need("arr_push_owned");
-        } else if (o.kind == "alloc_u8") {
+        } else if (o.kind_tag == 77) {  // alloc_u8
             // [n] -> fresh n-element array. __fern_alloc_u8(%rdi=n).
             s = s.write("    popq %rdi\n    call __fern_alloc_u8\n    pushq %rax\n");
             s = s.need("heap").need("alloc_u8");
-        } else if (o.kind == "alloc") {
+        } else if (o.kind_tag == 76) {  // alloc
             // [n] -> bump-alloc n raw bytes, push the usize pointer (core/map's
             // __alloc). __fern_alloc(%rdi=n) is the bare-pointer allocator.
             s = s.write("    popq %rdi\n    call __fern_alloc\n    pushq %rax\n");
             s = s.need("heap");
-        } else if (o.kind == "ptr_width") {
+        } else if (o.kind_tag == 79) {  // ptr_width
             // () -> heap-pointer width in bytes. 8 on x86-64.
             s = s.write("    pushq $8\n");
-        } else if (o.kind == "str_from_bytes") {
+        } else if (o.kind_tag == 103) {  // str_from_bytes
             // [arr] -> string box packing each slot's low byte. The arg IS
             // param[0] (+16); call the Fern-compiled __fn___fern_string_from_bytes
             // via the stack ABI.
             s = s.write("    call __fn___fern_string_from_bytes\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("heap").need("str_from_bytes");
-        } else if (o.kind == "memcpy") {
+        } else if (o.kind_tag == 74) {  // memcpy
             // [dst, src, n] -> copy n bytes src->dst (rep movsb), push dummy 0.
             // n is on top, then src, then dst (the lowering order). Mirrors the
             // AST __memcpy emitter in asm.fern.
             s = s.write("    popq %rcx\n    popq %rsi\n    popq %rdi\n    rep movsb\n    pushq $0\n");
-        } else if (o.kind == "memset") {
+        } else if (o.kind_tag == 75) {  // memset
             // [dst, byte, n] -> fill n bytes at dst with byte's low byte (rep
             // stosb, AL), push dummy 0. n on top, then byte, then dst.
             s = s.write("    popq %rcx\n    popq %rax\n    popq %rdi\n    cld\n    rep stosb\n    pushq $0\n");
-        } else if (o.kind == "free") {
+        } else if (o.kind_tag == 78) {  // free
             // [ptr, size] -> no-op under the bump/leak heap; drop both, push dummy 0.
             s = s.write("    popq %rax\n    popq %rax\n    pushq $0\n");
-        } else if (o.kind == "load_i32") {
+        } else if (o.kind_tag == 69) {  // load_i32
             // [addr] -> sign-extended 4-byte load (matches __fn___load_i32).
             s = s.write("    popq %rax\n    movslq (%rax), %rax\n    pushq %rax\n");
-        } else if (o.kind == "load_i64" || o.kind == "load_ptr") {
+        } else if (o.kind_tag == 70 || o.kind_tag == 71) {  // load_i64, load_ptr
             // [addr] -> 8-byte load (ptr is heap-pointer width = 8 on x86-64).
             s = s.write("    popq %rax\n    movq (%rax), %rax\n    pushq %rax\n");
-        } else if (o.kind == "store_i32") {
+        } else if (o.kind_tag == 72) {  // store_i32
             // [addr, val] -> store low 4 bytes; push dummy 0 (val on top).
             s = s.write("    popq %rcx\n    popq %rax\n    movl %ecx, (%rax)\n    pushq $0\n");
-        } else if (o.kind == "store_ptr") {
+        } else if (o.kind_tag == 73) {  // store_ptr
             // [addr, val] -> store 8 bytes; push dummy 0.
             s = s.write("    popq %rcx\n    popq %rax\n    movq %rcx, (%rax)\n    pushq $0\n");
-        } else if (o.kind == "load_local") {
+        } else if (o.kind_tag == 18) {  // load_local
             s = s.write("    pushq " + util.i32_to_string(0 - 8 * (o.i32_imm + 1)) + "(%rbp)\n");
-        } else if (o.kind == "store_local") {
+        } else if (o.kind_tag == 19) {  // store_local
             s = s.write("    popq %rax\n    movq %rax, " + util.i32_to_string(0 - 8 * (o.i32_imm + 1)) + "(%rbp)\n");
-        } else if (o.kind == "not") {
+        } else if (o.kind_tag == 34) {  // not
             s = s.write("    popq %rax\n    testq %rax, %rax\n    setz %al\n    movzbq %al, %rax\n    pushq %rax\n");
-        } else if (o.kind == "return") {
+        } else if (o.kind_tag == 160) {  // return
             s = s.write("    popq %rax\n    leave\n    ret\n");
-        } else if (o.kind == "if") {
+        } else if (o.kind_tag == 154) {  // if
             // jump to the matching else (if any) or end when the cond is false.
             var elseidx: i32 = irlower.find_matching_else(r.ops, i + 1);
             var tgt: string = "";
             if (elseidx >= 0) { tgt = lp + util.i32_to_string(elseidx); }
             else { tgt = lp + util.i32_to_string(irlower.find_matching_end(r.ops, i + 1)); }
             s = s.write("    popq %rax\n    testq %rax, %rax\n    jz " + tgt + "\n");
-        } else if (o.kind == "else") {
+        } else if (o.kind_tag == 155) {  // else
             // end of the then-arm jumps past the else; land the false path here.
             s = s.write("    jmp " + lp + util.i32_to_string(irlower.find_matching_end(r.ops, i + 1)) + "\n");
             s = s.write(lp + util.i32_to_string(i) + ":\n");
-        } else if (o.kind == "block") {
+        } else if (o.kind_tag == 152) {  // block
             // forward scope: its exit label is defined at the matching `end`.
-        } else if (o.kind == "loop") {
+        } else if (o.kind_tag == 153) {  // loop
             // backward scope: header label, branched to by `br`.
             s = s.write(lp + util.i32_to_string(i) + ":\n");
-        } else if (o.kind == "br") {
+        } else if (o.kind_tag == 157) {  // br
             s = s.write("    jmp " + br_target(r.ops, lp, i, o.i32_imm) + "\n");
-        } else if (o.kind == "brif") {
+        } else if (o.kind_tag == 158) {  // brif
             s = s.write("    popq %rax\n    testq %rax, %rax\n    jnz " + br_target(r.ops, lp, i, o.i32_imm) + "\n");
-        } else if (o.kind == "arr_make") {
+        } else if (o.kind_tag == 87) {  // arr_make
             // n element values on the operand stack (element n-1 on top).
             // asm.fern 8-byte layout via __fern_arr_box: data = base+16, rc=1,
             // len=n, element i at data+(i+1)*8. Pop top-down (element n-1 →
@@ -3807,41 +3807,41 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
                 em = em - 1;
             }
             s = s.write("    pushq %rax\n");
-        } else if (o.kind == "arr_get") {
+        } else if (o.kind_tag == 88) {  // arr_get
             // pop idx (top), base; element at data+(idx+1)*8.
             s = s.write("    popq %rcx\n    popq %rax\n    incq %rcx\n    movq (%rax,%rcx,8), %rax\n    pushq %rax\n");
-        } else if (o.kind == "arr_set") {
+        } else if (o.kind_tag == 89) {  // arr_set
             // pop val (top), idx, base; store at data+(idx+1)*8.
             s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n    incq %rcx\n    movq %rdx, (%rax,%rcx,8)\n");
-        } else if (o.kind == "arr_len") {
+        } else if (o.kind_tag == 90) {  // arr_len
             // pop base; length header at data+0.
             s = s.write("    popq %rax\n    movq (%rax), %rax\n    pushq %rax\n");
-        } else if (o.kind == "arr_rc") {
+        } else if (o.kind_tag == 91) {  // arr_rc
             // pop base; 32-bit refcount field at data-8.
             s = s.write("    popq %rax\n    movl -8(%rax), %eax\n    pushq %rax\n");
-        } else if (o.kind == "raw_alloc") {
+        } else if (o.kind_tag == 81) {  // raw_alloc
             // Tier-2 floor (#2649): pop n → %rdi, call __fern_alloc, push ptr.
             s = s.write("    popq %rdi\n    call __fern_alloc\n    pushq %rax\n");
             s = s.mark_heap();
-        } else if (o.kind == "raw_store8") {
+        } else if (o.kind_tag == 82) {  // raw_store8
             // pop v (top), off, ptr; store low byte of v at [ptr+off]; push v back
             // (keeps the one-value-per-expr invariant; statement position drops it).
             s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n    addq %rcx, %rax\n    movb %dl, (%rax)\n    pushq %rdx\n");
-        } else if (o.kind == "raw_load8") {
+        } else if (o.kind_tag == 83) {  // raw_load8
             // pop off (top), ptr; zero-extended byte at [ptr+off].
             s = s.write("    popq %rcx\n    popq %rax\n    addq %rcx, %rax\n    movzbl (%rax), %eax\n    pushq %rax\n");
-        } else if (o.kind == "raw_store_ptr") {
+        } else if (o.kind_tag == 84) {  // raw_store_ptr
             // pop v (top), off, ptr; store word slot at [ptr+off*8]; push v back.
             s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n    movq %rdx, (%rax,%rcx,8)\n    pushq %rdx\n");
-        } else if (o.kind == "raw_load_ptr") {
+        } else if (o.kind_tag == 85) {  // raw_load_ptr
             // pop off (top), ptr; word slot at [ptr+off*8].
             s = s.write("    popq %rcx\n    popq %rax\n    movq (%rax,%rcx,8), %rax\n    pushq %rax\n");
-        } else if (o.kind == "raw_string") {
+        } else if (o.kind_tag == 86) {  // raw_string
             // pop [data, len] (len on top); build an rc-headered box via __fern_str_box
             // (#2649 Option A). len -> %rsi, data -> %rdi, call, push the box.
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_str_box\n    pushq %rax\n");
             s = s.mark_heap();
-        } else if (o.kind == "const_str") {
+        } else if (o.kind_tag == 5) {  // const_str
             // String literal: intern the bytes in .rodata, build an rc-headered box
             // via __fern_str_box (#2649 Option A) — data = .rodata label, len = byte
             // count. box = [rc=1][data][len]; data@box+0 / len@box+8 unchanged, so
@@ -3858,86 +3858,86 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             // predicates/concat/eq/cmp) are emitted by emit_str_op — factored out
             // to keep this dispatch under the oversized-function threshold (#2720).
             s = emit_str_op(o, s);
-        } else if (o.kind == "arr_slice") {
+        } else if (o.kind_tag == 96) {  // arr_slice
             // operand stack [arr, start, end]; __fern_arr_slice(%rdi=arr,
             // %rsi=start, %rdx=end) -> fresh array in %rax (copies elements).
             s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    call __fern_arr_slice\n    pushq %rax\n");
             s = s.mark_arr_slice();
-        } else if (o.kind == "random_bytes") {
+        } else if (o.kind_tag == 185) {  // random_bytes
             // operand stack [n]; __fern_random_bytes(%rdi=n) -> string box in %rax.
             s = s.write("    popq %rdi\n    call __fern_random_bytes\n    pushq %rax\n");
             s = s.need("heap").need("random_bytes");
-        } else if (o.kind == "random_i32") {
+        } else if (o.kind_tag == 186) {  // random_i32
             // no operands; __fern_random_i32() -> i32 in %rax.
             s = s.write("    call __fern_random_i32\n    pushq %rax\n");
             s = s.need("random_i32");
-        } else if (o.kind == "monotonic_ns") {
+        } else if (o.kind_tag == 182) {  // monotonic_ns
             // no operands; __fern_monotonic_ns() -> i64 in %rax.
             s = s.write("    call __fern_monotonic_ns\n    pushq %rax\n");
             s = s.need("monotonic_ns");
-        } else if (o.kind == "now_unix_ms") {
+        } else if (o.kind_tag == 184) {  // now_unix_ms
             // no operands; __fern_now_unix_ms() -> i64 in %rax.
             s = s.write("    call __fern_now_unix_ms\n    pushq %rax\n");
             s = s.need("now_unix_ms");
-        } else if (o.kind == "now_ns") {
+        } else if (o.kind_tag == 183) {  // now_ns
             // no operands; __fern_now_ns() -> i64 in %rax.
             s = s.write("    call __fern_now_ns\n    pushq %rax\n");
             s = s.need("now_ns");
-        } else if (o.kind == "poll") {
+        } else if (o.kind_tag == 187) {  // poll
             // operand stack [fds, timeout]; __fern_poll(%rdi=fds box ptr,
             // %rsi=timeout_ms) -> i32 ready index (or -1) in %rax.
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_poll\n    pushq %rax\n");
             s = s.need("heap").need("poll");
-        } else if (o.kind == "timer_fd") {
+        } else if (o.kind_tag == 188) {  // timer_fd
             // [ms]; __fern_timer_fd(%rdi=ms) -> a CLOCK_MONOTONIC timerfd fd
             // (readable after ms), or -errno, in %rax.
             s = s.write("    popq %rdi\n    call __fern_timer_fd\n    pushq %rax\n");
             s = s.need("timer_fd");
-        } else if (o.kind == "wasm_timer_pollable") {
+        } else if (o.kind_tag == 189) {  // wasm_timer_pollable
             // [ns]; __fern_wasm_timer_pollable(%rdi=ns) -> -1 on native (no
             // pollable; the deadline comes from poll(2)'s timeout). Portability
             // shim for std/async's with_deadline.
             s = s.write("    popq %rdi\n    call __fern_wasm_timer_pollable\n    pushq %rax\n");
             s = s.need("wasm_timer_pollable");
-        } else if (o.kind == "wasm_pollable_drop") {
+        } else if (o.kind_tag == 190) {  // wasm_pollable_drop
             // [p]; __fern_wasm_pollable_drop(%rdi=p) -> 0 on native (a pollable
             // is just an fd; nothing to drop). Portability shim.
             s = s.write("    popq %rdi\n    call __fern_wasm_pollable_drop\n    pushq %rax\n");
             s = s.need("wasm_pollable_drop");
-        } else if (o.kind == "wasm_block") {
+        } else if (o.kind_tag == 191) {  // wasm_block
             // [p]; __fern_wasm_block(%rdi=p) -> 0 on native (no pollable to wait
             // on; a deadline rides poll(2)). Push the 0 result.
             s = s.write("    popq %rdi\n    call __fern_wasm_block\n    pushq %rax\n");
             s = s.need("wasm_block");
-        } else if (o.kind == "wasm_poll") {
+        } else if (o.kind_tag == 192) {  // wasm_poll
             // [pollables ptr]; __fern_wasm_poll(%rdi=ptr) -> -1 on native (no real
             // pollables; readiness rides poll(2)). Push the -1 result.
             s = s.write("    popq %rdi\n    call __fern_wasm_poll\n    pushq %rax\n");
             s = s.need("wasm_poll");
-        } else if (o.kind == "tcp_connect") {
+        } else if (o.kind_tag == 193) {  // tcp_connect
             // [host_be, port]; __fern_tcp_connect(%rdi=host_be, %rsi=port) -> fd
             // (or -errno) in %rax.
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_tcp_connect\n    pushq %rax\n");
             s = s.need("tcp_connect");
-        } else if (o.kind == "tcp_send") {
+        } else if (o.kind_tag == 194) {  // tcp_send
             // [fd, str box]; __fern_tcp_send(%rdi=fd, %rsi=box) -> bytes / -errno.
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_tcp_send\n    pushq %rax\n");
             s = s.need("tcp_send");
-        } else if (o.kind == "tcp_recv") {
+        } else if (o.kind_tag == 195) {  // tcp_recv
             // [fd, max]; __fern_tcp_recv(%rdi=fd, %rsi=max) -> string box (data,
             // len) in %rax. Allocates the buffer + the box.
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_tcp_recv\n    pushq %rax\n");
             s = s.need("heap").need("tcp_recv");
-        } else if (o.kind == "tcp_close") {
+        } else if (o.kind_tag == 196) {  // tcp_close
             // [fd]; __fern_tcp_close(%rdi=fd) -> 0 / -errno.
             s = s.write("    popq %rdi\n    call __fern_tcp_close\n    pushq %rax\n");
             s = s.need("tcp_close");
-        } else if (o.kind == "tcp_pollable") {
+        } else if (o.kind_tag == 197) {  // tcp_pollable
             // [fd]; __fern_tcp_pollable(%rdi=fd) -> the fd unchanged (native's
             // readiness token IS the fd).
             s = s.write("    popq %rdi\n    call __fern_tcp_pollable\n    pushq %rax\n");
             s = s.need("tcp_pollable");
-        } else if (o.kind == "heap_bump_bytes") {
+        } else if (o.kind_tag == 80) {  // heap_bump_bytes
             // bump high-water mark = (__fern_heap_ptr == 0) ? 0 : ptr − base.
             // The arena is mmap'd lazily; its base is recoverable from the
             // recorded end (__fern_heap_end = base + heap_size), so base =
@@ -3954,7 +3954,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    cmovneq %rdx, %rcx\n");                 // 0 if uninit, else ptr−base
             s = s.write("    pushq %rcx\n");
             s = s.need("heap");
-        } else if (o.kind == "struct_make") {
+        } else if (o.kind_tag == 138) {  // struct_make
             // nf field values on the operand stack (field nf-1 on top, decl
             // order). Box = [shape_ptr@0, f0@8, f1@16, …]; shape = the interned
             // struct-name string (asm.fern's layout). The box is rc-HEADERED so
@@ -3981,7 +3981,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
                 em = em - 1;
             }
             s = s.write("    pushq %rax\n");
-        } else if (o.kind == "opt_make") {
+        } else if (o.kind_tag == 120) {  // opt_make
             // Option/Result box [tag@0, payload@8], 2 words. rc-HEADERED via
             // __fern_arr_box(cap=2) — exactly like struct_make/tuple_make — so a
             // fresh, single-owner, dead-after-match scalar Option local can be freed
@@ -3992,170 +3992,170 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    movq $2, %rdi\n    call __fern_arr_box\n");
             s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", (%rax)\n");
             s = s.write("    popq %rcx\n    movq %rcx, 8(%rax)\n    pushq %rax\n");
-        } else if (o.kind == "opt_none") {
+        } else if (o.kind_tag == 121) {  // opt_none
             // Payloadless box with tag 1 (None), rc-headered (arr_box cap=2).
             s = s.write("    movq $2, %rdi\n    call __fern_arr_box\n");
             s = s.write("    movq $1, (%rax)\n    movq $0, 8(%rax)\n    pushq %rax\n");
-        } else if (o.kind == "opt_tag") {
+        } else if (o.kind_tag == 122) {  // opt_tag
             // pop box; tag is the i32 at offset 0.
             s = s.write("    popq %rax\n    movq (%rax), %rax\n    pushq %rax\n");
-        } else if (o.kind == "opt_payload") {
+        } else if (o.kind_tag == 123) {  // opt_payload
             // pop box; payload is at offset 8.
             s = s.write("    popq %rax\n    movq 8(%rax), %rax\n    pushq %rax\n");
-        } else if (o.kind == "map_new") {
+        } else if (o.kind_tag == 124) {  // map_new
             s = s.write("    popq %rdi\n    call __fern_map_new\n    pushq %rax\n");
-        } else if (o.kind == "print_int") {
+        } else if (o.kind_tag == 161) {  // print_int
             // [n] -> write n's decimal text to stdout (the AST path's helper +
             // symbol). Push the syscall return so the statement-level drop balances.
             s = s.write("    popq %rdi\n    call __fern_print_int\n    pushq %rax\n");
             s = s.need("print_int");
-        } else if (o.kind == "print_str") {
+        } else if (o.kind_tag == 163) {  // print_str
             // [strbox] -> write its bytes to stdout (the AST path's __fern_print_str).
             // Push the syscall return so the statement-level drop balances.
             s = s.write("    popq %rdi\n    call __fern_print_str\n    pushq %rax\n");
             s = s.need("str_print");
-        } else if (o.kind == "read_int") {
+        } else if (o.kind_tag == 167) {  // read_int
             // no args -> read an i32 from stdin (the AST path's __fern_read_int),
             // push the result (a value op).
             s = s.write("    call __fern_read_int\n    pushq %rax\n");
             s = s.need("read_int");
-        } else if (o.kind == "read_line") {
+        } else if (o.kind_tag == 168) {  // read_line
             // no args -> read one line from stdin into a fresh string box (the AST
             // path's __fern_read_line, which allocates), push the box (a value op).
             s = s.write("    call __fern_read_line\n    pushq %rax\n");
             s = s.need("heap").need("str_read_line");
-        } else if (o.kind == "read_file") {
+        } else if (o.kind_tag == 169) {  // read_file
             // [pathbox] -> read the whole named file, push a fresh Result[string,
             // IoError] box (the AST path's __fern_read_file, which allocates). The
             // path string box is the popped %rdi arg.
             s = s.write("    popq %rdi\n    call __fern_read_file\n    pushq %rax\n");
             s = s.need("heap").need("read_file");
-        } else if (o.kind == "write_file") {
+        } else if (o.kind_tag == 170) {  // write_file
             // [pathbox][contentbox] -> write content to the named file, push a
             // fresh Option[IoError] box (the AST path's __fern_write_file, which
             // allocates). content on TOS -> rsi, path below -> rdi.
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_write_file\n    pushq %rax\n");
             s = s.need("heap").need("write_file");
-        } else if (o.kind == "remove_dir_all") {
+        } else if (o.kind_tag == 172) {  // remove_dir_all
             // [pathbox] -> recursively rm -rf the named dir tree, push a fresh
             // Option[IoError] box (the AST path's __fern_remove_dir_all, which
             // allocates + recurses). The path string box is the popped %rdi arg.
             s = s.write("    popq %rdi\n    call __fern_remove_dir_all\n    pushq %rax\n");
             s = s.need("heap").need("remove_dir_all");
-        } else if (o.kind == "remove_file") {
+        } else if (o.kind_tag == 173) {  // remove_file
             // [pathbox] -> unlink the named file, push a fresh Option[IoError] box
             // (the AST path's __fern_remove_file, which allocates). The path string
             // box is the popped %rdi arg.
             s = s.write("    popq %rdi\n    call __fern_remove_file\n    pushq %rax\n");
             s = s.need("heap").need("remove_file");
-        } else if (o.kind == "temp_dir") {
+        } else if (o.kind_tag == 174) {  // temp_dir
             // [prefixbox] -> make a uniquely-named /tmp dir, push a fresh
             // Result[string, IoError] box (the AST path's __fern_temp_dir, which
             // allocates + calls __fern_monotonic_ns). The prefix box is the
             // popped %rdi arg; monotonic_ns need pulls in the clock helper.
             s = s.write("    popq %rdi\n    call __fern_temp_dir\n    pushq %rax\n");
             s = s.need("heap").need("monotonic_ns").need("temp_dir");
-        } else if (o.kind == "read_dir") {
+        } else if (o.kind_tag == 171) {  // read_dir
             // [pathbox] -> list a directory's base-name children, push a fresh
             // Result[string[], IoError] box (the AST path's __fern_read_dir, which
             // allocates + boxes a string[] via __fern_arr_box). The path box is the
             // popped %rdi arg.
             s = s.write("    popq %rdi\n    call __fern_read_dir\n    pushq %rax\n");
             s = s.need("heap").need("read_dir");
-        } else if (o.kind == "env") {
+        } else if (o.kind_tag == 176) {  // env
             // [namebox] -> look up an environment variable, push a fresh
             // Option[string] box (Some(value) / None) — the AST path's __fern_env,
             // which allocates the value into a fresh string block. The name box is
             // the popped %rdi arg.
             s = s.write("    popq %rdi\n    call __fern_env\n    pushq %rax\n");
             s = s.need("heap").need("env");
-        } else if (o.kind == "stat") {
+        } else if (o.kind_tag == 175) {  // stat
             // [pathbox] -> stat the named file, push a fresh Result[FileStat,
             // IoError] box (the AST path's __fern_stat, which allocates a FileStat
             // struct + a Result wrapper). The path box is the popped %rdi arg.
             s = s.write("    popq %rdi\n    call __fern_stat\n    pushq %rax\n");
             s = s.need("heap").need("stat");
-        } else if (o.kind == "subprocess") {
+        } else if (o.kind_tag == 177) {  // subprocess
             // [cmdbox][argsbox][stdinbox] (stdin on TOS) -> spawn the child, push a
             // fresh ProcessResult struct box (the AST path's __fern_subprocess, which
             // allocates the struct + its stdout/stderr string blocks). Pop stdin into
             // %rdx, args into %rsi, cmd into %rdi (the asm.fern arg order).
             s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    call __fern_subprocess\n    pushq %rax\n");
             s = s.need("heap").need("subprocess");
-        } else if (o.kind == "read_chunk") {
+        } else if (o.kind_tag == 178) {  // read_chunk
             // [fd][n] -> read up to n bytes from the Reader fd, push a fresh
             // Option[string] box (Some(chunk) / None at EOF). Reuses the AST path's
             // __fern_reader_read_chunk (which allocates). n on TOS, fd below.
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_reader_read_chunk\n    pushq %rax\n");
             s = s.need("heap").need("reader");
-        } else if (o.kind == "reader_close") {
+        } else if (o.kind_tag == 179) {  // reader_close
             // [fd] -> close the Reader fd, push a fresh Option[IoError] (None on
             // success). Reuses the AST path's __fern_reader_close (which allocates).
             s = s.write("    popq %rdi\n    call __fern_reader_close\n    pushq %rax\n");
             s = s.need("heap").need("reader");
-        } else if (o.kind == "args") {
+        } else if (o.kind_tag == 180) {  // args
             // no args -> build a fresh string[] of the command-line arguments (the
             // AST path's __fern_args, which allocates). The args need also makes the
             // entry's _start save argc/argv from the initial stack.
             s = s.write("    call __fern_args\n    pushq %rax\n");
             s = s.need("heap").need("args");
-        } else if (o.kind == "eprint_str") {
+        } else if (o.kind_tag == 164) {  // eprint_str
             // [strbox] -> write its bytes to stderr (the AST path's __fern_eprint_str).
             // Push the syscall return so the statement-level drop balances.
             s = s.write("    popq %rdi\n    call __fern_eprint_str\n    pushq %rax\n");
             s = s.need("eprint");
-        } else if (o.kind == "exit") {
+        } else if (o.kind_tag == 166) {  // exit
             // [n] -> sys_exit(n). Never returns; the pushed dummy keeps the
             // operand-stack shape for the statement-level drop.
             s = s.write("    popq %rdi\n    movq $60, %rax\n    syscall\n    pushq $0\n");
-        } else if (o.kind == "putchar") {
+        } else if (o.kind_tag == 165) {  // putchar
             // [byte] -> write the low byte to stdout (write(1,&byte,1)). Push the
             // syscall return so the statement-level drop balances.
             s = s.write("    popq %rdi\n    call __fern_putchar\n    pushq %rax\n");
             s = s.need("putchar");
-        } else if (o.kind == "strbuf_reset") {
+        } else if (o.kind_tag == 117) {  // strbuf_reset
             // no args -> clear the global string-builder length. Push a dummy so
             // the statement-level drop balances (same shape as putchar).
             s = s.write("    call __fern_strbuf_reset\n    pushq %rax\n");
             s = s.need("strbuf");
-        } else if (o.kind == "strbuf_append") {
+        } else if (o.kind_tag == 118) {  // strbuf_append
             // [strbox] -> copy its bytes onto the global string-builder. Push the
             // helper's return so the statement-level drop balances.
             s = s.write("    popq %rdi\n    call __fern_strbuf_append\n    pushq %rax\n");
             s = s.need("strbuf");
-        } else if (o.kind == "strbuf_take") {
+        } else if (o.kind_tag == 119) {  // strbuf_take
             // no args -> snapshot the builder into a fresh string box and reset it
             // (a value op, allocates). The string runtime + heap back the helper.
             s = s.write("    call __fern_strbuf_take\n    pushq %rax\n");
             s = s.need("heap").need("strbuf");
-        } else if (o.kind == "sleep_ms") {
+        } else if (o.kind_tag == 181) {  // sleep_ms
             // [ms] -> nanosleep(ms). Push the syscall return so the
             // statement-level drop balances (sleep_ms is void).
             s = s.write("    popq %rdi\n    call __fern_sleep_ms\n    pushq %rax\n");
             s = s.need("sleep_ms");
-        } else if (o.kind == "map_set") {
+        } else if (o.kind_tag == 125) {  // map_set
             s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
             // %r8 = derived eq fn for a struct/enum key (o.str = "K.eq"), or
             // 0 for a scalar/string key. __fern_map_set dispatches struct
             // keys through it (call *) instead of i32/string compare. #2671.
             if (o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n"); } else { s = s.write("    xorq %r8, %r8\n"); }
             s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rcx\n    call __fern_map_set\n    pushq %rax\n");
-        } else if (o.kind == "map_len") {
+        } else if (o.kind_tag == 126) {  // map_len
             s = s.write("    popq %rax\n    movq (%rax), %rax\n    movq (%rax), %rax\n    pushq %rax\n");
-        } else if (o.kind == "map_get") {
+        } else if (o.kind_tag == 127) {  // map_get
             s = s.write("    popq %rsi\n    popq %rdi\n");
             if (o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n"); } else { s = s.write("    xorq %r8, %r8\n"); }
             s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rdx\n    call __fern_map_get\n    pushq %rax\n");
-        } else if (o.kind == "map_has") {
+        } else if (o.kind_tag == 128) {  // map_has
             s = s.write("    popq %rsi\n    popq %rdi\n");
             if (o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n"); } else { s = s.write("    xorq %r8, %r8\n"); }
             s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rdx\n    call __fern_map_has\n    pushq %rax\n");
-        } else if (o.kind == "map_delete") {
+        } else if (o.kind_tag == 130) {  // map_delete
             // [map, key] -> __fern_map_delete(rdi=map, rsi=key, rdx=keykind) -> map.
             s = s.write("    popq %rsi\n    popq %rdi\n");
             if (o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n"); } else { s = s.write("    xorq %r8, %r8\n"); }
             s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rdx\n    call __fern_map_delete\n    pushq %rax\n");
-        } else if (o.kind == "map_get_or") {
+        } else if (o.kind_tag == 129) {  // map_get_or
             // [map, k, default] -> __fern_map_get, then Some payload or default.
             var golbl: string = lp + "go" + util.i32_to_string(i);
             s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n");
@@ -4164,46 +4164,46 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    movq (%rax), %rcx\n    testq %rcx, %rcx\n    jnz " + golbl + "_d\n");
             s = s.write("    movq 8(%rax), %rax\n    jmp " + golbl + "_e\n");
             s = s.write(golbl + "_d:\n    movq %rdx, %rax\n" + golbl + "_e:\n    pushq %rax\n");
-        } else if (o.kind == "map_keys") {
+        } else if (o.kind_tag == 131) {  // map_keys
             // parallel-array map: keys[] pointer at box+0.
             s = s.write("    popq %rax\n    movq (%rax), %rax\n    pushq %rax\n");
-        } else if (o.kind == "map_values") {
+        } else if (o.kind_tag == 132) {  // map_values
             // parallel-array map: values[] pointer at box+8.
             s = s.write("    popq %rax\n    movq 8(%rax), %rax\n    pushq %rax\n");
-        } else if (o.kind == "map_iter") {
+        } else if (o.kind_tag == 133) {  // map_iter
             // m.iter() -> 16-byte iterator box [map_ptr@0, cursor@8] (asm.fern:1258).
             // heap need is set centrally by op_allocates(map_iter); push the box.
             s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
             s = s.write("    popq %rcx\n    movq %rcx, (%rax)\n    movq $0, 8(%rax)\n    pushq %rax\n");
-        } else if (o.kind == "mapiter_has_next") {
+        } else if (o.kind_tag == 134) {  // mapiter_has_next
             // cursor < keys.len: keys[] at map@0, len at keys@0 (asm.fern:1269).
             s = s.write("    popq %rax\n    movq 8(%rax), %rcx\n    movq (%rax), %rdx\n");
             s = s.write("    movq (%rdx), %rdx\n    movq (%rdx), %rdx\n");
             s = s.write("    cmpq %rdx, %rcx\n    movq $0, %rax\n    setl %al\n    movzbq %al, %rax\n    pushq %rax\n");
-        } else if (o.kind == "mapiter_key") {
+        } else if (o.kind_tag == 135) {  // mapiter_key
             // keys[cursor]: keys[] at map@0, element[cursor] at (keys, cursor+1, 8).
             s = s.write("    popq %rax\n    movq 8(%rax), %rcx\n    movq (%rax), %rdx\n    movq (%rdx), %rdx\n");
             s = s.write("    incq %rcx\n    movq (%rdx,%rcx,8), %rax\n    pushq %rax\n");
-        } else if (o.kind == "mapiter_value") {
+        } else if (o.kind_tag == 136) {  // mapiter_value
             // values[cursor]: values[] at map@8, element[cursor] at (values, cursor+1, 8).
             s = s.write("    popq %rax\n    movq 8(%rax), %rcx\n    movq (%rax), %rdx\n    movq 8(%rdx), %rdx\n");
             s = s.write("    incq %rcx\n    movq (%rdx,%rcx,8), %rax\n    pushq %rax\n");
-        } else if (o.kind == "mapiter_advance") {
+        } else if (o.kind_tag == 137) {  // mapiter_advance
             // bump the stored cursor; push a dummy result for the statement drop.
             s = s.write("    popq %rax\n    movq 8(%rax), %rcx\n    incq %rcx\n    movq %rcx, 8(%rax)\n    pushq $0\n");
-        } else if (o.kind == "struct_get") {
+        } else if (o.kind_tag == 139) {  // struct_get
             // pop struct box; field at (index+1)*8.
             s = s.write("    popq %rax\n    movq " + util.i32_to_string((o.i32_imm + 1) * 8) + "(%rax), %rax\n    pushq %rax\n");
-        } else if (o.kind == "struct_set") {
+        } else if (o.kind_tag == 140) {  // struct_set
             // pop val (top), box; store val at field (index+1)*8.
             s = s.write("    popq %rcx\n    popq %rax\n    movq %rcx, " + util.i32_to_string((o.i32_imm + 1) * 8) + "(%rax)\n");
-        } else if (o.kind == "tuple_set") {
+        } else if (o.kind_tag == 144) {  // tuple_set
             // pop val (top), box; store val at element index*8 (no shape slot,
             // unlike struct_set). One 8-byte movq for EVERY element kind (i32 / i64
             // / f64 / pointer all ride the operand stack as 8 bytes), so width is
             // ignored here — only wasm distinguishes it. Tuple constructor-reuse writer.
             s = s.write("    popq %rcx\n    popq %rax\n    movq %rcx, " + util.i32_to_string(o.i32_imm * 8) + "(%rax)\n");
-        } else if (o.kind == "struct_set_shape") {
+        } else if (o.kind_tag == 141) {  // struct_set_shape
             // peek box (top of stack); write o.str's interned shape pointer (the
             // SAME .S label struct_make writes / variant_is compares) at offset 0.
             // Leaves the box on the stack. Used by the enum-donor in-place reuse to
@@ -4213,7 +4213,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    movq (%rsp), %rax\n");
             s = s.write("    leaq " + sslo.label + "(%rip), %rcx\n");
             s = s.write("    movq %rcx, (%rax)\n");
-        } else if (o.kind == "variant_is") {
+        } else if (o.kind_tag == 145) {  // variant_is
             // pop variant box; shape ptr @0; compare to the interned variant name
             // (same .S label struct_make stores, so pointer equality identifies
             // the variant). Push 1 if equal, else 0.
@@ -4222,7 +4222,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    popq %rax\n    movq (%rax), %rax\n");
             s = s.write("    leaq " + vlo.label + "(%rip), %rcx\n");
             s = s.write("    cmpq %rcx, %rax\n    sete %al\n    movzbq %al, %rax\n    pushq %rax\n");
-        } else if (o.kind == "tuple_make") {
+        } else if (o.kind_tag == 142) {  // tuple_make
             // n element values on the operand stack (element n-1 on top). Box =
             // [e0@0, e1@8, …], n*8 bytes, NO shape slot (numeric `.i` access).
             // Pop top-down; %rax (box) stays live across the pops. The box is
@@ -4241,12 +4241,12 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
                 tem = tem - 1;
             }
             s = s.write("    pushq %rax\n");
-        } else if (o.kind == "tuple_get") {
+        } else if (o.kind_tag == 143) {  // tuple_get
             // pop tuple box; element at index*8.
             s = s.write("    popq %rax\n    movq " + util.i32_to_string(o.i32_imm * 8) + "(%rax), %rax\n    pushq %rax\n");
-        } else if (o.kind == "drop") {
+        } else if (o.kind_tag == 159) {  // drop
             s = s.write("    addq $8, %rsp\n");
-        } else if (o.kind == "call_direct" && is_fern_helper(o.str)) {
+        } else if (o.kind_tag == 149 && is_fern_helper(o.str)) {  // call_direct
             // Runtime RC helper — asm.fern's stack-arg ABI + symbols (drop-in):
             // the arg(s) are already on the operand stack (the helper reads
             // 8(%rsp)); call, caller-clean the args, push the result. The
@@ -4273,7 +4273,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    call " + ir_helper_symbol(o.str) + "\n");
             if (o.i32_imm > 0) { s = s.write("    addq $" + util.i32_to_string(o.i32_imm * 8) + ", %rsp\n"); }
             s = s.write("    pushq %rax\n");
-        } else if (o.kind == "call_direct") {
+        } else if (o.kind_tag == 149) {  // call_direct
             // User call: the IR pushes args left-to-right (arg0 deepest);
             // asm.fern's stack ABI wants arg0 on TOP (param[i] at +16+i*8(%rbp)).
             // Reverse the argc on-stack slots, call, pop the args, push %rax.
@@ -4291,7 +4291,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    call __fn_" + asmcore.sanitize_label(o.str) + "\n");
             if (argc > 0) { s = s.write("    addq $" + util.i32_to_string(argc * 8) + ", %rsp\n"); }
             s = s.write("    pushq %rax\n");
-        } else if (o.kind == "dyn_dispatch") {
+        } else if (o.kind_tag == 147) {  // dyn_dispatch
             // `dyn Trait` method call. Receiver (arg0) + args are spilled in argc
             // consecutive locals from base_slot. Read the receiver's shape pointer
             // and dispatch to the matching `<Type>.<method>` — a compare-branch
@@ -4345,7 +4345,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             }
             s = s.write("    pushq $0\n");   // fallback (unreachable for a valid dyn value)
             s = s.write(dend + ":\n");
-        } else if (o.kind == "dyn_box") {
+        } else if (o.kind_tag == 146) {  // dyn_box
             // Heap-box a primitive/string value coerced into a `dyn Trait` slot
             // (docs/DYN-TRAITS.md §4.2.3). Cell = [shape@0, value@8], 16 bytes;
             // shape = the interned primitive type name (the SAME .S label struct
@@ -4359,7 +4359,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    leaq " + dbl.label + "(%rip), %rcx\n");
             s = s.write("    movq %rcx, (%rax)\n");
             s = s.write("    popq %rcx\n    movq %rcx, 8(%rax)\n    pushq %rax\n");
-        } else if (o.kind == "dyn_downcast") {
+        } else if (o.kind_tag == 148) {  // dyn_downcast
             // `e as? T` downcast (docs/DYN-TRAITS.md §9). The `dyn` value (a heap
             // pointer carrying its concrete shape @0) is on top of the operand
             // (machine) stack. Read its shape and compare to T's interned shape
@@ -4387,12 +4387,12 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    movq $16, %rdi\n    call __fern_alloc\n");
             s = s.write("    movq $1, (%rax)\n    movq $0, 8(%rax)\n    pushq %rax\n");
             s = s.write(dcend + ":\n");
-        } else if (o.kind == "const_func") {
+        } else if (o.kind_tag == 6) {  // const_func
             // A function VALUE is the function's code address — push it. Register
             // backends need no funcref table (unlike wasm's table index): the
             // address is the value, dispatched directly by call_indirect.
             s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %rax\n    pushq %rax\n");
-        } else if (o.kind == "call_indirect") {
+        } else if (o.kind_tag == 150) {  // call_indirect
             // Indirect call through a function value: the stack holds
             // [arg0(deepest) … argN-1, fn_addr(top)]. Pop the target into a
             // scratch reg, reverse the args so arg0 is on TOP (the stack-arg ABI
@@ -4413,7 +4413,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    call *%r11\n");
             if (icargc > 0) { s = s.write("    addq $" + util.i32_to_string(icargc * 8) + ", %rsp\n"); }
             s = s.write("    pushq %rax\n");
-        } else if (o.kind == "const_f64") {
+        } else if (o.kind_tag == 4) {  // const_f64
             // Float literal: GAS assembles the source text to an IEEE double in
             // .rodata; load its bits and push them (floats flow on the rt-stack
             // as their 8-byte bit pattern, like i64). Mirrors asm.fern.
@@ -4421,34 +4421,34 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = flb.state;
             s = s.write("    .section .rodata\n" + flb.name + ": .double " + o.str + "\n    .text\n");
             s = s.write("    movsd " + flb.name + "(%rip), %xmm0\n    movq %xmm0, %rax\n    pushq %rax\n");
-        } else if (o.kind == "i32_to_f64") {
+        } else if (o.kind_tag == 11) {  // i32_to_f64
             // signed i32 -> f64 (cvtsi2sd); value rides the stack as bits.
             s = s.write("    popq %rax\n    cvtsi2sd %rax, %xmm0\n    movq %xmm0, %rax\n    pushq %rax\n");
-        } else if (o.kind == "f64_to_i32") {
+        } else if (o.kind_tag == 12) {  // f64_to_i32
             // Saturating f64 -> i32 (#4332); needs a per-op-unique label base.
             s = s.write(ir_f2i_sat(32, lp + util.i32_to_string(i)));
-        } else if (o.kind == "f64_to_i64") {
+        } else if (o.kind_tag == 13) {  // f64_to_i64
             // Saturating f64 -> i64 (#4332).
             s = s.write(ir_f2i_sat(64, lp + util.i32_to_string(i)));
-        } else if (o.kind == "f64_bits" || o.kind == "f64_from_bits") {
+        } else if (o.kind_tag == 16 || o.kind_tag == 17) {  // f64_bits, f64_from_bits
             // No-op reinterpret: the 8-byte rt-stack slot already holds the
             // IEEE-754 bit pattern, identical to the i64 bits.
-        } else if (o.kind == "f32_bits") {
+        } else if (o.kind_tag == 14) {  // f32_bits
             // f64 -> f32 (cvtsd2ss), take the 32-bit pattern, sign-extend into
             // the 64-bit slot.
             s = s.write("    popq %rax\n    movq %rax, %xmm0\n    cvtsd2ss %xmm0, %xmm0\n    movd %xmm0, %eax\n    movsxd %eax, %rax\n    pushq %rax\n");
-        } else if (o.kind == "f32_from_bits") {
+        } else if (o.kind_tag == 15) {  // f32_from_bits
             // interpret the low 32 bits as an IEEE-754 f32 and widen to f64.
             s = s.write("    popq %rax\n    movd %eax, %xmm0\n    cvtss2sd %xmm0, %xmm0\n    movq %xmm0, %rax\n    pushq %rax\n");
-        } else if (o.kind == "fadd" || o.kind == "fsub" || o.kind == "fmul" || o.kind == "fdiv") {
+        } else if (o.kind_tag == 45 || o.kind_tag == 46 || o.kind_tag == 47 || o.kind_tag == 48) {  // fadd, fsub, fmul, fdiv
             // f64 arithmetic: pop rhs/lhs bits into xmm1/xmm0, op, push result.
             s = s.write("    popq %rax\n    movq %rax, %xmm1\n    popq %rax\n    movq %rax, %xmm0\n");
-            if (o.kind == "fadd") { s = s.write("    addsd %xmm1, %xmm0\n"); }
-            else if (o.kind == "fsub") { s = s.write("    subsd %xmm1, %xmm0\n"); }
-            else if (o.kind == "fmul") { s = s.write("    mulsd %xmm1, %xmm0\n"); }
+            if (o.kind_tag == 45) { s = s.write("    addsd %xmm1, %xmm0\n"); }  // fadd
+            else if (o.kind_tag == 46) { s = s.write("    subsd %xmm1, %xmm0\n"); }  // fsub
+            else if (o.kind_tag == 47) { s = s.write("    mulsd %xmm1, %xmm0\n"); }  // fmul
             else { s = s.write("    divsd %xmm1, %xmm0\n"); }
             s = s.write("    movq %xmm0, %rax\n    pushq %rax\n");
-        } else if (o.kind == "fpow") {
+        } else if (o.kind_tag == 66) {  // fpow
             // pow(x, y) = x^y = 2^(y·log2 x) on the x87 FPU (x > 0): fyl2x gives
             // t = y·log2(x), then the f2xm1 + fscale reconstruction of 2^t.
             // Mirrors asm.fern's __pow_f64. fbin pops rhs (y) then lhs (x).
@@ -4471,15 +4471,15 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    fstpl (%rsp)\n");
             s = s.write("    movq (%rsp), %rax\n");
             s = s.write("    addq $16, %rsp\n    pushq %rax\n");
-        } else if (o.kind == "fsin" || o.kind == "fcos" || o.kind == "fexp" || o.kind == "flog") {
+        } else if (o.kind_tag == 64 || o.kind_tag == 65 || o.kind_tag == 62 || o.kind_tag == 63) {  // fsin, fcos, fexp, flog
             // f64 transcendentals on the x87 FPU (the -nostdlib backend can't link
             // libm; x87 computes these directly). The operand bits ride a scratch
             // stack slot (x87 loads from memory, not xmm). exp(x) = 2^(x·log2 e)
             // via f2xm1 + fscale; log(x) = ln2·log2(x) via fyl2x. Mirrors asm.fern.
             s = s.write("    popq %rax\n    subq $8, %rsp\n    movq %rax, (%rsp)\n");
-            if (o.kind == "fsin") { s = s.write("    fldl (%rsp)\n    fsin\n    fstpl (%rsp)\n"); }
-            else if (o.kind == "fcos") { s = s.write("    fldl (%rsp)\n    fcos\n    fstpl (%rsp)\n"); }
-            else if (o.kind == "flog") { s = s.write("    fldln2\n    fldl (%rsp)\n    fyl2x\n    fstpl (%rsp)\n"); }
+            if (o.kind_tag == 64) { s = s.write("    fldl (%rsp)\n    fsin\n    fstpl (%rsp)\n"); }  // fsin
+            else if (o.kind_tag == 65) { s = s.write("    fldl (%rsp)\n    fcos\n    fstpl (%rsp)\n"); }  // fcos
+            else if (o.kind_tag == 63) { s = s.write("    fldln2\n    fldl (%rsp)\n    fyl2x\n    fstpl (%rsp)\n"); }  // flog
             else {
                 s = s.write("    fldl2e\n    fmull (%rsp)\n");     // t = x·log2(e)
                 s = s.write("    fld %st(0)\n    frndint\n");      // n = round(t)
@@ -4489,25 +4489,25 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
                 s = s.write("    fstpl (%rsp)\n");
             }
             s = s.write("    movq (%rsp), %rax\n    addq $8, %rsp\n    pushq %rax\n");
-        } else if (o.kind == "fsqrt" || o.kind == "ffloor" || o.kind == "fceil" || o.kind == "ftrunc") {
+        } else if (o.kind_tag == 57 || o.kind_tag == 59 || o.kind_tag == 58 || o.kind_tag == 60) {  // fsqrt, ffloor, fceil, ftrunc
             // f64 unary math (op_funary): pop the operand bits into xmm0, apply the
             // single SSE instruction, push. roundsd needs SSE4.1 (universal on
             // x86-64); $1/$2/$3 select floor / ceil / trunc. Mirrors asm.fern.
             s = s.write("    popq %rax\n    movq %rax, %xmm0\n");
-            if (o.kind == "fsqrt") { s = s.write("    sqrtsd %xmm0, %xmm0\n"); }
-            else if (o.kind == "ffloor") { s = s.write("    roundsd $1, %xmm0, %xmm0\n"); }
-            else if (o.kind == "fceil") { s = s.write("    roundsd $2, %xmm0, %xmm0\n"); }
+            if (o.kind_tag == 57) { s = s.write("    sqrtsd %xmm0, %xmm0\n"); }  // fsqrt
+            else if (o.kind_tag == 59) { s = s.write("    roundsd $1, %xmm0, %xmm0\n"); }  // ffloor
+            else if (o.kind_tag == 58) { s = s.write("    roundsd $2, %xmm0, %xmm0\n"); }  // fceil
             else { s = s.write("    roundsd $3, %xmm0, %xmm0\n"); }
             s = s.write("    movq %xmm0, %rax\n    pushq %rax\n");
-        } else if (o.kind == "fabs") {
+        } else if (o.kind_tag == 56) {  // fabs
             // |x| clears the f64 sign bit — a plain mask on the bits in %rax, no
             // xmm needed (mirrors asm.fern's __abs_f64).
             s = s.write("    popq %rax\n    movabsq $0x7fffffffffffffff, %rcx\n    andq %rcx, %rax\n    pushq %rax\n");
-        } else if (o.kind == "fneg") {
+        } else if (o.kind_tag == 55) {  // fneg
             // -x flips the f64 sign bit (XOR), preserving signed zero — unlike
             // the old 0.0 - x lowering which flushed -0.0 to +0.0 (#4333).
             s = s.write("    popq %rax\n    movabsq $0x8000000000000000, %rcx\n    xorq %rcx, %rax\n    pushq %rax\n");
-        } else if (o.kind == "fround") {
+        } else if (o.kind_tag == 61) {  // fround
             // round-half-away-from-zero (Go's math.Round): roundsd only offers
             // ties-to-even / floor / ceil / trunc, so emulate via
             // trunc(x + copysign(0.5, x)). Build copysign(0.5, x) by OR-ing x's
@@ -4519,20 +4519,20 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
             s = s.write("    movq %rcx, %xmm1\n    movq %rax, %xmm0\n");
             s = s.write("    addsd %xmm1, %xmm0\n    roundsd $3, %xmm0, %xmm0\n");
             s = s.write("    movq %xmm0, %rax\n    pushq %rax\n");
-        } else if (o.kind == "flt" || o.kind == "fle" || o.kind == "fgt" || o.kind == "fge" || o.kind == "feq" || o.kind == "fne") {
+        } else if (o.kind_tag == 51 || o.kind_tag == 52 || o.kind_tag == 53 || o.kind_tag == 54 || o.kind_tag == 49 || o.kind_tag == 50) {  // flt, fle, fgt, fge, feq, fne
             // f64 compare → i32 0/1, NaN-correct (mirrors asm.fern): ucomisd sets
             // CF=ZF=PF=1 when unordered, so `<`/`<=`/`==` mask with setnp and
             // `!=` accepts unordered via setp; `>`/`>=` use seta/setae (CF=0).
             s = s.write("    popq %rax\n    movq %rax, %xmm1\n    popq %rax\n    movq %rax, %xmm0\n");
             s = s.write("    ucomisd %xmm1, %xmm0\n    movq $0, %rax\n");
-            if (o.kind == "flt") { s = s.write("    setb %al\n    setnp %dl\n    andb %dl, %al\n"); }
-            else if (o.kind == "fle") { s = s.write("    setbe %al\n    setnp %dl\n    andb %dl, %al\n"); }
-            else if (o.kind == "fgt") { s = s.write("    seta %al\n"); }
-            else if (o.kind == "fge") { s = s.write("    setae %al\n"); }
-            else if (o.kind == "feq") { s = s.write("    sete %al\n    setnp %dl\n    andb %dl, %al\n"); }
+            if (o.kind_tag == 51) { s = s.write("    setb %al\n    setnp %dl\n    andb %dl, %al\n"); }  // flt
+            else if (o.kind_tag == 52) { s = s.write("    setbe %al\n    setnp %dl\n    andb %dl, %al\n"); }  // fle
+            else if (o.kind_tag == 53) { s = s.write("    seta %al\n"); }  // fgt
+            else if (o.kind_tag == 54) { s = s.write("    setae %al\n"); }  // fge
+            else if (o.kind_tag == 49) { s = s.write("    sete %al\n    setnp %dl\n    andb %dl, %al\n"); }  // feq
             else { s = s.write("    setne %al\n    setp %dl\n    orb %dl, %al\n"); }
             s = s.write("    movzbq %al, %rax\n    pushq %rax\n");
-        } else if (o.kind == "end") {
+        } else if (o.kind_tag == 156) {  // end
             // Define the label at this end's index — the target of the if/else
             // that opened it (no-else if's jz, else's jmp) or a block's br.
             // A loop's closing end is unused (harmless).
@@ -4540,7 +4540,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asm
         } else {
             // binary op: pop rhs (rcx), lhs (rax), combine, push.
             s = s.write("    popq %rcx\n    popq %rax\n");
-            if (o.kind == "div_s" || o.kind == "rem_s" || o.kind == "div_u" || o.kind == "rem_u") {
+            if (o.kind_tag == 24 || o.kind_tag == 26 || o.kind_tag == 25 || o.kind_tag == 27) {  // div_s, rem_s, div_u, rem_u
                 // Non-trapping guarded div/rem (#4329); needs a per-op-unique
                 // label base — reuse the loop prefix + this op's index.
                 s = s.write(ir_div_guarded(o.kind, o.width, lp + util.i32_to_string(i)));
