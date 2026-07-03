@@ -202,6 +202,8 @@ func insertDefersInStmt(s ast.Stmt, kept map[string]string) {
 		}
 	case *ast.While:
 		insertDefersInStmt(x.Body, kept)
+	case *ast.Loop:
+		insertDefersInStmt(x.Body, kept)
 	case *ast.For:
 		insertDefersInStmt(x.Body, kept)
 	case *ast.Match:

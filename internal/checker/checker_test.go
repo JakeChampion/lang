@@ -1273,10 +1273,28 @@ func TestUnknownLoopLabelRejected(t *testing.T) {
 	for _, src := range []string{
 		`function f(): i32 { outer: for i in 0..3 { break nope; } return 0; }`,
 		`function f(): i32 { outer: while (true) { continue nope; } return 0; }`,
+		`function f(): i32 { outer: loop { continue nope; } return 0; }`,
 	} {
 		if err := checkSource(t, src); err == nil {
 			t.Errorf("expected E058 for unknown loop label in: %s", src)
 		}
+	}
+}
+
+// A let-else whose else branch ends in a canonical `loop { … }` counts as
+// diverging (E022 accepts it) without needing an explicit trailing
+// return/break/continue after the loop — the same conservative
+// "unconditional loop never falls through" treatment funcBodyExits
+// already gives literal-true While, now keyed off the dedicated Loop
+// node instead of pattern-matching a BoolLit condition.
+func TestLetElseAcceptsDivergentLoop(t *testing.T) {
+	src := `enum Opt { Has(i32), Nil }
+		function f(o: Opt): i32 {
+			let Has(v) = o else { loop { } };
+			return v;
+		}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("let-else with a diverging `loop` else-branch should check clean, got: %v", err)
 	}
 }
 
@@ -1669,6 +1687,10 @@ func TestMissingReturnAcceptsDivergentForms(t *testing.T) {
 		// infinite loop never falls through
 		`function loops(): i32 {
 			while (true) { var x = 1; }
+		}`,
+		// canonical `loop` never falls through either
+		`function loops2(): i32 {
+			loop { var x = 1; }
 		}`,
 		// switch with default, every arm returns
 		`function sw(n: i32): i32 {

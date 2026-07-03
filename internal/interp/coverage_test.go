@@ -109,6 +109,11 @@ function main(): i32 { var p: P = P { x: 3, y: 4 }; return p.y; }`},
     while (i < 3) { i = i + 1; }
     return i;
 }`},
+		{node: "Loop", src: `function main(): i32 {
+    var i: i32 = 0;
+    loop { i = i + 1; if (i == 3) { break; } }
+    return i;
+}`},
 		{node: "For", src: `function main(): i32 {
     var sum: i32 = 0;
     for (var i: i32 = 0; i < 3; i = i + 1) { sum = sum + i; }
@@ -280,6 +285,7 @@ func allStmtNodeNames() []string {
 		(*ast.IfLet)(nil),
 		(*ast.LetElse)(nil),
 		(*ast.While)(nil),
+		(*ast.Loop)(nil),
 		(*ast.For)(nil),
 		(*ast.Break)(nil),
 		(*ast.Continue)(nil),

@@ -1360,6 +1360,8 @@ func collectLocalsStmt(s ast.Stmt, dst map[string]bool) {
 		collectLocals(x.Else, dst)
 	case *ast.While:
 		collectLocalsStmt(x.Body, dst)
+	case *ast.Loop:
+		collectLocalsStmt(x.Body, dst)
 	case *ast.For:
 		collectLocalsStmt(x.Init, dst)
 		collectLocalsStmt(x.Body, dst)
@@ -1415,6 +1417,8 @@ func (r *rewriter) rewriteStmt(s ast.Stmt) {
 		}
 	case *ast.While:
 		r.rewriteExpr(&x.Cond)
+		r.rewriteStmt(x.Body)
+	case *ast.Loop:
 		r.rewriteStmt(x.Body)
 	case *ast.For:
 		if x.Init != nil {

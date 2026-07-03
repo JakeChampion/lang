@@ -138,6 +138,8 @@ func (r *renamer) walkStmt(s ast.Stmt) {
 	case *ast.While:
 		r.walkExpr(n.Cond)
 		r.walkStmt(n.Body)
+	case *ast.Loop:
+		r.walkStmt(n.Body)
 	case *ast.For:
 		// Init's Var lands in the for's own scope; same for
 		// any other init form. Body, Cond, Step all share that

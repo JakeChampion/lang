@@ -403,6 +403,8 @@ func walkStmt(s ast.Stmt, byName map[string]*ast.FuncDecl, enqueue func(string))
 	case *ast.While:
 		walkExpr(x.Cond, byName, enqueue)
 		walkStmt(x.Body, byName, enqueue)
+	case *ast.Loop:
+		walkStmt(x.Body, byName, enqueue)
 	case *ast.For:
 		if x.Init != nil {
 			walkStmt(x.Init, byName, enqueue)

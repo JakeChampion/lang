@@ -1995,8 +1995,23 @@ type While struct {
 	Body Stmt
 	// Label is the optional loop label (`outer: while (...) { ... }`),
 	// empty when unlabeled. A labeled `break`/`continue` names it to
-	// target this loop from a nested one. `loop { ... }` desugars to a
-	// While with a `true` Cond, carrying its label here.
+	// target this loop from a nested one.
+	Label string
+}
+
+// Loop is the canonical unconditional infinite loop (`loop { ... }`).
+// Unlike While, it carries no Cond — it is definitionally diverging:
+// every control-flow path through it either loops forever or exits via
+// `break`/`return`, never by falling off the end. That makes it the
+// vehicle divergence analyses (blockDiverges/stmtDiverges,
+// funcBodyExits) key off, instead of pattern-matching a literal-true
+// While condition. `break`/`continue` (labeled or not) work as in any
+// While loop.
+type Loop struct {
+	P    Position
+	Body Stmt
+	// Label is the optional loop label (`outer: loop { ... }`), empty
+	// when unlabeled.
 	Label string
 }
 
@@ -2325,6 +2340,7 @@ func (s *If) Pos() Position                     { return s.P }
 func (s *IfLet) Pos() Position                  { return s.P }
 func (s *LetElse) Pos() Position                { return s.P }
 func (s *While) Pos() Position                  { return s.P }
+func (s *Loop) Pos() Position                   { return s.P }
 func (s *For) Pos() Position                    { return s.P }
 func (s *ForEach) Pos() Position                { return s.P }
 func (s *Break) Pos() Position                  { return s.P }
@@ -2345,6 +2361,7 @@ func (*If) isStmt()          {}
 func (*IfLet) isStmt()       {}
 func (*LetElse) isStmt()     {}
 func (*While) isStmt()       {}
+func (*Loop) isStmt()        {}
 func (*For) isStmt()         {}
 func (*ForEach) isStmt()     {}
 func (*Break) isStmt()       {}

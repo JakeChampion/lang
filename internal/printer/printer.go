@@ -186,6 +186,9 @@ func printStmt(b *strings.Builder, s ast.Stmt) {
 		printExpr(b, x.Cond)
 		b.WriteString(") ")
 		printStmt(b, x.Body)
+	case *ast.Loop:
+		b.WriteString("loop ")
+		printStmt(b, x.Body)
 	case *ast.For:
 		b.WriteString("for (")
 		if x.Init != nil {

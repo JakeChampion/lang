@@ -56,6 +56,14 @@ func TestRoundtripWhileAndAssign(t *testing.T) {
 	}`)
 }
 
+func TestRoundtripLoop(t *testing.T) {
+	roundTrip(t, `function f(): i32 {
+		var i: i32 = 0;
+		loop { i = i + 1; if (i >= 3) { break; } }
+		return i;
+	}`)
+}
+
 func TestRoundtripArraysAndIndexing(t *testing.T) {
 	roundTrip(t, `function f(): i32 {
 		var a: i32[] = [1, 2, 3];
@@ -167,6 +175,9 @@ func zeroStmt(s ast.Stmt) {
 	case *ast.While:
 		x.P = ast.Position{}
 		zeroExpr(x.Cond)
+		zeroStmt(x.Body)
+	case *ast.Loop:
+		x.P = ast.Position{}
 		zeroStmt(x.Body)
 	case *ast.For:
 		x.P = ast.Position{}

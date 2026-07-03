@@ -557,6 +557,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"missing-return", "function f(): i32 { var x = 1; }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
 		{"missing-return-one-armed-if", "function f(c: boolean): i32 { if (c) { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
 		{"return-while-true-ok", "function f(): i32 { while (true) { return 1; } }\nfunction main(): i32 { return 0; }\n", nil},
+		{"return-loop-ok", "function f(): i32 { loop { return 1; } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"return-if-else-ok", "function f(c: boolean): i32 { if (c) { return 1; } else { return 2; } }\nfunction main(): i32 { return 0; }\n", nil},
 		// void return type: an empty body is fine (no E052 — falling off the
 		// end is the normal exit), a bare `return;` is fine, and returning a
@@ -799,6 +800,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"letelse-source-nonenum", "function main(): i32 { var n: i32 = 5; let Has(v) = n else { return 0; }; return 0; }\n", []string{"E022"}},
 		{"letelse-source-struct", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; let Has(v) = p else { return 0; }; return 0; }\n", []string{"E022"}},
 		{"letelse-else-nondiverge", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; let Has(v) = o else { var x: i32 = 1; }; return 0; }\n", []string{"E022"}},
+		{"letelse-else-loop-diverge-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; let Has(v) = o else { loop { } }; return v; }\n", nil},
 		{"iflet-enum-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; if let Has(v) = o { return v; } return 0; }\n", nil},
 		{"letelse-enum-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; let Has(v) = o else { return 0; }; return v; }\n", nil},
 		{"iflet-bad-variant", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; if let Bogus(v) = o { return 0; } return 0; }\n", []string{"E014"}},

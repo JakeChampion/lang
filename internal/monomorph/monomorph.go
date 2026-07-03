@@ -1077,6 +1077,8 @@ func substituteStmt(s ast.Stmt, sub map[string]ast.Type) {
 	case *ast.While:
 		substituteExpr(x.Cond, sub)
 		substituteStmt(x.Body, sub)
+	case *ast.Loop:
+		substituteStmt(x.Body, sub)
 	case *ast.For:
 		if x.Init != nil {
 			substituteStmt(x.Init, sub)
@@ -1469,6 +1471,8 @@ func walkStmtStructLits(s ast.Stmt, fn func(*ast.StructLit)) {
 	case *ast.While:
 		walkExprStructLits(x.Cond, fn)
 		walkStmtStructLits(x.Body, fn)
+	case *ast.Loop:
+		walkStmtStructLits(x.Body, fn)
 	case *ast.For:
 		if x.Init != nil {
 			walkStmtStructLits(x.Init, fn)
@@ -1730,6 +1734,8 @@ func rewriteStmtTypes(s ast.Stmt, info *checker.Info, into map[instKey][]ast.Typ
 		rewriteBlockTypes(x.Else, info, into)
 	case *ast.While:
 		rewriteStmtTypes(x.Body, info, into)
+	case *ast.Loop:
+		rewriteStmtTypes(x.Body, info, into)
 	case *ast.For:
 		if x.Init != nil {
 			rewriteStmtTypes(x.Init, info, into)
@@ -1783,6 +1789,8 @@ func walkStmt(s ast.Stmt, fn func(*ast.Call)) {
 		walkBlock(x.Else, fn)
 	case *ast.While:
 		walkExpr(x.Cond, fn)
+		walkStmt(x.Body, fn)
+	case *ast.Loop:
 		walkStmt(x.Body, fn)
 	case *ast.For:
 		if x.Init != nil {
