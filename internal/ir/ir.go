@@ -5518,7 +5518,7 @@ func (b *builder) emitLiteralMatchExpr(n *ast.MatchExpr) error {
 					return err
 				}
 				b.openIf(BlockTypeVoid)
-				if err := b.expr(arm.Body); err != nil {
+				if err := b.emitCountedYield(arm.Body); err != nil {
 					return err
 				}
 				b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
@@ -5526,7 +5526,7 @@ func (b *builder) emitLiteralMatchExpr(n *ast.MatchExpr) error {
 				b.closeScope()
 				continue
 			}
-			if err := b.expr(arm.Body); err != nil {
+			if err := b.emitCountedYield(arm.Body); err != nil {
 				return err
 			}
 			b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
@@ -5550,7 +5550,7 @@ func (b *builder) emitLiteralMatchExpr(n *ast.MatchExpr) error {
 				return err
 			}
 			b.openIf(BlockTypeVoid)
-			if err := b.expr(arm.Body); err != nil {
+			if err := b.emitCountedYield(arm.Body); err != nil {
 				return err
 			}
 			b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
@@ -5560,7 +5560,7 @@ func (b *builder) emitLiteralMatchExpr(n *ast.MatchExpr) error {
 			continue
 		}
 		b.openIf(BlockTypeVoid)
-		if err := b.expr(arm.Body); err != nil {
+		if err := b.emitCountedYield(arm.Body); err != nil {
 			return err
 		}
 		b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
@@ -5790,7 +5790,7 @@ func (b *builder) emitTupleMatchExpr(n *ast.MatchExpr) error {
 					return err
 				}
 				b.openIf(BlockTypeVoid)
-				if err := b.expr(arm.Body); err != nil {
+				if err := b.emitCountedYield(arm.Body); err != nil {
 					return err
 				}
 				b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
@@ -5798,7 +5798,7 @@ func (b *builder) emitTupleMatchExpr(n *ast.MatchExpr) error {
 				b.closeScope()
 				continue
 			}
-			if err := b.expr(arm.Body); err != nil {
+			if err := b.emitCountedYield(arm.Body); err != nil {
 				return err
 			}
 			b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
@@ -5819,7 +5819,7 @@ func (b *builder) emitTupleMatchExpr(n *ast.MatchExpr) error {
 			}
 			b.openIf(BlockTypeVoid)
 		}
-		if err := b.expr(arm.Body); err != nil {
+		if err := b.emitCountedYield(arm.Body); err != nil {
 			return err
 		}
 		b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
@@ -7254,27 +7254,14 @@ func (b *builder) expr(e ast.Expr) error {
 			return err
 		}
 		b.openIf(bt)
-		if err := b.expr(n.Then); err != nil {
+		// Counted yields (#4399 sink 4): see emitCountedYield. Slice
+		// yields stay uncounted views and keep their escape taint.
+		if err := b.emitCountedYield(n.Then); err != nil {
 			return err
-		}
-		// Counted yield (#4399 sink 4a): an arm that yields an ALIASED
-		// pointer-shaped value (bare ident / field / index — the
-		// needsRcIncOnAlias shapes) incs it, so the if-expression's
-		// result is an OWNED reference no matter which arm ran (a fresh
-		// arm value — call result / literal / constructor — reads false
-		// and moves out as-is). This is what lets computeFreeEligible
-		// drop the escape taint for those yield shapes: the source local
-		// stays reclaimable, and the consumer's own drop balances the
-		// inc. Slice yields stay uncounted views and keep their taint.
-		if needsRcIncOnAlias(n.Then, b) {
-			b.emitAliasInc(n.Then)
 		}
 		b.elseBranch()
-		if err := b.expr(n.Else); err != nil {
+		if err := b.emitCountedYield(n.Else); err != nil {
 			return err
-		}
-		if needsRcIncOnAlias(n.Else, b) {
-			b.emitAliasInc(n.Else)
 		}
 		b.closeScope()
 	case *ast.MatchExpr:
@@ -7374,7 +7361,7 @@ func (b *builder) expr(e ast.Expr) error {
 					}
 					b.emit(Op{Kind: OpNot})
 					b.brTo(armEndD, true)
-					if err := b.expr(arm.Body); err != nil {
+					if err := b.emitCountedYield(arm.Body); err != nil {
 						return err
 					}
 					b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
@@ -7382,7 +7369,7 @@ func (b *builder) expr(e ast.Expr) error {
 					b.closeScope()
 					continue
 				}
-				if err := b.expr(arm.Body); err != nil {
+				if err := b.emitCountedYield(arm.Body); err != nil {
 					return err
 				}
 				b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
@@ -7423,7 +7410,7 @@ func (b *builder) expr(e ast.Expr) error {
 				b.emit(Op{Kind: OpNot})
 				b.brTo(outerArmD, true)
 			}
-			if err := b.expr(arm.Body); err != nil {
+			if err := b.emitCountedYield(arm.Body); err != nil {
 				return err
 			}
 			b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
@@ -12610,6 +12597,22 @@ func (b *builder) callConsumesIdent(e ast.Expr, name string) bool {
 		}
 	}
 	return false
+}
+
+// emitCountedYield lowers a conditional-expression arm body (if-expr /
+// match-expr yield) and incs an ALIASED pointer-shaped result — the
+// needsRcIncOnAlias shapes — so the expression's value is an OWNED
+// reference whichever arm ran (#4399 sink 4). A fresh arm value (call
+// result / literal / constructor) reads false and moves out as-is.
+// computeFreeEligible drops the escape taint for exactly these shapes.
+func (b *builder) emitCountedYield(e ast.Expr) error {
+	if err := b.expr(e); err != nil {
+		return err
+	}
+	if needsRcIncOnAlias(e, b) {
+		b.emitAliasInc(e)
+	}
+	return nil
 }
 
 func (b *builder) assign(n *ast.Assign) error {

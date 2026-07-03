@@ -416,6 +416,19 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			tainted[id.Name] = true
 		}
 	}
+	// escapeCountedYield is the if-/match-expr yield variant (#4399 sink
+	// 4): the arm's emitCountedYield inc covers the needsRcIncOnAlias
+	// shapes, so only uncovered yields (slice views, scalar / untracked
+	// projections) keep the escape walk.
+	escapeCountedYield := func(e ast.Expr) {
+		switch e.(type) {
+		case *ast.Ident, *ast.FieldAccess, *ast.Index:
+			if needsRcIncOnAlias(e, b) {
+				return // counted: the arm's alias inc covers it
+			}
+		}
+		escape(e)
+	}
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		switch s := n.(type) {
 		case *ast.Var:
@@ -445,25 +458,17 @@ func (b *builder) computeFreeEligible() map[string]bool {
 				}
 			}
 		case *ast.IfExpr:
-			// If-expr yields are COUNTED for the needsRcIncOnAlias shapes
-			// (#4399 sink 4a): the IfExpr lowering incs an aliased bare
-			// ident / field / index yield per arm, so the expression's
-			// result is owned whichever arm ran and the source local
-			// stays reclaimable — no move-site suppression applies here
-			// (computeMovedLocals never keys arm yields), so even a
-			// direct-Ident yield is fully counted. Only the shapes the
-			// inc does NOT cover keep the escape taint: a slice yield is
-			// an uncounted view into its source, and a scalar / untracked
-			// projection falls through escape's pointer gate as before.
-			escapeCountedYield := func(e ast.Expr) {
-				switch e.(type) {
-				case *ast.Ident, *ast.FieldAccess, *ast.Index:
-					if needsRcIncOnAlias(e, b) {
-						return // counted: the arm's alias inc covers it
-					}
-				}
-				escape(e)
-			}
+			// If- and match-expr yields are COUNTED for the
+			// needsRcIncOnAlias shapes (#4399 sink 4): emitCountedYield
+			// incs an aliased bare ident / field / index yield per arm,
+			// so the expression's result is owned whichever arm ran and
+			// the source local stays reclaimable — no move-site
+			// suppression applies (computeMovedLocals never keys arm
+			// yields), so even a direct-Ident yield is fully counted.
+			// Only the shapes the inc does NOT cover keep the escape
+			// taint: a slice yield is an uncounted view into its source,
+			// and a scalar / untracked projection falls through escape's
+			// pointer gate as before.
 			escapeCountedYield(s.Then)
 			escapeCountedYield(s.Else)
 		case *ast.Destructure:
@@ -481,11 +486,14 @@ func (b *builder) computeFreeEligible() map[string]bool {
 		case *ast.MatchExpr:
 			for _, arm := range s.Arms {
 				markBindings(arm.Bindings)
-				// A local yielded from a match-expression arm
-				// (`var v = match (x) { … => v0 }`) is conditionally
-				// aliased without a reliable inc, so it must not be
-				// freed at scope exit. Mirrors the IfExpr case.
-				escape(arm.Body)
+				// Match-expr yields are counted exactly like if-expr
+				// yields (#4399 sink 4b — every arm-body yield site in
+				// all three match-expr lowering routes goes through
+				// emitCountedYield), so the covered shapes drop the
+				// escape taint; slice yields and untracked shapes keep
+				// it. Arm BINDINGS stay tainted above — they alias enum
+				// payloads with no projection dup.
+				escapeCountedYield(arm.Body)
 			}
 		case *ast.IfLet:
 			markBindings(s.Bindings)
