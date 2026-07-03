@@ -2888,18 +2888,29 @@ function main(): i32 {
 	}
 }
 
-// Phase 1d: `var y = x;` where x is an array variable load
-// bumps the refcount via __fern_rc_inc, so both x and y own
-// references. Returns 0 iff the post-alias rc is exactly 2.
+// Phase 1d transfer inc, refined by #4402 opt 1 (dead-alias dup/drop
+// cancellation): a pure borrowed-view alias — never reassigned, never
+// returned, never moved — elides its inc AND its exit-sweep dec as a
+// net-zero pair, so the rc stays 1. An alias that is still referenced
+// under the return keeps the ordinary transfer inc (rc 2).
 func TestX86_64RcAliasInc(t *testing.T) {
-	src := `
+	dead := `
 function main(): i32 {
     var arr: u8[] = __alloc_u8(8);
     var alias: u8[] = arr;
-    return __rc_get(arr) - 2;
+    return __rc_get(arr) - 1;
 }`
-	if _, code := compileAndRunX86_64(t, src); code != 0 {
-		t.Errorf("got exit %d, want 0 (alias should bump rc to 2)", code)
+	if _, code := compileAndRunX86_64(t, dead); code != 0 {
+		t.Errorf("dead alias: got exit %d, want 0 (borrowed view elides the inc — rc stays 1)", code)
+	}
+	live := `
+function main(): i32 {
+    var arr: u8[] = __alloc_u8(8);
+    var alias: u8[] = arr;
+    return __rc_get(arr) - 2 + alias.len() - 8;
+}`
+	if _, code := compileAndRunX86_64(t, live); code != 0 {
+		t.Errorf("returned alias: got exit %d, want 0 (transfer inc kept — rc 2)", code)
 	}
 }
 
