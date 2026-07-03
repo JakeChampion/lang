@@ -3606,7 +3606,20 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 // arr_ret_fns drives move-on-return / move-from-call for array values.
 function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState, borrowable_params: string[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[], map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], const_fns: string[], fn_names: string[], fresh_struct_ret_fns: string[], consume_safe_params: string[], return_fresh_struct_ret_fns: string[], str_fresh_ret_fns: string[]): asmcore.EmitState {
     var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls, str_ret_fns, strarr_ret_fns, arr_method_fns, opt_ret_fns, i64_ret_fns, tuple_ret_fns, struct_ret_fns, map_ret_fns, f64_ret_fns, f64arr_ret_fns, i64arr_ret_fns, fn_param_sigs, closure_fns, const_fns, borrowable_params, fn_names, fresh_struct_ret_fns, consume_safe_params, return_fresh_struct_ret_fns, str_fresh_ret_fns);
+    return emit_function_via_ir_pre(r, fd, s);
+}
 
+// emit_function_via_ir_pre is the emit half of emit_function_via_ir, split out at
+// the lower_func boundary so a caller that has ALREADY lowered `fd` can emit from
+// that LowerResult without lowering it a second time (#4394 lever 3 — the fused
+// eligible-and-emit path, emit_module_ir_gated, lowers each function once, checks
+// eligibility on that `r`, then emits from the same one, replacing the driver's
+// former lower-twice: all_eligible_known's gate pass re-lowered every function,
+// then emit_module_ir re-lowered every function again). Everything from the
+// runtime-need detection onward reads only r / fd / s (none of the eighteen
+// side-tables lower_func consumes), so this split is byte-identical to the
+// inlined body.
+function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s: asmcore.EmitState): asmcore.EmitState {
     // Runtime-need detection, folded into the per-function lowering the emit loop
     // ALREADY performs. The tail used to re-derive these by re-lowering the WHOLE
     // module twice (module_uses_maps / module_uses_heap, each a full second/third
@@ -4987,7 +5000,15 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], 
 // under the leak-mode ceiling. The hoisted side-tables below are ALWAYS
 // computed over the WHOLE all_funcs (never windowed) so cross-window call
 // tagging is identical to the unsharded emit; only the emit loop is windowed.
-function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32): asmcore.EmitState {
+function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32, cache: irlower.LowerResult[]): asmcore.EmitState {
+    // #4394 lever 3: when `cache` is non-empty the caller (emit_module_ir_gated)
+    // has ALREADY lowered every function — into cache[i], indexed by mod.funcs
+    // position — during its fused eligibility scan, so emit reuses that lowering
+    // (via emit_function_via_ir_pre) instead of lowering it a second time. An
+    // empty cache is the standard path: every function is lowered here from the
+    // eighteen side-tables below, exactly as before. The side-tables are cheap
+    // relative to the lowering they feed, so they are derived unconditionally
+    // (the lever's win is skipping the re-LOWERING, not the derivation).
     var arf: string[] = array_ret_fns_of(all_funcs);
     // Inter-procedural borrowability computed ONCE per module (not per function —
     // that OOMs the arm64 self-compile); threaded into every emit_function_via_ir.
@@ -5031,7 +5052,11 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
             if (mod.funcs[fi].receiver_type.len() > 0) { gname = util.base_type_name(mod.funcs[fi].receiver_type) + "." + mod.funcs[fi].name; }
             s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
         }
-        s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, irlower.fn_names_of(mod.funcs), frsf, csparams, rfrsf, sfrf);
+        if (cache.len() == 0) {
+            s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, irlower.fn_names_of(mod.funcs), frsf, csparams, rfrsf, sfrf);
+        } else {
+            s = emit_function_via_ir_pre(cache[fi], mod.funcs[fi], s);
+        }
         fi = fi + 1;
     }
     return s;
@@ -5055,7 +5080,7 @@ pub function module_runtime_needs(mod: parser.Module): string[] {
     // Needs depend only on this module's own ops, so the single-module
     // signature view suffices (a cross-module call's NEED set is the callee's,
     // aggregated separately via module_runtime_needs over each module).
-    s = emit_module_funcs(mod, mod.funcs, mod.structs, s, false, 0, 0 - 1);
+    s = emit_module_funcs(mod, mod.funcs, mod.structs, s, false, 0, 0 - 1, []);
     s = s.close_needs();
     strbuf_reset();
     return s.needed;
@@ -5109,7 +5134,84 @@ pub function emit_module_ir(mod: parser.Module): string {
     // emit_module_ir_unit re-infers `mod` (idempotent), keeping the emitted
     // module and the analysis set consistent.
     var im: parser.Module = parser.infer_ret_types_module(mod);
-    return emit_module_ir_unit(im, true, false, "", [], im.funcs, im.structs, 0, 0 - 1);
+    return emit_module_ir_unit(im, true, false, "", [], im.funcs, im.structs, 0, 0 - 1, []);
+}
+
+// emit_module_ir_gated is the FUSED eligibility-gate + whole-program emit (#4394
+// lever 3): it replaces the driver's two-call `if (all_eligible_known(m, known))
+// { emit_module_ir(m) }` — which lowered every function TWICE (once in the gate's
+// per-function eligibility scan, once in emit) — with a single lowering pass. It
+// lowers each function ONCE into a cache while checking eligibility on that same
+// LowerResult, then, if every function is eligible, emits from the cache (no
+// re-lowering); otherwise it returns "" to signal the caller to fall back to the
+// AST emitter. The eligibility verdict is identical to all_eligible_known's:
+// r.ok plus a call_direct/const_func scan whose only rejections are USER function
+// names (RC-inserted __struct_drop_/__field_reclaim_/__fern_* helper calls all
+// pass is_fern_helper), and those user calls come from the AST — unaffected by
+// the fuller emit-side RC side-tables this path lowers with. So a module that
+// routed IR before still routes IR (byte-identically), one that fell back to AST
+// still falls back — just at half the lowering cost.
+//
+// "" is an unambiguous "ineligible" sentinel: an eligible module always emits at
+// least `.globl _start\n    .text\n…`, never the empty string.
+pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
+    // Module-level gates, mirroring eligible_core_known_main's pre-checks: no
+    // functions / over the merged-bundle size budget (#3425) / no `main` (the
+    // whole-program emit writes `_start` → `call __fn_main`) all fall back to AST.
+    if (mod.funcs.len() == 0) { return ""; }
+    if (mod.funcs.len() > 512) { return ""; }
+    if (!asmcore.has_main(mod)) { return ""; }
+    // Infer ret types BEFORE lowering the cache so the side-tables see inferred
+    // return types (emit_module_ir_unit re-infers idempotently, keeping the cache
+    // indices aligned with the module it emits).
+    var im: parser.Module = parser.infer_ret_types_module(mod);
+    // Derive the emit-side side-tables ONCE (over im.funcs/im.structs — the whole-
+    // program view, all_funcs == im.funcs here) exactly as emit_module_funcs does,
+    // so the cached lowering is byte-identical to what emit would produce.
+    var arf: string[] = array_ret_fns_of(im.funcs);
+    var bparams: string[] = irlower.borrowable_params_interproc(im.funcs);
+    var csparams: string[] = irlower.consume_safe_params_interproc(im.funcs, bparams);
+    var srf: string[] = irlower.str_ret_fns_of(im.funcs);
+    var sarf: string[] = irlower.strarr_ret_fns_of(im.funcs);
+    var amf: string[] = irlower.arr_method_fns_of(im.funcs);
+    var orf: string[] = irlower.opt_ret_fns_of(im.funcs);
+    var irf: string[] = irlower.i64_ret_fns_of(im.funcs);
+    var trf: string[] = irlower.tuple_ret_fns_of(im.funcs);
+    var srtf: string[] = irlower.struct_ret_fns_of(im.funcs, im.structs);
+    var mrtf: string[] = irlower.map_ret_fns_of(im.funcs);
+    var frf: string[] = irlower.f64_ret_fns_of(im.funcs);
+    var farf: string[] = irlower.f64arr_ret_fns_of(im.funcs);
+    var iarf: string[] = irlower.i64arr_ret_fns_of(im.funcs);
+    var fps: string[] = irlower.fn_param_sigs_of(im.funcs);
+    var cfs: string[] = irlower.closure_ret_fns_of(im.funcs);
+    var cnf: string[] = irlower.const_fns_of(im.funcs);
+    var frsf: string[] = irlower.fresh_struct_ret_fns_of(im.funcs, im.structs);
+    var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(im.funcs, im.structs);
+    var sfrf: string[] = irlower.str_fresh_ret_fns_of(im.funcs);
+    var fnames: string[] = irlower.fn_names_of(im.funcs);
+    // Lower every function once into `cache`, checking eligibility on each result.
+    // Bail (AST fallback) on the first function whose body doesn't lower or whose
+    // direct calls / function values reference an unknown symbol.
+    var cache: irlower.LowerResult[] = [];
+    var i: i32 = 0;
+    while (i < im.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func(im.funcs[i], arf, im.structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, bparams, fnames, frsf, csparams, rfrsf, sfrf);
+        if (!r.ok) { return ""; }
+        var j: i32 = 0;
+        while (j < r.ops.len()) {
+            var o: ir.Op = r.ops[j];
+            if (o.kind_tag == 149) {  // call_direct
+                if (!is_fern_helper(o.str) && !module_has_func(im, o.str) && !known_includes(known, o.str)) { return ""; }
+            } else if (o.kind_tag == 6) {  // const_func
+                if (!module_has_func(im, o.str) && !known_includes(known, o.str)) { return ""; }
+            }
+            j = j + 1;
+        }
+        cache = cache.append(r);
+        i = i + 1;
+    }
+    // Every function eligible — emit from the cache (no second lowering).
+    return emit_module_ir_unit(im, true, false, "", [], im.funcs, im.structs, 0, 0 - 1, cache);
 }
 
 // emit_module_ir_unit is emit_module_ir parameterised for per-module
@@ -5158,11 +5260,15 @@ pub function emit_module_ir(mod: parser.Module): string {
 //            can be emitted across separate processes without any single emit's
 //            leak-mode heap crossing the arena ceiling. Only non-entry library
 //            shards are windowed; the entry emits its full window.
-pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], lo: i32, hi: i32): string {
+pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], lo: i32, hi: i32, cache: irlower.LowerResult[]): string {
     // Infer return types for unannotated functions so the IR path's
     // ret-type-keyed call tagging (str_ret_fns_of / opt_ret_fns_of / …)
     // matches the AST path, which gets the same via module_with_builtins.
-    mod = parser.infer_ret_types_module(mod);
+    // (#4394 lever 3: `cache`, when non-empty, is the caller's pre-lowered
+    // per-function LowerResult set — indexed by mod.funcs position — reused by
+    // emit_module_funcs instead of re-lowering. The caller must have inferred
+    // ret types before lowering; infer_ret_types_module is idempotent, so this
+    // re-infer is a no-op there and the cache indices stay aligned.)
     strbuf_reset();
     var s: asmcore.EmitState = asmcore.new_state();
     // struct_decls is the WHOLE-PROGRAM struct set so a function emitting an
@@ -5173,7 +5279,7 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     // Per-module: the entry exports its shared runtime entry points so sibling
     // library modules can link their `call __fern_*` externs against them.
     if (is_entry && globl_defs) { s = emit_runtime_globls(s); }
-    s = emit_module_funcs(mod, all_funcs, all_structs, s, globl_defs, lo, hi);
+    s = emit_module_funcs(mod, all_funcs, all_structs, s, globl_defs, lo, hi, cache);
     // Per-type __field_reclaim_<T> bodies (#3457), in .text alongside the module
     // funcs — emitted by EVERY unit that uses one (weak-deduped at link), so a
     // library module's call resolves locally rather than relying on the entry's
