@@ -117,9 +117,9 @@ pub function module_uses_strings(mod: parser.Module): boolean {
         var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            var k: string = ir.kind_name(r.ops[i].kind_tag);
-            if (k == "const_str" || k == "str_len" || k == "str_concat" || k == "str_eq" || k == "str_cmp") { return true; }
-            if (k == "str_index" || k == "str_slice") { return true; }
+            var kt: i32 = r.ops[i].kind_tag;
+            if (kt == 5 || kt == 97 || kt == 98 || kt == 99 || kt == 100) { return true; }  // const_str, str_len, str_concat, str_eq, str_cmp
+            if (kt == 101 || kt == 102) { return true; }  // str_index, str_slice
             i = i + 1;
         }
         fi = fi + 1;
@@ -152,8 +152,7 @@ pub function module_uses_maps(mod: parser.Module): boolean {
         var r: irlower.LowerResult = irlower.lower_func_for(mod.funcs[fi], asm_ir.array_ret_fns(mod), mod.structs, mod.funcs);
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            var k: string = ir.kind_name(r.ops[i].kind_tag);
-            if (k == "map_new" || k == "map_set" || k == "map_len") { return true; }
+            if (r.ops[i].kind_tag == 124 || r.ops[i].kind_tag == 125 || r.ops[i].kind_tag == 126) { return true; }  // map_new, map_set, map_len
             i = i + 1;
         }
         fi = fi + 1;
