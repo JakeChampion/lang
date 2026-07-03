@@ -1,0 +1,51 @@
+// examples/self_host/type_resolve_run.fern — golden driver for the checker's
+// structured type-name resolver (checker.fern's type_from_name_with_structs_unions
+// / type_from_ref_su + type_debug, SH-021 slice 4 — docs/SELF-HOST-AUDIT.md T2).
+//
+// The resolver maps a type STRING to the checker's Type against a struct/union
+// context. It now decodes via the structured TypeRef (parser.parse_type_ref +
+// pattern-match) instead of the former array-suffix / tuple / `Map[` first-comma
+// byte scans. This driver resolves a corpus covering every branch (scalars, the
+// struct / union / unknown name cases, arrays incl. multi-depth and of
+// struct/union/unknown elements, tuples incl. nested and single-element/empty
+// fallthrough, Map incl. nested value and single-arg fallthrough, array-of-map /
+// array-of-tuple, non-Map generics, and a qualified name) against fixed fixtures
+// (structs Foo/Bar, union Shape), printing type_debug of each result. The
+// companion Go test pins the exact mapping, so a regression in the decode fails
+// the golden here rather than silently mis-resolving a param / field / return
+// type in the checker.
+
+import "./checker";
+import "./util";
+
+function main(): i32 {
+    // Fixtures: two struct names, one union alias.
+    var structs: checker.StructSig[] = [
+        checker.StructSig { name: "Foo", field_names: [], field_types: [] },
+        checker.StructSig { name: "Bar", field_names: [], field_types: [] }
+    ];
+    var unions: checker.UnionSig[] = [
+        checker.UnionSig { name: "Shape", variants: [] }
+    ];
+    var corpus: string[] = [
+        "i32", "i64", "u32", "u64", "bool", "boolean", "string", "f64", "f32", "float",
+        "Foo", "Bar", "Shape", "Baz",
+        "i32[]", "string[]", "Foo[]", "Shape[]", "i32[][]", "Foo[][]",
+        "(i32, string)", "(Foo, Shape)", "(i32, string, bool)", "(string, (i32, bool))",
+        "(i32)", "()",
+        "Map[string, i32]", "Map[i32, Foo]", "Map[string, Map[i32, string]]",
+        "Map[string, Foo[]]", "Map[Foo, Shape]", "Map[string]",
+        "Map[string, i32][]", "(i32, string)[]",
+        "Option[i32]", "Vec[T]", "Foo[T]",
+        "Bogus[]", "mod.Thing", ""
+    ];
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < corpus.len()) {
+        var t: checker.Type = checker.type_from_name_with_structs_unions(corpus[i], structs, unions);
+        out = out + corpus[i] + " => " + checker.type_debug(t) + "\n";
+        i = i + 1;
+    }
+    write(out);
+    return 0;
+}
