@@ -77,6 +77,7 @@ func TestSelfHostSSALiftDifferential(t *testing.T) {
 		{"arrsum", `function main(): i32 { var a = [5, 10, 15]; return a[0] + a[1] + a[2]; }`},
 		{"structsum", `struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 10, y: 32 }; return p.x + p.y; }`},
 		{"tuplesum", `function main(): i32 { var t = (10, 32); return t.0 + t.1; }`},
+		{"f64cmp", `function main(): i32 { var x: f64 = 1.5; var y: f64 = 2.0; if (x * y + 0.5 > 3.0) { return 1; } return 0; }`},
 	}
 	for _, tc := range cases {
 		tc := tc

@@ -22,10 +22,11 @@ import (
 // loops, if-merge, break, cross-function calls, recursion), string literals
 // + length (const_str / str_len, which lower RC-free), i32 arrays
 // (arr_make / arr_get / arr_set / arr_len), scalar-field structs
-// (struct_make / struct_get, incl. nested), and tuples (tuple_make /
-// tuple_get, incl. nested), with irlower's RC-helper calls stripped.
-// Out-of-subset programs make the driver exit non-zero; only in-subset
-// programs are listed here.
+// (struct_make / struct_get, incl. nested), tuples (tuple_make /
+// tuple_get, incl. nested), and f64 scalars (const_f64 + fadd / fmul /
+// fgt / … + fneg), with irlower's RC-helper calls stripped. Out-of-subset
+// programs make the driver exit non-zero; only in-subset programs are
+// listed here.
 func TestSelfHostSSALiftIRLower(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	armgcc, qemu := arm64Tooling(t)
@@ -132,6 +133,14 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 		{"tuplefn", `function mk(): (i32, i32) { return (5, 9); } function main(): i32 { var t = mk(); return t.0 + t.1; }`},
 		{"tuplenest", `function main(): i32 { var t = (1, (2, 3)); return t.0 + t.1.0 + t.1.1; }`},
 		{"tuplebool", `function main(): i32 { var t = (true, 7); if (t.0) { return t.1; } return 0; }`},
+		// f64 scalars over real irlower output (slice 5): arithmetic +
+		// comparison, a bare compare, equality, and unary negation. The
+		// function returns via an i32 comparison result, so no float cast /
+		// float-returning call is needed (those are later slices).
+		{"f64arith", `function main(): i32 { var x: f64 = 1.5; var y: f64 = 2.0; var z = x * y + 0.5; if (z > 3.0) { return 7; } return 0; }`},
+		{"f64cmp", `function main(): i32 { var a: f64 = 3.14; var b: f64 = 2.71; if (a > b) { return 1; } return 0; }`},
+		{"f64eq", `function main(): i32 { var x: f64 = 2.0; var y: f64 = 2.0; if (x == y) { return 4; } return 0; }`},
+		{"f64neg", `function main(): i32 { var x: f64 = 5.0; var y = -x; if (y < 0.0) { return 9; } return 0; }`},
 	}
 	for _, tc := range cases {
 		tc := tc
