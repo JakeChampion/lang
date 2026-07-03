@@ -604,10 +604,11 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// NON-firing: x is RETURNED from mk (moved to caller), so mk must NOT free it.
 		// Detector 0.
 		{"returned-enum-not-freed-detector", `enum Shape { Circle(i32), Square(i32) } function mk(): Shape { var x = Circle(7); return x; } function main(): i32 { var s = mk(); var total = 0; match (s) { Circle(r) => { total = r; }, Square(w) => { total = w; }, } if (total != 7) { return 99; } return __rc_underflow(); }`, 0},
-		// NON-firing: a string-payload (non-scalar) variant means the box would need a
-		// per-variant deep-drop, so the consumed-free does NOT fire (left to leak).
-		// Detector 0.
-		{"nonscalar-enum-not-freed-detector", `enum Tok { Word(string), Num(i32) } function main(): i32 { var x = Num(7); var total = 0; match (x) { Word(s) => { total = s.len(); }, Num(n) => { total = n; }, } if (total != 7) { return 99; } return __rc_underflow(); }`, 0},
+		// FIRING since #4355 slice 2: a string-payload variant is rc-droppable (the
+		// per-variant deep-drop releases it via __fern_str_free), so this enum is
+		// now admitted — the live Num(7) box is freed after its match (the Word
+		// block's variant_is dispatch skips at runtime). Value correct, detector 0.
+		{"string-payload-enum-freed-detector", `enum Tok { Word(string), Num(i32) } function main(): i32 { var x = Num(7); var total = 0; match (x) { Word(s) => { total = s.len(); }, Num(n) => { total = n; }, } if (total != 7) { return 99; } return __rc_underflow(); }`, 0},
 		// NON-firing: x is used AFTER the match (`snd(x)`), so it is not dead — must
 		// NOT be freed. Detector 0.
 		{"enum-used-after-match-not-freed-detector", `enum Shape { Circle(i32), Square(i32) } function snd(s: Shape): i32 { return 1; } function main(): i32 { var x = Circle(7); var total = 0; match (x) { Circle(r) => { total = r; }, Square(w) => { total = w; }, } var g = snd(x); if (total + g != 8) { return 99; } return __rc_underflow(); }`, 0},
@@ -645,10 +646,8 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// boolean[]) — as long as no match arm BINDS the rc payload. At the free, a
 		// per-variant variant_is dispatch deep-drops exactly that variant's rc array
 		// fields BEFORE the box dec, so the array is freed exactly once (no leak, no
-		// double-free). (A `string` payload is NOT eligible: on this IR path a string
-		// is a header-less {ptr,len} fat struct that is leak-only — never freed — so a
-		// string-payload enum is classified by NEITHER free path and its box leaks;
-		// those cases below confirm the detector stays 0 anyway.)
+		// double-free). (#4355 slice 2: a FRESH `string` payload is now eligible too —
+		// released by the rc-aware __fern_str_free in the same variant dispatch.)
 		//
 		// FIRING: a leak-safe array-payload enum (i32[]) whose match IGNORES the rc
 		// payload (binds `_`), consumed-and-dead. The variant_is(V) deep-drop dec's the

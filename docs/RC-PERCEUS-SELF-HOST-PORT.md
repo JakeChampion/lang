@@ -3555,3 +3555,28 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `__fern_drop_arr_str` (rc_insert.go) — the native flat-`string[]` element
   walk this mirrors. Remaining #4355 gap after this slice: enum/Option STRING
   payloads (still classified leak-safe; next sub-slice).
+- 2026-07-03: **Landed enum/Option STRING-payload release on the IR path (#4355
+  slice 2, all three backends — irlower-only).** A FRESH string payload (a
+  literal or a fresh producer, gated by variant_struct_payloads_fresh on enums
+  and rcpayload_option_cand on Option/Result) is now rc-droppable:
+  enum_field_rc_droppable admits `string`, the consumed-by-match free's
+  per-variant dispatch releases it via the rc-aware __fern_str_free
+  (emit_enum_variant_drops' string arm), and Option/Result payloads ride the new
+  emit_opt_str_payload_drop (op_opt_payload → __fern_str_free → box dec; a
+  shallow rc-dec would free the 24-byte string block by the ARRAY layout's size
+  class on asm — wrong class). OptRcFrees carries a per-entry `strs` flag and
+  the precise-drop pass records an "opt-strpayload" kind (currently dormant for
+  the nested-if shape — the same gates that keep the array-payload nested-if
+  case leak-mode apply; parity, not a regression). Non-fresh payloads (bare
+  idents aliasing live locals) and escaping arm bindings stay sound leaks —
+  match_arm_binds_rc_payload now gates string bindings borrow-only
+  automatically via the widened droppable predicate. No backend edits: the
+  emitted call is the existing __fern_str_free helper on every backend.
+  VERIFIED: TestSelfHostEnumStrPayloadReclaimIRX86_64 (+wasm/arm64 siblings) —
+  bounded heap high-water flat across a second churn for enum Word(concat),
+  Option Some(concat), Result Err(concat); aliased-payload and
+  escaping-binding exclusions stay balanced (detector 0). The
+  `string-payload-enum-freed-detector` case in the precise-drop suite flips
+  from leak-documenting to firing. Remaining #4355 surface: the general
+  "any string anywhere" endpoint (payloads via `?`, string fields of enum
+  payload structs, nested shapes) — tracked on the issue.
