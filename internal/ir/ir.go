@@ -6422,7 +6422,10 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// (computeMovedLocals) — the reference moves to this binding
 		// and the source is excluded from the exit sweep, so the
 		// inc/dec pair is elided.
-		if needsRcIncOnAlias(n.Init, b) && !b.rc.moveSites[n] {
+		// Dead-alias cancellation (#4402 opt 1): a proven borrowed-view
+		// alias skips the transfer inc — its exit-sweep dec is equally
+		// elided (emitRcDecLocalsAtExitExcept), a net-zero pair.
+		if needsRcIncOnAlias(n.Init, b) && !b.rc.moveSites[n] && !b.rc.borrowedAliasSites[n] {
 			b.emitAliasInc(n.Init)
 		}
 		// Phase 5h: release the slot's previous value before this
@@ -6431,7 +6434,14 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// `var` the zero-init makes it a NULL-guarded no-op. The new value
 		// is on the stack underneath — emitVarReinitDropOld is net-zero —
 		// so it survives for the store below.
-		b.emitVarReinitDropOld(n.Name, idx)
+		//
+		// A borrowed-view alias site (#4402 opt 1) skips this too: the
+		// slot only ever holds the (un-inc'd) borrowed pointer, so a
+		// loop-repeated decl would otherwise dec the source's buffer once
+		// per iteration with no matching inc.
+		if !b.rc.borrowedAliasSites[n] {
+			b.emitVarReinitDropOld(n.Name, idx)
+		}
 		b.emit(Op{Kind: OpStoreLocal, I32: idx})
 	case *ast.Destructure:
 		// Evaluate Init once into the synthesised temp slot,
