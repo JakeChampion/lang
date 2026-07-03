@@ -52,6 +52,7 @@
 //     `opt_tag` / `opt_payload` lowered to build_func's 2-word { tag@0,
 //     payload@1 } box (payload 8-byte so pointers round-trip). The i64 / f64
 //     payload variants (opt_make_w / opt_payload_w, width 64) bail.
+//   - slice 12: `args` -> the SSA `args` inst (the argv string[]).
 // Everything else (value-producing ifs, i64 width, f64 across calls / composite
 // elements, the libm intrinsics, map ops) sets `ok=false` so a caller falls
 // back, mirroring how native's lift errors. Validated without a backend by running the lifted
@@ -381,6 +382,13 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
             var sbt: i32 = nvals; nvals = nvals + 1;
             cur_insts = cur_insts.append(ssa.SInst { kind: "strbuf_take", result: sbt, args: [], imm: 0, str: "" });
             stack = stack.append(sbt);
+        } else if (k == "args") {
+            // args() → the SSA `args` inst, which materialises the argv string[]
+            // ([len, strptr…]) the SSA `_start` saved. No operands; pushes the
+            // array. build_func's args() builtin.
+            var agv: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind: "args", result: agv, args: [], imm: 0, str: "" });
+            stack = stack.append(agv);
         } else if (k == "print_str") {
             // Raw stdout write of a string's bytes (NO newline) → the SSA `write`
             // inst; `print(s)` is desugared to print_str(s + "\n") upstream, so

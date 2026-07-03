@@ -28,7 +28,8 @@ import (
 // concat / equality (str_concat / str_eq), the string builder
 // (strbuf_reset / _append / _take), the process / output ops
 // (print_str / eprint_str / exit), string indexing (str_index), and
-// Option / Result (opt_make / opt_none / opt_tag / opt_payload), with
+// Option / Result (opt_make / opt_none / opt_tag / opt_payload), and args()
+// (the argv string[]), with
 // irlower's RC-helper calls stripped. Out-of-subset
 // programs make the driver exit non-zero; only in-subset programs are
 // listed here.
@@ -182,6 +183,10 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 		{"optnone", `function main(): i32 { var o: Option[i32] = None; match (o) { Some(v) => { return v; }, None => { return 7; } } }`},
 		{"optchain", `function f(n: i32): Option[i32] { if (n > 0) { return Some(n * 2); } return None; } function main(): i32 { match (f(5)) { Some(v) => { return v; }, None => { return 0; } } }`},
 		{"result", `function g(n: i32): Result[i32, i32] { if (n > 0) { return Ok(n + 1); } return Err(9); } function main(): i32 { match (g(10)) { Ok(v) => { return v; }, Err(e) => { return e; } } }`},
+		// args() over real irlower output (slice 12): the argv string[]. Guarded
+		// as `>= 1` so it holds regardless of how the harness invokes the binary
+		// (the differential diffs the emitted binary vs the interpreter).
+		{"argslen", `function main(): i32 { if (args().len() >= 1) { return 5; } return 0; }`},
 	}
 	for _, tc := range cases {
 		tc := tc
