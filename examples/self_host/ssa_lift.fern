@@ -70,7 +70,10 @@ import "./ir";
 import "./ssa";
 import "./util";
 
-pub struct LResult { func: ssa.SFunc, ok: boolean }
+// `bail` names the IR op kind that forced ok=false (or "unbalanced-scope"),
+// "" when the lift succeeded — a diagnostic for the coverage scan; the
+// production drivers read only .func / .ok.
+pub struct LResult { func: ssa.SFunc, ok: boolean, bail: string }
 
 // ---- small array helpers (value-semantics, no slice syntax) -------------
 
@@ -194,6 +197,7 @@ function fbin_sym(k: string): string {
 pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResult {
     var nvals: i32 = 0;
     var next_blk: i32 = 0;
+    var bail: string = "";   // the op kind that forced a fall-back (scan diagnostic)
 
     var blocks: ssa.SBlock[] = [];
     var cur_id: i32 = next_blk; next_blk = next_blk + 1;   // entry = block 0
@@ -1134,10 +1138,13 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
         } else {
             ok = false;   // outside the slice — caller falls back.
         }
+        // Record the offending op kind the first time the lift bails (any
+        // branch above — unhandled op, width-64, stack underflow, …).
+        if (!ok && bail == "") { bail = k; }
         i = i + 1;
     }
 
-    if (ok && sc_kind.len() != 0) { ok = false; }   // unbalanced scopes
+    if (ok && sc_kind.len() != 0) { ok = false; bail = "unbalanced-scope"; }   // unbalanced scopes
 
     if (ok) {
         if (cur_term.kind == "" && stack.len() >= 1) {
@@ -1160,7 +1167,7 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
     }
 
     var f: ssa.SFunc = ssa.SFunc { name: name, nparams: nparams, nvals: nvals, blocks: blocks, entry: 0, takes_env: false };
-    return LResult { func: f, ok: ok };
+    return LResult { func: f, ok: ok, bail: bail };
 }
 
 // ---- STerm constructors (ssa.fern's t_* helpers are module-private) ------
