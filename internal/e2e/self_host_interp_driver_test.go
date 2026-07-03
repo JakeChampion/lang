@@ -113,6 +113,23 @@ var interpProgs = []struct {
 	// are skipped like native's unicode.IsSpace. The \f sits between `{` and
 	// `return`; the program still returns 42.
 	{"lexer-formfeed-ws", "function main(): i32 {\freturn 42; }", 42},
+	// Bitwise / shift ops (#4348 item 7): eval_binary had no `& | ^ << >>`
+	// arm, so every bit-op program evaluated to VErr (exit 254). Now they
+	// apply the host i32 operator, matching native.
+	{"bit-and", "function main(): i32 { return 5 & 3; }", 1},
+	{"bit-or", "function main(): i32 { return 5 | 2; }", 7},
+	{"bit-xor", "function main(): i32 { return 6 ^ 3; }", 5},
+	{"bit-shl", "function main(): i32 { return 1 << 4; }", 16},
+	{"bit-shr", "function main(): i32 { return 256 >> 2; }", 64},
+	// Total division semantics (#4348 item 6): integer `x / 0 == 0` and
+	// `x % 0 == x` (docs/INTEGER-SEMANTICS.md), not a runtime error — the
+	// engine previously returned VErr (exit 254 after error-swallowing).
+	{"div-by-zero-total", "function main(): i32 { return 7 / 0; }", 0},
+	{"mod-by-zero-total", "function main(): i32 { return 7 % 0; }", 7},
+	// Float division by zero is IEEE, not an error: `1.0/0.0` is +Inf and
+	// `0.0/0.0` is NaN (self-comparison false). Each returns 7 iff honoured.
+	{"fdiv-inf", "function main(): i32 { var x: f64 = 1.0 / 0.0; if (x > 1000000000.0) { return 7; } return 0; }", 7},
+	{"fdiv-nan", "function main(): i32 { var y: f64 = 0.0 / 0.0; if (y != y) { return 7; } return 0; }", 7},
 }
 
 // TestSelfHostInterpDriverX86_64 is the keystone of the inference

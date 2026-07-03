@@ -285,11 +285,15 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
                     VInt(ri) => {
                         if (op == "-") { return v_int(li.v - ri.v); }
                         if (op == "*") { return v_int(li.v * ri.v); }
+                        // Total division semantics (docs/INTEGER-SEMANTICS.md):
+                        // `x / 0 == 0` and `x % 0 == x`, not a runtime error —
+                        // matching native (#4348 item 6). The engine also
+                        // shouldn't trap on data-dependent zero divisors.
                         if (op == "/") {
-                            if (ri.v == 0) { return v_err("division by zero"); }
+                            if (ri.v == 0) { return v_int(0); }
                             return v_int(li.v / ri.v);
                         }
-                        if (ri.v == 0) { return v_err("modulo by zero"); }
+                        if (ri.v == 0) { return v_int(li.v); }
                         return v_int(li.v % ri.v);
                     },
                     _ => { return v_err("arithmetic rhs not i32"); }
@@ -300,8 +304,9 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
                     VFloat(rf) => {
                         if (op == "-") { return v_float(lf.v - rf.v); }
                         if (op == "*") { return v_float(lf.v * rf.v); }
+                        // IEEE total semantics: `1.0/0.0` is +Inf and
+                        // `0.0/0.0` is NaN, not a runtime error (#4348 item 6).
                         if (op == "/") {
-                            if (rf.v == 0.0) { return v_err("float division by zero"); }
                             return v_float(lf.v / rf.v);
                         }
                         // `%` on floats isn't supported — the
@@ -360,6 +365,27 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
                 }
             },
             _ => { return v_err("logical lhs not bool"); }
+        }
+    }
+    // Bitwise / shift ops on i32 (#4348 item 7) — previously unimplemented,
+    // so any `& | ^ << >>` program evaluated to VErr (exit 254). The host
+    // operators match the native i32 semantics (arithmetic `>>`, shift-count
+    // masking as emitted by the compiler).
+    if (op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>") {
+        match (lv) {
+            VInt(li) => {
+                match (rv) {
+                    VInt(ri) => {
+                        if (op == "&") { return v_int(li.v & ri.v); }
+                        if (op == "|") { return v_int(li.v | ri.v); }
+                        if (op == "^") { return v_int(li.v ^ ri.v); }
+                        if (op == "<<") { return v_int(li.v << ri.v); }
+                        return v_int(li.v >> ri.v);
+                    },
+                    _ => { return v_err("bitwise rhs not i32"); }
+                }
+            },
+            _ => { return v_err("bitwise lhs not i32"); }
         }
     }
     return v_err("unknown binary op: " + op);
