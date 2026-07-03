@@ -30,9 +30,15 @@
 //   - slice 4: TUPLES — `tuple_make` / `tuple_get` / `tuple_set` (scalar /
 //     pointer elements) lowered to build_func's ExprTuple layout (element i
 //     at slot i, no prefix). Width-64 elements bail.
-// Everything else (value-producing ifs, i64 / f64 arrays + struct / tuple
-// elements, map / float ops, the i64 width) sets `ok=false` so a caller falls
-// back, mirroring how native's lift errors. Validated without a backend by running the lifted
+//   - slice 5: f64 SCALARS — `const_f64_text`, the f64 arithmetic / compare
+//     ops (fadd / fsub / fmul / fdiv / feq / … via fbin_sym) and `fneg`,
+//     lowered to SSA const_float / binary / unary. Value widths are inferred
+//     downstream by ssa.compute_isfloat, so the lift emits no float tag.
+//     f64 args / returns across calls, the int<->float casts, the libm
+//     intrinsics, and f64 array / struct / tuple elements are later slices.
+// Everything else (value-producing ifs, i64 width, f64 casts / calls / composite
+// elements, map ops) sets `ok=false` so a caller falls back, mirroring how
+// native's lift errors. Validated without a backend by running the lifted
 // SFunc through `ssa.eval_func` (the ssa.fern self-validation pattern).
 //
 // The lift is a single linear pass over the op stream; the structured-control-
@@ -140,6 +146,26 @@ function bin_sym(k: string): string {
     return "";
 }
 
+// fbin_sym maps an f64 IR op kind to its SSA `binary` symbol. Arithmetic
+// (fadd/…) yields an f64; a compare (feq/…) yields an i32 0/1. The SSA layer
+// needs no float tag from the lift: ssa.compute_isfloat classifies each value
+// (const_float / f64-arg / float-operand arithmetic) downstream, and each
+// backend selects the float instruction (addsd / ucomisd, fadd / fcmp) from
+// that — exactly as build_func's float `binary`s are emitted.
+function fbin_sym(k: string): string {
+    if (k == "fadd") { return "+"; }
+    if (k == "fsub") { return "-"; }
+    if (k == "fmul") { return "*"; }
+    if (k == "fdiv") { return "/"; }
+    if (k == "feq") { return "=="; }
+    if (k == "fne") { return "!="; }
+    if (k == "flt") { return "<"; }
+    if (k == "fle") { return "<="; }
+    if (k == "fgt") { return ">"; }
+    if (k == "fge") { return ">="; }
+    return "";
+}
+
 // ---- the lift ------------------------------------------------------------
 
 pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResult {
@@ -235,6 +261,14 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
                 cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: ctv, args: [], imm: util.digits_to_i32(t), str: "" });
                 stack = stack.append(ctv);
             }
+        } else if (k == "const_f64") {
+            // An f64 literal, carried as source text (its bits don't fit an
+            // immediate) → the SSA const_float inst, which each backend
+            // materialises in a data section. compute_isfloat seeds float-ness
+            // from this inst. Matches build_func's ExprNumber(is_float) path.
+            var fcv: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind: "const_float", result: fcv, args: [], imm: 0, str: op.str });
+            stack = stack.append(fcv);
         } else if (k == "int_cast") {
             // `x as i32` lowers to a sign-extend of the low 32 bits (movslq) —
             // identity for an i32 value, so the SSA value flows through with no
@@ -284,6 +318,21 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
                 cur_insts = cur_insts.append(ssa.SInst { kind: "binary", result: bv, args: [l, r], imm: 0, str: bin_sym(k) });
                 stack = stack.append(bv);
             }
+        } else if (fbin_sym(k) != "") {
+            // f64 arithmetic / comparison — same shape as the integer binary,
+            // but the SSA symbol drives a float instruction downstream once
+            // compute_isfloat classifies the operands (which trace back to a
+            // const_float / f64 arg). Arithmetic pushes an f64; a compare pushes
+            // an i32 0/1 (compute_isfloat leaves it non-float, as intended).
+            if (stack.len() < 2) { ok = false; }
+            else {
+                var fr: i32 = stack[stack.len() - 1];
+                var flf: i32 = stack[stack.len() - 2];
+                stack = drop_last2(stack);
+                var fbv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "binary", result: fbv, args: [flf, fr], imm: 0, str: fbin_sym(k) });
+                stack = stack.append(fbv);
+            }
         } else if (k == "not") {
             if (stack.len() < 1) { ok = false; }
             else {
@@ -292,6 +341,17 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
                 var nv: i32 = nvals; nvals = nvals + 1;
                 cur_insts = cur_insts.append(ssa.SInst { kind: "unary", result: nv, args: [x], imm: 0, str: "!" });
                 stack = stack.append(nv);
+            }
+        } else if (k == "fneg") {
+            // f64 negation → SSA unary "-"; compute_isfloat propagates float-ness
+            // through it (the "-" of a float value is float).
+            if (stack.len() < 1) { ok = false; }
+            else {
+                var fx: i32 = stack[stack.len() - 1];
+                stack = drop_last(stack);
+                var fnv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "unary", result: fnv, args: [fx], imm: 0, str: "-" });
+                stack = stack.append(fnv);
             }
         } else if (k == "call_direct") {
             var argc: i32 = op.i32_imm;
