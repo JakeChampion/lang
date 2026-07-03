@@ -346,7 +346,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     // combined — a full-range cached emit keeps shard_ns == base ns.)
     var shard_ns: string = parts[pm_index].ns;
     if (pm_lo > 0) { shard_ns = shard_ns + "_s" + util.i32_to_string(pm_lo); }
-    var unit: string = asm_ir.emit_module_ir_unit(infmods[pm_index], parts[pm_index].is_entry, true, shard_ns, extra, all_funcs, all_structs, pm_lo, pm_hi);
+    var unit: string = asm_ir.emit_module_ir_unit(infmods[pm_index], parts[pm_index].is_entry, true, shard_ns, extra, all_funcs, all_structs, pm_lo, pm_hi, []);
     // Emit to stdout first, then populate the cache. Both consume `unit`; doing
     // the file write last keeps the ordering unambiguous and avoids relying on
     // write_file's borrow/consume semantics for the unit box.
