@@ -4528,47 +4528,8 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 	// store to the same physical slot, and only that slot needs
 	// the safety zero).
 	zeroSeen := map[string]bool{}
-	zeroRcTracked := func(t ast.Type) bool {
-		// Phase 1d covers arrays; Phase 1e-struct-iii widens to
-		// user structs. Matches the rc-tracked set used by the
-		// exit dec sweep so the safety zero and the dec agree on
-		// which slots they touch.
-		if _, isArr := t.(ast.ArrayType); isArr {
-			return true
-		}
-		if _, isStruct := t.(ast.StructType); isStruct {
-			return true
-		}
-		// Phase 1e-enums-ii: zero enum slots too so the exit dec
-		// sweep's `ptr == 0` null guard fires on never-initialised
-		// enum locals (conditional / match-arm declarations).
-		if _, isEnum := t.(ast.EnumType); isEnum {
-			return true
-		}
-		// Phase 1e-closures-ii: zero FuncType (closure) slots too.
-		if _, isFunc := t.(*ast.FuncType); isFunc {
-			return true
-		}
-		// Zero tuple slots too: the exit-dec null guard then fires on
-		// a never-initialised tuple local (conditional declaration).
-		if _, isTuple := t.(ast.TupleType); isTuple {
-			return true
-		}
-		// String locals: zero so a never-initialised local's exit dec
-		// sees a null pointer — __fern_str_dec / __fern_rc_dec null-
-		// guard. wasm two-word zeroes both slots (data, len); native
-		// single-word (x86_64, !TwoWordOverride) zeroes one slot. arm64
-		// excluded for the same reason as the dec sweep.
-		if _, isStr := t.(ast.StringType); isStr {
-			// arm64 now has __fern_str_inc / __fern_str_dec / __fern_cell_free
-			// runtime helpers, so the wasm two-word path applies there too.
-			// All non-zero ptrW with strings is rc-tracked.
-			return true
-		}
-		return false
-	}
 	for _, v := range info.Locals[fn] {
-		if !zeroRcTracked(v.Type) {
+		if !rcTrackedSlotType(v.Type) {
 			continue
 		}
 		if zeroSeen[v.Name] {
@@ -4714,6 +4675,13 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		} else {
 			out.ScratchTypes[i] = ast.NumberType{}
 		}
+	}
+	// Differential-harness probe (#4482): hand the finished per-function
+	// rcPlan to the hook, if armed — nil (and free) outside tests / the
+	// differential gate. After everything above, so preciseDrops is filled
+	// and every table is final.
+	if RcPlanHook != nil {
+		RcPlanHook(fn.Name, b.dumpRcPlan())
 	}
 	return out, nil
 }
@@ -4913,73 +4881,6 @@ func (b *builder) payloadWidthForCalleeReturn(retType ast.Type) int {
 	return 0
 }
 
-// enumRcPayloadsEligible reports whether the Slice-1b EnumRcPayloads model
-// applies to enum `enumName`: the flag is on AND the enum's deep drop is fully
-// wired on every backend. Enums whose payloads transitively contain a Map are
-// excluded — a Map-in-enum deep drop calls `__map_drop_values`, a runtime helper
-// the wasm helper-inclusion pass doesn't pull in for a generated `__drop_enum_`
-// body, and Map key/value reclamation is itself an open gap. Excluded enums keep
-// the move model (flag-off behaviour) at every site, a documented safe leak.
-func (b *builder) enumRcPayloadsEligible(enumName string) bool {
-	return ast.EnumRcPayloads && !b.enumTransitivelyContainsMap(enumName, map[string]bool{})
-}
-
-// isOwnedByDefaultType reports whether a parameter of type `t` is owned by the
-// callee under Slice 2 (OwnedByDefault). Rolled out per category, enums first:
-// they're immutable (so the caller-side retain inc can't disturb the in-place
-// mutation the borrow model protects) and, post-1b, their boxes are rc-counted
-// and deep-droppable. The callee reclaims such a parameter at exit; the caller
-// retains it with an inc at the call site.
-func (b *builder) isOwnedByDefaultType(t ast.Type) bool {
-	if !ast.OwnedByDefault {
-		return false
-	}
-	switch ty := t.(type) {
-	case ast.EnumType:
-		// Enums (sub-slice 2a): only those whose deep drop is a pure, fully-wired
-		// box/enum walk — transitively scalar/enum/tuple payloads (no array /
-		// string / Map, keeping the array-payload deep-drop + self-overwrite-
-		// reuse interaction out of scope, e.g. `enum Bag { Keep(i32[]) }`) AND a
-		// UNIFORM box layout (emitDec only frees a uniform enum; a non-uniform
-		// one like `Shape { Circle(i32), Rect(i32,i32) }` flat-decs without
-		// freeing, so owned-by-default would mis-reclaim it). That is the FBIP
-		// list/tree case; other enums keep the borrow model for now.
-		if !b.enumRcPayloadsEligible(ty.Name) || !b.typeIsStringArrayFree(t, map[string]bool{}) {
-			return false
-		}
-		ed, ok := b.info.Enums[ty.Name]
-		if !ok {
-			return false
-		}
-		_, uniform := uniformEnumBoxSize(ed, b.ptrW)
-		return uniform
-	case ast.StructType:
-		// Structs (sub-slice 2c): Fern struct fields are immutable after
-		// construction (the checker rejects `p.x = v`; the idiom is a
-		// whole-struct rebuild `p = P{...old, x: v}`), so — exactly like enums —
-		// the caller-side retain inc that owned-by-default adds can never disturb
-		// an in-place mutation through the parameter; there is none. Admit a
-		// struct whose deep drop is the fully-wired pointer-box walk: transitively
-		// string/array/slice/Map-free (so __drop_struct_<N> never hits an unwired
-		// field) and backed by a real StructDecl. Runtime handles (Map / Reader /
-		// Writer / MapIter) have no decl and are rejected by typeIsStringArrayFree
-		// anyway; the box is uniform by construction (no variants), so no
-		// uniformity check is needed. Per-field rc counting (Phase 1e-struct-ii)
-		// balances the drop.
-		if _, ok := b.info.Structs[ty.Name]; !ok {
-			return false
-		}
-		return b.typeIsStringArrayFree(t, map[string]bool{})
-	case ast.TupleType:
-		// Tuples (sub-slice 2c): immutable, uniform headered boxes whose elements
-		// are rc-counted (the projection-site dup balances the per-element drop
-		// in emitDec's tuple branch). Same string/array/slice/Map-free gate as
-		// structs keeps the deep drop on the fully-wired path.
-		return b.typeIsStringArrayFree(t, map[string]bool{})
-	}
-	return false
-}
-
 // paramVerdict is THE per-(function, param) ownership classification (#4478):
 // one ladder, consulted by both the definition side (paramOwnedByDefault) and
 // the call site (calleeParamOwnedByDefault), so the two can never disagree on
@@ -5061,85 +4962,6 @@ func (b *builder) paramOwnedByDefault(t ast.Type, i int) bool {
 func (b *builder) calleeParamOwnedByDefault(callee string, t ast.Type, i int) bool {
 	v := b.paramVerdict(callee, t, i)
 	return v == paramVerdictOwned || v == paramVerdictTrmcConsume
-}
-
-// enumRcPayloadsEligibleForValue is the expression form: true when `e` is a
-// variant constructor (`Cons(..)`) or enum literal of an rc-eligible enum.
-func (b *builder) enumRcPayloadsEligibleForValue(e ast.Expr) bool {
-	var name string
-	switch x := e.(type) {
-	case *ast.Call:
-		id, ok := x.Callee.(*ast.Ident)
-		if !ok {
-			return false
-		}
-		en, _, _, isVar := b.lookupVariant(id.Name)
-		if !isVar {
-			return false
-		}
-		name = en
-	case *ast.EnumLit:
-		name = x.EnumName
-	default:
-		return false
-	}
-	return b.enumRcPayloadsEligible(name)
-}
-
-func (b *builder) enumTransitivelyContainsMap(enumName string, seen map[string]bool) bool {
-	if seen["e:"+enumName] {
-		return false
-	}
-	seen["e:"+enumName] = true
-	ed, ok := b.info.Enums[enumName]
-	if !ok {
-		return true // unknown / generic-erased — conservative (exclude)
-	}
-	for _, v := range ed.Variants {
-		for _, pl := range v.Payloads {
-			if b.typeTransitivelyContainsMap(pl, seen) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func (b *builder) typeTransitivelyContainsMap(t ast.Type, seen map[string]bool) bool {
-	switch ty := t.(type) {
-	case ast.StructType:
-		if ty.Name == "Map" {
-			return true
-		}
-		if seen["s:"+ty.Name] {
-			return false
-		}
-		seen["s:"+ty.Name] = true
-		sd, ok := b.info.Structs[ty.Name]
-		if !ok {
-			return false
-		}
-		for _, f := range sd.Fields {
-			if b.typeTransitivelyContainsMap(f.Type, seen) {
-				return true
-			}
-		}
-		return false
-	case ast.EnumType:
-		return b.enumTransitivelyContainsMap(ty.Name, seen)
-	case ast.TupleType:
-		for _, e := range ty.Elems {
-			if b.typeTransitivelyContainsMap(e, seen) {
-				return true
-			}
-		}
-		return false
-	case ast.ArrayType:
-		return b.typeTransitivelyContainsMap(ty.Elem, seen)
-	case ast.SliceType:
-		return b.typeTransitivelyContainsMap(ty.Elem, seen)
-	}
-	return false
 }
 
 func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, payloadCount int, args []ast.Expr) error {
