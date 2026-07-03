@@ -13,7 +13,7 @@ import (
 	"github.com/jakechampion/lang/internal/parser"
 )
 
-// TestSelfHostRcPlanDiffPreciseDrops is the e2e half of the #4482 rcPlan
+// TestSelfHostRcPlanDiff is the e2e half of the #4482 rcPlan
 // differential harness (goal 2): instead of only checking that programs still
 // run, it diffs the Perceus decision TABLES between the two compilers, so each
 // ported analysis lands with "tables match native" evidence.
@@ -25,17 +25,18 @@ import (
 // from irlower's tables. Both compile the identical source, so per-function
 // lines are directly comparable.
 //
-// This first slice diffs `preciseDrops` only (the one table both sides
-// compute); the diff widens line-by-line as ports land. The self-host dump
-// deliberately OMITS tables it has no counterpart for (movedLocals,
-// moveSites, ...) — a native-only line is a documented port gap, not a
+// The diff covers `diffedTables` and widens line-by-line as ports land:
+// preciseDrops landed first, consumedParams second (the consumed_params_of
+// port of native computeConsumedParams). The self-host dump deliberately
+// OMITS tables it has no counterpart for (movedLocals, moveSites,
+// freeEligible, ...) — a native-only line is a documented port gap, not a
 // failure, so the comparison here is per-table, not whole-dump.
 //
 // Known divergences are pinned explicitly (both sides' current output) so
 // drift on EITHER side is caught; agreement cases assert equality plus, for
 // the anchor case, the absolute expected value — agreement alone can't tell
 // "both right" from "both wrong the same way".
-func TestSelfHostRcPlanDiffPreciseDrops(t *testing.T) {
+func TestSelfHostRcPlanDiff(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	for _, name := range []string{"util.fern", "astwalk.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irlower_run.fern"} {
@@ -49,18 +50,23 @@ func TestSelfHostRcPlanDiffPreciseDrops(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "irlower_run.fern", "rcplan_driver")
 
+	// The tables diffed per function; widened line-by-line as ports land
+	// (#4482). movedLocals / moveSites / freeEligible etc. are NOT diffed yet
+	// — the self-host has no counterpart tables, and its dump omits the lines.
+	diffedTables := []string{"consumedParams", "preciseDrops"}
+
 	type divergence struct {
-		native   string // native's preciseDrops line value ("" = no line)
+		native   string // native's line value ("" = no line)
 		selfhost string // self-host's value
 	}
 	cases := []struct {
 		name string
 		src  string
-		// anchor: function -> exact preciseDrops value BOTH sides must emit.
-		anchor map[string]string
-		// diverge: function -> pinned per-side values. Everything else must
-		// simply agree between the compilers.
-		diverge map[string]divergence
+		// anchor: function -> table -> exact value BOTH sides must emit.
+		anchor map[string]map[string]string
+		// diverge: function -> table -> pinned per-side values. Everything
+		// else must simply agree between the compilers.
+		diverge map[string]map[string]divergence
 	}{
 		{
 			// The pinned TestRcPlanDumpFormat shape: big's last use is stmt 1,
@@ -72,7 +78,7 @@ func TestSelfHostRcPlanDiffPreciseDrops(t *testing.T) {
 	return s + 1;
 }
 function main(): i32 { return dropper(); }`,
-			anchor: map[string]string{"dropper": "1=big"},
+			anchor: map[string]map[string]string{"dropper": {"preciseDrops": "1=big"}},
 		},
 		{
 			// Two disjoint literal locals, dropped at their own last uses.
@@ -85,7 +91,7 @@ function main(): i32 { return dropper(); }`,
 	return x + y;
 }
 function main(): i32 { return two(); }`,
-			anchor: map[string]string{"two": "1=a,3=b"},
+			anchor: map[string]map[string]string{"two": {"preciseDrops": "1=a,3=b"}},
 		},
 		{
 			// Both locals last-used in ONE statement: a shared index group,
@@ -98,7 +104,7 @@ function main(): i32 { return two(); }`,
 	return s;
 }
 function main(): i32 { return pair(); }`,
-			anchor: map[string]string{"pair": "2=a+b"},
+			anchor: map[string]map[string]string{"pair": {"preciseDrops": "2=a+b"}},
 		},
 		{
 			// The local escapes by return: no precise drop on either side in
@@ -114,9 +120,9 @@ function main(): i32 { return pair(); }`,
 	return a;
 }
 function main(): i32 { var m: i32[] = make(); return m[0]; }`,
-			anchor: map[string]string{"make": ""},
-			diverge: map[string]divergence{
-				"main": {native: "", selfhost: "1=m"},
+			anchor: map[string]map[string]string{"make": {"preciseDrops": ""}},
+			diverge: map[string]map[string]divergence{
+				"main": {"preciseDrops": {native: "", selfhost: "1=m"}},
 			},
 		},
 		{
@@ -130,7 +136,52 @@ function main(): i32 { var m: i32[] = make(); return m[0]; }`,
 	return r;
 }
 function main(): i32 { return pick(1); }`,
-			anchor: map[string]string{"pick": "2=a"},
+			anchor: map[string]map[string]string{"pick": {"preciseDrops": "2=a"}},
+		},
+		{
+			// The pinned TestRcPlanDumpFormat consumed-threading shape: a
+			// string-bearing struct param reassigned in the body is promoted
+			// consumed-threaded. Native also marks it freeEligible — a table
+			// the self-host doesn't compute yet, outside diffedTables.
+			name: "consumed-thread",
+			src: `struct Ctx { name: string, n: i32 }
+function thread(c: Ctx): i32 {
+	c = Ctx { name: "x", n: c.n + 1 };
+	return c.n;
+}
+function main(): i32 { return thread(Ctx { name: "a", n: 1 }); }`,
+			anchor: map[string]map[string]string{"thread": {"consumedParams": "c"}},
+		},
+		{
+			// A string/array-FREE struct param stays on the owned-by-default
+			// baseline even when reassigned — no consumed promotion.
+			name: "consumed-skips-scalar-struct",
+			src: `struct P { x: i32, y: i32 }
+function bump(p: P): i32 {
+	p = P { x: p.x + 1, y: p.y };
+	return p.x;
+}
+function main(): i32 { return bump(P { x: 1, y: 2 }); }`,
+			anchor: map[string]map[string]string{"bump": {"consumedParams": ""}},
+		},
+		{
+			// A read-only (never reassigned) param is not consumed-threaded.
+			name: "consumed-skips-unassigned",
+			src: `struct S { name: string, n: i32 }
+function read(s: S): i32 { return s.n; }
+function main(): i32 { return read(S { name: "a", n: 3 }); }`,
+			anchor: map[string]map[string]string{"read": {"consumedParams": ""}},
+		},
+		{
+			// Tuple params take the same promotion: string-bearing + reassigned.
+			name: "consumed-tuple",
+			src: `function tup(t: (string, i32)): i32 {
+	t = ("x", 1);
+	var (s, k) = t;
+	return k + s.len();
+}
+function main(): i32 { return tup(("a", 2)); }`,
+			anchor: map[string]map[string]string{"tup": {"consumedParams": "t"}},
 		},
 	}
 
@@ -148,23 +199,25 @@ function main(): i32 { return pick(1); }`,
 				fns[fn] = true
 			}
 			for fn := range fns {
-				nl := rcPlanLine(native[fn], "preciseDrops")
-				sl := rcPlanLine(selfhost[fn], "preciseDrops")
-				if d, ok := tc.diverge[fn]; ok {
-					if nl != d.native {
-						t.Errorf("%s: native preciseDrops = %q, pinned divergence expects %q", fn, nl, d.native)
+				for _, table := range diffedTables {
+					nl := rcPlanLine(native[fn], table)
+					sl := rcPlanLine(selfhost[fn], table)
+					if d, ok := tc.diverge[fn][table]; ok {
+						if nl != d.native {
+							t.Errorf("%s: native %s = %q, pinned divergence expects %q", fn, table, nl, d.native)
+						}
+						if sl != d.selfhost {
+							t.Errorf("%s: self-host %s = %q, pinned divergence expects %q", fn, table, sl, d.selfhost)
+						}
+						continue
 					}
-					if sl != d.selfhost {
-						t.Errorf("%s: self-host preciseDrops = %q, pinned divergence expects %q", fn, sl, d.selfhost)
+					if nl != sl {
+						t.Errorf("%s: %s diverge — native %q vs self-host %q\n--- native dump ---\n%s--- self-host dump ---\n%s",
+							fn, table, nl, sl, native[fn], selfhost[fn])
 					}
-					continue
-				}
-				if nl != sl {
-					t.Errorf("%s: preciseDrops diverge — native %q vs self-host %q\n--- native dump ---\n%s--- self-host dump ---\n%s",
-						fn, nl, sl, native[fn], selfhost[fn])
-				}
-				if want, ok := tc.anchor[fn]; ok && nl != want {
-					t.Errorf("%s: preciseDrops = %q on both sides, but the anchor expects %q", fn, nl, want)
+					if want, ok := tc.anchor[fn][table]; ok && nl != want {
+						t.Errorf("%s: %s = %q on both sides, but the anchor expects %q", fn, table, nl, want)
+					}
 				}
 			}
 		})

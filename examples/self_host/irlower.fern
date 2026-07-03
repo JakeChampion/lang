@@ -19790,6 +19790,186 @@ pub function lower_func_for_noret(fn: parser.FuncDecl, structs: parser.StructDec
     return lower_func(fn, arr_ret, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs), closure_ret_fns_of(funcs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs));
 }
 
+// rc_scalar_type_name: the leak-free scalar value types — no heap box, so
+// they can appear anywhere in a consumed/owned type without RC wiring.
+function rc_scalar_type_name(t: string): boolean {
+    return t == "i32" || t == "boolean" || t == "i64" || t == "f64" || t == "f32"
+        || t == "u8" || t == "u32" || t == "u64" || t == "usize" || t == "char" || t == "void";
+}
+
+// rc_struct_decl_index returns the index of the PLAIN struct decl named `t`
+// (enum-variant payload structs, which carry enum_owner, don't count), or -1.
+function rc_struct_decl_index(structs: parser.StructDecl[], t: string): i32 {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == t && structs[i].enum_owner.len() == 0) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// rc_enum_has_variants reports whether `t` names a user enum — i.e. at least
+// one variant struct carries enum_owner == t.
+function rc_enum_has_variants(structs: parser.StructDecl[], t: string): boolean {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].enum_owner == t) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// rc_seen_has / rc_seen marks the named-type recursion guard for the two type
+// walks below (self-recursive structs/enums terminate as native's `seen` map).
+function rc_seen_has(seen: string[], key: string): boolean {
+    var i: i32 = 0;
+    while (i < seen.len()) {
+        if (seen[i] == key) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// rc_type_string_array_free is the port of native typeIsStringArrayFree
+// (internal/ir/rc_caps.go): true when the type transitively contains no
+// string / array / slice / Map — the gate that keeps a param on the
+// owned-by-default baseline instead of the consumed-threading promotion.
+function rc_type_string_array_free(t: string, structs: parser.StructDecl[], seen: string[]): boolean {
+    if (rc_scalar_type_name(t)) { return true; }
+    if (t == "string") { return false; }
+    if (is_array_type_name(t)) { return false; }
+    if (t == "Map" || util.base_type_name(t) == "Map") { return false; }
+    if (t.len() > 1 && t[0] == 40) {   // 40 = '(' — tuple: every element
+        var tags: string = tuple_elem_tags(t);
+        var depth: i32 = 0;
+        var start: i32 = 0;
+        var i: i32 = 0;
+        while (i <= tags.len()) {
+            if (i == tags.len() || (tags[i] == 44 && depth == 0)) {
+                if (!rc_type_string_array_free(tags[start : i], structs, seen)) { return false; }
+                start = i + 1;
+            } else if (tags[i] == 91 || tags[i] == 40) { depth = depth + 1; }
+            else if (tags[i] == 93 || tags[i] == 41) { depth = depth - 1; }
+            i = i + 1;
+        }
+        return true;
+    }
+    var si: i32 = rc_struct_decl_index(structs, t);
+    if (si >= 0) {
+        if (rc_seen_has(seen, "s:" + t)) { return true; }
+        var seen2: string[] = seen.append("s:" + t);
+        var f: i32 = 0;
+        while (f < structs[si].fields.len()) {
+            if (!rc_type_string_array_free(structs[si].fields[f].type_name, structs, seen2)) { return false; }
+            f = f + 1;
+        }
+        return true;
+    }
+    if (rc_enum_has_variants(structs, t)) {
+        if (rc_seen_has(seen, "e:" + t)) { return true; }
+        var seen3: string[] = seen.append("e:" + t);
+        var v: i32 = 0;
+        while (v < structs.len()) {
+            if (structs[v].enum_owner == t) {
+                var p: i32 = 0;
+                while (p < structs[v].fields.len()) {
+                    if (!rc_type_string_array_free(structs[v].fields[p].type_name, structs, seen3)) { return false; }
+                    p = p + 1;
+                }
+            }
+            v = v + 1;
+        }
+        return true;
+    }
+    return false;
+}
+
+// rc_consumed_drop_wired is the port of native consumedDropWired
+// (internal/ir/ir.go): every type reachable from `t` has its deep-drop glue
+// wired — strings and arrays ARE wired (unlike the string-array-free gate),
+// Map and unknown runtime handles (Reader / Writer / MapIter / undeclared
+// names) are not.
+function rc_consumed_drop_wired(t: string, structs: parser.StructDecl[], seen: string[]): boolean {
+    if (rc_scalar_type_name(t) || t == "string") { return true; }
+    if (is_array_type_name(t)) { return rc_consumed_drop_wired(t[0 : t.len() - 2], structs, seen); }
+    if (t == "Map" || util.base_type_name(t) == "Map") { return false; }
+    if (t.len() > 1 && t[0] == 40) {
+        var tags: string = tuple_elem_tags(t);
+        var depth: i32 = 0;
+        var start: i32 = 0;
+        var i: i32 = 0;
+        while (i <= tags.len()) {
+            if (i == tags.len() || (tags[i] == 44 && depth == 0)) {
+                if (!rc_consumed_drop_wired(tags[start : i], structs, seen)) { return false; }
+                start = i + 1;
+            } else if (tags[i] == 91 || tags[i] == 40) { depth = depth + 1; }
+            else if (tags[i] == 93 || tags[i] == 41) { depth = depth - 1; }
+            i = i + 1;
+        }
+        return true;
+    }
+    var si: i32 = rc_struct_decl_index(structs, t);
+    if (si >= 0) {
+        if (rc_seen_has(seen, "s:" + t)) { return true; }
+        var seen2: string[] = seen.append("s:" + t);
+        var f: i32 = 0;
+        while (f < structs[si].fields.len()) {
+            if (!rc_consumed_drop_wired(structs[si].fields[f].type_name, structs, seen2)) { return false; }
+            f = f + 1;
+        }
+        return true;
+    }
+    if (rc_enum_has_variants(structs, t)) {
+        if (rc_seen_has(seen, "e:" + t)) { return true; }
+        var seen3: string[] = seen.append("e:" + t);
+        var v: i32 = 0;
+        while (v < structs.len()) {
+            if (structs[v].enum_owner == t) {
+                var p: i32 = 0;
+                while (p < structs[v].fields.len()) {
+                    if (!rc_consumed_drop_wired(structs[v].fields[p].type_name, structs, seen3)) { return false; }
+                    p = p + 1;
+                }
+            }
+            v = v + 1;
+        }
+        return true;
+    }
+    return false;
+}
+
+// consumed_params_of is the port of native computeConsumedParams
+// (internal/ir/rc_analysis.go, #4482 slice 2): the pointer-shaped
+// struct/tuple params REASSIGNED in the body that are promoted to
+// consumed-threading. The native paramVerdict ladder drops out of this
+// table's condition — the !string-array-free gate below already implies
+// not-owned-by-default (isOwnedByDefaultType requires string-array-free) —
+// so the effective port is:
+//   not `own`  AND  reassigned in body  AND  struct- or tuple-typed  AND
+//   NOT string/array-free  AND  deep-drop fully wired.
+// Documented deviation: native returns the empty table for TRMC'd functions;
+// the self-host has no TRMC (#4352), so a TRMC-shaped corpus case would pin
+// a divergence here.
+pub function consumed_params_of(fn: parser.FuncDecl, structs: parser.StructDecl[]): string[] {
+    var out: string[] = [];
+    var reassigned: string[] = body_assign_targets(fn.body);
+    var pi: i32 = 0;
+    while (pi < fn.params.len()) {
+        var p: parser.ParamDecl = fn.params[pi];
+        var hit: boolean = !p.own && rc_seen_has(reassigned, p.name);
+        if (hit) {
+            var is_struct: boolean = rc_struct_decl_index(structs, p.type_name) >= 0;
+            var is_tuple: boolean = p.type_name.len() > 1 && p.type_name[0] == 40;
+            hit = is_struct || is_tuple;
+        }
+        if (hit && rc_type_string_array_free(p.type_name, structs, [])) { hit = false; }
+        if (hit && !rc_consumed_drop_wired(p.type_name, structs, [])) { hit = false; }
+        if (hit) { out = out.append(p.name); }
+        pi = pi + 1;
+    }
+    return out;
+}
+
 // rc_dump_str_lt is byte-wise lexicographic string less-than (there is no
 // string `<` operator), used to sort the name groups in rc_plan_dump the same
 // way native's sort.Strings orders them.
@@ -19819,6 +19999,33 @@ function rc_dump_str_lt(a: string, b: string): boolean {
 // Registries are derived per lower_func_for_noret's convention (the
 // module-local `*_of(funcs)` side-tables, not a cross-module fixed point).
 pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): string {
+    var head: string = "";
+    // consumedParams (line order matches native's dumpRcPlan): the params
+    // promoted to consumed-threading, name-sorted.
+    var cps: string[] = consumed_params_of(fn, structs);
+    if (cps.len() > 0) {
+        var sorted: string[] = [];
+        var ci: i32 = 0;
+        while (ci < cps.len()) {
+            var at: i32 = 0;
+            while (at < sorted.len() && rc_dump_str_lt(sorted[at], cps[ci])) { at = at + 1; }
+            var ns: string[] = [];
+            var q: i32 = 0;
+            while (q < at) { ns = ns.append(sorted[q]); q = q + 1; }
+            ns = ns.append(cps[ci]);
+            while (q < sorted.len()) { ns = ns.append(sorted[q]); q = q + 1; }
+            sorted = ns;
+            ci = ci + 1;
+        }
+        head = "consumedParams: ";
+        var co: i32 = 0;
+        while (co < sorted.len()) {
+            if (co > 0) { head = head + ","; }
+            head = head + sorted[co];
+            co = co + 1;
+        }
+        head = head + "\n";
+    }
     var arr_ret: string[] = [];
     var k: i32 = 0;
     while (k < funcs.len()) {
@@ -19826,7 +20033,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         k = k + 1;
     }
     var pd: PreciseDrops = precise_drop_names(fn.body, structs, arr_ret, strarr_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), borrowable_params_of(funcs));
-    if (pd.idxs.len() == 0) { return ""; }
+    if (pd.idxs.len() == 0) { return head; }
     // Distinct drop indices, insertion-sorted ascending (numeric — the native
     // renderer orders by parsed index, so "10" must sort after "9").
     var uidx: i32[] = [];
@@ -19850,7 +20057,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         }
         i = i + 1;
     }
-    var out: string = "preciseDrops: ";
+    var out: string = head + "preciseDrops: ";
     var u: i32 = 0;
     while (u < uidx.len()) {
         // Names dropped after statement uidx[u], insertion-sorted ascending.
