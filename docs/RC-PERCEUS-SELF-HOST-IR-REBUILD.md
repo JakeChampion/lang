@@ -1692,3 +1692,18 @@ over-release detector + the byte-identical x86-64 fixpoint:
   Until that mechanism exists in the self-host backend, the field-drop must stay
   limited to the single-pointer scalar cases (`string`, the leaksafe scalar arrays)
   whose inlined block is small.
+
+## Retired the early PoC drivers (2026-07-03, #4391 follow-up)
+
+The stack-IR proof-of-concept drivers from slices 1/3/7 — `ir_run.fern`
+(`Op[]` round-trip), `ir_x86.fern` + `ir_x86_run.fern` (the first
+IR→x86-64 backend), and their Go tests `TestSelfHostIRRoundTrip` /
+`TestSelfHostIRx86Run` / `TestSelfHostIRDiff` — are **retired**. They were
+smoke-test-only, i32-subset scaffolding that proved the AST→IR→machine-code
+shape end-to-end; the production multi-backend emitters
+`asm_ir.fern` / `asm_arm64_ir.fern` / `wasm_ir.fern` (slices 24–30) fully
+superseded them, carry the whole-language IR subset, and run the 250+ e2e
+fixtures. Removing them is the second sanctioned follow-up from
+`docs/SELFHOST-SSA-DECISION.md` (#4391) — retired before #3457 so the AST-emitter
+retirement deletes one PoC fallback fewer. The remaining slices' descriptions
+above are preserved as the historical rebuild record.

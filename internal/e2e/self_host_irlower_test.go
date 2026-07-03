@@ -148,8 +148,8 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		{"heap-live-grows", "function main(): i32 { var a = [1, 2, 3]; var b = [4, 5, 6]; var c = [7, 8, 9]; return __heap_used(); }", 60},
 		// f64 LOCALS / arithmetic / comparison / i32<->f64 casts now lower; f64
 		// modulo has no float form, so it's still out of subset -> lower bails
-		// (200). (f64 lower+run coverage lives in self_host_ir_x86_test / the
-		// IR-path differential suites; the round-trip evaluator here is
+		// (200). (f64 lower+run coverage lives in the production IR-path
+		// differential suites; the round-trip evaluator here is
 		// integer-only, so it can only exercise float programs that bail.)
 		{"f64-mod-bails", "function main(): i32 { var x: f64 = 5.5; var y: f64 = x % 2.0; if (y > 0.0) { return 1; } return 2; }", 200},
 		// Scalar (i32 / boolean) structs: a literal lowers to struct_make and

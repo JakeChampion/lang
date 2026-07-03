@@ -206,8 +206,8 @@ pub function op_ptr_width(): Op { return op0("ptr_width"); }
 // high-level array ops — layout-agnostic. The IR carries array SEMANTICS
 // (make / index / index-store / length / refcount read), not a byte layout;
 // each backend instruction-selects them into its OWN array memory layout
-// (the standalone ir_x86 backend's 4-byte freestanding header, asm.fern's
-// 8-byte `__fern_arr_box` rc/cap/len header, …). This is what lets the
+// (e.g. asm.fern's 8-byte `__fern_arr_box` rc/cap/len header vs the wasm
+// linear-memory slab). This is what lets the
 // production IR path emit asm.fern-compatible arrays without irlower baking
 // a single layout into the op stream (the target-agnostic-IR discipline:
 // layout lives in the backend, not the IR). `arr_make`'s i32_imm is the
@@ -881,7 +881,7 @@ pub function op_return(): Op { return op0("return"); }
 // enum + its `String()` / `intOp` (internal/ir/ir.go:44, :344, :13652). Native
 // dispatches every backend op on an INT `OpKind` (an O(1) compare); the
 // self-host still tags each `Op.kind` with a STRING, so every backend dispatch
-// (asm_ir / asm_arm64_ir / wasm_ir / irlower / ir_x86) runs an O(len) string
+// (asm_ir / asm_arm64_ir / wasm_ir / irlower) runs an O(len) string
 // compare inside its triple-nested emit loop, and each string tag fattens the
 // persistent Op box (the residual pinned on `Op.str` in
 // docs/IR-SELFCOMPILE-OOM-FINDINGS.md).

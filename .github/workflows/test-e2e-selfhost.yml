@@ -216,7 +216,7 @@ jobs:
           - { key: checker,   drivers: "checker_modload_run.fern" }
           - { key: ssa,       drivers: "ssa_run.fern,ssa_emit_run.fern" }
           - { key: cli,       drivers: "fern.fern" }
-          - { key: irx86,     drivers: "ir_x86_run.fern,irlower_run.fern" }
+          - { key: irx86,     drivers: "irlower_run.fern" }
           - { key: asmfile,   drivers: "asm_file_run.fern" }
     name: warm-selfhost-x86_64-${{ matrix.key }}
     runs-on: ubuntu-latest

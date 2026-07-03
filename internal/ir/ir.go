@@ -4741,9 +4741,9 @@ func (b *builder) computeFreeEligible() map[string]bool {
 							// argument may be RETAINED by the callee (stored into a container it
 							// returns — a struct field / array element that flows back out), which
 							// the intraprocedural escape analysis cannot see. Freeing it caller-
-							// side at last use then dangles the retained copy (observed:
-							// push_scope(kind, le, …) in ir_x86.fern stores `le` into an array
-							// field of the returned struct, and the native caller-side str_dec
+							// side at last use then dangles the retained copy (observed in a
+							// self-host codegen helper that stores a string arg into an array
+							// field of the returned struct, where the native caller-side str_dec
 							// recycled its box — corrupting nested control-flow codegen).
 							// Conservatively taint string-typed idents passed to a user function
 							// so they are not reclaimed here; the retained copy stays live (a leak
