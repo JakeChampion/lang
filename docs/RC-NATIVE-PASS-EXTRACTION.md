@@ -1,6 +1,6 @@
 # Extracting native Perceus RC into a discrete pass — rollout tracker
 
-Status: **slice 1 landed** (2026-07-03). Tracking issue: **#4393**.
+Status: **slices 1–4 landed** (2026-07-03). Tracking issue: **#4393**.
 Convergence-debt tracker: #4451 (this is a refactor of existing
 native surface, not new native-only surface, but it reshapes the
 exact layer goal 2 ports — keep it visible there).
@@ -66,25 +66,64 @@ two separable moves:
   `preciseDroppableType` → `dropFnNameFor` *records* into the
   shared `genEnumDrops`/`genTupleDrops` registries, so its call
   position is observable in generated-drop-fn order.)
-- **Slice 2: group the plan.** Move the analysis results off the
-  builder into an explicit per-function `rcPlan` struct (the
-  side-tables: consumedParams / freeEligible / movedLocals /
-  moveSites / arraySetInc / reuseSources / reuseConsumed / precise
-  drops), constructed by `computeRcAnalyses` and threaded to
-  lowering read-only. This is the struct goal 2 mirrors as
-  parallel arrays.
-- **Slice 3: carve the insertion helpers.** Move the Op-emitting
-  RC half (`emitRcDecLocalsAtExit*`, `emitPreciseDrop`,
-  `emitOwnedTempStackDrop`, the drop-fn name routing + generated
-  drop-body worklist) into `rc_insert.go` behind a named
-  `rcInserter` surface, still called from the same lowering sites.
-- **Slice 4+: true post-lowering insertion.** Where the plan
-  allows, replace in-lowering emission with insertion on the
-  lowered `[]Op` (entry prologue and exit sweep first — they sit
-  at structural boundaries). Each conversion is A/B'd with the
-  oracle above; anything whose placement depends on mid-lowering
-  state (scratch-slot allocation, registry recording order) stays
-  in-lowering until the dependency is broken.
+- **Slice 2 (landed): group the plan.** The per-function decision
+  tables (consumedParams / freeEligible / movedLocals / moveSites /
+  arraySetInc / reuseSources / reuseConsumed / preciseDrops) moved
+  off the builder into an explicit `rcPlan` struct (`b.rc`),
+  constructed by `computeRcAnalyses`. This is the struct goal 2
+  mirrors as parallel arrays. Two documented wrinkles:
+  `preciseDrops` is filled at its later `lowerFunc` call site (the
+  drop-fn registry-order constraint), and the C2 consuming-match
+  reuse still registers its scrutinee pairing in `reuseSources`
+  mid-lowering — an insertion-time decision a later slice should
+  fold into the plan.
+- **Slice 3 (landed): carve the insertion helpers.** The
+  Op-emitting RC half moved verbatim to `rc_insert.go` (~2.7k
+  lines, 44 functions): the exit dec sweep
+  (`emitRcDecLocalsAtExit*`), precise drops, owned-temp stack
+  drops, alias incs, reinit-overwrite / reuse-site old-field
+  drops, the owned-temp classifiers (`freshOwnedRcTempType` /
+  `ownedCallResultType` / `reclaimableMatchScrutinee`), and the
+  whole drop-specialisation subsystem (`dropFnNameFor` routing +
+  the `gen*DropFn` bodies the LowerWith worklist materialises).
+  Still called from the same lowering sites in ir.go (in-build
+  insertion); `ir.go` is down from 20.1k to 15.2k lines.
+- **Slice 4 (landed): first true post-lowering insertion + the
+  feasibility boundary.** The consumed-param entry retain-incs are
+  now spliced into the LOWERED `[]Op` after the whole body is
+  built (`insertConsumedParamEntryIncs`, `rc_insert.go`): lowerFunc
+  captures the prologue-boundary op index + position, and the pass
+  inserts the inc sequence there post-hoc — byte-identical because
+  the splice allocates no slots and nothing records absolute op
+  indices (control flow is depth-relative). That is the template
+  for further conversions: capture an anchor, emit nothing
+  in-build, splice on the finished stream, A/B the result.
+
+  The honest boundary, measured against the byte-identity
+  constraint (not against taste):
+  - **Exit dec sweep**: blocked as a post-pass. Each `return`'s
+    sweep can allocate fresh scratch slots (the enum-param tag
+    stash, #2828) whose numbering interleaves with body scratch
+    slots in emission order; post-hoc insertion would renumber
+    them. Convertible only after scratch allocation is itself
+    hoisted or virtualised.
+  - **Alias incs / overwrite decs / precise drops / reuse
+    plumbing**: inherent to expression lowering — they are part of
+    each expression's value production, and their positions are
+    AST-statement facts the op stream does not preserve. Deriving
+    identical placement from lowered IR alone means reconstructing
+    statement boundaries — a reimplementation, not a refactor
+    (`RC-PERCEUS-SELF-HOST-IR.md` §1's premise correction: the
+    analyses are AST-level *by design*, and that is faithful for
+    the goal-2 port too).
+
+  Net: "a discrete IR→IR pass" lands as *discrete stages around
+  the builder* — plan (rc_analysis.go) → in-build insertion at
+  named sites (rc_insert.go) → post-lowering splices where anchors
+  suffice — rather than a monolithic post-pass. The goal-2 port
+  consumes exactly this decomposition: port each analysis as a
+  pure AST→tables function (differential-diff the tables), then
+  port the insertion helpers site by site.
 - **Paired simplifications** (same review, each shrinks what the
   port mirrors): unify the type-classification predicates
   (`isOwnedByDefaultType`, `preciseDroppableType`,

@@ -27,9 +27,12 @@
 //     `struct_set` (width-0 i32 / boolean / pointer fields) lowered to
 //     build_func's tag-prefixed layout (slot 0 = tag, field f at slot f+1).
 //     Width-64 (f64 / i64) fields bail.
-// Everything else (value-producing ifs, i64 / f64 arrays + struct fields,
-// map / float ops, the i64 width) sets `ok=false` so a caller falls back,
-// mirroring how native's lift errors. Validated without a backend by running the lifted
+//   - slice 4: TUPLES — `tuple_make` / `tuple_get` / `tuple_set` (scalar /
+//     pointer elements) lowered to build_func's ExprTuple layout (element i
+//     at slot i, no prefix). Width-64 elements bail.
+// Everything else (value-producing ifs, i64 / f64 arrays + struct / tuple
+// elements, map / float ops, the i64 width) sets `ok=false` so a caller falls
+// back, mirroring how native's lift errors. Validated without a backend by running the lifted
 // SFunc through `ssa.eval_func` (the ssa.fern self-validation pattern).
 //
 // The lift is a single linear pass over the op stream; the structured-control-
@@ -460,6 +463,60 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[])
                 cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: soff3, args: [], imm: op.i32_imm + 1, str: "" });
                 var ssv3: i32 = nvals; nvals = nvals + 1;
                 cur_insts = cur_insts.append(ssa.SInst { kind: "store_elem", result: ssv3, args: [sp3, soff3, sv3], imm: 0, str: "" });
+            }
+        } else if (k == "tuple_make") {
+            // A tuple `(a, b, …)` → a heap box with element i at slot i (NO
+            // tag / length prefix — unlike arrays / structs), matching
+            // build_func's ExprTuple. The n element values are on the operand
+            // stack (element 0 deepest). 64-bit elements can't reach here (their
+            // producers bail), so every element stores i32-wide (imm 0).
+            if (stack.len() < op.i32_imm) { ok = false; }
+            else {
+                var tn2: i32 = op.i32_imm;
+                var telems: i32[] = [];
+                var ttd: i32 = tn2 - 1;
+                while (ttd >= 0) { telems = telems.append(stack[stack.len() - 1 - ttd]); ttd = ttd - 1; }
+                var tte: i32 = 0;
+                while (tte < tn2) { stack = drop_last(stack); tte = tte + 1; }
+                var th: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "alloc", result: th, args: [], imm: tn2, str: "" });
+                var tm2: i32 = 0;
+                while (tm2 < tn2) {
+                    var tei: i32 = nvals; nvals = nvals + 1;
+                    cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: tei, args: [], imm: tm2, str: "" });
+                    var tesv: i32 = nvals; nvals = nvals + 1;
+                    cur_insts = cur_insts.append(ssa.SInst { kind: "store_elem", result: tesv, args: [th, tei, telems[tm2]], imm: 0, str: "" });
+                    tm2 = tm2 + 1;
+                }
+                stack = stack.append(th);
+            }
+        } else if (k == "tuple_get") {
+            // t.i → element at slot i (no prefix), mirroring build_func's numeric
+            // ExprFieldAccess. Width-64 (i64 / f64) elements are a later slice.
+            if (op.width == 64) { ok = false; }
+            else if (stack.len() < 1) { ok = false; }
+            else {
+                var tp: i32 = stack[stack.len() - 1];
+                stack = drop_last(stack);
+                var tgi2: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: tgi2, args: [], imm: op.i32_imm, str: "" });
+                var tglv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "load_elem", result: tglv, args: [tp, tgi2], imm: 0, str: "" });
+                stack = stack.append(tglv);
+            }
+        } else if (k == "tuple_set") {
+            // In-place element write (the tuple constructor-reuse path). Stack is
+            // [tuple, value] (value on top). Width-64 elements bail.
+            if (op.width == 64) { ok = false; }
+            else if (stack.len() < 2) { ok = false; }
+            else {
+                var tsv: i32 = stack[stack.len() - 1];
+                var tsp: i32 = stack[stack.len() - 2];
+                stack = drop_last2(stack);
+                var tsi: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "const_int", result: tsi, args: [], imm: op.i32_imm, str: "" });
+                var tssv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind: "store_elem", result: tssv, args: [tsp, tsi, tsv], imm: 0, str: "" });
             }
         } else if (k == "drop") {
             if (stack.len() < 1) { ok = false; } else { stack = drop_last(stack); }

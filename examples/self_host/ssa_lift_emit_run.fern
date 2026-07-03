@@ -136,6 +136,22 @@ function fn_specs(name: string): FnSpec[] {
             ] }
         ];
     }
+    if (name == "tuplesum") {
+        // var t = (10, 32); return t.0 + t.1;  => 42
+        // Exercises the slice-4 tuple lift (tuple_make / tuple_get) through
+        // optimise / regalloc / emit on both backends. tuple_make pops the two
+        // elements (element 0 deepest) and pushes the prefix-free box (element
+        // i at slot i).
+        return [
+            FnSpec { name: "main", nparams: 0, nslots: 1, ops: [
+                ir.op_const_i32(10), ir.op_const_i32(32),
+                ir.op_tuple_make(2), ir.op_store_local(0),
+                ir.op_load_local(0), ir.op_tuple_get(0),
+                ir.op_load_local(0), ir.op_tuple_get(1), ir.op_bin("add", 0, false),
+                ir.op_return()
+            ] }
+        ];
+    }
     return [];
 }
 

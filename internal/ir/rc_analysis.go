@@ -22,6 +22,73 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 )
 
+// rcPlan is the per-function Perceus RC plan: every decision table the
+// analyses in this file compute, grouped so lowering consults one named
+// component (and so the goal-2 port has a single struct to mirror as the
+// self-host's parallel arrays). Computed by computeRcAnalyses before any
+// Op is emitted; preciseDrops is filled at its later lowerFunc call site
+// (drop-fn registry-order constraint, see computeRcAnalyses). All tables
+// are read-only during lowering, with one documented exception: the C2
+// consuming-match reuse registers its scrutinee pairing in reuseSources
+// mid-lowering (the reuseCtor hook in (*builder).stmt's match arm) — an
+// insertion-time decision that a later slice should fold into the plan.
+type rcPlan struct {
+	// consumedParams[name] is true for a pointer-shaped struct/tuple/enum
+	// PARAMETER that the borrow model would keep borrowed (its type is not
+	// owned-by-default — e.g. it carries a string field) but that the function
+	// THREADS: it is reassigned in the body (`s = s.emit(..)`, `ctx =
+	// check_stmt(.., ctx)`). The reassignment-overwrite dec's the old value, so
+	// a borrowed such param is over-released (the caller's value dec'd with no
+	// caller-side inc). computeConsumedParams promotes it to callee-owned: it is
+	// NOT borrow-tainted in computeFreeEligible (so it becomes freeEligible and
+	// the overwrite / exit-sweep deep-drop it), and lowerFunc emits a single
+	// entry-inc so the first overwrite-dec balances. This is purely
+	// callee-internal — the call ABI is unchanged (the caller still passes it
+	// borrowed), so no caller-side coordination is needed. It is the
+	// borrow-inference fix for the O(N^2) self-reassign accumulator leak: the
+	// self-host SSA builder / emitter thread their string-bearing accumulators
+	// through such params, which previously could not deep-drop the old value.
+	consumedParams map[string]bool
+	// freeEligible[name] is true for array-typed locals the
+	// borrow-aware analysis proved are OWNED — safe for the array
+	// dec sites to return to the freelist at rc==0. Borrowed /
+	// borrowed-derived locals are absent (false) and use a plain
+	// dec instead. Computed once by computeFreeEligible. See
+	// docs/RC-PERCEUS-PLAN.md (the borrow⇄free resolution).
+	freeEligible map[string]bool
+	// movedLocals[name] is true for an owned rc local whose LAST
+	// occurrence is a top-level alias that always executes (Phase 4
+	// move-on-alias): the alias skips its transfer inc and the exit
+	// sweep skips the local's dec (a net-zero pair). Computed by
+	// computeMovedLocals.
+	movedLocals map[string]bool
+	// moveSites[stmt] is true for the specific *ast.Var / *ast.Assign
+	// alias statement that is a move (skips its transfer inc). Keyed
+	// per-site so only the local's LAST alias moves — earlier aliases
+	// of the same local keep their inc.
+	moveSites map[ast.Node]bool
+	// arraySetInc[call] is true for a `__method_Array_set` (`.with`) call
+	// whose receiver is LIVE after the call (read again, and not a
+	// reassign-to-self), so emitArraySet must rc-inc the receiver buffer
+	// before __fern_arr_cow_inplace to force the copy path — otherwise the
+	// rc==1 in-place reuse aliases/mutates the still-live receiver (#2832).
+	arraySetInc map[*ast.Call]bool
+	// reuseSources pairs a construction site C (the *ast.StructLit or
+	// *ast.TupleLit node) with the name of a dead, owned struct/tuple local D
+	// whose box C reuses in place — the general FBIP win (Perceus reuse
+	// token threaded D's drop → C's alloc, across DIFFERENT locals, beyond
+	// the self-overwrite tryStructReuseOverwrite). reuseConsumed[D] marks
+	// such a D so computePreciseDrops doesn't ALSO drop it (the reuse
+	// already consumes D's box / dec's it on the shared path). See
+	// computeReuseSources.
+	reuseSources  map[ast.Expr]string
+	reuseConsumed map[string]bool
+	// preciseDrops[stmtIdx] lists the owned locals to deep-drop + zero right
+	// after lowering that top-level statement (Perceus garbage-free precise
+	// drops — computePreciseDrops).
+	preciseDrops map[int][]string
+}
+
 // computeRcAnalyses runs every per-function Perceus RC decision analysis, in
 // dependency order, and stores the resulting side-tables on the builder for
 // lowering to consult. This is the one place the per-function RC "plan" is
@@ -32,15 +99,15 @@ func (b *builder) computeRcAnalyses() {
 	// reassignment-overwrite can deep-drop the old value without over-releasing
 	// (paired with the entry-inc emitted by lowerFunc). Computed before
 	// freeEligible, which consults it (a consumed param is not borrow-tainted).
-	b.consumedParams = b.computeConsumedParams()
+	b.rc.consumedParams = b.computeConsumedParams()
 	// Borrow-aware free analysis: which array locals are OWNED and
 	// thus safe to return to the freelist at rc==0. Borrowed /
 	// borrowed-derived locals are excluded (only the owner frees).
-	b.freeEligible = b.computeFreeEligible()
-	b.moveSites = map[ast.Node]bool{}
-	b.movedLocals = b.computeMovedLocals()
-	b.arraySetInc = b.computeArraySetIncs()
-	b.reuseSources, b.reuseConsumed = b.computeReuseSources()
+	b.rc.freeEligible = b.computeFreeEligible()
+	b.rc.moveSites = map[ast.Node]bool{}
+	b.rc.movedLocals = b.computeMovedLocals()
+	b.rc.arraySetInc = b.computeArraySetIncs()
+	b.rc.reuseSources, b.rc.reuseConsumed = b.computeReuseSources()
 }
 
 func findReturnsNoParamEscape(prog *ast.Program, info *checker.Info) map[string]bool {
@@ -278,7 +345,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 		// returned-as-alias), so an owned-but-escaping param leaks safely
 		// instead of double-freeing. Move-on-consume (passing it onward to
 		// another `own` param) skips its drop via computeMovedLocals.
-		if !p.Own && !b.paramOwnedByDefault(p.Type, i) && !b.consumedParams[p.Name] {
+		if !p.Own && !b.paramOwnedByDefault(p.Type, i) && !b.rc.consumedParams[p.Name] {
 			tainted[p.Name] = true
 		}
 	}
@@ -611,7 +678,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 		// by the callee; a consumed-threaded param (computeConsumedParams) is
 		// promoted to callee-owned the same way. An escaped one was re-tainted
 		// and is skipped here.
-		if (!p.Own && !b.paramOwnedByDefault(p.Type, i) && !b.consumedParams[p.Name]) || tainted[p.Name] {
+		if (!p.Own && !b.paramOwnedByDefault(p.Type, i) && !b.rc.consumedParams[p.Name]) || tainted[p.Name] {
 			continue
 		}
 		switch t := p.Type.(type) {
@@ -829,7 +896,7 @@ func (b *builder) computeMovedLocals() map[string]bool {
 	sawReturn := false
 	for _, st := range b.fn.Body.Stmts {
 		if !sawReturn {
-			// The lowering checks b.moveSites on the Var node or the
+			// The lowering checks b.rc.moveSites on the Var node or the
 			// inner Assign node (assignments are ExprStmt-wrapped), so
 			// key the site on whichever the lowering will see.
 			var rhs *ast.Ident
@@ -856,13 +923,13 @@ func (b *builder) computeMovedLocals() map[string]bool {
 				// is an owned rc local at its last use, that inc and t's
 				// exit-sweep dec cancel — move t into the temp, which
 				// frees the box once. Keyed on the Destructure node (the
-				// lowering checks b.moveSites[n] there).
+				// lowering checks b.rc.moveSites[n] there).
 				rhs, _ = s.Init.(*ast.Ident)
 				site = s
 			}
 			if rhs != nil && b.isOwnedRcLocal(rhs.Name) && identIdx[rhs] == maxIdx[rhs.Name] {
 				moved[rhs.Name] = true
-				b.moveSites[site] = true
+				b.rc.moveSites[site] = true
 			}
 			// Move-on-construction: a struct literal built at this
 			// top-level statement that consumes an owned rc local at the
@@ -939,7 +1006,7 @@ func (b *builder) computeMovedLocals() map[string]bool {
 // non-string rc-tracked field at the local's LAST use
 // (`var s = Wrap{ inner: x }`, `x` dead after), the field-init inc and
 // x's exit-sweep dec cancel — x's single reference is moved into the
-// struct's field. Skipping the inc (gated on b.moveSites[fieldIdent] at
+// struct's field. Skipping the inc (gated on b.rc.moveSites[fieldIdent] at
 // the StructLit lowering) and x's dec (moved[x] excludes it from the
 // exit sweep) leaves the struct owning x; the struct's own field-drop
 // (emitDec) releases it exactly once, so the net rc is unchanged.
@@ -963,7 +1030,7 @@ func (b *builder) markConstructionMoves(val ast.Expr, identIdx map[*ast.Ident]in
 			return
 		}
 		moved[id.Name] = true
-		b.moveSites[id] = true
+		b.rc.moveSites[id] = true
 	}
 	switch lit := val.(type) {
 	case *ast.StructLit:
@@ -1033,7 +1100,7 @@ func (b *builder) markConstructionMoves(val ast.Expr, identIdx map[*ast.Ident]in
 			if _, isDyn := b.exprType(cap).(ast.DynTraitType); isDyn && b.dynRcSupported {
 				if id, ok := cap.(*ast.Ident); ok && identIdx[id] == maxIdx[id.Name] {
 					moved[id.Name] = true
-					b.moveSites[id] = true
+					b.rc.moveSites[id] = true
 				}
 			}
 		}
@@ -1105,11 +1172,11 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 	// the caller's array). This holds even at the param's last use and for a
 	// reassign-to-self (`xs = xs.with(...)`): the local rebind is fine, but the
 	// underlying buffer is the caller's. Same borrow predicate as
-	// computeFreeEligible (which runs before this — b.consumedParams /
-	// b.freeEligible are already populated). Force the inc so cow copies.
+	// computeFreeEligible (which runs before this — b.rc.consumedParams /
+	// b.rc.freeEligible are already populated). Force the inc so cow copies.
 	borrowedParam := map[string]bool{}
 	for i, p := range b.fn.Params {
-		if !p.Own && !b.paramOwnedByDefault(p.Type, i) && !b.consumedParams[p.Name] {
+		if !p.Own && !b.paramOwnedByDefault(p.Type, i) && !b.rc.consumedParams[p.Name] {
 			borrowedParam[p.Name] = true
 		}
 	}
@@ -1354,10 +1421,10 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 			// (observed: `var a=[d]; var c=T{…}` made a[0] read as c). The exit
 			// sweep already excludes movedLocals (computePreciseDrops); the reuse
 			// pass must too.
-			if b.movedLocals[dName] {
+			if b.rc.movedLocals[dName] {
 				continue
 			}
-			if !b.freeEligible[dName] || !b.localNameUnique(dName) {
+			if !b.rc.freeEligible[dName] || !b.localNameUnique(dName) {
 				continue
 			}
 			dKind, dTypeName, dClass, ok := reuseClassOf(dName)
@@ -1564,14 +1631,14 @@ func (b *builder) computePreciseDrops() map[int][]string {
 	}
 	out := map[int][]string{}
 	for name, di := range declIdx {
-		if reassigned[name] || b.movedLocals[name] || !b.freeEligible[name] || !b.localNameUnique(name) {
+		if reassigned[name] || b.rc.movedLocals[name] || !b.rc.freeEligible[name] || !b.localNameUnique(name) {
 			continue
 		}
 		// A local whose box is handed off to a general-FBIP reuse site
 		// (computeReuseSources) is already consumed there (its box taken, or
 		// dec'd on the shared path, and its slot zeroed) — dropping it again
 		// here would double-release. The reuse site subsumes its drop.
-		if b.reuseConsumed[name] {
+		if b.rc.reuseConsumed[name] {
 			continue
 		}
 		if !b.preciseDroppableType(name) {

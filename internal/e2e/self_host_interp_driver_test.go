@@ -183,6 +183,18 @@ var interpProgs = []struct {
 	{"arr-append-len", "function main(): i32 { var a: i32[] = [1, 2]; var b: i32[] = a.append(9); return b.len() as i32; }", 3},
 	{"arr-append-value", "function main(): i32 { var a: i32[] = [1, 2]; var b: i32[] = a.append(9); return b[2]; }", 9},
 	{"arr-append-immutable", "function main(): i32 { var a: i32[] = [1, 2]; var b: i32[] = a.append(9); return a.len() as i32 * 10 + b.len() as i32; }", 23},
+
+	// Top-level `const` references: the parser desugars `const N = expr;`
+	// into a zero-arg function `N()` and the native compiler lowers a bare
+	// `N` reference to a call. The interp's ExprIdent handler only did an
+	// env lookup, so a bare const reference errored as an undefined
+	// identifier. Now a bare ident with no local binding that names a
+	// zero-arg, non-method function evaluates as a nullary call.
+	{"const-ref", "const N: i32 = 42; function main(): i32 { return N; }", 42},
+	{"const-in-expr", "const N: i32 = 10; function main(): i32 { return N + N * 2; }", 30},
+	{"const-two", "const A: i32 = 3; const B: i32 = 4; function main(): i32 { return A * B; }", 12},
+	{"const-in-callee", "const K: i32 = 5; function helper(): i32 { return K * 2; } function main(): i32 { return helper(); }", 10},
+	{"const-string", "const S: string = \"hello\"; function main(): i32 { var s = S; return s.len() as i32; }", 5},
 }
 
 // TestSelfHostInterpDriverX86_64 is the keystone of the inference
