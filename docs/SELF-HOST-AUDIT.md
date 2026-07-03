@@ -195,10 +195,15 @@ findings. Ranked by leverage.
   `parse_type_ref` / `render_type_ref` pair (the single place the
   `[]` / `(…)` / `Name[…]` / `", "` grammar is scanned), with a round-trip golden
   (`typeref_run.fern` + `TestSelfHostTypeRef`: `render(parse s) == s` over the
-  full grammar corpus + structure spot-checks). Purely additive — no consumer is
-  retargeted yet. _Remaining:_ retarget each byte-scan decoder onto
-  `parse_type_ref` (asmcore `ty_from_name` / `split_tuple_ret` /
-  `tuple_ret_tag_at`, the checker's six `type_from_name*`, wasm), then have the
+  full grammar corpus + structure spot-checks).
+  _Slice 2 landed:_ asmcore `ty_from_name` now decodes via
+  `ty_from_ref(parse_type_ref(name))` — a structured pattern-match — retiring its
+  hand-rolled byte scan (and the `generic_value_ty` / `generic_key_is_i32` helper
+  scans it drove). Byte-identical, locked by a 51-case golden
+  (`ty_from_ref_run.fern` + `TestSelfHostTyFromRef`, `ty_tag(ty_from_name s)` over
+  every decode branch) plus the bootstrap / per-module fixpoints. _Remaining:_
+  retarget the rest onto `parse_type_ref` — asmcore `split_tuple_ret` /
+  `tuple_ret_tag_at`, the checker's six `type_from_name*`, wasm — then have the
   parser store `TypeRef` directly so the string becomes render output. Unblocks
   #4394 lever 1 (symbol interning ripples into this type system).
 
