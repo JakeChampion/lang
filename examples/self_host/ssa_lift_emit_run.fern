@@ -239,6 +239,17 @@ function fn_specs(name: string): FnSpec[] {
             ] }
         ];
     }
+    if (name == "argslen") {
+        // return args().len();  => 1 (the program name; run with no extra argv)
+        // Exercises the slice-12 `args` lift (the argv string[] + str_len)
+        // through optimise / regalloc / emit on both backends.
+        return [
+            FnSpec { name: "main", nparams: 0, nslots: 0, ops: [
+                ir.op_args(), ir.op_str_len(),
+                ir.op_return()
+            ] }
+        ];
+    }
     return [];
 }
 
