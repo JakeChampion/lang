@@ -749,6 +749,11 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 	for name := range b.rc.movedLocals {
 		seen[name] = true
 	}
+	// Borrowed-view aliases (#4402 opt 1) were never inc'd — their dec is
+	// the other half of the cancelled pair.
+	for name := range b.rc.borrowedAlias {
+		seen[name] = true
+	}
 	for _, v := range b.info.Locals[b.fn] {
 		if !rcTracked(v.Type) {
 			continue

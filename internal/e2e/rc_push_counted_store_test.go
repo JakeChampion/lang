@@ -206,3 +206,37 @@ func TestWasmMatchExprYieldNoUnderflow(t *testing.T) {
 		t.Errorf("match-yield release must stay balanced: want exit 0, got %d", got)
 	}
 }
+
+// #4402 opt 1 — dead-alias cancellation balance: reads through the borrowed
+// view stay valid for the whole function, releases stay exact, and the churn
+// loop stays flat (x reclaims once per call; the elided pair adds nothing).
+const deadAliasBalanceSrc = `function work(k: i32): i32 {
+    var x: i32[][] = [[k, k + 1], [k + 2]];
+    var y: i32[][] = x;
+    return y[1][0] + y[0][1] + x[0][0];
+}
+function main(): i32 {
+    var before: i32 = __heap_bump_bytes();
+    var i: i32 = 0;
+    var s: i32 = 0;
+    while (i < 5000) {
+        s = s + work(i);
+        i = i + 1;
+    }
+    if (s == 0) { return 1; }
+    if (__rc_underflow_count() != 0) { return 2; }
+    if (__heap_bump_bytes() - before > 65536) { return 3; }
+    return 0;
+}`
+
+func TestX86_64DeadAliasCancellationBalanced(t *testing.T) {
+	if got := mustRunX86_64FreeOn(t, deadAliasBalanceSrc); got != 0 {
+		t.Errorf("dead-alias cancellation must stay balanced and flat: want exit 0, got %d", got)
+	}
+}
+
+func TestWasmDeadAliasCancellationBalanced(t *testing.T) {
+	if got := runWasm(t, deadAliasBalanceSrc); got != 0 {
+		t.Errorf("dead-alias cancellation must stay balanced and flat: want exit 0, got %d", got)
+	}
+}
