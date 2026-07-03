@@ -152,6 +152,21 @@ The standing objective is, in order:
 When a PR merges and there's no more specific instruction, the default
 next task is the next increment toward goal 1 (then goal 2).
 
+**Native convergence policy — reference on any native-touching work.**
+`docs/NATIVE-CONVERGENCE.md` governs how `internal/` (native) and the
+self-host compiler are meant to converge instead of drifting forever:
+after goal 2 reaches parity and the freeze preconditions go green,
+`internal/` accepts only bugfixes, oracle needs, and whatever the
+self-host sources require to bootstrap ("Go 1.4 rule") — new language
+features land self-host-first/only from that point on. Until the
+freeze fires, treat every new native-only feature as a debt entry, not
+a free win, and prefer landing new surface self-host-first where the
+fixpoint allows it. Issue #4451 is the standing tracker for the freeze
+preconditions — reference it from any issue/PR that adds native-only
+surface (`internal/ir`, `internal/interp`, the codegen backends) or
+touches the differential/parity suites, so the debt stays visible in
+one place instead of tribal knowledge.
+
 **Finding real IR-subset gaps (probing methodology — learned the hard
 way).** The *per-function* IR subset is now mature: most valid
 constructs (closures incl. nested, matches incl. guards/nested,

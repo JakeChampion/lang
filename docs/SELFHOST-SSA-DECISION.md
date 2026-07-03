@@ -93,10 +93,13 @@ We **declare the stack IR the production lowering** and demote SSA
   whole parity axis. Land it **before** #3457 so the retirement removes one
   fallback, not two.
 
-- **Retire the superseded `ir_x86.fern` + `ir_run` / `ir_x86_run` PoC**
-  (sanctioned follow-up). These are the early stack-IR proof-of-concept
+- **Retire the superseded `ir_x86.fern` + `ir_run` / `ir_x86_run` PoC** ✅
+  (done — #4391 follow-up). These were the early stack-IR proof-of-concept
   (smoke-test only, a handful of references), superseded by
-  `asm_ir.fern` / `asm_arm64_ir.fern` / `wasm_ir.fern`.
+  `asm_ir.fern` / `asm_arm64_ir.fern` / `wasm_ir.fern`. Removed with their
+  Go tests (`TestSelfHostIRRoundTrip` / `TestSelfHostIRx86Run` /
+  `TestSelfHostIRDiff`); see the retirement note in
+  `docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md`.
 
 The `-ssa` opt-in and the `ssa_lift.fern` optimiser entry are deliberately
 kept: SSA stays a valid *experimental* lowering and a live **optimiser**
