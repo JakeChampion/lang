@@ -4980,59 +4980,87 @@ func (b *builder) isOwnedByDefaultType(t ast.Type) bool {
 	return false
 }
 
-// paramBorrowable reports whether parameter `i` of function `fnName` is kept
-// BORROWED by borrow inference (BorrowInferEnabled): the escape analysis proved
-// it cannot escape the callee, so the owned-by-default inc/dec pair is redundant
-// (the value can't outlive the call frame; the caller still owns it and reclaims
-// a fresh-temp arg through the arg-temp path). Both the definition side and the
-// call site consult this so they agree on which params skip the inc/dec.
-func (b *builder) paramBorrowable(fnName string, i int) bool {
-	esc, ok := b.paramEscapes[fnName]
-	nonEscaping := ok && i < len(esc) && !esc[i]
-	if !ast.BorrowInferEnabled {
-		// Owned model: params are reclaimed at the callee's exit — EXCEPT a
-		// read-only comparator (an Eq / Hash trait method). The type-erased
-		// Map runtime calls hash_fn / eq_fn on its BORROWED stored keys via a
-		// function value, so an owned-model exit-dec there would free the
-		// map's own key (corruption at scale). These methods never escape
-		// self / other, so borrowing is sound — gated on the escape facts as a
-		// safety net, and rooted in the same per-function escape analysis the
-		// borrow model uses, so owned and borrow agree on them. #2671.
-		return nonEscaping && b.readOnlyComparators[fnName]
+// paramVerdict is THE per-(function, param) ownership classification (#4478):
+// one ladder, consulted by both the definition side (paramOwnedByDefault) and
+// the call site (calleeParamOwnedByDefault), so the two can never disagree on
+// which params carry the owned-by-default inc/dec pair. It replaces the
+// paramBorrowable / paramOwnedByDefault / calleeParamOwnedByDefault predicate
+// trio, whose def/call agreement was previously by convention (each site
+// re-intersecting paramEscapes / readOnlyComparators / trmcFuncs /
+// trmcConsumeSafe). The consumed-threaded promotion (rc.consumedParams) stays
+// a separate def-side-only table: it changes only callee-internal reclamation,
+// never the call ABI, and is checked alongside the verdict at its sites.
+type paramVerdict uint8
+
+const (
+	// paramVerdictNotOwnedType: the parameter's TYPE is outside the
+	// owned-by-default set (scalar, or a string/array/Map-bearing composite —
+	// isOwnedByDefaultType). No inc/dec pair on either side.
+	paramVerdictNotOwnedType paramVerdict = iota
+	// paramVerdictOwned: the callee reclaims the param at exit; the caller
+	// retains an aliased argument.
+	paramVerdictOwned
+	// paramVerdictBorrowed: borrow inference (BorrowInferEnabled) proved the
+	// param non-escaping — the owned inc/dec pair is redundant (the value
+	// cannot outlive the call frame; the caller still owns and reclaims it).
+	paramVerdictBorrowed
+	// paramVerdictReadOnlyComparator: an Eq / Hash trait method param borrows
+	// even under the owned model. The type-erased Map runtime calls hash_fn /
+	// eq_fn on its BORROWED stored keys via a function value, so an
+	// owned-model exit-dec there would free the map's own key (corruption at
+	// scale). Gated on the same escape facts as the borrow model, so owned
+	// and borrow agree on them. #2671.
+	paramVerdictReadOnlyComparator
+	// paramVerdictTrmcExcluded: the function lowers via TRMC and its exit
+	// bypasses the param sweep — not owned in the body, not owned at the
+	// call site.
+	paramVerdictTrmcExcluded
+	// paramVerdictTrmcConsume: a consume-safe TRMC callee frees its scrutinee
+	// cell-by-cell in the loop, so it IS owned at the CALL site no matter
+	// what the escape analysis says (borrow inference must not flip it to
+	// borrowed — the caller would also reclaim the arg the loop already
+	// freed: a double free). Still excluded on the definition side (the TRMC
+	// exit bypasses the sweep; the loop is the reclamation).
+	paramVerdictTrmcConsume
+)
+
+// paramVerdict classifies parameter `i` (declared type `t`) of function
+// `fnName` — the single ownership ladder both sides read. Precedence:
+// type-eligibility, then TRMC (consume-safe before plain — the consume-safe
+// call-site ownership overrides the escape facts), then the borrow facts.
+func (b *builder) paramVerdict(fnName string, t ast.Type, i int) paramVerdict {
+	if !b.isOwnedByDefaultType(t) {
+		return paramVerdictNotOwnedType
 	}
-	return nonEscaping
+	if b.trmcConsumeSafe[fnName] {
+		return paramVerdictTrmcConsume
+	}
+	if b.trmcFuncs[fnName] {
+		return paramVerdictTrmcExcluded
+	}
+	if esc, ok := b.paramEscapes[fnName]; ok && i < len(esc) && !esc[i] {
+		if ast.BorrowInferEnabled {
+			return paramVerdictBorrowed
+		}
+		if b.readOnlyComparators[fnName] {
+			return paramVerdictReadOnlyComparator
+		}
+	}
+	return paramVerdictOwned
 }
 
 // paramOwnedByDefault: a parameter of the CURRENT function is owned-by-default
-// unless the function lowers via TRMC (its exit bypasses the param sweep) or
-// borrow inference keeps it borrowed (non-escaping → the exit dec is redundant).
+// (reclaimed by this function's exit sweep) exactly when its verdict is Owned.
 func (b *builder) paramOwnedByDefault(t ast.Type, i int) bool {
-	return b.isOwnedByDefaultType(t) && !b.trmcFuncs[b.fn.Name] && !b.paramBorrowable(b.fn.Name, i)
+	return b.paramVerdict(b.fn.Name, t, i) == paramVerdictOwned
 }
 
 // calleeParamOwnedByDefault: the CALLEE reclaims this parameter (so the caller
-// must retain an aliased arg) unless the callee lowers via TRMC — except a
-// consume-safe TRMC callee, which DOES reclaim its scrutinee cell-by-cell in the
-// loop and so is owned-by-default at the call site — or borrow inference keeps
-// the callee's param borrowed (non-escaping → the caller's retain inc is
-// redundant). The escape fact is global per function, so this matches the
-// callee's own paramOwnedByDefault verdict.
+// must retain an aliased arg). True for Owned and — call-site only — for the
+// consume-safe TRMC verdict, whose loop frees the scrutinee cell-by-cell.
 func (b *builder) calleeParamOwnedByDefault(callee string, t ast.Type, i int) bool {
-	if !b.isOwnedByDefaultType(t) {
-		return false
-	}
-	// A consume-safe TRMC callee ALWAYS frees its scrutinee cell-by-cell in the
-	// loop, so it is owned at the call site no matter what the escape analysis
-	// says — borrow inference must not flip it to borrowed (the caller would then
-	// also reclaim the arg the loop already freed: a double free). This takes
-	// precedence over paramBorrowable.
-	if b.trmcConsumeSafe[callee] {
-		return true
-	}
-	if b.paramBorrowable(callee, i) {
-		return false
-	}
-	return !b.trmcFuncs[callee]
+	v := b.paramVerdict(callee, t, i)
+	return v == paramVerdictOwned || v == paramVerdictTrmcConsume
 }
 
 // enumRcPayloadsEligibleForValue is the expression form: true when `e` is a

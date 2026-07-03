@@ -892,19 +892,7 @@ func (b *builder) computeMovedLocals() map[string]bool {
 	if b.fn.Body == nil {
 		return moved
 	}
-	idx := 0
-	identIdx := map[*ast.Ident]int{}
-	maxIdx := map[string]int{}
-	ast.Walk(b.fn.Body, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok {
-			idx++
-			identIdx[id] = idx
-			if idx > maxIdx[id.Name] {
-				maxIdx[id.Name] = idx
-			}
-		}
-		return true
-	})
+	order := identOrderOf(b.fn.Body)
 	sawReturn := false
 	for _, st := range b.fn.Body.Stmts {
 		if !sawReturn {
@@ -939,7 +927,7 @@ func (b *builder) computeMovedLocals() map[string]bool {
 				rhs, _ = s.Init.(*ast.Ident)
 				site = s
 			}
-			if rhs != nil && b.isOwnedRcLocal(rhs.Name) && identIdx[rhs] == maxIdx[rhs.Name] {
+			if rhs != nil && b.isOwnedRcLocal(rhs.Name) && order.isLast(rhs) {
 				moved[rhs.Name] = true
 				b.rc.moveSites[site] = true
 			}
@@ -948,7 +936,7 @@ func (b *builder) computeMovedLocals() map[string]bool {
 			// local's last use moves it into the field (see
 			// markConstructionMoves).
 			if val != nil {
-				b.markConstructionMoves(val, identIdx, maxIdx, moved)
+				b.markConstructionMoves(val, order, moved)
 			}
 		}
 		if stmtContainsReturn(st) {
@@ -976,7 +964,7 @@ func (b *builder) computeMovedLocals() map[string]bool {
 			// moved (its last use is the match).
 			markScrutinee := func(tag ast.Expr) {
 				if id, ok := tag.(*ast.Ident); ok && ownParam[id.Name] &&
-					identIdx[id] == maxIdx[id.Name] {
+					order.isLast(id) {
 					moved[id.Name] = true
 				}
 			}
@@ -1000,7 +988,7 @@ func (b *builder) computeMovedLocals() map[string]bool {
 							continue
 						}
 						if arg, ok := x.Args[i].(*ast.Ident); ok &&
-							ownParam[arg.Name] && identIdx[arg] == maxIdx[arg.Name] {
+							ownParam[arg.Name] && order.isLast(arg) {
 							moved[arg.Name] = true
 						}
 					}
@@ -1031,14 +1019,14 @@ func (b *builder) computeMovedLocals() map[string]bool {
 // its max pre-order index. The caller has already established the
 // dominance guards (top-level statement, no preceding return), so —
 // exactly as move-on-alias — x is moved on every path to an exit.
-func (b *builder) markConstructionMoves(val ast.Expr, identIdx map[*ast.Ident]int, maxIdx map[string]int, moved map[string]bool) {
+func (b *builder) markConstructionMoves(val ast.Expr, order identOrder, moved map[string]bool) {
 	// mark moves the Ident when it's an owned rc local at its last use.
 	// The caller has established the dominance guards; the per-container
 	// drop (struct field-drop / array drop_arr_ptr) releases the moved
 	// value exactly once, balancing the skipped construction inc.
 	mark := func(e ast.Expr) {
 		id, ok := e.(*ast.Ident)
-		if !ok || !b.isOwnedRcLocal(id.Name) || identIdx[id] != maxIdx[id.Name] {
+		if !ok || !b.isOwnedRcLocal(id.Name) || !order.isLast(id) {
 			return
 		}
 		moved[id.Name] = true
@@ -1110,7 +1098,7 @@ func (b *builder) markConstructionMoves(val ast.Expr, identIdx map[*ast.Ident]in
 			// it gates on isOwnedRcLocal, which (deliberately) excludes `dyn` —
 			// so apply the last-use guard inline.
 			if _, isDyn := b.exprType(cap).(ast.DynTraitType); isDyn && b.dynRcSupported {
-				if id, ok := cap.(*ast.Ident); ok && identIdx[id] == maxIdx[id.Name] {
+				if id, ok := cap.(*ast.Ident); ok && order.isLast(id) {
 					moved[id.Name] = true
 					b.rc.moveSites[id] = true
 				}
@@ -1146,19 +1134,7 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 	if b.fn.Body == nil {
 		return incs
 	}
-	idx := 0
-	identIdx := map[*ast.Ident]int{}
-	maxIdx := map[string]int{}
-	ast.Walk(b.fn.Body, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok {
-			idx++
-			identIdx[id] = idx
-			if idx > maxIdx[id.Name] {
-				maxIdx[id.Name] = idx
-			}
-		}
-		return true
-	})
+	order := identOrderOf(b.fn.Body)
 	// reassign-to-self: `A = A.with(...)` — the receiver's old value is
 	// overwritten by the result, so reuse is sound (no inc).
 	reassignSelf := map[*ast.Call]bool{}
@@ -1224,7 +1200,7 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 		}
 		// Live after the call iff this occurrence is NOT the receiver
 		// name's last use.
-		incs[c] = identIdx[rid] != maxIdx[rid.Name]
+		incs[c] = !order.isLast(rid)
 		return true
 	})
 	return incs
@@ -1282,16 +1258,6 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 		return true
 	})
 
-	references := func(st ast.Node, name string) bool {
-		found := false
-		ast.Walk(st, func(n ast.Node) bool {
-			if id, ok := n.(*ast.Ident); ok && id.Name == name {
-				found = true
-			}
-			return !found
-		})
-		return found
-	}
 	const rcHeaderBytes = 8
 	// reuseClassOf returns a local's box "kind" (struct / tuple / enum), its
 	// type name (empty for tuples), and its freelist class — (alloc+15)&-16 of
@@ -1491,7 +1457,7 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 	deadFromIn := func(stmts []ast.Stmt) func(string, int) bool {
 		return func(name string, k int) bool {
 			for i := k; i < len(stmts); i++ {
-				if references(stmts[i], name) {
+				if stmtReferencesName(stmts[i], name) {
 					return false
 				}
 			}
@@ -1631,16 +1597,6 @@ func (b *builder) computePreciseDrops() map[int][]string {
 		}
 		return true
 	})
-	references := func(st ast.Node, name string) bool {
-		found := false
-		ast.Walk(st, func(n ast.Node) bool {
-			if id, ok := n.(*ast.Ident); ok && id.Name == name {
-				found = true
-			}
-			return !found
-		})
-		return found
-	}
 	out := map[int][]string{}
 	for name, di := range declIdx {
 		if reassigned[name] || b.rc.movedLocals[name] || !b.rc.freeEligible[name] || !b.localNameUnique(name) {
@@ -1682,7 +1638,7 @@ func (b *builder) computePreciseDrops() map[int][]string {
 		unsafe := false
 		last := -1
 		for i := di + 1; i < len(stmts); i++ {
-			if !references(stmts[i], name) {
+			if !stmtReferencesName(stmts[i], name) {
 				continue
 			}
 			// Control-flow-aware placement (slice 5): the last use may now sit
@@ -1865,16 +1821,7 @@ func (b *builder) typeIsStringArrayFree(t ast.Type, seen map[string]bool) bool {
 // literals are NOT flagged — those inc the value, so a precise drop only
 // decs and the alias survives. Used to gate precise-drop placement.
 func (b *builder) flowsIntoUncountedAlias(st ast.Node, name string) bool {
-	hasName := func(n ast.Node) bool {
-		found := false
-		ast.Walk(n, func(m ast.Node) bool {
-			if id, ok := m.(*ast.Ident); ok && id.Name == name {
-				found = true
-			}
-			return !found
-		})
-		return found
-	}
+	hasName := func(n ast.Node) bool { return stmtReferencesName(n, name) }
 	bad := false
 	ast.Walk(st, func(n ast.Node) bool {
 		if bad {
@@ -2138,4 +2085,56 @@ func (b *builder) computeConsumingMatchReuse() map[*ast.Call]bool {
 		return true
 	})
 	return out
+}
+
+// stmtReferencesName reports whether any *ast.Ident named `name` appears
+// anywhere in the subtree `st` — the shared occurrence predicate behind the
+// last-use / deadness scans (#4480). Previously duplicated verbatim inside
+// computeReuseSources, computePreciseDrops, and flowsIntoUncountedAlias.
+func stmtReferencesName(st ast.Node, name string) bool {
+	found := false
+	ast.Walk(st, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && id.Name == name {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+// identOrder is the shared ident-occurrence-order fact (#4480): every
+// *ast.Ident in the function body numbered in pre-order (ast.Walk visit
+// order), plus each name's highest occurrence number. `isLast` is the
+// last-use test the move analyses hang off — an occurrence is the local's
+// LAST when no later occurrence of the same name exists anywhere in the
+// body. Previously built verbatim by both computeMovedLocals and
+// computeArraySetIncs and threaded pairwise into markConstructionMoves.
+// The statement-INDEX deadness scans (computePreciseDrops /
+// computeReuseSources) are a different fact by design — top-level /
+// per-block statement position, not ident occurrence — and stay separate.
+type identOrder struct {
+	idx  map[*ast.Ident]int
+	last map[string]int
+}
+
+func identOrderOf(body ast.Node) identOrder {
+	o := identOrder{idx: map[*ast.Ident]int{}, last: map[string]int{}}
+	n := 0
+	ast.Walk(body, func(node ast.Node) bool {
+		if id, ok := node.(*ast.Ident); ok {
+			n++
+			o.idx[id] = n
+			if n > o.last[id.Name] {
+				o.last[id.Name] = n
+			}
+		}
+		return true
+	})
+	return o
+}
+
+// isLast reports whether this occurrence is the highest-numbered occurrence
+// of its name — the "last use anywhere in the body" test.
+func (o identOrder) isLast(id *ast.Ident) bool {
+	return o.idx[id] == o.last[id.Name]
 }
