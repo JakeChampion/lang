@@ -218,12 +218,19 @@ per-type struct-drop / field-reclaim slices already landed).
   `/tmp/wt/adapter.wasm`; export the binaries onto `PATH` and set
   `FERN_WASI_ADAPTER` so the e2e tests don't SKIP). If a test SKIPs,
   treat that as a missing dependency to fix, not a green light.
-  **Pass `-timeout 30m` when running the *whole* `internal/e2e` package in
-  one `go test` invocation:** the unsharded suite runs ~10+ minutes (incl.
-  arm64/qemu + wasm), just over `go test`'s default 600s `-timeout`, so the
-  default aborts it with a `panic: test timed out` that reads like a failure
-  but is not one. CI doesn't hit this — it shards `internal/e2e` by
-  test-name regex across the `test-e2e-*` workflows, each well under its
+  **Pass `-timeout 30m` when running a *whole* e2e package in one `go test`
+  invocation:** the e2e suite is split (#4398 part 3) into
+  `internal/e2eselfhost` (the `TestSelfHost*` suite, ~575 files) and
+  `internal/e2e` (everything else + ~30 residual `TestSelfHost*` legs in
+  mixed native/selfhost fixture files), with the shared harness in
+  `internal/e2eharness` (each package re-binds the harness names via its
+  `harness_aliases_test.go`, so test code keeps bare identifiers like
+  `buildSelfHostBin`). Either package run unsharded takes ~10+ minutes
+  (incl. arm64/qemu + wasm), just over `go test`'s default 600s `-timeout`,
+  so the default aborts it with a `panic: test timed out` that reads like a
+  failure but is not one. CI doesn't hit this — it shards by test-name
+  regex across the `test-e2e-*` workflows (the selfhost lane round-robins
+  the union of both packages' `TestSelfHost*` lists), each well under its
   10-min job timeout.
 - **Self-host driver builds peak at ~16–18 GB RAM — enable swap if they
   get OOM-killed.** Every `buildSelfHostBin` / `buildBin` of a self-host

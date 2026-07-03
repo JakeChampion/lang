@@ -60,7 +60,7 @@ A few properties fall out of using commit statuses for this:
 | `e2e-wasm`          | Test e2e wasm                 | `go test -run '^Test(WASM\|Wasm)' ./internal/e2e/` (needs wasmtime + `FERN_WASI_ADAPTER`) |
 | `e2e-other`         | Test e2e other                | `go test -skip '^Test(Arm64\|X86_64\|WASM\|Wasm\|SelfHost\|Differential)' ./internal/e2e/` |
 | `e2e-differential`  | Test e2e differential         | `go test -run '^TestDifferential' ./internal/e2e/` |
-| `e2e-selfhost`      | Test e2e self-host            | `go test -run '^TestSelfHost' ./internal/e2e/` |
+| `e2e-selfhost`      | Test e2e self-host            | `go test -run '^TestSelfHost' ./internal/e2eselfhost/ ./internal/e2e/` (the residual mixed-fixture tests live in `internal/e2e`) |
 | `fuzz-parse`        | Fuzz parse round-trip         | `go test -fuzz=FuzzGenerate_ParseRoundTrips -fuzztime=60s -run='^$' ./internal/fernsmith` |
 | `fuzz-diff`         | Fuzz differential execution   | `go test -fuzz=FuzzGenerate_ExecutionAgrees -fuzztime=60s -run='^$' ./internal/e2e` |
 | `e2e-arm64`         | Test e2e arm64                | **discouraged** — see below |
