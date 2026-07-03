@@ -58,6 +58,34 @@ function main(): i32 {
         i = i + 1;
     }
 
+    // The lift emits calls to the pure-Fern runtime helpers (__ssa_arr_push /
+    // __ssa_arr_slice) for the array-append / slice ops — the same helpers
+    // build_func's `.append` / `a[lo:hi]` lowerings call. They are NOT lifted
+    // (they use __new_array, a build_func-only intrinsic irlower never emits), so
+    // build them the way ssa_emit_run does: parse ssa_helpers_src, and for each
+    // helper the lifted program actually calls, build_func_seeded + append it.
+    // Built on the same low bump heap (empty ptr_ret keeps 32-bit pointers, one
+    // memory model with the lifted code).
+    //
+    // Gate the whole block on a cheap pre-scan: parsing ssa_helpers_src is a big
+    // bump-heap allocation, and doing it unconditionally starves emit_program of
+    // arena for heavier programs (a composite + branch merge segfaulted). Only a
+    // program that actually appends / slices needs the helpers, so skip the parse
+    // entirely otherwise — restoring the original heap headroom for every
+    // non-append program.
+    if (ssa.calls_func(funcs, "__ssa_arr_push") || ssa.calls_func(funcs, "__ssa_arr_slice")) {
+        var hmod: parser.Module = parser.parse_module(lexer.tokenize(ssa.ssa_helpers_src()));
+        var hseed: ssa.Seed = ssa.build_seed(mod.funcs);
+        var hi: i32 = 0;
+        while (hi < hmod.funcs.len()) {
+            if (ssa.calls_func(funcs, hmod.funcs[hi].name)) {
+                var hr: ssa.BResult = ssa.build_func_seeded(hmod.funcs[hi], mod.structs, hseed);
+                if (hr.ok) { funcs = funcs.append(ssa.optimize(ssa.mark_float_calls(ssa.mark_ptr_calls(hr.func, empty), empty))); }
+            }
+            hi = hi + 1;
+        }
+    }
+
     if (target == "arm64") { write(ssa_arm64.emit_program(funcs, use_regalloc)); }
     else { write(ssa_x86.emit_program(funcs, use_regalloc)); }
     return 0;
