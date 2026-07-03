@@ -554,23 +554,29 @@ function eval_unary(op: string, ov: Value): Value {
     return v_err("unknown unary op: " + op);
 }
 
+// eval_number_literal parses a numeric literal to a Value. Kept OUT of
+// eval_expr's ExprNumber arm on purpose: inlining the i64 path (an extra
+// i64 local, the range compare, and the digits_to_i64 / box_i64 calls)
+// into the already-huge eval_expr pushed its arm64 frame / register
+// pressure over a threshold and tripped a layout-sensitive native-codegen
+// abort (the arm64 sibling of the #3425 x86 heap Heisenbug) — even though
+// the logic is correct in isolation. A separate function keeps eval_expr
+// small. Hex / binary literals keep i32 low-bits semantics via lit_to_i32
+// (digits_to_i32/i64 stop at the `x`/`b` and yield 0, #4341); decimal
+// literals parse as i64 so a value beyond i32 range survives, and box_i64
+// narrows it back to a compact VInt when it fits.
+function eval_number_literal(is_float: boolean, t: string): Value {
+    if (is_float) { return v_float(str_to_f64(t)); }
+    var hs: i32 = 0;
+    if (t.len() > 0 && t[0] == 45) { hs = 1; }
+    var is_radix: boolean = t.len() > hs + 1 && t[hs] == 48 && (t[hs + 1] == 120 || t[hs + 1] == 88 || t[hs + 1] == 98 || t[hs + 1] == 66);
+    if (is_radix) { return v_int(util.lit_to_i32(t)); }
+    return box_i64(util.digits_to_i64(t));
+}
+
 function eval_expr(e: parser.Expr, env: Env): Value {
     match (e) {
-        parser.ExprNumber(n) => {
-            if (n.is_float) { return v_float(str_to_f64(n.text)); }
-            // Hex / binary literals keep the i32 low-bits semantics via
-            // lit_to_i32 (digits_to_i32/i64 stop at the `x`/`b` and yield 0,
-            // #4341). Decimal literals are parsed as i64 so a value beyond
-            // i32 range (`5000000000`) survives; box_i64 keeps it a 32-bit
-            // VInt when it fits — preserving every existing i32 case, incl.
-            // overflow wrapping — and a VInt64 only when it exceeds i32.
-            var t: string = n.text;
-            var hs: i32 = 0;
-            if (t.len() > 0 && t[0] == 45) { hs = 1; }
-            var is_radix: boolean = t.len() > hs + 1 && t[hs] == 48 && (t[hs + 1] == 120 || t[hs + 1] == 88 || t[hs + 1] == 98 || t[hs + 1] == 66);
-            if (is_radix) { return v_int(util.lit_to_i32(t)); }
-            return box_i64(util.digits_to_i64(t));
-        },
+        parser.ExprNumber(n) => { return eval_number_literal(n.is_float, n.text); },
         parser.ExprBool(b) => { return v_bool(b.value); },
         parser.ExprString(s) => { return v_string(s.value); },
         parser.ExprIdent(id) => {
