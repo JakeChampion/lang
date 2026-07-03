@@ -22,7 +22,7 @@ func TestSelfHostEnumStructPayloadDropIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm_arm64_run.fern"} {
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm.fern", "asm_ir_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -31,7 +31,7 @@ func TestSelfHostEnumStructPayloadDropIRArm64(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_arm64_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	// bound-borrow-only payload: the arm reads inner.items before the post-arm reclaim
 	// deep-drops it. items[0]+items[15] = 1 + 16 = 17. A wrong/double free corrupts it.
@@ -47,7 +47,7 @@ function f(): i32 {
     return r;
 }
 function main(): i32 { return f() - 17; }`
-	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog))
+	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog), "-target", "arm64")
 	if len(asm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes")
 	}

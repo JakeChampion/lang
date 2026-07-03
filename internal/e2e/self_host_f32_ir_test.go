@@ -176,7 +176,7 @@ func TestSelfHostF32IRWasm(t *testing.T) {
 }
 
 // TestSelfHostF32IRArm64 runs the same cases through the self-hosted arm64
-// auto-decide driver (asm_arm64_run.fern), oracle-checked under qemu. The arm64
+// auto-decide driver (asm_ir_run.fern (-target arm64)), oracle-checked under qemu. The arm64
 // IR path shares eligibility with x86 (the asmcore frontend is common), so these
 // route IR there too; correctness is the gate. Mirrors TestSelfHostFloatArm64.
 func TestSelfHostF32IRArm64(t *testing.T) {
@@ -184,7 +184,7 @@ func TestSelfHostF32IRArm64(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm_arm64_run.fern"} {
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm.fern", "asm_ir_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -193,13 +193,13 @@ func TestSelfHostF32IRArm64(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_arm64_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range f32IRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.main + "\n")
 			want := interpExit(t, interpBin, string(src))
-			asm := runCapture(t, x86gcc, x86runner, driverBin, src)
+			asm := runCapture(t, x86gcc, x86runner, driverBin, src, "-target", "arm64")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}

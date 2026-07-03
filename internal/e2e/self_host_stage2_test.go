@@ -78,13 +78,20 @@ func TestSelfHostStage2Bootstrap(t *testing.T) {
 
 // runCapture runs bin (under the qemu runner if set), feeding stdin,
 // and returns stdout.
-func runCapture(t *testing.T, gcc string, runner []string, bin string, stdin []byte) []byte {
+// runCapture runs the built driver binary, pipes stdin in, and returns its
+// stdout. extraArgs are appended after the binary — the arm64/darwin consumers
+// pass "-target", "arm64" (etc.) to select the emit backend of the folded
+// asm_run driver (#4398 part 1); x86 callers pass nothing and stay unchanged.
+func runCapture(t *testing.T, gcc string, runner []string, bin string, stdin []byte, extraArgs ...string) []byte {
 	t.Helper()
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
-		cmd = exec.Command(bin)
+		cmd = exec.Command(bin, extraArgs...)
 	} else {
-		cmd = exec.Command(runner[0], append(runner[1:], bin)...)
+		args := append([]string{}, runner[1:]...)
+		args = append(args, bin)
+		args = append(args, extraArgs...)
+		cmd = exec.Command(runner[0], args...)
 	}
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)

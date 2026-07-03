@@ -471,7 +471,7 @@ self-bootstrap) stays green between slices.
 
 Mirror the native nets in the self-host's Go-side e2e harness
 (`internal/e2e/self_host_*_test.go`, driven through `asm_run.fern` /
-`asm_arm64_run.fern` / wasm):
+`asm_ir_run.fern -target arm64` / wasm):
 
 - **Functional**: extend `TestSelfHostAsmRun{X86_64,Arm64,WASM}` with
   RC-exercising programs (alias + push loops, scope drops, reassign,

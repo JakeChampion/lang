@@ -96,12 +96,12 @@ func TestSelfHostEnumArrayFieldIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostEnumArrayFieldIRArm64 runs the same cases through the arm64 IR
-// backend (asm_arm64_run → asm_arm64.emit_module's use_ir branch →
+// backend (asm_ir_run -target arm64 → asm_arm64.emit_module's use_ir branch →
 // asm_arm64_ir.emit_body, sharing irlower's enum-array-field lowering). This is
 // the load-bearing arm64 check: an enum-array struct field's deep-drop rides
 // arm64's heap-element reclamation, so an over-release here surfaces as a wrong
-// exit code / crash under qemu. Routing through asm_arm64_run (not the
-// differential asm_ir_run -target arm64 mode) is deliberate — only the production driver
+// exit code / crash under qemu. Routing through the production emit (no -ir flag,
+// so asm_arm64.emit_module's own use_ir dispatch runs) is deliberate — only it
 // injects the builtin enums (module_with_builtins) that enum-eligibility needs;
 // the differential -ir driver bails every enum program to AST. IR routing is
 // pinned by the arm64 IR emitter's `.Lira_` label marker rather than a size
@@ -113,7 +113,7 @@ func TestSelfHostEnumArrayFieldIRArm64(t *testing.T) {
 	for _, name := range []string{
 		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
 		"ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64.fern", "asm_arm64_ir.fern",
-		"asm_arm64_run.fern",
+		"asm.fern", "asm_ir_run.fern",
 	} {
 		s, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
@@ -123,10 +123,10 @@ func TestSelfHostEnumArrayFieldIRArm64(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_arm64_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 	for _, tc := range enumArrayFieldIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd := exec.Command(driverBin)
+			cmd := exec.Command(driverBin, "-target", "arm64")
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
 			asm, err := cmd.Output()
 			if err != nil || len(asm) == 0 {

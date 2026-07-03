@@ -74,7 +74,7 @@ The decision's 4-step sequencing is:
    real latent violation — a self-host test program using the old
    discarded-result `m.insert(...)` idiom — now fixed to `m = m.insert(...)`.
 
-   **Still to do:** the stdin drivers (`asm_run` / `asm_arm64_run`, used for
+   **Still to do:** the stdin drivers (`asm_run` / `asm_ir_run`, used for
    small single-file programs) and the wasm/ssa drivers don't gate yet — a
    mechanical follow-up applying the same three lines. The replacement
    idioms — struct-update (`T { ...old, f: v }`) and `arr = arr.with(i, v)`

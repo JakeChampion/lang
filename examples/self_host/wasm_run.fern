@@ -2,8 +2,8 @@
 // self-hosted wasm emitter. Reads Fern source from stdin, runs it
 // through lexer + parser + wasm.emit_module, and prints the resulting
 // WASI core module (WAT text) to stdout. Companion to asm_run.fern
-// (x86-64) and asm_arm64_run.fern (arm64): the same front end feeding
-// the wasm backend.
+// (x86-64) and asm_ir_run.fern (which serves arm64 / arm64-darwin via
+// `-target`): the same front end feeding the wasm backend.
 //
 // The Go-side test (self_host_wasm_test.go) pipes a source program in,
 // captures the WAT, and runs it with `wasmtime run prog.wat` — asserting
