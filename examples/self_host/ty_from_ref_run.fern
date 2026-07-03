@@ -1,0 +1,42 @@
+// examples/self_host/ty_from_ref_run.fern — golden driver for the structured
+// type-name decode (asmcore.fern's ty_from_ref / ty_from_name, SH-021 slice 2 —
+// docs/SELF-HOST-AUDIT.md T2).
+//
+// ty_from_name now decodes a type STRING to the coarse asmcore Ty via
+// ty_from_ref(parser.parse_type_ref(name)) — a structured tree pattern-match —
+// instead of the former hand-rolled byte scan. This driver runs a corpus
+// covering every branch of that decode (scalars, the dedicated scalar arrays vs
+// coarse arrays, Map / MapIter / Cell / Option / Result generics incl. nested
+// and single-arg degradations, the `Map`-prefix bare-name case, unrecognised
+// generics, tuples, and bare / qualified names) and prints ty_tag(ty_from_name s)
+// for each. The companion Go test pins the exact mapping, so a regression in
+// ty_from_ref (or in parse_type_ref feeding it) that changes any decoded Ty
+// fails the golden here rather than silently miscompiling a typed code path.
+
+import "./asmcore";
+import "./util";
+
+function main(): i32 {
+    var corpus: string[] = [
+        "i32", "u32", "u64", "i64", "usize", "f64", "f32", "float", "bool", "boolean", "string",
+        "i32[]", "u32[]", "u64[]", "i64[]", "string[]", "bool[]", "boolean[]", "f64[]",
+        "i32[][]", "string[][]", "Foo[]", "Option[i32][]", "Map[string, i32][]",
+        "Map[string, i32]", "Map[i32, string]", "Map[i32, Option[i32]]", "Map[string, Map[i32, string]]",
+        "Map", "MapConfig", "Map[string]",
+        "MapIter[i32, string]", "MapIter[string]",
+        "Cell[i32]", "Cell[string]",
+        "Option[i32]", "Option[string]", "Option[Map[string, i32]]", "Option[(string, string)]",
+        "Result[string, Err]", "Result[i32, string]", "Result[Foo]",
+        "Vec[T]", "Foo[A, B]", "Bar[i32]",
+        "(i32, string)", "(string, (i32, bool))",
+        "Foo", "mod.Bar", "TestRunner", "", "dyn Shape"
+    ];
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < corpus.len()) {
+        out = out + corpus[i] + " => " + asmcore.ty_tag(asmcore.ty_from_name(corpus[i])) + "\n";
+        i = i + 1;
+    }
+    write(out);
+    return 0;
+}
