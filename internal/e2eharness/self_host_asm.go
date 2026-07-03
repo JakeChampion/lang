@@ -13,7 +13,12 @@ import (
 func WriteSelfHostAsmProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern", "asm_arm64_ir.fern", "treeshake.fern"} {
+	// asm_arm64.fern is in the base set because asm_load_run.fern imports it
+	// (since #4506 folded the arm64 loader mirror behind `-target`, so the one
+	// loader driver dispatches to either backend). Consumers that build
+	// asm_load_run through this helper need it in the temp dir for modload to
+	// resolve; consumers building asm.fern (x86) just ignore the extra source.
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern", "asm_arm64.fern", "asm_arm64_ir.fern", "treeshake.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
