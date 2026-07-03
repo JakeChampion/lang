@@ -445,16 +445,27 @@ func (b *builder) computeFreeEligible() map[string]bool {
 				}
 			}
 		case *ast.IfExpr:
-			// A bare local read in an if-expr's value position
-			// (`var v = if (c) { v0 } else { v1 }`) aliases that local
-			// WITHOUT a reliable inc — the alias-inc only fires for a
-			// direct Ident RHS, not one wrapped in a conditional, and a
-			// per-arm inc can't be emitted unconditionally (some arms
-			// yield fresh rc=1 values). Freeing the source at scope exit
-			// would then strand the alias the conditional handed out, so
-			// taint any local that flows out of an arm.
-			escape(s.Then)
-			escape(s.Else)
+			// If-expr yields are COUNTED for the needsRcIncOnAlias shapes
+			// (#4399 sink 4a): the IfExpr lowering incs an aliased bare
+			// ident / field / index yield per arm, so the expression's
+			// result is owned whichever arm ran and the source local
+			// stays reclaimable — no move-site suppression applies here
+			// (computeMovedLocals never keys arm yields), so even a
+			// direct-Ident yield is fully counted. Only the shapes the
+			// inc does NOT cover keep the escape taint: a slice yield is
+			// an uncounted view into its source, and a scalar / untracked
+			// projection falls through escape's pointer gate as before.
+			escapeCountedYield := func(e ast.Expr) {
+				switch e.(type) {
+				case *ast.Ident, *ast.FieldAccess, *ast.Index:
+					if needsRcIncOnAlias(e, b) {
+						return // counted: the arm's alias inc covers it
+					}
+				}
+				escape(e)
+			}
+			escapeCountedYield(s.Then)
+			escapeCountedYield(s.Else)
 		case *ast.Destructure:
 			// Destructure bindings are NOT tainted: the lowering dups
 			// (rc_inc) each extracted pointer-shaped element, so the

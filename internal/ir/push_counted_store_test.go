@@ -142,3 +142,44 @@ func TestArraySetProjectionSourceFreeEligible(t *testing.T) {
 		}
 	}
 }
+
+// #4399 sink 4a — if-expr yields are counted stores for the
+// needsRcIncOnAlias shapes: each arm incs an aliased pointer-shaped yield
+// (fresh arm values move out uninc'd), so the source locals stay
+// reclaimable and only slice-view yields keep the escape taint.
+func TestIfExprYieldSourceFreeEligible(t *testing.T) {
+	p := lowerSource(t, `function pick(c: boolean, k: i32): i32 {
+    var a: i32[][] = [[k]];
+    var b2: i32[][] = [[k + 1]];
+    var v: i32[][] = if (c) { a } else { b2 };
+    return v[0][0];
+}`)
+	var pick *Func
+	for _, f := range p.Funcs {
+		if f.Name == "pick" {
+			pick = f
+		}
+	}
+	if pick == nil {
+		t.Fatalf("pick not lowered")
+	}
+	drops, incs := 0, 0
+	for _, op := range pick.Ops {
+		if op.Kind == OpCallDirect && strings.HasPrefix(op.Str, "__drop_arr_") {
+			drops++
+		}
+		if op.Kind == OpCallDirect && op.Str == "__fern_rc_inc" {
+			incs++
+		}
+	}
+	// a, b2, and v all become reclaimable (tainted baseline: 0 deep drops,
+	// 0 incs). The 6 = each local's release appears at both its
+	// precise/overwrite site and the exit-sweep path; the e2e balance
+	// tests pin that the is_unique-gated releases stay exact at runtime.
+	if drops != 6 {
+		t.Errorf("want 6 deep array drops (a + b2 + v, tainted baseline 0), got %d:\n%s", drops, p)
+	}
+	if incs < 2 {
+		t.Errorf("want >= 2 arm alias incs, got %d:\n%s", incs, p)
+	}
+}
