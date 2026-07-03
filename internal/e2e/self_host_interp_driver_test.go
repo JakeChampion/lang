@@ -95,6 +95,24 @@ var interpProgs = []struct {
 	// so the default method is synthesised onto `impl Greet[i32] for P`
 	// and `p.greet()` resolves to 42.
 	{"generic-trait-default-method", "trait Greet[T] { function greet(self: Self): i32 { return 42; } } struct P { x: i32 } impl Greet[i32] for P {} function main(): i32 { var p = P { x: 1 }; return p.greet(); }", 42},
+	// Leading-colon slice `a[:hi]` (#4339 item 3): parse_postfix's `[` arm read
+	// the `:` as the start of erased type args (parse_expr stalls on it) and
+	// dropped the slice; now it's a low-implicitly-0 slice. `[10,20,30][:2]`
+	// => elements 0,1 => 30.
+	{"slice-open-low", "function main(): i32 { var a = [10, 20, 30]; var b = a[:2]; return b[0] + b[1]; }", 30},
+	// C-style `for` with a non-`var` init (#4339 item 2): the self-host arm
+	// gated only on a `var` init, so an expression init (`i = 0`) or an empty
+	// init (`;`) fell into the `(k,v) in m` map arm and shredded. Now a
+	// top-level `;` in the header marks a C-for and the init may be empty /
+	// `var` / expression. Both loops sum 0..3 => 6.
+	{"cfor-expr-init", "function main(): i32 { var i = 0; var s = 0; for (i = 0; i < 4; i = i + 1) { s = s + i; } return s; }", 6},
+	{"cfor-empty-init", "function main(): i32 { var i = 0; var s = 0; for (; i < 4; i = i + 1) { s = s + i; } return s; }", 6},
+	// Vertical-tab / form-feed whitespace (#4339 item 5): is_space accepted only
+	// space/tab/LF/CR, so a form feed (\f, 0x0C) between tokens lexed to TokError
+	// and tokenize STOPPED, truncating the program. Now \v (0x0B) and \f (0x0C)
+	// are skipped like native's unicode.IsSpace. The \f sits between `{` and
+	// `return`; the program still returns 42.
+	{"lexer-formfeed-ws", "function main(): i32 {\freturn 42; }", 42},
 }
 
 // TestSelfHostInterpDriverX86_64 is the keystone of the inference

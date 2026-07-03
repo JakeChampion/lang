@@ -82,7 +82,12 @@ function hex_val(b: i32): i32 {
     if (b >= 65 && b <= 70) { return b - 65 + 10; }
     return 0;
 }
-function is_space(b: i32): boolean { return b == 32 || b == 9 || b == 10 || b == 13; }
+// Whitespace bytes skipped between tokens. Native uses unicode.IsSpace
+// (internal/lexer/lexer.go); at the byte level that includes the ASCII
+// set space/tab/LF/CR plus vertical-tab (0x0B) and form-feed (0x0C).
+// Without \v/\f a form feed lexed to TokError and tokenize STOPPED,
+// silently truncating the program (bogus E052 "missing return") (#4339).
+function is_space(b: i32): boolean { return b == 32 || b == 9 || b == 10 || b == 13 || b == 11 || b == 12; }
 function is_suffix_start(b: i32): boolean { return b == 105 || b == 117 || b == 102; }   // 'i' 'u' 'f'
 
 // Keyword set — mirrors `internal/lexer/lexer.go`'s `keywords` map.

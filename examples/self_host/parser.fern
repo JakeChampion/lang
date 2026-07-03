@@ -1223,6 +1223,30 @@ function parse_postfix(p: Par, base: Expr): ExprResult {
             pending_type_argc = 0;
         } else if (pk == "[") {
             p = p.advance();
+            // Leading-colon slice `a[:hi]` (low implicitly 0), mirroring the
+            // Go parseCall's `[:b]` form. The `:` isn't a value expression, so
+            // without handling it here the type-arg probe below would misread
+            // `:hi` as erased type args and drop the slice (#4339). `a[:]` is
+            // the full slice `[0:len]`.
+            if (p.peek_punct() == ":") {
+                p = p.advance(); // consume `:`
+                // Low bound is a literal 0. Inlined (not bound to a local)
+                // because the checker mishandles `var x: Expr = e_number(...)`
+                // here but accepts e_number inline as a call argument.
+                if (p.peek_punct() == "]") {
+                    p = p.advance();
+                    base = e_slice(base, e_number("0", "", false), e_call(e_field_access(base, "len"), []));
+                    continue;
+                }
+                var shi = parse_expr(p);
+                p = shi.par;
+                if (p.peek_punct() != "]") {
+                    return ExprResult { par: p, expr: e_unknown("missing ] in slice") };
+                }
+                p = p.advance();
+                base = e_slice(base, e_number("0", "", false), shi.expr);
+                continue;
+            }
             // Generic instantiation `f[i32](…)` / `Box[T] { … }`: the
             // bracket holds type arguments, not a value index. Detect it by
             // probing parse_expr — if it makes no progress (a type keyword
@@ -2544,17 +2568,49 @@ function parse_for_stmt(p: Par): StmtResult {
         var cfl: i32 = p.peek_line();
         var cfc: i32 = p.peek_col();
         p = p.advance();
-        // C-style `for (var i = INIT; COND; STEP) { BODY }` — distinguished
-        // from the `for (k, v) in m` map form by a `var` init. The self-host
-        // Stmt union has no C-style-for node, so desugar to a scoped while
-        // loop with a first-iteration flag, so a `continue` re-runs STEP
-        // (matching C semantics) instead of skipping it. Reuses if / while /
-        // break (no new node). (#2820)
-        if (p.peek_keyword() == "var") {
-            var fcinit: StmtResult = parse_stmt(p);   // `var i = INIT;` (eats `;`)
-            p = fcinit.par;
-            var fccond: ExprResult = parse_expr(p);   // `COND`
-            p = fccond.par;
+        // C-style `for (INIT; COND; STEP) { BODY }` — distinguished from the
+        // `for (k, v) in m` map form by a top-level `;` in the header (the map
+        // form has none). Native accepts a `var` init, an expression init, or
+        // an empty init/cond (`parser.go` parseFor); the self-host previously
+        // gated only on a `var` init (#2820), so `for (i = 0; …)` / `for (;
+        // …)` fell into the map arm and shredded (#4339). The Stmt union has
+        // no C-style-for node, so desugar to a scoped while loop with a
+        // first-iteration flag, so a `continue` re-runs STEP (matching C
+        // semantics) instead of skipping it. Reuses if / while / break.
+        //
+        // Detect via a lookahead: scan a copy of the cursor for a top-level
+        // `;` before the matching `)`, tracking ()[]{} nesting depth.
+        var scan: Par = p;
+        var sc_depth: i32 = 0;
+        var is_cfor: boolean = false;
+        while (!scan.at_end()) {
+            var sp: string = scan.peek_punct();
+            if (sp == "(" || sp == "[" || sp == "{") { sc_depth = sc_depth + 1; }
+            else if (sp == ")" || sp == "]" || sp == "}") {
+                if (sc_depth == 0) { break; }
+                sc_depth = sc_depth - 1;
+            }
+            else if (sp == ";" && sc_depth == 0) { is_cfor = true; break; }
+            scan = scan.advance();
+        }
+        if (is_cfor) {
+            // INIT: empty (`;`), `var …`, or an expression statement — each
+            // terminated by `;` (parse_stmt eats it for the var/expr forms).
+            var initstmts: Stmt[] = [];
+            if (p.peek_punct() == ";") {
+                p = p.advance();
+            } else {
+                var fcinit: StmtResult = parse_stmt(p);
+                p = fcinit.par;
+                initstmts = [fcinit.stmt];
+            }
+            // COND: empty means "always true" (`for (…; ; …)` loops forever).
+            var condexpr: Expr = e_bool(true);
+            if (p.peek_punct() != ";") {
+                var fccond: ExprResult = parse_expr(p);
+                p = fccond.par;
+                condexpr = fccond.expr;
+            }
             if (p.peek_punct() == ";") { p = p.advance(); }
             var stepone: Stmt[] = [];                 // STEP (no `;`, stops at `)`)
             if (p.peek_punct() != ")") {
@@ -2573,14 +2629,16 @@ function parse_for_stmt(p: Par): StmtResult {
             wbody = wbody.append(s_if(e_unary("!", e_ident(flag)), stepone, noelse));
             // first = false
             wbody = wbody.append(s_assign(flag, e_bool(false)));
-            // if (!(COND)) { break }
+            // if (!(COND)) { break }  — with an empty cond, COND is `true`, so
+            // this is `if (!true) break`, i.e. never breaks (infinite loop).
             var breakone: Stmt[] = [s_break()];
-            wbody = wbody.append(s_if(e_unary("!", fccond.expr), breakone, noelse));
+            wbody = wbody.append(s_if(e_unary("!", condexpr), breakone, noelse));
             var fbi: i32 = 0;
             while (fbi < fcbody.body.len()) { wbody = wbody.append(fcbody.body[fbi]); fbi = fbi + 1; }
             // { INIT; var first = true; while (true) { <wbody> } }  (scoped via if-true)
             var outer: Stmt[] = [];
-            outer = outer.append(fcinit.stmt);
+            var ini: i32 = 0;
+            while (ini < initstmts.len()) { outer = outer.append(initstmts[ini]); ini = ini + 1; }
             outer = outer.append(s_var(flag, "", e_bool(true)));
             outer = outer.append(s_while(e_bool(true), wbody));
             return StmtResult { par: p, stmt: s_if(e_bool(true), outer, noelse) };
