@@ -130,6 +130,13 @@ var interpProgs = []struct {
 	// `0.0/0.0` is NaN (self-comparison false). Each returns 7 iff honoured.
 	{"fdiv-inf", "function main(): i32 { var x: f64 = 1.0 / 0.0; if (x > 1000000000.0) { return 7; } return 0; }", 7},
 	{"fdiv-nan", "function main(): i32 { var y: f64 = 0.0 / 0.0; if (y != y) { return 7; } return 0; }", 7},
+	// Short-circuit && / || (#4348 item 5): eval_binary evaluated both operands
+	// eagerly, so a guarded out-of-bounds RHS still ran. With i=5 and a len-3
+	// array, `i < 3 && a[i] == 1` must not evaluate `a[5]` (OOB → VErr → 254);
+	// short-circuiting keeps the condition false so the program returns 42.
+	// The `||` mirror short-circuits on a true LHS.
+	{"and-short-circuit", "function main(): i32 { var a = [1, 2, 3]; var i = 5; if (i < 3 && a[i] == 1) { return 0; } return 42; }", 42},
+	{"or-short-circuit", "function main(): i32 { var a = [1, 2, 3]; var i = 5; if (i >= 3 || a[i] == 1) { return 42; } return 0; }", 42},
 }
 
 // TestSelfHostInterpDriverX86_64 is the keystone of the inference
