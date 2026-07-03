@@ -453,6 +453,20 @@ function eval_expr(e: parser.Expr, env: Env): Value {
         parser.ExprBinary(b) => {
             var lv: Value = eval_expr(b.left, env);
             if (is_err(lv)) { return lv; }
+            // Short-circuit `&&` / `||`: the RHS is NOT evaluated when the LHS
+            // already determines the result (#4348 item 5). Matches native and
+            // keeps a guarded side-effecting / out-of-bounds RHS from running
+            // (e.g. `i < len && a[i] == x`). The non-short-circuit path still
+            // flows through eval_binary with both operands.
+            if (b.op == "&&" || b.op == "||") {
+                match (lv) {
+                    VBool(lb) => {
+                        if (b.op == "&&" && !lb.v) { return v_bool(false); }
+                        if (b.op == "||" && lb.v) { return v_bool(true); }
+                    },
+                    _ => { },
+                }
+            }
             var rv: Value = eval_expr(b.right, env);
             if (is_err(rv)) { return rv; }
             return eval_binary(b.op, lv, rv);
