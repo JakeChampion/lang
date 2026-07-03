@@ -3580,3 +3580,33 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   from leak-documenting to firing. Remaining #4355 surface: the general
   "any string anywhere" endpoint (payloads via `?`, string fields of enum
   payload structs, nested shapes) — tracked on the issue.
+- 2026-07-03: **Landed closure-env capture RC on the IR path (#4354, port slice
+  5 — irlower-only, all three backends).** The single-classifier model from the
+  AST path, ported to IR emission: `closure_capture_kind` classifies each
+  capture ('s' string, 'a' scalar array, '.' everything else), and the SAME
+  kinds string drives the build-site retain and the exit-sweep release, so incs
+  and drops land together (the issue's invariant). lower_func approves closure
+  locals via `clo_rc_candidate_names` (single-bind literal-lambda init, never
+  reassigned, not shadowed, body_unsafe_for-clean) seeded as "OK:<name>" into
+  the new `LowerState.clo_cap_kinds` registry; the StmtVar lowering consumes
+  the approval — after storing the env box it reads each classifiable capture
+  back (`env[ci+1]`, the closure-call path's own arr_get) and `__fern_rc_inc`s
+  it, registering "<name>|<kinds>". The exit sweep's array loop releases before
+  the box dec: an rc==1-gated walk (`__fern_rc_is_unique` + if) frees each
+  's' capture via __fern_str_free and each 'a' via __fern_rc_dec. The #4354
+  interlock: a fresh string captured into an APPROVED closure is no longer
+  escape-flagged by the STR: gate (`body_unsafe_for_clo`) — build inc (rc 2) +
+  env release (→1) + string sweep (→0) free it exactly once, with ordering
+  (env release in the array loop, string sweep after) making any classifier
+  mismatch a sound leak instead of a UAF. Unclassified capture kinds (string[]
+  / struct / enum / map / nested closure) and escaping/aliased/reassigned
+  closures keep today's leak. No backend edits (existing rc helpers only).
+  VERIFIED: TestSelfHostClosureEnvRcIRX86_64 (+wasm/arm64 siblings) — string
+  and scalar-array capture churns flat + underflow 0, capture-used-after and
+  param-capture balance. Known pre-existing (NOT this slice): a bare-ident
+  closure alias (`var d = c; d()`) segfaults on the IR path — d is never
+  marked a closure local, so `d()` calls the raw env box; unchanged by this
+  slice and excluded from the RC gates (an aliased env's release is rc==1
+  gated). Remaining for full slice-5 parity: struct/enum/map/string[]/nested
+  capture kinds, closure ARRAYS (`__drop_arr_closure` equivalent), and the
+  escaping-closure drop thunk (native `__closure_drop_<name>` dispatch).
